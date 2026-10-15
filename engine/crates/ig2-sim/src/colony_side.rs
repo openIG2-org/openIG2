@@ -204,6 +204,11 @@ impl TechTable {
         }
     }
 
+    /// The seen-matrix byte [`TechTable::mark_seen`] sets (0 past the table).
+    pub fn seen(&self, t: usize, spy: usize, owner: usize) -> bool {
+        self.bytes.get(self.at(t, 0xc0 + 9 * spy + owner)).is_some_and(|&b| b != 0)
+    }
+
     /// `Research_TalalmanyUjraSzamol` (exe 0x5245c0), spec §4.1.
     pub fn recompute(&mut self, players: i32, all_techs: bool) {
         for e in 1..=players.clamp(0, EMPIRES as i32 - 1) as usize {

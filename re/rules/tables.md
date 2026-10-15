@@ -37,6 +37,7 @@ from the user's own `ig2.exe` (`engine/crates/ig2-rules`, ADR 0004). No values a
 | `NehezsegGyartasSzorzo` / `NehezsegPenzSzorzo` | 0x8F8834 / 0x8F8848 | f32 × 5 | difficulty: production (0.75/1.2/2.0/1.8), money (0.75/1.2/1.6/1.5) | = file |
 | `FejlesztesSebessegSzorzo` | 0x8F885C | f32 × 5 | development speed (1.0/1.6/2.5/2.5) | = file |
 | `FajBekeMogalomSzint`, `FajKereskedelemIgenySzint`, `FajFelelemOnmegsemmisitotolSzint` | 0x90B924, 0x90B960, 0x90B99C | i32 × 15 | per-race diplomacy thresholds (peace, trade demand, fear) | = file |
+| `Megbizhatatlansag_DeclareWar` | 0x902FC0 (read by `DiplomaciaMegtamadas` exe 0x4bd850) | i32 × 2 × 4 × 2 | unreliability a war adds: `[undeclared][relation row][victim, others]` (`diplomacy.md` §8.1) | (not dumped) |
 | `FajMiBolygokHanyadReszeGyartas`, `FajMiBolygokMilyenKatonaiAutiBuild` | 0x915F90, 0x915FCC | i32 × 15 | AI production share (50%), AI military autobuild level | = file |
 | `ProblemakLeiro` | 0x912858 | 24 × 20 | colony problem curves `{a, b, c, d, rate, weight}` (`colony-economy.md` §5) | = file, except entry 4 rate/weight (rewritten per planet) |
 | `CsaladtagMoralCsokkenesLeiro` | 0x913838 | 4 × 6 | morale loss per kidnapped-family-member state | = file |

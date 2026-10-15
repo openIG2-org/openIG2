@@ -142,7 +142,8 @@ not found: u = 0; while u < count and Terepek[u].type != k: u += 1      (u = cou
 if u + 1 != count: cursor[k] = u + 1  else: cursor[k] = 0               (k ≥ 8 would abort; unreachable here)
 return u == 60 ? 63 : u                                                  (map 60 is never used: 63 instead)
 ```
-Verified with real fleet arrivals (`traces/2026-10-15-arrivals.md`: 98 colonisations, 43 terraformings).
+Verified with real fleet arrivals (`traces/2026-10-15-arrivals.md`: 127 colonisations, 51 terraformings,
+owner races randomised so the empire-number row is pinned).
 
 ## 6. Autobuild
 ### 6.1 Per planet (inside the economy step, after taxes and the `+0x68` counter, before spy expulsion)

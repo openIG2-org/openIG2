@@ -63,6 +63,16 @@ pub mod layout {
     pub const AUTOBUILD_NAMES: (u32, usize, usize) = (0x8F1ED0, 4, 17); // AutoBuildNevek (char*)
     pub const PRODUCTION_DEFAULT: (u32, usize, usize) = (0x90B8A8, 1, 64); // pGyartas0
     pub const BUILDING_MODELS: (u32, usize, usize) = (0x8F1F28, 0x6c, 60); // Building (kind 1..=60), footprint +0x58/+0x5c
+    pub const DECLARE_WAR_UNRELIABILITY: (u32, usize, usize) = (0x902FC0, 4, 16); // Megbizhatatlansag_DeclareWar [2][4][2]
+    pub const SPY_MISSIONS: (u32, usize, usize) = (0x912F48, 0x20, 27); // KemKuldetesek
+    pub const SPY_OUTCOME_STATE: (u32, usize, usize) = (0x9132A8, 4, 5); // KemKuldetesAtmenet
+    pub const SPY_RANK_POINTS: (u32, usize, usize) = (0x9132BC, 4, 15); // KemSzintLepesSzetoszthato
+    pub const SPY_TEMPLATES: (u32, usize, usize) = (0x9132F8, 0x4c, 15); // KemTartalekok
+    /// `KemRangXPHatar[0..=20]` plus the i32 after it, which `Spy_New` reads for rank 20.
+    pub const SPY_RANK_XP: (u32, usize, usize) = (0x9137A8, 4, 22);
+    pub const SPY_TRAINING_XP: (u32, usize, usize) = (0x92705C, 4, 6); // TrainingKuldetesXP
+    /// `Spy_New` (code): the recruit names are immediates stored into a local `char*` array.
+    pub const SPY_NEW_CODE: (u32, usize, usize) = (0x58F830, 1, 0x4c0);
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -71,6 +81,40 @@ fn cstr(b: &[u8]) -> String {
 
 fn i32_at(b: &[u8], o: usize) -> i32 {
     i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
+}
+
+/// The recruit names of `Spy_New`: the code stores each `char*` with `mov dword [ebp + d], imm32`
+/// (`C7 45 d8` / `C7 85 d32`) into a local array; sorted by `d` they are the list in order (37 names,
+/// `re/rules/espionage.md` §1.2).
+fn spy_names(img: &PeImage) -> Result<Vec<Vec<u8>>> {
+    let (va, _, len) = layout::SPY_NEW_CODE;
+    let code = img.read(va, len)?;
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i + 7 <= code.len() {
+        let (d, imm, step) = match (code[i], code[i + 1]) {
+            (0xc7, 0x45) => (code[i + 2] as i8 as i32, u32::from_le_bytes(code[i + 3..i + 7].try_into().unwrap()), 7),
+            (0xc7, 0x85) if i + 10 <= code.len() => {
+                (i32_at(code, i + 2), u32::from_le_bytes(code[i + 6..i + 10].try_into().unwrap()), 10)
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        if let Ok(s) = img.read(imm, 16) {
+            let name: Vec<u8> = s.iter().take_while(|&&c| c != 0).copied().collect();
+            if !name.is_empty() && name.len() < 16 && name.iter().all(|&c| c >= 0x20) {
+                found.push((d, name));
+            }
+        }
+        i += step;
+    }
+    found.sort();
+    if found.len() != 37 || found.windows(2).any(|w| w[1].0 - w[0].0 != 4) {
+        return Err(Error::Pe("unexpected Spy_New name list"));
+    }
+    Ok(found.into_iter().map(|(_, n)| n).collect())
 }
 
 /// One technology (`Talalmanyok0` record, 276 bytes; per-empire runtime state at 69.. is omitted).
@@ -129,6 +173,33 @@ pub struct Building {
     /// +32 bit 0: the effect is the scaled output (otherwise 1 per building);
     /// +33 bit 0: the effect persists while the building isn't working.
     pub flags: [u8; 2],
+}
+
+/// A spy mission (`KemKuldetesek`, 0x20 bytes; `re/rules/espionage.md` §1.2).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct SpyMission {
+    /// +0: enabled (the story toggles story missions; `FRISSIT_Spy` clears mission 11 daily).
+    pub enabled: u8,
+    /// +4: 1 = the parameter is a planet of the target.
+    pub kind: i32,
+    pub w8: i32,
+    /// +0xc: experience for a success.
+    pub xp: i32,
+    /// +0x10: cost; +0x14: length.
+    pub cost: i32,
+    pub length: i32,
+    pub b18: u8,
+    /// +0x19 / +0x1a / +0x1b: infiltration floor, infiltration for the full chance, full chance %.
+    pub skill_floor: u8,
+    pub skill_full: u8,
+    pub chance: u8,
+    /// +0x1c: needs a living target (and can be caught).
+    pub needs_target: u8,
+    /// +0x1d: story mission (the story script decides).
+    pub story: u8,
+    /// +0x1e: no countdown.
+    pub no_countdown: u8,
+    pub b1f: u8,
 }
 
 /// One colony problem curve (`ProblemakLeiro`, 6 × i32; entry 0 is the morale curve).
@@ -270,6 +341,19 @@ pub struct Rules {
     /// `Building[k − 1]` `+0x58/+0x5c`: footprint (width, height) of building kind `k` on the 200 × 200
     /// colony grid, indexed by kind (entry 0 = (0, 0); `re/rules/colony-placement.md` §1).
     pub building_footprints: Vec<(i32, i32)>,
+    /// `Megbizhatatlansag_DeclareWar`: `[undeclared][row][victim, others]` unreliability a war adds
+    /// (`re/rules/diplomacy.md` §8.1), 16 i32 in memory order.
+    pub declare_war_unreliability: Vec<i32>,
+    /// Espionage (`re/rules/espionage.md` §1.2): missions 0..=26, the new state per catch outcome 0..=4,
+    /// skill points per rank by race, the 15 template spy records (0x4c bytes) by race, rank experience
+    /// 0..=21 (21 = the i32 after the table), training experience by level, recruit names.
+    pub spy_missions: Vec<SpyMission>,
+    pub spy_outcome_state: Vec<i32>,
+    pub spy_rank_points: Vec<i32>,
+    pub spy_templates: Vec<Vec<u8>>,
+    pub spy_rank_xp: Vec<i32>,
+    pub spy_training_xp: Vec<i32>,
+    pub spy_names: Vec<Vec<u8>>,
 }
 
 impl Rules {
@@ -451,6 +535,40 @@ impl Rules {
                 let (b, s, n) = tab(layout::BUILDING_MODELS)?;
                 std::iter::once((0, 0)).chain((0..n).map(|i| (i32_at(b, i * s + 0x58), i32_at(b, i * s + 0x5c)))).collect()
             },
+            declare_war_unreliability: ints(layout::DECLARE_WAR_UNRELIABILITY)?,
+            spy_missions: {
+                let (b, s, n) = tab(layout::SPY_MISSIONS)?;
+                (0..n)
+                    .map(|i| {
+                        let r = &b[i * s..(i + 1) * s];
+                        SpyMission {
+                            enabled: r[0],
+                            kind: i32_at(r, 4),
+                            w8: i32_at(r, 8),
+                            xp: i32_at(r, 0xc),
+                            cost: i32_at(r, 0x10),
+                            length: i32_at(r, 0x14),
+                            b18: r[0x18],
+                            skill_floor: r[0x19],
+                            skill_full: r[0x1a],
+                            chance: r[0x1b],
+                            needs_target: r[0x1c],
+                            story: r[0x1d],
+                            no_countdown: r[0x1e],
+                            b1f: r[0x1f],
+                        }
+                    })
+                    .collect()
+            },
+            spy_outcome_state: ints(layout::SPY_OUTCOME_STATE)?,
+            spy_rank_points: ints(layout::SPY_RANK_POINTS)?,
+            spy_templates: {
+                let (b, s, n) = tab(layout::SPY_TEMPLATES)?;
+                (0..n).map(|i| b[i * s..(i + 1) * s].to_vec()).collect()
+            },
+            spy_rank_xp: ints(layout::SPY_RANK_XP)?,
+            spy_training_xp: ints(layout::SPY_TRAINING_XP)?,
+            spy_names: spy_names(&img)?,
         })
     }
 

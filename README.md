@@ -48,6 +48,8 @@ it matches bit for bit**.
 | **Radar & visibility** | Per-empire radar, supply fade, stealth, alliances, discovery, "enemy approaching" slow-down |
 | **Space combat (strategic)** | Design stats, battle routing, auto-resolve |
 | **Research & production** | Research progress, AI research picks, production queues, ship/vehicle building |
+| **Diplomacy** | Daily relations and opinion, the AI's proposals, threats and declarations, AI-to-AI answers, wars and peace treaties; the human's messages, deals (money, planets, techs, radar maps, hostages, wars, peace), demands, answers and counter-proposals, and the auto-cancel of stale offers |
+| **Espionage** | Spy ranks and experience, double agents, the catch check and the captor's verdict, 13 missions (reports, theft of money and techs, sabotage, ship strikes, rebellions, assassinations, kidnapping), recruitment |
 
 ### 🚧 Planned
 
@@ -55,7 +57,7 @@ it matches bit for bit**.
 |---|---|
 | Real-time space battles (`SpwC`) as a fixed-step sim | 📝 specified |
 | Ground combat (`WF*`) | ⏳ |
-| Diplomacy, espionage and the AI empires | ⏳ |
+| The AI empires (`FRISSIT_MI`) | ⏳ |
 | Campaign and story scripting | ⏳ |
 | wgpu game renderer and UI | ⏳ |
 | Lockstep multiplayer over QUIC: LAN discovery, direct IP, UPnP, rejoin | ⏳ |

@@ -70,6 +70,8 @@ pub struct Fleet {
     pub flags: u16,
     pub ship_count: i32,
     pub strength: i32,
+    /// `+0x68`: ground strength of the vehicles aboard (`space-combat.md` §3).
+    pub ground_strength: i32,
     pub radar: f32,
 }
 
@@ -99,6 +101,7 @@ impl Fleet {
             flags: u16::from_le_bytes([r[0x52], r[0x53]]),
             ship_count: i32_at(0x54),
             strength: i32_at(0x60),
+            ground_strength: i32_at(0x68),
             radar: f32_at(0x7c),
         }
     }

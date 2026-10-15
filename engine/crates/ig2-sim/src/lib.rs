@@ -4,6 +4,7 @@
 
 pub mod colony;
 pub mod colony_side;
+pub mod diplomacy;
 pub mod fleet;
 pub mod placement;
 pub mod production;
@@ -11,4 +12,5 @@ pub mod radar;
 pub mod research;
 pub mod rng;
 pub mod spacewar;
+pub mod spy;
 pub mod time;
