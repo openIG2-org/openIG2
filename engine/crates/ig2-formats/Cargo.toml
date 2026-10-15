@@ -1,0 +1,12 @@
+[package]
+name = "ig2-formats"
+version = "0.1.0"
+description = "Readers for Imperium Galactica II (GOG remaster) data files. Ships no game data."
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+lz4_flex.workspace = true
+encoding_rs.workspace = true
+thiserror.workspace = true

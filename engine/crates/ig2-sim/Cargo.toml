@@ -1,0 +1,13 @@
+[package]
+name = "ig2-sim"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
+ig2-rules = { version = "0.1.0", path = "../ig2-rules" }

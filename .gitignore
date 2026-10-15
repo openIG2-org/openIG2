@@ -1,0 +1,30 @@
+# Never commit original game assets, binaries, or anything decoded from them.
+/Imperium_Galactica_II_ORIGINAL_GOG/
+/_local/
+__pycache__/
+
+*.pvr
+*.ogg
+*.mp4
+*.xv
+*.ani
+*.scn
+*.mou
+*.map
+*.res
+*.dsc
+*.eng
+*.tut
+*.raw
+*.psd
+*.blend
+*.sgmodel
+*.exe
+*.dll
+*.so
+*.so.*
+*.gpr
+*.rep/
+
+# Rust
+target/
