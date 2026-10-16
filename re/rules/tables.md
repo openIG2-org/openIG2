@@ -18,7 +18,7 @@ from the user's own `ig2.exe` (`engine/crates/ig2-rules`, ADR 0004). No values a
 | `Talalmanyok0` | 0x8DE048 | 276 × 193 | technology defaults (copied to live `Talalmanyok` @0xB9C0C8) | names localised at start-up (bytes 0–15); all else = file |
 | `TalalmanyokrEro` | 0x8EB730 | 4 × 193 | per-tech firepower/strength (Fighter 10, … = res_info "FIREPOWER") | = file |
 | `ScirmishTalalmanyFejlesztes` | 0x8EC218 | 4 × 193 | per-tech skirmish start state [inf] | = file |
-| `Talalmanyok2` | 0x8EB060 | 1737 B | auto-design data (`TervAutoDesign`) [unk layout] | = file |
+| `Talalmanyok2` | 0x8EB060 | 9 × 193 | u8 `[tech][race]`: the AI's tech priority for the special variant of a ground hull (`TervAutoDesign`, `ai-empire.md` §10.3) | = file |
 | `EpuletekLeiro` | 0x8EBA38 | 36 × 56 | building descriptors | = file |
 | `PodTipusok` | 0x8F8918 | 84 × 55 | equipment pod types | names set at new game (bytes 4–16) |
 | `PodFajok` | 0x8F9B28 | 8 × (14·27·12) | design slot grid: [pod table][hull][slot] → (pod type, max) | = file |
@@ -92,4 +92,4 @@ Per-empire radar tables derived from these at runtime (`RadarHatotav2` 0xBB61A8,
 ## Open
 - Hull +0x10..+0x23 (design/spy screens), weapon +0x40/+0x48/+0x59 and kinds other than 2 (tactical battle, not ported).
 - Tech words +28/+36/+60..; building +1/+4/+24/+28; the leading `-` on some built-in names (`-Fighter`) [unk marker].
-- `Talalmanyok2` layout; `FajSpeckoKutatasMoneySzorzo` exact address.
+- `FajSpeckoKutatasMoneySzorzo` exact address. (`Talalmanyok2` is `[193][9]` u8, read by `TervAutoDesign`: `ai-empire.md` §10.3.)

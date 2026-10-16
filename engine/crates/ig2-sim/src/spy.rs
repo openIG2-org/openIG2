@@ -216,6 +216,10 @@ pub struct MissionRule {
     pub needs_target: bool,
     pub story: bool,
     pub no_countdown: bool,
+    /// `+0x10` / `+0x14` / `+0x18`: length in days, cost, the rank the AI needs (`re/rules/ai-empire.md` §6).
+    pub days: i32,
+    pub cost: i32,
+    pub min_rank: u8,
 }
 
 /// Rule tables (from the user's exe, ADR 0004).
@@ -1136,7 +1140,7 @@ pub fn chance(rule: &MissionRule, infiltration: u8, m: usize, ctx: &SpyContext, 
 }
 
 /// `st_eSearch2spy(4, owner, p, tech)` (spec §5.6): a random finished building, `(planet, slot)` (1-based).
-fn search_building(w: &mut World, owner: usize, p: i32, tech: i32) -> (usize, usize) {
+pub(crate) fn search_building(w: &mut World, owner: usize, p: i32, tech: i32) -> (usize, usize) {
     let mut found = (0, 0);
     let mut i = 0;
     for q in 1..w.colony.planets.len() {

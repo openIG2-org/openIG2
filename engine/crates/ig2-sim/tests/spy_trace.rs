@@ -86,6 +86,9 @@ fn spy_rules(r: &ig2_rules::Rules) -> SpyRules {
                 needs_target: m.needs_target != 0,
                 story: m.story != 0,
                 no_countdown: m.no_countdown != 0,
+                days: m.days,
+                cost: m.cost,
+                min_rank: m.min_rank,
             })
             .collect(),
         outcome_state: r.spy_outcome_state.clone(),

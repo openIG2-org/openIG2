@@ -71,8 +71,19 @@ pub mod layout {
     /// `KemRangXPHatar[0..=20]` plus the i32 after it, which `Spy_New` reads for rank 20.
     pub const SPY_RANK_XP: (u32, usize, usize) = (0x9137A8, 4, 22);
     pub const SPY_TRAINING_XP: (u32, usize, usize) = (0x92705C, 4, 6); // TrainingKuldetesXP
+    pub const SPY_TRAINING_COST: (u32, usize, usize) = (0x927044, 4, 6); // TrainingKuldetesAr
+    pub const SPY_RACE_COST_MULT: (u32, usize, usize) = (0x91376C, 4, 15); // KemKuldetesPenzSzorzoFajonkent
+    /// The AI's unit categories 1..=10 (`re/rules/ai-empire.md` §1.2): how a category is built, and the
+    /// range of `MiTervMutato` slots it takes its design from (11 bytes each, padded to 12 in the exe).
+    pub const AI_BUILD_MODE: (u32, usize, usize) = (0x915F6C, 1, 11); // MiGyartasMod
+    pub const AI_BUILD_MIN: (u32, usize, usize) = (0x915F78, 1, 11); // MiGyartasMitMin
+    pub const AI_BUILD_MAX: (u32, usize, usize) = (0x915F84, 1, 11); // MiGyartasMitMax
+    /// `Talalmanyok2[tech][race]` (193 × 9 u8): the AI's tech priority for the special variant of a ground hull
+    /// (`TervAutoDesign`, `ai-empire.md` §10.3).
+    pub const AI_GROUND_PRIORITY: (u32, usize, usize) = (0x8EB060, 1, 193 * 9); // Talalmanyok2
     /// `Spy_New` (code): the recruit names are immediates stored into a local `char*` array.
     pub const SPY_NEW_CODE: (u32, usize, usize) = (0x58F830, 1, 0x4c0);
+    pub const SHIP_TYPES: (u32, usize, usize) = (0x91F488, 0x30, 240); // tipusnevek [20 races][12 types]
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -185,10 +196,11 @@ pub struct SpyMission {
     pub w8: i32,
     /// +0xc: experience for a success.
     pub xp: i32,
-    /// +0x10: cost; +0x14: length.
+    /// +0x10: length in days; +0x14: cost (`FRISSIT_MI_KEMKEDES`, `re/rules/ai-empire.md` §5).
+    pub days: i32,
     pub cost: i32,
-    pub length: i32,
-    pub b18: u8,
+    /// +0x18: the rank a spy needs before the AI sends it.
+    pub min_rank: u8,
     /// +0x19 / +0x1a / +0x1b: infiltration floor, infiltration for the full chance, full chance %.
     pub skill_floor: u8,
     pub skill_full: u8,
@@ -354,6 +366,38 @@ pub struct Rules {
     pub spy_rank_xp: Vec<i32>,
     pub spy_training_xp: Vec<i32>,
     pub spy_names: Vec<Vec<u8>>,
+    /// `TrainingKuldetesAr[level]`: what a training mission costs (the AI's spy missions, `ai-empire.md` §5).
+    pub spy_training_cost: Vec<i32>,
+    /// `KemKuldetesPenzSzorzoFajonkent[race]`: mission cost multiplier.
+    pub spy_race_cost_mult: Vec<f32>,
+    /// `MiGyartasMod` / `MiGyartasMitMin` / `MiGyartasMitMax`, categories 0..=10 (`ai-empire.md` §1.2).
+    pub ai_build_mode: Vec<u8>,
+    pub ai_build_min: Vec<u8>,
+    pub ai_build_max: Vec<u8>,
+    /// `tipusnevek[race·12 + type]`: the battle's ship types (`re/rules/space-combat.md` §7.2, §7.10).
+    pub ship_types: Vec<ShipTypeRecord>,
+    /// `Talalmanyok2[tech · 9 + race]` (`ai-empire.md` §10.3).
+    pub ai_ground_priority: Vec<u8>,
+}
+
+/// A battle ship type (`tipusnevek`, exe 0x91F488, 0x30 bytes; record `race·12 + type`, spec §7.10).
+#[derive(Debug, Clone, Serialize)]
+pub struct ShipTypeRecord {
+    pub index: usize,
+    /// +0: model name.
+    pub name: String,
+    /// +0x10: model scale (radius in world units / 1024).
+    pub scale: f32,
+    /// +0x14 top speed, +0x18 [unk], +0x1c acceleration, +0x20 [unk], +0x24 turn rate.
+    pub top_speed: f32,
+    pub f18: f32,
+    pub accel: f32,
+    pub f20: f32,
+    pub turn: f32,
+    /// +0x28 / +0x2c: footprint in grid cells (horizontal, vertical); `AddUjUrhajo` rewrites it for a ship's
+    /// type from the scale before placing the ship.
+    pub size_xy: i32,
+    pub size_z: i32,
 }
 
 impl Rules {
@@ -546,9 +590,9 @@ impl Rules {
                             kind: i32_at(r, 4),
                             w8: i32_at(r, 8),
                             xp: i32_at(r, 0xc),
-                            cost: i32_at(r, 0x10),
-                            length: i32_at(r, 0x14),
-                            b18: r[0x18],
+                            days: i32_at(r, 0x10),
+                            cost: i32_at(r, 0x14),
+                            min_rank: r[0x18],
                             skill_floor: r[0x19],
                             skill_full: r[0x1a],
                             chance: r[0x1b],
@@ -569,6 +613,33 @@ impl Rules {
             spy_rank_xp: ints(layout::SPY_RANK_XP)?,
             spy_training_xp: ints(layout::SPY_TRAINING_XP)?,
             spy_names: spy_names(&img)?,
+            spy_training_cost: ints(layout::SPY_TRAINING_COST)?,
+            spy_race_cost_mult: floats(layout::SPY_RACE_COST_MULT)?,
+            ai_build_mode: tab(layout::AI_BUILD_MODE)?.0.to_vec(),
+            ai_build_min: tab(layout::AI_BUILD_MIN)?.0.to_vec(),
+            ai_build_max: tab(layout::AI_BUILD_MAX)?.0.to_vec(),
+            ship_types: {
+                let (b, s, n) = tab(layout::SHIP_TYPES)?;
+                let f = |r: &[u8], o: usize| f32::from_bits(i32_at(r, o) as u32);
+                (0..n)
+                    .map(|i| {
+                        let r = &b[i * s..(i + 1) * s];
+                        ShipTypeRecord {
+                            index: i,
+                            name: cstr(&r[..0x10]),
+                            scale: f(r, 0x10),
+                            top_speed: f(r, 0x14),
+                            f18: f(r, 0x18),
+                            accel: f(r, 0x1c),
+                            f20: f(r, 0x20),
+                            turn: f(r, 0x24),
+                            size_xy: i32_at(r, 0x28),
+                            size_z: i32_at(r, 0x2c),
+                        }
+                    })
+                    .collect()
+            },
+            ai_ground_priority: tab(layout::AI_GROUND_PRIORITY)?.0.to_vec(),
         })
     }
 

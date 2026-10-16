@@ -267,7 +267,8 @@ pub struct FleetTotals {
     /// `+0x6c` hit points (ships and fighters), `+0x70` fighter hit points.
     pub hp: i32,
     pub fighter_hp: i32,
-    /// `+0x78` vehicle capacity.
+    /// `+0x74` (unknown; zeroed by `FlottakUjraSzamol`), `+0x78` vehicle capacity.
+    pub field_74: i32,
     pub capacity: i32,
 }
 
@@ -282,6 +283,7 @@ impl FleetTotals {
             ground_strength: rd_i32(r, 0x68),
             hp: rd_i32(r, 0x6c),
             fighter_hp: rd_i32(r, 0x70),
+            field_74: rd_i32(r, 0x74),
             capacity: rd_i32(r, 0x78),
         }
     }

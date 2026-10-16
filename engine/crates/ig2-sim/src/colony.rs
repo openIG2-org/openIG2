@@ -189,10 +189,13 @@ pub struct Planet {
     pub energy_produced: i32,
     pub energy_demand: i32,
     pub workers_demand: i32,
-    /// `+0x54` (u16) and `+0x58 / +0x5c` (i32): cleared for a new colony.
+    /// `+0x54` (u16) and `+0x58 / +0x5c` (i32): cleared for a new colony. `+0x58 / +0x5c` are the garrison's
+    /// vehicles and their ground strength (`TankFlottahozHozzaszamol`); `+0x60` is cleared with them by
+    /// `FlottakUjraSzamol`.
     pub field_54: u16,
     pub field_58: i32,
     pub field_5c: i32,
+    pub field_60: i32,
     /// `+0x64 != 0` (the exe tests the whole byte): no rebellion counting (SP) and never abandoned.
     pub protected: bool,
     pub autobuild_counter: i32,
@@ -208,7 +211,9 @@ pub struct Planet {
     pub spies: [u8; 19],
     /// Visibility per empire (`+0xd8 + 2e`, radar module).
     pub visibility: [i16; 19],
-    /// `+0x114`.
+    /// `+0x100 + 2k`: space stations (design ids) `1..=field_114`.
+    pub stations: [i16; 10],
+    /// `+0x114`: the station count.
     pub field_114: i32,
     /// Smoothed problem levels (`+0x118 + 4p`), index 1..=19.
     pub problems: [i32; problem::COUNT],
@@ -231,9 +236,9 @@ impl Default for Planet {
         Self {
             x: 0.0, y: 0.0, owner: 0, race: 0, surface: 0, colony_map: 0, richness: 0, population: 0, population_change: 0,
             morale: 0, tax_level: 0, gdp_acc: 0, gdp_last: 0, tax_acc: 0, tax_last: 0, energy_produced: 0,
-            energy_demand: 0, workers_demand: 0, field_54: 0, field_58: 0, field_5c: 0, protected: false,
+            energy_demand: 0, workers_demand: 0, field_54: 0, field_58: 0, field_5c: 0, field_60: 0, protected: false,
             autobuild_counter: 0, autobuild_mode: 0, autobuild_aggr: 0, ship_capacity: 0, vehicle_capacity: 0,
-            production: [0; 64], epidemic: 0, spies: [0; 19], visibility: [0; 19], field_114: 0,
+            production: [0; 64], epidemic: 0, spies: [0; 19], visibility: [0; 19], stations: [0; 10], field_114: 0,
             problems: [0; problem::COUNT], events: [0; 5], morale_penalty: 0, morale_penalty_rate: 0,
             loyal: false, ai_proof: false, unrest: 0, buildings: Vec::new(),
         }

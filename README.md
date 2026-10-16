@@ -47,17 +47,17 @@ it matches bit for bit**.
 | **Fleets** | Movement, waypoints and patrols, following, merging, traders, wormholes; colonisation and terraforming arrivals |
 | **Radar & visibility** | Per-empire radar, supply fade, stealth, alliances, discovery, "enemy approaching" slow-down |
 | **Space combat (strategic)** | Design stats, battle routing, auto-resolve |
+| **Real-time space battles** | Setup from the strategic state (fleets joining a running battle, formations, ships grouped into units, weapons, shields and pods, fighter wings, planet guns and defence ships, asteroids), the 20 Hz battle tick (battle AI, targeting, projectiles, damage, special pods, fighters, path search, retreats), the end and its result |
 | **Research & production** | Research progress, AI research picks, production queues, ship/vehicle building |
 | **Diplomacy** | Daily relations and opinion, the AI's proposals, threats and declarations, AI-to-AI answers, wars and peace treaties; the human's messages, deals (money, planets, techs, radar maps, hostages, wars, peace), demands, answers and counter-proposals, and the auto-cancel of stale offers |
 | **Espionage** | Spy ranks and experience, double agents, the catch check and the captor's verdict, 13 missions (reports, theft of money and techs, sabotage, ship strikes, rebellions, assassinations, kidnapping), recruitment |
+| **AI empire** | Empire centres and main fleets, the main planet, colony autobuild profiles and tax by wealth and danger, income sliders and shares, production choices (colony ships, default warships and vehicles, scrapping obsolete ships), spy missions (skill points, firing, targets, mission choice and cost); colony ships to the nearest free planets, war declarations, attack targets (fleets and planets), fleeing and regrouping, loading and unloading vehicles, scouting; the AI's own designs and their upgrades |
 
 ### 🚧 Planned
 
 | Area | |
 |---|---|
-| Real-time space battles (`SpwC`) as a fixed-step sim | 📝 specified |
 | Ground combat (`WF*`) | ⏳ |
-| The AI empires (`FRISSIT_MI`) | ⏳ |
 | Campaign and story scripting | ⏳ |
 | wgpu game renderer and UI | ⏳ |
 | Lockstep multiplayer over QUIC: LAN discovery, direct IP, UPnP, rejoin | ⏳ |

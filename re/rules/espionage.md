@@ -80,7 +80,7 @@ Spy record (0x4c bytes; fields not listed are copied with the record and otherwi
 ### 1.2 Rule tables (static, byte-identical in both binaries)
 | Name | exe VA | Layout |
 |---|---|---|
-| `KemKuldetesek` | 0x912F48 | 27 missions × 0x20: +0 enabled u8, +4 i32 kind (1 = the parameter is a planet of the target), +0xc i32 experience, +0x10 i32 cost, +0x14 i32 length, +0x19 u8 skill floor, +0x1a u8 skill for full chance, +0x1b u8 full chance %, +0x1c u8 needs a living target (and can be caught), +0x1d u8 story mission, +0x1e u8 no countdown |
+| `KemKuldetesek` | 0x912F48 | 27 missions × 0x20: +0 enabled u8, +4 i32 kind (1 = the parameter is a planet of the target), +0xc i32 experience, +0x10 i32 length in days, +0x14 i32 cost, +0x18 u8 the rank the AI needs (both read by `FRISSIT_MI_KEMKEDES`, `ai-empire.md` §6; earlier versions of this spec had +0x10/+0x14 swapped), +0x19 u8 skill floor, +0x1a u8 skill for full chance, +0x1b u8 full chance %, +0x1c u8 needs a living target (and can be caught), +0x1d u8 story mission, +0x1e u8 no countdown |
 | `KemKuldetesAtmenet` | 0x9132A8 | i32 `[5]`: new state per outcome 0..=4 (§4.1) |
 | `KemSzintLepesSzetoszthato` | 0x9132BC | i32 `[15]`: skill points per rank, by race |
 | `KemTartalekok` | 0x9132F8 | 15 template spy records × 0x4c, by race (§6.1) |
@@ -243,4 +243,4 @@ the copy's state = 1.
   reads one entry past `KemRangXPHatar`; mission 12 redraws its loop bound; mission 7's second pass reuses
   the first pass's weighted-choice total; the kidnap mission is disabled every day.
 - Open: the spy screen (`Spy_Main`), `MULTIGET_Spy` (the human's missions, decisions about captured spies,
-  hiring), the AI's mission choice (`FRISSIT_MI_KEMKEDES`, with `FRISSIT_MI`), story missions, mission costs.
+  hiring), story missions. The AI's mission choice and its costs are ported with the AI (`ai-empire.md` §6).

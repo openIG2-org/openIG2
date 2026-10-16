@@ -171,6 +171,10 @@ impl TechTable {
         let o = self.at(t, 0x2d);
         [self.bytes[o] as usize, self.bytes[o + 1] as usize, self.bytes[o + 2] as usize]
     }
+    /// Byte `off` of tech `t`'s record (0 past the table).
+    pub fn byte(&self, t: usize, off: usize) -> u8 {
+        self.bytes.get(self.at(t, off)).copied().unwrap_or(0)
+    }
     /// `+0x45 + e`.
     pub fn status(&self, t: usize, e: usize) -> u8 {
         self.bytes[self.at(t, 0x45 + e)]
