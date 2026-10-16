@@ -373,10 +373,69 @@ pub enum StoryEvent {
     /// `st_SetTalalmanyAllapot(t, state, e)` (exe 0x602920) with `e` as the script passes it (`< 0`: the human);
     /// the specials queue entry is the story's ([`Story::set_tech_state`]).
     SetTechState { tech: i32, state: i32, empire: i32 },
+    // ---- st_Elem_include (crate::elem, spec §8.14)
+    /// `st_SetTozsdeOlcso` (exe 0x602b20) on a transition: every trade good's price (`TradeTervek[k]` `+0x24`,
+    /// exe 0xB9AAF0, count 0xF439CC) := `(int)((f64) price × 0.8)` (`cheap`) or `× 1.25`.
+    TradePrices { cheap: bool },
+    /// Story 817 at difficulty 4: every building of the planet deleted (`EpuletDelete` exe 0x53c730, slots in
+    /// order), then `BolygoElfoglal(p, 0)`.
+    RazePlanet(i32),
+    /// `st_SetBolygoCoord(p, w)` (exe 0x6025d0): the planet moved (`+0x18`, `+0x1c`).
+    SetPlanetXY { planet: i32, x: f32, y: f32 },
+    /// `st_bSetRadarMsg`: planet `+0xbb` (its radar notice).
+    PlanetRadarMsg { planet: i32, on: bool },
+    /// `st_bSetExtra` (exe 0x603ed0): planet `+0x186` and `+0x187` (the undo entry is the story's).
+    PlanetExtra { planet: i32, on: bool },
+    /// Tech `t` (`Talalmanyok[t]`): research time `+0x38` and the empire's time left `+0x58 + 4e` halved (C
+    /// division; with `price` also `+0x34`) or doubled (`<< 1`).
+    TechTimes { tech: i32, empire: i32, halve: bool, price: bool },
+    /// `st_SetSzovetsegesViszony(a, b)` (exe 0x6028e0): `BirodalomBeketKot(a, b)` (0x53b280), then `Viszony`
+    /// level 5 both ways.
+    MakeAllies { a: i32, b: i32 },
+    /// `st_SetHaborusViszony(a, b)` (exe 0x602820): `Viszony[b][a].+4 −= 10000`, level 1 both ways.
+    DeclareWar { a: i32, b: i32 },
+    /// `st_SetSemlegesViszony(a, b)` (exe 0x6028a0): `BirodalomBeketKot(a, b)`, then both levels (`+0x25`) := 3.
+    MakeNeutral { a: i32, b: i32 },
+    /// `st_EnableKemKuldetes(id)` (exe 0x5e6ac0) / `st_DisableKemKuldetes(id)` (0x5d4ab0): the story spy mission
+    /// `14 + k` with `StoryKuldetes[k] == id` offered or not (`KemKuldetesek[14 + k].+0 := on`; the undo entry is
+    /// the story's).
+    SpyMission { id: i32, on: bool },
+    /// The human's spy `slot`: `+0x10` (its state) written.
+    SpyState { slot: i32, state: i32 },
+    /// The human's spy `slot`: `+0x3c` (its experience) `+= add`.
+    SpyExperience { slot: i32, add: i32 },
+    /// Tech `tech`: the human has seen empire `owner` have it (`+0xc0 + 9·EN + owner := 1`).
+    TechSeen { tech: i32, owner: i32 },
+    /// `st_Colonise(p, owner, 0)` → `Generate_Planet(p, owner, owner, false, false, 0, 0)` (exe 0x59af50).
+    Colonise { planet: i32, owner: i32 },
+    /// Building `slot` of planet `planet`: its byte `+offset` (`+0x18` a gun's or shield's strength, `+0x19` flags)
+    /// written.
+    BuildingByte { planet: i32, slot: i32, offset: i32, value: i32 },
+    /// `st_Foldrenges(p)` (inlined): an earthquake on planet `p` is shown (`AktKepKell := 3`, `AktPlanetKell := p`,
+    /// `Colony_elozo_foldrenges` 0x9ABAE4 := 0, `Colony_foldrenges` 0x9ABB70 := p; UI).
+    Earthquake(i32),
+
+    // st_Fable_include (crate::fable, spec §8.15).
+    /// Fleet `+0x18` bits set, then cleared (bit 0 hidden / has traded, bit 1 leaving).
+    FleetState { fleet: i32, set: u8, clear: u8 },
+    /// `KiszedUtolsoUzenet(id, arg)` (0x506140): the message's last copy is taken back.
+    WithdrawMessage { id: i32, arg: i32 },
+    /// Planet `+0x6e` (its radar level) written.
+    SetPlanetRadar { planet: i32, level: i32 },
+    /// Wormhole `w`: both ends known (`+8`, `+0x14` := 1).
+    ShowWormhole(i32),
+    /// The story agent (`st_Fable_include` 310): the human's new spy `slot` (`Spy_New`) gets the story's record with
+    /// `xp` (`campaign.md` §8.15).
+    StorySpy { slot: i32, xp: i32 },
+    /// `KemJelentesAdd(kind, spy, 0, 0, 0, 0, EN, 0…)` (0x58d000): a spy report for the human (`info-messages.md`
+    /// §3.3); the story's part (`Story_KemEsemeny`) is done by the story.
+    SpyReport { kind: i32, spy: i32 },
+    /// Spy `slot` of empire `empire`: `+0x10 := 0` (gone).
+    KillSpy { empire: i32, slot: i32 },
 }
 
 /// A message parameter's text (`SetParamStr`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MessageText {
     /// `Birodalom_Nev[e]`: the empire's name.
     Empire(i32),
@@ -398,6 +457,12 @@ pub enum MessageText {
     Design { empire: i32, design: i32 },
     /// `RndHosok[hero]`'s texts in story 242's offer (`bonuses`: its battle bonuses, else its description).
     Hero { hero: i32, bonuses: bool },
+    /// A number as `"%.2f"` (`st_Rnd` 128's and 129's coordinates).
+    Number(f64),
+    /// Three numbers as `"%.2f, %.2f, %.2f"` (`st_Rnd` 132's and 133's position).
+    Position([f64; 3]),
+    /// The name of participant `k` (0-based) of the finished space battle (`SpwFlottak[k]`, `+0x00`).
+    Participant(i32),
 }
 
 /// The lines the multiplayer modes put on the starmap (`st_AddGameInfo`).
@@ -415,6 +480,8 @@ pub enum InfoLine {
     Empire(i32),
     /// A count first, then the planet's name (story 10's countdown).
     Countdown { count: i32, planet: i32 },
+    /// A tech's name (`Talalmanyok[t]`).
+    Tech(i32),
 }
 
 /// The multiplayer modes' texts for the human (`AddSzoveg`).
@@ -468,6 +535,11 @@ pub trait StoryWorld {
     fn speed_mult(&self) -> i32;
     /// `EN`.
     fn human(&self) -> i32;
+    /// Canonical lockstep multiplayer (`game::ViewMode::Canonical`): the effects the original ran for the local
+    /// human on each machine run for every human (`re/rules/multiplayer.md` §5.3).
+    fn canonical(&self) -> bool {
+        false
+    }
     /// `Nehezseg`.
     fn difficulty(&self) -> i32;
     fn multiplayer(&self) -> bool;
@@ -770,6 +842,24 @@ pub trait StoryWorld {
     fn planet_richness(&self, _p: i32) -> i32 {
         0
     }
+
+    // st_Fable_include (crate::fable, spec §8.15).
+    /// Fleet `+0x52` (u16, `fleet-movement.md` §1).
+    fn fleet_flags(&self, _f: i32) -> i32 {
+        0
+    }
+    /// `KemRangXPHatar[rank]` (exe 0x9137A8).
+    fn spy_rank_xp(&self, _rank: i32) -> i32 {
+        0
+    }
+    /// `Spy_New(e)` (exe 0x58f830): the new spy's slot (< 1: no room).
+    fn new_spy(&mut self, _e: i32) -> i32 {
+        0
+    }
+    /// `LaborSzint[e][k]` (exe 0x912728, i32 `[19][4]`): the empire's lab level of kind `k`.
+    fn lab_level(&self, _e: i32, _k: i32) -> i32 {
+        0
+    }
     /// `OsszHanyWormhole` (exe 0xBB61A0).
     fn wormhole_count(&self) -> i32 {
         0
@@ -777,6 +867,24 @@ pub trait StoryWorld {
     /// Wormhole `w` (exe 0xBB60F8 + 0x1c·w): its two ends, `(known, fleet slot)` (`+8`/`+0xa`, `+0x14`/`+0x16`).
     fn wormhole(&self, _w: i32) -> [(bool, i32); 2] {
         [(false, 0); 2]
+    }
+
+    // st_Elem_include (crate::elem, spec §8.14).
+    /// Planet `+0x187` (`st_bIsExtra`).
+    fn planet_extra(&self, _p: i32) -> bool {
+        false
+    }
+    /// `Talalmany[t]` `+0x58 + 4e`: the research time empire `e` has left.
+    fn tech_time_left(&self, _t: i32, _e: i32) -> i32 {
+        0
+    }
+    /// Building `k` of planet `p`: its bytes `+0x18` (a gun's or shield's strength) and `+0x19` (flags).
+    fn building_bytes(&self, _p: i32, _k: i32) -> (i32, i32) {
+        (0, 0)
+    }
+    /// `Kemek[e][k].+0x40` (u8): the spy's rank.
+    fn spy_rank(&self, _e: i32, _k: i32) -> i32 {
+        0
     }
 }
 
@@ -793,6 +901,10 @@ pub struct SpyRecord {
     pub mission: i32,
     /// `+0x32`, `+0x33` (u8): its skills.
     pub skill: (i32, i32),
+    /// `+0x16` (i16): non-zero while it is in use (`st_Fable_include` 310).
+    pub active: i32,
+    /// Its name is the story agent's (`_s(5, 3092)`, `st_Fable_include` 310).
+    pub agent: bool,
 }
 
 /// `KemEsemeny` (exe 0xF2F874, 0x38 bytes): the last spy news `KemJelentesAdd(kind, spy, died, success, _,
@@ -878,7 +990,8 @@ pub struct Story {
     pub skip_first: i32,
     /// `StoryAktKuldetesNowReStarting`.
     pub restarting: i32,
-    /// `Story_check_locked` (never set by the exe).
+    /// `Story_check_locked` (set by `st_Fable_include` 310 around its spy report only: the port sets the report's flags
+    /// itself there).
     pub locked: bool,
     /// `Story_Check::ent_count`.
     pub depth: i32,
@@ -938,6 +1051,10 @@ pub struct Story {
     pub kem: KemNews,
     /// `CounterIntelligence_kem` (exe 0xF265D0): the human's spy `st_CounterIntelligence` last caught someone with.
     pub counter_spy: i32,
+    /// `KemkedesAzonosito` (exe 0xF26584): the story mission of the last spy news (`st_KemSiker`).
+    pub spy_story: i32,
+    /// `KemkedesValasz` (exe 0xF2659C): the spy news' answer (`st_Rnd` 127 clears it).
+    pub spy_answer: i32,
 }
 
 /// A story building record (`StoryBuildingData`, 16 bytes).
@@ -1017,6 +1134,8 @@ impl Default for Story {
             building_data: Vec::new(),
             kem: KemNews::default(),
             counter_spy: 0,
+            spy_story: 0,
+            spy_answer: 0,
         }
     }
 }
@@ -1073,13 +1192,20 @@ impl Story {
     pub fn win(&mut self, id: i32, history: bool, world: &mut dyn StoryWorld) {
         let id = if id == 0 { self.last_checked } else { id };
         self.running(id);
-        for k in 0..self.undo.len() {
+        // The loop re-reads the count: an entry a type-8 undo re-registers past the cursor is applied again.
+        let mut k = 0;
+        while k < self.undo.len() {
             let (kind, a, owner) = self.undo[k];
+            k += 1;
             if owner != id {
                 continue;
             }
+            let k = k - 1;
             match kind {
                 0 | 12 => {}
+                // `st_bSetExtra(−a, 0)` (exe 0x603ed0): it registers `(8, a, StoryLastChecked)` again (in the first
+                // free slot or appended, before this one is zeroed).
+                8 => self.b_set_extra(a.wrapping_neg(), false, world),
                 13 => {
                     let off = 0xd0usize.wrapping_add((a as usize).wrapping_mul(4));
                     if off + 4 <= ADAT && self.adat_i32(off) > 0 {

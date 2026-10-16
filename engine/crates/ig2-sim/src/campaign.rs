@@ -10,8 +10,8 @@
 use crate::story::{last_fn, Abort, ScenarioStory, Story, StoryEvent, StoryWorld, STREAM};
 
 /// The campaign tables, the exe's words from VA [`CampaignTables::VA`] (`StoryEleje` 0x928340, `StoryElejeSeq`,
-/// `StoryLine`, `StoryScenario`, `RndStoryk` 0x928540, `RndStoryValasztas`, `StoryHosok`, `RndHosok` 0x9288B0;
-/// spec §8.1). The accessors index them the way the exe does, campaign rows by `CampaignType` 1..=3, so the
+/// `StoryLine`, `StoryScenario`, `RndStoryk` 0x928540, `RndStoryValasztas`, `StoryHosok`, `RndHosok` 0x9288B0,
+/// `StoryKuldetes` 0x9289AC; spec §8.1). The accessors index them the way the exe does, campaign rows by `CampaignType` 1..=3, so the
 /// rows overlap where the exe's do (campaign 3's opening sequence is campaign 1's storyline row).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CampaignTables {
@@ -23,7 +23,7 @@ pub static NO_TABLES: CampaignTables = CampaignTables { words: Vec::new() };
 
 impl CampaignTables {
     pub const VA: u32 = 0x928340;
-    pub const WORDS: usize = 411;
+    pub const WORDS: usize = 423;
     const RND_STORYK: u32 = 0x928540;
 
     /// From the exe's words; `RndStoryk`'s row counts (word 0 of each of the 5 rows, −1 in the image) are
@@ -92,6 +92,11 @@ impl CampaignTables {
     /// the fee in thousands, the strength (`st_Rnd` 242).
     pub fn hero(&self, k: i32, i: i32) -> i32 {
         self.word(0x9288b0, k, 0x1c, i)
+    }
+
+    /// `StoryKuldetes[k]` (12 words): the story whose spy mission is `KemKuldetesek[14 + k]` (`st_Rnd` 127).
+    pub fn story_mission(&self, k: i32) -> i32 {
+        self.word(0x9289ac, 0, 0, k)
     }
 }
 

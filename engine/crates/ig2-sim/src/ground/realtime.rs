@@ -83,6 +83,14 @@ impl TankRt {
         let h = (r % 500 - 0x672) as f32;
         [h / 3.0, h / 3.0, h]
     }
+
+    /// The body and turret orientations as `SetTankPositionAndMatrix` leaves them, from the saved basis and
+    /// angles alone (the colony screen draws the models with them; `re/screens/colony.md` §4).
+    pub fn orientation(&self) -> ([f32; 9], [f32; 9]) {
+        let body = mul(&self.basis, &axis_rotation([1.0, 0.0, 0.0], self.angle));
+        let axis = [body[2], body[5], body[8]];
+        (body, mul(&body, &axis_rotation(axis, -(self.turret_angle - self.angle))))
+    }
 }
 
 impl Default for TankRt {
@@ -353,13 +361,7 @@ pub enum Start {
 impl War<'_> {
     /// The cells of the units that block a vehicle (`LocateTankSuitablePosition`'s unit pass).
     fn placed_cells(&self) -> Vec<(i32, i32)> {
-        (0..self.field.units.len())
-            .filter(|&i| {
-                let u = &self.field.units[i];
-                self.field.alive[i] && u.flags & (flag::NOT_PLACED | flag::NOT_COUNTED) == 0 && u.flags2 & 4 == 0
-            })
-            .map(|i| self.field.units[i].cell)
-            .collect()
+        self.field.placed_cells()
     }
 
     /// `LocateTankSuitablePosition(p, &x, &y, start)`: with a [`GroundMap`] the real search, else the

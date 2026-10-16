@@ -26,6 +26,8 @@ pub struct PlanetView {
     pub name: String,
     /// Seen by the human (`+0xd8 + 2·EN`).
     pub known: bool,
+    /// `+0xba`: the name blinks (`Show_Stars2d3d`, re/screens/hud.md §4.2).
+    pub blink: bool,
     /// How the starmap draws it (`+0x17c..+0x185`, re/screens/starmap.md §3).
     pub look: PlanetLook,
 }
@@ -105,8 +107,11 @@ pub struct FleetView {
     pub target: Option<[f32; 2]>,
     /// `+0x40`: the order (2 = attack: a red route).
     pub order: i16,
-    /// `+0x52`: bit 5 = small sprite and no route, bit 14 = the special sprite column (re/screens/starmap.md §5).
+    /// `+0x52`: bit 5 = small sprite and no route, bit 11 = the name is shown (re/screens/hud.md §4.3), bit 14 =
+    /// the special sprite column (re/screens/starmap.md §5).
     pub flags: u16,
+    /// `+0`: the name (the game's code page).
+    pub name: Vec<u8>,
 }
 
 /// The starmap at one sim tick.
@@ -140,6 +145,7 @@ impl Snapshot {
                     surface: r[0x22],
                     name: name.iter().map(|&b| b as char).collect(),
                     known: sp.visible[en] != 0 || sp.owner as usize == en,
+                    blink: r[0xba] != 0,
                     look: PlanetLook::read(&r),
                 }
             })
@@ -159,6 +165,7 @@ impl Snapshot {
                 target: target(&map, f),
                 order: f.order,
                 flags: f.flags,
+                name: f.name.iter().copied().take_while(|&b| b != 0).collect(),
             })
             .collect();
         Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0 }
@@ -216,6 +223,12 @@ pub struct World<'r> {
     pub curr: Snapshot,
     /// The camera the save was left with.
     pub view: SavedView,
+    /// The colony screen's planet, if it is open, and its last two snapshots.
+    pub colony: Option<usize>,
+    pub colony_prev: Option<crate::colony::ColonySnap>,
+    pub colony_curr: Option<crate::colony::ColonySnap>,
+    /// What the 2D screens show (charts, inbox, the message line's queue).
+    pub ui: crate::ui::UiSnap,
 }
 
 impl<'r> World<'r> {
@@ -228,7 +241,8 @@ impl<'r> World<'r> {
         game.saved();
         let view = SavedView::read(save);
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game.state) };
-        Self { game, prev: curr.clone(), curr, view }
+        let ui = crate::ui::UiSnap::read(&game.state);
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui }
     }
 
     /// `IdoSpeedSzorzo` for a single-player speed setting.
@@ -253,6 +267,29 @@ impl<'r> World<'r> {
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
         next.orbit = (self.curr.orbit as f64 + speed as f64 / 1500.0) as f32;
         self.prev = std::mem::replace(&mut self.curr, next);
+        self.ui = crate::ui::UiSnap::read(&self.game.state);
+        self.colony_prev = self.colony_curr.take();
+        if let Some(p) = self.colony {
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+        }
+    }
+
+    /// The UI takes the message line's next text (`FRISSIT_Scroll2` pops `ScrollUzenetek[1]`; `Ticker::pop`).
+    pub fn pop_message(&mut self) -> Option<(Vec<u8>, bool)> {
+        let mut t = self.game.state.ticker();
+        t.pop()?;
+        let text: Vec<u8> = t.on_screen.iter().copied().take_while(|&b| b != 0).collect();
+        let important = t.on_screen_important != 0;
+        self.game.state.store_ticker(&t);
+        self.ui = crate::ui::UiSnap::read(&self.game.state);
+        Some((text, important))
+    }
+
+    /// Open (or close) the colony screen of planet `p`.
+    pub fn show_colony(&mut self, p: Option<usize>) {
+        self.colony = p;
+        self.colony_curr = p.and_then(|p| crate::colony::ColonySnap::read(&self.game.state, p));
+        self.colony_prev = self.colony_curr.clone();
     }
 }
 
@@ -261,7 +298,7 @@ mod tests {
     use super::*;
 
     fn fleet(slot: usize, x: f32, y: f32) -> FleetView {
-        FleetView { slot, pos: [x, y], owner: 3, visible: true, target: None, order: 0, flags: 0 }
+        FleetView { slot, pos: [x, y], owner: 3, visible: true, target: None, order: 0, flags: 0, name: Vec::new() }
     }
 
     #[test]

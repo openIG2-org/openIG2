@@ -163,7 +163,7 @@ pub enum Blend {
 
 /// A texture registered with the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TexId(usize);
+pub struct TexId(pub(crate) usize);
 
 #[derive(Debug, Clone)]
 struct Batch {
@@ -176,6 +176,8 @@ struct Batch {
 #[derive(Debug, Clone, Default)]
 pub struct Frame {
     pub clear: [f64; 4],
+    /// Meshes drawn before the quads (the colony screen).
+    pub scene: Option<crate::render3d::Scene3d>,
     instances: Vec<Instance>,
     batches: Vec<Batch>,
 }
@@ -215,7 +217,13 @@ pub struct Renderer {
     tex_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     textures: Vec<wgpu::BindGroup>,
+    /// The same textures with a repeating sampler (meshes).
+    textures_rep: Vec<wgpu::BindGroup>,
+    sampler_rep: wgpu::Sampler,
     instances: Option<(wgpu::Buffer, u64)>,
+    pipe3d: crate::render3d::Pipe3d,
+    /// The colour format the pipelines draw into.
+    format: wgpu::TextureFormat,
 }
 
 impl Renderer {
@@ -310,7 +318,32 @@ impl Renderer {
             mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        Self { device, queue, alpha, additive, uniform, uniform_bg, tex_layout, sampler, textures: Vec::new(), instances: None }
+        let sampler_rep = d.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 8,
+            ..Default::default()
+        });
+        let pipe3d = crate::render3d::Pipe3d::new(d, format, &tex_layout);
+        Self {
+            device,
+            queue,
+            alpha,
+            additive,
+            uniform,
+            uniform_bg,
+            tex_layout,
+            sampler,
+            textures: Vec::new(),
+            textures_rep: Vec::new(),
+            sampler_rep,
+            instances: None,
+            pipe3d,
+            format,
+        }
     }
 
     /// A headless renderer (no surface): `--snapshot`.
@@ -341,15 +374,26 @@ impl Renderer {
             &mips.concat(),
         );
         let view = tex.create_view(&Default::default());
-        self.textures.push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.tex_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-            ],
-        }));
+        for (list, sampler) in [(&mut self.textures, &self.sampler), (&mut self.textures_rep, &self.sampler_rep)] {
+            list.push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.tex_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                ],
+            }));
+        }
         TexId(self.textures.len() - 1)
+    }
+
+    /// Upload world-space triangles the renderer keeps until [`Renderer::clear_meshes`].
+    pub fn add_mesh(&mut self, verts: &[crate::render3d::MeshVertex]) -> crate::render3d::MeshId {
+        self.pipe3d.add_mesh(&self.device, verts)
+    }
+
+    pub fn clear_meshes(&mut self) {
+        self.pipe3d.clear_meshes();
     }
 
     /// Draw `frame` into `target` (`size` in physical pixels).
@@ -373,14 +417,18 @@ impl Renderer {
             self.queue.write_buffer(buf, 0, bytes);
         }
         let mut enc = self.device.create_command_encoder(&Default::default());
+        if let Some(scene) = &frame.scene {
+            self.pipe3d.encode(&self.device, &self.queue, &mut enc, target, size, frame.clear, scene, &self.textures_rep);
+        }
         {
             let [r, g, b, a] = frame.clear;
+            let load = if frame.scene.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -398,6 +446,33 @@ impl Renderer {
             }
         }
         self.queue.submit([enc.finish()]);
+    }
+
+    /// Draw `frame` into a new texture the quads can sample (the colony radar's picture of the terrain).
+    pub fn render_texture(&mut self, frame: &Frame, size: (u32, u32)) -> TexId {
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("rendered"),
+            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&Default::default());
+        self.draw(frame, &view, size, 0.0);
+        for (list, sampler) in [(&mut self.textures, &self.sampler), (&mut self.textures_rep, &self.sampler_rep)] {
+            list.push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.tex_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                ],
+            }));
+        }
+        TexId(self.textures.len() - 1)
     }
 
     /// Draw into an offscreen texture and read it back as RGBA8 (sRGB).
@@ -466,22 +541,111 @@ fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
     out
 }
 
+/// `--snapshot --colony P`: planet `P`'s colony screen.
+fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &crate::ui::Hud, p: usize) -> Result<(), String> {
+    use crate::colony::{ColonyScene, ColonySnap, View};
+    let curr = ColonySnap::read(&world.game.state, p).ok_or(format!("no planet {p}"))?;
+    let prev = world.colony_prev.clone().filter(|s| s.planet == p).unwrap_or_else(|| curr.clone());
+    let mut scene = ColonyScene::load(r, &l.install, &l.tables, &l.rules.ground_maps, &curr)?;
+    let mut view = View::new(&curr, o.size, o.scale, &scene);
+    if let Some([x, y, zoom, pitch, rotate]) = o.colony_cam {
+        view.camera = crate::colony::Camera { x, y, zoom, pitch, rotate, ..view.camera };
+    }
+    let t = curr.tick as f32 * 0.05 + o.alpha * 0.05;
+    let mut frame = view.build(r, &l.install, &l.tables, &l.rules.ground_maps, &mut scene, &prev, &curr, o.alpha, t);
+    hud.draw_colony(&mut frame, &world.game.state, &l.tables, &l.rules.ground_maps, &view, &scene, &curr);
+    hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Colony, t);
+    let rgba = r.draw_to_image(&frame, o.size, t);
+    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    let gm = &l.rules.ground_maps[curr.map];
+    let e = view.camera.eye(gm);
+    println!(
+        "{}: planet {p} map {} surface {} owner {} | {} buildings, {} units, {} shots | camera {:?} eye {:?} target {:?}",
+        out.display(),
+        curr.map,
+        curr.surface,
+        curr.owner,
+        curr.buildings.len(),
+        curr.units.len(),
+        curr.shots.len(),
+        curr.camera,
+        e.eye,
+        e.target
+    );
+    let basis = view.camera.basis(gm);
+    println!("  weather {} background {} fog {:?}", curr.weather, curr.background, scene.fog());
+    for (b, (slot, at)) in curr.buildings.iter().zip(&scene.building_at) {
+        println!("  building {slot:3} kind {:2} grid ({}, {}) work {} at {at:?} -> {:?}", b.kind, b.x, b.y, b.work_left, view.camera.project(&basis, *at));
+    }
+    for u in &curr.units {
+        println!(
+            "  unit {:3} owner {:2} hull {} flags {:08x} gun {:?} design {} at {:?} -> {:?}",
+            u.slot,
+            u.owner,
+            u.hull,
+            u.flags,
+            u.gun,
+            u.design,
+            u.pos,
+            view.camera.project(&basis, u.pos)
+        );
+    }
+    Ok(())
+}
+
 /// `--snapshot`: run the requested ticks headlessly and write one frame as PNG.
 pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
     let l = crate::load(o)?;
     let mut world = crate::world::World::load(&l.save, &l.rules, &l.tech_defaults, &l.volatile);
     world.set_speed(o.speed);
+    world.show_colony(o.colony);
     for _ in 0..o.ticks {
         world.tick();
     }
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
+    let mut hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
+    hud.chart = o.chart.min(9);
+    hud.speed = crate::hud::speed_index(world.game.state.mem.i32(ig2_sim::save::va::IDO_SPEED));
+    // The message line at the UI's pace (10 ms frames).
+    for _ in 0..o.ui_frames {
+        hud.scroller.step(&mut || world.pop_message());
+    }
+    let screen = match o.screen.as_deref() {
+        Some("info") => Some(crate::ui::Screen::Info),
+        Some("messages") => Some(crate::ui::Screen::Messages),
+        _ => None,
+    };
+    if let Some(screen) = screen {
+        let t = world.curr.tick as f32 * 0.05;
+        let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+        hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, screen, t);
+        let rgba = r.draw_to_image(&frame, o.size, t);
+        crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+        let s = &world.ui;
+        println!(
+            "{}: {screen:?} chart {} | known {:?} | inbox {} | line {:?} queue {} history {}",
+            out.display(),
+            hud.chart,
+            (1..=8).filter(|&e| s.known[e]).collect::<Vec<_>>(),
+            s.inbox.len(),
+            String::from_utf8_lossy(&hud.scroller.text),
+            s.queue.len(),
+            s.history.len()
+        );
+        return Ok(());
+    }
+    if let Some(p) = o.colony {
+        return colony_snapshot(o, out, &l, &world, &mut r, &hud, p);
+    }
     let assets = crate::starmap::Assets::load(&mut r, &l.install);
     let mut view = crate::starmap::View::new(&world.curr, &world.view, o.size, o.scale);
     view.reveal = o.reveal;
     view.selected = o.select_fleet.map(crate::starmap::Pick::Fleet);
     view.hover = o.hover.and_then(|(x, y)| view.pick(&world.prev, &world.curr, o.alpha, [x, y]));
     let t = world.curr.tick as f32 * 0.05 + o.alpha * 0.05;
-    let frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
+    let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
+    hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
+    hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
     let (y, m, d) = world.curr.date();

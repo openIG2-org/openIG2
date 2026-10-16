@@ -42,6 +42,9 @@ pub mod id {
     pub const THREE: i32 = 10031;
     pub const RADAR: i32 = 10033;
     pub const OFFER: i32 = 10034;
+    /// Ours (canonical multiplayer, `re/rules/multiplayer.md` §5.3): a variable with a bit per empire that bought the
+    /// radar. No script uses this id.
+    pub const RADAR_BUYERS: i32 = 10039;
     /// The radar offer (message block 0x2347).
     pub const OFFER_MESSAGE: i32 = 0x2347;
     /// 1005: the bases 10051/10052 (and the carriers' designs `v(10051)`/`v(10052)`), who holds the other's
@@ -310,19 +313,28 @@ fn three_planets(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     // The purchase comes back from the lockstep queue as special 15 (sender, 10031).
     if s.special_is(15, 0, id::THREE, 0) {
         let buyer = s.special[1];
-        w.event(StoryEvent::AddMoney { empire: if buyer > 0 { buyer } else { en }, amount: -20000.0 });
-        if buyer == en {
+        let payer = if buyer > 0 { buyer } else { en };
+        w.event(StoryEvent::AddMoney { empire: payer, amount: -20000.0 });
+        if w.canonical() {
+            // Every buyer's radar, not only the local human's (each machine's in the original).
+            let bought = s.v_get(id::RADAR_BUYERS);
+            s.v_set(id::RADAR_BUYERS, bought | 1i32.wrapping_shl(payer as u32));
+            s.sz_start(id::RADAR, 1);
+        } else if buyer == en {
             s.sz_start(id::RADAR, 1);
         }
     }
     if s.counter(id::RADAR) {
         s.sz_start(id::RADAR, 1);
-        let enemy = |w: &dyn StoryWorld, f: i32| {
+        // The radar's owners: the human (classic), every buyer (canonical multiplayer).
+        let mask = if w.canonical() { s.v_get(id::RADAR_BUYERS) } else { 1i32.wrapping_shl(en as u32) };
+        let bought = |o: i32| (0..32).contains(&o) && mask >> o & 1 != 0;
+        let enemy_of = |w: &dyn StoryWorld, f: i32, of: &dyn Fn(i32) -> bool| {
             let o = w.fleet_owner(f);
-            o != 0xff && o != en && o <= 8
+            o != 0xff && !of(o) && o <= 8
         };
         for f in 1..=w.fleet_count() {
-            if enemy(&*w, f) {
+            if enemy_of(&*w, f, &bought) {
                 w.event(StoryEvent::SetFleetVisible { fleet: f, on: false });
             }
         }
@@ -331,9 +343,10 @@ fn three_planets(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         for k in 0..3 {
             let p = s.b_search(id::THREE + k, 0, w);
             let mut best = 1000;
-            if w.planet_owner(p) == en {
+            let po = w.planet_owner(p);
+            if bought(po) {
                 for f in 1..=w.fleet_count() {
-                    if !enemy(&*w, f) {
+                    if !enemy_of(&*w, f, &|o| o == po) {
                         continue;
                     }
                     let d = distance(w.planet_xy(p), w.fleet_xy(f));
@@ -399,10 +412,11 @@ fn capture_the_flag(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
             w.event(StoryEvent::RenamePlanet { planet: b, name: "Base 2" });
         }
         if s.v_get(id::BASE) == 0 {
-            let record = flag_carrier(en);
-            let d = w.new_design(1, &record);
+            // The original writes its local `EN` (each machine its own); canonical multiplayer the owner's number.
+            let (r1, r2) = if w.canonical() { (flag_carrier(1), flag_carrier(2)) } else { (flag_carrier(en), flag_carrier(en)) };
+            let d = w.new_design(1, &r1);
             s.v_set(id::BASE, d);
-            let d = w.new_design(2, &record);
+            let d = w.new_design(2, &r2);
             s.v_set(id::BASE + 1, d);
         }
         s.b_show(id::BASE, -1, w);
@@ -541,4 +555,171 @@ fn capture_the_flag(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
         s.add_info_line(id::BASE, line, -1, w);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rng::Streams;
+
+    /// Human 6 (`EN`); planets 1..=3 owned by 6, 3 and nobody; fleets of 3 and 2 near planet 1, of 6 near planet 2,
+    /// of 2 far away.
+    struct W {
+        canonical: bool,
+        rng: Streams,
+        designs: Vec<(i32, i16)>,
+        events: Vec<StoryEvent>,
+    }
+
+    const OWNERS: [i32; 4] = [0, 6, 3, 0];
+    const PLANETS: [(f32, f32); 4] = [(0.0, 0.0), (100.0, 100.0), (500.0, 500.0), (900.0, 100.0)];
+    const FLEETS: [(i32, (f32, f32)); 5] = [(0, (0.0, 0.0)), (3, (120.0, 100.0)), (6, (520.0, 500.0)), (2, (100.0, 130.0)), (2, (900.0, 900.0))];
+
+    impl StoryWorld for W {
+        fn ido(&self) -> i32 {
+            0
+        }
+        fn speed_mult(&self) -> i32 {
+            1
+        }
+        fn human(&self) -> i32 {
+            6
+        }
+        fn canonical(&self) -> bool {
+            self.canonical
+        }
+        fn difficulty(&self) -> i32 {
+            1
+        }
+        fn multiplayer(&self) -> bool {
+            true
+        }
+        fn rng(&mut self) -> &mut Streams {
+            &mut self.rng
+        }
+        fn planet_count(&self) -> i32 {
+            3
+        }
+        fn planet_owner(&self, p: i32) -> i32 {
+            OWNERS[p as usize]
+        }
+        fn planet_value(&self, _p: i32) -> i32 {
+            0
+        }
+        fn planet_visibility(&self, _p: i32) -> i32 {
+            1
+        }
+        fn planet_xy(&self, p: i32) -> (f32, f32) {
+            PLANETS[p as usize]
+        }
+        fn fleet_count(&self) -> i32 {
+            FLEETS.len() as i32 - 1
+        }
+        fn fleet_owner(&self, f: i32) -> i32 {
+            FLEETS[f as usize].0
+        }
+        fn fleet_xy(&self, f: i32) -> (f32, f32) {
+            FLEETS[f as usize].1
+        }
+        fn fleet_id(&self, _f: i32) -> i32 {
+            0
+        }
+        fn empire_alive(&self, _e: i32) -> bool {
+            true
+        }
+        fn planets_of(&self, _e: i32) -> i32 {
+            1
+        }
+        fn money(&self, _e: i32) -> f64 {
+            0.0
+        }
+        fn tech_status(&self, _t: i32, _e: i32) -> i32 {
+            0
+        }
+        fn relation_level(&self, _a: i32, _b: i32) -> i32 {
+            3
+        }
+        fn new_design(&mut self, e: i32, record: &[u8; DESIGN]) -> i32 {
+            self.designs.push((e, i16::from_le_bytes([record[0x40], record[0x41]])));
+            self.designs.len() as i32
+        }
+        fn event(&mut self, ev: StoryEvent) {
+            self.events.push(ev);
+        }
+    }
+
+    fn world(canonical: bool) -> W {
+        W { canonical, rng: Streams::default(), designs: Vec::new(), events: Vec::new() }
+    }
+
+    fn three() -> Story {
+        let mut s = Story::default();
+        for k in 0..3 {
+            s.b_add_id(k + 1, id::THREE + k);
+        }
+        s
+    }
+
+    /// The purchase coming back from the lockstep queue (special 15 from `buyer`).
+    fn buy(s: &mut Story, w: &mut W, buyer: i32) {
+        s.flags[flag::SPECIAL] = true;
+        s.special = [15, buyer, id::THREE, 0, 0, 0, 0, 0];
+        three_planets(s, w).unwrap();
+        s.flags[flag::SPECIAL] = false;
+    }
+
+    /// The radar counter firing: the fleets hidden and shown.
+    fn radar(s: &mut Story, w: &mut W) -> (Vec<i32>, Vec<i32>) {
+        w.events.clear();
+        s.flags[flag::COUNTER] = true;
+        s.counter_done = id::RADAR;
+        three_planets(s, w).unwrap();
+        s.flags[flag::COUNTER] = false;
+        let pick = |on: bool| -> Vec<i32> {
+            w.events.iter().filter_map(|e| match e {
+                StoryEvent::SetFleetVisible { fleet, on: o } if *o == on => Some(*fleet),
+                _ => None,
+            }).collect()
+        };
+        (pick(false), pick(true))
+    }
+
+    #[test]
+    fn classic_radar_is_the_local_humans_only() {
+        let (mut s, mut w) = (three(), world(false));
+        buy(&mut s, &mut w, 3);
+        assert!(s.counters.get(id::RADAR).is_none(), "another player's purchase starts nothing here");
+        buy(&mut s, &mut w, 6);
+        assert!(s.sz_get(id::RADAR) > 0);
+        assert!(s.vars.get(id::RADAR_BUYERS).is_none(), "classic mode leaves the story tables alone");
+        // Every fleet but the human's is hidden; the two enemies near its planet show.
+        assert_eq!(radar(&mut s, &mut w), (vec![1, 3, 4], vec![1, 3]));
+    }
+
+    #[test]
+    fn canonical_radar_runs_for_every_buyer() {
+        let (mut s, mut w) = (three(), world(true));
+        buy(&mut s, &mut w, 3);
+        assert_eq!(s.v_get(id::RADAR_BUYERS), 1 << 3);
+        assert!(s.sz_get(id::RADAR) > 0);
+        // Buyer 3 alone: everything not of 3 hidden, 6's fleet near 3's planet shown.
+        assert_eq!(radar(&mut s, &mut w), (vec![2, 3, 4], vec![2]));
+        buy(&mut s, &mut w, 6);
+        assert_eq!(s.v_get(id::RADAR_BUYERS), (1 << 3) | (1 << 6));
+        // Both: the buyers' fleets stay, each planet shows its owner's enemies.
+        assert_eq!(radar(&mut s, &mut w), (vec![3, 4], vec![1, 3, 2]));
+    }
+
+    #[test]
+    fn flag_carriers_carry_their_owner_in_canonical_mode() {
+        for (canonical, want) in [(false, [(1, 6), (2, 6)]), (true, [(1, 1), (2, 2)])] {
+            let (mut s, mut w) = (Story::default(), world(canonical));
+            s.b_add_id(1, id::BASE);
+            s.b_add_id(3, id::BASE + 1);
+            s.last_checked = 1005;
+            s.buckets[1005 & 0xff].add(1005, 1);
+            capture_the_flag(&mut s, &mut w).unwrap();
+            assert_eq!(w.designs, want);
+        }
+    }
 }

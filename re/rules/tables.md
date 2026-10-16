@@ -41,6 +41,7 @@ from the user's own `ig2.exe` (`engine/crates/ig2-rules`, ADR 0004). No values a
 | `FajMiBolygokHanyadReszeGyartas`, `FajMiBolygokMilyenKatonaiAutiBuild` | 0x915F90, 0x915FCC | i32 × 15 | AI production share (50%), AI military autobuild level | = file |
 | `ProblemakLeiro` | 0x912858 | 24 × 20 | colony problem curves `{a, b, c, d, rate, weight}` (`colony-economy.md` §5) | = file, except entry 4 rate/weight (rewritten per planet) |
 | `CsaladtagMoralCsokkenesLeiro` | 0x913838 | 4 × 6 | morale loss per kidnapped-family-member state | = file |
+| (wormhole colours) | 0x913850 | i32 × 6 × 3 | wormhole `w`'s RGB; `AddWormhole` 0x53aec0 tints both ends `255 − (255 − c) / 2` (`fleet-movement.md` "Opening a wormhole") | = file |
 | `RadarHatotav` | 0x913898 | f32 × 6 | radar range per radar tech level 0..=5 (`fleet-movement.md` §6; code reads index 6 = next table's word 0) | = file (Frida, every traced tick) |
 | `RadarHatotav2Init` | 0x9138B0 | f32 × 8 | planet radar range per planet radar level, copied to every empire at new game; levels 3..=7 repeat `RadarHatotav[1..=5]` | = file |
 

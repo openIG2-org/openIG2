@@ -90,3 +90,20 @@ fn hull_weapon_design_fields_are_consistent() {
     // Weapons: positive reload; range is the field fegyverhozzaad tracks (> 0 for used records).
     assert!(r.space_weapons.iter().filter(|w| w.reload > 0).all(|w| w.range > 0 && w.accuracy <= 100));
 }
+
+#[test]
+fn hud_pictures_and_brushes_line_up() {
+    let Some(r) = rules() else { return };
+    // re/screens/hud.md §1, §3: kep 17 is the colony HUD's sheet; its brushes 12 (planet panel) and 13 (radar frame)
+    // sit where the reference captures show them; 28 is the radar picture on kep 1.
+    assert_eq!(r.pictures.len(), 107);
+    assert_eq!(r.pictures[17], "COLONY_X.BMP");
+    assert_eq!(r.pictures[14], "BRUSHOK.BMP");
+    assert_eq!(r.colony_brushes.len(), 33);
+    let (p, f) = (r.colony_brushes[12], r.colony_brushes[13]);
+    assert_eq!((p.kep, p.dst, p.size), (17, [0, 18], [-223, -153]));
+    assert_eq!((f.kep, f.dst, f.size), (17, [491, 348], [-149, -132]));
+    assert_eq!((r.colony_brushes[28].kep, r.colony_brushes[28].dst), (1, [522, 362]));
+    assert_eq!(r.starmap_brushes.len(), 13);
+    assert_eq!(r.starmap_brushes[4].kep, 30);
+}

@@ -232,6 +232,16 @@ pub struct PlayerSlot {
     pub counter_answer: Answer,
 }
 
+/// Another human's contact list in canonical multiplayer (`re/rules/multiplayer.md` §5.1): what
+/// [`Diplomacy::players`], [`Diplomacy::ghost`] and [`Diplomacy::shown_players`] are for the canonical `EN`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContactList {
+    pub empire: u8,
+    pub players: Vec<PlayerSlot>,
+    pub ghost: PlayerSlot,
+    pub shown: i32,
+}
+
 /// What `DiplomaciaErtek` reads of a planet (spec §6.3).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlanetTerms {
@@ -264,8 +274,8 @@ pub trait Deals {
         PlanetTerms::default()
     }
     /// `BolygoElfoglal(p, owner)`, keeping `w.planets`, `w.tech` and `w.starmap` in step. Returns the
-    /// empires the human met by it (`FelfedezBirodalom`, in order).
-    fn transfer_planet(&mut self, _w: &mut World<'_>, _p: usize, _owner: u8) -> Vec<u8> {
+    /// `(human, empire)` meetings it caused (`FelfedezBirodalom`, in order).
+    fn transfer_planet(&mut self, _w: &mut World<'_>, _p: usize, _owner: u8) -> Vec<(u8, u8)> {
         Vec::new()
     }
     /// `TalalmanyKifejlesztve(e, t)`.
@@ -318,7 +328,7 @@ impl Deals for ColonyDeals<'_> {
         }
     }
 
-    fn transfer_planet(&mut self, w: &mut World<'_>, p: usize, owner: u8) -> Vec<u8> {
+    fn transfer_planet(&mut self, w: &mut World<'_>, p: usize, owner: u8) -> Vec<(u8, u8)> {
         if p >= self.world.planets.len() {
             return Vec::new();
         }
@@ -346,7 +356,7 @@ impl Deals for ColonyDeals<'_> {
                         }
                     }
                 }
-                SideEvent::Met { who, whom } if who as usize == w.ctx.human_empire => met.push(whom),
+                SideEvent::Met { who, whom } => met.push((who, whom)),
                 _ => {}
             }
         }
@@ -410,6 +420,8 @@ pub struct Diplomacy {
     pub started: bool,
     /// `MostHanyPlayerVan`: the contact count the screen shows, `MaxPlayerek` as of the last tick.
     pub shown_players: i32,
+    /// Canonical multiplayer: every other human's contact list, by empire (empty in single player).
+    pub others: Vec<ContactList>,
 }
 
 impl Default for Diplomacy {
@@ -430,6 +442,7 @@ impl Default for Diplomacy {
             last_day: 0,
             started: true,
             shown_players: 0,
+            others: Vec::new(),
         }
     }
 }
@@ -522,8 +535,8 @@ pub enum DiploEvent {
     Message { from: u8, to: u8, msg: Message, accepted: Option<bool> },
     /// An answer was processed (`FeldolgozValasz`; a counter-proposal's own answer is the AI's reply).
     Answered(Answer),
-    /// `FelfedezBirodalom`: the human learns of an empire (contact list, scroll message).
-    Discovered { empire: u8 },
+    /// `FelfedezBirodalom`: human `by` learns of an empire (contact list, scroll message).
+    Discovered { empire: u8, by: u8 },
     /// A war started (`DiplomaciaMegtamadas`; the scroll message when the human knows either side).
     War { a: u8, b: u8 },
     /// libc `rand()` drawn for a dialogue text, with its value (spec §9).
@@ -532,8 +545,8 @@ pub enum DiploEvent {
     StorySpecial { proposer: u8, answerer: u8, msg: Message },
     /// `Story_Diplomacy_Special(SpecialLeiro[special], to)`: a special (cat 4) reached the AI.
     DiplomacySpecial { special: i32, to: u8 },
-    /// [`Diplomacy::tick`] withdrew a message of `from` that could no longer be carried out.
-    AutoCancelled { from: u8 },
+    /// [`Diplomacy::tick`] withdrew a message of `from` to human `to` that could no longer be carried out.
+    AutoCancelled { from: u8, to: u8 },
     /// A fleet whose attack order was cancelled by a peace (`BirodalomBeketKot`) or a planet deal.
     Starmap(StarmapEvent),
 }
@@ -912,15 +925,54 @@ impl Diplomacy {
         }
     }
 
-    /// `FelfedezBirodalom(e, true)`.
+    /// Human `x` keeps a contact list: the canonical `en`, or another human in canonical multiplayer.
+    pub fn keeps(&self, en: usize, x: usize) -> bool {
+        x == en || self.others.iter().any(|c| c.empire as usize == x)
+    }
+
+    /// Run `f` with `owner`'s contact list as [`Diplomacy::players`] (the original's code for `EN` on `owner`'s
+    /// machine; `en` = the canonical `EN`, whose list is `players` itself). `None` if `owner` keeps none.
+    pub fn with_list<R>(&mut self, en: usize, owner: usize, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        if owner == en {
+            return Some(f(self));
+        }
+        let i = self.others.iter().position(|c| c.empire as usize == owner)?;
+        let mut c = std::mem::take(&mut self.others[i]);
+        self.swap_list(&mut c);
+        let r = f(self);
+        self.swap_list(&mut c);
+        self.others[i] = c;
+        Some(r)
+    }
+
+    fn swap_list(&mut self, c: &mut ContactList) {
+        std::mem::swap(&mut c.players, &mut self.players);
+        std::mem::swap(&mut c.ghost, &mut self.ghost);
+        std::mem::swap(&mut c.shown, &mut self.shown_players);
+    }
+
+    /// Whether `owner`'s list has a slot for `e`.
+    fn lists(&mut self, en: usize, owner: usize, e: usize) -> bool {
+        self.with_list(en, owner, |d| d.players.iter().any(|s| s.empire == e as i32)).unwrap_or(false)
+    }
+
     /// `FelfedezBirodalom(e)`: the human meets `e` (a contact slot for empires 1..=8; message 0x1A).
     pub fn discover(&mut self, w: &mut World, e: usize) {
+        self.discover_as(w, w.ctx.human_empire, e);
+    }
+
+    /// `FelfedezBirodalom(e)` on `owner`'s machine: `owner`'s list (canonical multiplayer, `multiplayer.md` §5.1).
+    pub fn discover_by(&mut self, w: &mut World, owner: usize, e: usize) {
+        self.with_list(w.ctx.human_empire, owner, |d| d.discover_as(w, owner, e));
+    }
+
+    fn discover_as(&mut self, w: &mut World, owner: usize, e: usize) {
         if e == 0 || w.ctx.race[e] == 5 || self.players.iter().any(|s| s.empire == e as i32) {
             return;
         }
-        if e != w.ctx.human_empire && e < 9 {
+        if e != owner && e < 9 {
             self.players.push(PlayerSlot { empire: e as i32, controller: w.ctx.player_ki[e] as i32, open: 1, ..Default::default() });
-            w.events.push(DiploEvent::Discovered { empire: e as u8 });
+            w.events.push(DiploEvent::Discovered { empire: e as u8, by: owner as u8 });
         }
     }
 
@@ -1085,8 +1137,8 @@ impl Diplomacy {
     pub fn receive_message(&mut self, w: &mut World, deals: &mut dyn Deals, letter: Letter) {
         let (a, b, msg) = (letter.from.max(0) as usize, letter.to.max(0) as usize, letter.msg);
         let en = w.ctx.human_empire;
-        if b == en && !self.players.iter().any(|s| s.empire == a as i32) {
-            self.discover(w, a);
+        if self.keeps(en, b) && !self.lists(en, b, a) {
+            self.discover_by(w, b, a);
         }
         w.starmap.met[a][b] = 1;
         w.starmap.met[b][a] = 1;
@@ -1096,12 +1148,16 @@ impl Diplomacy {
         }
         self.react(w, a, b, msg);
         let mut accepted = None;
-        if a != en && b == en && (self.slot(a).open != 0 || letter.declaration) {
-            Self::draw_text(w);
-            let s = self.slot(a);
-            s.waiting = 1;
-            s.letter = letter;
-            s.cancelled = 0;
+        if a != b && self.keeps(en, b) {
+            self.with_list(en, b, |d| {
+                if d.slot(a).open != 0 || letter.declaration {
+                    Self::draw_text(w);
+                    let s = d.slot(a);
+                    s.waiting = 1;
+                    s.letter = letter;
+                    s.cancelled = 0;
+                }
+            });
         }
         if !w.ctx.human[b] {
             let yes = match w.ctx.forced_answer {
@@ -1532,12 +1588,12 @@ impl Diplomacy {
         let en = w.ctx.human_empire;
         if answer.counter {
             if w.ctx.human[a] {
-                if a == en {
-                    let s = self.slot(b);
+                self.with_list(en, a, |d| {
+                    let s = d.slot(b);
                     s.countered = 1;
                     s.screen = 0;
                     s.counter_answer = answer;
-                }
+                });
                 return;
             }
             // `EldontIgenNemValasz`: a coin flip (libc `rand() % 2`).
@@ -1554,13 +1610,13 @@ impl Diplomacy {
             let reply = Answer { from: a as i32, to: b as i32, msg: answer.msg, counter: false, reply: true, yes };
             return self.receive_answer(w, deals, reply);
         }
-        if a == en {
-            let s = self.slot(b);
+        self.with_list(en, a, |d| {
+            let s = d.slot(b);
             s.answered = 1;
             s.asked = 0;
             s.screen = 0;
             s.answer = answer;
-        }
+        });
         w.events.push(DiploEvent::Answered(answer));
         if w.ctx.tutorial || !answer.yes {
             return;
@@ -1619,8 +1675,10 @@ impl Diplomacy {
                 }
             }
             item::PLANET => {
-                for e in deals.transfer_planet(w, v, y as u8) {
-                    self.discover(w, e as usize);
+                for (who, e) in deals.transfer_planet(w, v, y as u8) {
+                    if self.keeps(w.ctx.human_empire, who as usize) {
+                        self.discover_by(w, who as usize, e as usize);
+                    }
                 }
             }
             item::TECH => {
@@ -1661,6 +1719,15 @@ impl Diplomacy {
         if !self.started {
             return;
         }
+        let en = w.ctx.human_empire;
+        self.auto_cancel(w, en);
+        for owner in self.others.iter().map(|c| c.empire as usize).collect::<Vec<_>>() {
+            self.with_list(en, owner, |d| d.auto_cancel(w, owner));
+        }
+    }
+
+    /// The auto-cancel of `list_owner`'s list (`players`; spec §10.3).
+    fn auto_cancel(&mut self, w: &mut World, list_owner: usize) {
         self.shown_players = self.players.len() as i32;
         for i in 0..self.players.len() {
             let s = self.players[i];
@@ -1688,7 +1755,7 @@ impl Diplomacy {
                 let s = &mut self.players[i];
                 s.cancelled = 1;
                 s.waiting = 0;
-                w.events.push(DiploEvent::AutoCancelled { from: f.max(0) as u8 });
+                w.events.push(DiploEvent::AutoCancelled { from: f.max(0) as u8, to: list_owner as u8 });
             }
         }
     }
@@ -1736,8 +1803,8 @@ impl Diplomacy {
         w.events.push(DiploEvent::War { a: a as u8, b: b as u8 });
         let en = w.ctx.human_empire;
         for (x, y) in [(a, b), (b, a)] {
-            if x == en && !self.players.iter().any(|s| s.empire == y as i32) {
-                self.discover(w, y);
+            if self.keeps(en, x) && !self.lists(en, x, y) {
+                self.discover_by(w, x, y);
             }
         }
     }
@@ -1987,7 +2054,7 @@ mod tests {
         fn planet_terms(&self, _p: usize) -> PlanetTerms {
             self.terms
         }
-        fn transfer_planet(&mut self, w: &mut World<'_>, p: usize, owner: u8) -> Vec<u8> {
+        fn transfer_planet(&mut self, w: &mut World<'_>, p: usize, owner: u8) -> Vec<(u8, u8)> {
             self.transfers.push((p, owner));
             w.planets[p].owner = owner;
             Vec::new()

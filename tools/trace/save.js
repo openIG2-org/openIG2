@@ -4,6 +4,13 @@
 // frame hook (same thread, nothing runs in between), and reports the snapshot. The Python side copies the written
 // `save<slot>.sav` to _local/saves/ and removes it from the game's data directory.
 // --ships: give empires with designs a few warships (as spy.js) and hand the human's empire to the AI.
+// --refit: at each day, perturb the buildings (positions, damage, work, holes made with the exe's `EpuletDelete`) and
+// the ground units' cells, write a save, call `EpuleteketJoHelyreTesz` (exe 0x53cd00, the end of `LoadScenario`;
+// re/rules/colony-placement.md §6) and write a second save: index 2k before, 2k + 1 after.
+// --wormholes: at each day, set `OsszHanyWormhole` (0xBB61A0) to a start value (0 the first day), write a save, call
+// the exe's `AddWormhole` (0x53aec0) with fuzzed coordinates until one returns 0 (the call after the fifth wormhole)
+// and write a second save (2k / 2k + 1); the calls and their results go into the second save's JSON
+// (re/rules/fleet-movement.md "Opening a wormhole").
 // Addresses are image VAs, rebased at runtime. Output holds game state: keep it under _local/.
 'use strict';
 
@@ -25,9 +32,11 @@ const A = {
   Bolygok: va(0xb85ea8), HanyBolygo: va(0x912ac8), Tervek: va(0xb9aa18), TervCount: va(0xb9c028),
   HanyEpulet: va(0xba9518), HanyEpuletLefoglalva: va(0xba9840), HanyEpuletBlokk: va(0xba9b68), Epuletek: va(0xba9e90),
   MiGyarthato: va(0xdb28e8), StoryAdat: va(0xf273f8),
+  AddWormhole: va(0x53aec0), WormholeCount: va(0xbb61a0),
+  Refit: va(0x53cd00), EpuletDelete: va(0x53c730), WfCount: va(0x9c33c4), WfUsed: va(0x9c33cc), WfUnits: va(0x9c3574),
 };
 
-const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, days: [3, 40, 150], slot: 97, ships: false, mp: false, seed: 4242 };
+const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, days: [3, 40, 150], slot: 97, ships: false, mp: false, seed: 4242, refit: false, wormholes: false };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -53,6 +62,53 @@ const loadSave = nf(A.LoadSave, 'void', ['int', 'pointer', 'int']);
 const getSavedGame = nf(A.GetSavedGame, 'pointer', ['int']);
 const flottaNew = nf(A.FlottaNew, 'int', ['pointer', 'int', 'int', 'float', 'float', 'float']);
 const hajoNew = nf(A.HajoNew, 'void', ['int', 'int']);
+const refit = nf(A.Refit, 'void', []);
+const addWormhole = nf(A.AddWormhole, 'int', ['int', 'int', 'int', 'int']);
+const epuletDelete = nf(A.EpuletDelete, 'void', ['int', 'int']);
+
+// --refit's perturbation: on every owned planet some buildings move (whole and fractional cells, a few near the
+// edges, some onto another building), get damage and unfinished work, some slots are emptied by `EpuletDelete`
+// (holes the refit fills); units on the battlefield move onto building cells (the search's vehicle pass).
+function fuzzBuildings() {
+  const out = { moved: 0, holes: 0, units: 0 };
+  const np = A.HanyBolygo.readS32();
+  for (let p = 1; p <= np; p++) {
+    if (A.Bolygok.add(0x188 * p + 0x20).readU8() === 0) continue;
+    const n = A.HanyEpuletLefoglalva.add(4 * p).readS32();
+    const cells = [];
+    for (let j = 1; j <= n; j++) {
+      const b = A.Epuletek.add(4 * p).readPointer().add(0x20 * j);
+      if (b.readU8() === 0) continue;
+      cells.push([b.add(0xc).readFloat(), b.add(0x10).readFloat()]);
+      const r = rnd(12);
+      if (r < 3) {
+        const edge = rnd(5) === 0;
+        b.add(0xc).writeFloat(edge ? rnd(2) ? 3 + rnd(20) : 180 + rnd(19) : 20 + rnd(160) + rnd(4) * 0.25);
+        b.add(0x10).writeFloat(edge ? rnd(2) ? 3 + rnd(20) : 180 + rnd(19) : 20 + rnd(160) + rnd(4) * 0.25);
+        out.moved++;
+      } else if (r === 3 && cells.length > 1) {
+        const c = cells[rnd(cells.length - 1)];
+        b.add(0xc).writeFloat(c[0] + rnd(3) - 1); b.add(0x10).writeFloat(c[1] + rnd(3) - 1);
+        out.moved++;
+      } else if (r === 4) {
+        epuletDelete(p, j);
+        out.holes++;
+        continue;
+      }
+      if (rnd(4) === 0) b.add(4).writeS32(rnd(200));
+      if (rnd(4) === 0) b.add(8).writeU16(rnd(3000));
+    }
+    const nu = A.WfCount.add(0x8ec * p).readS32(), used = A.WfUsed.add(0x8ec * p).readPointer(), units = A.WfUnits.add(0x8ec * p).readPointer();
+    if (nu < 1 || used.isNull() || units.isNull() || !cells.length) continue;
+    for (let i = 0; i < nu; i++) {
+      if (!used.add(i).readU8() || rnd(2)) continue;
+      const u = units.add(4 * i).readPointer(), c = cells[rnd(cells.length)];
+      u.add(0x1a0).writeS32(Math.trunc(c[0]) + rnd(5) - 2); u.add(0x1a4).writeS32(Math.trunc(c[1]) + rnd(5) - 2);
+      out.units++;
+    }
+  }
+  return out;
+}
 
 // The save's sections, read from their source globals (names = re/formats/save.md and ig2-formats::save).
 function snapshot() {
@@ -139,6 +195,45 @@ Interceptor.attach(A.Fake_FRISSITES, {
     }
     if (ido - day0 < cfg.days[next] * 50) return;
     busy = true;
+    if (cfg.wormholes) {
+      const start = next === 0 ? 0 : rnd(6);
+      A.WormholeCount.writeS32(start);
+      const coord = () => rnd(1400) - 200;
+      const calls = [];
+      for (const half of [0, 1]) {
+        const idx = 2 * next + half, slot = cfg.slot + idx;
+        if (half) {
+          for (;;) {
+            const c = [coord(), coord(), coord(), coord()];
+            if (rnd(4) === 0) [c[2], c[3]] = [c[0], c[1]];
+            const w = addWormhole(c[0], c[1], c[2], c[3]);
+            calls.push([...c, w]);
+            if (w === 0) break;
+          }
+        }
+        loadSave(slot, Memory.allocAnsiString('Wormhole ' + idx), 2);
+        emit({ k: 'save', idx, slot, name: 'Wormhole ' + idx, frames, snap: {}, mp: '', start, calls: half ? calls : [] });
+      }
+      flush();
+      busy = false;
+      next++;
+      if (next >= cfg.days.length) { emit({ k: 'done' }); flush(); phase = 2; }
+      return;
+    }
+    if (cfg.refit) {
+      const fuzz = fuzzBuildings();
+      for (const half of [0, 1]) {
+        const idx = 2 * next + half, slot = cfg.slot + idx;
+        if (half) refit();
+        loadSave(slot, Memory.allocAnsiString('Refit ' + idx), 2);
+        emit({ k: 'save', idx, slot, name: 'Refit ' + idx, frames, snap: {}, mp: '', fuzz });
+      }
+      flush();
+      busy = false;
+      next++;
+      if (next >= cfg.days.length) { emit({ k: 'done' }); flush(); phase = 2; }
+      return;
+    }
     const slot = cfg.slot + next, name = 'Probe ' + next;
     const snap = snapshot();
     loadSave(slot, Memory.allocAnsiString(name), 2);

@@ -38,7 +38,8 @@ const activeSlots = () => { let n = 0; for (let b = 0; b < 10; b++) if (SPW0.add
 const OBJ = 0x2d9c, UNIT = 600, FIGHTER = 0xa8, GUN = 0xa8, SHOT = 0xa8, SPRITE = 0x4c, WEAPON = 0x70;
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, steps: 3000, battles: 20, seed: 4242,
-  fuzz: false, aiHuman: false, planets: false, join: false, fuzzDesigns: false, every: 4, speed: 4, perBattle: 1500 };
+  fuzz: false, aiHuman: false, planets: false, join: false, fuzzDesigns: false, every: 4, speed: 4, perBattle: 1500,
+  orders: 0, orderEvery: 5 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -112,7 +113,7 @@ function regions(self) {
     try { p.readU8(); p.add(n - 1).readU8(); out.push([key, p, n]); } catch (e) { /* stale pointer */ }
   };
   add('obj', self, OBJ);
-  const units = self.add(0xc20).readPointer(), nu = self.add(0xc28).readS32();
+  const units = self.add(0xc20).readPointer(), nu = units.isNull() ? 0 : self.add(0xc28).readS32();
   add('units', units, UNIT * nu);
   for (let u = 0; u < nu; u++) {
     const p = units.add(UNIT * u);
@@ -233,6 +234,7 @@ Interceptor.attach(A.SpaceWarFrissit, {
       if (Object.keys(d).length) emit({ k: 'between', battle: battleSerial, d });
       cur = now;
     }
+    if (cfg.orders && battleSteps % cfg.orderEvery === 0) stageOrders(self);
   },
   onLeave() {
     if (!this.on) return;
@@ -244,6 +246,108 @@ Interceptor.attach(A.SpaceWarFrissit, {
     if (steps >= cfg.steps) emit({ k: 'done' });
   },
 });
+
+// ---------------------------------------------------------------- staged orders (MULTIGET_SpaceWar)
+// --orders N: every --order-every ticks, N random battle-screen orders go through the exe's own MULTIGET_SpaceWar
+// (0x5615b0, spec §7.12) between two ticks: its Multi_GetNextTipus calls (0x513340) are pointed at a stub that
+// returns the staged type once, only to a call whose range holds it; its Multi_Get calls (0x513160) at a stub that
+// writes the staged ints to the out-parameters ([esp + 8 + 8i]). Each order is an 'order' record: type, values,
+// and the byte diff it made.
+const MULTIGET = va(0x5615b0);
+const NEXT_CALLS = [0x5615d9, 0x561a9e, 0x561ab9, 0x561c0b].map(va);
+const GET_CALLS = [0x56160f, 0x5616a5, 0x56172d, 0x561783, 0x5617e8, 0x561850, 0x5618a1, 0x5619b4, 0x561a5a,
+  0x561ae2, 0x561b3b, 0x561bb1].map(va);
+const multiget = new NativeFunction(MULTIGET, 'void', [], { abi: 'mscdecl', traps: 'all' });
+let ostub = null;
+function stubs() {
+  if (ostub !== null) return;
+  ostub = Memory.alloc(Process.pageSize);
+  const type = ostub.add(0x200), vals = ostub.add(0x210);
+  Memory.patchCode(ostub, 0x180, (code) => {
+    const w = new X86Writer(code, { pc: ostub });
+    // eax = the staged type; 0 or outside [lo, hi] (the dword arguments) -> 0; else clear it and return it.
+    w.putMovRegAddress('ecx', type); w.putMovRegRegPtr('eax', 'ecx');
+    w.putCmpRegI32('eax', 0); w.putJccShortLabel('je', 'none', 'no-hint');
+    w.putMovRegRegOffsetPtr('edx', 'esp', 4); w.putCmpRegReg('eax', 'edx'); w.putJccShortLabel('jl', 'none', 'no-hint');
+    w.putMovRegRegOffsetPtr('edx', 'esp', 8); w.putCmpRegReg('eax', 'edx'); w.putJccShortLabel('jg', 'none', 'no-hint');
+    w.putMovRegPtrU32('ecx', 0); w.putRet();
+    w.putLabel('none'); w.putXorRegReg('eax', 'eax'); w.putRet();
+    w.flush();
+    const g = new X86Writer(code.add(0x80), { pc: ostub.add(0x80) });
+    // Arguments: type, then (out pointer, size marker) pairs; the list ends with a 0 in a marker's place.
+    for (let i = 0; i < 8; i++) {
+      g.putMovRegRegOffsetPtr('ecx', 'esp', 8 + 8 * i);
+      g.putMovRegAddress('edx', vals.add(4 * i)); g.putMovRegRegPtr('eax', 'edx');
+      g.putMovRegPtrReg('ecx', 'eax');
+      g.putMovRegRegOffsetPtr('ecx', 'esp', 0xc + 8 * i);
+      g.putCmpRegI32('ecx', 0); g.putJccNearLabel('je', 'done', 'no-hint');
+    }
+    g.putLabel('done'); g.putMovRegU32('eax', 1); g.putRet();
+    g.flush();
+  });
+}
+function patchCalls(calls, target) {
+  const saved = calls.map((c) => c.readByteArray(5));
+  for (const c of calls) Memory.patchCode(c, 5, (code) => { const w = new X86Writer(code, { pc: c }); w.putCallAddress(target); w.flush(); });
+  return () => calls.forEach((c, i) => Memory.patchCode(c, 5, (code) => code.writeByteArray(saved[i])));
+}
+function runOrder(type, vals) {
+  stubs();
+  ostub.add(0x200).writeS32(type);
+  for (let i = 0; i < 8; i++) ostub.add(0x210 + 4 * i).writeS32(i < vals.length ? vals[i] : 0);
+  const undoNext = patchCalls(NEXT_CALLS, ostub), undoGet = patchCalls(GET_CALLS, ostub.add(0x80));
+  try { multiget(); } finally { undoNext(); undoGet(); }
+}
+const f32bits = (x) => { const b = new ArrayBuffer(4); new DataView(b).setFloat32(0, x, true); return new DataView(b).getInt32(0, true); };
+// A random order for this battle; the units, guns and mounts it names exist.
+function makeOrder(self, b) {
+  const units = self.add(0xc20).readPointer(), nu = self.add(0xc28).readS32();
+  const ng = self.add(0xc90).readS32();
+  const unit = (u) => units.add(UNIT * u);
+  const all = [], alive = [], owners = [];
+  for (let u = 0; u < nu; u++) {
+    all.push(u);
+    if (unit(u).readU8()) { alive.push(u); const o = unit(u).add(0x14).readS32(); if (o > 0 && !owners.includes(o)) owners.push(o); }
+  }
+  if (!all.length) return null;
+  const pick = (a) => a[rnd(a.length)];
+  const some = () => (alive.length && rnd(6)) ? pick(alive) : pick(all);
+  const issuer = owners.length ? pick(owners) : 1;
+  const r = rnd(100);
+  if (r < 22) {
+    // A point the screen can send: JobbClick clamps it to the bounds less two cells (x = height: ±9, y/z: ±186).
+    const x = (rnd(181) - 90) / 10, y = rnd(372) - 186 + rnd(1000) / 1000, z = rnd(372) - 186 + rnd(1000) / 1000;
+    return [0x70, [issuer, f32bits(x), f32bits(y), f32bits(z), some(), b]];
+  }
+  if (r < 42) return [0x71, [issuer, some(), rnd(10) ? some() : -1, b]];
+  if (r < 46) return [0x72, [issuer, b]];
+  if (r < 54 && ng > 0) return [0x73, [issuer, some(), rnd(8) ? rnd(ng) : -1, b]];
+  if (r < 60 && ng > 0) return [0x74, [issuer, rnd(ng), rnd(8) ? some() : -1, b]];
+  if (r < 62) return [0x75, [issuer]];
+  if (r < 64) return [0x76, [issuer, b, some()]];
+  if (r < 72) return [0x77, [issuer, rnd(101), rnd(19), b]];
+  if (r < 88) {
+    const armed = all.filter((u) => unit(u).add(0x218).readS32() > 0);
+    if (!armed.length) return null;
+    const u = rnd(6) ? pick(armed) : pick(all);
+    const nm = unit(u).add(0x218).readS32();
+    if (nm < 1) return null;
+    return [0x44e, [issuer, u, some(), rnd(nm), b]];
+  }
+  const keep = rnd(3) ? ~(1 << rnd(32)) : rnd(0x7fffffff);
+  return [0x44f, [issuer, some(), keep | 0, rnd(4) ? 0 : (1 << rnd(32)) | 0, b]];
+}
+function stageOrders(self) {
+  const b = self.sub(SPW0).toInt32() / SPW_STRIDE;
+  for (let i = 0; i < cfg.orders; i++) {
+    const o = makeOrder(self, b);
+    if (!o) continue;
+    runOrder(o[0], o[1]);
+    const now = grab(regions(self));
+    emit({ k: 'order', battle: battleSerial, n: steps, type: o[0], vals: o[1], d: diff(cur, now) });
+    cur = now;
+  }
+}
 
 // ---------------------------------------------------------------- fuzzing a fresh battle
 const PODS = [0x20, 0x40, 0x80, 0x100, 0x200, 0x400];

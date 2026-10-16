@@ -6,9 +6,9 @@
 
 use std::collections::BTreeMap;
 
-use ig2_sim::game::{Game, GameRules, Libc, ViewMode};
+use ig2_sim::game::{Game, GameRules, Libc, RealTime, ViewMode};
 use ig2_sim::ground::Field;
-use ig2_sim::save::{Memory, SaveState, StoryQueues, BUILDING_SIZE, DESIGN_SIZE, FLEET_SIZE};
+use ig2_sim::save::{HumanSide, Memory, SaveState, StoryQueues, BUILDING_SIZE, DESIGN_SIZE, FLEET_SIZE};
 use ig2_sim::story::Queue;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 4;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -75,6 +75,9 @@ struct View<'a> {
     ground_fields: &'a BTreeMap<usize, Field>,
     /// `Game::view`: `None` = classic, `Some(en)` = canonical with that `EN` (since version 2).
     view: Option<u8>,
+    /// `SaveState::humans`: `(empire, contacts, ghost, shown, reports)` (since version 3).
+    humans: Vec<(u8, Bytes<'a>, Bytes<'a>, i32, Bytes<'a>)>,
+    realtime: &'a RealTime,
     pending: &'a [Command],
 }
 
@@ -97,6 +100,8 @@ struct Owned {
     family_names: Vec<ByteBuf>,
     ground_fields: BTreeMap<usize, Field>,
     view: Option<u8>,
+    humans: Vec<(u8, ByteBuf, ByteBuf, i32, ByteBuf)>,
+    realtime: RealTime,
     pending: Vec<Command>,
 }
 
@@ -124,6 +129,8 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
             ViewMode::Classic => None,
             ViewMode::Canonical { en } => Some(en),
         },
+        humans: s.humans.iter().map(|(&e, h)| (e, Bytes(&h.contacts), Bytes(&h.ghost), h.shown, Bytes(&h.reports))).collect(),
+        realtime: &g.realtime,
         pending,
     }
 }
@@ -195,6 +202,11 @@ impl Snapshot {
         s.multiplayer_blob = o.multiplayer_blob;
         s.fresh_buildings = o.fresh_buildings;
         s.set_ground_fields(o.ground_fields);
+        s.humans = o
+            .humans
+            .into_iter()
+            .map(|(e, contacts, ghost, shown, reports)| (e, HumanSide { contacts: contacts.0, ghost: ghost.0, shown, reports: reports.0 }))
+            .collect();
         let mut g = Game::new(s, rules);
         g.libc = Libc(o.libc);
         g.fleet_name = o.fleet_name.map(|b| b.0);
@@ -203,6 +215,7 @@ impl Snapshot {
         if let Some(en) = o.view {
             g.canonical_view(en);
         }
+        g.realtime = o.realtime;
         Ok((g, o.pending))
     }
 

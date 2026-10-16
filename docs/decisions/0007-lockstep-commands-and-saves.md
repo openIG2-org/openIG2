@@ -30,6 +30,8 @@ handler, so the classic ruleset stays the original's order of effects:
 | `DiplomacyAnswer { to, msg, counter, reply, yes }` | 0x3f → `FeldolgozValasz` | `Game::diplomacy_answer` (from = issuer) |
 | `StoryChoice { id }` | 0x66 `MULTIGET_Story` | `Game::story_special([15, issuer, id, 0…])` |
 | `FleetEmptied { fleet }` | 0x1b `MULTIGET_Starmap` | `Game::fleet_emptied` |
+| `Spy { order }` | 0x47..0x4c `MULTIGET_Spy` exe 0x5883c0 | `Game::spy_order(issuer, …)` (`espionage.md` §8, verified) |
+| `StoryStart { id }` | 0x65 `MULTIGET_Story` | `Game::story_start` (`StartStory(id, false)`) |
 
 - The **issuer** is the empire of the peer that sent it, stamped by the host (a peer can't act for another
   empire). Commands are validated by the sim exactly as the handler validates its message (a refused purchase is a
@@ -116,7 +118,6 @@ input delay.
 - Every new UI action needs its command variant and handler port first; that keeps the MP surface explicit.
 - A hash per turn costs one encoding of the state (a few MB, milliseconds); the interval can grow if it shows up in
   profiles.
-- Open: per-human state the canonical view keeps for the host only (contact lists, spy reports, `st_Multi_include`
-  effects; `multiplayer.md` §5); the not yet ported handlers (`MULTIGET_Spy`, `MULTIGET_SpaceWar`, 0x65 story
-  start); the real-time battles' per-frame UI input (`MULTISEND_SpWarSynch`) as commands; LAN discovery, UPnP and the
-  lobby on top of the QUIC transport; adaptive input delay from measured round trips.
+- Per-human state (contact lists, spy reports, `st_Multi_include` effects) is kept per human in canonical MP
+  (`multiplayer.md` §5, snapshot version 3). Open: `MULTIGET_SpaceWar`; the real-time battles' per-frame UI input (`MULTISEND_SpWarSynch`) as commands (LAN discovery, UPnP and the
+  lobby: ADR 0008); adaptive input delay from measured round trips.

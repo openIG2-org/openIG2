@@ -13,10 +13,12 @@ Evidence (ELF `ig2` / exe):
 | `DecodedCheckAllocation(x, y, w, h)` | 0x4bbb40 | 0x46db30 | "is this spot taken?" (passed to `LocatePos` as a pointer, `push 0x46db30` @ 0x486b76) |
 | `CheckKeretAllocation(grid, x, y, w, h)` | 0x4bb8e0 | 0x460800 | frame test (keret = frame) |
 | `LocatePos(check, cx, cy, &x, &y, w, h)` | 0x4885c0 | 0x486610 | square-spiral search |
-| `EpuleteketJoHelyreTesz()` | 0x61cd10 | — | re-places every building (load fix-up, §6) |
+| `EpuleteketJoHelyreTesz()` | 0x61cd10 | 0x53cd00 | re-places every building (load fix-up, §6) |
 
 Callers: every scripted/automatic new building goes through `EpuletNewSearchLocation(p, kind, done, dmg, −1, −1)`
-(colonisation's colony hub, autobuild, AI build orders, story/scenario buildings; ~40 call sites in the ELF).
+(colonisation's colony hub, autobuild, AI build orders, story/scenario buildings; ~40 call sites in the ELF). The exe
+calls `LocateSuitableLocation` from three places: `EpuletNewSearchLocation`, `EpuleteketJoHelyreTesz` (§6) and a story
+helper 0x5c95b0 (`Story_Check`, `st_Elem`).
 The human's own placement in the colony screen is a separate UI path (not covered here).
 
 ## 1. Data
@@ -40,7 +42,10 @@ The human's own placement in the colony screen is a separate UI path (not covere
 ## 2. Building the grid (`LocateSuitableLocation`, first part)
 1. `Decode2LargeMap(m, grid, false, p)`: for mask row `r` 0..50 and cell `c` 0..50 (columns 50–51 of
    the 13-byte row are skipped), the 4 × 4 block `x ∈ 4c..4c+4, y ∈ 4r..4r+4` = `(cell != 0) as u8`
-   (written, not OR-ed). The landing-zone branch (`landing = true`) isn't used here.
+   (written, not OR-ed). The landing-zone branch (`landing = true`: every cell whose `LandingZones[p − 1]` level is
+   above 0 becomes 1, the zone generated first if needed) is `LocateTankSuitablePosition`'s (exe 0x486bd3), ported as
+   `placement::{landing_zone, locate_tank}` and verified with the real-time ground war (`ground-combat.md` §11.1,
+   `traces/2026-10-16-ground-realtime.md`); `Init3dColony` (0x47e6e4) is the colony screen's.
 2. Every building slot `j` in 1..=n with kind `k ≠ 0`, in slot order: `DecodedAllocate((int)x_j, (int)y_j, w_k, h_k, ring = true)`;
    `n += 1`; `sx = (int)((f32)sx + x_j)`, `sy = (int)((f32)sy + y_j)` (an int accumulator re-truncated after every
    f32 add: `cvtsi2ss`/`addss`/`cvttss2si`).
@@ -89,13 +94,23 @@ The written `(x, y)` (ints) become the building's f32 position. No spot: returns
 their input (−1, −1); `EpuletNewSearchLocation` then creates nothing and returns 0 (autobuild's
 "no room", `colony-side.md` §3).
 
-## 6. `EpuleteketJoHelyreTesz` (ELF only; load-time fix-up)
-For every owned planet and every occupied slot: remember kind and `(int)` position, `EpuletDelete(p, j)`,
-`LocateSuitableLocation(p, kind, &x, &y)` with the old position as the start (so it stays if it's free),
-then `EpuletNew(p, kind, done = true, x, y, 0)` whether or not the search succeeded. Not ported (no exe
-caller found yet).
+## 6. `EpuleteketJoHelyreTesz` (load-time fix-up; exe 0x53cd00)
+The last call of `LoadScenario` (exe 0x552d8f, unconditional: every scenario and campaign map load) and a console
+command (`ExecuteString` 0x4ddb7c). For every planet with an owner (`+0x20`), slots `j` = 1.. while
+`j ≤ HanyEpuletLefoglalva[p]` (re-read each step) with kind `k ≠ 0`: remember `k` and the `(int)` position,
+`EpuletDelete(p, j)` (turrets removed, the `'+'` building's self-destruct reset, `HanyEpulet[p] − 1`),
+`LocateSuitableLocation(p, k, &x, &y)` with the old cell as the start (so it stays if it's free; with no spot the
+outputs keep the old cell), then `EpuletNew(p, k, done = true, (f32)x, (f32)y, 0)`: a fresh record (damage 0, no
+work left, output factor recomputed) with `AddBuildingTurrets` and `BuildingBuilt`. `EpuletNew` takes the planet's
+**first empty slot**, so a building behind a hole moves into it (and isn't visited again) [original behaviour].
+The search sees the ground units on the map (§1) and the buildings not yet re-placed. Port: `Game::refit_buildings`.
 
 ## 7. Verification
+The vehicle pass (§1, §2.3) now gets the planet's battlefield (`SaveState::vehicle_cells` =
+`ground::Field::placed_cells`) in the economy step and colonisation arrivals; the refit (§6) is verified with it in
+`traces/2026-10-16-refit.md` (10 fuzzed refits, 2,060 buildings, 569 moved; mutations of the vehicle pass, the start
+hint, `BuildingBuilt` and the damage reset are each caught). Open: the human's own placement on the colony screen.
+
 `traces/2026-10-15-placement.md`: the colony-side replays place every new building with the port
 (`ig2-sim::placement`): 60 colonisation hubs and 161 autobuild purchases land exactly where the game put
 them, and the 9 "no room" outcomes match. Mutations caught 6/9; the per-step centroid truncation and the

@@ -58,7 +58,7 @@ the real-time battle only. No rule values here: the tables (§1.3) are read from
 | `GroundWarSetBattleStatus` | 0x47caa0 | 0x49e820 | §6.4 |
 | `TankDelete(f, d, n)` (core) / `TankNew(f, d, n)` | 0x541510 / 0x541750 | 0x616f70 / 0x618a70 | `space-combat.md` §5.3, `production-research.md` §5.1 |
 | `SearchBuilding(p, type, working)` | 0x541150 | 0x616720 | finished buildings of a type |
-| `LocateTankSuitablePosition(p, &x, &y, sx, sy)` | 0x486b90 | 0x488d80 | free map cell (§3.4; not ported) |
+| `LocateTankSuitablePosition(p, &x, &y, sx, sy)` | 0x486b90 | 0x488d80 | free map cell (§3.4, §11.1; `placement::locate_tank`) |
 | `KemkedesFoldiharcLekezel(f, p)` | 0x53ef00 | 0x61f9d0 | spies learn designs/buildings (§2) |
 | `Story_GroundBattleSimulateCheck` / `…Started` / `…FinishedSave` | 0x5c8e70 / 0x5c8fc0 / 0x5c8de0 | | campaign hooks (§2, §6.3) |
 
@@ -1119,3 +1119,26 @@ then fires for zero damage, §11.10). The link (`+0x1e0` carrier, `+0x1e4` partn
 `WF_Tank::Damage` (§5.6), `RemoveTankGroup`, `GroundWarFinished` (§6.1) and `Simulate`. The exe's crash (§8)
 needs a split partner group; a transporter design landed as one vehicle never splits (the tracer's
 `--transport` stages it that way).
+
+### 11.17 The MP ground war (`GrWar_MultiCsata_*`)
+Exe globals: in progress `GrWar_MultiCsata_folyamatban` 0xBAD13C, the planet `GrWar_MultiCsata_bolygo` 0xBAD140
+(ELF 0x14480b4 / 0x14480b8; `…_vegetert` 0x14480c0 and `…_mehet` 0x1183164 have no readers). `GroundWarIndit` (exe
+0x59c2d0) routed to real time sets the planet and, in MP, the flag, then `StartGrWar(p)` (§11.4, which in MP also
+sends every machine to the colony screen of `p`). While the flag is set, `Fake_FRISSITES` (exe 0x4de720) runs
+neither the clock (`FRISSIT_Datum`) nor the strategic systems: only `GroundWarSetBattleStatus` (exe 0x47caa0),
+`IdoMultiPlayerBattle` += 1, `FRISSIT_Grwar` (unless a space battle runs) and `FRISSIT_SpaceWar`. `FRISSIT_Grwar`'s
+MP branch (exe 0x4747c0 after the per-planet part) runs `WF::MI` and `WF::Refresh` for the flagged planet every tick,
+whatever is on screen. `WF::Refresh`'s MP end (exe 0x494b70.., ELF 0x48d750 line `else if`): no countdown;
+`GetStatus() ≠ −1` → `GroundWarFinished(p, s, false)`, `+0x190 := 1`; `GroundWarFinished` clears the flag (§6.1
+step 12). MP routing (§2) sends a war to real time only when both sides are human; the AI (`WF::MI`) skips human
+empires and idle fire needs a target that has fired, so without the players' orders (`MULTIGET_Colony`, ELF
+0x4ec2e0: move 0x22, waypoint 0x23, target 0x24, stop 0x25, detonate 0x12d, landing zone 0x12f, air strike 0x130,
+…; not ported) the two sides never engage [original behaviour].
+
+The canonical view (ours, `multiplayer.md` §7) runs exactly this on the sim clock (`game::realtime`): the flag and
+planet are synced state, `WF::MI`/`WF::Refresh` of that planet run in the tick, `GroundContext::multiplayer` is set
+(MP landing, retreat, status and end rules) and `mp_war` mirrors the flag; the dropships (§11.16) fly once per sim
+tick for every battlefield (the 100 Hz UI's every fifth pass is 20 Hz). The capture of `GroundWarFinished` step 7 is
+carried out by `Game::with_wars` after the field's part (the same order: before the abandonment test). Tested by
+`ig2-net/tests/lockstep.rs::two_humans_fight_a_ground_war_in_lockstep`; the MP end branch is not traced against the
+exe (MP needs a second machine).

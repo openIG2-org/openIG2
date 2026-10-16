@@ -102,7 +102,7 @@ fn move_fleet(w: &mut dyn StoryWorld, fleet: i32, kind: i32, mode: i32, x: f32, 
 }
 
 /// The fleet slot of `x` (`< 1`: the slot `−x`), as the fleet helpers take it.
-fn slot_of(s: &mut Story, x: i32, w: &mut dyn StoryWorld) -> i32 {
+pub(crate) fn slot_of(s: &mut Story, x: i32, w: &mut dyn StoryWorld) -> i32 {
     if x < 1 {
         x.wrapping_neg()
     } else {
@@ -144,7 +144,7 @@ fn attack_human(s: &mut Story, id: i32, w: &mut dyn StoryWorld) {
 }
 
 /// `st_fMoveToPlanet(x, b)` (exe 0x604b40).
-fn move_to_planet(s: &mut Story, x: i32, b: i32, w: &mut dyn StoryWorld) {
+pub(crate) fn move_to_planet(s: &mut Story, x: i32, b: i32, w: &mut dyn StoryWorld) {
     let f = slot_of(s, x, w);
     let g = s.b_search(b, 0, w);
     let ok = f > 0 && g > 0;
@@ -162,7 +162,7 @@ fn stands(s: &mut Story, x: i32, w: &mut dyn StoryWorld) -> bool {
 }
 
 /// `st_fDelete(x)`.
-fn delete_fleet(s: &mut Story, x: i32, w: &mut dyn StoryWorld) {
+pub(crate) fn delete_fleet(s: &mut Story, x: i32, w: &mut dyn StoryWorld) {
     let f = if x < 0 { x.wrapping_neg() } else { s.f_search(x, w) };
     if f >= 1 {
         w.event(StoryEvent::DeleteFleet(f));
@@ -180,14 +180,14 @@ fn show_fleet(s: &mut Story, x: i32, on: bool, w: &mut dyn StoryWorld) {
 }
 
 /// `(int)(f32) sqrt((f64)(f32)(dy² + dx²))` of f32 coordinates (`st_bDistFromBir`'s and `st_bGetFromDist`'s).
-fn planet_distance(a: (f32, f32), b: (f32, f32)) -> i32 {
+pub(crate) fn planet_distance(a: (f32, f32), b: (f32, f32)) -> i32 {
     let (dx, dy) = (a.0 - b.0, a.1 - b.1);
     ((dy * dy + dx * dx) as f64).sqrt() as f32 as i32
 }
 
 /// `st_bDistFromBir(q, −1)` (exe 0x603240): the distance from the human's nearest visible planet (1..n − 1) to
 /// planet `q`, 1,000,000 without one.
-fn human_distance(q: i32, w: &dyn StoryWorld) -> i32 {
+pub(crate) fn human_distance(q: i32, w: &dyn StoryWorld) -> i32 {
     let en = w.human();
     let target = w.planet_xy(q);
     (1..w.planet_count())
@@ -297,7 +297,7 @@ impl Story {
     }
 
     /// `st_bSetRadarMsg(id, true)`: the planet with story id `id` gets `+0xbb := 1`.
-    fn radar_notice(&mut self, id: i32, w: &mut dyn StoryWorld) {
+    pub(crate) fn radar_notice(&mut self, id: i32, w: &mut dyn StoryWorld) {
         match self.planets.iter().find(|e| e.0 == id) {
             Some(&(_, p)) if p != 0 => {
                 self.error = 0;

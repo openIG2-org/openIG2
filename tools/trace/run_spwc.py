@@ -7,6 +7,8 @@ given defence ships and planet guns; --fuzz: random special pods, weapons, shiel
 --join: right after a battle starts another AI fleet joins it (SpaceWar_NewBattle's join path);
 --fuzz-designs: random weapons, shields and pods in the participants' designs, big fighter wings, armour and
 skipped/switched-off defence buildings.
+--orders N [--order-every K]: every K ticks, N random battle-screen orders through the exe's own MULTIGET_SpaceWar
+(the human's in-battle orders, spec §7.12), each an 'order' record with its byte diff.
 Every SpaceWarIndit call is wrapped in 'presetup'/'setup' snapshots (the battle setup, spec §7.10), and
 leaving the battle screen records the end globals ('left', §7.11).
 The agent starts real-time battles (human fleet vs AI fleet) and records every SpwC::SpaceWarFrissit call
@@ -38,6 +40,8 @@ ap.add_argument("--join", action="store_true")
 ap.add_argument("--fuzz-designs", action="store_true")
 ap.add_argument("--speed", type=int, default=4)
 ap.add_argument("--per-battle", type=int, default=1500)
+ap.add_argument("--orders", type=int, default=0)
+ap.add_argument("--order-every", type=int, default=5)
 a = ap.parse_args()
 
 exe = os.path.join(a.install, "ig2.exe")
@@ -74,7 +78,8 @@ script.on("message", on_message)
 script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "steps": a.steps, "battles": a.battles,
                                            "seed": a.seed, "fuzz": a.fuzz, "aiHuman": a.ai_human,
-                                           "planets": a.planets, "join": a.join, "fuzzDesigns": a.fuzz_designs, "speed": a.speed, "perBattle": a.per_battle}})
+                                           "planets": a.planets, "join": a.join, "fuzzDesigns": a.fuzz_designs, "speed": a.speed, "perBattle": a.per_battle,
+                                           "orders": a.orders, "orderEvery": a.order_every}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()

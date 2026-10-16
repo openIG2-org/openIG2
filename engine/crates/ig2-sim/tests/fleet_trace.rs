@@ -23,7 +23,7 @@ fn trace_paths() -> Vec<PathBuf> {
         return vec![PathBuf::from(p)];
     }
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces");
-    ["fleet.jsonl", "fleet-fuzz.jsonl", "fleet-approach.jsonl"].iter().map(|f| dir.join(f)).filter(|p| p.exists()).collect()
+    ["fleet.jsonl", "fleet-fuzz.jsonl", "fleet-approach.jsonl", "fleet-mpradar.jsonl"].iter().map(|f| dir.join(f)).filter(|p| p.exists()).collect()
 }
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -71,6 +71,7 @@ fn wormholes(s: &Value) -> Vec<Wormhole> {
             by: f32_at(w, 0x10),
             revealed_b: w[0x14] != 0,
             fleet_b: i16_at(w, 0x16),
+            tint: [w[0x18], w[0x19], w[0x1a]],
         })
         .collect()
 }
@@ -181,7 +182,7 @@ fn context(s: &Value, rel: &str, after: &Value) -> StarmapContext {
         story_no_supply: i32_at(&story, 0x48) != 0,
         story_supply_planet: i32_at(&story, 0x50),
         tutorial_sighting: (tut[0].as_i64().unwrap() != 0 || tut[1].as_i64().unwrap() != 0) && tut[2].as_i64().unwrap() == 1,
-        radar_rules: RadarRules { ranges: ranges[..6].try_into().unwrap(), planet_ranges: ranges[6..].try_into().unwrap() },
+        radar_rules: RadarRules { ranges: ranges[..6].try_into().unwrap(), planet_ranges: ranges[6..].try_into().unwrap(), ..Default::default() },
         in_battle,
     }
 }
@@ -371,7 +372,8 @@ fn replay(path: &std::path::Path) {
     for m in mismatches.iter().take(20) {
         eprintln!("{m}");
     }
-    assert!(ticks >= 500, "trace too short");
+    // `--mp-radar` recordings end at ~380 ticks (a fuzzed attack opens a battle screen, which stops strategic time).
+    assert!(ticks >= 300, "trace too short");
     assert!(mismatches.is_empty(), "{}: {} mismatches", path.display(), mismatches.len());
 }
 

@@ -1,8 +1,10 @@
 # Multiplayer: per-peer state in the simulation
 
-Status: audit done 2026-10-16 (ADR 0007 §5). Implemented in `ig2-sim::game` (`ViewMode`, `LocalView`,
+Status: audit done 2026-10-16 (ADR 0007 §5); the real-time battles run by session rules (§7). Implemented in `ig2-sim::game` (`ViewMode`, `LocalView`,
 `Game::cosmetic`, `Game::messages_for`) and `ig2-net` (`Peer::show`, snapshot format version 2); tested by
-`ig2-net/tests/lockstep.rs::local_views_stay_out_of_the_synced_state`.
+`ig2-net/tests/lockstep.rs::local_views_stay_out_of_the_synced_state`. Per-human contact lists, spy report queues
+and the `st_Multi_include` effects (§5): `SaveState::humans`, snapshot version 3, tested by
+`ig2-net/tests/lockstep.rs::each_human_keeps_its_own_contacts_and_reports`.
 
 The original runs the whole strategic sim on every machine, but some code paths read globals that differ per
 machine: `EN` (0x912A3C, the local human's empire), the screen on show (`AktKep` 0xBAE0FC, `StarmapMode`
@@ -75,7 +77,7 @@ in the original, so it never runs in MP. "MP" says what the canonical view does.
 | `Game::starmap_pass` | `FlottaOsszevon` exe 0x53d860 | writes `AktFleet` = the merged fleet | UI state in the state | not written; UI follows `StarmapEvent::Merge` |
 | `StoryWorld::akt_planet` / `akt_fleet` | campaign stories (`campaign.md` §8: bomb, volcano on `AktPlanet`; new ships into `AktFleet`) | the selection | G | SP only. `Game`'s `StoryView` still returns 0 (the trait default); reading the state broke the save replay (story 405 start at tick 2): open |
 | `ground::War` with `on_screen` | `WF::Refresh` 0x490890, `FRISSIT_Grwar` 0x4747c0 | debris `AddRepesz` 0x45d400, ruins `Rom::Rom` 0x455570, bursts, dust, bomb textures, voices (libc draws; debris takes list-B slots that order later shots) | G | `Game::with_war` passes `on_screen: false`; a renderer makes its own debris from `Game::cosmetic` |
-| the real-time ground war itself | `FRISSIT_Grwar` 0x4747c0: `WF::MI` 0x486d40 and `WF::Refresh` run for the planet on the colony screen only | `AktKep == 3`, `AktPlanet` | G | open (§5): must run by session rules, not by a peer's screen |
+| the real-time ground war itself | `FRISSIT_Grwar` 0x4747c0: `WF::MI` 0x486d40 and `WF::Refresh` run for the planet on the colony screen only (SP) | `AktKep == 3`, `AktPlanet` | G | the war's planet every tick, the original's MP branch (§6) |
 
 ## 4. UI-paced timers and screen-dependent draws
 
@@ -83,25 +85,101 @@ in the original, so it never runs in MP. "MP" says what the canonical view does.
 |---|---|---|---|
 | Scrolling line drain `FRISSIT_Scroll2` 0x556210 (frame-paced, `Ticker::pop`) | UI | P | per peer (the line isn't in the synced state in canonical mode) |
 | Voice-line cooldowns (0xA3EA3C, UI-paced) | ground voices | P, but their draws are on the libc stream | off screen: no draws |
-| Transporters `WF::Refresh2` 0x48ce10 every 5th `ColonyCounter` (f32 0x99823c) of the 100 Hz colony tick | ground war | G | open (§5): needs a fixed sim cadence |
-| End-of-battle countdown `WF+0x148` (runs down on the colony screen only) | ground war | G | open (§5) |
-| Real-time space battle `SpaceWarFrissit` 0x56dff0 (`IdoSpeedSzorzoBattle` calls per frame; the UI writes unit +0x184..+0x190) | battle screen | G | open: `MULTISEND_SpWarSynch` as commands (ADR 0007 open items) |
+| Transporters `WF::Refresh2` 0x48ce10 every 5th `ColonyCounter` (f32 0x99823c) of the 100 Hz colony tick | ground war | G | once per sim tick (§6) |
+| End-of-battle countdown `WF+0x148` (runs down on the colony screen only) | ground war | G | none in MP: `WF::Refresh` ends the war when a side holds the field (§6) |
+| Real-time space battle `SpaceWarFrissit` 0x56dff0 (`IdoSpeedSzorzoBattle` calls per 20 Hz tick; the UI writes unit +0x184..+0x18f, selection/UI only) | battle screen | G | every slot every tick, the humans' orders as commands (§6) |
 | `AktEtaDays` 0xF43428 libc draw per new month (`FRISSIT_Trade` 0x605ed0) | UI value | P, unconditional | stays on the synced stream (not view-dependent) |
 | `FeldolgozValasz` 0x4c1480 text draw (every answer) | UI text | P, unconditional | stays on the synced stream |
 
-## 5. Open (per-human state the canonical view can't express)
+## 5. Per-human state (ours; implemented)
 
-The canonical view makes every peer agree, but where the original kept something per human (it ran the same code
-with a different `EN` on each machine), it now exists only for the host's empire:
+Where the original keeps something for "the local human" and runs the same code with a different `EN` on each
+machine, every machine ends up with its own copy for its own empire. The canonical view alone would keep it for the
+host's empire only, so canonical MP keeps **one copy per human empire** in the synced state (`SaveState::humans`,
+snapshot version 3); `ViewMode::Classic` has none, so single player and every replay are unchanged.
 
-- The human's diplomacy contact list (`AktPlayerek` 0xA41E98: discovered empires, waiting letters, answers,
-  counter-proposals) and the spy report queue (`KemBeszolasok`). A non-host human's letters to AI empires still
-  work (the AI answers through `FeldolgozValasz`), but the slots that pace the human's side are the host's.
-  Needs: these as per-empire synced state (one list per human slot) and the MP blob's layout (`GetSavedGame`
-  0x543670 stores the player in the `EN` slot) as evidence of how the original split them.
-- `st_Multi_include`'s per-player effects (the radar purchase of mode 1003, the flag carrier record of 1005):
-  should run once per human empire.
+Evidence that the original never split them: the MP state blob `GetSavedGame(player)` (exe 0x543670,
+`formats/save.md` §6) is the save stream with only `player` written into the `EN` slot, so a joining client gets
+the **host's** `AktPlayerek` and `KemBeszolasok` and from then on its own machine updates them for its own `EN`. The
+initial copy is therefore ours (below), the updates follow the original's `EN` code paths with `EN` = the copy's
+owner.
+
+### 5.1 Contact lists (`AktPlayerek` 0xA41E98, `diplomacy.md` §10.1)
+- `Diplomacy::players`/`ghost`/`shown_players` stay the canonical `EN`'s list (the exe's memory); every other human
+  `h` has a `ContactList { empire: h, players, ghost, shown }` in `Diplomacy::others` (`SaveState::humans[h]`, raw
+  0xc4-byte slots, so the dialogue bytes the sim doesn't decode survive).
+- Created by `Game::canonical_view` for every human-controlled empire (`PlayerKi == 1`) other than `en` that has
+  none yet: `FelfedezBirodalom(e)` (`discover`) for each `e` it has met (`BirodalomIsmeri[h][e]`), `e = 1..=8` in
+  order (empires ≥ 9 and race 5 get no slot, as in the original).
+- Each `EN`-keyed site of `diplomacy.md` applies to **the list of the human concerned** (`Diplomacy::keeps(x)` = `x`
+  is `EN` or has a list):
+  - `FelfedezBirodalom` (`discover_by(owner, e)`): from a message to `owner` (`FeldolgozAjanlat`), a war of
+    `owner`'s (`DiplomaciaMegtamadas`), a radar meeting (`StarmapEvent::EmpireMet { by: owner }`: story special
+    0x0B stays `EN`'s only), a caught spy of an unknown empire (`SpyEvent::Discovered { by: owner }`: special 0x0B
+    `EN`'s only), a planet changing hands in a deal (`BolygoElfoglal`'s `SideEvent::Met`, now reported for every
+    human; diplomacy keeps those whose `who` has a list).
+  - `FeldolgozAjanlat` (exe 0x4c1480 area, §5): a message to `b` with a list waits in `b`'s slot of the sender
+    (`a != b`; the dialogue-text draw comes from `Game::cosmetic` in canonical mode, as for `EN`).
+  - `FeldolgozValasz` (§7): an answer or counter-answer to proposer `a` with a list lands in `a`'s slot of `b`.
+  - `FRISSIT_Diplomacy`'s auto-cancel (§10): every list, `EN`'s first, then the others by empire;
+    `DiploEvent::AutoCancelled { from, to }` names the list's owner.
+  - `DiploEvent::Discovered { empire, by }` names the owner (each peer posts message 0x1A for its own empire).
+
+### 5.2 Spy report queues (`KemBeszolasok` 0xBAF338, `info-messages.md` §3.3)
+- `KemJelentesAdd` is guarded by "the receiver is `EN`". Canonical MP: a report to `EN` is `SpyEvent::Report` as
+  before (queue in the exe's memory, `KemEsemeny`, `Story_KemEsemeny`); a report to another human `h` with a list is
+  `SpyEvent::ReportTo { to: h, report }`, which only appends to `h`'s queue (`SaveState::humans[h].reports`, the
+  same 50-entry shift as step 2). `Story_KemEsemeny` is single-player only in the original (`campaign.md`), so the
+  queue is all there is in MP.
+- The other `EN`-guarded spy events (rank-ups, the victim's `Struck`, `Exposed`) are presentation only and stay
+  `EN`'s; per-peer messages for them are the client's (`Game::messages_for`).
+
+### 5.3 `st_Multi_include` (`campaign.md` §8.10)
+- 1003 (three planets): the radar purchase comes back as special 15 with the buyer; the original starts the radar
+  counter only on the buyer's machine (`buyer == EN`). Canonical MP: every buyer is recorded in story variable
+  `RADAR_BUYERS` (10039, a bit per empire; an id the scripts never use) and the radar pass runs for each recorded
+  buyer in empire order (its planets, the enemies of that buyer), plus `EN` when it bought; the fleet visibility it
+  sets is the canonical view's (the host's; per-peer visibility is U16).
+- 1005 (capture the flag): the original writes `EN` into the Flag Carrier design's race field (`flag_carrier(EN)`),
+  so the two machines' designs differ. Canonical MP: the design for empire 1 carries 1, for empire 2 carries 2.
+
+## 6. Open
+
 - The unowned planets' richness by the host's race (`GetBolygoGazdagsag`) and radar row 0: a fidelity question
   only; the original machines likely disagreed here.
-- The real-time battles' screen-paced parts (§3, §4): the ground war, its transporters and countdown, and the
-  space battle must run on the sim clock in MP, with player input as commands.
+- Per-peer fleet visibility (the original's flags are per machine; canonical mode keeps the host's): U16.
+- The ground war's orders (`MULTIGET_Colony`, ELF 0x4ec2e0) aren't commands yet: two humans' units don't engage
+  without them (`ground-combat.md` §11.17).
+- `MultiPlayerMode` isn't set by the lobby start: a session from an SP save routes battles by the SP rules (the
+  battles themselves run by the MP rules, §7).
+
+## 7. The real-time battles (ours; implemented)
+
+The original already runs MP battles by session rules, not by a screen: a real-time battle (space: two human sides;
+ground: two human sides) sets an in-progress flag on every machine (0xBAD114 space, 0xBAD13C ground with the planet
+at 0xBAD140), every machine stops its clock and strategic systems while it is set, `FRISSIT_SpaceWar` ticks every
+battle slot and `FRISSIT_Grwar` runs `WF::MI`/`WF::Refresh` for the flagged planet on the 20 Hz loop, and the humans'
+input reaches the battle through the lockstep queue (`space-combat.md` §7.12–§7.13, `ground-combat.md` §11.17). The
+canonical view (`game::realtime`; `ViewMode::Classic` runs none of it, so SP and every replay are unchanged) keeps
+that and fixes the per-machine parts:
+
+- Synced: the flags, the planet, the vegetert list, the battle slots, the live ship-type table and `AktSpaceWar`
+  (`Game::realtime`, snapshot version 4).
+- While a flag is set, `Game::advance_clock` doesn't step the clock and `Game::run_tick` runs the battle branch
+  (`GroundWarSetBattleStatus`, `IdoMultiPlayerBattle`, `FRISSIT_Grwar` unless a space battle runs,
+  `FRISSIT_SpaceWar`); otherwise the normal tick ends with `FRISSIT_SpaceWar`.
+- The space battle is shown (every human is sent to its screen); no screen fade; the battle and the ground war see
+  `MultiPlayerMode` = 1 (MP landing, retreat, end and story rules) whatever the state says.
+- `IdoSpeedSzorzoBattle` (unsaved) is set by `Game::canonical_view` when the state has none, as MP `SetIdoSpeed`
+  would for the game speed.
+- The orders: `Command::SpaceOrder { battle, order }` (messages 0x70..0x77, 0x44e, 0x44f, `ig2_net::BattleOrder`) and
+  `Command::SpaceBattleLeft` (0x44d), applied at the tick boundary; `MULTIGET_SpaceWar`'s tail
+  (`Game::space_battles_settle`) runs before every clock step. Ours: an order naming units or guns that don't exist,
+  or another empire's (the screen only sends the player's own), is refused on every peer alike, and a move target
+  gets the screen's clamp (`Battle::screen_point`).
+- The ground war's dropships fly once per sim tick (the 100 Hz UI's every fifth pass); `WF::Refresh` ends the war
+  as soon as one side holds the field (MP has no countdown); the capture follows (`Game::with_wars`).
+
+Tested by `ig2-net/tests/lockstep.rs::two_humans_fight_a_real_time_battle_in_lockstep` (two humans fight with
+orders, the clock waits, both leave, `SpaceWarVege` ends it, 600+ turns hash-identical, a mid-battle snapshot
+restores to the same hash) and `two_humans_fight_a_ground_war_in_lockstep`.

@@ -45,7 +45,7 @@ const A = {
 };
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, speedPlan: [], ticks: 1500,
-  fuzz: false, fuzzRadar: false, fuzzApproach: false };
+  fuzz: false, fuzzRadar: false, fuzzApproach: false, mpRadar: false };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -317,6 +317,20 @@ function fuzzApproach() {
   return true;
 }
 
+// --mp-radar: on half the refresh ticks, MultiPlayerMode (0xBAE2C0) is 1 for the whole FRISSIT_Starmap call
+// (GetENRadarKifejlesztve runs at its start, 0x594afc) and restored after it, so the radar pass takes its MP branches
+// (fleet-movement.md §6: no story radar bonus, unowned radar planets see for nobody, no SP extra circle); one or two
+// planets are first made unowned radar stations.
+function mpRadar() {
+  const np = A.HanyBolygo.readS32();
+  for (let k = 0; k < 1 + rnd(2); k++) {
+    const p = A.Bolygok.add(0x188 * (1 + rnd(np)));
+    p.add(0x20).writeU8(0);
+    p.add(0x6e).writeU8(2 + rnd(6));
+  }
+  A.MultiPlayerMode.writeU8(1);
+}
+
 let recorded = 0, rnds = null, ticks = 0;
 Interceptor.attach(A.FRISSIT_Starmap, {
   onEnter() {
@@ -337,6 +351,8 @@ Interceptor.attach(A.FRISSIT_Starmap, {
       this.unlock = true;
     }
     this.withShips = ido2 % 10 === 1;
+    this.mp = cfg.mpRadar && ido2 % 10 === 1 && rnd(2) === 0;
+    if (this.mp) mpRadar();
     this.before = snapshot(this.withShips);
     this.planets = planets();
     this.rel = relations();
@@ -345,6 +361,7 @@ Interceptor.attach(A.FRISSIT_Starmap, {
   onLeave() {
     if (!this.on) return;
     const after = snapshot(false);
+    if (this.mp) A.MultiPlayerMode.writeU8(0);
     if (this.unlock) A.SpeedLocked.writeS32(0);
     emit({ k: 'tick', seq: recorded++, before: this.before, after, planets: this.planets,
       planetsAfter: planets(), relations: this.rel, rnds });

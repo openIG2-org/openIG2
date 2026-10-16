@@ -8,6 +8,9 @@
 // catch windows, double agents, applicants, captured spies, counter-intelligence), and now and then the
 // kidnap table, the SP debug override (0xB77250), DEBUGX, the day (Nap 1: monthly experience) and the
 // difficulty (all restored after the call).
+// --orders N: after each traced call, N staged spy-screen orders through the exe's own MULTIGET_Spy (0x5883c0, spec
+// §8): its Multi_GetNextTipus/Multi_Get calls are pointed at stubs handing it one staged message, the target spy and
+// money are prepared first (part of the record's 'pre'); records {k: 'order', order: [type, sender, ...]}.
 // Addresses are image VAs, rebased at runtime. Output holds game state: keep it under _local/.
 'use strict';
 
@@ -34,10 +37,12 @@ const A = {
   // Callees (coverage).
   BolygoFellazad: va(0x53bc40), EpuletDelete: va(0x53c730), HajoDelete: va(0x53e5d0), Talalmany: va(0x524e50),
   SpyNew: va(0x58f830), SpyCopy: va(0x58d170), Sorsarol: va(0x584350), Felfedez: va(0x4c1d60), MoneyLog: va(0x53fb10),
+  MultigetSpy: va(0x5883c0), NextCalls: [va(0x5883cd), va(0x5888f2)],
+  GetCalls: [va(0x588400), va(0x5884c3), va(0x588546), va(0x5886b5), va(0x588701), va(0x5888b5)],
 };
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, count: 600, fuzz: false, seed: 4242, debug: false,
-  ships: false, aiHuman: false };
+  ships: false, aiHuman: false, orders: 0 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -260,6 +265,81 @@ function setup() {
   emit({ k: 'setup', names: names.length, ships: nShips(), fleets: nFleets() });
 }
 
+// ---------------------------------------------------------------- staged orders (MULTIGET_Spy)
+const multigetSpy = nf(A.MultigetSpy, 'void', []);
+let ostub = null;
+// Stubs: +0 Multi_GetNextTipus (returns the staged type once, then 0), +0x40 Multi_Get (writes the staged ints to
+// its out-parameters at [esp + 8 + 8i], returns 1); data at +0x200 (type) and +0x210 (values).
+function stubs(n) {
+  if (ostub === null) ostub = Memory.alloc(Process.pageSize);
+  const flag = ostub.add(0x200), vals = ostub.add(0x210);
+  Memory.patchCode(ostub, 0x100, (code) => {
+    const w = new X86Writer(code, { pc: ostub });
+    w.putMovRegAddress('ecx', flag); w.putMovRegRegPtr('eax', 'ecx'); w.putMovRegPtrU32('ecx', 0); w.putRet();
+    w.flush();
+    const g = new X86Writer(code.add(0x40), { pc: ostub.add(0x40) });
+    for (let i = 0; i < n; i++) {
+      g.putMovRegRegOffsetPtr('ecx', 'esp', 8 + 8 * i);
+      g.putMovRegAddress('edx', vals.add(4 * i)); g.putMovRegRegPtr('eax', 'edx');
+      g.putMovRegPtrReg('ecx', 'eax');
+    }
+    g.putMovRegU32('eax', 1); g.putRet();
+    g.flush();
+  });
+}
+function patchCalls(calls, target) {
+  const saved = calls.map((c) => c.readByteArray(5));
+  for (const c of calls) Memory.patchCode(c, 5, (code) => { const w = new X86Writer(code, { pc: c }); w.putCallAddress(target); w.flush(); });
+  return () => calls.forEach((c, i) => Memory.patchCode(c, 5, (code) => code.writeByteArray(saved[i])));
+}
+function runOrder(type, vals) {
+  stubs(vals.length);
+  ostub.add(0x200).writeS32(type);
+  vals.forEach((v, i) => ostub.add(0x210 + 4 * i).writeS32(v));
+  const undoNext = patchCalls(A.NextCalls, ostub), undoGet = patchCalls(A.GetCalls, ostub.add(0x40));
+  try { multigetSpy(); } finally { undoNext(); undoGet(); }
+}
+// A random order, its spy prepared so the interesting branches come up.
+function stageOrder() {
+  const en = A.EN.readS32(), e = rnd(3) ? en : 1 + rnd(8), k = rnd(10) ? 1 + rnd(12) : rnd(13);
+  const cnt = A.Ossz.add(4 * e);
+  if (cnt.readS32() < k) { for (let j = cnt.readS32() + 1; j < k; j++) spyAt(e, j).add(0x10).writeS16(0); cnt.writeS32(k); }
+  const s = spyAt(e, k);
+  if (rnd(4) === 0) writeSpy(e, k, true);
+  if (rnd(5) === 0) A.Money.add(8 * e).writeDouble(rnd(3) ? rnd(30000) : 0);
+  const type = 0x47 + rnd(6);
+  switch (type) {
+    case 0x47: return [type, [e, k]];
+    case 0x48: s.add(0x10).writeS16([1, 3, 3, 2][rnd(4)]); return [type, [e, k]];
+    case 0x49: {
+      s.add(0x10).writeS16(rnd(5) ? 1 : [0, 2, 3][rnd(3)]);
+      const m = rnd(4) === 0 ? 1 : rnd(14), t = 1 + rnd(8), [p1, p2] = m === 1 ? [rnd(6), 0] : param(m, t);
+      return [type, [e, k, m, t, p1, p2, rnd(6) ? 1 + rnd(40) : rnd(3)]];
+    }
+    case 0x4a: {
+      const o = 1 + rnd(8), j = 1 + rnd(12);
+      if (A.Ossz.add(4 * o).readS32() < j) { for (let x = A.Ossz.add(4 * o).readS32() + 1; x < j; x++) spyAt(o, x).add(0x10).writeS16(0); A.Ossz.add(4 * o).writeS32(j); }
+      spyAt(o, j).add(0x10).writeS16(4);
+      return [type, [e, rnd(8), o, j]];
+    }
+    case 0x4b: s.add(0x10).writeS16(1); s.add(0x16).writeS16(1); if (rnd(4) === 0) s.add(0x12).writeU8(14); return [type, [e, rnd(5), k]];
+    default: s.add(0x10).writeS16(rnd(4) ? 1 + rnd(3) : 0); s.add(0x38).writeS32(rnd(3)); return [type, [e, k, rnd(6)]];
+  }
+}
+function orders() {
+  for (let i = 0; i < cfg.orders; i++) {
+    const [type, vals] = stageOrder();
+    const s = read(), g = globals(), pre = diff(known, s);
+    known = s;
+    calls = []; inCall = true;
+    runOrder(type, vals);
+    inCall = false;
+    const after = read();
+    emit({ k: 'order', seq, g, order: [type].concat(vals), pre, post: diff(known, after), calls });
+    known = after;
+  }
+}
+
 // ---------------------------------------------------------------- hooks
 let seq = 0, phase = 0, inCall = false, calls = [];
 function track(addr, name, n) {
@@ -292,6 +372,7 @@ Interceptor.attach(A.FRISSIT_Spy, {
     emit({ k: 'spy', seq: seq++, g: this.g, pre: this.pre, post: diff(known, s), calls });
     known = s;
     for (const [p, b] of this.saved) p.writeByteArray(b);
+    if (cfg.orders) orders();
     if (seq >= cfg.count) { emit({ k: 'done' }); phase = 2; }
   },
 });

@@ -1,12 +1,20 @@
 //! The campaign's random stories, part 2: `st_Rnd_include` (exe 0x5f0e20, ELF 0x74a2c0; `st_rnd.cpp`), the
 //! script `Story_Check` runs right after `st_Begin_include`. Spec: `re/rules/campaign.md` §8.13.
 //!
-//! The script holds 62 stories (101..=199, 242, 302). Ported so far (part 1): the ones story 400 starts in every
+//! The script holds 62 stories (101..=199, 242, 302). Ported: part 1, the ones story 400 starts in every
 //! campaign (118 the pirate bounty, 142 the wormhole warning, 199 the special-0x18 video, 242 the hero ships for
-//! hire) and the small planet, tech and money events 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173. The
-//! others don't run yet (the campaign tracer's `--keep rnd` stages only these). What the stories do to the rest
-//! of the game goes out as [`StoryEvent`]s and [`StoryWorld`] calls.
+//! hire) and the small planet, tech and money events 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173 (this
+//! file); part 2a, the relations ([`relations`]: 116, 117, 145, 147, 148), a spy mission ([`spies`]: 127), planets
+//! found ([`finds`]: 128, 129, 132, 133, 134, 136, 137, 139) and buildings ([`buildings`]: 152, 153, 155, 156,
+//! 161, 165, 166). The others don't run yet (the campaign tracer's `--keep rnd` stages only these). What the
+//! stories do to the rest of the game goes out as [`StoryEvent`]s and [`StoryWorld`] calls.
 
+mod buildings;
+mod finds;
+mod relations;
+mod spies;
+
+use crate::begin::{delete_fleet, move_to_planet};
 use crate::brnd::{fleet_strength, random_tech, ship_fleet};
 use crate::story::{adat, flag, last_fn, Abort, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
@@ -17,7 +25,10 @@ pub struct RndStories;
 type Block = fn(&mut Story, &mut dyn StoryWorld) -> Result<(), Abort>;
 
 /// The stories ported, in the script's order.
-pub const PORTED: [i32; 15] = [118, 142, 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173, 199, 242];
+pub const PORTED: [i32; 36] = [
+    116, 117, 118, 127, 128, 129, 132, 133, 134, 136, 137, 139, 142, 144, 145, 146, 147, 148, 149, 150, 152, 153, 155,
+    156, 161, 163, 164, 165, 166, 169, 170, 171, 172, 173, 199, 242,
+];
 
 impl Script for RndStories {
     fn run(&self, s: &mut Story, w: &mut dyn StoryWorld) {
@@ -25,15 +36,36 @@ impl Script for RndStories {
         if w.multiplayer() {
             return;
         }
-        let stories: [(i32, Block); 15] = [
+        let stories: [(i32, Block); 36] = [
+            (116, relations::peace),
+            (117, relations::trade),
             (118, bounty),
+            (127, spies::mission),
+            (128, finds::tech_planet),
+            (129, finds::lost_tech),
+            (132, finds::ruins),
+            (133, finds::race),
+            (134, finds::marked),
+            (136, finds::deserter),
+            (137, finds::far_tech),
+            (139, finds::settlers),
             (142, wormholes),
             (144, low_morale),
+            (145, relations::seized),
             (146, unrest),
+            (147, relations::swap_147),
+            (148, relations::swap_148),
             (149, nearest_planets),
             (150, epidemic),
+            (152, buildings::quake),
+            (153, buildings::weaker_guns),
+            (155, buildings::poorer),
+            (156, buildings::disarmed),
+            (161, buildings::stronger_shields),
             (163, tech_done),
             (164, richer),
+            (165, buildings::gift),
+            (166, buildings::festival),
             (169, announcement),
             (170, tech_offer),
             (171, tribute_171),
@@ -57,7 +89,8 @@ fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
     w.rng().range(STREAM, lo, hi)
 }
 
-/// `RndClass(5)` + `Next(1)`: the `n`-th candidate replaces the pick when `rnd(1, n) ≤ 1`.
+/// `RndClass(5)` (exe `RndClass::Next`): the candidate offered with weight `x` replaces the pick when
+/// `rnd(1, Σx) ≤ x`.
 #[derive(Default)]
 struct Pick {
     n: i32,
@@ -65,8 +98,12 @@ struct Pick {
 
 impl Pick {
     fn offer(&mut self, w: &mut dyn StoryWorld) -> bool {
-        self.n += 1;
-        rnd(w, 1, self.n) <= 1
+        self.weighted(1, w)
+    }
+
+    fn weighted(&mut self, x: i32, w: &mut dyn StoryWorld) -> bool {
+        self.n = self.n.wrapping_add(x);
+        rnd(w, 1, self.n) <= x
     }
 }
 
@@ -78,6 +115,11 @@ fn answered(s: &Story, b: i32, r: i32) -> bool {
 /// `st_Elevul(b)`: message `b` was promoted (flag 7).
 fn promoted(s: &Story, b: i32) -> bool {
     s.flags[flag::PROMOTED] && s.message.0 == b
+}
+
+/// `st_Olvas(b)`: message `b` was read (flag 9, `MessageSelectedBlokk`).
+fn read(s: &Story, b: i32) -> bool {
+    s.flags[flag::READ] && s.message.0 == b
 }
 
 fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
@@ -96,6 +138,16 @@ fn param_int(w: &mut dyn StoryWorld, slot: i32, value: i32) {
 fn add_money(w: &mut dyn StoryWorld, x: f64) {
     let en = w.human();
     w.event(StoryEvent::AddMoney { empire: en, amount: x });
+}
+
+/// `st_ViszonyValt(a, b, x)`: `b`'s view of `a` (`Viszony[b][a]` value 2) changes by `100·x`.
+fn relation(w: &mut dyn StoryWorld, a: i32, b: i32, x: i32) {
+    w.event(StoryEvent::RelationChange { a, b, delta: x.wrapping_mul(100) });
+}
+
+/// `st_ShowAnim(_s(6, id))`: a video.
+fn anim(w: &mut dyn StoryWorld, id: i32) {
+    w.event(StoryEvent::Anim(id));
 }
 
 /// `id`, or `other` in campaign `campaign` (the campaigns' own message texts).

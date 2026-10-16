@@ -737,7 +737,7 @@ fn fleet_arrivals_match_the_game() {
             let ectx = context(before);
             let (mut map, mut sctx) = starmap(before, &w);
             let map_before = map.fleets.clone();
-            let mut arrivals = ColonyArrivals { world: &mut w, rules: &rules, ctx: &ectx, placement: &placement, events: Vec::new() };
+            let mut arrivals = ColonyArrivals { world: &mut w, rules: &rules, ctx: &ectx, placement: &placement, vehicles: &|_| Vec::new(), events: Vec::new() };
             let events = map.tick(&[], &mut sctx, &mut rng, &mut arrivals);
             let side_events = arrivals.events.len();
             let (mut theirs, trng) = world(after);

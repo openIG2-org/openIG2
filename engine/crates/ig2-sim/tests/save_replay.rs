@@ -286,6 +286,7 @@ fn game_rules(inst: &Install) -> GameRules {
             training_xp: r.spy_training_xp.clone(),
             names: r.spy_names.clone(),
             building_tech: r.buildings.iter().map(|b| b.tech).collect(),
+            hire_cost_mult: r.spy_hire_cost_mult.clone(),
         },
         ai: AiRules {
             build_mode: r.ai_build_mode.clone(),
@@ -300,7 +301,7 @@ fn game_rules(inst: &Install) -> GameRules {
             pods: r.pod_types.iter().map(|p| PodRule { id: p.id, techs: std::array::from_fn(|i| p.techs.get(i).copied().unwrap_or(0)) }).collect(),
             ground_priority: r.ai_ground_priority.clone(),
         },
-        radar: RadarRules { ranges: r.radar_ranges[..6].try_into().unwrap(), planet_ranges: r.planet_radar_ranges[..8].try_into().unwrap() },
+        radar: RadarRules { ranges: r.radar_ranges[..6].try_into().unwrap(), planet_ranges: r.planet_radar_ranges[..8].try_into().unwrap(), wormhole_colours: r.wormhole_colours },
         difficulty_production: r.difficulty_production_mult.clone(),
         difficulty_money: r.difficulty_money_mult.clone(),
         messages: Texts::default(),
@@ -323,6 +324,7 @@ fn game_rules(inst: &Install) -> GameRules {
         surface_weathers: surfaces.iter().map(|s| s.weathers.clone()).collect(),
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
         ground_maps,
+        space: Default::default(),
     }
 }
 
@@ -383,35 +385,7 @@ fn replay_matches_the_exe_tick_by_tick() {
             game.family_names = names.iter().map(|n| unhex(n.as_str().unwrap_or_default())).collect();
         }
         let source = next.clone();
-        game.uninit = Some(Box::new(move |what| {
-            let s = source.borrow();
-            let Some(s) = s.as_ref() else { return Vec::new() };
-            let rec = match what {
-                Fresh::Fleet(f) => s.fleets.get(f).map(|r| r.to_vec()),
-                Fresh::Ship(i) => s.ships.get(i).map(|r| r.to_vec()),
-                Fresh::Building { planet, slot } => s.buildings.get(planet).and_then(|b| b.get(slot)).map(|r| r.to_vec()),
-                Fresh::Design { empire, design } => s.designs.get(empire).and_then(|d| d.get(design)).map(|r| r.to_vec()),
-                // A new unit object's uninitialised fields, as the exe saved them (the first `+0x19c` is the pointer).
-                Fresh::GroundUnit { planet, slot } => {
-                    let mut pairs = Vec::new();
-                    let u = format!("WF[{}].unit[{slot}]", planet - 1);
-                    for o in ig2_sim::ground::UNINIT {
-                        // `+0x270..+0x27c` travel inside the `+0x264` block.
-                        let b = if (0x264..0x27c).contains(&o) {
-                            s.chunk(&format!("{u}+0x264")).map(|b| &b[o - 0x264..])
-                        } else {
-                            s.chunk(&format!("{u}+{o:#x}"))
-                        };
-                        if let Some(b) = b {
-                            pairs.extend((o as u32).to_le_bytes());
-                            pairs.extend_from_slice(&b[..4]);
-                        }
-                    }
-                    Some(pairs)
-                }
-            };
-            rec.unwrap_or_default()
-        }));
+        game.uninit = Some(Box::new(move |what| source.borrow().as_ref().map_or_else(Vec::new, |s| fresh(s, what))));
         // Every `LoadSave` (the load and each of the tracer's saves) ends in `FlottakUjraSzamol`.
         game.saved();
         let mut bad = Vec::new();
@@ -526,6 +500,154 @@ fn replay_matches_the_exe_tick_by_tick() {
         }
     }
     assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// An appended record's uninitialised bytes ([`Game::uninit`]) as the exe saved them in `s`.
+fn fresh(s: &SaveGame, what: Fresh) -> Vec<u8> {
+    let rec = match what {
+        Fresh::Fleet(f) => s.fleets.get(f).map(|r| r.to_vec()),
+        Fresh::Ship(i) => s.ships.get(i).map(|r| r.to_vec()),
+        Fresh::Building { planet, slot } => s.buildings.get(planet).and_then(|b| b.get(slot)).map(|r| r.to_vec()),
+        Fresh::Design { empire, design } => s.designs.get(empire).and_then(|d| d.get(design)).map(|r| r.to_vec()),
+        // A new unit object's uninitialised fields, as the exe saved them (the first `+0x19c` is the pointer).
+        Fresh::GroundUnit { planet, slot } => {
+            let mut pairs = Vec::new();
+            let u = format!("WF[{}].unit[{slot}]", planet - 1);
+            for o in ig2_sim::ground::UNINIT {
+                // `+0x270..+0x27c` travel inside the `+0x264` block.
+                let b = if (0x264..0x27c).contains(&o) {
+                    s.chunk(&format!("{u}+0x264")).map(|b| &b[o - 0x264..])
+                } else {
+                    s.chunk(&format!("{u}+{o:#x}"))
+                };
+                if let Some(b) = b {
+                    pairs.extend((o as u32).to_le_bytes());
+                    pairs.extend_from_slice(&b[..4]);
+                }
+            }
+            Some(pairs)
+        }
+    };
+    rec.unwrap_or_default()
+}
+
+/// `EpuleteketJoHelyreTesz` (exe 0x53cd00, `colony-placement.md` §6) against the exe: `run_save.py --refit` perturbs
+/// the buildings and the ground units' cells, writes a save (`<tag>-<2k>.sav`), calls the exe's refit and writes
+/// another (`<tag>-<2k+1>.sav`); the port loads the first, refits and must write the second.
+#[test]
+fn building_refit_matches_the_exe() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let dir = local("IG2_TRACE_DIR", "traces").join("refit");
+    let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for e in std::fs::read_dir(&dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default() {
+        let name = e.file_name().and_then(|f| f.to_str()).unwrap_or_default().to_string();
+        let Some((tag, k)) = name.strip_suffix(".sav").and_then(|n| n.rsplit_once('-')) else { continue };
+        let Ok(k) = k.parse::<usize>() else { continue };
+        if k % 2 == 0 {
+            pairs.push((e.clone(), dir.join(format!("{tag}-{}.sav", k + 1))));
+        }
+    }
+    pairs.retain(|(_, b)| b.exists());
+    pairs.sort();
+    if pairs.is_empty() {
+        eprintln!("no refit recording in {}; run tools/trace/run_save.py --refit", dir.display());
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let (mut bad, mut moved, mut buildings) = (Vec::new(), 0, 0);
+    for (a, b) in &pairs {
+        let (before, after) = (load(a), load(b));
+        let mut game = Game::new(SaveState::from_save(&before, &tech_defaults), &rules);
+        let exe = after.clone();
+        game.uninit = Some(Box::new(move |what| fresh(&exe, what)));
+        game.saved();
+        game.refit_buildings();
+        let d: Vec<String> = diff(&game.state.chunks(), &group_chunks(&after)).into_iter().filter(|d| modelled(d.split(':').next().unwrap())).collect();
+        if !d.is_empty() {
+            bad.push(format!("{}: {} chunk groups differ:
+  {}", b.display(), d.len(), d.join("
+  ")));
+        }
+        for (p, (x, y)) in before.buildings.iter().zip(&after.buildings).enumerate().skip(1) {
+            let n = |s: &SaveGame| s.chunk("HanyEpuletLefoglalva").map_or(0, |c| i32::from_le_bytes(c[4 * p..4 * p + 4].try_into().unwrap()).max(0) as usize);
+            let pos = |r: &[u8]| (r[0], r[0xc..0x14].to_vec());
+            let old: Vec<_> = x.iter().skip(1).take(n(&before)).map(|r| pos(r)).filter(|r| r.0 != 0).collect();
+            let new: Vec<_> = y.iter().skip(1).take(n(&after)).map(|r| pos(r)).filter(|r| r.0 != 0).collect();
+            buildings += new.len();
+            moved += new.iter().filter(|r| !old.contains(r)).count();
+        }
+    }
+    eprintln!("{} refits, {buildings} buildings re-placed, {moved} of them moved", pairs.len());
+    assert!(bad.is_empty(), "{}", bad.join("
+"));
+}
+
+/// `AddWormhole` (exe 0x53aec0, `fleet-movement.md` "Opening a wormhole") against the exe: `run_save.py --wormholes`
+/// sets `OsszHanyWormhole`, writes a save (`<tag>-<2k>.sav`), calls the exe's `AddWormhole` with fuzzed coordinates
+/// until it returns 0 and writes another (`<tag>-<2k+1>.sav`, the calls and results in its JSON); the port loads the
+/// first, makes the same calls (same results) and must write the second.
+#[test]
+fn add_wormhole_matches_the_exe() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let dir = local("IG2_TRACE_DIR", "traces").join("addwormhole");
+    let mut pairs: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for e in std::fs::read_dir(&dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default() {
+        let name = e.file_name().and_then(|f| f.to_str()).unwrap_or_default().to_string();
+        let Some((tag, k)) = name.strip_suffix(".sav").and_then(|n| n.rsplit_once('-')) else { continue };
+        let Ok(k) = k.parse::<usize>() else { continue };
+        if k % 2 == 0 {
+            pairs.push((e.clone(), dir.join(format!("{tag}-{}.sav", k + 1))));
+        }
+    }
+    pairs.retain(|(_, b)| b.exists() && b.with_extension("json").exists());
+    pairs.sort();
+    if pairs.is_empty() {
+        eprintln!("no AddWormhole recording in {}; run tools/trace/run_save.py --wormholes", dir.display());
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let (mut bad, mut made, mut refused) = (Vec::new(), 0, 0);
+    for (a, b) in &pairs {
+        let (before, after) = (load(a), load(b));
+        let rec: Value = serde_json::from_str(&std::fs::read_to_string(b.with_extension("json")).unwrap()).unwrap();
+        let mut game = Game::new(SaveState::from_save(&before, &tech_defaults), &rules);
+        let exe = after.clone();
+        game.uninit = Some(Box::new(move |what| fresh(&exe, what)));
+        game.saved();
+        for c in rec["calls"].as_array().unwrap() {
+            let c: Vec<i32> = c.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
+            let w = game.add_wormhole(c[0], c[1], c[2], c[3]);
+            if w != c[4] {
+                bad.push(format!("{}: AddWormhole{:?} returned {w}, the exe {}", b.display(), &c[..4], c[4]));
+            }
+            if c[4] == 0 { refused += 1 } else { made += 1 }
+        }
+        let d: Vec<String> = diff(&game.state.chunks(), &group_chunks(&after)).into_iter().filter(|d| modelled(d.split(':').next().unwrap())).collect();
+        if !d.is_empty() {
+            bad.push(format!("{}: {} chunk groups differ:
+  {}", b.display(), d.len(), d.join("
+  ")));
+        }
+        // Story 239's reveal (not traced; exe 0x5ceb86): both ends shown, both fleets always visible.
+        let w = game.state.mem.i32(va::WORMHOLE_COUNT);
+        game.reveal_wormhole(w);
+        let r = game.state.mem.read(va::WORMHOLES + 0x1c * w as u32, 0x1c);
+        let map = game.state.starmap();
+        let fl = |o: usize| map.fleets[i16::from_le_bytes([r[o], r[o + 1]]) as usize].flags;
+        assert!(r[8] == 1 && r[0x14] == 1 && fl(10) & 0x100 != 0 && fl(0x16) & 0x100 != 0, "wormhole {w} not revealed");
+    }
+    eprintln!("{} AddWormhole recordings: {made} wormholes made, {refused} calls refused", pairs.len());
+    assert!(refused > 0, "no refused call recorded");
+    assert!(bad.is_empty(), "{}", bad.join("
+"));
 }
 
 /// The unsaved globals of `replay.js`'s dump that ported systems write (the rest are inputs or UI state).

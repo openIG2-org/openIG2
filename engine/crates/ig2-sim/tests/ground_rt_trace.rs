@@ -335,6 +335,7 @@ fn context(ev: &Value) -> GroundContext {
     let g = &ev["g"];
     let bonus = ints(&g["bonus"]);
     GroundContext {
+        mp_war: false,
         human: g["en"].as_i64().unwrap() as i32,
         multiplayer: g["mp"].as_u64().unwrap() != 0,
         story_planet: g["storyPlanet"].as_i64().unwrap() as i32,

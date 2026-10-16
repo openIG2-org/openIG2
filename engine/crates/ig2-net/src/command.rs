@@ -3,6 +3,8 @@
 
 use ig2_sim::diplomacy::{Answer, Letter, Message};
 use ig2_sim::game::{Game, GameEvent};
+use ig2_sim::spacebattle::Order;
+use ig2_sim::spy;
 use ig2_sim::trade::{Delivery, DELIVERY};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +24,65 @@ impl From<Terms> for Message {
     }
 }
 
+/// A spy-screen order (`ig2_sim::spy::Order`, `MULTIGET_Spy`'s messages 0x47..0x4c; `re/rules/espionage.md` §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpyOrder {
+    Dismiss { spy: u8 },
+    Recall { spy: u8 },
+    Send { spy: u8, mission: u16, target: u8, param1: i16, param2: i16, days: i32 },
+    Verdict { fate: i32, owner: u8, spy: u8 },
+    Applicant { choice: i32, spy: u8 },
+    Skill { spy: u8, skill: u8 },
+}
+
+impl From<SpyOrder> for spy::Order {
+    fn from(o: SpyOrder) -> Self {
+        use spy::Order;
+        match o {
+            SpyOrder::Dismiss { spy } => Order::Dismiss { spy },
+            SpyOrder::Recall { spy } => Order::Recall { spy },
+            SpyOrder::Send { spy, mission, target, param1, param2, days } => Order::Send { spy, mission, target, param1, param2, days },
+            SpyOrder::Verdict { fate, owner, spy } => Order::Verdict { fate, owner, spy },
+            SpyOrder::Applicant { choice, spy } => Order::Applicant { choice, spy },
+            SpyOrder::Skill { spy, skill } => Order::Skill { spy, skill },
+        }
+    }
+}
+
+/// A battle-screen order (`ig2_sim::spacebattle::Order`, `MULTIGET_SpaceWar`'s messages 0x70..0x77, 0x44e, 0x44f;
+/// `re/rules/space-combat.md` §7.12). Coordinates travel as f32 bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BattleOrder {
+    Move { unit: u16, x: u32, y: u32, z: u32 },
+    Attack { unit: u16, target: u16 },
+    Retreat,
+    AttackGun { unit: u16, gun: u16 },
+    GunTarget { gun: u16, unit: u16 },
+    ArmAll,
+    Explode { unit: u16 },
+    FighterStance { side: u8, value: i32 },
+    DirectFire { unit: u16, target: u16, mount: u16 },
+    Weapons { unit: u16, keep: u32, set: u32 },
+}
+
+impl From<BattleOrder> for Order {
+    fn from(o: BattleOrder) -> Self {
+        let u = |x: u16| x as usize;
+        match o {
+            BattleOrder::Move { unit, x, y, z } => Order::Move { unit: u(unit), x: f32::from_bits(x), y: f32::from_bits(y), z: f32::from_bits(z) },
+            BattleOrder::Attack { unit, target } => Order::Attack { unit: u(unit), target: u(target) },
+            BattleOrder::Retreat => Order::Retreat,
+            BattleOrder::AttackGun { unit, gun } => Order::AttackGun { unit: u(unit), gun: u(gun) },
+            BattleOrder::GunTarget { gun, unit } => Order::GunTarget { gun: u(gun), unit: u(unit) },
+            BattleOrder::ArmAll => Order::ArmAll,
+            BattleOrder::Explode { unit } => Order::Explode { unit: u(unit) },
+            BattleOrder::FighterStance { side, value } => Order::FighterStance { side: side as usize, value },
+            BattleOrder::DirectFire { unit, target, mount } => Order::DirectFire { unit: u(unit), target: u(target), mount: u(mount) },
+            BattleOrder::Weapons { unit, keep, set } => Order::Weapons { unit: u(unit), keep, set },
+        }
+    }
+}
+
 /// A player's action. The acting empire (the issuer) isn't part of it: the host stamps it from the sender's slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Command {
@@ -36,6 +97,15 @@ pub enum Command {
     /// Packet 0x1b, `MULTIGET_Starmap` ELF 0x719680: delete fleet `fleet` if it's still empty. Sim-originated: every
     /// peer queues it from its own tick ([`Command::from_event`]).
     FleetEmptied { fleet: u32 },
+    /// Packets 0x47..0x4c, `MULTIGET_Spy` exe 0x5883c0: an order from the spy screen.
+    Spy { order: SpyOrder },
+    /// Packet 0x65, `MULTIGET_Story`: `StartStory(id, false)`.
+    StoryStart { id: i32 },
+    /// Packets 0x70..0x77, 0x44e, 0x44f, `MULTIGET_SpaceWar` exe 0x5615b0: an order on the battle screen of slot
+    /// `battle`.
+    SpaceOrder { battle: u8, order: BattleOrder },
+    /// Packet 0x44d: the issuer left the finished battle's screen (`SpaceWarVege` once every human has).
+    SpaceBattleLeft,
 }
 
 /// A command with its issuer, as a bundle carries it.
@@ -68,6 +138,12 @@ impl Command {
             }
             Command::StoryChoice { id } => game.story_special([15, issuer as i32, *id, 0, 0, 0, 0, 0]),
             Command::FleetEmptied { fleet } => game.fleet_emptied(*fleet as usize),
+            Command::Spy { order } => game.spy_order(issuer as usize, (*order).into()),
+            Command::StoryStart { id } => game.story_start(*id),
+            Command::SpaceOrder { battle, order } => {
+                game.space_order(issuer, *battle as usize, (*order).into());
+            }
+            Command::SpaceBattleLeft => game.space_battle_left(issuer),
         }
     }
 }

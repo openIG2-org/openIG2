@@ -13,6 +13,7 @@ use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
 use ig2_sim::research::ResearchRules;
 use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
+use ig2_sim::spacebattle::{FormRules, FormationSlot, ShipType, SpaceRules};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
 
 /// The rule tables and the `Talalmanyok0` defaults a save is loaded over.
@@ -123,6 +124,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
             training_xp: r.spy_training_xp.clone(),
             names: r.spy_names.clone(),
             building_tech: r.buildings.iter().map(|b| b.tech).collect(),
+            hire_cost_mult: r.spy_hire_cost_mult.clone(),
         },
         ai: AiRules {
             build_mode: r.ai_build_mode.clone(),
@@ -137,7 +139,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
             pods: r.pod_types.iter().map(|p| PodRule { id: p.id, techs: std::array::from_fn(|i| p.techs.get(i).copied().unwrap_or(0)) }).collect(),
             ground_priority: r.ai_ground_priority.clone(),
         },
-        radar: RadarRules { ranges: r.radar_ranges[..6].try_into().unwrap(), planet_ranges: r.planet_radar_ranges[..8].try_into().unwrap() },
+        radar: RadarRules { ranges: r.radar_ranges[..6].try_into().unwrap(), planet_ranges: r.planet_radar_ranges[..8].try_into().unwrap(), wormhole_colours: r.wormhole_colours },
         difficulty_production: r.difficulty_production_mult.clone(),
         difficulty_money: r.difficulty_money_mult.clone(),
         messages,
@@ -160,6 +162,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
         surface_weathers: surfaces.iter().map(|s| s.weathers.clone()).collect(),
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
         ground_maps: maps,
+        space: space_rules(inst, &r)?,
     };
     Ok((rules, r.tech_defaults))
 }
@@ -174,4 +177,29 @@ pub fn scenario_globals(inst: &Install) -> Result<Vec<(u32, Vec<u8>)>, String> {
         .into_iter()
         .map(|at| pe.read(at, 19).map(|b| (at, b.to_vec())).map_err(|e| e.to_string()))
         .collect()
+}
+
+/// The real-time space battle's rules: the exe's weapon, projectile-form and ship-type tables, the buildings' tech
+/// and hit points, and the two formation files.
+pub fn space_rules(inst: &Install, r: &ig2_rules::Rules) -> Result<SpaceRules, String> {
+    let (weapons, weapon_words) = SpaceRules::weapons_from_table(&r.space_weapon_table());
+    let formation = |n: usize| -> Result<Vec<FormationSlot>, String> {
+        let p = format!("dataraw/spacewar/felallas{n}.bin");
+        let b = inst.read(&p).map_err(|e| format!("{p}: {e}"))?;
+        let slots = ig2_formats::formation::parse(&b).map_err(|e| format!("{p}: {e}"))?;
+        Ok(slots.iter().map(|s| FormationSlot::from_record(s.cell, s.kind, &s.extra)).collect())
+    };
+    Ok(SpaceRules {
+        weapons,
+        weapon_words,
+        forms: r.shot_forms.iter().map(|f| FormRules { loaded: !f.model.is_empty(), slots: f.slots.max(0) as usize, size: f.size }).collect(),
+        formations: [formation(0)?, formation(1)?],
+        ship_types: r
+            .ship_types
+            .iter()
+            .map(|t| ShipType { scale: t.scale, top_speed: t.top_speed, accel: t.accel, turn: t.turn, size_xy: t.size_xy, size_z: t.size_z })
+            .collect(),
+        building_tech: r.buildings.iter().map(|b| b.tech).collect(),
+        building_hp: r.buildings.iter().map(|b| b.max_hp).collect(),
+    })
 }

@@ -21,7 +21,7 @@ pub mod snapshot;
 pub mod transport;
 pub mod wire;
 
-pub use command::{Command, Stamped, Terms};
+pub use command::{BattleOrder, Command, SpyOrder, Stamped, Terms};
 pub use lockstep::{Bundle, Desync, Host, Msg, Peer, DEFAULT_DELAY, TURN_TICKS};
 pub use snapshot::{state_hash, Header, Snapshot};
 pub use transport::{loopback, Loopback, Transport};

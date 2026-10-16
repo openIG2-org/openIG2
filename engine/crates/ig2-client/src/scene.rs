@@ -1,0 +1,286 @@
+//! `.xv` models as the original's 3D engine places them (re/screens/colony.md §2): the scene tree walked like
+//! `Kocka2` (ELF 0x5fac80) into triangle lists in the model's root space, plus the object transforms of
+//! `AddToScene`/`AddToSceneGenesis`/`ScaleObj`/`RotateObj`/`MoveObj` to put a model into the world.
+//!
+//! World coordinates are the engine's `(h, x, y)`: `h` is the height axis (up is −h), `x`, `y` the map plane.
+
+use ig2_formats::xv::{Archive, ChildContent, Material, Node};
+use ig2_formats::Install;
+
+pub type V3 = [f32; 3];
+/// A row-major 3×3 matrix, applied to column vectors (`MultipleMatrix(a, b)` = `b·a`).
+pub type M3 = [f32; 9];
+
+pub const IDENTITY: M3 = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+
+pub fn mul(a: &M3, b: &M3) -> M3 {
+    std::array::from_fn(|k| {
+        let (r, c) = (k / 3, k % 3);
+        (0..3).map(|i| a[r * 3 + i] * b[i * 3 + c]).sum()
+    })
+}
+
+pub fn apply(m: &M3, v: V3) -> V3 {
+    std::array::from_fn(|r| m[r * 3] * v[0] + m[r * 3 + 1] * v[1] + m[r * 3 + 2] * v[2])
+}
+
+pub fn scale(s: V3) -> M3 {
+    [s[0], 0.0, 0.0, 0.0, s[1], 0.0, 0.0, 0.0, s[2]]
+}
+
+/// `CreateMatrix(a, b, c)` (ELF 0x451ee0), f32 sines and cosines.
+pub fn create_matrix(a: f32, b: f32, c: f32) -> M3 {
+    let (sa, ca) = ((a as f64).sin() as f32, (a as f64).cos() as f32);
+    let (sb, cb) = ((b as f64).sin() as f32, (b as f64).cos() as f32);
+    let (sc, cc) = ((c as f64).sin() as f32, (c as f64).cos() as f32);
+    [
+        cc * cb,
+        -cc * sb * sa - sc * ca,
+        -cc * sb * ca + sc * sa,
+        sc * cb,
+        -sc * sb * sa + cc * ca,
+        -sc * sb * ca - cc * sa,
+        sb,
+        cb * sa,
+        cb * ca,
+    ]
+}
+
+/// One vertex in a model's root space.
+#[derive(Debug, Clone, Copy)]
+pub struct Vert {
+    pub pos: V3,
+    pub normal: V3,
+    pub uv: [f32; 2],
+}
+
+/// How a part is blended (`SetObjTransparency`, property bits; re/screens/colony.md §2.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Look {
+    Opaque,
+    /// Alpha-tested foliage (`fak`: properties 0x100/0x200).
+    Cutout,
+    /// Transparent with the given opacity (`SetObjTransparency(t)` → opacity `1 − t`).
+    Glass(f32),
+}
+
+/// The triangles of one material of one mesh, in the model's root space.
+#[derive(Debug, Clone)]
+pub struct Part {
+    /// The `.pvr` the material's texture resolves to (`TextureDir` rule), if any.
+    pub texture: Option<String>,
+    /// The chain of child names from the root (`findboxxvb2` matches parts by name).
+    pub path: String,
+    pub verts: Vec<Vert>,
+    pub look: Look,
+}
+
+/// A loaded model: its root node's half-extents (`XVBStruct+4..+0xc`) and its parts.
+#[derive(Debug, Clone, Default)]
+pub struct Model {
+    pub origin: V3,
+    pub parts: Vec<Part>,
+}
+
+impl Model {
+    /// `LoadBox(name)` with the screen's `VectorDir`/`TextureDir`: `<vector_dir><stem>.xv`, textures by the
+    /// game's lookup in `texture_dir`.
+    pub fn load(install: &Install, vector_dir: &str, name: &str, texture_dir: &str) -> Result<Self, String> {
+        let stem = name.trim_end_matches(".xvb").trim_end_matches(".XVB");
+        let path = format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase();
+        let bytes = install.read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let archive = Archive::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
+        let scene = archive.scene(Some(stem)).map_err(|e| format!("{path}: {e}"))?.ok_or(format!("{path}: no root node"))?;
+        let root = archive.root(Some(stem)).map(|m| m.name.clone()).unwrap_or_default();
+        let mut w = Walk {
+            archive: &archive,
+            install,
+            texture_dir,
+            prefix: format!("{}-", root.split('.').next().unwrap_or_default()),
+            parts: Vec::new(),
+        };
+        w.node(&scene, &IDENTITY, [0.0; 3], "");
+        Ok(Self { origin: scene.header.origin, parts: w.parts })
+    }
+
+    /// Every vertex position (root space).
+    pub fn positions(&self) -> impl Iterator<Item = V3> + '_ {
+        self.parts.iter().flat_map(|p| p.verts.iter().map(|v| v.pos))
+    }
+
+    /// Set the look of the parts whose path contains `name` (`findboxxvb2` + `SetObjTransparency`).
+    pub fn set_look(&mut self, name: &str, look: Look) {
+        let n = name.to_ascii_lowercase();
+        for p in &mut self.parts {
+            if p.path.to_ascii_lowercase().contains(&n) {
+                p.look = look;
+            }
+        }
+    }
+}
+
+struct Walk<'a, 'b> {
+    archive: &'a Archive<'b>,
+    install: &'a Install,
+    texture_dir: &'a str,
+    prefix: String,
+    parts: Vec<Part>,
+}
+
+impl Walk<'_, '_> {
+    fn texture(&self, material: &str) -> Option<String> {
+        let m = self.archive.get(&format!("{}{material}.xvm", self.prefix))?;
+        let mat = Material::parse(m.data).ok()?;
+        if mat.texture.is_empty() {
+            return None;
+        }
+        self.install.resolve_texture(self.texture_dir, &mat.texture).or_else(|| {
+            let screen = self.texture_dir.trim_start_matches("textures/").split('/').next().unwrap_or("");
+            self.install.resolve_model_texture(screen, &mat.texture)
+        })
+    }
+
+    /// `Kocka2`: a child sits at `P·t + T` with matrix `P·M` (the child record's matrix; `RotateObj` is never
+    /// applied inside a model).
+    fn node(&mut self, n: &Node, p: &M3, t: V3, path: &str) {
+        for (c, content) in &n.children {
+            let ct = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
+            let pt = apply(p, ct);
+            let t2 = [pt[0] + t[0], pt[1] + t[1], pt[2] + t[2]];
+            let m = mul(p, &c.matrix);
+            let path = format!("{path}/{}", c.name);
+            match content {
+                ChildContent::Node(sub) => self.node(sub, &m, t2, &path),
+                ChildContent::Mesh(mesh) => {
+                    let texs: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture(x)).collect();
+                    let nm = normal_matrix(&m);
+                    let mut by_mat: Vec<Vec<Vert>> = vec![Vec::new(); texs.len().max(1)];
+                    for f in &mesh.faces {
+                        let k = (f.material as usize).min(by_mat.len() - 1);
+                        for &i in &f.idx {
+                            let Some(v) = mesh.vertices.get(i as usize) else { continue };
+                            let q = apply(&m, v.pos);
+                            by_mat[k].push(Vert {
+                                pos: [q[0] + t2[0], q[1] + t2[1], q[2] + t2[2]],
+                                normal: normalise(apply(&nm, v.normal)),
+                                uv: v.uv,
+                            });
+                        }
+                    }
+                    for (k, verts) in by_mat.into_iter().enumerate() {
+                        if !verts.is_empty() {
+                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), verts, look: Look::Opaque });
+                        }
+                    }
+                }
+                ChildContent::Missing => {}
+            }
+        }
+    }
+}
+
+/// The inverse transpose of `m` (normals).
+fn normal_matrix(m: &M3) -> M3 {
+    let c = |r: usize, k: usize| m[r * 3 + k];
+    let cof: M3 = [
+        c(1, 1) * c(2, 2) - c(1, 2) * c(2, 1),
+        c(1, 2) * c(2, 0) - c(1, 0) * c(2, 2),
+        c(1, 0) * c(2, 1) - c(1, 1) * c(2, 0),
+        c(0, 2) * c(2, 1) - c(0, 1) * c(2, 2),
+        c(0, 0) * c(2, 2) - c(0, 2) * c(2, 0),
+        c(0, 1) * c(2, 0) - c(0, 0) * c(2, 1),
+        c(0, 1) * c(1, 2) - c(0, 2) * c(1, 1),
+        c(0, 2) * c(1, 0) - c(0, 0) * c(1, 2),
+        c(0, 0) * c(1, 1) - c(0, 1) * c(1, 0),
+    ];
+    // The cofactor matrix is the inverse transpose up to the determinant's scale (normals are renormalised).
+    cof
+}
+
+pub fn normalise(v: V3) -> V3 {
+    let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if l > 1e-12 {
+        [v[0] / l, v[1] / l, v[2] / l]
+    } else {
+        [1.0, 0.0, 0.0]
+    }
+}
+
+/// Where a model instance sits: `world = 1024·(R·S)·v + T` (the engine's scene unit is 1/1024 of a world unit:
+/// `MoveObj` divides by 1024 and `dumpvertexlist`/`renderscene` multiply the scene by 1024).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Placement {
+    pub matrix: M3,
+    pub translation: V3,
+}
+
+impl Placement {
+    /// `AddToScene(xvb, parent, s)` (ELF 0x4551d0): the root's half-extents over their maximum, times `s`.
+    pub fn add_to_scene(origin: V3, s: f32) -> Self {
+        let mx = origin[0].max(origin[1]).max(origin[2]);
+        let d = origin.map(|o| o / mx * s);
+        Self { matrix: scale(d), translation: [0.0; 3] }
+    }
+
+    /// `AddToSceneGenesis(xvb, parent, s)` (ELF 0x455320): the root's half-extents times `s`.
+    pub fn genesis(origin: V3, s: f32) -> Self {
+        Self { matrix: scale(origin.map(|o| o * s)), translation: [0.0; 3] }
+    }
+
+    /// `ScaleObj(id, a, b, c)`: scales the record's matrix rows.
+    pub fn scaled(mut self, s: V3) -> Self {
+        self.matrix = mul(&scale(s), &self.matrix);
+        self
+    }
+
+    /// `RotateObj(id, a, b, c)` after the scale: `CreateMatrix(a, b, c)·S` (`MultipleMatrix(S, R)`).
+    pub fn rotated(&self, a: f32, b: f32, c: f32) -> M3 {
+        mul(&create_matrix(a, b, c), &self.matrix)
+    }
+
+    /// The world transform of a model whose record has scale `self`, rotation `(a, b, c)`, moved to `world`
+    /// (`MoveObj` in world units).
+    pub fn world(&self, rot: (f32, f32, f32), world: V3) -> Transform {
+        let m = self.rotated(rot.0, rot.1, rot.2);
+        Transform { matrix: m.map(|x| x * 1024.0), translation: world }
+    }
+}
+
+/// A finished world transform: `world = matrix·v + translation`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transform {
+    pub matrix: M3,
+    pub translation: V3,
+}
+
+impl Transform {
+    pub fn point(&self, v: V3) -> V3 {
+        let q = apply(&self.matrix, v);
+        [q[0] + self.translation[0], q[1] + self.translation[1], q[2] + self.translation[2]]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotate_quarter_turn_maps_model_axes() {
+        // `RotateObj(0, π/2, 0)` as `Init3dColony` uses it: (x, y, z) → (−z, y, x).
+        let r = create_matrix(0.0, std::f32::consts::FRAC_PI_2, 0.0);
+        let p = apply(&r, [1.0, 2.0, 3.0]);
+        assert!((p[0] + 3.0).abs() < 1e-6 && (p[1] - 2.0).abs() < 1e-6 && (p[2] - 1.0).abs() < 1e-6, "{p:?}");
+    }
+
+    #[test]
+    fn matrix_products_compose_like_multiple_matrix() {
+        let a = scale([2.0, 3.0, 4.0]);
+        let r = create_matrix(0.3, 0.2, 0.1);
+        let v = [1.0, -1.0, 0.5];
+        let both = apply(&mul(&r, &a), v);
+        let step = apply(&r, apply(&a, v));
+        for k in 0..3 {
+            assert!((both[k] - step[k]).abs() < 1e-5);
+        }
+    }
+}

@@ -297,6 +297,13 @@ impl Story {
                 break;
             }
         }
+        self.nearest_unknown(w)
+    }
+
+    /// `st_bGetNearestUnknown()` (exe 0x603a60): of the planets 11001..=11015 the human doesn't know (view < 0) the
+    /// nearest to its planets' centre (f32 `dx² + dy²` against the last pick's truncated value), shown to everybody
+    /// (`st_bUnhide`); aborts when there is none.
+    pub fn nearest_unknown(&mut self, w: &mut dyn StoryWorld) -> Result<i32, Abort> {
         let (cx, cy) = empire_centre(w.human(), &*w);
         let (mut pick, mut best) = (0, 0);
         for k in 1..=15 {

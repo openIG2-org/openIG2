@@ -9,6 +9,8 @@ pub mod campaign;
 pub mod colony;
 pub mod colony_side;
 pub mod diplomacy;
+pub mod elem;
+pub mod fable;
 pub mod fleet;
 pub mod game;
 pub mod ground;

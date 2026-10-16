@@ -233,7 +233,35 @@ the copy's state = 1.
 ## 7. Working spies
 `HanyKemVan[e]` = spies with state > 0 and not applicants, for `e` in 1..=8 alive and not race 5 (others 0).
 
-## 8. Port notes
+## 8. The human's orders: `MULTIGET_Spy` (exe 0x5883c0, ELF 0x6d08e0)
+
+The spy screen (`Spy_Main`, UI) sends its orders through the lockstep queue (`Multi_Send(type, EN, …)`, also in
+SP); `MULTIGET_Spy` applies them a frame later, every message of types 0x47..0x4f waiting, in queue order. The
+sender `e` is the message's player (`Multi_Get`'s first out-parameter); `k` is a slot of `e`'s roster
+(`Kemek[e][k]`, record `(e·13 + k)·0x4c` from 0xBAFCC8). The exe (normative) inlines `Spy_MennyiPenzbeKerul`; the
+arithmetic is the ELF's (checked in the asm, all f32 below). Found by its `rndlog` line numbers 0xd7d/0xd86/0xda1/0xdb1
+(`spy.cpp`).
+
+| Type | Payload | Effect |
+|---|---|---|
+| 0x47 | `k` | dismiss: `state := 0`. (UI: with the spy screen open for `EN`, the cursor `AktKem` 0xBB2384 skips to a live slot.) |
+| 0x48 | `k` | recall: if `state == 3` (on a mission): `mission := 0`, `state := 1` |
+| 0x49 | `k, m, t, p1, p2, days` | send: `cost = KemKuldetesek[m].+0x14` (`TrainingKuldetesAr[p1]` for `m == 1`), `c = (int)((f32)cost · KemKuldetesPenzSzorzoFajonkent[PlayerFaj[e]])` (`cvttss2si`); if `(f64)c <= MoneyMennyi(e, 0)` and `state == 1`: `MoneyHozzaadLog(e, 0, −c)`, `state := 3`, `+0x1a := m` (u16), `+0x1c := t` (u8), `+0x1e := p1`, `+0x20 := p2` (i16), `+0x24 := +0x28 := days·50`, `+0x2c := rndlog(4, days·50/3, days·50 − 30)` (C division). (UI: `EN`'s "sending" flag 0xE75435 := 0.) |
+| 0x4a | `fate, e2, k` | the captor `e`'s verdict on `e2`'s caught spy `k`: `DontottAKemSorsarol(e, fate, e2, k)` (§4.2) |
+| 0x4b | `choice, k` | an applicant (`+0x16`): 1 hire: `c = race byte +0x12 == 14 ? 0 : (int)(KemFelvetelPenzSzorzoFajonkent[PlayerFaj[e]] · 3000.0f · (f32)rank +0x40)` (exe 0x9137FC, 15 f32); if `(f64)c <= MoneyMennyi(e, 0)` or `c == 0`: `MoneyHozzaadLog(e, 0, −c)`, `+0x16 := 0`; else `state := 0`. 2 reject: `state := 0`. 3: `rndlog(4, 1, 10) > 1` → the whole record is copied into slot 0 (the spare); then `state := 0` |
+| 0x4c | `k, i` | a skill point: if `state > 0` and `+0x38 > 0`: byte `+0x30 + i` += 1, `+0x38 -= 1` |
+| 0x4d..0x4f | | none (the loop takes and drops them) |
+
+After the queue is empty, every call recounts `HanyKemVan[e]` (§7) for `e` 1..=8. The handler runs every frame
+whether or not a message came; the recount only depends on the rosters, so the port runs it after each order
+(`Game::spy_order`), which leaves the same state at every tick boundary.
+
+Port: `spy::Order` (one variant per type) and `Spies::order(w, e, order)`; `Game::spy_order(issuer, order)`;
+`ig2_net::Command::Spy { order }` in the lockstep (ADR 0007 §1). **Verified**: 928 staged orders byte-exact through the
+exe's own handler (`traces/2026-10-16-spy-orders.md`). Orders naming a slot, empire, mission or training level
+outside the exe's arrays are dropped by the port (the exe would read past them; never staged).
+
+## 9. Port notes
 - `ig2-sim::spy`: `Spies` (the roster, counts, the kidnap mission switch), `SpyRules` (§1.2 tables and the
   names, read from the exe by `ig2-rules`), `World` = the colony world (`colony_side::ColonyWorld`: planets,
   buildings, money, techs, `BirodalomIsmeri`), the combat world (`spacewar::CombatWorld`: ships, fleets,
@@ -243,5 +271,5 @@ the copy's state = 1.
 - Original quirks kept: the AI captor's loyalty roll reads its own slot `k` (§4 step 6); `Spy_New`'s rank 20
   reads one entry past `KemRangXPHatar`; mission 12 redraws its loop bound; mission 7's second pass reuses
   the first pass's weighted-choice total; the kidnap mission is disabled every day.
-- Open: the spy screen (`Spy_Main`), `MULTIGET_Spy` (the human's missions, decisions about captured spies,
-  hiring), story missions. The AI's mission choice and its costs are ported with the AI (`ai-empire.md` §6).
+- Open: the spy screen (`Spy_Main`, UI), story missions. The human's orders are §8. The AI's mission choice and its
+  costs are ported with the AI (`ai-empire.md` §6).

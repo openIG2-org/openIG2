@@ -392,6 +392,21 @@ pub struct Field {
     pub tail: FieldTail,
 }
 
+impl Field {
+    /// The cells of the units on the map: used, placed (flags without 2 / 0x40000000) and without flags2 bit 2.
+    /// `LocateSuitableLocation` blocks each as a 1 × 1 footprint (`colony-placement.md` §1),
+    /// `LocateTankSuitablePosition` as a 3 × 3 block (§11.1).
+    pub fn placed_cells(&self) -> Vec<(i32, i32)> {
+        (0..self.units.len())
+            .filter(|&i| {
+                let u = &self.units[i];
+                self.alive[i] && u.flags & (flag::NOT_PLACED | flag::NOT_COUNTED) == 0 && u.flags2 & 4 == 0
+            })
+            .map(|i| self.units[i].cell)
+            .collect()
+    }
+}
+
 impl Default for Field {
     fn default() -> Self {
         Self {
@@ -453,6 +468,9 @@ pub struct GroundContext {
     pub players: i32,
     /// `Bolygok[p − 1].owner`: `GroundWarFinished` rearranges this owner's groups (§6.1 step 11).
     pub prev_planet_owner: u8,
+    /// `GrWar_MultiCsata_folyamatban` (exe 0xBAD13C): an MP ground war runs (`WF::Refresh` ends it when a side holds
+    /// the field).
+    pub mp_war: bool,
     /// The battlefield is on the colony screen (`AktKep == 3`, `AktPlanet == p`, not entering or leaving
     /// it): new units load their meshes, which has state effects ([`War::load_mesh`]).
     pub on_screen: bool,
@@ -473,6 +491,8 @@ pub enum GroundEvent {
     Captured { owner: u8 },
     /// `BolygoElfoglal(p, 0)`: no building left.
     Abandoned,
+    /// MP: `WF::Refresh` found the field held by side `holder` and ran `GroundWarFinished(p, holder, false)`.
+    Ended { holder: i32 },
     /// `WF::ShotSpecWeapon`: the ground AI called an air strike on a cell (before the spread; the bombs or
     /// the fighter wave are in [`Field::lists`], `ground-combat.md` §11.15).
     AirStrike { empire: i32, cell: (i32, i32), big_ships: bool },

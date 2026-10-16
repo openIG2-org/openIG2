@@ -19,7 +19,7 @@ use ig2_sim::diplomacy::Relation;
 use ig2_sim::research::{Research, ResearchContext, ResearchRules};
 use ig2_sim::rng::Streams;
 use ig2_sim::spacewar::{CombatFleet, CombatWorld, Design, FleetTotals, Ship, Vehicle};
-use ig2_sim::spy::{MissionRule, Spies, Spy, SpyContext, SpyEvent, SpyRules, StoryCheck, World, RECORD, ROSTERS, SLOTS};
+use ig2_sim::spy::{MissionRule, Order, Spies, Spy, SpyContext, SpyEvent, SpyRules, StoryCheck, World, RECORD, ROSTERS, SLOTS};
 use serde_json::Value;
 
 fn traces(prefix: &str) -> Vec<PathBuf> {
@@ -98,6 +98,7 @@ fn spy_rules(r: &ig2_rules::Rules) -> SpyRules {
         training_xp: r.spy_training_xp.clone(),
         names: r.spy_names.clone(),
         building_tech: r.buildings.iter().map(|b| b.tech).collect(),
+        hire_cost_mult: r.spy_hire_cost_mult.clone(),
     }
 }
 
@@ -160,6 +161,7 @@ struct Stats {
     missions: BTreeMap<(u16, bool), usize>,
     outcomes: BTreeMap<(u8, Option<u8>), usize>,
     exe_calls: BTreeMap<String, usize>,
+    orders: BTreeMap<String, usize>,
 }
 
 /// Write the port's state back into the raw regions.
@@ -255,7 +257,7 @@ fn spy_matches_every_traced_call() {
                 }
                 continue;
             }
-            if k != "spy" {
+            if k != "spy" && k != "order" {
                 continue;
             }
             apply(&mut state, &ev["pre"]);
@@ -284,6 +286,7 @@ fn spy_matches_every_traced_call() {
                 forced: gi("forced") as i32,
                 day: gi("nap") as i32,
                 senders: None,
+                listed: [false; EMPIRES],
             };
             let mut sp = spies(&before);
             let mut colony = colony_world(&before, g);
@@ -342,7 +345,14 @@ fn spy_matches_every_traced_call() {
                     story: &mut story,
                     events: Vec::new(),
                 };
-                sp.daily(&mut w);
+                match ev["order"].as_array() {
+                    Some(o) => {
+                        let (e, order) = order_of(o);
+                        *st.orders.entry(format!("{order:?}").split([' ', '{']).next().unwrap().to_string()).or_default() += 1;
+                        sp.order(&mut w, e, order, &r.spy_training_cost, &r.spy_race_cost_mult);
+                    }
+                    None => sp.daily(&mut w),
+                }
                 w.events
             };
             st.calls += 1;
@@ -393,6 +403,7 @@ fn spy_matches_every_traced_call() {
         }
     }
     eprintln!("{} calls; events {:?}", st.calls, st.events);
+    eprintln!("staged MULTIGET_Spy orders: {:?}", st.orders);
     eprintln!("missions (mission, ok): {:?}", st.missions);
     eprintln!("catch outcomes (outcome, fate): {:?}", st.outcomes);
     eprintln!("exe callees: {:?}", st.exe_calls);
@@ -402,6 +413,21 @@ fn spy_matches_every_traced_call() {
         }
         panic!("{} mismatches", bad.len());
     }
+}
+
+/// A staged `MULTIGET_Spy` message `[type, sender, …]` (`espionage.md` §8) as the sender and its order.
+fn order_of(o: &[Value]) -> (usize, Order) {
+    let v = |i: usize| o[i].as_i64().unwrap();
+    let order = match v(0) {
+        0x47 => Order::Dismiss { spy: v(2) as u8 },
+        0x48 => Order::Recall { spy: v(2) as u8 },
+        0x49 => Order::Send { spy: v(2) as u8, mission: v(3) as u16, target: v(4) as u8, param1: v(5) as i16, param2: v(6) as i16, days: v(7) as i32 },
+        0x4a => Order::Verdict { fate: v(2) as i32, owner: v(3) as u8, spy: v(4) as u8 },
+        0x4b => Order::Applicant { choice: v(2) as i32, spy: v(3) as u8 },
+        0x4c => Order::Skill { spy: v(2) as u8, skill: v(3) as u8 },
+        t => panic!("order type {t:#x}"),
+    };
+    (v(1) as usize, order)
 }
 
 fn colony_planet(r: &[u8], bld: &[u8], unrest: i32) -> Planet {

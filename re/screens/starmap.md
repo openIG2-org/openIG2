@@ -5,8 +5,8 @@ How the original draws the starmap (screen `AktKep == 2`). Evidence: the ELF ora
 (palette, saved camera). `[inf]` marks inference.
 
 Scope: the 3D view, systems, planets, fleets, routes, selection, background, colours, the minimap. The HUD panels
-(`starpan`, `screen/star_*` brushes 1–3, 8–11), planet names (text), info panels and input → commands are listed in §9
-but not specified.
+(`starpan`, `screen/star_*` brushes 1–3, 8–11), info panels and input → commands are listed in §9 but not specified;
+the names (§3.5, §4.2) and the top bar are in re/screens/hud.md §2, §4.
 
 ## 1. Frame structure
 

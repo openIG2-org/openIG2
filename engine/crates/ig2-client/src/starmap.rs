@@ -3,7 +3,8 @@
 //! `n1..n8` per system, planets orbiting their star, fleets as the 2D `screen/star_pl` sprites in their empire's
 //! column, routes, the selection ring and the generated background, in the exe's palette (`DDColor`).
 //!
-//! Not drawn yet: names (no text), the HUD panels, the minimap, radar rings (spec §9).
+//! Names are drawn by [`View::names`] (re/screens/hud.md §4). Not drawn yet: the HUD panels, the minimap, radar
+//! rings (spec §9).
 
 use ig2_formats::Install;
 
@@ -83,7 +84,7 @@ impl Assets {
 }
 
 /// `DDColor` from the user's `ig2.exe` (never shipped: ADR 0004).
-fn read_palette(install: &Install) -> Result<Vec<[f32; 3]>, String> {
+pub(crate) fn read_palette(install: &Install) -> Result<Vec<[f32; 3]>, String> {
     let exe = std::fs::read(install.root().join("ig2.exe")).map_err(|e| e.to_string())?;
     let img = ig2_rules::PeImage::parse(&exe).map_err(|e| e.to_string())?;
     let b = img.read(DD_COLOR, 4 * DD_COLORS).map_err(|e| e.to_string())?;
@@ -579,6 +580,32 @@ impl View {
         f
     }
 
+    /// `Show_Stars2d3d` and `Show_Flottak2d`'s names (re/screens/hud.md §4.2, §4.3): an owned planet's name under
+    /// its system, `sqrt(Zoom/5)` lower, faded from zoom 590, blinking with `+0xba`; a fleet's name (`+0x52` bit
+    /// 11) 9 below it, both size 1, centred, in the owner's colour `DDColor[owner + 15]`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn names(&self, f: &mut Frame, font: &crate::font::Font, a: &Assets, prev: &Snapshot, curr: &Snapshot, alpha: f32, time: f32) {
+        let cam = &self.camera;
+        let v = crate::font::Virtual::new(cam.size);
+        let virt = |p: [f32; 2]| ((p[0] - v.x0) / v.k, p[1] / v.k);
+        let col = |owner: u8| a.palette.get(owner as usize + 15).copied().unwrap_or([1.0; 3]);
+        let zoom_fade = if cam.zoom >= 590.0 { (100.0 - (cam.zoom - 590.0) / 9.1 * 100.0) as i32 as f32 / 100.0 } else { 1.0 };
+        let below = (cam.zoom / 5.0).sqrt() as i32 as f32;
+        for p in self.planets(curr).filter(|p| p.on_map() && (p.owner != 0 || p.blink)) {
+            let Some((c, _)) = cam.project(p.pos) else { continue };
+            let (x, y) = virt(c);
+            let k = zoom_fade.max(0.0) * if p.blink { crate::hud::blink(time, 300.0) } else { 1.0 };
+            let name: Vec<u8> = p.name.chars().map(|c| c as u32 as u8).collect();
+            font.text(f, &v, &name, x.trunc(), (y + below).trunc(), 0x14, 1, crate::font::Align::Centre, col(p.owner).map(|c| c * k), None);
+        }
+        for fl in self.shown(&curr.fleets_at(prev, alpha)).filter(|fl| fl.flags & 0x800 != 0) {
+            let Some((c, _)) = cam.project(fl.pos) else { continue };
+            let (x, y) = virt(c);
+            // The shadow in colour 0 first (black: nothing to add), then the name.
+            font.text(f, &v, &fl.name, (x + 1.0).trunc(), (y + 9.0).trunc(), 0x14, 1, crate::font::Align::Centre, col(fl.owner), None);
+        }
+    }
+
     /// The generated galaxy: point stars, clouds and fog clumps, additive (spec §6).
     fn background(&self, f: &mut Frame, a: &Assets, m: &[[f32; 3]; 3]) {
         let cam = &self.camera;
@@ -616,7 +643,7 @@ mod tests {
     use crate::world::PlanetLook;
 
     fn planet(index: usize, x: f32, y: f32) -> PlanetView {
-        PlanetView { index, pos: [x, y], owner: 0, surface: 1, name: String::new(), known: true, look: PlanetLook { star_size: 8, ..Default::default() } }
+        PlanetView { index, pos: [x, y], owner: 0, surface: 1, name: String::new(), known: true, blink: false, look: PlanetLook { star_size: 8, ..Default::default() } }
     }
 
     fn cam(rotate: f32, pitch: f32) -> Camera {
@@ -713,7 +740,7 @@ mod tests {
     #[test]
     fn fleets_are_picked_before_planets() {
         let mut s = Snapshot { planets: vec![planet(1, 0.0, 0.0), planet(2, 50.0, 0.0)], ..Default::default() };
-        s.fleets.push(FleetView { slot: 4, pos: [0.5, 0.0], owner: 6, visible: true, target: None, order: 0, flags: 0 });
+        s.fleets.push(FleetView { slot: 4, pos: [0.5, 0.0], owner: 6, visible: true, target: None, order: 0, flags: 0, name: Vec::new() });
         let saved = SavedView { x: 25.0, y: 0.0, rotate: 0.0, pitch: -1.5, zoom: 400.0, orbit: 0.0 };
         let v = View::new(&s, &saved, (1000, 1000), 1.0);
         let at = |p: [f32; 2]| v.pick(&s, &s, 1.0, v.camera.to_screen(p).unwrap());

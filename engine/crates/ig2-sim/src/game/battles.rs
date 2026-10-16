@@ -11,7 +11,7 @@ use crate::spacewar::{self, BattlePlanet, CombatEvent, Contender, DefenceSlot, R
 use crate::story::Participant;
 
 /// Exe globals of the battle routing (unsaved: the replay dumps them).
-mod at {
+pub(super) mod at {
     /// `spFlottak` (6-byte entries from index 1: `+0` fleet, `+2` side), `SpWarHanyFlotta`, `spKozeliBolygo`,
     /// `SpWarKiNyert`, the planet-battle flag.
     pub const SP_FLEETS: u32 = 0xBAA1C0;
@@ -126,11 +126,11 @@ impl Game<'_> {
         self.state.fleets.get(f).map_or(0, |r| i32::from_le_bytes(r[o..o + 4].try_into().unwrap()))
     }
 
-    fn planet_rec(&self, p: usize) -> Vec<u8> {
+    pub(super) fn planet_rec(&self, p: usize) -> Vec<u8> {
         self.state.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE)
     }
 
-    fn planet_owner(&self, p: usize) -> u8 {
+    pub(super) fn planet_owner(&self, p: usize) -> u8 {
         self.state.mem.u8(va::PLANETS + (p * PLANET_SIZE) as u32 + 0x20)
     }
 
@@ -259,6 +259,9 @@ impl Game<'_> {
         let human = fleets.iter().any(|&f| self.fleet_owner(f) == en) || (bp > 0 && self.planet_owner(bp) == en);
         let Route::Simulate { lopsided } = spacewar::route(&input) else {
             self.events.push(GameEvent::Battle(BattleEvent::SpaceRealTime { attacker: f1, defender: f2, planet: bp }));
+            if g.canonical {
+                self.space_real_time(&fleets, bp);
+            }
             return;
         };
         let winner = self.simulate_space(f1, f2, bp);
@@ -341,7 +344,7 @@ impl Game<'_> {
     /// whose counter is `Tankok[96].count`), the human's emptied fleet goes over the network (message 0x1b; in
     /// canonical mode every human's, `Game::view`),
     /// destroyed planet guns are `EpuletDelete`d.
-    fn combat_aftermath(&mut self, events: Vec<CombatEvent>, sends: [bool; EMPIRES]) {
+    pub(super) fn combat_aftermath(&mut self, events: Vec<CombatEvent>, sends: [bool; EMPIRES]) {
         for e in events {
             match e {
                 CombatEvent::FollowerStopped { fleet } => {
@@ -442,6 +445,9 @@ impl Game<'_> {
         self.set_adat_i32(ADAT_NO_INCIDENT, 0);
         if !simulate {
             self.events.push(GameEvent::Battle(BattleEvent::GroundRealTime { fleet: f, planet: p }));
+            if g.canonical {
+                self.ground_real_time(p);
+            }
             self.ground_battle_status();
             return;
         }
@@ -459,7 +465,7 @@ impl Game<'_> {
     }
 
     /// `BolygoElfoglal(p, owner)` (`colony-side.md` §4) with its follow-ups.
-    fn capture(&mut self, p: usize, owner: u8) {
+    pub(super) fn capture(&mut self, p: usize, owner: u8) {
         let g = self.globals();
         let ctx = self.economy_context(&g);
         let mut w = self.state.colony();
@@ -552,7 +558,7 @@ impl Game<'_> {
 
     /// `GroundWarSetBattleStatus` (exe 0x47caa0, `ground-combat.md` §6.4): every planet's war flag `+0x64` from
     /// its field's status, the attackers' fleets marked in battle while it is contested.
-    fn ground_battle_status(&mut self) {
+    pub(super) fn ground_battle_status(&mut self) {
         let all: Vec<usize> = (1..=self.state.planet_count()).collect();
         self.with_wars(&all, |w| w.battle_status());
     }
@@ -614,7 +620,9 @@ impl Game<'_> {
             };
             let ctx = GroundContext {
                 human: g.en as i32,
-                multiplayer: g.multiplayer,
+                // The canonical view runs the wars by the original's MP rules (`multiplayer.md` §7).
+                multiplayer: g.multiplayer || g.canonical,
+                mp_war: m.i32(super::realtime::at::GROUND_RUNNING) != 0,
                 story_planet: adat_i32(&adat, ADAT_STORY_PLANET),
                 story_bonus: adat_i32(&adat, 0x70).wrapping_add(adat_i32(&adat, 0x74)),
                 players: g.pp2 as i32,
@@ -663,6 +671,15 @@ impl Game<'_> {
         self.state.store_rng(&rng);
         self.state.store_combat(&world);
         for (p, e) in raised {
+            // `GroundWarFinished(p, s, false)` from the real-time war (canonical MP only: the classic game runs it
+            // simulated): `BolygoElfoglal(p, s)`, `BattlesWon[s] += 1`, before the abandonment test.
+            if let GroundEvent::Captured { owner } = e {
+                if g.canonical {
+                    self.capture(p, owner);
+                    let won = at::BATTLES_WON + 4 * owner as u32;
+                    self.state.mem.set_i32(won, self.state.mem.i32(won).wrapping_add(1));
+                }
+            }
             if e == GroundEvent::Abandoned {
                 self.capture(p, 0);
             }

@@ -36,6 +36,7 @@ const OPEN_MAX: usize = 1000;
 
 /// `PONTTYPE`: 16 bytes, the fourth float is carried along by struct copies.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct V4 {
     pub x: f32,
     pub y: f32,
@@ -195,6 +196,7 @@ pub struct FormRules {
 
 /// The ship-type record a unit points at (`+0x214`, 0x30 bytes).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShipType {
     /// +0x10: model scale.
     pub scale: f32,
@@ -233,11 +235,74 @@ pub struct BattleRules {
     pub fade: f32,
 }
 
+/// Everything a battle reads from the rules (ADR 0004: the user's exe and install), for the game.
+#[derive(Debug, Clone, Default)]
+pub struct SpaceRules {
+    /// The weapon table (`fegyverek`) and each record as 46 i32 words reaching into the next records (the
+    /// out-of-table damage reads, [`WeaponRules::damage_vs`]).
+    pub weapons: Vec<WeaponRules>,
+    pub weapon_words: Vec<Vec<i32>>,
+    pub forms: Vec<FormRules>,
+    /// `felallas0` / `felallas1` (`dataraw/spacewar/felallas<n>.bin`).
+    pub formations: [Vec<FormationSlot>; 2],
+    /// `tipusnevek` as compiled (the setup rewrites the footprints of the live copy, [`crate::game`] keeps it).
+    pub ship_types: Vec<ShipType>,
+    /// `EpuletekLeiro[type].+0` (tech) and `+8` (hit points).
+    pub building_tech: Vec<u8>,
+    pub building_hp: Vec<i32>,
+}
+
+impl SpaceRules {
+    /// The weapon rules and words from the raw `fegyverek` table (40 × 0x5c bytes).
+    pub fn weapons_from_table(table: &[u8]) -> (Vec<WeaponRules>, Vec<Vec<i32>>) {
+        let i32_at = |o: usize| table.get(o..o + 4).map_or(0, |b| i32::from_le_bytes(b.try_into().unwrap()));
+        let f32_at = |o: usize| f32::from_bits(i32_at(o) as u32);
+        let n = table.len() / 0x5c;
+        let weapons = (0..n)
+            .map(|w| {
+                let o = w * 0x5c;
+                WeaponRules {
+                    kind: i32_at(o),
+                    reload: i32_at(o + 4),
+                    damage: std::array::from_fn(|k| i32_at(o + 8 + 4 * k)),
+                    hit: i32_at(o + 0x38),
+                    spread: f32_at(o + 0x3c),
+                    turn: f32_at(o + 0x40),
+                    speed: f32_at(o + 0x44),
+                    accel: f32_at(o + 0x48),
+                    duration: i32_at(o + 0x4c),
+                    range: i32_at(o + 0x50),
+                    form: i32_at(o + 0x54),
+                    aimed: table[o + 0x58] != 0,
+                    beam: table[o + 0x5a] != 0,
+                }
+            })
+            .collect();
+        let words = (0..n).map(|w| (0..46).map(|k| i32_at(w * 0x5c + 4 * k)).collect()).collect();
+        (weapons, words)
+    }
+
+    /// The rules a battle tick reads, with the state's switches (`BattleRules`).
+    pub fn tick_rules(&self) -> BattleRules {
+        BattleRules { weapons: self.weapons.clone(), forms: self.forms.clone(), ..Default::default() }
+    }
+
+    pub fn setup_rules(&self) -> SetupRules {
+        SetupRules {
+            weapons: self.weapons.clone(),
+            forms: self.forms.clone(),
+            formations: self.formations.clone(),
+            building_tech: self.building_tech.clone(),
+        }
+    }
+}
+
 // ------------------------------------------------------------------------------------------------
 // Battle state
 
 /// A weapon mount of a unit (0x70 bytes, `fegyverhozzaad`).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Mount {
     /// +0: weapon id.
     pub weapon: i32,
@@ -288,6 +353,7 @@ pub mod pod {
 
 /// A battle unit (`urhajotipus`, exe 600 bytes): one ship, or several ships of one type, owner and fleet.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Unit {
     /// +0.
     pub alive: bool,
@@ -396,6 +462,7 @@ pub struct Unit {
 
 /// A fighter group (`vadasztipus`, 0xa8 bytes).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Fighter {
     pub alive: bool,
     /// +4 position, +0x14 destination, +0x24 velocity, +0x40 direction.
@@ -435,6 +502,7 @@ pub struct Fighter {
 
 /// A planet gun (`bolygofegyvertipus`, 0xa8 bytes).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Gun {
     pub pos: V4,
     /// +0x10: hits scored.
@@ -457,6 +525,7 @@ pub struct Gun {
 
 /// Which pool slot a projectile is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShotRef {
     pub form: usize,
     pub slot: usize,
@@ -480,6 +549,7 @@ pub mod shot_kind {
 
 /// A projectile (`lovedektipus`, exe 0xa8 bytes). A slot is in use while it has a shooter.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Shot {
     pub weapon: i32,
     pub owner: i32,
@@ -514,12 +584,14 @@ pub struct Shot {
 
 /// A pool of projectile slots for one form.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Pool {
     pub shots: Vec<Shot>,
 }
 
 /// A participating fleet (`+0xe98 + 0x30k`, `+0x1420` of them).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Participant {
     pub owner: i32,
     /// +4: 3 fighting, 1 destroyed, 2 retreated (or destroyed while retreating).
@@ -532,6 +604,7 @@ pub struct Participant {
 
 /// A battle AI squad (0x1c bytes): units that gather, then attack.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Squad {
     /// +4: 0 gathering, 1 attacking.
     pub state: i32,
@@ -542,6 +615,7 @@ pub struct Squad {
 
 /// Per-empire battle record (0x6c bytes at `+0x6c·e`).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Side {
     /// +0x1c: where the side's fighters start; +0x2c the rotation its new units get (`+0x148`).
     pub centre: V4,
@@ -565,12 +639,14 @@ pub struct Side {
 /// The empires present (`resztvevobirodalmakujraszamol`): `+0xe09` ids, `+0xe1c` what each still has
 /// (bit 0 ships, 1 fighters, 2 guns).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Present {
     pub empires: Vec<(u8, u8)>,
 }
 
 /// One battle (`SpwC`, exe 0x2D9C bytes per slot at 0xE417C0).
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Battle {
     /// +0xc4c.
     pub tick: i32,
@@ -692,10 +768,14 @@ pub enum BattleEvent {
 
 /// The search grid and open list of `Utkeres` (exe 0x6133a0) and its result globals.
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Search {
     /// 128 × 128 × 8 u16, plus the 4 bytes after it (open-list slot 0, always 0) that a z overflow reads.
+    /// Scratch: every search refills it (not in a snapshot).
+    #[cfg_attr(feature = "serde", serde(skip))]
     grid: Vec<u16>,
-    /// 1-based binary heap of (x, y, z, f).
+    /// 1-based binary heap of (x, y, z, f); read only up to `open_len`.
+    #[cfg_attr(feature = "serde", serde(skip))]
     open: Vec<[u16; 4]>,
     open_len: i32,
     goal: [i32; 3],
@@ -2721,6 +2801,8 @@ impl Battle {
         }
         if self.search.grid.len() != GRID_CELLS + 4 {
             self.search.grid = vec![0; GRID_CELLS + 4];
+        }
+        if self.search.open.len() != OPEN_MAX + 2 {
             self.search.open = vec![[0; 4]; OPEN_MAX + 2];
         }
         self.search.result_w = 500000;
@@ -3316,6 +3398,122 @@ impl Battle {
 }
 
 // ------------------------------------------------------------------------------------------------
+// The human's orders (spec §7.12): `MULTIGET_SpaceWar` (exe 0x5615b0, ELF 0x67ef60)
+
+/// An order from the battle screen (`MULTIGET_SpaceWar`'s messages; the battle slot travels with it). Indices are
+/// the battle's own (units, guns, mounts); the handlers trust them, so callers check them first
+/// ([`Battle::order_valid`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Order {
+    /// 0x70, `moveship(x, y, z, unit)` (0x57c4c0) outside the editor: move to the point (x = height).
+    Move { unit: usize, x: f32, y: f32, z: f32 },
+    /// 0x71, `attack(unit, target)` (0x571a50): attack another unit.
+    Attack { unit: usize, target: usize },
+    /// 0x72, `retreat(issuer)` (0x57ee20): the issuer's side retreats.
+    Retreat,
+    /// 0x73, `shipattackscolonygun(unit, gun)` (0x5817a0): attack a planet gun.
+    AttackGun { unit: usize, gun: usize },
+    /// 0x74, `colonygunattacksship(gun, unit)` (0x5720d0): a planet gun's forced target.
+    GunTarget { gun: usize, unit: usize },
+    /// 0x75 (cheat console): every unit of the issuer in every battle gets one barrel of weapons 0..20. Handled
+    /// per battle by [`Battle::arm_all`].
+    ArmAll,
+    /// 0x76 (cheat console): every ship of the unit blows up (`felrobban(unit, 0, 0, 1, 1)` × its ship count).
+    Explode { unit: usize },
+    /// 0x77 (`infoszamol`'s fighter stance button): side `side`'s fighter aggression (`+0x6c·side + 0x40`).
+    FighterStance { side: usize, value: i32 },
+    /// 0x44e, `DirectFire(unit, target, mount)` (0x566ba0): fire one mount at a unit now.
+    DirectFire { unit: usize, target: usize, mount: usize },
+    /// 0x44f, `FegyverKibeKapcsol(unit, keep, set)` (0x566e80): weapon mask `+0x1bc := (mask & keep) | set`.
+    Weapons { unit: usize, keep: u32, set: u32 },
+}
+
+impl Battle {
+    /// A move target as the battle screen sends it: `JobbClick` (ELF 0x6b0210) clamps the point two cells inside the
+    /// arena (y, then z, then the height x) before message 0x70; the handler itself doesn't.
+    pub fn screen_point(&self, x: f32, y: f32, z: f32) -> (f32, f32, f32) {
+        let mut p = V4 { x, y, z, w: 0.0 };
+        self.clamp_inside(&mut p);
+        (p.x, p.y, p.z)
+    }
+
+    /// Whether every index the order names exists in this battle (the exe reads whatever is there).
+    pub fn order_valid(&self, o: &Order) -> bool {
+        let unit = |u: usize| u < self.units.len();
+        let gun = |g: usize| g < self.guns.len();
+        match *o {
+            Order::Move { unit: u, .. } | Order::Explode { unit: u } | Order::Weapons { unit: u, .. } => unit(u),
+            Order::Attack { unit: u, target } => unit(u) && unit(target),
+            Order::AttackGun { unit: u, gun: g } | Order::GunTarget { gun: g, unit: u } => unit(u) && gun(g),
+            Order::DirectFire { unit: u, target, mount } => unit(u) && unit(target) && mount < self.units[u].mounts.len(),
+            Order::FighterStance { side, .. } => side < self.sides.len(),
+            Order::Retreat | Order::ArmAll => true,
+        }
+    }
+
+    /// Carry out an order of empire `issuer` (spec §7.12). [`Order::ArmAll`] is the caller's ([`Battle::arm_all`]
+    /// on every active battle).
+    pub fn order(&mut self, t: &mut Tick, issuer: i32, o: Order) {
+        match o {
+            Order::Move { unit, x, y, z } => self.move_to(unit, V4 { x, y, z, w: 0.0 }),
+            Order::Attack { unit, target } => self.attack_order(unit, target),
+            Order::Retreat => self.retreat(t, issuer),
+            Order::AttackGun { unit, gun } => {
+                let u = &mut self.units[unit];
+                if u.range_min != 0.0 {
+                    u.target = Some(gun);
+                    u.target_kind = target_kind::GUN;
+                    u.order = order::ATTACK;
+                }
+            }
+            Order::GunTarget { gun, unit } => self.guns[gun].target = unit as i32,
+            Order::ArmAll => {}
+            Order::Explode { unit } => {
+                for _ in 0..self.units[unit].ship_count.max(0) {
+                    self.explode(t, unit, 0, true, true);
+                }
+            }
+            Order::FighterStance { side, value } => self.sides[side].fighter_aggression = value,
+            Order::DirectFire { unit, target, mount } => {
+                if !self.units[unit].alive {
+                    return;
+                }
+                // `rndlog(6, 2r/3, r − 1)` (spwc.cpp line 0x3702) into the mount's timer and its set value.
+                let r = reload_roll(t.rng, self.units[unit].mounts[mount].reload);
+                let m = &mut self.units[unit].mounts[mount];
+                m.timer = r;
+                m.timer_set = r;
+                let (weapon, count) = (m.weapon, m.count);
+                let (owner, pos) = (self.units[unit].owner, self.units[unit].pos);
+                self.fire(t, owner, pos, shot_kind::SHIP, unit, target, weapon, count);
+            }
+            Order::Weapons { unit, keep, set } => {
+                let u = &mut self.units[unit];
+                if u.alive {
+                    u.weapon_mask = (u.weapon_mask & keep) | set;
+                }
+            }
+        }
+    }
+
+    /// The cheat order 0x75 on this battle: every live unit of `owner` gets one barrel of each weapon 0..20
+    /// (`fegyverhozzaad(unit, w, 1, ships[0])`, a new mount drawing its reload on stream 6).
+    pub fn arm_all(&mut self, weapons: &[WeaponRules], rng: &mut Streams, owner: i32) {
+        if !self.active {
+            return;
+        }
+        for u in 0..self.units.len() {
+            if self.units[u].alive && self.units[u].owner == owner {
+                for w in 0..20 {
+                    self.add_weapon(weapons, rng, u, w, 1);
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
 // Setup (spec §7.10): `SpaceWar_NewBattle` (exe 0x563700), `InitSpaceWar` (0x5684e0), `AddFleet` (0x5646b0)
 
 /// Ship-type records per race (`tipusnevek`, exe 0x91F488): record `race·12 + type`.
@@ -3664,12 +3862,17 @@ impl Battle {
 
     /// `fegyverhozzaad` (exe 0x572650): `n` barrels of weapon `w` (a mount of `w` already there gains them).
     fn add_mount(&mut self, s: &mut Setup, u: usize, w: i32, n: i32) {
+        self.add_weapon(&s.rules.weapons, s.rng, u, w, n);
+    }
+
+    /// [`Battle::add_mount`] with the weapon table and stream 6 (also the cheat order 0x75, spec §7.12).
+    fn add_weapon(&mut self, weapons: &[WeaponRules], rng: &mut Streams, u: usize, w: i32, n: i32) {
         if let Some(m) = self.units[u].mounts.iter_mut().rev().find(|m| m.weapon == w) {
             m.count = m.count.wrapping_add(n);
             return;
         }
-        let Some(r) = s.rules.weapons.get(w as usize) else { return };
-        let timer = reload_roll(s.rng, r.reload);
+        let Some(r) = weapons.get(w as usize) else { return };
+        let timer = reload_roll(rng, r.reload);
         let unit = &mut self.units[u];
         unit.mounts.push(Mount {
             weapon: w,

@@ -624,7 +624,8 @@ impl ColonyWorld {
         if (1..=8).contains(&n) {
             for e in 1..=8 {
                 if self.alive[e] && e != n && self.knows[e][n] == 0 && self.planets[p].visibility[e] > 0 {
-                    if e == ctx.human_empire as usize {
+                    // Every human (multiplayer: each keeps its own contact list; diplomacy picks the ones that do).
+                    if e == ctx.human_empire as usize || ctx.human_controlled[e] {
                         events.push(SideEvent::Met { who: e as u8, whom: new });
                     }
                     self.knows[e][n] = 1;
@@ -760,13 +761,15 @@ pub struct ColonyArrivals<'a> {
     pub rules: &'a SideRules,
     pub ctx: &'a EconomyContext,
     pub placement: &'a PlacementRules,
+    /// The cells of planet `p`'s ground-war units on the map ([`crate::save::SaveState::vehicle_cells`]).
+    pub vehicles: &'a dyn Fn(usize) -> Vec<(i32, i32)>,
     pub events: Vec<SideEvent>,
 }
 
 impl Arrivals for ColonyArrivals<'_> {
     fn colonise(&mut self, p: usize, owner: u8, star: &mut StarPlanet, rng: &mut Streams) {
-        let placement = self.placement;
-        let mut place = |pl: &Planet, _: usize, k: u8| placement.place(pl, k, &[]);
+        let (placement, vehicles) = (self.placement, self.vehicles);
+        let mut place = |pl: &Planet, p: usize, k: u8| placement.place(pl, k, &vehicles(p));
         self.world.colonise(p, owner, &mut place, self.rules, self.ctx, rng, &mut self.events);
         // The starmap's view of the planet.
         let pl = &self.world.planets[p];

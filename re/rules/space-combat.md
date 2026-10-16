@@ -253,7 +253,7 @@ battle keeps its fleets marked (and immobile, §4.2) until it ends.
 ## 7. The real-time battle (`SpwC`)
 Status: **the battle tick, its setup and its end are ported** (`engine/crates/ig2-sim/src/spacebattle.rs`) and
 verified bit-exact against the exe (§8; tick: `traces/2026-10-16-spacebattle.md`, setup and end:
-`traces/2026-10-16-spacebattle-setup.md`). Not ported: the battle screen (camera, selection, drawing).
+`traces/2026-10-16-spacebattle-setup.md`). Not ported: the battle screen (camera, selection, drawing); its orders are (§7.12), and so is the MP flow (§7.13).
 Gameplay randomness is stream **6** only; every libc `rand()` in a battle is cosmetic (§7.9).
 
 | Function | ELF | exe |
@@ -635,6 +635,57 @@ is `EN`'s, `SpwFlottak`/`SpwFlottaNum` 0xF265C4/0xF265C8 = the records, `StoryEs
 and mount lists, the arrays and the side lists are freed and the slot goes inactive and hidden (+0x1f2e,
 +0x1f2c = 0). Everything the battle did to the starmap (ships, fighters and fleets lost, planet ships and
 buildings, fleets retreating) already happened during the ticks (§7.5, §7.7).
+
+### 7.12 The human's orders (`MULTIGET_SpaceWar`)
+Status: **ported and verified byte-exact** (`spacebattle::Order`, `Battle::order`, `Battle::arm_all`;
+`traces/2026-10-16-spacebattle-orders.md`). The battle screen never calls the order functions itself: it sends
+lockstep messages, in SP too, and `MULTIGET_SpaceWar` (exe 0x5615b0, ELF 0x67ef60) carries them out between frames
+(two `Multi_GetNextTipus` loops: 0x6e..0x77, then 0x44c..0x456). Each names its battle slot; the handler points
+`AktSpaceWarp` at it for the call and restores `AktSpaceWar` (0xE41788) after. No index is checked.
+
+| Msg | Sender (ELF) | Values | Handler (exe) | Effect |
+|---|---|---|---|---|
+| 0x6f | none in the shipped code | fleet list | `SpaceWar_NewBattle` 0x563700 | a battle from `spFlottak`, screen 0xB (not ported) |
+| 0x70 | `SpwC::JobbClick` 0x6b0210 | x, y, z, unit | `moveship` 0x57c4c0 | outside the editor (`spacewareditormode` 0xE72DD3 = 0): unless disabled (+0x1c0): destination (+0x64) := point, `pos2racspos` into waypoint 0 (+0x74), destination := the cell's centre, step (+0xb4) := it, order := 1, +0x174 := −1.0, step cell := waypoint 0, path short (+0x180) := 1, plan position 0, plan tick −1000, path fails (+0x254) 0. The editor branches (scenery, waypoint queue +0x2c) are the editor's |
+| 0x71 | `JobbClick` | unit, target | `attack` 0x571a50 | target ≠ −1, not disabled, has a weapon range (+0x168 ≠ 0): destination := the target's position clamped two cells inside, its cell and centre, +0x174 := −1, target, target kind 1, order 3, path short 1, plan 0 / −1000 |
+| 0x72 | `HandleRetreatWindow` 0x6814e0, `SpaceWarKeyboardHandler` | — (the sender) | `retreat(sender)` 0x57ee20 | §7.7 |
+| 0x73 | `JobbClick` | unit, gun | `shipattackscolonygun` 0x5817a0 | gun ≠ −1 and a weapon range: target := gun, kind 2, order 3 (no disabled test) |
+| 0x74 | `JobbClick` | gun, unit | `colonygunattacksship` 0x5720d0 | unit ≠ −1: the gun's forced target (+0x98) := unit |
+| 0x75 | cheat console `ExecuteString` | — (the sender) | `fegyverhozzaad` 0x572650 | every active slot, every live unit of the sender: one barrel of each weapon 0..19 (`fegyverhozzaad(u, w, 1, ships[0])`: a new mount draws its reload on stream 6, line 0x12ed) |
+| 0x76 | cheat console | battle, unit | `felrobban` 0x5737e0 | `felrobban(unit, 0, 0, 1, 1)` as many times as the unit's ship count (+0x1b0) before the loop (dead units too) |
+| 0x77 | `SpwC::infoszamol` | value, side | — | side record `+0x6c·side + 0x40` (fighter aggression) := value |
+| 0x44d | `SpaceWar_Kilep` 0x562b50 (MP) | — (the sender) | — | `SpWar_MultiCsata_vegetert[sender]` (0xBAD118 + 4e) := 1 (§7.13) |
+| 0x44e | `JobbClick` (direct-fire cursor) | unit, target, mount | `DirectFire` 0x566ba0 | live unit: `rndlog(6, 2r/3, r − 1)` (line 0x3702, r = mount reload +0x14) into the mount's timer and its set value, then `Loves2(owner, position, 0, unit, target, weapon, barrels)` (§7.4) |
+| 0x44f | `SpwC::main` | unit, keep, set | `FegyverKibeKapcsol` 0x566e80 | live unit: weapon mask (+0x1bc) := `(mask & keep) | set` |
+
+`JobbClick` sends moves for every selected own unit with the point clamped two cells inside the arena (y, z,
+then the height x; the 2D cursor sends the unit's own height), attacks for every selected own unit on the hovered
+enemy, gun orders only for the human's own planet guns; the port's `Battle::screen_point` is that clamp. The
+handler doesn't clamp: a point outside makes the path search diverge (seen in a trace with points the screen
+can't send; not a reachable input). `MULTISEND_SpWarSynch` (exe 0x59f780, ELF 0x71d520) only sends message 0x402
+every 81st call from the host while an MP battle runs: `MULTIGET_Starmap` answers with the `SynchStruct` resync
+(0x401) — the original's desync repair, replaced by ADR 0007's hashes; no state.
+
+### 7.13 The real-time battle in MP
+Exe globals: `SpWar_MultiCsata_folyamatban` 0xBAD114 (ELF 0x144808c), `…_vegetert[e]` 0xBAD118 + 4e (ELF
+0x1448090; `…_mehet` has no readers). `SpaceWarIndit` (§4) routes an MP battle to real time only with two human
+sides (`MultiplayerBattleStatusz` 0 or 1); it clears the listed fleets' orders, `SpaceWar_NewBattle`, and on every
+machine (the strategic sim is the same everywhere) `AktKepKell = 0xB`, the flag := 1 and `vegetert[1..=8]` := 0.
+While the flag is set, `Fake_FRISSITES` runs no clock and no strategic system (§`ground-combat.md` 11.17: only
+`MULTISEND_SpWarSynch`, `GroundWarSetBattleStatus`, `IdoMultiPlayerBattle`, `FRISSIT_SpaceWar`; not
+`FRISSIT_Grwar`), and `FRISSIT_SpaceWar` ticks **every** slot in MP (`frissit` → `SpaceWarFrissit`
+`IdoSpeedSzorzoBattle` times, §7.1) on the 20 Hz loop. `IdoSpeedSzorzoBattle` is set with the game speed by
+`SetIdoSpeed` (ELF 0x6233d0; MP: ×4 → 1, ×8 → 2, ×16 → 2; SP 1/2/4) and isn't saved. The end check closes the
+battle on every screen (§7.11); each player leaving it sends 0x44d, and `MULTIGET_SpaceWar`'s tail (every frame):
+while the flag is set, it stays set as long as a human empire 1..=8 (`PlayerKi == 1`) hasn't left; else 0 and
+`SpaceWarVege` on `AktSpaceWar` (the slot `SpaceWar_NewBattle` used last).
+
+The canonical view (ours, `multiplayer.md` §7) runs this on the sim clock (`game::realtime`, `Game::space_order`,
+`Game::space_battle_left`, `Game::space_battles_settle` before each clock step): the slots, the live ship-type table
+and `AktSpaceWar` are synced state (snapshot v4), the battle is shown (every human is on its screen, so the victory
+flight and the ground war after a won planet battle run), the screen fade is 0, the battle sees `MultiPlayerMode`
+= 1, and a loaded game without a battle speed gets the MP `SetIdoSpeed` value. Tested by
+`ig2-net/tests/lockstep.rs::two_humans_fight_a_real_time_battle_in_lockstep`.
 
 ## 8. Verification
 `tools/trace/run_spacewar.py` + `spacewar.js` on the GOG exe, replayed by

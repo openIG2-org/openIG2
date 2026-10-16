@@ -1,7 +1,7 @@
 """Spawn the user's ig2.exe under Frida, run tools/trace/spy.js, write a JSONL espionage trace.
 
 Usage (project venv): _local/venv/Scripts/python.exe tools/trace/run_spy.py <install-dir> <out.jsonl>
-          [--count N] [--fuzz] [--seconds 300] [--seed 4242]
+          [--count N] [--fuzz] [--seconds 300] [--seed 4242] [--orders N]
 Before/after every FRISSIT_Spy (exe 0x584b30) call the game makes, as byte-region diffs ('init' = full dump,
 then 'pre'/'post' changes per record), with the callees reached (coverage). --fuzz revives empires 1..8 and
 rewrites spy records before each call (missions due today, catch windows, double agents, ...). --ships adds
@@ -30,6 +30,7 @@ ap.add_argument("--scenario", default="scenario/quick.scn")
 ap.add_argument("--fuzz", action="store_true")
 ap.add_argument("--debug", action="store_true")
 ap.add_argument("--ships", action="store_true", help="add warships; hands the human's empire to the AI")
+ap.add_argument("--orders", type=int, default=0, help="staged MULTIGET_Spy orders after each call (espionage.md §8)")
 a = ap.parse_args()
 
 exe = os.path.join(a.install, "ig2.exe")
@@ -68,7 +69,8 @@ except frida.InvalidArgumentError:
 script.on("message", on_message)
 script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "count": a.count, "fuzz": a.fuzz, "seed": a.seed,
-                                           "debug": a.debug, "ships": a.ships, "aiHuman": a.ships}})
+                                           "debug": a.debug, "ships": a.ships, "aiHuman": a.ships,
+                                           "orders": a.orders}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; fuzz {a.fuzz}, up to {a.seconds}s")
 t0 = time.time()

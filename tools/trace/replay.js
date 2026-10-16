@@ -64,7 +64,7 @@ const VOLATILE = [
 const QUEUES = [['vegzes', 0xf43290], ['talal', 0xf4329c]];
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, name: 'Replay', speed: 3, ticks: 40,
-  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
+  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
  traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
@@ -423,6 +423,8 @@ const tankNew = nf(M.TankNew, 'void', ['int', 'int', 'int']);
 const flottaMozgat = nf(M.FlottaMozgat, 'void', ['int', 'int', 'int', 'float', 'float']);
 // EpuletNewSearchLocation(p, kind, done, dmg%, x, y) (exe 0x53cca0): a building where the AI would put it; the slot.
 const epuletNew = nf(va(0x53cca0), 'int', ['int', 'int', 'int', 'int', 'int', 'int']);
+// AddWormhole(x1, y1, x2, y2) (exe 0x53aec0): the new wormhole's index (0 when there are already 5).
+const addWormhole = nf(va(0x53aec0), 'int', ['int', 'int', 'int', 'int']);
 function stageMerges() {
   const out = { fleets: {}, skipped: [] };
   const fl = (f) => F.Flottak.readPointer().add(f * 0x80);
@@ -500,6 +502,62 @@ function stageMerges() {
       const f = k.ships.length ? make(`${en}:wormhole`, en, x + 0.5, y, [k.ships[0]], []) : 0;
       if (f) flottaMozgat(f, 1, 2, wa, 0);
     }
+  }
+  return out;
+}
+
+// --wormholes: wormhole trips (re/rules/fleet-movement.md §4.3 "move/attack a wormhole fleet"). quick.scn's two
+// "- Wormhole -" fleets (bit 10) belong to no wormhole (OsszHanyWormhole 0), so the exe's own AddWormhole (0x53aec0,
+// what stories 902/239 call) opens one from next to the human's home planet (end A) to next to the AI's (end B).
+// Then: a human fleet moving to end A (comes out at B), an AI fleet attacking end B (out at A), a human fleet moving
+// to end A from afar (arrives some ticks later) and a human fleet moving to one of the scenario's unlisted wormhole
+// fleets (no trip; story special 0x14 all the same). Done before save 0.
+function stageWormholes() {
+  const out = { fleets: {}, skipped: [] };
+  const fl = (f) => F.Flottak.readPointer().add(f * 0x80);
+  const np = T.HanyBolygo.readS32(), en = T.EN.readS32(), ai = cfg.aiEmpire;
+  const pxy = (p) => [T.Bolygok.add(p * 0x188 + 0x18).readFloat(), T.Bolygok.add(p * 0x188 + 0x1c).readFloat()];
+  const home = (e) => { for (let p = 1; p <= np; p++) if (owner(p) === e) return p; return 0; };
+  const ship = (e) => {
+    for (let d = 1; d <= designs(e); d++) {
+      const r = design(e, d);
+      if (r.add(0x16).readS16() === 1 && (r.add(0x2c).readS32() > 0 || r.add(0x30).readS32() > 0) && r.add(0x36).readU8() === 0
+        && r.add(0x34).readU8() === 0 && r.add(0x35).readU8() === 0 && r.add(0x3c).readFloat() > 0) return d;
+    }
+    return 0;
+  };
+  const make = (tag, e, x, y) => {
+    const d = ship(e), f = d ? flottaNew(A.AlapNev.readPointer(), e, 0, x, y, 0) : 0;
+    if (f < 1) { out.skipped.push(tag); return 0; }
+    hajoNew(f, d);
+    fl(f).add(0x38).writeFloat(2);
+    fl(f).add(0x3c).writeFloat(2);
+    out.fleets[tag] = f;
+    return f;
+  };
+  const hh = home(en), ah = home(ai);
+  if (!hh || !ah) { out.skipped.push('homes'); return out; }
+  const [hx, hy] = pxy(hh), [ax, ay] = pxy(ah);
+  const listed = new Set();
+  for (let w = 1; w <= M.WormholeCount.readS32(); w++) { const r = M.Wormhole.add(0x1c * w); listed.add(r.add(10).readS16()); listed.add(r.add(0x16).readS16()); }
+  const dangling = [];
+  for (let f = 1; f <= F.HanyFlotta.readS32(); f++) if (fl(f).add(0x15).readU8() !== 0xff && (fl(f).add(0x52).readU16() & 0x400) && !listed.has(f)) dangling.push(f);
+  const w = addWormhole(Math.trunc(hx) + 6, Math.trunc(hy) - 6, Math.trunc(ax) - 6, Math.trunc(ay) + 6);
+  out.wormhole = w;
+  if (w < 1) return out;
+  const r = M.Wormhole.add(0x1c * w), fa = r.add(10).readS16(), fb = r.add(0x16).readS16();
+  out.ends = [fa, fb];
+  const [xa, ya] = [fl(fa).add(0x30).readFloat(), fl(fa).add(0x34).readFloat()], [xb, yb] = [fl(fb).add(0x30).readFloat(), fl(fb).add(0x34).readFloat()];
+  const h1 = make(`${en}:through`, en, xa + 0.5, ya);
+  if (h1) flottaMozgat(h1, 1, 2, fa, 0);
+  const a1 = make(`${ai}:attack`, ai, xb - 0.4, yb + 0.3);
+  if (a1) flottaMozgat(a1, 2, 2, fb, 0);
+  const h2 = make(`${en}:far`, en, xa + 20, ya + 15);
+  if (h2) flottaMozgat(h2, 1, 2, fa, 0);
+  out.dangling = dangling;
+  if (dangling.length) {
+    const d = dangling[0], h3 = make(`${en}:dangling`, en, fl(d).add(0x30).readFloat() + 0.5, fl(d).add(0x34).readFloat());
+    if (h3) flottaMozgat(h3, 1, 2, d, 0);
   }
   return out;
 }
@@ -793,6 +851,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (cfg.traders) emit({ k: 'traders', stage: stageTraders() });
       if (cfg.spies) emit({ k: 'spies', stage: stageSpies() });
       if (cfg.merges) emit({ k: 'merges', stage: stageMerges() });
+      if (cfg.wormholes) emit({ k: 'wormholes', stage: stageWormholes() });
       if (cfg.battles) emit({ k: 'battles', stage: stageBattles() });
       if (cfg.deaths) emit({ k: 'deaths', stage: stageDeaths() });
       if (cfg.stage) {

@@ -705,12 +705,22 @@ impl War<'_> {
             }
         }
         self.status();
-        if !self.ctx.multiplayer && self.field.countdown != -1 {
-            self.field.countdown -= 1;
-            if self.field.countdown == -1 {
-                let st = self.status();
+        if !self.ctx.multiplayer {
+            if self.field.countdown != -1 {
+                self.field.countdown -= 1;
+                if self.field.countdown == -1 {
+                    let st = self.status();
+                    self.finish(st, false);
+                    self.field.finished_flag = true;
+                }
+            }
+        } else if self.ctx.mp_war {
+            // MP (exe 0x494b70..): no countdown; a holder ends the war at once.
+            let st = self.status();
+            if st != CONTESTED {
                 self.finish(st, false);
                 self.field.finished_flag = true;
+                self.events.push(super::GroundEvent::Ended { holder: st });
             }
         }
     }

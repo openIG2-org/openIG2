@@ -18,7 +18,13 @@ battle starts, specials 0x11/0x19; --inline narrows the stories; re/rules/traces
 st_Begin_include in and stages the opening episodes 1..24 (starts, counters, messages, daily checks, specials, arrivals,
 space and ground battles, the radar, spy news; re/rules/traces/2026-10-16-begin.md). --keep rnd leaves st_Rnd_include in,
 keeps its unported stories from running (their st_Story calls get an unknown id) and stages the ported ones (starts,
-counters, answers, daily checks, a pirate battle's end, specials 0x14..0x19, battle starts; re/rules/traces/2026-10-16-rnd.md).
+counters, answers, daily checks, a pirate battle's end, specials 0x14..0x19, battle starts; re/rules/traces/2026-10-16-rnd.md). --keep elem
+leaves st_Elem_include in, patches its unported blocks out the same way and stages the ported storyline episodes
+(part 1: 805..868; starts, counters, messages read/answered, ground battles, radar contacts, arrivals, specials 10/13,
+daily checks; re/rules/traces/2026-10-16-elem.md).
+--keep fable leaves st_Fable_include in and stages the random fables 301..316 (their timers, answers, merchants'
+battles, the escort's arrival, the agent's death; battles are auto-resolved so the clock keeps running;
+re/rules/traces/2026-10-16-fable.md).
 The output holds game state derived from the user's install: keep it under _local/, never commit it.
 Record to _local/traces/pending-story-*.jsonl and rename to story-*.jsonl when complete (the replay globs story-*).
 Run in the foreground with --seconds 540 (the tool limit is 600 s).

@@ -24,6 +24,8 @@ pub struct RadarRules {
     pub ranges: [f32; 6],
     /// `RadarHatotav2Init`: planet radar range per planet radar level, stored right after `ranges`.
     pub planet_ranges: [f32; 8],
+    /// Wormhole `w`'s colour (`i32 [6][3]` at exe 0x913850, read by `AddWormhole`; `Game::add_wormhole`).
+    pub wormhole_colours: [[i32; 3]; 6],
 }
 
 impl RadarRules {
@@ -402,7 +404,7 @@ mod tests {
 
     fn rules() -> RadarRules {
         // Synthetic values (the real ones come from the user's exe).
-        RadarRules { ranges: [0.0, 10.0, 20.0, 30.0, 40.0, 50.0], planet_ranges: [0.0, 0.0, 0.0, 10.0, 20.0, 30.0, 40.0, 50.0] }
+        RadarRules { ranges: [0.0, 10.0, 20.0, 30.0, 40.0, 50.0], planet_ranges: [0.0, 0.0, 0.0, 10.0, 20.0, 30.0, 40.0, 50.0], ..Default::default() }
     }
 
     fn ctx() -> StarmapContext {
@@ -479,6 +481,25 @@ mod tests {
         let fade = (3.0 - ((625.0f32 / 100.0) as f64).sqrt() as f32) * 20.0;
         assert_eq!(m.fleets[2].radar, fade);
         assert_eq!(m.fleets[3].radar, 0.0, "beyond 3R: no radar");
+    }
+
+    /// The booster sum is f64 in the exe (§6.3 step 4) but can't differ from an f32 sum on reachable inputs: an
+    /// integral radar range times 1.5 is exact in f32, and two f32s whose exponents differ by < 29 add exactly in
+    /// f64, so the cast back rounds once like `addss` (`traces/2026-10-16-mp-radar.md`, "Booster sum").
+    #[test]
+    fn booster_sum_in_f64_equals_f32_on_reachable_inputs() {
+        let mut x = 12345u32;
+        let mut next = || {
+            x = x.wrapping_mul(1103515245).wrapping_add(12345);
+            (x >> 8) as f32 / (1 << 24) as f32
+        };
+        for _ in 0..200_000 {
+            let range = (next() * 1000.0) as i32 as f32;
+            let (dx, dy) = ((next() - 0.5) * 8000.0, (next() - 0.5) * 8000.0);
+            let d = dy * dy * 2.0 + dx * dx;
+            let wide = (d as f64 + range as f64 * 1.5) as f32;
+            assert_eq!(wide.to_bits(), (d + range * 1.5).to_bits(), "range {range}, d {d}");
+        }
     }
 
     #[test]

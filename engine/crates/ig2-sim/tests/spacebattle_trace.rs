@@ -6,6 +6,10 @@
 //! exe's state after the tick. Per-tick resync: a mismatch stays local. Rules and switches come from the
 //! trace (the live weapon table and the battle's globals). Traces: `_local/traces/spwc-*.jsonl` (game
 //! state: never committed; `IG2_TRACE_DIR` points elsewhere). Skips without them.
+//!
+//! `spwo-*.jsonl` (`run_spwc.py --orders N`) add the human's orders between ticks: each staged through the exe's own
+//! `MULTIGET_SpaceWar` (spec §7.12) with the bytes it changed; the replay applies `Battle::order` / `Battle::arm_all`
+//! to the decoded state and compares the same way.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
@@ -722,6 +726,8 @@ struct Run {
     shots: usize,
     lost: usize,
     over: usize,
+    /// Staged orders by message type.
+    orders: BTreeMap<i32, usize>,
 }
 
 trait Shots<'a> {
@@ -774,31 +780,7 @@ fn replay(path: &PathBuf, run: &mut Run) {
                 tidy(&mut before);
                 tidy(&mut after);
                 compare(&before, &after, &mut errs);
-                let seeds = mem.get("seeds");
-                for i in 0..21 {
-                    if rng.state(i) != u32_at(seeds, 4 * i) {
-                        errs.push(format!("stream {i}"));
-                    }
-                }
-                let want = world(&mem, st);
-                if wd.w.ships != want.w.ships {
-                    errs.push("Hajok".into());
-                }
-                if wd.w.vehicles[..] != want.w.vehicles[..wd.w.vehicles.len().min(want.w.vehicles.len())] {
-                    errs.push("Tankok".into());
-                }
-                for (f, (a, b)) in wd.w.fleets.iter().zip(&want.w.fleets).enumerate() {
-                    if a.owner != b.owner || (b.owner != 0xff && (a.totals != b.totals || a.x != b.x || a.y != b.y)) {
-                        errs.push(format!("fleet {f}"));
-                    }
-                }
-                if wd.planet != want.planet {
-                    errs.push("planet".into());
-                }
-                let types = |b: &Option<Vec<u8>>| b.as_ref().map(|b| b.chunks(0x20).map(|c| (c[0], i32_at(c, 4))).collect::<Vec<_>>());
-                if types(&wd.buildings) != types(&want.buildings) {
-                    errs.push("buildings".into());
-                }
+                strategic(&mem, st, &rng, &wd, &mut errs);
                 run.buildings += wd.buildings_hit;
                 run.steps += 1;
                 let exe = &after;
@@ -843,24 +825,114 @@ fn replay(path: &PathBuf, run: &mut Run) {
                     }
                 }
             }
+            "order" => {
+                let st = st.as_ref().unwrap();
+                let mut before = decode(&mem, st);
+                let (rules, words) = rules(&mem, st);
+                let mut rng = Streams::default();
+                let seeds = mem.get("seeds").to_vec();
+                for i in 0..21 {
+                    rng.set_state(i, u32_at(&seeds, 4 * i));
+                }
+                let mut wd = world(&mem, st);
+                let mut events = Vec::new();
+                let ty = e["type"].as_i64().unwrap() as i32;
+                let v: Vec<i32> = e["vals"].as_array().unwrap().iter().map(|x| x.as_i64().unwrap() as i32).collect();
+                let order = staged_order(ty, &v);
+                match order {
+                    Some(Order::ArmAll) => before.arm_all(&rules.weapons, &mut rng, v[0]),
+                    Some(o) => {
+                        let mut t = Tick { rules: &rules, weapon_words: &words, rng: &mut rng, world: &mut wd, events: &mut events };
+                        before.order(&mut t, v[0], o);
+                    }
+                    None => {}
+                }
+                mem.apply(&e["d"]);
+                let mut after = decode(&mem, st);
+                let mut errs = Vec::new();
+                tidy(&mut before);
+                tidy(&mut after);
+                compare(&before, &after, &mut errs);
+                strategic(&mem, st, &rng, &wd, &mut errs);
+                *run.orders.entry(ty).or_default() += 1;
+                if order.is_none() {
+                    *run.orders.entry(-1).or_default() += 1;
+                }
+                if !errs.is_empty() {
+                    run.bad += 1;
+                    if run.bad <= 6 {
+                        eprintln!("{} battle {} tick {} order {ty:#x} {v:?}: {:#?}", path.file_name().unwrap().to_string_lossy(), e["battle"], e["n"], errs);
+                    }
+                }
+            }
             _ => {}
         }
     }
 }
 
+/// A staged `MULTIGET_SpaceWar` message as the port's order (spec §7.12); `None` = one the handler ignores (a target
+/// of −1). `v` = the `Multi_Get` out-parameters in order (the issuer first).
+fn staged_order(ty: i32, v: &[i32]) -> Option<Order> {
+    let u = |i: usize| v[i] as usize;
+    Some(match ty {
+        0x70 => Order::Move { unit: u(4), x: f32::from_bits(v[1] as u32), y: f32::from_bits(v[2] as u32), z: f32::from_bits(v[3] as u32) },
+        0x71 if v[2] != -1 => Order::Attack { unit: u(1), target: u(2) },
+        0x72 => Order::Retreat,
+        0x73 if v[2] != -1 => Order::AttackGun { unit: u(1), gun: u(2) },
+        0x74 if v[2] != -1 => Order::GunTarget { gun: u(1), unit: u(2) },
+        0x75 => Order::ArmAll,
+        0x76 => Order::Explode { unit: u(2) },
+        0x77 => Order::FighterStance { side: u(2), value: v[1] },
+        0x44e => Order::DirectFire { unit: u(1), target: u(2), mount: u(3) },
+        0x44f => Order::Weapons { unit: u(1), keep: v[2] as u32, set: v[3] as u32 },
+        _ => return None,
+    })
+}
+
+/// The streams and the strategic records after a step or an order, against the exe's.
+fn strategic(mem: &Mem, st: &Statics, rng: &Streams, wd: &RawWorld, errs: &mut Vec<String>) {
+    let seeds = mem.get("seeds");
+    for i in 0..21 {
+        if rng.state(i) != u32_at(seeds, 4 * i) {
+            errs.push(format!("stream {i}"));
+        }
+    }
+    let want = world(mem, st);
+    if wd.w.ships != want.w.ships {
+        errs.push("Hajok".into());
+    }
+    if wd.w.vehicles[..] != want.w.vehicles[..wd.w.vehicles.len().min(want.w.vehicles.len())] {
+        errs.push("Tankok".into());
+    }
+    for (f, (a, b)) in wd.w.fleets.iter().zip(&want.w.fleets).enumerate() {
+        if a.owner != b.owner || (b.owner != 0xff && (a.totals != b.totals || a.x != b.x || a.y != b.y)) {
+            errs.push(format!("fleet {f}"));
+        }
+    }
+    if wd.planet != want.planet {
+        errs.push("planet".into());
+    }
+    let types = |b: &Option<Vec<u8>>| b.as_ref().map(|b| b.chunks(0x20).map(|c| (c[0], i32_at(c, 4))).collect::<Vec<_>>());
+    if types(&wd.buildings) != types(&want.buildings) {
+        errs.push("buildings".into());
+    }
+}
+
 #[test]
 fn battle_ticks_match_trace() {
-    let files = traces("spwc-");
+    let mut files = traces("spwc-");
+    files.extend(traces("spwo-"));
     if files.is_empty() {
         return;
     }
-    let mut run = Run { weapons: [0; 64], kinds: [0; 8], cover: BTreeMap::new(), buildings: 0, steps: 0, bad: 0, hits: 0, shots: 0, lost: 0, over: 0 };
+    let mut run = Run { weapons: [0; 64], kinds: [0; 8], cover: BTreeMap::new(), buildings: 0, steps: 0, bad: 0, hits: 0, shots: 0, lost: 0, over: 0, orders: BTreeMap::new() };
     for p in &files {
         replay(p, &mut run);
     }
     eprintln!("coverage (ticks): {:?}", run.cover);
     eprintln!("projectile-ticks by weapon: {:?}", run.weapons.iter().enumerate().filter(|x| *x.1 > 0).collect::<Vec<_>>());
     eprintln!("projectile-ticks by kind: {:?}", run.kinds);
+    eprintln!("orders by message (−1: ignored by the handler): {:x?}", run.orders);
     eprintln!(
         "spwc: {} ticks, {} shots fired, {} hits, {} ships lost, {} building hits, {} end checks true, {} mismatches",
         run.steps, run.shots, run.hits, run.lost, run.buildings, run.over, run.bad

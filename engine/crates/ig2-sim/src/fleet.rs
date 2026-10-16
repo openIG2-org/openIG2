@@ -137,6 +137,8 @@ pub struct Wormhole {
     pub by: f32,
     pub revealed_b: bool,
     pub fleet_b: i16,
+    /// `+0x18..+0x1a`: the ends' tint (`AddWormhole`).
+    pub tint: [u8; 3],
 }
 
 /// What the starmap needs to know about a planet.
@@ -310,7 +312,7 @@ pub enum StarmapEvent {
     ProtectedTarget { fleet: usize },
     /// `Story_Special(data)` from an arrival (spec §4.3), at its place in the loop: colonisation 10(owner, planet),
     /// terraforming 0x18(owner, planet), scripted 0x10(story id, fleet), wormhole 0x14(owner, 1, fleet,
-    /// wormholes + 1), protected target 0x12(target fleet, 2, fleet) / 0x12(fleet, 1, planet).
+    /// wormholes), protected target 0x12(target fleet, 2, fleet) / 0x12(fleet, 1, planet).
     StorySpecial([i32; 8]),
     /// A trader was paid at `planet` (booked through [`Arrivals::trader_paid`]).
     TraderPaid { fleet: usize, planet: usize, empire: u8, amount: i32 },
@@ -698,9 +700,10 @@ impl Starmap {
                         }
                     }
                 }
-                // The last argument is the loop counter after the loop: OsszHanyWormhole + 1 [original quirk].
-                let past = self.wormholes.len().max(1) as i32;
-                ev.push(StarmapEvent::StorySpecial([0x14, fl.owner as i32, 1, f as i32, past, 0, 0, 0]));
+                // The last argument is the loop's last index, OsszHanyWormhole (exe 0x596c71: a local copied before
+                // each increment); with no wormhole that local is never written: uninitialised, 0 here [original quirk].
+                let last = self.wormholes.len().saturating_sub(1) as i32;
+                ev.push(StarmapEvent::StorySpecial([0x14, fl.owner as i32, 1, f as i32, last, 0, 0, 0]));
             }
             let fl = self.fleets[f].clone();
             if fl.alive() && fl.order == order::ATTACK && fl.kind == order::FLEET {

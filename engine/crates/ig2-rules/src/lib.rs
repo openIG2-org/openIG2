@@ -39,6 +39,7 @@ pub mod layout {
     pub const HULLS: (u32, usize, usize) = (0x90BBF8, 36, 25); // Alapok
     pub const DESIGNS: (u32, usize, usize) = (0x90BF80, 132, 201); // Tervek0
     pub const SPACE_WEAPONS: (u32, usize, usize) = (0x91D858, 92, 40); // fegyverek
+    pub const SHOT_FORMS: (u32, usize, usize) = (0x9256F8, 0x78, 40); // fegyveralakok
     pub const RACE_SURFACE_AFFINITY: (u32, usize, usize) = (0x90B9D8, 4, 135); // FajBolygoViszony (15 × 9)
     pub const RESEARCH_SIZE_MULT: (u32, usize, usize) = (0x9185D0, 4, 192); // Research_MeretSzorzok
     pub const RACE_PRODUCTION_MULT: (u32, usize, usize) = (0x8F8870, 4, 15);
@@ -54,6 +55,7 @@ pub mod layout {
     pub const RACE_AI_MILITARY_AUTOBUILD: (u32, usize, usize) = (0x915FCC, 4, 15);
     pub const PROBLEM_CURVES: (u32, usize, usize) = (0x912858, 24, 20); // ProblemakLeiro
     pub const KIDNAP_MORALE: (u32, usize, usize) = (0x913838, 4, 6); // CsaladtagMoralCsokkenesLeiro
+    pub const WORMHOLE_COLOURS: (u32, usize, usize) = (0x913850, 12, 6); // i32 [6][3], AddWormhole's tints
     pub const RADAR_RANGES: (u32, usize, usize) = (0x913898, 4, 6); // RadarHatotav
     pub const PLANET_RADAR_RANGES: (u32, usize, usize) = (0x9138B0, 4, 8); // RadarHatotav2Init
     pub const TANK_SPEEDS: (u32, usize, usize) = (0x8EC9D4, 4, 5); // TankAlapSpeed (ground hull techs 145..=149)
@@ -63,6 +65,30 @@ pub mod layout {
     pub const AUTOBUILD_NAMES: (u32, usize, usize) = (0x8F1ED0, 4, 17); // AutoBuildNevek (char*)
     pub const PRODUCTION_DEFAULT: (u32, usize, usize) = (0x90B8A8, 1, 64); // pGyartas0
     pub const BUILDING_MODELS: (u32, usize, usize) = (0x8F1F28, 0x6c, 60); // Building (kind 1..=60), footprint +0x58/+0x5c
+    /// The colony screen's unit models (`WF_Tank::LoadMesh`, `re/screens/colony.md` §4): `TankAlap` (hull models, name +
+    /// vector directory at +0x34), `TankMeret` (hull scale), `TankPivotAdder`, `TankTorony` (weapon models),
+    /// `TankToronySize` (`[hull][9]`), `TankToronyMeret` (defence turrets 0xa1..=0xa8).
+    pub const TANK_MODELS: (u32, usize, usize) = (0x8F50D8, 0x38, 5);
+    pub const TANK_SCALE: (u32, usize, usize) = (0x8F1BC4, 4, 5);
+    pub const TANK_PIVOT: (u32, usize, usize) = (0x8EC524, 4, 5);
+    pub const TURRET_MODELS: (u32, usize, usize) = (0x8EC538, 0x38, 19);
+    pub const TURRET_SCALE: (u32, usize, usize) = (0x8F1BD8, 4, 45);
+    pub const DEFENCE_TURRET_SCALE: (u32, usize, usize) = (0x8F1BA4, 4, 8);
+    /// The bitmap font of `KiirStr` (`re/screens/messages.md` §1): glyph size, step, first row and glyphs per
+    /// row for sizes 0..=4 (`CharXMeret`, `CharYMeret`, `CharXTolas`, `CharYTolas`, `CharXKezdet`, `CharYDarab`),
+    /// and the glyph order of the atlas (162 bytes; Hungarian and the other languages).
+    pub const CHAR_TABLES: (u32, usize, usize) = (0x912A50, 4, 30);
+    pub const GLYPHS_HU: (u32, usize, usize) = (0x8527F0, 1, 162);
+    pub const GLYPHS: (u32, usize, usize) = (0x852748, 1, 162);
+    /// `FajnevX`: the info screen's race-name columns (`KirakFajNeveket`).
+    pub const RACE_NAME_X: (u32, usize, usize) = (0x90B6BC, 4, 8);
+    /// The HUD (`re/screens/hud.md` §1): `Kepek` (the 2D pictures, file name at +0) and the colony and starmap
+    /// screens' brush records (`ColonyBrushok`, `StarmapBrushok`; 14 dwords each).
+    pub const PICTURES: (u32, usize, usize) = (0x903558, 0x124, 107);
+    pub const COLONY_BRUSHES: (u32, usize, usize) = (0x8ECA08, 0x38, 33);
+    pub const STARMAP_BRUSHES: (u32, usize, usize) = (0x927130, 0x38, 13);
+    /// `utdarabsize`: the scale of the road pieces `ut1..ut9.xvb` (`AddUtDarab`).
+    pub const ROAD_SCALE: (u32, usize, usize) = (0x8EC968, 4, 9);
     pub const DECLARE_WAR_UNRELIABILITY: (u32, usize, usize) = (0x902FC0, 4, 16); // Megbizhatatlansag_DeclareWar [2][4][2]
     pub const SPY_MISSIONS: (u32, usize, usize) = (0x912F48, 0x20, 27); // KemKuldetesek
     pub const SPY_OUTCOME_STATE: (u32, usize, usize) = (0x9132A8, 4, 5); // KemKuldetesAtmenet
@@ -73,6 +99,7 @@ pub mod layout {
     pub const SPY_TRAINING_XP: (u32, usize, usize) = (0x92705C, 4, 6); // TrainingKuldetesXP
     pub const SPY_TRAINING_COST: (u32, usize, usize) = (0x927044, 4, 6); // TrainingKuldetesAr
     pub const SPY_RACE_COST_MULT: (u32, usize, usize) = (0x91376C, 4, 15); // KemKuldetesPenzSzorzoFajonkent
+    pub const SPY_HIRE_COST_MULT: (u32, usize, usize) = (0x9137FC, 4, 15); // KemFelvetelPenzSzorzoFajonkent
     /// The AI's unit categories 1..=10 (`re/rules/ai-empire.md` §1.2): how a category is built, and the
     /// range of `MiTervMutato` slots it takes its design from (11 bytes each, padded to 12 in the exe).
     pub const AI_BUILD_MODE: (u32, usize, usize) = (0x915F6C, 1, 11); // MiGyartasMod
@@ -101,8 +128,8 @@ pub mod layout {
     /// Armour factors by ground hull and hit side (front, side, rear): `SetRealDamage` divides by them.
     pub const GROUND_ARMOUR: (u32, usize, usize) = (0x8F858C, 4, 15);
     /// The campaign tables `StoryEleje`, `StoryElejeSeq`, `StoryLine`, `StoryScenario`, `RndStoryk`,
-    /// `RndStoryValasztas`, `StoryHosok`, `RndHosok` (contiguous; `re/rules/campaign.md` §8.1).
-    pub const CAMPAIGN: (u32, usize, usize) = (0x928340, 4, 411);
+    /// `RndStoryValasztas`, `StoryHosok`, `RndHosok`, `StoryKuldetes` (contiguous; `re/rules/campaign.md` §8.1).
+    pub const CAMPAIGN: (u32, usize, usize) = (0x928340, 4, 423);
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -203,6 +230,79 @@ pub struct Building {
     /// +32 bit 0: the effect is the scaled output (otherwise 1 per building);
     /// +33 bit 0: the effect persists while the building isn't working.
     pub flags: [u8; 2],
+}
+
+/// How the colony screen shows a building kind (`Building[k − 1]`, 0x6c bytes; `re/screens/colony.md` §3).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BuildingModel {
+    /// `+0x00`: the model (`LoadMaxLevelBox` in `vector/colony/`).
+    pub model: String,
+    /// `+0x28`: the build menu's preview model.
+    pub preview: String,
+    /// `+0x50`: the model's scale (`AddToSceneGenesis(…, scale / 1024 / 1000)`).
+    pub scale: f32,
+    /// `+0x54`: the preview's scale.
+    pub preview_scale: f32,
+}
+
+/// A model of the colony screen's units: the name (`LoadBox`) and the vector directory it loads from
+/// (`+0x34`: 0 `starmap/transfer`, 1 `spacewar`, 2 `talalmanyok`, 3 `colony`).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct UnitModel {
+    pub name: String,
+    pub dir: i32,
+}
+
+/// The ground units' models (`WF_Tank::LoadMesh` ELF 0x46efc0, `re/screens/colony.md` §4).
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct UnitModels {
+    /// `TankAlap[hull]`, scaled `TankMeret[hull] / 1024 / 10 / 5` (`AddToSceneGenesis`).
+    pub hulls: Vec<UnitModel>,
+    pub hull_scale: Vec<f32>,
+    /// `TankPivotAdder[hull]`: how far along the body's third axis the model sits.
+    pub pivot: Vec<f32>,
+    /// `TankTorony[k]`: weapon pods 0xa1.. (k = pod − 0xa1), the defence turrets (k = pod − 0x98), the
+    /// air-strike pods 0x11/0x12.
+    pub turrets: Vec<UnitModel>,
+    /// `TankToronySize[hull·9 + k]` (scale `/ 1024 / 10`).
+    pub turret_scale: Vec<f32>,
+    /// `TankToronyMeret[pod − 0xa1]` for the defence turrets.
+    pub defence_scale: Vec<f32>,
+}
+
+/// `KiirStr`'s bitmap font (`screen/charset_bmp`, a 256-unit atlas): per size 0..=4 the glyph size, its step in the
+/// atlas, the first row's y and the glyphs per row; the glyph order maps a byte to its atlas index (bytes not in it
+/// show glyph 76, a space).
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct Charset {
+    pub width: Vec<i32>,
+    pub height: Vec<i32>,
+    pub step_x: Vec<i32>,
+    pub step_y: Vec<i32>,
+    pub start_y: Vec<i32>,
+    pub per_row: Vec<i32>,
+    pub order_hu: Vec<u8>,
+    pub order: Vec<u8>,
+}
+
+/// A HUD brush record (`re/screens/hud.md` §1): a rectangle of picture `kep` drawn at `dst`. A negative size means
+/// the source rectangle is in the original's pixels on a picture twice as large (the remaster's); frame `n` of an
+/// animated brush starts `step·((n − 1) % per_row, (n − 1) / per_row)` further on.
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+pub struct Brush {
+    pub src: [i32; 2],
+    pub dst: [i32; 2],
+    pub size: [i32; 2],
+    pub step: [i32; 2],
+    pub per_row: i32,
+    pub kep: i32,
+}
+
+impl Brush {
+    pub fn from_record(r: &[u8]) -> Self {
+        let w = |k: usize| i32_at(r, 4 * k);
+        Self { src: [w(0), w(1)], dst: [w(2), w(3)], size: [w(4), w(5)], step: [w(6), w(7)], per_row: w(8), kep: w(9) }
+    }
 }
 
 /// A spy mission (`KemKuldetesek`, 0x20 bytes; `re/rules/espionage.md` §1.2).
@@ -313,6 +413,19 @@ pub struct SpaceWeapon {
     pub flags: [u8; 4],
 }
 
+/// A projectile form (`fegyveralakok`, 0x78 bytes; `re/rules/space-combat.md` §7.1): its model, sprite size and
+/// pool size (the battle's projectile slots of this form).
+#[derive(Debug, Clone, Serialize)]
+pub struct ShotForm {
+    pub index: usize,
+    /// +0: the model file; empty = never loaded (the form can't be fired).
+    pub model: String,
+    /// +0x10: sprite size.
+    pub size: f32,
+    /// +0x14: pool slots.
+    pub slots: i32,
+}
+
 /// Default design (`Tervek0`, 0x84 bytes; layout in `re/rules/space-combat.md` §2.3).
 #[derive(Debug, Clone, Serialize)]
 pub struct DesignTemplate {
@@ -336,6 +449,7 @@ pub struct Rules {
     pub hulls: Vec<Hull>,
     pub designs: Vec<DesignTemplate>,
     pub space_weapons: Vec<SpaceWeapon>,
+    pub shot_forms: Vec<ShotForm>,
     /// `TankAlapSpeed`: base speed of the ground hulls (techs 145..=149), ÷100 in designs.
     pub tank_speeds: Vec<f32>,
     pub skirmish_tech_start: Vec<i32>,
@@ -358,6 +472,9 @@ pub struct Rules {
     pub problem_curves: Vec<ProblemCurve>,
     /// Morale loss per kidnapped-family-member state (`CsaladtagMoralCsokkenesLeiro`).
     pub kidnap_morale: Vec<i32>,
+    /// Wormhole `w`'s colour (`i32 [6][3]` at 0x913850, just before `RadarHatotav`; `AddWormhole` tints its ends
+    /// with it, fleet-movement.md "Opening a wormhole").
+    pub wormhole_colours: [[i32; 3]; 6],
     /// Radar range per radar tech level 0..=5 (`RadarHatotav`; fleet-movement.md §6).
     pub radar_ranges: Vec<f32>,
     /// Planet radar range per planet radar level 0..=7, copied to every empire at new game
@@ -375,6 +492,19 @@ pub struct Rules {
     /// `Building[k − 1]` `+0x58/+0x5c`: footprint (width, height) of building kind `k` on the 200 × 200
     /// colony grid, indexed by kind (entry 0 = (0, 0); `re/rules/colony-placement.md` §1).
     pub building_footprints: Vec<(i32, i32)>,
+    /// `Building[k − 1]`'s models, indexed by kind (entry 0 is empty).
+    pub building_models: Vec<BuildingModel>,
+    pub unit_models: UnitModels,
+    /// `utdarabsize[n − 1]`: the `AddToScene` scale of road piece `ut<n>.xvb`, n = 1..=9.
+    pub road_scale: Vec<f32>,
+    pub charset: Charset,
+    /// `FajnevX[e − 1]`: where the info screen writes race `e`'s name.
+    pub race_name_x: Vec<i32>,
+    /// `Kepek[k]`'s file names (`COLONY_X.BMP`, …), by picture index.
+    pub pictures: Vec<String>,
+    /// `ColonyBrushok`, `StarmapBrushok` (index 0 unused).
+    pub colony_brushes: Vec<Brush>,
+    pub starmap_brushes: Vec<Brush>,
     /// `Megbizhatatlansag_DeclareWar`: `[undeclared][row][victim, others]` unreliability a war adds
     /// (`re/rules/diplomacy.md` §8.1), 16 i32 in memory order.
     pub declare_war_unreliability: Vec<i32>,
@@ -392,6 +522,8 @@ pub struct Rules {
     pub spy_training_cost: Vec<i32>,
     /// `KemKuldetesPenzSzorzoFajonkent[race]`: mission cost multiplier.
     pub spy_race_cost_mult: Vec<f32>,
+    /// `KemFelvetelPenzSzorzoFajonkent[race]`: an applicant's price per rank, ÷ 3000 (`espionage.md` §8).
+    pub spy_hire_cost_mult: Vec<f32>,
     /// `MiGyartasMod` / `MiGyartasMitMin` / `MiGyartasMitMax`, categories 0..=10 (`ai-empire.md` §1.2).
     pub ai_build_mode: Vec<u8>,
     pub ai_build_min: Vec<u8>,
@@ -443,6 +575,27 @@ pub struct ShipTypeRecord {
 }
 
 impl Rules {
+    /// `fegyverek` as the exe holds it (40 × 0x5c bytes), for readers that index past a record like the battle does.
+    pub fn space_weapon_table(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.space_weapons.len() * 0x5c);
+        for w in &self.space_weapons {
+            out.extend_from_slice(&w.kind.to_le_bytes());
+            out.extend_from_slice(&w.reload.to_le_bytes());
+            for d in w.damage {
+                out.extend_from_slice(&d.to_le_bytes());
+            }
+            out.extend_from_slice(&w.accuracy.to_le_bytes());
+            for f in [w.spread, w.f40, w.speed, w.f48] {
+                out.extend_from_slice(&f.to_le_bytes());
+            }
+            for v in [w.duration, w.range, w.graphic] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&w.flags);
+        }
+        out
+    }
+
     /// Read every catalogued table from the bytes of the user's `ig2.exe`.
     pub fn from_exe(exe: &[u8]) -> Result<Self> {
         let digest: String = Sha256::digest(exe).iter().map(|b| format!("{b:02x}")).collect();
@@ -591,6 +744,15 @@ impl Rules {
             hulls,
             designs,
             space_weapons,
+            shot_forms: {
+                let (b, s, n) = tab(layout::SHOT_FORMS)?;
+                (0..n)
+                    .map(|i| {
+                        let r = &b[i * s..(i + 1) * s];
+                        ShotForm { index: i, model: cstr(&r[..0x10]), size: f32::from_bits(i32_at(r, 0x10) as u32), slots: i32_at(r, 0x14) }
+                    })
+                    .collect()
+            },
             tank_speeds: floats(layout::TANK_SPEEDS)?,
             skirmish_tech_start: ints(layout::SKIRMISH_TECH_START)?,
             race_surface_affinity: affinity.chunks(9).map(<[i32]>::to_vec).collect(),
@@ -611,6 +773,10 @@ impl Rules {
                 .map(|v| ProblemCurve { a: v[0], b: v[1], c: v[2], d: v[3], rate: v[4], weight: v[5] })
                 .collect(),
             kidnap_morale: ints(layout::KIDNAP_MORALE)?,
+            wormhole_colours: {
+                let v = rec_ints(layout::WORMHOLE_COLOURS)?;
+                std::array::from_fn(|w| std::array::from_fn(|i| v[w][i]))
+            },
             radar_ranges: floats(layout::RADAR_RANGES)?,
             planet_radar_ranges: floats(layout::PLANET_RADAR_RANGES)?,
             autobuild_problem: ints(layout::AUTOBUILD_PROBLEM)?,
@@ -621,6 +787,59 @@ impl Rules {
             building_footprints: {
                 let (b, s, n) = tab(layout::BUILDING_MODELS)?;
                 std::iter::once((0, 0)).chain((0..n).map(|i| (i32_at(b, i * s + 0x58), i32_at(b, i * s + 0x5c)))).collect()
+            },
+            road_scale: floats(layout::ROAD_SCALE)?,
+            charset: {
+                let t = ints(layout::CHAR_TABLES)?;
+                let bytes = |t| -> Result<Vec<u8>> { Ok(tab(t)?.0.to_vec()) };
+                Charset {
+                    width: t[0..5].to_vec(),
+                    height: t[5..10].to_vec(),
+                    step_x: t[10..15].to_vec(),
+                    step_y: t[15..20].to_vec(),
+                    start_y: t[20..25].to_vec(),
+                    per_row: t[25..30].to_vec(),
+                    order_hu: bytes(layout::GLYPHS_HU)?,
+                    order: bytes(layout::GLYPHS)?,
+                }
+            },
+            race_name_x: ints(layout::RACE_NAME_X)?,
+            pictures: {
+                let (b, s, n) = tab(layout::PICTURES)?;
+                (0..n).map(|i| cstr(&b[i * s..i * s + 0x100])).collect()
+            },
+            colony_brushes: {
+                let (b, s, n) = tab(layout::COLONY_BRUSHES)?;
+                (0..n).map(|i| Brush::from_record(&b[i * s..(i + 1) * s])).collect()
+            },
+            starmap_brushes: {
+                let (b, s, n) = tab(layout::STARMAP_BRUSHES)?;
+                (0..n).map(|i| Brush::from_record(&b[i * s..(i + 1) * s])).collect()
+            },
+            unit_models: {
+                let models = |t| -> Result<Vec<UnitModel>> {
+                    let (b, s, n) = tab(t)?;
+                    Ok((0..n).map(|i| UnitModel { name: cstr(&b[i * s..i * s + 0x28]), dir: i32_at(b, i * s + 0x34) }).collect())
+                };
+                UnitModels {
+                    hulls: models(layout::TANK_MODELS)?,
+                    hull_scale: floats(layout::TANK_SCALE)?,
+                    pivot: floats(layout::TANK_PIVOT)?,
+                    turrets: models(layout::TURRET_MODELS)?,
+                    turret_scale: floats(layout::TURRET_SCALE)?,
+                    defence_scale: floats(layout::DEFENCE_TURRET_SCALE)?,
+                }
+            },
+            building_models: {
+                let (b, s, n) = tab(layout::BUILDING_MODELS)?;
+                let f = |o: usize| f32::from_bits(i32_at(b, o) as u32);
+                let empty = BuildingModel { model: String::new(), preview: String::new(), scale: 0.0, preview_scale: 0.0 };
+                std::iter::once(empty)
+                    .chain((0..n).map(|i| {
+                        let r = i * s;
+                        BuildingModel { model: cstr(&b[r..r + 0x28]), preview: cstr(&b[r + 0x28..r + 0x50]), scale: f(r + 0x50), preview_scale: f(r + 0x54) }
+                    }))
+                    .collect()
             },
             declare_war_unreliability: ints(layout::DECLARE_WAR_UNRELIABILITY)?,
             spy_missions: {
@@ -667,6 +886,7 @@ impl Rules {
             spy_names: spy_names(&img)?,
             spy_training_cost: ints(layout::SPY_TRAINING_COST)?,
             spy_race_cost_mult: floats(layout::SPY_RACE_COST_MULT)?,
+            spy_hire_cost_mult: floats(layout::SPY_HIRE_COST_MULT)?,
             ai_build_mode: tab(layout::AI_BUILD_MODE)?.0.to_vec(),
             ai_build_min: tab(layout::AI_BUILD_MIN)?.0.to_vec(),
             ai_build_max: tab(layout::AI_BUILD_MAX)?.0.to_vec(),

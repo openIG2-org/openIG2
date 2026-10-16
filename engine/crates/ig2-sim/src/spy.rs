@@ -239,6 +239,8 @@ pub struct SpyRules {
     pub names: Vec<Vec<u8>>,
     /// `EpuletekLeiro[kind].+0`: the tech a building kind belongs to (sabotage's filter).
     pub building_tech: Vec<u8>,
+    /// `KemFelvetelPenzSzorzoFajonkent[race]` (exe 0x9137FC): an applicant's price per rank, ÷ 3000.
+    pub hire_cost_mult: Vec<f32>,
 }
 
 impl SpyRules {
@@ -248,6 +250,23 @@ impl SpyRules {
     fn state_after(&self, outcome: usize) -> i16 {
         self.outcome_state.get(outcome).copied().unwrap_or(0) as i16
     }
+}
+
+/// A spy-screen order (`MULTIGET_Spy`'s messages, spec §8); `spy` is a slot of the sender's roster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Order {
+    /// 0x47: dismiss.
+    Dismiss { spy: u8 },
+    /// 0x48: call a spy on a mission home.
+    Recall { spy: u8 },
+    /// 0x49: send a spy at home on mission `mission` against `target` for `days` days.
+    Send { spy: u8, mission: u16, target: u8, param1: i16, param2: i16, days: i32 },
+    /// 0x4a: the sender's verdict (`fate` 1..=6, §4.2) on `owner`'s caught spy.
+    Verdict { fate: i32, owner: u8, spy: u8 },
+    /// 0x4b: an applicant: 1 hire, 2 reject, 3 turn away (kept in the spare slot 0 nine times in ten).
+    Applicant { choice: i32, spy: u8 },
+    /// 0x4c: one skill point into byte `+0x30 + skill` (1..=4 = the skills).
+    Skill { spy: u8, skill: u8 },
 }
 
 /// State owned by espionage.
@@ -296,6 +315,8 @@ pub struct SpyContext {
     /// The empires whose own machine sends the original's `Multi_Send(.., EN, ..)`: `EN` alone (classic, the
     /// default `None`), or every human (`game::ViewMode::Canonical`, ADR 0007 §5).
     pub senders: Option<[bool; EMPIRES]>,
+    /// Canonical multiplayer: the other humans, each with its own report queue (`re/rules/multiplayer.md` §5.2).
+    pub listed: [bool; EMPIRES],
 }
 
 impl SpyContext {
@@ -391,6 +412,8 @@ impl Report {
 pub enum SpyEvent {
     /// A report to the human (`KemJelentesAdd`).
     Report(Report),
+    /// A report to another human with its own queue (canonical multiplayer, `re/rules/multiplayer.md` §5.2).
+    ReportTo { to: u8, report: Report },
     /// A mission hit the human (`target`; `info-messages.md` §3.3's victim messages): `a` = the planet (sabotage,
     /// rebellion), the hull tech (ship) or the family member (kidnap); `b` = the building type (sabotage).
     Struck { mission: u16, a: i32, b: i32 },
@@ -401,8 +424,8 @@ pub enum SpyEvent {
     Caught { empire: u8, spy: u8, target: u8, outcome: u8, fate: Option<u8> },
     /// A story mission's catch check said "caught".
     StoryCaught { empire: u8, spy: u8 },
-    /// `Story_Special(0xb, t, e)` and `FelfedezBirodalom(e, true)`: the human caught a spy of an unknown empire.
-    Discovered { empire: u8 },
+    /// `Story_Special(0xb, t, e)` and `FelfedezBirodalom(e, true)`: human `by` caught a spy of an unknown empire.
+    Discovered { empire: u8, by: u8 },
     /// A spy got home (message 0x82 to the human).
     Returned { empire: u8, spy: u8 },
     /// A mission ended; `report` = the result's values (`info-messages.md` §3.3's `r0..r4`; fail codes in `report[4]`).
@@ -456,10 +479,12 @@ impl World<'_> {
             r.v[field::SPY_GRIEVANCE] = r.v[field::SPY_GRIEVANCE].wrapping_add(x);
         }
     }
-    /// `KemJelentesAdd`, when `to` is the human.
+    /// `KemJelentesAdd`, when `to` is the human (or another human with its own queue).
     fn report(&mut self, to: usize, r: Report) {
         if to == self.ctx.human_empire {
             self.events.push(SpyEvent::Report(r));
+        } else if self.ctx.listed.get(to).copied().unwrap_or(false) {
+            self.events.push(SpyEvent::ReportTo { to: to as u8, report: r });
         }
     }
     fn struck(&mut self, t: usize, mission: usize, a: i32, b: i32) {
@@ -542,12 +567,98 @@ impl Spies {
             }
         }
         self.recruit(w);
+        self.recount(w);
+    }
+
+    /// `HanyKemVan[e]` (§7).
+    fn recount(&mut self, w: &World) {
         for e in 1..ROSTERS {
             self.working[e] = 0;
             if w.ctx.race(e) != 5 && w.ctx.alive(e) {
                 self.working[e] = (1..=self.len(e)).filter(|&k| self.spy(e, k).state > 0 && self.spy(e, k).applicant == 0).count() as i32;
             }
         }
+    }
+
+    /// `MULTIGET_Spy` (exe 0x5883c0, spec §8): empire `e`'s order from the spy screen, then the recount. `training` =
+    /// `TrainingKuldetesAr`, `mult` = `KemKuldetesPenzSzorzoFajonkent`. An order naming a slot, empire, mission or
+    /// table entry outside the exe's arrays is dropped (the exe would read past them).
+    pub fn order(&mut self, w: &mut World, e: usize, o: Order, training: &[i32], mult: &[f32]) {
+        if e >= ROSTERS {
+            return;
+        }
+        let money = |w: &World, e: usize| w.colony.money.get(e).map_or(0.0, |m| m.available(0));
+        let race = w.ctx.race(e) as usize;
+        match o {
+            Order::Dismiss { spy } if (spy as usize) < SLOTS => self.spy_mut(e, spy as usize).state = state::NONE,
+            Order::Recall { spy } if (spy as usize) < SLOTS => {
+                let s = self.spy_mut(e, spy as usize);
+                if s.state == state::MISSION {
+                    s.mission = 0;
+                    s.state = state::HOME;
+                }
+            }
+            Order::Send { spy, mission: m, target, param1, param2, days } if (spy as usize) < SLOTS && (m as usize) < w.rules.missions.len() => {
+                let cost = if m as usize == mission::TRAINING {
+                    match usize::try_from(param1).ok().and_then(|i| training.get(i)) {
+                        Some(&c) => c,
+                        None => return,
+                    }
+                } else {
+                    w.rules.mission(m as usize).cost
+                };
+                let c = (cost as f32 * mult.get(race).copied().unwrap_or(0.0)) as i32;
+                if c as f64 <= money(w, e) && self.spy(e, spy as usize).state == state::HOME {
+                    w.colony.add_money(e, 0, -c as f64, w.side_rules, w.econ);
+                    let len = days.wrapping_mul(50);
+                    let catch_at = w.r(len / 3, len.wrapping_sub(30));
+                    let s = self.spy_mut(e, spy as usize);
+                    s.state = state::MISSION;
+                    s.mission = m;
+                    s.target = target;
+                    s.param1 = param1;
+                    s.param2 = param2;
+                    s.length = len;
+                    s.left = len;
+                    s.catch_at = catch_at;
+                }
+            }
+            Order::Verdict { fate, owner, spy } if (owner as usize) < ROSTERS && (spy as usize) < SLOTS => {
+                self.fate(w, e, fate, owner as usize, spy as usize);
+            }
+            Order::Applicant { choice, spy } if (spy as usize) < SLOTS => {
+                let k = spy as usize;
+                if choice == 1 {
+                    let s = *self.spy(e, k);
+                    let c = if s.race == 14 { 0 } else { (w.rules.hire_cost_mult.get(race).copied().unwrap_or(0.0) * 3000.0 * s.rank as f32) as i32 };
+                    if c as f64 <= money(w, e) || c == 0 {
+                        w.colony.add_money(e, 0, -c as f64, w.side_rules, w.econ);
+                        self.spy_mut(e, k).applicant = 0;
+                    } else {
+                        self.spy_mut(e, k).state = state::NONE;
+                    }
+                }
+                if choice == 2 {
+                    self.spy_mut(e, k).state = state::NONE;
+                } else if choice == 3 {
+                    if w.r(1, 10) > 1 {
+                        self.roster[e][0] = *self.spy(e, k);
+                    }
+                    self.spy_mut(e, k).state = state::NONE;
+                }
+            }
+            Order::Skill { spy, skill } if (spy as usize) < SLOTS && 0x30 + (skill as usize) < RECORD => {
+                let s = self.spy_mut(e, spy as usize);
+                if s.state > 0 && s.points > 0 {
+                    let mut b = s.to_bytes();
+                    b[0x30 + skill as usize] = b[0x30 + skill as usize].wrapping_add(1);
+                    *s = Spy::from_bytes(&b);
+                    s.points -= 1;
+                }
+            }
+            _ => {}
+        }
+        self.recount(w);
     }
 
     fn spy_day(&mut self, w: &mut World, e: usize, k: usize, flag: &mut u8) {
@@ -692,8 +803,8 @@ impl Spies {
                 outcome::DONE
             } else if c < 45 || w.ctx.forced(2) {
                 if w.colony.knows[t][e] == 0 {
-                    if t == w.ctx.human_empire {
-                        w.events.push(SpyEvent::Discovered { empire: e as u8 });
+                    if t == w.ctx.human_empire || w.ctx.listed[t] {
+                        w.events.push(SpyEvent::Discovered { empire: e as u8, by: t as u8 });
                     }
                     w.colony.knows[t][e] = 1;
                 }
@@ -1310,6 +1421,7 @@ mod tests {
             training_xp: vec![0, 100, 200, 300, 400, 500],
             names: (0..37).map(|i| format!("Spy{i}").into_bytes()).collect(),
             building_tech: (0..60).collect(),
+            hire_cost_mult: vec![1.0; 15],
         }
     }
 
@@ -1385,6 +1497,25 @@ mod tests {
 
     fn on_mission(m: usize, target: u8, skill: u8) -> Spy {
         Spy { state: state::MISSION, mission: m as u16, target, left: 50, catch_at: -1000, skills: [skill; 4], rank: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn reports_reach_each_human_with_a_queue() {
+        let mut f = Fixture::new();
+        let r = Report { kind: 2, a: 1, ..Default::default() };
+        let (_, ev) = f.run(|w| {
+            w.report(6, r);
+            w.report(3, r);
+        });
+        // Classic: only `EN`'s.
+        assert_eq!(ev, vec![SpyEvent::Report(r)]);
+        f.ctx.listed[3] = true;
+        let (_, ev) = f.run(|w| {
+            w.report(6, r);
+            w.report(3, r);
+            w.report(4, r);
+        });
+        assert_eq!(ev, vec![SpyEvent::Report(r), SpyEvent::ReportTo { to: 3, report: r }]);
     }
 
     #[test]

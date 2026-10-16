@@ -116,8 +116,10 @@ In this order of precedence:
 
 The arrivals' story calls go **inside the loop**, before the fleet is deleted: colonisation
 `Story_Special(10, owner, p)`, terraforming `Story_Special(0x18, owner, p)`, scripted `Story_Special(0x10, id, f)`,
-a wormhole trip `Story_Special(0x14, owner, 1, f, OsszHanyWormhole + 1)` (the last argument is the wormhole
-loop's counter after the loop [original quirk]) and an attack on a protected target `Story_Special(0x12, t, 2, f)`
+a wormhole trip `Story_Special(0x14, owner, 1, f, OsszHanyWormhole)` (the last argument is the wormhole loop's
+last index: the exe copies the counter to a local before each increment, 0x596c71; with no wormhole the local is
+never written and the call passes an uninitialised stack word [original quirk]; the ELF's counter after the loop
+would be `+ 1`; verified, `traces/2026-10-16-wormholes.md`) and an attack on a protected target `Story_Special(0x12, t, 2, f)`
 (fleet) / `Story_Special(0x12, f, 1, p)` (planet); then `Story_FleetArrivedCheck` at the end of the fleet's step.
 4. Otherwise:
    - move to a planet: virus bookkeeping (bit2: picks up a virus at a planet with an epidemic; spreads it
@@ -237,7 +239,7 @@ unless marked f64).
 | `BirodalomIsmeri` | 0xbaebb8 | u8 [19][19] | `[e][o]`: empire `e` has met empire `o` |
 | `OsszHanyKolonizalo` / `…Terraformalo` | 0xbb4108 / 0xbb4158 | i32 [19] | idle colony ships / terraformers aboard fleets |
 | `ProgramPlayers` / `ProgramPlayers2` | 0x912acc / 0x912ad0 | i32 | empires that can discover (8) / empires in the visibility and alliance loops (16 in quick.scn) |
-| `Wormhole` / `OsszHanyWormhole` | 0xbb60f8 / 0xbb61a0 | 0x1c B, 1-based | `+8 u8` end A revealed, `+10 i16` end A fleet, `+0x14 u8`, `+0x16 i16` end B |
+| `Wormhole` / `OsszHanyWormhole` | 0xbb60f8 / 0xbb61a0 | 0x1c B, 1-based, ≤ 5 | `+0/+4` f32 end A, `+8 u8` end A revealed, `+10 i16` end A fleet, `+0xc/+0x10` end B, `+0x14 u8`, `+0x16 i16` end B fleet, `+0x18..+0x1a` u8 tint (below) |
 | `StoryAdat` | 0xf273f8 | | `+0x28` tracked story fleet (`T`), `+0x38` human radar bonus, `+0x48` no supply limit, `+0x50` supply planet |
 | tutorial | 0xf6915d / 0xf66f2a / 0xf66f40 | u8 / u8 / i32 | active, paused, current event |
 
@@ -336,6 +338,16 @@ The space-war in-battle marking (§6.3 step 8: an input, the list of fleets in b
 and side effects owned by other systems, reported as events: arrivals (battles, virus spread) and radar consequences (story event 0x0B / `FelfedezBirodalom` on
 meeting an empire, `Story_ArrivedToRadarRange*`, the "enemy approaching" message, the tutorial rename).
 
+### Opening a wormhole (`AddWormhole(x1, y1, x2, y2)`, exe 0x53aec0)
+Called by stories 902 and 239 (`campaign.md`). With `OsszHanyWormhole > 4` it returns 0; else `w = ++OsszHanyWormhole`,
+end A = `((f32)x1, (f32)y1)` not revealed, its fleet `FlottaNew("- Wormhole -", owner 0, id 0, (f32)x1, (f32)y1, 0)`
+with `+0x53 |= 4` (bit 10, wormhole) and `|= 2` (bit 9); end B likewise from `(x2, y2)`. The tint
+`+0x18 + i = 255 − (255 − c[w][i]) / 2` (C division, stored as a byte) from `i32 [6][3]` at exe 0x913850 (the
+original's colours, just before `RadarHatotav`); then four `WormHole` scene objects (render only: both ends, two
+colour orders). Returns `w`. Ported as `Game::add_wormhole`, which carries out the stories' `StoryEvent::Wormhole`;
+story 239's follow-up (`StoryEvent::RevealWormhole`, exe 0x5ceb86: when `w ≠ 0`, `+8`/`+0x14` := 1 and both fleets'
+`+0x53 |= 1`) is `Game::reveal_wormhole`. Verified byte-exact against the exe (`traces/2026-10-16-addwormhole.md`).
+
 ## 11. Verification
 `traces/2026-10-15-fleet.md`: Frida before/after snapshots of every `FRISSIT_Starmap` tick on the GOG
 exe (plain quick.scn and a fuzzed run with random orders, waypoints, patrols, follow orders, speed
@@ -351,7 +363,10 @@ Merges, colonisation, terraforming and deletions with their units (§4.3, §4.6)
 replay (`traces/2026-10-16-merges.md`: `run_replay.py --merges`, 36 ticks: 7 merges with vehicles, a name copy, a
 retargeted follower, colonisation and terraforming by the human and the AI, a dead empire's fleet).
 `ig2-sim` runs them inside `Starmap::tick` through `Arrivals::merge_units` / `Arrivals::delete_units`
-(`game::StarmapHooks` on the combat view: `CombatWorld::merge_units`, `delete_ship`). Wormhole trips are ported
-from the decompile only (quick.scn has no wormholes; the staging adds a trip when a save has one).
-The f64 booster sum (§6.3 step 4) is pinned by the asm only (`cvtss2sd`/`addsd`/`cvtsd2ss`
-@ 0x594fc2..0x594fca): the traced values round identically either way.
+(`game::StarmapHooks` on the combat view: `CombatWorld::merge_units`, `delete_ship`). Wormhole trips are verified in
+the save replay (`traces/2026-10-16-wormholes.md`: `run_replay.py --wormholes` opens a wormhole with the exe's own
+`AddWormhole` 0x53aec0 and sends three fleets through it, moving and attacking, from both ends; it corrected the
+story special's last argument, §4.3).
+The f64 booster sum (§6.3 step 4) is pinned by the asm (`cvtss2sd`/`addsd`/`cvtsd2ss` @ 0x594fc2..0x594fca) and
+provably equal to an f32 sum on every reachable input (`traces/2026-10-16-mp-radar.md`, "Booster sum"). The MP branches
+of §6 are verified by staging `MultiPlayerMode` during refresh ticks (`run_fleet.py --mp-radar`, same report).

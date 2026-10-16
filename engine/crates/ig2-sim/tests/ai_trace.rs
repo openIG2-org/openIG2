@@ -166,6 +166,7 @@ fn rules(r: &ig2_rules::Rules) -> Rules {
             training_xp: r.spy_training_xp.clone(),
             names: r.spy_names.clone(),
             building_tech: r.buildings.iter().map(|b| b.tech).collect(),
+            hire_cost_mult: r.spy_hire_cost_mult.clone(),
         },
         side: SideRules {
             colony,

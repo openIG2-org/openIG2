@@ -34,6 +34,9 @@
 
 mod battles;
 mod death;
+mod realtime;
+
+pub use realtime::{RealTime, RealTimeEvent};
 
 pub use battles::BattleEvent;
 pub use death::{GameOver, LAST_ENEMY_STORY};
@@ -43,14 +46,14 @@ use crate::colony::{ColonyEvent, EconomyContext, Planet, StoryHooks};
 use crate::colony_side::{ColonyArrivals, SideEvent, SideRules, EMPIRES};
 use crate::ground;
 use crate::diplomacy::{self, DiploEvent, DiploPlanet, Diplomacy, DiplomacyContext, DiplomacyRules};
-use crate::fleet::{order, Arrivals, StarPlanet, Starmap, StarmapContext, StarmapEvent, DELETED};
+use crate::fleet::{flag, order, Arrivals, Wormhole, StarPlanet, Starmap, StarmapContext, StarmapEvent, DELETED};
 use crate::messages::{cstr, Texts};
 use crate::placement::PlacementRules;
 use crate::production::{ProductionContext, ProductionEvent, Queue, Shipyard, YardFleet, YardPlanet};
 use crate::radar::RadarRules;
 use crate::research::{self, ResearchContext, ResearchEvent, ResearchRules};
 use crate::rng::Streams;
-use crate::save::{fleet_totals_put, put_fleet, va, SaveState, PLANET_SIZE};
+use crate::save::{fleet_totals_put, put_fleet, put_wormhole, va, HumanSide, SaveState, PLANET_SIZE};
 use crate::spacewar::{CombatFleet, CombatWorld, Ship, Vehicle, NO_DESIGN};
 use crate::spy::{self, SpyContext, SpyEvent, SpyRules, StoryCheck};
 use crate::story::{ScenarioStories, StoryEvent, StoryWorld};
@@ -82,6 +85,8 @@ pub struct GameRules {
     /// The colony maps (by `Bolygok +0x23`) for placing vehicles on a battlefield outside the real-time battle
     /// (`LocateTankSuitablePosition`; heights for the units' `+0x1dc`).
     pub ground_maps: Vec<ground::GroundMap>,
+    /// The real-time space battle (weapons, projectile forms, formations, ship types; multiplayer only so far).
+    pub space: crate::spacebattle::SpaceRules,
 }
 
 /// The MSVC CRT `rand()` (`holdrand · 214013 + 2531011`, bits 16..30): the unseeded libc draws of the original.
@@ -140,6 +145,8 @@ pub enum GameEvent {
     FleetEmptied { fleet: usize },
     /// A battle the starmap started (`SpaceWarIndit`, `GroundWarIndit`).
     Battle(BattleEvent),
+    /// A real-time battle of canonical multiplayer (`game::realtime`).
+    RealTime(RealTimeEvent),
     /// The game ends for the human (`MEGHALAS`, `MEGNYERES`; `game::death`).
     GameOver(GameOver),
 }
@@ -179,6 +186,8 @@ pub struct Game<'r> {
     pub cosmetic: Libc,
     /// The events up to here had their battlefield side carried out ([`Game::battlefield_hand_offs`]).
     hand_offs: usize,
+    /// The real-time battles of canonical multiplayer (`game::realtime`). Synced.
+    pub realtime: RealTime,
 }
 
 /// One planet's draws in the economy prologue: `(planet, weather, background)` ([`Game::weather_draws`]).
@@ -208,6 +217,8 @@ struct Globals {
     speed: i32,
     multiplayer: bool,
     en: usize,
+    /// `ViewMode::Canonical`.
+    canonical: bool,
     /// The empires whose machine sends the original's `Multi_Send(.., EN, ..)` ([`ViewMode`]).
     sends: [bool; EMPIRES],
     /// `UAktUzenetFajta` (exe 0xDABDBC, the inbox message on screen); 0 in canonical mode.
@@ -243,6 +254,7 @@ impl<'r> Game<'r> {
             view: ViewMode::Classic,
             local: LocalView::default(),
             cosmetic: Libc::default(),
+            realtime: RealTime::default(),
         }
     }
 
@@ -254,6 +266,32 @@ impl<'r> Game<'r> {
             self.local = self.local_view();
         }
         self.view = ViewMode::Canonical { en };
+        self.per_human_copies();
+        // `IdoSpeedSzorzoBattle` isn't saved: a loaded game gets it as MP `SetIdoSpeed` (ELF 0x6233d0) sets it with the
+        // game speed (×4 → 1, ×8 and ×16 → 2), so every peer's battles step alike (`multiplayer.md` §7).
+        let m = &mut self.state.mem;
+        if m.i32(va::BATTLE_SPEED) <= 0 {
+            m.set_i32(va::BATTLE_SPEED, if m.i32(va::IDO_SPEED) <= 4 { 1 } else { 2 });
+        }
+    }
+
+    /// Canonical multiplayer: every human but `EN` gets its own contact list and spy report queue
+    /// (`re/rules/multiplayer.md` §5): `FelfedezBirodalom(e)` for each empire 1..=8 it has met. Kept if it has one.
+    fn per_human_copies(&mut self) {
+        let ViewMode::Canonical { en } = self.view else { return };
+        let humans = self.state.human_controlled();
+        for h in (1..EMPIRES).filter(|&h| humans[h] && h != en as usize) {
+            if self.state.humans.contains_key(&(h as u8)) {
+                continue;
+            }
+            self.state.humans.insert(h as u8, HumanSide::default());
+            let knows: Vec<usize> = (1..9).filter(|&e| self.state.mem.u8(va::EMPIRE_KNOWS + (h * EMPIRES + e) as u32) != 0).collect();
+            self.with_diplomacy(|d, w| {
+                for &e in &knows {
+                    d.discover_by(w, h, e);
+                }
+            });
+        }
     }
 
     /// The local player's view: the state's globals (classic), else [`Game::local`].
@@ -313,6 +351,7 @@ impl<'r> Game<'r> {
             speed: m.i32(va::IDO_SPEED),
             multiplayer: m.u8(va::MULTIPLAYER) != 0,
             en,
+            canonical: self.view != ViewMode::Classic,
             sends: match self.view {
                 ViewMode::Classic => std::array::from_fn(|e| e == en),
                 ViewMode::Canonical { .. } => human,
@@ -345,8 +384,105 @@ impl<'r> Game<'r> {
         self.with_ai(|_, w, _| w.recount());
     }
 
+    /// `EpuleteketJoHelyreTesz` (exe 0x53cd00, the last call of `LoadScenario`; `colony-placement.md` §6): on every
+    /// owned planet each building in slot order is `EpuletDelete`d and `EpuletNew`ed finished and undamaged at the
+    /// first free spot of `LocateSuitableLocation` searched from its old cell (the old cell when there is none). The
+    /// new record takes the planet's first empty slot: a building behind a hole moves into it and isn't visited again.
+    pub fn refit_buildings(&mut self) {
+        let g = self.globals();
+        let econ = self.economy_context(&g);
+        for p in 1..=self.state.planet_count() {
+            let owner = self.state.mem.u8(va::PLANETS + (p * PLANET_SIZE) as u32 + 0x20);
+            if owner == 0 {
+                continue;
+            }
+            let mut j = 1;
+            while j as i32 <= self.state.mem.i32(va::BUILDING_SLOTS + 4 * p as u32) {
+                let rec = self.state.buildings.get(p).and_then(|b| b.get(j)).map_or([0; 0x20], |r| r[..0x20].try_into().unwrap());
+                let kind = rec[0];
+                if kind != 0 {
+                    let f = |o: usize| f32::from_le_bytes(rec[o..o + 4].try_into().unwrap()) as i32;
+                    let (x, y) = (f(0xc), f(0x10));
+                    self.with_war(p, |w| w.delete_building(j as i32));
+                    let mut world = self.state.colony();
+                    let cells = self.state.vehicle_cells(p);
+                    let (x, y) = self.rules.placement.locate(&world.planets[p], kind, &cells, Some((x, y))).unwrap_or((x, y));
+                    let slot = world.new_building(p, kind, true, (x as f32, y as f32), 0, &self.rules.side, &econ);
+                    self.state.store_colony(&world);
+                    self.with_war(p, |w| {
+                        w.add_building_turrets(kind, owner as i32, slot as i32);
+                        w.building_built(slot as i32);
+                    });
+                }
+                j += 1;
+            }
+        }
+    }
+
+    /// `AddWormhole(x1, y1, x2, y2)` (exe 0x53aec0, `fleet-movement.md` "Opening a wormhole"): with more than four
+    /// wormholes it returns 0; else wormhole `w = ++OsszHanyWormhole` gets end A at `((f32)x1, (f32)y1)` and end B
+    /// at `((f32)x2, (f32)y2)`, both unrevealed, each with its fleet `FlottaNew("- Wormhole -", 0, 0, x, y, 0)`
+    /// flagged `+0x53 |= 6` (wormhole, bit 9), and the tint `+0x18 + i = 255 − (255 − c[w][i]) / 2`. Returns `w`.
+    /// The four `WormHole` scene objects it also makes are render-only.
+    pub fn add_wormhole(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) -> i32 {
+        let n = self.state.mem.i32(va::WORMHOLE_COUNT);
+        if n > 4 {
+            return 0;
+        }
+        let w = n + 1;
+        self.state.mem.set_i32(va::WORMHOLE_COUNT, w);
+        let mut ends = [0i16; 2];
+        self.with_ai(|_, world, hooks| {
+            for (k, (x, y)) in [(x1, y1), (x2, y2)].into_iter().enumerate() {
+                let f = world.new_fleet(b"- Wormhole -", 0, 0, x as f32, y as f32, 0.0, hooks);
+                world.starmap.fleets[f].flags |= flag::WORMHOLE | 1 << 9;
+                world.mirror(f);
+                ends[k] = f as i16;
+            }
+        });
+        let at = va::WORMHOLES + 0x1c * w as u32;
+        let mut r = self.state.mem.read(at, 0x1c);
+        let c = self.rules.radar.wormhole_colours[w as usize];
+        let hole = Wormhole {
+            ax: x1 as f32,
+            ay: y1 as f32,
+            revealed_a: false,
+            fleet_a: ends[0],
+            bx: x2 as f32,
+            by: y2 as f32,
+            revealed_b: false,
+            fleet_b: ends[1],
+            tint: std::array::from_fn(|i| (255 - (255 - c[i] as u8 as i32) / 2) as u8),
+        };
+        put_wormhole(&mut r, &hole);
+        self.state.mem.write(at, &r);
+        w
+    }
+
+    /// Story 239's follow-up to a wormhole `AddWormhole` made (exe 0x5ceb86..0x5cebc8, `StoryEvent::RevealWormhole`):
+    /// both ends revealed (`+8`, `+0x14` := 1) and both fleets always visible (`+0x53 |= 1`).
+    pub fn reveal_wormhole(&mut self, w: i32) {
+        let at = va::WORMHOLES + 0x1c * w as u32;
+        let mut r = self.state.mem.read(at, 0x1c);
+        let mut hole = crate::save::wormhole_from(&r);
+        (hole.revealed_a, hole.revealed_b) = (true, true);
+        put_wormhole(&mut r, &hole);
+        self.state.mem.write(at, &r);
+        let mut map = self.state.starmap();
+        for f in [hole.fleet_a, hole.fleet_b] {
+            if let Some(x) = map.fleets.get_mut(f as usize) {
+                x.flags |= flag::ALWAYS_VISIBLE;
+            }
+        }
+        self.state.store_starmap(&map);
+    }
+
     /// `FRISSIT_Datum`: `Ido += IdoSpeedSzorzo`, `Ido2 += 1`, the calendar.
     pub fn advance_clock(&mut self) {
+        self.space_battles_settle();
+        if self.mp_battle_running() {
+            return;
+        }
         let m = &mut self.state.mem;
         let ido = m.i32(va::IDO).wrapping_add(m.i32(va::IDO_SPEED));
         let t = GameTime(ido);
@@ -359,6 +495,10 @@ impl<'r> Game<'r> {
 
     /// The rest of the tick after the clock step (see the module docs).
     pub fn run_tick(&mut self) {
+        if self.mp_battle_running() {
+            self.battle_tick();
+            return;
+        }
         let m = &mut self.state.mem;
         let (nap, old) = (m.i32(va::NAP), m.i32(va::OLD_NAP));
         let first_event = self.events.len();
@@ -380,6 +520,10 @@ impl<'r> Game<'r> {
         m.set_i32(0xBAE054, m.i32(0xBAE054).wrapping_add(1));
         self.battlefield_hand_offs();
         self.grwar();
+        self.space_tick();
+        if self.view != ViewMode::Classic {
+            self.dropships_mp();
+        }
         self.fill_fresh_buildings();
         self.post_messages(first_event);
     }
@@ -644,6 +788,7 @@ impl<'r> Game<'r> {
             forced: m.i32(va::SPY_FORCED),
             day: g.day,
             senders: (self.view != ViewMode::Classic).then_some(g.sends),
+            listed: std::array::from_fn(|e| e != g.en && self.state.humans.contains_key(&(e as u8))),
         }
     }
 
@@ -655,8 +800,8 @@ impl<'r> Game<'r> {
         let mut ctx = self.economy_context(&g);
         let mut w = self.state.colony();
         let mut rng = self.state.rng();
-        let placement = &self.rules.placement;
-        let mut place = |pl: &Planet, _: usize, k: u8| placement.place(pl, k, &[]);
+        let (placement, state) = (&self.rules.placement, &self.state);
+        let mut place = |pl: &Planet, p: usize, k: u8| placement.place(pl, k, &state.vehicle_cells(p));
         let (_, events) = w.economy_step(&self.rules.side, &mut ctx, &mut rng, &mut place);
         self.state.store_colony(&w);
         self.state.store_rng(&rng);
@@ -739,6 +884,9 @@ impl<'r> Game<'r> {
             if due {
                 self.with_war(p, |w| w.grwar_planet(clock, gvalue));
             }
+        }
+        if self.view != ViewMode::Classic {
+            self.grwar_mp();
         }
     }
 
@@ -967,14 +1115,17 @@ impl<'r> Game<'r> {
             let hook = ev.clone();
             self.events.push(GameEvent::Spy(ev));
             match hook {
-                SpyEvent::Discovered { empire } => {
+                SpyEvent::Discovered { empire, by } if by as i32 == en => {
                     self.story_special([0x0b, en, empire as i32, 0, 0, 0, 0, 0]);
                     self.with_diplomacy(|d, w| d.discover(w, empire as usize));
                 }
+                // Another human's (canonical multiplayer, `re/rules/multiplayer.md` §5): its own copies only.
+                SpyEvent::Discovered { empire, by } => self.with_diplomacy(|d, w| d.discover_by(w, by as usize, empire as usize)),
                 SpyEvent::Report(r) => {
                     self.state.push_spy_report(&r);
                     self.with_story(|st, w| st.spy_event(&ScenarioStories, w));
                 }
+                SpyEvent::ReportTo { to, report } => self.state.push_spy_report_to(to, &report),
                 SpyEvent::Combat(crate::spacewar::CombatEvent::HumanFleetEmptied { fleet }) => {
                     self.events.push(GameEvent::FleetEmptied { fleet });
                 }
@@ -984,6 +1135,18 @@ impl<'r> Game<'r> {
     }
 
     fn spies(&mut self) {
+        self.with_spies(|spies, w| spies.daily(w));
+    }
+
+    /// A human's spy-screen order out of the lockstep queue (`MULTIGET_Spy` exe 0x5883c0, `espionage.md` §8).
+    pub fn spy_order(&mut self, issuer: usize, order: spy::Order) {
+        let (training, mult) = (self.rules.ai.training_cost.clone(), self.rules.ai.mission_cost_mult.clone());
+        self.with_spies(|spies, w| spies.order(w, issuer, order, &training, &mult));
+    }
+
+    /// Run `f` on espionage's state and world (decoded from the save state, stored back afterwards), then carry out
+    /// its events ([`Game::spy_hooks`]).
+    fn with_spies(&mut self, f: impl FnOnce(&mut spy::Spies, &mut spy::World)) {
         let g = self.globals();
         let sctx = self.spy_context(&g);
         let econ = self.economy_context(&g);
@@ -1013,7 +1176,7 @@ impl<'r> Game<'r> {
                 story: &mut story,
                 events: Vec::new(),
             };
-            spies.daily(&mut w);
+            f(&mut spies, &mut w);
             w.events
         };
         self.state.store_colony(&colony);
@@ -1062,6 +1225,13 @@ impl<'r> Game<'r> {
         self.with_story(|st, w| st.story_special(data, &ScenarioStories, w));
     }
 
+    /// `MULTIGET_Story`'s message 0x65 (ELF 0x740670): `StartStory(id, false)` (queued for the next check).
+    pub fn story_start(&mut self, id: i32) {
+        self.with_story(|st, _| {
+            st.start_story(id, false);
+        });
+    }
+
     fn story(&mut self) {
         self.with_story(|st, w| st.tick(&ScenarioStories, w));
     }
@@ -1079,13 +1249,19 @@ impl<'r> Game<'r> {
         };
         self.state.store_story(&st);
         self.state.store_rng(&rng);
+        let mut made = 0;
         for e in &events {
-            if let StoryEvent::StopFleet(f) = *e {
-                let ctx = self.starmap_context(&g);
-                let mut map = self.state.starmap();
-                let mut ev = Vec::new();
-                map.order(f.max(0) as usize, 0, 0, 0.0, 0.0, &ctx, &mut ev);
-                self.state.store_starmap(&map);
+            match *e {
+                StoryEvent::StopFleet(f) => {
+                    let ctx = self.starmap_context(&g);
+                    let mut map = self.state.starmap();
+                    let mut ev = Vec::new();
+                    map.order(f.max(0) as usize, 0, 0, 0.0, 0.0, &ctx, &mut ev);
+                    self.state.store_starmap(&map);
+                }
+                StoryEvent::Wormhole { x1, y1, x2, y2 } => made = self.add_wormhole(x1, y1, x2, y2),
+                StoryEvent::RevealWormhole if made != 0 => self.reveal_wormhole(made),
+                _ => {}
             }
         }
         self.story_deaths(&events);
@@ -1107,6 +1283,9 @@ impl<'r> Game<'r> {
                 if by as usize == g.en {
                     self.story_special([0x0b, by as i32, empire as i32, 0, 0, 0, 0, 0]);
                     self.with_diplomacy(|d, w| d.discover(w, empire as usize));
+                } else if self.state.humans.contains_key(&by) {
+                    // Another human's radar (canonical multiplayer, `re/rules/multiplayer.md` §5.1): its list only.
+                    self.with_diplomacy(|d, w| d.discover_by(w, by as usize, empire as usize));
                 }
             }
         }
@@ -1145,9 +1324,14 @@ impl<'r> Game<'r> {
         let mut combat = self.state.combat();
         let mut fleet_numbers = self.state.mem.i32s(va::FLEET_NUMBERS);
         let econ = self.economy_context(&g);
+        let state = &self.state;
+        let vehicles = |p: usize| state.vehicle_cells(p);
         let (events, extra, side, overflow, merges) = {
             let mut hooks = StarmapHooks {
-                colony: ColonyArrivals { world: &mut colony, rules: &self.rules.side, ctx: &econ, placement: &self.rules.placement, events: Vec::new() },
+                colony: ColonyArrivals {
+                    world: &mut colony, rules: &self.rules.side, ctx: &econ, placement: &self.rules.placement, vehicles: &vehicles,
+                    events: Vec::new(),
+                },
                 combat: &mut combat,
                 fleet_numbers: &mut fleet_numbers,
                 overflow: 0,
@@ -1618,6 +1802,9 @@ impl StoryWorld for StoryView<'_> {
     fn ido(&self) -> i32 {
         self.g.tick
     }
+    fn canonical(&self) -> bool {
+        self.g.canonical
+    }
     fn speed_mult(&self) -> i32 {
         self.g.speed
     }
@@ -1751,6 +1938,7 @@ impl Game<'_> {
         let knows = |a: u8| m.u8(va::EMPIRE_KNOWS + (en * EMPIRES) as u32 + a as u32) != 0;
         let debug = m.u8(va::DEBUGX) != 0;
         let is_en = |e: u8| e as usize == en;
+        let canonical_en = self.globals().en;
         // (id, parameters, important, interrupt)
         let mut posts: Vec<(i32, Vec<Vec<u8>>, bool, bool)> = Vec::new();
         for ev in events {
@@ -1770,7 +1958,7 @@ impl Game<'_> {
                 GameEvent::Diplomacy(DiploEvent::Message { from, to, .. }) if is_en(*to) => {
                     posts.push((10, vec![self.empire_name(*from)], true, false))
                 }
-                GameEvent::Diplomacy(DiploEvent::Discovered { empire }) => posts.push((26, vec![self.empire_name(*empire)], true, false)),
+                GameEvent::Diplomacy(DiploEvent::Discovered { empire, by }) if is_en(*by) => posts.push((26, vec![self.empire_name(*empire)], true, false)),
                 GameEvent::Side(s) | GameEvent::Spy(SpyEvent::Colony(s)) => match *s {
                     SideEvent::Abandoned { planet, owner } if is_en(owner) => posts.push((5, vec![self.planet_name(planet)], true, false)),
                     SideEvent::TechCaptured { empire, tech } if is_en(empire) => posts.push((7, vec![self.tech_name(tech)], false, false)),
@@ -1790,7 +1978,10 @@ impl Game<'_> {
                     }
                     _ => {}
                 },
-                GameEvent::Spy(SpyEvent::Report(r)) => posts.extend(r.messages().into_iter().map(|id| (id, Vec::new(), false, false))),
+                GameEvent::Spy(SpyEvent::Report(r)) if is_en(canonical_en as u8) => posts.extend(r.messages().into_iter().map(|id| (id, Vec::new(), false, false))),
+                GameEvent::Spy(SpyEvent::ReportTo { to, report }) if is_en(*to) => {
+                    posts.extend(report.messages().into_iter().map(|id| (id, Vec::new(), false, false)))
+                }
                 GameEvent::Spy(SpyEvent::Returned { .. }) => posts.push((0x82, Vec::new(), false, false)),
                 GameEvent::Spy(SpyEvent::Struck { mission, a, b }) => {
                     let (a, b) = (*a, *b);

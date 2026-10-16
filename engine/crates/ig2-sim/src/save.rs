@@ -19,7 +19,7 @@ use ig2_formats::save::SaveGame;
 use crate::ai::{AiState, Category, CATEGORIES, CATEGORY_SIZE, DESIGN_SLOTS, GRID};
 use crate::colony::{Building, Planet};
 use crate::colony_side::{ColonyWorld, TechTable, Treasury, EMPIRES, PLANET_SLOTS};
-use crate::diplomacy::{Answer, Diplomacy, Letter, Message, PlayerSlot, Relation, LAST_CONTACT_CELLS};
+use crate::diplomacy::{Answer, ContactList, Diplomacy, Letter, Message, PlayerSlot, Relation, LAST_CONTACT_CELLS};
 use crate::fleet::{Fleet, StarPlanet, Waypoint, Wormhole};
 use crate::info::{Charts, InfoWorld};
 use crate::messages::{Inbox, Ticker, ENTRY, LIST, MESSAGE, ON_SCREEN, PLAYBACK};
@@ -624,6 +624,23 @@ pub struct SaveState {
     wf_ranges: BTreeMap<usize, std::ops::Range<usize>>,
     /// The ground battlefields stored since the load (by planet), written back by [`SaveState::chunks`].
     fields: BTreeMap<usize, crate::ground::Field>,
+    /// Canonical multiplayer: the per-human copies of what the original keeps for its local human, for every human
+    /// but the canonical `EN` (whose copies are the exe's memory), by empire (`re/rules/multiplayer.md` §5). Empty in
+    /// single player.
+    pub humans: BTreeMap<u8, HumanSide>,
+}
+
+/// One human's own copies (`re/rules/multiplayer.md` §5), in the exe's raw layouts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HumanSide {
+    /// `AktPlayerek[0..n]`: n × [`PLAYER_SLOT`] bytes.
+    pub contacts: Vec<u8>,
+    /// What slot −1 reads and writes for this human ([`PLAYER_SLOT`] bytes).
+    pub ghost: Vec<u8>,
+    /// `MostHanyPlayerVan`.
+    pub shown: i32,
+    /// `KemBeszolasok[1..=n]`: n × `spy::REPORT` bytes (at most `spy::MAX_REPORTS`).
+    pub reports: Vec<u8>,
 }
 
 fn rd_i32(b: &[u8], o: usize) -> i32 {
@@ -661,6 +678,7 @@ impl SaveState {
             story: StoryQueues::default(),
             multiplayer_blob: false,
             fresh_buildings: Vec::new(),
+            humans: BTreeMap::new(),
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -720,6 +738,7 @@ impl SaveState {
             story,
             multiplayer_blob: save.multiplayer,
             fresh_buildings: Vec::new(),
+            humans: BTreeMap::new(),
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -821,6 +840,15 @@ impl SaveState {
         let i = p.checked_sub(1)?;
         let r = self.wf_ranges.get(&i)?.clone();
         Some(wf::decode(self.template[r].iter().map(|(n, b)| (n.as_str(), &b[..])), &format!("WF[{i}]")))
+    }
+
+    /// The cells of planet `p`'s ground-war units on the colony map ([`crate::ground::Field::placed_cells`]): what
+    /// `LocateSuitableLocation` blocks besides terrain and buildings.
+    pub fn vehicle_cells(&self, p: usize) -> Vec<(i32, i32)> {
+        match self.fields.get(&p) {
+            Some(f) => f.placed_cells(),
+            None => self.ground_field(p).map_or_else(Vec::new, |f| f.placed_cells()),
+        }
     }
 
     /// Planet `p`'s battlefield taken out of the state (the default when the save has none); hand it back with
@@ -1069,6 +1097,7 @@ pub fn wormhole_from(w: &[u8]) -> Wormhole {
         by: rd_f32(w, 0x10),
         revealed_b: w[0x14] != 0,
         fleet_b: rd_i16(w, 0x16),
+        tint: [w[0x18], w[0x19], w[0x1a]],
     }
 }
 
@@ -1081,6 +1110,7 @@ pub fn put_wormhole(r: &mut [u8], w: &Wormhole) {
     put(r, 0x10, &w.by.to_le_bytes());
     r[0x14] = w.revealed_b as u8;
     put(r, 0x16, &w.fleet_b.to_le_bytes());
+    r[0x18..0x1b].copy_from_slice(&w.tint);
 }
 
 fn message(b: &[u8], o: usize) -> Message {
@@ -1279,6 +1309,18 @@ impl SaveState {
         r.write(&mut rec);
         m.write(at, &rec);
     }
+    /// `KemJelentesAdd`'s queue step for another human `to` (`re/rules/multiplayer.md` §5.2): its own queue only.
+    pub fn push_spy_report_to(&mut self, to: u8, r: &crate::spy::Report) {
+        use crate::spy::{MAX_REPORTS, REPORT};
+        let q = &mut self.humans.entry(to).or_default().reports;
+        if q.len() / REPORT >= MAX_REPORTS as usize {
+            q.drain(..REPORT);
+        }
+        let mut rec = [0u8; REPORT];
+        r.write(&mut rec);
+        q.extend_from_slice(&rec);
+    }
+
     pub fn store_inbox(&mut self, b: &Inbox) {
 
         let m = &mut self.mem;
@@ -1755,10 +1797,30 @@ impl SaveState {
             last_day: m.i32(va::DIP_OLD_NAP),
             started: m.u8(va::DIP_STARTED) != 0,
             shown_players: m.i32(va::SHOWN_PLAYERS),
+            others: self
+                .humans
+                .iter()
+                .map(|(&empire, h)| ContactList {
+                    empire,
+                    players: h.contacts.chunks_exact(PLAYER_SLOT).map(player_slot).collect(),
+                    ghost: if h.ghost.len() == PLAYER_SLOT { player_slot(&h.ghost) } else { PlayerSlot::default() },
+                    shown: h.shown,
+                })
+                .collect(),
         }
     }
 
     pub fn store_diplomacy(&mut self, d: &Diplomacy) {
+        for c in &d.others {
+            let h = self.humans.entry(c.empire).or_default();
+            h.contacts.resize(c.players.len() * PLAYER_SLOT, 0);
+            for (b, s) in h.contacts.chunks_exact_mut(PLAYER_SLOT).zip(&c.players) {
+                put_player_slot(b, s);
+            }
+            h.ghost.resize(PLAYER_SLOT, 0);
+            put_player_slot(&mut h.ghost, &c.ghost);
+            h.shown = c.shown;
+        }
         self.store_relations(&d.relations);
         let m = &mut self.mem;
         m.set_f32s(va::EMPIRE_POWER, &d.power);
