@@ -442,11 +442,36 @@ fleet don't count, and neither does a field won by the attackers when `f` was fu
 0x18/0x19 lost; else 0x0b/0x0c when `f.+0x5c > 0`); `f.+0x5c > 0` → `BolygoElfoglal(p, f.owner)`,
 `BattlesWon[f.owner] += 1`.
 
-### 6.4 `GroundWarSetBattleStatus` (after every `GroundWarIndit`)
+### 6.4 `GroundWarSetBattleStatus` (after every `GroundWarIndit`, and every tick in `FRISSIT_Starmap`)
 For every owned planet `q`: `+0x64 := (GetStatus(WF[q]) == −1)` (a status call: may refresh the cache and
 start a countdown, §5.1); while contested, every counted unit (not flag 2/0x40000000/flags2&4) of an owner
 ≠ the planet's, not 0x1028000, with `origin[0] > 0` marks its fleet in battle (`+0x52 |= 1`). Unowned
-planets get 0.
+planets get 0. `FRISSIT_Starmap` calls it on every tick too (exe 0x595d61), after the radar refresh (which clears
+the fleets' battle bit) and the real-time battles' marks, before the movement loop: its marks stop the attackers
+that tick (`Game::starmap_ground_marks`, handed to the starmap with the space battles').
+
+### 6.6 Units entering and leaving a battlefield outside a war (verified in the save replay)
+The planet's battlefield is the exe's live state, saved with the game (`re/formats/save.md` §4.13); these keep it in
+step with the strategic side (`Game::battlefield_hand_offs`, in event order):
+- `TankNew(−p, d, n)` (exe 0x541750; production, trade deliveries, the AI's `TankAtpakol`): after the `Tankok`
+  entry, n × `AddOwnTankToPlanet(d, p)` (0x45cbf0: `LocateTankSuitablePosition(p, −1, −1)` (0x486b90; the outputs
+  are uninitialised locals when no cell is found), `AddTank(d, TankAlapHP[hull of Tervek[owner][d] +0x44], owner,
+  −p, merge, x, y, 0)`, then `+0x150 = 3.0, +0x108 = 2.5, +0x110 = 0.15, +0x114 = 0.3`), then
+  `RearrangeTankGroups(owner)` (§4). The search sees only the planet's used building slots (`Epuletek[p][1..=
+  slots]`, 0xBA9840; the rest of the block holds garbage whose coordinates would wreck the centroid) and the
+  heights come from the shown planet's map (§11.2).
+- `RemoveTankFromPlanet(d, p, owner)` (0x497c70 → `WF::RemoveTank(d, owner)` 0x497af0): the **last** alive group of
+  design `d` and `owner` that isn't a partner loses its last member (count −1, `+0x125 = 0`); a group of one goes
+  (`RemoveTarget`, alive 0, the object freed with the pointer kept). Callers, once per vehicle: `BolygoElfoglal`
+  (the garrison), `FlottaDelete` of a planet holder (0x53d040), `TankAtpakol` from a planet (0x541410 via 0x5414c0,
+  then `RearrangeTankGroups(owner)` before the `TankNew` of the destination) and `TervDelete` (0x541d50).
+  `TankDelete` (0x541510) itself never touches the battlefield.
+- `BolygoElfoglal(p, new)` (0x53b720), after recalling the attackers: every garrison entry (`Tankok` fleet −p, in
+  order) is `TankDelete`d and its vehicles leave the battlefield one by one with the **old** owner; then every alive
+  turret (flag 0x4000000) gets `+0x194 = +0x198 = new`, and `+0x8cc := 0` (exe 0x53b812..0x53b8ff).
+- `EpuletNew` → `AddBuildingTurrets(kind, 100, owner, slot, p)` and `EpuletFelepult` → `BuildingBuilt(slot)`
+  (§11.3) for buildings the economy places (autobuild) and finishes.
+Not handed off yet: planets changing hands in a diplomatic deal (diplomacy's internal `SideEvent`s).
 
 ### 6.5 Between battles: repairs (`FRISSIT_Epuletek`, exe 0x4746f0)
 Every tick, after `FRISSIT_Diplomacy` and before `FRISSIT_Starmap` (`time-and-rng.md` §1): for every planet `p`
@@ -670,7 +695,9 @@ countdown `WF+0x334` (§1.1, the `'+'` building's; at 0 → `SelfDestruct` 0x499
 only on the colony screen (`AktKep == 3`): planet `+0x64` (ground war) → `WF::MI` (0x486d40, stream 13;
 else 18 per-empire counters `WF+0x37c + 0x40·e` are zeroed), and `WF::Refresh` (0x490890) unless a story
 script holds the planet (`0xF261F8`). MP: both for the battle planet. Order inside one call: `gvalue += 1`, the per-planet part (§11.7), `WF::MI`,
-`WF::Refresh`.
+`WF::Refresh`. The strategic game runs it after every tick (`Game::grwar`: the per-planet part for every planet,
+verified with `gvalue` dumped in the save replay; the colony screen's `WF::MI`/`WF::Refresh` belong to the
+real-time battle).
 
 ### 11.7 The battlefield tick (`WF::Refresh` 0x490890, and `FRISSIT_Grwar`'s own part)
 `S` = `IdoSpeedSzorzoBattle` (0xBAE260, battle steps per tick), `run` = (`IdoPause` 0xBAE264 == 0).

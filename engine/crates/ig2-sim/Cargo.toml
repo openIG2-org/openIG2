@@ -7,6 +7,11 @@ rust-version.workspace = true
 
 [dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+
+[features]
+# serde derives on the state types `ig2-net` snapshots (ADR 0007).
+serde = ["dep:serde"]
 
 [dev-dependencies]
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }

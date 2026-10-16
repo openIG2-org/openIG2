@@ -132,32 +132,24 @@ pub struct Surface {
     pub landing_zone: String,
 }
 
+/// One `[hatter]` section of `colony/terepleiro.txt` (`Hatterek[n]`, exe 0x9B2EC0, stride 0x3c; `HanyHatter`
+/// 0x9B2EC4): a colony background.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Background {
+    /// The background object, its fog colour (`+0x20..+0x28`).
+    pub model: String,
+    pub fog: Vec<i32>,
+    /// Possible weathers (`+0x2c` count, `+0x30` list; `CheckWeather` matches them with the surface's) and times
+    /// of day (0 day, 1 dusk).
+    pub weathers: Vec<i32>,
+    pub times: Vec<i32>,
+}
+
 /// `[felszin]` sections of `colony/terepleiro.txt`, in file order (`[hatter]` backgrounds are skipped).
 pub fn parse_surfaces(text: &str) -> Result<Vec<Surface>> {
     let err = |m: String| format_err("terepleiro.txt", m);
-    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
-    for line in text.lines() {
-        // Strip a `;` comment outside quotes.
-        let mut quoted = false;
-        let end = line.char_indices().find(|&(_, c)| {
-            if c == '"' {
-                quoted = !quoted;
-            }
-            c == ';' && !quoted
-        });
-        let v = line[..end.map_or(line.len(), |e| e.0)].trim();
-        if v.is_empty() {
-            continue;
-        }
-        if v.starts_with('[') && v.ends_with(']') {
-            sections.push((v[1..v.len() - 1].to_owned(), Vec::new()));
-        } else if let Some(s) = sections.last_mut() {
-            s.1.push(v.to_owned());
-        }
-    }
-    let ints = |v: &str| -> Result<Vec<i32>> {
-        v.split(',').map(|x| x.trim().parse().map_err(|_| err(format!("bad number {v:?}")))).collect()
-    };
+    let sections = sections(text);
+    let ints = |v: &str| ints(v).ok_or_else(|| err(format!("bad number {v:?}")));
     let unquote = |v: &str| v.trim_matches('"').to_owned();
     sections
         .iter()
@@ -186,6 +178,52 @@ pub fn parse_surfaces(text: &str) -> Result<Vec<Surface>> {
             })
         })
         .collect()
+}
+
+/// `[hatter]` sections of `colony/terepleiro.txt`, in file order (commented-out sections don't count).
+pub fn parse_backgrounds(text: &str) -> Result<Vec<Background>> {
+    let err = |m: String| format_err("terepleiro.txt", m);
+    sections(text)
+        .iter()
+        .filter(|s| s.0 == "hatter")
+        .enumerate()
+        .map(|(n, (_, v))| {
+            if v.len() < 4 {
+                return Err(err(format!("background {n}: {} values, expected 4", v.len())));
+            }
+            let list = |x: &str| ints(x).ok_or_else(|| err(format!("background {n}: bad number {x:?}")));
+            Ok(Background { model: v[0].trim_matches('"').to_owned(), fog: list(&v[1])?, weathers: list(&v[2])?, times: list(&v[3])? })
+        })
+        .collect()
+}
+
+/// The file's `[section]`s and their values, one per line, `;` comments outside quotes stripped.
+fn sections(text: &str) -> Vec<(String, Vec<String>)> {
+    let mut sections: Vec<(String, Vec<String>)> = Vec::new();
+    for line in text.lines() {
+        // Strip a `;` comment outside quotes.
+        let mut quoted = false;
+        let end = line.char_indices().find(|&(_, c)| {
+            if c == '"' {
+                quoted = !quoted;
+            }
+            c == ';' && !quoted
+        });
+        let v = line[..end.map_or(line.len(), |e| e.0)].trim();
+        if v.is_empty() {
+            continue;
+        }
+        if v.starts_with('[') && v.ends_with(']') {
+            sections.push((v[1..v.len() - 1].to_owned(), Vec::new()));
+        } else if let Some(s) = sections.last_mut() {
+            s.1.push(v.to_owned());
+        }
+    }
+    sections
+}
+
+fn ints(v: &str) -> Option<Vec<i32>> {
+    v.split(',').map(|x| x.trim().parse().ok()).collect()
 }
 
 #[cfg(test)]

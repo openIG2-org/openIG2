@@ -87,6 +87,12 @@ impl CampaignTables {
     pub fn hero_design(&self, k: i32) -> i32 {
         self.word(0x9288b0, k, 0x1c, 0)
     }
+
+    /// `RndHosok[k]` word `i` (0..=6): id, tech, the three battle bonuses (`StoryAdat+0x84`, `+0x90`, `+0x7c`),
+    /// the fee in thousands, the strength (`st_Rnd` 242).
+    pub fn hero(&self, k: i32, i: i32) -> i32 {
+        self.word(0x9288b0, k, 0x1c, i)
+    }
 }
 
 /// The story variables, counters and planet ids `Story_Check` uses (decimal = the exe's hex).

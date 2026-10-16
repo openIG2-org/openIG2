@@ -283,6 +283,7 @@ fn spy_matches_every_traced_call() {
                 no_recruits: gi("norecruit") != 0,
                 forced: gi("forced") as i32,
                 day: gi("nap") as i32,
+                senders: None,
             };
             let mut sp = spies(&before);
             let mut colony = colony_world(&before, g);

@@ -93,10 +93,15 @@ self-destruct = 43) · 48 trade centre · 49 bank · 50 trade port · 52–55 fu
 
 ## 3. Economy step, overview (`full = true`, `only = 0`)
 ```
-prologue:  ground-war flags for every planet (libc rand(); not economy)          [draws ported, flags not]
+prologue:  every battlefield's weather and background (libc rand(); not economy)   [ported, verified]
            (exe 0x4749b9..0x474ab0, p = 1..=HanyBolygo, skipping AktPlanet 0xB9933C when StarmapMode
-           0xB9998C == 1: WF[p]+0x8d0 weather = one rand() for surfaces 2, 5, 7; WF[p]+0x8d4 ambience =
-           0x47a380, one rand(), when the colony map < hanyterep 0x9B2EC8; game.rs battlefield_weather)
+           0xB9998C == 1; ground::weather / ground::pick_background, game.rs battlefield_weather):
+           WF[p]+0x8d0 := 0; surface type (Bolygok+0x22) 2 or 5: rand(), 2 (rain) if even or
+           BolygoInfoIs(p, 0x776), else 0; type 7: rand(), 1 (snow) if even. Then, colony map (+0x23) <
+           hanyterep 0x9B2EC8: WF[p]+0x8d4 := CheckWeather's picker 0x47a380(Terepek[map] weathers +4/+8):
+           k = rand() % 20 + 1 times: cursor (0x996488, unsaved) += 1 (wrapping at HanyHatter 0x9B2EC4), then
+           on while Hatterek[cursor] (0x9B2EC0, stride 0x3c; +0x2c/+0x30 its weathers) shares no weather
+           with the surface; the result is the cursor (the [hatter] sections of terepleiro.txt)
            monthly: FullGDP[e] = FullTax[e] = 0
            reset per-empire lab levels, spy capacity, trade-port and defence totals
            GlobalisMoral (exe 0xBAEAC4) moves toward 0 by GlobalisMoralSebesseg (0xBAEB14)

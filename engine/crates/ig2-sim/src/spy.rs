@@ -293,6 +293,9 @@ pub struct SpyContext {
     pub forced: i32,
     /// `Nap`.
     pub day: i32,
+    /// The empires whose own machine sends the original's `Multi_Send(.., EN, ..)`: `EN` alone (classic, the
+    /// default `None`), or every human (`game::ViewMode::Canonical`, ADR 0007 §5).
+    pub senders: Option<[bool; EMPIRES]>,
 }
 
 impl SpyContext {
@@ -304,6 +307,13 @@ impl SpyContext {
     }
     fn human(&self, e: usize) -> bool {
         self.human.get(e).copied().unwrap_or(false)
+    }
+    /// Whether empire `e`'s machine sends a `Multi_Send(.., EN, ..)` ([`SpyContext::senders`]).
+    pub fn sends(&self, e: usize) -> bool {
+        match self.senders {
+            Some(s) => s.get(e).copied().unwrap_or(false),
+            None => e == self.human_empire,
+        }
     }
     fn race(&self, e: usize) -> u8 {
         self.race.get(e).copied().unwrap_or(0)

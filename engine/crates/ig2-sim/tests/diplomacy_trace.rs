@@ -550,6 +550,7 @@ fn diplomacy_matches_every_traced_call() {
                     rng: &mut rng,
                     rules: &rules,
                     libc: &mut libc,
+                    view_libc: None,
                     events: Vec::new(),
                 };
                 match k {

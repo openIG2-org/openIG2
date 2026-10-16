@@ -12,6 +12,7 @@ use super::{flag, realtime::grid_to_real, War, CONTESTED, NONE};
 
 /// A homing shell of list A (`WF+0xd4`, count `+0xe0`; 0x38-byte objects from 0x45d5d0).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Shell {
     /// `+8` velocity and `+0x14` position, both `(height, x, y)`.
     pub vel: [f32; 3],
@@ -30,6 +31,7 @@ pub struct Shell {
 /// A list-B object (`WF+0xd8`, count `+0xe8`; 0x44 bytes): rockets (kinds 4–6), shells (0), manipulator
 /// bolts (3), bombs (1, 2), debris (7).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Missile {
     pub vel: [f32; 3],
     pub pos: [f32; 3],
@@ -48,6 +50,7 @@ pub struct Missile {
 
 /// A paralyser bolt of list C (`WF+0xdc`, count `+0xe4`).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bolt {
     pub vel: [f32; 3],
     pub pos: [f32; 3],
@@ -60,6 +63,7 @@ pub struct Bolt {
 
 /// One fighter of an air strike's wave (`WF+0x1f4 + 0x40·k`, k = 0..5; `WF::AddFighters` 0x45b8d0).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Fighter {
     /// `+0` position and `+0xc` velocity, both `(height, x, y)`; the height velocity is the descent.
     pub pos: [f32; 3],
@@ -75,6 +79,7 @@ pub struct Fighter {
 
 /// The projectile lists of a battlefield (slots are reused: a new object takes the first empty one).
 #[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Lists {
     pub shells: Vec<Option<Shell>>,
     pub missiles: Vec<Option<Missile>>,

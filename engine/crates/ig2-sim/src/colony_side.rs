@@ -449,8 +449,10 @@ pub enum SideEvent {
     Rebelled { planet: usize, result: i32, new_owner: u8 },
     /// Fleets with `order 2, kind 1, target planet` get `FlottaMozgat(f, 0, 0, 0, 0)`.
     RecallAttackers { planet: usize },
-    /// The planet's garrison (`Tankok` entries with fleet −planet) is deleted; ground-war units switch side.
-    GarrisonLost { planet: usize, new_owner: u8 },
+    /// The planet's garrison (`Tankok` entries with fleet −planet) is deleted and leaves its battlefield (owned by
+    /// `old_owner`), whose turrets switch to `new_owner` (`BolygoElfoglal` exe 0x53b812..0x53b8ff; `Game` carries
+    /// it out).
+    GarrisonLost { planet: usize, old_owner: u8, new_owner: u8 },
     /// `empire` got `tech` with a captured building (message 7 when it is the human).
     TechCaptured { empire: u8, tech: usize },
     /// `who` now knows `whom` (story special 0xb and `FelfedezBirodalom` when `who` is the human).
@@ -585,7 +587,7 @@ impl ColonyWorld {
         if self.planets[p].owner != 0 {
             events.push(SideEvent::RecallAttackers { planet: p });
         }
-        events.push(SideEvent::GarrisonLost { planet: p, new_owner: new });
+        events.push(SideEvent::GarrisonLost { planet: p, old_owner: self.planets[p].owner, new_owner: new });
         for q in 1..self.planets.len() {
             let other = &mut self.planets[q];
             if other.owner != 0 && other.production[0x34] as usize == p {

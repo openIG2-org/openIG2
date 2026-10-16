@@ -6,6 +6,7 @@
 //! - `staged`: a call the tracer made through its trampoline: `StartStory` + `Story_Check(1)` (the inline
 //!   stories 402..918), `Story_Special` (0x11, 0x12), a fleet arrival, event flags + `Story_Check(1)`, `WIN`.
 //!
+//! - `--keep begin`: the opening episodes 1..24 (`st_Begin_include`, §8.12) staged with the world they test.
 //! - `--keep multi`: the multiplayer modes 1001..1006 (`st_Multi_include`, §8.10) staged the same way, with
 //!   counters, ground battles, specials 10/15, the radar offer's answers, base arrivals and space battles.
 //!
@@ -20,13 +21,15 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use ig2_sim::begin::BeginStories;
 use ig2_sim::brnd::BRndStories;
+use ig2_sim::rnd::RndStories;
 use ig2_sim::campaign::CampaignTables;
 use ig2_sim::multi::{MultiStories, FLAG_CARRIER_UNSET};
 use ig2_sim::rng::{stream, Streams};
 use ig2_sim::story::{
-    self, BuildingData, FleetData, MessageText, Notice, Queue, ScenarioStories, ScenarioStory, Script, Story, StoryEvent, StoryWorld,
-    DESIGN, FLAGS,
+    self, BuildingData, FleetData, KemNews, MessageText, Notice, Queue, ScenarioStories, ScenarioStory, Script, SpyRecord, Story,
+    StoryEvent, StoryWorld, DESIGN, FLAGS,
 };
 use ig2_sim::storyline::LineStories;
 use serde_json::Value;
@@ -43,13 +46,40 @@ fn traces(prefix: &str) -> Vec<PathBuf> {
     v
 }
 
-/// The campaign tables and the buildings' workers (`EpuletekLeiro` `+0x10`), from the user's exe.
-fn tables() -> Option<(CampaignTables, Vec<i32>)> {
+/// The buildings' workers, hit points and techs (`EpuletekLeiro` `+0x10`, `+8`, `+0`), from the user's exe.
+struct Buildings {
+    workers: Vec<i32>,
+    hp: Vec<i32>,
+    tech: Vec<i32>,
+}
+
+/// The campaign tables and the buildings, from the user's exe.
+fn tables() -> Option<(CampaignTables, Buildings)> {
     let dir = std::env::var_os("IG2_INSTALL_DIR")?;
     let exe = std::fs::read(PathBuf::from(dir).join("ig2.exe")).ok()?;
     let rules = ig2_rules::Rules::from_exe(&exe).ok()?;
-    let workers = rules.buildings.iter().map(|b| b.workers).collect();
-    Some((CampaignTables::new(rules.campaign_words), workers))
+    let b = &rules.buildings;
+    let buildings = Buildings {
+        workers: b.iter().map(|b| b.workers).collect(),
+        hp: b.iter().map(|b| b.max_hp).collect(),
+        tech: b.iter().map(|b| b.tech as i32).collect(),
+    };
+    Some((CampaignTables::new(rules.campaign_words), buildings))
+}
+
+/// The scripts in `Story_Check`'s order.
+struct Chain(Vec<Box<dyn Script>>);
+
+impl Script for Chain {
+    fn run(&self, story: &mut Story, world: &mut dyn StoryWorld) {
+        self.run_in(story, world, self);
+    }
+
+    fn run_in(&self, story: &mut Story, world: &mut dyn StoryWorld, all: &dyn Script) {
+        for s in &self.0 {
+            s.run_in(story, world, all);
+        }
+    }
 }
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -87,6 +117,14 @@ struct Planet {
     b8: i32,
     prod: (i32, i32),
     morale: Option<i32>,
+    /// `HanyEpulet[p]`, `+0xbb` (st_Begin traces).
+    buildings: i32,
+    notice: Option<i32>,
+    /// `+0x30` (morale), `+0x22` (surface), `+0x24` (richness; st_Rnd traces: after st_BRnd's three, or after
+    /// st_Begin's two when both were kept).
+    morale30: i32,
+    surface: i32,
+    richness: i32,
 }
 
 #[derive(Clone)]
@@ -102,6 +140,9 @@ struct Fleet {
     command: i32,
     target: f32,
     state: i32,
+    /// `+0x52`, `+0x60` (st_Begin traces).
+    flags: i32,
+    power: i32,
 }
 
 /// The world of one record, with the exe's calls as the oracle.
@@ -133,7 +174,18 @@ struct W<'a> {
     designs: HashMap<(i32, i32), Vec<u8>>,
     /// Fleets' `+0x52` with the port's `SetFleetVisible` applied (checked against `post`).
     f52: Option<Vec<i32>>,
-    workers: &'a [i32],
+    buildings: &'a Buildings,
+    /// `Tankok` with the port's `TankDelete`s applied (st_Begin traces).
+    tanks: Vec<(i32, i32, i32)>,
+    /// A building the trace didn't dump was read: the record can't be checked.
+    missing: std::cell::Cell<bool>,
+    /// st_Begin's direct writes, checked against `post` at the end: fleets' `+0x52` (set, cleared), planets'
+    /// epidemic, the relations' value 2, the trade offers added, designs' price.
+    fleet_flags: HashMap<i32, (i32, i32)>,
+    epidemic: HashMap<i32, i32>,
+    relations: HashMap<i32, i32>,
+    offers_added: i32,
+    prices: HashMap<i32, i32>,
     /// The designs `new_design_raw` made, checked at their `TervUjraSzamol`.
     made: HashMap<(i32, i32), [u8; DESIGN]>,
     /// The last value the port wrote to a planet's `+0x28`, a ship's design, a planet's morale (checked against
@@ -142,6 +194,8 @@ struct W<'a> {
     ship_designs: HashMap<i32, i32>,
     morale: HashMap<i32, i32>,
     gmoral: Option<i32>,
+    /// The last value the port wrote to a planet's `+0x24` (st_Rnd).
+    richness: HashMap<i32, i32>,
     /// Ships whose design the port changed (`UpgradeShip`), seen by later reads in the record.
     ships: Option<Vec<(i32, i32)>>,
 }
@@ -164,8 +218,23 @@ fn planets_of(w: &Value) -> Vec<Planet> {
             b8: p.get(6).map_or(0, int),
             prod: p.get(12).map_or((0, 0), |b| (int(&p[11]), int(b))),
             morale: p.get(13).map(int),
+            buildings: p.get(14).map_or(0, int),
+            notice: p.get(15).map(int),
+            morale30: rnd_field(p, 0),
+            surface: rnd_field(p, 1),
+            richness: rnd_field(p, 2),
         })
         .collect()
+}
+
+/// A planet row's st_Rnd field `i`: rows of 17 (st_BRnd's + st_Rnd's) or 19 (with st_Begin's two before them).
+fn rnd_field(p: &Value, i: usize) -> i32 {
+    let row = p.as_array().unwrap();
+    match row.len() {
+        17 => int(&row[14 + i]),
+        19 => int(&row[16 + i]),
+        _ => 0,
+    }
 }
 
 fn fleets_of(w: &Value) -> Vec<Fleet> {
@@ -184,12 +253,14 @@ fn fleets_of(w: &Value) -> Vec<Fleet> {
             command: f.get(7).map_or(0, int),
             target: f.get(8).map_or(0.0, bits),
             state: f.get(9).map_or(0, int),
+            flags: f.get(10).map_or(0, int),
+            power: f.get(11).map_or(0, int),
         })
         .collect()
 }
 
 impl<'a> W<'a> {
-    fn new(r: &Value, tables: &'a CampaignTables, infos: &'a [i32], workers: &'a [i32]) -> Self {
+    fn new(r: &Value, tables: &'a CampaignTables, infos: &'a [i32], buildings: &'a Buildings) -> Self {
         let w = r["pre"]["w"].clone();
         let mut rng = Streams::default();
         rng.set_state(story::STREAM, w["seed5"].as_u64().unwrap() as u32);
@@ -239,12 +310,20 @@ impl<'a> W<'a> {
             infos,
             designs,
             f52: w_f52(&r["pre"]["w"]),
-            workers,
+            buildings,
+            tanks: r["pre"]["w"]["tanks"].as_array().map_or(Vec::new(), |t| t.iter().map(|x| (int(&x[0]), int(&x[1]), int(&x[2]))).collect()),
+            missing: std::cell::Cell::new(false),
+            fleet_flags: HashMap::new(),
+            epidemic: HashMap::new(),
+            relations: HashMap::new(),
+            offers_added: 0,
+            prices: HashMap::new(),
             made: HashMap::new(),
             values: HashMap::new(),
             ship_designs: HashMap::new(),
             morale: HashMap::new(),
             gmoral: None,
+            richness: HashMap::new(),
             ships: None,
         }
     }
@@ -281,6 +360,21 @@ impl<'a> W<'a> {
     fn message(&mut self, id: i32, arg: i32, what: &str) {
         self.expect("message", &[v(id), v(arg)], what);
         self.w["speed"] = self.post_w["speed"].clone();
+    }
+
+    /// A design field of the human's (`designs` column `col`) or of story 7's planet's owner (`odes` column
+    /// `other`); another empire's design can't be checked.
+    fn design_field(&self, e: i32, d: i32, col: usize, other: usize) -> i32 {
+        if e == self.en {
+            return self.w["designs"].get(d as usize).map_or(0, |x| int(&x[col]));
+        }
+        match self.w.get("odes") {
+            Some(o) if int(&o[0]) == e => o[1].get(d as usize).map_or(0, |x| int(&x[other])),
+            _ => {
+                self.missing.set(true);
+                0
+            }
+        }
     }
 
     fn byte(&self, key: &str, i: i32) -> u8 {
@@ -344,6 +438,10 @@ impl StoryWorld for W<'_> {
     }
     fn planets_of(&self, e: i32) -> i32 {
         int(&self.w["hanyb"][e as usize])
+    }
+    fn fleet_infected(&self, f: i32) -> bool {
+        let f = &self.fleets[f as usize];
+        f.owner != 0xff && f.flags & 4 != 0
     }
     fn money(&self, _e: i32) -> f64 {
         self.w["money"].as_f64().unwrap()
@@ -468,9 +566,12 @@ impl StoryWorld for W<'_> {
         }
         let f = int(&a[3]);
         if f as usize >= self.fleets.len() {
-            self.fleets.resize(f as usize + 1, Fleet { owner: 0xff, id: 0, x: 0.0, y: 0.0, order: 0, w5c: 0, speed: 0, command: 0, target: 0.0, state: 0 });
+            self.fleets.resize(f as usize + 1, Fleet { owner: 0xff, id: 0, x: 0.0, y: 0.0, order: 0, w5c: 0, speed: 0, command: 0, target: 0.0, state: 0, flags: 0, power: 0 });
         }
-        self.fleets[f as usize] = Fleet { owner, id, x, y, order: 0, w5c: 0, speed: speed.to_bits(), command: 0, target: 0.0, state: 0 };
+        // +0x5c and +0x60 come from FlottaNew/HajoNew (not the stories): the exe's values after the record.
+        let post = fleets_of(&self.post_world()).get(f as usize).map_or((0, 0), |q| (q.w5c, q.power));
+        self.fleets[f as usize] =
+            Fleet { owner, id, x, y, order: 0, w5c: post.0, speed: speed.to_bits(), command: 0, target: 0.0, state: 0, flags: 0, power: post.1 };
         f
     }
     fn config_int(&self, key: &str) -> i32 {
@@ -555,7 +656,96 @@ impl StoryWorld for W<'_> {
         self.planets[p as usize].prod
     }
     fn building_workers(&self, kind: i32) -> i32 {
-        self.workers[kind as usize]
+        self.buildings.workers[kind as usize]
+    }
+    fn fleet_power(&self, f: i32) -> i32 {
+        self.fleets[f as usize].power
+    }
+    fn building_count(&self, p: i32) -> i32 {
+        self.planets[p as usize].buildings
+    }
+    fn building(&self, p: i32, k: i32) -> (i32, i32, i32) {
+        match self.w["bld"].get(p.to_string()).and_then(|b| b.get(k as usize)) {
+            Some(b) => (int(&b[0]), int(&b[1]), int(&b[2])),
+            None => {
+                self.missing.set(true);
+                (0, 0, 0)
+            }
+        }
+    }
+    fn building_hp(&self, kind: i32) -> i32 {
+        self.buildings.hp[kind as usize]
+    }
+    fn building_tech(&self, kind: i32) -> i32 {
+        self.buildings.tech[kind as usize]
+    }
+    fn tank_count(&self) -> i32 {
+        self.tanks.len() as i32 - 1
+    }
+    fn tank(&self, k: i32) -> (i32, i32, i32) {
+        self.tanks[k as usize]
+    }
+    fn design_class(&self, e: i32, d: i32) -> i32 {
+        self.design_field(e, d, 5, 0)
+    }
+    fn design_size(&self, e: i32, d: i32) -> i32 {
+        self.design_field(e, d, 6, 1)
+    }
+    fn design_colony(&self, e: i32, d: i32) -> bool {
+        assert_eq!(e, self.en);
+        self.w["designs"].get(d as usize).is_some_and(|x| int(&x[7]) != 0)
+    }
+    fn trade_offer_count(&self) -> i32 {
+        self.w["trade"].as_array().map_or(0, |t| t.len() as i32)
+    }
+    fn trade_offer(&self, k: i32) -> (i32, i32) {
+        let t = &self.w["trade"][k as usize];
+        (int(&t[0]), int(&t[1]))
+    }
+    fn trade_agreement(&self, a: i32, b: i32) -> bool {
+        assert_eq!(a, self.en);
+        int(&self.w["tra"][b as usize]) != 0
+    }
+    fn planet_epidemic(&self, p: i32) -> i32 {
+        self.planets[p as usize].b8
+    }
+    fn tech_priority(&self, t: i32) -> i32 {
+        int(&self.w["tres"][t as usize][0])
+    }
+    fn tech_research(&self, t: i32) -> (i32, i32) {
+        // st_Rnd traces hold the research costs only (`tcost`).
+        if let Some(c) = self.w.get("tcost") {
+            return (int(&c[t as usize]), 0);
+        }
+        let r = &self.w["tres"][t as usize];
+        (int(&r[1]), int(&r[2]))
+    }
+    fn researching(&self, e: i32) -> i32 {
+        assert_eq!(e, self.en);
+        int(&self.w["res"])
+    }
+    fn spy_count(&self, e: i32) -> i32 {
+        int(&self.w["spies"][e as usize][0])
+    }
+    fn spy_record(&self, e: i32, k: i32) -> SpyRecord {
+        let r = &self.w["spies"][e as usize][1][k as usize];
+        SpyRecord { state: int(&r[0]), race: int(&r[1]), target: int(&r[2]), mission: int(&r[3]), skill: (int(&r[4]), int(&r[5])) }
+    }
+    fn planet_morale(&self, p: i32) -> i32 {
+        self.planets[p as usize].morale30
+    }
+    fn planet_surface(&self, p: i32) -> i32 {
+        self.planets[p as usize].surface
+    }
+    fn planet_richness(&self, p: i32) -> i32 {
+        self.planets[p as usize].richness
+    }
+    fn wormhole_count(&self) -> i32 {
+        self.w["whn"].as_i64().map_or(self.w["wh"].as_array().map_or(0, |a| a.len() as i32), |n| n as i32)
+    }
+    fn wormhole(&self, k: i32) -> [(bool, i32); 2] {
+        let e = &self.w["wh"][k as usize - 1];
+        [(int(&e[0]) & 1 != 0, e.get(2).map_or(0, int)), (int(&e[1]) & 1 != 0, e.get(3).map_or(0, int))]
     }
     fn wormhole_shown(&self) -> bool {
         self.w["wh"].as_array().unwrap().iter().any(|k| int(&k[0]) != 0 && int(&k[1]) != 0)
@@ -586,9 +776,18 @@ impl StoryWorld for W<'_> {
         let what = format!("{ev:?}");
         match ev {
             StoryEvent::MoveFleet { fleet, kind, mode, x, y } => {
-                self.expect("move", &[v(fleet), v(kind), v(mode), v(x.to_bits()), v(y.to_bits())], &what)
+                self.expect("move", &[v(fleet), v(kind), v(mode), v(x.to_bits()), v(y.to_bits())], &what);
+                // FlottaMozgat sets the order (+0x40) later reads in the record see.
+                if let Some(f) = self.fleets.get_mut(fleet as usize) {
+                    f.command = kind;
+                }
             }
-            StoryEvent::StopFleet(f) => self.expect("move", &[v(f), v(0), v(0), v(0u32), v(0u32)], &what),
+            StoryEvent::StopFleet(f) => {
+                self.expect("move", &[v(f), v(0), v(0), v(0u32), v(0u32)], &what);
+                if let Some(q) = self.fleets.get_mut(f as usize) {
+                    q.command = 0;
+                }
+            }
             StoryEvent::DeleteFleet(f) => self.expect("delete", &[v(f)], &what),
             StoryEvent::NewShip { fleet, design } => self.expect("ship", &[v(fleet), v(design)], &what),
             StoryEvent::NewTanks { fleet, design, count } => self.expect("tank", &[v(fleet), v(design), v(count)], &what),
@@ -606,6 +805,11 @@ impl StoryWorld for W<'_> {
                 }
             }
             StoryEvent::AddMoney { empire, amount } => {
+                // The money the scripts read later in the record (`MoneyMennyi`) includes this.
+                if empire == self.en {
+                    let m = self.w["money"].as_f64().unwrap() + amount;
+                    self.w["money"] = m.into();
+                }
                 if let Some(a) = self.take("money", &what) {
                     if ints(&a[1].as_array().unwrap()[..2].to_vec().into()) != [empire, -1] || a[1][2].as_f64() != Some(amount) {
                         self.bad.push(format!("{what}: exe args {}", a[1]));
@@ -679,8 +883,14 @@ impl StoryWorld for W<'_> {
                     MessageText::Planet(p) => ("planet", p),
                     MessageText::Player(e) => ("player", e),
                     MessageText::Tech(t) => ("tech", t),
+                    MessageText::Fleet(f) => ("fleet", f),
                     // A text of the string table: any string.
-                    MessageText::Text(_) => {
+                    // A list of planets, a design's name, a hero's texts (st_Rnd): any string too.
+                    MessageText::Text(_)
+                    | MessageText::Star(_)
+                    | MessageText::Planets(_)
+                    | MessageText::Design { .. }
+                    | MessageText::Hero { .. } => {
                         if let Some(a) = self.take("param", &what) {
                             if int(&a[1][0]) != slot || a[1][1] != "other" {
                                 self.bad.push(format!("{what}: exe {}", a[1]));
@@ -707,7 +917,12 @@ impl StoryWorld for W<'_> {
                 self.met.push(e);
             }
             StoryEvent::UnhidePlanet(p) => {
-                self.expect("unhide", &[v(-p)], &what);
+                // st_bUnhide(x): the planet itself (`x = −p`) or its story id (st_Begin's base, 11).
+                if let Some(a) = self.take("unhide", &what) {
+                    if !(int(&a[1][0]) == -p || int(&a[1][0]) > 0) {
+                        self.bad.push(format!("{what}: exe args {}", a[1]));
+                    }
+                }
                 let post = planets_of(&self.post_world());
                 if post.get(p as usize).is_some_and(|q| q.views.len() == 19 && q.views[1..].iter().any(|&x| x < 0)) {
                     self.bad.push(format!("{what}: exe views {:?}", post[p as usize].views));
@@ -783,7 +998,19 @@ impl StoryWorld for W<'_> {
             StoryEvent::PlaceStoryBuilding { planet, kind, level } => {
                 self.expect("building", &[v(planet), v(kind), v(1), v(level), v(-1), v(-1)], &what)
             }
-            StoryEvent::AddPlanetInfo { planet, info } => self.expect("infoadd", &[v(planet), v(info), v(1)], &what),
+            StoryEvent::AddPlanetInfo { planet, info } => {
+                self.expect("infoadd", &[v(planet), v(info), v(1)], &what);
+                self.add_info(planet, info);
+            }
+            StoryEvent::AddPlanetInfoHidden { planet, info } => {
+                self.expect("infoadd", &[v(planet), v(info), v(0)], &what);
+                self.add_info(planet, info);
+            }
+            StoryEvent::SetPlanetRichness { planet, value } => {
+                self.richness.insert(planet, value);
+                self.planets[planet as usize].richness = value;
+            }
+            StoryEvent::SetTechState { tech, state, empire } => self.expect("techstate", &[v(tech), v(state), v(empire)], &what),
             StoryEvent::SendStorySpecial(id) => self.expect("multisend", &[v(0x66), v(self.en), v(4), v(id)], &what),
             StoryEvent::DeleteShip(k) => self.expect("shipdelete", &[v(k)], &what),
             StoryEvent::SetFleetVisible { fleet, on } => {
@@ -818,6 +1045,91 @@ impl StoryWorld for W<'_> {
                     }
                 }
             }
+            StoryEvent::FleetFlags { fleet, set, clear } => {
+                let e = self.fleet_flags.entry(fleet).or_default();
+                e.0 = (e.0 & !(clear as i32)) | set as i32;
+                e.1 = (e.1 & !(set as i32)) | clear as i32;
+            }
+            StoryEvent::RadarNotice(p) => {
+                if planets_of(&self.post_world()).get(p as usize).and_then(|q| q.notice) != Some(1) {
+                    self.bad.push(format!("{what}: the exe's +0xbb isn't 1"));
+                }
+            }
+            StoryEvent::SetPlanetView { planet, view } => {
+                let post = planets_of(&self.post_world());
+                let got = post.get(planet as usize).map(|q| q.views.get(self.en as usize).copied());
+                if got != Some(Some(view as i16)) {
+                    self.bad.push(format!("{what}: exe {got:?}"));
+                }
+            }
+            StoryEvent::SetEpidemic { planet, value } => {
+                self.epidemic.insert(planet, value);
+                self.planets[planet as usize].b8 = value;
+            }
+            StoryEvent::VirusCheck(p) => {
+                self.expect("virus", &[v(p)], &what);
+                // `Virus_CheckAdd` adds info 100 (seen by later `BolygoInfoIs` in the record).
+                self.add_info(p, 100);
+            }
+            StoryEvent::RelationChange { b, delta, .. } if (0..19).contains(&b) => {
+                *self.relations.entry(b).or_default() += delta;
+            }
+            StoryEvent::TradeAgreement { b, .. } if (0..19).contains(&b) => {
+                if int(&self.post_world()["tra"][b as usize]) == 0 {
+                    self.bad.push(format!("{what}: no trade agreement in the exe"));
+                }
+            }
+            StoryEvent::DeleteTanks { place, design, count } => {
+                self.expect("tankdelete", &[v(place), v(design), v(count)], &what);
+                // TankDeleteGrWar (exe 0x541510): the first record of the place and design.
+                if let Some(k) = (1..self.tanks.len()).find(|&k| self.tanks[k].0 == place && self.tanks[k].1 == design) {
+                    let t = &mut self.tanks[k];
+                    t.2 -= count.min(t.2);
+                    if t.2 < 1 {
+                        t.1 = 0x7fff;
+                    }
+                }
+            }
+            StoryEvent::DesignPriceDiv { design, div, .. } => {
+                let cur = *self.prices.entry(design).or_insert_with(|| self.w["designs"].get(design as usize).map_or(0, |x| int(&x[1])));
+                self.prices.insert(design, cur / div);
+            }
+            StoryEvent::DesignForSale { design, .. } => {
+                let cur = *self.prices.entry(design).or_insert_with(|| self.w["designs"].get(design as usize).map_or(0, |x| int(&x[1])));
+                self.prices.insert(design, cur / 3);
+                self.offers_added += 1;
+                let post = self.post_world();
+                if post["designs"].get(design as usize).map(|x| int(&x[8])) != Some(3) {
+                    self.bad.push(format!("{what}: the exe's design +0x6c isn't 3"));
+                }
+            }
+            StoryEvent::TechCheaper(t) => {
+                let (pre, post) = (self.w["tres"][t as usize].clone(), self.post_world()["tres"][t as usize].clone());
+                let want: Vec<i32> = (0..4).map(|i| if i == 0 { int(&pre[0]) } else { int(&pre[i]) / 3 }).collect();
+                if ints(&post) != want {
+                    self.bad.push(format!("{what}: port {want:?} exe {post}"));
+                }
+            }
+            StoryEvent::DamageBuilding { planet, slot, damage } => {
+                let post = self.post_world();
+                let got = post["bld"].get(planet.to_string()).and_then(|b| b.get(slot as usize)).map(|b| int(&b[1]));
+                if got != Some(damage) {
+                    self.bad.push(format!("{what}: exe {got:?}"));
+                }
+            }
+            StoryEvent::ScrollSabotage { .. } => {
+                self.take("scroll", &what);
+            }
+            StoryEvent::SpyTarget { slot, empire } => {
+                let post = self.post_world();
+                let got = int(&post["spies"][self.en as usize][1][slot as usize][2]);
+                if got != empire {
+                    self.bad.push(format!("{what}: exe {got}"));
+                }
+            }
+            StoryEvent::SpyCaught { spy, empire, enemy } => {
+                self.expect("spyreport", &[v(3), v(spy), v(0), v(0), v(0), v(0), v(empire), v(enemy), v(0)], &what)
+            }
             StoryEvent::Won
             | StoryEvent::EmpireDies(_)
             | StoryEvent::GameInfo { .. }
@@ -851,9 +1163,69 @@ impl W<'_> {
                 other => self.bad.push(format!("ship {k} design: port {d} exe {other:?}")),
             }
         }
+        let pre_fleets = fleets_of(&self.w);
+        let post_fleets = fleets_of(&post);
+        // The bits the stories touch (0x100 visible, 0x200 friendly, 0x800 named), from `pre` with the port's writes.
+        for (&f, &(set, clear)) in &self.fleet_flags {
+            let was = pre_fleets.get(f as usize).map_or(0, |q| q.flags);
+            let want = ((was & !clear) | set) & 0xb00;
+            let got = post_fleets.get(f as usize).map_or(0, |q| q.flags) & 0xb00;
+            if got != want {
+                self.bad.push(format!("fleet {f} +0x52: port {want:#x} exe {got:#x}"));
+            }
+        }
+        for (&p, &val) in &self.richness {
+            if planets.get(p as usize).map(|q| q.richness) != Some(val) {
+                self.bad.push(format!("planet {p} +0x24: port {val} exe {:?}", planets.get(p as usize).map(|q| q.richness)));
+            }
+        }
+        for (&p, &b8) in &self.epidemic {
+            if planets.get(p as usize).map(|q| q.b8) != Some(b8) {
+                self.bad.push(format!("planet {p} +0xb8: port {b8} exe {:?}", planets.get(p as usize).map(|q| q.b8)));
+            }
+        }
+        for (&e, &d) in &self.relations {
+            let (was, got) = (int(&self.w["rel"][e as usize]), int(&post["rel"][e as usize]));
+            if (was + d) as i16 as i32 != got {
+                self.bad.push(format!("relation of {e}: port {was} + {d}, exe {got}"));
+            }
+        }
+        if self.offers_added != 0 {
+            let n = |w: &Value| w["trade"].as_array().map_or(0, |t| t.len() as i32);
+            if n(&post) != n(&self.w) + self.offers_added {
+                self.bad.push(format!("trade offers: port +{} exe {} → {}", self.offers_added, n(&self.w), n(&post)));
+            }
+        }
+        for (&d, &price) in &self.prices {
+            // A design st_GetTerv made in this record: its price came from the story design data.
+            if self.w["designs"].as_array().is_some_and(|x| d as usize >= x.len()) {
+                continue;
+            }
+            if post["designs"].get(d as usize).map(|x| int(&x[1])) != Some(price) {
+                self.bad.push(format!("design {d} price: port {price} exe {:?}", post["designs"].get(d as usize).map(|x| int(&x[1]))));
+            }
+        }
+        if let Some(t) = post["tanks"].as_array() {
+            let exe: Vec<(i32, i32, i32)> = t.iter().map(|x| (int(&x[0]), int(&x[1]), int(&x[2]))).collect();
+            if exe != self.tanks && self.events.iter().any(|e| matches!(e, StoryEvent::DeleteTanks { .. })) {
+                self.bad.push(format!("Tankok: port {:?} exe {exe:?}", self.tanks));
+            }
+        }
         if let Some(g) = self.gmoral {
             if int(&post["gmoral"][0]) != g || int(&post["gmoral"][1]) != 6 {
                 self.bad.push(format!("global morale: port {g} exe {}", post["gmoral"]));
+            }
+        }
+    }
+
+    /// `BolygoInfoAdd`: the info takes a free slot (seen by later `BolygoInfoIs` in the record).
+    fn add_info(&mut self, planet: i32, info: i32) {
+        if let Some(p) = self.planets.get_mut(planet as usize) {
+            if !p.infos.contains(&info) {
+                match p.infos.iter().position(|&i| i == 0) {
+                    Some(k) => p.infos[k] = info,
+                    None => p.infos.push(info),
+                }
             }
         }
     }
@@ -926,6 +1298,25 @@ fn load(s: &Value) -> Story {
         st.best_prod.copy_from_slice(&ints(b));
     }
     st.all_fleets_visible = s.get("allvis").map_or(0, |x| int(x) as u8);
+    if let Some(k) = s.get("kn") {
+        let k = ints(k);
+        st.kem = KemNews {
+            news: k[0],
+            spy: k[1],
+            died: k[2],
+            success: k[3] != 0,
+            mission: k[4],
+            target: k[5],
+            tech: k[6],
+            techs: k[7..12].try_into().unwrap(),
+        };
+    }
+    st.counter_spy = s.get("ci").map_or(0, int);
+    st.battle_winner = s.get("spwin").or(s.get("kinyert")).map_or(0, int);
+    // st_Rnd traces: the finished space battle's participants.
+    if let Some(b) = s.get("battle").and_then(|b| b.as_array()) {
+        st.battle = b.iter().map(|p| story::Participant { owner: int(&p[0]), slot_id: int(&p[1]), fleet_id: int(&p[2]) }).collect();
+    }
     st
 }
 
@@ -990,6 +1381,7 @@ fn compare(st: &Story, s: &Value) -> Vec<String> {
     field!(nearest_planet);
     field!(best_prod);
     field!(all_fleets_visible);
+    field!(counter_spy);
     bad
 }
 
@@ -1032,7 +1424,7 @@ struct Stats {
 #[test]
 fn campaign_matches_exe() {
     let files = traces("campaign-");
-    let Some((tables, workers)) = tables() else {
+    let Some((tables, buildings)) = tables() else {
         eprintln!("skipped: IG2_INSTALL_DIR not set (the campaign tables come from the exe)");
         return;
     };
@@ -1050,14 +1442,24 @@ fn campaign_matches_exe() {
         // The scripts the tracer kept in the exe (the others are patched out on both sides); `st_Multi_include`
         // runs last (it does nothing in the traces that patched it out: no mode runs there).
         let keep: Vec<&str> = setup["keep"].as_array().map(|k| k.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
-        // `st_BRnd_include` runs first; only where the tracer kept it (its special-0x19 check runs in every check).
-        let sc: Box<dyn Script> = match (keep.contains(&"brnd"), keep.contains(&"line")) {
-            (true, true) => Box::new(((BRndStories, (ScenarioStories, LineStories)), MultiStories)),
-            (true, false) => Box::new(((BRndStories, ScenarioStories), MultiStories)),
-            (false, true) => Box::new(((ScenarioStories, LineStories), MultiStories)),
-            (false, false) => Box::new((ScenarioStories, MultiStories)),
-        };
-        let sc = &*sc;
+        // `Story_Check`'s order: `Begin`, `BRnd` (only where the tracer kept them: BRnd's special-0x19 check runs in
+        // every check), `Scen`, `Line`, `Multi`.
+        let mut chain: Vec<Box<dyn Script>> = Vec::new();
+        if keep.contains(&"begin") {
+            chain.push(Box::new(BeginStories));
+        }
+        if keep.contains(&"rnd") {
+            chain.push(Box::new(RndStories));
+        }
+        if keep.contains(&"brnd") {
+            chain.push(Box::new(BRndStories));
+        }
+        chain.push(Box::new(ScenarioStories));
+        if keep.contains(&"line") {
+            chain.push(Box::new(LineStories));
+        }
+        chain.push(Box::new(MultiStories));
+        let sc = &Chain(chain);
         let infos: Vec<i32> = setup["infos"].as_array().map_or(Vec::new(), |a| a.iter().map(int).collect());
         for r in &recs {
             let kind = r["k"].as_str().unwrap();
@@ -1069,7 +1471,7 @@ fn campaign_matches_exe() {
             st.values.clone_from(&values);
             st.fleet_data.clone_from(&fleet_data);
             st.building_data.clone_from(&building_data);
-            let mut w = W::new(r, &tables, &infos, &workers);
+            let mut w = W::new(r, &tables, &infos, &buildings);
             let seed0 = w.rng.state(story::STREAM);
             stats.records += 1;
             let label = if kind == "staged" { format!("staged {}", r["call"].as_str().unwrap()) } else { kind.to_string() };
@@ -1168,6 +1570,10 @@ fn campaign_matches_exe() {
             if w.next < w.acts.len() {
                 bad.push(format!("exe calls the port didn't make: {:?}", &w.acts[w.next..]));
             }
+            if w.missing.get() {
+                *stats.unchecked.entry("record: buildings not dumped".into()).or_default() += 1;
+                continue;
+            }
             if !bad.is_empty() {
                 failures.push(format!("{} seq {} {kind} {}: {}", path.display(), r["seq"], r["call"], bad.join("; ")));
             }
@@ -1179,5 +1585,9 @@ fn campaign_matches_exe() {
         stats.records, stats.kinds, stats.started, stats.ended, stats.acts, stats.counters_fired, stats.draws, stats.won,
         stats.died, stats.unchecked
     );
+    // `IG2_FAILURES=<file>`: every mismatch, for triage.
+    if let Some(f) = std::env::var_os("IG2_FAILURES") {
+        std::fs::write(f, failures.join("\n")).unwrap();
+    }
     assert!(failures.is_empty(), "{} mismatches, first: {}", failures.len(), failures[..failures.len().min(8)].join("\n"));
 }

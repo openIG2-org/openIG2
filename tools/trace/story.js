@@ -60,6 +60,13 @@ const A = {
   // Story_Minden_Flotta_Latszik, StoryBuildingData.
   SpFlottak: va(0xbaa1c6), Wormholes: va(0xbb60f8), WormholeN: va(0xbb61a0), GMoral: va(0xbaeac4), GMoralSpeed: va(0xbaeb14),
   Best3: va(0xf432b8), AllVis: va(0xf265d4), BuildingData: va(0xf22740), BuildingDataN: va(0xf23a00),
+  // st_Begin_include (--keep begin): Tankok, the trade offers, the spies, KemEsemeny, CounterIntelligence_kem,
+  // SpWarKiNyert, ResearchAktFejlesztett, the buildings.
+  Tanks: va(0xbb41a8), TankN: va(0xbb4154), TradeN: va(0xf439cc), TradeT: va(0xb9aaf0), Kemek: va(0xbafcc8), KemN: va(0xbb1f84),
+  KemNews: va(0xf2f874), CiKem: va(0xf265d0), SpWin: va(0xbaa1ec), Research: va(0xb9a9b8), HanyEpulet: va(0xba9840),
+  Epuletek: va(0xba9e90),
+  // st_Rnd_include (--keep rnd): the finished battle's list count and winner, st_Story, RndHosok.
+  SpwN: va(0xf265c8), KiNyert: va(0xbaa1ec), StoryAt: va(0x602f80), RndHosok: va(0x9288b0),
   // The race menu's state CampaignGameStart reads.
   FajStart: va(0xbbb17c), FajSzetnyilas: va(0xbbb16c), FajRace: va(0xbbb178), FajNehezseg: va(0xbbb180),
 };
@@ -161,7 +168,19 @@ function story() {
     fn: [A.FnB.readS32(), A.FnR.readS32(), A.FnQ.readS32(), A.FnX.readS32(), A.FnY.readS32()],
     line: A.LineStory.readS32(), scen: A.Scenario.readS32(), near: A.Near.readS32(),
     best3: ints(A.Best3, 3), allvis: A.AllVis.readU8(),
+    // KemEsemeny (news, spy, died, success, mission, target, tech, 5 techs), CounterIntelligence_kem, SpWarKiNyert.
+    kn: [A.KemNews.readS32(), A.KemNews.add(4).readS32(), A.KemNews.add(8).readS32(), A.KemNews.add(0xc).readU8(),
+      A.KemNews.add(0x14).readS32(), A.KemNews.add(0x18).readS32(), A.KemNews.add(0x1c).readS32()].concat(ints(A.KemNews.add(0x24), 5)),
+    ci: A.CiKem.readS32(), spwin: A.SpWin.readS32(),
+    // st_Rnd: the finished space battle's participants (owner +0x18, +0x20, +0x24) and SpWarKiNyert.
+    battle: cfg.keep.includes('rnd') ? spwList() : undefined, kinyert: cfg.keep.includes('rnd') ? A.KiNyert.readS32() : undefined,
   };
+}
+function spwList() {
+  const p = A.Spw.readPointer(), n = A.SpwN.readS32(), out = [];
+  if (p.isNull() || n < 0 || n > 40) return out;
+  for (let i = 0; i < n; i++) { const q = p.add(0x30 * i); out.push([q.add(0x18).readS32(), q.add(0x20).readS32(), q.add(0x24).readS32()]); }
+  return out;
 }
 function varOf(id) {
   const n = A.nV.readS32();
@@ -170,7 +189,8 @@ function varOf(id) {
 }
 function world() {
   const en = A.EN.readS32(), np = nPlanets(), nfl = nFleets(), planets = [], fleets = [], multi = cfg.keep.includes('multi');
-  const brnd = cfg.keep.includes('brnd');
+  // st_Begin_include and st_Rnd_include dump what st_BRnd's traces have and more.
+  const begin = cfg.keep.includes('begin'), rndk = cfg.keep.includes('rnd'), brnd = cfg.keep.includes('brnd') || begin || rndk;
   for (let p = 0; p <= np; p++) { // slot 0 too: a failed search returns 0 and the scripts read it
     const b = A.Bolygok.add(0x188 * p);
     const row = [b.add(0x20).readU8(), b.add(0x28).readS32(), b.add(0xd8 + 2 * en).readS16()];
@@ -181,6 +201,10 @@ function world() {
       row.push(b.add(0xbc).readU8(), info, hex(b.add(0xd8), 38));
       // st_BRnd: production +0x70/+0x74, morale +0x174.
       if (brnd) row.push(b.add(0x70).readS32(), b.add(0x74).readS32(), b.add(0x174).readS32());
+      // st_Begin: the building slots (HanyEpulet), the radar notice +0xbb.
+      if (begin) row.push(A.HanyEpulet.add(4 * p).readS32(), b.add(0xbb).readU8());
+      // st_Rnd: morale +0x30, surface +0x22, richness +0x24.
+      if (rndk) row.push(b.add(0x30).readS32(), b.add(0x22).readU8(), b.add(0x24).readS32());
     }
     planets.push(row);
   }
@@ -189,6 +213,8 @@ function world() {
     if (cfg.campaign) row.push(f32bits(q.add(0x30)), f32bits(q.add(0x34)), q.add(0x42).readS16(), q.add(0x5c).readS32(), f32bits(q.add(0x3c)));
     // st_BRnd: +0x40 ships, +0x44 the order's target, +0x18, +0x52.
     if (cfg.campaign && brnd) row.push(q.add(0x40).readS16(), f32bits(q.add(0x44)), q.add(0x18).readU8(), q.add(0x52).readU16());
+    // st_Begin: +0x60 (its strength).
+    if (cfg.campaign && begin) row.push(q.add(0x60).readS32());
     fleets.push(row);
   }
   const hanyb = [], visz = [];
@@ -225,6 +251,8 @@ function world() {
       const designs = [], tn = A.TervCount.add(4 * en).readS32(), tp = A.Tervek.add(4 * en).readPointer();
       // st_BRnd also: +0x20 cost, +0x2c attack, +0x80 story key.
       for (let d = 0; d <= tn; d++) designs.push(brnd ? [tp.add(0x84 * d + 0x1c).readS32(), tp.add(0x84 * d + 0x24).readS32(), tp.add(0x84 * d + 0x20).readS32(), tp.add(0x84 * d + 0x2c).readS32(), tp.add(0x84 * d + 0x80).readS32()] : [tp.add(0x84 * d + 0x1c).readS32(), tp.add(0x84 * d + 0x24).readS32()]);
+      // st_Begin also: +0x16 (2 = ground), +0x44 (size), +0x34 (colony ship), +0x6c (3 = for sale).
+      if (begin) for (let d = 0; d <= tn; d++) designs[d].push(tp.add(0x84 * d + 0x16).readS16(), tp.add(0x84 * d + 0x44).readS32(), tp.add(0x84 * d + 0x34).readU8(), tp.add(0x84 * d + 0x6c).readS32());
       out.ships = ships;
       out.designs = designs;
     }
@@ -234,9 +262,49 @@ function world() {
       const t = []; for (let k = 0; k < 193; k++) { const r = A.Techs.add(0x114 * k); t.push(r.add(0x45 + en).readU8(), r.add(0x2d).readU8(), r.add(0x2e).readU8(), r.add(0x2f).readU8()); }
       out.techs = t.map((x) => (x < 16 ? '0' : '') + x.toString(16)).join('');
       out.spf = [A.SpFlottak.readS16(), A.SpFlottak.add(6).readS16()];
-      const wh = []; for (let k = 1; k <= A.WormholeN.readS32(); k++) wh.push([A.Wormholes.add(0x1c * k + 8).readU8(), A.Wormholes.add(0x1c * k + 0x14).readU8()]);
+      const wh = []; for (let k = 1; k <= A.WormholeN.readS32(); k++) { const q = A.Wormholes.add(0x1c * k); wh.push([q.add(8).readU8(), q.add(0x14).readU8(), q.add(0xa).readS16(), q.add(0x16).readS16()]); }
       out.wh = wh;
       out.gmoral = [A.GMoral.readS32(), A.GMoralSpeed.readS32()];
+      if (rndk) { const c = []; for (let k = 0; k < 193; k++) c.push(A.Techs.add(0x114 * k + 0x34).readS32()); out.tcost = c; out.whn = A.WormholeN.readS32(); }
+    }
+    if (begin) {
+      // Every tech's priority +0xb8, +0x34, +0x38 and the human's time +0x58 + 4·EN; the research; Tankok; the
+      // trade offers; the human's trade agreements and the relations (value 2) seen from the others; the spies; the
+      // buildings of the human's planets and of planets 101 and 191.
+      const tr = []; for (let k = 0; k < 193; k++) { const r = A.Techs.add(0x114 * k); tr.push([r.add(0xb8).readU8(), r.add(0x34).readS32(), r.add(0x38).readS32(), r.add(0x58 + 4 * en).readS32()]); }
+      out.tres = tr;
+      out.res = A.Research.add(4 * en).readS32();
+      const tanks = [], tkn = A.TankN.readS32(); for (let k = 0; k <= tkn; k++) { const t = A.Tanks.add(8 * k); tanks.push([t.readS16(), t.add(2).readS16(), t.add(4).readS32()]); }
+      out.tanks = tanks;
+      const trade = [], trn = A.TradeN.readS32(); for (let k = 0; k < trn; k++) { const t = A.TradeT.add(0x84 * k); trade.push([t.add(0x16).readS16(), t.add(0x80).readS32()]); }
+      out.trade = trade;
+      const ta = []; for (let e = 0; e < 19; e++) ta.push(A.Viszony.add((en * 19 + e) * 0x26 + 0x24).readU8());
+      out.tra = ta;
+      const rel = []; for (let e = 0; e < 19; e++) rel.push(A.Viszony.add((e * 19 + en) * 0x26 + 4).readS16());
+      out.rel = rel;
+      const spies = [];
+      for (let e = 0; e < 9; e++) {
+        const k = [];
+        for (let i = 0; i < 13; i++) { const r = kemRec(e, i); k.push([r.add(0x10).readS16(), r.add(0x12).readU8(), r.add(0x18).readU8(), r.add(0x1a).readS16(), r.add(0x32).readU8(), r.add(0x33).readU8()]); }
+        spies.push([A.KemN.add(4 * e).readS32(), k]);
+      }
+      out.spies = spies;
+      const bld = {}, wanted = new Set([planetOfId(101), planetOfId(191)]);
+      for (let p = 1; p <= np; p++) {
+        // Story 10 searches every planet when its planet id is missing (st_eSearch3(0, 1)).
+        if (A.Bolygok.add(0x188 * p + 0x20).readU8() !== en && !wanted.has(p) && !(bucketHas(10) && !planetOfId(101))) continue;
+        const n = A.HanyEpulet.add(4 * p).readS32(), base = A.Epuletek.add(4 * p).readPointer(), list = [];
+        for (let k = 0; k <= n; k++) { const r = base.add(0x20 * k); list.push([r.readU8(), r.add(4).readS32(), r.add(8).readS16()]); }
+        bld[p] = list;
+      }
+      out.bld = bld;
+      // Story 7's planet when it's no longer the human's: its owner's designs (+0x16, +0x44) for the units on it.
+      const p73 = planetOfId(73), o73 = p73 ? A.Bolygok.add(0x188 * p73 + 0x20).readU8() : 0;
+      if (o73 && o73 !== en && o73 < 19) {
+        const tn = A.TervCount.add(4 * o73).readS32(), tp = A.Tervek.add(4 * o73).readPointer(), d = [];
+        for (let k = 0; k <= tn; k++) d.push([tp.add(0x84 * k + 0x16).readS16(), tp.add(0x84 * k + 0x44).readS32()]);
+        out.odes = [o73, d];
+      }
     }
   }
   return out;
@@ -300,6 +368,8 @@ function setupActs() {
     for (let e = 0; e < 19; e++) if (A.Nevek.add(4 * e).readPointer().equals(p)) return [argI(c, 0), 'empire', e];
     const to = p.sub(A.Techs).toInt32();
     if (to >= 0 && to % 0x114 === 0 && to / 0x114 < 193) return [argI(c, 0), 'tech', to / 0x114];
+    const fo = p.sub(A.Flottak.readPointer()).toInt32();
+    if (fo >= 0 && fo % 0x80 === 0 && fo / 0x80 <= nFleets()) return [argI(c, 0), 'fleet', fo / 0x80];
     const po = p.sub(A.PlayerNev).toInt32();
     if (po >= 0 && po % 11 === 0 && po / 11 < 19) return [argI(c, 0), 'player', po / 11];
     return [argI(c, 0), 'other', p.readAnsiString()];
@@ -309,8 +379,20 @@ function setupActs() {
   logged(va(0x53c0b0), 'inforemove', ints(3));
   logged(va(0x4c1d60), 'discover', ints(2));
   logged(va(0x604040), 'unhide', ints(1));
-  if (cfg.keep.includes('multi') || cfg.keep.includes('brnd')) setupMultiActs(ints);
-  if (cfg.keep.includes('brnd')) {
+  const rndk = cfg.keep.includes('rnd');
+  if (cfg.keep.includes('multi') || cfg.keep.includes('brnd') || cfg.keep.includes('begin') || rndk) setupMultiActs(ints);
+  if (cfg.keep.includes('begin')) {
+    // st_Begin_include's calls: units deleted, spy reports, the epidemic's info.
+    logged(va(0x5414c0), 'tankdelete', ints(3));
+    // KemJelentesAdd runs a nested Story_Check(1) (Story_KemEsemeny) whose calls are the stories' own: logged flat.
+    // Its ticker line (ScrollUzenetId) is not a story's call.
+    Interceptor.attach(va(0x58d000), { onEnter() { const c = this.context, o = []; for (let i = 0; i < 9; i++) o.push(argI(c, i)); act('spyreport', o); } });
+    Interceptor.attach(va(0x556dc0), { onEnter() { actDepth++; }, onLeave() { actDepth--; } });
+    logged(va(0x542930), 'virus', ints(1));
+  }
+  // st_Rnd_include: Virus_CheckAdd (st_Begin's block logs it too).
+  if (rndk && !cfg.keep.includes('begin')) logged(va(0x542930), 'virus', ints(1));
+  if (cfg.keep.includes('brnd') || cfg.keep.includes('begin') || rndk) {
     // st_BRnd_include's calls: designs deleted, number parameters, techs given, the ticker.
     logged(va(0x541d50), 'tervdelete', ints(4));
     logged(va(0x509500), 'paramint', ints(2));
@@ -1008,6 +1090,308 @@ function brndFuzz() {
   }
 }
 
+// ---------------------------------------------------------------- staged calls, st_Begin_include (--keep begin)
+// The opening episodes 1..24 (+ 51) started, their counters run out (with the world they test set up for the
+// record), their messages read, answered or promoted, daily checks, specials 10/0xd/0x10/0x13, fleet arrivals,
+// space battles starting and ending with their fleets, ground battles ending on their planets, the radar reaching
+// the base, spy news.
+const BEGIN = [1, 4, 5, 51, 6, 7, 8, 9, 10, 11, 12, 19, 20, 21, 22, 23, 24];
+const spwBufs = [];
+const BEGIN_COUNTERS = { 1: [18, 12, 19, 11], 4: [49], 5: [59], 6: [61, 62], 7: [71, 72, 73], 9: [91], 10: [109, 101],
+  11: [111], 12: [129], 19: [196, 195, 197, 198, 191], 20: [201], 21: [211], 23: [231], 24: [241, 242] };
+// [kind (6 answer, 7 promoted, 9 read), block, part]
+const BEGIN_MESSAGES = { 1: [[9, 11]], 4: [[6, 41, 4], [6, 41, 6], [6, 41, 7], [7, 41], [6, 41, 2]], 5: [[9, 51]], 6: [[9, 61]],
+  7: [[6, 72, 2], [6, 72, 3], [7, 72], [6, 73, 2], [6, 73, 3]], 8: [[9, 81]],
+  9: [[6, 91, 2], [6, 91, 3], [6, 91, 4], [6, 92, 2], [6, 92, 3], [6, 92, 4], [7, 91], [7, 92], [8, 91]],
+  10: [[9, 111], [9, 101]], 11: [[9, 111], [7, 111]] };
+const BEGIN_FLEETS = [11, 12, 14, 41, 51, 63, 69, 231, 232, 241];
+const BEGIN_RARE = [1, 4, 5, 6, 7, 10, 19, 20, 21, 23, 24];
+const pickBegin = (ids) => { const r = ids.filter((x) => BEGIN_RARE.includes(x)); return r.length && rnd(3) ? pick(r) : pick(ids); };
+function fleetOfId(id) { for (let f = 1; f <= nFleets(); f++) if (fleet(f).add(0x16).readS16() === id && fleet(f).add(0x15).readU8() !== 0xff) return f; return 0; }
+function ownPlanets() { const en = A.EN.readS32(), o = []; for (let p = 1; p <= nPlanets(); p++) if (A.Bolygok.add(0x188 * p + 0x20).readU8() === en) o.push(p); return o; }
+const kemRec = (e, k) => A.Kemek.add((e * 13 + k) * 0x4c);
+// The human's spies for the record: alive, at home on counter-espionage (19) or with a target (21).
+function stageSpies(sets, kind) {
+  const en = A.EN.readS32(), n = A.KemN.add(4 * en).readS32();
+  if (n < 2 && rnd(2)) transientS32(sets, A.KemN.add(4 * en), 2 + rnd(4));
+  const m = Math.max(n, 3);
+  for (let k = 1; k < m; k++) {
+    if (rnd(3) === 0) continue;
+    const r = kemRec(en, k);
+    transientS16(sets, r.add(0x10), kind === 19 ? pick([3, 3, 1, 0]) : pick([1, 1, 2, 3, 0]));
+    if (kind === 19) { transientS16(sets, r.add(0x1a), pick([13, 13, 2])); transientU8(sets, r.add(0x32), rnd(10)); transientU8(sets, r.add(0x33), rnd(10)); }
+    if (kind === 21 && rnd(4) === 0) transientU8(sets, r.add(0x18), 1 + rnd(8));
+  }
+}
+function beginFuzz() {
+  const pool = cfg.inline && cfg.inline.length ? BEGIN.filter((x) => cfg.inline.includes(x)) : BEGIN;
+  const c = rnd(24), en = A.EN.readS32(), np = nPlanets(), running = pool.filter(bucketHas);
+  const sets = [];
+  const prep = () => sets.forEach((x) => x[0]()), after = () => sets.slice().reverse().forEach((x) => x[1]());
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  if (c < 4 || !running.length) {
+    const ids = pool.filter((id) => !bucketHas(id));
+    if (!ids.length) return;
+    const id = pickBegin(ids);
+    if (id === 6 && !planetOfId(61)) {
+      const cand = []; for (let p = 1; p <= np; p++) { const o = A.Bolygok.add(0x188 * p + 0x20).readU8(); if (o !== en && o !== 0 && o <= 8) cand.push(p); }
+      if (cand.length) bAddAzon(pick(cand), 61);
+    }
+    if (id === 10 && rnd(3)) transientS32(sets, A.HanyB.add(4 * en), 1 + rnd(2));
+    if (id === 9) for (let e = 1; e < 9; e++) if (e !== en && rnd(3) === 0) transientU8(sets, A.Ismeri.add(19 * en + e), rnd(2));
+    if (id === 19 || id === 21) stageSpies(sets, id);
+    if (id === 24) {
+      // A trader of empire 9 (ids 10000..11000) near one of the human's planets.
+      const nine = liveFleets().filter((f) => fleet(f).add(0x15).readU8() === 9), own = ownPlanets();
+      if (own.length && rnd(2)) {
+        const f = nine.length && rnd(2) ? pick(nine) : pick(liveFleets()), b = A.Bolygok.add(0x188 * pick(own));
+        transientU8(sets, fleet(f).add(0x15), 9); transientS16(sets, fleet(f).add(0x16), 10000 + rnd(1001));
+        transientU32(sets, fleet(f).add(0x30), ftou(b.add(0x18).readFloat() + rnd(120) - 60));
+        transientU32(sets, fleet(f).add(0x34), ftou(b.add(0x1c).readFloat() + rnd(120) - 60));
+      }
+    }
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+  } else if (c < 6) {
+    const id = pickBegin(running), list = BEGIN_COUNTERS[id];
+    if (list) szStart(pick(list), rnd(2));
+  } else if (c < 11) {
+    // A staged counter with the world it tests set up.
+    const id = pickBegin(running), list = BEGIN_COUNTERS[id];
+    if (!list) return;
+    const ctr = pick(list);
+    if (id === 19) stageSpies(sets, 19);
+    if (id === 1 && ctr === 12 && rnd(2)) { const p = planetOfId(11); if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), rnd(2) ? 10 : en); }
+    if (id === 6 && rnd(2)) { const p = planetOfId(61); if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), pick([10, 10, en, 3])); }
+    if (id === 1 || id === 5 || id === 6) for (const fid of [11, 12, 14, 51, 63, 69]) { const f = fleetOfId(fid); if (f && rnd(2)) transientS16(sets, fleet(f).add(0x40), rnd(2) ? 0 : 1); }
+    if (id === 4 && rnd(2)) { const p = planetOfId(41); if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), rnd(3) ? en : 3); }
+    if (id === 10 && ctr === 101 && rnd(2)) { const p = planetOfId(101); if (p) transientS32(sets, A.Bolygok.add(0x188 * p + 0x28), pick([1000, 4999, 5000, 7000, 8000, 10000, 20000])); }
+    flagRec(5, [ctr], () => A.SzVegzett.writeS32(ctr));
+  } else if (c < 15) {
+    // A message read (9), answered (6), promoted (7) or the disable query (8).
+    const id = pickBegin(running), ms = BEGIN_MESSAGES[id];
+    if (!ms) return;
+    const [kind, b, part] = pick(ms);
+    if (id === 4 && rnd(2)) { const p = planetOfId(41); if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), rnd(3) ? en : 3); }
+    flagRec(kind, [b, part || 0], () => { A.Msg.writeS32(b); A.Msg.add(4).writeS32(part || 0); });
+  } else if (c < 17) {
+    // A daily check; the fleets standing or not, story 7's troops on the planet, 21's spy.
+    for (const fid of BEGIN_FLEETS) { const f = fleetOfId(fid); if (f && rnd(3) === 0) transientS16(sets, fleet(f).add(0x40), rnd(2) ? 0 : 1); }
+    if (bucketHas(7) && rnd(2)) {
+      // Units of size 19 on planet 73: a design of the human's made a size-19 ground unit, a Tankok record there.
+      const p = planetOfId(73), tn = A.TervCount.add(4 * en).readS32(), n = A.TankN.readS32();
+      if (p && tn > 0 && n > 0) {
+        const d = 1 + rnd(tn), tp = A.Tervek.add(4 * en).readPointer().add(0x84 * d);
+        transientS16(sets, tp.add(0x16), 2); transientS32(sets, tp.add(0x44), 19);
+        for (let k = rnd(3) + 1; k > 0; k--) {
+          const t = A.Tanks.add(8 * (1 + rnd(n)));
+          transientS16(sets, t, -p); transientS16(sets, t.add(2), d); transientS32(sets, t.add(4), pick([1, 2, 3, 4, 5, 8]));
+        }
+      }
+    }
+    if (bucketHas(21) && rnd(2)) { const k = varOf(211); if (k > 0 && k < 13) transientS16(sets, kemRec(en, k).add(0x10), rnd(2) ? 0 : 1); }
+    if (bucketHas(10) && rnd(2)) { const p = planetOfId(101); if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), rnd(2) ? en : 3); }
+    flagRec(0x10, [0]);
+  } else if (c < 18) {
+    // Specials: 10 (a colonisation, by the human mostly), 0xd (research done), 0x13 (a design bought), 0x10.
+    const t = pick([10, 10, 0xd, 0x13, 0x10]);
+    let args;
+    if (t === 10) { const p = rnd(2) && planetOfId(221) ? planetOfId(221) : 1 + rnd(np); args = [10, rnd(4) ? en : 1 + rnd(8), p, 0, 0, 0, 0, 0]; }
+    else if (t === 0xd) args = [0xd, en, rnd(2) ? varOf(121) : 1 + rnd(192), 0, 0, 0, 0, 0];
+    else if (t === 0x13) { const tn = A.TervCount.add(4 * en).readS32(); let d = 1 + rnd(Math.max(1, tn)); for (let k = 40; k <= tn; k++) if (A.Tervek.add(4 * en).readPointer().add(0x84 * k + 0x80).readS32() === 81 && rnd(2)) d = k; args = [0x13, en, d, 0, 0, 0, 0, 0]; }
+    else args = [0x10, pick([51, 231, 7]), 0, 0, 0, 0, 0, 0];
+    stage('special', [[A.Special, args]], { args });
+  } else if (c < 19) {
+    // A fleet arrives: 41 at a point, the human's at planet 221, 232 at 231, the human's at 241.
+    const own = liveFleets().filter((f) => fleet(f).add(0x15).readU8() === en);
+    const kind = pick([0, 1, 2, 3]);
+    let a;
+    if (kind === 0) { const f = fleetOfId(41) || pick(liveFleets()); a = [41, f, 0, 0, 0]; }
+    else if (kind === 1) { const f = own.length ? pick(own) : pick(liveFleets()); a = [fleet(f).add(0x16).readS16(), f, planetOfId(221) || 1 + rnd(np), 1, 0]; }
+    else if (kind === 2) { const f = fleetOfId(232) || pick(liveFleets()); a = [232, f, fleetOfId(231), 2, 231]; }
+    else { const f = own.length ? pick(own) : pick(liveFleets()); a = [fleet(f).add(0x16).readS16(), f, fleetOfId(241), 2, 241]; }
+    flagRec(0, a, () => { for (let i = 0; i < 5; i++) A.Arr.add(4 * i).writeS32(a[i]); });
+  } else if (c < 20) {
+    // A space battle starts with the base's fleets (spFlottak).
+    const all = liveFleets();
+    if (!all.length) return;
+    const ids = [11, 12].map(fleetOfId).filter((f) => f);
+    const a = ids.length && rnd(3) ? pick(ids) : pick(all), b = pick(all);
+    transientS16(sets, A.SpFlottak, rnd(2) ? a : b); transientS16(sets, A.SpFlottak.add(6), rnd(2) ? b : a);
+    flagRec(1, [a, b]);
+  } else if (c < 22) {
+    // A space battle ends with the stories' fleets among the participants; the winner (SpWarKiNyert) set.
+    // A buffer of its own: several staged records can wait for the same frame.
+    const n = 2 + rnd(2), list = [], buf = Memory.alloc(0x30 * 4);
+    spwBufs.push(buf);
+    if (spwBufs.length > 64) spwBufs.shift();
+    for (let i = 0; i < n; i++) {
+      const id = rnd(3) ? pick(BEGIN_FLEETS) : 0, owner = rnd(2) ? en : pick([10, 13, 9, 3, 1]);
+      const p = buf.add(0x30 * i); p.add(0x18).writeS32(owner); p.add(0x20).writeS32(id); p.add(0x24).writeS32(id); list.push([owner, id]);
+    }
+    transientS32(sets, A.SpWin, rnd(2) ? list[0][0] : list[1][0]);
+    // The fleet may be gone already (it lost).
+    for (const [, id] of list) { const f = fleetOfId(id); if (f && rnd(2)) transientS16(sets, fleet(f).add(0x16), 0); }
+    stage('spwfinished', [[A.SpwFinished, [buf.toUInt32(), n, 1]]], { args: list }, prep, after);
+  } else if (c < 23) {
+    // A ground battle ends on a story planet (flag 4).
+    const p = pick([11, 51, 61, 61].map(planetOfId).filter((x) => x).concat([1 + rnd(np)]));
+    const fid = pick([0, 69, 11, 51]), f = fleetOfId(fid), won = rnd(2);
+    flagRec(4, [fid, p, won], () => {
+      A.Gr.writeS32(f); A.Gr.add(4).writeS32(fid); A.Gr.add(8).writeS32(en); A.Gr.add(12).writeS32(p); A.Gr.add(16).writeS32(A.Bolygok.add(0x188 * p + 0x20).readU8());
+      A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won);
+    });
+  } else {
+    // The radar reaches the base (flag 11), or spy news (flag 15).
+    if (rnd(2)) {
+      const p = rnd(3) ? planetOfId(11) : 1 + rnd(np);
+      flagRec(11, [p], () => A.RadarB.writeS32(p));
+    } else {
+      const spy = pick([varOf(211), 1 + rnd(6), 0]), mission = pick([4, 8, 8, 3]), target = rnd(3) ? varOf(201) : 1 + rnd(8);
+      const techs = []; for (let i = 0; i < 5; i++) techs.push(rnd(4) ? 1 + rnd(192) : 0);
+      const tech = rnd(2) ? varOf(203) : 1 + rnd(192), died = rnd(3) === 0 ? 1 : 0, ok = rnd(4) ? 1 : 0;
+      for (const t of techs) if (t && rnd(2)) transientU8(sets, A.Techs.add(0x114 * t + 0x45 + en), 1 + rnd(5));
+      flagRec(15, [spy, mission, target, tech, died, ok].concat(techs), () => {
+        A.KemTipus.writeS32(3);
+        const k = A.KemNews;
+        k.writeS32(1); k.add(4).writeS32(spy); k.add(8).writeS32(died); k.add(0xc).writeU8(ok);
+        k.add(0x14).writeS32(mission); k.add(0x18).writeS32(target); k.add(0x1c).writeS32(tech);
+        for (let i = 0; i < 5; i++) k.add(0x24 + 4 * i).writeS32(techs[i]);
+      });
+    }
+  }
+}
+
+// ---------------------------------------------------------------- staged calls, st_Rnd_include (--keep rnd)
+// The stories of st_Rnd_include the port has (part 1); the script's other stories are kept from running: their
+// `st_Story(id, 1)` calls from inside the script get an id no story has (no side effect: not found leaves
+// StoryLastChecked alone). Staged: starts (with the world they test set up), counters, answers, promotions,
+// daily checks, finished space battles with a pirate (118), specials 0x14/0x15/0x16/0x18/0x19, battle starts.
+const RND = [118, 142, 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173, 199, 242];
+const RND_COUNTERS = { 144: [0x5a1, 0x5a2], 146: [0x5bd, 0x5b5], 149: [0x5d3], 170: [0x6a5], 171: [0x6af, 0x6b0],
+  172: [0x6b9, 0x6ba], 173: [0x6c3, 0x6c4], 242: [0x975] };
+const RND_MESSAGES = { 170: [[0x6a5, [2, 3, 4]], [0x6a6, [2, 4]], [0x125d, [2, 3]], [0x125e, [2, 4]]],
+  171: [[0x6af, [2, 3, 4]], [0x6b0, [2, 3]]], 172: [[0x6b9, [2, 3, 4]], [0x6ba, [3, 5, 6]]],
+  173: [[0x6c3, [4, 5, 6]], [0x6c4, [2, 3]]], 242: [[0x975, [2, 2, 3]]] };
+const RND_RARE = [118, 149, 170, 242];
+function setupRndFilter() {
+  const lo = va(0x5f0e20), hi = va(0x601580);
+  Interceptor.attach(A.StoryAt, {
+    onEnter(args) {
+      const ra = this.returnAddress;
+      if (ra.compare(lo) < 0 || ra.compare(hi) >= 0 || args[1].toInt32() !== 1) return;
+      if (!RND.includes(args[0].toInt32())) args[0] = ptr(0x7fffff00);
+    },
+  });
+}
+const heroId = (k) => A.RndHosok.add(0x1c * k).readS32();
+const heroWord = (k, i) => A.RndHosok.add(0x1c * k + 4 * i).readS32();
+function humanPlanets() { const en = A.EN.readS32(), o = []; for (let p = 1; p <= nPlanets(); p++) if (A.Bolygok.add(0x188 * p + 0x20).readU8() === en) o.push(p); return o; }
+function techOf(sets, t, v) { transientU8(sets, A.Techs.add(0x114 * t + 0x45 + A.EN.readS32()), v); }
+// A strong fleet: one of the human's ships' design gets a big attack.
+function strongFleet(sets) {
+  const ships = humanShips(), en = A.EN.readS32();
+  if (!ships.length) return;
+  const [k] = pick(ships), d = A.Hajok.readPointer().add(6 * k + 2).readS16();
+  transientS32(sets, A.Tervek.add(4 * en).readPointer().add(0x84 * d + 0x2c), pick([800, 3000, 9000, 20000, 60000]));
+}
+function rndFuzz() {
+  const pool = cfg.inline && cfg.inline.length ? RND.filter((x) => cfg.inline.includes(x)) : RND;
+  const c = rnd(20), en = A.EN.readS32(), np = nPlanets(), running = pool.filter(bucketHas);
+  // A wormhole for story 142 (the campaign maps start without one): made once, natively, not recorded.
+  if (!wormholeMade && A.WormholeN.readS32() === 0 && np > 2) {
+    wormholeMade = true;
+    const a = A.Bolygok.add(0x188 * (1 + rnd(np))), b = A.Bolygok.add(0x188 * (1 + rnd(np)));
+    call(va(0x53aec0), [a.add(0x18).readFloat() | 0, a.add(0x1c).readFloat() | 0, b.add(0x18).readFloat() | 0, b.add(0x1c).readFloat() | 0], null, false);
+    return;
+  }
+  const sets = [];
+  const prep = () => sets.forEach((x) => x[0]()), after = () => sets.slice().reverse().forEach((x) => x[1]());
+  const pickR = (ids) => { const r = ids.filter((x) => RND_RARE.includes(x)); return r.length && rnd(3) ? pick(r) : pick(ids); };
+  const wormholeEnds = () => {
+    for (let k = 1; k <= A.WormholeN.readS32(); k++) {
+      const q = A.Wormholes.add(0x1c * k), m = rnd(4);
+      transientU8(sets, q.add(8), m & 1); transientU8(sets, q.add(0x14), m >> 1);
+    }
+  };
+  const morale = (n) => { for (let k = rnd(n); k > 0; k--) transientS32(sets, A.Bolygok.add(0x188 * (1 + rnd(np)) + 0x30), pick([100, 1500, 1999, 2000, 2500, 3000, 3001, 3500, 349, 350, 900])); };
+  if (c < 3 || !running.length) {
+    const ids = pool.filter((id) => !bucketHas(id));
+    if (!ids.length) return;
+    const id = pickR(ids);
+    if (rnd(2)) transientS32(sets, A.HanyB.add(4 * en), pick([3, 7, 8, 9, 12, 40]));
+    if (id === 142 && rnd(2)) wormholeEnds();
+    if (id === 163) for (let k = rnd(6); k > 0; k--) techOf(sets, 1 + rnd(192), pick([4, 4, 3, 5]));
+    if (id === 164) { const own = humanPlanets(); if (own.length && rnd(2)) transientS16(sets, A.Bolygok.add(0x188 * pick(own) + 0x16a), 0x60f); }
+    if (id === 149) for (const p of humanPlanets()) if (rnd(4) === 0) transientU8(sets, A.Bolygok.add(0x188 * p + 0x22), 7);
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+  } else if (c < 5) {
+    // A counter runs out at the next tick (a hired hero's fee counter now and then).
+    const id = pickR(running);
+    let list = RND_COUNTERS[id];
+    if (id === 242 && rnd(2)) list = [heroId(rnd(9))];
+    if (list) szStart(pick(list), rnd(2));
+  } else if (c < 9) {
+    // A staged counter with the world it tests set up.
+    const id = pickR(running);
+    let ctr = RND_COUNTERS[id] ? pick(RND_COUNTERS[id]) : 0;
+    if (id === 144 || id === 146) morale(8);
+    if (id === 146) for (const p of humanPlanets()) if (rnd(2)) transientS16(sets, A.Bolygok.add(0x188 * p + 0xd8 + 2 * en), pick([0, 1, -1]));
+    if (id === 149) for (let k = rnd(4); k > 0; k--) transientS16(sets, A.Bolygok.add(0x188 * (1 + rnd(np)) + 0x16a + 2 * rnd(5)), pick([0x5d3, 0]));
+    if (id === 170 && rnd(2)) techOf(sets, varOf(0x6a5), pick([5, 3]));
+    if (id === 242) {
+      if (rnd(3)) { strongFleet(sets); for (let k = 0; k < 9; k++) if (rnd(3) === 0) techOf(sets, heroWord(k, 1) + pick([3, 7]), pick([5, 1])); }
+      // A hired hero's yearly fee.
+      if (rnd(3) === 0) ctr = heroId(rnd(9));
+    }
+    if (!ctr) return;
+    stage('flag', [[A.Check, [1]]], { args: [5, ctr] }, () => { prep(); A.Flags.add(5).writeU8(1); A.SzVegzett.writeS32(ctr); }, after);
+  } else if (c < 13) {
+    // An answer (flag 6) or a promotion (7).
+    const id = pickR(running), ms = RND_MESSAGES[id];
+    if (!ms) return;
+    const [b, parts] = pick(ms), kind = rnd(4) ? 6 : 7, part = kind === 6 ? pick(parts.concat([1, 5])) : 0;
+    stage('flag', [[A.Check, [1]]], { args: [kind, b, part] }, () => { prep(); A.Flags.add(kind).writeU8(1); A.Msg.writeS32(b); A.Msg.add(4).writeS32(part); }, after);
+  } else if (c < 15) {
+    // A daily check: 142's wormholes, 144's planet owner, 170's tech done.
+    if (bucketHas(142) && rnd(2)) wormholeEnds();
+    if (bucketHas(170) && rnd(2)) techOf(sets, varOf(0x6a5), pick([5, 2]));
+    stage('flag', [[A.Check, [1]]], { args: [0x10, 0] }, () => { prep(); A.Flags.add(0x10).writeU8(1); }, after);
+  } else if (c < 16) {
+    // 118: a space battle ends with the human and a pirate (owner 9) among the participants.
+    const n = 2 + rnd(2), list = [];
+    const owners = [en, 9, pick([en, 9, 3, 0])];
+    if (rnd(2)) owners.reverse();
+    for (let i = 0; i < n; i++) {
+      const owner = rnd(6) ? owners[i] : rnd(19), id = pick([10000, 10500, 11000, 11001, 9999, 10000 + rnd(1001), rnd(5000), varOf(0xbcd)]);
+      const p = fake.add(0x30 * i); p.add(0x18).writeS32(owner); p.add(0x20).writeS32(id); p.add(0x24).writeS32(id); list.push([owner, id]);
+    }
+    transientS32(sets, A.KiNyert, rnd(4) ? en : pick([9, 0, 3]));
+    stage('spwfinished', [[A.SpwFinished, [fake.toUInt32(), n, 1]]], { args: list }, prep, after);
+  } else if (c < 18) {
+    // Specials: 0x14 (142), 0x15/0x16 (144), 0x18 (199).
+    const t = pick([0x14, 0x14, 0x15, 0x16, 0x18, 0x18]);
+    const d1 = t === 0x15 || t === 0x16 ? 1 + rnd(np) : rnd(4) ? en : rnd(9);
+    if (t === 0x18 && rnd(2)) vSet(0x7c7, pick([3, 1, 0]));
+    const args = [t, d1, rnd(3), 0, 0, 0, 0, 0];
+    stage('special', [[A.Special, args]], { args }, prep, after);
+  } else if (c < 19) {
+    // Special 0x19 for a fleet of the human's and one of its designs (a hero's design now and then).
+    const own = liveFleets().filter((f) => fleet(f).add(0x15).readU8() === en), tn = A.TervCount.add(4 * en).readS32();
+    if (!own.length || tn < 1) return;
+    const d = 1 + rnd(tn);
+    if (rnd(2)) transientS32(sets, A.Tervek.add(4 * en).readPointer().add(0x84 * d + 0x80), rnd(4) ? heroId(rnd(9)) : pick([2200, 0]));
+    const args = [0x19, pick(own), d, 0, 0, 0, 0, 0];
+    stage('special', [[A.Special, args]], { args }, prep, after);
+  } else {
+    // A space battle starts: spFlottak holds a fleet of the human's (a hero's mostly).
+    const own = liveFleets().filter((f) => fleet(f).add(0x15).readU8() === en), all = liveFleets();
+    if (!all.length) return;
+    const a = own.length && rnd(3) ? pick(own) : pick(all), b = pick(all);
+    transientS16(sets, A.SpFlottak, rnd(2) ? a : b); transientS16(sets, A.SpFlottak.add(6), rnd(2) ? b : a);
+    stage('flag', [[A.Check, [1]]], { args: [1, a, b] }, () => { prep(); A.Flags.add(1).writeU8(1); }, after);
+  }
+}
+
 let frames = 0, started = false, loadedAt = 0, initAt = 1e9, lastIdo = -1, sameFor = 0, homeKep = -1, wantSpeed = 0;
 Interceptor.attach(A.Fake_FRISSITES, {
   onEnter() {
@@ -1017,6 +1401,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (cfg.campaign) {
         setupActs();
         for (const name in UNPORTED) if (!cfg.keep.includes(name)) Memory.patchCode(va(UNPORTED[name]), 1, (code) => code.writeU8(0xc3));
+        if (cfg.keep.includes('rnd')) setupRndFilter();
         // The race menu's choice: campaign N (race index N - 1), the difficulty selector (0 → 1, 2 → 2, 1 → 4).
         A.FajStart.writeU8(1); A.FajSzetnyilas.writeFloat(100.0); A.FajRace.writeS32(cfg.campaign - 1);
         A.FajNehezseg.writeS32({ 1: 0, 2: 2, 4: 1 }[cfg.difficulty] ?? 2); A.DebugSeed.writeS32(cfg.seed);
@@ -1040,7 +1425,9 @@ Interceptor.attach(A.Fake_FRISSITES, {
     }
     if (phase === 1 && cfg.fuzz && (!cfg.campaign || wantSpeed) && frames % cfg.every === 0) {
       try {
-        if (cfg.campaign && cfg.keep.includes('brnd')) brndFuzz();
+        if (cfg.campaign && cfg.keep.includes('begin')) beginFuzz();
+        else if (cfg.campaign && cfg.keep.includes('rnd')) rndFuzz();
+        else if (cfg.campaign && cfg.keep.includes('brnd')) brndFuzz();
         else if (cfg.campaign && cfg.keep.includes('multi')) multiFuzz();
         else if (cfg.campaign && cfg.keep.includes('line') && rnd(3)) lineFuzz();
         else if (cfg.campaign) campaignFuzz();
@@ -1050,6 +1437,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
     if (phase === 1 && wantSpeed && frames % 300 === 0 && A.Speed.readS32() !== wantSpeed) setSpeed(cfg.speed, 1);
     // --keep brnd: story 227's enemy fleets (owner 10) would fight the human in real time and stop the clock.
     if (phase === 1 && cfg.keep.includes('brnd') && frames % 20 === 0) for (const f of liveFleets()) if (fleet(f).add(0x15).readU8() === 10) fleet(f).add(0x3c).writeFloat(0);
+    // --keep begin: the base's and the hunter's fleets (owners 10, 13) likewise.
+    if (phase === 1 && cfg.keep.includes('begin') && frames % 20 === 0) for (const f of liveFleets()) { const o = fleet(f).add(0x15).readU8(); if (o === 10 || o === 13) fleet(f).add(0x3c).writeFloat(0); }
     if (phase === 1 && wantSpeed) {
       const ido = A.Ido.readS32();
       sameFor = ido === lastIdo ? sameFor + 1 : 0;

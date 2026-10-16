@@ -125,6 +125,7 @@ impl GroundRules {
 /// One unit group (`WF_Tank`, exe 0x290 bytes; spec §1.2). Only the fields the strategic ground war
 /// reads or writes; the rest belongs to the real-time battle.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Group {
     /// `+0x15c` design (of the owner's `Tervek`).
     pub design: i32,
@@ -175,6 +176,110 @@ pub struct Group {
     pub transport: u32,
     /// The real-time fields (spec §11).
     pub rt: TankRt,
+    /// Saved bytes no ported system reads.
+    pub tail: UnitTail,
+}
+
+/// The bytes of a unit `WF_Tank::LoadSave` (exe 0x4859a0, `re/formats/save.md` §4.13) saves that no ported system
+/// reads or writes, kept so that a battlefield written back holds them. Constructor values in [`Default`].
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UnitTail {
+    /// `+0x14` and `+0x274` (both uninitialised by the constructor), `+0xe8` (0), `+0x240` (2), `+0x270` (0).
+    pub f14: u32,
+    pub fe8: u32,
+    pub f240: u32,
+    pub f270: u32,
+    pub f274: u32,
+    /// `+0x13c..+0x146` and `+0x146` (zero).
+    pub f13c: [u8; 10],
+    pub f146: u8,
+    /// A full record saves the member-origin pointer `+0x19c` itself as a scalar first: a heap address.
+    pub origin_ptr: u32,
+}
+
+impl Default for UnitTail {
+    fn default() -> Self {
+        Self { f14: 0, fe8: 0, f240: 2, f270: 0, f274: 0, f13c: [0; 10], f146: 0, origin_ptr: 0 }
+    }
+}
+
+/// The saved unit bytes `WF_Tank::WF_Tank` (exe 0x457020) and `WF::AddTank` leave uninitialised: `+0xc/+0x10` (the
+/// render position; a turret's is never set), `+0x14`, `+0x18`
+/// (aim), `+0x98/+0x9c` (driving direction), `+0x1b0/+0x1b4` (destination) and `+0x23c` (target) until orders are
+/// given, `+0x1e0` (carrier), `+0x24c` (AI home), `+0x25c/+0x260` (last hit), `+0x274`, and the origin pointer a full
+/// record saves at `+0x19c`. A replay takes them from the exe's save after the tick, which holds whatever the tick
+/// wrote over them too.
+pub const UNINIT: [usize; 15] = [0xc, 0x10, 0x14, 0x18, 0x98, 0x9c, 0x19c, 0x1b0, 0x1b4, 0x1e0, 0x23c, 0x24c, 0x25c, 0x260, 0x274];
+
+impl Group {
+    /// Take [`UNINIT`] fields from `pairs`: `(offset, value)` as two little-endian u32 each (the fields a source
+    /// has; the others are left alone).
+    pub fn fill_uninit(&mut self, pairs: &[u8]) {
+        for p in pairs.chunks_exact(8) {
+            let (o, v) = (u32::from_le_bytes(p[..4].try_into().unwrap()), u32::from_le_bytes(p[4..].try_into().unwrap()));
+            let f = f32::from_bits(v);
+            match o {
+                0xc => self.rt.step.0 = f,
+                0x10 => self.rt.step.1 = f,
+                0x14 => self.tail.f14 = v,
+                0x18 => self.rt.aim = f,
+                0x98 => self.rt.dir.0 = f,
+                0x9c => self.rt.dir.1 = f,
+                0x19c => self.tail.origin_ptr = v,
+                0x1b0 => self.dest.0 = v as i32,
+                0x1b4 => self.dest.1 = v as i32,
+                0x1e0 => self.carrier = v as i32,
+                0x23c => self.target = v as i32,
+                0x24c => self.rt.ai_home = v as i32,
+                0x25c => self.last_hit = Some((v as i32, self.last_hit.map_or(0, |h| h.1))),
+                0x260 => self.last_hit = Some((self.last_hit.map_or(0, |h| h.0), v as i32)),
+                0x274 => self.tail.f274 = v,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The battlefield bytes `WF::LoadSave` (exe 0x485420) saves that no ported system reads or writes.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FieldTail {
+    /// `+0x18`, `+0x184` (a byte), `+0x18c` the planet (`WF_Tank::LoadSave`'s planet), `+0x1a8..+0x1b8`.
+    pub f18: u32,
+    pub f184: u8,
+    pub planet: i32,
+    pub f1a8: [u32; 5],
+    /// `+0x1ec..+0x32c` as saved; the fighter wave ([`Lists::fighters`]) is written over it.
+    pub strike: Vec<u8>,
+    /// `+0x33c..+0x37c`: empire 0's (unused) AI block.
+    pub ai0: Vec<u8>,
+    /// The first 8 bytes of every list-B / list-C object (saved whole, not modelled), in list order.
+    pub missile_heads: Vec<[u8; 8]>,
+    pub bolt_heads: Vec<[u8; 8]>,
+    /// Unit slots that got a new object (`operator new` + `WF_Tank::WF_Tank`) since the owner last drained this:
+    /// their saved bytes the constructor leaves uninitialised ([`UNINIT`]) are heap garbage in the exe.
+    pub created: Vec<usize>,
+    /// Unit slots loaded without an object (`loadsave_ptr`'s flag 0): saved as absent until a unit takes the slot.
+    /// Every other slot keeps its object after the unit dies (`RemoveTankGroup` 0x497c90 only clears `alive`).
+    pub absent: Vec<bool>,
+}
+
+impl Default for FieldTail {
+    fn default() -> Self {
+        Self {
+            f18: 0,
+            f184: 0,
+            planet: 0,
+            f1a8: [0; 5],
+            strike: vec![0; 0x140],
+            ai0: vec![0; 0x40],
+            missile_heads: Vec::new(),
+            bolt_heads: Vec::new(),
+            created: Vec::new(),
+            absent: Vec::new(),
+        }
+    }
 }
 
 impl Default for Group {
@@ -213,6 +318,7 @@ impl Default for Group {
             aim: NONE,
             transport: 1,
             rt: TankRt::default(),
+            tail: UnitTail::default(),
         }
     }
 }
@@ -244,6 +350,7 @@ impl Group {
 /// A planet's battlefield (`Warfare[p]`, exe `0x9C3244 + p·0x8EC`; spec §1.1). A dead slot keeps its last
 /// unit's data (the exe's freed object), which only the original's undefined reads see.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Field {
     pub units: Vec<Group>,
     pub alive: Vec<bool>,
@@ -277,6 +384,12 @@ pub struct Field {
     pub passability: Vec<Vec<u16>>,
     /// `+0x33c + 0x40·e`: the ground AI's state per empire `e` (index 0 unused; `ground-ai.md` §2.1).
     pub ai: [GroundAi; 19],
+    /// `+0x8d0` the weather (0 none, 1 snow, 2 rain: `InitWeather`) and `+0x8d4` the background (`melyikhatter`, a
+    /// `[hatter]` of `terepleiro.txt`), both drawn in the economy step's prologue ([`weather`]).
+    pub weather: i32,
+    pub background: i32,
+    /// Saved bytes no ported system reads.
+    pub tail: FieldTail,
 }
 
 impl Default for Field {
@@ -300,6 +413,9 @@ impl Default for Field {
             lists: Lists::default(),
             passability: Vec::new(),
             ai: Default::default(),
+            weather: 0,
+            background: 0,
+            tail: FieldTail::default(),
         }
     }
 }
@@ -554,6 +670,7 @@ impl<'a> War<'a> {
             let r = (self.libc)();
             self.field.units[i] = Group::default();
             self.field.units[i].rt.drop = TankRt::dropship_start(r);
+            self.field.tail.created.push(i);
         }
         let i = i as i32;
         let u = self.um(i);
@@ -1496,8 +1613,61 @@ impl<'a> War<'a> {
         self.events.push(GroundEvent::BuildingDestroyed { slot: slot as usize, kind });
     }
 
+    /// `AddOwnTankToPlanet(d, p)` (exe 0x45cbf0; `TankNew(−p, d, n)` calls it once per vehicle, then
+    /// [`War::rearrange`] for the planet's owner): one garrison vehicle of the owner joins the battlefield at
+    /// `LocateTankSuitablePosition(p, −1, −1)` (failing: the cell the last search left, uninitialised locals in the
+    /// exe), merged into a group of its design (`AddTank(d, hp, owner, −p, merge, x, y, 0)`), the driving speeds
+    /// reset.
+    pub fn add_own_tank(&mut self, d: i32) {
+        let owner = self.planet.owner as i32;
+        let hull = design_of(&self.world.designs, owner, d).map_or(-1, |des| des.hull);
+        let hp = self.rules.hull_hp.get(hull.max(0) as usize).copied().unwrap_or(0);
+        let (_, (x, y)) = self.locate_tank(None);
+        let u = self.add_tank(d, hp, owner, -self.planet.index, true, x, y, 0);
+        let rt = &mut self.um(u).rt;
+        rt.speed = 3.0;
+        rt.max_speed = 2.5;
+        rt.accel = 0.15;
+        rt.decel = 0.3;
+    }
+
+    /// `WF::RemoveTank(d, owner)` (exe 0x497af0, via `RemoveTankFromPlanet(d, p, owner)` 0x497c70; `BolygoElfoglal`,
+    /// `FlottaDelete` and `TankAtpakol` call it once per garrison vehicle leaving): the last alive group of design
+    /// `d` and `owner` that isn't a partner loses its last member; a group of one goes (`RemoveTarget`, its object
+    /// freed; the slot keeps the pointer).
+    pub fn remove_tank(&mut self, d: i32, owner: i32) {
+        let Some(i) = (0..self.n()).rev().find(|&i| {
+            let u = &self.field.units[i];
+            self.field.alive[i] && u.design == d && u.owner == owner && u.flags & flag::PARTNER == 0
+        }) else {
+            return;
+        };
+        if self.field.units[i].size() == 1 {
+            self.remove_target(i as i32);
+            self.field.alive[i] = false;
+        } else {
+            let u = &mut self.field.units[i];
+            u.hp.pop();
+            u.origin.pop();
+            u.rt.alive_cached = 0;
+        }
+    }
+
+    /// `BolygoElfoglal(p, owner)`'s battlefield part after the garrison left (exe 0x53b8a1..0x53b8ff): the planet's
+    /// turrets (flag 0x4000000) change hands, and the status cache is invalid.
+    pub fn captured(&mut self, owner: i32) {
+        for i in 0..self.n() {
+            let u = &mut self.field.units[i];
+            if self.field.alive[i] && u.flags & flag::TURRET != 0 {
+                u.owner = owner;
+                u.side = owner;
+            }
+        }
+        self.field.status_valid = false;
+    }
+
     /// `TankDelete(f, d, n)` (exe 0x541510): fleets through [`CombatWorld`], a garrison (f ≤ 0) here.
-    fn tank_delete(&mut self, f: i32, d: i32, n: i32) {
+    pub fn tank_delete(&mut self, f: i32, d: i32, n: i32) {
         if f >= 1 {
             self.world.delete_vehicles(f as i16, d as i16, n);
             return;
@@ -2029,6 +2199,46 @@ pub fn route(inp: &RouteInput) -> GroundRoute {
     } else {
         GroundRoute::RealTime
     }
+}
+
+/// A battlefield's weather (`FRISSIT_Planet(true, 0)`'s prologue, exe 0x4749b9..0x474a4f, `re/rules/colony-economy.md`
+/// §3): surface types 2 and 5 draw a libc `rand()`, rain (2) when it is even or the planet holds info 0x776, else none;
+/// type 7 draws one, snow (1) when it is even; every other type has none (0).
+pub fn weather(surface: u8, info_776: bool, libc: &mut dyn FnMut() -> i32) -> i32 {
+    match surface {
+        2 | 5 => {
+            if libc() % 2 == 0 || info_776 { 2 } else { 0 }
+        }
+        7 => (libc() % 2 == 0) as i32,
+        _ => 0,
+    }
+}
+
+/// `CheckWeather`'s picker (exe 0x47a380, ELF `CheckWeather` 0x4c0f50 is its test): the background of a
+/// battlefield on a colony map whose surface allows `weathers`. `cursor` (`melyikhatter`'s cursor 0x996488, unsaved;
+/// only this function moves it) steps `rand() % 20 + 1` times through `backgrounds` (the `[hatter]` sections' weather
+/// lists, wrapping), each step going on to the next background sharing a weather with the surface; the last one is
+/// the result. With no such background the exe never returns; the port stops after a full turn.
+pub fn pick_background(cursor: &mut i32, weathers: &[i32], backgrounds: &[Vec<i32>], libc: &mut dyn FnMut() -> i32) -> i32 {
+    let n = backgrounds.len() as i32;
+    let fits = |c: i32| backgrounds.get(c as usize).is_some_and(|b| b.iter().any(|w| weathers.iter().any(|x| *x as u8 == *w as u8)));
+    let next = |c: &mut i32| {
+        *c += 1;
+        if *c == n {
+            *c = 0;
+        }
+    };
+    let mut k = libc() % 20 + 1;
+    while k > 0 {
+        next(cursor);
+        let mut tries = 0;
+        while !fits(*cursor) && tries <= n {
+            next(cursor);
+            tries += 1;
+        }
+        k -= 1;
+    }
+    *cursor
 }
 
 #[cfg(test)]

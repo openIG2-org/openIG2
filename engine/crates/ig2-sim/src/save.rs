@@ -30,6 +30,8 @@ use crate::spacewar::{CombatFleet, Design, FleetTotals, Ship, Vehicle};
 use crate::spy::{Spies, Spy, RECORD, ROSTERS, SLOTS};
 use crate::story::{self, Queue, Story};
 
+mod wf;
+
 pub const PLANET_SIZE: usize = 0x188;
 pub const FLEET_SIZE: usize = 0x80;
 pub const BUILDING_SIZE: usize = 0x20;
@@ -58,6 +60,9 @@ pub mod va {
     pub const MULTIPLAYER: u32 = 0xBAE2C0;
     pub const SPEED_LOCKED: u32 = 0xBAD0D4;
     pub const AI_OFF: u32 = 0xB77244;
+    /// `AktKep` (the screen shown) and `CampaignType` (> 0 in a campaign).
+    pub const AKT_KEP: u32 = 0xBAE0FC;
+    pub const CAMPAIGN_TYPE: u32 = 0x928278;
     pub const ALL_TECHS: u32 = 0xB77254;
     pub const RESEARCH_CHEAT: u32 = 0xB7727C;
     pub const DEBUGX: u32 = 0xBAE587;
@@ -142,6 +147,13 @@ pub mod va {
     /// `AktFleet`: the selected fleet (`FlottaOsszevon` moves it to the merged fleet).
     pub const AKT_FLEET: u32 = 0xB99664;
     pub const STARMAP_MODE: u32 = 0xB9998C;
+    /// `melyikhatter`'s cursor in the background picker (exe 0x47a380; unsaved).
+    pub const BACKGROUND_CURSOR: u32 = 0x996488;
+    /// `gvalue`, `FRISSIT_Grwar`'s call counter (unsaved); `AktKep` the screen; `IdoSpeedSzorzoBattle`; an MP space
+    /// battle in progress (`Fake_FRISSITES` skips the ground war then).
+    pub const GVALUE: u32 = 0x9B2900;
+    pub const BATTLE_SPEED: u32 = 0xBAE260;
+    pub const MP_SPACE_BATTLE: u32 = 0xBAD114;
     pub const STORY_DESIGN_COUNT: u32 = 0xF419D0;
     pub const STORY_DESIGN_NEXT: u32 = 0xF419D4;
     pub const SPY_CENTRES_BY_PLANET: u32 = 0xBB2418;
@@ -261,6 +273,16 @@ pub struct Memory {
 }
 
 impl Memory {
+    /// The runs by start VA, as stored (what a snapshot writes, ADR 0007).
+    pub fn runs(&self) -> &BTreeMap<u32, Vec<u8>> {
+        &self.runs
+    }
+
+    /// The image of `runs` exactly as [`Memory::runs`] gave them.
+    pub fn from_runs(runs: BTreeMap<u32, Vec<u8>>) -> Self {
+        Self { runs }
+    }
+
     /// `len` bytes at `at`; bytes no run covers read 0.
     pub fn read(&self, at: u32, len: usize) -> Vec<u8> {
         let mut out = vec![0; len];
@@ -408,7 +430,7 @@ pub fn chunk_va(name: &str) -> Option<u32> {
         "st_vOzonviz" => va::STORY_UNDO,
         "StoryInterregnumIdo" => 0xF22738,
         "StoryAdat" => va::STORY_ADAT,
-        "CampaignType" => 0x928278,
+        "CampaignType" => va::CAMPAIGN_TYPE,
         "Story_Minden_Flotta_Latszik" => va::STORY_ALL_FLEETS_VISIBLE,
         "sBolygok.n" => va::STORY_LIST_COUNTS,
         "sSzamlalok.n" => va::STORY_LIST_COUNTS + 4,
@@ -598,6 +620,10 @@ pub struct SaveState {
     pub fresh_buildings: Vec<(usize, usize)>,
     /// Every chunk of the loaded save in order (the template for [`SaveState::chunks`]).
     template: Vec<(String, Vec<u8>)>,
+    /// The template's chunk range of each ground battlefield `WF[i]`, by `i`.
+    wf_ranges: BTreeMap<usize, std::ops::Range<usize>>,
+    /// The ground battlefields stored since the load (by planet), written back by [`SaveState::chunks`].
+    fields: BTreeMap<usize, crate::ground::Field>,
 }
 
 fn rd_i32(b: &[u8], o: usize) -> i32 {
@@ -617,6 +643,39 @@ fn put(b: &mut [u8], o: usize, v: &[u8]) {
 const QUEUES: [&str; 4] = ["StoryVodor", "HistoryVodor", "StartVodor", "OlvasasVodor"];
 
 impl SaveState {
+    /// The loaded save's chunks in order (the template of [`SaveState::chunks`]; a snapshot carries it, ADR 0007).
+    pub fn template(&self) -> &[(String, Vec<u8>)] {
+        &self.template
+    }
+
+    /// A state from its memory image and chunk template, with empty record arrays and queues (a snapshot fills them).
+    pub fn from_parts(mem: Memory, template: Vec<(String, Vec<u8>)>) -> Self {
+        let wf_ranges = wf_ranges(&template);
+        Self {
+            mem,
+            fleets: Vec::new(),
+            ships: Vec::new(),
+            waypoints: Vec::new(),
+            designs: Vec::new(),
+            buildings: Vec::new(),
+            story: StoryQueues::default(),
+            multiplayer_blob: false,
+            fresh_buildings: Vec::new(),
+            template,
+            wf_ranges,
+            fields: BTreeMap::new(),
+        }
+    }
+
+    /// The battlefields stored since the load (by planet; the others are the template's), for a snapshot.
+    pub fn ground_fields(&self) -> &BTreeMap<usize, crate::ground::Field> {
+        &self.fields
+    }
+
+    pub fn set_ground_fields(&mut self, fields: BTreeMap<usize, crate::ground::Field>) {
+        self.fields = fields;
+    }
+
     /// The state of `save`. `tech_defaults` = `Talalmanyok0` (`ig2_rules::Rules::tech_defaults`): the live tech
     /// table starts from it (`InitNewGame`) and the save overwrites each tech's per-empire state.
     pub fn from_save(save: &SaveGame, tech_defaults: &[u8]) -> Self {
@@ -650,6 +709,7 @@ impl SaveState {
         // `LoadSave` sets `HanyBolygo2 = HanyBolygo`, `ENGRAFIKA = EN` and clears the mission table's +0x160.
         mem.set_i32(va::PLANET_COUNT2, mem.i32(va::PLANET_COUNT));
         mem.set_i32(va::MISSIONS + 0x160, 0);
+        let wf_ranges = wf_ranges(&template);
         Self {
             mem,
             fleets: save.fleets.clone(),
@@ -661,6 +721,8 @@ impl SaveState {
             multiplayer_blob: save.multiplayer,
             fresh_buildings: Vec::new(),
             template,
+            wf_ranges,
+            fields: BTreeMap::new(),
         }
     }
 
@@ -678,6 +740,16 @@ impl SaveState {
         let mut add = |n: &str, b: &[u8]| out.entry(n.to_string()).or_default().extend_from_slice(b);
         let mut queues_done = false;
         for (name, data) in &self.template {
+            if let Some(i) = battlefield_of(name) {
+                if let Some(f) = self.fields.get(&(i + 1)) {
+                    if self.wf_ranges.get(&i).is_some_and(|r| self.template[r.start].0 == *name) {
+                        for (n, b) in wf::encode(f, &format!("WF[{i}]")) {
+                            add(&n, &b);
+                        }
+                    }
+                    continue;
+                }
+            }
             if QUEUES.iter().any(|q| name.starts_with(q) && name[q.len()..].starts_with('.')) {
                 if !queues_done {
                     queues_done = true;
@@ -740,104 +812,54 @@ impl SaveState {
 }
 
 impl SaveState {
-    /// Planet `p`'s ground battlefield as the loaded save holds it (`WF::LoadSave` exe 0x485420, battlefield
-    /// `p − 1` of the stream, `re/formats/save.md` §4.13): the fields the strategic ground war reads. The rest of a
-    /// group (the real-time state, the AI block) gets the constructor's values, as a load gives the fields it
-    /// doesn't save. `None` when the save has no such battlefield.
+    /// Planet `p`'s ground battlefield (`WF::LoadSave` exe 0x485420, battlefield `p − 1` of the stream,
+    /// `re/formats/save.md` §4.13): the one last stored, else the loaded save's. `None` when the save has none.
     pub fn ground_field(&self, p: usize) -> Option<crate::ground::Field> {
-        use crate::ground::{Field, Group};
-        let tag = format!("WF[{}]", p.checked_sub(1)?);
-        let mut chunks = self.template.iter().filter(|(n, _)| {
-            n.strip_prefix(tag.as_str()).is_some_and(|r| r.starts_with('+') || r.starts_with('.'))
-        });
-        let first = chunks.next()?;
-        let mut f = Field::default();
-        let (mut units, mut alive): (Vec<Group>, Vec<bool>) = (Vec::new(), Vec::new());
-        let mut unit: Option<(usize, Group)> = None;
-        let flush = |u: Option<(usize, Group)>, units: &mut Vec<Group>| {
-            if let Some((k, g)) = u {
-                units[k] = g;
-            }
-        };
-        for (name, b) in std::iter::once(first).chain(chunks) {
-            let rest = &name[tag.len()..];
-            let i = |o: usize| b.get(o..o + 4).map_or(0, |x| i32::from_le_bytes(x.try_into().unwrap()));
-            let ints = || b.chunks_exact(4).map(|x| i32::from_le_bytes(x.try_into().unwrap())).collect::<Vec<_>>();
-            if let Some(u) = rest.strip_prefix(".unit[") {
-                let (k, field) = u.split_once(']').unwrap();
-                let k: usize = k.parse().unwrap();
-                if unit.as_ref().is_none_or(|(j, _)| *j != k) {
-                    flush(unit.take(), &mut units);
-                    unit = Some((k, Group::default()));
-                }
-                let g = &mut unit.as_mut().unwrap().1;
-                match field {
-                    "+0x188" => g.flags = i(0) as u32,
-                    "+0x1b0" => g.dest.0 = i(0),
-                    "+0x1b4" => g.dest.1 = i(0),
-                    "+0x23c" => g.target = i(0),
-                    "+0x158" => g.max_hp = i(0),
-                    "+0x15c" => g.design = i(0),
-                    "+0x194" => g.owner = i(0),
-                    "+0x198" => g.side = i(0),
-                    "+0x1a0" => g.cell.0 = i(0),
-                    "+0x1a4" => g.cell.1 = i(0),
-                    "+0x1a8" => g.last_cell.0 = i(0),
-                    "+0x1ac" => g.last_cell.1 = i(0),
-                    "+0x1b8" => g.move_state.0 = i(0),
-                    "+0x1cc" => g.regen = i(0),
-                    "+0x1d0" => g.weapons = i(0) as u32,
-                    "+0x1e0" => g.carrier = i(0),
-                    "+0x1e4" => g.partner = i(0),
-                    "+0x1e8" => g.paralysed = i(0),
-                    "+0x1ec" => g.seized = i(0),
-                    "+0x11c" => g.pods = i(0),
-                    "+0x288" => g.air = i(0),
-                    "+0x120" => g.ammo = i(0),
-                    "+0x1d4" => g.pos.0 = f32::from_bits(i(0) as u32),
-                    "+0x1d8" => g.pos.1 = f32::from_bits(i(0) as u32),
-                    "+0x244" => g.index = i(0),
-                    "+0x154" => g.hp = ints(),
-                    // Saved twice: a full record's scalar first, then the members' origins (the last one).
-                    "+0x19c" => g.origin = ints(),
-                    "+0x18c" => g.flags2 = i(0) as u32,
-                    "+0x138" => g.prev_size = i(0),
-                    "+0x25c" => g.last_hit = Some((i(0), g.last_hit.map_or(0, |h| h.1))),
-                    "+0x260" => g.last_hit = Some((g.last_hit.map_or(0, |h| h.0), i(0))),
-                    "+0x238" => g.building = i(0),
-                    "+0x130" => g.has_gun = b.first().is_some_and(|&x| x != 0),
-                    "+0x134" => g.hull = i(0),
-                    _ => {}
-                }
-                continue;
-            }
-            match rest {
-                "+0x8c8" => f.last_status = i(0),
-                "+0x8cc" => f.status_valid = i(0) != 0,
-                ".countdown" => f.countdown = i(0),
-                "+0x334" => f.self_destruct = i(0),
-                "+0x338" => f.attack_fleet = i(0),
-                "+0x88c" => f.simulating = b.first().is_some_and(|&x| x != 0),
-                "+0x88d" => f.not_watching.copy_from_slice(&b[..18]),
-                "+0x89f" => f.retreat.copy_from_slice(&b[..18]),
-                "+0x190" => f.finished_flag = b.first().is_some_and(|&x| x != 0),
-                "+0x7fc" => {
-                    for (e, t) in f.timers.iter_mut().enumerate() {
-                        *t = (i(8 * e), i(8 * e + 4));
-                    }
-                }
-                ".alive" => {
-                    alive = b.iter().map(|&x| x != 0).collect();
-                    units = vec![Group::default(); alive.len()];
-                }
-                _ => {}
-            }
+        if let Some(f) = self.fields.get(&p) {
+            return Some(f.clone());
         }
-        flush(unit.take(), &mut units);
-        f.units = units;
-        f.alive = alive;
-        Some(f)
+        let i = p.checked_sub(1)?;
+        let r = self.wf_ranges.get(&i)?.clone();
+        Some(wf::decode(self.template[r].iter().map(|(n, b)| (n.as_str(), &b[..])), &format!("WF[{i}]")))
     }
+
+    /// Planet `p`'s battlefield taken out of the state (the default when the save has none); hand it back with
+    /// [`SaveState::store_ground_field`].
+    pub fn take_ground_field(&mut self, p: usize) -> crate::ground::Field {
+        match self.fields.remove(&p) {
+            Some(f) => f,
+            None => self.ground_field(p).unwrap_or_default(),
+        }
+    }
+
+    /// After a save (`WF::LoadSave` clears `+0x8cc` before saving it): every battlefield's status cache is invalid.
+    pub fn battlefields_saved(&mut self) {
+        for f in self.fields.values_mut() {
+            f.status_valid = false;
+        }
+    }
+
+    /// Planet `p`'s battlefield, saved as `WF[p − 1]` from now on (only a battlefield the save has is written).
+    pub fn store_ground_field(&mut self, p: usize, f: crate::ground::Field) {
+        self.fields.insert(p, f);
+    }
+}
+
+/// The template's chunk range of each battlefield `WF[i]`, by `i`.
+fn wf_ranges(template: &[(String, Vec<u8>)]) -> BTreeMap<usize, std::ops::Range<usize>> {
+    let mut out: BTreeMap<usize, std::ops::Range<usize>> = BTreeMap::new();
+    for (k, (name, _)) in template.iter().enumerate() {
+        if let Some(i) = battlefield_of(name) {
+            out.entry(i).or_insert(k..k).end = k + 1;
+        }
+    }
+    out
+}
+
+/// The battlefield index `i` of a chunk `WF[i]…`.
+fn battlefield_of(name: &str) -> Option<usize> {
+    let r = name.strip_prefix("WF[")?;
+    r[..r.find(']')?].parse().ok()
 }
 
 /// Whether the state models chunk `name` (a mapped global, a pointer array or a story queue); other chunks
@@ -847,6 +869,7 @@ pub fn modelled(name: &str) -> bool {
         || matches!(name, "Flottak" | "Hajok" | "Waypointek")
         || name.starts_with("Tervek[")
         || name.starts_with("Epuletek[")
+        || battlefield_of(name).is_some()
         || QUEUES.iter().any(|q| name.starts_with(q) && name[q.len()..].starts_with('.'))
 }
 

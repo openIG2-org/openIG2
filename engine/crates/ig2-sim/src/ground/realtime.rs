@@ -8,6 +8,7 @@ use crate::placement::{self, Terrain};
 
 /// Real-time fields of a unit (`WF_Tank`, exe offsets; constructor values in [`Default`]).
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TankRt {
     /// `+0x1dc` height on the map (the third map coordinate, with [`Group::pos`]).
     pub z: f32,
@@ -449,6 +450,7 @@ impl War<'_> {
             }
         };
         let r = (self.libc)();
+        self.field.tail.created.push(i);
         let mut u = Group::default();
         u.rt.drop = TankRt::dropship_start(r);
         u.design = pod;

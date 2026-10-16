@@ -326,6 +326,53 @@ pub enum StoryEvent {
     RevealWormhole,
     /// `EpuletNewSearchLocation(p, kind, true, level, −1, −1)` (`AutoAddBuilding`).
     PlaceStoryBuilding { planet: i32, kind: i32, level: i32 },
+    // ---- st_Begin_include (crate::begin, spec §8.12)
+    /// Fleet `+0x52` bits set, then cleared (`fleet-movement.md` §1: 0x100 always visible, 0x200 friendly, 0x800
+    /// custom name).
+    FleetFlags { fleet: i32, set: u16, clear: u16 },
+    /// `st_bSetRadarMsg(p, true)`: planet `+0xbb := 1` (the radar notices it).
+    RadarNotice(i32),
+    /// The human's view of the planet (`+0xd8[EN]`, i16) written.
+    SetPlanetView { planet: i32, view: i32 },
+    /// Planet `+0xb8` (i16, the epidemic) written.
+    SetEpidemic { planet: i32, value: i32 },
+    /// `Virus_CheckAdd(p)` (exe 0x542930): info 100 added to the planet unless it has it (the epidemic switch is the
+    /// story's).
+    VirusCheck(i32),
+    /// `st_ViszonyValt(a, b, x)`: `Viszony[b][a]` value 2 (`+4`, i16) `+= delta` (`100·x`).
+    RelationChange { a: i32, b: i32, delta: i32 },
+    /// Story 9: `Viszony[a][b].+0x24 := 1` and `Viszony[b][a].+0x24 := 1` (a trade agreement; `b` may be out of range).
+    TradeAgreement { a: i32, b: i32 },
+    /// `TankDelete(place, design, n)` (exe 0x5414c0): `n` units of the first `Tankok` record of the place and design
+    /// go (a record left empty gets design 0x7fff), with their battlefield units.
+    DeleteTanks { place: i32, design: i32, count: i32 },
+    /// Story 51: design `+0x24` (its price) divided by `div`.
+    DesignPriceDiv { empire: i32, design: i32, div: i32 },
+    /// Story 8: the design's `+0x6c := 3`, `+0x74..+0x7c` := the date, `+0x24 /= 3`, then the record is appended to
+    /// the market (`TradeTervek[TradeHanyTradeCuccVan++]`, `trade.md`).
+    DesignForSale { empire: i32, design: i32 },
+    /// Story 12: tech `+0x38`, the human's `+0x58 + 4·EN` and `+0x34` divided by 3.
+    TechCheaper(i32),
+    /// Building `slot` of planet `planet`: its damage (`+4`) written.
+    DamageBuilding { planet: i32, slot: i32, damage: i32 },
+    /// `ScrollUzenet(sprintf(_s(5, …), tech name, planet name), 1, 0, 0)`: story 19's sabotage on the ticker.
+    ScrollSabotage { tech: i32, planet: i32 },
+    /// The human's spy `slot`: `+0x18` (its target empire) written.
+    SpyTarget { slot: i32, empire: i32 },
+    /// `KemJelentesAdd(3, spy, 0, 0, 0, 0, empire, enemy, 0…)` (exe 0x58d000): the human's counter-spy `spy` caught
+    /// empire `empire`'s spy `enemy`.
+    SpyCaught { spy: i32, empire: i32, enemy: i32 },
+    /// Fleet `+0x00` (its name) written with a story text.
+    RenameFleet(i32),
+
+    // st_Rnd_include (crate::rnd, spec §8.13).
+    /// `BolygoInfoAdd(p, info, false)` (exe 0x53beb0): a planet info line not shown.
+    AddPlanetInfoHidden { planet: i32, info: i32 },
+    /// Planet `+0x24` (its richness) written directly.
+    SetPlanetRichness { planet: i32, value: i32 },
+    /// `st_SetTalalmanyAllapot(t, state, e)` (exe 0x602920) with `e` as the script passes it (`< 0`: the human);
+    /// the specials queue entry is the story's ([`Story::set_tech_state`]).
+    SetTechState { tech: i32, state: i32, empire: i32 },
 }
 
 /// A message parameter's text (`SetParamStr`).
@@ -341,6 +388,16 @@ pub enum MessageText {
     Tech(i32),
     /// `_s(5, id)`: a story text.
     Text(i32),
+    /// Fleet `f`'s name (`Flottak[f]`, its first field).
+    Fleet(i32),
+    /// `_s(29, n)`: the name of constellation `n` (`Generate_StarNames`).
+    Star(i32),
+    /// The names of up to four planets (0 = none), comma-separated (`st_Rnd` 149).
+    Planets([i32; 4]),
+    /// A design's name (`Tervek[e][d]`, its first field).
+    Design { empire: i32, design: i32 },
+    /// `RndHosok[hero]`'s texts in story 242's offer (`bonuses`: its battle bonuses, else its description).
+    Hero { hero: i32, bonuses: bool },
 }
 
 /// The lines the multiplayer modes put on the starmap (`st_AddGameInfo`).
@@ -356,6 +413,8 @@ pub enum InfoLine {
     Score { score: [i32; 2], touchdowns: [i32; 2], flag: [bool; 2] },
     /// An empire's name (`Birodalom_Nev[e]`).
     Empire(i32),
+    /// A count first, then the planet's name (story 10's countdown).
+    Countdown { count: i32, planet: i32 },
 }
 
 /// The multiplayer modes' texts for the human (`AddSzoveg`).
@@ -623,6 +682,137 @@ pub trait StoryWorld {
     fn wormhole_shown(&self) -> bool {
         false
     }
+
+    // st_Begin_include (crate::begin, spec §8.12).
+    /// Fleet `+0x60`: its strength (story 5 compares the human's fleets with it).
+    fn fleet_power(&self, _f: i32) -> i32 {
+        0
+    }
+    /// `HanyEpulet[p]` (exe 0xBA9840): the planet's building slots.
+    fn building_count(&self, _p: i32) -> i32 {
+        0
+    }
+    /// Building `k` (1-based) of planet `p` (`Epuletek[p] + 0x20·k`): `+0` kind, `+4` damage, `+8` (i16).
+    fn building(&self, _p: i32, _k: i32) -> (i32, i32, i32) {
+        (0, 0, 0)
+    }
+    /// `EpuletekLeiro[kind]` (exe 0x8EBA38, 0x24 B): `+8` its hit points, `+0` the tech it comes from.
+    fn building_hp(&self, _kind: i32) -> i32 {
+        0
+    }
+    fn building_tech(&self, _kind: i32) -> i32 {
+        0
+    }
+    /// `OsszHanyTank` (exe 0xBB4154) and `Tankok[k]` (0xBB41A8, 8 B): `(+0 place (≤ 0: planet −p), +2 design (0x7fff
+    /// free), +4 count)`.
+    fn tank_count(&self) -> i32 {
+        0
+    }
+    fn tank(&self, _k: i32) -> (i32, i32, i32) {
+        (0, 0x7fff, 0)
+    }
+    /// `Tervek[e][d]`: `+0x16` (i16, 2 = a ground unit), `+0x44` (its size), `+0x34` (u8, a colony ship).
+    fn design_class(&self, _e: i32, _d: i32) -> i32 {
+        0
+    }
+    fn design_size(&self, _e: i32, _d: i32) -> i32 {
+        0
+    }
+    fn design_colony(&self, _e: i32, _d: i32) -> bool {
+        false
+    }
+    /// `TradeHanyTradeCuccVan` (exe 0xF439CC) and offer `k`'s `+0x16` (i16) and `+0x80` (`TradeTervek` 0xB9AAF0).
+    fn trade_offer_count(&self) -> i32 {
+        0
+    }
+    fn trade_offer(&self, _k: i32) -> (i32, i32) {
+        (0, 0)
+    }
+    /// `Viszony[a][b].+0x24`: a trade agreement.
+    fn trade_agreement(&self, _a: i32, _b: i32) -> bool {
+        false
+    }
+    /// Planet `+0xb8` (i16): the epidemic.
+    fn planet_epidemic(&self, _p: i32) -> i32 {
+        0
+    }
+    /// `Talalmany[t]`: `+0xb8` (u8, the research priority).
+    fn tech_priority(&self, _t: i32) -> i32 {
+        0
+    }
+    /// `Talalmany[t]`: `+0x34` (its research cost) and `+0x38` (its research time).
+    fn tech_research(&self, _t: i32) -> (i32, i32) {
+        (0, 0)
+    }
+    /// `ResearchAktFejlesztett[e]` (exe 0xB9A9B8): the tech being researched (0 none).
+    fn researching(&self, _e: i32) -> i32 {
+        0
+    }
+    /// `OsszHanyKem[e]` (exe 0xBB1F84).
+    fn spy_count(&self, _e: i32) -> i32 {
+        0
+    }
+    /// Spy `k` of empire `e` (`Kemek` 0xBAFCC8, `[9][13]` × 0x4c).
+    fn spy_record(&self, _e: i32, _k: i32) -> SpyRecord {
+        SpyRecord::default()
+    }
+
+    // st_Rnd_include (crate::rnd, spec §8.13).
+    /// Planet `+0x30`: its morale (0..=999).
+    fn planet_morale(&self, _p: i32) -> i32 {
+        0
+    }
+    /// Planet `+0x22` (u8): its surface type.
+    fn planet_surface(&self, _p: i32) -> i32 {
+        0
+    }
+    /// Planet `+0x24`: its richness (base production capacity).
+    fn planet_richness(&self, _p: i32) -> i32 {
+        0
+    }
+    /// `OsszHanyWormhole` (exe 0xBB61A0).
+    fn wormhole_count(&self) -> i32 {
+        0
+    }
+    /// Wormhole `w` (exe 0xBB60F8 + 0x1c·w): its two ends, `(known, fleet slot)` (`+8`/`+0xa`, `+0x14`/`+0x16`).
+    fn wormhole(&self, _w: i32) -> [(bool, i32); 2] {
+        [(false, 0); 2]
+    }
+}
+
+/// A spy as `st_Begin_include` reads it (`Kemek[e][k]`, `espionage.md`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpyRecord {
+    /// `+0x10` (i16): 0 gone, 3 at home.
+    pub state: i32,
+    /// `+0x12` (u8): its race (the message portrait).
+    pub race: i32,
+    /// `+0x18` (u8): the empire it works against.
+    pub target: i32,
+    /// `+0x1a` (i16): its mission (13 counter-espionage).
+    pub mission: i32,
+    /// `+0x32`, `+0x33` (u8): its skills.
+    pub skill: (i32, i32),
+}
+
+/// `KemEsemeny` (exe 0xF2F874, 0x38 bytes): the last spy news `KemJelentesAdd(kind, spy, died, success, _,
+/// mission, target, tech, _, techs…)` gave the stories (spec §8.12).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KemNews {
+    /// `+0`: the report's kind (the stories test 1).
+    pub news: i32,
+    /// `+4`: the spy.
+    pub spy: i32,
+    /// `+8`: 1 when it died.
+    pub died: i32,
+    /// `+0xc` (u8): it succeeded.
+    pub success: bool,
+    /// `+0x14`, `+0x18`, `+0x1c`: the mission, the target empire, the tech.
+    pub mission: i32,
+    pub target: i32,
+    pub tech: i32,
+    /// `+0x24`: a list of 5 techs (mission 4).
+    pub techs: [i32; 5],
 }
 
 /// A design record's size (`Tervek[e][d]`, the `.scn` `TERV` layout).
@@ -631,13 +821,23 @@ pub const DESIGN: usize = 0x84;
 /// One `st_*_include` script.
 pub trait Script {
     fn run(&self, story: &mut Story, world: &mut dyn StoryWorld);
+    /// `run` inside `Story_Check`, with `all` the scripts the check runs: a script that calls back into the story
+    /// engine (a nested `Story_Check`, as `KemJelentesAdd` → `Story_KemEsemeny` does) runs them. Default: `run`.
+    fn run_in(&self, story: &mut Story, world: &mut dyn StoryWorld, all: &dyn Script) {
+        let _ = all;
+        self.run(story, world);
+    }
 }
 
 /// Two scripts in order (`Story_Check` runs `Scen`, then `Line`, …).
 impl<A: Script, B: Script> Script for (A, B) {
     fn run(&self, story: &mut Story, world: &mut dyn StoryWorld) {
-        self.0.run(story, world);
-        self.1.run(story, world);
+        self.run_in(story, world, self);
+    }
+
+    fn run_in(&self, story: &mut Story, world: &mut dyn StoryWorld, all: &dyn Script) {
+        self.0.run_in(story, world, all);
+        self.1.run_in(story, world, all);
     }
 }
 
@@ -734,6 +934,10 @@ pub struct Story {
     pub all_fleets_visible: u8,
     /// `StoryBuildingData` (exe 0xF22740, count 0xF23A00): the story buildings (`AutoAddBuilding`).
     pub building_data: Vec<BuildingData>,
+    /// `KemEsemeny` (exe 0xF2F874): the last spy news (`st_KemMeghalt` & co.).
+    pub kem: KemNews,
+    /// `CounterIntelligence_kem` (exe 0xF265D0): the human's spy `st_CounterIntelligence` last caught someone with.
+    pub counter_spy: i32,
 }
 
 /// A story building record (`StoryBuildingData`, 16 bytes).
@@ -811,6 +1015,8 @@ impl Default for Story {
             best_prod: [0; 3],
             all_fleets_visible: 0,
             building_data: Vec::new(),
+            kem: KemNews::default(),
+            counter_spy: 0,
         }
     }
 }
@@ -1281,7 +1487,7 @@ impl Story {
         self.delayed = false;
         self.check_add_ship(world);
         self.restarting = 0;
-        scripts.run(self, world);
+        scripts.run_in(self, world, scripts);
         campaign::inline_stories(self, world);
         if self.adat_i32(adat::EPIDEMIC) != 0 && self.daily() {
             let planets = world.planet_count();
@@ -1679,6 +1885,12 @@ impl Story {
         self.diplomacy = (which, e, 0);
         self.flags[flag::DIPLOMACY] = true;
         self.check(true, scripts, world);
+    }
+
+    /// `KemJelentesAdd`'s story part (exe 0x58d000): the news (`KemEsemeny`), then `Story_KemEsemeny()`.
+    pub fn spy_news(&mut self, news: KemNews, scripts: &dyn Script, world: &mut dyn StoryWorld) {
+        self.kem = news;
+        self.spy_event(scripts, world);
     }
 
     /// `Story_KemEsemeny()` (SP only).

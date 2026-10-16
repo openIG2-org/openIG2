@@ -332,15 +332,16 @@ impl Game<'_> {
             }
         }
         self.with_story(|st, w| st.space_battle_finished(&list, false, &ScenarioStories, w));
-        self.combat_aftermath(fleet_events, g.en);
+        self.combat_aftermath(fleet_events, g.sends);
         winner
     }
 
     /// The deletions' consequences outside the combat view: followers stop (`FlottaMozgat(g, 0, …)`),
     /// `OsszHanySajatFlotta[owner] −= 1` per `FlottaDelete` (twice on a re-entry, the second time for owner 0xFF,
-    /// whose counter is `Tankok[96].count`), the human's emptied fleet goes over the network (message 0x1b),
+    /// whose counter is `Tankok[96].count`), the human's emptied fleet goes over the network (message 0x1b; in
+    /// canonical mode every human's, `Game::view`),
     /// destroyed planet guns are `EpuletDelete`d.
-    fn combat_aftermath(&mut self, events: Vec<CombatEvent>, en: usize) {
+    fn combat_aftermath(&mut self, events: Vec<CombatEvent>, sends: [bool; EMPIRES]) {
         for e in events {
             match e {
                 CombatEvent::FollowerStopped { fleet } => {
@@ -364,7 +365,7 @@ impl Game<'_> {
                     self.state.mem.set_i32(at, self.state.mem.i32(at).wrapping_sub(1));
                 }
                 CombatEvent::HumanFleetEmptied { fleet } => {
-                    if self.fleet_owner(fleet) as usize == en {
+                    if sends[self.fleet_owner(fleet) as usize % EMPIRES] {
                         self.events.push(GameEvent::FleetEmptied { fleet });
                     }
                 }
@@ -471,75 +472,197 @@ impl Game<'_> {
             }
         }
         self.events.extend(events.into_iter().map(GameEvent::Side));
+        self.battlefield_hand_offs();
+    }
+
+    /// The battlefield side of the unit hand-offs raised since the last call, in event order (the exe does it inside
+    /// the calls that raise them; nothing in between reads a battlefield): garrison vehicles entering a planet's
+    /// battlefield (`TankNew(−p, d, n)`: `AddOwnTankToPlanet` × n, then `RearrangeTankGroups(owner)`) or leaving it
+    /// (`RemoveTankFromPlanet` × n; `TankAtpakol` rearranges after), and a captured planet's garrison and turrets
+    /// (`BolygoElfoglal`).
+    pub(super) fn battlefield_hand_offs(&mut self) {
+        while self.hand_offs < self.events.len() {
+            let e = self.events[self.hand_offs].clone();
+            self.hand_offs += 1;
+            let owner = |g: &Self, p: usize| g.planet_owner(p) as i32;
+            match e {
+                GameEvent::Production(ProductionEvent::GarrisonPlaced { planet, design, count })
+                | GameEvent::Ai(ai::AiEvent::GarrisonMap { planet, design, count })
+                    if count > 0 =>
+                {
+                    let o = owner(self, planet);
+                    self.with_war(planet, |w| {
+                        for _ in 0..count {
+                            w.add_own_tank(design as i32);
+                        }
+                        w.rearrange(o);
+                    });
+                }
+                GameEvent::Ai(ai::AiEvent::GarrisonMap { planet, design, count }) => {
+                    let o = owner(self, planet);
+                    self.with_war(planet, |w| {
+                        for _ in 0..count.wrapping_neg() {
+                            w.remove_tank(design as i32, o);
+                        }
+                    });
+                }
+                GameEvent::Ai(ai::AiEvent::GarrisonRearranged { planet }) => {
+                    let o = owner(self, planet);
+                    self.with_war(planet, |w| w.rearrange(o));
+                }
+                // `EpuletNew` → `AddBuildingTurrets(kind, 100, owner, slot, p)`; `EpuletFelepult` → `BuildingBuilt(slot)`
+                // (ground-combat.md §11.3).
+                GameEvent::Side(SideEvent::AutobuildPlaced { planet, kind, slot, .. }) => {
+                    let o = owner(self, planet);
+                    self.with_war(planet, |w| w.add_building_turrets(kind, o, slot as i32));
+                }
+                GameEvent::Side(SideEvent::Colony { planet, event: crate::colony::ColonyEvent::BuildingFinished { slot } }) => {
+                    self.with_war(planet, |w| w.building_built(slot as i32 + 1));
+                }
+                GameEvent::Side(SideEvent::GarrisonLost { planet, old_owner, new_owner })
+                | GameEvent::Spy(SpyEvent::Colony(SideEvent::GarrisonLost { planet, old_owner, new_owner })) => {
+                    self.garrison_lost(planet, old_owner, new_owner);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `BolygoElfoglal(p, new)`'s garrison and battlefield part (exe 0x53b812..0x53b8ff), on the old owner's terms:
+    /// every garrison entry (`Tankok` with fleet −p, in order) is `TankDelete`d and its vehicles leave the battlefield
+    /// one by one (`RemoveTankFromPlanet(d, p, old)`); then the turrets change hands ([`ground::War::captured`]).
+    fn garrison_lost(&mut self, p: usize, old: u8, new: u8) {
+        let garrison: Vec<(i32, i32)> = self.state.combat().vehicles.iter().skip(1)
+            .filter(|v| v.fleet as i32 == -(p as i32) && v.design != spacewar::NO_DESIGN)
+            .map(|v| (v.design as i32, v.count))
+            .collect();
+        self.with_war(p, |w| {
+            let now = w.planet.owner;
+            w.planet.owner = old;
+            for &(d, n) in &garrison {
+                w.tank_delete(-(p as i32), d, n);
+                for _ in 0..n {
+                    w.remove_tank(d, old as i32);
+                }
+            }
+            w.planet.owner = now;
+            w.captured(new as i32);
+        });
     }
 
     /// `GroundWarSetBattleStatus` (exe 0x47caa0, `ground-combat.md` §6.4): every planet's war flag `+0x64` from
     /// its field's status, the attackers' fleets marked in battle while it is contested.
     fn ground_battle_status(&mut self) {
-        for q in 1..=self.state.planet_count() {
-            self.with_war(q, |w| w.battle_status());
-        }
+        let all: Vec<usize> = (1..=self.state.planet_count()).collect();
+        self.with_wars(&all, |w| w.battle_status());
     }
 
-    /// The ground war on planet `p` (its battlefield from [`Game::ground_fields`], else the loaded save's), with the
-    /// planet, the units, the streams and libc; everything goes back to the state afterwards.
-    fn with_war(&mut self, p: usize, f: impl FnOnce(&mut War)) {
+    /// `GroundWarSetBattleStatus` at the head of `FRISSIT_Starmap` (exe 0x595d61: after the radar refresh and the
+    /// real-time battles' marks, before the movement loop): every planet's war flag and status cache. Returns the
+    /// attacking fleets it marks in battle, for the starmap to mark with the space battles' (the refresh clears the
+    /// mark, so it must come after).
+    pub(super) fn starmap_ground_marks(&mut self) -> Vec<usize> {
+        self.battlefield_hand_offs();
+        let mut combat = self.state.combat();
+        let flags: Vec<u16> = combat.fleets.iter().map(|f| f.flags).collect();
+        for f in combat.fleets.iter_mut() {
+            f.flags &= !1;
+        }
+        self.state.store_combat(&combat);
+        self.ground_battle_status();
+        let mut combat = self.state.combat();
+        let marked = (0..combat.fleets.len()).filter(|&f| combat.fleets[f].flags & 1 != 0).collect();
+        for (f, x) in combat.fleets.iter_mut().zip(flags) {
+            f.flags = x;
+        }
+        self.state.store_combat(&combat);
+        marked
+    }
+
+    /// The ground war on planet `p` (its battlefield from the state), with the planet, the units, the streams and
+    /// libc; everything goes back to the state afterwards.
+    pub(super) fn with_war(&mut self, p: usize, f: impl FnOnce(&mut War)) {
+        let mut f = Some(f);
+        self.with_wars(&[p], |w| (f.take().unwrap())(w));
+    }
+
+    /// [`Game::with_war`] for several planets in turn, with one view of the units, streams and libc.
+    pub(super) fn with_wars(&mut self, planets: &[usize], mut f: impl FnMut(&mut War)) {
         let g = self.globals();
-        let mut field = match self.ground_fields.remove(&p) {
-            Some(x) => x,
-            None => self.state.ground_field(p).unwrap_or_default(),
-        };
-        let r = self.planet_rec(p);
-        let blocks = self.state.buildings.get(p).cloned().unwrap_or_default();
-        let m = &self.state.mem;
-        let mut planet = GroundPlanet {
-            index: p as i32,
-            owner: r[0x20],
-            garrison: i32::from_le_bytes(r[0x58..0x5c].try_into().unwrap()),
-            garrison_strength: i32::from_le_bytes(r[0x5c..0x60].try_into().unwrap()),
-            in_war: r[0x64],
-            buildings: blocks.iter().map(|b| building_from(b)).collect(),
-            building_count: m.i32(va::BUILDINGS_OCCUPIED + 4 * p as u32),
-            building_z: blocks.iter().map(|b| f32::from_le_bytes(b[0x14..0x18].try_into().unwrap())).collect(),
-        };
         let adat = self.adat();
-        let ctx = GroundContext {
-            human: g.en as i32,
-            multiplayer: g.multiplayer,
-            story_planet: adat_i32(&adat, ADAT_STORY_PLANET),
-            story_bonus: adat_i32(&adat, 0x70).wrapping_add(adat_i32(&adat, 0x74)),
-            players: g.pp2 as i32,
-            prev_planet_owner: m.u8(va::PLANETS + ((p - 1) * PLANET_SIZE) as u32 + 0x20),
-            on_screen: false,
-            player_ki: m.read(va::PLAYER_KI, EMPIRES).try_into().unwrap(),
-        };
         let mut world = self.state.combat();
         let mut rng = self.state.rng();
         let mut libc = self.libc;
-        let mut draw = || libc.rand();
-        let mut place = |_: Option<(i32, i32)>| (true, (100, 100));
-        let events = {
-            let mut war = War::new(&mut field, &mut planet, &mut world, &self.rules.ground, &ctx, &mut rng, &mut draw, &mut place);
-            f(&mut war);
-            war.events
-        };
+        let mut raised = Vec::new();
+        for &p in planets {
+            let mut field = self.state.take_ground_field(p);
+            let r = self.planet_rec(p);
+            // The used slots (`Epuletek[p][1..=slots]`, exe 0xBA9840): the rest of the block is unused (garbage).
+            let slots = self.state.mem.i32(va::BUILDING_SLOTS + 4 * p as u32).max(0) as usize;
+            let mut blocks = self.state.buildings.get(p).cloned().unwrap_or_default();
+            blocks.truncate(slots + 1);
+            let m = &self.state.mem;
+            let mut planet = GroundPlanet {
+                index: p as i32,
+                owner: r[0x20],
+                garrison: i32::from_le_bytes(r[0x58..0x5c].try_into().unwrap()),
+                garrison_strength: i32::from_le_bytes(r[0x5c..0x60].try_into().unwrap()),
+                in_war: r[0x64],
+                buildings: blocks.iter().map(|b| building_from(b)).collect(),
+                building_count: m.i32(va::BUILDINGS_OCCUPIED + 4 * p as u32),
+                building_z: blocks.iter().map(|b| f32::from_le_bytes(b[0x14..0x18].try_into().unwrap())).collect(),
+            };
+            let ctx = GroundContext {
+                human: g.en as i32,
+                multiplayer: g.multiplayer,
+                story_planet: adat_i32(&adat, ADAT_STORY_PLANET),
+                story_bonus: adat_i32(&adat, 0x70).wrapping_add(adat_i32(&adat, 0x74)),
+                players: g.pp2 as i32,
+                prev_planet_owner: m.u8(va::PLANETS + ((p - 1) * PLANET_SIZE) as u32 + 0x20),
+                on_screen: false,
+                player_ki: m.read(va::PLAYER_KI, EMPIRES).try_into().unwrap(),
+            };
+            let mut draw = || libc.rand();
+            let mut place = |_: Option<(i32, i32)>| (true, (100, 100));
+            let map = self.rules.ground_maps.get(r[0x23] as usize);
+            // `SetTankPositionAndMatrix` reads the heights of the planet on the colony screen [original quirk].
+            let shown = self.planet_rec(m.i32(va::AKT_PLANET).max(0) as usize)[0x23] as usize;
+            let view = self.rules.ground_maps.get(shown);
+            let events = {
+                let mut war = War::new(&mut field, &mut planet, &mut world, &self.rules.ground, &ctx, &mut rng, &mut draw, &mut place);
+                war.map = map;
+                war.view_map = view;
+                f(&mut war);
+                war.events
+            };
+            let at = va::PLANETS + (p * PLANET_SIZE) as u32;
+            let m = &mut self.state.mem;
+            m.set_i32(at + 0x58, planet.garrison);
+            m.set_i32(at + 0x5c, planet.garrison_strength);
+            m.set_u8(at + 0x64, planet.in_war);
+            m.set_i32(va::BUILDINGS_OCCUPIED + 4 * p as u32, planet.building_count);
+            if let Some(blocks) = self.state.buildings.get_mut(p) {
+                for (rec, b) in blocks.iter_mut().zip(&planet.buildings) {
+                    rec[0] = b.kind;
+                    rec[4..8].copy_from_slice(&b.damage.to_le_bytes());
+                }
+            }
+            for slot in std::mem::take(&mut field.tail.created) {
+                let raw = match self.uninit.as_mut() {
+                    Some(f) => f(Fresh::GroundUnit { planet: p, slot }),
+                    None => Vec::new(),
+                };
+                if let Some(u) = field.units.get_mut(slot) {
+                    u.fill_uninit(&raw);
+                }
+            }
+            self.state.store_ground_field(p, field);
+            raised.extend(events.into_iter().map(|e| (p, e)));
+        }
         self.libc = libc;
         self.state.store_rng(&rng);
         self.state.store_combat(&world);
-        let at = va::PLANETS + (p * PLANET_SIZE) as u32;
-        let m = &mut self.state.mem;
-        m.set_i32(at + 0x58, planet.garrison);
-        m.set_i32(at + 0x5c, planet.garrison_strength);
-        m.set_u8(at + 0x64, planet.in_war);
-        m.set_i32(va::BUILDINGS_OCCUPIED + 4 * p as u32, planet.building_count);
-        if let Some(blocks) = self.state.buildings.get_mut(p) {
-            for (rec, b) in blocks.iter_mut().zip(&planet.buildings) {
-                rec[0] = b.kind;
-                rec[4..8].copy_from_slice(&b.damage.to_le_bytes());
-            }
-        }
-        self.ground_fields.insert(p, field);
-        for e in events {
+        for (p, e) in raised {
             if e == GroundEvent::Abandoned {
                 self.capture(p, 0);
             }

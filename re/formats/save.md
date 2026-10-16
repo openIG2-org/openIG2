@@ -194,6 +194,29 @@ array `+0x1f0..+0x224` (same rule); `+0x1c` (0x24), `+0x244`, `+0x248`; hit poin
 On load `+0x280` = the planet, `+0xe0` = 0.65f, and a building-bound group (`+0x23c < 0`, ≠ 10000, flag 0x100)
 recomputes `+0x14c` from the building's footprint.
 
+**Writing** (`mode` 2, verified in the save replay: `rules/traces/2026-10-16-save-replay.md`): the same calls in the
+same order, so a save holds exactly the fields above (at version 0x6a). Details that matter for a writer
+(`ig2-sim::save::wf`, `SaveState::{ground_field, take_ground_field, store_ground_field}`):
+- `WF::LoadSave` sets `+0x8cc = 0` **before** the variable in either direction: a save always writes 0 and leaves
+  every battlefield's status cache invalid (`SaveState::battlefields_saved`, from `Game::saved`).
+- The presence flags are `pointer ≠ NULL`. `RemoveTankGroup` (0x497c90) only clears the alive byte and
+  `WF::RemoveTank` (0x497af0) frees the object without clearing the pointer, so a slot stays "present" once a unit
+  was there; only slots loaded as absent stay 0 until a unit takes them. List objects (`ElementList` refresh
+  0x4903f0) are freed and nulled. Every alive unit is written whole (`+0x19c`'s scalar is the origin array's heap
+  address: per run, taken from the exe in a replay).
+- The ammunition words travel in a fixed weapon-bit order: bit `b` of `+0x1d0` → word `AMMO[b]` of `+0xa8`/`+0x1f0`
+  with `AMMO = [0, 8, 3, 12, 2, 13, 10, 11, 4, 5, 6, 7, 9, 1]`.
+- `+0x8d0` is the battlefield's weather and `+0x8d4` its background (`melyikhatter`, read by `InitWeather`, ELF
+  0x4c1160), both drawn in `FRISSIT_Planet`'s prologue (`rules/colony-economy.md` §3); the background cursor
+  0x996488 isn't saved.
+- `+0x18c` is the battlefield's planet (passed to every `WF_Tank::LoadSave`); `+0x14`, `+0xe8`, `+0x13c..+0x146`,
+  `+0x240`, `+0x270/+0x274`, the battlefield's `+0x18`, `+0x184`, `+0x1a8..+0x1b8`, empire 0's AI block and the
+  first 8 bytes of the list-B/C objects aren't read by any ported system: the port keeps them as loaded
+  (`ground::{UnitTail, FieldTail}`). A unit object made since the load has the constructor's values; the saved
+  fields the constructor (`WF_Tank::WF_Tank` 0x457020) and `AddTank` leave uninitialised are listed in
+  `ground::UNINIT` (heap garbage in the exe: `+0xc/+0x10` for turrets, `+0x14`, `+0x18`, `+0x98/+0x9c`,
+  `+0x1b0/+0x1b4`, `+0x23c`, `+0x1e0`, `+0x24c`, `+0x25c/+0x260`, `+0x274`, the `+0x19c` pointer).
+
 ### 4.14 Colony view, relations, AI
 `ColonyXStart/YStart/Rotate/Pitch/Zoom` 0xBA90DC, 0xBA9514, 0xBA983C, 0xBA9B64, 0xBA9E8C (4 each), `Viszony`
 0xDABF38 (0x3596 = 19² × 0x26), `DiplomaciaMikorHivtaUtoljara` 0xDAF520 (0x144, v > 0x57), `MiTervMutato` 0xDAF668,

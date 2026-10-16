@@ -715,6 +715,7 @@ impl War<'_> {
             }
         };
         let r = (self.libc)();
+        self.field.tail.created.push(j);
         let mut u = super::Group::default();
         u.rt.drop = super::TankRt::dropship_start(r);
         u.hp.push(hp);

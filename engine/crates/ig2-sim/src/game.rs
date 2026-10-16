@@ -5,7 +5,7 @@
 //! FRISSIT_Datum                       Game::advance_clock
 //! if IdoNapValtozott:                 Game::run_tick from here
 //!     Nap % 6 == 1: FRISSIT_Planet    colony_side::ColonyWorld::economy_step
-//!     FRISSIT_Viszony                 diplomacy::Diplomacy::daily
+//!     FRISSIT_Viszony                 diplomacy::Diplomacy::daily, its deaths Game::empire_dies (game::death)
 //!     FRISSIT_MI                      ai::AiState::daily
 //!     FRISSIT_Spy                     spy::Spies::daily
 //!     MI_DIPLOMACY                    diplomacy::Diplomacy::ai_messages
@@ -17,6 +17,7 @@
 //! FRISSIT_Diplomacy                   diplomacy::Diplomacy::tick
 //! FRISSIT_Epuletek                    Game::buildings_tick (repairs, refresh of planets at war)
 //! FRISSIT_Starmap                     fleet::Starmap::tick (colonisation arrivals), then production::Shipyard::tick
+//! MegnyeresEllenoriz                  Game::victory_check (game::death)
 //! IdoMultiPlayerBattle += 1
 //! ```
 //!
@@ -26,18 +27,21 @@
 //! events at its end, in event order ([`Game::post_messages`], `re/rules/info-messages.md` §3).
 //!
 //! Not ported, so skipped: `FRISSIT_Design` (empty in the exe),
-//! the victory check, the ground and space battles' real-time ticks. Their effects on the other systems (a fleet
+//! the ground and space battles' real-time ticks. Their effects on the other systems (a fleet
 //! stopped by a story, a war the AI declares) are reported as [`GameEvent`]s, and the few the replay needs are
 //! carried out here. Each system decodes its state from the [`SaveState`] and stores it back, so systems see each
 //! other's writes as in the exe.
 
 mod battles;
+mod death;
 
 pub use battles::BattleEvent;
+pub use death::{GameOver, LAST_ENEMY_STORY};
 
 use crate::ai::{self, AiContext, AiHooks, AiRules};
 use crate::colony::{ColonyEvent, EconomyContext, Planet, StoryHooks};
 use crate::colony_side::{ColonyArrivals, SideEvent, SideRules, EMPIRES};
+use crate::ground;
 use crate::diplomacy::{self, DiploEvent, DiploPlanet, Diplomacy, DiplomacyContext, DiplomacyRules};
 use crate::fleet::{order, Arrivals, StarPlanet, Starmap, StarmapContext, StarmapEvent, DELETED};
 use crate::messages::{cstr, Texts};
@@ -71,6 +75,13 @@ pub struct GameRules {
     /// The auto-resolved space battle's planet guns and the ground war (`SimulateSpBattle`, `WF::Simulate`).
     pub guns: crate::spacewar::GunRules,
     pub ground: crate::ground::GroundRules,
+    /// `terepleiro.txt`: each `[felszin]`'s weathers (by colony map) and each `[hatter]`'s (the battlefields'
+    /// backgrounds, `ground::pick_background`).
+    pub surface_weathers: Vec<Vec<i32>>,
+    pub backgrounds: Vec<Vec<i32>>,
+    /// The colony maps (by `Bolygok +0x23`) for placing vehicles on a battlefield outside the real-time battle
+    /// (`LocateTankSuitablePosition`; heights for the units' `+0x1dc`).
+    pub ground_maps: Vec<ground::GroundMap>,
 }
 
 /// The MSVC CRT `rand()` (`holdrand · 214013 + 2531011`, bits 16..30): the unseeded libc draws of the original.
@@ -82,6 +93,32 @@ impl Libc {
         self.0 = self.0.wrapping_mul(214013).wrapping_add(2531011);
         ((self.0 >> 16) & 0x7fff) as i32
     }
+}
+
+/// Where the sim's per-peer view state comes from (ADR 0007 §5, `re/rules/multiplayer.md`): `EN` (the local
+/// human), the shown screen and planet (`StarmapMode`/`AktPlanet`) and the selected fleet (`AktFleet`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ViewMode {
+    /// The original: the sim reads (and the UI writes) those globals in the state. Single player and every
+    /// byte-exact replay.
+    #[default]
+    Classic,
+    /// Lockstep multiplayer: the sim reads canonical values, the same on every peer: `EN` = `en` (the host's
+    /// empire), nothing on screen, no selection, and the original's `Multi_Send(.., EN, ..)` goes out for every
+    /// human. Each peer's own view is [`Game::local`], which the sim never reads; draws that only pick what the
+    /// local player sees come from [`Game::cosmetic`]. Synced state (in the snapshot).
+    Canonical { en: u8 },
+}
+
+/// One player's view: whose empire they play and what they look at (the original's `EN`, `StarmapMode`,
+/// `AktPlanet`, `AktFleet`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalView {
+    pub empire: u8,
+    /// `StarmapMode` (exe 0xB9998C): 1 = a planet's screen is up.
+    pub starmap_mode: i32,
+    pub planet: i32,
+    pub fleet: i32,
 }
 
 /// What a tick asked of systems that aren't ported, or reported to the UI.
@@ -103,6 +140,8 @@ pub enum GameEvent {
     FleetEmptied { fleet: usize },
     /// A battle the starmap started (`SpaceWarIndit`, `GroundWarIndit`).
     Battle(BattleEvent),
+    /// The game ends for the human (`MEGHALAS`, `MEGNYERES`; `game::death`).
+    GameOver(GameOver),
 }
 
 impl GameEvent {
@@ -130,10 +169,20 @@ pub struct Game<'r> {
     pub empire_names: Vec<Vec<u8>>,
     /// `KemCsaladtag_Nev[x]` (exe 0xBB6968, unsaved, localised): the family members the kidnap message names.
     pub family_names: Vec<Vec<u8>>,
-    /// The ground battlefields (`Warfare[p]`) a battle touched since the load; the others are the loaded save's
-    /// (`SaveState::ground_field`). Their chunks aren't written back (unported: `WF::LoadSave`).
-    pub ground_fields: std::collections::BTreeMap<usize, crate::ground::Field>,
+    /// Classic (the view in the state) or canonical (multiplayer). Synced.
+    pub view: ViewMode,
+    /// This peer's view in [`ViewMode::Canonical`] (unused in classic mode, where the state holds it). Per peer:
+    /// not in the snapshot or the hash.
+    pub local: LocalView,
+    /// The per-peer libc stream of [`ViewMode::Canonical`] for draws that only pick what the local player sees or
+    /// hears (classic mode draws them from [`Game::libc`], like the exe). Not in the snapshot or the hash.
+    pub cosmetic: Libc,
+    /// The events up to here had their battlefield side carried out ([`Game::battlefield_hand_offs`]).
+    hand_offs: usize,
 }
+
+/// One planet's draws in the economy prologue: `(planet, weather, background)` ([`Game::weather_draws`]).
+pub type WeatherDraw = (usize, i32, Option<i32>);
 
 /// An appended record whose untouched bytes [`Game::uninit`] supplies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,6 +193,9 @@ pub enum Fresh {
     /// A building record appended to planet `planet`'s block (`EpuletNew` reallocates by 20).
     Building { planet: usize, slot: usize },
     Design { empire: usize, design: usize },
+    /// A unit object new on planet `planet`'s battlefield at `slot`: [`ground::UNINIT`] fields as `(offset, value)`
+    /// pairs ([`ground::Group::fill_uninit`]).
+    GroundUnit { planet: usize, slot: usize },
 }
 
 /// The tick's global inputs read from the state.
@@ -156,6 +208,10 @@ struct Globals {
     speed: i32,
     multiplayer: bool,
     en: usize,
+    /// The empires whose machine sends the original's `Multi_Send(.., EN, ..)` ([`ViewMode`]).
+    sends: [bool; EMPIRES],
+    /// `UAktUzenetFajta` (exe 0xDABDBC, the inbox message on screen); 0 in canonical mode.
+    message_shown: i32,
     human: [bool; EMPIRES],
     race: [u8; EMPIRES],
     alive: [bool; EMPIRES],
@@ -183,12 +239,71 @@ impl<'r> Game<'r> {
             events: Vec::new(),
             empire_names: Vec::new(),
             family_names: Vec::new(),
-            ground_fields: Default::default(),
+            hand_offs: 0,
+            view: ViewMode::Classic,
+            local: LocalView::default(),
+            cosmetic: Libc::default(),
+        }
+    }
+
+    /// Switch to the canonical view of a lockstep session whose canonical `EN` is `en` (the host's empire). It's
+    /// synced state: every peer sets the same `en` before the first tick (the host sends it with the start
+    /// message), and the snapshot carries it. The local view starts as the state's classic one.
+    pub fn canonical_view(&mut self, en: u8) {
+        if self.view == ViewMode::Classic {
+            self.local = self.local_view();
+        }
+        self.view = ViewMode::Canonical { en };
+    }
+
+    /// The local player's view: the state's globals (classic), else [`Game::local`].
+    pub fn local_view(&self) -> LocalView {
+        match self.view {
+            ViewMode::Classic => {
+                let m = &self.state.mem;
+                LocalView {
+                    empire: m.i32(va::EN).clamp(0, EMPIRES as i32 - 1) as u8,
+                    starmap_mode: m.i32(va::STARMAP_MODE),
+                    planet: m.i32(va::AKT_PLANET),
+                    fleet: m.i32(va::AKT_FLEET),
+                }
+            }
+            ViewMode::Canonical { .. } => self.local,
+        }
+    }
+
+    /// The UI changes the local view: classic mode writes the original's globals (game state there: the sim reads
+    /// them), canonical mode keeps it beside the state.
+    pub fn set_view(&mut self, v: LocalView) {
+        match self.view {
+            ViewMode::Classic => {
+                let m = &mut self.state.mem;
+                m.set_i32(va::EN, v.empire as i32);
+                m.set_i32(va::STARMAP_MODE, v.starmap_mode);
+                m.set_i32(va::AKT_PLANET, v.planet);
+                m.set_i32(va::AKT_FLEET, v.fleet);
+            }
+            ViewMode::Canonical { .. } => self.local = v,
+        }
+    }
+
+    /// The planet on screen as the sim sees it (`StarmapMode == 1` → `AktPlanet`); none in canonical mode.
+    fn shown_planet(&self) -> Option<i32> {
+        let m = &self.state.mem;
+        match self.view {
+            ViewMode::Classic => (m.i32(va::STARMAP_MODE) == 1).then(|| m.i32(va::AKT_PLANET)),
+            ViewMode::Canonical { .. } => None,
         }
     }
 
     fn globals(&self) -> Globals {
         let m = &self.state.mem;
+        let en = match self.view {
+            ViewMode::Classic => m.i32(va::EN).clamp(0, EMPIRES as i32 - 1) as usize,
+            ViewMode::Canonical { en } => (en as usize).min(EMPIRES - 1),
+        };
+        let human = self.state.human_controlled();
+        let classic = |at: u32| if self.view == ViewMode::Classic { m.i32(at) } else { 0 };
         Globals {
             year: m.i32(va::EV),
             month: m.i32(va::HONAP),
@@ -197,8 +312,13 @@ impl<'r> Game<'r> {
             ido2: m.i32(va::IDO2),
             speed: m.i32(va::IDO_SPEED),
             multiplayer: m.u8(va::MULTIPLAYER) != 0,
-            en: m.i32(va::EN).clamp(0, EMPIRES as i32 - 1) as usize,
-            human: self.state.human_controlled(),
+            en,
+            sends: match self.view {
+                ViewMode::Classic => std::array::from_fn(|e| e == en),
+                ViewMode::Canonical { .. } => human,
+            },
+            message_shown: classic(va::INBOX_SHOWING),
+            human,
             race: self.state.races(),
             alive: self.state.alive(),
             difficulty: m.i32(va::NEHEZSEG),
@@ -216,11 +336,12 @@ impl<'r> Game<'r> {
     }
 
     /// `LoadSave`'s epilogue (exe 0x543c80, ELF `save.cpp`), after writing a save as after loading one:
-    /// `KemKuldetesek[0x160] = 0` and `FlottakUjraSzamol()` (every fleet's totals, colony ships, terraformers and
+    /// `KemKuldetesek[0x160] = 0`, the battlefields' status caches cleared (`WF::LoadSave`) and `FlottakUjraSzamol()` (every fleet's totals, colony ships, terraformers and
     /// pools, every garrison recounted; `ai-empire.md` §12.9). It changes the state: a colonising fleet's colony ship
     /// has left the pool, and the recount puts it back (`fleet-movement.md` §4.3). `FRISSITES_IGAZIT` is the UI's.
     pub fn saved(&mut self) {
         self.state.mem.set_i32(va::MISSIONS + 0x160, 0);
+        self.state.battlefields_saved();
         self.with_ai(|_, w, _| w.recount());
     }
 
@@ -246,6 +367,7 @@ impl<'r> Game<'r> {
             self.daily();
         }
         self.trade();
+        self.battlefield_hand_offs();
         self.info();
         self.research();
         self.story();
@@ -253,8 +375,11 @@ impl<'r> Game<'r> {
         self.diplomacy_tick();
         self.buildings_tick();
         self.starmap();
+        self.victory_check(&[]);
         let m = &mut self.state.mem;
         m.set_i32(0xBAE054, m.i32(0xBAE054).wrapping_add(1));
+        self.battlefield_hand_offs();
+        self.grwar();
         self.fill_fresh_buildings();
         self.post_messages(first_event);
     }
@@ -331,8 +456,11 @@ impl<'r> Game<'r> {
     fn daily(&mut self) {
         if self.state.mem.i32(va::NAP) % 6 == 1 {
             self.economy();
+            self.battlefield_hand_offs();
         }
+        let from = self.events.len();
         self.diplomacy_daily(false);
+        self.empire_deaths(from);
         if self.state.mem.i32(va::AI_OFF) == 0 {
             self.ai();
         }
@@ -340,6 +468,7 @@ impl<'r> Game<'r> {
         if self.state.mem.i32(va::AI_OFF) == 0 {
             self.diplomacy_daily(true);
         }
+        self.battlefield_hand_offs();
     }
 
     // -------------------------------------------------------------------------------------------- contexts
@@ -514,6 +643,7 @@ impl<'r> Game<'r> {
             no_recruits: m.u8(va::TUTORIAL_NO_RECRUITS) != 0,
             forced: m.i32(va::SPY_FORCED),
             day: g.day,
+            senders: (self.view != ViewMode::Classic).then_some(g.sends),
         }
     }
 
@@ -540,24 +670,74 @@ impl<'r> Game<'r> {
     }
 
     /// The prologue of `FRISSIT_Planet(true, 0)` (exe 0x4749b9..0x474ab0, `colony-economy.md` §3): each planet's
-    /// ground battlefield gets its weather (`WF[p]+0x8d0`: one libc `rand()` for surfaces 2, 5 and 7) and its
-    /// ambience (`WF[p]+0x8d4`, exe 0x47a380: one `rand()` when the colony map is below `hanyterep`), skipping the
-    /// planet on screen. The battlefields' fields aren't ported; the draws shift every later libc draw of the tick.
+    /// ground battlefield gets its weather (`WF[p]+0x8d0`, [`ground::weather`]) and, when its colony map is below
+    /// `hanyterep`, its background (`WF[p]+0x8d4`, exe 0x47a380, [`ground::pick_background`]), skipping the planet
+    /// on screen (none in canonical mode).
     fn battlefield_weather(&mut self) {
+        let cursor = self.state.mem.i32(va::BACKGROUND_CURSOR);
+        let (draws, cursor, libc) = self.weather_draws(cursor, self.libc);
+        for (p, weather, background) in draws {
+            let mut field = self.state.take_ground_field(p);
+            field.weather = weather;
+            if let Some(b) = background {
+                field.background = b;
+            }
+            self.state.store_ground_field(p, field);
+        }
+        self.state.mem.set_i32(va::BACKGROUND_CURSOR, cursor);
+        self.libc = libc;
+    }
+
+    /// The prologue's draws from background cursor `cursor` and libc `libc`: `(planet, weather, background)` per
+    /// planet drawn for, the cursor and libc after. Changes nothing (`melyikhatter`'s cursor 0x996488 isn't saved:
+    /// a replay without its value can try each).
+    pub fn weather_draws(&self, mut cursor: i32, mut libc: Libc) -> (Vec<WeatherDraw>, i32, Libc) {
         let m = &self.state.mem;
-        let shown = (m.i32(va::STARMAP_MODE) == 1).then(|| m.i32(va::AKT_PLANET));
+        let shown = self.shown_planet();
         let terrains = self.rules.placement.terrains.len();
+        let mut out = Vec::new();
         for p in 1..=self.state.planet_count() {
             if shown == Some(p as i32) {
                 continue;
             }
-            let at = va::PLANETS + (p * PLANET_SIZE) as u32;
-            let (surface, map) = (m.u8(at + 0x22), m.u8(at + 0x23));
-            if matches!(surface, 2 | 5 | 7) {
-                self.libc.rand();
-            }
-            if (map as usize) < terrains {
-                self.libc.rand();
+            let r = m.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE);
+            let (surface, map) = (r[0x22], r[0x23] as usize);
+            let info = (0..5).any(|k| i16::from_le_bytes([r[0x16a + 2 * k], r[0x16b + 2 * k]]) == 0x776);
+            let weather = ground::weather(surface, info, &mut || libc.rand());
+            let background = (map < terrains).then(|| {
+                let weathers = self.rules.surface_weathers.get(map).map_or(&[][..], |w| &w[..]);
+                ground::pick_background(&mut cursor, weathers, &self.rules.backgrounds, &mut || libc.rand())
+            });
+            out.push((p, weather, background));
+        }
+        (out, cursor, libc)
+    }
+
+    /// Whether this tick's daily block runs the economy step (`FRISSIT_Planet(true, 0)` when the day changed and
+    /// `Nap % 6 == 1`).
+    pub fn economy_due(&self) -> bool {
+        let m = &self.state.mem;
+        m.i32(va::NAP) != m.i32(va::OLD_NAP) && m.i32(va::NAP) % 6 == 1
+    }
+
+    /// `FRISSIT_Grwar` (exe 0x4747c0, ground-combat.md §11.7) after the tick (`Fake_FRISSITES`, unless an MP space
+    /// battle runs (0xBAD114) or the SP battle screen is up): `gvalue` (0x9B2900) += 1, then every planet's
+    /// self-destruct countdown per battle step and, every 300th call, `WF::Collapse`
+    /// ([`ground::War::grwar_planet`]). The colony screen's `WF::MI` / `WF::Refresh` for the shown planet are the
+    /// real-time battle's (not run here). `FRISSIT_Colony` (0x474680), which follows, changes nothing a save holds:
+    /// the passability maps' 600-tick expiry, smoke emitters (0xA3E9C8, with libc draws), debris and the UI effect list.
+    fn grwar(&mut self) {
+        let m = &self.state.mem;
+        if m.i32(va::MP_SPACE_BATTLE) != 0 || (m.i32(va::AKT_KEP) == 0xb && !self.globals().multiplayer) {
+            return;
+        }
+        let gvalue = m.i32(va::GVALUE).wrapping_add(1);
+        self.state.mem.set_i32(va::GVALUE, gvalue);
+        let clock = ground::Clock { speed: self.state.mem.i32(va::BATTLE_SPEED), paused: false };
+        for p in 1..=self.state.mem.i32(va::PLANET_COUNT2).max(0) as usize {
+            let due = gvalue % 300 == 0 || self.state.ground_field(p).is_some_and(|f| f.self_destruct > -1);
+            if due {
+                self.with_war(p, |w| w.grwar_planet(clock, gvalue));
             }
         }
     }
@@ -595,6 +775,9 @@ impl<'r> Game<'r> {
         let mut rng = self.state.rng();
         let mut libc = self.libc;
         let mut draw = || libc.rand();
+        let mut cosmetic = self.cosmetic;
+        let mut draw_view = || cosmetic.rand();
+        let canonical = self.view != ViewMode::Classic;
         let events = {
             let mut w = diplomacy::World {
                 ctx: &mut ctx,
@@ -605,12 +788,14 @@ impl<'r> Game<'r> {
                 rng: &mut rng,
                 rules: &self.rules.diplomacy,
                 libc: &mut draw,
+                view_libc: if canonical { Some(&mut draw_view) } else { None },
                 events: Vec::new(),
             };
             f(&mut d, &mut w);
             w.events
         };
         self.libc = libc;
+        self.cosmetic = cosmetic;
         self.store_diplomacy_world(&d, &ctx, &pl, &map, &tech, &rng);
         self.events.extend(events.into_iter().map(GameEvent::Diplomacy));
     }
@@ -632,6 +817,49 @@ impl<'r> Game<'r> {
 
     fn diplomacy_tick(&mut self) {
         self.with_diplomacy(|d, w| d.tick(w));
+    }
+
+    /// A human's message out of the lockstep queue (`MULTIGET_Diplomacy` exe 0x4c7880, packet 0x3e →
+    /// `FeldolgozAjanlat`, `re/rules/diplomacy.md` §10.2); its deals reach money, planets and research.
+    pub fn diplomacy_message(&mut self, letter: diplomacy::Letter) {
+        self.with_deals(|d, w, deals| d.receive_message(w, deals, letter));
+    }
+
+    /// A human's answer (packet 0x3f → `FeldolgozValasz`, §10.2).
+    pub fn diplomacy_answer(&mut self, answer: diplomacy::Answer) {
+        self.with_deals(|d, w, deals| d.receive_answer(w, deals, answer));
+    }
+
+    /// [`Game::with_diplomacy`] with the colony world as the deals' side (`diplomacy::ColonyDeals`).
+    fn with_deals(&mut self, f: impl FnOnce(&mut Diplomacy, &mut diplomacy::World, &mut dyn diplomacy::Deals)) {
+        let g = self.globals();
+        let rules = self.rules;
+        let econ = self.economy_context(&g);
+        let rctx = self.research_context(&g);
+        let mut colony = self.state.colony();
+        let mut research = self.state.research();
+        let mut deals = diplomacy::ColonyDeals {
+            world: &mut colony,
+            rules: &rules.side,
+            ctx: &econ,
+            research: &mut research,
+            research_rules: &rules.research,
+            research_ctx: &rctx,
+            events: Vec::new(),
+            research_events: Vec::new(),
+        };
+        self.with_diplomacy(|d, w| f(d, w, &mut deals));
+        let (side, done) = (std::mem::take(&mut deals.events), std::mem::take(&mut deals.research_events));
+        // Diplomacy's tech table is authoritative (stored above), and so are the deaths it stored.
+        colony.tech = self.state.tech();
+        let alive = self.state.alive();
+        for (a, &b) in colony.alive.iter_mut().zip(alive.iter()) {
+            *a &= b;
+        }
+        self.state.store_colony(&colony);
+        self.state.store_research(&research);
+        self.events.extend(side.into_iter().map(GameEvent::Side));
+        self.events.extend(done.into_iter().map(GameEvent::Research));
     }
 
     fn ai(&mut self) {
@@ -860,12 +1088,15 @@ impl<'r> Game<'r> {
                 self.state.store_starmap(&map);
             }
         }
+        self.story_deaths(&events);
         self.events.extend(events.into_iter().map(GameEvent::Story));
     }
 
     fn starmap(&mut self) {
+        let marked = self.starmap_ground_marks();
         let g = self.globals();
         let mut ctx = self.starmap_context(&g);
+        ctx.in_battle.extend(marked);
         let ships = self.state.ship_designs();
         let (events, paused) = self.starmap_pass(&mut ctx, |map, ctx, rng, hooks| map.tick_until_battle(&ships, ctx, rng, hooks));
         self.state.mem.set_i32(va::IDO_SPEED, ctx.speed_mult);
@@ -942,9 +1173,10 @@ impl<'r> Game<'r> {
             let at = va::FLEET_NUMBERS + 4 * DELETED as u32;
             self.state.mem.set_i32(at, self.state.mem.i32(at) - overflow);
         }
-        // `FlottaOsszevon` moves the selection (`AktFleet`) to the merged fleet.
+        // `FlottaOsszevon` moves the selection (`AktFleet`) to the merged fleet (in canonical mode a peer's UI
+        // follows `StarmapEvent::Merge`).
         for (into, from) in merges {
-            if self.state.mem.i32(va::AKT_FLEET) == from as i32 {
+            if self.view == ViewMode::Classic && self.state.mem.i32(va::AKT_FLEET) == from as i32 {
                 self.state.mem.set_i32(va::AKT_FLEET, into as i32);
             }
         }
@@ -1471,7 +1703,7 @@ impl Game<'_> {
     /// stories (`Story_MessageElevules`).
     fn inbox(&mut self) {
         let mut b = self.state.inbox();
-        let Some(block) = b.expire(self.state.mem.i32(va::IDO), self.state.mem.i32(va::INBOX_SHOWING)) else { return };
+        let Some(block) = b.expire(self.state.mem.i32(va::IDO), self.globals().message_shown) else { return };
         self.state.store_inbox(&b);
         self.with_story(|st, w| {
             st.message.0 = block;
@@ -1493,16 +1725,35 @@ impl Game<'_> {
     }
 
     /// The messages the tick's systems posted to the human (`ScrollUzenetId` at the sites of
-    /// `info-messages.md` §3.2), from the events since `from`, in order.
+    /// `info-messages.md` §3.2), from the events since `from`, in order. Classic mode only: in canonical mode the
+    /// scrolling line is each peer's UI state ([`Game::messages_for`] with its own empire).
     pub fn post_messages(&mut self, from: usize) {
-        let en = self.globals().en;
+        if self.view != ViewMode::Classic {
+            return;
+        }
+        let posts = self.messages_for(&self.events[from..], self.globals().en);
+        if posts.is_empty() {
+            return;
+        }
+        let mut t = self.state.ticker();
+        for (id, text, important, interrupt) in posts {
+            t.post(&text, id, important, interrupt);
+        }
+        self.state.store_ticker(&t);
+    }
+
+    /// The scrolling messages `events` post for empire `en`: `(id, text, important, interrupt)`. Events the
+    /// systems only report for `EN` (unrest warnings, spy reports, contact lost, an enemy approaching) are the
+    /// canonical `EN`'s in canonical mode (`re/rules/multiplayer.md` §2).
+    pub fn messages_for(&self, events: &[GameEvent], en: usize) -> Vec<(i32, Vec<u8>, bool, bool)> {
+        let en = en.min(EMPIRES - 1);
         let m = &self.state.mem;
         let knows = |a: u8| m.u8(va::EMPIRE_KNOWS + (en * EMPIRES) as u32 + a as u32) != 0;
         let debug = m.u8(va::DEBUGX) != 0;
         let is_en = |e: u8| e as usize == en;
         // (id, parameters, important, interrupt)
         let mut posts: Vec<(i32, Vec<Vec<u8>>, bool, bool)> = Vec::new();
-        for ev in &self.events[from..] {
+        for ev in events {
             match ev {
                 GameEvent::Research(ResearchEvent::Completed { empire, tech }) if is_en(*empire) => {
                     posts.push((2, vec![self.tech_name(*tech)], false, false))
@@ -1572,16 +1823,12 @@ impl Game<'_> {
                 _ => {}
             }
         }
-        if posts.is_empty() {
-            return;
-        }
-        let mut t = self.state.ticker();
-        for (id, params, important, interrupt) in posts {
-            let params: Vec<&[u8]> = params.iter().map(|p| &p[..]).collect();
-            if let Some(text) = self.rules.messages.format(id, &params) {
-                t.post(&text, id, important, interrupt);
-            }
-        }
-        self.state.store_ticker(&t);
+        posts
+            .into_iter()
+            .filter_map(|(id, params, important, interrupt)| {
+                let params: Vec<&[u8]> = params.iter().map(|p| &p[..]).collect();
+                self.rules.messages.format(id, &params).map(|text| (id, text, important, interrupt))
+            })
+            .collect()
     }
 }

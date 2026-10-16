@@ -86,7 +86,7 @@ fn add_adat(s: &mut Story, off: usize, x: i32) {
 }
 
 /// `st_tav` on truncated coordinates: `(int)(f32) sqrt((f64)(f32)(dx² + dy²))`.
-fn distance(a: (f32, f32), b: (f32, f32)) -> i32 {
+pub fn distance(a: (f32, f32), b: (f32, f32)) -> i32 {
     let dx = (a.0 as i32).wrapping_sub(b.0 as i32);
     let dy = (a.1 as i32).wrapping_sub(b.1 as i32);
     let sum = dy.wrapping_mul(dy).wrapping_add(dx.wrapping_mul(dx));
@@ -144,7 +144,7 @@ pub fn nearest_fleet(x: i32, y: i32, owner: i32, w: &dyn StoryWorld) -> i32 {
 
 /// `GetRndBirodalom(a, b, c)` (exe 0x5c27c0): a random live empire 1..=8 other than `a`, `b`, `c` and the
 /// human, one the human knows if there is one in ten steps; aborts when there is none.
-fn random_empire(w: &mut dyn StoryWorld, a: i32, b: i32, c: i32) -> Result<i32, Abort> {
+pub fn random_empire(w: &mut dyn StoryWorld, a: i32, b: i32, c: i32) -> Result<i32, Abort> {
     let en = w.human();
     let mut e = rnd(w, 1, 8);
     let unfit = |w: &dyn StoryWorld, e: i32, known: bool| {
@@ -184,7 +184,7 @@ pub fn story_design_record(en: i32, size: i32, key: i32) -> [u8; DESIGN] {
 }
 
 /// `st_TalalmanyAdhato(t, e)`: tech `t` can be given (status 1..=3, every prerequisite done).
-fn can_give(w: &dyn StoryWorld, t: i32, e: i32) -> bool {
+pub fn can_give(w: &dyn StoryWorld, t: i32, e: i32) -> bool {
     let status = w.tech_status(t, e);
     (1..4).contains(&status) && w.tech_prereqs(t).iter().all(|&p| p == 0 || w.tech_status(p, e) == 5)
 }

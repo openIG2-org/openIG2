@@ -223,6 +223,8 @@ pub enum AiEvent {
     /// Vehicles entered (`count` > 0) or left a planet's ground-war map (`AddOwnTankToPlanet`,
     /// `RemoveTankFromPlanet`, `WF::RearrangeTankGroups`).
     GarrisonMap { planet: usize, design: i16, count: i32 },
+    /// `TankAtpakol` from a planet: `RearrangeTankGroups(owner)` on its battlefield after the vehicles left.
+    GarrisonRearranged { planet: usize },
     /// MP: the human's emptied fleet is reported over the network (`Multi_Send(0x1b)`).
     HumanFleetEmptied { fleet: usize },
     Combat(CombatEvent),

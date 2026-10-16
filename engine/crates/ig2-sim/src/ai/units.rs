@@ -228,6 +228,9 @@ impl World<'_> {
     /// `TankAtpakol(from, to, d, n)` (§12.6).
     pub(crate) fn transfer_vehicles(&mut self, from: i32, to: i32, d: i16, n: i32) {
         self.delete_vehicles(from, d, n);
+        if from < 0 {
+            self.events.push(AiEvent::GarrisonRearranged { planet: from.unsigned_abs() as usize });
+        }
         self.new_vehicles(to, d, n);
     }
 
@@ -255,7 +258,7 @@ impl World<'_> {
         let Some((flags, owner)) = self.rec(f).map(|r| (r.flags, r.owner)) else { return };
         let special = flags & (flag::WORMHOLE | flag::PROTECTED) != 0;
         if self.totals(f).ships < 1 && !special {
-            if owner as usize == self.spy.ctx.human_empire {
+            if self.spy.ctx.sends(owner as usize) {
                 self.events.push(AiEvent::HumanFleetEmptied { fleet: f as usize });
             }
             if !self.human_controlled(owner) {

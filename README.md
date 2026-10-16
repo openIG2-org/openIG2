@@ -49,13 +49,13 @@ it matches bit for bit**.
 | **Space combat (strategic)** | Design stats, battle routing, auto-resolve |
 | **Real-time space battles** | Setup from the strategic state (fleets joining a running battle, formations, ships grouped into units, weapons, shields and pods, fighter wings, planet guns and defence ships, asteroids), the 20 Hz battle tick (battle AI, targeting, projectiles, damage, special pods, fighters, path search, retreats), the end and its result |
 | **Research & production** | Research progress, AI research picks, production queues, ship/vehicle building |
-| **Diplomacy** | Daily relations and opinion, the AI's proposals, threats and declarations, AI-to-AI answers, wars and peace treaties; the human's messages, deals (money, planets, techs, radar maps, hostages, wars, peace), demands, answers and counter-proposals, and the auto-cancel of stale offers |
+| **Diplomacy** | Daily relations and opinion, the AI's proposals, threats and declarations, AI-to-AI answers, wars and peace treaties; the human's messages, deals (money, planets, techs, radar maps, hostages, wars, peace), demands, answers and counter-proposals, and the auto-cancel of stale offers; an empire's death (its fleets deleted) and the victory check |
 | **Espionage** | Spy ranks and experience, double agents, the catch check and the captor's verdict, 13 missions (reports, theft of money and techs, sabotage, ship strikes, rebellions, assassinations, kidnapping), recruitment |
 | **AI empire** | Empire centres and main fleets, the main planet, colony autobuild profiles and tax by wealth and danger, income sliders and shares, production choices (colony ships, default warships and vehicles, scrapping obsolete ships), spy missions (skill points, firing, targets, mission choice and cost); colony ships to the nearest free planets, war declarations, attack targets (fleets and planets), fleeing and regrouping, loading and unloading vehicles, scouting; the AI's own designs and their upgrades |
-| **Story engine** | Story queues and start flags, variables, logic flags, counters, story planet and fleet ids, event flags and the hooks other systems call, the per-tick counters and daily check, story endings with their undo list and info lines; the skirmish scenarios' victory and defeat conditions (stories 360–375); the campaign start (storyline and map choice, mirroring, first buildings) and the campaign driver (heroes, storylines, random stories, the opening episodes) with the short scripted stories and story fleets; the six storylines' scripts (their timers, messages and answers, the episodes they start, the planets and empires they hand around); the multiplayer game modes (king of the hill, three planets, capture the flag); the first random stories (mercenaries for hire, a fleet in quarantine, a planet to blow up, strikes, a tax, a refugee planet, a wormhole) |
+| **Story engine** | Story queues and start flags, variables, logic flags, counters, story planet and fleet ids, event flags and the hooks other systems call, the per-tick counters and daily check, story endings with their undo list and info lines; the skirmish scenarios' victory and defeat conditions (stories 360–375); the campaign start (storyline and map choice, mirroring, first buildings) and the campaign driver (heroes, storylines, random stories, the opening episodes) with the short scripted stories and story fleets; the six storylines' scripts (their timers, messages and answers, the episodes they start, the planets and empires they hand around); the multiplayer game modes (king of the hill, three planets, capture the flag); the first random stories (mercenaries for hire, a fleet in quarantine, a planet to blow up, strikes, a tax, a refugee planet, a wormhole); the opening episodes (a pirate base, the plague ship, the hunter, rebels, troops wanted, a design for sale, a trade treaty, a colony, a research grant, a saboteur, a tech to steal, a spy's target, a far planet, a fugitive, an escort); the random stories the campaign always runs (the pirate bounty, the wormhole warning, the hero ships for hire) with the small planet, tech and tribute events |
 | **Trade** | The merchants' offers (random and story), purchases, delivery countdowns and arrivals, lost destinations re-targeted or refunded, offer expiry |
 | **Info and messages** | The info screen's monthly statistics and their smoothed charts; the scrolling message line with its history and the messages the game posts to the player (including espionage, the spy screen's report queue, and the outcomes of auto-resolved space battles and ground wars); the message inbox's expiry |
-| **Original saves in the sim** | An original save loads into the simulation and whole game ticks run on it (economy, relations, AI, spies, trade, info charts, research, story, messages, fleets, production, auto-resolved space battles and ground wars with their captures and repairs), matching the original game byte for byte over 1,900 ticks |
+| **Original saves in the sim** | An original save loads into the simulation and whole game ticks run on it (economy, relations, AI, spies, trade, info charts, research, story, messages, fleets, production, auto-resolved space battles and ground wars with their captures, landings and repairs), and the planets' ground battlefields are written back into the save, matching the original game byte for byte over 2,500 ticks |
 | **Ground combat (strategic)** | Routing to the real-time or auto-resolved ground war, landing and group arrangement, the auto-resolved war (attrition, guns, paralysers, manipulators, kamikazes, air strikes, building turrets), survivors re-embarking, capture |
 | **Real-time ground battles** | Landing placement and the landing zone, terrain heights and unit orientation, defence-building turrets, the 20 Hz battle tick (driving, passability maps and path search, attack-moves, turret and body turning, aiming, shells, rockets, bolts, paralysers, manipulators, the machine gun, lasers, armour, mines, self-destruct), the campaign's "mad tanks" that pick their own targets, air strikes (big-ship bomb carpets, fighter waves), defence-building turrets sharing hits, the end countdown and its result, transporters (dropships setting units down and picking them up, the player's landing orders, retreats that can be shot down, transporter-pod escorts) |
 | **Ground battle AI** | The computer's plans on the battlefield (flanks, reserve, pincer, fortress guards), rally points and formation lines, target choice, reactions to hits, the air-strike target scan |
@@ -64,10 +64,10 @@ it matches bit for bit**.
 
 | Area | |
 |---|---|
-| Campaign story scripts (`st_*_include`) | 📝 engine, scenario stories, campaign start and driver, storylines, MP game modes, random stories 220–239 done |
-| wgpu game renderer and UI | ⏳ |
-| Lockstep multiplayer over QUIC: LAN discovery, direct IP, UPnP, rejoin | ⏳ |
-| Saves (single and multiplayer) | 📝 original format read (files and MP blob) and loaded into the sim; own format to do |
+| Campaign story scripts (`st_*_include`) | 📝 engine, scenario stories, campaign start and driver, storylines, MP game modes, random stories 220–239, opening episodes 1–24 and 15 of `st_Rnd_include`'s 62 stories done |
+| wgpu game renderer and UI | 📝 architecture decided (ADR 0006); `ig2-client` runs an original save at 20 Hz and draws the starmap the way the original does (its 3D camera, star glows, orbiting planets, fleet sprites and palette; re/screens/starmap.md; fleets interpolated at any refresh rate, hover and selection, high DPI and ultrawide, headless `--snapshot`); screens, text and input commands to do |
+| Lockstep multiplayer over QUIC: LAN discovery, direct IP, UPnP, rejoin | 📝 command model, lockstep turns with input delay, desync detection by state hash and rejoin from a snapshot + command log work in process, and peers with different empires and screens stay identical (canonical view, `re/rules/multiplayer.md`) (ADR 0007, `ig2-net`); QUIC transport with a pinned per-session certificate works on the local machine; LAN discovery, opt-in UPnP/NAT-PMP port mapping (tested without touching a real router) and the lobby (open, password and private sessions, empire slots, ready flags, chat, start into lockstep; passwords checked by SPAKE2, never sent) work (ADR 0008); lobby UI to do |
+| Saves (single and multiplayer) | 📝 original format read (files and MP blob) and loaded into the sim; our own format (versioned, compressed, hash-checked) saves and restores the whole game exactly; save/load UI to do |
 | *Enhanced* ruleset options | ⏳ |
 
 ## 🚀 Quick start
@@ -78,6 +78,7 @@ You need the **GOG release of Imperium Galactica II** and a stable Rust toolchai
 cd engine
 IG2_INSTALL_DIR="/path/to/Imperium Galactica II" cargo test --release
 cargo run --release -p ig2-viewer
+cargo run --release -p ig2-client -- --save path/to/save.sav   # starmap of an original save
 ```
 
 Without `IG2_INSTALL_DIR`, the tests that need the game data are skipped.
@@ -85,7 +86,7 @@ Without `IG2_INSTALL_DIR`, the tests that need the game data are skipped.
 ## 🗂️ Repository
 
 ```
-engine/   Cargo workspace: ig2-formats · ig2-rules · ig2-sim · ig2-viewer
+engine/   Cargo workspace: ig2-formats · ig2-rules · ig2-sim · ig2-net · ig2-viewer · ig2-client
 re/       Reverse-engineering specs: formats, rules, runtime verification reports, STATUS
 tools/    Ghidra scripts, Frida tracers, symbol porting, decoders
 docs/     Architecture decision records (ADRs)

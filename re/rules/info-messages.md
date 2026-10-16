@@ -4,7 +4,8 @@ Status: **verified at runtime** for what the recordings reach (`traces/2026-10-1
 charts every tick of 1,900 (the sample after each load and 17 month changes), the scrolling-message lists with the
 year's tax message (twice) and the "enemy fleet spotted" message, the spy reports and messages of a staged spy
 recording (§3.3: the report queue with 26 reports, ids 100, 101, 103, 106, 136, 139–141), the battle outcomes of
-two staged recordings (§3.2: 11, 12, 15–18, 22, 23 from eleven auto-resolved space battles and ground wars), the inbox
+three staged recordings (§3.2: 11, 12, 15–18, 22–25 from fifteen auto-resolved space battles and ground wars, one
+of them a planet battle followed by the winner's landing), the inbox
 (nothing expired), byte-exact against `engine/crates/ig2-sim` (`info.rs`, `messages.rs`, `spy.rs`, `game.rs`,
 `game/battles.rs`, `tests/save_replay.rs`). The other posting sites (§3.2) are ported from the code, not traced.
 
@@ -123,7 +124,7 @@ Every site posts only for the human (`EN` 0x912A3C) as stated; `imp`/`intr` as p
 | Id | Site (exe call) | Condition | `%1` | imp, intr | Port: event |
 |---|---|---|---|---|---|
 | 2 | `FRISSIT_Research` 0x51e1ab | `EN`'s project done, before `SetIdoLelassit(3)` | tech | 0, 0 | `ResearchEvent::Completed` |
-| 3 | `MEGHALAS(e)` 0x53b651 | `e ≤ 8`, `e ≠ EN` | empire `e` | 0, 0 | `DiploEvent::EmpireDied`, `StoryEvent::EmpireDies` |
+| 3 | `BirodalomMeghal(e)` 0x53b651 (`diplomacy.md` §12) | `e ≤ 8`, `e ≠ EN` | empire `e` | 0, 0 | `DiploEvent::EmpireDied`, `StoryEvent::EmpireDies` |
 | 4 | `FRISSIT_Starmap` 0x595ea2 (SP), 0x595f39 (MP) | the human's fleet lost its target from view | "" | 0, 0 | `StarmapEvent::ContactLost`, `ContactLostNetwork` |
 | 5 | `FRISSIT_Planet` 0x47738f | the human's planet has no buildings, before `BolygoElfoglal(p, 0)` | planet | 1, 0 | `SideEvent::Abandoned` |
 | 6 | `DiplomaciaMegtamadas(a, b)` 0x4bda34 (`Id2`) | (`BirodalomIsmeri[EN][a]` or `[EN][b]` or `DEBUGX` 0xBAE587) and `a, b ≤ 8` | empire `a`, `%2` empire `b` | 1, 0 | `DiploEvent::War` |

@@ -56,12 +56,15 @@ const VOLATILE = [
   // spwsflotta and the CTF values.
   ['battledebug', 0xb77230, 0x10], ['mpbattle', 0xbae558, 4], ['st_bans', 0xf42664, 0x10], ['spw_fleets', 0xbaa1c0, 0x30],
   ['spw_planetflag', 0xb9c027, 1], ['spwsflotta', 0xf21260, 0x60], ['ctf', 0xf261f0, 8],
+  // The battlefields (re/formats/save.md 4.13): melyikhatter's cursor (the economy prologue's background picker),
+  // FRISSIT_Grwar's gvalue counter, the MP space battle flag that skips FRISSIT_Grwar.
+  ['bgcursor', 0x996488, 4], ['gvalue', 0x9b2900, 4], ['mpspacewar', 0xbad114, 4],
 ];
 // Story queues outside the save ({ids, dual, n}).
 const QUEUES = [['vegzes', 0xf43290], ['talal', 0xf4329c]];
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, name: 'Replay', speed: 3, ticks: 40,
-  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, battles: false, battlesMode: 'space', lopsidedTanks: 40, evenTanks: 16,
+  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
  traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
@@ -418,6 +421,8 @@ const M = {
 // flottaNew / hajoNew: the --spies set-up's (same exe functions).
 const tankNew = nf(M.TankNew, 'void', ['int', 'int', 'int']);
 const flottaMozgat = nf(M.FlottaMozgat, 'void', ['int', 'int', 'int', 'float', 'float']);
+// EpuletNewSearchLocation(p, kind, done, dmg%, x, y) (exe 0x53cca0): a building where the AI would put it; the slot.
+const epuletNew = nf(va(0x53cca0), 'int', ['int', 'int', 'int', 'int', 'int', 'int']);
 function stageMerges() {
   const out = { fleets: {}, skipped: [] };
   const fl = (f) => F.Flottak.readPointer().add(f * 0x80);
@@ -499,6 +504,78 @@ function stageMerges() {
   return out;
 }
 
+// --deaths: empires dying in the first days (re/rules/diplomacy.md §3.2, §12: FRISSIT_Viszony's death check and
+// BirodalomMeghal 0x53b630). Three dead empires with a race are revived as AI empires (BirodalomEl 1,
+// BirodalomMIzik 1) without planets, their countdowns (BirodalomVisszaSzamlalas 0xBAEB68) set:
+//   x  countdown 1, two fleets (ships; ships and vehicles), a fleet of the human's and one of the AI's following
+//      the first: dies on the first day (countdown 0); its fleets go with FlottaDelete, the followers stop
+//   y  countdown 96, nothing: dies on the first day too (power 1.0 and countdown 95 < 96), after x
+//   w  countdown 3, one fleet: dies on the third day
+// AI 3 stays alive, so MegnyeresEllenoriz finds an enemy left (no victory screen).
+// --deaths-mode campaign instead makes the victory check's campaign branch start story 0x195 (diplomacy.md §12.2):
+// CampaignType (0x928278) 1, AI 3 the last enemy, its planets handed to the human (owner byte only), so the next
+// FRISSIT_Viszony's BirodalomEro/BirodalomHanyBolygo put the human above twice its own; StoryAdat+0xc8 0.
+function stageDeaths() {
+  const out = { fleets: {}, skipped: [], mode: cfg.deathsMode };
+  const en = T.EN.readS32(), ai = cfg.aiEmpire;
+  if (cfg.deathsMode === 'campaign') {
+    va(0x928278).writeS32(1);
+    out.given = [];
+    for (let p = 1; p <= T.HanyBolygo.readS32(); p++) if (owner(p) === ai) { T.Bolygok.add(p * 0x188 + 0x20).writeU8(en); out.given.push(p); }
+    va(0xf273f8).add(0xc8).writeS32(0);
+    out.human = [va(0xbaea78).add(4 * en).readFloat(), va(0xbaeb18).add(4 * en).readS32()];
+    return out;
+  }
+  const faj = va(0xbae574), alive = va(0xbae6ac), mizik = va(0x915f58), countdown = va(0xbaeb68);
+  const fl = (f) => F.Flottak.readPointer().add(f * 0x80);
+  const ships = (e) => {
+    const k = { ships: [], ground: [] };
+    for (let d = 1; d <= designs(e); d++) {
+      const r = design(e, d), cls = r.add(0x16).readS16();
+      const special = [0x34, 0x35, 0x36].some((o) => r.add(o).readU8() !== 0);
+      if (cls === 1 && !special && r.add(0x3c).readFloat() > 0) k.ships.push(d);
+      else if (cls === 2) k.ground.push(d);
+    }
+    return k;
+  };
+  const make = (tag, e, x, y, s, g) => {
+    const f = flottaNew(A.AlapNev.readPointer(), e, 0, x, y, 0);
+    if (f < 1) { out.skipped.push(tag); return 0; }
+    for (const d of s) hajoNew(f, d);
+    for (const [d, n] of g) tankNew(f, d, n);
+    fl(f).add(0x38).writeFloat(2);
+    fl(f).add(0x3c).writeFloat(2);
+    out.fleets[tag] = [f, fl(f).add(0x54).readS32(), fl(f).add(0x60).readS32()];
+    return f;
+  };
+  const pick = [];
+  for (let e = 1; e <= 8 && pick.length < 3; e++) {
+    if (e === en || e === ai || alive.add(e).readU8() || [0, 5].includes(faj.add(e).readU8())) continue;
+    if (pick.length !== 1 && !ships(e).ships.length) continue;
+    pick.push(e);
+  }
+  out.empires = pick;
+  if (pick.length < 3) { out.skipped.push('fewer than three dead empires with ships'); return out; }
+  const [x, y, w] = pick;
+  for (const [e, c] of [[x, 1], [y, 96], [w, 3]]) {
+    alive.add(e).writeU8(1); mizik.add(e).writeU8(1); countdown.add(4 * e).writeS32(c);
+  }
+  const kx = ships(x), kw = ships(w);
+  const a = make('x:ships', x, 10, 10, [kx.ships[0], kx.ships[kx.ships.length - 1]], []);
+  make('x:mixed', x, 14, 10, [kx.ships[0]], kx.ground.length ? [[kx.ground[0], 4]] : []);
+  make('w:ships', w, 10, 16, [kw.ships[0]], []);
+  if (a) {
+    for (const e of [en, ai]) {
+      const k = ships(e);
+      if (!k.ships.length) { out.skipped.push(`${e}:follower`); continue; }
+      const b = make(`${e}:follower`, e, 30, 30 + 4 * (e === ai), [k.ships[0]], []);
+      if (b) flottaMozgat(b, 1, 2, a, 0);
+    }
+  }
+  out.countdowns = [x, y, w].map((e) => countdown.add(4 * e).readS32());
+  return out;
+}
+
 // --battles: auto-resolved space battles and ground wars in the first ticks (re/rules/info-messages.md §3.2: the
 // battle outcomes 11/12, 15-18, 22-25). The human's empire is handed to the AI (PlayerKi[EN] = 0; the AI's
 // pass is switched off, every fleet is visible): no battle opens the real-time screen, and SpaceWarIndit/GroundWarIndit
@@ -508,8 +585,12 @@ function stageMerges() {
 //           attacking the human, and a planet battle against a defended planet (defence fleet within 15)
 //   ground  planet attacks with ground vehicles on undefended planets (GroundWarIndit straight away): lopsided
 //           ones (22/23), even ones (11/12), a garrisoned planet (TankNew(-p)) the attacker loses (no message).
-//           A lopsided attack that loses (24/25) wasn't reached: even 60 vehicles of the weakest design beat the
-//           turrets.
+//   land    a planet battle the attacker wins and lands after (SpaceWarIndit -> GroundWarIndit): the human's big
+//           fleet with ground vehicles against an AI planet with its guns on and a weak defence fleet (planet guns
+//           destroyed in space: EpuletDelete), then lopsided attacks that lose (24 to the human owner, 25 to the
+//           human attacker): a few vehicles against the turrets of a planet whose fortress value
+//           (BolygoMennyiErodEro, saved; recomputed by the next economy step) is cleared, so the ratio counts as
+//           lopsided.
 function stageBattles() {
   const out = { mode: cfg.battlesMode, fleets: {}, skipped: [] };
   const en = T.EN.readS32(), ai = cfg.aiEmpire;
@@ -571,6 +652,7 @@ function stageBattles() {
   } else {
     if (!K[en].ground.length || !K[ai].ground.length) { out.skipped.push('no ground designs'); return out; }
     const tanks = (e, n) => [[K[e].ground[K[e].ground.length - 1], n]];
+    const fortress = (p) => va(0xb99cb8).add(4 * p);
     const attack = (tag, e, p, ships, ground) => {
       const [x, y] = pxy(p);
       const f = make(tag, e, x + 0.4, y + 2.3, ships, ground);
@@ -605,6 +687,39 @@ function stageBattles() {
       }
       return true;
     }).slice(0, 3);
+    if (cfg.battlesMode === 'land') {
+      // The planet battle: an AI planet nobody else stands next to, guns as they are, a one-ship AI defence fleet
+      // next to it (idle, within 15).
+      const target = out.planets[ai].find((p) => {
+        const [x, y] = pxy(p);
+        for (let f = 1; f <= F.HanyFlotta.readS32(); f++) {
+          const r = fl(f);
+          if (r.add(0x15).readU8() !== 0xff && Math.abs(r.add(0x30).readFloat() - x) + Math.abs(r.add(0x34).readFloat() - y) < 16) return false;
+        }
+        return true;
+      });
+      out.landTarget = target || 0;
+      if (target) {
+        const [x, y] = pxy(target);
+        const q = T.Bolygok.add(target * 0x188);
+        out.landTargetState = { ships: q.add(0x114).readS32(), garrison: q.add(0x58).readS32(), fortress: fortress(target).readS32() };
+        // Finished space guns (a planet gun and a turreted one): the battle destroys some (EpuletDelete, with the
+        // turret's battlefield group).
+        out.landGuns = [0x24, 0x1c, 0x24].map((kind) => epuletNew(target, kind, 1, 0, -1, -1));
+        make('land:defence', ai, x - 2, y + 1, small(ai), []);
+        attack('land:won', en, target, big(en, cfg.landShips), tanks(en, cfg.lopsidedTanks));
+      }
+      const rest = (e) => out.planets[e].filter((p) => p !== target);
+      const mine = undefended(en).filter((p) => p !== target), theirs = undefended(ai).filter((p) => p !== target);
+      out.undefended = { [en]: mine, [ai]: theirs, rest: [rest(en).length, rest(ai).length] };
+      for (const p of [theirs[0], mine[0]]) if (p) { out.why[p].fortressCleared = fortress(p).readS32(); fortress(p).writeS32(0); }
+      if (theirs[0]) attack('land:lopsided-lost', en, theirs[0], small(en), tanks(en, cfg.lostTanks));
+      if (mine[0]) attack('land:ai-lopsided-lost', ai, mine[0], small(ai), tanks(ai, cfg.lostTanks));
+      va(0xbae560).add(en).writeU8(0);
+      va(0xb77244).writeS32(1);
+      va(0xf265d4).writeU8(1);
+      return out;
+    }
     const mine = undefended(en), theirs = undefended(ai);
     out.undefended = { [en]: mine, [ai]: theirs };
     // Lopsided (ground strength > 5 x (garrison + fortress)): the attacker wins (22 to the human attacking, 23 to
@@ -646,7 +761,7 @@ Interceptor.attach(va(0x605ed0), { onEnter() { mark(-1); } });
 
 function save(where) {
   busy = true;
-  const slot = 100 + k, ido2 = A.Ido2.readS32();
+  const slot = cfg.slotBase + k, ido2 = A.Ido2.readS32();
   const seed = (cfg.seed + ido2) >>> 0;
   const vol = volatile(k === 0);
   loadSave(slot, Memory.allocAnsiString(cfg.name + ' ' + k), 2);
@@ -679,10 +794,11 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (cfg.spies) emit({ k: 'spies', stage: stageSpies() });
       if (cfg.merges) emit({ k: 'merges', stage: stageMerges() });
       if (cfg.battles) emit({ k: 'battles', stage: stageBattles() });
+      if (cfg.deaths) emit({ k: 'deaths', stage: stageDeaths() });
       if (cfg.stage) {
         const st = stageTrade();
-        loadSave(98, Memory.allocAnsiString(cfg.name + ' pre'), 2);
-        emit({ k: 'pre', slot: 98, stage: st });
+        loadSave(cfg.preSlot, Memory.allocAnsiString(cfg.name + ' pre'), 2);
+        emit({ k: 'pre', slot: cfg.preSlot, stage: st });
         const h = st.mine[0];
         if (T.N.readS32() > 0) {
           buy(h, T.EtaDays.readS32(), 0, 1);

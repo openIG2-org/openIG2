@@ -118,8 +118,10 @@ planets[o] += 1;  countdown[o] = 100
 
 ### 3.2 Death check
 For e in 1..=P2 that is alive, owns no planet and is AI-controlled (`BirodalomMIzik`): `countdown[e] −= 1`; if
-`countdown[e] < 1`, or `power[e] == 1.0 && countdown[e] < 96`, the empire dies (`BirodalomMeghal` exe
-0x53b630: out of scope here, an event; it clears `alive[e]`, which the later loops see).
+`countdown[e] < 1`, or `power[e] == 1.0 && countdown[e] < 96`, the empire dies there and then
+(`BirodalomMeghal`, §12): `alive[e]` is cleared before the next `e` and the later loops. `power`, `planets` and
+`countdown` are the globals `BirodalomEro` 0xBAEA78, `BirodalomHanyBolygo` 0xBAEB18, `BirodalomVisszaSzamlalas`
+0xBAEB68 (f32/i32 `[19]`, saved).
 
 ### 3.3 Pair pass 1 (a ≠ b, both alive, a and b in 1..=P2; `r = Viszony[a][b]`)
 ```
@@ -427,8 +429,52 @@ Then, once `DiplomacyStarted`: `MostHanyPlayerVan = MaxPlayerek`, and every slot
 Cancel: `+0x58 = 1`, `+0x17 = 0`, `Multi_Send(0x41, EN, f)` (a no-op handler in SP). No random draws.
 
 ## 11. Not ported (open)
-`MiertValaszolt…` reason codes and `vv_*` text flags, `BirodalomMeghal`, `Story_Special` and
+`MiertValaszolt…` reason codes and `vv_*` text flags, `Story_Special` and
 `Story_Diplomacy_Special`, `NEWGAME_Diplomacy` (initial ruler ages and the cosmetic tables), the MP transport
 (§10.2; the 0x3d/0x40/0x41 handlers), the human's screen itself (which messages it lets the human compose), the
 alias of `DiplomaciaMikorHivtaUtoljara` with the AI table, the race diplomacy thresholds (`FajBekeMogalomSzint`
 & co. have no reader in the ELF).
+
+## 12. An empire dies (`BirodalomMeghal`) and the victory check (`MegnyeresEllenoriz`)
+Port: `ig2-sim::game::death` (`Game::empire_dies`, `Game::victory_check`), verified in the save replay
+(`traces/2026-10-16-save-replay.md`, `run_replay.py --deaths`).
+
+### 12.1 `BirodalomMeghal(e)` (exe 0x53b630; ELF 0x61e720 calls `MEGHALAS()` 0x61e800, which the exe inlines)
+Callers: `FRISSIT_Viszony`'s death check (§3.2, exe 0x50e12a), the stories' `DIE()` (= `BirodalomMeghal(EN)`,
+`Story_Check` 0x5c7cd8; `campaign.md` §1), other story scripts (0x5de449, five calls in the unported scripts after
+`st_Ozonviz`), the cheat console (`ExecuteString`, twice). In order:
+1. `e < 9` and `e ≠ EN`: `ScrollUzenetG1(3, BirodalomNev[e], false, false)` ("empire e has died",
+   `info-messages.md` §3.2).
+2. Every fleet slot f in 1..=`OsszHanyFlotta` (the count re-read each step) with owner `e`: `FlottaDelete(f)`
+   (`space-combat.md` §5.3: followers of f stop, its ships and vehicles go, wormholes stay). Slots aren't
+   compacted, so none is skipped.
+3. `BirodalomMeghalDiplomacia(e)` (exe 0x4b82b0): if `e < 9` has a contact slot and that slot is the one the
+   diplomacy screen shows (`PlayerSelected` 0x902F70), the screen is reset (its menus, `Keszazajanlat`,
+   `Exchangemode`, `DipVoltMarSzovegBeolvasva` — the exe also zeroes 0xAB6505 — and the slot's byte `+0x19`), and
+   `PlayerSelected = −1`. UI state only.
+4. `e > 18` → abort (the exe's bounds check). `BirodalomEl[e] = 0`.
+5. `e == EN` and `GameStarted` (0xBAE297): `ExitToMainScreen()`, for a race < 9 the race's loss animation
+   (`Anim_Meghalas_Nev[race]` in a campaign, `misc/altalanos_elvesztes.bik` otherwise) and
+   `misc/end_gameover.bik`, `AktKepKell = 0xF`. The port reports `GameEvent::GameOver(Lost)`.
+6. Tail call `MegnyeresEllenoriz()`.
+
+Nothing else is handed over: planets (a dying empire owns none on the §3.2 path; a story's `DIE()` leaves the
+human's), spies, relations and contacts stay as they are; the dead empire drops out of every pass that checks
+`alive`. In the port `FRISSIT_Viszony` reports the deaths (`DiploEvent::EmpireDied`) and `Game` carries them out
+right after it, in order, each victory check seeing the empires that die later that day as alive: nothing between
+the death check and the end of `FRISSIT_Viszony` reads fleets or `MegnyeresEllenoriz`'s results. A story's death
+(`StoryEvent::EmpireDies`) is carried out after the story call.
+
+### 12.2 `MegnyeresEllenoriz()` (exe 0x53f8c0), every sim tick after `FRISSIT_Starmap` and after every death
+`P = ProgramPlayers`; `others` = alive e in 1..=P, `e ≠ EN`; `enemies` = those with `level[EN][e] ≠ 5`.
+1. `others` empty, `EN` alive, `AktKep < 0xE`, `GameStarted`: won — `ExitToMainScreen()`, for a race < 9 the
+   win animation (`Anim_Megnyeres_Nev[race]` + `misc/end_campaign_win.bik` in a campaign, else
+   `misc/altalanos_megnyeres.bik` + `misc/end_victory.bik`), `AktKepKell = 0xF` (`MEGNYERES(true)` 0x53f6b0).
+2. SP and `CampaignType` (0x928278) > 0 only:
+   - `EN` alive, `enemies` = 0, `GameStarted`: won as in 1 (no screen check).
+   - `StoryAdat+0xc8 == 0`, `EN` alive, exactly one `other` (o) and it is an enemy, `BirodalomEro[o]·2 <
+     BirodalomEro[EN]` (f32) and `BirodalomHanyBolygo[o]·2 < BirodalomHanyBolygo[EN]`: `StoryAdat+0xcc = o`,
+     `StartStory(0x195, false)` (the last enemy's surrender, `campaign.md` §8). Nothing here sets `+0xc8`, so
+     the check repeats every tick while it holds (`StartStory` of a running story is the story engine's).
+The port reports a win as `GameEvent::GameOver(Won)` (each time it fires) and takes `GameStarted` as set; the
+front end owns the screens and animations. With no story or campaign, quick.scn never reaches 2.

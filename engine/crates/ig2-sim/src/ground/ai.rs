@@ -14,6 +14,7 @@ use std::f64::consts::PI;
 
 /// The AI's state for one empire (`WF + 0x33c + 0x40·e`, §2.1).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GroundAi {
     /// `+0x33c` 0 none yet, 1..=5 attacker plans, 6 guard the fortresses.
     pub strategy: i32,

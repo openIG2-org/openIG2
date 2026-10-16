@@ -26,7 +26,7 @@ use ig2_sim::radar::RadarRules;
 use ig2_sim::research::ResearchRules;
 use ig2_sim::save::{group_chunks, modelled, va, SaveState};
 use ig2_sim::save::va::TRADE_OFFERS;
-use ig2_sim::ground::GroundRules;
+use ig2_sim::ground::{GroundMap, GroundRules};
 use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
 use ig2_sim::trade::{Delivery, TradeEvent, DELIVERY};
@@ -87,6 +87,10 @@ fn store_everything(s: &mut SaveState) {
     s.store_rng(&v);
     let v = s.kidnap();
     s.store_kidnap(&v);
+    for p in 1..=200 {
+        let f = s.take_ground_field(p);
+        s.store_ground_field(p, f);
+    }
 }
 
 #[test]
@@ -217,14 +221,20 @@ fn game_rules(inst: &Install) -> GameRules {
     };
     let raw = inst.read("dataraw/colony/terepleiro.txt").expect("terepleiro.txt");
     let surfaces = colony_map::parse_surfaces(&text::decode(&raw, inst.lang())).unwrap();
+    let backgrounds = colony_map::parse_backgrounds(&text::decode(&raw, inst.lang())).unwrap();
     let terrains = surfaces
         .iter()
         .enumerate()
         .map(|(n, s)| {
             let m = colony_map::ColonyMap::parse(&inst.read(&format!("dataraw/colony/gen_maps/{n}.map")).unwrap()).unwrap();
-            Terrain { mask: m.mask_a, kind: s.kind as u8, start: s.ai_build_start }
+            (Terrain { mask: m.mask_a, kind: s.kind as u8, start: s.ai_build_start }, m.heights.to_vec(), -(m.base - 200.0))
         })
+        .collect::<Vec<_>>();
+    let ground_maps = terrains
+        .iter()
+        .map(|(t, h, base)| GroundMap { terrain: t.clone(), heights: h.clone(), base: *base, footprints: r.building_footprints.clone() })
         .collect();
+    let terrains = terrains.into_iter().map(|t| t.0).collect();
     let design = DesignRules {
         hulls: r.hulls.iter().map(|h| Hull { class: h.class, flags: h.flags, tech: h.tech }).collect(),
         tech_price: r.techs.iter().map(|t| t.price).collect(),
@@ -310,6 +320,9 @@ fn game_rules(inst: &Install) -> GameRules {
             turn_speeds: r.ground_turn_speeds.clone(),
             armour: r.ground_armour.clone(),
         },
+        surface_weathers: surfaces.iter().map(|s| s.weathers.clone()).collect(),
+        backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
+        ground_maps,
     }
 }
 
@@ -352,6 +365,7 @@ fn replay_matches_the_exe_tick_by_tick() {
     }
     let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
     let rules = GameRules { messages: message_texts(&recs), ..game_rules(&inst) };
+    let mut failed = Vec::new();
     for rec in recs {
         // A staged recording starts before the purchases (`pre.sav`); they are replayed and checked against save 0.
         let pre = rec.dir.join("pre.sav");
@@ -377,6 +391,24 @@ fn replay_matches_the_exe_tick_by_tick() {
                 Fresh::Ship(i) => s.ships.get(i).map(|r| r.to_vec()),
                 Fresh::Building { planet, slot } => s.buildings.get(planet).and_then(|b| b.get(slot)).map(|r| r.to_vec()),
                 Fresh::Design { empire, design } => s.designs.get(empire).and_then(|d| d.get(design)).map(|r| r.to_vec()),
+                // A new unit object's uninitialised fields, as the exe saved them (the first `+0x19c` is the pointer).
+                Fresh::GroundUnit { planet, slot } => {
+                    let mut pairs = Vec::new();
+                    let u = format!("WF[{}].unit[{slot}]", planet - 1);
+                    for o in ig2_sim::ground::UNINIT {
+                        // `+0x270..+0x27c` travel inside the `+0x264` block.
+                        let b = if (0x264..0x27c).contains(&o) {
+                            s.chunk(&format!("{u}+0x264")).map(|b| &b[o - 0x264..])
+                        } else {
+                            s.chunk(&format!("{u}+{o:#x}"))
+                        };
+                        if let Some(b) = b {
+                            pairs.extend((o as u32).to_le_bytes());
+                            pairs.extend_from_slice(&b[..4]);
+                        }
+                    }
+                    Some(pairs)
+                }
             };
             rec.unwrap_or_default()
         }));
@@ -402,6 +434,7 @@ fn replay_matches_the_exe_tick_by_tick() {
         let mut unmodelled: BTreeMap<String, usize> = BTreeMap::new();
         let mut battles = Vec::new();
         let (mut seen, mut sent) = (0, 0);
+        let mut cursor_known = rec.events[0]["vol"]["mem"].as_array().unwrap().iter().any(|r| r[0] == "bgcursor");
         for (k, ev) in rec.events.iter().enumerate().skip(1) {
             // The lockstep messages the last tick sent reach their handlers in the next frame, before this tick.
             let emptied: Vec<usize> = game.events[sent..].iter().filter_map(GameEvent::emptied_fleet).collect();
@@ -446,9 +479,23 @@ fn replay_matches_the_exe_tick_by_tick() {
             game.saved();
             *next.borrow_mut() = std::fs::read(rec.dir.join(format!("{}.sav", k + 1))).ok().and_then(|b| SaveGame::parse(&b).ok());
             game.libc = Libc(ev["seed"].as_u64().unwrap() as u32);
+            // `melyikhatter`'s cursor (unsaved; dumped as `bgcursor` since the WF write-back): a recording without it
+            // takes the one start that reproduces the exe's backgrounds at the first economy step.
+            if !cursor_known && game.economy_due() {
+                if let Some(exe) = next.borrow().as_ref() {
+                    let bg = |p: usize| exe.chunk(&format!("WF[{}]+0x8d4", p - 1)).map(|b| i32::from_le_bytes(b[..4].try_into().unwrap()));
+                    let fits = (0..rules.backgrounds.len() as i32).find(|&c| {
+                        game.weather_draws(c, game.libc).0.iter().all(|&(p, _, b)| b.is_none() || b == bg(p))
+                    });
+                    if let Some(c) = fits {
+                        game.state.mem.set_i32(va::BACKGROUND_CURSOR, c);
+                    }
+                    cursor_known = true;
+                }
+            }
             let before = game.events.len();
             game.run_tick();
-            for e in game.events[before..].iter().filter(|e| matches!(e, GameEvent::Battle(BattleEvent::Space { .. } | BattleEvent::Ground { .. }))) {
+            for e in game.events[before..].iter().filter(|e| matches!(e, GameEvent::Battle(BattleEvent::Space { .. } | BattleEvent::Ground { .. } | BattleEvent::GroundSide { .. }))) {
                 battles.push(format!("tick {k}: {e:?}"));
             }
         }
@@ -474,8 +521,11 @@ fn replay_matches_the_exe_tick_by_tick() {
         }
         eprintln!("scrolling-line ids seen: {ids:?}; spy reports queued at the end: {reports}, report kinds seen: {kinds:x?}");
         eprintln!("chunks only unported systems change (ticks differing from the loaded save): {unmodelled:?}");
-        assert!(bad.is_empty(), "{}", bad.join("\n"));
+        if !bad.is_empty() {
+            failed.push(format!("{}: {}", rec.dir.display(), bad.join("\n")));
+        }
     }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
 /// The unsaved globals of `replay.js`'s dump that ported systems write (the rest are inputs or UI state).
@@ -483,7 +533,7 @@ const COMPARED_VOLATILE: &[&str] = &[
     "speed", "rnd", "rndossz", "radar2", "radar2sq", "radarsz", "radarszsq", "dipnap", "dipstart", "st_flags", "st_last",
     "st_oldido", "st_szvegzett", "st_delayed", "st_restart", "st_skip", "st_err", "st_signal", "st_addship", "st_special",
     "st_radar", "st_dipl", "st_diplvalasz", "st_arr", "st_gr", "st_youwas", "st_grwin", "st_kem", "abmitepit", "mapcursor",
-    "tradeports", "etahonap", "etadays", "infomonth", "spw_fleets", "spw_planetflag",
+    "tradeports", "etahonap", "etadays", "infomonth", "spw_fleets", "spw_planetflag", "gvalue", "bgcursor",
 ];
 
 /// The UI's part between two ticks (`info-messages.md` §2.3): `FRISSIT_Scroll2` takes texts off the scrolling
@@ -543,4 +593,46 @@ fn event_counts(events: &[GameEvent]) -> BTreeMap<String, usize> {
         *m.entry(key).or_default() += 1;
     }
     m
+}
+
+/// `BirodalomMeghal` and `MegnyeresEllenoriz` on `quick-1.sav` (only AI 3 and the human 6 alive): AI 3's death
+/// deletes its fleet and wins the game for the human, unless an empire dying later the same pass is still alive;
+/// the human's death (a story's `DIE()`) loses it.
+#[test]
+fn empire_death_deletes_fleets_and_checks_victory() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-1.sav");
+    if !p.exists() {
+        eprintln!("no {}; skipping", p.display());
+        return;
+    }
+    use ig2_sim::game::GameOver;
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let save = load(&p);
+    let owned = |g: &Game, e: u8| g.state.fleets.iter().skip(1).filter(|f| f[0x15] == e).count();
+    let over = |g: &Game| g.events.iter().filter_map(|e| if let GameEvent::GameOver(o) = e { Some(*o) } else { None }).collect::<Vec<_>>();
+    let alive = |g: &Game, e: u32| g.state.mem.u8(va::EMPIRE_ALIVE + e);
+
+    // quick-1's only fleets are the traders' (empire 9): AI 3 gets the first.
+    let mut g = Game::new(SaveState::from_save(&save, &tech_defaults), &rules);
+    let f: usize = g.state.fleets.iter().skip(1).position(|f| f[0x15] == 9).expect("a trader's fleet") + 1;
+    g.state.fleets[f][0x15] = 3;
+    assert_eq!(owned(&g, 3), 1);
+    g.empire_dies(3, &[]);
+    assert_eq!((owned(&g, 3), alive(&g, 3)), (0, 0));
+    assert_eq!(over(&g), [GameOver::Won]);
+
+    let mut g = Game::new(SaveState::from_save(&save, &tech_defaults), &rules);
+    g.empire_dies(3, &[1]);
+    assert!(over(&g).is_empty(), "empire 1 dies later in the same pass: still an enemy here");
+
+    let mut g = Game::new(SaveState::from_save(&save, &tech_defaults), &rules);
+    g.state.fleets[f][0x15] = 6;
+    g.empire_dies(6, &[]);
+    assert_eq!((owned(&g, 6), alive(&g, 6)), (0, 0));
+    assert_eq!(over(&g), [GameOver::Lost]);
 }

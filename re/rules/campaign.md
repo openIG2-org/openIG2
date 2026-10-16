@@ -5,7 +5,9 @@ Status: **engine core, the scenario stories, `InitStory`, the inline campaign st
 `traces/2026-10-16-line.md`), ported in `engine/crates/ig2-sim/src/story.rs`, `campaign.rs` and `storyline.rs`
 (`tests/story_trace.rs`, `tests/campaign_trace.rs`); the MP game modes (`st_Multi_include`, §8.10,
 `traces/2026-10-16-multi.md`) in `multi.rs`, the random stories 220..239 (`st_BRnd_include`, §8.11,
-`traces/2026-10-16-brnd.md`) in `brnd.rs`. The campaign's other scripts are mapped (§8.8) but not ported yet.
+`traces/2026-10-16-brnd.md`) in `brnd.rs`, the opening episodes (`st_Begin_include`, §8.12,
+`traces/2026-10-16-begin.md`) in `begin.rs`, the first 15 stories of `st_Rnd_include` (§8.13,
+`traces/2026-10-16-rnd.md`) in `rnd.rs`. The campaign's other scripts are mapped (§8.8, §8.13) but not ported yet.
 
 The campaign is not data: the 1999 authors wrote every story as C code (`story.cpp`, `st_begin.cpp`,
 `st_rnd.cpp`, `st_brnd.cpp`, `st_fable.cpp`, `st_scen.cpp`, `st_line.cpp`, `st_elem.cpp`, `st_multi.cpp`), each
@@ -26,7 +28,7 @@ event predicates, and drops the scripts' `SDL_ReportAssertion` loops (release bu
 | `Story_Check(top)` | **0x5c5610** | 0x739810 | runs every script, then the end-of-check processing (§4) |
 | `FRISSIT_Story` | **0x5c1ff0** | 0x73ef50 | every tick: counters, the "daily" check (§3) |
 | `StartStory(id, now)` | 0x5c4840 | 0x731320 | queue a story (§2.2) |
-| `WIN(id, history)` | 0x5c9770 | 0x730aa0 | a story ends (§2.3); `LOST()` = `WIN(0, 1)`, `DIE()` = `MEGHALAS(EN)` (0x53b630) |
+| `WIN(id, history)` | 0x5c9770 | 0x730aa0 | a story ends (§2.3); `LOST()` = `WIN(0, 1)`, `DIE()` = `BirodalomMeghal(EN)` (0x53b630, `diplomacy.md` §12) |
 | `MEGNYERES(1)` | 0x53f6b0 | 0x61eb50 | the human wins the game (an event here) |
 | `NEWGAME_Story` | 0x5c3040 | 0x7308a0 | reset (§2.6), then reads the story data files (`story-data.md`) |
 | `InitStory(mode)` | 0x5c2940 | 0x72ec70 | the campaign set-up (§8.2) |
@@ -34,6 +36,8 @@ event predicates, and drops the scripts' `SDL_ReportAssertion` loops (release bu
 | `st_Scen_include` | **0x601580** | 0x774c00 | the scenario stories 360..375 (§6) |
 | `st_Line_include` | **0x5eb6f0** | 0x7771e0 | the storylines 501..720 (§8.9) |
 | `st_BRnd_include` | **0x5c9f20** | 0x768d50 | the random stories 220..239, 2301, 2311 (§8.11) |
+| `st_Begin_include` | **0x5cec20** | 0x7407b0 | the opening episodes 1..24 (§8.12) |
+| `st_Rnd_include` | **0x5f0e20** | 0x74a2c0 | the random stories 101..199, 242, 302 (§8.13; 15 ported) |
 | other scripts | 0x5cec20, 0x5f0e20, 0x5c9f20, 0x5e6ba0, 0x5d4b70, 0x5ee4d0 | §8 | `Begin`, `Rnd`, `BRnd`, `Fable`, `Elem`, `Multi` |
 | `st_vSet` / `st_vGet` | 0x605780 / 0x605650 | 0x72f530 / 0x72f9d0 | variables (§2.4); `st_vAdd` & co. are inlined in the exe |
 | `st_szStart` / `st_szGet` | 0x605570 / 0x6054c0 | 0x735a90 / 0x735a20 | counters (§2.5) |
@@ -212,7 +216,7 @@ All are false unless their flag is set. `0` as a parameter means "any".
 
 ## 6. The scenario stories (`st_Scen_include`, exe 0x601580)
 Started by the skirmish `.scn` files (`Story 361` with `vSet 3611 …` etc.). Every story ends the same way on
-success: `WIN(0, 1)` then `MEGNYERES(1)` (the human wins); `DIE` = `MEGHALAS(EN)` (the human loses). Unless
+success: `WIN(0, 1)` then `MEGNYERES(1)` (the human wins); `DIE` = `BirodalomMeghal(EN)` (the human loses, `diplomacy.md` §12). Unless
 noted, the test runs on the daily flag. `v(x)` = `st_vGet(x)`, `b(x)` = `st_bSearch(x, 0)`, `f(x)` =
 `st_fSearch(x, 0)`, `P[p]` / `F[f]` the planet / fleet record (slot 0 when a search fails).
 
@@ -242,7 +246,7 @@ Exe vs ELF: the start blocks of 360–365, 367–370, 372, 374, 375 only assert 
 ## 7. Port
 `story::Story` holds §2's state; `FRISSIT_Story` is [`Story::tick`], the hooks are methods, `Story_Check` is
 [`Story::check`], the scripts are [`Script`]s run in the exe's order (a pair of scripts is one: so far
-`((BRndStories, (ScenarioStories, LineStories)), MultiStories)`), then
+`Begin`, `Rnd`, `BRnd`, `Scen`, `Line`, `Multi` where kept), then
 `campaign::inline_stories` (§8). A [`StoryWorld`] gives the world reads, the RNG, the calls that return something
 (`FlottaNew`, `st_IsInRR`, `st_GetTerv`, `LoadScenario`, `Generate_StarNames`, the config and registry reads) and
 takes the [`StoryEvent`]s: `MEGNYERES`, `MEGHALAS`, the undo actions that reach the world, game infos, fleet
@@ -372,9 +376,9 @@ them.
 story. The port's story functions return `Result<(), Abort>`.
 
 ### 8.8 Not ported yet: the scripts
-`st_Begin_include` (exe 0x5cec20, ELF 40 KB), `st_Rnd_include` (0x5f0e20, 125 KB), `st_Fable_include` (0x5e6ba0,
+`st_Rnd_include` (0x5f0e20, 125 KB), `st_Fable_include` (0x5e6ba0,
 19 KB), `st_Elem_include` (0x5d4b70, 132 KB); `st_Line_include` (§8.9), `st_Multi_include` (§8.10) and
-`st_BRnd_include` (§8.11) are ported. They hold the
+`st_BRnd_include` (§8.11) and `st_Begin_include` (§8.12) are ported, `st_Rnd_include` in part (§8.13: 15 of its 62 stories). They hold the
 stories 400's tables start (opening episodes 1..24, heroes 176..227, random stories 101..316,
 118/142/199/242/837/842/865), the episodes the storylines start (801..864) and start 402..918. Their calls to
 other systems go through the same `StoryWorld`/`StoryEvent` set (extended as needed: diplomacy specials and
@@ -642,3 +646,133 @@ Exe vs ELF: the exe inlines `st_Story`/`st_StoryStart`, `st_Counter`/`st_Message
 `st_TalalmanyAdhato` and `st_fAddTank`, with the same results. Precision (asm): `st_tav` through f32, 234/235's
 parameters f64, the scaling and 235's sum f32. Quirks kept: `st_GetUnknownPlanet` throws its draws away; `best`
 survives calls; 230's `StartStory(2301)` before `WIN(0)` ends a running 2301 instead of 230.
+
+### 8.12 `st_Begin_include` (exe 0x5cec20, ELF 0x7407b0): the opening episodes
+Ported in `engine/crates/ig2-sim/src/begin.rs` ([`BeginStories`]; `Story_Check` runs it first, before `BRnd`).
+The 17 episodes story 401 draws from `StoryEleje` (§8.4) and the ones they start: 1, 4, 5, 51, 6, 7, 8, 9, 10,
+11, 12, 19, 20, 21, 22, 23, 24, in that order. Each story block catches an abort (§8.7) with `WIN(0, 1)` and goes
+on with the next story; a `WIN` inside a block does not stop it (its later tests still run). Ids are decimal
+(story `s`'s ids are mostly `10·s + k`: 41 = 0x29); notation as in §8.9 and §8.11 (`b(x)`, `v(x)`, `l(x)` the logic
+flag, `C(x)`, `A(b, r)`, `P(b)` promoted (flag 7), `R(b)` read (flag 9, `st_Olvas`: `StoryMessageBlokk == b`),
+`M(id, arg)`, `Diff(a, b, c, d)` (§5), `N` = `Nehezseg`). Helpers (the fleet ones set `StoryError`):
+- `atkF(id, x)` = `st_fAttackFleet` (exe 0x604520): `f = st_fSearch(id)`, `g = st_fSearch(x)` (`x < 0`: a random
+  fleet of empire `−x`, stream 5); both ≥ 1 → `FlottaMozgat(f, 2, 2, g, 0)`, true. `atkP(id, x)` =
+  `st_fAttackPlanet` (0x604590): the same with `g = st_bSearch(x, 0)` (`x < 0`: a random visible planet of `−x`,
+  stream 5) and `FlottaMozgat(f, 2, 1, g, 0)`. `attack(id)` = `atkF(id, −EN)`, else `atkP(id, −EN)`.
+- `moveP(id, b)` = `st_fMoveToPlanet` (0x604b40): `FlottaMozgat(f, 1, 1, st_bSearch(b), 0)`. `stands(f)` =
+  `st_FlottaAll(−f)` (0x5ea3b0): fleet slot `f`'s `+0x40` (i16) is 0. `del(−f)` = `st_fDelete`: `FlottaDelete(f)`.
+  `show(id)` / `hide(id)` = `st_fShow` / `st_fHide`: fleet `+0x52` bit 0x100 set / cleared. `away(id)` =
+  `st_fEliminate` (§8.11).
+- `tav` = `st_tav` (§8.11, through f32). `dist(q)` = `st_bDistFromBir(q, −1)` (exe 0x603240): over the planets
+  1..`HanyBolygo` − 1 of `EN` the human sees, the least `(int)(f32) sqrt((f64)(f32)(dy² + dx²))` (f32
+  coordinates, `dy` first) to planet `q`, from 1,000,000. `fdist(f)` = `st_fDistFromBir(f, −1)` (0x604650): the
+  same with `tav` to fleet `f`'s truncated position.
+- `far(lo, hi)` = `st_bGetFromDist` (exe 0x6036e0): `hi == 0` → `2·lo`. `st_bSearch(0, 1) == 0` (no free planet
+  the human sees; a stream-5 draw when there is one) → `st_bSearch(0, 0)` (aborts). Else 100 tries: `q =
+  st_bSearch(0, 0)`, `d` = the least distance (as `dist`) from the human's visible planets 1..n − 1 to `q`; `hi < d
+  < best` (`best` from 1,000,000 + 500) → pick `q`, `best := d`; else `lo < d < hi` → `rnd(5, 1, k) == 1` (`k` = 1,
+  2, … per such try) → pick `q`, `best := d`. No pick → `st_bSearch(0, 0)`. The ELF also asserts `hi > lo + 30`
+  and asks for an unknown planet (`st_UnknownPlanetReq`) when there's no free one; the exe doesn't.
+- `near(x, y)` = `st_GetNearestBir` (exe 0x5ea800): over planets 1..n owned by 1..8 other than `EN` the first, or
+  one with `(f32)((y − py)² + (x − px)²) < (f32) best` (`best` the last pick's truncated value);
+  `nearest_bir_planet` (0xF2652C) := the pick (0 before); returns its owner, 0 without one.
+- `Relation(e, x)` = `st_ViszonyValt(EN, e, x)`: `Viszony[e][EN]` value 2 (`+4`, i16) `+= 100·x`.
+- `infect(p)`: planet `+0xb8` (i16) += 20, then `Virus_CheckAdd(p)` (exe 0x542930): info 100 added unless a slot
+  1..5 holds it, `StoryAdat+0x30 := 1` (the epidemic switch, §4).
+- Battles as §5: `st_SpWarStart(id)`: one of `spFlottak`'s fleets has story id `id`; `st_SpWarWin/Lose(id)`: the
+  participant's owner is / isn't `SpWarKiNyert`; `st_SpWarPartTulaj(e)`: the first of the first three entries (the
+  third only with more than two) owned by `e`.
+
+| Story | What it does |
+|---|---|
+| 1 (a base nearby) | start: `p = b(11)`, else `p = far(35, 80)` gets id 11; `st_bUnhide(11)`, `st_SetBolygoTulaj(p, 10)`, `st_bSetRadarMsg(11)` (planet `+0xbb := 1`), `AutoAddBuilding(11)`, `AutoAddtank(11)`, the human's view `+0xd8[EN] := 0`; fleet 11 (`st_fNewEx("", 10, 11, 0.06, 2, p)`, ships 3×2, 2×3, tanks 1×2), counter 18 := 30, `attack(11)`, `l(11) := 0`, counter 19 := 10. `C(18)`: fleet 12 the same at `b(11)` (no counters). `C(12)` and `b(11)` owner 10's: `l(11) := 1`, `M(11, 0)`, `SetParamStr(11, planet)` (slot 11: a slip kept). `R(11)`: `st_bShow(11, −1)`, info 11 (the planet's name). A space battle starts with fleet 11 or 12: `StoryAdat+0x94 := 1`. A ground battle on `b(11)` won by the attacker: `M(12, 0)`, the human +12,000, info 11 removed, fleets 11, 12 and 14 all gone → `WIN`. `C(19)`: each of fleets 11, 12, 14 that exists and stands: `attack(id)`; counter 19 := 10. `C(11)`: fleet 14 (`st_fNewEx("", 10, 14, 0.06, 2, st_fSearch(11))`: fleet 11's slot as the planet, a slip kept; ships 3×3, 2×5, tanks 1×4), `attack(14)`, `M(13, 0)`. `RangeB(11)` (flag 11 for `b(11)`) with `l(11)` false: `l(11) := 1`, counter 12 := 1, counter 11 := [0, 500, 350, 350, 250][N]. A battle ends with fleet 11, 12 or 14: `l(11)` false → `l(11) := 1`, counter 12 := 5, counter 11 := the same; then fleets 11, 12, 14 gone and `b(11)` not owner 10's → `WIN`. Then fleets 14, 12, 11 in that order: won their battle → `attack(id)` |
+| 4 (the plague ship) | start: the human's planet with the most buildings (`HanyEpulet` 0xBA9518, strictly more, from 0; none → abort) gets id 41, `M(41, 100)`, `l(41) := 0`. `A(41, 7)`: the human −7,000, `WIN`. `A(41, 4)`, `A(41, 6)` or `P(41)`: `p = b(41)` the human's → `f = st_fNewEx("", 10, 41, 0.04, 1, p << 16)`, info 41 (no text), `k = Diff(1, 5, 15, 25)`, `d = (f32) sqrt((f64)(dy² + dx²))` planet − fleet (f32; 1 when 0), `FlottaMozgat(f, 1, 0, (int)(px − k·dx/d), (int)(py − k·dy/d))` (f32: it stops `k` short of the planet); else `WIN`. `st_ArrivedS(41)`: counter 49 := [0, 60, 30, 20, 10][N]. `C(49)`: fleet 41 gone or `b(41)` not the human's → `WIN`; else info 41 removed, info 42, `away(41)`, `infect(b(41))`, `l(41) := 1`, `M(44, 0)`. Daily with `l(41)`: `f = st_fSearch(41)` 0 → `WIN`, else `stands(f)` → `away(−f)`. A battle with fleet 41 lost and fleet 41 gone: `l(41)` → (`b(41)` infected and the human's: `M(46, 0)`, `+0xb8 := min(+0xb8, 5)`), `WIN`; else `M(42, 0)`, `WIN` |
+| 5 (the hunter) | start or `C(59)`: no fleet of the human's (`st_fSearch(−EN)`, stream 5) → abort; `p = st_bSearch(−EN, 0)` gets id 51 (none → abort); fleet 51 (`st_fNewEx("", 13, 51, Diff(5, 6, 7, 8), 1, 120)`), counter 51 := 1, `atkP(51, 51)`, `M(51, 0)`, param 1 = `p`, `v(51) = v(52) = v(53) := 0`. `R(51)`: info 51, `show(51)`. Daily: `f = st_fSearch(51)` (none → abort); mode 1 for `N == 1`, 2 for `N == 2`, else 2 when planet 51 is owner 13's or fleet `+0x5c == 0` (then 4 if `N == 4` and the human has no fleet, a stream-5 draw), else 3. 4: `moveP(51, 51)`; 3: `atkP(51, 51)`; 2: over the human's fleets 1..n the lowest level (1: `+0x60 ≤ s/2`, 2: `≤ s`, else 3; `s` = fleet 51's `+0x60`; from 3), nearest by `tav` among equals (strictly) → `FlottaMozgat(f, 2, 2, g, 0)`; 1: the nearest by `tav` → the same; none → `away(51)`, `hide(51)`, `v(53) := 1`. Daily with `v(53)` and fleet 51 standing: `away(−f)`. Special 16 with `d1 == 51`: `WIN`. A battle with fleet 51 and the human: fleet 51 lost → global morale +20, `M(52, 0)`, `StartStory(51)`, `WIN`; else `v(52) == 0`, `N > 2` and `st_bSearch(−EN, 1)` (stream 5) → `v(52) := 1`, `M(53, 0)`. A ground battle on `b(51)`: attacker won → `v(51) == 0` → `v(51) := 1`, `st_bSearch(−EN, 1)` → `M(54, 0)`; defender won → fleet 51 gone → `M(52, 0)`, `StartStory(51)`, `WIN`; else `away(51)`, `hide(51)`, `v(53) := 1` |
+| 51 | start: `d = st_GetTerv(EN, 511, 3)`, its price `+0x24 /= 2`, ticker `_s(5, …)`, `WIN` |
+| 6 (rebels) | start: `p = b(61)` (unchecked), `st_SetBolygoTulaj(p, 10)`, `AutoAddBuilding(61)`, `AutoAddtank(61)`, fleet 61 (`st_fNewEx("", 10, 61, 0.1, 2, p)`, ships 3×2, 2×4), counters 61 := 250, 62 := 150, `M(61, 0)`, param 1 = `p`, `v(61) := 0`. `R(61)`: `st_bShow(61, −1)`, info 61 (planet), `v(61) := 2`. Daily: fleet 63 standing → `atkP(63, −EN)`, else `atkF(63, −EN)`; fleet 69 standing → planet 61 owner 10's → `atkP(69, 61)`, else `del(−f)`; `v(61) == 1`: planet 61 owner 10's → info 61, `v(61) := 2`, else info 61 removed, `v(61) := 1`. A ground battle on `b(61)` by fleet 69 → fleet 69 deleted, `WIN`; else won by the attacker: `v(69) == 0` → `M(62, 0)`, +15,000, `Relation(9, 10)`; else `M(64, 0)`, +10,000, `Relation(9, 8)`; `away(69)`, `WIN`. `C(62)` and planet 61 owner 10's: fleet 63 (`st_fNewEx("", 10, 63, 0.09, 2, b(61))`, ship 3×1), `atkP(63, −EN)`. `C(61)`: planet 61 not owner 10's → `M(62, 0)`, +15,000, `Relation(9, 10)`, `WIN`; else `st_SendSignal(6, 2)` (onto `VegzesVodor`), `M(63, 0)`, `e = near(planet 61)`, `v(68) := e`; 0 → `WIN`; else fleet 69 for `e` (`st_fNewEx("", e, 69, 0.1, 2, nearest_bir_planet)`, ships 3×3, 2×6, tanks 1×6 via `st_fAddTank`), `atkP(69, 61)`, `v(69) := 1` |
+| 7 (troops wanted) | start: counter 71 := 20, `M(71, 0)`, `l(71) := l(72) := 0`. `C(71)`: the human's visible planet with the most `+0x74` + buildings (the first, then strictly more) gets id 73 (none → abort), `v(71) := 4`, `M(72, 150)`, int params 1 = `v(71)`, 2 = 15,000·`v(71)`, param 3 = the planet, int 4 = [0, 1000, 780, 630, 500][N]. `A(72, 2)`: counter 72 := the same, `l(71) := 1`. Daily with `l(71)`: info 71 replaced (planet 73, `st_szGet(72)` days). `A(72, 3)` or `P(72)`: `WIN`. Daily with `l(71)`: the units of size 19 (design `+0x16 == 2`, `+0x44 == 19` of their place's owner) on planet 73 (`Tankok` 0xBB41A8, place `−p`) sum to `v(71)` or more → `v(71)` of them go (`TankDelete(place, design, min(left, count))` record by record), counter 72 stopped, the human +15,000·`v(71)`; `l(72)` → `M(75, 0)`, `WIN`; else `far(80, 0)` 0 → `WIN`, else `M(73, 0)`; `l(71) := 0`, info 71 removed. `A(73, 2)`: info 73, counter 73 := 360, `StoryAdat+0xac := 1`. `A(73, 3)`: `WIN`. `C(72)`: `M(74, 0)`, `WIN`. `C(73)`: `+0xac := 0`, `WIN` |
+| 8 (a design for sale) | start: `M(81, 0)`, `d = st_GetTerv(EN, 81, 3)`: `+0x6c := 3`, `+0x74/+0x78/+0x7c := Ev/Honap/Nap`, `+0x24 /= 3`, the record copied to `TradeTervek[TradeHanyTradeCuccVan++]` (exe 0xB9AAF0, count 0xF439CC, `trade.md`), `v(82) :=` its index, `v(89) := 0`. `R(81)`: info 81. Daily: no offer with `+0x16 > 0` and `+0x80 == 81` left → `M(82, 0)`, `WIN`. Special 0x13 for `EN` with `v(89) == 0` and the human's design `SpecialData2` keyed 81: `M(83, 0)`, `v(89) := 1` |
+| 9 (a trade treaty) | start: `e = GetRndBirodalom(0, 0, 0)` (§8.11); unknown to the human or with a trade agreement (`Viszony[EN][e].+0x24`) → abort; `v(91) := 1000`, `v(92) := e`, `M(91, 120)`, param 1 = `e`'s name, int 2 = `v(91)`. `C(91)`: `v(92)` dead → abort; `M(92, 120)`, the same params. `A(91, 2)` or `A(92, 2)`: `x = v(91)`, the human −`x`; the trade agreement is written for `x` **as the empire** (`Viszony[EN][x].+0x24` and `[x][EN]`, outside the table: the original reads `v(91)` instead of `v(92)`), `EpuletNewSearchLocation(st_bSearch(−x, 0), 0x30, true, 0, −1, −1)` (no planet: a `rnd(5, 1, 0)` draw, planet 0), `Viszony[x][EN]` value 2 += 2000, `WIN`. `A(91, 3)`: counter 91 := 300. `A(91, 4)`, `A(92, 3)`, `A(92, 4)`, `P(91)`, `P(92)`: `WIN`. (The ELF's money checks `st_oldLetilt` are empty functions.) |
+| 10 (a colony) | start: the human has 3 planets or more → `WIN`; else counter 109 := [0, 2000, 1600, 1200, 1000][N], `v(101) = v(102) := 0`, `M(111, 0)`, `v(103) := 0`. `R(111)`: `v(103) := 1`. `C(109)`: `M(113, 0)`, `WIN`. Special 10 (a colonisation) by `EN` with `v(101) == 0`: counter 109 stopped, planet `SpecialData2` gets id 101, counter 101 := 1080, `M(101, 0)`, param 1 = the planet, int 2 = [0, 5, 7, 8, 10][N], `st_bShow(101, −1)`, `v(101) := 1`, info 103 removed. `R(101)`: `v(102) := 1`. `R(101)`, or daily with `v(102)`: infos 101, 102, 105 removed; `st_eSearch3(b(101), 1)` (below) 0 → info 105 (planet); else `d = st_szGet(101)`: `d ≥ 31` → info 101 ("(d + 29)/30", planet), `2 ≤ d ≤ 30` → info 102 ("d", planet). Daily with `st_szGet(101) != 0`, or `C(101)`: planet 101's `+0x28 ≥ 1000·`[0, 5, 7, 8, 10][N] → `M(102, 0)`, the human +`(d/90 + 4)·5000` (`d = st_szGet(101)`), int 1 = that / 1000, `WIN`; else `C(101)` → `M(104, 0)`, `WIN`. Daily while still running: `v(101)` set and planet 101 not the human's → (`v(102) == 0` → `KiszedUzenet(101)`), `WIN`; else with `v(103)`: `v(101)` → infos 103 and 104 removed; else a ship of the human's (1..n, with a design) of a colony design (`+0x34`) → info 103 removed, info 104; else info 104 removed, info 103 |
+| 11 (colonise in time) | start: `M(111, 90)`. `R(111)`: counter 111 := 920, `v(111) := 1`. `P(111)`: `WIN`. Special 10 by `EN` with `v(111)`: `M(112, 0)`, global morale +30, `WIN`. `C(111)`: `M(113, 0)`, `WIN` |
+| 12 (a research grant) | start: `v(121) := 0`; nothing being researched (`ResearchAktFejlesztett[EN] == 0`) → pick now; else `v(129) := 1`, counter 129 := 180. `C(129)` with `v(129)`, or special 13 (research done) by `EN` with `v(129)`: `v(129) := 0`, pick. Pick: of techs 1..192 the human can be given (§8.11 `st_TalalmanyAdhato`) the lowest priority `+0xb8` (0 → 20; the first strictly lower, from 100); none → `WIN`; else `v(121) := t`, `v(122) := +0x38`, then `:= +0x34`, `M(121, 0)`, param 1 = the tech, its `+0x38`, the human's `+0x58 + 4·EN` and `+0x34` divided by 3. Special 13 by `EN` with `SpecialData2 == v(121)`: `M(122, 0)`, `WIN`. Daily: tech `v(121)` done by the human → `WIN` |
+| 19 (a saboteur) | start: `st_CounterIntelligence(20)` (below) → caught; else counter 196 := 10, mode 1. `C(196)`: `M(191, 0)`, video, param 1 = `b(191)` (unchecked), counters 191 := 300, 195 := 80, 197 := 140, 198 := 200. `C(195)`, `C(198)` or `C(197)`: `st_CounterIntelligence(40)` → caught (`WIN`), else mode 2. `C(191)`: `st_CounterIntelligence(40)` → `M(193, 0)`, race of `Kemek[EN][CounterIntelligence_kem].+0x12` (1 when 0); `WIN`. With a mode: `st_eSearch(EN, mode == 1)` (below) none → `WIN`; else the planet gets id 191, the building's damage `+4 += hp·rnd(5, 40, 90)/100` (`hp` = `EpuletekLeiro[kind].+8`), at most `hp − 1`; ticker `sprintf(_s(5, …), the name of tech EpuletekLeiro[kind].+0, the planet's name)`. Caught: `e = GetRndBirodalom(5, 1, 0)`, its last spy `k` (1..`OsszHanyKem[e]`, `+0x10 > 0`) → `KemJelentesAdd(3, CounterIntelligence_kem, 0, 0, 0, 0, e, k, 0…)` |
+| 20 (a tech to steal) | start: the first live known empire 1..8 other than `EN`; none → the nearest planet (`dist`, strictly less, from 1,000,000) owned by someone other than 0, `EN` and 5 (none → abort) gets id 201, `st_bShow(201, −1)`, its owner `e` is met (`BirodalomIsmeri`, `FelfedezBirodalom(e, 1)` when new), `M(201, 0)`, params `e`'s name, the planet; counter 201 := 20, `v(201) := e`. `C(201)`: `M(202, 0)`, `v(201)`'s name, `v(202) := 1`. Spy news (`KemEsemeny`, below) of mission 4 (a tech list) against `v(201)` with `0 < v(202) < 3`: of the 5 listed techs the human lacks (status 1..4) a reservoir pick (`rnd(5, 1, n) ≤ 1`); none → `v(202) == 1` ? (`M(206, 0)`, `v(202) := 2`) : (`M(207, 0)`, `WIN`); else `M(203, 0)`, param the tech, `v(203) := t`, `v(202) := 3`. Spy news of mission 8 (a tech stolen) against `v(201)` with `v(202) == 3` and the tech `v(203)` → `M(204, 0)`, race of the spy (`Kemek[EN][spy].+0x12`), `WIN`; otherwise `v(202) == 3` and tech `v(203)` done → `M(205, 0)`, `WIN` |
+| 21 (a spy's target) | start: a weighted pick (10 known, 1 not) among the live empires 1..8 other than `EN` and 5 (none → abort); over the human's spies 1..`OsszHanyKem[EN]` − 1 alive (`+0x10 != 0`): the first with a target `+0x18` gives it as the empire and ends the search, else a weighted pick (10 when `+0x10 == 1`); none → abort; the spy's `+0x18 :=` the empire, `v(211) := k`, `M(211, 0)`, counter 211 := 360. `C(211)`: `M(213, 0)`, global morale −4, `WIN`. Spy news of a death (`+8 == 1`) of spy `v(211)` (or any while `v(211) == 0`) → `M(214, 0)` and `WIN` if the dead spy is `v(211)`; without such news: daily with spy `v(211)` gone (`+0x10 == 0`) → `M(215, 0)`, `WIN` |
+| 22 (a far planet) | start: `n = v(500)` (the constellations, §8.2); no fleet of the human's (`st_fSearch(−EN, 1)`, stream 5) or `n == 0` → abort; of planets `b(500)..b(500 + n − 1)` (one missing → abort) the one the human has never seen (`+0xd8[EN] == 0`) nearest by `dist` (strictly less, from 1,000,000) gets id 221 (none → abort), `M(221, 0)` (campaign 2: 9221), param 1 = `_s(29, …)`. Special 10 by `EN` on `b(221)`, or a fleet of the human's arrives at `b(221)`: free or the human's → `M(223, 0)` (9223), +20,000, param 1 = the planet; `WIN`. Special 10 by another empire on `b(221)`: `WIN` |
+| 23 (a fugitive) | start: fleet 231 (`st_fNewEx("", 9, 231, [0, 6, 7, 7, 8][N], 1, 0)`, ship 3×2), `M(231, 0)`, counter 231 := 40·N + 160, `FlottaMozgat(f, 1, 1, last_fn_b, 0)`, `v(232) := 1`. Daily with `v(232)`: fleet 231 (none → abort); the nearest visible planet of the human's and the nearest fleet of the human's by `(int)(f32)(dy² + dx²)` (strictly less, from 1,000,000; no planet → abort); the fleet within 144 → flee from it; else the planet within 99 → flee from it; else `FlottaMozgat(f, 1, 1, planet, 0)`. Flee from `q`: `dx, dy` = fleet − `q` (f32), `d = (f32) sqrt((f64)(f32)(dy² + dx²))`, `(f64) d < 0.1` → `d := 0.1f`, `dx := 0.05f`; `dx` clamped to `±d`; `a = (f32) acos((f64)(dx/d))`, `dy < 0` → `a := (f32)(2π − (f64) a)`; `a := (f32)((f64) rnd(5, −50, 50)·π/180 + (f64) a)`; `FlottaMozgat(f, 1, 0, (x + dx) + (f32) cos a·30, (y + dy) + (f32) sin a·30)` (f32; `dx` clamped, `dy` not). `C(231)`: fleet 231 (none → abort); fleet 232 (`st_fNewEx("", 9, 232, 0, 2, st_bSearch(−EN, 0))`, ships 3×3, 2×5) chases it (`FlottaMozgat(g, 1, 2, f, 0)`), `v(231) := 1`. Fleet 232 reaches fleet 231: fleet 232 (if any) takes id 231; the first fleet 231 (none → abort) stops (`+0x3c := 0`) and is renamed `_s(5, …)`, `M(232, 0)`, `away(231)`, `v(232) := 0`. A battle with fleet 232 and it gone: `M(236, 0)`, `away(231)`, `v(232) := 0`. A battle with fleet 231 and it gone: `v(231) == 0` → `M(234, 0)`, +25,000; else `M(233, 0)`, +14,000; `WIN`. Special 16 with `d1 == 231`: `M(235, 0)`, `WIN` |
+| 24 (an escort) | start: counter 241 := 10. `C(241)`: of empire 9's fleets with ids 10000..=11000 and `+0x18` bit 0 clear the first, or one with a smaller `fdist`; none or `fdist ≥ 80` → counter 241 := 10; else `v(241) :=` its id, `v(242) := (int)` its target `+0x44`, its id := 241, `+0x52 |= 0x200, 0x800, 0x100`, it stops, `M(241, 0)`, param 1 = the fleet's name, counter 242 := 400. A fleet of the human's reaches fleet 241, or `C(242)`: fleet 241 (none → abort) gets id `v(241)` back, the three bits cleared, `FlottaMozgat(f, 1, 1, v(242), 0)`, `ErkezettFlottaNumber` stops (a stale slot on the counter path); `C(242)` → `M(243, 0)`, param 1 = its name, `WIN`; else `v(249) := 1`, counter 242 stopped, `M(242, 0)`, +4,000, param 1, `WIN` |
+
+- `st_CounterIntelligence(x)` (exe 0x5d4900): `CounterIntelligence_kem` (0xF265D0) := 0; over the human's spies
+  1..`OsszHanyKem[EN]` in state 3 (`+0x10`) on mission 13 (`+0x1a`, counter-espionage): chance =
+  `clamp((int)((f64)((+0x33·40 + +0x32·60)·10)/100.0 + x), 10, 100)`, `rndlog(5, 0, 99) < chance` → caught by that
+  spy (`CounterIntelligence_kem := k`) and the loop stops before the next spy. Returns whether one caught.
+- `st_eSearch(e, mode)` (exe 0x604290): over the planets of `e` the human sees and their buildings (`Epuletek[p]`
+  1..count, 0x20 bytes: `+0` kind, `+4` damage, `+8` i16) with a kind and `+8 == 0`: the first one is the answer
+  unless a fitting one comes (`mode == 0`, or a kind 0x34..=0x37 for `mode == 1`): undamaged (`+4 == 0`) fitting
+  ones win (a reservoir `rnd(5, 0, n) == 0`, restarted at the first undamaged one when the very first building was
+  damaged); damaged fitting ones join only while no undamaged one was found.
+- `st_eSearch3(p, kind)` (0x6041c0): over planet `p`'s (0: every planet's) buildings with a kind, `+8 == 0` and the
+  kind `kind` (0: any) a reservoir (`rnd(5, 0, n) == 0`); the building's slot, 0 when none.
+- `KemEsemeny` (exe 0xF2F874, with flag 15 `KemkedesTipus == 3`, from `KemJelentesAdd`, `espionage.md`): `+0` 1 for
+  news, `+4` the spy, `+8` 1 when it died, `+0xc` success, `+0x14` the mission, `+0x18` the target empire, `+0x1c`
+  the tech, `+0x24` 5 techs. `st_KemTalalmanyLista()` = news, success, mission 4; `st_KemTalalmany()` = news,
+  success, mission 8; `st_KemMeghalt(k)` = news, died, `k == 0` or the spy `k`.
+
+Exe vs ELF: the exe inlines the logic-flag and planet-id accessors, `st_bSetRadarMsg`, `st_fShow`/`st_fHide`,
+`st_fAddTank` (except story 6's), `st_ViszonyValt`, `st_GlobalMoralValt`, `st_SpWarPart*`, `GetIsmertBirodalom`
+(`GetRndBirodalom` + the "known" abort) and `Virus_CheckAdd`'s test, with the same results; it drops
+`st_bGetFromDist`'s assertion and unknown-planet request, the two `st_bSearch` assertions (stories 1, 6) and story
+9's `st_oldLetilt` money checks (empty in the ELF too). Precision (asm): every distance through f32 like `st_tav`;
+story 4's approach and story 23's flight as above. Quirks kept: story 1's `SetParamStr(11, …)` and fleet 14 placed at
+"planet = fleet 11's slot", story 9's trade agreement for the price as the empire, story 24 stopping a stale
+arriving fleet on its counter, `st_eSearch` answering with the first building when none fits the mode.
+
+### 8.13 `st_Rnd_include` (exe 0x5f0e20, ELF 0x74a2c0): random stories, part 2
+Run right after `st_Begin_include` (`Story_Check` order: `Begin`, `Rnd`, `BRnd`, …). The exe calls `st_Story`
+(0x602f80) and `st_StoryStart` (0x602fe0) here instead of inlining them, and drops the ELF's `st_oldLetilt`
+branches (the ELF's `st_oldLetilt` always returns false). Each story block catches an abort with `WIN(0, 1)` (§8.7).
+Notation as in §8.9/§8.11; ids are decimal in the text, the exe's are their hex (1181 = 0x49d).
+
+**Map (all 62 stories).** Block starts in the exe (`push id; call st_Story`): 101 0x5f0e5f, 102 0x5f14e8, 108 0x5f1afa,
+116 0x5f23b4, 117 0x5f257c, 118 0x5f27b8 (302 tested at 0x5f283e), 124 0x5f29a7, 127 0x5f310f, 128 (inlined test),
+129 0x5f3c27, 131 0x5f434a, 132 0x5f4c8f, 133 0x5f50c9, 134 0x5f5b0b, 136 0x5f5c79, 137 0x5f6576, 138 0x5f681a, 139
+0x5f6f21, 142 0x5f73ec, 144 0x5f75a2, 145 0x5f788e, 146 0x5f7e2b, 147 0x5f7fd5, 148 0x5f83ad, 149 0x5f879c, 150
+0x5f8a94, 151 0x5f8b58, 152 0x5f97c8, 153 0x5f9964, 155 0x5f9b12, 156 0x5f9c89, 161 0x5f9d97, 163 0x5f9f13, 164
+0x5fa074, 165 0x5fa15d, 166 0x5fa2ea, 169 0x5fa45a, 170 0x5fa4c2, 171 0x5fa92c, 172 0x5fab45, 173 0x5fadaf, 174
+0x5faf8f, the heroes 176..192 0x5fb243..0x600a8f, 199 0x600b4f, 242 0x600c0f. What the unported ones reach: escorts
+and pirates with fleet orders and battles (101, 102, 108, 124, 131), relations (`st_ViszonyValt` 116, 117, 145, 147,
+148, 181, 183, 185, 190), diplomacy specials (147, 148), spy missions (127, 174: `st_KemEsely`, `st_EnableKemKuldetes`,
+138: `Spy_New`, `Spy_Beszolas`), planets shown/colonised/owned (128..139, 145, 174), buildings written directly
+(151..156, 161, 165, 166: `Epuletek` records, `EpuletDelete`, `st_Foldrenges`), the trade market (192
+`st_SetTozsdeOlcso`), the terrorist switch (188), the heroes 176..192 (fleets for hire, `st_HajoKigyujt`, undo
+entries).
+
+**Ported (part 1):** 118, 142, 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173, 199, 242 (`engine/crates/ig2-sim/src/rnd.rs`,
+[`RndStories`]; verified, `traces/2026-10-16-rnd.md`).
+
+| Story | What it does |
+|---|---|
+| 118 | (story 400 starts it) start: `v(1181) := v(1182) := 0`. A space battle ends (flag 3) with participants owned by `EN` and by 9 (`st_SpWarPartTulaj` 0x602d40: the first of list[0], list[1] (read even past a one-entry list), list[2] with more than two) and `SpWarKiNyert` (0xBAA1EC) `== EN`: the pirate's `+0x24` id `x`; story 302 running (`st_Story(302, 0)`, no mark) and `v(3021) == x` → nothing; `10000 ≤ x ≤ 11000`: `n = v(1181) + 1` (and `v(1182)` read) stored; `n == 5` → `M(0x4a7, 0)`; else `rnd(1, 3) == 1` → `v(1182) += 1`, `M(0x49d, 0)`, `a = rnd(3, 5)·2000`, `SetParamInt(1, a)`, `st_AddMoney(a)` |
+| 142 | (400) start: some wormhole (1..=`OsszHanyWormhole`) with an end shown (`+8` or `+0x14`), or the count 0 → `WIN`; `v(1421) := 0`. Daily otherwise with `v(1421) == 0` and some end shown: some wormhole with both ends shown → `WIN`, else `v(1421) := 1`, `M(0x58d)` (campaign 3: 0x1145). Special 0x14 with `d1 == EN`: `d2 == 1` → `M(0x591)`, `WIN`; else `M(0x58f)` (0x1147) |
+| 144 | start: counter 1441 := 30, `v(1441) := 0`. `C(1441)`: a weighted pick (`RndClass`) over planets 1..=n with morale `+0x30 / 10 < 200`; none → counter 1441 := 30; else `M(0x5a1)`, param 1 the planet, counter 1442 := 120, the planet gets id 1441. Daily with `st_szGet(1442) != 0` and `b(1441)` not the human's → `st_szStop(1442)`. `C(1442)` with morale `/10 > 300` → `M(0x5a6)`, param 1 `b(1441)`. Special 0x15 / 0x16 with `v(1441) == 0`: `M(0x5a4)` / `M(0x5a5)`, param 1 planet `d1` (0x16: param 2 its owner's name), `v(1441) := 1` |
+| 146 | start: `v(1469) := 0`, counter 1469 := 10. `C(1469)`: a pick over the human's planets with `+0xd8[EN] > 0` and morale `< 350`; one → id 1461, counter 1461 := 2; none → `v(1469) < 11`: `+1`, counter 1469 := 360, else `WIN`. `C(1461)`: `M(0x5b5)`, param 1 `b(1461)`, counter 1462 := 30 (tested, no effect) |
+| 149 | start: fewer than 8 planets → `WIN`; else `s = st_bSearch(−EN, 0)` (0 → abort); four times the human's planet (`+0x22 != 7`, no info 1491) nearest to `s` (`(int)(dy² + dx²)`, f32, against the last pick, first of equals) gets info 1491 (`BolygoInfoAdd(p, 1491, true)`, seen by the next round); no name at all → abort; `M(0x5d3)`, param 1 the names joined by ", ", counter 1491 := 150. `C(1491)`: a pick among the planets with info 1491 loses it, the count `n` of them; `n < 2` → `M(0x5d4)`, `WIN`; else counter 1491 := 20 |
+| 150 | start: `M(0x5dd)`, `p = st_bSearch(−EN, 0)` gets id 1501, `+0xb8 += 50` (i16), `Virus_CheckAdd(p)` (exe 0x542930: info 100 shown unless present, `StoryAdat+0x30 := 1`), param 1, `BolygoInfoAdd(p, 100, false)`, `WIN` |
+| 163 | start: for groups `g` = 0..=11 the first tech `16g + j` (`j` 1..=16) the human researches (status 4): `rnd(0, n)` (`n` such groups before), 0 → the pick; none → `WIN(0, 0)`; else `st_SetTalalmanyAllapot(t, 5, EN)` (the specials queue gets `(EN, t)`), `M(0x65f)` (campaign 3: 0x1217), param 1 the tech, `WIN` |
+| 164 | start: `p = st_bSearch(−EN, 0)`; without info 1551: id 1641, `+0x24 += 20` (campaign 3: 16), `M(0x669)` (0x1221), param 1; `WIN` |
+| 169 | start: `M(0x69b)`, `WIN` |
+| 170 | first, while it runs: `StoryMessageBlokk` 0x125d → 0x6a5, 0x125e → 0x6a6 (a global write). Start: `t = st_GetRandomTalalmany(−1, 0)` (§8.11; −1 = `EN`), none → `WIN`; else `v(1701) := t`, `v(1702) := +0x34 / 2` (C division), `M(0x6a5, 50)` (0x125d), `v(1709) := 1`, param 1 the tech, `SetParamInt(2, price)`. Daily with the tech at status 5: `v(1709) == 1` → `KiszedUzenet(0x6a5)`, `== 2` → `(0x6a6)` (campaign 3's ids). `A(0x6a5/0x6a6/0x125d/0x125e, 2)` → `st_AddMoney(−price)`, `st_SetTalalmanyAllapot(t, 5, EN)`, `WIN`. `A(0x6a5 or 0x125d, 3)` → counter 1701 := 140, `v(1709) := 0`. Promotions of any of the four, `A(0x6a6 or 0x125e, 4)` → `WIN`. `C(1701)`: status < 5 → `M(0x6a6, 50)` (0x125e), `v(1709) := 2`, params as above; else `WIN`. `A(0x6a6 or 0x125e, 2)` again: pays `min(v(1702), (int) MoneyMennyi(EN, 0))` (read after the first payment), `WIN` (so the reminder is paid twice) |
+| 171 | a tribute of 7,000: start `M(0x6af, 50)`, `SetParamInt(1, 7)`. `A(0x6af, 2)` or `A(0x6b0, 2)` → −7,000, counter 1711 := 15. `A(0x6af, 3)` → counter 1712 := `rnd(30, 90)`. `A(0x6af, 4)`, `P(0x6af)` → `WIN`. `C(1712)` → `M(0x6b0, 50)`, param 7. `A(0x6b0, 3)`, `P(0x6b0)` → `WIN`. `C(1711)` → `M(0x6b1)` (campaign 2: 0x1269), `WIN` |
+| 172 | 9,000 (0x6b9/0x6ba, counters 1721/1722): only `A(0x6b9, 2)` pays; `P(0x6b9)`, `A(0x6b9, 4)` → `WIN`; reminder `A(0x6ba, 3 or 6)`, `P(0x6ba)` → `WIN`; `A(0x6ba, 5)` → `MoneyMennyi` read and dropped, −9 (the source's slip for −9,000), counter 1721 := 15; thanks 0x6bb (0x1273) |
+| 173 | 3,000 (0x6c3/0x6c4, counters 1731/1732): `A(0x6c3, 4)` or `A(0x6c4, 2)` pays; `A(0x6c3, 5)` asks again; `P(0x6c3)`, `P(0x6c4)`, `A(0x6c4, 3)`, `A(0x6c3, 6)` → `WIN`; thanks 0x6c5 (0x127d) |
+| 199 | (400) start: `v(1991) := 0`. Special 0x18 with `d1 == EN`: `v = v(1991)`; not campaign 1 → video `_s(6, 1991)`; `v == 3` → `WIN` |
+| 242 | (400) the hero ships (`RndHosok[k]` 0x9288b0, 7 words: id, tech `T`, bonuses to `StoryAdat+0x84`, `+0x90`, `+0x7c`, fee (thousands), strength). Start: counter 0x975 := `rnd(1800, 2880)`. `C(0x975)`: `S = st_GetOsszFlottaEro() / 3`; a pick over the heroes with `v(id) == 0`, (`T < 3` or tech `T + 3` at status 5), (`T > 4` or tech `T + 7` not at 5), strength `< S` (tested in that order, the pick last); one → `st_vInc(0x975)`, `v(0x976) := k`, `v(id) := 1`, `M(0x975, 120)`, param 1 the name of `st_GetTerv(EN, id, 3)`, 2 a text, `SetParamInt(3, fee)`, 4 the bonuses' text; then `v(0x975) < 4` → counter 0x975 := `rnd(2520, 3600)`. `A(0x975, 2)`: hero `v(0x976)`: −fee·1000, `st_GetTerv`, `f = st_fNewEx(<design name>, EN, 0, 0, 1, 0)`, `HajoNew(f, st_GetTerv(EN, id, 3))`, `FlottaMozgat(f, 1, 1, last_fn_b, 0)`, counter `id` := 360. Any counter (`st_Counter(0)`) whose id is a hero with `v(id) == 1`: no ship of it (`st_hSearch(EN, id)`) → `v(id) := 2`, else −fee·1000 and counter `id` := 360. A space battle starts: each hero with `v(id) == 1` whose fleet (`st_hSearch`) is in `spFlottak` adds its three bonuses. Special 0x19 with `Tervek[owner(d1)][d2].+0x80` a hero's id: every ship of `st_GetTerv(EN, id, 3)` in a fleet of the human's → `HajoDelete`, `v(id) := 2` |
+
+Port: the new world reads are the planets' morale/surface/richness (`+0x30`/`+0x22`/`+0x24`), the techs' research
+cost (`+0x34`, st_Begin's read) and the wormholes; the new events `AddPlanetInfoHidden`, `SetPlanetRichness`, `SetTechState` (the epidemic
+uses st_Begin's `SetEpidemic` + `VirusCheck`, the research cost its `tech_research`). The exe keeps the ELF's results everywhere checked (`st_oldLetilt` dead, C
+division for the price, the two `CampaignType` id swaps). Untraced: 118's
+exclusion of story 302's pirate (302 never ran in the traces), 146's last empty year.
+Not ported yet (U24): the other 47 stories (the tracer keeps them from running: `--keep rnd` rewrites their
+`st_Story(id, 1)` calls from inside the script to an id no story has).

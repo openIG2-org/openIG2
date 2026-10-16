@@ -111,6 +111,12 @@ impl TickClock {
         }
         n
     }
+
+    /// How far `now_ms` is into the next period, 0..=1 (after [`TickClock::advance`]): the renderer's
+    /// interpolation factor between the last two ticks (ADR 0006).
+    pub fn phase(&self, now_ms: u32) -> f32 {
+        (now_ms.wrapping_sub(self.last) as f32 / self.period as f32).clamp(0.0, 1.0)
+    }
 }
 
 /// Calendar state advanced by sim ticks (`FRISSIT_Datum` + `IdoNapValtozott`).
@@ -172,6 +178,15 @@ mod tests {
         assert_eq!(c.advance(1050), 0, "needs strictly more than 50 ms");
         assert_eq!(c.advance(1051), 1);
         assert_eq!(c.advance(10_000), 9, "backlog clamped to 500 ms; strict > 50 → at most 9 ticks");
+    }
+
+    #[test]
+    fn clock_phase_is_the_way_into_the_next_tick() {
+        let mut c = TickClock::new(SIM_TICK_MS, 1000);
+        assert_eq!(c.advance(1075), 1);
+        assert_eq!(c.phase(1075), 0.5);
+        assert_eq!(c.phase(1050), 0.0);
+        assert_eq!(c.phase(1200), 1.0, "clamped while ticks are due");
     }
 
     #[test]

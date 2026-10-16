@@ -2,7 +2,7 @@
 (tools/trace/replay.js), for the port's save replay (engine/crates/ig2-sim/tests/save_replay.rs).
 
 Usage (project venv): _local/venv/Scripts/python.exe -u tools/trace/run_replay.py <install-dir> <save> <out-dir>
-          [--ticks 40] [--speed 3] [--seed 4242] [--slot 99] [--seconds 400] [--stage] [--traders] [--spies] [--merges] [--battles [--battles-mode space|ground]]
+          [--ticks 40] [--speed 3] [--seed 4242] [--slot 99] [--seconds 400] [--stage] [--traders] [--spies] [--merges] [--battles [--battles-mode space|ground|land]] [--deaths [--deaths-mode base|campaign]] [--slot-base 100] [--pre-slot 98]
 The input save is copied to the game's data directory (%LOCALAPPDATA%/GyroscopeGames/ig2) as save<slot>.sav and
 loaded with the exe's `LoadSave(slot, name, 1)`; the game then writes save<100+k>.sav per tick, which this script
 moves to <out-dir>/<k>.sav, with <out-dir>/replay.jsonl (one line per save: tick, seed, non-saved globals). Files
@@ -30,6 +30,8 @@ ap.add_argument("--ticks", type=int, default=40)
 ap.add_argument("--speed", type=int, default=3, help="SetIdoSpeed level: 1/2/3 = x1/x4/x16 in single player")
 ap.add_argument("--seed", type=int, default=4242, help="libc rand() is reseeded with seed + Ido2 every tick")
 ap.add_argument("--slot", type=int, default=99)
+ap.add_argument("--slot-base", type=int, default=100, help="per-tick saves go to slot base + k (pick another base to record beside another run)")
+ap.add_argument("--pre-slot", type=int, default=98)
 ap.add_argument("--seconds", type=float, default=400)
 ap.add_argument("--scenario", default="scenario/quick.scn")
 ap.add_argument("--stage", action="store_true", help="stage trade purchases and deliveries before save 0")
@@ -43,9 +45,14 @@ ap.add_argument("--spies-mode", default="base", choices=["base", "force1", "forc
                 help="--spies: the staged mix; force1/2/3 also set the SP debug switch 0xB77250 (success/caught/recruit)")
 ap.add_argument("--battles", action="store_true",
                 help="stage auto-resolved space battles / ground wars for the first ticks (info-messages.md 3.2)")
-ap.add_argument("--battles-mode", default="space", choices=["space", "ground"])
+ap.add_argument("--battles-mode", default="space", choices=["space", "ground", "land"])
 ap.add_argument("--lopsided-tanks", type=int, default=40, help="--battles-mode ground: vehicles of the lopsided attacks")
 ap.add_argument("--even-tanks", type=int, default=16, help="--battles-mode ground: vehicles of the even attacks")
+ap.add_argument("--deaths", action="store_true",
+                help="revive three dead empires without planets whose countdowns run out in the first days (BirodalomMeghal)")
+ap.add_argument("--deaths-mode", default="base", choices=["base", "campaign"])
+ap.add_argument("--lost-tanks", type=int, default=3, help="--battles-mode land: vehicles of the lopsided attacks that lose")
+ap.add_argument("--land-ships", type=int, default=30, help="--battles-mode land: warships of the planet battle's attacker")
 ap.add_argument("--merges", action="store_true",
                 help="stage fleet merges, colonise/terraform arrivals, a dead empire's fleet and a wormhole trip before save 0")
 ap.add_argument("--trader-near", type=float, default=0.5, help="--traders: distance left to the trader's planet")
@@ -62,7 +69,7 @@ def slot_file(n):
 
 
 moved = []
-for n in [a.slot, 98] + list(range(100, 100 + a.ticks + 2)):
+for n in [a.slot, a.pre_slot] + list(range(a.slot_base, a.slot_base + a.ticks + 2)):
     if os.path.exists(slot_file(n)):
         shutil.move(slot_file(n), os.path.join(aside, f"save{n}.sav"))
         moved.append(n)
@@ -103,7 +110,7 @@ def on_message(msg, _data):
         elif ev["k"] == "buy":
             log.write(json.dumps(ev) + "\n")
             print("buy: accepted" if ev["accepted"] else "buy: rejected")
-        elif ev["k"] in ("traders", "spies", "merges", "battles"):
+        elif ev["k"] in ("traders", "spies", "merges", "battles", "deaths"):
             log.write(json.dumps(ev) + "\n")
             print(ev["k"], "staged:", ev["stage"])
         elif ev["k"] == "done":
@@ -120,7 +127,7 @@ script.on("message", on_message)
 script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "slot": a.slot, "speed": a.speed, "ticks": a.ticks,
                                            "seed": a.seed, "stage": a.stage,
-                                           "traders": a.traders, "traderNear": a.trader_near, "spies": a.spies, "spiesMode": a.spies_mode, "merges": a.merges, "battles": a.battles, "battlesMode": a.battles_mode, "lopsidedTanks": a.lopsided_tanks, "evenTanks": a.even_tanks,
+                                           "traders": a.traders, "traderNear": a.trader_near, "spies": a.spies, "spiesMode": a.spies_mode, "merges": a.merges, "battles": a.battles, "deaths": a.deaths, "deathsMode": a.deaths_mode, "slotBase": a.slot_base, "preSlot": a.pre_slot, "battlesMode": a.battles_mode, "lopsidedTanks": a.lopsided_tanks, "evenTanks": a.even_tanks, "lostTanks": a.lost_tanks, "landShips": a.land_ships,
                                            "storyCountdown": a.story_countdown,
                                            "randlog": a.randlog}})
 device.resume(pid)

@@ -1,0 +1,31 @@
+[package]
+name = "ig2-net"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ig2-sim = { version = "0.1.0", path = "../ig2-sim", features = ["serde"] }
+getrandom = "0.3"
+miniz_oxide = "0.8"
+quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
+rcgen = { version = "0.14.7", default-features = false, features = ["crypto", "ring"], optional = true }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"], optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.0"
+socket2 = "0.6"
+thiserror.workspace = true
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "io-util", "time"], optional = true }
+igd-next = { version = "0.17.1", default-features = false, optional = true }
+spake2 = "0.4"
+
+[dev-dependencies]
+ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
+ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
+
+[features]
+# The QUIC transport (ADR 0005 §2, ADR 0007 §6).
+quic = ["dep:quinn", "dep:rustls", "dep:rcgen", "dep:tokio"]
+# UPnP IGD port mapping (ADR 0008 §2).
+upnp = ["dep:igd-next"]

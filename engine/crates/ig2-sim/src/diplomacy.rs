@@ -551,6 +551,9 @@ pub struct World<'a> {
     pub rules: &'a DiplomacyRules,
     /// libc `rand()` (0..=32767): text variants and the counter-proposal coin (spec §9).
     pub libc: &'a mut dyn FnMut() -> i32,
+    /// The draws that only pick the local human's text (`EN` receives a message): `None` = from `libc`, like the
+    /// exe; the per-peer cosmetic stream in canonical multiplayer (`game::ViewMode`, ADR 0007 §5).
+    pub view_libc: Option<&'a mut dyn FnMut() -> i32>,
     pub events: Vec<DiploEvent>,
 }
 
@@ -1070,7 +1073,10 @@ impl Diplomacy {
     }
 
     fn draw_text(w: &mut World) {
-        let value = (w.libc)();
+        let value = match w.view_libc.as_mut() {
+            Some(draw) => draw(),
+            None => (w.libc)(),
+        };
         w.events.push(DiploEvent::RandDraw { value });
     }
 
@@ -1827,6 +1833,7 @@ mod tests {
                 rng: &mut self.rng,
                 rules: &self.rules,
                 libc: &mut *self.libc,
+                view_libc: None,
                 events: Vec::new(),
             }
         }

@@ -210,6 +210,7 @@ fn unit_bytes(r: &[u8], hp: Vec<i32>, origin: Vec<i32>, waypoints: Vec<(i32, i32
             mine_cell: (i32_at(&r, 0x254), i32_at(&r, 0x258)),
             fired: r[0x28c],
         },
+        tail: Default::default(),
     }
 }
 

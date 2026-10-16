@@ -41,6 +41,9 @@ if GameStarted:
     else: MULTISEND_SpWarSynch; GroundWarSetBattleStatus
     IdoMultiPlayerBattle += 1
     if no MP space battle and (screen != SpaceWar or MP): FRISSIT_Grwar; FRISSIT_Colony
+          (Game::grwar after the tick: gvalue 0x9B2900 += 1, self-destruct countdowns, WF::Collapse every
+          300th; FRISSIT_Colony saves nothing: passability-map expiry after 600 ticks, smoke emitters 0xA3E9C8
+          with libc draws, debris 0xA33390, the UI effect list; not ported)
     FRISSIT_SpaceWar
   else if paused and screen == Colony: every 60th tick (3 s) FRISSIT_Planet(false, 0)  (display refresh)
 MP: supervisor sends a ping when (Ido / IdoSpeedSzorzo) % 111 == 0.
