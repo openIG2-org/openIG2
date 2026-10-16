@@ -128,15 +128,23 @@ vehicle capacity (`+0x74` is zeroed by `FlottakUjraSzamol`, [unk]).
 ## 4. Routing (`SpaceWarIndit(f1, f2, planet)`)
 Called by `FRISSIT_Starmap` arrivals (`fleet-movement.md` §4.3: attack a fleet → `(f, target, 0)`;
 attack a defended planet → `(f, nearest defender fleet within 15 or 0, planet)`).
-1. Participants `spFlottak` = f1 (side 1) and f2 (side 2) if any; the battle planet `spKozeliBolygo` =
-   `planet`, else `SearchFlottahozKozeliBolygo(f1, 20.0)` kept only if owned by f1's or f2's owner.
-2. `KemkedesUrharcLekezel` (spies), then `Story_SpaceBattleStarted` (ELF 0x73d9c0), which first
+0. `f2 == 0 && planet == 0` → nothing.
+1. Participants `spFlottak` (exe 0xBAA1C0, 6-byte entries from index 1: `+0` fleet i16, `+2` side i16) = f1
+   (side 1) and f2 (side 2; written even when f2 is 0), `SpWarHanyFlotta` 0xBAA1E8 = 2, or 1 without f2; the
+   battle planet `spKozeliBolygo` (0xBAA1E4) = `planet` (flag 0xB9C027 := 1), else (flag := 0)
+   `SearchFlottahozKozeliBolygo(f1, 20.0)` kept only if owned by f1's or f2's owner.
+2. `KemkedesUrharcLekezel` (exe 0x53f0c0): for every pair `(a, b)` of participants, `a = b` included, with both
+   owners < 9: every ship and every class-1 vehicle (fighter) of `a` is seen by `b`'s owner
+   (`KemkedesTervLekezel`, exe 0x53f060: the design's hull tech `+0x48` and its pods' techs `+0x51..` (`+0x4c` of
+   them) into the seen matrix `[tech].+0xc0 + 9·spy + owner`, `colony-side.md` §2). Then
+   `Story_SpaceBattleStarted` (exe 0x5c9220, ELF 0x73d9c0), which first
    **clears** `Story_SpWarTiltas`, `Story_SpWarSimulateTiltas`, `StoryAdat+0x88/+0x94/+0x98/+0x7c/+0x84`,
    the story battle pacts (`StoryUrharcViszony`), retreat permissions and `StoryUrharcZachkinBarkacs`,
    and then runs the campaign script (story event 1, or the hard-wired fleets 0x439/0x43a), which may
    set them for this battle: their values before the call don't matter (runtime-confirmed). Unless
-   `StoryAdat+0x88` (SP) the attack is a diplomatic incident (`DiplomaciaMegtamadas`,
-   `BirodalomMegtamad`). `Story_SpWarTiltas` → no battle at all.
+   `StoryAdat+0x88` (SP) the attack is a diplomatic incident (`DiplomaciaMegtamadas(o₁, o₂, 0, 0)`; the
+   exe's `BirodalomMegtamad` call goes to an empty function, 0x559ad0), then `StoryAdat+0x88 := 0`.
+   `Story_SpWarTiltas` → no battle at all.
 3. `P` = planet owner if human-controlled (`PlayerKi == 1`), else 0. `any_human` = a participant's or
    the planet owner's empire is human-controlled; `humans` = human-controlled participants other than
    `P`, + 1 if `P`.
@@ -152,9 +160,15 @@ attack a defended planet → `(f, nearest defender fleet within 15 or 0, planet)
 6. Real-time: every participant's order is cleared (`FlottaMozgat(f, 0, …)`), `SpaceWar_NewBattle`
    (joins the battle a participant is already in, else takes a free slot of 10 and `InitSpaceWar`;
    `AddFleet`), then SP: screen 0xB (`AktKepKell`), speed 1, paused; MP: battle-in-progress flags.
-   Auto-resolve: `SimulateSpBattle`, `BattlesWon[winner] += 1`, a message for the human (0x0F/0x10 for
-   a lopsided SP battle, else 0x11/0x12, won/lost), and after a planet battle won with ground units
-   aboard (`+0x54 > 0` and `+0x5c > 0`) `GroundWarIndit(f1, planet)`.
+   Auto-resolve: `SimulateSpBattle(f1, f2, spKozeliBolygo)`, `BattlesWon[winner] += 1`, a message when `EN` owns
+   a participant or the battle planet — whoever plays it (0x0F/0x10 for a lopsided SP battle, else 0x11/0x12,
+   won/lost; `info-messages.md` §3.2), and when f1 still has ships and ground units (`+0x54 > 0`, `+0x5c > 0`)
+   after an attack on a planet (the `planet` argument, not the nearby battle planet) `GroundWarIndit(f1, planet)`.
+
+Port: `Game::space_war` (`game/battles.rs`) runs steps 0–6 where the starmap's loop calls it (the loop pauses there,
+`fleet-movement.md` §4.3); a real-time route is reported (`BattleEvent::SpaceRealTime`) and not run. Verified in the
+save replay (`traces/2026-10-16-save-replay.md`, `replay-quick1-battles-*`): 11 battles incl. one against a battle
+planet whose defence ships fought for the defending fleet.
 
 ## 5. Auto-resolve (`SimulateSpBattle(f1, f2, planet)`)
 Integer only, RNG stream **7** (`time-and-rng.md` §3). Story bookkeeping (`spwsflotta` × 2 at exe
@@ -199,8 +213,13 @@ keeps one target until it dies ("focus fire"). The exe reads unit 0 (uninitialis
 harmless, it only re-zeroes the target.
 ### 5.3 Aftermath
 1. Destroyed units, side 1 then side 2, unit order: ship → `HajoDelete`; fighter → `TankDelete(fleet,
-   design, 1)`; planet ship → its slot zeroed, then the list is compacted; gun → `EpuletDelete(planet, slot)`.
-2. `SpWarKiNyert` (exe 0xBAA1EC, also the return value) = winner's owner.
+   design, 1)`; planet ship `k` → its slot `+0xfe + 2k` := 0; gun → `EpuletDelete(planet, slot)`. Then the
+   defence-ship list closes up in place: for `i = 1` while `i ≤ n` (`+0x114`): a zero slot → `n −= 1`, stop if
+   `n < i`, else slots `i..=n` := slots `i+1..=n+1` (and test slot `i` again); a non-zero one → `i += 1`. The old
+   last entry stays behind the new end (a destroyed last ship stays 0; runtime-confirmed).
+2. `SpWarKiNyert` (exe 0xBAA1EC, also the return value) = winner's owner (`spwsflotta[winner − 1].owner`: the
+   planet's owner for side 2 without f2). `spwsflotta` gets the results (3 won, 1 lost; a stalemate gives side 1 a 2 and side 2 a 3) and
+   `Story_SpaceBattleFinished(spwsflotta, 2, false)` stores them for the story (`campaign.md`).
 3. The loser's fleet (side 2 → f2, i.e. fleet slot **0** for a planet) backs off unless its slot is
    free: `FlottaArrebPakol`, f32: `d = centre(owner) − pos` (`MiBirodalomKozeppontX/Y`, exe
    0xDB2848/0xDB2898, i32), `l = (f32)sqrt((f64)(dy² + dx²)) + 0.001f`, `pos += d × 6.0 / l`.
@@ -210,8 +229,10 @@ harmless, it only re-zeroes the target.
 capacity** go: `x = +0x5c − +0x78`; for each vehicle entry of the fleet with a non-fighter design
 (`+0x36 == 0`) while `x > 0`: `TankDelete(f, d, min(x, count))` — `x` is not reduced, so every entry
 loses up to `x` [original bug]. Then a fleet with `+0x54 < 1` that isn't a wormhole/protected
-(`+0x53 & 0x44`) is reported over the network if it's the human's, and deleted if its owner isn't
-human-controlled. `TankDelete(f, d, n)` (core 0x541510): the **lowest-index** entry with that fleet
+(`+0x53 & 0x44`) is reported over the network if its owner is `EN` (`Multi_Send(0x1b, EN, f)`; not while the
+battle screen holds it as one of its two fleets), and deleted if its owner isn't human-controlled
+(`PlayerKi != 1`). The 0x1b message reaches `MULTIGET_Starmap` (ELF 0x719680) in a later frame, even in SP, and
+deletes the fleet (`FlottaDelete`) if it still holds no ships: `Game::fleet_emptied`. `TankDelete(f, d, n)` (core 0x541510): the **lowest-index** entry with that fleet
 and design loses `min(n, count)`; count < 1 frees it; then the sums (§3) with −n. `FlottaDelete(f)`
 (not wormholes): fleets with an attack order on f stop (`FlottaMozgat(g, 0, …)`), every ship
 (`HajoDelete`, which can re-enter `FlottaDelete` on the last ship) and vehicle (`TankDelete`) goes,

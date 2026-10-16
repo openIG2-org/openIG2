@@ -215,34 +215,40 @@ impl Grid {
     }
 
     /// `LocatePos(DecodedCheckAllocation, cx, cy, &x, &y, w, h)` (spec §5).
-    pub fn search(&self, (cx, cy): (i32, i32), w: i32, h: i32) -> Option<(i32, i32)> {
-        if !(10..=189).contains(&cx) || !(10..=189).contains(&cy) {
-            return None;
-        }
-        let a = cx - (w / 2 + 1);
-        let b = cy - (h / 2 + 1);
-        let c = SIDE - (w / 2 + 1) - cx;
-        let d = SIDE - (h / 2 + 1) - cy;
-        let reach = 0.max(a).max(b).max(c).max(d);
-        for r in 0..reach {
-            for k in 0..=r {
-                let candidates = [
-                    (r <= a && k <= b, (cx - r, cy - k)),
-                    (r <= a && k <= d, (cx - r, cy + k)),
-                    (r <= c && k <= b, (cx + r, cy - k)),
-                    (r <= c && k <= d, (cx + r, cy + k)),
-                    (r <= b && k <= a, (cx - k, cy - r)),
-                    (r <= b && k <= c, (cx + k, cy - r)),
-                    (r <= d && k <= a, (cx - k, cy + r)),
-                    (r <= d && k <= c, (cx + k, cy + r)),
-                ];
-                if let Some(&(_, p)) = candidates.iter().find(|(ok, p)| *ok && !self.taken(p.0, p.1, w, h)) {
-                    return Some(p);
-                }
+    pub fn search(&self, start: (i32, i32), w: i32, h: i32) -> Option<(i32, i32)> {
+        locate_pos(start, w, h, |x, y| self.taken(x, y, w, h))
+    }
+}
+
+/// `LocatePos(taken, cx, cy, &x, &y, w, h)` (exe 0x486610, spec §5): the square spiral from `(cx, cy)`
+/// (which must lie in 10..=189) to the first cell `taken` refuses; `w`, `h` only bound the reach.
+pub fn locate_pos((cx, cy): (i32, i32), w: i32, h: i32, taken: impl Fn(i32, i32) -> bool) -> Option<(i32, i32)> {
+    if !(10..=189).contains(&cx) || !(10..=189).contains(&cy) {
+        return None;
+    }
+    let a = cx - (w / 2 + 1);
+    let b = cy - (h / 2 + 1);
+    let c = SIDE - (w / 2 + 1) - cx;
+    let d = SIDE - (h / 2 + 1) - cy;
+    let reach = 0.max(a).max(b).max(c).max(d);
+    for r in 0..reach {
+        for k in 0..=r {
+            let candidates = [
+                (r <= a && k <= b, (cx - r, cy - k)),
+                (r <= a && k <= d, (cx - r, cy + k)),
+                (r <= c && k <= b, (cx + r, cy - k)),
+                (r <= c && k <= d, (cx + r, cy + k)),
+                (r <= b && k <= a, (cx - k, cy - r)),
+                (r <= b && k <= c, (cx + k, cy - r)),
+                (r <= d && k <= a, (cx - k, cy + r)),
+                (r <= d && k <= c, (cx + k, cy + r)),
+            ];
+            if let Some(&(_, p)) = candidates.iter().find(|(ok, p)| *ok && !taken(p.0, p.1)) {
+                return Some(p);
             }
         }
-        None
     }
+    None
 }
 
 #[cfg(test)]

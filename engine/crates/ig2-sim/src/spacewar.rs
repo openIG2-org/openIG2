@@ -32,6 +32,39 @@ pub struct Hull {
     pub tech: i32,
 }
 
+/// `TervClear(e, d)` on a design record (`ai-empire.md` §10.2).
+pub fn clear_design_record(r: &mut [u8; 0x84]) {
+    r[0x18] = 1;
+    r[0x19] = 0;
+    r[0x1a] = 0;
+    r[0x1c..0x20].fill(0);
+    r[0x6c..0x71].fill(0);
+    r[0x74..0x80].fill(0);
+    r[0x50..0x6a].fill(0);
+    r[0x80..0x84].fill(0);
+}
+
+/// `TervNew(e, id)` on `e`'s raw design table (`ai-empire.md` §10.2): the lowest deleted record (class < 0), else
+/// a new one at the end (`fresh(index)` gives its bytes before the writes: uninitialised in the original). The
+/// record is cleared, listed, and gets `+0x40 = id > 0 ? id : race`. Returns its index.
+pub fn new_design_record(table: &mut Vec<[u8; 0x84]>, race: u8, id: i32, fresh: impl FnOnce(usize) -> [u8; 0x84]) -> usize {
+    if table.is_empty() {
+        table.push([0; 0x84]);
+    }
+    let n = table.len() - 1;
+    let d = (1..=n).find(|&k| i16::from_le_bytes([table[k][0x16], table[k][0x17]]) < 0).unwrap_or_else(|| {
+        table.push(fresh(n + 1));
+        n + 1
+    });
+    let r = &mut table[d];
+    r[0] = 0;
+    clear_design_record(r);
+    r[0x18] = 1;
+    let owner = if id > 0 { id as u16 } else { race as u16 };
+    r[0x40..0x42].copy_from_slice(&owner.to_le_bytes());
+    d
+}
+
 /// What `TervUjraSzamol` reads from the rules tables (all from the user's exe, `ig2-rules`).
 #[derive(Debug, Clone, Default)]
 pub struct DesignRules {
@@ -685,6 +718,70 @@ impl CombatWorld {
         }
         if let Some(des) = design_of(&self.designs, fl.owner, design).cloned() {
             self.fleets[fleet as usize].totals.add_vehicle(&des, -n);
+        }
+    }
+
+    /// `TankNew(f, d, n)` for a fleet (`production-research.md` §5.1): the last live entry of `f` with design `d`
+    /// grows, else the last free entry (else a new one) takes the units.
+    pub fn new_vehicles(&mut self, fleet: i16, design: i16, n: i32) {
+        let vs = &mut self.vehicles;
+        let live = (1..vs.len()).rev().find(|&i| vs[i].design != NO_DESIGN && vs[i].design == design && vs[i].fleet == fleet);
+        let slot = match live.or_else(|| (1..vs.len()).rev().find(|&i| vs[i].design == NO_DESIGN)) {
+            Some(i) => i,
+            None => {
+                if vs.len() > crate::production::MAX_VEHICLE_ENTRIES {
+                    return;
+                }
+                if vs.is_empty() {
+                    vs.push(Vehicle { fleet: 0, design: NO_DESIGN, count: 0 });
+                }
+                vs.push(Vehicle { fleet: 0, design: NO_DESIGN, count: 0 });
+                vs.len() - 1
+            }
+        };
+        let v = &mut vs[slot];
+        if v.design == NO_DESIGN {
+            *v = Vehicle { fleet, design, count: n };
+        } else {
+            v.count = v.count.wrapping_add(n);
+        }
+        let Some(fl) = self.fleets.get(fleet.max(0) as usize).copied() else { return };
+        if fleet < 1 || !fl.alive() {
+            return;
+        }
+        if let Some(des) = design_of(&self.designs, fl.owner, design).cloned() {
+            self.fleets[fleet as usize].totals.add_vehicle(&des, n);
+        }
+    }
+
+    /// `HajoAtpakol(i, g)` (`fleet-movement.md` §4.3): ship `i` moves to fleet `g`; its sums leave the old fleet
+    /// and join `g` (`HajoFlottahozHozzaszamol` −1 / +1, colony ships and terraformers included).
+    pub fn move_ship(&mut self, i: usize, g: usize) {
+        let Ship { fleet: f, design: d } = self.ships[i];
+        if d == NO_DESIGN {
+            return;
+        }
+        self.ships[i].fleet = g as i16;
+        self.ship_totals(f, d, -1);
+        self.ship_totals(g as i16, d, 1);
+    }
+
+    /// The units of `FlottaOsszevon(into, from)`: `from`'s ships in ship order (`HajoAtpakol`), then for every
+    /// vehicle entry of `from` in entry order `TankAtpakol(from, into, d, count)` = `TankDelete(from, d, count)`
+    /// (the lowest-index entry with that design) + `TankNew(into, d, count)`.
+    pub fn merge_units(&mut self, into: usize, from: usize) {
+        for i in 1..self.ships.len() {
+            let s = self.ships[i];
+            if s.fleet as usize == from && s.fleet > 0 && s.design != NO_DESIGN {
+                self.move_ship(i, into);
+            }
+        }
+        for k in 1..self.vehicles.len() {
+            let v = self.vehicles[k];
+            if v.fleet as usize == from && v.fleet > 0 && v.design != NO_DESIGN {
+                self.delete_vehicles(from as i16, v.design, v.count);
+                self.new_vehicles(into as i16, v.design, v.count);
+            }
         }
     }
 

@@ -238,7 +238,8 @@ the copy's state = 1.
   names, read from the exe by `ig2-rules`), `World` = the colony world (`colony_side::ColonyWorld`: planets,
   buildings, money, techs, `BirodalomIsmeri`), the combat world (`spacewar::CombatWorld`: ships, fleets,
   designs), research, the relations (`diplomacy::Relation`), the kidnap table, stream state and a story hook.
-  UI messages, `FelfedezBirodalom`, story specials and tutorial events are `SpyEvent`s.
+  UI messages, the human's reports (`KemJelentesAdd`, `info-messages.md` §3.3), `FelfedezBirodalom`, story
+  specials and tutorial events are `SpyEvent`s; `Game::spy_hooks` carries them out.
 - Original quirks kept: the AI captor's loyalty roll reads its own slot `k` (§4 step 6); `Spy_New`'s rank 20
   reads one entry past `KemRangXPHatar`; mission 12 redraws its loop bound; mission 7's second pass reuses
   the first pass's weighted-choice total; the kidnap mission is disabled every day.

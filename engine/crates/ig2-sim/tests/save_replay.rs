@@ -18,13 +18,18 @@ use ig2_sim::ai::{AiEvent, AiRules, PodRule};
 use ig2_sim::colony::{BuildingKind, ColonyRules, Curve};
 use ig2_sim::colony_side::{tech_strength, AutobuildMode, AutobuildRules, SideRules};
 use ig2_sim::diplomacy::DiplomacyRules;
-use ig2_sim::game::{Fresh, Game, GameEvent, GameRules, Libc};
+use ig2_sim::fleet::StarmapEvent;
+use ig2_sim::game::{BattleEvent, Fresh, Game, GameEvent, GameRules, Libc};
+use ig2_sim::messages::{cstr, Texts, ENTRY};
 use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
 use ig2_sim::research::ResearchRules;
 use ig2_sim::save::{group_chunks, modelled, va, SaveState};
-use ig2_sim::spacewar::{DesignRules, Hull};
+use ig2_sim::save::va::TRADE_OFFERS;
+use ig2_sim::ground::GroundRules;
+use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
+use ig2_sim::trade::{Delivery, TradeEvent, DELIVERY};
 use serde_json::Value;
 
 fn local(var: &str, sub: &str) -> PathBuf {
@@ -49,8 +54,12 @@ fn diff(a: &BTreeMap<String, Vec<u8>>, b: &BTreeMap<String, Vec<u8>>) -> Vec<Str
     for n in a.keys().chain(b.keys().filter(|k| !a.contains_key(*k))) {
         let (x, y) = (a.get(n).map_or(&[][..], |v| &v[..]), b.get(n).map_or(&[][..], |v| &v[..]));
         if x != y {
-            let i = (0..x.len().max(y.len())).find(|&i| x.get(i) != y.get(i)).unwrap();
-            out.push(format!("{n}: len {}/{} first diff at {i:#x}: {:?} / {:?}", x.len(), y.len(), x.get(i), y.get(i)));
+            let at: Vec<usize> = (0..x.len().max(y.len())).filter(|&i| x.get(i) != y.get(i)).collect();
+            let i = at[0];
+            let more: Vec<String> = at.iter().skip(1).take(7).map(|&j| format!("{j:#x}: {:?}/{:?}", x.get(j), y.get(j))).collect();
+            let word = |v: &[u8]| v.get(i & !3..(i & !3) + 4).map(|w| i32::from_le_bytes(w.try_into().unwrap()));
+            out.push(format!("{n}: len {}/{} first diff at {i:#x}: {:?} / {:?} (word {:?} / {:?}; {} bytes; {})", x.len(), y.len(), x.get(i), y.get(i),
+                word(x), word(y), at.len(), more.join(", ")));
         }
     }
     out
@@ -116,7 +125,10 @@ fn saves_round_trip_through_the_sim_state() {
 
 struct Recording {
     dir: PathBuf,
+    /// One per save `k` (`{"k": "save"}`).
     events: Vec<Value>,
+    /// `--stage`: the purchases made between `pre.sav` and save 0 (`{"k": "buy", "e", "msg", "accepted"}`).
+    buys: Vec<Value>,
 }
 
 fn recordings() -> Vec<Recording> {
@@ -127,8 +139,10 @@ fn recordings() -> Vec<Recording> {
     v.into_iter()
         .filter_map(|dir| {
             let text = std::fs::read_to_string(dir.join("replay.jsonl")).ok()?;
-            let events = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-            Some(Recording { dir, events })
+            let all: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+            let (events, rest): (Vec<Value>, Vec<Value>) = all.into_iter().partition(|e| e["k"] == "save");
+            let buys = rest.into_iter().filter(|e| e["k"] == "buy").collect();
+            Some(Recording { dir, events, buys })
         })
         .collect()
 }
@@ -271,7 +285,7 @@ fn game_rules(inst: &Install) -> GameRules {
             military_mode: r.race_ai_military_autobuild.clone(),
             training_cost: r.spy_training_cost.clone(),
             mission_cost_mult: r.spy_race_cost_mult.clone(),
-            design,
+            design: design.clone(),
             pod_slot_max: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.max_count).collect()).collect()).collect(),
             pods: r.pod_types.iter().map(|p| PodRule { id: p.id, techs: std::array::from_fn(|i| p.techs.get(i).copied().unwrap_or(0)) }).collect(),
             ground_priority: r.ai_ground_priority.clone(),
@@ -279,7 +293,48 @@ fn game_rules(inst: &Install) -> GameRules {
         radar: RadarRules { ranges: r.radar_ranges[..6].try_into().unwrap(), planet_ranges: r.planet_radar_ranges[..8].try_into().unwrap() },
         difficulty_production: r.difficulty_production_mult.clone(),
         difficulty_money: r.difficulty_money_mult.clone(),
+        messages: Texts::default(),
+        guns: GunRules {
+            building_tech: r.buildings.iter().map(|b| b.tech).collect(),
+            firepower: r.techs.iter().map(|t| t.firepower).collect(),
+            tech_hp: r.techs.iter().map(|t| t.hp).collect(),
+        },
+        ground: GroundRules {
+            weapons: r.ground_weapons.clone(),
+            hull_hp: r.ground_hull_hp.clone(),
+            building_hp: r.buildings.iter().map(|b| b.max_hp).collect(),
+            map_size: r.ground_map_size,
+            designs: design.clone(),
+            rt_weapons: r.ground_rt_weapons.clone(),
+            fortress: r.ground_fortress_weapons.clone(),
+            turn_speeds: r.ground_turn_speeds.clone(),
+            armour: r.ground_armour.clone(),
+        },
     }
+}
+
+/// `uzenet.txt` in the language the recordings' exe ran in: the one whose texts begin the messages on the
+/// recordings' scrolling lines (English when none shows one).
+fn message_texts(recs: &[Recording]) -> Texts {
+    let mut shown: Vec<(i32, Vec<u8>)> = Vec::new();
+    for rec in recs {
+        let last = load(&rec.dir.join(format!("{}.sav", rec.events.len() - 1)));
+        let main = last.chunk("ScrollUzenetek").unwrap();
+        for e in main.chunks(ENTRY).skip(1) {
+            shown.push((i32::from_le_bytes(e[0x38..0x3c].try_into().unwrap()), cstr(e).to_vec()));
+        }
+    }
+    let texts = |lang| Install::from_env(lang).and_then(|i| i.ok()).and_then(|i| i.read("dataraw/text/uzenet.txt").ok()).map(|raw| Texts::parse(&raw));
+    for lang in Lang::ALL {
+        let Some(t) = texts(lang) else { continue };
+        let fits = |(id, text): &(i32, Vec<u8>)| {
+            t.format(*id, &[]).is_some_and(|f| text.starts_with(&f[..f.windows(2).position(|w| w[0] == b'%').unwrap_or(f.len())]))
+        };
+        if !shown.is_empty() && shown.iter().all(fits) {
+            return t;
+        }
+    }
+    texts(Lang::En).unwrap_or_default()
 }
 
 // ------------------------------------------------------------------------------------------------ the replay
@@ -296,32 +351,67 @@ fn replay_matches_the_exe_tick_by_tick() {
         return;
     }
     let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
-    let rules = game_rules(&inst);
+    let rules = GameRules { messages: message_texts(&recs), ..game_rules(&inst) };
     for rec in recs {
-        let first = load(&rec.dir.join("0.sav"));
+        // A staged recording starts before the purchases (`pre.sav`); they are replayed and checked against save 0.
+        let pre = rec.dir.join("pre.sav");
+        let first = load(&if pre.exists() { pre } else { rec.dir.join("0.sav") });
         let mut state = SaveState::from_save(&first, &tech_defaults);
         state.set_volatile(&volatile(&rec.events[0]));
         // Appended records' uninitialised bytes: from the exe's save after the tick.
         let next: Rc<RefCell<Option<SaveGame>>> = Rc::default();
         let mut game = Game::new(state, &rules);
         game.fleet_name = Some(rec.events[0]["vol"]["alapnev"].as_str().unwrap().as_bytes().to_vec());
+        if let Some(names) = rec.events[0]["vol"]["empnames"].as_array() {
+            game.empire_names = names.iter().map(|n| unhex(n.as_str().unwrap_or_default())).collect();
+        }
+        if let Some(names) = rec.events[0]["vol"]["famnames"].as_array() {
+            game.family_names = names.iter().map(|n| unhex(n.as_str().unwrap_or_default())).collect();
+        }
         let source = next.clone();
         game.uninit = Some(Box::new(move |what| {
             let s = source.borrow();
             let Some(s) = s.as_ref() else { return Vec::new() };
             let rec = match what {
                 Fresh::Fleet(f) => s.fleets.get(f).map(|r| r.to_vec()),
+                Fresh::Ship(i) => s.ships.get(i).map(|r| r.to_vec()),
+                Fresh::Building { planet, slot } => s.buildings.get(planet).and_then(|b| b.get(slot)).map(|r| r.to_vec()),
                 Fresh::Design { empire, design } => s.designs.get(empire).and_then(|d| d.get(design)).map(|r| r.to_vec()),
             };
             rec.unwrap_or_default()
         }));
+        // Every `LoadSave` (the load and each of the tracer's saves) ends in `FlottakUjraSzamol`.
+        game.saved();
         let mut bad = Vec::new();
+        for b in &rec.buys {
+            let msg = Delivery(unhex(b["msg"].as_str().unwrap())[..DELIVERY].try_into().unwrap());
+            let ok = game.buy(b["e"].as_u64().unwrap() as usize, &msg);
+            if ok != b["accepted"].as_bool().unwrap() {
+                bad.push(format!("purchase {b}: accepted {ok}"));
+            }
+        }
+        if !rec.buys.is_empty() {
+            let d: Vec<String> = diff(&game.state.chunks(), &group_chunks(&load(&rec.dir.join("0.sav")))).into_iter().filter(|d| modelled(d.split(':').next().unwrap())).collect();
+            if !d.is_empty() {
+                bad.push(format!("after the purchases (save 0): {} chunk groups differ:
+  {}", d.len(), d.join("
+  ")));
+            }
+            game.saved();
+        }
         let mut unmodelled: BTreeMap<String, usize> = BTreeMap::new();
-        let mut seen = 0;
+        let mut battles = Vec::new();
+        let (mut seen, mut sent) = (0, 0);
         for (k, ev) in rec.events.iter().enumerate().skip(1) {
+            // The lockstep messages the last tick sent reach their handlers in the next frame, before this tick.
+            let emptied: Vec<usize> = game.events[sent..].iter().filter_map(GameEvent::emptied_fleet).collect();
+            for f in emptied {
+                game.fleet_emptied(f);
+            }
+            sent = game.events.len();
             game.advance_clock();
             let exe = load(&rec.dir.join(format!("{k}.sav")));
-            import_trade(&mut game.state, &exe);
+            ui_between_ticks(&mut game.state, &exe, ev);
             import_names(&mut game.state, &exe, &game.events[seen..]);
             seen = game.events.len();
             let want = group_chunks(&exe);
@@ -349,15 +439,40 @@ fn replay_matches_the_exe_tick_by_tick() {
                     d.push(format!("story queue {name} (unsaved): {:?} / {live:?}", q.entries));
                 }
             }
-            if !d.is_empty() {
+            if !d.is_empty() || !bad.is_empty() {
                 bad.push(format!("tick {k} (Ido2 {}): {} chunk groups differ:\n  {}", ev["ido2"], d.len(), d.join("\n  ")));
                 break;
             }
+            game.saved();
             *next.borrow_mut() = std::fs::read(rec.dir.join(format!("{}.sav", k + 1))).ok().and_then(|b| SaveGame::parse(&b).ok());
             game.libc = Libc(ev["seed"].as_u64().unwrap() as u32);
+            let before = game.events.len();
             game.run_tick();
+            for e in game.events[before..].iter().filter(|e| matches!(e, GameEvent::Battle(BattleEvent::Space { .. } | BattleEvent::Ground { .. }))) {
+                battles.push(format!("tick {k}: {e:?}"));
+            }
         }
         eprintln!("{}: {} ticks, events {:?}", rec.dir.display(), rec.events.len() - 1, event_counts(&game.events));
+        // Trader income booked into money and `TradeIncomeThisYear` (fleet-movement.md §4.3; `--traders` stages it).
+        let paid: Vec<(usize, usize, u8, i32)> = game.events.iter().filter_map(|e| match e {
+            GameEvent::Starmap(StarmapEvent::TraderPaid { empire, amount, planet, fleet }) => Some((*fleet, *planet, *empire, *amount)),
+            _ => None,
+        }).collect();
+        eprintln!("trader payments (empire, amount): {paid:?}");
+        for b in &battles {
+            eprintln!("battle {b}");
+        }
+        // The message ids the exe's scrolling line held (posted in the replayed ticks or before), and its spy reports.
+        let mut ids = std::collections::BTreeSet::new();
+        let (mut reports, mut kinds) = (0, std::collections::BTreeSet::new());
+        for k in 0..rec.events.len() {
+            let s = load(&rec.dir.join(format!("{k}.sav")));
+            ids.extend(s.chunk("ScrollUzenetek").unwrap().chunks(ENTRY).skip(1).map(|e| i32::from_le_bytes(e[0x38..0x3c].try_into().unwrap())));
+            reports = i32::from_le_bytes(s.chunk("KemHanyBeszolas").unwrap()[..4].try_into().unwrap());
+            // KemBeszolasok: entry n at n·0x30, +0 the kind (info-messages.md §3.3).
+            kinds.extend(s.chunk("KemBeszolasok").unwrap().chunks(0x30).skip(1).take(reports.max(0) as usize).map(|e| e[0]));
+        }
+        eprintln!("scrolling-line ids seen: {ids:?}; spy reports queued at the end: {reports}, report kinds seen: {kinds:x?}");
         eprintln!("chunks only unported systems change (ticks differing from the loaded save): {unmodelled:?}");
         assert!(bad.is_empty(), "{}", bad.join("\n"));
     }
@@ -368,28 +483,28 @@ const COMPARED_VOLATILE: &[&str] = &[
     "speed", "rnd", "rndossz", "radar2", "radar2sq", "radarsz", "radarszsq", "dipnap", "dipstart", "st_flags", "st_last",
     "st_oldido", "st_szvegzett", "st_delayed", "st_restart", "st_skip", "st_err", "st_signal", "st_addship", "st_special",
     "st_radar", "st_dipl", "st_diplvalasz", "st_arr", "st_gr", "st_youwas", "st_grwin", "st_kem", "abmitepit", "mapcursor",
-    "tradeports",
+    "tradeports", "etahonap", "etadays", "infomonth", "spw_fleets", "spw_planetflag",
 ];
 
-/// What the unported `FRISSIT_Trade` (the merchants, ELF 0x7b0ad0) wrote into chunks the port models, taken from
-/// the exe's save: its stream 11, the merchant countdown `StoryAdat+0xc4`, and the trade fields `+0x6c..+0x80`
-/// (offer count, date) of the design it put on the market. Nothing ported reads them.
-fn import_trade(s: &mut SaveState, exe: &SaveGame) {
-    let seeds = exe.chunk("RandSeed").unwrap();
-    s.mem.write(va::RAND_SEED + 4 * 11, &seeds[44..48]);
-    let adat = exe.chunk("StoryAdat").unwrap();
-    s.mem.write(va::STORY_ADAT + 0xc4, &adat[0xc4..0xc8]);
-    for (ours, theirs) in s.designs.iter_mut().zip(&exe.designs) {
-        for (a, b) in ours.iter_mut().zip(theirs) {
-            if a[0x74..0x80] != b[0x74..0x80] && b[0x6c..0x80].iter().any(|&x| x != 0) {
-                a[0x6c..0x80].copy_from_slice(&b[0x6c..0x80]);
-            }
+/// The UI's part between two ticks (`info-messages.md` §2.3): `FRISSIT_Scroll2` takes texts off the scrolling
+/// line at the display's pace, as many as the exe's save shows taken; the line's text and flag as dumped (when
+/// the recording has them).
+fn ui_between_ticks(s: &mut SaveState, exe: &SaveGame, ev: &Value) {
+    let want = i32::from_le_bytes(exe.chunk("UzenetekDb").unwrap()[..4].try_into().unwrap());
+    let mut t = s.ticker();
+    while t.count > want {
+        t.pop();
+    }
+    s.store_ticker(&t);
+    for (name, at, live) in ev["vol"]["mem"].as_array().unwrap().iter().map(|r| (r[0].as_str().unwrap(), r[1].as_u64().unwrap() as u32, unhex(r[2].as_str().unwrap()))) {
+        if matches!(name, "scrolltext" | "scrollimp") {
+            s.mem.write(at, &live);
         }
     }
 }
 
-/// Localised names the AI gave in the last tick (`DesignPoenosanElnevez`, `MiFoFlottaNev`: text tables the port
-/// doesn't render), taken from the exe's save.
+/// Localised names given in the last tick (the AI's and the story merchant's `DesignPoenosanElnevez`,
+/// `MiFoFlottaNev`: text tables the port doesn't render), taken from the exe's save.
 fn import_names(s: &mut SaveState, exe: &SaveGame, events: &[GameEvent]) {
     for e in events {
         match e {
@@ -397,6 +512,17 @@ fn import_names(s: &mut SaveState, exe: &SaveGame, events: &[GameEvent]) {
                 let (e, d) = (*empire as usize, *design);
                 if let (Some(a), Some(b)) = (s.designs.get_mut(e).and_then(|v| v.get_mut(d)), exe.designs.get(e).and_then(|v| v.get(d))) {
                     a[..0x15].copy_from_slice(&b[..0x15]);
+                }
+            }
+            GameEvent::Trade(TradeEvent::OfferNamed { slot, .. }) => {
+                // The whole name as the exe built it (`name + " " + design name`, which may run past +0x14), over
+                // as many bytes as the longer of the two strings covers.
+                let theirs = exe.chunk("TradeTervek").unwrap();
+                let at = TRADE_OFFERS + (slot * 0x84) as u32;
+                if let Some(b) = theirs.get(slot * 0x84..(slot + 1) * 0x84) {
+                    let ours = s.mem.read(at, 0x84);
+                    let end = |r: &[u8]| r.iter().position(|&c| c == 0).map_or(0x84, |i| i + 1);
+                    s.mem.write(at, &b[..end(b).max(end(&ours))]);
                 }
             }
             GameEvent::Ai(AiEvent::MainFleetNamed { fleet, .. }) => {

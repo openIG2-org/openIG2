@@ -543,8 +543,8 @@ impl War<'_> {
     }
 
     /// `WF::ShotSpecWeapon(x, y, kind, e)` (exe 0x49cb70): the charge goes, one air unit of the first
-    /// carrier is spent; big ships drop 20 bombs (list B kind 1, flown by `missiles_step`), fighters start a
-    /// wave (only its draws and flag: the fighter objects are not ported, `ground-combat.md` §11.11).
+    /// carrier is spent, the impact point is spread by ±4 cells (lines 0x3135/0x3136 or 0x3155/0x3156) and
+    /// the big ships' 20 bombs or the fighter wave are made (`ground-combat.md` §11.15).
     fn shot_spec_weapon(&mut self, x: i32, y: i32, kind: i32, e: i32) {
         let t = &mut self.field.timers[(e - 1) as usize];
         if kind == 0 {
@@ -560,51 +560,10 @@ impl War<'_> {
             return;
         };
         self.field.units[i].air -= 1;
-        let gx = x + self.draw(-4, 4);
-        let gy = y + self.draw(-4, 4);
-        if kind == 1 {
-            // The cell on the battlefield's map (f32 with an f64 tail; x mirrored) and its height.
-            let (w, h) = self.rules.map_size;
-            let fx = (gx as f32 * 0.5 / 99.0 * 100.0 * w) / 99.0;
-            let fy = (gy as f32 * 0.5 / 99.0 * 100.0 * h) / 99.0;
-            let ax = (-(fx as f64 - w as f64 * 0.5)) as f32;
-            let ay = (fy as f64 - h as f64 * 0.5) as f32;
-            let (hx, hy) = ((gx as f64 * 0.25) as f32, (gy as f64 * 0.25) as f32);
-            let z = if hx > 200.0 || hy > 200.0 { 0.0 } else { self.height(hx, hy) };
-            let (zi, top) = (cvtt(z), cvtt(z + 300.0));
-            // 20 bombs from high above, spread around the cell, falling towards a spread point.
-            for _ in 0..20 {
-                let dy = cvtt((self.draw(0, 399) as f32 + ay) - 200.0);
-                let dx = cvtt((self.draw(0, 399) as f32 + ax) - 200.0);
-                let sy = (self.draw(0, 1999) as f32 + ay) - 1000.0;
-                let sx = (self.draw(0, 1999) as f32 + ax) - 1000.0;
-                self.add_bomb([z - 3000.0, sx, sy], [top, dx, dy], 300, 10, zi);
-            }
-        } else if !self.field.lists.fighters_on {
-            // `WF::AddFighters` (exe 0x45b8d0): five fighters, one draw each, unless a wave is still up.
-            self.field.lists.fighters_on = true;
-            for _ in 0..5 {
-                self.draw(0, 4);
-            }
-        }
+        let cx = x + self.draw(-4, 4);
+        let cy = y + self.draw(-4, 4);
+        self.air_strike_objects(cx, cy, kind == 1);
         self.events.push(super::GroundEvent::AirStrike { empire: e, cell: (x, y), big_ships: kind == 1 });
-    }
-
-    /// The bomb of a big-ship strike (exe 0x457ad0): a list-B object of kind 1 from `p` towards `dest`
-    /// (height first), speed `((f64)rndlog(2, 0, 14)/10 + 0.5)·3` × 20; on screen a libc `rand()` picks its
-    /// texture. Its `+0x3c` is uninitialised heap in the exe (the port: 0).
-    fn add_bomb(&mut self, p: [f32; 3], dest: [i32; 3], life: i32, dmg: i32, target: i32) {
-        let k = super::battle::slot(&mut self.field.lists.missiles);
-        let dest = dest.map(|v| v as f32);
-        let mut v = [dest[0] - p[0], dest[1] - p[1], dest[2] - p[2]];
-        super::battle::normalise(&mut v);
-        let s = ((self.draw(0, 14) as f64 / 10.0 + 0.5) * 3.0) as f32 * 20.0;
-        let vel = v.map(|c| s * c);
-        self.field.lists.missiles[k] =
-            Some(super::Missile { vel, pos: p, dest, life, dmg, target, kind: 1, fade: 0.0, by: NONE });
-        if self.ctx.on_screen {
-            (self.libc)();
-        }
     }
 
     // -------------------------------------------------------------------------------------------- §6

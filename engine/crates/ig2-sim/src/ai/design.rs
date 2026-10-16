@@ -52,16 +52,7 @@ impl World<'_> {
 
     /// `TervClear(e, d)` (§10.2).
     fn clear_design(&mut self, e: usize, d: usize) {
-        self.edit_design(e, d, |r| {
-            r[0x18] = 1;
-            r[0x19] = 0;
-            r[0x1a] = 0;
-            r[0x1c..0x20].fill(0);
-            r[0x6c..0x71].fill(0);
-            r[0x74..0x80].fill(0);
-            r[0x50..0x6a].fill(0);
-            r[0x80..0x84].fill(0);
-        });
+        self.edit_design(e, d, crate::spacewar::clear_design_record);
     }
 
     /// `TervNew(e, id)` (§10.2): the lowest deleted design, else a new record at the end. Returns its index.

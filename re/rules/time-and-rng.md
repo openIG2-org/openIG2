@@ -124,7 +124,8 @@ Seeded by `srand(SDL_GetTicks())` at start-up, so **not reproducible**, and not 
 Mostly cosmetic (particles, weather, explosions, music choice, UI), **but these gameplay paths use it too**:
 - ground combat: `WF::Damage`, `WF_Tank::Shot`, `WF_Tank::ShotWithSpecificWeapon`, `WF_Tank::Detonate`, `WF_Tank::Damage`, `WF::RemoveTankGroup`
 - diplomacy decisions: `FeldolgozAjanlat`, `FeldolgozValasz`, `EldontIgenNemValasz`
-- trade: `FRISSIT_Trade`, `TradeRandMerchant`
+- trade: `FRISSIT_Trade` (one draw per new month, only the trade screen's default delivery time: `rules/trade.md`
+  §3.1); `TradeRandMerchant` isn't called by it
 - economy: `FRISSIT_Planet` (2 sites), `SelfDestruct`, `colony_start_build`
 - generation: `GenerateGalaxy`, `NEWGAME_Diplomacy`, `LoadBolygoUrhajok`
 

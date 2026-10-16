@@ -110,6 +110,7 @@ fn slot(b: &[u8], i: usize) -> PlayerSlot {
     let o = i * SLOT;
     PlayerSlot {
         empire: i32_at(b, o),
+        controller: i32_at(b, o + 4),
         screen: b[o + 0x0c],
         open: b[o + 0x14],
         asked: b[o + 0x16],
@@ -170,6 +171,7 @@ fn context(s: &Regions, g: &Value) -> DiplomacyContext {
         ai: flags(&s["mizik"]),
         may_attack: flags(&s["tamadhat"]),
         human: std::array::from_fn(|e| s["ki"][e] == 1),
+        player_ki: s["ki"][..EMPIRES].try_into().unwrap(),
         race: s["faj"][..EMPIRES].try_into().unwrap(),
         human_empire: gi("en") as usize,
         multiplayer: gi("mp") != 0,

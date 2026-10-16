@@ -113,6 +113,12 @@ In this order of precedence:
    Cases 1–2 are verified end to end (`traces/2026-10-15-arrivals.md`): `ig2-sim` runs them inside
    `Starmap::tick` through the `Arrivals` hook (`colony_side::ColonyArrivals`).
 3. **Scripted** (+0x18 bit1): story event 0x10, fleet deleted.
+
+The arrivals' story calls go **inside the loop**, before the fleet is deleted: colonisation
+`Story_Special(10, owner, p)`, terraforming `Story_Special(0x18, owner, p)`, scripted `Story_Special(0x10, id, f)`,
+a wormhole trip `Story_Special(0x14, owner, 1, f, OsszHanyWormhole + 1)` (the last argument is the wormhole
+loop's counter after the loop [original quirk]) and an attack on a protected target `Story_Special(0x12, t, 2, f)`
+(fleet) / `Story_Special(0x12, f, 1, p)` (planet); then `Story_FleetArrivedCheck` at the end of the fleet's step.
 4. Otherwise:
    - move to a planet: virus bookkeeping (bit2: picks up a virus at a planet with an epidemic; spreads it
      via `Virus_CheckTerjedes` at an own planet, or any owned planet for empire 9); then **merge** into the
@@ -120,18 +126,40 @@ In this order of precedence:
      colonising/terraforming/hidden (owners 9 and 10 never merge) — `FlottaOsszevon(other, f)`.
      A merge keeps the larger radar range; a default-named destination takes the source's name and
      story id, and bit11 is recomputed from the name; followers of the source now follow the
-     destination; the source slot is freed. Ships move over (`HajoAtpakol`, not ported).
+     destination; the ships and vehicles move over; the source slot is freed (§4.6).
    - move/attack a **wormhole** fleet (bit10): teleport to the other end, both ends become visible, radar 0.
    - attack a fleet (not protected, not a wormhole): `SpaceWarIndit` — battle, stop the loop.
-   - attack a planet (not protected): ground war if no defender fleet within 15 and no guns/shields/
-     fortress-gate flag, else space war; stop the loop. Planet events −0x1F90/−0x2031 force a ground war.
+   - attack a planet (not protected; exe 0x596d61..0x596e8e): planet events −0x1F90/−0x2031 (`BolygoInfoIs`) →
+     `GroundWarIndit(f, p)`; else `d = SearchBolygohozKozeliFlotta(p, 15.0, own, idle, 0, 0, 0)` (the owner's
+     nearest idle fleet, `production-research.md` §4) and, if `d == 0`, no defence ship (`+0x114 == 0`) and no
+     finished working building (`SearchBuilding(p, k, 1)`) of kinds 0x25, 0x26, 0x24, 0x1F, 0x1E, 0x1D, 0x1C →
+     `GroundWarIndit(f, p)` (which does nothing without ground vehicles), else `SpaceWarIndit(f, d, p)`. Stop the
+     loop.
+   - The battle runs inside the step (`space-combat.md` §4, `ground-combat.md` §2); afterwards the step goes on
+     with the record as the battle left it (a destroyed fleet skips the rest; a deleted target stopped its
+     followers), and the position the step computed is written back even over the loser's retreat
+     (`FlottaArrebPakol` moved f1; the step's locals win: the write at 0x59705d is unconditional). Then, as after every arrival,
+     `Story_SpaceBattleFinishedCheck`, `Story_FleetArrivedCheck` and `Story_GroundBattleFinishedCheck` (exe
+     0x5c9200, 0x5c8c90, 0x5c8d80; the battle's own story check has usually cleared their flags). Port:
+     `Starmap::tick_until_battle` pauses at the battle, `Game` runs it (`game::battles`) and `Starmap::resume` ends
+     the step; production doesn't run in that tick.
    - move to an own fleet: merge into it.
    - then: traders (id 10000..=10999) are paid (below) and stop; other fleets `FlottaTovabbMozgat` unless
      the order was "move to a (non-wormhole) fleet", which keeps following.
-   **Trader income**: nearest planet `n` (§5); unless the trader is hidden: `money[owner(n)] +=
-   (int)(trade_centres(n) × 10000 × (min(banks(n), 1) × 0.5 + 1) × (race 3 ? 2 : 1))`, also counted in
-   `TradeIncomeThisYear`. The trader gets +0x18 bit0 and stops **where it was** (it doesn't snap to
-   the planet).
+   **Trader income** (exe 0x596f09..0x596fdc, `starmap.cpp` line 0x2512): unless the trader has already traded
+   (+0x18 bit0): nearest planet `n` (§5, limit 1e6), `o = owner(n)` (0 for an unowned planet: it is booked to
+   empire 0 all the same), centres = working buildings of kind 48, banks = kind 49 (`0x541150(n, kind, 1)`),
+   ```
+   amount = (int)(((f64)min(banks, 1) × 0.5 + 1.0) × (f64)(centres × 10000) × (f64)(PlayerFaj[o] == 3 ? 2 : 1))
+   MoneyHozzaadLog(o, 0, (f64)amount)          // 0x53fb10 → MoneyHozzaadOld: pool 0, split by the shares;
+                                               // an AI's income × NehezsegPenzSzorzo (× 0.5 in MP), colony-side.md §6.4
+   TradeIncomeThisYear[o] += amount            // i32 at 0xBAE150 + 4·o, the unscaled amount
+   ```
+   all f64 (`cvtdq2pd`/`mulsd`, truncated by `cvttsd2si`). The call happens even for `amount = 0`, which takes
+   `MoneyHozzaadOld`'s spending branch with `a = 0` (pools in debt are re-split by the shares, `Money` re-summed). Nothing later in the
+   fleet loop reads money; the production block after it does (pool 1), so the booking must land before it.
+   Port: `Arrivals::trader_paid` (`ColonyArrivals` books it into the colony world), plus `StarmapEvent::TraderPaid`.
+   The trader gets +0x18 bit0 and stops **where it was** (it doesn't snap to the planet).
 
 ### 4.4 Idle traders (after the step)
 A trader (owner 9, id 10000..=10999) with no order picks a destination: if it has traded (+0x18 bit0)
@@ -148,6 +176,44 @@ never accepts.)
 ### 4.5 Clean-up
 A fleet with ship count < 1 that isn't a wormhole/protected (`+0x53 & 0x44 == 0`): the human's is
 reported over the network (MP), an AI's is deleted.
+
+### 4.6 Merges and deletions: the units
+Evidence: ELF `FlottaOsszevon` 0x617000 / exe 0x53d860, `HajoAtpakol` 0x617540 / exe 0x53e510, `TankAtpakol`
+0x617700 / exe 0x541410, `FlottaDelete` 0x6167d0 / exe 0x53d040 (exe = ELF, no inlining differences).
+
+**`FlottaOsszevon(into, from)`** (both in 1..=`OsszHanyFlotta`, distinct), in this order:
+1. radar `+0x7c` = the larger; `into` named exactly `AlapFlottaNev` → `strcpy` from `from` (up to and including the
+   NUL: the bytes after it stay); story id from `from` if `into`'s is 0; bit 11 = name ≠ `AlapFlottaNev`.
+2. Fleets `g` ≠ `into`, `from` (live, order > 0, kind 2, target `from`) → `FlottaMozgat(g, g.order, 2, into)`,
+   keeping their bit 5.
+3. Every ship of `from` in ship order → `HajoAtpakol(i, into)`: the ship's fleet becomes `into`;
+   `HajoFlottahozHozzaszamol(from, d, −1)` then `(into, d, +1)` (`space-combat.md` §3: totals `+0x54..+0x78`, colony
+   ships `+0x4c` / terraformers `+0x4e` with their pools ±1, design 28's flag). The starmap's transfer screen
+   flags (`StarmapTransferValtozott*`, `StarmapAktFlottaValtozott`) are UI only.
+4. Every vehicle entry `k` of `from` in entry order → `TankAtpakol(from, into, d_k, count_k)` = `TankDelete(from, d,
+   n)` (the lowest-index entry of `from` with design `d`) + `TankNew(into, d, n)` (`production-research.md` §5.1:
+   the last live entry of `into` with `d` grows, else the last free entry, else a new one).
+5. `OsszHanySajatFlotta[from.owner] −= 1`, `from.owner = 0xFF`.
+6. `into`'s bit 5 is cleared for a human owner (`PlayerKi == 1`) and when colony ships + terraformers == ships
+   (**after** the transfer: `+0x54` is the merged count).
+7. `AktFleet` (the selection, saved) == `from` → `into`; likewise the transfer screen's two fleets (UI).
+
+Later fleets of the same tick see the merged strengths (`+0x60`, the next merge choice) and counts (clean-up §4.5).
+
+**`FlottaDelete(f)`** (not a wormhole): followers' orders cleared; every ship of `f` → `HajoDelete` (the ship
+goes, its sums leave `f`, vehicles beyond the capacity go; an emptied **AI** fleet is deleted **from inside**:
+the last `HajoDelete` re-enters `FlottaDelete(f)`, which deletes the remaining vehicles, counts the owner down
+and sets the owner to 0xFF); every vehicle entry → `TankDelete`; `OsszHanySajatFlotta[owner] −= 1` with the owner
+read **now**: after the re-entry that is 0xFF, whose counter is exe 0xBB40B0 + 0x3FC = 0xBB44AC =
+`Tankok[96].count` [original bug]; the owner = 0xFF. So a colony ship's or terraformer's arrival, a scripted
+arrival and a dead empire's fleet (§4.1) take their ships with them. `HajoDelete` takes the colony ship
+out of the pool once more (`OsszHanyKolonizalo −= 1`; the colonising order had already done so, §2), and so the
+pools of a colonising or terraforming empire run one below the count until the next refresh (§6.3 step 2).
+
+**`LoadSave`** (exe 0x543c80) ends, after loading **and after writing** a save, with `KemKuldetesek[0x160] = 0`,
+`FRISSITES_IGAZIT()` (UI) and `FlottakUjraSzamol()` (`ai-empire.md` §12.9: every total, colony-ship and terraformer
+count, pool and garrison recounted from the ships and vehicles). Saving therefore changes the game: the
+pools count colonising fleets' ships again. The save replay models it (`Game::saved`) after every traced save.
 
 ## 5. Nearest planet (`SearchFlottahozKozeliBolygo(f, limit, own_only, skip_protected)`)
 Manhattan distance `|dx| + |dy|` (f32), strictly smaller than the running best (initially `limit`), over
@@ -267,8 +333,7 @@ reveals, design stealth) with `!= 0` where the ELF uses `& 1`; the supply fade m
 
 ## 10. Not ported
 The space-war in-battle marking (§6.3 step 8: an input, the list of fleets in battle),
-and side effects owned by other systems, reported as events: arrivals (merges, battles, colonisation,
-terraforming, story, trader payment) and radar consequences (story event 0x0B / `FelfedezBirodalom` on
+and side effects owned by other systems, reported as events: arrivals (battles, virus spread) and radar consequences (story event 0x0B / `FelfedezBirodalom` on
 meeting an empire, `Story_ArrivedToRadarRange*`, the "enemy approaching" message, the tutorial rename).
 
 ## 11. Verification
@@ -282,5 +347,11 @@ owners, radar stations, stealth and radar designs, boosters, story fields); §6 
 `traces/2026-10-15-radar.md` §"Enemy approaching": `run_fleet.py --fuzz-approach` (×16, staged unseen
 attacks on the human on refresh ticks, sometimes with the SP speed lock) pins the same-tick slow-down of
 §6.3 step 6: 57 slow-downs and the locked ticks replay exactly; keeping the old speed gives 279 mismatches.
+Merges, colonisation, terraforming and deletions with their units (§4.3, §4.6) are verified byte-exact in the save
+replay (`traces/2026-10-16-merges.md`: `run_replay.py --merges`, 36 ticks: 7 merges with vehicles, a name copy, a
+retargeted follower, colonisation and terraforming by the human and the AI, a dead empire's fleet).
+`ig2-sim` runs them inside `Starmap::tick` through `Arrivals::merge_units` / `Arrivals::delete_units`
+(`game::StarmapHooks` on the combat view: `CombatWorld::merge_units`, `delete_ship`). Wormhole trips are ported
+from the decompile only (quick.scn has no wormholes; the staging adds a trip when a save has one).
 The f64 booster sum (§6.3 step 4) is pinned by the asm only (`cvtss2sd`/`addsd`/`cvtsd2ss`
 @ 0x594fc2..0x594fca): the traced values round identically either way.

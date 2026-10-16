@@ -2,11 +2,14 @@
 (tools/trace/replay.js), for the port's save replay (engine/crates/ig2-sim/tests/save_replay.rs).
 
 Usage (project venv): _local/venv/Scripts/python.exe -u tools/trace/run_replay.py <install-dir> <save> <out-dir>
-          [--ticks 40] [--speed 3] [--seed 4242] [--slot 99] [--seconds 400]
+          [--ticks 40] [--speed 3] [--seed 4242] [--slot 99] [--seconds 400] [--stage] [--traders] [--spies] [--merges] [--battles [--battles-mode space|ground]]
 The input save is copied to the game's data directory (%LOCALAPPDATA%/GyroscopeGames/ig2) as save<slot>.sav and
 loaded with the exe's `LoadSave(slot, name, 1)`; the game then writes save<100+k>.sav per tick, which this script
 moves to <out-dir>/<k>.sav, with <out-dir>/replay.jsonl (one line per save: tick, seed, non-saved globals). Files
 the game had in those slots are moved aside and put back afterwards.
+--stage exercises the trade market (re/rules/trade.md): replay.js edits the loaded state (a trade port, an early
+story merchant, old offers, pending deliveries) and saves it as <out-dir>/pre.sav, then makes the human buy through
+the exe's MULTIGET_Trade (the messages go to replay.jsonl as {"k": "buy"}) before save 0.
 The output holds game state derived from the user's install: keep it under _local/, never commit it.
 Run in the foreground: launched from a background shell the game stalled after loading.
 """
@@ -29,6 +32,23 @@ ap.add_argument("--seed", type=int, default=4242, help="libc rand() is reseeded 
 ap.add_argument("--slot", type=int, default=99)
 ap.add_argument("--seconds", type=float, default=400)
 ap.add_argument("--scenario", default="scenario/quick.scn")
+ap.add_argument("--stage", action="store_true", help="stage trade purchases and deliveries before save 0")
+ap.add_argument("--randlog", action="store_true", help="report the callers of libc rand() per tick ('rands')")
+ap.add_argument("--story-countdown", type=int, default=100, help="--stage: StoryAdat+0xc4 (story merchant) in Ido")
+ap.add_argument("--traders", action="store_true",
+                help="give empire planets trade centres/banks and move traders near their targets before save 0")
+ap.add_argument("--spies", action="store_true",
+                help="stage spy missions, catch checks and reports for the first daily spy pass (info-messages.md 3.3)")
+ap.add_argument("--spies-mode", default="base", choices=["base", "force1", "force2", "force3", "lost"],
+                help="--spies: the staged mix; force1/2/3 also set the SP debug switch 0xB77250 (success/caught/recruit)")
+ap.add_argument("--battles", action="store_true",
+                help="stage auto-resolved space battles / ground wars for the first ticks (info-messages.md 3.2)")
+ap.add_argument("--battles-mode", default="space", choices=["space", "ground"])
+ap.add_argument("--lopsided-tanks", type=int, default=40, help="--battles-mode ground: vehicles of the lopsided attacks")
+ap.add_argument("--even-tanks", type=int, default=16, help="--battles-mode ground: vehicles of the even attacks")
+ap.add_argument("--merges", action="store_true",
+                help="stage fleet merges, colonise/terraform arrivals, a dead empire's fleet and a wormhole trip before save 0")
+ap.add_argument("--trader-near", type=float, default=0.5, help="--traders: distance left to the trader's planet")
 a = ap.parse_args()
 
 data_dir = os.path.join(os.environ["LOCALAPPDATA"], "GyroscopeGames", "ig2")
@@ -42,7 +62,7 @@ def slot_file(n):
 
 
 moved = []
-for n in [a.slot] + list(range(100, 100 + a.ticks + 2)):
+for n in [a.slot, 98] + list(range(100, 100 + a.ticks + 2)):
     if os.path.exists(slot_file(n)):
         shutil.move(slot_file(n), os.path.join(aside, f"save{n}.sav"))
         moved.append(n)
@@ -76,6 +96,16 @@ def on_message(msg, _data):
             saved += 1
             if saved % 10 == 1:
                 print(f"save {ev['idx']} ({ev['where']}): Ido {ev['ido']} Ido2 {ev['ido2']}")
+        elif ev["k"] == "pre":
+            shutil.move(slot_file(ev["slot"]), os.path.join(a.out, "pre.sav"))
+            log.write(json.dumps(ev) + "\n")
+            print("staged:", ev["stage"])
+        elif ev["k"] == "buy":
+            log.write(json.dumps(ev) + "\n")
+            print("buy: accepted" if ev["accepted"] else "buy: rejected")
+        elif ev["k"] in ("traders", "spies", "merges", "battles"):
+            log.write(json.dumps(ev) + "\n")
+            print(ev["k"], "staged:", ev["stage"])
         elif ev["k"] == "done":
             finished = True
         else:
@@ -89,7 +119,10 @@ script = session.create_script(agent)
 script.on("message", on_message)
 script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "slot": a.slot, "speed": a.speed, "ticks": a.ticks,
-                                           "seed": a.seed}})
+                                           "seed": a.seed, "stage": a.stage,
+                                           "traders": a.traders, "traderNear": a.trader_near, "spies": a.spies, "spiesMode": a.spies_mode, "merges": a.merges, "battles": a.battles, "battlesMode": a.battles_mode, "lopsidedTanks": a.lopsided_tanks, "evenTanks": a.even_tanks,
+                                           "storyCountdown": a.story_countdown,
+                                           "randlog": a.randlog}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()

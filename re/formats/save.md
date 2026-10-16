@@ -158,7 +158,8 @@ per tech. Then `KutatasSurgos` 0xB9C014 (0x13), `ResearchAktFejlesztett` 0xB9A9B
 ### 4.11 Designs and trade
 `OsszHanyTerv` 0xB9C028 (0x4c); `TervekReallocate()`; for e = 1..18: `Tervek[e][0..=n]` (*(0xB9AA18 + 4e),
 (n+1)·0x84). `[TradeHanyTradeCuccVan]` 0xF439CC + `TradeTervek` 0xB9AAF0 (n·0x84), `TradeHanySzallitas` 0xF66DE0
-(0x4c), for e = 1..18 `TradeSzallitas[e]` 0xF45780 + e·0x1DB0 (n·0x98), `TradeOldNap` 0xF66E2C (4).
+(0x4c), for e = 1..18 `TradeSzallitas[e]` 0xF439D0 + e·0x1DB0 (n·0x98; empire 1 at 0xF45780), `TradeOldNap`
+0xF66E2C (4). Layouts: `rules/trade.md` §1.
 
 ### 4.12 Buildings
 `AktEpuletTipus` 0xB9C0C4 (4), `HanyEpulet` 0xBA9518, `HanyEpuletLefoglalva` 0xBA9840, `HanyEpuletBlokk` 0xBA9B68

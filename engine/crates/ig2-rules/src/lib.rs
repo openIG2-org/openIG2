@@ -100,6 +100,9 @@ pub mod layout {
     pub const GROUND_SLOPE_LIMITS: (u32, usize, usize) = (0x8F8574, 4, 5);
     /// Armour factors by ground hull and hit side (front, side, rear): `SetRealDamage` divides by them.
     pub const GROUND_ARMOUR: (u32, usize, usize) = (0x8F858C, 4, 15);
+    /// The campaign tables `StoryEleje`, `StoryElejeSeq`, `StoryLine`, `StoryScenario`, `RndStoryk`,
+    /// `RndStoryValasztas`, `StoryHosok`, `RndHosok` (contiguous; `re/rules/campaign.md` §8.1).
+    pub const CAMPAIGN: (u32, usize, usize) = (0x928340, 4, 411);
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -412,6 +415,9 @@ pub struct Rules {
     pub ground_turn_speeds: Vec<f32>,
     /// Armour factors `[hull·3 + side]` (exe 0x8F858C, f32 × 15; side 0 front, 1 flank, 2 rear).
     pub ground_armour: Vec<f32>,
+    /// The campaign tables as the exe's words from VA 0x928340 (`re/rules/campaign.md` §8.1); the story
+    /// engine indexes them like the exe (`ig2_sim::campaign::CampaignTables`).
+    pub campaign_words: Vec<i32>,
     /// Slope limits of the passability layers 0..5 (exe 0x8F8574, f32 × 5; `GenerateMap` uses 1..=4).
     pub ground_slope_limits: Vec<f32>,
 }
@@ -655,6 +661,7 @@ impl Rules {
             ground_fortress_weapons: ints(layout::GROUND_FORTRESS_WEAPONS)?.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect(),
             ground_turn_speeds: floats(layout::GROUND_TURN_SPEEDS)?,
             ground_armour: floats(layout::GROUND_ARMOUR)?,
+            campaign_words: ints(layout::CAMPAIGN)?,
             ground_slope_limits: floats(layout::GROUND_SLOPE_LIMITS)?,
             spy_training_xp: ints(layout::SPY_TRAINING_XP)?,
             spy_names: spy_names(&img)?,

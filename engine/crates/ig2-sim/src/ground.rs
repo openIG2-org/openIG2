@@ -11,8 +11,8 @@
 //! mine; none changes the outcome) come from the injected [`War::libc`] (ADR 0003).
 //!
 //! The battle AI (`WF::MI`, stream 13) is [`War::mi`] (`ground/ai.rs`, `re/rules/ground-ai.md`).
-//! Not ported (spec §9): the real-time battle (`WF::Refresh`, shots, projectiles,
-//! mines, transporters), `LocateTankSuitablePosition` (a hook: [`War::place`]), turret creation.
+//! The real-time battle (spec §11) lives in `ground/{realtime, battle, tick, path, voices}.rs`, its
+//! transporters (the dropships and the landing orders, §11.16) in `ground/transport.rs`.
 
 use crate::colony::{flag as bflag, Building};
 use crate::rng::{stream, Streams};
@@ -24,6 +24,7 @@ mod battle;
 mod path;
 mod realtime;
 mod tick;
+mod transport;
 mod voices;
 pub use ai::GroundAi;
 pub use atjaras::{generate_map, Passability};
@@ -31,6 +32,7 @@ pub use battle::*;
 pub use path::PathOut;
 pub use realtime::*;
 pub use tick::Clock;
+pub use transport::drop;
 pub use voices::{VoiceLine, Voices};
 
 /// "No unit" (`10000` throughout `grwar.cpp`).
@@ -48,6 +50,8 @@ pub mod flag {
     pub const BONUS: u32 = 1;
     /// Not placed yet (in the transporter); a turret: destroyed.
     pub const NOT_PLACED: u32 = 2;
+    /// A story "mad tank" (`StoryMadTankFrissit`, real time only).
+    pub const MAD: u32 = 4;
     pub const MESH: u32 = 0x10;
     pub const MESH2: u32 = 0x20;
     pub const PLACED: u32 = 0x40;
@@ -353,11 +357,9 @@ pub enum GroundEvent {
     Captured { owner: u8 },
     /// `BolygoElfoglal(p, 0)`: no building left.
     Abandoned,
-    /// `WF::ShotSpecWeapon`: the ground AI called an air strike on a cell (its bombs / fighters are not
-    /// ported, `ground-combat.md` §11.11).
+    /// `WF::ShotSpecWeapon`: the ground AI called an air strike on a cell (before the spread; the bombs or
+    /// the fighter wave are in [`Field::lists`], `ground-combat.md` §11.15).
     AirStrike { empire: i32, cell: (i32, i32), big_ships: bool },
-    /// `WF::DamageBuilding`: a building hit directly (real-time only) shares the damage with its turrets.
-    BuildingHit { slot: usize, damage: i32 },
 }
 
 /// What a war did (diagnostics for the trace report; no gameplay effect).
@@ -551,7 +553,7 @@ impl<'a> War<'a> {
             // A new object: the constructor draws a libc `rand()` for a cosmetic float.
             let r = (self.libc)();
             self.field.units[i] = Group::default();
-            self.field.units[i].rt.phase = (r % 500 - 0x672) as f32;
+            self.field.units[i].rt.drop = TankRt::dropship_start(r);
         }
         let i = i as i32;
         let u = self.um(i);
@@ -1112,7 +1114,13 @@ impl<'a> War<'a> {
         me.target = t;
         me.flags |= flag::HAS_TARGET;
         let my_owner = me.owner;
-        if t >= 0 && (t as usize) < self.n() {
+        if t < 0 {
+            // `+0x14c`: the range plus half the building's width (`Building` 0x8F1F28 `+0x58`).
+            let kind = self.planet.buildings.get((-t) as usize).map_or(0, |b| b.kind);
+            let w = self.map.map_or(0, |m| m.footprints.get(kind as usize).map_or(0, |f| f.0));
+            let me = self.um(i);
+            me.rt.bld_range = (w / 2) as f32 + me.rt.range;
+        } else if (t as usize) < self.n() {
             let tt = self.um(t);
             if tt.owner != tt.side && tt.owner == my_owner {
                 tt.paralysed = 0;
@@ -1120,14 +1128,78 @@ impl<'a> War<'a> {
         }
     }
 
-    /// `EpuletDamage(p, slot, dmg, turret)`: building damage (`+4`, never below 0).
-    fn building_damage(&mut self, slot: i32, dmg: i32, turret: bool) {
+    /// `EpuletDamage(p, slot, dmg, turret, by)` (exe 0x53c6e0): building damage (`+4`, never below 0); unless
+    /// `turret`, `WF::DamageBuilding` shares it with the building's turrets (negative: a repair).
+    pub fn building_damage(&mut self, slot: i32, dmg: i32, turret: bool, by: i32) {
         if let Some(b) = self.planet.buildings.get_mut(slot.max(0) as usize) {
             b.damage = b.damage.wrapping_add(dmg).max(0);
         }
         if !turret {
-            self.events.push(GroundEvent::BuildingHit { slot: slot.max(0) as usize, damage: dmg });
+            self.turrets_share(slot, dmg, by);
         }
+    }
+
+    /// The placed turrets of building `slot` in slot order (`flags & 2` clear).
+    fn building_turrets(&self, slot: i32) -> Vec<i32> {
+        (0..self.n() as i32)
+            .filter(|&i| self.alive(i) && self.u(i).flags & flag::NOT_PLACED == 0 && self.u(i).turret() && self.u(i).building == slot)
+            .collect()
+    }
+
+    /// `WF::DamageBuilding(p, slot, dmg, by)` (exe 0x46d270, spec §5.5): a defence building (kinds
+    /// 0x1c..=0x23) hit directly passes the damage on to its turrets, `dmg / (turrets left)` each in slot
+    /// order (`WF_Tank::Damage`; a destroyed turret group is removed); with no turret left the building is
+    /// deleted at once. Negative damage repairs them (hit marker set) or re-places the last unplaced one.
+    /// Then the building's damage := its hit points − the turrets' first-member hit points.
+    fn turrets_share(&mut self, slot: i32, dmg: i32, by: i32) {
+        let Some(kind) = self.planet.buildings.get(slot.max(0) as usize).map(|b| b.kind) else { return };
+        if !(0x1c..=0x23).contains(&kind) {
+            return;
+        }
+        if dmg < 0 {
+            let mut heal = -dmg;
+            let worn: Vec<i32> = self.building_turrets(slot).into_iter().filter(|&i| self.u(i).hp.first() != Some(&self.u(i).max_hp)).collect();
+            if worn.is_empty() {
+                let unplaced = (0..self.n() as i32).rev().find(|&i| self.alive(i) && self.u(i).flags & flag::NOT_PLACED != 0 && self.u(i).building == slot);
+                if let Some(i) = unplaced {
+                    let u = self.um(i);
+                    if let Some(h) = u.hp.first_mut() {
+                        *h = heal.min(u.max_hp);
+                    }
+                    u.flags &= !flag::NOT_PLACED;
+                }
+            } else {
+                let n = worn.len() as i32;
+                for (j, &i) in worn.iter().enumerate() {
+                    let share = heal / (n - j as i32);
+                    let u = self.um(i);
+                    if let Some(h) = u.hp.first_mut() {
+                        *h = (*h + share).min(u.max_hp);
+                    }
+                    u.last_hit = Some((10000, by));
+                    heal -= share;
+                }
+            }
+        } else {
+            let turrets = self.building_turrets(slot);
+            if turrets.is_empty() {
+                self.building_delete(slot);
+                self.remove_target(-slot);
+                return;
+            }
+            let (mut left, n) = (dmg, turrets.len() as i32);
+            for (j, &i) in turrets.iter().enumerate() {
+                let share = left / (n - j as i32);
+                if self.unit_damage(i, share, by) {
+                    self.kill(i);
+                }
+                left -= share;
+            }
+        }
+        let sum: i32 = self.building_turrets(slot).iter().map(|&i| self.u(i).hp.first().copied().unwrap_or(0)).fold(0, i32::wrapping_add);
+        // The kind is read again: the last turret's removal may have deleted the building (kind 0).
+        let b = &mut self.planet.buildings[slot as usize];
+        b.damage = self.rules.building_hp.get(b.kind as usize).copied().unwrap_or(0).wrapping_sub(sum);
     }
 
     fn building_fallen(&self, slot: i32) -> bool {
@@ -1159,7 +1231,7 @@ impl<'a> War<'a> {
                 return self.unit_damage(u, dmg, by);
             }
             let slot = self.u(u).building;
-            self.building_damage(slot, dmg, true);
+            self.building_damage(slot, dmg, true, by);
             if !self.building_fallen(slot) {
                 return self.unit_damage(u, dmg, by);
             }
@@ -1172,7 +1244,7 @@ impl<'a> War<'a> {
             self.remove_target(slot); // the slot number as a unit index [original bug]
             return true;
         }
-        self.building_damage(-u, dmg, false);
+        self.building_damage(-u, dmg, false, by);
         if self.building_fallen(-u) {
             if self.ctx.on_screen {
                 // A building hit directly falls: 24 pieces.
@@ -1389,6 +1461,11 @@ impl<'a> War<'a> {
         }
     }
 
+    /// `EpuletDelete(p, slot)` from outside the ground war (a planet gun destroyed in a space battle).
+    pub fn delete_building(&mut self, slot: i32) {
+        self.building_delete(slot);
+    }
+
     /// `EpuletDelete(p, slot)` (exe 0x53c730): turrets go, the slot empties.
     fn building_delete(&mut self, slot: i32) {
         let Some(kind) = self.planet.buildings.get(slot.max(0) as usize).map(|b| b.kind) else { return };
@@ -1396,8 +1473,10 @@ impl<'a> War<'a> {
             self.field.self_destruct = -1;
         }
         // `Remove3dBuilding` (exe 0x497760) on the colony screen: the ruin (`Rom::Rom` 0x455570) bursts
-        // into 24 pieces of debris (libc draws and list-B slots only).
-        if self.ctx.on_screen {
+        // into 24 pieces of debris (libc draws and list-B slots only), while the building still has its 3D
+        // model: not when an emptied slot is deleted again (a turreted building whose last turret fell
+        // inside `WF::DamageBuilding`, spec §5.5).
+        if self.ctx.on_screen && kind != 0 {
             let p = self.building_point_pub(slot);
             self.burst(p, 24, false);
         }

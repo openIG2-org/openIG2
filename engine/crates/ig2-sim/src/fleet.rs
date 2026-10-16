@@ -253,9 +253,28 @@ pub trait Arrivals {
     fn terraform(&mut self, _planet: usize, _owner: u8) -> u8 {
         0
     }
+    /// A trader's income at the nearest planet (spec §4.3): `MoneyHozzaadLog(empire, 0, (f64)amount)` and
+    /// `TradeIncomeThisYear[empire] += amount`, also when `amount` is 0.
+    fn trader_paid(&mut self, _empire: u8, _amount: i32) {}
+    /// `FlottaOsszevon(into, from)`'s units (spec §4.3): every ship of `from` moves to `into` (`HajoAtpakol`), then
+    /// every vehicle entry (`TankAtpakol`); the records' totals (`+0x54`/`+0x60`/`+0x68`) and colony-ship /
+    /// terraformer counts follow, and so do the map's pools. Called after the followers are retargeted, before
+    /// `from` is freed (later fleets of the tick see the new strengths).
+    fn merge_units(&mut self, _into: usize, _from: usize, _map: &mut Starmap) {}
+    /// `FlottaDelete(f)`'s units: every ship (`HajoDelete`) and vehicle entry goes and `OsszHanySajatFlotta[owner]`
+    /// drops. Called after the followers stop, before the slot is freed.
+    fn delete_units(&mut self, _f: usize, _map: &mut Starmap) {}
 }
 
 impl Arrivals for () {}
+
+/// A movement step paused by a battle ([`Starmap::tick_until_battle`]): the fleet and the position its step
+/// reached (written back when the step ends).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paused {
+    pub fleet: usize,
+    pub pos: (f32, f32),
+}
 
 /// Effects of a tick that other systems carry out, or that the UI reports.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -268,15 +287,18 @@ pub enum StarmapEvent {
     /// MP: the human's fleet lost contact; the order change goes over the network instead.
     ContactLostNetwork { fleet: usize },
     Deleted { fleet: usize },
-    /// `Story_FleetArrivedSave`.
-    Arrived { fleet: usize },
+    /// `Story_FleetArrivedSave(f)` on arrival, with what it stores (the record at that moment): the order's target
+    /// type `+0x42`, `(int) +0x44`, the story ids `+0x16` of the fleet and (type 2) of the target fleet.
+    Arrived { fleet: usize, kind: i16, target: i32, fleet_id: i16, target_fleet_id: i16 },
+    /// `Story_FleetArrivedSave(f)` again after arriving at a followed fleet (and merging into it if it is an own one).
+    ArrivalResaved { fleet: usize, kind: i16, target: i32, fleet_id: i16, target_fleet_id: i16 },
     /// Colonisation (carried out by [`Arrivals::colonise`]; story special 10 follows).
     Colonise { fleet: usize, planet: usize },
     /// Terraforming to `surface` ([`Arrivals::terraform`]; star sprites rebuilt, story special 0x18).
     Terraform { fleet: usize, planet: usize, surface: u8 },
     /// Scripted fleet reached its goal (story event 0x10).
     ScriptedArrival { fleet: usize },
-    /// `FlottaOsszevon(into, from)`: `from`'s ships move into `into` (fleet records already updated).
+    /// `FlottaOsszevon(into, from)` (the units moved by [`Arrivals::merge_units`]).
     Merge { into: usize, from: usize },
     /// Virus bookkeeping at a planet (`Virus_CheckTerjedes`, stream 8): may clear the carrier flag.
     VirusSpread { fleet: usize, planet: usize },
@@ -286,6 +308,11 @@ pub enum StarmapEvent {
     PlanetAttack { fleet: usize, planet: usize },
     /// Attack on a story-protected target (story event 0x12).
     ProtectedTarget { fleet: usize },
+    /// `Story_Special(data)` from an arrival (spec §4.3), at its place in the loop: colonisation 10(owner, planet),
+    /// terraforming 0x18(owner, planet), scripted 0x10(story id, fleet), wormhole 0x14(owner, 1, fleet,
+    /// wormholes + 1), protected target 0x12(target fleet, 2, fleet) / 0x12(fleet, 1, planet).
+    StorySpecial([i32; 8]),
+    /// A trader was paid at `planet` (booked through [`Arrivals::trader_paid`]).
     TraderPaid { fleet: usize, planet: usize, empire: u8, amount: i32 },
     /// `BirodalomIsmeri[by][empire]` became set; for the human also story event 0x0B and
     /// `FelfedezBirodalom(empire)` (diplomacy list, "new empire" message).
@@ -438,7 +465,7 @@ impl Starmap {
     }
 
     /// `FlottaDelete`: followers stop, the slot is freed (waypoints aren't returned to the pool).
-    fn delete(&mut self, f: usize, ctx: &StarmapContext, ev: &mut Vec<StarmapEvent>) {
+    fn delete(&mut self, f: usize, ctx: &StarmapContext, arrivals: &mut dyn Arrivals, ev: &mut Vec<StarmapEvent>) {
         if !self.fleets[f].alive() || self.fleets[f].flags & flag::WORMHOLE != 0 {
             return;
         }
@@ -448,12 +475,13 @@ impl Starmap {
                 self.order(g, order::NONE, order::POINT, 0.0, 0.0, ctx, ev);
             }
         }
+        arrivals.delete_units(f, self);
         self.fleets[f].owner = DELETED;
         ev.push(StarmapEvent::Deleted { fleet: f });
     }
 
-    /// `FlottaOsszevon(into, from)` as far as fleet records go; ships move via the event.
-    fn merge(&mut self, into: usize, from: usize, ctx: &StarmapContext, ev: &mut Vec<StarmapEvent>) {
+    /// `FlottaOsszevon(into, from)`: the records here, the units through [`Arrivals::merge_units`].
+    fn merge(&mut self, into: usize, from: usize, ctx: &StarmapContext, arrivals: &mut dyn Arrivals, ev: &mut Vec<StarmapEvent>) {
         if into == from || into == 0 || from == 0 || into >= self.fleets.len() || from >= self.fleets.len() {
             return;
         }
@@ -462,7 +490,10 @@ impl Starmap {
         }
         let default = cstr(&ctx.default_fleet_name);
         if cstr(&self.fleets[into].name) == default {
-            self.fleets[into].name = self.fleets[from].name;
+            // `strcpy`: up to and including the NUL; the bytes after it stay.
+            let src = self.fleets[from].name;
+            let len = (cstr(&src).len() + 1).min(src.len());
+            self.fleets[into].name[..len].copy_from_slice(&src[..len]);
         }
         if self.fleets[into].story_id == 0 {
             self.fleets[into].story_id = self.fleets[from].story_id;
@@ -478,6 +509,7 @@ impl Starmap {
                 self.fleets[g].flags = (self.fleets[g].flags & !flag::RADAR_IGNORED) | keep;
             }
         }
+        arrivals.merge_units(into, from, self);
         self.fleets[from].owner = DELETED;
         self.settle_radar_flag(into, ctx);
         ev.push(StarmapEvent::Merge { into, from });
@@ -499,7 +531,7 @@ impl Starmap {
     }
 
     /// Spec §4.1: keep orders consistent with what the owner can see and own.
-    fn upkeep(&mut self, f: usize, ctx: &StarmapContext, ev: &mut Vec<StarmapEvent>) {
+    fn upkeep(&mut self, f: usize, ctx: &StarmapContext, arrivals: &mut dyn Arrivals, ev: &mut Vec<StarmapEvent>) {
         let fl = self.fleets[f].clone();
         let t = fl.target_index();
         if fl.order > 0 && fl.kind == order::FLEET {
@@ -541,7 +573,7 @@ impl Starmap {
         }
         let owner = self.fleets[f].owner;
         if (1..9).contains(&owner) && !ctx.alive[owner as usize] {
-            self.delete(f, ctx, ev);
+            self.delete(f, ctx, arrivals, ev);
         }
     }
 
@@ -582,12 +614,20 @@ impl Starmap {
         }
     }
 
+    /// What `Story_FleetArrivedSave(f)` reads: `+0x42`, `(int) +0x44`, `+0x16`, and for a fleet target its `+0x16`.
+    fn arrival_record(&self, f: usize) -> (i16, i32, i16, i16) {
+        let fl = &self.fleets[f];
+        let target = fl.tx as i32;
+        let target_id = if fl.kind == order::FLEET { self.fleets.get(target.max(0) as usize).map_or(0, |g| g.story_id) } else { 0 };
+        (fl.kind, target, fl.story_id, target_id)
+    }
+
     /// Spec §4.3. Returns true if a battle started.
     fn arrive(&mut self, f: usize, cur: (f32, f32), ctx: &StarmapContext, rng: &mut Streams, arrivals: &mut dyn Arrivals,
-        ev: &mut Vec<StarmapEvent>) -> bool {
+        ev: &mut Vec<StarmapEvent>) -> Option<(f32, f32)> {
         let mut pos = cur;
-        let mut battle = false;
-        ev.push(StarmapEvent::Arrived { fleet: f });
+        let (kind, target, fleet_id, target_fleet_id) = self.arrival_record(f);
+        ev.push(StarmapEvent::Arrived { fleet: f, kind, target, fleet_id, target_fleet_id });
         let fl = self.fleets[f].clone();
         let t = fl.target_index();
         let to_unowned_planet =
@@ -596,17 +636,20 @@ impl Starmap {
             if to_unowned_planet {
                 ev.push(StarmapEvent::Colonise { fleet: f, planet: t });
                 arrivals.colonise(t, fl.owner, &mut self.planets[t], rng);
-                self.delete(f, ctx, ev);
+                ev.push(StarmapEvent::StorySpecial([10, fl.owner as i32, t as i32, 0, 0, 0, 0, 0]));
+                self.delete(f, ctx, arrivals, ev);
             }
         } else if fl.flags & flag::TERRAFORMING != 0 {
             if to_unowned_planet {
                 let surface = arrivals.terraform(t, fl.owner);
                 ev.push(StarmapEvent::Terraform { fleet: f, planet: t, surface });
-                self.delete(f, ctx, ev);
+                ev.push(StarmapEvent::StorySpecial([0x18, fl.owner as i32, t as i32, 0, 0, 0, 0, 0]));
+                self.delete(f, ctx, arrivals, ev);
             }
         } else if fl.state & 2 != 0 {
             ev.push(StarmapEvent::ScriptedArrival { fleet: f });
-            self.delete(f, ctx, ev);
+            ev.push(StarmapEvent::StorySpecial([0x10, fl.story_id as i32, f as i32, 0, 0, 0, 0, 0]));
+            self.delete(f, ctx, arrivals, ev);
         } else {
             if fl.order == order::MOVE && fl.kind == order::PLANET {
                 let p = self.planets[t];
@@ -634,7 +677,7 @@ impl Starmap {
                     }
                 }
                 if best.0 > 0 {
-                    self.merge(best.0, f, ctx, ev);
+                    self.merge(best.0, f, ctx, arrivals, ev);
                 }
             }
             let fl = self.fleets[f].clone();
@@ -655,32 +698,53 @@ impl Starmap {
                         }
                     }
                 }
+                // The last argument is the loop counter after the loop: OsszHanyWormhole + 1 [original quirk].
+                let past = self.wormholes.len().max(1) as i32;
+                ev.push(StarmapEvent::StorySpecial([0x14, fl.owner as i32, 1, f as i32, past, 0, 0, 0]));
             }
             let fl = self.fleets[f].clone();
             if fl.alive() && fl.order == order::ATTACK && fl.kind == order::FLEET {
                 let tf = self.fleets[t].flags;
                 if tf & flag::PROTECTED != 0 {
                     ev.push(StarmapEvent::ProtectedTarget { fleet: f });
+                    ev.push(StarmapEvent::StorySpecial([0x12, t as i32, 2, f as i32, 0, 0, 0, 0]));
                 } else if tf & flag::WORMHOLE == 0 {
                     ev.push(StarmapEvent::SpaceBattle { fleet: f, target: t });
-                    battle = true;
+                    return Some(pos);
                 }
             }
             if fl.alive() && fl.order == order::ATTACK && fl.kind == order::PLANET {
                 if fl.flags & flag::PROTECTED != 0 {
                     ev.push(StarmapEvent::ProtectedTarget { fleet: f });
+                    ev.push(StarmapEvent::StorySpecial([0x12, f as i32, 1, t as i32, 0, 0, 0, 0]));
                 } else {
                     ev.push(StarmapEvent::PlanetAttack { fleet: f, planet: t });
-                    battle = true;
+                    return Some(pos);
                 }
             }
+            self.arrival_tail(f, &mut pos, ctx, arrivals, ev);
+        }
+        self.fleets[f].x = pos.0;
+        self.fleets[f].y = pos.1;
+        None
+    }
+
+    /// The rest of an arrival (spec §4.3), also after a battle: following an own fleet merges into it, then the
+    /// route continues or a trader is paid (the position the step ends at goes to `pos`).
+    fn arrival_tail(&mut self, f: usize, pos: &mut (f32, f32), ctx: &StarmapContext, arrivals: &mut dyn Arrivals,
+        ev: &mut Vec<StarmapEvent>) {
+        {
+            let t = self.fleets[f].target_index();
             let fl = self.fleets[f].clone();
             // Following an own fleet ends in a merge (story arrival save happens either way).
             if fl.alive() && fl.order == order::MOVE && fl.kind == order::FLEET
                 && self.fleets[t].flags & (flag::COLONISING | flag::TERRAFORMING) == 0
-                && self.fleets[t].owner == fl.owner
             {
-                self.merge(t, f, ctx, ev);
+                if self.fleets[t].owner == fl.owner {
+                    self.merge(t, f, ctx, arrivals, ev);
+                }
+                let (kind, target, fleet_id, target_fleet_id) = self.arrival_record(f);
+                ev.push(StarmapEvent::ArrivalResaved { fleet: f, kind, target, fleet_id, target_fleet_id });
             }
             let fl = self.fleets[f].clone();
             if fl.alive() {
@@ -697,17 +761,39 @@ impl Starmap {
                         let race3 = ctx.empire_race.get(p.owner as usize) == Some(&3);
                         let amount = ((p.banks.min(1) as f64 * 0.5 + 1.0) * (p.trade_centres * 10000) as f64
                             * if race3 { 2.0 } else { 1.0 }) as i32;
+                        arrivals.trader_paid(p.owner, amount);
                         ev.push(StarmapEvent::TraderPaid { fleet: f, planet: n, empire: p.owner, amount });
                     }
                     self.fleets[f].state |= 1;
-                    pos = (fl.x, fl.y);
+                    *pos = (fl.x, fl.y);
                     self.order(f, order::NONE, order::POINT, 0.0, 0.0, ctx, ev);
                 }
             }
         }
-        self.fleets[f].x = pos.0;
-        self.fleets[f].y = pos.1;
-        battle
+    }
+
+    /// The movement loop's step after a battle paused it ([`Starmap::tick_until_battle`]): the rest of the
+    /// arrival, the position the step computed (written back over a retreat the battle made, as in the exe), then
+    /// the end of the fleet's step. The loop doesn't go on: the battle ended the tick's movement.
+    pub fn resume(&mut self, p: Paused, ctx: &StarmapContext, rng: &mut Streams, arrivals: &mut dyn Arrivals) -> Vec<StarmapEvent> {
+        let mut ev = Vec::new();
+        let mut pos = p.pos;
+        self.arrival_tail(p.fleet, &mut pos, ctx, arrivals, &mut ev);
+        self.fleets[p.fleet].x = pos.0;
+        self.fleets[p.fleet].y = pos.1;
+        self.step_end(p.fleet, ctx, rng, arrivals, &mut ev);
+        ev
+    }
+
+    /// The end of a fleet's step: an idle trader picks a destination, an AI fleet without ships goes.
+    fn step_end(&mut self, f: usize, ctx: &StarmapContext, rng: &mut Streams, arrivals: &mut dyn Arrivals, ev: &mut Vec<StarmapEvent>) {
+        self.trader_destination(f, ctx, rng, ev);
+        let fl = &self.fleets[f];
+        if fl.alive() && fl.ship_count < 1 && fl.flags & (flag::WORMHOLE | flag::PROTECTED) == 0
+            && !ctx.human_controlled[fl.owner as usize]
+        {
+            self.delete(f, ctx, arrivals, ev);
+        }
     }
 
     /// Spec §4.4: an idle trader picks its next planet (stream 14).
@@ -755,6 +841,18 @@ impl Starmap {
     /// mid-loop.
     pub fn tick(&mut self, ships: &[ShipDesign], ctx: &mut StarmapContext, rng: &mut Streams, arrivals: &mut dyn Arrivals)
         -> Vec<StarmapEvent> {
+        let (mut ev, paused) = self.tick_until_battle(ships, ctx, rng, arrivals);
+        if let Some(p) = paused {
+            ev.extend(self.resume(p, ctx, rng, arrivals));
+        }
+        ev
+    }
+
+    /// [`Starmap::tick`] up to a battle: an arrival that starts one (`SpaceBattle`, `PlanetAttack`, the last event)
+    /// pauses the movement loop, so the caller can run `SpaceWarIndit`/`GroundWarIndit` on the whole game where the
+    /// exe calls them, then [`Starmap::resume`] the step (no later fleet moves in this tick).
+    pub fn tick_until_battle(&mut self, ships: &[ShipDesign], ctx: &mut StarmapContext, rng: &mut Streams,
+        arrivals: &mut dyn Arrivals) -> (Vec<StarmapEvent>, Option<Paused>) {
         let mut ev = Vec::new();
         self.radar.refresh(&ctx.radar_rules, ctx);
         if ctx.tick % 10 == 1 {
@@ -771,12 +869,11 @@ impl Starmap {
                 fl.flags |= flag::IN_BATTLE;
             }
         }
-        let mut battle = false;
         for f in 1..self.fleets.len() {
-            if !self.fleets[f].alive() || battle {
+            if !self.fleets[f].alive() {
                 continue;
             }
-            self.upkeep(f, ctx, &mut ev);
+            self.upkeep(f, ctx, arrivals, &mut ev);
             let fl = self.fleets[f].clone();
             if fl.order > 0 && fl.speed > 0.0 {
                 if fl.flags & flag::IN_BATTLE == 0 {
@@ -793,7 +890,9 @@ impl Starmap {
                     }
                     let reach = ctx.speed_mult as f32 * step;
                     if d <= reach || (fl.kind == order::FLEET && d <= 1.0) {
-                        battle |= self.arrive(f, cur, ctx, rng, arrivals, &mut ev);
+                        if let Some(pos) = self.arrive(f, cur, ctx, rng, arrivals, &mut ev) {
+                            return (ev, Some(Paused { fleet: f, pos }));
+                        }
                     } else {
                         let g = &mut self.fleets[f];
                         g.x = ((aim.0 - fl.x) * reach) / da + fl.x;
@@ -803,15 +902,9 @@ impl Starmap {
                     self.order(f, order::NONE, order::POINT, 0.0, 0.0, ctx, &mut ev);
                 }
             }
-            self.trader_destination(f, ctx, rng, &mut ev);
-            let fl = &self.fleets[f];
-            if fl.alive() && fl.ship_count < 1 && fl.flags & (flag::WORMHOLE | flag::PROTECTED) == 0
-                && !ctx.human_controlled[fl.owner as usize]
-            {
-                self.delete(f, ctx, &mut ev);
-            }
+            self.step_end(f, ctx, rng, arrivals, &mut ev);
         }
-        ev
+        (ev, None)
     }
 }
 
@@ -908,11 +1001,36 @@ mod tests {
         assert_eq!((m.fleets[1].x, m.fleets[1].order), (1.0, order::NONE));
     }
 
+    /// Moves the ship counts over, as the game's hook does with the units.
+    struct Units(Vec<(usize, usize)>);
+    impl Arrivals for Units {
+        fn merge_units(&mut self, into: usize, from: usize, map: &mut Starmap) {
+            assert!(map.fleets[from].alive(), "the units move before the slot is freed");
+            map.fleets[into].ship_count += std::mem::take(&mut map.fleets[from].ship_count);
+            self.0.push((into, from));
+        }
+    }
+
+    #[test]
+    fn a_merge_moves_the_units_before_the_radar_flag_rule() {
+        let (mut m, mut c, mut ev) = (map(2), ctx(), Vec::new());
+        c.human_controlled = [false; 19];
+        // The destination holds one colony ship: after the merge it has two ships, so bit 5 stays.
+        m.fleets[1].colony_ships = 1;
+        m.fleets[1].flags |= flag::RADAR_IGNORED;
+        let mut units = Units(Vec::new());
+        m.merge(1, 2, &c, &mut units, &mut ev);
+        assert_eq!(units.0, [(1, 2)]);
+        assert!(!m.fleets[2].alive());
+        assert_eq!(m.fleets[1].ship_count, 2);
+        assert_ne!(m.fleets[1].flags & flag::RADAR_IGNORED, 0);
+    }
+
     #[test]
     fn deleting_a_fleet_stops_its_followers() {
         let (mut m, c, mut ev) = (map(2), ctx(), Vec::new());
         m.order(2, order::MOVE, order::FLEET, 1.0, 0.0, &c, &mut ev);
-        m.delete(1, &c, &mut ev);
+        m.delete(1, &c, &mut (), &mut ev);
         assert!(!m.fleets[1].alive());
         assert_eq!(m.fleets[2].order, order::NONE);
     }

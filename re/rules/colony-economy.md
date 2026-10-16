@@ -93,7 +93,10 @@ self-destruct = 43) · 48 trade centre · 49 bank · 50 trade port · 52–55 fu
 
 ## 3. Economy step, overview (`full = true`, `only = 0`)
 ```
-prologue:  ground-war flags for every planet (libc rand(); not economy)          [not ported]
+prologue:  ground-war flags for every planet (libc rand(); not economy)          [draws ported, flags not]
+           (exe 0x4749b9..0x474ab0, p = 1..=HanyBolygo, skipping AktPlanet 0xB9933C when StarmapMode
+           0xB9998C == 1: WF[p]+0x8d0 weather = one rand() for surfaces 2, 5, 7; WF[p]+0x8d4 ambience =
+           0x47a380, one rand(), when the colony map < hanyterep 0x9B2EC8; game.rs battlefield_weather)
            monthly: FullGDP[e] = FullTax[e] = 0
            reset per-empire lab levels, spy capacity, trade-port and defence totals
            GlobalisMoral (exe 0xBAEAC4) moves toward 0 by GlobalisMoralSebesseg (0xBAEB14)

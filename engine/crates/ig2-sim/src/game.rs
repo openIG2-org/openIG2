@@ -9,34 +9,49 @@
 //!     FRISSIT_MI                      ai::AiState::daily
 //!     FRISSIT_Spy                     spy::Spies::daily
 //!     MI_DIPLOMACY                    diplomacy::Diplomacy::ai_messages
+//! FRISSIT_Trade                       trade::Trade::tick (deliveries, merchants, expiry)
+//! FRISSIT_Info                        info::Charts::sample (on a new month)
 //! FRISSIT_Research                    research::tick
 //! FRISSIT_Story                       story::Story::tick (the scenario stories)
+//! FRISSIT_Messages                    messages::Inbox::expire
 //! FRISSIT_Diplomacy                   diplomacy::Diplomacy::tick
+//! FRISSIT_Epuletek                    Game::buildings_tick (repairs, refresh of planets at war)
 //! FRISSIT_Starmap                     fleet::Starmap::tick (colonisation arrivals), then production::Shipyard::tick
 //! IdoMultiPlayerBattle += 1
 //! ```
 //!
-//! Not ported, so skipped: `FRISSIT_Trade`, `FRISSIT_Info`, `FRISSIT_Messages`, `FRISSIT_Design`, `FRISSIT_Epuletek`,
+//! A purchase from the trade screen (`MULTIGET_Trade`, through the lockstep queue) is [`Game::buy`].
+//!
+//! The messages the systems post to the human's scrolling line (`ScrollUzenetId`) are posted from the tick's
+//! events at its end, in event order ([`Game::post_messages`], `re/rules/info-messages.md` §3).
+//!
+//! Not ported, so skipped: `FRISSIT_Design` (empty in the exe),
 //! the victory check, the ground and space battles' real-time ticks. Their effects on the other systems (a fleet
 //! stopped by a story, a war the AI declares) are reported as [`GameEvent`]s, and the few the replay needs are
 //! carried out here. Each system decodes its state from the [`SaveState`] and stores it back, so systems see each
 //! other's writes as in the exe.
 
+mod battles;
+
+pub use battles::BattleEvent;
+
 use crate::ai::{self, AiContext, AiHooks, AiRules};
-use crate::colony::{EconomyContext, Planet, StoryHooks};
+use crate::colony::{ColonyEvent, EconomyContext, Planet, StoryHooks};
 use crate::colony_side::{ColonyArrivals, SideEvent, SideRules, EMPIRES};
 use crate::diplomacy::{self, DiploEvent, DiploPlanet, Diplomacy, DiplomacyContext, DiplomacyRules};
-use crate::fleet::{order, StarmapContext, StarmapEvent};
+use crate::fleet::{order, Arrivals, StarPlanet, Starmap, StarmapContext, StarmapEvent, DELETED};
+use crate::messages::{cstr, Texts};
 use crate::placement::PlacementRules;
 use crate::production::{ProductionContext, ProductionEvent, Queue, Shipyard, YardFleet, YardPlanet};
 use crate::radar::RadarRules;
 use crate::research::{self, ResearchContext, ResearchEvent, ResearchRules};
 use crate::rng::Streams;
 use crate::save::{fleet_totals_put, put_fleet, va, SaveState, PLANET_SIZE};
-use crate::spacewar::{Ship, Vehicle};
+use crate::spacewar::{CombatFleet, CombatWorld, Ship, Vehicle, NO_DESIGN};
 use crate::spy::{self, SpyContext, SpyEvent, SpyRules, StoryCheck};
 use crate::story::{ScenarioStories, StoryEvent, StoryWorld};
 use crate::time::GameTime;
+use crate::trade::{self, Delivery, Market, MarketContext, TradeEvent};
 
 /// The rule tables every system reads (from the user's exe and install, ADR 0004).
 #[derive(Debug, Clone, Default)]
@@ -51,6 +66,11 @@ pub struct GameRules {
     /// `NehezsegGyartasSzorzo` / `NehezsegPenzSzorzo` by difficulty.
     pub difficulty_production: Vec<f32>,
     pub difficulty_money: Vec<f32>,
+    /// `uzenet.txt` in the game's language (the scrolling messages' texts).
+    pub messages: Texts,
+    /// The auto-resolved space battle's planet guns and the ground war (`SimulateSpBattle`, `WF::Simulate`).
+    pub guns: crate::spacewar::GunRules,
+    pub ground: crate::ground::GroundRules,
 }
 
 /// The MSVC CRT `rand()` (`holdrand · 214013 + 2531011`, bits 16..30): the unseeded libc draws of the original.
@@ -75,8 +95,24 @@ pub enum GameEvent {
     Story(StoryEvent),
     Starmap(StarmapEvent),
     Production(ProductionEvent),
+    Trade(TradeEvent),
     /// The AI declared war (`ElkuldHaduzenet`); carried out by diplomacy.
     WarDeclared { a: u8, b: u8 },
+    /// `HajoDelete` emptied the human's own fleet: `Multi_Send(0x1b, EN, f)`. The lockstep queue hands it to
+    /// `MULTIGET_Starmap` in a later frame: the driver calls [`Game::fleet_emptied`] before the next tick.
+    FleetEmptied { fleet: usize },
+    /// A battle the starmap started (`SpaceWarIndit`, `GroundWarIndit`).
+    Battle(BattleEvent),
+}
+
+impl GameEvent {
+    /// The fleet of a 0x1b message (`GameEvent::FleetEmptied`, or the AI pass's `HumanFleetEmptied`).
+    pub fn emptied_fleet(&self) -> Option<usize> {
+        match self {
+            GameEvent::FleetEmptied { fleet } | GameEvent::Ai(ai::AiEvent::HumanFleetEmptied { fleet }) => Some(*fleet),
+            _ => None,
+        }
+    }
 }
 
 /// The game: its state and the rules.
@@ -86,19 +122,27 @@ pub struct Game<'r> {
     pub libc: Libc,
     /// `AlapFlottaNev` (the localised default fleet name; `None` = the English "Fleet").
     pub fleet_name: Option<Vec<u8>>,
-    /// `OldEtaHonap` of the unported `FRISSIT_Trade`: on a new month it draws one libc `rand()` (the merchants'
-    /// arrival days), which shifts the later draws of the tick. `None` = the current month (as after a load).
-    pub trade_month: Option<i32>,
     /// The bytes of records appended to grown arrays before the code writes them (uninitialised heap in the
     /// original): `None` = zero.
     pub uninit: Option<Box<dyn FnMut(Fresh) -> Vec<u8> + 'r>>,
     pub events: Vec<GameEvent>,
+    /// `BirodalomNev[e]` (exe 0xBB6730, unsaved, localised): the empire names messages quote.
+    pub empire_names: Vec<Vec<u8>>,
+    /// `KemCsaladtag_Nev[x]` (exe 0xBB6968, unsaved, localised): the family members the kidnap message names.
+    pub family_names: Vec<Vec<u8>>,
+    /// The ground battlefields (`Warfare[p]`) a battle touched since the load; the others are the loaded save's
+    /// (`SaveState::ground_field`). Their chunks aren't written back (unported: `WF::LoadSave`).
+    pub ground_fields: std::collections::BTreeMap<usize, crate::ground::Field>,
 }
 
 /// An appended record whose untouched bytes [`Game::uninit`] supplies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fresh {
     Fleet(usize),
+    /// A ship record (`Hajok[i]`, 6 bytes; `+5` is never written).
+    Ship(usize),
+    /// A building record appended to planet `planet`'s block (`EpuletNew` reallocates by 20).
+    Building { planet: usize, slot: usize },
     Design { empire: usize, design: usize },
 }
 
@@ -130,7 +174,17 @@ fn adat_i32(adat: &[u8], off: usize) -> i32 {
 
 impl<'r> Game<'r> {
     pub fn new(state: SaveState, rules: &'r GameRules) -> Self {
-        Self { state, rules, libc: Libc::default(), fleet_name: None, trade_month: None, uninit: None, events: Vec::new() }
+        Self {
+            state,
+            rules,
+            libc: Libc::default(),
+            fleet_name: None,
+            uninit: None,
+            events: Vec::new(),
+            empire_names: Vec::new(),
+            family_names: Vec::new(),
+            ground_fields: Default::default(),
+        }
     }
 
     fn globals(&self) -> Globals {
@@ -161,6 +215,15 @@ impl<'r> Game<'r> {
         self.state.mem.read(va::STORY_ADAT, crate::story::ADAT)
     }
 
+    /// `LoadSave`'s epilogue (exe 0x543c80, ELF `save.cpp`), after writing a save as after loading one:
+    /// `KemKuldetesek[0x160] = 0` and `FlottakUjraSzamol()` (every fleet's totals, colony ships, terraformers and
+    /// pools, every garrison recounted; `ai-empire.md` §12.9). It changes the state: a colonising fleet's colony ship
+    /// has left the pool, and the recount puts it back (`fleet-movement.md` §4.3). `FRISSITES_IGAZIT` is the UI's.
+    pub fn saved(&mut self) {
+        self.state.mem.set_i32(va::MISSIONS + 0x160, 0);
+        self.with_ai(|_, w, _| w.recount());
+    }
+
     /// `FRISSIT_Datum`: `Ido += IdoSpeedSzorzo`, `Ido2 += 1`, the calendar.
     pub fn advance_clock(&mut self) {
         let m = &mut self.state.mem;
@@ -177,26 +240,92 @@ impl<'r> Game<'r> {
     pub fn run_tick(&mut self) {
         let m = &mut self.state.mem;
         let (nap, old) = (m.i32(va::NAP), m.i32(va::OLD_NAP));
+        let first_event = self.events.len();
         if nap != old {
             m.set_i32(va::OLD_NAP, nap);
             self.daily();
         }
         self.trade();
+        self.info();
         self.research();
         self.story();
+        self.inbox();
         self.diplomacy_tick();
+        self.buildings_tick();
         self.starmap();
         let m = &mut self.state.mem;
         m.set_i32(0xBAE054, m.i32(0xBAE054).wrapping_add(1));
+        self.fill_fresh_buildings();
+        self.post_messages(first_event);
     }
 
-    /// What the unported `FRISSIT_Trade` does to the ported systems' inputs: its libc draw on a new month.
-    fn trade(&mut self) {
-        let month = self.state.mem.i32(va::HONAP);
-        if *self.trade_month.get_or_insert(month) != month {
-            self.trade_month = Some(month);
-            self.libc.rand();
+    /// Building records appended this tick hold uninitialised bytes in the original: the records past the used
+    /// slots all of them, a used slot the bytes no ported code writes ([`crate::save::BUILDING_UNWRITTEN`]).
+    fn fill_fresh_buildings(&mut self) {
+        for (p, j) in std::mem::take(&mut self.state.fresh_buildings) {
+            let u = self.fresh::<{ crate::save::BUILDING_SIZE }>(Fresh::Building { planet: p, slot: j });
+            let used = self.state.mem.i32(va::BUILDING_SLOTS + 4 * p as u32).max(0) as usize;
+            if let Some(r) = self.state.buildings.get_mut(p).and_then(|b| b.get_mut(j)) {
+                if j > used {
+                    *r = u;
+                } else {
+                    for o in crate::save::BUILDING_UNWRITTEN {
+                        r[o] = u[o];
+                    }
+                    r[0x19] = (r[0x19] & 0x7f) | (u[0x19] & 0x80);
+                }
+            }
         }
+    }
+
+    /// `FRISSIT_Trade` (`re/rules/trade.md` §3).
+    fn trade(&mut self) {
+        let mut ctx = self.market_context();
+        let mut t = self.state.trade();
+        let events = t.tick(&mut ctx, &mut TradeView { game: self });
+        self.state.store_trade(&t);
+        self.state.mem.set_i32(va::STORY_ADAT + 0xc4, ctx.story_countdown);
+        self.events.extend(events.into_iter().map(GameEvent::Trade));
+    }
+
+    /// A purchase message from empire `e` (`MULTIGET_Trade`, `re/rules/trade.md` §4); whether it was accepted.
+    pub fn buy(&mut self, e: usize, msg: &Delivery) -> bool {
+        let mut t = self.state.trade();
+        let ev = t.buy(e, msg, &mut TradeView { game: self });
+        self.state.store_trade(&t);
+        let ok = ev.is_some();
+        self.events.extend(ev.map(GameEvent::Trade));
+        ok
+    }
+
+    fn market_context(&self) -> MarketContext {
+        let g = self.globals();
+        let m = &self.state.mem;
+        let a = self.adat();
+        MarketContext {
+            year: g.year,
+            month: g.month,
+            day: g.day,
+            speed_mult: g.speed,
+            program_players: g.pp,
+            human_controlled: g.human,
+            debug: m.u8(va::DEBUGX) != 0,
+            cheat: m.u8(va::TRADE_CHEAT) != 0,
+            story_countdown: adat_i32(&a, 0xc4),
+            story_discount: adat_i32(&a, 0x60) != 0,
+            story_designs: self.state.story_designs(),
+            story_next_id: m.i32(va::STORY_DESIGN_NEXT),
+        }
+    }
+
+    /// `MoneyHozzaad`'s income multiplier for a non-human empire (`None` for a human).
+    fn ai_income(&self, e: usize) -> Option<f64> {
+        let g = self.globals();
+        if g.human.get(e).copied().unwrap_or(false) {
+            return None;
+        }
+        let m = self.rules.difficulty_money.get(g.difficulty.max(0) as usize).copied().unwrap_or(1.0) as f64;
+        Some(if g.multiplayer { m * 0.5 } else { m })
     }
 
     fn daily(&mut self) {
@@ -313,6 +442,7 @@ impl<'r> Game<'r> {
         let m = &self.state.mem;
         let a = self.adat();
         DiplomacyContext {
+            player_ki: m.read(va::PLAYER_KI, EMPIRES).try_into().unwrap(),
             program_players: g.pp,
             program_players2: g.pp2,
             alive: g.alive,
@@ -390,6 +520,7 @@ impl<'r> Game<'r> {
     // -------------------------------------------------------------------------------------------- systems
 
     fn economy(&mut self) {
+        self.battlefield_weather();
         let g = self.globals();
         let mut ctx = self.economy_context(&g);
         let mut w = self.state.colony();
@@ -406,6 +537,29 @@ impl<'r> Game<'r> {
             }
         }
         self.events.extend(events.into_iter().map(GameEvent::Side));
+    }
+
+    /// The prologue of `FRISSIT_Planet(true, 0)` (exe 0x4749b9..0x474ab0, `colony-economy.md` §3): each planet's
+    /// ground battlefield gets its weather (`WF[p]+0x8d0`: one libc `rand()` for surfaces 2, 5 and 7) and its
+    /// ambience (`WF[p]+0x8d4`, exe 0x47a380: one `rand()` when the colony map is below `hanyterep`), skipping the
+    /// planet on screen. The battlefields' fields aren't ported; the draws shift every later libc draw of the tick.
+    fn battlefield_weather(&mut self) {
+        let m = &self.state.mem;
+        let shown = (m.i32(va::STARMAP_MODE) == 1).then(|| m.i32(va::AKT_PLANET));
+        let terrains = self.rules.placement.terrains.len();
+        for p in 1..=self.state.planet_count() {
+            if shown == Some(p as i32) {
+                continue;
+            }
+            let at = va::PLANETS + (p * PLANET_SIZE) as u32;
+            let (surface, map) = (m.u8(at + 0x22), m.u8(at + 0x23));
+            if matches!(surface, 2 | 5 | 7) {
+                self.libc.rand();
+            }
+            if (map as usize) < terrains {
+                self.libc.rand();
+            }
+        }
     }
 
     /// `FlottaMozgat(f, 0, 0, 0, 0)` for every fleet attacking planet `p` (`order 2, kind 1`).
@@ -560,6 +714,9 @@ impl<'r> Game<'r> {
         self.state.store_ai(&st);
         self.state.store_colony(&colony);
         self.state.store_combat(&combat);
+        // The AI keeps the pools in the combat view (`ai::World::starmap`); the starmap's copy is stored last.
+        map.colony_ship_pool = combat.colony_ship_pool;
+        map.terraformer_pool = combat.terraformer_pool;
         self.state.store_starmap(&map);
         self.state.store_research(&research);
         self.state.store_relations(&relations);
@@ -570,7 +727,32 @@ impl<'r> Game<'r> {
         self.state.store_known_since(&known);
         self.events.extend(hooks.wars.into_iter().map(|(a, b)| GameEvent::WarDeclared { a: a as u8, b: b as u8 }));
         self.events.extend(events.into_iter().map(GameEvent::Ai));
-        self.events.extend(spy_events.into_iter().map(GameEvent::Spy));
+        self.spy_hooks(spy_events);
+    }
+
+    /// The spy pass's calls into other systems, in event order (inside the pass in the exe; nothing later in it
+    /// reads what they change): `Story_Special(0xb, EN, e)` + `FelfedezBirodalom(e)` for a caught spy of an unknown
+    /// empire, and each report's queue entry and `Story_KemEsemeny` (`info-messages.md` §3.3).
+    fn spy_hooks(&mut self, events: Vec<SpyEvent>) {
+        let en = self.globals().en as i32;
+        for ev in events {
+            let hook = ev.clone();
+            self.events.push(GameEvent::Spy(ev));
+            match hook {
+                SpyEvent::Discovered { empire } => {
+                    self.story_special([0x0b, en, empire as i32, 0, 0, 0, 0, 0]);
+                    self.with_diplomacy(|d, w| d.discover(w, empire as usize));
+                }
+                SpyEvent::Report(r) => {
+                    self.state.push_spy_report(&r);
+                    self.with_story(|st, w| st.spy_event(&ScenarioStories, w));
+                }
+                SpyEvent::Combat(crate::spacewar::CombatEvent::HumanFleetEmptied { fleet }) => {
+                    self.events.push(GameEvent::FleetEmptied { fleet });
+                }
+                _ => {}
+            }
+        }
     }
 
     fn spies(&mut self) {
@@ -613,7 +795,15 @@ impl<'r> Game<'r> {
         self.state.store_kidnap(&kidnap);
         self.state.store_rng(&rng);
         self.state.store_spies(&spies);
-        self.events.extend(events.into_iter().map(GameEvent::Spy));
+        self.spy_hooks(events);
+    }
+
+    /// `MULTIGET_Starmap`'s message 0x1b (ELF 0x719680): fleet `f` is deleted (`FlottaDelete`) if it still holds
+    /// no ships (`+0x54 < 1`).
+    pub fn fleet_emptied(&mut self, f: usize) {
+        if self.state.combat().fleets.get(f).is_some_and(|x| x.totals.ships < 1) {
+            self.with_ai(|_, w, _| w.delete_fleet(f));
+        }
     }
 
     fn research(&mut self) {
@@ -677,20 +867,8 @@ impl<'r> Game<'r> {
         let g = self.globals();
         let mut ctx = self.starmap_context(&g);
         let ships = self.state.ship_designs();
-        let mut map = self.state.starmap();
-        let mut rng = self.state.rng();
-        let mut colony = self.state.colony();
-        let econ = self.economy_context(&g);
-        let (events, side) = {
-            let mut arrivals = ColonyArrivals { world: &mut colony, rules: &self.rules.side, ctx: &econ, placement: &self.rules.placement, events: Vec::new() };
-            let ev = map.tick(&ships, &mut ctx, &mut rng, &mut arrivals);
-            (ev, arrivals.events)
-        };
-        self.state.store_colony(&colony);
-        self.state.store_starmap(&map);
-        self.state.store_rng(&rng);
+        let (events, paused) = self.starmap_pass(&mut ctx, |map, ctx, rng, hooks| map.tick_until_battle(&ships, ctx, rng, hooks));
         self.state.mem.set_i32(va::IDO_SPEED, ctx.speed_mult);
-        let battle = events.iter().any(|e| matches!(e, StarmapEvent::SpaceBattle { .. } | StarmapEvent::PlanetAttack { .. }));
         // The human met an empire: story special 0x0B(EN, o) and `FelfedezBirodalom(o)` (fleet-movement.md §6.3;
         // inside the radar pass in the exe, which nothing after it in the tick reads).
         for e in &events {
@@ -701,18 +879,139 @@ impl<'r> Game<'r> {
                 }
             }
         }
+        self.story_arrivals(&events);
+        let battle = events.last().copied().filter(|_| paused.is_some());
         self.events.extend(events.into_iter().map(GameEvent::Starmap));
+        // An arrival that attacks: `SpaceWarIndit` / `GroundWarIndit` inside the step (`game::battles`), then the
+        // step ends and the arrival's story checks run; no later fleet moves, and production doesn't run.
+        if let Some(p) = paused {
+            match battle {
+                Some(StarmapEvent::SpaceBattle { fleet, target }) => self.space_war(fleet, target, 0),
+                Some(StarmapEvent::PlanetAttack { fleet, planet }) => self.planet_attack(fleet, planet),
+                _ => {}
+            }
+            let g = self.globals();
+            let mut ctx = self.starmap_context(&g);
+            let (events, ()) = self.starmap_pass(&mut ctx, |map, ctx, rng, hooks| (map.resume(p, ctx, rng, hooks), ()));
+            self.story_arrivals(&events);
+            self.arrival_checks();
+            self.events.extend(events.into_iter().map(GameEvent::Starmap));
+            return;
+        }
+        // The production block ends `FRISSIT_Starmap` (production-research.md §3).
+        self.production(&g, ctx.speed_mult);
+    }
+
+    /// Run `f` on the starmap with the arrival hooks (colony world, combat view), then store everything back; the
+    /// colony side's events are added to the game's. Returns `f`'s events and its other result.
+    fn starmap_pass<R>(&mut self, ctx: &mut StarmapContext,
+        f: impl FnOnce(&mut Starmap, &mut StarmapContext, &mut Streams, &mut StarmapHooks) -> (Vec<StarmapEvent>, R))
+        -> (Vec<StarmapEvent>, R) {
+        let g = self.globals();
+        let mut map = self.state.starmap();
+        let mut rng = self.state.rng();
+        let mut colony = self.state.colony();
+        let mut combat = self.state.combat();
+        let mut fleet_numbers = self.state.mem.i32s(va::FLEET_NUMBERS);
+        let econ = self.economy_context(&g);
+        let (events, extra, side, overflow, merges) = {
+            let mut hooks = StarmapHooks {
+                colony: ColonyArrivals { world: &mut colony, rules: &self.rules.side, ctx: &econ, placement: &self.rules.placement, events: Vec::new() },
+                combat: &mut combat,
+                fleet_numbers: &mut fleet_numbers,
+                overflow: 0,
+                merges: Vec::new(),
+            };
+            let (ev, extra) = f(&mut map, ctx, &mut rng, &mut hooks);
+            (ev, extra, hooks.colony.events, hooks.overflow, hooks.merges)
+        };
+        // `FlottaMozgat` gave colony ships and terraformers of re-ordered colonising fleets back to the pools.
+        for e in &events {
+            match *e {
+                StarmapEvent::ColonyShipFreed { empire } => map.colony_ship_pool[empire as usize % EMPIRES] += 1,
+                StarmapEvent::TerraformerFreed { empire } => map.terraformer_pool[empire as usize % EMPIRES] += 1,
+                _ => {}
+            }
+        }
+        self.state.store_colony(&colony);
+        // The combat view holds the totals, ships and vehicles; the starmap's records the rest (stored last).
+        self.state.store_combat(&combat);
+        self.state.store_starmap(&map);
+        self.state.mem.set_i32s(va::FLEET_NUMBERS, &fleet_numbers);
+        if overflow != 0 {
+            let at = va::FLEET_NUMBERS + 4 * DELETED as u32;
+            self.state.mem.set_i32(at, self.state.mem.i32(at) - overflow);
+        }
+        // `FlottaOsszevon` moves the selection (`AktFleet`) to the merged fleet.
+        for (into, from) in merges {
+            if self.state.mem.i32(va::AKT_FLEET) == from as i32 {
+                self.state.mem.set_i32(va::AKT_FLEET, into as i32);
+            }
+        }
+        self.state.store_rng(&rng);
         self.events.extend(side.into_iter().map(GameEvent::Side));
-        // The production block ends `FRISSIT_Starmap` (production-research.md §3); a battle returns earlier.
-        if !battle {
-            self.production(&g, ctx.speed_mult);
+        (events, extra)
+    }
+
+    /// The story's view of the starmap's arrivals (fleet-movement.md §4.3, `campaign.md` §2): every
+    /// `Story_FleetArrivedSave(f)` stores the arrival, and `Story_FleetArrivedCheck()` runs at the end of that fleet's
+    /// step, unless its arrival started a battle (the loop stops; the flag waits for the next check). The arrivals'
+    /// `Story_Special` calls (colonisation, terraforming, scripted fleets, wormholes, protected targets) run in between.
+    fn story_arrivals(&mut self, events: &[StarmapEvent]) {
+        let mut pending = false;
+        for (i, e) in events.iter().enumerate() {
+            // An arrival's `Story_Special` runs at its place, before the fleet's arrival check.
+            if let StarmapEvent::StorySpecial(data) = *e {
+                self.story_special(data);
+                continue;
+            }
+            let (StarmapEvent::Arrived { fleet, kind, target, fleet_id, target_fleet_id }
+            | StarmapEvent::ArrivalResaved { fleet, kind, target, fleet_id, target_fleet_id }) = *e
+            else {
+                continue;
+            };
+            if pending && matches!(e, StarmapEvent::Arrived { .. }) {
+                self.with_story(|st, w| st.fleet_arrived_check(&ScenarioStories, w));
+            }
+            if !(0..=2).contains(&kind) {
+                pending = false;
+                continue;
+            }
+            let arrival = crate::story::Arrival {
+                fleet_id: fleet_id as i32,
+                fleet: fleet as i32,
+                target,
+                target_type: kind as i32,
+                target_fleet_id: target_fleet_id as i32,
+            };
+            self.with_story(|st, _| {
+                st.arrival = arrival;
+                st.flags[crate::story::flag::ARRIVED] = true;
+            });
+            let battle = events[i + 1..].iter().take_while(|x| !matches!(x, StarmapEvent::Arrived { .. })).any(|x| {
+                matches!(*x, StarmapEvent::SpaceBattle { fleet: g, .. } | StarmapEvent::PlanetAttack { fleet: g, .. } if g == fleet)
+            });
+            pending = !battle;
+        }
+        if pending {
+            self.with_story(|st, w| st.fleet_arrived_check(&ScenarioStories, w));
         }
     }
 
     fn production(&mut self, g: &Globals, speed: i32) {
+        let ctx = self.production_context(g, speed);
+        let mut yard = self.shipyard();
+        let mut money = self.state.treasuries();
+        let events = yard.tick(&mut money, &ctx);
+        self.state.store_treasuries(&money);
+        self.store_shipyard(&yard, &events);
+        self.events.extend(events.into_iter().map(GameEvent::Production));
+    }
+
+    fn production_context(&self, g: &Globals, speed: i32) -> ProductionContext {
         let d = g.difficulty.max(0) as usize;
         let name = self.fleet_name();
-        let ctx = ProductionContext {
+        ProductionContext {
             speed_mult: speed,
             day: g.day,
             multiplayer: g.multiplayer,
@@ -721,11 +1020,15 @@ impl<'r> Game<'r> {
             difficulty_money: self.rules.difficulty_money.get(d).copied().unwrap_or(1.0),
             default_fleet_name: name.clone(),
             numbered_fleet_name: name,
-        };
+        }
+    }
+
+    /// Production's view: planets, fleets, ships, vehicles, designs and the per-planet/per-empire tables.
+    fn shipyard(&self) -> Shipyard {
         let s = &self.state;
         let m = &s.mem;
         let combat = s.combat();
-        let mut yard = Shipyard {
+        Shipyard {
             planets: (0..=s.planet_count()).map(|p| yard_planet(&m.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE))).collect(),
             fleets: s.fleets.iter().map(|r| YardFleet { fleet: crate::fleet::Fleet::from_record(r), totals: crate::spacewar::FleetTotals::from_record(r) }).collect(),
             ships: combat.ships.clone(),
@@ -735,11 +1038,40 @@ impl<'r> Game<'r> {
             fleet_numbers: m.i32s(va::FLEET_NUMBERS),
             colony_ship_pool: m.i32s(va::COLONY_SHIP_POOL),
             terraformer_pool: m.i32s(va::TERRAFORMER_POOL),
-        };
-        let mut money = s.treasuries();
-        let events = yard.tick(&mut money, &ctx);
+        }
+    }
+
+    /// The bytes of an appended record before the code writes it ([`Game::uninit`]; zero without it).
+    fn fresh<const N: usize>(&mut self, what: Fresh) -> [u8; N] {
+        let mut out = [0; N];
+        if let Some(f) = self.uninit.as_mut() {
+            let b = f(what);
+            let n = b.len().min(N);
+            out[..n].copy_from_slice(&b[..n]);
+        }
+        out
+    }
+
+    /// Production's view back into the state. `events` tell which fleet and ship slots `FlottaNew`/`HajoNew` (re)used:
+    /// they clear bytes the views don't hold (fleet `+0x2c/+0x2d`, ship `+4`); appended records start from
+    /// [`Game::uninit`].
+    fn store_shipyard(&mut self, yard: &Shipyard, events: &[ProductionEvent]) {
+        for i in self.state.fleets.len()..yard.fleets.len() {
+            let r = self.fresh::<0x80>(Fresh::Fleet(i));
+            self.state.fleets.push(r);
+        }
+        for i in self.state.ships.len()..yard.ships.len() {
+            let r = self.fresh::<6>(Fresh::Ship(i));
+            self.state.ships.push(r);
+        }
+        for e in events {
+            match *e {
+                ProductionEvent::FleetCreated { fleet } => self.state.fleets[fleet][0x2c..0x2e].fill(0),
+                ProductionEvent::ShipCreated { ship } => self.state.ships[ship][4] = 0,
+                _ => {}
+            }
+        }
         let st = &mut self.state;
-        st.store_treasuries(&money);
         for (p, y) in yard.planets.iter().enumerate() {
             let at = va::PLANETS + (p * PLANET_SIZE) as u32;
             let mut r = st.mem.read(at, PLANET_SIZE);
@@ -762,7 +1094,115 @@ impl<'r> Game<'r> {
         st.store_combat(&cw);
         st.mem.set_i32s(va::LAST_NEAR_FLEET, &yard.last_fleet);
         st.mem.set_i32s(va::FLEET_NUMBERS, &yard.fleet_numbers);
-        self.events.extend(events.into_iter().map(GameEvent::Production));
+    }
+}
+
+/// The trade market's view of the game (`re/rules/trade.md`): everything lives in the save state, so a delivery's
+/// units and its story check see what the market wrote before them.
+struct TradeView<'a, 'r> {
+    game: &'a mut Game<'r>,
+}
+
+impl Market for TradeView<'_, '_> {
+    fn rnd(&mut self, lo: i32, hi: i32) -> i32 {
+        let mut r = self.game.state.rng();
+        let v = r.range(trade::STREAM, lo, hi);
+        self.game.state.store_rng(&r);
+        v
+    }
+    fn libc_rand(&mut self) -> i32 {
+        self.game.libc.rand()
+    }
+    fn planet_count(&self) -> usize {
+        self.game.state.planet_count()
+    }
+    fn planet_owner(&self, p: i32) -> u8 {
+        self.game.state.mem.u8(va::PLANETS.wrapping_add((p as u32).wrapping_mul(PLANET_SIZE as u32)).wrapping_add(0x20))
+    }
+    fn working_buildings(&self, p: usize, kind: u8) -> i32 {
+        self.game.state.working_buildings(p, kind)
+    }
+    fn tech_status(&self, t: i32, e: usize) -> u8 {
+        if !(0..crate::save::TECHS as i32).contains(&t) {
+            return 0;
+        }
+        self.game.state.mem.u8(va::TECHS + (t as usize * crate::save::TECH_SIZE) as u32 + 0x45 + e as u32)
+    }
+    fn tech_name(&self, t: i32) -> Vec<u8> {
+        if !(0..crate::save::TECHS as i32).contains(&t) {
+            return vec![0];
+        }
+        let mut n = self.game.state.mem.read(va::TECHS + (t as usize * crate::save::TECH_SIZE) as u32, 0x40);
+        n.truncate(n.iter().position(|&c| c == 0).unwrap_or(n.len() - 1) + 1);
+        n
+    }
+    fn hull_tech(&self, hull: i32) -> i32 {
+        usize::try_from(hull).ok().and_then(|h| self.game.rules.ai.design.hulls.get(h)).map_or(0, |h| h.tech)
+    }
+    fn design_count(&self, e: usize) -> usize {
+        self.game.state.designs.get(e).map_or(0, |t| t.len().saturating_sub(1))
+    }
+    fn design(&self, e: usize, d: usize) -> Option<trade::Record> {
+        self.game.state.designs.get(e)?.get(d).copied()
+    }
+    fn set_design(&mut self, e: usize, d: usize, r: &trade::Record) {
+        if let Some(x) = self.game.state.designs.get_mut(e).and_then(|t| t.get_mut(d)) {
+            *x = *r;
+        }
+    }
+    fn new_design(&mut self, e: usize, id: i32) -> usize {
+        let race = self.game.state.races()[e.min(EMPIRES - 1)];
+        let g = &mut *self.game;
+        if g.state.designs.len() <= e {
+            g.state.designs.resize(e + 1, Vec::new());
+        }
+        let uninit = &mut g.uninit;
+        let d = crate::spacewar::new_design_record(&mut g.state.designs[e], race, id, |n| {
+            let mut out = [0; 0x84];
+            if let Some(f) = uninit.as_mut() {
+                let b = f(Fresh::Design { empire: e, design: n });
+                let k = b.len().min(0x84);
+                out[..k].copy_from_slice(&b[..k]);
+            }
+            out
+        });
+        let n = g.state.designs[e].len() as i32 - 1;
+        g.state.mem.set_i32(va::DESIGN_COUNT + 4 * e as u32, n);
+        d
+    }
+    fn recompute_design(&mut self, e: usize, d: usize, price: bool) {
+        let race = self.game.state.races()[e.min(EMPIRES - 1)];
+        let rules = &self.game.rules.ai.design;
+        if let Some(x) = self.game.state.designs.get_mut(e).and_then(|t| t.get_mut(d)) {
+            let mut des = crate::spacewar::Design::from_bytes(x);
+            des.recompute(rules, race, price);
+            *x = des.to_bytes();
+        }
+    }
+    fn money(&self, e: usize) -> f64 {
+        self.game.state.treasuries()[e.min(EMPIRES - 1)].available(0)
+    }
+    fn add_money(&mut self, e: usize, x: f64) {
+        let income = self.game.ai_income(e);
+        let mut t = self.game.state.treasuries();
+        t[e.min(EMPIRES - 1)].add(0, x, income);
+        self.game.state.store_treasuries(&t);
+    }
+    fn deliver(&mut self, e: usize, planet: i32, d: usize, units: i32) {
+        let g = self.game.globals();
+        let ctx = self.game.production_context(&g, g.speed);
+        let mut yard = self.game.shipyard();
+        let p = planet.max(0) as usize;
+        if p < yard.planets.len() {
+            if let Some(des) = yard.designs.get(e).and_then(|t| t.get(d)).cloned() {
+                let f = yard.delivery_fleet(p, 6.0, true, true, false, false, 0);
+                let mut ev = Vec::new();
+                yard.build(p, f, d as i16, units, 0, des.class == 1, &des, true, &ctx, &mut ev);
+                self.game.store_shipyard(&yard, &ev);
+                self.game.events.extend(ev.into_iter().map(GameEvent::Production));
+            }
+        }
+        self.game.story_special([0x13, e as i32, d as i32, units, planet, 0, 0, 0]);
     }
 }
 
@@ -790,6 +1230,106 @@ fn put_yard_planet(r: &mut [u8], p: &YardPlanet) {
         r[0x100 + 2 * k..0x102 + 2 * k].copy_from_slice(&s.to_le_bytes());
     }
     r[0x114..0x118].copy_from_slice(&p.station_count.to_le_bytes());
+}
+
+/// The starmap's arrival hooks (`fleet-movement.md` §4.3): colonisation, terraforming and traders through the colony
+/// world; the units of merges and deletions (`HajoAtpakol`, `TankAtpakol`, `HajoDelete`) through the combat world,
+/// whose view of the touched fleets is refreshed from the records first and copied back after.
+struct StarmapHooks<'a> {
+    colony: ColonyArrivals<'a>,
+    combat: &'a mut CombatWorld,
+    /// `OsszHanySajatFlotta`.
+    fleet_numbers: &'a mut [i32; EMPIRES],
+    /// Decrements of `OsszHanySajatFlotta[0xFF]` (exe 0xBB44AC = `Tankok[96].count`) while `Tankok` is shorter.
+    overflow: i32,
+    /// `(into, from)` per merge, for `AktFleet`.
+    merges: Vec<(usize, usize)>,
+}
+
+impl StarmapHooks<'_> {
+    fn sync_in(&mut self, map: &Starmap, fleets: &[usize]) {
+        let cw = &mut *self.combat;
+        if cw.fleets.len() < map.fleets.len() {
+            cw.fleets.resize(map.fleets.len(), CombatFleet { owner: DELETED, ..Default::default() });
+        }
+        for &f in fleets {
+            let (r, c) = (&map.fleets[f], &mut cw.fleets[f]);
+            (c.owner, c.flags, c.x, c.y) = (r.owner, r.flags, r.x, r.y);
+            (c.colony_ships, c.terraformers) = (r.colony_ships, r.terraformers);
+        }
+        cw.colony_ship_pool = map.colony_ship_pool;
+        cw.terraformer_pool = map.terraformer_pool;
+    }
+
+    fn sync_out(&self, map: &mut Starmap, fleets: &[usize]) {
+        let cw = &*self.combat;
+        for &f in fleets {
+            let (r, c) = (&mut map.fleets[f], &cw.fleets[f]);
+            r.flags = c.flags;
+            (r.colony_ships, r.terraformers) = (c.colony_ships, c.terraformers);
+            (r.ship_count, r.strength, r.ground_strength) = (c.totals.ships, c.totals.attack, c.totals.ground_strength);
+        }
+        map.colony_ship_pool = cw.colony_ship_pool;
+        map.terraformer_pool = cw.terraformer_pool;
+    }
+
+    /// `OsszHanySajatFlotta[owner] −= 1`; owner 0xFF reads `Tankok[96].count`.
+    fn count_down(&mut self, owner: u8) {
+        match self.fleet_numbers.get_mut(owner as usize) {
+            Some(c) => *c -= 1,
+            None => match self.combat.vehicles.get_mut(COUNTER_OVERFLOW_VEHICLE) {
+                Some(v) => v.count -= 1,
+                None => self.overflow += 1,
+            },
+        }
+    }
+}
+
+/// `OsszHanySajatFlotta[0xFF]` is `Tankok[96].count` (`ai::units`).
+const COUNTER_OVERFLOW_VEHICLE: usize = 96;
+
+impl Arrivals for StarmapHooks<'_> {
+    fn colonise(&mut self, p: usize, owner: u8, star: &mut StarPlanet, rng: &mut Streams) {
+        self.colony.colonise(p, owner, star, rng);
+    }
+    fn terraform(&mut self, p: usize, owner: u8) -> u8 {
+        self.colony.terraform(p, owner)
+    }
+    fn trader_paid(&mut self, empire: u8, amount: i32) {
+        self.colony.trader_paid(empire, amount);
+    }
+    fn merge_units(&mut self, into: usize, from: usize, map: &mut Starmap) {
+        self.sync_in(map, &[into, from]);
+        self.combat.merge_units(into, from);
+        self.sync_out(map, &[into, from]);
+        self.count_down(map.fleets[from].owner);
+        self.merges.push((into, from));
+    }
+    /// The ships go in ship order; the last `HajoDelete` of an AI's fleet re-enters `FlottaDelete`, which counts the
+    /// owner down and frees the slot, so the outer call then counts down `[0xFF]` [original bug].
+    fn delete_units(&mut self, f: usize, map: &mut Starmap) {
+        self.sync_in(map, &[f]);
+        let owner = map.fleets[f].owner;
+        let cw = &mut *self.combat;
+        for i in 1..cw.ships.len() {
+            let s = cw.ships[i];
+            if s.fleet >= 0 && s.fleet as usize == f && s.design != NO_DESIGN {
+                cw.delete_ship(i);
+            }
+        }
+        for k in 1..cw.vehicles.len() {
+            let v = cw.vehicles[k];
+            if v.fleet >= 0 && v.fleet as usize == f && v.design != NO_DESIGN {
+                cw.delete_vehicles(v.fleet, v.design, v.count);
+            }
+        }
+        let reentered = !cw.fleets[f].alive();
+        self.sync_out(map, &[f]);
+        self.count_down(owner);
+        if reentered {
+            self.count_down(DELETED);
+        }
+    }
 }
 
 /// The AI's hooks: war declarations are recorded (diplomacy carries them out when the replay meets one); appended
@@ -908,5 +1448,140 @@ impl StoryWorld for StoryView<'_> {
     }
     fn event(&mut self, ev: StoryEvent) {
         self.events.push(ev);
+    }
+}
+
+// ------------------------------------------------------------------------------------------------ info and messages
+
+impl Game<'_> {
+    /// `FRISSIT_Info` (`info-messages.md` §1): the charts sample once a month.
+    fn info(&mut self) {
+        let month = self.state.mem.i32(va::HONAP);
+        if self.state.mem.i32(va::INFO_MONTH) == month {
+            return;
+        }
+        let w = self.state.info_world();
+        let mut c = self.state.info_charts();
+        c.sample(&w);
+        self.state.store_info_charts(&c);
+        self.state.mem.set_i32(va::INFO_MONTH, month);
+    }
+
+    /// `FRISSIT_Messages` (`info-messages.md` §4): a message past its expiry leaves the inbox and tells the
+    /// stories (`Story_MessageElevules`).
+    fn inbox(&mut self) {
+        let mut b = self.state.inbox();
+        let Some(block) = b.expire(self.state.mem.i32(va::IDO), self.state.mem.i32(va::INBOX_SHOWING)) else { return };
+        self.state.store_inbox(&b);
+        self.with_story(|st, w| {
+            st.message.0 = block;
+            st.flags[crate::story::flag::PROMOTED] = true;
+            st.check(true, &ScenarioStories, w);
+        });
+    }
+
+    fn planet_name(&self, p: usize) -> Vec<u8> {
+        cstr(&self.state.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, 0x20)).to_vec()
+    }
+
+    fn tech_name(&self, t: usize) -> Vec<u8> {
+        cstr(&self.state.mem.read(va::TECHS + (t * crate::save::TECH_SIZE) as u32, 0x20)).to_vec()
+    }
+
+    fn empire_name(&self, e: u8) -> Vec<u8> {
+        self.empire_names.get(e as usize).cloned().unwrap_or_default()
+    }
+
+    /// The messages the tick's systems posted to the human (`ScrollUzenetId` at the sites of
+    /// `info-messages.md` §3.2), from the events since `from`, in order.
+    pub fn post_messages(&mut self, from: usize) {
+        let en = self.globals().en;
+        let m = &self.state.mem;
+        let knows = |a: u8| m.u8(va::EMPIRE_KNOWS + (en * EMPIRES) as u32 + a as u32) != 0;
+        let debug = m.u8(va::DEBUGX) != 0;
+        let is_en = |e: u8| e as usize == en;
+        // (id, parameters, important, interrupt)
+        let mut posts: Vec<(i32, Vec<Vec<u8>>, bool, bool)> = Vec::new();
+        for ev in &self.events[from..] {
+            match ev {
+                GameEvent::Research(ResearchEvent::Completed { empire, tech }) if is_en(*empire) => {
+                    posts.push((2, vec![self.tech_name(*tech)], false, false))
+                }
+                GameEvent::Diplomacy(DiploEvent::EmpireDied { empire: e }) if *e < 9 && !is_en(*e) => {
+                    posts.push((3, vec![self.empire_name(*e)], false, false))
+                }
+                GameEvent::Story(StoryEvent::EmpireDies(e)) if (0..9).contains(e) && *e as usize != en => {
+                    posts.push((3, vec![self.empire_name(*e as u8)], false, false))
+                }
+                GameEvent::Diplomacy(DiploEvent::War { a, b }) if (knows(*a) || knows(*b) || debug) && *a < 9 && *b < 9 => {
+                    posts.push((6, vec![self.empire_name(*a), self.empire_name(*b)], true, false))
+                }
+                GameEvent::Diplomacy(DiploEvent::Message { from, to, .. }) if is_en(*to) => {
+                    posts.push((10, vec![self.empire_name(*from)], true, false))
+                }
+                GameEvent::Diplomacy(DiploEvent::Discovered { empire }) => posts.push((26, vec![self.empire_name(*empire)], true, false)),
+                GameEvent::Side(s) | GameEvent::Spy(SpyEvent::Colony(s)) => match *s {
+                    SideEvent::Abandoned { planet, owner } if is_en(owner) => posts.push((5, vec![self.planet_name(planet)], true, false)),
+                    SideEvent::TechCaptured { empire, tech } if is_en(empire) => posts.push((7, vec![self.tech_name(tech)], false, false)),
+                    SideEvent::Revolt { planet, owner } if is_en(owner) => posts.push((8, vec![self.planet_name(planet)], true, true)),
+                    SideEvent::Colony { planet, event: ColonyEvent::UnrestWarning } => posts.push((9, vec![self.planet_name(planet)], true, false)),
+                    SideEvent::Colony { planet, event: ColonyEvent::SpyExpelled { empire } } if is_en(empire) => {
+                        posts.push((13, vec![self.planet_name(planet)], false, false))
+                    }
+                    SideEvent::Rebelled { planet, new_owner, .. } if is_en(new_owner) => posts.push((19, vec![self.planet_name(planet)], true, false)),
+                    SideEvent::YearClosed => {
+                        for (id, at) in [(20, va::TAX_LAST), (21, va::TRADE_LAST)] {
+                            let v = m.i32(at + 4 * en as u32);
+                            if v > 0 {
+                                posts.push((id, vec![v.to_string().into_bytes()], false, false));
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                GameEvent::Spy(SpyEvent::Report(r)) => posts.extend(r.messages().into_iter().map(|id| (id, Vec::new(), false, false))),
+                GameEvent::Spy(SpyEvent::Returned { .. }) => posts.push((0x82, Vec::new(), false, false)),
+                GameEvent::Spy(SpyEvent::Struck { mission, a, b }) => {
+                    let (a, b) = (*a, *b);
+                    let building_tech = |kind: i32| self.rules.side.colony.buildings.get(kind as usize).map_or(0, |k| k.tech as usize);
+                    let post = match *mission as usize {
+                        spy::mission::STEAL_MONEY => Some((0x87, vec![Vec::new()])),
+                        spy::mission::SABOTAGE => Some((0x88, vec![self.tech_name(building_tech(b)), self.planet_name(a as usize)])),
+                        spy::mission::DESTROY_SHIP => Some((0x89, vec![self.tech_name(a.max(0) as usize)])),
+                        spy::mission::REBELLION => Some((0x8b, vec![self.planet_name(a as usize)])),
+                        spy::mission::ASSASSINATE => Some((0x8c, vec![Vec::new()])),
+                        spy::mission::KIDNAP => Some((0x8d, vec![self.family_names.get(a as usize).cloned().unwrap_or_default()])),
+                        spy::mission::MASS_UNREST => Some((0x8e, vec![Vec::new()])),
+                        _ => None,
+                    };
+                    if let Some((id, params)) = post {
+                        posts.push((id, params, true, false));
+                    }
+                }
+                GameEvent::Battle(b) => {
+                    for (id, planet, important) in b.messages(en as u8) {
+                        posts.push((id, vec![planet.map(|p| self.planet_name(p)).unwrap_or_default()], important, false));
+                    }
+                }
+                GameEvent::Starmap(s) | GameEvent::Diplomacy(DiploEvent::Starmap(s)) => match s {
+
+                    StarmapEvent::ContactLost { .. } | StarmapEvent::ContactLostNetwork { .. } => posts.push((4, Vec::new(), false, false)),
+                    StarmapEvent::EnemyApproaching { .. } => posts.push((14, Vec::new(), false, false)),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        if posts.is_empty() {
+            return;
+        }
+        let mut t = self.state.ticker();
+        for (id, params, important, interrupt) in posts {
+            let params: Vec<&[u8]> = params.iter().map(|p| &p[..]).collect();
+            if let Some(text) = self.rules.messages.format(id, &params) {
+                t.post(&text, id, important, interrupt);
+            }
+        }
+        self.state.store_ticker(&t);
     }
 }

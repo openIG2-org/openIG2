@@ -190,7 +190,7 @@ fn unit_bytes(r: &[u8], hp: Vec<i32>, origin: Vec<i32>, waypoints: Vec<(i32, i32
             ai_home: i32_at(&r, 0x24c),
             alive_cached: r[0x125],
             alive_n: i32_at(&r, 0x128),
-            phase: f32_at(&r, 0x26c),
+            drop: [f32_at(&r, 0x264), f32_at(&r, 0x268), f32_at(&r, 0x26c)],
             planet: i32_at(&r, 0x280),
             basis: mat(&r, 0x1c),
             body: mat(&r, 0x40),
@@ -401,13 +401,13 @@ fn key(u: &Group) -> String {
         "d{} o{} s{} max{} hp{:?} or{:?} fl{:#x} f2{:#x} w{:#x} pods{} ammo{} regen{} air{} gun{} hull{} prev{} \
          partner{} carrier{} par{} sei{} bld{} tgt{} idx{} aim{} tr{:#x} cell{:?} last{:?} mv{:?} pos{:x}/{:x} z{:x} \
          turn{:x}/{:x} m{:x}/{:x}/{:x}/{:x} spd{:x} rng{:x} rel{:x?} ang{:x}/{:x} elevation{} f228{} group{} alive_cached{} \
-         phase{:x} pl{} hit{:?} basis{:x?} body{:x?} tur{:x?} rp{:x}/{:x} snap{} moved{}",
+         drop{:x?} pl{} hit{:?} basis{:x?} body{:x?} tur{:x?} rp{:x}/{:x} snap{} moved{}",
         u.design, u.owner, u.side, u.max_hp, u.hp, u.origin, u.flags & !(flag::MESH | flag::MESH2), u.flags2, u.weapons,
         u.pods, u.ammo, u.regen, u.air, u.has_gun as u8, u.hull, u.prev_size, u.partner, partner_link, u.paralysed,
         u.seized, u.building, target, u.index, u.aim, u.transport, u.cell, u.last_cell, u.move_state, bits(u.pos.0),
         bits(u.pos.1), bits(rt.z), bits(rt.turn.0), bits(rt.turn.1), bits(rt.max_speed), bits(rt.velocity), bits(rt.accel),
         bits(rt.decel), bits(rt.speed), bits(rt.range), reload, bits(rt.angle), bits(rt.turret_angle), bits(rt.elevation), rt.f228, rt.ai_group,
-        rt.alive_cached, bits(rt.phase), rt.planet, u.last_hit, m(&rt.basis), m(&rt.body), m(&rt.turret), bits(rt.step.0),
+        rt.alive_cached, rt.drop.map(bits), rt.planet, u.last_hit, m(&rt.basis), m(&rt.body), m(&rt.turret), bits(rt.step.0),
         bits(rt.step.1), rt.snap, rt.moved
     )
 }
@@ -623,7 +623,14 @@ fn apply(state: &mut Regions, d: &Value) {
     for (n, v) in d.as_object().unwrap() {
         let len = v["len"].as_i64().unwrap();
         if len < 0 {
-            state.remove(n);
+            // A dead unit's record is freed by `RemoveTankGroup` but its pointer stays: a shooter that picked
+            // it as its auto-aim after `RemoveTarget` ran keeps reading it. Keep the last bytes as the freed
+            // block's content.
+            if let Some(b) = state.remove(n) {
+                if ["u", "hp", "or"].iter().any(|p| n.strip_prefix(p).is_some_and(|d| d.bytes().all(|c| c.is_ascii_digit()))) {
+                    state.insert(format!("freed-{n}"), b);
+                }
+            }
             continue;
         }
         let b = state.entry(n.clone()).or_default();
@@ -676,6 +683,17 @@ fn battle_state(st: &Regions, p: i32) -> (Field, GroundPlanet) {
         f.timers[e] = (i32_at(w, 0x7fc + 8 * e), i32_at(w, 0x800 + 8 * e));
     }
     f.lists.fighters_on = w[0x32c] != 0;
+    for (k, x) in f.lists.fighters.iter_mut().enumerate() {
+        let o = 0x1f4 + 0x40 * k;
+        *x = Fighter {
+            pos: f3(w, o),
+            vel: f3(w, o + 0xc),
+            step: f3(w, o + 0x18),
+            phase: i32_at(w, o + 0x24),
+            ground: f32_at(w, o + 0x28),
+            cooldown: i32_at(w, o + 0x34),
+        };
+    }
     f.ai = ai_blocks(w);
     let n = i32_at(w, 0x180).max(0) as usize;
     let alive = st.get("alive").cloned().unwrap_or_default();
@@ -688,6 +706,11 @@ fn battle_state(st: &Regions, p: i32) -> (Field, GroundPlanet) {
                 let or = st.get(&format!("or{i}")).map(|b| i32s(b)).unwrap_or_default();
                 let wp = st.get(&format!("wp{i}")).map(|b| i32s(b).chunks(2).map(|c| (c[0], c[1])).collect()).unwrap_or_default();
                 unit_bytes(r, hp, or, wp)
+            }
+            (false, _) if st.contains_key(&format!("freed-u{i}")) => {
+                let hp = st.get(&format!("freed-hp{i}")).map(|b| i32s(b)).unwrap_or_default();
+                let or = st.get(&format!("freed-or{i}")).map(|b| i32s(b)).unwrap_or_default();
+                unit_bytes(&st[&format!("freed-u{i}")], hp, or, Vec::new())
             }
             _ => Group::default(),
         };
@@ -757,9 +780,13 @@ fn battle_state(st: &Regions, p: i32) -> (Field, GroundPlanet) {
 }
 
 /// The projectile lists, keyed for comparison; debris (kind 7) only by its kind (its lifetime is
-/// uninitialised heap memory in the exe and its motion is cosmetic).
+/// uninitialised heap memory in the exe and its motion is cosmetic); then the fighter wave.
 fn list_keys(f: &Field) -> Vec<String> {
     let mut out = Vec::new();
+    for (k, x) in f.lists.fighters.iter().enumerate() {
+        let on = f.lists.fighters_on;
+        out.push(format!("F{k} {on} {:?}", (x.pos.map(bits), x.vel.map(bits), x.step.map(bits), x.phase, bits(x.ground), x.cooldown)));
+    }
     for (k, s) in f.lists.shells.iter().enumerate() {
         out.push(format!("A{k} {:?}", s.as_ref().map(|s| (s.vel.map(bits), s.pos.map(bits), s.life, s.target, bits(s.pull), s.dmg, s.by, s.jitter))));
     }
@@ -787,6 +814,7 @@ fn check_grwar(
     ev: &Value,
     after: &Regions,
     entry: &Value,
+    fuzz_masked: bool,
     fails: &mut Vec<String>,
     kinds: &mut std::collections::BTreeMap<String, usize>,
 ) -> bool {
@@ -824,7 +852,14 @@ fn check_grwar(
         fail("units", format!("units port {} exe {}", field.units.len(), want.units.len()));
     } else {
         for i in 0..field.units.len() {
-            if field.alive[i] && tick_key(&field.units[i]) != tick_key(&want.units[i]) {
+            let mut w = want.units[i].clone();
+            if fuzz_masked {
+                // Recorded before the tracer's `aifuzz` event: the AI fuzzer's writes (weapons, air units,
+                // hit markers) made before `WF::MI` show up in this diff.
+                let g = &field.units[i];
+                (w.weapons, w.air, w.last_hit) = (g.weapons, g.air, g.last_hit);
+            }
+            if field.alive[i] && tick_key(&field.units[i]) != tick_key(&w) {
                 fail("unit", format!("unit {i} differs"));
             }
         }
@@ -931,7 +966,10 @@ fn battle_tick_matches_trace() {
     let Ok(rd) = std::fs::read_dir(&dir) else { return };
     let mut files: Vec<PathBuf> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("grt-battle") || p.file_name().unwrap().to_string_lossy().starts_with("grt-small"))
+        .filter(|p| {
+            let n = p.file_name().unwrap().to_string_lossy();
+            n.starts_with("grt-battle") || n.starts_with("grt-small") || n.starts_with("grt-ai") || n.starts_with("grt-transport") || n.starts_with("grt-laser")
+        })
         .collect();
     files.sort();
     let limit: usize = std::env::var("IG2_BATTLE_LIMIT").ok().and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
@@ -941,20 +979,23 @@ fn battle_tick_matches_trace() {
     let mut gen_tail = (0usize, 0usize);
     let (mut grwars, mut grwar_exact, mut finished, mut elevation_ulps) = (0usize, 0usize, 0usize, 0usize);
     let mut kinds = std::collections::BTreeMap::<String, usize>::new();
+    let (mut fighter_ticks, mut bomb_ticks, mut mad_ticks) = (0usize, 0usize, 0usize);
     for path in files {
         let mut meta = Value::Null;
         let mut st = Regions::new();
         let mut grwar: Option<(Regions, Value)> = None;
+        let fuzz_masked = path.file_name().unwrap().to_string_lossy().starts_with("grt-ai")
+            && !std::fs::read_to_string(&path).unwrap().contains("\"k\":\"aifuzz\"");
         for line in std::io::BufReader::new(std::fs::File::open(&path).unwrap()).lines() {
             let ev: Value = serde_json::from_str(&line.unwrap()).unwrap();
             let k = ev["k"].as_str().unwrap();
-            if matches!(k, "mi" | "ref" | "grwar_end") {
+            if matches!(k, "mi" | "ref" | "grwar_end" | "aifuzz") {
                 if let Some((gst, gev)) = grwar.take() {
                     let mut after = st.clone();
                     apply(&mut after, if k == "grwar_end" { &ev["post"] } else { &ev["pre"] });
                     let tag = format!("{} battle {} grwar tick {}", path.file_name().unwrap().to_string_lossy(), gev["battle"], gev["tick"]);
                     grwars += 1;
-                    if check_grwar(&tag, &env, &gr, &meta, &gst, &gev, &after, &ev["entry"], &mut fails, &mut kinds) {
+                    if check_grwar(&tag, &env, &gr, &meta, &gst, &gev, &after, &ev["entry"], fuzz_masked, &mut fails, &mut kinds) {
                         grwar_exact += 1;
                     }
                 }
@@ -966,6 +1007,12 @@ fn battle_tick_matches_trace() {
                     grwar = Some((st.clone(), ev));
                 }
                 "grwar_end" => apply(&mut st, &ev["post"]),
+                "aifuzz" => apply(&mut st, &ev["pre"]),
+                // The dropships and landing orders between ticks (replayed by `transporters_match_trace`).
+                "hor" | "order" => {
+                    apply(&mut st, &ev["pre"]);
+                    apply(&mut st, &ev["post"]);
+                }
                 "init" => {
                     st.clear();
                     for (n, h) in ev["regions"].as_object().unwrap() {
@@ -1007,12 +1054,15 @@ fn battle_tick_matches_trace() {
                     let watching: [i32; 18] = std::array::from_fn(|k| i32_at(&before["kimelyik"], 4 * k));
                     let (mut field, mut planet) = battle_state(&before, p);
                     let before_countdown = field.countdown;
+                    fighter_ticks += field.lists.fighters_on as usize;
+                    bomb_ticks += field.lists.missiles.iter().flatten().any(|m| matches!(m.kind, 1 | 2)) as usize;
                     let s = serde_json::json!({ "tanks": before.get("tanks").map(|b| hexs(b)).unwrap_or_default() });
                     let mut world = world(&meta, &s);
                     let mut rng = Streams::default();
                     for (k, c) in before["seeds"].chunks(4).enumerate() {
                         rng.set_state(k, u32::from_le_bytes(c.try_into().unwrap()));
                     }
+                    let before_s5 = rng.state(5);
                     let mut lcg = Lcg(ev["rand"]["seed"].as_u64().unwrap() as u32);
                     let m = before["planet"][0x23] as usize;
                     let mut voices = before.get("voices").map(|b| voices_of(b));
@@ -1056,11 +1106,11 @@ fn battle_tick_matches_trace() {
                             w.rt.step = g2.rt.step;
                         }
                         let (gk, wk) = (tick_key(g2), tick_key(&w));
-                        // The gun elevation `+0x1c8` is render-only; it differs by a few dozen ulps in a
+                        // The gun elevation `+0x1c8` is render-only; it differs by up to ~150 ulps in a
                         // handful of solutions (identical inputs, the asm's chain: spec §11.8).
                         let elev_only = gk.split(' ').zip(wk.split(' ')).filter(|(a, b)| a != b).all(|(a, b)| {
                             let n = |s: &str| s.strip_prefix("elevation").and_then(|v| v.parse::<i64>().ok());
-                            matches!((n(a), n(b)), (Some(x), Some(y)) if (x - y).abs() <= 128)
+                            matches!((n(a), n(b)), (Some(x), Some(y)) if (x - y).abs() <= 256)
                         });
                         if gk != wk && elev_only {
                             elevation_ulps += 1;
@@ -1114,6 +1164,14 @@ fn battle_tick_matches_trace() {
                         *kinds.entry("stream2".into()).or_default() += 1;
                         fails.push(format!("{tag}: stream 2 port {} exe {}", rng.state(2), wr.state(2)));
                     }
+                    // Stream 5: the story mad tanks (`--mad`).
+                    if rng.state(5) != wr.state(5) {
+                        *kinds.entry("stream5".into()).or_default() += 1;
+                        fails.push(format!("{tag}: stream 5 port {} exe {}", rng.state(5), wr.state(5)));
+                    }
+                    if rng.state(5) != before_s5 {
+                        mad_ticks += 1;
+                    }
                     let (r1, r2) = (ev["rand"]["r1"].as_i64().unwrap() as i32, ev["rand"]["r2"].as_i64().unwrap() as i32);
                     let (a, b) = (lcg.next(), lcg.next());
                     if (a, b) != (r1, r2) {
@@ -1150,7 +1208,7 @@ fn battle_tick_matches_trace() {
         return;
     }
     eprintln!("FRISSIT_Grwar passes: {grwars} replayed, {grwar_exact} exact; {finished} end countdowns into GroundWarFinished");
-    eprintln!("battle ticks: {calls} replayed, {exact} exact ({heap_debris} with heap-garbage debris slots, {generated} passability map builds generated ({} needing the strip y >= 195 from the trace, {} with the next record's head and exact), {elevation_ulps} gun elevations a few ulps off); mismatch kinds {kinds:?}", gen_tail.0, gen_tail.1);
+    eprintln!("battle ticks: {calls} replayed, {exact} exact ({heap_debris} with heap-garbage debris slots, {generated} passability map builds generated ({} needing the strip y >= 195 from the trace, {} with the next record's head and exact), {elevation_ulps} gun elevations a few ulps off; {fighter_ticks} with a fighter wave up, {bomb_ticks} with air-strike bombs falling, {mad_ticks} drawing for mad tanks); mismatch kinds {kinds:?}", gen_tail.0, gen_tail.1);
     if !fails.is_empty() {
         for x in fails.iter().take(std::env::var("IG2_SHOW").ok().and_then(|v| v.parse().ok()).unwrap_or(30)) {
             eprintln!("{x}");
@@ -1173,12 +1231,13 @@ fn ground_ai_matches_trace() {
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
             let n = p.file_name().unwrap().to_string_lossy();
-            n.starts_with("grt-battle") || n.starts_with("grt-small") || n.starts_with("grt-ai")
+            n.starts_with("grt-battle") || n.starts_with("grt-small") || n.starts_with("grt-ai") || n.starts_with("grt-transport") || n.starts_with("grt-laser")
         })
         .collect();
     files.sort();
     let mut fails: Vec<String> = Vec::new();
     let (mut calls, mut exact, mut inits, mut strikes, mut heap_calls) = (0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut big_strikes = 0usize;
     let mut kinds = std::collections::BTreeMap::<String, usize>::new();
     let mut plans = std::collections::BTreeMap::<(i32, i32), usize>::new();
     for path in files {
@@ -1194,8 +1253,8 @@ fn ground_ai_matches_trace() {
                         st.insert(n.clone(), unhex(h.as_str().unwrap()));
                     }
                 }
-                "grwar" => apply(&mut st, &ev["pre"]),
-                "ref" => {
+                "grwar" | "aifuzz" => apply(&mut st, &ev["pre"]),
+                "ref" | "hor" | "order" => {
                     apply(&mut st, &ev["pre"]);
                     apply(&mut st, &ev["post"]);
                 }
@@ -1236,6 +1295,7 @@ fn ground_ai_matches_trace() {
                     let mut war = War::new(&mut field, &mut planet, &mut world, &gr, &ctx, &mut rng, &mut libc, &mut place).with_map(&env.maps[m]);
                     war.mi(speed);
                     strikes += war.events.iter().filter(|e| matches!(e, GroundEvent::AirStrike { .. })).count();
+                    big_strikes += war.events.iter().filter(|e| matches!(e, GroundEvent::AirStrike { big_ships: true, .. })).count();
                     drop(war);
                     let (want, _) = battle_state(&st, p);
                     for a in want.ai.iter().skip(1).filter(|a| a.strategy != 0) {
@@ -1287,9 +1347,6 @@ fn ground_ai_matches_trace() {
     exe  {b}")).take(3).collect();
                         fail(&mut kinds, &mut fails, "lists", format!("lists (len port {} exe {}){}", gl.len(), wl.len(), d.join("")));
                     }
-                    if field.lists.fighters_on != want.lists.fighters_on {
-                        fail(&mut kinds, &mut fails, "fighters", format!("fighters up port {} exe {}", field.lists.fighters_on, want.lists.fighters_on));
-                    }
                     let (r1, r2) = (ev["rand"]["r1"].as_i64().unwrap() as i32, ev["rand"]["r2"].as_i64().unwrap() as i32);
                     if (lcg.next(), lcg.next()) != (r1, r2) {
                         fail(&mut kinds, &mut fails, "libc", "libc draws differ".into());
@@ -1332,7 +1389,172 @@ fn ground_ai_matches_trace() {
     if calls == 0 {
         return;
     }
-    eprintln!("WF::MI: {calls} calls replayed, {exact} exact, {heap_calls} with a target picked over heap garbage ({inits} drawing stream 13, {strikes} air strikes); (strategy, phase) seen {plans:?}; mismatch kinds {kinds:?}");
+    eprintln!("WF::MI: {calls} calls replayed, {exact} exact, {heap_calls} with a target picked over heap garbage ({inits} drawing stream 13, {strikes} air strikes, {big_strikes} of them by big ships); (strategy, phase) seen {plans:?}; mismatch kinds {kinds:?}");
+    if !fails.is_empty() {
+        for x in fails.iter().take(std::env::var("IG2_SHOW").ok().and_then(|v| v.parse().ok()).unwrap_or(30)) {
+            eprintln!("{x}");
+        }
+        panic!("{} mismatches", fails.len());
+    }
+}
+
+/// The transporters (re/rules/ground-combat.md §11.16): every recorded dropship pass (`WF_Hordozo::Refresh2`,
+/// exe 0x48e0a0; `hor`) replayed through `War::dropship`, and every landing order (`order`: `PlaceAllTanks`
+/// 0x48c150, `PlaceTank` 0x48c2c0, `UnplaceTank` 0x4a4f70) through its port, from the exe's state before the
+/// call: every unit, the projectile lists (a shot-down pick-up's debris), the status cache, streams 0 and 2
+/// and the libc sequence.
+#[test]
+fn transporters_match_trace() {
+    let Some(env) = env() else { return };
+    let gr = ground_rules(&env.rules);
+    let dir = std::env::var_os("IG2_TRACE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces"));
+    let Ok(rd) = std::fs::read_dir(&dir) else { return };
+    let mut files: Vec<PathBuf> =
+        rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("grt-")).collect();
+    files.sort();
+    let mut fails: Vec<String> = Vec::new();
+    let mut kinds = std::collections::BTreeMap::<String, usize>::new();
+    let (mut passes, mut exact, mut orders, mut heap_debris) = (0usize, 0usize, 0usize, 0usize);
+    let mut seen = std::collections::BTreeMap::<String, usize>::new();
+    for path in files {
+        let mut meta = Value::Null;
+        let mut st = Regions::new();
+        for line in std::io::BufReader::new(std::fs::File::open(&path).unwrap()).lines() {
+            let ev: Value = serde_json::from_str(&line.unwrap()).unwrap();
+            let k = ev["k"].as_str().unwrap();
+            match k {
+                "battle" => meta = ev,
+                "init" => {
+                    st.clear();
+                    for (n, h) in ev["regions"].as_object().unwrap() {
+                        st.insert(n.clone(), unhex(h.as_str().unwrap()));
+                    }
+                }
+                "grwar" | "aifuzz" => apply(&mut st, &ev["pre"]),
+                "grwar_end" => apply(&mut st, &ev["post"]),
+                "mi" | "ref" => {
+                    apply(&mut st, &ev["pre"]);
+                    apply(&mut st, &ev["post"]);
+                }
+                "hor" | "order" => {
+                    apply(&mut st, &ev["pre"]);
+                    let before = st.clone();
+                    apply(&mut st, &ev["post"]);
+                    let p = meta["p"].as_i64().unwrap() as i32;
+                    let tag = format!("{} battle {} tick {} {k} {}", path.file_name().unwrap().to_string_lossy(), ev["battle"], ev["tick"], ev["seq"]);
+                    let g = &ev["g"];
+                    let mut ctx = context(&meta);
+                    ctx.on_screen =
+                        g["aktKep"].as_i64() == Some(3) && g["aktPlanet"].as_i64() == Some(p as i64) && g["belep"] == 0 && g["atlepes"] == 0;
+                    let (mut field, mut planet) = battle_state(&before, p);
+                    let s = serde_json::json!({ "tanks": before.get("tanks").map(|b| hexs(b)).unwrap_or_default() });
+                    let mut world = world(&meta, &s);
+                    let mut rng = Streams::default();
+                    for (k, c) in before["seeds"].chunks(4).enumerate() {
+                        rng.set_state(k, u32::from_le_bytes(c.try_into().unwrap()));
+                    }
+                    let mut lcg = Lcg(ev["rand"]["seed"].as_u64().unwrap() as u32);
+                    let m = before["planet"][0x23] as usize;
+                    let before_fails = fails.len();
+                    {
+                        let mut libc = || lcg.next();
+                        let mut place = |_s: Option<(i32, i32)>| (false, (0, 0));
+                        let mut war = War::new(&mut field, &mut planet, &mut world, &gr, &ctx, &mut rng, &mut libc, &mut place).with_map(&env.maps[m]);
+                        if k == "hor" {
+                            passes += 1;
+                            let i = ev["idx"].as_i64().unwrap() as i32;
+                            let s0 = war.field.units[i as usize].transport;
+                            if (ev["cc"].as_f64().unwrap() as i32) % 5 != 0 {
+                                fails.push(format!("{tag}: ColonyCounter {} not a multiple of 5", ev["cc"]));
+                            }
+                            let lost = war.dropship(i);
+                            let s1 = war.field.units[i as usize].transport;
+                            let to = if lost { "lost".to_string() } else { format!("{s1:#x}") };
+                            if s0 != s1 || lost {
+                                *seen.entry(format!("{s0:#x}->{to}")).or_default() += 1;
+                            }
+                            if lost != (ev["ret"].as_i64() == Some(1)) {
+                                fails.push(format!("{tag}: shot down port {lost} exe {}", ev["ret"]));
+                            }
+                        } else {
+                            orders += 1;
+                            let c = ints(&ev["cmd"]);
+                            *seen.entry(format!("order {}", c[0])).or_default() += 1;
+                            match c[0] {
+                                0 => war.place_all_tanks(c[1], c[2], c[3], c[4] != 0),
+                                1 => war.place_tank(c[1], c[2], c[3]),
+                                _ => war.unplace_tank(c[1]),
+                            }
+                        }
+                    }
+                    let (want, _) = battle_state(&st, p);
+                    for i in 0..field.units.len().max(want.units.len()) {
+                        let ga = field.alive.get(i).copied().unwrap_or(false);
+                        let wa = want.alive.get(i).copied().unwrap_or(false);
+                        if ga != wa {
+                            fails.push(format!("{tag}: unit {i} alive port {ga} exe {wa}"));
+                            *kinds.entry("alive".into()).or_default() += 1;
+                            continue;
+                        }
+                        if !ga {
+                            continue;
+                        }
+                        let mut w = want.units[i].clone();
+                        let g2 = &field.units[i];
+                        if g2.last_hit.is_none() {
+                            w.last_hit = None;
+                        }
+                        if w.flags & flag::TURRET != 0 {
+                            w.rt.step = g2.rt.step;
+                        }
+                        let (gk, wk) = (tick_key(g2), tick_key(&w));
+                        if gk != wk {
+                            let d: Vec<String> = gk
+                                .split(' ')
+                                .zip(wk.split(' '))
+                                .filter(|(a, b)| a != b)
+                                .map(|(a, b)| {
+                                    let name: String = a.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+                                    *kinds.entry(name).or_default() += 1;
+                                    format!("port {a} exe {b}")
+                                })
+                                .collect();
+                            fails.push(format!("{tag}: unit {i}: {}", d.join("; ")));
+                        }
+                    }
+                    let (gl, wl) = (list_keys(&field), list_keys(&want));
+                    if gl != wl && debris_only(&gl, &wl) {
+                        heap_debris += 1;
+                    } else if gl != wl {
+                        *kinds.entry("lists".into()).or_default() += 1;
+                        fails.push(format!("{tag}: lists (len port {} exe {})", gl.len(), wl.len()));
+                    }
+                    if field.status_valid != want.status_valid {
+                        *kinds.entry("status".into()).or_default() += 1;
+                        fails.push(format!("{tag}: status cache port {} exe {}", field.status_valid, want.status_valid));
+                    }
+                    for s in [0, 2] {
+                        let w = u32::from_le_bytes(st["seeds"][4 * s..4 * s + 4].try_into().unwrap());
+                        if rng.state(s) != w {
+                            *kinds.entry(format!("stream{s}")).or_default() += 1;
+                            fails.push(format!("{tag}: stream {s} port {} exe {w}", rng.state(s)));
+                        }
+                    }
+                    check_libc(&tag, &mut lcg, &ev["rand"], &mut fails);
+                    if fails.len() == before_fails {
+                        exact += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if passes + orders == 0 {
+        return;
+    }
+    eprintln!("dropships: {passes} passes and {orders} landing orders replayed, {exact} exact ({heap_debris} with heap-garbage debris slots); transitions {seen:?}; mismatch kinds {kinds:?}");
     if !fails.is_empty() {
         for x in fails.iter().take(std::env::var("IG2_SHOW").ok().and_then(|v| v.parse().ok()).unwrap_or(30)) {
             eprintln!("{x}");

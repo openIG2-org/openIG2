@@ -442,6 +442,9 @@ pub struct ColonyWorld {
 pub enum SideEvent {
     /// A planet economy event (index = planet).
     Colony { planet: usize, event: ColonyEvent },
+    /// The unrest counter passed 30 on `owner`'s planet: `BolygoFellazad` follows (message 8 to the human
+    /// owner, `info-messages.md` §3.2).
+    Revolt { planet: usize, owner: u8 },
     /// `BolygoFellazad` ran; story special 0x15 (result 2) or 0x16 (result 3) follows in the step.
     Rebelled { planet: usize, result: i32, new_owner: u8 },
     /// Fleets with `order 2, kind 1, target planet` get `FlottaMozgat(f, 0, 0, 0, 0)`.
@@ -774,6 +777,13 @@ impl Arrivals for ColonyArrivals<'_> {
     fn terraform(&mut self, p: usize, owner: u8) -> u8 {
         self.world.terraform(p, owner, self.rules, self.placement).0
     }
+
+    fn trader_paid(&mut self, e: u8, amount: i32) {
+        let e = e as usize;
+        self.world.add_money(e, 0, amount as f64, self.rules, self.ctx);
+        let t = &mut self.world.empires.trade_this_year[e];
+        *t = t.wrapping_add(amount);
+    }
 }
 
 /// What autobuild does with a pick of building 0 (category 1 without a researched power plant). The
@@ -1038,6 +1048,7 @@ impl ColonyWorld {
             let (fx, report) = colony::economy_head(&mut self.planets[p], &rules.colony, ctx);
             self.occupied[p] = fx.occupied;
             if report.events.contains(&ColonyEvent::Rebellion) {
+                events.push(SideEvent::Revolt { planet: p, owner: self.planets[p].owner });
                 let result = self.rebel(p, 0, true, rules, ctx, rng, &mut events);
                 let _ = result;
             }

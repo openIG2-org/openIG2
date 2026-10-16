@@ -38,8 +38,9 @@ pub struct TankRt {
     /// `+0x125` the alive-member count `+0x128` is cached for this tick (`AliveTankNum` 0x45f380).
     pub alive_cached: u8,
     pub alive_n: i32,
-    /// `+0x26c` a cosmetic phase from the constructor's libc `rand()` (`r % 500 − 1650`), `+0x264/+0x268` a third of it.
-    pub phase: f32,
+    /// The dropship (`WF_Hordozo`, §11.16): `+0x264/+0x268` its offset on the map axes, `+0x26c` its height
+    /// above the unit (negative: up).
+    pub drop: [f32; 3],
     /// `+0x280` the battlefield's planet.
     pub planet: i32,
     /// `+0x1c` the smoothed terrain basis, `+0x40` the body's and `+0x64` the turret's orientation
@@ -74,6 +75,15 @@ pub struct TankRt {
 
 const IDENTITY: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
 
+impl TankRt {
+    /// The dropship as the unit constructor (`WF_Hordozo::WF_Hordozo`, inlined at exe 0x4570c0) leaves it from
+    /// its libc `rand()` `r`: height `r % 500 − 1650`, offsets a third of it (f32).
+    pub fn dropship_start(r: i32) -> [f32; 3] {
+        let h = (r % 500 - 0x672) as f32;
+        [h / 3.0, h / 3.0, h]
+    }
+}
+
 impl Default for TankRt {
     fn default() -> Self {
         Self {
@@ -95,7 +105,7 @@ impl Default for TankRt {
             ai_home: 0,
             alive_cached: 0,
             alive_n: 0,
-            phase: 0.0,
+            drop: [0.0; 3],
             planet: 0,
             basis: IDENTITY,
             body: IDENTITY,
@@ -438,9 +448,9 @@ impl War<'_> {
                 self.field.units.len() - 1
             }
         };
-        let phase = (self.libc)();
+        let r = (self.libc)();
         let mut u = Group::default();
-        u.rt.phase = (phase % 500 - 0x672) as f32;
+        u.rt.drop = TankRt::dropship_start(r);
         u.design = pod;
         u.hp.push(hp);
         u.origin.push(-1);

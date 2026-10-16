@@ -58,14 +58,30 @@ pub struct Bolt {
     pub power: i32,
 }
 
+/// One fighter of an air strike's wave (`WF+0x1f4 + 0x40·k`, k = 0..5; `WF::AddFighters` 0x45b8d0).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Fighter {
+    /// `+0` position and `+0xc` velocity, both `(height, x, y)`; the height velocity is the descent.
+    pub pos: [f32; 3],
+    pub vel: [f32; 3],
+    /// `+0x18` the last step taken (render only; `AddFighters` leaves it from the previous wave).
+    pub step: [f32; 3],
+    /// `+0x24` the flight phase (ticks of the wave), `+0x28` the ground height under the strike point,
+    /// `+0x34` the bomb cooldown.
+    pub phase: i32,
+    pub ground: f32,
+    pub cooldown: i32,
+}
+
 /// The projectile lists of a battlefield (slots are reused: a new object takes the first empty one).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Lists {
     pub shells: Vec<Option<Shell>>,
     pub missiles: Vec<Option<Missile>>,
     pub bolts: Vec<Option<Bolt>>,
-    /// `+0x32c`: an air strike's fighters are flying (`+0x1f4 + 0x40k`, not ported: §11.11).
+    /// `+0x32c`: an air strike's fighters are flying (the byte overlaps fighter 4's unused `+0x38`).
     pub fighters_on: bool,
+    pub fighters: [Fighter; 5],
 }
 
 pub(super) fn slot<T>(v: &mut Vec<Option<T>>) -> usize {
@@ -184,6 +200,125 @@ impl War<'_> {
         self.field.lists.bolts[k] = Some(Bolt { vel, pos: [p[0] - 10.0, p[1], p[2]], dest, life, target: t, power });
     }
 
+    /// A bomb of an air strike in list B, falling from `p` to the int point `d`: kind 1 (exe 0x457ad0, a
+    /// big ship's: speed `((rndlog(2, 0, 14)/10 + 0.5)·3` in f64, then `·20` in f32) or kind 2 (0x45b600,
+    /// a fighter's: speed 20). Shooter 10000; on screen one libc `rand()` picks the texture. The fade
+    /// `+0x3c` is left uninitialised by the exe (here 0).
+    fn add_bomb(&mut self, p: [f32; 3], d: [i32; 3], dmg: i32, ground: i32, kind: i32) {
+        let k = slot(&mut self.field.lists.missiles);
+        let dest = d.map(|v| v as f32);
+        let mut v = [dest[0] - p[0], dest[1] - p[1], dest[2] - p[2]];
+        normalise(&mut v);
+        let speed = if kind == 1 { ((self.draw(0, 14) as f64 / 10.0 + 0.5) * 3.0) as f32 * 20.0 } else { 20.0 };
+        let vel = v.map(|c| speed * c);
+        self.field.lists.missiles[k] = Some(Missile { vel, pos: p, dest, life: 300, dmg, target: ground, kind, fade: 0.0, by: NONE });
+        if self.ctx.on_screen {
+            (self.libc)();
+        }
+    }
+
+    /// The impact point of an air strike at cell `(cx, cy)`: the cell's map position (no +0.5) and the
+    /// ground height there (`GetHeight` at a quarter of the cell, through f64; 0 beyond 200).
+    fn strike_point(&self, cx: i32, cy: i32) -> [f32; 3] {
+        let (x, y) = grid_to_real(cx, cy, self.rules.map_size);
+        let (hx, hy) = ((cx as f64 * 0.25) as f32, (cy as f64 * 0.25) as f32);
+        let h = if 200.0 < hx || 200.0 < hy { 0.0 } else { self.height(hx, hy) };
+        [h, x, y]
+    }
+
+    /// The objects `WF::ShotSpecWeapon` (exe 0x49cb70) makes at cell `(cx, cy)` (the spread already
+    /// added): big ships drop 20 bombs (kind 1, damage 10) from 3000 above a 2000-wide square onto a
+    /// 400-wide one; fighters bring a wave of five unless one is still up.
+    pub(super) fn air_strike_objects(&mut self, cx: i32, cy: i32, big_ships: bool) {
+        let [h, x, y] = self.strike_point(cx, cy);
+        if !big_ships {
+            self.add_fighters(h, x, y);
+            return;
+        }
+        let (ground, top, start) = (h as i32, (h + 300.0) as i32, h - 3000.0);
+        for _ in 0..20 {
+            let dy = ((self.draw(0, 399) as f32 + y) - 200.0) as i32;
+            let dx = ((self.draw(0, 399) as f32 + x) - 200.0) as i32;
+            let sy = (self.draw(0, 1999) as f32 + y) - 1000.0;
+            let sx = (self.draw(0, 1999) as f32 + x) - 1000.0;
+            self.add_bomb([start, sx, sy], [top, dx, dy], 10, ground, 1);
+        }
+    }
+
+    /// `WF::AddFighters(h, x, y, e, 40, h)` (exe 0x45b8d0): unless a wave is up, five fighters on a circle
+    /// of radius 1500·1.35 around the strike point, 1500 (+60 each) above it, flying across it (f64
+    /// trigonometry, asm-checked); each gets a bomb cooldown `rndlog(2, 0, 4)` (line 0x2991).
+    fn add_fighters(&mut self, h: f32, x: f32, y: f32) {
+        if self.field.lists.fighters_on {
+            return;
+        }
+        self.field.lists.fighters_on = true;
+        let top = h - 1500.0;
+        for k in 0..5 {
+            let a = (k as f32 / 5.0) as f64 * std::f64::consts::PI * 2.0;
+            let s = (a.sin() * 500.0 * 3.0) as f32;
+            let c = (a.cos() * 500.0 * 3.0) as f32;
+            let pos = [top - (k * 60) as f32, (s as f64 * 1.35 + x as f64) as f32, (c as f64 * 1.35 + y as f64) as f32];
+            let cooldown = self.draw(0, 4);
+            let f = &mut self.field.lists.fighters[k as usize];
+            f.pos = pos;
+            f.cooldown = cooldown;
+            f.phase = 0;
+            f.vel = [12.0, (-(s / 1500.0) as f64 * 3.333 * 3.0) as f32, (-(c / 1500.0) as f64 * 3.333 * 3.0) as f32];
+            f.ground = h;
+        }
+    }
+
+    /// The fighters' flight (`WF::Refresh` step 5, `2·S` rounds while the wave is up): every round each
+    /// fighter makes a trail (3 libc draws) and flies its phase: 0..95 descending (dropping a kind-2 bomb
+    /// every 10th round ahead of itself, `AddFighterLaser` 0x45b600, damage 4000), 95..105 levelling out,
+    /// 105..145 level, 145..155 pulling up, 155..200 climbing; phase 200 ends the wave.
+    fn fighters_step(&mut self) {
+        for k in 0..5 {
+            let mut f = self.field.lists.fighters[k];
+            f.cooldown += 1;
+            for _ in 0..3 {
+                (self.libc)();
+            }
+            // (new height, height step); the descent `vel[0]` itself never changes.
+            let up = match f.phase {
+                ..95 => {
+                    // f32 product, the division by 3.333 in f64 (asm 0x490aef).
+                    let t = (((f.ground - f.pos[0]) * 0.5) as f64 / 3.333) as f32;
+                    if f.cooldown >= 10 {
+                        let g = f.ground as i32;
+                        let d = [g, (f.vel[1] * t + f.pos[1]) as i32, (f.vel[2] * t + f.pos[2]) as i32];
+                        self.add_bomb(f.pos, d, 4000, g, 2);
+                        f.cooldown = 0;
+                    }
+                    Some((f.vel[0] + f.pos[0], f.vel[0]))
+                }
+                95..105 => {
+                    let v = f.vel[0] * (1.0 - (f.phase as f32 - 95.0) / 10.0);
+                    Some((v + f.pos[0], v))
+                }
+                105..145 => Some((f.pos[0], 0.0)),
+                145..155 => {
+                    let v = f.vel[0] * 2.0 * ((f.phase as f32 - 145.0) / 10.0);
+                    Some((f.pos[0] - v, -v))
+                }
+                155..200 => Some((f.pos[0] - f.vel[0] * 2.0, f.vel[0] * -2.0)),
+                _ => None,
+            };
+            if let Some((h, dh)) = up {
+                f.pos[0] = h;
+                f.phase += 1;
+                f.pos[1] += f.vel[1];
+                f.pos[2] += f.vel[2];
+                f.step = [dh, f.vel[1], f.vel[2]];
+            }
+            if f.phase >= 200 {
+                self.field.lists.fighters_on = false;
+            }
+            self.field.lists.fighters[k] = f;
+        }
+    }
+
     /// `AddRepesz` (exe 0x45d400): a piece of debris in list B (only while `WF+0x334 ≠ 0`; two more libc
     /// draws on screen). Its lifetime is left uninitialised by the exe (here −1: never reaches 0).
     pub(super) fn add_debris(&mut self, p: [f32; 3], v: [f32; 3]) {
@@ -265,7 +400,7 @@ impl War<'_> {
 
     /// `WF::GetNearestEnemy` via `WF_Tank` (exe 0x47b860): the nearest counted enemy that has fired and
     /// that moved this tick (or any, for a turret), by squared map distance.
-    fn nearest_enemy(&self, i: i32) -> i32 {
+    pub(super) fn nearest_enemy(&self, i: i32) -> i32 {
         let me = self.u(i);
         let mut best = 10_000_000i32;
         let mut pick = NONE;
@@ -434,11 +569,16 @@ impl War<'_> {
             }
         }
         if w & 0x800 != 0 && k == 7 {
-            // The laser hits at once (the exe aims at the mesh on screen: here the target's position).
-            let base = if partner { 0.0 } else { self.calc_damage(i, 7) as f32 };
+            // The laser hits at once. On screen the exe moves the hit point onto the target's mesh
+            // (0x47af70), but along the shooter-target line, so the armour side is the target position's.
+            let base = if partner { 0 } else { self.calc_damage(i, 7) };
             let tp = if t < 0 { self.building_point(-t) } else { let v = self.u(t); [v.rt.z, v.pos.0, v.pos.1] };
+            // The beam (`villamgenesis` 0x616190, 12 points): 10 inner points of 2 jitters of 3 draws.
+            for _ in 0..60 {
+                (self.libc)();
+            }
             let n = self.alive_members(i);
-            let dmg = n.wrapping_mul(base as i32);
+            let dmg = n.wrapping_mul(base);
             let dmg = self.real_damage(t, dmg, tp[1] - x, tp[2] - y);
             if self.damage(t, dmg, index) {
                 self.kill(t);
@@ -536,7 +676,12 @@ impl War<'_> {
         if s0 == CONTESTED {
             self.field.finished_flag = false;
         }
-        // The fighters of an air strike (`+0x32c`) are not ported (§11.11).
+        // The fighters of an air strike: `2·S` rounds while the wave is up (`+0x32c`).
+        for _ in 0..s * 2 {
+            if self.field.lists.fighters_on {
+                self.fighters_step();
+            }
+        }
         for _ in 0..s {
             self.shells_step();
         }

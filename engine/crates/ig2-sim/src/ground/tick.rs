@@ -199,6 +199,55 @@ impl War<'_> {
         }
     }
 
+    /// `StoryMadTankFrissit(u)` (exe 0x5c5370, stream 5): a story "mad tank" (flag 4) of the human picks its
+    /// own targets: 3 % the nearest enemy, else 1 % the nearest finished building (one within 7 cells
+    /// may win by a running reservoir draw), else 5 % it drops its target.
+    fn mad_tank(&mut self, i: i32) {
+        use crate::rng::stream::STORY;
+        let u = self.u(i);
+        if u.owner != self.ctx.human {
+            return;
+        }
+        if u.flags & 0x500 == 0 {
+            if self.rng.range(STORY, 0, 99) < 3 {
+                let t = self.nearest_enemy(i);
+                if t != NONE {
+                    self.set_target(i, t);
+                }
+                return;
+            }
+            if self.rng.range(STORY, 0, 99) == 0 {
+                // `RndValasztas` with weight 1 (0x4e3630 on {count, sum, stream 5}).
+                let (mut best, mut best_d, mut sum) = (0usize, 0i32, 0i32);
+                let cell = self.u(i).cell;
+                for slot in 1..self.planet.buildings.len() {
+                    let b = self.planet.buildings[slot];
+                    if b.kind == 0 || b.work_left != 0 {
+                        continue;
+                    }
+                    let dx = cell.0.wrapping_sub(b.x as i32);
+                    let dy = cell.1.wrapping_sub(b.y as i32);
+                    let d = sqrtf(dy.wrapping_mul(dy).wrapping_add(dx.wrapping_mul(dx)) as f32) as i32;
+                    let take = best == 0 || (d < 7 && {
+                        sum += 1;
+                        self.rng.range(STORY, 1, sum) <= 1
+                    }) || d < best_d;
+                    if take {
+                        best = slot;
+                        best_d = d;
+                    }
+                }
+                if best != 0 {
+                    self.set_target(i, -(best as i32));
+                }
+                return;
+            }
+        }
+        if self.rng.range(STORY, 0, 99) < 5 {
+            self.um(i).flags &= 0xfffff6ff;
+        }
+    }
+
     /// The path step of a move (0x400) or an attack-move (0x800): every 15 ticks (or once the step is
     /// reached) search the next cell with `grUtkeres` and set the step point there.
     fn path_step(&mut self, i: i32, attack: bool) {
@@ -422,7 +471,9 @@ impl War<'_> {
                 }
             }
         }
-        // Flag 4 (a story "mad tank", `StoryMadTankFrissit` 0x5c5370) is campaign-only: not modelled.
+        if self.u(i).flags & flag::MAD != 0 {
+            self.mad_tank(i);
+        }
         if self.u(i).flags & flag::HAS_TARGET != 0 {
             self.aim_and_fire(i, clock);
         }
@@ -663,9 +714,9 @@ impl War<'_> {
                 self.field.units.len() - 1
             }
         };
-        let phase = (self.libc)();
+        let r = (self.libc)();
         let mut u = super::Group::default();
-        u.rt.phase = (phase % 500 - 0x672) as f32;
+        u.rt.drop = super::TankRt::dropship_start(r);
         u.hp.push(hp);
         u.origin.push(-1);
         u.max_hp = hp;

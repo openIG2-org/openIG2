@@ -5,7 +5,8 @@ Usage (project venv): _local/venv/Scripts/python.exe -u tools/trace/run_ground_r
 - place:  staged real-time landings (AddTanksToPlanet(f, p, 0): LocateTankSuitablePosition, the landing zone,
           splits) and sometimes StartGrWar; --fuzz: ground pods, more vehicles, human-controlled attacker.
 - turret: EpuletNewSearchLocation with defence buildings (AddBuildingTurrets, AddTurret, GetHeight, BuildingBuilt).
-- battle: real-time battles on the colony screen, snapshots around the game's own WF::MI / WF::Refresh.
+- battle: real-time battles on the colony screen, snapshots around the game's own WF::MI / WF::Refresh and the
+          dropships (WF_Hordozo::Refresh2); --transport --place-after T --retreat-after T stage the transporters.
 The output holds game state derived from the user's install: keep it under _local/, never commit it.
 Spec: re/rules/ground-combat.md.
 """
@@ -36,6 +37,11 @@ ap.add_argument("--destruct-after", type=int, default=0, help="battle: set the s
 ap.add_argument("--ai-fuzz", action="store_true", help="battle: perturb the ground AI's plans, timers, hits and air strikes before WF::MI")
 ap.add_argument("--ai-fuzz-every", type=int, default=25, help="battle: perturb before about one WF::MI call in N")
 ap.add_argument("--small", action="store_true", help="battle: small forces, so battles end (countdown, GroundWarFinished)")
+ap.add_argument("--transport", action="store_true", help="battle: one attacking vehicle carries a transporter pod (0x9f) and its partner")
+ap.add_argument("--place-after", type=int, default=0, help="battle: from tick N the human's hidden vehicles get landing orders (PlaceAllTanks/PlaceTank/UnplaceTank)")
+ap.add_argument("--laser", action="store_true", help="battle: the staged designs carry a laser pod (0xa5)")
+ap.add_argument("--mad", action="store_true", help="battle: the human's placed vehicles become story mad tanks (flag 4)")
+ap.add_argument("--retreat-after", type=int, default=0, help="battle: the attacker retreats after N ticks (the dropships pick its units up)")
 a = ap.parse_args()
 
 exe = os.path.join(a.install, "ig2.exe")
@@ -75,7 +81,10 @@ script.post({"type": "config", "payload": {"mode": a.mode, "scenario": a.scenari
                                            "ticks": a.ticks, "steps": a.steps, "speed": a.speed,
                                            "small": a.small, "endAfter": a.end_after,
                                            "human": a.human, "destructAfter": a.destruct_after,
-                                           "aiFuzz": a.ai_fuzz, "aiFuzzEvery": a.ai_fuzz_every}})
+                                           "aiFuzz": a.ai_fuzz, "aiFuzzEvery": a.ai_fuzz_every,
+                                           "transport": a.transport, "placeAfter": a.place_after,
+                                           "retreatAfter": a.retreat_after,
+                                           "laser": a.laser, "mad": a.mad}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; mode {a.mode}, up to {a.seconds}s")
 t0 = time.time()

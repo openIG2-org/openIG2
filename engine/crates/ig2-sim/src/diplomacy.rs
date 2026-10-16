@@ -211,6 +211,8 @@ pub struct Answer {
 pub struct PlayerSlot {
     /// `+0x00`: the empire.
     pub empire: i32,
+    /// `+0x04`: `PlayerKi[empire]` when it was met (`FelfedezBirodalom`).
+    pub controller: i32,
     /// `+0x0c`: screen state, cleared by answers and auto-cancels.
     pub screen: u8,
     /// `+0x14`: set by `InitBirodalom`; messages of this empire reach the human.
@@ -406,6 +408,8 @@ pub struct Diplomacy {
     pub last_day: i32,
     /// `DiplomacyStarted` (set by `NEWGAME_Diplomacy`).
     pub started: bool,
+    /// `MostHanyPlayerVan`: the contact count the screen shows, `MaxPlayerek` as of the last tick.
+    pub shown_players: i32,
 }
 
 impl Default for Diplomacy {
@@ -425,6 +429,7 @@ impl Default for Diplomacy {
             greeted: [0; EMPIRES],
             last_day: 0,
             started: true,
+            shown_players: 0,
         }
     }
 }
@@ -440,6 +445,8 @@ pub struct DiplomacyContext {
     pub ai: [bool; EMPIRES],
     pub may_attack: [bool; EMPIRES],
     pub human: [bool; EMPIRES],
+    /// `PlayerKi`: who controls each empire (1 = a human), copied into a new contact slot.
+    pub player_ki: [u8; EMPIRES],
     /// `PlayerFaj`.
     pub race: [u8; EMPIRES],
     /// `EN`.
@@ -909,7 +916,7 @@ impl Diplomacy {
             return;
         }
         if e != w.ctx.human_empire && e < 9 {
-            self.players.push(PlayerSlot { empire: e as i32, open: 1, ..Default::default() });
+            self.players.push(PlayerSlot { empire: e as i32, controller: w.ctx.player_ki[e] as i32, open: 1, ..Default::default() });
             w.events.push(DiploEvent::Discovered { empire: e as u8 });
         }
     }
@@ -1648,6 +1655,7 @@ impl Diplomacy {
         if !self.started {
             return;
         }
+        self.shown_players = self.players.len() as i32;
         for i in 0..self.players.len() {
             let s = self.players[i];
             if s.cancelled != 0 || s.waiting == 0 {

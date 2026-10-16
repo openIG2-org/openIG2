@@ -282,10 +282,11 @@ gx = (f32)((f64)X·0.25), gy likewise;  z = gx > 200 or gy > 200 ? 0 : GetHeight
 The bomb (exe 0x457ad0): a list-B object of kind 1 in the first free slot, velocity = normalised(dest − pos)
 (`0x4501f0`: f32 sum, f64 sqrt, unchanged below 1e-5) × `(f32)(((f64)rndlog(2,0,14)/10 + 0.5)·3)·20f` (line
 0x27b5), shooter 10000, `+0x3c` uninitialised heap; on screen one libc `rand()` (its texture). The bombs then
-fly and burst in `WF::Refresh` (`ground-combat.md` §11.10, list B kind 1).
-Fighters: `WF::AddFighters` (0x45b8d0) only when no wave is up (`WF+0x32c`, which it sets): five fighters,
-`rndlog(2, 0, 4)` each (line 0x2991). The fighter objects (`WF+0x1f4 + 0x40k`, their lasers and the bombs
-they drop) are not ported (`ground-combat.md` §11.11); the port reports `GroundEvent::AirStrike`.
+fly and burst in `WF::Refresh` (`ground-combat.md` §11.7, list B kind 1).
+Fighters: `WF::AddFighters(h, A, B, e, 40, h)` (0x45b8d0, `h` = the height `z` as above) only when no wave is
+up (`WF+0x32c`, which it sets): five fighters, `rndlog(2, 0, 4)` each (line 0x2991). The wave's objects, its
+flight and the bombs it drops are in `ground-combat.md` §11.15 (verified); the port also reports
+`GroundEvent::AirStrike` (the AI's cell, before the spread).
 
 ## 6. Helpers (exe)
 ### 6.1 `CsoportbaRendezestKitorol()`: every used unit: group := 0, hit marker := 0, attacker := 10000.

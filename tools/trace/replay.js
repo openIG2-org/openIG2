@@ -45,12 +45,24 @@ const VOLATILE = [
   ['battlespeed', 0xbae260, 4],
   // BirodalomMIzik (the AI plays the empire), BirodalomTamadhat (may attack): set by the scenario, not saved.
   ['mizik', 0x915f58, 19], ['tamadhat', 0x915f44, 19],
+  // FRISSIT_Trade (re/rules/trade.md): OldEtaHonap, AktEtaDays, TradeCheat, StoryDesignDataMut and
+  // StoryDesignElsoTerv (the records themselves go with the first dump).
+  ['etahonap', 0x928db0, 4], ['etadays', 0xf43428, 4], ['tradecheat', 0xf43835, 1], ['stdesignn', 0xf419d0, 4],
+  ['stdesignfirst', 0xf419d4, 4],
+  // re/rules/info-messages.md: InfoOldHonap; the scrolling line's text and flag (UI state the posts read).
+  ['infomonth', 0xb84c78, 4], ['scrolltext', 0xe41230, 0xc8], ['scrollimp', 0xe412f8, 1],
+  // The battles (info-messages.md §3.2): the debug switches 0xB77230..0xB7723F (always simulate, never lopsided, ...),
+  // MultiplayerBattleStatusz, the story's battle bans, spFlottak/SpWarHanyFlotta/spKozeliBolygo/SpWarKiNyert,
+  // spwsflotta and the CTF values.
+  ['battledebug', 0xb77230, 0x10], ['mpbattle', 0xbae558, 4], ['st_bans', 0xf42664, 0x10], ['spw_fleets', 0xbaa1c0, 0x30],
+  ['spw_planetflag', 0xb9c027, 1], ['spwsflotta', 0xf21260, 0x60], ['ctf', 0xf261f0, 8],
 ];
 // Story queues outside the save ({ids, dual, n}).
 const QUEUES = [['vegzes', 0xf43290], ['talal', 0xf4329c]];
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, name: 'Replay', speed: 3, ticks: 40,
-  seed: 4242 };
+  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, battles: false, battlesMode: 'space', lopsidedTanks: 40, evenTanks: 16,
+ traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -75,7 +87,11 @@ const srand = nf(crt.getExportByName('srand'), 'void', ['uint']);
 
 function volatile(full) {
   const v = { mem: VOLATILE.map(([n, a, sz]) => [n, a, hexOf(va(a), sz)]), queues: {} };
-  if (full) v.mem.push(['techs', 0xb9c0c8, hexOf(va(0xb9c0c8), 193 * 0x114)]);
+  if (full) {
+    v.mem.push(['techs', 0xb9c0c8, hexOf(va(0xb9c0c8), 193 * 0x114)]);
+    const n = va(0xf419d0).readS32();
+    if (n > 0) v.mem.push(['stdesigns', 0xf2f8c0, hexOf(va(0xf2f8c0), n * 0x94)]);
+  }
   for (const [n, a] of QUEUES) {
     const q = va(a), ids = q.readPointer(), dual = q.add(4).readPointer(), cnt = q.add(8).readS32(), out = [];
     for (let i = 0; i < cnt; i++) out.push([ids.add(4 * i).readS32(), dual.add(4 * i).readS32()]);
@@ -83,17 +99,560 @@ function volatile(full) {
   }
   const p = A.AlapNev.readPointer();
   v.alapnev = p.isNull() ? '' : p.readCString();
+  // BirodalomNev[e] (0xBB6730, char *[19]): the empire names messages quote, as hex (the game's code page).
+  v.empnames = [];
+  for (let e = 0; e < 19; e++) {
+    const q = va(0xbb6730).add(4 * e).readPointer();
+    let n = 0;
+    if (!q.isNull()) while (n < 64 && q.add(n).readU8() !== 0) n++;
+    v.empnames.push(n ? hexOf(q, n) : '');
+  }
+  // KemCsaladtag_Nev[x] (0xBB6968, char *[6]): the family members the kidnap message names (info-messages.md §3.3).
+  v.famnames = [];
+  for (let x = 0; x < 6; x++) {
+    const q = va(0xbb6968).add(4 * x).readPointer();
+    let n = 0;
+    if (!q.isNull()) while (n < 64 && q.add(n).readU8() !== 0) n++;
+    v.famnames.push(n ? hexOf(q, n) : '');
+  }
   return v;
 }
 
+// --stage: exercise the trade market (re/rules/trade.md) from the loaded save. The edits go into save 'pre'
+// (pre.sav); then the human buys twice through the exe's own MULTIGET_Trade (0x6070b0), whose two Multi_Get calls
+// (0x513160) are pointed at a stub handing it one staged message (Multi_Send only queues for a later frame);
+// save 0 follows. Each purchase is reported as {k: 'buy', e, msg} with the 0x98-byte message.
+const T = {
+  EN: va(0x912a3c), HanyBolygo: va(0x912ac8), Bolygok: va(0xb85ea8), Tervek: va(0xb9aa18), OsszHanyTerv: va(0xb9c028),
+  N: va(0xf439cc), Offers: va(0xb9aaf0), Count: va(0xf66de0), Deliveries: va(0xf439d0), Temp: va(0xf43388),
+  EtaDays: va(0xf43428), StoryC4: va(0xf274bc), Slots: va(0xba9840), Epuletek: va(0xba9e90),
+  MultiGet: va(0x513160), MultigetTrade: va(0x6070b0), TradeAr: va(0x608830),
+  getCalls: [va(0x6070c8), va(0x607262)],
+};
+const multigetTrade = nf(T.MultigetTrade, 'void', []);
+const tradeAr = nf(T.TradeAr, 'int', ['int', 'int']);
+const design = (e, d) => T.Tervek.add(4 * e).readPointer().add(d * 0x84);
+const designs = (e) => T.OsszHanyTerv.add(4 * e).readS32();
+const owner = (p) => T.Bolygok.add(p * 0x188 + 0x20).readU8();
+
+function addDelivery(e, planet, days, units, price, rec) {
+  const n = T.Count.add(4 * e).readS32();
+  const d = T.Deliveries.add((e * 0x32 + n) * 0x98);
+  d.writeByteArray(new Array(0x98).fill(0));
+  d.writeS32(planet); d.add(4).writeS32(days); d.add(8).writeS32(-1); d.add(0xc).writeS32(units);
+  d.add(0x10).writeS32(price);
+  d.add(0x14).writeByteArray(rec.readByteArray(0x84));
+  T.Count.add(4 * e).writeS32(n + 1);
+}
+
+function findDesign(e, test) {
+  for (let d = 1; d <= designs(e); d++) {
+    const r = design(e, d);
+    if (r.add(0x16).readS16() >= 0 && test(r)) return r;
+  }
+  return null;
+}
+
+function stageTrade() {
+  const en = T.EN.readS32(), ai = cfg.aiEmpire, out = { en, ai };
+  const mine = [], theirs = [];
+  for (let p = 1; p <= T.HanyBolygo.readS32(); p++) {
+    if (owner(p) === en) mine.push(p);
+    else if (owner(p) === ai) theirs.push(p);
+  }
+  out.mine = mine; out.theirs = theirs;
+  // A working trade port (kind 50) on the human's last planet: re-targeting lands there.
+  if (mine.length > 1) {
+    const p = mine[mine.length - 1], slots = T.Slots.add(4 * p).readS32(), b = T.Epuletek.add(4 * p).readPointer();
+    for (let j = slots; j >= 1; j--) {
+      const r = b.add(j * 0x20);
+      if (r.readU8() !== 0) { r.writeU8(50); r.add(8).writeS16(0); r.add(0x19).writeU8(r.add(0x19).readU8() | 1); out.port = [p, j]; break; }
+    }
+  }
+  T.StoryC4.writeS32(cfg.storyCountdown);
+  const plain = (r) => r.add(0x16).readS16() === 1 && r.add(0x34).readU32() === 0 && r.add(0x38).readU8() === 0;
+  const ship = findDesign(en, plain), tank = findDesign(en, (r) => r.add(0x16).readS16() === 2);
+  const fighter = findDesign(en, (r) => r.add(0x16).readS16() === 1 && r.add(0x36).readU8() !== 0);
+  const foreign = findDesign(ai, plain);
+  // A few more offers (copies of designs, 2 units each), then every offer a year older: past the 180-day
+  // limit, so the daily expiry draws apply.
+  for (const r of [ship, tank, foreign, ship, tank].slice(0, cfg.extraOffers)) {
+    const n = T.N.readS32();
+    if (!r || n >= 40) continue;
+    const o = T.Offers.add(n * 0x84);
+    o.writeByteArray(r.readByteArray(0x84));
+    o.add(0x6c).writeS32(2); o.add(0x74).writeS32(A.Ido.readS32() / 18000 | 0); o.add(0x78).writeS32(5); o.add(0x7c).writeS32(1);
+    T.N.writeS32(n + 1);
+  }
+  for (let i = 0; i < T.N.readS32(); i++) { const r = T.Offers.add(i * 0x84 + 0x74); r.writeS32(r.readS32() - 1); }
+  const h = mine[0];
+  if (ship) {
+    addDelivery(en, h, 1, 2, 1000, ship);
+    addDelivery(en, h, 0, 1, 500, ship);
+    addDelivery(en, h, -1, 1, 500, ship);
+    if (theirs.length) addDelivery(en, theirs[0], 5, 1, 700, ship);
+  }
+  if (foreign) addDelivery(en, h, 2, 1, 900, foreign);
+  if (tank) addDelivery(en, h, 3, 3, 600, tank);
+  if (fighter) addDelivery(en, h, 2, 1, 300, fighter);
+  if (foreign) addDelivery(ai, h, 4, 2, 1200, foreign);
+  out.designs = [!!ship, !!tank, !!fighter, !!foreign];
+  return out;
+}
+
+// --traders: make the traders' income (re/rules/fleet-movement.md §4.3) non-zero. Every planet of empires 1..=8
+// gets its last finished non-hub building turned into a working trade centre (kind 48) and the one before into a
+// bank (49); traders flying to a planet are moved `traderNear` units short of it with a speed override (+0x3c) of 2,
+// so they arrive in the first ticks (the next economy step may switch the new buildings off). Done before save 0, so the save carries it.
+const F = { Flottak: va(0xbb40a4), HanyFlotta: va(0xbb40a8) };
+function stageTraders() {
+  const out = { centres: [], banks: [], moved: [] };
+  const working = (r) => { r.add(8).writeS16(0); r.add(0x19).writeU8(r.add(0x19).readU8() | 1); };
+  for (let p = 1; p <= T.HanyBolygo.readS32(); p++) {
+    const o = owner(p);
+    if (o < 1 || o > 8) continue;
+    const slots = T.Slots.add(4 * p).readS32(), b = T.Epuletek.add(4 * p).readPointer();
+    const free = [];
+    for (let j = slots; j >= 1 && free.length < 2; j--) {
+      const r = b.add(j * 0x20), kind = r.readU8();
+      if (kind !== 0 && kind !== 1 && r.add(8).readS16() === 0) free.push(r);
+    }
+    if (free.length) { free[0].writeU8(48); working(free[0]); out.centres.push(p); }
+    if (free.length > 1) { free[1].writeU8(49); working(free[1]); out.banks.push(p); }
+  }
+  const fl = F.Flottak.readPointer(), n = F.HanyFlotta.readS32();
+  for (let f = 1; f < n; f++) {
+    const r = fl.add(f * 0x80), id = r.add(0x16).readS16();
+    if (r.add(0x15).readU8() !== 9 || id < 10000 || id >= 11000) continue;
+    if (r.add(0x40).readS16() !== 1 || r.add(0x42).readS16() !== 1 || r.add(0x50).readS16() !== 0) continue;
+    const t = r.add(0x44).readFloat() | 0, pl = T.Bolygok.add(t * 0x188);
+    const tx = pl.add(0x18).readFloat(), ty = pl.add(0x1c).readFloat();
+    const x = r.add(0x30).readFloat(), y = r.add(0x34).readFloat(), d = Math.hypot(x - tx, y - ty);
+    if (d <= cfg.traderNear) continue;
+    r.add(0x30).writeFloat(tx + (x - tx) * cfg.traderNear / d);
+    r.add(0x34).writeFloat(ty + (y - ty) * cfg.traderNear / d);
+    r.add(0x3c).writeFloat(2);
+    out.moved.push([f, t]);
+  }
+  return out;
+}
+
+// --spies: stage the spy reports and messages (re/rules/info-messages.md §3.3) for the first daily spy passes. New
+// spies are appended to the rosters (Kemek 0xBAFCC8 [9][13] x 0x4c, OsszHanyKem 0xBB1F84). --spies-mode picks the
+// mix; the force modes also set the SP debug switch 0xB77250 (espionage.md §1.1; saved, so the port reads it):
+//   base   for the human a mission that ends that day (empire report on the AI), one whose catch check falls on it
+//          against an AI counter-spy, one returning, one ranking up several times, a double agent its own
+//          counter-spy exposes, a counter-spy and one at home; for the AI a counter-spy and missions against the
+//          human that end that day (money, sabotage, rebellion, assassination, kidnap, mass unrest) plus one whose
+//          catch check meets the human's counter-spy.
+//   force1 every mission succeeds: the human's reports (done), its spy coming home, and the AI's money (the
+//          human gets money), ship (the human gets a ship), sabotage, rebellion, kidnap and mass-unrest missions;
+//          the assassination ends a day later so it can't pick the returning spy first.
+//   force2 every spy is caught: six of the human's spies meet their catch check against the AI; the AI's roster
+//          (at-home spies) covers their slots k, whose loyalty (the captor's roll reads them) alternates 0 / 255,
+//          so turned, double-agent, released and executed fates all come up.
+//   lost   the AI's spies meet the human's counter-spy in duels tuned to the "identified and lost" outcome, which
+//          needs three living empires knowing the spy: the human's kind-4 report and post 104.
+//   force3 a recruit every day: the human's roster has room, so it gets an applicant; one spy returns home.
+const K = { Kemek: va(0xbafcc8), Ossz: va(0xbb1f84), Forced: va(0xb77250), Money: va(0xbad168), Pools: va(0xbad200),
+  FlottaNew: va(0x53d400), HajoNew: va(0x53e800) };
+const flottaNew = nf(K.FlottaNew, 'int', ['pointer', 'int', 'int', 'float', 'float', 'float']);
+const hajoNew = nf(K.HajoNew, 'void', ['int', 'int']);
+function spyPlans(en, ai) {
+  // [state, mission, target, left, catch_at, infiltration, counter, combat, xp, master]
+  const big = 100000, ctr = [3, 13, 0, big, -1000, 50, 255, 255, 0, 0];
+  switch (cfg.spiesMode) {
+    case 'force1': return {
+      [en]: [[3, 2, ai, 50, -1000, 200, 10, 10, 0, 0], [3, 3, ai, 50, -1000, 200, 10, 10, 0, 0], [2, 0, 0, 50, -1000, 50, 10, 10, 0, 0],
+        [1, 0, 0, 0, -1000, 50, 10, 10, 0, 0]],
+      [ai]: [ctr, [3, 5, en, 50, -1000, 255, 10, 10, 0, 0], [3, 7, en, 50, -1000, 255, 10, 10, 0, 0], [3, 12, en, 50, -1000, 255, 10, 10, 0, 0],
+        [3, 6, en, 50, -1000, 255, 10, 10, 0, 0], [3, 9, en, 50, -1000, 255, 10, 10, 0, 0], [3, 11, en, 50, -1000, 255, 10, 10, 0, 0],
+        [3, 10, en, 100, -1000, 255, 10, 255, 0, 0]],
+    };
+    case 'force2': return {
+      [en]: Array.from({ length: 6 }, () => [3, 4, ai, 100, 75, 50, 10, 10, 0, 0]),
+      // At-home spies fill the AI's roster past the human's slots: the captor's slot k must be saved (a slot
+      // past OsszHanyKem isn't), and Spy_Copy then appends the first two turned spies and fails the third.
+      [ai]: [ctr, ...Array.from({ length: 7 }, () => [1, 0, 0, 0, -1000, 50, 10, 10, 0, 0])],
+    };
+    case 'lost': return {
+      // Catch checks against the human's counter-spy (counter 255, so no attacker slips) with both combats 1, so
+      // the duel lands in the "identified and lost" band (45 <= c < 52) now and then; the spies are known to three
+      // living empires (a third is revived below).
+      [en]: [[3, 13, 0, big, -1000, 50, 255, 1, 0, 0]],
+      [ai]: Array.from({ length: 10 }, () => [3, 5, en, 100, 75, 0, 10, 1, 0, 0]),
+    };
+    case 'force3': return { [en]: [[2, 0, 0, 50, -1000, 50, 10, 10, 0, 0]], [ai]: [] };
+    default: return {
+      [en]: [[3, 2, ai, 50, -1000, 200, 10, 10, 0, 0], [3, 4, ai, 100, 75, 0, 10, 0, 0, 0], [2, 0, 0, 50, -1000, 50, 10, 10, 0, 0],
+        [1, 0, 0, 0, -1000, 50, 10, 10, big, 0], [1, 0, 0, 0, -1000, 0, 10, 10, 0, ai], ctr, [1, 0, 0, 0, -1000, 50, 10, 0, 0, 0]],
+      [ai]: [ctr, [3, 5, en, 50, -1000, 255, 10, 10, 0, 0], [3, 6, en, 50, -1000, 255, 10, 10, 0, 0],
+        [3, 9, en, 50, -1000, 255, 10, 10, 0, 0], [3, 10, en, 50, -1000, 255, 10, 255, 0, 0], [3, 11, en, 50, -1000, 255, 10, 10, 0, 0],
+        [3, 12, en, 50, -1000, 255, 10, 10, 0, 0], [3, 5, en, 100, 75, 0, 10, 0, 0, 0]],
+    };
+  }
+}
+function stageSpies() {
+  const en = T.EN.readS32(), ai = cfg.aiEmpire, out = { mode: cfg.spiesMode };
+  const plans = spyPlans(en, ai);
+  for (const e of [en, ai]) {
+    let n = K.Ossz.add(4 * e).readS32();
+    out[e] = [];
+    for (const [st, m, t, left, cat, inf, cnt, cmb, xp, master] of plans[e]) {
+      if (n >= 12) break;
+      n++;
+      const r = K.Kemek.add((e * 13 + n) * 0x4c);
+      r.writeByteArray(new Array(0x4c).fill(0));
+      r.writeUtf8String('Stage ' + n);
+      r.add(0x10).writeS16(st); r.add(0x12).writeU8(1); r.add(0x18).writeU8(master);
+      r.add(0x1a).writeU16(m); r.add(0x1c).writeU8(t);
+      r.add(0x24).writeS32(left); r.add(0x28).writeS32(left); r.add(0x2c).writeS32(cat);
+      r.add(0x31).writeByteArray([inf, cnt, cmb, 5]);
+      r.add(0x3c).writeS32(xp);
+      out[e].push(n);
+    }
+    K.Ossz.add(4 * e).writeS32(n);
+  }
+  if (cfg.spiesMode === 'lost') {
+    // Revive a dead empire with a race (alive flag only; BirodalomMIzik 0 so the AI leaves it alone) and mark the
+    // AI's staged spies known to it, the AI and the human: a8 = 3 (espionage.md §4 step 2).
+    const faj = va(0xbae574), alive = va(0xbae6ac), mizik = va(0x915f58);
+    let y = 0;
+    for (let x = 1; x <= 8 && !y; x++) if (x !== en && x !== ai && alive.add(x).readU8() === 0 && ![0, 5].includes(faj.add(x).readU8())) y = x;
+    if (y) {
+      alive.add(y).writeU8(1); mizik.add(y).writeU8(0);
+      for (const k of out[ai]) for (const x of [en, ai, y]) K.Kemek.add((ai * 13 + k) * 0x4c + 0x41 + x).writeU8(1);
+    }
+    out.revived = y;
+  }
+  const forced = { force1: 1, force2: 2, force3: 3 }[cfg.spiesMode] || 0;
+  if (forced) K.Forced.writeS32(forced);
+  if (cfg.spiesMode === 'force2') {
+    // The AI captor's loyalty roll reads its own slot k (espionage.md §4, quirk kept): 0 keeps fates 2/3, 255 makes
+    // them 5/6. +0x18 must be clear or the fate is always 5/6.
+    out.loyalty = out[en].map((k, i) => {
+      const r = K.Kemek.add((ai * 13 + k) * 0x4c);
+      r.add(0x34).writeU8(i % 2 ? 255 : 0); r.add(0x18).writeU8(0);
+      return [k, r.add(0x34).readU8()];
+    });
+    // Stream 4 (RandSeed 0xBAF2D0 [21], saved) from --seed: the fates differ per seed.
+    if (cfg.seed !== 4242) va(0xbaf2d0).add(16).writeU32(Math.imul(cfg.seed, 2654435761) >>> 0);
+    out.stream4 = va(0xbaf2d0).add(16).readU32();
+  }
+  if (cfg.spiesMode === 'force1') {
+    // Money to steal (MoneyMennyi(EN, 0) > 0; pools 1..3 as colony_side.js writes them) and one ship to destroy.
+    const pools = K.Pools.add(en * 48);
+    for (let j = 1; j < 4; j++) pools.add(8 * j).writeDouble(20000);
+    K.Money.add(8 * en).writeDouble(pools.add(8).readDouble() + 0 + pools.add(16).readDouble() + pools.add(24).readDouble());
+    let pick = 0;
+    for (let d = 1; d <= designs(en); d++) {
+      const p = design(en, d);
+      if (p.add(0x80).readS32() !== 0 || p.add(0x16).readS16() !== 1) continue;
+      const armed = p.add(0x2c).readS32() > 0 || p.add(0x30).readS32() > 0;
+      if (!pick || !armed) pick = d;
+      if (!armed) break;
+    }
+    let home = 0;
+    for (let p = 1; p <= T.HanyBolygo.readS32() && !home; p++) if (owner(p) === en) home = p;
+    if (pick && home) {
+      const q = T.Bolygok.add(0x188 * home);
+      const f = flottaNew(Memory.allocAnsiString('Stage'), en, 0, q.add(0x18).readFloat(), q.add(0x1c).readFloat(), 0);
+      if (f > 0) hajoNew(f, pick);
+      out.ship = [home, pick, f];
+    }
+    out.money = K.Money.add(8 * en).readDouble();
+  }
+  return out;
+}
+
+// One purchase through the exe's handler: TradeSzallitasTemp = {planet, days, offer, units, TradeAr, offer copy}.
+let stub = null;
+function buy(planet, days, offer, units) {
+  const en = T.EN.readS32();
+  if (stub === null) {
+    stub = Memory.alloc(Process.pageSize);
+    const flag = stub.add(0x100);
+    Memory.patchCode(stub, 64, (code) => {
+      const w = new X86Writer(code, { pc: stub });
+      w.putMovRegAddress('eax', flag); w.putMovRegRegPtr('ecx', 'eax');
+      w.putTestRegReg('ecx', 'ecx'); w.putJccShortLabel('je', 'none', 'no-hint');
+      w.putMovRegPtrU32('eax', 0);
+      w.putMovRegRegOffsetPtr('ecx', 'esp', 8); w.putMovRegU32('eax', en); w.putMovRegPtrReg('ecx', 'eax');
+      w.putMovRegRegOffsetPtr('ecx', 'esp', 0xc); w.putMovRegU32('eax', 0x98); w.putMovRegPtrReg('ecx', 'eax');
+      w.putMovRegU32('eax', 1); w.putRet();
+      w.putLabel('none'); w.putXorRegReg('eax', 'eax'); w.putRet();
+      w.flush();
+    });
+  }
+  const t = T.Temp;
+  t.writeByteArray(new Array(0x98).fill(0));
+  t.writeS32(planet); t.add(4).writeS32(days); t.add(8).writeS32(offer); t.add(0xc).writeS32(units);
+  t.add(0x10).writeS32(tradeAr(offer, units));
+  t.add(0x14).writeByteArray(T.Offers.add(offer * 0x84).readByteArray(0x84));
+  const msg = hexOf(t, 0x98);
+  const before = T.Count.add(4 * en).readS32();
+  const saved = T.getCalls.map((c) => c.readByteArray(5));
+  for (const c of T.getCalls) {
+    Memory.patchCode(c, 5, (code) => { const w = new X86Writer(code, { pc: c }); w.putCallAddress(stub); w.flush(); });
+  }
+  stub.add(0x100).writeU32(1);
+  multigetTrade();
+  T.getCalls.forEach((c, i) => Memory.patchCode(c, 5, (code) => code.writeByteArray(saved[i])));
+  emit({ k: 'buy', e: en, msg, accepted: T.Count.add(4 * en).readS32() > before });
+}
+
+// --merges: fleet merges and the other ship-carrying arrivals (re/rules/fleet-movement.md §4.3). For the human and
+// the AI (`aiEmpire`), next to an own planet P (arrival point P + (0, 2)): two idle fleets, a weak one and a strong
+// one with vehicles (the human's named exactly AlapFlottaNev, so it takes the arriving fleet's name); a fleet moving
+// to P that arrives at once and merges into the strong one; a follower of that fleet (retargeted by the merge, then
+// merging itself); an idle fleet and a fleet following it from close by (merge on reaching an own fleet). Then a
+// colony ship and a terraformer next to unowned planets (colonise / terraform: FlottaDelete with ships), a fleet of
+// a dead empire (deleted with its ships) and, if there are wormholes, a fleet moving through one. All built with
+// the exe's FlottaNew/HajoNew/TankNew/FlottaMozgat; new fleets get speed and override 2 so they move before the
+// next speed refresh. Done before save 0, so the save carries it.
+const M = {
+  TankNew: va(0x541750), FlottaMozgat: va(0x53d270),
+  Kolonizalo: va(0xbb4108), Terraformalo: va(0xbb4158), Alive: va(0xbae6ac), Wormhole: va(0xbb60f8),
+  WormholeCount: va(0xbb61a0),
+};
+// flottaNew / hajoNew: the --spies set-up's (same exe functions).
+const tankNew = nf(M.TankNew, 'void', ['int', 'int', 'int']);
+const flottaMozgat = nf(M.FlottaMozgat, 'void', ['int', 'int', 'int', 'float', 'float']);
+function stageMerges() {
+  const out = { fleets: {}, skipped: [] };
+  const fl = (f) => F.Flottak.readPointer().add(f * 0x80);
+  const np = T.HanyBolygo.readS32();
+  const pxy = (p) => [T.Bolygok.add(p * 0x188 + 0x18).readFloat(), T.Bolygok.add(p * 0x188 + 0x1c).readFloat()];
+  const kinds = (e) => {
+    const k = { ships: [], ground: [], colony: [], terra: [] };
+    for (let d = 1; d <= designs(e); d++) {
+      const r = design(e, d), cls = r.add(0x16).readS16();
+      const strong = r.add(0x2c).readS32() > 0 || r.add(0x30).readS32() > 0;
+      if (cls === 1 && r.add(0x34).readU8()) k.colony.push(d);
+      else if (cls === 1 && r.add(0x35).readU8()) k.terra.push(d);
+      else if (cls === 1 && strong && r.add(0x36).readU8() === 0 && r.add(0x3c).readFloat() > 0) k.ships.push(d);
+      else if (cls === 2 && strong) k.ground.push(d);
+    }
+    return k;
+  };
+  const make = (tag, e, x, y, ships, ground) => {
+    const f = flottaNew(A.AlapNev.readPointer(), e, 0, x, y, 0);
+    if (f < 1) { out.skipped.push(tag); return 0; }
+    for (const d of ships) hajoNew(f, d);
+    for (const [d, n] of ground) tankNew(f, d, n);
+    fl(f).add(0x38).writeFloat(2);
+    fl(f).add(0x3c).writeFloat(2);
+    out.fleets[tag] = f;
+    return f;
+  };
+  const unowned = [];
+  for (let p = 1; p <= np; p++) if (owner(p) === 0) unowned.push(p);
+  let u = 0;
+  for (const e of [T.EN.readS32(), cfg.aiEmpire]) {
+    const k = kinds(e);
+    let home = 0;
+    for (let p = 1; p <= np && !home; p++) if (owner(p) === e) home = p;
+    if (!home || !k.ships.length) { out.skipped.push(`empire ${e}: no planet or ships`); continue; }
+    const [x, y] = pxy(home), s = k.ships, g = k.ground.length ? [[k.ground[0], 3]] : [];
+    make(`${e}:weak`, e, x + 3, y + 2, [s[0]], []);
+    const strong = make(`${e}:strong`, e, x - 3, y + 2, [s[0], s[s.length - 1], s[0]], g);
+    if (strong && e === T.EN.readS32()) fl(strong).writeAnsiString(A.AlapNev.readPointer().readCString());
+    const a = make(`${e}:arrive`, e, x + 0.4, y + 2.3, [s[s.length - 1], s[0]], g);
+    if (a) {
+      fl(a).writeAnsiString(`Merger ${e}`);
+      fl(a).add(0x52).writeU16(fl(a).add(0x52).readU16() | 0x800);
+      flottaMozgat(a, 1, 1, home, 0);
+      const b = make(`${e}:follower`, e, x + 9, y + 8, [s[0]], []);
+      if (b) flottaMozgat(b, 1, 2, a, 0);
+    }
+    const d = make(`${e}:idle`, e, x + 25, y - 20, [s[0]], []);
+    const c = make(`${e}:joiner`, e, x + 26, y - 20.5, [s[s.length - 1]], g);
+    if (d && c) flottaMozgat(c, 1, 2, d, 0);
+    for (const [tag, list, bit, pool] of [['colonise', k.colony, 0x08, M.Kolonizalo], ['terraform', k.terra, 0x10, M.Terraformalo]]) {
+      if (!list.length || u >= unowned.length) { out.skipped.push(`${e}:${tag}`); continue; }
+      const p = unowned[u++], [ux, uy] = pxy(p);
+      const f = make(`${e}:${tag}`, e, ux + 0.3, uy + 2.2, [list[0]], []);
+      if (!f) continue;
+      flottaMozgat(f, 1, 1, p, 0);
+      fl(f).add(0x52).writeU16(fl(f).add(0x52).readU16() | bit);
+      pool.add(4 * e).writeS32(pool.add(4 * e).readS32() - 1);
+      out.fleets[`${e}:${tag}:planet`] = p;
+    }
+  }
+  for (let e = 1; e <= 8; e++) {
+    if (M.Alive.add(e).readU8() || designs(e) < 1) continue;
+    const k = kinds(e);
+    if (!k.ships.length) continue;
+    make(`${e}:dead`, e, 10, 10, [k.ships[0], k.ships[0]], []);
+    break;
+  }
+  const nw = M.WormholeCount.readS32(), en = T.EN.readS32();
+  out.wormholes = nw;
+  if (nw > 0) {
+    const w = M.Wormhole.add(0x1c), wa = w.add(10).readS16();
+    if (wa > 0) {
+      const k = kinds(en), x = fl(wa).add(0x30).readFloat(), y = fl(wa).add(0x34).readFloat();
+      const f = k.ships.length ? make(`${en}:wormhole`, en, x + 0.5, y, [k.ships[0]], []) : 0;
+      if (f) flottaMozgat(f, 1, 2, wa, 0);
+    }
+  }
+  return out;
+}
+
+// --battles: auto-resolved space battles and ground wars in the first ticks (re/rules/info-messages.md §3.2: the
+// battle outcomes 11/12, 15-18, 22-25). The human's empire is handed to the AI (PlayerKi[EN] = 0; the AI's
+// pass is switched off, every fleet is visible): no battle opens the real-time screen, and SpaceWarIndit/GroundWarIndit
+// still post the human's messages. Attackers sit within one step of their targets; the starmap loop stops at the
+// first battle, so the next attacker in slot order fights in the next tick. --battles-mode picks the mix:
+//   space   duels between the human's and the AI's fleets: lopsided won/lost (15/16), even ones (17/18), the AI
+//           attacking the human, and a planet battle against a defended planet (defence fleet within 15)
+//   ground  planet attacks with ground vehicles on undefended planets (GroundWarIndit straight away): lopsided
+//           ones (22/23), even ones (11/12), a garrisoned planet (TankNew(-p)) the attacker loses (no message).
+//           A lopsided attack that loses (24/25) wasn't reached: even 60 vehicles of the weakest design beat the
+//           turrets.
+function stageBattles() {
+  const out = { mode: cfg.battlesMode, fleets: {}, skipped: [] };
+  const en = T.EN.readS32(), ai = cfg.aiEmpire;
+  const fl = (f) => F.Flottak.readPointer().add(f * 0x80);
+  const np = T.HanyBolygo.readS32();
+  const pxy = (p) => [T.Bolygok.add(p * 0x188 + 0x18).readFloat(), T.Bolygok.add(p * 0x188 + 0x1c).readFloat()];
+  const kinds = (e) => {
+    const k = { ships: [], ground: [] };
+    for (let d = 1; d <= designs(e); d++) {
+      const r = design(e, d), cls = r.add(0x16).readS16();
+      const strong = r.add(0x2c).readS32() > 0 && r.add(0x30).readS32() > 0;
+      const special = [0x34, 0x35, 0x36, 0x37, 0x38, 0x39].some((o) => r.add(o).readU8() !== 0);
+      if (cls === 1 && strong && !special && r.add(0x3c).readFloat() > 0) k.ships.push(d);
+      else if (cls === 2 && strong) k.ground.push(d);
+    }
+    return k;
+  };
+  const make = (tag, e, x, y, ships, ground) => {
+    const f = flottaNew(A.AlapNev.readPointer(), e, 0, x, y, 0);
+    if (f < 1) { out.skipped.push(tag); return 0; }
+    fl(f).writeAnsiString(tag.slice(0, 20));  // the name field is 21 bytes; the owner follows
+    for (const d of ships) hajoNew(f, d);
+    for (const [d, n] of ground) tankNew(f, d, n);
+    fl(f).add(0x38).writeFloat(2);
+    fl(f).add(0x3c).writeFloat(2);
+    out.fleets[tag] = [f, fl(f).add(0x54).readS32(), fl(f).add(0x60).readS32(), fl(f).add(0x6c).readS32(), fl(f).add(0x5c).readS32(), fl(f).add(0x68).readS32()];
+    return f;
+  };
+  const planets = (e) => { const l = []; for (let p = 1; p <= np; p++) if (owner(p) === e) l.push(p); return l; };
+  const K = { [en]: kinds(en), [ai]: kinds(ai) };
+  out.kinds = K;
+  out.planets = { [en]: planets(en), [ai]: planets(ai) };
+  if (!K[en].ships.length || !K[ai].ships.length) { out.skipped.push('no warship designs'); return out; }
+  const big = (e, n) => Array(n).fill(K[e].ships[K[e].ships.length - 1]);
+  const small = (e) => [K[e].ships[0]];
+  // Battles far from every planet (no battle planet within 20): a row of duels at (x0 + 30i, y0).
+  let spot = 0;
+  const open = () => { const s = [60 + 25 * (spot % 6), 40 + 25 * Math.floor(spot / 6)]; spot++; return s; };
+  const duel = (tag, a, sa, b, sb) => {
+    const [x, y] = open();
+    const t = make(`${tag}:target`, b, x, y, sb, []);
+    const f = t ? make(`${tag}:attacker`, a, x + 0.5, y + 0.3, sa, []) : 0;
+    if (f) flottaMozgat(f, 2, 2, t, 0);
+  };
+  if (cfg.battlesMode === 'space') {
+    duel('won', en, big(en, 6), ai, small(ai));
+    duel('lost', en, small(en), ai, big(ai, 6));
+    duel('even', en, big(en, 2), ai, big(ai, 2));
+    duel('ai', ai, big(ai, 2), en, big(en, 2));
+    duel('ai-lopsided', ai, big(ai, 8), en, small(en));
+    // A planet battle: the AI attacks the human's planet with a defence fleet next to it.
+    const p = out.planets[en][0];
+    if (p) {
+      const [x, y] = pxy(p);
+      make('planet:defender', en, x - 2, y + 1, big(en, 2), []);
+      const f = make('planet:attacker', ai, x + 0.4, y + 2.3, big(ai, 3), []);
+      if (f) flottaMozgat(f, 2, 1, p, 0);
+    }
+  } else {
+    if (!K[en].ground.length || !K[ai].ground.length) { out.skipped.push('no ground designs'); return out; }
+    const tanks = (e, n) => [[K[e].ground[K[e].ground.length - 1], n]];
+    const attack = (tag, e, p, ships, ground) => {
+      const [x, y] = pxy(p);
+      const f = make(tag, e, x + 0.4, y + 2.3, ships, ground);
+      if (f) { flottaMozgat(f, 2, 1, p, 0); out.fleets[tag].push(p); }
+      return f;
+    };
+    // Undefended planets (`fleet-movement.md` §4.3: no defence ship, no working gun or shield building, no idle own
+    // fleet within 15): the attack goes straight to GroundWarIndit. Targets without a nearby fleet are disarmed: the
+    // defence-ship count is cleared and the guns/shields switched off (+0x19 bit 0; the next economy step may turn
+    // them on again, after the attacks). Garrison and fortress strength stay (they decide "lopsided").
+    out.why = {};
+    const undefended = (e) => out.planets[e].filter((p) => {
+      const [x, y] = pxy(p);
+      for (let f = 1; f <= F.HanyFlotta.readS32(); f++) {
+        const r = fl(f);
+        if (r.add(0x15).readU8() === e && Math.abs(r.add(0x30).readFloat() - x) + Math.abs(r.add(0x34).readFloat() - y) < 16) {
+          out.why[p] = `fleet ${f}`;
+          return false;
+        }
+      }
+      const q = T.Bolygok.add(p * 0x188);
+      const n = T.Slots.add(4 * p).readS32(), b = T.Epuletek.add(4 * p).readPointer();
+      out.why[p] = { ships: q.add(0x114).readS32(), garrison: q.add(0x58).readS32(), strength: q.add(0x5c).readS32(),
+        fortress: va(0xb99cb8).add(4 * p).readS32(), guns: [] };
+      q.add(0x114).writeS32(0);
+      for (let s = 1; s <= n; s++) {
+        const k = b.add(0x20 * s).readU8();
+        if ((k >= 0x1c && k <= 0x1f) || (k >= 0x24 && k <= 0x26)) {
+          out.why[p].guns.push(k);
+          b.add(0x20 * s + 0x19).writeU8(b.add(0x20 * s + 0x19).readU8() & 0xfe);
+        }
+      }
+      return true;
+    }).slice(0, 3);
+    const mine = undefended(en), theirs = undefended(ai);
+    out.undefended = { [en]: mine, [ai]: theirs };
+    // Lopsided (ground strength > 5 x (garrison + fortress)): the attacker wins (22 to the human attacking, 23 to
+    // the human losing the planet).
+    if (theirs[0]) attack('ground:won', en, theirs[0], small(en), tanks(en, cfg.lopsidedTanks));
+    if (mine[0]) attack('ground:ai', ai, mine[0], small(ai), tanks(ai, cfg.lopsidedTanks));
+    // Even wars the attacker should still win (12 to the human attacking, 11 to the owner).
+    if (theirs[1]) attack('ground:even-won', en, theirs[1], small(en), tanks(en, cfg.evenTanks));
+    if (mine[1]) attack('ground:even-ai', ai, mine[1], small(ai), tanks(ai, cfg.evenTanks));
+    // A garrisoned planet: the attacker loses (no message).
+    if (theirs[2]) {
+      tankNew(-theirs[2], K[ai].ground[K[ai].ground.length - 1], 8);
+      attack('ground:even-lost', en, theirs[2], small(en), tanks(en, 3));
+    }
+  }
+  // The human's empire to the AI (no real-time screens); FRISSIT_MI off (the debug switch 0xB77244, dumped as
+  // 'aioff'), else the AI's fleet pass redirects the staged fleets, the human's too now; every fleet visible to
+  // everyone (Story_Minden_Flotta_Latszik, saved), else an attack on an unseen fleet turns into a move.
+  va(0xbae560).add(en).writeU8(0);
+  va(0xb77244).writeS32(1);
+  va(0xf265d4).writeU8(1);
+  return out;
+}
+
 let k = 0, frames = 0, phase = 0, loadedAt = 0, homeKep = -1, busy = false;
+
+// --randlog: the callers of libc rand() during the tick (run-length [return address, count]; [-1, 1] marks
+// FRISSIT_Trade's entry), reported with the next save as 'rands'.
+let rands = [];
+function mark(a) {
+  if (!cfg.randlog || phase !== 2 || busy) return;
+  const last = rands[rands.length - 1];
+  if (last && last[0] === a) last[1]++; else rands.push([a, 1]);
+}
+Interceptor.attach(crt.getExportByName('rand'), {
+  onEnter() { if (cfg.randlog) mark(this.returnAddress.sub(mod.base).add(IMAGE_BASE).toInt32()); },
+});
+Interceptor.attach(va(0x605ed0), { onEnter() { mark(-1); } });
+
 function save(where) {
   busy = true;
   const slot = 100 + k, ido2 = A.Ido2.readS32();
   const seed = (cfg.seed + ido2) >>> 0;
   const vol = volatile(k === 0);
   loadSave(slot, Memory.allocAnsiString(cfg.name + ' ' + k), 2);
-  emit({ k: 'save', idx: k, slot, where, ido: A.Ido.readS32(), ido2, seed, vol });
+  const ev = { k: 'save', idx: k, slot, where, ido: A.Ido.readS32(), ido2, seed, vol };
+  if (cfg.randlog) { ev.rands = rands; rands = []; }
+  emit(ev);
   flush();
   busy = false;
   k++;
@@ -116,6 +675,22 @@ Interceptor.attach(A.Fake_FRISSITES, {
       loadSave(cfg.slot, Memory.allocAnsiString(cfg.name), 1);
       setSpeed(cfg.speed, 1);
       setPause(0, 0);
+      if (cfg.traders) emit({ k: 'traders', stage: stageTraders() });
+      if (cfg.spies) emit({ k: 'spies', stage: stageSpies() });
+      if (cfg.merges) emit({ k: 'merges', stage: stageMerges() });
+      if (cfg.battles) emit({ k: 'battles', stage: stageBattles() });
+      if (cfg.stage) {
+        const st = stageTrade();
+        loadSave(98, Memory.allocAnsiString(cfg.name + ' pre'), 2);
+        emit({ k: 'pre', slot: 98, stage: st });
+        const h = st.mine[0];
+        if (T.N.readS32() > 0) {
+          buy(h, T.EtaDays.readS32(), 0, 1);
+          buy(h, 2, 0, T.Offers.add(0x6c).readS32());
+          buy(h, 2, 0, 1);
+          if (st.theirs.length) buy(st.theirs[0], 2, T.N.readS32() - 1, 1);
+        }
+      }
       busy = false;
       emit({ k: 'loaded', ido: A.Ido.readS32(), ido2: A.Ido2.readS32(), kep: A.AktKep.readS32(), home: homeKep });
       save('load');

@@ -389,7 +389,8 @@ Answer (`DiplomaciaiValaszTipus`, 0x30; `AktDipValasz` 0xA43748): `+0x00` from, 
 `Ido`, `+0x10` counter, `+0x11` reply, `+0x12` yes (u8s), `+0x14` sub, `+0x18` value, `+0x1c` sub2, `+0x20`
 value2, `+0x24` extra, `+0x28` text variant, `+0x2c` reason code.
 Contact-list slot (`AktPlayerek[i]`, 0xc4 bytes, `KeresPlayer`: the last slot with `+0x00 == e`, else −1, which
-reads the bytes before the array): `+0x00` empire, `+0x0c` (cleared by answers and auto-cancels: UI),
+reads the bytes before the array): `+0x00` empire, `+0x04` `PlayerKi[empire]` when met (`FelfedezBirodalom`
+ELF 0x50f090: `InitBirodalom(MaxPlayerek)` then these two; a dead empire is met too), `+0x0c` (cleared by answers and auto-cancels: UI),
 `+0x14` open (messages of this empire reach the human; set by `InitBirodalom`), `+0x15` the other side
 blocks calls (MP), `+0x16` the human's message to this empire awaits its answer (cleared by answers),
 `+0x17` **waiting**: a message of this empire awaits the human's answer (`Diplomacy_WaitingForReply` 0x4c0190,

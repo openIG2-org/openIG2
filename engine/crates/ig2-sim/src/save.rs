@@ -21,6 +21,8 @@ use crate::colony::{Building, Planet};
 use crate::colony_side::{ColonyWorld, TechTable, Treasury, EMPIRES, PLANET_SLOTS};
 use crate::diplomacy::{Answer, Diplomacy, Letter, Message, PlayerSlot, Relation, LAST_CONTACT_CELLS};
 use crate::fleet::{Fleet, StarPlanet, Waypoint, Wormhole};
+use crate::info::{Charts, InfoWorld};
+use crate::messages::{Inbox, Ticker, ENTRY, LIST, MESSAGE, ON_SCREEN, PLAYBACK};
 use crate::radar::ShipDesign;
 use crate::research::Research;
 use crate::rng::Streams;
@@ -31,11 +33,17 @@ use crate::story::{self, Queue, Story};
 pub const PLANET_SIZE: usize = 0x188;
 pub const FLEET_SIZE: usize = 0x80;
 pub const BUILDING_SIZE: usize = 0x20;
+/// `EpuletNew` grows a planet's building block by this many records.
+pub const BUILDING_BLOCK_STEP: usize = 20;
+/// Building record bytes no ported code writes (`put_building`): they keep what the slot held.
+pub const BUILDING_UNWRITTEN: [usize; 7] = [2, 3, 0xb, 0x14, 0x15, 0x16, 0x17];
 pub const DESIGN_SIZE: usize = 0x84;
 pub const TECH_SIZE: usize = 0x114;
 pub const TECHS: usize = 193;
 /// `AktPlayerek` entry.
 pub const PLAYER_SLOT: usize = 0xc4;
+/// `TradeSzallitas[e]`: 50 deliveries of 0x98 B per empire.
+pub const TRADE_EMPIRE_STRIDE: u32 = (crate::trade::DELIVERIES * crate::trade::DELIVERY) as u32;
 
 /// Exe image VAs of the globals the sim reads (re/formats/save.md §4, the rules specs).
 pub mod va {
@@ -106,6 +114,7 @@ pub mod va {
     pub const CONTACTS: u32 = 0xA41E98;
     pub const CONTACT_GHOST: u32 = 0xA41DD4;
     pub const MAX_PLAYERS: u32 = 0xAB64DC;
+    pub const SHOWN_PLAYERS: u32 = 0xA41D24;
     pub const RULER_AGE: u32 = 0xA41E48;
     pub const GREETED: u32 = 0xA41CC4;
     pub const RELATIONS: u32 = 0xDABF38;
@@ -117,6 +126,24 @@ pub mod va {
     pub const SPY_CENTRES: u32 = 0xBB23AC;
     pub const SPIES_WORKING: u32 = 0xBB23D0;
     pub const TRADE_PORTS: u32 = 0xBB23F4;
+    /// The trade market (`re/rules/trade.md` §1).
+    pub const TRADE_OFFER_COUNT: u32 = 0xF439CC;
+    pub const TRADE_OFFERS: u32 = 0xB9AAF0;
+    pub const TRADE_DELIVERY_COUNTS: u32 = 0xF66DE0;
+    /// `TradeSzallitas[e]` = this + e·0x1DB0 (empire 1 at 0xF45780).
+    pub const TRADE_DELIVERIES: u32 = 0xF439D0;
+    pub const TRADE_OLD_DAY: u32 = 0xF66E2C;
+    pub const TRADE_ETA_MONTH: u32 = 0x928DB0;
+    pub const TRADE_ETA_DAYS: u32 = 0xF43428;
+    pub const TRADE_CHEAT: u32 = 0xF43835;
+    pub const STORY_DESIGNS: u32 = 0xF2F8C0;
+    /// The planet the UI shows and the starmap mode (1 = planet view): saved UI state the economy's prologue reads.
+    pub const AKT_PLANET: u32 = 0xB9933C;
+    /// `AktFleet`: the selected fleet (`FlottaOsszevon` moves it to the merged fleet).
+    pub const AKT_FLEET: u32 = 0xB99664;
+    pub const STARMAP_MODE: u32 = 0xB9998C;
+    pub const STORY_DESIGN_COUNT: u32 = 0xF419D0;
+    pub const STORY_DESIGN_NEXT: u32 = 0xF419D4;
     pub const SPY_CENTRES_BY_PLANET: u32 = 0xBB2418;
     pub const KIDNAP: u32 = 0xBB405C;
     pub const MISSIONS: u32 = 0x912F48;
@@ -198,6 +225,31 @@ pub mod va {
 
     pub const AUTOBUILD_PICK: u32 = 0x996530;
     pub const MAP_CURSOR: u32 = 0x996420;
+
+    // Info charts and messages (info-messages.md).
+    pub const INFO_CHARTS: u32 = 0xB7A000;
+    pub const INFO_SMOOTHED: u32 = 0xB7E4C0;
+    /// `BattlesWon[e]` (the saved block starts at empire 1, 0xB79FB8).
+    pub const BATTLES_WON: u32 = 0xB79FB4;
+    /// `InfoOldHonap` (unsaved).
+    pub const INFO_MONTH: u32 = 0xB84C78;
+    pub const SCROLL: u32 = 0xE40CB0;
+    pub const SCROLL_HISTORY: u32 = 0xE40F70;
+    pub const SCROLL_COUNT: u32 = 0xE413D4;
+    pub const SCROLL_HISTORY_COUNT: u32 = 0xE413D8;
+    /// `ScrollSzoveg`, `ScrollFontos` (UI state, unsaved).
+    pub const SCROLL_TEXT: u32 = 0xE41230;
+    pub const SCROLL_IMPORTANT: u32 = 0xE412F8;
+    /// `KemHanyBeszolas`, `KemBeszolasok`: the human's spy reports (`info-messages.md` §3.3).
+    pub const SPY_REPORT_COUNT: u32 = 0xBAF334;
+    pub const SPY_REPORTS: u32 = 0xBAF338;
+    /// `Story_KemEsemeny`'s data (0xF2F874.., unsaved).
+    pub const SPY_EVENT: u32 = 0xF2F874;
+    pub const INBOX: u32 = 0xDA6620;
+    pub const INBOX_RANDOM: u32 = 0xDABC10;
+    pub const INBOX_PLAYBACK: u32 = 0xDA9B40;
+    pub const INBOX_COUNT: u32 = 0xDABDD0;
+    pub const INBOX_SHOWING: u32 = 0xDABDBC;
 }
 
 // ------------------------------------------------------------------------------------------------ memory
@@ -318,6 +370,9 @@ pub fn chunk_va(name: &str) -> Option<u32> {
     if let Some(e) = name.strip_prefix("Kemek[").and_then(|r| r.strip_suffix(']')) {
         return Some(va::KEMEK + e.parse::<u32>().ok()? * (SLOTS * RECORD) as u32);
     }
+    if let Some(e) = name.strip_prefix("TradeSzallitas[").and_then(|r| r.strip_suffix(']')) {
+        return Some(va::TRADE_DELIVERIES + e.parse::<u32>().ok()? * TRADE_EMPIRE_STRIDE);
+    }
     Some(match name {
         "Ev" => va::EV,
         "Honap" => va::HONAP,
@@ -342,7 +397,7 @@ pub fn chunk_va(name: &str) -> Option<u32> {
         "SpecialListaMut" => 0xA41DC4,
         "PlayerSelected" => 0x902F70,
         "PlayerSelectedOld" => 0x902F74,
-        "MostHanyPlayerVan" => 0xA41D24,
+        "MostHanyPlayerVan" => va::SHOWN_PLAYERS,
         "SpecialLista" => 0xA42DE8,
         "MaxPlayerek" => va::MAX_PLAYERS,
         "DiplomaciaEngedelyezve" => va::DIPLOMACY_ENABLED,
@@ -400,6 +455,11 @@ pub fn chunk_va(name: &str) -> Option<u32> {
         "TradeIncomeThisYear" => va::TRADE_THIS,
         "TaxIncomeLastYear" => va::TAX_LAST,
         "TaxIncomeThisYear" => va::TAX_THIS,
+        // The trade market.
+        "TradeHanyTradeCuccVan" => va::TRADE_OFFER_COUNT,
+        "TradeTervek" => va::TRADE_OFFERS,
+        "TradeHanySzallitas" => va::TRADE_DELIVERY_COUNTS,
+        "TradeOldNap" => va::TRADE_OLD_DAY,
         // Spies.
         "OsszHanyKem" => va::SPY_COUNT,
         "HanyKemLehet" => va::SPY_CAPACITY,
@@ -425,6 +485,9 @@ pub fn chunk_va(name: &str) -> Option<u32> {
         "HanyBolygo2" => va::PLANET_COUNT2,
         "Bolygok" => va::PLANETS,
         "BolygoUtolsoKozeliFlotta" => va::LAST_NEAR_FLEET,
+        "AktPlanet" => va::AKT_PLANET,
+        "AktFleet" => va::AKT_FLEET,
+        "StarmapMode" => va::STARMAP_MODE,
         "BolygoMennyiIdejeLazad" => va::UNREST,
         "BolygoMennyiFoldiEro" => va::GROUND,
         "BolygoMennyiErodEro" => va::FORTRESS,
@@ -436,6 +499,42 @@ pub fn chunk_va(name: &str) -> Option<u32> {
         "ResearchAktFejlesztett" => va::RESEARCHING,
         "ResearchTerulet" => 0xB9A9B4,
         "ResearchMezo" => 0xB9AA04,
+        // Info_Save's charts (the rest of it is screen state, passed through).
+        "InfoCharts" => va::INFO_CHARTS,
+        "InfoChartsSmoothed" => va::INFO_SMOOTHED,
+        "BattlesWon" => va::BATTLES_WON + 4,
+        // Messages.
+        "Uzenetek" => va::INBOX,
+        "UzenetekRandomKitol" => va::INBOX_RANDOM,
+        "UzenetPlaybackek" => va::INBOX_PLAYBACK,
+        "FolyamatbanU" => 0xDABDA0,
+        "FolyamatbanUH" => 0xDABDA4,
+        "FolyamatbanU3" => 0xDABDA8,
+        "FolyamatbanUP" => 0xDABDAC,
+        "FolyamatbanPA" => 0xDA65E7,
+        "FolyamatbanOldBlokk" => 0xDABDB0,
+        "VoltUjValasz" => 0xDABDB4,
+        "VoltUjUzenet" => 0xDABDB8,
+        "UAktUzenetFajta" => va::INBOX_SHOWING,
+        "UAktUzenet" => 0xDABDC0,
+        "AktBlokk" => 0xDABDC4,
+        "UVoltUjUzenet" => 0xDA65FF,
+        "LastNewMessage" => 0xDABDC8,
+        "UUjUzenetLejarasa" => 0xDABDCC,
+        "UzenetekSzama" => va::INBOX_COUNT,
+        "AktUzenetPointer" => 0xDABDD4,
+        "AutomataUzenet" => 0xDABDD8,
+        "AutomataUzenetHanyadik" => 0xDABDDC,
+        "Szovegvegen" => 0xDABDE0,
+        "Tiltolista" => 0xDABDE8,
+        "MaxTiltasok" => 0xDABDE4,
+        "HanyUzenetFajta" => 0xDABE38,
+        "UzenetekDb" => va::SCROLL_COUNT,
+        "UzenetekDbHistory" => va::SCROLL_HISTORY_COUNT,
+        "ScrollUzenetek" => va::SCROLL,
+        "ScrollUzenetekHistory" => va::SCROLL_HISTORY,
+        "KemHanyBeszolas" => va::SPY_REPORT_COUNT,
+        "KemBeszolasok" => va::SPY_REPORTS,
         "ResearchTalalmany" => 0xB9AA08,
         "LaborSzint" => va::LABS,
         "LaborSzintOsszes" => va::LAB_BUILDINGS,
@@ -494,6 +593,9 @@ pub struct SaveState {
     pub buildings: Vec<Vec<[u8; BUILDING_SIZE]>>,
     pub story: StoryQueues,
     pub multiplayer_blob: bool,
+    /// Building records `(planet, slot)` appended since this was last drained: uninitialised in the original
+    /// (the game fills them from its `uninit` source).
+    pub fresh_buildings: Vec<(usize, usize)>,
     /// Every chunk of the loaded save in order (the template for [`SaveState::chunks`]).
     template: Vec<(String, Vec<u8>)>,
 }
@@ -557,6 +659,7 @@ impl SaveState {
             buildings: save.buildings.clone(),
             story,
             multiplayer_blob: save.multiplayer,
+            fresh_buildings: Vec::new(),
             template,
         }
     }
@@ -597,6 +700,12 @@ impl SaveState {
                 "Tankok" => self.mem.read(va::VEHICLES, 8 * (self.mem.i32(va::VEHICLE_COUNT).max(0) as usize + 1)),
                 "Bolygok" => self.mem.read(va::PLANETS, PLANET_SIZE * (self.mem.i32(va::PLANET_COUNT).max(0) as usize + 1)),
                 n if n.starts_with("Tervek[") => self.designs[index_of(n)].concat(),
+                "TradeTervek" => self.mem.read(va::TRADE_OFFERS, crate::trade::RECORD * self.mem.i32(va::TRADE_OFFER_COUNT).max(0) as usize),
+                n if n.starts_with("TradeSzallitas[") => {
+                    let e = index_of(n) as u32;
+                    let count = self.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * e).max(0) as usize;
+                    self.mem.read(chunk_va(n).unwrap(), count * crate::trade::DELIVERY)
+                }
                 n if n.starts_with("Epuletek[") => self.buildings[index_of(n)].concat(),
                 n if n.starts_with("Kemek[") => {
                     let e = index_of(n);
@@ -609,6 +718,9 @@ impl SaveState {
                     let n = self.mem.i32(va::STORY_LIST_COUNTS + 4 * k as u32).max(0) as usize;
                     self.mem.read(chunk_va(name).unwrap(), (n + 1) * 8)
                 }
+                "ScrollUzenetek" => self.mem.read(va::SCROLL, ENTRY * (self.mem.i32(va::SCROLL_COUNT).max(0) as usize + 1)),
+                "ScrollUzenetekHistory" => self.mem.read(va::SCROLL_HISTORY, ENTRY * (self.mem.i32(va::SCROLL_HISTORY_COUNT).max(0) as usize + 1)),
+                "KemBeszolasok" => self.mem.read(va::SPY_REPORTS, crate::spy::REPORT * (self.mem.i32(va::SPY_REPORT_COUNT).max(0) as usize + 1)),
                 "st_vOzonviz" => self.mem.read(va::STORY_UNDO, 0xc * self.mem.i32(va::STORY_UNDO_COUNT).max(0) as usize),
                 // A count saved with its array: from the array.
                 "OsszHanyFlotta" => ((self.fleets.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
@@ -624,6 +736,107 @@ impl SaveState {
             add(name, &bytes);
         }
         out
+    }
+}
+
+impl SaveState {
+    /// Planet `p`'s ground battlefield as the loaded save holds it (`WF::LoadSave` exe 0x485420, battlefield
+    /// `p − 1` of the stream, `re/formats/save.md` §4.13): the fields the strategic ground war reads. The rest of a
+    /// group (the real-time state, the AI block) gets the constructor's values, as a load gives the fields it
+    /// doesn't save. `None` when the save has no such battlefield.
+    pub fn ground_field(&self, p: usize) -> Option<crate::ground::Field> {
+        use crate::ground::{Field, Group};
+        let tag = format!("WF[{}]", p.checked_sub(1)?);
+        let mut chunks = self.template.iter().filter(|(n, _)| {
+            n.strip_prefix(tag.as_str()).is_some_and(|r| r.starts_with('+') || r.starts_with('.'))
+        });
+        let first = chunks.next()?;
+        let mut f = Field::default();
+        let (mut units, mut alive): (Vec<Group>, Vec<bool>) = (Vec::new(), Vec::new());
+        let mut unit: Option<(usize, Group)> = None;
+        let flush = |u: Option<(usize, Group)>, units: &mut Vec<Group>| {
+            if let Some((k, g)) = u {
+                units[k] = g;
+            }
+        };
+        for (name, b) in std::iter::once(first).chain(chunks) {
+            let rest = &name[tag.len()..];
+            let i = |o: usize| b.get(o..o + 4).map_or(0, |x| i32::from_le_bytes(x.try_into().unwrap()));
+            let ints = || b.chunks_exact(4).map(|x| i32::from_le_bytes(x.try_into().unwrap())).collect::<Vec<_>>();
+            if let Some(u) = rest.strip_prefix(".unit[") {
+                let (k, field) = u.split_once(']').unwrap();
+                let k: usize = k.parse().unwrap();
+                if unit.as_ref().is_none_or(|(j, _)| *j != k) {
+                    flush(unit.take(), &mut units);
+                    unit = Some((k, Group::default()));
+                }
+                let g = &mut unit.as_mut().unwrap().1;
+                match field {
+                    "+0x188" => g.flags = i(0) as u32,
+                    "+0x1b0" => g.dest.0 = i(0),
+                    "+0x1b4" => g.dest.1 = i(0),
+                    "+0x23c" => g.target = i(0),
+                    "+0x158" => g.max_hp = i(0),
+                    "+0x15c" => g.design = i(0),
+                    "+0x194" => g.owner = i(0),
+                    "+0x198" => g.side = i(0),
+                    "+0x1a0" => g.cell.0 = i(0),
+                    "+0x1a4" => g.cell.1 = i(0),
+                    "+0x1a8" => g.last_cell.0 = i(0),
+                    "+0x1ac" => g.last_cell.1 = i(0),
+                    "+0x1b8" => g.move_state.0 = i(0),
+                    "+0x1cc" => g.regen = i(0),
+                    "+0x1d0" => g.weapons = i(0) as u32,
+                    "+0x1e0" => g.carrier = i(0),
+                    "+0x1e4" => g.partner = i(0),
+                    "+0x1e8" => g.paralysed = i(0),
+                    "+0x1ec" => g.seized = i(0),
+                    "+0x11c" => g.pods = i(0),
+                    "+0x288" => g.air = i(0),
+                    "+0x120" => g.ammo = i(0),
+                    "+0x1d4" => g.pos.0 = f32::from_bits(i(0) as u32),
+                    "+0x1d8" => g.pos.1 = f32::from_bits(i(0) as u32),
+                    "+0x244" => g.index = i(0),
+                    "+0x154" => g.hp = ints(),
+                    // Saved twice: a full record's scalar first, then the members' origins (the last one).
+                    "+0x19c" => g.origin = ints(),
+                    "+0x18c" => g.flags2 = i(0) as u32,
+                    "+0x138" => g.prev_size = i(0),
+                    "+0x25c" => g.last_hit = Some((i(0), g.last_hit.map_or(0, |h| h.1))),
+                    "+0x260" => g.last_hit = Some((g.last_hit.map_or(0, |h| h.0), i(0))),
+                    "+0x238" => g.building = i(0),
+                    "+0x130" => g.has_gun = b.first().is_some_and(|&x| x != 0),
+                    "+0x134" => g.hull = i(0),
+                    _ => {}
+                }
+                continue;
+            }
+            match rest {
+                "+0x8c8" => f.last_status = i(0),
+                "+0x8cc" => f.status_valid = i(0) != 0,
+                ".countdown" => f.countdown = i(0),
+                "+0x334" => f.self_destruct = i(0),
+                "+0x338" => f.attack_fleet = i(0),
+                "+0x88c" => f.simulating = b.first().is_some_and(|&x| x != 0),
+                "+0x88d" => f.not_watching.copy_from_slice(&b[..18]),
+                "+0x89f" => f.retreat.copy_from_slice(&b[..18]),
+                "+0x190" => f.finished_flag = b.first().is_some_and(|&x| x != 0),
+                "+0x7fc" => {
+                    for (e, t) in f.timers.iter_mut().enumerate() {
+                        *t = (i(8 * e), i(8 * e + 4));
+                    }
+                }
+                ".alive" => {
+                    alive = b.iter().map(|&x| x != 0).collect();
+                    units = vec![Group::default(); alive.len()];
+                }
+                _ => {}
+            }
+        }
+        flush(unit.take(), &mut units);
+        f.units = units;
+        f.alive = alive;
+        Some(f)
     }
 }
 
@@ -889,6 +1102,7 @@ fn put_answer(b: &mut [u8], o: usize, a: &Answer) {
 pub fn player_slot(b: &[u8]) -> PlayerSlot {
     PlayerSlot {
         empire: rd_i32(b, 0),
+        controller: rd_i32(b, 4),
         screen: b[0x0c],
         open: b[0x14],
         asked: b[0x16],
@@ -904,6 +1118,7 @@ pub fn player_slot(b: &[u8]) -> PlayerSlot {
 
 pub fn put_player_slot(b: &mut [u8], s: &PlayerSlot) {
     put(b, 0, &s.empire.to_le_bytes());
+    put(b, 4, &s.controller.to_le_bytes());
     b[0x0c] = s.screen;
     b[0x14] = s.open;
     b[0x16] = s.asked;
@@ -935,6 +1150,11 @@ impl SaveState {
         self.buildings.get(p).map_or(&[][..], |b| &b[1.min(b.len())..(n + 1).min(b.len())])
     }
 
+    /// `SearchBuilding(p, kind, true)`: finished (`+8 == 0`), working (`+0x19 & 1`) buildings of a kind on `p`.
+    pub fn working_buildings(&self, p: usize, kind: u8) -> i32 {
+        self.slots(p).iter().filter(|b| b[0] == kind && rd_i16(&b[..], 8) == 0 && b[0x19] & 1 != 0).count() as i32
+    }
+
     pub fn human_controlled(&self) -> [bool; EMPIRES] {
         self.mem.bytes::<EMPIRES>(va::PLAYER_KI).map(|k| k == 1)
     }
@@ -943,6 +1163,106 @@ impl SaveState {
     }
     pub fn alive(&self) -> [bool; EMPIRES] {
         self.mem.flags(va::EMPIRE_ALIVE)
+    }
+
+    /// `InfoCharts`, `InfoChartsSmoothed` (`info-messages.md` §1).
+    pub fn info_charts(&self) -> Charts {
+        Charts::from_bytes(&self.mem.read(va::INFO_CHARTS, crate::info::SIZE), &self.mem.read(va::INFO_SMOOTHED, crate::info::SIZE))
+    }
+    pub fn store_info_charts(&mut self, c: &Charts) {
+        let (raw, smoothed) = c.to_bytes();
+        self.mem.write(va::INFO_CHARTS, &raw);
+        self.mem.write(va::INFO_SMOOTHED, &smoothed);
+    }
+
+    /// What the chart sampler reads (`info-messages.md` §1.2).
+    pub fn info_world(&self) -> InfoWorld {
+        let m = &self.mem;
+        let c = self.combat();
+        InfoWorld {
+            alive: self.alive(),
+            planets: (0..PLANET_SLOTS as u32)
+                .map(|p| {
+                    let at = va::PLANETS + p * PLANET_SIZE as u32;
+                    (m.u8(at + 0x20), m.i32(at + 0x44), m.i32(at + 0x28))
+                })
+                .collect(),
+            planet_count: self.planet_count(),
+            fleet_owners: self.fleets.iter().map(|r| r[0x15]).collect(),
+            ships: c.ships,
+            vehicles: c.vehicles,
+            designs: c.designs,
+            tech: self.tech(),
+            spies: self.spies(),
+            battles_won: m.i32s(va::BATTLES_WON),
+            opinion: (0..EMPIRES)
+                .map(|e| std::array::from_fn(|i| m.i16(va::RELATIONS + ((e * EMPIRES + i) * 0x26 + 0x22) as u32)))
+                .collect(),
+        }
+    }
+
+    /// The scrolling message line (`info-messages.md` §2).
+    pub fn ticker(&self) -> Ticker {
+        let m = &self.mem;
+        Ticker {
+            main: m.read(va::SCROLL, LIST),
+            count: m.i32(va::SCROLL_COUNT),
+            history: m.read(va::SCROLL_HISTORY, LIST),
+            history_count: m.i32(va::SCROLL_HISTORY_COUNT),
+            on_screen: m.read(va::SCROLL_TEXT, ON_SCREEN),
+            on_screen_important: m.u8(va::SCROLL_IMPORTANT),
+            tutorial: m.u8(va::TUTORIAL_ACTIVE) != 0 || m.u8(va::TUTORIAL_PAUSED) != 0,
+        }
+    }
+    pub fn store_ticker(&mut self, t: &Ticker) {
+        let m = &mut self.mem;
+        m.write(va::SCROLL, &t.main);
+        m.set_i32(va::SCROLL_COUNT, t.count);
+        m.write(va::SCROLL_HISTORY, &t.history);
+        m.set_i32(va::SCROLL_HISTORY_COUNT, t.history_count);
+        m.write(va::SCROLL_TEXT, &t.on_screen);
+        m.set_u8(va::SCROLL_IMPORTANT, t.on_screen_important);
+    }
+
+    /// The message inbox (`info-messages.md` §4).
+    pub fn inbox(&self) -> Inbox {
+        let m = &self.mem;
+        Inbox {
+            messages: m.read(va::INBOX, 100 * MESSAGE),
+            random_from: m.read(va::INBOX_RANDOM, 400),
+            playbacks: m.read(va::INBOX_PLAYBACK, 100 * PLAYBACK),
+            count: m.i32(va::INBOX_COUNT),
+        }
+    }
+    /// `KemJelentesAdd`'s data and queue steps (`info-messages.md` §3.3 steps 1–2).
+    pub fn push_spy_report(&mut self, r: &crate::spy::Report) {
+        use crate::spy::{MAX_REPORTS, REPORT};
+        let m = &mut self.mem;
+        let ev = [r.kind as i32, r.a, r.b as i32];
+        for (i, v) in ev.iter().chain(&[r.d as i32]).chain(&r.x).enumerate() {
+            m.set_i32(va::SPY_EVENT + 4 * i as u32 + if i < 3 { 0 } else { 4 }, *v);
+        }
+        m.set_u8(va::SPY_EVENT + 0xc, r.c);
+        let mut n = m.i32(va::SPY_REPORT_COUNT);
+        if n >= MAX_REPORTS {
+            n -= 1;
+            let moved = m.read(va::SPY_REPORTS + 2 * REPORT as u32, n.max(0) as usize * REPORT);
+            m.write(va::SPY_REPORTS + REPORT as u32, &moved);
+        }
+        n += 1;
+        m.set_i32(va::SPY_REPORT_COUNT, n);
+        let at = va::SPY_REPORTS + (n.max(0) as usize * REPORT) as u32;
+        let mut rec = m.read(at, REPORT);
+        r.write(&mut rec);
+        m.write(at, &rec);
+    }
+    pub fn store_inbox(&mut self, b: &Inbox) {
+
+        let m = &mut self.mem;
+        m.write(va::INBOX, &b.messages);
+        m.write(va::INBOX_RANDOM, &b.random_from);
+        m.write(va::INBOX_PLAYBACK, &b.playbacks);
+        m.set_i32(va::INBOX_COUNT, b.count);
     }
 
     pub fn treasuries(&self) -> [Treasury; EMPIRES] {
@@ -1049,20 +1369,36 @@ impl SaveState {
             if self.buildings.len() <= p {
                 self.buildings.resize(p + 1, Vec::new());
             }
+            // `EpuletNew` (exe 0x53c7d0): a slot appended to a full block reallocates it by 20 records
+            // (`HanyEpuletBlokk += 20`); the new records are uninitialised heap, which the save carries.
+            let old_blocks = self.mem.i32(va::BUILDING_BLOCKS + 4 * p as u32).max(0) as usize;
+            let mut blocks = old_blocks;
+            while pl.buildings.len() > blocks {
+                blocks += BUILDING_BLOCK_STEP;
+            }
             let slots = &mut self.buildings[p];
             if slots.is_empty() {
                 slots.push([0; BUILDING_SIZE]);
             }
-            if slots.len() < pl.buildings.len() + 1 {
-                slots.resize(pl.buildings.len() + 1, [0; BUILDING_SIZE]);
+            let have = slots.len();
+            let want = if blocks > old_blocks { blocks + 1 } else { pl.buildings.len() + 1 };
+            if have < want {
+                slots.resize(want, [0; BUILDING_SIZE]);
+                self.fresh_buildings.extend((have..want).map(|j| (p, j)));
             }
+            let used = self.mem.i32(va::BUILDING_SLOTS + 4 * p as u32).max(0) as usize;
+            let slots = &mut self.buildings[p];
             for (j, b) in pl.buildings.iter().enumerate() {
+                // A slot appended now keeps bit 7 of the record's old flags (`EpuletNew`: `flags &= 0x80`).
+                let old = slots[j + 1][0x19];
                 put_building(&mut slots[j + 1], b);
+                if j + 1 > used {
+                    slots[j + 1][0x19] = (b.flags & 0x7f) | (old & 0x80);
+                }
             }
-            let blocks = slots.len() as i32 - 1;
             self.mem.set_i32(va::BUILDING_SLOTS + 4 * p as u32, pl.buildings.len() as i32);
-            if self.mem.i32(va::BUILDING_BLOCKS + 4 * p as u32) < blocks {
-                self.mem.set_i32(va::BUILDING_BLOCKS + 4 * p as u32, blocks);
+            if blocks > old_blocks || (old_blocks as i32) < slots.len() as i32 - 1 {
+                self.mem.set_i32(va::BUILDING_BLOCKS + 4 * p as u32, blocks.max(slots.len() - 1) as i32);
             }
             self.mem.set_i32(va::UNREST + 4 * p as u32, pl.unrest);
         }
@@ -1329,6 +1665,53 @@ impl SaveState {
         }
     }
 
+    /// The trade market (`TradeTervek`, `TradeSzallitas`, `TradeOldNap` and the unsaved `OldEtaHonap`/`AktEtaDays`).
+    pub fn trade(&self) -> crate::trade::Trade {
+        use crate::trade::{Delivery, DELIVERIES, DELIVERY, OFFERS, RECORD};
+        let m = &self.mem;
+        let n = (m.i32(va::TRADE_OFFER_COUNT).max(0) as usize).min(OFFERS + 1);
+        let offers = (0..n).map(|i| m.read(va::TRADE_OFFERS + (i * RECORD) as u32, RECORD).try_into().unwrap()).collect();
+        let deliveries = (0..EMPIRES)
+            .map(|e| {
+                let c = if e == 0 { 0 } else { (m.i32(va::TRADE_DELIVERY_COUNTS + 4 * e as u32).max(0) as usize).min(DELIVERIES) };
+                let at = va::TRADE_DELIVERIES + e as u32 * TRADE_EMPIRE_STRIDE;
+                (0..c).map(|i| Delivery(m.read(at + (i * DELIVERY) as u32, DELIVERY).try_into().unwrap())).collect()
+            })
+            .collect();
+        crate::trade::Trade {
+            offers,
+            deliveries,
+            old_day: m.i32(va::TRADE_OLD_DAY),
+            eta_month: m.i32(va::TRADE_ETA_MONTH),
+            eta_days: m.i32(va::TRADE_ETA_DAYS),
+        }
+    }
+    pub fn store_trade(&mut self, t: &crate::trade::Trade) {
+        use crate::trade::{DELIVERY, RECORD};
+        let m = &mut self.mem;
+        m.set_i32(va::TRADE_OFFER_COUNT, t.offers.len() as i32);
+        for (i, o) in t.offers.iter().enumerate() {
+            m.write(va::TRADE_OFFERS + (i * RECORD) as u32, o);
+        }
+        for (e, list) in t.deliveries.iter().enumerate().skip(1).take(EMPIRES - 1) {
+            m.set_i32(va::TRADE_DELIVERY_COUNTS + 4 * e as u32, list.len() as i32);
+            let at = va::TRADE_DELIVERIES + e as u32 * TRADE_EMPIRE_STRIDE;
+            for (i, d) in list.iter().enumerate() {
+                m.write(at + (i * DELIVERY) as u32, &d.0);
+            }
+        }
+        m.set_i32(va::TRADE_OLD_DAY, t.old_day);
+        m.set_i32(va::TRADE_ETA_MONTH, t.eta_month);
+        m.set_i32(va::TRADE_ETA_DAYS, t.eta_days);
+    }
+
+    /// `StoryDesignData[0..StoryDesignDataMut]` (`designs.txt`; not saved: from a live dump or the install).
+    pub fn story_designs(&self) -> Vec<[u8; crate::trade::STORY_DESIGN]> {
+        use crate::trade::STORY_DESIGN;
+        let n = (self.mem.i32(va::STORY_DESIGN_COUNT).max(0) as usize).min(10_000);
+        (0..n).map(|i| self.mem.read(va::STORY_DESIGNS + (i * STORY_DESIGN) as u32, STORY_DESIGN).try_into().unwrap()).collect()
+    }
+
     /// Diplomacy's own state (relations, power, contacts, the contact list with slot −1).
     pub fn diplomacy(&self) -> Diplomacy {
         let m = &self.mem;
@@ -1348,6 +1731,7 @@ impl SaveState {
             greeted: m.bytes(va::GREETED),
             last_day: m.i32(va::DIP_OLD_NAP),
             started: m.u8(va::DIP_STARTED) != 0,
+            shown_players: m.i32(va::SHOWN_PLAYERS),
         }
     }
 
@@ -1376,6 +1760,7 @@ impl SaveState {
         m.set_i32(va::MAX_PLAYERS, d.players.len() as i32);
         m.set_i32(va::DIP_OLD_NAP, d.last_day);
         m.set_u8(va::DIP_STARTED, d.started as u8);
+        m.set_i32(va::SHOWN_PLAYERS, d.shown_players);
         self.store_known_since(&d.known_since);
     }
 

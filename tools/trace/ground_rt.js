@@ -38,7 +38,7 @@ const A = {
 const WF_SIZE = 0x8ec, UNIT = 0x290;
 
 const cfg = { human: false, destructAfter: 0, endAfter: 0, small: false, mode: 'place', scenario: 'scenario/quick.scn', startAfterFrames: 1200, count: 200, fuzz: false,
-  every: 4, seed: 4242, ticks: 1500, steps: 100000, speed: 0 };
+  every: 4, seed: 4242, ticks: 1500, steps: 100000, speed: 0, transport: false, placeAfter: 0, retreatAfter: 0, laser: false, mad: false };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -165,6 +165,12 @@ function fuzzDesign(e, d, saved) {
     p.add(0x51 + k).writeU8(rnd(4) ? GROUND_PODS[rnd(GROUND_PODS.length)] : 0);
   }
 }
+function laserDesign(e, d, saved) {
+  const p = designs(e).add(0x84 * d);
+  if (p.add(0x51).readU8() === 0xa5) return;
+  saved.push([p, p.readByteArray(0x84)]);
+  p.add(0x51).writeU8(0xa5);
+}
 function pickTarget() {
   const np = A.HanyBolygo.readS32();
   for (let k = 0; k < 60; k++) {
@@ -191,12 +197,30 @@ function stage(p, o1, o2, restore) {
   const picks = [];
   for (let k = 0; k < (cfg.small ? 1 : 1 + rnd(3)); k++) picks.push(g1[rnd(g1.length)]);
   if (cfg.fuzz) for (const d of picks) if (rnd(2)) fuzzDesign(o1, d, restore);
-  for (const d of picks) tankNew(f, d, cfg.small ? 1 + rnd(3) : 1 + rnd(cfg.fuzz ? 25 : 8));
+  // --transport: the first pick carries a transporter pod (0x9f) and lands as ONE vehicle, the only other
+  // vehicles of that design being its partner: a bigger group gets split by RearrangeTankGroups, and a
+  // split-off partner keeps a garbage carrier that crashes the exe (ground-combat.md §8).
+  // --laser: the picks (and the defenders below) carry a laser pod (0xa5, weapon 0x800) in their first slot.
+  if (cfg.laser) for (const d of picks) laserDesign(o1, d, restore);
+  let carrier = 0;
+  if (cfg.transport && picks.length) {
+    carrier = picks[0];
+    const r = designs(o1).add(0x84 * carrier);
+    restore.push([r, r.readByteArray(0x84)]);
+    r.add(0x51).writeU8(0x9f);
+    if (rnd(2)) r.add(0x52).writeU8(0x9f);
+  }
+  for (const d of picks) {
+    if (carrier && d === carrier) continue;
+    tankNew(f, d, cfg.small ? 1 + rnd(3) : 1 + rnd(cfg.fuzz ? 25 : 8));
+  }
+  if (carrier) tankNew(f, carrier, 1);
   const g2 = classDesigns(o2, 2);
   if (g2.length && (cfg.small ? rnd(3) === 0 : rnd(3))) {
     for (let k = 0; k < (cfg.small ? 1 : 1 + rnd(3)); k++) {
       const d = g2[rnd(g2.length)];
       if (cfg.fuzz && rnd(2)) fuzzDesign(o2, d, restore);
+      if (cfg.laser && rnd(3)) laserDesign(o2, d, restore);
       tankNew(-p, d, cfg.small ? 1 : 1 + rnd(5));
     }
   }
@@ -331,9 +355,19 @@ function readRegions(p) {
   out.voices = voicesBytes();
   return out;
 }
+// The dropship hook's cheaper read: a dropship pass never touches the passability maps or the landing zone,
+// so those are carried over from the last known state (the diffs stay exact).
+const HEAVY = (n) => n === 'landing' || n.startsWith('atj');
+function readRegionsLight(p) {
+  const out = {};
+  for (const [n, ptr, sz] of battleRegions(p)) out[n] = HEAVY(n) && known && n in known ? known[n] : new Uint8Array(ptr.readByteArray(sz));
+  out.voices = voicesBytes();
+  return out;
+}
 function diffRegions(oldS, newS) {
   const d = {};
   for (const n in newS) {
+    if (oldS[n] === newS[n]) continue;
     const a = oldS[n] || new Uint8Array(0), b = newS[n], runs = [];
     let i = 0;
     while (i < b.length) {
@@ -397,12 +431,47 @@ function aiFuzz(p) {
     u.add(0x260).writeS32(rnd(4) ? live[rnd(live.length)] : 10000);
   }
 }
+// --mad: the human's placed vehicles become story "mad tanks" (flag 4, StoryMadTankFrissit 0x5c5370).
+function madTanks(p) {
+  const w = wf(p), n = w.add(0x180).readS32(), en = A.EN.readS32();
+  const alive = w.add(0x188).readPointer(), units = w.add(0x330).readPointer();
+  for (let i = 0; i < n; i++) {
+    if (!alive.add(i).readU8()) continue;
+    const u = units.add(4 * i).readPointer(), f = u.add(0x188).readU32();
+    if (u.add(0x194).readS32() === en && !(f & 0x4020006)) u.add(0x188).writeU32(f | 4);
+  }
+  // Now and then one idle mad tank's cell is moved next to a building, so the building pick meets
+  // buildings within 7 cells (its reservoir draw); the position stays (the pick reads only the cell).
+  if (rnd(6) !== 0) return;
+  const mads = [];
+  for (let i = 0; i < n; i++) {
+    if (!alive.add(i).readU8()) continue;
+    const u = units.add(4 * i).readPointer();
+    if ((u.add(0x188).readU32() & 0x504) === 4 && u.add(0x194).readS32() === en) mads.push(u);
+  }
+  const bl = A.Epuletek.add(4 * p).readPointer(), nb = A.SlotCount.add(4 * p).readS32(), bs = [];
+  for (let k = 1; k <= nb; k++) if (bl.add(0x20 * k).readU8()) bs.push(bl.add(0x20 * k));
+  if (!mads.length || !bs.length) return;
+  const u = mads[rnd(mads.length)], b = bs[rnd(bs.length)];
+  const cl = (v) => Math.max(10, Math.min(190, v));
+  u.add(0x1a0).writeS32(cl(Math.trunc(b.add(0xc).readFloat()) + rnd(9) - 4));
+  u.add(0x1a4).writeS32(cl(Math.trunc(b.add(0x10).readFloat()) + rnd(9) - 4));
+}
 function hookCall(kind) {
   return {
     onEnter() {
       if (!battle || this.context.ecx.compare(wf(battle.p)) !== 0) { this.skip = true; return; }
       this.skip = false;
-      if (kind === 'mi' && cfg.aiFuzz) aiFuzz(battle.p);
+      if (kind === 'mi' && (cfg.aiFuzz || cfg.mad)) {
+        // FRISSIT_Grwar's own part ends here: its diff goes out first, so the fuzz writes below stay out
+        // of it and reach the replay as MI's `pre`.
+        const s0 = readRegions(battle.p);
+        emitInit(s0);
+        emit({ k: 'aifuzz', battle: battles, tick: battle.ticks, pre: diffRegions(known, s0) });
+        known = s0;
+        if (cfg.aiFuzz) aiFuzz(battle.p);
+        if (cfg.mad) madTanks(battle.p);
+      }
       const s = readRegions(battle.p);
       emitInit(s);
       // The libc pair the call would have seen (FRISSIT_Grwar's own draws end here), then the pin.
@@ -426,6 +495,91 @@ function hookCall(kind) {
 }
 Interceptor.attach(MI, hookCall('mi'));
 Interceptor.attach(REFRESH, hookCall('ref'));
+// The dropships (WF_Hordozo::Refresh2, exe 0x48e0a0; thiscall on the unit's +0x264, args WF*, x, y, z,
+// index): WF::Refresh2 (0x48ce10) calls it from the 100 Hz colony UI tick (0x477dc0) on every 5th
+// ColonyCounter (0x99823c) for every planet's units without flag 2 whose dropship isn't away (+0x278 bit 1).
+// Each call of the battle planet is a record like MI/Refresh (libc pinned, region diffs), `cc` the counter.
+const COLONY_COUNTER = va(0x99823c);
+// The laser's beam end (exe 0x47af70, thiscall on WF; target, start xyzw, end xyzw, &out): on the battle's
+// colony screen it moves the end onto the target's mesh (vonalmetszes, hit flag 0xDE01DF). Logged as `beam`
+// events (not replayed: the port aims at the target point; the report compares the armour sides).
+const bits2f = (p) => { const b = new ArrayBuffer(4); new Int32Array(b)[0] = p.toInt32(); return new Float32Array(b)[0]; };
+Interceptor.attach(va(0x47af70), {
+  onEnter(args) {
+    this.skip = !battle || !this.context.ecx.equals(wf(battle.p));
+    if (this.skip) return;
+    this.t = args[0].toInt32();
+    this.start = [1, 2, 3].map((k) => bits2f(args[k]));
+    this.end = [5, 6, 7].map((k) => bits2f(args[k]));
+    this.out = args[9];
+    beamProbe = { vm: 0, obj: null };
+  },
+  onLeave() {
+    if (this.skip) return;
+    const hit = [0, 4, 8].map((o) => this.out.add(o).readFloat());
+    emit({ k: 'beam', battle: battles, tick: battle.ticks, t: this.t, start: this.start, end: this.end, hit, flag: va(0xde01df).readU8(),
+      scene: va(0x93da34).readU32(), obj: beamProbe.obj, vm: beamProbe.vm });
+    beamProbe = null;
+  },
+});
+// Inside a beam: the target's scene object lookup (0x451210 -> int*, *p != 0 = found) and the line test.
+let beamProbe = null;
+Interceptor.attach(va(0x451210), { onLeave(r) { if (beamProbe && beamProbe.obj === null) beamProbe.obj = r.isNull() ? -1 : r.readS32(); } });
+Interceptor.attach(va(0x53a2b0), { onEnter() { if (beamProbe) beamProbe.vm++; } });
+Interceptor.attach(va(0x48e0a0), {
+  onEnter(args) {
+    this.skip = true;
+    if (!battle || !args[0].equals(wf(battle.p)) || (this.context.ecx.add(0x14).readU32() & 1)) return;
+    this.skip = false;
+    const s = readRegionsLight(battle.p);
+    emitInit(s);
+    const entry = { r1: crand(), r2: crand() };
+    const seed = seed32();
+    this.call = { idx: args[4].toInt32(), cc: COLONY_COUNTER.readFloat(), g: tickGlobals(), pre: diffRegions(known, s), seed, entry };
+    known = s;
+    srand(seed);
+  },
+  onLeave(ret) {
+    if (this.skip || !battle) return;
+    const c = this.call, r1 = crand(), r2 = crand();
+    const s = readRegionsLight(battle.p);
+    emit({ k: 'hor', battle: battles, seq: seq++, tick: battle.ticks, idx: c.idx, cc: c.cc, ret: ret.toInt32() & 0xff,
+      g: c.g, pre: c.pre, post: diffRegions(known, s), rand: { seed: c.seed, r1, r2 }, entry: c.entry });
+    known = s;
+  },
+});
+// The human's landing orders from the colony screen's mouse handler (0x47b350): PlaceAllTanks(x, y, owner,
+// all) 0x48c150, PlaceTank(x, y, owner) 0x48c2c0, UnplaceTank(i) 0x4a4f70 (thiscall on the battlefield).
+const placeAll = nf(va(0x48c150), 'void', ['pointer', 'int', 'int', 'int', 'int'], 'thiscall');
+const placeOne = nf(va(0x48c2c0), 'void', ['pointer', 'int', 'int', 'int'], 'thiscall');
+const unplace = nf(va(0x4a4f70), 'void', ['pointer', 'int'], 'thiscall');
+// A landing order between two ticks, recorded like a call: `cmd` (0 all, 1 one, 2 unplace) with its arguments.
+function landingOrder() {
+  const p = battle.p, w = wf(p), en = A.EN.readS32();
+  const n = w.add(0x180).readS32(), alive = w.add(0x188).readPointer(), units = w.add(0x330).readPointer();
+  const hidden = [];
+  for (let i = 0; i < n; i++) {
+    if (!alive.add(i).readU8()) continue;
+    const u = units.add(4 * i).readPointer();
+    if (u.add(0x194).readS32() === en && (u.add(0x278).readU32() & 1)) hidden.push(i);
+  }
+  if (!hidden.length) return false;
+  const s = readRegions(p);
+  emitInit(s);
+  const pre = diffRegions(known, s);
+  known = s;
+  const k = rnd(10), x = rnd(220) - 10, y = rnd(220) - 10, all = rnd(2);
+  let cmd;
+  const r = pinnedCall(seed32(), () => {
+    if (k < 4) { cmd = [0, x, y, en, all]; placeAll(w, x, y, en, all); }
+    else if (k < 7) { cmd = [1, x, y, en]; placeOne(w, x, y, en); }
+    else { const i = hidden[rnd(hidden.length)]; cmd = [2, i]; unplace(w, i); }
+  });
+  const s2 = readRegions(p);
+  emit({ k: 'order', battle: battles, seq: seq++, tick: battle.ticks, cmd, g: tickGlobals(), pre, post: diffRegions(known, s2), rand: r });
+  known = s2;
+  return true;
+}
 function emitInit(s) {
   if (known) return;
   const init = {};
@@ -518,6 +672,18 @@ function watchBattle() {
     }
     for (const i of gone) { removeGroup(w, i); removeTarget(w, i); }
     emit({ k: 'removed', battle: battles, tick: battle.ticks, units: gone });
+  }
+  // --place-after T: from tick T the human's hidden vehicles get landing orders, one every 5 ticks.
+  if (cfg.placeAfter && battle.ticks >= cfg.placeAfter && battle.ticks - (battle.ordered ?? -5) >= 5) {
+    battle.ordered = battle.ticks;
+    landingOrder();
+  }
+  // --retreat-after T: the attacker's side retreats (WF+0x89f + side − 1), so WF::Refresh calls Retreat and
+  // the dropships come back for its units (the next record's `pre` carries the byte).
+  if (cfg.retreatAfter && battle.ticks >= cfg.retreatAfter && !battle.retreated) {
+    battle.retreated = true;
+    w.add(0x89f + battle.o1 - 1).writeU8(1);
+    emit({ k: 'retreat', battle: battles, tick: battle.ticks, side: battle.o1 });
   }
   if (battle.ticks >= cfg.ticks) return endBattle('ticks');
   if (frames - battle.frame > 60 * 60 && battle.ticks === 0) return endBattle('stuck');

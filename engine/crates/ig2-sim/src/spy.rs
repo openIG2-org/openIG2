@@ -322,9 +322,68 @@ pub struct StoryCheck {
     pub param2: i16,
 }
 
+/// `KemJelentesAdd(kind, a, b, c, d, x6..x14)` (exe 0x58d000, `info-messages.md` §3.3): a report to the human's
+/// spy screen (its `KemBeszolasok` entry, `Story_KemEsemeny`, maybe a scrolling message).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Report {
+    pub kind: u8,
+    pub a: i32,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    /// `x6..x14`.
+    pub x: [i32; 9],
+}
+
+/// The report queue's entry size.
+pub const REPORT: usize = 0x30;
+/// `KemBeszolasok` holds entries 1..=50.
+pub const MAX_REPORTS: i32 = 50;
+
+impl Report {
+    fn new(kind: u8, a: i32, b: u8) -> Self {
+        Self { kind, a, b, ..Default::default() }
+    }
+    /// The report of a mission's state change: `m, t, p1, p2` then the result's values.
+    fn mission(kind: u8, a: i32, (b, c, d): (u8, u8, i16), s: &Spy, p1: i32, r: [i32; 5]) -> Self {
+        let mut x = [0; 9];
+        x[..4].copy_from_slice(&[s.mission as i32, s.target as i32, p1, s.param2 as i32]);
+        x[4..].copy_from_slice(&r);
+        Self { kind, a, b, c, d: d as u8, x }
+    }
+    /// Writes the entry's fields into `rec` (0x30 bytes; the padding keeps its bytes).
+    pub fn write(&self, rec: &mut [u8]) {
+        rec[0] = self.kind;
+        rec[4..8].copy_from_slice(&self.a.to_le_bytes());
+        rec[8..11].copy_from_slice(&[self.b, self.c, self.d]);
+        for (i, v) in self.x.iter().enumerate() {
+            rec[0xc + 4 * i..0x10 + 4 * i].copy_from_slice(&v.to_le_bytes());
+        }
+    }
+    /// The scrolling message it posts (`ScrollUzenetId(id, "", 0, 0)`): its own, then the fate function's.
+    pub fn messages(&self) -> Vec<i32> {
+        let mut out = Vec::new();
+        if self.kind <= 6 && self.b != 2 {
+            out.push(if self.b == 4 && self.c == 0 { 100 } else { 100 + self.kind as i32 });
+        }
+        match self.kind {
+            0xf | 0x12 => out.push(0x65),
+            0x10 => out.push(0x71),
+            0x11 => out.push(0x6a),
+            _ => {}
+        }
+        out
+    }
+}
+
 /// Effects other systems or the UI carry out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpyEvent {
+    /// A report to the human (`KemJelentesAdd`).
+    Report(Report),
+    /// A mission hit the human (`target`; `info-messages.md` §3.3's victim messages): `a` = the planet (sabotage,
+    /// rebellion), the hull tech (ship) or the family member (kidnap); `b` = the building type (sabotage).
+    Struck { mission: u16, a: i32, b: i32 },
     RankUp { empire: u8, spy: u8, rank: u8 },
     /// A double agent was exposed by its own counter-intelligence and died.
     Exposed { empire: u8, spy: u8 },
@@ -336,7 +395,8 @@ pub enum SpyEvent {
     Discovered { empire: u8 },
     /// A spy got home (message 0x82 to the human).
     Returned { empire: u8, spy: u8 },
-    /// A mission ended; `report` = the values the result message shows (fail codes in `report[4]`).
+    /// A mission ended; `report` = the result's values (`info-messages.md` §3.3's `r0..r4`; fail codes in `report[4]`).
+
     MissionDone { empire: u8, spy: u8, mission: u16, target: u8, ok: bool, report: [i32; 5] },
     /// `TutorialCheckEvent(n)`.
     Tutorial(u8),
@@ -384,6 +444,17 @@ impl World<'_> {
     fn grievance(&mut self, t: usize, e: usize, x: i16) {
         if let Some(r) = self.relations.get_mut(t).and_then(|r| r.get_mut(e)) {
             r.v[field::SPY_GRIEVANCE] = r.v[field::SPY_GRIEVANCE].wrapping_add(x);
+        }
+    }
+    /// `KemJelentesAdd`, when `to` is the human.
+    fn report(&mut self, to: usize, r: Report) {
+        if to == self.ctx.human_empire {
+            self.events.push(SpyEvent::Report(r));
+        }
+    }
+    fn struck(&mut self, t: usize, mission: usize, a: i32, b: i32) {
+        if t == self.ctx.human_empire {
+            self.events.push(SpyEvent::Struck { mission: mission as u16, a, b });
         }
     }
     fn planet_owner(&self, p: usize) -> u8 {
@@ -446,6 +517,8 @@ impl Spies {
         if let Some(x) = self.enabled.get_mut(mission::KIDNAP) {
             *x = 0;
         }
+        // The pass's "slipped"/success local, reused by the story-caught report (uninitialised at first).
+        let mut flag = 0u8;
         for e in 1..ROSTERS {
             if w.ctx.race(e) == 5 || !w.ctx.alive(e) {
                 continue;
@@ -453,7 +526,7 @@ impl Spies {
             let mut k = 1;
             while k <= self.len(e) {
                 if self.spy(e, k).state > 0 {
-                    self.spy_day(w, e, k);
+                    self.spy_day(w, e, k, &mut flag);
                 }
                 k += 1;
             }
@@ -467,7 +540,7 @@ impl Spies {
         }
     }
 
-    fn spy_day(&mut self, w: &mut World, e: usize, k: usize) {
+    fn spy_day(&mut self, w: &mut World, e: usize, k: usize, flag: &mut u8) {
         let en = w.ctx.human_empire;
         // §3.1 ranks.
         loop {
@@ -478,7 +551,9 @@ impl Spies {
             s.rank += 1;
             s.points = s.points.wrapping_add(w.rules.rank_points.get(s.race as usize).copied().unwrap_or(0));
             if e == en {
-                w.events.push(SpyEvent::RankUp { empire: e as u8, spy: k as u8, rank: s.rank });
+                let rank = s.rank;
+                w.events.push(SpyEvent::RankUp { empire: e as u8, spy: k as u8, rank });
+                w.report(e, Report { x: [0, 0, rank as i32, 0, 0, 0, 0, 0, 0], ..Report::new(0xc, k as i32, 0) });
             }
         }
         // §3.2 counter-intelligence experience (f64), once a month.
@@ -502,6 +577,7 @@ impl Spies {
                         self.spy_mut(e, k).state = state::NONE;
                         if e == en {
                             w.events.push(SpyEvent::Exposed { empire: e as u8, spy: k as u8 });
+                            w.report(e, Report { x: [0, s.master as i32, 0, 0, 0, 0, 0, 0, 0], ..Report::new(0x13, k as i32, 1) });
                         }
                     }
                 }
@@ -515,7 +591,7 @@ impl Spies {
         }
         let s = *self.spy(e, k);
         if st == state::MISSION && s.left.wrapping_sub(50) < s.catch_at && s.catch_at < s.left {
-            self.catch_check(w, e, k);
+            self.catch_check(w, e, k, flag);
         }
         let m = self.spy(e, k).mission as usize;
         if !w.rules.mission(m).no_countdown {
@@ -530,21 +606,23 @@ impl Spies {
                 }
             }
             if self.spy(e, k).state == state::MISSION {
-                self.result(w, e, k);
+                self.result(w, e, k, flag);
             }
         }
     }
 
     /// The catch check (spec §4).
-    fn catch_check(&mut self, w: &mut World, e: usize, k: usize) {
+    fn catch_check(&mut self, w: &mut World, e: usize, k: usize, flag: &mut u8) {
         let s = *self.spy(e, k);
         let (m, t) = (s.mission as usize, s.target as usize);
         let rule = w.rules.mission(m);
         if rule.story {
             let check = StoryCheck { caught: true, empire: e as u8, spy: k as u8, mission: s.mission, target: s.target, param1: s.param1, param2: s.param2 };
             if (w.story)(check) {
-                self.spy_mut(e, k).state = w.rules.state_after(outcome::LOST);
+                let st = w.rules.state_after(outcome::LOST);
+                self.spy_mut(e, k).state = st;
                 w.events.push(SpyEvent::StoryCaught { empire: e as u8, spy: k as u8 });
+                w.report(e, Report::mission(1, k as i32, (outcome::LOST as u8, *flag, st), &s, s.param1 as i32, [0; 5]));
             }
             return;
         }
@@ -594,6 +672,7 @@ impl Spies {
         }
         let master = s.master as usize;
         let slipped = defender == 0 && master != t && !w.ctx.forced(2);
+        *flag = slipped as u8;
         if !slipped {
             let c0 = w.r(0, self.spy(tr, defender).skills[skill::COMBAT] as i32 * 10);
             let c4 = w.r(0, s.skills[skill::COMBAT] as i32 * 10);
@@ -608,7 +687,9 @@ impl Spies {
                     }
                     w.colony.knows[t][e] = 1;
                 }
-                if !w.ctx.human(t) {
+                if w.ctx.human(t) {
+                    w.report(t, Report { x: [0, e as i32, k as i32, 0, 0, 0, 0, 0, 0], ..Report::new(3, defender as i32, 0) });
+                } else {
                     let mut f = w.r(2, 4);
                     if f == 2 || f == 3 {
                         // The captor's own slot k (original).
@@ -631,6 +712,7 @@ impl Spies {
                     w.grievance(t, e, 500);
                     outcome::SPOTTED
                 } else {
+                    w.report(t, Report { x: [0, e as i32, k as i32, 0, 0, 0, 0, 0, 0], ..Report::new(4, defender as i32, 0) });
                     w.grievance(t, e, 2000);
                     outcome::LOST
                 }
@@ -648,39 +730,56 @@ impl Spies {
             }
             sm.mission = 0;
             w.events.push(SpyEvent::Caught { empire: e as u8, spy: k as u8, target: t as u8, outcome: out as u8, fate: fate.map(|f| f as u8) });
+            w.report(e, Report::mission(1, k as i32, (out as u8, 0, new_state), &s, s.param1 as i32, [0; 5]));
+            if master == t {
+                w.report(t, Report::mission(7, 0, (out as u8, 0, new_state), &s, s.param1 as i32, [0; 5]));
+            }
             if let Some(f) = fate {
-                self.fate(t, f, e, k);
+                self.fate(w, t, f, e, k);
             }
         }
         self.spy_mut(e, k).catch_at = -1000;
     }
 
-    /// `DontottAKemSorsarol(t, fate, e, k)` (spec §4.2).
-    fn fate(&mut self, t: usize, f: i32, e: usize, k: usize) {
-        match f {
-            1 | 5 => self.spy_mut(e, k).state = state::HOME,
+    /// `DontottAKemSorsarol(t, fate, e, k)` (spec §4.2) and its report to `e` (`info-messages.md` §3.3).
+    fn fate(&mut self, w: &mut World, t: usize, f: i32, e: usize, k: usize) {
+        let kind = match f {
+            1 | 5 => {
+                self.spy_mut(e, k).state = state::HOME;
+                if f == 1 { 0xf } else { 0x12 }
+            }
             2 => {
                 if self.copy(t, e, k) < 0 {
                     self.spy_mut(e, k).state = state::NONE;
+                    0x11
+                } else {
+                    0x10
                 }
             }
             3 => {
                 let s = self.spy_mut(e, k);
                 s.state = state::HOME;
                 s.master = t as u8;
+                0x12
             }
-            4 | 6 => self.spy_mut(e, k).state = state::NONE,
-            _ => {}
-        }
+            4 | 6 => {
+                self.spy_mut(e, k).state = state::NONE;
+                0x11
+            }
+            _ => return,
+        };
+        w.report(e, Report { x: [0, t as i32, 0, 0, 0, 0, 0, 0, 0], ..Report::new(kind, k as i32, 0) });
     }
 
     /// The mission result (spec §5).
-    fn result(&mut self, w: &mut World, e: usize, k: usize) {
+    fn result(&mut self, w: &mut World, e: usize, k: usize, flag: &mut u8) {
         let s = *self.spy(e, k);
         let (m, t) = (s.mission as usize, s.target as usize);
         let (p1, p2) = (s.param1 as i32, s.param2 as i32);
         let rule = w.rules.mission(m);
         let mut report = [0i32; 5];
+        // `local_1c`: the mission's first parameter as the effect left it.
+        let mut p1_after = p1;
         let ok = if rule.story {
             let check = StoryCheck { caught: false, empire: e as u8, spy: k as u8, mission: s.mission, target: s.target, param1: s.param1, param2: s.param2 };
             (w.story)(check)
@@ -708,7 +807,7 @@ impl Spies {
                 report[4] = fail::TARGET_DEAD;
                 false
             } else if ok {
-                self.effect(w, e, k, m, t, p1, p2, &mut report)
+                self.effect(w, e, k, m, t, (&mut p1_after, p2), &mut report)
             } else {
                 false
             }
@@ -727,11 +826,17 @@ impl Spies {
         }
         w.grievance(t, e, 500);
         w.events.push(SpyEvent::MissionDone { empire: e as u8, spy: k as u8, mission: s.mission, target: s.target, ok, report });
+        *flag = ok as u8;
+        w.report(e, Report::mission(1, k as i32, (outcome::DONE as u8, ok as u8, new_state), &s, p1_after, report));
+        if !rule.story {
+            w.report(s.master as usize, Report::mission(7, 0, (outcome::DONE as u8, ok as u8, new_state), &s, p1_after, report));
+        }
     }
 
     /// A mission's effect (spec §5.2–§5.12); false = it failed after all (code in `report[4]`).
     #[allow(clippy::too_many_arguments)]
-    fn effect(&mut self, w: &mut World, e: usize, k: usize, m: usize, t: usize, p1: i32, p2: i32, report: &mut [i32; 5]) -> bool {
+    fn effect(&mut self, w: &mut World, e: usize, k: usize, m: usize, t: usize, (p1_after, p2): (&mut i32, i32), report: &mut [i32; 5]) -> bool {
+        let p1 = *p1_after;
         let np = w.colony.planets.len();
         let nothing = |report: &mut [i32; 5]| {
             report[4] = fail::NOTHING;
@@ -785,6 +890,7 @@ impl Spies {
                         if found == 0 {
                             return nothing(report);
                         }
+                        *p1_after = found as i32;
                     }
                 }
                 if found != 0 {
@@ -830,6 +936,7 @@ impl Spies {
                 let r = w.r(0, ftol(w.colony.money[t].total));
                 let x = r / 100 * 100;
                 if x < 1 && w.ctx.human(t) {
+                    report[0] = x;
                     return false;
                 }
                 w.colony.add_money(t, 0, (-x) as f64, w.side_rules, w.econ);
@@ -839,6 +946,7 @@ impl Spies {
                 }
                 w.colony.add_money(e, 0, gain as f64, w.side_rules, w.econ);
                 report[0] = gain;
+                w.struck(t, m, 0, 0);
                 true
             }
             mission::SABOTAGE => {
@@ -860,6 +968,7 @@ impl Spies {
                 }
                 report[..3].copy_from_slice(&[p as i32, slot as i32, kind as i32]);
                 w.events.push(SpyEvent::BuildingDestroyed { planet: p, slot, kind });
+                w.struck(t, m, p as i32, kind as i32);
                 true
             }
             mission::DESTROY_SHIP => {
@@ -888,6 +997,7 @@ impl Spies {
                 report[0] = pick as i32;
                 report[1] = hull;
                 w.events.push(SpyEvent::ShipDestroyed { ship: pick, hull_tech: hull });
+                w.struck(t, m, hull, 0);
                 true
             }
             mission::STEAL_TECH => {
@@ -900,6 +1010,7 @@ impl Spies {
                         }
                     }
                 }
+                *p1_after = x;
                 if x < 1 || x as usize > LAST_TECH || w.colony.tech.status(x as usize, t) != status::OWNED {
                     return nothing(report);
                 }
@@ -913,7 +1024,6 @@ impl Spies {
                 if master != 0 {
                     w.develop(master, x as usize);
                 }
-                report[0] = x;
                 true
             }
             mission::REBELLION => {
@@ -929,6 +1039,7 @@ impl Spies {
                 }
                 report[0] = pick as i32;
                 report[1] = w.rebel(pick, e);
+                w.struck(t, m, pick as i32, 0);
                 true
             }
             mission::ASSASSINATE => {
@@ -953,6 +1064,8 @@ impl Spies {
                 }
                 self.spy_mut(tr, victim).state = state::NONE;
                 report[0] = self.spy(tr, victim).rank as i32;
+                w.report(t, Report { x: [0, e as i32, k as i32, 0, 0, 0, 0, 0, 0], ..Report::new(6, victim as i32, 0) });
+                w.struck(t, m, 0, 0);
                 true
             }
             mission::KIDNAP => {
@@ -963,6 +1076,7 @@ impl Spies {
                 w.kidnap[t] = x;
                 w.kidnap[9 + t] = e as i32;
                 report[0] = x;
+                w.struck(t, m, x, 0);
                 true
             }
             mission::MASS_UNREST => {
@@ -984,6 +1098,7 @@ impl Spies {
                     }
                     i += 1;
                 }
+                w.struck(t, m, 0, 0);
                 true
             }
             // Training, counter-intelligence and unknown missions: no effect.
@@ -1011,6 +1126,7 @@ impl Spies {
             let applicant = w.ctx.human(e);
             if applicant {
                 self.spy_mut(e, k as usize).applicant = 1;
+                w.report(e, Report { x: [0, e as i32, 0, 0, 0, 0, 0, 0, 0], ..Report::new(2, k, 0) });
             }
             w.events.push(SpyEvent::Recruited { empire: e as u8, spy: k as u8, applicant });
         }
@@ -1389,5 +1505,26 @@ mod tests {
             assert!(spies.count[e] <= MAX_SPIES);
         }
         assert!(spies.count.iter().sum::<i32>() > 0);
+    }
+
+    #[test]
+    fn reports_post_by_kind_and_outcome() {
+        let r = |kind, b, c| Report { kind, b, c, ..Default::default() }.messages();
+        assert_eq!(r(1, 4, 0), [100]);
+        assert_eq!(r(1, 4, 1), [101]);
+        assert_eq!(r(1, 2, 0), [0; 0]);
+        assert_eq!(r(1, 1, 0), [101]);
+        assert_eq!(r(2, 0, 0), [102]);
+        assert_eq!(r(6, 0, 0), [106]);
+        assert_eq!(r(7, 4, 0), [0; 0]);
+        assert_eq!(r(0xc, 0, 0), [0; 0]);
+        assert_eq!(r(0xf, 0, 0), [0x65]);
+        assert_eq!(r(0x10, 0, 0), [0x71]);
+        assert_eq!(r(0x11, 0, 0), [0x6a]);
+        assert_eq!(r(0x12, 0, 0), [0x65]);
+        let mut rec = [0xaau8; REPORT];
+        Report { kind: 1, a: 3, b: 4, c: 1, d: 2, x: [5, 6, 7, 8, 9, 10, 11, 12, -1] }.write(&mut rec);
+        assert_eq!(&rec[..0xc], &[1, 0xaa, 0xaa, 0xaa, 3, 0, 0, 0, 4, 1, 2, 0xaa]);
+        assert_eq!(&rec[0x2c..], &[0xff; 4]);
     }
 }

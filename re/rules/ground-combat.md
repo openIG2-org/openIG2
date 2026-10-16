@@ -113,6 +113,8 @@ the real-time battle only. No rule values here: the tables (§1.3) are read from
 | +0x23c | +0x254 | i32 | target (meaningful only with flag 0x100; 10000 = none) |
 | +0x244 | +0x25c | i32 | own index |
 | +0x25c / +0x260 | +0x274 / +0x278 | i32 | last hit: 10000 / attacker (written by `WF_Tank::Damage`) |
+| +0x264 / +0x268 / +0x26c | +0x27c.. | f32 | the dropship (`WF_Hordozo`): offset on the map axes, height (§11.16) |
+| +0x278 | +0x290 | u32 | dropship state (1: away, §11.16) |
 | +0x27c | | i32 | (10000) cleared to 10000 by `RemoveTarget` [real-time aim] |
 | +0x280 | +0x298 | i32 | planet |
 
@@ -142,15 +144,19 @@ Weapons (`+0x1d0`) and their `WF_Weapons` entry (§1.3): 1 → W0, 0x2000 → W1
 ## 2. Routing (`GroundWarIndit(f, p)`)
 1. Fleet `f` without ground vehicles (`+0x5c < 1`) → nothing. `BolygoInfoIs(p, −0x21ac)` (a story
    planet) → `Grwar8020hoz(f)` (campaign) and nothing else.
-2. `KemkedesFoldiharcLekezel(f, p)`: for owners < 9, each side's spies learn the other's ground designs
-   (`KemkedesTervLekezel`) and the attacker sees every building of `p` (seen matrix, `colony-side.md` §2).
+2. `KemkedesFoldiharcLekezel(f, p)` (exe 0x53ef00): for owners < 9, the planet's owner sees every class-2 vehicle
+   design of `f` and the attacker every class-2 design of the garrison (vehicles with fleet `−p`)
+   (`KemkedesTervLekezel` 0x53f060: hull tech and pod techs, `space-combat.md` §4 step 2), and the attacker sees
+   the tech of every building in slots `1..=HanyEpuletLefoglalva[p]` with a kind (finished or not; seen matrix,
+   `colony-side.md` §2).
 3. **Lopsided** (exe precision: f64 division, rounded to f32):
    `(f32)(((f64)f.+0x68 + 0.1) / ((f64)(p.+0x5c + BolygoMennyiErodEro[p]) + 0.1)) > 5.0f`, unless debug
    switch 0xB7723C is set; then cleared again if 0xB77230 is set. (`+0x68` fleet ground strength, `p.+0x5c`
    garrison strength, `BolygoMennyiErodEro` exe 0xB99CB8 the planet's fortress strength.)
-4. `Story_GroundBattleSimulateCheck(f, p)` **clears** `Story_GrWarSimulateTiltas` (0xF42670) and sets it
-   again when a running campaign script forbids simulating this planet (story triggers 0x328, 0x32e, 0x338
-   naming `p`): its value before the call doesn't matter (runtime-confirmed).
+4. `Story_GroundBattleSimulateCheck(f, p)` (exe 0x5c8e70) **clears** `Story_GrWarSimulateTiltas` (0xF42670) and
+   sets it again when a running campaign script forbids simulating this planet: story 0x328 with story planet
+   0x1F90, 0x32E with 0x1FCC, or 0x338 with 0x2031 while variable 0x2034 is 0 (`st_Story(id, 1)` sets
+   `StoryLastChecked`), equal to `p`; its value before the call doesn't matter (runtime-confirmed).
 5. **Simulate** (SP): `(((0xB77234 ≠ 0 or lopsided) and not tiltas) or (neither f's owner nor p's owner
    is human-controlled))`. MP: real-time only when `MultiplayerBattleStatusz ∈ {0, 2}` and **both**
    owners are human-controlled; otherwise simulate.
@@ -159,6 +165,12 @@ Weapons (`+0x1d0`) and their `WF_Weapons` entry (§1.3): 1 → W0, 0x2000 → W1
    `diplomacy.md`); `StoryAdat+0x88 := 0`.
 7. Real-time: `GrWar_MultiCsata_bolygo := p` (MP: in-progress flag), `StartGrWar(p)`. Simulate: §5, then §6.3.
    Either way `GroundWarSetBattleStatus` (§6.4).
+
+Port: `Game::ground_war` (`game/battles.rs`) runs §2–§6.4 on the save state where the starmap calls it (and after a
+won planet battle), with the planet's battlefield decoded from the save (`SaveState::ground_field`); the real-time
+route is reported (`BattleEvent::GroundRealTime`). Verified in the save replay (`traces/2026-10-16-save-replay.md`,
+`replay-quick1-battles-ground-x16`): five wars against fortress turrets and garrisons, four won (two lopsided),
+with the captures, the messages (§6.3) and the repairs after them (§6.5).
 
 ## 3. Landing (`AddTanksToPlanet(f, p, sim)`)
 ### 3.1 The loop
@@ -344,8 +356,19 @@ SP → `dmg = (int)((f64)((StoryAdat+0x70 + StoryAdat+0x74 + 100)·dmg)/100.0)` 
   below the building's hit points → `WF_Tank::Damage(dmg, by)`; else the building falls: `EpuletDelete(p,
   slot)`, `RemoveTarget(slot)` — the **slot number as a unit index** [original bug: units aiming at unit
   #slot lose their target] — and true.
-- `u < 0` (a building, real-time only): `EpuletDamage(p, −u, dmg, false, by)` (also `WF::DamageBuilding`:
-  the turrets share it); at or above its hit points → `EpuletDelete`, `RemoveTarget(u)`, true.
+- `u < 0` (a building, real-time only): `EpuletDamage(p, −u, dmg, false, by)`, which also calls
+  `WF::DamageBuilding(p, slot, dmg, by)` (exe 0x46d270) for a defence building (kinds 0x1c..=0x23): its placed
+  turrets (alive, flag 2 clear, slot order) share the damage, `dmg / (turrets left)` each, through
+  `WF_Tank::Damage` (a destroyed turret: `RemoveTankGroup` + `RemoveTarget`; the last one deletes the
+  building, §11.10); with no placed turret the building is deleted at once (`EpuletDelete`, `RemoveTarget(−slot)`)
+  and nothing else happens; otherwise the building's damage `+4 := hp[kind] − Σ` the turrets' first-member hit
+  points, with the kind **read again** (a building deleted meanwhile gives `hp[0] − 0`, 10 000 in the
+  shipped table). Negative damage repairs: every placed turret below its maximum `+0x158` gets
+  `heal / (left)` (capped, hit marker `(10000, by)`); with none, the last unplaced turret of the slot is
+  placed again with `min(heal, max)`. Back in `WF::Damage` the kind is read again too: damage at or above
+  `hp[kind]` → a burst of 24 on screen, `EpuletDelete`, `RemoveTarget(u)`, true — also for a slot that
+  `DamageBuilding` already emptied (a second `EpuletDelete`: the building count drops twice [original bug];
+  its `Remove3dBuilding` finds no 3D model and leaves no ruin).
 On the colony screen of `p` the exe adds particles, debris and voices (more libc `rand()`, §7).
 
 ### 5.6 `WF_Tank::Damage(dmg, by)` → all dead?
@@ -425,6 +448,22 @@ start a countdown, §5.1); while contested, every counted unit (not flag 2/0x400
 ≠ the planet's, not 0x1028000, with `origin[0] > 0` marks its fleet in battle (`+0x52 |= 1`). Unowned
 planets get 0.
 
+### 6.5 Between battles: repairs (`FRISSIT_Epuletek`, exe 0x4746f0)
+Every tick, after `FRISSIT_Diplomacy` and before `FRISSIT_Starmap` (`time-and-rng.md` §1): for every planet `p`
+with an owner, if it isn't at war (`+0x64 == 0`), each building in slots `1..=HanyEpuletLefoglalva[p]` with a kind
+and `damage > 0` is repaired: `EpuletDamage(p, slot, −min(damage, BolygoMennyiTuzolto[p]) × IdoSpeedSzorzo, 0,
+10000)` (exe 0x53c6e0: `+4 := max(0, damage + x)`, then `WF::DamageBuilding`'s repair branch heals the building's
+turrets, §5.5). A planet that repaired something, and every planet at war, gets `FRISSIT_Planet(false, p)`
+(`colony-economy.md`: the building pass and production, so the repaired buildings' flags and efficiency follow
+at once). Port: `Game::buildings_tick` (`game/battles.rs`); verified in the save replay after the staged ground wars
+(their damaged buildings repaired tick by tick; skipping it is caught one tick after the first war).
+
+Not ported in the strategic tick: `FRISSIT_Grwar` and `FRISSIT_Colony` after it (`FRISSIT_Grwar` ticks a pending
+self-destruct and `WF::Collapse` on every battlefield; `FRISSIT_Colony` frees passability maps after 600 ticks),
+nor the battlefields' write-back into the save (`WF::LoadSave`): `Game::ground_fields` keeps the fields a battle
+touched (the others come from the loaded save, `SaveState::ground_field`), and the replay reports the `WF` chunks
+without comparing them.
+
 ## 7. Randomness
 - **Stream 2** draws (exe call sites): `WF_Tank::Damage` 0x46bfa0 (`grwar.cpp` 0xacc, every round),
   `Simulate` 0x2ef9/0x2f06/0x2f12 (fighters), 0x2f27/0x2f34/0x2f40 (big ships), 0x2fa1..0x305f (guns),
@@ -451,16 +490,19 @@ previous planet's owner (§6.1); the second enemy skips the paralysis/turret tes
 Real time: heights read on the shown planet's map (§11.2), the slope speed only for units landed on screen
 (§11.5), the in-place heap priority (§11.9), the machine gun's double member factor and `RemoveTarget`
 marking units moved (§11.10), the self-destruct burst's height (§11.7), the voices' stuck mute (§11.12),
-the passability heights read past the colony map's grid (§11.13).
+the passability heights read past the colony map's grid (§11.13), the auto-aim kept on a unit freed in
+the same shot (§11.10).
 
 ## 9. Not ported (real-time ground war)
 Ported and verified (§11): `StartGrWar`, placement with the landing zone, heights and orientation, building
 turrets, `FRISSIT_Grwar`'s own part (self-destruct, `WF::Collapse`), `WF::Refresh` with its three projectile
 lists, idle fire and the end countdown, `WF_Tank::Refresh` (movement, path search, aiming, firing, mines),
 the shots and `SetRealDamage`, removal, the voices' libc draws, the passability maps (`GenerateMap`, §11.13).
-Left (§11.11): `GenerateMap`'s editor mode, air
-strikes (fighters, bombs), transporters (`WF_Hordozo`), the laser's mesh intersection, the story mad tank,
-`Refresh2`, `UpgradeTanks`, the MP battle protocol, `LoadSave`.
+Air strikes (bombs and the fighter wave, §11.15) and a building's turrets sharing a
+direct hit (§5.5) are ported too, and the transporters (the dropships of `WF_Hordozo`, the landing orders and
+the pod-0x9f partners, §11.16), the laser (§11.10, its mesh intersection is render-only) and the story mad
+tank (§11.8). Left (§11.11): `GenerateMap`'s editor mode, the rest of `Refresh2` (visuals), `UpgradeTanks`,
+the MP battle protocol, `LoadSave`.
 
 ## 10. Verification
 `tools/trace/run_ground.py` + `ground.js` (`traces/2026-10-16-ground.md`): `--mode war` stages a landing
@@ -477,7 +519,7 @@ partners taking hits (rare; the crash above), the 0x10 ammunition weapon, big-sh
 ## 11. The real-time ground war
 Port: `engine/crates/ig2-sim/src/ground/` `realtime.rs` (placement, heights, turrets, the start),
 `battle.rs` (§11.7, §11.10), `tick.rs` (§11.8), `path.rs` (§11.9), `voices.rs` (§11.12) and
-`placement::{landing_zone, locate_tank}`. Verified in `traces/2026-10-16-ground-realtime.md`.
+`placement::{landing_zone, locate_tank}`. Verified in `traces/2026-10-16-ground-realtime.md` and `traces/2026-10-16-laser.md` (the laser, the mad tank).
 
 | Function | exe | ELF | Role |
 |---|---|---|---|
@@ -506,7 +548,13 @@ Port: `engine/crates/ig2-sim/src/ground/` `realtime.rs` (placement, heights, tur
 | `WF::RemoveTankGroup` / `WF::RemoveTarget` / `EpuletDelete` | 0x497c90 / 0x499070 / 0x53c730 | | §11.10 |
 | `WF::AddMine` | 0x45c770 | | §11.10 |
 | `AddRepesz` / `Remove3dBuilding` / `Rom::Rom` | 0x45d400 / 0x497760 / 0x455570 | | debris (§11.12) |
+| `WF::ShotSpecWeapon` / big-ship bomb / `WF::AddFighters` / `AddFighterLaser` | 0x49cb70 / 0x457ad0 / 0x45b8d0 / 0x45b600 | 0x4ab170 / – / 0x49fd90 / 0x4964c0 | air strikes (§11.15) |
+| laser beam end / `villamgenesis` ctor / line test | 0x47af70 / 0x616190 (jitter 0x616620) / `vonalmetszes` 0x53a2b0 | | the laser (§11.10) |
+| `StoryMadTankFrissit` / `WF_Tank::SetTarget` | 0x5c5370 / 0x49c670 | | story mad tank (§11.8) |
+| `WF::DamageBuilding` / `EpuletDamage` | 0x46d270 / 0x53c6e0 | 0x473410 / 0x61cc60 | a building hit directly (§5.5) |
 | `WF::PlaySpeechGrWar` / `SpeakingDirector::Play` / `Speeches::Play` | 0x48c670 / 0x563cd0 / 0x563d50 | 0x45f340 / 0x67fe30 / 0x680200 | voices (§11.12) |
+| `WF::Refresh2` / `WF_Hordozo::Refresh2` | 0x48ce10 / 0x48e0a0 | 0x489170 / 0x48bb70 | the dropships (§11.16) |
+| `PlaceAllTanks` / `PlaceTank` / `UnplaceTank` / `GetNearestLandingZone` (test 0x4609a0) | 0x48c150 / 0x48c2c0 / 0x4a4f70 / 0x47b980 | 0x4a5a20 / 0x4a57c0 / 0x4a5d00 / 0x488460 | landing orders (§11.16) |
 
 ### 11.1 Placement
 `LocateTankSuitablePosition(p, &x, &y, sx, sy)` builds the building search's grid (`colony-placement.md`
@@ -642,8 +690,8 @@ bug]), `EpuletDelete(p, slot)`; for every slot `RemoveTarget(−slot)`; then eve
    (0x499260) else `StopRetreat` (0x4a4d00).
 3. `+0x88d + k := (planet ≠ KiMelyikBolygonVan[k])` (0x9ABAE8, the planet empire k + 1 watches).
 4. `s0 = GetStatus()`; `s0 == −1` (contested) → `+0x190 := 0`.
-5. The fighters of an air strike (`+0x32c`, 5 per empire at `+0x1f4 + 0x40k`; `AddFighterLaser` 0x45b600):
-   not ported (§11.11).
+5. The fighters of an air strike: `2S` rounds, each only while the wave is up (`+0x32c`), of the five
+   fighters' flight (§11.15).
 6. `S` rounds of list A, `4S` rounds of list B, `S` rounds of list C (below).
 7. `s0 == −1`: **idle fire**. Every alive unit (not flag 2 / 0x40000000, not flags2 bit 2) without a target
    (flag 0x100 off or target 10000) that is either moving (0x400 with `+0x1b8 ≠ 0`) or has no move order:
@@ -683,7 +731,8 @@ freed.
   kind 1); every alive unit (not flag 2, not a turret) within √3600 (kind 2 √2500) map units: 2 draws,
   `Damage(i, dmg·20 | (int)((f64)dmg·1.5), shooter)` → kill; `DamageBuildings(p, h, x, y, dmg | dmg/1500)`
   (0x46d5f0: every building within √5000 takes ·900, a fallen one is deleted); |aim − position| < 40 →
-  freed. Bombs come only from air strikes (big ships: `ground-ai.md` §5.7, ported; fighters: not ported).
+  freed. Bombs come only from air strikes (§11.15). A bomb's blast is checked every round while its height
+  is within the band, so one bomb can hit several rounds in a row.
 - 7 (debris, §11.12) and others: only the ticks. Debris never moves here (`Refresh2` moves it per frame).
 
 **List C** (`+0xdc`/count `+0xe4`, paralyser bolts from 0x45cca0: `+0x2c` ticks, `+0x30` target, `+0x34`
@@ -711,7 +760,17 @@ stream-2 damage draws happen.
    the next one → `MoveG(x, y)` (0x48bdc0: not for turrets/mines, cells outside 0..200, flags 0x28000000 or a
    transporter in flight; clamped to 10..=190; a new destination resets the path counters `+0x1b8/+0x1bc`
    to (0, −1); target dropped; flags 0x900 off, 0x400 on) unless flag 0x80000000.
-6. Flag 4 (a story "mad tank", `StoryMadTankFrissit` 0x5c5370, stream 5): campaign only, not ported.
+6. Flag 4 (a story "mad tank", set by campaign code): `StoryMadTankFrissit(u)` (0x5c5370, stream 5), only
+   for the human's units (`owner == EN`). Unless flags & 0x500 (a target or a move): `rndlog(5, 0, 99)`
+   (line 0x1345) `< 3` → `t := GetNearestEnemy` (0x47b860, as idle fire), `SetTarget(t)` unless 10000, return;
+   else `rndlog(5, 0, 99)` (line 0x134a) `== 0` → the building pick: over the slots `1..=count`
+   (0xBA9840[p]) of built (`kind ≠ 0`) and finished (`+8` work left 0) buildings, `d = (int)(f32)sqrt((f64)(f32)
+   (dx² + dy²))` with `dx = cell.x − (int)b.x` (int); the slot is taken when none is yet, or when `d < 7` and
+   a `RndValasztas` draw with weight 1 wins (0x4e3630 on `{count, sum, stream 5}`: `sum += 1`,
+   `rnd(5, 1, sum) ≤ 1`, the plain stream draw 0x542ea0), or when `d <` the best so far; a pick →
+   `SetTarget(−slot)`; return either way. Otherwise (and with flags & 0x500): `rndlog(5, 0, 99)` (line 0x135c)
+   `< 5` → flags 0x900 off (0x48c0b0).
+   `SetTarget(t)` (0x49c670, `ground-ai.md` §6.9) sets, for a building, `+0x14c := (f32)(width/2) + range`.
 7. A target (0x100): **aim** `+0x18 = asin(dy/len)` (f64, π − that when dx < 0) at the target's map point;
    gun elevation `+0x1c8` from the ballistic formula (f32 with f64 roots and `tan`); mines aim at once;
    the elevation is render-only (no battle code reads `+0x1c8`); the turret turns at `+0xe0/5` per step (snaps within `+0xe4/5·S`, f64; wraps by 2π beyond π; flags
@@ -774,7 +833,27 @@ building width for a building target); `+0x28c := 1`, then by k (only the weapon
   paralyser (`0x45cca0`, list C) unless the target is already paralysed and it has nothing else.
 - 4 (0x100) machine gun, instant: `CalcDamage(4)·members`, 147 libc draws (one, 16 tracer lines of 9, a
   flash and a sound), the damage times the members **again** [original quirk], `SetRealDamage`, `Damage`.
-- 7 (0x800) laser: needs the beam/mesh intersection (0x47af70) of the renderer: not ported (§11.11).
+- 7 (0x800) laser, instant: damage `CalcDamage(7)` (0 for a partner), a fixed sound (no draw); the beam runs
+  from `(z − 10, x, y)` of the shooter to the target point (a unit's `(+0x1dc, +0x1d4, +0x1d8)`, a building's
+  `+0x14` height and `0x47c520` of its `+0xc/+0x10` cell); `0x47af70` copies that end and, **only on the
+  battle's colony screen** (`AktKep == 3`, `AktPlanet == WF+0x18c`, not entering/leaving, a 3D scene
+  0x93DA34), marks the target's scene object (0x451210, flag 0x100000) and runs the renderer's line test
+  `vonalmetszes` (0x53a2b0) from `end + 20·(start − end)` to the end; a hit (0xDE01DF) replaces the end by
+  the hit on the target's mesh. Then a `villamgenesis` beam object (0x457350 → 0x616190: 12 points,
+  10 inner ones each jittered twice by 0x616620 = 3 libc `rand()`: **60 libc draws, on screen or not**)
+  joins the UI effect list 0xA34FD4 (drawn and aged by the colony screen, not by the battle);
+  `SetRealDamage(t, members·dmg, end − start)` and `Damage`. The mesh hit lies on the start→end line (the
+  tested segment is that line), so `SetRealDamage`'s angle (normalised `(dx, dy)` against the body
+  direction) is the target point's up to f32 rounding (≤ 7·10⁻⁷ rad in the traces): the port aims at the
+  target point. It could differ only for an angle within ~10⁻⁶ rad of π/4 or 3π/4, or a shooter inside the
+  target's mesh [render-dependent; not seen in 210 traced shots, 20 of them mesh hits]. `WF::Refresh`
+  (§11.7) calls 0x47af70 too, for a list-A shell within 60 or a list-B projectile within 40 of its hit:
+  there the result only places the explosion flash (0x45d270); the damage takes the projectile's velocity.
+- An instant kill in idle fire (`ShotOne` before `+0x27c := t`, §11.7): `RemoveTarget` has already run,
+  so the shooter keeps auto-aiming at the dead unit, whose object `RemoveTankGroup` has `operator delete`d
+  with the pointer kept: later idle fire reads the freed record (cell, owner) and may shoot at it again
+  [original quirk: a use after free; the port keeps the dead unit's last record, which matched the exe's
+  freed block in the traces].
 `CalcDamage(k)` (0x45fb40) = `rndlog(2, min_k, max_k)`. `SetRealDamage(t, &dmg, v)` (0x49c3c0): a ground
 vehicle (hull 0..4, not a turret or mine) takes `(int)((1/armour[hull][side])·dmg)` (exe 0x8F858C, 5 × 3
 f32) by the angle between its body direction and `v`: < π/4 front, < 3π/4 flank, else rear.
@@ -802,10 +881,10 @@ and 4 for the weapons 2 and 0x100), then remembers the cell.
 ### 11.11 Not ported (real-time)
 - `GenerateMap`'s editor mode (`GenerateMap(p, 1)`: layer 0 and mask A written back, §11.13).
 - `WF::MI` (0x486d40, stream 13): the battle AI, ported separately (`ground-ai.md`, `War::mi`).
-- The fighters of an air strike (`+0x32c`, `AddFighterLaser`, the bombs of list B kinds 1 and 2 come from
-  them), `WF_Hordozo` (transporter landing and the partner pods; pods 0x9f crash the exe, §8), the laser's
-  mesh intersection, the story mad tank, `Refresh2` (per UI frame: visuals, debris flight, the human's
-  transporters), the MP battle protocol.
+- The rest of `Refresh2` (per UI tick: visuals, debris flight, the effect list 0xA34FD4 with the laser
+  beams; its dropship pass is §11.16), the MP battle protocol (the dropships' arrival doesn't run in MP).
+- The laser's mesh intersection is renderer work (it needs the shown 3D scene); the port uses the target
+  point, which gives the same armour side (§11.10).
 - An AI-against-AI battle on screen has no end in `WF::Refresh` (§11.7 step 9).
 
 ### 11.12 Cosmetic libc draws
@@ -895,10 +974,121 @@ passability maps, the planet, the buildings, the landing zone, the fleets and ve
 and the voices; libc `rand()` is pinned by `srand` at each call. Options: `--small` (battles small enough
 to end), `--human` (the human attacks: the end countdown), `--end-after T` (the attacker's groups are
 removed with the exe's `RemoveTankGroup` between two ticks), `--destruct-after T` (the self-destruct timer
-set to 3), `--fuzz`, `--speed`. `engine/crates/ig2-sim/tests/ground_rt_trace.rs` replays every call from its
+set to 3), `--fuzz`, `--speed`, `--ai-fuzz [--ai-fuzz-every N]` (arms AI units with air strikes; its writes
+go out as an `aifuzz` event before `WF::MI`), `--laser` (the staged designs carry a laser pod 0xa5; every
+beam end is logged as a `beam` event with the mesh probe: scene object, line tests, hit), `--mad` (the
+human's units get flag 4 through the same `aifuzz` write, and now and then one mad tank's cell is moved next
+to a building so the building pick's reservoir draw runs). `engine/crates/ig2-sim/tests/ground_rt_trace.rs` replays every call from its
 recorded pre-state and compares every unit field, the lists, the field globals, the buildings, the voices,
 stream 2 and the libc sequence. A planet's passability maps built inside a call are generated by the port
 from the live colony-map record (§11.13) and compared with the exe's.
 `tools/trace/run_atjmap.py` + `atjmap.js` (`traces/2026-10-16-atjaras.md`) call `GenerateMap` directly on
 a scratch object for every colony map and for fuzzed records; `tests/atjaras_trace.rs` replays them.
 
+### 11.15 Air strikes (`WF::ShotSpecWeapon` 0x49cb70 and what it makes)
+Port: `ground/battle.rs` (`air_strike_objects`, `add_bomb`, `add_fighters`, `fighters_step`), called from
+`ground/ai.rs` (`shot_spec_weapon`, the ground AI's strike: `ground-ai.md` §5.7). Verified in
+`traces/2026-10-16-ground-air.md`.
+
+**Impact point.** The AI's cell plus the spread `(rndlog(2, −4, 4), rndlog(2, −4, 4))` (lines 0x3135/0x3136,
+fighters 0x3155/0x3156) gives `(cx, cy)`; its map position `(X, Y)` is the cell formula of §11.3 without the
++0.5 (f32 products, f64 centring); the height `h = GetHeight((f32)((f64)cx·0.25), (f32)((f64)cy·0.25), p − 1)`
+of the battle planet's own map, 0 when either coordinate is above 200 [cells below 0 read before the height
+grid in the exe; the port reads 0 there].
+
+**Big ships** (kind 1): 20 bombs. Per bomb, in order: `a, b = rndlog(2, 0, 399)`, `c, d = rndlog(2, 0, 1999)`
+(line 0x3140), all f32: start `(h − 3000, d + X − 1000, c + Y − 1000)`, aim
+`((int)(h + 300), (int)(b + X − 200), (int)(a + Y − 200))`; then exe 0x457ad0 makes a list-B object (first
+empty slot): velocity = the normalised aim − start (f32, `0x4501f0`: left as is below 1e-5) times
+`(f32)(((f64)rndlog(2, 0, 14)/10.0 + 0.5)·3.0)·20.0f` (line 0x27b5), position = start, aim point = the aim
+(as f32), ticks 300, damage 10, `+0x34` = `(int)h` (the ground height the blast tests against), kind 1,
+shooter 10000; on screen one libc `rand()` picks one of two textures. The fade `+0x3c` stays uninitialised.
+
+**Fighters** (kind 0): `WF::AddFighters(h, X, Y, e, 40, h)` (0x45b8d0) does nothing while a wave is up
+(`+0x32c`); else it sets the flag and fills the five fighters `WF+0x1f4 + 0x40k` (the flag byte overlaps
+fighter 4's unused `+0x38`): `θ = (f64)((f32)k / 5.0f)·π·2.0`, `s = (f32)(sin θ·500·3)`, `c = (f32)(cos θ·500·3)`
+(f64), position `+0 (h − 1500) − 60k`, `+4 (f32)((f64)s·1.35 + X)`, `+8 (f32)((f64)c·1.35 + Y)`; velocity
+`+0xc 12.0`, `+0x10 (f32)((f64)(−(s/1500.0f))·3.333·3.0)`, `+0x14` likewise with `c` (they fly across the
+strike point); phase `+0x24 := 0`, ground `+0x28 := h`, bomb cooldown `+0x34 := rndlog(2, 0, 4)` (line
+0x2991). `+0x18..+0x20` (the last step) keep the previous wave's values.
+
+**The wave's flight** (`WF::Refresh` step 5): `2S` rounds; a round runs only while `+0x32c` is set and then
+moves all five fighters: cooldown += 1; three libc draws (a trail particle); by phase `n`:
+- `n < 95` (descending): `t = (f32)((f64)((ground − h)·0.5f)/3.333)`; cooldown ≥ 10 → `AddFighterLaser`
+  (0x45b600, a list-B bomb of kind 2 from the fighter's position to `((int)ground, (int)(vx·t + x),
+  (int)(vy·t + y))`, speed 20 (f32), ticks 300, damage 4000, `+0x34 = (int)ground`, shooter 10000, one libc
+  `rand()` on screen) and cooldown := 0; then `h += vh`, step = `vh`;
+- `n < 105`: `v = vh·(1 − (n − 95)/10)`, `h = v + h`, step `v`; `n < 145`: level, step 0;
+- `n < 155`: `v = vh·2·((n − 145)/10)`, `h −= v`, step `−v`; `n < 200`: `h −= vh·2`, step `vh·−2`;
+- `n ≥ 200`: no move.
+
+Every moving phase: `n += 1`, `x += vx`, `y += vy`, the step `(·, vx, vy)` stored at `+0x18`. A fighter with
+`n ≥ 200` clears `+0x32c` (the others still finish the round). All f32 unless stated. Blasts (§11.7 list B):
+a kind-1 bomb within 100 (height) of its ground height hits units (not flag 2, not turrets) within 60 map
+units for 200 and buildings within √5000 for 9000; a kind-2 bomb within 40 hits units within 50 for 6000 and
+buildings for 1800 (`4000/1500·900`). Buildings take it through `WF::Damage` (§5.5), so a defence building's
+turrets share it.
+
+### 11.16 Transporters (`WF_Hordozo`, the landing orders and the partner pods)
+Port: `ground/transport.rs` (`War::dropships`, `dropship`, `place_all_tanks`, `place_tank`, `unplace_tank`).
+Verified in `traces/2026-10-16-transporters.md`.
+
+**The dropship.** Every unit carries one (`WF_Hordozo`, inlined into the unit at exe `+0x264`): offsets
+`+0x264/+0x268` on the map axes, height `+0x26c` above the unit (negative = up), a mesh `+0x270`, state `+0x278`.
+The unit constructor (inlined at exe 0x4570c0; ELF `WF_Hordozo::WF_Hordozo` 0x4f2f70) sets state 1 and, from its
+libc `rand()` `r`, height `(f32)(r % 500 − 1650)` and both offsets `height / 3.0f`. State bits: 1 away (no
+pass), 2 arriving, 4 leaving, 8 carrying the unit, and the orders 0x10 deliver, 0x20 collect, 0x40 retreat
+pick-up. `ArriveTransporter` = `(s & ~5) | 2`, `DepartTransporter` = `(s & ~3) | 4` (inlined in the exe).
+
+**Cadence.** `WF::Refresh2` (exe 0x48ce10) runs once per 100 Hz colony UI tick (0x477dc0, called by the UI loop
+at exe 0x4de8e8; it adds 1.0 to the f32 `ColonyCounter` 0x99823c first) for **every** planet's battlefield.
+When `(int)ColonyCounter % 5 == 0` it calls `WF_Hordozo::Refresh2(WF, x, y, z, i)` (0x48e0a0) for every alive
+unit without flag 2 whose dropship isn't away, on or off screen. So the dropships move at 20 Hz but on the UI
+clock, between the battle ticks, and they draw on stream 2, a game stream [original quirk: a UI-paced draw].
+
+**A pass** (`dropship(i)`; all f32 unless stated; `v(h) = max(2, (f32)sqrt((f64)−h))`, a NaN stays NaN):
+1. Arriving (not in MP): `v = v(h)`; `h = v + h`; both offsets `+= v / 3`. `h > 0` → touchdown: offsets and
+   height 0, then by the order bits, tested in this order:
+   - 0x10 deliver: state `(s & ~0xb) | 4` (leaving, empty); the unit loses flag 0x8000000 (it may move).
+   - 0x20 collect: state `(s & ~3) | 0xc`; `RemoveTarget(i)`; unit flag 0x8000000; then the common part.
+   - 0x40 retreat: state `(s & ~3) | 0xc`; the unit loses the paralysis and seizure flags, owner := side, gets
+     flag 0x40000000 and loses flag 8; `RemoveTarget(i)`; `rndlog(2, 0, 19)` (line 0x32b1) `< 6` → **shot
+     down**: on the unit's map point a flash (one libc draw) and 16 slow pieces of debris (§11.12, 3 draws
+     each), `RemoveTankGroup(i)`, the pass returns true (no climb).
+   - none: `RemoveTarget(i)`, state `|= 8`; then the common part.
+   - common: the unit loses the paralysis and seizure flags, owner := side.
+
+   Still descending with the unit on board (bit 8 of the state at entry): unit flag 0x40.
+2. Leaving (bit 4, also right after a touchdown): with 8 the unit loses flag 8; `v = v(h)`; `h −= v`; offsets
+   `+= v / 3`; the exhaust particle draws six times on **stream 0** (lines 0x3300, 0x32fe, 0x32fd, 0x32fc,
+   0x32fb, 0x32fa: the exe evaluates the arguments last to first, the ELF the other way round). `h < −1400` →
+   away (state `|= 1`), with 8 the unit gets flag 2 (it left with the dropship), a new height
+   `(f32)(rndlog(0, 0, 499) − 1650)` (line 0x3307) with offsets a third of it, and the status cache `+0x8cc` is
+   cleared. Else, with 8, unit flag 0x40.
+
+**Who sends them.** `AddTanksToPlanet` (§3.1): an AI attacker's vehicles get `(s & ~0x25) | 0x1a` (arriving
+with the unit, deliver), so they stand at once but cannot move until touchdown clears flag 0x8000000; a human's
+stay away with flags 2 and 0x8000000 until ordered. `Retreat` (0x499260, in the landing zone, SP): `(s &
+0xffffffe2) | 0x42`; `StopRetreat` (0x4a4d00): `(s & ~3) | 4`. The human's orders, called by the colony
+screen's mouse handler (0x47b350) between ticks:
+- `PlaceAllTanks(x, y, owner, all)` (0x48c150): `(x, y)` clamped to 11..=189; every alive unit of `owner`,
+  not a turret or mine (0x4020000), dropship away, and flag 0x8000000 unless `all`: `LocateTankSuitablePosition`
+  from `(x, y)` (landing zone closed, §11.1), failing that from the default start; `SetPosG`; flags `&= ~2`,
+  state `((s & ~5) | 0x1a) & ~0x20`, flags `&= ~0x8000000`.
+- `PlaceTank(x, y, owner)` (0x48c2c0): the first alive unit of `owner` with flag 0x8000000 and its dropship away;
+  the placement search from `(x, y)` must return `(x, y)` itself (a failed search leaves its outputs at
+  `(owner, y)`); `SetPosG(x, y)`; then `GetNearestLandingZone` (0x47b980: `LocatePos` from the unit's cell with
+  the test 0x4609a0 `zone[y·200 + x] ≠ 0`, **a row off** the zone's `(y − 1)·200 + x` layout [original quirk];
+  the zone is generated first) must also return `(x, y)` (a failed search keeps it); then as above. A unit
+  that fails the second test stays moved but away [original quirk].
+- `UnplaceTank(i)` (0x4a4f70): only with the dropship away: not arriving → `((s & ~5) | 2) & ~8`, else
+  `(s & ~3) | 0xc`; then `& ~0x10 | 0x20`, flags `&= ~2`: the dropship comes back for the unit (a pending
+  retreat order 0x40 is then overridden by the collect).
+
+**The transporter pod** (0x9f, flag 0x400000) has no real-time behaviour of its own: it only gives the unit
+its partner (§3.1; one hit point, flags 0x8000 | 2 | 0x8000000, never merged). An AI's partner stays on board
+(flag 2: skipped by `WF::Refresh` and the dropships); a human's `PlaceAllTanks` places it like any vehicle (it
+then fires for zero damage, §11.10). The link (`+0x1e0` carrier, `+0x1e4` partner) is used only by
+`WF_Tank::Damage` (§5.6), `RemoveTankGroup`, `GroundWarFinished` (§6.1) and `Simulate`. The exe's crash (§8)
+needs a split partner group; a transporter design landed as one vehicle never splits (the tracer's
+`--transport` stages it that way).
