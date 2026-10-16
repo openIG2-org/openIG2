@@ -26,7 +26,7 @@ impl Default for ColonyView {
 struct Images {
     heights: egui::TextureHandle,
     tiles: egui::TextureHandle,
-    h_range: (u16, u16),
+    h_range: (i16, i16),
 }
 
 fn tile_color(t: u8) -> [u8; 3] {
@@ -36,13 +36,13 @@ fn tile_color(t: u8) -> [u8; 3] {
 }
 
 fn build(ctx: &egui::Context, path: &str, m: &ColonyMap) -> Images {
-    let (lo, hi) = m.heights.iter().fold((u16::MAX, 0), |(lo, hi), &h| (lo.min(h), hi.max(h)));
-    let span = (hi - lo).max(1) as f32;
+    let (lo, hi) = m.heights.iter().fold((i16::MAX, i16::MIN), |(lo, hi), &h| (lo.min(h), hi.max(h)));
+    let span = (hi as i32 - lo as i32).max(1) as f32;
     let mut hp = Vec::with_capacity(SIDE * SIDE * 4);
     let mut tp = Vec::with_capacity(SIDE * SIDE * 4);
     for y in 0..SIDE {
         for x in 0..SIDE {
-            let v = ((m.height(x, y) - lo) as f32 / span * 255.0) as u8;
+            let v = ((m.height(x, y) as i32 - lo as i32) as f32 / span * 255.0) as u8;
             hp.extend_from_slice(&[v, v, v, 255]);
             let c = tile_color(m.tile(x, y));
             tp.extend_from_slice(&[c[0], c[1], c[2], 255]);

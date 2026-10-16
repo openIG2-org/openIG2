@@ -17,7 +17,15 @@ starmap 54, …). The game asks for `<name>.xvb`, and `openxv` maps that to `<Ve
 | `LoadXVBx` | 0x602ad0 | `openxv(name)` → `LoadXVB(name, mainobjectname)` → `BoxUjraszamol` (recompute bounds) |
 | `LoadXVB` | 0x601c20 | node (`.xvb`) |
 | `LoadObject` | 0x600e30 | mesh (`.xvo`), source file `../sources_base/rotate.cpp` |
-| `loadmaterial` | 0x5ff760 | material (`.xvm`) |
+| `loadmaterial` | 0x5ff760 | material (`.xvm`) → `loadtexture2(texture)`, `loadtexture(texture2, 1)` |
+| `loadtexture` | 0x5ff310 | `TextureDir + name`, cached in `texture_vector` (≤ 2000) |
+| `D3DTexture::Load` | 0x4f5e60 | loads; on failure retries with the last character → `t`, then → `f` |
+| `command_glLoadTexture` | 0x426e30 | `.` → `_`, `dataraw/` + path as a texture resource (`.pvr`) |
+| `Kocka2` | 0x5fac80 | scene walk: child translation, matrices, frame propagation |
+| `Kocka` | 0x5f6a40 | scene walk for rendering: node animation keys (interpolated) |
+| `kirak` | 0x60e160 | textured mesh renderer: vertex animation (interpolated positions) |
+| `wirekirak` | 0x6083f0 | wireframe renderer: the only reader of the face flags |
+| `SetFrame(meshid*, float)` | 0x4564f0 | sets a child's frame (child `+0xe4`, 8.8 fixed point) |
 
 ## Archive
 
@@ -49,11 +57,22 @@ u32  lod_param           // stored to XVB+0x10 when a LOD archive is chained [in
 char lod_archive[16]     // if set (and the load depth allows): openxv(lod) + LoadXVB with prefix "<lodstem>-"
 u16  nchildren
 nchildren × 68-byte child record:
-    +0x00 [16]  unknown
-    +0x10 f32[9] 3×3 matrix (copied to +100, then MultipleMatrix → +0x88)
+    +0x00 f32[3] translation t (Kocka2/Kocka read +0, +4, +8)
+    +0x0c [4]    never read (often 0xCDCDCDCD exporter fill)
+    +0x10 f32[9] 3×3 matrix M (copied to +100, then MultipleMatrix → +0x88)
     +0x34 char name[16]
-nchildren × frames × 84 bytes   // 21 f32 per child per frame [inf: matrix + translation keys]
+frames × nchildren × 84 bytes   // frame-major: key(f, c) at (f·nchildren + c)·84
+    f32[9] matrix   // full transform; replaces M while the child is animated
+    f32[9] rotation // rotation-only chain (normals/lighting, spsorttype+0x24)
+    f32[3] translation
 ```
+Node animation (`Kocka` 0x5f6a40): only for a child whose frame (child `+0xe4`, −1 after load) was set
+by `SetFrame` (8.8 fixed point: key `f = frame >> 8`, blend `(frame & 0xff) / 256` towards key `f + 1`,
+clamped to the last frame) and when the node has frames. The child's position becomes
+`parent·(t + key.translation − key(0, c).translation) + parent.t`; its matrices are
+`MultipleMatrix(child[+100], MultipleMatrix(key.matrix, parent))` and the same with `key.rotation` and the
+parent's rotation chain (`child[+100]` is the identity until `RotateObj` sets it). 1–2-frame nodes often hold uninitialised fill here: on 1,015
+children of nodes with ≥ 3 frames, frame 0's translation equals `t` for 995 (golden test).
 Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB`, otherwise
 `<prefix><name>.xvo` via `LoadObject`. A missing member leaves a NULL child.
 
@@ -62,7 +81,7 @@ Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB
 header
 u32  nverts
 u32  frames_raw          // & 0x7FFFFFFF = frames
-u32  unknown
+u32  unknown             // read into a local and dropped
 char chained[16]         // if non-empty, LoadObject(chained) recursively; stored at +0x18, +0x10 = 1.0f
 u16  nfaces
 v2:  i32 nmat            // < 1 → 1 material with empty name, no names read
@@ -70,19 +89,39 @@ v2:  i32 nmat            // < 1 → 1 material with empty name, no names read
 nmat × char[16]          // material names → loadmaterial(prefix + name + ".xvm")
 nverts × 32: f32 pos[3], f32 normal[3], f32 uv[2]    // normal renormalised at load; zero → (1,0,0)
 nfaces × 8:  u16 a, b, c, u16 material              // material used by v2 only; clamped to nmat−1
-frames × nverts × 24 bytes                          // [inf: 6 f32 per vertex per frame]
-nfaces × u8 face flags                              // optional: if missing, every flag = 7
+frames × nverts × 24 bytes                          // f32 pos[3], f32 normal[3] per vertex per frame
+nfaces × u8 face flags                              // wireframe edge mask; if missing, every flag = 7
 ```
 After loading: `CalcCullPoints`, and `optimizeobject` when `(frames_raw & 0x7FFFFFFF) < 3` and the
 high bit is clear (`quadpatch` objects use a different optimisation mode).
+
+Vertex animation (`kirak` 0x60e160, the textured path): only when `frames ≥ 3` and the child has a frame
+(as above). Positions are lerped between frame `f` and `f + 1` (clamped) and transformed like the base
+vertices; the frame normals aren't read by any renderer. Frame 0 equals the base vertices in all 3
+shipped animated meshes (`colony/teszt`, `spacewar/karika`, `spacewar/ora`); 1–2-frame meshes carry a
+frame block too, often uninitialised fill.
+
+Face flags (`wirekirak` 0x6083f0, the wireframe path selected by render flag 0x40): bit 0 draws edge
+c–a, bit 1 a–b, bit 2 b–c (face `= a, b, c`). The textured and shadow renderers ignore them, so 7 =
+"all edges".
 
 ## `.xvm` material (52 bytes)
 ```
 char name[16]; char texture[16]; char texture2[16]; u32 flags;
 ```
-The texture names are 1999 `.bmp` names (`panel_4_3.bmp`). In the remaster they resolve to `.pvr`
-under `dataraw/textures/` [inf; the mapping is in `loadmaterial` → texture loader, to verify].
+The texture names are 1999 `.bmp` names (`panel_4_3.bmp`). `loadmaterial` loads `texture` with
+`loadtexture2` and a non-empty `texture2` with `loadtexture(…, 1)` (a second, environment-style map);
+`fenyek_2.bmp` and `reflec.bmp` as `texture2` are swapped for a runtime texture.
 Five shipped materials are 48 bytes, with the flags missing.
+
+Texture path (verified in code): `loadtexture` prepends the global `TextureDir`, which each screen's
+init code sets (`textures/colony/`, `textures/colony/terrainmap/<n>/` for terrain objects,
+`textures/design/screen/`, …; `Init3dColony` sets it next to `VectorDir`). `D3DTexture::Load` tries the
+name, then with its last character replaced by `t`, then by `f` (`foo.bmp` → `foo.bmt` → `foo.bmf`;
+the install ships `diplomac/*_bmt.pvr` and `colony/shadowmap_bmf.pvr`), and `command_glLoadTexture`
+replaces every `.` with `_` and loads `dataraw/<path>` as a `.pvr` resource. `Install::resolve_texture`
+implements exactly this; `Install::resolve_model_texture` guesses `TextureDir` from the archive's
+screen directory (15,958 / 15,983 references resolve).
 
 ## Deviations seen in data
 - 68 v0 meshes omit the face-flag block (sphere planets in `info/bolygo_*.xv` and similar). The game
@@ -97,12 +136,10 @@ Five shipped materials are 48 bytes, with the flags missing.
   fields are per-axis half-extents; vertices are normalised to about [-1, 1]).
 - Texture V needs no flip.
 - Texture mapping: `foo.bmp` → `dataraw/textures/<screen>/foo_bmp.pvr`, where `<screen>` is the archive's
-  `dataraw/vector/<screen>/` (fallback: any screen). Resolves 99.8% of 16,310 references; the 30 misses
+  `dataraw/vector/<screen>/` (fallback: any screen). The code rule is above (`TextureDir`); the misses
   are runtime-generated (planet maps, loading screens). `Install::resolve_model_texture`.
 - `Pod*` children of ship designs have untextured materials: equipment slots filled at runtime.
 
 ## Open questions
-- The child record's first 16 bytes, the meaning of the node animation keys (21 floats), and the
-  vertex-animation layout.
-- Face flag bits (7 = default: probably visible | lit | textured).
-- Confirm the texture mapping in code (`loadmaterial` → texture loader); currently empirical.
+- None for the file layout. The material `flags` word and the render-flag words of the child records
+  (`+0x54`/`+0x58` masks, set at runtime) belong to the renderer port (Phase 3).

@@ -67,6 +67,73 @@ impl PlacementRules {
     }
 }
 
+/// `LandingZone::Generate` (exe 0x478dd0, ELF 0x46b610; `ground-combat.md` §11.1): around every building
+/// twelve nested boxes, `w + 22 × h + 22` shrinking by 2 per level, mark each cell with the highest level
+/// covering it (1 = outermost). Row `y − 1` is written (index `(y − 1)·200 + x`, checked against the
+/// buffer only). Cells above 0 are closed to the real-time landing.
+pub fn landing_zone(buildings: &[(u8, f32, f32)], footprints: &[(i32, i32)]) -> Vec<i8> {
+    let mut z = vec![0i8; (SIDE * SIDE) as usize];
+    for &(kind, x, y) in buildings.iter().filter(|b| b.0 != 0) {
+        let (w, h) = footprints.get(kind as usize).copied().unwrap_or((0, 0));
+        let (bx, by) = (x as i32, y as i32);
+        let (mut w, mut h) = (w + 0x16, h + 0x16);
+        for level in 1..0xd {
+            for ix in bx - w / 2..bx + w / 2 + w % 2 {
+                for iy in by - h / 2 - h % 2..by + h / 2 {
+                    let i = (iy - 1) * SIDE + ix;
+                    if (0..SIDE * SIDE).contains(&i) && z[i as usize] < level {
+                        z[i as usize] = level;
+                    }
+                }
+            }
+            w -= 2;
+            h -= 2;
+        }
+    }
+    z
+}
+
+/// `LocateTankSuitablePosition(p, &x, &y, sx, sy)` (exe 0x486b90, ELF 0x488d80; `ground-combat.md` §11.1):
+/// a free cell for one vehicle. The grid is the building search's (terrain, buildings with frames), plus
+/// a 3 × 3 block per placed unit (`units`: cells of alive units without flags 2 / 0x40000000 and without
+/// flags2 bit 2); a given start (`sx ≠ −1`) also closes the landing zone and replaces the centroid start.
+pub fn locate_tank(
+    terrain: &Terrain,
+    footprints: &[(i32, i32)],
+    buildings: &[(u8, f32, f32)],
+    landing: Option<&[i8]>,
+    units: &[(i32, i32)],
+    start: Option<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    let mut grid = Grid::from_terrain(&terrain.mask);
+    if let (Some(z), Some(_)) = (landing, start) {
+        for (c, &l) in grid.0.iter_mut().zip(z) {
+            if l > 0 {
+                *c = 1;
+            }
+        }
+    }
+    let (mut sx, mut sy, mut n) = (0i32, 0i32, 0i32);
+    for &(kind, x, y) in buildings.iter().filter(|b| b.0 != 0) {
+        let (w, h) = footprints.get(kind as usize).copied().unwrap_or((0, 0));
+        grid.allocate(x as i32, y as i32, w, h, true);
+        n += 1;
+        sx = (sx as f32 + x) as i32;
+        sy = (sy as f32 + y) as i32;
+    }
+    for &(x, y) in units {
+        grid.allocate(x, y, 3, 3, false);
+    }
+    let mut at = terrain.start;
+    if n != 0 {
+        at = (sx / n, sy / n);
+    }
+    if let Some(s) = start {
+        at = s;
+    }
+    grid.search(at, 1, 1)
+}
+
 /// The occupancy grid `DecodedAlloc`: 1 = blocked, multiples of 0x20 = frames of placed buildings.
 #[derive(Clone)]
 pub struct Grid(Vec<u8>);
@@ -193,6 +260,38 @@ mod tests {
             buildings: buildings.iter().map(|&(kind, x, y)| Building { kind, x, y, ..Default::default() }).collect(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn landing_zone_rings_and_the_row_above_quirk() {
+        let fp = rules().footprints;
+        let z = landing_zone(&[(3, 100.0, 100.0)], &fp);
+        let at = |x: i32, y: i32| z[((y - 1) * SIDE + x) as usize];
+        // A 1 × 1 building: the outer box is 23 × 23 (level 1), the innermost 1 × 1 (level 12) sits on
+        // the row above (an odd height puts the extra row low).
+        assert_eq!((at(100, 99), at(100, 100)), (12, 11));
+        assert_eq!(at(100 - 11, 100), 1);
+        assert_eq!(at(100 + 11, 100), 1);
+        assert_eq!(at(100 + 12, 100), 0);
+        assert_eq!(at(100, 100 + 11), 0, "the outer box runs y − 12 ..= y + 10");
+        assert_eq!(at(100, 100 - 12), 1);
+    }
+
+    #[test]
+    fn locate_tank_closes_the_landing_zone_only_for_a_given_start() {
+        let r = rules();
+        let b = [(3u8, 100.0f32, 100.0f32)];
+        let z = landing_zone(&b, &r.footprints);
+        let t = &r.terrains[0];
+        // Without a start: the centroid of the buildings, beside the building's frame.
+        let free = locate_tank(t, &r.footprints, &b, Some(&z), &[], None).unwrap();
+        assert!((free.0 - 100).abs() <= 3 && (free.1 - 100).abs() <= 3);
+        // With a start inside the zone the search spirals out of it.
+        let out = locate_tank(t, &r.footprints, &b, Some(&z), &[], Some((100, 100))).unwrap();
+        assert_eq!(z[((out.1 - 1) * SIDE + out.0) as usize], 0);
+        // Units block 3 × 3.
+        let blocked = locate_tank(t, &r.footprints, &[], None, &[(100, 100)], None).unwrap();
+        assert!((blocked.0 - 100).abs() >= 2 || (blocked.1 - 100).abs() >= 2);
     }
 
     #[test]

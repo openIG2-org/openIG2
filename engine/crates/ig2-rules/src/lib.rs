@@ -84,6 +84,22 @@ pub mod layout {
     /// `Spy_New` (code): the recruit names are immediates stored into a local `char*` array.
     pub const SPY_NEW_CODE: (u32, usize, usize) = (0x58F830, 1, 0x4c0);
     pub const SHIP_TYPES: (u32, usize, usize) = (0x91F488, 0x30, 240); // tipusnevek [20 races][12 types]
+    /// Ground combat (`re/rules/ground-combat.md` §1.3): `WF_Weapons` {min, max, period, unk} × 14.
+    pub const GROUND_WEAPONS: (u32, usize, usize) = (0x8F82C0, 4, 56);
+    /// `TankAlapHP` (hulls 0x13..=0x17) as `AddTanksToPlanet` reads it: `0x8F1EC8 + 4·hull` for hulls 0..=24.
+    pub const GROUND_HULL_HP: (u32, usize, usize) = (0x8F1EC8, 4, 25);
+    /// Colony battlefield size (f32 width, height) for `WF_Tank::SetPosG` (exe 0x49c250).
+    pub const GROUND_MAP_SIZE: (u32, usize, usize) = (0x8EC960, 4, 2);
+    /// `WF_NonSimulateWeapons` and `WF_FortressWeapons`: 14 × {min, max, reload, range} (real-time ground war).
+    pub const GROUND_RT_WEAPONS: (u32, usize, usize) = (0x8F83A0, 4, 56);
+    pub const GROUND_FORTRESS_WEAPONS: (u32, usize, usize) = (0x8F8480, 4, 56);
+    /// Turning speed by ground hull index 0..5 (`AddTank`: `+0xe0 = t`, `+0xe4 = 1.5 t`).
+    pub const GROUND_TURN_SPEEDS: (u32, usize, usize) = (0x8F8560, 4, 5);
+    /// Slope limits by passability layer 0..5 (`PlanetAtjarasMap::GenerateMap`: a cell's slope class is
+    /// gentle when `|class| <= limit`; layer 0 is the editor's, 1..=4 the vehicles').
+    pub const GROUND_SLOPE_LIMITS: (u32, usize, usize) = (0x8F8574, 4, 5);
+    /// Armour factors by ground hull and hit side (front, side, rear): `SetRealDamage` divides by them.
+    pub const GROUND_ARMOUR: (u32, usize, usize) = (0x8F858C, 4, 15);
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -305,6 +321,9 @@ pub struct DesignTemplate {
 #[derive(Debug, Clone, Serialize)]
 pub struct Rules {
     pub techs: Vec<Tech>,
+    /// `Talalmanyok0` as raw 276-byte records (193): the defaults `InitNewGame` copies to the live table
+    /// `Talalmanyok` (exe 0xB9C0C8); a loaded save overwrites the per-empire state of each tech.
+    pub tech_defaults: Vec<u8>,
     pub buildings: Vec<Building>,
     pub pod_types: Vec<PodType>,
     /// `[pod_table][hull][slot]`: 14 tables × 27 hulls × 12 slots.
@@ -378,6 +397,23 @@ pub struct Rules {
     pub ship_types: Vec<ShipTypeRecord>,
     /// `Talalmanyok2[tech · 9 + race]` (`ai-empire.md` §10.3).
     pub ai_ground_priority: Vec<u8>,
+    /// Ground combat (`re/rules/ground-combat.md` §1.3): `WF_Weapons` as 14 × [min, max, period, unk]
+    /// (the auto-resolve's damage ranges and periods), member hit points by hull id 0..=24
+    /// (`TankAlapHP` for 0x13..=0x17; other ids read the neighbouring memory like the exe), and the
+    /// battlefield size used for map positions.
+    pub ground_weapons: Vec<[i32; 4]>,
+    pub ground_hull_hp: Vec<i32>,
+    pub ground_map_size: (f32, f32),
+    /// The real-time ground war's weapons (`WF_NonSimulateWeapons` 0x8F83A0) and building turrets'
+    /// (`WF_FortressWeapons` 0x8F8480): 14 × [min, max, reload, range].
+    pub ground_rt_weapons: Vec<[i32; 4]>,
+    pub ground_fortress_weapons: Vec<[i32; 4]>,
+    /// Turning speeds by ground hull index (exe 0x8F8560, f32 × 5).
+    pub ground_turn_speeds: Vec<f32>,
+    /// Armour factors `[hull·3 + side]` (exe 0x8F858C, f32 × 15; side 0 front, 1 flank, 2 rear).
+    pub ground_armour: Vec<f32>,
+    /// Slope limits of the passability layers 0..5 (exe 0x8F8574, f32 × 5; `GenerateMap` uses 1..=4).
+    pub ground_slope_limits: Vec<f32>,
 }
 
 /// A battle ship type (`tipusnevek`, exe 0x91F488, 0x30 bytes; record `race·12 + type`, spec §7.10).
@@ -540,6 +576,7 @@ impl Rules {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
+            tech_defaults: tb.to_vec(),
             techs,
             buildings,
             pod_types,
@@ -611,6 +648,14 @@ impl Rules {
                 (0..n).map(|i| b[i * s..(i + 1) * s].to_vec()).collect()
             },
             spy_rank_xp: ints(layout::SPY_RANK_XP)?,
+            ground_weapons: ints(layout::GROUND_WEAPONS)?.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect(),
+            ground_hull_hp: ints(layout::GROUND_HULL_HP)?,
+            ground_map_size: { let m = floats(layout::GROUND_MAP_SIZE)?; (m[0], m[1]) },
+            ground_rt_weapons: ints(layout::GROUND_RT_WEAPONS)?.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect(),
+            ground_fortress_weapons: ints(layout::GROUND_FORTRESS_WEAPONS)?.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect(),
+            ground_turn_speeds: floats(layout::GROUND_TURN_SPEEDS)?,
+            ground_armour: floats(layout::GROUND_ARMOUR)?,
+            ground_slope_limits: floats(layout::GROUND_SLOPE_LIMITS)?,
             spy_training_xp: ints(layout::SPY_TRAINING_XP)?,
             spy_names: spy_names(&img)?,
             spy_training_cost: ints(layout::SPY_TRAINING_COST)?,

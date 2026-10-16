@@ -37,7 +37,7 @@ it matches bit for bit**.
 
 | Area | What works |
 |---|---|
-| **Asset formats** | `ecGs`/`neGs` containers, PVR textures, `.xv` 3D archives, colony maps, `.scn` scenarios, `.ani`, UI and keyed string tables, dialogue, diplomacy, formations, story data (6 languages, golden-tested) |
+| **Asset formats** | `ecGs`/`neGs` containers, PVR textures, `.xv` 3D archives, colony maps, `.scn` scenarios, `.ani`, UI and keyed string tables, dialogue, diplomacy, formations, story data and story fleets, the tutorial script and its input recordings (6 languages, golden-tested); original save games and the multiplayer state blob |
 | **Rules from your exe** | Techs, buildings, hulls, designs, weapons, race/difficulty tables, radar and footprints read from the user's `ig2.exe` (sha256-gated) |
 | **Asset viewer** | `ig2-viewer` (eframe + wgpu): models, textures, colony maps, messages; headless `--snapshot` |
 | **Time & RNG** | 20 Hz sim clock, calendar, 21 bit-exact RNG streams |
@@ -52,16 +52,21 @@ it matches bit for bit**.
 | **Diplomacy** | Daily relations and opinion, the AI's proposals, threats and declarations, AI-to-AI answers, wars and peace treaties; the human's messages, deals (money, planets, techs, radar maps, hostages, wars, peace), demands, answers and counter-proposals, and the auto-cancel of stale offers |
 | **Espionage** | Spy ranks and experience, double agents, the catch check and the captor's verdict, 13 missions (reports, theft of money and techs, sabotage, ship strikes, rebellions, assassinations, kidnapping), recruitment |
 | **AI empire** | Empire centres and main fleets, the main planet, colony autobuild profiles and tax by wealth and danger, income sliders and shares, production choices (colony ships, default warships and vehicles, scrapping obsolete ships), spy missions (skill points, firing, targets, mission choice and cost); colony ships to the nearest free planets, war declarations, attack targets (fleets and planets), fleeing and regrouping, loading and unloading vehicles, scouting; the AI's own designs and their upgrades |
+| **Story engine** | Story queues and start flags, variables, logic flags, counters, story planet and fleet ids, event flags and the hooks other systems call, the per-tick counters and daily check, story endings with their undo list and info lines; the skirmish scenarios' victory and defeat conditions (stories 360–375) |
+| **Original saves in the sim** | An original save loads into the simulation and whole game ticks run on it (economy, relations, AI, spies, research, story, fleets, production), matching the original game byte for byte over ~100 game days |
+| **Ground combat (strategic)** | Routing to the real-time or auto-resolved ground war, landing and group arrangement, the auto-resolved war (attrition, guns, paralysers, manipulators, kamikazes, air strikes, building turrets), survivors re-embarking, capture |
+| **Real-time ground battles** | Landing placement and the landing zone, terrain heights and unit orientation, defence-building turrets, the 20 Hz battle tick (driving, passability maps and path search, attack-moves, turret and body turning, aiming, shells, rockets, bolts, paralysers, manipulators, the machine gun, armour, mines, self-destruct), the end countdown and its result |
+| **Ground battle AI** | The computer's plans on the battlefield (flanks, reserve, pincer, fortress guards), rally points and formation lines, target choice, reactions to hits, the air-strike target scan |
 
 ### 🚧 Planned
 
 | Area | |
 |---|---|
-| Ground combat (`WF*`) | ⏳ |
-| Campaign and story scripting | ⏳ |
+| Air-strike fighters and transporters in real time | 📝 battle tick, ground AI and bombs done |
+| Campaign stories (`st_*_include` scripts, `Story_Check`'s inline stories) | 📝 engine and scenario stories done |
 | wgpu game renderer and UI | ⏳ |
 | Lockstep multiplayer over QUIC: LAN discovery, direct IP, UPnP, rejoin | ⏳ |
-| Saves (single and multiplayer) | ⏳ |
+| Saves (single and multiplayer) | 📝 original format read (files and MP blob) and loaded into the sim; own format to do |
 | *Enhanced* ruleset options | ⏳ |
 
 ## 🚀 Quick start

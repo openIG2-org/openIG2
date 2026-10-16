@@ -11,10 +11,12 @@ pub mod diplomacy;
 pub mod formation;
 pub mod misc_text;
 pub mod pvr;
+pub mod save;
 pub mod scn;
 pub mod story_data;
 pub mod strings;
 pub mod text;
+pub mod tutorial;
 pub mod vfs;
 pub mod xv;
 

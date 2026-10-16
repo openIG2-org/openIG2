@@ -99,24 +99,33 @@ impl Install {
 
     /// Resolve a 1999 `.bmp` texture name used by a `.xv` material to its remaster `.pvr`.
     ///
-    /// Convention [inf, verified on data]: `foo.bmp` → `dataraw/textures/<screen>/foo_bmp.pvr`,
-    /// with `<screen>` the archive's top-level `dataraw/vector/<screen>/` directory. Otherwise any
-    /// screen directory. This resolves 99.8% of 16,310 references; the misses are textures the
-    /// game generates at runtime (planet maps, loading screens).
+    /// The game's rule is [`Install::resolve_texture`] with the `TextureDir` of the screen that loads
+    /// the model. This approximates `TextureDir` with the archive's top-level
+    /// `dataraw/vector/<screen>/` directory, then falls back to any screen directory. It resolves
+    /// 99.8% of the references; the misses are textures the game generates at runtime (planet
+    /// maps, loading screens).
     pub fn resolve_model_texture(&self, screen: &str, bmp_name: &str) -> Option<String> {
-        let file = format!("{}.pvr", bmp_name.to_ascii_lowercase().replace('.', "_"));
-        let preferred = format!("dataraw/textures/{}/{file}", screen.to_ascii_lowercase());
-        if self.index.contains_key(&preferred) {
-            return Some(preferred);
+        if let Some(p) = self.resolve_texture(&format!("textures/{screen}/"), bmp_name) {
+            return Some(p);
         }
-        let suffix = format!("/{file}");
-        let mut any: Vec<&String> = self
-            .index
-            .keys()
-            .filter(|k| k.starts_with("dataraw/textures/") && k.ends_with(&suffix))
-            .collect();
-        any.sort();
-        any.first().map(|k| (*k).clone())
+        texture_candidates(bmp_name).into_iter().find_map(|file| {
+            let suffix = format!("/{file}.pvr");
+            let mut any: Vec<&String> =
+                self.index.keys().filter(|k| k.starts_with("dataraw/textures/") && k.ends_with(&suffix)).collect();
+            any.sort();
+            any.first().map(|k| (*k).clone())
+        })
+    }
+
+    /// The game's own texture lookup for a material texture name: `loadtexture` (ELF 0x5ff310)
+    /// prefixes the screen's `TextureDir` (`textures/colony/`, `textures/design/screen/`,
+    /// `textures/colony/terrainmap/<n>/`, …, set by each screen's init code), `D3DTexture::Load`
+    /// (0x4f5e60) retries with the name's last character replaced by `t`, then `f`, and
+    /// `command_glLoadTexture` (0x426e30) turns every `.` into `_` and asks for `dataraw/<path>` as a
+    /// texture resource (`.pvr`).
+    pub fn resolve_texture(&self, texture_dir: &str, name: &str) -> Option<String> {
+        let dir = normalize(texture_dir);
+        texture_candidates(name).into_iter().map(|file| format!("dataraw/{dir}{file}.pvr")).find(|p| self.index.contains_key(p))
     }
 
     /// Every file in the install, including localization copies (lowercase, `/`-separated).
@@ -138,4 +147,14 @@ impl Install {
         v.sort_unstable();
         v
     }
+}
+
+/// `foo.bmp`, then `foo.bmt`, then `foo.bmf` (`D3DTexture::Load`), with `.` → `_`, lowercased.
+fn texture_candidates(name: &str) -> Vec<String> {
+    let name = name.to_ascii_lowercase();
+    let mut out = vec![name.replace('.', "_")];
+    if let Some((i, _)) = name.char_indices().last() {
+        out.extend(['t', 'f'].map(|c| format!("{}{c}", &name[..i]).replace('.', "_")));
+    }
+    out
 }

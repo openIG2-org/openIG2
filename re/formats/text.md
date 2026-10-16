@@ -105,15 +105,58 @@ specials (ids 141, 1471, 1481, 8601, 8571, 8581); **DE/FR/ES/IT ship only the la
 | `help/<topic>.txt` | `Help_Belep`, `HelpKikeresKepek` @0x54d8f0 | `*` heading, `+` new line, `-` flowing; inline `<Fn>` font, `<Cn>` colour, `<Pfile.bmp>` picture → remaster `help/<file>_bmp.pvr` (all resolve) |
 | `colony/terepleiro.txt` | `InitHatterekEsTerepek` @ELF 0x4bd5b0 | `[hatter]` (4 values) / `[felszin]` (11 values) sections, one value per line, `;` comments outside quotes; `[felszin]` `n` = `gen_maps/<n>.map` (75 in shipped data). `ig2_formats::colony_map::parse_surfaces` |
 
-## 6. Not yet implemented (rules data, Phase 2)
+## 6. Story data, small tables, tutorial
 
+`building.txt`, `designs.txt`, `values.txt`: `rules/story-data.md` (`ig2_formats::story_data`).
+`autobld1..10.txt`: `misc_text::parse_autobuild` (`INIT_AutoBuild`, `rules/colony-side.md`).
+
+### `text/fleet.txt`: `ReadFlottaData` @0x72a390 → `ParseFlottaData` @0x729150 (`story_data::parse_fleets`)
+`NewTextFile` lines; per line, in this order:
+- `level` (case-insensitive) + `atoi` → current level 1..9 (`akt_flotta_level`, initially 1; asserted);
+- `D`/`d` → `ParseDesignData(line+1)`, `C`/`c` → `ParseDesignColorData(line+1)`: same grammar as
+  `designs.txt` (208 designs, `D0011 "Starlight", NN, 4, Destroyer, 17/3, 33/1`);
+- anything else → `ParseFlottaData`: `[<story>/]<fleet> <design> <n1>, <n2>, <n3>, <n4>` (separators
+  space/tab/comma). No `/` → story 0 (all stories); `story/fleet` with story `atoi` 0 → ignored. A line
+  needs a fleet ID ≠ 0 and something after it, so `//` comments and `#define`s fall out. `<design>` is
+  a design ID, else a `TervStrKonv` word (.data 0x119bc50: FIGHTER 2, FIGHTER1 2, FIGHTER2 11,
+  FIGHTER3 12, FIGHTER4 13, DESTROYER 3, COLONIZATION 4, SZALLITO 8) stored negated, else
+  `HOSHAJO(x)` stored as `x − 8`; an unknown word leaves the scratch slot's previous value (quirk).
+  The file's own `#define CORVETTE …` lines are comments to the game.
+- Records (`StoryFlottaData` 0x17c8d60, stride 0x54, < 400): `+0` story, `+4` fleet, `+8` design,
+  `+0xc` `i16 [4 difficulties][9 levels]`, −1 = unset. A line with an existing (story, fleet, design)
+  merges; its four counts go to the current level (asserted unset).
+- After the file: per record and difficulty, level 1 = the first set level's count, level 9 = the last
+  one's, gaps in between are interpolated `(v[a]·(b−i) + v[b]·(i−a)) / (b−a)` in C integers.
+Shipped: 396 fleet lines → 362 records (80 by ship class), every design ID defined (golden test).
+
+### Small tables (`misc_text`)
+| File | Loader | Grammar |
+|---|---|---|
+| `text/fajinfo.txt` | `LoadFajInfoText` @0x59aca0 | for `Empire 01`..`03`: the text between the next pair of `"` after the header (1000-byte fields `FajInfo`) |
+| `text/gameinfo.txt` | `LoadGameInfo` @0x6218b0 | `<id> <text>` split at the first space, lines without one skipped; 100 slots, unchecked (91 shipped) |
+| `text/maffia.txt` | `NEWGAME_Colony` @0x4d8e40 | 64 lines, each cut at its first `"` → `MaffiaNev[64]` (pirate names of the buildings; the rest of the line is a note) |
+| `text/fabscr.txt` | `LoadHighscores` @0x629440 | default high scores when the registry has no valid table: `<scenario>/<name>:<score>` with `0 < '/' < ':'` and score > 0, stored × 50, in order, 10 slots unchecked |
+| `text/tozsde.txt` | — | unused: its name sits in `ScrollFile` (.data 0x119d8c0), which nothing reads; the stock ticker text comes from `GetString(8, 4)` |
+
+### Tutorial: `tutorial/main/script/main.tut` and `tutorial/main/*.mou` (`ig2_formats::tutorial`)
+`TutorialStart` @0x7b3d50 loads `tutorial/main/script/<name>.tut` (`<name>` = `main`; `text/main.tut` is
+a stale copy no code opens) and `TutorialGetNextCommand` @0x7b4bc0 interprets it: it skips to the next
+`<` (text outside tags is commentary: `;` lines, `###` notes, translator banners), skips `/* … */`, and
+matches the text after `<` against 74 keywords by case-insensitive **prefix**, in a fixed order
+(`tutorial::COMMANDS`: `AT`, `END`, `RETURNTOMAINMENU`, `SEEKCHAPTER`, …, `TEXTURE`; the first hit
+wins, so `<WAITFORMOUSEMOVE>` is `WAITFORMOUSE`). An unknown tag ends the tutorial. Numbers come from
+`GetInt(args, n)`, strings from quotes (`<TYPE "…">` text may span lines, `#V##C3#` markup). All six
+languages' scripts use known tags only (971–979 tags, 147–148 texts).
+
+`.mou` (`TutorialPlayMouse` @0x7b3310, written by `TutorialStopMouseSave` @0x7b30b0): `u32 count`,
+then per sample `i32 x, i32 y, u8 button, u8 left, u8 right, u8 modifiers (1 Alt, 2 Shift, 4 Ctrl)`,
+`u8 flag`, and if the flag is 1, `u8 virt[4], u32 key[4]` (up to 4 key presses for that step,
+`ReadNext` @0x57f9b0). One sample per `TutorialCounter` step (`Mouse_Tutorial_Kezel` @0x5b7230).
+Sample 0 is never written by the recorder (shipped files start with `0xCD` fill). Paths:
+`tutorial/` + `main/` + the `PLAYMOUSE` name; all 73 played recordings and every shipped `.mou` parse
+exactly.
+
+### Not implemented
 | Files | Loader | Shape |
 |---|---|---|
-| `text/building.txt` | `ReadBuildingData` | `****`-separated building records |
-| `text/designs.txt` | `ReadDesignData` | `****`-separated designs |
-| `text/fleet.txt` | `ReadFlottaData` | `[<story>/]<fleet-id> …`, `//` comments |
-| `text/values.txt` | `ReadValues` | C-like `{…}` tables |
-| `text/autobld1..10.txt` | `INIT_AutoBuild` | `:SECTION` + rules |
-| `text/fajinfo.txt`, `gameinfo.txt`, `maffia.txt`, `fabscr.txt`, `tozsde.txt` | `LoadFajInfoText`, `LoadGameInfo`, `NEWGAME_Colony`, `LoadHighscores` | simple id/quoted tables |
-| `tutorial/*.tut`, `*.mou` | `TutorialLoadScenario`, `TutorialStartMouseSave` | tutorial script and recorded input |
 | `gfx/*.json`, `texts.json` | `TextServer::Initialise` | remaster C-preprocessed JSON (UI, Phase 3) |

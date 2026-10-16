@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use ig2_formats::text::{self, Lang};
-use ig2_formats::{dialogue, diplomacy, formation, misc_text, Install};
+use ig2_formats::{dialogue, diplomacy, formation, misc_text, tutorial, Install};
 
 fn installs() -> Vec<Install> {
     let Some(base) = Install::from_env(Lang::En) else {
@@ -227,4 +227,75 @@ fn story_data_tables_parse() {
     assert!(d.designs.len() > 50);
     assert!(d.designs.iter().all(|x| (1..=23).contains(&x.hull)));
     assert!(!v.is_empty() && v.len() < MAX_STORY_VALUES);
+}
+
+#[test]
+fn story_fleets_parse() {
+    use ig2_formats::story_data::{self, MAX_STORY_FLEETS};
+    let Some(inst) = installs().into_iter().next() else { return };
+    let f = story_data::parse_fleets(&read_text(&inst, "dataraw/text/fleet.txt"));
+    let classes = f.fleets.iter().filter(|x| x.design < 0).count();
+    eprintln!("story fleets {} ({classes} by ship class), fleet designs {}", f.fleets.len(), f.designs.designs.len());
+    assert!(f.rejected.is_empty(), "{:#?}", f.rejected);
+    assert!(f.designs.rejected.is_empty(), "{:#?}", f.designs.rejected);
+    assert!(f.fleets.len() > 100 && f.fleets.len() < MAX_STORY_FLEETS);
+    // After the fill every level of every difficulty has a count.
+    assert!(f.fleets.iter().all(|x| x.counts.iter().flatten().all(|&c| c >= 0)));
+    // Fleet lines name designs from designs.txt, the `D` lines, or a ship class.
+    let d = story_data::parse_designs(&read_text(&inst, "dataraw/text/designs.txt"));
+    let known: BTreeSet<i32> = d.resolved_ids().into_iter().chain(f.designs.resolved_ids()).collect();
+    let missing: BTreeSet<i32> = f.fleets.iter().map(|x| x.design).filter(|&id| id > 0 && !known.contains(&id)).collect();
+    eprintln!("fleet designs not defined in either file: {missing:?}");
+}
+
+#[test]
+fn small_tables_parse() {
+    for inst in installs() {
+        let lang = inst.lang();
+        let opt = |p: &str| inst.read(p).ok().map(|b| text::decode(&b, lang));
+        let faj = misc_text::parse_fajinfo(&opt("dataraw/text/fajinfo.txt").unwrap());
+        assert!(faj.iter().all(|t| t.as_ref().is_some_and(|t| !t.is_empty() && t.len() < 1000)), "{lang:?}");
+        let gi = misc_text::parse_gameinfo(&opt("dataraw/text/gameinfo.txt").unwrap());
+        assert!(!gi.is_empty() && gi.len() <= misc_text::MAX_GAME_INFO, "{lang:?}: {}", gi.len());
+        let m = misc_text::parse_maffia(&opt("dataraw/text/maffia.txt").unwrap());
+        assert!(m[0].len() > 3, "{lang:?}");
+        let sc = misc_text::parse_fabscr(&opt("dataraw/text/fabscr.txt").unwrap());
+        let mut per: BTreeMap<String, usize> = BTreeMap::new();
+        for e in &sc {
+            *per.entry(e.scenario.to_ascii_lowercase()).or_default() += 1;
+        }
+        assert!(!sc.is_empty() && per.values().all(|&n| n <= misc_text::HIGHSCORE_SLOTS), "{lang:?}");
+        eprintln!("{lang:?}: gameinfo {}, maffia {} named, default scores {} in {} scenarios", gi.len(), m.iter().filter(|x| !x.trim().is_empty()).count(), sc.len(), per.len());
+    }
+}
+
+#[test]
+fn tutorial_script_and_recordings() {
+    for inst in installs() {
+        let lang = inst.lang();
+        let script = read_text(&inst, "dataraw/tutorial/main/script/main.tut");
+        let cmds = tutorial::parse_script(&script);
+        let unknown: Vec<_> = cmds.iter().filter(|c| c.keyword.is_none()).map(|c| c.text.as_str()).collect();
+        assert!(unknown.is_empty(), "{lang:?}: {unknown:?}");
+        // `<PLAYMOUSE "x.mou">` → `tutorial/` + `main/` + name.
+        let mut mice = BTreeSet::new();
+        for c in cmds.iter().filter(|c| c.keyword == Some("PLAYMOUSE")) {
+            let name = c.quoted.as_deref().expect("quoted .mou name");
+            let path = format!("dataraw/tutorial/main/{name}");
+            let frames = tutorial::parse_mou(&inst.read(&path).unwrap_or_else(|e| panic!("{path}: {e}"))).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert!(!frames.is_empty(), "{path}");
+            mice.insert(name.to_ascii_lowercase());
+        }
+        let types = cmds.iter().filter(|c| c.keyword == Some("TYPE")).count();
+        eprintln!("{lang:?}: {} tutorial tags, {types} texts, {} recordings", cmds.len(), mice.len());
+        assert!(types > 100);
+    }
+    // Every shipped recording parses exactly, played or not.
+    let Some(inst) = installs().into_iter().next() else { return };
+    let all = inst.list("dataraw/tutorial/main/");
+    let mous: Vec<_> = all.iter().filter(|p| p.ends_with(".mou")).collect();
+    for p in &mous {
+        tutorial::parse_mou(&inst.read(p).unwrap()).unwrap_or_else(|e| panic!("{p}: {e}"));
+    }
+    assert!(mous.len() > 50);
 }

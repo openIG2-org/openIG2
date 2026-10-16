@@ -1,7 +1,10 @@
-//! Smaller text formats: `text/infostr.txt`, `text/res_info.txt`, `scenario/*.dsc`, `help/*.txt`.
+//! Smaller text formats: `text/infostr.txt`, `text/res_info.txt`, `scenario/*.dsc`, `help/*.txt`,
+//! `text/autobld*.txt`, `text/fajinfo.txt`, `text/gameinfo.txt`, `text/maffia.txt`, `text/fabscr.txt`.
 //!
 //! Spec: `re/formats/text.md`. Evidence (ELF `ig2`): `InfoString_Read`, `LoadTalalmanyInfok`,
-//! `LoadScenarioDescription` (`../sources_base/save.cpp`), `Help_Belep`, `HelpKikeresKepek`.
+//! `LoadScenarioDescription` (`../sources_base/save.cpp`), `Help_Belep`, `HelpKikeresKepek`,
+//! `INIT_AutoBuild`, `LoadFajInfoText` @0x59aca0, `LoadGameInfo` @0x6218b0, `NEWGAME_Colony`
+//! @0x4d8e40, `LoadHighscores` @0x629440.
 
 use crate::dialogue::atoi;
 use crate::text::lines;
@@ -256,5 +259,85 @@ mod autobuild_tests {
         assert_eq!(f.name, "MODE");
         assert_eq!((f.threshold, f.listed_priority), (12, -3));
         assert_eq!(f.entries, ["GUN", "BANK", "END"]);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// fajinfo.txt, gameinfo.txt, maffia.txt, fabscr.txt
+
+/// `LoadFajInfoText`: the race blurbs of the three playable-in-campaign empires. For `Empire 01`..
+/// `Empire 03` it searches the header, then takes the text between the next pair of `"` (into a
+/// 1000-byte field). `None` = header or quotes missing (the game would read garbage).
+pub fn parse_fajinfo(text: &str) -> [Option<String>; 3] {
+    std::array::from_fn(|i| {
+        let at = text.find(&format!("Empire {:02}", i + 1))?;
+        let q = at + text[at..].find('"')? + 1;
+        let end = q + text[q..].find('"')?;
+        Some(text[q..end].to_owned())
+    })
+}
+
+/// Capacity of `GameInfoList` (`operator new[]` of 100 entries; the loader doesn't check it).
+pub const MAX_GAME_INFO: usize = 100;
+
+/// `LoadGameInfo`: `<id> <text>` objective lines for the in-game mission list. A line is split at
+/// its first space (`atoi` of the part before it); lines without a space are skipped. The text
+/// keeps `%s` placeholders.
+pub fn parse_gameinfo(text: &str) -> Vec<(i32, String)> {
+    lines(text).filter_map(|l| l.split_once(' ').map(|(id, t)| (atoi(id), t.to_owned()))).collect()
+}
+
+/// Number of `MaffiaNev` entries `NEWGAME_Colony` reads.
+pub const MAFFIA_NAMES: usize = 64;
+
+/// `NEWGAME_Colony`: the mafia (pirate) names of the 64 building types, one per line, each cut at
+/// its first `"` (the rest is the translator's note with the normal name). Missing lines are empty.
+pub fn parse_maffia(text: &str) -> Vec<String> {
+    let mut it = lines(text);
+    (0..MAFFIA_NAMES).map(|_| it.next().map_or(String::new(), |l| l.split('"').next().unwrap_or("").to_owned())).collect()
+}
+
+/// One default high-score entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultScore {
+    /// Scenario name as `LoadHighscores` matches it (case-insensitive).
+    pub scenario: String,
+    pub name: String,
+    /// As stored: the file's value × 50.
+    pub score: i32,
+}
+
+/// Slots per scenario table (`LoadHighscores` writes on without checking).
+pub const HIGHSCORE_SLOTS: usize = 10;
+
+/// `LoadHighscores` (`fabscr.txt` = "factory scores"): when the registry holds no valid table for a
+/// scenario, it is seeded from the `<scenario>/<name>:<score>` lines, in file order, keeping lines
+/// with `0 < '/' < ':'` and a positive score.
+pub fn parse_fabscr(text: &str) -> Vec<DefaultScore> {
+    lines(text)
+        .filter_map(|l| {
+            let (slash, colon) = (l.find('/')?, l.find(':')?);
+            if slash == 0 || colon <= slash {
+                return None;
+            }
+            let score = atoi(&l[colon + 1..]);
+            (score > 0).then(|| DefaultScore { scenario: l[..slash].to_owned(), name: l[slash + 1..colon].to_owned(), score: score * 50 })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod small_table_tests {
+    use super::*;
+
+    #[test]
+    fn small_tables() {
+        let f = parse_fajinfo("Empire 01:\r\n\r\n\"Solar\r\nians.\"\r\nEmpire 03:\r\n\"Kra\"");
+        assert_eq!(f, [Some("Solar\r\nians.".into()), None, Some("Kra".into())]);
+        assert_eq!(parse_gameinfo("1 Info 1-\r\n0071 Provide 4 tanks at %s\r\nnospace\r\n"), [(1, "Info 1-".into()), (71, "Provide 4 tanks at %s".into())]);
+        let m = parse_maffia("Godfather's Hub\"        ;Colony Hub\"\r\n\"\r\n");
+        assert_eq!((m.len(), m[0].as_str(), m[1].as_str(), m[2].as_str()), (64, "Godfather's Hub", "", ""));
+        let s = parse_fabscr("\r\nswarm/Fable:2026\r\nattack\r\nx/y:0\r\n/a:1\r\n");
+        assert_eq!(s, [DefaultScore { scenario: "swarm".into(), name: "Fable".into(), score: 101_300 }]);
     }
 }

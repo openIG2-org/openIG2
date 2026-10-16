@@ -11,25 +11,33 @@ use crate::{format_err, Result};
 
 /// Mask/grid side length in cells. One cell covers 4×4 units of the 200×200 `Real2Grid` grid.
 pub const SIDE: usize = 50;
-/// Bytes per mask row: 13 bytes × 4 cells (2 bits each) = 52 cells.
-/// Columns 50–51 are set in shipped files, so their meaning is open (re/formats/colony-map.md).
+/// Bytes per mask row: 13 bytes × 4 cells (2 bits each) = 52 cells. Columns 50–51 (the high nibble of
+/// each row's last byte) are padding: `Decode2LargeMap` and `PlanetAtjarasMap::GenerateMap` read only
+/// cells 0..50 of a row, so whatever the exporter left there is never used.
 pub const MASK_STRIDE: usize = 13;
 const MASK_LEN: usize = SIDE * MASK_STRIDE; // 650
 const FIXED_LEN: usize = 2 * MASK_LEN + SIDE * SIDE + SIDE * SIDE * 2 + 4; // 8,804, then N×4 + 4
 
 #[derive(Debug, Clone)]
 pub struct ColonyMap {
-    /// `Terepek+0xae`. 2-bit cells. Terrain-object footprints are OR-ed in as 0b11.
+    /// `Terepek+0xae`: the build mask (`Decode2LargeMap` → building placement). A cell is blocked when
+    /// its 2 bits are non-zero. Terrain-object footprints are OR-ed in as 0b11 at load.
     pub mask_a: [u8; MASK_LEN],
-    /// `Terepek+0x338`. Same addressing as `mask_a`, marked together in `CheckTerepTargyak`.
+    /// `Terepek+0x338`: the terrain-object (obstacle) mask. `CheckTerepTargyak` marks object
+    /// footprints into it, and `PlanetAtjarasMap::GenerateMap` blocks those cells for the vehicle
+    /// passability layers 1..=4 (layer 0 doesn't use it).
     pub mask_b: [u8; MASK_LEN],
-    /// `Terepek+0x9d0`. 50×50 byte grid, row-major [inf: tile/texture IDs; 166 distinct in 0.map].
+    /// `Terepek+0x9d0`. 50×50 byte grid, row-major [inf: tile/texture IDs]. Loaded, but no code in the
+    /// ELF reads it (the remaster textures the terrain from `textures/colony/terrainmap/<n>/`).
     pub tiles: Vec<u8>,
-    /// `Terepek+0x1394`. 50×50 u16 grid, row-major [inf: heights; used by TestHeightMapDifferences].
-    pub heights: Vec<u16>,
-    /// `Terepek+0x5cc`, with its count at `+0x9cc`. N little-endian f32 [unk: role].
+    /// `Terepek+0x1394`. 50×50 heights, row-major, **i16** (`fix2float` sign-extends; map 56 has
+    /// negative ones). See [`ColonyMap::height_world`].
+    pub heights: Vec<i16>,
+    /// `Terepek+0x5cc`, with its count at `+0x9cc`. N little-endian f32. Loaded, never read by the ELF
+    /// (dead 1999 editor data).
     pub extra: Vec<f32>,
-    /// `Terepek+0x8c`. f32 [inf: base height offset; GetHeightFloat subtracts it].
+    /// `Terepek+0x8c` as stored in the file. The loader turns it into `200 − base`
+    /// ([`ColonyMap::base_height`]), which overwrites `terepleiro.txt`'s "special height".
     pub base: f32,
 }
 
@@ -52,7 +60,7 @@ impl ColonyMap {
         let mask_a: [u8; MASK_LEN] = take(MASK_LEN).try_into().unwrap();
         let mask_b: [u8; MASK_LEN] = take(MASK_LEN).try_into().unwrap();
         let tiles = take(SIDE * SIDE).to_vec();
-        let heights = take(SIDE * SIDE * 2).chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let heights = take(SIDE * SIDE * 2).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
         let n = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
         if b.len() != FIXED_LEN + 4 * n + 4 {
             return Err(err(&format!("size {} doesn't match list count {n}", b.len())));
@@ -74,7 +82,21 @@ impl ColonyMap {
         self.tiles[y * SIDE + x]
     }
 
-    pub fn height(&self, x: usize, y: usize) -> u16 {
+    /// The loaded base height `Terepek+0x8c`: `-(base − 200)` (`InitHatterekEsTerepek` after the
+    /// `dread`; `GetHeightFloat` adds it to every sample).
+    pub fn base_height(&self) -> f32 {
+        -(self.base - 200.0)
+    }
+
+    /// Height of grid vertex `(x, y)` in world units, as `GetHeightFloat` (ELF 0x464090) uses it:
+    /// `fix2float(h) + base_height`, `fix2float(h) = (f32)((f64)(i16)h / 16.0) − 700.0` (ELF 0x4bb7a0).
+    /// One height cell spans 4 of the 200 `Real2Grid` cells; the terrain is `TEREPXSIZE` world units
+    /// wide (the terrain mesh's bounding box, set in `Init3dColony`).
+    pub fn height_world(&self, x: usize, y: usize) -> f32 {
+        ((self.height(x, y) as f64 / 16.0) as f32 - 700.0) + self.base_height()
+    }
+
+    pub fn height(&self, x: usize, y: usize) -> i16 {
         self.heights[y * SIDE + x]
     }
 }
@@ -87,19 +109,26 @@ pub struct Surface {
     pub kind: i32,
     /// Possible weathers (0 none, 1 rain, 2 snow, 3 sandstorm).
     pub weathers: Vec<i32>,
-    /// Terrain object, heightmap object, radar heightmap, radar pattern.
+    /// Terrain object (`Terepek+0x11`, loaded by `Init3dColony`).
     pub model: String,
+    /// Heightmap object, radar heightmap (`colony/bf.b`), radar pattern (`colony/talaj.b`):
+    /// `Terepek+0x2f/+0x4d/+0x6b`. Stored, but the shipped code never opens these files
+    /// (`Colony_Belep` copies the pattern name into a global nothing reads).
     pub height_model: String,
     pub radar_height: String,
     pub radar_pattern: String,
-    /// "spec. magassag" (special height).
+    /// "spec. magassag" (special height): read as a float + 110 into `Terepek+0x8c`, then
+    /// overwritten by the map file's base height ([`ColonyMap::base_height`]). Dead.
     pub special_height: i32,
-    /// Terrain-object description (`obj*.res`) and passability map.
+    /// Terrain-object description (`obj*.res`, `Terepek+0x90`, never opened) and passability map
+    /// (`a.m`, read into a scratch buffer and dropped).
     pub objects: String,
     pub passability: String,
     /// "Az MI itt kezd el epiteni": where automatic building placement starts on an empty map
     /// (`Terepek+0x5c4/+0x5c8`; `re/rules/colony-placement.md` §3), in 200 × 200 grid cells.
     pub ai_build_start: (i32, i32),
+    /// `colony/landzone.map`: read into a scratch buffer and dropped; landing zones are generated at
+    /// runtime (`LandingZone::Generate`).
     pub landing_zone: String,
 }
 

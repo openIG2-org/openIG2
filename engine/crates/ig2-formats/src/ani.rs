@@ -21,7 +21,8 @@ pub struct Ani<'a> {
     pub frame_count: u16,
     pub width: u16,
     pub height: u16,
-    /// Header word at 0x11 [unk; 1 in all shipped files].
+    /// Header word at 0x11 (`AnimHanyBlokk`, 1 in all shipped files). `InitAnim`'s loader stores it
+    /// (ELF 0x45f086) and nothing in the binary reads it back: ignore it.
     pub blocks: u16,
     body: &'a [u8],
 }

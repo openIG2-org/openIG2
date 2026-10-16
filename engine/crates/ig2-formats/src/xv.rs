@@ -149,11 +149,32 @@ fn origin(c: &mut Cur) -> Result<(u8, [f32; 3])> {
 
 #[derive(Debug, Clone)]
 pub struct ChildRef {
-    /// Bytes 0x00..0x10 of the child record [unk].
+    /// Bytes 0x00..0x10 of the child record: `f32[3]` translation ([`ChildRef::translation`]), then
+    /// 4 bytes no code reads (often the exporter's `0xCDCDCDCD` fill).
     pub head: [u8; 16],
     /// 3×3 rotation/scale matrix, row-major (`+0x10`, copied to `+100` and fed to `MultipleMatrix`).
     pub matrix: [f32; 9],
     pub name: String,
+}
+
+impl ChildRef {
+    /// The child's offset in the parent's frame: `p' = M·v + t` (`Kocka2` ELF 0x5fac80 and `Kocka`
+    /// 0x5f6a40 read child record +0x00..+0x0c as three floats).
+    pub fn translation(&self) -> [f32; 3] {
+        std::array::from_fn(|i| f32::from_le_bytes(self.head[4 * i..4 * i + 4].try_into().unwrap()))
+    }
+}
+
+/// One node animation key (21 f32), as `Kocka` (ELF 0x5f6a40) interpolates it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodeKey {
+    /// Full child transform (rotation and scale), replacing the child record's matrix while animated.
+    pub matrix: [f32; 9],
+    /// Rotation only: the chain used for normals/lighting (`spsorttype+0x24`).
+    pub rotation: [f32; 9],
+    /// Translation key. The child is placed at `child.translation + key.translation −
+    /// key₀.translation` (key₀ = frame 0 of the same child).
+    pub translation: [f32; 3],
 }
 
 #[derive(Debug, Clone)]
@@ -167,13 +188,27 @@ pub struct NodeHeader {
     /// Lower-detail archive (`openxv(lod)`) [inf].
     pub lod_archive: String,
     pub children: Vec<ChildRef>,
-    /// `children × frames × 84` bytes of per-child animation keys (21 × f32 each) [inf].
+    /// `frames × children` animation keys of 84 bytes (21 × f32), frame-major ([`NodeHeader::key`]).
     pub anim: Vec<f32>,
 }
 
 impl NodeHeader {
     pub fn frames(&self) -> u32 {
         self.frames_raw & 0x7FFF_FFFF
+    }
+
+    /// Key of `child` at `frame` (index `(frame · children + child) · 21`, `Kocka` ELF 0x5f6a40).
+    /// The game only uses keys after `SetFrame` gave the child a frame (child `+0xe4` ≥ 0, 8.8 fixed
+    /// point: `frame >> 8` with `(frame & 0xff) / 256` linear blending towards the next key, clamped
+    /// at the last one). Many 1–2-frame nodes hold uninitialised fill here, so don't use their keys
+    /// unless the game animates that child.
+    pub fn key(&self, frame: usize, child: usize) -> Option<NodeKey> {
+        let k = self.anim.get((frame * self.children.len() + child) * 21..)?.get(..21)?;
+        Some(NodeKey {
+            matrix: k[..9].try_into().unwrap(),
+            rotation: k[9..18].try_into().unwrap(),
+            translation: k[18..].try_into().unwrap(),
+        })
     }
 
     pub fn parse(b: &[u8]) -> Result<Self> {
@@ -233,6 +268,7 @@ pub struct Mesh {
     pub version: u8,
     pub origin: [f32; 3],
     pub frames_raw: u32,
+    /// Read into a local and dropped by `LoadObject` (ELF 0x600e30): no meaning in the game.
     pub unknown: u32,
     /// Chained object loaded recursively by `LoadObject` [inf: LOD or attachment].
     pub chained: String,
@@ -240,15 +276,32 @@ pub struct Mesh {
     pub materials: Vec<String>,
     pub vertices: Vec<Vertex>,
     pub faces: Vec<Face>,
-    /// `frames × vertices × 6` f32 (24 bytes per vertex per frame) [inf: position + normal keys].
+    /// `frames × vertices × 6` f32: position + normal per vertex per frame ([`Mesh::frame_vertex`]).
     pub anim: Vec<f32>,
-    /// Per-face flags. Defaults to 7 when absent (68 shipped v0 meshes omit them).
+    /// Per-face wireframe edge mask (`wirekirak` ELF 0x6083f0): bit 0 = edge c–a, bit 1 = a–b,
+    /// bit 2 = b–c (`idx = [a, b, c]`). Only the wireframe renderer reads it. Defaults to 7 (all edges)
+    /// when absent (68 shipped v0 meshes omit the block).
     pub face_flags: Vec<u8>,
 }
 
 impl Mesh {
     pub fn frames(&self) -> u32 {
         self.frames_raw & 0x7FFF_FFFF
+    }
+
+    /// Whether the renderer blends vertex frames: `kirak` (ELF 0x60e160) needs at least 3 frames
+    /// (and a frame set on the child); `LoadObject` runs `optimizeobject` on the others. The frame
+    /// block of 1–2-frame meshes is often uninitialised fill.
+    pub fn is_vertex_animated(&self) -> bool {
+        self.frames() >= 3
+    }
+
+    /// Position and normal of `vertex` at `frame`. `kirak` lerps the positions of frame `f` and
+    /// `f + 1` (clamped to the last frame) and transforms them like the base vertices; the normals
+    /// aren't read by the shipped renderer (frame 0 equals the base vertices).
+    pub fn frame_vertex(&self, frame: usize, vertex: usize) -> Option<([f32; 3], [f32; 3])> {
+        let v = self.anim.get((frame * self.vertices.len() + vertex) * 6..)?.get(..6)?;
+        Some((v[..3].try_into().unwrap(), v[3..].try_into().unwrap()))
     }
 
     pub fn parse(b: &[u8]) -> Result<Self> {

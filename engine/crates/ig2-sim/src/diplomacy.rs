@@ -903,7 +903,8 @@ impl Diplomacy {
     }
 
     /// `FelfedezBirodalom(e, true)`.
-    fn discover(&mut self, w: &mut World, e: usize) {
+    /// `FelfedezBirodalom(e)`: the human meets `e` (a contact slot for empires 1..=8; message 0x1A).
+    pub fn discover(&mut self, w: &mut World, e: usize) {
         if e == 0 || w.ctx.race[e] == 5 || self.players.iter().any(|s| s.empire == e as i32) {
             return;
         }

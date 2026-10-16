@@ -103,10 +103,22 @@ fn every_colony_map_parses() {
     let Some(inst) = install() else { return };
     let maps = inst.list("dataraw/colony/gen_maps/");
     assert_eq!(maps.len(), 75);
+    let (mut lo, mut hi, mut padded, mut negative) = (f32::MAX, f32::MIN, 0, 0);
     for rel in maps {
         // Layout check: parse() verifies the total size against the trailing list count.
-        ig2_formats::colony_map::ColonyMap::parse(&inst.read(rel).unwrap()).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        let m = ig2_formats::colony_map::ColonyMap::parse(&inst.read(rel).unwrap()).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        negative += m.heights.iter().filter(|&&h| h < 0).count();
+        for y in 0..50 {
+            for x in 0..50 {
+                let h = m.height_world(x, y);
+                (lo, hi) = (lo.min(h), hi.max(h));
+            }
+        }
+        // Mask columns 50–51 (padding the game never reads) are set in some files.
+        padded += (0..50).filter(|&y| (m.mask_a[y * 13 + 12] | m.mask_b[y * 13 + 12]) & 0xF0 != 0).count();
     }
+    eprintln!("colony heights {lo}..{hi} world units ({negative} negative samples); rows with padding bits set: {padded}");
+    assert!(lo > -8192.0 && hi < 8192.0); // within the default terrain extent (`TEREPXSIZE`)
 }
 
 #[test]
@@ -126,6 +138,7 @@ fn every_xv_archive_parses_exactly() {
     let Some(inst) = install() else { return };
     let mut counts = [0usize; 4]; // archives, nodes, meshes, materials
     let (mut counts_scenes, mut without_root) = (0usize, Vec::new());
+    let mut anim = [0usize; 4]; // animated meshes, ..with frame 0 = base; animated-node children, ..with key₀ = offset
     for rel in inst.all_files().into_iter().filter(|p| p.ends_with(".xv")) {
         let bytes = inst.read(rel).unwrap();
         let a = Archive::parse(&bytes).unwrap_or_else(|e| panic!("{rel}: {e}"));
@@ -145,13 +158,26 @@ fn every_xv_archive_parses_exactly() {
             }
         }
         // Every archive yields a scene, and face indices stay in range.
-        fn check(n: &Node, rel: &str) {
+        fn check(n: &Node, rel: &str, anim: &mut [usize; 4]) {
+            if n.header.frames() >= 3 {
+                // Animated node: frame 0's translation key is the child's own offset.
+                for (i, (c, _)) in n.children.iter().enumerate() {
+                    let k = n.header.key(0, i).unwrap();
+                    anim[2] += 1;
+                    anim[3] += (0..3).all(|a| (k.translation[a] - c.translation()[a]).abs() < 1e-3) as usize;
+                }
+            }
             for (c, content) in &n.children {
                 match content {
-                    ChildContent::Node(sub) => check(sub, rel),
+                    ChildContent::Node(sub) => check(sub, rel, anim),
                     ChildContent::Mesh(m) => {
                         for f in &m.faces {
                             assert!(f.idx.iter().all(|&i| (i as usize) < m.vertices.len()), "{rel}:{}", c.name);
+                        }
+                        if m.is_vertex_animated() && !m.vertices.is_empty() {
+                            // Vertex frames hold position + normal; frame 0 is the base mesh.
+                            anim[0] += 1;
+                            anim[1] += m.vertices.iter().enumerate().all(|(i, v)| m.frame_vertex(0, i).unwrap().0 == v.pos) as usize;
                         }
                     }
                     ChildContent::Missing => {}
@@ -161,15 +187,44 @@ fn every_xv_archive_parses_exactly() {
         let stem = rel.rsplit('/').next().unwrap().trim_end_matches(".xv");
         match a.scene(Some(stem)).unwrap_or_else(|e| panic!("{rel}: {e}")) {
             Some(scene) => {
-                check(&scene, rel);
+                check(&scene, rel, &mut anim);
                 counts_scenes += 1;
             }
             None => without_root.push(rel),
         }
     }
-    eprintln!("archives/nodes/meshes/materials: {counts:?}; scenes {counts_scenes}; no root: {without_root:?}");
+    eprintln!("archives/nodes/meshes/materials: {counts:?}; scenes {counts_scenes}; no root: {without_root:?}; anim {anim:?}");
+    assert!(anim[0] > 0 && anim[1] == anim[0], "{anim:?}");
+    assert!(anim[2] > 0 && anim[3] * 10 >= anim[2] * 9, "{anim:?}");
     assert_eq!(counts, [937, 1816, 14594, 16074]);
     assert!(without_root.len() <= 3, "{without_root:?}");
+}
+
+#[test]
+fn model_textures_resolve() {
+    use ig2_formats::xv::{Archive, Material};
+    let Some(inst) = install() else { return };
+    let (mut total, mut found, mut retried) = (0usize, 0usize, 0usize);
+    for rel in inst.list("dataraw/vector/").into_iter().filter(|p| p.ends_with(".xv")) {
+        let screen = rel["dataraw/vector/".len()..].split('/').next().unwrap();
+        let bytes = inst.read(rel).unwrap();
+        for m in Archive::parse(&bytes).unwrap().members.iter().filter(|m| m.name.to_ascii_lowercase().ends_with(".xvm")) {
+            let mat = Material::parse(m.data).unwrap();
+            if mat.texture.is_empty() {
+                continue;
+            }
+            total += 1;
+            if let Some(p) = inst.resolve_model_texture(screen, &mat.texture) {
+                found += 1;
+                retried += (p.ends_with("_bmt.pvr") || p.ends_with("_bmf.pvr")) as usize;
+            }
+        }
+    }
+    eprintln!("model textures: {found}/{total} resolve, {retried} through the .bmt/.bmf retry");
+    assert!(found * 1000 >= total * 997, "{found}/{total}");
+    // `D3DTexture::Load`'s retry: the game's own lookup finds `_bmt` textures.
+    let t = inst.resolve_texture("textures/colony/", "shadowmap.bmp");
+    assert_eq!(t.as_deref(), Some("dataraw/textures/colony/shadowmap_bmf.pvr"));
 }
 
 #[test]

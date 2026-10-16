@@ -6,8 +6,8 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
 
 [dev-dependencies]
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
-ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
 ig2-rules = { version = "0.1.0", path = "../ig2-rules" }

@@ -10,3 +10,7 @@ rust-version.workspace = true
 lz4_flex.workspace = true
 encoding_rs.workspace = true
 thiserror.workspace = true
+miniz_oxide = "0.8"
+
+[dev-dependencies]
+serde_json = "1.0.154"
