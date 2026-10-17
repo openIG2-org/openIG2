@@ -1258,13 +1258,11 @@ fn design_fader(f: &mut Frame, design: Option<TexId>, white: TexId, vv: &Virtual
         return;
     }
     let a = (255.0 - ft.clamp(0.0, 255.0)) / 255.0;
-    // The texture is sampled in linear light (its mean 0.5 reads as 0.22): ×1.5 brings the fill to the exe's half
-    // brightness over black [obs].
-    let c = crate::starmap_hud::srgb_blend(fill, a);
-    let c = [c[0] * 1.5, c[1] * 1.5, c[2] * 1.5, c[3]];
+    // The 2D pass samples the texture's stored values (its mean 0.5: the exe's half brightness over black [obs]).
+    let c = crate::starmap_hud::fade_color(fill, a);
     let mut q = crate::render::Instance::new(crate::render::kind::SPRITE, vv.px(x + w / 2.0, y + h / 2.0), [w * vv.k / 2.0, h * vv.k / 2.0], c);
     q.uv = [0.0, 0.0, (w / 256.0).min(1.0), (h / 256.0).min(1.0)];
-    f.push(tex, crate::render::Blend::Alpha, q);
+    f.push(tex, crate::render::Blend::GammaAlpha, q);
     crate::starmap_panels::fader(f, white, vv, r, [0.0; 3], 255.0, edge, et);
 }
 

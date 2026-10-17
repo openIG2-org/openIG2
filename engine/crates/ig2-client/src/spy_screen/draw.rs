@@ -84,17 +84,28 @@ impl SpyScreen {
     pub fn draw(&self, f: &mut Frame, d: &SpyData, g: &Draw2d, spots: &[Spot; 12]) {
         // `SpyGfx2D_1` queues `FadeKeret(6, 248, 172, 217)` and `(464, 248, …)` in (0, 45, 90) at 128 past frame 35,
         // but no capture shows them [obs: the panels' edges are the fill's (2, 20, 26)]: not drawn.
-        if self.frame < 50.0 {
-            return;
+        // The 2D passes draw only while the screen is open (`spyKINYITVA`) and not closing (`spyBECSUKAS`).
+        if self.opened && !self.closing {
+            self.names(f, d, g, spots);
+            self.faders(f, d, g);
+            if let Some(p) = self.popup {
+                self.popup_box(f, d, g, &p);
+            }
+            self.texts(f, d, g);
+            if let Some(p) = self.popup {
+                self.popup_rows(f, d, g, &p);
+            }
         }
-        self.names(f, d, g, spots);
-        self.faders(f, d, g);
-        if let Some(p) = self.popup {
-            self.popup_box(f, d, g, &p);
-        }
-        self.texts(f, d, g);
-        if let Some(p) = self.popup {
-            self.popup_rows(f, d, g, &p);
+        self.tooltip_box(f, g);
+    }
+
+    /// The tooltip (`GFX_DateMoneyScrollFade` ELF 0x66d160: the box in fader pass 3; `UpdateFrame` ELF 0x578e40:
+    /// the text over everything): `FadeKerettelKerekit(x + 15, y − 1, len·6 + 10, 13)` in (0, 10, 30) at 30 with a
+    /// (0, 13, 31) edge at 15, the text at `(x + 21, y + 2)`, 99 cells, size `0x1a % 8` = 2, flags 0xc (left,
+    /// clipped to the screen), colour 2.
+    fn tooltip_box(&self, f: &mut Frame, g: &Draw2d) {
+        if let Some(s) = g.t.tips.get(self.tip.shown as usize) {
+            self.tip.draw(f, g.font, g.white, &g.v, g.palette, s);
         }
     }
 

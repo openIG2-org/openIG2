@@ -43,6 +43,13 @@ pub struct Assets {
     stars: [Option<TexId>; 8],
     /// `felho3`, `felho2`: the galaxy clouds.
     clouds: [Option<TexId>; 2],
+    /// `radar.bmp`: the radar ranges' dots; the discs' colours, `rrange.bmp` (planets) and `rrange2.bmp` (fleets).
+    radar_dot: Option<TexId>,
+    radar_fill: [[f32; 3]; 2],
+    /// `gomb.xvb`: the sky sphere around the galaxy (spec §6.5), baked into world space, per texture.
+    sky: Vec<(Vec<crate::render3d::MeshVertex>, TexId)>,
+    /// The planet and cloud meshes (spec §3.3).
+    planet_meshes: crate::starmap_planet::Planets,
     /// `screen/star_pl` (30 × 22 cells, 17 columns) and `screen/star_pl2` (15 × 11, 16 columns).
     fleets: Option<Sheet>,
     small_fleets: Option<Sheet>,
@@ -63,6 +70,18 @@ impl Assets {
         let planets = std::array::from_fn(|s| if s > 0 { tex(&format!("dataraw/textures/starmap/p{s}_bmp.pvr")) } else { None });
         let stars = std::array::from_fn(|i| tex(&format!("dataraw/textures/starmap/n{}_bmp.pvr", i + 1)));
         let clouds = [tex("dataraw/textures/starmap/felho3_bmp.pvr"), tex("dataraw/textures/starmap/felho2_bmp.pvr")];
+        let radar_dot = tex("dataraw/textures/starmap/radar_bmp.pvr");
+        let sky = sky_sphere(r, install);
+        let planet_meshes = crate::starmap_planet::Planets::load(r, install);
+        // The disc textures are one colour (rrange2 with faint stripes): their mean.
+        let mean = |path: &str, or: [f32; 3]| {
+            img(path).map_or(or, |i| {
+                let n = (i.rgba.len() / 4).max(1) as f32;
+                let sum = i.rgba.chunks_exact(4).fold([0.0f32; 3], |a, p| [a[0] + p[0] as f32, a[1] + p[1] as f32, a[2] + p[2] as f32]);
+                sum.map(|c| c / n / 255.0)
+            })
+        };
+        let radar_fill = [mean("dataraw/textures/starmap/rrange_bmp.pvr", [1.0, 0.0, 0.0]), mean("dataraw/textures/starmap/rrange2_bmp.pvr", [0.27, 0.0, 1.0])];
         let mut sheet = |path: &str, cell: [f32; 2]| {
             img(path).map(|i| Sheet { size: [i.width as f32, i.height as f32], tex: r.add_texture(&i), cell })
         };
@@ -73,7 +92,7 @@ impl Assets {
             eprintln!("ig2-client: no palette from ig2.exe ({e}); drawing everything grey");
             vec![[0.6; 3]; DD_COLORS]
         });
-        Self { white, select, planets, stars, clouds, fleets, small_fleets, palette }
+        Self { white, select, planets, stars, clouds, radar_dot, radar_fill, sky, planet_meshes, fleets, small_fleets, palette }
     }
 
     /// Empire `e`'s colour, `DDColor[e + 15]` (spec §7).
@@ -81,6 +100,39 @@ impl Assets {
         let [r, g, b] = self.palette.get(owner as usize + 15).copied().unwrap_or([0.6; 3]);
         [r, g, b, a]
     }
+}
+
+/// `Init3dStarmap`'s `gomb.xvb` (`AddToScene(…, mainxvb, 2.0)`, not moved or turned): a sphere of radius ≈ 2048
+/// around the galaxy's origin with the nebula textures `texcso3.bmp` and `ujtext.bmp` on the inside.
+fn sky_sphere(r: &mut Renderer, install: &Install) -> Vec<(Vec<crate::render3d::MeshVertex>, TexId)> {
+    use crate::scene::{Model, Placement};
+    let model = match Model::load(install, "vector/starmap/", "gomb.xvb", "textures/starmap/") {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("ig2-client: {e} (no sky sphere)");
+            return Vec::new();
+        }
+    };
+    let xf = Placement::add_to_scene(model.origin, 2.0).world((0.0, 0.0, 0.0), [0.0; 3]);
+    model
+        .parts
+        .iter()
+        .filter_map(|p| {
+            let t = Image::load(install, p.texture.as_deref()?).ok()?;
+            let tex = r.add_texture(&t);
+            let verts = p
+                .verts
+                .iter()
+                .map(|v| crate::render3d::MeshVertex {
+                    pos: xf.point(v.pos),
+                    normal: crate::scene::normalise(crate::scene::apply(&xf.matrix, v.normal)),
+                    uv: v.uv,
+                    color: [1.0, 1.0, 1.0, 0.0],
+                })
+                .collect();
+            Some((verts, tex))
+        })
+        .collect()
 }
 
 /// `DDColor` from the user's `ig2.exe` (never shipped: ADR 0004).
@@ -183,6 +235,38 @@ impl Camera {
         let d = [h, p[0] - self.x, p[1] + self.y];
         let r = |i: usize| m[i][0] * d[0] + m[i][1] * d[1] + m[i][2] * d[2];
         [r(0), r(1), r(2) - self.distance()]
+    }
+
+    /// World `(h, x, y)` → clip space for the mesh pass: the particles' projection (`e = M·(p − pivot) − (0, 0, D)`,
+    /// `fov` 600, centre (320, 250) of the 480-line virtual screen) as a matrix. The near plane is `ShowStarmap`'s
+    /// `zbm` (0.4): the long info's eye sits about one unit from its planet.
+    fn clip_matrix(&self) -> [[f32; 4]; 4] {
+        const NEAR: f32 = 0.4;
+        const FAR: f32 = 10000.0;
+        let m = self.matrix();
+        let pivot = [0.0, self.x, -self.y];
+        let t = |i: usize| -(m[i][0] * pivot[0] + m[i][1] * pivot[1] + m[i][2] * pivot[2]);
+        // e = M·p + (t0, t1, t2 − D); w = −e.z.
+        let e = [[m[0][0], m[0][1], m[0][2], t(0)], [m[1][0], m[1][1], m[1][2], t(1)], [m[2][0], m[2][1], m[2][2], t(2) - self.distance()]];
+        let w = e[2].map(|x| -x);
+        let sx = 2.0 * FOV / VIRTUAL_H * self.size[1] / self.size[0];
+        let sy = -2.0 * FOV / VIRTUAL_H;
+        let cy = 1.0 - 2.0 * CENTER[1] / VIRTUAL_H;
+        let zf = FAR / (FAR - NEAR);
+        let rows = [
+            e[0].map(|x| x * sx),
+            std::array::from_fn(|c| e[1][c] * sy + w[c] * cy),
+            std::array::from_fn(|c| w[c] * zf - if c == 3 { NEAR * zf } else { 0.0 }),
+            w,
+        ];
+        std::array::from_fn(|c| std::array::from_fn(|r| rows[r][c]))
+    }
+
+    /// The eye (spec §2.2): the camera's rows and its world point (h, x, y), where `e = 0` in [`Camera::eye`].
+    fn eye_world(&self) -> crate::starmap_planet::Eye {
+        let m = self.matrix();
+        let d = self.distance();
+        crate::starmap_planet::Eye { matrix: m, at: [m[2][0] * d, m[2][1] * d + self.x, m[2][2] * d - self.y] }
     }
 
     /// Virtual → physical pixels.
@@ -289,7 +373,98 @@ pub struct View {
     pub selected: Option<Pick>,
     /// Draw every fleet and planet, not only those the human sees (the original's `DEBUGX` view).
     pub reveal: bool,
+    /// `StarSize[p − 1]` over its backup while the planet's long info flies in or out (re/screens/starmap.md §15.1).
+    pub star_scale: Option<(usize, f32)>,
     background: Vec<Particle>,
+    /// The background as generated, before any drift.
+    generated: Vec<Particle>,
+    /// `GomolygasCounter`: UI ticks the starmap has run (the clouds' drift clock).
+    clouds: i32,
+    /// `HANYFELHOPARTICLE = OptionsFogResolution · 50`: how many clouds of each set are drawn and drift.
+    fog: usize,
+    twinkle: Twinkle,
+    /// `futofeny`, the starmap's UI clock (+1 per UI tick) when pinned (`--futofeny`, the exe's value at a capture);
+    /// else `time · 100`.
+    pub futofeny: Option<f32>,
+    /// The remaster's clock `game::acttime` (exe 0xFD1520, ms) in seconds, `sg3d_time.x` of the cloud material, when
+    /// pinned (`--acttime`, the exe's value at a capture); else the frame time.
+    pub acttime: Option<f32>,
+}
+
+/// The background's layout: the far stars, `Clouds1`, `Clouds2`, `KodPamacsok`.
+const FAR_STARS: usize = 2500;
+const CLOUDS: usize = 105;
+const CLOUDS1: usize = FAR_STARS;
+const CLOUDS2: usize = CLOUDS1 + CLOUDS;
+const FOG: usize = CLOUDS2 + CLOUDS;
+/// `KodPamacsok`' members that keep a colour (spec §6.1).
+const FOG_LIT: usize = 30;
+
+/// `PulzaljKisCsillag` (exe 0x5a05a0, ELF 0x6e9d50): the far stars twinkle. Its tables, built at the first call.
+struct Twinkle {
+    rnd1: Vec<i32>,
+    rnd2: Vec<i32>,
+    sine: [i32; 256],
+}
+
+impl Twinkle {
+    /// The exe's own approximations of π (3.1415, 3.141592) are part of the tables.
+    #[allow(clippy::approx_constant)]
+    fn new() -> Self {
+        let sin = |x: f64| x.sin();
+        let rnd1 = (0..FAR_STARS).map(|i| (((sin((i as f32 * 82.0) as f64) as f32 / 3.0 + 1.0) * 0.25 * 180.0) as f64 / 3.1415) as i32).collect();
+        let rnd2 = (0..FAR_STARS).map(|i| (sin((i as f32 * 415.0) as f64) as f32 * 30.0 + 120.0) as i32).collect();
+        let sine = std::array::from_fn(|j| (sin((j as f32 * 0.0078125) as f64 * 3.141592) * 90.0) as i32);
+        Self { rnd1, rnd2, sine }
+    }
+
+    /// Far star `i`'s colour at UI clock `futofeny` (`starmaperosseg` 1): `0x646464` with the transparency
+    /// `sine[((i + ⌊futofeny/10⌋)·rnd1[i]) & 0xff] + rnd2[i]`. The exe updates a quarter of the stars per frame
+    /// (`melyikkiscsill`), so right after `⌊futofeny/10⌋` changes the other quarters still show the previous value;
+    /// the port gives every star the current one.
+    fn color(&self, i: usize, futofeny: f32) -> u32 {
+        let k = (futofeny / 10.0) as i32;
+        let t = self.sine[(self.rnd1[i].wrapping_mul(i as i32 + k) & 0xff) as usize] + self.rnd2[i];
+        (t.wrapping_mul(0x100_0000) as u32) | 0x64_6464
+    }
+}
+
+/// `PulzaljNagyCsillag` (exe 0x5a0810, ELF 0x6ea0e0): a seen system star's size `StarSize + sin(c + futofeny/4/13)/2.5`
+/// (c = the planet's 0-based index), in f64, every frame; its colour is white (`0xffffff`), not the planet's `szin`.
+pub fn star_pulse(index: usize, star_size: f32, futofeny: f32) -> f32 {
+    (((futofeny as f64 * 0.25) / 13.0 + (index as f64 - 1.0)).sin() / 2.5 + star_size as f64) as f32
+}
+
+/// `OptionsFogResolution` from the user's options (2 when the file has none).
+fn fog_particles() -> usize {
+    let res = ig2_formats::options::Options::load().int("OptionsFogResolution").unwrap_or(2);
+    (res.max(0) as usize * 50).min(CLOUDS)
+}
+
+/// `GalaxisGomolygas` (ELF 0x6d8ac0, exe 0x5999c0) at drift clock `clock`: every fifth UI tick the first `n` clouds
+/// of both sets move and grow a little, in f64 written back to f32.
+fn drift(bg: &mut [Particle], clock: i32, n: usize) {
+    if clock % 5 != 0 {
+        return;
+    }
+    let t = clock as f64;
+    let step = |v: &mut f32, w: f64, k: f64| *v = (w / k + *v as f64) as f32;
+    for i in 0..n.min(CLOUDS) {
+        let k = i as f64;
+        let p = &mut bg[CLOUDS1 + i];
+        step(&mut p.h, (t / (k + 319.0) + k).cos(), 40.0);
+        step(&mut p.p[0], (t / (k + 210.0) + k).sin(), 40.0);
+        step(&mut p.p[1], (t / (k + 250.0) + k).sin(), 40.0);
+        step(&mut p.size, (t / (k + 400.0) + k).cos(), 70.0);
+    }
+    for i in 0..n.min(CLOUDS) {
+        let k = i as f64;
+        let p = &mut bg[CLOUDS2 + i];
+        step(&mut p.h, (t / (k + 279.0) + k).sin(), 9.0);
+        step(&mut p.p[0], (t / (k + 210.0) + k).cos(), 9.0);
+        step(&mut p.p[1], (t / (k + 150.0) + k).sin(), 9.0);
+        step(&mut p.size, (t / (k + 220.0) + k).sin(), 20.0);
+    }
 }
 
 /// A background particle (spec §6): galaxy point, height, size (galaxy units; 0 = a point), colour, texture set.
@@ -301,6 +476,8 @@ struct Particle {
     color: u32,
     /// 0 = point star, 1 = `felho3`, 2 = `felho2`.
     set: u8,
+    /// The index in its set (the clouds past `HANYFELHOPARTICLE` aren't drawn).
+    n: u16,
 }
 
 /// MSVC's `rand()` from `srand(seed)` (the exe's libc).
@@ -323,35 +500,52 @@ impl MsvcRand {
 
 /// A point on the galaxy's spiral arms: (height, x, y) (`GenerateStarParticles`' arm recipe); `mid` draws what
 /// the original draws between the position and the arm's turn.
+/// The exe (0x599cf0) rounds the square root and the sine and cosine to f32 and mixes f32 and f64 steps (asm; the ELF
+/// works in f64).
 fn spiral<T>(r: &mut MsvcRand, mid: impl FnOnce(&mut MsvcRand) -> T) -> (f32, [f32; 2], T) {
     let (ax, ay) = if r.random(2) == 0 { (1.0f32, 0.0f32) } else { (0.0, 1.0) };
     let h0 = (r.random(30) - 15) as f32;
     let (a, b) = (r.random(600), r.random(50));
-    let x = (ax * (a - 300) as f32 + b as f32) - 25.0;
+    let x = (b as f32 + (a - 300) as f32 * ax) - 25.0;
     let (a, b) = (r.random(600), r.random(50));
-    let y = (ay * (a - 300) as f32 + b as f32) - 25.0;
+    let y = (b as f32 + (a - 300) as f32 * ay) - 25.0;
     let t = mid(r);
-    let dist = ((x * x + y * y) as f64).sqrt();
-    let turn0 = (dist / 100.0) as f32;
-    let h = (h0 as f64 * ((1.0 - dist / 180000f64.sqrt()) + 0.3)) as f32;
-    let turn = turn0 + (r.random((turn0 * 100.0) as i32) as f32 / 100.0 - turn0 / 2.0) / 2.5;
-    let (s, c) = ((turn as f64).sin(), (turn as f64).cos());
-    (h, [(c * x as f64 - s * y as f64) as f32, (c * y as f64 + s * x as f64) as f32], t)
+    let dist = ((y * y + x * x) as f64).sqrt() as f32;
+    let turn0 = dist / 100.0;
+    let h = (((1.0 - dist / (180000f64.sqrt() as f32)) as f64 + 0.3) * h0 as f64) as f32;
+    let turn = ((r.random((turn0 * 100.0) as i32) as f64 / 100.0 - (turn0 * 0.5) as f64) / 2.5 + turn0 as f64) as f32;
+    let (s, c) = ((turn as f64).sin() as f32, (turn as f64).cos() as f32);
+    (h, [c * x - s * y, s * x + c * y], t)
+}
+
+/// `AddColor` (exe 0x590f60, ELF 0x6d8650): adds `rgb · (1 − d/√720900)^power` to every cloud of both sets at
+/// distance `d` from `at` (h, x, y), each channel capped at 255 (f32 with the root and the power in f64).
+fn add_color(clouds: &mut [Particle], at: [f32; 3], power: f32, rgb: [i32; 3]) {
+    let far = 720900f64.sqrt() as f32;
+    for p in clouds {
+        let d = [at[0] - p.h, at[1] - p.p[0], at[2] - p.p[1]];
+        let dist = ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]) as f64).sqrt() as f32;
+        let k = ((1.0 - dist / far) as f64).powf(power as f64) as f32;
+        let ch = |shift: u32, add: i32| (((p.color >> shift) & 0xff) as f32 + add as f32 * k) as u32;
+        let (r, g, b) = (ch(0, rgb[0]).min(255), ch(8, rgb[1]).min(255), ch(16, rgb[2]).min(255));
+        p.color = 0xc800_0000 | b << 16 | g << 8 | r;
+    }
 }
 
 /// `GenerateStarParticles` (ELF 0x6d8e90): the far stars, the clouds and the fog clumps from `srand(1)`.
 fn background() -> Vec<Particle> {
     let mut r = MsvcRand(1);
     let grey = |v: i32| (v as u32) * 0x010101;
-    let mut stars = vec![Particle { h: 0.0, p: [0.0; 2], size: 0.0, color: 0, set: 0 }; 2500];
+    let mut stars = vec![Particle { h: 0.0, p: [0.0; 2], size: 0.0, color: 0, set: 0, n: 0 }; FAR_STARS];
     for s in stars.iter_mut().take(1750) {
         let (h, p, v) = spiral(&mut r, |r| r.random(100));
         *s = Particle { h, p, color: grey(v), ..*s };
     }
     let ring = |r: &mut MsvcRand, rad: f32| {
-        let a = (r.random(400) as f32 / 400.0) * std::f32::consts::PI * 2.0;
-        let (s, c) = ((a as f64).sin(), (a as f64).cos());
-        [(-s * rad as f64) as f32, (c * rad as f64) as f32]
+        // In f64 (asm; the double literal is π itself).
+        let a = ((r.random(400) as f64 / 400.0) * std::f64::consts::PI * 2.0) as f32;
+        let (s, c) = ((a as f64).sin() as f32, (a as f64).cos() as f32);
+        [c * 0.0 - s * rad, c * rad + s * 0.0]
     };
     for s in stars.iter_mut().skip(1500) {
         let rad = (r.random(600) - 300) as f32;
@@ -376,23 +570,24 @@ fn background() -> Vec<Particle> {
     let mut out = stars;
     // `Clouds1` (felho3, sizes 5..10) and `Clouds2` (felho2, 12..31).
     for (set, base, span) in [(1u8, 5, 6), (2, 12, 20)] {
-        for _ in 0..105 {
+        for n in 0..CLOUDS as u16 {
             let (h, p, tint) = spiral(&mut r, |r| r.random(50) + 50);
             let size = (r.random(span) + base) as f32;
             let b = (r.random(100) + tint + 0x37) as u32;
             let (g, rr) = ((r.random(50) + 50) as u32, (r.random(50) + 50) as u32);
-            out.push(Particle { h, p, size, color: 0xc800_0000 | b << 16 | g << 8 | rr, set });
+            out.push(Particle { h, p, size, color: 0xc800_0000 | b << 16 | g << 8 | rr, set, n });
         }
     }
-    // The first five `Clouds2` are moved again for `AddColor` (not drawn differently here).
-    let first = out.len() - 105;
+    // The first five `Clouds2` move to new spiral points, each tinting every cloud near it (`AddColor`). The exe
+    // passes the three draws right to left: the first is blue (the ELF's first is red).
     for i in 0..5 {
         let (h, p, ()) = spiral(&mut r, |_| ());
-        out[first + i].h = h;
-        out[first + i].p = p;
-        for _ in 0..3 {
-            r.random(50);
-        }
+        out[CLOUDS2 + i].h = h;
+        out[CLOUDS2 + i].p = p;
+        let b = r.random(50);
+        let g = r.random(50);
+        let rr = r.random(50);
+        add_color(&mut out[CLOUDS1..FOG], [h, p[0], p[1]], 25.0, [rr, g, b]);
     }
     // `KodPamacsok`: 30 fog clumps of 10 (felho2, sizes 25..49), far out of the galaxy plane: the ±675 spreads
     // are the height and x, the ±450 one y.
@@ -412,8 +607,15 @@ fn background() -> Vec<Particle> {
             let b = (bb + r.random(50)) as u32;
             let g = (bg + r.random(50)) as u32;
             let rr = (br + r.random(50)) as u32;
-            out.push(Particle { h, p: [x, y], size, color: 0xc800_0000 | b << 16 | g << 8 | rr, set: 2 });
+            let n = (out.len() - FOG) as u16;
+            out.push(Particle { h, p: [x, y], size, color: 0xc800_0000 | b << 16 | g << 8 | rr, set: 2, n });
         }
+    }
+    // Both binaries copy the colour to the backup at `+0x48` of the clump's index, not the member's, and
+    // `Init3dStarmap` then restores every colour from the backup: only members 0..29 keep theirs, the other 270 are
+    // black (invisible in the additive pass; the exe's live records confirm it).
+    for p in &mut out[FOG + FOG_LIT..] {
+        p.color = 0;
     }
     out
 }
@@ -426,15 +628,28 @@ pub fn orbit_position(p: &PlanetView, clock: f32) -> [f32; 2] {
     [p.pos[0] + (-(a.sin()) * r as f64) as f32, p.pos[1] + (a.cos() * r as f64) as f32]
 }
 
-/// A planet sphere's radius in galaxy units [inf] (spec §3.3).
-fn planet_radius(p: &PlanetView) -> f32 {
-    1.1327 * (p.look.size as f32 / 1600.0 + 0.25)
-}
-
 impl View {
     pub fn new(s: &Snapshot, saved: &SavedView, size: (u32, u32), scale: f32) -> Self {
         let camera = Camera::from_save(saved, s, [size.0 as f32, size.1 as f32]);
-        Self { camera, scale, hover: None, selected: None, reveal: false, background: background() }
+        let generated = background();
+        Self { camera, scale, hover: None, selected: None, reveal: false, star_scale: None, background: generated.clone(), generated, clouds: 0, fog: fog_particles(), twinkle: Twinkle::new(), futofeny: None, acttime: None }
+    }
+
+    /// One UI tick of the starmap (`FRISSIT_Starmap2` → `GalaxisGomolygas`).
+    pub fn ui_tick(&mut self) {
+        self.clouds += 1;
+        drift(&mut self.background, self.clouds, self.fog);
+    }
+
+    /// The clouds as after `clock` UI ticks on the starmap (the exe's `GomolygasCounter`, `--clouds`).
+    pub fn set_clouds(&mut self, clock: i32) {
+        if clock < self.clouds {
+            self.background.clone_from(&self.generated);
+            self.clouds = 0;
+        }
+        while self.clouds < clock {
+            self.ui_tick();
+        }
     }
 
     pub fn resize(&mut self, size: (u32, u32), scale: f32) {
@@ -500,28 +715,54 @@ impl View {
         let cam = &self.camera;
         let m = cam.matrix();
         let k = cam.k();
-        let ui = time * UI_HZ;
-        self.background(&mut f, a, &m);
+        let ui = self.futofeny.unwrap_or(time * UI_HZ);
+        self.sky(&mut f, a, time);
+        self.background(&mut f, a, &m, ui);
+        self.radar(&mut f, a, &m, &curr.radar);
 
         // System stars: `n{(surface − 1) % 8 + 1}` glows in the star colour (spec §3.2).
         for p in self.planets(curr) {
-            let Some((c, half)) = self.star_box(p) else { continue };
+            let Some((c, _)) = self.star_box(p) else { continue };
+            let px = cam.project(p.pos).map_or(0.0, |(_, px)| px);
+            let mut half = star_pulse(p.index, (p.look.star_size >> 1) as f32, ui) * px;
+            if let Some((_, k)) = self.star_scale.filter(|s| s.0 == p.index) {
+                half *= k;
+                if half <= 0.0 {
+                    continue;
+                }
+            }
             let tex = a.stars[(p.surface.max(1) as usize - 1) % 8].unwrap_or(a.white);
             let kind = if tex == a.white { kind::GLOW } else { kind::SPRITE };
-            f.push(tex, Blend::Additive, Instance::new(kind, c, [half; 2], particle_color(p.look.color)));
+            f.push(tex, Blend::GammaAdditive, Instance::new(kind, c, [half; 2], particle_color(0xff_ffff)));
         }
 
-        // Planets on their orbits, spinning (`ShowStarmap`: angle `PlanetRotate · spin · 6`, `PlanetRotate` +1/150
-        // per UI tick).
+        // Planets on their orbits as meshes, spinning (`ShowStarmap`: `RotateObj(0, 0, PlanetRotate · spin · 6)`,
+        // `PlanetRotate` +1/150 per UI tick like `futofeny`; spec §3.3), the long info's planet with its clouds
+        // (`HideClouds`). The particle pass (`DrawStarmapParticles`, a scene callback) comes first: the planets
+        // cover it.
         let clock = prev.orbit + (curr.orbit - prev.orbit) * alpha.clamp(0.0, 1.0);
         let planet_rotate = ui / 150.0;
+        let clouds = self.star_scale.map(|s| s.0);
+        let eye = cam.eye_world();
+        f.mark_late();
         for p in self.planets(curr) {
-            let Some((c, px)) = cam.project(orbit_position(p, clock)) else { continue };
-            let half = (planet_radius(p) * px).max(0.75 * self.scale);
+            let at = orbit_position(p, clock);
+            let spin = p.look.spin as f32 / 100.0;
+            let Frame { scene, late, .. } = &mut f;
+            if let (true, Some(scene)) = (a.planet_meshes.ready(p.surface), scene.as_mut()) {
+                a.planet_meshes.add_planet(scene, late, p.surface, p.look.size, planet_rotate * spin * 6.0, [0.0, at[0], at[1]], &eye);
+                if clouds == Some(p.index) {
+                    a.planet_meshes.add_clouds(scene, late, p.look.size, -planet_rotate * spin * 2.0, [0.0, at[0], at[1]], &eye);
+                }
+                continue;
+            }
+            // Without the meshes: a shaded sprite of the surface map.
+            let Some((c, px)) = cam.project(at) else { continue };
+            let half = (1024.0 * 0.846 * (p.look.size as f32 / 200000.0 + 0.002) / 8.0 * px).max(0.75 * self.scale);
             if c[0] < -half || c[1] < -half || c[0] > cam.size[0] + half || c[1] > cam.size[1] + half {
                 continue;
             }
-            let turn = planet_rotate * p.look.spin as f32 / 100.0 * 6.0 / std::f32::consts::TAU;
+            let turn = planet_rotate * spin * 6.0 / std::f32::consts::TAU;
             match a.planets.get(p.surface as usize).copied().flatten() {
                 Some(t) => f.push(
                     t,
@@ -563,7 +804,7 @@ impl View {
                         continue;
                     }
                     if let Some((s, px)) = cam.project_eye(e) {
-                        f.push(t, Blend::Additive, Instance::new(kind::SPRITE, s, [size * px; 2], particle_color(color)));
+                        f.push(t, Blend::GammaAdditive, Instance::new(kind::SPRITE, s, [size * px; 2], particle_color(color)));
                     }
                 }
             }
@@ -581,7 +822,7 @@ impl View {
                 Some(s) => {
                     let frame = if fl.flags & 0x4000 != 0 && !small { 17 } else { fl.owner.max(1) as u32 } + row * cols;
                     let (col, row) = ((frame - 1) % cols, ((frame - 1) / cols) % 48);
-                    f.push(s.tex, Blend::Alpha, Instance { uv: s.uv(col, row), ..Instance::new(kind::SPRITE, c, half, [dim, dim, dim, 1.0]) });
+                    f.push(s.tex, Blend::GammaAlpha, Instance { uv: s.uv(col, row), ..Instance::new(kind::SPRITE, c, half, [dim, dim, dim, 1.0]) });
                 }
                 None => f.push(a.white, Blend::Alpha, Instance::new(kind::MARKER, c, [half[1]; 2], a.empire(fl.owner, dim))),
             }
@@ -628,21 +869,26 @@ impl View {
     }
 
     /// The generated galaxy: point stars, clouds and fog clumps, additive (spec §6).
-    fn background(&self, f: &mut Frame, a: &Assets, m: &[[f32; 3]; 3]) {
+    fn background(&self, f: &mut Frame, a: &Assets, m: &[[f32; 3]; 3], futofeny: f32) {
         let cam = &self.camera;
-        for p in &self.background {
+        for (i, p) in self.background.iter().enumerate() {
+            // Black particles add nothing (`Particle` skips textured ones with colour 0); `Init3dStarmap` hands the
+            // cloud sets `HANYFELHOPARTICLE` as their counts.
+            if p.color == 0 || ((CLOUDS1..FOG).contains(&i) && p.n as usize >= self.fog) {
+                continue;
+            }
             let e = cam.eye(m, p.h, p.p);
             if e[2] >= ZCLIP {
                 continue;
             }
             let Some((c, px)) = cam.project_eye(e) else { continue };
-            let color = particle_color(p.color);
+            let color = particle_color(if i < FAR_STARS { self.twinkle.color(i, futofeny) } else { p.color });
             match p.set {
                 0 => {
                     if c[0] < 0.0 || c[1] < 0.0 || c[0] > cam.size[0] || c[1] > cam.size[1] {
                         continue;
                     }
-                    f.push(a.white, Blend::Additive, Instance::new(kind::GLOW, c, [1.5 * self.scale; 2], color));
+                    f.push(a.white, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [0.5 * cam.k(); 2], color));
                 }
                 s => {
                     let half = p.size * px;
@@ -650,10 +896,93 @@ impl View {
                         continue;
                     }
                     if let Some(t) = a.clouds[s as usize - 1] {
-                        f.push(t, Blend::Additive, Instance::new(kind::SPRITE, c, [half; 2], color));
+                        f.push(t, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [half; 2], color));
                     }
                 }
             }
+        }
+    }
+
+    /// The sky sphere (spec §6.5) through the mesh pass, lit by the scene's ambient 0x404040 and parallel light
+    /// 0x808080 from (10, 10, −10), in the gamma pass like the remaster's (re/screens/render.md §2).
+    fn sky(&self, f: &mut Frame, a: &Assets, time: f32) {
+        if a.sky.is_empty() {
+            return;
+        }
+        let (amb, sun) = (0x40 as f32 / 255.0, 0x80 as f32 / 255.0);
+        let mut dynamic = Vec::new();
+        let mut draws = Vec::new();
+        for (verts, tex) in &a.sky {
+            let start = dynamic.len() as u32;
+            dynamic.extend_from_slice(verts);
+            draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+        }
+        let l = crate::scene::normalise([-1.0, -1.0, 1.0]);
+        f.scene = Some(crate::render3d::Scene3d {
+            gamma: true,
+            shadow: None,
+            uniforms: crate::render3d::SceneUniforms {
+                view: self.camera.clip_matrix(),
+                // `w`: `sg3d_time.x` for the planets' cloud material.
+                eye: [0.0, 0.0, 0.0, self.acttime.unwrap_or(time)],
+                light: [l[0], l[1], l[2], 0.0],
+                ambient: [amb; 4],
+                sun: [sun; 4],
+                fog: [0.0; 4],
+                fog_range: [1.0e9, 1.0e9, 0.0, 1.0e9],
+            },
+            draws,
+            dynamic,
+        });
+    }
+
+    /// The radar ranges (spec §6.3): the discs' union in `rrange.bmp`'s colour (planets) or `rrange2.bmp`'s
+    /// (fleets), added at 10 % in gamma space (`SetObjTransparency(1 − 0.1·starmaperosseg·fade)`, the fade from
+    /// zoom 580 to 590), then the `radar.bmp` dots (`FStars` set 2, half size 1.3, red `0xff` or blue `0xc04000`).
+    fn radar(&self, f: &mut Frame, a: &Assets, m: &[[f32; 3]; 3], rings: &crate::starmap_radar::Rings) {
+        let cam = &self.camera;
+        let fade = (1.0 - (cam.zoom - 580.0) / 10.0).clamp(0.0, 1.0);
+        let full = |f: &mut Frame, blend: Blend, color: [f32; 4]| {
+            f.push(a.white, blend, Instance::new(kind::SPRITE, [cam.size[0] / 2.0, cam.size[1] / 2.0], [cam.size[0] / 2.0 + 1.0, cam.size[1] / 2.0 + 1.0], color));
+        };
+        // `rrange.xvb`: a fan of 15 triangles around a unit disc's centre.
+        for fleet in [false, true] {
+            let discs: Vec<_> = rings.discs.iter().filter(|d| d.2 == fleet && d.1 > 0.0).collect();
+            if discs.is_empty() || fade <= 0.0 {
+                continue;
+            }
+            full(f, Blend::MaskClear, [0.0; 4]);
+            for &&(centre, r, _) in &discs {
+                let eye = |k: usize| {
+                    let t = k as f32 * std::f32::consts::TAU / 15.0;
+                    let (sn, co) = ((t as f64).sin() as f32, (t as f64).cos() as f32);
+                    cam.eye(m, 0.0, [centre[0] + co * r, centre[1] + sn * r])
+                };
+                let mid = cam.eye(m, 0.0, centre);
+                let Some((c0, _)) = (mid[2] < ZCLIP).then(|| cam.project_eye(mid)).flatten() else { continue };
+                for k in 0..15 {
+                    let (e1, e2) = (eye(k), eye(k + 1));
+                    if e1[2] >= ZCLIP || e2[2] >= ZCLIP {
+                        continue;
+                    }
+                    if let (Some((c1, _)), Some((c2, _))) = (cam.project_eye(e1), cam.project_eye(e2)) {
+                        f.push(a.white, Blend::MaskMax, Instance::tri(c0, c1, c2, [1.0, 1.0, 1.0, 0.1 * fade]));
+                    }
+                }
+            }
+            let [r, g, b] = a.radar_fill[fleet as usize];
+            full(f, Blend::MaskAdd, [r, g, b, 1.0]);
+            full(f, Blend::MaskRestore, [1.0; 4]);
+        }
+        let Some(t) = a.radar_dot else { return };
+        for d in &rings.dots {
+            let e = cam.eye(m, 0.0, d.pos);
+            if e[2] >= ZCLIP {
+                continue;
+            }
+            let Some((c, px)) = cam.project_eye(e) else { continue };
+            let color = if d.fleet { particle_color(0xc04000) } else { particle_color(0xff) };
+            f.push(t, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [1.3 * px; 2], color));
         }
     }
 }
@@ -758,6 +1087,52 @@ mod tests {
         assert!(b[2000..2500].iter().all(|p| (899.0..1400.0).contains(&r(p))));
     }
 
+    /// The exe's live particle records (`run_screen.py --particles`, `_local/traces/starmap-particles.json`): the
+    /// clouds after its drift clock and the fog clumps' colours, bit for bit.
+    #[test]
+    fn the_background_matches_the_exes_records() {
+        let dir = std::env::var("IG2_TRACE_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../../_local/traces").into());
+        let Ok(text) = std::fs::read_to_string(format!("{dir}/starmap-particles.json")) else {
+            eprintln!("skipped: no starmap-particles.json");
+            return;
+        };
+        let d: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let clock = d["clouds"].as_i64().unwrap() as i32;
+        let fog = d["hany"].as_i64().unwrap() as usize;
+        let mut bg = background();
+        for t in 1..=clock {
+            drift(&mut bg, t, fog);
+        }
+        let hex = |s: &str| (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<u8>>();
+        let f = |r: &[u8], o: usize| f32::from_le_bytes(r[o..o + 4].try_into().unwrap());
+        // The quarter `melyikkiscsill − 1` was updated at the grab's `futofeny`, the others up to three frames earlier.
+        let futofeny = d["futofeny"].as_f64().unwrap() as f32;
+        let kis = d["kis"].as_i64().unwrap() as usize;
+        let stars = hex(d["fstars"][0]["recs"].as_str().unwrap());
+        let tw = Twinkle::new();
+        for (i, p) in bg.iter_mut().enumerate().take(FAR_STARS) {
+            let exe = u32::from_le_bytes(stars[i * 0x4c + 0xc..i * 0x4c + 0x10].try_into().unwrap());
+            let back = (kis + 3 - i % 4) % 4;
+            p.color = (0..=back as i32 * 2).map(|d| tw.color(i, futofeny - d as f32)).find(|&c| c == exe).unwrap_or(tw.color(i, futofeny));
+        }
+        let mut bad = 0;
+        for (set, first, n) in [(0, 0, FAR_STARS), (8, CLOUDS1, fog), (9, CLOUDS2, fog), (10, FOG, 300)] {
+            let recs = hex(d["fstars"][set]["recs"].as_str().unwrap());
+            for (i, r) in recs.chunks_exact(0x4c).take(n).enumerate() {
+                let p = &bg[first + i];
+                let (want, got) = ([f(r, 0), f(r, 4), f(r, 8), f(r, 0x14)], [p.h, p.p[0], p.p[1], p.size]);
+                let color = u32::from_le_bytes(r[0xc..0x10].try_into().unwrap());
+                if want.map(f32::to_bits) != got.map(f32::to_bits) || color != p.color {
+                    if bad < 10 {
+                        eprintln!("set {set} #{i}: exe {want:?} {color:08x}, port {got:?} {:08x}", p.color);
+                    }
+                    bad += 1;
+                }
+            }
+        }
+        assert_eq!(bad, 0);
+    }
+
     #[test]
     fn fleets_are_picked_before_planets() {
         let mut s = Snapshot { planets: vec![planet(1, 0.0, 0.0), planet(2, 50.0, 0.0)], ..Default::default() };
@@ -770,3 +1145,5 @@ mod tests {
         assert_eq!(at([25.0, 30.0]), None);
     }
 }
+
+

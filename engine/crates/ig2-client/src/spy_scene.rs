@@ -11,9 +11,10 @@
 use ig2_formats::xv::{Archive, ChildContent, Node};
 use ig2_formats::Install;
 
+use crate::lighting;
 use crate::render::{Renderer, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
-use crate::scene::{self, Model, Part, Placement, V3};
+use crate::scene::{self, frame_keys, Model, Part, Placement, V3};
 
 const VECTORS: &str = "vector/spy/";
 const TEXTURES: &str = "textures/spy/";
@@ -71,9 +72,14 @@ pub struct Spot {
 /// Everything `Spying3DUpdate` needs from the screen's state.
 #[derive(Debug, Clone, Default)]
 pub struct Pose {
-    /// `spyframe` 0..=50 (the opening), `spywireframe` 0..10.
+    /// `spyframe` 0..=50 (the opening, back to 0 when closing), `spywireframe` 0..10.
     pub frame: f32,
     pub wire: f32,
+    /// `spyKELLKINYITAS` (the screen opens and closes animated), `spyKINYITVA` (fully open once), `spyBECSUKAS`
+    /// (closing).
+    pub animated: bool,
+    pub opened: bool,
+    pub closing: bool,
     /// `SpyPalastRotation`.
     pub rotation: f64,
     /// `spyFrameValtozo`, `spyAtfordulas`, `spyAtvaneFordulva`, `spykeringeto`.
@@ -89,10 +95,23 @@ pub struct Pose {
     pub head: Option<TexId>,
 }
 
+/// A part of the frame `spybck2`: its look and whether it belongs to the telescopes (child 1, `Group18`).
+#[derive(Clone)]
+struct FramePart {
+    piece: Piece,
+    glass: f32,
+    telescope: bool,
+}
+
 pub struct SpyScene {
-    frame: Vec<(Piece, f32)>,
-    /// The sphere `Gomb` at frames 50..=60: edges (pairs of model-space points).
-    wire: Vec<Vec<[V3; 2]>>,
+    /// The frame's parts posed at the integer frames 0..=50 (`SetFrame(SpyMainMesh, spyframe)`; the same parts in
+    /// the same order at every frame).
+    frame: Vec<Vec<FramePart>>,
+    /// The sphere `Gomb` at frames 0..=60: its triangles (points in `Gomb`'s own space: the model's minus the
+    /// child's translation) with their edge masks.
+    wire: Vec<Vec<([V3; 3], u8)>>,
+    /// `Gomb`'s translation in the model (replaced by `MoveObj` while the screen is animated).
+    gomb: V3,
     pedestals: Vec<Pedestal>,
     ring: Vec<Piece>,
     disc: Vec<Piece>,
@@ -178,39 +197,38 @@ impl SpyScene {
         // `SpyMainMesh` at rest (`SetFrame(spyframe = 50)`): child 1 (the telescopes) is hidden once the screen
         // is open, child 0 is the wireframe sphere (`PropertiesOn(0x40)`), drawn below; the panels' fills
         // (`Group59/Object05`, `Group60/Object06`) are `SetObjTransparency(0.8)`.
-        let main = Model::load_at(install, VECTORS, "spybck2.xvb", TEXTURES, Some(50))?;
-        let mut frame = Vec::new();
-        for p in &main.parts {
-            let t = top(&p.path);
-            if t == "Gomb" || t == "Group18" {
-                continue;
-            }
-            let glass = if p.path.ends_with("/Object05") || p.path.ends_with("/Object06") { 0.8 } else { -1.0 };
-            for piece in pieces(r, install, &[p], &mut cache, white) {
-                frame.push((piece, glass));
-            }
-        }
+        // The telescopes' children 4 and 5 (`Group16`, `Group17`) are hidden for good (`Spying3DInit`); the rest of
+        // child 1 shows while the screen opens (before frame 25) and while it closes (`Spying3DUpdate`).
+        let gomb = children(install, "spybck2").first().map_or([0.0; 3], |c| c.1);
         let masks = sphere_masks(install);
+        let mut frame = Vec::new();
         let mut wire = Vec::new();
-        for f in 50..=60 {
+        let mut origin = [1024.0; 3];
+        for f in 0..=60 {
             let m = Model::load_at(install, VECTORS, "spybck2.xvb", TEXTURES, Some(f))?;
-            let mut edges = Vec::new();
-            for p in m.parts.iter().filter(|p| top(&p.path) == "Gomb") {
-                for (i, t) in p.verts.chunks_exact(3).enumerate() {
-                    let mask = masks.get(i).copied().unwrap_or(7);
-                    let (a, b, c) = (t[0].pos, t[1].pos, t[2].pos);
-                    if mask & 2 != 0 {
-                        edges.push([a, b]);
+            origin = m.origin;
+            if f <= 50 {
+                let mut parts = Vec::new();
+                for p in &m.parts {
+                    let t = top(&p.path);
+                    if t == "Gomb" || (t == "Group18" && matches!(p.index.get(1), Some(4 | 5))) {
+                        continue;
                     }
-                    if mask & 4 != 0 {
-                        edges.push([b, c]);
-                    }
-                    if mask & 1 != 0 {
-                        edges.push([c, a]);
+                    let glass = if p.path.ends_with("/Object05") || p.path.ends_with("/Object06") { 0.8 } else { -1.0 };
+                    for piece in pieces(r, install, &[p], &mut cache, white) {
+                        parts.push(FramePart { piece, glass, telescope: t == "Group18" });
                     }
                 }
+                frame.push(parts);
             }
-            wire.push(edges);
+            let mut tris = Vec::new();
+            let local = |v: V3| -> V3 { std::array::from_fn(|k| v[k] - gomb[k]) };
+            for p in m.parts.iter().filter(|p| top(&p.path) == "Gomb") {
+                for (i, t) in p.verts.chunks_exact(3).enumerate() {
+                    tris.push(([local(t[0].pos), local(t[1].pos), local(t[2].pos)], masks.get(i).copied().unwrap_or(7)));
+                }
+            }
+            wire.push(tris);
         }
         let palast = Model::load(install, VECTORS, "spybck2a.xvb", TEXTURES)?;
         let kids = children(install, "spybck2a");
@@ -238,7 +256,7 @@ impl SpyScene {
         let mut status_tex: Vec<TexId> = STATUS_TEXTURES.iter().map(|n| texture(r, install, n, &mut cache, white)).collect();
         status_tex.extend((0..HOURGLASS).map(|k| texture(r, install, &format!("{:06}.bmp", 10000 + k), &mut cache, white)));
         let head_tex = r.add_texture(&crate::assets::Image { width: 1, height: 1, rgba: vec![0, 0, 0, 255] });
-        Ok(Self { frame, wire, pedestals, ring, disc, icon, race_tex, status_tex, white, head_tex, frame_origin: main.origin })
+        Ok(Self { frame, wire, gomb, pedestals, ring, disc, icon, race_tex, status_tex, white, head_tex, frame_origin: origin })
     }
 
     /// The pedestals' places for pose `p` (`BeallitKemekAtlatszosaga`: the carousel turned by `rotation`, each
@@ -287,22 +305,68 @@ impl SpyScene {
     /// The 3D pass for this frame, sized `size` physical pixels.
     pub fn build(&self, p: &Pose, size: [f32; 2]) -> Scene3d {
         let mut b = Builder::default();
-        let lights = Lights::new(p.orbit);
-        // The frame (`SpyMainMesh`, scale 0.45 at (0, 2, −650)).
+        let lights = lights(p.orbit);
+        // The frame (`SpyMainMesh`, scale 0.45 at (0, 2, −650)), posed at `spyframe` (`Kocka` interpolates the keys
+        // in 1/256 frame steps; here the posed vertices of the two integer frames around it).
         let main = Placement::add_to_scene(self.frame_origin, 0.45).world((0.0, 0.0, 0.0), [0.0, 2.0, -650.0]);
-        for (piece, glass) in &self.frame {
-            let look = if *glass >= 0.0 { Look::Glass(1.0 - glass) } else { Look::Lit(0.0) };
-            b.piece(piece, look, &lights, |v| main.point(v));
+        let (f0, f1, ft) = frame_keys(p.frame, self.frame.len());
+        // `Spying3DUpdate`: the telescopes show (and the ring hides) while opening before frame 25 and while closing.
+        let telescopes = (!p.opened && p.frame < 25.0) || p.closing;
+        if let (Some(a), Some(c)) = (self.frame.get(f0), self.frame.get(f1)) {
+            for (x, y) in a.iter().zip(c) {
+                if x.telescope && !telescopes {
+                    continue;
+                }
+                let look = if x.glass >= 0.0 { Look::Glass(1.0 - x.glass) } else { Look::Lit(0) };
+                b.piece(&lerp_piece(&x.piece, &y.piece, ft), look, &lights, |v| main.point(v));
+            }
         }
         // The wireframe sphere (`SetFrame(spyframe + spywireframe)`): its edges at the texture's colour, unlit
-        // but for the ambient light [obs: (1, 8, 10) = Racsszin (8, 101, 132) × 0x14/0xff].
-        let k = p.wire.clamp(0.0, 10.0);
-        let (f0, t) = (k.floor() as usize, k.fract());
-        if let (Some(a), Some(c)) = (self.wire.get(f0), self.wire.get((f0 + 1).min(self.wire.len().saturating_sub(1)))) {
-            let colour = [8.0, 101.0, 132.0].map(|c: f32| linear(c / 255.0 * AMBIENT));
-            for (e0, e1) in a.iter().zip(c) {
-                let lerp = |x: V3, y: V3| std::array::from_fn(|j| x[j] + (y[j] - x[j]) * t);
-                b.line(main.point(lerp(e0[0], e1[0])), main.point(lerp(e0[1], e1[1])), colour, size, self.white);
+        // but for the ambient light [obs: (1, 8, 10) = Racsszin (8, 101, 132) × 0x14/0xff]. While the screen is
+        // animated `Gomb` is moved to `(spyInitPos1 = 0, (1 − f)·200, −(1 − f)·1000)` (`MoveObj` replaces the
+        // child's translation) and turned `(sin((1 − f)·2)·3, sin((1 − f)·2.1)·2, 0)`, `f = spyframe/50`; its
+        // transparency is `1.35 − 2·spyframe/50` up to frame 25 (`spySetObjTransparencyH`, clamped to
+        // 1e−6..0.9999999), else 1e−6.
+        let (w0, w1, t) = frame_keys(p.frame + p.wire, self.wire.len());
+        let (offset, turn) = if p.animated {
+            let g = 1.0 - p.frame / 50.0;
+            let a = ((g * 2.0) as f64).sin() as f32 * 3.0;
+            let b2 = (g as f64 * 2.1).sin() as f32 * 2.0;
+            ([0.0, g * 200.0 / 1024.0, -(g * 1000.0) / 1024.0], scene::create_matrix(a, b2, 0.0))
+        } else {
+            (self.gomb, scene::create_matrix(0.0, 0.0, 0.0))
+        };
+        let tr = if p.frame <= 25.0 { (1.35 - p.frame * 2.0 / 50.0).clamp(1e-6, 0.9999999) } else { 1e-6 };
+        if let (Some(a), Some(c)) = (self.wire.get(w0), self.wire.get(w1)) {
+            // Transparent, the lines are the texture's colour × the opacity in the frame's gamma space [obs: closing
+            // frame 20, opacity 0.45: (4, 45, 59) on a line, (6, 71, 92) where two cross; opening frame 12: (2, 24,
+            // 32) at crossings]; opaque, ambient-lit.
+            let (colour, opacity) = if tr < 0.0001 {
+                ([8.0, 101.0, 132.0].map(|c: f32| c / 255.0 * AMBIENT), 1.0)
+            } else {
+                let o = 1.0 - tr;
+                ([8.0, 101.0, 132.0].map(|c: f32| c / 255.0), o)
+            };
+            let at = |v: V3| {
+                let q = scene::apply(&turn, v);
+                main.point([q[0] + offset[0], q[1] + offset[1], q[2] + offset[2]])
+            };
+            // Only the triangles facing the camera in the model's winding draw their edges (the engine's back-face
+            // test) [obs: closing frame 20, the sphere seen from outside shows one side's grid; inside, at rest,
+            // every triangle faces the camera].
+            for ((x, mask), (y, _)) in a.iter().zip(c) {
+                let lerp = |i: usize| at(std::array::from_fn(|j| x[i][j] + (y[i][j] - x[i][j]) * t));
+                let (pa, pb, pc) = (lerp(0), lerp(1), lerp(2));
+                let (u, w) = (sub(pb, pa), sub(pc, pa));
+                let n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+                if n[0] * pa[0] + n[1] * pa[1] + n[2] * pa[2] > 0.0 {
+                    continue;
+                }
+                for (bit, e0, e1) in [(2, pa, pb), (4, pb, pc), (1, pc, pa)] {
+                    if mask & bit != 0 {
+                        b.line(e0, e1, colour, opacity, size, self.white);
+                    }
+                }
             }
         }
         // The carousel.
@@ -312,11 +376,12 @@ impl SpyScene {
             let Some((race, state)) = p.slots.get(i).copied().flatten() else {
                 // An empty pedestal: the sheet is hidden (`RarakKemekTexturai`), the base and its "---" stay.
                 for x in &ped.base {
-                    b.piece(x, glass_or_lit(spots[i].transparency, 0.0), &lights, |v| palast.point(Self::turned(v, ped.origin, rot)));
+                    b.piece(x, glass_or_lit(spots[i].transparency, 0), &lights, |v| palast.point(Self::turned(v, ped.origin, rot)));
                 }
                 continue;
             };
-            let extra = if p.selected == Some(i) { (((p.orbit * 90.0) as f64).sin() as f32 + 1.0) * 127.0 / 255.0 } else { 0.0 };
+            // `SpyRarakFeny`: the selected pedestal's own ambient light, `(sin(90k) + 1)·127` grey.
+            let extra = if p.selected == Some(i) { ((((p.orbit * 90.0) as f64).sin() as f32 + 1.0) * 127.0) as u8 } else { 0 };
             let at = |v: V3| palast.point(Self::turned(v, ped.origin, rot));
             for x in &ped.base {
                 b.piece(x, glass_or_lit(spots[i].transparency, extra), &lights, at);
@@ -339,7 +404,7 @@ impl SpyScene {
                 b.piece(&Piece { tex, ..x.clone() }, Look::Glass((1.0 - spots[i].transparency).min(1.0)), &lights, |v| place.point(v));
             }
         }
-        if p.frame >= 25.0 {
+        if !telescopes {
             // `SpyKozep` (scale 0.303) and the disc `kor` (0.173) at (0, 182, −1000): turned about z by
             // `spyFrameValtozo/220`, about y by `spyAtvaneFordulva`, and flipping over `spyAtfordulas` 0..30 (moved
             // towards the camera and back).
@@ -364,33 +429,46 @@ impl SpyScene {
             };
             let ring = Placement::add_to_scene([1024.0; 3], 0.303).world((0.0, 0.0, 0.0), [0.0, y, z]);
             for x in &self.ring {
-                b.piece(x, Look::Lit(0.0), &lights, |v| ring.point(turn(v, p.spin as f32 / 220.0)));
+                b.piece(x, Look::Lit(0), &lights, |v| ring.point(turn(v, p.spin as f32 / 220.0)));
             }
-            let disc = Placement::add_to_scene([1024.0; 3], 0.173).world((0.0, 0.0, 0.0), [0.0, y, z]);
-            let tex = p.head.unwrap_or(self.head_tex);
-            for x in &self.disc {
-                b.piece(&Piece { tex, ..x.clone() }, Look::Flat, &lights, |v| disc.point(turn(v, 0.0)));
-            }
+            self.draw_disc(&mut b, p, [0.0, y, z], &|v| turn(v, 0.0), Look::Flat, &lights);
+        } else if p.closing {
+            // Closing: the ring is hidden; the disc stays turned as it was, fades (`1 − f`, clamped like
+            // `spySetObjTransparencyH`) and drops back to `(0, (1 − f)·70 + 182, −1000 − (1 − f)·700)`.
+            let g = 1.0 - p.frame / 50.0;
+            let turn = |v: V3| scene::apply(&scene::axis_matrix([0.0, 1.0, 0.0], p.flipped), v);
+            let o = 1.0 - g.clamp(1e-6, 0.9999999);
+            self.draw_disc(&mut b, p, [0.0, g * 70.0 + 182.0, -1000.0 - g * 700.0], &turn, Look::Glass(o), &lights);
         }
         b.finish(size)
     }
-}
 
-/// The linear-light factor that scales a mid-tone texel (sRGB 0.4) as the engine's factor `x` scales it in sRGB.
-fn gamma(x: f32) -> f32 {
-    linear(0.4 * x.max(0.0)) / linear(0.4)
-}
-
-/// An sRGB value (0..1) in linear light.
-fn linear(v: f32) -> f32 {
-    if v <= 0.04045 {
-        v / 12.92
-    } else {
-        ((v + 0.055) / 1.055).powf(2.4)
+    /// The head-video disc `kor` (scale 0.173) at `at`, shown once its video started (`UnhideObj(spyKorId)` past
+    /// the flip's frame 15).
+    fn draw_disc(&self, b: &mut Builder, p: &Pose, at: V3, turn: &dyn Fn(V3) -> V3, look: Look, lights: &lighting::Lights) {
+        let Some(tex) = p.head else { return };
+        let disc = Placement::add_to_scene([1024.0; 3], 0.173).world((0.0, 0.0, 0.0), at);
+        for x in &self.disc {
+            b.piece(&Piece { tex, ..x.clone() }, look, lights, |v| disc.point(turn(v)));
+        }
     }
 }
 
-fn glass_or_lit(transparency: f32, extra: f32) -> Look {
+fn sub(a: V3, b: V3) -> V3 {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+/// A frame part between two posed frames.
+fn lerp_piece(a: &Piece, b: &Piece, t: f32) -> Piece {
+    if t == 0.0 || a.verts.len() != b.verts.len() {
+        return a.clone();
+    }
+    let l = |x: V3, y: V3| -> V3 { std::array::from_fn(|k| x[k] + (y[k] - x[k]) * t) };
+    let verts = a.verts.iter().zip(&b.verts).map(|(x, y)| scene::Vert { pos: l(x.pos, y.pos), normal: scene::normalise(l(x.normal, y.normal)), uv: x.uv, lnormal: l(x.lnormal, y.lnormal) }).collect();
+    Piece { verts, tex: a.tex }
+}
+
+fn glass_or_lit(transparency: f32, extra: u8) -> Look {
     if transparency < 0.0001 {
         Look::Lit(extra)
     } else {
@@ -412,49 +490,25 @@ fn bbox_centre(points: impl Iterator<Item = V3>) -> V3 {
     std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0)
 }
 
+/// The screen's lights (`Spying3DInit`, `spyOldalsoFenyekBe` ELF 0x6b9c80, `spyMozgatMainFenyek` 0x6b9a60): the
+/// ambient 0x141414, a white parallel light 0x808080 from (0, 0, −10) and two coloured ones (0x7f5d00, 0x004e7f)
+/// moved to `(sin(20k)·300, cos(20k)·200, −1000)` and the same at +1.57075 (`k = spykeringeto`), lit by the engine's
+/// model (`lighting`, re/screens/research.md §2.1).
 /// `Spying3DInit`'s ambient 0x141414.
 const AMBIENT: f32 = 0x14 as f32 / 255.0;
 
-/// The screen's lights (`Spying3DInit`, `spyOldalsoFenyekBe` ELF 0x6b9c80, `spyMozgatMainFenyek` 0x6b9a60): the
-/// ambient 0x141414, a white light 0x808080 at (0, 0, −10), and two coloured ones (0x7f5d00 and 0x004e7f) circling
-/// at (±300, ±200, −1000) with `spykeringeto`, in the ring's plane. Shaded per vertex here (the engine's Gouraud pass)
-/// as lights at those points, one-sided [inf: the capture's ring takes the colours on its rims only, on the side
-/// the lights are; the white light's face-on value matches the frame's brackets and figures]. The colour words are
-/// read as `0x00RRGGBB` [inf].
-struct Lights {
-    points: [(V3, [f32; 3]); 3],
-}
-
-impl Lights {
-    fn new(orbit: f32) -> Self {
-        // 0x80 is full light [inf: the capture's ring is drawn at its texture's own brightness, face-on].
-        let rgb = |c: u32| [((c >> 16) & 0xff) as f32 / 128.0, ((c >> 8) & 0xff) as f32 / 128.0, (c & 0xff) as f32 / 128.0];
-        let a = (orbit * 20.0) as f64;
-        let l3 = [(a.sin() * 300.0) as f32, (a.cos() * 200.0) as f32, -1000.0];
-        let l4 = [((a + 1.57075).sin() * 300.0) as f32, ((a + 1.57075).cos() * 200.0) as f32, -1000.0];
-        Self { points: [([0.0, 0.0, -10.0], rgb(0x808080)), (l3, rgb(0x7f5d00)), (l4, rgb(0x004e7f))] }
-    }
-    /// The light on a vertex at world `p` with world normal `n`.
-    fn shade(&self, p: V3, n: V3, extra: f32) -> [f32; 3] {
-        let mut c = [AMBIENT + extra; 3];
-        for (i, (at, col)) in self.points.iter().enumerate() {
-            let l = scene::normalise([at[0] - p[0], at[1] - p[1], at[2] - p[2]]);
-            let d = n[0] * l[0] + n[1] * l[1] + n[2] * l[2];
-            let d = if i == 0 { d.abs() } else { d.max(0.0) };
-            for k in 0..3 {
-                c[k] += col[k] * d;
-            }
-        }
-        c.map(|x| x.min(1.3))
-    }
+fn lights(orbit: f32) -> lighting::Lights {
+    let side = |a: f32| [((a as f64).sin() * 300.0) as f32, ((a as f64).cos() * 200.0) as f32, -1000.0];
+    let k = orbit * 20.0;
+    lighting::Lights::default().ambient(0x141414).parallel(0x808080, [0.0, 0.0, -10.0]).parallel(0x7f5d00, side(k)).parallel(0x004e7f, side(k + 1.57075))
 }
 
 #[derive(Clone, Copy)]
 enum Look {
     /// Lit opaque (alpha-tested), with an extra ambient term (the selected spy's pulse).
-    Lit(f32),
-    /// Unlit at this opacity (`SetObjTransparency`: transparent parts take the texture's colour × opacity
-    /// [obs: the panels' (2, 20, 26) = Racsszin × 0.2]).
+    Lit(u8),
+    /// Lit at this opacity (`SetObjTransparency`: the texture's colour × the light × opacity [obs: the panels' (2,
+    /// 20, 26) = Racsszin × 0.2 with the lights about saturated]).
     Glass(f32),
     /// Unlit and opaque (the video disc).
     Flat,
@@ -468,25 +522,30 @@ struct Builder {
 }
 
 impl Builder {
-    fn piece(&mut self, x: &Piece, look: Look, lights: &Lights, at: impl Fn(V3) -> V3) {
+    fn piece(&mut self, x: &Piece, look: Look, lights: &lighting::Lights, at: impl Fn(V3) -> V3) {
         let start = self.dynamic.len() as u32;
         for v in &x.verts {
-            // The engine lights and blends in the frame's gamma space; this frame is sRGB, so the factors go
-            // through the transfer curve ([`gamma`]) to land on the same values.
+            // The engine lights and blends in the frame's gamma space: the gamma pass (re/screens/render.md §2).
             let p = at(v.pos);
             let (rgb, a) = match look {
                 Look::Lit(e) => {
-                    // The normal through the same transform (rotation and uniform scale).
-                    let q = at([v.pos[0] + v.normal[0], v.pos[1] + v.normal[1], v.pos[2] + v.normal[2]]);
-                    let n = scene::normalise([q[0] - p[0], q[1] - p[1], q[2] - p[2]]);
-                    (lights.shade(p, n, e).map(gamma), 0.0)
+                    let w = lighting::through(&at, v.pos, v.lnormal);
+                    let c = if e > 0 { lights.clone().ambient(u32::from_le_bytes([e, e, e, 0])).rgb(w) } else { lights.rgb(w) };
+                    (c, 0.0)
                 }
-                Look::Glass(o) => ([gamma(o) / o.max(1e-6); 3], o),
+                // Transparent parts are lit too (`fenyekszamolasa` with property 8 keeps the colour and puts the
+                // opacity in alpha) [obs: opening 30's right panel 1.74 → 1.16].
+                Look::Glass(o) => {
+                    let c = lights.rgb(lighting::through(&at, v.pos, v.lnormal));
+                    (c, o)
+                }
                 Look::Flat => ([1.0; 3], 0.0),
             };
             self.dynamic.push(MeshVertex { pos: p, normal: v.normal, uv: v.uv, color: [rgb[0], rgb[1], rgb[2], a] });
         }
-        let d = MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: x.tex, glass: matches!(look, Look::Glass(_)) };
+        // The opaque video disc takes the remaster's `VIDEO` material.
+        let video = matches!(look, Look::Flat);
+        let d = MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: x.tex, glass: matches!(look, Look::Glass(_)), cloud: false, shadow: crate::render3d::Shadow::None, video, additive: false };
         if d.glass {
             self.glass.push(d);
         } else {
@@ -494,8 +553,9 @@ impl Builder {
         }
     }
 
-    /// A one-pixel line between two world points, as a thin quad facing the camera.
-    fn line(&mut self, a: V3, b: V3, rgb: [f32; 3], size: [f32; 2], white: TexId) {
+    /// A one-pixel line between two world points, as a thin quad facing the camera, `rgb` blended at opacity `o`.
+    #[allow(clippy::too_many_arguments)]
+    fn line(&mut self, a: V3, b: V3, rgb: [f32; 3], o: f32, size: [f32; 2], white: TexId) {
         if a[2] > -1.0 || b[2] > -1.0 {
             return;
         }
@@ -512,9 +572,9 @@ impl Builder {
         let start = self.dynamic.len() as u32;
         let n = [0.0, 0.0, 1.0];
         for q in [off(a, 1.0), off(a, -1.0), off(b, 1.0), off(b, -1.0), off(b, 1.0), off(a, -1.0)] {
-            self.dynamic.push(MeshVertex { pos: q, normal: n, uv: [0.0, 0.0], color: [rgb[0], rgb[1], rgb[2], 1.0] });
+            self.dynamic.push(MeshVertex { pos: q, normal: n, uv: [0.0, 0.0], color: [rgb[0], rgb[1], rgb[2], o] });
         }
-        self.glass.push(MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: white, glass: true });
+        self.glass.push(MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: white, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
     }
 
     fn finish(mut self, size: [f32; 2]) -> Scene3d {
@@ -529,6 +589,8 @@ impl Builder {
         let mut draws = std::mem::take(&mut self.opaque);
         draws.extend(self.glass);
         Scene3d {
+            gamma: true,
+            shadow: None,
             uniforms: SceneUniforms {
                 view,
                 eye: [0.0; 4],
@@ -561,13 +623,10 @@ impl HeadVideo {
             .and_then(|b| {
                 let ani = ig2_formats::ani::Ani::parse(&b).ok()?;
                 let (w, h) = (ani.width as u32, ani.height as u32);
-                // An opaque texture: pixels no frame wrote yet are black.
-                // `DrawAnimInterlace`: every other row at half brightness [obs: the capture's stripes, 27 vs 54].
+                // An opaque texture: pixels no frame wrote yet are black. `PlayAnimVector` (ELF 0x45ea70) uploads the
+                // frames as they are; the stripes are the `VIDEO` material's (re/screens/render.md §3).
                 let opaque = |mut rgba: Vec<u8>| {
-                    for (i, p) in rgba.chunks_exact_mut(4).enumerate() {
-                        if (i / w as usize) % 2 == 1 {
-                            p[..3].iter_mut().for_each(|c| *c /= 2);
-                        }
+                    for p in rgba.chunks_exact_mut(4) {
                         p[3] = 255;
                     }
                     rgba
@@ -588,5 +647,21 @@ impl HeadVideo {
             r.replace_texture(tex, &self.frames[k]);
             self.shown = Some(k);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_keys;
+
+    /// `SetFrame` keeps `frame·256`: the opening's thirds land on 1/256 steps, the last frame stays put.
+    #[test]
+    fn frames_blend_in_256ths() {
+        assert_eq!(frame_keys(0.0, 51), (0, 1, 0.0));
+        assert_eq!(frame_keys(12.5, 51), (12, 13, 0.5));
+        assert_eq!(frame_keys(1.0 / 3.0, 51), (0, 1, 85.0 / 256.0));
+        assert_eq!(frame_keys(50.0, 51), (50, 50, 0.0));
+        assert_eq!(frame_keys(59.75, 61), (59, 60, 0.75));
+        assert_eq!(frame_keys(-1.0, 51), (0, 1, 0.0));
     }
 }

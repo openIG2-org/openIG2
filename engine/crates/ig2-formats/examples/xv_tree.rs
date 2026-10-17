@@ -16,7 +16,7 @@ fn walk(n: &Node, depth: usize) {
                 walk(sub, depth + 1);
             }
             ChildContent::Mesh(mesh) => {
-                println!("{pad}[{i}] {} t {t:?} mesh v {} f {} frames {} mats {:?}", c.name, mesh.vertices.len(), mesh.faces.len(), mesh.frames(), mesh.materials);
+                println!("{pad}[{i}] {} t {t:?} m {m:?} mesh v {} f {} frames {} mats {:?}", c.name, mesh.vertices.len(), mesh.faces.len(), mesh.frames(), mesh.materials);
             }
             ChildContent::Missing => println!("{pad}[{i}] {} missing", c.name),
         }

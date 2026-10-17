@@ -343,9 +343,10 @@ pub fn strongest_enemy(a: i32, b: i32, known: bool, w: &dyn StoryWorld) -> i32 {
     best
 }
 
-/// `st_GetMasodikLegerosebbEllenseg(1)`: the strongest known empire other than empire 1 and the strongest.
-pub fn second_strongest_enemy(w: &dyn StoryWorld) -> i32 {
-    strongest_enemy(1, strongest_enemy(0, 0, false, w), true, w)
+/// `st_GetMasodikLegerosebbEllenseg(x)` (exe 0x5ea7e0): the strongest known empire other than empire `x` and the
+/// strongest (`GetIsmert…(x, GetLegerosebb(0, 0))`).
+pub fn second_strongest_enemy(x: i32, w: &dyn StoryWorld) -> i32 {
+    strongest_enemy(x, strongest_enemy(0, 0, false, w), true, w)
 }
 
 // ---------------------------------------------------------------- the inline stories (spec §8.3–§8.5)

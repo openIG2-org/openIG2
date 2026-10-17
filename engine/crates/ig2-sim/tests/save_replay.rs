@@ -19,7 +19,7 @@ use ig2_sim::colony::{BuildingKind, ColonyRules, Curve};
 use ig2_sim::colony_side::{tech_strength, AutobuildMode, AutobuildRules, SideRules};
 use ig2_sim::diplomacy::DiplomacyRules;
 use ig2_sim::fleet::StarmapEvent;
-use ig2_sim::game::{BattleEvent, ColonyOrder, Fresh, Game, GameEvent, GameRules, Libc, ResearchOrder, StarmapOrder};
+use ig2_sim::game::{BattleEvent, ColonyOrder, Fresh, Game, GameEvent, GameRules, InfoOrder, Libc, ResearchOrder, StarmapOrder};
 use ig2_sim::messages::{cstr, Texts, ENTRY};
 use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
@@ -133,8 +133,8 @@ struct Recording {
     events: Vec<Value>,
     /// `--stage`: the purchases made between `pre.sav` and save 0 (`{"k": "buy", "e", "msg", "accepted"}`).
     buys: Vec<Value>,
-    /// `--orders` / `--colony` / `--research`: starmap / colony / research messages staged before save `before`
-    /// (`{"k": "sorder" | "corder" | "rorder", "before", "type", "vals"}`).
+    /// `--orders` / `--colony` / `--research` / `--info`: starmap / colony / research / info messages staged before
+    /// save `before` (`{"k": "sorder" | "corder" | "rorder" | "iorder", "before", "type", "vals"}`).
     orders: Vec<Value>,
 }
 
@@ -151,7 +151,7 @@ fn recordings() -> Vec<Recording> {
             let all: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
             let (events, rest): (Vec<Value>, Vec<Value>) = all.into_iter().partition(|e| e["k"] == "save");
             let buys = rest.iter().filter(|e| e["k"] == "buy").cloned().collect();
-            let orders = rest.into_iter().filter(|e| e["k"] == "sorder" || e["k"] == "corder" || e["k"] == "rorder").collect();
+            let orders = rest.into_iter().filter(|e| ["sorder", "corder", "rorder", "iorder"].iter().any(|k| e["k"] == *k)).collect();
             Some(Recording { dir, events, buys, orders })
         })
         .collect()
@@ -431,7 +431,9 @@ fn replay_matches_the_exe_tick_by_tick() {
                 }
                 let vals: Vec<i32> = o["vals"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
                 let t = o["type"].as_i64().unwrap() as i32;
-                if o["k"] == "rorder" {
+                if o["k"] == "iorder" {
+                    game.info_order(vals[0] as u8, InfoOrder::from_message(t, &vals[1..]).expect("an info message"));
+                } else if o["k"] == "rorder" {
                     game.research_order(vals[0] as u8, ResearchOrder::from_message(t, &vals[1..]).expect("a research message"));
                 } else if o["k"] == "corder" {
                     game.colony_order(vals[0] as u8, ColonyOrder::from_message(t, &vals[1..]).expect("a colony message"));

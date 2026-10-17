@@ -2,15 +2,41 @@
 //! `Story_Check` runs after `st_Line_include`. Spec: `re/rules/campaign.md` §8.14.
 //!
 //! Stories 801..=868 are the episodes the storylines (§8.9) start. Part 1 is ported: 805, 811, 813, 816, 817,
-//! 818, 820, 830, 831, 835, 837, 841, 842 and 864..=868; the other blocks of the script (801, 802, 804, 806..=810,
-//! 814, 815, 821, 824, 832, 834, 836, 839, 840, 843, 844, 850..=863) are not yet (STATUS U24). What the episodes do
-//! to the rest of the game goes out as [`StoryEvent`]s and [`StoryWorld`] calls.
+//! 818, 820, 830, 831, 835, 837, 841, 842 and 864..=868; part 2a the spy episodes 802, 824, 850, 852 and 861
+//! ([`spies`]); part 2b the ground-war episodes 808 and 854 ([`ground`]); part 2c the diplomacy episodes 810, 857,
+//! 858 and 860 ([`diplomacy`]); the other blocks of the script (801, 804, 806, 807, 809, 814, 815, 821, 832, 834,
+//! 836, 839, 840, 843, 844, 856, 862, 863) are not yet
+//! (STATUS U24). What the episodes do to the rest of the game goes out as
+//! [`StoryEvent`]s and [`StoryWorld`] calls.
+
+mod diplomacy;
+mod ground;
+mod spies;
 
 use crate::story::{flag, Abort, InfoLine, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
-/// `st_Elem_include` (part 1).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ElemStories;
+/// `st_Elem_include` (parts 1, 2a, 2b and 2c).
+#[derive(Debug, Clone, Default)]
+pub struct ElemStories {
+    /// Stories that don't run (a replay of a trace recorded before they were ported: the exe had them patched out).
+    skip: Vec<i32>,
+}
+
+/// Part 2a's stories.
+pub const PART_2A: [i32; 5] = [802, 824, 850, 852, 861];
+
+/// Part 2b's stories.
+pub const PART_2B: [i32; 2] = [808, 854];
+
+/// Part 2c's stories.
+pub const PART_2C: [i32; 4] = [810, 857, 858, 860];
+
+impl ElemStories {
+    /// The script without stories `skip`.
+    pub fn without(skip: &[i32]) -> Self {
+        Self { skip: skip.to_vec() }
+    }
+}
 
 type Block = fn(&mut Story, &mut dyn StoryWorld) -> Result<(), Abort>;
 
@@ -20,25 +46,36 @@ impl Script for ElemStories {
         if w.multiplayer() {
             return;
         }
-        let stories: [(i32, Block); 18] = [
+        let stories: [(i32, Block); 29] = [
+            (802, spies::story_802),
             (805, |s, w| {
                 if s.starting_now() {
                     s.win(0, true, w);
                 }
                 Ok(())
             }),
+            (808, ground::story_808),
+            (810, diplomacy::story_810),
             (811, story_811),
             (813, story_813),
             (816, story_816),
             (817, story_817),
             (818, story_818),
             (820, story_820),
+            (824, spies::story_824),
             (830, story_830),
             (831, story_831),
             (835, story_835),
             (837, story_837),
             (841, story_841),
             (842, story_842),
+            (850, spies::story_850),
+            (852, spies::story_852),
+            (854, ground::story_854),
+            (857, diplomacy::story_857),
+            (858, diplomacy::story_858),
+            (860, diplomacy::story_860),
+            (861, spies::story_861),
             (864, story_864),
             (865, story_865),
             (866, story_866),
@@ -53,7 +90,7 @@ impl Script for ElemStories {
         ];
         for (id, story) in stories {
             // The catch handler of each story block: `WIN(0, 1)`, then the next story.
-            if s.running(id) && story(s, w).is_err() {
+            if !self.skip.contains(&id) && s.running(id) && story(s, w).is_err() {
                 s.win(0, true, w);
             }
         }

@@ -29,9 +29,61 @@ const date = () => [0xbae040, 0xbae044, 0xbae048].map((x) => va(x).readS32());
 va(0xbbb22f).writeU8(1);
 
 let cfg = null;
-recv('config', (m) => { cfg = m.payload; if (cfg.rop) hookRop(); });
+recv('config', (m) => {
+  cfg = m.payload;
+  if (cfg.rop) hookRop();
+  if (cfg.ropMenu || cfg.menu) hookMenus();
+  if (cfg.spyFrame !== null) hookSpyFrame();
+  if (cfg.resFrame !== null && cfg.resFrame !== undefined) hookResFrame();
+  if (cfg.lightProbe) hookLightProbe();
+  if (cfg.verdict) hookVerdict();
+  if (cfg.hide) hideInfoPlanet(cfg.hide);
+  infoLeft = (cfg.infoPress || []).slice();
+  if (infoLeft.length || cfg.infoSelect) hookInfoMain();
+});
 
-let frames = 0, phase = 0, at = 0, shot = 0, ropDone = false;
+// --info-press IDS: on the info screen (`AktKep` 9) press its hot-spots in turn through the game's own input
+// (`AktIkonKell` 0xB77208 = hot-spot + 0x1e, as --verdict), 30 frames apart: e.g. 9 a row's detail mode, 31 the list
+// down, 15 the star log, 37 back from the detail (re/screens/info.md §6.5–§6.8).
+// `AktIkonKell` sets `AktIkon2` but not `Mouse_Lenyom` (0xDB465F, the press edge `Info_Main` exe 0x4e81c0 checks):
+// set it at `Info_Main`'s entry in the frame the staged hot-spot arrives.
+let infoLeft = [], infoWait = 0, infoPending = 0;
+// --info-select K,X,Y,I: once the presses are done, hold the planet-settings menu of hot-spot K open at (X, Y) on
+// item I (re/screens/info.md §7.1: `InfoSelectTax`/`AutoBuild`/`Priority` 0xB79F8A/0xB79F8B/0xB79FB0, `infoSelectX/Y`
+// 0x90B6FC/0x90B700, `infosmSelected` 0xB84C14), written after every `Info_Main` (which leaves them alone while the
+// pointer isn't on 26..28).
+const INFO_SELECT = { 26: 0xb79f8a, 27: 0xb79f8b, 28: 0xb79fb0 };
+function hookInfoMain() {
+  Interceptor.attach(va(0x4e81c0), {
+    onEnter() {
+      if (infoPending && va(0xbae240).readS32() === infoPending) {
+        va(0xdb465f).writeU8(1);
+        send({ k: 'info-taken', id: infoPending, frames });
+        infoPending = 0;
+      }
+    },
+    onLeave() {
+      const s = cfg.infoSelect;
+      if (!s || infoLeft.length || infoPending) return;
+      for (const k of [26, 27, 28]) va(INFO_SELECT[k]).writeU8(k === s[0] ? 1 : 0);
+      va(0x90b6fc).writeS32(s[1]); va(0x90b700).writeS32(s[2]); va(0xb84c14).writeS32(s[3]);
+    },
+  });
+}
+
+// --hide clouds|planet: the long info's planet without its clouds (`HideClouds` exe 0x59c600 skips its unhide:
+// `JZ` at 0x59c63e made a `JMP`) or the clouds alone (`HideObj` exe 0x4524c0 on `PlanetId` 0xF18BD0 + 8·(AktPlanet − 1)
+// after it), to compare the two meshes one at a time (re/screens/starmap.md §3.3).
+function hideInfoPlanet(what) {
+  if (what === 'clouds') {
+    Memory.patchCode(va(0x59c63e), 1, (c) => c.writeU8(0xeb));
+  } else {
+    const hideObj = nf(va(0x4524c0), 'void', ['pointer']);
+    Interceptor.attach(va(0x59c600), { onLeave() { hideObj(va(0xf18bd0 + (A.AktPlanet.readS32() - 1) * 8)); } });
+  }
+}
+
+let frames = 0, phase = 0, at = 0, shot = 0, ropDone = false, setupDone = false, staged = false, mainCalls = 0, gfx1Calls = 0, spyStage = null;
 
 // --spies MODE: a roster for the human's spy screen (`Kemek` 0xBAFCC8 [9][13] × 0x4c, `OsszHanyKem` 0xBB1F84;
 // re/rules/espionage.md §1.1): five spies of different races and states (at home with skill points, on a mission
@@ -85,6 +137,141 @@ function stageSpies(mode) {
   return { en, ai, spies: plan.length, prisoner: n };
 }
 
+// --spy-frame F [--spy-closing]: hold the spy screen's `spyframe` (f32 0xE75504) at F before every `Spying3DUpdate`
+// (exe 0x590410), the opening's pose (with --spy-closing `spyBECSUKAS` 0xE75383 set: the closing's); re/screens/spy.md
+// §1.1, §2.2. `spyKELLKINYITAS` 0xE75430 (= `KELLKINYITASDEFAULT` 0x912A39, the registry's) is reported.
+// --res-frame F [--res-closing]: hold the research screen's `resframe` (f32 0xDC5368) at F before every
+// `Research3DUpdate` (exe 0x51fd10); with --res-closing `resBECSUKAS` 0xDDF323 set and `resKINYITVA` 0xDDF322 cleared,
+// as `Research_Kilep` leaves them (re/screens/research.md §5); `reskeringeto` 0, `resatlatszosag` 0.85.
+function hookResFrame() {
+  Interceptor.attach(va(0x51fd10), {
+    onEnter() {
+      if (A.AktKep.readS32() !== 4) return;
+      va(0xdc5368).writeFloat(cfg.resFrame);
+      // The side lights' clock `reskeringeto` (f32 0xDDF6BC, read by the inlined `resMozgatMainFenyek`) and the
+      // glass's transparency `resatlatszosag` (f32 0xDC5370, from `res_xy`) pinned too, so the client can match them.
+      va(0xddf6bc).writeFloat(cfg.resKeringeto || 0);
+      va(0xdc5370).writeFloat(0.85);
+      if (resFrames3d < 1000) resFrames3d++;
+      if (cfg.resClosing) { va(0xddf323).writeU8(1); va(0xddf322).writeU8(0); }
+    },
+  });
+}
+
+// --light-probe (research screen): the engine's per-vertex lighting `fenyekszamolasa` (ELF 0x606530, exe 0x52f190,
+// cdecl (pos, vertexnormal[], n, spsorttype, XVOStruct, opacity); re/screens/research.md §2.1) on the screen's first
+// lit frames: per call the object's rotation chain (sp +0x24), flags (+0x68), its lights (+0x6c/+0x70: type, colour
+// word, the light vector +0x28) and every vertex's normal and the colour it got (vertexnormal 0x14 B: xyz, colour
+// +0xc), plus the shade table once. Records {k: 'light', ...} go to --jsonl.
+let resFrames3d = 0, shadeSent = false;
+function hookLightProbe() {
+  Interceptor.attach(va(0x52f190), {
+    onEnter(args) {
+      this.on = A.AktKep.readS32() === 4 && resFrames3d >= 1 && resFrames3d <= 3 && va(0xdff940).readU32() !== 0;
+      if (!this.on) return;
+      this.vn = args[1]; this.n = args[2].toInt32(); this.sp = args[3]; this.xvo = args[4]; this.op = args[5].toInt32();
+    },
+    onLeave() {
+      if (!this.on) return;
+      const sp = this.sp, m = [];
+      for (let i = 0; i < 9; i++) m.push(sp.add(0x24 + 4 * i).readFloat());
+      const flags = sp.add(0x68).readU32(), nl = sp.add(0x70).readS32(), lights = [];
+      for (let i = 0; i < nl && i < 16; i++) {
+        const l = sp.add(0x6c).readPointer().add(4 * i).readPointer();
+        lights.push({ type: l.readS32(), color: l.add(4).readU32(), dir: [0x18, 0x1c, 0x20].map((o) => l.add(o).readFloat()),
+          vec: [0x28, 0x2c, 0x30].map((o) => l.add(o).readFloat()), spec: l.add(0x44).readU8() });
+      }
+      const verts = [];
+      for (let i = 0; i < this.n && i < 3000; i++) {
+        const v = this.vn.add(0x14 * i);
+        verts.push([v.readFloat(), v.add(4).readFloat(), v.add(8).readFloat(), v.add(0xc).readU32()]);
+      }
+      const mat = this.xvo.add(0x34).readPointer().readPointer();
+      const rec = { k: 'light', frame: resFrames3d, sp: sp.toString(), m, flags, opacity: this.op, lights, verts, keringeto: va(0xddf6bc).readFloat() };
+      if (!shadeSent) {
+        const t = mat.add(0x34).readPointer(), sp2 = mat.add(0x38).readPointer();
+        rec.shade = Array.from(new Uint16Array(t.readByteArray(0x4000 + 0x4000)));
+        rec.specular = sp2.isNull() ? null : sp2.toString();
+        rec.shadeAt = t.toString();
+        shadeSent = true;
+      }
+      send(rec);
+    },
+  });
+}
+
+function hookSpyFrame() {
+  Interceptor.attach(va(0x590410), {
+    onEnter() {
+      if (A.AktKep.readS32() !== 7) return;
+      va(0xe75504).writeFloat(cfg.spyFrame);
+      if (cfg.spyClosing) va(0xe75383).writeU8(1);
+    },
+  });
+}
+
+// --verdict N (with --spies verdict): N presses of the verdict buttons 0x14..0x17 (re/screens/spy.md §6.2) through
+// the game's own input (`AktIkonKell` 0xB77208 = hot-spot + 0x1e, as `IG2_gameUpdate` takes it), each on a fresh
+// copy of the report (kind 3, `KemBeszolasok[1]` 0xBAF368, the dialog `SpyBeszolasMi` 0xE75384) with the prisoner's
+// loyalty (`Kemek[x7][x8] + 0x34`), double-agent field (`+0x18`) and stream 0's seed (`RandSeed` 0xBAF2D0) fuzzed.
+// `Spy_Main` (exe 0x58d410) is hooked: the seed before and after its press, the report's new kind; `Multi_Send`
+// (exe 0x513840) gives the fate it sends (0x4a). Records {k: 'verdict', choice, owner, spy, loyalty, master,
+// seed0, seed1, kind, dialog, fate}.
+let verdictLeft = 0, verdictPending = null, verdictWait = 0, verdictRnd = 0;
+function vrnd(n) {
+  verdictRnd = (Math.imul(verdictRnd, 1103515245) + 12345) >>> 0;
+  return (verdictRnd >>> 8) % n;
+}
+function hookVerdict() {
+  verdictLeft = cfg.verdict;
+  verdictRnd = cfg.verdictSeed >>> 0;
+  Interceptor.attach(va(0x58d410), {
+    onEnter() {
+      const id = va(0xbae240).readS32();
+      this.press = verdictPending && id >= 0x14 && id <= 0x17 ? verdictPending : null;
+      if (!this.press) return;
+      // The last press's fate (`MULTIGET_Spy` 0x4a, applied a frame or more later) may have rewritten the
+      // prisoner since the staging: put its fields back here, where the roll reads them.
+      const p = this.press, r = va(0xbafcc8).add((p.owner * 13 + p.spy) * 0x4c);
+      r.add(0x34).writeU8(p.loyalty); r.add(0x18).writeU8(p.master);
+      p.seed0 = va(0xbaf2d0).readU32();
+    },
+    onLeave() {
+      const p = this.press;
+      if (!p) return;
+      p.seed1 = va(0xbaf2d0).readU32();
+      p.kind = va(0xbaf368).readU8();
+      p.dialog = va(0xe75384).readS32();
+      send(p);
+      verdictPending = null;
+      verdictLeft--;
+      verdictWait = 10;
+    },
+  });
+  Interceptor.attach(va(0x513840), {
+    onEnter() {
+      if (!verdictPending) return;
+      const s = this.context.esp;
+      if ((s.add(4).readS32() & 0xffff) === 0x4a) verdictPending.fate = s.add(16).readPointer().readS32();
+    },
+  });
+}
+function stageVerdict(stage) {
+  const owner = stage.ai, k = stage.prisoner;
+  const r = va(0xbafcc8).add((owner * 13 + k) * 0x4c);
+  const loyalty = vrnd(4) ? vrnd(12) : vrnd(256), master = vrnd(3) ? 0 : 1 + vrnd(8);
+  r.add(0x34).writeU8(loyalty); r.add(0x18).writeU8(master);
+  const q = va(0xbaf338).add(0x30);
+  q.writeByteArray(new Array(0x30).fill(0));
+  q.writeU8(3); q.add(4).writeS32(1); q.add(0x10).writeS32(owner); q.add(0x14).writeS32(k);
+  va(0xbaf334).writeS32(1);
+  va(0xe75384).writeS32(3);
+  if (vrnd(2)) va(0xbaf2d0).writeU32((vrnd(0x10000) << 16 | vrnd(0x10000)) >>> 0);
+  const choice = 1 + vrnd(4);
+  verdictPending = { k: 'verdict', choice, owner, spy: k, loyalty, master, fate: null };
+  va(0xb77208).writeS32(0x14 + choice - 1 + 0x1e);
+}
+
 // --fleets N: N fleets of the human (`EN` 0x912A3C) beside the shown planet, built like production does (`FlottaNew`
 // 0x53d400, `HajoNew` 0x53e800, `TankNew` 0x541750): ships of the human's first two ship designs and, when it has
 // one, a vehicle entry; quick-1.sav's human has no fleet of its own.
@@ -123,6 +310,64 @@ function hookRop() {
     if (cfg.ropNow && !ropDone) { target.writeS32(cfg.rop); ropDone = true; send({ k: 'rop', rop: cfg.rop }); }
   });
 }
+// --rop-menu X,Y: hold the radial menu open at the virtual point (`StarmapRopIkonMod` 0xF16F18, `RopIkonFazis`
+// 0xEF1154, `RopIkonFrame` f32 0xE8634C = 50, `LastMouseX/Y` 0xE75A74/78 = the point − (82, 84)); `StarmapGfx2D_1`
+// (exe 0x5a87d0) clears `StarmapVoltRopikonAlap` 0xE75A73 without a held button, so it is set again after it.
+// --menu KIND@X,Y: a select menu held open (re/screens/starmap.md §16): its flag, `smSelectX/Y` 0x927078/0x92707C
+// and the hot-spot as `AktIkon2` 0xBAE240, so `Starmap_Main` (exe 0x5b2b70) keeps it and picks the item under the
+// pointer (--mouse).
+const MENUS = { tax: [0xf1737f, 0x5a], autobuild: [0xf176e8, 0x5e], priority: [0xf176e9, 0x60], sale: [0xf176ea, 0x65], planets: [0xf176eb, 0x32] };
+function stageMenus() {
+  if (cfg.ropMenu) {
+    va(0xf16f18).writeU8(1); va(0xef1154).writeS32(1); va(0xe8634c).writeFloat(50);
+    va(0xe75a74).writeS32(cfg.ropMenu[0] - 82); va(0xe75a78).writeS32(cfg.ropMenu[1] - 84);
+  }
+  if (cfg.menu) {
+    const [flag, spot] = MENUS[cfg.menu.kind];
+    va(0x927078).writeS32(cfg.menu.x); va(0x92707c).writeS32(cfg.menu.y);
+    va(flag).writeU8(1);
+    va(0xbae240).writeS32(spot + (cfg.menu.kind === 'sale' ? cfg.menu.n - 1 : 0));
+    // `smSelected` 0xE75A68 as `Starmap_Main` would pick it (it doesn't run while the clock is paused):
+    // the row under --mouse (§16), −1 without one.
+    let sel = -1;
+    if (cfg.mouse && cfg.menu.kind !== 'planets') {
+      const [mx, my] = cfg.mouse, { x, y } = cfg.menu;
+      const k = Math.floor((my - y) / 13), w = cfg.menu.kind === 'sale' ? (cfg.menu.w || 200) : 120;
+      const first = cfg.menu.kind === 'priority' || cfg.menu.kind === 'sale' ? 1 : 0;
+      const last = { tax: 7, autobuild: 8, priority: 3, sale: 1 }[cfg.menu.kind];
+      if (mx >= x && mx <= x + w && my >= y && k + first <= last) sel = k + first;
+    }
+    if (cfg.menu.kind === 'planets') {
+      // `smSelectChr/Ma/Sz` 0xE75A5C/60/64 as `Starmap_Main` sets them (§17): the longest name a, the longest
+      // production text b (`pct%-design`), ⌈n/32⌉ columns.
+      const e = va(0x912a3c).readS32(), n = va(0x912ac8).readS32(), designs = va(0xb9aa18).add(4 * e).readPointer();
+      let a = 0, b = 0, cnt = 0;
+      for (let p = 1; p <= n; p++) {
+        const q = va(0xb85ea8).add(0x188 * p);
+        if (q.add(0x20).readU8() !== e) continue;
+        cnt++;
+        a = Math.max(a, q.readCString().length);
+        const d = q.add(0x78).readS16();
+        if (d > 0) {
+          const rec = designs.add(0x84 * d), time = rec.add(0x20).readS32();
+          const pct = Math.min(99, 100 - Math.trunc(q.add(0xa0).readS32() * 100 / time));
+          b = Math.max(b, String(pct).padStart(2, ' ').length + 2 + rec.readCString().length);
+        }
+      }
+      const sz = Math.max(1, Math.trunc((cnt + 31) / 32));
+      va(0xe75a5c).writeS32(a + b); va(0xe75a64).writeS32(sz); va(0xe75a60).writeS32(Math.trunc((cnt + sz - 1) / sz));
+    }
+    va(0xe75a68).writeS32(sel);
+  }
+}
+function hookMenus() {
+  // `StarmapGfx2D_1` (exe 0x5a87d0) runs every drawn frame, `Starmap_Main` not while the clock is paused: stage the
+  // state before it and set `StarmapVoltRopikonAlap` (which wants a held button) after it.
+  Interceptor.attach(va(0x5a87d0), {
+    onEnter() { if (staged) { mainCalls++; stageMenus(); } },
+    onLeave() { if (staged) { gfx1Calls++; if (cfg.ropMenu) va(0xe75a73).writeU8(1); } },
+  });
+}
 Interceptor.attach(A.Fake_FRISSITES, {
   onEnter() {
     if (!cfg) return;
@@ -142,9 +387,11 @@ Interceptor.attach(A.Fake_FRISSITES, {
     // Keep the clock paused (`IdoPause` 0xBAE264) once the screen is asked for (the loading screen needs it running,
     // and the screens' `_Belep` can restart it), so the save written at the grab is the moment on screen.
     if (phase >= 3 && !cfg.run && va(0xbae264).readU8() === 0) va(0xbae264).writeU8(1);
+    // --mouse X,Y puts it elsewhere (a menu's hover; on the spy screen a hot-spot's tooltip).
     if (phase >= 2) {
-      va(0x916008).writeS32(320); va(0x91600c).writeS32(240);
-      va(0xdb4654).writeS32(320); va(0xdb4658).writeS32(240);
+      const [mx, my] = phase >= 3 && cfg.mouse && (staged || ((cfg.kep === 7 || cfg.kep === 4) && A.AktKep.readS32() === cfg.kep)) ? cfg.mouse : [320, 240];
+      va(0x916008).writeS32(mx); va(0x91600c).writeS32(my);
+      va(0xdb4654).writeS32(mx); va(0xdb4658).writeS32(my);
     }
     // --debug: the dispatcher's state (`AktKep`, `AktKepKell` 0xBAE250, `Atlepes` 0xBAE24D, `Belep` 0xBAE24C,
     // `OldKep` 0xBAE19C, `IdoPause`) every 120 frames.
@@ -166,20 +413,64 @@ Interceptor.attach(A.Fake_FRISSITES, {
     } else if (phase === 2 && frames >= at + 60 && (A.AktKep.readS32() === 2 || frames >= at + 300)) {
       // `LoadSave` leaves the game on the main menu screen (15) while the clock is paused (with the clock running it
       // goes on to the starmap); ask for ours from there.
-      if (cfg.spies) send({ k: 'spies', stage: stageSpies(cfg.spies) });
+      if (cfg.spies) {
+        spyStage = stageSpies(cfg.spies);
+        send({ k: 'spies', stage: spyStage });
+      }
+      // --fleets on the info screen: the human's fleets first (the list's fleet rows, re/screens/info.md §6.6).
+      if (cfg.fleets && cfg.kep === 9) populate(cfg.fleets);
+      // --info-starlog N: N lines in the unsaved `StarLog` (0xB82990, 200 × 0x2c, the newest last; colour +0, text +8;
+      // `StarlogHanysorfeltoltve` 0xB84BF4), so the star log has something to show (re/screens/info.md §6.8).
+      if (cfg.infoStarlog) {
+        const cols = [1, 2, 3, 6, 0x21, 0x22, 0x23, 7];
+        for (let k = 0; k < cfg.infoStarlog; k++) {
+          const r = va(0xb82990 + 0x2c * (200 - cfg.infoStarlog + k));
+          r.writeS32(cols[k % cols.length]);
+          r.add(8).writeByteArray(Array.from('LINE ' + (k + 1) + ' OF THE STAR LOG, 33 CHARS', (c) => c.charCodeAt(0)).slice(0, 33).concat([0]));
+        }
+        va(0xb84bf4).writeS32(cfg.infoStarlog);
+      }
       if (cfg.kep >= 0) {
         A.AktKepKell.writeS32(cfg.kep);
         A.AktPlanetKell.writeS32(cfg.planet);
       }
       at = frames; phase = 3;
-    } else if (phase === 3 && cfg.rop && !cfg.ropNow && A.AktKep.readS32() === 2 && frames >= at + 60) {
+    } else if (phase === 3 && !setupDone && (cfg.rop || cfg.fleets || cfg.ropMenu || cfg.menu) && A.AktKep.readS32() === 2 && frames >= at + 60) {
       // The starmap is up: make the fleets, select one (--rop-fleet K: `StarmapMode` 0xB9998C = 2, `AktFleet`
       // 0xB99664 = the K-th made), then press the icon and wait from there.
       if (cfg.fleets) populate(cfg.fleets);
       if (cfg.ropFleet && fleets[cfg.ropFleet - 1]) { va(0xb9998c).writeS32(2); va(0xb99664).writeS32(fleets[cfg.ropFleet - 1]); }
-      cfg.ropNow = true;
+      if (cfg.rop) cfg.ropNow = true;
+      setupDone = true;
       at = frames;
-    } else if (phase === 3 && (!cfg.rop || ropDone) && frames >= at + cfg.wait) {
+    } else if (phase === 3 && setupDone && !staged && (cfg.ropMenu || cfg.menu) && (!cfg.rop || ropDone) && frames >= at + 60) {
+      // The icon's view has settled (the long info's zoom, the production view): stage the menus from here.
+      staged = true;
+      at = frames;
+      send({ k: 'staged' });
+    } else if (phase === 3 && cfg.verdict && verdictLeft > 0 && A.AktKep.readS32() === 7 && frames >= at + 300) {
+      // --verdict: one press at a time; a press `Spy_Main` didn't take within 60 frames is reported and dropped.
+      if (verdictPending) {
+        if (++verdictPending.waited > 60) { send({ k: 'error', what: 'verdict press not taken', p: verdictPending }); verdictPending = null; verdictLeft--; }
+      } else if (verdictWait > 0) {
+        verdictWait--;
+      } else {
+        stageVerdict(spyStage);
+        verdictPending.waited = 0;
+      }
+      if (verdictLeft <= 0) at = frames - cfg.wait + 30;
+    } else if (phase === 3 && infoLeft.length > 0 && A.AktKep.readS32() === 9 && frames >= at + 300) {
+      if (infoWait > 0) {
+        infoWait--;
+      } else {
+        const id = infoLeft.shift();
+        va(0xb77208).writeS32(id + 0x1e);
+        infoPending = id;
+        send({ k: 'info-press', id, frames });
+        infoWait = 30;
+      }
+      if (infoLeft.length === 0) at = frames - 300;
+    } else if (phase === 3 && (!cfg.rop || ropDone) && (!(cfg.ropMenu || cfg.menu) || staged) && (!cfg.verdict || verdictLeft <= 0) && infoLeft.length === 0 && frames >= at + cfg.wait) {
       const f = (x) => va(x).readFloat();
       const p = A.AktPlanet.readS32();
       const wf = 0x9c3244 + p * 0x8ec;
@@ -191,7 +482,47 @@ Interceptor.attach(A.Fake_FRISSITES, {
       // --state-out: write the state on screen with the exe's own `LoadSave(slot, name, 2)`, so the client can render
       // the very same moment.
       if (cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('screendiff'), 2);
-      send({ k: 'grab', n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
+      const menus = { mainCalls, gfx1Calls, mod: va(0xf16f18).readU8(), frame: va(0xe8634c).readFloat(), alap: va(0xe75a73).readU8(),
+        places: [0, 4, 8, 12].map((o) => va(0xe75a30 + o).readS32()), last: [va(0xe75a74).readS32(), va(0xe75a78).readS32()],
+        hover: va(0xf16f14).readS32(), ikon2: va(0xbae240).readS32(), sel: va(0xe75a68).readS32(), sx: va(0x927078).readS32(), sy: va(0x92707c).readS32(),
+        info: va(0xf16ef7).readU8(), mode: va(0xb9998c).readS32() };
+      const spy = { kell: va(0xe75430).readU8(), frame: va(0xe75504).readFloat(), open: va(0xe75436).readU8(), closing: va(0xe75383).readU8(), dialog: va(0xe75384).readS32() };
+      // --particles: the starmap's particle sets `FStars` (11 × 0x38: +0 records, 0x4c bytes each) and `DiffStars`
+      // (8 × 0x38), the records of every set, `HANYFELHOPARTICLE` 0x92712C and `OptionsFogResolution` 0xDB9764.
+      if (cfg.particles) {
+        const hex = (p, n) => Array.from(new Uint8Array(p.readByteArray(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+        const sets = (base, n) => Array.from({ length: n }, (_, i) => {
+          const h = va(base + i * 0x38);
+          const recs = h.readPointer();
+          const head = hex(h, 0x38);
+          const count = h.add(0x10).readS32();
+          return { head, count, recs: recs.isNull() || count <= 0 || count > 5000 ? '' : hex(recs, count * 0x4c) };
+        });
+        send({ k: 'particles', fstars: sets(0xf16f38, 11), diff: sets(0xf171a0, 8), hany: va(0x92712c).readS32(), fog: va(0xdb9764).readS32(), clouds: va(0xe75918).readS32(),
+          futofeny: va(0xf1736c).readFloat(), kis: va(0xe75914).readS32(), erosseg: va(0x927994).readFloat() });
+      }
+      const res = { kell: va(0x918bd5).readU8(), frame: va(0xdc5368).readFloat(), open: va(0xddf322).readU8(), closing: va(0xddf323).readU8(),
+        wire: va(0xdc537c).readFloat(), started: va(0xddf628).readU8() };
+      // `GomolygasCounter` 0xE75918 (the clouds' drift), `futofeny` 0xF1736C (the starmap's UI clock): re/screens/starmap.md §6;
+      // the remaster's `game::acttime` 0xFD1520 (ms, the planet clouds' drift): §3.3; the info screen's side lights' and
+      // chart sweeps' clock `infokeringeto` 0xB85304 (re/screens/info.md §1.1); the info list's `BolygoFlottaPointer`
+      // 0xB82984, `KirakBolygoInfo`'s problem step 0xB85E88, `Counter` 0xBAE05C and per slot of `InfoBF` 0xB85B90 (0xB0
+      // each) the spin +0x78 and the planet's / fleet's rotation +0x30 / +0x54 (§6.2, §6.4).
+      const mat = (o) => Array.from({ length: 9 }, (_, i) => va(o + 4 * i).readFloat());
+      // The detail mode (§6.6: `Info_NagyInfoMode` 0xB79FB1, `Info_KilepesNagyinforol` 0xB85258, `InfoBolygoFlottaSelected`
+      // 0xB82980, `InfoNKivalasztott` 0xB852B8, `InfoMaxTervekPtr` 0xB84C08 / `InfoMaxTervek` 0xB84C0C, the info-text
+      // statics 0x90B8A0 / 0xB85E94 / 0xB85E98), the slots' positions `+0x7c`, home `+0x88`, start `+0x94`, target
+      // `+0xa0`, steps `+0xac`, and the star log (§6.8: `Info_StarLogMode` 0xB79FB2, `infoframe` 0xB85260, `StarLog`
+      // 0xB82990 (200 × 0x2c: colour, text at +8), `StarLogPointer` 0xB84C10, `StarlogHanysorfeltoltve` 0xB84BF4).
+      const hexs = (p, n) => Array.from(new Uint8Array(p.readByteArray(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+      const infoList = { pointer: va(0xb82984).readS32(), step: va(0xb85e88).readS32(), counter: va(0xbae05c).readS32(),
+        globes: [0, 1, 2, 3].map((k) => { const b = 0xb85b90 + 0xb0 * k; return [va(b + 0x78).readFloat()].concat(mat(b + 0x30), mat(b + 0x54), Array.from({ length: 15 }, (_, i) => va(b + 0x7c + 4 * i).readFloat())); }),
+        select: [va(0xb79f8a).readU8() ? 26 : va(0xb79f8b).readU8() ? 27 : va(0xb79fb0).readU8() ? 28 : 0, va(0x90b6fc).readS32(), va(0x90b700).readS32(), va(0xb84c14).readS32()],
+        detail: { mode: va(0xb79fb1).readU8(), leaving: va(0xb85258).readU8(), entry: va(0xb82980).readS32(), slot: va(0xb852b8).readS32(),
+          ptr: va(0xb84c08).readS32(), n: va(0xb84c0c).readS32(), texts: [va(0x90b8a0).readS32(), va(0xb85e94).readS32(), va(0xb85e98).readS32()] },
+        star: { mode: va(0xb79fb2).readU8(), frame: va(0xb85260).readFloat(), pointer: va(0xb84c10).readS32(), filled: va(0xb84bf4).readS32(),
+          log: Array.from({ length: 200 }, (_, i) => { const r = va(0xb82990 + 0x2c * i); const t = r.add(8).readByteArray(0x24); const b = new Uint8Array(t); const n = b.indexOf(0); return [r.readS32(), hexs(r.add(8), n < 0 ? 0x24 : n)]; }) } };
+      send({ k: 'grab', clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
       shot++;
       at = frames;
       if (shot >= cfg.shots) phase = 4;

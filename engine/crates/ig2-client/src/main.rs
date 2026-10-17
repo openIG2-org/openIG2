@@ -10,10 +10,25 @@
 //!           [--open-message I | --show-message ID]` draws the info screen, the messages screen (inbox entry I or
 //!           message ID open) or the research screen (after `--ui-frames` frames); `--ui-frames N` runs the message line N frames of 10 ms (default 150); `--paused`
 //!           shows the clock paused; `--panel production|transfer:F1,F2[,tank]` opens the starmap's production view
-//!           (the selected planet's) or the transfer panel between holders F1 and F2 (a planet is −p).
+//!           (the selected planet's) or the transfer panel between holders F1 and F2 (a planet is −p);
+//!           `--planet-info` shows the selected planet's long info, `--rop-menu X,Y` holds the radial menu open at
+//!           the virtual point, `--menu tax|autobuild|priority|sale:N|planets@X,Y` a select menu with its box at
+//!           X,Y, `--mouse X,Y` the pointer (the menus' hover, a hot-spot's tooltip); `--screen spy` the spy screen,
+//!           `--spy-frame F [--spy-closing]` held at frame F of its opening (closing); the research screen takes the
+//!           same as `--anim-frame F [--anim-closing]`; `--clouds N` drifts the starmap's clouds as after N UI ticks
+//!           on the starmap (the exe's `GomolygasCounter`; default 0); `--futofeny F` pins the starmap's UI clock
+//!           (star twinkle, pulse and the planets' spin, fleet sprite frames; default ticks × 5); `--acttime S` the
+//!           remaster's clock in seconds (the long info planet's cloud drift; default the frame time); `--info-turn K`
+//!           the info screen's `infokeringeto` (its side lights and chart sweeps; default 0); `--info-list P,H,C`
+//!           its list's first row, problem step and `Counter`, `--info-globes S,P0..P8,F0..F8;…` the list slots'
+//!           spins, model rotations and positions (the exe's at a capture, re/screens/info.md §6); `--info-detail
+//!           E,S,L,P` the detail mode on entry E (slot S, leaving, design pointer) with `--info-texts H,OC,OP`;
+//!           `--info-star F` the star log at `infoframe` F and `--info-log FILE` its records (§6.8);
+//!           `--info-select K,X,Y,I` the planet-settings menu of hot-spot K open at (X, Y) on item I (§7.1).
 //! Info:     `ig2-client --info [--save <file.sav>] [--ticks N]` prints the starmap's planets and fleets.
 //!
-//! The install comes from `IG2_INSTALL_DIR`, the language from `IG2_LANG` (default en). The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
+//! The install comes from `IG2_INSTALL_DIR`; the language from `--lang en|hu|de|fr|es|it`, else `IG2_LANG`, else the one
+//! the GOG ig2.exe would pick on this machine (`ig2_formats::locale`, re/formats/locale.md). The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
 //! repository's `_local/saves`). Saves, installs and rendered PNGs hold game data: keep them out of the repo.
 
 mod assets;
@@ -24,6 +39,7 @@ mod diplomacy_scene;
 mod font;
 mod hud;
 mod info_screen;
+mod lighting;
 mod messages_screen;
 mod orders;
 mod render;
@@ -34,9 +50,12 @@ mod scene;
 mod screen_frames;
 mod starmap;
 mod starmap_hud;
+mod starmap_menus;
 mod spy_scene;
 mod spy_screen;
 mod starmap_panels;
+mod starmap_planet;
+mod starmap_radar;
 mod ui;
 mod window;
 mod world;
@@ -78,10 +97,47 @@ pub struct Options {
     /// `--show-message ID`: message `ID` open without an inbox entry (checks the dialogue's drawing).
     pub show_message: Option<i32>,
     pub ui_frames: u32,
+    /// `--spy-frame F [--spy-closing]`: the spy screen with `spyframe` held at F while opening (or closing)
+    /// (re/screens/spy.md §1.1, §9).
+    pub spy_frame: Option<f32>,
+    pub spy_closing: bool,
+    /// `--clouds N`: the starmap clouds' drift clock (re/screens/starmap.md §6.2).
+    pub clouds: i32,
+    /// `--futofeny F`: the starmap's UI clock (re/screens/starmap.md §6.4).
+    pub futofeny: Option<f32>,
+    /// `--acttime S`: the remaster's clock in seconds, which drifts the long info planet's clouds
+    /// (re/screens/starmap.md §3.3).
+    pub acttime: Option<f32>,
+    /// `--info-turn K`: the info screen's `infokeringeto` (re/screens/info.md §1.1).
+    pub info_turn: f32,
+    /// `--info-list P,H,C`: the list's `BolygoFlottaPointer`, its problem step and `Counter` (re/screens/info.md §6.2).
+    pub info_list: Option<(usize, usize, i32)>,
+    /// `--info-globes S,P0..P8,F0..F8[,POS,HOME,START,TARGET,STEP];…`: per list slot the spin, the planet's and
+    /// fleet's rotations and optionally the five positions (3 each) of the slot (`InfoBF`, re/screens/info.md §6.4,
+    /// §6.6).
+    pub info_globes: Vec<Vec<f32>>,
+    /// `--info-detail E,S,L,P`: the detail mode on list entry E in slot S, leaving (0/1), the design list's pointer
+    /// (re/screens/info.md §6.6); `--info-texts H,OC,OP` its info-text statics.
+    pub info_detail: Option<(usize, usize, bool, usize)>,
+    pub info_texts: Option<(usize, i32, usize)>,
+    /// `--info-select K,X,Y,I`: the select menu of hot-spot K (26 tax, 27 auto-build, 28 priority) open at
+    /// `infoSelectX/Y` (X, Y) with `infosmSelected` I (re/screens/info.md §7.1).
+    pub info_select: Option<[i32; 4]>,
+    /// `--info-star F`: star-log mode with `infoframe` F; `--info-log FILE` the star log (a line "pointer filled",
+    /// then per record "colour hex-text") (re/screens/info.md §6.8).
+    pub info_star: Option<f32>,
+    pub info_log: Option<String>,
     /// Show the clock as paused (`--paused`; the capture tool pauses the exe).
     pub paused: bool,
     /// `--panel production` or `--panel transfer:F1,F2[,tank]`: the starmap's production view or transfer panel up.
     pub panel: Option<String>,
+    /// `--planet-info`, `--rop-menu X,Y`, `--menu KIND@X,Y`, `--mouse X,Y` (re/screens/starmap.md §14–§17).
+    pub planet_info: bool,
+    pub rop_menu: Option<[f32; 2]>,
+    pub menu: Option<String>,
+    pub mouse: Option<[f32; 2]>,
+    /// `--lang CODE`: the texts' language (default: the exe's own choice).
+    pub lang: Option<Lang>,
 }
 
 fn default_save() -> PathBuf {
@@ -111,8 +167,26 @@ fn parse(args: &[String]) -> Result<Options, String> {
         open_message: None,
         show_message: None,
         ui_frames: 150,
+        spy_frame: None,
+        spy_closing: false,
+        clouds: 0,
+        futofeny: None,
+        acttime: None,
+        info_turn: 0.0,
+        info_list: None,
+        info_globes: Vec::new(),
+        info_detail: None,
+        info_select: None,
+        info_texts: None,
+        info_star: None,
+        info_log: None,
         paused: false,
         panel: None,
+        planet_info: false,
+        rop_menu: None,
+        menu: None,
+        mouse: None,
+        lang: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -154,8 +228,61 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--open-message" => o.open_message = Some(val()?.parse().map_err(|e| format!("--open-message: {e}"))?),
             "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),
             "--ui-frames" => o.ui_frames = val()?.parse().map_err(|e| format!("--ui-frames: {e}"))?,
+            "--spy-frame" | "--anim-frame" => o.spy_frame = Some(val()?.parse().map_err(|e| format!("--anim-frame: {e}"))?),
+            "--spy-closing" | "--anim-closing" => o.spy_closing = true,
+            "--clouds" => o.clouds = val()?.parse().map_err(|e| format!("--clouds: {e}"))?,
+            "--futofeny" => o.futofeny = Some(val()?.parse().map_err(|e| format!("--futofeny: {e}"))?),
+            "--info-turn" => o.info_turn = val()?.parse().map_err(|e| format!("--info-turn: {e}"))?,
+            "--info-list" => {
+                let v: Vec<i64> = val()?.split(',').map(|x| x.trim().parse::<i64>()).collect::<Result<_, _>>().map_err(|e| format!("--info-list: {e}"))?;
+                let [p, h, c] = v[..] else { return Err("--info-list P,H,C".into()) };
+                o.info_list = Some((p.max(0) as usize, h.max(0) as usize, c as i32));
+            }
+            "--info-globes" => {
+                for g in val()?.split(';') {
+                    let v: Vec<f32> = g.split(',').map(|x| x.trim().parse::<f32>()).collect::<Result<_, _>>().map_err(|e| format!("--info-globes: {e}"))?;
+                    if v.len() != 19 && v.len() != 34 {
+                        return Err("--info-globes: 19 or 34 values a slot".into());
+                    }
+                    o.info_globes.push(v);
+                }
+            }
+            "--info-detail" => {
+                let v: Vec<i64> = val()?.split(',').map(|x| x.trim().parse::<i64>()).collect::<Result<_, _>>().map_err(|e| format!("--info-detail: {e}"))?;
+                let [e, s, l, p] = v[..] else { return Err("--info-detail E,S,L,P".into()) };
+                o.info_detail = Some((e.max(0) as usize, s.clamp(0, 3) as usize, l != 0, p.max(0) as usize));
+            }
+            "--info-select" => {
+                let v: Vec<i32> = val()?.split(',').map(|x| x.trim().parse::<i32>()).collect::<Result<_, _>>().map_err(|e| format!("--info-select: {e}"))?;
+                let [k, x, y, i] = v[..] else { return Err("--info-select K,X,Y,I".into()) };
+                o.info_select = Some([k, x, y, i]);
+            }
+            "--info-texts" => {
+                let v: Vec<i64> = val()?.split(',').map(|x| x.trim().parse::<i64>()).collect::<Result<_, _>>().map_err(|e| format!("--info-texts: {e}"))?;
+                let [h, c, p] = v[..] else { return Err("--info-texts H,OC,OP".into()) };
+                o.info_texts = Some((h.clamp(1, 5) as usize, c as i32, p.max(0) as usize));
+            }
+            "--info-star" => o.info_star = Some(val()?.parse().map_err(|e| format!("--info-star: {e}"))?),
+            "--info-log" => o.info_log = Some(val()?),
+            "--acttime" => o.acttime = Some(val()?.parse().map_err(|e| format!("--acttime: {e}"))?),
             "--colony" => o.colony = Some(val()?.parse().map_err(|e| format!("--colony: {e}"))?),
             "--panel" => o.panel = Some(val()?),
+            "--planet-info" => o.planet_info = true,
+            "--menu" => o.menu = Some(val()?),
+            "--rop-menu" | "--mouse" => {
+                let v = val()?;
+                let (x, y) = v.split_once(',').ok_or(format!("{a} X,Y"))?;
+                let p = Some([num(x.into())?, num(y.into())?]);
+                if a == "--mouse" {
+                    o.mouse = p;
+                } else {
+                    o.rop_menu = p;
+                }
+            }
+            "--lang" => {
+                let v = val()?;
+                o.lang = Some(Lang::from_code(&v).ok_or(format!("--lang {v}: en, hu, de, fr, es or it"))?);
+            }
             "--select-fleet" => o.select_fleet = Some(val()?.parse().map_err(|e| format!("--select-fleet: {e}"))?),
             _ => return Err(format!("unknown argument {a}")),
         }
@@ -175,15 +302,20 @@ pub struct Loaded {
 }
 
 pub fn load(o: &Options) -> Result<Loaded, String> {
-    // The game's language (`IG2_LANG` = en, de, fr, es, it, hu; English by default), as the install's own setting.
-    let lang = std::env::var("IG2_LANG").ok().and_then(|c| Lang::from_code(&c)).unwrap_or(Lang::En);
-    let install = Install::from_env(lang).ok_or("set IG2_INSTALL_DIR to your IG2 install")?.map_err(|e| e.to_string())?;
+    let root = std::env::var_os(ig2_formats::vfs::INSTALL_ENV).ok_or("set IG2_INSTALL_DIR to your IG2 install")?;
+    let install = Install::open(PathBuf::from(&root), language(o, std::path::Path::new(&root))).map_err(|e| e.to_string())?;
     let (rules, tech_defaults) = rules::load(&install)?;
     let volatile = rules::scenario_globals(&install)?;
     let bytes = std::fs::read(&o.save).map_err(|e| format!("{}: {e}", o.save.display()))?;
     let save = SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", o.save.display()))?;
     let tables = ig2_rules::Rules::from_install(&install)?;
     Ok(Loaded { install, rules, tech_defaults, volatile, save, tables })
+}
+
+/// The texts' language: `--lang`, else `IG2_LANG`, else what the GOG exe would run in (`ig2.settings`' `language=`,
+/// a `locale.txt`, the system locale).
+fn language(o: &Options, root: &std::path::Path) -> Lang {
+    o.lang.or_else(|| std::env::var("IG2_LANG").ok().and_then(|c| Lang::from_code(&c))).unwrap_or_else(|| ig2_formats::locale::exe_language(root).0)
 }
 
 fn info(o: &Options) -> Result<(), String> {

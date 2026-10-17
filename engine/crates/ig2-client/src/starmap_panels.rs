@@ -799,38 +799,131 @@ impl Panels {
     }
 }
 
-/// `FadeKerettelKerekit(x, y, w, h, fill, t, edge, t')` (ELF 0x538330 → `FadeKerekit`/`FadeKeretKerekit` →
-/// `FadeScreen` 0x537890): a fill and its one-pixel frame. `FadeScreen` queues the colour as `0xTTBBGGRR`: `t` is a
-/// transparency, the colour is blended at opacity `(255 − t)/255` [obs: the transfer panel's faders over black and
-/// the production panels' edges in the exe; the rounded corners are left square].
+/// `fadertexture`: every screen's 3D init loads `textures/design/screen/dt.bmp` into it (`Init3dStarmap`,
+/// `Init3dColony`, `Research3DInit`, `Diplomacy3DInit`, `Infoing3DInit`, …); `polygonsfader` (ELF 0x5f16a0) draws
+/// every fader quad with it, the texel multiplied into the vertex colour.
+struct FaderTexture {
+    tex: TexId,
+    /// The texel at the coordinates (0, 0) (a texture scale of 0): bilinear with repeat there is the mean of the four
+    /// corner texels.
+    corner: [f32; 4],
+}
+
+/// One per process: the client has one renderer (the window's or the snapshot's).
+static FADER_TEXTURE: std::sync::OnceLock<FaderTexture> = std::sync::OnceLock::new();
+
+/// Load `dt.bmp` for the faders (without it they are drawn untextured, like `nulltexture`).
+pub fn load_fader_texture(r: &mut Renderer, install: &Install) {
+    if FADER_TEXTURE.get().is_some() {
+        return;
+    }
+    let img = install.resolve_texture("textures/design/screen/", "dt.bmp").and_then(|p| crate::assets::Image::load(install, &p).ok());
+    if let Some(img) = img.filter(|i| i.width > 0 && i.height > 0) {
+        let (w, h) = (img.width as usize, img.height as usize);
+        let px = |x: usize, y: usize, k: usize| img.rgba[4 * (y * w + x) + k] as f32 / 255.0;
+        let corner = std::array::from_fn(|k| (px(0, 0, k) + px(w - 1, 0, k) + px(0, h - 1, k) + px(w - 1, h - 1, k)) / 4.0);
+        let _ = FADER_TEXTURE.set(FaderTexture { tex: r.add_texture(&img), corner });
+    }
+}
+
+/// `FadeKerettelKerekit(x, y, w, h, fill, t, edge, t', …, 0, 0, 0, 0)` (ELF 0x538330): `FadeKerekit` 0x537bd0's
+/// rounded fill (five strips) and `FadeKeretKerekit` 0x537e70's one-pixel rounded frame (twelve pieces), each a
+/// `FadeScreen` 0x537890 that queues the colour as `0xTTBBGGRR`; `polygonsfader` inverts the fourth value (a
+/// transparency: opacity `(255 − t)/255`) and blends with src alpha in the 2D pass ([`Blend::GammaAlpha`]). With a
+/// texture scale of 0 `PutDarkeningFace` (ELF 0x538de0) gives every vertex the coordinates (0, 0): the fill and the
+/// frame are tinted by `fadertexture`'s corner texel.
 #[allow(clippy::too_many_arguments)]
 pub fn fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
-    let [x, y, w, h] = r;
+    rounded(f, white, v, r, fill, ft, Some((edge, et)), None);
+}
+
+/// `FadeKerekit(x, y, w, h, fill, t, false, 0.005, 0.005, u, v)` (ELF 0x537bd0): the rounded fill alone, textured
+/// by `fadertexture` at `((x + u)·0.005, (y + v)·0.005)` per virtual pixel (`PutDarkeningFace`).
+pub fn fade_kerekit(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], t: f32, off: [f32; 2]) {
+    rounded(f, white, v, r, fill, t, None, Some(off));
+}
+
+/// `KirakFader(i, faders, x, y, w, h, fill, t, edge, t', …, 0.005, 0.005)` (ELF 0x547920): `GLOBALKELLDESIGN` is
+/// set (1 in the image, never written), so it passes the texture scale 0.005 and the fader's own offsets
+/// (`+0x1e0`/`+0x258 + 4i`, drifting by `rand()` in `FaderDesignFrissito`; 0 here, as `InitFaderDesignStruktura`
+/// leaves them): the fill samples `fadertexture` at `((x + u)·0.005, (y + v)·0.005)` per virtual pixel; the frame
+/// keeps the scale 0. The callers' colours are × `s` (`+0x168 + 4i` = 0.9 + the occasional shine, [`S`]).
+#[allow(clippy::too_many_arguments)]
+pub fn kirak_fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
+    rounded(f, white, v, r, fill, ft, Some((edge, et)), Some([0.0; 2]));
+}
+
+#[allow(clippy::too_many_arguments)]
+/// The fill (textured at 0.005 a pixel from `design`'s offsets, else at the corner texel) and the frame, if any.
+fn rounded(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, frame: Option<([f32; 3], f32)>, design: Option<[f32; 2]>) {
+    let [x, y, w, h] = r.map(|c| c as i32 as f32);
     if w <= 0.0 || h <= 0.0 {
         return;
     }
-    let quad = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 4]| {
-        f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], c));
+    let dt = FADER_TEXTURE.get();
+    let corner = dt.map_or([1.0; 4], |t| t.corner);
+    let quad = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 4], scale: f32, off: [f32; 2]| {
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let mut i = Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], c);
+        match dt {
+            Some(t) if scale > 0.0 => {
+                i.uv = [(x + off[0]) * scale, (y + off[1]) * scale, w * scale, h * scale];
+                f.push(t.tex, Blend::GammaAlpha, i);
+            }
+            _ => {
+                i.color = std::array::from_fn(|k| c[k] * corner[k]);
+                f.push(white, Blend::GammaAlpha, i);
+            }
+        }
     };
-    let tint = |c: [f32; 3], t: f32| {
-        let a = (255.0 - t.clamp(0.0, 255.0)) / 255.0;
-        crate::starmap_hud::srgb_blend(c, a)
+    let tint = |c: [f32; 3], tr: f32| {
+        let a = (255.0 - tr.clamp(0.0, 255.0)) / 255.0;
+        [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, a]
     };
-    quad(f, x, y, w, h, tint(fill, ft));
+    let c = tint(fill, ft);
+    let (scale, off) = match design {
+        Some(o) => (0.005, o),
+        None => (0.0, [0.0; 2]),
+    };
+    for [qx, qy, qw, qh] in [
+        [x + 4.0, y + 1.0, w - 8.0, 1.0],
+        [x + 2.0, y + 2.0, w - 4.0, 2.0],
+        [x + 1.0, y + 4.0, w - 2.0, h - 8.0],
+        [x + 2.0, y + h - 4.0, w - 4.0, 2.0],
+        [x + 4.0, y + h - 2.0, w - 8.0, 1.0],
+    ] {
+        quad(f, qx, qy, qw, qh, c, scale, off);
+    }
+    let Some((edge, et)) = frame else { return };
     let e = tint(edge, et);
-    quad(f, x, y, w, 1.0, e);
-    quad(f, x, y + h - 1.0, w, 1.0, e);
-    quad(f, x, y + 1.0, 1.0, h - 2.0, e);
-    quad(f, x + w - 1.0, y + 1.0, 1.0, h - 2.0, e);
+    let (x1, y1) = (x + w, y + h);
+    for [qx, qy, qw, qh] in [
+        [x + 4.0, y, w - 8.0, 1.0],
+        [x + 4.0, y1 - 1.0, w - 8.0, 1.0],
+        [x, y + 4.0, 1.0, h - 8.0],
+        [x1 - 1.0, y + 4.0, 1.0, h - 8.0],
+        [x + 2.0, y + 1.0, 2.0, 1.0],
+        [x1 - 4.0, y + 1.0, 2.0, 1.0],
+        [x + 2.0, y1 - 2.0, 2.0, 1.0],
+        [x1 - 4.0, y1 - 2.0, 2.0, 1.0],
+        [x + 1.0, y + 2.0, 1.0, 2.0],
+        [x + 1.0, y1 - 4.0, 1.0, 2.0],
+        [x1 - 2.0, y + 2.0, 1.0, 2.0],
+        [x1 - 2.0, y1 - 4.0, 1.0, 2.0],
+    ] {
+        quad(f, qx, qy, qw, qh, e, 0.0, [0.0; 2]);
+    }
 }
 
 /// `FaderDesignFrissito` (ELF 0x547e10) keeps a fader's `s` at 0.9 (the remaster's shine adds to it only with
 /// `GLOBALKELLDESIGN`).
-const S: f32 = 0.9;
+pub const S: f32 = 0.9;
 
 /// `KirakFader(…, 0, 54s, 90s, 100, 0, 90s, 130s, 70)` (`starf`).
 fn starf(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4]) {
-    fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
+    kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
 }
 
 /// `FadeKerettelKerekit(x, 80, w, 292, 0, 20, 20, 200, 0, 15, 15, 150)`: the production view's big panels.
@@ -842,7 +935,7 @@ fn big_panel(f: &mut Frame, white: TexId, v: &Virtual, x: f32, w: f32) {
 fn fill(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], c: [f32; 3]) {
     let [x, y, w, h] = r;
     if w > 0.0 && h > 0.0 {
-        f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
+        f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
     }
 }
 
@@ -861,7 +954,7 @@ impl Draw2d<'_> {
         self.palette.get(i).copied().unwrap_or([1.0; 3])
     }
     #[allow(clippy::too_many_arguments)]
-    fn text(&self, f: &mut Frame, s: &[u8], x: f32, y: f32, len: usize, size: usize, align: u32, col: usize) {
+    pub(crate) fn text(&self, f: &mut Frame, s: &[u8], x: f32, y: f32, len: usize, size: usize, align: u32, col: usize) {
         let a = match align & 3 {
             0 => Align::Left,
             1 => Align::Field,
@@ -917,7 +1010,7 @@ impl Panels {
         }
         if let Some(t) = &self.transfer {
             // `ShowStarmap`'s transfer faders (`fifo`): fill (0, 54s, 90s) at 100, frame (0, 60s, 110s) at 70.
-            let fifo = |f: &mut Frame, r: [f32; 4]| fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 60.0 * S, 110.0 * S], 70.0);
+            let fifo = |f: &mut Frame, r: [f32; 4]| kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 60.0 * S, 110.0 * S], 70.0);
             for r in [[28.0, 27.0, 273.0, 334.0], [338.0, 27.0, 273.0, 334.0], [30.0, 29.0, 269.0, 17.0], [30.0, 342.0, 269.0, 17.0], [340.0, 29.0, 269.0, 17.0], [340.0, 342.0, 269.0, 17.0]] {
                 fifo(f, r);
             }
@@ -1253,6 +1346,8 @@ impl PanelModels {
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
         let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
         f.scene = Some(Scene3d {
+            gamma: false,
+            shadow: None,
             uniforms: SceneUniforms {
                 view,
                 eye: [0.0; 4],
@@ -1297,7 +1392,7 @@ fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], alpha: f32, out: &mut Vec
             });
         }
         let tex = texs.get(pi).copied().unwrap_or(texs.first().copied().unwrap_or(TexId(0)));
-        draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0 });
+        draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
     }
 }
 

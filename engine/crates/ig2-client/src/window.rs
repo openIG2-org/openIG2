@@ -17,8 +17,9 @@
 //! K or the top bar's research button = the research screen (re/screens/research.md: its buttons, lists and models
 //! by mouse; arrows = fields, PgUp/PgDn = categories, Enter = start/stop, D = urgent).
 //! The info box's buttons open the production view and the transfer panel (re/screens/starmap.md §12–§13); a right
-//! click on the box splits the selected fleet (the transfer between the two opens) or shows the planet's colony; T =
-//! the transfer between the selected fleet and the player's nearest one (the radial menu's icon, not drawn yet).
+//! click on the box splits the selected fleet (the transfer between the two opens) or shows the planet's colony, a
+//! left click on a planet's box its long info with the tax, auto-build and priority menus (§15–§16). A left press on
+//! the map selects and opens the radial icon menu; releasing over an icon carries it out (§14).
 //! Always: the top bar's speed buttons or 1/2/3 = speed, space = pause (lockstep commands, re/screens/starmap.md §10),
 //! V = vsync on/off, Esc = back to the starmap / quit.
 
@@ -37,6 +38,7 @@ use winit::window::{Window, WindowId};
 use crate::orders::{self, Keys, Selection};
 use crate::render::Renderer;
 use crate::starmap::{Assets, Pick, View};
+use crate::starmap_menus::{Do, MenuKind, Menus};
 use crate::starmap_panels::{Action, PanelModels, Panels};
 use crate::world::World;
 
@@ -83,6 +85,8 @@ struct App {
     /// Where the left and right buttons went down on the starmap (a click is a press and release in place).
     left_down: Option<[f32; 2]>,
     right_down: Option<[f32; 2]>,
+    /// The info screen's buttons held (`Mouse_Gomb`; `Info_Main`'s drags and select menus).
+    info_down: bool,
     modifiers: ModifiersState,
     title_at: Instant,
     frames: u32,
@@ -95,10 +99,14 @@ struct App {
     /// `TargetXStart/YStart/Zoom` with the frames left (`Mozgasd`), and the view `StarmapBeZoomol` remembered.
     cam_tween: Option<([f32; 3], i32)>,
     cam_saved: Option<[f32; 3]>,
+    /// The radial menu, the planet's long info and the select menus (re/screens/starmap.md §14–§17).
+    menus: Menus,
     /// The research screen (re/screens/research.md): its state, models and the techs' info texts.
     research: Option<crate::research::Research>,
     research_models: Option<crate::research::ResearchModels>,
     tech_infos: Vec<[Vec<u8>; 3]>,
+    /// The research screen's tooltip texts by hot-spot (`Research_MouseInit`).
+    research_tips: Vec<Vec<u8>>,
 }
 
 pub fn run(o: crate::Options) -> Result<(), String> {
@@ -131,6 +139,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         drag: None,
         left_down: None,
         right_down: None,
+        info_down: false,
         modifiers: ModifiersState::empty(),
         title_at: start,
         frames: 0,
@@ -140,9 +149,11 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         frame_models: None,
         cam_tween: None,
         cam_saved: None,
+        menus: Menus::default(),
         research: None,
         research_models: None,
         tech_infos: Vec::new(),
+        research_tips: Vec::new(),
     };
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -177,7 +188,7 @@ impl App {
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
+            view_formats: Renderer::view_formats(format),
         };
         surface.configure(&device, &config);
         let mut renderer = Renderer::new(device, queue, format);
@@ -271,9 +282,13 @@ impl App {
         }
     }
 
-    /// Open the spy screen (`AktKepKell = 7`) or close it.
+    /// Open the spy screen (`AktKepKell = 7`) or close it (`Spy_Kilep`: after the closing animation, which the
+    /// redraw runs out).
     fn toggle_spy(&mut self) {
-        if self.spy.take().is_some() {
+        if let Some(s) = &mut self.spy {
+            if s.leave() {
+                self.spy = None;
+            }
             return;
         }
         let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) else { return };
@@ -297,7 +312,10 @@ impl App {
     fn toggle_screen(&mut self, s: crate::ui::Screen) {
         self.overlay = if self.overlay == Some(s) { None } else { Some(s) };
         if let (Some(crate::ui::Screen::Info), Some(h)) = (self.overlay, &mut self.hud) {
+            // `InfoTriX/Y` keep the knob where it was left (`Info_Belep` only moves the model there).
+            let tri = h.info.tri;
             h.info = crate::ui::InfoScreen::enter(self.world.ui.human);
+            h.info.tri = tri;
         }
     }
 
@@ -307,7 +325,13 @@ impl App {
         let Some(h) = &mut self.hud else { return };
         match screen {
             crate::ui::Screen::Info => {
-                h.info.press(crate::info_screen::spot_at(&self.tables.race_name_x, at));
+                let id = h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui);
+                h.info.press(id, &self.world.ui.info, self.world.ui.human, at[1]);
+                self.info_down = true;
+                let b = crate::info_screen::Buttons { press: true, down: true, left: true, ..Default::default() };
+                for c in h.info.orders(id, at, b, &self.world.ui.info, self.world.ui.human) {
+                    self.world.send(c);
+                }
             }
             crate::ui::Screen::Messages => match h.messages.press(at, self.world.ui.inbox.len()) {
                 crate::messages_screen::Press::Open(i) => h.open_message(&self.install, &self.world.ui, i),
@@ -315,6 +339,18 @@ impl App {
                 crate::messages_screen::Press::None => {}
             },
             _ => {}
+        }
+    }
+
+    /// A right press, or a release, on the info screen (`Info_Main`'s triangle reset, drags, menus).
+    fn info_button(&mut self, press: bool, right: bool) {
+        let at = self.virtual_cursor();
+        let Some(h) = &mut self.hud else { return };
+        let id = h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui);
+        self.info_down = press;
+        let b = crate::info_screen::Buttons { press, release: !press, down: press, left: !right, right };
+        for c in h.info.orders(id, at, b, &self.world.ui.info, self.world.ui.human) {
+            self.world.send(c);
         }
     }
 
@@ -342,14 +378,21 @@ impl App {
     /// or, when up, closes.
     fn toggle_research(&mut self) {
         if self.overlay == Some(crate::ui::Screen::Research) {
-            self.overlay = None;
-            self.research = None;
+            // `Research_Kilep`: after the closing animation, which the redraw runs out.
+            if self.research.as_mut().is_none_or(|r| r.leave()) {
+                self.overlay = None;
+                self.research = None;
+            }
             return;
         }
         if self.tech_infos.is_empty() {
             self.tech_infos = crate::research::tech_infos(&self.install);
         }
-        self.research = Some(crate::research::Research::open(&self.world.game.state, self.tables));
+        if let (true, Some(h)) = (self.research_tips.is_empty(), &self.hud) {
+            self.research_tips = crate::research::tips(&h.texts);
+        }
+        // `KELLKINYITASDEFAULT` (1): coming from the starmap, the screen opens animated.
+        self.research = Some(crate::research::Research::open(&self.world.game.state, self.tables, true));
         self.overlay = Some(crate::ui::Screen::Research);
     }
 
@@ -363,6 +406,10 @@ impl App {
     fn research_press(&mut self) {
         let at = self.virtual_cursor();
         let (Some(r), Some(m)) = (&mut self.research, &self.research_models) else { return };
+        r.held = true;
+        if r.closing {
+            return;
+        }
         for a in r.press(&self.world.game.state, self.tables, &m.mask, at, &m.centres) {
             let crate::research::Act::Send(c) = a;
             self.world.send(c);
@@ -421,6 +468,100 @@ impl App {
         }
     }
 
+    /// Carry out what the menus asked for.
+    fn apply_do(&mut self, dos: Vec<Do>) {
+        let sel = self.selection();
+        for d in dos {
+            let acts = match d {
+                Do::Act(a) => vec![a],
+                Do::Colony => {
+                    if self.colony.is_none() {
+                        self.toggle_colony();
+                    }
+                    Vec::new()
+                }
+                Do::Production => self.panels.toggle_production(&self.world.game.state, &sel),
+                Do::Tanks => self.panels.tanks_button(&self.world.game.state, &sel),
+                Do::Join => self.panels.fleet_transfer(&self.world.game.state, &sel),
+            };
+            self.apply(acts);
+        }
+    }
+
+    /// The camera as `[XStart, YStart, Zoom]`.
+    fn camera3(&self) -> [f32; 3] {
+        self.view.as_ref().map_or([0.0; 3], |v| [v.camera.x, v.camera.y, v.camera.zoom])
+    }
+
+    /// A left press on the starmap (`Starmap_Main`): the long info's hot-spots, the panels', the production view's
+    /// planet list, then the map: the redirect pick, or a pick that becomes the selection and opens the radial menu.
+    fn starmap_press(&mut self) -> bool {
+        let at = self.virtual_cursor();
+        let sel = self.selection();
+        if self.menus.info_on() {
+            // Hot-spots 8 (left), 9 and 11 leave; the panel's buttons and menus; the rest of the screen is caught.
+            let cam = self.camera3();
+            if (at[0] < 166.0 && at[1] >= 424.0) || crate::starmap_menus::exit_spot(at) {
+                self.menus.leave_info(cam, false);
+            } else if (422.0..466.0).contains(&at[0]) && (432.0..476.0).contains(&at[1]) {
+                self.menus.leave_info(cam, true);
+            } else if let Some(dos) = self.menus.press_info(&self.world.game.state, at) {
+                self.apply_do(dos);
+            }
+            return true;
+        }
+        if self.panels.product && (276.0..363.0).contains(&at[0]) && (32.0..79.0).contains(&at[1]) {
+            let dos = self.menus.open_menu(&self.world.game.state, MenuKind::Planets, at);
+            self.apply_do(dos);
+            return true;
+        }
+        if self.panel_press(true) {
+            self.panel_held = Some(true);
+            return true;
+        }
+        // The top bar, the info box and the minimap act on the release.
+        let m = orders::MINIMAP_SPOT;
+        let on_minimap = !self.panels.active() && at[0] >= m[0] && at[0] < m[2] && at[1] >= m[1] && at[1] < m[3];
+        if at[1] < 20.0 || (at[0] < 166.0 && at[1] >= 424.0) || on_minimap || (self.panels.transfer.is_some() && at[1] >= 20.0) {
+            return false;
+        }
+        let Some(v) = &self.view else { return false };
+        if self.menus.redirect {
+            let target = orders::select_nearest_planet(&self.world.curr, &v.camera, at, 1.0);
+            let dos = self.menus.redirect_to(&self.world.game.state, &sel, target);
+            self.apply_do(dos);
+            return true;
+        }
+        let pick = if self.panels.production_open() {
+            orders::select_nearest_planet(&self.world.curr, &v.camera, at, 1.0).map(|p| Selection { mode: 1, planet: p, ..sel })
+        } else {
+            orders::left_click(&self.world.curr, &v.camera, at, &sel)
+        };
+        if let Some(s) = pick {
+            self.select(s);
+            let s = self.selection();
+            let blink = (self.now_ms() / 100) % 2 == 1;
+            let places = crate::starmap_menus::rop_places(&self.world.game.state, &s, &self.panels, self.menus.redirect, (self.menus.sat_sent, self.menus.col_sent), blink);
+            self.menus.open_rop(at, places);
+        }
+        true
+    }
+
+    /// The left button went up after [`Self::starmap_press`]: an open select menu sends, the radial menu fires its
+    /// icon.
+    fn starmap_release(&mut self) {
+        let sel = self.selection();
+        if self.menus.menu.is_some() {
+            let dos = self.menus.release_menu(&self.world.game.state, &sel);
+            self.apply_do(dos);
+        }
+        if self.menus.rop.is_some() {
+            let icon = self.menus.release_rop();
+            let dos = self.menus.fire(icon, &self.world.game.state, &sel);
+            self.apply_do(dos);
+        }
+    }
+
     /// The pointer in virtual pixels.
     fn virtual_cursor(&self) -> [f32; 2] {
         self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor))
@@ -468,10 +609,20 @@ impl App {
         let at = v.camera.virtual_of(p);
         let keys = Keys { shift: self.modifiers.shift_key(), ctrl: self.modifiers.control_key(), alt: self.modifiers.alt_key() };
         let sel = self.selection();
-        // The info box (hot-spot 8 at (0, 424, 166, 56)).
+        if self.menus.info_on() {
+            return;
+        }
+        // The info box (hot-spot 8 at (0, 424, 166, 56)): right = colony / split, left in planet mode = the long info.
         if at[0] >= 0.0 && at[0] < 166.0 && at[1] >= 424.0 {
             if right {
                 self.info_box_click();
+            } else if sel.mode == 1 && sel.planet > 0 {
+                self.panels.close_production();
+                let acts = self.panels.close_transfer(&self.world.game.state, &sel, false);
+                self.apply(acts);
+                self.cam_tween = None;
+                let cam = self.camera3();
+                self.menus.enter_info(sel.planet, cam);
             }
             return;
         }
@@ -480,7 +631,14 @@ impl App {
             return;
         }
         if right {
-            if let Some(o) = orders::right_click(&self.world.curr, &v.camera, at, &sel, keys) {
+            // In planet mode on the player's planet (and in the redirect mode) the right button picks the rally
+            // planet (`0x400`).
+            let own = sel.mode == 1 && self.world.curr.planets.iter().any(|p| p.index == sel.planet && p.owner == self.world.curr.human);
+            if self.menus.redirect || own {
+                let target = orders::select_nearest_planet(&self.world.curr, &v.camera, at, 1.0);
+                let dos = self.menus.redirect_to(&self.world.game.state, &sel, target);
+                self.apply_do(dos);
+            } else if let Some(o) = orders::right_click(&self.world.curr, &v.camera, at, &sel, keys) {
                 self.send(o);
             }
             return;
@@ -503,13 +661,6 @@ impl App {
             if let Some(v) = &mut self.view {
                 (v.camera.x, v.camera.y) = (t[0], t[1]);
             }
-            return;
-        }
-        if let Some(s) = orders::left_click(&self.world.curr, &v.camera, at, &sel) {
-            // The production view picks planets only (`SelectNearestPlanet`).
-            if s.mode == 1 || !self.panels.production_open() {
-                self.select(s);
-            }
         }
     }
 
@@ -517,6 +668,7 @@ impl App {
         let now = self.now_ms();
         // The frame's message pass, then the ticks due (none while `IdoPause`).
         self.world.pump();
+        self.menus.sent_done();
         if let Some(c) = &mut self.colony {
             let p = self.world.colony.unwrap_or(0);
             c.ui.events(&std::mem::take(&mut self.world.colony_events), self.world.curr.human, p);
@@ -577,12 +729,52 @@ impl App {
             let world = &mut self.world;
             for _ in 0..due_ui {
                 h.scroller.step(&mut || world.pop_message());
-                h.info.ui_frame();
+                h.info.ui_frame(&world.ui.info, world.ui.human);
                 h.messages.ui_frame();
             }
             if let Some(d) = &mut h.messages.open {
                 d.advance(due_ui as f32 * 10.0);
             }
+        }
+        // `FRISSIT_Starmap2` runs on the starmap only.
+        if let (Some(v), None, None) = (&mut self.view, &self.colony, self.overlay) {
+            for _ in 0..due_ui {
+                v.ui_tick();
+            }
+        }
+        // The radial menu's frame (`FRISSIT_Starmap2`).
+        for _ in 0..due_ui {
+            self.menus.ui_frame();
+        }
+        // The long info's fly in and out and its pin to the planet (`Starmap_Main`, `GFX_Starmap`).
+        let mut production = false;
+        if let Some(v) = &mut self.view {
+            let c = &v.camera;
+            let (curr, prev) = (&self.world.curr, &self.world.prev);
+            let clock = prev.orbit + (curr.orbit - prev.orbit) * self.clock.phase(now).clamp(0.0, 1.0);
+            let orbit = |p: usize| curr.planets.iter().find(|q| q.index == p).map_or([0.0; 2], |q| crate::starmap::orbit_position(q, clock));
+            let planet = self.menus.info.map(|i| i.planet);
+            let (cam, star, out) = self.menus.advance_info([c.x, c.y, c.zoom, c.rotate], orbit, now as f32 / 1000.0);
+            if let Some([x, y, z]) = cam {
+                (v.camera.x, v.camera.y, v.camera.zoom) = (x, y, z);
+            }
+            v.star_scale = planet.filter(|_| self.menus.info_on()).map(|p| (p, star));
+            // `KellSelect` 0: no selection ring while the long info is up.
+            if self.menus.info_on() {
+                v.selected = None;
+            } else if v.selected.is_none() {
+                let s = self.world.game.local_view();
+                v.selected = match s.starmap_mode {
+                    1 => Some(Pick::Planet(s.planet.max(0) as usize)),
+                    2 => Some(Pick::Fleet(s.fleet.max(0) as usize)),
+                    _ => None,
+                };
+            }
+            production = out == Some(true);
+        }
+        if production {
+            let acts = self.panels.toggle_production(&self.world.game.state, &sel);
+            self.apply(acts);
         }
         if let (Some(c), Some(s)) = (&mut self.colony, &self.world.colony_curr) {
             for _ in 0..due_ui {
@@ -594,6 +786,14 @@ impl App {
             for _ in 0..due_ui {
                 r.step(&self.world.game.state);
             }
+            if r.closed() {
+                self.research = None;
+                self.overlay = None;
+            }
+        }
+        if let (Some(r), Some(m)) = (&mut self.research, &self.research_models) {
+            r.tip.moved(self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor)));
+            r.tooltip(&self.world.game.state, &m.mask, &self.research_tips, now as f64);
         }
         // A button held on a panel repeats on the 100 Hz UI frames (`Starmap_Main::KezdoIdo`).
         if self.panel_held.is_some() {
@@ -616,13 +816,17 @@ impl App {
             let en = self.world.curr.human as usize;
             let d = crate::spy_screen::SpyData::read(&self.world.game.state, en, self.world.game.rules, self.tables);
             spy.advance(&mut g.renderer, &self.install, &d, due_ui, t);
+            if spy.closed() {
+                self.spy = None;
+                g.window.request_redraw();
+                return;
+            }
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.paused = paused;
             let mut frame = spy.build(h, &d, size, self.install.lang() == ig2_formats::text::Lang::Hu);
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Spy, t);
             if let Ok(out) = g.surface.get_current_texture() {
-                let view = out.texture.create_view(&Default::default());
-                g.renderer.draw(&frame, &view, (g.config.width, g.config.height), t);
+                g.renderer.draw(&frame, &out.texture, (g.config.width, g.config.height), t);
                 g.window.pre_present_notify();
                 out.present();
             }
@@ -689,10 +893,12 @@ impl App {
                     let sel = Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
                     h.draw_starmap_hud(&mut frame, &self.world.game.state, self.tables, v, &self.world.prev, &self.world.curr, &sel, alpha, t);
                     h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, &sel, panel_tex, size, t);
+                    h.draw_starmap_menus(&mut frame, &self.menus, &self.world.game.state, self.tables, size, v.camera.zoom, t);
                 }
                 (crate::ui::Screen::Research, ..) => {
                     if let (Some(r), Some((tex, lines))) = (&self.research, research) {
-                        h.draw_research(&mut frame, r, &self.tech_infos, &self.world.game.state, self.tables, tex, lines, size, t);
+                        let glow = self.research_models.as_ref().and_then(|m| m.glow);
+                        h.draw_research(&mut frame, r, &self.tech_infos, &self.research_tips, &self.world.game.state, self.tables, (tex, glow), lines, size, t);
                     }
                 }
                 _ => {}
@@ -710,8 +916,7 @@ impl App {
                 return;
             }
         };
-        let view = out.texture.create_view(&Default::default());
-        g.renderer.draw(&frame, &view, (g.config.width, g.config.height), t);
+        g.renderer.draw(&frame, &out.texture, (g.config.width, g.config.height), t);
         g.window.pre_present_notify();
         out.present();
         self.frames += 1;
@@ -775,10 +980,16 @@ impl ApplicationHandler for App {
                 if let Some(v) = &self.view {
                     let at = v.camera.virtual_of(p);
                     self.panels.hover(at);
+                    self.menus.hover(at);
                     if let Some(h) = &mut self.hud {
                         match self.overlay {
                             Some(crate::ui::Screen::Info) => {
-                                h.info.hover(crate::info_screen::spot_at(&self.tables.race_name_x, at));
+                                let id = h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui);
+                                h.info.hover(id);
+                                let b = crate::info_screen::Buttons { down: self.info_down, left: true, ..Default::default() };
+                                for c in h.info.orders(id, at, b, &self.world.ui.info, self.world.ui.human) {
+                                    self.world.send(c);
+                                }
                             }
                             Some(crate::ui::Screen::Messages) => h.messages.hover(at),
                             _ => {}
@@ -816,7 +1027,7 @@ impl ApplicationHandler for App {
                 };
                 if let Some(c) = &mut self.colony {
                     c.view.camera.zoom_steps(steps);
-                } else if let Some(v) = &mut self.view {
+                } else if let (Some(v), false) = (&mut self.view, self.menus.info_on()) {
                     v.camera.zoom_steps(steps);
                 }
             }
@@ -825,9 +1036,11 @@ impl ApplicationHandler for App {
                 let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
                 let Some(spy) = &mut self.spy else { return };
                 let orders = if state == ElementState::Pressed { spy.press(&d, at) } else { spy.release(&d) };
+                let errors = spy.take_errors();
                 for c in orders {
                     self.world.send(c);
                 }
+                self.world.local_lines.extend(errors);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let on_starmap = self.colony.is_none() && self.overlay.is_none();
@@ -835,6 +1048,11 @@ impl ApplicationHandler for App {
                 match (button, state) {
                     (MouseButton::Left, ElementState::Pressed) if self.top_bar_research() => self.toggle_research(),
                     (MouseButton::Left, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Research) => self.research_press(),
+                    (MouseButton::Left, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Research) => {
+                        if let Some(r) = &mut self.research {
+                            r.held = false;
+                        }
+                    }
                     (MouseButton::Left, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Diplomacy) => {
                         self.dip_input.pressed = true;
                         self.dip_input.held = true;
@@ -843,6 +1061,8 @@ impl ApplicationHandler for App {
                         self.dip_input.released = true;
                         self.dip_input.held = false;
                     }
+                    (MouseButton::Left | MouseButton::Right, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Info) => self.info_button(false, button == MouseButton::Right),
+                    (MouseButton::Right, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Info) => self.info_button(true, true),
                     (MouseButton::Left, ElementState::Pressed) if self.overlay.is_some() => {
                         let s = self.overlay.unwrap();
                         self.screen_press(s);
@@ -853,19 +1073,24 @@ impl ApplicationHandler for App {
                         self.colony_input(|ui, ctx, at, now| ui.release(ctx, at, true, now));
                     }
                     (MouseButton::Left, ElementState::Pressed) => {
-                        if on_starmap && self.panel_press(true) {
-                            self.panel_held = Some(true);
-                        } else {
+                        self.menus.held = true;
+                        if !(on_starmap && self.starmap_press()) {
                             self.left_down = Some(self.cursor);
                         }
                     }
+                    (MouseButton::Left, ElementState::Released) if self.menus.menu.is_some() || self.menus.rop.is_some() => {
+                        self.menus.held = false;
+                        self.starmap_release();
+                    }
                     (MouseButton::Left, ElementState::Released) if self.panel_held.is_some() => {
+                        self.menus.held = false;
                         self.panel_held = None;
                         let sel = self.selection();
                         let acts = self.panels.release(&self.world.game.state, &sel);
                         self.apply(acts);
                     }
                     (MouseButton::Left, ElementState::Released) => {
+                        self.menus.held = false;
                         self.left_drag = None;
                         let down = self.left_down.take();
                         if on_starmap && !moved(down, self.cursor) {
@@ -901,7 +1126,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => match event.logical_key.as_ref() {
                 Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Research) => self.toggle_research(),
-                Key::Named(NamedKey::Escape) if self.spy.is_some() => self.spy = None,
+                Key::Named(NamedKey::Escape) if self.spy.is_some() => self.toggle_spy(),
                 Key::Named(NamedKey::Escape) if self.overlay.is_some() => self.overlay = None,
                 Key::Character("s" | "S") => self.toggle_spy(),
                 Key::Named(dir @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) if self.spy.is_some() => {
@@ -941,11 +1166,6 @@ impl ApplicationHandler for App {
                 }
                 Key::Named(NamedKey::Escape) => el.exit(),
                 Key::Character("c" | "C") => self.toggle_colony(),
-                Key::Character("t" | "T") if self.colony.is_none() => {
-                    let sel = self.selection();
-                    let acts = self.panels.fleet_transfer(&self.world.game.state, &sel);
-                    self.apply(acts);
-                }
                 Key::Named(NamedKey::Space) => self.toggle_pause(),
                 Key::Character("1") => self.set_speed(1),
                 Key::Character("2") => self.set_speed(2),

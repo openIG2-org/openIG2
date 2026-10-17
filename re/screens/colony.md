@@ -102,7 +102,9 @@ product `R·S` (`+0x88`; `MultipleMatrix(a, b)` 0x4518f0 = `b·a`, column vector
 (2200 − 2000)/0.03), colour `Hatterek[bg]+0x20..+0x28`; `SetBorderFog` 0x4be2c0 gives terrain vertices beyond 95 % of
 the half-size fog 0.5 and beyond 99 % full fog; `fogalap.xvb` (scale 12.1, moved to h = 1600) is fully fogged. The
 remaster's GL renderer shows **no distance fog** in the reference captures (§8) [obs]; the client keeps the border
-fog only.
+fog only. The terrain and buildings sit under `mainmeshid1` (ambient `light1` 0x1e1e1e, the parallel `light2`
+0xc8c8c8; the lightning `villamid` is black), the building panel's model under `mainmeshid2` (0x404040 and `light5x`
+0xffffff from (10, 10, −10)); the remaster draws them in gamma space with the shadow map: render.md §4–§5.
 
 The background: `melyikhatter = WF+0xa04` (exe `+0x8d4`, `Field::background`, `InitWeather` 0x4c1160), `LoadBox(Hatterek[bg])`
 (`[hatter]` sections of `terepleiro.txt`), `AddToScene(…, 11.0)`, `ScaleObj(1, 1, 1.1)`, `RotateObj(0, π/2, 0)`,

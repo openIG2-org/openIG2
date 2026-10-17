@@ -19,6 +19,12 @@ impl Image {
         Ok(Self { width: img.width, height: img.height, rgba: img.pixels })
     }
 
+    /// The texture's `uv_mul` (its PVR's `CNST` metadata, `ig2_vertex.shader` scales the mesh UVs by it), else (1, 1).
+    pub fn uv_mul(install: &Install, path: &str) -> [f32; 2] {
+        let c = install.read(path).ok().and_then(|b| Pvr::parse(&b).ok().and_then(|p| p.constant("uv_mul")));
+        c.map_or([1.0; 2], |c| [c[0], c[1]])
+    }
+
     /// A 1×1 white image (untextured shapes).
     pub fn white() -> Self {
         Self { width: 1, height: 1, rgba: vec![255; 4] }

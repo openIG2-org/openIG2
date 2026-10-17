@@ -26,7 +26,7 @@ shown category 1..=12), `ResearchMezo` 0xB9AA04 (field 1..=16), `ResearchTalalma
 2 weapons, 3 radars, 4 shields, 5 bombs, 6 civil buildings, 7 research, 8 military buildings, 9 power plants,
 10 tanks, 11 turrets, 12 special.
 
-Screen state (one peer's UI): `resframe` (the opening 0..60, +0.4 a UI frame), `resKINYITVA` (open), `kezeloframe`
+Screen state (one peer's UI): `resframe` (the opening 0..60, +0.4 a UI frame; §5), `resKINYITVA` (open), `kezeloframe`
 → `kezeloframeto` (the middle wheel), `maxhossz[16]` (characters out per list row: −(k % 8) on entry, +1.8 a frame
 up to 20), `InfoSorok[4]+0xb4` (the info lines' characters out: +1.4 a frame), `reswireframe`, the ball's matrix,
 `AddZoom`/`TalalmanyDir` (the models flying out and in), `Kozelites`/`KozelitesDirection` (the chosen model coming
@@ -41,7 +41,57 @@ remembered one on; −1 if none); `Double_Lenyomva = KutatasSurgos[EN]`.
 ## 2. The 3D scene (`Research3DInit`, `Research3DUpdate`)
 Camera as the starmap's panels: `vx = 600·x/w + 320`, `vy = 600·y/w + 250` (w = −z; `kamerapont` z 600,
 `xcenter`/`ycenter` 320/250). Lights: ambient 0x202020, parallel 0x808080 from (0, 0, −10), two side lights
-(0xffba00, 0x009cff) circling with `reskeringeto` (`resMozgatMainFenyek`).
+(0xffba00, 0x009cff) circling with `reskeringeto` (exe 0xDDF6BC; `resMozgatMainFenyek`, inlined in the exe's
+`Research3DUpdate`: `(sin(20k)·300, cos(20k)·200, −950)` and the same at +1.57075).
+Engine behaviour seen on the opening's captures (§7) [obs]: back faces are culled (solid parts and the ball's
+wireframe; the wire sphere draws every edge); geometry close to the camera still draws (the info box's glass
+passes within a few units while closing: the port's depth range starts at w = 10); an opaque wireframe is lit per
+triangle (the wire sphere: its cells facing the camera full (46, 144, 239), the far side the ambient's (5, 18, 30));
+edges crossing the camera plane are clipped, not dropped; the 2D faders and lasers draw over the models. Port: every
+part lit per vertex by the engine's model (§2.1, `ig2-client::lighting`), all four lights.
+
+### 2.1 The engine's lights (verified)
+The 3D engine colours the vertices of lit objects (property 1) on the CPU; the shader only multiplies the texture
+by the vertex colour (`gl_FragColor = texture2D(…)·var_color`, `var_color.xyz *= var_color.w`; no doubling). Shared
+by every 3D screen.
+- Lights live on a scene node (`CreateLightAmbient` ELF 0x4575c0 / exe 0x451cb0, type 0; `CreateLightParalell`
+  0x4577a0 / 0x451ef0, type 1, stores `normalizevektor(pos)` at +0x18; `CreateLightOmni` 0x457980, type 2;
+  records of 0x48 bytes: type +0, colour word +4, `SetLightStrength`'s strength +0x3c (omni only), specular flag
+  +0x44). `SetLightPos` (0x457c50 / 0x453050) stores a parallel light's normalised position (an omni's raw one) and
+  flags the node's subtree for relighting (`fenyvaltozikbeir` 0x454490) only when it changed; `MoveObj`,
+  `RotateObj`, `SetFrame`, `ScaleObj` and `AddToScene` flag theirs too.
+- `Kocka` (ELF 0x5f6a40) gives every node the parent's lights, then its own (at most 15, colour ≠ 0); a parallel
+  light's vector is turned by the parent's rotation chain into +0x28 (the camera's `cmatrix` at the root: identity on
+  the 3D-framed screens). Each node carries two matrices: the placement (scale × rotation, +0) and the rotation
+  chain (`spsorttype+0x24`): `AddToXVB` keeps the `AddToScene` scale apart (+0x10) from the rotation (+0x64,
+  `CreateMatrix`, `RotateObj`); a file child contributes its record matrix, an animated one its key's rotation
+  matrix (key floats 9..17; `Kocka` blends two keys linearly without renormalising).
+- `fenyekszamolasa` (ELF 0x606530, exe 0x52f190; only when a light or the node changed: the colours are cached in
+  the mesh's `vertexnormal` array, +0xc): the colour starts at 0; ambient lights add their colour bytes; a parallel
+  light adds `colour·shade[i] >> 8` per byte with `i = float2int(|n' − Mᵀ·L|²·2047)`, `n'` = the vertex's file normal
+  (normalised by `LoadObject`) with z negated, `M` the node's rotation chain (`InvertMatrix` 0x451b80 is a transpose),
+  `L` the light's +0x28; with the specular flag (`SetLightSpecular`) and a material specular table also
+  `colour·specular[i] >> 8`. Every add saturates per byte (`addcolor` 0x450c70). Omni lights add nothing here.
+  Without property 8 the bytes are scaled by the opacity `(255 − 255·transparency)` `>> 8` and alpha is 0xff; with
+  property 8 (the research screen's parts) the bytes stay and alpha = the opacity. Unlit objects (no property 1,
+  no 0x100) get 0xffffff.
+- `shade` = `SetLights(2, 0.15)` (ELF 0x602ea0, from `Init3DVariables`): `N = (int)(√2/4·8192)` = 2896, `shade[i] =
+  (int)(sqrt(1 − i/N)·255)` below N, 0 from N to 8191; `specular[i] = (int)(cos(i·3.141/N/2)^64·255)` likewise.
+  `float2int` (exe 0x542d80) adds 2²³ in f32 and keeps the mantissa (round to nearest even). So a parallel light
+  reaches a normal within ~73° of it (`cos θ > 1 − N/4094`), full (255) face-on, `sqrt` falloff.
+- Colour words are bytes `[r, g, b]`: `0xffba00` is (0, 186, 255), sky blue; `0x009cff` (255, 156, 0), orange
+  [obs: the cyan left wheel at opening 45].
+- `wirekirak` (ELF 0x6083f0) draws a lit wireframe's edges with each end's vertex colour times the texture there.
+- Verified: `run_screen.py --kep 4 --res-frame 60 --res-keringeto 0.01 --light-probe --jsonl
+  _local/traces/light-research.jsonl` hooks the exe's `fenyekszamolasa` on the research screen's first lit frames
+  and records each node's rotation chain, lights and every vertex's normal and colour: the formula above gives all
+  6,096 colours exactly (`lighting::tests::research_probe_matches_the_exe`; the shade table matches the exe's
+  copy).
+- Port (`ig2-client::lighting`): `Lights::shade(w)` with the camera-space lighting normal `w = R·n'` (`scene::Vert::
+  lnormal` carries the model's chain applied to `n'`; `lighting::normal` adds the placement's rotation, the columns of
+  `R·S` normalised; `lighting::through` for a point map that scales last), `|w − L|²` = `|n' − Rᵀ·L|²` for a
+  rotation. The bytes map into the sRGB frame through `spy_scene::gamma` [obs: better than the factors as they are,
+  open 45 `labs` 8.30 → 3.81]; transparent parts are lit the same, times their opacity.
 
 - `resbck.xvb` (`vector/research/screen/`), `AddToScene(…, 0.95)` at (0, `resmozgato`, −650), `resmozgato =
   (1 − resframe/60)·26 + 3`, posed at `resframe` (121-frame node animation; open = 60). Its 17 children
@@ -98,7 +148,7 @@ Camera as the starmap's panels: `vx = 600·x/w + 320`, `vy = 600·y/w + 250` (w 
   in SP, at most the work left, at least 1; days = `(int)left / speed / 50`. Cost per day = `price × money
   multiplier × left / total` (f32), ×2 when urgent.
 
-`ResearchGfx2D_1` draws the opening lasers and sparks (not ported); `ResearchGfx2D_3` is empty.
+`ResearchGfx2D_1` draws the opening lasers and sparks (§5.2); `ResearchGfx2D_3` is empty.
 
 ## 4. Input
 Hot-spots come from the mask picture `RESE_MSK.RAW` (kep 0x58; `mhwanh` header 640 × 480, a palette, then one byte
@@ -107,6 +157,7 @@ that colour (`Mouse_Szoveg_Set(id, colour, …)`; colour 0 = the rectangle). `Re
 - 1 (colour 0x11): start/stop (`ResearchStartStop`); on only while a project runs or the shown tech can start.
 - 4 (0x12): urgent (`ResearchDoubleGomb`: the button's texture flips at once, message 0x2b).
 - 6, 7, 8, 10, 0xd, 0xe, 0xf (their own colours): civil, power, military, research, special, tanks, turrets.
+- 0x13..=0x18 (rectangles): the labs' tooltips only (§5.5).
 - 9, 0x10, 0xb, 5, 0xc: radars, weapons, shields, bombs, ships on the middle wheel. The wheel's five slots keep
   their colours (9, 16, 11, 5, 12); `Forgotabla(n)` turns category n to the front slot: s = its slot,
   `forgastabla2/3/4x/4y` rotate right `5 − s` times (exe 0x525740), `kezeloframeto += (5 − s)·10` (mod 50),
@@ -129,15 +180,109 @@ turrets, radars, ships, bombs, shields, weapons, special, civil, power, research
 The client opens the screen with the top bar's research button (1005, (600, 0) 40 × 20) and K, closes it with Esc
 or the button.
 
-## 5. Not ported yet
-The opening/closing animation (`resframe` 0..60: the console flying in, `ResearchGfx2D_1`'s lasers and sparks, the
-fade of the starmap console), the buttons' press animations (`resSetGombFrame`), `DesignKeret1`'s animated frame
-(drawn as a plain box), the lines from the wheel button to the ball (`ResDrawVonalak`), tooltips, sounds, the ball
-drag, the screen-select menu entry.
+## 5. Opening, closing and presses
+### 5.1 The opening and closing (`Research3DUpdate`, `FRISSIT_Research2`, `Research_Kilep`)
+State (exe): `resframe` f32 0xDC5368, `resKINYITVA` 0xDDF322 (open), `resBECSUKAS` 0xDDF323 (closing),
+`resKELLKINYITAS` 0x918BD5, `reswireframe` 0xDC537C, `resELINDULT` 0xDDF628 (a frame was drawn).
+- `FRISSIT_Research2` (100 Hz): animated and started, `resframe += 0.4` up to 60 (150 UI frames); closing,
+  `−0.72` down to 0. `AddZoom` +0.01 (open, models flying out) or +0.02 (closing).
+- `Research3DUpdate` (per drawn frame): `SetFrame(ResMainMesh, resframe)` (the whole console's node animation
+  0..=60), `MoveObj(ResMainMesh, 0, (int)resmozgato, −650)`. Not open: at frame 60 (not closing) the screen opens
+  (`resKINYITVA`, `InitKozepso`: the closed middle wheel `Group115` hidden, the turning `Group133` shown); before
+  frame 30 the ball is hidden and the wire sphere's transparency is `1.35 − 2f/60` (the exe clamps < 0.0001 to 0,
+  > 0.99 to 1); from 30 the ball flies in: `g = (60 − f)·200`, `MoveObj(FociMesh, sin(g/1000)·200·g/2000,
+  cos(g/1000)·150·g/2000 − 35, −950 − g/10)`, `RotateObj(sin(g/1000), 0, 0)` then turned 0.002 (its transparency
+  `g/12000 − 0.6` is always clamped to 0), the sphere opaque.
+- While `resKELLKINYITAS` (also at rest), with `g = 1 − f/60`: the info box `Group85` (child 0xf) is moved to
+  `InitPos2 + (0, g·700, g·1400)` (exe 0x9185c0: (0.036, −233.77, −8.66)) and turned `(sin(2g)·2, 0, 0)`; the wire
+  sphere `Group66` (0xe) to `resInitPos1 + (0, g·200, −g·1000)` (exe 0x9185b0: (0, 0, 200)) and turned
+  `(sin(2g)·3, sin(2g)·2, 0)`. `MoveObj` on a child replaces its record translation (`v/1024`), `RotateObj` its
+  matrix (`P·K·R`, spy.md §2.2): at rest the sphere sits at z 200/1024, not its file's −0.069 [obs: frame 8.65 →
+  8.40 on the capture].
+- `Kezelo_radar` (0x10, the starmap console) shows while not open or closing (the exe also hides it on the one frame
+  where `resframe == 20` exactly, and for the transitions to/from screen 9).
+- The 2D faders (`KirakFader` 0..4) only past frame 30: `l = f/30 − 1`; opening, whole panels with fill
+  transparency `(1 − l)·150 + 105` and edge `(1 − l)·205 + 50` (opaque at 30, the open values at 60); closing,
+  the open transparencies with the panels folding to y 124 (`y = 124 − 43l`, `h = 106l`).
+- `ResearchGfx2D_2` writes nothing until open; the lists and labs stop when closing. The info lines restart at
+  `InfoSorok[i]+0xb8` (0, −20, −40, −60: `NEWGAME_Research`) for a new tech and type on only while open.
+- The tech models: `LoadTalalmanyVectorok` hides them; they show after the zoom-in that follows the opening
+  (`UnHideMeglevoTalalmanyok` when open and `TalalmanyDir == 0`) or at a category's reload.
+- `Research_Kilep` (animated, not to screens 10/1/13): `resBECSUKAS`, the turning wheel hidden and the closed one
+  shown, the models fly out (`TalalmanyDir` 1, from `ADDZOOMMIN` when they stood), sound `scrn01ki.wav`; then
+  `resKINYITVA = 0`, `UpdateFrame` + `FRISSITES` in a loop until frame 0 was drawn once (`VoltNulla`). Closing at
+  the max zoom hides the models (`HideAllTalalmany`); at frame 0 the sphere is hidden.
+- `Research_Belep` starts `kezeloframe = kezeloframeto = 0` and then `Forgotabla(ResearchOldForgato)`: the wheel
+  turns to the saved front category once open.
+
+### 5.2 The lasers (`ResearchGfx2D_1` ELF 0x5deeb0)
+Started and not closing: while opening (frame not 0 or 60, not open) `DrawLaser` (ELF 0x53c200) runs round both side
+faders (3, 81, 135, 106) and (500, 81, 135, 106) from `LaserPos` (0, 0) and (639, 0) with colour (0, 0x70, 0xe3) at
+`t = f/60`; `DrawSparks` unless at frame 60. `DrawLaser`: opacity `a = 255 − fade` (`fade = (0.1 − t)·2550` below
+0.1, `(t − 0.9)·2550` above 0.9); four heads (top from the left `(x + wt, y)`, bottom from the right
+`(x + w(1 − t), y + h)`, left from the bottom `(x, y + h(1 − t))`, right from the top `(x + w, y + ht)`); the top
+and bottom heads drag a tail of additive pixels from the head back to its start, the colour less 2 a pixel
+(`DrawFadingLineH`; `DrawFadingLineV` ELF 0x53c040 fills its pixel list but never draws it, so the side heads have
+none [obs]); 12 additive lines (`line2d`) from the source to the heads in `(r/5 + random(15), g/5 +
+random(15), b/5 + random(15))`, and at half colour from one pixel left and one up; per head `AddSpark` and a glow
+(`laservago.bmp`, `InitFader1`) of half-size `(random(10) + 15)/1.5` in the colour and `(… + 5)/1.5` white, both × `a`,
+additive (`polygons(…, 1)`). `AddSpark` (0x53bcd0): 10 sparks in free slots of 1500, speed `(random(50)/5 − 2.5)/3`
+each axis; `UpdateSparks` (0x53b9a0, every UI frame from `Frissit2_Grafika`): move, ×0.93, +0.04 down, −3 a channel,
+gone below a colour sum of 50 or off (1..638, 1..478); `DrawSparks`: additive pixels. `random(n)` = `rand() % n`
+(libc, cosmetic: a local generator in the port).
+
+### 5.3 Presses (`resSetGombFrame` ELF 0x5e4360)
+`ResMelyikGombot` (the button, −1 none) and `ResGombNew` are set by `ResearchStartStop` (0xcc), the `TT_*`
+category handlers (middle wheel: `forgastabla3[slot]` = 100 + child, set by `Forgotabla` before it rotates; off the
+wheel: tanks 1, turrets 3 (left wheel), civil 0x12d, military 0x12e, research 0x12f, power 0x130 (right wheel),
+special 0x6a). In `Research3DUpdate` from frame 60: `ResGombNew` clears `KeszALenyomas`; then `ResGombFrame` (shared)
+goes +7 to 10 and back −7 to 0 (`ResGombFrameCsokkent`), `KeszALenyomas` again at 0; the middle wheel only turns
+with `ResGombFrame == 0`, `KeszALenyomas` and the models not flying out, and the category hot-spots are off while
+it turns or a press isn't over. `resSetGombFrame(id, f)`: id < 100 → the left wheel's child id, z = `−30f − 6000`
+(1) / `−5300` (3); 100..199 → the middle wheel's child id − 100, z = its start z (`GetKezdoZposok`) − 30f; 200..299
+→ the info box's child id − 200 `SetFrame(f + 60)` (the buttons' own keys push them in over frames 60..70);
+300..399 → the right wheel's, z = `−30f − 3250/3060/2950/3260` for 0x12d/0x12e/0x12f/0x130 (`MoveObj`, v units: the
+first press moves a side button to that depth for good). The urgent button doesn't use it: `ResearchDoubleGomb`
+puts it in (10, `SetDoubleTexture`) or out (0, `DoubleGombFelenged`) at once; `Research_Belep` puts it in when urgent.
+
+### 5.4 The chosen row's frame (`DesignKeret1` ELF 0x53f780)
+`DesignKeret1(x − 5, y − 2, 20 cells + 10, h + 4, 1)` every drawn frame while open. A new place starts a morph
+(`dkmcel = π/2`); `Frissit2_Grafika` (ELF 0x5481c0, every UI frame) runs `dkm` +0.05 to π/2, jumps to the new place,
+then back to 0 (`dkoldx == 0` after a screen change keeps it hidden until the first place arrives; asked on the very
+first frame it would never show). Drawn with `f = 1 − sin(dkm)`, `w' = w(2 − f)`, `x' = x − w(1 − f)/3`, colour
+`DDColor[1]` × `KiirStrSzinSzorzo` (100): per row of `h + 1` from `y − 1` a glow of half the colour times a triangle
+peaking mid-height, dark at both ends over a tenth of the width (`line3` gives a segment's first colour to its far
+end); the border as 18 one-pixel segments (top right to left, the left corner, side and corner, bottom left to
+right, the right corner, side and corner), segment k `frac((sin(GfxNovelo + k·20°) + 1)/2)` bright (`GfxNovelo`
++0.02 a UI frame, a light running round); all additive (`line3(…, true)`). Port: `ui::DesignFrame` (the info
+screen's race frame can use it too).
+
+### 5.5 Tooltips
+`Research_MouseInit` (exe 0x524080) gives each hot-spot `GetString(4, 1, k)` (from the asm's immediates): 1 → 6 (and
+0x18 from `Research_MouseInit2` every frame), 3 → 7, 4 → 8, 6 → 9, 7 → 0xa, 8 → 0xb, 10 → 0xc, 0xd..=0xf → 0xd..=0xf,
+0x12 → 0x10, 0x13..=0x18 → 0x11..=0x16 (the labs: rectangles (10 | 0x23f, 0xbd/0xf5/0x129, 0x37, 0x32)), 0x19 →
+0x17; `Forgotabla` the middle wheel's 9, 0x10, 0xb, 5, 0xc → 1..=5. `Research_MouseInit2` (exe 0x523e20, from
+`UpdateFrame`): 3 and 0x19 only while a project runs, 1 as `ResearchStartStop` would act, 0x11 never, 0x12 while
+open and not closing, the labs while their cone shows (`GombocTransparencyk[i] == 0`: 0x13/0x16 lab 1, 0x14/0x17
+lab 2, 0x15/0x18 lab 3). Shown like every screen's (`UpdateFrame` 400 ms rest, lowest id, spy.md §6.1): the shared
+`ui::Tooltip`.
+
+### 5.6 Not ported yet
+The lines from the wheel button to the ball (`ResDrawVonalak`, `ResInitVonalkak`/`ResFrissitVonalkak`), the panels'
+design frames (`FadeKerettelKerekitDesign` under `GLOBALKELLDESIGN`), sounds, the ball drag, the screen-select menu
+entry. The info box glass's depth against the left wheel while closing (closing 40's `labs`, 12.9).
 
 ## 6. Orders
 `MULTIGET_Research`: re/rules/production-research.md §2.4 (verified byte-exact, traces/2026-10-17-research-orders.md).
 
 ## 7. Capture comparison
-`tools/trace/run_screendiff.py <install> quick-1.sav research` (the client in Hungarian, `IG2_LANG=hu`, like the
-exe): results in diff-results.md.
+`tools/trace/run_screendiff.py <install> quick-1.sav research` (the client in the exe's language, Hungarian here, like the
+exe): results in diff-results.md. `--anim-frame F [--anim-closing]` holds `resframe` at F in both (the tracer writes
+it before every exe `Research3DUpdate`, `run_screen.py --res-frame`; closing it also sets `resBECSUKAS` and clears
+`resKINYITVA` as `Research_Kilep` does, but leaves the middle wheels as they were); held, the side lights' clock
+`reskeringeto` (exe 0xDDF6BC) is pinned at 0 and the glass's `resatlatszosag` (exe 0xDC5370) at 0.85 in both, and
+`--anim-frame 60` is the open screen at a known phase (use it with `--anim-mouse`); `run_screen.py --res-keringeto K`
+pins the light clock at K instead (the light probe, §2.1). `--anim-mouse X,Y` rests the
+pointer there (a tooltip). The client: `--anim-frame`, `--anim-closing`, `--mouse`. Without a held frame the exe grab
+waits 1000 frames (the screen opens over ~250 after the save loads). Results of the held frames:
+diff-results.md (`research-anim-captures`).

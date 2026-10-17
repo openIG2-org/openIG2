@@ -525,7 +525,7 @@ impl ColonyUi {
             crate::starmap_panels::fader(f, white, v, [pk.at[0] - 6.0, pk.at[1] - 2.0, (4 * 0x78 + 3) as f32, (rows * 0xd + 0x12) as f32], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
             // `Epulet_Terulet_Nev[1..=4]` (txt17 §3, 0x22 + k, the Hungarian file's `StringReadAll`).
             for k in 1..=4u16 {
-                let name = crate::ui::latin1(hu17.get(0x11, 3, 0x22 + k));
+                let name = crate::ui::hu_bytes(hu17.get(0x11, 3, 0x22 + k));
                 font.text(f, v, &name, pk.at[0] + ((k - 1) * 0x78 + 0x36) as f32, pk.at[1] + 3.0, 0x12, 2, Align::Centre, col(6), None);
             }
             let hub = c.has_hub();
@@ -579,7 +579,7 @@ fn hp_stripe(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], val
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
     let fill = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 3]| {
         if w > 0.0 {
-            f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
+            f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
         }
     };
     fill(f, x, y, w, 5.0, col(0));
@@ -685,7 +685,7 @@ impl PanelBuilding {
                 let q = scene::apply(&m, v.pos);
                 dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: scene::normalise(scene::apply(&m, v.normal)), uv: v.uv, color: [1.0, 1.0, 1.0, a] });
             }
-            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0 });
+            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
         }
         let k = size[1] / 480.0;
         let px = ((640.0 * k).round().max(1.0) as u32, size[1].round().max(1.0) as u32);
@@ -695,16 +695,20 @@ impl PanelBuilding {
         let (a, b) = (1.0 / (1.0 / near - 1.0 / far) / near, 1.0 / (1.0 / near - 1.0 / far));
         let rows4 = [[1200.0 / 640.0, 0.0, -(cx - 320.0) / 320.0, 0.0], [0.0, -1200.0 / 480.0, -(1.0 - 2.0 * cy / 480.0), 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
-        let light = scene::normalise([0.0, -0.35, 1.0]);
+        // `light5x` from (10, 10, −10) with the h axis flipped for the file normals, as the view's (colony.rs).
+        let light = scene::normalise([-1.0, 1.0, -1.0]);
         let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
         f.scene = Some(Scene3d {
+            gamma: true,
+            shadow: None,
             uniforms: SceneUniforms {
                 view,
                 eye: [0.0; 4],
                 light: [light[0], light[1], light[2], 0.0],
-                // `mainmeshid2`'s ambient 0x404040 (`Init3dColony`) and the parallel light 0xc8c8c8.
+                // `mainmeshid2`'s ambient 0x404040 and parallel light `light5x` 0xffffff (`Init3dColony`;
+                // `SetEnvironment` only recolours `light2`).
                 ambient: [0.251, 0.251, 0.251, 0.0],
-                sun: [0.784, 0.784, 0.784, 0.0],
+                sun: [1.0, 1.0, 1.0, 0.0],
                 fog: [0.0; 4],
                 fog_range: [1e9, 2e9, 0.0, 1e9],
             },
@@ -725,7 +729,7 @@ impl PanelBuilding {
         let (w, h) = (x1 - x0, y1 - y0);
         let mut i = Instance::new(kind::SPRITE, v.px(x0 + w / 2.0, y0 + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [1.0; 4]);
         i.uv = [x0 / 640.0, y0 / 480.0, w / 640.0, h / 480.0];
-        f.push(tex, Blend::Alpha, i);
+        f.push(tex, Blend::GammaPremul, i);
     }
 }
 

@@ -75,9 +75,13 @@ message while it types or its dialogue runs (`UBAXSz` is set at run time [inf: 0
 
 ## 4. The frame (`Messages3DInit` 0x5a19a0, `Messages3DUpdate` 0x5a3ad0, `FRISSIT_Messages2` 0x5aad60)
 `messbck.xvb` (`vector/messages/`, `textures/messages/`) ×0.9 at (33, 10, −650), not rotated, posed by `mesframe`;
-projection as the info screen's (`xcenter` 320, `ycenter` 240, focal 600); ambient 0x141414, parallel 0x808080 from
-(0, 0, −10), side lights 0x7f5d00 / 0x004e7f from (200, 0, −350) (`mesOldalsoFenyekBe` 0x5a1280); sub-meshes 1/6, 2/7
-and 4/0 are 40 % transparent. `mesframe` runs to 15 at +1/3 a UI frame (the list panel); opening a message
+projection as the info screen's (`xcenter` 320, `ycenter` 240, focal 600); lit per vertex by the engine's model
+(research.md §2.1): ambient 0x141414, parallel 0x808080 from (0, 0, −10), side lights 0x7f5d00 / 0x004e7f from
+(200, 0, −350), all on `mainmeshid` (`mesOldalsoFenyekBe` ELF 0x5a1280 = exe 0x50a000, which the ported names call
+`resOldalsoFenyekBe`; the exe's "`mesOldalsoFenyekBe`" 0x5047d0 is another screen's). The side lights never move:
+`mesMozgatMainFenyek` (0x5a0f40) has no caller and nothing writes `meskeringeto` but `Messages_Belep`'s reset
+[obs: no `call` to it in the ELF, no reference to the exe's lights 0xDABEBC/0xDABE70 outside their creation; the
+capture matches to 0.3]. Sub-meshes 1/6, 2/7 and 4/0 are 40 % transparent. `mesframe` runs to 15 at +1/3 a UI frame (the list panel); opening a message
 (`KELLKINYITAS2`) runs it on to 30 (the text and answer panels), where the exe saves the screen (`SaveScreen(3)`) and
 from then on draws that picture (0x36) instead of the model. Under the model `Copy3hatterkep(0x35, 0xff − 195·min(
 mesframe, 15)/15)` (the screen before, `SaveScreen(2)` in `Messages_Belep`; black in the captures). The buttons 0 and 3

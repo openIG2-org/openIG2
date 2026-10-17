@@ -477,7 +477,7 @@ fn line_680(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
 
 /// 710 and 720's war on the second strongest enemy: `vSet(0x20a7, e)`, message `id` names it, story 835.
 fn second_enemy(s: &mut Story, w: &mut dyn StoryWorld, id: i32, slots: &[i32]) {
-    let e = second_strongest_enemy(&*w);
+    let e = second_strongest_enemy(1, &*w);
     if e == 0 {
         s.win(0, true, w);
         return;

@@ -51,7 +51,7 @@ impl Console {
                 }
                 _ => white,
             };
-            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex, glass: false });
+            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
         }
         let [x0, y0, x1, y1] = CONSOLE_RECT;
         let (w, h) = (x1 - x0, y1 - y0);
@@ -66,6 +66,8 @@ impl Console {
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows[k][c]));
         let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
         f.scene = Some(Scene3d {
+            gamma: false,
+            shadow: None,
             uniforms: SceneUniforms {
                 view,
                 eye: [0.0; 4],
@@ -145,7 +147,7 @@ impl InfoTexts<'_> {
     }
     /// `txt17` §4 from the Hungarian file: `Problemak_Nev[p]` = 21 + p, `Moral_Nev[k]` = 41 + k.
     fn names(&self, index: u16) -> Vec<u8> {
-        crate::ui::latin1(self.hu17.get(0x11, 4, index))
+        crate::ui::hu_bytes(self.hu17.get(0x11, 4, index))
     }
     fn empire(&self, e: u8) -> Vec<u8> {
         self.empire_names.get(e as usize).cloned().unwrap_or_default()
@@ -287,7 +289,7 @@ impl InfoBox {
 }
 
 /// `GetBolygoGazdagsag` (ELF 0x4fb180): richness × the owner's race production multiplier, plus the event bonus.
-fn richness(state: &SaveState, rules: &ig2_rules::Rules, p: usize, en: u8) -> i32 {
+pub(crate) fn richness(state: &SaveState, rules: &ig2_rules::Rules, p: usize, en: u8) -> i32 {
     let c = state.colony();
     let Some(pl) = c.planets.get(p) else { return 0 };
     let mut bonus = 0;
@@ -309,7 +311,7 @@ fn richness(state: &SaveState, rules: &ig2_rules::Rules, p: usize, en: u8) -> i3
 
 /// `StarmapProblemaRendez` (ELF 0x7082c0): the problems 1..=19 at 100000 or more (`+0x118 + 4p`), the four worst
 /// first.
-fn problem_order(r: &[u8], debug: bool) -> Vec<usize> {
+pub(crate) fn problem_order(r: &[u8], debug: bool) -> Vec<usize> {
     let v = |p: usize| i32::from_le_bytes(r[0x118 + 4 * p..0x11c + 4 * p].try_into().unwrap());
     let mut order: Vec<usize> = Vec::new();
     for c in 1..0x14 {
@@ -329,7 +331,7 @@ fn problem_order(r: &[u8], debug: bool) -> Vec<usize> {
 
 /// The production line: the head ship (line 0) or vehicle (line 1; every other 30 frames when both) and how much
 /// of it is built.
-fn production_line(state: &SaveState, r: &[u8], owner: u8, counter: i32) -> Option<Vec<u8>> {
+pub(crate) fn production_line(state: &SaveState, r: &[u8], owner: u8, counter: i32) -> Option<Vec<u8>> {
     let head = |l: usize| i16::from_le_bytes([r[0x78 + 8 * l], r[0x79 + 8 * l]]);
     let mut line = if head(0) > 0 { Some(0) } else { None };
     if head(1) > 0 && ((counter / 30) % 2 == 0 || line.is_none()) {
@@ -353,30 +355,17 @@ fn production_line(state: &SaveState, r: &[u8], owner: u8, counter: i32) -> Opti
 }
 
 /// `KirakFader(i, …, x, y, w, h, 0, 54s, 90s, 155l + 100, 0, 90s, 130s, 185l + 70)` (ELF 0x547920 →
-/// `FadeKerettelKerekit` 0x538330: a rounded fill and its frame) with s = 1 and l = 0: the fill (0, 54, 90) at
-/// opacity 100/255 and a one-pixel frame (0, 90, 130) at 70/255 [obs: exe pixels inside the box; inf: the rounded
-/// corners are left square].
+/// `FadeKerettelKerekit` 0x538330, [`crate::starmap_panels::kirak_fader`]) with s = [`crate::starmap_panels::S`] and
+/// l = 0.
 pub fn fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4]) {
-    let [x, y, w, h] = r;
-    let quad = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 4]| {
-        f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], c));
-    };
-    quad(f, x, y, w, h, srgb_blend([0.0, 54.0, 90.0], 100.0 / 255.0));
-    let edge = srgb_blend([0.0, 90.0, 130.0], 70.0 / 255.0);
-    quad(f, x, y, w, 1.0, edge);
-    quad(f, x, y + h - 1.0, w, 1.0, edge);
-    quad(f, x, y + 1.0, 1.0, h - 2.0, edge);
-    quad(f, x + w - 1.0, y + 1.0, 1.0, h - 2.0, edge);
+    use crate::starmap_panels::S;
+    crate::starmap_panels::kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
 }
 
-/// The tint and alpha that blend in this sRGB frame (in linear light) as the exe's `c` (0..255) at opacity `a`
-/// blends in sRGB: the background keeps `(1 − a)` of its sRGB value (≈ `(1 − a)^2.2` linear), and over black the
-/// result is `a·c` exactly.
-pub fn srgb_blend(c: [f32; 3], a: f32) -> [f32; 4] {
-    let lin = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
-    let eff = 1.0 - (1.0 - a).powf(2.2);
-    let k = |v: f32| if eff > 0.0 { lin(a * v / 255.0) / eff } else { 0.0 };
-    [k(c[0]), k(c[1]), k(c[2]), eff]
+/// The exe's colour `c` (0..255) at opacity `a` as a [`Blend::GammaAlpha`] tint: `FadeScreen`'s quads are the 2D
+/// pass's (re/screens/hud.md §1.1), blended on the frame's stored values.
+pub fn fade_color(c: [f32; 3], a: f32) -> [f32; 4] {
+    [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, a]
 }
 
 /// The HUD's resources.
@@ -407,7 +396,7 @@ impl StarmapHud {
         // `StarmapGfx2D_1`: the fader behind the short info, then the minimap's dark window (`FadeScreen(271, 385,
         // 98, 71, black, 0x40)`; the value is the transparency [obs: the window is dark in the captures]).
         fader(f, white, v, [5.0, 423.0, 162.0, 52.0]);
-        f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(271.0 + 49.0, 385.0 + 35.5), [49.0 * v.k, 35.5 * v.k], srgb_blend([0.0; 3], 1.0 - 0x40 as f32 / 255.0)));
+        f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(271.0 + 49.0, 385.0 + 35.5), [49.0 * v.k, 35.5 * v.k], fade_color([0.0; 3], 1.0 - 0x40 as f32 / 255.0)));
         for &(b, n, x, y) in &info.brushes {
             if let Some(b) = brushes.get(b) {
                 pics.brush(f, v, b, n, Some([x, y]), [1.0; 4]);
@@ -421,7 +410,7 @@ impl StarmapHud {
         let inside = |q: [f32; 2]| q[0] > 274.0 && q[0] < 366.0 && q[1] > 388.0 && q[1] < 453.0;
         let dot = |f: &mut Frame, q: [f32; 2], w: f32, h: f32, c: [f32; 3], a: f32| {
             let (x, y) = ((q[0] - 1.0).trunc(), (q[1] - 1.0).trunc());
-            f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], a]));
+            f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], a]));
         };
         let blink = crate::hud::blink(time, 100.0);
         for &(p, c, sel) in &mini.fleets {
@@ -441,7 +430,7 @@ impl StarmapHud {
             if let (Some(a), Some(b)) = (corner(a), corner(b)) {
                 if let Some((a, b)) = crate::hud::clip_line(a, b, MINIMAP) {
                     let c = col(1);
-                    f.push(white, Blend::Alpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), [c[0], c[1], c[2], 1.0]));
+                    f.push(white, Blend::GammaAlpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), [c[0], c[1], c[2], 1.0]));
                 }
             }
         }

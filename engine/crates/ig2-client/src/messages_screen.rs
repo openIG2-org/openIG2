@@ -664,7 +664,7 @@ pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f
 fn rect(f: &mut Frame, white: TexId, v: &Virtual, x: f32, y: f32, w: f32, h: f32, c: [f32; 3]) {
     use crate::render::kind;
     let p = v.px(x + w / 2.0, y + h / 2.0);
-    f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, p, [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
+    f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, p, [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
 }
 
 #[cfg(test)]

@@ -54,7 +54,7 @@ impl Pictures {
         let [x, y] = at.unwrap_or([b.dst[0] as f32, b.dst[1] as f32]);
         let mut i = Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], tint);
         i.uv = [src[0] as f32 * kx / tw, src[1] as f32 * ky / th, w * kx / tw, h * ky / th];
-        f.push(tex, Blend::Alpha, i);
+        f.push(tex, Blend::GammaAlpha, i);
     }
 }
 
@@ -168,7 +168,7 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
     }
     let dot = |f: &mut Frame, x: f32, y: f32, s: f32, c: [f32; 3]| {
         if x >= RADAR[0] && y >= RADAR[1] && x <= RADAR[2] && y <= RADAR[3] {
-            f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(x + s / 2.0, y + s / 2.0), [s * v.k / 2.0; 2], [c[0], c[1], c[2], 1.0]));
+            f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x + s / 2.0, y + s / 2.0), [s * v.k / 2.0; 2], [c[0], c[1], c[2], 1.0]));
         }
     };
     for &(gx, gy, c) in &c.buildings {
@@ -181,7 +181,7 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
     if let Some(q) = c.view {
         for (a, b) in [(q[0], q[1]), (q[0], q[2]), (q[3], q[2]), (q[3], q[1])] {
             if let Some((a, b)) = clip_line(a, b, RADAR) {
-                f.push(white, Blend::Alpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), [1.0; 4]));
+                f.push(white, Blend::GammaAlpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), [1.0; 4]));
             }
         }
     }

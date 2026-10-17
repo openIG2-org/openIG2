@@ -396,6 +396,10 @@ pub enum StoryEvent {
     DeclareWar { a: i32, b: i32 },
     /// `st_SetSemlegesViszony(a, b)` (exe 0x6028a0): `BirodalomBeketKot(a, b)`, then both levels (`+0x25`) := 3.
     MakeNeutral { a: i32, b: i32 },
+    /// `st_SetNonagressionViszony(a, b)` (exe 0x602860): `BirodalomBeketKot(a, b)`, then both levels (`+0x25`) := 4.
+    MakeNonAggression { a: i32, b: i32 },
+    /// `Diplomacy_RemoveSpecial(id, e)` (exe 0x4c0010): the diplomacy special `id` offered to empire `e` taken back.
+    RemoveDiplomacySpecial { id: i32, empire: i32 },
     /// `st_EnableKemKuldetes(id)` (exe 0x5e6ac0) / `st_DisableKemKuldetes(id)` (0x5d4ab0): the story spy mission
     /// `14 + k` with `StoryKuldetes[k] == id` offered or not (`KemKuldetesek[14 + k].+0 := on`; the undo entry is
     /// the story's).
@@ -462,6 +466,35 @@ pub enum StoryEvent {
     DesignFlags { empire: i32, design: i32, b18: i32, b19: i32 },
     /// Design `+0x00` (its name) := `_s(5, text)`, or for `None` its tech's name (`Talalmanyok[+0x48]`).
     NameDesign { empire: i32, design: i32, text: Option<i32> },
+
+    // st_Elem_include part 2a (crate::elem::spies, spec §8.14).
+    /// Planet `p`'s battlefield: the self-destruct timer `WF+0x334` written (`ground-combat.md` §11).
+    SelfDestruct { planet: i32, value: i32 },
+    /// `WF_Tank::SetMadness(true)` (exe 0x49c140): unit `unit` of planet `p`'s battlefield, `+0x188 |= 4`.
+    MadUnit { planet: i32, unit: i32 },
+    /// `Multi_Send(0x49, EN, spy, mission, 0, 0, 0, 10)`: the human's spy `spy` goes on spy mission `mission` through
+    /// the lockstep queue (`MULTIGET_Spy`).
+    SpyOrder { spy: i32, mission: i32 },
+    /// `ScrollUzenet(format(_s(5, text), a, b), 1, 0, 0)` with two numbers (story 850's tribute).
+    ScrollNumbers { text: i32, a: i32, b: i32 },
+    /// `ScrollUzenet(format(_s(5, text), empire's name, planet's name), 1, 0, 0)` (story 824's gift).
+    ScrollEmpirePlanet { text: i32, empire: i32, planet: i32 },
+
+    // st_Elem_include part 2b (crate::elem::ground, spec §8.14).
+    /// `WF_Tank::SetMadness(false)` (exe 0x49c140) and `WF_Tank::NoTarget` (0x48c0b0): unit `unit` of planet `p`'s
+    /// battlefield, `+0x188 &= !4`, then `&= !0x900`.
+    CalmUnit { planet: i32, unit: i32 },
+    /// Story 854's riot: unit `unit` of planet `p`'s battlefield goes over to empire 10. `TankDelete(−p, +0x15c,
+    /// +0x190)` (the core 0x541510: the garrison record only), then (its flags `+0x188 & 0x4020000` still clear)
+    /// `WF_Tank::SetSide(10)` (0x49c4e0: owner `+0x194 := 10`) and `+0x198 := 10`, every vehicle's origin fleet
+    /// `+0x19c[0..+0x190] := fleet`, `+0x285 := 1`, the battlefield's status cache `WF+0x8cc := 0`.
+    RiotUnit { planet: i32, unit: i32, fleet: i32 },
+    /// Unit `unit` of planet `p`'s battlefield: its design `+0x15c := design`.
+    UnitDesign { planet: i32, unit: i32, design: i32 },
+    /// Story 854 shows the riot: the colony screen of planet `p` (`AktKepKell` 0xBAE250 := 3, `AktPlanetKell`
+    /// 0xBAE254 := p), the script holds its battlefield (0xF261F8 := p: no `WF::Refresh` there, `ground-combat.md`
+    /// §11.6) and the game pauses (`SetIdoPause(1, 0)`, exe 0x541300).
+    HoldGroundWar { planet: i32 },
 }
 
 /// A message parameter's text (`SetParamStr`).
@@ -493,6 +526,10 @@ pub enum MessageText {
     Position([f64; 3]),
     /// The name of participant `k` (0-based) of the finished space battle (`SpwFlottak[k]`, `+0x00`).
     Participant(i32),
+    /// Spy `slot` of empire `empire` (`Kemek[e][k]`, its name).
+    Spy { empire: i32, slot: i32 },
+    /// A literal text of the script's (808's `"--"`).
+    Literal(&'static str),
 }
 
 /// The lines the multiplayer modes put on the starmap (`st_AddGameInfo`).
@@ -512,6 +549,8 @@ pub enum InfoLine {
     Countdown { count: i32, planet: i32 },
     /// A tech's name (`Talalmanyok[t]`).
     Tech(i32),
+    /// An empire's name (`Birodalom_Nev[e]`), then a planet's (story 808).
+    EmpirePlanet { empire: i32, planet: i32 },
 }
 
 /// The multiplayer modes' texts for the human (`AddSzoveg`).
@@ -950,6 +989,55 @@ pub trait StoryWorld {
     fn fleet_units(&self, _f: i32) -> (i32, i32) {
         (0, 0)
     }
+
+    // st_Elem_include part 2a.
+    /// Planet `p`'s battlefield units 0..`WF::TankNum` (`WF+0x330`): `(alive (WF+0x188 byte), owner +0x194)`.
+    fn battlefield_units(&self, _p: i32) -> Vec<(bool, i32)> {
+        Vec::new()
+    }
+    /// `HanyEpulet[p]` (exe 0xBA9518): the planet's buildings (not its slots, `HanyEpuletLefoglalva` 0xBA9840).
+    fn buildings_occupied(&self, _p: i32) -> i32 {
+        0
+    }
+
+    // st_Elem_include part 2b.
+    /// Planet `+0x58`: the garrison's vehicles (`TankFlottahozHozzaszamol`).
+    fn planet_garrison(&self, _p: i32) -> i32 {
+        0
+    }
+    /// Planet `p`'s battlefield units 0..`WF::TankNum` with what story 854 reads.
+    fn battlefield_records(&self, _p: i32) -> Vec<FieldUnit> {
+        Vec::new()
+    }
+    /// `TervNew(e, 0)` (exe 0x5422f0) and `TervCopy2(e, &Tervek[from][d], new)` (0x541ca0: the 0x84 bytes of
+    /// empire `from`'s design `d` over the new one): the new design's slot.
+    fn copy_design_new(&mut self, _e: i32, _from: i32, _d: i32) -> i32 {
+        0
+    }
+}
+
+/// A unit of a battlefield as story 854 reads it (`WF(p)` exe 0x9C3244 + p·0x8EC, units `+0x330`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FieldUnit {
+    /// The battlefield's alive byte (`WF+0x188`).
+    pub alive: bool,
+    /// `+0x194`: its owner.
+    pub owner: i32,
+    /// `+0x188`: its flags.
+    pub flags: u32,
+    /// `+0x18c` (the byte).
+    pub flags2: u8,
+    /// `+0x190`: its vehicles.
+    pub count: i32,
+    /// `+0x15c`: its design.
+    pub design: i32,
+}
+
+impl FieldUnit {
+    /// `WF::TankUsed` (exe 0x4a4f20): alive, not `+0x188 & 2` or `& 0x40000000`, not `+0x18c & 4`.
+    pub fn used(&self) -> bool {
+        self.alive && self.flags & 2 == 0 && self.flags & 0x4000_0000 == 0 && self.flags2 & 4 == 0
+    }
 }
 
 /// A spy as `st_Begin_include` reads it (`Kemek[e][k]`, `espionage.md`).
@@ -1129,6 +1217,8 @@ pub struct Story {
     pub spy_slot: i32,
     /// `last_hajo_kigyujt_flotta` (exe 0xF265CC): the fleet `st_HajoKigyujt` last took a ship from.
     pub last_collect_fleet: i32,
+    /// `st_bGet3Nearest::best` (exe 0xF432C4): the three planets it last chose (a static, never cleared).
+    pub nearest3: [i32; 3],
 }
 
 /// A story building record (`StoryBuildingData`, 16 bytes).
@@ -1213,6 +1303,7 @@ impl Default for Story {
             spy_owner: 0,
             spy_slot: 0,
             last_collect_fleet: 0,
+            nearest3: [0; 3],
         }
     }
 }

@@ -44,13 +44,13 @@ playable from start to finish.
 |---|---|---|
 | Game simulation | ✅ done | Economy, fleets, radar, research, production, diplomacy, espionage, trade, the AI empires, auto-resolved and real-time space and ground battles, info and messages; original saves run whole game days identical to the original |
 | Story engine and skirmish scenarios | ✅ done | Scenario victory and defeat, the campaign start and driver, the six storylines, the multiplayer game modes |
-| Campaign scripts | 🚧 most done | Remaining: 29 of `st_Elem_include`'s 47 storyline episodes |
-| Game client: starmap | 🚧 playable | The original's 3D camera, stars, orbiting planets, fleets, names and selection; speed and pause, selecting, move/attack/waypoint orders through the lockstep commands; the control panel, planet/fleet info box and minimap; the production view and the transfer panel. To do: the menus and the radial icons |
+| Campaign scripts | 🚧 most done | Remaining: 18 of `st_Elem_include`'s 47 storyline episodes |
+| Game client: starmap | 🚧 playable | The original's 3D camera, stars, orbiting planets, fleets, names and selection; speed and pause, selecting, move/attack/waypoint orders through the lockstep commands; the control panel, planet/fleet info box and minimap; the production view and the transfer panel; the radial icon menu, the planet's long info with its tax, auto-build, priority and station-sale menus. To do: the fleet and vehicle info panels |
 | Game client: colony screen | 🚧 playable | Terrain, buildings, roads and ground units, planet panel, radar, building names; select, build (the build menu's list and the placing cursor), repair, demolish and switch buildings, all as the original's commands. To do: the planet info mode, the ground war's controls |
-| Game client: HUD, text, info, messages | 🚧 drawn and driven | Top bar (money, date, speed), the game's bitmap font, the scrolling message line; the info screen's 3D frame, race heads, empire panel, spending limit, money triangle and charts (pick a race or a chart); the messages screen's frame, inbox and open messages with their dialogue and answers. To do: the planet/fleet list, star log, the settings' and answers' orders |
+| Game client: HUD, text, info, messages | 🚧 drawn and driven | Top bar (money, date, speed), the game's bitmap font, the scrolling message line; the info screen's 3D frame, race heads, empire panel, spending limit, money triangle, charts, the planet/fleet list with its turning planets and fleets (pick a race or a chart, scroll the list), a row's detail view (click a planet or fleet) and the star log; the planet settings menus in the detail view, the money triangle and the spending limit (sent as lockstep commands); the messages screen's frame, inbox and open messages with their dialogue and answers. To do: the answers' orders |
 | Game client: diplomacy screen | 🚧 playable | The contacts' heads and portraits, the leader's video, the info panel, the proposal and answer menus and the dialogue texts; proposals and answers go out as lockstep commands. To do: the opening animation, the special (story) menu, sounds |
-| Game client: spy screen | 🚧 playable | The roster carousel with the spies' figures, names and status icons, the head video, the spy's stats, the mission planner with its lists and chance, reports, verdicts and applicants; every action through the lockstep commands. To do: the opening animation, tooltips, sounds |
-| Game client: research screen | 🚧 playable | The console, its category wheels, the ball with the category's tech models, the tech's texts, lists, labs and the running project; start, stop, urgent and the category/tech choice by mouse and keys, as the original's commands. To do: the opening animation, press animations, tooltips, sounds |
+| Game client: spy screen | 🚧 playable | The roster carousel with the spies' figures, names and status icons, the head video, the spy's stats, the mission planner with its lists and chance, reports, verdicts and applicants; every action through the lockstep commands; the frame's opening and closing animation, the tooltips. To do: sounds |
+| Game client: research screen | 🚧 playable | The console, its category wheels, the ball with the category's tech models, the tech's texts, lists, labs and the running project; start, stop, urgent and the category/tech choice by mouse and keys, as the original's commands; the opening and closing animation with its lasers, the buttons' press animations, the chosen row's animated frame and the tooltips. To do: the button lines, sounds |
 | Game client: other screens | ⏳ to do | Design, trade, the battle screens, menus |
 | Game client: audio and video | ⏳ to do | Music, UI sounds, voices, the tutorial's narration; the intro, message, story and ending videos (MP4) |
 | Screen comparison with the original | 🚧 started | Every screen is listed with the original's functions ([`re/screens/`](re/screens/README.md)); a tool captures the original and our client on the same save and diffs them pixel by pixel. Starmap, colony, info, messages and the spy screen are compared; the spy screen's carousel and panels match, no screen passes whole yet ([results](re/screens/diff-results.md)) |
@@ -99,11 +99,13 @@ The client opens an original save and runs it live.
 | Space | pause |
 | 1 / 2 / 3 | game speed |
 | Mouse wheel | zoom |
-| Starmap: right drag, left click | pan, select |
+| Starmap: right drag, left press | pan; select and open the radial icons (release over one to use it) |
+| Starmap: left click on a planet's info box | the planet's long info: tax, auto-build, priority, station sale |
+| Starmap: right click with the player's planet selected | its rally planet |
 | Starmap: Q / E, Page Up / Down | turn and tilt the camera |
 | Starmap: R | show every fleet |
 | Starmap: the info box's buttons | the planet's production queues; the transfer between a fleet and the planet |
-| Starmap: right click on the fleet's info box, T | split the fleet; the transfer between it and the nearest own fleet |
+| Starmap: right click on the fleet's info box | split the fleet |
 | C | colony screen of the selected planet (and back) |
 | Colony: left drag, right drag | pan, turn and tilt |
 | Colony: left click, hold on the planet panel | select a building; the build menu (release on a building, then click where it goes) |

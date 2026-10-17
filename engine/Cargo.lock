@@ -1765,6 +1765,7 @@ dependencies = [
  "ig2-sim",
  "png",
  "pollster 1.0.1",
+ "serde_json",
  "wgpu",
  "winit",
 ]

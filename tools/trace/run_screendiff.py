@@ -3,8 +3,11 @@
     run_screendiff.py <install> <save.sav> <screen> [--out _local/screendiff] [--exe-png PNG] [--wait 240]
                       [--build] [--threshold T] [--shift N] [--mask X,Y,W,H]... [--no-default-masks]
 
-<screen>: starmap | colony:<planet> | info | messages | research | production:<planet> | transfer:<planet> | diplomacy |
-spy:<roster|report|verdict|applicant> (run_screen.py --spies stages the human's roster and one report). The tool
+<screen>: starmap | colony:<planet> | info[:IDS] | messages | research | production:<planet> | transfer:<planet> | diplomacy |
+spy:<roster|report|verdict|applicant> (run_screen.py --spies stages the human's roster and one report) |
+(spy and research: --anim-frame F [--anim-closing] holds both at frame F of the opening/closing, --anim-mouse X,Y
+rests the pointer there: a tooltip; --spy-* are the same) |
+rop | planetinfo | tax | autobuild | priority | planets (the starmap's menus on planet 71). The tool
 1. captures ig2.exe on <save> at that screen (tools/trace/run_screen.py: Frida loads the save with the exe's
    `LoadSave`, asks for the screen through `AktKepKell`, pauses the clock, writes the exe's own save of the moment
    (`<name>-state.sav`) and grabs the 800 × 600 client area), unless --exe-png gives an earlier capture;
@@ -44,8 +47,9 @@ SCREENS = {
         "list=0,245,290,235", "chart=388,272,224,180", "buttons=345,280,55,170"]),
     "messages": dict(kep=10, client=["--screen", "messages"], regions=[TOPBAR, "panel=0,160,190,300", "inbox=0,190,250,210"]),
     # The research screen (research.md): the ball and its models turn with the frames drawn, so "ball" compares
-    # their place and size more than their pixels.
-    "research": dict(kep=4, lang="hu", client=["--screen", "research", "--ui-frames", "240"], regions=[
+    # their place and size more than their pixels. The exe opens it over ~250 frames after loading the save: the
+    # grab waits 1000 (at 240 it is mid-opening; held frames, --anim-frame 60 included, don't wait for it).
+    "research": dict(kep=4, wait=1000, client=["--screen", "research", "--ui-frames", "240"], regions=[
         TOPBAR, "info_box=175,25,300,55", "start_double=100,20,440,62", "left_list=3,81,135,106",
         "right_list=500,81,135,106", "labs=0,235,80,60", "labs_right=560,235,80,60", "wheels=60,330,520,150",
         "ball=150,70,340,300"]),
@@ -64,6 +68,20 @@ SCREENS = {
     # many UI frames. The head video and the names' blink run on the clocks, so `ring` and `carousel` vary.
     "spy": dict(kep=7, wait=1200, exe=["--spies", "{mode}"], client=["--screen", "spy", "--ui-frames", "1200"], regions=[
         TOPBAR, "carousel=0,20,640,215", "left_panel=6,248,172,217", "right_panel=464,248,172,217", "ring=196,226,248,254"]),
+    # The radial menu, the planet's long info and its select menus, the production view's planet list (starmap.md
+    # §14–§17): the exe stages them (run_screen.py --rop-menu/--menu/--mouse), the client draws the same state.
+    "rop": dict(kep=2, exe=["--rop-menu", "320,240"], client=["--rop-menu", "320,240"], regions=[TOPBAR, "icons=240,175,135,135"]),
+    "planetinfo": dict(kep=2, exe=["--rop", "0xf"], client=["--planet-info"], regions=[
+        TOPBAR, "panel=319,33,302,326", "planet=0,40,300,330", "exit=445,380,190,30"]),
+    "tax": dict(kep=2, exe=["--rop", "0xf", "--menu", "tax@422,277", "--mouse", "430,300"],
+                client=["--menu", "tax@422,277", "--mouse", "430,300"], masks=["425,293,115,22"], regions=[TOPBAR, "panel=319,33,302,326", "menu=416,275,130,108"]),
+    "autobuild": dict(kep=2, exe=["--rop", "0xf", "--menu", "autobuild@422,299", "--mouse", "430,335"],
+                      client=["--menu", "autobuild@422,299", "--mouse", "430,335"], masks=["425,328,115,22"], regions=[TOPBAR, "panel=319,33,302,326", "menu=416,297,130,121"]),
+    "priority": dict(kep=2, exe=["--rop", "0xf", "--menu", "priority@422,321", "--mouse", "430,330"],
+                     client=["--menu", "priority@422,321", "--mouse", "430,330"], masks=["425,323,115,22"], regions=[TOPBAR, "panel=319,33,302,326", "menu=416,319,130,43"]),
+    # The exe's staging leaves the list without a hovered planet (`smSelected` −1), so no --mouse here.
+    "planets": dict(kep=2, exe=["--rop", "2", "--menu", "planets@300,90"],
+                    client=["--panel", "production", "--menu", "planets@300,90"], regions=[TOPBAR, "menu=294,88,200,60"]),
 }
 # The message line's text (messages.md §2: clipped to x 270..593, y 5..16).
 DEFAULT_MASKS = ["268,3,328,15"]
@@ -88,17 +106,49 @@ def main():
     ap.add_argument("--shift", default="2")
     ap.add_argument("--mask", action="append", default=[])
     ap.add_argument("--no-default-masks", action="store_true")
-    ap.add_argument("--lang", help="the client's language (IG2_LANG: en, de, fr, es, it, hu), as the exe runs")
+    ap.add_argument("--fleets", type=int, default=0, help="info: give the human N fleets first (run_screen.py --fleets)")
+    ap.add_argument("--select", help="info: hold a planet-settings menu open in the exe (run_screen.py --info-select K,X,Y,I)")
+    ap.add_argument("--starlog", type=int, default=0, help="info: stage N star log lines first (run_screen.py --info-starlog)")
+    ap.add_argument("--lang", help="the client's language (IG2_LANG: en, de, fr, es, it, hu); default: the one ig2.exe picks (re/formats/locale.md)")
+    ap.add_argument("--anim-frame", "--spy-frame", dest="anim_frame", type=float,
+                    help="spy, research: hold the opening's frame (spyframe, resframe) at F in both (--anim-closing: the closing's)")
+    ap.add_argument("--anim-closing", "--spy-closing", dest="anim_closing", action="store_true")
+    ap.add_argument("--anim-mouse", "--spy-mouse", dest="anim_mouse",
+                    help="spy, research: the pointer rests at the virtual point X,Y in both (a hot-spot's tooltip)")
     a = ap.parse_args()
 
     kind, _, arg = a.screen.partition(":")
     if kind not in SCREENS:
         sys.exit(f"unknown screen {kind}: {', '.join(SCREENS)}")
     cfg = SCREENS[kind]
-    mode = arg if kind == "spy" else ""
-    planet = int(arg) if arg and not mode else (71 if kind in ("production", "transfer") else 42)
+    mode = arg if kind in ("spy", "info") else ""
+    planet = int(arg) if arg and not mode else (71 if kind in ("production", "transfer", "rop", "planetinfo", "tax", "autobuild", "priority", "planets") else 42)
     name = f"{kind}{planet}" if kind == "colony" else f"spy-{mode or 'roster'}" if kind == "spy" else kind
+    held = []
+    held_exe = []
+    # info:IDS (e.g. info:9, info:31+10, info:15): the exe presses these hot-spots first (re/screens/info.md §6.5–§6.8).
+    if kind == "info" and mode:
+        held_exe = ["--info-press", mode.replace("+", ",")]
+        name = f"info-{mode.replace('+', '_')}"
+    if kind == "info" and a.fleets:
+        held_exe += ["--fleets", str(a.fleets)]
+        name += f"-f{a.fleets}"
+    if kind == "info" and a.select:
+        held_exe += ["--info-select", a.select]
+        name += "-m" + a.select.split(",")[0]
+    if kind == "info" and a.starlog:
+        held_exe += ["--info-starlog", str(a.starlog)]
+        name += f"-s{a.starlog}"
     mode = mode or "roster"
+    if kind in ("spy", "research") and a.anim_frame is not None:
+        flag = "--spy" if kind == "spy" else "--res"
+        held = ["--anim-frame", str(a.anim_frame)] + (["--anim-closing"] if a.anim_closing else [])
+        held_exe = [flag + "-frame", str(a.anim_frame)] + ([flag + "-closing"] if a.anim_closing else [])
+        name += f"-{'close' if a.anim_closing else 'open'}{a.anim_frame:g}"
+    if kind in ("spy", "research") and a.anim_mouse:
+        held += ["--mouse", a.anim_mouse]
+        held_exe += ["--mouse", a.anim_mouse]
+        name += "-mouse" + a.anim_mouse.replace(",", "_")
     os.makedirs(a.out, exist_ok=True)
     env = dict(os.environ, IG2_INSTALL_DIR=os.path.abspath(a.install))
     if a.lang:
@@ -112,13 +162,14 @@ def main():
     exe_png = os.path.join(a.out, f"{name}-exe.png")
     save = a.exe_state or a.save
     if a.exe_png:
-        shutil.copyfile(a.exe_png, exe_png)
+        if os.path.abspath(a.exe_png) != os.path.abspath(exe_png):
+            shutil.copyfile(a.exe_png, exe_png)
     else:
         prefix = os.path.join(a.out, f"{name}-exe-cap")
         state = os.path.join(a.out, f"{name}-state.sav")
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
                  "--planet", str(planet), "--wait", str(a.wait or cfg.get("wait", 240)), "--shots", "1", "--state-out", state,
-                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])])
+                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])] + held_exe)
         if r.returncode or not os.path.exists(prefix + "-0.png"):
             sys.exit("the exe capture failed")
         shutil.move(prefix + "-0.png", exe_png)
@@ -127,18 +178,55 @@ def main():
         save = state
 
     client_png = os.path.join(a.out, f"{name}-client.png")
-    args = [x.format(planet=planet) for x in cfg["client"]]
-    # The exe runs in the install's language (Hungarian here); a screen with `lang` renders the client in it unless --lang says.
-    if "lang" in cfg and not a.lang:
-        env = dict(env, IG2_LANG=cfg["lang"])
+    args = [x.format(planet=planet) for x in cfg["client"]] + held
+    # The exe's starmap clocks at the grab (run_screen.py writes them beside the state save).
+    ui = save + ".ui.json"
+    if os.path.exists(ui):
+        with open(ui, encoding="utf-8") as f:
+            clocks = json.load(f)
+        if clocks.get("clouds") is not None:
+            args += ["--clouds", str(clocks["clouds"])]
+        if clocks.get("futofeny") is not None:
+            args += ["--futofeny", repr(clocks["futofeny"])]
+        if clocks.get("acttime") is not None:
+            args += ["--acttime", repr(clocks["acttime"] / 1000)]
+        if clocks.get("info_turn") is not None and kind == "info":
+            args += ["--info-turn", repr(clocks["info_turn"])]
+        il = clocks.get("info_list")
+        if il and kind == "info":
+            args += ["--info-list", f"{il['pointer']},{il['step']},{il['counter']}",
+                     "--info-globes", ";".join(",".join(repr(x) for x in g) for g in il["globes"])]
+            # The detail mode and the star log (re/screens/info.md §6.6, §6.8); the log isn't saved: hand it over.
+            dt = il.get("detail")
+            if dt and dt["mode"]:
+                if il.get("select") and il["select"][0]:
+                    args += ["--info-select", ",".join(str(x) for x in il["select"])]
+                args += ["--info-detail", f"{dt['entry']},{dt['slot']},{dt['leaving']},{dt['ptr']}",
+                         "--info-texts", ",".join(str(x) for x in dt["texts"])]
+            st = il.get("star")
+            if st:
+                if st["mode"] or st["frame"] > 45:
+                    args += ["--info-star", repr(st["frame"])]
+                log = save + ".starlog.txt"
+                with open(log, "w", encoding="utf-8") as f:
+                    f.write(f"{st['pointer']} {st['filled']}\n")
+                    for c, t in st["log"]:
+                        f.write(f"{c} {t}\n")
+                args += ["--info-log", log]
     r = run([CLIENT, "--snapshot", client_png, "--save", save, "--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args, env=env)
     if r.returncode:
         sys.exit("the client snapshot failed")
 
-    masks = ([] if a.no_default_masks else DEFAULT_MASKS) + a.mask
+    # The pointer and a hot-spot's tooltip the exe draws beside it (screens held under --mouse).
+    masks = ([] if a.no_default_masks else DEFAULT_MASKS) + cfg.get("masks", []) + a.mask
     cmd = [DIFF, exe_png, client_png, "--json", "--heat", os.path.join(a.out, f"{name}-heat.png"),
            "--threshold", a.threshold, "--shift", a.shift]
-    for reg in cfg["regions"]:
+    regions = list(cfg["regions"])
+    if kind == "info" and a.select:
+        # The open menu's box (re/screens/info.md §7.1): 108 / 13 per item + 4 / 43 high.
+        k, x, y = (int(v, 0) for v in a.select.split(",")[:3])
+        regions.append(f"select={x - 6},{y - 2},130,{ {26: 108, 27: 121, 28: 43}.get(k, 108) }")
+    for reg in regions:
         cmd += ["--region", reg]
     for m in masks:
         cmd += ["--mask", m]

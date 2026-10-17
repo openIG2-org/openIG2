@@ -39,6 +39,25 @@ pub struct SpyTexts {
     pub morale: Vec<Vec<u8>>,
     /// `Birodalom_Nev[1..=18]` = (17, 1, k + 33).
     pub empires: Vec<Vec<u8>>,
+    /// The hot-spots' tooltips (`Spy_MouseInit`'s `Mouse_Szoveg_Set(id, …, GetString(7, 1, k))`, indices from the
+    /// asm): by hot-spot id.
+    pub tips: Vec<Vec<u8>>,
+    /// `Spy_Main`'s lines for `ScrollHibaUzenet`: a mission the treasury can't pay (7, 2, 1), a repeat it can't pay
+    /// (7, 2, 2).
+    pub no_money: Vec<u8>,
+    pub no_money_repeat: Vec<u8>,
+}
+
+/// `Spy_MouseInit`'s tooltip text `GetString(7, 1, k)` of hot-spot `id` (0: none): 1..=4 → 1..=4, 0xe..=0x18 →
+/// 5..=15, the four skill buttons 0x19..=0x1c all 16, 0x1e..=0x25 → 17..=24.
+pub fn tip_index(id: u32) -> u16 {
+    match id {
+        1..=4 => id as u16,
+        0xe..=0x18 => (id - 9) as u16,
+        0x19..=0x1c => 16,
+        0x1e..=0x25 => (id - 13) as u16,
+        _ => 0,
+    }
 }
 
 impl SpyTexts {
@@ -58,6 +77,12 @@ impl SpyTexts {
             target_kinds: tbl(5, &|k| texts.get(7, 6, k + 5)),
             morale: (0..=20).map(|k| crate::ui::hu_bytes(hu17.get(17, 4, 41 + k))).collect(),
             empires: crate::ui::empire_names(hu17),
+            tips: (0..=0x25).map(|id| match tip_index(id) {
+                0 => Vec::new(),
+                k => texts.get(7, 1, k),
+            }).collect(),
+            no_money: texts.get(7, 2, 1),
+            no_money_repeat: texts.get(7, 2, 2),
         }
     }
 }
@@ -257,6 +282,20 @@ pub struct SpyScreen {
     /// `spyframe`, `spywireframe`, `spyFrameValtozo`, `spyAtfordulas`, `spyAtvaneFordulva`, `RaalltKem`, `SpyOldMe`.
     pub frame: f32,
     pub wire: f32,
+    /// `spyKELLKINYITAS` (`KELLKINYITASDEFAULT`: the screen opens and closes animated), `spyKINYITVA` (open: set
+    /// by `Spying3DUpdate` at frame 50), `spyBECSUKAS` (closing, `Spy_Kilep`) and `Spy_Kilep::voltnulla` (frame 0
+    /// was drawn once).
+    pub animated: bool,
+    pub opened: bool,
+    pub closing: bool,
+    closed_once: bool,
+    /// `spyELINDULT`: a frame was drawn (the opening runs from then on).
+    started: bool,
+    /// A `spyframe` held for a capture comparison (the tracer pins the exe's the same way).
+    pub pin: Option<f32>,
+    /// The head-video disc is shown (`UnhideObj(spyKorId)`: by `Spying3DInit` when not animated, else once a
+    /// flip passes its frame 15).
+    pub disc: bool,
     pub spin: i32,
     pub flip: f32,
     pub flipped: f32,
@@ -265,11 +304,15 @@ pub struct SpyScreen {
     /// The pointer in virtual pixels and the left button.
     pub mouse: [f32; 2],
     held: bool,
+    /// The tooltip (`UpdateFrame`).
+    pub tip: crate::ui::Tooltip,
+    /// Lines for the message ticker (`ScrollHibaUzenet`), taken by the window.
+    pub errors: Vec<Vec<u8>>,
 }
 
 impl SpyScreen {
-    /// `Spy_Belep`: the cursor on slot 1, no plan or list, the screen open (`spyKELLKINYITAS` off: the opening
-    /// animation is ours to skip, re/screens/spy.md §1), then the first report if there is one.
+    /// `Spy_Belep`: the cursor on slot 1, no plan or list, then the first report if there is one. `opening` =
+    /// `spyKELLKINYITAS`: the frame opens from `spyframe` 0 (else it is open at once, re/screens/spy.md §1.1).
     pub fn enter(d: &SpyData, opening: bool) -> Self {
         let mut s = Self {
             akt: 1,
@@ -288,6 +331,13 @@ impl SpyScreen {
             turn_speed: 0.0,
             frame: if opening { 0.0 } else { 50.0 },
             wire: 0.0,
+            animated: opening,
+            opened: !opening,
+            closing: false,
+            closed_once: false,
+            started: false,
+            pin: None,
+            disc: !opening,
             spin: 0,
             flip: 30.0,
             flipped: 0.0,
@@ -295,6 +345,8 @@ impl SpyScreen {
             old_me: 0,
             mouse: [320.0, 240.0],
             held: false,
+            tip: crate::ui::Tooltip::default(),
+            errors: Vec::new(),
         };
         s.plan = Plan::init();
         s.fix_cursor(d);
@@ -377,13 +429,27 @@ impl SpyScreen {
                 self.blink = 0;
             }
         }
-        let open = self.frame >= 50.0;
+        let open = self.opened;
         if open && self.text_fade < 100.0 {
             self.text_fade += 1.0;
         }
         self.orbit += 0.0006;
-        if !open {
+        let tau = std::f64::consts::TAU;
+        while self.rotation < tau {
+            self.rotation += tau / 5.0;
+        }
+        while self.rotation >= 2.0 * tau {
+            self.rotation -= tau / 5.0;
+        }
+        // The opening (`spyELINDULT`: after the first drawn frame) and the closing.
+        if self.animated && !self.closing && !self.opened && self.started {
             self.frame = (self.frame + 1.0 / 3.0).min(50.0);
+        }
+        if self.animated && self.closing {
+            self.frame = (self.frame - 0.6).max(0.0);
+        }
+        if let Some(f) = self.pin {
+            self.frame = f;
         }
         if self.frame >= 25.0 && self.flip as i32 != 30 {
             self.flip += 0.2;
@@ -408,18 +474,11 @@ impl SpyScreen {
             } else {
                 self.turn_speed *= 0.92;
             }
-            let tau = std::f64::consts::TAU;
             while self.rotation < tau {
                 self.rotation += tau;
             }
             while self.rotation >= 2.0 * tau {
                 self.rotation -= tau;
-            }
-        }
-        if self.frame == 50.0 {
-            self.wire += 0.25;
-            if self.wire >= 10.0 {
-                self.wire = 0.0;
             }
         }
         if d.spy(self.akt).state == 0 {
@@ -470,6 +529,9 @@ impl SpyScreen {
         Pose {
             frame: self.frame,
             wire: self.wire,
+            animated: self.animated,
+            opened: self.opened,
+            closing: self.closing,
             rotation: self.rotation,
             spin: self.spin,
             flip: self.flip,
@@ -492,12 +554,51 @@ impl SpyScreen {
 
     /// A new spy under the cursor starts the ring's flip (`Spying3DUpdate`: `spyAtfordulas` back to 0 when the
     /// cursor changed and the last flip ended).
+    /// Also: the screen counts as open from frame 50 (`spyKINYITVA`), the ring spins past frame 25 unless closing
+    /// (`spyFrameValtozo`), the sphere's wire frames run at rest (`spywireframe`).
     pub fn draw_frame(&mut self) {
-        self.spin += 1;
         if self.frame >= 25.0 && self.akt as i32 != self.old_kem && self.flip as i32 != 0 {
             self.flip = 0.0;
             self.old_kem = self.akt as i32;
         }
+        if self.frame >= 25.0 && !self.closing && self.flip as i32 != 30 && self.flip as i32 > 15 {
+            self.disc = true;
+        }
+        if !self.opened && self.frame >= 50.0 {
+            self.opened = true;
+        }
+        if self.frame >= 25.0 && !self.closing {
+            self.spin += 1;
+        }
+        if self.frame == 50.0 {
+            self.wire += 0.25;
+            if self.wire >= 10.0 {
+                self.wire = 0.0;
+            }
+        }
+        self.started = true;
+    }
+
+    /// `Spy_Kilep`: leaving the screen. Animated, the frame closes first (`spyBECSUKAS`, frame 50 → 0); returns
+    /// whether the screen can go now. The original loops `UpdateFrame` + `FRISSITES` until frame 0 was drawn once.
+    pub fn leave(&mut self) -> bool {
+        if !self.animated {
+            return true;
+        }
+        self.closing = true;
+        self.closed()
+    }
+
+    /// The closing has drawn frame 0 (`Spy_Kilep::voltnulla`) and one more frame.
+    pub fn closed(&mut self) -> bool {
+        if !self.closing || self.frame != 0.0 {
+            return false;
+        }
+        if self.closed_once {
+            return true;
+        }
+        self.closed_once = true;
+        false
     }
 
     // ------------------------------------------------------------------------------------------------ input
@@ -516,6 +617,8 @@ impl SpyScreen {
         let skills = self.akt > 0 && s.points > 0 && matches!(s.state, 1..=3);
         for i in 0..4 {
             on(0x19 + i, [75, 322 + 16 * i as i32, 96, 10], skills && self.dialog == 0);
+            // The skills' names: tooltips only (`Spy_MouseInit2`: on while open with a spy on show).
+            on(0x22 + i, [12, 320 + 16 * i as i32, 86, 15], self.opened && self.akt > 0);
         }
         if self.dialog == 0 {
             if !self.plan.on {
@@ -569,9 +672,21 @@ impl SpyScreen {
             && r.x[8] != 0x3e5
     }
 
+    /// `Mouse_Darabol` (ELF 0x5b7a40): the enabled hot-spot under the pointer (clamped to the screen), the lowest id
+    /// of several.
     fn spot_at(&self, d: &SpyData) -> Option<u32> {
-        let [x, y] = self.mouse;
-        self.hot_spots(d).into_iter().find(|(_, r)| x >= r[0] as f32 && x < (r[0] + r[2]) as f32 && y >= r[1] as f32 && y < (r[1] + r[3]) as f32).map(|(id, _)| id)
+        let [x, y] = [self.mouse[0].clamp(0.0, 639.0) as i32, self.mouse[1].clamp(0.0, 479.0) as i32];
+        self.hot_spots(d).into_iter().filter(|(_, r)| x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]).map(|(id, _)| id).min()
+    }
+
+    /// The tooltip, once per drawn frame (`UpdateFrame` ELF 0x578e40): the hot-spot under the pointer shows its
+    /// text once the pointer rested 400 ms on it (or stays on the one shown); a held button hides it. It follows
+    /// the pointer, kept on the 640-pixel screen (`len·6 + 0x18` wide). `now` is the clock in ms (`AktIdo`).
+    pub fn tooltip(&mut self, d: &SpyData, t: &SpyTexts, now: f64) {
+        let akt = self.spot_at(d).unwrap_or(0);
+        let len = t.tips.get(akt as usize).map_or(0, |s| cstr(s).len());
+        self.tip.mouse = self.mouse;
+        self.tip.update(now, akt, len, self.held);
     }
 
     /// The left button went down at virtual `at` (`Mouse_Lenyom`): a hot-spot, or a spy on the carousel
@@ -593,6 +708,8 @@ impl SpyScreen {
 
     /// The pointer moved (a list follows it while the button is held).
     pub fn hover(&mut self, d: &SpyData, t: &SpyTexts, at: [f32; 2]) {
+        // `Mouse_Lekerdez`: a move of more than a pixel restarts the tooltip's wait.
+        self.tip.moved(at);
         self.mouse = at;
         if let (Some(p), true) = (self.popup, self.held) {
             self.popup = Some(Popup { selected: self.row_at(d, t, &p), ..p });
@@ -605,7 +722,7 @@ impl SpyScreen {
         let mut out = Vec::new();
         if let Some(p) = self.popup.take() {
             let p = Popup { selected: self.row_at(d, t, &p), ..p };
-            self.choose(d, p, &mut out);
+            self.choose(d, t, p, &mut out);
         }
         self.after(d, &mut out);
         out
@@ -718,7 +835,9 @@ impl SpyScreen {
                 if let Some(r) = d.report() {
                     let m = r.mission();
                     let cost = d.cost(m, r.x[2]) as i32;
-                    if (cost as f64) <= d.money {
+                    if (cost as f64) > d.money {
+                        self.errors.push(t.no_money_repeat.clone());
+                    } else {
                         let days = if m == 1 { d.tables.spy_training_days.get(r.x[2].max(0) as usize).copied().unwrap_or(0) } else { d.mission(m).days };
                         out.push(Command::Spy {
                             order: SpyOrder::Send { spy, mission: m as u16, target: r.x[1] as u8, param1: r.x[2] as i16, param2: r.x[3] as i16, days },
@@ -916,12 +1035,13 @@ impl SpyScreen {
     }
 
     /// `Spy_Main`'s release branch of a list.
-    fn choose(&mut self, d: &SpyData, p: Popup, out: &mut Vec<Command>) {
+    fn choose(&mut self, d: &SpyData, t: &SpyTexts, p: Popup, out: &mut Vec<Command>) {
         let s = p.selected;
         match p.list {
             List::Mission => {
                 if s > 0 && (d.money) < d.cost(s, 1) as f64 {
-                    // "Nincs elég pénzed." on the message line (`ScrollHibaUzenet`): not drawn yet.
+                    // "Nincs elég pénzed." on the message line (`ScrollHibaUzenet`).
+                    self.errors.push(t.no_money.clone());
                 } else if s > 0 {
                     self.plan.mission = s;
                     self.plan.target2 = 0;
@@ -1024,6 +1144,8 @@ pub struct SpyView {
     head_race: Option<u8>,
     /// When the head video started (seconds).
     head_start: f32,
+    /// The remaster's clock in seconds (`sg3d_time`: the head video's scan lines), when pinned (`--acttime`).
+    pub acttime: Option<f32>,
 }
 
 impl SpyView {
@@ -1035,6 +1157,7 @@ impl SpyView {
             head: None,
             head_race: None,
             head_start: 0.0,
+            acttime: None,
         })
     }
 
@@ -1049,8 +1172,9 @@ impl SpyView {
             self.screen.settle(d, &spots);
             self.screen.draw_frame();
         }
+        self.screen.tooltip(d, &self.texts, time as f64 * 1000.0);
         let race = self.screen.head_race(d);
-        if self.head_race != Some(race) && self.screen.flip >= 15.0 {
+        if self.head_race != Some(race) && self.screen.flip >= 15.0 && self.screen.disc {
             self.head = Some(crate::spy_scene::HeadVideo::load(install, race));
             self.head_race = Some(race);
             self.head_start = time;
@@ -1062,10 +1186,12 @@ impl SpyView {
 
     /// The screen's frame: the 3D pass, then the 2D layers.
     pub fn build(&self, hud: &crate::ui::Hud, d: &SpyData, size: [f32; 2], hungarian: bool) -> Frame {
-        let pose = self.screen.pose(d, self.head.as_ref().map(|_| self.scene.head_tex));
+        let pose = self.screen.pose(d, self.head.as_ref().filter(|_| self.screen.disc).map(|_| self.scene.head_tex));
         let spots = self.scene.spots(&pose);
         let mut f = Frame::new([0.0, 0.0, 0.0, 1.0]);
-        f.scene = Some(self.scene.build(&pose, size));
+        let mut scene = self.scene.build(&pose, size);
+        scene.uniforms.eye[3] = self.acttime.unwrap_or(0.0);
+        f.scene = Some(scene);
         if let Some(font) = &hud.font {
             let g = Draw2d { font, white: hud.white, v: crate::font::Virtual::new(size), palette: &hud.palette, ui: &hud.texts, t: &self.texts, hungarian };
             self.screen.draw(&mut f, d, &g, &spots);
@@ -1086,6 +1212,18 @@ impl SpyView {
     pub fn key(&mut self, d: &SpyData, left: bool) {
         self.screen.key(d, left);
     }
+    /// Start leaving (`Spy_Kilep`): true when the screen can go at once (not animated).
+    pub fn leave(&mut self) -> bool {
+        self.screen.leave()
+    }
+    /// The closing animation is over.
+    pub fn closed(&mut self) -> bool {
+        self.screen.closed()
+    }
+    /// The lines for the message ticker since the last call.
+    pub fn take_errors(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.screen.errors)
+    }
 }
 
 /// `--snapshot --screen spy`: the screen as the save left it, after `--ui-frames` UI frames (the carousel settles,
@@ -1093,8 +1231,28 @@ impl SpyView {
 pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let en = world.curr.human as usize;
     let d = SpyData::read(&world.game.state, en, &l.rules, &l.tables);
-    let mut v = SpyView::open(r, &l.install, hud, &d, false)?;
+    // Animated like the exe (`KELLKINYITASDEFAULT` 1): at rest the sphere's `MoveObj` still applies (§2.2). The
+    // save's moment is the open screen, or `--spy-frame F` held while opening (closing).
+    let mut v = SpyView::open(r, &l.install, hud, &d, true)?;
+    match o.spy_frame {
+        Some(f) => {
+            v.screen.pin = Some(f);
+            v.screen.frame = f;
+            v.screen.closing = o.spy_closing;
+            // Closing starts from the open screen (`spyKINYITVA` stays set).
+            v.screen.opened = o.spy_closing;
+        }
+        None => {
+            v.screen.frame = 50.0;
+            v.screen.opened = true;
+        }
+    }
+    // `--mouse X,Y`: the pointer rests there (a hot-spot's tooltip shows after 400 ms).
+    if let Some(m) = o.mouse {
+        v.screen.mouse = m;
+    }
     let t = world.curr.tick as f32 * 0.05;
+    v.acttime = o.acttime;
     v.advance(r, &l.install, &d, o.ui_frames.max(1) as u64, t);
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut frame = v.build(hud, &d, size, l.install.lang() == ig2_formats::text::Lang::Hu);
@@ -1282,5 +1440,12 @@ mod tests {
         let mut quiet = ig2_sim::rng::Streams::default();
         assert_eq!(sp.escape_chance(&ctx, &rules, &mut quiet, 1, 1, 1, 3, 1000, 0), 100);
         assert_eq!(quiet.state(0), 0);
+    }
+
+    /// `Spy_MouseInit`'s tooltip indices (the asm's `GetString(7, 1, k)` immediates).
+    #[test]
+    fn tooltips_follow_the_mouse_init() {
+        let k: Vec<u16> = [1, 4, 5, 0xd, 0xe, 0x10, 0x14, 0x17, 0x18, 0x19, 0x1c, 0x1d, 0x1e, 0x21, 0x22, 0x25, 0x26].iter().map(|&id| tip_index(id)).collect();
+        assert_eq!(k, [1, 4, 0, 0, 5, 7, 11, 14, 15, 16, 16, 0, 17, 20, 21, 24, 0]);
     }
 }

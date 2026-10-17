@@ -2,7 +2,7 @@
 //! as its `MULTIGET_*` handler applies it.
 
 use ig2_sim::diplomacy::{Answer, Letter, Message, ScreenOp};
-use ig2_sim::game::{ColonyOrder, Game, GameEvent, ResearchOrder, StarmapOrder};
+use ig2_sim::game::{ColonyOrder, Game, GameEvent, InfoOrder, ResearchOrder, StarmapOrder};
 use ig2_sim::spacebattle::Order;
 use ig2_sim::spy;
 use ig2_sim::trade::{Delivery, DELIVERY};
@@ -249,6 +249,16 @@ pub enum Command {
     DiplomacyScreen { empire: u8, op: DiplomacyScreenOp },
     /// Packets 0x29, 0x2a, 0x2b, 0x31, `MULTIGET_Research` exe 0x51ee70: a research-screen order.
     Research { order: ResearchCmd },
+    /// Packets 0x5b, 0x5c, `MULTIGET_Info` exe 0x4ece60: the info screen's money shares or spending limit
+    /// (`ig2_sim::game::InfoOrder`) as its message type and dwords (each f64 as its two words).
+    Info { kind: i32, values: Vec<i32> },
+}
+
+impl From<InfoOrder> for Command {
+    fn from(o: InfoOrder) -> Self {
+        let (kind, values) = o.to_message();
+        Command::Info { kind, values }
+    }
 }
 
 impl From<ColonyOrder> for Command {
@@ -306,6 +316,11 @@ impl Command {
             }
             Command::DiplomacyScreen { empire, op } => game.diplomacy_screen(issuer as usize, *empire as usize, (*op).into()),
             Command::Research { order } => game.research_order(issuer, (*order).into()),
+            Command::Info { kind, values } => {
+                if let Some(o) = InfoOrder::from_message(*kind, values) {
+                    game.info_order(issuer, o);
+                }
+            }
         }
     }
 }

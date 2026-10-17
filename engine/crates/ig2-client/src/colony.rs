@@ -10,7 +10,7 @@ use ig2_sim::save::SaveState;
 
 use crate::assets::Image;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, TexId};
-use crate::render3d::{MeshDraw, MeshId, MeshVertex, Scene3d, SceneUniforms};
+use crate::render3d::{MeshDraw, MeshId, MeshVertex, Scene3d, SceneUniforms, Shadow, ShadowMap};
 use crate::scene::{self, Look, Model, Placement, Transform, V3, M3};
 
 /// `TEREPXSIZE`/`TEREPYSIZE` after `Init3dColony`: the terrain spans ±4096 world units in x and y.
@@ -412,7 +412,7 @@ fn maximize(eye: &mut V3, pivot: &mut V3, m: f32) {
 
 struct Drawn {
     mesh: MeshId,
-    draws: Vec<(std::ops::Range<u32>, TexId, bool)>,
+    draws: Vec<(std::ops::Range<u32>, TexId, bool, Shadow)>,
     /// Drawn only when the human sees inside (`Some(true)`) or only when not (`Some(false)`).
     when: Option<bool>,
 }
@@ -489,13 +489,13 @@ impl ColonyScene {
         let surfaces = colony_map::parse_surfaces(&txt).map_err(|e| e.to_string())?;
         let backgrounds = colony_map::parse_backgrounds(&txt).map_err(|e| e.to_string())?;
         let mut statics = Vec::new();
-        let upload = |r: &mut Renderer, textures: &mut HashMap<String, TexId>, model: &Model, verts: Vec<MeshVertex>, ranges: Vec<(std::ops::Range<u32>, usize, Look)>| {
+        let upload = |r: &mut Renderer, textures: &mut HashMap<String, TexId>, model: &Model, verts: Vec<MeshVertex>, ranges: Vec<(std::ops::Range<u32>, usize, Look)>, role: &dyn Fn(&str) -> Shadow| {
             let mesh = r.add_mesh(&verts);
             let draws = ranges
                 .into_iter()
                 .map(|(rg, pi, look)| {
                     let t = texture(r, install, textures, white, model.parts[pi].texture.as_deref());
-                    (rg, t, matches!(look, Look::Glass(_)))
+                    (rg, t, matches!(look, Look::Glass(_)), role(&model.parts[pi].path.to_ascii_lowercase()))
                 })
                 .collect();
             Drawn { mesh, draws, when: None }
@@ -510,7 +510,7 @@ impl ColonyScene {
                     let xf = Placement::add_to_scene(m.origin, 11.0).scaled([1.0, 1.0, 1.1]).world((0.0, HALF_PI, 0.0), [-3000.0, 0.0, 0.0]);
                     let (mut v, mut rg) = (Vec::new(), Vec::new());
                     bake(&m, &xf, [1.0; 3], 0.0, &mut v, &mut rg);
-                    statics.push(upload(r, &mut textures, &m, v, rg));
+                    statics.push(upload(r, &mut textures, &m, v, rg, &|_| Shadow::None));
                 }
                 Err(e) => eprintln!("ig2-client: background: {e}"),
             }
@@ -529,7 +529,10 @@ impl ColonyScene {
         let xf = rec.scaled([4096.0 / raw_max_x; 3]).world((0.0, HALF_PI, 0.0), [gm.base, 0.0, 0.0]);
         let (mut v, mut rg) = (Vec::new(), Vec::new());
         bake(&terrain, &xf, [1.0; 3], 1.0, &mut v, &mut rg);
-        statics.push(upload(r, &mut textures, &terrain, v, rg));
+        // The shadow map (re/screens/render.md §4): the terrain receives (`PropertiesOn(terep, 0x800000)`), its objects
+        // `tt` and trees `fak` cast instead (`Init3dColony`, with `OptionsKellArnyek`, `lehetarnyek` and
+        // `kelltereptargyarnyek` on).
+        statics.push(upload(r, &mut textures, &terrain, v, rg, &|path| if path.contains("tt") || path.contains("fak") { Shadow::Cast } else { Shadow::Receive }));
         let radar = radar_picture(r, statics.last().unwrap());
 
         // The buildings (spec §3): `AddToSceneGenesis(model, scale/1024/1000)`, turned a quarter, on the ground.
@@ -575,7 +578,9 @@ impl ColonyScene {
             for ((range, pi, look), kind) in rg.into_iter().zip(owners) {
                 let m = models[&kind].as_ref().unwrap();
                 let t = texture(r, install, &mut textures, white, m.parts[pi].texture.as_deref());
-                draws.push((range, t, matches!(look, Look::Glass(_))));
+                // A building casts (0x400000), its `+r` parts (the ground plates) receive instead.
+                let role = if m.parts[pi].path.to_ascii_lowercase().contains("+r") { Shadow::Receive } else { Shadow::Cast };
+                draws.push((range, t, matches!(look, Look::Glass(_)), role));
             }
             statics.push(Drawn { mesh, draws, when: Some(true) });
         }
@@ -595,7 +600,7 @@ impl ColonyScene {
         }
         if !v.is_empty() {
             let n = v.len() as u32;
-            statics.push(Drawn { mesh: r.add_mesh(&v), draws: vec![(0..n, base_tex, true)], when: Some(false) });
+            statics.push(Drawn { mesh: r.add_mesh(&v), draws: vec![(0..n, base_tex, true, Shadow::None)], when: Some(false) });
         }
         // The roads (spec §3.3): `ut<n>.xvb` strips along the buildings' frame cells.
         let mut grid = road_grid(gm, &s.buildings, &rules.building_footprints);
@@ -627,7 +632,8 @@ impl ColonyScene {
                 .zip(which)
                 .map(|((range, pi, _), n)| {
                     let t = texture(r, install, &mut textures, white, road_models[&n].as_ref().unwrap().parts[pi].texture.as_deref());
-                    (range, t, false)
+                    // `AddUtDarab`: roads receive the shadows (0x800000 with `OptionsKellArnyek`).
+                    (range, t, false, Shadow::Receive)
                 })
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true) });
@@ -914,8 +920,8 @@ impl View {
         let basis = self.camera.basis(gm);
         let mut draws: Vec<MeshDraw> = Vec::new();
         for d in scene.statics.iter().filter(|d| d.when.is_none_or(|w| w == curr.visible)) {
-            for (range, tex, glass) in &d.draws {
-                draws.push(MeshDraw { mesh: Some(d.mesh), range: range.clone(), tex: *tex, glass: *glass });
+            for (range, tex, glass, shadow) in &d.draws {
+                draws.push(MeshDraw { mesh: Some(d.mesh), range: range.clone(), tex: *tex, glass: *glass, cloud: false, shadow: *shadow, video: false, additive: false });
             }
         }
         // Units (spec §4): the hull at `P + body·(0,0,pivot)` with matrix `body·S`, the weapon on top.
@@ -958,8 +964,17 @@ impl View {
             }
         }
         self.overlay_models(r, install, rules, gm, scene, curr, &mut dynamic, &mut draws);
-        let l = scene::normalise([-1.0, -1.0, 1.0]);
+        // `light2` from (2, 2, −2) (`SetEnvironment`); `fenyekszamolasa` takes `|n' − L|` with the file normal's model z
+        // negated, which for the quarter-turned models (`RotateObj(0, π/2, 0)`, model z = −h) flips h: the shader's
+        // file normals see the light at (−2, 2, −2) [obs: colony view 18.3 → 11.7 against the other seven signs].
+        let l = scene::normalise([-1.0, 1.0, -1.0]);
+        // `rendershadowmap` (ELF 0x604f50): `CameraRotate(0, (2, 2, 2))`, its first two rows.
+        let d = scene::normalise([2.0, 2.0, 2.0]);
+        let a = scene::normalise(cross(d, [1.0, 0.0, 0.0]));
+        let b = scene::normalise(cross(d, a));
         f.scene = Some(Scene3d {
+            gamma: true,
+            shadow: Some(ShadowMap { rows: [a, [-b[0], -b[1], -b[2]]] }),
             uniforms: SceneUniforms {
                 view: self.camera.clip_matrix(&basis),
                 eye: [basis.eye[0], basis.eye[1], basis.eye[2], 0.0],
@@ -1019,7 +1034,7 @@ impl View {
                 }
                 dynamic.extend(v);
                 for (range, pi, _) in rg {
-                    draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: true });
+                    draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
                 }
             }
         }
@@ -1037,7 +1052,7 @@ impl View {
         let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [z, at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };
         let base = dynamic.len() as u32;
         dynamic.extend([q(-hx, hy, 0.0, 1.0), q(hx, hy, 1.0, 1.0), q(hx, -hy, 1.0, 0.0), q(-hx, hy, 0.0, 1.0), q(-hx, -hy, 0.0, 0.0), q(hx, -hy, 1.0, 0.0)]);
-        draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true });
+        draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
     }
 
     /// The ground point under window pixel `p` (`Update3D`'s click test against the terrain): the eye's ray
@@ -1088,9 +1103,11 @@ fn radar_picture(r: &mut Renderer, terrain: &Drawn) -> TexId {
     let rows = [[0.0, -s, 0.0, 0.0], [0.0, 0.0, -s, 0.0], [1.0 / 20000.0, 0.0, 0.0, 0.5], [0.0, 0.0, 0.0, 1.0]];
     let view = std::array::from_fn(|c| std::array::from_fn(|k| rows[k][c]));
     let l = scene::normalise([-1.0, -1.0, 1.0]);
-    let draws = terrain.draws.iter().map(|(range, tex, glass)| MeshDraw { mesh: Some(terrain.mesh), range: range.clone(), tex: *tex, glass: *glass }).collect();
+    let draws = terrain.draws.iter().map(|(range, tex, glass, _)| MeshDraw { mesh: Some(terrain.mesh), range: range.clone(), tex: *tex, glass: *glass, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false }).collect();
     let mut f = Frame::new([0.0, 0.0, 0.0, 1.0]);
     f.scene = Some(Scene3d {
+        gamma: false,
+        shadow: None,
         uniforms: SceneUniforms {
             view,
             eye: [-20000.0, 0.0, 0.0, 0.0],
@@ -1231,7 +1248,7 @@ fn push_model(model: &Model, texs: &[TexId], xf: &Transform, out: &mut Vec<MeshV
     let base = out.len() as u32;
     out.extend(v);
     for (range, pi, look) in rg {
-        draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: texs[pi], glass: matches!(look, Look::Glass(_)) });
+        draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: texs[pi], glass: matches!(look, Look::Glass(_)), cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
     }
 }
 

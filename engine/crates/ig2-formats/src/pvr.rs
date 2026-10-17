@@ -75,6 +75,34 @@ impl<'a> Pvr<'a> {
         })
     }
 
+    /// A named shader constant from the GOG remaster's metadata block (fourCC `SGLB`, key `CNST`: `u32` count, then
+    /// per constant `u32` name length, the name, `f32 × 4`; `sg3d::texture_t::load_pvr` hands them to the material,
+    /// e.g. the starmap planet maps' `uv_mul` = (1, 0.5, 0, 0): the maps hold the surface twice, one above the other).
+    pub fn constant(&self, name: &str) -> Option<[f32; 4]> {
+        let m = self.metadata;
+        let u32_at = |o: usize| m.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+        let mut o = 0;
+        while o + 12 <= m.len() {
+            let (fourcc, key, len) = (&m[o..o + 4], &m[o + 4..o + 8], u32_at(o + 8)? as usize);
+            let data = m.get(o + 12..o + 12 + len)?;
+            if fourcc == b"BLGS" && key == b"TSNC" {
+                let d = |p: usize| data.get(p..p + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+                let mut p = 4;
+                for _ in 0..d(0)? {
+                    let n = d(p)? as usize;
+                    let found = data.get(p + 4..p + 4 + n)? == name.as_bytes();
+                    let v = data.get(p + 4 + n..p + 20 + n)?;
+                    if found {
+                        return Some(std::array::from_fn(|i| f32::from_le_bytes(v[4 * i..4 * i + 4].try_into().unwrap())));
+                    }
+                    p += 20 + n;
+                }
+            }
+            o += 12 + len;
+        }
+        None
+    }
+
     fn level_size(&self, w: u32, h: u32) -> usize {
         match self.format {
             PixelFormat::Generic { bits, .. } => {
@@ -186,6 +214,29 @@ fn decode_bc1(src: &[u8], w: u32, h: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constants_come_from_the_cnst_block() {
+        let mut meta = Vec::new();
+        meta.extend_from_slice(b"BLGSVNXT");
+        meta.extend_from_slice(&4u32.to_le_bytes());
+        meta.extend_from_slice(&11u32.to_le_bytes());
+        meta.extend_from_slice(b"BLGSTSNC");
+        meta.extend_from_slice(&30u32.to_le_bytes());
+        meta.extend_from_slice(&1u32.to_le_bytes());
+        meta.extend_from_slice(&6u32.to_le_bytes());
+        meta.extend_from_slice(b"uv_mul");
+        for x in [1.0f32, 0.5, 0.0, 0.0] {
+            meta.extend_from_slice(&x.to_le_bytes());
+        }
+        let mut f = header(7, 4, 4);
+        f[48..52].copy_from_slice(&(meta.len() as u32).to_le_bytes());
+        f.extend_from_slice(&meta);
+        f.extend_from_slice(&[0; 8]);
+        let p = Pvr::parse(&f).unwrap();
+        assert_eq!(p.constant("uv_mul"), Some([1.0, 0.5, 0.0, 0.0]));
+        assert_eq!(p.constant("uv_add"), None);
+    }
 
     fn header(pf: u64, w: u32, h: u32) -> Vec<u8> {
         let mut v = Vec::new();

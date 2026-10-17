@@ -71,6 +71,9 @@ pub struct Vert {
     pub pos: V3,
     pub normal: V3,
     pub uv: [f32; 2],
+    /// The lighting normal (`lighting`): the file normal with z negated, turned by the nodes' rotation chain
+    /// (`spsorttype+0x24`: animated nodes' key rotations, the records' matrices else; no `AddToScene` scale).
+    pub lnormal: V3,
 }
 
 /// How a part is blended (`SetObjTransparency`, property bits; re/screens/colony.md §2.4).
@@ -98,11 +101,25 @@ pub struct Part {
     pub edges: Vec<u8>,
 }
 
-/// A loaded model: its root node's half-extents (`XVBStruct+4..+0xc`) and its parts.
+/// A loaded model: its root node's half-extents (`XVBStruct+4..+0xc`), its parts and the pose of every child.
 #[derive(Debug, Clone, Default)]
 pub struct Model {
     pub origin: V3,
     pub parts: Vec<Part>,
+    pub nodes: Vec<NodePose>,
+}
+
+/// Where a child (`GetSubMeshid` chain `index`) was placed: its parent's matrix, its record translation, its matrix
+/// (`P·M`) and translation in the root's space.
+#[derive(Debug, Clone)]
+pub struct NodePose {
+    pub index: Vec<u16>,
+    pub parent: M3,
+    pub record: V3,
+    pub matrix: M3,
+    pub at: V3,
+    /// The rotation chain to this child (lighting).
+    pub light: M3,
 }
 
 impl Model {
@@ -128,10 +145,62 @@ impl Model {
             texture_dir,
             prefix: format!("{}-", root.split('.').next().unwrap_or_default()),
             parts: Vec::new(),
+            nodes: Vec::new(),
             frame,
         };
-        w.node(&scene, &IDENTITY, [0.0; 3], "", &[]);
-        Ok(Self { origin: scene.header.origin, parts: w.parts })
+        w.node(&scene, &IDENTITY, &IDENTITY, [0.0; 3], "", &[]);
+        Ok(Self { origin: scene.header.origin, parts: w.parts, nodes: w.nodes })
+    }
+
+    /// `MoveObj`/`RotateObj` on the child `index` (re/screens/spy.md §2.2): its record translation replaced by `to`
+    /// (model units, `v/1024`) and its matrix turned by `rot` (`P·K·R`), moving every part below it.
+    pub fn move_child(&mut self, index: &[u16], to: Option<V3>, rot: Option<&M3>) {
+        let Some(n) = self.nodes.iter().find(|n| n.index == index).cloned() else { return };
+        let shift = to.map_or([0.0; 3], |t| apply(&n.parent, [t[0] - n.record[0], t[1] - n.record[1], t[2] - n.record[2]]));
+        // v' = at' + M·R·M⁻¹·(v − at); a collapsed (zero-scale) child keeps its points.
+        let turn = rot.and_then(|r| inverse(&n.matrix).map(|inv| mul(&mul(&n.matrix, r), &inv)));
+        let nturn = turn.map(|t| normal_matrix(&t));
+        let lturn = rot.and_then(|r| inverse(&n.light).map(|inv| mul(&mul(&n.light, r), &inv)));
+        for p in self.parts.iter_mut().filter(|p| p.index.starts_with(index)) {
+            for v in &mut p.verts {
+                let mut q = v.pos;
+                if let (Some(t), Some(nt)) = (&turn, &nturn) {
+                    let d = apply(t, [q[0] - n.at[0], q[1] - n.at[1], q[2] - n.at[2]]);
+                    q = [d[0] + n.at[0], d[1] + n.at[1], d[2] + n.at[2]];
+                    v.normal = normalise(apply(nt, v.normal));
+                }
+                if let Some(lt) = &lturn {
+                    v.lnormal = apply(lt, v.lnormal);
+                }
+                v.pos = [q[0] + shift[0], q[1] + shift[1], q[2] + shift[2]];
+            }
+        }
+    }
+
+    /// The parts below child `index`.
+    pub fn below<'a>(&'a self, index: &'a [u16]) -> impl Iterator<Item = &'a Part> + 'a {
+        self.parts.iter().filter(move |p| p.index.starts_with(index))
+    }
+
+    /// This model's points moved `t` of the way to `other`'s (the same model at the next frame: the same parts in
+    /// the same order; `SetFrame` between two keys).
+    pub fn lerp(&self, other: &Model, t: f32) -> Model {
+        if t == 0.0 {
+            return self.clone();
+        }
+        let l = |x: V3, y: V3| -> V3 { std::array::from_fn(|k| x[k] + (y[k] - x[k]) * t) };
+        let mut out = self.clone();
+        for (p, q) in out.parts.iter_mut().zip(&other.parts) {
+            if p.verts.len() == q.verts.len() {
+                for (v, w) in p.verts.iter_mut().zip(&q.verts) {
+                    v.pos = l(v.pos, w.pos);
+                    v.normal = normalise(l(v.normal, w.normal));
+                    // `Kocka` blends the keys' rotation matrices linearly (no renormalising).
+                    v.lnormal = l(v.lnormal, w.lnormal);
+                }
+            }
+        }
+        out
     }
 
     /// Every vertex position (root space).
@@ -156,6 +225,7 @@ struct Walk<'a, 'b> {
     texture_dir: &'a str,
     prefix: String,
     parts: Vec<Part>,
+    nodes: Vec<NodePose>,
     frame: Option<usize>,
 }
 
@@ -174,24 +244,29 @@ impl Walk<'_, '_> {
 
     /// `Kocka2`: a child sits at `P·t + T` with matrix `P·M` (the child record's matrix; `RotateObj` is never
     /// applied inside a model).
-    fn node(&mut self, n: &Node, p: &M3, t: V3, path: &str, index: &[u16]) {
+    fn node(&mut self, n: &Node, p: &M3, pl: &M3, t: V3, path: &str, index: &[u16]) {
         let frames = n.header.frames() as usize;
         for (i, (c, content)) in n.children.iter().enumerate() {
             let mut ct = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
             let mut cm = c.matrix;
+            let mut cl = c.matrix;
             if let (Some(f), true) = (self.frame, frames > 2) {
                 if let (Some(k), Some(k0)) = (n.header.key(f.min(frames - 1), i), n.header.key(0, i)) {
                     cm = k.matrix;
+                    cl = k.rotation;
                     ct = std::array::from_fn(|j| ct[j] + k.translation[j] - k0.translation[j]);
                 }
             }
             let pt = apply(p, ct);
             let t2 = [pt[0] + t[0], pt[1] + t[1], pt[2] + t[2]];
             let m = mul(p, &cm);
+            let ml = mul(pl, &cl);
             let path = format!("{path}/{}", c.name);
             let index: Vec<u16> = index.iter().copied().chain([i as u16]).collect();
+            let record = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
+            self.nodes.push(NodePose { index: index.clone(), parent: *p, record, matrix: m, at: t2, light: ml });
             match content {
-                ChildContent::Node(sub) => self.node(sub, &m, t2, &path, &index),
+                ChildContent::Node(sub) => self.node(sub, &m, &ml, t2, &path, &index),
                 ChildContent::Mesh(mesh) => {
                     let texs: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture(x)).collect();
                     let nm = normal_matrix(&m);
@@ -209,6 +284,11 @@ impl Walk<'_, '_> {
                                 pos: [q[0] + t2[0], q[1] + t2[1], q[2] + t2[2]],
                                 normal: normalise(apply(&nm, v.normal)),
                                 uv: v.uv,
+                                // `LoadObject` normalises the file normal (a zero one becomes (1, 0, 0)).
+                                lnormal: apply(&ml, {
+                                    let q = if v.normal == [0.0; 3] { [1.0, 0.0, 0.0] } else { normalise(v.normal) };
+                                    [q[0], q[1], -q[2]]
+                                }),
                             });
                         }
                     }
@@ -222,6 +302,40 @@ impl Walk<'_, '_> {
             }
         }
     }
+}
+
+/// The two integer frames around `frame` (within `n`) and the weight of the second: `SetFrame` keeps
+/// `floor(frame)·256 + fract·256` as an integer, so the fraction goes in 1/256 steps.
+pub fn frame_keys(frame: f32, n: usize) -> (usize, usize, f32) {
+    let last = n.saturating_sub(1);
+    let f = frame.max(0.0) as f64;
+    let k = (f.floor() * 256.0 + (f - f.floor()) * 256.0) as i32;
+    let f0 = (k >> 8) as usize;
+    if f0 >= last {
+        return (last, last, 0.0);
+    }
+    (f0, f0 + 1, (k & 0xff) as f32 / 256.0)
+}
+
+/// The inverse of `m`, if it isn't singular.
+pub fn inverse(m: &M3) -> Option<M3> {
+    let c = |r: usize, k: usize| m[r * 3 + k];
+    let det = c(0, 0) * (c(1, 1) * c(2, 2) - c(1, 2) * c(2, 1)) - c(0, 1) * (c(1, 0) * c(2, 2) - c(1, 2) * c(2, 0)) + c(0, 2) * (c(1, 0) * c(2, 1) - c(1, 1) * c(2, 0));
+    if det.abs() < 1e-30 || !det.is_finite() {
+        return None;
+    }
+    let i = 1.0 / det;
+    Some([
+        (c(1, 1) * c(2, 2) - c(1, 2) * c(2, 1)) * i,
+        (c(0, 2) * c(2, 1) - c(0, 1) * c(2, 2)) * i,
+        (c(0, 1) * c(1, 2) - c(0, 2) * c(1, 1)) * i,
+        (c(1, 2) * c(2, 0) - c(1, 0) * c(2, 2)) * i,
+        (c(0, 0) * c(2, 2) - c(0, 2) * c(2, 0)) * i,
+        (c(0, 2) * c(1, 0) - c(0, 0) * c(1, 2)) * i,
+        (c(1, 0) * c(2, 1) - c(1, 1) * c(2, 0)) * i,
+        (c(0, 1) * c(2, 0) - c(0, 0) * c(2, 1)) * i,
+        (c(0, 0) * c(1, 1) - c(0, 1) * c(1, 0)) * i,
+    ])
 }
 
 /// The inverse transpose of `m` (normals).

@@ -189,7 +189,7 @@ pub fn right_click(s: &Snapshot, cam: &Camera, at: [f32; 2], sel: &Selection, ke
     })
 }
 
-/// A left click on the map (on release, `Starmap_Main`): the next unit under the cursor (`SelectNearestUnit` at
+/// A left press on the map (`Starmap_Main`, which then opens the radial menu): the next unit under the cursor (`SelectNearestUnit` at
 /// radius 1, cycling from the current selection) becomes the selection.
 pub fn left_click(s: &Snapshot, cam: &Camera, at: [f32; 2], sel: &Selection) -> Option<Selection> {
     let exclude = if sel.mode == 2 { sel.fleet as i32 } else { -(sel.planet as i32) };
@@ -197,6 +197,19 @@ pub fn left_click(s: &Snapshot, cam: &Camera, at: [f32; 2], sel: &Selection) -> 
         Unit::Planet(p) => Selection { mode: 1, planet: p, fleet: sel.fleet },
         Unit::Fleet(f) => Selection { mode: 2, planet: sel.planet, fleet: f },
     })
+}
+
+/// `SelectNearestPlanet(sx, sy, r, &kind)` (ELF 0x6e5150): the player's own planet it sees whose star projects
+/// nearest to `at` within `max(225, (Zoom/20)²)·r²`; no cycling.
+pub fn select_nearest_planet(s: &Snapshot, cam: &Camera, at: [f32; 2], r: f32) -> Option<usize> {
+    let mut best = (reach(cam.zoom) * r * r, None);
+    for p in s.planets.iter().filter(|p| p.owner == s.human && p.known) {
+        let d = tavolsag(cam, at, p.pos);
+        if d < best.0 {
+            best = (d, Some(p.index));
+        }
+    }
+    best.1
 }
 
 /// A click in the minimap (hot-spot 7, `Starmap_Main`): the view's pivot moves over the galaxy point there

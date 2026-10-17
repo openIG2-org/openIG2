@@ -35,11 +35,13 @@
 mod battles;
 mod colony_orders;
 mod death;
+mod info_orders;
 mod orders;
 mod realtime;
 mod research_orders;
 
 pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
+pub use info_orders::InfoOrder;
 pub use orders::{OrderEvent, StarmapOrder};
 pub use realtime::{RealTime, RealTimeEvent};
 pub use research_orders::ResearchOrder;
@@ -312,6 +314,23 @@ impl<'r> Game<'r> {
     }
 
     /// The local player's view: the state's globals (classic), else [`Game::local`].
+    /// `GetENRadarKifejlesztve` on the current state, without keeping the result (the starmap's radar ranges call
+    /// it first: re/screens/starmap.md §6.3). Rows a loaded save left empty start from `InitNewGame`'s
+    /// `RadarHatotav2Init` (the exe's live tables hold them after a load).
+    pub fn radar_tables(&self) -> crate::radar::RadarTables {
+        let g = self.globals();
+        let ctx = self.starmap_context(&g);
+        let mut t = self.state.starmap().radar;
+        let init = crate::radar::RadarTables::new_game(&self.rules.radar);
+        for e in 1..EMPIRES {
+            if t.range[e].iter().all(|&r| r == 0.0) {
+                (t.range[e], t.range_sq[e]) = (init.range[e], init.range_sq[e]);
+            }
+        }
+        t.refresh(&self.rules.radar, &ctx);
+        t
+    }
+
     pub fn local_view(&self) -> LocalView {
         match self.view {
             ViewMode::Classic => {

@@ -23,8 +23,13 @@ impl Story {
 }
 
 /// `st_KemSiker(id)`: spy news of kind 2 (a success) for story mission `id` (flag 15).
-fn spy_success(s: &Story, id: i32) -> bool {
+pub(crate) fn spy_success(s: &Story, id: i32) -> bool {
     s.flags[flag::SPY] && s.spy_kind == 2 && (id == 0 || s.spy_story == id)
+}
+
+/// `st_KemElkap(id)` (exe 0x5eb4b0): spy news of kind 1 (is the spy caught?) for story mission `id` (flag 15).
+pub(crate) fn spy_caught(s: &Story, id: i32) -> bool {
+    s.flags[flag::SPY] && s.spy_kind == 1 && (id == 0 || s.spy_story == id)
 }
 
 /// 127: an empire (not 5) is to be spied on (message 0x4f7, its name). Read → story mission 1271 is offered for
@@ -106,14 +111,14 @@ pub(super) fn mission(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort
 }
 
 /// `st_IsKemKuldetesEnabled(id)` (exe 0x5eb430): story `id`'s spy mission is offered (`KemKuldetesek[14 + k].+0`).
-fn mission_enabled(id: i32, w: &dyn StoryWorld) -> bool {
+pub(crate) fn mission_enabled(id: i32, w: &dyn StoryWorld) -> bool {
     (0..MISSIONS).find(|&k| w.campaign_tables().story_mission(k) == id).is_some_and(|k| w.spy_mission_on(14 + k))
 }
 
 /// `st_KemEsely(kind, a, lo, hi, true)` (exe 0x5eb4e0): the last story mission's spy (`Kemek[KemkedesTulaj]
 /// [KemkedesAktKem]`, skills `+0x31..+0x33`) succeeds: kinds 1 and 2 `100·s₁`, 3 `70·s₃ + 30·s₁`, 4 `70·s₂ + 30·s₃`,
 /// else 0; `(x·50/a)/10` clamped to `hi`, then `lo`; `rnd(0, 99)` below it.
-fn spy_chance(s: &Story, kind: i32, a: i32, lo: i32, hi: i32, w: &mut dyn StoryWorld) -> i32 {
+pub(crate) fn spy_chance(s: &Story, kind: i32, a: i32, lo: i32, hi: i32, w: &mut dyn StoryWorld) -> i32 {
     let spy = w.spy_record(s.spy_owner, s.spy_slot);
     let (s1, s2, s3) = (spy.skill_31, spy.skill.0, spy.skill.1);
     let x = match kind {

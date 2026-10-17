@@ -75,7 +75,7 @@ panels]); the viewport is the 4:3 one widened by `ModifyViewPort`.
   white light pulsing 160..224, the others a tint `(100 − h, 100 − h/2, 100 + h)`; ambient marks
   (`0xBBGGRR`): `JelolFej` 0x860E0E (blue: selected), `JelolFej2` 0x0E0E86 (red: the slot isn't open, or blinking
   while the human's message awaits its answer), `JelolFej3` 0x0E860E (green, blinking: a message of that empire
-  waits for the human).
+  waits for the human). All lit by the engine's model (research.md §2.1; the cages' wires per vertex, `wirekirak`).
 - Background: `Copy3hatterkep(0x34, grey 255 − 128·dipframe/80)`: picture 52 (`_ESIG_U2.BMP`) stretched over the
   viewport, half bright once open.
 - Faders (`FadeKerettelKerekit`, fill (0, 54, 90), edge (0, 90, 130); `f = 2·dipframe/80 − 1`, 1 when open): the

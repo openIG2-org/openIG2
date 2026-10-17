@@ -6,7 +6,8 @@ How the original draws the starmap (screen `AktKep == 2`). Evidence: the ELF ora
 
 Scope: the 3D view, systems, planets, fleets, routes, selection, background, colours, the minimap, the orders the
 screen sends and the lockstep handler that carries them out (§10), the control panel and the short info (§11), the
-production view (§12) and the transfer panel (§13). The names (§3.5, §4.2) and the top bar are in re/screens/hud.md
+production view (§12), the transfer panel (§13), the radial icon menu (§14), the planet's long info (§15), the select
+menus (§16) and the production view's planet list (§17). The names (§3.5, §4.2) and the top bar are in re/screens/hud.md
 §2, §4; what is left is in §9.
 
 ## 1. Frame structure
@@ -15,7 +16,8 @@ production view (§12) and the transfer panel (§13). The names (§3.5, §4.2) a
   `Init3dStarmap`.
 - `Init3dStarmap` 0x6db470: builds the 3D scene (`mainxvb`): lights (ambient 0x404040, parallel 0x808080 from
   (10, 10, −10)), one planet mesh + two cloud meshes per planet, the particle sets (§4.1, §6), the radar-range rings
-  (`rrange.xvb`, option `OptionsKellRadarRange`), the production panel, the control pointer `kezel.xvb`; registers the
+  (`rrange.xvb`, option `OptionsKellRadarRange`, §6.3), the sky sphere `gomb.xvb` (§6.5), the production panel, the
+  control pointer `kezel.xvb`; registers the
   2D passes `StarmapGfx2D_1` (0x6dcb30: names, routes, fleets), `StarmapGfx2D_2` (panels), `DrawStarmapParticles`.
 - Per UI tick (100 Hz: `Fake_FRISSITES` runs it every 10 ms of `SDL_GetTicks`): `FRISSIT_Starmap2` 0x719070 (counters: `PlanetRotate += 1/150`, `futofeny += 1`,
   `smkeringeto += 0.0002`; cloud drift `GalaxisGomolygas` 0x6d8ac0), `Starmap_Main` 0x6f50a0 (input, camera tweens),
@@ -102,26 +104,57 @@ confirms it (§8: screen x = −x).
 (`Init3dStarmap` 0x6db470 → `PlanetProperties[p−1]` +4/+8/+0xc/+0x10, `StarSize[p−1] = csillagmeret >> 1`.)
 
 ### 3.2 The star
-One particle per planet in `DiffStars[(s−1)%8]` (texture `textures/starmap/n1..n8`, additive), at (0, px, py), colour
-`szin`, size `StarSize` (`rotate_stars` 0x6e1a00 sets size `StarSize·starmapszorzo` (= 1) when the human sees the
-planet, else 0). A textured particle is a screen-aligned quad of half-size `size·fov/−e.z` around the projection
+One particle per planet in `DiffStars[(s−1)%8]` (texture `textures/starmap/n1..n8`, additive), at (0, px, py), white,
+size `StarSize` pulsing (§6.4; `rotate_stars` 0x6e1a00 first sets `StarSize·starmapszorzo` (= 1) when the human sees
+the planet, else 0). A textured particle is a screen-aligned quad of half-size `size·fov/−e.z` around the projection
 (`Particle` 0x5f4ff0).
 
 ### 3.3 The planet
-Mesh `PlanetMeshes[(s−1)%8]` scaled `(bolygomeret/200000 + 0.002)/8` (`AddToScene` 0x4551d0), placed by
-`rotate_stars` on its orbit around the star:
+Mesh `PlanetMeshes[(s−1)%8]` = `b{k}0.xvb` scaled `(bolygomeret/200000 + 0.002)/8` (`AddToScene` 0x4551d0; exe
+`Init3dStarmap` 0x59c850 is the same), placed by `rotate_stars` on its orbit around the star:
 
 ```
 K = StarmapPlanetKering, r = Dist/20 + 2, T = Speed/100 + 0.1
 planet = (0, px − sin(K/T)·r, py + cos(K/T)·r)
 ```
 
-Two cloud meshes (`felhoo_0.xvb`, 50 % transparent) share the position. `ShowStarmap` spins them every frame:
-planet `RotateObj(0, 0, PlanetRotate·spin·6)`, clouds `(−PlanetRotate·spin·2, 5, 0)` and `(PlanetRotate·spin·3, 0, 0)`.
-World radius `[inf]`: the meshes are unit spheres with a ×1.1327 child scale and the scene's mesh unit appears to be
-1000 world units (the radar ring `rrange.xvb`, a unit circle, is scaled `range·0.001` to show a radar range), so
-`r_planet ≈ 1.1327·(bolygomeret/1600 + 0.25)`: a fraction of a unit, visible only when zoomed in. The planet texture
-is the surface map (`p<surface>`; the client already uses it).
+`ShowStarmap` turns it every frame by `RotateObj(0, 0, PlanetRotate·spin·6)` (spin = `SpinSpeed/100`;
+`PlanetRotate` exe 0xE85028 steps 1/150 per UI tick with `futofeny`, so it is `futofeny/150`: 1.58667 at
+`futofeny` 238 in a capture; the exe's `GetObjMatrix` gives exactly `CreateMatrix(0, 0, PlanetRotate·spin·6)`).
+Verified against captures of the long info (`run_screen.py --hide clouds|planet`, below; diff-results
+`starmap-planet`):
+- **Level of detail.** `b{k}0` is a 4-face tetrahedron whose node names `b{k}1` as `lod_archive`, which names
+  `b{k}2`, then `b{k}3` (48, 168, 528 faces, radius 1 × child scale 0.846). `Kocka` (ELF 0x5f6a40) steps down the
+  chain while `valtashatar·30^level < size·lod²` (`lod` 5 in each): the long info's planet is at `b{k}3`. On screen
+  its radius is `1024·0.846·scale` world units (Magellan 10, size 7: 0.218 at distance ≈ 1, 163 pixels at 800 × 600,
+  as in the exe). The client draws the last level everywhere.
+- **Texture.** The material's `p{k+1}.bmp` (= `p<surface>` for surfaces 1..8) holds the map twice, one above the
+  other; the remaster's PVR carries a metadata block `SGLB`/`CNST` with `uv_mul = (1, 0.5, 0, 0)` and
+  `render/ig2_vertex.shader` multiplies the mesh UVs by it (`var_uv = sg3d_texcoord0 · uv_mul.xy`), so the sphere
+  shows one copy (`ig2_formats::pvr::Pvr::constant`).
+- **Light.** `ShowStarmap` sets the lighting direction `(fxn, fyn, fzn)` = `(StmapLightX, StmapLightY, StmapLightZ)`
+  (ELF 0x1730060/64, never written, and 0x119a72c = −10): (0, 0, −1) in camera space, which lights the faces turned
+  towards the eye; per vertex `ambient 0x40 + 0x80·max(0, n·to_eye)` (`Init3dStarmap`'s ambient and parallel light
+  levels), gamma-space. The meshes' stored normals are mirrored in x and y (`(−x, −y, z)` of the positions); the
+  captures match outward normals [obs] (planet region 12.2 vs 21.8–29.6 for the stored ones).
+- **Order.** The remaster draws the starmap's meshes without the depth test (`render/video.state`) in the old
+  engine's sorted order, the particle pass (`DrawStarmapParticles`, a `SetRenderOther` callback) before the planets:
+  the background's additive clouds don't show through a planet (they gave the client's planets a blue cast).
+- **Clouds** (`HideClouds` exe 0x59c600: only the long info's planet `AktPlanet` keeps them). `felhoo_0.xvb` (a LOD
+  chain to `felhoo_3`, 528 faces, radius ≈ 1.0 × (0.855, 0.854, 0.856)) at `(scale + 0.0001)/8`, turned by
+  `RotateObj(−PlanetRotate·spin·2, 5, 0)`; a second copy at scale 0 (`CloudId2`, never visible). Its texture
+  `ethcldbp.bmp` only picks the remaster's `CLOUD` material (`command_glLoadTexture` ELF 0x426e30;
+  `render/ig2.material`, `ig2_cloud.program`): `render/ig2_fragment_cloud.shader` draws procedural clouds,
+  `cloud = smoothstep(0, 0.4, Σ₄ (noise(uv') − 0.4)·½ᵏ · edge fades)` with `uv' = (u, v/2)·0.5 + sg3d_time.x·0.01`
+  scaled 3.3 per octave, colour `min(2·cloud, 1)` × the vertex light, alpha `cloud`, alpha-blended
+  (`SetObjTransparency(0.5)` is ignored). `sg3d_time.x = game::acttime/1000` (`ig2screen::render` ELF 0x423b80; exe
+  0x7370f0, `acttime` exe 0xFD1520 in ms). The noise is `sg3d::create_plasma(7, 5)` (ELF 0x87dbb0, made once by
+  `ig2screen::initialise`): `create_noise_optim(5)` fills 32 × 32 bytes from sg3d's own generator (`srand` ELF
+  0x7d2a40: Park–Miller `seed·16807 mod 2³¹ − 1`, `rand_seed` ELF 0x119dfb0 = 1 [inf: nothing draws from it
+  earlier]), then each of 128 × 128 texels sums 3 octaves of `(2·s − 1)·amp` (amp ½, ¼, ⅛, uv doubling) of
+  `sample_optim` (ELF 0x870920: smoothstep-weighted bilinear, wrapping), stored as `(int)(sum·127.5 + 127.5)`, all
+  f32; sampled with mipmaps and repeat. Port: `ig2-client::starmap_planet`; the captures' `acttime` is passed as
+  `--acttime`.
 
 ### 3.4 Which planets are drawn
 Only planets the human sees: `Bolygok[p] + 0xd8 + 2·EN` (i16) **> 0** (or the debug switch `DEBUGX`); others are
@@ -178,21 +211,90 @@ step: particles `h` and `h + 20` (h = `futofeny2 % 40`) get size 2.0, the others
 divided by `√(0.3·600/D)`. Colour `0xff8020` (blue) for a planet, `0x00ffff` (yellow) in fleet mode, faded by the
 planet-info zoom.
 
-## 6. Background (`GenerateStarParticles` 0x6d8e90, once, `srand(1)`, `random(n) = n > 0 ? rand() % n : 0`)
-All in (h, x, y); the exe's `rand` is MSVC's.
-- `FarStar` (2500 untextured points, colour `v·0x010101`, v = `random(100)`): 0..1749 a two-armed spiral (arm =
-  `random(2)`, offset along the arm `random(600) − 300 + random(50) − 25`, height `(random(30) − 15)·(1 − r/√180000 +
-  0.3)`, rotated by `r/100 + (random(r)/100 − r/200)/2.5` with r = |(x, y)|·… as in the code); 1500..2499 then
-  overwritten by a flat disc (radius `random(600) − 300`, angle `random(400)/400·2π`), 1750..2499 by a wide ring
-  (radius `random(1800) − 900`, height `random(600) − 300`), 2000..2499 by a shell (`random(100) − 50` per axis,
-  normalised, × `900 + random(500)`).
-- `Clouds1` (`felho3`, 105, size 5 + `random(6)`) and `Clouds2` (`felho2`, 105, size 12 + `random(20)`): spiral
-  positions like the stars, colour `0xc8BBGGRR` with R = `random(50) + 50`, G = `random(50) + 50`,
-  B = `random(100) + 50 + random(50) + 55` (transparency 0xc8 → ×55/256). Then 5 spiral points recoloured with
-  `AddColor` (unmapped). Drawn up to `HANYFELHOPARTICLE = OptionsFogResolution·50`; they drift (`GalaxisGomolygas`).
-- `KodPamacsok` (`felho2`, 30 clumps × 10): clump centre `(random(900) − 450)·1.5` in x and y, height
-  `±random(300)·1.5`; members ±50, size 25 + `random(25)`, colour like the clouds with per-clump bases.
-Particles are drawn additively (blend 1, 1; `+0x20` = 100 set by `ShowStarmap`); untextured ones as points.
+## 6. Background
+Verified against the exe's live particle records (`run_screen.py --particles`: `FStars` exe 0xF16F38, 11 sets ×
+0x38 = {+0 records (0x4c bytes: +0 h, +4 x, +8 y, +0xc colour `0xTTBBGGRR`, +0x14 size, +0x48 colour backup), +4
+texture, +0x10 count}; `DiffStars` 0xF171A0, 8 sets): all 3,010 background particles and quick-1.sav's 52 radar dots
+bit for bit (`starmap::tests::the_background_matches_the_exes_records`,
+`starmap_radar::tests::quick1_rings_match_the_exes_particles`). Sets: 0 `FarStar` (no texture: points), 2
+`RadarRange` (`radar.bmp`), 3 `Selection`, 6 `FlottaMozgPart`, 7 the wormholes, 8 `Clouds1` (`felho3.bmp`), 9
+`Clouds2` and 10 `KodPamacsok` (`felho2.bmp`). `Particle` (ELF 0x5f4ff0) draws a textured particle as a
+screen-aligned quad of half size `size·fov/−e.z` with colour × `(255 − TT)/256` and blend (1, 1) (alpha blending when
+the set's `+0x20` is 99), skipping colour 0 and size ≤ 0; untextured sets as GL points. The whole pass is gamma-space
+GL (re/screens/hud.md §1.1): the client draws all of it on `Blend::GammaAdditive`.
+
+### 6.1 Generation (`GenerateStarParticles` exe 0x599cf0, ELF 0x6d8e90; once, `srand(1)`)
+`random(n) = n > 0 ? rand() % n : 0` with MSVC's `rand`. Positions are (h, x, y). The exe rounds the square roots and
+the sines and cosines to f32 and mixes f32 and f64 steps where the ELF works in f64 (asm; `starmap::spiral`).
+- `FarStar` (2500, colour `v·0x010101`, v = `random(100)`, overwritten by the twinkle, §6.4): 0..1749 a two-armed
+  spiral: arm = `random(2)`, height `h0 = random(30) − 15`, along the arm `random(600) − 300 + random(50) − 25` (for
+  both axes, one of them × 0), the colour draw, `r = √(x² + y²)` (f32), `turn0 = r/100` (f32), height
+  `((1 − r/√180000) (f32) + 0.3)·h0` (f64), `turn = (random(⌊turn0·100⌋)/100 − turn0·0.5)/2.5 + turn0` (f64), turned by
+  `turn` with f32 sine and cosine; 1500..2499 then overwritten by a flat disc (radius `random(600) − 300`, angle
+  `random(400)/400·π·2` in f64 with π exact), 1750..2499 by a wide ring (radius `random(1800) − 900`, height
+  `random(600) − 300`), 2000..2499 by a shell (`random(100) − 50` per axis, normalised, × `900 + random(500)`).
+- `Clouds1` (105, size 5 + `random(6)`) and `Clouds2` (105, size 12 + `random(20)`): spiral points with a tint
+  `random(50) + 50` drawn after the position, colour `0xc8BBGGRR`, B = `random(100) + tint + 0x37`, G =
+  `random(50) + 50`, R = `random(50) + 50`.
+- `AddColor` (exe 0x590f60, ELF 0x6d8650): the first five `Clouds2` move to five new spiral points; each point adds
+  `(R, G, B)·(1 − d/√720900)^25` to every cloud of both sets (d its distance; f32 with the root and the power in f64;
+  channels capped at 255). The exe passes the three `random(50)` right to left: its first draw is blue (the ELF's is
+  red).
+- `KodPamacsok` (30 clumps × 10, `felho2`, size 25 + `random(25)`): clump centre h = `(random(900) − 450)·1.5`, x =
+  `(random(900) − 450)·1.5`, y = `±random(300)·1.5`, bases R, G, B = `random(100) + 50`; members ±50 per axis, colour
+  base + `random(50)` (B, G, R order). **Only 30 of the 300 are lit**: both binaries copy the colour to the backup
+  `+0x48` of the clump's index instead of the member's, and `Init3dStarmap` then restores every colour from the
+  backups, so members 30..299 are black.
+
+### 6.2 Clouds drawn and drifting
+`Init3dStarmap` gives both cloud sets the count `HANYFELHOPARTICLE = OptionsFogResolution·50` (100 with the option at
+2; `%LOCALAPPDATA%/GyroscopeGames/ig2/options.dat`, key/value strings, `ig2_formats::options`), so their last 5 are
+never drawn. `GalaxisGomolygas` (exe 0x5999c0, ELF 0x6d8ac0) runs every starmap UI tick (`FRISSIT_Starmap2`):
+`GomolygasCounter` (exe 0xE75918) + 1, and on multiples of 5 the first `HANYFELHOPARTICLE` clouds move by
+`cos|sin(counter/(i + k) + i)/40` (`Clouds1`: h cos 319, x sin 210, y sin 250; size cos 400 /70) and `/9` (`Clouds2`:
+h sin 279, x cos 210, y sin 150; size sin 220 /20), in f64 written back to f32. The counter isn't saved: the capture
+tool reports it (`run_screen.py`'s grab → `<state>.ui.json`, passed on by `run_screendiff.py`) and the client takes
+it as `--clouds N` (`View::set_clouds`; the window ticks it on the starmap).
+
+### 6.3 Radar ranges (`OptionsKellRadarRange`, on)
+`RadarRangeKi` (ELF 0x70e030) first runs `GetENRadarKifejlesztve`, then collects circles (`RadarKorok`, ≤ 400): for
+each empire allied with the human (`Viszony` level 5, the human included, 1..`ProgramPlayers2`), each planet with
+radar level `+0x6e` 1 or ≥ 3 that this empire owns, or of level ≥ 3 whoever owns it (once per ally), radius
+`RadarHatotav2[owner][level]`; then the human's fleets with `+0x52` bit 5 clear and the story's tracked fleet
+(`StoryAdat+0x28`, `+0x18` bit 0 clear) with radar `+0x7c` > 0. A loaded save doesn't carry `RadarHatotav2`; the
+exe's rows hold `RadarHatotav2Init` (radius 30 at level 3 in quick-1.sav): `Game::radar_tables`.
+`RadarRangeReszKi` (0x70dc80) puts `8n` dots on each circle (n = 2 below radius 35, 3 below 70, else 4; angles
+`π/(8n) + k·π/(4n)` mirrored 8 ways, offsets `(f32)cos·r`; ≤ 4000 dots). `CopyRadarParticles` (0x70caa0) then takes
+each live circle c against every other live o that touches it: when c is no bigger than o or o pokes out of c, the
+dots of o inside c (`d² ≤ r_c² − 1`) go; else c swallows o (its dots and its disc go); two planets' equal circles
+holding each other's centre add an arc of c, and arcs covering c all round remove c (joined from a "first" arc the
+original picks by comparing the last arc's start each time, kept). The surviving dots (≤ 999) are `FStars` set 2:
+colour `0xff` (red) for planets', `0xc04000` for fleets', TT = `255 − starmaperosseg·255` (`starmaperosseg` is 1 but
+in `starmapszarok`), size 1.3. The surviving circles show their discs: planet p's `RRange[p − 1]` = `rrange.xvb` (a
+15-segment unit fan, `rrange.bmp` pure red), moved and scaled to the circle by `rotate_stars`; fleets' `rrang2.xvb`
+(`rrange2.bmp`, blue-violet); transparency `1 − starmaperosseg·0.1·fade` (fade 1 up to zoom 580, 0 at 590).
+Measured on the capture, a disc adds 10 % of its colour in gamma space (red +25.5, green and blue unchanged), and
+overlapping discs add once (coplanar and depth-tested): the client draws the union through the frame's alpha
+(`Blend::MaskClear`/`MaskMax`/`MaskAdd`/`MaskRestore`, `kind::TRI` fans).
+
+### 6.4 Stars (`PulzaljKisCsillag` exe 0x5a05a0, `PulzaljNagyCsillag` exe 0x5a0810; every `ShowStarmap`)
+- The far stars twinkle. Tables at the first call: `rnd1[i] = ((sin(i·82 (f32))/3 + 1)·0.25·180 (f32))/3.1415`,
+  `rnd2[i] = sin(i·415)·30 + 120` (f32), `sine[j] = sin((j·0.0078125) (f32)·3.141592)·90`. Each frame a quarter of
+  the stars (i ≡ `melyikkiscsill` exe 0xE75914 mod 4) get colour `0x646464` with TT = `sine[((i + ⌊futofeny/10⌋)·
+  rnd1[i]) & 0xff] + rnd2[i]` (with `starmaperosseg` ≤ 0.99: `255 − (255 − TT)·starmaperosseg`). `futofeny` (exe
+  0xF1736C, + 1 per UI tick) is unsaved like the drift counter: `--futofeny F` (also the fleet sprites' row clock).
+  The client draws them as squares one virtual pixel wide.
+- System stars: colour **white** `0xffffff` (not the planet's `szin`), size `StarSize[c] + sin(c + futofeny·0.25/13)/2.5`
+  (c = planet − 1, f64) for the planets the human sees.
+
+### 6.5 The sky sphere
+`Init3dStarmap` loads `gomb.xvb` (`AddToScene(…, mainxvb, 2.0)`, properties 0xc0000 on and 6 off, never moved): a
+sphere of radius ≈ 2048 around the galaxy's origin, two parts textured `texcso3.bmp` (orange and teal nebulae) and
+`ujtext.bmp`, seen from inside, lit by the scene's ambient 0x404040 and parallel light 0x808080 (towards (−1, −1, 1),
+the colony's convention). It makes most of the exe's broad haze. The client bakes it at load and draws it through
+the mesh pass with the particles' projection (`Camera::clip_matrix`), the light levels raised to 2.2 since the mesh
+pass works in linear light. The sub-meshes' own ambient 0x404040 and the property bits are unexplained; the levels
+above fit the captures best (view 5.5; sun 0.25 or the ambients summed fit worse).
 
 ## 7. Colours
 `DDColor` (exe 0x8F8710, ELF 0x1166cd0): 43 × `0x00BBGGRR` (red in the low byte: GL vertex colours). Empire `e`'s
@@ -208,11 +310,10 @@ footprint as four lines between `get_radarpos` of the virtual corners (−320, �
 (320, 240).
 
 ## 9. Not specified here
-The select menus of `StarmapGfx2D_4` (tax, autobuild, priority, station sale, the production view's planet list),
-the fleet and vehicle info panels (`StarmapFleetMode`, `StarmapTanksInfo`: the info box's left click), the planet's
-long info (`StarmapHosszuInfoKiir`), the radial "rop" icon menu (`StarmapRopIkonok`, brush 9 around the cursor),
-`StarmapKeyboardHandler`'s keys beyond the camera, the console's own buttons (hot-spots 4..6: side view, zoom and
-pitch while held), radar-range rings (`rrange.xvb`), wormhole particles, `AddColor`, cloud drift.
+The fleet and vehicle info panels (`StarmapFleetMode`: the info box's left click in fleet mode; `StarmapTanksInfo`:
+the radial icon 9) with their ship and vehicle sale menus (`StarmapSelectDeleteMode`, `…TankDeleteMode`), the
+hot-spots' tooltips, `StarmapKeyboardHandler`'s keys beyond the camera, the console's own buttons (hot-spots 4..6: side view, zoom and
+pitch while held), wormhole particles, `starmapszarok`'s brightness change.
 
 ## 10. Input → orders (lockstep messages)
 The screen never changes the game state itself: every order goes out as `Multi_Send(type, EN, …)` and is carried
@@ -263,8 +364,10 @@ Port: `StarmapEvent::FleetEmptied` (`StarmapContext::sends`, `transfer`).
   others' planets without `+0xbc` bit 0. The pick is the highest rank below `exclude`'s (a fleet's rank, 1 for a
   planet −p, unless `exclude` is out of reach), else the highest within 1.1 × the nearest distance: clicking again
   cycles through a stack.
-- Left click (on release): `SelectNearestUnit(…, 1.0, AktFleet or −AktPlanet, false, false)` selects
-  (`StarmapMode` 1 planet / 2 fleet, `AktPlanet`/`AktFleet`).
+- Left press: `SelectNearestUnit(…, 1.0, AktFleet or −AktPlanet, false, false)` selects (`StarmapMode` 1 planet / 2
+  fleet, `AktPlanet`/`AktFleet`) and opens the radial menu (§14); the release carries out its icon.
+- Right press in planet mode on the player's planet (and any press in the redirect mode): the rally order 0x400
+  (§14.5).
 - Right click with the human's fleet selected (or story fleet 0x1f88): Ctrl = attack mode; the pick at r = 0.5
   (skipping the fleet itself, its target excluded); Alt = no pick. A hostile pick (owned by someone other than the
   human and the fleet's owner; fleets without 0x200, planets without `+0xbc` bit 0) turns a move into an attack (2).
@@ -297,9 +400,9 @@ Drawn in the original's order: the 3D pass with the control panel, then the 2D p
   it (`(sin·300, cos·200, 0)` of `smkeringeto·20`). `KezeloGombFrame`/`MelyikGombot` animate its buttons. [The port
   renders it once with one warm front light.]
 - `StarmapGfx2D_1` (ELF 0x6dcb30): `KirakFader(…, 5, 423, 162, 52, 0, 54s, 90s, 155l + 100, 0, 90s, 130s, 185l + 70)`
-  behind the short info (`FadeKerettelKerekit`: rounded fill, then frame; s = 1, l = 0 at rest: fill (0, 54, 90) at
-  opacity 100/255, frame (0, 90, 130) at 70/255 [obs: exe pixels]), then `FadeScreen(271, 385, 98, 71, black,
-  0x40)` over the minimap, 0x40 being the transparency (75 % black [obs]).
+  behind the short info (`FadeKerettelKerekit`: rounded fill, then frame; s = 0.9, l = 0 at rest; the fader rules,
+  texture included, are re/screens/hud.md §1.2), then `FadeScreen(271, 385, 98, 71, black, 0x40)` over the
+  minimap, 0x40 being the transparency (75 % black [obs]).
 - `StarmapGfx2D_3` (ELF 0x6d4a30, exe 0x5aaba0): a selected fleet's mark (brush 11 at (6, 430) for flag 0x4000,
   else brush 3 at (6, 429) for 0x400), `StarmapRovidInfoKiir(50, 424, 0)`, the buttons `BrushClipToScreenMelyikXY(9,
   Starmap_RopIkonKonvert[k], …)` (exe 0x927088: `[0, 13, 9, 10, 8, 1, 2, 6, 7, 5, 0, 0, 0, 3, 4, 0, 11, 12, 14, 0]`):
@@ -373,9 +476,8 @@ off. Frame 0 hides the model. A transfer panel open at the press closes first (`
   `(cos θ/2, sin θ/2·axis)`).
 - Faders (`StarmapGfx2D_2`; `KirakFader` → `FadeKerettelKerekit` 0x538330 → `FadeKerekit`/`FadeKeretKerekit` →
   `FadeScreen` 0x537890, which queues `0xTTBBGGRR`: **the fourth colour value is a transparency**, the colour is
-  blended at opacity `(255 − t)/255` [obs: the panels' edges in the exe capture give 0.22 for t = 200, the transfer
-  faders over black match]; `s` = the fader's `+0x168 + 4i` = 0.9 (`FaderDesignFrissito` 0x547e10; more only with
-  `GLOBALKELLDESIGN`)): when up, `FadeKerettelKerekit(5, 80, 190, 292, 0, 20, 20, 200, 0, 15, 15, 150)` and
+  blended at opacity `(255 − t)/255`, tinted by `dt.bmp` (re/screens/hud.md §1.2); `s` = the fader's `+0x168 + 4i`
+  = 0.9 (`FaderDesignFrissito` 0x547e10, plus a short shine since `GLOBALKELLDESIGN` is set)): when up, `FadeKerettelKerekit(5, 80, 190, 292, 0, 20, 20, 200, 0, 15, 15, 150)` and
   (445, 80, 191, 292), the slot boxes `KirakFader(11 | 511, y, 120, h, 0, 54s, 90s, 100, 0, 90s, 130s, 70)` for
   (y, h) = (125, 60), (206, 50), (261, 50), (316, 50), the capacity boxes (32, 86, 76, 35) and (532, 86, 76, 35).
   Moving (`PModeIn`; f = the frame, or 30 − frame past 12): slot box j slides in by `cos((f − 2j)/6·π/2)·130` (130
@@ -487,3 +589,196 @@ production | transfer` compares `ig2-client --snapshot --panel production | tran
 (re/screens/diff-results.md). The client test `starmap_panels::panel_clicks_reach_the_sim` drives the hot-spots on
 `quick-1.sav`: a design picked from the list, its count raised, the unit finished (0x40f), the fleet split, its
 ship moved across, the emptied fleet kept while the panel is up.
+
+## 14. The radial icon menu ("rop" icons)
+Pressing the left button on the map picks a unit and opens up to four icons around the pointer; releasing the button
+over one carries it out (ELF `Starmap_Main` 0x6f50a0 / exe 0x5b2b70, `Starmap_MouseInit2` ELF 0x7024b0 / exe
+0x5b8950, drawing `StarmapGfx2D_3` exe 0x5aaba0, frame counter `FRISSIT_Starmap2` ELF 0x719070). Port:
+`ig2-client::starmap_menus::RopMenu`.
+
+### 14.1 State (exe)
+`StarmapRopIkonMod` 0xF16F18 (open), `RopIkonFrame` f32 0xE8634C, `RopIkonFazis` 0xEF1154 (1 opening, 2 closed),
+`LastMouseX/Y` 0xE75A74/0xE75A78, `StarmapRopIkonok[1..=4]` 0xE75A30.. (the icons of the four places),
+`AktRopIkon2` 0xF16F14 (the icon under the pointer), `AktRopIkon` 0xE83654 (the icon to carry out this frame, cleared
+at the head of `Starmap_Main`), `StarmapVoltRopikonAlap` 0xE75A73. Tables (exe .data, the same values in the ELF):
+
+| table | exe | [1], [2], [3], [4] |
+|---|---|---|
+| `Starmap_RopIkonX` / `Y` (hit centres) | 0x9270d4 / 0x9270e8 | (29, 86), (81, 125), (132, 86), (81, 49) |
+| `Starmap_RopIkonX2` / `Y2` (icon top-left) | 0x9270fc / 0x927110 | (5, 62), (56, 100), (107, 62), (56, 24) |
+
+`Starmap_RopIkonKonvert` (exe 0x927088, 19 entries) maps an icon to its frame of `StarmapBrushok` 9 (§11).
+
+### 14.2 Opening, choosing, firing
+- Hot-spot 0x35 (the whole screen, the lowest priority) pressed with the left button while no fleet order or redirect
+  is pending (`StarmapVillogasMode`, `StarmapAtiranyitasMode` 0) and the menu is shut: on the press's first frame
+  (`Mouse_VoltFelengedes`) `SelectNearestUnit(Mouse, 1.0, AktFleet or −AktPlanet, false, false)` (§10.3; with the
+  production view up `SelectNearestPlanet`, below) picks; a pick becomes the selection (`StarmapMode`, `AktPlanet` +
+  `StarmapProductPlanetChange`, or `AktFleet` + the fleet's voice for the player's own) and opens the menu:
+  `StarmapRopIkonMod` 1, frame 0, phase 1. `LastMouseX/Y = Mouse − (82, 84)` either way. **Selection happens on the
+  press**, not on the release.
+- `FRISSIT_Starmap2` (the 100 Hz UI frame) steps the frame +1 up to 50 in phase 1, −1 down to 0 in phase 2.
+- From frame 50 every `Starmap_Main` sets `AktRopIkon2` to the icon of the last place `k` whose hit centre
+  `LastMouse + (X[k], Y[k])` is within 30 pixels of the pointer (`dx² + dy² ≤ 900`); it starts each frame at 0.
+- The left button's release (hot-spot 0x35, `Mouse_Felenged`) with the menu open: `StarmapRopIkonMod` 0, phase 2,
+  frame 0, `AktRopIkon = AktRopIkon2`. Releasing before frame 50, or away from the icons, does nothing.
+- The tanks and production buttons (hot-spots 10 and 11) set `AktRopIkon` 1 and 2 directly (`AktIkon2 − 9`).
+- `SelectNearestPlanet(x, y, r, &kind)` (ELF 0x6e5150): the player's own planets it sees (`+0xd8 + 2EN > 0`), the
+  nearest star projection within `max(225, (Zoom/20)²)·r²` squared virtual pixels, no cycling.
+
+### 14.3 Which icons (`Starmap_MouseInit2`, with no production view, transfer panel, fleet info or tank info up)
+All four places cleared, then:
+- Planet mode: place 2 = 4 (the colony screen); the player's planet: place 4 = 9 (tank info), place 1 = 2
+  (production), place 3 = 3 (redirect). Someone else's planet (or a free one): place 1 = 5 (satellite) when the player
+  has none there (`+0xc4 + EN` = 0), hasn't sent one (`StarmapSatelliteElkuldve` 0xE75A72) and tech 15 (Satellite)
+  is researched (status `+0x45 + EN` = 5); place 1 = 6 (spy satellite) instead when that level is below 2, nothing is
+  sent and tech 16 is researched; place 3 = 0x12 (gigabomb) for an owned planet of empire 1..=8 when the story allows
+  it (`StoryAdat + 0x44` and `st_bRakhatoNovabomb(p)`). A free planet (owner 0) without a colony ship sent
+  (`StarmapKolonizaloElkuldve` 0xE75A71), none heading there (`IndultEKolonizalo(EN, p)`: an `EN` fleet ordered to the
+  planet with flag 0x8 or 0x10) and no "don't colonise" mark (`BolygoInfoIs(p, −0x2094)`): place 4 = 8 (colonise)
+  with colony ships in the pool (`OsszHanyKolonizalo[EN]` exe 0xBB4108), place 3 = 7 (terraform) with terraformers
+  (`OsszHanyTerraformalo[EN]` 0xBB4158).
+- Fleet mode, the player's fleet: place 1 = 0xd (split) with more than one ship (`+0x54`), place 2 = 0xe (join) when
+  `StarmapAktFleethezKozeliSajatFlotta` (§13.1) exists, place 3 = 1 (tanks) when the player's planet is near
+  (`SearchFlottahozKozeliBolygo(f, 20, true, true)`), 0x11 (virus alert) instead for flag 0x2000. A story fleet of
+  empire 9 (`StoryAdat + 0x30`, story id 10000..10999) heading for a planet with `+0xb8 > 0` within the player's radar
+  range: place 1 = 0x10 (wormhole). A fleet in battle (`+0x52` bit 0) loses 0xd, 0xe and 1.
+- The redirect mode (`StarmapAtiranyitasMode` 0xE75A58) on the player's planet puts 3 in place 2 every other blink
+  (`AktIdo100` bit 0); on another planet it ends the mode.
+
+### 14.4 Drawing
+`StarmapGfx2D_1` sets `StarmapVoltRopikonAlap` when the menu is open, the frame ≥ 30 and a button is held
+(`Mouse_Akt_Gomb`); `StarmapGfx2D_3` then draws each place's icon `> 0` as brush 9 frame `Konvert[icon]` with its
+top-left at `LastMouse + (X2[k], Y2[k])`: relative to the press (−77, −22) left, (−26, 16) below, (25, −22) right,
+(−26, −60) above (49 × 49 cells). So the icons appear after 0.3 s of holding and answer from 0.5 s. With an icon
+under the pointer the tooltip shows `StarmapRopIkon_Nev[AktRopIkon2]` (`txt17` §6 index k of the Hungarian file;
+`GFX_DateMoneyScrollFade` ELF 0x66d160 at the tooltip place) [not drawn by the port].
+
+### 14.5 What the icons do (`Starmap_Main`, `AktRopIkon`)
+| icon | frame | does |
+|---|---|---|
+| 1 | 13 | the tanks button: the vehicle transfer panel (§13.1) |
+| 2 | 9 | the production view on/off (§12.1) |
+| 3 | 10 | toggles the redirect mode: the next left press, or any right press, on the map picks a planet (`SelectNearestPlanet(…, 1.0)`) and, if it is the player's, sends `0x400(AktPlanet, target)` (0 when it is the planet itself: no rally); the mode ends. The blinking mark at (471, 430) (§11) shows it |
+| 4 | 8 | the colony screen of the planet (`AktKepKell` 3) |
+| 5, 6 | 1, 2 | `0x18(AktPlanet, 1 or 2)` (satellite, spy satellite), `StarmapSatelliteElkuldve` set until the handler has run |
+| 7, 8 | 6, 7 | `0x16(AktPlanet, 2 or 1)` (terraform, colonise), `StarmapKolonizaloElkuldve` set until the handler has run |
+| 9 | 5 | the tank info panel (`StarmapTanksInfo`) [not ported] |
+| 0xd | 3 | split: zoom in to 590, `0x14(AktFleet)` unless one is pending (`StarmapTransferOnElkuldve`) |
+| 0xe | 4 | the transfer between the selected fleet and the nearest own one (§13.1) |
+| 0xf | 0 | the long info (§15; no place offers it, the info box's left click does the same) |
+| 0x10 | 11 | SP only: the story fleet `FlottaMozgat`s to a random owned planet (`RndValasztas`) [not ported] |
+| 0x11 | 12 | SP only: `Story_Special(0x11, AktFleet)` and `HajoDelete` of its first design-0x1c ship [not ported] |
+| 0x12 | 14 | `Story_Special(0x12, AktPlanet)` [not ported] |
+
+The story icons call the sim directly, outside the lockstep queue; the port leaves them out.
+
+## 15. The planet's long info (`StarmapPlanetInfoMod` exe 0xF16EF7)
+The info box (hot-spot 8) left-clicked in planet mode (or `AktRopIkon` 0xf) zooms onto the planet and shows its long
+info with the tax, auto-build and priority settings (ELF `Starmap_Main`, `GFX_Starmap` 0x6f36c0, `StarmapGfx2D_1`
+0x6dcb30, `StarmapHosszuInfoKiir` 0x708440 / exe 0x5ac7a0). Port: `ig2-client::starmap_menus::PlanetInfo`.
+
+### 15.1 Entering and leaving
+- Enter (the left button's release on hot-spot 8, `Mouse_Felenged_Bal`; both buttons start a rename instead): the
+  production view closes, a transfer panel goes (`TransferOff`); `Backup{Zoom, XStart, YStart}` and the star's size
+  are kept; the zoom runs `Zoom += (600 − Zoom)/2` per drawn frame up to 599 (a blocking loop of `FRISSITES` +
+  `UpdateFrame`) with the pivot moving from the old one towards the planet's (below) in proportion, and the star
+  shrinking to nothing (`StarSize = Backup·(1 − progress)`). The right button's release opens the colony screen.
+- While on, `GFX_Starmap` pins `Zoom = 599` and the pivot to the orbiting planet, offset towards the screen's left:
+  `XStart = planet x − (cα·0.35 − sα·0.12)/1.3`, `YStart = −planet y − (cα·0.12 + sα·0.35)/1.3` (planet = §3.3, α =
+  `StarmapRotate`).
+- Leave by hot-spot 8 (left button), 9 (the exit button) or 11 (the production button, which then opens the view):
+  `Zoom −= (600 − Zoom)/2` per frame down to the backup with the pivot moving back in proportion and the star growing
+  again; then the mode ends.
+- With the mode on, hot-spots 1..=7 (the console, the minimap) and 0x35 are off; 0x5a..=0x63 are on for the player's
+  planet, 100 (the panel, it catches clicks) and 0x6f (the screen) always, 0x65..=0x64 + `+0x114` (one per station).
+
+### 15.2 Pictures
+`q = (Zoom − L)/(600 − L)` with `L = (int)max(540, BackupZoom)`; nothing while `Zoom ≤ L`.
+- `StarmapGfx2D_1`: the panel `KirakFader(319, 33, 302, 326)` (the `starf` look, §12.2); for the player's planet per
+  row r = 0..=2 at y = 288 + 22r: `FadeKerettelKerekit(399, y, 102, 18)` (the value), `(505, y, 32, 18)` ("ALL") and
+  for rows 0 and 2 `(541, y, 22, 18)`, `(567, y, 22, 18)` (−, +), all black with transparency `255 − 100q` (fill) and
+  `255 − 180q` (frame). `StarmapInfoOffHoltart = (Zoom − BackupZoom)/(600 − BackupZoom)` brings the exit button in
+  (§12.2).
+- `StarmapGfx2D_3` → `StarmapHosszuInfoKiir(320, 34)`: texts at brightness `KiirStrSzinSzorzo = 80q² + 20` %;
+  `GetString(2, 2, n)` labels at x 330 (size 3, len 8, colour 1), values at x 398 (size 3, colour 0x21), a line every
+  16 pixels from y = 44:
+  1. NAME (n 1): the planet's name, colour 3.
+  2. SURFACE (2): `Felszin_Nev[+0x22]`; for the player's planet, a planet with the player's satellite or `DEBUGX`:
+     + `" (" + GetBolygoGazdagsag(p) + "% " + Gazdagsag_Nev + ")"`.
+  3. EMPIRE (3), owned planets: `Birodalom_Nev[owner]`.
+  4. RACE (4): `Faj_Nev[+0x21]` + `" "` for an owned planet (else empty), then for the player's or a satellite's
+     planet `"(" + FajBolygoViszony[race][surface] + "% " + FajBolygoViszony_Nev + ")"` (race = the owner's, `EN`'s
+     for a free planet).
+  5. POPUL (5), owned and (own or satellite): `"\x01%d (%+d)"` of `+0x28`, `+0x2c`.
+  6. The player's planet only: MORALE (6) `Moral_Nev[(int)(f32)(+0x30/100)]`; INCOME (7) `"$%d"` of `+0x44`; WORKERS
+     (8) `"\x01" + +0x28` and NEEDED (9) at x 460 / `"\x01" + +0x50` at x 528, colour 6 when `+0x28 < +0x50`;
+     ENERGY (10) `"\x02" + +0x48`, NEEDED (11) `"\x02" + +0x4c`, colour 6 when `+0x48 < +0x4c`.
+  7. TANKS (12), owned and (own or a spy satellite, level ≥ 2): `+0x58` (`KiirInt`, len 8).
+  8. SPECIAL (13): the planet's info texts (`InfoString_Get(+0x168 + 2h)`, `infostr.txt`) for h = 1..=5, the next
+     non-empty one every 30 `Counter` frames (restarting at 1 for a new planet), colour 6.
+  9. PROBLEMS (14, len 9), the player's planet: per problem `StarmapProblemaRendez` keeps (§11), 12 pixels apart from
+     the same row + 2: `+0x118 + 4p` / 10000 right-aligned in 2 at x 406 and `"%"` at 419 (colour 6),
+     `Problemak_Nev[p]` at 432 (size 2, colour 0x21).
+  10. The player's planet: TAX (15), AUTO BUILD (16), PRIORITY (17) at (330, 294 / 316 / 338) size 2; their values
+     `AdoMertek_Nev[+0x34]`, `AutoBuild_Nev[+0x6c]`, `BolygoPrioritas_Nev[+0x6d]` field-centred in 16 at x 402, colour
+     0x21; per row "ALL" (18) at 506 (len 5, field-centred, colour 2 while the button is held over it, else 1) and for
+     rows 0 and 2 `"-"` / `"+"` at 548 / 574, y − 2, size 3.
+- The name tables come from the Hungarian `txt17.txt` (`StringReadAll`): `Felszin_Nev[s]` §5 s, `Gazdagsag_Nev` §5 20,
+  `FajBolygoViszony_Nev` §5 21, `AdoMertek_Nev[k]` §5 22 + k (8), `AutoBuild_Nev[k]` §5 30 + k (11),
+  `BolygoPrioritas_Nev[k]` §5 41 + k (4), `RemoveSpaceBase_Nev[1]` §5 45, `StarmapRopIkon_Nev[k]` §6 k.
+- The stations (`StarmapLoadUrallomasok` 0x6d3310, `StarmapForgatEsMozgatUrallomasok` 0x6d2c00) circle the planet as
+  their designs' models [not drawn by the port]; their hot-spots 0x65.. are the strips (0, 40 + 30i, 100, 20),
+  i = 0..=9 (the design's name as the tooltip).
+
+### 15.3 Input → orders
+| Hot-spot | Rectangle | `Starmap_Main` |
+|---|---|---|
+| 0x5a / 0x5e / 0x60 | (400, 289 / 311 / 333, 100, 16) | the tax / auto-build / priority menu (§16) → `0x19(planet, 8 / 9 / 10, value)` |
+| 0x5b / 0x5f / 0x61 | (506, …, 30, 16) | "ALL": `0x19(planet, 5 / 6 / 7, 0)` (copy to every planet of the player it sees) |
+| 0x5c / 0x5d | (542 / 568, 289, 20, 16) | tax − / +: `0x19(planet, 1 / 2, 0)` |
+| 0x62 / 0x63 | (542 / 568, 333, 20, 16) | priority − / +: `0x19(planet, 3 / 4, 0)` |
+| 0x65 + i | (0, 40 + 30i, 100, 20) | the sale menu of station i + 1 (§16) → `0x17(planet, i + 1)` |
+| 8 (left), 9, 11 | | leave (§15.1) |
+
+The buttons send on the press; every message carries `AktPlanet`.
+
+## 16. The select menus (`StarmapGfx2D_2` ELF 0x6de1b0 boxes, `StarmapGfx2D_4` 0x6d6b20 texts)
+A menu opens on its hot-spot's press at the pointer, follows the held button (the item under the pointer is
+`smSelected` 0xE75A68, colour 6, the others 3) and sends on the release when an item is under it. Flags (exe):
+`StarmapSelectTax` 0xF1737F, `…AutoBuild` 0xF176E8, `…Priority` 0xF176E9, `…RemoveSpaceBase` 0xF176EA, `…Planet`
+0xF176EB; the place `smSelectX/Y` 0x927078/0x92707C (`smSelectChr/Ma/Sz` 0xE75A5C/60/64). Each box is
+`FadeKerettelKerekit(x − 6, y − 2, w, h, 0, 10, 0, 60, 0, 5, 0, 30)` (fill (0, 10, 0) at transparency 60, frame
+(0, 5, 0) at 30), drawn after the other faders; the texts are size 2.
+
+| menu | place (pointer +) | items at y | box w × h | hit row |
+|---|---|---|---|---|
+| tax | (12, −20) | `AdoMertek_Nev[0..=7]` at y + 3 + 13i, len 20 | 130 × 108 | `y + 13i ≤ my < y + 13(i + 1)`, `x ≤ mx ≤ x + 120` |
+| auto-build | (12, −20) | `AutoBuild_Nev[0..=n]`, n = 6 for race 5 (`PlayerFaj[EN]`), else 8 | 130 × (13(n + 1) + 4) | the same |
+| priority | (12, −20) | `BolygoPrioritas_Nev[1..=3]` at y + 13k − 10 | 130 × 43 | `y + 13(k − 1) ≤ my < y + 13k` |
+| station sale | (−12, 16), x ≥ 6 | one line: `RemoveSpaceBase_Nev[1]` ("Sell %s. Credits: $%d") with the design's name and `CsokkentettTervAr(EN, d)`, at y + 3, len = its length | (6·len + 10) × 17 | `x ≤ mx ≤ x + 6·len`, `y ≤ my < y + 13` |
+
+The place is taken on the press only. The release sends `0x19(AktPlanet, 8 / 9 / 10, item)`, or
+`0x17(AktPlanet, i + 1)` for the sale; nothing without an item.
+
+## 17. The production view's planet list (hot-spot 0x32, `StarmapSelectPlanet`)
+Pressing the planet's name plate lists the player's planets (ascending index) to jump to (`Starmap_Main`,
+`StarmapGfx2D_2`/`_4`):
+- Per planet its name and, for one building a ship (`+0x78 > 0`), `pct + "%-" + design name` with `pct = 100 −
+  left·100/time` (`+0xa0`, the design's `+0x20`; 99 at most) padded to two characters with a leading space; `a` = the
+  longest name, `b` = the longest such text (`smSelectChr = a + b`).
+- `sz = max(1, ⌈n/32⌉)` columns of `ma = ⌈n/sz⌉`; place = pointer + (12, 6) on the press, then x ≥ 6, y ≥ 22,
+  `x + 6(a + b + 1)·sz − 3 ≤ 640`, `y + 13·ma + 2 ≤ 480`.
+- Box `(x − 6, y − 2, 6(a + b + 1)·sz + 3, 13·ma + 4)` (the menus' look); item i in column `c = i/ma`, row `i % ma`:
+  the name at `(x + 6(a + b + 1)c, y + 3 + 13·row)` len a, colour 3 / 6; the production text at
+  `x + 6(a + b + 1)c + 2 + 6a`, `y + 4 + 13·row`, len b, size 1, colour 1. Hit: the column's width `6(a + b + 1)` and
+  the row.
+- Release on a planet: it becomes `AktPlanet`, `StarmapBeZoomol(its star, Zoom)` (flies there at the same zoom),
+  `StarmapZoomMode` 0, `StarmapProductPlanetChange` (the view shows its queues).
+
+## 18. Verification
+`run_screen.py … --kep 2 --planet P` stages the states in ig2.exe and saves them (`--state-out`): `--rop 0xf` (the
+long info), `--rop-menu X,Y` (the radial menu held open at the virtual point), `--menu tax|autobuild|priority|sale:N|
+planets@X,Y` and `--mouse X,Y` (the pointer, for the hover). `ig2-client --snapshot` renders the same with
+`--rop-menu`, `--planet-info`, `--menu` and `--mouse`; `run_screendiff.py` compares them (re/screens/diff-results.md).
+The client test `starmap_menus::menus_reach_the_sim` drives the hot-spots on `quick-1.sav`.

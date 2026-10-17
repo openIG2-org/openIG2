@@ -81,11 +81,11 @@ const A = {
   FajStart: va(0xbbb17c), FajSzetnyilas: va(0xbbb16c), FajRace: va(0xbbb178), FajNehezseg: va(0xbbb180),
 };
 // The scripts the port doesn't have yet (Story_Check calls them; campaign mode patches them to `ret`).
-// st_Elem_include's blocks the port doesn't have yet (801, 802, 804, 806..810, 814, 815, 821, 824, 832, 834, 836, 839,
-// 840, 843, 844, 850..863): the `push id` before each block's st_Story(id, 1) call.
-const ELEM_UNPORTED = [0x5d4bb7, 0x5d5cf1, 0x5d6de5, 0x5d7387, 0x5d7c83, 0x5d8716, 0x5d8ff7, 0x5d95a1, 0x5d9d93, 0x5da289, 0x5db408,
-  0x5dbeea, 0x5dde11, 0x5de47e, 0x5def0a, 0x5df708, 0x5dfc10, 0x5e079f, 0x5e0d66, 0x5e141a, 0x5e1f38, 0x5e253a, 0x5e30e2, 0x5e3f60,
-  0x5e4379, 0x5e4964, 0x5e4e4f, 0x5e5212, 0x5e5b4f];
+// st_Elem_include's blocks the port doesn't have yet (801, 804, 806, 807, 809, 814, 815, 821, 832, 834, 836, 839,
+// 840, 843, 844, 856, 862, 863): the `push id` before each block's st_Story(id, 1) call. Part 2b took out 808
+// (0x5d8716) and 854 (0x5e253a), part 2c 810 (0x5d95a1), 857 (0x5e3f60), 858 (0x5e4379) and 860 (0x5e4964).
+const ELEM_UNPORTED = [0x5d4bb7, 0x5d6de5, 0x5d7387, 0x5d7c83, 0x5d8ff7, 0x5d9d93, 0x5da289, 0x5db408,
+  0x5dde11, 0x5de47e, 0x5def0a, 0x5df708, 0x5dfc10, 0x5e079f, 0x5e0d66, 0x5e30e2, 0x5e5212, 0x5e5b4f];
 const UNPORTED = { begin: 0x5cec20, rnd: 0x5f0e20, brnd: 0x5c9f20, fable: 0x5e6ba0, line: 0x5eb6f0, elem: 0x5d4b70, multi: 0x5ee4d0 };
 
 const cfg = { scenario: 'scenario/intruders.scn', startAfterFrames: 1200, count: 2000, fuzz: false, seed: 4242,
@@ -158,6 +158,8 @@ function bucketHas(id) {
   const q = vodor(A.Vodor.add(12 * (id & 0xff)));
   return q.some((e) => e[0] === id);
 }
+// st_Rnd part 2 and st_Elem part 2a read and write the story missions' spy news.
+function spyKept() { return cfg.keep.includes('rnd') || cfg.keep.includes('elem'); }
 function story() {
   const buckets = {};
   for (let k = 0; k < 256; k++) {
@@ -190,9 +192,11 @@ function story() {
     // st_Rnd: the finished space battle's participants (owner +0x18, +0x20, +0x24) and SpWarKiNyert.
     battle: cfg.keep.includes('rnd') ? spwList() : undefined, kinyert: cfg.keep.includes('rnd') ? A.KiNyert.readS32() : undefined,
     // st_Rnd part 2: KemkedesAzonosito, KemkedesValasz.
-    kaz: cfg.keep.includes('rnd') ? A.KemAzon.readS32() : undefined, kval: cfg.keep.includes('rnd') ? A.KemValasz.readS32() : undefined,
+    kaz: spyKept() ? A.KemAzon.readS32() : undefined, kval: spyKept() ? A.KemValasz.readS32() : undefined,
     // st_Rnd part 2c: KemkedesTulaj, KemkedesAktKem, last_hajo_kigyujt_flotta.
-    ktul: cfg.keep.includes('rnd') ? A.KemTulaj.readS32() : undefined, kakt: cfg.keep.includes('rnd') ? A.KemAktKem.readS32() : undefined,
+    ktul: spyKept() ? A.KemTulaj.readS32() : undefined, kakt: spyKept() ? A.KemAktKem.readS32() : undefined,
+    // st_Elem part 2a: st_bGet3Nearest's static.
+    n3: cfg.keep.includes('elem') ? ints(va(0xf432c4), 3) : undefined,
     lcol: cfg.keep.includes('rnd') ? A.LastCollect.readS32() : undefined,
     ...(cfg.keep.includes('fable') ? fableStory() : {}),
   };
@@ -323,7 +327,7 @@ function world() {
       const trade = [], trn = A.TradeN.readS32(); for (let k = 0; k < trn; k++) { const t = A.TradeT.add(0x84 * k); trade.push([t.add(0x16).readS16(), t.add(0x80).readS32()]); }
       out.trade = trade;
     }
-    if (begin || rndk) {
+    if (begin || rndk || elem) {
       // The human's trade agreements and the relations (value 2) seen from the others; the spies (st_Rnd: also
       // +0x3c experience, +0x40 rank); the buildings of the human's planets (st_Begin: and of planets 101 and 191;
       // st_Rnd: also +0x18, +0x19).
@@ -336,7 +340,7 @@ function world() {
         const k = [];
         for (let i = 0; i < 13; i++) {
           const r = kemRec(e, i), row = [r.add(0x10).readS16(), r.add(0x12).readU8(), r.add(0x18).readU8(), r.add(0x1a).readS16(), r.add(0x32).readU8(), r.add(0x33).readU8()];
-          if (rndk) row.push(r.add(0x3c).readS32(), r.add(0x40).readU8(), r.add(0x31).readU8(), r.add(0x16).readS16(), latin1(r, 15));
+          if (rndk || elem) row.push(r.add(0x3c).readS32(), r.add(0x40).readU8(), r.add(0x31).readU8(), r.add(0x16).readS16(), latin1(r, 15));
           k.push(row);
         }
         spies.push([A.KemN.add(4 * e).readS32(), k]);
@@ -350,7 +354,7 @@ function world() {
         for (let k = 0; k <= n; k++) { const r = base.add(0x20 * k), row = [r.readU8(), r.add(4).readS32(), r.add(8).readS16()]; if (rndk) row.push(r.add(0x18).readU8(), r.add(0x19).readU8()); list.push(row); }
         bld[p] = list;
       }
-      out.bld = bld;
+      if (!elem) out.bld = bld;
     }
     if (rndk) {
       // st_Rnd part 2b: the fleet slots past the count up to the ship count (owner, x, y; 101's escort loop reads
@@ -435,17 +439,94 @@ function world() {
       out.bld = [];
       for (let p = 1; p <= np; p++) {
         const o = A.Bolygok.add(0x188 * p + 0x20).readU8();
-        if (o !== en && o !== 11) continue; // the human's (835) and empire 11's (817 razes them)
+        // the human's (835), empire 11's (817 razes them), 8080's and 8540's (part 2b)
+        if (o !== en && o !== 11 && p !== planetOfId(8080) && p !== planetOfId(8540)) continue;
         const n = A.HanyEpulet.add(4 * p).readS32(), e = A.Epuletek.add(4 * p).readPointer(), sl = [];
-        for (let k = 1; k <= n && k <= 2000; k++) sl.push([e.add(0x20 * k).readU8(), e.add(0x20 * k + 8).readS16()]);
+        // Part 2a: also the damage +4 (802's earthquake); part 2b the flags +0x19 (854's working police).
+        for (let k = 1; k <= n && k <= 2000; k++) sl.push([e.add(0x20 * k).readU8(), e.add(0x20 * k + 8).readS16(), e.add(0x20 * k + 4).readS32(), e.add(0x20 * k + 0x19).readU8()]);
         out.bld.push([p, sl]);
       }
+      // Part 2a: every planet's buildings (HanyEpulet 0xBA9518: 802's pick, 824's average), the story missions' switches, the others' levels
+      // towards the human, the earthquake's planet, the battlefields' self-destruct timers (WF+0x334) and the
+      // ground battle's planet's units (alive WF+0x188, owner +0x194; 850's madness).
+      out.hanyo = []; for (let p = 0; p <= np; p++) out.hanyo.push(va(0xba9518).add(4 * p).readS32());
+      const kmon = []; for (let k = 0; k < 12; k++) kmon.push(A.KemKuld.add(0x20 * (14 + k)).readU8());
+      out.kmon = kmon;
+      const v2 = []; for (let e = 0; e < 19; e++) v2.push(A.Viszony.add((e * 19 + en) * 0x26 + 0x25).readU8());
+      out.visz2 = v2;
+      out.quake = A.Quake.readS32();
+      out.wfsd = []; for (let p = 0; p <= np; p++) out.wfsd.push(wf(p).add(0x334).readS32());
+      const gp = A.Gr.add(12).readS32();
+      if (gp > 0 && gp <= np) out.wfu = [gp, wfUnits(gp)];
       const v = (a, b) => A.Viszony.add((a * 19 + b) * 0x26);
       out.vrel = [v(en, 5).add(0x25).readU8(), v(5, en).add(0x25).readU8(), v(5, en).add(4).readS16()];
+      // Part 2b: every planet's garrison (+0x58, 854's riots), the units of the battlefields 808/854 read (the ground
+      // battle's planet, 8080's, 8540's, v(8549)'s and the human's planets) and their status caches
+      // WF+0x8cc, the screen request, the held planet and the pause (AktKepKell, AktPlanetKell, 0xF261F8, IdoPause).
+      out.gar = []; for (let p = 0; p <= np; p++) out.gar.push(A.Bolygok.add(0x188 * p + 0x58).readS32());
+      const wp = new Set([gp, planetOfId(8080), planetOfId(8540), varOf(8549)]);
+      for (let p = 1; p <= np; p++) if (A.Bolygok.add(0x188 * p + 0x20).readU8() === en) wp.add(p);
+      out.wfus = []; for (const p of wp) if (p > 0 && p <= np) out.wfus.push([p, wfRecs(p), wf(p).add(0x8cc).readS32()]);
+      out.kep = [A.AktKepKell.readS32(), va(0xbae254).readS32(), va(0xf261f8).readS32(), va(0xbae264).readU8()];
+      // Tankok (808's start deletes the garrison) unless st_Rnd/st_Begin dumped it.
+      if (!out.tanks) { const tanks = [], tkn = A.TankN.readS32(); for (let k = 0; k <= tkn; k++) { const t = A.Tanks.add(8 * k); tanks.push([t.readS16(), t.add(2).readS16(), t.add(4).readS32()]); } out.tanks = tanks; }
     }
   }
   return out;
 }
+// The battlefield of planet p (WF, exe 0x9C3244 + p·0x8EC) and its units `[alive, owner]` (count +0x180, alive bytes
+// +0x188, units +0x330, owner +0x194).
+function wf(p) { return va(0x9c3244).add(0x8ec * p); }
+function wfUnits(p) {
+  const w = wf(p), n = w.add(0x180).readS32(), out = [];
+  if (n <= 0 || n > 2000) return out;
+  // A battlefield without a war may hold stale pointers: an unreadable one ends the list (the replay sees it short).
+  try {
+    const alive = w.add(0x188).readPointer(), units = w.add(0x330).readPointer();
+    for (let k = 0; k < n; k++) out.push([alive.add(k).readU8(), units.add(4 * k).readPointer().add(0x194).readU32()]);
+  } catch (e) { out.push(null); }
+  return out;
+}
+// Part 2b: the units of planet p's battlefield as 854 reads and writes them: [alive, owner +0x194, flags +0x188, +0x18c,
+// vehicles +0x190, design +0x15c, +0x198, +0x285, origin fleets +0x19c[0..vehicles] (at most 16)].
+function wfRecs(p) {
+  const w = wf(p), n = w.add(0x180).readS32(), out = [];
+  if (n <= 0 || n > 2000) return out;
+  try {
+    const alive = w.add(0x188).readPointer(), units = w.add(0x330).readPointer();
+    for (let k = 0; k < n; k++) {
+      const u = units.add(4 * k).readPointer(), c = u.add(0x190).readS32(), o = [];
+      if (c > 0 && c <= 16) { const q = u.add(0x19c).readPointer(); for (let i = 0; i < c; i++) o.push(q.add(4 * i).readS32()); }
+      out.push([alive.add(k).readU8(), u.add(0x194).readU32(), u.add(0x188).readU32(), u.add(0x18c).readU8(), c, u.add(0x15c).readS32(), u.add(0x198).readS32(), u.add(0x285).readU8(), o]);
+    }
+  } catch (e) { out.push(null); }
+  return out;
+}
+// The battlefields and indices holding unit `u` ([[p, k]…]): the planets the episodes act on first (the ground
+// battle's, 8080's, 8540's, v(8549)'s, the human's); only when none holds it every other planet's (a stale
+// battlefield of a planet without a war may hold the pointer too). Scanning every planet for every call stalled the
+// game for minutes.
+function unitAt(u) {
+  const np = nPlanets(), en = A.EN.readS32(), first = [A.Gr.add(12).readS32(), planetOfId(8080), planetOfId(8540), varOf(8549)];
+  for (let p = 1; p <= np; p++) if (A.Bolygok.add(0x188 * p + 0x20).readU8() === en) first.push(p);
+  const scan = (ps) => {
+    const all = [], seen = new Set();
+    for (const p of ps) {
+      if (p < 1 || p > np || seen.has(p)) continue;
+      seen.add(p);
+      const n = wf(p).add(0x180).readS32();
+      if (n <= 0 || n > 2000) continue;
+      try { const units = wf(p).add(0x330).readPointer(); for (let i = 0; i < n; i++) if (units.add(4 * i).readPointer().equals(u)) all.push([p, i]); } catch (e) {}
+    }
+    return all;
+  };
+  const all = scan(first);
+  if (all.length) return all;
+  const rest = []; for (let p = 1; p <= np; p++) if (!first.includes(p)) rest.push(p);
+  return scan(rest);
+}
+// A unit call's arguments: [first planet, first index, …extra, every [p, k] holding it].
+function unitArgs(u, extra) { const all = unitAt(u), f = all.length ? all[0] : [A.Gr.add(12).readS32(), -1]; return f.concat(extra, [all]); }
 // A NUL-terminated name of at most n bytes, one char per byte.
 function latin1(q, n) { const b = new Uint8Array(q.readByteArray(n)); let t = ''; for (const x of b) { if (!x) break; t += String.fromCharCode(x); } return t; }
 function fableWorld(en) {
@@ -477,7 +558,14 @@ const snap = () => ({ s: story(), w: world(), ends: ends() });
 // ---------------------------------------------------------------- the stories' calls to other systems
 // Each logged call: [name, args, depth (0 = called by story code), return value]. Floats travel as their bits.
 let cur = null, actDepth = 0, staging = false;
-function act(name, args) { if (!cur) return null; const e = [name, args, actDepth - cur.d0, null]; cur.acts.push(e); return e; }
+function act(name, args) {
+  if (!cur) return null;
+  const e = [name, args, actDepth - cur.d0, null];
+  cur.acts.push(e);
+  // --debug: a staged ground battle's end streams its calls (the campaign sometimes reset itself inside one).
+  if (cfg.debug && cur.call === 'flag' && cur.args && cur.args[0] === 4) send({ type: 'batch', events: [{ k: 'dbgact', seq: cur.seq, e: [name, args, e[2]] }] });
+  return e;
+}
 const argI = (ctx, i) => ctx.esp.add(4 + 4 * i).readS32();
 const argU = (ctx, i) => ctx.esp.add(4 + 4 * i).readU32();
 function logged(addr, name, read, ret) {
@@ -522,6 +610,8 @@ function setupActs() {
     if (fo >= 0 && fo % 0x80 === 0 && fo / 0x80 <= nFleets()) return [argI(c, 0), 'fleet', fo / 0x80];
     const lp = A.Spw.readPointer(), so = lp.isNull() ? -1 : p.sub(lp).toInt32();
     if (so >= 0 && so % 0x30 === 0 && so / 0x30 < 12) return [argI(c, 0), 'participant', so / 0x30];
+    const ko = p.sub(A.Kemek).toInt32();
+    if (ko >= 0 && ko % 0x4c === 0 && ko / 0x4c < 9 * 13) return [argI(c, 0), 'spy', ko / 0x4c];
     const po = p.sub(A.PlayerNev).toInt32();
     if (po >= 0 && po % 11 === 0 && po / 11 < 19) return [argI(c, 0), 'player', po / 11];
     return [argI(c, 0), 'other', p.readAnsiString()];
@@ -549,6 +639,33 @@ function setupActs() {
     // st_Elem_include's calls: buildings deleted (story 817), the peace a new alliance makes (864).
     logged(va(0x53c730), 'bdelete', ints(2));
     logged(va(0x53b280), 'peace', ints(2));
+    // Part 2a: the story spy missions, SetSemlegesViszony (861), WF_Tank::SetMadness (850; thiscall: the unit's
+    // index on the ground battle's planet).
+    if (!rndk) {
+      logged(va(0x6028a0), 'neutral', ints(2));
+      logged(va(0x5e6ac0), 'kemenable', ints(1));
+      logged(va(0x5d4ab0), 'kemdisable', ints(1));
+    }
+    // Part 2b: the unit found on any battlefield (854's riot planet isn't the ground battle's).
+    logged(va(0x49c140), 'madness', (c) => (cur ? unitArgs(c.ecx, [argI(c, 0) & 0xff]) : null));
+    // Part 2b: WF_Tank::NoTarget and SetSide (thiscall), the core TankDelete (854's riot), TervCopy2 (its source as
+    // [empire, design]), SetIdoPause; TankDelete with its battlefield units (808's start).
+    logged(va(0x48c0b0), 'notarget', (c) => (cur ? unitArgs(c.ecx, []) : null));
+    logged(va(0x49c4e0), 'setside', (c) => (cur ? unitArgs(c.ecx, [argI(c, 0)]) : null));
+    logged(va(0x541510), 'tankdel0', ints(3));
+    logged(va(0x541ca0), 'tervcopy2', (c) => {
+      const src = c.esp.add(8).readPointer();
+      for (let e = 0; e < 19; e++) {
+        const tp = A.Tervek.add(4 * e).readPointer(), o = src.sub(tp).toInt32();
+        if (!tp.isNull() && o >= 0 && o % 0x84 === 0 && o / 0x84 <= A.TervCount.add(4 * e).readS32()) return [argI(c, 0), e, o / 0x84, argI(c, 2)];
+      }
+      return [argI(c, 0), -1, -1, argI(c, 2)];
+    });
+    logged(A.SetIdoPause, 'pause', ints(2));
+    if (!rndk && !cfg.keep.includes('begin')) logged(va(0x5414c0), 'tankdelete', ints(3));
+    // Part 2c: st_SetNonagressionViszony (858), Diplomacy_RemoveSpecial (858).
+    logged(va(0x602860), 'nonaggr', ints(2));
+    logged(va(0x4c0010), 'diplremove', ints(2));
   }
   if (rndk) {
     logged(va(0x6028a0), 'neutral', ints(2));
@@ -624,7 +741,7 @@ function setupActs() {
       emit({ k: 'setup', init: snap(), data: storyData(), campaign: cfg.campaign, keep: cfg.keep, infos, agent: cfg.keep.includes('fable') ? sText(5, 0xc14) : null,
         stext5: rk ? RND2C_TEXTS.map((id) => { const o = Memory.alloc(16); sCall(o, 5, id); const q = o.readPointer(); return [id, q.isNull() ? '' : latin1(q, 64)]; }) : null,
         recruits: rk ? [0, 1, 2, 3, 4, 5, 6].map((k) => latin1(A.Recruits.add(8 * k), 8)) : null,
-        alapnev: rk ? A.AlapNev.readPointer().readCString() : null });
+        alapnev: rk ? A.AlapNev.readPointer().readCString() : null, elem2a: cfg.keep.includes('elem'), elem2b: cfg.keep.includes('elem'), elem2c: cfg.keep.includes('elem') });
       phase = 1;
     },
   });
@@ -639,7 +756,8 @@ function setupActs() {
 function setupMultiActs(ints) {
   const str = (c, i) => { const q = c.esp.add(4 + 4 * i).readPointer(); return q.isNull() ? '' : q.readCString(); };
   logged(va(0x591360), 'text', (c) => [str(c, 0)]);
-  logged(va(0x513840), 'multisend', (c) => [argI(c, 0), argI(c, 1), argI(c, 2), c.esp.add(16).readPointer().readS32()]);
+  // Type 0x49 (a spy order, st_Elem part 2a): also the second value (the mission).
+  logged(va(0x513840), 'multisend', (c) => { const o = [argI(c, 0), argI(c, 1), argI(c, 2), c.esp.add(16).readPointer().readS32()]; if (o[0] === 0x49) o.push(c.esp.add(24).readPointer().readS32()); return o; });
   logged(va(0x53e5d0), 'shipdelete', ints(1));
   logged(va(0x5422f0), 'tervnew', ints(2), (r) => r.toInt32());
   logged(va(0x53beb0), 'infoadd', ints(3));
@@ -2036,13 +2154,413 @@ function rndFuzz() {
 // The storyline episodes of part 1 (805..868) started, their counters run out with the world they test set up,
 // their messages read (flag 9), answered (6) or promoted (7), ground battles on their planets (4), space battles
 // with the raider (3), radar contacts (11), arrivals (0), specials 10 and 13, story 816's finish (12), daily checks.
-const ELEM = [805, 811, 813, 816, 817, 818, 820, 830, 831, 835, 837, 841, 842, 864, 865, 866, 867, 868];
+const ELEM = [802, 805, 808, 810, 811, 813, 816, 817, 818, 820, 824, 830, 831, 835, 837, 841, 842, 850, 852, 854, 857, 858, 860, 861, 864, 865, 866, 867, 868];
 const ELEM_COUNTERS = { 811: [8110], 813: [8131], 816: [8183, 8189, 5619], 817: [8179], 820: [8201, 8209], 830: [8302, 8301],
   831: [8312, 8311], 835: [8351, 8350], 837: [8370], 841: [8411], 842: [8429], 864: [8640, 8642, 8643], 867: [8671] };
 // Planet ids the episodes read: given to some other planet when the campaign map lacks them.
 const ELEM_PLANETS = [8160, 8200, 8301, 8302, 8011];
 // The multi-step episodes: picked more often.
-const ELEM_RARE = [816, 820, 830, 831, 835, 842, 864, 866];
+const ELEM_RARE = [816, 820, 830, 831, 835, 842, 864, 866, 802, 824, 850, 852, 861];
+// Part 2a: the spy episodes.
+const ELEM2A = [802, 824, 850, 852, 861];
+const ELEM2A_COUNTERS = { 802: [8020, 8021, 8022, 8023, 8025, 8026, 8029], 824: [8241, 8243, 8244], 850: [8110, 5313, 5311, 8507, 5314],
+  852: [8100, 8520, 6705, 6706], 861: [8611, 8612] };
+const ELEM2A_ANSWERS = { 802: [[6, 8020, 2], [6, 9020, 2], [7, 8020, 0], [7, 9020, 0]],
+  824: [[7, 8241, 0], [6, 8241, 4], [7, 8242, 0], [6, 8242, 4], [6, 8241, 3], [6, 8242, 3], [6, 8251, 2], [6, 8251, 4], [6, 8251, 5],
+    [6, 8252, 2], [6, 8252, 4], [6, 8252, 5]],
+  850: [[6, 5310, 2], [6, 5310, 3], [7, 5310, 0], [6, 5311, 2], [6, 5311, 3], [7, 5311, 0], [6, 8112, 2], [6, 8112, 3], [7, 8112, 0], [6, 5320, 2]],
+  852: [[6, 6701, 2], [6, 6703, 2]],
+  861: [[6, 8611, 2], [6, 8611, 3], [6, 8611, 4], [6, 8611, 5], [7, 8611, 0], [6, 8613, 2], [6, 8613, 3], [7, 8613, 0]] };
+const ELEM2A_MISSIONS = { 802: [8021], 824: [8241, 8242, 8243], 850: [8501], 852: [8521], 861: [8611] };
+function aliveEmpires(en) { const o = []; for (let e = 1; e < 9; e++) if (e !== en && A.El.add(e).readU8()) o.push(e); return o; }
+// Part 2a's staging: starts with the world they read, counters, answers, the spy news of their missions (kind 1 = caught?,
+// 2 = success; the spy's skills and the mission switch), ground battles starting and ending on 8021/8241/the human's
+// planets, 802's fleet in battles, arriving and special 0x10, tech 183 (special 13, daily), daily checks.
+function elem2aFuzz(pool, running, sets, prep, after) {
+  const en = A.EN.readS32(), np = nPlanets(), own = humanPlanets(), live = running.filter((x) => ELEM2A.includes(x));
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  const c = rnd(22);
+  if (c < 4 || !live.length) {
+    const ids = pool.filter((id) => ELEM2A.includes(id) && !bucketHas(id));
+    if (!ids.length) return;
+    const id = pick(ids), al = aliveEmpires(en);
+    if (id === 824) { vSet(5208, al.length && rnd(6) ? pick(al) : rnd(9)); vSet(8082, rnd(2)); }
+    if (id === 852) vSet(8521, al.length ? pick(al) : 3);
+    if (id === 850 && rnd(2)) vSet(8001, pick([0, 2]));
+    if (id === 861) for (const e of [1, 5]) if (e !== en) transientU8(sets, A.El.add(e), rnd(5) ? 1 : 0);
+    if (id === 802 && rnd(3) === 0) { const p = own.length ? pick(own) : 1 + rnd(np); bAddAzon(p, 8020); }
+    // 850 needs three planets of the human's (st_bGet3Nearest): some others become its own for the record.
+    if (id === 850 && own.length < 3 && rnd(4)) {
+      for (let k = 3 + rnd(3); k > 0; k--) { const q = 1 + rnd(np - 1); transientU8(sets, A.Bolygok.add(0x188 * q + 0x20), en); transientS16(sets, A.Bolygok.add(0x188 * q + 0xd8 + 2 * en), 1); }
+      transientS32(sets, A.HanyB.add(4 * en), 3 + rnd(3));
+    }
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+    return;
+  }
+  const id = pick(live);
+  if (c < 8) {
+    const ctr = pick(ELEM2A_COUNTERS[id]);
+    if (ctr === 8611) for (const e of [1, 5]) if (e !== en && rnd(4) === 0) transientU8(sets, A.El.add(e), 0);
+    if (ctr === 8244 || ctr === 8243) {
+      const e = varOf(5208);
+      if (e > 0 && e < 19 && rnd(3) === 0) transientU8(sets, A.Viszony.add((en * 19 + e) * 0x26 + 0x25), pick([1, 3, 5]));
+      if (e > 0 && e < 9 && rnd(4) === 0) transientU8(sets, A.El.add(e), 0);
+    }
+    if (ctr === 8520 || ctr === 5313) { const n = A.KemN.add(4 * en).readS32(); for (let k = 1; k <= n; k++) if (rnd(3) === 0) transientS16(sets, kemRec(en, k).add(0x10), pick([1, 1, 2, 3])); }
+    if (ctr === 8110 && rnd(2)) transientS32(sets, A.Adat.add(0x2c), rnd(3) ? rnd(100000) : 0);
+    if (ctr === 8110 && rnd(3) === 0) vSet(8110, pick([10, 11, 82, 83, rnd(20)]));
+    if (ctr === 8020 && rnd(2)) vSet(8022, 0);
+    stage('flag', [[A.Check, [1]]], { args: [5, ctr] }, () => { prep(); A.Flags.add(5).writeU8(1); A.SzVegzett.writeS32(ctr); }, after);
+  } else if (c < 12) {
+    // 824's refusal (answer 3: the spy missions) more often than its other answers.
+    const [kind, b, part] = id === 824 && rnd(2) ? pick([[6, 8241, 3], [6, 8242, 3]]) : pick(ELEM2A_ANSWERS[id]);
+    if (b === 8613) for (const e of [1, 5]) if (rnd(3) === 0) transientU8(sets, A.Viszony.add((en * 19 + e) * 0x26 + 0x25), 1 + rnd(5));
+    if (b === 6701 && rnd(4) === 0) vSet(8522, 0);
+    if (b === 5320 && rnd(4) === 0) vSet(8502, 0);
+    stage('flag', [[A.Check, [1]]], { args: [kind, b, part] }, () => { prep(); A.Flags.add(kind).writeU8(1); A.Msg.writeS32(b); A.Msg.add(4).writeS32(part); }, after);
+  } else if (c < 16) {
+    // Spy news for a mission of the story's (or another's).
+    const n = A.KemN.add(4 * en).readS32(), slot = n > 0 ? 1 + rnd(n) : 0, r = kemRec(en, slot);
+    for (const o of [0x31, 0x32, 0x33]) if (rnd(2)) transientU8(sets, r.add(o), rnd(11));
+    const sid = rnd(6) ? pick(ELEM2A_MISSIONS[id]) : pick([8021, 8241, 8242, 8243, 8501, 8521, 8611]);
+    let k = 0; while (k < 12 && A.StoryKuld.add(4 * k).readS32() !== sid) k++;
+    // The mission's switch: mostly on (the success paths need it), sometimes off.
+    if (k < 12) { if (rnd(5) === 0) transientU8(sets, A.KemKuld.add(0x20 * (14 + k)), 0); else if (rnd(3)) transientU8(sets, A.KemKuld.add(0x20 * (14 + k)), 1); }
+    const kind = rnd(3) ? 2 : 1;
+    if (id === 850 && rnd(2)) vSet(8056, rnd(2));
+    // 802's success searches the nearest empire's planet (st_GetNearestBirZachkinhoz): more empires' planets and the
+    // human's knowledge of them, for the record.
+    if (sid === 8021 && rnd(4)) {
+      for (let j = 4 + rnd(10); j > 0; j--) transientU8(sets, A.Bolygok.add(0x188 * (1 + rnd(np)) + 0x20), pick([2, 4, 6, 7, 8, 3, 1, 5, 0, 9]));
+      for (let e = 1; e < 9; e++) if (e !== en && rnd(3) === 0) transientU8(sets, A.Ismeri.add(19 * en + e), rnd(2));
+    }
+    flagRec(15, [kind, sid, slot], () => { A.KemTipus.writeS32(kind); A.KemAzon.writeS32(sid); A.KemTulaj.writeS32(en); A.KemAktKem.writeS32(slot); A.KemValasz.writeS32(-1); });
+  } else if (c < 18) {
+    // A ground battle starts (2) or ends (4): on 8021, 8241 or a planet of the human's.
+    const ids = (id === 824 ? [8241] : id === 802 ? [8021] : [8021, 8241]).map(planetOfId).filter((p) => p);
+    const p = ids.length && (id !== 850 || rnd(4) === 0) && rnd(4) ? pick(ids) : own.length && rnd(3) ? pick(own) : 1 + rnd(np);
+    const fl = rnd(2) ? 2 : 4, owner = rnd(4) ? en : pick([3, 10, 0]), won = rnd(2);
+    if (fl === 4 && rnd(2)) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), pick([en, 0, varOf(5208) & 0xff, varOf(8029) & 0xff]));
+    if (id === 802 && rnd(2)) szStart(8022, rnd(3) ? 10 : 0);
+    if (id === 850 && rnd(2)) vSet(8055, 1);
+    // 850's madness needs units of the human's on the battlefield: the exe's TankNew(−p, 1, n) first (not recorded).
+    if (id === 850 && fl === 2 && rnd(3) === 0 && A.Bolygok.add(0x188 * p + 0x20).readU8() === en) call(va(0x541750), [-p, 1, 2 + rnd(4)], null, false);
+    flagRec(fl, [p, owner, won], () => { A.Gr.writeS32(0); A.Gr.add(4).writeS32(0); A.Gr.add(8).writeS32(owner); A.Gr.add(12).writeS32(p); A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won); });
+  } else if (c < 21 && id === 802) {
+    // 802's fleet: a battle starting (1) or finished, its arrival at 8022 (0) or special 0x10.
+    const f = fleetOfId(8020), all = liveFleets(), k = rnd(4);
+    if (k === 0 && all.length) {
+      const a = f || pick(all), mine = all.filter((x) => fleet(x).add(0x15).readU8() === en), b = mine.length ? pick(mine) : pick(all);
+      transientS16(sets, A.SpFlottak, rnd(2) ? a : b); transientS16(sets, A.SpFlottak.add(6), rnd(2) ? b : a);
+      flagRec(1, [a, b]);
+    } else if (k === 1) {
+      const n = 2 + rnd(2), list = [];
+      for (let i = 0; i < n; i++) list.push([i === 1 || rnd(3) === 0 ? en : pick([10, 3, varOf(8029) & 0xff]), i === 0 || rnd(3) === 0 ? 8020 : rnd(9000)]);
+      const write = () => list.forEach(([owner, fid], i) => { const q = fake.add(0x30 * i); q.add(0x18).writeS32(owner); q.add(0x20).writeS32(fleetOfId(fid)); q.add(0x24).writeS32(fid); });
+      transientS32(sets, A.KiNyert, rnd(2) ? list[0][0] : list[1][0]);
+      stage('spwfinished', [[A.SpwFinished, [fake.toUInt32(), n, 1]]], { args: list.map(([o, fid]) => [o, fleetOfId(fid), fid]) }, () => { prep(); write(); }, after);
+    } else if (k === 2) {
+      const p = rnd(4) ? planetOfId(8022) : 1 + rnd(np), fid = rnd(4) ? 8020 : 0;
+      const a = [fid, f, p, rnd(5) ? 1 : 0, 0];
+      flagRec(0, a, () => { for (let i = 0; i < 5; i++) A.Arr.add(4 * i).writeS32(a[i]); });
+    } else {
+      const args = [0x10, rnd(4) ? 8020 : 0, 0, 0, 0, 0, 0, 0];
+      stage('special', [[A.Special, args]], { args }, prep, after);
+    }
+  } else {
+    // Tech 183 (special 13 or daily), 824's daily (a fleet of the human's near its planet), the wars 824/852 test.
+    techOf(sets, 183, rnd(2) ? 5 : 3);
+    if (rnd(4) === 0) vSet(8026, rnd(2));
+    const p = planetOfId(8241);
+    if (p && rnd(2)) {
+      const mine = liveFleets().filter((x) => fleet(x).add(0x15).readU8() === en);
+      if (mine.length) {
+        const q = fleet(pick(mine)), b = A.Bolygok.add(0x188 * p);
+        let wx = 0, wy = 0;
+        const nx = b.add(0x18).readFloat() + rnd(15) - 7, ny = b.add(0x1c).readFloat() + rnd(15) - 7;
+        sets.push([() => { wx = q.add(0x30).readFloat(); wy = q.add(0x34).readFloat(); q.add(0x30).writeFloat(nx); q.add(0x34).writeFloat(ny); },
+          () => { q.add(0x30).writeFloat(wx); q.add(0x34).writeFloat(wy); }]);
+      }
+    }
+    for (const v of [8521, 5208]) { const e = varOf(v); if (e > 0 && e < 19 && rnd(3) === 0) transientU8(sets, A.Viszony.add((en * 19 + e) * 0x26 + 0x25), pick([1, 3])); }
+    if (rnd(2)) {
+      const args = [0xd, rnd(4) ? en : 3, rnd(4) ? 183 : 100, 0, 0, 0, 0, 0];
+      stage('special', [[A.Special, args]], { args }, prep, after);
+    } else stage('flag', [[A.Check, [1]]], { args: [0x10, 0] }, () => { prep(); A.Flags.add(0x10).writeU8(1); }, after);
+  }
+}
+// Part 2b: the ground-war episodes 808 (planet 8080 of empire v(5208)) and 854 (the riots).
+const ELEM2B = [808, 854];
+// 808/854 staging: starts (808 with an empire and sometimes a planet for 8080), the counters, daily checks, ground
+// battles starting and ending on 8080 / the human's planets (854's riot needs a planet of the human's with more than 4
+// vehicles, few police and the human's units on its battlefield: TankNew(−p, 1, n) first, not recorded), message
+// 8540 read.
+function elem2bFuzz(pool, running, sets, prep, after) {
+  const en = A.EN.readS32(), np = nPlanets(), own = humanPlanets(), live = running.filter((x) => ELEM2B.includes(x));
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  const ctrRec = (ctr) => flagRec(5, [ctr], () => A.SzVegzett.writeS32(ctr));
+  const grRec = (fl, p, owner, won) => flagRec(fl, [p, owner, won], () => {
+    A.Gr.writeS32(0); A.Gr.add(4).writeS32(0); A.Gr.add(8).writeS32(owner); A.Gr.add(12).writeS32(p); A.Gr.add(16).writeS32(A.Bolygok.add(0x188 * p + 0x20).readU8());
+    A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won);
+  });
+  // TankNew(−p, 1, n) faults for an owner without a design table (free planets, empires ≥ 9 without designs).
+  // The madness a staged battle start sets stays without the battle the game would run: unmarked after the record
+  // (left set, the planet counts as at war, and a later end's BolygoElfoglal re-ran Story_Check from inside it until
+  // the stack ran out).
+  const calmAfter = (p) => sets.push([() => {}, () => {
+    const w = wf(p), n = w.add(0x180).readS32();
+    if (n <= 0 || n > 2000) return;
+    try { const u = w.add(0x330).readPointer(); for (let k = 0; k < n; k++) { const q = u.add(4 * k).readPointer().add(0x188); q.writeU32(q.readU32() & ~4); } } catch (e) {}
+  }]);
+  const atWar = (p) => A.Bolygok.add(0x188 * p + 0x64).readU8() !== 0;
+  // 854's guards count intact police only: a police station (kind 6) damaged (+8) for the record now and then.
+  // The riot skips units with +0x188 & 0x4020000: the bit set on some of the human's units for the record now and
+  // then (only the added bit is taken back after it).
+  const flagUnits = (q) => {
+    if (!q || rnd(3)) return;
+    const w = wf(q), n = w.add(0x180).readS32();
+    if (n <= 0 || n > 2000) return;
+    try {
+      const u = w.add(0x330).readPointer();
+      for (let k = 0; k < n; k++) {
+        const r = u.add(4 * k).readPointer();
+        if (r.add(0x194).readU32() !== en || rnd(3)) continue;
+        const f = r.add(0x188), bit = pick([0x20000, 0x4000000]);
+        if (f.readU32() & bit) continue;
+        sets.push([() => f.writeU32(f.readU32() | bit), () => f.writeU32(f.readU32() & ~bit)]);
+      }
+    } catch (e) {}
+  };
+  const damagePolice = (q) => {
+    if (!q || rnd(3)) return;
+    const n = A.HanyEpulet.add(4 * q).readS32(), e = A.Epuletek.add(4 * q).readPointer();
+    for (let j = 1; j <= n && j <= 2000; j++) if (e.add(0x20 * j).readU8() === 6 && rnd(2)) transientS16(sets, e.add(0x20 * j + 8), 1 + rnd(200));
+  };
+  const units = (p, n) => {
+    const o = A.Bolygok.add(0x188 * p + 0x20).readU8();
+    if (o >= 1 && o < 19 && !A.Tervek.add(4 * o).readPointer().isNull() && A.TervCount.add(4 * o).readS32() >= 1) call(va(0x541750), [-p, 1, n], null, false);
+  };
+  const others = []; for (let p = 1; p <= np; p++) { const o = A.Bolygok.add(0x188 * p + 0x20).readU8(); if (o !== en && o > 0 && o < 9) others.push(p); }
+  // A riot candidate: a planet of the human's it sees, crowded (+0x58 > 4) and with people enough (+0x28).
+  const crowd = (q) => {
+    const b = A.Bolygok.add(0x188 * q);
+    if (b.add(0xd8 + 2 * en).readS16() <= 0) transientS16(sets, b.add(0xd8 + 2 * en), 1);
+    transientS32(sets, b.add(0x58), pick([3, 4, 5, 6, 7, 9, 12]));
+    if (rnd(3)) transientS32(sets, b.add(0x28), pick([40000, 100000, 1000000]));
+  };
+  const c = rnd(20);
+  if (c < 3 || !live.length) {
+    const ids = pool.filter((id) => ELEM2B.includes(id) && !bucketHas(id));
+    if (!ids.length) return;
+    const id = pick(ids), al = aliveEmpires(en);
+    if (id === 808) {
+      // An empire with a design table (AutoAddtank's st_GetTerv makes designs: a map's inactive empire has none and
+      // TervNew faults).
+      const designs = (e) => !A.Tervek.add(4 * e).readPointer().isNull() && A.TervCount.add(4 * e).readS32() >= 1;
+      const owners = others.map((p) => A.Bolygok.add(0x188 * p + 0x20).readU8()).filter(designs), al2 = al.filter(designs);
+      vSet(5208, owners.length && rnd(6) ? pick(owners) : al2.length ? pick(al2) : 3);
+      const mine = others.filter((p) => designs(A.Bolygok.add(0x188 * p + 0x20).readU8()));
+      if (mine.length && rnd(3) === 0) bAddAzon(pick(mine), 8080);
+      vSet(8080, 0); if (rnd(3) === 0) vSet(6400, 1);
+      if (cfg.debug) { const e = varOf(5208), q = planetOfId(8080); emit({ k: 'dbg', what: '808start', e, q, owner: q ? A.Bolygok.add(0x188 * q + 0x20).readU8() : -1, tn: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((x) => [A.Tervek.add(4 * x).readPointer().isNull() ? 0 : 1, A.TervCount.add(4 * x).readS32()]) }); }
+    }
+    if (id === 854 && own.length && rnd(2)) { const q = pick(own); crowd(q); units(q, 1 + rnd(3)); }
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+    return;
+  }
+  const id = pick(live);
+  if (id === 808) {
+    const k = rnd(8), p = planetOfId(8080), owner = p ? A.Bolygok.add(0x188 * p + 0x20).readU8() : 0;
+    if (k < 2) {
+      const ctr = pick([8080, 8081, 8081, 8088]);
+      if (ctr === 8081) vSet(8089, rnd(2));
+      if (ctr === 8080 && rnd(2)) vSet(6400, rnd(2));
+      ctrRec(ctr);
+    } else if (k < 3) {
+      // Daily: a building of kind 0x20..0x23 on 8080's planet first (EpuletNewSearchLocation, not recorded).
+      if (p && owner !== en && owner > 0 && rnd(2)) call(va(0x53cca0), [p, 0x20 + rnd(4), 1, 0, -1, -1], null, false);
+      if (p && rnd(3) === 0) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), pick([en, owner]));
+      flagRec(0x10, []);
+    } else if (k < 6 || !p || owner === 0 || atWar(p)) {
+      // The human lands on 8080 (or elsewhere); after the 153 days 10 more vehicles land.
+      const q = p && rnd(5) ? p : 1 + rnd(np);
+      if (rnd(2)) vSet(8080, 1);
+      if (q && rnd(3) === 0) units(q, 1 + rnd(3));
+      // A building the start deletes (kinds 0x1c..0x1f) first, not recorded.
+      if (q === p && owner > 0 && rnd(3) === 0) call(va(0x53cca0), [q, 0x1c + rnd(4), 1, 0, -1, -1], null, false);
+      // The start sets StoryAdat+0x40 (the planet) and +0x88 for the battle (GroundWarIndit, SpaceWarIndit read them):
+      // without the battle that follows in the game, cleared after the record (left set, the game soon reset itself).
+      sets.push([() => {}, () => { A.Adat.add(0x40).writeS32(0); A.Adat.add(0x88).writeS32(0); }]);
+      calmAfter(q);
+      grRec(2, q, en, 0);
+    } else {
+      // The battle ends: the buildings' sums against the start's. As in the game the human has just taken the
+      // planet: its owner byte is the human's for the record (handing the empire its own planet again crashed; a
+      // real BolygoElfoglal(p, EN) first made the campaign reset itself).
+      // The sums at the end (808's: the kinds 0xe..0x10 count EpuletekLeiro[kind].+8 into both, the others it less
+      // their damage +4): mostly v(8083) set round the bar total = (v(8083) − 2·v(8084))·4/5, so either result shows.
+      let total = 0;
+      const n8 = A.HanyEpulet.add(4 * p).readS32(), e8 = A.Epuletek.add(4 * p).readPointer();
+      for (let j = 1; j <= n8 && j <= 2000; j++) {
+        const kd = e8.add(0x20 * j).readU8();
+        if (kd) total += va(0x8eba40).add(0x24 * kd).readS32() - ((kd >= 0xe && kd <= 0x10) ? 0 : e8.add(0x20 * j + 4).readS32());
+      }
+      const b84 = rnd(3) === 0 ? pick([0, 1, 300]) : 0;
+      const near = Math.floor((total * 5) / 4) + 2 * b84 + rnd(9) - 4;
+      vSet(8084, b84);
+      vSet(8083, rnd(4) ? near : pick([0, 1, 500, 5000, 50000, rnd(20000), 1000000, 10000000, rnd(3000000)]));
+      if (owner !== en) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), en);
+      // The human knows the empire it fought: BolygoElfoglal's contact block posts special 0xB before it marks an
+      // unknown empire known, and 808's end (flag 4 still set) runs again inside it until the stack runs out.
+      const e = varOf(5208);
+      if (e > 0 && e < 19) transientU8(sets, A.Ismeri.add(19 * en + e), 1);
+      grRec(4, p, en, rnd(2));
+    }
+    return;
+  }
+  const k = rnd(12), riotP = varOf(8549), p8540 = planetOfId(8540);
+  if (k < 4) {
+    // The riot's counter: v(8540) = 3 ends it.
+    vSet(8540, pick([0, 0, 1, 2, 3]));
+    if (own.length && rnd(4)) { const q = p8540 && rnd(3) === 0 ? p8540 : pick(own); crowd(q); damagePolice(q); flagUnits(q); if (rnd(4)) units(q, 1 + rnd(3)); }
+    ctrRec(8540);
+  } else if (k < 5) {
+    ctrRec(8549);
+  } else if (k < 7) {
+    const q = riotP > 0 && riotP <= np && rnd(4) ? riotP : own.length ? pick(own) : 1 + rnd(np);
+    grRec(4, q, rnd(2) ? en : 10, rnd(2));
+  } else if (k < 9) {
+    // A ground battle starts on a planet of the human's after a riot (v(8548)).
+    const q = p8540 && rnd(2) ? p8540 : own.length ? pick(own) : 1 + rnd(np);
+    if (rnd(2)) vSet(8548, 1);
+    if (rnd(2)) units(q, 1 + rnd(3));
+    damagePolice(q);
+    // Few people for the police: the madness chance reaches its upper clamp (75).
+    if (rnd(3) === 0) transientS32(sets, A.Bolygok.add(0x188 * q + 0x28), pick([0, 100, 3000, 20000]));
+    calmAfter(q);
+    grRec(2, q, rnd(3) ? 10 : en, 0);
+  } else if (k < 10) {
+    flagRec(9, [8540], () => { A.Msg.writeS32(8540); A.Msg.add(4).writeS32(0); });
+  } else {
+    if (rnd(2)) vSet(8548, 1);
+    if (p8540 && rnd(3) === 0) transientS32(sets, A.Bolygok.add(0x188 * p8540 + 0x28), pick([0, 100, 4000, 100000]));
+    damagePolice(p8540);
+    if (p8540 && rnd(4) === 0) transientU8(sets, A.Bolygok.add(0x188 * p8540 + 0x20), pick([0, 3]));
+    flagRec(0x10, []);
+  }
+}
+function transientF32(sets, q, v) { let was = 0; sets.push([() => { was = q.readFloat(); q.writeFloat(v); }, () => q.writeFloat(was)]); }
+// Part 2c: the diplomacy episodes 810 (protection of v(8109)), 857 (an alliance from the second strongest enemy),
+// 858 (empire 5's planet 8580, then the others' non-aggression pacts) and 860 (empire 1's tribute).
+const ELEM2C = [810, 857, 858, 860];
+const ELEM2C_COUNTERS = { 810: [6011, 6011, 6602, 6701, 6705], 857: [8570, 8571, 8571, 8572], 858: [8580, 8589], 860: [8600, 8600, 8601, 8601, 8602] };
+const ELEM2C_ANSWERS = { 810: [[6, 6601, 2], [6, 6800, 2], [6, 6601, 3], [6, 6800, 3], [7, 6601, 0], [7, 6800, 0], [6, 6602, 2], [6, 6802, 2],
+  [6, 6602, 3], [6, 6802, 3], [7, 6602, 0], [7, 6802, 0], [6, 6701, 2], [6, 6702, 2], [6, 6703, 2]],
+  857: [[6, 8573, 2]], 858: [[6, 8580, 2]],
+  860: [[6, 8601, 5], [7, 8601, 0], [6, 8601, 6], [6, 8601, 7], [6, 8601, 8], [6, 8601, 9], [6, 8601, 2]] };
+// Staging: starts with the world they read (the empires alive, known, at war, their strengths, the human's planets),
+// the counters (with the money, the tribute, the levels), the answers, the diplomacy specials answered (flag 13 with
+// the empire), ground battles ending on 8580 / the empire's planets with a fleet of the human's or another's, daily
+// checks.
+function elem2cFuzz(pool, running, sets, prep, after) {
+  const en = A.EN.readS32(), np = nPlanets(), own = humanPlanets(), live = running.filter((x) => ELEM2C.includes(x));
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  const level = (e, l) => { if (e > 0 && e < 19 && e !== en) transientU8(sets, A.Viszony.add((en * 19 + e) * 0x26 + 0x25), l); };
+  const alive = (e, x) => { if (e > 0 && e < 9 && e !== en) transientU8(sets, A.El.add(e), x); };
+  const ownerOf = (p) => A.Bolygok.add(0x188 * p + 0x20).readU8();
+  // Three planets of the human's it sees (860's st_bGet3Nearest) for the record.
+  const threeOwn = () => {
+    if (own.length >= 3 || !rnd(4)) return;
+    for (let k = 3 + rnd(3); k > 0; k--) { const q = 1 + rnd(np - 1); transientU8(sets, A.Bolygok.add(0x188 * q + 0x20), en); transientS16(sets, A.Bolygok.add(0x188 * q + 0xd8 + 2 * en), 1); }
+    transientS32(sets, A.HanyB.add(4 * en), 3 + rnd(3));
+  };
+  const c = rnd(24);
+  if (c < 4 || !live.length) {
+    const ids = pool.filter((id) => ELEM2C.includes(id) && !bucketHas(id));
+    if (!ids.length) return;
+    const id = pick(ids), al = aliveEmpires(en);
+    if (id === 810) {
+      vSet(8109, rnd(3) ? 0 : al.length ? pick(al) : 3);
+      for (const e of al) if (rnd(4) === 0) level(e, pick([1, 3, 4]));
+      for (const e of al) if (rnd(4) === 0) transientU8(sets, A.Ismeri.add(19 * en + e), rnd(2));
+    }
+    if (id === 857) {
+      // GetLegerosebb(0, 0) over the strengths (f32), then the strongest known one but empire 5 and it.
+      for (const e of al) if (rnd(3) === 0) transientF32(sets, A.Ero.add(4 * e), rnd(2) ? rnd(100000) : rnd(50));
+      for (const e of al) if (rnd(3) === 0) transientU8(sets, A.Ismeri.add(19 * en + e), rnd(3) ? 1 : 0);
+    }
+    if (id === 858) {
+      vSet(8589, rnd(5) ? 1 : 0);
+      alive(5, rnd(6) ? 1 : 0);
+      // Empire 5's planets the human sees (+0xd8[EN] >= 0) with their people (+0x28): a few more for the record.
+      if (rnd(2)) for (let k = 1 + rnd(4); k > 0; k--) { const q = 1 + rnd(np); if (ownerOf(q) === en) continue; transientU8(sets, A.Bolygok.add(0x188 * q + 0x20), 5); transientS16(sets, A.Bolygok.add(0x188 * q + 0xd8 + 2 * en), rnd(4) ? 1 : -1); }
+      for (let q = 1; q <= np; q++) if (ownerOf(q) === 5 && rnd(3) === 0) transientS32(sets, A.Bolygok.add(0x188 * q + 0x28), pick([0, 1, 5000, rnd(1000000)]));
+    }
+    if (id === 860) { alive(1, rnd(6) ? 1 : 0); alive(5, rnd(6) ? 1 : 0); level(1, pick([1, 2, 3, 4])); if (rnd(3) === 0) transientU8(sets, A.Ismeri.add(19 * en + 1), 0); }
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+    return;
+  }
+  const id = pick(live);
+  if (c < 10) {
+    const ctr = pick(ELEM2C_COUNTERS[id]);
+    if (ctr === 6011) { vSet(6700, rnd(2)); if (rnd(2)) vSet(6701, rnd(2)); const e = varOf(8109); if (rnd(2)) level(e, pick([1, 2, 3, 5])); }
+    if (ctr === 8570 || ctr === 8571) {
+      const m = A.Money.add(8 * en), x = pick([0, 1999999.5, 2000000, 2000001, 5e6, rnd(3000000)]);
+      let was = 0;
+      if (rnd(2)) sets.push([() => { was = m.readDouble(); m.writeDouble(x); }, () => m.writeDouble(was)]);
+      const e = varOf(8579);
+      if (ctr === 8571) { if (rnd(4) === 0) alive(e, 0); if (rnd(3) === 0) level(e, pick([4, 5])); }
+    }
+    if (ctr === 8580) alive(5, rnd(3) ? 1 : 0);
+    if (ctr === 8600) { alive(1, rnd(6) ? 1 : 0); threeOwn(); }
+    if (ctr === 8601) {
+      alive(1, rnd(8) ? 1 : 0);
+      if (rnd(3)) transientS32(sets, A.Adat.add(0x2c), rnd(3) ? rnd(200000) : pick([0, 9, 10, -25, 0x7fffffff]));
+      if (rnd(2)) vSet(8600, pick([0, 9, 10, 11, 12, rnd(11)]));
+    }
+    stage('flag', [[A.Check, [1]]], { args: [5, ctr] }, () => { prep(); A.Flags.add(5).writeU8(1); A.SzVegzett.writeS32(ctr); }, after);
+  } else if (c < 14) {
+    const [kind, b, part] = pick(ELEM2C_ANSWERS[id]);
+    if (b === 8601 && part >= 6) for (let k = 0; k < 3; k++) { const q = planetOfId(8600 + k); if (q && rnd(4) === 0) transientU8(sets, A.Bolygok.add(0x188 * q + 0x20), pick([en, 1, 0])); }
+    stage('flag', [[A.Check, [1]]], { args: [kind, b, part] }, () => { prep(); A.Flags.add(kind).writeU8(1); A.Msg.writeS32(b); A.Msg.add(4).writeS32(part); }, after);
+  } else if (c < 17 && id !== 810) {
+    // A diplomacy special answered (flag 13): 857's 8571, 858's 8581 (by any empire, the level before the pact),
+    // 860's 8601 (or another's).
+    const which = rnd(6) ? { 857: 8571, 858: 8581, 860: 8601 }[id] : pick([8571, 8581, 8601, 1234]);
+    const al = aliveEmpires(en), e = al.length && rnd(5) ? pick(al) : 1 + rnd(8);
+    if (which === 8581 && rnd(2)) level(e, pick([1, 2, 3, 4, 5]));
+    flagRec(13, [which, e], () => { A.Dipl.writeS32(which); A.Dipl.add(4).writeS32(e); });
+  } else if (c < 20 && id !== 810 && id !== 860) {
+    // A ground battle ends (4): on 8580 (858) or a planet of 857's empire, the battle's fleet the human's (read live,
+    // Flottak[GrWarFlotta].+0x15), the old owner the empire's.
+    const all = liveFleets(), mine = all.filter((x) => fleet(x).add(0x15).readU8() === en);
+    const f = mine.length && rnd(5) ? pick(mine) : all.length ? pick(all) : 0;
+    const e = varOf(8579), p858 = planetOfId(8580);
+    let p = 1 + rnd(np);
+    if (id === 858 && p858 && rnd(5)) p = p858;
+    const oldOwner = id === 857 && rnd(4) ? e : ownerOf(p);
+    // 857 ends when the empire has no planet left: sometimes none for the record.
+    if (id === 857 && e > 0 && e < 19 && rnd(3) === 0) for (let q = 1; q <= np; q++) if (ownerOf(q) === e) transientU8(sets, A.Bolygok.add(0x188 * q + 0x20), en);
+    if (id === 858 && rnd(3) === 0) vSet(8582, rnd(2));
+    const won = rnd(4) ? 1 : 0;
+    // GrWarFlottaTulaj (+8) apart from the fleet's live owner now and then (857/858 read the fleet's).
+    const gOwner = rnd(4) === 0 ? pick([en, 10, 3, 5]) : f ? fleet(f).add(0x15).readU8() : en;
+    flagRec(4, [p, f, oldOwner, won], () => {
+      A.Gr.writeS32(f); A.Gr.add(4).writeS32(f ? fleet(f).add(0x16).readS16() : 0); A.Gr.add(8).writeS32(gOwner);
+      A.Gr.add(12).writeS32(p); A.Gr.add(16).writeS32(oldOwner); A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won);
+    });
+  } else {
+    // Daily: 810 with its empire dead; 858's pacts (v(8590 + e)) and empire 5 dead after v(8588).
+    if (id === 810 && rnd(3) === 0) alive(varOf(8109), 0);
+    if (id === 858) {
+      if (rnd(2)) vSet(8599, rnd(3) ? 1 : 0);
+      for (let e = 1; e < 9; e++) if (rnd(3) === 0) vSet(8590 + e, rnd(2));
+      if (rnd(2)) vSet(8588, 1);
+      alive(5, rnd(3) ? 1 : 0);
+    }
+    flagRec(0x10, []);
+  }
+}
 function elemFuzz() {
   const pool = cfg.inline && cfg.inline.length ? ELEM.filter((x) => cfg.inline.includes(x)) : ELEM;
   const c = rnd(24), en = A.EN.readS32(), np = nPlanets(), running = pool.filter(bucketHas);
@@ -2054,6 +2572,9 @@ function elemFuzz() {
   const sets = [];
   const prep = () => sets.forEach((x) => x[0]()), after = () => sets.slice().reverse().forEach((x) => x[1]());
   const pickRare = (ids) => { const r = ids.filter((x) => ELEM_RARE.includes(x)); return r.length && rnd(2) ? pick(r) : pick(ids); };
+  if (pool.some((x) => ELEM2C.includes(x)) && rnd(3)) { elem2cFuzz(pool, running, sets, prep, after); return; }
+  if (pool.some((x) => ELEM2B.includes(x)) && rnd(3)) { elem2bFuzz(pool, running, sets, prep, after); return; }
+  if (pool.some((x) => ELEM2A.includes(x)) && rnd(3)) { elem2aFuzz(pool, running, sets, prep, after); return; }
   // Empires 1 and 5 alive or not, story 864's relation and the human's money, for one record.
   const empires = () => {
     for (const e of [1, 5]) if (e !== en && rnd(4) === 0) transientU8(sets, A.El.add(e), rnd(2));
@@ -2065,7 +2586,8 @@ function elemFuzz() {
     }
   };
   if (c < 3 || !running.length) {
-    const ids = pool.filter((id) => !bucketHas(id));
+    // 808 and 854 start only from their own staging (808 needs an empire with designs: AutoAddtank).
+    const ids = pool.filter((id) => !bucketHas(id) && !ELEM2B.includes(id) && !ELEM2C.includes(id));
     if (!ids.length) return;
     const id = pickRare(ids);
     // 816 (and 818, which starts it) belong to a storyline that first gives planet 8160 to empire 10
@@ -2361,4 +2883,66 @@ Interceptor.attach(A.Fake_FRISSITES, {
   },
 });
 
+// --debug: report a crash (exe VA, the faulting access, registers, a fuzzy stack) before the process dies, with the
+// records still buffered.
+let cxxThrows = 0;
+Process.setExceptionHandler((d) => {
+  const rel = (p) => { try { const o = p.sub(mod.base).toInt32(); return o >= 0 && o < mod.size ? '0x' + (o + 0x400000).toString(16) : String(p); } catch (e) { return String(p); } };
+  // 'system' = RaiseException: OutputDebugString's (0x40010006, 0x4001000a: the game's log lines, skipped) and C++
+  // throws (the stories' aborts among them; the first 300 reported with their throw site).
+  let sys = null;
+  if (d.type === 'system') {
+    const bt = Thread.backtrace(d.context, Backtracer.FUZZY).slice(0, 8).map(rel);
+    if (bt[0] === '0x40010006' || bt[0] === '0x4001000a' || !cfg.debug || cxxThrows++ > 300) return false;
+    sys = bt;
+  }
+  if (cfg.debug) {
+    if (sys) { send({ type: 'batch', events: [{ k: 'throw', stack: sys, cur: cur ? [cur.call, cur.args, cur.acts.slice(-6)] : null }] }); return false; }
+    flush();
+    send({ type: 'batch', events: [{ k: 'crash', type: d.type, address: rel(d.address), mem: d.memory ? [d.memory.operation, String(d.memory.address)] : null,
+      ctx: { eax: String(d.context.eax), ecx: String(d.context.ecx), edx: String(d.context.edx), esi: String(d.context.esi), edi: String(d.context.edi) },
+      stack: Thread.backtrace(d.context, Backtracer.FUZZY).slice(0, 16).map(rel), cur: cur ? [cur.call, cur.args] : null }] });
+  }
+  return false;
+});
+// --debug: who ends the game (BirodalomMeghal 0x53b630, MEGNYERES 0x53f6b0, the game-over screen request): the
+// stack and the record's calls so far.
+// The `AktKepKell := 0xF` sites (game over / won: 0x53b702 the human's death, 0x53f6fb/0x53f71f MEGNYERES,
+// 0x53f998/0x53fa2e MegnyeresEllenoriz's inlined wins, 0x4db68d, 0x4e303d, 0x60c988).
+for (const [a_, name] of [[0x53b630, 'meghal'], [0x53f6b0, 'megnyeres'], [0x5117f0, 'exitmain'], [0x4db68d, 'kep15'], [0x4e303d, 'kep15'], [0x53b702, 'kep15'],
+  [0x53f6fb, 'kep15'], [0x53f71f, 'kep15'], [0x53f998, 'kep15'], [0x53fa2e, 'kep15'], [0x60c988, 'kep15']]) {
+  Interceptor.attach(va(a_), {
+    onEnter() {
+      if (!cfg.debug) return;
+      const rel = (p) => { const o = p.sub(mod.base).toInt32(); return o >= 0 && o < mod.size ? '0x' + (o + 0x400000).toString(16) : String(p); };
+      flush();
+      send({ type: 'batch', events: [{ k: 'dbg', what: name, at: '0x' + a_.toString(16), arg: argI(this.context, 0), stack: Thread.backtrace(this.context, Backtracer.ACCURATE).slice(0, 16).map(rel),
+        cur: cur ? [cur.call, cur.args, cur.acts.slice(-30)] : null }] });
+    },
+  });
+}
+// --debug: the game's (re-)initialisation 0x4dfa00 after the start (the campaign reset itself in some traces).
+let inits = 0;
+Interceptor.attach(va(0x4dfa00), {
+  onEnter() {
+    if (!cfg.debug || inits++ === 0) return;
+    const rel = (p) => { const o = p.sub(mod.base).toInt32(); return o >= 0 && o < mod.size ? '0x' + (o + 0x400000).toString(16) : String(p); };
+    flush();
+    send({ type: 'batch', events: [{ k: 'dbg', what: 'reinit', frames, stack: Thread.backtrace(this.context, Backtracer.ACCURATE).slice(0, 24).map(rel),
+      fuzzy: Thread.backtrace(this.context, Backtracer.FUZZY).slice(0, 40).map(rel), cur: cur ? [cur.call, cur.args, cur.acts.slice(-20)] : null }] });
+  },
+});
+// --debug: when the frame hook stops running, sample every thread's stack (exe VAs).
+let wdFrames = -1, wdSame = 0;
+setInterval(() => {
+  if (!cfg.debug || phase !== 1) return;
+  wdSame = frames === wdFrames ? wdSame + 1 : 0;
+  wdFrames = frames;
+  if (wdSame === 3 || wdSame === 6) {
+    const rel = (p) => { const o = p.sub(mod.base).toInt32(); return o >= 0 && o < mod.size ? '0x' + (o + 0x400000).toString(16) : String(p); };
+    const th = Process.enumerateThreads().map((t) => ({ id: t.id, pc: rel(t.context.pc), bt: Thread.backtrace(t.context, Backtracer.FUZZY).slice(0, 16).map(rel) }));
+    flush();
+    send({ type: 'batch', events: [{ k: 'hang', frames, seq, threads: th }] });
+  }
+}, 2000);
 send({ type: 'ready', base: mod.base.toString() });

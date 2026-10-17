@@ -14,8 +14,8 @@ mod battles;
 mod buildings;
 mod finds;
 mod heroes;
-mod relations;
-mod spies;
+pub(crate) mod relations;
+pub(crate) mod spies;
 
 use crate::begin::{delete_fleet, move_to_planet};
 use crate::brnd::{fleet_strength, random_tech, ship_fleet};
@@ -134,16 +134,16 @@ fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
 /// `RndClass(5)` (exe `RndClass::Next`): the candidate offered with weight `x` replaces the pick when
 /// `rnd(1, Σx) ≤ x`.
 #[derive(Default)]
-struct Pick {
+pub(crate) struct Pick {
     n: i32,
 }
 
 impl Pick {
-    fn offer(&mut self, w: &mut dyn StoryWorld) -> bool {
+    pub(crate) fn offer(&mut self, w: &mut dyn StoryWorld) -> bool {
         self.weighted(1, w)
     }
 
-    fn weighted(&mut self, x: i32, w: &mut dyn StoryWorld) -> bool {
+    pub(crate) fn weighted(&mut self, x: i32, w: &mut dyn StoryWorld) -> bool {
         self.n = self.n.wrapping_add(x);
         rnd(w, 1, self.n) <= x
     }

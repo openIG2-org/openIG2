@@ -25,7 +25,7 @@ pub(super) fn enemy_empire(x: i32, w: &mut dyn StoryWorld) -> i32 {
 
 /// `st_GetNemEllensegesBirodalom(x, y)` (exe 0x5eaa60): a random live empire 1..=8 (not the human, `x` or `y`) the
 /// human is not at war with, weighted 10 when the human knows it, else 1 (stream 5); 0 without one.
-fn friendly_empire(x: i32, y: i32, w: &mut dyn StoryWorld) -> i32 {
+pub(crate) fn friendly_empire(x: i32, y: i32, w: &mut dyn StoryWorld) -> i32 {
     let en = w.human();
     let (mut pick, mut r) = (0, Pick::default());
     for e in 1..9 {

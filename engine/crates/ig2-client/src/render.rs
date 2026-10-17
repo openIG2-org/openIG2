@@ -38,7 +38,12 @@ fn vs(@builtin(vertex_index) vi: u32, i: I) -> VO {
     let c = cos(i.rot);
     let s = sin(i.rot);
     let d = q * i.half;
-    let p = i.center + vec2(d.x * c - d.y * s, d.x * s + d.y * c);
+    var p = i.center + vec2(d.x * c - d.y * s, d.x * s + d.y * c);
+    // A triangle: its corners are `center`, `half` and `param`; the second half of the quad collapses.
+    if i.kind == 6u {
+        var tri = array<vec2<f32>, 6>(i.center, i.half, i.param, i.center, i.center, i.center);
+        p = tri[vi];
+    }
     var o: VO;
     o.pos = vec4(p.x / u.screen.x * 2.0 - 1.0, 1.0 - p.y / u.screen.y * 2.0, 0.0, 1.0);
     o.q = q;
@@ -105,6 +110,10 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
             let a = cover(abs(q.y) - 1.0 + 0.5 * fwidth(q.y));
             return vec4(v.color.rgb, v.color.a * a);
         }
+        // Solid triangle (kind 6).
+        case 6u: {
+            return v.color;
+        }
         // Soft round glow (procedural stars).
         default: {
             let r = length(q);
@@ -123,6 +132,7 @@ pub mod kind {
     pub const MARKER: u32 = 3;
     pub const LINE: u32 = 4;
     pub const GLOW: u32 = 5;
+    pub const TRI: u32 = 6;
 }
 
 /// One quad, in physical pixels (origin top left).
@@ -144,6 +154,10 @@ impl Instance {
     pub fn new(kind: u32, center: [f32; 2], half: [f32; 2], color: [f32; 4]) -> Self {
         Self { center, half, rot: 0.0, kind, param: [0.0; 2], uv: [0.0, 0.0, 1.0, 1.0], color }
     }
+    /// A solid triangle with the corners `a`, `b`, `c` (kind [`kind::TRI`]).
+    pub fn tri(a: [f32; 2], b: [f32; 2], c: [f32; 2], color: [f32; 4]) -> Self {
+        Self { param: c, ..Self::new(kind::TRI, a, b, color) }
+    }
     /// A line from `a` to `b`, `width` pixels wide.
     pub fn line(a: [f32; 2], b: [f32; 2], width: f32, color: [f32; 4]) -> Self {
         let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
@@ -159,12 +173,35 @@ impl Instance {
 pub enum Blend {
     Alpha,
     Additive,
+    /// The exe's 2D pass (`DDBrushToScreen3d`, `KiirStr`; re/screens/hud.md §1.1): its GL textures and frame have no
+    /// sRGB formats, so texels, tints and blending stay in gamma space, and its PVRs have one level, sampled
+    /// bilinearly without mips. Drawn through the frame's non-sRGB view with the textures' raw views.
+    GammaAlpha,
+    GammaAdditive,
+    /// A frame of the gamma-space mesh pass ([`crate::render3d::Scene3d::gamma`]) drawn into a cleared target, laid
+    /// over the frame as the remaster draws its meshes straight onto it: the target holds `c·a` and the coverage
+    /// `a` (premultiplied), so the result is `c·a + frame·(1 − a)` in gamma space.
+    GammaPremul,
+    /// A union of shapes added once (the exe's coplanar, depth-tested radar discs, re/screens/starmap.md §6.3),
+    /// through the frame's alpha channel, in gamma space: `MaskClear` (a full-frame quad) sets alpha to 0,
+    /// `MaskMax` (the shapes) raises it to the shapes' alpha, `MaskAdd` (a full-frame quad) adds its colour ×
+    /// that alpha, `MaskRestore` (a full-frame quad) sets alpha back to 1. Colours are left alone except by `MaskAdd`.
+    MaskClear,
+    MaskMax,
+    MaskAdd,
+    MaskRestore,
+}
+
+impl Blend {
+    fn gamma(self) -> bool {
+        !matches!(self, Blend::Alpha | Blend::Additive)
+    }
 }
 
 /// A texture frames are drawn into ([`Renderer::target`]).
 pub struct Target {
     pub tex: TexId,
-    view: wgpu::TextureView,
+    texture: wgpu::Texture,
     pub size: (u32, u32),
 }
 
@@ -185,6 +222,10 @@ pub struct Frame {
     pub clear: [f64; 4],
     /// Meshes drawn before the quads (the colony screen).
     pub scene: Option<crate::render3d::Scene3d>,
+    /// Parts of `scene` (its vertices) drawn after the quads pushed before [`Frame::mark_late`], over them: the
+    /// starmap's planets over its background particles.
+    pub late: Vec<crate::render3d::MeshDraw>,
+    late_at: usize,
     instances: Vec<Instance>,
     batches: Vec<Batch>,
 }
@@ -204,6 +245,10 @@ impl Frame {
     pub fn len(&self) -> usize {
         self.instances.len()
     }
+    /// The quads pushed so far go below [`Frame::late`].
+    pub fn mark_late(&mut self) {
+        self.late_at = self.batches.len();
+    }
 }
 
 #[repr(C)]
@@ -219,6 +264,12 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     alpha: wgpu::RenderPipeline,
     additive: wgpu::RenderPipeline,
+    /// [`Blend::GammaAlpha`] / [`Blend::GammaAdditive`], drawing into the frame's non-sRGB view.
+    gamma_alpha: wgpu::RenderPipeline,
+    gamma_additive: wgpu::RenderPipeline,
+    gamma_premul: wgpu::RenderPipeline,
+    /// [`Blend::MaskClear`], [`Blend::MaskMax`], [`Blend::MaskAdd`], [`Blend::MaskRestore`].
+    mask: [wgpu::RenderPipeline; 4],
     uniform: wgpu::Buffer,
     uniform_bg: wgpu::BindGroup,
     tex_layout: wgpu::BindGroupLayout,
@@ -227,6 +278,12 @@ pub struct Renderer {
     /// The same textures with a repeating sampler (meshes).
     textures_rep: Vec<wgpu::BindGroup>,
     sampler_rep: wgpu::Sampler,
+    /// The same textures' raw (non-sRGB) views with the exe's 2D sampling (the gamma blends).
+    textures_raw: Vec<wgpu::BindGroup>,
+    sampler_raw: wgpu::Sampler,
+    /// The raw views with the mesh sampler (`TXNV` 11: repeat, trilinear with anisotropy): the remaster's gamma-space
+    /// mesh pass (re/screens/render.md).
+    textures_raw_rep: Vec<wgpu::BindGroup>,
     instances: Option<(wgpu::Buffer, u64)>,
     pipe3d: crate::render3d::Pipe3d,
     /// The colour format the pipelines draw into.
@@ -276,7 +333,7 @@ impl Renderer {
             push_constant_ranges: &[],
         });
         let attrs = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Uint32, 4 => Float32x2, 5 => Float32x4, 6 => Float32x4];
-        let pipeline = |blend: wgpu::BlendState| {
+        let pipeline = |blend: wgpu::BlendState, format: wgpu::TextureFormat| {
             d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ig2-client quads"),
                 layout: Some(&layout),
@@ -303,9 +360,22 @@ impl Renderer {
                 cache: None,
             })
         };
-        let alpha = pipeline(wgpu::BlendState::ALPHA_BLENDING);
+        let alpha = pipeline(wgpu::BlendState::ALPHA_BLENDING, format);
         let add = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
-        let additive = pipeline(wgpu::BlendState { color: add, alpha: add });
+        let additive = pipeline(wgpu::BlendState { color: add, alpha: add }, format);
+        let gamma_alpha = pipeline(wgpu::BlendState::ALPHA_BLENDING, format.remove_srgb_suffix());
+        let gamma_additive = pipeline(wgpu::BlendState { color: add, alpha: add }, format.remove_srgb_suffix());
+        let gamma_premul = pipeline(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING, format.remove_srgb_suffix());
+        let comp = |src_factor, dst_factor, operation| wgpu::BlendComponent { src_factor, dst_factor, operation };
+        use wgpu::{BlendFactor as F, BlendOperation as O};
+        let keep = comp(F::Zero, F::One, O::Add);
+        let mask = [
+            wgpu::BlendState { color: keep, alpha: comp(F::Zero, F::Zero, O::Add) },
+            wgpu::BlendState { color: keep, alpha: comp(F::One, F::One, O::Max) },
+            wgpu::BlendState { color: comp(F::DstAlpha, F::One, O::Add), alpha: keep },
+            wgpu::BlendState { color: keep, alpha: comp(F::One, F::Zero, O::Add) },
+        ]
+        .map(|b| pipeline(b, format.remove_srgb_suffix()));
         let uniform = d.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -334,12 +404,27 @@ impl Renderer {
             anisotropy_clamp: 8,
             ..Default::default()
         });
+        // `sg3d::texture_t::load_pvr` (ELF 0x86db50): the screen pictures' PVRs have one level and a `TXNV` word
+        // of 11 (repeat in s and t; trilinear only with mips): GL_LINEAR both ways on level 0.
+        let sampler_raw = d.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_max_clamp: 0.0,
+            ..Default::default()
+        });
         let pipe3d = crate::render3d::Pipe3d::new(d, format, &tex_layout);
         Self {
+            mask,
             device,
             queue,
             alpha,
             additive,
+            gamma_alpha,
+            gamma_additive,
+            gamma_premul,
             uniform,
             uniform_bg,
             tex_layout,
@@ -347,6 +432,9 @@ impl Renderer {
             textures: Vec::new(),
             textures_rep: Vec::new(),
             sampler_rep,
+            textures_raw: Vec::new(),
+            textures_raw_rep: Vec::new(),
+            sampler_raw,
             instances: None,
             pipe3d,
             format,
@@ -363,6 +451,15 @@ impl Renderer {
 
     /// Upload an image with a full mip chain (box-filtered on the CPU).
     pub fn add_texture(&mut self, img: &Image) -> TexId {
+        self.upload(img, wgpu::TextureFormat::Rgba8UnormSrgb)
+    }
+
+    /// [`Renderer::add_texture`] for data, sampled as stored (no sRGB decoding): the cloud material's noise.
+    pub fn add_texture_linear(&mut self, img: &Image) -> TexId {
+        self.upload(img, wgpu::TextureFormat::Rgba8Unorm)
+    }
+
+    fn upload(&mut self, img: &Image, format: wgpu::TextureFormat) -> TexId {
         let mips = mip_chain(img);
         let size = wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 };
         let tex = self.device.create_texture_with_data(
@@ -373,32 +470,44 @@ impl Renderer {
                 mip_level_count: mips.len() as u32,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
+                view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
             },
             wgpu::util::TextureDataOrder::MipMajor,
             &mips.concat(),
         );
+        let [a, b, c, e] = self.groups(&tex);
+        self.textures.push(a);
+        self.textures_rep.push(b);
+        self.textures_raw.push(c);
+        self.textures_raw_rep.push(e);
+        TexId(self.textures.len() - 1)
+    }
+
+    /// The bind groups of `tex`: its sRGB view with the clamping and the repeating sampler, its raw view with the
+    /// exe's 2D sampling and with the repeating sampler.
+    fn groups(&self, tex: &wgpu::Texture) -> [wgpu::BindGroup; 4] {
         let view = tex.create_view(&Default::default());
-        for (list, sampler) in [(&mut self.textures, &self.sampler), (&mut self.textures_rep, &self.sampler_rep)] {
-            list.push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let raw = raw_view(tex);
+        let group = |view: &wgpu::TextureView, sampler: &wgpu::Sampler| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &self.tex_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) },
                     wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
                 ],
-            }));
-        }
-        TexId(self.textures.len() - 1)
+            })
+        };
+        [group(&view, &self.sampler), group(&view, &self.sampler_rep), group(&raw, &self.sampler_raw), group(&raw, &self.sampler_rep)]
     }
 
     /// Upload world-space triangles the renderer keeps until [`Renderer::clear_meshes`].
     /// Upload `img` in place of texture `id` (a video frame; the old texture is freed).
     pub fn replace_texture(&mut self, id: TexId, img: &Image) {
         let new = self.add_texture(img);
-        for list in [&mut self.textures, &mut self.textures_rep] {
+        for list in [&mut self.textures, &mut self.textures_rep, &mut self.textures_raw, &mut self.textures_raw_rep] {
             let g = list.swap_remove(new.0);
             if let Some(slot) = list.get_mut(id.0) {
                 *slot = g;
@@ -414,8 +523,8 @@ impl Renderer {
         self.pipe3d.clear_meshes();
     }
 
-    /// Draw `frame` into `target` (`size` in physical pixels).
-    pub fn draw(&mut self, frame: &Frame, target: &wgpu::TextureView, size: (u32, u32), time: f32) {
+    /// Draw `frame` into `target` (`size` in physical pixels; made with [`Renderer::view_formats`]).
+    pub fn draw(&mut self, frame: &Frame, target: &wgpu::Texture, size: (u32, u32), time: f32) {
         let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, _pad: 0.0 };
         self.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let bytes: &[u8] = bytemuck::cast_slice(&frame.instances);
@@ -434,17 +543,34 @@ impl Renderer {
         if !bytes.is_empty() {
             self.queue.write_buffer(buf, 0, bytes);
         }
+        let (view, raw) = (target.create_view(&Default::default()), raw_view(target));
         let mut enc = self.device.create_command_encoder(&Default::default());
         if let Some(scene) = &frame.scene {
-            self.pipe3d.encode(&self.device, &self.queue, &mut enc, target, size, frame.clear, scene, &self.textures_rep);
+            self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, Some(frame.clear), scene, &scene.draws, (&self.textures_rep, &self.textures_raw_rep));
         }
-        {
+        let late = frame.scene.as_ref().filter(|_| !frame.late.is_empty());
+        let mut late_done = late.is_none();
+        // One pass per run of batches in the same space: the gamma blends draw through the raw view.
+        let mut start = 0;
+        let mut first = true;
+        while first || start < frame.batches.len() {
+            if !late_done && start >= frame.late_at {
+                if let Some(scene) = late {
+                    self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, None, scene, &frame.late, (&self.textures_rep, &self.textures_raw_rep));
+                }
+                late_done = true;
+            }
+            let gamma = frame.batches.get(start).is_some_and(|b| b.blend.gamma());
+            let mut end = (start..frame.batches.len()).find(|&i| frame.batches[i].blend.gamma() != gamma).unwrap_or(frame.batches.len());
+            if !late_done && start < frame.late_at {
+                end = end.min(frame.late_at);
+            }
             let [r, g, b, a] = frame.clear;
-            let load = if frame.scene.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
+            let load = if !first || frame.scene.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: if gamma { &raw } else { &view },
                     resolve_target: None,
                     ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 })],
@@ -454,14 +580,26 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.uniform_bg, &[]);
             pass.set_vertex_buffer(0, buf.slice(..));
-            for b in &frame.batches {
-                pass.set_pipeline(match b.blend {
-                    Blend::Alpha => &self.alpha,
-                    Blend::Additive => &self.additive,
-                });
-                pass.set_bind_group(1, &self.textures[b.tex.0], &[]);
+            for b in &frame.batches[start..end] {
+                let (pipeline, textures) = match b.blend {
+                    Blend::Alpha => (&self.alpha, &self.textures),
+                    Blend::Additive => (&self.additive, &self.textures),
+                    Blend::GammaAlpha => (&self.gamma_alpha, &self.textures_raw),
+                    Blend::GammaAdditive => (&self.gamma_additive, &self.textures_raw),
+                    Blend::GammaPremul => (&self.gamma_premul, &self.textures_raw),
+                    Blend::MaskClear => (&self.mask[0], &self.textures_raw),
+                    Blend::MaskMax => (&self.mask[1], &self.textures_raw),
+                    Blend::MaskAdd => (&self.mask[2], &self.textures_raw),
+                    Blend::MaskRestore => (&self.mask[3], &self.textures_raw),
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(1, &textures[b.tex.0], &[]);
                 pass.draw(0..6, b.range.clone());
             }
+            (start, first) = (end, false);
+        }
+        if let (false, Some(scene)) = (late_done, late) {
+            self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, None, scene, &frame.late, (&self.textures_rep, &self.textures_raw_rep));
         }
         self.queue.submit([enc.finish()]);
     }
@@ -469,31 +607,32 @@ impl Renderer {
     /// Draw `frame` into a new texture the quads can sample (the colony radar's picture of the terrain).
     pub fn render_texture(&mut self, frame: &Frame, size: (u32, u32)) -> TexId {
         let t = self.target(size);
-        self.draw(frame, &t.view, size, 0.0);
+        self.draw(frame, &t.texture, size, 0.0);
         t.tex
     }
 
     /// A texture the quads can sample that frames can be drawn into again and again ([`Renderer::draw_into`]).
     pub fn target(&mut self, size: (u32, u32)) -> Target {
-        let (view, groups) = self.target_view(size);
-        self.textures.push(groups[0].clone());
-        self.textures_rep.push(groups[1].clone());
-        Target { tex: TexId(self.textures.len() - 1), view, size }
+        let (texture, [a, b, c, e]) = self.target_texture(size);
+        self.textures.push(a);
+        self.textures_rep.push(b);
+        self.textures_raw.push(c);
+        self.textures_raw_rep.push(e);
+        Target { tex: TexId(self.textures.len() - 1), texture, size }
     }
 
     /// Draw `frame` into `t`, resized to `size` first (same [`TexId`]).
     pub fn draw_into(&mut self, frame: &Frame, t: &mut Target, size: (u32, u32), time: f32) {
         if t.size != size {
-            let (view, groups) = self.target_view(size);
-            self.textures[t.tex.0] = groups[0].clone();
-            self.textures_rep[t.tex.0] = groups[1].clone();
-            (t.view, t.size) = (view, size);
+            let (texture, [a, b, c, e]) = self.target_texture(size);
+            (self.textures[t.tex.0], self.textures_rep[t.tex.0], self.textures_raw[t.tex.0], self.textures_raw_rep[t.tex.0]) = (a, b, c, e);
+            (t.texture, t.size) = (texture, size);
         }
-        let view = t.view.clone();
-        self.draw(frame, &view, size, time);
+        let texture = t.texture.clone();
+        self.draw(frame, &texture, size, time);
     }
 
-    fn target_view(&mut self, size: (u32, u32)) -> (wgpu::TextureView, [wgpu::BindGroup; 2]) {
+    fn target_texture(&mut self, size: (u32, u32)) -> (wgpu::Texture, [wgpu::BindGroup; 4]) {
         let size = (size.0.max(1), size.1.max(1));
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rendered"),
@@ -503,21 +642,15 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: self.format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
+            view_formats: &Self::view_formats(self.format),
         });
-        let view = tex.create_view(&Default::default());
-        let group = |sampler: &wgpu::Sampler| {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.tex_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
-                ],
-            })
-        };
-        let groups = [group(&self.sampler), group(&self.sampler_rep)];
-        (view, groups)
+        let groups = self.groups(&tex);
+        (tex, groups)
+    }
+
+    /// The view formats a frame of `format` needs: its non-sRGB twin for the gamma blends.
+    pub fn view_formats(format: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
+        if format.remove_srgb_suffix() == format { vec![] } else { vec![format.remove_srgb_suffix()] }
     }
 
     /// Draw into an offscreen texture and read it back as RGBA8 (sRGB).
@@ -531,9 +664,9 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
+            view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
         });
-        self.draw(frame, &tex.create_view(&Default::default()), size, time);
+        self.draw(frame, &tex, size, time);
         let row = (4 * w).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -558,6 +691,11 @@ impl Renderer {
         }
         out
     }
+}
+
+/// `tex` viewed without its sRGB transfer (the same format when it has none).
+fn raw_view(tex: &wgpu::Texture) -> wgpu::TextureView {
+    tex.create_view(&wgpu::TextureViewDescriptor { format: Some(tex.format().remove_srgb_suffix()), ..Default::default() })
 }
 
 /// The image and its box-filtered mips down to 1×1 (in sRGB space; good enough for these assets).
@@ -590,6 +728,7 @@ fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
 fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let state = &world.game.state;
     let mut d = crate::diplomacy::Open::new(r, &l.install, &l.tables, &hud.texts, state);
+    d.scene.acttime = o.acttime;
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     d.screen.settle();
@@ -702,20 +841,33 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     Ok(())
 }
 
-/// `--snapshot --screen research`: the research screen on the save's selection after `--ui-frames` 10 ms frames.
+/// `--snapshot --screen research`: the research screen on the save's selection after `--ui-frames` 10 ms frames,
+/// open (or with `--anim-frame F [--anim-closing]` held at frame F of its opening or closing), the pointer resting at
+/// `--mouse X,Y` (a hot-spot's tooltip).
 fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let state = &world.game.state;
-    let mut s = crate::research::Research::open(state, &l.tables);
-    for _ in 0..o.ui_frames.max(1) {
-        s.step(state);
+    // Animated like the exe (`KELLKINYITASDEFAULT` 1): the info box and the wire sphere stay where `MoveObj` puts
+    // them also at rest.
+    let mut s = crate::research::Research::open(state, &l.tables, true);
+    match o.spy_frame {
+        Some(f) => s.hold(f, o.spy_closing),
+        None => s.hold_open(),
+    }
+    if let Some(m) = o.mouse {
+        s.tip.mouse = m;
     }
     let infos = crate::research::tech_infos(&l.install);
+    let tips = crate::research::tips(&hud.texts);
     let mut models = crate::research::ResearchModels::new(r, &l.install);
+    for _ in 0..o.ui_frames.max(1) {
+        s.step(state);
+        s.tooltip(state, &models.mask, &tips, s.frames as f64 * 10.0);
+    }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
     let t = world.curr.tick as f32 * 0.05;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-    hud.draw_research(&mut frame, &s, &infos, state, &l.tables, tex, lines, size, t);
+    hud.draw_research(&mut frame, &s, &infos, &tips, state, &l.tables, (tex, models.glow), lines, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
@@ -736,6 +888,46 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     let mut hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
     hud.info = crate::ui::InfoScreen::enter(world.ui.human);
     hud.info.chart = o.chart.min(9);
+    hud.info.at_turn(o.info_turn);
+    if let Some((p, h, c)) = o.info_list {
+        (hud.info.pointer, hud.info.problem_step, hud.info.counter) = (p, h, c);
+        hud.info.problem_counter = c;
+    }
+    for (g, v) in hud.info.globes.iter_mut().zip(&o.info_globes) {
+        g.spin = v[0];
+        g.planet = std::array::from_fn(|k| v[1 + k]);
+        g.fleet = std::array::from_fn(|k| v[10 + k]);
+        if v.len() >= 34 {
+            let at = |i: usize| [v[19 + 3 * i], v[20 + 3 * i], v[21 + 3 * i]];
+            (g.pos, g.home, g.start, g.target, g.step) = (at(0), at(1), at(2), at(3), at(4));
+        }
+    }
+    // The detail mode, the star log (re/screens/info.md §6.6, §6.8).
+    if let Some((e, s, leaving, p)) = o.info_detail {
+        let i = &mut hud.info;
+        (i.detail, i.leaving, i.sel_entry, i.sel_slot, i.designs_ptr) = (true, leaving, e, s, p);
+        i.sel_pick = world.ui.info.list(i.selected, world.ui.human).get(e).copied();
+    }
+    if let Some(t) = o.info_texts {
+        hud.info.texts = t;
+    }
+    if let Some([k, x, y, item]) = o.info_select.filter(|s| (26..=28).contains(&s[0])) {
+        (hud.info.select, hud.info.select_at, hud.info.select_item) = (Some(k as u32), [x, y], item);
+    }
+    if let Some(fr) = o.info_star {
+        (hud.info.star_log, hud.info.frame) = (true, fr);
+    }
+    if let Some(path) = &o.info_log {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("--info-log {path}: {e}"))?;
+        let mut lines = text.lines();
+        let head: Vec<usize> = lines.next().unwrap_or("").split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        if let [p, n] = head[..] {
+            (hud.info.log_pointer, hud.info.log_filled) = (p, n);
+        }
+        let hex = |h: &str| (0..h.len() / 2).filter_map(|k| u8::from_str_radix(&h[2 * k..2 * k + 2], 16).ok()).collect::<Vec<u8>>();
+        hud.info.log = lines.map(|l| l.split_once(' ').map_or((0, Vec::new()), |(c, t)| (c.parse().unwrap_or(0), hex(t.trim())))).collect();
+    }
+    hud.info.settle(&world.ui.info, world.ui.human);
     hud.speed = crate::hud::speed_index(world.game.state.mem.i32(ig2_sim::save::va::IDO_SPEED));
     hud.paused = o.paused;
     // The message line at the UI's pace (10 ms frames).
@@ -801,6 +993,9 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     let assets = crate::starmap::Assets::load(&mut r, &l.install);
     let mut view = crate::starmap::View::new(&world.curr, &world.view, o.size, o.scale);
     view.reveal = o.reveal;
+    view.set_clouds(o.clouds);
+    view.futofeny = o.futofeny;
+    view.acttime = o.acttime;
     let lv = world.game.local_view();
     let saved = match lv.starmap_mode {
         1 => Some(crate::starmap::Pick::Planet(lv.planet.max(0) as usize)),
@@ -810,16 +1005,42 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     view.selected = o.select_fleet.map(crate::starmap::Pick::Fleet).or(saved);
     view.hover = o.hover.and_then(|(x, y)| view.pick(&world.prev, &world.curr, o.alpha, [x, y]));
     let t = world.curr.tick as f32 * 0.05 + o.alpha * 0.05;
+    // The long info shrinks the planet's star to nothing (re/screens/starmap.md §15.1).
+    let info = o.planet_info || o.menu.as_deref().is_some_and(|m| !m.starts_with("planets"));
+    if info && lv.starmap_mode == 1 {
+        // The pin to the orbiting planet at zoom 599 (a save's zoom is clamped to 580) and no selection ring.
+        let p = lv.planet.max(0) as usize;
+        view.star_scale = Some((p, 0.0));
+        view.selected = None;
+        if let Some(q) = world.curr.planets.iter().find(|q| q.index == p) {
+            let clock = world.prev.orbit + (world.curr.orbit - world.prev.orbit) * o.alpha.clamp(0.0, 1.0);
+            let [x, y] = crate::starmap_menus::info_pivot(crate::starmap::orbit_position(q, clock), view.camera.rotate);
+            (view.camera.x, view.camera.y, view.camera.zoom) = (x, y, 599.0);
+        }
+    }
+    // The transfer panel opens zoomed in to 590 (`StarmapBeZoomol`, re/screens/starmap.md §13.1); a save's zoom is
+    // clamped to 580.
+    if o.panel.as_deref().is_some_and(|p| p.starts_with("transfer")) {
+        view.camera.zoom = 590.0;
+    }
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
     let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
     hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t);
-    if let Some(panel) = &o.panel {
-        let p = crate::starmap_panels::Panels::opened(panel)?;
+    let panels = match &o.panel {
+        Some(panel) => crate::starmap_panels::Panels::opened(panel)?,
+        None => crate::starmap_panels::Panels::default(),
+    };
+    if o.panel.is_some() {
         let mut models = crate::starmap_panels::PanelModels::new(&mut r);
         let size = [o.size.0 as f32, o.size.1 as f32];
-        let tex = models.render(&mut r, &l.install, &l.tables, &p, &world.game.state, &sel, size);
-        hud.draw_starmap_panels(&mut frame, &p, &world.game.state, &sel, tex, size, t);
+        let tex = models.render(&mut r, &l.install, &l.tables, &panels, &world.game.state, &sel, size);
+        hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &sel, tex, size, t);
+    }
+    if o.planet_info || o.rop_menu.is_some() || o.menu.is_some() {
+        let c = &view.camera;
+        let (menus, _) = crate::starmap_menus::staged(&world.game.state, &sel, &panels, [c.x, c.y, c.zoom, c.rotate], o.planet_info, o.rop_menu, o.menu.as_deref(), o.mouse, t)?;
+        hud.draw_starmap_menus(&mut frame, &menus, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], view.camera.zoom.max(if menus.info_on() { 599.0 } else { 0.0 }), t);
     }
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     let rgba = r.draw_to_image(&frame, o.size, t);

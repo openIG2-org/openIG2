@@ -65,6 +65,9 @@ out = open(a.out, "w", encoding="utf-8")
 counts = {}
 finished = False
 last_event = time.time()
+# The last record (tick, staged, hook check): a game that left the scenario (or hangs) writes none; after 150 s the
+# run stops early.
+last_record = None
 PROBE = """
 const mod = Process.getModuleByName('ig2.exe');
 const rel = (p) => { const o = p.sub(mod.base).toInt32(); return o >= 0 && o < mod.size ? '0x' + (o + 0x400000).toString(16) : String(p); };
@@ -77,7 +80,7 @@ send({ kep: g(0xbae0fc).readS32(), kepkell: g(0xbae250).readS32(), ido: g(0xbae0
 
 
 def on_message(msg, _data):
-    global finished, last_event
+    global finished, last_event, last_record
     if msg["type"] == "error":
         print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
         return
@@ -90,6 +93,8 @@ def on_message(msg, _data):
                 print("agent:", ev)
             if ev["k"] == "done":
                 finished = True
+            if ev["k"] in ("tick", "staged", "check"):
+                last_record = time.time()
             out.write(json.dumps(ev) + "\n")
         out.flush()
     else:
@@ -118,6 +123,9 @@ try:
     probed = False
     while time.time() - t0 < a.seconds and not finished:
         time.sleep(1)
+        if last_record is not None and time.time() - last_record > 150:
+            print("no records for 150 s: stopping")
+            break
         if a.debug and not probed and time.time() - last_event > 25:
             # The game thread is stuck (possibly inside the tracer's own callbacks): sample every stack from a
             # second script, which has its own lock.

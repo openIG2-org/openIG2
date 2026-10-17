@@ -65,7 +65,7 @@ const QUEUES = [['vegzes', 0xf43290], ['talal', 0xf4329c]];
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, name: 'Replay', speed: 3, ticks: 40,
   seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
- traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5, orders: 0, ordersEvery: 3, colony: 0, research: 0, researchEvery: 2 };
+ traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5, orders: 0, ordersEvery: 3, colony: 0, research: 0, researchEvery: 2, info: 0, infoEvery: 2 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -1028,6 +1028,60 @@ function stageResearch() {
     emit({ k: 'rorder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
   }
 }
+// --info N: every --info-every ticks (from tick 1), N random info-screen messages go through the exe's own
+// MULTIGET_Info (0x4ece60, re/screens/info.md §7) at IdoNapValtozott, before that tick's save, with the starmap
+// orders' stubs: 0x5b the money triangle's three shares (f64; mostly a point of the triangle as Info_Main measures
+// it, with its 0.03 cut-off, now and then any values) and 0x5c the spending limit (f64; mostly the bar's rounded
+// values). Mostly the human's, now and then an AI's. Each is reported as {k: 'iorder', before: k, libc, type, vals}
+// (vals: the issuer, then each f64 as its low and high dwords).
+const IO = {
+  Multiget: va(0x4ece60),
+  next: [0x4ece6a, 0x4ecf45].map(va),
+  get: [0x4eceac, 0x4ecf1f].map(va),
+};
+const multigetInfo = nf(IO.Multiget, 'void', []);
+function ioRun(type, outs) {
+  soStubs(outs);
+  soNext.add(0x200).writeS32(type);
+  const undoNext = soPatch(IO.next, soNext), undoGet = soPatch(IO.get, soGet);
+  try { multigetInfo(); } finally { undoNext(); undoGet(); }
+}
+const dwords = (x) => { const b = new ArrayBuffer(8); const dv = new DataView(b); dv.setFloat64(0, x, true); return [dv.getInt32(0, true), dv.getInt32(4, true)]; };
+function ioMake() {
+  const en = T.EN.readS32();
+  const e = srnd(5) ? en : 1 + srnd(8);
+  if (srnd(100) < 60) {
+    let sh;
+    if (srnd(6)) {
+      // A point (x, y) of the triangle (319, 50 + h) / (271.9, 50) / (366.1, 50), h = sqrt(2700).
+      const h = Math.sqrt(2700), y = 51 + srnd(51), half = (50 + h - y) / h * 47.1;
+      const x = Math.floor(319 - half + srnd(1000) / 1000 * 2 * half);
+      const d = (ax, ay, bx, by) => Math.abs((bx - ax) * (y - ay) - (by - ay) * (x - ax)) / Math.hypot(ay - by, bx - ax);
+      sh = [d(271.9, 50, 366.1, 50) / h, d(319, 50 + h, 366.1, 50) / h / 1.25, d(319, 50 + h, 271.9, 50) / h / 1.25].map((v) => (v < 0.03 ? 0 : v));
+      if (!sh.some((v) => v > 0)) sh[0] = 0.5;
+    } else {
+      sh = [srnd(1000) / 997, srnd(3) ? srnd(1000) / 991 : 0, srnd(1000) / 983];
+      if (!sh.some((v) => v > 0)) sh[2] = 0.25;
+    }
+    return [0x5b, [[e]].concat(sh.map(dwords))];
+  }
+  let lim;
+  if (srnd(5)) {
+    const x = srnd(101), v = Math.floor((Math.exp(x * 2000 * 3 / 200000) - 1) * 10500);
+    lim = Math.trunc(v / 100) * 100;
+    if (lim > 15000) lim = Math.trunc(lim / 1000) * 1000;
+  } else lim = srnd(3) ? srnd(200000) + 0.5 : 0;
+  return [0x5c, [[e], dwords(lim)]];
+}
+function stageInfo() {
+  const libc = (cfg.seed * 7919 + 41 + A.Ido2.readS32()) >>> 0;
+  srand(libc);
+  for (let i = 0; i < cfg.info; i++) {
+    const o = ioMake();
+    ioRun(o[0], o[1]);
+    emit({ k: 'iorder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
+  }
+}
 function stageOrdersSetup() {
   soSeed = cfg.seed | 0;
   va(0xb77230).writeU8(1);
@@ -1185,6 +1239,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (cfg.orders) emit({ k: 'orders', stage: stageOrdersSetup() });
       if (cfg.colony) emit({ k: 'colony', stage: stageColonySetup() });
       if (cfg.research) { soSeed = (cfg.seed | 0) ^ 0x5eed; va(0xb77230).writeU8(1); }
+      if (cfg.info) { soSeed = (cfg.seed | 0) ^ 0x1f0; va(0xb77230).writeU8(1); }
       if (cfg.stage) {
         const st = stageTrade();
         loadSave(cfg.preSlot, Memory.allocAnsiString(cfg.name + ' pre'), 2);
@@ -1211,6 +1266,7 @@ Interceptor.attach(A.IdoNapValtozott, {
     if (cfg.orders && k >= 1 && k % cfg.ordersEvery === 0) stageOrders();
     if (cfg.colony && k >= 1 && k % cfg.ordersEvery === 0) stageColony();
     if (cfg.research && k >= 1 && k % cfg.researchEvery === 0) stageResearch();
+    if (cfg.info && k >= 1 && k % cfg.infoEvery === 0) stageInfo();
     save('tick');
     srand((cfg.seed + A.Ido2.readS32()) >>> 0);
     if (k > cfg.ticks) { phase = 3; emit({ k: 'done' }); flush(); }

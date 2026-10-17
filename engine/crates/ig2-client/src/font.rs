@@ -96,7 +96,7 @@ impl Font {
                 let p = v.px(x + w / 2.0, y + h / 2.0);
                 let mut i = Instance::new(kind::SPRITE, p, [w * v.k / 2.0, h * v.k / 2.0], [rgb[0], rgb[1], rgb[2], 1.0]);
                 i.uv = [u / 256.0, vv / 256.0, w / 256.0, h / 256.0];
-                f.push(self.tex, Blend::Additive, i);
+                f.push(self.tex, Blend::GammaAdditive, i);
             }
             x += w;
         }

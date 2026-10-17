@@ -136,10 +136,13 @@ pub struct Snapshot {
     pub fleets: Vec<FleetView>,
     /// `StarmapPlanetKering`: the planets' orbit clock (advanced by the client, the sim doesn't port the view).
     pub orbit: f32,
+    /// The radar ranges the starmap shows (re/screens/starmap.md §6.3).
+    pub radar: crate::starmap_radar::Rings,
 }
 
 impl Snapshot {
-    pub fn read(state: &SaveState) -> Self {
+    pub fn read(game: &Game) -> Self {
+        let state = &game.state;
         let m = &state.mem;
         let en = m.i32(va::EN).clamp(0, EMPIRES as i32 - 1) as usize;
         let map = state.starmap();
@@ -184,7 +187,9 @@ impl Snapshot {
                 target_index: (f.tx as i32).max(0) as usize,
             })
             .collect();
-        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0 }
+        let (circles, planet_circles) = crate::starmap_radar::circles(state, &map, &game.radar_tables(), en);
+        let radar = crate::starmap_radar::rings(&circles, planet_circles);
+        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar }
     }
 
     /// The fleets between `prev` (alpha 0) and `self` (alpha 1). A fleet pairs with the same slot in `prev`; one
@@ -264,7 +269,7 @@ impl<'r> World<'r> {
         // `LoadSave` ends with `FlottakUjraSzamol` (fleet-movement.md §4.3).
         game.saved();
         let view = SavedView::read(save);
-        let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game.state) };
+        let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
         Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new() }
     }
@@ -297,7 +302,7 @@ impl<'r> World<'r> {
             self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
         }
         // Same tick: the fleets keep gliding from `prev`.
-        self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game.state) };
+        self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game) };
         self.ui = crate::ui::UiSnap::read(&self.game.state);
     }
 
@@ -358,7 +363,7 @@ impl<'r> World<'r> {
         }
         self.game.advance_clock();
         self.game.run_tick();
-        let mut next = Snapshot::read(&self.game.state);
+        let mut next = Snapshot::read(&self.game);
         // `FRISSIT_Starmap` (ELF 0x7132b0) ends with `StarmapPlanetKering += IdoSpeedSzorzo / 1500`.
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
         next.orbit = (self.curr.orbit as f64 + speed as f64 / 1500.0) as f32;

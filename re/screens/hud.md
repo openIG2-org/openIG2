@@ -27,6 +27,54 @@ the 640 × 480 virtual screen × 1.25). Text is `KiirStr` (re/screens/messages.m
   `|h|·k / H`, where `W × H` is the loaded picture's size and `k = 2` for a negative `w` (`h` for v), else 1: a
   negative size marks a record whose source rectangle is in the original's pixels on a doubled remaster picture.
 
+### 1.1 Colour space and sampling of the 2D pass
+The exe's 2D quads (`DDBrushToScreen3d` ELF 0x4f9b40 / exe 0x4aae80, `KiirStr`'s glyphs) are pre-transformed
+vertices (`x, y, 0.5, 1`, colour, `u, v`) handed to `gl_draw_tlv` 0x4f68f0, which queues them for the render thread
+(`ig2_pushcommand`; `command_glDrawElements` 0x4269f0 draws them with the stateblock's blend, `command_glBlendFunc`
+0x426780). Textures come from `command_glLoadTexture` (ELF 0x426e30 / exe 0x733fe0: `dataraw/<name>.pvr` through
+`sgres`, the font sheet in the `FONT` pass) → `sg3d::texture_t::load_pvr` (ELF 0x86db50 / exe 0x728d50, checked):
+- **No sRGB anywhere**: the screen pictures' formats map to plain `GL_RGB`/`GL_RGBA` (`charset_bmp` is 8-bit
+  luminance, `brushok_orig_bmp` RGB 565, `colony_x_bmp` RGBA 4444), and the exe never enables
+  `GL_FRAMEBUFFER_SRGB` (no 0x8DB9 immediate in ig2.exe). So texels, the vertex colour (`DDColor[i]`, the brush
+  tint) and the blend (src alpha, 1 − src alpha for brushes; additive for text) all work on the stored gamma-space
+  values. [obs: the money text's core is (160, 160, 20) = `DDColor[0x21]` exactly.]
+- **One level, bilinear**: min filter `GL_LINEAR_MIPMAP_NEAREST` only with more than one mip level, else
+  `GL_LINEAR`; mag `GL_LINEAR`; wrap from the PVR's `SGLB`/`TXNV` metadata word (bit 0/1 repeat in s/t, bit 2/3
+  trilinear (+anisotropy), bit 4 nearest). The screen pictures have one level and `TXNV` = 11: bilinear on level 0,
+  repeat (at 800 × 600 the 2× pictures are minified 1.6×, so the glyphs alias thin rather than blur).
+
+The client (ADR 0006) renders into an sRGB frame with sRGB textures: its 2D blends ran in linear light, which turned
+a tint `c` into `c^(1/2.2)` (text (203, 203, 77)) and brightened every translucent or filtered edge; with its mip
+chains the glyphs also blurred into their neighbours' atlas cells. `Blend::GammaAlpha`/`GammaAdditive`
+(`ig2-client::render`) are the exe's pass: drawn through the frame's non-sRGB view with the textures' raw views and a
+level-0 bilinear repeating sampler; `hud::Pictures::brush` and `font::Font::text` use them. Before/after:
+re/screens/diff-results.md (the top bar 7.7 → 0.1 on every screen).
+
+### 1.2 Faders
+Every translucent box (`KirakFader` ELF 0x547920, `FadeKerettelKerekit` 0x538330, `FadeScreen` 0x537890) is queued
+into `fade` (0x34 B records) and drawn by `PutDarkening` 0x5391d0 → `PutDarkeningFace` 0x538de0 →
+`polygonsfader` 0x5f16a0 in the same 2D pass (checked):
+- **Shape**: `FadeKerettelKerekit` = `FadeKerekit` 0x537bd0's rounded fill (five strips: `(x + 4, y + 1, w − 8, 1)`,
+  `(x + 2, y + 2, w − 4, 2)`, `(x + 1, y + 4, w − 2, h − 8)` and their mirrors) + `FadeKeretKerekit` 0x537e70's
+  one-pixel rounded frame (four sides inset 4, eight corner pieces).
+- **Colour**: `FadeScreen` packs `0xTTBBGGRR`; `polygonsfader` turns the fourth value into `255 − t` (a
+  transparency) and blends src alpha / 1 − src alpha (its additive mode is unused here).
+- **Texture**: `polygonsfader` binds `fadertexture`, which every screen's 3D init loads from
+  `textures/design/screen/dt.bmp` (`Init3dStarmap`, `Init3dColony`, `Research3DInit`, `Diplomacy3DInit`,
+  `Infoing3DInit`, `Design3DInit`, …: `FindRefs` on 0x169e518); the texel multiplies the vertex colour. The
+  coordinates are `((x + u)·su, (y + v)·sv)` per virtual pixel. `GLOBALKELLDESIGN` (ELF .data 0x1171e88) is 1 and
+  never written, so `KirakFader` passes `su = sv = 0.005` and the fader's own offsets (`faderstruktura +0x1e0/+0x258
+  + 4i`, 0 after `InitFaderDesignStruktura` 0x547cf0, then drifting by `rand()` in `FaderDesignFrissito` 0x547e10):
+  its fill shows the texture (mean 0.50); its frame and every direct `FadeKerettelKerekit`/`FadeScreen` call pass a
+  scale of 0, so all their vertices sample (0, 0): with repeat, the mean of the four corner texels (0.65 in the GOG
+  `dt.bmp`). The callers' colours are × `s` = `+0x168 + 4i` = 0.9 + an occasional "shine" (`FaderDesignFrissito`).
+  [obs: across the edges of the transfer panel and the long info in the exe captures, inside = A + B·outside with
+  B = 0.37–0.40 (= 1 − 155/255) and A = (0, 14, 24) (= (0, 48.6, 81)·0.61·0.48), which the port now reproduces to
+  half a level.]
+
+The port: `starmap_panels::fader` (scale 0) and `kirak_fader` (the texture at offset 0; the `rand()` drift and the
+shine aren't drawn) on `Blend::GammaAlpha`.
+
 ## 2. The top bar (every screen below 0xe)
 Two persistent 2D layers (`GFX_AllandoInit1/2` 0x66d080/0x66d0f0, added by every screen's 3D init) draw it after the
 screen's own passes, unless options (0xd) runs as the self-playing demo or the load menu, or the game is leaving.
