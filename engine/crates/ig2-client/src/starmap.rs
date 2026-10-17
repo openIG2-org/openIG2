@@ -225,6 +225,27 @@ impl Camera {
         (t > 0.0).then(|| [o[1] + t * r[1] + self.x, o[2] + t * r[2] - self.y])
     }
 
+    /// A galaxy point on the 640 × 480 virtual screen (`smRotatePoint` + `TransformPoint`), when in front.
+    pub fn virtual_point(&self, p: [f32; 2]) -> Option<[f32; 2]> {
+        let e = self.eye(&self.matrix(), 0.0, p);
+        if e[2] >= 0.0 {
+            return None;
+        }
+        let f = FOV / -e[2];
+        Some([e[0] * f + CENTER[0], e[1] * f + CENTER[1]])
+    }
+
+    /// Physical → virtual pixels.
+    pub fn virtual_of(&self, s: [f32; 2]) -> [f32; 2] {
+        let k = self.k();
+        [(s[0] - self.size[0] / 2.0) / k + CENTER[0], s[1] / k]
+    }
+
+    /// `get_pos` / `SikMetszespont`: the galaxy point under the virtual point `v`.
+    pub fn virtual_to_world(&self, v: [f32; 2]) -> Option<[f32; 2]> {
+        self.to_world(self.phys(v))
+    }
+
     /// Drag the galaxy so the point under `from` ends under `to`; the pivot stays in the pan square.
     pub fn pan(&mut self, from: [f32; 2], to: [f32; 2]) {
         if let (Some(a), Some(b)) = (self.to_world(from), self.to_world(to)) {
@@ -643,7 +664,7 @@ mod tests {
     use crate::world::PlanetLook;
 
     fn planet(index: usize, x: f32, y: f32) -> PlanetView {
-        PlanetView { index, pos: [x, y], owner: 0, surface: 1, name: String::new(), known: true, blink: false, look: PlanetLook { star_size: 8, ..Default::default() } }
+        PlanetView { index, pos: [x, y], owner: 0, surface: 1, name: String::new(), known: true, blink: false, friendly: false, look: PlanetLook { star_size: 8, ..Default::default() } }
     }
 
     fn cam(rotate: f32, pitch: f32) -> Camera {
@@ -740,7 +761,7 @@ mod tests {
     #[test]
     fn fleets_are_picked_before_planets() {
         let mut s = Snapshot { planets: vec![planet(1, 0.0, 0.0), planet(2, 50.0, 0.0)], ..Default::default() };
-        s.fleets.push(FleetView { slot: 4, pos: [0.5, 0.0], owner: 6, visible: true, target: None, order: 0, flags: 0, name: Vec::new() });
+        s.fleets.push(FleetView { slot: 4, pos: [0.5, 0.0], owner: 6, visible: true, target: None, order: 0, flags: 0, name: Vec::new(), ships: 1, story_id: 0, kind: 0, target_index: 0 });
         let saved = SavedView { x: 25.0, y: 0.0, rotate: 0.0, pitch: -1.5, zoom: 400.0, orbit: 0.0 };
         let v = View::new(&s, &saved, (1000, 1000), 1.0);
         let at = |p: [f32; 2]| v.pick(&s, &s, 1.0, v.camera.to_screen(p).unwrap());

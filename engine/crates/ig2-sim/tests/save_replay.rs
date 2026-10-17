@@ -19,7 +19,7 @@ use ig2_sim::colony::{BuildingKind, ColonyRules, Curve};
 use ig2_sim::colony_side::{tech_strength, AutobuildMode, AutobuildRules, SideRules};
 use ig2_sim::diplomacy::DiplomacyRules;
 use ig2_sim::fleet::StarmapEvent;
-use ig2_sim::game::{BattleEvent, Fresh, Game, GameEvent, GameRules, Libc};
+use ig2_sim::game::{BattleEvent, ColonyOrder, Fresh, Game, GameEvent, GameRules, Libc, ResearchOrder, StarmapOrder};
 use ig2_sim::messages::{cstr, Texts, ENTRY};
 use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
@@ -133,20 +133,26 @@ struct Recording {
     events: Vec<Value>,
     /// `--stage`: the purchases made between `pre.sav` and save 0 (`{"k": "buy", "e", "msg", "accepted"}`).
     buys: Vec<Value>,
+    /// `--orders` / `--colony` / `--research`: starmap / colony / research messages staged before save `before`
+    /// (`{"k": "sorder" | "corder" | "rorder", "before", "type", "vals"}`).
+    orders: Vec<Value>,
 }
 
 fn recordings() -> Vec<Recording> {
     let dir = local("IG2_TRACE_DIR", "traces");
     let mut v: Vec<PathBuf> = std::fs::read_dir(&dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect()).unwrap_or_default();
-    v.retain(|p| p.is_dir() && p.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.starts_with("replay-")));
+    // `IG2_REPLAY_SKIP`: recordings whose name contains it are left out (not ported yet).
+    let skip = std::env::var("IG2_REPLAY_SKIP").ok().filter(|s| !s.is_empty());
+    v.retain(|p| p.is_dir() && p.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.starts_with("replay-") && skip.as_ref().is_none_or(|s| !f.contains(s.as_str()))));
     v.sort();
     v.into_iter()
         .filter_map(|dir| {
             let text = std::fs::read_to_string(dir.join("replay.jsonl")).ok()?;
             let all: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
             let (events, rest): (Vec<Value>, Vec<Value>) = all.into_iter().partition(|e| e["k"] == "save");
-            let buys = rest.into_iter().filter(|e| e["k"] == "buy").collect();
-            Some(Recording { dir, events, buys })
+            let buys = rest.iter().filter(|e| e["k"] == "buy").cloned().collect();
+            let orders = rest.into_iter().filter(|e| e["k"] == "sorder" || e["k"] == "corder" || e["k"] == "rorder").collect();
+            Some(Recording { dir, events, buys, orders })
         })
         .collect()
 }
@@ -325,6 +331,7 @@ fn game_rules(inst: &Install) -> GameRules {
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
         ground_maps,
         space: Default::default(),
+        satellite_prices: r.satellite_prices.clone(),
     }
 }
 
@@ -417,6 +424,21 @@ fn replay_matches_the_exe_tick_by_tick() {
             }
             sent = game.events.len();
             game.advance_clock();
+            // `--orders`/`--colony`: the tracer ran `MULTIGET_Starmap`/`MULTIGET_Colony` at `IdoNapValtozott`, after the clock step.
+            for o in rec.orders.iter().filter(|o| o["before"].as_u64() == Some(k as u64)) {
+                if let Some(seed) = o["libc"].as_u64().filter(|_| o == rec.orders.iter().find(|x| x["before"] == o["before"]).unwrap()) {
+                    game.libc = Libc(seed as u32);
+                }
+                let vals: Vec<i32> = o["vals"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
+                let t = o["type"].as_i64().unwrap() as i32;
+                if o["k"] == "rorder" {
+                    game.research_order(vals[0] as u8, ResearchOrder::from_message(t, &vals[1..]).expect("a research message"));
+                } else if o["k"] == "corder" {
+                    game.colony_order(vals[0] as u8, ColonyOrder::from_message(t, &vals[1..]).expect("a colony message"));
+                } else {
+                    game.starmap_order(vals[0] as u8, StarmapOrder::from_message(t, &vals[1..]).expect("a starmap message"));
+                }
+            }
             let exe = load(&rec.dir.join(format!("{k}.sav")));
             ui_between_ticks(&mut game.state, &exe, ev);
             import_names(&mut game.state, &exe, &game.events[seen..]);
@@ -509,6 +531,7 @@ fn fresh(s: &SaveGame, what: Fresh) -> Vec<u8> {
         Fresh::Ship(i) => s.ships.get(i).map(|r| r.to_vec()),
         Fresh::Building { planet, slot } => s.buildings.get(planet).and_then(|b| b.get(slot)).map(|r| r.to_vec()),
         Fresh::Design { empire, design } => s.designs.get(empire).and_then(|d| d.get(design)).map(|r| r.to_vec()),
+        Fresh::Waypoint(i) => s.waypoints.get(i).map(|r| r.to_vec()),
         // A new unit object's uninitialised fields, as the exe saved them (the first `+0x19c` is the pointer).
         Fresh::GroundUnit { planet, slot } => {
             let mut pairs = Vec::new();

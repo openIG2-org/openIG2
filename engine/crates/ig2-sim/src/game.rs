@@ -33,10 +33,16 @@
 //! other's writes as in the exe.
 
 mod battles;
+mod colony_orders;
 mod death;
+mod orders;
 mod realtime;
+mod research_orders;
 
+pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
+pub use orders::{OrderEvent, StarmapOrder};
 pub use realtime::{RealTime, RealTimeEvent};
+pub use research_orders::ResearchOrder;
 
 pub use battles::BattleEvent;
 pub use death::{GameOver, LAST_ENEMY_STORY};
@@ -87,6 +93,8 @@ pub struct GameRules {
     pub ground_maps: Vec<ground::GroundMap>,
     /// The real-time space battle (weapons, projectile forms, formations, ship types; multiplayer only so far).
     pub space: crate::spacebattle::SpaceRules,
+    /// `MuholdAr` (exe 0x9138D0): satellite prices by kind (`MULTIGET_Starmap` 0x18).
+    pub satellite_prices: Vec<i32>,
 }
 
 /// The MSVC CRT `rand()` (`holdrand · 214013 + 2531011`, bits 16..30): the unseeded libc draws of the original.
@@ -149,13 +157,19 @@ pub enum GameEvent {
     RealTime(RealTimeEvent),
     /// The game ends for the human (`MEGHALAS`, `MEGNYERES`; `game::death`).
     GameOver(GameOver),
+    /// A starmap order's outcome for the issuer's screen (`game::orders`).
+    Order(OrderEvent),
+    /// A colony order's outcome for the issuer's screen (`game::colony_orders`).
+    ColonyOrder(ColonyOrderEvent),
 }
 
 impl GameEvent {
     /// The fleet of a 0x1b message (`GameEvent::FleetEmptied`, or the AI pass's `HumanFleetEmptied`).
     pub fn emptied_fleet(&self) -> Option<usize> {
         match self {
-            GameEvent::FleetEmptied { fleet } | GameEvent::Ai(ai::AiEvent::HumanFleetEmptied { fleet }) => Some(*fleet),
+            GameEvent::FleetEmptied { fleet }
+            | GameEvent::Ai(ai::AiEvent::HumanFleetEmptied { fleet })
+            | GameEvent::Starmap(StarmapEvent::FleetEmptied { fleet }) => Some(*fleet),
             _ => None,
         }
     }
@@ -205,6 +219,9 @@ pub enum Fresh {
     /// A unit object new on planet `planet`'s battlefield at `slot`: [`ground::UNINIT`] fields as `(offset, value)`
     /// pairs ([`ground::Group::fill_uninit`]).
     GroundUnit { planet: usize, slot: usize },
+    /// A waypoint record (`Waypointek[i]`, 0xc bytes) the array grew by: record 0 is never written, the others'
+    /// `+0xa..+0xc`.
+    Waypoint(usize),
 }
 
 /// The tick's global inputs read from the state.
@@ -322,6 +339,21 @@ impl<'r> Game<'r> {
                 m.set_i32(va::AKT_FLEET, v.fleet);
             }
             ViewMode::Canonical { .. } => self.local = v,
+        }
+    }
+
+    /// The starmap's transfer panel opens between `fleets` (`StarmapTransferMode` exe 0xB9A304,
+    /// `StarmapTransferFlotta1/2` 0xB9A62C/0xB9A954; a planet is −p) or closes (`None`): `FRISSIT_Starmap` doesn't
+    /// send 0x1b for the panel's emptied fleets while it is up (re/screens/starmap.md §10.2, §13). Classic mode
+    /// only: the canonical view keeps no panel.
+    pub fn set_transfer(&mut self, fleets: Option<(i32, i32)>) {
+        if let ViewMode::Classic = self.view {
+            let m = &mut self.state.mem;
+            m.set_u8(va::STARMAP_TRANSFER_MODE, fleets.is_some() as u8);
+            if let Some((a, b)) = fleets {
+                m.set_i32(va::STARMAP_TRANSFER_FLEETS.0, a);
+                m.set_i32(va::STARMAP_TRANSFER_FLEETS.1, b);
+            }
         }
     }
 
@@ -530,7 +562,7 @@ impl<'r> Game<'r> {
 
     /// Building records appended this tick hold uninitialised bytes in the original: the records past the used
     /// slots all of them, a used slot the bytes no ported code writes ([`crate::save::BUILDING_UNWRITTEN`]).
-    fn fill_fresh_buildings(&mut self) {
+    pub(super) fn fill_fresh_buildings(&mut self) {
         for (p, j) in std::mem::take(&mut self.state.fresh_buildings) {
             let u = self.fresh::<{ crate::save::BUILDING_SIZE }>(Fresh::Building { planet: p, slot: j });
             let used = self.state.mem.i32(va::BUILDING_SLOTS + 4 * p as u32).max(0) as usize;
@@ -703,6 +735,28 @@ impl<'r> Game<'r> {
             tutorial_sighting: g.tutorial && m.i32(va::TUTORIAL_EVENT) == 1,
             radar_rules: self.rules.radar.clone(),
             in_battle: Vec::new(),
+            sends: g.sends,
+            transfer: (m.i32(va::AKT_KEP) == 2 && m.u8(va::STARMAP_TRANSFER_MODE) != 0)
+                .then(|| (m.i32(va::STARMAP_TRANSFER_FLEETS.0), m.i32(va::STARMAP_TRANSFER_FLEETS.1))),
+        }
+    }
+
+    /// Waypoint records appended since there were `from` (`FlottaAddWaypoint`'s pool grows): the bytes the code
+    /// never writes come from [`Game::uninit`] (all of record 0, `+0xa..+0xc` of the others).
+    fn fresh_waypoints(&mut self, from: usize) {
+        let n = self.state.waypoints.len();
+        let Some(f) = self.uninit.as_mut() else { return };
+        for i in from..n {
+            let raw = f(Fresh::Waypoint(i));
+            if raw.len() < 0xc {
+                continue;
+            }
+            let r = &mut self.state.waypoints[i];
+            if i == 0 {
+                r.copy_from_slice(&raw[..0xc]);
+            } else {
+                r[0xa..0xc].copy_from_slice(&raw[0xa..0xc]);
+            }
         }
     }
 
@@ -973,6 +1027,14 @@ impl<'r> Game<'r> {
         self.with_deals(|d, w, deals| d.receive_message(w, deals, letter));
     }
 
+    /// Human `issuer`'s diplomacy screen writes to its contact-list slot of `empire` (`re/screens/diplomacy.md` §8).
+    pub fn diplomacy_screen(&mut self, issuer: usize, empire: usize, op: diplomacy::ScreenOp) {
+        let (en, ido) = (self.state.mem.i32(va::EN).clamp(0, 18) as usize, self.state.mem.i32(va::IDO));
+        let mut d = self.state.diplomacy();
+        d.screen(en, issuer, empire, op, ido);
+        self.state.store_diplomacy(&d);
+    }
+
     /// A human's answer (packet 0x3f → `FeldolgozValasz`, §10.2).
     pub fn diplomacy_answer(&mut self, answer: diplomacy::Answer) {
         self.with_deals(|d, w, deals| d.receive_answer(w, deals, answer));
@@ -1054,6 +1116,7 @@ impl<'r> Game<'r> {
         let mut known = self.state.known_since();
         let mut story = |_: StoryCheck| false;
         let mut hooks = WarHooks { wars: Vec::new(), uninit: self.uninit.as_mut() };
+        let waypoints = self.state.waypoints.len();
         let (events, spy_events) = {
             let mut w = ai::World {
                 ctx: &ctx,
@@ -1102,6 +1165,7 @@ impl<'r> Game<'r> {
         self.state.mem.set_i32s(va::FLEET_NUMBERS, &fleet_numbers);
         self.state.store_known_since(&known);
         self.events.extend(hooks.wars.into_iter().map(|(a, b)| GameEvent::WarDeclared { a: a as u8, b: b as u8 }));
+        self.fresh_waypoints(waypoints);
         self.events.extend(events.into_iter().map(GameEvent::Ai));
         self.spy_hooks(spy_events);
     }
@@ -1141,6 +1205,26 @@ impl<'r> Game<'r> {
     /// A human's spy-screen order out of the lockstep queue (`MULTIGET_Spy` exe 0x5883c0, `espionage.md` §8).
     pub fn spy_order(&mut self, issuer: usize, order: spy::Order) {
         let (training, mult) = (self.rules.ai.training_cost.clone(), self.rules.ai.mission_cost_mult.clone());
+        // The spy screen's own steps (re/screens/spy.md §7): the issuer's report queue and its stream-0 rolls.
+        let en = self.globals().en;
+        match order {
+            spy::Order::Acknowledge => return self.state.pop_spy_report(issuer, en),
+            spy::Order::Estimate { spy: k, mission: m, target: t } => {
+                let ctx = self.spy_context(&self.globals());
+                let (spies, mut rng) = (self.state.spies(), self.state.rng());
+                spies.escape_chance(&ctx, &self.rules.spy, &mut rng, issuer, k as usize, m as usize, t as usize, spy::ESTIMATE_ROUNDS, spy::UI_STREAM);
+                return self.state.store_rng(&rng);
+            }
+            spy::Order::Judge { choice, owner, spy: k } => {
+                let (spies, mut rng) = (self.state.spies(), self.state.rng());
+                let (fate, kind) = spies.judge(&mut rng, owner as usize, k as usize, choice);
+                self.state.store_rng(&rng);
+                self.state.set_spy_report_kind(issuer, en, kind);
+                let verdict = spy::Order::Verdict { fate, owner, spy: k };
+                return self.with_spies(|spies, w| spies.order(w, issuer, verdict, &training, &mult));
+            }
+            _ => {}
+        }
         self.with_spies(|spies, w| spies.order(w, issuer, order, &training, &mult));
     }
 
@@ -1211,13 +1295,23 @@ impl<'r> Game<'r> {
         self.state.mem.set_i32(va::IDO_SPEED, ctx.speed_mult);
         // A finished project: story special 0x0D(e, t), then the AI's designs `FRISSIT_MI_DESIGN(e, false)`
         // (production-research.md §2; inside the empire loop in the exe, which nothing later in it reads).
+        // A human's hull tech: `TervezAutomatikus` inside `TalalmanyKifejlesztve`.
         for e in &events {
-            if let ResearchEvent::Completed { empire, tech } = *e {
-                self.story_special([0x0d, empire as i32, tech as i32, 0, 0, 0, 0, 0]);
-                self.with_ai(|st, w, hooks| st.design(w, empire as usize, false, hooks));
+            match *e {
+                ResearchEvent::AutoDesign { empire, tech } => self.automatic_design(empire as usize, tech),
+                ResearchEvent::Completed { empire, tech } => {
+                    self.story_special([0x0d, empire as i32, tech as i32, 0, 0, 0, 0, 0]);
+                    self.with_ai(|st, w, hooks| st.design(w, empire as usize, false, hooks));
+                }
+                _ => {}
             }
         }
         self.events.extend(events.into_iter().map(GameEvent::Research));
+    }
+
+    /// `TervezAutomatikus(e, t)` (exe 0x4b72b0): the automatic design a human's developed hull tech brings.
+    pub(crate) fn automatic_design(&mut self, e: usize, t: usize) {
+        self.with_ai(|_, w, hooks| w.automatic_design(e, t, hooks));
     }
 
     /// `Story_Special(data)`: the story engine checks the scripts against it.

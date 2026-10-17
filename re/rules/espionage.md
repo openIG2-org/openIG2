@@ -256,6 +256,9 @@ After the queue is empty, every call recounts `HanyKemVan[e]` (§7) for `e` 1..=
 whether or not a message came; the recount only depends on the rosters, so the port runs it after each order
 (`Game::spy_order`), which leaves the same state at every tick boundary.
 
+The spy screen's own steps that touch synced state (the verdict's stream-0 roll, closing a report, the chance
+estimate's stream-0 draws) are orders of ours, `spy::Order::{Judge, Acknowledge, Estimate}` (`re/screens/spy.md` §7).
+
 Port: `spy::Order` (one variant per type) and `Spies::order(w, e, order)`; `Game::spy_order(issuer, order)`;
 `ig2_net::Command::Spy { order }` in the lockstep (ADR 0007 §1). **Verified**: 928 staged orders byte-exact through the
 exe's own handler (`traces/2026-10-16-spy-orders.md`). Orders naming a slot, empire, mission or training level

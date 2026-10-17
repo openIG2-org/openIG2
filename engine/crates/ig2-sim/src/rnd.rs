@@ -6,11 +6,14 @@
 //! hire) and the small planet, tech and money events 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173 (this
 //! file); part 2a, the relations ([`relations`]: 116, 117, 145, 147, 148), a spy mission ([`spies`]: 127), planets
 //! found ([`finds`]: 128, 129, 132, 133, 134, 136, 137, 139) and buildings ([`buildings`]: 152, 153, 155, 156,
-//! 161, 165, 166). The others don't run yet (the campaign tracer's `--keep rnd` stages only these). What the
+//! 161, 165, 166); part 2b, escorts, pirates and battles ([`battles`]: 101, 102, 108, 124, 131, 151); part 2c,
+//! spy recruits and a colony to spy out ([`spies`]: 138, 174) and the heroes ([`heroes`]: 176..=192). What the
 //! stories do to the rest of the game goes out as [`StoryEvent`]s and [`StoryWorld`] calls.
 
+mod battles;
 mod buildings;
 mod finds;
+mod heroes;
 mod relations;
 mod spies;
 
@@ -19,15 +22,29 @@ use crate::brnd::{fleet_strength, random_tech, ship_fleet};
 use crate::story::{adat, flag, last_fn, Abort, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
 /// `st_Rnd_include`.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RndStories;
+#[derive(Debug, Clone, Default)]
+pub struct RndStories {
+    /// Stories that don't run (a replay of a trace recorded before they were ported: the exe had them patched out).
+    skip: Vec<i32>,
+}
+
+/// Part 2c's stories.
+pub const PART_2C: [i32; 19] = [138, 174, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192];
+
+impl RndStories {
+    /// The script without stories `skip`.
+    pub fn without(skip: &[i32]) -> Self {
+        Self { skip: skip.to_vec() }
+    }
+}
 
 type Block = fn(&mut Story, &mut dyn StoryWorld) -> Result<(), Abort>;
 
 /// The stories ported, in the script's order.
-pub const PORTED: [i32; 36] = [
-    116, 117, 118, 127, 128, 129, 132, 133, 134, 136, 137, 139, 142, 144, 145, 146, 147, 148, 149, 150, 152, 153, 155,
-    156, 161, 163, 164, 165, 166, 169, 170, 171, 172, 173, 199, 242,
+pub const PORTED: [i32; 61] = [
+    101, 102, 108, 116, 117, 118, 124, 127, 128, 129, 131, 132, 133, 134, 136, 137, 138, 139, 142, 144, 145, 146, 147,
+    148, 149, 150, 151, 152, 153, 155, 156, 161, 163, 164, 165, 166, 169, 170, 171, 172, 173, 174, 176, 177, 178, 179,
+    180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 199, 242,
 ];
 
 impl Script for RndStories {
@@ -36,18 +53,24 @@ impl Script for RndStories {
         if w.multiplayer() {
             return;
         }
-        let stories: [(i32, Block); 36] = [
+        let stories: [(i32, Block); 61] = [
+            (101, battles::escort_101),
+            (102, battles::escort_102),
+            (108, battles::chase),
             (116, relations::peace),
             (117, relations::trade),
             (118, bounty),
+            (124, battles::prey),
             (127, spies::mission),
             (128, finds::tech_planet),
             (129, finds::lost_tech),
+            (131, battles::scientist),
             (132, finds::ruins),
             (133, finds::race),
             (134, finds::marked),
             (136, finds::deserter),
             (137, finds::far_tech),
+            (138, spies::recruits_138),
             (139, finds::settlers),
             (142, wormholes),
             (144, low_morale),
@@ -57,6 +80,7 @@ impl Script for RndStories {
             (148, relations::swap_148),
             (149, nearest_planets),
             (150, epidemic),
+            (151, battles::monster),
             (152, buildings::quake),
             (153, buildings::weaker_guns),
             (155, buildings::poorer),
@@ -71,12 +95,30 @@ impl Script for RndStories {
             (171, tribute_171),
             (172, tribute_172),
             (173, tribute_173),
+            (174, spies::colony_174),
+            (176, heroes::hero_176),
+            (177, heroes::hero_177),
+            (178, heroes::hero_178),
+            (179, heroes::hero_179),
+            (180, heroes::hero_180),
+            (181, heroes::hero_181),
+            (182, heroes::hero_182),
+            (183, heroes::advisers_183),
+            (184, heroes::hero_184),
+            (185, heroes::maps_185),
+            (186, heroes::engineers_186),
+            (187, heroes::instructors_187),
+            (188, heroes::terrorists_188),
+            (189, heroes::rumour_189),
+            (190, heroes::spy_ship_190),
+            (191, heroes::find_191),
+            (192, heroes::market_192),
             (199, video),
             (242, heroes),
         ];
         for (id, story) in stories {
             // The catch handler of each story block: `WIN(0, 1)`, then the next story.
-            if s.running(id) && story(s, w).is_err() {
+            if !self.skip.contains(&id) && s.running(id) && story(s, w).is_err() {
                 s.win(0, true, w);
             }
         }
@@ -160,7 +202,7 @@ fn campaign_id(w: &dyn StoryWorld, campaign: i32, id: i32, other: i32) -> i32 {
 }
 
 /// `cvttsd2si`: out of range and NaN give `i32::MIN`.
-fn cvtt(x: f64) -> i32 {
+pub(crate) fn cvtt(x: f64) -> i32 {
     if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 {
         i32::MIN
     } else {
@@ -194,6 +236,15 @@ impl Story {
         w.event(StoryEvent::SetTechState { tech: t, state: 5, empire: e });
         let e = if e < 0 { w.human() } else { e };
         self.specials.add(e, t);
+    }
+
+    /// `st_SetTalalmanyAllapot(t, state, e)` (exe 0x602920) for any state: only state 5 queues the special.
+    pub fn set_tech_state_to(&mut self, t: i32, state: i32, e: i32, w: &mut dyn StoryWorld) {
+        if state == 5 {
+            self.set_tech_state(t, e, w);
+        } else {
+            w.event(StoryEvent::SetTechState { tech: t, state, empire: e });
+        }
     }
 }
 

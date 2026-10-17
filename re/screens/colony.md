@@ -6,7 +6,8 @@ where offsets or values differ (camera globals, battlefield layout, tables) and 
 reference captures of the running exe (§8). `[inf]` marks inference.
 
 Scope: the 3D view (camera, terrain object, buildings, roads, units, shots), what is hidden on planets the human
-doesn't see into, and the HUD's layout. Text, the HUD's contents and input → commands are listed in §7 but not specified.
+doesn't see into, the HUD's layout, the building orders (`MULTIGET_Colony`, §9) and the building screen's input with
+the 2D parts it owns (§10). The ground war's unit orders and the rest of §7 are not specified here.
 
 ## 1. Frame structure
 
@@ -189,8 +190,11 @@ bases/selection, `WF::WriteStuff`, the radar, special-weapon buttons), `_2` (pla
 over depth 2300..2800.
 
 ## 7. Not specified here
-The HUD's contents and texts, `ColonyKeyboardHandler`/`ColonyGestureHandler` and the build/selection input, the
-shadow map (`rendershadowmap`), scenery objects (`LoadScapeObj`), weather particles, lightning, lens flare, building
+The ground war's input (unit selection, moves, targets, mines, air strikes, landing: `GetNearestBuilding`'s unit half,
+hot-spots 0xb..=0x10, 0x12), the planet info mode (`ColonyPlanetInfoMod`, `StarmapHosszuInfoKiir`, hot-spots
+0x15..=0x1e: their tax / autobuild / priority drop-downs send starmap message 0x19), renaming the planet (`IOMode`),
+`ColonyGestureHandler`, the small turning model beside the building info (`HandleKisInfoObject`), the self-destruct
+buttons (hot-spots 8, 10, `WriteSelfDestruct`), the shadow map (`rendershadowmap`), scenery objects (`LoadScapeObj`), weather particles, lightning, lens flare, building
 effects (`AddBuildingSpecEffect`, `PlaceVillam`), construction cuts and scaffolding, landing zones, the build grid.
 
 ## 8. Reference captures
@@ -202,3 +206,120 @@ planet 42: the exe's camera after entering is pivot (0, 375.6696, 333.1013), eye
 `ig2-client --snapshot --colony 42` computes the same values; buildings, roads, terrain and rocks line up in the
 images. Planet 54 of `replay-quick1-battles-ground-x16/0.sav` (owner AI 3, no satellites): red footprints only, as the
 client draws them. Captures hold game imagery: `_local/snapshots/ref/`, never committed.
+
+## 9. The colony screen's orders (`MULTIGET_Colony`)
+`MULTIGET_Colony` (ELF 0x4ec2e0, exe 0x48a270; found by its `Multi_GetNextTipus(0x1f, 0x27)` / `(300, 399)` calls) runs
+every frame like the starmap's handler (`re/screens/starmap.md` §10): each message is `Multi_Get(type, &issuer, …)`
+with int values, applied on every peer. Port: `ig2_sim::game::ColonyOrder` (`from_message`/`to_message`),
+`Game::colony_order`, `ig2_net::Command::Colony { kind, values }`; outcomes for the issuer's screen are
+`GameEvent::ColonyOrder(ColonyOrderEvent)`. Values: planet p, building slot k (1-based), kind t.
+
+| Type | Values | What the exe does |
+|---|---|---|
+| 0x1f | p, t, x, y | `NemSzabadEpiteni − 1` when from `EN` (UI); unless the research cheat 0xB7727C is set: `MoneyMennyi(e, 0) < GetGyartasAr(e, EpuletekLeiro[t].tech)` (f64 compare) → the line `GetString(3, 2, 10)` ("You don't have enough money to build a %s!") for the issuer, whose screen drops the cursor (`ColonyRemoveBuilding`), nothing else; else `MoneyHozzaadLog(e, 0, −price)`. Then `EpuletNewSearchLocation(p, t, false, 0, x, y)`: `LocateSuitableLocation` searched from (x, y) (colony-placement.md §3–§5); no room → no building and **the money stays spent** [original behaviour]. `EpuletNew` (exe 0x53c7d0: the tutorial's events, `AddBuildingTurrets(t, 100, owner, slot, p)`); the issuer's screen on p selects the new slot (`AktEpulet`, when `CanModifyAktEpulet`). |
+| 0x20 | p, k | `MoneyHozzaadLog(e, 0, GetGyartasAr(e, tech of Epuletek[p][k]) / 2)` (int division: `cdq; sub; sar`), `EpuletDelete(p, k)` (exe 0x53c730): a `'+'` building resets the self-destruct, the colony screen on p drops `AktEpulet`, turrets removed, kind 0, `HanyEpulet[p] − 1`, `RemoveTarget(−k)`. No check of k: an empty slot is "deleted" again (`HanyEpulet` one too low until the next recount, below) and a slot past `HanyEpuletLefoglalva` reads the block's unused records; the port refuses k outside 1..=`HanyEpuletLefoglalva[p]` (the screen never sends one). |
+| 0x21 | p, k | `+0x19 ^= 2`. The colony screen's code never sends it. |
+| 0x22..=0x25 | p, unit, … | the ground war's move, waypoint, target, stop (not ported here). |
+| 0x26 | p | `KiMelyikBolygonVan[e − 1] = p` (`(&0x9ABAE4)[e]`, unsaved; e = 0 writes `Colony_elozo_foldrenges`). `Colony_Belep` sends it. |
+| 0x27 / 300 | p | the self-destruct starts (`WF+0x334 = 399`, ground-combat.md §11) / is called off (−1). |
+| 0x12d, 0x12f, 0x130, 0x134 | | detonate, landing zone done, air strike, a unit's flag (ground war, not ported). |
+| 0x132 | p, k | `+0x19 ^= 0x20`: the building's on/off switch (hot-spot 0x11 "Switch on/off", key E; `FRISSIT_Planet` keeps a switched-off building idle). |
+| 0x133 | p, k | if the slot's kind ≠ 0: cost = `EpuletJavitasAr` (inlined) = `(int)((f32)Talalmanyok[tech]+0x14 · (f32)damage / (f32)EpuletekLeiro[t]+8)`, the tech's own price without the race discount (`mulss`, then `divss`); `MoneyMennyi < cost` → the same refusal line for the issuer; else `MoneyHozzaadLog(e, 0, −cost)` and six `EpuletDamage(p, k, −damage, false, 10000)` (the first repairs it all and shares the repair with its turrets, the other five pass 0). |
+
+`FRISSIT_Planet` (exe 0x474930, also its display refresh `FRISSIT_Planet(false, p)` that `FRISSIT_Epuletek` runs for
+planets with repairs) recounts `HanyEpulet[p]` from the records (`= 0`, `+1` per non-empty slot); the port's refresh
+returns the count (`colony::refresh`).
+
+Verified (`re/rules/traces/2026-10-17-colony-orders.md`): 730 messages staged through the exe's own handler in three
+save-replay recordings, byte-exact.
+
+## 10. The building screen's input and its 2D parts (`ig2-client::colony_ui`)
+Hot-spots (`Colony_MouseInit` ELF 0x4e0b80: `Mouse_Szoveg_Set(id, 0, x, y, w, h, tooltip GetString(3, 1, n))`;
+enabled per frame by `Colony_MouseInit2` 0x4e1d90; the actions are `Colony_Main`'s, ELF 0x4dadf0 / exe 0x4666d0):
+
+| Id | Rect | Enabled | Action |
+|---|---|---|---|
+| 1 | (179, 443) 31 × 31 | own planet not at war, a building selected, damaged, `+0x19` bit 4 clear | `ColonyRepairWindow` (drops the build cursor) |
+| 2 | (212, 443) 31 × 31 | as 1 without the damage test (and not `TutorialDisableEpuletLerombolas`) | `ColonyDemolishWindow` |
+| 4 | (0, 424) 166 × 56 | always | released with the right button: the starmap; with the left: the planet info mode |
+| 5 | (522, 362) 100 × 100 | always | the camera glides to the radar point, `ColTargetX = (−(mx − 572)/50)·8192/2`, `ColTargetY = (−(my − 412)/50)·8192/2`, over 10 frames (`ColTFrame`), while held |
+| 6 | (25, 39) 145 × 99 | own planet, not at war, not in info mode | the build menu's pick list (below), unless build orders are on their way (`NemSzabadEpiteni`) |
+| 0x11 | (245, 443) 31 × 31 | as 2 | `Multi_Send(0x132, p, AktEpulet)` |
+| 0x13 | (63, 148) 85 × 17 | | "Build": `colony_start_build` |
+| 0x14 | (0, 20) 640 × 460 | always | the 3D view (below) |
+
+The pick list (`ColonySelectEpuletMode`): pressing hot-spot 6 opens it at (mx + 12, my − 17) (x 163 when `x + 477 >
+640`), drawn only after 300 ms (`SelectBuildingMikorVoltLenyomas`): `FadeKerettelKerekit(x − 6, y − 2, 4·120 + 3,
+rows·13 + 18)` with fill (0, 10, 0) t 60 and edge (0, 5, 0) t 30; the headers `Epulet_Terulet_Nev[1..=4]`
+(`StringReadAll`: the Hungarian txt17 §3, 35..=38) centred at x + 120(k − 1) + 54, y + 3, colour 6; the entries are the
+techs 0x51..=0x90 the human owns (status 5; race 5 lacks 0x69, 0x81..=0x83), in column (t − 0x51)/16, one 13-pixel row
+each from y + 17: the name at +8 (size 2, colour 3; 1 without a working colony hub, except 0x51; 6 under the pointer)
+and the planet's count of that kind left of it (size 1, colour 0xc). While held, the entry under the pointer (x .. x +
+114) is `colSelected` (only the hub's without a hub); hovering one drops the build cursor. Released under 301 ms
+after the press: the build cursor toggles for the current kind; else the entry's building `Talalmanyok[t] + 0x27`
+becomes `AktEpuletTipus` with the cursor up. Without a working hub (`SearchBuilding(p, 1, true)`) only the hub can be
+picked.
+
+The 3D view: without the build cursor the left button selects the building under the pointer (`GetNearestBuilding`'s
+`selectedepulet + 1`, the model hit by the click; finished defence posts 0x20..=0x23 select their turrets and give 0)
+and makes its kind `AktEpuletTipus`. With the cursor up (`ShowColony`): the pointer's ground cell `AktBGridX/Y`
+(`Real2Grid` ELF 0x4717e0: `floor((S/2 − x)·99/S/100·99·2)`, `floor((y + S/2)·99/S/100·99·2)`) is searched for the
+kind's first free spot (`LocateActBuildingSuitableLocation` 0x4bc820 = `LocatePos(CheckAllocation, …)` over the road
+grid and the units: the order's own search), and the half-transparent model `tempepulet` stands there
+(`AktBGridXSarga/YSarga`), lit red when the spot is taken; a left click with a free spot (or the Build button) runs
+`colony_start_build` (ELF 0x4dcbb0: `NemSzabadEpiteni + 1`, `Multi_Send(0x1f, p, AktEpuletTipus, x, y)`, the cursor
+down, `CanModifyAktEpulet`); no spot → the line `GetString(3, 2, 2)` with the name; no hub → `GetString(3, 2, 1)`; the
+right button drops the cursor.
+
+The windows: `ShowRepairWindow`/`ShowDemolishWindow` (ELF 0x4bae90/0x4ba980) `FadeKerettelKerekit(222, 408, 6n, 56)` /
+`(239, 420, 6n, 44)` with fill (0, 20, 30) t 60 and edge (0, 15, 25) t 30, n = strlen(title) + 2; the texts
+(`WriteRepairWindow` 0x4baf50 / `WriteDemolishWindow` 0x4baa40): the title `GetString(3, 4, 4)` / `(3, 4, 1)` at
+(x, 411) / (x, 423) in n cells, the repair's "The price: " `(3, 4, 5)` + `EpuletJavitasAr` at (x, 423), "Yes"/"No"
+(`(3, 4, 2)`, `(3, 4, 3)`) centred at x + 3n, y 435 / 449, size 3, colour 2 under the pointer, else 1. They open on the
+button's press and take their answer once the left button is up (`HandleRepairWindow`/`HandleDemolishWindow` in
+`ColonyGfx2D_3`): row 1 = y 434..=446, row 2 = 448..=460, within x .. x + 6n; "Yes" sends 0x133 / 0x20 (the demolish
+also drops `AktEpulet`), anything else shuts it: the answer is a press on the button, a drag to "Yes" and the
+release.
+
+Keys (`ColonyKeyboardHandler`): E = 0x132 for the selected building, Shift+Delete = 0x20 at once, PageUp/PageDown =
+the previous/next planet the human owns and sees (`+0xd8 + 2·EN > 0`), I = the planet info mode.
+
+The selection marker (`DrawBuildingSelection` ELF 0x482ca0): `epkij.bmp` on two flat triangles at the building's placed
+height `+0x14` plus `allvanypoziciok[k − 1]` − 20 (exe 0x8F3878, 60 floats, `ig2-rules::scaffold_heights`), half sizes
+`w·40·Building[k − 1].select + 2·selectionsize` and `h·40·… ` (exe `+0x68`, ELF `+0x6c`, `ig2-rules::BuildingModel::select`),
+alpha `selectionatlatszosag`. `Frissit2_Colony` animates it per UI frame: a new selection starts at size 300, shrinking
+×0.95 (alpha `(255 − (size − 3))/3`) until it reaches `sin(ColonyCounter/30)·3 + 3`, then it pulses with alpha
+`−sin(ColonyCounter/30)·64 + 128`. (Each triangle draws a libc `rand()` into an unused counter: render-only.)
+
+The short info (`ColonyGfx2D_2` → `StarmapRovidInfoKiir(50, 424)` with `StarmapMode` 1): `FRISSIT_Colony2` sets
+`ColonyInfoMod` 1 with units selected, 2 with a building selected, else 0. 0 shows the planet's short info
+(re/screens/starmap.md §11), 2 `ColonyKisInfo` (ELF 0x4edb40): the building's tech name at (50, 427), size 2, colour
+0x22 (the mafia's name `MaffiaNev[tech − 0x51]` for a `+0x19` bit 4 building of techs 0x52..=0x90); "Damage :"
+`(3, 2, 11)` at (50, 448), size 1, colour 0x23, with `DrawHpStripe(max − damage, max, 98, 448, 50)` (ELF 0x45f6a0: a
+black 5-pixel bar, inside it `(w − 2)·v/max` pixels of colour 7 above half, 3 above a quarter, else 6); not working:
+"Not working" `(3, 2, 14)` at y 439 and for a producer (`EpuletekLeiro[t]+1 ≠ 0`) "Product: nothing" `(3, 2, 15)` at
+y 457, or under construction "Not completed" `(3, 2, 16)` and "Compl. :" `(3, 2, 17)` with the bar `(work − left/50,
+work)` at (98, 457); working: "Working:   %" `(3, 2, 12)` without its '%' at y 439 and the efficiency `+0x1e·100/256`
+with '%' right-aligned in 4 cells after the whole text (colour 6 below 100), and for a producer "Product:"
+`(3, 2, 13)` and the icon byte (1 workers, 2 energy, 3 money) + `output · +0x18 · +0x1e / 256` (×
+`GetBolygoGazdagsag(p)`/100 for class 3; kinds 6/7 show 5000/7000 with planet info −0x215c) at y 456, size 2.
+`HandleKisInfoObject` (ELF 0x4ce840) also turns a small copy of the building's model beside it (not drawn by the
+client).
+
+The panel's turning building (`ShowColony`, `buildshown`): when `AktEpuletTipus` changes, the preview model
+`Building[k − 1]+0x28` (`LoadMaxLevelBox`) is `AddToScene(…, mainxvb2, Building+0x54 · 3/2)` (1.5 at most below
+`OptionsBuildingRes` 2), its `_A_`/`_B_`/`_C_` children as the buildings', `RotateObj(π/2, 0, 0)`,
+`RotateObj2((1, 0, 0), −0.3)`, camera-fixed (`SetRelative(false)`) at (0, 0, −30000); `Frissit2_Colony` turns it 0.012
+per UI frame about `(0, cos −0.3, sin −0.3)`; the second `Update3D` draws it in the viewport 18..173 × 36..167 centred
+on (95, 101) (`ShowColony`'s `HatarX1..`, `xcenter`, `ycenter`). A unit being placed shows its hull instead
+(`AktEpuletTipus = −10 − design`).
+
+Deviations in the client: the building under the pointer is the one whose footprint holds the pointer's cell (the
+original tests the model hit by the click); a left drag on the view pans the camera (the original scrolls at the
+window's edges and box-selects units with it); the build cursor's red light is a tint.
+
+Verified: `ig2-client`'s test `building_through_the_screen_reaches_the_sim` drives quick-1.sav's planet 42 through the
+pick list, the cursor, a click (0x1f: the building stands where the cursor showed and is selected) and the demolish
+window (0x20); the capture comparison is in `re/screens/diff-results.md` (`--colony-live`: the exe's state save is
+written on the colony screen, so the camera is the live `ColonyXStart…` chunks; `--colony-ui pick|demolish|build`
+renders those states).

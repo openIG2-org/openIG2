@@ -59,8 +59,11 @@ pub struct BuildingView {
     pub work_left: u16,
     /// `+4`: damage (the repair button shows while it is positive).
     pub damage: i32,
-    /// `+0x19` bit 4: blinking (`ShowColony`).
+    /// `+0x19`: bit 0 working, bit 4 blinking (`ShowColony`), bit 5 switched off.
     pub flags: u8,
+    /// `+0x18`: output factor (%); `+0x1e`: efficiency (256 = full).
+    pub yield_pct: u8,
+    pub efficiency: i16,
 }
 
 /// A unit (`WF_Tank`) as the colony screen draws it (spec §4).
@@ -149,7 +152,7 @@ impl ColonySnap {
             .iter()
             .enumerate()
             .filter(|(_, b)| b.kind != 0)
-            .map(|(i, b)| BuildingView { slot: i + 1, kind: b.kind, x: b.x, y: b.y, work_left: b.work_left, damage: b.damage, flags: b.flags })
+            .map(|(i, b)| BuildingView { slot: i + 1, kind: b.kind, x: b.x, y: b.y, work_left: b.work_left, damage: b.damage, flags: b.flags, yield_pct: b.yield_pct, efficiency: b.efficiency })
             .collect();
         let units = field
             .units
@@ -432,6 +435,10 @@ pub struct ColonyScene {
     pub building_at: Vec<(usize, V3)>,
     /// The radar's picture: the terrain seen from straight above (re/screens/hud.md §3.1).
     pub radar: Option<TexId>,
+    /// What the baked buildings were made from: `(slot, kind, x, y, finished)` ([`ColonyScene::stale`]).
+    key: Vec<(usize, u8, i32, i32, bool)>,
+    /// Building models for the build cursor (`tempepulet`), by kind.
+    buildings: HashMap<u8, Option<UnitMesh>>,
 }
 
 fn texture(r: &mut Renderer, install: &Install, cache: &mut HashMap<String, TexId>, white: TexId, path: Option<&str>) -> TexId {
@@ -625,12 +632,40 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true) });
         }
-        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar) })
+        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new() })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
     pub fn fog(&self) -> [f32; 3] {
         self.fog
+    }
+
+    /// The buildings changed since the scene was baked (built, demolished, finished): `Init3dColony`'s building
+    /// loop must run again (the original adds and removes them one by one: `Build3dBuilding`, `Remove3dBuilding`).
+    pub fn stale(&self, s: &ColonySnap) -> bool {
+        self.key != scene_key(s)
+    }
+
+    /// A building kind's model with its textures (`LoadMaxLevelBox(Building[k − 1])`), for the build cursor.
+    fn building_mesh(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: u8) -> Option<&UnitMesh> {
+        let (textures, white) = (&mut self.textures, self.white);
+        self.buildings
+            .entry(kind)
+            .or_insert_with(|| {
+                let bm = rules.building_models.get(kind as usize)?;
+                let mut model = Model::load(install, "vector/colony/", &bm.model, "textures/colony/").map_err(|e| eprintln!("ig2-client: building {kind}: {e}")).ok()?;
+                model.set_look("_a_", Look::Glass(0.4));
+                model.set_look("_c_", Look::Glass(0.4));
+                let texs = model.parts.iter().map(|p| texture(r, install, textures, white, p.texture.as_deref())).collect();
+                Some(UnitMesh { model, texs })
+            })
+            .as_ref()
+    }
+
+    /// `epkij.bmp` (`epuletkijelolestextura`, `Init3dColony`): the selected building's marker.
+    fn marker_texture(&mut self, r: &mut Renderer, install: &Install) -> TexId {
+        let path = install.resolve_texture("textures/colony/", "epkij.bmp");
+        texture(r, install, &mut self.textures, self.white, path.as_deref())
     }
 
     fn unit_mesh(&mut self, r: &mut Renderer, install: &Install, um: &UnitModels, u: &UnitView) -> Option<&UnitMesh> {
@@ -815,6 +850,27 @@ fn bottom_vertex(m: &Model, rel: &Transform, map: &GroundMap, x: f32, y: f32) ->
 pub struct View {
     pub camera: Camera,
     pub scale: f32,
+    /// What the colony screen's input adds to the 3D pass (`crate::colony_ui`).
+    pub overlay: Overlay,
+}
+
+/// The build cursor and the selection marker, drawn with the scene.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Overlay {
+    /// `tempepulet` (`ShowColony`): the build menu's building at the spot found for it, half transparent.
+    pub ghost: Option<Ghost>,
+    /// `DrawBuildingSelection` (ELF 0x482ca0): building slot `slot`'s marker, `size` = `selectionsize`, `alpha` =
+    /// `selectionatlatszosag` (0..=255).
+    pub selection: Option<(usize, f32, i32)>,
+}
+
+/// The build cursor: building `kind` at grid cell `at` (`AktBGridXSarga/YSarga`); `blocked` lights it red
+/// (`SetLightColor(Tlight, 0xff)` when `CheckAllocation` reports the spot taken).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ghost {
+    pub kind: u8,
+    pub at: (i32, i32),
+    pub blocked: bool,
 }
 
 impl View {
@@ -831,7 +887,7 @@ impl View {
                 }
             }
         }
-        Self { camera, scale }
+        Self { camera, scale, overlay: Overlay::default() }
     }
 
     pub fn resize(&mut self, size: (u32, u32), scale: f32) {
@@ -901,6 +957,7 @@ impl View {
                 push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
             }
         }
+        self.overlay_models(r, install, rules, gm, scene, curr, &mut dynamic, &mut draws);
         let l = scene::normalise([-1.0, -1.0, 1.0]);
         f.scene = Some(Scene3d {
             uniforms: SceneUniforms {
@@ -935,6 +992,91 @@ impl View {
         let _ = time;
         f
     }
+}
+
+impl View {
+    /// The build cursor (`ShowColony`'s `tempepulet` block) and the selection marker (`DrawBuildingSelection`).
+    #[allow(clippy::too_many_arguments)]
+    fn overlay_models(&self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, gm: &GroundMap, scene: &mut ColonyScene, curr: &ColonySnap, dynamic: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+        if let Some(g) = self.overlay.ghost {
+            let (w, h) = rules.building_footprints.get(g.kind as usize).copied().unwrap_or((0, 0));
+            let scale = rules.building_models.get(g.kind as usize).map_or(0.0, |b| b.scale);
+            if let Some(mesh) = scene.building_mesh(r, install, rules, g.kind) {
+                // The model's centre: the cell, odd sizes shifted half a cell (`Grid2Real` of the frame box's corners).
+                let (ox, oy) = (if w % 2 != 0 { 0.5 } else { 0.0 }, if h % 2 != 0 { -0.5 } else { 0.0 });
+                let (wx, wy) = grid_to_real(g.at.0 as f32 + ox, g.at.1 as f32 + oy);
+                let rec = Placement::genesis(mesh.model.origin, scale / 1024.0 / 1000.0);
+                let rel = rec.world((0.0, HALF_PI, 0.0), [0.0; 3]);
+                let bottom = bottom_vertex(&mesh.model, &rel, gm, wx, wy);
+                let xf = Transform { translation: [bottom - 1.0, wx, wy], ..rel };
+                let tint = if g.blocked { [1.0, 0.25, 0.25] } else { [1.0; 3] };
+                let (mut v, mut rg) = (Vec::new(), Vec::new());
+                bake(&mesh.model, &xf, tint, 1.0, &mut v, &mut rg);
+                let base = dynamic.len() as u32;
+                // `SetObjTransparency(tempepulet, 0.5)`.
+                for x in &mut v {
+                    x.color[3] *= 0.5;
+                }
+                dynamic.extend(v);
+                for (range, pi, _) in rg {
+                    draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: true });
+                }
+            }
+        }
+        let Some((slot, size, alpha)) = self.overlay.selection else { return };
+        let Some(b) = curr.buildings.iter().find(|b| b.slot == slot) else { return };
+        let Some(&(_, at)) = scene.building_at.iter().find(|(s, _)| *s == slot) else { return };
+        let (w, h) = rules.building_footprints.get(b.kind as usize).copied().unwrap_or((0, 0));
+        let k = rules.building_models.get(b.kind as usize).map_or(0.0, |m| m.select);
+        let lift = rules.scaffold_heights.get((b.kind as usize).wrapping_sub(1)).copied().unwrap_or(0.0) - 20.0;
+        let (hx, hy) = ((w * 0x28) as f32 * k + size * 2.0, (h * 0x28) as f32 * k + size * 2.0);
+        let tex = scene.marker_texture(r, install);
+        // Flat at the building's placed height (`+0x14`) plus `allvanypoziciok[k − 1] − 20` (up is −h).
+        let z = at[0] + lift;
+        let c = [1.0, 1.0, 1.0, alpha.clamp(0, 255) as f32 / 255.0];
+        let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [z, at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };
+        let base = dynamic.len() as u32;
+        dynamic.extend([q(-hx, hy, 0.0, 1.0), q(hx, hy, 1.0, 1.0), q(hx, -hy, 1.0, 0.0), q(-hx, hy, 0.0, 1.0), q(-hx, -hy, 0.0, 0.0), q(hx, -hy, 1.0, 0.0)]);
+        draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true });
+    }
+
+    /// The ground point under window pixel `p` (`Update3D`'s click test against the terrain): the eye's ray
+    /// marched over the heights until it goes below the ground; world `(x, y)`.
+    pub fn ground_at(&self, gm: &GroundMap, p: [f32; 2]) -> Option<(f32, f32)> {
+        let v = self.camera.basis(gm);
+        let k = self.camera.size[1] / 480.0;
+        let (vx, vy) = ((p[0] - self.camera.size[0] / 2.0) / k + 320.0, p[1] / k);
+        let c = [(vx - 320.0) / 600.0, (vy - 240.0) / 600.0, -1.0];
+        let r = v.rows;
+        let d: V3 = std::array::from_fn(|j| r[0][j] * c[0] + r[1][j] * c[1] + r[2][j] * c[2]);
+        let n = scene::normalise(d);
+        let half = MAP_SIZE / 2.0;
+        let mut t = 0.0f32;
+        let mut last = v.eye;
+        while t < 20000.0 {
+            t += 8.0;
+            let q = [v.eye[0] + n[0] * t, v.eye[1] + n[1] * t, v.eye[2] + n[2] * t];
+            if q[1].abs() > half * 1.5 || q[2].abs() > half * 1.5 {
+                return None;
+            }
+            // Up is −h: under the ground once h passes the terrain's height there.
+            if q[0] >= height(gm, q[1], q[2]) {
+                let mid = ((q[1] + last[1]) / 2.0, (q[2] + last[2]) / 2.0);
+                return (mid.0.abs() <= half && mid.1.abs() <= half).then_some(mid);
+            }
+            last = q;
+        }
+        None
+    }
+}
+
+/// `Real2Grid` (ELF 0x4717e0): world `(x, y)` → the grid cell, `floor((S/2 − x)·99/S/100·99·2)` and
+/// `floor((y + S/2)·99/S/100·99·2)` (f32, floored in f64).
+pub fn grid_cell(x: f32, y: f32) -> (i32, i32) {
+    let s = MAP_SIZE;
+    let fy = ((y + s / 2.0) * 99.0) / s;
+    let gx = (((-x + s / 2.0) * 99.0) / s) / 100.0 * 99.0 * 2.0;
+    ((gx as f64).floor() as i32, ((fy / 100.0 * 99.0 * 2.0) as f64).floor() as i32)
 }
 
 /// The radar's picture (re/screens/hud.md §3.1): the terrain rendered from straight above, the radar's left edge
@@ -1034,7 +1176,7 @@ impl View {
 
 /// The colony HUD's state (re/screens/hud.md §3) for the shown planet, with the build menu on `build_kind`.
 #[allow(clippy::too_many_arguments)]
-pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usize) -> Vec<u8>, curr: &ColonySnap, view: &View, maps: &[GroundMap], build_kind: usize) -> crate::hud::ColonyHud {
+pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usize) -> Vec<u8>, curr: &ColonySnap, view: &View, maps: &[GroundMap], build_kind: usize, selected: usize) -> crate::hud::ColonyHud {
     use ig2_sim::save::{va, PLANET_SIZE};
     let en = state.mem.i32(va::EN).clamp(0, 18) as usize;
     let r = state.mem.read(va::PLANETS + (curr.planet * PLANET_SIZE) as u32, PLANET_SIZE);
@@ -1059,8 +1201,8 @@ pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usi
     } else {
         Vec::new()
     };
-    // `AktEpulet`: entering with `WF+0x184` selects the first building (`SelectBuildingRelative(1)`).
-    let selected = curr.buildings.first().filter(|_| curr.camera.centre).map(|b| (b.damage, b.flags));
+    // `AktEpulet` (`crate::colony_ui`).
+    let selected = curr.buildings.iter().find(|b| b.slot == selected).map(|b| (b.damage, b.flags));
     crate::hud::ColonyHud {
         own,
         selected,
@@ -1070,7 +1212,12 @@ pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usi
         buildings,
         units,
         view: maps.get(curr.map).and_then(|gm| view.radar_view(gm)),
+        panel_model: None,
     }
+}
+
+fn scene_key(s: &ColonySnap) -> Vec<(usize, u8, i32, i32, bool)> {
+    s.buildings.iter().map(|b| (b.slot, b.kind, b.x as i32, b.y as i32, b.work_left == 0)).collect()
 }
 
 fn axis_x(angle: f32) -> M3 {

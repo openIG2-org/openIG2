@@ -24,6 +24,11 @@ impl Virtual {
     pub fn px(&self, x: f32, y: f32) -> [f32; 2] {
         [self.x0 + x * self.k, y * self.k]
     }
+
+    /// Window pixels → virtual pixels.
+    pub fn virtual_of(&self, p: [f32; 2]) -> [f32; 2] {
+        [(p[0] - self.x0) / self.k, p[1] / self.k]
+    }
 }
 
 /// Text alignment (`KiirStr`'s flags & 3): 0 left, 1 centred in the `len` cells, 2 right-aligned in them, 3 centred

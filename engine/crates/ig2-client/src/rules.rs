@@ -163,6 +163,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
         ground_maps: maps,
         space: space_rules(inst, &r)?,
+        satellite_prices: r.satellite_prices.clone(),
     };
     Ok((rules, r.tech_defaults))
 }

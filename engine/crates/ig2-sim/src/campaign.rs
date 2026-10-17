@@ -237,7 +237,14 @@ impl Story {
     /// conquered (and the race written when non-zero).
     pub fn set_planet_owner(&mut self, p: i32, owner: i32, w: &mut dyn StoryWorld) {
         let race = w.race(owner);
+        let conquest = w.planet_owner(p) != 0;
         w.event(StoryEvent::SetPlanetOwner { planet: p, owner, race });
+        // `BolygoElfoglal` cures the planet (exe 0x542980) and, with nothing infected left, ends the epidemic:
+        // `StoryAdat+0x30 := 0` and info 0x65 off every planet.
+        if conquest && w.conquest_ends_epidemic(p) {
+            self.set_adat_i32(crate::story::adat::EPIDEMIC, 0);
+            w.event(StoryEvent::EpidemicOver);
+        }
     }
 
     /// `st_bUnhide(x)` (exe 0x604040): planet `−x` (`x ≤ 0`) or the planet with story id `x`; every empire's

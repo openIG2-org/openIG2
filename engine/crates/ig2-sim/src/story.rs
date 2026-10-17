@@ -432,6 +432,36 @@ pub enum StoryEvent {
     SpyReport { kind: i32, spy: i32 },
     /// Spy `slot` of empire `empire`: `+0x10 := 0` (gone).
     KillSpy { empire: i32, slot: i32 },
+    /// `EpuletDelete(p, k)` (exe 0x53c730): the building goes (kind 0, `HanyEpulet[p]` −1, its turrets and target).
+    DeleteBuilding { planet: i32, slot: i32 },
+    /// Tech `t`'s prerequisite `slot` (1..=3, `+0x2c + slot`) written (`st_Rnd` 131's fake prerequisite 0xb8).
+    TechPrereq { tech: i32, slot: i32, value: i32 },
+    /// Tech `t`: the human's research time left (`+0x58 + 4·EN`) written.
+    TechResearchTime { tech: i32, value: i32 },
+
+    // st_Rnd_include part 2c (crate::rnd, spec §8.13).
+    /// Empire `empire`'s view of the planet (`+0xd8 + 2·e`, i16) written.
+    SetPlanetViewOf { planet: i32, empire: i32, view: i32 },
+    /// The planet's name (`+0x00`) := `_s(5, text)`.
+    NamePlanet { planet: i32, text: i32 },
+    /// `st_Rnd` 138: the human's new spy `slot` (`Spy_New`) gets 138's record, recruit name `name` (0..7) and `xp`.
+    StoryRecruit { slot: i32, name: i32, xp: i32 },
+    /// Fleet `+0x00` (its name) := `_s(5, text)`, or `AlapFlottaNev` for `None`.
+    NameFleet { fleet: i32, text: Option<i32> },
+    /// Fleet `+0x30`, `+0x34` written.
+    SetFleetPos { fleet: i32, x: f32, y: f32 },
+    /// Fleet `+0x15` (its owner) written.
+    SetFleetOwner { fleet: i32, owner: i32 },
+    /// `Tankok[k]` `+2` (the units' design) written.
+    SetTankDesign { tank: i32, design: i32 },
+    /// `TervCopy(e, from, to)` (exe 0x541cd0): design record `from` copied over `to`.
+    CopyDesign { empire: i32, from: i32, to: i32 },
+    /// Design `+0x80` (its story key) written.
+    SetDesignKey { empire: i32, design: i32, key: i32 },
+    /// Design `+0x18`, `+0x19` written.
+    DesignFlags { empire: i32, design: i32, b18: i32, b19: i32 },
+    /// Design `+0x00` (its name) := `_s(5, text)`, or for `None` its tech's name (`Talalmanyok[+0x48]`).
+    NameDesign { empire: i32, design: i32, text: Option<i32> },
 }
 
 /// A message parameter's text (`SetParamStr`).
@@ -882,9 +912,43 @@ pub trait StoryWorld {
     fn building_bytes(&self, _p: i32, _k: i32) -> (i32, i32) {
         (0, 0)
     }
+    /// After `BolygoElfoglal(p, …)`: the cure of exe 0x542980 (the planet's `+0xb8 := 0`; the new owner's fleets
+    /// with `dx² + dy² < 100` from it lose `+0x52` bit 2) leaves no planet with `+0xb8 > 0` and no fleet slot
+    /// 1..=`OsszHanyFlotta` with bit 2.
+    fn conquest_ends_epidemic(&mut self, _p: i32) -> bool {
+        false
+    }
+    /// Fleet `+0x54`: its ship count.
+    fn fleet_ship_count(&self, _f: i32) -> i32 {
+        0
+    }
+    /// `SearchBolygohozKozeliFlotta(p, radius, true, true, false, false, 0)` (exe 0x540f50): a fleet near planet `p`.
+    fn near_fleet(&mut self, _p: i32, _radius: f32) -> i32 {
+        0
+    }
+    /// Design `d` of empire `e`: `+0x16` (2 = a ground unit).
+    fn design_kind(&self, _e: i32, _d: i32) -> i32 {
+        0
+    }
     /// `Kemek[e][k].+0x40` (u8): the spy's rank.
     fn spy_rank(&self, _e: i32, _k: i32) -> i32 {
         0
+    }
+    /// `st_Rnd` 138's recruit names (exe 0x85e0bc + 8·k, `k` 0..7).
+    fn recruit_name(&self, _k: i32) -> Vec<u8> {
+        Vec::new()
+    }
+    /// `KemKuldetesek[k].+0` (u8): spy mission `k` is offered.
+    fn spy_mission_on(&self, _k: i32) -> bool {
+        false
+    }
+    /// Fleet `f`'s name is `_s(5, text)`.
+    fn fleet_named(&self, _f: i32, _text: i32) -> bool {
+        false
+    }
+    /// Fleet `+0x5c` (ground units) and `+0x78` (their capacity).
+    fn fleet_units(&self, _f: i32) -> (i32, i32) {
+        (0, 0)
     }
 }
 
@@ -901,10 +965,14 @@ pub struct SpyRecord {
     pub mission: i32,
     /// `+0x32`, `+0x33` (u8): its skills.
     pub skill: (i32, i32),
+    /// `+0x31` (u8): its first skill (`st_KemEsely`).
+    pub skill_31: i32,
     /// `+0x16` (i16): non-zero while it is in use (`st_Fable_include` 310).
     pub active: i32,
     /// Its name is the story agent's (`_s(5, 3092)`, `st_Fable_include` 310).
     pub agent: bool,
+    /// `+0x00..+0x10`: its name (NUL-terminated; `st_Rnd` 138 compares it).
+    pub name: [u8; 16],
 }
 
 /// `KemEsemeny` (exe 0xF2F874, 0x38 bytes): the last spy news `KemJelentesAdd(kind, spy, died, success, _,
@@ -1055,6 +1123,12 @@ pub struct Story {
     pub spy_story: i32,
     /// `KemkedesValasz` (exe 0xF2659C): the spy news' answer (`st_Rnd` 127 clears it).
     pub spy_answer: i32,
+    /// `KemkedesTulaj`, `KemkedesAktKem` (exe 0xF26598, 0xF265A0): the spy of the last story mission's news
+    /// (`st_KemEsely`).
+    pub spy_owner: i32,
+    pub spy_slot: i32,
+    /// `last_hajo_kigyujt_flotta` (exe 0xF265CC): the fleet `st_HajoKigyujt` last took a ship from.
+    pub last_collect_fleet: i32,
 }
 
 /// A story building record (`StoryBuildingData`, 16 bytes).
@@ -1136,6 +1210,9 @@ impl Default for Story {
             counter_spy: 0,
             spy_story: 0,
             spy_answer: 0,
+            spy_owner: 0,
+            spy_slot: 0,
+            last_collect_fleet: 0,
         }
     }
 }

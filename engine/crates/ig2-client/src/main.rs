@@ -6,22 +6,37 @@
 //!            [--size WxH] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
-//!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages [--chart C]` draws the
-//!           info charts or the inbox; `--ui-frames N` runs the message line N frames of 10 ms (default 150).
+//!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
+//!           [--open-message I | --show-message ID]` draws the info screen, the messages screen (inbox entry I or
+//!           message ID open) or the research screen (after `--ui-frames` frames); `--ui-frames N` runs the message line N frames of 10 ms (default 150); `--paused`
+//!           shows the clock paused; `--panel production|transfer:F1,F2[,tank]` opens the starmap's production view
+//!           (the selected planet's) or the transfer panel between holders F1 and F2 (a planet is −p).
 //! Info:     `ig2-client --info [--save <file.sav>] [--ticks N]` prints the starmap's planets and fleets.
 //!
-//! The install comes from `IG2_INSTALL_DIR`. The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
+//! The install comes from `IG2_INSTALL_DIR`, the language from `IG2_LANG` (default en). The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
 //! repository's `_local/saves`). Saves, installs and rendered PNGs hold game data: keep them out of the repo.
 
 mod assets;
 mod colony;
+mod colony_ui;
+mod diplomacy;
+mod diplomacy_scene;
 mod font;
 mod hud;
+mod info_screen;
+mod messages_screen;
+mod orders;
 mod render;
 mod render3d;
+mod research;
 mod rules;
 mod scene;
+mod screen_frames;
 mod starmap;
+mod starmap_hud;
+mod spy_scene;
+mod spy_screen;
+mod starmap_panels;
 mod ui;
 mod window;
 mod world;
@@ -49,10 +64,24 @@ pub struct Options {
     pub colony: Option<usize>,
     /// Override the colony camera: x, y, zoom, pitch, rotate (`--colony-cam`).
     pub colony_cam: Option<[f32; 5]>,
+    /// `--colony-live`: the save was written on that colony screen (a capture's state save): the camera is the live
+    /// `ColonyXStart…` chunks and the entry's selection stands.
+    pub colony_live: bool,
+    /// `--colony-ui pick|demolish|build`: the colony screen with the pick list held open, the demolish window up, or
+    /// the build cursor out (the input driven through `colony_ui`'s own press/release).
+    pub colony_ui: Option<String>,
     /// `--screen info|messages` (with `--chart C`), and how many 10 ms UI frames the message line runs (`--ui-frames`).
     pub screen: Option<String>,
     pub chart: usize,
+    /// `--open-message I`: the messages screen with inbox entry `I` open (typed for `--ui-frames` frames).
+    pub open_message: Option<usize>,
+    /// `--show-message ID`: message `ID` open without an inbox entry (checks the dialogue's drawing).
+    pub show_message: Option<i32>,
     pub ui_frames: u32,
+    /// Show the clock as paused (`--paused`; the capture tool pauses the exe).
+    pub paused: bool,
+    /// `--panel production` or `--panel transfer:F1,F2[,tank]`: the starmap's production view or transfer panel up.
+    pub panel: Option<String>,
 }
 
 fn default_save() -> PathBuf {
@@ -75,9 +104,15 @@ fn parse(args: &[String]) -> Result<Options, String> {
         reveal: false,
         colony: None,
         colony_cam: None,
+        colony_live: false,
+        colony_ui: None,
         screen: None,
         chart: 0,
+        open_message: None,
+        show_message: None,
         ui_frames: 150,
+        paused: false,
+        panel: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -107,14 +142,20 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 o.hover = Some((num(x.into())?, num(y.into())?));
             }
             "--reveal" => o.reveal = true,
+            "--paused" => o.paused = true,
             "--colony-cam" => {
                 let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse::<f32>().map_err(|e| format!("--colony-cam: {e}"))).collect::<Result<_, _>>()?;
                 o.colony_cam = Some(v.try_into().map_err(|_| "--colony-cam X,Y,ZOOM,PITCH,ROTATE")?);
             }
+            "--colony-live" => o.colony_live = true,
+            "--colony-ui" => o.colony_ui = Some(val()?),
             "--screen" => o.screen = Some(val()?),
             "--chart" => o.chart = val()?.parse().map_err(|e| format!("--chart: {e}"))?,
+            "--open-message" => o.open_message = Some(val()?.parse().map_err(|e| format!("--open-message: {e}"))?),
+            "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),
             "--ui-frames" => o.ui_frames = val()?.parse().map_err(|e| format!("--ui-frames: {e}"))?,
             "--colony" => o.colony = Some(val()?.parse().map_err(|e| format!("--colony: {e}"))?),
+            "--panel" => o.panel = Some(val()?),
             "--select-fleet" => o.select_fleet = Some(val()?.parse().map_err(|e| format!("--select-fleet: {e}"))?),
             _ => return Err(format!("unknown argument {a}")),
         }
@@ -134,7 +175,9 @@ pub struct Loaded {
 }
 
 pub fn load(o: &Options) -> Result<Loaded, String> {
-    let install = Install::from_env(Lang::En).ok_or("set IG2_INSTALL_DIR to your IG2 install")?.map_err(|e| e.to_string())?;
+    // The game's language (`IG2_LANG` = en, de, fr, es, it, hu; English by default), as the install's own setting.
+    let lang = std::env::var("IG2_LANG").ok().and_then(|c| Lang::from_code(&c)).unwrap_or(Lang::En);
+    let install = Install::from_env(lang).ok_or("set IG2_INSTALL_DIR to your IG2 install")?.map_err(|e| e.to_string())?;
     let (rules, tech_defaults) = rules::load(&install)?;
     let volatile = rules::scenario_globals(&install)?;
     let bytes = std::fs::read(&o.save).map_err(|e| format!("{}: {e}", o.save.display()))?;

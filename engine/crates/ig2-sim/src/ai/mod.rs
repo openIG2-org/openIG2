@@ -995,18 +995,7 @@ fn possible(w: &mut World, e: usize, m: usize, t: usize, p1: i16, p2: i16) -> bo
 /// `KemEselySzamolas2(e, k, m, t)` (spec §6.5): the success chance the AI weighs.
 fn chance(w: &World, e: usize, k: usize, m: usize, t: usize) -> i32 {
     let rule = w.mission(m);
-    let mut c = spy::chance(&rule, w.spies.roster[e][k].skills[spy::skill::INFILTRATION], m, w.spy.ctx, e);
-    if rule.no_countdown {
-        c = 0;
-    }
-    let mp = w.spy.ctx.multiplayer;
-    if m == spy::mission::KIDNAP && (t == 0 || w.spy.kidnap.get(t).copied().unwrap_or(0) != 0 || (!mp && t == 5)) {
-        c = 0;
-    }
-    if !mp && w.race(t) == 5 {
-        c /= 2;
-    }
-    c
+    spy::mission_chance(&rule, w.spies.roster[e][k].skills[spy::skill::INFILTRATION], m, w.spy.ctx, e, t, w.spy.kidnap.get(t).copied().unwrap_or(0))
 }
 
 #[cfg(test)]

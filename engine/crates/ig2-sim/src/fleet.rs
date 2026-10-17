@@ -56,6 +56,8 @@ pub struct Fleet {
     pub state: u8,
     /// `+0x19 + e`.
     pub visible: [u8; 19],
+    /// `+0x2c..+0x2d`: not read; `FlottaNew`'s dword clear at `+0x2a` zeroes them.
+    pub field_2c: [u8; 2],
     pub x: f32,
     pub y: f32,
     pub speed: f32,
@@ -87,6 +89,7 @@ impl Fleet {
             story_id: i16_at(0x16),
             state: r[0x18],
             visible: r[0x19..0x19 + 19].try_into().unwrap(),
+            field_2c: [r[0x2c], r[0x2d]],
             x: f32_at(0x30),
             y: f32_at(0x34),
             speed: f32_at(0x38),
@@ -226,6 +229,11 @@ pub struct StarmapContext {
     /// Fleets whose ships are in an active space war (get the in-battle bit every tick, spec §6.3 step 8):
     /// [`crate::spacewar::fleets_in_battle`] of the active battles (`space-combat.md` §6).
     pub in_battle: Vec<usize>,
+    /// The empires whose machine sends the original's `Multi_Send(.., EN, ..)` (classic: the local player).
+    pub sends: [bool; 19],
+    /// The two fleets the starmap's transfer panel shows (`AktKep == 2` and `StarmapTransferMode`:
+    /// `StarmapTransferFlotta1/2`); their emptiness isn't reported.
+    pub transfer: Option<(i32, i32)>,
 }
 
 impl StarmapContext {
@@ -283,6 +291,9 @@ pub struct Paused {
 pub enum StarmapEvent {
     /// A colony ship or terraformer returns to its empire's pool (`OsszHanyKolonizalo`/…`Terraformalo`).
     ColonyShipFreed { empire: u8 },
+    /// `Multi_Send(0x1b, EN, f)`: the sending player's fleet `f` has no ships (handled before the next tick:
+    /// `Game::fleet_emptied`).
+    FleetEmptied { fleet: usize },
     TerraformerFreed { empire: u8 },
     /// The tracked fleet vanished from radar; the order became a move to its last position.
     ContactLost { fleet: usize },
@@ -788,10 +799,20 @@ impl Starmap {
         ev
     }
 
-    /// The end of a fleet's step: an idle trader picks a destination, an AI fleet without ships goes.
+    /// The end of a fleet's step: an idle trader picks a destination; a fleet without ships (`+0x54 < 1`, not a
+    /// wormhole or protected one) of the sending player is reported (`Multi_Send(0x1b, EN, f)`, unless the transfer
+    /// panel holds it), an AI's goes.
     fn step_end(&mut self, f: usize, ctx: &StarmapContext, rng: &mut Streams, arrivals: &mut dyn Arrivals, ev: &mut Vec<StarmapEvent>) {
         self.trader_destination(f, ctx, rng, ev);
         let fl = &self.fleets[f];
+        if fl.alive()
+            && fl.ship_count < 1
+            && fl.flags & (flag::WORMHOLE | flag::PROTECTED) == 0
+            && ctx.sends.get(fl.owner as usize).copied().unwrap_or(false)
+            && !ctx.transfer.is_some_and(|(a, b)| f as i32 == a || f as i32 == b)
+        {
+            ev.push(StarmapEvent::FleetEmptied { fleet: f });
+        }
         if fl.alive() && fl.ship_count < 1 && fl.flags & (flag::WORMHOLE | flag::PROTECTED) == 0
             && !ctx.human_controlled[fl.owner as usize]
         {

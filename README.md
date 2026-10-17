@@ -2,100 +2,161 @@
 
 # 🌌 IG2 Rust Rework
 
-**A from-scratch, Rust-powered reimplementation of _Imperium Galactica II_ — built for multiplayer, modern displays and bit-exact fidelity.**
+**A complete remake of the _Imperium Galactica II_ game client in Rust: the original game, rebuilt for multiplayer, modern displays and today's hardware.**
 
 ![Rust](https://img.shields.io/badge/Rust-stable-B7410E?logo=rust&logoColor=white)
 ![wgpu](https://img.shields.io/badge/renderer-wgpu-5E5CE6)
-![Phase](https://img.shields.io/badge/phase-2%20%C2%B7%20game%20rules-0A84FF)
-![Verified](https://img.shields.io/badge/rules-Frida--verified%20bit--exact-2EA44F)
+![Phase](https://img.shields.io/badge/phase-3%20%C2%B7%20game%20client-0A84FF)
+![Simulation](https://img.shields.io/badge/simulation-matches%20the%20original-2EA44F)
 ![Assets](https://img.shields.io/badge/game%20assets-not%20included-lightgrey)
 
 </div>
 
 ---
 
-In the spirit of **OpenMW** and **OpenRA**: the engine ships **no original assets and no rule values**.
-It reads everything (graphics, text, maps and even the balance tables) from **your own copy** of the GOG
-release at runtime.
+IG2 Rust Rework is a new game client for *Imperium Galactica II*, in the spirit of **OpenMW** and **OpenRA**.
+You play the game you know (its campaign, skirmishes, starmap, colonies, space and ground battles, diplomacy
+and espionage) on a new engine. It plays online properly, runs at any refresh rate and resolution, and
+loads your existing saves.
 
-Every rule is reverse-engineered from the shipped executable, written up as a spec with decompiler
-evidence, ported to idiomatic Rust, then **replayed against live Frida traces of the original game until
-it matches bit for bit**.
+The remake ships **no original assets and no rule values**. It reads graphics, text, maps and even the
+balance tables from **your own copy** of the GOG release when it starts.
 
-## ✨ Goals
+## ✨ What it will be
 
 | | |
 |---|---|
-| 🌐 **Multiplayer first** | Stable online play, rejoin, multiplayer saves (deterministic lockstep, seeded RNG everywhere) |
-| 🖥️ **Modern displays** | High refresh rate, high DPI, 4K and ultrawide |
+| 🎮 **The whole game** | Single-player campaign, skirmish scenarios and multiplayer, with every screen of the original |
+| 🌐 **Multiplayer first** | Lockstep over QUIC: LAN discovery, direct IP, opt-in UPnP, password lobbies, rejoin after a drop, multiplayer saves |
+| 🖥️ **Modern displays** | High refresh rate (smooth interpolation between the 20 Hz game ticks), high DPI, 4K and ultrawide |
 | ⚡ **Faster than the original** | A fixed-step simulation decoupled from rendering |
-| 🎯 **Classic fidelity** | The classic ruleset reproduces the original exactly; every deliberate change gets an ADR and an optional *enhanced* mode |
+| 💾 **Your saves keep working** | Original save games load and play on; our own save format is versioned, compressed and hash-checked |
+| 🪞 **A 1:1 remake of the original client** | The same menus, screens, layout, input, sounds and timing: you can't tell which one you started, except by the extras you switch on and the new multiplayer screens (styled like the original's). On widescreen and 4K the original layout is scaled up and letterboxed; an option lets the 3D maps fill the screen. Every screen is accepted only after a pixel comparison with the original ([ADR 0009](docs/decisions/0009-one-to-one-client.md)) |
+| 🎯 **Classic fidelity, optional improvements** | The classic ruleset plays exactly like the original; every deliberate change is opt-in through an *enhanced* mode |
 
-## 📊 Status
+## 📍 Where we are
 
-### ✅ Done
+The **game simulation is done**: every strategic and battle system runs and matches the original game.
+Work has moved to the **game client**: the screens, the input and the multiplayer front end that make it
+playable from start to finish.
+
+| Part | Status | |
+|---|---|---|
+| Game simulation | ✅ done | Economy, fleets, radar, research, production, diplomacy, espionage, trade, the AI empires, auto-resolved and real-time space and ground battles, info and messages; original saves run whole game days identical to the original |
+| Story engine and skirmish scenarios | ✅ done | Scenario victory and defeat, the campaign start and driver, the six storylines, the multiplayer game modes |
+| Campaign scripts | 🚧 most done | Remaining: 29 of `st_Elem_include`'s 47 storyline episodes |
+| Game client: starmap | 🚧 playable | The original's 3D camera, stars, orbiting planets, fleets, names and selection; speed and pause, selecting, move/attack/waypoint orders through the lockstep commands; the control panel, planet/fleet info box and minimap; the production view and the transfer panel. To do: the menus and the radial icons |
+| Game client: colony screen | 🚧 playable | Terrain, buildings, roads and ground units, planet panel, radar, building names; select, build (the build menu's list and the placing cursor), repair, demolish and switch buildings, all as the original's commands. To do: the planet info mode, the ground war's controls |
+| Game client: HUD, text, info, messages | 🚧 drawn and driven | Top bar (money, date, speed), the game's bitmap font, the scrolling message line; the info screen's 3D frame, race heads, empire panel, spending limit, money triangle and charts (pick a race or a chart); the messages screen's frame, inbox and open messages with their dialogue and answers. To do: the planet/fleet list, star log, the settings' and answers' orders |
+| Game client: diplomacy screen | 🚧 playable | The contacts' heads and portraits, the leader's video, the info panel, the proposal and answer menus and the dialogue texts; proposals and answers go out as lockstep commands. To do: the opening animation, the special (story) menu, sounds |
+| Game client: spy screen | 🚧 playable | The roster carousel with the spies' figures, names and status icons, the head video, the spy's stats, the mission planner with its lists and chance, reports, verdicts and applicants; every action through the lockstep commands. To do: the opening animation, tooltips, sounds |
+| Game client: research screen | 🚧 playable | The console, its category wheels, the ball with the category's tech models, the tech's texts, lists, labs and the running project; start, stop, urgent and the category/tech choice by mouse and keys, as the original's commands. To do: the opening animation, press animations, tooltips, sounds |
+| Game client: other screens | ⏳ to do | Design, trade, the battle screens, menus |
+| Game client: audio and video | ⏳ to do | Music, UI sounds, voices, the tutorial's narration; the intro, message, story and ending videos (MP4) |
+| Screen comparison with the original | 🚧 started | Every screen is listed with the original's functions ([`re/screens/`](re/screens/README.md)); a tool captures the original and our client on the same save and diffs them pixel by pixel. Starmap, colony, info, messages and the spy screen are compared; the spy screen's carousel and panels match, no screen passes whole yet ([results](re/screens/diff-results.md)) |
+| Input → game commands | 🚧 started | Speed and pause work; every screen's actions become lockstep commands as they are ported |
+| Multiplayer | 🚧 engine done | Lockstep, desync detection and rejoin, QUIC, LAN discovery, port mapping and the lobby work; real-time battles run in lockstep. To do: the lobby and connection screens, ground-war orders as commands |
+| Saves | 🚧 engine done | Original saves load; our own format saves and restores the whole game exactly. To do: the save/load screens |
+| *Enhanced* ruleset options | ⏳ later | |
+
+<details>
+<summary><b>Simulation systems in detail</b></summary>
 
 | Area | What works |
 |---|---|
-| **Asset formats** | `ecGs`/`neGs` containers, PVR textures, `.xv` 3D archives, colony maps, `.scn` scenarios, `.ani`, UI and keyed string tables, dialogue, diplomacy, formations, story data and story fleets, the tutorial script and its input recordings (6 languages, golden-tested); original save games and the multiplayer state blob |
+| **Asset formats** | `ecGs`/`neGs` containers, PVR textures, `.xv` 3D archives, colony maps, `.scn` scenarios, `.ani`, UI and keyed string tables, dialogue, diplomacy, formations, story data and story fleets, the tutorial script and its input recordings (6 languages); original save games and the multiplayer state blob |
 | **Rules from your exe** | Techs, buildings, hulls, designs, weapons, race/difficulty tables, radar and footprints read from the user's `ig2.exe` (sha256-gated) |
-| **Asset viewer** | `ig2-viewer` (eframe + wgpu): models, textures, colony maps, messages; headless `--snapshot` |
-| **Time & RNG** | 20 Hz sim clock, calendar, 21 bit-exact RNG streams |
-| **Colony economy** | Buildings, energy and workers, 19 problems and morale, population, taxes and GDP, construction |
-| **Colony side systems** | Rebellion, conquest and tech capture, colonisation, autobuild AI, money pools, yearly income |
-| **Building placement** | Colony-map search with terrain masks, footprints, ground units and a spiral search; the buildings' re-placement at scenario load |
-| **Fleets** | Movement, waypoints and patrols, following, merging, traders, wormholes (trips and the stories opening them); colonisation and terraforming arrivals |
-| **Radar & visibility** | Per-empire radar (SP and MP), supply fade, stealth, alliances, discovery, "enemy approaching" slow-down |
-| **Space combat (strategic)** | Design stats, battle routing, auto-resolve |
-| **Real-time space battles** | Setup from the strategic state (fleets joining a running battle, formations, ships grouped into units, weapons, shields and pods, fighter wings, planet guns and defence ships, asteroids), the 20 Hz battle tick (battle AI, targeting, projectiles, damage, special pods, fighters, path search, retreats), the end and its result, the player's orders (move, attack, planet guns, retreat, direct fire, weapon toggles, fighter stance) |
-| **Research & production** | Research progress, AI research picks, production queues, ship/vehicle building |
-| **Diplomacy** | Daily relations and opinion, the AI's proposals, threats and declarations, AI-to-AI answers, wars and peace treaties; the human's messages, deals (money, planets, techs, radar maps, hostages, wars, peace), demands, answers and counter-proposals, and the auto-cancel of stale offers; an empire's death (its fleets deleted) and the victory check |
-| **Espionage** | Spy ranks and experience, double agents, the catch check and the captor's verdict, 13 missions (reports, theft of money and techs, sabotage, ship strikes, rebellions, assassinations, kidnapping), recruitment |
-| **AI empire** | Empire centres and main fleets, the main planet, colony autobuild profiles and tax by wealth and danger, income sliders and shares, production choices (colony ships, default warships and vehicles, scrapping obsolete ships), spy missions (skill points, firing, targets, mission choice and cost); colony ships to the nearest free planets, war declarations, attack targets (fleets and planets), fleeing and regrouping, loading and unloading vehicles, scouting; the AI's own designs and their upgrades |
-| **Story engine** | Story queues and start flags, variables, logic flags, counters, story planet and fleet ids, event flags and the hooks other systems call, the per-tick counters and daily check, story endings with their undo list and info lines; the skirmish scenarios' victory and defeat conditions (stories 360–375); the campaign start (storyline and map choice, mirroring, first buildings) and the campaign driver (heroes, storylines, random stories, the opening episodes) with the short scripted stories and story fleets; the six storylines' scripts (their timers, messages and answers, the episodes they start, the planets and empires they hand around); the multiplayer game modes (king of the hill, three planets, capture the flag); the first random stories (mercenaries for hire, a fleet in quarantine, a planet to blow up, strikes, a tax, a refugee planet, a wormhole); the opening episodes (a pirate base, the plague ship, the hunter, rebels, troops wanted, a design for sale, a trade treaty, a colony, a research grant, a saboteur, a tech to steal, a spy's target, a far planet, a fugitive, an escort); the random stories the campaign always runs (the pirate bounty, the wormhole warning, the hero ships for hire) with the small planet, tech and tribute events; the first storyline episodes (a supernova, a raider at a base, a planet to win back, a research rush, cheap trade, the alliance with empire 5 and its endings, a colony race, a last enemy planet, a reinforcement fleet) |
-| **Trade** | The merchants' offers (random and story), purchases, delivery countdowns and arrivals, lost destinations re-targeted or refunded, offer expiry |
-| **Info and messages** | The info screen's monthly statistics and their smoothed charts; the scrolling message line with its history and the messages the game posts to the player (including espionage, the spy screen's report queue, and the outcomes of auto-resolved space battles and ground wars); the message inbox's expiry |
-| **Original saves in the sim** | An original save loads into the simulation and whole game ticks run on it (economy, relations, AI, spies, trade, info charts, research, story, messages, fleets, production, auto-resolved space battles and ground wars with their captures, landings and repairs), and the planets' ground battlefields are written back into the save, matching the original game byte for byte over 2,500 ticks |
-| **Ground combat (strategic)** | Routing to the real-time or auto-resolved ground war, landing and group arrangement, the auto-resolved war (attrition, guns, paralysers, manipulators, kamikazes, air strikes, building turrets), survivors re-embarking, capture |
-| **Real-time ground battles** | Landing placement and the landing zone, terrain heights and unit orientation, defence-building turrets, the 20 Hz battle tick (driving, passability maps and path search, attack-moves, turret and body turning, aiming, shells, rockets, bolts, paralysers, manipulators, the machine gun, lasers, armour, mines, self-destruct), the campaign's "mad tanks" that pick their own targets, air strikes (big-ship bomb carpets, fighter waves), defence-building turrets sharing hits, the end countdown and its result, transporters (dropships setting units down and picking them up, the player's landing orders, retreats that can be shot down, transporter-pod escorts) |
-| **Ground battle AI** | The computer's plans on the battlefield (flanks, reserve, pincer, fortress guards), rally points and formation lines, target choice, reactions to hits, the air-strike target scan |
+| **Time & RNG** | 20 Hz sim clock, calendar, 21 seeded RNG streams |
+| **Colonies** | Buildings, energy and workers, 19 problems and morale, population, taxes and GDP, construction; rebellion, conquest and tech capture, colonisation, autobuild, money pools, yearly income; building placement on the colony map |
+| **Fleets & radar** | Movement, waypoints and patrols, following, merging, traders, wormholes, colonisation and terraforming arrivals; per-empire radar (SP and MP), stealth, alliances, discovery, the "enemy approaching" slow-down |
+| **Space battles** | Design stats, battle routing, auto-resolve; the real-time battle (setup, formations, weapons, shields, pods, fighters, planet guns, asteroids, battle AI, path search, retreats, the player's orders) |
+| **Ground battles** | Landing, the auto-resolved war, capture; the real-time battle (terrain, path search, every weapon, mines, self-destruct, air strikes, building turrets, transporters, the battle AI's plans, the campaign's "mad tanks") |
+| **Research & production** | Research progress, AI research picks, production queues, ship and vehicle building |
+| **Diplomacy** | Relations, the AI's proposals, threats and declarations, AI-to-AI answers, wars and peace; the player's messages, deals, demands and counter-proposals; an empire's death and the victory check |
+| **Espionage** | Spy ranks, double agents, the catch check, 13 missions, recruitment |
+| **AI empires** | Empire centres and main fleets, colony management, income, production, spies, colonisation, war declarations, attack targets, fleeing and regrouping, vehicle transport, scouting, its own ship designs |
+| **Trade** | Merchant offers (random and story), purchases, deliveries, refunds, expiry; trader income |
+| **Info & messages** | Monthly statistics and smoothed charts, the message line and its history, the inbox |
+| **Story engine** | Story queues, variables, flags, hooks; skirmish victory/defeat; the campaign start, driver, storylines, random stories, opening episodes and fables; the multiplayer game modes |
+| **Original saves** | Load into the simulation and run whole game ticks, matching the original byte for byte over 2,500 ticks |
 
-### 🚧 Planned
+</details>
 
-| Area | |
-|---|---|
-| Campaign story scripts (`st_*_include`) | 📝 engine, scenario stories, campaign start and driver, storylines, MP game modes, random stories 220–239, opening episodes 1–24, the random fables 301–316, 36 of `st_Rnd_include`'s 62 stories and 18 of `st_Elem_include`'s 47 storyline episodes done |
-| wgpu game renderer and UI | 📝 architecture decided (ADR 0006); `ig2-client` runs an original save at 20 Hz and draws the starmap the way the original does (its 3D camera, star glows, orbiting planets, fleet sprites and palette; re/screens/starmap.md; fleets interpolated at any refresh rate, hover and selection, high DPI and ultrawide, headless `--snapshot`) and the colony screen (terrain, buildings, roads, ground units from the sim, the original's camera checked against ig2.exe captures; re/screens/colony.md), the game's bitmap font, the scrolling message line, the info charts and the message inbox (re/screens/info.md, messages.md), the top bar (money, date, speed buttons), the colony HUD (planet panel, radar, building names) and the starmap's planet and fleet names, matched against ig2.exe captures (re/screens/hud.md); the starmap's panels and input commands to do |
-| Lockstep multiplayer over QUIC: LAN discovery, direct IP, UPnP, rejoin | 📝 command model, lockstep turns with input delay, desync detection by state hash and rejoin from a snapshot + command log work in process, and peers with different empires and screens stay identical (canonical view, `re/rules/multiplayer.md`) (ADR 0007, `ig2-net`); QUIC transport with a pinned per-session certificate works on the local machine; LAN discovery, opt-in UPnP/NAT-PMP port mapping (tested without touching a real router) and the lobby (open, password and private sessions, empire slots, ready flags, chat, start into lockstep; passwords checked by SPAKE2, never sent) work (ADR 0008); each human keeps its own contact list and spy reports (`re/rules/multiplayer.md` §5); spy-screen orders, story starts and the space battle's orders are commands; the real-time battles run by session rules on the sim clock (space and ground, hash-identical in lockstep); lobby UI and the ground war's orders to do |
-| Saves (single and multiplayer) | 📝 original format read (files and MP blob) and loaded into the sim; our own format (versioned, compressed, hash-checked) saves and restores the whole game exactly; save/load UI to do |
-| *Enhanced* ruleset options | ⏳ |
-
-## 🚀 Quick start
+## 🚀 Try it
 
 You need the **GOG release of Imperium Galactica II** and a stable Rust toolchain.
 
 ```bash
 cd engine
-IG2_INSTALL_DIR="/path/to/Imperium Galactica II" cargo test --release
-cargo run --release -p ig2-viewer
-cargo run --release -p ig2-client -- --save path/to/save.sav   # starmap of an original save (C: colony screen, I: info charts, M: messages)
+export IG2_INSTALL_DIR="/path/to/Imperium Galactica II"
+cargo run --release -p ig2-client -- --save path/to/save.sav
 ```
 
-Without `IG2_INSTALL_DIR`, the tests that need the game data are skipped.
+The client opens an original save and runs it live.
+
+| Key / mouse | |
+|---|---|
+| Space | pause |
+| 1 / 2 / 3 | game speed |
+| Mouse wheel | zoom |
+| Starmap: right drag, left click | pan, select |
+| Starmap: Q / E, Page Up / Down | turn and tilt the camera |
+| Starmap: R | show every fleet |
+| Starmap: the info box's buttons | the planet's production queues; the transfer between a fleet and the planet |
+| Starmap: right click on the fleet's info box, T | split the fleet; the transfer between it and the nearest own fleet |
+| C | colony screen of the selected planet (and back) |
+| Colony: left drag, right drag | pan, turn and tilt |
+| Colony: left click, hold on the planet panel | select a building; the build menu (release on a building, then click where it goes) |
+| Colony: the building's buttons, E, Shift+Delete, Page Up / Down | repair / demolish (drag to "Yes"), switch on/off, demolish, the previous / next colony |
+| I | info screen (the mouse over a race picks it; the chart buttons, Tab: next chart) |
+| M | messages screen (click a message to open it, an answer to answer; a click elsewhere leaves) |
+| D | diplomacy screen (click a head to pick an empire; hold the button on a menu entry, release on the item) |
+| V | vsync on/off |
+| Esc | back to the starmap / quit |
+
+`ig2-viewer` (`cargo run --release -p ig2-viewer`) browses the game's models, textures, colony maps and
+messages.
+
+Tests: `cargo test --release` with `IG2_INSTALL_DIR` set. Without it, the tests that need the game data
+are skipped.
+
+## 🏗️ Architecture
+
+```
+ig2-formats   reads the original files (containers, textures, models, maps, text, saves)
+ig2-rules     the game's balance tables, read from your ig2.exe
+ig2-sim       the deterministic game simulation (20 Hz ticks, seeded RNG, lockstep commands)
+ig2-net       multiplayer: lockstep sessions, QUIC transport, LAN discovery, port mapping, lobby
+ig2-client    the game client: wgpu renderer, screens, input
+ig2-viewer    asset browser for development
+ig2-screendiff  compares our client's screens with captures of the original, pixel by pixel
+```
+
+The simulation knows nothing about rendering or the network. The client draws whatever the simulation
+state is, interpolated to the display's refresh rate. In multiplayer, every player action is a
+command that all peers apply on the same tick. Key decisions are in [`docs/decisions/`](docs/decisions/)
+(renderer and client: ADR 0006; lockstep and saves: ADR 0007; lobby: ADR 0008).
+
+## 🎯 How we stay faithful
+
+Every game rule is taken from the shipped executable and written up as a spec under [`re/`](re/)
+(start with [`re/STATUS.md`](re/STATUS.md)). It is then ported to Rust and replayed against recordings
+of the original game until the results match **bit for bit**. Screens are compared pixel by pixel with
+captures of the original (`tools/trace/run_screendiff.py`, inventory in [`re/screens/`](re/screens/README.md)). Any intended difference from the original goes through an ADR and stays optional.
 
 ## 🗂️ Repository
 
 ```
-engine/   Cargo workspace: ig2-formats · ig2-rules · ig2-sim · ig2-net · ig2-viewer · ig2-client
-re/       Reverse-engineering specs: formats, rules, runtime verification reports, STATUS
-tools/    Ghidra scripts, Frida tracers, symbol porting, decoders
-docs/     Architecture decision records (ADRs)
+engine/   Cargo workspace (the crates above)
+docs/     Architecture decision records
+re/       Specs of the original's formats, rules and screens; verification reports
+tools/    Analysis and recording tools used to write the specs
 ```
 
 ## ⚖️ Legal
 
 This is an independent, non-commercial fan project. It is not affiliated with or endorsed by the rights
 holders of *Imperium Galactica II*. **No game files, binaries or extracted data are in this repository.**
-You must own the game to use it. The license is not yet decided; until one is chosen, all rights are reserved.
+You must own the game to play it. The license is not yet decided; until one is chosen, all rights are reserved.
 
-<div align="center"><sub>Built with 🦀 and a lot of disassembly.</sub></div>
+<div align="center"><sub>Built with 🦀 for a game we still love.</sub></div>

@@ -162,8 +162,9 @@ b, c, d, x6..x14)`** (exe 0x58d000; inlined three times in `FRISSIT_Spy` with th
    `x6..x14`. Bytes `+1..+3` and `+0xb` keep what the slot held (the inlined copies write `+8` as a u16 0).
 3. If `kind ≤ 6` and `b ≠ 2`: `ScrollUzenetId(b == 4 && c == 0 ? 100 : 100 + kind, "", 0, 0)`.
 
-The spy screen pops the queue (UI, `AktKep` 7; with it open, `FRISSIT_Spy` also moves its cursor `AktKem` 0xBB2384
-and the fate function skips dead slots): not the sim's.
+The spy screen pops the queue (`AktKep` 7, `re/screens/spy.md` §4; with it open, `FRISSIT_Spy` also moves its cursor
+`AktKem` 0xBB2384 and the fate function skips dead slots); the port pops it with the order `spy::Order::Acknowledge`
+(the queue is synced state).
 
 The reports (`e` = the spy's owner, `k` its slot, `t` the target, `m`/`p1`/`p2` its mission and parameters, `s` the
 state just set; `KemKuldetesAtmenet` outcomes `o`: 1 lost, 2 caught, 3 spotted, 4 done):

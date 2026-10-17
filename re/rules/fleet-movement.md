@@ -176,8 +176,10 @@ w = (900 − (int)sqrt_f64(dx² + dy²)) × (trade_ports(p) > 0 ? 3 : 1) × ack 
 The last accepted `p` becomes a move-to-planet order. (Weights can be ≤ 0 far away; `RndValasztas` then
 never accepts.)
 ### 4.5 Clean-up
-A fleet with ship count < 1 that isn't a wormhole/protected (`+0x53 & 0x44 == 0`): the human's is
-reported over the network (MP), an AI's is deleted.
+A fleet with ship count < 1 that isn't a wormhole/protected (`+0x53 & 0x44 == 0`): the local player's is
+reported with `Multi_Send(0x1b, EN, f)` (also in SP; not while the starmap's transfer panel shows it) and deleted
+by the next frame's `MULTIGET_Starmap` if still empty (`re/screens/starmap.md` §10.2, verified 2026-10-17); an AI's
+(`PlayerKi != 1`) is deleted at once.
 
 ### 4.6 Merges and deletions: the units
 Evidence: ELF `FlottaOsszevon` 0x617000 / exe 0x53d860, `HajoAtpakol` 0x617540 / exe 0x53e510, `TankAtpakol`

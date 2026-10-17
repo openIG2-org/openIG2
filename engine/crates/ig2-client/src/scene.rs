@@ -46,6 +46,25 @@ pub fn create_matrix(a: f32, b: f32, c: f32) -> M3 {
     ]
 }
 
+/// `creatematrixfromaxis(axis, θ)` (ELF 0x4520a0): the rotation by `θ` about the unit `axis`, from the quaternion
+/// `(cos θ/2, sin θ/2·axis)`. `RotateObj2(axis, θ)` makes an object's rotation `axis(θ)·R`.
+pub fn axis_matrix(axis: V3, a: f32) -> M3 {
+    let n = normalise(axis);
+    let (w, s) = ((a / 2.0).cos(), (a / 2.0).sin());
+    let (x, y, z) = (n[0] * s, n[1] * s, n[2] * s);
+    [
+        1.0 - 2.0 * (y * y + z * z),
+        2.0 * (x * y - w * z),
+        2.0 * (x * z + w * y),
+        2.0 * (x * y + w * z),
+        1.0 - 2.0 * (x * x + z * z),
+        2.0 * (y * z - w * x),
+        2.0 * (x * z - w * y),
+        2.0 * (y * z + w * x),
+        1.0 - 2.0 * (x * x + y * y),
+    ]
+}
+
 /// One vertex in a model's root space.
 #[derive(Debug, Clone, Copy)]
 pub struct Vert {
@@ -71,8 +90,12 @@ pub struct Part {
     pub texture: Option<String>,
     /// The chain of child names from the root (`findboxxvb2` matches parts by name).
     pub path: String,
+    /// The same chain as child indices (`GetSubMeshid(parent, child, i)`).
+    pub index: Vec<u16>,
     pub verts: Vec<Vert>,
     pub look: Look,
+    /// Per triangle, the wireframe edge mask (`wirekirak`: bit 0 = c–a, bit 1 = a–b, bit 2 = b–c).
+    pub edges: Vec<u8>,
 }
 
 /// A loaded model: its root node's half-extents (`XVBStruct+4..+0xc`) and its parts.
@@ -86,6 +109,13 @@ impl Model {
     /// `LoadBox(name)` with the screen's `VectorDir`/`TextureDir`: `<vector_dir><stem>.xv`, textures by the
     /// game's lookup in `texture_dir`.
     pub fn load(install: &Install, vector_dir: &str, name: &str, texture_dir: &str) -> Result<Self, String> {
+        Self::load_at(install, vector_dir, name, texture_dir, None)
+    }
+
+    /// [`Model::load`] posed at animation frame `frame` (`SetFrame`): every node with more than two frames places
+    /// its children by their keys (`Kocka` ELF 0x5f6a40: the key's matrix, the record's translation moved by the
+    /// key's change since frame 0).
+    pub fn load_at(install: &Install, vector_dir: &str, name: &str, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {
         let stem = name.trim_end_matches(".xvb").trim_end_matches(".XVB");
         let path = format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase();
         let bytes = install.read(&path).map_err(|e| format!("{path}: {e}"))?;
@@ -98,8 +128,9 @@ impl Model {
             texture_dir,
             prefix: format!("{}-", root.split('.').next().unwrap_or_default()),
             parts: Vec::new(),
+            frame,
         };
-        w.node(&scene, &IDENTITY, [0.0; 3], "");
+        w.node(&scene, &IDENTITY, [0.0; 3], "", &[]);
         Ok(Self { origin: scene.header.origin, parts: w.parts })
     }
 
@@ -125,6 +156,7 @@ struct Walk<'a, 'b> {
     texture_dir: &'a str,
     prefix: String,
     parts: Vec<Part>,
+    frame: Option<usize>,
 }
 
 impl Walk<'_, '_> {
@@ -142,21 +174,34 @@ impl Walk<'_, '_> {
 
     /// `Kocka2`: a child sits at `P·t + T` with matrix `P·M` (the child record's matrix; `RotateObj` is never
     /// applied inside a model).
-    fn node(&mut self, n: &Node, p: &M3, t: V3, path: &str) {
-        for (c, content) in &n.children {
-            let ct = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
+    fn node(&mut self, n: &Node, p: &M3, t: V3, path: &str, index: &[u16]) {
+        let frames = n.header.frames() as usize;
+        for (i, (c, content)) in n.children.iter().enumerate() {
+            let mut ct = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
+            let mut cm = c.matrix;
+            if let (Some(f), true) = (self.frame, frames > 2) {
+                if let (Some(k), Some(k0)) = (n.header.key(f.min(frames - 1), i), n.header.key(0, i)) {
+                    cm = k.matrix;
+                    ct = std::array::from_fn(|j| ct[j] + k.translation[j] - k0.translation[j]);
+                }
+            }
             let pt = apply(p, ct);
             let t2 = [pt[0] + t[0], pt[1] + t[1], pt[2] + t[2]];
-            let m = mul(p, &c.matrix);
+            let m = mul(p, &cm);
             let path = format!("{path}/{}", c.name);
+            let index: Vec<u16> = index.iter().copied().chain([i as u16]).collect();
             match content {
-                ChildContent::Node(sub) => self.node(sub, &m, t2, &path),
+                ChildContent::Node(sub) => self.node(sub, &m, t2, &path, &index),
                 ChildContent::Mesh(mesh) => {
                     let texs: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture(x)).collect();
                     let nm = normal_matrix(&m);
                     let mut by_mat: Vec<Vec<Vert>> = vec![Vec::new(); texs.len().max(1)];
-                    for f in &mesh.faces {
+                    let mut edges: Vec<Vec<u8>> = vec![Vec::new(); by_mat.len()];
+                    for (fi, f) in mesh.faces.iter().enumerate() {
                         let k = (f.material as usize).min(by_mat.len() - 1);
+                        if f.idx.iter().all(|&i| (i as usize) < mesh.vertices.len()) {
+                            edges[k].push(mesh.face_flags.get(fi).copied().unwrap_or(7));
+                        }
                         for &i in &f.idx {
                             let Some(v) = mesh.vertices.get(i as usize) else { continue };
                             let q = apply(&m, v.pos);
@@ -167,9 +212,9 @@ impl Walk<'_, '_> {
                             });
                         }
                     }
-                    for (k, verts) in by_mat.into_iter().enumerate() {
+                    for (k, (verts, edges)) in by_mat.into_iter().zip(edges).enumerate() {
                         if !verts.is_empty() {
-                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), verts, look: Look::Opaque });
+                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges });
                         }
                     }
                 }

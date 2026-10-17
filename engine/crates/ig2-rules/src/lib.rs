@@ -42,6 +42,17 @@ pub mod layout {
     pub const SHOT_FORMS: (u32, usize, usize) = (0x9256F8, 0x78, 40); // fegyveralakok
     pub const RACE_SURFACE_AFFINITY: (u32, usize, usize) = (0x90B9D8, 4, 135); // FajBolygoViszony (15 × 9)
     pub const RESEARCH_SIZE_MULT: (u32, usize, usize) = (0x9185D0, 4, 192); // Research_MeretSzorzok
+    /// The research screen (`re/screens/research.md`): `TTeruletek` (the techs' model names, `char*`), the models'
+    /// orbit offsets `TPozX/Y/Z[1..=16]`, the middle wheel's `forgastablai`/`forgastabla2i`/`forgastabla3i` (mask
+    /// colour, category, button id per slot) and its line ends `forgastabla4x/4y`, the lab numbers' places
+    /// `Tudomany_X`/`Tudomany_X2`/`Tudomany_Y[1..=3]`.
+    pub const RESEARCH_MODELS: (u32, usize, usize) = (0x919298, 4, 192);
+    pub const RESEARCH_ORBIT_X: (u32, usize, usize) = (0x9190F8, 4, 17);
+    pub const RESEARCH_ORBIT_Y: (u32, usize, usize) = (0x919140, 4, 17);
+    pub const RESEARCH_ORBIT_Z: (u32, usize, usize) = (0x919188, 4, 17);
+    pub const RESEARCH_WHEEL: (u32, usize, usize) = (0x918BD8, 4, 15);
+    pub const RESEARCH_WHEEL_LINES: (u32, usize, usize) = (0x918C50, 4, 10);
+    pub const RESEARCH_LABS_XY: (u32, usize, usize) = (0x919268, 4, 12);
     pub const RACE_PRODUCTION_MULT: (u32, usize, usize) = (0x8F8870, 4, 15);
     pub const RACE_RESEARCH_TIME_MULT: (u32, usize, usize) = (0x8F87F8, 4, 15);
     pub const RACE_RESEARCH_MONEY_MULT: (u32, usize, usize) = (0x8F87BC, 4, 15); // FajSpeckoKutatasMoneySzorzo
@@ -58,6 +69,7 @@ pub mod layout {
     pub const WORMHOLE_COLOURS: (u32, usize, usize) = (0x913850, 12, 6); // i32 [6][3], AddWormhole's tints
     pub const RADAR_RANGES: (u32, usize, usize) = (0x913898, 4, 6); // RadarHatotav
     pub const PLANET_RADAR_RANGES: (u32, usize, usize) = (0x9138B0, 4, 8); // RadarHatotav2Init
+    pub const SATELLITE_PRICES: (u32, usize, usize) = (0x9138D0, 4, 3); // MuholdAr
     pub const TANK_SPEEDS: (u32, usize, usize) = (0x8EC9D4, 4, 5); // TankAlapSpeed (ground hull techs 145..=149)
     pub const AUTOBUILD_PROBLEM: (u32, usize, usize) = (0x8F1D50, 4, 29); // AutoBuildHanyasProblema
     pub const AUTOBUILD_MIN: (u32, usize, usize) = (0x8F1DD0, 4, 29); // AutoBuildMitEpitMin
@@ -74,6 +86,8 @@ pub mod layout {
     pub const TURRET_MODELS: (u32, usize, usize) = (0x8EC538, 0x38, 19);
     pub const TURRET_SCALE: (u32, usize, usize) = (0x8F1BD8, 4, 45);
     pub const DEFENCE_TURRET_SCALE: (u32, usize, usize) = (0x8F1BA4, 4, 8);
+    /// `TransfAlap`: the starmap's model of each hull (design `+0x44`), same records as `TankAlap`.
+    pub const TRANSFER_MODELS: (u32, usize, usize) = (0x927410, 0x38, 25);
     /// The bitmap font of `KiirStr` (`re/screens/messages.md` §1): glyph size, step, first row and glyphs per
     /// row for sizes 0..=4 (`CharXMeret`, `CharYMeret`, `CharXTolas`, `CharYTolas`, `CharXKezdet`, `CharYDarab`),
     /// and the glyph order of the atlas (162 bytes; Hungarian and the other languages).
@@ -89,6 +103,7 @@ pub mod layout {
     pub const STARMAP_BRUSHES: (u32, usize, usize) = (0x927130, 0x38, 13);
     /// `utdarabsize`: the scale of the road pieces `ut1..ut9.xvb` (`AddUtDarab`).
     pub const ROAD_SCALE: (u32, usize, usize) = (0x8EC968, 4, 9);
+    pub const SCAFFOLD_HEIGHTS: (u32, usize, usize) = (0x8F3878, 4, 60); // allvanypoziciok (ELF 0x115f740)
     pub const DECLARE_WAR_UNRELIABILITY: (u32, usize, usize) = (0x902FC0, 4, 16); // Megbizhatatlansag_DeclareWar [2][4][2]
     pub const SPY_MISSIONS: (u32, usize, usize) = (0x912F48, 0x20, 27); // KemKuldetesek
     pub const SPY_OUTCOME_STATE: (u32, usize, usize) = (0x9132A8, 4, 5); // KemKuldetesAtmenet
@@ -98,6 +113,7 @@ pub mod layout {
     pub const SPY_RANK_XP: (u32, usize, usize) = (0x9137A8, 4, 22);
     pub const SPY_TRAINING_XP: (u32, usize, usize) = (0x92705C, 4, 6); // TrainingKuldetesXP
     pub const SPY_TRAINING_COST: (u32, usize, usize) = (0x927044, 4, 6); // TrainingKuldetesAr
+    pub const SPY_TRAINING_DAYS: (u32, usize, usize) = (0x926EE4, 4, 6); // TrainingKuldetesIdo
     pub const SPY_RACE_COST_MULT: (u32, usize, usize) = (0x91376C, 4, 15); // KemKuldetesPenzSzorzoFajonkent
     pub const SPY_HIRE_COST_MULT: (u32, usize, usize) = (0x9137FC, 4, 15); // KemFelvetelPenzSzorzoFajonkent
     /// The AI's unit categories 1..=10 (`re/rules/ai-empire.md` §1.2): how a category is built, and the
@@ -125,6 +141,18 @@ pub mod layout {
     /// Slope limits by passability layer 0..5 (`PlanetAtjarasMap::GenerateMap`: a cell's slope class is
     /// gentle when `|class| <= limit`; layer 0 is the editor's, 1..=4 the vehicles').
     pub const GROUND_SLOPE_LIMITS: (u32, usize, usize) = (0x8F8574, 4, 5);
+    /// The diplomacy screen (`re/screens/diplomacy.md` §2): `GombPoziciok` (6 × f32 x, y, z, 0), `DipFejX`,
+    /// `MenukKezdX/Y`, `InfonevX/Y`, `InfonevFont`/`InfoSzin1`/`InfoSzin2`, `PnevekFont`/`PnevekSzin2`,
+    /// `MenuMaxSorokO`/`MenuOszlopKoz`, `TexturaNevek` (char*), `KemFejNevek` (char*, by race).
+    pub const DIPLOMACY_HEADS: (u32, usize, usize) = (0x903418, 4, 24);
+    pub const DIPLOMACY_NAME_X: (u32, usize, usize) = (0x90335C, 4, 6);
+    pub const DIPLOMACY_MENU_XY: (u32, usize, usize) = (0x902FB8, 4, 2);
+    pub const DIPLOMACY_INFO_XY: (u32, usize, usize) = (0x903000, 4, 2);
+    pub const DIPLOMACY_INFO_STYLE: (u32, usize, usize) = (0x903374, 4, 3);
+    pub const DIPLOMACY_NAME_STYLE: (u32, usize, usize) = (0x902F98, 4, 2);
+    pub const DIPLOMACY_MENU_GRID: (u32, usize, usize) = (0x902F80, 4, 2);
+    pub const DIPLOMACY_PORTRAITS: (u32, usize, usize) = (0x9033D8, 4, 16);
+    pub const DIPLOMACY_HEAD_ANIMS: (u32, usize, usize) = (0x926FFC, 4, 15);
     /// Armour factors by ground hull and hit side (front, side, rear): `SetRealDamage` divides by them.
     pub const GROUND_ARMOUR: (u32, usize, usize) = (0x8F858C, 4, 15);
     /// The campaign tables `StoryEleje`, `StoryElejeSeq`, `StoryLine`, `StoryScenario`, `RndStoryk`,
@@ -243,6 +271,8 @@ pub struct BuildingModel {
     pub scale: f32,
     /// `+0x54`: the preview's scale.
     pub preview_scale: f32,
+    /// `+0x68` (ELF `+0x6c`): the selection marker's size per footprint cell (`DrawBuildingSelection`).
+    pub select: f32,
 }
 
 /// A model of the colony screen's units: the name (`LoadBox`) and the vector directory it loads from
@@ -268,6 +298,30 @@ pub struct UnitModels {
     pub turret_scale: Vec<f32>,
     /// `TankToronyMeret[pod − 0xa1]` for the defence turrets.
     pub defence_scale: Vec<f32>,
+    /// `TransfAlap[hull]`: the starmap's models of the hulls (the production view's head units, the transfer
+    /// panel; `+0x34`: 0 and 2 `talalmanyok`, 1 `spacewar`, 3 `colony` there).
+    pub transfer: Vec<UnitModel>,
+}
+
+/// The research screen's tables (`re/screens/research.md` §2–§4).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ResearchScreen {
+    /// `TTeruletek[t − 1]`: tech `t`'s model on the screen (`""` = none; categories 6..=9 use the buildings',
+    /// 11's turrets fall back to `TankTorony`).
+    pub models: Vec<String>,
+    /// `TPozX/Y/Z[k]` (k = 1..=16): where the category's k-th model orbits the ball (×2.2).
+    pub orbit: Vec<[f32; 3]>,
+    /// The middle wheel's five slots: hot-spot mask colour, category (`ResearchTerulet`) and button id
+    /// (`resSetGombFrame`), as `Research_Belep` starts them (`forgastablai`, `…2i`, `…3i`).
+    pub wheel_kep: [i32; 5],
+    pub wheel_area: [i32; 5],
+    pub wheel_button: [i32; 5],
+    /// `forgastabla4x/4y`: where `ResDrawVonalak`'s lines start for each slot.
+    pub wheel_line: [[i32; 2]; 5],
+    /// `Tudomany_X`, `Tudomany_X2`, `Tudomany_Y` for labs 1..=3 (index 0 unused): the lab level and the tech's need.
+    pub lab_x: [i32; 4],
+    pub lab_x2: [i32; 4],
+    pub lab_y: [i32; 4],
 }
 
 /// `KiirStr`'s bitmap font (`screen/charset_bmp`, a 256-unit atlas): per size 0..=4 the glyph size, its step in the
@@ -480,6 +534,8 @@ pub struct Rules {
     /// Planet radar range per planet radar level 0..=7, copied to every empire at new game
     /// (`RadarHatotav2Init`, stored right after `RadarHatotav`).
     pub planet_radar_ranges: Vec<f32>,
+    /// Satellite price by kind 0..=2 (`MuholdAr`, right after `RadarHatotav2Init`; `MULTIGET_Starmap` 0x18).
+    pub satellite_prices: Vec<i32>,
     /// Autobuild categories 1..=28 (`re/rules/colony-side.md` §1.3): problem slot they answer
     /// (0 = listed category, −1 = none) and the building type range.
     pub autobuild_problem: Vec<i32>,
@@ -495,8 +551,11 @@ pub struct Rules {
     /// `Building[k − 1]`'s models, indexed by kind (entry 0 is empty).
     pub building_models: Vec<BuildingModel>,
     pub unit_models: UnitModels,
+    pub research_screen: ResearchScreen,
     /// `utdarabsize[n − 1]`: the `AddToScene` scale of road piece `ut<n>.xvb`, n = 1..=9.
     pub road_scale: Vec<f32>,
+    /// `allvanypoziciok[k − 1]`: building kind `k`'s scaffolding height (the selection marker sits 20 below it).
+    pub scaffold_heights: Vec<f32>,
     pub charset: Charset,
     /// `FajnevX[e − 1]`: where the info screen writes race `e`'s name.
     pub race_name_x: Vec<i32>,
@@ -520,6 +579,8 @@ pub struct Rules {
     pub spy_names: Vec<Vec<u8>>,
     /// `TrainingKuldetesAr[level]`: what a training mission costs (the AI's spy missions, `ai-empire.md` §5).
     pub spy_training_cost: Vec<i32>,
+    /// `TrainingKuldetesIdo[level]`: a training mission's length in days (the spy screen, re/screens/spy.md §6).
+    pub spy_training_days: Vec<i32>,
     /// `KemKuldetesPenzSzorzoFajonkent[race]`: mission cost multiplier.
     pub spy_race_cost_mult: Vec<f32>,
     /// `KemFelvetelPenzSzorzoFajonkent[race]`: an applicant's price per rank, ÷ 3000 (`espionage.md` §8).
@@ -552,6 +613,32 @@ pub struct Rules {
     pub campaign_words: Vec<i32>,
     /// Slope limits of the passability layers 0..5 (exe 0x8F8574, f32 × 5; `GenerateMap` uses 1..=4).
     pub ground_slope_limits: Vec<f32>,
+    pub diplomacy_screen: DiplomacyScreen,
+}
+
+/// The diplomacy screen's layout (`re/screens/diplomacy.md` §2).
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct DiplomacyScreen {
+    /// `GombPoziciok`: the six head slots `(x, y, z)` in camera space.
+    pub heads: Vec<[f32; 3]>,
+    /// `DipFejX`: the x of each slot's name.
+    pub name_x: Vec<i32>,
+    /// `MenukKezdX/Y`, `InfonevX/Y`.
+    pub menu_xy: [i32; 2],
+    pub info_xy: [i32; 2],
+    /// `InfonevFont`, `InfoSzin1`, `InfoSzin2`.
+    pub info_font: i32,
+    pub info_colours: [i32; 2],
+    /// `PnevekFont`, `PnevekSzin2`.
+    pub name_font: i32,
+    pub name_colour: i32,
+    /// `MenuMaxSorokO` (rows per column), `MenuOszlopKoz` (column gap).
+    pub menu_rows: i32,
+    pub menu_gap: i32,
+    /// `TexturaNevek`: the portrait textures, two per race (`a`, `b`).
+    pub portraits: Vec<String>,
+    /// `KemFejNevek[race]`: the leaders' videos in `anim/fejek/` (entry 0 isn't a race).
+    pub head_anims: Vec<String>,
 }
 
 /// A battle ship type (`tipusnevek`, exe 0x91F488, 0x30 bytes; record `race·12 + type`, spec §7.10).
@@ -779,6 +866,7 @@ impl Rules {
             },
             radar_ranges: floats(layout::RADAR_RANGES)?,
             planet_radar_ranges: floats(layout::PLANET_RADAR_RANGES)?,
+            satellite_prices: ints(layout::SATELLITE_PRICES)?,
             autobuild_problem: ints(layout::AUTOBUILD_PROBLEM)?,
             autobuild_min: ints(layout::AUTOBUILD_MIN)?,
             autobuild_max: ints(layout::AUTOBUILD_MAX)?,
@@ -789,6 +877,7 @@ impl Rules {
                 std::iter::once((0, 0)).chain((0..n).map(|i| (i32_at(b, i * s + 0x58), i32_at(b, i * s + 0x5c)))).collect()
             },
             road_scale: floats(layout::ROAD_SCALE)?,
+            scaffold_heights: floats(layout::SCAFFOLD_HEIGHTS)?,
             charset: {
                 let t = ints(layout::CHAR_TABLES)?;
                 let bytes = |t| -> Result<Vec<u8>> { Ok(tab(t)?.0.to_vec()) };
@@ -828,16 +917,40 @@ impl Rules {
                     turrets: models(layout::TURRET_MODELS)?,
                     turret_scale: floats(layout::TURRET_SCALE)?,
                     defence_scale: floats(layout::DEFENCE_TURRET_SCALE)?,
+                    transfer: models(layout::TRANSFER_MODELS)?,
+                }
+            },
+            research_screen: {
+                let w = ints(layout::RESEARCH_WHEEL)?;
+                let l = ints(layout::RESEARCH_WHEEL_LINES)?;
+                let labs = ints(layout::RESEARCH_LABS_XY)?;
+                let (x, y, z) = (floats(layout::RESEARCH_ORBIT_X)?, floats(layout::RESEARCH_ORBIT_Y)?, floats(layout::RESEARCH_ORBIT_Z)?);
+                ResearchScreen {
+                    models: ints(layout::RESEARCH_MODELS)?
+                        .into_iter()
+                        .map(|ptr| match ptr as u32 {
+                            0 => Ok(String::new()),
+                            va => img.read(va, 32).map(cstr),
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                    orbit: (0..x.len()).map(|k| [x[k], y[k], z[k]]).collect(),
+                    wheel_kep: std::array::from_fn(|i| w[i]),
+                    wheel_area: std::array::from_fn(|i| w[5 + i]),
+                    wheel_button: std::array::from_fn(|i| w[10 + i]),
+                    wheel_line: std::array::from_fn(|i| [l[i], l[5 + i]]),
+                    lab_x: std::array::from_fn(|i| labs[i]),
+                    lab_x2: std::array::from_fn(|i| labs[4 + i]),
+                    lab_y: std::array::from_fn(|i| labs[8 + i]),
                 }
             },
             building_models: {
                 let (b, s, n) = tab(layout::BUILDING_MODELS)?;
                 let f = |o: usize| f32::from_bits(i32_at(b, o) as u32);
-                let empty = BuildingModel { model: String::new(), preview: String::new(), scale: 0.0, preview_scale: 0.0 };
+                let empty = BuildingModel { model: String::new(), preview: String::new(), scale: 0.0, preview_scale: 0.0, select: 0.0 };
                 std::iter::once(empty)
                     .chain((0..n).map(|i| {
                         let r = i * s;
-                        BuildingModel { model: cstr(&b[r..r + 0x28]), preview: cstr(&b[r + 0x28..r + 0x50]), scale: f(r + 0x50), preview_scale: f(r + 0x54) }
+                        BuildingModel { model: cstr(&b[r..r + 0x28]), preview: cstr(&b[r + 0x28..r + 0x50]), scale: f(r + 0x50), preview_scale: f(r + 0x54), select: f(r + 0x68) }
                     }))
                     .collect()
             },
@@ -882,9 +995,33 @@ impl Rules {
             ground_armour: floats(layout::GROUND_ARMOUR)?,
             campaign_words: ints(layout::CAMPAIGN)?,
             ground_slope_limits: floats(layout::GROUND_SLOPE_LIMITS)?,
+            diplomacy_screen: {
+                let names = |t| -> Result<Vec<String>> {
+                    ints(t)?.into_iter().map(|ptr| Ok(img.read(ptr as u32, 32).map(cstr).unwrap_or_default())).collect()
+                };
+                let pair = |t| -> Result<[i32; 2]> { let v = ints(t)?; Ok([v[0], v[1]]) };
+                let info = ints(layout::DIPLOMACY_INFO_STYLE)?;
+                let style = ints(layout::DIPLOMACY_NAME_STYLE)?;
+                let grid = ints(layout::DIPLOMACY_MENU_GRID)?;
+                DiplomacyScreen {
+                    heads: floats(layout::DIPLOMACY_HEADS)?.chunks(4).map(|c| [c[0], c[1], c[2]]).collect(),
+                    name_x: ints(layout::DIPLOMACY_NAME_X)?,
+                    menu_xy: pair(layout::DIPLOMACY_MENU_XY)?,
+                    info_xy: pair(layout::DIPLOMACY_INFO_XY)?,
+                    info_font: info[0],
+                    info_colours: [info[1], info[2]],
+                    name_font: style[0],
+                    name_colour: style[1],
+                    menu_rows: grid[0],
+                    menu_gap: grid[1],
+                    portraits: names(layout::DIPLOMACY_PORTRAITS)?,
+                    head_anims: names(layout::DIPLOMACY_HEAD_ANIMS)?,
+                }
+            },
             spy_training_xp: ints(layout::SPY_TRAINING_XP)?,
             spy_names: spy_names(&img)?,
             spy_training_cost: ints(layout::SPY_TRAINING_COST)?,
+            spy_training_days: ints(layout::SPY_TRAINING_DAYS)?,
             spy_race_cost_mult: floats(layout::SPY_RACE_COST_MULT)?,
             spy_hire_cost_mult: floats(layout::SPY_HIRE_COST_MULT)?,
             ai_build_mode: tab(layout::AI_BUILD_MODE)?.0.to_vec(),

@@ -420,6 +420,7 @@ impl Shipyard {
         f.story_id = id;
         f.state &= !3;
         f.visible[1..].fill(0);
+        f.field_2c = [0; 2];
         if let Some(v) = f.visible.get_mut(o) {
             *v = 1;
         }

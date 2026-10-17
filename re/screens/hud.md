@@ -61,7 +61,7 @@ bottom-left info, the build menu's when open), `GFX_DateMoneyScrollFade`, then h
 
 | id | what | src → dst, size | frames |
 |---|---|---|---|
-| 1, 2 | building buttons (repair, demolish) | (0, 93) → (179, 443), (0, 124) → (212, 443), 31 × 31 | 2 per row |
+| 1, 2 | building buttons (repair, demolish; colony.md §10) | (0, 93) → (179, 443), (0, 124) → (212, 443), 31 × 31 | 2 per row |
 | 3..=5 | build-menu tabs | → (37/81/125, 331), 39 × 20 | 3 |
 | 6, 7 | side tabs | → (176, 361/405), 20 × 39 | 3 |
 | 8, 9 | 72 × 19 bars | → (33, 116), (115, 146) | 3 |
@@ -83,14 +83,18 @@ bottom-left info, the build menu's when open), `GFX_DateMoneyScrollFade`, then h
 - `ColonyGfx2D_2` 0x4e3f60: rain/sandstorm, the attack text at (200, 30), then for the human's planet not at war
   (`+0x64` bit 0 clear): `"\x01:%+d"` (workers: planet `+0x28 − +0x50`) at (4, 406) and `"\x02:%+d"` (energy:
   `+0x48 − +0x4c`) at (87, 406), 10 cells, size 3, flags 5, colour 6 when negative, else 1 (bytes 1 and 2 are the
-  font's worker and energy icons); the selected building's buttons 1, 2 and 29 (`+0x19` bit 5 → frame 2); the
-  short info of the selected building (`StarmapRovidInfoKiir(50, 424)`), the long one with `ColonyPlanetInfoMod`.
+  font's worker and energy icons); the selected building's buttons 1, 2 and 29 (the on/off switch: `+0x19` bit 5 →
+  frame 2); the short info (`StarmapRovidInfoKiir(50, 424)`: the planet's, or `ColonyKisInfo`'s for a selected
+  building, colony.md §10), the long one with `ColonyPlanetInfoMod`.
 - `ColonyGfx2D_3` 0x4e4f00: the planet panel `BrushToScreen(12)` (the human's planet not at war, or the human not
   placing units), then for the human's planet not at war the build menu's building `AktEpuletTipus`: its name
   (`Talalmanyok[EpuletekLeiro[t].tech]`) at (54, 141), 16 cells, size 2, flags 5, colour 0x25, and at x 160, size 2,
   colour 0x25: `"$:" + GetGyartasAr(EN, tech)` at y 61, `"\x02:" + EpuletekLeiro[t].+0xc` (energy) at y 92,
   `"\x01:" + +0x10` (workers) at y 123; the BUILD button animation `Copy3(17, …)` at (59, 148), 91 × 23. The panel's
-  turning building is a second 3D render (`Update3D` into the panel's viewport, colony.md §1).
+  turning building is a second 3D render (`Update3D` into the panel's viewport, colony.md §10); then the repair and
+  demolish windows (colony.md §10).
+- `ColonyGfx2D_4` 0x4e5680: the self-destruct countdown, the rename field, the pick list's and the drop-downs'
+  texts, the windows' texts (colony.md §10).
 
 ### 3.1 The radar (`DrawRadar(bool)` 0x4cb220)
 The radar is the 100 × 100 square at (522, 362), half a grid cell per pixel (grid 0..200):
@@ -136,8 +140,8 @@ debug build adds the fleet's numbers under it. On the starmap, fleets with `+0x5
 marker `StarmapBrushok` 6 at (x − 15, y − 13).
 
 ## 5. Not specified here
-The screen-select menu and tooltips, the build menu and its lists, the colony panel's 3D building, the short/long
-planet info texts (`StarmapRovidInfoKiir`), the ground-war buttons' conditions in detail, faders' look
+The screen-select menu and tooltips, the long planet info (`StarmapHosszuInfoKiir`), the ground-war buttons'
+conditions in detail, faders' look
 (`KirakFader`, `FadeKerettelKerekit`), the starmap's own panels (`StarmapGfx2D_1..4`, `kezel.xvb`), input.
 
 ## 6. Reference captures

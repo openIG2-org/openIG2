@@ -94,9 +94,29 @@ tick (`FRISSIT_Starmap` movement and production), run at the new multiplier (fou
 
 ### 2.1 `TalalmanyKifejlesztve(e, t)`
 If `status[t][e] != 5`: `progress = (int)((f32)tech.+0x38 × RaceResearchTime[race(e)])`; status 5; for a
-human-controlled `e` with `+0x26 != 0` or `+0x28 != 0` → `TervezAutomatikus(e, t)` (auto design, an event);
+human-controlled `e` with `+0x26 != 0` or `+0x28 != 0` → `TervezAutomatikus(e, t)` (§2.3);
 the recompute (`colony-side.md` §4.1); `ResearchAktFejlesztett[e] == t` → 0. Tech **0x95** also develops
 **0xAA** (same steps).
+
+### 2.3 `TervezAutomatikus(e, t)` (exe 0x4b72b0, ELF 0x61bc80; verified in the save replay)
+The first hull `h` in `Alapok[1..25]` whose tech (`+0xc`) is `t`; none → nothing. Else `d = TervNew(e, 0)`
+(ai-empire.md §10.2), `+0x44 = h`, the design's name = `strcpy` of tech `t`'s name (the localised one),
+`TervUjraSzamol(e, d, false, true)`, `TervAutoDesign(e, d, 0)` (§10.3), `TervUjraSzamol` again. On the design
+screen it also re-sorts the list (UI). Port: `ai::World::automatic_design`, run by `Game` for the
+`ResearchEvent::AutoDesign` of the research tick and of message 0x31; the name is reported
+(`AiEvent::DesignNamed`).
+
+### 2.4 The research screen's orders (`MULTIGET_Research` exe 0x51ee70, ELF 0x5ec6e0; verified byte-exact)
+Lockstep messages from `Research_Main` (re/screens/research.md §6), also in SP. Values after the issuer `e`:
+- 0x29 `(4, t)` stop: `ResearchAktFejlesztett[e] = 0`, status(t, e) = 3.
+- 0x2a `(4, t)` start: `ResearchAktFejlesztett[e] = t`, status(t, e) = 4.
+- 0x2b toggle `KutatasSurgos[e]` (`!= 0` → 0, else 1).
+- 0x31 (a debug key): for t from 0xc0 down to 1: if some empire 1..=8 has a non-zero status for t and e doesn't
+  own it, `TalalmanyKifejlesztve(e, t)` and, in SP, `Story_Special(0x0d, e, 5)` (5, not t); then
+  `Research_TalalmanyUjraSzamol`.
+The handler clears `ButtonPressed` for the local issuer (screen state). The values are not range-checked in the
+exe (a tech outside the table writes past it); the port refuses those. Port: `Game::research_order`
+(`game::ResearchOrder`), `ig2_net::Command::Research`.
 
 ### 2.2 AI choice (`FRISSIT_MI_FEJLESZTES(e)`)
 Only for `PlayerKi[e] != 1` with `ResearchAktFejlesztett[e] == 0`. `r = race(e)` if < 9, else 1. Over techs
@@ -175,8 +195,8 @@ without an order** can replace it. Returns 0 if none.
   map (`AddOwnTankToPlanet` × n, `RearrangeTankGroups`): not ported, an event.
 
 ## 6. Events (not ported)
-Research: human messages and slow-down, tutorial checks, story special 0x0D, `TervezAutomatikus`,
-`FRISSIT_MI_DESIGN`. Production: the UI refresh flags (`PrShip*`/`PrTank*`), ground-war placement of new
+Research: human messages and slow-down, tutorial checks, story special 0x0D, `FRISSIT_MI_DESIGN` (`Game` carries
+out 0x0D, `FRISSIT_MI_DESIGN` and `TervezAutomatikus`). Production: the UI refresh flags (`PrShip*`/`PrTank*`), ground-war placement of new
 garrison vehicles.
 
 ## 7. Order and RNG
@@ -197,3 +217,5 @@ planets in order, line 0 before line 1, one unit per line per tick at most. No R
 `traces/2026-10-15-production.md`: Frida before/after region diffs of every `FRISSIT_Research` call and
 every production block, plain and fuzzed, replayed byte for byte; 18/23 research and 21/27 production
 mutations caught, the rest data-equivalent or untraced (listed there).
+`traces/2026-10-17-research-orders.md`: 615 research-screen messages (§2.4) staged through the exe's own handler in
+three save replays, byte-exact on the whole state with `TervezAutomatikus` (§2.3); 6/7 mutations caught.

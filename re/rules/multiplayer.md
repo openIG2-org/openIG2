@@ -90,6 +90,9 @@ in the original, so it never runs in MP. "MP" says what the canonical view does.
 | Real-time space battle `SpaceWarFrissit` 0x56dff0 (`IdoSpeedSzorzoBattle` calls per 20 Hz tick; the UI writes unit +0x184..+0x18f, selection/UI only) | battle screen | G | every slot every tick, the humans' orders as commands (§6) |
 | `AktEtaDays` 0xF43428 libc draw per new month (`FRISSIT_Trade` 0x605ed0) | UI value | P, unconditional | stays on the synced stream (not view-dependent) |
 | `FeldolgozValasz` 0x4c1480 text draw (every answer) | UI text | P, unconditional | stays on the synced stream |
+| The spy screen's verdict roll (`Spy_Main` exe 0x58d410: `rndlog(0, …)` ×1–2) | UI | G (it picks the fate sent) | `spy::Order::Judge` carries the choice, every peer rolls (`re/screens/spy.md` §7) |
+| The spy screen's chance estimate (`KemEselySzamolas1` exe 0x587b80, stream 0: 2 draws a round × 1000 + picks) | UI | G (stream 0) | `spy::Order::Estimate`: every peer draws; the issuer shows the figure from a copy |
+| Closing a spy report (`KemHanyBeszolas −= 1`, `Spy_Main`) | UI | G (the queue, §5.2) | `spy::Order::Acknowledge` on the issuer's queue |
 
 ## 5. Per-human state (ours; implemented)
 

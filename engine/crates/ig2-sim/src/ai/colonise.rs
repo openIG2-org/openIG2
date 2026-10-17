@@ -83,6 +83,47 @@ impl World<'_> {
         }
         g
     }
+
+    /// `FindNearestTerraformalo(x, y, e)` (exe 0x53ceb0): as [`World::nearest_colony_fleet`] for terraformers
+    /// (`+0x4e > 0`, not terraforming).
+    pub(crate) fn nearest_terraformer_fleet(&self, x: i32, y: i32, e: usize) -> usize {
+        let (mut best, mut pick) = (99_999_999, 0);
+        for (f, r) in self.starmap.fleets.iter().enumerate().skip(1) {
+            if r.owner == DELETED || r.owner as usize != e || r.terraformers < 1 || r.flags & flag::TERRAFORMING != 0 {
+                continue;
+            }
+            let dx = ((r.x - x as f32) as f64).abs() as f32;
+            let dy = ((r.y - y as f32) as f64).abs() as f32;
+            let d = (dx * 2.0 + dy) as i32;
+            if d < best {
+                best = d;
+                pick = f;
+            }
+        }
+        pick
+    }
+
+    /// `DeleteTerraformalo(f, p)` (exe 0x53c560): the first terraformer of fleet `f` leaves in a new fleet
+    /// "Terraformer" for planet `p` (always a new fleet, and `f` stays even when emptied, unlike
+    /// [`World::send_colony_ship`]). Returns the new fleet (0 when `f` has no terraformer).
+    pub(crate) fn send_terraformer(&mut self, f: usize, p: usize, hooks: &mut dyn AiHooks) -> usize {
+        let owner = self.starmap.fleets[f].owner;
+        let Some(i) = (1..self.spy.combat.ships.len()).find(|&i| {
+            let s = self.spy.combat.ships[i];
+            s.design != NO_DESIGN && s.fleet as usize == f && s.fleet >= 0 && self.des(owner as usize, s.design as i32).is_some_and(|d| d.raw[0x35] != 0)
+        }) else {
+            return 0;
+        };
+        let (x, y) = (self.starmap.fleets[f].x, self.starmap.fleets[f].y);
+        let g = self.new_fleet(b"Terraformer", owner, 0, x, y, 0.0, hooks);
+        self.move_ship(i, g);
+        self.order(g, order::MOVE, order::PLANET, p as f32, 0.0);
+        self.starmap.fleets[g].flags |= flag::TERRAFORMING;
+        self.mirror(g);
+        let o = self.starmap.fleets[g].owner as usize % super::EMPIRES;
+        self.spy.combat.terraformer_pool[o] -= 1;
+        g
+    }
 }
 
 impl AiState {

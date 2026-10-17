@@ -260,6 +260,9 @@ pub struct FieldTail {
     /// Unit slots that got a new object (`operator new` + `WF_Tank::WF_Tank`) since the owner last drained this:
     /// their saved bytes the constructor leaves uninitialised ([`UNINIT`]) are heap garbage in the exe.
     pub created: Vec<usize>,
+    /// Unit slots whose member arrays (`+0x154`/`+0x19c`) grew since the owner last drained this: `realloc` may have
+    /// moved them, so the origin pointer the record saves (`+0x19c`) is heap state too.
+    pub grown: Vec<usize>,
     /// Unit slots loaded without an object (`loadsave_ptr`'s flag 0): saved as absent until a unit takes the slot.
     /// Every other slot keeps its object after the unit dies (`RemoveTankGroup` 0x497c90 only clears `alive`).
     pub absent: Vec<bool>,
@@ -277,6 +280,7 @@ impl Default for FieldTail {
             missile_heads: Vec::new(),
             bolt_heads: Vec::new(),
             created: Vec::new(),
+            grown: Vec::new(),
             absent: Vec::new(),
         }
     }
@@ -708,6 +712,7 @@ impl<'a> War<'a> {
         u.max_hp = hp;
         u.rt.alive_cached = 0;
         self.field.alive[i as usize] = true;
+        self.field.tail.grown.push(i as usize);
         if self.u(i).size() == 1 {
             let planet = self.planet.index;
             let u = self.um(i);
@@ -939,7 +944,9 @@ impl<'a> War<'a> {
         }
         u.hp.push(0);
         u.origin.push(0);
-        u.hp.len() - 1
+        let k = u.hp.len() - 1;
+        self.field.tail.grown.push(dst as usize);
+        k
     }
 
     /// `JoinGroups` / `AtlagoldC`: move `n` members `src → dst`, last member first.

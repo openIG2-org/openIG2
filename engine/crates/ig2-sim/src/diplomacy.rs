@@ -215,6 +215,8 @@ pub struct PlayerSlot {
     pub controller: i32,
     /// `+0x0c`: screen state, cleared by answers and auto-cancels.
     pub screen: u8,
+    /// `+0x10`: the `Ido` of the human's last message to this empire (the screen waits 250 before the next).
+    pub sent_at: i32,
     /// `+0x14`: set by `InitBirodalom`; messages of this empire reach the human.
     pub open: u8,
     /// `+0x16`: the human's message to this empire awaits its answer (set by the screen).
@@ -230,6 +232,25 @@ pub struct PlayerSlot {
     /// `+0x64` / `+0x94`: the last answer / counter-answer.
     pub answer: Answer,
     pub counter_answer: Answer,
+}
+
+/// What the human's diplomacy screen writes to its own contact-list slot of an empire (`DiplomGfx2D_1` ELF
+/// 0x511190, `re/screens/diplomacy.md` §7–§8), as a lockstep command applied before the message or answer it
+/// belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenOp {
+    /// "Send it now!": `+0x0c = 1`, `+0x16 = 1`, `+0x10 = Ido`.
+    Sent,
+    /// The waiting message was answered: `+0x17 = 0`.
+    Answered,
+    /// The arrived answer was acknowledged: `+0x18 = 0`.
+    AnswerSeen,
+    /// The counter-answer was answered: `+0x2c = 0`.
+    CounterSeen,
+    /// `CancelLastMessage` (multiplayer): `+0x16 = 0`, `+0x0c = 0`.
+    Cancelled,
+    /// The birthday greeting was sent: `VoltmarUdvozloUzenetEbbenAzEvben[empire] = 1`.
+    Greeted,
 }
 
 /// Another human's contact list in canonical multiplayer (`re/rules/multiplayer.md` §5.1): what
@@ -1724,6 +1745,35 @@ impl Diplomacy {
         for owner in self.others.iter().map(|c| c.empire as usize).collect::<Vec<_>>() {
             self.with_list(en, owner, |d| d.auto_cancel(w, owner));
         }
+    }
+
+    /// The diplomacy screen of human `owner` writes `op` to its slot of `empire` at time `ido` (`en` = the canonical
+    /// `EN`; an empire without a slot writes the spare slot −1, like the original).
+    pub fn screen(&mut self, en: usize, owner: usize, empire: usize, op: ScreenOp, ido: i32) {
+        if op == ScreenOp::Greeted {
+            if let Some(g) = self.greeted.get_mut(empire) {
+                *g = 1;
+            }
+            return;
+        }
+        self.with_list(en, owner, |d| {
+            let s = d.slot(empire);
+            match op {
+                ScreenOp::Sent => {
+                    s.screen = 1;
+                    s.asked = 1;
+                    s.sent_at = ido;
+                }
+                ScreenOp::Answered => s.waiting = 0,
+                ScreenOp::AnswerSeen => s.answered = 0,
+                ScreenOp::CounterSeen => s.countered = 0,
+                ScreenOp::Cancelled => {
+                    s.asked = 0;
+                    s.screen = 0;
+                }
+                ScreenOp::Greeted => {}
+            }
+        });
     }
 
     /// The auto-cancel of `list_owner`'s list (`players`; spec §10.3).

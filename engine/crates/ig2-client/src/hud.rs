@@ -141,6 +141,8 @@ pub struct ColonyHud {
     pub buildings: Vec<(f32, f32, usize)>,
     pub units: Vec<(f32, f32, bool)>,
     pub view: Option<[[f32; 2]; 4]>,
+    /// The planet panel's turning building, rendered over the whole virtual screen (`crate::colony_ui::PanelBuilding`).
+    pub panel_model: Option<TexId>,
 }
 
 /// The radar square (`DrawRadar` ELF 0x4cb220: `HatarX1..Y2` = 522..621 × 362..461).
@@ -153,8 +155,8 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
     let full = [1.0; 4];
     // `KirakFader`s behind the bottom-left info.
-    for (x, y, w, h) in [(6.0, 403.0, 77.0, 17.0), (89.0, 403.0, 77.0, 17.0), (5.0, 423.0, 162.0, 52.0)] {
-        crate::ui::panel(f, white, v, x, y, w, h);
+    for r in [[6.0, 403.0, 77.0, 17.0], [89.0, 403.0, 77.0, 17.0], [5.0, 423.0, 162.0, 52.0]] {
+        crate::starmap_hud::fader(f, white, v, r);
     }
     // `ColonyGfx2D_1`: the radar frame, then the picture (`CopyToScreen(28)`), then `DrawRadar`.
     if let Some(b) = brushes.get(13) {
@@ -204,11 +206,14 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
             pics.brush(f, v, &brushes[29], if flags & 0x20 != 0 { 2 } else { 1 }, None, full);
         }
     }
-    // `ColonyGfx2D_3`: the planet panel over the second 3D view of the build menu's building (not drawn: a dark
-    // viewport, 18..173 × 36..167 [obs]), and its name and costs.
+    // `ColonyGfx2D_3`: the planet panel over the second 3D view of the build menu's building (a dark viewport,
+    // 18..173 × 36..167 [obs], with `buildshown` turning in it), and its name and costs.
     let own_panel = c.own && brushes.len() > 12;
     if own_panel {
         f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(95.5, 101.5), [77.5 * v.k, 65.5 * v.k], [0.02, 0.03, 0.06, 1.0]));
+        if let Some(t) = c.panel_model {
+            crate::colony_ui::PanelBuilding::draw(f, v, t);
+        }
     }
     if let Some(b) = brushes.get(12) {
         pics.brush(f, v, b, 1, None, full);

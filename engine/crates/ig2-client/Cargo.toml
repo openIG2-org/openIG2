@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
+ig2-net = { version = "0.1.0", path = "../ig2-net" }
 ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
 ig2-sim = { version = "0.1.0", path = "../ig2-sim" }
 png = "0.18.1"

@@ -249,6 +249,7 @@ fn yard_fleet(r: &[u8]) -> YardFleet {
             story_id: i16_at(r, 0x16),
             state: r[0x18],
             visible: r[0x19..0x19 + 19].try_into().unwrap(),
+            field_2c: [r[0x2c], r[0x2d]],
             x: f32_at(r, 0x30),
             y: f32_at(r, 0x34),
             speed: f32_at(r, 0x38),

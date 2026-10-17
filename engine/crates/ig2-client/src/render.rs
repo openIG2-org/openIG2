@@ -161,6 +161,13 @@ pub enum Blend {
     Additive,
 }
 
+/// A texture frames are drawn into ([`Renderer::target`]).
+pub struct Target {
+    pub tex: TexId,
+    view: wgpu::TextureView,
+    pub size: (u32, u32),
+}
+
 /// A texture registered with the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TexId(pub(crate) usize);
@@ -388,6 +395,17 @@ impl Renderer {
     }
 
     /// Upload world-space triangles the renderer keeps until [`Renderer::clear_meshes`].
+    /// Upload `img` in place of texture `id` (a video frame; the old texture is freed).
+    pub fn replace_texture(&mut self, id: TexId, img: &Image) {
+        let new = self.add_texture(img);
+        for list in [&mut self.textures, &mut self.textures_rep] {
+            let g = list.swap_remove(new.0);
+            if let Some(slot) = list.get_mut(id.0) {
+                *slot = g;
+            }
+        }
+    }
+
     pub fn add_mesh(&mut self, verts: &[crate::render3d::MeshVertex]) -> crate::render3d::MeshId {
         self.pipe3d.add_mesh(&self.device, verts)
     }
@@ -450,6 +468,33 @@ impl Renderer {
 
     /// Draw `frame` into a new texture the quads can sample (the colony radar's picture of the terrain).
     pub fn render_texture(&mut self, frame: &Frame, size: (u32, u32)) -> TexId {
+        let t = self.target(size);
+        self.draw(frame, &t.view, size, 0.0);
+        t.tex
+    }
+
+    /// A texture the quads can sample that frames can be drawn into again and again ([`Renderer::draw_into`]).
+    pub fn target(&mut self, size: (u32, u32)) -> Target {
+        let (view, groups) = self.target_view(size);
+        self.textures.push(groups[0].clone());
+        self.textures_rep.push(groups[1].clone());
+        Target { tex: TexId(self.textures.len() - 1), view, size }
+    }
+
+    /// Draw `frame` into `t`, resized to `size` first (same [`TexId`]).
+    pub fn draw_into(&mut self, frame: &Frame, t: &mut Target, size: (u32, u32), time: f32) {
+        if t.size != size {
+            let (view, groups) = self.target_view(size);
+            self.textures[t.tex.0] = groups[0].clone();
+            self.textures_rep[t.tex.0] = groups[1].clone();
+            (t.view, t.size) = (view, size);
+        }
+        let view = t.view.clone();
+        self.draw(frame, &view, size, time);
+    }
+
+    fn target_view(&mut self, size: (u32, u32)) -> (wgpu::TextureView, [wgpu::BindGroup; 2]) {
+        let size = (size.0.max(1), size.1.max(1));
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rendered"),
             size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
@@ -461,18 +506,18 @@ impl Renderer {
             view_formats: &[],
         });
         let view = tex.create_view(&Default::default());
-        self.draw(frame, &view, size, 0.0);
-        for (list, sampler) in [(&mut self.textures, &self.sampler), (&mut self.textures_rep, &self.sampler_rep)] {
-            list.push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let group = |sampler: &wgpu::Sampler| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,
                 layout: &self.tex_layout,
                 entries: &[
                     wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                     wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
                 ],
-            }));
-        }
-        TexId(self.textures.len() - 1)
+            })
+        };
+        let groups = [group(&self.sampler), group(&self.sampler_rep)];
+        (view, groups)
     }
 
     /// Draw into an offscreen texture and read it back as RGBA8 (sRGB).
@@ -541,8 +586,27 @@ fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
     out
 }
 
+/// `--snapshot --screen diplomacy`: the diplomacy screen at rest (re/screens/diplomacy.md).
+fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    let state = &world.game.state;
+    let mut d = crate::diplomacy::Open::new(r, &l.install, &l.tables, &hud.texts, state);
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let t = world.curr.tick as f32 * 0.05;
+    d.screen.settle();
+    let _ = d.input(state, hud, &l.tables, &crate::diplomacy::Input::default());
+    d.screen.settle();
+    let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+    d.draw(&mut frame, r, &l.install, &l.tables, hud, state, size, t);
+    hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Diplomacy, t);
+    let rgba = r.draw_to_image(&frame, o.size, t);
+    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    let v = crate::diplomacy::View::read(state);
+    println!("{}: diplomacy | selected {} | contacts {:?} | menus {:?}", out.display(), d.screen.selected, v.slots.iter().map(|s| (s.empire, s.waiting, s.answered)).collect::<Vec<_>>(), d.screen.shown);
+    Ok(())
+}
+
 /// `--snapshot --colony P`: planet `P`'s colony screen.
-fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &crate::ui::Hud, p: usize) -> Result<(), String> {
+fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud, p: usize) -> Result<(), String> {
     use crate::colony::{ColonyScene, ColonySnap, View};
     let curr = ColonySnap::read(&world.game.state, p).ok_or(format!("no planet {p}"))?;
     let prev = world.colony_prev.clone().filter(|s| s.planet == p).unwrap_or_else(|| curr.clone());
@@ -550,10 +614,55 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let mut view = View::new(&curr, o.size, o.scale, &scene);
     if let Some([x, y, zoom, pitch, rotate]) = o.colony_cam {
         view.camera = crate::colony::Camera { x, y, zoom, pitch, rotate, ..view.camera };
+    } else if o.colony_live {
+        // The colony screen's own globals, saved as chunks (re/formats/save.md §4: `ColonyXStart/YStart/Rotate/Pitch/Zoom`).
+        let f = |n: &str| l.save.chunk(n).and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        view.camera = crate::colony::Camera { x: f("ColonyXStart"), y: f("ColonyYStart"), zoom: f("ColonyZoom"), pitch: f("ColonyPitch"), rotate: f("ColonyRotate"), ..view.camera };
     }
     let t = curr.tick as f32 * 0.05 + o.alpha * 0.05;
+    // The screen's input state as entering leaves it, a second of UI frames on (the selection marker settled).
+    let own = curr.owner as i32 == world.game.state.mem.i32(ig2_sim::save::va::EN) && !curr.at_war;
+    let mut ui = crate::colony_ui::ColonyUi::enter(&curr, own, &world.game.state);
+    if o.colony_live && own {
+        // `AktEpulet` isn't saved: entering selected the first building (`SelectBuildingRelative(1)`) [inf].
+        ui.selected = curr.buildings.first().map_or(0, |b| b.slot);
+    }
+    for _ in 0..100 {
+        ui.ui_frame(&curr, &mut view.camera);
+    }
+    let mut cursor = [320.0, 240.0];
+    let mut now_ms = 0;
+    if let Some(mode) = o.colony_ui.as_deref() {
+        let texts = &hud.texts;
+        let names = |t: usize| hud.tech_name(t);
+        let c = crate::colony_ui::Ctx { state: &world.game.state, snap: &curr, rules: &l.tables, sim: &l.rules, texts, tech_name: &names };
+        match mode {
+            "pick" | "build" => {
+                ui.press(&c, [100.0, 80.0], true, 0);
+                cursor = [150.0, 90.0];
+                ui.drag(&c, cursor);
+                now_ms = 1000;
+                if mode == "build" {
+                    ui.release(&c, cursor, true, now_ms);
+                    let gm = &l.rules.ground_maps[curr.map];
+                    let px = [o.size.0 as f32 * 0.5, o.size.1 as f32 * 0.55];
+                    ui.hover(&c, crate::colony_ui::cell_under(&view, gm, px));
+                }
+            }
+            "demolish" => {
+                ui.press(&c, [220.0, 450.0], true, 0);
+                cursor = [250.0, 440.0];
+            }
+            m => return Err(format!("--colony-ui {m}: pick, demolish or build")),
+        }
+    }
+    view.overlay = ui.overlay();
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let mut panel_model = crate::colony_ui::PanelBuilding::default();
+    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, ui.spin(), size);
     let mut frame = view.build(r, &l.install, &l.tables, &l.rules.ground_maps, &mut scene, &prev, &curr, o.alpha, t);
-    hud.draw_colony(&mut frame, &world.game.state, &l.tables, &l.rules.ground_maps, &view, &scene, &curr);
+    let input = crate::ui::ColonyInput { ui: &ui, sim: &l.rules, panel, cursor, now_ms, time: t };
+    hud.draw_colony(&mut frame, &world.game.state, &l.tables, &l.rules.ground_maps, &view, &scene, &curr, &input);
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Colony, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
@@ -593,6 +702,27 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     Ok(())
 }
 
+/// `--snapshot --screen research`: the research screen on the save's selection after `--ui-frames` 10 ms frames.
+fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    let state = &world.game.state;
+    let mut s = crate::research::Research::open(state, &l.tables);
+    for _ in 0..o.ui_frames.max(1) {
+        s.step(state);
+    }
+    let infos = crate::research::tech_infos(&l.install);
+    let mut models = crate::research::ResearchModels::new(r, &l.install);
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
+    let t = world.curr.tick as f32 * 0.05;
+    let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+    hud.draw_research(&mut frame, &s, &infos, state, &l.tables, tex, lines, size, t);
+    hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
+    let rgba = r.draw_to_image(&frame, o.size, t);
+    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    println!("{}: research area {} field {} tech {} | models at {:?}", out.display(), s.area, s.field, s.tech, models.centres);
+    Ok(())
+}
+
 /// `--snapshot`: run the requested ticks headlessly and write one frame as PNG.
 pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
     let l = crate::load(o)?;
@@ -604,28 +734,59 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     }
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let mut hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
-    hud.chart = o.chart.min(9);
+    hud.info = crate::ui::InfoScreen::enter(world.ui.human);
+    hud.info.chart = o.chart.min(9);
     hud.speed = crate::hud::speed_index(world.game.state.mem.i32(ig2_sim::save::va::IDO_SPEED));
+    hud.paused = o.paused;
     // The message line at the UI's pace (10 ms frames).
     for _ in 0..o.ui_frames {
         hud.scroller.step(&mut || world.pop_message());
     }
+    if o.screen.as_deref() == Some("spy") {
+        return crate::spy_screen::snapshot(o, out, &l, &world, &mut r, &mut hud);
+    }
+    if o.screen.as_deref() == Some("research") {
+        return research_snapshot(o, out, &l, &world, &mut r, &mut hud);
+    }
     let screen = match o.screen.as_deref() {
         Some("info") => Some(crate::ui::Screen::Info),
         Some("messages") => Some(crate::ui::Screen::Messages),
+        Some("diplomacy") => return diplomacy_snapshot(o, out, &l, &world, &mut r, &mut hud),
         _ => None,
     };
     if let Some(screen) = screen {
         let t = world.curr.tick as f32 * 0.05;
+        let size = [o.size.0 as f32, o.size.1 as f32];
+        let mut models = crate::screen_frames::FrameModels::new(&mut r);
+        if screen == crate::ui::Screen::Messages {
+            if let Some(id) = o.show_message {
+                hud.show_message(&l.install, id);
+            }
+            if let Some(i) = o.open_message {
+                hud.open_message(&l.install, &world.ui, i);
+            }
+            if o.open_message.is_some() || o.show_message.is_some() {
+                // Typed out as after `--ui-frames` frames of 10 ms.
+                if let Some(d) = &mut hud.messages.open {
+                    d.advance(o.ui_frames as f32 * 10.0);
+                }
+            }
+        }
+        hud.frame_tex = match screen {
+            crate::ui::Screen::Info => models.render_info(&mut r, &l.install, &hud.info.frame_view(&world.ui), size),
+            _ => models.render_messages(&mut r, &l.install, if hud.messages.open.is_some() { 30 } else { 15 }, size),
+        };
+        // Black under the frame: the exe's `Copy3hatterkep(0x34)` picture (`SaveScreen(1)`, the screen before) is
+        // black in the captures (re/screens/info.md §1.1).
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-        hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, screen, t);
+        hud.draw(&mut frame, size, &world.ui, &l.tables, screen, t);
         let rgba = r.draw_to_image(&frame, o.size, t);
         crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
         let s = &world.ui;
         println!(
             "{}: {screen:?} chart {} | known {:?} | inbox {} | line {:?} queue {} history {}",
             out.display(),
-            hud.chart,
+            hud.info.chart,
             (1..=8).filter(|&e| s.known[e]).collect::<Vec<_>>(),
             s.inbox.len(),
             String::from_utf8_lossy(&hud.scroller.text),
@@ -635,16 +796,31 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         return Ok(());
     }
     if let Some(p) = o.colony {
-        return colony_snapshot(o, out, &l, &world, &mut r, &hud, p);
+        return colony_snapshot(o, out, &l, &world, &mut r, &mut hud, p);
     }
     let assets = crate::starmap::Assets::load(&mut r, &l.install);
     let mut view = crate::starmap::View::new(&world.curr, &world.view, o.size, o.scale);
     view.reveal = o.reveal;
-    view.selected = o.select_fleet.map(crate::starmap::Pick::Fleet);
+    let lv = world.game.local_view();
+    let saved = match lv.starmap_mode {
+        1 => Some(crate::starmap::Pick::Planet(lv.planet.max(0) as usize)),
+        2 => Some(crate::starmap::Pick::Fleet(lv.fleet.max(0) as usize)),
+        _ => None,
+    };
+    view.selected = o.select_fleet.map(crate::starmap::Pick::Fleet).or(saved);
     view.hover = o.hover.and_then(|(x, y)| view.pick(&world.prev, &world.curr, o.alpha, [x, y]));
     let t = world.curr.tick as f32 * 0.05 + o.alpha * 0.05;
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
+    let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
+    hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t);
+    if let Some(panel) = &o.panel {
+        let p = crate::starmap_panels::Panels::opened(panel)?;
+        let mut models = crate::starmap_panels::PanelModels::new(&mut r);
+        let size = [o.size.0 as f32, o.size.1 as f32];
+        let tex = models.render(&mut r, &l.install, &l.tables, &p, &world.game.state, &sel, size);
+        hud.draw_starmap_panels(&mut frame, &p, &world.game.state, &sel, tex, size, t);
+    }
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;

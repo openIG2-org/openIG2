@@ -62,6 +62,10 @@ pub mod va {
     pub const AI_OFF: u32 = 0xB77244;
     /// `AktKep` (the screen shown) and `CampaignType` (> 0 in a campaign).
     pub const AKT_KEP: u32 = 0xBAE0FC;
+    /// `StarmapTransferMode` (u8) and `StarmapTransferFlotta1/2` (i32; a planet as −p): the starmap's transfer
+    /// panel (UI state, unsaved).
+    pub const STARMAP_TRANSFER_MODE: u32 = 0xB9A304;
+    pub const STARMAP_TRANSFER_FLEETS: (u32, u32) = (0xB9A62C, 0xB9A954);
     pub const CAMPAIGN_TYPE: u32 = 0x928278;
     pub const ALL_TECHS: u32 = 0xB77254;
     pub const RESEARCH_CHEAT: u32 = 0xB7727C;
@@ -521,6 +525,9 @@ pub fn chunk_va(name: &str) -> Option<u32> {
         "ResearchAktFejlesztett" => va::RESEARCHING,
         "ResearchTerulet" => 0xB9A9B4,
         "ResearchMezo" => 0xB9AA04,
+        // Research_Save: the research screen's middle wheel and remembered fields.
+        "ResearchOldForgato" => 0x919598,
+        "Terulet_Akt" => 0x919200,
         // Info_Save's charts (the rest of it is screen state, passed through).
         "InfoCharts" => va::INFO_CHARTS,
         "InfoChartsSmoothed" => va::INFO_SMOOTHED,
@@ -787,6 +794,7 @@ impl SaveState {
             let bytes = match name.as_str() {
                 "Flottak" => self.fleets.concat(),
                 "Hajok" => self.ships.concat(),
+                "Waypointek" if self.waypoints.len() <= 1 => continue,
                 "Waypointek" => self.waypoints.concat(),
                 "Tankok" => self.mem.read(va::VEHICLES, 8 * (self.mem.i32(va::VEHICLE_COUNT).max(0) as usize + 1)),
                 "Bolygok" => self.mem.read(va::PLANETS, PLANET_SIZE * (self.mem.i32(va::PLANET_COUNT).max(0) as usize + 1)),
@@ -816,7 +824,14 @@ impl SaveState {
                 // A count saved with its array: from the array.
                 "OsszHanyFlotta" => ((self.fleets.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
                 "OsszHanyHajo" => ((self.ships.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
-                "OsszHanyWaypoint" => ((self.waypoints.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
+                // `Waypointek` follows its count only when there are waypoints (re/formats/save.md §4.8).
+                "OsszHanyWaypoint" => {
+                    add(name, &((self.waypoints.len() as i32 - 1).max(0)).to_le_bytes());
+                    if self.waypoints.len() > 1 && !self.template.iter().any(|(n, _)| n == "Waypointek") {
+                        add("Waypointek", &self.waypoints.concat());
+                    }
+                    continue;
+                }
                 // `VanUresBolygo[0]` is saved before the whole array.
                 "VanUresBolygo[0]" => self.mem.read(va::AI_EMPTY_PLANETS, 1),
                 n => match chunk_va(n) {
@@ -1066,6 +1081,7 @@ pub fn put_fleet(r: &mut [u8], f: &Fleet) {
     put(r, 0x16, &f.story_id.to_le_bytes());
     r[0x18] = f.state;
     put(r, 0x19, &f.visible);
+    put(r, 0x2c, &f.field_2c);
     for (o, v) in [(0x30, f.x), (0x34, f.y), (0x38, f.speed), (0x3c, f.speed_override), (0x44, f.tx), (0x48, f.ty), (0x7c, f.radar)] {
         put(r, o, &v.to_le_bytes());
     }
@@ -1157,6 +1173,7 @@ pub fn player_slot(b: &[u8]) -> PlayerSlot {
         empire: rd_i32(b, 0),
         controller: rd_i32(b, 4),
         screen: b[0x0c],
+        sent_at: rd_i32(b, 0x10),
         open: b[0x14],
         asked: b[0x16],
         waiting: b[0x17],
@@ -1173,6 +1190,7 @@ pub fn put_player_slot(b: &mut [u8], s: &PlayerSlot) {
     put(b, 0, &s.empire.to_le_bytes());
     put(b, 4, &s.controller.to_le_bytes());
     b[0x0c] = s.screen;
+    put(b, 0x10, &s.sent_at.to_le_bytes());
     b[0x14] = s.open;
     b[0x16] = s.asked;
     b[0x17] = s.waiting;
@@ -1319,6 +1337,46 @@ impl SaveState {
         let mut rec = [0u8; REPORT];
         r.write(&mut rec);
         q.extend_from_slice(&rec);
+    }
+
+    /// Human `h`'s spy report queue (`KemBeszolasok[1..=n]`, n × `spy::REPORT` bytes): the exe's memory for the
+    /// state's `EN` (`en`), else `h`'s own copy (re/rules/multiplayer.md §5.2).
+    pub fn spy_reports(&self, h: usize, en: usize) -> Vec<u8> {
+        use crate::spy::REPORT;
+        if h == en {
+            let n = self.mem.i32(va::SPY_REPORT_COUNT).clamp(0, crate::spy::MAX_REPORTS) as usize;
+            self.mem.read(va::SPY_REPORTS + REPORT as u32, n * REPORT)
+        } else {
+            self.humans.get(&(h as u8)).map_or_else(Vec::new, |x| x.reports.clone())
+        }
+    }
+    /// The spy screen closes `h`'s first report (`Spy_Main` exe 0x58d410: `KemHanyBeszolas −= 1`, entries 2..=n
+    /// move to 1..; the old last entry keeps its bytes).
+    pub fn pop_spy_report(&mut self, h: usize, en: usize) {
+        use crate::spy::REPORT;
+        if h == en {
+            let n = self.mem.i32(va::SPY_REPORT_COUNT);
+            if n > 0 {
+                let n = n - 1;
+                let moved = self.mem.read(va::SPY_REPORTS + 2 * REPORT as u32, n as usize * REPORT);
+                self.mem.write(va::SPY_REPORTS + REPORT as u32, &moved);
+                self.mem.set_i32(va::SPY_REPORT_COUNT, n);
+            }
+        } else if let Some(x) = self.humans.get_mut(&(h as u8)) {
+            if x.reports.len() >= REPORT {
+                x.reports.drain(..REPORT);
+            }
+        }
+    }
+    /// The verdict's follow-up (`KemBeszolasok[1].kind := kind`, re/screens/spy.md §7).
+    pub fn set_spy_report_kind(&mut self, h: usize, en: usize, kind: u8) {
+        if h == en {
+            if self.mem.i32(va::SPY_REPORT_COUNT) > 0 {
+                self.mem.set_u8(va::SPY_REPORTS + crate::spy::REPORT as u32, kind);
+            }
+        } else if let Some(r) = self.humans.get_mut(&(h as u8)).and_then(|x| x.reports.first_mut()) {
+            *r = kind;
+        }
     }
 
     pub fn store_inbox(&mut self, b: &Inbox) {

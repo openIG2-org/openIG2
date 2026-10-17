@@ -23,7 +23,7 @@ use ig2_sim::spy::{MissionRule, Order, Spies, Spy, SpyContext, SpyEvent, SpyRule
 use serde_json::Value;
 
 fn traces(prefix: &str) -> Vec<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces");
+    let dir = std::env::var_os("IG2_TRACE_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces"));
     let mut v: Vec<PathBuf> = std::fs::read_dir(&dir)
         .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
         .unwrap_or_default();

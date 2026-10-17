@@ -429,9 +429,10 @@ Then, once `DiplomacyStarted`: `MostHanyPlayerVan = MaxPlayerek`, and every slot
 Cancel: `+0x58 = 1`, `+0x17 = 0`, `Multi_Send(0x41, EN, f)` (a no-op handler in SP). No random draws.
 
 ## 11. Not ported (open)
+The human's screen (which messages it lets the human compose, its texts and answers) is `re/screens/diplomacy.md`.
 `MiertValaszolt…` reason codes and `vv_*` text flags, `Story_Special` and
 `Story_Diplomacy_Special`, `NEWGAME_Diplomacy` (initial ruler ages and the cosmetic tables), the MP transport
-(§10.2; the 0x3d/0x40/0x41 handlers), the human's screen itself (which messages it lets the human compose), the
+(§10.2; the 0x3d/0x40/0x41 handlers), the
 alias of `DiplomaciaMikorHivtaUtoljara` with the AI table, the race diplomacy thresholds (`FajBekeMogalomSzint`
 & co. have no reader in the ELF).
 

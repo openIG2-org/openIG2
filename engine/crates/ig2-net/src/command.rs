@@ -1,8 +1,8 @@
 //! Player commands (ADR 0007 §1): one variant per lockstep message of the original, applied at a tick boundary
 //! as its `MULTIGET_*` handler applies it.
 
-use ig2_sim::diplomacy::{Answer, Letter, Message};
-use ig2_sim::game::{Game, GameEvent};
+use ig2_sim::diplomacy::{Answer, Letter, Message, ScreenOp};
+use ig2_sim::game::{ColonyOrder, Game, GameEvent, ResearchOrder, StarmapOrder};
 use ig2_sim::spacebattle::Order;
 use ig2_sim::spy;
 use ig2_sim::trade::{Delivery, DELIVERY};
@@ -24,7 +24,33 @@ impl From<Terms> for Message {
     }
 }
 
-/// A spy-screen order (`ig2_sim::spy::Order`, `MULTIGET_Spy`'s messages 0x47..0x4c; `re/rules/espionage.md` §8).
+/// What the diplomacy screen writes to its own contact-list slot (`ig2_sim::diplomacy::ScreenOp`,
+/// `re/screens/diplomacy.md` §8): the original writes these flags in the frame it sends the message or answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiplomacyScreenOp {
+    Sent,
+    Answered,
+    AnswerSeen,
+    CounterSeen,
+    Cancelled,
+    Greeted,
+}
+
+impl From<DiplomacyScreenOp> for ScreenOp {
+    fn from(o: DiplomacyScreenOp) -> Self {
+        match o {
+            DiplomacyScreenOp::Sent => ScreenOp::Sent,
+            DiplomacyScreenOp::Answered => ScreenOp::Answered,
+            DiplomacyScreenOp::AnswerSeen => ScreenOp::AnswerSeen,
+            DiplomacyScreenOp::CounterSeen => ScreenOp::CounterSeen,
+            DiplomacyScreenOp::Cancelled => ScreenOp::Cancelled,
+            DiplomacyScreenOp::Greeted => ScreenOp::Greeted,
+        }
+    }
+}
+
+/// A spy-screen order (`ig2_sim::spy::Order`, `MULTIGET_Spy`'s messages 0x47..0x4c; `re/rules/espionage.md` §8;
+/// the screen's own steps, re/screens/spy.md §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpyOrder {
     Dismiss { spy: u8 },
@@ -33,6 +59,11 @@ pub enum SpyOrder {
     Verdict { fate: i32, owner: u8, spy: u8 },
     Applicant { choice: i32, spy: u8 },
     Skill { spy: u8, skill: u8 },
+    /// Ours (re/screens/spy.md §7): the verdict buttons with the UI's stream-0 roll, the report closed, the chance
+    /// estimate's stream-0 draws.
+    Judge { choice: i32, owner: u8, spy: u8 },
+    Acknowledge,
+    Estimate { spy: u8, mission: u16, target: u8 },
 }
 
 impl From<SpyOrder> for spy::Order {
@@ -45,6 +76,9 @@ impl From<SpyOrder> for spy::Order {
             SpyOrder::Verdict { fate, owner, spy } => Order::Verdict { fate, owner, spy },
             SpyOrder::Applicant { choice, spy } => Order::Applicant { choice, spy },
             SpyOrder::Skill { spy, skill } => Order::Skill { spy, skill },
+            SpyOrder::Judge { choice, owner, spy } => Order::Judge { choice, owner, spy },
+            SpyOrder::Acknowledge => Order::Acknowledge,
+            SpyOrder::Estimate { spy, mission, target } => Order::Estimate { spy, mission, target },
         }
     }
 }
@@ -83,6 +117,105 @@ impl From<BattleOrder> for Order {
     }
 }
 
+/// A starmap order (`ig2_sim::game::StarmapOrder`, `MULTIGET_Starmap`'s messages 0x14..0x1d, 0x400, 0x403, 0x406,
+/// 0x407, 0x40f; re/screens/starmap.md §10). Coordinates travel as f32 bits, the production block as its 64 bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StarmapCmd {
+    Split { fleet: i32 },
+    Move { fleet: i32, order: i32, kind: i32, x: u32, y: u32 },
+    Colonise { planet: i32, kind: i32 },
+    SellStation { planet: i32, index: i32 },
+    Satellite { planet: i32, kind: i32 },
+    Setting { planet: i32, what: i32, value: i32 },
+    Queue { planet: i32, block: Vec<u8> },
+    Transfer { from: i32, to: i32, design: i32, ship: i32, count: i32 },
+    Production { op: i32, planet: i32, line: i32, slot: i32, value: i32 },
+    Rally { planet: i32, target: i32 },
+    FinishHeads { planet: i32 },
+    MpSpeed { value: i32 },
+    Speed { level: i32 },
+    Pause { paused: bool },
+}
+
+impl StarmapCmd {
+    /// The sim's order; `None` for a malformed production block.
+    pub fn order(&self) -> Option<StarmapOrder> {
+        use StarmapCmd as C;
+        use StarmapOrder as O;
+        Some(match *self {
+            C::Split { fleet } => O::Split { fleet },
+            C::Move { fleet, order, kind, x, y } => O::Move { fleet, order, kind, x: f32::from_bits(x), y: f32::from_bits(y) },
+            C::Colonise { planet, kind } => O::Colonise { planet, kind },
+            C::SellStation { planet, index } => O::SellStation { planet, index },
+            C::Satellite { planet, kind } => O::Satellite { planet, kind },
+            C::Setting { planet, what, value } => O::Setting { planet, what, value },
+            C::Queue { planet, ref block } => O::Queue { planet, block: block[..].try_into().ok()? },
+            C::Transfer { from, to, design, ship, count } => O::Transfer { from, to, design, ship, count },
+            C::Production { op, planet, line, slot, value } => O::Production { op, planet, line, slot, value },
+            C::Rally { planet, target } => O::Rally { planet, target },
+            C::FinishHeads { planet } => O::FinishHeads { planet },
+            C::MpSpeed { value } => O::MpSpeed { value },
+            C::Speed { level } => O::Speed { level },
+            C::Pause { paused } => O::Pause { paused },
+        })
+    }
+}
+
+impl From<StarmapOrder> for StarmapCmd {
+    fn from(o: StarmapOrder) -> Self {
+        use StarmapCmd as C;
+        use StarmapOrder as O;
+        match o {
+            O::Split { fleet } => C::Split { fleet },
+            O::Move { fleet, order, kind, x, y } => C::Move { fleet, order, kind, x: x.to_bits(), y: y.to_bits() },
+            O::Colonise { planet, kind } => C::Colonise { planet, kind },
+            O::SellStation { planet, index } => C::SellStation { planet, index },
+            O::Satellite { planet, kind } => C::Satellite { planet, kind },
+            O::Setting { planet, what, value } => C::Setting { planet, what, value },
+            O::Queue { planet, block } => C::Queue { planet, block: block.to_vec() },
+            O::Transfer { from, to, design, ship, count } => C::Transfer { from, to, design, ship, count },
+            O::Production { op, planet, line, slot, value } => C::Production { op, planet, line, slot, value },
+            O::Rally { planet, target } => C::Rally { planet, target },
+            O::FinishHeads { planet } => C::FinishHeads { planet },
+            O::MpSpeed { value } => C::MpSpeed { value },
+            O::Speed { level } => C::Speed { level },
+            O::Pause { paused } => C::Pause { paused },
+        }
+    }
+}
+
+/// A research-screen order (`ig2_sim::game::ResearchOrder`, `MULTIGET_Research`'s messages 0x29, 0x2a, 0x2b, 0x31;
+/// re/screens/research.md §6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResearchCmd {
+    Stop { tech: i32 },
+    Start { tech: i32 },
+    Urgent,
+    DevelopAll,
+}
+
+impl From<ResearchCmd> for ResearchOrder {
+    fn from(o: ResearchCmd) -> Self {
+        match o {
+            ResearchCmd::Stop { tech } => ResearchOrder::Stop { tech },
+            ResearchCmd::Start { tech } => ResearchOrder::Start { tech },
+            ResearchCmd::Urgent => ResearchOrder::Urgent,
+            ResearchCmd::DevelopAll => ResearchOrder::DevelopAll,
+        }
+    }
+}
+
+impl From<ResearchOrder> for ResearchCmd {
+    fn from(o: ResearchOrder) -> Self {
+        match o {
+            ResearchOrder::Stop { tech } => ResearchCmd::Stop { tech },
+            ResearchOrder::Start { tech } => ResearchCmd::Start { tech },
+            ResearchOrder::Urgent => ResearchCmd::Urgent,
+            ResearchOrder::DevelopAll => ResearchCmd::DevelopAll,
+        }
+    }
+}
+
 /// A player's action. The acting empire (the issuer) isn't part of it: the host stamps it from the sender's slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Command {
@@ -106,6 +239,23 @@ pub enum Command {
     SpaceOrder { battle: u8, order: BattleOrder },
     /// Packet 0x44d: the issuer left the finished battle's screen (`SpaceWarVege` once every human has).
     SpaceBattleLeft,
+    /// Packets 0x14..0x1d, 0x400, 0x403, 0x406, 0x407, 0x40f, `MULTIGET_Starmap` exe 0x59d930: a starmap order.
+    Starmap { order: StarmapCmd },
+    /// Packets 0x1f..0x21, 0x26, 0x27, 300, 0x132, 0x133, `MULTIGET_Colony` exe 0x48a270: a colony-screen order
+    /// (`ig2_sim::game::ColonyOrder`) as its message type and values.
+    Colony { kind: i32, values: Vec<i32> },
+    /// The diplomacy screen's own writes to the issuer's contact-list slot of `empire` (no packet of its own in the
+    /// original: `DiplomGfx2D_1` writes them before `ElkuldUzenet`/`ElkuldValasz`).
+    DiplomacyScreen { empire: u8, op: DiplomacyScreenOp },
+    /// Packets 0x29, 0x2a, 0x2b, 0x31, `MULTIGET_Research` exe 0x51ee70: a research-screen order.
+    Research { order: ResearchCmd },
+}
+
+impl From<ColonyOrder> for Command {
+    fn from(o: ColonyOrder) -> Self {
+        let (kind, values) = o.to_message();
+        Command::Colony { kind, values }
+    }
 }
 
 /// A command with its issuer, as a bundle carries it.
@@ -144,6 +294,49 @@ impl Command {
                 game.space_order(issuer, *battle as usize, (*order).into());
             }
             Command::SpaceBattleLeft => game.space_battle_left(issuer),
+            Command::Starmap { order } => {
+                if let Some(o) = order.order() {
+                    game.starmap_order(issuer, o);
+                }
+            }
+            Command::Colony { kind, values } => {
+                if let Some(o) = ColonyOrder::from_message(*kind, values) {
+                    game.colony_order(issuer, o);
+                }
+            }
+            Command::DiplomacyScreen { empire, op } => game.diplomacy_screen(issuer as usize, *empire as usize, (*op).into()),
+            Command::Research { order } => game.research_order(issuer, (*order).into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn starmap_orders_survive_the_wire() {
+        let orders = [
+            StarmapOrder::Move { fleet: 4, order: 14, kind: 0, x: -0.0, y: 123.456 },
+            StarmapOrder::Queue { planet: 42, block: std::array::from_fn(|i| i as u8) },
+            StarmapOrder::Production { op: 4, planet: 7, line: 1, slot: 2, value: 33 },
+            StarmapOrder::Pause { paused: true },
+        ];
+        for o in orders {
+            let c = Command::Starmap { order: StarmapCmd::from(o) };
+            let back: Command = crate::wire::from_slice(&crate::wire::to_vec(&c).unwrap()).unwrap();
+            let Command::Starmap { order } = back else { panic!() };
+            let got = order.order().unwrap();
+            assert_eq!(format!("{got:?}"), format!("{o:?}"));
+            if let (StarmapOrder::Move { x: a, .. }, StarmapOrder::Move { x: b, .. }) = (got, o) {
+                assert_eq!(a.to_bits(), b.to_bits());
+            }
+        }
+        let o = ColonyOrder::Build { planet: 42, kind: 7, x: 100, y: -1 };
+        let back: Command = crate::wire::from_slice(&crate::wire::to_vec(&Command::from(o)).unwrap()).unwrap();
+        let Command::Colony { kind, values } = back else { panic!() };
+        assert_eq!(ColonyOrder::from_message(kind, &values), Some(o));
+        // A block that isn't 64 bytes is refused.
+        assert!(StarmapCmd::Queue { planet: 1, block: vec![0; 3] }.order().is_none());
     }
 }

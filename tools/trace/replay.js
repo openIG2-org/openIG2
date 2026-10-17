@@ -65,7 +65,7 @@ const QUEUES = [['vegzes', 0xf43290], ['talal', 0xf4329c]];
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, name: 'Replay', speed: 3, ticks: 40,
   seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
- traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5 };
+ traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5, orders: 0, ordersEvery: 3, colony: 0, research: 0, researchEvery: 2 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -802,6 +802,334 @@ function stageBattles() {
   return out;
 }
 
+// --orders N: every --orders-every ticks (from tick 1), N random starmap orders go through the exe's own
+// MULTIGET_Starmap (0x59d930, re/screens/starmap.md §10) at IdoNapValtozott, before that tick's save: its
+// Multi_GetNextTipus calls (0x513340) are pointed at a stub returning the staged type once to a call whose range
+// holds it, its Multi_Get calls (0x513160) at a stub written for the order that stores each value into the
+// out-parameters ([esp + 8 + 8i]; the list ends with a 0 in a marker's place; 0x1a's block is 16 dwords). Each is
+// reported as {k: 'sorder', before: k, type, vals} (vals: the issuer, then the dwords). Set-up before save 0:
+// "always simulate" battles (0xB77230, so attacks don't stop the clock), stations on the human's planets, two
+// fleets of the human's ships and vehicles beside its first planet.
+const SO = {
+  Multiget: va(0x59d930), Hajok: va(0xbb4100), HanyHajo: va(0xbb4104), Tankok: va(0xbb41a8), HanyTank: va(0xbb4154),
+  next: [0x59d973, 0x59da1c, 0x59da31, 0x59eb13, 0x59eb4a, 0x59f449, 0x59f466, 0x59f581].map(va),
+  get: [0x59d99f, 0x59d9fc, 0x59da6c, 0x59dbf6, 0x59dd52, 0x59de16, 0x59df00, 0x59e022, 0x59e1f9, 0x59e283, 0x59e301,
+    0x59e650, 0x59eb84, 0x59ec31, 0x59ece6, 0x59ed36, 0x59f1a9, 0x59f1fc, 0x59f23b, 0x59f34a, 0x59f381, 0x59f3c4, 0x59f3fd,
+    0x59f497].map(va),
+};
+const multigetStarmap = nf(SO.Multiget, 'void', []);
+const soTankNew = nf(va(0x541750), 'void', ['int', 'int', 'int']);
+let soSeed = 0;
+// mulberry32 on --seed: the staged orders are reproducible per seed.
+function srnd(n) {
+  soSeed = (soSeed + 0x6d2b79f5) | 0;
+  let t = soSeed;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return n > 0 ? (((t ^ (t >>> 14)) >>> 0) % n) : 0;
+}
+const spick = (a) => a[srnd(a.length)];
+const fbits = (x) => { const b = new ArrayBuffer(4); new DataView(b).setFloat32(0, x, true); return new DataView(b).getInt32(0, true); };
+function soPatch(calls, target) {
+  const saved = calls.map((c) => c.readByteArray(5));
+  for (const c of calls) Memory.patchCode(c, 5, (code) => { const w = new X86Writer(code, { pc: c }); w.putCallAddress(target); w.flush(); });
+  return () => calls.forEach((c, i) => Memory.patchCode(c, 5, (code) => code.writeByteArray(saved[i])));
+}
+let soNext = null, soGet = null;
+function soStubs(outs) {
+  if (soNext === null) {
+    soNext = Memory.alloc(Process.pageSize);
+    soGet = Memory.alloc(Process.pageSize);
+    const type = soNext.add(0x200);
+    Memory.patchCode(soNext, 0x80, (code) => {
+      const w = new X86Writer(code, { pc: soNext });
+      w.putMovRegAddress('ecx', type); w.putMovRegRegPtr('eax', 'ecx');
+      w.putCmpRegI32('eax', 0); w.putJccShortLabel('je', 'none', 'no-hint');
+      w.putMovRegRegOffsetPtr('edx', 'esp', 4); w.putCmpRegReg('eax', 'edx'); w.putJccShortLabel('jl', 'none', 'no-hint');
+      w.putMovRegRegOffsetPtr('edx', 'esp', 8); w.putCmpRegReg('eax', 'edx'); w.putJccShortLabel('jg', 'none', 'no-hint');
+      w.putMovRegPtrU32('ecx', 0); w.putRet();
+      w.putLabel('none'); w.putXorRegReg('eax', 'eax'); w.putRet();
+      w.flush();
+    });
+  }
+  Memory.patchCode(soGet, 0x800, (code) => {
+    const g = new X86Writer(code, { pc: soGet });
+    outs.forEach((o, i) => {
+      g.putMovRegRegOffsetPtr('ecx', 'esp', 8 + 8 * i);
+      o.forEach((v, j) => g.putMovRegOffsetPtrU32('ecx', 4 * j, v >>> 0));
+      if (i + 1 < outs.length) {
+        g.putMovRegRegOffsetPtr('ecx', 'esp', 0xc + 8 * i);
+        g.putCmpRegI32('ecx', 0); g.putJccNearLabel('je', 'done', 'no-hint');
+      }
+    });
+    g.putLabel('done'); g.putMovRegU32('eax', 1); g.putRet();
+    g.flush();
+  });
+}
+function soRun(type, outs) {
+  soStubs(outs);
+  soNext.add(0x200).writeS32(type);
+  const undoNext = soPatch(SO.next, soNext), undoGet = soPatch(SO.get, soGet);
+  try { multigetStarmap(); } finally { undoNext(); undoGet(); }
+}
+function soState() {
+  const en = T.EN.readS32(), np = T.HanyBolygo.readS32();
+  const fl = F.Flottak.readPointer(), n = F.HanyFlotta.readS32();
+  const planets = [], all = [], mine = [];
+  for (let p = 1; p <= np; p++) if (owner(p) === en) planets.push(p);
+  for (let f = 1; f <= n; f++) {
+    const o = fl.add(f * 0x80 + 0x15).readU8();
+    if (o === 0xff) continue;
+    all.push(f);
+    if (o === en) mine.push(f);
+  }
+  const des = { 1: [], 2: [], st: [] };
+  for (let d = 1; d <= designs(en); d++) {
+    const r = design(en, d), c = r.add(0x16).readS16();
+    if (c === 1 && r.add(0x37).readU8()) des.st.push(d);
+    else if (c === 1 || c === 2) des[c].push(d);
+  }
+  return { en, np, planets, all, mine, des };
+}
+// What holder h (fleet > 0, planet -p) carries: [[design, ship index or 0], ...].
+function soHeld(h) {
+  const out = [], hs = SO.Hajok.readPointer();
+  for (let i = 1; i <= SO.HanyHajo.readS32(); i++) {
+    const r = hs.add(6 * i);
+    if (r.add(2).readS16() !== 0x7fff && r.readS16() === h) out.push([r.add(2).readS16(), i]);
+  }
+  for (let i = 1; i <= SO.HanyTank.readS32(); i++) {
+    const r = SO.Tankok.add(8 * i);
+    if (r.add(2).readS16() !== 0x7fff && r.readS16() === h && r.add(4).readS32() > 0) out.push([r.add(2).readS16(), 0]);
+  }
+  return out;
+}
+// A whole production block (+0x78..+0xb8) of the human's own designs.
+function soBlock(st, p) {
+  const b = new Uint8Array(T.Bolygok.add(p * 0x188 + 0x78).readByteArray(0x40));
+  const dv = new DataView(b.buffer);
+  for (let line = 0; line < 2; line++) {
+    const list = line === 0 ? st.des[1].concat(st.des.st) : st.des[2];
+    const m = list.length ? srnd(5) : 0;
+    const ui = [0, 1, 2, 3];
+    for (let k = 3; k > 0; k--) { const j = srnd(k + 1); const t = ui[k]; ui[k] = ui[j]; ui[j] = t; }
+    for (let k = 0; k < 4; k++) {
+      dv.setInt16(8 * line + 2 * k, k < m ? spick(list) : 0, true);
+      b[0x10 + 4 * line + k] = 1 + srnd(5); b[0x18 + 4 * line + k] = srnd(2);
+      b[0x20 + 4 * line + k] = ui[k]; b[0x35 + 4 * line + k] = srnd(2);
+    }
+    const head = dv.getInt16(8 * line, true);
+    dv.setInt32(0x28 + 4 * line, head > 0 ? design(st.en, head).add(0x20).readS32() : 0, true);
+    b[0x30 + line] = 0;
+  }
+  const words = [];
+  for (let i = 0; i < 16; i++) words.push(dv.getInt32(4 * i, true));
+  return words;
+}
+function soMake(st) {
+  const en = st.en, r = srnd(100);
+  const P = st.planets.length ? st.planets : [1];
+  const anyPlanet = () => 1 + srnd(st.np);
+  const myPlanet = () => (srnd(8) ? spick(P) : anyPlanet());
+  const fleet = () => (st.mine.length && srnd(4) ? spick(st.mine) : (st.all.length ? spick(st.all) : 1));
+  if (r < 24) {
+    const kind = spick([0, 0, 0, 1, 1, 2]), ord = spick([1, 1, 1, 2, 0, 13, 14]);
+    let x = 0, y = 0;
+    if (kind === 0) { x = srnd(600) - 300 + srnd(100) / 100; y = srnd(600) - 300 + srnd(100) / 100; }
+    if (kind === 1) x = anyPlanet();
+    if (kind === 2) x = st.all.length ? spick(st.all) : 1;
+    return [0x15, [[en], [fleet()], [ord], [kind], [fbits(x)], [fbits(y)]]];
+  }
+  if (r < 29) return [0x14, [[en], [fleet()]]];
+  if (r < 34) return [0x16, [[en], [anyPlanet()], [1 + srnd(2)]]];
+  if (r < 39) {
+    const p = myPlanet();
+    return [0x17, [[en], [p], [srnd(T.Bolygok.add(p * 0x188 + 0x114).readS32() + 2)]]];
+  }
+  if (r < 43) return [0x18, [[en], [myPlanet()], [srnd(3)]]];
+  if (r < 52) return [0x19, [[en], [myPlanet()], [srnd(11)], [srnd(12)]]];
+  if (r < 56) { const p = myPlanet(); return [0x1a, [[en], [p], soBlock(st, p)]]; }
+  if (r < 70) {
+    const holders = st.mine.concat(P.map((p) => -p));
+    if (!holders.length) return null;
+    const from = spick(holders), held = soHeld(from);
+    let to = spick(holders);
+    if (to === from) to = spick(holders);
+    // Ships only go between fleets (the transfer screen; HajoAtpakol onto a planet writes outside Flottak).
+    const ok = held.filter(([, i]) => to > 0 || i === 0);
+    const [d, i] = ok.length ? spick(ok) : [spick(st.des[2].concat(to > 0 ? st.des[1] : []).concat([1])), 0];
+    return [0x1c, [[en], [from], [to], [d], [srnd(2) ? 0 : i], [1 + srnd(6)]]];
+  }
+  if (r < 87) {
+    const op = 1 + srnd(5), line = srnd(2);
+    const list = line === 0 ? st.des[1].concat(st.des.st) : st.des[2];
+    const value = op === 4 ? (list.length && srnd(3) ? spick(list) : 0) : srnd(4);
+    return [0x1d, [[en], [op], [myPlanet()], [line], [0], [srnd(4)], [value]]];
+  }
+  if (r < 91) return [0x400, [[en], [myPlanet()], [srnd(3) ? spick(P) : 0]]];
+  if (r < 94) return [0x40f, [[en], [myPlanet()]]];
+  if (r < 97) return [0x406, [[en], [1 + srnd(3)]]];
+  if (r < 99) return [0x407, [[en], [0]]];
+  return [0x403, [[en], [srnd(5)]]];
+}
+// libc rand() is pinned for the batch (garrisons landing draw their dropships' offsets): reported as 'libc'.
+function stageOrders() {
+  const libc = (cfg.seed * 7919 + 17 + A.Ido2.readS32()) >>> 0;
+  srand(libc);
+  for (let i = 0; i < cfg.orders; i++) {
+    const o = soMake(soState());
+    if (!o) continue;
+    soRun(o[0], o[1]);
+    emit({ k: 'sorder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
+  }
+}
+// --research N: every --research-every ticks (from tick 1), N random research-screen messages go through the exe's
+// own MULTIGET_Research (0x51ee70, re/screens/research.md §6) at IdoNapValtozott, before that tick's save, with the
+// starmap orders' stubs: 0x2a start (mostly a researchable tech of the human while it researches nothing, as the
+// button does; now and then any tech, or with a project running), 0x29 stop (mostly the running project), 0x2b the
+// urgent toggle, rarely 0x31 (develop every tech some empire knows). Mostly the human's, now and then an AI's.
+// Each is reported as {k: 'rorder', before: k, libc, type, vals} (vals: the issuer, then the dwords).
+const RO = {
+  Multiget: va(0x51ee70), Akt: va(0xb9a9b8), Techs: va(0xb9c0c8),
+  next: [0x51ee7a, 0x51f02d].map(va),
+  get: [0x51eea6, 0x51ef01, 0x51ef3b, 0x51ef74].map(va),
+};
+const multigetResearch = nf(RO.Multiget, 'void', []);
+function roRun(type, outs) {
+  soStubs(outs);
+  soNext.add(0x200).writeS32(type);
+  const undoNext = soPatch(RO.next, soNext), undoGet = soPatch(RO.get, soGet);
+  try { multigetResearch(); } finally { undoNext(); undoGet(); }
+}
+const roStatus = (t, e) => RO.Techs.add(t * 0x114 + 0x45 + e).readU8();
+function roMake() {
+  const en = T.EN.readS32();
+  const e = srnd(6) ? en : 1 + srnd(8);
+  const akt = RO.Akt.add(4 * e).readS32();
+  const r = srnd(100);
+  const any = () => 1 + srnd(192);
+  if (r < 45) {
+    const ok = [];
+    for (let t = 1; t < 193; t++) if (roStatus(t, e) === 3) ok.push(t);
+    const t = ok.length && srnd(5) ? spick(ok) : any();
+    if (akt !== 0 && srnd(3)) return [0x29, [[e], [akt]]];
+    return [0x2a, [[e], [t]]];
+  }
+  if (r < 75) return [0x29, [[e], [akt > 0 && srnd(4) ? akt : any()]]];
+  if (r < 98) return [0x2b, [[e]]];
+  return [0x31, [[e]]];
+}
+function stageResearch() {
+  const libc = (cfg.seed * 7919 + 29 + A.Ido2.readS32()) >>> 0;
+  srand(libc);
+  for (let i = 0; i < cfg.research; i++) {
+    const o = roMake();
+    roRun(o[0], o[1]);
+    emit({ k: 'rorder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
+  }
+}
+function stageOrdersSetup() {
+  soSeed = cfg.seed | 0;
+  va(0xb77230).writeU8(1);
+  const st = soState(), out = { en: st.en, planets: st.planets.length, fleets: st.mine.length, designs: [st.des[1].length, st.des[2].length, st.des.st.length] };
+  if (!st.planets.length) return out;
+  for (const p of st.planets.slice(0, 3)) {
+    if (!st.des.st.length) break;
+    const q = T.Bolygok.add(p * 0x188), n = 2 + srnd(4);
+    q.add(0x114).writeS32(n);
+    for (let k = 1; k <= n; k++) q.add(0xfe + 2 * k).writeS16(spick(st.des.st));
+  }
+  const home = st.planets[0], q = T.Bolygok.add(home * 0x188);
+  out.made = [];
+  for (let j = 0; j < 2 && st.des[1].length; j++) {
+    const f = flottaNew(Memory.allocAnsiString('Stage'), st.en, 0, q.add(0x18).readFloat() + j, q.add(0x1c).readFloat(), 0);
+    if (f <= 0) continue;
+    for (let s = 0; s < 3; s++) hajoNew(f, spick(st.des[1]));
+    if (st.des[2].length) soTankNew(f, spick(st.des[2]), 2);
+    out.made.push(f);
+  }
+  return out;
+}
+
+// --colony N: every --orders-every ticks (from tick 1), N random colony orders go through the exe's own
+// MULTIGET_Colony (0x48a270, re/screens/colony.md §9) at IdoNapValtozott, like --orders: its 2 Multi_GetNextTipus
+// calls and 16 Multi_Get calls are pointed at the stubs. Each is reported as {k: 'corder', before: k, libc, type,
+// vals}. The orders are shaped like the screen's: build kinds seen on the map at a random cell of the issuer's
+// planet, demolish/switch/priority/repair of its buildings, now and then a foreign planet, an empty or missing slot,
+// the shown planet (0x26), the self-destruct switch (0x27/300). Set-up before save 0: a third of the human's
+// buildings get random damage (for the repairs).
+const CO = {
+  Multiget: va(0x48a270), Epuletek: va(0xba9e90), Slots: va(0xba9840), Leiro: va(0x8eba38),
+  next: [0x48a29a, 0x48a2b1].map(va),
+  get: [0x48a2fa, 0x48a501, 0x48a591, 0x48a602, 0x48a6ea, 0x48a787, 0x48a86b, 0x48a90b, 0x48a943, 0x48a984, 0x48a9da,
+    0x48aa34, 0x48ab31, 0x48aba9, 0x48ac0f, 0x48aec7].map(va),
+};
+const multigetColony = nf(CO.Multiget, 'void', []);
+const coSlots = (p) => CO.Slots.add(4 * p).readS32();
+const coRec = (p, k) => CO.Epuletek.add(4 * p).readPointer().add(0x20 * k);
+function coRun(type, outs) {
+  soStubs(outs);
+  soNext.add(0x200).writeS32(type);
+  const undoNext = soPatch(CO.next, soNext), undoGet = soPatch(CO.get, soGet);
+  try { multigetColony(); } finally { undoNext(); undoGet(); }
+}
+function coKinds() {
+  const kinds = new Set();
+  for (let p = 1; p <= T.HanyBolygo.readS32(); p++) {
+    for (let k = 1; k <= coSlots(p); k++) { const t = coRec(p, k).readU8(); if (t) kinds.add(t); }
+  }
+  return [...kinds];
+}
+let coKindList = [];
+function coMake(st) {
+  const en = st.en, r = srnd(100);
+  const P = st.planets.length ? st.planets : [1];
+  const planet = () => (srnd(10) ? spick(P) : 1 + srnd(st.np));
+  const slotOf = (p) => 1 + srnd(coSlots(p));
+  const live = (p) => { const n = coSlots(p), out = []; for (let k = 1; k <= n; k++) if (coRec(p, k).readU8()) out.push(k); return out; };
+  const building = (p) => { const l = live(p); return l.length && srnd(12) ? spick(l) : slotOf(p); };
+  if (r < 34) {
+    const p = planet(), kind = coKindList.length ? spick(coKindList) : 1;
+    const x = srnd(8) ? 20 + srnd(160) : -1, y = x < 0 ? -1 : 20 + srnd(160);
+    return [0x1f, [[en], [p], [kind], [x], [y]]];
+  }
+  // The screen only names used slots (1..=HanyEpuletLefoglalva; empty ones now and then): past them the exe reads
+  // the block's unused records (a demolish there counts HanyEpulet down).
+  if (r >= 34 && r < 92) {
+    const p = planet();
+    if (coSlots(p) <= 0) return null;
+    return [r < 46 ? 0x20 : r < 62 ? 0x21 : r < 74 ? 0x132 : 0x133, [[en], [p], [building(p)]]];
+  }
+  if (r < 96) return [0x26, [[en], [planet()]]];
+  if (r < 98) return [0x27, [[en], [spick(P)]]];
+  return [300, [[en], [spick(P)]]];
+}
+function stageColony() {
+  const libc = (cfg.seed * 7919 + 29 + A.Ido2.readS32()) >>> 0;
+  srand(libc);
+  for (let i = 0; i < cfg.colony; i++) {
+    const o = coMake(soState());
+    if (!o) continue;
+    coRun(o[0], o[1]);
+    emit({ k: 'corder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
+  }
+}
+function stageColonySetup() {
+  soSeed = (cfg.seed | 0) ^ 0x5eed;
+  coKindList = coKinds();
+  const st = soState(), out = { en: st.en, planets: st.planets.length, kinds: coKindList.length, damaged: 0 };
+  for (const p of st.planets) {
+    for (let k = 1; k <= coSlots(p); k++) {
+      const r = coRec(p, k), t = r.readU8();
+      if (!t || srnd(3)) continue;
+      const hp = CO.Leiro.add(0x24 * t + 8).readS32();
+      r.add(4).writeS32(1 + srnd(Math.max(1, hp - 1)));
+      out.damaged++;
+    }
+  }
+  return out;
+}
+
 let k = 0, frames = 0, phase = 0, loadedAt = 0, homeKep = -1, busy = false;
 
 // --randlog: the callers of libc rand() during the tick (run-length [return address, count]; [-1, 1] marks
@@ -854,6 +1182,9 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (cfg.wormholes) emit({ k: 'wormholes', stage: stageWormholes() });
       if (cfg.battles) emit({ k: 'battles', stage: stageBattles() });
       if (cfg.deaths) emit({ k: 'deaths', stage: stageDeaths() });
+      if (cfg.orders) emit({ k: 'orders', stage: stageOrdersSetup() });
+      if (cfg.colony) emit({ k: 'colony', stage: stageColonySetup() });
+      if (cfg.research) { soSeed = (cfg.seed | 0) ^ 0x5eed; va(0xb77230).writeU8(1); }
       if (cfg.stage) {
         const st = stageTrade();
         loadSave(cfg.preSlot, Memory.allocAnsiString(cfg.name + ' pre'), 2);
@@ -877,6 +1208,9 @@ Interceptor.attach(A.Fake_FRISSITES, {
 Interceptor.attach(A.IdoNapValtozott, {
   onEnter() {
     if (busy || phase !== 2) return;
+    if (cfg.orders && k >= 1 && k % cfg.ordersEvery === 0) stageOrders();
+    if (cfg.colony && k >= 1 && k % cfg.ordersEvery === 0) stageColony();
+    if (cfg.research && k >= 1 && k % cfg.researchEvery === 0) stageResearch();
     save('tick');
     srand((cfg.seed + A.Ido2.readS32()) >>> 0);
     if (k > cfg.ticks) { phase = 3; emit({ k: 'done' }); flush(); }

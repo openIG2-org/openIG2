@@ -664,6 +664,20 @@ impl Game<'_> {
                     u.fill_uninit(&raw);
                 }
             }
+            // A grown group's member arrays may have moved: only the saved origin pointer is taken.
+            let mut grown = std::mem::take(&mut field.tail.grown);
+            grown.sort_unstable();
+            grown.dedup();
+            for slot in grown {
+                let raw = match self.uninit.as_mut() {
+                    Some(f) => f(Fresh::GroundUnit { planet: p, slot }),
+                    None => Vec::new(),
+                };
+                let ptr: Vec<u8> = raw.chunks_exact(8).filter(|c| c[..4] == 0x19cu32.to_le_bytes()).flatten().copied().collect();
+                if let Some(u) = field.units.get_mut(slot) {
+                    u.fill_uninit(&ptr);
+                }
+            }
             self.state.store_ground_field(p, field);
             raised.extend(events.into_iter().map(|e| (p, e)));
         }
@@ -718,7 +732,7 @@ impl Game<'_> {
                 let g = self.globals();
                 let ctx = self.economy_context(&g);
                 let mut w = self.state.colony();
-                crate::colony::refresh(&mut w.planets[p], &self.rules.side.colony, &ctx);
+                w.occupied[p] = crate::colony::refresh(&mut w.planets[p], &self.rules.side.colony, &ctx);
                 self.state.store_colony(&w);
             }
         }

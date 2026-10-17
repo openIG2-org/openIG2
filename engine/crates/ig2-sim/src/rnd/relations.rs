@@ -12,7 +12,7 @@ fn at_war(w: &dyn StoryWorld, a: i32, b: i32) -> bool {
 
 /// `st_GetEllensegesBirodalom(x)` (exe 0x5ea640): a random live empire 1..=8 (not the human, not `x`) the human is
 /// at war with (a reservoir pick, stream 5), 0 without one.
-fn enemy_empire(x: i32, w: &mut dyn StoryWorld) -> i32 {
+pub(super) fn enemy_empire(x: i32, w: &mut dyn StoryWorld) -> i32 {
     let en = w.human();
     let (mut pick, mut r) = (0, Pick::default());
     for e in 1..9 {

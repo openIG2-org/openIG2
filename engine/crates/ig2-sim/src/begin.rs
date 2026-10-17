@@ -111,7 +111,7 @@ pub(crate) fn slot_of(s: &mut Story, x: i32, w: &mut dyn StoryWorld) -> i32 {
 }
 
 /// `st_fAttackFleet(id, x)` (exe 0x604520): fleet `id` follows fleet `x` (`x < 0`: a random fleet of `−x`).
-fn attack_fleet(s: &mut Story, id: i32, x: i32, w: &mut dyn StoryWorld) -> bool {
+pub(crate) fn attack_fleet(s: &mut Story, id: i32, x: i32, w: &mut dyn StoryWorld) -> bool {
     let f = s.f_search(id, w);
     let g = s.f_search(x, w);
     let ok = f > 0 && g > 0;
@@ -144,7 +144,7 @@ fn attack_human(s: &mut Story, id: i32, w: &mut dyn StoryWorld) {
 }
 
 /// `st_fMoveToPlanet(x, b)` (exe 0x604b40).
-pub(crate) fn move_to_planet(s: &mut Story, x: i32, b: i32, w: &mut dyn StoryWorld) {
+pub(crate) fn move_to_planet(s: &mut Story, x: i32, b: i32, w: &mut dyn StoryWorld) -> bool {
     let f = slot_of(s, x, w);
     let g = s.b_search(b, 0, w);
     let ok = f > 0 && g > 0;
@@ -152,10 +152,11 @@ pub(crate) fn move_to_planet(s: &mut Story, x: i32, b: i32, w: &mut dyn StoryWor
         move_fleet(w, f, 1, 1, g as f32, 0.0);
     }
     s.error = !ok as i32;
+    ok
 }
 
 /// `st_FlottaAll(x)` (exe 0x5ea3b0): the fleet has no order (`+0x40 == 0`).
-fn stands(s: &mut Story, x: i32, w: &mut dyn StoryWorld) -> bool {
+pub(crate) fn stands(s: &mut Story, x: i32, w: &mut dyn StoryWorld) -> bool {
     let f = slot_of(s, x, w);
     s.error = (f == 0) as i32;
     f != 0 && w.fleet_command(f) == 0
@@ -171,7 +172,7 @@ pub(crate) fn delete_fleet(s: &mut Story, x: i32, w: &mut dyn StoryWorld) {
 }
 
 /// `st_fShow(id)` / `st_fHide(x)`: fleet `+0x52` bit 0x100 (always visible).
-fn show_fleet(s: &mut Story, x: i32, on: bool, w: &mut dyn StoryWorld) {
+pub(crate) fn show_fleet(s: &mut Story, x: i32, on: bool, w: &mut dyn StoryWorld) {
     let f = if on { s.f_search(x, w) } else if x < 0 { x.wrapping_neg() } else { s.f_search(x, w) };
     if f >= 1 {
         w.event(StoryEvent::SetFleetVisible { fleet: f, on });
@@ -197,7 +198,7 @@ pub(crate) fn human_distance(q: i32, w: &dyn StoryWorld) -> i32 {
 }
 
 /// `st_fDistFromBir(f, −1)` (exe 0x604650): the same to fleet `f` with `st_tav`.
-fn fleet_distance(f: i32, w: &dyn StoryWorld) -> i32 {
+pub(crate) fn fleet_distance(f: i32, w: &dyn StoryWorld) -> i32 {
     let en = w.human();
     let target = w.fleet_xy(f);
     (1..w.planet_count())
@@ -661,7 +662,9 @@ fn hunter(s: &mut Story, w: &mut dyn StoryWorld, _: &dyn Script) -> Result<(), A
             }
         };
         match mode {
-            4 => move_to_planet(s, 51, 51, w),
+            4 => {
+                move_to_planet(s, 51, 51, w);
+            }
             3 => {
                 attack_planet(s, 51, 51, w);
             }

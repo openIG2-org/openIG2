@@ -57,6 +57,11 @@ ap.add_argument("--wormholes", action="store_true",
                 help="open a wormhole with the exe's AddWormhole and stage trips through it (and to an unlisted wormhole fleet) before save 0")
 ap.add_argument("--merges", action="store_true",
                 help="stage fleet merges, colonise/terraform arrivals, a dead empire's fleet and a wormhole trip before save 0")
+ap.add_argument("--orders", type=int, default=0, help="stage N random starmap orders (MULTIGET_Starmap) every --orders-every ticks")
+ap.add_argument("--orders-every", type=int, default=3)
+ap.add_argument("--colony", type=int, default=0, help="stage N random colony orders (MULTIGET_Colony) every --orders-every ticks")
+ap.add_argument("--research", type=int, default=0, help="stage N random research orders (MULTIGET_Research) every --research-every ticks")
+ap.add_argument("--research-every", type=int, default=2)
 ap.add_argument("--trader-near", type=float, default=0.5, help="--traders: distance left to the trader's planet")
 a = ap.parse_args()
 
@@ -112,7 +117,9 @@ def on_message(msg, _data):
         elif ev["k"] == "buy":
             log.write(json.dumps(ev) + "\n")
             print("buy: accepted" if ev["accepted"] else "buy: rejected")
-        elif ev["k"] in ("traders", "spies", "merges", "wormholes", "battles", "deaths"):
+        elif ev["k"] in ("sorder", "corder", "rorder"):
+            log.write(json.dumps(ev) + "\n")
+        elif ev["k"] in ("traders", "spies", "merges", "wormholes", "battles", "deaths", "orders", "colony"):
             log.write(json.dumps(ev) + "\n")
             print(ev["k"], "staged:", ev["stage"])
         elif ev["k"] == "done":
@@ -131,7 +138,8 @@ script.post({"type": "config", "payload": {"scenario": a.scenario, "slot": a.slo
                                            "seed": a.seed, "stage": a.stage,
                                            "traders": a.traders, "traderNear": a.trader_near, "spies": a.spies, "spiesMode": a.spies_mode, "merges": a.merges, "wormholes": a.wormholes, "battles": a.battles, "deaths": a.deaths, "deathsMode": a.deaths_mode, "slotBase": a.slot_base, "preSlot": a.pre_slot, "battlesMode": a.battles_mode, "lopsidedTanks": a.lopsided_tanks, "evenTanks": a.even_tanks, "lostTanks": a.lost_tanks, "landShips": a.land_ships,
                                            "storyCountdown": a.story_countdown,
-                                           "randlog": a.randlog}})
+                                           "randlog": a.randlog, "orders": a.orders, "ordersEvery": a.orders_every, "colony": a.colony,
+                                           "research": a.research, "researchEvery": a.research_every}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()

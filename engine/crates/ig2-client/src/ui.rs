@@ -8,6 +8,7 @@ use ig2_formats::{dialogue, text, Install};
 use ig2_sim::save::{va, SaveState};
 
 use crate::font::{Align, Font, Virtual};
+pub use crate::info_screen::InfoScreen;
 use crate::render::{kind, Blend, Frame, Instance, TexId};
 
 /// What the 2D screens show, read from the sim after each tick.
@@ -20,8 +21,8 @@ pub struct UiSnap {
     pub known: [bool; 19],
     pub alive: [bool; 19],
     pub races: [u8; 19],
-    /// `Viszony[EN][e].+0x25`: 1 war, 2 cease-fire, 3 neutral, 4 NAP, 5 alliance.
-    pub level: [u8; 19],
+    /// `Viszony[a][e].+0x25`: 1 war, 2 cease-fire, 3 neutral, 4 NAP, 5 alliance.
+    pub levels: Vec<[u8; 19]>,
     /// The inbox (`Uzenetek`, 0x88 each): block id, kept/read flag, date (`+0xc`, an `Ido`).
     pub inbox: Vec<(i32, u8, i32)>,
     /// The scrolling line's waiting texts (`ScrollUzenetek` 1..=db: text, important) and the history.
@@ -29,6 +30,10 @@ pub struct UiSnap {
     pub history: Vec<Vec<u8>>,
     /// The top bar (re/screens/hud.md §2); the speed buttons come from the client.
     pub bar: crate::hud::BarState,
+    /// The inbox entries' `#k#` parameters (`+0x10 + 0x14·k`, five NUL-ended strings).
+    pub inbox_params: Vec<Vec<Vec<u8>>>,
+    /// The info screen's panels.
+    pub info: crate::info_screen::InfoData,
 }
 
 fn cstr(b: &[u8]) -> Vec<u8> {
@@ -42,10 +47,9 @@ impl UiSnap {
         let met = state.starmap().met;
         let rel = state.relations();
         let ib = state.inbox();
-        let inbox = (0..ib.count.max(0) as usize)
-            .filter_map(|i| ib.messages.get(i * 0x88..(i + 1) * 0x88))
-            .map(|m| (i32::from_le_bytes(m[0..4].try_into().unwrap()), m[4], i32::from_le_bytes(m[0xc..0x10].try_into().unwrap())))
-            .collect();
+        let rows: Vec<&[u8]> = (0..ib.count.max(0) as usize).filter_map(|i| ib.messages.get(i * 0x88..(i + 1) * 0x88)).collect();
+        let inbox = rows.iter().map(|m| (i32::from_le_bytes(m[0..4].try_into().unwrap()), m[4], i32::from_le_bytes(m[0xc..0x10].try_into().unwrap()))).collect();
+        let inbox_params = rows.iter().map(|m| (0..5).map(|k| cstr(&m[0x10 + 0x14 * k..0x24 + 0x14 * k])).collect()).collect();
         let t = state.ticker();
         fn entries(list: &[u8], n: i32) -> Vec<&[u8]> {
             (1..=n.max(0) as usize).filter_map(|k| list.get(k * 0x40..(k + 1) * 0x40)).collect()
@@ -56,11 +60,13 @@ impl UiSnap {
             known: std::array::from_fn(|e| met.get(en).is_some_and(|r| r[e] != 0)),
             alive: state.alive(),
             races: state.races(),
-            level: std::array::from_fn(|e| rel.get(en).map_or(0, |r| r[e].level)),
+            levels: (0..19).map(|a| std::array::from_fn(|e| rel.get(a).map_or(0, |r| r[e].level))).collect(),
             inbox,
             queue: entries(&t.main, t.count).into_iter().map(|e| (cstr(e), e[0x3c] != 0)).collect(),
             history: entries(&t.history, t.history_count).into_iter().map(cstr).collect(),
             bar: bar_state(state, en),
+            inbox_params,
+            info: crate::info_screen::InfoData::read(state),
         }
     }
 }
@@ -163,6 +169,8 @@ impl Scroller {
 pub struct UiTexts {
     pub strings: UiStrings,
     pub kinds: Vec<MessageKind>,
+    /// The texts' language (their code page).
+    pub lang: ig2_formats::text::Lang,
 }
 
 impl UiTexts {
@@ -174,13 +182,57 @@ impl UiTexts {
             }
         }
         let kinds = install.read("dataraw/uzenetek/uzenetek.txt").map(|b| dialogue::parse_message_index(&text::decode(&b, install.lang()))).unwrap_or_default();
-        Self { strings, kinds }
+        Self { strings, kinds, lang: install.lang() }
     }
 
-    /// `GetString(file, section, index)` as the font's bytes (the decoded text back in Latin-1 where it fits).
+    /// `GetString(file, section, index)` as the font's bytes: the file's own bytes (its language's code page; the
+    /// Hungarian ő/ű are not Latin-1).
     pub fn get(&self, file: u16, section: u16, index: u16) -> Vec<u8> {
-        latin1(self.strings.get(file, section, index))
+        self.lang.encoding().encode(self.strings.get(file, section, index)).0.into_owned()
     }
+}
+
+/// The Hungarian `txt17.txt`: `StringReadAll` fills its name tables from it whatever the game's language [obs: the
+/// empire names in the live table and the morale name on the starmap of an English run].
+pub fn hungarian_txt17(install: &Install) -> UiStrings {
+    let mut hu = UiStrings::default();
+    let file = install.read("localization/hu/dataraw/text/txt17.txt").or_else(|_| install.read("dataraw/text/txt17.txt"));
+    if let Ok(b) = file {
+        hu.add_file(&text::decode(&b, ig2_formats::text::Lang::Hu));
+    }
+    hu
+}
+
+/// `BirodalomNev[e]` = `GetString(0x11, 1, 33 + e)` of the Hungarian `txt17.txt`.
+pub fn empire_names(hu17: &UiStrings) -> Vec<Vec<u8>> {
+    (0..19u16).map(|e| if e == 0 { Vec::new() } else { hu_bytes(hu17.get(0x11, 1, 33 + e)) }).collect()
+}
+
+/// A Hungarian text's bytes as the game reads them (code page 1250).
+pub fn hu_bytes(s: &str) -> Vec<u8> {
+    ig2_formats::text::Lang::Hu.encoding().encode(s).0.into_owned()
+}
+
+/// `sprintf` for the screens' formats: `%d` takes the next number, `%%` is a per cent sign.
+pub fn sprintf(fmt: &[u8], args: &[i64]) -> Vec<u8> {
+    let (mut out, mut i, mut a) = (Vec::new(), 0, args.iter());
+    while i < fmt.len() {
+        match (fmt[i], fmt.get(i + 1)) {
+            (b'%', Some(b'd')) => {
+                out.extend(a.next().copied().unwrap_or(0).to_string().bytes());
+                i += 2;
+            }
+            (b'%', Some(b'%')) => {
+                out.push(b'%');
+                i += 2;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 pub fn latin1(s: &str) -> Vec<u8> {
@@ -190,7 +242,7 @@ pub fn latin1(s: &str) -> Vec<u8> {
 /// The info screen's chart (`Info_PutChart` ELF 0x55dbf0): every known empire's smoothed row of chart `c`, cells
 /// 4..=50 as line segments `(4k + 385, 426 − v/scale)`, scale = the largest such value / 153, in `DDColor[e + 15]`
 /// dimmed by the distance to the row's sweeping highlight (`InfoChartSzamlalok`).
-pub fn draw_chart(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, palette: &[[f32; 3]], chart: usize, sweep: f32) {
+pub fn draw_chart(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, palette: &[[f32; 3]], chart: usize, sweep: &dyn Fn(usize) -> f32) {
     let cell = |e: usize, k: usize| s.charts.get(chart * 440 + (e - 1) * 55 + k).copied().unwrap_or(-1.0);
     let mut peak = 0.0f32;
     for e in 1..=8 {
@@ -209,6 +261,7 @@ pub fn draw_chart(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, palette:
             continue;
         }
         let base = palette.get(e + 15).copied().unwrap_or([0.7; 3]);
+        let sweep = sweep(e - 1);
         for k in 4..0x32 {
             let bright = (1.0 - ((sweep - k as f32).abs() / 55.0) * 3.0).clamp(0.1, 1.0);
             let c = [base[0] * bright, base[1] * bright, base[2] * bright, 1.0];
@@ -219,56 +272,54 @@ pub fn draw_chart(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, palette:
     }
 }
 
-/// A plain dark panel (the original's 3D frames aren't drawn) in virtual pixels.
-pub fn panel(f: &mut Frame, white: TexId, v: &Virtual, x: f32, y: f32, w: f32, h: f32) {
-    let c = v.px(x + w / 2.0, y + h / 2.0);
-    f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, c, [w * v.k / 2.0, h * v.k / 2.0], [0.03, 0.06, 0.12, 0.85]));
-}
-
-/// The info screen (`AktKep` 9, re/screens/info.md): race names on their columns (`KirakFajNeveket(40, 117)`),
-/// the chart panel with the chart's name (`GetString(9, 1, 5 + c)`).
+/// The info screen (`AktKep` 9, re/screens/info.md) over its frame: the panels (`InfoGfx2D_2`), the chart in chart
+/// mode, the race names on their columns (`KirakFajNeveket(40, 117)`, `InfoGfx2D_3`).
 #[allow(clippy::too_many_arguments)]
-pub fn draw_info(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, texts: &UiTexts, rules: &ig2_rules::Rules, palette: &[[f32; 3]], chart: usize, time: f32) {
+pub fn draw_info(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, texts: &UiTexts, rules: &ig2_rules::Rules, palette: &[[f32; 3]], names: &[Vec<u8>], ui: &crate::info_screen::InfoScreen) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
+    crate::info_screen::draw(f, font, white, v, s, &s.info, texts, names, &rules.race_name_x, palette, ui);
+    if !ui.star_log {
+        draw_chart(f, white, v, s, palette, ui.chart, &|k| ui.sweep(k));
+    }
     for e in 1..=8 {
         if !s.known[e] {
             continue;
         }
-        let mut c = match s.level[e] {
+        // The colour by `Viszony[InfoSelected][e]`; the selected empire white in a frame (`DesignKeret1(x − 5,
+        // 114, 0x36, 0xc, 2)`, settled: its outline [inf: the morph and the blink aren't drawn]).
+        let level = s.levels.get(ui.selected).map_or(0, |r| r[e]);
+        let mut c = match level {
             1 => 6,
             2 => 3,
             4 => 0x29,
             5 => 7,
             _ => 1,
         };
-        if e == s.human {
+        let x = rules.race_name_x.get(e - 1).copied().unwrap_or(40) as f32;
+        if e == ui.selected {
             c = 2;
+            let (bx, by, bw, bh) = (x - 5.0, 114.0, 0x36 as f32, 0xc as f32);
+            for (rx, ry, rw, rh) in [(bx, by, bw, 1.0), (bx, by + bh - 1.0, bw, 1.0), (bx, by, 1.0, bh), (bx + bw - 1.0, by, 1.0, bh)] {
+                let p = v.px(rx + rw / 2.0, ry + rh / 2.0);
+                let k = col(2);
+                f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, p, [rw * v.k / 2.0, rh * v.k / 2.0], [k[0], k[1], k[2], 1.0]));
+            }
         }
         if !s.alive[e] {
             c = 0xc;
         }
         // `Faj_Nev[e]` = `GetString(0x11, 1, race + 5)`.
         let name = texts.get(0x11, 1, s.races[e] as u16 + 5);
-        let x = rules.race_name_x.get(e - 1).copied().unwrap_or(40) as f32;
         font.text(f, v, &name, x, 117.0, 0x27, 2, Align::Left, col(c), None);
     }
-    // The chart panel (the original's 3D frame spans about 388..612 × 272..452 on the reference capture).
-    panel(f, white, v, 388.0, 272.0, 224.0, 180.0);
-    let title = texts.get(9, 1, 5 + chart as u16);
-    font.text(f, v, &title, 500.0, 276.0, 0, 2, Align::Centre, col(2), None);
-    // `FRISSIT_Info2`: each row's highlight runs along its cells (`InfoChartSzamlalok`, speed `rand() % 400 + 200`
-    // per row) [inf: one shared sweep here].
-    let sweep = (time * 40.0) % 80.0 - 10.0;
-    draw_chart(f, white, v, s, palette, chart, sweep);
 }
 
 /// The inbox (`MessagesGfx2D_2` ELF 0x5a1d30, `AktKep` 10): the four entries from `AktUzenetPointer`, each 45 high
 /// from `UBAY` = 352 upwards: the sender (`UzenetFajtak[KerUz(block)]+7`, size `UBAFont2` = 3, colour `UBASzin4`
 /// = 34, or `UBASzin1` = 1 when kept), the date (`Ido2Ev/Honap/Nap`, size 2, colour 2) and the two subject lines.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_inbox(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, texts: &UiTexts, palette: &[[f32; 3]], first: usize) {
+pub fn draw_inbox(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, texts: &UiTexts, palette: &[[f32; 3]], first: usize, read: &[usize]) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
-    panel(f, white, v, 0.0, 214.0, 160.0, 186.0);
     let n = s.inbox.len();
     let (x, w2) = (3.0, font.advance(2));
     for (i, slot) in inbox_rows(n, first) {
@@ -276,7 +327,7 @@ pub fn draw_inbox(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiS
         let y = 352.0 - (3 - slot) as f32 * 45.0;
         let kind = texts.kinds.iter().find(|k| k.id as i32 == block);
         let sender = kind.map(|k| latin1(&k.sender)).unwrap_or_else(|| format!("#{block}").into_bytes());
-        font.text(f, v, &sender, x, y, 0x13, 3, Align::Left, col(if kept & 1 != 0 { 1 } else { 34 }), None);
+        font.text(f, v, &sender, x, y, 0x13, 3, Align::Left, col(if kept & 1 != 0 || read.contains(&i) { 1 } else { 34 }), None);
         let (year, month, day) = (date / 18000, date / 1500 % 12 + 1, date / 50 % 30 + 1);
         font.int(f, v, year as i64, x, y + 13.0, 4, 2, Align::Left, col(2));
         font.text(f, v, b".", x + w2 * 4.0, y + 13.0, 1, 2, Align::Left, col(2), None);
@@ -287,13 +338,6 @@ pub fn draw_inbox(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiS
             font.text(f, v, &latin1(&k.subject[0]), x, y + 23.0, 0x14, 2, Align::Left, col(2), None);
             font.text(f, v, &latin1(&k.subject[1]), x, y + 32.0, 0x14, 2, Align::Left, col(2), None);
         }
-    }
-    if n == 0 {
-        font.text(f, v, b"No messages", x + 4.0, 300.0, 0, 2, Align::Left, col(2), None);
-    }
-    // The message history (`GFX_ScrollHistory`): entries at (268, 16 + 10k), size 2, colour 0x21.
-    for (k, t) in s.history.iter().enumerate() {
-        font.text(f, v, t, 268.0, 26.0 + 10.0 * k as f32, 0x36, 2, Align::Left, col(0x21), None);
     }
 }
 
@@ -315,6 +359,18 @@ pub fn inbox_rows(n: usize, first: usize) -> Vec<(usize, usize)> {
     out
 }
 
+/// What the colony screen's HUD takes from its input state.
+pub struct ColonyInput<'a> {
+    pub ui: &'a crate::colony_ui::ColonyUi,
+    pub sim: &'a ig2_sim::game::GameRules,
+    /// The panel's turning building (`crate::colony_ui::PanelBuilding`), rendered this frame.
+    pub panel: Option<TexId>,
+    /// The pointer in virtual pixels.
+    pub cursor: [f32; 2],
+    pub now_ms: u32,
+    pub time: f32,
+}
+
 /// Which screen is up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -322,6 +378,12 @@ pub enum Screen {
     Colony,
     Info,
     Messages,
+    /// `AktKep` 6 (re/screens/diplomacy.md), drawn by [`crate::diplomacy::Open`].
+    Diplomacy,
+    /// The spy screen (`crate::spy_screen`): only the top bar here.
+    Spy,
+    /// `AktKep` 4 (re/screens/research.md), drawn by [`crate::research::Research`].
+    Research,
 }
 
 /// The 2D layer's resources and UI state.
@@ -331,18 +393,24 @@ pub struct Hud {
     pub white: TexId,
     pub palette: Vec<[f32; 3]>,
     pub scroller: Scroller,
-    /// `Info_SelectedChart` (0..=9).
-    pub chart: usize,
-    /// `AktUzenetPointer`.
-    pub inbox_first: usize,
+    /// The info screen's and the messages screen's UI state, and the frame texture of the screen shown
+    /// ([`crate::screen_frames::FrameModels`]).
+    pub info: crate::info_screen::InfoScreen,
+    pub messages: crate::messages_screen::MessagesScreen,
+    pub frame_tex: Option<TexId>,
     /// The HUD's pictures (the bar's sheet, `COLONY_X.BMP`) and the colony and starmap brush tables.
     pub pics: crate::hud::Pictures,
     pub colony_brushes: Vec<ig2_rules::Brush>,
+    pub starmap_brushes: Vec<ig2_rules::Brush>,
     /// The speed buttons: `IdoSpeed` 0..=2 and `IdoPause`, set by the client each frame.
     pub speed: usize,
     pub paused: bool,
-    /// The colony build menu's building (`AktEpuletTipus`; 1 = the colony hub).
-    pub build_kind: usize,
+    /// The starmap's panel, faders, short info and minimap (re/screens/starmap.md §11).
+    pub starmap: crate::starmap_hud::StarmapHud,
+    /// `BirodalomNev[e]`: the empire names (the Hungarian `txt17` §1 even in other languages [obs]).
+    pub empire_names: Vec<Vec<u8>>,
+    /// The Hungarian `txt17.txt` `StringReadAll` fills its name tables from (`Moral_Nev`, `Problemak_Nev`, …).
+    pub hu17: UiStrings,
 }
 
 impl Hud {
@@ -351,20 +419,43 @@ impl Hud {
             eprintln!("ig2-client: palette: {e}");
             vec![[0.8; 3]; 43]
         });
+        let console = crate::starmap_hud::Console::load(r, install).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
+        let hu17 = hungarian_txt17(install);
         Self {
+            starmap: crate::starmap_hud::StarmapHud { console, rotation: Default::default() },
+            empire_names: empire_names(&hu17),
+            hu17,
             font: Font::load(r, install, rules),
             texts: UiTexts::load(install),
             white: r.add_texture(&crate::assets::Image::white()),
             palette,
             scroller: Scroller::default(),
-            chart: 0,
-            inbox_first: 0,
-            pics: crate::hud::Pictures::load(r, install, &rules.pictures, &[14, 17]),
+            info: crate::info_screen::InfoScreen::enter(0),
+            messages: Default::default(),
+            frame_tex: None,
+            pics: crate::hud::Pictures::load(r, install, &rules.pictures, &[14, 17, 33, 97]),
             colony_brushes: rules.colony_brushes.clone(),
+            starmap_brushes: rules.starmap_brushes.clone(),
             speed: 2,
             paused: false,
-            build_kind: 1,
         }
+    }
+
+    /// Open inbox entry `i` (`KiertekelUjuzenet`; re/screens/messages.md §4).
+    pub fn open_message(&mut self, install: &Install, s: &UiSnap, i: usize) {
+        let Some(&(id, kept, _)) = s.inbox.get(i) else { return };
+        let conversation = self.texts.kinds.iter().find(|k| k.id as i32 == id).is_some_and(|k| k.conversation);
+        let params = s.inbox_params.get(i).cloned().unwrap_or_default();
+        self.messages.open = Some(crate::messages_screen::Dialogue::open(install, i, id, params, conversation, kept & 1 != 0));
+        if !self.messages.read.contains(&i) {
+            self.messages.read.push(i);
+        }
+    }
+
+    /// Show message `id` as if opened from the inbox (a check of the dialogue's drawing; no inbox entry).
+    pub fn show_message(&mut self, install: &Install, id: i32) {
+        let conversation = self.texts.kinds.iter().find(|k| k.id as i32 == id).is_some_and(|k| k.conversation);
+        self.messages.open = Some(crate::messages_screen::Dialogue::open(install, usize::MAX, id, Vec::new(), conversation, false));
     }
 
     /// A tech's localised name (`txt17.txt`, re/screens/hud.md §4.1).
@@ -374,13 +465,28 @@ impl Hud {
 
     /// The colony screen's HUD under the top bar: building names, the radar, the panels (re/screens/hud.md §3, §4.1).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_colony(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, maps: &[ig2_sim::ground::GroundMap], view: &crate::colony::View, scene: &crate::colony::ColonyScene, curr: &crate::colony::ColonySnap) {
+    pub fn draw_colony(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, maps: &[ig2_sim::ground::GroundMap], view: &crate::colony::View, scene: &crate::colony::ColonyScene, curr: &crate::colony::ColonySnap, input: &ColonyInput) {
         let Some(font) = &self.font else { return };
         let by_kind = |k: u8| rules.buildings.get(k as usize).map_or_else(Vec::new, |b| self.tech_name(b.tech as usize));
         view.names(f, font, &self.palette, &by_kind, scene, maps, curr);
-        let c = crate::colony::hud_state(state, rules, &|t| self.tech_name(t), curr, view, maps, self.build_kind);
+        let ui = input.ui;
+        let mut c = crate::colony::hud_state(state, rules, &|t| self.tech_name(t), curr, view, maps, ui.kind, ui.selected);
+        c.panel_model = input.panel;
         let v = Virtual::new(view.camera.size);
         crate::hud::draw_colony(f, &self.pics, font, self.white, &v, &self.palette, &self.colony_brushes, scene.radar, &c);
+        // `ColonyGfx2D_2`: `StarmapRovidInfoKiir(50, 424, 0)` with `StarmapMode` 1, the planet's short info.
+        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names };
+        let counter = (input.time * 100.0) as i32;
+        let sel = crate::orders::Selection { mode: 1, planet: curr.planet, fleet: 0 };
+        let ctx = crate::colony_ui::Ctx { state, snap: curr, rules, sim: input.sim, texts: &self.texts, tech_name: &|t| self.tech_name(t) };
+        // `ColonyInfoMod` 2 (a building selected) shows `ColonyKisInfo` instead.
+        if !ui.draw_building_info(f, &ctx, font, self.white, &v, &self.palette) {
+            let info = crate::starmap_hud::InfoBox::new(state, rules, &t, &sel, self.starmap.step(curr.planet, counter), counter);
+            for (s, x, y, size, k) in &info.lines {
+                font.text(f, &v, s, *x, *y, 0x13, *size, crate::font::Align::Left, self.palette.get(*k).copied().unwrap_or([1.0; 3]), None);
+            }
+        }
+        ui.draw(f, &ctx, font, self.white, &v, &self.palette, &self.hu17, input.cursor, input.now_ms);
     }
 
     /// The starmap's planet and fleet names (re/screens/hud.md §4.2, §4.3).
@@ -391,13 +497,59 @@ impl Hud {
         }
     }
 
+    /// The starmap's production view and transfer panel (re/screens/starmap.md §12–§13): the faders, the models'
+    /// texture `models` (rendered by [`crate::starmap_panels::PanelModels`]), the texts.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_starmap_panels(&self, f: &mut Frame, p: &crate::starmap_panels::Panels, state: &SaveState, sel: &crate::orders::Selection, models: Option<TexId>, size: [f32; 2], time: f32) {
+        let Some(font) = &self.font else { return };
+        let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
+        p.draw_under(f, &d, state);
+        p.draw_over(f, &d, state, sel, models);
+    }
+
+    /// The starmap's HUD under the top bar (re/screens/starmap.md §11) for the local selection.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_starmap_hud(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32) {
+        let Some(font) = &self.font else { return };
+        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names };
+        let counter = (time * 100.0) as i32;
+        let step = self.starmap.step(if sel.mode == 1 { sel.planet } else { 0 }, counter);
+        let info = crate::starmap_hud::InfoBox::new(state, rules, &t, sel, step, counter);
+        let fleets = curr.fleets_at(prev, alpha);
+        let mini = crate::starmap_hud::Minimap::new(curr, &fleets, sel, &view.camera);
+        let v = Virtual::new(view.camera.size);
+        self.starmap.draw(f, font, self.white, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, &mini, time);
+    }
+
+    /// The research screen's 2D passes around its models (re/screens/research.md §3).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_research(&self, f: &mut Frame, r: &crate::research::Research, infos: &[[Vec<u8>; 3]], state: &SaveState, rules: &ig2_rules::Rules, models: Option<TexId>, lines: Vec<crate::render::Instance>, size: [f32; 2], time: f32) {
+        let Some(font) = &self.font else { return };
+        let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
+        r.draw_under(f, &d, state);
+        // The info box's glass (alpha, first), then the wireframes (additive).
+        for (i, l) in lines.into_iter().enumerate() {
+            let blend = if i == 0 && l.kind == crate::render::kind::SPRITE { crate::render::Blend::Alpha } else { crate::render::Blend::Additive };
+            f.push(self.white, blend, l);
+        }
+        r.draw_over(f, &d, state, rules, &crate::research::Texts { infos }, models);
+    }
+
     /// Draw `screen`'s 2D part and the message line over `f`.
-    pub fn draw(&self, f: &mut Frame, size: [f32; 2], s: &UiSnap, rules: &ig2_rules::Rules, screen: Screen, time: f32) {
+    pub fn draw(&mut self, f: &mut Frame, size: [f32; 2], s: &UiSnap, rules: &ig2_rules::Rules, screen: Screen, time: f32) {
         let Some(font) = &self.font else { return };
         let v = Virtual::new(size);
+        if matches!(screen, Screen::Info | Screen::Messages) {
+            if let Some(t) = self.frame_tex {
+                crate::screen_frames::draw(f, t, &v);
+            }
+        }
         match screen {
-            Screen::Info => draw_info(f, font, self.white, &v, s, &self.texts, rules, &self.palette, self.chart, time),
-            Screen::Messages => draw_inbox(f, font, self.white, &v, s, &self.texts, &self.palette, self.inbox_first),
+            Screen::Info => draw_info(f, font, self.white, &v, s, &self.texts, rules, &self.palette, &self.empire_names, &self.info),
+            Screen::Messages => {
+                draw_inbox(f, font, &v, s, &self.texts, &self.palette, self.messages.first, &self.messages.read);
+                crate::messages_screen::draw(f, font, self.white, &v, &self.palette, &mut self.messages, s.inbox.len(), time);
+            }
             _ => {}
         }
         // The top bar (re/screens/hud.md §2), then its line (`GFX_Scroll` ELF 0x66f270; message windows aren't drawn
@@ -443,3 +595,4 @@ mod tests {
         assert!(inbox_rows(0, 0).is_empty());
     }
 }
+

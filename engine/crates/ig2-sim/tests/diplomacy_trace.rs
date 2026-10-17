@@ -31,8 +31,11 @@ use ig2_sim::research::{Research, ResearchContext, ResearchRules};
 use ig2_sim::rng::Streams;
 use serde_json::Value;
 
+/// `_local/traces` of the checkout, or `IG2_TRACE_DIR` (a git worktree without the gitignored traces).
 fn traces(prefix: &str) -> Vec<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces");
+    let dir = std::env::var_os("IG2_TRACE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces"));
     let mut v: Vec<PathBuf> = std::fs::read_dir(&dir)
         .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect())
         .unwrap_or_default();
@@ -112,6 +115,7 @@ fn slot(b: &[u8], i: usize) -> PlayerSlot {
         empire: i32_at(b, o),
         controller: i32_at(b, o + 4),
         screen: b[o + 0x0c],
+        sent_at: i32_at(b, o + 0x10),
         open: b[o + 0x14],
         asked: b[o + 0x16],
         waiting: b[o + 0x17],

@@ -2,10 +2,13 @@
 //! fixed 20 Hz, and the starmap read back out as plain snapshots the renderer interpolates between.
 //!
 //! The client never writes sim state except through the sim's own entry points (`Game::advance_clock`,
-//! `Game::run_tick`, `Game::fleet_emptied`); the renderer only sees [`Snapshot`]s.
+//! `Game::run_tick`, `Game::fleet_emptied`) and the player's commands (`ig2_net::Command`, ADR 0007: the
+//! original's lockstep messages, which it applies in the next frame's message pass even in single player); the
+//! renderer only sees [`Snapshot`]s.
 
 use ig2_formats::save::SaveGame;
-use ig2_sim::game::{Game, GameEvent, GameRules};
+use ig2_net::Command;
+use ig2_sim::game::{ColonyOrderEvent, Game, GameEvent, GameRules, OrderEvent};
 use ig2_sim::save::{va, SaveState};
 use ig2_sim::time::{GameTime, Speed};
 
@@ -28,6 +31,8 @@ pub struct PlanetView {
     pub known: bool,
     /// `+0xba`: the name blinks (`Show_Stars2d3d`, re/screens/hud.md §4.2).
     pub blink: bool,
+    /// `+0xbc` bit 0: never a target (`SelectNearestUnit`'s enemies-only pick skips it).
+    pub friendly: bool,
     /// How the starmap draws it (`+0x17c..+0x185`, re/screens/starmap.md §3).
     pub look: PlanetLook,
 }
@@ -112,6 +117,12 @@ pub struct FleetView {
     pub flags: u16,
     /// `+0`: the name (the game's code page).
     pub name: Vec<u8>,
+    /// `+0x54`: ships aboard; `+0x16`: the story id.
+    pub ships: i32,
+    pub story_id: i16,
+    /// `+0x42`: the order's target kind (0 point, 1 planet, 2 fleet) and `(int)+0x44`.
+    pub kind: i16,
+    pub target_index: usize,
 }
 
 /// The starmap at one sim tick.
@@ -146,6 +157,7 @@ impl Snapshot {
                     name: name.iter().map(|&b| b as char).collect(),
                     known: sp.visible[en] != 0 || sp.owner as usize == en,
                     blink: r[0xba] != 0,
+                    friendly: r[0xbc] & 1 != 0,
                     look: PlanetLook::read(&r),
                 }
             })
@@ -166,6 +178,10 @@ impl Snapshot {
                 order: f.order,
                 flags: f.flags,
                 name: f.name.iter().copied().take_while(|&b| b != 0).collect(),
+                ships: f.ship_count,
+                story_id: f.story_id,
+                kind: f.kind,
+                target_index: (f.tx as i32).max(0) as usize,
             })
             .collect();
         Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0 }
@@ -229,6 +245,14 @@ pub struct World<'r> {
     pub colony_curr: Option<crate::colony::ColonySnap>,
     /// What the 2D screens show (charts, inbox, the message line's queue).
     pub ui: crate::ui::UiSnap,
+    /// The player's commands for the next message pass ([`World::pump`]).
+    pub outbox: Vec<Command>,
+    /// What the last pass's orders did for this player's screen (a split's new fleet).
+    pub order_events: Vec<OrderEvent>,
+    /// What the last pass's colony orders did (`MULTIGET_Colony`).
+    pub colony_events: Vec<ColonyOrderEvent>,
+    /// `ScrollHibaUzenet`: the screens' own error lines for the message ticker, shown before the sim's.
+    pub local_lines: Vec<Vec<u8>>,
 }
 
 impl<'r> World<'r> {
@@ -242,24 +266,96 @@ impl<'r> World<'r> {
         let view = SavedView::read(save);
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game.state) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new() }
     }
 
-    /// `IdoSpeedSzorzo` for a single-player speed setting.
+    /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
+    pub fn send(&mut self, c: Command) {
+        self.outbox.push(c);
+    }
+
+    /// The frame's message pass (`MULTIGET_*`): the queued commands are applied for the human, in order, also
+    /// while the clock is paused; the screens see the result at once.
+    pub fn pump(&mut self) {
+        if self.outbox.is_empty() {
+            return;
+        }
+        let human = self.curr.human;
+        let from = self.game.events.len();
+        for c in std::mem::take(&mut self.outbox) {
+            c.apply(&mut self.game, human);
+        }
+        self.order_events.extend(self.game.events[from..].iter().filter_map(|e| match e {
+            GameEvent::Order(o) => Some(*o),
+            _ => None,
+        }));
+        self.colony_events.extend(self.game.events[from..].iter().filter_map(|e| match e {
+            GameEvent::ColonyOrder(o) => Some(*o),
+            _ => None,
+        }));
+        if let Some(p) = self.colony {
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+        }
+        // Same tick: the fleets keep gliding from `prev`.
+        self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game.state) };
+        self.ui = crate::ui::UiSnap::read(&self.game.state);
+    }
+
+    /// `IdoPause`.
+    pub fn paused(&self) -> bool {
+        self.game.paused()
+    }
+
+    /// The tail of `MULTIGET_Starmap` (ELF 0x719680), every frame: a selected fleet (`StarmapMode` 2) that is gone or
+    /// no longer seen (and not a wormhole's) gives way to the first own fleet that isn't hidden, else the first own
+    /// one, else the first seen one; with none the planet is selected again (`StarmapMode` 1).
+    pub fn fix_selection(&self) -> Option<crate::orders::Selection> {
+        use ig2_sim::fleet::{flag, DELETED};
+        let v = self.game.local_view();
+        if v.starmap_mode != 2 {
+            return None;
+        }
+        let map = self.game.state.starmap();
+        let en = v.empire as usize;
+        let debug = self.game.state.mem.u8(va::DEBUGX) != 0;
+        let seen = |f: &ig2_sim::fleet::Fleet| f.visible.get(en).is_some_and(|&b| b & 1 != 0) || f.flags & flag::ALWAYS_VISIBLE != 0;
+        let gone = map.fleets.get(v.fleet.max(0) as usize).is_none_or(|f| {
+            f.flags & flag::WORMHOLE == 0 && (f.owner == DELETED || ((!f.visible.get(en).is_some_and(|&b| b & 1 != 0) || f.state & 1 != 0) && !debug && f.flags & flag::ALWAYS_VISIBLE == 0))
+        });
+        if !gone {
+            return None;
+        }
+        let fleets = || map.fleets.iter().enumerate().skip(1);
+        let pick = fleets()
+            .find(|(_, f)| f.owner as usize == en && f.state & 1 == 0)
+            .or_else(|| fleets().find(|(_, f)| f.owner as usize == en))
+            .or_else(|| fleets().find(|(_, f)| f.owner != DELETED && seen(f)))
+            .map(|(i, _)| i);
+        let sel = crate::orders::Selection { mode: 2, planet: v.planet.max(0) as usize, fleet: v.fleet.max(0) as usize };
+        Some(match pick {
+            Some(f) => crate::orders::Selection { fleet: f, ..sel },
+            None => crate::orders::Selection { mode: 1, ..sel },
+        })
+    }
+
+    /// The speed the session starts with (`SetIdoSpeed(level, false)`: 1/2/3 = ×1/×4/×16 in single player).
     pub fn set_speed(&mut self, speed: Speed) {
-        let mp = self.game.state.mem.u8(va::MULTIPLAYER) != 0;
-        self.game.state.mem.set_i32(va::IDO_SPEED, speed.ido_per_tick(mp));
+        let level = match speed {
+            Speed::Normal => 1,
+            Speed::Fast => 2,
+            Speed::Fastest => 3,
+        };
+        self.game.set_speed(level, false);
     }
 
     /// One 50 ms sim tick, as the original's frame runs it: the lockstep messages the last tick sent first
     /// (`Game::fleet_emptied`), then `FRISSIT_Datum` and the rest of the tick.
     pub fn tick(&mut self) {
-        let emptied: Vec<usize> = self.game.events.iter().filter_map(GameEvent::emptied_fleet).collect();
-        for f in emptied {
+        // The client keeps no event history yet (the UI that shows them comes later).
+        let events = self.game.take_events();
+        for f in events.iter().filter_map(GameEvent::emptied_fleet) {
             self.game.fleet_emptied(f);
         }
-        // The client keeps no event history yet (the UI that shows them comes later).
-        self.game.events.clear();
         self.game.advance_clock();
         self.game.run_tick();
         let mut next = Snapshot::read(&self.game.state);
@@ -276,6 +372,9 @@ impl<'r> World<'r> {
 
     /// The UI takes the message line's next text (`FRISSIT_Scroll2` pops `ScrollUzenetek[1]`; `Ticker::pop`).
     pub fn pop_message(&mut self) -> Option<(Vec<u8>, bool)> {
+        if !self.local_lines.is_empty() {
+            return Some((self.local_lines.remove(0), true));
+        }
         let mut t = self.game.state.ticker();
         t.pop()?;
         let text: Vec<u8> = t.on_screen.iter().copied().take_while(|&b| b != 0).collect();
@@ -298,7 +397,7 @@ mod tests {
     use super::*;
 
     fn fleet(slot: usize, x: f32, y: f32) -> FleetView {
-        FleetView { slot, pos: [x, y], owner: 3, visible: true, target: None, order: 0, flags: 0, name: Vec::new() }
+        FleetView { slot, pos: [x, y], owner: 3, visible: true, target: None, order: 0, flags: 0, name: Vec::new(), ships: 1, story_id: 0, kind: 0, target_index: 0 }
     }
 
     #[test]
@@ -321,6 +420,43 @@ mod tests {
         moved.owner = 6;
         let curr = Snapshot { fleets: vec![moved], ..Default::default() };
         assert_eq!(curr.fleets_at(&prev, 0.5)[0].pos, [4.0, 0.0]);
+    }
+
+    type Loaded = (SaveGame, GameRules, Vec<u8>, Vec<(u32, Vec<u8>)>);
+
+    fn quick1() -> Option<Loaded> {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return None;
+        };
+        let dir = std::env::var_os("IG2_SAVE_DIR")?;
+        let bytes = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")).ok()?;
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        Some((SaveGame::parse(&bytes).unwrap(), rules, defaults, volatile))
+    }
+
+    /// Orders go through `ig2_net::Command` and change the sim in the next pass, paused or not.
+    #[test]
+    fn commands_reach_the_sim() {
+        use ig2_net::StarmapCmd;
+        let Some((save, rules, defaults, volatile)) = quick1() else { return };
+        let mut w = World::load(&save, &rules, &defaults, &volatile);
+        w.set_speed(Speed::Fastest);
+        w.send(Command::Starmap { order: StarmapCmd::Pause { paused: true } });
+        w.pump();
+        assert!(w.paused());
+        w.send(Command::Starmap { order: StarmapCmd::Speed { level: 1 } });
+        w.send(Command::Starmap { order: StarmapCmd::Pause { paused: false } });
+        w.pump();
+        assert!(!w.paused());
+        assert_eq!(w.game.speed_level(), 1);
+        let f = w.curr.fleets[0].slot;
+        let order = ig2_sim::game::StarmapOrder::Move { fleet: f as i32, order: 1, kind: 0, x: 10.0, y: -20.0 };
+        w.send(Command::Starmap { order: StarmapCmd::from(order) });
+        w.pump();
+        let g = w.curr.fleets.iter().find(|g| g.slot == f).unwrap();
+        assert_eq!((g.order, g.target), (1, Some([10.0, -20.0])));
     }
 
     /// The real thing: `quick-1.sav` in the sim (skips without the install and the save).

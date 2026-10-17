@@ -500,11 +500,13 @@ pub fn production_capacity(planet: &mut Planet, fx: &Effects, rules: &ColonyRule
     }
 }
 
-/// A display refresh (`FRISSIT_Planet(false, p)`): building pass and production only.
-pub fn refresh(planet: &mut Planet, rules: &ColonyRules, ctx: &EconomyContext) {
+/// A display refresh (`FRISSIT_Planet(false, p)`): building pass and production only. Returns the recount of the
+/// used buildings, `HanyEpulet[p]` (exe 0xBA9518; it heals a count an empty slot's demolish took down).
+pub fn refresh(planet: &mut Planet, rules: &ColonyRules, ctx: &EconomyContext) -> i32 {
     let human = ctx.human_controlled[planet.owner as usize];
     let fx = building_pass(planet, rules, human);
     production_capacity(planet, &fx, rules, ctx);
+    fx.occupied
 }
 
 /// `exp(ln(n) × 1.5)` with the exe's f32 rounding of the argument and of `ln` (spec §10).

@@ -342,6 +342,7 @@ impl World<'_> {
         f.story_id = id;
         f.state &= !3;
         f.visible[1..].fill(0);
+        f.field_2c = [0; 2];
         if let Some(v) = f.visible.get_mut(o) {
             *v = 1;
         }
@@ -560,6 +561,75 @@ impl World<'_> {
                     *x = Design::from_bytes(&x.raw);
                 }
             }
+        }
+    }
+
+    /// `MULTIGET_Starmap` 0x17 (exe 0x59dbe8): station `index` (1-based) of planet `p` is sold for
+    /// `CsokkentettTervAr(e, d)` (`MoneyHozzaadLog(e, 0, x)`) and the list closes up.
+    pub(crate) fn sell_station(&mut self, e: usize, p: usize, index: i32) {
+        let n = self.spy.colony.planets[p].field_114;
+        if index < 1 || index > n || n < 1 {
+            return;
+        }
+        let st = self.spy.colony.planets[p].stations;
+        let Some(&d) = st.get(index as usize - 1) else { return };
+        let price = self.design(e, d as i32).map_or(0, |r| super::resale(r, self.ctx, self.spy.ctx.human_empire));
+        let sw = &mut self.spy;
+        sw.colony.add_money(e, 0, price as f64, sw.side_rules, sw.econ);
+        let pl = &mut self.spy.colony.planets[p];
+        pl.field_114 -= 1;
+        for i in index..=pl.field_114 {
+            let (a, b) = (i as usize - 1, i as usize);
+            if b < pl.stations.len() {
+                pl.stations[a] = pl.stations[b];
+            }
+        }
+    }
+
+    /// `MULTIGET_Starmap` 0x1c (exe 0x59e2b4): up to `n` units of design `d` go from holder `from` to `to` (a fleet,
+    /// or planet p as −p; both the issuer's): ships first (`HajoAtpakol`, only ship `ship` when non-zero; never onto
+    /// a planet, which the exe would write outside the fleet table), then the first vehicle entry (`TankAtpakol`,
+    /// clamped to `to`'s free capacity for ground vehicles), then the ground vehicles `from` can no longer carry.
+    pub(crate) fn transfer_units(&mut self, e: usize, from: i32, to: i32, d: i16, ship: i32, n: i32) {
+        let mut n = n;
+        let mut i = 1;
+        while i < self.spy.combat.ships.len() && n > 0 {
+            let s = self.spy.combat.ships[i];
+            if s.fleet as i32 == from && s.design == d && (ship == 0 || i as i32 == ship) && to > 0 {
+                self.move_ship(i, to as usize);
+                n -= 1;
+            }
+            i += 1;
+        }
+        let ground = |w: &Self, d: i16| w.des(e, d as i32).is_some_and(|x| x.class == 2);
+        if ground(self, d) && to > 0 {
+            let t = self.totals(to);
+            n = n.min(t.capacity - t.ground);
+        }
+        let mut i = 1;
+        while i < self.spy.combat.vehicles.len() && n > 0 {
+            let v = self.spy.combat.vehicles[i];
+            if v.fleet as i32 == from && v.design == d {
+                n = n.min(v.count);
+                self.transfer_vehicles(from, to, d, n);
+                break;
+            }
+            i += 1;
+        }
+        let mut excess = if from > 0 { let t = self.totals(from); (t.ground - t.capacity).max(0) } else { 0 };
+        let mut i = 1;
+        while i < self.spy.combat.vehicles.len() && excess > 0 {
+            let v = self.spy.combat.vehicles[i];
+            if v.design != NO_DESIGN && v.fleet as i32 == from && ground(self, v.design) {
+                let mut m = excess.min(v.count);
+                if to > 0 {
+                    let t = self.totals(to);
+                    m = m.min((t.capacity - t.ground).max(0));
+                }
+                self.transfer_vehicles(from, to, v.design, m);
+                excess -= m;
+            }
+            i += 1;
         }
     }
 }

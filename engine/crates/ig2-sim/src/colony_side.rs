@@ -175,6 +175,13 @@ impl TechTable {
     pub fn byte(&self, t: usize, off: usize) -> u8 {
         self.bytes.get(self.at(t, off)).copied().unwrap_or(0)
     }
+    /// Tech `t`'s name at `+0x00`, up to and including its NUL (what `strcpy` copies).
+    pub fn name_bytes(&self, t: usize) -> Vec<u8> {
+        let o = self.at(t, 0);
+        let rec = &self.bytes[o..(o + TECH_STRIDE).min(self.bytes.len())];
+        let n = rec.iter().position(|&c| c == 0).map_or(rec.len(), |i| i + 1);
+        rec[..n].to_vec()
+    }
     /// `+0x45 + e`.
     pub fn status(&self, t: usize, e: usize) -> u8 {
         self.bytes[self.at(t, 0x45 + e)]

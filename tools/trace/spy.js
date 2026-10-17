@@ -11,6 +11,11 @@
 // --orders N: after each traced call, N staged spy-screen orders through the exe's own MULTIGET_Spy (0x5883c0, spec
 // §8): its Multi_GetNextTipus/Multi_Get calls are pointed at stubs handing it one staged message, the target spy and
 // money are prepared first (part of the record's 'pre'); records {k: 'order', order: [type, sender, ...]}.
+// --estimate N: no FRISSIT_Spy records; instead N direct calls of the spy screen's chance estimate
+// KemEselySzamolas1(e, k, m, t, rounds, stream) (exe 0x587b80, re/screens/spy.md §6.2) on fuzzed rosters (the target's
+// counter-spies, skills, known flags, race, difficulty), recording the inputs, the result and the stream's state
+// before and after: records {k: 'estimate', e, k, m, t, rounds, stream, spy, guards, race, diff, human, mission,
+// seed0, seed1, result}.
 // Addresses are image VAs, rebased at runtime. Output holds game state: keep it under _local/.
 'use strict';
 
@@ -42,7 +47,7 @@ const A = {
 };
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, count: 600, fuzz: false, seed: 4242, debug: false,
-  ships: false, aiHuman: false, orders: 0 };
+  ships: false, aiHuman: false, orders: 0, estimate: 0 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -340,6 +345,39 @@ function orders() {
   }
 }
 
+// ---------------------------------------------------------------- the chance estimate (KemEselySzamolas1)
+const estimateFn = nf(va(0x587b80), 'int', ['int', 'int', 'int', 'int', 'int', 'int']);
+const hexAt = (p, n) => hexOf(new Uint8Array(p.readByteArray(n)), 0, n);
+function estimates() {
+  const en = A.EN.readS32();
+  for (let i = 0; i < cfg.estimate; i++) {
+    const e = rnd(3) ? en : 1 + rnd(8), t = 1 + rnd(8), k = 1 + rnd(12), m = rnd(4) ? 2 + rnd(12) : rnd(27);
+    const stream = rnd(4) ? 0 : 1 + rnd(20), rounds = rnd(3) ? 1000 : 1 + rnd(40);  // 0 rounds divides by zero
+    // The target's roster: up to 12 slots, counter-spies (state 3, mission 13) among them.
+    const n = rnd(13);
+    const saved = [[A.Ossz.add(4 * t), A.Ossz.add(4 * t).readByteArray(4)], [spyAt(t, 0), spyAt(t, 0).readByteArray(0x3dc)],
+      [spyAt(e, 0), spyAt(e, 0).readByteArray(0x3dc)], [A.PlayerFaj.add(e), A.PlayerFaj.add(e).readByteArray(1)],
+      [A.PlayerKi.add(e), A.PlayerKi.add(e).readByteArray(1)], [A.Nehezseg, A.Nehezseg.readByteArray(4)]];
+    A.Ossz.add(4 * t).writeS32(n);
+    for (let j = 1; j <= 12; j++) {
+      const g = spyAt(t, j);
+      const guard = rnd(3) !== 0;
+      g.add(0x10).writeS16(guard ? 3 : rnd(5)); g.add(0x1a).writeU16(guard ? 13 : rnd(14)); g.add(0x32).writeU8(rnd(4) ? rnd(60) : rnd(256));
+    }
+    const s = spyAt(e, k);
+    s.add(0x31).writeU8(rnd(4) ? rnd(60) : rnd(256));
+    for (let x = 1; x <= 8; x++) s.add(0x41 + x).writeU8(rnd(4) === 0 ? 1 : 0);
+    A.PlayerFaj.add(e).writeU8(rnd(3) === 0 ? 3 : 1 + rnd(14)); A.PlayerKi.add(e).writeU8(rnd(2)); A.Nehezseg.writeS32(1 + rnd(3));
+    const rec = { k: 'estimate', e, spy: k, m, t, rounds, stream, mission: hexAt(A.Kuld.add(0x20 * m), 0x20), mp: A.MP.readU8(),
+      race: A.PlayerFaj.add(e).readU8(), human: A.PlayerKi.add(e).readU8(), diff: A.Nehezseg.readS32(), count: n,
+      me: hexAt(s, 0x4c), guards: hexAt(spyAt(t, 0), 13 * 0x4c), seed0: A.RandSeed.add(4 * stream).readU32() };
+    rec.result = estimateFn(e, k, m, t, rounds, stream);
+    rec.seed1 = A.RandSeed.add(4 * stream).readU32();
+    emit(rec);
+    for (const [p, b] of saved) p.writeByteArray(b);
+  }
+}
+
 // ---------------------------------------------------------------- hooks
 let seq = 0, phase = 0, inCall = false, calls = [];
 function track(addr, name, n) {
@@ -390,6 +428,12 @@ Interceptor.attach(A.Fake_FRISSITES, {
       return;
     }
     if (started && phase === 0 && frames >= loadedAt + 300) { if (cfg.fuzz) setup(); homeKep = A.AktKep.readS32(); phase = 1; }
+    if (cfg.estimate && phase === 1) {
+      estimates();
+      emit({ k: 'done' });
+      phase = 2;
+      return;
+    }
     // Fuzzed state can stop the clock (a popup or story screen waiting for the human): log it, go back to the
     // starmap screen and restart the clock (as spacewar.js does after a tactical battle).
     if (phase === 1) {

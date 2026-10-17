@@ -184,6 +184,9 @@ fn context(s: &Value, rel: &str, after: &Value) -> StarmapContext {
         tutorial_sighting: (tut[0].as_i64().unwrap() != 0 || tut[1].as_i64().unwrap() != 0) && tut[2].as_i64().unwrap() == 1,
         radar_rules: RadarRules { ranges: ranges[..6].try_into().unwrap(), planet_ranges: ranges[6..].try_into().unwrap(), ..Default::default() },
         in_battle,
+        // The 0x1b messages are events, not state.
+        sends: [false; 19],
+        transfer: None,
     }
 }
 

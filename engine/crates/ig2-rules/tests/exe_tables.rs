@@ -19,6 +19,10 @@ fn tables_have_catalogued_shapes() {
     assert_eq!(r.building_footprints.len(), 61);
     assert!(r.building_footprints[1..=55].iter().all(|&(w, h)| w > 0 && h > 0 && w <= 20 && h <= 20));
     assert!(r.building_footprints[56..].iter().all(|&f| f == (0, 0)));
+    // `allvanypoziciok` (ELF 0x115f740) and `Building[0]+0x68` (ELF +0x6c): the selection marker of the colony hub.
+    assert_eq!(r.scaffold_heights.len(), 60);
+    assert_eq!(&r.scaffold_heights[..4], &[170.0, 15.0, 205.0, 50.0]);
+    assert_eq!(r.building_models[1].select, 0.59);
     assert_eq!(r.pod_types.len(), 55);
     assert_eq!(r.pod_slots.len(), 14);
     assert!(r.pod_slots.iter().all(|t| t.len() == 27 && t.iter().all(|h| h.len() == 12)));
@@ -106,4 +110,20 @@ fn hud_pictures_and_brushes_line_up() {
     assert_eq!((r.colony_brushes[28].kep, r.colony_brushes[28].dst), (1, [522, 362]));
     assert_eq!(r.starmap_brushes.len(), 13);
     assert_eq!(r.starmap_brushes[4].kep, 30);
+}
+
+#[test]
+fn research_screen_tables_line_up() {
+    let Some(r) = rules() else { return };
+    // re/screens/research.md §2: the middle wheel starts radar, weapons, shields, bombs, ships (mask colours 9, 16,
+    // 11, 5, 12); every tech has a model slot; the mask picture is kep 0x58.
+    let s = &r.research_screen;
+    assert_eq!(s.wheel_kep, [9, 16, 11, 5, 12]);
+    assert_eq!(s.wheel_area, [3, 2, 4, 5, 1]);
+    assert_eq!(s.wheel_button, [100, 102, 103, 104, 105]);
+    assert_eq!(s.wheel_line, [[322, 353]; 5]);
+    assert_eq!(s.models.len(), 192);
+    assert_eq!(s.orbit.len(), 17);
+    assert_eq!(r.pictures[0x58], "RESE_MSK.RAW");
+    eprintln!("models {:?}\norbit {:?}\nlabs {:?} {:?} {:?}", &s.models[..32], s.orbit, s.lab_x, s.lab_x2, s.lab_y);
 }

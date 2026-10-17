@@ -267,7 +267,22 @@ pub enum Order {
     Applicant { choice: i32, spy: u8 },
     /// 0x4c: one skill point into byte `+0x30 + skill` (1..=4 = the skills).
     Skill { spy: u8, skill: u8 },
+    /// Ours (re/screens/spy.md §7): the spy screen's verdict buttons (`Spy_Main` exe 0x58d410, `choice` 1..=4):
+    /// the original rolls on stream 0 in the UI (spy.cpp 0x313/0x318) before it sends 0x4a, so the roll travels
+    /// with the order. Applied by `Game::spy_order` (the roll, the report's follow-up kind, then [`Order::Verdict`]).
+    Judge { choice: i32, owner: u8, spy: u8 },
+    /// Ours: the spy screen closes the report on show (`KemHanyBeszolas −= 1`, the queue moves up); the queue is
+    /// synced state (re/rules/multiplayer.md §5.2). Applied by `Game::spy_order`.
+    Acknowledge,
+    /// Ours: the mission planner's chance estimate `KemEselySzamolas1(EN, spy, mission, target, 1000, 0)` draws
+    /// on stream 0 in the UI (exe 0x587b80); its draws travel as an order so every peer's stream 0 stays in step.
+    Estimate { spy: u8, mission: u16, target: u8 },
 }
+
+/// `KemEselySzamolas1` ELF 0x6ca200's draw count per round: `rounds` × this (plus the counter-spy picks).
+pub const ESTIMATE_ROUNDS: i32 = 1000;
+/// The stream the spy screen's own rolls use (`rndlog(0, …)`).
+pub const UI_STREAM: usize = 0;
 
 /// State owned by espionage.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1341,6 +1356,121 @@ impl Spies {
         }
         slot
     }
+}
+
+impl Spies {
+    /// `KemEselySzamolas1(e, k, m, t, rounds, stream)` (ELF 0x6ca200, exe 0x587b80; re/screens/spy.md §6.2): how
+    /// often, in percent, spy `k` of `e` gets past `t`'s counter-spies (state 3 on mission 13), playing the duel
+    /// `rounds` times on `stream`. Missions without a target: 100, no draws.
+    #[allow(clippy::too_many_arguments)]
+    pub fn escape_chance(&self, ctx: &SpyContext, rules: &SpyRules, rng: &mut Streams, e: usize, k: usize, m: usize, t: usize, rounds: i32, stream: usize) -> i32 {
+        let Some(rule) = rules.missions.get(m) else { return 0 };
+        if !rule.needs_target || e >= ROSTERS || k >= SLOTS || t >= ROSTERS {
+            return 100;
+        }
+        let spy = self.roster[e][k];
+        let n = self.count[t].clamp(0, SLOTS as i32 - 1) as usize;
+        let mut escaped = 0;
+        let mut round = 1;
+        while round <= rounds {
+            let mut on_guard = [false; SLOTS];
+            let mut left = 0;
+            for (g, s) in on_guard.iter_mut().zip(&self.roster[t]).take(n + 1).skip(1) {
+                if s.state == state::MISSION && s.mission as usize == mission::COUNTER_INTELLIGENCE {
+                    left += 1;
+                    *g = true;
+                }
+            }
+            let (mut catcher, mut guard) = (0, 0);
+            let mut r = 1;
+            while r <= left {
+                rng.choice_begin();
+                let mut pick = 0;
+                for (j, &g) in on_guard.iter().enumerate().take(n + 1).skip(1) {
+                    if g && rng.choice_offer(stream, 1) {
+                        pick = j;
+                    }
+                }
+                if pick > 0 {
+                    left -= 1;
+                    catcher = pick;
+                    on_guard[pick] = false;
+                    guard += self.roster[t][pick].skills[skill::COUNTER] as i32 * 10 / r;
+                }
+                r += 1;
+            }
+            let mut a = rng.range(stream, 0, spy.skills[skill::INFILTRATION] as i32 * 140);
+            let d = rng.range(stream, 0, guard * 10);
+            if spy.known_to.get(t).copied().unwrap_or(0) != 0 {
+                a /= 3;
+            }
+            if ctx.race(e) == 3 {
+                a = (a as f64 * 1.5) as i32;
+            }
+            if ctx.difficulty == 1 && !ctx.multiplayer && ctx.human(e) {
+                a = (a as f64 * 1.5) as i32;
+            }
+            if d <= a {
+                catcher = 0;
+            }
+            if catcher == 0 {
+                escaped += 1;
+            }
+            round += 1;
+        }
+        let mut c = if rounds > 0 { escaped * 100 / rounds } else { 0 };
+        if m > 0 && rule.no_countdown {
+            c = 0;
+        }
+        c
+    }
+
+    /// `KemEselySzamolas2(e, k, m, t)` (ELF 0x6ca620, exe 0x587de0; `re/rules/ai-empire.md` §6.5): the success
+    /// chance in percent the planner shows and the AI weighs. `kidnapped` = `CsaladtagElrabolvaKi[t]`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn success_chance(&self, ctx: &SpyContext, rules: &SpyRules, e: usize, k: usize, m: usize, t: usize, kidnapped: i32) -> i32 {
+        let (Some(rule), Some(spy)) = (rules.missions.get(m), self.roster.get(e).and_then(|r| r.get(k))) else { return 0 };
+        mission_chance(rule, spy.skills[skill::INFILTRATION], m, ctx, e, t, kidnapped)
+    }
+
+    /// The spy screen's verdict roll (`Spy_Main` exe 0x58d410, spy.cpp 0x313/0x318): `choice` 1 release, 2 turn,
+    /// 3 make a double agent, 4 execute on `owner`'s caught spy `k`. Turning (2, 3) fails unless `rndlog(0, 1,
+    /// loyalty + 3) < 6` and the spy is nobody's double agent; then a coin `rndlog(0, 1, 2)` makes it escape (fate
+    /// 5) or die escaping (6). Returns the fate sent (0x4a) and the report's follow-up kind (8..=0xe).
+    pub fn judge(&self, rng: &mut Streams, owner: usize, k: usize, choice: i32) -> (i32, u8) {
+        let s = self.roster.get(owner).and_then(|r| r.get(k)).copied().unwrap_or_default();
+        match choice {
+            2 | 3 => {
+                if rng.range(UI_STREAM, 1, s.skills[skill::LOYALTY] as i32 + 3) < 6 && s.master == 0 {
+                    (choice, if choice == 2 { 8 } else { 9 })
+                } else if rng.range(UI_STREAM, 1, 2) == 1 {
+                    (5, 10)
+                } else {
+                    (6, 11)
+                }
+            }
+            1 => (1, 0xd),
+            4 => (4, 0xe),
+            _ => (choice, 0),
+        }
+    }
+}
+
+/// `KemEselySzamolas2`'s body: [`chance`], 0 for missions without a countdown, a kidnap with no one to take
+/// (`t == 0`, taken already, or `t`'s race 5 in SP), halved against race 5 in SP.
+pub fn mission_chance(rule: &MissionRule, infiltration: u8, m: usize, ctx: &SpyContext, e: usize, t: usize, kidnapped: i32) -> i32 {
+    let mut c = chance(rule, infiltration, m, ctx, e);
+    if rule.no_countdown {
+        c = 0;
+    }
+    let mp = ctx.multiplayer;
+    if m == mission::KIDNAP && (t == 0 || kidnapped != 0 || (!mp && t == 5)) {
+        c = 0;
+    }
+    if !mp && ctx.race(t) == 5 {
+        c /= 2;
+    }
+    c
 }
 
 /// The success chance in percent (spec §5.1, f32).

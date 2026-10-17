@@ -186,6 +186,7 @@ pub fn game_rules(inst: &Install) -> GameRules {
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
         ground_maps,
         space: space_rules(inst, &r).expect("battle rules"),
+        satellite_prices: r.satellite_prices.clone(),
     }
 }
 

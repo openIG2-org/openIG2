@@ -15,7 +15,7 @@ const GROUND_HULLS: std::ops::RangeInclusive<i32> = 0x91..=0x95;
 /// `TervAutoDesign`'s per-race allow lists (`9·variant + race`) for shields 0x31..=0x36, techs 0x41..=0x43 and
 /// 0x44..=0x45.
 const SHIELDS_OK: [u8; 18] = [0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0];
-const T41_OK: [u8; 18] = [0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0];
+const T41_OK: [u8; 18] = [0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1];
 const T44_OK: [u8; 18] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0];
 
 fn rd_i16(b: &[u8], o: usize) -> i16 {
@@ -79,6 +79,26 @@ impl World<'_> {
             r[0x40..0x42].copy_from_slice(&owner.to_le_bytes());
         });
         d
+    }
+
+    /// `TervezAutomatikus(e, t)` (exe 0x4b72b0, ELF 0x61bc80; `TalalmanyKifejlesztve` calls it for a human's tech with
+    /// `+0x26`/`+0x28` set, re/screens/research.md §6): when `t` is the tech of a hull `Alapok[1..25]` (the first),
+    /// a new design of that hull named after the tech (`strcpy` of the tech's name), recomputed, fitted with
+    /// `TervAutoDesign(e, d, 0)` and recomputed again. The name is the exe's localised one: reported as
+    /// [`AiEvent::DesignNamed`].
+    pub fn automatic_design(&mut self, e: usize, t: usize, hooks: &mut dyn AiHooks) {
+        let Some(h) = (1..=HULL_SLOTS).find(|&h| self.rules.design.hulls.get(h).is_some_and(|x| x.tech == t as i32)) else { return };
+        let d = self.new_design(e, 0, hooks);
+        let name = self.spy.colony.tech.name_bytes(t);
+        self.edit_design(e, d, |r| {
+            r[0x44..0x48].copy_from_slice(&(h as i32).to_le_bytes());
+            let n = name.len().min(r.len());
+            r[..n].copy_from_slice(&name[..n]);
+        });
+        self.recompute_design(e, d);
+        self.auto_design(e, d, 0);
+        self.recompute_design(e, d);
+        self.events.push(AiEvent::DesignNamed { empire: e as u8, design: d, slot: h, special: false });
     }
 
     /// `TalalmanyRarakhato(h, t, k, min, e, pt)` (§10.3): tech `t` fits slot `k` of hull `h` for pod table `pt`.
