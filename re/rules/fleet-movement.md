@@ -338,7 +338,7 @@ reveals, design stealth) with `!= 0` where the ELF uses `& 1`; the supply fade m
 ## 10. Not ported
 The space-war in-battle marking (§6.3 step 8: an input, the list of fleets in battle),
 and side effects owned by other systems, reported as events: arrivals (battles, virus spread) and radar consequences (story event 0x0B / `FelfedezBirodalom` on
-meeting an empire, `Story_ArrivedToRadarRange*`, the "enemy approaching" message, the tutorial rename).
+meeting an empire, `Story_ArrivedToRadarRange*`, the "enemy approaching" message, the tutorial rename: `Game::tutorial_sighting`, `tutorial.md` §4).
 
 ### Opening a wormhole (`AddWormhole(x1, y1, x2, y2)`, exe 0x53aec0)
 Called by stories 902 and 239 (`campaign.md`). With `OsszHanyWormhole > 4` it returns 0; else `w = ++OsszHanyWormhole`,

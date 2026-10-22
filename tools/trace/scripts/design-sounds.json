@@ -1,0 +1,56 @@
+{
+ "screen": "design",
+ "note": "The design screen, viewing (re/screens/design.md §6, §9): the opening (desframe 0..60 at 0.8 a UI tick, screen21; the first hull slides in, be1), a list press on the third row (Global[0] + ki1, the new hull's be1), down and up (no sound, a hull each), the scroll bar's tooltip rest, Esc (screen23, the closing). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {
+   "t": 150,
+   "press": [
+    40,
+    130
+   ]
+  },
+  {
+   "t": 250,
+   "key": "down"
+  },
+  {
+   "t": 350,
+   "key": "up"
+  },
+  {
+   "t": 400,
+   "mouse": [
+    60,
+    160
+   ]
+  },
+  {
+   "t": 440,
+   "press": [
+    540,
+    102
+   ]
+  },
+  {
+   "t": 520,
+   "key": "f2"
+  }
+ ],
+ "grabs": [
+  10,
+  40,
+  80,
+  100,
+  160,
+  170,
+  200,
+  260,
+  300,
+  380,
+  450,
+  500,
+  540,
+  560
+ ],
+ "tail": 80
+}

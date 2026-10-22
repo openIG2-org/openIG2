@@ -124,6 +124,21 @@ pub struct Dialogue {
     pub hover: Option<usize>,
     /// The typer's sound steps since the window last took them.
     pub typing: Vec<Typing>,
+    /// The message's id (`UAktUzenetFajta`) and whether it is a conversation (`UzenetFajtak[k] + 4`).
+    pub id: i32,
+    conversation: bool,
+    /// The talking-head clip's steps since the window last took them (re/screens/video.md §5.3).
+    pub clip: Vec<ClipStep>,
+}
+
+/// What the dialogue asks of the talking-head clip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipStep {
+    /// `GetTxtFileCommands` read a `TE` part: its clips become `AnimFile` and `MesKellAnimInditas` is set.
+    PartRead(u32),
+    /// The typer reached the end (`KiirtaMar` 0 → 1): `VegeAzElsoAnimnak` while the speaking clip plays; then the
+    /// end clip for a plain message (`plain`) or a dialogue that ends here (`ParbeszedVegeJon`, `ends`).
+    TypedOut { plain: bool, ends: bool },
 }
 
 impl Dialogue {
@@ -157,6 +172,9 @@ impl Dialogue {
             speaker: 1,
             hover: None,
             typing: vec![Typing::Start],
+            id,
+            conversation,
+            clip: Vec::new(),
         };
         if !conversation {
             d.over = true;
@@ -259,6 +277,9 @@ impl Dialogue {
         let field = |k: i32, n: i32| self.txt.get((at + k) as usize..(at + k + n) as usize).unwrap_or(b"").to_vec();
         let speed = atoi(&field(8, 2));
         self.speaker = if field(11, 2) == b"EN" { 1 } else { 2 };
+        if self.speaker == 2 {
+            self.clip.push(ClipStep::PartRead(atoi(&field(0, 2)).max(0) as u32));
+        }
         self.step = speed as f32 / OSZTO;
         // `PutColorCommand(ParbeszLength, EnVagyTe)`.
         let l = self.length.max(0) as usize;
@@ -408,6 +429,7 @@ impl Dialogue {
             } else {
                 if !self.typed_all {
                     self.typing.push(Typing::Stop);
+                    self.clip.push(ClipStep::TypedOut { plain: !self.conversation, ends: self.ends });
                 }
                 self.typed_all = true;
                 if self.ends {
@@ -419,6 +441,13 @@ impl Dialogue {
         if self.typed_all && !self.over && self.answers.len() == 1 {
             self.choose(0);
         }
+    }
+
+    /// `MsgSzin` at the typer's front: the colour of the last `|C` command before it (1 the player, 2 the other side).
+    pub fn front_colour(&self) -> u8 {
+        let end = (self.typed.max(0) as usize).min(self.place.len());
+        let p = &self.place[..end];
+        (0..p.len().saturating_sub(2)).rev().find(|&i| p[i] == b'|' && p[i + 1] == b'C').map_or(0, |i| p[i + 2])
     }
 
     /// A left click in the text (x 186..512, y 1..167): type the rest at once (`ParbeszTyperPtrNovelo` = 0.001).
@@ -709,7 +738,27 @@ mod tests {
             speaker: 1,
             hover: None,
             typing: Vec::new(),
+            id: 1,
+            conversation: false,
+            clip: Vec::new(),
         }
+    }
+
+    /// The clip's steps: a `TE` part read, the colour at the typer's front, the typer's end of a plain message.
+    #[test]
+    fn clip_steps() {
+        let txt = b"01 0001 12 EN\r\n+ hi\r\n02 0001 12 TE\r\n+ ho\r\n";
+        let mut d = dialogue(b"", txt);
+        d.print_parts(1);
+        d.print_parts(2);
+        assert_eq!(d.clip, [ClipStep::PartRead(2)]);
+        d.typed = 4;
+        assert_eq!(d.front_colour(), 1);
+        d.typed = d.length;
+        assert_eq!(d.front_colour(), 2);
+        d.clip.clear();
+        d.advance(1000.0);
+        assert_eq!(d.clip, [ClipStep::TypedOut { plain: true, ends: false }]);
     }
 
     #[test]

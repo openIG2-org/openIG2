@@ -8,6 +8,26 @@ use crate::save::{PLANET_SIZE, TECH_SIZE};
 use crate::tutorial::Effect;
 
 impl Game<'_> {
+    /// `FRISSIT_Starmap`'s tutorial sighting (exe 0x595a77..0x595ae6, `re/rules/tutorial.md` §4): while event 1 is
+    /// awaited, the planet's name := `GetString(2, 4, 6)` (`strcpy`: the bytes after the NUL stay), then
+    /// `TutorialCheckEvent(1)`: `TutorialEvent` 0 and, when paused, `TutorialUnPause`'s flags (its input resets and
+    /// the interpreter's own copy are the driver's: `StarmapEvent::TutorialPlanetSighted`).
+    pub(crate) fn tutorial_sighting(&mut self, p: usize) {
+        let m = &mut self.state.mem;
+        if (m.u8(va::TUTORIAL_ACTIVE) == 0 && m.u8(va::TUTORIAL_PAUSED) == 0) || m.i32(va::TUTORIAL_EVENT) != 1 {
+            return;
+        }
+        let name = cstr(&self.rules.messages.new_planet);
+        let mut text = name.to_vec();
+        text.push(0);
+        m.write(va::PLANETS + (p * PLANET_SIZE) as u32, &text);
+        m.set_i32(va::TUTORIAL_EVENT, 0);
+        if m.u8(va::TUTORIAL_PAUSED) != 0 {
+            m.set_u8(va::TUTORIAL_PAUSED, 0);
+            m.set_u8(va::TUTORIAL_ACTIVE, 1);
+        }
+    }
+
     /// Carry out a tutorial command's effect on the game, if it is one of the in-place writes; false otherwise
     /// (the caller hands it to the UI or the owning system).
     pub fn tutorial_effect(&mut self, e: &Effect) -> bool {

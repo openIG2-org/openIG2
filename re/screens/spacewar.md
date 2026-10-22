@@ -882,8 +882,8 @@ Not Box:
 Box: while the left button is held: the rectangle is drawn with four `Line(.., 7, 0xff)` (colour 7) clipped to `HatarX1..HatarY2` (the full 640 x 480 viewport); the selection is rebuilt every frame: `kijelolesleszed(false)`; with Shift (`KeyShift`) the snapshot of own units is re-added first; then every live own, not yet selected, not disabled (`+0x1e0` clear) unit whose projected centre (`GetObjCenter` + `TransformPoint`, z < 0) is strictly inside the rectangle is selected (speech kind 1 for units that were not selected in the snapshot: `i % 3 + 1`, condition `+0x24b8 && unit +8 < 8 && beszedlasttick + 0x1e < acttick2`); planet guns of the human planet owner (`+0xd7c == +0xd2c`) likewise (`RotateAndTransformPoint`). Counters `+0x16f8/fc/1700/1704/1708/170c` are updated as in kijelol.
 Box end: a right press during the box (`+0x223c`) cancels it (selection restored from the snapshot, counters recounted, `Box = 0; Sup = 1; Rot = 1`); when the left button goes up (`+0x223f` seen in the Box branch) `Box = 0` and, if the fire cursor was armed (`MousePointerType == 4`), it is restored (`MousePointerType = +0x24c4`, armed group and marker -1).
 After the machine: if neither button is held `Sup = 0`; if `Rot && !(+0x229e)`: yaw `+0xd70 -= (+0x225c - x) / 100.0` and pitch `+0xd74 -= (+0x2264 - y) / 200.0` (f32 arithmetic; prev = last frame mouse), pitch clamped to [-1.5607964, -0.2]; then `SpaceWarMouseMove`; `prev = now`; the four event flags are cleared.
-SpaceWarMouseMove (not Rot/Hgt/Box): `+0x2234 = 0`; pick radius threshold 400 (squared screen distance, `tav2`): for each live unit whose owner == me or `+0x1e3` clear: centre projected (`GetObjCenter`, `TransformPoint`, z < 0), radius `max(10, TransformTav(ship type scale (+0x230 -> +0x10) * 1000, z))`; the nearest within both gives `+0x2230 = idx`, `+0x2234 = 1`; then planet guns (`+0x84 != 0`, radius 10, projected with `RotateAndTransformPoint`) can win with `+0x2234 = 2`. Nothing -> `+0x2230 = -1`, `+0x2234 = 0`.
-Cursor (`MousePointerType`, only when < 4, i.e. no fire cursor armed): nothing hovered -> 0; hovered own unit (or a gun when the planet is mine) -> 2; hovered other unit: 2 if nothing is selected (`+0x16f8 == 0`) or if any selected live unit satisfies `ellenseg(..)` (ELF function, meaning unverified), else 3 (attack cursor). `Mouse_Tipus` per frame: 0 -> 1, 2 -> 5, 3 -> 7, 4 -> 6 (exe 0xDB9414).
+SpaceWarMouseMove (not Rot/Hgt/Box; corrected in 8.7.5): `+0x2234 = 0`; `best = 400` pixels; for each live unit whose owner == me or `+0x1e3` clear: centre projected (`GetObjCenter`, `TransformPoint`, z < 0, the 639/479 round trip), radius `max(10, TransformTav(ship type scale (+0x230 -> +0x10) * 1000, z))`; `d = tav2` (a pixel distance, `sqrt` in f64); accepted if `best > d && radius > d` (strict): `best = d`, `+0x2230 = idx`, `+0x2234 = 1`; then planet guns (`+0x84 != 0`, radius 10, `RotateAndTransformPoint`) share `best`, so a gun wins only when nearer (`+0x2234 = 2`). Nothing -> `+0x2230 = -1`, `+0x2234 = 0`.
+Cursor (`MousePointerType`, only when < 4, i.e. no fire cursor armed): nothing hovered -> 0; hovered own unit (or a gun when the planet is mine) -> 2; hovered other unit or gun: 2 if nothing is selected (`+0x16f8 == 0`) or if any selected live unit is the human's enemy (`ellenseg(u)` = `rel[EN·0x13 + u.owner] == 1`: the selected unit's owner, not the hovered one's), else 3 (attack cursor). `Mouse_Tipus` per frame: 0 -> 1, 2 -> 5, 3 -> 7, 4 -> 6 (exe 0xDB9414).
 
 #### 7.1.3 Clicks and the messages (BalClick ELF 0x6b13c0 / exe 0x566810; JobbClick ELF 0x6b0210 / exe 0x569190; weapon buttons in main)
 BalClick (left release; needs `AktIkon == 0x4c`, `+0x24bc == 0` (battle not over), `!(+0x229e)`): `PlaySoundGlobal(0)`; if the fire cursor is armed: cancel it (`MousePointerType = 0`, `+0x24c4 = 0`, `+0x24c8 = +0x24cc = -1`).
@@ -1065,6 +1065,70 @@ Frame timers (screenfrissites): SDL ticks `+0x22f0`; `+0x2268/+0x226c` (+= dt ms
 - `SpaceWar_ZoomFinished` exe address and its caller.
 - Whether the property bits and node order make the three callbacks run before or after the planet shell and the grid (draw order of the callbacks inside `renderscene`).
 
+### 8.7 infoszamol, the selection helpers, SikMetszespont (part 2's reading; ELF / exe)
+Read from `_local/decomp/spacewar-screen-elf*`, `spwc-elf/`, `spwc-exe*/` and the disassemblies where no .c exists (ELF
+`kijelolagyu` 0x6afe20, `kijelolinvertagyu` 0x6afec0, `SpaceWarMouseMove` 0x6b2c90; exe `SikMetszespont` 0x52ca10,
+`kijelolescenter` 0x5772c0, `SpaceWarMouseMove` 0x56fa60). Exe offsets: stats `+0x2550..` → minus 0x58c, counters
+`+0x16f8..` → `+0x15ac..`, groups `+0x30d8..` → minus 0x6a8; unit stride 0x290 / 600.
+
+#### 8.7.1 `infoszamol` (ELF 0x6a4080 / exe 0x574040), every 6th tick
+1. Always: the stats `+0x2550..+0x2568` := 0, rank `+0x256c` := −1, class `+0x2570` := 0; the snapshot `+0x2574..+0x2588`
+   := the live counters (total, ships, guns, last, last kind, own; exe `+0x1fe8..+0x1ffc`); each side's firepower 0.
+2. Firepower per live ship with an owner: a plan-less ship (slot list `[0] < 0`) sums its mounts' `+0x28`, else the
+   plan values `Tervek[+0x1d4][Hajok[slot].design] +0x2c` over its ships; stored in the unit `+0x284` (exe `+0x250`) and
+   added to its owner's side. Fighter groups add `plan +0x2c × count`; guns `TalalmanyokrEro[tech]` to the planet owner.
+3. Only while something is selected (live counters): `+0x2550` = the human's live ships + its guns (all, not the
+   selection); per selected live ship with an owner (any owner): ships +1, damage `+0x18`, `+0x20`, `+0x24`, max hp
+   `+0x1c`, class `+0x1b8`, value = the plan values as in 2 (not `+0x284`), rank `+0x1b0 / +0x1bc` (int) summed (the
+   first replaces −1); per selected gun: +1, damage, max hp, value. The weapon groups from the selected live OWN ships:
+   per mount of kind k ≥ 0, barrels, enabled barrels (`+0x1c8` bit k), reload `0xa9 − timer·0xaa / timerSet` (int,
+   truncating) clamped to 0..0xaa (a mount with timerSet 0 keeps the previous value; the exe starts it as a pointer,
+   which clamps to 0xaa: corrects 8.2.2); then per group g the sums over its mask's kinds and the state (−1, 6, 7, 3).
+   Nothing selected: the groups keep their last values.
+4. The guns' armour product `+0x3428` (f32, from 1.0), `selectkisinfourhajo()`; with gfx up: the slider hot-spot 0x19
+   on iff nothing is selected, the fighter stance message 0x77 while the slider differs from `side[me] +0x44` (every
+   call), the small box's case-C totals (ships, fighters, firepower for own / enemy / other), the sides' flag B (`+0x70`).
+5. The one-shot block (`+0x3448`, exe `+0x2d98`) writes the sim: each side whose firepower is below a third of an
+   enemy's gets flag A (`+0`); then, through a stale pointer to the last ship record (an original bug, same in the exe
+   at 0x574ee1..0x574f2b), `Hajok[slot] +4` += 1 for each of that ship's slots, n times. Not ported (a screen writing
+   the sim; `re/deviations.md`).
+Verified: `spacewar_ui::infoszamol_matches_the_exe` (four dumps: the counters, damage, max hp, rank and the ten groups'
+barrels, enabled barrels, reload and state, with the ELF table's masks).
+
+#### 8.7.2 Selection helpers (counters T `+0x16f8`, S `+0x16fc`, G `+0x1700`, L `+0x1704`, K `+0x1708`, O `+0x170c`)
+`kijelolesleszed(snap)` (0x6ade40 / 0x5774e0): every ship and gun deselected, T = S = G = O = 0, L = −1, K = 0.
+`kijelol(i)` (0x698220 / 0x576ee0): deselect all, select i, L = i, K = the hover kind `+0x2234` (stale when not from a
+click), T = S = 1, O = 1 if own. `kijelolinvert(i)` (0x69a630 / 0x577770): T == 0 → `kijelol(i)`; else only own ships
+toggle (T, S, O ± 1; L, K unchanged). `kijelolagyu(g)` (0x6afe20 / 0x576f50) the same for a gun (G, O if the planet is
+mine). `kijelolinvertagyu(g)` (0x6afec0 / 0x577820): T == 0 → the SHIP routine `kijelol(g)` [original bug, both
+binaries]; else toggles the gun when the planet is mine. `flottafelallit` (0x68eae0 / 0x573a30): every live own ship
+not disabled, then EVERY gun when the planet is mine (no `+0x84` test). `csapat(n)` (0x6b3ee0 / 0x572100): only outside
+a view animation; disarm the fire cursor, deselect, select every own ship of group n (no alive test). `csapatkijelol(n)`
+(0x6b3e50 / 0x5721c0): with O ≠ 0 every selected ship (any owner, no alive test) gets group n.
+`kijelolescenter` (0x6b1a40 / 0x5772c0) as in 2.5: confirmed (n ≥ 2: f32 sums in list order, `max tav · 2.5` in f64).
+
+#### 8.7.3 `SikMetszespont` (ELF 0x5ee770 / exe 0x52ca10)
+The inverse of `cmatrix` is a transpose; points at view depth 1 and 10 under the pixel (`(s − centre)/(fov/−z)`,
+`s = 639·x/639`), to the world (`M·c + forg`); the height step `dx = B.h − A.h` clamped to at most −0.01 (f64 compare);
+`out = (h, (B.y − A.y)/(dx/(h − A.h)) + A.y, same for z)`. On-plane `+0x2244`: `+0x900 < y < +0x904 && +0x908 < z <
++0x90c` (strict f32). `TransformTav(a, z) = a·fov/−z`; `TransformPoint`: `k = fov/−z`, `x·k + xcenter`.
+
+#### 8.7.4 Unit `+0x25c/+0x260/+0x264` (exe `+0x234/+0x238/+0x23c`)
+Zeroed by `AddUjUrhajo` only; `frissit2` adds to `+0x260` in f64 (types 8, 9, 10: 0.007, 0.005, 0.01). They are
+`seturhajopos`' `CreateMatrix(+0x25c + π/2, +0x260 + π/2, +0x264)`. `CreateMatrix2v(a, v, 0)` (ELF 0x453690): `c =
+normalise(a × v)`, `b = normalise(a × c)`, the columns `−a, −b, −c`; `MultipleMatrix(a, b, out)` (0x4518f0) is `out = b·a`.
+Verified: `spacewar_ui::pose_keeps_the_exe_matrix_of_a_ship_at_rest` (56 resting ships of four dumps: one more
+`seturhajopos` keeps the dumped matrix, or moves it one easing step).
+
+#### 8.7.5 Unknowns left
+- The camera's steady state in grab4: the dumped pivot is (−188.8, 188.8) at t300 and t800 while the exe's smoothed
+  target stays at (−186.7, 186.7): something clamps the camera targets (not the ±186 of 2.4, and grab3's pivot −189.03
+  is followed exactly). Check `kamerabeallit` (exe 0x576750) and `SpaceWarFrissit2`'s clamp in the asm.
+- Who unpauses the battle after the opening zoom when there is no formation choice (`SpaceWarIndit` pauses in SP);
+  the client unpauses at the end of the zoom [inf].
+- `HandleRetreatWindow`'s trigger: "every frame without the left button" would close the window the frame after it
+  opened; the client takes the next left release after the opening click's [inf].
+
 ## 9. The client (`ig2-client::spacewar_screen`, `spacewar_hud`) and the captures
 
 ### 9.1 How the screen is drawn
@@ -1123,10 +1187,41 @@ moving side lights, the radar's frustum line fainter, the weapon buttons brighte
 contrast), the info model's spin phase (not dumped), the cursor (exe only) and the top bar's speed buttons (§7 of hud.md:
 their battle state isn't drawn). `re/deviations.md` lists them.
 
-### 9.4 Not yet (part 2)
-The screen's input and its orders through `Battle::order` (§7: selection, box select, move/attack/height clicks, the
-weapon buttons, the retreat window, the camera cluster and keys, the radar click), the opening and closing zoom (§2.5)
-and the per-tick camera (`SpaceWarFrissit2`, §2.4) in the live client, the starmap's fade-out (`starmapszarok`, §3.3),
-the shots, beams, lightning, engine trails, explosions, shield rings, fighters and planet-gun markers (§6), the big info
-box and the retreat window (§5.2, §5.4), the screen's sounds (`SpWar_Hangok`, §7.3, through client audio) with
-the sound-id tracer's (action → sound) table, `input-audit`, and the screen entry from the starmap's real-time battle.
+### 9.4 The live screen (part 2, 2026-10-22)
+- **The sim** (`game::realtime`, `SpBattles`): single player's real-time battles run when the client asks
+  (`sp_battles.live`; off for the replays): a real-time route starts the battle as `SpaceWarIndit` does in SP (speed 1,
+  paused, `RealTimeEvent::SpaceStarted`), the slots tick only while the battle screen is up (`on_screen`, `AktKep ==
+  0xB`) with the screen's fade in the end check, the strategic clock runs on beside it, the human's orders come through
+  `Command::SpaceOrder` (`Game::space_order`, own units only), and leaving a finished battle's screen ends it
+  (`Command::SpaceBattleLeft` → `SpaceWarVege`). Tested by `ig2-net/tests/sp_battle.rs`.
+- **The screen** (`spacewar_ui::SpaceWarUi`, `spacewar_live::Live`): entered from the starmap camera at scene scale
+  0.0004 (§1.1 step 3), the first frame's block and the opening zoom (§2.5, `rescalescene(2500)` at its end), the 30 Hz
+  tick (§2.4, §7.2: zoom/yaw/tilt rates, the pivot's chase, the radar counter, the column's slide counters, the
+  cluster's button frames, `infoszamol` every 6th, `kamerabeallit`), the per-frame selection timers (§3.6), the poses
+  after each battle tick (`seturhajopos`, §6.5), the closing zoom when the end check fires or on Esc. A battle point is
+  the starmap point `origin + q/2500` at every scale (`rescalescene` changes the camera's units, not the battle's
+  place). Input: the hot-spots by `STAR_M.RAW`'s colours and rectangles (§4.2), `SpwC::main` (radar drag, the camera
+  cluster, zoom/pitch buttons, the small info box, the stance slider, the weapon column: right arms the fire cursor,
+  left toggles the group's mounts, the tenth opens the retreat window), `SpaceWarMouse` (select, shift-toggle, box
+  select with its snapshot, both-button rotate, the right-drag height mode, `JobbClick`'s attack / gun / direct-fire /
+  move orders with the arena clamp), the keys of §7.1.5 (arrows, numpad ± one tick per key event, A, 1–9 with Ctrl,
+  DEBUGX R and Backspace). The retreat window (§5.4) is drawn and answered. Orders leave as commands in SP too.
+- **Scripted runs**: `ig2-client --snapshot OUT --save S.sav --screen spacewar --battle <grab>.json --script S` puts the
+  dumped battle into slot 0 as a live battle, enters from the save's starmap camera and runs the script on the 10 ms UI
+  clock (sim ticks every 50 ms while unpaused, the screen's 30 Hz tick, a frame per UI tick), writing `OUT-t<T>.png`
+  per grab and printing what the screen sent (orders, clicks) per tick; script keys `left right up down add subtract a
+  1..9 shift`.
+- **Tests** (runtime-observed, `IG2_GRAB_DIR` = the captures): `pose_keeps_the_exe_matrix_of_a_ship_at_rest`,
+  `infoszamol_matches_the_exe`; `kamerabeallit_matches_the_exe_camera` reports, it checks nothing yet (the captured
+  cameras are not settled, 8.7.5).
+- **Acceptance so far**: the four stills of §9.3 give the same numbers after the drawing moved to the shared live/dump
+  path; the exe-side battle input script and the frame-sequence comparison are part 3 (9.5).
+
+### 9.5 Not yet (part 3)
+The exe side of a battle input script (`spwc.js` staging + `screen.js`'s script frames on AktKep 11) and the
+frame-sequence comparison with the client's scripted run; the sound-id tracer's (action → sound) table
+(`SpWar_Hangok`, §7.3) and the screen's sounds through client audio (the client plays only the click now); the
+shots, beams, lightning, engine trails, explosions, shield rings, fighters and planet-gun markers (§6); the big info
+box (§5.2) and its camera mode; the formation phase's formation picking (`loadfelallas`) and its texts; the fighter
+chase camera (`c`); the cursor shapes (`MousePointerType`); the small box's case B/C texts; the MP versus banner; the
+starmap's fade-out (`starmapszarok`, §3.3) beyond `starmaperosseg`.

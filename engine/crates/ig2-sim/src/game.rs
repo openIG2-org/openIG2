@@ -35,6 +35,7 @@
 mod battles;
 mod colony_orders;
 mod death;
+mod design_orders;
 mod info_orders;
 mod orders;
 mod realtime;
@@ -42,9 +43,10 @@ mod research_orders;
 mod tutorial;
 
 pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
+pub use design_orders::{DesignOrder, DesignRecord};
 pub use info_orders::InfoOrder;
 pub use orders::{OrderEvent, StarmapOrder};
-pub use realtime::{RealTime, RealTimeEvent};
+pub use realtime::{RealTime, RealTimeEvent, SpBattles};
 pub use research_orders::ResearchOrder;
 
 pub use battles::BattleEvent;
@@ -56,7 +58,7 @@ use crate::colony_side::{ColonyArrivals, SideEvent, SideRules, EMPIRES};
 use crate::ground;
 use crate::diplomacy::{self, DiploEvent, DiploPlanet, Diplomacy, DiplomacyContext, DiplomacyRules};
 use crate::fleet::{flag, order, Arrivals, Wormhole, StarPlanet, Starmap, StarmapContext, StarmapEvent, DELETED};
-use crate::messages::{cstr, Texts};
+use crate::messages::{self, cstr, Texts};
 use crate::placement::PlacementRules;
 use crate::production::{ProductionContext, ProductionEvent, Queue, Shipyard, YardFleet, YardPlanet};
 use crate::radar::RadarRules;
@@ -205,6 +207,8 @@ pub struct Game<'r> {
     hand_offs: usize,
     /// The real-time battles of canonical multiplayer (`game::realtime`). Synced.
     pub realtime: RealTime,
+    /// The single-player battle screen (ours, classic view; not in the state).
+    pub sp_battles: SpBattles,
 }
 
 /// One planet's draws in the economy prologue: `(planet, weather, background)` ([`Game::weather_draws`]).
@@ -275,6 +279,7 @@ impl<'r> Game<'r> {
             local: LocalView::default(),
             cosmetic: Libc::default(),
             realtime: RealTime::default(),
+            sp_battles: SpBattles::default(),
         }
     }
 
@@ -1479,6 +1484,13 @@ impl<'r> Game<'r> {
             }
         }
         self.state.store_rng(&rng);
+        // Tutorial event 1: the pass's first sighting renames its planet (the exe re-reads the flags each time).
+        if let Some(p) = events.iter().find_map(|e| match *e {
+            StarmapEvent::TutorialPlanetSighted { planet } => Some(planet),
+            _ => None,
+        }) {
+            self.tutorial_sighting(p);
+        }
         self.events.extend(side.into_iter().map(GameEvent::Side));
         (events, extra)
     }
@@ -2025,6 +2037,25 @@ impl Game<'_> {
         self.empire_names.get(e as usize).cloned().unwrap_or_default()
     }
 
+    /// A story script's own line on the scrolling ticker (`info-messages.md` §3.4): its text and important flag.
+    pub fn story_line(&self, ev: &StoryEvent) -> Option<(Vec<u8>, bool)> {
+        messages::story_line(ev, &self.rules.messages, self)
+    }
+}
+
+impl messages::LineNames for Game<'_> {
+    fn tech(&self, t: i32) -> Vec<u8> {
+        if (0..crate::save::TECHS as i32).contains(&t) { self.tech_name(t as usize) } else { Vec::new() }
+    }
+    fn planet(&self, p: i32) -> Vec<u8> {
+        if (0..=self.state.planet_count() as i32).contains(&p) { self.planet_name(p as usize) } else { Vec::new() }
+    }
+    fn empire(&self, e: i32) -> Vec<u8> {
+        self.empire_name(e.clamp(0, 255) as u8)
+    }
+}
+
+impl Game<'_> {
     /// The messages the tick's systems posted to the human (`ScrollUzenetId` at the sites of
     /// `info-messages.md` §3.2), from the events since `from`, in order. Classic mode only: in canonical mode the
     /// scrolling line is each peer's UI state ([`Game::messages_for`] with its own empire).
@@ -2053,6 +2084,8 @@ impl Game<'_> {
         let debug = m.u8(va::DEBUGX) != 0;
         let is_en = |e: u8| e as usize == en;
         let canonical_en = self.globals().en;
+        // A story line's place in `posts`: its one parameter is the finished text, posted with id 1.
+        const STORY_LINE: i32 = i32::MIN;
         // (id, parameters, important, interrupt)
         let mut posts: Vec<(i32, Vec<Vec<u8>>, bool, bool)> = Vec::new();
         for ev in events {
@@ -2065,6 +2098,12 @@ impl Game<'_> {
                 }
                 GameEvent::Story(StoryEvent::EmpireDies(e)) if (0..9).contains(e) && *e as usize != en => {
                     posts.push((3, vec![self.empire_name(*e as u8)], false, false))
+                }
+                // The scripts post their own text (`ScrollUzenet(text, 1, imp, 0)`) for the canonical `EN`.
+                GameEvent::Story(s) if is_en(canonical_en as u8) => {
+                    if let Some((text, important)) = self.story_line(s) {
+                        posts.push((STORY_LINE, vec![text], important, false));
+                    }
                 }
                 GameEvent::Diplomacy(DiploEvent::War { a, b }) if (knows(*a) || knows(*b) || debug) && *a < 9 && *b < 9 => {
                     posts.push((6, vec![self.empire_name(*a), self.empire_name(*b)], true, false))
@@ -2130,7 +2169,10 @@ impl Game<'_> {
         }
         posts
             .into_iter()
-            .filter_map(|(id, params, important, interrupt)| {
+            .filter_map(|(id, mut params, important, interrupt)| {
+                if id == STORY_LINE {
+                    return Some((1, params.swap_remove(0), important, interrupt));
+                }
                 let params: Vec<&[u8]> = params.iter().map(|p| &p[..]).collect();
                 self.rules.messages.format(id, &params).map(|text| (id, text, important, interrupt))
             })

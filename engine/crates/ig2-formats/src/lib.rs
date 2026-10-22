@@ -10,6 +10,7 @@ pub mod dialogue;
 pub mod diplomacy;
 pub mod formation;
 pub mod locale;
+pub mod mp4;
 pub mod misc_text;
 pub mod options;
 pub mod pvr;

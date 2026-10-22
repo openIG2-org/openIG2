@@ -747,7 +747,7 @@ fn cheap_design(s: &mut Story, w: &mut dyn StoryWorld, _: &dyn Script) -> Result
         let en = w.human();
         let d = w.story_design(en, 511, 3);
         w.event(StoryEvent::DesignPriceDiv { empire: en, design: d, div: 2 });
-        w.event(StoryEvent::ScrollText(510));
+        w.event(StoryEvent::ScrollText { text: 511, important: true });
         s.win(0, true, w);
     }
     Ok(())

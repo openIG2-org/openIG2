@@ -3,7 +3,7 @@
     run_screendiff.py <install> <save.sav> <screen> [--out _local/screendiff] [--exe-png PNG] [--wait 240]
                       [--build] [--threshold T] [--shift N] [--mask X,Y,W,H]... [--no-default-masks]
 
-<screen>: starmap | colony:<planet> | info[:IDS] | messages | research | production:<planet> | transfer:<planet> | diplomacy |
+<screen>: starmap | colony:<planet> | info[:IDS] | messages | research | design | production:<planet> | transfer:<planet> | diplomacy |
 spy:<roster|report|verdict|applicant> (run_screen.py --spies stages the human's roster and one report) |
 (spy and research: --anim-frame F [--anim-closing] holds both at frame F of the opening/closing, --anim-mouse X,Y
 rests the pointer there: a tooltip; --spy-* are the same) |
@@ -68,11 +68,23 @@ SCREENS = {
         TOPBAR, "info_box=175,25,300,55", "start_double=100,20,440,62", "left_list=3,81,135,106",
         "right_list=500,81,135,106", "labs=0,235,80,60", "labs_right=560,235,80,60", "wheels=60,330,520,150",
         "ball=150,70,340,300"]),
+    # The design screen (design.md), part 1: viewing the save's chosen design. The hull turns 0.002 a frame from
+    # when it slid in, so "hull" compares its place and size more than its pixels.
+    "design": dict(kep=5, wait=600, script=True, client=["--screen", "design", "--ui-frames", "240"], regions=[
+        TOPBAR, "top_panel=160,22,320,57", "list=5,92,124,234", "right_panel=499,92,136,234",
+        "bottom_left=5,365,174,72", "bottom_right=471,365,166,72", "console=170,330,300,150", "hull=140,90,355,250"]),
     # The main menu (mainscr.md): as the exe boots (run_screen.py --boot), no save; the galaxy clouds and the dust are
     # random particles (statistically alike), the rings and labels are exact. Script only.
     "main": dict(kep=15, script=True, exe=["--boot", "--run"], client=["--screen", "main"], regions=[
         "rings_top=150,40,340,140", "rings_side=60,180,520,130", "rings_bottom=150,300,340,140", "galaxy=110,150,300,250",
         "background=0,0,640,480"]),
+    # The Options screen (options.md): over the game (black behind, the top bar), and load only over the main menu's
+    # scene (the exe boots, the script presses the load ring; the galaxy behind is random, so "background" is loose).
+    # The lasers' sparks are random (statistically alike). Script only.
+    "options": dict(kep=13, script=True, client=["--screen", "options"], regions=[
+        TOPBAR, "left_panel=9,62,288,384", "buttons=360,60,262,42", "slots=358,113,269,336"]),
+    "options-load": dict(kep=15, script=True, exe=["--boot", "--run"], client=["--screen", "main"], regions=[
+        "left_panel=9,62,288,384", "buttons=360,60,262,42", "slots=358,113,269,336", "background=0,0,640,480"]),
     # The starmap's panels (starmap.md §12–§13): the exe presses the icon itself (run_screen.py --rop); the transfer
     # first gives the human two fleets beside the planet (fleets 10 and 9 in quick-1.sav, the exe's FlottaNew slots).
     "production": dict(kep=2, exe=["--rop", "2"], client=["--panel", "production"], regions=[
@@ -180,9 +192,13 @@ def sequence(a, kind, cfg, env, masks, planet):
     state = os.path.join(a.out, f"{name}-state.sav")
     sounds = os.path.join(a.out, f"{name}-sounds.jsonl")
     prefix = a.exe_seq or os.path.join(a.out, f"{name}-exe")
+    # A boot run has no game to save (the exe's `LoadSave(.., 2)` crashes on it): the client takes the given save.
+    boot = "--boot" in cfg.get("exe", [])
+    if boot:
+        state = a.save
     if not a.exe_seq:
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
-                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--state-out", state, "--seconds", "560"] + cfg.get("exe", []))
+                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []))
         if r.returncode:
             sys.exit("the exe's script run failed")
     with open(prefix + "-frames.json", encoding="utf-8") as f:

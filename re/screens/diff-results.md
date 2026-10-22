@@ -16,7 +16,7 @@ Lessons for driving the exe in the background (the capture runs without window f
   runs the screen fades: no screen change completes. `screen.js` sets it every frame.
 - `MainScr_Kilep` (exe 0x4fecc0) leaves the main menu by looping `UpdateFrame` + `FRISSITES` until its fade counter
   (f32 0xBBB360, from 100, flag 0xBBB22A) runs out, which it doesn't in the background: `screen.js` zeroes it.
-- The title video (`title.bik`, `VoltGTLogo` 0xBBB22F) is skipped by setting the flag at spawn.
+- The title video (`title.bik`, `VoltGTLogo` 0xBBB22F) is skipped by setting the flag at spawn (the video itself: see "video (title)" below).
 - With the clock paused, `LoadSave` leaves the game on screen 15; the screen request then goes from there.
 
 ## 2026-10-17, quick-1.sav (2327-10-23), client at `ff7d274` + the `--paused` option
@@ -737,3 +737,20 @@ Left: the preview models' spin phase (vehicles) and the fleet preview's pitch/ma
 mapped to pi - t [obs at t = 0.91 and 2.69]); the models' warmer, darker lighting; the faders' random texture
 drift/shine (hud.md §1.2, not drawn); the fleet glow on the map under the scroll bar is slightly brighter. The exe runs
 Hungarian texts. Sounds verified with the sound-id tracer (`tools/trace/scripts/fleetinfo.json`). Deviations #41-#48.
+
+## 2026-10-22, the Design screen, viewing mode (`design`, re/screens/design.md §14)
+
+`run_screendiff.py … design` (still) and `design --script` (14 grabs: opening, list press, down/up, pod-row press, F2 closing; `_local/screendiff/run`). At rest every region matches (means 0.05–3.7) except the exe's random fader flash (one panel at a time, 11–18) and the hull (spin phase: about 3 at the still, 7–9 in the sequence). The sequence matches likewise. The 9 sounds match the exe's in order and tick (`tools/trace/scripts/design-sounds.json`). Not drawn: the fader flashes and scan bands, the lasers and sparks, the DesignKeret2 pod-row frame (part 2).
+
+## 2026-10-22, Options (`options`, `options-load`; re/screens/options.md §14)
+
+`run_screendiff.py options --script tools/trace/scripts/options.json` (over a save): every region matches except `buttons` at t100/170/320 (6.8-11.2: random sparks + the unported fader hover glow, deviations.md rows 68-74). Sounds match (Global_Hangok[0] only on the quit press).
+
+`run_screendiff.py options-load --script tools/trace/scripts/options-loadonly.json` (`--boot`, load-only mode over the main-menu scene): within 1-2 ticks of the exe.
+
+## 2026-10-22, video (title)
+`title.bik` (`run_video.py`, `--snapshot --screen video:title --video-ms T`) against ig2.exe at 800x600 (video times 2, 70,
+1002, 3001, 6002, 20002 ms) and 1280x720 (3001 ms): every region matches; mean diff 0.02-0.22 (video), 0.01-0.66 (logo
+overlay) except 2.15 at 70 ms (the exe's logo fade starts a few ms later; under 0.1 s), bars 0.00. Skip verified in the exe
+(key down+up closes at the next frame; a button down alone doesn't). Message clips: unit-tested, not capture-compared (no
+save with an inbox message). Spec `video.md`; deviations #75-#82.

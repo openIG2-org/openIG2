@@ -499,7 +499,7 @@ fn spy_network_308(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
                 w.event(StoryEvent::SetPlanetRadar { planet: p, level: 0 });
             }
         }
-        w.event(StoryEvent::ScrollText(3081));
+        w.event(StoryEvent::ScrollText { text: 3081, important: false });
         s.win(0, true, w);
     }
     if s.daily() {

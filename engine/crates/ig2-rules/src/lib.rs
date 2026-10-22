@@ -57,6 +57,16 @@ pub mod layout {
     /// colour, category, button id per slot) and its line ends `forgastabla4x/4y`, the lab numbers' places
     /// `Tudomany_X`/`Tudomany_X2`/`Tudomany_Y[1..=3]`.
     pub const RESEARCH_MODELS: (u32, usize, usize) = (0x919298, 4, 192);
+    /// The design screen's hull models (`LoadAlapVektor`, re/screens/design.md §5.1): `AlapNevek[m]` (file in
+    /// `vector/design/alapok/`) and `AlapAranyok[m]` (the `AddToScene` scale before its ×0.5), m = `Alapok[hull]+8`.
+    pub const DESIGN_HULL_MODELS: (u32, usize, usize) = (0x9028E8, 4, 25);
+    pub const DESIGN_HULL_SCALE: (u32, usize, usize) = (0x8F88B0, 4, 25);
+    /// `PodFajok[table][hull][slot]` (8 tables × 27 hulls × 12 slots of (class, i32)) and
+    /// `HanyasFajPodTablazatatHasznalja[race]` (the race's table, 1-based).
+    pub const DESIGN_POD_SLOTS: (u32, usize, usize) = (0x8F9B28, 4, 8 * 0xA20 / 4);
+    pub const DESIGN_POD_TABLE_OF_RACE: (u32, usize, usize) = (0x902F10, 4, 19);
+    /// `DesignBrushok[1..=4]` (`AktBrushok` on the screen): the pod rows' minus, plus and their greyed twins.
+    pub const DESIGN_BRUSHES: (u32, usize, usize) = (0x902988, 0x38, 4);
     pub const RESEARCH_ORBIT_X: (u32, usize, usize) = (0x9190F8, 4, 17);
     pub const RESEARCH_ORBIT_Y: (u32, usize, usize) = (0x919140, 4, 17);
     pub const RESEARCH_ORBIT_Z: (u32, usize, usize) = (0x919188, 4, 17);
@@ -168,6 +178,12 @@ pub mod layout {
     /// The campaign tables `StoryEleje`, `StoryElejeSeq`, `StoryLine`, `StoryScenario`, `RndStoryk`,
     /// `RndStoryValasztas`, `StoryHosok`, `RndHosok`, `StoryKuldetes` (contiguous; `re/rules/campaign.md` §8.1).
     pub const CAMPAIGN: (u32, usize, usize) = (0x928340, 4, 423);
+    /// The end videos by the human's empire `EN` (`re/screens/video.md` §5, char*): `MEGHALAS`'s loss clip and
+    /// `MEGNYERES`'s campaign win clip.
+    pub const VIDEO_LOSS: (u32, usize, usize) = (0x919724, 4, 9);
+    pub const VIDEO_WIN: (u32, usize, usize) = (0x919748, 4, 9);
+    /// `StartAnim`/`VegeAzElsoAnimnak`'s head clips {loop, wait} by sender index (char* pairs, 15 records).
+    pub const VIDEO_MESSAGE_CLIPS: (u32, usize, usize) = (0x915e60, 4, 30);
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -311,6 +327,53 @@ pub struct UnitModels {
     /// `TransfAlap[hull]`: the starmap's models of the hulls (the production view's head units, the transfer
     /// panel; `+0x34`: 0 and 2 `talalmanyok`, 1 `spacewar`, 3 `colony` there).
     pub transfer: Vec<UnitModel>,
+}
+
+/// The design screen's tables (`re/screens/design.md` §5.1).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct DesignScreen {
+    /// `AlapNevek[m]`: hull model `m`'s file (`""` = none; models 5..=11 take the race digit at [4]).
+    pub models: Vec<String>,
+    /// `AlapAranyok[m]`.
+    pub scale: Vec<f32>,
+    /// `PodFajok` as dwords (`[table − 1]·0x288 + hull·0x18 + slot·2`: the class, then a second word).
+    pub pod_slots: Vec<i32>,
+    /// `HanyasFajPodTablazatatHasznalja[race]`.
+    pub pod_table: Vec<i32>,
+    /// `DesignBrushok[1..=4]`.
+    pub brushes: Vec<Brush>,
+}
+
+impl DesignScreen {
+    /// The pod classes of `hull`'s twelve slots for `race` (`PodFajok[HanyasFaj…[race] − 1][hull][k]`, 0 = none).
+    pub fn pod_slots(&self, race: usize, hull: usize) -> Vec<i32> {
+        let t = self.pod_table.get(race).copied().unwrap_or(0);
+        if t < 1 || hull >= 27 {
+            return vec![0; 12];
+        }
+        let at = (t as usize - 1) * 0x288 + hull * 0x18;
+        (0..12).map(|k| self.pod_slots.get(at + 2 * k).copied().unwrap_or(0)).collect()
+    }
+
+    /// `GetMaxRarakhato(race, hull, k)` (ELF 0x4fb4c0): how many of a tech slot `k` (1-based) takes, the slot's second
+    /// word.
+    pub fn pod_max(&self, race: usize, hull: usize, k: usize) -> i32 {
+        let t = self.pod_table.get(race).copied().unwrap_or(0);
+        if t < 1 || hull >= 27 || !(1..=12).contains(&k) {
+            return 0;
+        }
+        self.pod_slots.get((t as usize - 1) * 0x288 + hull * 0x18 + 2 * (k - 1) + 1).copied().unwrap_or(0)
+    }
+
+    /// The text naming pod class `c` (`NEWGAME_Design` ELF 0x508210: `GetString(0x13, 1, c)` below 0x33, else
+    /// `GetString(0x13, 2, c − 0x32)`; cut to 14 characters).
+    pub fn pod_type_text(&self, c: i32) -> Option<(u16, u16)> {
+        match c {
+            1..=0x32 => Some((1, c as u16)),
+            0x33.. => Some((2, (c - 0x32) as u16)),
+            _ => None,
+        }
+    }
 }
 
 /// The research screen's tables (`re/screens/research.md` §2–§4).
@@ -565,6 +628,7 @@ pub struct Rules {
     pub building_models: Vec<BuildingModel>,
     pub unit_models: UnitModels,
     pub research_screen: ResearchScreen,
+    pub design_screen: DesignScreen,
     /// `utdarabsize[n − 1]`: the `AddToScene` scale of road piece `ut<n>.xvb`, n = 1..=9.
     pub road_scale: Vec<f32>,
     /// `allvanypoziciok[k − 1]`: building kind `k`'s scaffolding height (the selection marker sits 20 below it).
@@ -627,6 +691,18 @@ pub struct Rules {
     /// Slope limits of the passability layers 0..5 (exe 0x8F8574, f32 × 5; `GenerateMap` uses 1..=4).
     pub ground_slope_limits: Vec<f32>,
     pub diplomacy_screen: DiplomacyScreen,
+    pub videos: Videos,
+}
+
+/// The video names the exe picks from tables (`re/screens/video.md` §5); `""` where the exe has an empty string.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct Videos {
+    /// By `EN` 0..=8: `MEGHALAS`'s clip before `misc/end_gameover.bik`.
+    pub loss: Vec<String>,
+    /// By `EN` 0..=8: `MEGNYERES`'s campaign clip before `misc/end_campaign_win.bik`.
+    pub win: Vec<String>,
+    /// By the message's head index: (loop, wait) clips.
+    pub message_clips: Vec<(String, String)>,
 }
 
 /// The diplomacy screen's layout (`re/screens/diplomacy.md` §2).
@@ -934,6 +1010,22 @@ impl Rules {
                     transfer: models(layout::TRANSFER_MODELS)?,
                 }
             },
+            design_screen: DesignScreen {
+                models: ints(layout::DESIGN_HULL_MODELS)?
+                    .into_iter()
+                    .map(|ptr| match ptr as u32 {
+                        0 => Ok(String::new()),
+                        va => img.read(va, 32).map(cstr),
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                scale: floats(layout::DESIGN_HULL_SCALE)?,
+                pod_slots: ints(layout::DESIGN_POD_SLOTS)?,
+                pod_table: ints(layout::DESIGN_POD_TABLE_OF_RACE)?,
+                brushes: {
+                    let (b, s, n) = tab(layout::DESIGN_BRUSHES)?;
+                    (0..n).map(|i| Brush::from_record(&b[i * s..(i + 1) * s])).collect()
+                },
+            },
             research_screen: {
                 let w = ints(layout::RESEARCH_WHEEL)?;
                 let l = ints(layout::RESEARCH_WHEEL_LINES)?;
@@ -1063,6 +1155,17 @@ impl Rules {
                     .collect()
             },
             ai_ground_priority: tab(layout::AI_GROUND_PRIORITY)?.0.to_vec(),
+            videos: {
+                let names = |t| -> Result<Vec<String>> {
+                    ints(t)?.into_iter().map(|ptr| Ok(img.read(ptr as u32, 64).map(cstr).unwrap_or_default())).collect()
+                };
+                let clips = names(layout::VIDEO_MESSAGE_CLIPS)?;
+                Videos {
+                    loss: names(layout::VIDEO_LOSS)?,
+                    win: names(layout::VIDEO_WIN)?,
+                    message_clips: clips.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect(),
+                }
+            },
         })
     }
 

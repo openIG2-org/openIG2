@@ -54,6 +54,11 @@ pub fn decode(bytes: &[u8], lang: Lang) -> String {
     lang.encoding().decode_without_bom_handling(bytes).0.into_owned()
 }
 
+/// Encode a decoded game text back to the game's bytes (the inverse of [`decode`] for its code page).
+pub fn encode(text: &str, lang: Lang) -> Vec<u8> {
+    lang.encoding().encode(text).0.into_owned()
+}
+
 /// Split into lines, accepting CRLF and LF.
 pub fn lines(text: &str) -> impl Iterator<Item = &str> {
     text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l))

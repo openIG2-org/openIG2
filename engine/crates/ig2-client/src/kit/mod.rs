@@ -4,10 +4,12 @@
 
 pub mod design_frame;
 pub mod fader;
+pub mod laser;
 pub mod layout;
 pub mod tooltip;
 
 pub use design_frame::DesignFrame;
+pub use laser::Lasers;
 pub use layout::{Layout, Virtual, Wide};
 pub use tooltip::Tooltip;
 

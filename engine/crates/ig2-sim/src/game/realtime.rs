@@ -11,7 +11,11 @@
 //!   `WF::Refresh` for its planet every tick whatever anybody's screen shows; `WF::Refresh` ends it as soon as one
 //!   side holds the field (MP: no countdown); the dropships fly once per tick (the 100 Hz UI's every fifth pass).
 //!
-//! None of this runs in [`ViewMode::Classic`]: single player and the trace replays are unchanged.
+//! None of this runs in [`ViewMode::Classic`]: single player and the trace replays are unchanged, unless the client
+//! asks for single player's own real-time battles ([`SpBattles::live`]): then a real-time route starts the battle as
+//! `SpaceWarIndit` does in SP (screen 0xB, speed 1, paused), `FRISSIT_SpaceWar` runs the slots while the battle
+//! screen is up (`AktKep == 0xB`), the human's orders arrive as in MP (`MULTIGET_SpaceWar` runs in SP too), and
+//! leaving a finished battle's screen ends it (`SpaceWar_Kilep` → `SpaceWarVege`).
 
 use super::*;
 use crate::ground::{Clock, GroundEvent, GroundOrder, Start};
@@ -55,7 +59,19 @@ pub struct RealTime {
     pub current: usize,
 }
 
-/// What a real-time battle did (canonical multiplayer).
+/// The single-player battle screen (ours, classic view; per machine, not in the state).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SpBattles {
+    /// The client shows real-time battles. Off (the replays, the tools): a real-time route is only reported
+    /// ([`super::BattleEvent::SpaceRealTime`]).
+    pub live: bool,
+    /// `AktKep == 0xB`: the battle screen is up, so `FRISSIT_SpaceWar` runs the slots (`space-combat.md` §7.1).
+    pub on_screen: bool,
+    /// `spacewarelfade` (exe 0xE72E14): the end check waits while it is strictly between 0 and 1.
+    pub fade: f32,
+}
+
+/// What a real-time battle did (canonical multiplayer, or single player's own with [`SpBattles::live`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RealTimeEvent {
     /// `SpaceWar_NewBattle` put the fight into `slot` (joined when it was already running).
@@ -234,7 +250,7 @@ impl Game<'_> {
             human: g.en as i32,
             human_controlled: g.human,
             // The canonical view runs the battles by the original's MP rules (`multiplayer.md` §7).
-            multiplayer: true,
+            multiplayer: g.canonical || g.multiplayer,
             asteroids: m.u8(at::ASTEROIDS) != 0,
             story_pact: std::array::from_fn(|k| m.i32(at::STORY_PACT + 4 * k as u32)),
             story_zachkin: m.i32(at::STORY_ZACHKIN),
@@ -258,6 +274,13 @@ impl Game<'_> {
         let Some(slot) = got else { return };
         self.realtime.current = slot;
         self.realtime.slots[slot].shown = true;
+        if !g.canonical {
+            // SP: `AktKepKell = 0xB`, `SetIdoSpeed(1, false)`, `SetIdoPause(true, false)` (spec §4 step 6).
+            self.set_speed(1, false);
+            self.set_pause(true, false);
+            self.events.push(GameEvent::RealTime(RealTimeEvent::SpaceStarted { slot }));
+            return;
+        }
         let m = &mut self.state.mem;
         m.set_i32(at::SPACE_RUNNING, 1);
         for e in 1..9u32 {
@@ -270,8 +293,9 @@ impl Game<'_> {
     fn battle_rules(&self) -> BattleRules {
         let m = &self.state.mem;
         let adat = |o: u32| m.i32(va::STORY_ADAT + o);
+        let canonical = self.view != ViewMode::Classic;
         BattleRules {
-            multiplayer: true,
+            multiplayer: canonical || m.u8(va::MULTIPLAYER) != 0,
             story_hit_bonus: adat(0x78).wrapping_add(adat(0x7c)),
             story_damage_bonus: adat(0x80).wrapping_add(adat(0x84)),
             paused: m.u8(at::PAUSE) != 0,
@@ -281,7 +305,7 @@ impl Game<'_> {
             story_retreat_lock_a: m.u8(va::TUTORIAL_ACTIVE) != 0,
             story_retreat_lock_b: m.u8(va::TUTORIAL_PAUSED) != 0,
             // No screen fades in the canonical view.
-            fade: 0.0,
+            fade: if canonical { 0.0 } else { self.sp_battles.fade },
             ..self.rules.space.tick_rules()
         }
     }
@@ -346,7 +370,8 @@ impl Game<'_> {
     /// that finds a battle over closes it for every screen (`+0x1fba`, then `Starmapvisszaallit`'s `+0x1fb8`),
     /// returns the time to the program speed (`SetIdoLelassit(0)`) and starts the ground war of a won planet battle.
     pub(super) fn space_tick(&mut self) {
-        if self.view == ViewMode::Classic || self.realtime.slots.is_empty() {
+        let sp = self.sp_battles;
+        if (self.view == ViewMode::Classic && !(sp.live && sp.on_screen)) || self.realtime.slots.is_empty() {
             return;
         }
         let speed = self.state.mem.i32(va::BATTLE_SPEED);
@@ -384,7 +409,7 @@ impl Game<'_> {
     /// isn't running or names something that isn't there. Canonical MP also refuses orders for another empire's
     /// units and guns (the screen only sends the player's own).
     pub fn space_order(&mut self, issuer: u8, slot: usize, o: Order) -> bool {
-        if self.view == ViewMode::Classic {
+        if self.view == ViewMode::Classic && !(self.sp_battles.live && issuer as usize == self.globals().en) {
             return false;
         }
         if let Order::ArmAll = o {
@@ -425,6 +450,14 @@ impl Game<'_> {
 
     /// Message 0x44d: `issuer` has left the battle screen (`SpWar_MultiCsata_vegetert[issuer] = 1`).
     pub fn space_battle_left(&mut self, issuer: u8) {
+        if self.view == ViewMode::Classic {
+            // SP `SpaceWar_Kilep`: a finished battle ends at once (`SpaceWarVege`); one still running stays.
+            let slot = self.realtime.current;
+            if self.sp_battles.live && self.realtime.slots.get(slot).is_some_and(|b| b.active && b.ended) {
+                self.space_battle_end(slot);
+            }
+            return;
+        }
         if self.view != ViewMode::Classic && (1..EMPIRES).contains(&(issuer as usize)) {
             self.state.mem.set_i32(at::SPACE_LEFT + 4 * issuer as u32, 1);
         }

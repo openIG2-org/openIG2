@@ -405,6 +405,30 @@ impl Audio {
         }
     }
 
+    /// A fullscreen video's sound (`Mix_HookMusic(soundhook)`, re/screens/video.md §4): beside the effects, at no
+    /// volume setting of the options. `blocking` also stops the music (`PlayBink(1, …)`), which `frame` then
+    /// follows with the next main track once the game runs again.
+    pub fn play_video(&mut self, video: &crate::video::Player, blocking: bool) {
+        let Some(mixer) = self.mixer.clone() else { return };
+        let Ok(mut m) = mixer.lock() else { return };
+        if blocking {
+            m.stop_music();
+        }
+        match video.sound(m.rate) {
+            Some(s) => m.play_video(Box::new(s), mixer::MAX_VOLUME),
+            None => m.stop_video(),
+        }
+    }
+
+    /// `stop()` (`Mix_HookMusic(0, 0)`).
+    pub fn stop_video(&mut self) {
+        if let Some(m) = &self.mixer
+            && let Ok(mut m) = m.lock()
+        {
+            m.stop_video();
+        }
+    }
+
     /// `PlayMusicMain`/`Menu`/`GrWar`/`SpWar(a, immediate)` → `PlayMusicExistCheck` → `PlayMusicGlobal`.
     pub fn play_music(&mut self, which: Music, immediate: bool, race: u8) {
         if !self.music_on {

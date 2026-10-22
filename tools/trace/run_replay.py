@@ -2,7 +2,7 @@
 (tools/trace/replay.js), for the port's save replay (engine/crates/ig2-sim/tests/save_replay.rs).
 
 Usage (project venv): _local/venv/Scripts/python.exe -u tools/trace/run_replay.py <install-dir> <save> <out-dir>
-          [--ticks 40] [--speed 3] [--seed 4242] [--slot 99] [--seconds 400] [--stage] [--traders] [--spies] [--merges] [--wormholes] [--battles [--battles-mode space|ground|land]] [--deaths [--deaths-mode base|campaign]] [--slot-base 100] [--pre-slot 98]
+          [--ticks 40] [--speed 3] [--seed 4242] [--slot 99] [--seconds 400] [--stage] [--traders] [--spies] [--merges] [--wormholes] [--battles [--battles-mode space|ground|land]] [--deaths [--deaths-mode base|campaign]] [--tutorial-sighting] [--slot-base 100] [--pre-slot 98]
 The input save is copied to the game's data directory (%LOCALAPPDATA%/GyroscopeGames/ig2) as save<slot>.sav and
 loaded with the exe's `LoadSave(slot, name, 1)`; the game then writes save<100+k>.sav per tick, which this script
 moves to <out-dir>/<k>.sav, with <out-dir>/replay.jsonl (one line per save: tick, seed, non-saved globals). Files
@@ -51,6 +51,8 @@ ap.add_argument("--even-tanks", type=int, default=16, help="--battles-mode groun
 ap.add_argument("--deaths", action="store_true",
                 help="revive three dead empires without planets whose countdowns run out in the first days (BirodalomMeghal)")
 ap.add_argument("--deaths-mode", default="base", choices=["base", "campaign"])
+ap.add_argument("--tutorial-sighting", action="store_true",
+                help="the tutorial awaits event 1 with no script: the first sighting renames its planet (re/rules/tutorial.md §4)")
 ap.add_argument("--lost-tanks", type=int, default=3, help="--battles-mode land: vehicles of the lopsided attacks that lose")
 ap.add_argument("--land-ships", type=int, default=30, help="--battles-mode land: warships of the planet battle's attacker")
 ap.add_argument("--wormholes", action="store_true",
@@ -64,6 +66,8 @@ ap.add_argument("--research", type=int, default=0, help="stage N random research
 ap.add_argument("--research-every", type=int, default=2)
 ap.add_argument("--info", type=int, default=0, help="stage N random info-screen messages (MULTIGET_Info: shares, limit) every --info-every ticks")
 ap.add_argument("--info-every", type=int, default=2)
+ap.add_argument("--design", type=int, default=0, help="stage N random design messages (MULTIGET_Design: store, sell, refit) every --design-every ticks")
+ap.add_argument("--design-every", type=int, default=2)
 ap.add_argument("--trader-near", type=float, default=0.5, help="--traders: distance left to the trader's planet")
 a = ap.parse_args()
 
@@ -119,9 +123,9 @@ def on_message(msg, _data):
         elif ev["k"] == "buy":
             log.write(json.dumps(ev) + "\n")
             print("buy: accepted" if ev["accepted"] else "buy: rejected")
-        elif ev["k"] in ("sorder", "corder", "rorder", "iorder"):
+        elif ev["k"] in ("sorder", "corder", "rorder", "iorder", "dorder"):
             log.write(json.dumps(ev) + "\n")
-        elif ev["k"] in ("traders", "spies", "merges", "wormholes", "battles", "deaths", "orders", "colony"):
+        elif ev["k"] in ("traders", "spies", "merges", "wormholes", "battles", "deaths", "tutorial", "orders", "colony"):
             log.write(json.dumps(ev) + "\n")
             print(ev["k"], "staged:", ev["stage"])
         elif ev["k"] == "done":
@@ -138,11 +142,12 @@ script.on("message", on_message)
 script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "slot": a.slot, "speed": a.speed, "ticks": a.ticks,
                                            "seed": a.seed, "stage": a.stage,
-                                           "traders": a.traders, "traderNear": a.trader_near, "spies": a.spies, "spiesMode": a.spies_mode, "merges": a.merges, "wormholes": a.wormholes, "battles": a.battles, "deaths": a.deaths, "deathsMode": a.deaths_mode, "slotBase": a.slot_base, "preSlot": a.pre_slot, "battlesMode": a.battles_mode, "lopsidedTanks": a.lopsided_tanks, "evenTanks": a.even_tanks, "lostTanks": a.lost_tanks, "landShips": a.land_ships,
+                                           "traders": a.traders, "traderNear": a.trader_near, "spies": a.spies, "spiesMode": a.spies_mode, "merges": a.merges, "wormholes": a.wormholes, "battles": a.battles, "deaths": a.deaths, "deathsMode": a.deaths_mode, "tutorialSighting": a.tutorial_sighting, "slotBase": a.slot_base, "preSlot": a.pre_slot, "battlesMode": a.battles_mode, "lopsidedTanks": a.lopsided_tanks, "evenTanks": a.even_tanks, "lostTanks": a.lost_tanks, "landShips": a.land_ships,
                                            "storyCountdown": a.story_countdown,
                                            "randlog": a.randlog, "orders": a.orders, "ordersEvery": a.orders_every, "colony": a.colony,
                                            "research": a.research, "researchEvery": a.research_every,
-                                           "info": a.info, "infoEvery": a.info_every}})
+                                           "info": a.info, "infoEvery": a.info_every,
+                                           "design": a.design, "designEvery": a.design_every}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()

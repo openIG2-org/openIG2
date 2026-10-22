@@ -51,11 +51,13 @@ pub struct Mixer {
     pub music_finished: bool,
     /// The channels [`Self::alloc_free`] made.
     voices: Vec<usize>,
+    /// A video's sound (re/screens/video.md §4): a stream of its own beside the music, with its own volume.
+    video: Option<(Box<dyn Stream>, i32)>,
 }
 
 impl Mixer {
     pub fn new(rate: u32, channels: usize) -> Self {
-        Self { rate, channels: vec![None; channels], music: None, music_volume: MAX_VOLUME, music_finished: false, voices: Vec::new() }
+        Self { rate, channels: vec![None; channels], music: None, music_volume: MAX_VOLUME, music_finished: false, voices: Vec::new(), video: None }
     }
 
     /// A new channel (sgsnd allocates as it goes; nothing is reserved).
@@ -109,6 +111,11 @@ impl Mixer {
         self.music_finished = false;
     }
 
+    /// `sgsnd::stop_channels("music")`: the music stops (its end is not reported as finished).
+    pub fn stop_music(&mut self) {
+        self.music = None;
+    }
+
     pub fn music_playing(&self) -> bool {
         self.music.is_some()
     }
@@ -116,6 +123,15 @@ impl Mixer {
     /// `Mix_VolumeMusic`.
     pub fn set_music_volume(&mut self, volume: i32) {
         self.music_volume = volume.clamp(0, MAX_VOLUME);
+    }
+
+    /// Starts a video's sound at `volume` 0..=128 (replacing one still playing).
+    pub fn play_video(&mut self, stream: Box<dyn Stream>, volume: i32) {
+        self.video = Some((stream, volume.clamp(0, MAX_VOLUME)));
+    }
+
+    pub fn stop_video(&mut self) {
+        self.video = None;
     }
 
     /// Mixes the next `out.len()` frames over silence.
@@ -139,6 +155,18 @@ impl Mixer {
             }
         }
         self.mix_music(out);
+        if let Some((stream, volume)) = &mut self.video {
+            let mut buf = vec![[0.0f32; 2]; out.len()];
+            let n = stream.read(&mut buf);
+            let gain = *volume as f32 / MAX_VOLUME as f32;
+            for (o, s) in out.iter_mut().zip(&buf[..n]) {
+                o[0] += s[0] * gain;
+                o[1] += s[1] * gain;
+            }
+            if n < out.len() {
+                self.video = None;
+            }
+        }
         for f in out.iter_mut() {
             f[0] = f[0].clamp(-1.0, 1.0);
             f[1] = f[1].clamp(-1.0, 1.0);
@@ -173,6 +201,19 @@ mod tests {
             self.0 -= n;
             n
         }
+    }
+
+    #[test]
+    fn video_sound_mixes_and_ends() {
+        let mut m = Mixer::new(1000, 0);
+        m.play_video(Box::new(Ramp(5)), 64);
+        let mut out = [[0.0; 2]; 4];
+        m.mix(&mut out);
+        assert_eq!(out[3], [0.25, 0.25]);
+        assert!(m.video.is_some());
+        m.mix(&mut out);
+        assert_eq!(out[1], [0.0, 0.0]);
+        assert!(m.video.is_none());
     }
 
     #[test]

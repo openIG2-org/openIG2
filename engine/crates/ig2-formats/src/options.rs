@@ -30,13 +30,42 @@ impl Options {
         Self { pairs }
     }
 
-    /// The user's file (empty when there is none).
+    /// The user's file (empty when there is none), with the remake's own settings ([`Options::own_path`]) over it.
     pub fn load() -> Self {
-        Self::path().and_then(|p| std::fs::read(p).ok()).map(|b| Self::parse(&b)).unwrap_or_default()
+        let read = |p: Option<PathBuf>| p.and_then(|p| std::fs::read(p).ok()).map(|b| Self::parse(&b)).unwrap_or_default();
+        let mut o = read(Self::path());
+        for (k, v) in read(Self::own_path()).pairs {
+            o.set(&k, &v);
+        }
+        o
     }
 
     pub fn path() -> Option<PathBuf> {
         std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("GyroscopeGames/ig2/options.dat"))
+    }
+
+    /// Where the remake keeps the settings its Options screen changes: beside the original's file, in the same
+    /// format, so the original's own `options.dat` is never rewritten (re/deviations.md).
+    pub fn own_path() -> Option<PathBuf> {
+        Self::path().map(|p| p.with_file_name("ig2-rework-options.dat"))
+    }
+
+    /// Set `key` (replacing its pair, else appending one).
+    pub fn set(&mut self, key: &str, value: &str) {
+        match self.pairs.iter_mut().find(|(k, _)| k == key) {
+            Some(p) => p.1 = value.to_string(),
+            None => self.pairs.push((key.to_string(), value.to_string())),
+        }
+    }
+
+    /// The file's bytes (`save_options_new` exe 0x51c4d0): every pair, then the empty one.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut b = Vec::new();
+        for s in self.pairs.iter().flat_map(|(k, v)| [k, v]).map(String::as_str).chain(["", ""]) {
+            b.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+        }
+        b
     }
 
     pub fn get(&self, key: &str) -> Option<&str> {
@@ -67,5 +96,17 @@ mod tests {
         assert_eq!(o.get("Missing"), None);
         assert_eq!(Options::parse(&b[..b.len() - 8]).pairs.len(), 2, "the file may end without the empty pair");
         assert_eq!(Options::parse(&b[..b.len() - 9]).pairs.len(), 1, "a truncated value drops its pair");
+    }
+
+    #[test]
+    fn set_and_write_round_trip() {
+        let b = [s("Cutscenes"), s("1"), s("OptionsFogResolution"), s("2"), s(""), s("")].concat();
+        let mut o = Options::parse(&b);
+        assert_eq!(o.to_bytes(), b);
+        o.set("Cutscenes", "0");
+        o.set("Music Volume", "40");
+        let back = Options::parse(&o.to_bytes());
+        assert_eq!(back, o);
+        assert_eq!((back.int("Cutscenes"), back.int("Music Volume"), back.pairs.len()), (Some(0), Some(40), 3));
     }
 }

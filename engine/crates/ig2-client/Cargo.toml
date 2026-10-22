@@ -13,9 +13,11 @@ ig2-net = { version = "0.1.0", path = "../ig2-net" }
 ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
 ig2-sim = { version = "0.1.0", path = "../ig2-sim" }
 lewton = "0.10"
+openh264 = "0.9.9"
 png = "0.18.1"
 pollster = "1.0.1"
 serde_json = "1.0.154"
+symphonia = { version = "0.6.1", default-features = false, features = ["aac"] }
 wgpu = "25.0.2"
 winit = "0.30.13"
 

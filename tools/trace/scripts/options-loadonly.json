@@ -1,0 +1,11 @@
+{
+ "screen": "main",
+ "note": "Options in load-only mode (re/screens/options.md): the main menu boots, the load ring (ring 2, at (404, 107) at t 250) is pressed; Options opens over the running main-menu scene and fades in (OptionsFelfadeles +0.6 a tick); the pointer then rests on the BACK button (580, 80).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 250, "press": [404, 107]},
+  {"t": 600, "mouse": [580, 80]}
+ ],
+ "grabs": [260, 300, 360, 420, 480, 560, 650],
+ "tail": 20
+}

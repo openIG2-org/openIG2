@@ -1,9 +1,10 @@
 //! IG2 game client (ADR 0006): loads an original save into the simulation, runs it at the original's 20 Hz and
 //! renders the starmap at the display's refresh rate.
 //!
-//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3]`: the main menu (re/screens/mainscr.md; its load ring starts
-//!           the default save), or the game of `--save` at once.
+//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3]`: the main menu (re/screens/mainscr.md; its load ring opens
+//!           the Options screen's slots, re/screens/options.md), or the game of `--save` at once.
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
+//! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
 //!            [--size WxH] [--letterbox] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
@@ -49,10 +50,13 @@ mod lighting;
 mod mainscr;
 mod mainscr_scene;
 mod messages_screen;
+mod options;
 mod orders;
 mod render;
 mod render3d;
 mod research;
+mod design;
+mod design_scene;
 mod rules;
 mod scene;
 mod script;
@@ -62,13 +66,16 @@ mod starmap_hud;
 mod starmap_info;
 mod starmap_menus;
 mod spacewar_hud;
+mod spacewar_live;
 mod spacewar_screen;
+mod spacewar_ui;
 mod spy_scene;
 mod spy_screen;
 mod starmap_panels;
 mod starmap_planet;
 mod starmap_radar;
 mod ui;
+mod video;
 mod window;
 mod world;
 
@@ -117,6 +124,10 @@ pub struct Options {
     /// `--spy-frame F [--spy-closing]`: the spy screen with `spyframe` held at F while opening (or closing)
     /// (re/screens/spy.md §1.1, §9).
     pub spy_frame: Option<f32>,
+    /// `--screen video:NAME --video-ms T [--video-at X,Y]`: the window at time `T` of the `.bik` name's video,
+    /// fullscreen or in the screen at `X,Y` of the 640×480 frame (re/screens/video.md §6).
+    pub video_ms: u64,
+    pub video_at: Option<[f32; 2]>,
     pub spy_closing: bool,
     /// `--clouds N`: the starmap clouds' drift clock (re/screens/starmap.md §6.2).
     pub clouds: i32,
@@ -195,6 +206,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
         show_message: None,
         ui_frames: 150,
         spy_frame: None,
+        video_ms: 0,
+        video_at: None,
         spy_closing: false,
         clouds: 0,
         futofeny: None,
@@ -258,6 +271,12 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--colony-live" => o.colony_live = true,
             "--colony-ui" => o.colony_ui = Some(val()?),
             "--screen" => o.screen = Some(val()?),
+            "--video-ms" => o.video_ms = val()?.parse().map_err(|e| format!("--video-ms: {e}"))?,
+            "--video-at" => {
+                let v = val()?;
+                let (x, y) = v.split_once(',').ok_or("--video-at X,Y")?;
+                o.video_at = Some([num(x.into())?, num(y.into())?]);
+            }
             "--chart" => o.chart = val()?.parse().map_err(|e| format!("--chart: {e}"))?,
             "--open-message" => o.open_message = Some(val()?.parse().map_err(|e| format!("--open-message: {e}"))?),
             "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),

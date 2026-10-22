@@ -510,7 +510,7 @@ meteors, ships), the 10 ms tick (§5.1 items 5–8, §5.2 fade-in, §5.3, §5.5)
 (main ↔ single player / multiplayer / tutorial; back), load game (starts the game from `--save`'s save: the Options
 screen's load slots are the next task) and quit. The window starts on the menu unless `--save` is given;
 `ig2-client --snapshot OUT --screen main [--ui-frames N] [--mouse X,Y] [--script S]`.
-Not yet: the title and credits videos (U30), the ring boxes' tooltips (the box texts are §6.1; whether the generic
+The title and credits videos now play (`video.md`). Not yet: the ring boxes' tooltips (the box texts are §6.1; whether the generic
 tooltip draws on this screen is unverified), the exit animation and loading plates (§2.2, `HandleLoadingMesh`), the
 race choice and difficulty (§9.2), the scenario / skirmish list (§9.3, §7), the tutorial start (§9.4), the multiplayer
 name / IP / IRC entry (§6.5, §9.6), the high-score name entry, the meteor and ship sounds (`MainPlaySound`; the menu music `PlayMusicMenu` plays through `ig2-client::audio`), new-game

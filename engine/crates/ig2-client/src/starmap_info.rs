@@ -168,13 +168,9 @@ pub fn units_of(state: &SaveState, e: u8, holder: i32, d: usize) -> (i32, i32) {
     (n, sum)
 }
 
-/// What a sale menu's release sends (`MULTIGET_Design` ELF 0x50c430): 0x34 sells the holder's units of the design
-/// (`mode` 2), 0x35 refits them to its upgrade target. The sim doesn't carry these out yet (with the Design screen).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DesignOrder {
-    Sell { design: i32, mode: i32, holder: i32 },
-    Refit { design: i32, holder: i32 },
-}
+/// What a sale menu's release sends (`MULTIGET_Design` exe 0x4b4d60, re/rules/design-orders.md): 0x34 sells the
+/// holder's units of the design (`mode` 2), 0x35 refits them to its upgrade target.
+pub use ig2_sim::game::DesignOrder;
 
 /// Which panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -801,6 +797,20 @@ mod tests {
         panels.hover([220.0, 98.0]);
         let acts = panels.release(&w.game.state, &sel);
         assert_eq!(acts, vec![Action::Design(DesignOrder::Sell { design: d1 as i32, mode: 2, holder: -(p as i32) })]);
+        // It reaches the sim (re/rules/design-orders.md §3): the planet's vehicles of d1 go, their price comes in
+        // (`trunc(Σ price / div)`, the menu's `count·CsokkentettTervAr` give or take the rounding) and the design
+        // stays (a holder's sale).
+        let money = w.game.state.treasuries()[e as usize].total;
+        for a in acts {
+            if let Action::Design(o) = a {
+                w.send(Command::from(o));
+            }
+        }
+        w.pump();
+        assert_eq!(tank_rows(&w.game.state, p).iter().map(|r| (r.design, r.count)).collect::<Vec<_>>(), vec![(d0, 3)]);
+        let got = w.game.state.treasuries()[e as usize].total - money;
+        assert!(got >= (5 * resale) as f64 && got < (5 * resale + 5) as f64, "credited {got}, the menu said {}", 5 * resale);
+        assert!(design(&w.game.state, e, d1).is_some_and(|r| i16_at(r, 0x16) == 2));
         // Hot-spot 9 closes it; nothing flies.
         assert_eq!(panels.press(&w.game.state, &sel, [500.0, 400.0], true), Some(vec![]));
         assert!(panels.info.is_none());
@@ -836,9 +846,19 @@ mod tests {
         panels.hover([80.0, 98.0]);
         let acts = panels.release(&w.game.state, &sel);
         assert_eq!(acts, vec![Action::Design(DesignOrder::Sell { design: d as i32, mode: 2, holder: f })]);
+        let sold = acts;
         // The info box again: the panel goes and the camera flies back.
         assert_eq!(panels.info_box_fleet(&w.game.state, &sel, names, 300.0), vec![Action::ZoomOut]);
         assert!(panels.info.is_none());
+        // The sale reaches the sim: the ship goes, and its emptied fleet with it (`TervDelete(e, d, f, 1)`).
+        for a in sold {
+            if let Action::Design(o) = a {
+                w.send(Command::from(o));
+            }
+        }
+        w.pump();
+        assert!(fleet_rows(&w.game.state, f).is_empty());
+        assert_eq!(crate::starmap_panels::near_fleet(&w.game.state, p), 0);
     }
 
     #[test]

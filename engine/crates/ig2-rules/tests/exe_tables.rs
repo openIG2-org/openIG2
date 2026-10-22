@@ -129,6 +129,28 @@ fn research_screen_tables_line_up() {
 }
 
 #[test]
+fn design_screen_hull_models_line_up() {
+    let Some(r) = rules() else { return };
+    // re/screens/design.md §5.1: 25 hull models; model 0 has none, the others are .xvb files with a positive scale.
+    let s = &r.design_screen;
+    assert_eq!((s.models.len(), s.scale.len()), (25, 25));
+    assert!(s.models[0].is_empty());
+    assert!(s.models[1..].iter().all(|m| m.to_ascii_lowercase().ends_with(".xvb")));
+    assert!(s.scale[1..].iter().all(|&k| k > 0.0));
+    // Every race uses one of the eight pod tables; a hull's slots are filled from the first.
+    assert!(s.pod_table[1..=8].iter().all(|t| (1..=8).contains(t)));
+    // The four 9 × 9 cells side by side on kep 0x13 (`DESIGN_X.BMP`).
+    assert_eq!(s.brushes.iter().map(|b| (b.src, b.size, b.kep)).collect::<Vec<_>>(), (0..4).map(|i| ([9 * i, 0], [9, 9], 0x13)).collect::<Vec<_>>());
+    for race in 1..=8 {
+        for hull in 0..25 {
+            let p = s.pod_slots(race, hull);
+            let n = p.iter().filter(|&&c| c > 0).count();
+            assert!(p[..n].iter().all(|&c| c > 0), "race {race} hull {hull}: {p:?}");
+        }
+    }
+}
+
+#[test]
 fn sound_tables_name_the_installs_files() {
     use ig2_rules::sounds::{install_paths, SoundTables, Table};
     let Some(inst) = Install::from_env(Lang::En) else { return };
@@ -149,4 +171,21 @@ fn sound_tables_name_the_installs_files() {
     assert_eq!(t.music.len(), 19);
     assert!(t.music.iter().all(|m| m.starts_with("mfx/") && inst.resolve(m).is_some()));
     assert_eq!(t.music[12], "mfx/menu.ogg");
+}
+
+/// The video name tables (`re/screens/video.md` §5): every name resolves to a file of the install.
+#[test]
+fn video_tables_resolve() {
+    let Some(r) = rules() else { return };
+    let inst = ig2_formats::Install::from_env(ig2_formats::text::Lang::En).unwrap().unwrap();
+    let v = &r.videos;
+    assert_eq!((v.loss.len(), v.win.len(), v.message_clips.len()), (9, 9, 15));
+    let names = v.loss.iter().chain(&v.win).chain(v.message_clips.iter().flat_map(|(a, b)| [a, b]));
+    let mut n = 0;
+    for name in names.filter(|n| !n.is_empty()) {
+        let mp4 = format!("anim/mpeg4/{}.mp4", name.strip_suffix(".bik").unwrap());
+        assert!(inst.resolve(&mp4).is_some(), "{name}");
+        n += 1;
+    }
+    assert_eq!(n, 16 + 20);
 }

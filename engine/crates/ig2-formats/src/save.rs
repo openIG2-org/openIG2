@@ -57,6 +57,31 @@ pub struct Header {
 }
 
 impl Header {
+    /// The header alone (`LoadTitle` exe 0x553590: what the Options screen's slot list reads).
+    pub fn read(file: &[u8]) -> Result<Self> {
+        if file.len() < HEADER_LEN || &file[..9] != MAGIC {
+            return Err(format_err(FMT, "missing VERS0002 header"));
+        }
+        let at = |o: usize| rd_i32(file, o);
+        let version = at(40);
+        // From version 101 the header carries EN and CampaignType; without them the lengths move up by 8.
+        let (en, campaign_type, lens) = if version > 100 { (Some(at(64)), Some(at(68)), 72) } else { (None, None, 64) };
+        // Only VERS0002 compresses (`atoi("0002") == 2`); other magics would be an uncompressed stream.
+        Ok(Self {
+            name: file[9..40].try_into().unwrap(),
+            version,
+            year: at(44),
+            month: at(48),
+            day: at(52),
+            ido: at(56),
+            old_day: at(60),
+            en,
+            campaign_type,
+            compressed_len: at(lens) as u32,
+            decompressed_len: at(lens + 4) as u32,
+        })
+    }
+
     pub fn name_str(&self) -> String {
         let n = self.name[..30].iter().position(|&b| b == 0).unwrap_or(30);
         String::from_utf8_lossy(&self.name[..n]).into_owned()
@@ -240,28 +265,8 @@ fn rd_f32(b: &[u8], o: usize) -> f32 {
 impl SaveGame {
     /// Parse a `save<n>.sav` file.
     pub fn parse(file: &[u8]) -> Result<Self> {
-        if file.len() < HEADER_LEN || &file[..9] != MAGIC {
-            return Err(format_err(FMT, "missing VERS0002 header"));
-        }
-        let at = |o: usize| rd_i32(file, o);
-        let version = at(40);
-        // From version 101 the header carries EN and CampaignType; without them the lengths move up by 8.
-        let (en, campaign_type, lens) = if version > 100 { (Some(at(64)), Some(at(68)), 72) } else { (None, None, 64) };
-        // Only VERS0002 compresses (`atoi("0002") == 2`); other magics would be an uncompressed stream.
-        let header = Header {
-            name: file[9..40].try_into().unwrap(),
-            version,
-            year: at(44),
-            month: at(48),
-            day: at(52),
-            ido: at(56),
-            old_day: at(60),
-            en,
-            campaign_type,
-            compressed_len: at(lens) as u32,
-            decompressed_len: at(lens + 4) as u32,
-        };
-        let start = lens + 8;
+        let header = Header::read(file)?;
+        let start = if header.en.is_some() { 80 } else { 72 };
         let end = start + header.compressed_len as usize;
         let Some(z) = file.get(start..end) else {
             return Err(format_err(FMT, "zlib stream runs past the file"));

@@ -890,7 +890,7 @@ The exit button (hot-spot 9) is §12.2's: `StarmapGfx2D_2`'s `starf` fader `((1 
 - The release on a row it allows: `GetTervEladasOszto < 0` → `Story_Special(0x19, AktFleet, d)` (SP; no message);
   row 1 → `0x34(d, 2, AktFleet)`; row 2 → `0x35(d, AktFleet)` (`MULTIGET_Design` ELF 0x50c430: 0x34 sells the fleet's
   units of the design for `TervHajoinakCsokkentettAra`, logs the design's retirement, offers a copy on the market,
-  `TervDelete`; 0x35 refits them to the upgrade target for the cost). The menu closes. No sound.
+  `TervDelete`; 0x35 refits them to the upgrade target for the cost; ported: `re/rules/design-orders.md`). The menu closes. No sound.
 
 ### 19.8 Sounds
 `PlaySoundGlobal(0)`: opening, closing (8, 9), a cell press; `PlaySoundGlobal(5)`: the zooms in and out. [obs, 2026-10-22, `tools/trace/scripts/fleetinfo.json` with `--fleets 2 --rop-fleet 1`: the info box's release Global[0] + Global[5] (Click1, benyilas1), a cell press Global[0], the exit button Global[0] + Global[5]; the client plays the same through `Panels::sounds`.] The vehicle panel's (`PlaySoundGlobal(0)` on opening and a cell press, none on hot-spot 9) are from the decompile.
@@ -942,7 +942,7 @@ turning as §19.3's cells; the selected one (`Selected − First` in 0..8) also 
   planet (or `DEBUGX`) §19.7's menu with `SellTankHossz` / `SellTankMenuSor(r, owner, design)`: row 1 `Name[0]` with
   `count·CsokkentettTervAr` (`GetString(2, 4, 7)` "Unable to sell" when it can't be sold), row 2 (with an upgrade
   target) as §19.7 over the planet's units; `SellTankMehet(1)` is always true. The release sends `0x34(d, 2,
-  −AktPlanet)` or `0x35(d, −AktPlanet)` when `GetTervEladasOszto ≥ 0` (else nothing).
+  −AktPlanet)` or `0x35(d, −AktPlanet)` when `GetTervEladasOszto ≥ 0` (else nothing); the sim side is `re/rules/design-orders.md`.
 
 ### 20.5 Verification
 `run_screen.py … --kep 2 --planet P --rop 9` (the vehicle panel) and `--fleets 1 --rop-fleet 1 --rop 0xf` (the fleet

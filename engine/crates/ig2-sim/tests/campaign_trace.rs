@@ -38,7 +38,14 @@ use ig2_sim::story::{
     Story, StoryEvent, StoryWorld, DESIGN, FLAGS,
 };
 use ig2_sim::storyline::LineStories;
+use ig2_formats::text::Lang;
+use ig2_formats::Install;
+use ig2_sim::messages::{story_line, LineNames, Texts};
+
 use serde_json::Value;
+
+/// The scripts' ticker lines checked against the exe's.
+static SCROLL_LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn traces(prefix: &str) -> Vec<PathBuf> {
     let dir = std::env::var_os("IG2_TRACE_DIR")
@@ -71,6 +78,72 @@ fn tables() -> Option<(CampaignTables, Buildings)> {
         tech: b.iter().map(|b| b.tech as i32).collect(),
     };
     Some((CampaignTables::new(rules.campaign_words), buildings))
+}
+
+/// The story texts (`s_story.txt`, `txt02.txt`) of every language the install has, for the scripts' ticker lines.
+fn story_texts() -> &'static [(Lang, Texts)] {
+    static TEXTS: std::sync::OnceLock<Vec<(Lang, Texts)>> = std::sync::OnceLock::new();
+    TEXTS.get_or_init(|| {
+        Lang::ALL
+            .into_iter()
+            .filter_map(|lang| {
+                let inst = Install::from_env(lang)?.ok()?;
+                let read = |p| inst.read(p).unwrap_or_default();
+                Some((lang, Texts::default().with_story(&read("dataraw/text/s_story.txt"), &read("dataraw/text/txt02.txt"), lang)))
+            })
+            .collect()
+    })
+}
+
+/// A name the traces don't dump: matches any text (`\u{1}` in the rendered line).
+struct AnyName;
+
+impl LineNames for AnyName {
+    fn tech(&self, _: i32) -> Vec<u8> {
+        vec![1]
+    }
+    fn planet(&self, _: i32) -> Vec<u8> {
+        vec![1]
+    }
+    fn empire(&self, _: i32) -> Vec<u8> {
+        vec![1]
+    }
+}
+
+/// The exe's ticker text (read as the system's ANSI code page, or as UTF-8 by the fable tracer, whose undecodable
+/// bytes turn into U+FFFD) against the port's line decoded in its language, `\u{1}` matching any name.
+fn same_line(exe: &str, port: &str) -> bool {
+    // Non-ASCII runs compare as one placeholder when the exe's text lost them.
+    let norm = |s: &str| -> String {
+        if !exe.contains('\u{fffd}') {
+            return s.to_string();
+        }
+        let mut out = String::new();
+        for c in s.chars() {
+            let c = if c.is_ascii() { c } else { '?' };
+            if !(c == '?' && out.ends_with('?')) {
+                out.push(c);
+            }
+        }
+        out
+    };
+    let (exe, port) = (norm(exe), norm(port));
+    let parts: Vec<&str> = port.split('\u{1}').collect();
+    if parts.len() == 1 {
+        return exe == port;
+    }
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if !exe.starts_with(first) || !exe[first.len()..].ends_with(last) || exe.len() < first.len() + last.len() {
+        return false;
+    }
+    let mut rest = &exe[first.len()..exe.len() - last.len()];
+    for p in &parts[1..parts.len() - 1] {
+        match rest.find(p) {
+            Some(i) => rest = &rest[i + p.len()..],
+            None => return false,
+        }
+    }
+    true
 }
 
 /// The scripts in `Story_Check`'s order.
@@ -527,6 +600,31 @@ impl<'a> W<'a> {
                 }
                 None
             }
+        }
+    }
+
+    /// A script's ticker line (`ScrollUzenet(text, 1, imp, 0)`, `info-messages.md` §3.4): the exe's text in one of
+    /// the install's languages, id 1, and the flags where the tracer logged them.
+    fn scroll(&mut self, ev: &StoryEvent, what: &str) {
+        let Some(x) = self.take("scroll", what) else { return };
+        let a = x[1].as_array().unwrap();
+        let exe = a[0].as_str().unwrap_or("");
+        let mut important = None;
+        let fits = story_texts().iter().any(|(lang, texts)| {
+            let Some((line, imp)) = story_line(ev, texts, &AnyName) else { return false };
+            important = Some(imp);
+            same_line(exe, &ig2_formats::text::decode(&line, *lang))
+        });
+        if !story_texts().is_empty() && !fits {
+            let port = story_texts().iter().find(|(l, _)| *l == Lang::Hu).or(story_texts().first()).and_then(|(l, t)| {
+                story_line(ev, t, &AnyName).map(|(line, _)| ig2_formats::text::decode(&line, *l))
+            });
+            self.bad.push(format!("{what}: ticker text: port {port:?} exe {exe:?}"));
+        }
+        SCROLL_LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let flags = a.get(2).map(|_| (int(&a[2]), int(&a[3])));
+        if int(&a[1]) != 1 || flags.is_some_and(|f| Some(f) != important.map(|i| (i as i32, 0))) {
+            self.bad.push(format!("{what}: ticker id/flags: port (1, {important:?}, 0) exe {}", x[1]));
         }
     }
 
@@ -1718,9 +1816,11 @@ impl StoryWorld for W<'_> {
             }
             StoryEvent::MessageParamInt { slot, value } => self.expect("paramint", &[v(slot), v(value)], &what),
             StoryEvent::GiveTech(t) => self.expect("techstate", &[v(t), v(5), v(-1)], &what),
-            StoryEvent::ScrollText(_) => {
-                self.take("scroll", &what);
-            }
+            StoryEvent::ScrollText { .. }
+            | StoryEvent::ScrollSabotage { .. }
+            | StoryEvent::ScrollNumbers { .. }
+            | StoryEvent::ScrollNumber { .. }
+            | StoryEvent::ScrollEmpirePlanet { .. } => self.scroll(&ev, &what),
             StoryEvent::SetFleetId { fleet, id } => {
                 // Checked at the end: a later write wins (st_Rnd 184 names its fleet, then clears the id).
                 self.fleet_ids.insert(fleet, id);
@@ -1892,9 +1992,6 @@ impl StoryWorld for W<'_> {
                 if got != Some(damage) {
                     self.bad.push(format!("{what}: exe {got:?}"));
                 }
-            }
-            StoryEvent::ScrollSabotage { .. } => {
-                self.take("scroll", &what);
             }
             StoryEvent::SpyTarget { slot, empire } => {
                 let post = self.post_world();
@@ -2242,24 +2339,6 @@ impl StoryWorld for W<'_> {
                 let en = self.en;
                 self.expect("multisend", &[v(0x49), v(en), v(4), v(spy), v(mission)], &what)
             }
-            StoryEvent::ScrollNumbers { a, b, .. } => {
-                if let Some(x) = self.take("scroll", &what) {
-                    let t = x[1][0].as_str().unwrap_or("");
-                    if !(t.contains(&a.to_string()) && t.contains(&b.to_string())) {
-                        self.bad.push(format!("{what}: exe {t:?}"));
-                    }
-                }
-            }
-            StoryEvent::ScrollNumber { text, a } => {
-                if let Some(x) = self.take("scroll", &what) {
-                    let t = x[1][0].as_str().unwrap_or("");
-                    // `format(_s(5, text), a)`: the number shows only where the text has a `%d` (814's is empty).
-                    let shown = self.stext.get(&text).is_none_or(|f| f.contains('%'));
-                    if t.contains(&a.to_string()) != shown {
-                        self.bad.push(format!("{what}: exe {t:?}"));
-                    }
-                }
-            }
             StoryEvent::ColonyDiscount { halve } => self.colony_discount(halve, &what),
             // Undo type 11 (840's discount ends with the story): the prices doubled back.
             StoryEvent::Undo { kind: 11, .. } => self.colony_discount(false, &what),
@@ -2269,9 +2348,6 @@ impl StoryWorld for W<'_> {
                 if post["wf334"].get(0).map(int) == Some(planet) && post["wf334"].get(1).map(int) != Some(value) {
                     self.bad.push(format!("{what}: exe {}", post["wf334"]));
                 }
-            }
-            StoryEvent::ScrollEmpirePlanet { .. } => {
-                self.take("scroll", &what);
             }
             StoryEvent::Won
             | StoryEvent::CampaignOver
@@ -3210,6 +3286,11 @@ fn campaign_matches_exe() {
          {} stream-5 draws, {} MEGNYERES, {} MEGHALAS, events not checked {:?}; port events {:?}",
         stats.records, stats.kinds, stats.started, stats.ended, stats.acts, stats.counters_fired, stats.draws, stats.won,
         stats.died, stats.unchecked, stats.events
+    );
+    eprintln!(
+        "ticker lines checked: {} (texts in {} languages)",
+        SCROLL_LINES.load(std::sync::atomic::Ordering::Relaxed),
+        story_texts().len()
     );
     // `IG2_FAILURES=<file>`: every mismatch, for triage.
     if let Some(f) = std::env::var_os("IG2_FAILURES") {

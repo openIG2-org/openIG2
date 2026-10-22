@@ -437,6 +437,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     // A script's input reaches `Update3D`'s press test two UI ticks after it went in [obs: the fly-out of the t 350
     // press fits best 2 ticks late].
     let lag = 2;
+    // The load ring opens Options in load-only mode over the scene (re/screens/options.md); input goes to it then.
+    let mut options: Option<(crate::options::Headless, crate::options::OptionsScreen)> = None;
     for t in 0..=script.end() {
         let mut press = None;
         let mut release = None;
@@ -462,17 +464,43 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         }
         s.frame();
         s.hover(mouse);
-        let acts = [press.and_then(|p| s.press(p)), release.and_then(|p| s.release(p))];
-        for a in acts.into_iter().flatten() {
-            println!("t {t}: {a:?}");
+        if let Some((_, os)) = &mut options {
+            os.hover(mouse);
+            if let Some(p) = press {
+                os.press(p, &mut |id| println!("t {t}: sound {id:?}"));
+            }
+            if release.is_some() {
+                os.release();
+            }
+            os.tick();
+            if let Some(a) = os.done() {
+                println!("t {t}: options {a:?}");
+            }
+        } else {
+            let acts = [press.and_then(|p| s.press(p)), release.and_then(|p| s.release(p))];
+            for a in acts.into_iter().flatten() {
+                println!("t {t}: {a:?}");
+                if a == crate::mainscr::Act::LoadGame {
+                    let tables = ig2_rules::Rules::from_install(&install)?;
+                    let h = crate::options::Headless::load(&mut r, &install, &tables);
+                    let os = h.enter(&install, true);
+                    options = Some((h, os));
+                }
+            }
         }
         if script.grabs.contains(&t) {
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             scene.draw(&mut frame, &mut r, &install, &s, &vv);
+            if let Some((h, os)) = &mut options {
+                h.draw(os, &mut frame, size, t as f64 * 10.0);
+            }
             let rgba = r.draw_to_image(&frame, o.size, 0.0);
             let path = crate::script::grab_path(out, t);
             crate::assets::write_snapshot(&path, o, &rgba)?;
             println!("{}: t {t} | menu {:?} M {} tav {} cel {} gt {} hovered {:?}", path.display(), s.menu, s.m, s.tav, s.cel, s.gt, s.hovered);
+        } else if let Some((h, os)) = &mut options {
+            // Options draws (and so fades) every frame, the grab or not.
+            h.draw(os, &mut Frame::new([0.0; 4]), size, t as f64 * 10.0);
         }
     }
     Ok(())

@@ -56,7 +56,7 @@ impl World<'_> {
     }
 
     /// `TervNew(e, id)` (§10.2): the lowest deleted design, else a new record at the end. Returns its index.
-    fn new_design(&mut self, e: usize, id: i32, hooks: &mut dyn AiHooks) -> usize {
+    pub(crate) fn new_design(&mut self, e: usize, id: i32, hooks: &mut dyn AiHooks) -> usize {
         let n = self.design_count(e);
         let free = (1..=n).find(|&k| self.des(e, k as i32).is_some_and(|x| rd_i16(&x.raw, 0x16) < 0));
         let d = match free {

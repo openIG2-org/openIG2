@@ -88,6 +88,13 @@ pub enum OrderEvent {
     Split { empire: u8, fleet: usize, new: usize },
     /// 0x18 refused: not enough money (`ScrollHibaUzenet`, for the issuer).
     SatelliteRefused { empire: u8, planet: usize },
+    /// `MULTIGET_Design` 0x33 stored design `design` (the new one, or the edited one when affordable): the Design
+    /// screen re-sorts its list and selects it (for the issuer).
+    DesignStored { empire: u8, design: usize },
+    /// 0x34: `holder`'s units of `design` were sold or deleted (`holder` 0: the design too).
+    DesignSold { empire: u8, design: usize, holder: i32 },
+    /// 0x35: `holder`'s units of `design` were refitted (`StarmapAktFlottaValtozott`).
+    Refitted { empire: u8, design: usize, holder: i32 },
 }
 
 /// `MuholdAr` (exe 0x9138D0, `i32 × 3`): satellite prices by kind (rules, from the user's exe).

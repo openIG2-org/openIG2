@@ -1,10 +1,12 @@
 //! The human's messages: the scrolling message line (`ScrollUzenet`, exe 0x556b50) with its history, the texts
-//! of `uzenet.txt` (`ScrollUzenetId`, exe 0x556dc0) and the inbox's expiry (`FRISSIT_Messages`, exe 0x5062d0).
-//! Spec: `re/rules/info-messages.md` §2–§4.
+//! of `uzenet.txt` (`ScrollUzenetId`, exe 0x556dc0), the story scripts' lines (`_s(5, n)` through [`printf`]) and
+//! the inbox's expiry (`FRISSIT_Messages`, exe 0x5062d0). Spec: `re/rules/info-messages.md` §2–§4.
 //!
 //! The lists are kept as the original's raw 0x40-byte entries: a text is copied up to its NUL, so the bytes after
 //! it are whatever the slot held before, and a save round-trips only with them. The sim posts; the UI takes the
 //! next text off the line at its own pace ([`Ticker::pop`]).
+
+use std::collections::BTreeMap;
 
 /// One list entry.
 pub const ENTRY: usize = 0x40;
@@ -134,15 +136,37 @@ fn atoi(s: &[u8]) -> i32 {
     if neg { v.wrapping_neg() } else { v }
 }
 
-/// The lines of `uzenet.txt` (raw bytes in the game's code page), spec §3.1.
+/// The texts the sim posts or writes, raw bytes in the game's code page: the lines of `uzenet.txt` (spec §3.1),
+/// the story table `_s(5, n)` (`s_story.txt`, spec §3.4) and the tutorial's name for a sighted planet
+/// (`GetString(2, 4, 6)`, `re/rules/tutorial.md` §4).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Texts {
     pub lines: Vec<Vec<u8>>,
+    pub story: BTreeMap<i32, Vec<u8>>,
+    pub new_planet: Vec<u8>,
 }
 
 impl Texts {
     pub fn parse(raw: &[u8]) -> Self {
-        Self { lines: raw.split(|&c| c == b'\n').map(|l| l.strip_suffix(b"\r").unwrap_or(l).to_vec()).collect() }
+        Self { lines: raw.split(|&c| c == b'\n').map(|l| l.strip_suffix(b"\r").unwrap_or(l).to_vec()).collect(), ..Self::default() }
+    }
+
+    /// Add the story table (`s_story.txt`, keyed table 5) and the UI table's `2 4 6` line (`txt02.txt`), both in
+    /// the game's language.
+    pub fn with_story(mut self, s_story: &[u8], txt02: &[u8], lang: ig2_formats::text::Lang) -> Self {
+        use ig2_formats::{strings, text};
+        let mut keyed = strings::KeyedStrings::default();
+        keyed.add_file(5, &text::decode(s_story, lang));
+        self.story = keyed.entries.iter().map(|(k, s)| ((k & 0xffff) as i32, text::encode(s, lang))).collect();
+        let mut ui = strings::UiStrings::default();
+        ui.add_file(&text::decode(txt02, lang));
+        self.new_planet = text::encode(ui.get(2, 4, 6), lang);
+        self
+    }
+
+    /// `_s(5, n)` (exe 0x542ce0): a missing key gives "".
+    pub fn story_text(&self, n: i32) -> &[u8] {
+        self.story.get(&n).map_or(&[], Vec::as_slice)
     }
 
     /// `ScrollUzenetId`'s text: the first line whose number is `id`, from byte 5 on, with `%1`, `%2`, … replaced
@@ -158,6 +182,69 @@ impl Texts {
         }
         Some(s)
     }
+}
+
+/// An argument of [`printf`].
+#[derive(Debug, Clone, Copy)]
+pub enum Arg<'a> {
+    Int(i32),
+    Str(&'a [u8]),
+}
+
+/// C `printf` for the story texts (`stringhelper::format` = `vsnprintf`, and `sprintf`; spec §3.4): `%d`/`%i`, `%s`
+/// (up to the NUL) and `%%`, the conversions the texts use. Any other `%` sequence is copied as it is; an argument
+/// past the last given reads as an empty string or 0.
+pub fn printf(fmt: &[u8], args: &[Arg]) -> Vec<u8> {
+    let fmt = cstr(fmt);
+    let mut out = Vec::with_capacity(fmt.len());
+    let mut args = args.iter();
+    let mut i = 0;
+    while i < fmt.len() {
+        match (fmt[i], fmt.get(i + 1)) {
+            (b'%', Some(b'%')) => out.push(b'%'),
+            (b'%', Some(b'd' | b'i')) => match args.next() {
+                Some(Arg::Int(n)) => out.extend_from_slice(n.to_string().as_bytes()),
+                Some(Arg::Str(_)) | None => out.push(b'0'),
+            },
+            (b'%', Some(b's')) => {
+                if let Some(Arg::Str(s)) = args.next() {
+                    out.extend_from_slice(cstr(s));
+                }
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+        }
+        i += 2;
+    }
+    out
+}
+
+/// The names a story line fills in: `Talalmanyok[t]`, `Bolygok[p]`, `BirodalomNev[e]` (C strings).
+pub trait LineNames {
+    fn tech(&self, t: i32) -> Vec<u8>;
+    fn planet(&self, p: i32) -> Vec<u8>;
+    fn empire(&self, e: i32) -> Vec<u8>;
+}
+
+/// A story script's own line on the scrolling ticker (spec §3.4): its text and important flag (posted with id 1,
+/// no interrupt). `None` for the other story events.
+pub fn story_line(ev: &crate::story::StoryEvent, texts: &Texts, names: &dyn LineNames) -> Option<(Vec<u8>, bool)> {
+    use crate::story::StoryEvent;
+    let t = |n| texts.story_text(n);
+    Some(match *ev {
+        StoryEvent::ScrollText { text, important } => (cstr(t(text)).to_vec(), important),
+        // `sprintf(_s(5, 191), EpuletekLeiro[kind]'s tech name, planet name)`.
+        StoryEvent::ScrollSabotage { tech, planet } => (printf(t(191), &[Arg::Str(&names.tech(tech)), Arg::Str(&names.planet(planet))]), false),
+        StoryEvent::ScrollNumber { text, a } => (printf(t(text), &[Arg::Int(a)]), false),
+        StoryEvent::ScrollNumbers { text, a, b } => (printf(t(text), &[Arg::Int(a), Arg::Int(b)]), false),
+        StoryEvent::ScrollEmpirePlanet { text, empire, planet } => {
+            (printf(t(text), &[Arg::Str(&names.empire(empire)), Arg::Str(&names.planet(planet))]), false)
+        }
+        _ => return None,
+    })
 }
 
 /// The inbox (`Uzenetek`): 100 entries of 0x88 bytes (`+0` block, `+4` kept, `+8` expiry `Ido`), with the
@@ -222,6 +309,44 @@ mod tests {
         // On the line now: posting it again is a duplicate (history only).
         t.post(b"C", 3, true, false);
         assert_eq!(t.count, 3);
+    }
+
+    #[test]
+    fn printf_fills_the_story_texts() {
+        let f = printf(b"%d tons of food has been sold at %d price", &[Arg::Int(120), Arg::Int(-7)]);
+        assert_eq!(f, b"120 tons of food has been sold at -7 price");
+        let f = printf(b"Building %s damaged on %s", &[Arg::Str(b"Park\0junk"), Arg::Str(b"Orion 1")]);
+        assert_eq!(f, b"Building Park damaged on Orion 1");
+        assert_eq!(printf(b"100%% %x", &[]), b"100% %x");
+        assert_eq!(printf(b"", &[Arg::Int(5)]), b"");
+    }
+
+    #[test]
+    fn story_lines_render_their_texts() {
+        use crate::story::StoryEvent;
+        struct N;
+        impl LineNames for N {
+            fn tech(&self, t: i32) -> Vec<u8> {
+                format!("tech{t}").into_bytes()
+            }
+            fn planet(&self, p: i32) -> Vec<u8> {
+                format!("planet{p}").into_bytes()
+            }
+            fn empire(&self, e: i32) -> Vec<u8> {
+                format!("empire{e}").into_bytes()
+            }
+        }
+        let mut t = Texts::default();
+        t.story.insert(191, b"Building %s damaged on %s".to_vec());
+        t.story.insert(3081, b"Sta Kirin has been captured!".to_vec());
+        t.story.insert(8242, b"Reinfocement arrived from %s to %s".to_vec());
+        let line = |ev| story_line(&ev, &t, &N);
+        assert_eq!(line(StoryEvent::ScrollText { text: 3081, important: false }), Some((b"Sta Kirin has been captured!".to_vec(), false)));
+        assert_eq!(line(StoryEvent::ScrollSabotage { tech: 7, planet: 3 }), Some((b"Building tech7 damaged on planet3".to_vec(), false)));
+        assert_eq!(line(StoryEvent::ScrollEmpirePlanet { text: 8242, empire: 2, planet: 9 }).unwrap().0, b"Reinfocement arrived from empire2 to planet9");
+        // 814's key isn't in table 5: an empty line.
+        assert_eq!(line(StoryEvent::ScrollNumber { text: 8140, a: 15000 }), Some((Vec::new(), false)));
+        assert_eq!(line(StoryEvent::Won), None);
     }
 
     #[test]

@@ -17,6 +17,7 @@
 pub mod colonise;
 pub mod design;
 pub mod fleets;
+pub mod refit;
 pub mod units;
 
 use crate::colony::{production_base, Planet};
@@ -747,15 +748,26 @@ fn scrap(w: &mut World, e: usize) {
 
 /// `CsokkentettTervAr` with `GetTervEladasOszto` (spec §5.3).
 fn resale(r: &[u8; 0x84], ctx: &AiContext, human_empire: usize) -> i32 {
+    sale_price(rd_i32(r, 0x24), sale_divisor(r, ctx.story_resale, human_empire))
+}
+
+/// `GetTervEladasOszto(e, d)` (exe 0x4b4370): 2, 10 for `+0x36`, 0.5 for the story hero's ship (`StoryAdat+0xac`,
+/// hull 5, original owner the human), −1 (unsellable) for the story designs `+0x80` in 0x6a5..3000 but a few.
+pub(crate) fn sale_divisor(r: &[u8; 0x84], story_resale: bool, human_empire: usize) -> f32 {
     let mut f: f32 = if r[0x36] != 0 { 10.0 } else { 2.0 };
-    if ctx.story_resale && rd_i32(r, 0x44) == 5 && rd_i16(r, 0x40) as i32 == human_empire as i32 {
+    if story_resale && rd_i32(r, 0x44) == 5 && rd_i16(r, 0x40) as i32 == human_empire as i32 {
         f = 0.5;
     }
     let id = rd_i32(r, 0x80);
     if (0x6a5..3000).contains(&id) && ![0x8fc, 0x8fd, 0x906].contains(&id) && !(0x924..=0x937).contains(&id) {
         f = -1.0;
     }
-    if f < 0.0 { 0 } else { cvtt((rd_i32(r, 0x24) as f32 / f) as f64) }
+    f
+}
+
+/// A price over the resale divisor: `trunc((f32)price / div)`, 0 when unsellable.
+pub(crate) fn sale_price(price: i32, div: f32) -> i32 {
+    if div < 0.0 { 0 } else { cvtt((price as f32 / div) as f64) }
 }
 
 /// `FRISSIT_MI_FEJLESZTES(e)` (`production-research.md` §2.2).

@@ -319,8 +319,8 @@ pub enum StoryEvent {
     /// `st_SetTalalmanyAllapot(t, 5, −1)` (exe 0x602920): the human is given tech `t` (`TalalmanyKifejlesztve`,
     /// its research time, the recompute; the story queue entry is the story's).
     GiveTech(i32),
-    /// `ScrollUzenet(_s(5, id), 1, true, false)` (exe 0x556b50): a line on the scrolling ticker.
-    ScrollText(i32),
+    /// `ScrollUzenet(_s(5, text), 1, important, false)` (exe 0x556b50): a line on the scrolling ticker.
+    ScrollText { text: i32, important: bool },
     /// Fleet `+0x16` (its story id) written (`st_RemoveFlottaAzonosito`: 0).
     SetFleetId { fleet: i32, id: i32 },
     /// `st_fEliminate`: fleet `+0x18` bit 1 set (it is sent away; the order follows as [`StoryEvent::MoveFleet`]).

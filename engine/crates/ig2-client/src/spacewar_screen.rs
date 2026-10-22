@@ -122,6 +122,47 @@ impl Dump {
         raw::f32_at(&self.obj, o)
     }
 
+    /// The dump as the renderer reads it: the units' drawn poses and selection timers (exe unit `+0xe4`, `+0x234`,
+    /// `+0x181`, `+0x184..+0x18c`), the weapon column, `infoszamol`'s statistics, the radar's yaw `+0xc7c`.
+    pub fn shown(&self, tables: &ig2_rules::Rules) -> Shown<'_> {
+        let v = self.view();
+        let (eye, target) = match self.cam {
+            Some(c) if !v.restoring => ([c[0], c[1], c[2]], [c[4], c[5], c[6]]),
+            _ => v.eye_target(),
+        };
+        let units = (0..self.battle.units.len())
+            .map(|i| {
+                let r = &self.units_raw[i * 600..(i + 1) * 600];
+                crate::spacewar_ui::UnitGfx {
+                    matrix: std::array::from_fn(|k| raw::f32_at(r, 0xe4 + 4 * k)),
+                    turn: std::array::from_fn(|k| raw::f32_at(r, 0x234 + 4 * k)),
+                    selected: r[0x181] != 0,
+                    was_selected: r[0x181] != 0,
+                    grow: raw::i32_at(r, 0x184),
+                    fade: raw::i32_at(r, 0x188),
+                    attacked: raw::i32_at(r, 0x18c),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        Shown {
+            battle: &self.battle,
+            view: v,
+            eye,
+            target,
+            units,
+            types: (0..self.battle.units.len()).map(|i| self.unit_type(i, tables)).collect(),
+            slots: std::array::from_fn(|i| Slot::from_slot(&self.obj, i)),
+            stats: crate::spacewar_hud::Stats::from_slot(&self.obj),
+            snap_yaw: self.f(0xc7c),
+            erosseg: self.erosseg.unwrap_or(0.0),
+            fade: 1.0,
+            radar: 100,
+            spin: 0.0,
+            hidden_button: None,
+        }
+    }
+
     /// The camera fields (exe offsets; spec §2.1): pivot `+0xc5c` (h, x, y), yaw `+0xc80`, tilt `+0xc84`, zoom
     /// `+0xc88`; the view animation runs while `+0x1d3e` is set; `xcenter` `+0x1fc0`.
     pub fn view(&self) -> View {
@@ -136,6 +177,28 @@ impl Dump {
             scale: self.f(0x1f88),
         }
     }
+}
+
+/// One frame of the battle screen, from a capture's dump or the live screen ([`crate::spacewar_ui::SpaceWarUi`]).
+pub struct Shown<'a> {
+    pub battle: &'a Battle,
+    pub view: View,
+    pub eye: [f32; 3],
+    pub target: [f32; 3],
+    pub units: Vec<crate::spacewar_ui::UnitGfx>,
+    /// Each unit's model name and `AddToScene` scale (`tipusnevek[race·12 + type]`).
+    pub types: Vec<Option<(String, f32)>>,
+    pub slots: [Slot; 10],
+    pub stats: crate::spacewar_hud::Stats,
+    /// `+0xd6c` (exe `+0xc7c`): the radar's quarter-turn yaw.
+    pub snap_yaw: f32,
+    pub erosseg: f32,
+    /// `spacewarelfade`, `spwradarcounter`, the info model's turn.
+    pub fade: f32,
+    pub radar: i32,
+    pub spin: f32,
+    /// The armed weapon group's button in its blink's off phase (§5.1).
+    pub hidden_button: Option<usize>,
 }
 
 /// The battle camera's state (spec §2.1).
@@ -325,10 +388,10 @@ impl Slot {
 }
 
 impl Models {
-    pub fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install, tables: &ig2_rules::Rules, d: &Dump) -> Self {
+    pub fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install, s: &Shown) -> Self {
         let mut ships = HashMap::new();
-        for (i, u) in d.battle.units.iter().enumerate() {
-            let Some((name, _)) = d.unit_type(i, tables) else { continue };
+        for (i, u) in s.battle.units.iter().enumerate() {
+            let Some(Some((name, _))) = s.types.get(i).cloned() else { continue };
             let key = (name, u.kind >= 8);
             if let std::collections::hash_map::Entry::Vacant(e) = ships.entry(key) {
                 let m = Self::mesh(r, install, &e.key().0, e.key().1);
@@ -336,6 +399,18 @@ impl Models {
             }
         }
         Self { ships }
+    }
+
+    /// Load the models of units that came since (`AddUjUrhajo` mid-battle).
+    pub fn top_up(&mut self, r: &mut crate::render::Renderer, install: &ig2_formats::Install, s: &Shown) {
+        for (i, u) in s.battle.units.iter().enumerate() {
+            let Some(Some((name, _))) = s.types.get(i).cloned() else { continue };
+            let key = (name, u.kind >= 8);
+            if let std::collections::hash_map::Entry::Vacant(e) = self.ships.entry(key) {
+                let m = Self::mesh(r, install, &e.key().0, e.key().1);
+                e.insert(m);
+            }
+        }
     }
 
     fn mesh(r: &mut crate::render::Renderer, install: &ig2_formats::Install, name: &str, small: bool) -> Option<Mesh> {
@@ -353,12 +428,9 @@ struct Scene<'a> {
     view: &'a View,
     assets: &'a crate::starmap::Assets,
     models: &'a Models,
-    tables: &'a ig2_rules::Rules,
     /// The battle planet's surface (`Bolygok +0x22`), for a planet battle.
     surface: Option<u8>,
-    /// The exe's units as dumped (600 bytes each): the drawn pose `+0xe4` (the node's matrix, `seturhajopos`).
-    units_raw: &'a [u8],
-    dump: &'a Dump,
+    shown: &'a Shown<'a>,
 }
 
 /// Grid constants (`InitSpaceWar`, spec §1.5): cells of 3, 128 × 128, bounds ±192, the plane at h = 18.
@@ -455,10 +527,10 @@ const COLUMN_RECT: [f32; 4] = [560.0, 20.0, 640.0, 480.0];
 const INFO_MODEL_RECT: [f32; 4] = [0.0, 420.0, 60.0, 480.0];
 
 impl<'a> Scene<'a> {
-    /// A battle point in the starmap's world.
+    /// A battle point in the starmap's world: `origin + q/2500` at any scene scale (`rescalescene` scales the battle
+    /// and the starmap alike: the camera's units change, not where the battle sits in the starmap).
     fn world(&self, q: [f32; 3]) -> [f32; 3] {
-        let k = (self.view.scale * SCENE_SCALE).max(1e-6);
-        std::array::from_fn(|i| self.view.origin[i] + q[i] / k)
+        std::array::from_fn(|i| self.view.origin[i] + q[i] / SCENE_SCALE)
     }
 
     /// A 3D line in battle units, its colour fading linearly from `ca` to `cb` (drawn in pieces), clipped at the
@@ -547,14 +619,10 @@ impl<'a> Scene<'a> {
     /// Unit `i`'s model and pose: the node's matrix (exe unit `+0xe4`, `seturhajopos`) and the `AddToScene` scale
     /// `tipusnevek.scale`, at its position.
     fn pose(&self, i: usize, u: &ig2_sim::spacebattle::Unit) -> Option<(&Mesh, crate::scene::M3, crate::scene::Transform)> {
-        let k = (self.view.scale * SCENE_SCALE).max(1e-6);
-        let (name, scale) = self.dump.unit_type(i, self.tables)?;
+        let (name, scale) = self.shown.types.get(i).cloned().flatten()?;
         let mesh = self.models.get(&name, u.kind >= 8)?;
-        let m: crate::scene::M3 = match self.units_raw.get(i * 600..(i + 1) * 600) {
-            Some(r) => std::array::from_fn(|i| raw::f32_at(r, 0xe4 + 4 * i)),
-            None => [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        };
-        let place = crate::scene::Placement::add_to_scene(mesh.origin, scale / k);
+        let m: crate::scene::M3 = self.shown.units.get(i).map_or([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], |g| g.matrix);
+        let place = crate::scene::Placement::add_to_scene(mesh.origin, scale / SCENE_SCALE);
         let rs = crate::scene::mul(&m, &place.matrix);
         Some((mesh, m, crate::scene::Transform { matrix: rs.map(|x| x * 1024.0), translation: self.world([u.pos.x, u.pos.y, u.pos.z]) }))
     }
@@ -607,7 +675,6 @@ impl<'a> Scene<'a> {
     fn overlays(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, hud: &crate::ui::Hud, b: &Battle, erosseg: f32) {
         use crate::render::{kind, Blend, Instance};
         let v = crate::font::Virtual::new(cam.size);
-        let k = (self.view.scale * SCENE_SCALE).max(1e-6);
         let c = 1.0 - erosseg;
         let (ab, ar) = ((255.0 - c * 127.0) as i32 as u32, (255.0 - c * 191.0) as i32 as u32);
         let additive = |w: u32| {
@@ -628,12 +695,12 @@ impl<'a> Scene<'a> {
         let font = hud.font.as_ref();
         let pal = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
         for (i, u) in b.units.iter().enumerate() {
-            let Some(r) = self.units_raw.get(i * 600..(i + 1) * 600) else { continue };
+            let Some(g) = self.shown.units.get(i) else { continue };
             if !u.alive {
                 continue;
             }
-            let (t1, fd, t3) = (raw::i32_at(r, 0x184) as f32, raw::i32_at(r, 0x188) as f32, raw::i32_at(r, 0x18c) as f32);
-            let selected = r[0x181] != 0;
+            let (t1, fd, t3) = (g.grow as f32, g.fade as f32, g.attacked as f32);
+            let selected = g.selected;
             let brackets = t1 != 0.0 && fd < 250.0;
             if !brackets && t3 <= 0.0 {
                 continue;
@@ -642,8 +709,8 @@ impl<'a> Scene<'a> {
             let e = cam.eye(&m, w[0], [w[1], w[2]]);
             let Some((p, px)) = cam.project_eye(e) else { continue };
             let [x, y] = v.virtual_of(p);
-            let scale = self.dump.unit_type(i, self.tables).map_or(0.0, |t| t.1);
-            let rr0 = scale * 1000.0 * self.view.scale / k * px / v.k;
+            let scale = self.shown.types.get(i).cloned().flatten().map_or(0.0, |t| t.1);
+            let rr0 = scale * 1000.0 / SCENE_SCALE * px / v.k;
             let (g, fa) = if brackets { ((t1 / 250.0).min(1.0), (250.0 - fd) / 250.0) } else { ((t3 / 250.0).min(1.0), 1.0) };
             // The bar: `r·f/5` high, `1.2·r·f + 1` above the centre (f64 in the exe), red for the damage, green.
             let q = u.damage as f32 / u.hp as f32;
@@ -690,11 +757,14 @@ impl<'a> Scene<'a> {
     fn weapons<'p>(&self, items: &mut Vec<Fixed<'p>>, panel: &'p Panel) {
         let half = std::f32::consts::FRAC_PI_2;
         for i in 0..10 {
-            let sl = Slot::from_slot(&self.dump.obj, i);
+            let sl = self.shown.slots[i];
             if sl.counter == 0 {
                 continue;
             }
             let at = sl.place(i, self.view.xcenter);
+            if self.shown.hidden_button == Some(i) {
+                continue;
+            }
             if let Some(Some(m)) = panel.icons.get(i) {
                 items.push(Fixed { mesh: m, at, size: 0.02, rot: (half, 0.0, 0.0), opacity: 1.0 });
             }
@@ -719,23 +789,22 @@ impl<'a> Scene<'a> {
     /// The info box's model (`kisinfogfxfrissit` ELF 0x6860c0, exe 0x5778c0; spec §5.2): the selection's highest
     /// `race·12 + type` (`selectkisinfourhajo`) at 0.03, turned π/2 about x, at (−545, 365, −1100), spinning 0.05 a
     /// frame (the phase isn't dumped: `spin`).
-    fn info_model(&self, items: &mut Vec<Fixed<'a>>, b: &Battle, spin: f32) {
+    fn info_model(&self, items: &mut Vec<Fixed<'a>>, b: &Battle, spin: f32, clear: f32) {
         let mut best: Option<(i32, usize)> = None;
         for (i, u) in b.units.iter().enumerate() {
-            let sel = self.units_raw.get(i * 600 + 0x181).is_some_and(|&x| x != 0);
+            let sel = self.shown.units.get(i).is_some_and(|g| g.selected);
             if u.alive && sel && best.is_none_or(|(t, _)| u.race * 12 + u.kind > t) {
                 best = Some((u.race * 12 + u.kind, i));
             }
         }
         let Some((_, i)) = best else { return };
-        let Some((name, _)) = self.dump.unit_type(i, self.tables) else { return };
+        let Some((name, _)) = self.shown.types.get(i).cloned().flatten() else { return };
         if let Some(m) = self.models.get(&name, b.units[i].kind >= 8) {
-            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 });
+            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear });
         }
     }
 
     fn draw(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, b: &Battle, eye: &crate::starmap_planet::Eye) {
-        let k = (self.view.scale * SCENE_SCALE).max(1e-6);
         // The planet of a planet battle (step 7): `b{(type − 1) % 8}2.xvb` at R·1.16, `RotateObj(π/2, π/2, 0)`, at P.
         if let (Some(surface), true) = (self.surface, b.planet_owner >= 0 || b.planet > 0) {
             let r = b.planet_size as f32;
@@ -743,7 +812,7 @@ impl<'a> Scene<'a> {
             let half = std::f32::consts::FRAC_PI_2;
             let crate::render::Frame { scene, late, .. } = f;
             if let Some(scene) = scene.as_mut() {
-                self.assets.planet_meshes.add_battle_planet(scene, late, surface, r * 1.16 / k, (half, half, 0.0), self.world(p), eye, planet_light());
+                self.assets.planet_meshes.add_battle_planet(scene, late, surface, r * 1.16 / SCENE_SCALE, (half, half, 0.0), self.world(p), eye, planet_light());
             }
         }
         self.ships(f, b, eye);
@@ -763,15 +832,127 @@ fn clock_frame(reload: i32) -> usize {
     ((reload / 10) as f32 * 1.65) as usize
 }
 
+/// The battle screen's own models: the ships, the weapon column, the control panel under the ambient light, the star
+/// field.
+pub struct Gfx {
+    models: Models,
+    panel: Panel,
+    console: Option<crate::starmap_hud::Console>,
+    stars: Vec<([f32; 3], f32, f32)>,
+}
+
+impl Gfx {
+    pub fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install, s: &Shown) -> Self {
+        // The panel under the ambient light alone [obs: console diff 11.4 and 10.1 in two battles against 19.4 and
+        // 16.3 with the starmap's lights; the exe's panel changes colour with the side lights `smMozgatMainFenyek`
+        // circles].
+        let console = crate::starmap_hud::Console::load_lit(r, install, [0.0; 3]).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
+        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field() }
+    }
+}
+
+/// The battle's camera on the starmap's view and its star field, before the view is built (spec §9.1).
+pub fn prepare(view: &mut crate::starmap::View, gfx: &Gfx, white: crate::render::TexId, s: &Shown) {
+    view.camera.look = Some(starmap_look(&s.view, s.eye, s.target));
+    view.backdrop.clear();
+    star_sprites(white, &mut view.backdrop, &view.camera, &gfx.stars);
+}
+
+/// Everything the battle adds to the starmap's frame: its scene, the overlays, the weapon column, the panel, the radar
+/// and the small info box (without the top bar).
+#[allow(clippy::too_many_arguments)]
+pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, install: &ig2_formats::Install, gfx: &mut Gfx, assets: &crate::starmap::Assets, cam: &crate::starmap::Camera, hud: &crate::ui::Hud, s: &Shown, surface: Option<u8>, size: [f32; 2]) {
+    gfx.models.top_up(r, install, s);
+    let scene = Scene { view: &s.view, assets, models: &gfx.models, surface, shown: s };
+    scene.draw(f, cam, s.battle, &cam.eye_world());
+    scene.overlays(f, cam, hud, s.battle, s.erosseg);
+    for sl in &s.slots[..9] {
+        gfx.panel.clock(r, install, clock_frame(sl.reload));
+    }
+    let virt = crate::font::Virtual::new(size);
+    let mut column = Vec::new();
+    scene.weapons(&mut column, &gfx.panel);
+    put_fixed(f, &virt, fixed_texture(r, &column, COLUMN_RECT), COLUMN_RECT);
+    let mut info = Vec::new();
+    scene.info_model(&mut info, s.battle, s.spin, 1.0 - s.fade);
+    let info_tex = fixed_texture(r, &info, INFO_MODEL_RECT);
+    crate::spacewar_hud::draw(f, hud, gfx.console.as_ref(), &virt, s);
+    put_fixed(f, &virt, info_tex, INFO_MODEL_RECT);
+}
+
+/// A battle point on the virtual screen and the projection's pixels per battle unit there.
+fn to_virtual(cam: &crate::starmap::Camera, view: &View, q: [f32; 3]) -> Option<([f32; 2], f32)> {
+    let w: [f32; 3] = std::array::from_fn(|i| view.origin[i] + q[i] / SCENE_SCALE);
+    let e = cam.eye(&cam.matrix(), w[0], [w[1], w[2]]);
+    let (p, px) = cam.project_eye(e)?;
+    let v = crate::font::Virtual::new(cam.size);
+    Some((v.virtual_of(p), px / v.k / SCENE_SCALE))
+}
+
+/// `SpaceWarMouseMove`'s projections (spec §7.1.2): each live unit's model centre (`GetObjCenter`) and its pick
+/// radius `TransformTav(type scale · 1000, z)`; each gun's position (virtual pixels).
+pub fn pick(gfx: &Gfx, assets: &crate::starmap::Assets, s: &Shown, cam: &crate::starmap::Camera) -> (Vec<Option<crate::spacewar_ui::Projected>>, Vec<Option<crate::spacewar_ui::Projected>>) {
+    let scene = Scene { view: &s.view, assets, models: &gfx.models, surface: None, shown: s };
+    let units = s
+        .battle
+        .units
+        .iter()
+        .enumerate()
+        .map(|(i, u)| {
+            if !u.alive {
+                return None;
+            }
+            let w = scene.centre(i, u)?;
+            let q: [f32; 3] = std::array::from_fn(|j| (w[j] - s.view.origin[j]) * SCENE_SCALE);
+            let (at, px) = to_virtual(cam, &s.view, q)?;
+            let scale = s.types.get(i).cloned().flatten().map_or(0.0, |t| t.1);
+            Some(crate::spacewar_ui::Projected { at, radius: scale * 1000.0 * px })
+        })
+        .collect();
+    let guns = s.battle.guns.iter().map(|g| to_virtual(cam, &s.view, [g.pos.x, g.pos.y, g.pos.z]).map(|(at, _)| crate::spacewar_ui::Projected { at, radius: 10.0 })).collect();
+    (units, guns)
+}
+
+/// `SikMetszespont` (ELF 0x5ee770, exe 0x52ca10): the point of the plane at height `h` under the virtual point `at`,
+/// along the view ray (its height step kept towards the plane); `None` unless it is strictly inside the arena (the
+/// on-plane test `+0x2244`).
+pub fn plane_point(s: &Shown, at: [f32; 2], h: f32) -> Option<[f32; 3]> {
+    let m = look_matrix(s.eye, s.target);
+    let e = [(at[0] - s.view.xcenter) / 600.0, (at[1] - 250.0) / 600.0, -1.0];
+    let dir: [f32; 3] = std::array::from_fn(|j| m[0][j] * e[0] + m[1][j] * e[1] + m[2][j] * e[2]);
+    let a: [f32; 3] = std::array::from_fn(|j| s.eye[j] + dir[j]);
+    let bb: [f32; 3] = std::array::from_fn(|j| s.eye[j] + dir[j] * 10.0);
+    // The exe's frame has the plane below the eye and clamps the height step to at most −0.01; in ours the eye is at
+    // negative h (the battle's views look up at the grid plane at +18), so the step is at least +0.01.
+    let mut dx = bb[0] - a[0];
+    if (dx as f64) < 0.01 {
+        dx = 0.01;
+    }
+    let q = dx / (h - a[0]);
+    // The camera's units are the battle's times the scene scale.
+    let p = [h, (bb[1] - a[1]) / q + a[1], (bb[2] - a[2]) / q + a[2]].map(|x| x / s.view.scale.max(1e-9));
+    let b = s.battle;
+    (b.bounds[0] < p[1] && p[1] < b.bounds[1] && b.bounds[2] < p[2] && p[2] < b.bounds[3]).then_some(p)
+}
+
+/// `magassagkirak` (spec §3.7): the height on the pole at the ground point `pole` whose screen row is `y`, between
+/// its ends at −12.6 and 18.
+pub fn pole_height(s: &Shown, cam: &crate::starmap::Camera, pole: [f32; 2], y: f32) -> f32 {
+    let (h0, h1) = (-12.6f32, 18.0f32);
+    match (to_virtual(cam, &s.view, [h0, pole[0], pole[1]]), to_virtual(cam, &s.view, [h1, pole[0], pole[1]])) {
+        (Some((a, _)), Some((b, _))) if (a[1] - b[1]).abs() > 1e-3 => h0 + (h1 - h0) * ((a[1] - y) / (a[1] - b[1])),
+        _ => h1,
+    }
+}
+
 /// `--screen spacewar --battle FILE`: the battle a capture dumped, drawn at the dump's moment.
-pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let path = o.battle.as_deref().ok_or("--screen spacewar needs --battle FILE")?;
     let d = Dump::load(path)?;
-    let v = d.view();
-    let (eye, target) = match d.cam {
-        Some(c) if !v.restoring => ([c[0], c[1], c[2]], [c[4], c[5], c[6]]),
-        _ => v.eye_target(),
-    };
+    if let Some(script) = &o.script {
+        return live(o, out, l, world, r, hud, d.battle, &crate::script::Script::load(script)?);
+    }
+    let s = d.shown(&l.tables);
     let t = world.curr.tick as f32 * 0.05;
     let mut assets = crate::starmap::Assets::load(r, &l.install);
     assets.planet_meshes.load_battle(r, &l.install);
@@ -779,43 +960,18 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     view.set_clouds(o.clouds);
     view.futofeny = o.futofeny.or(d.futofeny);
     view.acttime = o.acttime.or(d.acttime.map(|a| a as f32 / 1000.0));
-    view.camera.look = Some(starmap_look(&v, eye, target));
-    star_sprites(assets.white, &mut view.backdrop, &view.camera, &star_field());
+    let mut gfx = Gfx::load(r, &l.install, &s);
+    prepare(&mut view, &gfx, assets.white, &s);
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
-    let models = Models::load(r, &l.install, &l.tables, &d);
-    let scene = Scene {
-        view: &v,
-        assets: &assets,
-        models: &models,
-        tables: &l.tables,
-        surface: world.curr.planets.iter().find(|p| p.index as i32 == d.battle.planet).map(|p| p.surface),
-        units_raw: &d.units_raw,
-        dump: &d,
-    };
-    scene.draw(&mut frame, &view.camera, &d.battle, &view.camera.eye_world());
-    scene.overlays(&mut frame, &view.camera, hud, &d.battle, d.erosseg.unwrap_or(0.0));
-    let mut panel = Panel::load(r, &l.install);
-    for i in 0..9 {
-        panel.clock(r, &l.install, clock_frame(Slot::from_slot(&d.obj, i).reload));
-    }
-    let virt = crate::font::Virtual::new([o.size.0 as f32, o.size.1 as f32]);
-    let mut column = Vec::new();
-    scene.weapons(&mut column, &panel);
-    put_fixed(&mut frame, &virt, fixed_texture(r, &column, COLUMN_RECT), COLUMN_RECT);
-    let mut info = Vec::new();
-    scene.info_model(&mut info, &d.battle, 0.0);
-    let info_tex = fixed_texture(r, &info, INFO_MODEL_RECT);
-    // The panel under the ambient light alone [obs: console diff 11.4 and 10.1 in two battles against 19.4 and 16.3
-    // with the starmap's lights; the exe's panel changes colour with the side lights `smMozgatMainFenyek` circles].
-    let console = crate::starmap_hud::Console::load_lit(r, &l.install, [0.0; 3]).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
-    crate::spacewar_hud::draw(&mut frame, hud, console.as_ref(), &virt, &d, eye, target, 1.0);
-    put_fixed(&mut frame, &virt, info_tex, INFO_MODEL_RECT);
-    hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
+    let surface = world.curr.planets.iter().find(|p| p.index as i32 == d.battle.planet).map(|p| p.surface);
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    draw(&mut frame, r, &l.install, &mut gfx, &assets, &view.camera, hud, &s, surface, size);
+    hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
-    let b = &d.battle;
+    let (b, v) = (&d.battle, &s.view);
     println!(
-        "{}: space battle | tick {} units {} fighters {} | pivot {:?} yaw {} tilt {} zoom {} | eye {eye:?} target {target:?} | origin {:?}",
+        "{}: space battle | tick {} units {} fighters {} | pivot {:?} yaw {} tilt {} zoom {} | eye {:?} target {:?} | origin {:?}",
         out.display(),
         b.tick,
         b.units.len(),
@@ -824,8 +980,113 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
         v.yaw,
         v.tilt,
         v.zoom,
+        s.eye,
+        s.target,
         v.origin
     );
+    Ok(())
+}
+
+/// `--screen spacewar --battle FILE --script S`: the dumped battle as a live battle slot, entered from the save's
+/// starmap camera and run by the script on the 10 ms UI clock (the sim's ticks every 50 ms while unpaused,
+/// `FRISSIT_SpaceWar2` at 30 Hz, a frame per UI tick); a PNG per grab, and a log of what the screen sent (orders,
+/// clicks) on stdout for the (action → sound) table.
+#[allow(clippy::too_many_arguments)]
+fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud, battle: Battle, script: &crate::script::Script) -> Result<(), String> {
+    use crate::script::Input;
+    use crate::spacewar_ui::{Key, Out};
+    let g = &mut world.game;
+    g.realtime.slots = (0..10).map(|_| Battle::slot()).collect();
+    let mut battle = battle;
+    (battle.active, battle.shown) = (true, true);
+    g.realtime.slots[0] = battle;
+    g.realtime.types = g.rules.space.ship_types.clone();
+    g.realtime.current = 0;
+    g.sp_battles.live = true;
+    // `SpaceWarIndit` in SP: speed 1, paused.
+    g.set_speed(1, false);
+    g.set_pause(true, false);
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let mut assets = crate::starmap::Assets::load(r, &l.install);
+    assets.planet_meshes.load_battle(r, &l.install);
+    let mut view = crate::starmap::View::new(&world.curr, &world.view, o.size, o.scale);
+    view.set_clouds(o.clouds);
+    let mut live = crate::spacewar_live::Live::enter(world, 0, &view.camera, &l.install, 0).ok_or("no battle slot")?;
+    let (mut mouse, mut next, mut shift) = ([320.0f32, 240.0], 0, false);
+    for tick in 0..=script.end() {
+        let now = tick * 10;
+        let mut outs = Vec::new();
+        while let Some(e) = script.events.get(next).filter(|e| e.t <= tick) {
+            next += 1;
+            match &e.input {
+                Input::Move(at) => mouse = *at,
+                Input::Button { button, down, at } => {
+                    mouse = *at;
+                    match button {
+                        1 => live.left = *down,
+                        3 => live.right = *down,
+                        _ => {}
+                    }
+                }
+                Input::Key { name, down } => {
+                    let k = match name.as_str() {
+                        "left" => Some(Key::Left),
+                        "right" => Some(Key::Right),
+                        "up" => Some(Key::Up),
+                        "down" => Some(Key::Down),
+                        "add" => Some(Key::ZoomIn),
+                        "subtract" => Some(Key::ZoomOut),
+                        "a" => Some(Key::All),
+                        n if n.len() == 1 && ("1"..="9").contains(&n) => Some(Key::Group(n.as_bytes()[0] as i32 - b'1' as i32)),
+                        "shift" => {
+                            shift = *down;
+                            None
+                        }
+                        _ => None,
+                    };
+                    if let (Some(k), Some(b)) = (k, world.game.realtime.slots.get(live.ui.slot)) {
+                        live.ui.key(b, k, *down, false, false, false, &mut outs);
+                    }
+                }
+            }
+        }
+        world.pump();
+        for e in std::mem::take(&mut world.realtime) {
+            if let ig2_sim::game::RealTimeEvent::SpaceOver { .. } = e {
+                live.over(world, now);
+                world.game.set_pause(true, false);
+            }
+        }
+        if tick % 5 == 0 && !world.paused() {
+            world.tick();
+        }
+        outs.extend(live.update(world, now));
+        let t = now as f32 / 1000.0;
+        let (frame, more) = live.frame(world, r, &l.install, &assets, &mut view, hud, &l.tables, mouse, shift, now, 1.0, t, size);
+        outs.extend(more);
+        let mut left = false;
+        for o in &outs {
+            println!("t {tick}: {o:?}");
+            for c in live.commands(o) {
+                world.send(c);
+            }
+            left |= *o == Out::Left;
+        }
+        if let (Some(mut f), true) = (frame, script.grabs.binary_search(&tick).is_ok()) {
+            hud.speed = (world.game.speed_level() - 1).clamp(0, 2) as usize;
+            hud.paused = world.paused();
+            hud.draw(&mut f, size, &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
+            let rgba = r.draw_to_image(&f, o.size, t);
+            let path = crate::script::grab_path(out, tick);
+            crate::assets::write_snapshot(&path, o, &rgba)?;
+            let u = &live.ui;
+            println!("{}: tick {tick} battle {} fade {} zoom {} yaw {} tilt {} pivot {:?} selected {}", path.display(), world.game.realtime.slots[0].tick, u.fade, u.zoom, u.yaw, u.tilt, u.pivot, u.stats.total);
+        }
+        if left {
+            println!("t {tick}: left the battle screen");
+            break;
+        }
+    }
     Ok(())
 }
 

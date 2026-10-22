@@ -73,7 +73,7 @@ impl World<'_> {
     }
 
     /// The owner of a vehicle holder: fleet `h > 0`, planet `−h` otherwise.
-    fn holder_owner(&self, h: i32) -> u8 {
+    pub(crate) fn holder_owner(&self, h: i32) -> u8 {
         if h < 1 {
             self.spy.colony.planets.get(h.unsigned_abs() as usize).map_or(DELETED, |p| p.owner)
         } else {

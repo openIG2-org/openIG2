@@ -384,8 +384,12 @@ pub enum Screen {
     Diplomacy,
     /// The spy screen (`crate::spy_screen`): only the top bar here.
     Spy,
+    /// `AktKep` 13 (re/screens/options.md), drawn by [`crate::options::OptionsScreen`]: only the top bar here.
+    Options,
     /// `AktKep` 4 (re/screens/research.md), drawn by [`crate::research::Research`].
     Research,
+    /// `AktKep` 5 (re/screens/design.md), drawn by [`crate::design::Design`] and [`crate::design_scene`].
+    Design,
 }
 
 /// The 2D layer's resources and UI state.
@@ -400,6 +404,10 @@ pub struct Hud {
     pub info: crate::info_screen::InfoScreen,
     pub messages: crate::messages_screen::MessagesScreen,
     pub frame_tex: Option<TexId>,
+    /// The messages screen's talking-head clip this frame (its texture, centre, half size in pixels) and the
+    /// interlace texture laid over it (`DrawAnimInterlace`; re/screens/video.md §5.2).
+    pub clip: Option<(TexId, [f32; 2], [f32; 2])>,
+    pub interlace: Option<TexId>,
     /// The HUD's pictures (the bar's sheet, `COLONY_X.BMP`) and the colony and starmap brush tables.
     pub pics: crate::hud::Pictures,
     pub colony_brushes: Vec<ig2_rules::Brush>,
@@ -446,7 +454,9 @@ impl Hud {
             info: crate::info_screen::InfoScreen::enter(0),
             messages: Default::default(),
             frame_tex: None,
-            pics: crate::hud::Pictures::load(r, install, &rules.pictures, &[14, 17, 33, 97]),
+            clip: None,
+            interlace: None,
+            pics: crate::hud::Pictures::load(r, install, &rules.pictures, &[14, 17, 0x13, 33, 97]),
             colony_brushes: rules.colony_brushes.clone(),
             starmap_brushes: rules.starmap_brushes.clone(),
             speed: 2,
@@ -578,6 +588,19 @@ impl Hud {
         }
     }
 
+    /// The design screen's 2D pass over its scene (re/screens/design.md §5): the faders, the scroll bar, the
+    /// texts, the tooltip.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_design(&self, f: &mut Frame, s: &crate::design::Design, state: &SaveState, techs: &ig2_sim::colony_side::TechTable, rules: &ig2_rules::Rules, tips: &[Vec<u8>], size: [f32; 2], time: f32) {
+        let Some(font) = &self.font else { return };
+        let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
+        s.draw_faders(f, &d);
+        s.draw_texts(f, &d, &self.pics, state, techs, rules);
+        if let Some(t) = tips.get(s.tip.shown as usize) {
+            s.tip.draw(f, font, self.white, &d.v, &self.palette, t);
+        }
+    }
+
     /// Draw `screen`'s 2D part and the message line over `f`.
     pub fn draw(&mut self, f: &mut Frame, size: [f32; 2], s: &UiSnap, rules: &ig2_rules::Rules, screen: Screen, time: f32) {
         let Some(font) = &self.font else { return };
@@ -595,6 +618,14 @@ impl Hud {
         match screen {
             Screen::Info => draw_info(f, font, self.white, &v, s, &self.texts, &self.infostr, &self.hu17, rules, &self.palette, &self.empire_names, &self.info),
             Screen::Messages => {
+                // The clip over the frame, the interlace over the clip: `finalinter.bmp` at x 201..533,
+                // y 204..392 (`InterlaceMover` 0), vertex colour 0x19ffffff.
+                if let Some((tex, c, half)) = self.clip {
+                    f.push(tex, Blend::GammaAlpha, Instance::new(crate::render::kind::SPRITE, c, half, [1.0; 4]));
+                    if let Some(il) = self.interlace {
+                        f.push(il, Blend::GammaAlpha, Instance::new(crate::render::kind::SPRITE, c, half, [1.0, 1.0, 1.0, 25.0 / 255.0]));
+                    }
+                }
                 draw_inbox(f, font, &v, s, &self.texts, &self.palette, self.messages.first, &self.messages.read);
                 crate::messages_screen::draw(f, font, self.white, &v, &self.palette, &mut self.messages, s.inbox.len(), time);
             }

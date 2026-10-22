@@ -536,7 +536,7 @@ fn quarantine(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         w.event(StoryEvent::DesignCostTimes5 { empire: en, design: d });
         s.sz_start(2300, 3);
         s.sz_start(2302, 1080);
-        w.event(StoryEvent::ScrollText(2302));
+        w.event(StoryEvent::ScrollText { text: 2302, important: true });
     }
     if answered(s, 2300, 3) || promoted(s, 2300) {
         s.win(0, true, w);

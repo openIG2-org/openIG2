@@ -611,7 +611,7 @@ let scriptT = null, scriptUi0 = 0, scriptMouse = [320, 240], scriptEvents = [], 
 let vt = 0, vtOn = false, realTicks = null, swapHooked = false;
 const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050], enter: [40, 13],
   pageup: [75, 0x4000004b], pagedown: [78, 0x4000004e], escape: [41, 27], d: [7, 100], k: [14, 107], space: [44, 32],
-  c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127] };
+  c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127], f2: [59, 0x4000003b] };
 // The research screen's clock and selection (`ResearchTerulet` 0xB9A9B4, `ResearchMezo` 0xB9AA04, `ResearchTalalmany`
 // 0xB9AA08, `ResearchOldForgato` 0x919598; re/screens/research.md §1).
 const resState = () => ({ frame: va(0xdc5368).readFloat(), open: va(0xddf322).readU8(), closing: va(0xddf323).readU8(), started: va(0xddf628).readU8(),

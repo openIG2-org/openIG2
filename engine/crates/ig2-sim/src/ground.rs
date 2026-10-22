@@ -413,6 +413,13 @@ impl Field {
             .map(|i| self.units[i].cell)
             .collect()
     }
+
+    /// Whether unit `i` takes part in a design change of `e`'s design `d` ([`War::change_design`]): alive, owned
+    /// by `e`, of design `d`, flags without 0x4020000.
+    pub fn redesigned(&self, i: usize, e: i32, d: i32) -> bool {
+        let u = &self.units[i];
+        self.alive[i] && u.flags & 0x4020000 == 0 && u.owner == e && u.design == d
+    }
 }
 
 impl Default for Field {
@@ -768,6 +775,17 @@ impl<'a> War<'a> {
             }
         }
         i
+    }
+
+    /// The battlefield half of a design change (exe 0x4a78d0 and `MULTIGET_Design` 0x33's loop,
+    /// re/rules/design-orders.md §2, §6): `e`'s live units of design `from` take `to`, then `WF::CheckDesign`.
+    pub(crate) fn change_design(&mut self, e: i32, from: i32, to: i32) {
+        for i in 0..self.n() as i32 {
+            if self.field.redesigned(i as usize, e, from) {
+                self.um(i).design = to;
+                self.check_design(i);
+            }
+        }
     }
 
     /// `WF::CheckDesign(u)` (exe 0x45fd20, spec §3.3): pods → abilities (the strategic part).

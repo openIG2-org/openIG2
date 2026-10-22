@@ -64,7 +64,7 @@ const VOLATILE = [
 const QUEUES = [['vegzes', 0xf43290], ['talal', 0xf4329c]];
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, name: 'Replay', speed: 3, ticks: 40,
-  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
+  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', tutorialSighting: false, slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
  traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5, orders: 0, ordersEvery: 3, colony: 0, research: 0, researchEvery: 2, info: 0, infoEvery: 2 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
@@ -562,6 +562,46 @@ function stageWormholes() {
   return out;
 }
 
+// --tutorial-sighting: the tutorial waiting for event 1 ("exploreaplanet") with no script (re/rules/tutorial.md §4):
+// TutorialPaused (0xF66F2A) 1, TutorialEvent (0xF66F40) 1, TutorialActive (0xF6915D) 0. FRISSIT_Starmap's next first
+// sighting copies GetString(2, 4, 6) over that planet's name and TutorialCheckEvent(1) (0x60bdf0) unpauses (Active 1;
+// the saves show it). TutorialFrissit (0x60c020) is stubbed so no script runs, and TutorialActMouseAllapot (0xF66F20,
+// 0 in a game no tutorial ever started) is set to -1 as TutorialStart does: ReadNext would read the missing recording.
+// So that a sighting happens (quick-1 starts with no fleet that has a radar), the human gets a new fleet (FlottaNew +
+// HajoNew of its first warship design, which gets radar level 2 at design +0x6a; the starmap's refresh gives a fleet
+// its best ship's radar, faded outside the owner's supply, fleet-movement.md §6) 10 units short of the planet it hasn't
+// seen (planet +0xd8 + 2·EN == 0) that lies nearest to one of its planets, on the line from that planet.
+function stageTutorial() {
+  va(0xf66f2a).writeU8(1);
+  va(0xf66f40).writeS32(1);
+  va(0xf6915d).writeU8(0);
+  const mouse = va(0xf66f20).readS32();
+  va(0xf66f20).writeS32(-1);
+  const en = T.EN.readS32(), np = T.HanyBolygo.readS32();
+  let d = 1;
+  while (d <= designs(en) && !(design(en, d).add(0x16).readS16() === 1 && design(en, d).add(0x3c).readFloat() > 0)) d++;
+  const pos = (k) => [T.Bolygok.add(k * 0x188 + 0x18).readFloat(), T.Bolygok.add(k * 0x188 + 0x1c).readFloat()];
+  let best = null;
+  for (let p = 1; p <= np; p++) {
+    if (T.Bolygok.add(p * 0x188 + 0xd8 + 2 * en).readS16() !== 0) continue;
+    for (let h = 1; h <= np; h++) {
+      if (owner(h) !== en) continue;
+      const [px, py] = pos(p), [hx, hy] = pos(h), dd = Math.hypot(px - hx, py - hy);
+      if (best === null || dd < best.d) best = { p, h, d: dd };
+    }
+  }
+  let made = null;
+  if (d <= designs(en) && best !== null) {
+    design(en, d).add(0x6a).writeU8(2);
+    const [px, py] = pos(best.p), [hx, hy] = pos(best.h), t = Math.max(0, 1 - 10 / best.d);
+    const f = flottaNew(A.AlapNev.readPointer(), en, 0, hx + (px - hx) * t, hy + (py - hy) * t, 0);
+    if (f > 0) hajoNew(f, d);
+    made = { fleet: f, design: d, planet: best.p, from: best.h, dist: best.d };
+  }
+  Interceptor.replace(va(0x60c020), new NativeCallback(() => {}, 'void', [], 'mscdecl'));
+  return { paused: 1, event: 1, made, mouse };
+}
+
 // --deaths: empires dying in the first days (re/rules/diplomacy.md §3.2, §12: FRISSIT_Viszony's death check and
 // BirodalomMeghal 0x53b630). Three dead empires with a race are revived as AI empires (BirodalomEl 1,
 // BirodalomMIzik 1) without planets, their countdowns (BirodalomVisszaSzamlalas 0xBAEB68) set:
@@ -856,7 +896,9 @@ function soStubs(outs) {
     const g = new X86Writer(code, { pc: soGet });
     outs.forEach((o, i) => {
       g.putMovRegRegOffsetPtr('ecx', 'esp', 8 + 8 * i);
-      o.forEach((v, j) => g.putMovRegOffsetPtrU32('ecx', 4 * j, v >>> 0));
+      // {u8: v}: a one-byte field (mov byte ptr [ecx], v), so the stub doesn't write over its neighbours.
+      if (!Array.isArray(o)) g.putBytes([0xc6, 0x01, o.u8 & 0xff]);
+      else o.forEach((v, j) => g.putMovRegOffsetPtrU32('ecx', 4 * j, v >>> 0));
       if (i + 1 < outs.length) {
         g.putMovRegRegOffsetPtr('ecx', 'esp', 0xc + 8 * i);
         g.putCmpRegI32('ecx', 0); g.putJccNearLabel('je', 'done', 'no-hint');
@@ -1082,6 +1124,107 @@ function stageInfo() {
     emit({ k: 'iorder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
   }
 }
+// --design N: every --design-every ticks (from tick 3), N random design messages go through the exe's own
+// MULTIGET_Design (0x4b4d60, re/rules/design-orders.md) at IdoNapValtozott, before that tick's save, with the
+// starmap orders' stubs (0x33's flag is a byte field) and their set-up (the human's stations and two fleets): 0x33
+// stores an issuer's design back (mode 3: in place or, with flag 1, as a new upgrade copy; else as a new design) with
+// its price and build time now and then changed; 0x34 sells (mode 2, now and then another mode) a design's units of
+// one holder (0 = all of them, a fleet, or a planet −p); 0x35 refits them to the design's upgrade target. Mostly the
+// human's, now and then an AI's. Each is reported as {k: 'dorder', before: k, libc, type, vals} (vals: the issuer,
+// then the dwords; 0x33's record as 33 dwords and its flag as one).
+const DO = {
+  Multiget: va(0x4b4d60),
+  next: [0x4b4d7a, 0x4b5740].map(va),
+  get: [0x4b4dd4, 0x4b5328, 0x4b565e].map(va),
+};
+const multigetDesign = nf(DO.Multiget, 'void', []);
+function doRun(type, outs) {
+  soStubs(outs);
+  soNext.add(0x200).writeS32(type);
+  const undoNext = soPatch(DO.next, soNext), undoGet = soPatch(DO.get, soGet);
+  try { multigetDesign(); } finally { undoNext(); undoGet(); }
+}
+// The designs of e that hold units, by holder: {d: [holders]} over ships, vehicles and (as 0) stations.
+function doHeld(e) {
+  const out = {}, add = (d, h) => { (out[d] = out[d] || []).push(h); };
+  const hs = SO.Hajok.readPointer(), fl = F.Flottak.readPointer();
+  for (let i = 1; i <= SO.HanyHajo.readS32(); i++) {
+    const r = hs.add(6 * i), d = r.add(2).readS16(), f = r.readS16();
+    if (d !== 0x7fff && f > 0 && fl.add(f * 0x80 + 0x15).readU8() === e) add(d, f);
+  }
+  for (let i = 1; i <= SO.HanyTank.readS32(); i++) {
+    const r = SO.Tankok.add(8 * i), d = r.add(2).readS16(), h = r.readS16();
+    if (d === 0x7fff) continue;
+    const o = h > 0 ? fl.add(h * 0x80 + 0x15).readU8() : owner(-h);
+    if (o === e) add(d, h);
+  }
+  return out;
+}
+function doMake() {
+  const en = T.EN.readS32();
+  const e = srnd(6) ? en : 1 + srnd(8);
+  const n = designs(e);
+  if (n < 1) return null;
+  const held = doHeld(e), withUnits = Object.keys(held).map(Number).filter((d) => d >= 1 && d <= n);
+  const live = [];
+  for (let d = 1; d <= n; d++) if (design(e, d).add(0x16).readS16() >= 0) live.push(d);
+  const upg = live.filter((d) => design(e, d).add(0x1c).readS32() > 0);
+  const pick = () => (withUnits.length && srnd(4) ? spick(withUnits) : (live.length ? spick(live) : 1 + srnd(n)));
+  const r = srnd(100);
+  // The upgrade targets of designs with units: an in-place edit there refits those units (TervAzOsszesHajotAtalalitja).
+  // Edited in place at about the old design's price, they are affordable.
+  const pairs = withUnits.map((x) => [x, design(e, x).add(0x1c).readS32()]).filter(([, t]) => t >= 1 && t <= n);
+  if (r < 15 && pairs.length) {
+    const [x, d] = spick(pairs), rec = new Uint8Array(design(e, d).readByteArray(0x84)), dv = new DataView(rec.buffer);
+    dv.setInt32(0x24, Math.floor(design(e, x).add(0x24).readS32() * (30 + srnd(90)) / 100), true);
+    const words = [];
+    for (let i = 0; i < 33; i++) words.push(dv.getInt32(4 * i, true));
+    return [0x33, [[e], [3], [d], words, { u8: 0 }]];
+  }
+  if (r < 40) {
+    const d = pick(), rec = new Uint8Array(design(e, d).readByteArray(0x84)), dv = new DataView(rec.buffer);
+    if (srnd(3)) dv.setInt32(0x24, Math.max(0, Math.floor(dv.getInt32(0x24, true) * (50 + srnd(250)) / 100) + srnd(3) * srnd(5000)), true);
+    if (srnd(3) === 0) dv.setInt32(0x20, Math.max(1, Math.floor(dv.getInt32(0x20, true) * (50 + srnd(150)) / 100)), true);
+    const words = [];
+    for (let i = 0; i < 33; i++) words.push(dv.getInt32(4 * i, true));
+    const mode = srnd(5) ? 3 : spick([0, 1, 2]);
+    return [0x33, [[e], [mode], [d], words, { u8: srnd(3) === 0 ? 1 : 0 }]];
+  }
+  if (r < 75) {
+    const d = pick(), hs = held[d] || [];
+    const P = soState().planets;
+    const h = srnd(4) === 0 || !hs.length ? (srnd(3) || !P.length ? 0 : -spick(P)) : spick(hs);
+    return [0x34, [[e], [d], [srnd(6) ? 2 : spick([0, 1, 3])], [h]]];
+  }
+  const d = upg.length && srnd(4) ? spick(upg) : pick(), hs = held[d] || [];
+  return [0x35, [[e], [d], [hs.length && srnd(5) ? spick(hs) : 0]]];
+}
+// --design at tick 2 (the replay test has no source for fresh battlefield units' bytes at tick 1): the staged fleets' vehicles go to the human's first planet as garrisons (planet holders −p)
+// through the exe's own MULTIGET_Starmap 0x1c, reported as starmap orders ({k: 'sorder'}).
+function doGarrisons() {
+  const st = soState();
+  if (!st.planets.length) return;
+  const libc = (cfg.seed * 7919 + 17 + A.Ido2.readS32()) >>> 0;
+  srand(libc);
+  for (const f of st.mine) {
+    for (const [d, i] of soHeld(f)) {
+      if (i !== 0) continue;
+      const o = [0x1c, [[st.en], [f], [-st.planets[0]], [d], [0], [2]]];
+      soRun(o[0], o[1]);
+      emit({ k: 'sorder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
+    }
+  }
+}
+function stageDesign() {
+  const libc = (cfg.seed * 7919 + 59 + A.Ido2.readS32()) >>> 0;
+  srand(libc);
+  for (let i = 0; i < cfg.design; i++) {
+    const o = doMake();
+    if (!o) continue;
+    doRun(o[0], o[1]);
+    emit({ k: 'dorder', before: k, libc, type: o[0], vals: [].concat(...o[1].map((x) => (Array.isArray(x) ? x : [x.u8]))) });
+  }
+}
 function stageOrdersSetup() {
   soSeed = cfg.seed | 0;
   va(0xb77230).writeU8(1);
@@ -1236,10 +1379,12 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (cfg.wormholes) emit({ k: 'wormholes', stage: stageWormholes() });
       if (cfg.battles) emit({ k: 'battles', stage: stageBattles() });
       if (cfg.deaths) emit({ k: 'deaths', stage: stageDeaths() });
-      if (cfg.orders) emit({ k: 'orders', stage: stageOrdersSetup() });
+      if (cfg.tutorialSighting) emit({ k: 'tutorial', stage: stageTutorial() });
+      if (cfg.orders || cfg.design) emit({ k: 'orders', stage: stageOrdersSetup() });
       if (cfg.colony) emit({ k: 'colony', stage: stageColonySetup() });
       if (cfg.research) { soSeed = (cfg.seed | 0) ^ 0x5eed; va(0xb77230).writeU8(1); }
       if (cfg.info) { soSeed = (cfg.seed | 0) ^ 0x1f0; va(0xb77230).writeU8(1); }
+      if (cfg.design) soSeed = (cfg.seed | 0) ^ 0xd35;
       if (cfg.stage) {
         const st = stageTrade();
         loadSave(cfg.preSlot, Memory.allocAnsiString(cfg.name + ' pre'), 2);
@@ -1267,6 +1412,8 @@ Interceptor.attach(A.IdoNapValtozott, {
     if (cfg.colony && k >= 1 && k % cfg.ordersEvery === 0) stageColony();
     if (cfg.research && k >= 1 && k % cfg.researchEvery === 0) stageResearch();
     if (cfg.info && k >= 1 && k % cfg.infoEvery === 0) stageInfo();
+    if (cfg.design && k === 2) doGarrisons();
+    if (cfg.design && k >= 3 && k % cfg.designEvery === 0) stageDesign();
     save('tick');
     srand((cfg.seed + A.Ido2.readS32()) >>> 0);
     if (k > cfg.ticks) { phase = 3; emit({ k: 'done' }); flush(); }

@@ -147,7 +147,7 @@ ground war's end (`GroundWarFinished(p, s, false)` 0x47c5d0 posts 11/12 there) a
 result; the routing reports them (`BattleEvent::SpaceRealTime`, `GroundRealTime`) and leaves them. The espionage
 posts are §3.3. The UI side
 (§2.3) isn't the sim's either: no recording shows the line draining. The story
-scripts call `ScrollUzenet` directly (unported scripts, U24). `LoadSave` posts one message after a load (in the
+scripts call `ScrollUzenet` directly (§3.4). `LoadSave` posts one message after a load (in the
 save before the replay starts).
 
 ### 3.3 Espionage: the spy reports and the victim's messages
@@ -214,7 +214,39 @@ The mission's victim, when it is `EN` (`t == EN`, after the effect; `ScrollUzene
 | 141 (0x8d) | 11 kidnap | `KemCsaladtag_Nev[x]` (0xBB6968, `char *[6]`, unsaved, localised: text group 0x11/3, 10..14, set by 0x4ca65a) |
 | 142 (0x8e) | 12 mass unrest | "" |
 
-And 130 (0x82, `""`, 0, 0, 0x585749): `EN`'s spy got home (§3.4).
+And 130 (0x82, `""`, 0, 0, 0x585749): `EN`'s spy got home (`espionage.md` §3.4).
+
+### 3.4 The story scripts' lines
+Nine calls of `ScrollUzenet(text, 1, imp, intr)` (exe 0x556b50) in the scripts, found as every reference to it
+(Ghidra `FindRefs`; the other three callers are `ScrollUzenetId` 0x556fcb, `ScrollHibaUzenet` 0x5572eb and `LoadSave`
+0x5440aa). Each posts for whoever plays `EN` (the scripts run for the human); id 1, interrupt 0. The text is
+`_s(5, n)` (exe 0x542ce0: the keyed table 5, `s_story.txt` in the game's language, binary search on `5 << 16 | n`;
+**a missing key gives ""**, the empty string at 0x837984), formatted where stated with `stringhelper::format`
+(exe 0x6b7b40, ELF 0x897a70: `vsnprintf` into a string grown until it fits, i.e. plain C `printf`) or `sprintf`
+(0x8353e4). The texts use only `%s` and `%d` (12 and 5 times in `s_story.txt`, every language).
+
+| Call | Story (script) | Text | Arguments | imp |
+|---|---|---|---|---|
+| 0x5cc200 | 230 (`st_BRnd`, `brnd.md`) | `_s(5, 2302)` | | 1 |
+| 0x5d0961 | 51 (`st_Begin`, `begin.md`) | `_s(5, 511)` (0x1ff; the story design's key) | | 1 |
+| 0x5d2c40 | 19 (`st_Begin`) sabotage | `sprintf(_s(5, 191), tech name, planet name)`, the tech `EpuletekLeiro[kind].+0` | `%s %s` | 0 |
+| 0x5da20c | 814 (`st_Elem`) | `format(_s(5, 8140), x)`, `x` = `rnd(5, 100, 200) · 100` | `%d` | 0 |
+| 0x5dd71d | 824 (`st_Elem`) | `format(_s(5, 8242), BirodalomNev[v(5208)], planet name)` | `%s %s` | 0 |
+| 0x5df5da | 837 (`st_Elem`) | `_s(5, 8371)` | | 1 |
+| 0x5e180a | 850 (`st_Elem`) | `format(_s(5, 8501), kept, paid)` | `%d %d` | 0 |
+| 0x5e4dac | 860 (`st_Elem`) | `format(_s(5, 8601), kept, paid)` | `%d %d` | 0 |
+| 0x5e82eb | 308 (`st_Fable`, `fable.md`) | `_s(5, 3081)` | | 0 |
+
+`s_story.txt` has no key 8140 (that number is `gameinfo.txt`'s), so 814's line is always `""`: §2.2 puts it in the
+history and, with the line empty, drops it as a duplicate of the empty line. The names are the save's bytes
+(`Talalmanyok[t]`, `Bolygok[p]`) and the unsaved `BirodalomNev` (`Game::empire_names`). While a tutorial runs nothing
+is posted (§2.2).
+
+Port: the scripts emit `StoryEvent::ScrollText { text, important }`, `ScrollSabotage`, `ScrollNumber(s)` and
+`ScrollEmpirePlanet`; `messages::story_line` renders them (`Texts::with_story`, `printf`) and `Game::messages_for`
+posts them with id 1 in event order. Verified: 574 lines of the campaign recordings exact (all but 308's, which no
+recording reaches; `traces/2026-10-22-story-ticker.md`). `Game`'s own story tick runs only the scenario's scripts so
+far, so a save replay doesn't reach these lines yet.
 
 ## 4. The inbox expiry (`FRISSIT_Messages`)
 `Uzenetek` 0xDA6620 (100 × 0x88: `+0` block id, `+4` u8 kept, `+8` i32 expiry `Ido`), `UzenetekRandomKitol`

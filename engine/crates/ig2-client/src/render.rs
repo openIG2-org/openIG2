@@ -288,6 +288,8 @@ pub struct Renderer {
     pipe3d: crate::render3d::Pipe3d,
     /// The colour format the pipelines draw into.
     format: wgpu::TextureFormat,
+    /// The video frames' textures (one level, rewritten in place each frame), by texture id.
+    videos: Vec<(TexId, wgpu::Texture)>,
 }
 
 impl Renderer {
@@ -438,6 +440,7 @@ impl Renderer {
             instances: None,
             pipe3d,
             format,
+            videos: Vec::new(),
         }
     }
 
@@ -501,6 +504,45 @@ impl Renderer {
             })
         };
         [group(&view, &self.sampler), group(&view, &self.sampler_rep), group(&raw, &self.sampler_raw), group(&raw, &self.sampler_rep)]
+    }
+
+    /// A texture for a video's frames (re/screens/video.md §6): one level, bilinear like the remaster's video
+    /// texture, rewritten by [`Renderer::write_video`]; draw it with [`Blend::GammaAlpha`] (the shader's output goes
+    /// to the frame as it is).
+    pub fn video_texture(&mut self, width: u32, height: u32) -> TexId {
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("video"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+        });
+        let [a, b, c, e] = self.groups(&tex);
+        self.textures.push(a);
+        self.textures_rep.push(b);
+        self.textures_raw.push(c);
+        self.textures_raw_rep.push(e);
+        let id = TexId(self.textures.len() - 1);
+        self.videos.push((id, tex));
+        id
+    }
+
+    /// Writes a frame into a [`Renderer::video_texture`] of the same size.
+    pub fn write_video(&mut self, id: TexId, img: &Image) {
+        let Some((_, tex)) = self.videos.iter().find(|(t, _)| *t == id) else { return };
+        let size = tex.size();
+        if (size.width, size.height) != (img.width, img.height) {
+            return;
+        }
+        self.queue.write_texture(
+            tex.as_image_copy(),
+            &img.rgba,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(img.width * 4), rows_per_image: Some(img.height) },
+            size,
+        );
     }
 
     /// Upload world-space triangles the renderer keeps until [`Renderer::clear_meshes`].
@@ -884,6 +926,93 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     Ok(())
 }
 
+/// `--snapshot --screen design`: the design screen on the save's chosen design after `--ui-frames` 10 ms frames,
+/// open (the hull slid in and turning), the pointer resting at `--mouse X,Y` (a hot-spot's tooltip).
+fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    let state = &world.game.state;
+    let techs = state.tech();
+    let mut s = crate::design::Design::open(state, true);
+    s.hold_open();
+    if let Some(m) = o.mouse {
+        s.tip.mouse = m;
+    }
+    let tips = crate::design::tips(&hud.texts);
+    let mut scene = crate::design_scene::DesignScene::new(r, &l.install);
+    for _ in 0..o.ui_frames.max(1) {
+        s.step(state, &l.tables);
+        s.tooltip(state, &techs, &l.tables, &scene.mask, &tips, s.frames as f64 * 10.0);
+    }
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let t = world.curr.tick as f32 * 0.05;
+    let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
+    let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+    scene.draw(&mut frame, r, &l.install, &l.tables, &s, state, &techs, en, size);
+    hud.draw_design(&mut frame, &s, state, &techs, &l.tables, &tips, size, t);
+    hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
+    let rgba = r.draw_to_image(&frame, o.size, t);
+    crate::assets::write_snapshot(out, o, &rgba)?;
+    println!("{}: design {} (rank {} of {}) model {} zoom {}", out.display(), s.current(), s.pointer, s.count(), s.loaded, s.add_zoom);
+    Ok(())
+}
+
+/// `--snapshot --screen design --script S`: the design screen opened animated (`Design_Belep` with
+/// `KELLKINYITASDEFAULT`), run tick by tick with the script's input (re/screens/sound.md §3): the pointer, the left
+/// button as `Design_Main`'s press, the right one turning the hull, up and down (`DesignKeyboardHandler`), Esc
+/// (`Design_Kilep`); grab t is drawn after t ticks. Viewing sends no orders.
+fn design_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    use crate::design::Key;
+    use crate::script::Input;
+    let state = &world.game.state;
+    let techs = state.tech();
+    let mut s = crate::design::Design::open(state, true);
+    s.tip.moved([320.0, 240.0]);
+    let tips = crate::design::tips(&hud.texts);
+    let mut scene = crate::design_scene::DesignScene::new(r, &l.install);
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let t = world.curr.tick as f32 * 0.05;
+    let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
+    let mut heard: Vec<(Option<u32>, crate::audio::SoundId)> = s.sounds.drain(..).map(|id| (None, id)).collect();
+    for tick in 0..=script.end() {
+        if tick > 0 {
+            s.step(state, &l.tables);
+            s.tooltip(state, &techs, &l.tables, &scene.mask, &tips, s.frames as f64 * 10.0);
+            heard.extend(s.sounds.drain(..).map(|id| (Some(tick - 1), id)));
+        }
+        if script.grabs.contains(&tick) {
+            let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+            scene.draw(&mut frame, r, &l.install, &l.tables, &s, state, &techs, en, size);
+            hud.draw_design(&mut frame, &s, state, &techs, &l.tables, &tips, size, t);
+            hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
+            let rgba = r.draw_to_image(&frame, o.size, t);
+            let path = crate::script::grab_path(out, tick);
+            crate::assets::write_snapshot(&path, o, &rgba)?;
+            println!("{}: t {tick} | design {} rank {} first {} | desframe {} open {} model {} zoom {}", path.display(), s.current(), s.pointer, s.first, s.frame, s.opened, s.loaded, s.add_zoom);
+        }
+        for e in script.at(tick) {
+            match &e.input {
+                Input::Move(at) => s.moved(*at),
+                Input::Button { button: 1, down: true, at } => s.press(state, &techs, &l.tables, &scene.mask, *at),
+                Input::Button { button: 3, down: true, at } => s.press_right(*at),
+                Input::Button { down: false, .. } => s.release(),
+                Input::Key { name, down: true } => match name.as_str() {
+                    "up" => s.key(Key::Up),
+                    "down" => s.key(Key::Down),
+                    // Esc goes to the options screen at once (no closing, no sound); F2 asks for the starmap.
+                    "f2" => {
+                        s.leave();
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            heard.extend(s.sounds.drain(..).map(|id| (Some(tick), id)));
+        }
+    }
+    let path = crate::script::write_sounds(out, &heard)?;
+    println!("{}: {} sounds", path.display(), heard.len());
+    Ok(())
+}
+
 /// `--snapshot --screen research --script S`: the research screen opened animated (as `Research_Belep` with
 /// `KELLKINYITASDEFAULT`), run tick by tick with the script's input (re/screens/sound.md §3): events at t go in before
 /// tick t + 1 (the pointer, the left button as `Research_Main`'s press, `ResearchKeyboardHandler`'s keys, Esc
@@ -983,6 +1112,9 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
 /// `--snapshot`: run the requested ticks headlessly and write one frame as PNG.
 /// Render a snapshot of the window `o.size`: the screens draw in its band ([`crate::kit::Layout::band`]).
 pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
+    if let Some(name) = o.screen.as_deref().and_then(|s| s.strip_prefix("video:")) {
+        return crate::video::playback::snapshot(&crate::Options { window: o.size, ..o.clone() }, name, out);
+    }
     let [_, _, w, h] = crate::kit::Layout::new(o.size.0 as i32, o.size.1 as i32).band();
     let o = crate::Options { size: (w as u32, h as u32), window: o.size, ..o.clone() };
     snapshot_band(&o, out)
@@ -995,6 +1127,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     if o.screen.as_deref() == Some("main") {
         return crate::mainscr_scene::snapshot(o, out);
+    }
+    if o.screen.as_deref() == Some("options") {
+        return crate::options::snapshot(o, out);
     }
     let l = crate::load(o)?;
     let mut world = crate::world::World::load(&l.save, &l.rules, &l.tech_defaults, &l.volatile);
@@ -1054,7 +1189,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         hud.scroller.step(&mut || world.pop_message());
     }
     if o.screen.as_deref() == Some("spacewar") {
-        return crate::spacewar_screen::snapshot(o, out, &l, &world, &mut r, &mut hud);
+        return crate::spacewar_screen::snapshot(o, out, &l, &mut world, &mut r, &mut hud);
     }
     if o.screen.as_deref() == Some("spy") {
         return crate::spy_screen::snapshot(o, out, &l, &world, &mut r, &mut hud);
@@ -1062,6 +1197,13 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if let (Some("research"), Some(path)) = (o.screen.as_deref(), &o.script) {
         let script = crate::script::Script::load(path)?;
         return research_sequence(o, out, &script, &l, &mut world, &mut r, &mut hud);
+    }
+    if let (Some("design"), Some(path)) = (o.screen.as_deref(), &o.script) {
+        let script = crate::script::Script::load(path)?;
+        return design_sequence(o, out, &script, &l, &world, &mut r, &mut hud);
+    }
+    if o.screen.as_deref() == Some("design") {
+        return design_snapshot(o, out, &l, &world, &mut r, &mut hud);
     }
     if o.screen.as_deref() == Some("research") {
         return research_snapshot(o, out, &l, &world, &mut r, &mut hud);

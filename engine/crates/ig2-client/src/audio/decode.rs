@@ -19,7 +19,7 @@ fn frames_of(packet: &[Vec<i16>]) -> impl Iterator<Item = [f32; 2]> + '_ {
 
 /// Linear resampler from `from` Hz to `to` Hz over a stream of frames.
 #[derive(Debug, Clone)]
-struct Resampler {
+pub struct Resampler {
     step: f64,
     /// Position of the next output frame, in input frames past `prev`.
     pos: f64,
@@ -27,12 +27,12 @@ struct Resampler {
 }
 
 impl Resampler {
-    fn new(from: u32, to: u32) -> Self {
+    pub fn new(from: u32, to: u32) -> Self {
         Self { step: from as f64 / to as f64, pos: 0.0, prev: [0.0; 2] }
     }
 
     /// Feeds one input frame; pushes the output frames that fall between the previous one and this.
-    fn push(&mut self, f: [f32; 2], out: &mut Vec<[f32; 2]>) {
+    pub fn push(&mut self, f: [f32; 2], out: &mut Vec<[f32; 2]>) {
         while self.pos < 1.0 {
             let t = self.pos as f32;
             out.push([self.prev[0] + (f[0] - self.prev[0]) * t, self.prev[1] + (f[1] - self.prev[1]) * t]);

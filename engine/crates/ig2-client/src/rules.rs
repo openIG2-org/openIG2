@@ -83,7 +83,10 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
         pod_slot_types: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.pod_type).collect()).collect()).collect(),
         tank_speeds: r.tank_speeds.clone(),
     };
-    let messages = read("dataraw/text/uzenet.txt").map(|raw| Texts::parse(&raw)).unwrap_or_default();
+    let story = |p: &str| read(p).unwrap_or_default();
+    let messages = read("dataraw/text/uzenet.txt")
+        .map(|raw| Texts::parse(&raw).with_story(&story("dataraw/text/s_story.txt"), &story("dataraw/text/txt02.txt"), inst.lang()))
+        .unwrap_or_default();
     let rules = GameRules {
         side,
         placement: PlacementRules { terrains, footprints: r.building_footprints.clone() },

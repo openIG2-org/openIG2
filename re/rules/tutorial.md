@@ -251,7 +251,7 @@ Event ids are hexadecimal below (as in the code).
 
 | id | name | fired by (ELF function: condition) |
 |---|---|---|
-| 0x01 | exploreaplanet | `FRISSIT_Starmap`: a radar sweep explores a planet for the first time while Active/Paused and event==1; **also renames that planet** (`strcpy(planet name, GetString(2,4))`) |
+| 0x01 | exploreaplanet | `FRISSIT_Starmap`: a radar sweep explores a planet for the first time while Active/Paused and event==1; **also renames that planet** (`strcpy(planet name, GetString(2,4,6))`; see below) |
 | 0x02 | colonizeaplanet | `TutorialCheckEvents` polling |
 | 0x03 / 0x04 | renameplanet / renamefleet | `DoKeyboard` (AktKep 2, `IOAzonosito` 0x15 / 0x16, Enter in a rename box) |
 | 0x05 | splitfleet | `TransferOff` when `Tutorial_Split_Ok` (set by `Starmap_Main` while event 5 is awaited and a transfer icon 0x43..0x52 is clicked) |
@@ -290,6 +290,16 @@ Event ids are hexadecimal below (as in the code).
 | 0x29 | buildfoodfactory | `EpuletNew` type 4 |
 | 0x2a | exchangedipl | `FeldolgozValasz` (raw pattern 6,1,..,0x12,3,0xf: meaning UNCERTAIN) |
 | 0x2b | sendsattoplanet | `Starmap_Main` rop icons 5 / 6 (`Multi_Send(0x18, ...)`) |
+
+The rename (exe 0x595a77..0x595ae6, inside `FRISSIT_Starmap`'s radar pass, `fleet-movement.md` §6): when a fleet of
+any owner `o` (merchants included) sees planet `p` with `visible[o] == 0` and sets it to 1, and `(TutorialActive ||
+TutorialPaused) && TutorialEvent == 1`: `GetString(2, 4, 6)` (exe 0x4c9a80: `Stringek[(2·11 + 4)·0x34 + 6]`, the UI
+table's `2 4 6` line, "New Planet" in English) is copied over the planet's name (`Bolygok[p] +0`, `strcpy`), then
+`TutorialCheckEvent(1)` (0x60bdf0): `TutorialEvent := 0` and `TutorialUnPause`. The flags are read again at every
+sighting, so only the pass's first one renames. Port: the pass emits `StarmapEvent::TutorialPlanetSighted` at every
+sighting while the tick began with the event awaited; `Game` carries out the first (`Game::tutorial_sighting`: the
+name, `TutorialEvent` and the pause flags in the state; the driver's `Tutorial::check_event(1)` does the rest).
+Verified byte-exact in a staged save replay (`traces/2026-10-22-story-ticker.md`).
 
 `EpuletNew` fires only if the planet owner is EN. Building type numbers are the `param_2` argument of `EpuletNew`.
 

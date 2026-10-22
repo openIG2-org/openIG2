@@ -2,7 +2,7 @@
 //! as its `MULTIGET_*` handler applies it.
 
 use ig2_sim::diplomacy::{Answer, Letter, Message, ScreenOp};
-use ig2_sim::game::{ColonyOrder, Game, GameEvent, InfoOrder, ResearchOrder, StarmapOrder};
+use ig2_sim::game::{ColonyOrder, DesignOrder, Game, GameEvent, InfoOrder, ResearchOrder, StarmapOrder};
 use ig2_sim::spacebattle::Order;
 use ig2_sim::spy;
 use ig2_sim::trade::{Delivery, DELIVERY};
@@ -113,6 +113,24 @@ impl From<BattleOrder> for Order {
             BattleOrder::FighterStance { side, value } => Order::FighterStance { side: side as usize, value },
             BattleOrder::DirectFire { unit, target, mount } => Order::DirectFire { unit: u(unit), target: u(target), mount: u(mount) },
             BattleOrder::Weapons { unit, keep, set } => Order::Weapons { unit: u(unit), keep, set },
+        }
+    }
+}
+
+impl From<Order> for BattleOrder {
+    fn from(o: Order) -> Self {
+        let u = |x: usize| x as u16;
+        match o {
+            Order::Move { unit, x, y, z } => BattleOrder::Move { unit: u(unit), x: x.to_bits(), y: y.to_bits(), z: z.to_bits() },
+            Order::Attack { unit, target } => BattleOrder::Attack { unit: u(unit), target: u(target) },
+            Order::Retreat => BattleOrder::Retreat,
+            Order::AttackGun { unit, gun } => BattleOrder::AttackGun { unit: u(unit), gun: u(gun) },
+            Order::GunTarget { gun, unit } => BattleOrder::GunTarget { gun: u(gun), unit: u(unit) },
+            Order::ArmAll => BattleOrder::ArmAll,
+            Order::Explode { unit } => BattleOrder::Explode { unit: u(unit) },
+            Order::FighterStance { side, value } => BattleOrder::FighterStance { side: side as u8, value },
+            Order::DirectFire { unit, target, mount } => BattleOrder::DirectFire { unit: u(unit), target: u(target), mount: u(mount) },
+            Order::Weapons { unit, keep, set } => BattleOrder::Weapons { unit: u(unit), keep, set },
         }
     }
 }
@@ -257,6 +275,16 @@ pub enum Command {
     PlayerAway,
     /// Ours: the issuer's player rejoined; on the running space battle's screen again.
     PlayerBack,
+    /// Packets 0x33..0x35, `MULTIGET_Design` exe 0x4b4d60: a design stored, a design's units sold or refitted
+    /// (`ig2_sim::game::DesignOrder`) as its message type and dwords.
+    Design { kind: i32, values: Vec<i32> },
+}
+
+impl From<DesignOrder> for Command {
+    fn from(o: DesignOrder) -> Self {
+        let (kind, values) = o.to_message();
+        Command::Design { kind, values }
+    }
 }
 
 impl From<InfoOrder> for Command {
@@ -333,6 +361,11 @@ impl Command {
             }
             Command::PlayerAway => game.player_away(issuer),
             Command::PlayerBack => game.player_back(issuer),
+            Command::Design { kind, values } => {
+                if let Some(o) = DesignOrder::from_message(*kind, values) {
+                    game.design_order(issuer, o);
+                }
+            }
         }
     }
 }
@@ -363,6 +396,10 @@ mod tests {
         let back: Command = crate::wire::from_slice(&crate::wire::to_vec(&Command::from(o)).unwrap()).unwrap();
         let Command::Colony { kind, values } = back else { panic!() };
         assert_eq!(ColonyOrder::from_message(kind, &values), Some(o));
+        let o = DesignOrder::Sell { design: 9, mode: 2, holder: -17 };
+        let back: Command = crate::wire::from_slice(&crate::wire::to_vec(&Command::from(o)).unwrap()).unwrap();
+        let Command::Design { kind, values } = back else { panic!() };
+        assert_eq!(DesignOrder::from_message(kind, &values), Some(o));
         // A block that isn't 64 bytes is refused.
         assert!(StarmapCmd::Queue { planet: 1, block: vec![0; 3] }.order().is_none());
     }

@@ -743,7 +743,7 @@ fn story_837(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             }
         }
         if own.wrapping_mul(3) > seen.wrapping_mul(2) {
-            w.event(StoryEvent::ScrollText(8371));
+            w.event(StoryEvent::ScrollText { text: 8371, important: true });
             let f = s.f_new_ex("", en, F, 0.0, 1, 0, w);
             let b = s.last_fn[crate::story::last_fn::B];
             w.event(StoryEvent::MoveFleet { fleet: f, kind: 1, mode: 1, x: b as f32, y: 0.0 });

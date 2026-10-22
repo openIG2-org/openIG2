@@ -259,7 +259,7 @@ impl Game<'_> {
         let human = fleets.iter().any(|&f| self.fleet_owner(f) == en) || (bp > 0 && self.planet_owner(bp) == en);
         let Route::Simulate { lopsided } = spacewar::route(&input) else {
             self.events.push(GameEvent::Battle(BattleEvent::SpaceRealTime { attacker: f1, defender: f2, planet: bp }));
-            if g.canonical {
+            if g.canonical || self.sp_battles.live {
                 self.space_real_time(&fleets, bp);
             }
             return;

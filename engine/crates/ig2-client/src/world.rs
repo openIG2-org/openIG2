@@ -76,7 +76,12 @@ pub struct SavedView {
 impl SavedView {
     /// From the save's chunks; `LoadSave` resets NaN or |x|, |y| > 100000 to 0 and clamps the zoom to 580.
     pub fn read(save: &SaveGame) -> Self {
-        let f = |n: &str| save.chunk(n).and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        Self::from_chunks(|n| save.chunk(n).map(<[u8]>::to_vec))
+    }
+
+    /// From a chunk lookup (an original save's, or a state's own `SaveState::chunks`).
+    pub fn from_chunks(chunk: impl Fn(&str) -> Option<Vec<u8>>) -> Self {
+        let f = |n: &str| chunk(n).and_then(|b| b.get(..4).map(|b| f32::from_le_bytes(b.try_into().unwrap()))).unwrap_or(0.0);
         let sane = |v: f32| if v.is_nan() || v.abs() > 100000.0 { 0.0 } else { v };
         Self {
             x: sane(f("StarmapXStart")),
@@ -260,6 +265,10 @@ pub struct World<'r> {
     pub local_lines: Vec<Vec<u8>>,
     /// The ids of the sim's messages the line took (`ScrollUzenetek+0x38`), for their voices (`FRISSIT_Scroll2`).
     pub popped: Vec<i32>,
+    /// What the real-time battles did since the screen last looked (start, end).
+    pub realtime: Vec<ig2_sim::game::RealTimeEvent>,
+    /// The videos the sim asked for since the window last took them (`st_ShowAnim`, the game's end).
+    pub videos: Vec<crate::video::Request>,
 }
 
 impl<'r> World<'r> {
@@ -268,12 +277,36 @@ impl<'r> World<'r> {
         let mut state = SaveState::from_save(save, tech_defaults);
         state.set_volatile(volatile);
         let mut game = Game::new(state, rules);
+        // The client shows single player's real-time battles (re/screens/spacewar.md).
+        game.sp_battles.live = true;
         // `LoadSave` ends with `FlottakUjraSzamol` (fleet-movement.md §4.3).
         game.saved();
-        let view = SavedView::read(save);
+        Self::from_game(game, SavedView::read(save))
+    }
+
+    /// A slot of the Options screen (re/screens/options.md §5): an original `save<n>.sav` as [`World::load`] loads
+    /// it, or the remake's own `save<n>.ig2s` (ADR 0007 §4: the snapshot restored as it was saved).
+    pub fn load_slot(path: &std::path::Path, rules: &'r GameRules, tech_defaults: &[u8], volatile: &[(u32, Vec<u8>)]) -> Result<Self, String> {
+        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        if bytes.starts_with(ig2_net::snapshot::MAGIC) {
+            let (snap, _) = ig2_net::snapshot::Snapshot::from_file(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (game, _) = snap.restore(rules).map_err(|e| format!("{}: {e}", path.display()))?;
+            let chunks = game.state.chunks();
+            return Ok(Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned())));
+        }
+        let save = SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(Self::load(&save, rules, tech_defaults, volatile))
+    }
+
+    /// The state as the remake's save file (`.ig2s`) holds it.
+    pub fn save_file(&self) -> Vec<u8> {
+        ig2_net::snapshot::Snapshot::capture(&self.game, &[], 0, 0).to_file(0, false)
+    }
+
+    fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new() }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new() }
     }
 
     /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
@@ -292,6 +325,7 @@ impl<'r> World<'r> {
         for c in std::mem::take(&mut self.outbox) {
             c.apply(&mut self.game, human);
         }
+        self.realtime.extend(self.game.events[from..].iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.order_events.extend(self.game.events[from..].iter().filter_map(|e| match e {
             GameEvent::Order(o) => Some(*o),
             _ => None,
@@ -360,11 +394,14 @@ impl<'r> World<'r> {
     pub fn tick(&mut self) {
         // The client keeps no event history yet (the UI that shows them comes later).
         let events = self.game.take_events();
+        self.videos.extend(events.iter().filter_map(crate::video::Request::of));
         for f in events.iter().filter_map(GameEvent::emptied_fleet) {
             self.game.fleet_emptied(f);
         }
         self.game.advance_clock();
         self.game.run_tick();
+        // At once: a battle starts paused, so no next tick would hand them over.
+        self.realtime.extend(self.game.events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         let mut next = Snapshot::read(&self.game);
         // `FRISSIT_Starmap` (ELF 0x7132b0) ends with `StarmapPlanetKering += IdoSpeedSzorzo / 1500`.
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
@@ -442,6 +479,34 @@ mod tests {
         let (rules, defaults) = crate::rules::load(&install).unwrap();
         let volatile = crate::rules::scenario_globals(&install).unwrap();
         Some((SaveGame::parse(&bytes).unwrap(), rules, defaults, volatile))
+    }
+
+    /// The Options screen's save and load: a game a few ticks on is saved to a slot (`save<n>.ig2s`), the slot list
+    /// shows its title, loading it gives the same state, the same camera and the same next ticks.
+    #[test]
+    fn slot_save_and_load_round_trip() {
+        let Some((save, rules, defaults, volatile)) = quick1() else { return };
+        let mut w = World::load(&save, &rules, &defaults, &volatile);
+        for _ in 0..30 {
+            w.tick();
+        }
+        let dir = std::env::temp_dir().join(format!("ig2-slots-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (y, m, d) = w.curr.date();
+        std::fs::write(dir.join("save3.ig2s"), crate::options::slot_file(w.save_file(), b"Round trip", [y, m, d])).unwrap();
+        let slots = crate::options::read_slots(Some(&dir));
+        let slot = slots[3].clone().expect("slot 3 listed");
+        assert_eq!((slot.name.as_slice(), slot.date, slot.ours), (&b"Round trip"[..], [y, m, d], true));
+        assert!(slots.iter().enumerate().all(|(i, s)| i == 3 || s.is_none()));
+        let mut back = World::load_slot(&slot.file, &rules, &defaults, &volatile).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(ig2_net::snapshot::state_hash(&back.game, &[]), ig2_net::snapshot::state_hash(&w.game, &[]));
+        assert_eq!(back.view, w.view);
+        for _ in 0..40 {
+            w.tick();
+            back.tick();
+        }
+        assert_eq!(ig2_net::snapshot::state_hash(&back.game, &[]), ig2_net::snapshot::state_hash(&w.game, &[]), "the next ticks stay identical");
     }
 
     /// Orders go through `ig2_net::Command` and change the sim in the next pass, paused or not.

@@ -1,0 +1,15 @@
+{
+ "screen": "options",
+ "note": "The Options screen over the game (re/screens/options.md): it fades in (OptionsFelfadeles +0.6 a tick: the buttons by 33/66/100, the slot list to 50, the left panel 50..100, a laser round each block while it fades); the pointer on the save button (its label lights, its tooltip after 400 ms); a press on the game tab (page 2: the option rows); the pointer on a row; a press on quit (sound 0, the question: YES/NO); a press on NO (no sound); the pointer over the slot list picks slot 6 by hover.",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 200, "mouse": [480, 80]},
+  {"t": 300, "press": [150, 75]},
+  {"t": 360, "mouse": [100, 109]},
+  {"t": 420, "press": [580, 80]},
+  {"t": 480, "press": [580, 80]},
+  {"t": 520, "mouse": [400, 200]}
+ ],
+ "grabs": [5, 50, 100, 170, 250, 320, 400, 450, 500, 560],
+ "tail": 20
+}

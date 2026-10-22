@@ -19,7 +19,7 @@ use ig2_sim::colony::{BuildingKind, ColonyRules, Curve};
 use ig2_sim::colony_side::{tech_strength, AutobuildMode, AutobuildRules, SideRules};
 use ig2_sim::diplomacy::DiplomacyRules;
 use ig2_sim::fleet::StarmapEvent;
-use ig2_sim::game::{BattleEvent, ColonyOrder, Fresh, Game, GameEvent, GameRules, InfoOrder, Libc, ResearchOrder, StarmapOrder};
+use ig2_sim::game::{BattleEvent, ColonyOrder, DesignOrder, Fresh, Game, GameEvent, GameRules, InfoOrder, Libc, ResearchOrder, StarmapOrder};
 use ig2_sim::messages::{cstr, Texts, ENTRY};
 use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
@@ -134,7 +134,7 @@ struct Recording {
     /// `--stage`: the purchases made between `pre.sav` and save 0 (`{"k": "buy", "e", "msg", "accepted"}`).
     buys: Vec<Value>,
     /// `--orders` / `--colony` / `--research` / `--info`: starmap / colony / research / info messages staged before
-    /// save `before` (`{"k": "sorder" | "corder" | "rorder" | "iorder", "before", "type", "vals"}`).
+    /// save `before` (`{"k": "sorder" | "corder" | "rorder" | "iorder" | "dorder", "before", "type", "vals"}`).
     orders: Vec<Value>,
 }
 
@@ -151,7 +151,7 @@ fn recordings() -> Vec<Recording> {
             let all: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
             let (events, rest): (Vec<Value>, Vec<Value>) = all.into_iter().partition(|e| e["k"] == "save");
             let buys = rest.iter().filter(|e| e["k"] == "buy").cloned().collect();
-            let orders = rest.into_iter().filter(|e| ["sorder", "corder", "rorder", "iorder"].iter().any(|k| e["k"] == *k)).collect();
+            let orders = rest.into_iter().filter(|e| ["sorder", "corder", "rorder", "iorder", "dorder"].iter().any(|k| e["k"] == *k)).collect();
             Some(Recording { dir, events, buys, orders })
         })
         .collect()
@@ -336,8 +336,8 @@ fn game_rules(inst: &Install) -> GameRules {
     }
 }
 
-/// `uzenet.txt` in the language the recordings' exe ran in: the one whose texts begin the messages on the
-/// recordings' scrolling lines (English when none shows one).
+/// The texts (`uzenet.txt`, the story table) in the language the recordings' exe ran in: the one whose texts begin the
+/// messages on the recordings' scrolling lines (the remaster's language setting when none shows one).
 fn message_texts(recs: &[Recording]) -> Texts {
     let mut shown: Vec<(i32, Vec<u8>)> = Vec::new();
     for rec in recs {
@@ -347,7 +347,12 @@ fn message_texts(recs: &[Recording]) -> Texts {
             shown.push((i32::from_le_bytes(e[0x38..0x3c].try_into().unwrap()), cstr(e).to_vec()));
         }
     }
-    let texts = |lang| Install::from_env(lang).and_then(|i| i.ok()).and_then(|i| i.read("dataraw/text/uzenet.txt").ok()).map(|raw| Texts::parse(&raw));
+    let texts = |lang| {
+        let inst = Install::from_env(lang).and_then(|i| i.ok())?;
+        let raw = inst.read("dataraw/text/uzenet.txt").ok()?;
+        let story = |p| inst.read(p).unwrap_or_default();
+        Some(Texts::parse(&raw).with_story(&story("dataraw/text/s_story.txt"), &story("dataraw/text/txt02.txt"), lang))
+    };
     for lang in Lang::ALL {
         let Some(t) = texts(lang) else { continue };
         let fits = |(id, text): &(i32, Vec<u8>)| {
@@ -357,7 +362,9 @@ fn message_texts(recs: &[Recording]) -> Texts {
             return t;
         }
     }
-    texts(Lang::En).unwrap_or_default()
+    // No line to tell by: the language the remaster runs in (the tutorial's planet name, `tutorial.md` §4).
+    let lang = std::env::var_os("IG2_INSTALL_DIR").map_or(Lang::En, |d| ig2_formats::locale::exe_language(std::path::Path::new(&d)).0);
+    texts(lang).unwrap_or_default()
 }
 
 // ------------------------------------------------------------------------------------------------ the replay
@@ -432,7 +439,9 @@ fn replay_matches_the_exe_tick_by_tick() {
                 }
                 let vals: Vec<i32> = o["vals"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
                 let t = o["type"].as_i64().unwrap() as i32;
-                if o["k"] == "iorder" {
+                if o["k"] == "dorder" {
+                    game.design_order(vals[0] as u8, DesignOrder::from_message(t, &vals[1..]).expect("a design message"));
+                } else if o["k"] == "iorder" {
                     game.info_order(vals[0] as u8, InfoOrder::from_message(t, &vals[1..]).expect("an info message"));
                 } else if o["k"] == "rorder" {
                     game.research_order(vals[0] as u8, ResearchOrder::from_message(t, &vals[1..]).expect("a research message"));
@@ -681,7 +690,8 @@ const COMPARED_VOLATILE: &[&str] = &[
     "speed", "rnd", "rndossz", "radar2", "radar2sq", "radarsz", "radarszsq", "dipnap", "dipstart", "st_flags", "st_last",
     "st_oldido", "st_szvegzett", "st_delayed", "st_restart", "st_skip", "st_err", "st_signal", "st_addship", "st_special",
     "st_radar", "st_dipl", "st_diplvalasz", "st_arr", "st_gr", "st_youwas", "st_grwin", "st_kem", "abmitepit", "mapcursor",
-    "tradeports", "etahonap", "etadays", "infomonth", "spw_fleets", "spw_planetflag", "gvalue", "bgcursor",
+    "tradeports", "etahonap", "etadays", "infomonth", "spw_fleets", "spw_planetflag", "gvalue", "bgcursor", "tut_active",
+    "tut_paused", "tut_event",
 ];
 
 /// The UI's part between two ticks (`info-messages.md` §2.3): `FRISSIT_Scroll2` takes texts off the scrolling
