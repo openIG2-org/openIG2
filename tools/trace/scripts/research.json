@@ -1,0 +1,54 @@
+{
+ "screen": "research",
+ "note": "The research screen (re/screens/research.md): the opening (resframe 0..60 over 150 UI ticks), the urgent button's tooltip and press, a category and a field by key, the urgent key. Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {
+   "t": 300,
+   "mouse": [
+    507,
+    50
+   ]
+  },
+  {
+   "t": 330,
+   "press": [
+    507,
+    50
+   ]
+  },
+  {
+   "t": 400,
+   "key": "pagedown"
+  },
+  {
+   "t": 470,
+   "key": "down"
+  },
+  {
+   "t": 530,
+   "key": "d"
+  }
+ ],
+ "grabs": [
+  10,
+  30,
+  60,
+  100,
+  150,
+  200,
+  250,
+  300,
+  320,
+  340,
+  360,
+  400,
+  420,
+  440,
+  470,
+  500,
+  530,
+  560,
+  600
+ ],
+ "tail": 60
+}

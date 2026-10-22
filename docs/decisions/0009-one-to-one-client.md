@@ -41,6 +41,9 @@ by the extras they opted into and by the new multiplayer.
 - Developer tools (egui overlays, `--snapshot`, `--info`) stay out of the player's way (ADR 0006 §5).
 
 ### 3. Widescreen, high DPI and 4K
+*Amended by ADR 0010 (2026-10-18): the default is the remaster's own rule (2D in the centred 4:3 frame, the 3D
+scenes and background pictures over the full width, narrow windows letterboxed top and bottom); letterboxing is the
+option. The first two bullets below are superseded.*
 - **Default: the original layout scaled up and letterboxed.** The 640 × 480 virtual screen is scaled by the largest
   factor that fits the window (non-integer allowed, aspect 4:3 kept) and centred; the bars are black. 2D brushes are
   sampled from the remaster's 2× pictures, the bitmap font and the 3D scenes are drawn at the output resolution (no

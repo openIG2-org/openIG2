@@ -35,9 +35,7 @@ const SPOTS: [(u32, [f32; 4]); 9] = [
 /// `AktEpuletTipus` (exe 0xB9C0C4, saved).
 const AKT_EPULET_TIPUS: u32 = 0xB9C0C4;
 
-fn inside(r: [f32; 4], p: [f32; 2]) -> bool {
-    p[0] >= r[0] && p[0] < r[0] + r[2] && p[1] >= r[1] && p[1] < r[1] + r[3]
-}
+use crate::kit::inside_f as inside;
 
 /// The repair and demolish windows (`ColonyRepairWindow`, `ColonyDemolishWindow`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -522,7 +520,7 @@ impl ColonyUi {
         if let Some(pk) = self.picker.filter(|pk| now_ms.wrapping_sub(pk.pressed_ms) > 300) {
             let offered = c.offered();
             let rows = layout(&offered).iter().map(|&(_, _, r)| r + 1).max().unwrap_or(0);
-            crate::starmap_panels::fader(f, white, v, [pk.at[0] - 6.0, pk.at[1] - 2.0, (4 * 0x78 + 3) as f32, (rows * 0xd + 0x12) as f32], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
+            crate::kit::fader::fader(f, white, v, [pk.at[0] - 6.0, pk.at[1] - 2.0, (4 * 0x78 + 3) as f32, (rows * 0xd + 0x12) as f32], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
             // `Epulet_Terulet_Nev[1..=4]` (txt17 §3, 0x22 + k, the Hungarian file's `StringReadAll`).
             for k in 1..=4u16 {
                 let name = crate::ui::hu_bytes(hu17.get(0x11, 3, 0x22 + k));
@@ -550,7 +548,7 @@ impl ColonyUi {
         let (x, y, h) = w.frame();
         let cells = self.window_cells(c, w);
         let width = (cells * 6) as f32;
-        crate::starmap_panels::fader(f, white, v, [x, y, width, h], [0.0, 20.0, 30.0], 60.0, [0.0, 15.0, 25.0], 30.0);
+        crate::kit::fader::fader(f, white, v, [x, y, width, h], [0.0, 20.0, 30.0], 60.0, [0.0, 15.0, 25.0], 30.0);
         let row = w.row(cells, p);
         match w {
             Confirm::Repair => {
@@ -687,13 +685,14 @@ impl PanelBuilding {
             }
             draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
         }
-        let k = size[1] / 480.0;
-        let px = ((640.0 * k).round().max(1.0) as u32, size[1].round().max(1.0) as u32);
+        let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
+        let px = wide.px;
         // Camera space → clip over the virtual 640 × 480 with the centre at (95, 101): vx = 600·x/w + 95.
         let (cx, cy) = (PANEL_CENTRE[0], PANEL_CENTRE[1]);
         let (near, far) = (20000.0f32, 40000.0f32);
         let (a, b) = (1.0 / (1.0 / near - 1.0 / far) / near, 1.0 / (1.0 / near - 1.0 / far));
         let rows4 = [[1200.0 / 640.0, 0.0, -(cx - 320.0) / 320.0, 0.0], [0.0, -1200.0 / 480.0, -(1.0 - 2.0 * cy / 480.0), 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
+        let rows4 = wide.rows(rows4);
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
         // `light5x` from (10, 10, −10) with the h axis flipped for the file normals, as the view's (colony.rs).
         let light = scene::normalise([-1.0, 1.0, -1.0]);
@@ -728,7 +727,8 @@ impl PanelBuilding {
         let [x0, y0, x1, y1] = PANEL_VIEW;
         let (w, h) = (x1 - x0, y1 - y0);
         let mut i = Instance::new(kind::SPRITE, v.px(x0 + w / 2.0, y0 + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [1.0; 4]);
-        i.uv = [x0 / 640.0, y0 / 480.0, w / 640.0, h / 480.0];
+        let wide = crate::kit::Wide::new(v);
+        i.uv = [wide.u(x0), y0 / 480.0, w / (640.0 * wide.sx), h / 480.0];
         f.push(tex, Blend::GammaPremul, i);
     }
 }

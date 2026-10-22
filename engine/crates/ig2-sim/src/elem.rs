@@ -4,18 +4,22 @@
 //! Stories 801..=868 are the episodes the storylines (§8.9) start. Part 1 is ported: 805, 811, 813, 816, 817,
 //! 818, 820, 830, 831, 835, 837, 841, 842 and 864..=868; part 2a the spy episodes 802, 824, 850, 852 and 861
 //! ([`spies`]); part 2b the ground-war episodes 808 and 854 ([`ground`]); part 2c the diplomacy episodes 810, 857,
-//! 858 and 860 ([`diplomacy`]); the other blocks of the script (801, 804, 806, 807, 809, 814, 815, 821, 832, 834,
-//! 836, 839, 840, 843, 844, 856, 862, 863) are not yet
-//! (STATUS U24). What the episodes do to the rest of the game goes out as
+//! 858 and 860 ([`diplomacy`]); part 2d 801, 804, 806, 807 and 809 ([`crises`]); part 2e 814, 815, 821, 832 and 834
+//! ([`threats`]); part 2f 836, 839, 840 and 843 ([`waves`]); the other blocks of the script (844, 856, 862, 863)
+//! are not yet (STATUS U24). What the episodes do to the rest of the game goes out as
 //! [`StoryEvent`]s and [`StoryWorld`] calls.
 
+mod crises;
 mod diplomacy;
+mod finale;
 mod ground;
 mod spies;
+mod threats;
+mod waves;
 
 use crate::story::{flag, Abort, InfoLine, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
-/// `st_Elem_include` (parts 1, 2a, 2b and 2c).
+/// `st_Elem_include` (parts 1 and 2a–2g).
 #[derive(Debug, Clone, Default)]
 pub struct ElemStories {
     /// Stories that don't run (a replay of a trace recorded before they were ported: the exe had them patched out).
@@ -30,6 +34,18 @@ pub const PART_2B: [i32; 2] = [808, 854];
 
 /// Part 2c's stories.
 pub const PART_2C: [i32; 4] = [810, 857, 858, 860];
+
+/// Part 2d's stories.
+pub const PART_2D: [i32; 5] = [801, 804, 806, 807, 809];
+
+/// Part 2e's stories.
+pub const PART_2E: [i32; 5] = [814, 815, 821, 832, 834];
+
+/// Part 2f's stories.
+pub const PART_2F: [i32; 4] = [836, 839, 840, 843];
+
+/// Part 2g's stories.
+pub const PART_2G: [i32; 4] = [844, 856, 862, 863];
 
 impl ElemStories {
     /// The script without stories `skip`.
@@ -46,36 +62,54 @@ impl Script for ElemStories {
         if w.multiplayer() {
             return;
         }
-        let stories: [(i32, Block); 29] = [
+        let stories: [(i32, Block); 47] = [
+            (801, crises::story_801),
             (802, spies::story_802),
+            (804, crises::story_804),
             (805, |s, w| {
                 if s.starting_now() {
                     s.win(0, true, w);
                 }
                 Ok(())
             }),
+            (806, crises::story_806),
+            (807, crises::story_807),
             (808, ground::story_808),
+            (809, crises::story_809),
             (810, diplomacy::story_810),
             (811, story_811),
             (813, story_813),
+            (814, threats::story_814),
+            (815, threats::story_815),
             (816, story_816),
             (817, story_817),
             (818, story_818),
             (820, story_820),
+            (821, threats::story_821),
             (824, spies::story_824),
             (830, story_830),
             (831, story_831),
+            (832, threats::story_832),
+            (834, threats::story_834),
             (835, story_835),
+            (836, waves::story_836),
             (837, story_837),
+            (839, waves::story_839),
+            (840, waves::story_840),
             (841, story_841),
             (842, story_842),
+            (843, waves::story_843),
+            (844, finale::story_844),
             (850, spies::story_850),
             (852, spies::story_852),
             (854, ground::story_854),
+            (856, finale::story_856),
             (857, diplomacy::story_857),
             (858, diplomacy::story_858),
             (860, diplomacy::story_860),
             (861, spies::story_861),
+            (862, finale::story_862),
+            (863, finale::story_863),
             (864, story_864),
             (865, story_865),
             (866, story_866),
@@ -510,7 +544,7 @@ fn story_820(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
 /// `StoryInit_GenerateSupernovaBolygok_de_nem_kell_elore_meghivni(k)` (exe 0x5c5230): planets 8010/8011 (`k`:
 /// 8301/8302) are shown and go to empire 16 with race 11, the first worth 14,800 and marked extra, both with their
 /// story buildings. Aborts when either is missing.
-fn supernova_planets(s: &mut Story, second: bool, w: &mut dyn StoryWorld) -> Result<(), Abort> {
+pub(super) fn supernova_planets(s: &mut Story, second: bool, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     let (a, b) = if second { (8301, 8302) } else { (8010, 8011) };
     let p = s.b_search(a, 1, w);
     if p == 0 {

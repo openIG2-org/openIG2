@@ -3,7 +3,7 @@
 //!
 //! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3]`
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -15,7 +15,8 @@
 //!           the virtual point, `--menu tax|autobuild|priority|sale:N|planets@X,Y` a select menu with its box at
 //!           X,Y, `--mouse X,Y` the pointer (the menus' hover, a hot-spot's tooltip); `--screen spy` the spy screen,
 //!           `--spy-frame F [--spy-closing]` held at frame F of its opening (closing); the research screen takes the
-//!           same as `--anim-frame F [--anim-closing]`; `--clouds N` drifts the starmap's clouds as after N UI ticks
+//!           same as `--anim-frame F [--anim-closing]` and `--script S` (an input script, one `OUT-t<T>.png` per
+//!           grab, re/screens/sound.md §3); `--clouds N` drifts the starmap's clouds as after N UI ticks
 //!           on the starmap (the exe's `GomolygasCounter`; default 0); `--futofeny F` pins the starmap's UI clock
 //!           (star twinkle, pulse and the planets' spin, fleet sprite frames; default ticks × 5); `--acttime S` the
 //!           remaster's clock in seconds (the long info planet's cloud drift; default the frame time); `--info-turn K`
@@ -39,6 +40,7 @@ mod diplomacy_scene;
 mod font;
 mod hud;
 mod info_screen;
+mod kit;
 mod lighting;
 mod messages_screen;
 mod orders;
@@ -47,6 +49,7 @@ mod render3d;
 mod research;
 mod rules;
 mod scene;
+mod script;
 mod screen_frames;
 mod starmap;
 mod starmap_hud;
@@ -75,6 +78,9 @@ pub struct Options {
     pub ticks: u32,
     pub alpha: f32,
     pub size: (u32, u32),
+    /// The window (`size` is its band, [`kit::Layout::band`]); `--letterbox`: the 3D stops at the 4:3 frame.
+    pub window: (u32, u32),
+    pub letterbox: bool,
     pub scale: f32,
     pub hover: Option<(f32, f32)>,
     pub select_fleet: Option<usize>,
@@ -127,6 +133,8 @@ pub struct Options {
     /// then per record "colour hex-text") (re/screens/info.md §6.8).
     pub info_star: Option<f32>,
     pub info_log: Option<String>,
+    /// `--script S`: an input script (re/screens/sound.md §3); the snapshot writes one PNG per grab.
+    pub script: Option<String>,
     /// Show the clock as paused (`--paused`; the capture tool pauses the exe).
     pub paused: bool,
     /// `--panel production` or `--panel transfer:F1,F2[,tank]`: the starmap's production view or transfer panel up.
@@ -154,6 +162,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
         ticks: 0,
         alpha: 1.0,
         size: (1920, 1080),
+        window: (1920, 1080),
+        letterbox: false,
         scale: 1.0,
         hover: None,
         select_fleet: None,
@@ -180,6 +190,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         info_texts: None,
         info_star: None,
         info_log: None,
+        script: None,
         paused: false,
         panel: None,
         planet_info: false,
@@ -216,6 +227,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 o.hover = Some((num(x.into())?, num(y.into())?));
             }
             "--reveal" => o.reveal = true,
+            "--letterbox" => o.letterbox = true,
             "--paused" => o.paused = true,
             "--colony-cam" => {
                 let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse::<f32>().map_err(|e| format!("--colony-cam: {e}"))).collect::<Result<_, _>>()?;
@@ -264,6 +276,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             }
             "--info-star" => o.info_star = Some(val()?.parse().map_err(|e| format!("--info-star: {e}"))?),
             "--info-log" => o.info_log = Some(val()?),
+            "--script" => o.script = Some(val()?),
             "--acttime" => o.acttime = Some(val()?.parse().map_err(|e| format!("--acttime: {e}"))?),
             "--colony" => o.colony = Some(val()?.parse().map_err(|e| format!("--colony: {e}"))?),
             "--panel" => o.panel = Some(val()?),
@@ -287,6 +300,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
             _ => return Err(format!("unknown argument {a}")),
         }
     }
+    o.window = o.size;
+    kit::layout::set_letterbox(o.letterbox);
     Ok(o)
 }
 

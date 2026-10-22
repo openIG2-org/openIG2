@@ -12,7 +12,8 @@ use ig2_sim::save::{va, SaveState, PLANET_SIZE, TECH_SIZE};
 use crate::font::Align;
 use crate::orders::Selection;
 use crate::render::Frame;
-use crate::starmap_panels::{fader, Action, Draw2d, Panels};
+use crate::kit::fader::fader;
+use crate::starmap_panels::{Action, Draw2d, Panels};
 
 /// `Starmap_RopIkonX/Y` (exe 0x9270d4/0x9270e8): the places' hit centres from `LastMouseX/Y`, places 1..=4.
 const HIT: [[i32; 2]; 4] = [[29, 86], [81, 125], [132, 86], [81, 49]];
@@ -221,9 +222,7 @@ pub fn exit_spot(at: [f32; 2]) -> bool {
     inside([445, 380, 164, 60], at)
 }
 
-fn inside(r: [i32; 4], at: [f32; 2]) -> bool {
-    at[0] >= r[0] as f32 && at[0] < (r[0] + r[2]) as f32 && at[1] >= r[1] as f32 && at[1] < (r[1] + r[3]) as f32
-}
+use crate::kit::inside;
 
 /// The screen's menus and modes (the original's screen globals).
 #[derive(Debug, Clone, Default)]
@@ -719,7 +718,7 @@ impl MenuTexts<'_> {
 /// `KirakFader(…)` in the `starf` look (re/screens/starmap.md §12.2).
 fn starf(f: &mut Frame, d: &Draw2d, r: [f32; 4]) {
     let s = 0.9;
-    crate::starmap_panels::kirak_fader(f, d.white, &d.v, r, [0.0, 54.0 * s, 90.0 * s], 100.0, [0.0, 90.0 * s, 130.0 * s], 70.0);
+    crate::kit::fader::kirak_fader(f, d.white, &d.v, r, [0.0, 54.0 * s, 90.0 * s], 100.0, [0.0, 90.0 * s, 130.0 * s], 70.0);
 }
 
 /// `FadeKerettelKerekit(x − 6, y − 2, w, h, 0, 10, 0, 60, 0, 5, 0, 30)`: a select menu's box.

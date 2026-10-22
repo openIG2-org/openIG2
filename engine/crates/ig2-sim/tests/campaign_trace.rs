@@ -237,6 +237,8 @@ struct W<'a> {
     /// The `TankDelete`s the game made inside the stories' calls, with the index of the outermost call they ran in
     /// (`HajoDelete` drops the units its fleet can no longer carry); applied as that call is matched.
     nested_tank_deletes: Vec<(usize, Value)>,
+    /// The `FlottaMozgat`s nested in an outermost call (`FlottaDelete` stops the fleets following the deleted one).
+    nested_moves: Vec<(usize, Value)>,
     /// st_Rnd part 2c: `_s(5, id)`, 138's recruit names, `AlapFlottaNev` (from the setup record); the port's writes,
     /// checked against `post` at the end: fleet names, positions and owners, units' designs, design keys, flags and
     /// names, other empires' views of planets, planet names, the recruits.
@@ -268,6 +270,19 @@ struct W<'a> {
     rioted: Vec<(i32, i32, i32, i32)>,
     held: Option<i32>,
     deleted: Vec<(i32, i32)>,
+    /// st_Elem part 2d: designs' bytes written (`(design, offset)`), planets' `+0x187` alone.
+    design_bytes: HashMap<(i32, i32), i32>,
+    extra187: HashMap<i32, bool>,
+    /// st_Elem part 2f: the alliances made (836's, 864's; checked against `post`'s `vlev` with the wars), 840's colony
+    /// discount applied to `pre`'s `cdis` (designs `[d, +0x34, +0x20, +0x24]`, planets `[p, +0x78, its +0x34, +0xa0]`),
+    /// whether the record is a tick (the planets' `+0xa0` move with production then).
+    allies: Vec<(i32, i32)>,
+    cdis: Option<Value>,
+    tick: bool,
+    /// st_Elem part 2g: the wars between two others declared (862's 1/5; checked against `post`'s `vlev`).
+    pair_wars: Vec<(i32, i32)>,
+    /// The fighters (designs with `+0x16 ≠ 2`) the record's TankDeletes took from each fleet (`+0x58`).
+    fighters_lost: HashMap<i32, i32>,
 }
 
 fn planets_of(w: &Value) -> Vec<Planet> {
@@ -344,6 +359,10 @@ impl<'a> W<'a> {
         }
         if let Some(s4) = w["seed4"].as_u64() {
             rng.set_state(stream::SPY, s4 as u32);
+        }
+        // st_Elem part 2d: stream 0 (806's first pick).
+        if let Some(s0) = w["seed0"].as_u64() {
+            rng.set_state(0, s0 as u32);
         }
         let mut designs = HashMap::new();
         // `EpuletDelete` is logged for story 817; `InitStory`'s own (the campaign map's set-up) aren't the stories'.
@@ -430,6 +449,7 @@ impl<'a> W<'a> {
             prereqs: HashMap::new(),
             joined_n: None,
             nested_tank_deletes: nested_tank_deletes(r, init),
+            nested_moves: nested_acts(r, init, "move"),
             stext: HashMap::new(),
             recruits: Vec::new(),
             alapnev: String::new(),
@@ -453,7 +473,35 @@ impl<'a> W<'a> {
             rioted: Vec::new(),
             held: None,
             deleted: Vec::new(),
+            design_bytes: HashMap::new(),
+            extra187: HashMap::new(),
+            allies: Vec::new(),
+            pair_wars: Vec::new(),
+            fighters_lost: HashMap::new(),
+            cdis: None,
+            tick: r["k"].as_str() == Some("tick"),
         }
+    }
+
+    /// st_Elem part 2f: 840's colony discount (spec §8.14 part 2f) on the `cdis` model.
+    fn colony_discount(&mut self, halve: bool, what: &str) {
+        let Some(mut m) = self.cdis.take().or_else(|| self.w.get("cdis").cloned()) else {
+            self.bad.push(format!("{what}: cdis not dumped"));
+            return;
+        };
+        let f = |x: i32| if halve { x / 2 } else { x.wrapping_add(x) };
+        for d in m[0].as_array_mut().unwrap() {
+            if int(&d[1]) != 0 {
+                d[2] = v(f(int(&d[2])));
+                d[3] = v(f(int(&d[3])));
+            }
+        }
+        for q in m[1].as_array_mut().unwrap() {
+            if int(&q[1]) > 0 && int(&q[2]) != 0 {
+                q[3] = v(f(int(&q[3])));
+            }
+        }
+        self.cdis = Some(m);
     }
 
     /// st_Elem part 2b: the `wfus` row of planet `p` in `post`.
@@ -551,6 +599,11 @@ fn tech_rows(w: &Value) -> Vec<[i32; 4]> {
 /// The nested `TankDelete`s of a record with the index (among the outermost calls the replay matches) of the call
 /// they ran in.
 fn nested_tank_deletes(r: &Value, init: bool) -> Vec<(usize, Value)> {
+    nested_acts(r, init, "tankdelete")
+}
+
+/// The nested calls `name` with the index of the outermost call they run in.
+fn nested_acts(r: &Value, init: bool, name: &str) -> Vec<(usize, Value)> {
     let mut out = Vec::new();
     let mut outer = 0usize;
     for a in r["acts"].as_array().unwrap() {
@@ -558,7 +611,7 @@ fn nested_tank_deletes(r: &Value, init: bool) -> Vec<(usize, Value)> {
             if !(init && a[0] == "bdelete") {
                 outer += 1;
             }
-        } else if a[0] == "tankdelete" {
+        } else if a[0] == name {
             out.push((outer.wrapping_sub(1), a[1].clone()));
         }
     }
@@ -702,6 +755,11 @@ impl StoryWorld for W<'_> {
         int(&self.w["akt"][1])
     }
     fn planet_xy(&self, p: i32) -> (f32, f32) {
+        // st_Elem 834 places its fleets on planet −1: the record before the planets (`bm1`).
+        if p < 0 {
+            let e = &self.w["bm1"];
+            return (bits(&e[0]), bits(&e[1]));
+        }
         let p = &self.planets[p as usize];
         (f32::from_bits(p.x), f32::from_bits(p.y))
     }
@@ -758,6 +816,20 @@ impl StoryWorld for W<'_> {
             None => 0,
         }
     }
+    fn near_fleet_ex(&mut self, p: i32, radius: f32, own: bool, idle: bool, room: bool, calm: bool, last: i32) -> i32 {
+        let what = format!("SearchBolygohozKozeliFlotta({p}, {radius}, {own}, {idle}, {room}, {calm}, {last})");
+        match self.take("nearfleet", &what) {
+            Some(a) => {
+                let flags = [own, idle, room, calm].map(|b| b as i64);
+                let got: Vec<i64> = (2..6).map(|i| a[1].get(i).and_then(|x| x.as_i64()).unwrap_or(-1) & 0xff).collect();
+                if int(&a[1][0]) != p || a[1][1].as_u64() != Some(radius.to_bits() as u64) || got != flags || a[1].get(6).map(int) != Some(last) {
+                    self.bad.push(format!("{what}: exe {}", a[1]));
+                }
+                int(&a[3])
+            }
+            None => 0,
+        }
+    }
     fn design_kind(&self, e: i32, d: i32) -> i32 {
         match self.w["des2"].get(e as usize).and_then(|x| x.get(d as usize)) {
             Some(r) => int(&r[1]),
@@ -777,11 +849,14 @@ impl StoryWorld for W<'_> {
         self.w["ships"].as_array().map_or(0, |s| s.len() as i32 - 1)
     }
     fn ship(&self, k: i32) -> (i32, i32) {
+        // A slot past the list (801's stale ship variables) reads free.
         if let Some(s) = &self.ships {
-            return s[k as usize];
+            return s.get(k.max(0) as usize).copied().unwrap_or((0, 0x7fff));
         }
-        let s = &self.w["ships"][k as usize];
-        (int(&s[0]), int(&s[1]))
+        match self.w["ships"].get(k.max(0) as usize) {
+            Some(s) => (int(&s[0]), int(&s[1])),
+            None => (0, 0x7fff),
+        }
     }
     fn design_upgrade(&self, e: i32, d: i32) -> i32 {
         assert_eq!(e, self.en);
@@ -1090,8 +1165,11 @@ impl StoryWorld for W<'_> {
         int(&self.w["spies"][e as usize][1][k as usize][7])
     }
     fn building_bytes(&self, p: i32, k: i32) -> (i32, i32) {
-        // st_Elem part 2b traces: `+0x19` after the damage (no `+0x18`).
+        // st_Elem part 2b traces: `+0x19` after the damage (no `+0x18`); part 2d: the port's writes in the record.
         if let Some(b) = self.elem_buildings(p) {
+            if let Some(&x) = self.building_bytes.get(&(p, k, 0x19)) {
+                return (0, x);
+            }
             return match b.get(k as usize - 1).and_then(|s| s.get(3)) {
                 Some(x) => (0, int(x)),
                 None => {
@@ -1133,6 +1211,9 @@ impl StoryWorld for W<'_> {
         self.w["wh"].as_array().unwrap().iter().any(|k| int(&k[0]) != 0 && int(&k[1]) != 0)
     }
     fn planet_extra(&self, p: i32) -> bool {
+        if let Some(&on) = self.extra187.get(&p) {
+            return on;
+        }
         match self.extras.get(&p) {
             Some(&on) => on,
             None => self.planets[p as usize].extra.expect("+0x187 not recorded").1 != 0,
@@ -1248,6 +1329,55 @@ impl StoryWorld for W<'_> {
         self.expect("tervcopy2", &[v(e), v(from), v(d), v(new)], &what);
         new
     }
+    fn story_text(&self, id: i32) -> Vec<u8> {
+        self.stext.get(&id).map_or(Vec::new(), |t| t.chars().map(|c| c as u32 as u8).collect())
+    }
+    fn design_hull(&self, e: i32, d: i32) -> i32 {
+        assert_eq!(e, self.en);
+        // st_Elem part 2d rows: +0x48 at 6, +0x36 at 7.
+        match self.w["designs"].get(d as usize).and_then(|x| x.get(6)) {
+            Some(x) => int(x),
+            None => {
+                self.missing.set(true);
+                0
+            }
+        }
+    }
+    fn fleet_fighters(&self, f: i32) -> i32 {
+        // `pre`'s `+0x58` less the fighters the record's TankDeletes took (`TankFlottahozHozzaszamol`).
+        match self.w["fveh"].get(f as usize) {
+            Some(n) => int(n) - self.fighters_lost.get(&f).copied().unwrap_or(0),
+            None => {
+                self.missing.set(true);
+                0
+            }
+        }
+    }
+    fn design_44(&self, e: i32, d: i32) -> i32 {
+        assert_eq!(e, self.en);
+        // st_Elem part 2g rows: +0x44 at 9.
+        match self.w["designs"].get(d as usize).and_then(|x| x.get(9)) {
+            Some(x) => int(x),
+            None => {
+                self.missing.set(true);
+                0
+            }
+        }
+    }
+    fn design_36(&self, e: i32, d: i32) -> i32 {
+        assert_eq!(e, self.en);
+        match self.w["designs"].get(d as usize).and_then(|x| x.get(7)) {
+            Some(x) => int(x),
+            None => {
+                self.missing.set(true);
+                0
+            }
+        }
+    }
+    fn date(&self) -> [i32; 3] {
+        let d = &self.w["date"];
+        [int(&d[0]), int(&d[1]), int(&d[2])]
+    }
     fn new_spy(&mut self, e: i32) -> i32 {
         let what = format!("Spy_New({e})");
         let Some(a) = self.take("spynew", &what) else { return 0 };
@@ -1305,6 +1435,14 @@ impl StoryWorld for W<'_> {
             }
             StoryEvent::DeleteFleet(f) => {
                 self.expect("delete", &[v(f)], &what);
+                // `FlottaDelete` stops the fleets that followed it (nested `FlottaMozgat(g, 0, 0, 0, 0)`): later reads
+                // of their order (`st_FlottaAll`, story 834) see it.
+                let k = self.next.wrapping_sub(1);
+                for (_, a) in self.nested_moves.iter().filter(|(i, _)| *i == k) {
+                    if let Some(q) = self.fleets.get_mut(int(&a[0]) as usize) {
+                        q.command = int(&a[1]);
+                    }
+                }
                 // A deleted fleet is free (owner 0xff): later searches in the record skip it.
                 if let Some(q) = self.fleets.get_mut(f as usize) {
                     q.owner = 0xff;
@@ -1335,8 +1473,16 @@ impl StoryWorld for W<'_> {
                 }
             }
             StoryEvent::Wormhole { x1, y1, x2, y2 } => self.expect("wormhole", &[v(x1), v(y1), v(x2), v(y2)], &what),
-            StoryEvent::DestroyPlanet(p) => self.expect("destroy", &[v(p)], &what),
-            StoryEvent::Anim(_) => self.expect("anim", &[], &what),
+            StoryEvent::DestroyPlanet(p) => {
+                self.expect("destroy", &[v(p)], &what);
+                // `st_BolygoDestroy` (exe 0x5d47b0): `BolygoElfoglal(p, 0)`, then every empire's view (+0xda..) := -1;
+                // later reads in the record (801's landing test) see it.
+                if let Some(q) = self.planets.get_mut(p as usize).filter(|_| p > 0) {
+                    q.owner = 0;
+                    q.vis = -1;
+                }
+            }
+            StoryEvent::Anim(_) | StoryEvent::AnimFile(_) => self.expect("anim", &[], &what),
             StoryEvent::SetPlanetOwner { planet, owner, race } => {
                 if self.planet_owner(planet) == 0 {
                     self.expect("colonise", &[v(planet), v(owner), v(race), v(1), v(0), v(0), v(0)], &what)
@@ -1522,8 +1668,9 @@ impl StoryWorld for W<'_> {
             StoryEvent::Undo { kind: 5, value } => self.expect("kemdisable", &[v(value)], &what),
             StoryEvent::Undo { kind: 2 | 6, .. } | StoryEvent::EpidemicOver => {
                 // BolygoInfoRemove calls of the undo list (one each) / the epidemic's end (not checked).
+                // The epidemic's end removes info 0x65 only (a later BolygoInfoRemove of the script's isn't its).
                 let all = ev == StoryEvent::EpidemicOver;
-                while self.acts.get(self.next).is_some_and(|a| a[0] == "inforemove") {
+                while self.acts.get(self.next).is_some_and(|a| a[0] == "inforemove" && (!all || int(&a[1][1]) == 0x65)) {
                     self.next += 1;
                     if !all {
                         break;
@@ -1611,6 +1758,10 @@ impl StoryWorld for W<'_> {
                     ships[k as usize].1 = 0x7fff;
                     self.ships = Some(ships);
                 }
+                // A ship the record refitted and then deleted (801 loads and lands it in one check) ends free.
+                if let Some(d) = self.ship_designs.get_mut(&k) {
+                    *d = 0x7fff;
+                }
                 self.apply_nested_tank_deletes(self.next.wrapping_sub(1));
             }
             StoryEvent::SetFleetVisible { fleet, on } => {
@@ -1645,6 +1796,12 @@ impl StoryWorld for W<'_> {
                     Notice::Touchdown { .. } => Box::new(|t| t.ends_with(" has captured your flag!")),
                     Notice::FlagLost { by } if by == en => Box::new(|t| t == "You have lost the flag!"),
                     Notice::FlagLost { .. } => Box::new(|t| t == "Your flag has been returned!"),
+                    Notice::StoryText(id) => {
+                        // The act's text and the setup's decode the accented letters differently: ASCII compared.
+                        let ascii = |t: &str| t.chars().map(|c| if c.is_ascii() { c } else { '?' }).collect::<String>();
+                        let want = ascii(&self.stext.get(&id).cloned().unwrap_or_default());
+                        Box::new(move |t| ascii(t) == want)
+                    }
                 };
                 if let Some(a) = self.take("text", &what) {
                     if !a[1][0].as_str().is_some_and(&*ok) {
@@ -1693,6 +1850,11 @@ impl StoryWorld for W<'_> {
                 self.expect("tankdelete", &[v(place), v(design), v(count)], &what);
                 // TankDeleteGrWar (exe 0x541510): the first record of the place and design.
                 if let Some(k) = (1..self.tanks.len()).find(|&k| self.tanks[k].0 == place && self.tanks[k].1 == design) {
+                    // st_Elem part 2g rows: `+0x16` at 10 (a fleet's fighters drop with a non-ground design's).
+                    let kind = self.w["designs"].get(design as usize).and_then(|x| x.get(10)).map(int);
+                    if place > 0 && kind.is_some_and(|k| k != 2) {
+                        *self.fighters_lost.entry(place).or_default() += count.min(self.tanks[k].2);
+                    }
                     let t = &mut self.tanks[k];
                     t.2 -= count.min(t.2);
                     if t.2 < 1 {
@@ -1884,6 +2046,14 @@ impl StoryWorld for W<'_> {
                 }
                 self.tt = Some(tt);
             }
+            StoryEvent::MakeAllies { a, b } if self.w.get("vlev").is_some() => {
+                // st_Elem part 2f traces: every pair's levels dumped, checked at the end (836's wars follow).
+                self.expect("peace", &[v(a), v(b)], &what);
+                self.allies.push((a, b));
+                if a == self.en {
+                    self.w["visz"][b as usize] = v(5);
+                }
+            }
             StoryEvent::MakeAllies { a, b } => {
                 self.expect("peace", &[v(a), v(b)], &what);
                 let post = ints(&self.post_world()["vrel"]);
@@ -1891,6 +2061,10 @@ impl StoryWorld for W<'_> {
                     self.bad.push(format!("{what}: exe levels {post:?}"));
                 }
                 self.w["visz"][b as usize] = v(5);
+            }
+            StoryEvent::DeclareWar { a, b } if a != self.en && self.w.get("vlev").is_some() => {
+                // st_Elem part 2g traces: 862's war of empire 1 on 5, the levels checked at the end.
+                self.pair_wars.push((a, b));
             }
             StoryEvent::DeclareWar { a, b } if self.w.get("visz2").is_some() && self.w.get("rel").is_some() => {
                 // st_Elem part 2a traces: any empire; `Viszony[b][a].+4 −= 10000` with the levels 1 both ways, checked
@@ -1915,6 +2089,13 @@ impl StoryWorld for W<'_> {
             StoryEvent::SetPlanetRadar { planet, level } => {
                 if let Some(p) = self.planets.get_mut(planet as usize) {
                     p.radar = level;
+                }
+                // st_Elem part 2e traces (`wf334` dumped): 834's `+0x6e := 5` (nothing else in the record writes it).
+                if self.w.get("wf334").is_some() {
+                    let got = planets_of(&self.post_world()).get(planet as usize).map(|q| q.radar);
+                    if got != Some(level) {
+                        self.bad.push(format!("{what}: exe {got:?}"));
+                    }
                 }
             }
             StoryEvent::ShowWormhole(k) => {
@@ -2015,6 +2196,44 @@ impl StoryWorld for W<'_> {
                     r.3 = design;
                 }
             }
+            StoryEvent::DesignByte { design, offset, value, .. } => {
+                self.design_bytes.insert((design, offset), value);
+            }
+            StoryEvent::ColoniseAs { planet, owner, race } => {
+                self.expect("colonise", &[v(planet), v(owner), v(race), v(0), v(0), v(0), v(0)], &what);
+                if let Some(p) = self.planets.get_mut(planet as usize) {
+                    p.owner = owner;
+                }
+            }
+            StoryEvent::PlaceBuildingUnbuilt { planet, kind } => {
+                self.expect("building", &[v(planet), v(kind), v(0), v(0), v(-1), v(-1)], &what)
+            }
+            StoryEvent::MergeFleets { into, from } => {
+                self.expect("osszevon", &[v(into), v(from)], &what);
+                // `FlottaOsszevon` (fleet-movement.md §4.6): `from` is freed, `into` takes its story id when it has none
+                // and its vehicles (`+0x5c`); its ships go over.
+                let src = self.fleets.get(from as usize).cloned();
+                if let Some(src) = src {
+                    if let Some(g) = self.fleets.get_mut(into as usize) {
+                        if g.id == 0 {
+                            g.id = src.id;
+                        }
+                        g.w5c = g.w5c.wrapping_add(src.w5c);
+                    }
+                    self.fleets[from as usize].owner = 0xff;
+                    let n = self.ship_count();
+                    let mut ships: Vec<(i32, i32)> = (0..=n).map(|k| self.ship(k)).collect();
+                    for s in ships.iter_mut().skip(1) {
+                        if s.0 == from {
+                            s.0 = into;
+                        }
+                    }
+                    self.ships = Some(ships);
+                }
+            }
+            StoryEvent::PlanetExtraFlag { planet, on } => {
+                self.extra187.insert(planet, on);
+            }
             StoryEvent::HoldGroundWar { planet } => {
                 self.expect("pause", &[v(1), v(0)], &what);
                 self.held = Some(planet);
@@ -2031,10 +2250,31 @@ impl StoryWorld for W<'_> {
                     }
                 }
             }
+            StoryEvent::ScrollNumber { text, a } => {
+                if let Some(x) = self.take("scroll", &what) {
+                    let t = x[1][0].as_str().unwrap_or("");
+                    // `format(_s(5, text), a)`: the number shows only where the text has a `%d` (814's is empty).
+                    let shown = self.stext.get(&text).is_none_or(|f| f.contains('%'));
+                    if t.contains(&a.to_string()) != shown {
+                        self.bad.push(format!("{what}: exe {t:?}"));
+                    }
+                }
+            }
+            StoryEvent::ColonyDiscount { halve } => self.colony_discount(halve, &what),
+            // Undo type 11 (840's discount ends with the story): the prices doubled back.
+            StoryEvent::Undo { kind: 11, .. } => self.colony_discount(false, &what),
+            StoryEvent::SelfDestructTimer { planet, value } => {
+                // st_Elem part 2e: the dump has planet 8140's `WF+0x334` (the record's last write wins).
+                let post = self.post_world();
+                if post["wf334"].get(0).map(int) == Some(planet) && post["wf334"].get(1).map(int) != Some(value) {
+                    self.bad.push(format!("{what}: exe {}", post["wf334"]));
+                }
+            }
             StoryEvent::ScrollEmpirePlanet { .. } => {
                 self.take("scroll", &what);
             }
             StoryEvent::Won
+            | StoryEvent::CampaignOver
             | StoryEvent::EmpireDies(_)
             | StoryEvent::GameInfo { .. }
             | StoryEvent::InfoLine { .. }
@@ -2123,9 +2363,19 @@ impl W<'_> {
             }
         }
         for (&p, &on) in &self.extras {
-            // Traces before st_Elem don't record the bytes.
-            if planets.get(p as usize).is_some_and(|q| q.extra.is_some()) && planets[p as usize].extra != Some((on as u8, on as u8)) {
-                self.bad.push(format!("planet {p} +0x186/+0x187: port {on} exe {:?}", planets.get(p as usize).and_then(|q| q.extra)));
+            // Traces before st_Elem don't record the bytes; part 2d's 806 clears `+0x187` alone afterwards.
+            let b = self.extra187.get(&p).copied().unwrap_or(on);
+            if planets.get(p as usize).is_some_and(|q| q.extra.is_some()) && planets[p as usize].extra != Some((on as u8, b as u8)) {
+                self.bad.push(format!("planet {p} +0x186/+0x187: port {on}/{b} exe {:?}", planets.get(p as usize).and_then(|q| q.extra)));
+            }
+        }
+        for (&p, &on) in &self.extra187 {
+            if self.extras.contains_key(&p) {
+                continue;
+            }
+            let got = planets.get(p as usize).and_then(|q| q.extra).map(|x| x.1);
+            if got != Some(on as u8) {
+                self.bad.push(format!("planet {p} +0x187: port {on} exe {got:?}"));
             }
         }
         if let Some(tt) = &self.tt {
@@ -2157,7 +2407,11 @@ impl W<'_> {
         }
         for (&(p, k, off), &val) in &self.building_bytes {
             let i = if off == 0x18 { 3 } else { 4 };
-            let got = post["bld"].get(p.to_string()).and_then(|b| b.get(k as usize)).map(|b| int(&b[i]));
+            // st_Elem traces: `[p, [[kind, +8, +4, +0x19]…]]` from slot 1.
+            let got = match post["bld"].as_array() {
+                Some(rows) if off == 0x19 => rows.iter().find(|r| int(&r[0]) == p).and_then(|r| r[1].get(k as usize - 1)).and_then(|b| b.get(3)).map(int),
+                _ => post["bld"].get(p.to_string()).and_then(|b| b.get(k as usize)).map(|b| int(&b[i])),
+            };
             if got != Some(val) {
                 self.bad.push(format!("building {p}/{k} +{off:#x}: port {val} exe {got:?}"));
             }
@@ -2203,6 +2457,44 @@ impl W<'_> {
             let (l1, l2) = (int(&post["visz"][b as usize]), int(&post["visz2"][b as usize]));
             if (l1, l2) != (1, 1) {
                 self.bad.push(format!("war with {b}: exe levels {l1} / {l2}"));
+            }
+        }
+        if let Some(lev) = post["vlev"].as_str().map(unhex) {
+            let en = self.en;
+            for &(a, b) in &self.pair_wars {
+                // 862's alliance with the human follows the war: with the human one of the two it wins.
+                if self.allies.iter().any(|&p| p == (a, b) || p == (b, a)) {
+                    continue;
+                }
+                for (x, y) in [(a, b), (b, a)] {
+                    let got = lev.get((x * 9 + y) as usize).copied();
+                    if got != Some(1) {
+                        self.bad.push(format!("war {a}/{b}: level [{x}][{y}] port 1 exe {got:?}"));
+                    }
+                }
+            }
+            for &(a, b) in &self.allies {
+                // A war the record declared afterwards (836) wins over the alliance.
+                let war = (a == en && self.wars.contains(&b)) || (b == en && self.wars.contains(&a));
+                let want: u8 = if war { 1 } else { 5 };
+                for (x, y) in [(a, b), (b, a)] {
+                    let got = lev.get((x * 9 + y) as usize).copied();
+                    if got != Some(want) {
+                        self.bad.push(format!("alliance {a}/{b}: level [{x}][{y}] port {want} exe {got:?}"));
+                    }
+                }
+            }
+        }
+        if let Some(mut model) = self.cdis.take() {
+            let got = &post["cdis"];
+            if got[0] != model[0] {
+                self.bad.push(format!("colony discount designs: port {} exe {}", model[0], got[0]));
+            }
+            // The dump lists the human's planets: one the record handed over (840's takeover) drops out.
+            let en = self.en;
+            model[1].as_array_mut().unwrap().retain(|q| planets.get(int(&q[0]) as usize).is_some_and(|x| x.owner == en));
+            if !self.tick && got[1] != model[1] {
+                self.bad.push(format!("colony discount planets: port {} exe {}", model[1], got[1]));
             }
         }
         self.finish_2c(&post);
@@ -2281,7 +2573,7 @@ impl W<'_> {
             }
         }
         let en = self.en;
-        for (&(e, d), &key) in &self.design_keys {
+        for (&(e, d), &key) in self.design_keys.iter().filter(|_| post.get("des2").is_some()) {
             let got = post["des2"].get(e as usize).and_then(|x| x.get(d as usize)).map(|r| int(&r[2]));
             if got != Some(key) {
                 self.bad.push(format!("design {e}/{d} key: port {key} exe {got:?}"));
@@ -2311,6 +2603,32 @@ impl W<'_> {
         if let Some(s4) = post["seed4"].as_u64() {
             if self.rng.state(stream::SPY) != s4 as u32 {
                 self.bad.push(format!("stream 4: port {:#x} exe {s4:#x}", self.rng.state(stream::SPY)));
+            }
+        }
+        if let Some(s0) = post["seed0"].as_u64() {
+            if self.rng.state(0) != s0 as u32 {
+                self.bad.push(format!("stream 0: port {:#x} exe {s0:#x}", self.rng.state(0)));
+            }
+        }
+        // st_Elem part 2d: designs' bytes (st_Elem rows: +0x34 at 5, +0x28 at 8) and the keys the stories wrote (+0x80
+        // at 4).
+        for (&(d, off), &val) in &self.design_bytes {
+            let col = match off {
+                0x34 => 5,
+                0x28 => 8,
+                _ => continue,
+            };
+            let got = post["designs"].get(d as usize).and_then(|x| x.get(col)).map(int);
+            if got != Some(val) {
+                self.bad.push(format!("design {d} +{off:#x}: port {val} exe {got:?}"));
+            }
+        }
+        if post.get("seed0").is_some() {
+            for (&(e, d), &key) in &self.design_keys {
+                let got = post["designs"].get(d as usize).and_then(|x| x.get(4)).map(int);
+                if e == self.en && got != Some(key) {
+                    self.bad.push(format!("design {d} key: port {key} exe {got:?}"));
+                }
             }
         }
     }
@@ -2448,6 +2766,9 @@ fn load(s: &Value) -> Story {
     if let Some(n) = s.get("n3") {
         st.nearest3.copy_from_slice(&ints(n));
     }
+    if let Some(n) = s.get("n4") {
+        st.brutal4.copy_from_slice(&ints(n));
+    }
     // st_Rnd traces: the finished space battle's participants.
     if let Some(b) = s.get("battle").and_then(|b| b.as_array()) {
         st.battle = b.iter().map(|p| story::Participant { owner: int(&p[0]), slot_id: int(&p[1]), fleet_id: int(&p[2]) }).collect();
@@ -2537,6 +2858,9 @@ fn compare(st: &Story, s: &Value) -> Vec<String> {
     field!(last_collect_fleet);
     if s.get("n3").is_some() {
         field!(nearest3);
+    }
+    if s.get("n4").is_some() {
+        field!(brutal4);
     }
     if s.get("kemev").is_some() {
         field!(kem);
@@ -2706,6 +3030,22 @@ fn campaign_matches_exe() {
             if setup["elem2c"].as_bool() != Some(true) {
                 skip.extend(ig2_sim::elem::PART_2C);
             }
+            // ... and before part 2d (no `elem2d`) 801, 804, 806, 807, 809.
+            if setup["elem2d"].as_bool() != Some(true) {
+                skip.extend(ig2_sim::elem::PART_2D);
+            }
+            // ... and before part 2e (no `elem2e`) 814, 815, 821, 832, 834.
+            if setup["elem2e"].as_bool() != Some(true) {
+                skip.extend(ig2_sim::elem::PART_2E);
+            }
+            // ... and before part 2f (no `elem2f`) 836, 839, 840, 843.
+            if setup["elem2f"].as_bool() != Some(true) {
+                skip.extend(ig2_sim::elem::PART_2F);
+            }
+            // ... and before part 2g (no `elem2g`) 844, 856, 862, 863.
+            if setup["elem2g"].as_bool() != Some(true) {
+                skip.extend(ig2_sim::elem::PART_2G);
+            }
             if !a {
                 skip.extend(ig2_sim::elem::PART_2A);
             }
@@ -2829,7 +3169,7 @@ fn campaign_matches_exe() {
                 }
             }
             let (e0, e1) = (ints(&pre["ends"]), ints(&post["ends"]));
-            let won = w.events.iter().filter(|e| **e == StoryEvent::Won).count() as i32;
+            let won = w.events.iter().filter(|e| matches!(e, StoryEvent::Won | StoryEvent::CampaignOver)).count() as i32;
             let died: Vec<i32> = w.events.iter().filter_map(|e| if let StoryEvent::EmpireDies(x) = e { Some(*x) } else { None }).collect();
             stats.won += won as usize;
             stats.died += died.len();

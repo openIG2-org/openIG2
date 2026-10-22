@@ -305,7 +305,7 @@ pub struct SpyScreen {
     pub mouse: [f32; 2],
     held: bool,
     /// The tooltip (`UpdateFrame`).
-    pub tip: crate::ui::Tooltip,
+    pub tip: crate::kit::Tooltip,
     /// Lines for the message ticker (`ScrollHibaUzenet`), taken by the window.
     pub errors: Vec<Vec<u8>>,
 }
@@ -345,7 +345,7 @@ impl SpyScreen {
             old_me: 0,
             mouse: [320.0, 240.0],
             held: false,
-            tip: crate::ui::Tooltip::default(),
+            tip: crate::kit::Tooltip::default(),
             errors: Vec::new(),
         };
         s.plan = Plan::init();
@@ -1258,7 +1258,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     let mut frame = v.build(hud, &d, size, l.install.lang() == ig2_formats::text::Lang::Hu);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Spy, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
-    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    crate::assets::write_snapshot(out, o, &rgba)?;
     let s = &v.screen;
     println!(
         "{}: spy screen | EN {en} spy {} dialog {} plan {:?} | roster {:?} | rotation {:.3}",

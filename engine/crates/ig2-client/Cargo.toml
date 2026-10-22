@@ -13,8 +13,7 @@ ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
 ig2-sim = { version = "0.1.0", path = "../ig2-sim" }
 png = "0.18.1"
 pollster = "1.0.1"
+serde_json = "1.0.154"
 wgpu = "25.0.2"
 winit = "0.30.13"
 
-[dev-dependencies]
-serde_json = "1.0.154"

@@ -262,13 +262,14 @@ impl FrameModels {
         if dynamic.is_empty() {
             return None;
         }
-        let k = size[1] / 480.0;
-        let px = ((640.0 * k).round().max(1.0) as u32, size[1].round().max(1.0) as u32);
+        let wide = crate::kit::Wide::frame(&crate::font::Virtual::new(size));
+        let px = wide.px;
         // Camera space → clip over the virtual 640 × 480: vx = 600·x/w + 320, vy = 600·y/w + 240 (w = −z); depth
         // 0..1 over w = 50..3000 (the info screen's detail globe comes to w = 150).
         let (n, f) = (50.0f32, 3000.0f32);
         let (a, b) = (1.0 / (1.0 / n - 1.0 / f) / n, 1.0 / (1.0 / n - 1.0 / f));
         let rows = [[1200.0 / 640.0, 0.0, 0.0, 0.0], [0.0, -1200.0 / 480.0, 0.0, 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
+        let rows = wide.rows(rows);
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows[k][c]));
         let mut frame = Frame::new([0.0, 0.0, 0.0, 0.0]);
         frame.scene = Some(Scene3d {
@@ -441,10 +442,10 @@ impl FrameModels {
     }
 }
 
-/// Draw a frame texture over the virtual screen (the target covers 640 × 480 virtual pixels).
+/// Draw a frame texture over the virtual screen (the target covers the 4:3 frame, [`crate::kit::Wide::frame`]).
 pub fn draw(f: &mut Frame, tex: TexId, v: &crate::font::Virtual) {
     use crate::render::{kind, Blend, Instance};
     let c = v.px(320.0, 240.0);
-    f.push(tex, Blend::GammaPremul, Instance::new(kind::SPRITE, c, [320.0 * v.k, 240.0 * v.k], [1.0; 4]));
+    f.push(tex, Blend::GammaPremul, Instance::new(kind::SPRITE, c, crate::kit::Wide::frame(v).half(v), [1.0; 4]));
 }
 

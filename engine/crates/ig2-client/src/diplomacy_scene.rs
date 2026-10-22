@@ -261,9 +261,12 @@ impl DiplomacyScene {
         // The grid is the far background: under the solid models.
         line(f, grid);
         if !dynamic.is_empty() {
-            let px = ((640.0 * vv.k).round().max(1.0) as u32, size[1].round().max(1.0) as u32);
+            let wide = crate::kit::Wide::new(vv);
+            let px = wide.px;
             let mut fr = Frame::new([0.0, 0.0, 0.0, 0.0]);
             let mut u = uniforms();
+            let rows = wide.rows(std::array::from_fn(|r| std::array::from_fn(|c| u.view[c][r])));
+            u.view = std::array::from_fn(|c| std::array::from_fn(|r| rows[r][c]));
             u.eye[3] = self.acttime.unwrap_or(time);
             fr.scene = Some(Scene3d { uniforms: u, gamma: true, shadow: None, draws, dynamic });
             let target = match &mut self.target {
@@ -272,7 +275,7 @@ impl DiplomacyScene {
             };
             r.draw_into(&fr, target, px, 0.0);
             let tex = target.tex;
-            let half = [320.0 * vv.k, size[1] / 2.0];
+            let half = wide.half(vv);
             f.push(tex, Blend::GammaPremul, Instance::new(kind::SPRITE, vv.px(320.0, 240.0), half, [1.0; 4]));
         }
         line(f, wires);

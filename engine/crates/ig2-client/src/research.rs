@@ -215,11 +215,11 @@ pub struct Research {
     slot_button: [i32; 5],
     pub pressed: Vec<(i32, i32)>,
     /// The tooltip (`UpdateFrame`) and the left button held.
-    pub tip: crate::ui::Tooltip,
+    pub tip: crate::kit::Tooltip,
     pub held: bool,
     /// The chosen row's frame (`DesignKeret1`, asked for by every drawn frame while open, stepped every UI frame)
     /// and the list font's cell (`CharXMeret[2]`, `CharYMeret[2]`).
-    design: crate::ui::DesignFrame,
+    design: crate::kit::DesignFrame,
     cell: [i32; 2],
     /// `ResearchGfx2D_1`: the opening's lasers and sparks, and whether this frame draws them (`resELINDULT`, not
     /// closing; the lasers while opening, the sparks unless at frame 60).
@@ -286,7 +286,7 @@ impl Research {
             press_done: true,
             slot_button: s.wheel_button,
             pressed: Vec::new(),
-            tip: crate::ui::Tooltip::default(),
+            tip: crate::kit::Tooltip::default(),
             held: false,
             design: Default::default(),
             cell: [rules.charset.width.get(2).copied().unwrap_or(6), rules.charset.height.get(2).copied().unwrap_or(7)],
@@ -1124,7 +1124,7 @@ impl Research {
         let (white, v) = (d.white, &d.v);
         let s = 0.9;
         let (ft, et) = ((1.0 - fade) * 150.0 + 105.0, (1.0 - fade) * 205.0 + 50.0);
-        let kirak = |f: &mut Frame, r: [f32; 4]| crate::starmap_panels::kirak_fader(f, white, v, r, [0.0, 54.0 * s, 90.0 * s], ft, [0.0, 90.0 * s, 130.0 * s], et);
+        let kirak = |f: &mut Frame, r: [f32; 4]| crate::kit::fader::kirak_fader(f, white, v, r, [0.0, 54.0 * s, 90.0 * s], ft, [0.0, 90.0 * s, 130.0 * s], et);
         let (y, h) = (124.0 - grow * 43.0, grow * 106.0);
         kirak(f, [3.0, y, 135.0, h]);
         kirak(f, [500.0, y, 135.0, h]);
@@ -1140,7 +1140,7 @@ impl Research {
     /// side panels cover the closed wheel's pods]).
     pub fn draw_models(&self, f: &mut Frame, d: &Draw2d, models: TexId) {
         let v = &d.v;
-        f.push(models, Blend::GammaPremul, Instance::new(kind::SPRITE, v.px(320.0, 240.0), [320.0 * v.k, 240.0 * v.k], [1.0; 4]));
+        f.push(models, Blend::GammaPremul, Instance::new(kind::SPRITE, v.px(320.0, 240.0), crate::kit::Wide::new(v).half(v), [1.0; 4]));
     }
 
     pub fn draw_over(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, rules: &ig2_rules::Rules, t: &Texts) {
@@ -1536,7 +1536,7 @@ impl ResearchModels {
                         pts.iter().map(|q| q[1]).reduce(f32::min),
                         pts.iter().map(|q| q[1]).reduce(f32::max),
                     ) {
-                        let c = crate::starmap_hud::fade_color(GLASS, a);
+                        let c = crate::kit::fader::fade_color(GLASS, a);
                         lines.insert(0, Instance::new(kind::SPRITE, v.px((x0 + x1) / 2.0, (y0 + y1) / 2.0), [(x1 - x0) * v.k / 2.0, (y1 - y0) * v.k / 2.0], c));
                     }
                     continue;
@@ -1618,13 +1618,14 @@ impl ResearchModels {
         if dynamic.is_empty() {
             return (None, lines);
         }
-        let k = size[1] / 480.0;
-        let px = ((640.0 * k).round().max(1.0) as u32, size[1].round().max(1.0) as u32);
+        let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
+        let px = wide.px;
         let light = scene::normalise(LIGHT);
         // Depth from w = NEAR to 2400 [obs: closing, the info box's glass passes close to the camera and still shows].
         const NEAR: f32 = 10.0;
         let (a, b) = (1.0 / (1.0 / NEAR - 1.0 / 2400.0) / NEAR, 1.0 / (1.0 / NEAR - 1.0 / 2400.0));
         let rows4 = [[1200.0 / 640.0, 0.0, 0.0, 0.0], [0.0, -1200.0 / 480.0, -(1.0 - 500.0 / 480.0), 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
+        let rows4 = wide.rows(rows4);
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
         let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
         f.scene = Some(Scene3d {
@@ -1845,7 +1846,7 @@ mod tests {
             press_done: true,
             slot_button: [100, 101, 102, 103, 104],
             pressed: Vec::new(),
-            tip: crate::ui::Tooltip::default(),
+            tip: crate::kit::Tooltip::default(),
             held: false,
             design: Default::default(),
             cell: [6, 7],

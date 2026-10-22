@@ -738,7 +738,7 @@ fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Load
     d.draw(&mut frame, r, &l.install, &l.tables, hud, state, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Diplomacy, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
-    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    crate::assets::write_snapshot(out, o, &rgba)?;
     let v = crate::diplomacy::View::read(state);
     println!("{}: diplomacy | selected {} | contacts {:?} | menus {:?}", out.display(), d.screen.selected, v.slots.iter().map(|s| (s.empire, s.waiting, s.answered)).collect::<Vec<_>>(), d.screen.shown);
     Ok(())
@@ -804,7 +804,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     hud.draw_colony(&mut frame, &world.game.state, &l.tables, &l.rules.ground_maps, &view, &scene, &curr, &input);
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Colony, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
-    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    crate::assets::write_snapshot(out, o, &rgba)?;
     let gm = &l.rules.ground_maps[curr.map];
     let e = view.camera.eye(gm);
     println!(
@@ -870,13 +870,109 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     hud.draw_research(&mut frame, &s, &infos, &tips, state, &l.tables, (tex, models.glow), lines, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
-    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    crate::assets::write_snapshot(out, o, &rgba)?;
     println!("{}: research area {} field {} tech {} | models at {:?}", out.display(), s.area, s.field, s.tech, models.centres);
     Ok(())
 }
 
+/// `--snapshot --screen research --script S`: the research screen opened animated (as `Research_Belep` with
+/// `KELLKINYITASDEFAULT`), run tick by tick with the script's input (re/screens/sound.md §3): events at t go in before
+/// tick t + 1 (the pointer, the left button as `Research_Main`'s press, `ResearchKeyboardHandler`'s keys, Esc
+/// `Research_Kilep`), their commands applied at once as the exe's `MULTIGET_Research`; grab t is drawn after t ticks.
+fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &mut crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    use crate::research::{Act, Key};
+    use crate::script::Input;
+    let mut s = crate::research::Research::open(&world.game.state, &l.tables, true);
+    s.tip.moved([320.0, 240.0]);
+    let infos = crate::research::tech_infos(&l.install);
+    let tips = crate::research::tips(&hud.texts);
+    let mut models = crate::research::ResearchModels::new(r, &l.install);
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let t = world.curr.tick as f32 * 0.05;
+    let mut rendered = None;
+    // Per tick: the tick, the grab (the frame drawn after it), then the events that go in before the next tick.
+    for tick in 0..=script.end() {
+        if tick > 0 {
+            s.step(&world.game.state);
+            s.tooltip(&world.game.state, &models.mask, &tips, s.frames as f64 * 10.0);
+            rendered = None;
+        }
+        if script.grabs.contains(&tick) {
+            let (tex, lines) = models.render(r, &l.install, &l.tables, &s, &world.game.state, size);
+            let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+            hud.draw_research(&mut frame, &s, &infos, &tips, &world.game.state, &l.tables, (tex, models.glow), lines, size, t);
+            hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
+            let rgba = r.draw_to_image(&frame, o.size, t);
+            let path = crate::script::grab_path(out, tick);
+            crate::assets::write_snapshot(&path, o, &rgba)?;
+            println!("{}: t {tick} | research area {} field {} tech {} | frames {} resframe {} open {}", path.display(), s.area, s.field, s.tech, s.frames, s.frame, s.opened);
+        }
+        for e in script.at(tick) {
+            let acts = match &e.input {
+                Input::Move(at) => {
+                    s.tip.moved(*at);
+                    Vec::new()
+                }
+                // The top bar's research button (`HACK_SetBrushok`'s 1005 at (600, 0), 40 × 20) leaves the screen.
+                Input::Button { button: 1, down: true, at } if at[1] < 20.0 && (600.0..640.0).contains(&at[0]) => {
+                    s.leave();
+                    Vec::new()
+                }
+                Input::Button { button: 1, down: true, at } => {
+                    s.held = true;
+                    if s.closing {
+                        Vec::new()
+                    } else {
+                        // The models' projected centres of the last drawn frame (`CheckIfTalalmanyokFolottVan`).
+                        if rendered.is_none() {
+                            rendered = Some(models.render(r, &l.install, &l.tables, &s, &world.game.state, size));
+                        }
+                        s.press(&world.game.state, &l.tables, &models.mask, *at, &models.centres)
+                    }
+                }
+                Input::Button { button: 1, down: false, .. } => {
+                    s.held = false;
+                    Vec::new()
+                }
+                Input::Key { name, down: true } => {
+                    let k = match name.as_str() {
+                        "down" => Some(Key::Down),
+                        "up" => Some(Key::Up),
+                        "right" => Some(Key::Right),
+                        "left" => Some(Key::Left),
+                        "enter" => Some(Key::Enter),
+                        "d" => Some(Key::Double),
+                        "pageup" => Some(Key::PageUp),
+                        "pagedown" => Some(Key::PageDown),
+                        "escape" => {
+                            s.leave();
+                            None
+                        }
+                        _ => None,
+                    };
+                    k.map_or_else(Vec::new, |k| s.key(&world.game.state, k))
+                }
+                _ => Vec::new(),
+            };
+            for a in acts {
+                let Act::Send(c) = a;
+                world.send(c);
+            }
+            world.pump();
+        }
+    }
+    Ok(())
+}
+
 /// `--snapshot`: run the requested ticks headlessly and write one frame as PNG.
+/// Render a snapshot of the window `o.size`: the screens draw in its band ([`crate::kit::Layout::band`]).
 pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
+    let [_, _, w, h] = crate::kit::Layout::new(o.size.0 as i32, o.size.1 as i32).band();
+    let o = crate::Options { size: (w as u32, h as u32), window: o.size, ..o.clone() };
+    snapshot_band(&o, out)
+}
+
+fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
     let l = crate::load(o)?;
     let mut world = crate::world::World::load(&l.save, &l.rules, &l.tech_defaults, &l.volatile);
     world.set_speed(o.speed);
@@ -937,6 +1033,10 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     if o.screen.as_deref() == Some("spy") {
         return crate::spy_screen::snapshot(o, out, &l, &world, &mut r, &mut hud);
     }
+    if let (Some("research"), Some(path)) = (o.screen.as_deref(), &o.script) {
+        let script = crate::script::Script::load(path)?;
+        return research_sequence(o, out, &script, &l, &mut world, &mut r, &mut hud);
+    }
     if o.screen.as_deref() == Some("research") {
         return research_snapshot(o, out, &l, &world, &mut r, &mut hud);
     }
@@ -973,7 +1073,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
         hud.draw(&mut frame, size, &world.ui, &l.tables, screen, t);
         let rgba = r.draw_to_image(&frame, o.size, t);
-        crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+        crate::assets::write_snapshot(out, o, &rgba)?;
         let s = &world.ui;
         println!(
             "{}: {screen:?} chart {} | known {:?} | inbox {} | line {:?} queue {} history {}",
@@ -1044,7 +1144,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     }
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
-    crate::assets::write_png(out, o.size.0, o.size.1, &rgba)?;
+    crate::assets::write_snapshot(out, o, &rgba)?;
     let (y, m, d) = world.curr.date();
     let shown = world.curr.fleets.iter().filter(|f| view.reveal || f.visible).count();
     println!(

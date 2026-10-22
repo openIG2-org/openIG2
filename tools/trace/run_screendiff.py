@@ -17,6 +17,14 @@ rop | planetinfo | tax | autobuild | priority | planets (the starmap's menus on 
    writes `<out>/<name>-{exe,client,heat}.png` and `<out>/<name>.json`, and prints the table.
 The message line is masked by default (it scrolls on the UI clock in both). Exit code 0 = every region matches.
 Images hold game imagery: keep --out under _local/.
+
+--script S (screens with `script` below; re/screens/sound.md §3) compares a frame sequence instead of one still: the
+exe runs the input script S on the screen (run_screen.py --script --sounds: one UI tick a drawn frame, each grab read
+back at exactly t ticks, the exe's save of the script's first frame), the client runs the same script on that save
+(`--snapshot --script`), and every grab t is diffed: `<name>-{exe,client,heat}-t<T>.png`, `<name>-seq.json` (per grab
+the regions, the exe's screen state; the sounds the exe started, each with the input before it) and a table of
+mean differences, grabs × regions. --exe-seq PREFIX reuses an earlier exe run (PREFIX-t<T>.png, PREFIX-frames.json,
+the state save beside it as <name>-state.sav).
 """
 import argparse
 import json
@@ -49,7 +57,7 @@ SCREENS = {
     # The research screen (research.md): the ball and its models turn with the frames drawn, so "ball" compares
     # their place and size more than their pixels. The exe opens it over ~250 frames after loading the save: the
     # grab waits 1000 (at 240 it is mid-opening; held frames, --anim-frame 60 included, don't wait for it).
-    "research": dict(kep=4, wait=1000, client=["--screen", "research", "--ui-frames", "240"], regions=[
+    "research": dict(kep=4, wait=1000, script=True, client=["--screen", "research", "--ui-frames", "240"], regions=[
         TOPBAR, "info_box=175,25,300,55", "start_double=100,20,440,62", "left_list=3,81,135,106",
         "right_list=500,81,135,106", "labs=0,235,80,60", "labs_right=560,235,80,60", "wheels=60,330,520,150",
         "ball=150,70,340,300"]),
@@ -92,6 +100,106 @@ def run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
+def diff(exe_png, client_png, heat, regions, masks, a):
+    cmd = [DIFF, exe_png, client_png, "--json", "--heat", heat, "--threshold", a.threshold, "--shift", a.shift]
+    for reg in regions:
+        cmd += ["--region", reg]
+    for m in masks:
+        cmd += ["--mask", m]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode == 2:
+        sys.exit(r.stderr)
+    return json.loads(r.stdout)
+
+
+def clock_args(save):
+    """The exe's UI clocks a state save doesn't hold (run_screen.py writes them beside it)."""
+    ui = save + ".ui.json"
+    if not os.path.exists(ui):
+        return []
+    with open(ui, encoding="utf-8") as f:
+        clocks = json.load(f)
+    args = []
+    if clocks.get("clouds") is not None:
+        args += ["--clouds", str(clocks["clouds"])]
+    if clocks.get("futofeny") is not None:
+        args += ["--futofeny", repr(clocks["futofeny"])]
+    if clocks.get("acttime") is not None:
+        args += ["--acttime", repr(clocks["acttime"] / 1000)]
+    return args
+
+
+def sound_table(path):
+    """(input → sound) pairs of a --sounds log: each sound the exe started on the script, with the input before it."""
+    rows = []
+    if not os.path.exists(path):
+        return rows
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            p = json.loads(line)
+            if p.get("k") != "sound":
+                continue
+            i = p.get("input") or {}
+            rows.append(dict(t=p.get("t"), ui=p.get("ui"), fn=p.get("fn"), table=p.get("table"), idx=p.get("idx"), name=p.get("name"),
+                             loop=p.get("loop"), vol=p.get("vol"), on=p.get("on"),
+                             input=None if i.get("src") != "script" else dict(t=i.get("t"), ev=i.get("ev"), at=i.get("at"), key=i.get("key")),
+                             after=p.get("dui") if i.get("src") == "script" else None))
+    return rows
+
+
+def sequence(a, kind, cfg, env, masks):
+    stem = os.path.splitext(os.path.basename(a.script))[0]
+    name = f"{kind}-seq-{stem}" if stem != kind else f"{kind}-seq"
+    with open(a.script, encoding="utf-8") as f:
+        grabs = sorted(json.load(f).get("grabs", []))
+    state = os.path.join(a.out, f"{name}-state.sav")
+    sounds = os.path.join(a.out, f"{name}-sounds.jsonl")
+    prefix = a.exe_seq or os.path.join(a.out, f"{name}-exe")
+    if not a.exe_seq:
+        r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
+                 "--script", a.script, "--sounds", sounds, "--state-out", state, "--seconds", "560"])
+        if r.returncode:
+            sys.exit("the exe's script run failed")
+    with open(prefix + "-frames.json", encoding="utf-8") as f:
+        meta = json.load(f)
+    by_t = {x["t"]: x for x in meta["frames"]}
+    client = os.path.join(a.out, f"{name}-client.png")
+    args = [x for x in cfg["client"] if x not in ("--ui-frames", "240")] + ["--script", a.script]
+    r = run([CLIENT, "--snapshot", client, "--save", state, "--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args + clock_args(state), env=env)
+    if r.returncode:
+        sys.exit("the client's script run failed")
+    out = []
+    for t in grabs:
+        exe_png = f"{prefix}-t{t}.png"
+        client_png = os.path.join(a.out, f"{name}-client-t{t}.png")
+        if not (os.path.exists(exe_png) and os.path.exists(client_png)):
+            out.append(dict(t=t, missing=True))
+            continue
+        rows = diff(exe_png, client_png, os.path.join(a.out, f"{name}-heat-t{t}.png"), cfg["regions"], masks, a)
+        out.append(dict(t=t, exe=by_t.get(t, {}).get("res"), ticks=by_t.get(t, {}).get("ticks"), regions=rows))
+    table = sound_table(sounds if not a.exe_seq else os.path.join(os.path.dirname(prefix), f"{name}-sounds.jsonl"))
+    result = dict(screen=kind, script=os.path.basename(a.script), save=os.path.basename(a.save), masks=masks, threshold=float(a.threshold),
+                  start=meta.get("start"), grabs=out, sounds=table)
+    with open(os.path.join(a.out, f"{name}-seq.json"), "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=1)
+    regions = [r.split("=")[0] for r in cfg["regions"]]
+    print(f"\n{kind} sequence {os.path.basename(a.script)} ({os.path.basename(a.save)}): best-offset mean per region, * = differs")
+    print(f"{'t':>5} " + " ".join(f"{r[:11]:>11}" for r in ["frame"] + regions))
+    for g in out:
+        if g.get("missing"):
+            print(f"{g['t']:>5} missing")
+            continue
+        cells = {x["region"]: x for x in g["regions"]}
+        print(f"{g['t']:>5} " + " ".join(f"{cells[r]['mean']:10.2f}{'*' if cells[r]['verdict'] != 'match' else ' '}" for r in ["frame"] + regions if r in cells))
+    print("\nsounds (exe): t, input before it → table[id] name")
+    for s in table:
+        i = s["input"]
+        before = f"{i['ev']} {i.get('key') or i.get('at')} at {i['t']} (+{s['after']})" if i else "-"
+        print(f"{s['t'] if s['t'] is not None else '-':>5}  {before:<34} {s['fn']} {s['table']}[{s['idx']}] {s['name']}")
+    ok = all(not g.get("missing") and all(x["verdict"] == "match" for x in g["regions"]) for g in out)
+    sys.exit(0 if ok else 1)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("install")
@@ -115,6 +223,8 @@ def main():
     ap.add_argument("--anim-closing", "--spy-closing", dest="anim_closing", action="store_true")
     ap.add_argument("--anim-mouse", "--spy-mouse", dest="anim_mouse",
                     help="spy, research: the pointer rests at the virtual point X,Y in both (a hot-spot's tooltip)")
+    ap.add_argument("--script", help="compare the frame sequence of this input script (re/screens/sound.md §3)")
+    ap.add_argument("--exe-seq", help="with --script: reuse this exe run (its run_screen.py out-prefix)")
     a = ap.parse_args()
 
     kind, _, arg = a.screen.partition(":")
@@ -159,7 +269,12 @@ def main():
         if run([cargo, "build", "--release", "-p", "ig2-client", "-p", "ig2-screendiff"], cwd=ENGINE).returncode:
             sys.exit("build failed")
 
-    exe_png = os.path.join(a.out, f"{name}-exe.png")
+    if a.script:
+        if not cfg.get("script"):
+            sys.exit(f"--script: the client runs no input scripts on {kind} yet")
+        sequence(a, kind, cfg, env, ([] if a.no_default_masks else DEFAULT_MASKS) + cfg.get("masks", []) + a.mask)
+
+    exe_png =os.path.join(a.out, f"{name}-exe.png")
     save = a.exe_state or a.save
     if a.exe_png:
         if os.path.abspath(a.exe_png) != os.path.abspath(exe_png):

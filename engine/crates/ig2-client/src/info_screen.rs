@@ -1010,7 +1010,7 @@ fn line(f: &mut Frame, white: TexId, v: &Virtual, a: [f32; 2], b: [f32; 2], ca: 
 /// chart's, the four list rows', the empire panel's, the scroll bar and its thumb, the human's spending limit. The
 /// texts are faded in (`infoFelfadeles` 100: `t` = 0, opaque); the detail mode's shapes aren't drawn.
 pub fn draw_faders(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, ui: &InfoScreen) {
-    use crate::starmap_panels::{fade_kerekit, kirak_fader};
+    use crate::kit::fader::{fade_kerekit, kirak_fader};
     let (max, fr) = (crate::screen_frames::INFO_MAX_FRAMES, ui.frame);
     if fr < max - 15.0 {
         return;
@@ -1411,7 +1411,7 @@ fn draw_select(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, d: &InfoDa
         27 => ((items.end() + 1) * 0xd + 4) as f32,
         _ => 0x2b as f32,
     };
-    crate::starmap_panels::fader(f, white, v, [x - 6.0, y - 2.0, 0x82 as f32, h], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
+    crate::kit::fader::fader(f, white, v, [x - 6.0, y - 2.0, 0x82 as f32, h], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
     let (base, first) = match k {
         26 => (22, 0),
         27 => (30, 0),

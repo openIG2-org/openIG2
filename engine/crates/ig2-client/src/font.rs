@@ -8,28 +8,7 @@ use ig2_rules::Charset;
 use crate::assets::Image;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, TexId};
 
-/// The virtual screen (480 lines high, widened for the window; `ModifyViewPort`) → window pixels.
-#[derive(Debug, Clone, Copy)]
-pub struct Virtual {
-    pub k: f32,
-    pub x0: f32,
-}
-
-impl Virtual {
-    pub fn new(size: [f32; 2]) -> Self {
-        let k = size[1] / 480.0;
-        Self { k, x0: size[0] / 2.0 - 320.0 * k }
-    }
-
-    pub fn px(&self, x: f32, y: f32) -> [f32; 2] {
-        [self.x0 + x * self.k, y * self.k]
-    }
-
-    /// Window pixels → virtual pixels.
-    pub fn virtual_of(&self, p: [f32; 2]) -> [f32; 2] {
-        [(p[0] - self.x0) / self.k, p[1] / self.k]
-    }
-}
+pub use crate::kit::Virtual;
 
 /// Text alignment (`KiirStr`'s flags & 3): 0 left, 1 centred in the `len` cells, 2 right-aligned in them, 3 centred
 /// on x (ELF 0x4f8570: integer halves).

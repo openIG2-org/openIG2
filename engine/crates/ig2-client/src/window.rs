@@ -48,6 +48,44 @@ struct Gpu {
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     assets: Assets,
+    /// Where a window narrower than 4:3 draws its band before it goes on the window.
+    band_target: Option<crate::render::Target>,
+}
+
+impl Gpu {
+    /// `ig2_resize` for the window.
+    fn layout(&self) -> crate::kit::Layout {
+        crate::kit::Layout::new(self.config.width as i32, self.config.height as i32)
+    }
+
+    /// The viewport the screens draw in (the whole window unless it is narrower than 4:3).
+    fn band(&self) -> (u32, u32) {
+        let [_, _, w, h] = self.layout().band();
+        (w as u32, h as u32)
+    }
+
+    /// Draw the frame on the window: through the band's target when it is letterboxed top and bottom, with the
+    /// side strips black under the "letterbox" option.
+    fn present(&mut self, mut frame: crate::render::Frame, out: &wgpu::Texture, t: f32) {
+        let l = self.layout();
+        crate::kit::layout::letterbox_bars(&mut frame, &l, self.assets.white);
+        let size = (self.config.width, self.config.height);
+        let [x, y, w, h] = l.band();
+        if [w, h] == [size.0 as i32, size.1 as i32] {
+            self.renderer.draw(&frame, out, size, t);
+            return;
+        }
+        let px = (w as u32, h as u32);
+        let target = match &mut self.band_target {
+            Some(tg) => tg,
+            None => self.band_target.insert(self.renderer.target(px)),
+        };
+        self.renderer.draw_into(&frame, target, px, t);
+        let mut f = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
+        let c = [x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0];
+        f.push(target.tex, crate::render::Blend::Alpha, crate::render::Instance::new(crate::render::kind::SPRITE, c, [w as f32 / 2.0, h as f32 / 2.0], [1.0; 4]));
+        self.renderer.draw(&f, out, size, t);
+    }
 }
 
 /// The open colony screen: its scene on the GPU, its view, the input state and the panel's turning building.
@@ -196,7 +234,8 @@ impl App {
         self.panel_models = Some(PanelModels::new(&mut renderer));
         self.frame_models = Some(crate::screen_frames::FrameModels::new(&mut renderer));
         let scale = window.scale_factor() as f32;
-        self.view = Some(View::new(&self.world.curr, &self.world.view, (config.width, config.height), scale));
+        let [_, _, bw, bh] = crate::kit::Layout::new(config.width as i32, config.height as i32).band();
+        self.view = Some(View::new(&self.world.curr, &self.world.view, (bw as u32, bh as u32), scale));
         let sel = self.selection();
         if sel.mode == 1 || sel.mode == 2 {
             self.select(sel);
@@ -205,7 +244,7 @@ impl App {
         // The messages quote the empires by `BirodalomNev` (the HUD's table).
         self.world.game.empire_names = hud.empire_names.clone();
         self.hud = Some(hud);
-        self.gpu = Some(Gpu { window, surface, config, renderer, assets });
+        self.gpu = Some(Gpu { window, surface, config, renderer, assets, band_target: None });
         Ok(())
     }
 
@@ -217,10 +256,10 @@ impl App {
         g.config.present_mode = if self.vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
         g.surface.configure(&g.renderer.device, &g.config);
         if let Some(v) = &mut self.view {
-            v.resize((g.config.width, g.config.height), g.window.scale_factor() as f32);
+            v.resize(g.band(), g.window.scale_factor() as f32);
         }
         if let Some(c) = &mut self.colony {
-            c.view.resize((g.config.width, g.config.height), g.window.scale_factor() as f32);
+            c.view.resize(g.band(), g.window.scale_factor() as f32);
         }
     }
 
@@ -246,7 +285,7 @@ impl App {
         let Some(snap) = self.world.colony_curr.clone() else { return };
         match crate::colony::ColonyScene::load(&mut g.renderer, &self.install, self.tables, self.maps, &snap) {
             Ok(scene) => {
-                let view = crate::colony::View::new(&snap, (g.config.width, g.config.height), g.window.scale_factor() as f32, &scene);
+                let view = crate::colony::View::new(&snap, g.band(), g.window.scale_factor() as f32, &scene);
                 let own = snap.owner == self.world.curr.human && !snap.at_war;
                 let ui = crate::colony_ui::ColonyUi::enter(&snap, own, &self.world.game.state);
                 self.colony = Some(Colony { scene, view, ui, panel: Default::default() });
@@ -303,8 +342,8 @@ impl App {
     fn spy_virtual(&self, p: [f32; 2]) -> Option<[f32; 2]> {
         let g = self.gpu.as_ref()?;
         self.spy.as_ref()?;
-        let v = crate::font::Virtual::new([g.config.width as f32, g.config.height as f32]);
-        Some([(p[0] - v.x0) / v.k, p[1] / v.k])
+        let (w, h) = g.band();
+        Some(crate::font::Virtual::new([w as f32, h as f32]).virtual_of(p))
     }
 
     /// A starmap order or setting of the local player (`Multi_Send(.., EN, ..)`), applied in the next frame.
@@ -807,7 +846,7 @@ impl App {
         let alpha = if paused { 1.0 } else { self.clock.phase(now) };
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
-        let size = [g.config.width as f32, g.config.height as f32];
+        let size = { let (w, h) = g.band(); [w as f32, h as f32] };
         let panel_tex = match (&mut self.panel_models, self.colony.is_none() && self.overlay.is_none() && self.panels.active()) {
             (Some(m), true) => m.render(&mut g.renderer, &self.install, self.tables, &self.panels, &self.world.game.state, &sel, size),
             _ => None,
@@ -826,7 +865,7 @@ impl App {
             let mut frame = spy.build(h, &d, size, self.install.lang() == ig2_formats::text::Lang::Hu);
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Spy, t);
             if let Ok(out) = g.surface.get_current_texture() {
-                g.renderer.draw(&frame, &out.texture, (g.config.width, g.config.height), t);
+                g.present(frame, &out.texture, t);
                 g.window.pre_present_notify();
                 out.present();
             }
@@ -846,7 +885,7 @@ impl App {
                 d.screen.ui_tick();
             }
             let vv = crate::font::Virtual::new(size);
-            self.dip_input.at = [(self.cursor[0] - vv.x0) / vv.k, self.cursor[1] / vv.k];
+            self.dip_input.at = vv.virtual_of(self.cursor);
             for c in d.input(&self.world.game.state, h, self.tables, &self.dip_input) {
                 self.world.send(c);
             }
@@ -916,7 +955,7 @@ impl App {
                 return;
             }
         };
-        g.renderer.draw(&frame, &out.texture, (g.config.width, g.config.height), t);
+        g.present(frame, &out.texture, t);
         g.window.pre_present_notify();
         out.present();
         self.frames += 1;
@@ -970,7 +1009,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => self.frame(),
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
-                let p = [position.x as f32, position.y as f32];
+                // The band's pixels: the mouse goes through the frame (`IG2_VIRTUAL_POSY`, re/screens/widescreen.md §4).
+                let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
+                let p = [position.x as f32, position.y as f32 - top];
                 if let Some(at) = self.spy_virtual(p) {
                     let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
                     if let Some(spy) = &mut self.spy {

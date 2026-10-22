@@ -32,6 +32,15 @@ impl Image {
 }
 
 /// Write an RGBA8 image as PNG (snapshots; they hold game data, keep them out of the repo).
+/// A snapshot's band (`o.size`) written as the window `o.window` shows it ([`crate::kit::layout::compose`]).
+pub fn write_snapshot(path: &std::path::Path, o: &crate::Options, rgba: &[u8]) -> Result<(), String> {
+    let l = crate::kit::Layout::new(o.window.0 as i32, o.window.1 as i32);
+    if o.window == o.size && !(crate::kit::layout::letterbox() && l.frame[2] < l.size[0]) {
+        return write_png(path, o.size.0, o.size.1, rgba);
+    }
+    write_png(path, o.window.0, o.window.1, &crate::kit::layout::compose(&l, rgba))
+}
+
 pub fn write_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w, h);

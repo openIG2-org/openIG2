@@ -334,8 +334,8 @@ impl Camera {
     }
 
     /// Virtual pixels → window pixels: 480 lines high, centred.
-    fn k(&self) -> f32 {
-        self.size[1] / 480.0
+    pub fn k(&self) -> f32 {
+        crate::font::Virtual::new(self.size).k
     }
 
     /// World → window pixels, `None` behind the near plane.
@@ -347,8 +347,7 @@ impl Camera {
         }
         let f = 600.0 / -e[2];
         let (vx, vy) = (e[0] * f + 320.0, e[1] * f + 240.0);
-        let k = self.k();
-        Some([self.size[0] / 2.0 + (vx - 320.0) * k, vy * k])
+        Some(crate::font::Virtual::new(self.size).px(vx, vy))
     }
 
     /// The same projection as a clip-space matrix (column-major for WGSL).
@@ -991,7 +990,7 @@ impl View {
             dynamic,
         });
         // Shots: glowing points (the original draws them as particles and small meshes, spec §5).
-        let k = self.camera.size[1] / 480.0;
+        let k = self.camera.k();
         for s in &curr.shots {
             if let Some(p) = self.camera.project(&basis, s.pos) {
                 let (c, sz) = match s.list {
@@ -1059,8 +1058,7 @@ impl View {
     /// marched over the heights until it goes below the ground; world `(x, y)`.
     pub fn ground_at(&self, gm: &GroundMap, p: [f32; 2]) -> Option<(f32, f32)> {
         let v = self.camera.basis(gm);
-        let k = self.camera.size[1] / 480.0;
-        let (vx, vy) = ((p[0] - self.camera.size[0] / 2.0) / k + 320.0, p[1] / k);
+        let [vx, vy] = crate::font::Virtual::new(self.camera.size).virtual_f(p);
         let c = [(vx - 320.0) / 600.0, (vy - 240.0) / 600.0, -1.0];
         let r = v.rows;
         let d: V3 = std::array::from_fn(|j| r[0][j] * c[0] + r[1][j] * c[1] + r[2][j] * c[2]);

@@ -1250,7 +1250,7 @@ fn planet_name(v: &View, p: i32) -> Vec<u8> {
 #[allow(clippy::too_many_arguments)]
 fn design_fader(f: &mut Frame, design: Option<TexId>, white: TexId, vv: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
     let Some(tex) = design else {
-        crate::starmap_panels::fader(f, white, vv, r, fill, ft, edge, et);
+        crate::kit::fader::fader(f, white, vv, r, fill, ft, edge, et);
         return;
     };
     let [x, y, w, h] = r;
@@ -1259,11 +1259,11 @@ fn design_fader(f: &mut Frame, design: Option<TexId>, white: TexId, vv: &Virtual
     }
     let a = (255.0 - ft.clamp(0.0, 255.0)) / 255.0;
     // The 2D pass samples the texture's stored values (its mean 0.5: the exe's half brightness over black [obs]).
-    let c = crate::starmap_hud::fade_color(fill, a);
+    let c = crate::kit::fader::fade_color(fill, a);
     let mut q = crate::render::Instance::new(crate::render::kind::SPRITE, vv.px(x + w / 2.0, y + h / 2.0), [w * vv.k / 2.0, h * vv.k / 2.0], c);
     q.uv = [0.0, 0.0, (w / 256.0).min(1.0), (h / 256.0).min(1.0)];
     f.push(tex, crate::render::Blend::GammaAlpha, q);
-    crate::starmap_panels::fader(f, white, vv, r, [0.0; 3], 255.0, edge, et);
+    crate::kit::fader::fader(f, white, vv, r, [0.0; 3], 255.0, edge, et);
 }
 
 /// `AjanlatFeltetelekOK` (ELF 0x51ce50): a demanded tech the human doesn't have, or an offered tech the sender no

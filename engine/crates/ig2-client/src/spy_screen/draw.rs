@@ -36,7 +36,7 @@ impl Draw2d<'_> {
             _ => Align::Centre,
         };
         let c = self.palette.get(col).copied().unwrap_or([1.0; 3]).map(|x| x * mult / 100.0);
-        let clip = (flags & 8 != 0).then(|| (-self.v.x0 / self.v.k, 640.0 + self.v.x0 / self.v.k));
+        let clip = (flags & 8 != 0).then(|| self.v.x_range());
         self.font.text(f, &self.v, s, x as f32, y as f32, len, size, a, c, clip);
     }
     fn t2(&self, f: &mut Frame, s: &[u8], x: i32, y: i32, len: usize, col: usize) {
@@ -44,7 +44,7 @@ impl Draw2d<'_> {
     }
     /// `FadeKerettelKerekit(x, y, w, h, fill, t, edge, t')`.
     fn fader(&self, f: &mut Frame, r: [i32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
-        crate::starmap_panels::fader(f, self.white, &self.v, r.map(|x| x as f32), fill, ft, edge, et);
+        crate::kit::fader::fader(f, self.white, &self.v, r.map(|x| x as f32), fill, ft, edge, et);
     }
     /// A button's box (`0, 10, 30, 100, 0, 10, 50, 100`).
     fn button(&self, f: &mut Frame, r: [i32; 4]) {

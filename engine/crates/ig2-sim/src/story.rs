@@ -235,6 +235,10 @@ pub enum StoryEvent {
     DestroyPlanet(i32),
     /// `st_ShowAnim(_s(id))`: a video (UI).
     Anim(i32),
+    /// `st_ShowAnim(file)`: a video by its file name (UI; story 863's ending).
+    AnimFile(&'static str),
+    /// `MEGNYERES(0)` (exe 0x53f6b0): the campaign is over, back to the main screen (story 863).
+    CampaignOver,
     /// `st_SetBolygoTulaj(p, owner, -1)`: colonised for `owner` when free (`FUN_0059af50(p, owner, race,
     /// 1, 0, 0, 0)`), else conquered (`BolygoElfoglal(p, owner)`, then planet `+0x21 := race` when non-zero).
     SetPlanetOwner { planet: i32, owner: i32, race: i32 },
@@ -495,6 +499,30 @@ pub enum StoryEvent {
     /// 0xBAE254 := p), the script holds its battlefield (0xF261F8 := p: no `WF::Refresh` there, `ground-combat.md`
     /// §11.6) and the game pauses (`SetIdoPause(1, 0)`, exe 0x541300).
     HoldGroundWar { planet: i32 },
+
+    // st_Elem_include part 2d (crate::elem::crises, spec §8.14).
+    /// Design `+offset` (a byte: 801's `+0x34`, `+0x28`) written.
+    DesignByte { empire: i32, design: i32, offset: i32, value: i32 },
+    /// `st_Colonise(p, owner, race)` (exe 0x5d4890) unless the planet is already `owner`'s: `Generate_Planet(p, owner,
+    /// race, 0, 0, 0, 0)` (exe 0x59af50).
+    ColoniseAs { planet: i32, owner: i32, race: i32 },
+    /// `EpuletNewSearchLocation(p, kind, false, 0, −1, −1)` (exe 0x53cca0): a building placed, still to be built.
+    PlaceBuildingUnbuilt { planet: i32, kind: i32 },
+    /// `FlottaOsszevon(into, from)` (exe 0x53d860, `fleet-movement.md` §4.6): fleet `from` merged into `into`.
+    MergeFleets { into: i32, from: i32 },
+    /// Planet `+0x187` alone (`st_bIsExtra`'s byte; 806 clears it right after `st_bSetExtra`).
+    PlanetExtraFlag { planet: i32, on: bool },
+    // ---- st_Elem_include part 2e (crate::elem, spec §8.14)
+    /// The battlefield's self-destruct countdown `Warfare[p].+0x334` written (story 814: 3000 when a ground battle
+    /// starts there, −1 when it ends; `ground-combat.md` §1).
+    SelfDestructTimer { planet: i32, value: i32 },
+    /// `ScrollUzenet(format(_s(5, text), a), 1, 0, 0)` with one number (story 814's payments).
+    ScrollNumber { text: i32, a: i32 },
+    // ---- st_Elem_include part 2f (crate::elem::waves, spec §8.14)
+    /// Story 840's colony discount (and undo type 11, `halve == false`): the human's designs 40..=`OsszHanyTerv[EN]` with
+    /// byte `+0x34` set get `+0x24` and `+0x20` halved (C division) or doubled; the human's planets building one
+    /// (`+0x78 > 0` naming such a design) get `+0xa0` halved or doubled.
+    ColonyDiscount { halve: bool },
 }
 
 /// A message parameter's text (`SetParamStr`).
@@ -551,6 +579,12 @@ pub enum InfoLine {
     Tech(i32),
     /// An empire's name (`Birodalom_Nev[e]`), then a planet's (story 808).
     EmpirePlanet { empire: i32, planet: i32 },
+    /// A planet's name, then a date `"%d.%2d.%2d"` of year + 1, month, day (story 807).
+    PlanetDate { planet: i32, date: [i32; 3] },
+    /// A date `"%d.%2d.%2d"` of year + 1, month, day (story 863).
+    Date([i32; 3]),
+    /// Four planets' names joined with `", "` (story 863).
+    Planets([i32; 4]),
 }
 
 /// The multiplayer modes' texts for the human (`AddSzoveg`).
@@ -567,6 +601,8 @@ pub enum Notice {
     Touchdown { by: i32 },
     /// "You have lost the flag!" (the human's carrier) or "Your flag has been returned!" (empire `by`'s).
     FlagLost { by: i32 },
+    /// `_s(5, id)`: a story text (story 834's colony).
+    StoryText(i32),
 }
 
 /// What a `.scn` file gives the story engine.
@@ -965,6 +1001,12 @@ pub trait StoryWorld {
     fn near_fleet(&mut self, _p: i32, _radius: f32) -> i32 {
         0
     }
+    /// `SearchBolygohozKozeliFlotta(p, radius, own, idle, room, calm, last)` (exe 0x540f50,
+    /// `production-research.md` §4) with every argument.
+    #[allow(clippy::too_many_arguments)]
+    fn near_fleet_ex(&mut self, _p: i32, _radius: f32, _own: bool, _idle: bool, _room: bool, _calm: bool, _last: i32) -> i32 {
+        0
+    }
     /// Design `d` of empire `e`: `+0x16` (2 = a ground unit).
     fn design_kind(&self, _e: i32, _d: i32) -> i32 {
         0
@@ -1013,6 +1055,33 @@ pub trait StoryWorld {
     /// empire `from`'s design `d` over the new one): the new design's slot.
     fn copy_design_new(&mut self, _e: i32, _from: i32, _d: i32) -> i32 {
         0
+    }
+
+    // st_Elem_include part 2d.
+    /// `_s(5, id)`: a story text's bytes (801's designs are named with it).
+    fn story_text(&self, _id: i32) -> Vec<u8> {
+        Vec::new()
+    }
+    /// Design `d` of empire `e`: `+0x48` (its hull class) and `+0x36` (u8, the ground-unit byte).
+    fn design_hull(&self, _e: i32, _d: i32) -> i32 {
+        0
+    }
+    fn design_36(&self, _e: i32, _d: i32) -> i32 {
+        0
+    }
+
+    // st_Elem_include part 2g.
+    /// Fleet `+0x58` (i32): its fighters (`space-combat.md` §2; `TankDelete` leaves it).
+    fn fleet_fighters(&self, _f: i32) -> i32 {
+        0
+    }
+    /// Design `d` of empire `e`: `+0x44` (i32; a fighter's class 1..=4, story 856's loss table).
+    fn design_44(&self, _e: i32, _d: i32) -> i32 {
+        0
+    }
+    /// `(Ev, Honap, Nap)`: the date.
+    fn date(&self) -> [i32; 3] {
+        [0; 3]
     }
 }
 
@@ -1219,6 +1288,8 @@ pub struct Story {
     pub last_collect_fleet: i32,
     /// `st_bGet3Nearest::best` (exe 0xF432C4): the three planets it last chose (a static, never cleared).
     pub nearest3: [i32; 3],
+    /// `st_bGet4Brutal`'s planets (exe 0xF432D0): the four it last chose (a static, never cleared).
+    pub brutal4: [i32; 4],
 }
 
 /// A story building record (`StoryBuildingData`, 16 bytes).
@@ -1304,6 +1375,7 @@ impl Default for Story {
             spy_slot: 0,
             last_collect_fleet: 0,
             nearest3: [0; 3],
+            brutal4: [0; 4],
         }
     }
 }
@@ -1907,8 +1979,9 @@ impl Story {
             self.last_fn[last_fn::B] = p;
             self.last_fn[last_fn::Q] = 0;
             self.last_fn[last_fn::R] = 0;
+            // `cvttss2si`: story 834 passes planet −1, whose record is whatever precedes the planets.
             let (px, py) = w.planet_xy(p);
-            (x, y) = (px as i32, py as i32);
+            (x, y) = (crate::rnd::cvtt(px as f64), crate::rnd::cvtt(py as f64));
             self.last_fn[last_fn::X] = x;
             self.last_fn[last_fn::Y] = y;
         } else if mode == 4 {

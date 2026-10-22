@@ -129,7 +129,7 @@ Tracked in `re/STATUS.md` (U29–U31):
 - **Audio**: music (`PlayMusicMain/Menu/SpWar/GrWar` 0x61f360.., `SE_Music`, SDL_mixer streams), UI and world
   sounds (`PlaySoundGlobal` exe 0x55d0b0 with 51 call sites on the starmap alone, `PlaySound`, `sounds/`), voices
   (`Speech::Play` exe 0x563d50, `PlayWav` exe 0x563e60, the colony speaker's lines, the tutorial's `PlayMp2`
-  exe 0x563df0 `mfx/tutorial/*.mp2`), message audio (`PlayMessagesHang`).
+  exe 0x563df0 `mfx/tutorial/*.mp2`), message audio (`PlayMessagesHang`). The per-screen sound-id tables and the tracer: `re/screens/sound.md`.
 - **Video**: the `.bik` names are played from `anim/mpeg4/*.mp4` (H.264/AAC through the remaster's `videoentity`,
   `OpenBink` exe 0x7325b0, `PlayBink` exe 0x732660): title, intros, race loops, message videos, story videos,
   endings, credits.
@@ -140,9 +140,12 @@ Tracked in `re/STATUS.md` (U29–U31):
 
 Run with `tools/trace/run_screendiff.py` (ADR 0009 §4): ig2.exe through Frida (`screen.js`) and
 `ig2-client --snapshot` on the same save and screen at 800 × 600, compared by `ig2-client --diff`. Images stay under
-`_local/screendiff/`; only the numbers are recorded here.
+`_local/screendiff/`; only the numbers are recorded here. Frame sequences and input scripts (`--script`, per-grab diffs): `re/screens/sound.md` §3.
 
 See `re/screens/diff-results.md` for the latest results per screen.
+
+Widescreen: 2D stays in the centred 4:3 frame, the 3D scenes and background pictures span the full width, narrower
+windows are letterboxed (`ig2_resize` exe 0x4d84d0, `ModifyViewPort` 0x4ac4f0): `re/screens/widescreen.md`, ADR 0010.
 
 Every 3D screen goes through the remaster's own GL layer (shaders, materials, the shadow map, the `VIDEO` and
 `CLOUD` materials): `re/screens/render.md`.

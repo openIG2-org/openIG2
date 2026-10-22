@@ -673,3 +673,26 @@ the pointer in colour 6), held open in ig2.exe by `run_screendiff.py … info:9 
 Every region matches; the menus' texts and boxes sit at offset 0. The triangle and the limit change no picture beyond
 the knob and the texts already compared; their messages are verified in the save replay
 (re/rules/traces/2026-10-17-info-orders.md).
+
+## 2026-10-22, the research screen as a frame sequence (`sound-tracer`, re/screens/sound.md §3–§4)
+The first sequence comparison: `run_screendiff.py <install> quick-1.sav research --script tools/trace/scripts/research.json`
+(the opening, the urgent button's tooltip and press at t 300/330, PgDn at 400, ↓ at 470, D at 530; 19 grabs; times in
+UI ticks). The exe ran one UI tick per drawn frame and every grab came back at exactly its tick (glReadPixels at the
+swap). Best-offset means, threshold 6 (`_local/screendiff/seq/research-seq-seq.json`):
+
+| t | frame | info_box | start_double | left_list | right_list | labs | labs_right | wheels | ball |
+|---|---|---|---|---|---|---|---|---|---|
+| 10 / 30 | 1.47 / 1.44 | 0.00 / 0.00 | 0.36 / 0.31 | 2.49 / 5.37 | 2.33 / 5.17 | 0.00 | 0.00 | 2.63 / 0.48 | 0.14 / 0.31 |
+| 60 | 3.72 | 0.00 | 0.10 | 5.14 | 3.60 | 0.08 | 0.15 | 4.45 | 5.59 |
+| 100 | 11.06 | 9.91 | 10.19 | 13.10 | 6.47 | 19.94 | 5.62 | 5.10 | 17.79 |
+| 150 | 6.75 | 0.78 | 6.04 | 8.44 | 16.24 | 3.77 | 4.16 | 10.39 | 4.55 |
+| 200–400 (at rest) | 4.4–5.1 | 1.8–2.5 | 2.1–2.6 | 4.2–6.3 | 3.1–5.2 | 3.0–3.5 | 3.1–3.4 | 3.1–3.8 | 9.2–11.6 |
+| 320 (tooltip) | 5.02 | 5.14 | 6.11 | 4.55 | 3.08 | 3.05 | 3.21 | 3.52 | 9.77 |
+| 420–600 (PgDn) | 4.6–9.8 | 6.5–21.3 | 5.1–15.7 | 12.3–14.0 | 4.7–6.8 | 9.0–20.2 | 9.2–20.9 | 2.3–4.4 | 3.5–16.8 |
+
+The top bar stays at 0.05–0.58. What the sequence shows (screendiff-review): the opening's start (t 10, 30) matches;
+from t 60 the poses drift (the sphere's size and turn, the corner light streaks), at t 100 the panels' fade band sits
+~17–20 px lower in ours, at t 150 ours isn't open yet (one tick behind: deviations #9) so the list text and lab
+counters are missing. At rest only the ball's model turn differs. The tooltip shows in the exe at t 320, in ours
+later (#10); the exe draws the pointer (#11). From t 420 the two show different categories: PgDn goes the other way in
+ours (#6). Sounds of the run: re/screens/sound.md §4.

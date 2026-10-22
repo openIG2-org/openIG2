@@ -4,7 +4,7 @@
                   [--cam X,Y,ZOOM,PITCH,ROTATE] [--slot 99] [--seconds 120] [--state-out STATE.sav]
                   [--fleets N] [--rop N] [--rop-fleet K] [--rop-menu X,Y] [--menu KIND@X,Y] [--mouse X,Y]
                   [--spies MODE] [--spy-frame F [--spy-closing]] [--verdict N --verdict-seed S --jsonl OUT]
-                  [--info-press IDS]
+                  [--info-press IDS] [--script SCRIPT.json] [--sounds OUT.jsonl]
 
 Copies the save to the game's slot <slot>, spawns ig2.exe under screen.js (quick.scn, then `LoadSave`, clock paused
 unless --run), opens screen <kep> (3 = the colony of <planet>; -1 stays on the loaded screen), waits <wait> frames
@@ -16,13 +16,21 @@ stages a roster and a report, --spy-frame holds the opening (closing) at a frame
 buttons N times on fuzzed prisoners and writes what `Spy_Main` did to --jsonl (re/screens/spy.md §6.2, §9). On the info
 screen (--kep 9) --info-press presses hot-spots in turn (a row's detail mode, the list arrows, the star log; the
 state of the list, its globes, the detail mode and the star log go into STATE.sav.ui.json). The PNGs
-show game imagery: write them under _local/ and never commit them.
+show game imagery: write them under _local/ and never commit them. --size WxH runs the game in a window of that size
+(it rewrites width=/height= in the install's ig2.settings for the run and puts the file back; re/screens/widescreen.md).
+--script runs an input script on screen <kep> (re/screens/sound.md §3: the exe's clock moves 10 ms a drawn frame, one
+UI tick a frame; events at UI tick t; each grab read back in the game at exactly t ticks) and writes
+<out-prefix>-t<T>.png per grab, <out-prefix>-frames.json (each grab's tick, the screen's state) and with --state-out
+the exe's save of the script's first frame. --sounds writes every sound the exe starts and every input event to
+OUT.jsonl (sound.js; the tables from sound_tables.py).
 """
 import argparse
+import atexit
 import ctypes
 import ctypes.wintypes as wt
 import json
 import os
+import re
 import shutil
 import struct
 import sys
@@ -66,6 +74,9 @@ ap.add_argument("--hide", choices=["clouds", "planet"], help="starmap long info:
 ap.add_argument("--jsonl", help="write the 'verdict' records here")
 ap.add_argument("--info-starlog", type=int, default=0, help="info screen: stage N lines in the (unsaved) star log first")
 ap.add_argument("--info-select", help="info screen: hold the planet-settings menu K (26 tax, 27 auto-build, 28 priority) open at X,Y on item I: K,X,Y,I")
+ap.add_argument("--size", help="window size WxH (ig2.settings width/height for this run; re/screens/widescreen.md)")
+ap.add_argument("--script", help="an input script on the screen --kep (JSON: events, grabs; re/screens/sound.md §3)")
+ap.add_argument("--sounds", help="write the sounds the exe starts and the input events to this JSONL (sound.js)")
 ap.add_argument("--info-press", help="info screen (--kep 9): press these hot-spots in turn, e.g. 9 (a row's detail), 31,9, 15 (the star log)")
 a = ap.parse_args()
 
@@ -145,11 +156,46 @@ def grab(hwnd, path):
 grabs = []
 done = []
 records = open(a.jsonl, "w", encoding="utf-8") if a.jsonl else None
+sounds = open(a.sounds, "w", encoding="utf-8") if a.sounds else None
+script = None
+if a.script:
+    with open(a.script, encoding="utf-8") as f:
+        script = json.load(f)
+frames_meta = {"start": None, "frames": [], "done": None}
 
 
-def on(msg, _):
+def png_rgba_bottom_up(path, w, h, rgba):
+    # glReadPixels' rows, bottom first, RGBA.
+    rows = b"".join(b"\0" + b"".join(rgba[((h - 1 - y) * w + px) * 4:((h - 1 - y) * w + px) * 4 + 3] for px in range(w)) for y in range(h))
+    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
+
+
+def on(msg, data):
     if msg["type"] == "send":
         p = msg["payload"]
+        if p.get("k") in ("sound", "input"):
+            if sounds:
+                sounds.write(json.dumps(p) + "\n")
+                sounds.flush()
+            if p.get("k") == "sound":
+                print(f"sound {p.get('fn')} {p.get('table')}[{p.get('idx')}] {p.get('name')} t={p.get('t')} ui={p.get('ui')}", flush=True)
+            return
+        if p.get("k") == "frame":
+            path = f"{a.out}-t{p['t']}.png"
+            png_rgba_bottom_up(path, p["w"], p["h"], data)
+            frames_meta["frames"].append(dict(p, png=os.path.basename(path)))
+            print(f"frame t={p['t']} ticks={p['ticks']} {p['w']}x{p['h']} res={p['res']} -> {path}", flush=True)
+            return
+        if p.get("k") == "scriptStart":
+            frames_meta["start"] = p
+            if a.state_out:
+                with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
+                    json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"),
+                               "res": p.get("res")}, f)
+        if p.get("k") == "scriptDone":
+            frames_meta["done"] = p
         if p.get("k") == "particles" and a.particles:
             with open(a.particles, "w", encoding="utf-8") as f:
                 json.dump(p, f)
@@ -170,15 +216,29 @@ def on(msg, _):
         done.append(1)
 
 
+if a.size:
+    # ig2_resize lays the screen out from the window ig2.settings asks for: set it for this run only.
+    settings = os.path.join(a.install, "ig2.settings")
+    orig = open(settings, "rb").read()
+    w, h = a.size.lower().split("x")
+    s = re.sub(rb"(?m)^width=\d+", b"width=" + w.encode(), orig)
+    open(settings, "wb").write(re.sub(rb"(?m)^height=\d+", b"height=" + h.encode(), s))
+    atexit.register(lambda: open(settings, "wb").write(orig))
 exe = os.path.join(a.install, "ig2.exe")
 device = frida.get_local_device()
 pid = device.spawn([exe], cwd=a.install)
 session = device.attach(pid)
 here = os.path.dirname(os.path.abspath(__file__))
-script = session.create_script(open(os.path.join(here, "screen.js"), encoding="utf-8").read())
-script.on("message", on)
-script.load()
-script.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "shots": a.shots, "run": a.run,
+source = open(os.path.join(here, "screen.js"), encoding="utf-8").read() + "\n" + open(os.path.join(here, "sound.js"), encoding="utf-8").read()
+agent = session.create_script(source)
+agent.on("message", on)
+agent.load()
+sound_tables = None
+if a.sounds:
+    sys.path.insert(0, here)
+    import sound_tables
+    sound_tables = sound_tables.find(a.install)
+agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "shots": a.shots, "run": a.run,
                                            "cam": [float(v) for v in a.cam.split(",")] if a.cam else None,
                                            "stateSlot": a.slot + 1 if a.state_out else 0, "debug": a.debug,
                                            "fleets": a.fleets, "rop": a.rop, "ropFleet": a.rop_fleet,
@@ -189,12 +249,17 @@ script.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet
                                            "resKeringeto": a.res_keringeto, "lightProbe": a.light_probe,
                                            "verdict": a.verdict, "verdictSeed": a.verdict_seed, "particles": bool(a.particles), "hide": a.hide,
                                            "infoStarlog": a.info_starlog, "infoPress": [int(x, 0) for x in a.info_press.split(",")] if a.info_press else [],
-                                           "infoSelect": [int(x, 0) for x in a.info_select.split(",")] if a.info_select else None}})
+                                           "infoSelect": [int(x, 0) for x in a.info_select.split(",")] if a.info_select else None,
+                                           "script": script, "soundTables": sound_tables}})
 device.resume(pid)
 t0, n = time.time(), 0
 WM_MOUSEMOVE = 0x0200
 try:
-    while time.time() - t0 < a.seconds and n < a.shots and not done:
+    while time.time() - t0 < a.seconds and (frames_meta["done"] is None if script else n < a.shots) and not done:
+        if script:
+            # No pointer messages: the script owns the pointer.
+            time.sleep(0.05)
+            continue
         # The colony screen scrolls while the pointer sits at a window edge (`Colony_Autoscroll` reads SDL's
         # position): tell the window the pointer is in its middle, without moving the real cursor.
         hwnd = window_of(pid)
@@ -222,4 +287,10 @@ finally:
             shutil.move(state_slot, a.state_out)
         if os.path.exists(state_slot + ".screen-aside"):
             shutil.move(state_slot + ".screen-aside", state_slot)
+if script:
+    with open(f"{a.out}-frames.json", "w", encoding="utf-8") as f:
+        json.dump(frames_meta, f, indent=1)
+    want = len(script.get("grabs", []))
+    print(f"script: {len(frames_meta['frames'])}/{want} frames, done {frames_meta['done']}", flush=True)
+    sys.exit(0 if frames_meta["done"] and len(frames_meta["frames"]) == want else 1)
 sys.exit(0 if n >= a.shots else 1)

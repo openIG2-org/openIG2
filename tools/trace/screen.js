@@ -40,6 +40,8 @@ recv('config', (m) => {
   if (cfg.hide) hideInfoPlanet(cfg.hide);
   infoLeft = (cfg.infoPress || []).slice();
   if (infoLeft.length || cfg.infoSelect) hookInfoMain();
+  if (cfg.soundTables && typeof hookSounds === 'function') hookSounds();
+  if (cfg.script) hookScript();
 });
 
 // --info-press IDS: on the info screen (`AktKep` 9) press its hot-spots in turn through the game's own input
@@ -389,7 +391,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
     if (phase >= 3 && !cfg.run && va(0xbae264).readU8() === 0) va(0xbae264).writeU8(1);
     // --mouse X,Y puts it elsewhere (a menu's hover; on the spy screen a hot-spot's tooltip).
     if (phase >= 2) {
-      const [mx, my] = phase >= 3 && cfg.mouse && (staged || ((cfg.kep === 7 || cfg.kep === 4) && A.AktKep.readS32() === cfg.kep)) ? cfg.mouse : [320, 240];
+      const [mx, my] = scriptT !== null ? scriptMouse : phase >= 3 && cfg.mouse && (staged || ((cfg.kep === 7 || cfg.kep === 4) && A.AktKep.readS32() === cfg.kep)) ? cfg.mouse : [320, 240];
       va(0x916008).writeS32(mx); va(0x91600c).writeS32(my);
       va(0xdb4654).writeS32(mx); va(0xdb4658).writeS32(my);
     }
@@ -470,6 +472,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
         infoWait = 30;
       }
       if (infoLeft.length === 0) at = frames - 300;
+    } else if (phase === 3 && cfg.script) {
+      scriptFrame();
     } else if (phase === 3 && (!cfg.rop || ropDone) && (!(cfg.ropMenu || cfg.menu) || staged) && (!cfg.verdict || verdictLeft <= 0) && infoLeft.length === 0 && frames >= at + cfg.wait) {
       const f = (x) => va(x).readFloat();
       const p = A.AktPlanet.readS32();
@@ -529,3 +533,137 @@ Interceptor.attach(A.Fake_FRISSITES, {
     }
   },
 });
+
+// --script FILE (run_screen.py; re/screens/sound.md §3): an input script on the screen --kep, frame by frame.
+// From the first frame the screen is up (`AktKep` == kep), `SDL_GetTicks` (exe 0x689e80) returns a clock that moves
+// 10 ms a drawn frame, so `Fake_FRISSITES`' 100 Hz loop (UI counter 0xB772A4, `uiStamp` 0xBAE278) runs exactly one
+// UI tick a frame and the run is the same at any drawing speed; `scriptT` counts the UI ticks from there. Events at t
+// go in at frame t's entry, before its tick, through the game's own SDL2 event filter `MainCallBackEventHandler`
+// (0x4e2db0): {t, mouse: [x, y]} moves the pointer (virtual pixels: `Mouse_Akt`/`Mouse_x` as screen.js already
+// writes them), {t, press: [x, y], button: 1|3, hold: 3} a button down there and up `hold` frames later (window
+// pixels from `ig2_resize`'s virtual frame 0xB770D0..DC: w, h, x0, y0), {t, key: NAME, hold: 3} an SDL2 key down and
+// up (keysym +0x10 scancode, +0x14 sym; `remapKeyCodes` maps it). Grabs: the frame whose swap (gdi32 `SwapBuffers`)
+// comes after exactly t UI ticks is read back with glReadPixels (the default framebuffer's back buffer, the GL state
+// put back after) → {k: 'frame', t, ticks, res} + RGBA bytes, bottom-up. The exe's own save of the first frame goes to
+// --state-out (before any event), with the UI clocks in {k: 'scriptStart'}.
+let scriptT = null, scriptUi0 = 0, scriptMouse = [320, 240], scriptEvents = [], scriptGrabs = [], scriptEnd = 0;
+let vt = 0, vtOn = false, realTicks = null, swapHooked = false;
+const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050], enter: [40, 13],
+  pageup: [75, 0x4000004b], pagedown: [78, 0x4000004e], escape: [41, 27], d: [7, 100], k: [14, 107], space: [44, 32] };
+// The research screen's clock and selection (`ResearchTerulet` 0xB9A9B4, `ResearchMezo` 0xB9AA04, `ResearchTalalmany`
+// 0xB9AA08, `ResearchOldForgato` 0x919598; re/screens/research.md §1).
+const resState = () => ({ frame: va(0xdc5368).readFloat(), open: va(0xddf322).readU8(), closing: va(0xddf323).readU8(), started: va(0xddf628).readU8(),
+  area: va(0xb9a9b4).readS32(), field: va(0xb9aa04).readS32(), tech: va(0xb9aa08).readS32(), wheel: va(0x919598).readS32() });
+
+function hookScript() {
+  const s = cfg.script;
+  scriptGrabs = (s.grabs || []).slice().sort((x, y) => x - y);
+  // Presses and keys expand to their down and up events.
+  for (const e of s.events || []) {
+    if (e.press) {
+      scriptEvents.push({ t: e.t, mouse: e.press, quiet: true }, { t: e.t, down: e.button || 1, at: e.press });
+      scriptEvents.push({ t: e.t + (e.hold || 3), up: e.button || 1, at: e.press });
+    } else if (e.key) {
+      scriptEvents.push({ t: e.t, keydown: e.key }, { t: e.t + (e.hold || 3), keyup: e.key });
+    } else {
+      scriptEvents.push(e);
+    }
+  }
+  scriptEnd = Math.max(0, ...scriptGrabs, ...scriptEvents.map((e) => e.t)) + (s.tail || 30);
+  const ticks = va(0x689e80);
+  const real = new NativeFunction(ticks, 'uint32', [], { abi: 'mscdecl' });
+  realTicks = () => real();
+  Interceptor.replace(ticks, new NativeCallback(() => (vtOn ? vt >>> 0 : real()), 'uint32', [], 'mscdecl'));
+}
+
+const sdlHandler = nf(va(0x4e2db0), 'uint32', ['pointer']);
+const sdlEvent = Memory.alloc(64);
+function sdlSend(type, fill) {
+  for (let i = 0; i < 64; i += 4) sdlEvent.add(i).writeU32(0);
+  sdlEvent.writeU32(type);
+  sdlEvent.add(4).writeU32(vt >>> 0);
+  fill(sdlEvent);
+  sdlHandler(sdlEvent);
+}
+
+function toWindow([x, y]) {
+  const w = va(0xb770d0).readS32(), h = va(0xb770d4).readS32(), x0 = va(0xb770d8).readS32(), y0 = va(0xb770dc).readS32();
+  return [x0 + Math.ceil((x * w) / 640), y0 + Math.ceil((y * h) / 480)];
+}
+
+function applyEvent(e) {
+  if (e.mouse) {
+    scriptMouse = e.mouse.slice();
+    [[0x916008, 0x91600c], [0xdb4654, 0xdb4658]].forEach(([ax, ay]) => { va(ax).writeS32(scriptMouse[0]); va(ay).writeS32(scriptMouse[1]); });
+    if (!e.quiet) sndInput({ src: 'script', ev: 'move', at: scriptMouse });
+  } else if (e.down || e.up) {
+    const [wx, wy] = toWindow(e.at);
+    sdlSend(e.down ? 0x401 : 0x402, (p) => { p.add(0xc).writeU8(e.down || e.up); p.add(0xd).writeU8(e.down ? 1 : 0); p.add(0xe).writeU8(1); p.add(0x10).writeS32(wx); p.add(0x14).writeS32(wy); });
+    sndInput({ src: 'script', ev: e.down ? 'down' : 'up', button: e.down || e.up, at: e.at, win: [wx, wy] });
+  } else if (e.keydown || e.keyup) {
+    const name = e.keydown || e.keyup, [sc, sym] = SDL_KEYS[name] || [0, 0];
+    sdlSend(e.keydown ? 0x300 : 0x301, (p) => { p.add(0xc).writeU8(e.keydown ? 1 : 0); p.add(0x10).writeS32(sc); p.add(0x14).writeS32(sym); });
+    sndInput({ src: 'script', ev: e.keydown ? 'keydown' : 'keyup', key: name });
+  }
+}
+
+function hookSwap() {
+  const gl = Process.getModuleByName('opengl32.dll'), gdi = Process.getModuleByName('gdi32.dll'), user = Process.getModuleByName('user32.dll');
+  const f = (m, n, r, a) => new NativeFunction(m.getExportByName(n), r, a, { abi: 'stdcall' });
+  const readPixels = f(gl, 'glReadPixels', 'void', ['int', 'int', 'int', 'int', 'uint', 'uint', 'pointer']);
+  const getInt = f(gl, 'glGetIntegerv', 'void', ['uint', 'pointer']);
+  const readBuffer = f(gl, 'glReadBuffer', 'void', ['uint']);
+  const pixelStore = f(gl, 'glPixelStorei', 'void', ['uint', 'int']);
+  const getProc = f(gl, 'wglGetProcAddress', 'pointer', ['pointer']);
+  const winOfDc = f(user, 'WindowFromDC', 'pointer', ['pointer']);
+  const clientRect = f(user, 'GetClientRect', 'int', ['pointer', 'pointer']);
+  let bindFb = null, bindBuf = null;
+  const tmp = Memory.alloc(16), rect = Memory.alloc(16);
+  const get = (e) => { getInt(e, tmp); return tmp.readS32(); };
+  Interceptor.attach(gdi.getExportByName('SwapBuffers'), {
+    onEnter(args) {
+      if (scriptT === null || scriptGrabs.length === 0) return;
+      const ticks = va(0xb772a4).readS32() - scriptUi0;
+      if (ticks < scriptGrabs[0]) return;
+      const want = scriptGrabs.shift();
+      if (!bindFb) {
+        const p = getProc(Memory.allocAnsiString('glBindFramebuffer')), q = getProc(Memory.allocAnsiString('glBindBuffer'));
+        bindFb = p.isNull() ? () => {} : new NativeFunction(p, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+        bindBuf = q.isNull() ? () => {} : new NativeFunction(q, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+      }
+      clientRect(winOfDc(args[0]), rect);
+      const w = rect.add(8).readS32(), h = rect.add(12).readS32();
+      // GL_READ_FRAMEBUFFER_BINDING, GL_PIXEL_PACK_BUFFER_BINDING, GL_READ_BUFFER, GL_PACK_ALIGNMENT.
+      const fb = get(0x8caa), pack = get(0x88ed), rb = get(0x0c02), align = get(0x0d05);
+      bindFb(0x8ca8, 0); bindBuf(0x88eb, 0); readBuffer(0x0405); pixelStore(0x0d05, 1);
+      const buf = Memory.alloc(w * h * 4);
+      readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
+      bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
+      send({ k: 'frame', t: want, ticks, w, h, frames, scriptT, res: resState(), mouse: scriptMouse, kep: A.AktKep.readS32(), thread: Process.getCurrentThreadId() }, buf.readByteArray(w * h * 4));
+    },
+  });
+}
+
+function scriptFrame() {
+  if (scriptT === null) {
+    if (A.AktKep.readS32() !== cfg.kep) return;
+    scriptT = 0;
+    scriptUi0 = va(0xb772a4).readS32();
+    vt = realTicks();
+    va(0xbae278).writeU32((vt - 1) >>> 0);
+    vtOn = true;
+    if (!swapHooked) { hookSwap(); swapHooked = true; }
+    if (cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('screendiff'), 2);
+    send({ k: 'scriptStart', frames, ui: scriptUi0, res: resState(), clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(),
+      infoTurn: va(0xb85304).readFloat(), kep: A.AktKep.readS32(), date: date(), paused: va(0xbae264).readU8() });
+  } else {
+    // The UI ticks run so far (a frame now and then runs none or two: `scriptT` follows the ticks, not the frames).
+    scriptT = va(0xb772a4).readS32() - scriptUi0;
+  }
+  vt += 10;
+  for (const e of scriptEvents) if (!e.done && e.t <= scriptT) { e.done = true; applyEvent(e); }
+  if (scriptT >= scriptEnd && scriptGrabs.length === 0) {
+    send({ k: 'scriptDone', scriptT, ticks: va(0xb772a4).readS32() - scriptUi0, stamp: va(0xbae270).readU32(), vt });
+    phase = 4;
+  }
+}

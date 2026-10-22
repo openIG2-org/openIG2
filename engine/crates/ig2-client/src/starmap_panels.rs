@@ -13,6 +13,7 @@ use ig2_sim::game::StarmapOrder;
 use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 
 use crate::font::{Align, Font, Virtual};
+use crate::kit::fader::{fader, kirak_fader, S};
 use crate::orders::Selection;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, Target, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
@@ -170,9 +171,7 @@ fn spot_rect(id: u32) -> Option<[i32; 4]> {
     SPOTS.iter().find(|s| s.0 == id).map(|s| s.1)
 }
 
-fn inside(r: [i32; 4], at: [f32; 2]) -> bool {
-    at[0] >= r[0] as f32 && at[0] < (r[0] + r[2]) as f32 && at[1] >= r[1] as f32 && at[1] < (r[1] + r[3]) as f32
-}
+use crate::kit::inside;
 
 /// The planet record `p`.
 fn planet(state: &SaveState, p: usize) -> Vec<u8> {
@@ -799,128 +798,6 @@ impl Panels {
     }
 }
 
-/// `fadertexture`: every screen's 3D init loads `textures/design/screen/dt.bmp` into it (`Init3dStarmap`,
-/// `Init3dColony`, `Research3DInit`, `Diplomacy3DInit`, `Infoing3DInit`, …); `polygonsfader` (ELF 0x5f16a0) draws
-/// every fader quad with it, the texel multiplied into the vertex colour.
-struct FaderTexture {
-    tex: TexId,
-    /// The texel at the coordinates (0, 0) (a texture scale of 0): bilinear with repeat there is the mean of the four
-    /// corner texels.
-    corner: [f32; 4],
-}
-
-/// One per process: the client has one renderer (the window's or the snapshot's).
-static FADER_TEXTURE: std::sync::OnceLock<FaderTexture> = std::sync::OnceLock::new();
-
-/// Load `dt.bmp` for the faders (without it they are drawn untextured, like `nulltexture`).
-pub fn load_fader_texture(r: &mut Renderer, install: &Install) {
-    if FADER_TEXTURE.get().is_some() {
-        return;
-    }
-    let img = install.resolve_texture("textures/design/screen/", "dt.bmp").and_then(|p| crate::assets::Image::load(install, &p).ok());
-    if let Some(img) = img.filter(|i| i.width > 0 && i.height > 0) {
-        let (w, h) = (img.width as usize, img.height as usize);
-        let px = |x: usize, y: usize, k: usize| img.rgba[4 * (y * w + x) + k] as f32 / 255.0;
-        let corner = std::array::from_fn(|k| (px(0, 0, k) + px(w - 1, 0, k) + px(0, h - 1, k) + px(w - 1, h - 1, k)) / 4.0);
-        let _ = FADER_TEXTURE.set(FaderTexture { tex: r.add_texture(&img), corner });
-    }
-}
-
-/// `FadeKerettelKerekit(x, y, w, h, fill, t, edge, t', …, 0, 0, 0, 0)` (ELF 0x538330): `FadeKerekit` 0x537bd0's
-/// rounded fill (five strips) and `FadeKeretKerekit` 0x537e70's one-pixel rounded frame (twelve pieces), each a
-/// `FadeScreen` 0x537890 that queues the colour as `0xTTBBGGRR`; `polygonsfader` inverts the fourth value (a
-/// transparency: opacity `(255 − t)/255`) and blends with src alpha in the 2D pass ([`Blend::GammaAlpha`]). With a
-/// texture scale of 0 `PutDarkeningFace` (ELF 0x538de0) gives every vertex the coordinates (0, 0): the fill and the
-/// frame are tinted by `fadertexture`'s corner texel.
-#[allow(clippy::too_many_arguments)]
-pub fn fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
-    rounded(f, white, v, r, fill, ft, Some((edge, et)), None);
-}
-
-/// `FadeKerekit(x, y, w, h, fill, t, false, 0.005, 0.005, u, v)` (ELF 0x537bd0): the rounded fill alone, textured
-/// by `fadertexture` at `((x + u)·0.005, (y + v)·0.005)` per virtual pixel (`PutDarkeningFace`).
-pub fn fade_kerekit(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], t: f32, off: [f32; 2]) {
-    rounded(f, white, v, r, fill, t, None, Some(off));
-}
-
-/// `KirakFader(i, faders, x, y, w, h, fill, t, edge, t', …, 0.005, 0.005)` (ELF 0x547920): `GLOBALKELLDESIGN` is
-/// set (1 in the image, never written), so it passes the texture scale 0.005 and the fader's own offsets
-/// (`+0x1e0`/`+0x258 + 4i`, drifting by `rand()` in `FaderDesignFrissito`; 0 here, as `InitFaderDesignStruktura`
-/// leaves them): the fill samples `fadertexture` at `((x + u)·0.005, (y + v)·0.005)` per virtual pixel; the frame
-/// keeps the scale 0. The callers' colours are × `s` (`+0x168 + 4i` = 0.9 + the occasional shine, [`S`]).
-#[allow(clippy::too_many_arguments)]
-pub fn kirak_fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
-    rounded(f, white, v, r, fill, ft, Some((edge, et)), Some([0.0; 2]));
-}
-
-#[allow(clippy::too_many_arguments)]
-/// The fill (textured at 0.005 a pixel from `design`'s offsets, else at the corner texel) and the frame, if any.
-fn rounded(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, frame: Option<([f32; 3], f32)>, design: Option<[f32; 2]>) {
-    let [x, y, w, h] = r.map(|c| c as i32 as f32);
-    if w <= 0.0 || h <= 0.0 {
-        return;
-    }
-    let dt = FADER_TEXTURE.get();
-    let corner = dt.map_or([1.0; 4], |t| t.corner);
-    let quad = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 4], scale: f32, off: [f32; 2]| {
-        if w <= 0.0 || h <= 0.0 {
-            return;
-        }
-        let mut i = Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], c);
-        match dt {
-            Some(t) if scale > 0.0 => {
-                i.uv = [(x + off[0]) * scale, (y + off[1]) * scale, w * scale, h * scale];
-                f.push(t.tex, Blend::GammaAlpha, i);
-            }
-            _ => {
-                i.color = std::array::from_fn(|k| c[k] * corner[k]);
-                f.push(white, Blend::GammaAlpha, i);
-            }
-        }
-    };
-    let tint = |c: [f32; 3], tr: f32| {
-        let a = (255.0 - tr.clamp(0.0, 255.0)) / 255.0;
-        [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, a]
-    };
-    let c = tint(fill, ft);
-    let (scale, off) = match design {
-        Some(o) => (0.005, o),
-        None => (0.0, [0.0; 2]),
-    };
-    for [qx, qy, qw, qh] in [
-        [x + 4.0, y + 1.0, w - 8.0, 1.0],
-        [x + 2.0, y + 2.0, w - 4.0, 2.0],
-        [x + 1.0, y + 4.0, w - 2.0, h - 8.0],
-        [x + 2.0, y + h - 4.0, w - 4.0, 2.0],
-        [x + 4.0, y + h - 2.0, w - 8.0, 1.0],
-    ] {
-        quad(f, qx, qy, qw, qh, c, scale, off);
-    }
-    let Some((edge, et)) = frame else { return };
-    let e = tint(edge, et);
-    let (x1, y1) = (x + w, y + h);
-    for [qx, qy, qw, qh] in [
-        [x + 4.0, y, w - 8.0, 1.0],
-        [x + 4.0, y1 - 1.0, w - 8.0, 1.0],
-        [x, y + 4.0, 1.0, h - 8.0],
-        [x1 - 1.0, y + 4.0, 1.0, h - 8.0],
-        [x + 2.0, y + 1.0, 2.0, 1.0],
-        [x1 - 4.0, y + 1.0, 2.0, 1.0],
-        [x + 2.0, y1 - 2.0, 2.0, 1.0],
-        [x1 - 4.0, y1 - 2.0, 2.0, 1.0],
-        [x + 1.0, y + 2.0, 1.0, 2.0],
-        [x + 1.0, y1 - 4.0, 1.0, 2.0],
-        [x1 - 2.0, y + 2.0, 1.0, 2.0],
-        [x1 - 2.0, y1 - 4.0, 1.0, 2.0],
-    ] {
-        quad(f, qx, qy, qw, qh, e, 0.0, [0.0; 2]);
-    }
-}
-
-/// `FaderDesignFrissito` (ELF 0x547e10) keeps a fader's `s` at 0.9 (the remaster's shine adds to it only with
-/// `GLOBALKELLDESIGN`).
-pub const S: f32 = 0.9;
-
 /// `KirakFader(…, 0, 54s, 90s, 100, 0, 90s, 130s, 70)` (`starf`).
 fn starf(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4]) {
     kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
@@ -1036,7 +913,7 @@ impl Panels {
     pub fn draw_over(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, sel: &Selection, models: Option<TexId>) {
         let v = &d.v;
         if let Some(tex) = models {
-            f.push(tex, Blend::Alpha, Instance::new(kind::SPRITE, v.px(320.0, 240.0), [320.0 * v.k, 240.0 * v.k], [1.0; 4]));
+            f.push(tex, Blend::Alpha, Instance::new(kind::SPRITE, v.px(320.0, 240.0), crate::kit::Wide::new(v).half(v), [1.0; 4]));
         }
         if let Some(t) = &self.transfer {
             self.draw_transfer_texts(f, d, state, t);
@@ -1336,13 +1213,14 @@ impl PanelModels {
         if dynamic.is_empty() {
             return None;
         }
-        let k = size[1] / 480.0;
-        let px = ((640.0 * k).round().max(1.0) as u32, size[1].round().max(1.0) as u32);
+        let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
+        let px = wide.px;
         let light = scene::normalise([0.0, -0.35, 1.0]);
         // Camera space → clip over the virtual 640 × 480: vx = 600·x/w + 320, vy = 600·y/w + 250 (w = −z); depth
         // 0..1 over w = 400..2100.
         let (a, b) = (1.0 / (1.0 / 400.0 - 1.0 / 2100.0) / 400.0, 1.0 / (1.0 / 400.0 - 1.0 / 2100.0));
         let rows4 = [[1200.0 / 640.0, 0.0, 0.0, 0.0], [0.0, -1200.0 / 480.0, -(1.0 - 500.0 / 480.0), 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
+        let rows4 = wide.rows(rows4);
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
         let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
         f.scene = Some(Scene3d {

@@ -6,6 +6,7 @@ use ig2_formats::Install;
 use ig2_sim::save::{va, SaveState};
 
 use crate::font::{Align, Font, Virtual};
+use crate::kit::fader::fade_color;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
 use crate::scene::{self, Model, Placement};
@@ -355,17 +356,11 @@ pub(crate) fn production_line(state: &SaveState, r: &[u8], owner: u8, counter: i
 }
 
 /// `KirakFader(i, …, x, y, w, h, 0, 54s, 90s, 155l + 100, 0, 90s, 130s, 185l + 70)` (ELF 0x547920 →
-/// `FadeKerettelKerekit` 0x538330, [`crate::starmap_panels::kirak_fader`]) with s = [`crate::starmap_panels::S`] and
+/// `FadeKerettelKerekit` 0x538330, [`crate::kit::fader::kirak_fader`]) with s = [`crate::kit::fader::S`] and
 /// l = 0.
 pub fn fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4]) {
-    use crate::starmap_panels::S;
-    crate::starmap_panels::kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
-}
-
-/// The exe's colour `c` (0..255) at opacity `a` as a [`Blend::GammaAlpha`] tint: `FadeScreen`'s quads are the 2D
-/// pass's (re/screens/hud.md §1.1), blended on the frame's stored values.
-pub fn fade_color(c: [f32; 3], a: f32) -> [f32; 4] {
-    [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0, a]
+    use crate::kit::fader::S;
+    crate::kit::fader::kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
 }
 
 /// The HUD's resources.

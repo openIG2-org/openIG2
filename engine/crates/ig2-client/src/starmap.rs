@@ -36,7 +36,7 @@ impl Sheet {
 
 /// The starmap's textures and the exe's palette (each texture falls back to a plain shape when missing).
 pub struct Assets {
-    white: TexId,
+    pub white: TexId,
     select: Option<TexId>,
     planets: [Option<TexId>; SURFACES],
     /// `textures/starmap/n1..n8`: the system stars.
@@ -227,7 +227,12 @@ impl Camera {
     }
     /// Physical pixels per virtual pixel.
     pub fn k(&self) -> f32 {
-        self.size[1] / VIRTUAL_H
+        self.virt().k
+    }
+
+    /// The virtual screen in this view ([`crate::kit::Layout`]).
+    pub fn virt(&self) -> crate::font::Virtual {
+        crate::font::Virtual::new(self.size)
     }
 
     /// Camera space of the galaxy point `p` at height `h` (`smRotatePoint`).
@@ -271,8 +276,7 @@ impl Camera {
 
     /// Virtual → physical pixels.
     fn phys(&self, v: [f32; 2]) -> [f32; 2] {
-        let k = self.k();
-        [self.size[0] / 2.0 + (v[0] - CENTER[0]) * k, v[1] * k]
+        self.virt().px(v[0], v[1])
     }
 
     /// Screen position and physical pixels per galaxy unit there, when in front of the camera.
@@ -294,8 +298,7 @@ impl Camera {
 
     /// The galaxy point (height 0) under the screen point `s`, if the ray meets the galaxy plane.
     pub fn to_world(self, s: [f32; 2]) -> Option<[f32; 2]> {
-        let k = self.k();
-        let v = [(s[0] - self.size[0] / 2.0) / k + CENTER[0], s[1] / k];
+        let v = self.virt().virtual_f(s);
         let dir = [(v[0] - CENTER[0]) / FOV, (v[1] - CENTER[1]) / FOV, -1.0];
         let m = self.matrix();
         // d = Mᵀ·(e + (0, 0, D)): the eye sits at e = 0.
@@ -321,8 +324,7 @@ impl Camera {
 
     /// Physical → virtual pixels.
     pub fn virtual_of(&self, s: [f32; 2]) -> [f32; 2] {
-        let k = self.k();
-        [(s[0] - self.size[0] / 2.0) / k + CENTER[0], s[1] / k]
+        self.virt().virtual_of(s)
     }
 
     /// `get_pos` / `SikMetszespont`: the galaxy point under the virtual point `v`.

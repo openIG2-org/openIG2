@@ -81,11 +81,13 @@ const A = {
   FajStart: va(0xbbb17c), FajSzetnyilas: va(0xbbb16c), FajRace: va(0xbbb178), FajNehezseg: va(0xbbb180),
 };
 // The scripts the port doesn't have yet (Story_Check calls them; campaign mode patches them to `ret`).
-// st_Elem_include's blocks the port doesn't have yet (801, 804, 806, 807, 809, 814, 815, 821, 832, 834, 836, 839,
-// 840, 843, 844, 856, 862, 863): the `push id` before each block's st_Story(id, 1) call. Part 2b took out 808
-// (0x5d8716) and 854 (0x5e253a), part 2c 810 (0x5d95a1), 857 (0x5e3f60), 858 (0x5e4379) and 860 (0x5e4964).
-const ELEM_UNPORTED = [0x5d4bb7, 0x5d6de5, 0x5d7387, 0x5d7c83, 0x5d8ff7, 0x5d9d93, 0x5da289, 0x5db408,
-  0x5dde11, 0x5de47e, 0x5def0a, 0x5df708, 0x5dfc10, 0x5e079f, 0x5e0d66, 0x5e30e2, 0x5e5212, 0x5e5b4f];
+// st_Elem_include's blocks the port doesn't have yet (none since part 2g): the `push id` before each block's
+// st_Story(id, 1) call. Part 2b took out 808 (0x5d8716) and 854 (0x5e253a),
+// part 2c 810 (0x5d95a1), 857 (0x5e3f60), 858 (0x5e4379) and 860 (0x5e4964), part 2d 801 (0x5d4bb7), 804 (0x5d6de5),
+// 806 (0x5d7387), 807 (0x5d7c83) and 809 (0x5d8ff7), part 2e 814 (0x5d9d93), 815 (0x5da289), 821 (0x5db408), 832
+// (0x5dde11) and 834 (0x5de47e), part 2f 836 (0x5def0a), 839 (0x5df708), 840 (0x5dfc10) and 843 (0x5e079f), part 2g
+// 844 (0x5e0d66), 856 (0x5e30e2), 862 (0x5e5212) and 863 (0x5e5b4f).
+const ELEM_UNPORTED = [];
 const UNPORTED = { begin: 0x5cec20, rnd: 0x5f0e20, brnd: 0x5c9f20, fable: 0x5e6ba0, line: 0x5eb6f0, elem: 0x5d4b70, multi: 0x5ee4d0 };
 
 const cfg = { scenario: 'scenario/intruders.scn', startAfterFrames: 1200, count: 2000, fuzz: false, seed: 4242,
@@ -190,13 +192,15 @@ function story() {
       A.KemNews.add(0x14).readS32(), A.KemNews.add(0x18).readS32(), A.KemNews.add(0x1c).readS32()].concat(ints(A.KemNews.add(0x24), 5)),
     ci: A.CiKem.readS32(), spwin: A.SpWin.readS32(),
     // st_Rnd: the finished space battle's participants (owner +0x18, +0x20, +0x24) and SpWarKiNyert.
-    battle: cfg.keep.includes('rnd') ? spwList() : undefined, kinyert: cfg.keep.includes('rnd') ? A.KiNyert.readS32() : undefined,
+    battle: cfg.keep.includes('rnd') || cfg.keep.includes('elem') ? spwList() : undefined, kinyert: cfg.keep.includes('rnd') ? A.KiNyert.readS32() : undefined,
     // st_Rnd part 2: KemkedesAzonosito, KemkedesValasz.
     kaz: spyKept() ? A.KemAzon.readS32() : undefined, kval: spyKept() ? A.KemValasz.readS32() : undefined,
     // st_Rnd part 2c: KemkedesTulaj, KemkedesAktKem, last_hajo_kigyujt_flotta.
     ktul: spyKept() ? A.KemTulaj.readS32() : undefined, kakt: spyKept() ? A.KemAktKem.readS32() : undefined,
     // st_Elem part 2a: st_bGet3Nearest's static.
     n3: cfg.keep.includes('elem') ? ints(va(0xf432c4), 3) : undefined,
+    // Part 2g: st_bGet4Brutal's static.
+    n4: cfg.keep.includes('elem') ? ints(va(0xf432d0), 4) : undefined,
     lcol: cfg.keep.includes('rnd') ? A.LastCollect.readS32() : undefined,
     ...(cfg.keep.includes('fable') ? fableStory() : {}),
   };
@@ -300,8 +304,9 @@ function world() {
       for (let d = 0; d <= tn; d++) designs.push(brnd ? [tp.add(0x84 * d + 0x1c).readS32(), tp.add(0x84 * d + 0x24).readS32(), tp.add(0x84 * d + 0x20).readS32(), tp.add(0x84 * d + 0x2c).readS32(), tp.add(0x84 * d + 0x80).readS32()] : [tp.add(0x84 * d + 0x1c).readS32(), tp.add(0x84 * d + 0x24).readS32()]);
       // st_Begin also: +0x16 (2 = ground), +0x44 (size), +0x34 (colony ship), +0x6c (3 = for sale).
       if (begin) for (let d = 0; d <= tn; d++) designs[d].push(tp.add(0x84 * d + 0x16).readS16(), tp.add(0x84 * d + 0x44).readS32(), tp.add(0x84 * d + 0x34).readU8(), tp.add(0x84 * d + 0x6c).readS32());
-      // st_Elem: +0x34 (story 842's design test).
-      if (elem) for (let d = 0; d <= tn; d++) designs[d].push(tp.add(0x84 * d + 0x34).readU8());
+      // st_Elem: +0x34 (story 842's design test); part 2d +0x48 (807's hull classes), +0x36 (its vehicles), +0x28
+      // (801's design A).
+      if (elem) for (let d = 0; d <= tn; d++) designs[d].push(tp.add(0x84 * d + 0x34).readU8(), tp.add(0x84 * d + 0x48).readS32(), tp.add(0x84 * d + 0x36).readU8(), tp.add(0x84 * d + 0x28).readU8(), tp.add(0x84 * d + 0x44).readS32(), tp.add(0x84 * d + 0x16).readS16());
       out.ships = ships;
       out.designs = designs;
     }
@@ -355,6 +360,37 @@ function world() {
         bld[p] = list;
       }
       if (!elem) out.bld = bld;
+    }
+    if (elem && !rndk) {
+      // st_Elem part 2e: the fleet slots past the count up to the ship count (821's escort loop reads them; the dump
+      // stops at the allocation's end), the record before the planets (834's fleets start on planet -1), planet
+      // 8140's battlefield WF+0x334 (814's self-destruct countdown), spFlottak.
+      const nsh = A.HajoCount.readS32(), fext = [];
+      try { for (let f = nfl + 1; f <= nsh; f++) { const q = fleet(f); fext.push([q.add(0x15).readU8(), f32bits(q.add(0x30)), f32bits(q.add(0x34))]); } } catch (e) {}
+      out.fext = fext;
+      const m1 = A.Bolygok.sub(0x188);
+      out.bm1 = [f32bits(m1.add(0x18)), f32bits(m1.add(0x1c))];
+      const p8140 = planetOfId(8140);
+      out.wf334 = p8140 ? [p8140, wf(p8140).add(0x334).readS32()] : [0, 0];
+      // spFlottak and its count (821's escort joins the battle).
+      const spw = []; for (let k = 0; k <= 4; k++) spw.push([A.SpFl0.add(6 * k).readS16(), A.SpFl0.add(6 * k + 2).readU8()]);
+      out.spw = [A.SpFlottakN.readS32(), spw];
+      // Part 2f: the levels of empires 0..8 towards each other (836's alliances, 9 x 9 bytes); while 840 runs (or ran
+      // in this record) the human's designs 40.. ([d, +0x34, +0x20, +0x24]) and planets building a ship ([p, +0x78,
+      // that design's +0x34, +0xa0]): the colony discount.
+      let vl = ''; for (let a = 0; a < 9; a++) for (let b = 0; b < 9; b++) vl += ('0' + A.Viszony.add((a * 19 + b) * 0x26 + 0x25).readU8().toString(16)).slice(-2);
+      out.vlev = vl;
+      if (bucketHas(840) || (cur && cur.pre && cur.pre.w && cur.pre.w.cdis !== undefined)) {
+        const tn = A.TervCount.add(4 * en).readS32(), tp = A.Tervek.add(4 * en).readPointer(), ds = [], ps = [];
+        if (!tp.isNull()) {
+          for (let d = 40; d <= tn && d < 400; d++) { const r = tp.add(0x84 * d); ds.push([d, r.add(0x34).readU8(), r.add(0x20).readS32(), r.add(0x24).readS32()]); }
+          for (let p = 1; p <= np; p++) {
+            const b = A.Bolygok.add(0x188 * p), d = b.add(0x78).readS16();
+            if (b.add(0x20).readU8() === en && d > 0) ps.push([p, d, d < 400 ? tp.add(0x84 * d + 0x34).readU8() : 0, b.add(0xa0).readS32()]);
+          }
+        }
+        out.cdis = [ds, ps];
+      }
     }
     if (rndk) {
       // st_Rnd part 2b: the fleet slots past the count up to the ship count (owner, x, y; 101's escort loop reads
@@ -439,8 +475,10 @@ function world() {
       out.bld = [];
       for (let p = 1; p <= np; p++) {
         const o = A.Bolygok.add(0x188 * p + 0x20).readU8();
-        // the human's (835), empire 11's (817 razes them), 8080's and 8540's (part 2b)
-        if (o !== en && o !== 11 && p !== planetOfId(8080) && p !== planetOfId(8540)) continue;
+        // the human's (835), empire 11's (817 razes them), 8080's and 8540's (part 2b), empire 10's (806 hands its
+        // planet over on strike, part 2d)
+        // and 8140's (814's doomsday building, part 2e)
+        if (o !== en && o !== 11 && o !== 10 && p !== planetOfId(8080) && p !== planetOfId(8540) && p !== planetOfId(8140)) continue;
         const n = A.HanyEpulet.add(4 * p).readS32(), e = A.Epuletek.add(4 * p).readPointer(), sl = [];
         // Part 2a: also the damage +4 (802's earthquake); part 2b the flags +0x19 (854's working police).
         for (let k = 1; k <= n && k <= 2000; k++) sl.push([e.add(0x20 * k).readU8(), e.add(0x20 * k + 8).readS16(), e.add(0x20 * k + 4).readS32(), e.add(0x20 * k + 0x19).readU8()]);
@@ -470,6 +508,12 @@ function world() {
       out.kep = [A.AktKepKell.readS32(), va(0xbae254).readS32(), va(0xf261f8).readS32(), va(0xbae264).readU8()];
       // Tankok (808's start deletes the garrison) unless st_Rnd/st_Begin dumped it.
       if (!out.tanks) { const tanks = [], tkn = A.TankN.readS32(); for (let k = 0; k <= tkn; k++) { const t = A.Tanks.add(8 * k); tanks.push([t.readS16(), t.add(2).readS16(), t.add(4).readS32()]); } out.tanks = tanks; }
+      // Part 2d: stream 0 (806's first pick), the date (807's game info), the fleets' names (801 renames them).
+      out.seed0 = A.RandSeed.readU32();
+      out.date = [va(0xbae040).readS32(), va(0xbae044).readS32(), va(0xbae048).readS32()];
+      // Part 2g: the fleets' vehicles (+0x58, 856's toll).
+      out.fveh = []; for (let f = 0; f <= nfl; f++) out.fveh.push(fleet(f).add(0x58).readS32());
+      if (!out.fnames) { const fn = []; for (let f = 0; f <= nfl; f++) fn.push(latin1(fleet(f), 0x15)); out.fnames = fn; }
     }
   }
   return out;
@@ -666,6 +710,10 @@ function setupActs() {
     // Part 2c: st_SetNonagressionViszony (858), Diplomacy_RemoveSpecial (858).
     logged(va(0x602860), 'nonaggr', ints(2));
     logged(va(0x4c0010), 'diplremove', ints(2));
+    // Part 2d: FlottaOsszevon (804's OsszevonasCheck).
+    logged(va(0x53d860), 'osszevon', ints(2));
+    // Part 2e: SearchBolygohozKozeliFlotta with every argument (834's siege).
+    if (!rndk) logged(va(0x540f50), 'nearfleet', (c) => [argI(c, 0), argU(c, 1), argI(c, 2) & 0xff, argI(c, 3) & 0xff, argI(c, 4) & 0xff, argI(c, 5) & 0xff, argI(c, 6)], (r) => r.toInt32());
   }
   if (rndk) {
     logged(va(0x6028a0), 'neutral', ints(2));
@@ -737,11 +785,13 @@ function setupActs() {
       cur.post = snap(); emit(cur); cur = null; initAt = frames;
       // Record from here on (the first daily check starts story 400); the speed is set a little later.
       const infos = []; for (let i = 0; i < A.InfoStrN.readS32(); i++) infos.push(A.InfoStr.add(12 * i).readS16());
-      const rk = cfg.keep.includes('rnd');
+      const rk = cfg.keep.includes('rnd'), ek = cfg.keep.includes('elem');
+      // st_Elem part 2d: 801's texts (the transports' fleet name, the designs' names) and AlapFlottaNev too.
+      const texts = (rk ? RND2C_TEXTS : []).concat(ek ? ELEM2D_TEXTS.concat(ELEM2E_TEXTS, ELEM2F_TEXTS, ELEM2G_TEXTS) : []);
       emit({ k: 'setup', init: snap(), data: storyData(), campaign: cfg.campaign, keep: cfg.keep, infos, agent: cfg.keep.includes('fable') ? sText(5, 0xc14) : null,
-        stext5: rk ? RND2C_TEXTS.map((id) => { const o = Memory.alloc(16); sCall(o, 5, id); const q = o.readPointer(); return [id, q.isNull() ? '' : latin1(q, 64)]; }) : null,
+        stext5: rk || ek ? texts.map((id) => { const o = Memory.alloc(16); sCall(o, 5, id); const q = o.readPointer(); return [id, q.isNull() ? '' : latin1(q, 64)]; }) : null,
         recruits: rk ? [0, 1, 2, 3, 4, 5, 6].map((k) => latin1(A.Recruits.add(8 * k), 8)) : null,
-        alapnev: rk ? A.AlapNev.readPointer().readCString() : null, elem2a: cfg.keep.includes('elem'), elem2b: cfg.keep.includes('elem'), elem2c: cfg.keep.includes('elem') });
+        alapnev: rk || ek ? A.AlapNev.readPointer().readCString() : null, elem2a: ek, elem2b: ek, elem2c: ek, elem2d: ek, elem2e: ek, elem2f: ek, elem2g: ek });
       phase = 1;
     },
   });
@@ -2154,11 +2204,12 @@ function rndFuzz() {
 // The storyline episodes of part 1 (805..868) started, their counters run out with the world they test set up,
 // their messages read (flag 9), answered (6) or promoted (7), ground battles on their planets (4), space battles
 // with the raider (3), radar contacts (11), arrivals (0), specials 10 and 13, story 816's finish (12), daily checks.
-const ELEM = [802, 805, 808, 810, 811, 813, 816, 817, 818, 820, 824, 830, 831, 835, 837, 841, 842, 850, 852, 854, 857, 858, 860, 861, 864, 865, 866, 867, 868];
+const ELEM = [801, 802, 804, 805, 806, 807, 808, 809, 810, 811, 813, 814, 815, 816, 817, 818, 820, 821, 824, 830, 831, 832, 834, 835, 836, 837, 839, 840, 841, 842, 843, 844, 850, 852, 854, 856, 857, 858, 860, 861, 862, 863, 864, 865, 866, 867, 868];
 const ELEM_COUNTERS = { 811: [8110], 813: [8131], 816: [8183, 8189, 5619], 817: [8179], 820: [8201, 8209], 830: [8302, 8301],
   831: [8312, 8311], 835: [8351, 8350], 837: [8370], 841: [8411], 842: [8429], 864: [8640, 8642, 8643], 867: [8671] };
 // Planet ids the episodes read: given to some other planet when the campaign map lacks them.
-const ELEM_PLANETS = [8160, 8200, 8301, 8302, 8011];
+const ELEM_PLANETS = [8160, 8200, 8301, 8302, 8011, 8010, 8040, 8041, 8042, 8091, 8092, 8093, 8094, 8140, 8150, 8151, 8152, 8320,
+  8321, 8322, 8340, 8560, 8044];
 // The multi-step episodes: picked more often.
 const ELEM_RARE = [816, 820, 830, 831, 835, 842, 864, 866, 802, 824, 850, 852, 861];
 // Part 2a: the spy episodes.
@@ -2561,6 +2612,651 @@ function elem2cFuzz(pool, running, sets, prep, after) {
     flagRec(0x10, []);
   }
 }
+// Part 2d: 801 (the evacuation of 8010), 804 (empire 10's bases 8040..8042), 806 (the police strike), 807 (the
+// pirates' ultimatum), 809 (empire 13's blockade).
+// Part 2f: 836 (empire 1's three waves on 8351), 839 (empire 10's hunter fleet 8390 round 8391..8393), 840 (the
+// colonisation race, empire 17), 843 (the raiders 8430..8432 past planet 8044).
+const ELEM2G = [844, 856, 862, 863];
+// The fleets' names (844's 8443 and 8441, 856's 8561, 862's 8621 and 8623, 863's 8638; 856's colony text 8560 is in
+// ELEM2E_TEXTS).
+const ELEM2G_TEXTS = [0x20f9, 0x20fb, 0x2171, 0x21ad, 0x21af, 0x21be];
+const ELEM2G_COUNTERS = { 844: [8441], 856: [8560, 8561, 8563, 8563, 8564, 8565, 8565, 8569], 863: [8630, 8631, 8632, 8632, 8633, 8634, 8636, 8638] };
+const ELEM2G_ACTS = { 844: ['ctr', 'arrive', 'arrive', 'ss', 'se', 'se', 'daily', 'daily'],
+  856: ['ctr', 'ctr', 'ctr', 'ans', 'ans', 'ans', 'letilt', 'special', 'arrive', 'arrive', 'daily'],
+  862: ['read', 'daily', 'daily', 'daily', 'arrive', 'arrive', 'gstart'], 863: ['ctr', 'ctr', 'ctr', 'ground', 'daily'] };
+const ELEM2G_ANSWERS = [[8562, 2], [8562, 3], [8562, 4], [8563, 3], [8563, 4], [8563, 5], [8563, 6], [8563, 7], [8564, 2], [8564, 3],
+  [8567, 2], [8567, 3]];
+function elem2gFuzz(pool, running, sets, prep, after) {
+  const en = A.EN.readS32(), np = nPlanets(), live = running.filter((x) => ELEM2G.includes(x));
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  const ownerOf = (p) => A.Bolygok.add(0x188 * p + 0x20).readU8();
+  const setOwner = (p, o) => { if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), o); };
+  const fxy = (f) => [fleet(f).add(0x30).readFloat(), fleet(f).add(0x34).readFloat()];
+  const mine = () => liveFleets().filter((f) => fleet(f).add(0x15).readU8() === en);
+  // Empires 1 and 5 alive for the record (862 and 863 need both); some of the others' colonies lent to them (never a
+  // free planet: a conquest of one hangs the game).
+  const lend = (e, n) => {
+    const c = []; for (let p = 1; p <= np; p++) { const o = ownerOf(p); if (o !== 0 && o !== en && o !== e && o < 9) c.push(p); }
+    for (let k = n; k > 0 && c.length; k--) setOwner(c.splice(rnd(c.length), 1)[0], e);
+  };
+  const alive = (e) => { if (!A.El.add(e).readU8()) transientU8(sets, A.El.add(e), 1); };
+  // A fleet of the human's holds story id `fid` for the record (856's 8562), its vehicles' designs' classes varied;
+  // now and then its vehicle designs made fighters (+0x16 ≠ 2) with +0x58 their sum (TankDelete lowers it then).
+  const holdFleet = (fid, fighters) => {
+    let f = fleetOfId(fid);
+    const m = mine();
+    if ((!f || rnd(4) === 0) && m.length) { f = pick(m); transientS16(sets, fleet(f).add(0x16), fid); }
+    if (!f) return 0;
+    const own = fleet(f).add(0x15).readU8(), tp = A.Tervek.add(4 * own).readPointer(), tkn = A.TankN.readS32();
+    for (let k = 1; k <= tkn; k++) {
+      const t = A.Tanks.add(8 * k), d = t.add(2).readS16();
+      if (d === 0x7fff || t.readS16() !== f || tp.isNull()) continue;
+      if (rnd(2)) transientS32(sets, tp.add(0x84 * d + 0x44), 1 + rnd(4));
+      if (rnd(3) === 0) transientU8(sets, tp.add(0x84 * d + 0x36), pick([0, 1, 2]));
+    }
+    if ((fighters || rnd(2)) && !tp.isNull()) {
+      let n = 0;
+      for (let k = 1; k <= tkn; k++) {
+        const t = A.Tanks.add(8 * k), d = t.add(2).readS16();
+        if (d === 0x7fff || t.readS16() !== f) continue;
+        const kind = tp.add(0x84 * d + 0x16);
+        if (kind.readS16() === 2) transientS16(sets, kind, pick([0, 1]));
+        if (tp.add(0x84 * d + 0x36).readU8() === 0) transientU8(sets, tp.add(0x84 * d + 0x36), 1);
+        n += t.add(4).readS32();
+      }
+      if (n) transientS32(sets, fleet(f).add(0x58), n);
+    }
+    return f;
+  };
+  if (rnd(6) === 0 || !live.length) {
+    const ids = pool.filter((id) => ELEM2G.includes(id) && !bucketHas(id));
+    if (!ids.length) return;
+    const id = pick(ids);
+    if (id === 862 || id === 863) {
+      if (rnd(6)) { alive(1); alive(5); }
+      if (rnd(4)) lend(5, 1 + rnd(4));
+      if (id === 863 && rnd(4)) lend(1, 1 + rnd(3));
+    }
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+    return;
+  }
+  const id = pick(live), act = pick(ELEM2G_ACTS[id]);
+  if (act === 'ctr') {
+    const ctr = pick(ELEM2G_COUNTERS[id]);
+    // 844: the raid's two empires alive or not.
+    if (ctr === 8441) for (const v of [8448, 8449]) { const e = varOf(v); if (e > 0 && e < 19 && rnd(4) === 0) transientU8(sets, A.El.add(e), rnd(2)); }
+    // 856: the toll in vehicles (v(8563): 5, 20 or all) or ships, from the held fleet.
+    if (ctr >= 8563 && ctr <= 8565) { if (rnd(2)) vSet(8563, pick([1, 2, 3, 0])); if (rnd(8)) holdFleet(8562, rnd(4) !== 0); }
+    // 856: empire 5 dead now and then (no raider).
+    if (ctr === 8569 && rnd(4) === 0) transientU8(sets, A.El.add(5), 0);
+    // 863: the human's money round 500,000, empire 5's planet count (3, 6: the waves) and the human's.
+    if (ctr === 8630) { const m = A.Money.add(8 * en), x = pick([100000, 500000, 500001, 2000000]); let was = 0; sets.push([() => { was = m.readDouble(); m.writeDouble(x); }, () => m.writeDouble(was)]); }
+    if (ctr === 8631 || ctr === 8632) {
+      if (rnd(2)) lend(5, ctr === 8632 ? 4 + rnd(6) : rnd(8));
+      if (rnd(3) === 0) transientS32(sets, A.HanyB.add(4 * 5), pick([0, 1, 2, 3, 5, 6, 9]));
+      else if (ctr === 8632 && rnd(2)) transientS32(sets, A.HanyB.add(4 * 5), pick([6, 7, 9]));
+      if (rnd(6) === 0) transientS32(sets, A.HanyB.add(4 * en), pick([1, 2, 3]));
+    }
+    // 863: the marked planets (8632..8635, 8633) empire 5's or not.
+    if (ctr === 8633 || ctr === 8634) for (const b of [8632, 8633, 8634, 8635]) { const p = planetOfId(b); if (p && rnd(3) === 0) setOwner(p, pick([5, en, 1])); }
+    if (ctr === 8634 && rnd(4) === 0) transientU8(sets, A.El.add(5), 0);
+    stage('flag', [[A.Check, [1]]], { args: [5, ctr] }, () => { prep(); A.Flags.add(5).writeU8(1); A.SzVegzett.writeS32(ctr); }, after);
+  } else if (act === 'ans') {
+    const [b, part] = pick(ELEM2G_ANSWERS);
+    if (b === 8567 && rnd(2)) holdFleet(8562);
+    stage('flag', [[A.Check, [1]]], { args: [6, b, part] }, () => { prep(); A.Flags.add(6).writeU8(1); A.Msg.writeS32(b); A.Msg.add(4).writeS32(part); }, after);
+  } else if (act === 'letilt') {
+    // st_Letilt(8563): the answers the held fleet's vehicles can't pay are disabled.
+    if (rnd(4)) holdFleet(8562);
+    stage('flag', [[A.Check, [1]]], { args: [8, 8563, 0] }, () => { prep(); A.Flags.add(8).writeU8(1); A.Msg.writeS32(8563); A.Msg.add(4).writeS32(0); }, after);
+  } else if (act === 'read') {
+    flagRec(9, [8620, 0], () => { A.Msg.writeS32(8620); A.Msg.add(4).writeS32(0); });
+  } else if (act === 'special') {
+    // A colonisation (special 10) of planet 8560 (or another) by the human or another empire.
+    const p = planetOfId(8560), args = [10, rnd(3) ? en : 1 + rnd(8), p && rnd(4) ? p : 1 + rnd(np), 0, 0, 0, 0, 0];
+    stage('special', [[A.Special, args]], { args });
+  } else if (act === 'arrive') {
+    // 844's envoy at its point (type 0) or the raid at its planet (type 1); 856's raider at its point, a fleet of the
+    // human's (or not) at 8560 (v(8560) and v(8562) varied); 862's escort at 8620. Another fleet takes a missing id.
+    const all = liveFleets();
+    if (!all.length) return;
+    let fid, type, tgt = 0, f;
+    if (id === 844) { [fid, type] = rnd(2) ? [8443, 0] : [8441, 1]; }
+    else if (id === 856) {
+      if (rnd(3) === 0) { fid = 8561; type = 0; }
+      else {
+        const m = mine(); f = m.length && rnd(5) ? pick(m) : pick(all); fid = fleet(f).add(0x16).readS16(); type = 1; tgt = planetOfId(8560) || 1 + rnd(np);
+        if (rnd(3) === 0) vSet(8560, pick([0, 1, 1])); if (rnd(4) === 0) vSet(8562, rnd(2));
+        if (rnd(2)) transientS32(sets, fleet(f).add(0x58), pick([0, 3, 12, 30]));
+      }
+    } else { fid = 8623; type = 1; tgt = planetOfId(8620) || 1 + rnd(np); }
+    if (rnd(8) === 0) type = 1 - type;
+    if (!f) { f = fleetOfId(fid) || pick(all); if (fleet(f).add(0x16).readS16() !== fid) transientS16(sets, fleet(f).add(0x16), fid); }
+    if (type === 1 && !tgt) tgt = 1 + rnd(np);
+    const a = [fid, f, tgt, type, 0];
+    flagRec(0, a, () => { for (let i = 0; i < 5; i++) A.Arr.add(4 * i).writeS32(a[i]); });
+  } else if (act === 'ss') {
+    // 844: a space battle starts with the envoy or the raid among spFlottak's two.
+    const all = liveFleets();
+    if (all.length < 2) return;
+    const fid = pick([8443, 8441]);
+    let g = fleetOfId(fid);
+    if (!g) { g = pick(all); transientS16(sets, fleet(g).add(0x16), fid); }
+    const o = pick(all.filter((x) => x !== g));
+    keepRegion(sets, A.SpFl0, 0x2c); keepRegion(sets, A.Adat.add(0x94), 8);
+    const [s1, s2] = rnd(2) ? [g, o] : [o, g];
+    transientS16(sets, A.SpFlottak, s1); transientS16(sets, A.SpFlottak.add(6), s2);
+    flagRec(1, [s1, s2]);
+  } else if (act === 'se') {
+    // 844: a space battle ends with the envoy or the raid among the participants, lost or won.
+    const n = 2 + rnd(2), list = [], buf = Memory.alloc(0x30 * 4);
+    spwBufs.push(buf);
+    if (spwBufs.length > 64) spwBufs.shift();
+    for (let i = 0; i < n; i++) {
+      const fid = pick([0, 8443, 8441, 8441]), owner = rnd(2) ? en : pick([9, 10, 1]);
+      const q = buf.add(0x30 * i); q.add(0x18).writeS32(owner); q.add(0x20).writeS32(fid); q.add(0x24).writeS32(fid); list.push([owner, fid]);
+    }
+    transientS32(sets, A.SpWin, rnd(2) ? list[0][0] : list[1][0]);
+    stage('spwfinished', [[A.SpwFinished, [buf.toUInt32(), n, 1]]], { args: list }, prep, after);
+  } else if (act === 'gstart' || act === 'ground') {
+    // 862: a ground battle starts on 8620 (its fleet deleted); 863: one ends anywhere (the waves' checks).
+    const p = id === 862 && rnd(4) ? planetOfId(8620) || 1 + rnd(np) : 1 + rnd(np);
+    const m = mine(), f = m.length ? pick(m) : 0, won = rnd(3) ? 1 : 0, fl = act === 'gstart' ? 2 : 4;
+    if (id === 863) { if (rnd(2)) vSet(8639, 1); for (const b of [8632, 8633, 8634, 8635]) { const q = planetOfId(b); if (q && rnd(3) === 0) setOwner(q, pick([5, en])); } }
+    flagRec(fl, [p, f, won], () => {
+      A.Gr.writeS32(f); A.Gr.add(4).writeS32(f ? fleet(f).add(0x16).readS16() : 0); A.Gr.add(8).writeS32(en);
+      A.Gr.add(12).writeS32(p); A.Gr.add(16).writeS32(ownerOf(p)); A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won);
+    });
+  } else {
+    // Daily: 844's raid wandering (empire v(8448) without planets now and then); 856's raider hunting near 8560; 862's
+    // raiders and escort (v(8621) 0, 2, 3; empires 1 and 5 without planets); 863 with empire 5 dead.
+    if (id === 844) {
+      // The raid (another empire's fleet takes id 8441 for the record), heading for a planet of v(8448)'s or not.
+      let g = fleetOfId(8441);
+      const others = liveFleets().filter((x) => fleet(x).add(0x15).readU8() !== en);
+      if (!g && others.length && rnd(2)) { g = pick(others); transientS16(sets, fleet(g).add(0x16), 8441); }
+      if (g && rnd(2)) { transientS16(sets, fleet(g).add(0x40), pick([0, 1, 1])); transientS16(sets, fleet(g).add(0x42), pick([0, 1, 1, 2])); }
+    }
+    if (id === 844) { if (rnd(2)) vSet(8441, 1); const e = varOf(8448); if (e > 0 && e < 19 && rnd(5) === 0) transientS32(sets, A.HanyB.add(4 * e), 0); }
+    if (id === 856 && rnd(2)) vSet(8561, rnd(3) ? 1 : 0);
+    if (id === 862) {
+      if (rnd(2)) vSet(8621, pick([0, 0, 2, 3]));
+      if (rnd(3) === 0) vSet(8628, rnd(2));
+      const f = fleetOfId(8621), p = planetOfId(8620);
+      // The raiders near the planet or far, the human's fleets near them now and then.
+      if (f && p && rnd(2)) { const b = A.Bolygok.add(0x188 * p); transientF32(sets, fleet(f).add(0x30), b.add(0x18).readFloat() + pick([5, 60, 150])); transientF32(sets, fleet(f).add(0x34), b.add(0x1c).readFloat()); }
+      if (f && rnd(3) === 0) { const [x, y] = fxy(f); for (const g of mine().slice(0, 2)) { transientF32(sets, fleet(g).add(0x30), x + pick([3, 20, 45])); transientF32(sets, fleet(g).add(0x34), y); } }
+    }
+    if (id === 863 && rnd(3) === 0) transientU8(sets, A.El.add(5), 0);
+    flagRec(0x10, []);
+  }
+}
+const ELEM2F = [836, 839, 840, 843];
+// The fleets' names (836's 8360..8362, 839's 8390, 840's 8401; 843 uses 834's 8340..8342, in ELEM2E_TEXTS).
+const ELEM2F_TEXTS = [0x20a8, 0x20a9, 0x20aa, 0x20c6, 0x20d1];
+const ELEM2F_COUNTERS = { 836: [8360, 8361, 8363, 8364], 839: [8398, 8398, 8391, 8392, 8399, 8399], 840: [8400, 8400, 8401, 8402, 8407, 8407, 8408, 8409],
+  843: [8435, 8436, 8430] };
+const ELEM2F_ACTS = { 836: ['ctr', 'ctr', 'ground', 'ground', 'daily', 'daily'], 839: ['ctr', 'ctr', 'ctr', 'ans', 'special', 'arrive', 'arrive', 'se', 'se'],
+  840: ['ctr', 'ctr', 'ctr', 'special', 'special', 'ground', 'daily', 'daily'], 843: ['ctr', 'ctr', 'arrive', 'arrive', 'arrive', 'se', 'se'] };
+function elem2fFuzz(pool, running, sets, prep, after) {
+  const en = A.EN.readS32(), np = nPlanets(), live = running.filter((x) => ELEM2F.includes(x));
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  const ownerOf = (p) => A.Bolygok.add(0x188 * p + 0x20).readU8();
+  const setOwner = (p, o) => { if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), o); };
+  const mine = () => liveFleets().filter((f) => fleet(f).add(0x15).readU8() === en);
+  // Empire e's planets given away for the record now and then (b(-e) finds none).
+  const strip = (e) => { for (let p = 1; p <= np; p++) if (ownerOf(p) === e) setOwner(p, pick([en, 0])); };
+  if (rnd(6) === 0 || !live.length) {
+    const ids = pool.filter((id) => ELEM2F.includes(id) && !bucketHas(id));
+    if (!ids.length) return;
+    const id = pick(ids);
+    // 836's target: planet 8351 the human's, another's or missing; empire 1 without planets now and then.
+    if (id === 836) { const p = planetOfId(8351); if (p && rnd(3) === 0) setOwner(p, pick([en, 1, 0])); if (rnd(6) === 0) strip(1); }
+    // 839's planets: kept (shown), one of them taken, or missing.
+    if (id === 839) for (const b of [8391, 8392, 8393]) { const p = planetOfId(b); if (p && rnd(4) === 0) setOwner(p, pick([en, 10, 0])); }
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+    return;
+  }
+  const id = pick(live), act = pick(ELEM2F_ACTS[id]);
+  if (act === 'ctr') {
+    const ctr = pick(ELEM2F_COUNTERS[id]);
+    if (id === 836 && ctr !== 8361 && rnd(4) === 0) strip(1);
+    if (ctr === 8398) {
+      for (const b of [8391, 8392, 8393]) { const p = planetOfId(b); if (p && rnd(3) === 0) setOwner(p, pick([en, 10, 0, 0])); }
+      if (rnd(2)) vSet(8399, rnd(2));
+    }
+    if (ctr === 8399) {
+      const f = fleetOfId(8390);
+      if (f && rnd(3) === 0) transientS16(sets, fleet(f).add(0x16), 0);
+      // The human's fleets far away (st_fGetNearest finds none: the hunter is sent off).
+      if (rnd(4) === 0) for (const g of mine()) transientU8(sets, fleet(g).add(0x15), 0xff);
+    }
+    if (ctr === 8400) {
+      if (rnd(2)) vSet(8400, pick([0, 1, 3]));
+      // Fewer than 3 planets the human sees now and then; else others' planets given to the human for the record (840
+      // hands the two poorest to empire 17), their +0x28 varied (equal values now and then).
+      if (rnd(4) === 0) { const m = []; for (let p = 1; p <= np; p++) if (ownerOf(p) === en) m.push(p); for (const p of m.slice(rnd(3))) transientS16(sets, A.Bolygok.add(0x188 * p + 0xd8 + 2 * en), -1); }
+      else {
+        // Colonies of the others (a free planet has no colony data: BolygoElfoglal on it hung the game).
+        const free = []; for (let p = 1; p <= np; p++) if (ownerOf(p) !== 0 && ownerOf(p) !== en && ownerOf(p) < 19) free.push(p);
+        for (let k = 2 + rnd(3); k > 0 && free.length; k--) {
+          const p = free.splice(rnd(free.length), 1)[0], b = A.Bolygok.add(0x188 * p);
+          setOwner(p, en); transientS16(sets, b.add(0xd8 + 2 * en), pick([0, 1, 1])); transientS32(sets, b.add(0x28), pick([0, 100, 100, 2500, 50000]));
+        }
+      }
+    }
+    stage('flag', [[A.Check, [1]]], { args: [5, ctr] }, () => { prep(); A.Flags.add(5).writeU8(1); A.SzVegzett.writeS32(ctr); }, after);
+  } else if (act === 'ans') {
+    // 839's message read (flag 9).
+    stage('flag', [[A.Check, [1]]], { args: [9, 8390, 0] }, () => { prep(); A.Flags.add(9).writeU8(1); A.Msg.writeS32(8390); A.Msg.add(4).writeS32(0); }, after);
+  } else if (act === 'special') {
+    // A colonisation (special 10) by the human or another empire; 839's planets taken, 840's v(8401) varied.
+    if (id === 839) for (const b of [8391, 8392, 8393]) { const p = planetOfId(b); if (p && rnd(3) === 0) setOwner(p, pick([en, 10])); }
+    if (id === 839 && rnd(2)) vSet(8399, rnd(2));
+    if (id === 840 && rnd(4) === 0) vSet(8401, rnd(2));
+    if (id === 840 && rnd(3) === 0) vSet(8400, pick([3, 4, 5, 6]));
+    const args = [10, rnd(4) ? en : 1 + rnd(8), 1 + rnd(np), 0, 0, 0, 0, 0];
+    stage('special', [[A.Special, args]], { args });
+  } else if (act === 'ground') {
+    // A ground battle ends (flag 4) on 8351 (836) or anywhere (840), the attacker winning or not; 840: empire 17's
+    // planets gone now and then, v(8409) 1.
+    const p = id === 836 && rnd(4) ? planetOfId(8351) || 1 + rnd(np) : 1 + rnd(np);
+    // 836 strips the ids of fleets 8350..8354: some fleets get them for the record.
+    if (id === 836) { const all = liveFleets(); for (let k = rnd(3); k > 0 && all.length; k--) transientS16(sets, fleet(pick(all)).add(0x16), 8350 + rnd(5)); }
+    if (id === 840) { if (rnd(2)) strip(17); if (rnd(2)) vSet(8409, pick([1, 1, 2])); }
+    const m = mine(), f = m.length ? pick(m) : 0, won = rnd(3) ? 1 : 0;
+    flagRec(4, [p, f, won], () => {
+      A.Gr.writeS32(f); A.Gr.add(4).writeS32(f ? fleet(f).add(0x16).readS16() : 0); A.Gr.add(8).writeS32(en);
+      A.Gr.add(12).writeS32(p); A.Gr.add(16).writeS32(ownerOf(p)); A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won);
+    });
+  } else if (act === 'arrive') {
+    // 839's fleet at a planet (type 1); 843's raiders at their point (type 0). Another fleet takes a missing id.
+    const all = liveFleets();
+    if (!all.length) return;
+    const fid = id === 839 ? 8390 : 8430 + rnd(3), f = fleetOfId(fid) || pick(all), type = id === 839 ? (rnd(8) ? 1 : 0) : (rnd(8) ? 0 : 1);
+    if (fleet(f).add(0x16).readS16() !== fid) transientS16(sets, fleet(f).add(0x16), fid);
+    const a = [fid, f, type === 1 ? 1 + rnd(np) : 0, type, 0];
+    flagRec(0, a, () => { for (let i = 0; i < 5; i++) A.Arr.add(4 * i).writeS32(a[i]); });
+  } else if (act === 'se') {
+    // A space battle ends with 839's fleet (gone now and then) or 843's raiders among the participants.
+    const n = 2 + rnd(2), list = [], buf = Memory.alloc(0x30 * 4);
+    spwBufs.push(buf);
+    if (spwBufs.length > 64) spwBufs.shift();
+    for (let i = 0; i < n; i++) {
+      const fid = id === 839 && rnd(2) ? 8390 : pick([0, 8430, 8431, 8432, 8202]), owner = rnd(2) ? en : pick([10, 1]);
+      const q = buf.add(0x30 * i); q.add(0x18).writeS32(owner); q.add(0x20).writeS32(fid); q.add(0x24).writeS32(fid); list.push([owner, fid]);
+    }
+    transientS32(sets, A.SpWin, rnd(2) ? list[0][0] : list[1][0]);
+    const ids = id === 839 ? [8390] : [8430, 8431, 8432];
+    for (const x of ids) { const f = fleetOfId(x); if (f && rnd(2)) transientS16(sets, fleet(f).add(0x16), 0); }
+    stage('spwfinished', [[A.SpwFinished, [buf.toUInt32(), n, 1]]], { args: list }, prep, after);
+  } else {
+    // Daily: 836's fleets with ground units aboard or not, idle or not; 840 with empire 17's planets gone.
+    if (id === 836) for (let k = 0; k < 3; k++) {
+      const f = fleetOfId(8360 + k);
+      if (f && rnd(2)) transientS32(sets, fleet(f).add(0x5c), pick([0, 0, 3]));
+      if (f && rnd(2)) transientS16(sets, fleet(f).add(0x40), pick([0, 1]));
+    }
+    if (id === 840) { if (rnd(2)) strip(17); if (rnd(2)) vSet(8409, pick([1, 1, 2, 0])); }
+    flagRec(0x10, []);
+  }
+}
+const ELEM2E = [814, 815, 821, 832, 834];
+// 814's ticker 8140, the fleets' names (821's convoy 8206 and pirates 8202, 832's and 834's fleets), 834's notice 8560.
+const ELEM2E_TEXTS = [0x1fcc, 0x200e, 0x200a, 0x2080, 0x2081, 0x2082, 0x2094, 0x2095, 0x2096, 0x2097, 0x2098, 0x2170];
+const ELEM2E_COUNTERS = { 814: [8140, 8141, 8141], 815: [8150, 8151, 8159], 821: [8219, 8219, 8200, 8200], 832: [8327, 8327, 8321, 8329],
+  834: [8340, 8341, 8342, 8343, 8344] };
+// What gets staged per running story (starts aside): counters, answers, ground battles, arrivals, space battle starts
+// and ends, specials, daily checks.
+const ELEM2E_ACTS = { 814: ['ctr', 'ctr', 'ans', 'ans', 'ground', 'ground', 'ground', 'daily'], 815: ['ctr', 'ctr', 'ground', 'ground', 'daily', 'daily', 'daily'],
+  821: ['ctr', 'ctr', 'ctr', 'arrive', 'arrive', 'ss', 'ss', 'ss', 'se', 'se', 'se', 'daily', 'daily', 'daily'],
+  832: ['ctr', 'ctr', 'ans', 'ground', 'ground', 'se', 'se', 'daily', 'daily', 'daily'], 834: ['ctr', 'ctr', 'ctr', 'ans', 'arrive', 'arrive', 'arrive', 'se', 'se', 'special', 'special', 'daily'] };
+const ELEM2E_ANSWERS = { 814: [[6, 8140, 2], [6, 8140, 3], [6, 8140, 4], [7, 8140, 0], [8, 8140, 0], [8, 8140, 0]], 815: [], 821: [],
+  832: [[9, 8320, 0]], 834: [[9, 8340, 0]] };
+// Saved before the record and put back after it (the record sees the story's own writes).
+function keepRegion(sets, q, n) { let was = null; sets.push([() => { was = q.readByteArray(n); }, () => q.writeByteArray(was)]); }
+function elem2eFuzz(pool, running, sets, prep, after) {
+  const en = A.EN.readS32(), np = nPlanets(), live = running.filter((x) => ELEM2E.includes(x));
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  const ownerOf = (p) => A.Bolygok.add(0x188 * p + 0x20).readU8();
+  const setOwner = (p, o) => { if (p) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), o); };
+  const mine = () => liveFleets().filter((f) => fleet(f).add(0x15).readU8() === en);
+  // A fleet of the human's put next to (x, y) for the record (within `r`, sometimes just beyond it).
+  const near = (x, y, r) => {
+    const m = mine();
+    if (!m.length) return 0;
+    const f = pick(m), q = fleet(f), a = rnd(360) * Math.PI / 180, d = pick([0, r * 0.3, r * 0.9, r - 0.5, r + 0.5, r * 1.5]);
+    transientF32(sets, q.add(0x30), x + d * Math.cos(a)); transientF32(sets, q.add(0x34), y + d * Math.sin(a));
+    return f;
+  };
+  const pxy = (p) => [A.Bolygok.add(0x188 * p + 0x18).readFloat(), A.Bolygok.add(0x188 * p + 0x1c).readFloat()];
+  const fxy = (f) => [fleet(f).add(0x30).readFloat(), fleet(f).add(0x34).readFloat()];
+  if (rnd(6) === 0 || !live.length) {
+    const ids = pool.filter((id) => ELEM2E.includes(id) && !bucketHas(id));
+    if (!ids.length) return;
+    const id = pick(ids);
+    // 815's planets: the human's view of them varied (b(·, 1) finds them anyway).
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+    return;
+  }
+  const id = pick(live), act = pick(ELEM2E_ACTS[id]);
+  if (act === 'ctr') {
+    const ctr = pick(ELEM2E_COUNTERS[id]);
+    if (ctr === 8219 && rnd(2)) transientS32(sets, A.HanyB.add(4 * en), pick([1, 2, 3]));
+    if (ctr === 8200) { if (rnd(2)) setOwner(planetOfId(8200), pick([10, 10, en, 0])); if (rnd(2)) vSet(8201, pick([0, 1, 2, 3])); if (rnd(3) === 0) vSet(8211, rnd(3)); }
+    if (ctr === 8150 || ctr === 8151) vSet(8150, rnd(2));
+    if (ctr === 8327 || ctr === 8329) {
+      // Empire 13's planets taken now and then (b(-13, 1) finds none).
+      if (rnd(2)) for (let p = 1; p <= np; p++) if (ownerOf(p) === 13) setOwner(p, pick([en, 0]));
+    }
+    if (ctr >= 8340 && ctr <= 8344 && rnd(4) === 0) for (let p = 1; p <= np; p++) if (ownerOf(p) === 1) setOwner(p, pick([en, 0, 1]));
+    stage('flag', [[A.Check, [1]]], { args: [5, ctr] }, () => { prep(); A.Flags.add(5).writeU8(1); A.SzVegzett.writeS32(ctr); }, after);
+  } else if (act === 'ans') {
+    const [kind, b, part] = pick(ELEM2E_ANSWERS[id]);
+    if (kind === 8 && rnd(2)) transientS32(sets, A.Adat.add(0x58), rnd(2));
+    stage('flag', [[A.Check, [1]]], { args: [kind, b, part] }, () => { prep(); A.Flags.add(kind).writeU8(1); A.Msg.writeS32(b); A.Msg.add(4).writeS32(part); }, after);
+  } else if (act === 'ground') {
+    // A ground battle starts (flag 2: 814) or ends (flag 4) on 814's base, 815's planets or anywhere (832, the old owner
+    // 13 now and then); the doomsday building ('+') intact or not.
+    const base = id === 814 ? [8140] : id === 815 ? [8150, 8151, 8152] : [8320, 8321, 8322];
+    const p = rnd(4) ? planetOfId(pick(base)) || 1 + rnd(np) : 1 + rnd(np), fl = id === 814 && rnd(3) === 0 ? 2 : 4;
+    if (rnd(2)) setOwner(p, pick([en, en, id === 814 ? 10 : id === 815 ? 12 : 13, 0]));
+    if (id === 815) for (const b of base) if (rnd(3) === 0) setOwner(planetOfId(b), pick([en, 12]));
+    if (id === 814 && rnd(2)) {
+      const n = A.HanyEpulet.add(4 * p).readS32(), e = A.Epuletek.add(4 * p).readPointer(), slots = [];
+      for (let k = 1; k <= n && k < 400; k++) if (e.add(0x20 * k).readU8() !== 0) slots.push(k);
+      for (let k = rnd(3); k > 0 && slots.length; k--) { const r = e.add(0x20 * pick(slots)); transientU8(sets, r, 0x2b); transientS16(sets, r.add(8), pick([0, 0, 1])); }
+      // The doomsday building ('+') wiped out (every one damaged) or some intact.
+      const gone = rnd(2);
+      for (const k of slots) if (e.add(0x20 * k).readU8() === 0x2b && (gone || rnd(2))) transientS16(sets, e.add(0x20 * k + 8), gone ? pick([1, 30]) : pick([0, 1, 30]));
+    }
+    if (id === 832 && rnd(2)) for (let q = 1; q <= np; q++) if (ownerOf(q) === 13 && rnd(2)) setOwner(q, pick([en, 0]));
+    const m = mine(), f = m.length ? pick(m) : 0, won = rnd(2), old = id === 832 && rnd(2) ? 13 : pick([en, 10, 12, 0]);
+    flagRec(fl, [p, f, won, old], () => {
+      A.Gr.writeS32(f); A.Gr.add(4).writeS32(f ? fleet(f).add(0x16).readS16() : 0); A.Gr.add(8).writeS32(en);
+      A.Gr.add(12).writeS32(p); A.Gr.add(16).writeS32(old); A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won);
+    });
+  } else if (act === 'arrive') {
+    // Arrivals at a planet: 821's convoy (anywhere; v(8218) varied) or its pirates going home (8203 at 8200); one of
+    // 834's fleets at 8340 with fleets of the human's (or others) next to it.
+    const all = liveFleets();
+    if (!all.length) return;
+    let fid, f, tgt;
+    if (id === 821) {
+      fid = rnd(3) ? 8207 : 8203; f = fleetOfId(fid) || pick(all);
+      tgt = fid === 8203 && rnd(2) ? planetOfId(8200) || 1 + rnd(np) : 1 + rnd(np);
+      if (rnd(3) === 0) vSet(8218, rnd(2));
+      if (rnd(3) === 0) transientS32(sets, A.HanyB.add(4 * en), pick([1, 2, 3]));
+    } else {
+      fid = 8340 + rnd(5); f = fleetOfId(fid) || pick(all);
+      tgt = rnd(4) ? planetOfId(8340) || 1 + rnd(np) : 1 + rnd(np);
+      const p = planetOfId(8340);
+      if (p) { const [x, y] = pxy(p); for (let k = rnd(3); k > 0; k--) near(x, y, 20); }
+    }
+    if (fleet(f).add(0x16).readS16() !== fid) transientS16(sets, fleet(f).add(0x16), fid);
+    const a = [fid, f, tgt, rnd(8) ? 1 : 0, 0];
+    flagRec(0, a, () => { for (let i = 0; i < 5; i++) A.Arr.add(4 * i).writeS32(a[i]); });
+  } else if (act === 'ss') {
+    // A space battle starts between the pirates and the convoy (spFlottak), the human's fleets round the convoy; the
+    // list, its count and the flags the escort sets are put back after the record.
+    const all = liveFleets();
+    if (all.length < 2) return;
+    // The convoy and the pirates (another fleet takes the id for the record when one is missing).
+    let cv = fleetOfId(8207), pr = fleetOfId(8202);
+    if (!cv && rnd(2)) { cv = pick(all); transientS16(sets, fleet(cv).add(0x16), 8207); }
+    if (!pr && rnd(2)) { pr = pick(all.filter((f) => f !== cv)); transientS16(sets, fleet(pr).add(0x16), 8202); }
+    const a = cv && rnd(6) ? cv : pick(all), b = pr && rnd(6) ? pr : pick(all);
+    if (cv) { const [x, y] = fxy(cv); for (let k = rnd(4); k > 0; k--) near(Math.trunc(x), Math.trunc(y), 10); }
+    keepRegion(sets, A.SpFl0, 0x2c); keepRegion(sets, va(0xf26174), 4); keepRegion(sets, A.Adat.add(0x88), 4); keepRegion(sets, A.Adat.add(0x94), 8);
+    const [s1, s2] = rnd(2) ? [a, b] : [b, a];
+    transientS16(sets, A.SpFlottak, s1); transientS16(sets, A.SpFlottak.add(6), s2);
+    flagRec(1, [s1, s2]);
+  } else if (act === 'se') {
+    // A space battle ends with the convoy (or anything) among the participants; the convoy gone now and then.
+    const n = 2 + rnd(2), list = [], buf = Memory.alloc(0x30 * 4);
+    spwBufs.push(buf);
+    if (spwBufs.length > 64) spwBufs.shift();
+    for (let i = 0; i < n; i++) {
+      const fid = id === 821 && rnd(2) ? 8207 : pick([0, 8202, 8320, 8340 + rnd(5)]), owner = rnd(2) ? en : pick([9, 10, 13, 1]);
+      const q = buf.add(0x30 * i); q.add(0x18).writeS32(owner); q.add(0x20).writeS32(fid); q.add(0x24).writeS32(fid); list.push([owner, fid]);
+    }
+    transientS32(sets, A.SpWin, rnd(2) ? list[0][0] : list[1][0]);
+    const cv = fleetOfId(8207);
+    if (id === 821 && cv && rnd(2)) transientS16(sets, fleet(cv).add(0x16), 0);
+    if (id === 832 && rnd(2)) for (let p = 1; p <= np; p++) if (ownerOf(p) === 13) setOwner(p, pick([en, 0]));
+    // Empire 13's fleets gone (832) / 834's five fleets gone (their ids taken for the record), v(8349) set.
+    if (id === 832 && rnd(2)) for (const f of liveFleets()) if (fleet(f).add(0x15).readU8() === 13) transientU8(sets, fleet(f).add(0x15), pick([0xff, en]));
+    if (id === 834 && rnd(2)) { if (rnd(2)) vSet(8349, 1); for (let k = 0; k < 5; k++) { const f = fleetOfId(8340 + k); if (f && rnd(4)) transientS16(sets, fleet(f).add(0x16), 0); } }
+    if (id === 821 && !cv && rnd(2)) { const all = liveFleets(); if (all.length) transientS16(sets, fleet(pick(all)).add(0x16), 8207); }
+    if (id === 821 && rnd(2) && !fleetOfId(8202)) { const all = liveFleets(); if (all.length) transientS16(sets, fleet(pick(all)).add(0x16), 8202); }
+    stage('spwfinished', [[A.SpwFinished, [buf.toUInt32(), n, 1]]], { args: list }, prep, after);
+  } else if (act === 'special') {
+    // A colonisation (special 10) of planet 8340, by the human or another empire.
+    const p = planetOfId(8340), args = [10, rnd(3) ? en : 1 + rnd(8), p && rnd(4) ? p : 1 + rnd(np), 0, 0, 0, 0, 0];
+    stage('special', [[A.Special, args]], { args });
+  } else {
+    // Daily: 815's zone (fleets of the human's inside the triangle; tech 177 found), 821's convoy (idle, moving to a
+    // planet of the human's or not; the base taken), 832's guards (the human's fleets near them; their planets
+    // lost), 834's fleets idle.
+    if (id === 815) {
+      const ax = [0, 1, 2].map((k) => A.Adat.add(8 + 4 * k).readFloat()), ay = [0, 1, 2].map((k) => A.Adat.add(0x14 + 4 * k).readFloat());
+      const cx = (ax[0] + ax[1] + ax[2]) / 3, cy = (ay[0] + ay[1] + ay[2]) / 3;
+      for (let k = rnd(3); k > 0; k--) { const m = mine(); if (!m.length) break; const q = fleet(pick(m)), t = rnd(2) ? 0.5 * rnd(3) : 1.2; const v = rnd(3); transientF32(sets, q.add(0x30), cx + t * (ax[v] - cx)); transientF32(sets, q.add(0x34), cy + t * (ay[v] - cy)); }
+      if (rnd(3) === 0) vSet(8159, rnd(2));
+      if (rnd(3) === 0) vSet(8152, 1);
+      if (rnd(3) === 0) transientU8(sets, A.Techs.add(0x114 * 177 + 0x45 + en), pick([3, 5, 1]));
+      if (rnd(4) === 0) vSet(8158, 1);
+    }
+    if (id === 821) {
+      const cv = fleetOfId(8207);
+      if (cv && rnd(2)) { const q = fleet(cv); transientS16(sets, q.add(0x40), pick([0, 1, 1, 2])); transientS16(sets, q.add(0x42), pick([0, 1, 1, 2])); transientF32(sets, q.add(0x44), 1 + rnd(np)); }
+      if (rnd(3) === 0) vSet(8217, pick([0, 1 + rnd(np)]));
+      if (rnd(4) === 0) vSet(8219, rnd(2));
+      if (rnd(4) === 0) vSet(8218, rnd(2));
+      if (rnd(3) === 0) setOwner(planetOfId(8200), pick([10, en]));
+      for (const fid of [8202, 8203]) { const f = fleetOfId(fid); if (f && rnd(2)) transientS16(sets, fleet(f).add(0x40), pick([0, 1])); }
+      if (rnd(3) === 0) transientS32(sets, A.HanyB.add(4 * en), pick([1, 2, 3]));
+    }
+    if (id === 832) for (const fid of [8320, 8321, 8322]) {
+      const f = fleetOfId(fid), p = planetOfId(fid);
+      if (f && rnd(2)) { const [x, y] = fxy(f); near(x, y, 20); }
+      if (p && rnd(4) === 0) setOwner(p, pick([en, 13, 0]));
+      if (f && rnd(3) === 0) transientS32(sets, fleet(f).add(0x5c), rnd(2));
+    }
+    if (id === 834) for (let k = 0; k < 5; k++) { const f = fleetOfId(8340 + k); if (f && rnd(2)) transientS16(sets, fleet(f).add(0x40), pick([0, 1])); }
+    flagRec(0x10, []);
+  }
+}
+const ELEM2D = [801, 804, 806, 807, 809];
+const ELEM2D_TEXTS = [0x1f4a, 0x1f4b];
+const ELEM2D_COUNTERS = { 801: [8001, 8002, 8003], 804: [8044, 8045, 8046, 8049, 8049], 806: [8069, 8069, 8069, 8060, 8060, 8061],
+  807: [8078, 8070, 8071, 8071, 8071, 8074, 8079], 809: [8099, 8099, 8090, 8091] };
+const ELEM2D_ANSWERS = { 801: [[9, 5001, 0], [9, 5001, 0], [7, 5001, 0]], 804: [], 806: [], 809: [],
+  807: [[6, 6840, 4], [6, 6840, 5], [6, 6840, 6], [6, 6841, 3], [6, 6841, 4], [6, 8074, 3], [6, 8074, 4], [6, 8074, 5], [6, 8074, 2]] };
+// Buildings for a planet of the human's (806 needs more than 10 intact ones with police, shields now and then):
+// EpuletNewSearchLocation(p, kind, true, 0, -1, -1) called natively before the record (not recorded).
+function elem2dBuild(p) {
+  const kinds = [7, 7, 0x20 + rnd(4), 2, 5, 6, 2, 5, 6, 3, 4, 7];
+  for (let k = 2 + rnd(10); k > 0; k--) call(va(0x53cca0), [p, pick(kinds), 1, 0, -1, -1], null, false);
+}
+function slotReadable(k) { try { fleet(k).add(0x7f).readU8(); return true; } catch (e) { return false; } }
+function elem2dFuzz(pool, running, sets, prep, after) {
+  const en = A.EN.readS32(), np = nPlanets(), own = humanPlanets(), live = running.filter((x) => ELEM2D.includes(x));
+  const flagRec = (fl, extra, write) => stage('flag', [[A.Check, [1]]], { args: [fl].concat(extra || []) }, () => { prep(); A.Flags.add(fl).writeU8(1); if (write) write(); }, after);
+  const ownerOf = (p) => A.Bolygok.add(0x188 * p + 0x20).readU8();
+  const ships = () => { const o = [], n = A.HajoCount.readS32(), hp = A.Hajok.readPointer(); for (let k = 1; k <= n; k++) o.push([k, hp.add(6 * k).readS16(), hp.add(6 * k + 2).readS16()]); return o; };
+  const shipDesign = (k, d) => transientS16(sets, A.Hajok.readPointer().add(6 * k + 2), d);
+  const mine = () => liveFleets().filter((f) => fleet(f).add(0x15).readU8() === en);
+  // 806's counters with planet 8060's id gone (its daily check lost the planet): C(8060) divides by the slot count of
+  // planet 0 (0) and C(8061) hands planet 0 to empire 10, which the original does too; stopped here, not recorded.
+  if (bucketHas(806) && !planetOfId(8060)) {
+    const n = va(0xf23a0c).readS32(), tab = va(0xf24388); // sHanySzamlalo, sSzamlalok {id, ticks} from 1
+    for (let k = 1; k <= n && k <= 300; k++) { const id = tab.add(8 * k).readS32(); if ((id === 8060 || id === 8061) && tab.add(8 * k + 4).readS32() >= 0) tab.add(8 * k + 4).writeS32(-1); }
+  }
+  const c = rnd(24);
+  if (c < 4 || !live.length) {
+    const ids = pool.filter((id) => ELEM2D.includes(id) && !bucketHas(id));
+    if (!ids.length) return;
+    const id = pick(ids);
+    // 804's bases belong to empire 10 first (StoryInit804, exe 0x5c49c0: AutoAddtank for another owner may crash the
+    // game). Done natively, not recorded.
+    if (id === 804 && ownerOf(planetOfId(8040)) !== 10) { call(va(0x5c49c0), [], null, false); return; }
+    if (id === 806 && own.length && rnd(2)) elem2dBuild(pick(own));
+    stage('start', [[A.StartStory, [id, 0]], [A.Check, [1]]], { args: [id] }, prep, after);
+    return;
+  }
+  const id = pick(live);
+  if (c < 11) {
+    const ctr = pick(ELEM2D_COUNTERS[id]);
+    if (ctr === 8001) vSet(8001, pick([0, 1, 2]));
+    if (ctr === 8002 || ctr === 8003) {
+      // The loaded ships: live ones, free ones (design 0x7fff) or none.
+      const sh = ships().filter((s) => slotReadable(s[0])), used = sh.filter((s) => s[2] !== 0x7fff), free = sh.filter((s) => s[2] === 0x7fff);
+      for (const v of [8017, 8018]) if (rnd(2)) vSet(v, pick([0, 0, used.length ? pick(used)[0] : 0, free.length ? pick(free)[0] : 0]));
+    }
+    if (ctr >= 8044 && ctr <= 8046) { const p = planetOfId(ctr - 4); if (p && rnd(3) === 0) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), pick([10, en, 0])); }
+    if (ctr === 8049) {
+      // Raiders standing on a base without an id (st_fMarkNearPlanet), two of them close (OsszevonasCheck).
+      const ten = liveFleets().filter((f) => fleet(f).add(0x15).readU8() === 10);
+      for (let k = rnd(3); k > 0 && ten.length; k--) {
+        const f = pick(ten), q = fleet(f), b = planetOfId(8040 + rnd(3));
+        if (rnd(2)) transientS16(sets, q.add(0x16), pick([0, 8049]));
+        if (b && rnd(2)) { transientF32(sets, q.add(0x30), A.Bolygok.add(0x188 * b + 0x18).readFloat()); transientF32(sets, q.add(0x34), A.Bolygok.add(0x188 * b + 0x1c).readFloat()); }
+        else if (rnd(2)) {
+          // Next to another raider: dy² + dx² round the 10 the merge tests.
+          const g = pick(ten), [dx, dy] = pick([[3, 1], [1, 3], [3, 0], [2, 2], [0, 0], [3, 2], [rnd(4), -rnd(3)]]);
+          transientF32(sets, q.add(0x30), fleet(g).add(0x30).readFloat() + dx); transientF32(sets, q.add(0x34), fleet(g).add(0x34).readFloat() + dy);
+        }
+      }
+    }
+    if (ctr === 8069 && own.length && rnd(3)) elem2dBuild(pick(own));
+    if (ctr === 8069) for (const p of own) if (rnd(3) === 0) transientS16(sets, A.Bolygok.add(0x188 * p + 0xd8 + 2 * en), pick([0, 1, 5]));
+    // Intact counts of 10 or 11 exactly: other intact slots damaged (+8, i16) for the record.
+    if (ctr === 8069) for (const p of own) if (rnd(4)) {
+      const n = A.HanyEpulet.add(4 * p).readS32(), e = A.Epuletek.add(4 * p).readPointer(), intact = [];
+      for (let k = 1; k <= n && k < 400; k++) { const r = e.add(0x20 * k); if (r.readU8() !== 0 && r.add(8).readS16() === 0) intact.push(k); }
+      // Keep one police station intact; any other slot may go.
+      const keep = intact.find((k) => e.add(0x20 * k).readU8() === 7), others = intact.filter((k) => k !== keep);
+      for (let x = intact.length - pick([10, 11]); x > 0 && others.length; x--) transientS16(sets, e.add(0x20 * others.splice(rnd(others.length), 1)[0] + 8), pick([1, 50]));
+    }
+    if (ctr === 8061 || ctr === 8060) {
+      const p = planetOfId(8060);
+      if (!p) return;
+      if (rnd(4) === 0) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), pick([en, 10, 0]));
+    }
+    if (ctr === 8071) {
+      // Fleets of the human's next to planet 8070, some of the human's designs' hull classes changed for the record.
+      const p = planetOfId(8070), m = mine();
+      if (p && m.length) for (let k = 1 + rnd(3); k > 0; k--) {
+        const g = pick(m), q = fleet(g);
+        // Its ships' designs mostly of the hull classes 807 lets through (5..8; else 11 or others).
+        if (rnd(2)) { const tp = A.Tervek.add(4 * en).readPointer(); for (const s of ships()) if (s[1] === g && s[2] > 0 && s[2] !== 0x7fff) transientS32(sets, tp.add(0x84 * s[2] + 0x48), pick([5, 6, 5, 6, 7, 8, 11])); }
+        transientF32(sets, q.add(0x30), A.Bolygok.add(0x188 * p + 0x18).readFloat() + rnd(30) - 10);
+        transientF32(sets, q.add(0x34), A.Bolygok.add(0x188 * p + 0x1c).readFloat() + rnd(30) - 10);
+      }
+      if (rnd(3) === 0) { const tn = A.TervCount.add(4 * en).readS32(), tp = A.Tervek.add(4 * en).readPointer(); for (let k = rnd(4); k > 0; k--) transientS32(sets, tp.add(0x84 * (1 + rnd(tn)) + 0x48), pick([5, 6, 7, 8, 11, 2, 0])); }
+      // The vehicles of the human's fleets: counts round 20, their designs' +0x36 byte (0, 1, 2: the exe tests the byte).
+      if (rnd(4)) {
+        const tkn = A.TankN.readS32(), tp = A.Tervek.add(4 * en).readPointer();
+        for (let k = 1; k <= tkn && k < 2000; k++) {
+          const r = A.Tanks.add(8 * k), pl = r.readS16(), d = r.add(2).readS16();
+          if (d === 0x7fff || !m.includes(pl)) continue;
+          transientS32(sets, r.add(4), pick([19, 20, 21, 20, 21, 1]));
+          if (d > 0 && rnd(4)) transientU8(sets, tp.add(0x84 * d + 0x36), pick([0, 1, 2, 2, 2]));
+        }
+      }
+    }
+    if (ctr === 8079 && rnd(3) === 0) {
+      // A ship of one of the pirates' story designs (7801, 7811, 7821) in a fleet of the human's.
+      const tn = A.TervCount.add(4 * en).readS32(), tp = A.Tervek.add(4 * en).readPointer(), m = mine(), sh = ships().filter((s) => m.includes(s[1]));
+      if (sh.length && tn >= 40) { const d = 40 + rnd(tn - 39); transientS32(sets, tp.add(0x84 * d + 0x80), pick([7801, 7811, 7821])); shipDesign(pick(sh)[0], d); }
+    }
+    if (ctr === 8099) {
+      const p = planetOfId(8099);
+      if (p && rnd(2)) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), pick([en, en, 13, 0]));
+      if (p && rnd(2)) transientS32(sets, A.Bolygok.add(0x188 * p + 0x28), pick([1000, 1001, 1031, 5000, rnd(200000)]));
+    }
+    stage('flag', [[A.Check, [1]]], { args: [5, ctr] }, () => { prep(); A.Flags.add(5).writeU8(1); A.SzVegzett.writeS32(ctr); }, after);
+  } else if (c < 14 && ELEM2D_ANSWERS[id].length) {
+    const [kind, b, part] = pick(ELEM2D_ANSWERS[id]);
+    stage('flag', [[A.Check, [1]]], { args: [kind, b, part] }, () => { prep(); A.Flags.add(kind).writeU8(1); A.Msg.writeS32(b); A.Msg.add(4).writeS32(part); }, after);
+  } else if (c < 20 && id === 801) {
+    // A fleet of the human's arrives at 8010 (its ships of design A) or at a planet of the human's / a free one it sees
+    // (its ships of design B, v(8017)/v(8018) on them).
+    const m = mine(), all = liveFleets();
+    if (!all.length) return;
+    // The transports' fleets (named _s(5, 8010) by a load) now and then: their landing tests fleet slot k's name.
+    const tq = Memory.alloc(16); sCall(tq, 5, 0x1f4a);
+    const tname = tq.readPointer().isNull() ? '' : latin1(tq.readPointer(), 0x15), named = m.filter((x) => latin1(fleet(x), 0x15) === tname);
+    const f = named.length && rnd(2) ? pick(named) : m.length && rnd(6) ? pick(m) : pick(all), da = A.Adat.add(0x3c).readS32(), db = A.Adat.add(0x64).readS32();
+    // Only ships whose index is a fleet slot too: 801 renames fleet slot k (the ship's index) and reads past the fleet
+    // array for a larger one (the original crashes the same way).
+    const fs = ships().filter((s) => s[1] === f && slotReadable(s[0]));
+    let tgt;
+    if (rnd(2)) {
+      tgt = planetOfId(8010) || 1 + rnd(np);
+      for (const s of fs) if (rnd(3)) shipDesign(s[0], da);
+      if (rnd(4)) vSet(8009, rnd(6) ? 1 : 0);
+      // Without its custom name (bit 11) the loaded fleet gets the transports' name.
+      if (rnd(2)) { const q = fleet(f).add(0x52); transientS16(sets, q, q.readU16() & ~0x800); }
+      if (rnd(3) === 0) vSet(8019, pick([0, 1, 2, 3]));
+      if (rnd(3) === 0 && fs.length) vSet(pick([8017, 8018]), pick(fs)[0]);
+    } else {
+      const vis = []; for (let p = 1; p <= np; p++) { const o = ownerOf(p); if ((o === en || o === 0) && A.Bolygok.add(0x188 * p + 0xd8 + 2 * en).readS16() >= 0) vis.push(p); }
+      const ownVis = vis.filter((p) => ownerOf(p) === en);
+      tgt = ownVis.length && rnd(2) ? pick(ownVis) : vis.length && rnd(5) ? pick(vis) : 1 + rnd(np);
+      const chosen = fs.filter(() => rnd(2)).slice(0, 2);
+      for (const s of chosen) shipDesign(s[0], db);
+      if (chosen.length) { vSet(8017, chosen[0][0]); vSet(8018, chosen.length > 1 ? chosen[1][0] : pick([0, 0, chosen[0][0]])); }
+      if (rnd(4)) vSet(8015, pick([0, 0, tgt, 1 + rnd(np)]));
+    }
+    const a = [fleet(f).add(0x16).readS16(), f, tgt, rnd(8) ? 1 : 0, 0];
+    flagRec(0, a, () => { for (let i = 0; i < 5; i++) A.Arr.add(4 * i).writeS32(a[i]); });
+  } else if (c < 20 && (id === 807 || id === 809)) {
+    // A space battle ends with fleet 8070 / 8091 among the participants (the winner set; the fleet gone now and then).
+    const n = 2 + rnd(2), list = [], buf = Memory.alloc(0x30 * 4);
+    spwBufs.push(buf);
+    if (spwBufs.length > 64) spwBufs.shift();
+    const sid = id === 807 ? 8070 : 8091;
+    for (let i = 0; i < n; i++) {
+      const fid = rnd(2) ? sid : pick([0, 8072, 8092]), owner = rnd(2) ? en : pick([10, 13, 9]);
+      const q = buf.add(0x30 * i); q.add(0x18).writeS32(owner); q.add(0x20).writeS32(fid); q.add(0x24).writeS32(fid); list.push([owner, fid]);
+    }
+    transientS32(sets, A.SpWin, rnd(2) ? list[0][0] : list[1][0]);
+    const f = fleetOfId(sid);
+    if (f && rnd(2)) transientS16(sets, fleet(f).add(0x16), 0);
+    stage('spwfinished', [[A.SpwFinished, [buf.toUInt32(), n, 1]]], { args: list }, prep, after);
+  } else if (c < 22 && (id === 807 || id === 809)) {
+    // A space battle starts: spFlottak with an empire 13 fleet (809) or a fleet of the human's (807's pirate ships).
+    const all = liveFleets();
+    if (!all.length) return;
+    const pref = all.filter((f) => fleet(f).add(0x15).readU8() === (id === 809 ? 13 : en));
+    const a = pref.length && rnd(3) ? pick(pref) : pick(all), b = pick(all);
+    transientS16(sets, A.SpFlottak, rnd(2) ? a : b); transientS16(sets, A.SpFlottak.add(6), rnd(2) ? b : a);
+    flagRec(1, [a, b]);
+  } else if (c < 23 && (id === 804 || id === 809)) {
+    // A ground battle ends (flag 4) on a base / an empire 13 planet; the bases sometimes no longer theirs.
+    const base = id === 804 ? [8040, 8041, 8042] : [8091, 8092, 8093, 8094], owner = id === 804 ? 10 : 13;
+    for (const b of base) { const p = planetOfId(b); if (p && rnd(2)) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), rnd(3) ? en : owner); }
+    if (id === 804 && rnd(3) === 0) vSet(8049, rnd(2));
+    const p = rnd(4) ? planetOfId(pick(base)) || 1 + rnd(np) : 1 + rnd(np), m = mine(), f = m.length ? pick(m) : 0, won = rnd(2);
+    flagRec(4, [p, f, won], () => {
+      A.Gr.writeS32(f); A.Gr.add(4).writeS32(f ? fleet(f).add(0x16).readS16() : 0); A.Gr.add(8).writeS32(en);
+      A.Gr.add(12).writeS32(p); A.Gr.add(16).writeS32(owner); A.GrWin.writeU8(won); A.GrWin.add(1).writeU8(1 - won);
+    });
+  } else {
+    // Daily: 806's police (working bit 0, strike bit 4 of +0x19) on 8060.
+    if (id === 806) {
+      const p = planetOfId(8060);
+      if (p && rnd(4) === 0) transientU8(sets, A.Bolygok.add(0x188 * p + 0x20), pick([en, 10]));
+      if (p && rnd(2)) {
+        const n = A.HanyEpulet.add(4 * p).readS32(), e = A.Epuletek.add(4 * p).readPointer();
+        for (let k = 1; k <= n && k < 400; k++) if (e.add(0x20 * k).readU8() === 7 && rnd(2)) transientU8(sets, e.add(0x20 * k + 0x19), pick([1, 0x11, 0, 1]));
+      }
+    }
+    flagRec(0x10, []);
+  }
+}
 function elemFuzz() {
   const pool = cfg.inline && cfg.inline.length ? ELEM.filter((x) => cfg.inline.includes(x)) : ELEM;
   const c = rnd(24), en = A.EN.readS32(), np = nPlanets(), running = pool.filter(bucketHas);
@@ -2572,6 +3268,10 @@ function elemFuzz() {
   const sets = [];
   const prep = () => sets.forEach((x) => x[0]()), after = () => sets.slice().reverse().forEach((x) => x[1]());
   const pickRare = (ids) => { const r = ids.filter((x) => ELEM_RARE.includes(x)); return r.length && rnd(2) ? pick(r) : pick(ids); };
+  if (pool.some((x) => ELEM2G.includes(x)) && rnd(3)) { elem2gFuzz(pool, running, sets, prep, after); return; }
+  if (pool.some((x) => ELEM2F.includes(x)) && rnd(3)) { elem2fFuzz(pool, running, sets, prep, after); return; }
+  if (pool.some((x) => ELEM2E.includes(x)) && rnd(3)) { elem2eFuzz(pool, running, sets, prep, after); return; }
+  if (pool.some((x) => ELEM2D.includes(x)) && rnd(3)) { elem2dFuzz(pool, running, sets, prep, after); return; }
   if (pool.some((x) => ELEM2C.includes(x)) && rnd(3)) { elem2cFuzz(pool, running, sets, prep, after); return; }
   if (pool.some((x) => ELEM2B.includes(x)) && rnd(3)) { elem2bFuzz(pool, running, sets, prep, after); return; }
   if (pool.some((x) => ELEM2A.includes(x)) && rnd(3)) { elem2aFuzz(pool, running, sets, prep, after); return; }
@@ -2587,7 +3287,7 @@ function elemFuzz() {
   };
   if (c < 3 || !running.length) {
     // 808 and 854 start only from their own staging (808 needs an empire with designs: AutoAddtank).
-    const ids = pool.filter((id) => !bucketHas(id) && !ELEM2B.includes(id) && !ELEM2C.includes(id));
+    const ids = pool.filter((id) => !bucketHas(id) && !ELEM2B.includes(id) && !ELEM2C.includes(id) && !ELEM2D.includes(id) && !ELEM2E.includes(id) && !ELEM2F.includes(id) && !ELEM2G.includes(id));
     if (!ids.length) return;
     const id = pickRare(ids);
     // 816 (and 818, which starts it) belong to a storyline that first gives planet 8160 to empire 10
@@ -2822,6 +3522,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
         // st_Fable's pirates attack the human's fleets: auto-resolve two-sided battles (the debug switch "always
         // simulate", space-combat.md §4), so the clock doesn't stop on the battle screen.
         if (cfg.keep.includes('fable')) va(0xb77230).writeS32(1);
+        // st_Elem part 2d: 807's pirates and 809's blockade fight the human's fleets too.
+        if (cfg.keep.includes('elem') && (cfg.inline || []).some((x) => ELEM2D.includes(x) || ELEM2E.includes(x) || ELEM2F.includes(x) || ELEM2G.includes(x))) va(0xb77230).writeS32(1);
         // The race menu's choice: campaign N (race index N - 1), the difficulty selector (0 → 1, 2 → 2, 1 → 4).
         A.FajStart.writeU8(1); A.FajSzetnyilas.writeFloat(100.0); A.FajRace.writeS32(cfg.campaign - 1);
         A.FajNehezseg.writeS32({ 1: 0, 2: 2, 4: 1 }[cfg.difficulty] ?? 2); A.DebugSeed.writeS32(cfg.seed);

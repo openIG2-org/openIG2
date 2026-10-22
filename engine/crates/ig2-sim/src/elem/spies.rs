@@ -95,7 +95,7 @@ fn spy_at_home(w: &mut dyn StoryWorld) -> i32 {
 }
 
 /// `st_SpWarStart(id)`: a space battle starts with a fleet of story id `id` among `spFlottak`'s two.
-fn battle_starts_with(s: &Story, id: i32, w: &dyn StoryWorld) -> bool {
+pub(super) fn battle_starts_with(s: &Story, id: i32, w: &dyn StoryWorld) -> bool {
     let (a, b) = w.battle_fleets();
     s.flags[flag::SPACE_START] && (w.fleet_id(a) == id || w.fleet_id(b) == id)
 }
