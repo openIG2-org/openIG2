@@ -258,6 +258,8 @@ pub struct World<'r> {
     pub colony_events: Vec<ColonyOrderEvent>,
     /// `ScrollHibaUzenet`: the screens' own error lines for the message ticker, shown before the sim's.
     pub local_lines: Vec<Vec<u8>>,
+    /// The ids of the sim's messages the line took (`ScrollUzenetek+0x38`), for their voices (`FRISSIT_Scroll2`).
+    pub popped: Vec<i32>,
 }
 
 impl<'r> World<'r> {
@@ -271,7 +273,7 @@ impl<'r> World<'r> {
         let view = SavedView::read(save);
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new() }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new() }
     }
 
     /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
@@ -381,7 +383,8 @@ impl<'r> World<'r> {
             return Some((self.local_lines.remove(0), true));
         }
         let mut t = self.game.state.ticker();
-        t.pop()?;
+        let id = t.pop()?;
+        self.popped.push(id);
         let text: Vec<u8> = t.on_screen.iter().copied().take_while(|&b| b != 0).collect();
         let important = t.on_screen_important != 0;
         self.game.state.store_ticker(&t);

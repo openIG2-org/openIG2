@@ -129,6 +129,8 @@ pub fn draw_bar(f: &mut Frame, pics: &Pictures, font: &Font, v: &Virtual, palett
 pub struct ColonyHud {
     /// The human's planet and not at war (`+0x20 == EN`, `+0x64` bit 0 clear).
     pub own: bool,
+    /// The planet panel is drawn (not in a ground war once EN's units have landed).
+    pub panel: bool,
     /// Workers and energy surplus: `+0x28 − +0x50`, `+0x48 − +0x4c`.
     pub workers: i32,
     pub energy: i32,
@@ -154,9 +156,11 @@ pub const RADAR: [f32; 4] = [522.0, 362.0, 621.0, 461.0];
 pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], brushes: &[Brush], radar: Option<TexId>, c: &ColonyHud) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
     let full = [1.0; 4];
-    // `KirakFader`s behind the bottom-left info.
+    // `KirakFader`s behind the bottom-left info; the two over the surplus line only with it (EN's planet, not at war).
     for r in [[6.0, 403.0, 77.0, 17.0], [89.0, 403.0, 77.0, 17.0], [5.0, 423.0, 162.0, 52.0]] {
-        crate::starmap_hud::fader(f, white, v, r);
+        if c.own || r[1] > 410.0 {
+            crate::starmap_hud::fader(f, white, v, r);
+        }
     }
     // `ColonyGfx2D_1`: the radar frame, then the picture (`CopyToScreen(28)`), then `DrawRadar`.
     if let Some(b) = brushes.get(13) {
@@ -215,7 +219,7 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
             crate::colony_ui::PanelBuilding::draw(f, v, t);
         }
     }
-    if let Some(b) = brushes.get(12) {
+    if let Some(b) = brushes.get(12).filter(|_| c.panel) {
         pics.brush(f, v, b, 1, None, full);
     }
     if let (true, Some((name, price, energy, workers))) = (c.own, &c.build) {

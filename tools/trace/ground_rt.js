@@ -38,7 +38,8 @@ const A = {
 const WF_SIZE = 0x8ec, UNIT = 0x290;
 
 const cfg = { human: false, destructAfter: 0, endAfter: 0, small: false, mode: 'place', scenario: 'scenario/quick.scn', startAfterFrames: 1200, count: 200, fuzz: false,
-  every: 4, seed: 4242, ticks: 1500, steps: 100000, speed: 0, transport: false, placeAfter: 0, retreatAfter: 0, laser: false, mad: false };
+  every: 4, seed: 4242, ticks: 1500, steps: 100000, speed: 0, transport: false, placeAfter: 0, retreatAfter: 0, laser: false, mad: false,
+  ordersAfter: 0, ordersEvery: 3, ordersDetonate: false };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -580,6 +581,138 @@ function landingOrder() {
   known = s2;
   return true;
 }
+// --orders-after T: from tick T, every --orders-every ticks, one ground-war message goes through the exe's own
+// MULTIGET_Colony (0x48a270, re/screens/colony.md §9): its 2 Multi_GetNextTipus calls and 16 Multi_Get calls are
+// pointed at stubs (as replay.js --colony) that hand it the staged type and values. Recorded like a landing order:
+// {k: 'gorder', type, vals: [issuer, p, ...], pre, post, rand}. The messages are shaped like the screen's: move /
+// waypoint (cells −10..209), target (a live unit or a building), stop, detonate, landing zone done, air strike
+// (kind 0/1), the mine-laying switch; issuer mostly the human, sometimes a side of the war.
+const GO = {
+  Multiget: va(0x48a270),
+  next: [0x48a29a, 0x48a2b1].map(va),
+  get: [0x48a2fa, 0x48a501, 0x48a591, 0x48a602, 0x48a6ea, 0x48a787, 0x48a86b, 0x48a90b, 0x48a943, 0x48a984, 0x48a9da,
+    0x48aa34, 0x48ab31, 0x48aba9, 0x48ac0f, 0x48aec7].map(va),
+};
+const multigetColony = nf(GO.Multiget, 'void', []);
+function goPatch(calls, target) {
+  const saved = calls.map((c) => c.readByteArray(5));
+  for (const c of calls) Memory.patchCode(c, 5, (code) => { const w = new X86Writer(code, { pc: c }); w.putCallAddress(target); w.flush(); });
+  return () => calls.forEach((c, i) => Memory.patchCode(c, 5, (code) => code.writeByteArray(saved[i])));
+}
+let goNext = null, goGet = null;
+function goStubs(outs) {
+  if (goNext === null) {
+    goNext = Memory.alloc(Process.pageSize);
+    goGet = Memory.alloc(Process.pageSize);
+    const type = goNext.add(0x200);
+    Memory.patchCode(goNext, 0x80, (code) => {
+      const w = new X86Writer(code, { pc: goNext });
+      w.putMovRegAddress('ecx', type); w.putMovRegRegPtr('eax', 'ecx');
+      w.putCmpRegI32('eax', 0); w.putJccShortLabel('je', 'none', 'no-hint');
+      w.putMovRegRegOffsetPtr('edx', 'esp', 4); w.putCmpRegReg('eax', 'edx'); w.putJccShortLabel('jl', 'none', 'no-hint');
+      w.putMovRegRegOffsetPtr('edx', 'esp', 8); w.putCmpRegReg('eax', 'edx'); w.putJccShortLabel('jg', 'none', 'no-hint');
+      w.putMovRegPtrU32('ecx', 0); w.putRet();
+      w.putLabel('none'); w.putXorRegReg('eax', 'eax'); w.putRet();
+      w.flush();
+    });
+  }
+  Memory.patchCode(goGet, 0x800, (code) => {
+    const g = new X86Writer(code, { pc: goGet });
+    outs.forEach((v, i) => {
+      g.putMovRegRegOffsetPtr('ecx', 'esp', 8 + 8 * i);
+      g.putMovRegOffsetPtrU32('ecx', 0, v >>> 0);
+      if (i + 1 < outs.length) {
+        g.putMovRegRegOffsetPtr('ecx', 'esp', 0xc + 8 * i);
+        g.putCmpRegI32('ecx', 0); g.putJccNearLabel('je', 'done', 'no-hint');
+      }
+    });
+    g.putLabel('done'); g.putMovRegU32('eax', 1); g.putRet();
+    g.flush();
+  });
+}
+function goRun(type, vals) {
+  goStubs(vals);
+  goNext.add(0x200).writeS32(type);
+  const undoNext = goPatch(GO.next, goNext), undoGet = goPatch(GO.get, goGet);
+  try { multigetColony(); } finally { undoNext(); undoGet(); }
+}
+function goMake(p, w) {
+  const en = A.EN.readS32();
+  const n = w.add(0x180).readS32(), alive = w.add(0x188).readPointer(), units = w.add(0x330).readPointer();
+  const live = [], mine = [];
+  for (let i = 0; i < n; i++) {
+    if (!alive.add(i).readU8()) continue;
+    live.push(i);
+    if (units.add(4 * i).readPointer().add(0x194).readS32() === en) mine.push(i);
+  }
+  if (!live.length) return null;
+  const pick = (a) => a[rnd(a.length)];
+  const unit = () => (mine.length && rnd(4) ? pick(mine) : pick(live));
+  const cell = () => (rnd(10) ? 5 + rnd(190) : rnd(220) - 10);
+  const issuer = rnd(5) ? en : pick([battle.o1, battle.o2]);
+  const ns = A.SlotCount.add(4 * p).readS32();
+  const r = rnd(100);
+  if (cfg.ordersDetonate && r < 50) return [0x12d, [issuer, p, unit(), rnd(2)]];
+  if (r < 22) return [0x22, [issuer, p, unit(), cell(), cell()]];
+  if (r < 36) return [0x23, [issuer, p, unit(), cell(), cell()]];
+  if (r < 56) {
+    const t = ns > 0 && rnd(3) === 0 ? -(1 + rnd(ns)) : pick(live);
+    return [0x24, [issuer, p, unit(), t]];
+  }
+  if (r < 68) return [0x25, [issuer, p, unit()]];
+  if (r < 74) return [0x12d, [issuer, p, unit(), rnd(2)]];
+  if (r < 78) return [0x12f, [issuer, p]];
+  if (r < 88) return [0x130, [issuer, p, cell(), cell(), rnd(2)]];
+  return [0x134, [issuer, p, unit(), rnd(2)]];
+}
+// Detonate (0x46dc40) tests "on screen" for a dead victim's burst with the detonator's record after
+// RemoveTankGroup freed it (`cmp eax, [ecx+0x280]`, 6 bytes at 0x46f49d): while a message runs, that compare is
+// a call to a stub that logs the value read (count at +0, values from +4) and does the compare (flags survive
+// the ret). An Interceptor probe there doesn't fire for calls from the agent's thread.
+const DET_CMP = va(0x46f49d);
+let detLog = null, detStub = null;
+function detPatch() {
+  if (detStub === null) {
+    detLog = Memory.alloc(Process.pageSize);
+    detStub = Memory.alloc(Process.pageSize);
+    Memory.patchCode(detStub, 0x40, (code) => {
+      const w = new X86Writer(code, { pc: detStub });
+      w.putPushReg('edx'); w.putPushReg('ebx'); w.putPushReg('esi');
+      w.putMovRegRegOffsetPtr('edx', 'ecx', 0x280);
+      w.putMovRegAddress('ebx', detLog); w.putMovRegRegPtr('esi', 'ebx');
+      w.putIncReg('esi'); w.putMovRegPtrReg('ebx', 'esi');
+      w.putShlRegU8('esi', 2); w.putAddRegReg('esi', 'ebx'); w.putMovRegPtrReg('esi', 'edx');
+      w.putPopReg('esi'); w.putPopReg('ebx'); w.putPopReg('edx');
+      w.putBytes([0x3b, 0x81, 0x80, 0x02, 0x00, 0x00]);
+      w.putRet();
+      w.flush();
+    });
+  }
+  detLog.writeS32(0);
+  const saved = DET_CMP.readByteArray(6);
+  Memory.patchCode(DET_CMP, 6, (code) => { const w = new X86Writer(code, { pc: DET_CMP }); w.putCallAddress(detStub); w.putNop(); w.flush(); });
+  return () => {
+    Memory.patchCode(DET_CMP, 6, (code) => code.writeByteArray(saved));
+    const n = detLog.readS32();
+    return Array.from({ length: n }, (_, i) => detLog.add(4 + 4 * i).readS32());
+  };
+}
+function groundOrder() {
+  const p = battle.p, w = wf(p);
+  const o = goMake(p, w);
+  if (!o) return false;
+  const s = readRegions(p);
+  emitInit(s);
+  const pre = diffRegions(known, s);
+  known = s;
+  const undoDet = detPatch();
+  let freed;
+  const r = pinnedCall(seed32(), () => { try { goRun(o[0], o[1]); } finally { freed = undoDet(); } });
+  const s2 = readRegions(p);
+  emit({ k: 'gorder', battle: battles, seq: seq++, tick: battle.ticks, type: o[0], vals: o[1], freed, g: tickGlobals(), pre, post: diffRegions(known, s2), rand: r });
+  known = s2;
+  return true;
+}
 function emitInit(s) {
   if (known) return;
   const init = {};
@@ -677,6 +810,10 @@ function watchBattle() {
   if (cfg.placeAfter && battle.ticks >= cfg.placeAfter && battle.ticks - (battle.ordered ?? -5) >= 5) {
     battle.ordered = battle.ticks;
     landingOrder();
+  }
+  if (cfg.ordersAfter && battle.ticks >= cfg.ordersAfter && battle.ticks - (battle.gordered ?? -cfg.ordersEvery) >= cfg.ordersEvery) {
+    battle.gordered = battle.ticks;
+    groundOrder();
   }
   // --retreat-after T: the attacker's side retreats (WF+0x89f + side − 1), so WF::Refresh calls Retreat and
   // the dropships come back for its units (the next record's `pre` carries the byte).

@@ -310,9 +310,7 @@ footprint as four lines between `get_radarpos` of the virtual corners (−320, �
 (320, 240).
 
 ## 9. Not specified here
-The fleet and vehicle info panels (`StarmapFleetMode`: the info box's left click in fleet mode; `StarmapTanksInfo`:
-the radial icon 9) with their ship and vehicle sale menus (`StarmapSelectDeleteMode`, `…TankDeleteMode`), the
-hot-spots' tooltips, `StarmapKeyboardHandler`'s keys beyond the camera, the console's own buttons (hot-spots 4..6: side view, zoom and
+The hot-spots' tooltips, `StarmapKeyboardHandler`'s keys beyond the camera, the console's own buttons (hot-spots 4..6: side view, zoom and
 pitch while held), wormhole particles, `starmapszarok`'s brightness change.
 
 ## 10. Input → orders (lockstep messages)
@@ -782,3 +780,171 @@ long info), `--rop-menu X,Y` (the radial menu held open at the virtual point), `
 planets@X,Y` and `--mouse X,Y` (the pointer, for the hover). `ig2-client --snapshot` renders the same with
 `--rop-menu`, `--planet-info`, `--menu` and `--mouse`; `run_screendiff.py` compares them (re/screens/diff-results.md).
 The client test `starmap_menus::menus_reach_the_sim` drives the hot-spots on `quick-1.sav`.
+
+## 19. The fleet's info panel (`StarmapFleetMode` exe 0xF16EEF, ELF 0x1728948)
+The info box (hot-spot 8) left-clicked in fleet mode zooms onto the fleet and lists its ships and vehicles per design
+(one left panel of 2 × 4 cells, as §13's), the selected design's turning model and its data, and a sale menu per
+cell. ELF `Starmap_Main` 0x6f50a0, `ArrangeFleetInfo` 0x6e5c30 (models, faders; called from `ShowStarmap` 0x6eca50),
+`FlottaInfoText2d` 0x6e74b0 (texts, the end of `StarmapGfx2D_3`), `CopyFleets` 0x6e59e0, `InfoBetoltAlap` 0x6e5b20,
+`InfoForgatAlap` 0x6d3840, `SellShipMehet` 0x6f40c0, `SellShipMenuSor` 0x6f4220, `SellShipHossz` 0x6f4650. Exe:
+`ClickedInfoItem` 0x927124, `ActInfoItem2` 0xE83650, `FlottaInf` 0xE83708 (12-byte rows), `StarmapInfoHanyHely`
+0xE8370C, `StarmapSelectDeleteMode` 0xF176EC, the scroll `StarmapTransferKezdet` 0xB9A95C (shared with §13). Port:
+`ig2-client::starmap_info`.
+
+### 19.1 Entering and leaving
+- `StarmapMode == 2`, not `FlottaTipus::fSpec(AktFleet)`, and hot-spot 8 released with the left button (or
+  `AktRopIkon` 0xf): `PlaySoundGlobal(0)`, the vehicle panel (§20) goes, then the first of:
+  1. the fleet panel already up: `StarmapKiZoomol` (a left release only), `InfoRemoveAlap`, the mode off (the box
+     toggles);
+  2. a transfer panel up: `PlaySoundGlobal(0)`, `TransferOff` (no zoom-out, except in vehicle mode);
+  3. `EN`'s fleet (or `DEBUGX`): `StarmapBeZoomol(fleet +0x30, +0x34, 590)` unless 2. ran (the zoom is still in), the
+     mode on, `Kezdet` 0, the rows rebuilt.
+  Both buttons start the rename (§11); the right release splits (§13.1).
+- `StarmapBeZoomol` (0x6fe450) is §2.4's non-blocking fly (`PlaySoundGlobal(5)`, 9 halving frames to zoom 590 at the
+  fleet); no pivot offset as in §15.
+- Leave: hot-spot 9 (`PlaySoundGlobal(0)`, the mode off, `StarmapKiZoomol` with `PlaySoundGlobal(5)`), the info box
+  again, the tanks button (icon 1, no zoom-out: the vehicle transfer opens), leaving the starmap. A fleet destroyed
+  under the panel isn't checked here.
+- With the mode on: hot-spots 1..=7 off while zoomed (`StarmapZoomMode`), 0x35 and the radial menu off.
+
+### 19.2 Rows (`CopyFleets`)
+`FlottaInf`: one row per design `(design, count, unit indices)`: the `Hajok` entries of `AktFleet`, then its `Tankok`
+entries (a vehicle row counts its entry's `+4`). Sorted (`qsort`, `FlottaRendezo` 0x6e5830, fields from
+`Tervek[EN]`): `+0x16` ascending (1 ship, 2 vehicle), non-fighters (`+0x36` bit 0) first, design ascending.
+`StarmapAktFlottaValtozott` (set by `HajoAtpakol`, `HajoDelete`, the AI, the tank functions, `MULTIGET_Design` 0x35)
+makes `GFX_Starmap` re-run `CopyFleets`: the same designs → only the counts change, else the models reload.
+
+### 19.3 Models
+- Cells: per row `TransfAlap[D +0x44]` (`D = Tervek[fleet owner][design]`; the race digit `'0' + D +0x40` capped at
+  `'8'` for spacewar hulls < 12; a vehicle hull > 0x12 gets `tankok/<kind><min(owner, 10)>.bmp`), `AddToScene(…,
+  0.04)`, camera-fixed at `((k % 2)·129 − 229, (k / 2)·70 − 156, −600)` for `k = i − Kezdet` in 0..8 (the others
+  hidden), `RotateObj(π/2, 0, 0)` + `RotateObj2((1, 0, 0), −0.5)`, turning `RotateObj2((0, cos −0.5, sin −0.5),
+  (i % 3 + 1)·0.03)` per drawn frame: §13.3's left panel.
+- The selected design (`InfoBetoltAlap(item)`: row 0 on load, `ActInfoItem2` on every cell press): the same model at
+  scale 0.08, posed every frame by `InfoForgatAlap`: `RotateObj(0, 0, InfoAlapRotation)`, `RotateObj2((1, 0, 0),
+  1.3)`, `MoveObj(150 + fifo slide x, −150 + slide y, −600)` (screen ≈ (470, 90)); `InfoAlapRotation += 0.01` per
+  100 Hz UI frame (`FRISSIT_Starmap2`, also for §13 and §20). Exe: `InfoForgatAlap` 0x59C780, `InfoAlapRotation` 0xF158C0, `FlottaInfoTscAlapIdBetoltve` 0xE83701, the slides 0xF1584C / 0xF157D4 (`fifo` 0xF15368). [obs: the exe's view at rotation t is the port's `create_matrix(0, 0, π − t)` (captures at t = 0.91 and 2.69); the pitch still differs a little, re/deviations.md.]
+- The selection ring around the fleet (`ShowStarmap`) is 75 % transparent (alpha 0x40) while the mode is on and fades
+  back over the exit zoom (`(7 − TargetFrame)·0x17 + 0x40`).
+
+### 19.4 Pictures (`ArrangeFleetInfo`, `fifo`, `KirakFader(k, …, 0, 54s, 90s, 100, 0, 60s, 110s, 70)` as §13.3)
+| k | rect | |
+|---|---|---|
+| 0 | 28, 27, 273, 334 | the list |
+| 1 | 338, 186, 273, 175 | the data |
+| 2 | 338, 27, 273, 152 | the model |
+| 3 | 30, 29, 269, 17 | the list's title bar |
+| 4 | 30, 342, 269, 17 | the list's bottom bar |
+| 5 | 340, 188, 269, 17 | the data's title bar |
+| 6 | 306, 29, 28, 333 and 310, top + 34, 20, h − 8 | the scroll bar and its thumb (§13.3) |
+
+The selected cell: `DesignKeret1(39 + c·129, 121 + r·70, 120, 13, 0x22)` (the morphing frame, `ui::DesignFrame`).
+The exit button (hot-spot 9) is §12.2's: `StarmapGfx2D_2`'s `starf` fader `((1 − sin(h·π/2))·200 + 445, 380, addo +
+176, 30)` with `h = StarmapInfoOffHoltart = (Zoom − OffLastZoom)/(TargetZoom − OffLastZoom)` and `addo` stepping to
+−10, its text `GetString(2, 4, 4)` ("OFF") at `((1 − sin)·200 + 475, 390)` len 13 size 3 flags 0xd colour 0x25.
+
+### 19.5 Texts (`FlottaInfoText2d`; `KiirStr(text, x, y, len, size, flags, colour)`, flags 7 centred, 4 left)
+- `ClickedInfoItem` (−1 = none, reset at the end) makes `ActInfoItem = Kezdet + Clicked` when below n.
+- The fleet's name at (156, 32) len 19 size 3 flags 7 colour 3.
+- Per cell (item i, `x = 91 + 129c`, colour 2 for `ActInfoItem`, else 1): the design's name (+ `" (" + GetString(2, 4,
+  1) + ")"` with an upgrade target `+0x1c > 0`) at (x, 124 + 70r) len 25 size 2 flags 7; the count at (x, 112 + 70r)
+  len 14.
+- `ShowFlottaTankCap(110, 347, AktFleet)` (§13.3).
+- The data (`D` = the `ActInfoItem` row's design, of the fleet's owner):
+  - the slots `p = 1..=GetMaxPodok(D +0x40, D +0x44)` at (485, 200 + 12p): `D +0x50 + p == 0` → `GetString(2, 5, 5)`
+    (len 0, flags 4, colour 2); else the tech name `Talalmanyok[D +0x50 + p]` (len 16, flags 4, colour 3) and its
+    count `D +0x5d + p` at `599 − 3·digits` (len 2, flags 4): `"-"` colour 6 for 0, else colour 3 below
+    `min(GetMaxRarakhato(D +0x40, D +0x44, p), tech +0x24)`, 0x22 at it;
+  - the header: the name (+ `" (" + GetString(2, 4, 5) + ")"` with an upgrade target) at (472, 193) len 31 size 2
+    flags 7 colour 2;
+  - labels colour 1 size 2 len 16: `GetString(2, 5, 6)` at (420, 212) flags 7; `GetString(2, 5, 7..=9)` at (340, 248 /
+    260 / 272) flags 4; `GetString(2, 5, 10)` at (340, 284) only for a ship (`+0x16 == 1`) without the fighter bit;
+  - values colour 2 size 2 flags 7: `Talalmanyok[D +0x48]` (the hull tech) at (400, 224) len 16; `D +0x30` at (441,
+    248), `D +0x2c` at (441, 260) len 5; at (441, 272) `(int)((f64)(D +0x3c ·f32 100) + 0.5)` (`mulss`, `cvtss2sd`,
+    `addsd`, `cvttsd2si` ELF 0x6e8557..0x6e8564), signed `/ 4` when `D +0x38` bit 0; `D +0x28` (byte) at (441, 284)
+    under label 10's condition.
+
+### 19.6 Hot-spots (`Starmap_MouseInit2`; rectangles `Starmap_MouseInit` 0x6feb70)
+| id | rect | when | does |
+|---|---|---|---|
+| 8 | 0, 424, 166, 56 | always | §19.1 |
+| 9 | 445, 380, 164, 60 | always | close (tooltip `GetString(2, 1, 0x26)`) |
+| 0x43 + 2k, k < min(n, 8) (not less `Kezdet`: a scrolled list's empty cell still answers, with the old `ActInfoItem2`) | k even (28, 60 + 70⌊k/2⌋, 124, 70), odd (152, …, 139, 70) | | the cell of item `Kezdet + k` (tooltip `GetString(2, 1, 0x27)`) |
+| 0x57 | 307, 30, 26, 329 | | the scroll bar (§13.4's formula) |
+| 0x58 | 24, 24, 313, 339 | | catches the clicks under the panel |
+
+### 19.7 The sale menu (`StarmapSelectDeleteMode`)
+- A cell hot-spot under a held button (`Mouse_Lenyom`, or the menu open): `ClickedInfoItem = k`, `ActInfoItem2 =
+  Kezdet + k` when below n, `InfoBetoltAlap(ActInfoItem2)`, `PlaySoundGlobal(0)` on the press. Unless
+  `TutorialDisableHajokEladasa` (exe 0xF66FFD), for `EN`'s fleet (or `DEBUGX`), while held: the menu (§16's look),
+  `n = 1` row, or 2 with an upgrade target; on its first frame `smSelectX = Mouse_x + 14`, `smSelectY = Mouse_y − 6`,
+  then `smSelectX = 636 − 6·len` when `smSelectX + 6·len + 4 > 639` (`len = SellShipHossz()`, the longest row);
+  `smSelected` = the row `k` with `smSelectX ≤ mx ≤ smSelectX + 6·len`, `smSelectY + 13(k − 1) ≤ my < smSelectY + 13k`.
+- Box `FadeKerettelKerekit(smSelectX − 6, smSelectY − 2, 6·len + 10, 13n + 4, …)` (§16); row c at `(smSelectX,
+  smSelectY + 13c − 10)` size 2 flags 4, colour 6 hovered, 1 when `!SellShipMehet(c)`, else 3. Texts
+  (`DesignTorlesValasztasNev[0..4]` = `GetString(0x11, 3, 0x1c..=0x1f)`, the number appended by `CString::operator+` after the text's own `- $`): row 1
+  `Name[0]` with `count·CsokkentettTervAr(owner, d)` (`GetHosElkuldesStr` instead when `GetTervEladasOszto < 0`,
+  `Name[3]` when the vehicles wouldn't fit); row 2 `Name[1]` (`Name[2]` when unaffordable) with `cost = max(0,
+  (count·Tervek[owner][D +0x1c] +0x24 − TervHajoinakAra(owner, fleet, d))·2)`.
+- `SellShipMehet(1)`: `count·D +0x28 ≤ fleet +0x78 − fleet +0x5c`; `(2)`: `cost < 1` or `cost ≤ MoneyMennyi(EN, 0)`.
+- The release on a row it allows: `GetTervEladasOszto < 0` → `Story_Special(0x19, AktFleet, d)` (SP; no message);
+  row 1 → `0x34(d, 2, AktFleet)`; row 2 → `0x35(d, AktFleet)` (`MULTIGET_Design` ELF 0x50c430: 0x34 sells the fleet's
+  units of the design for `TervHajoinakCsokkentettAra`, logs the design's retirement, offers a copy on the market,
+  `TervDelete`; 0x35 refits them to the upgrade target for the cost). The menu closes. No sound.
+
+### 19.8 Sounds
+`PlaySoundGlobal(0)`: opening, closing (8, 9), a cell press; `PlaySoundGlobal(5)`: the zooms in and out. [obs, 2026-10-22, `tools/trace/scripts/fleetinfo.json` with `--fleets 2 --rop-fleet 1`: the info box's release Global[0] + Global[5] (Click1, benyilas1), a cell press Global[0], the exit button Global[0] + Global[5]; the client plays the same through `Panels::sounds`.] The vehicle panel's (`PlaySoundGlobal(0)` on opening and a cell press, none on hot-spot 9) are from the decompile.
+
+## 20. The vehicle info panel (`StarmapTanksInfo` exe 0xF176ED, ELF 0x1728e98)
+The vehicles on the player's planet: up to 8 designs per page with their counts, the selected one's model and data, a
+sale menu. ELF `StarmapTanksInfoSetup` 0x6ec7d0 (every `GFX_Starmap`), `SetTanksInfoObjects` 0x6ebbb0,
+`SetSpecificMeshId` 0x6ec190, `StarmapTanksInfoFaderKirakas` 0x6ea720 (from `ShowStarmap`),
+`StarmapTanksInfoSzovegKiirasok` 0x6ec6a0, `DrawStarmapTankInfoSzoveg` 0x6eb0f0, `DrawSpecificInfoOnTank` 0x6eb210,
+`GetNthTank` 0x6ea600, `SellTankMehet` 0x6f4800, `SellTankMenuSor` 0x6f4910, `SellTankHossz` 0x6f4d60. Exe:
+`StarmapTanksInfoFirst/Selected/HanyItemVan` 0xE836C0/C4/C8, `StarmapSelectTankDeleteMode` 0xE75A70. Port:
+`ig2-client::starmap_info`.
+
+### 20.1 Opening, closing, scrolling
+- `AktRopIkon == 9` (the radial icon on the player's planet, §14.3): `PlaySoundGlobal(0)`, the panel on, First,
+  Selected and the count 0. No zoom.
+- Closed by hot-spot 9 (no sound), the tanks / production buttons (icons 1, 2, with `PlaySoundGlobal(0)`; then the
+  transfer panel or the production view opens), icon 0xe, the info box (the long info / the fleet panel), leaving the
+  starmap. With the panel up the radial menu offers nothing and 0x35 is off; hot-spots 1..=7 stay on.
+- The list: the `Tankok` entries held by `−AktPlanet`, in table order (`GetNthTank(n, holder)`: the n-th used one,
+  1-based); n = how many from `First + 1` on (`StarmapTanksInfoSetup`, every frame).
+- Scroll: hot-spot 0x57 only, §13.4's formula (2632/n and 329; the thumb 2648/n and 331). Nothing re-clamps First or
+  Selected after a sale.
+
+### 20.2 Models
+Per cell i the hull `m = D +0x44 − 0x13` (`D = Tervek[planet owner][design]`): `TankAlap[m]` (`vector/colony/`
+kerekes, kozepes, lebego, lanctalp, aknarako) with sub-mesh 0 skinned `textures/colony/tankok/{kerekes, kozep, lebeg,
+lanc, aknarak}<min(EN, 10)>.bmp`, `AddToScene(…, 0.04)` at `((i % 2)·129 − 229, (i / 2)·70 − 156, −600)`, posed and
+turning as §19.3's cells; the selected one (`Selected − First` in 0..8) also at scale 0.1, `MoveObj(150, −150, −600)`,
+`RotateObj2((1, 0, 0), −0.5)` once, then `RotateObj2((0, cos −0.5, sin −0.5), 0.03)` per frame (not
+`InfoForgatAlap`'s pose).
+
+### 20.3 Pictures and texts
+- Faders (`StarmapTanksInfoFaderKirakas`, §13.3's call): (28, 27, 273, 334), (338, 186, 273, 175), (338, 27, 273,
+  152), the title bars (30, 29, 269, 17) and (340, 188, 269, 17), the scroll bar and thumb (§19.4); no bottom bar. The
+  exit button as §19.4 without the slide (`starf` (445, 380, 176, 30)) and the same text.
+- Texts: the planet's name at (156, 32) len 19 size 3 flags 7 colour 3; per cell (colour 2 when `i == Selected −
+  First`, else 1) the design's name at (91 + 129c, 124 + 70r) len 25 and the count at (116 + 129c, 114 + 70r) len 4,
+  size 2 flags 7 (no frame, no upgrade suffix).
+- The selected one's data (`DrawSpecificInfoOnTank`): the slots as §19.5; the header at (472, 193) the same; labels
+  `GetString(2, 5, 6)` at (420, 212), `GetString(2, 5, 7..=10)` at (385, 248 / 260 / 272 / 284), len 15, flags 7
+  (centred), colour 1, label 10 under §19.5's condition; values colour 2: the hull tech at (400, 224) len 16, `D
+  +0x30`, `D +0x2c`, `(int)D +0x3c` (truncated, not ×100) and `D +0x28` at x 435, len 5.
+
+### 20.4 Hot-spots and the sale menu
+- Hot-spots 8, 9 (tooltip `GetString(2, 1, 0x28)`), the tanks / production buttons (10, 11), the cells 0x43 + 2k as
+  §19.6, 0x57, 0x58 (24, 24, 313, 339).
+- A cell under a held button: `Selected = First + k` when below n, `PlaySoundGlobal(0)` on the press; on the player's
+  planet (or `DEBUGX`) §19.7's menu with `SellTankHossz` / `SellTankMenuSor(r, owner, design)`: row 1 `Name[0]` with
+  `count·CsokkentettTervAr` (`GetString(2, 4, 7)` "Unable to sell" when it can't be sold), row 2 (with an upgrade
+  target) as §19.7 over the planet's units; `SellTankMehet(1)` is always true. The release sends `0x34(d, 2,
+  −AktPlanet)` or `0x35(d, −AktPlanet)` when `GetTervEladasOszto ≥ 0` (else nothing).
+
+### 20.5 Verification
+`run_screen.py … --kep 2 --planet P --rop 9` (the vehicle panel) and `--fleets 1 --rop-fleet 1 --rop 0xf` (the fleet
+panel) open them in ig2.exe through `AktRopIkon`; `ig2-client --snapshot --info-panel fleet | tanks` renders the same
+(re/screens/diff-results.md).

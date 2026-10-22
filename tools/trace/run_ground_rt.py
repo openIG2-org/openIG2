@@ -42,6 +42,9 @@ ap.add_argument("--place-after", type=int, default=0, help="battle: from tick N 
 ap.add_argument("--laser", action="store_true", help="battle: the staged designs carry a laser pod (0xa5)")
 ap.add_argument("--mad", action="store_true", help="battle: the human's placed vehicles become story mad tanks (flag 4)")
 ap.add_argument("--retreat-after", type=int, default=0, help="battle: the attacker retreats after N ticks (the dropships pick its units up)")
+ap.add_argument("--orders-after", type=int, default=0, help="battle: from tick N ground-war messages go through the exe's MULTIGET_Colony (move, waypoint, target, stop, detonate, landing zone, air strike, mines)")
+ap.add_argument("--orders-detonate", action="store_true", help="battle: half the ground-war messages are detonations")
+ap.add_argument("--orders-every", type=int, default=3, help="battle: one ground-war message every N ticks")
 a = ap.parse_args()
 
 exe = os.path.join(a.install, "ig2.exe")
@@ -84,7 +87,9 @@ script.post({"type": "config", "payload": {"mode": a.mode, "scenario": a.scenari
                                            "aiFuzz": a.ai_fuzz, "aiFuzzEvery": a.ai_fuzz_every,
                                            "transport": a.transport, "placeAfter": a.place_after,
                                            "retreatAfter": a.retreat_after,
-                                           "laser": a.laser, "mad": a.mad}})
+                                           "laser": a.laser, "mad": a.mad,
+                                           "ordersAfter": a.orders_after, "ordersEvery": a.orders_every,
+                                           "ordersDetonate": a.orders_detonate}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; mode {a.mode}, up to {a.seconds}s")
 t0 = time.time()

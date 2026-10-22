@@ -54,6 +54,7 @@ ap.add_argument("--seconds", type=int, default=120)
 ap.add_argument("--debug", action="store_true", help="log the screen dispatcher's state every 120 frames")
 ap.add_argument("--state-out", help="write the exe's own save of the grabbed moment (slot <slot>+1) to this file")
 ap.add_argument("--fleets", type=int, default=0, help="first give the human N fleets beside --planet (ships + a vehicle entry)")
+ap.add_argument("--planet-tanks", type=int, default=0, help="starmap: first put N vehicle entries of the human on --planet")
 ap.add_argument("--rop", type=lambda v: int(v, 0), default=0, help="starmap: press icon N once (1 transfer, 2 production, 0xd split, 0xe fleet transfer)")
 ap.add_argument("--rop-fleet", type=int, default=0, help="select the K-th made fleet before --rop")
 ap.add_argument("--spies", choices=["roster", "report", "verdict", "applicant"], help="stage a spy roster (and a report) for the spy screen (--kep 7)")
@@ -76,7 +77,11 @@ ap.add_argument("--info-starlog", type=int, default=0, help="info screen: stage 
 ap.add_argument("--info-select", help="info screen: hold the planet-settings menu K (26 tax, 27 auto-build, 28 priority) open at X,Y on item I: K,X,Y,I")
 ap.add_argument("--size", help="window size WxH (ig2.settings width/height for this run; re/screens/widescreen.md)")
 ap.add_argument("--script", help="an input script on the screen --kep (JSON: events, grabs; re/screens/sound.md §3)")
+ap.add_argument("--boot", action="store_true", help="the main menu as the exe starts: no scenario, no save (use with --kep 15 --run)")
+ap.add_argument("--probe", help="append this Frida script to the agent (a screen's own probe, e.g. probes/mainscr.js; its records go to stdout)")
 ap.add_argument("--sounds", help="write the sounds the exe starts and the input events to this JSONL (sound.js)")
+ap.add_argument("--grwar", action="store_true", help="colony screen: the human lands on --planet in real time, every unit placed and selected (colony.md §11)")
+ap.add_argument("--grwar-arm", type=int, default=0, help="with --grwar: the air-strike timers full and SpecWeaponMode set to N (1 fighters, 2 big ships)")
 ap.add_argument("--info-press", help="info screen (--kep 9): press these hot-spots in turn, e.g. 9 (a row's detail), 31,9, 15 (the star log)")
 a = ap.parse_args()
 
@@ -175,12 +180,14 @@ def png_rgba_bottom_up(path, w, h, rgba):
 def on(msg, data):
     if msg["type"] == "send":
         p = msg["payload"]
-        if p.get("k") in ("sound", "input"):
+        if p.get("k") in ("sound", "input", "music", "track", "fade"):
             if sounds:
                 sounds.write(json.dumps(p) + "\n")
                 sounds.flush()
             if p.get("k") == "sound":
                 print(f"sound {p.get('fn')} {p.get('table')}[{p.get('idx')}] {p.get('name')} t={p.get('t')} ui={p.get('ui')}", flush=True)
+            if p.get("k") in ("music", "track"):
+                print(f"{p['k']} {p.get('id', p.get('name'))} ui={p.get('ui')} kep={p.get('kep')} eppen={p.get('eppen')} regi={p.get('regi')} hangero={p.get('hangero')}", flush=True)
             return
         if p.get("k") == "frame":
             path = f"{a.out}-t{p['t']}.png"
@@ -192,7 +199,7 @@ def on(msg, data):
             frames_meta["start"] = p
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
-                    json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"),
+                    json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
                                "res": p.get("res")}, f)
         if p.get("k") == "scriptDone":
             frames_meta["done"] = p
@@ -209,7 +216,7 @@ def on(msg, data):
             # The UI clocks a state save doesn't hold, beside it for the client (`--clouds`).
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
-                    json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"),
+                    json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
                                "info_list": p.get("infoList")}, f)
     else:
         print(msg, flush=True)
@@ -230,6 +237,8 @@ pid = device.spawn([exe], cwd=a.install)
 session = device.attach(pid)
 here = os.path.dirname(os.path.abspath(__file__))
 source = open(os.path.join(here, "screen.js"), encoding="utf-8").read() + "\n" + open(os.path.join(here, "sound.js"), encoding="utf-8").read()
+if a.probe:
+    source += "\n" + open(a.probe, encoding="utf-8").read()
 agent = session.create_script(source)
 agent.on("message", on)
 agent.load()
@@ -238,10 +247,10 @@ if a.sounds:
     sys.path.insert(0, here)
     import sound_tables
     sound_tables = sound_tables.find(a.install)
-agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "shots": a.shots, "run": a.run,
+agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "shots": a.shots, "run": a.run, "boot": a.boot,
                                            "cam": [float(v) for v in a.cam.split(",")] if a.cam else None,
                                            "stateSlot": a.slot + 1 if a.state_out else 0, "debug": a.debug,
-                                           "fleets": a.fleets, "rop": a.rop, "ropFleet": a.rop_fleet,
+                                           "fleets": a.fleets, "planetTanks": a.planet_tanks, "rop": a.rop, "ropFleet": a.rop_fleet,
                                            "spies": a.spies, "aiEmpire": a.ai_empire,
                                            "ropMenu": point(a.rop_menu), "menu": menu(a.menu), "mouse": point(a.mouse),
                                            "spyFrame": a.spy_frame, "spyClosing": a.spy_closing,
@@ -250,6 +259,7 @@ agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet"
                                            "verdict": a.verdict, "verdictSeed": a.verdict_seed, "particles": bool(a.particles), "hide": a.hide,
                                            "infoStarlog": a.info_starlog, "infoPress": [int(x, 0) for x in a.info_press.split(",")] if a.info_press else [],
                                            "infoSelect": [int(x, 0) for x in a.info_select.split(",")] if a.info_select else None,
+                                           "grwar": a.grwar, "grwarArm": a.grwar_arm,
                                            "script": script, "soundTables": sound_tables}})
 device.resume(pid)
 t0, n = time.time(), 0

@@ -9,7 +9,7 @@
 //!  "grabs": [10, 30, 60]}
 //! ```
 //! A press is the pointer moved there, the button down, and up `hold` ticks later; a key is down and up `hold`
-//! ticks later (names: down, up, right, left, enter, pageup, pagedown, escape, d, k, space).
+//! ticks later (names: down, up, right, left, enter, pageup, pagedown, escape, d, k, space, c, e, i, m, s, 1, 2, 3, tab, delete).
 
 use serde_json::Value;
 
@@ -88,6 +88,21 @@ impl Script {
 pub fn grab_path(out: &std::path::Path, t: u32) -> std::path::PathBuf {
     let stem = out.file_stem().map_or_else(|| "snapshot".into(), |s| s.to_string_lossy().into_owned());
     out.with_file_name(format!("{stem}-t{t}.png"))
+}
+
+/// `OUT-sounds.jsonl`: the sounds a script's run started, one record per sound in the tracer's shape
+/// (re/screens/sound.md §2: `{k: 'sound', table, idx, t}`; `t` null = before the script's first frame).
+pub fn write_sounds(out: &std::path::Path, heard: &[(Option<u32>, crate::audio::SoundId)]) -> Result<std::path::PathBuf, String> {
+    let stem = out.file_stem().map_or_else(|| "snapshot".into(), |s| s.to_string_lossy().into_owned());
+    let path = out.with_file_name(format!("{stem}-sounds.jsonl"));
+    let mut text = String::new();
+    for (t, id) in heard {
+        let rec = serde_json::json!({"k": "sound", "table": id.table.name(), "idx": id.idx, "t": t});
+        text.push_str(&rec.to_string());
+        text.push('\n');
+    }
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
 }
 
 #[cfg(test)]

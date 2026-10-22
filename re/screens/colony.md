@@ -7,7 +7,7 @@ reference captures of the running exe (§8). `[inf]` marks inference.
 
 Scope: the 3D view (camera, terrain object, buildings, roads, units, shots), what is hidden on planets the human
 doesn't see into, the HUD's layout, the building orders (`MULTIGET_Colony`, §9) and the building screen's input with
-the 2D parts it owns (§10). The ground war's unit orders and the rest of §7 are not specified here.
+the 2D parts it owns (§10), the ground war's input and 2D parts (§11). The rest of §7 is not specified here.
 
 ## 1. Frame structure
 
@@ -192,8 +192,7 @@ bases/selection, `WF::WriteStuff`, the radar, special-weapon buttons), `_2` (pla
 over depth 2300..2800.
 
 ## 7. Not specified here
-The ground war's input (unit selection, moves, targets, mines, air strikes, landing: `GetNearestBuilding`'s unit half,
-hot-spots 0xb..=0x10, 0x12), the planet info mode (`ColonyPlanetInfoMod`, `StarmapHosszuInfoKiir`, hot-spots
+The ground war's landing clicks, shadows, landing zone, unit picture and self-destruct window (§11.4), the planet info mode (`ColonyPlanetInfoMod`, `StarmapHosszuInfoKiir`, hot-spots
 0x15..=0x1e: their tax / autobuild / priority drop-downs send starmap message 0x19), renaming the planet (`IOMode`),
 `ColonyGestureHandler`, the small turning model beside the building info (`HandleKisInfoObject`), the self-destruct
 buttons (hot-spots 8, 10, `WriteSelfDestruct`), the shadow map (`rendershadowmap`), scenery objects (`LoadScapeObj`), weather particles, lightning, lens flare, building
@@ -221,12 +220,57 @@ with int values, applied on every peer. Port: `ig2_sim::game::ColonyOrder` (`fro
 | 0x1f | p, t, x, y | `NemSzabadEpiteni − 1` when from `EN` (UI); unless the research cheat 0xB7727C is set: `MoneyMennyi(e, 0) < GetGyartasAr(e, EpuletekLeiro[t].tech)` (f64 compare) → the line `GetString(3, 2, 10)` ("You don't have enough money to build a %s!") for the issuer, whose screen drops the cursor (`ColonyRemoveBuilding`), nothing else; else `MoneyHozzaadLog(e, 0, −price)`. Then `EpuletNewSearchLocation(p, t, false, 0, x, y)`: `LocateSuitableLocation` searched from (x, y) (colony-placement.md §3–§5); no room → no building and **the money stays spent** [original behaviour]. `EpuletNew` (exe 0x53c7d0: the tutorial's events, `AddBuildingTurrets(t, 100, owner, slot, p)`); the issuer's screen on p selects the new slot (`AktEpulet`, when `CanModifyAktEpulet`). |
 | 0x20 | p, k | `MoneyHozzaadLog(e, 0, GetGyartasAr(e, tech of Epuletek[p][k]) / 2)` (int division: `cdq; sub; sar`), `EpuletDelete(p, k)` (exe 0x53c730): a `'+'` building resets the self-destruct, the colony screen on p drops `AktEpulet`, turrets removed, kind 0, `HanyEpulet[p] − 1`, `RemoveTarget(−k)`. No check of k: an empty slot is "deleted" again (`HanyEpulet` one too low until the next recount, below) and a slot past `HanyEpuletLefoglalva` reads the block's unused records; the port refuses k outside 1..=`HanyEpuletLefoglalva[p]` (the screen never sends one). |
 | 0x21 | p, k | `+0x19 ^= 2`. The colony screen's code never sends it. |
-| 0x22..=0x25 | p, unit, … | the ground war's move, waypoint, target, stop (not ported here). |
+| 0x22..=0x25, 0x12d, 0x12f, 0x130, 0x134 | p, … | the ground war's orders: §9.1. |
 | 0x26 | p | `KiMelyikBolygonVan[e − 1] = p` (`(&0x9ABAE4)[e]`, unsaved; e = 0 writes `Colony_elozo_foldrenges`). `Colony_Belep` sends it. |
 | 0x27 / 300 | p | the self-destruct starts (`WF+0x334 = 399`, ground-combat.md §11) / is called off (−1). |
-| 0x12d, 0x12f, 0x130, 0x134 | | detonate, landing zone done, air strike, a unit's flag (ground war, not ported). |
 | 0x132 | p, k | `+0x19 ^= 0x20`: the building's on/off switch (hot-spot 0x11 "Switch on/off", key E; `FRISSIT_Planet` keeps a switched-off building idle). |
 | 0x133 | p, k | if the slot's kind ≠ 0: cost = `EpuletJavitasAr` (inlined) = `(int)((f32)Talalmanyok[tech]+0x14 · (f32)damage / (f32)EpuletekLeiro[t]+8)`, the tech's own price without the race discount (`mulss`, then `divss`); `MoneyMennyi < cost` → the same refusal line for the issuer; else `MoneyHozzaadLog(e, 0, −cost)` and six `EpuletDamage(p, k, −damage, false, 10000)` (the first repairs it all and shares the repair with its turrets, the other five pass 0). |
+
+### 9.1 The ground war's orders
+Sent by the colony screen for the selected units (`WF_Tank` flags bit 8) of a real-time ground war; `unit` is the
+battlefield slot (`WF(p)+0x330`), `e` the sender. Port: `ig2_sim::ground::GroundOrder`, `War::order` (`ground/orders.rs`),
+carried as `ColonyOrder::Ground { planet, order }`; outcomes for the screen are `GroundEvent::Order`. Exe handler 0x48a29a
+(body of 0x48a270); the exe inlines `WT_WayPoint::Free/Add` and `WF_Tank::Stop`. No handler range-checks `p`, `unit` or
+`t`, and the unit pointer is loaded before the alive test: the port refuses a unit slot that isn't alive.
+
+| Type | Values | Sender (exe) | What the handler does |
+|---|---|---|---|
+| 0x22 | p, unit, x, y | `MoveSelected` 0x48be70 (click on the field; own units without flags 2/4) | unit flags & 0x80000000 = 0 and alive: waypoints freed (count `+0x22c`, cursor `+0x230` := 0, list `+0x234` freed), `MoveG(x, y)` (0x48bdc0, ground-combat.md §11) |
+| 0x23 | p, unit, x, y | 0x45f300 (shift-click; e = each unit's owner) | alive: `WT_WayPoint::Add`: count + 1, `realloc`, the cell (x, y) as two i32; no limit, cursor untouched |
+| 0x24 | p, unit, t | `WF::AttackWithSelected` 0x45f520 (t = the unit under the cursor or `−(slot)` a building) | `t < 0` or alive[t], and alive[unit]: waypoints freed, `SetTarget(t)` (0x49c670) |
+| 0x25 | p, unit | `WF::StopSelected` 0x4a4d80 (button 0x12, its key) | alive: `Stop` inlined (unless flag 0x20000000: move state reset, flags `&= 0xfffff27f`, destination := cell, target := 10000); the waypoints stay |
+| 0x12d | p, unit, big | 0x470cd0 (buttons 0xD/0xE: big = id − 0xD; units with weapon 0x40 resp. 0x80) | `WF_Tank::Detonate(big, WF, unit)` (exe 0x46dc40, ELF 0x4a0130), below; no alive test |
+| 0x12f | p | `Colony_Main` / key R (only when no unit is still landing) | `LandingZone::Free` (zone 0xA34F50 + p·0xC0: the 200 × 200 levels and the outline `FUN_00477d40`); on the shown planet `ColonySpeaker.Play(1, e = EN ? 3 : 10)` (a picked line draws libc once); then the **retreat flag** of side e flips: `WF(AktPlanet)+0x89f + e − 1` [original bug: `AktPlanet`, the receiving machine's screen, not p; every machine shows p during a war (`StartGrWar`), the port uses p] |
+| 0x130 | p, x, y, kind | `Colony_Main` button 0x14 after 0xB/0xC (kind 0 fighters: timer = 200, 1 big ships: 300) | `WF::ShotSpecWeapon(x, y, kind, e)` (0x49cb70, ground-combat.md §11.15), then the same charge timer `WF+0x7fc + 8(e − 1) + 4·kind` := 0 again; kind unchecked (the port refuses kind ∉ {0, 1}) |
+| 0x134 | p, unit, v (1 byte) | 0x4a4e00 (button 0xF; units with weapon 0x10) | `+0x250` (mine laying) := v ≠ 0; the byte lands in a stack int: only its low byte counts |
+
+`WF_Tank::Detonate(big, wf, i)`: `k = big + 1`. (1) `100k` particles, seven libc draws each (`%5, %0x1e, %0x32, %0x32,
+%0x14, %0x14, %0x14`; render only). (2) On the shown planet (`AktPlanet` = unit `+0x280`, `AktKep` 3, no
+`Atlepes`/`Belep`): a flash (one draw), 24 pieces of debris (`AddRepesz`: draws a, b, c; `vy = (a%0x3c/10 − 3)/1.2`,
+`vx = (b%0x3c/10 − 3)/1.2`, `vh = (c%0x1e/10 − 4)/1.2`, f32). (3) One draw for `Blast07.wav + r%5` (played on the shown
+planet when `WF+0x88c` = 0). (4) A scorch mark (`Koszfolt`, 80 × 80, list 0xA34FD4; render only) unless a turret.
+(5) `RemoveTankGroup(i)`, `RemoveTarget(i)`. (6) Unless the unit had flag 0x8000 (a partner) at entry: every alive
+unit without flags 2/0x40000000 and flags2 bit 2 at `d = (f32)sqrt((f64)(f32)(dx² + dy²))` cells (int cells) `≤ 6`
+takes `WF_Tank::Damage(dmg, 10000)`, `dmg = (int)(f32)((f64)(80000k) − (f64)((f32)(80000k)·d) / 6.0)` (`mulss`, then
+`divsd`/`subsd`, `cvtpd2ps`, `cvttss2si`); a dead group: not a partner and "on screen" a burst (one draw, 24 × 3
+draws, `/1.5`), one sound draw, `RemoveTankGroup`, `RemoveTarget` (the loop re-reads the unit count). Then every
+building slot `1..=HanyEpuletLefoglalva[p]` with kind ≠ 0 at `d ≤ w/2 + 6` (`w` the kind's width, building position
+truncated) takes `WF::Damage(−slot, (int)(f32)((f64)(10000k) − (f64)((f32)(10000k)·d) / ((f64)(w/2) + 6.0)), 10000)`
+and one sound draw. Stream 2 only inside the damage calls; the rest is libc.
+
+[original bug] The victim burst's "on screen" test (exe 0x46f49d, `cmp eax, [ecx+0x280]`) reads the planet from the
+detonator's record after `RemoveTankGroup` freed it: once the heap has handed the block to the debris allocated
+meanwhile, the value is garbage and the burst (with its 73 draws and 24 objects) is skipped. The port reads the record
+as left (`War::detonate`'s `freed_planet`); the tracer logs every value the exe read there and the replay feeds them
+back (1 of 31 recorded detonations hit a reused block). In lockstep the burst is cosmetic but its libc draws aren't:
+peers stay in step because they all run the port's rule.
+
+`SetTarget` on an emptied building slot (a message sent before the building fell): the width is read for kind 0, out
+of the table (`Building[−1]+0x58`, exe 0x8F1F14 = 10000): range `+0x14c` = 5000 + the weapon range
+(`Rules::building_footprint0`, `GroundRules::kind0_width`).
+
+Verified (`re/rules/traces/2026-10-22-groundwar-orders.md`): 407 messages staged through the exe's own handler in five
+recordings of real-time battles, all exact (units, lists, retreat flags, timers, landing zone, voices, streams, libc).
 
 `FRISSIT_Planet` (exe 0x474930, also its display refresh `FRISSIT_Planet(false, p)` that `FRISSIT_Epuletek` runs for
 planets with repairs) recounts `HanyEpulet[p]` from the records (`= 0`, `+1` per non-empty slot); the port's refresh
@@ -325,3 +369,151 @@ pick list, the cursor, a click (0x1f: the building stands where the cursor showe
 window (0x20); the capture comparison is in `re/screens/diff-results.md` (`--colony-live`: the exe's state save is
 written on the colony screen, so the camera is the live `ColonyXStart…` chunks; `--colony-ui pick|demolish|build`
 renders those states).
+
+## 11. The ground war's input and 2D parts (`ig2-client::colony_war`)
+Evidence: the ELF decompiles of `Colony_MouseInit`/`_MouseInit2`/`Colony_Main`/`ColonyKeyboardHandler`/`ColonyGfx2D_0..4`,
+`GetNearestBuilding`, `WarfareKeretesKijeloles`, the `WF::`/`WF_Tank::` selection, draw and order-sending functions and
+`LandingZone::*` (`_local/decomp/colony-war/`), checked against the exe's (`Colony_Main` 0x4666d0, `Colony_MouseInit`
+0x4680e0, `_MouseInit2` 0x467990, `ColonyKeyboardHandler` 0x4628c0, `ColonyGfx2D_1` 0x461190, `GetNearestBuilding`
+0x47b350, `WF::CheckTanks` 0x460b70, `WF::MouseOver` 0x48bb00, `CheckPlacing` 0x4609d0, `GetSelNum` 0x47bb90 and the
+senders of §9.1). Unit offsets are the exe's; EN = the local player.
+
+**Selection** is unit flag 8 (`+0x188`), set and cleared only by the UI (`WF_Tank::SetSelection` ELF 0x47c9b0: skipped
+for flag 0x40000000; a new selection restarts the ring's animation at size 300, alpha 0); no `MULTIGET_Colony` handler
+and no sim pass reads it. `GetSelNum` = alive units with flags & 2 = 0 and flag 8. `LastSelectedTank` (exe 0x9964cc) =
+the owner of the last unit selected. The port keeps the selection in the screen (a set of unit slots), not in the
+sim's records: each machine selects for itself, as each exe does.
+
+### 11.1 Hot-spots in a war
+While the planet is at war (`+0x64` bit 0) the building buttons 1, 2, 0x11 and the pick list 6 are off; the war buttons
+take the bottom row (`Colony_MouseInit` rects 31 × 31 at y 443; tooltip `GetString(3, 1, n)`; the brush is the
+`ColonyBrushok` record on `COLONY_X.BMP`, frame k = the k-th cell of its row, 31 apart):
+
+| Id | x | n | Enabled (`Colony_MouseInit2`) | Press (`Colony_Main`) | Brush, frame |
+|---|---|---|---|---|---|
+| 0xb | 344 | 8 Air Strike | `CheckFighterAttack(EN)` (exe 0x460770): owner ≠ EN and a unit of EN with weapon 0x20, flags & 2 = 0, `+0x288` > 0 | if the fighter timer `WF+0x7fc + 8(EN − 1)` = 200: `SpecWeaponMode` := 1 (0 when it was 1) | 20 (src 0, 31), frame `(mode = 1) + 1` |
+| 0xc | 377 | 9 Laser Strike | `CheckBigShipAttack(EN)` (exe 0x45fc90): the same with weapon 8 | if the big-ship timer `+0x800 + 8(EN − 1)` = 300: mode := 2 (0 when it was 2) | 21 (0, 62), frame `(mode = 2) + 1` |
+| 0xd | 245 | 10 Detonator | `CheckWeaponSelected(EN, 0x40)` (exe 0x460d00): a selected unit of EN with weapon 0x40 | `DetonateSelected(EN, 0)` (exe 0x470cd0): 0x12d (p, unit, 0) per such unit | 24 (0, 155), frame 1 |
+| 0xe | 278 | 11 Devastator | the same with weapon 0x80 | 0x12d (p, unit, 1) | 25 (62, 0), frame 1 |
+| 0xf | 212 | 12 Mine on/off | the same with weapon 0x10 | `CheckSelectedMine` (exe 0x460aa0) = 2·(a selected layer laying, `+0x250`) + (one not laying); 1 → 0x134 (p, unit, 1) per selected layer, 2 or 3 → 0x134 (…, 0) (`SwitchSelectedMineLayers` exe 0x4a4e00) | 26 (62, 31), frame = that value |
+| 0x10 | 410 | 13 Retreat on/off | owner ≠ EN and at war | not while `TutorialPaused`; only when no alive unit is still to land (flag 0x8000000) and every one has `+0x278` bit 0: 0x12f (p) | 27 (62, 62), frame = EN's retreat flag (`WF+0x89f + EN − 1`) + 1 |
+| 0x12 | 311 | 15 Cancel order | off without an own selected unit (`IsOwnTankSelected` exe 0x483c00); on while `AnyMovementInSelection` (exe 0x45f4b0: a selected own unit with flag 0x100 or 0x400); else left as it was | `StopSelected` (exe 0x4a4d80): 0x25 (p, unit) per selected unit of EN with flags & 6 = 0 | 30 (62, 124), frame 1 |
+
+The war buttons act once, on the press, and each press plays `PlaySoundGlobal(0)`. Brushes 21, 24, 25, 26, 27 (and the
+self-destruct's 19) and the retreat/landing texts are drawn only when `local_22` = not multiplayer, or the planet is the
+MP war's and (owner = EN or side EN has units on the field, `WF+0x8b1 + EN`); in that MP case without units 0xb..=0x10
+are off too. Brushes 20 and 30 have no such gate. The brushes are drawn only while their hot-spot is enabled.
+
+Charge bars (`ColonyGfx2D_1`, while 0xb / 0xc is enabled): `FillToScreen(x, 427, 31, 5, 6)` and over it
+`FillToScreen(x, 427, (int)((f64)timer·31.0/200.0), 5, 7)` at x 344 (fighters) and 377 (big ships: also /200.0, so its
+bar runs past the cell above a charge of 200 [original quirk]); 6 and 7 are palette indices.
+
+Hot-spot 4 released with the right button (the starmap) and PageUp/PageDown are blocked while
+`GetWarfareStatus(planet) = 1` (the war runs on the shown planet).
+
+### 11.2 Keys (`ColonyKeyboardHandler`)
+| Key | Effect |
+|---|---|
+| Ctrl + 4..9 | `WF::SaveSelection(n − 4)`: each unit's byte `+0x13c + n` := its flag 8; the rings restart (`ForceSelectionAnim`) |
+| 4..9 | `WF::LoadSelection(n − 4)`: flag 8 := the saved byte (no ring restart, `LastSelectedTank` untouched) |
+| S | `StopSelected` (0x25 per selected own unit; no click sound) |
+| a | the building selection goes; every alive unit with flags & 2 = 0, not 0x40000000, flags2 bit 2 clear (the exe's filter): selected when its owner is EN and it isn't a defence turret, else deselected; then the select voice |
+| R | only with the debug switch (`DEBUGX` exe 0xBAE587); retreat is the button in normal play |
+| E, Shift+Delete | building on/off, demolish: not at war |
+
+### 11.3 The 3D view (hot-spot 0x14)
+`ShowColony` each frame: `TankSelected` = `GetSelNum ≠ 0`, the grid cell under the pointer (`AktBGridX/Y`; the ray
+missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles` (the box). Then `Colony_Main`:
+
+- **Hit test** (`WF::CheckTanks` exe 0x460b70): among the alive units with flags & 2 = 0 whose owner is EN, or all when
+  side EN has units on the field (`WF+0x8b1 + EN`), those under the pointer (`WF_Tank::MouseOver` exe 0x48bc90 via
+  `WF::MouseOver`'s test: not flag 0x20, not a defence turret of pods 0xa1..=0xa4; the object centre (`GetObjCenter` of
+  the hull mesh, the gun mesh for a turret) projected; radius `TransformTav(35.0, z)` = 35·600/−z, at least 10.0; hit
+  when `dx² + dy² < r²`, f32); of those the one whose projected centre is nearest to the pointer; −1 none.
+- **Left press** (nothing armed, no build cursor): the box starts (`KeretesKijeloles`, `keretstart` = the pointer).
+  `GetNearestBuilding` (exe 0x47b350): each unit's selection is first kept in `+0x146`; without Shift and outside a drag
+  of `|dx| + |dy| ≥ 16`, everything but the unit under the pointer is deselected (`DeSelectAll`); the unit under the
+  pointer is selected (any one without Shift; with Shift only an own one, when `LastSelectedTank = EN` or nothing is
+  selected); nothing under it: the building rule of §10 (a defence post selects its turrets).
+- **Box** (`WarfareKeretesKijeloles` exe 0x4a79e0, while the left button is held and `|dx| + |dy| > 15`): the building
+  selection goes; `FadeKeret(start, size)` = four 1-pixel lines of (250, 80, 153) at t 128 (no fill); the unit under the
+  start point stays selected; every unit whose projected centre is inside the rectangle (inclusive) is selected, every
+  other deselected; then, unless exactly one is selected, the selected units of other sides are deselected; with Shift
+  the kept selection (`+0x146`) is added back.
+- **Left release**: the box ends; with the first selected unit EN's (not a mine) the select voice
+  (`ColonySpeaker.Play(slot % 3 + 1, 1)`).
+- **Right press** (the press frame only) with units selected; `t` = the unit under the pointer, `b` = the building
+  under it; "the move" is `MoveSelectedG` (exe 0x48be70): 0x22 (p, unit, gx, gy) per selected unit of EN with flags & 6
+  = 0 to the last cell under the pointer (also when the ray missed the ground), not with Ctrl or while `TutorialPaused`;
+  the move voice (kind 0):
+  - `t` not EN's (or EN's with Ctrl): no Alt → `AttackWithSelected(t)` (exe 0x45f520): 0x24 (p, unit, t) per selected
+    unit of EN with flags & 6 = 0, the attack voice (kind 2); with Alt → the move.
+  - else a building `b` and (owner ≠ EN or Ctrl): no Alt → `AttackWithSelected(−b)`; with Alt → the move.
+  - else Shift: `AddWayPointSelectedGrid` (exe 0x45f300): 0x23 (p, unit, gx, gy) for every selected unit with flags & 2
+    = 0, sent as that unit's owner (no owner filter [original quirk]).
+  - else the move.
+  With nothing selected the right press selects like the left one (without the box).
+- **Special weapon** (`SpecWeaponMode` 1/2, exe 0x99649c; 0 on entering): selection and orders are skipped; the release
+  of either button in the view (`Mouse_Felenged`) sends 0x130 (p, gx, gy, mode − 1) and disarms; the last cell is used
+  even when the pointer is off the ground.
+- **Landing** (owner ≠ EN while EN has units to place, `CheckPlacing(EN)` false): the left click places or picks up the
+  unit at the cell (`UsedPosition`/`PlaceTank`/`UnplaceTank`), the right click places them all (`PlaceAllTanks`,
+  ground-combat.md §11.16). These aren't `MULTIGET_Colony` messages [not ported yet].
+
+### 11.4 Draw list
+- **Rings** (`WF_Tank::DrawSelection` ELF 0x47df60, from `WF::WriteStuff`): every selected unit (mesh loaded, not flag
+  0x20): `friend.bmp` for EN's, else `enemy.bmp`; a flat square at the unit's (x, y), 5 above its height (a turret's at
+  it), half size `+0xec`, alpha `+0xf0`, two triangles. Animation (`WF_Tank::Refresh2` ELF 0x483400, per UI frame):
+  `ph = ColonyCounter/30 + slot`, `s = sin(ph)·3 + 40`; zooming in from 300: size ×0.8, alpha
+  `clamp((255 − (size − 45))/3, 0, 255)`, settled once size ≤ s; settled: size = s, alpha = `−sin(ph)·64 + 128`.
+- **Targets** (`DrawTarget` ELF 0x47e5a0): a selected unit with flag 0x100 and a target ≠ 10000: on a unit `nyilak.bmp`
+  at its position (5 up), on a building (`−slot`) `epuletkij.bmp` the size of the building's marker
+  (`w·40·select + (size − 45)·2`); the same animation with `sin(ColonyCounter/30 − target)·3 + 50`; one marker per
+  target per frame.
+- **Route crosses** (`WF_Tank::Draw3d` ELF 0x481890): for each selected own unit each waiting waypoint (cursor ..
+  count) two `line3d` (0x80be8882) crossing at the cell, 10 above the ground, half length `sin(gvalue/10)·3 + 6` along
+  the map axes.
+- **Group size** (`WF_Tank::WriteStuff` ELF 0x47dc30): a unit standing for more than one (`AliveTankNum > 1`) shows the
+  number at its projected centre − (8, 8), size 2, colour 2; a retreating one (flag 4) a label below.
+- **Texts** (`ColonyGfx2D_1`, owner ≠ EN, at war, `local_22`): EN's retreat flag on: `GetString(3, 2, 3)` at (220, 40);
+  units still to land: `GetString(3, 2, 4)` at (220, 50); both `KiirStr(…, 70 cells, size 2, colour 2)`.
+- Not specified in full or not ported yet: shadows (`DrawShadow`), the landing zone (`LandingZone::Draw`: 14 edge tiles
+  `landz1..14` chosen by an 8-neighbour mask, `GenerateKorvonal` ELF 0x46acd0), the unit info panel (`ColonyKisInfo`,
+  `ColonyInfoMod` 1), the self-destruct window (`ShowSelfDestruct`, hot-spots 8, 9, 10), the attack banner (`_2`), the
+  radar's noise, the cursor shapes, the shots' and explosions' models and particles (§5), the voices. Each ring, target
+  and shadow triangle draws a libc `rand()` into an unused counter (render only, as §10's marker).
+- **The panel and the view in a war**: the planet panel (brush 12) and its faders only when the planet is EN's and not at
+  war or EN still has units to land (`GFX_Colony`, `ColonyGfx2D_3`); the surplus line's two faders only with the line
+  (EN's planet, not at war). The buildings and units show when EN owns the planet, has satellites there, or has units
+  on the field (`WF+0x8b1 + EN`, as `GetStatus` sets it); else the red footprints of §3.3. A unit riding its dropship
+  (`+0x278` bit 3) is drawn at its dropship's offset (`+0x27c..+0x284`, §4), its ring stays on the ground. The rings and
+  target markers add their texture (black is clear).
+- **Attack banner** (`ColonyGfx2D_2` exe 0x461900): while `TamadasSzovegCounter` (exe 0x9ABAE0; `StartGrWar` sets 900,
+  `Frissit2_Colony` counts it down per UI frame on the colony screen, `Colony_Kilep` zeroes it) runs: EN's planet:
+  `GetString(3, 2, 5)` with the attacking fleet's owner (`Flottak[WF+0x338]+0x15`, 1..=15) and the planet's name; else
+  `GetString(3, 2, 6)` with the planet's name and its owner's (swapped in language 4); MP: `"%s (%s) vs. %s (%s)"` with
+  the players' names; `KiirStr(…, 200, 30, 70, 2, 4, 2)` at `min(100, 2·counter)` % brightness.
+- **Unit info** (`ColonyInfoMod` 1, in `StarmapRovidInfoKiir`'s place at (50, 424)): several units: `GetString(3, 2, 33)`
+  ("%d units selected.") at (50, 430) size 1, the first one's empire at (50, 439) in colour owner + 0xf, its weapon's
+  tech name (the pod, `+0x51` else `+0x52` of the design; a turret's own pod) at (50, 466); one unit: its design's name at
+  (50, 427) size 2 in the owner's colour instead of the count. The exe also draws the unit's picture left of the lines
+  (not specified yet).
+
+### 11.5 Sounds
+`PlaySoundGlobal(0)` on each war button press that acts (0xb, 0xc only with a full timer; 0x10 only once every unit has
+landed and its dropship left; 0xd, 0xe, 0xf, 0x12 always) and when a press in the view changes the selected building;
+none for the keys. Voices (`ColonySpeaker.Play(line, kind)`, ground-combat.md §11.12): select (left release, `a`)
+kind 1, move kind 0, attack kind 2, detonate kind 4, line `slot % 3 + 1`. Recorded (`run_screen.py --grwar --script
+tools/trace/scripts/grwar.json --sounds`, quick-1.sav planet 17): the right press on the ground → one `Speech::Play`
+the next UI tick; the retreat presses before the dropships left, the `a`/S keys and the inactive buttons → nothing; the
+ambient `Colony_Hangok` 43 and the ground-war track (`mfx/gwar3.ogg`) at entry. The client plays the button click
+(`audio::CLICK`); the voices wait for the colony speaker (audio part 2).
+
+### 11.6 Verified
+`ig2-client` tests `clicks_and_the_box_select`, `the_right_button_and_the_buttons_send_the_orders` (every order of
+§9.1 through the screen's input), `rings_zoom_in_then_pulse`. Capture comparison `run_screendiff.py … grwar:17`
+(`run_screen.py --grwar`: ig2.exe lands two of the human's vehicle designs on AI planet 17 with `AddTanksToPlanet` +
+`StartGrWar`, `PlaceAllTanks(100, 100)`, sets the war bit and flag 8 on every human unit; the client renders the saved
+moment with `--colony-ui war`): the attack banner, the retreat button, the unit info's lines and the selection rings
+line up with the exe's; the rest is the colony renderer's known terrain shadow and building texture differences
+(re/screens/diff-results.md).

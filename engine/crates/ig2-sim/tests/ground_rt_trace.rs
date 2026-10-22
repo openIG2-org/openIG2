@@ -17,6 +17,7 @@ use ig2_formats::text::{self, Lang};
 use ig2_formats::Install;
 use ig2_rules::Rules;
 use ig2_sim::colony::Building;
+use ig2_sim::game::ColonyOrder;
 use ig2_sim::ground::*;
 use ig2_sim::placement::Terrain;
 use ig2_sim::rng::Streams;
@@ -119,6 +120,7 @@ fn ground_rules(r: &Rules) -> GroundRules {
         fortress: r.ground_fortress_weapons.clone(),
         turn_speeds: r.ground_turn_speeds.clone(),
         armour: r.ground_armour.clone(),
+        kind0_width: r.building_footprint0.0,
     }
 }
 
@@ -1011,7 +1013,7 @@ fn battle_tick_matches_trace() {
                 "grwar_end" => apply(&mut st, &ev["post"]),
                 "aifuzz" => apply(&mut st, &ev["pre"]),
                 // The dropships and landing orders between ticks (replayed by `transporters_match_trace`).
-                "hor" | "order" => {
+                "hor" | "order" | "gorder" => {
                     apply(&mut st, &ev["pre"]);
                     apply(&mut st, &ev["post"]);
                 }
@@ -1256,7 +1258,7 @@ fn ground_ai_matches_trace() {
                     }
                 }
                 "grwar" | "aifuzz" => apply(&mut st, &ev["pre"]),
-                "ref" | "hor" | "order" => {
+                "ref" | "hor" | "order" | "gorder" => {
                     apply(&mut st, &ev["pre"]);
                     apply(&mut st, &ev["post"]);
                 }
@@ -1402,9 +1404,10 @@ fn ground_ai_matches_trace() {
 
 /// The transporters (re/rules/ground-combat.md §11.16): every recorded dropship pass (`WF_Hordozo::Refresh2`,
 /// exe 0x48e0a0; `hor`) replayed through `War::dropship`, and every landing order (`order`: `PlaceAllTanks`
-/// 0x48c150, `PlaceTank` 0x48c2c0, `UnplaceTank` 0x4a4f70) through its port, from the exe's state before the
-/// call: every unit, the projectile lists (a shot-down pick-up's debris), the status cache, streams 0 and 2
-/// and the libc sequence.
+/// 0x48c150, `PlaceTank` 0x48c2c0, `UnplaceTank` 0x4a4f70) through its port, and every ground-war message
+/// (`gorder`: staged through the exe's `MULTIGET_Colony` 0x48a270) through `War::order`, from the exe's state
+/// before the call: every unit, the projectile lists (a shot-down pick-up's debris), the retreat flags, call-in
+/// timers and landing zone, the status cache, streams 0 and 2 and the libc sequence.
 #[test]
 fn transporters_match_trace() {
     let Some(env) = env() else { return };
@@ -1418,7 +1421,7 @@ fn transporters_match_trace() {
     files.sort();
     let mut fails: Vec<String> = Vec::new();
     let mut kinds = std::collections::BTreeMap::<String, usize>::new();
-    let (mut passes, mut exact, mut orders, mut heap_debris) = (0usize, 0usize, 0usize, 0usize);
+    let (mut passes, mut exact, mut orders, mut gorders, mut heap_debris) = (0usize, 0usize, 0usize, 0usize, 0usize);
     let mut seen = std::collections::BTreeMap::<String, usize>::new();
     for path in files {
         let mut meta = Value::Null;
@@ -1440,7 +1443,7 @@ fn transporters_match_trace() {
                     apply(&mut st, &ev["pre"]);
                     apply(&mut st, &ev["post"]);
                 }
-                "hor" | "order" => {
+                "hor" | "order" | "gorder" => {
                     apply(&mut st, &ev["pre"]);
                     let before = st.clone();
                     apply(&mut st, &ev["post"]);
@@ -1460,10 +1463,14 @@ fn transporters_match_trace() {
                     let mut lcg = Lcg(ev["rand"]["seed"].as_u64().unwrap() as u32);
                     let m = before["planet"][0x23] as usize;
                     let before_fails = fails.len();
+                    let mut voices = before.get("voices").map(|b| voices_of(b));
                     {
                         let mut libc = || lcg.next();
                         let mut place = |_s: Option<(i32, i32)>| (false, (0, 0));
                         let mut war = War::new(&mut field, &mut planet, &mut world, &gr, &ctx, &mut rng, &mut libc, &mut place).with_map(&env.maps[m]);
+                        if let Some(v) = voices.as_mut() {
+                            war = war.with_voices(v);
+                        }
                         if k == "hor" {
                             passes += 1;
                             let i = ev["idx"].as_i64().unwrap() as i32;
@@ -1480,6 +1487,32 @@ fn transporters_match_trace() {
                             if lost != (ev["ret"].as_i64() == Some(1)) {
                                 fails.push(format!("{tag}: shot down port {lost} exe {}", ev["ret"]));
                             }
+                        } else if k == "gorder" {
+                            gorders += 1;
+                            let (t, v) = (ev["type"].as_i64().unwrap() as i32, ints(&ev["vals"]));
+                            *seen.entry(format!("gorder {t:#x}")).or_default() += 1;
+                            let Some(ColonyOrder::Ground { order, .. }) = ColonyOrder::from_message(t, &v[1..]) else {
+                                panic!("{tag}: not a ground-war message")
+                            };
+                            match (order, ev["freed"].as_array()) {
+                                // The exe's victim bursts read the freed detonator's planet (`War::detonate`).
+                                (GroundOrder::Detonate { unit, big }, Some(reads)) if war.field.alive.get(unit as usize) == Some(&true) => {
+                                    let reads: Vec<i32> = reads.iter().map(|r| r.as_i64().unwrap() as i32).collect();
+                                    if reads.iter().any(|&r| r != p) {
+                                        *seen.entry("detonate, freed record reused".into()).or_default() += 1;
+                                    }
+                                    let mut it = reads.iter().copied();
+                                    let mut used = 0;
+                                    war.detonate(unit, big, &mut || {
+                                        used += 1;
+                                        it.next().unwrap_or(i32::MIN)
+                                    });
+                                    if used != reads.len() {
+                                        fails.push(format!("{tag}: detonate tested the freed record {used} times, exe {}", reads.len()));
+                                    }
+                                }
+                                _ => war.order(v[0], order),
+                            }
                         } else {
                             orders += 1;
                             let c = ints(&ev["cmd"]);
@@ -1489,6 +1522,12 @@ fn transporters_match_trace() {
                                 1 => war.place_tank(c[1], c[2], c[3]),
                                 _ => war.unplace_tank(c[1]),
                             }
+                        }
+                    }
+                    if let (Some(v), Some(w)) = (&voices, st.get("voices").map(|b| voices_of(b))) {
+                        if *v != w {
+                            *kinds.entry("voices".into()).or_default() += 1;
+                            fails.push(format!("{tag}: voices differ"));
                         }
                     }
                     let (want, _) = battle_state(&st, p);
@@ -1533,6 +1572,11 @@ fn transporters_match_trace() {
                         *kinds.entry("lists".into()).or_default() += 1;
                         fails.push(format!("{tag}: lists (len port {} exe {})", gl.len(), wl.len()));
                     }
+                    if (field.retreat, field.timers, field.landing.is_some()) != (want.retreat, want.timers, want.landing.is_some()) {
+                        *kinds.entry("field".into()).or_default() += 1;
+                        fails.push(format!("{tag}: retreat/timers/landing port {:?} {:?} {} exe {:?} {:?} {}", field.retreat, field.timers,
+                            field.landing.is_some(), want.retreat, want.timers, want.landing.is_some()));
+                    }
                     if field.status_valid != want.status_valid {
                         *kinds.entry("status".into()).or_default() += 1;
                         fails.push(format!("{tag}: status cache port {} exe {}", field.status_valid, want.status_valid));
@@ -1553,10 +1597,10 @@ fn transporters_match_trace() {
             }
         }
     }
-    if passes + orders == 0 {
+    if passes + orders + gorders == 0 {
         return;
     }
-    eprintln!("dropships: {passes} passes and {orders} landing orders replayed, {exact} exact ({heap_debris} with heap-garbage debris slots); transitions {seen:?}; mismatch kinds {kinds:?}");
+    eprintln!("dropships: {passes} passes, {orders} landing orders and {gorders} ground-war messages replayed, {exact} exact ({heap_debris} with heap-garbage debris slots); transitions {seen:?}; mismatch kinds {kinds:?}");
     if !fails.is_empty() {
         for x in fails.iter().take(std::env::var("IG2_SHOW").ok().and_then(|v| v.parse().ok()).unwrap_or(30)) {
             eprintln!("{x}");

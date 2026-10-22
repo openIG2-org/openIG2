@@ -591,7 +591,11 @@ impl War<'_> {
         }
     }
 
-    fn footprint_w(&self, kind: u8) -> i32 {
+    /// A building kind's width (kind 0, an emptied slot: what the exe reads before the table).
+    pub(super) fn footprint_w(&self, kind: u8) -> i32 {
+        if kind == 0 {
+            return self.rules.kind0_width;
+        }
         self.map.map_or(0, |m| m.footprints.get(kind as usize).map_or(0, |f| f.0))
     }
 

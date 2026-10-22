@@ -1,0 +1,30 @@
+{
+ "screen": "colony",
+ "note": "Colony sounds (re/screens/audio.md \u00a76.2) on an own planet (quick-1.sav, planet 42): the entry wind (Colony_Belep), the radar press, the build menu press and short release (Global[0]). Times are UI ticks from the script's first frame. (The E key can't be injected: ColonyKeyboardHandler's character doesn't come from the key event the script sends.)",
+ "events": [
+  {
+   "t": 50,
+   "press": [
+    570,
+    410
+   ]
+  },
+  {
+   "t": 120,
+   "press": [
+    100,
+    80
+   ],
+   "hold": 5
+  },
+  {
+   "t": 200,
+   "press": [
+    100,
+    80
+   ],
+   "hold": 5
+  }
+ ],
+ "grabs": []
+}

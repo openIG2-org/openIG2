@@ -39,6 +39,7 @@ mod info_orders;
 mod orders;
 mod realtime;
 mod research_orders;
+mod tutorial;
 
 pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
 pub use info_orders::InfoOrder;

@@ -1,0 +1,13 @@
+{
+ "screen": "main",
+ "note": "The main menu as the exe boots (re/screens/mainscr.md §13): the rings fly in (Tav 10 -> 1 over 180 UI ticks) and the scene fades in (GlobalTransparency +0.003 a tick); the pointer rests on the load ring (ring 2) and then on the exit ring (ring 1); a press on the single-player ring (ring 4) flies the rings out and back as the single-player set; the pointer on its back ring. Ring centres move with MainScrMozgato (M = t/10): the points are where the rings are at those ticks.",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 250, "mouse": [404, 107]},
+  {"t": 300, "mouse": [480, 229]},
+  {"t": 350, "press": [163, 268]},
+  {"t": 700, "mouse": [320, 240]}
+ ],
+ "grabs": [5, 60, 120, 180, 240, 260, 320, 360, 400, 450, 520, 600, 700],
+ "tail": 30
+}

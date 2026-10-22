@@ -252,6 +252,8 @@ impl InfoData {
 /// The screen's UI state.
 #[derive(Debug, Clone)]
 pub struct InfoScreen {
+    /// The sounds the screen started since the window last took them (re/screens/audio.md §6.3).
+    pub sounds: Vec<crate::audio::SoundId>,
     /// `InfoSelected`: the empire the panels show (the human on entry).
     pub selected: usize,
     /// `Info_SelectedChart` 0..=9.
@@ -525,6 +527,7 @@ impl InfoScreen {
             Globe { planet: rot, fleet: rot, spin: ((rand() % 10) as f32 + 1.0) / 100.0 + 0.01, pos: home, home, start: home, target: home, step: [0.0; 3] }
         });
         Self {
+            sounds: Vec::new(),
             selected: human,
             chart: 0,
             star_log: false,
@@ -787,6 +790,11 @@ impl InfoScreen {
     /// (`AtteszMatrixokat`; the design list in detail mode), 34 the scroll bar at virtual `y`, 35/36 the star log.
     pub fn press(&mut self, id: Option<u32>, d: &InfoData, human: usize, y: f32) {
         let n = d.list(self.selected, human).len();
+        // `Info_Main` (exe 0x4e81c0): the mode and chart buttons, the list and star log arrows click on every press,
+        // whether or not anything moves.
+        if matches!(id, Some(14..=25 | 30 | 31 | 35 | 36)) {
+            self.sounds.push(crate::audio::CLICK);
+        }
         match id {
             Some(14) => self.star_log = false,
             Some(15) => self.star_log = true,
@@ -859,6 +867,8 @@ impl InfoScreen {
                     (self.select, self.held) = (Some(k), Some(k));
                 } else {
                     if self.select_item >= 0 {
+                        // A pick of the planet settings menus clicks (exe 0x4e85bf, 0x4e87b9, 0x4e880f).
+                        self.sounds.push(crate::audio::CLICK);
                         setting = Some((k as i32 - 18, self.select_item));
                     }
                     self.select = None;

@@ -7,7 +7,9 @@
 spy:<roster|report|verdict|applicant> (run_screen.py --spies stages the human's roster and one report) |
 (spy and research: --anim-frame F [--anim-closing] holds both at frame F of the opening/closing, --anim-mouse X,Y
 rests the pointer there: a tooltip; --spy-* are the same) |
-rop | planetinfo | tax | autobuild | priority | planets (the starmap's menus on planet 71). The tool
+fleetinfo | tanksinfo | rop | planetinfo | tax | autobuild | priority | planets (the starmap's menus on planet 71) |
+spacewar:<grab.json> (a battle-screen grab of `run_spwc.py --grab-ticks`: the exe's PNG beside the JSON, <save.sav> its
+--state-out save; re/screens/spacewar.md §9). The tool
 1. captures ig2.exe on <save> at that screen (tools/trace/run_screen.py: Frida loads the save with the exe's
    `LoadSave`, asks for the screen through `AktKepKell`, pauses the clock, writes the exe's own save of the moment
    (`<name>-state.sav`) and grabs the 800 × 600 client area), unless --exe-png gives an earlier capture;
@@ -45,10 +47,15 @@ DIFF = os.path.join(TARGET, "release", "ig2-screendiff" + EXE_SUFFIX)
 TOPBAR = "topbar=0,0,640,20"
 # The regions each screen is judged by, in virtual pixels (re/screens/hud.md, info.md, messages.md).
 SCREENS = {
-    "starmap": dict(kep=2, client=[], regions=[TOPBAR, "view=0,20,640,460"]),
-    "colony": dict(kep=3, client=["--colony", "{planet}", "--colony-live"], regions=[
+    "starmap": dict(kep=2, script=True, client=[], regions=[TOPBAR, "view=0,20,640,460"]),
+    "colony": dict(kep=3, script=True, client=["--colony", "{planet}", "--colony-live"], regions=[
         TOPBAR, "planet_panel=0,18,223,153", "radar=491,348,149,132", "bottom_info=5,403,162,72",
         "buttons=170,440,320,36", "view=223,20,268,320"]),
+    # The colony screen in a real-time ground war (colony.md §11): the exe lands the human on the planet, places and
+    # selects every unit (run_screen.py --grwar); the client seeds its selection from the saved flag 8.
+    "grwar": dict(kep=3, exe=["--grwar"], client=["--colony", "{planet}", "--colony-live", "--colony-ui", "war"], regions=[
+        TOPBAR, "texts=200,30,300,40", "radar=491,348,149,132", "bottom_info=5,403,162,72",
+        "buttons=200,425,260,50", "view=223,20,268,320"]),
     # The info screen opens over 150 UI frames and fades its texts in over 100 more: the grab waits longer.
     "info": dict(kep=9, wait=1500, client=["--screen", "info"], regions=[
         TOPBAR, "heads=20,40,600,90", "race_names=30,110,580,20", "triangle=230,30,180,110", "empire_panel=110,140,420,90",
@@ -61,12 +68,23 @@ SCREENS = {
         TOPBAR, "info_box=175,25,300,55", "start_double=100,20,440,62", "left_list=3,81,135,106",
         "right_list=500,81,135,106", "labs=0,235,80,60", "labs_right=560,235,80,60", "wheels=60,330,520,150",
         "ball=150,70,340,300"]),
+    # The main menu (mainscr.md): as the exe boots (run_screen.py --boot), no save; the galaxy clouds and the dust are
+    # random particles (statistically alike), the rings and labels are exact. Script only.
+    "main": dict(kep=15, script=True, exe=["--boot", "--run"], client=["--screen", "main"], regions=[
+        "rings_top=150,40,340,140", "rings_side=60,180,520,130", "rings_bottom=150,300,340,140", "galaxy=110,150,300,250",
+        "background=0,0,640,480"]),
     # The starmap's panels (starmap.md §12–§13): the exe presses the icon itself (run_screen.py --rop); the transfer
     # first gives the human two fleets beside the planet (fleets 10 and 9 in quick-1.sav, the exe's FlottaNew slots).
     "production": dict(kep=2, exe=["--rop", "2"], client=["--panel", "production"], regions=[
         TOPBAR, "name_plate=250,30,140,60", "left_panel=5,80,190,292", "right_panel=445,80,191,292", "exit=445,380,190,30"]),
     "transfer": dict(kep=2, exe=["--fleets", "2", "--rop", "0xe", "--rop-fleet", "1"], client=["--panel", "transfer:9,10"], regions=[
         TOPBAR, "left_panel=28,27,273,334", "right_panel=338,27,273,334", "scroll_bar=306,29,28,333", "exit=445,380,190,30"]),
+    # The fleet's and the vehicle info panels (starmap.md §19–§20): the exe opens them through `AktRopIkon` 0xf (fleet mode,
+    # the first of two new human fleets) and 9 (planet mode, three vehicle entries put on the planet first); the grab waits 420 frames.
+    "fleetinfo": dict(kep=2, wait=420, exe=["--fleets", "2", "--rop", "0xf", "--rop-fleet", "1"], client=["--panel", "fleet"], regions=[
+        TOPBAR, "list=28,27,273,334", "model=338,27,273,152", "data=338,186,273,175", "scroll_bar=306,29,28,333", "exit=445,380,190,30"]),
+    "tanksinfo": dict(kep=2, wait=420, exe=["--planet-tanks", "3", "--rop", "9"], client=["--panel", "tanks"], regions=[
+        TOPBAR, "list=28,27,273,334", "model=338,27,273,152", "data=338,186,273,175", "scroll_bar=306,29,28,333", "exit=445,380,190,30"]),
     # The diplomacy screen (diplomacy.md): the exe opens with a 2.8 s animation, so it waits 1000 frames; the round
     # frame shows the leader's video and the cages turn (animated, judged loosely).
     "diplomacy": dict(kep=6, wait=1000, client=["--screen", "diplomacy"], regions=[
@@ -76,6 +94,11 @@ SCREENS = {
     # many UI frames. The head video and the names' blink run on the clocks, so `ring` and `carousel` vary.
     "spy": dict(kep=7, wait=1200, exe=["--spies", "{mode}"], client=["--screen", "spy", "--ui-frames", "1200"], regions=[
         TOPBAR, "carousel=0,20,640,215", "left_panel=6,248,172,217", "right_panel=464,248,172,217", "ring=196,226,248,254"]),
+    # The space battle (spacewar.md): the exe's grab comes from run_spwc.py --grab-ticks (a battle staged on quick.scn),
+    # the client draws the dumped slot (--battle).
+    "spacewar": dict(kep=11, client=["--screen", "spacewar", "--battle", "{grab}"], regions=[
+        TOPBAR, "view=0,20,640,340", "console=210,360,220,120", "info_box=5,423,162,52", "radar=274,388,94,67",
+        "weapons=595,20,45,440"]),
     # The radial menu, the planet's long info and its select menus, the production view's planet list (starmap.md
     # §14–§17): the exe stages them (run_screen.py --rop-menu/--menu/--mouse), the client draws the same state.
     "rop": dict(kep=2, exe=["--rop-menu", "320,240"], client=["--rop-menu", "320,240"], regions=[TOPBAR, "icons=240,175,135,135"]),
@@ -126,6 +149,8 @@ def clock_args(save):
         args += ["--futofeny", repr(clocks["futofeny"])]
     if clocks.get("acttime") is not None:
         args += ["--acttime", repr(clocks["acttime"] / 1000)]
+    if clocks.get("info_alap") is not None:
+        args += ["--info-alap", repr(clocks["info_alap"])]
     return args
 
 
@@ -147,7 +172,7 @@ def sound_table(path):
     return rows
 
 
-def sequence(a, kind, cfg, env, masks):
+def sequence(a, kind, cfg, env, masks, planet):
     stem = os.path.splitext(os.path.basename(a.script))[0]
     name = f"{kind}-seq-{stem}" if stem != kind else f"{kind}-seq"
     with open(a.script, encoding="utf-8") as f:
@@ -157,14 +182,15 @@ def sequence(a, kind, cfg, env, masks):
     prefix = a.exe_seq or os.path.join(a.out, f"{name}-exe")
     if not a.exe_seq:
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
-                 "--script", a.script, "--sounds", sounds, "--state-out", state, "--seconds", "560"])
+                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--state-out", state, "--seconds", "560"] + cfg.get("exe", []))
         if r.returncode:
             sys.exit("the exe's script run failed")
     with open(prefix + "-frames.json", encoding="utf-8") as f:
         meta = json.load(f)
     by_t = {x["t"]: x for x in meta["frames"]}
     client = os.path.join(a.out, f"{name}-client.png")
-    args = [x for x in cfg["client"] if x not in ("--ui-frames", "240")] + ["--script", a.script]
+    # The colony's `--colony-live` camera comes from the state save (the script's first frame).
+    args = [x.format(planet=planet) for x in cfg["client"] if x not in ("--ui-frames", "240")] + ["--script", a.script]
     r = run([CLIENT, "--snapshot", client, "--save", state, "--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args + clock_args(state), env=env)
     if r.returncode:
         sys.exit("the client's script run failed")
@@ -223,6 +249,7 @@ def main():
     ap.add_argument("--anim-closing", "--spy-closing", dest="anim_closing", action="store_true")
     ap.add_argument("--anim-mouse", "--spy-mouse", dest="anim_mouse",
                     help="spy, research: the pointer rests at the virtual point X,Y in both (a hot-spot's tooltip)")
+    ap.add_argument("--arm", type=int, default=0, help="grwar: both call-in timers full and the air strike N armed (run_screen.py --grwar-arm)")
     ap.add_argument("--script", help="compare the frame sequence of this input script (re/screens/sound.md §3)")
     ap.add_argument("--exe-seq", help="with --script: reuse this exe run (its run_screen.py out-prefix)")
     a = ap.parse_args()
@@ -232,8 +259,16 @@ def main():
         sys.exit(f"unknown screen {kind}: {', '.join(SCREENS)}")
     cfg = SCREENS[kind]
     mode = arg if kind in ("spy", "info") else ""
-    planet = int(arg) if arg and not mode else (71 if kind in ("production", "transfer", "rop", "planetinfo", "tax", "autobuild", "priority", "planets") else 42)
-    name = f"{kind}{planet}" if kind == "colony" else f"spy-{mode or 'roster'}" if kind == "spy" else kind
+    grab = arg if kind == "spacewar" else ""
+    if kind == "spacewar":
+        if not grab:
+            sys.exit("spacewar:<grab.json>: the dump of run_spwc.py --grab-ticks")
+        a.exe_png = a.exe_png or os.path.splitext(grab)[0] + ".png"
+        arg = ""
+    planet = int(arg) if arg and not mode else (71 if kind in ("production", "transfer", "fleetinfo", "tanksinfo", "rop", "planetinfo", "tax", "autobuild", "priority", "planets") else 42)
+    name = f"{kind}{planet}" if kind in ("colony", "grwar") else f"spy-{mode or 'roster'}" if kind == "spy" else kind
+    if grab:
+        name = "spacewar-" + os.path.splitext(os.path.basename(grab))[0]
     held = []
     held_exe = []
     # info:IDS (e.g. info:9, info:31+10, info:15): the exe presses these hot-spots first (re/screens/info.md §6.5–§6.8).
@@ -250,6 +285,9 @@ def main():
         held_exe += ["--info-starlog", str(a.starlog)]
         name += f"-s{a.starlog}"
     mode = mode or "roster"
+    if kind == "grwar" and a.arm:
+        held_exe += ["--grwar-arm", str(a.arm)]
+        name += f"-arm{a.arm}"
     if kind in ("spy", "research") and a.anim_frame is not None:
         flag = "--spy" if kind == "spy" else "--res"
         held = ["--anim-frame", str(a.anim_frame)] + (["--anim-closing"] if a.anim_closing else [])
@@ -272,7 +310,7 @@ def main():
     if a.script:
         if not cfg.get("script"):
             sys.exit(f"--script: the client runs no input scripts on {kind} yet")
-        sequence(a, kind, cfg, env, ([] if a.no_default_masks else DEFAULT_MASKS) + cfg.get("masks", []) + a.mask)
+        sequence(a, kind, cfg, env, ([] if a.no_default_masks else DEFAULT_MASKS) + cfg.get("masks", []) + a.mask, planet)
 
     exe_png =os.path.join(a.out, f"{name}-exe.png")
     save = a.exe_state or a.save
@@ -293,7 +331,9 @@ def main():
         save = state
 
     client_png = os.path.join(a.out, f"{name}-client.png")
-    args = [x.format(planet=planet) for x in cfg["client"]] + held
+    args = [x.format(planet=planet, grab=os.path.abspath(grab) if grab else "") for x in cfg["client"]] + held
+    if kind == "grwar" and a.arm:
+        args[args.index("war")] = f"war:{a.arm}"
     # The exe's starmap clocks at the grab (run_screen.py writes them beside the state save).
     ui = save + ".ui.json"
     if os.path.exists(ui):
@@ -305,6 +345,8 @@ def main():
             args += ["--futofeny", repr(clocks["futofeny"])]
         if clocks.get("acttime") is not None:
             args += ["--acttime", repr(clocks["acttime"] / 1000)]
+        if clocks.get("info_alap") is not None:
+            args += ["--info-alap", repr(clocks["info_alap"])]
         if clocks.get("info_turn") is not None and kind == "info":
             args += ["--info-turn", repr(clocks["info_turn"])]
         il = clocks.get("info_list")

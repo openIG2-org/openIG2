@@ -5,6 +5,7 @@
 //! Peer::issue(cmd) ─ Input{turn+delay} ─▶ Host ─ Bundle{turn} ─▶ every Peer: apply, run TURN_TICKS ticks
 //!                    ◀──────────────── Hash{turn} ─────────────── (Host compares → Desync)
 //! rejoin: Snapshot (to_file/from_file) + Host::send_log(turn)
+//! session: HostSession / ClientSession (start, drops and grace, rejoin, desync resync, pause, MP saves, host migration)
 //! ```
 //!
 //! Transports: the in-process [`transport::Loopback`] (no sockets) and, with feature `quic`, `quic::QuicHost` /
@@ -17,11 +18,13 @@ pub mod lockstep;
 pub mod portmap;
 #[cfg(feature = "quic")]
 pub mod quic;
+pub mod session;
 pub mod snapshot;
 pub mod transport;
 pub mod wire;
 
 pub use command::{BattleOrder, Command, DiplomacyScreenOp, ResearchCmd, SpyOrder, Stamped, StarmapCmd, Terms};
-pub use lockstep::{Bundle, Desync, Host, Msg, Peer, DEFAULT_DELAY, TURN_TICKS};
+pub use lockstep::{Bundle, Desync, Host, Msg, Peer, DEFAULT_DELAY, KEPT_BUNDLES, TURN_TICKS};
+pub use session::{ClientSession, HoldStatus, HostSession, MpSave, SessionEvent, SessionMsg, SessionSettings};
 pub use snapshot::{state_hash, Header, Snapshot};
 pub use transport::{loopback, Loopback, Transport};

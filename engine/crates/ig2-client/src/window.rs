@@ -96,7 +96,18 @@ struct Colony {
     panel: crate::colony_ui::PanelBuilding,
 }
 
+/// The main menu while it is up (re/screens/mainscr.md): its state, its scene, the 10 ms UI clock and the pointer.
+struct Front {
+    s: crate::mainscr::MainScr,
+    scene: Option<crate::mainscr_scene::MainScene>,
+    ui_ms: u32,
+    at: [f32; 2],
+    quit: bool,
+}
+
 struct App {
+    /// The main menu, until a ring starts the game.
+    front: Option<Front>,
     world: World<'static>,
     install: ig2_formats::Install,
     tables: &'static ig2_rules::Rules,
@@ -145,6 +156,34 @@ struct App {
     tech_infos: Vec<[Vec<u8>; 3]>,
     /// The research screen's tooltip texts by hot-spot (`Research_MouseInit`).
     research_tips: Vec<Vec<u8>>,
+    /// Sound and music (re/screens/audio.md), and the screens seen up last frame (their enter/exit sounds).
+    audio: crate::audio::Audio,
+    sound_overlay: Option<crate::ui::Screen>,
+    sound_spy: Option<bool>,
+    /// The sounds the window's input code started this frame (re/screens/audio.md §6), played by `audio_frame`.
+    sounds: Vec<crate::audio::SoundId>,
+    /// A headless script run (`--snapshot --script` on the starmap or colony): its renderer, band and clock.
+    headless: Option<Headless>,
+}
+
+/// The renderer of a run without a window, its band, and the script's clock (one 10 ms UI tick a frame; the sim
+/// held, as the exe's script clock holds it: re/screens/sound.md §3).
+struct Headless {
+    renderer: Renderer,
+    band: (u32, u32),
+    ms: u32,
+}
+
+/// The renderer, the band and the scale factor, from the window or the headless run.
+fn gfx<'a>(gpu: &'a mut Option<Gpu>, headless: &'a mut Option<Headless>) -> Option<(&'a mut Renderer, (u32, u32), f32)> {
+    match (gpu, headless) {
+        (Some(g), _) => {
+            let (band, scale) = (g.band(), g.window.scale_factor() as f32);
+            Some((&mut g.renderer, band, scale))
+        }
+        (None, Some(h)) => Some((&mut h.renderer, h.band, 1.0)),
+        _ => None,
+    }
 }
 
 pub fn run(o: crate::Options) -> Result<(), String> {
@@ -154,53 +193,256 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     let tables: &'static ig2_rules::Rules = Box::leak(Box::new(l.tables));
     let mut world = World::load(&l.save, rules, &l.tech_defaults, &l.volatile);
     world.set_speed(o.speed);
-    let start = Instant::now();
-    let mut app = App {
-        world,
-        install: l.install,
-        tables,
-        maps: &rules.ground_maps,
-        colony: None,
-        left_drag: None,
-        hud: None,
-        overlay: None,
-        spy: None,
-        ui_frames: 0,
-        diplomacy: None,
-        dip_input: Default::default(),
-        gpu: None,
-        view: None,
-        clock: TickClock::new(SIM_TICK_MS, 0),
-        start,
-        vsync: true,
-        cursor: [0.0; 2],
-        drag: None,
-        left_down: None,
-        right_down: None,
-        info_down: false,
-        modifiers: ModifiersState::empty(),
-        title_at: start,
-        frames: 0,
-        panels: Panels::default(),
-        panel_models: None,
-        panel_held: None,
-        frame_models: None,
-        cam_tween: None,
-        cam_saved: None,
-        menus: Menus::default(),
-        research: None,
-        research_models: None,
-        tech_infos: Vec::new(),
-        research_tips: Vec::new(),
-    };
+    let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
+    let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
+    let audio_install = ig2_formats::Install::open(l.install.root(), l.install.lang()).map_err(|e| e.to_string())?;
+    let mut audio = crate::audio::Audio::new(audio_install, sounds, true);
+    if !audio.has_device() {
+        eprintln!("ig2-client: no sound device; running silent");
+    }
+    // The client starts on the main menu (`MainScr_Belep`'s `PlayMusicMenu(false, true)`), or with `--save` on the
+    // starmap (`Starmap_Belep`'s `PlayMusicMain(0, 0)`); nothing plays yet: at once.
+    let music = if o.main_menu { crate::audio::Music::Menu } else { crate::audio::Music::Main };
+    audio.play_music(music, o.main_menu, human_race(&world.game.state));
+    let mut app = App::new(world, l.install, tables, &rules.ground_maps, audio);
+    app.front = o.main_menu.then(|| Front { s: crate::mainscr::MainScr::enter(), scene: None, ui_ms: 0, at: [320.0, 240.0], quit: false });
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app).map_err(|e| e.to_string())
 }
 
+/// `--snapshot OUT --script S` on the starmap (or with `--colony P` the colony screen): the window's own input and
+/// frame code run headless on the script's clock (re/screens/sound.md §3: one 10 ms UI tick a frame, the sim held),
+/// the script's input fed in as window events. Writes the sounds as `OUT-sounds.jsonl` (the tracer's `t`: the entry's
+/// at 0, an event at t's sounds at t, tick k's own at k − 1); the grabs are not drawn.
+pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script) -> Result<(), String> {
+    use crate::script::Input;
+    let l = crate::load(o)?;
+    let rules: &'static ig2_sim::game::GameRules = Box::leak(Box::new(l.rules));
+    let tables: &'static ig2_rules::Rules = Box::leak(Box::new(l.tables));
+    let mut world = World::load(&l.save, rules, &l.tech_defaults, &l.volatile);
+    world.set_speed(o.speed);
+    let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
+    let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
+    let audio_install = ig2_formats::Install::open(l.install.root(), l.install.lang()).map_err(|e| e.to_string())?;
+    let audio = crate::audio::Audio::new(audio_install, sounds, false);
+    let mut renderer = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
+    let hud = crate::ui::Hud::load(&mut renderer, &l.install, tables);
+    let mut app = App::new(world, l.install, tables, &rules.ground_maps, audio);
+    app.world.game.empire_names = hud.empire_names.clone();
+    app.hud = Some(hud);
+    app.view = Some(View::new(&app.world.curr, &app.world.view, o.size, 1.0));
+    let sel = app.selection();
+    if sel.mode == 1 || sel.mode == 2 {
+        app.select(sel);
+    }
+    app.headless = Some(Headless { renderer, band: o.size, ms: 0 });
+    if let Some(p) = o.colony {
+        app.open_colony(p);
+        // The camera of the exe's state save (`--colony-live`, as `colony_snapshot`) or `--colony-cam`.
+        let f = |n: &str| l.save.chunk(n).and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        if let Some(c) = &mut app.colony {
+            if let Some([x, y, zoom, pitch, rotate]) = o.colony_cam {
+                c.view.camera = crate::colony::Camera { x, y, zoom, pitch, rotate, ..c.view.camera };
+            } else if o.colony_live {
+                c.view.camera = crate::colony::Camera { x: f("ColonyXStart"), y: f("ColonyYStart"), zoom: f("ColonyZoom"), pitch: f("ColonyPitch"), rotate: f("ColonyRotate"), ..c.view.camera };
+            }
+        }
+    }
+    // The screen's entry sounds: at t 0, as the tracer logs `Colony_Belep`'s on the script's first frame.
+    app.audio_frame(0);
+    let v = crate::kit::layout::Virtual::new([o.size.0 as f32, o.size.1 as f32]);
+    // A virtual point's pixel: its centre, so the exe's truncating mouse map gives the point back.
+    let px = |at: [f32; 2]| v.px(at[0] + 0.5, at[1] + 0.5);
+    for tick in 0..=script.end() {
+        if tick > 0 {
+            if let Some(h) = &mut app.headless {
+                h.ms = tick * 10;
+            }
+            app.frame();
+        }
+        for e in script.at(tick) {
+            match &e.input {
+                Input::Move(at) => app.cursor_moved(px(*at)),
+                Input::Button { button, down, at } => {
+                    app.cursor_moved(px(*at));
+                    app.mouse(if *button == 3 { MouseButton::Right } else { MouseButton::Left }, *down);
+                }
+                Input::Key { name, down: true } => {
+                    let key = match name.as_str() {
+                        "down" => Key::Named(NamedKey::ArrowDown),
+                        "up" => Key::Named(NamedKey::ArrowUp),
+                        "right" => Key::Named(NamedKey::ArrowRight),
+                        "left" => Key::Named(NamedKey::ArrowLeft),
+                        "enter" => Key::Named(NamedKey::Enter),
+                        "pageup" => Key::Named(NamedKey::PageUp),
+                        "pagedown" => Key::Named(NamedKey::PageDown),
+                        "escape" => Key::Named(NamedKey::Escape),
+                        "space" => Key::Named(NamedKey::Space),
+                        "tab" => Key::Named(NamedKey::Tab),
+                        "delete" => Key::Named(NamedKey::Delete),
+                        c => Key::Character(c),
+                    };
+                    app.key(key);
+                }
+                Input::Key { .. } => {}
+            }
+        }
+    }
+    // The last events' sounds.
+    app.audio_frame(0);
+    let heard: Vec<(Option<u32>, crate::audio::SoundId)> = app.audio.log.iter().map(|p| (Some(p.ui as u32), p.id)).collect();
+    if !script.grabs.is_empty() {
+        println!("ig2-client: --script on the starmap/colony draws no grabs");
+    }
+    let path = crate::script::write_sounds(out, &heard)?;
+    println!("{}: {} sounds", path.display(), heard.len());
+    Ok(())
+}
+
+/// `PlayerFaj[EN]`, the music's race.
+fn human_race(state: &ig2_sim::save::SaveState) -> u8 {
+    let en = state.mem.i32(ig2_sim::save::va::EN).max(0) as u32;
+    state.mem.u8(ig2_sim::save::va::PLAYER_FAJ + en)
+}
+
 impl App {
+    fn new(world: World<'static>, install: ig2_formats::Install, tables: &'static ig2_rules::Rules, maps: &'static [ig2_sim::ground::GroundMap], audio: crate::audio::Audio) -> Self {
+        let start = Instant::now();
+        App {
+            front: None,
+            world,
+            install,
+            tables,
+            maps,
+            colony: None,
+            left_drag: None,
+            hud: None,
+            overlay: None,
+            spy: None,
+            ui_frames: 0,
+            diplomacy: None,
+            dip_input: Default::default(),
+            gpu: None,
+            view: None,
+            clock: TickClock::new(SIM_TICK_MS, 0),
+            start,
+            vsync: true,
+            cursor: [0.0; 2],
+            drag: None,
+            left_down: None,
+            right_down: None,
+            info_down: false,
+            modifiers: ModifiersState::empty(),
+            title_at: start,
+            frames: 0,
+            panels: Panels::default(),
+            panel_models: None,
+            panel_held: None,
+            frame_models: None,
+            cam_tween: None,
+            cam_saved: None,
+            menus: Menus::default(),
+            research: None,
+            research_models: None,
+            tech_infos: Vec::new(),
+            research_tips: Vec::new(),
+            audio,
+            sound_overlay: None,
+            sound_spy: None,
+            sounds: Vec::new(),
+            headless: None,
+        }
+    }
+
     fn now_ms(&self) -> u32 {
-        self.start.elapsed().as_millis() as u32
+        match &self.headless {
+            Some(h) => h.ms,
+            None => self.start.elapsed().as_millis() as u32,
+        }
+    }
+
+    /// The frame's sounds: the screens' queued ones, the enter/exit sounds of the screens that came or went, the UI
+    /// ticks due (`FRISSIT2_SoundSystem`) and `UpdateFrame`'s music watchdog.
+    fn audio_frame(&mut self, due_ui: u64) {
+        use crate::audio::SoundId;
+        use crate::ui::Screen;
+        use ig2_rules::sounds::Table;
+        for id in self.sounds.drain(..) {
+            self.audio.play(id);
+        }
+        // `FRISSIT_Scroll2` (exe 0x556210): a message taken onto the line speaks, unless it is one of the four
+        // silent ids; the brutal voice for empire 5 (`EN`), else the human one.
+        let en = self.world.game.state.mem.i32(ig2_sim::save::va::EN);
+        for id in std::mem::take(&mut self.world.popped) {
+            if !matches!(id, 1 | 0x14 | 0x15 | 0x1a) {
+                let voice = if en == 5 { "brutal" } else { "human" };
+                self.audio.play_wav(&format!("sounds/scroll/{voice}/{id:04}.wav"));
+            }
+        }
+        if let Some(c) = &mut self.colony {
+            for id in c.ui.sounds.drain(..) {
+                self.audio.play(id);
+            }
+        }
+        if let Some(h) = &mut self.hud {
+            for id in h.info.sounds.drain(..) {
+                self.audio.play(id);
+            }
+        }
+        if let Some(d) = self.hud.as_mut().and_then(|h| h.messages.open.as_mut()) {
+            for t in d.typing.drain(..) {
+                self.audio.typing(t);
+            }
+        }
+        if let Some(d) = &mut self.diplomacy {
+            for id in d.screen.sounds.drain(..) {
+                self.audio.play(id);
+            }
+        }
+        if let Some(s) = &mut self.spy {
+            for id in s.screen.sounds.drain(..) {
+                self.audio.play(id);
+            }
+        }
+        if let Some(r) = &mut self.research {
+            for id in r.sounds.drain(..) {
+                self.audio.play(id);
+            }
+        }
+        for id in self.panels.sounds.drain(..) {
+            self.audio.play(id);
+        }
+        // `Messages_Belep`/`_Kilep` exe 0x507f90/0x5083d0, `Diplomacy_Belep`/`_Kilep` 0x4bf530/0x4bf810.
+        if self.overlay != self.sound_overlay {
+            match self.sound_overlay {
+                Some(Screen::Messages) => {
+                    // `Messages_Kilep` (exe 0x5083d0) also stops the typer.
+                    self.audio.stop_sound(SoundId::global(7));
+                    self.audio.play(SoundId::new(Table::Mes, 1));
+                }
+                Some(Screen::Diplomacy) => self.audio.play(SoundId::new(Table::Dip, 1)),
+                _ => {}
+            }
+            match self.overlay {
+                Some(Screen::Messages) => self.audio.play(SoundId::new(Table::Mes, 0)),
+                Some(Screen::Diplomacy) => self.audio.play(SoundId::new(Table::Dip, 0)),
+                _ => {}
+            }
+            self.sound_overlay = self.overlay;
+        }
+        // `Spy_Belep` exe 0x58cd50, `Spy_Kilep` 0x58d250 (when the closing starts).
+        let spy = self.spy.as_ref().map(|s| s.screen.closing);
+        match (self.sound_spy, spy) {
+            (None, Some(_)) => self.audio.play(SoundId::new(Table::Spy, 0)),
+            (Some(false), Some(true)) => self.audio.play(SoundId::new(Table::Spy, 2)),
+            _ => {}
+        }
+        self.sound_spy = spy;
+        for _ in 0..due_ui {
+            self.audio.tick();
+        }
+        self.audio.frame(human_race(&self.world.game.state));
     }
 
     fn init_gpu(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
@@ -280,12 +522,12 @@ impl App {
 
     /// Planet `p`'s colony screen (`Colony_Belep`).
     fn open_colony(&mut self, p: usize) {
-        let Some(g) = &mut self.gpu else { return };
+        let Some((renderer, band, scale)) = gfx(&mut self.gpu, &mut self.headless) else { return };
         self.world.show_colony(Some(p));
         let Some(snap) = self.world.colony_curr.clone() else { return };
-        match crate::colony::ColonyScene::load(&mut g.renderer, &self.install, self.tables, self.maps, &snap) {
+        match crate::colony::ColonyScene::load(renderer, &self.install, self.tables, self.maps, &snap) {
             Ok(scene) => {
-                let view = crate::colony::View::new(&snap, g.band(), g.window.scale_factor() as f32, &scene);
+                let view = crate::colony::View::new(&snap, band, scale, &scene);
                 let own = snap.owner == self.world.curr.human && !snap.at_war;
                 let ui = crate::colony_ui::ColonyUi::enter(&snap, own, &self.world.game.state);
                 self.colony = Some(Colony { scene, view, ui, panel: Default::default() });
@@ -297,13 +539,33 @@ impl App {
         }
     }
 
+    /// A key of the war (`ColonyKeyboardHandler`): 4..9 the groups, S stop, `a` every own unit; only while the shown
+    /// planet is at war.
+    fn colony_war_key(&self, ch: &str) -> Option<crate::colony_war::WarKey> {
+        use crate::colony_war::WarKey;
+        self.world.colony_curr.as_ref().filter(|s| self.colony.is_some() && s.war_flag)?;
+        match ch {
+            "4" | "5" | "6" | "7" | "8" | "9" => Some(WarKey::Group(ch.as_bytes()[0] as usize - b'4' as usize)),
+            "s" | "S" => Some(WarKey::Stop),
+            "a" => Some(WarKey::All),
+            _ => None,
+        }
+    }
+
     /// The colony screen's input with its context; the outcome carried out.
     fn colony_input(&mut self, f: impl FnOnce(&mut crate::colony_ui::ColonyUi, &crate::colony_ui::Ctx, [f32; 2], u32) -> crate::colony_ui::Outcome) {
         let now = self.now_ms();
         let (Some(c), Some(h), Some(snap)) = (&mut self.colony, &self.hud, &self.world.colony_curr) else { return };
         let at = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
+        if let Some(gm) = self.maps.get(snap.map) {
+            c.ui.war.project(&c.view, gm, snap);
+        }
+        c.ui.war.mods = crate::colony_war::Mods { shift: self.modifiers.shift_key(), ctrl: self.modifiers.control_key(), alt: self.modifiers.alt_key() };
         let ctx = crate::colony_ui::Ctx { state: &self.world.game.state, snap, rules: self.tables, sim: self.world.game.rules, texts: &h.texts, tech_name: &|t| h.tech_name(t) };
         let out = f(&mut c.ui, &ctx, at, now);
+        if out.click {
+            self.audio.play(crate::audio::SoundId::global(0));
+        }
         if out.pan {
             self.left_drag = Some(self.cursor);
         }
@@ -408,6 +670,10 @@ impl App {
     /// A speed button (hot-spots 3..=5): `SetIdoSpeed(n)` and unpause, when paused or at another speed.
     fn set_speed(&mut self, level: i32) {
         if !self.speed_locked() && (self.world.paused() || self.world.game.speed_level() != level) {
+            // `IG2_gameUpdate` (exe 0x4e08c6): the speed buttons' sound, single player only.
+            if !self.multiplayer() {
+                self.sounds.push(crate::audio::SoundId::global(10));
+            }
             self.send(StarmapOrder::Speed { level });
             self.send(StarmapOrder::Pause { paused: false });
         }
@@ -463,6 +729,11 @@ impl App {
         }
     }
 
+    /// `MultiPlayerMode`.
+    fn multiplayer(&self) -> bool {
+        self.world.game.state.mem.u8(ig2_sim::save::va::MULTIPLAYER) != 0
+    }
+
     fn speed_locked(&self) -> bool {
         self.world.game.state.mem.i32(ig2_sim::save::va::SPEED_LOCKED) != 0
     }
@@ -487,16 +758,25 @@ impl App {
             match a {
                 Action::Send(o) => self.send(o),
                 Action::Select(s) => self.select(s),
+                Action::Sound(id) => self.sounds.push(id),
                 Action::ZoomIn { x, y, zoom } => {
                     if let (Some(v), None) = (&self.view, self.cam_saved) {
+                        // `StarmapBeZoomol`: the zoom sound when not zoomed in yet (`StarmapZoomMode`).
+                        self.sounds.push(crate::audio::SoundId::global(5));
                         self.cam_saved = Some([v.camera.x, v.camera.y, v.camera.zoom]);
                     }
                     self.cam_tween = Some(([x, -y, zoom], 8));
                 }
                 Action::ZoomOut => {
                     if let Some(s) = self.cam_saved.take() {
+                        // `StarmapKiZoomol`'s sound.
+                        self.sounds.push(crate::audio::SoundId::global(5));
                         self.cam_tween = Some((s, 8));
                     }
+                }
+                Action::Design(o) => {
+                    // `MULTIGET_Design` 0x34 / 0x35 aren't in the sim yet (re/screens/starmap.md §19.7).
+                    eprintln!("ig2-client: {o:?} not carried out (MULTIGET_Design isn't ported)");
                 }
                 Action::Centre { x, y } => {
                     if let Some(v) = &self.view {
@@ -522,6 +802,11 @@ impl App {
                 Do::Production => self.panels.toggle_production(&self.world.game.state, &sel),
                 Do::Tanks => self.panels.tanks_button(&self.world.game.state, &sel),
                 Do::Join => self.panels.fleet_transfer(&self.world.game.state, &sel),
+                Do::TanksInfo => {
+                    self.panels.open_tanks_info(self.sale_names());
+                    Vec::new()
+                }
+                Do::FleetInfo => self.fleet_info(),
             };
             self.apply(acts);
         }
@@ -532,6 +817,20 @@ impl App {
         self.view.as_ref().map_or([0.0; 3], |v| [v.camera.x, v.camera.y, v.camera.zoom])
     }
 
+    /// The sale menus' texts (`DesignTorlesValasztasNev`).
+    fn sale_names(&self) -> crate::starmap_info::SaleNames {
+        self.hud.as_ref().map(|h| crate::starmap_info::SaleNames::load(&h.texts)).unwrap_or_default()
+    }
+
+    /// The info box's left click in fleet mode (`AktRopIkon` 0xf): the fleet's info panel toggles (§19.1).
+    fn fleet_info(&mut self) -> Vec<Action> {
+        let sel = self.selection();
+        self.cam_tween = None;
+        let from = self.cam_saved.map_or(self.camera3()[2], |s| s[2]);
+        let names = self.sale_names();
+        self.panels.info_box_fleet(&self.world.game.state, &sel, names, from)
+    }
+
     /// A left press on the starmap (`Starmap_Main`): the long info's hot-spots, the panels', the production view's
     /// planet list, then the map: the redirect pick, or a pick that becomes the selection and opens the radial menu.
     fn starmap_press(&mut self) -> bool {
@@ -540,9 +839,12 @@ impl App {
         if self.menus.info_on() {
             // Hot-spots 8 (left), 9 and 11 leave; the panel's buttons and menus; the rest of the screen is caught.
             let cam = self.camera3();
+            // Leaving plays the zoom sound (exe 0x5b303c).
             if (at[0] < 166.0 && at[1] >= 424.0) || crate::starmap_menus::exit_spot(at) {
+                self.sounds.push(crate::audio::SoundId::global(5));
                 self.menus.leave_info(cam, false);
             } else if (422.0..466.0).contains(&at[0]) && (432.0..476.0).contains(&at[1]) {
+                self.sounds.push(crate::audio::SoundId::global(5));
                 self.menus.leave_info(cam, true);
             } else if let Some(dos) = self.menus.press_info(&self.world.game.state, at) {
                 self.apply_do(dos);
@@ -558,14 +860,34 @@ impl App {
             self.panel_held = Some(true);
             return true;
         }
-        // The top bar, the info box and the minimap act on the release.
+        // The top bar's buttons (`HACK_SetBrushok`'s speed records 1012..=1015: pause, ×1, ×2, ×3) act on the press
+        // (`IG2_gameUpdate`, exe 0x4e08c6; observed: the speed sound on the press, sound-id trace 2026-10-22).
+        if at[1] < 20.0 && at[0] < 73.0 && !self.panels.fleet_info() {
+            match at[0] {
+                x if x < 15.0 => self.toggle_pause(),
+                x if x < 29.0 => self.set_speed(1),
+                x if x < 50.0 => self.set_speed(2),
+                _ => self.set_speed(3),
+            }
+            return true;
+        }
+        // The rest of the top bar, the info box and the minimap act on the release.
         let m = orders::MINIMAP_SPOT;
-        let on_minimap = !self.panels.active() && at[0] >= m[0] && at[0] < m[2] && at[1] >= m[1] && at[1] < m[3];
+        let on_minimap = !self.panels.minimap_off() && at[0] >= m[0] && at[0] < m[2] && at[1] >= m[1] && at[1] < m[3];
+        // The minimap (hot-spot 7) clicks on the press (exe 0x5b2e84).
+        if on_minimap {
+            self.sounds.push(crate::audio::CLICK);
+        }
         if at[1] < 20.0 || (at[0] < 166.0 && at[1] >= 424.0) || on_minimap || (self.panels.transfer.is_some() && at[1] >= 20.0) {
             return false;
         }
+        // With an info panel up the map takes no picks (hot-spot 0x35 is off).
+        if self.panels.info.is_some() {
+            return true;
+        }
         let Some(v) = &self.view else { return false };
         if self.menus.redirect {
+            self.sounds.push(crate::audio::CLICK);
             let target = orders::select_nearest_planet(&self.world.curr, &v.camera, at, 1.0);
             let dos = self.menus.redirect_to(&self.world.game.state, &sel, target);
             self.apply_do(dos);
@@ -624,18 +946,31 @@ impl App {
     fn info_box_click(&mut self) {
         let sel = self.selection();
         if sel.mode == 1 {
+            // Hot-spot 8 in planet mode: the zoom sound before the branch (exe 0x5b6373).
+            self.sounds.push(crate::audio::SoundId::global(5));
             self.toggle_colony();
             return;
         }
         let state = &self.world.game.state;
         let Some(r) = state.fleets.get(sel.fleet) else { return };
+        // Not for `fSpec` fleets (flags 0x4400, `Starmap_Main`, re/screens/starmap.md §19.1).
+        if u16::from_le_bytes([r[0x52], r[0x53]]) & 0x4400 != 0 {
+            return;
+        }
+        // Fleet mode clicks (exe 0x5b6a07), again when it closes a transfer panel (0x5b6b99).
+        self.sounds.push(crate::audio::CLICK);
+        if self.panels.transfer.is_some() {
+            self.sounds.push(crate::audio::CLICK);
+        }
         let f = |o: usize| f32::from_le_bytes(r[o..o + 4].try_into().unwrap());
         let (mine, calm, pos) = (r[0x15] == self.world.curr.human, r[0x52] & 1 == 0, (f(0x30), f(0x34)));
+        // The fleet's info panel goes without the zoom-out; the split then keeps the zoom (§19.1).
+        let had_info = self.panels.info.take().is_some();
         let closed = self.panels.transfer;
         let acts = self.panels.close_transfer(state, &sel, true);
         self.apply(acts);
         if mine && calm && closed.is_none_or(|t| t.tank_mode) {
-            if closed.is_none() {
+            if closed.is_none() && !had_info {
                 self.apply(vec![Action::ZoomIn { x: pos.0, y: pos.1, zoom: 590.0 }]);
             }
             self.send(StarmapOrder::Split { fleet: sel.fleet as i32 });
@@ -655,7 +990,12 @@ impl App {
         if at[0] >= 0.0 && at[0] < 166.0 && at[1] >= 424.0 {
             if right {
                 self.info_box_click();
+            } else if sel.mode == 2 {
+                let acts = self.fleet_info();
+                self.apply(acts);
             } else if sel.mode == 1 && sel.planet > 0 {
+                self.sounds.push(crate::audio::SoundId::global(5));
+                self.panels.info = None;
                 self.panels.close_production();
                 let acts = self.panels.close_transfer(&self.world.game.state, &sel, false);
                 self.apply(acts);
@@ -665,8 +1005,8 @@ impl App {
             }
             return;
         }
-        // The transfer panel covers the map (hot-spot 0x58).
-        if self.panels.transfer.is_some() && at[1] >= 20.0 {
+        // The transfer panel covers the map (hot-spot 0x58); under an info panel the map takes no orders.
+        if (self.panels.transfer.is_some() || self.panels.info.is_some()) && at[1] >= 20.0 {
             return;
         }
         if right {
@@ -674,28 +1014,32 @@ impl App {
             // planet (`0x400`).
             let own = sel.mode == 1 && self.world.curr.planets.iter().any(|p| p.index == sel.planet && p.owner == self.world.curr.human);
             if self.menus.redirect || own {
+                // The rally pick clicks before it picks (exe 0x5b5406).
+                self.sounds.push(crate::audio::CLICK);
                 let target = orders::select_nearest_planet(&self.world.curr, &v.camera, at, 1.0);
                 let dos = self.menus.redirect_to(&self.world.game.state, &sel, target);
                 self.apply_do(dos);
             } else if let Some(o) = orders::right_click(&self.world.curr, &v.camera, at, &sel, keys) {
+                // An own fleet's order: a click with Shift (exe 0x5b51b3); without it the fleet's voice
+                // [`StarmapSpeaker`, not ported].
+                let own_fleet = sel.mode == 2 && self.world.game.state.fleets.get(sel.fleet).is_some_and(|f| f[0x15] == self.world.curr.human);
+                if own_fleet && keys.shift {
+                    self.sounds.push(crate::audio::CLICK);
+                }
                 self.send(o);
             }
             return;
         }
+        // The top bar's and the console's hot-spots (1..=7) are off while the fleet's info panel is zoomed in.
+        if at[1] < 20.0 && self.panels.fleet_info() {
+            return;
+        }
         if at[1] < 20.0 {
-            // The top bar's buttons (`HACK_SetBrushok`'s speed records 1012..=1015: pause, ×1, ×2, ×3).
-            match at[0] {
-                x if (0.0..15.0).contains(&x) => self.toggle_pause(),
-                x if (15.0..29.0).contains(&x) => self.set_speed(1),
-                x if (29.0..50.0).contains(&x) => self.set_speed(2),
-                x if (50.0..73.0).contains(&x) => self.set_speed(3),
-                _ => {}
-            }
             return;
         }
         let m = orders::MINIMAP_SPOT;
-        // The panels turn the minimap off.
-        if !self.panels.active() && at[0] >= m[0] && at[0] < m[2] && at[1] >= m[1] && at[1] < m[3] {
+        // The panels turn the minimap off (not the vehicle panel).
+        if !self.panels.minimap_off() && at[0] >= m[0] && at[0] < m[2] && at[1] >= m[1] && at[1] < m[3] {
             let t = orders::minimap_target(at);
             if let Some(v) = &mut self.view {
                 (v.camera.x, v.camera.y) = (t[0], t[1]);
@@ -703,7 +1047,60 @@ impl App {
         }
     }
 
+    /// A frame of the main menu: its UI ticks due (10 ms each), the frame (`Mainscreen_Update3D`), the hover.
+    fn front_frame(&mut self) {
+        let now = self.now_ms();
+        let (Some(fr), Some(g)) = (&mut self.front, &mut self.gpu) else { return };
+        let mut due = 0;
+        while now >= fr.ui_ms + 10 {
+            fr.ui_ms += 10;
+            fr.s.tick();
+            due += 1;
+        }
+        for _ in 0..due {
+            self.audio.tick();
+        }
+        self.audio.frame(human_race(&self.world.game.state));
+        fr.s.frame();
+        fr.s.hover(fr.at);
+        let (bw, bh) = g.band();
+        let size = [bw as f32, bh as f32];
+        let scene = fr.scene.get_or_insert_with(|| crate::mainscr_scene::MainScene::load(&mut g.renderer, &self.install));
+        let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
+        scene.draw(&mut frame, &mut g.renderer, &self.install, &fr.s, &crate::font::Virtual::new(size));
+        let Ok(out) = g.surface.get_current_texture() else {
+            self.reconfigure();
+            return;
+        };
+        g.present(frame, &out.texture, now as f32 / 1000.0);
+        g.window.pre_present_notify();
+        out.present();
+    }
+
+    /// A ring's request (`crate::mainscr::Act`): load game starts the game from the save (the Options screen's load
+    /// slots aren't ported yet), quit leaves; the rest wait for their screens.
+    fn front_act(&mut self, a: crate::mainscr::Act) {
+        use crate::mainscr::Act;
+        match a {
+            Act::Quit => {
+                if let Some(f) = &mut self.front {
+                    f.quit = true;
+                }
+            }
+            Act::LoadGame => {
+                self.front = None;
+                self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
+            }
+            other => eprintln!("ig2-client: {other:?}: not ported yet (re/screens/mainscr.md §14)"),
+        }
+    }
+
     fn frame(&mut self) {
+        if self.front.is_some() {
+            self.front_frame();
+            return;
+        }
         let now = self.now_ms();
         // The frame's message pass, then the ticks due (none while `IdoPause`).
         self.world.pump();
@@ -712,9 +1109,9 @@ impl App {
             let p = self.world.colony.unwrap_or(0);
             c.ui.events(&std::mem::take(&mut self.world.colony_events), self.world.curr.human, p);
             // A building came or went: `Init3dColony`'s building loop again.
-            if let (Some(g), Some(s)) = (&mut self.gpu, &self.world.colony_curr) {
+            if let (Some((renderer, ..)), Some(s)) = (gfx(&mut self.gpu, &mut self.headless), &self.world.colony_curr) {
                 if c.scene.stale(s) {
-                    match crate::colony::ColonyScene::load(&mut g.renderer, &self.install, self.tables, self.maps, s) {
+                    match crate::colony::ColonyScene::load(renderer, &self.install, self.tables, self.maps, s) {
                         Ok(scene) => c.scene = scene,
                         Err(e) => eprintln!("ig2-client: colony: {e}"),
                     }
@@ -735,7 +1132,7 @@ impl App {
         }
         self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
         let due = self.clock.advance(now);
-        if !self.world.paused() {
+        if !self.world.paused() && self.headless.is_none() {
             for _ in 0..due {
                 self.world.tick();
             }
@@ -746,6 +1143,11 @@ impl App {
         let sel = self.selection();
         let acts = self.panels.advance(&self.world.game.state, &sel, now as f32 / 1000.0);
         self.apply(acts);
+        if let Some(i) = &mut self.panels.info {
+            let zoom = self.view.as_ref().map_or(0.0, |v| v.camera.zoom);
+            let ui = (now as u64 / 10).saturating_sub(self.ui_frames).min(50) as u32;
+            i.advance(&self.world.game.state, &sel, now as f32 / 1000.0, zoom, ui);
+        }
         // The panel's fleets are spared `FRISSIT_Starmap`'s 0x1b while it is up.
         self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
         // `Mozgasd`: the camera halves its way to the target for 8 frames.
@@ -817,9 +1219,15 @@ impl App {
         }
         if let (Some(c), Some(s)) = (&mut self.colony, &self.world.colony_curr) {
             for _ in 0..due_ui {
-                c.ui.ui_frame(s, &mut c.view.camera);
+                // `Frissit2_Colony`'s ambients and music only with the screen shown (`AktKep == 3`).
+                if self.overlay.is_none() && self.spy.is_none() {
+                    c.ui.ui_frame(s, self.world.curr.human as i32, &mut c.view.camera);
+                    if let Some(m) = c.ui.war_music(s.at_war) {
+                        self.audio.play_music(m, false, human_race(&self.world.game.state));
+                    }
+                }
             }
-            c.view.overlay = c.ui.overlay();
+            c.view.overlay = c.ui.overlay(s, self.world.curr.human as i32);
         }
         if let Some(r) = &mut self.research {
             for _ in 0..due_ui {
@@ -834,6 +1242,8 @@ impl App {
             r.tip.moved(self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor)));
             r.tooltip(&self.world.game.state, &m.mask, &self.research_tips, now as f64);
         }
+        // The sounds queued by the frame's input and by these UI ticks, then the ticks' music steps.
+        self.audio_frame(due_ui);
         // A button held on a panel repeats on the 100 Hz UI frames (`Starmap_Main::KezdoIdo`).
         if self.panel_held.is_some() {
             let at = self.virtual_cursor();
@@ -931,7 +1341,7 @@ impl App {
                     let lv = self.world.game.local_view();
                     let sel = Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
                     h.draw_starmap_hud(&mut frame, &self.world.game.state, self.tables, v, &self.world.prev, &self.world.curr, &sel, alpha, t);
-                    h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, &sel, panel_tex, size, t);
+                    h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, self.tables, &sel, panel_tex, size, t);
                     h.draw_starmap_menus(&mut frame, &self.menus, &self.world.game.state, self.tables, size, v.camera.zoom, t);
                 }
                 (crate::ui::Screen::Research, ..) => {
@@ -1006,234 +1416,305 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.reconfigure(),
-            WindowEvent::RedrawRequested => self.frame(),
+            WindowEvent::RedrawRequested => {
+                self.frame();
+                if self.front.as_ref().is_some_and(|f| f.quit) {
+                    el.exit();
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } if self.front.is_some() => {
+                let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
+                let (bw, bh) = self.gpu.as_ref().map_or((640, 480), |g| g.band());
+                let at = crate::font::Virtual::new([bw as f32, bh as f32]).virtual_of([position.x as f32, position.y as f32 - top]);
+                if let Some(f) = &mut self.front {
+                    f.at = at;
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. } if self.front.is_some() => {
+                if event.state == ElementState::Pressed && event.logical_key == Key::Named(NamedKey::Escape) {
+                    if let Some(f) = &mut self.front {
+                        f.s.escape();
+                    }
+                }
+            }
+            WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { button: MouseButton::Right | MouseButton::Middle, .. } if self.front.is_some() => {}
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.front.is_some() => {
+                let Some(f) = &mut self.front else { return };
+                let at = f.at;
+                let act = if state == ElementState::Pressed { f.s.press(at) } else { f.s.release(at) };
+                if let Some(a) = act {
+                    self.front_act(a);
+                }
+            }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
                 // The band's pixels: the mouse goes through the frame (`IG2_VIRTUAL_POSY`, re/screens/widescreen.md §4).
                 let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
                 let p = [position.x as f32, position.y as f32 - top];
-                if let Some(at) = self.spy_virtual(p) {
-                    let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
-                    if let Some(spy) = &mut self.spy {
-                        spy.hover(&d, at);
-                    }
-                }
-                if let Some(v) = &self.view {
-                    let at = v.camera.virtual_of(p);
-                    self.panels.hover(at);
-                    self.menus.hover(at);
-                    if let Some(h) = &mut self.hud {
-                        match self.overlay {
-                            Some(crate::ui::Screen::Info) => {
-                                let id = h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui);
-                                h.info.hover(id);
-                                let b = crate::info_screen::Buttons { down: self.info_down, left: true, ..Default::default() };
-                                for c in h.info.orders(id, at, b, &self.world.ui.info, self.world.ui.human) {
-                                    self.world.send(c);
-                                }
-                            }
-                            Some(crate::ui::Screen::Messages) => h.messages.hover(at),
-                            _ => {}
-                        }
-                    }
-                }
-                if self.colony.is_some() {
-                    self.cursor = p;
-                    let gm_cell = self.colony.as_ref().zip(self.world.colony_curr.as_ref()).and_then(|(c, s)| self.maps.get(s.map).and_then(|gm| crate::colony_ui::cell_under(&c.view, gm, p)));
-                    self.colony_input(|ui, ctx, at, _| {
-                        ui.drag(ctx, at);
-                        ui.hover(ctx, gm_cell);
-                        Default::default()
-                    });
-                }
-                if let Some(c) = &mut self.colony {
-                    if let Some(d) = self.drag {
-                        c.view.camera.turn(p[0] - d[0], p[1] - d[1]);
-                        self.drag = Some(p);
-                    }
-                    if let Some(d) = self.left_drag {
-                        c.view.camera.pan(d[0] - p[0], d[1] - p[1]);
-                        self.left_drag = Some(p);
-                    }
-                } else if let (Some(d), Some(v)) = (self.drag, &mut self.view) {
-                    v.camera.pan(d, p);
-                    self.drag = Some(p);
-                }
-                self.cursor = p;
+                self.cursor_moved(p);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let steps = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 / 60.0,
                 };
-                if let Some(c) = &mut self.colony {
-                    c.view.camera.zoom_steps(steps);
-                } else if let (Some(v), false) = (&mut self.view, self.menus.info_on()) {
-                    v.camera.zoom_steps(steps);
+                self.wheel(steps);
+            }
+            WindowEvent::MouseInput { state, button, .. } => self.mouse(button, state == ElementState::Pressed),
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                let quit = self.key(event.logical_key.as_ref());
+                if quit {
+                    el.exit();
                 }
             }
-            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.spy.is_some() => {
-                let Some(at) = self.spy_virtual(self.cursor) else { return };
-                let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
-                let Some(spy) = &mut self.spy else { return };
-                let orders = if state == ElementState::Pressed { spy.press(&d, at) } else { spy.release(&d) };
-                let errors = spy.take_errors();
-                for c in orders {
-                    self.world.send(c);
-                }
-                self.world.local_lines.extend(errors);
+            _ => {}
+        }
+    }
+}
+
+impl App {
+    /// The pointer moved to `p` (the band's pixels).
+    fn cursor_moved(&mut self, p: [f32; 2]) {
+        if let Some(at) = self.spy_virtual(p) {
+            let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
+            if let Some(spy) = &mut self.spy {
+                spy.hover(&d, at);
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                let on_starmap = self.colony.is_none() && self.overlay.is_none();
-                let moved = |d: Option<[f32; 2]>, p: [f32; 2]| d.is_none_or(|d| (d[0] - p[0]).abs() + (d[1] - p[1]).abs() > 4.0);
-                match (button, state) {
-                    (MouseButton::Left, ElementState::Pressed) if self.top_bar_research() => self.toggle_research(),
-                    (MouseButton::Left, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Research) => self.research_press(),
-                    (MouseButton::Left, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Research) => {
-                        if let Some(r) = &mut self.research {
-                            r.held = false;
+        }
+        if let Some(v) = &self.view {
+            let at = v.camera.virtual_of(p);
+            self.panels.hover(at);
+            self.menus.hover(at);
+            if let Some(h) = &mut self.hud {
+                match self.overlay {
+                    Some(crate::ui::Screen::Info) => {
+                        let id = h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui);
+                        h.info.hover(id);
+                        let b = crate::info_screen::Buttons { down: self.info_down, left: true, ..Default::default() };
+                        for c in h.info.orders(id, at, b, &self.world.ui.info, self.world.ui.human) {
+                            self.world.send(c);
                         }
                     }
-                    (MouseButton::Left, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Diplomacy) => {
-                        self.dip_input.pressed = true;
-                        self.dip_input.held = true;
-                    }
-                    (MouseButton::Left, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Diplomacy) => {
-                        self.dip_input.released = true;
-                        self.dip_input.held = false;
-                    }
-                    (MouseButton::Left | MouseButton::Right, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Info) => self.info_button(false, button == MouseButton::Right),
-                    (MouseButton::Right, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Info) => self.info_button(true, true),
-                    (MouseButton::Left, ElementState::Pressed) if self.overlay.is_some() => {
-                        let s = self.overlay.unwrap();
-                        self.screen_press(s);
-                    }
-                    (MouseButton::Left, ElementState::Pressed) if self.colony.is_some() => self.colony_input(|ui, ctx, at, now| ui.press(ctx, at, true, now)),
-                    (MouseButton::Left, ElementState::Released) if self.colony.is_some() => {
-                        self.left_drag = None;
-                        self.colony_input(|ui, ctx, at, now| ui.release(ctx, at, true, now));
-                    }
-                    (MouseButton::Left, ElementState::Pressed) => {
-                        self.menus.held = true;
-                        if !(on_starmap && self.starmap_press()) {
-                            self.left_down = Some(self.cursor);
-                        }
-                    }
-                    (MouseButton::Left, ElementState::Released) if self.menus.menu.is_some() || self.menus.rop.is_some() => {
-                        self.menus.held = false;
-                        self.starmap_release();
-                    }
-                    (MouseButton::Left, ElementState::Released) if self.panel_held.is_some() => {
-                        self.menus.held = false;
-                        self.panel_held = None;
-                        let sel = self.selection();
-                        let acts = self.panels.release(&self.world.game.state, &sel);
-                        self.apply(acts);
-                    }
-                    (MouseButton::Left, ElementState::Released) => {
-                        self.menus.held = false;
-                        self.left_drag = None;
-                        let down = self.left_down.take();
-                        if on_starmap && !moved(down, self.cursor) {
-                            self.starmap_click(self.cursor, false);
-                        }
-                    }
-                    (MouseButton::Right, ElementState::Pressed) if on_starmap && self.panel_press(false) => self.panel_held = Some(false),
-                    (MouseButton::Right, ElementState::Pressed) => {
-                        self.drag = Some(self.cursor);
-                        self.right_down = Some(self.cursor);
-                        if self.colony.is_some() {
-                            self.colony_input(|ui, ctx, at, now| ui.press(ctx, at, false, now));
-                        }
-                    }
-                    (MouseButton::Right, ElementState::Released) if self.panel_held.is_some() => {
-                        self.panel_held = None;
-                        let sel = self.selection();
-                        let acts = self.panels.release(&self.world.game.state, &sel);
-                        self.apply(acts);
-                    }
-                    (MouseButton::Right, ElementState::Released) => {
-                        self.drag = None;
-                        let down = self.right_down.take();
-                        if self.colony.is_some() && !moved(down, self.cursor) {
-                            self.colony_input(|ui, ctx, at, now| ui.release(ctx, at, false, now));
-                        }
-                        if on_starmap && !moved(down, self.cursor) {
-                            self.starmap_click(self.cursor, true);
-                        }
-                    }
+                    Some(crate::ui::Screen::Messages) => h.messages.hover(at),
                     _ => {}
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => match event.logical_key.as_ref() {
-                Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Research) => self.toggle_research(),
-                Key::Named(NamedKey::Escape) if self.spy.is_some() => self.toggle_spy(),
-                Key::Named(NamedKey::Escape) if self.overlay.is_some() => self.overlay = None,
-                Key::Character("s" | "S") => self.toggle_spy(),
-                Key::Named(dir @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) if self.spy.is_some() => {
-                    let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
-                    if let Some(spy) = &mut self.spy {
-                        spy.key(&d, dir == NamedKey::ArrowLeft);
-                    }
+        }
+        if self.colony.is_some() {
+            self.cursor = p;
+            let gm_cell = self.colony.as_ref().zip(self.world.colony_curr.as_ref()).and_then(|(c, s)| self.maps.get(s.map).and_then(|gm| crate::colony_ui::cell_under(&c.view, gm, p)));
+            self.colony_input(|ui, ctx, at, _| {
+                ui.drag(ctx, at);
+                ui.hover(ctx, gm_cell);
+                Default::default()
+            });
+        }
+        if let Some(c) = &mut self.colony {
+            if let Some(d) = self.drag {
+                c.view.camera.turn(p[0] - d[0], p[1] - d[1]);
+                self.drag = Some(p);
+            }
+            if let Some(d) = self.left_drag {
+                c.view.camera.pan(d[0] - p[0], d[1] - p[1]);
+                self.left_drag = Some(p);
+            }
+        } else if let (Some(d), Some(v)) = (self.drag, &mut self.view) {
+            v.camera.pan(d, p);
+            self.drag = Some(p);
+        }
+        self.cursor = p;
+    }
+
+    /// The wheel turned by `steps` notches.
+    fn wheel(&mut self, steps: f32) {
+        if let Some(c) = &mut self.colony {
+            c.view.camera.zoom_steps(steps);
+        } else if let (Some(v), false) = (&mut self.view, self.menus.info_on()) {
+            v.camera.zoom_steps(steps);
+        }
+    }
+
+    /// A mouse button went down or up.
+    fn mouse(&mut self, button: MouseButton, pressed: bool) {
+        let state = if pressed { ElementState::Pressed } else { ElementState::Released };
+        if button == MouseButton::Left && self.spy.is_some() {
+            let Some(at) = self.spy_virtual(self.cursor) else { return };
+            let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
+            let Some(spy) = &mut self.spy else { return };
+            let orders = if state == ElementState::Pressed { spy.press(&d, at) } else { spy.release(&d) };
+            let errors = spy.take_errors();
+            for c in orders {
+                self.world.send(c);
+            }
+            self.world.local_lines.extend(errors);
+            return;
+        }
+        let on_starmap = self.colony.is_none() && self.overlay.is_none();
+        let moved = |d: Option<[f32; 2]>, p: [f32; 2]| d.is_none_or(|d| (d[0] - p[0]).abs() + (d[1] - p[1]).abs() > 4.0);
+        match (button, state) {
+            (MouseButton::Left, ElementState::Pressed) if self.top_bar_research() => self.toggle_research(),
+            (MouseButton::Left, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Research) => self.research_press(),
+            (MouseButton::Left, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Research) => {
+                if let Some(r) = &mut self.research {
+                    r.held = false;
                 }
-                Key::Named(k) if self.overlay == Some(crate::ui::Screen::Research) && research_key(k).is_some() => {
-                    if let Some(k) = research_key(k) {
-                        self.research_key(k);
-                    }
+            }
+            (MouseButton::Left, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Diplomacy) => {
+                self.dip_input.pressed = true;
+                self.dip_input.held = true;
+            }
+            (MouseButton::Left, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Diplomacy) => {
+                self.dip_input.released = true;
+                self.dip_input.held = false;
+            }
+            (MouseButton::Left | MouseButton::Right, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Info) => self.info_button(false, button == MouseButton::Right),
+            (MouseButton::Right, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Info) => self.info_button(true, true),
+            (MouseButton::Left, ElementState::Pressed) if self.overlay.is_some() => {
+                let s = self.overlay.unwrap();
+                self.screen_press(s);
+            }
+            (MouseButton::Left, ElementState::Pressed) if self.colony.is_some() => self.colony_input(|ui, ctx, at, now| ui.press(ctx, at, true, now)),
+            (MouseButton::Left, ElementState::Released) if self.colony.is_some() => {
+                self.left_drag = None;
+                self.colony_input(|ui, ctx, at, now| ui.release(ctx, at, true, now));
+            }
+            (MouseButton::Left, ElementState::Pressed) => {
+                self.menus.held = true;
+                if !(on_starmap && self.starmap_press()) {
+                    self.left_down = Some(self.cursor);
                 }
-                Key::Character("d" | "D") if self.overlay == Some(crate::ui::Screen::Research) => self.research_key(crate::research::Key::Double),
-                Key::Character("k" | "K") => self.toggle_research(),
-                Key::Named(NamedKey::Escape) if self.colony.is_some() => self.toggle_colony(),
-                Key::Character("e" | "E") if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Priority)),
-                Key::Named(NamedKey::Delete) if self.colony.is_some() && self.modifiers.shift_key() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Demolish)),
-                Key::Named(NamedKey::PageUp) if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Prev)),
-                Key::Named(NamedKey::PageDown) if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Next)),
-                Key::Character("i" | "I") => self.toggle_screen(crate::ui::Screen::Info),
-                Key::Character("m" | "M") => self.toggle_screen(crate::ui::Screen::Messages),
-                Key::Character("d" | "D") => {
-                    if self.overlay == Some(crate::ui::Screen::Diplomacy) {
-                        self.overlay = None;
-                    } else if let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) {
-                        if self.diplomacy.is_none() {
-                            self.diplomacy = Some(crate::diplomacy::Open::new(&mut g.renderer, &self.install, self.tables, &h.texts, &self.world.game.state));
-                        }
-                        self.overlay = Some(crate::ui::Screen::Diplomacy);
-                    }
+            }
+            (MouseButton::Left, ElementState::Released) if self.menus.menu.is_some() || self.menus.rop.is_some() => {
+                self.menus.held = false;
+                self.starmap_release();
+            }
+            (MouseButton::Left, ElementState::Released) if self.panel_held.is_some() => {
+                self.menus.held = false;
+                self.panel_held = None;
+                let sel = self.selection();
+                let acts = self.panels.release(&self.world.game.state, &sel);
+                self.apply(acts);
+            }
+            (MouseButton::Left, ElementState::Released) => {
+                self.menus.held = false;
+                self.left_drag = None;
+                let down = self.left_down.take();
+                if on_starmap && !moved(down, self.cursor) {
+                    self.starmap_click(self.cursor, false);
                 }
-                Key::Named(NamedKey::Tab) => {
-                    if let Some(h) = &mut self.hud {
-                        h.info.chart = (h.info.chart + 1) % 10;
-                    }
+            }
+            (MouseButton::Right, ElementState::Pressed) if on_starmap && self.panel_press(false) => self.panel_held = Some(false),
+            (MouseButton::Right, ElementState::Pressed) => {
+                self.drag = Some(self.cursor);
+                self.right_down = Some(self.cursor);
+                if self.colony.is_some() {
+                    self.colony_input(|ui, ctx, at, now| ui.press(ctx, at, false, now));
                 }
-                Key::Named(NamedKey::Escape) => el.exit(),
-                Key::Character("c" | "C") => self.toggle_colony(),
-                Key::Named(NamedKey::Space) => self.toggle_pause(),
-                Key::Character("1") => self.set_speed(1),
-                Key::Character("2") => self.set_speed(2),
-                Key::Character("3") => self.set_speed(3),
-                Key::Character("q" | "Q" | "e" | "E") => {
-                    if let Some(v) = &mut self.view {
-                        // Five keyboard frames per key event (the original turns per 10 ms frame while held).
-                        v.camera.turn(if matches!(event.logical_key.as_ref(), Key::Character("q" | "Q")) { -5.0 } else { 5.0 });
-                    }
+            }
+            (MouseButton::Right, ElementState::Released) if self.panel_held.is_some() => {
+                self.panel_held = None;
+                let sel = self.selection();
+                let acts = self.panels.release(&self.world.game.state, &sel);
+                self.apply(acts);
+            }
+            (MouseButton::Right, ElementState::Released) => {
+                self.drag = None;
+                let down = self.right_down.take();
+                if self.colony.is_some() && !moved(down, self.cursor) {
+                    self.colony_input(|ui, ctx, at, now| ui.release(ctx, at, false, now));
                 }
-                Key::Named(NamedKey::PageUp | NamedKey::PageDown) => {
-                    if let Some(v) = &mut self.view {
-                        v.camera.tilt(if event.logical_key == Key::Named(NamedKey::PageUp) { 5.0 } else { -5.0 });
-                    }
+                if on_starmap && !moved(down, self.cursor) {
+                    self.starmap_click(self.cursor, true);
                 }
-                Key::Character("r" | "R") => {
-                    if let Some(v) = &mut self.view {
-                        v.reveal = !v.reveal;
-                    }
-                }
-                Key::Character("v" | "V") => {
-                    self.vsync = !self.vsync;
-                    self.reconfigure();
-                }
-                _ => {}
-            },
+            }
             _ => {}
         }
+    }
+
+    /// A key went down; true = quit.
+    fn key(&mut self, key: Key<&str>) -> bool {
+        match key {
+            Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Research) => self.toggle_research(),
+            Key::Named(NamedKey::Escape) if self.spy.is_some() => self.toggle_spy(),
+            Key::Named(NamedKey::Escape) if self.overlay.is_some() => self.overlay = None,
+            // The ground war's keys (`ColonyKeyboardHandler`, colony.md §11.2) while the shown planet is at war.
+            Key::Character(ch) if self.colony_war_key(ch).is_some() => {
+                if let Some(k) = self.colony_war_key(ch) {
+                    self.colony_input(move |ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::War(k)));
+                }
+            }
+            Key::Character("s" | "S") => self.toggle_spy(),
+            Key::Named(dir @ (NamedKey::ArrowLeft | NamedKey::ArrowRight)) if self.spy.is_some() => {
+                let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
+                if let Some(spy) = &mut self.spy {
+                    spy.key(&d, dir == NamedKey::ArrowLeft);
+                }
+            }
+            Key::Named(k) if self.overlay == Some(crate::ui::Screen::Research) && research_key(k).is_some() => {
+                if let Some(k) = research_key(k) {
+                    self.research_key(k);
+                }
+            }
+            Key::Character("d" | "D") if self.overlay == Some(crate::ui::Screen::Research) => self.research_key(crate::research::Key::Double),
+            Key::Character("k" | "K") => self.toggle_research(),
+            Key::Named(NamedKey::Escape) if self.colony.is_some() => self.toggle_colony(),
+            Key::Character("e" | "E") if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Priority)),
+            Key::Named(NamedKey::Delete) if self.colony.is_some() && self.modifiers.shift_key() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Demolish)),
+            Key::Named(NamedKey::PageUp) if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Prev)),
+            Key::Named(NamedKey::PageDown) if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Next)),
+            Key::Character("i" | "I") => self.toggle_screen(crate::ui::Screen::Info),
+            Key::Character("m" | "M") => self.toggle_screen(crate::ui::Screen::Messages),
+            Key::Character("d" | "D") => {
+                if self.overlay == Some(crate::ui::Screen::Diplomacy) {
+                    self.overlay = None;
+                } else if let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) {
+                    if self.diplomacy.is_none() {
+                        self.diplomacy = Some(crate::diplomacy::Open::new(&mut g.renderer, &self.install, self.tables, &h.texts, &self.world.game.state));
+                    }
+                    self.overlay = Some(crate::ui::Screen::Diplomacy);
+                }
+            }
+            Key::Named(NamedKey::Tab) => {
+                if let Some(h) = &mut self.hud {
+                    h.info.chart = (h.info.chart + 1) % 10;
+                }
+            }
+            Key::Named(NamedKey::Escape) => return true,
+            Key::Character("c" | "C") => self.toggle_colony(),
+            Key::Named(NamedKey::Space) => self.toggle_pause(),
+            Key::Character(c @ ("1" | "2" | "3")) => {
+                // `DoKeyboard` (ELF 0x5800d0): the keys sound whatever the speed was, single player only.
+                if !self.multiplayer() && !self.speed_locked() {
+                    self.sounds.push(crate::audio::SoundId::global(10));
+                }
+                let level = c.parse().unwrap_or(1);
+                if !self.speed_locked() && (self.world.paused() || self.world.game.speed_level() != level) {
+                    self.send(StarmapOrder::Speed { level });
+                    self.send(StarmapOrder::Pause { paused: false });
+                }
+            }
+            Key::Character("q" | "Q" | "e" | "E") => {
+                if let Some(v) = &mut self.view {
+                    // Five keyboard frames per key event (the original turns per 10 ms frame while held).
+                    v.camera.turn(if matches!(key, Key::Character("q" | "Q")) { -5.0 } else { 5.0 });
+                }
+            }
+            Key::Named(NamedKey::PageUp | NamedKey::PageDown) => {
+                if let Some(v) = &mut self.view {
+                    v.camera.tilt(if key == Key::Named(NamedKey::PageUp) { 5.0 } else { -5.0 });
+                }
+            }
+            Key::Character("r" | "R") => {
+                if let Some(v) = &mut self.view {
+                    v.reveal = !v.reveal;
+                }
+            }
+            Key::Character("v" | "V") => {
+                self.vsync = !self.vsync;
+                self.reconfigure();
+            }
+            _ => {}
+        }
+        false
     }
 }

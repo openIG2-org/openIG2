@@ -1,6 +1,6 @@
 # Multiplayer: per-peer state in the simulation
 
-Status: audit done 2026-10-16 (ADR 0007 §5); the real-time battles run by session rules (§7). Implemented in `ig2-sim::game` (`ViewMode`, `LocalView`,
+Status: audit done 2026-10-16 (ADR 0007 §5); the real-time battles run by session rules (§7, ADR 0011). Implemented in `ig2-sim::game` (`ViewMode`, `LocalView`,
 `Game::cosmetic`, `Game::messages_for`) and `ig2-net` (`Peer::show`, snapshot format version 2); tested by
 `ig2-net/tests/lockstep.rs::local_views_stay_out_of_the_synced_state`. Per-human contact lists, spy report queues
 and the `st_Multi_include` effects (§5): `SaveState::humans`, snapshot version 3, tested by
@@ -151,10 +151,6 @@ owner.
 - The unowned planets' richness by the host's race (`GetBolygoGazdagsag`) and radar row 0: a fidelity question
   only; the original machines likely disagreed here.
 - Per-peer fleet visibility (the original's flags are per machine; canonical mode keeps the host's): U16.
-- The ground war's orders (`MULTIGET_Colony`, ELF 0x4ec2e0) aren't commands yet: two humans' units don't engage
-  without them (`ground-combat.md` §11.17).
-- `MultiPlayerMode` isn't set by the lobby start: a session from an SP save routes battles by the SP rules (the
-  battles themselves run by the MP rules, §7).
 
 ## 7. The real-time battles (ours; implemented)
 
@@ -180,9 +176,134 @@ that and fixes the per-machine parts:
   (`Game::space_battles_settle`) runs before every clock step. Ours: an order naming units or guns that don't exist,
   or another empire's (the screen only sends the player's own), is refused on every peer alike, and a move target
   gets the screen's clamp (`Battle::screen_point`).
+- The ground war's orders: `Command::Colony` with `ColonyOrder::Ground` (0x22..0x25, 0x12d, 0x12f, 0x130, 0x134,
+  `War::order`). Ours: refused unless the planet is the flagged war's, the unit is alive and the issuer's, and for
+  retreat and air strikes the issuer is a participant (owns the planet or a live unit there) (`Game::colony_order`).
 - The ground war's dropships fly once per sim tick (the 100 Hz UI's every fifth pass); `WF::Refresh` ends the war
   as soon as one side holds the field (MP has no countdown); the capture follows (`Game::with_wars`).
 
+### 7.1 The session around a battle (ours, ADR 0011)
+
+- **Start**: `Game::start_multiplayer(en, humans)`: `MultiPlayerMode` = 1, `PlayerKi` = 1 for exactly the session's
+  humans (a former human not in the list: 0), canonical view of `en`. The original's MP routing then sends only
+  human-vs-human battles to real time; every human is on the screen, the participants order, the others watch.
+- **Cadence**: one battle step per sim tick (two per turn), orders `delay` turns after they're issued like every
+  command; the strategic clock waits, the turn clock doesn't.
+- **Hold**: `Host::hold(bool)` stops and resumes the bundles (every peer stalls at the same turn). The session
+  layer holds while a dropped human may come back during a battle (`Game::realtime_running`) and for a pause.
+- **Away/back**: `Command::PlayerAway` / `PlayerBack`, sent only by the host (`Host::inject`, stamped with the
+  dropped empire; a peer's copy is dropped by `Host::pump`). Away = the empire has left every running space
+  battle's screen (`SpaceWarVege` waits only for the others); back = that mark is cleared while the battle runs.
+- **Desync, rejoin, MP save**: the battle is in the snapshot and the per-turn hash (version 4), so all three work
+  mid-battle through the ordinary paths (ADR 0007 §3–§4).
+- **Parity**: the host's bundle log replayed into one `Game` reproduces every turn's hash the peers reported.
+
 Tested by `ig2-net/tests/lockstep.rs::two_humans_fight_a_real_time_battle_in_lockstep` (two humans fight with
 orders, the clock waits, both leave, `SpaceWarVege` ends it, 600+ turns hash-identical, a mid-battle snapshot
-restores to the same hash) and `two_humans_fight_a_ground_war_in_lockstep`.
+restores to the same hash) and `two_humans_fight_a_ground_war_in_lockstep` (with orders: the attacker's tanks take the planet; another
+empire's units refused), `a_player_drops_mid_battle_and_rejoins` (hold, away, rejoin from a snapshot and the log,
+back, the battle waits for the returning player; the host's log replayed into one `Game` gives every turn's hash),
+`a_desync_inside_a_battle_is_reported_and_resynced` and `recorded_ground_orders_cross_the_wire` (the 407 ground-war
+messages of the `grt-orders` recordings survive the input and bundle encoding).
+
+### 7.2 The session layer (ours, ADR 0011 §4–§6; `ig2_net::session`)
+
+No UI; the lobby screens sit on top. Time is the caller's (`now`, any monotonic origin), so the policy is
+deterministic under test; nothing in it touches the sim except the injected commands, which travel in the bundles.
+
+- **Start** (`HostSession::start(lobby, game, rules, settings)`): `Game::start_multiplayer(host's empire, the
+  members' empires)`, `Game::libc` = the session id (ADR 0007 §5), `Snapshot::capture(.., 0, 0).to_file(rules, true)`,
+  `LobbyHost::start`. The host's own player is an ordinary `Peer` on a loopback link. A joiner:
+  `ClientSession::new(&start, link, rules)` from `LobbyClient::into_game`.
+- **Drop** (a link reports `closed()`, or `HostSession::drop_player`): the host's peer first runs every bundle sent,
+  then: a real-time battle runs (`Game::realtime_running`) → *waiting*: `Host::hold(true)` until the rejoin or the
+  grace (`SessionSettings::grace`, default 60 s) → *away*: `Host::inject(empire, PlayerAway)`, the hold ends. No
+  battle → *away* at once. Whenever a battle starts while an empire is away, `PlayerAway` goes out for it again
+  (`Game::player_away` only marks the running battle). A dropped player's pause ends with it.
+- **Rejoin** (`HostSession::rejoin(empire, link, now)`, the link admitted by the glue): the host's state at
+  `Host::next_turn` as a fresh `Start` (`Msg::Lobby(LobbyMsg::Start)`) on the link, `Host::add_peer`, `send_log`
+  from the snapshot's turn, the hold status, and `PlayerBack` if the empire was away. The rejoiner reads it with
+  `ClientSession::wait_start`.
+- **Desync** (ADR 0007 §3): on a new report the host's peer catches up; every peer whose hash for a reported turn
+  differs from the host's own is restarted on its own link through the rejoin path (the host's state wins).
+  `Host` ignores a slot's hashes for turns before it (re)joined, so the old peer's in-flight reports don't count;
+  `ClientSession` swaps its peer when a `Start` arrives (`restarts`).
+- **Pause**: `HostSession::pause` / `ClientSession::pause` (`Msg::Session(SessionMsg::Pause)`); the session holds
+  while any human's pause stands. Every change of who is paused, awaited (with the grace left) or away goes to every
+  peer as `SessionMsg::Status(HoldStatus)`.
+- **MP save** (`HostSession::save`): the host's snapshot at the next turn as `Snapshot::to_file(rules, true)`, then
+  `IG2RSESS`, a `u32` length and the `SavedSession` (name, scenario, delay, grace, the humans' empires and names;
+  `wire` encoding). `MpSave::read` checks the MP flag and the rules fingerprint; `HostSession::resume(lobby, &save,
+  rules)` needs the lobby's members to hold exactly the saved empires and starts the `Host` at the saved turn
+  (`Host::at`; `LobbyHost::start` takes the turn from the snapshot's header).
+- **Rejoin admission** (`HostSession::admit(link, now)`, after the start): the same door as the lobby's (ADR 0008
+  §3.2, `lobby::Door`, kept from `LobbyHost::start` in `Started::door` with the lobby's `Settings`, session id and
+  rules fingerprint): `Hello{version, rules, name, code}` → `Refused{Version | Rules | Code}`, then for a password
+  session SPAKE2 and the key confirmation bound to the link (wrong → `Refused{WrongPassword}` after
+  `WRONG_PASSWORD_DELAY`), and `Refused{TimedOut}` once `ADMISSION_TIMEOUT` passes or the link closes. Who comes
+  back is the hello's name (truncated like the lobby's) matched against the session's humans (the names the
+  members had in the lobby that started it, a resumed save's too): no human of that name → `Refused{Started}` (it is
+  closed to newcomers); every human of that name still connected → `Refused{Connected}`. Both are checked at the
+  hello and again once the password checks out. Admitted: `Welcome{member: the human's slot}`, then the ordinary
+  rejoin above (`Start`, `send_log`, status, `PlayerBack`). The door runs on the session's clock (`now`), so the
+  delay and the timeout are deterministic under test; `LobbyHost` feeds it `Instant` time since its creation. The
+  joiner: `LobbyClient::rejoin(link, name, rules, password, code)` (the lobby's hello and password handling),
+  `Status::Admitted` at the welcome, then `LobbyClient::into_link` and `ClientSession::wait_start`. The name is the
+  only claim to an empire, as in the lobby anyone admitted may pick any open slot.
+- **Keep-alive** (`SessionSettings::keep_alive`, default `DEFAULT_KEEP_ALIVE` = 10 s; `Duration::ZERO` turns it
+  off): a silent peer counts as dropped even on a link that doesn't report `closed()`. Lockstep traffic alone can't
+  tell: while the session is held (a pause, an awaited player) no bundles go out, so no peer sends inputs or hashes
+  either. So both ends send `Msg::Session(SessionMsg::Alive)` at least every `keep_alive / 4` of the caller's clock
+  (`ClientSession::pump(now, max_turns)`, `HostSession::pump(now, ..)` to every peer), held or not. The host counts
+  every message a slot sends (`Host::heard(slot)`, the lockstep's own messages included; the relay keeps no clock);
+  the session notes when a human's count last changed, and a human connected but silent for `keep_alive` takes the
+  drop path (`HostSession::drop_player`: the link is let go, then *waiting* in a battle, else *away*). A (re)start
+  counts as hearing from it. The host's own peer (the loopback in the same process) is never timed out. The joiner
+  counts every message from the host the same way (its own `ClientSession::keep_alive`, default the same): `ClientSession::closed()` is the link's `closed()` or the host
+  silent for `keep_alive` at the last pump. The keep-alive isn't saved (`SavedSession`); a resumed session takes the
+  default. QUIC's own idle timeout and keep-alive pings (`quic.rs`) stay underneath; the admission's door has its
+  own `ADMISSION_TIMEOUT`.
+- **Host migration** (ADR 0012; ADR 0005 §5). Every `Start` carries `SessionInfo` (session id, name, scenario,
+  private/password flags, the host's slot, every human's `(slot, name)`, grace and keep-alive in ms; lobby protocol
+  version 2); the password stays with each joiner's glue. When `ClientSession::closed()` reports the host gone:
+  - *Election*: `ClientSession::successors()` = the session's humans in slot order without the host's slot and
+    without the empires the last `HoldStatus` lists away, waiting or migrating. The glue connects to the first that
+    answers; the one that is first itself calls `HostSession::migrate(client, fingerprint, password, now)`.
+  - *New host*: keeps its peer and state (no snapshot). Its `Host` (`Host::resumed(delay, log)`) continues at its own
+    frontier (the next turn it holds no bundle for) with the bundles its peer kept (the last `KEPT_BUNDLES` = 128 run
+    and every one buffered) as the log; its own peer moves to a loopback link and resends its unbundled inputs
+    (`Peer::resume(from)`). Every other surviving human is *migrating* (since `now`), the old host's is *lost*; the
+    session holds while any is either. Its door is the lobby's (`Door` from `SessionInfo`, the fingerprint, the
+    password).
+  - *Survivor*: `ClientSession::migrate(link, name, password, fingerprint)`: the rejoiner's hello (join code = session
+    id) and password; at `Welcome` it sends `SessionMsg::Resume{turn, bundles}` (its peer's kept and buffered bundles).
+    The new host adopts every bundle from its `Host::next_turn` on in turn order (`Host::adopt`: logged and sent to
+    every peer, its own included), then, if that migrating human's frontier is reached by the log, `Host::add_peer`,
+    `SessionMsg::Resumed{from}` (the peer resends its inputs for turns `>= from` no bundle covered and goes on from
+    there), `send_log` from the survivor's frontier and the status. Otherwise (a gap, or no longer migrating) the rejoin
+    path (`Start` from the new host's state). A survivor refused at the door hears `Refused` (the glue tries the next
+    candidate on `Refused` or a connect timeout).
+  - *End*: no human migrating (all resumed, or the grace since the migration began has passed: those take the drop
+    path). Then each *lost* human (the old host's) takes the drop path on the state at `Host::next_turn`: *waiting* in
+    a battle (the grace again), else *away*. From here the session is an ordinary one: rejoins and resyncs, pause, the
+    keep-alive and the MP save (`SessionInfo`'s names and settings).
+  - In-flight state: bundles the old host sent to some survivors only are adopted from whoever has them, so every
+    survivor runs the same turns; inputs sent to the old host but never bundled are resent; the old host's own
+    injected commands not bundled are lost (the drop path injects anew). Hashes from before a resumed peer's re-add
+    aren't compared (`Host`'s `since`).
+
+Tested by `ig2-net/tests/session.rs` (loopback, `quick-1.sav`): lobby → start → a real-time space battle with both
+humans' orders, an MP save mid-battle resumed in a new lobby gives the same 60 turns' hashes; a pause holds every
+peer; a mid-battle drop holds, the grace runs out on the test clock, `PlayerAway`, rejoin with `PlayerBack`; a drop
+outside a battle is away at once; a drifted battle is resynced by the host; in a private password session a
+mid-battle drop is turned away at the door for wrong rules, no join code, a wrong password (after the delay), an
+unknown name and a connected one, a silent connection times out on the test clock, then the right name, code and
+password come back (`Welcome`, `Start`) and a second claim is `Connected`; a joiner whose link stays up but goes
+silent mid-battle is dropped (awaited) after the keep-alive and not before, then comes back through the door; a
+paused session three keep-alives long with every peer pumping drops nobody; a joiner whose host stops pumping
+reports `closed()` after the keep-alive; host migration with three humans: the host drops mid-battle while one
+survivor (the successor) had stopped hearing it, both elect slot 1, it adopts the bundle only the other held, the other
+resumes from its own state (no restart), 6 is awaited for the grace then away, 70 turns on with every turn's hash equal
+to the old host's and each other's, and an MP save afterwards has all three humans; outside a battle with a survivor
+a few turns behind, 6 is away at once and its player comes back through the successor's door. Every turn's hashes
+agree.

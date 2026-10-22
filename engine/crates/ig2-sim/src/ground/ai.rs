@@ -546,7 +546,7 @@ impl War<'_> {
     /// `WF::ShotSpecWeapon(x, y, kind, e)` (exe 0x49cb70): the charge goes, one air unit of the first
     /// carrier is spent, the impact point is spread by ±4 cells (lines 0x3135/0x3136 or 0x3155/0x3156) and
     /// the big ships' 20 bombs or the fighter wave are made (`ground-combat.md` §11.15).
-    fn shot_spec_weapon(&mut self, x: i32, y: i32, kind: i32, e: i32) {
+    pub(super) fn shot_spec_weapon(&mut self, x: i32, y: i32, kind: i32, e: i32) {
         let t = &mut self.field.timers[(e - 1) as usize];
         if kind == 0 {
             t.0 = 0;

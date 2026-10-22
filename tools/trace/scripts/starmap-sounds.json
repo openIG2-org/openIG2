@@ -1,0 +1,13 @@
+{
+ "screen": "starmap",
+ "note": "Starmap sounds (re/screens/audio.md §6.1): the speed keys (Global[10]), a speed button, the minimap press (Global[0]), the info box's long info in planet mode and back (Global[5]). Times are UI ticks from the script's first frame.",
+ "events": [
+  {"t": 50, "key": "2"},
+  {"t": 100, "key": "1"},
+  {"t": 150, "press": [40, 5]},
+  {"t": 200, "press": [300, 400]},
+  {"t": 260, "press": [80, 450]},
+  {"t": 500, "press": [80, 450]}
+ ],
+ "grabs": []
+}

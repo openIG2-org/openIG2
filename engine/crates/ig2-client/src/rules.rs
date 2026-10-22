@@ -158,6 +158,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
             fortress: r.ground_fortress_weapons.clone(),
             turn_speeds: r.ground_turn_speeds.clone(),
             armour: r.ground_armour.clone(),
+            kind0_width: r.building_footprint0.0,
         },
         surface_weathers: surfaces.iter().map(|s| s.weathers.clone()).collect(),
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),

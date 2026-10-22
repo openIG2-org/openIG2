@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
 use crate::lockstep::{Host, Msg, Peer};
+use crate::session::SessionSettings;
 use crate::snapshot::{self, Snapshot};
 use crate::transport::{loopback, Loopback, Transport};
 use crate::wire;
 
 /// The lobby protocol version (checked in the hello).
-pub const LOBBY_VERSION: u32 = 1;
+pub const LOBBY_VERSION: u32 = 2;
 /// The host answers a wrong password after this long (one guess per connection).
 pub const WRONG_PASSWORD_DELAY: Duration = Duration::from_secs(1);
 /// A joiner that hasn't finished the admission by then is dropped.
@@ -48,6 +49,8 @@ pub enum Refusal {
     PasswordNeeded,
     /// Joiner side: the host's key confirmation was wrong (not the host, or not the same password).
     HostNotAuthentic,
+    /// After the start: the rejoiner's empire is still played (its player is connected).
+    Connected,
 }
 
 /// Who holds an empire slot.
@@ -107,8 +110,28 @@ pub struct Start {
     pub first_input: u64,
     /// Every human's (slot, empire).
     pub humans: Vec<(u8, u8)>,
+    /// What a successor needs to host the session (ADR 0012 §1).
+    pub session: SessionInfo,
     /// The start state (`Snapshot::to_file`).
     pub snapshot: Vec<u8>,
+}
+
+/// The session as every member knows it, so any of them can take over as host (ADR 0012 §1). The password stays
+/// with each member's glue.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionInfo {
+    /// The session id (a private session's join code).
+    pub id: u64,
+    pub name: String,
+    pub scenario: String,
+    pub private: bool,
+    pub password: bool,
+    /// The host's slot.
+    pub host: u8,
+    /// Every human's `(slot, name)` (the names rejoiners are matched by).
+    pub names: Vec<(u8, String)>,
+    pub grace_ms: u64,
+    pub keep_alive_ms: u64,
 }
 
 impl Start {
@@ -196,7 +219,7 @@ enum Stage {
     Pake { spake: Spake2<Ed25519Group>, name: String },
     /// Waiting for the joiner's confirmation.
     Confirm { key: Vec<u8>, name: String },
-    Refuse { at: Instant, why: Refusal },
+    Refuse { at: Duration, why: Refusal },
 }
 
 enum Outcome {
@@ -208,7 +231,137 @@ enum Outcome {
 struct Pending {
     link: Box<dyn Transport>,
     stage: Stage,
-    since: Instant,
+    since: Duration,
+}
+
+/// A connection through the admission, with the joiner's name.
+pub type Admitted = (Box<dyn Transport>, String);
+
+/// The admission (ADR 0008 §3.2): the hello's version, rules and join code, the password, the timeout. The lobby
+/// runs it before the start, the session ([`Started::door`]) for rejoiners after it. Time is the caller's (any
+/// monotonic origin).
+pub struct Door {
+    settings: Settings,
+    session: u64,
+    rules: [u8; 32],
+    pending: Vec<Pending>,
+}
+
+impl Door {
+    pub(crate) fn new(settings: Settings, session: u64, rules: [u8; 32]) -> Self {
+        Self { settings, session, rules, pending: Vec::new() }
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// A new connection at `now`.
+    pub fn admit(&mut self, link: Box<dyn Transport>, now: Duration) {
+        self.pending.push(Pending { link, stage: Stage::Hello, since: now });
+    }
+
+    /// Connections still being admitted.
+    pub fn pending(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Run the admissions as far as their messages go at `now`. `check` sees the name of a joiner whose hello
+    /// passed (and again once its password checked out) and may turn it away. Returns the admitted links with
+    /// their names; every refusal sent goes to `refused`.
+    pub fn pump(&mut self, now: Duration, check: impl Fn(&str) -> Option<Refusal>, refused: &mut Vec<Refusal>) -> Result<Vec<Admitted>, wire::Error> {
+        let mut admitted = Vec::new();
+        let mut keep = Vec::new();
+        for mut p in std::mem::take(&mut self.pending) {
+            match self.advance(&mut p, now, &check, refused)? {
+                Outcome::Keep => keep.push(p),
+                Outcome::Drop => {}
+                Outcome::Admit(name) => match check(&name) {
+                    Some(why) => {
+                        p.link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
+                        refused.push(why);
+                    }
+                    None => admitted.push((p.link, name)),
+                },
+            }
+        }
+        self.pending = keep;
+        Ok(admitted)
+    }
+
+    /// Turn every connection still being admitted away with `why`.
+    fn close(&mut self, why: Refusal) {
+        for mut p in std::mem::take(&mut self.pending) {
+            p.link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
+        }
+    }
+
+    /// Run one joiner's admission as far as its messages go.
+    fn advance(&self, p: &mut Pending, now: Duration, check: &dyn Fn(&str) -> Option<Refusal>, refused: &mut Vec<Refusal>) -> Result<Outcome, wire::Error> {
+        loop {
+            if let Stage::Refuse { at, why } = p.stage {
+                if now < at {
+                    return Ok(Outcome::Keep);
+                }
+                p.link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
+                refused.push(why);
+                return Ok(Outcome::Drop);
+            }
+            if now.saturating_sub(p.since) > ADMISSION_TIMEOUT || p.link.closed() {
+                p.stage = Stage::Refuse { at: now, why: Refusal::TimedOut };
+                continue;
+            }
+            let Some(m) = p.link.recv()? else { return Ok(Outcome::Keep) };
+            if let Some(name) = self.admission(p, m, now, check) {
+                return Ok(Outcome::Admit(name));
+            }
+        }
+    }
+
+    /// One admission message; returns the joiner's name once admitted.
+    fn admission(&self, p: &mut Pending, m: Msg, now: Duration, check: &dyn Fn(&str) -> Option<Refusal>) -> Option<String> {
+        let refuse = |why| Stage::Refuse { at: now, why };
+        let Some(m) = lobby(m) else {
+            p.stage = refuse(Refusal::Protocol);
+            return None;
+        };
+        match (std::mem::replace(&mut p.stage, Stage::Hello), m) {
+            (Stage::Hello, LobbyMsg::Hello { version, rules, name, code }) => {
+                let name = truncate(&name, MAX_NAME);
+                p.stage = if version != LOBBY_VERSION {
+                    refuse(Refusal::Version)
+                } else if rules != self.rules {
+                    refuse(Refusal::Rules)
+                } else if self.settings.private && code != Some(self.session) {
+                    refuse(Refusal::Code)
+                } else if let Some(why) = check(&name) {
+                    refuse(why)
+                } else if let Some(pw) = &self.settings.password {
+                    let (spake, out) = Spake2::<Ed25519Group>::start_b(&Password::new(pw.as_bytes()), &Identity::new(ID_JOINER), &Identity::new(ID_HOST));
+                    p.link.send(&Msg::Lobby(LobbyMsg::Pake(out)));
+                    Stage::Pake { spake, name }
+                } else {
+                    return Some(name);
+                };
+            }
+            (Stage::Pake { spake, name }, LobbyMsg::Pake(msg)) => {
+                p.stage = match spake.finish(&msg) {
+                    Ok(key) => Stage::Confirm { key, name },
+                    Err(_) => refuse(Refusal::Protocol),
+                };
+            }
+            (Stage::Confirm { key, name }, LobbyMsg::Confirm(mac)) => {
+                let binding = p.link.binding();
+                if same(&mac, &confirmation(&key, ID_JOINER, &binding)) {
+                    p.link.send(&Msg::Lobby(LobbyMsg::Confirm(confirmation(&key, ID_HOST, &binding))));
+                    return Some(name);
+                }
+                p.stage = Stage::Refuse { at: now + WRONG_PASSWORD_DELAY, why: Refusal::WrongPassword };
+            }
+            _ => p.stage = refuse(Refusal::Protocol),
+        }
+        None
+    }
 }
 
 /// Something that happened in the lobby (for the host's UI).
@@ -222,21 +375,22 @@ pub enum LobbyEvent {
 
 /// The host's side of the lobby.
 pub struct LobbyHost {
-    settings: Settings,
-    session: u64,
-    rules: [u8; 32],
+    door: Door,
+    /// The admission's clock.
+    epoch: Instant,
     state: LobbyState,
     links: BTreeMap<u8, Box<dyn Transport>>,
-    pending: Vec<Pending>,
     next_id: u8,
     dirty: bool,
 }
 
-/// What [`LobbyHost::start`] returns: the lockstep relay and the host's own peer start and link.
+/// What [`LobbyHost::start`] returns: the lockstep relay, the host's own peer start and link, and the door
+/// rejoiners come back through.
 pub struct Started {
     pub host: Host,
     pub own: Start,
     pub link: Loopback,
+    pub door: Door,
 }
 
 impl LobbyHost {
@@ -250,29 +404,35 @@ impl LobbyHost {
             slots: slots.iter().map(|&(empire, race)| Slot { empire, race, kind: SlotKind::Open }).collect(),
             members: vec![Member { id: 0, name: truncate(host_name, MAX_NAME), ready: false }],
         };
-        Self { settings, session, rules, state, links: BTreeMap::new(), pending: Vec::new(), next_id: 1, dirty: false }
+        Self { door: Door::new(settings, session, rules), epoch: Instant::now(), state, links: BTreeMap::new(), next_id: 1, dirty: false }
     }
 
     pub fn state(&self) -> &LobbyState {
         &self.state
     }
 
+    /// The rules fingerprint joiners must match.
+    pub fn rules(&self) -> [u8; 32] {
+        self.door.rules
+    }
+
     /// The session id, also the join code of a private session.
     pub fn session(&self) -> u64 {
-        self.session
+        self.door.session
     }
 
     /// The LAN announcement, or `None` for a private session.
     pub fn announcement(&self, port: u16, fingerprint: [u8; 32]) -> Option<crate::discovery::Announcement> {
-        (!self.settings.private).then(|| crate::discovery::Announcement {
-            session: self.session,
-            name: self.settings.name.clone(),
+        let s = &self.door.settings;
+        (!s.private).then(|| crate::discovery::Announcement {
+            session: self.door.session,
+            name: s.name.clone(),
             port,
             fingerprint,
-            password: self.settings.password.is_some(),
+            password: s.password.is_some(),
             version: LOBBY_VERSION,
-            rules: self.rules,
-            scenario: self.settings.scenario.clone(),
+            rules: self.door.rules,
+            scenario: s.scenario.clone(),
             humans: self.state.members.len() as u8,
             slots: self.state.slots.iter().filter(|s| s.kind != SlotKind::Closed && s.kind != SlotKind::Ai).count() as u8,
             started: false,
@@ -281,7 +441,7 @@ impl LobbyHost {
 
     /// A new connection (`QuicHost::accept`, or a loopback end).
     pub fn admit(&mut self, link: Box<dyn Transport>) {
-        self.pending.push(Pending { link, stage: Stage::Hello, since: Instant::now() });
+        self.door.admit(link, self.epoch.elapsed());
     }
 
     fn capacity(&self) -> usize {
@@ -377,18 +537,10 @@ impl LobbyHost {
 
     /// Run the admissions, take the members' messages, send the new state. Returns what happened.
     pub fn pump(&mut self) -> Result<Vec<LobbyEvent>, wire::Error> {
-        let mut events = Vec::new();
-        let now = Instant::now();
-        let mut admitted = Vec::new();
-        let mut keep = Vec::new();
-        for mut p in std::mem::take(&mut self.pending) {
-            match self.advance(&mut p, now, &mut events)? {
-                Outcome::Keep => keep.push(p),
-                Outcome::Drop => {}
-                Outcome::Admit(name) => admitted.push((p.link, name)),
-            }
-        }
-        self.pending = keep;
+        let full = self.capacity() <= self.state.members.len();
+        let mut refused = Vec::new();
+        let admitted = self.door.pump(self.epoch.elapsed(), |_| full.then_some(Refusal::Full), &mut refused)?;
+        let mut events: Vec<LobbyEvent> = refused.into_iter().map(LobbyEvent::Refused).collect();
         for (mut link, name) in admitted {
             if self.capacity() <= self.state.members.len() {
                 link.send(&Msg::Lobby(LobbyMsg::Refused(Refusal::Full)));
@@ -452,88 +604,39 @@ impl LobbyHost {
         Ok(events)
     }
 
-    /// Run one joiner's admission as far as its messages go.
-    fn advance(&self, p: &mut Pending, now: Instant, events: &mut Vec<LobbyEvent>) -> Result<Outcome, wire::Error> {
-        loop {
-            if let Stage::Refuse { at, why } = p.stage {
-                if Instant::now() < at {
-                    return Ok(Outcome::Keep);
-                }
-                p.link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
-                events.push(LobbyEvent::Refused(why));
-                return Ok(Outcome::Drop);
-            }
-            if now.duration_since(p.since) > ADMISSION_TIMEOUT || p.link.closed() {
-                p.stage = Stage::Refuse { at: now, why: Refusal::TimedOut };
-                continue;
-            }
-            let Some(m) = p.link.recv()? else { return Ok(Outcome::Keep) };
-            if let Some(name) = self.admission(p, m) {
-                return Ok(Outcome::Admit(name));
-            }
-        }
-    }
-
-    /// One admission message; returns the joiner's name once admitted.
-    fn admission(&self, p: &mut Pending, m: Msg) -> Option<String> {
-        let refuse = |why| Stage::Refuse { at: Instant::now(), why };
-        let Some(m) = lobby(m) else {
-            p.stage = refuse(Refusal::Protocol);
-            return None;
-        };
-        match (std::mem::replace(&mut p.stage, Stage::Hello), m) {
-            (Stage::Hello, LobbyMsg::Hello { version, rules, name, code }) => {
-                let name = truncate(&name, MAX_NAME);
-                p.stage = if version != LOBBY_VERSION {
-                    refuse(Refusal::Version)
-                } else if rules != self.rules {
-                    refuse(Refusal::Rules)
-                } else if self.settings.private && code != Some(self.session) {
-                    refuse(Refusal::Code)
-                } else if self.capacity() <= self.state.members.len() {
-                    refuse(Refusal::Full)
-                } else if let Some(pw) = &self.settings.password {
-                    let (spake, out) = Spake2::<Ed25519Group>::start_b(&Password::new(pw.as_bytes()), &Identity::new(ID_JOINER), &Identity::new(ID_HOST));
-                    p.link.send(&Msg::Lobby(LobbyMsg::Pake(out)));
-                    Stage::Pake { spake, name }
-                } else {
-                    return Some(name);
-                };
-            }
-            (Stage::Pake { spake, name }, LobbyMsg::Pake(msg)) => {
-                p.stage = match spake.finish(&msg) {
-                    Ok(key) => Stage::Confirm { key, name },
-                    Err(_) => refuse(Refusal::Protocol),
-                };
-            }
-            (Stage::Confirm { key, name }, LobbyMsg::Confirm(mac)) => {
-                let binding = p.link.binding();
-                if same(&mac, &confirmation(&key, ID_JOINER, &binding)) {
-                    p.link.send(&Msg::Lobby(LobbyMsg::Confirm(confirmation(&key, ID_HOST, &binding))));
-                    return Some(name);
-                }
-                p.stage = Stage::Refuse { at: Instant::now() + WRONG_PASSWORD_DELAY, why: Refusal::WrongPassword };
-            }
-            (_, LobbyMsg::Leave) => p.stage = refuse(Refusal::Protocol),
-            _ => p.stage = refuse(Refusal::Protocol),
-        }
-        None
-    }
-
     /// Start the game from `snapshot` (`Snapshot::to_file` of the start state, already in the canonical view of the
-    /// host's empire): every member gets its [`Start`], the links go to a lockstep [`Host`]. Refused (the lobby back)
-    /// unless [`LobbyHost::can_start`]. Joiners still being admitted are turned away.
-    pub fn start(mut self, snapshot: Vec<u8>, delay: u64) -> Result<Started, Box<Self>> {
+    /// host's empire): every member gets its [`Start`], the links go to a lockstep [`Host`] whose first bundle is the
+    /// snapshot's turn (0 for a new game, later for a resumed save). Refused (the lobby back) unless
+    /// [`LobbyHost::can_start`]. Joiners still being admitted are turned away.
+    pub fn start(self, snapshot: Vec<u8>, delay: u64) -> Result<Started, Box<Self>> {
+        self.start_with(snapshot, &SessionSettings { delay, ..SessionSettings::default() })
+    }
+
+    /// [`LobbyHost::start`] with the session's settings (its grace and keep-alive go to every member in
+    /// [`SessionInfo`]).
+    pub fn start_with(mut self, snapshot: Vec<u8>, settings: &SessionSettings) -> Result<Started, Box<Self>> {
+        let delay = settings.delay;
         if !self.can_start() {
             return Err(Box::new(self));
         }
-        for mut p in std::mem::take(&mut self.pending) {
-            p.link.send(&Msg::Lobby(LobbyMsg::Refused(Refusal::Started)));
-        }
+        self.door.close(Refusal::Started);
         let humans: Vec<(u8, u8)> = self.state.members.iter().map(|m| (m.id, self.state.empire_of(m.id).unwrap())).collect();
-        let mut host = Host::new(delay);
+        let turn = snapshot::Header::read(&snapshot).map_or(0, |h| h.turn);
+        let mut host = Host::at(delay, turn);
         let first_input = host.next_turn().max(delay);
-        let start = |slot: u8, empire: u8| Start { slot, empire, delay, first_input, humans: humans.clone(), snapshot: snapshot.clone() };
+        let s = &self.door.settings;
+        let session = SessionInfo {
+            id: self.door.session,
+            name: s.name.clone(),
+            scenario: s.scenario.clone(),
+            private: s.private,
+            password: s.password.is_some(),
+            host: 0,
+            names: self.state.members.iter().map(|m| (m.id, m.name.clone())).collect(),
+            grace_ms: settings.grace.as_millis() as u64,
+            keep_alive_ms: settings.keep_alive.as_millis() as u64,
+        };
+        let start = |slot: u8, empire: u8| Start { slot, empire, delay, first_input, humans: humans.clone(), session: session.clone(), snapshot: snapshot.clone() };
         let (own_end, link) = loopback();
         let own = start(0, humans[0].1);
         host.add_peer(0, own.empire, Box::new(own_end));
@@ -543,7 +646,7 @@ impl LobbyHost {
             let from = host.add_peer(id, empire, l);
             debug_assert_eq!(from, first_input);
         }
-        Ok(Started { host, own, link })
+        Ok(Started { host, own, link, door: self.door })
     }
 }
 
@@ -555,6 +658,8 @@ pub enum Status {
     Joining,
     InLobby,
     Started,
+    /// A rejoiner was let back in: the host's `Start` follows on the link ([`LobbyClient::into_link`]).
+    Admitted,
     Refused(Refusal),
 }
 
@@ -568,6 +673,8 @@ pub struct LobbyClient {
     pub state: Option<LobbyState>,
     pub chat: Vec<(u8, String)>,
     start: Option<Start>,
+    /// Coming back to a running game ([`LobbyClient::rejoin`]).
+    rejoin: bool,
 }
 
 impl LobbyClient {
@@ -575,7 +682,14 @@ impl LobbyClient {
     /// session.
     pub fn join(mut link: Box<dyn Transport>, name: &str, rules: [u8; 32], password: Option<String>, code: Option<u64>) -> Self {
         link.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION, rules, name: truncate(name, MAX_NAME), code }));
-        Self { link, password, key: None, status: Status::Joining, member: None, state: None, chat: Vec::new(), start: None }
+        Self { link, password, key: None, status: Status::Joining, member: None, state: None, chat: Vec::new(), start: None, rejoin: false }
+    }
+
+    /// Come back to a running game as `name` (the name the player had in the lobby): the same hello and password
+    /// check, then [`Status::Admitted`] and the host's `Start` on [`LobbyClient::into_link`]
+    /// (`session::ClientSession::wait_start`).
+    pub fn rejoin(link: Box<dyn Transport>, name: &str, rules: [u8; 32], password: Option<String>, code: Option<u64>) -> Self {
+        Self { rejoin: true, ..Self::join(link, name, rules, password, code) }
     }
 
     fn give_up(&mut self, why: Refusal) {
@@ -619,7 +733,7 @@ impl LobbyClient {
                         break;
                     }
                     self.member = Some(member);
-                    self.status = Status::InLobby;
+                    self.status = if self.rejoin { Status::Admitted } else { Status::InLobby };
                 }
                 LobbyMsg::State(s) if self.status == Status::InLobby => self.state = Some(s),
                 LobbyMsg::Said { member, text } if self.status == Status::InLobby => self.chat.push((member, text)),
@@ -653,5 +767,10 @@ impl LobbyClient {
     /// After the start: this member's [`Start`] and the link the lockstep continues on.
     pub fn into_game(self) -> Option<(Start, Box<dyn Transport>)> {
         Some((self.start?, self.link))
+    }
+
+    /// A rejoiner once [`Status::Admitted`]: the link the host's `Start` and the lockstep come over.
+    pub fn into_link(self) -> Option<Box<dyn Transport>> {
+        (self.status == Status::Admitted).then_some(self.link)
     }
 }

@@ -67,6 +67,10 @@ pub enum Do {
     Tanks,
     /// The transfer with the nearest own fleet (icon 0xe).
     Join,
+    /// The vehicle info panel (icon 9, re/screens/starmap.md §20).
+    TanksInfo,
+    /// The fleet's info panel (`AktRopIkon` 0xf in fleet mode, §19).
+    FleetInfo,
 }
 
 /// The radial menu while the button is held (`StarmapRopIkonMod`): the press point, `RopIkonFrame` (UI frames, up to
@@ -267,7 +271,7 @@ fn researched(state: &SaveState, t: usize, e: u8) -> bool {
 /// `GetTervEladasOszto` (2, fighters 10, the story's cheap sale 0.5, story designs nothing).
 pub fn resale(state: &SaveState, e: u8, d: usize) -> i32 {
     let Some(r) = design(state, e, d) else { return 0 };
-    let mut f: f32 = if r[0x36] != 0 { 10.0 } else { 2.0 };
+    let mut f: f32 = if r[0x36] & 1 != 0 { 10.0 } else { 2.0 };
     let story = i32_at(&state.mem.read(va::STORY_ADAT + 0xac, 4), 0) != 0;
     if story && i32_at(r, 0x44) == 5 && i16_at(r, 0x40) as i32 == e as i32 {
         f = 0.5;
@@ -395,6 +399,11 @@ impl Menus {
     pub fn fire(&mut self, icon: i32, state: &SaveState, sel: &Selection) -> Vec<Do> {
         let p = sel.planet as i32;
         let mut out = Vec::new();
+        // Every icon but the colony's clicks first (`Starmap_Main`'s `AktRopIkon` arms, exe 0x5b54e8..0x5b5e2b).
+        let click = Do::Act(Action::Sound(crate::audio::CLICK));
+        if matches!(icon, 1..=3 | 5..=8 | 0xe) || (icon == 0xd && !self.split_sent) {
+            out.push(click);
+        }
         match icon {
             1 => out.push(Do::Tanks),
             2 => out.push(Do::Production),
@@ -415,7 +424,9 @@ impl Menus {
                     self.split_sent = true;
                 }
             }
+            9 => out.push(Do::TanksInfo),
             0xe => out.push(Do::Join),
+            0xf if sel.mode == 2 => out.push(Do::FleetInfo),
             _ => {}
         }
         out
@@ -467,7 +478,8 @@ impl Menus {
     pub fn press_info(&mut self, state: &SaveState, at: [f32; 2]) -> Option<Vec<Do>> {
         let id = self.info_spot(state, at)?;
         let p = self.info?.planet as i32;
-        let set = |what: i32| vec![Do::Act(Action::Send(StarmapOrder::Setting { planet: p, what, value: 0 }))];
+        let click = Do::Act(Action::Sound(crate::audio::CLICK));
+        let set = |what: i32| vec![click.clone(), Do::Act(Action::Send(StarmapOrder::Setting { planet: p, what, value: 0 }))];
         Some(match id {
             0x5c => set(1),
             0x5d => set(2),
@@ -479,7 +491,8 @@ impl Menus {
             0x5a => self.open_menu(state, MenuKind::Tax, at),
             0x5e => self.open_menu(state, MenuKind::AutoBuild, at),
             0x60 => self.open_menu(state, MenuKind::Priority, at),
-            0x65..=0x6e => self.open_menu(state, MenuKind::Sale(id as i32 - 0x64), at),
+            // The station sale menu clicks as it opens (exe 0x5b85b2); the others only on their pick.
+            0x65..=0x6e => [vec![click], self.open_menu(state, MenuKind::Sale(id as i32 - 0x64), at)].concat(),
             _ => Vec::new(),
         })
     }
@@ -563,7 +576,9 @@ impl Menus {
             return Vec::new();
         }
         let p = self.info.map_or(sel.planet, |i| i.planet) as i32;
-        let send = |o| vec![Do::Act(Action::Send(o))];
+        // A pick clicks (exe 0x5b80ca, 0x5b8121, 0x5b817c, 0x5b85e9); the planet list zooms (`StarmapBeZoomol`'s
+        // sound, the mode forced back to 0 after it).
+        let send = |o| vec![Do::Act(Action::Sound(crate::audio::CLICK)), Do::Act(Action::Send(o))];
         match m.kind {
             MenuKind::Tax => send(StarmapOrder::Setting { planet: p, what: 8, value: m.hovered }),
             MenuKind::AutoBuild => send(StarmapOrder::Setting { planet: p, what: 9, value: m.hovered }),
@@ -572,6 +587,7 @@ impl Menus {
             MenuKind::Planets => {
                 let r = planet(state, m.hovered as usize);
                 vec![
+                    Do::Act(Action::Sound(crate::audio::SoundId::global(5))),
                     Do::Act(Action::Select(Selection { mode: 1, planet: m.hovered as usize, ..*sel })),
                     Do::Act(Action::Centre { x: f32_at(&r, 0x18), y: f32_at(&r, 0x1c) }),
                 ]

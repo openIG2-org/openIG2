@@ -13,8 +13,14 @@
 //   scancode, +0x14 sym), 0x401/0x402 button down/up (button +0xc, window x/y +0x10/+0x14); screen.js's injected
 //   events report through `sndInput` (Frida doesn't run our hooks inside our own NativeFunction calls).
 // `SOUND` (exe 0x919930) clear means PlaySound returns at once; the record says so (`on`).
+// - Music (re/screens/audio.md §4): `PlayMusicExistCheck(id, a, immediate, loop)` exe 0x540430 → {k: 'music'} with
+//   `ZeneEppenJatszott` 0xe3e3ac / `ZeneRegiMainZene` 0xe3e3b0 and the race `PlayerFaj[EN]`; `SoundEngine::LoadWave`
+//   with flags 0x10 (a track starts) → {k: 'track', name}; `FRISSIT2_SoundSystem` 0x55c4f0 → {k: 'fade'} whenever
+//   `ZeneHangero` 0xe4167c / `ZeneHangeroCel` 0x91a694 / the duck levels 0xe4166c, 0xe41678 change.
 const SND = { PlaySound: 0x55cd20, PlaySoundGlobal: 0x55d0b0, PlayWav: 0x563e60, PlayMp2: 0x563df0, SpeechPlay: 0x563d50,
-  PlayMessagesHang: 0x55c9b0, Handler: 0x4e2db0, UiFrame: 0xb772a4, SoundOn: 0x919930, MouseX: 0xdb4654, MouseY: 0xdb4658 };
+  PlayMessagesHang: 0x55c9b0, MusicExistCheck: 0x540430, LoadWave: 0x55dfb0, SoundSystem: 0x55c4f0, Eppen: 0xe3e3ac,
+  Regi: 0xe3e3b0, Hangero: 0xe4167c, Cel: 0x91a694, Duck: 0xe4166c, DuckReal: 0xe41678, En: 0x912a3c, Faj: 0xbae574,
+  Handler: 0x4e2db0, UiFrame: 0xb772a4, SoundOn: 0x919930, MouseX: 0xdb4654, MouseY: 0xdb4658 };
 const SND_REC = 0x11c;
 let sndLast = null, sndGlobal = null, sndCount = 0;
 
@@ -48,7 +54,40 @@ function sndRecord(fn, extra) {
 
 const sndStr = (p) => { try { return p.isNull() ? null : p.readCString(); } catch (e) { return null; } };
 
+let sndFade = null;
+function sndMusicState() {
+  return { eppen: va(SND.Eppen).readS32(), regi: va(SND.Regi).readS32(), hangero: va(SND.Hangero).readFloat(), cel: va(SND.Cel).readFloat(),
+    duck: va(SND.Duck).readS32(), duckReal: va(SND.DuckReal).readFloat() };
+}
+
+function hookMusic() {
+  Interceptor.attach(va(SND.MusicExistCheck), {
+    onEnter(args) {
+      const race = va(SND.Faj).add(va(SND.En).readS32()).readU8();
+      send({ k: 'music', ...sndNow(), id: args[0].toInt32(), a: args[1].toInt32() & 0xff, immediate: args[2].toInt32() & 0xff,
+        loop: args[3].toInt32() & 0xff, race, ...sndMusicState() });
+    },
+  });
+  Interceptor.attach(va(SND.LoadWave), {
+    onEnter(args) {
+      // thiscall on the engine: name, flags, &handle.
+      if ((args[1].toInt32() & 0x12) === 0x10) send({ k: 'track', ...sndNow(), name: sndStr(args[0]), ...sndMusicState() });
+    },
+  });
+  Interceptor.attach(va(SND.SoundSystem), {
+    onLeave() {
+      const m = sndMusicState();
+      const key = [m.hangero, m.cel, m.duck, m.duckReal].join();
+      if (key !== sndFade) {
+        sndFade = key;
+        send({ k: 'fade', ...sndNow(), ...m });
+      }
+    },
+  });
+}
+
 function hookSounds() {
+  hookMusic();
   Interceptor.attach(va(SND.PlaySoundGlobal), {
     onEnter(args) { sndGlobal = args[0].toInt32(); },
     onLeave() { sndGlobal = null; },

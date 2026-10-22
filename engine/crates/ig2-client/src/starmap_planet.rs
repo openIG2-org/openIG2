@@ -40,6 +40,8 @@ pub struct Planets {
     meshes: [Option<Mesh>; 8],
     cloud: Option<Mesh>,
     noise: TexId,
+    /// The battle screen's planet `b{k}2.xvb` (re/screens/spacewar.md §1.1 step 7), loaded on demand.
+    battle: Vec<Option<Mesh>>,
 }
 
 impl Planets {
@@ -47,7 +49,21 @@ impl Planets {
         let meshes = std::array::from_fn(|k| Mesh::load(r, install, &format!("b{k}0.xvb")));
         let cloud = Mesh::load(r, install, "felhoo_0.xvb");
         let noise = r.add_texture_linear(&Image { width: PLASMA, height: PLASMA, rgba: plasma().iter().flat_map(|&v| [v, v, v, 255]).collect() });
-        Self { meshes, cloud, noise }
+        Self { meshes, cloud, noise, battle: Vec::new() }
+    }
+
+    /// Load the battle screen's planet meshes `b{k}2.xvb`.
+    pub fn load_battle(&mut self, r: &mut Renderer, install: &Install) {
+        self.battle = (0..8).map(|k| Mesh::load(r, install, &format!("b{k}2.xvb"))).collect();
+    }
+
+    /// The battle planet (`initgfx`: `AddToScene(…, R·1.16)`, `RotateObj(rot)`, `MoveObj(at)`), `scale` and `at` in
+    /// the starmap's world, lit from the world direction `light` (towards the light).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_battle_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, light: [f32; 3]) {
+        if let Some(Some(m)) = self.battle.get((surface.max(1) as usize - 1) % 8) {
+            m.add(scene, draws, scale, rot, at, eye, None, normalise(light));
+        }
     }
 
     pub fn ready(&self, surface: u8) -> bool {
@@ -59,7 +75,7 @@ impl Planets {
     #[allow(clippy::too_many_arguments)]
     pub fn add_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, size: u8, spin: f32, at: [f32; 3], eye: &Eye) {
         if let Some(m) = &self.meshes[(surface.max(1) as usize - 1) % 8] {
-            m.add(scene, draws, scale(size) / 8.0, (0.0, 0.0, spin), at, eye, None);
+            m.add(scene, draws, scale(size) / 8.0, (0.0, 0.0, spin), at, eye, None, eye.matrix[2]);
         }
     }
 
@@ -70,7 +86,7 @@ impl Planets {
     #[allow(clippy::too_many_arguments)]
     pub fn add_clouds(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, size: u8, turn: f32, at: [f32; 3], eye: &Eye) {
         if let Some(m) = &self.cloud {
-            m.add(scene, draws, (scale(size) + 0.0001) / 8.0, (turn, 5.0, 0.0), at, eye, Some(self.noise));
+            m.add(scene, draws, (scale(size) + 0.0001) / 8.0, (turn, 5.0, 0.0), at, eye, Some(self.noise), eye.matrix[2]);
         }
     }
 }
@@ -121,10 +137,10 @@ impl Mesh {
     /// the meshes' own are mirrored in x and y, and the captures match outward ones [obs].
     /// `cloud`: the noise texture of the `CLOUD` material, drawn over the planet in gamma space.
     #[allow(clippy::too_many_arguments)]
-    fn add(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>) {
+    fn add(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, light: [f32; 3]) {
         let xf = Placement::add_to_scene(self.origin, scale).world(rot, at);
         let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-        let towards_eye = eye.matrix[2];
+        let towards_eye = light;
         for part in &self.parts {
             let start = scene.dynamic.len() as u32;
             for tri in part.verts.chunks_exact(3) {

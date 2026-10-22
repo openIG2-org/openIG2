@@ -252,6 +252,11 @@ pub enum Command {
     /// Packets 0x5b, 0x5c, `MULTIGET_Info` exe 0x4ece60: the info screen's money shares or spending limit
     /// (`ig2_sim::game::InfoOrder`) as its message type and dwords (each f64 as its two words).
     Info { kind: i32, values: Vec<i32> },
+    /// Ours (ADR 0011 §5), sent only by the host ([`crate::lockstep::Host::inject`]): the issuer's player dropped
+    /// and didn't come back in time; it has left every running space battle's screen.
+    PlayerAway,
+    /// Ours: the issuer's player rejoined; on the running space battle's screen again.
+    PlayerBack,
 }
 
 impl From<InfoOrder> for Command {
@@ -276,6 +281,11 @@ pub struct Stamped {
 }
 
 impl Command {
+    /// Only the host sends it ([`crate::lockstep::Host::inject`]); a peer's copy is dropped.
+    pub fn host_only(&self) -> bool {
+        matches!(self, Command::PlayerAway | Command::PlayerBack)
+    }
+
     /// The sim-originated command a tick's event sends (the sim's own `Multi_Send`), if any.
     pub fn from_event(e: &GameEvent) -> Option<Command> {
         e.emptied_fleet().map(|f| Command::FleetEmptied { fleet: f as u32 })
@@ -321,6 +331,8 @@ impl Command {
                     game.info_order(issuer, o);
                 }
             }
+            Command::PlayerAway => game.player_away(issuer),
+            Command::PlayerBack => game.player_back(issuer),
         }
     }
 }

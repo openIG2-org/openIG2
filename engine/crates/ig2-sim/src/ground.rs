@@ -21,6 +21,7 @@ use crate::spacewar::{CombatWorld, Design, DesignRules, Vehicle, NO_DESIGN};
 mod ai;
 mod atjaras;
 mod battle;
+mod orders;
 mod path;
 mod realtime;
 mod tick;
@@ -29,6 +30,7 @@ mod voices;
 pub use ai::GroundAi;
 pub use atjaras::{generate_map, Passability};
 pub use battle::*;
+pub use orders::{GroundOrder, GroundOrderEvent};
 pub use path::PathOut;
 pub use realtime::*;
 pub use tick::Clock;
@@ -114,6 +116,8 @@ pub struct GroundRules {
     pub turn_speeds: Vec<f32>,
     /// Armour factors `[hull·3 + side]` (exe 0x8F858C).
     pub armour: Vec<f32>,
+    /// The width the exe reads for building kind 0 (out of its table, `ig2_rules::Rules::building_footprint0`).
+    pub kind0_width: i32,
 }
 
 impl GroundRules {
@@ -491,6 +495,8 @@ pub enum GroundEvent {
     MineExploded { unit: usize },
     /// `SelfDestruct(p)` ran (the colony screen drops its selected building, exe 0xB9C074).
     SelfDestructed,
+    /// A ground-war order's line or sound (`MULTIGET_Colony`, [`GroundOrder`]).
+    Order(GroundOrderEvent),
     /// `BolygoElfoglal(p, owner)` with `BattlesWon[owner] += 1` (a won war).
     Captured { owner: u8 },
     /// `BolygoElfoglal(p, 0)`: no building left.
@@ -1261,7 +1267,7 @@ impl<'a> War<'a> {
         if t < 0 {
             // `+0x14c`: the range plus half the building's width (`Building` 0x8F1F28 `+0x58`).
             let kind = self.planet.buildings.get((-t) as usize).map_or(0, |b| b.kind);
-            let w = self.map.map_or(0, |m| m.footprints.get(kind as usize).map_or(0, |f| f.0));
+            let w = self.footprint_w(kind);
             let me = self.um(i);
             me.rt.bld_range = (w / 2) as f32 + me.rt.range;
         } else if (t as usize) < self.n() {

@@ -1,0 +1,10 @@
+{
+ "screen": "starmap",
+ "note": "The fleet's info panel (re/screens/starmap.md §19): run with --fleets 2 --rop-fleet 1 (the first new fleet selected). The info box opens it (zoom in), a cell press, the exit button closes it (zoom out). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 100, "press": [50, 450]},
+  {"t": 300, "press": [200, 100]},
+  {"t": 450, "press": [500, 400]}
+ ],
+ "grabs": [90, 250, 420, 600]
+}

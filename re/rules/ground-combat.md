@@ -1132,13 +1132,13 @@ whatever is on screen. `WF::Refresh`'s MP end (exe 0x494b70.., ELF 0x48d750 line
 `GetStatus() ≠ −1` → `GroundWarFinished(p, s, false)`, `+0x190 := 1`; `GroundWarFinished` clears the flag (§6.1
 step 12). MP routing (§2) sends a war to real time only when both sides are human; the AI (`WF::MI`) skips human
 empires and idle fire needs a target that has fired, so without the players' orders (`MULTIGET_Colony`, ELF
-0x4ec2e0: move 0x22, waypoint 0x23, target 0x24, stop 0x25, detonate 0x12d, landing zone 0x12f, air strike 0x130,
-…; not ported) the two sides never engage [original behaviour].
+0x4ec2e0: move 0x22, waypoint 0x23, target 0x24, stop 0x25, detonate 0x12d, retreat 0x12f, air strike 0x130, mine
+laying 0x134; re/screens/colony.md §9.1, ported as `War::order`) the two sides never engage [original behaviour].
 
 The canonical view (ours, `multiplayer.md` §7) runs exactly this on the sim clock (`game::realtime`): the flag and
 planet are synced state, `WF::MI`/`WF::Refresh` of that planet run in the tick, `GroundContext::multiplayer` is set
 (MP landing, retreat, status and end rules) and `mp_war` mirrors the flag; the dropships (§11.16) fly once per sim
 tick for every battlefield (the 100 Hz UI's every fifth pass is 20 Hz). The capture of `GroundWarFinished` step 7 is
 carried out by `Game::with_wars` after the field's part (the same order: before the abandonment test). Tested by
-`ig2-net/tests/lockstep.rs::two_humans_fight_a_ground_war_in_lockstep`; the MP end branch is not traced against the
+`ig2-net/tests/lockstep.rs::two_humans_fight_a_ground_war_in_lockstep` (with orders), `a_player_drops_mid_battle_and_rejoins`; the MP end branch is not traced against the
 exe (MP needs a second machine).

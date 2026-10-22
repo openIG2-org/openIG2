@@ -1,0 +1,84 @@
+{
+ "screen": "grwar",
+ "note": "The colony screen in a ground war (re/screens/colony.md \u00a711, run_screen.py --grwar --grwar-arm 1): select all (a), a right click on the ground (move), the stop button, the air strike armed and fired, the mine button, retreat on, a click in the view (select), S, retreat off. Times are UI ticks.",
+ "events": [
+  {
+   "t": 100,
+   "key": "a"
+  },
+  {
+   "t": 160,
+   "press": [
+    400,
+    250
+   ],
+   "button": 3
+  },
+  {
+   "t": 220,
+   "press": [
+    327,
+    458
+   ]
+  },
+  {
+   "t": 280,
+   "press": [
+    360,
+    458
+   ]
+  },
+  {
+   "t": 340,
+   "press": [
+    420,
+    300
+   ]
+  },
+  {
+   "t": 400,
+   "press": [
+    227,
+    458
+   ]
+  },
+  {
+   "t": 460,
+   "press": [
+    425,
+    458
+   ]
+  },
+  {
+   "t": 520,
+   "press": [
+    300,
+    200
+   ]
+  },
+  {
+   "t": 580,
+   "key": "s"
+  },
+  {
+   "t": 640,
+   "press": [
+    425,
+    458
+   ]
+  }
+ ],
+ "grabs": [
+  90,
+  150,
+  200,
+  300,
+  360,
+  420,
+  480,
+  540,
+  600,
+  660
+ ],
+ "tail": 60
+}

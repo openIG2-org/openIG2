@@ -260,6 +260,8 @@ impl Plan {
 /// The screen's state (`Spy_Belep`'s globals).
 #[derive(Debug, Clone)]
 pub struct SpyScreen {
+    /// The sounds the screen started since the window last took them (re/screens/audio.md §6.4).
+    pub sounds: Vec<crate::audio::SoundId>,
     /// `AktKem`, `SpyBeszolasKemBackup`, `SpyOldKem`.
     pub akt: usize,
     backup: usize,
@@ -315,6 +317,7 @@ impl SpyScreen {
     /// `spyKELLKINYITAS`: the frame opens from `spyframe` 0 (else it is open at once, re/screens/spy.md §1.1).
     pub fn enter(d: &SpyData, opening: bool) -> Self {
         let mut s = Self {
+            sounds: Vec::new(),
             akt: 1,
             backup: 0,
             old_kem: -1,
@@ -559,6 +562,10 @@ impl SpyScreen {
     pub fn draw_frame(&mut self) {
         if self.frame >= 25.0 && self.akt as i32 != self.old_kem && self.flip as i32 != 0 {
             self.flip = 0.0;
+            // `Spying3DUpdate` (exe 0x590410): the turn's sound once the screen is open (`spyKINYITVA`).
+            if self.frame >= 50.0 {
+                self.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Spy, 1));
+            }
             self.old_kem = self.akt as i32;
         }
         if self.frame >= 25.0 && !self.closing && self.flip as i32 != 30 && self.flip as i32 > 15 {
@@ -777,6 +784,8 @@ impl SpyScreen {
         let Some((i, z)) = best else { return };
         let Some(k) = Self::pedestals(d)[i] else { return };
         if z > -880.0 && d.spy(k).state > 0 {
+            // `BeallitKemekAtlatszosaga` (exe 0x583cb0): a pick clicks, the current spy's too.
+            self.sounds.push(crate::audio::CLICK);
             self.akt = k;
             if d.spy(k).state == 1 {
                 self.plan = Plan::init();
@@ -787,6 +796,14 @@ impl SpyScreen {
     /// `Spy_Main`'s branches for a pressed hot-spot.
     fn icon(&mut self, d: &SpyData, t: &SpyTexts, id: u32, out: &mut Vec<Command>) {
         let spy = self.akt as u8;
+        // `Spy_Main` (exe 0x58d410): the buttons and lists click on the press, the skills with `Global[2]`; the kill
+        // list not while the tutorial pauses.
+        match id {
+            0x19..=0x1c => self.sounds.push(crate::audio::SoundId::global(2)),
+            3 if d.state.mem.u8(ig2_sim::save::va::TUTORIAL_PAUSED) != 0 => {}
+            3 | 0xe..=0x18 | 0x1e..=0x21 => self.sounds.push(crate::audio::CLICK),
+            _ => {}
+        }
         match id {
             1 => self.plan = Plan::init(),
             2 => out.push(Command::Spy { order: SpyOrder::Dismiss { spy } }),

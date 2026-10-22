@@ -696,3 +696,44 @@ from t 60 the poses drift (the sphere's size and turn, the corner light streaks)
 counters are missing. At rest only the ball's model turn differs. The tooltip shows in the exe at t 320, in ours
 later (#10); the exe draws the pointer (#11). From t 420 the two show different categories: PgDn goes the other way in
 ours (#6). Sounds of the run: re/screens/sound.md §4.
+
+## 2026-10-22, the main menu as a frame sequence (`mainscr`, re/screens/mainscr.md §13–§14)
+
+`run_screendiff.py main --script tools/trace/scripts/mainscr.json` (the exe booted to the menu with `run_screen.py --boot`, no save). Frame mean 2.6 / 4.0 / 5.5 at t 5 / 60 / 120 (pass), 6.6–8.0 from t 180, 10.0 at t 360 (the fly-out). Rings, labels and hover match; the leftovers are deviations.md rows 17–20 (row 3 updated). Sounds: no PlaySound-family call on any ring action; the scene's sounds go through `MainPlaySound` (mainscr.md §13).
+
+## 2026-10-22, the SpaceWar screen at rest (`spacewar-screen`, re/screens/spacewar.md §9)
+`run_screendiff.py <install> S.sav spacewar:<grab>.json` (grabs from `run_spwc.py --grab-ticks`; two battles, two moments each, 800 x 600; regions topbar, view, console, info_box, radar, weapons; `_local/screendiff/spacewar/`). Best-offset means:
+
+| grab | frame | topbar | view | console | info_box | radar | weapons |
+|---|---|---|---|---|---|---|---|
+| grab3 t600 | 6.07 | 5.21 | 5.19 ✔ | 10.04 | 5.51 ✔ | 10.55 | 10.92 |
+| grab3 t1200 | 6.20 | 5.21 | 5.21 ✔ | 11.37 | 5.39 ✔ | 10.57 | 10.92 |
+| grab4 t300 | 8.08 | 5.33 | 8.18 | 10.34 | 6.33 | 10.18 | 8.74 |
+| grab4 t800 | 8.04 | 5.33 | 8.18 | 9.84 | 6.16 | 10.22 | 8.74 |
+
+
+Positions match (planet limb, ships, weapon buttons, radar dots and frustum, info text; brackets within 2 px, slightly larger). Differences: light and colour (planet and weapon buttons a little brighter, the panel's moving side lights, the radar frustum fainter), the grid's look, the info model's spin phase (not dumped), the cursor (exe only), the top bar's speed buttons (battle state not drawn). Listed in `re/deviations.md` #21-#27.
+
+## 2026-10-22, colony ground war (`grwar:17`, re/screens/colony.md §11.6)
+
+`run_screendiff.py … quick-1.sav grwar:17`: frame 30.4 -> 13.45. Top bar 2.59 (match), texts 4.80 (match; the attack
+banner), radar 9.06, bottom_info 14.95 (the exe's unit picture is missing), buttons 51.99 (the exe's terrain shadow
+band, not the buttons: the retreat button matches), view 8.28; the rings line up. regression-sweep: colony 42 shows no
+regressions (frame 10.24, bottom_info 8.10 better). Sound log: a move order plays Speech::Play; the buttons click only
+when they act.
+
+## 2026-10-22, the starmap's fleet and vehicle info panels (`starmap-fleet-panels`, re/screens/starmap.md §19–§20)
+`ig2-client::starmap_info` draws the fleet panel (`StarmapFleetMode`: the info box's left release in fleet mode) and
+the vehicle panel (`StarmapTanksInfo`: radial icon 9): cells, faders, texts, the preview model, the DesignKeret1 frame,
+scrolling and the sale menus. Captures of quick-1.sav, planet 71 (`run_screendiff.py` screens `fleetinfo` / `tanksinfo`,
+wait 420); mean difference per region, best offset:
+
+| Screen | frame | topbar | list | model | data | scroll_bar | exit |
+|---|---|---|---|---|---|---|---|
+| fleetinfo | 4.70 | 0.06 | 5.56 | **6.53** | 4.45 | **6.91** | 2.97 |
+| tanksinfo | 4.73 | 0.06 | 5.23 | **8.42** | 3.71 | 4.31 | 3.44 |
+
+Left: the preview models' spin phase (vehicles) and the fleet preview's pitch/material (the yaw is `InfoAlapRotation`
+mapped to pi - t [obs at t = 0.91 and 2.69]); the models' warmer, darker lighting; the faders' random texture
+drift/shine (hud.md §1.2, not drawn); the fleet glow on the map under the scroll bar is slightly brighter. The exe runs
+Hungarian texts. Sounds verified with the sound-id tracer (`tools/trace/scripts/fleetinfo.json`). Deviations #41-#48.

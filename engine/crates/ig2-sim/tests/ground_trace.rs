@@ -90,6 +90,7 @@ fn ground_rules(r: &Rules) -> GroundRules {
         fortress: r.ground_fortress_weapons.clone(),
         turn_speeds: r.ground_turn_speeds.clone(),
         armour: r.ground_armour.clone(),
+        kind0_width: r.building_footprint0.0,
     }
 }
 

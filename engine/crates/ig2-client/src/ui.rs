@@ -492,14 +492,27 @@ impl Hud {
         let counter = (input.time * 100.0) as i32;
         let sel = crate::orders::Selection { mode: 1, planet: curr.planet, fleet: 0 };
         let ctx = crate::colony_ui::Ctx { state, snap: curr, rules, sim: input.sim, texts: &self.texts, tech_name: &|t| self.tech_name(t) };
-        // `ColonyInfoMod` 2 (a building selected) shows `ColonyKisInfo` instead.
-        if !ui.draw_building_info(f, &ctx, font, self.white, &v, &self.palette) {
+        // The ground war's parts (colony.md §11): `Tervek[side]+0x84·design`'s name (+0), the weapon pod's tech name.
+        let record = |u: &crate::colony::UnitView| state.designs.get(u.side.max(0) as usize).and_then(|d| d.get(u.design.max(0) as usize)).copied();
+        let design_name = |u: &crate::colony::UnitView| record(u).map_or_else(Vec::new, |r| r[..0x14].iter().copied().take_while(|&b| b != 0).collect());
+        let weapon_name = |u: &crate::colony::UnitView| {
+            let pod = if u.flags & ig2_sim::ground::flag::TURRET != 0 { u.design as usize } else { record(u).map_or(0, |r| if r[0x51] != 0 { r[0x51] } else { r[0x52] } as usize) };
+            if pod == 0 { Vec::new() } else { self.tech_name(pod) }
+        };
+        let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name };
+        let w = crate::colony_war::WarCtx { snap: curr, en: state.mem.i32(ig2_sim::save::va::EN), tutorial_paused: false };
+        // `ColonyInfoMod` 1 (units selected) shows the units, 2 (a building selected) `ColonyKisInfo`'s building half.
+        if !ui.war.draw_unit_info(f, &w, &d) && !ui.draw_building_info(f, &ctx, font, self.white, &v, &self.palette) {
             let info = crate::starmap_hud::InfoBox::new(state, rules, &t, &sel, self.starmap.step(curr.planet, counter), counter);
             for (s, x, y, size, k) in &info.lines {
                 font.text(f, &v, s, *x, *y, 0x13, *size, crate::font::Align::Left, self.palette.get(*k).copied().unwrap_or([1.0; 3]), None);
             }
         }
         ui.draw(f, &ctx, font, self.white, &v, &self.palette, &self.hu17, input.cursor, input.now_ms);
+        // The ground war's buttons, marks and lines (colony.md §11).
+        if let Some(gm) = maps.get(curr.map) {
+            ui.war.draw(f, &w, &d, view, gm, input.cursor);
+        }
     }
 
     /// The starmap's planet and fleet names (re/screens/hud.md §4.2, §4.3).
@@ -513,11 +526,11 @@ impl Hud {
     /// The starmap's production view and transfer panel (re/screens/starmap.md §12–§13): the faders, the models'
     /// texture `models` (rendered by [`crate::starmap_panels::PanelModels`]), the texts.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_starmap_panels(&self, f: &mut Frame, p: &crate::starmap_panels::Panels, state: &SaveState, sel: &crate::orders::Selection, models: Option<TexId>, size: [f32; 2], time: f32) {
+    pub fn draw_starmap_panels(&self, f: &mut Frame, p: &crate::starmap_panels::Panels, state: &SaveState, rules: &ig2_rules::Rules, sel: &crate::orders::Selection, models: Option<TexId>, size: [f32; 2], time: f32) {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
-        p.draw_under(f, &d, state);
-        p.draw_over(f, &d, state, sel, models);
+        p.draw_under(f, &d, state, sel);
+        p.draw_over(f, &d, state, sel, rules, models);
     }
 
     /// The starmap's radial menu, the planet's long info and the select menus (re/screens/starmap.md §14–§17) at the

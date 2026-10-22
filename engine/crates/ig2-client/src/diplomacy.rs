@@ -504,6 +504,8 @@ pub struct Input {
 
 /// The screen's own state (the original's globals): selection, menus, the composed texts, the fades.
 pub struct Screen {
+    /// The sounds the screen started since the window last took them (re/screens/audio.md §6.5).
+    pub sounds: Vec<crate::audio::SoundId>,
     pub menus: Vec<Menu>,
     pub metrics: Metrics,
     /// `PlayerSelected`.
@@ -564,6 +566,7 @@ impl Screen {
             menus[id] = Menu { x: 0xa8, y: 0x15e, ..Menu::default() };
         }
         let mut s = Self {
+            sounds: Vec::new(),
             menus,
             metrics,
             selected: -1,
@@ -635,6 +638,8 @@ impl Screen {
         self.shown.push(root);
         let root_row = self.menus[root].row_at(&m, inp.at);
         if inp.pressed && root_row.is_some() {
+            // `DiplomGfx2D_1` (exe 0x4b89e0): a press on a menu clicks.
+            self.sounds.push(crate::audio::CLICK);
             self.cascade = Some(Cascade { root, row: root_row, sub_row: None });
         }
         let Some(mut c) = self.cascade.filter(|c| c.root == root) else {
@@ -694,6 +699,9 @@ impl Screen {
         let r = self.menus[id].row_at(&m, inp.at);
         self.hover.push((id, r));
         if inp.pressed {
+            if r.is_some() {
+                self.sounds.push(crate::audio::CLICK);
+            }
             r
         } else {
             None
@@ -850,6 +858,11 @@ impl Screen {
                 let x = h[0] + 340.0 - if k > 3 { 30.0 } else { 0.0 };
                 let (dx, dy) = (x - inp.at[0], h[1] + 240.0 - inp.at[1]);
                 if k as i32 != self.selected && v.alive_slot(k) && (dx * dx + dy * dy).sqrt() < 40.0 {
+                    // `DiplomGfx2D_2` (exe 0x4bc610): the pick clicks; a head at rest turns with `Dip_Hangok[2]`.
+                    self.sounds.push(crate::audio::CLICK);
+                    if self.turn as i32 == 30 {
+                        self.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 2));
+                    }
                     self.selected = k as i32;
                     self.cascade = None;
                     self.proposal = None;

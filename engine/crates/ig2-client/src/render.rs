@@ -766,8 +766,13 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
         // `AktEpulet` isn't saved: entering selected the first building (`SelectBuildingRelative(1)`) [inf].
         ui.selected = curr.buildings.first().map_or(0, |b| b.slot);
     }
+    // `--colony-ui war[:N]`: the units the exe's save has selected (flag 8, colony.md §11), `SpecWeaponMode` N.
+    if let Some(m) = o.colony_ui.as_deref().and_then(|m| m.strip_prefix("war")) {
+        ui.war.seed(curr.units.iter().filter(|u| u.flags & 8 != 0).map(|u| u.slot));
+        ui.war.armed = m.strip_prefix(':').and_then(|n| n.parse().ok()).unwrap_or(0);
+    }
     for _ in 0..100 {
-        ui.ui_frame(&curr, &mut view.camera);
+        ui.ui_frame(&curr, world.game.state.mem.i32(ig2_sim::save::va::EN), &mut view.camera);
     }
     let mut cursor = [320.0, 240.0];
     let mut now_ms = 0;
@@ -792,10 +797,14 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
                 ui.press(&c, [220.0, 450.0], true, 0);
                 cursor = [250.0, 440.0];
             }
-            m => return Err(format!("--colony-ui {m}: pick, demolish or build")),
+            m if m.starts_with("war") => {}
+            m => return Err(format!("--colony-ui {m}: pick, demolish, build or war[:N]")),
         }
     }
-    view.overlay = ui.overlay();
+    view.overlay = ui.overlay(&curr, world.game.state.mem.i32(ig2_sim::save::va::EN));
+    if let Some(gm) = l.rules.ground_maps.get(curr.map) {
+        ui.war.project(&view, gm, &curr);
+    }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut panel_model = crate::colony_ui::PanelBuilding::default();
     let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, ui.spin(), size);
@@ -890,12 +899,16 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     let mut rendered = None;
+    // The sounds by the tracer's `t` (the ticks done when the frame began): tick k's own sounds at k − 1, an event
+    // at t's at t (it goes in at the frame before tick t + 1).
+    let mut heard: Vec<(Option<u32>, crate::audio::SoundId)> = s.sounds.drain(..).map(|id| (None, id)).collect();
     // Per tick: the tick, the grab (the frame drawn after it), then the events that go in before the next tick.
     for tick in 0..=script.end() {
         if tick > 0 {
             s.step(&world.game.state);
             s.tooltip(&world.game.state, &models.mask, &tips, s.frames as f64 * 10.0);
             rendered = None;
+            heard.extend(s.sounds.drain(..).map(|id| (Some(tick - 1), id)));
         }
         if script.grabs.contains(&tick) {
             let (tex, lines) = models.render(r, &l.install, &l.tables, &s, &world.game.state, size);
@@ -959,8 +972,11 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
                 world.send(c);
             }
             world.pump();
+            heard.extend(s.sounds.drain(..).map(|id| (Some(tick), id)));
         }
     }
+    let path = crate::script::write_sounds(out, &heard)?;
+    println!("{}: {} sounds", path.display(), heard.len());
     Ok(())
 }
 
@@ -973,6 +989,13 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
 }
 
 fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
+    // An input script on the starmap or a colony screen runs the window's code headless.
+    if let (None | Some("starmap"), Some(path)) = (o.screen.as_deref(), &o.script) {
+        return crate::window::script_run(o, out, &crate::script::Script::load(path)?);
+    }
+    if o.screen.as_deref() == Some("main") {
+        return crate::mainscr_scene::snapshot(o, out);
+    }
     let l = crate::load(o)?;
     let mut world = crate::world::World::load(&l.save, &l.rules, &l.tech_defaults, &l.volatile);
     world.set_speed(o.speed);
@@ -1029,6 +1052,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     // The message line at the UI's pace (10 ms frames).
     for _ in 0..o.ui_frames {
         hud.scroller.step(&mut || world.pop_message());
+    }
+    if o.screen.as_deref() == Some("spacewar") {
+        return crate::spacewar_screen::snapshot(o, out, &l, &world, &mut r, &mut hud);
     }
     if o.screen.as_deref() == Some("spy") {
         return crate::spy_screen::snapshot(o, out, &l, &world, &mut r, &mut hud);
@@ -1120,22 +1146,28 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     // The transfer panel opens zoomed in to 590 (`StarmapBeZoomol`, re/screens/starmap.md §13.1); a save's zoom is
     // clamped to 580.
-    if o.panel.as_deref().is_some_and(|p| p.starts_with("transfer")) {
+    if o.panel.as_deref().is_some_and(|p| p.starts_with("transfer") || p == "fleet") {
         view.camera.zoom = 590.0;
     }
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
     let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
     hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t);
-    let panels = match &o.panel {
+    let mut panels = match &o.panel {
         Some(panel) => crate::starmap_panels::Panels::opened(panel)?,
         None => crate::starmap_panels::Panels::default(),
     };
+    // An info panel at rest: its selection frame morphed in (re/screens/starmap.md §19.4).
+    if let Some(i) = &mut panels.info {
+        i.advance(&world.game.state, &sel, t, view.camera.zoom, 0);
+        i.advance(&world.game.state, &sel, t, view.camera.zoom, 200);
+        i.turn = o.info_alap;
+    }
     if o.panel.is_some() {
         let mut models = crate::starmap_panels::PanelModels::new(&mut r);
         let size = [o.size.0 as f32, o.size.1 as f32];
         let tex = models.render(&mut r, &l.install, &l.tables, &panels, &world.game.state, &sel, size);
-        hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &sel, tex, size, t);
+        hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &l.tables, &sel, tex, size, t);
     }
     if o.planet_info || o.rop_menu.is_some() || o.menu.is_some() {
         let c = &view.camera;

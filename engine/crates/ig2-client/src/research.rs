@@ -17,7 +17,9 @@ use ig2_net::{Command, ResearchCmd};
 use ig2_sim::colony_side::TechTable;
 use ig2_sim::save::{va, SaveState};
 
+use crate::audio::{SoundId, CLICK};
 use crate::font::{Align, Virtual};
+use ig2_rules::sounds::Table;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, Target, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
 use crate::scene::{self, Look, Model, Placement, M3, V3};
@@ -177,6 +179,9 @@ pub struct Research {
     cones: [f32; 3],
     /// The category whose models are placed (`OldResearchTerulet` for `LoadTalalmanyVectorok`).
     placed: usize,
+    /// The sounds this screen started since the owner last took them (re/screens/audio.md §6): `Res_Hangok` and the
+    /// clicks of `PlaySoundGlobal`.
+    pub sounds: Vec<SoundId>,
     /// `ButtonPressed`: an order is on its way (`MULTIGET_Research` clears it for the issuer).
     pub button_pressed: bool,
     /// `ForgatasAlatt`: the middle wheel turned this frame (its category hot-spots are off).
@@ -286,6 +291,7 @@ impl Research {
             press_done: true,
             slot_button: s.wheel_button,
             pressed: Vec::new(),
+            sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
             held: false,
             design: Default::default(),
@@ -298,6 +304,8 @@ impl Research {
         // category once the screen is open.
         r.turn_wheel(m.i32(at::FRONT));
         r.slot_kep = s.wheel_kep;
+        // `Research_Belep` exe 0x523540: the opening's sound.
+        r.sounds.push(SoundId::new(Table::Res, 0));
         r.button = -1;
         r.old_area = r.area;
         // `SetDoubleTexture`: the urgent button starts pressed in.
@@ -471,15 +479,21 @@ impl Research {
             }
             Some(id) => {
                 if let Some(&(_, a)) = SPOT_AREA.iter().find(|&&(s, _)| s == id) {
+                    // `Forgotabla` (ELF 0x5e8230): the wheel's click.
+                    self.sounds.push(CLICK);
                     self.choose_area(a);
                 }
             }
             None => {
                 if let Some(k) = self.list_row(state, at) {
+                    // `ResearchGfx2D_2` (ELF 0x5dfb9a): a known tech's row.
+                    self.sounds.push(CLICK);
                     self.choose_field(k);
                 } else if self.zoom == ZOOM_MIN {
                     // A model's projected centre within 30 pixels.
                     if let Some(&(k, _)) = models.iter().find(|(k, c)| self.near_dir[*k] == 0 && (c[0] - at[0]).hypot(c[1] - at[1]) < 30.0) {
+                        // `CheckIfTalalmanyokFolottVan` (ELF 0x5e2a9b): `PlaySoundGlobal(2)`.
+                        self.sounds.push(SoundId::global(2));
                         self.choose_field(k as i32);
                     }
                 }
@@ -545,11 +559,13 @@ impl Research {
         if current == 0 && self.can_start(state) {
             self.button_pressed = true;
             (self.button, self.button_new) = (0xcc, true);
+            self.sounds.push(CLICK);
             out.push(Act::Send(Command::Research { order: ResearchCmd::Start { tech: self.tech } }));
         }
         if current > 0 {
             self.button_pressed = true;
             (self.button, self.button_new) = (0xcc, true);
+            self.sounds.push(CLICK);
             out.push(Act::Send(Command::Research { order: ResearchCmd::Stop { tech: current } }));
         }
         out
@@ -563,6 +579,7 @@ impl Research {
         // `SetDoubleTexture` / `DoubleGombFelenged`: the button is pressed in (frame 10) or let out at once.
         self.set_button_frame(0xc9, if self.urgent { 0 } else { 10 });
         self.urgent = !self.urgent;
+        self.sounds.push(CLICK);
         vec![Act::Send(Command::Research { order: ResearchCmd::Urgent })]
     }
 
@@ -635,6 +652,12 @@ impl Research {
             self.zoom = ZOOM_MAX;
             self.models_shown = false;
             if !self.closing {
+                // `LoadTalalmanyVectorok` exe 0x51ee14, the screen open: `Res_Hangok[1]` while the wheel is within
+                // 14 frames of its target, else `[2]` (f32 difference, f64 abs).
+                if self.opened {
+                    let near = (((self.turn - self.turn_to) as f64).abs() as f32) < 14.0;
+                    self.sounds.push(SoundId::new(Table::Res, if near { 1 } else { 2 }));
+                }
                 self.near = [0.0; 17];
                 self.near_dir = [0; 17];
                 self.placed = self.area;
@@ -819,6 +842,8 @@ impl Research {
             return true;
         }
         if !self.closing {
+            // `Research_Kilep` exe 0x5239b0: the closing's sound (`resKELLKINYITAS`).
+            self.sounds.push(SoundId::new(Table::Res, 3));
             self.closing = true;
             self.opened = false;
             if self.dir == 0 {
@@ -1846,6 +1871,7 @@ mod tests {
             press_done: true,
             slot_button: [100, 101, 102, 103, 104],
             pressed: Vec::new(),
+            sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
             held: false,
             design: Default::default(),

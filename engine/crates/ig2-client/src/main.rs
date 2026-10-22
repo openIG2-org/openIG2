@@ -1,7 +1,9 @@
 //! IG2 game client (ADR 0006): loads an original save into the simulation, runs it at the original's 20 Hz and
 //! renders the starmap at the display's refresh rate.
 //!
-//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3]`
+//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3]`: the main menu (re/screens/mainscr.md; its load ring starts
+//!           the default save), or the game of `--save` at once.
+//! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
 //!            [--size WxH] [--letterbox] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
@@ -33,8 +35,10 @@
 //! repository's `_local/saves`). Saves, installs and rendered PNGs hold game data: keep them out of the repo.
 
 mod assets;
+mod audio;
 mod colony;
 mod colony_ui;
+mod colony_war;
 mod diplomacy;
 mod diplomacy_scene;
 mod font;
@@ -42,6 +46,8 @@ mod hud;
 mod info_screen;
 mod kit;
 mod lighting;
+mod mainscr;
+mod mainscr_scene;
 mod messages_screen;
 mod orders;
 mod render;
@@ -53,7 +59,10 @@ mod script;
 mod screen_frames;
 mod starmap;
 mod starmap_hud;
+mod starmap_info;
 mod starmap_menus;
+mod spacewar_hud;
+mod spacewar_screen;
 mod spy_scene;
 mod spy_screen;
 mod starmap_panels;
@@ -74,6 +83,8 @@ use ig2_sim::time::Speed;
 #[derive(Debug, Clone)]
 pub struct Options {
     pub save: PathBuf,
+    /// The window starts on the main menu (re/screens/mainscr.md), unless `--save` names the game to run.
+    pub main_menu: bool,
     pub speed: Speed,
     pub ticks: u32,
     pub alpha: f32,
@@ -114,6 +125,8 @@ pub struct Options {
     /// `--acttime S`: the remaster's clock in seconds, which drifts the long info planet's clouds
     /// (re/screens/starmap.md §3.3).
     pub acttime: Option<f32>,
+    /// `--info-alap A`: the fleet info panel's model turn (`InfoAlapRotation`, re/screens/starmap.md §19.3).
+    pub info_alap: Option<f32>,
     /// `--info-turn K`: the info screen's `infokeringeto` (re/screens/info.md §1.1).
     pub info_turn: f32,
     /// `--info-list P,H,C`: the list's `BolygoFlottaPointer`, its problem step and `Counter` (re/screens/info.md §6.2).
@@ -135,6 +148,9 @@ pub struct Options {
     pub info_log: Option<String>,
     /// `--script S`: an input script (re/screens/sound.md §3); the snapshot writes one PNG per grab.
     pub script: Option<String>,
+    /// `--screen spacewar --battle FILE`: a battle-screen capture's dump (`run_spwc.py --grab-ticks`,
+    /// re/screens/spacewar.md §9) drawn as the exe drew it.
+    pub battle: Option<String>,
     /// Show the clock as paused (`--paused`; the capture tool pauses the exe).
     pub paused: bool,
     /// `--panel production` or `--panel transfer:F1,F2[,tank]`: the starmap's production view or transfer panel up.
@@ -158,6 +174,7 @@ fn default_save() -> PathBuf {
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut o = Options {
         save: default_save(),
+        main_menu: true,
         speed: Speed::Fastest,
         ticks: 0,
         alpha: 1.0,
@@ -182,6 +199,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         clouds: 0,
         futofeny: None,
         acttime: None,
+        info_alap: None,
         info_turn: 0.0,
         info_list: None,
         info_globes: Vec::new(),
@@ -191,6 +209,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         info_star: None,
         info_log: None,
         script: None,
+        battle: None,
         paused: false,
         panel: None,
         planet_info: false,
@@ -204,7 +223,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
         let mut val = || it.next().cloned().ok_or(format!("{a} needs a value"));
         let num = |v: String| v.parse::<f32>().map_err(|e| format!("{a}: {e}"));
         match a.as_str() {
-            "--save" => o.save = PathBuf::from(val()?),
+            "--save" => {
+                o.save = PathBuf::from(val()?);
+                o.main_menu = false;
+            }
             "--speed" => {
                 o.speed = match val()?.as_str() {
                     "1" => Speed::Normal,
@@ -277,7 +299,9 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--info-star" => o.info_star = Some(val()?.parse().map_err(|e| format!("--info-star: {e}"))?),
             "--info-log" => o.info_log = Some(val()?),
             "--script" => o.script = Some(val()?),
+            "--battle" => o.battle = Some(val()?),
             "--acttime" => o.acttime = Some(val()?.parse().map_err(|e| format!("--acttime: {e}"))?),
+            "--info-alap" => o.info_alap = Some(val()?.parse().map_err(|e| format!("--info-alap: {e}"))?),
             "--colony" => o.colony = Some(val()?.parse().map_err(|e| format!("--colony: {e}"))?),
             "--panel" => o.panel = Some(val()?),
             "--planet-info" => o.planet_info = true,
@@ -317,14 +341,19 @@ pub struct Loaded {
 }
 
 pub fn load(o: &Options) -> Result<Loaded, String> {
-    let root = std::env::var_os(ig2_formats::vfs::INSTALL_ENV).ok_or("set IG2_INSTALL_DIR to your IG2 install")?;
-    let install = Install::open(PathBuf::from(&root), language(o, std::path::Path::new(&root))).map_err(|e| e.to_string())?;
+    let install = open_install(o)?;
     let (rules, tech_defaults) = rules::load(&install)?;
     let volatile = rules::scenario_globals(&install)?;
     let bytes = std::fs::read(&o.save).map_err(|e| format!("{}: {e}", o.save.display()))?;
     let save = SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", o.save.display()))?;
     let tables = ig2_rules::Rules::from_install(&install)?;
     Ok(Loaded { install, rules, tech_defaults, volatile, save, tables })
+}
+
+/// The install from `IG2_INSTALL_DIR` in the texts' language.
+pub fn open_install(o: &Options) -> Result<Install, String> {
+    let root = std::env::var_os(ig2_formats::vfs::INSTALL_ENV).ok_or("set IG2_INSTALL_DIR to your IG2 install")?;
+    Install::open(PathBuf::from(&root), language(o, std::path::Path::new(&root))).map_err(|e| e.to_string())
 }
 
 /// The texts' language: `--lang`, else `IG2_LANG`, else what the GOG exe would run in (`ig2.settings`' `language=`,

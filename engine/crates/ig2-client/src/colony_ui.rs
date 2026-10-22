@@ -12,7 +12,9 @@ use ig2_sim::game::{ColonyOrder, ColonyOrderEvent};
 use ig2_sim::ground::GroundMap;
 use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 
+use crate::audio::{Rand, SoundId, CLICK};
 use crate::colony::{ColonySnap, Ghost, View};
+use ig2_rules::sounds::Table;
 use crate::font::{Align, Font, Virtual};
 use crate::render::{kind, Blend, Frame, Instance, Renderer, Target, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
@@ -31,6 +33,50 @@ const SPOTS: [(u32, [f32; 4]); 9] = [
     (0x14, [0.0, 20.0, 640.0, 460.0]),
     (0x20, [0.0, 0.0, 640.0, 480.0]),
 ];
+
+fn colony(idx: i32) -> SoundId {
+    SoundId::new(Table::Colony, idx as u16)
+}
+
+/// `Colony_Belep`'s sounds (exe 0x465b40) for planet type `surface` (`Bolygok+0x22`) and the battlefield's
+/// `weather`: the type's wind, and rain on a rainy field (a test of its own: a desert planet in rain gets both)
+/// [`OptionsKellIdojaras` taken as on].
+fn enter_ambient(r: &mut Rand, surface: u8, weather: i32) -> Vec<SoundId> {
+    let mut out = Vec::new();
+    if matches!(surface, 3 | 6) {
+        out.push(colony(12 + r.below(2)));
+    }
+    if weather == 2 {
+        out.push(colony(37 + r.below(3)));
+    }
+    match surface {
+        2 | 9 | 8 | 1 | 5 => out.push(colony(53 + r.below(3))),
+        4 => out.push(colony(56 + r.below(2))),
+        7 => out.push(colony(43)),
+        _ => {}
+    }
+    out
+}
+
+/// One check of `Frissit2_Colony`'s ambients (exe 0x477dc0): a 4-in-1000 draw, then the planet type's birds,
+/// crickets or cracks (nothing on type 4 or the others).
+fn ambient_pick(r: &mut Rand, surface: u8) -> Option<SoundId> {
+    let hit = |r: &mut Rand| r.rand() % 1000 < 4;
+    let id = match surface {
+        1 | 5 if hit(r) => {
+            if r.rand() & 1 == 0 { 17 + r.below(10) } else { 14 + r.below(3) }
+        }
+        2 | 8 | 9 if hit(r) => 49 + r.below(4),
+        3 | 6 if hit(r) => {
+            if r.rand() & 1 == 0 { 9 + r.below(3) } else { 8 }
+        }
+        7 if hit(r) => {
+            if r.rand() & 1 == 0 { 44 + r.below(3) } else { 3 + r.below(5) }
+        }
+        _ => return None,
+    };
+    Some(colony(id))
+}
 
 /// `AktEpuletTipus` (exe 0xB9C0C4, saved).
 const AKT_EPULET_TIPUS: u32 = 0xB9C0C4;
@@ -92,8 +138,10 @@ pub struct Outcome {
     /// `ScrollHibaUzenet`: a red line on the message ticker.
     pub error: Option<Vec<u8>>,
     /// The press went to the 3D view outside the build cursor: a left drag pans the camera [deviation: the original
-    /// scrolls at the window's edges and box-selects units with the left drag].
+    /// scrolls at the window's edges; in a war the left drag is the box, §11].
     pub pan: bool,
+    /// `PlaySoundGlobal(0)`.
+    pub click: bool,
 }
 
 /// The planet as the input code reads it.
@@ -140,6 +188,10 @@ impl Ctx<'_> {
     fn text(&self, section: u16, index: u16) -> Vec<u8> {
         self.texts.get(3, section, index)
     }
+    /// The war input's view of the planet (spec §11).
+    fn war(&self) -> crate::colony_war::WarCtx<'_> {
+        crate::colony_war::WarCtx { snap: self.snap, en: self.en() as i32, tutorial_paused: false }
+    }
 }
 
 /// `sprintf(GetString(…), name)`: the first `%s` replaced.
@@ -180,6 +232,14 @@ pub struct ColonyUi {
     glide: Option<([f32; 2], i32)>,
     /// `buildshown`'s spin (frames turned).
     spin: f32,
+    /// The ground war's input (spec §11).
+    pub war: crate::colony_war::WarUi,
+    /// The sounds the screen started since the window last took them (re/screens/audio.md §6.2).
+    pub sounds: Vec<SoundId>,
+    /// The libc `rand()` of the sound picks (a cosmetic stream, [`Rand`]).
+    rand: Rand,
+    /// `VoltHarc` (exe 0x99646a): the shown planet's ground war as `Frissit2_Colony` saw it last.
+    volt_harc: bool,
 }
 
 impl Default for ColonyUi {
@@ -202,6 +262,10 @@ impl Default for ColonyUi {
             counter: 0.0,
             glide: None,
             spin: 0.0,
+            war: Default::default(),
+            sounds: Vec::new(),
+            rand: Rand(1),
+            volt_harc: false,
         }
     }
 }
@@ -211,11 +275,42 @@ impl ColonyUi {
     /// (`HaVanEpuletAkkorAzLegyenKozepen`); on a foreign planet the selection goes back to 0.
     pub fn enter(s: &ColonySnap, own: bool, state: &SaveState) -> Self {
         // `AktEpuletTipus` is saved (exe 0xB9C0C4).
-        let mut ui = Self { kind: state.mem.i32(AKT_EPULET_TIPUS).max(1) as usize, ..Self::default() };
+        let mut ui = Self { kind: state.mem.i32(AKT_EPULET_TIPUS).max(1) as usize, rand: Rand::seeded(), ..Self::default() };
         if s.camera.centre && own {
             ui.selected = s.buildings.first().map_or(0, |b| b.slot);
         }
+        ui.enter_sounds(s);
         ui
+    }
+
+
+    /// `Colony_Belep` (exe 0x465b40) after `Init3dColony`: the planet type's wind (`Bolygok+0x22`), and rain on a
+    /// rainy battlefield (a test of its own: a desert planet in rain gets both) [`OptionsKellIdojaras` taken as on].
+    fn enter_sounds(&mut self, s: &ColonySnap) {
+        let e = enter_ambient(&mut self.rand, s.surface, s.weather);
+        self.sounds.extend(e);
+    }
+
+    /// `Frissit2_Colony`'s ambients (exe 0x477dc0), on the colony screen every fifth UI tick (`ColonyCounter`,
+    /// already counted): a 4-in-1000 draw, then the planet type's birds, crickets or cracks (none on type 4).
+    fn ambient(&mut self, surface: u8) {
+        if (self.counter as i64) % 5 == 0
+            && let Some(id) = ambient_pick(&mut self.rand, surface)
+        {
+            self.sounds.push(id);
+        }
+    }
+
+    /// `Frissit2_Colony`'s music switch (exe 0x477dc0, on the colony screen, not in a self-playing game): a ground war
+    /// starting on the shown planet → `PlayMusicGrWar(1, 0)`, ending → `PlayMusicMain(0, 0)`.
+    pub fn war_music(&mut self, war: bool) -> Option<crate::audio::Music> {
+        let m = match (self.volt_harc, war) {
+            (false, true) => Some(crate::audio::Music::GrWar),
+            (true, false) => Some(crate::audio::Music::Main),
+            _ => None,
+        };
+        self.volt_harc = war;
+        m
     }
 
     /// The enabled hot-spot under `p` (virtual pixels), per `Colony_MouseInit2` (ELF 0x4e1d90).
@@ -242,7 +337,21 @@ impl ColonyUi {
     /// A button pressed at `p` (virtual pixels): `left` or right.
     pub fn press(&mut self, c: &Ctx, p: [f32; 2], left: bool, now_ms: u32) -> Outcome {
         let mut out = Outcome::default();
-        let Some(id) = self.spot(c, p) else { return out };
+        let spot = self.spot(c, p);
+        // The war's buttons and its view input come first (`Colony_Main`'s 0xb..=0x12, 0x14 in a war).
+        if c.snap.war_flag || !self.war.selected.is_empty() {
+            let w = self.war.press(&c.war(), p, left, spot == Some(0x14));
+            out.commands = w.commands;
+            out.click = w.click;
+            if w.drop_building {
+                self.selected = 0;
+            }
+            if w.taken {
+                self.held = spot;
+                return out;
+            }
+        }
+        let Some(id) = spot else { return out };
         self.held = Some(id);
         match id {
             1 if left => {
@@ -253,15 +362,22 @@ impl ColonyUi {
                 self.window = Some(Confirm::Demolish);
                 self.drop_build();
             }
-            0x11 if left => out.commands.push(ColonyOrder::Priority { planet: c.snap.planet as i32, slot: self.selected as i32 }.into()),
-            5 if left => self.radar(p),
+            0x11 if left => {
+                self.sounds.push(CLICK);
+                out.commands.push(ColonyOrder::Priority { planet: c.snap.planet as i32, slot: self.selected as i32 }.into());
+            }
+            5 if left => {
+                self.sounds.push(CLICK);
+                self.radar(p);
+            }
             6 if left && self.pending == 0 => {
+                self.sounds.push(CLICK);
                 self.picker = Some(Picker { at: [p[0] + 12.0, p[1] - 17.0], pressed_ms: now_ms, hovered: -1 });
                 self.hover_picker(c, p);
             }
             0x13 if left => self.start_build(c, &mut out),
             0x14 => {
-                out.pan = left && !self.build_mode;
+                out.pan = left && !self.build_mode && !c.snap.war_flag;
                 self.view_press(c, left, &mut out);
             }
             _ => {}
@@ -271,6 +387,9 @@ impl ColonyUi {
 
     /// The pointer moved to `p` with a button held (the frame's `Colony_Main` pass while captured).
     pub fn drag(&mut self, c: &Ctx, p: [f32; 2]) {
+        if self.held == Some(0x14) && self.war.drag(&c.war(), p) {
+            self.selected = 0;
+        }
         match self.held {
             Some(5) => self.radar(p),
             Some(6) => self.hover_picker(c, p),
@@ -282,10 +401,22 @@ impl ColonyUi {
     pub fn release(&mut self, c: &Ctx, p: [f32; 2], left: bool, now_ms: u32) -> Outcome {
         let mut out = Outcome::default();
         let held = self.held.take();
+        let w = self.war.release(&c.war(), left, self.spot(c, p) == Some(0x14));
+        out.commands = w.commands;
         // `ColonyGfx2D_3`: with the left button up an open window takes its answer and shuts.
         if let (true, Some(w)) = (left, self.window.take()) {
             let cells = self.window_cells(c, w);
             if w.row(cells, p) == 1 {
+                // `HandleRepairWindow` sounds for any "yes" (exe 0x47d170); `HandleDemolishWindow` (0x47ced0) only
+                // with the building there, after its order.
+                if w == Confirm::Repair {
+                    let r = self.rand.below(2);
+                    self.sounds.push(colony(r));
+                }
+                if let (Confirm::Demolish, Some(_)) = (w, c.building(self.selected)) {
+                    let r = self.rand.below(4);
+                    self.sounds.push(SoundId::new(Table::Gr, 13 + r as u16));
+                }
                 if let Some(b) = c.building(self.selected) {
                     let (planet, slot) = (c.snap.planet as i32, b.slot as i32);
                     out.commands.push(match w {
@@ -304,8 +435,8 @@ impl ColonyUi {
                     self.pick(c, pk, now_ms);
                 }
             }
-            // Hot-spot 4 (the short info) released with the right button: the starmap.
-            Some(4) if !left && self.spot(c, p) == Some(4) => out.starmap = true,
+            // Hot-spot 4 (the short info) released with the right button: the starmap; not while the war runs here.
+            Some(4) if !left && !c.snap.war_flag && self.spot(c, p) == Some(4) => out.starmap = true,
             _ => {}
         }
         out
@@ -317,12 +448,27 @@ impl ColonyUi {
         let mut out = Outcome::default();
         let planet = c.snap.planet as i32;
         match k {
-            Key::Priority if c.own() && self.selected != 0 => out.commands.push(ColonyOrder::Priority { planet, slot: self.selected as i32 }.into()),
+            Key::Priority if c.own() => {
+                if self.selected != 0 {
+                    out.commands.push(ColonyOrder::Priority { planet, slot: self.selected as i32 }.into());
+                }
+                // `ColonyKeyboardHandler` (exe 0x462a7e): the click after the (maybe empty) send.
+                self.sounds.push(CLICK);
+            }
             Key::Demolish if c.own() && c.building(self.selected).is_some() => {
                 out.commands.push(ColonyOrder::Demolish { planet, slot: self.selected as i32 }.into());
+                let r = self.rand.rand() & 3;
+                self.sounds.push(SoundId::new(Table::Gr, 13 + r as u16));
                 self.selected = 0;
             }
-            Key::Prev | Key::Next => out.colony = next_planet(c, k == Key::Next),
+            Key::Prev | Key::Next if !c.snap.war_flag => out.colony = next_planet(c, k == Key::Next),
+            Key::War(wk) => {
+                let w = self.war.key(&c.war(), wk);
+                out.commands = w.commands;
+                if w.drop_building {
+                    self.selected = 0;
+                }
+            }
             _ => {}
         }
         out
@@ -372,7 +518,12 @@ impl ColonyUi {
     fn view_press(&mut self, c: &Ctx, left: bool, out: &mut Outcome) {
         if !self.build_mode {
             if left && c.snap.visible && c.snap.owner as usize == c.en() {
-                self.selected = self.building_under(c);
+                let under = self.building_under(c);
+                // `Colony_Main` hot-spot 0x14: the click when another building becomes the selection.
+                if under != self.selected {
+                    self.sounds.push(CLICK);
+                }
+                self.selected = under;
                 if let Some(b) = c.building(self.selected) {
                     self.kind = b.kind as usize;
                     self.can_modify = false;
@@ -381,6 +532,7 @@ impl ColonyUi {
             return;
         }
         if !left {
+            self.sounds.push(CLICK);
             self.drop_build();
             return;
         }
@@ -416,6 +568,9 @@ impl ColonyUi {
     /// `colony_start_build` (ELF 0x4dcbb0): with the cursor on a free spot, 0x1f for the kind at the spot.
     fn start_build(&mut self, c: &Ctx, out: &mut Outcome) {
         let Some(g) = self.ghost.filter(|g| self.build_mode && !g.blocked) else { return };
+        // `Build-Building1` (exe 0x4a88a0), before `Multi_Send(0x1f)`.
+        let r = self.rand.below(2);
+        self.sounds.push(colony(r));
         self.pending += 1;
         out.commands.push(ColonyOrder::Build { planet: c.snap.planet as i32, kind: self.kind as i32, x: g.at.0, y: g.at.1 }.into());
         self.can_modify = true;
@@ -433,6 +588,7 @@ impl ColonyUi {
     /// The pointer over the 3D view at grid cell `cell` (`ShowColony`): the build cursor's spot is the first free
     /// one for the kind searched from there (`LocateActBuildingSuitableLocation`, the same search the order runs).
     pub fn hover(&mut self, c: &Ctx, cell: Option<(i32, i32)>) {
+        self.war.pointer(cell);
         if cell == self.cell && (self.ghost.is_some() || !self.build_mode) {
             return;
         }
@@ -452,6 +608,10 @@ impl ColonyUi {
         for e in events {
             match *e {
                 ColonyOrderEvent::Built { empire, planet: p, slot } if empire == human => {
+                    // `Build3dBuilding` (exe 0x49c780, from `EpuletNew` on the shown planet): `Cracking1`.
+                    if p == planet {
+                        self.sounds.push(colony(3));
+                    }
                     self.pending = (self.pending - 1).max(0);
                     if p == planet && self.can_modify && slot > 0 {
                         self.selected = slot;
@@ -461,7 +621,11 @@ impl ColonyUi {
                     self.pending = (self.pending - 1).max(0);
                     self.drop_build();
                 }
-                ColonyOrderEvent::Demolished { planet: p, .. } if p == planet => self.selected = 0,
+                ColonyOrderEvent::Demolished { planet: p, .. } if p == planet => {
+                    // `Remove3dBuilding` (exe 0x497760, from `EpuletDelete`): `Cracking2`.
+                    self.sounds.push(colony(4));
+                    self.selected = 0;
+                }
                 _ => {}
             }
         }
@@ -469,8 +633,10 @@ impl ColonyUi {
 
     /// One 100 Hz UI frame (`Frissit2_Colony`): the selection marker's zoom-in and pulse, the panel's spin, the radar
     /// glide; and the selection kept on a building that still stands.
-    pub fn ui_frame(&mut self, s: &ColonySnap, cam: &mut crate::colony::Camera) {
+    pub fn ui_frame(&mut self, s: &ColonySnap, en: i32, cam: &mut crate::colony::Camera) {
+        self.war.ui_frame(&crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false });
         self.counter += 1.0;
+        self.ambient(s.surface);
         self.spin += 1.0;
         if !s.buildings.iter().any(|b| b.slot == self.selected) {
             self.selected = 0;
@@ -501,8 +667,9 @@ impl ColonyUi {
     }
 
     /// The 3D pass's additions.
-    pub fn overlay(&self) -> crate::colony::Overlay {
+    pub fn overlay(&self, s: &ColonySnap, en: i32) -> crate::colony::Overlay {
         crate::colony::Overlay {
+            marks: self.war.marks(&crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false }),
             ghost: self.ghost.filter(|_| self.build_mode),
             selection: (self.selected > 0).then_some((self.selected, self.sel_size, self.sel_alpha)),
         }
@@ -573,7 +740,7 @@ impl ColonyUi {
 /// `DrawHpStripe(v, max, x, y, w, 255)` (ELF 0x45f6a0): a black 5-pixel bar, inside it `(w − 2)·v/max` pixels of
 /// colour 7 above half, 3 above a quarter, else 6.
 #[allow(clippy::too_many_arguments)]
-fn hp_stripe(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], value: i32, max: i32, x: f32, y: f32, w: f32) {
+pub(crate) fn hp_stripe(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], value: i32, max: i32, x: f32, y: f32, w: f32) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
     let fill = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 3]| {
         if w > 0.0 {
@@ -593,6 +760,8 @@ pub enum Key {
     Demolish,
     Prev,
     Next,
+    /// The war's keys (spec §11.2).
+    War(crate::colony_war::WarKey),
 }
 
 /// The pick list's places: each offered tech's column `(t − 0x51)/16` and its row in that column.
@@ -822,6 +991,31 @@ pub fn cell_under(view: &View, gm: &GroundMap, p: [f32; 2]) -> Option<(i32, i32)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Observed (sound-id trace, quick-1.sav planet 42, surface 8, 2026-10-22): `Colony_Belep` played
+    /// `Colony_Hangok[54]` (Rock-windatmos2) at the script's first frame, one of the type's three.
+    #[test]
+    fn entering_plays_the_planet_types_wind() {
+        let mut r = Rand(7);
+        let e = enter_ambient(&mut r, 8, 0);
+        assert_eq!(e.len(), 1);
+        assert!((53..=55).contains(&e[0].idx) && e[0].table == Table::Colony);
+        // A desert planet in rain gets its wind and the rain; type 7 one fixed sound; type 0 none.
+        let e = enter_ambient(&mut r, 3, 2);
+        assert!(e.len() == 2 && (12..=13).contains(&e[0].idx) && (37..=39).contains(&e[1].idx));
+        assert_eq!(enter_ambient(&mut r, 7, 0), vec![colony(43)]);
+        assert!(enter_ambient(&mut r, 0, 0).is_empty());
+    }
+
+    /// The ambients' draws (exe 0x477dc0): about 4 checks in 1000 sound, within the type's groups; type 4 never.
+    #[test]
+    fn ambients_draw_four_in_a_thousand() {
+        let mut r = Rand(1);
+        let hits: Vec<SoundId> = (0..100_000).filter_map(|_| ambient_pick(&mut r, 1)).collect();
+        assert!((300..500).contains(&hits.len()), "{}", hits.len());
+        assert!(hits.iter().all(|h| (14..=26).contains(&h.idx)));
+        assert!((0..10_000).all(|_| ambient_pick(&mut r, 4).is_none()));
+    }
 
     #[test]
     fn the_pick_list_fills_four_columns_of_sixteen() {

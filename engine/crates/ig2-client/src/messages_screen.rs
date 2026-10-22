@@ -84,6 +84,17 @@ fn code_colour(c: u8, blink: bool) -> i32 {
 /// A run of text on the message panel: x, y, the bytes, the `DDColor` index.
 pub type Run = (f32, f32, Vec<u8>, i32);
 
+/// What the typer asks of its sound, `Global_Hangok[7]` (`MessagesGfx2D_2`, re/screens/audio.md §6.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Typing {
+    /// `InditKiirasHang`: stopped, started again and muted (`KiertekelUjuzenet`).
+    Start,
+    /// A character typed: `PlayOrContinueSoundGlobal(7)`, muted, and up again unless it is a space.
+    Char { space: bool },
+    /// `LeallitKiirasHang`: the typer passed the end.
+    Stop,
+}
+
 /// An open message: `ParbeszPlace` and the typer.
 #[derive(Debug, Clone)]
 pub struct Dialogue {
@@ -111,6 +122,8 @@ pub struct Dialogue {
     speaker: i32,
     /// `AktValasz0to3x`: the answer under the mouse.
     pub hover: Option<usize>,
+    /// The typer's sound steps since the window last took them.
+    pub typing: Vec<Typing>,
 }
 
 impl Dialogue {
@@ -143,6 +156,7 @@ impl Dialogue {
             ends: false,
             speaker: 1,
             hover: None,
+            typing: vec![Typing::Start],
         };
         if !conversation {
             d.over = true;
@@ -389,7 +403,12 @@ impl Dialogue {
             if self.typed < self.length {
                 self.typed += 1;
                 self.typed_all = false;
+                let space = self.place.get(self.typed as usize) == Some(&b' ');
+                self.typing.push(Typing::Char { space });
             } else {
+                if !self.typed_all {
+                    self.typing.push(Typing::Stop);
+                }
                 self.typed_all = true;
                 if self.ends {
                     self.over = true;
@@ -689,6 +708,7 @@ mod tests {
             ends: false,
             speaker: 1,
             hover: None,
+            typing: Vec::new(),
         }
     }
 

@@ -49,7 +49,7 @@ pub struct Assets {
     /// `gomb.xvb`: the sky sphere around the galaxy (spec §6.5), baked into world space, per texture.
     sky: Vec<(Vec<crate::render3d::MeshVertex>, TexId)>,
     /// The planet and cloud meshes (spec §3.3).
-    planet_meshes: crate::starmap_planet::Planets,
+    pub planet_meshes: crate::starmap_planet::Planets,
     /// `screen/star_pl` (30 × 22 cells, 17 columns) and `screen/star_pl2` (15 × 11, 16 columns).
     fleets: Option<Sheet>,
     small_fleets: Option<Sheet>,
@@ -144,7 +144,7 @@ pub(crate) fn read_palette(install: &Install) -> Result<Vec<[f32; 3]>, String> {
 }
 
 /// A `0xTTBBGGRR` particle colour: RGB × (255 − TT)/256 (`Particle` ELF 0x5f4ff0).
-fn particle_color(c: u32) -> [f32; 4] {
+pub(crate) fn particle_color(c: u32) -> [f32; 4] {
     let k = (255 - (c >> 24)) as f32 / 256.0 / 255.0;
     [(c & 0xff) as f32 * k, ((c >> 8) & 0xff) as f32 * k, ((c >> 16) & 0xff) as f32 * k, 1.0]
 }
@@ -173,10 +173,22 @@ pub struct Camera {
     pub pitch: f32,
     pub zoom: f32,
     pub size: [f32; 2],
+    /// The battle screen's look-at camera instead (re/screens/spacewar.md §2): the battle is drawn inside the
+    /// starmap's scene, so the galaxy behind it is this view of the starmap.
+    pub look: Option<Look>,
+}
+
+/// A look-at camera in the starmap's world `(h, x, y)` (`CameraRotate` ELF 0x5fcf90: the view rows `c`, `−b`, `−d`
+/// from `CreateMatrix2v`), its eye, and the near plane `zbm · 1.05`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Look {
+    pub matrix: [[f32; 3]; 3],
+    pub eye: [f32; 3],
+    pub near: f32,
 }
 
 /// `CreateMatrix(α, β, γ)` (ELF 0x451ee0), f32 sines and cosines like the original.
-fn create_matrix(a: f32, b: f32, c: f32) -> [[f32; 3]; 3] {
+pub(crate) fn create_matrix(a: f32, b: f32, c: f32) -> [[f32; 3]; 3] {
     let (s1, c1) = ((a as f64).sin() as f32, (a as f64).cos() as f32);
     let (s2, c2) = ((b as f64).sin() as f32, (b as f64).cos() as f32);
     let (s3, c3) = ((c as f64).sin() as f32, (c as f64).cos() as f32);
@@ -199,7 +211,7 @@ impl Camera {
             }
             n += 1;
         }
-        let mut c = Self { x: 0.0, y: 0.0, rotate: 0.0, pitch: -0.95, zoom: 2.0, size };
+        let mut c = Self { x: 0.0, y: 0.0, rotate: 0.0, pitch: -0.95, zoom: 2.0, size, look: None };
         if n > 0 {
             c.x = (hi[0] + lo[0]) / 2.0;
             c.y = -(hi[1] + lo[1]) / 2.0;
@@ -216,10 +228,13 @@ impl Camera {
             return Self::side_view(s, size);
         }
         let rotate = v.rotate.rem_euclid(std::f32::consts::TAU);
-        Self { x: v.x, y: v.y, rotate, pitch: v.pitch, zoom: v.zoom, size }
+        Self { x: v.x, y: v.y, rotate, pitch: v.pitch, zoom: v.zoom, size, look: None }
     }
 
-    fn matrix(&self) -> [[f32; 3]; 3] {
+    pub(crate) fn matrix(&self) -> [[f32; 3]; 3] {
+        if let Some(l) = &self.look {
+            return l.matrix;
+        }
         create_matrix(self.rotate, self.pitch, std::f32::consts::FRAC_PI_2)
     }
     fn distance(&self) -> f32 {
@@ -236,40 +251,48 @@ impl Camera {
     }
 
     /// Camera space of the galaxy point `p` at height `h` (`smRotatePoint`).
-    fn eye(&self, m: &[[f32; 3]; 3], h: f32, p: [f32; 2]) -> [f32; 3] {
-        let d = [h, p[0] - self.x, p[1] + self.y];
+    pub(crate) fn eye(&self, m: &[[f32; 3]; 3], h: f32, p: [f32; 2]) -> [f32; 3] {
+        let (d, back) = match &self.look {
+            Some(l) => ([h - l.eye[0], p[0] - l.eye[1], p[1] - l.eye[2]], 0.0),
+            None => ([h, p[0] - self.x, p[1] + self.y], self.distance()),
+        };
         let r = |i: usize| m[i][0] * d[0] + m[i][1] * d[1] + m[i][2] * d[2];
-        [r(0), r(1), r(2) - self.distance()]
+        [r(0), r(1), r(2) - back]
     }
 
     /// World `(h, x, y)` → clip space for the mesh pass: the particles' projection (`e = M·(p − pivot) − (0, 0, D)`,
     /// `fov` 600, centre (320, 250) of the 480-line virtual screen) as a matrix. The near plane is `ShowStarmap`'s
     /// `zbm` (0.4): the long info's eye sits about one unit from its planet.
     fn clip_matrix(&self) -> [[f32; 4]; 4] {
-        const NEAR: f32 = 0.4;
         const FAR: f32 = 10000.0;
         let m = self.matrix();
-        let pivot = [0.0, self.x, -self.y];
+        let (pivot, back, near) = match &self.look {
+            Some(l) => (l.eye, 0.0, l.near),
+            None => ([0.0, self.x, -self.y], self.distance(), 0.4),
+        };
         let t = |i: usize| -(m[i][0] * pivot[0] + m[i][1] * pivot[1] + m[i][2] * pivot[2]);
         // e = M·p + (t0, t1, t2 − D); w = −e.z.
-        let e = [[m[0][0], m[0][1], m[0][2], t(0)], [m[1][0], m[1][1], m[1][2], t(1)], [m[2][0], m[2][1], m[2][2], t(2) - self.distance()]];
+        let e = [[m[0][0], m[0][1], m[0][2], t(0)], [m[1][0], m[1][1], m[1][2], t(1)], [m[2][0], m[2][1], m[2][2], t(2) - back]];
         let w = e[2].map(|x| -x);
         let sx = 2.0 * FOV / VIRTUAL_H * self.size[1] / self.size[0];
         let sy = -2.0 * FOV / VIRTUAL_H;
         let cy = 1.0 - 2.0 * CENTER[1] / VIRTUAL_H;
-        let zf = FAR / (FAR - NEAR);
+        let zf = FAR / (FAR - near);
         let rows = [
             e[0].map(|x| x * sx),
             std::array::from_fn(|c| e[1][c] * sy + w[c] * cy),
-            std::array::from_fn(|c| w[c] * zf - if c == 3 { NEAR * zf } else { 0.0 }),
+            std::array::from_fn(|c| w[c] * zf - if c == 3 { near * zf } else { 0.0 }),
             w,
         ];
         std::array::from_fn(|c| std::array::from_fn(|r| rows[r][c]))
     }
 
     /// The eye (spec §2.2): the camera's rows and its world point (h, x, y), where `e = 0` in [`Camera::eye`].
-    fn eye_world(&self) -> crate::starmap_planet::Eye {
+    pub fn eye_world(&self) -> crate::starmap_planet::Eye {
         let m = self.matrix();
+        if let Some(l) = &self.look {
+            return crate::starmap_planet::Eye { matrix: m, at: l.eye };
+        }
         let d = self.distance();
         crate::starmap_planet::Eye { matrix: m, at: [m[2][0] * d, m[2][1] * d + self.x, m[2][2] * d - self.y] }
     }
@@ -280,7 +303,7 @@ impl Camera {
     }
 
     /// Screen position and physical pixels per galaxy unit there, when in front of the camera.
-    fn project_eye(&self, e: [f32; 3]) -> Option<([f32; 2], f32)> {
+    pub(crate) fn project_eye(&self, e: [f32; 3]) -> Option<([f32; 2], f32)> {
         if e[2] >= 0.0 {
             return None;
         }
@@ -303,13 +326,16 @@ impl Camera {
         let m = self.matrix();
         // d = Mᵀ·(e + (0, 0, D)): the eye sits at e = 0.
         let back = |e: [f32; 3]| -> [f32; 3] { std::array::from_fn(|j| m[0][j] * e[0] + m[1][j] * e[1] + m[2][j] * e[2]) };
-        let o = back([0.0, 0.0, self.distance()]);
+        let (o, at) = match &self.look {
+            Some(l) => (l.eye, [0.0, 0.0]),
+            None => (back([0.0, 0.0, self.distance()]), [self.x, -self.y]),
+        };
         let r = back(dir);
         if r[0].abs() < 1e-9 {
             return None;
         }
         let t = -o[0] / r[0];
-        (t > 0.0).then(|| [o[1] + t * r[1] + self.x, o[2] + t * r[2] - self.y])
+        (t > 0.0).then(|| [o[1] + t * r[1] + at[0], o[2] + t * r[2] + at[1]])
     }
 
     /// A galaxy point on the 640 × 480 virtual screen (`smRotatePoint` + `TransformPoint`), when in front.
@@ -377,6 +403,8 @@ pub struct View {
     pub reveal: bool,
     /// `StarSize[p − 1]` over its backup while the planet's long info flies in or out (re/screens/starmap.md §15.1).
     pub star_scale: Option<(usize, f32)>,
+    /// Quads drawn right after the background, under the planets (the battle screen's star field).
+    pub backdrop: Vec<(TexId, Blend, Instance)>,
     background: Vec<Particle>,
     /// The background as generated, before any drift.
     generated: Vec<Particle>,
@@ -483,15 +511,15 @@ struct Particle {
 }
 
 /// MSVC's `rand()` from `srand(seed)` (the exe's libc).
-struct MsvcRand(u32);
+pub(crate) struct MsvcRand(pub(crate) u32);
 
 impl MsvcRand {
-    fn rand(&mut self) -> i32 {
+    pub(crate) fn rand(&mut self) -> i32 {
         self.0 = self.0.wrapping_mul(214013).wrapping_add(2531011);
         ((self.0 >> 16) & 0x7fff) as i32
     }
     /// `random(n)` (ELF 0x4f0200).
-    fn random(&mut self, n: i32) -> i32 {
+    pub(crate) fn random(&mut self, n: i32) -> i32 {
         if n > 0 {
             self.rand() % n
         } else {
@@ -634,7 +662,7 @@ impl View {
     pub fn new(s: &Snapshot, saved: &SavedView, size: (u32, u32), scale: f32) -> Self {
         let camera = Camera::from_save(saved, s, [size.0 as f32, size.1 as f32]);
         let generated = background();
-        Self { camera, scale, hover: None, selected: None, reveal: false, star_scale: None, background: generated.clone(), generated, clouds: 0, fog: fog_particles(), twinkle: Twinkle::new(), futofeny: None, acttime: None }
+        Self { camera, scale, hover: None, selected: None, reveal: false, star_scale: None, backdrop: Vec::new(), background: generated.clone(), generated, clouds: 0, fog: fog_particles(), twinkle: Twinkle::new(), futofeny: None, acttime: None }
     }
 
     /// One UI tick of the starmap (`FRISSIT_Starmap2` → `GalaxisGomolygas`).
@@ -720,6 +748,9 @@ impl View {
         let ui = self.futofeny.unwrap_or(time * UI_HZ);
         self.sky(&mut f, a, time);
         self.background(&mut f, a, &m, ui);
+        for &(t, b, i) in &self.backdrop {
+            f.push(t, b, i);
+        }
         self.radar(&mut f, a, &m, &curr.radar);
 
         // System stars: `n{(surface − 1) % 8 + 1}` glows in the star colour (spec §3.2).
@@ -999,7 +1030,7 @@ mod tests {
     }
 
     fn cam(rotate: f32, pitch: f32) -> Camera {
-        Camera { x: 10.0, y: -20.0, rotate, pitch, zoom: 300.0, size: [1920.0, 1080.0] }
+        Camera { x: 10.0, y: -20.0, rotate, pitch, zoom: 300.0, size: [1920.0, 1080.0], look: None }
     }
 
     #[test]

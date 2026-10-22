@@ -44,6 +44,52 @@ recv('config', (m) => {
   if (cfg.script) hookScript();
 });
 
+// --grwar: the human lands on planet p in real time (run_ground_rt.py's staging, ground_rt.js `stage`): a fleet of EN
+// beside it with two of EN's vehicle designs (`FlottaNew`, `TankNew`), `AddTanksToPlanet(f, p, 0)`, `StartGrWar(p)`;
+// then `PlaceAllTanks(100, 100, EN, true)` lands every unit at once (re/rules/ground-combat.md §11.16) and every unit
+// of EN gets flag 8 (selected, colony.md §11). --grwar-arm N: both call-in timers full (`WF+0x7fc/+0x800 + 8(EN − 1)`)
+// and `SpecWeaponMode` (0x99649C) = N.
+function stageGrWar(p) {
+  const nf3 = (a, r, args, abi) => new NativeFunction(va(a), r, args, { abi: abi || 'mscdecl', traps: 'all' });
+  const flottaNew = nf3(0x53d400, 'int', ['pointer', 'int', 'int', 'float', 'float', 'float']);
+  const tankNew = nf3(0x541750, 'void', ['int', 'int', 'int']);
+  const addTanks = nf3(0x45e320, 'void', ['int', 'int', 'int']);
+  const startGrWar = nf3(0x4a4a70, 'void', ['int']);
+  const placeAll = nf3(0x48c150, 'void', ['pointer', 'int', 'int', 'int', 'int'], 'thiscall');
+  const en = va(0x912a3c).readS32();
+  const terv = va(0xb9aa18).add(4 * en).readPointer(), nterv = va(0xb9c028).add(4 * en).readS32();
+  const ground = [];
+  for (let d = 1; d <= nterv; d++) if (terv.add(0x84 * d + 0x16).readS16() === 2) ground.push(d);
+  const q = va(0xb85ea8).add(0x188 * p);
+  if (!ground.length || q.add(0x20).readU8() === en) return { error: 'no vehicle design or own planet', en, owner: q.add(0x20).readU8() };
+  const f = flottaNew(Memory.allocAnsiString('Lander'), en, 0, q.add(0x18).readFloat() + 1, q.add(0x1c).readFloat() + 1, 0);
+  if (f < 1) return { error: 'FlottaNew', f };
+  for (const [k, d] of ground.slice(0, 2).entries()) tankNew(f, d, 3 + k);
+  addTanks(f, p, 0);
+  startGrWar(p);
+  const w = va(0x9c3244).add(0x8ec * p);
+  placeAll(w, 100, 100, en, 1);
+  // The planet's war bit, as the next status pass sets it (`+0x64 := GetStatus == −1`, ground-combat.md §10): the
+  // capture's clock is paused before that pass runs.
+  q.add(0x64).writeU8(1);
+  const n = w.add(0x180).readS32(), alive = w.add(0x188).readPointer(), units = w.add(0x330).readPointer();
+  const mine = [];
+  for (let i = 0; i < n; i++) {
+    if (!alive.add(i).readU8()) continue;
+    const u = units.add(4 * i).readPointer();
+    if (u.add(0x194).readS32() === en && (u.add(0x188).readU32() & 2) === 0) {
+      u.add(0x188).writeU32(u.add(0x188).readU32() | 8);
+      mine.push(i);
+    }
+  }
+  if (cfg.grwarArm) {
+    w.add(0x7fc + 8 * (en - 1)).writeS32(200);
+    w.add(0x800 + 8 * (en - 1)).writeS32(300);
+    va(0x99649c).writeS32(cfg.grwarArm);
+  }
+  return { en, f, designs: ground.slice(0, 2), units: n, mine };
+}
+
 // --info-press IDS: on the info screen (`AktKep` 9) press its hot-spots in turn through the game's own input
 // (`AktIkonKell` 0xB77208 = hot-spot + 0x1e, as --verdict), 30 frames apart: e.g. 9 a row's detail mode, 31 the list
 // down, 15 the star log, 37 back from the detail (re/screens/info.md §6.5–§6.8).
@@ -298,6 +344,14 @@ function populate(n) {
   }
   send({ k: 'fleets', e, ships, vehicles, fleets });
 }
+// --planet-tanks N: N vehicle entries of the human's vehicle designs (in turn) on the shown planet (`TankNew(-p, d, n)`).
+function planetTanks(n) {
+  const e = va(0x912a3c).readS32(), cnt = va(0xb9c028).add(4 * e).readS32(), designs = va(0xb9aa18).add(4 * e).readPointer();
+  const vehicles = [];
+  for (let d = 1; d <= cnt; d++) if (designs.add(0x84 * d).add(0x16).readS16() === 2) vehicles.push(d);
+  for (let k = 0; k < n && vehicles.length; k++) tankNew(-cfg.planet, vehicles[k % vehicles.length], 3 + k);
+  send({ k: 'planetTanks', e, vehicles });
+}
 
 // --rop N: press the starmap's icon N once (`AktRopIkon` 0xE83654: 1 tanks/transfer, 2 production, 0xd split, 0xe
 // transfer between two fleets), as a click would. `Starmap_Main` (exe 0x5b2b70) clears it on entry, so the value is
@@ -402,7 +456,12 @@ Interceptor.attach(A.Fake_FRISSITES, {
         belep: va(0xbae24c).readU8(), old: va(0xbae19c).readS32(), pause: va(0xbae264).readU8(), date: date(),
         stack: Thread.backtrace(this.context, Backtracer.FUZZY).slice(0, 16).map((p) => '0x' + p.sub(mod.base).add(IMAGE_BASE).toString(16)) });
     }
-    if (phase === 0 && frames === 1200) {  // the menu needs ~1200 frames (replay.js)
+    if (phase === 0 && cfg.boot) {
+      // --boot: the main menu as the exe starts (`AktKep` 15, `Main3DInit` fresh; re/screens/mainscr.md §13): no
+      // scenario, no save; a script starts at its first frame.
+      at = frames; phase = 3;
+      send({ k: 'boot', kep: A.AktKep.readS32() });
+    } else if (phase === 0 && frames === 1200) {  // the menu needs ~1200 frames (replay.js)
       betolt(Memory.allocAnsiString('scenario/quick.scn'));
       at = frames; phase = 1;
       send({ k: 'scenario' });
@@ -432,15 +491,17 @@ Interceptor.attach(A.Fake_FRISSITES, {
         }
         va(0xb84bf4).writeS32(cfg.infoStarlog);
       }
+      if (cfg.grwar) send({ k: 'grwar', staged: stageGrWar(cfg.planet) });
       if (cfg.kep >= 0) {
         A.AktKepKell.writeS32(cfg.kep);
         A.AktPlanetKell.writeS32(cfg.planet);
       }
       at = frames; phase = 3;
-    } else if (phase === 3 && !setupDone && (cfg.rop || cfg.fleets || cfg.ropMenu || cfg.menu) && A.AktKep.readS32() === 2 && frames >= at + 60) {
+    } else if (phase === 3 && !setupDone && (cfg.rop || cfg.fleets || cfg.planetTanks || cfg.ropMenu || cfg.menu) && A.AktKep.readS32() === 2 && frames >= at + 60) {
       // The starmap is up: make the fleets, select one (--rop-fleet K: `StarmapMode` 0xB9998C = 2, `AktFleet`
       // 0xB99664 = the K-th made), then press the icon and wait from there.
       if (cfg.fleets) populate(cfg.fleets);
+      if (cfg.planetTanks) planetTanks(cfg.planetTanks);
       if (cfg.ropFleet && fleets[cfg.ropFleet - 1]) { va(0xb9998c).writeS32(2); va(0xb99664).writeS32(fleets[cfg.ropFleet - 1]); }
       if (cfg.rop) cfg.ropNow = true;
       setupDone = true;
@@ -526,7 +587,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
           ptr: va(0xb84c08).readS32(), n: va(0xb84c0c).readS32(), texts: [va(0x90b8a0).readS32(), va(0xb85e94).readS32(), va(0xb85e98).readS32()] },
         star: { mode: va(0xb79fb2).readU8(), frame: va(0xb85260).readFloat(), pointer: va(0xb84c10).readS32(), filled: va(0xb84bf4).readS32(),
           log: Array.from({ length: 200 }, (_, i) => { const r = va(0xb82990 + 0x2c * i); const t = r.add(8).readByteArray(0x24); const b = new Uint8Array(t); const n = b.indexOf(0); return [r.readS32(), hexs(r.add(8), n < 0 ? 0x24 : n)]; }) } };
-      send({ k: 'grab', clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
+      send({ k: 'grab', clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoAlap: va(0xf158c0).readFloat(), infoAlapOn: va(0xe83701).readU8(), fifo: [0, 1, 2, 3, 4, 5, 6, 7].map(k => va(0xf154d0 + 4 * k).readFloat()), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
       shot++;
       at = frames;
       if (shot >= cfg.shots) phase = 4;
@@ -549,7 +610,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
 let scriptT = null, scriptUi0 = 0, scriptMouse = [320, 240], scriptEvents = [], scriptGrabs = [], scriptEnd = 0;
 let vt = 0, vtOn = false, realTicks = null, swapHooked = false;
 const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050], enter: [40, 13],
-  pageup: [75, 0x4000004b], pagedown: [78, 0x4000004e], escape: [41, 27], d: [7, 100], k: [14, 107], space: [44, 32] };
+  pageup: [75, 0x4000004b], pagedown: [78, 0x4000004e], escape: [41, 27], d: [7, 100], k: [14, 107], space: [44, 32],
+  c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127] };
 // The research screen's clock and selection (`ResearchTerulet` 0xB9A9B4, `ResearchMezo` 0xB9AA04, `ResearchTalalmany`
 // 0xB9AA08, `ResearchOldForgato` 0x919598; re/screens/research.md §1).
 const resState = () => ({ frame: va(0xdc5368).readFloat(), open: va(0xddf322).readU8(), closing: va(0xddf323).readU8(), started: va(0xddf628).readU8(),

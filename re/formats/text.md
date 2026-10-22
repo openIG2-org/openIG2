@@ -155,6 +155,7 @@ then per sample `i32 x, i32 y, u8 button, u8 left, u8 right, u8 modifiers (1 Alt
 Sample 0 is never written by the recorder (shipped files start with `0xCD` fill). Paths:
 `tutorial/` + `main/` + the `PLAYMOUSE` name; all 73 played recordings and every shipped `.mou` parse
 exactly.
+The interpreter (commands, events, effects on the game) is specified in `re/rules/tutorial.md` and ported as `ig2_sim::tutorial`.
 
 ### Not implemented
 | Files | Loader | Shape |

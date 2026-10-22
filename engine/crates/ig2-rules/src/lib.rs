@@ -6,6 +6,7 @@
 //! (`re/rules/traces/2026-10-15-tables.md`).
 
 mod pe;
+pub mod sounds;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -23,6 +24,15 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Fails unless `exe` is the catalogued build (every table address below is that build's).
+pub(crate) fn check_build(exe: &[u8]) -> Result<()> {
+    let digest: String = Sha256::digest(exe).iter().map(|b| format!("{b:02x}")).collect();
+    if digest != GOG_2017_SHA256 {
+        return Err(Error::UnknownBuild(digest));
+    }
+    Ok(())
+}
 
 /// SHA-256 of the catalogued GOG `ig2.exe` (PE32, MSVC 2013, linked 2017-02-06).
 pub const GOG_2017_SHA256: &str = "2baa530be6bc86000b9d63e7c47a6131f0d0f4a6cc8d3f1897f5db0427950442";
@@ -548,6 +558,9 @@ pub struct Rules {
     /// `Building[k − 1]` `+0x58/+0x5c`: footprint (width, height) of building kind `k` on the 200 × 200
     /// colony grid, indexed by kind (entry 0 = (0, 0); `re/rules/colony-placement.md` §1).
     pub building_footprints: Vec<(i32, i32)>,
+    /// What the exe reads as kind 0's footprint (`Building[−1]` `+0x58/+0x5c` = 0x8F1F14, the int table before
+    /// it): `SetTarget` on an emptied building slot takes its width (re/screens/colony.md §9.1).
+    pub building_footprint0: (i32, i32),
     /// `Building[k − 1]`'s models, indexed by kind (entry 0 is empty).
     pub building_models: Vec<BuildingModel>,
     pub unit_models: UnitModels,
@@ -685,10 +698,7 @@ impl Rules {
 
     /// Read every catalogued table from the bytes of the user's `ig2.exe`.
     pub fn from_exe(exe: &[u8]) -> Result<Self> {
-        let digest: String = Sha256::digest(exe).iter().map(|b| format!("{b:02x}")).collect();
-        if digest != GOG_2017_SHA256 {
-            return Err(Error::UnknownBuild(digest));
-        }
+        check_build(exe)?;
         let img = PeImage::parse(exe)?;
         let tab = |(va, stride, n): (u32, usize, usize)| img.read(va, stride * n).map(|b| (b, stride, n));
         let ints = |t| -> Result<Vec<i32>> { let (b, _, n) = tab(t)?; Ok((0..n).map(|i| i32_at(b, 4 * i)).collect()) };
@@ -875,6 +885,10 @@ impl Rules {
             building_footprints: {
                 let (b, s, n) = tab(layout::BUILDING_MODELS)?;
                 std::iter::once((0, 0)).chain((0..n).map(|i| (i32_at(b, i * s + 0x58), i32_at(b, i * s + 0x5c)))).collect()
+            },
+            building_footprint0: {
+                let b = img.read(layout::BUILDING_MODELS.0 - layout::BUILDING_MODELS.1 as u32 + 0x58, 8)?;
+                (i32_at(b, 0), i32_at(b, 4))
             },
             road_scale: floats(layout::ROAD_SCALE)?,
             scaffold_heights: floats(layout::SCAFFOLD_HEIGHTS)?,

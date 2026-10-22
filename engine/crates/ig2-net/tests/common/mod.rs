@@ -17,7 +17,7 @@ use ig2_sim::messages::Texts;
 use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
 use ig2_sim::research::ResearchRules;
-use ig2_sim::save::SaveState;
+use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
 use ig2_sim::spacebattle::{FormRules, FormationSlot, ShipType, SpaceRules};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
@@ -181,6 +181,7 @@ pub fn game_rules(inst: &Install) -> GameRules {
             fortress: r.ground_fortress_weapons.clone(),
             turn_speeds: r.ground_turn_speeds.clone(),
             armour: r.ground_armour.clone(),
+            kind0_width: r.building_footprint0.0,
         },
         surface_weathers: surfaces.iter().map(|s| s.weathers.clone()).collect(),
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
@@ -213,4 +214,55 @@ pub fn space_rules(inst: &Install, r: &ig2_rules::Rules) -> Result<SpaceRules, S
         building_tech: r.buildings.iter().map(|b| b.tech).collect(),
         building_hp: r.buildings.iter().map(|b| b.max_hp).collect(),
     })
+}
+
+/// Empire 3 becomes a second human (the session runs the MP rules) and gets a fleet of warships next to a fleet of
+/// 6's beside one of 6's planets, ordered to attack it: a real-time space battle between the two humans.
+#[allow(dead_code)]
+pub fn space_clash(mut state: SaveState) -> SaveState {
+    state.mem.set_u8(va::PLAYER_KI + 3, 1);
+    state.mem.set_u8(va::MULTIPLAYER, 1);
+    state.mem.set_i32(0xBAE558, 0);
+    // MP normal speed (×4; the save holds 0): the battles step once per tick (`SetIdoSpeed`).
+    state.mem.set_i32(va::IDO_SPEED, 4);
+    let combat = state.combat();
+    let warship = |e: usize| {
+        (1..combat.designs[e].len())
+            .find(|&d| {
+                let x = &combat.designs[e][d];
+                x.class == 1 && !x.is_fighter() && x.attack > 0 && x.hp > 0
+            })
+            .unwrap_or_else(|| panic!("empire {e} has a warship design"))
+    };
+    let (d6, d3) = (warship(6), warship(3));
+    // A fleet for each next to one of 6's planets (records like fleet 1's, a plain fleet), 3's ordered to attack 6's.
+    let home = (1..=state.planet_count()).find(|&p| state.mem.u8(va::PLANETS + (p * PLANET_SIZE) as u32 + 0x20) == 6).expect("a planet of 6");
+    let at = va::PLANETS + (home * PLANET_SIZE) as u32;
+    let (hx, hy) = (f32::from_le_bytes(state.mem.read(at + 0x18, 4).try_into().unwrap()), f32::from_le_bytes(state.mem.read(at + 0x1c, 4).try_into().unwrap()));
+    for owner in [6u8, 3] {
+        let mut rec = state.fleets[1];
+        rec[0x15] = owner;
+        state.fleets.push(rec);
+    }
+    let (a, b) = (state.fleets.len() - 2, state.fleets.len() - 1);
+    state.mem.set_i32(va::FLEET_COUNT, b as i32);
+    for (f, d, n) in [(a, d6, 6), (b, d3, 6)] {
+        for _ in 0..n {
+            let mut s = [0u8; 6];
+            s[0..2].copy_from_slice(&(f as i16).to_le_bytes());
+            s[2..4].copy_from_slice(&(d as i16).to_le_bytes());
+            state.ships.push(s);
+        }
+    }
+    state.mem.set_i32(va::SHIP_COUNT, state.ships.len() as i32 - 1);
+    let mut map = state.starmap();
+    for f in [a, b] {
+        (map.fleets[f].x, map.fleets[f].y, map.fleets[f].order, map.fleets[f].flags) = (hx + 3.0, hy + 3.0, 0, 0);
+        map.fleets[f].name = [0; 21];
+        map.fleets[f].name[..5].copy_from_slice(b"Probe");
+    }
+    map.fleets[b].x += 1.0;
+    (map.fleets[b].order, map.fleets[b].kind, map.fleets[b].tx) = (ig2_sim::fleet::order::ATTACK, ig2_sim::fleet::order::FLEET, a as f32);
+    state.store_starmap(&map);
+    state
 }

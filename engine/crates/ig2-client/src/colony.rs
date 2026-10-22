@@ -36,7 +36,7 @@ fn height_cam(map: &GroundMap, x: f32, y: f32) -> f32 {
 }
 
 /// `GetHeight` (ELF 0x46bff0): 0 past the grid (the exe reads the next record inside it; clamped here).
-fn height(map: &GroundMap, x: f32, y: f32) -> f32 {
+pub fn height(map: &GroundMap, x: f32, y: f32) -> f32 {
     let (fx, fy) = height_cell(x, y);
     if fx > 200.0 || fy > 200.0 {
         return 0.0;
@@ -85,6 +85,19 @@ pub struct UnitView {
     pub turret_angle: f32,
     /// The weapon pod the turret model shows (`TankTorony` index), `None` without one.
     pub gun: Option<usize>,
+    /// What the war's buttons and markers read (spec §11): `+0x1d0` weapons, `+0x288` air-strike units, `+0x250`
+    /// mine laying, `+0x278` dropship bits, `+0x23c` target (with flag 0x100), the waypoints still to drive
+    /// (cursor `+0x230` .. count `+0x22c`) and the members with hit points (`AliveTankNum`).
+    pub weapons: u32,
+    pub air: i32,
+    pub laying: bool,
+    pub transport: u32,
+    pub target: i32,
+    pub route: Vec<(i32, i32)>,
+    pub members: i32,
+    /// Riding its dropship (`+0x278` bit 3): the model is drawn `(h, x, y)` = (`+0x284`, `+0x27c`, `+0x280`) off
+    /// its place (spec §4); the rings stay on the ground.
+    pub ride: Option<V3>,
 }
 
 /// A shot in flight: `(h, x, y)`, the list it is in (0 shells, 1 missiles/debris, 2 bolts) and its kind.
@@ -136,6 +149,19 @@ pub struct ColonySnap {
     pub weather: i32,
     pub background: i32,
     pub at_war: bool,
+    /// The battlefield's war state (spec §11): `+0x7fc/+0x800 + 8(e − 1)` the call-in timers, `+0x89f + s − 1` the
+    /// retreat flags, `+0x8b1 + s` side `s` has units on the field; the planet's `+0x64` bit 0 (a war on it).
+    pub timers: [(i32, i32); 18],
+    pub retreat: [u8; 18],
+    pub present: [u8; 19],
+    pub war_flag: bool,
+    /// Alive units still to land (flag 0x8000000), of any side: `(owner, design)` in slot order.
+    pub to_land: Vec<(i32, i32)>,
+    /// The attacking fleet's owner (`Flottak[WF+0x338]+0x15`, 0 none) and the planet's name (`+0`).
+    pub attacker: i32,
+    pub planet_name: Vec<u8>,
+    /// The retreat button's test (`Colony_Main` 0x10): no alive unit still to land and every one with `+0x278` bit 0.
+    pub all_landed: bool,
     /// The human sees inside (`WF+0xa1b`, set by `ShowColony`): the owner, or satellites there
     /// (`BolygoTipus::pMuholdakMennyi(EN)` = planet `+0xc4 + EN`; empire 7 counts an empty entry as one). Else
     /// the buildings, roads and units are hidden and only red footprints show (`DrawBuildingBases`).
@@ -188,6 +214,14 @@ impl ColonySnap {
                     turret,
                     turret_angle: u.rt.turret_angle,
                     gun,
+                    weapons: u.weapons,
+                    air: u.air,
+                    laying: u.rt.laying != 0,
+                    transport: u.transport,
+                    target: u.target,
+                    route: u.rt.waypoints.iter().skip(u.rt.wp_cursor.max(0) as usize).copied().collect(),
+                    members: u.hp.iter().filter(|&&h| h > 0).count() as i32,
+                    ride: (u.transport & 8 != 0).then_some([u.rt.drop[2], u.rt.drop[0], u.rt.drop[1]]),
                 }
             })
             .collect();
@@ -202,8 +236,20 @@ impl ColonySnap {
             .chain(l.fighters.iter().filter(|_| l.fighters_on).map(|f| ShotView { pos: f.pos, list: 3, kind: 0 }))
             .collect();
         let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
+        // `WF+0x8b1 + s` as `GetStatus` (exe 0x47be90) sets it: alive units counted on the field, by side (the saved
+        // bytes are stale until the next status call).
+        let mut present = [0u8; 19];
+        for (u, _) in field.units.iter().zip(&field.alive).filter(|(u, a)| {
+            **a && !(u.flags & flag::NOT_PLACED != 0 && u.flags & flag::NOT_COUNTED != 0) && u.flags2 & 4 == 0 && u.flags & flag::MINE == 0
+        }) {
+            if let Some(p) = present.get_mut(u.side as usize) {
+                *p = 1;
+            }
+        }
         let sats = if en == 7 && p.spies[7] == 0 { 1 } else { p.spies[en] };
-        let visible = p.owner as usize == en || sats != 0;
+        // `DrawBuildingBases` only when none of these: the owner, satellites, or side EN has units on the field
+        // (`WF+0x8b1 + EN`, colony.md §11.4: a lander sees the colony).
+        let visible = p.owner as usize == en || sats != 0 || present[en] != 0;
         let camera = if field.units.is_empty() && field.tail.f1a8 == [0; 5] { SavedCamera::NEW_GAME } else { SavedCamera::read(&field) };
         Some(Self {
             planet,
@@ -218,6 +264,14 @@ impl ColonySnap {
             weather: field.weather,
             background: field.background,
             at_war: field.units.iter().zip(&field.alive).any(|(u, &a)| a && u.flags & flag::TURRET == 0 && u.owner != p.owner as i32),
+            timers: field.timers,
+            retreat: field.retreat,
+            present,
+            war_flag: state.mem.u8(ig2_sim::save::va::PLANETS + (planet * ig2_sim::save::PLANET_SIZE) as u32 + 0x64) & 1 != 0,
+            attacker: usize::try_from(field.attack_fleet).ok().filter(|&f| f > 0).and_then(|f| state.fleets.get(f)).map_or(0, |r| r[0x15] as i32),
+            planet_name: state.mem.read(ig2_sim::save::va::PLANETS + (planet * ig2_sim::save::PLANET_SIZE) as u32, 0x14).into_iter().take_while(|&b| b != 0).collect(),
+            all_landed: field.units.iter().zip(&field.alive).all(|(u, &a)| !a || (u.flags & flag::LANDED == 0 && u.transport & 1 != 0)),
+            to_land: field.units.iter().zip(&field.alive).filter(|(u, a)| **a && u.flags & flag::LANDED != 0).map(|(u, _)| (u.owner, u.design)).collect(),
             visible,
         })
     }
@@ -348,6 +402,17 @@ impl Camera {
         let f = 600.0 / -e[2];
         let (vx, vy) = (e[0] * f + 320.0, e[1] * f + 240.0);
         Some(crate::font::Virtual::new(self.size).px(vx, vy))
+    }
+
+    /// World → virtual pixels and the depth `−z` in front of the eye (`TransformPoint`), `None` behind the near plane.
+    pub fn project_virtual(&self, v: &ViewBasis, p: V3) -> Option<([f32; 2], f32)> {
+        let q = [p[0] - v.eye[0], p[1] - v.eye[1], p[2] - v.eye[2]];
+        let e = v.rows.map(|r| dot(r, q));
+        if e[2] > -NEAR {
+            return None;
+        }
+        let f = 600.0 / -e[2];
+        Some(([e[0] * f + 320.0, e[1] * f + 240.0], -e[2]))
     }
 
     /// The same projection as a clip-space matrix (column-major for WGSL).
@@ -668,6 +733,12 @@ impl ColonyScene {
     }
 
     /// `epkij.bmp` (`epuletkijelolestextura`, `Init3dColony`): the selected building's marker.
+    /// A texture of `textures/colony/`, loaded once.
+    fn colony_texture(&mut self, r: &mut Renderer, install: &Install, name: &str) -> TexId {
+        let path = install.resolve_texture("textures/colony/", name);
+        texture(r, install, &mut self.textures, self.white, path.as_deref())
+    }
+
     fn marker_texture(&mut self, r: &mut Renderer, install: &Install) -> TexId {
         let path = install.resolve_texture("textures/colony/", "epkij.bmp");
         texture(r, install, &mut self.textures, self.white, path.as_deref())
@@ -859,14 +930,52 @@ pub struct View {
     pub overlay: Overlay,
 }
 
-/// The build cursor and the selection marker, drawn with the scene.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+/// The build cursor and the selection markers, drawn with the scene.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Overlay {
+    /// The ground war's rings and target markers (`WF_Tank::DrawSelection`/`DrawTarget`, spec §11.4).
+    pub marks: Vec<Mark>,
     /// `tempepulet` (`ShowColony`): the build menu's building at the spot found for it, half transparent.
     pub ghost: Option<Ghost>,
     /// `DrawBuildingSelection` (ELF 0x482ca0): building slot `slot`'s marker, `size` = `selectionsize`, `alpha` =
     /// `selectionatlatszosag` (0..=255).
     pub selection: Option<(usize, f32, i32)>,
+}
+
+/// A flat textured square on the ground (two triangles, `polygons3d`), alpha `alpha` (0..=255).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mark {
+    pub tex: MarkTex,
+    pub at: MarkAt,
+    pub alpha: i32,
+}
+
+/// `WF+0x200/+0x208/+0x210/+0x218` (`WF::LoadMesh`): `friend.bmp`, `enemy.bmp`, `nyilak.bmp`, `epuletkij.bmp`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkTex {
+    Friend,
+    Enemy,
+    Arrow,
+    Building,
+}
+
+impl MarkTex {
+    fn file(self) -> &'static str {
+        match self {
+            MarkTex::Friend => "friend.bmp",
+            MarkTex::Enemy => "enemy.bmp",
+            MarkTex::Arrow => "nyilak.bmp",
+            MarkTex::Building => "epuletkij.bmp",
+        }
+    }
+}
+
+/// Where a mark lies: around unit slot `slot` (half size `half`, `lift` above its height), or over building slot
+/// `slot` grown by `grow` (`DrawTarget`'s building case: the selection marker's size with `(size − 45)·2`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MarkAt {
+    Unit { slot: usize, half: f32, lift: f32 },
+    Building { slot: usize, grow: f32 },
 }
 
 /// The build cursor: building `kind` at grid cell `at` (`AktBGridXSarga/YSarga`); `blocked` lights it red
@@ -927,7 +1036,10 @@ impl View {
         let mut dynamic = Vec::new();
         let um = &rules.unit_models;
         // `WF_Tank::Draw3d`/`Update` hide the units too when the human doesn't see inside.
-        for u in curr.units_at(prev, alpha).into_iter().filter(|_| curr.visible) {
+        for mut u in curr.units_at(prev, alpha).into_iter().filter(|_| curr.visible) {
+            if let Some(d) = u.ride {
+                u.pos = std::array::from_fn(|k| u.pos[k] + d[k]);
+            }
             let turret_unit = u.flags & flag::TURRET != 0;
             let hull = u.hull.clamp(0, 4) as usize;
             let piv = um.pivot.get(hull).copied().unwrap_or(0.0);
@@ -1037,21 +1149,48 @@ impl View {
                 }
             }
         }
-        let Some((slot, size, alpha)) = self.overlay.selection else { return };
-        let Some(b) = curr.buildings.iter().find(|b| b.slot == slot) else { return };
-        let Some(&(_, at)) = scene.building_at.iter().find(|(s, _)| *s == slot) else { return };
-        let (w, h) = rules.building_footprints.get(b.kind as usize).copied().unwrap_or((0, 0));
-        let k = rules.building_models.get(b.kind as usize).map_or(0.0, |m| m.select);
-        let lift = rules.scaffold_heights.get((b.kind as usize).wrapping_sub(1)).copied().unwrap_or(0.0) - 20.0;
-        let (hx, hy) = ((w * 0x28) as f32 * k + size * 2.0, (h * 0x28) as f32 * k + size * 2.0);
-        let tex = scene.marker_texture(r, install);
-        // Flat at the building's placed height (`+0x14`) plus `allvanypoziciok[k − 1] − 20` (up is −h).
-        let z = at[0] + lift;
-        let c = [1.0, 1.0, 1.0, alpha.clamp(0, 255) as f32 / 255.0];
-        let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [z, at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };
-        let base = dynamic.len() as u32;
-        dynamic.extend([q(-hx, hy, 0.0, 1.0), q(hx, hy, 1.0, 1.0), q(hx, -hy, 1.0, 0.0), q(-hx, hy, 0.0, 1.0), q(-hx, -hy, 0.0, 0.0), q(hx, -hy, 1.0, 0.0)]);
-        draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+        // A building's marker square: centre, half sizes (`w·40·select + grow`) and height.
+        let building_at = scene.building_at.clone();
+        let building = |slot: usize, grow: f32| {
+            let b = curr.buildings.iter().find(|b| b.slot == slot)?;
+            let &(_, at) = building_at.iter().find(|(s, _)| *s == slot)?;
+            let (w, h) = rules.building_footprints.get(b.kind as usize).copied().unwrap_or((0, 0));
+            let k = rules.building_models.get(b.kind as usize).map_or(0.0, |m| m.select);
+            let lift = rules.scaffold_heights.get((b.kind as usize).wrapping_sub(1)).copied().unwrap_or(0.0) - 20.0;
+            // Flat at the building's placed height (`+0x14`) plus `allvanypoziciok[k − 1] − 20` (up is −h).
+            Some(([at[0] + lift, at[1], at[2]], (w * 0x28) as f32 * k + grow, (h * 0x28) as f32 * k + grow))
+        };
+        // `polygons3d(v, 3, 3)`: the war's marks add their texture (black is clear) [obs: the exe's rings over snow];
+        // the building marker keeps its alpha.
+        let mut square = |tex: TexId, at: V3, hx: f32, hy: f32, alpha: i32, additive: bool| {
+            let c = [1.0, 1.0, 1.0, alpha.clamp(0, 255) as f32 / 255.0];
+            let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [at[0], at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };
+            let base = dynamic.len() as u32;
+            dynamic.extend([q(-hx, hy, 0.0, 1.0), q(hx, hy, 1.0, 1.0), q(hx, -hy, 1.0, 0.0), q(-hx, hy, 0.0, 1.0), q(-hx, -hy, 0.0, 0.0), q(hx, -hy, 1.0, 0.0)]);
+            draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive });
+        };
+        if let Some((slot, size, alpha)) = self.overlay.selection {
+            if let Some((at, hx, hy)) = building(slot, size * 2.0) {
+                let tex = scene.marker_texture(r, install);
+                square(tex, at, hx, hy, alpha, false);
+            }
+        }
+        for m in &self.overlay.marks {
+            let tex = scene.colony_texture(r, install, m.tex.file());
+            match m.at {
+                MarkAt::Unit { slot, half, lift } => {
+                    // The unit's map position, `lift` above its height (up is −h).
+                    if let Some(u) = curr.units.iter().find(|u| u.slot == slot) {
+                        square(tex, [u.pos[0] - lift, u.pos[1], u.pos[2]], half, half, m.alpha, true);
+                    }
+                }
+                MarkAt::Building { slot, grow } => {
+                    if let Some((at, hx, hy)) = building(slot, grow) {
+                        square(tex, at, hx, hy, m.alpha, true);
+                    }
+                }
+            }
+        }
     }
 
     /// The ground point under window pixel `p` (`Update3D`'s click test against the terrain): the eye's ray
@@ -1220,6 +1359,9 @@ pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usi
     let selected = curr.buildings.iter().find(|b| b.slot == selected).map(|b| (b.damage, b.flags));
     crate::hud::ColonyHud {
         own,
+        // `GFX_Colony`/`ColonyGfx2D_3`: the planet panel and its faders when the planet is EN's and not at war, or
+        // while EN still has units to land (`!CheckPlacing(EN)`, colony.md §11.1).
+        panel: own || curr.to_land.iter().any(|&(o, _)| o == en as i32),
         selected,
         workers: i(0x28) - i(0x50),
         energy: i(0x48) - i(0x4c),

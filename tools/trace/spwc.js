@@ -39,7 +39,7 @@ const OBJ = 0x2d9c, UNIT = 600, FIGHTER = 0xa8, GUN = 0xa8, SHOT = 0xa8, SPRITE 
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, steps: 3000, battles: 20, seed: 4242,
   fuzz: false, aiHuman: false, planets: false, join: false, fuzzDesigns: false, every: 4, speed: 4, perBattle: 1500,
-  orders: 0, orderEvery: 5 };
+  orders: 0, orderEvery: 5, grabTicks: [], grabSettle: 120, stateSlot: 0 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -243,6 +243,12 @@ Interceptor.attach(A.SpaceWarFrissit, {
     cur = now;
     steps++;
     battleSteps++;
+    if (cfg.grabTicks.includes(battleSteps) && !grabPending) {
+      // The battle stops (no ticks a frame) while the screen keeps drawing; SetIdoPause left the battle screen.
+      grabPending = { tick: battleSteps, self: this.self, swaps: 0 };
+      A.BattleSpeed.writeS32(0);
+      if (!swapHooked) { swapHooked = true; hookSwap(); emit({ k: 'grabbing', tick: battleSteps }); }
+    }
     if (steps >= cfg.steps) emit({ k: 'done' });
   },
 });
@@ -583,7 +589,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
         onScreen++;
         pending = 0;
         if (A.IdoPause.readU8()) setPause(0, 0);
-        A.BattleSpeed.writeS32(cfg.speed);
+        A.BattleSpeed.writeS32(grabPending ? 0 : cfg.speed);
         // A long battle is abandoned (its slot closed) so the session sees more of them.
         if (battleSteps >= cfg.perBattle && lastSelf) {
           lastSelf.add(0x1f2e).writeU8(0);
@@ -608,5 +614,62 @@ Interceptor.attach(A.Fake_FRISSITES, {
     } catch (e) { emit({ k: 'error', msg: e.toString(), stack: e.stack }); }
   },
 });
+
+// ---------------------------------------------------------------- screen grabs (--grab-ticks)
+// --grab-ticks T,..: when the battle has run T ticks it stops (`IdoSpeedSzorzoBattle` 0), the screen settles for --grab-settle
+// frames (the camera's easing), then the back buffer is read at SwapBuffers (glReadPixels, as screen.js) and the
+// battle's full regions are dumped at that moment ('dump', the same shape as 'init'): ig2-client draws the same
+// battle from it (re/screens/spacewar.md). The first grab also writes the exe's own save (--state-slot) for the
+// top bar. Then the clock runs on to the next grab.
+let grabPending = null, grabsDone = 0, swapHooked = false;
+const loadSave = new NativeFunction(va(0x543c80), 'void', ['int', 'pointer', 'int'], { abi: 'mscdecl', traps: 'all' });
+function hookSwap() {
+  const gl = Process.getModuleByName('opengl32.dll'), gdi = Process.getModuleByName('gdi32.dll'), user = Process.getModuleByName('user32.dll');
+  const f = (m, n, r, a) => new NativeFunction(m.getExportByName(n), r, a, { abi: 'stdcall' });
+  const readPixels = f(gl, 'glReadPixels', 'void', ['int', 'int', 'int', 'int', 'uint', 'uint', 'pointer']);
+  const getInt = f(gl, 'glGetIntegerv', 'void', ['uint', 'pointer']);
+  const readBuffer = f(gl, 'glReadBuffer', 'void', ['uint']);
+  const pixelStore = f(gl, 'glPixelStorei', 'void', ['uint', 'int']);
+  const getProc = f(gl, 'wglGetProcAddress', 'pointer', ['pointer']);
+  const winOfDc = f(user, 'WindowFromDC', 'pointer', ['pointer']);
+  const clientRect = f(user, 'GetClientRect', 'int', ['pointer', 'pointer']);
+  let bindFb = null, bindBuf = null;
+  const tmp = Memory.alloc(16), rect = Memory.alloc(16);
+  const get = (e) => { getInt(e, tmp); return tmp.readS32(); };
+  Interceptor.attach(gdi.getExportByName('SwapBuffers'), {
+    onEnter(args) {
+      if (!grabPending || A.AktKep.readS32() !== 0xb) return;
+      if (++grabPending.swaps < cfg.grabSettle) return;
+      try {
+        if (!bindFb) {
+          const p = getProc(Memory.allocAnsiString('glBindFramebuffer')), q = getProc(Memory.allocAnsiString('glBindBuffer'));
+          bindFb = p.isNull() ? () => {} : new NativeFunction(p, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+          bindBuf = q.isNull() ? () => {} : new NativeFunction(q, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+        }
+        clientRect(winOfDc(args[0]), rect);
+        const w = rect.add(8).readS32(), h = rect.add(12).readS32();
+        const fb = get(0x8caa), pack = get(0x88ed), rb = get(0x0c02), align = get(0x0d05);
+        bindFb(0x8ca8, 0); bindBuf(0x88eb, 0); readBuffer(0x0405); pixelStore(0x0d05, 1);
+        const buf = Memory.alloc(w * h * 4);
+        readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
+        bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
+        const self = grabPending.self, now = grab(regions(self)), full = {};
+        for (const k in now) full[k] = { p: now[k].p, full: hexOf(now[k].b) };
+        flush();
+        send({ type: 'shot', tick: grabPending.tick, n: grabsDone, w, h, battle: battleSerial, self: self.toString(),
+          acttime: va(0xfd1520).readU32(), futofeny: va(0xf1736c).readFloat(), clouds: va(0xe75918).readS32(),
+          // The smoothed camera `spwkamerapont`/`spwforgaspont` (eye, target: h, x, y, w), `spacewarelfade`, `zbm`.
+          cam: hexOf(new Uint8Array(va(0xe72dd4).readByteArray(0x20))), fade: va(0xf16eb4).readFloat(), zbm: va(0x91965c).readFloat(), erosseg: va(0x927994).readFloat(),
+          statics: statics(self), regions: full }, buf.readByteArray(w * h * 4));
+        if (grabsDone === 0 && cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('spacewar'), 2);
+      } catch (e) { emit({ k: 'error', msg: e.toString(), stack: e.stack }); }
+      grabPending = null;
+      grabsDone++;
+      A.BattleSpeed.writeS32(cfg.speed);
+      if (grabsDone >= cfg.grabTicks.length) { emit({ k: 'done' }); steps = cfg.steps; }
+    },
+  });
+}
+// opengl32.dll is loaded late: the SwapBuffers hook goes in at the first grab.
 
 send({ type: 'ready', base: mod.base.toString() });

@@ -326,6 +326,7 @@ fn game_rules(inst: &Install) -> GameRules {
             fortress: r.ground_fortress_weapons.clone(),
             turn_speeds: r.ground_turn_speeds.clone(),
             armour: r.ground_armour.clone(),
+            kind0_width: r.building_footprint0.0,
         },
         surface_weathers: surfaces.iter().map(|s| s.weathers.clone()).collect(),
         backgrounds: backgrounds.into_iter().map(|b| b.weathers).collect(),
@@ -782,4 +783,39 @@ fn empire_death_deletes_fleets_and_checks_victory() {
     g.empire_dies(6, &[]);
     assert_eq!((owned(&g, 6), alive(&g, 6)), (0, 0));
     assert_eq!(over(&g), [GameOver::Lost]);
+}
+
+/// The tutorial's in-place writes (`re/rules/tutorial.md` §3; `Game::tutorial_effect`) on an original save.
+#[test]
+fn tutorial_effects_write_the_game() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-1.sav");
+    if !p.exists() {
+        eprintln!("no {}; skipping", p.display());
+        return;
+    }
+    use ig2_sim::tutorial::Effect;
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let mut g = Game::new(SaveState::from_save(&load(&p), &tech_defaults), &rules);
+    let en = g.state.mem.i32(va::EN) as usize;
+    let money = |g: &Game| g.state.treasuries()[en].total;
+    let m0 = money(&g);
+    assert!(g.tutorial_effect(&Effect::GiveMoney(300000)));
+    assert_eq!(money(&g), m0 + 300000.0);
+    assert!(g.tutorial_effect(&Effect::Invention { tech: 0x12, state: 3 }));
+    assert_eq!(g.state.mem.u8(va::TECHS + 0x12 * 0x114 + 0x45 + en as u32), 3);
+    assert!(g.tutorial_effect(&Effect::DisableAutobuild));
+    let n = g.state.planet_count();
+    assert!((1..=n).all(|q| g.state.mem.u8(va::PLANETS + (q * 0x188) as u32 + 0x6c) == 0));
+    assert!(g.tutorial_effect(&Effect::Traders { enabled: false }));
+    assert!(g.state.fleets.iter().skip(1).filter(|f| f[0x15] == 9).all(|f| f[0x18] & 1 == 1 && f[0x16] == 0x9a && f[0x17] == 2));
+    assert!(g.tutorial_effect(&Effect::Traders { enabled: true }));
+    assert!(g.state.fleets.iter().skip(1).filter(|f| f[0x15] == 9).all(|f| f[0x18] & 1 == 0));
+    assert!(g.tutorial_effect(&Effect::ExploreEmpire { empire: 6, diplomacy: false }));
+    assert_eq!(g.state.mem.u8(va::EMPIRE_KNOWS + 6 + 0x13 * en as u32), 1);
+    assert!(!g.tutorial_effect(&Effect::CenterFleet));
 }

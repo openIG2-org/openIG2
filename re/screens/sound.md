@@ -9,11 +9,11 @@ sound ids match in order", the capture diff for every state). Tools: `tools/trac
 ## 1. Sound tables and `PlaySound`
 - A `Hang` record is 0x11c bytes (exe and ELF alike): the file name at +0 (0x100 bytes, relative to `sounds/`),
   the first voice's handle +0x100 (−1 none), loop +0x104, the second and third voices' handles +0x108 / +0x10c,
-  the volume in per cent +0x110, "load when first played" +0x114 [`PlaySound` exe 0x55cd20, ELF 0x671070;
+  the volume in per cent +0x110, "load at init" +0x114 (clear in every GOG record; audio.md §2) [`PlaySound` exe 0x55cd20, ELF 0x671070;
   `InitSounds` exe 0x55c790].
-- `InitSounds(Hang*, n)` loads every record whose +0x114 is clear (`SoundEngine::LoadWave("sounds/" + name, loop,
+- `InitSounds(Hang*, n)` loads every record whose +0x114 is set (`SoundEngine::LoadWave("sounds/" + name, loop,
   &handle)`), sets the others' handle to −1, and clears both extra voices.
-- `PlaySound(Hang* h, bool raw)`: nothing unless `SOUND` (exe 0x919930) is set. A record still unloaded (+0x114 set,
+- `PlaySound(Hang* h, bool raw)`: nothing unless `SOUND` (exe 0x919930) is set. A record still unloaded (+0x114 clear,
   handle −1) is loaded first, from `"sounds/" + name` (`raw` 0) or `name` (`raw` 1). Then, by the first voice's
   status (`SoundEngine::GetStatus`): 1 (stopped) → its volume and play; 2 (playing) → the second voice (made on first
   use by copying the first, `FUN_0055d9d0`), then the third, each played if stopped; all three playing → the first
@@ -63,7 +63,10 @@ One JSON file drives both sides (`tools/trace/scripts/*.json`; `ig2-client/src/s
 `{events: [{t, mouse: [x, y]} | {t, press: [x, y], button?, hold?} | {t, key: NAME, hold?}], grabs: [t…], tail?}`.
 `t` counts UI ticks (10 ms) from the first frame the screen is up (`AktKep` = the screen); points are virtual
 (640 × 480); a press is the pointer moved there, the button down and up `hold` (3) ticks later; key names: down,
-up, right, left, enter, pageup, pagedown, escape, d, k, space.
+up, right, left, enter, pageup, pagedown, escape, d, k, space, c, e, i, m, s, 1, 2, 3, tab, delete (the exe gets
+key events only: a handler that reads the typed character, as `ColonyKeyboardHandler`'s E does, doesn't see them).
+On the starmap and the colony screen the client runs the window's own code headless (audio.md §7) and writes only
+the sounds; the scripts there carry no grabs.
 
 The exe side (`screen.js`, `run_screen.py --script`):
 - **The clock**: `Fake_FRISSITES` (exe 0x4de720) runs one UI tick per 10 ms of `SDL_GetTicks` (exe 0x689e80):

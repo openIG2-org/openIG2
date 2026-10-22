@@ -127,3 +127,26 @@ fn research_screen_tables_line_up() {
     assert_eq!(r.pictures[0x58], "RESE_MSK.RAW");
     eprintln!("models {:?}\norbit {:?}\nlabs {:?} {:?} {:?}", &s.models[..32], s.orbit, s.lab_x, s.lab_x2, s.lab_y);
 }
+
+#[test]
+fn sound_tables_name_the_installs_files() {
+    use ig2_rules::sounds::{install_paths, SoundTables, Table};
+    let Some(inst) = Install::from_env(Lang::En) else { return };
+    let inst = inst.expect("valid install");
+    let exe = inst.read_raw("ig2.exe").expect("ig2.exe");
+    let t = SoundTables::from_exe(&exe).expect("catalogued exe");
+    let counts: Vec<usize> = t.tables.iter().map(Vec::len).collect();
+    assert_eq!(counts, [11, 58, 44, 4, 3, 6, 19, 4, 42, 3, 2]);
+    // Every record has its file except Colony_Hangok[27..=36], ten night bird calls the GOG install lacks
+    // (re/screens/sound.md §1).
+    for table in Table::ALL {
+        for (i, h) in t.tables[table as usize].iter().enumerate() {
+            let found = install_paths(&h.name).iter().any(|p| inst.resolve(p).is_some());
+            assert_eq!(found, !(table == Table::Colony && (27..=36).contains(&i)), "{}[{i}] {}", table.name(), h.name);
+            assert!([0, 4, 6].contains(&h.looping) && (1..=100).contains(&h.volume) && !h.preload);
+        }
+    }
+    assert_eq!(t.music.len(), 19);
+    assert!(t.music.iter().all(|m| m.starts_with("mfx/") && inst.resolve(m).is_some()));
+    assert_eq!(t.music[12], "mfx/menu.ogg");
+}

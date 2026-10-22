@@ -24,28 +24,40 @@ pub trait Transport {
 }
 
 /// An in-process link. Messages cross it encoded, as they would cross a network, and the ends may live on
-/// different threads.
+/// different threads. Dropping one end closes the link: the other end reports [`Transport::closed`] once it has
+/// received everything sent before.
 pub struct Loopback {
     tx: Sender<Vec<u8>>,
     rx: Receiver<Vec<u8>>,
+    closed: bool,
 }
 
 /// The two ends of a new loopback link.
 pub fn loopback() -> (Loopback, Loopback) {
     let (a_tx, b_rx) = channel();
     let (b_tx, a_rx) = channel();
-    (Loopback { tx: a_tx, rx: a_rx }, Loopback { tx: b_tx, rx: b_rx })
+    (Loopback { tx: a_tx, rx: a_rx, closed: false }, Loopback { tx: b_tx, rx: b_rx, closed: false })
 }
 
 impl Transport for Loopback {
     fn send(&mut self, msg: &Msg) {
-        let _ = self.tx.send(wire::to_vec(msg).expect("messages encode"));
+        if self.tx.send(wire::to_vec(msg).expect("messages encode")).is_err() {
+            self.closed = true;
+        }
     }
 
     fn recv(&mut self) -> Result<Option<Msg>, wire::Error> {
         match self.rx.try_recv() {
             Ok(b) => wire::from_slice(&b).map(Some),
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => Ok(None),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => {
+                self.closed = true;
+                Ok(None)
+            }
         }
+    }
+
+    fn closed(&self) -> bool {
+        self.closed
     }
 }

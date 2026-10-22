@@ -2,7 +2,9 @@
 //! state, two peers on loopback links run the same ticks from the same commands with identical hashes, a third
 //! rejoins from a snapshot and the command log, a corrupted peer is reported as desynced, and peers playing
 //! different empires and looking at different planets stay identical in the canonical view (ADR 0007 §5), each with
-//! its own contact list and spy report queue (`re/rules/multiplayer.md` §5).
+//! its own contact list and spy report queue (`re/rules/multiplayer.md` §5). The real-time battles (§7, ADR 0011): two
+//! humans fight in space and on the ground with orders, a player drops and rejoins mid-battle, a battle desync is
+//! reported and resynced, and the host's log replayed into one game gives the peers' hashes.
 
 mod common;
 
@@ -105,6 +107,16 @@ impl<'r> Session<'r> {
             }
         }
         panic!("the session stalled");
+    }
+
+    /// Pump `rounds` times without asking for progress (a held session stands still).
+    fn idle(&mut self, rounds: usize) {
+        for _ in 0..rounds {
+            self.host.pump().unwrap();
+            for (p, link) in &mut self.peers {
+                p.poll(link, 3).unwrap();
+            }
+        }
     }
 }
 
@@ -358,52 +370,8 @@ fn each_human_keeps_its_own_contacts_and_reports() {
 fn two_humans_fight_a_real_time_battle_in_lockstep() {
     use ig2_net::BattleOrder;
     use ig2_sim::game::{GameEvent, RealTimeEvent};
-    let Some((rules, mut state)) = common::setup(SAVE) else { return };
-    // Empire 3 is the second human; the session runs the MP rules (two human sides fight in real time).
-    state.mem.set_u8(va::PLAYER_KI + 3, 1);
-    state.mem.set_u8(va::MULTIPLAYER, 1);
-    state.mem.set_i32(0xBAE558, 0);
-    // MP normal speed (×4; the save holds 0): the battles step once per tick (`SetIdoSpeed`).
-    state.mem.set_i32(va::IDO_SPEED, 4);
-    let combat = state.combat();
-    let warship = |e: usize| {
-        (1..combat.designs[e].len())
-            .find(|&d| {
-                let x = &combat.designs[e][d];
-                x.class == 1 && !x.is_fighter() && x.attack > 0 && x.hp > 0
-            })
-            .unwrap_or_else(|| panic!("empire {e} has a warship design"))
-    };
-    let (d6, d3) = (warship(6), warship(3));
-    // A fleet for each next to one of 6's planets (records like fleet 1's, a plain fleet), 3's ordered to attack 6's.
-    let home = (1..=state.planet_count()).find(|&p| state.mem.u8(va::PLANETS + (p * PLANET_SIZE) as u32 + 0x20) == 6).expect("a planet of 6");
-    let at = va::PLANETS + (home * PLANET_SIZE) as u32;
-    let (hx, hy) = (f32::from_le_bytes(state.mem.read(at + 0x18, 4).try_into().unwrap()), f32::from_le_bytes(state.mem.read(at + 0x1c, 4).try_into().unwrap()));
-    for owner in [6u8, 3] {
-        let mut rec = state.fleets[1];
-        rec[0x15] = owner;
-        state.fleets.push(rec);
-    }
-    let (a, b) = (state.fleets.len() - 2, state.fleets.len() - 1);
-    state.mem.set_i32(va::FLEET_COUNT, b as i32);
-    for (f, d, n) in [(a, d6, 6), (b, d3, 6)] {
-        for _ in 0..n {
-            let mut s = [0u8; 6];
-            s[0..2].copy_from_slice(&(f as i16).to_le_bytes());
-            s[2..4].copy_from_slice(&(d as i16).to_le_bytes());
-            state.ships.push(s);
-        }
-    }
-    state.mem.set_i32(va::SHIP_COUNT, state.ships.len() as i32 - 1);
-    let mut map = state.starmap();
-    for f in [a, b] {
-        (map.fleets[f].x, map.fleets[f].y, map.fleets[f].order, map.fleets[f].flags) = (hx + 3.0, hy + 3.0, 0, 0);
-        map.fleets[f].name = [0; 21];
-        map.fleets[f].name[..5].copy_from_slice(b"Probe");
-    }
-    map.fleets[b].x += 1.0;
-    (map.fleets[b].order, map.fleets[b].kind, map.fleets[b].tx) = (ig2_sim::fleet::order::ATTACK, ig2_sim::fleet::order::FLEET, a as f32);
-    state.store_starmap(&map);
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let state = common::space_clash(state);
     let canonical = |state: SaveState| {
         let mut g = game(state, &rules);
         g.canonical_view(6);
@@ -503,59 +471,107 @@ fn two_humans_fight_a_real_time_battle_in_lockstep() {
 /// A human lands on another human's planet: the ground war runs by the session's rules (`re/rules/multiplayer.md`
 /// §7, `ground-combat.md` §11.17): `WF::MI` and `WF::Refresh` of that planet every tick whatever the peers show, the
 /// strategic clock waits, the peers stay hash-identical. Two humans' units only fight on their players' orders
-/// (`MULTIGET_Colony`, not ported yet), so a defended planet stays contested; an undefended one falls at once
-/// (`StartGrWar` finds the field held).
+/// (`MULTIGET_Colony`, `Command::Colony` with `ColonyOrder::Ground`): without them a defended planet stays contested;
+/// with them the war ends with one side holding the field. An order for another empire's unit is refused (ADR 0011
+/// §2). An undefended planet falls at once (`StartGrWar` finds the field held).
 #[test]
 fn two_humans_fight_a_ground_war_in_lockstep() {
-    use ig2_sim::game::{GameEvent, RealTimeEvent};
+    use ig2_sim::game::{ColonyOrder, GameEvent, RealTimeEvent};
+    use ig2_sim::ground::GroundOrder;
     let Some((rules, base)) = common::setup(SAVE) else { return };
     let canonical = |state: SaveState| {
         let mut g = game(state, &rules);
         g.canonical_view(6);
         g
     };
-    for defended in [true, false] {
+    for (defended, ordered) in [(true, false), (true, true), (false, false)] {
         let (state, home) = landing(base.clone(), defended);
         let mut s = Session::new();
         s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
         s.join(2, 3, |_| Peer::new(2, 3, canonical(state.clone()), DEFAULT_DELAY));
-        let (mut started, mut ended, mut clock, mut turns_running) = (None, None, None, 0);
-        s.run_to(150, |p| {
-            for e in p.events.drain(..) {
-                match e {
-                    GameEvent::RealTime(RealTimeEvent::GroundStarted { planet, holder }) if p.slot == 1 => {
-                        started = Some((planet, holder));
-                        clock = Some(p.game.state.mem.i32(va::IDO));
+        let (mut started, mut ended, mut clock, mut turns_running, mut refused) = (None, None, None, 0, false);
+        let order = |unit: usize, target: i32| Command::from(ColonyOrder::Ground { planet: home as i32, order: GroundOrder::Target { unit: unit as i32, target } });
+        let limit = if ordered { 4000 } else { 150 };
+        while s.peers[0].0.turn < limit && ended.is_none() {
+            let target = s.peers[0].0.turn + 50;
+            s.run_to(target.min(limit), |p| {
+                for e in p.events.drain(..) {
+                    match e {
+                        GameEvent::RealTime(RealTimeEvent::GroundStarted { planet, holder }) if p.slot == 1 => {
+                            started = Some((planet, holder));
+                            clock = Some(p.game.state.mem.i32(va::IDO));
+                        }
+                        GameEvent::RealTime(RealTimeEvent::GroundEnded { planet, holder }) if p.slot == 1 => ended = Some((planet, holder)),
+                        _ => {}
                     }
-                    GameEvent::RealTime(RealTimeEvent::GroundEnded { planet, holder }) if p.slot == 1 => ended = Some((planet, holder)),
-                    _ => {}
                 }
-            }
-            if p.slot == 1 && p.game.state.mem.i32(0xBAD13C) != 0 {
-                turns_running += 1;
-                // The strategic clock stands still while the war runs.
-                assert_eq!(Some(p.game.state.mem.i32(va::IDO)), clock);
-            }
-        });
+                if p.game.state.mem.i32(0xBAD13C) == 0 {
+                    return;
+                }
+                if p.slot == 1 {
+                    turns_running += 1;
+                    // The strategic clock stands still while the war runs.
+                    assert_eq!(Some(p.game.state.mem.i32(va::IDO)), clock);
+                }
+                if !ordered || p.turn % 10 != 0 {
+                    return;
+                }
+                // Each player's live units attack the first live enemy unit, or else an enemy defence building.
+                let f = p.game.state.ground_field(home).unwrap();
+                let me = p.empire as i32;
+                let live = |i: usize| f.alive[i] && f.units[i].owner > 0;
+                let enemy = (0..f.units.len()).find(|&i| live(i) && f.units[i].owner != me).map(|i| i as i32).or_else(|| {
+                    let owner = p.game.state.mem.u8(va::PLANETS + (home * PLANET_SIZE) as u32 + 0x20) as i32;
+                    let slots = p.game.state.mem.i32(va::BUILDING_SLOTS + 4 * home as u32).max(0) as usize;
+                    (owner != me).then(|| (1..=slots).find(|&k| matches!(p.game.state.buildings[home][k][0], 0x1c..=0x23)).map(|k| -(k as i32))).flatten()
+                });
+                let Some(target) = enemy else { return };
+                for i in (0..f.units.len()).filter(|&i| live(i) && f.units[i].owner == me) {
+                    p.issue(order(i, target));
+                }
+                // An order for the other side's unit changes nothing on any peer.
+                if !refused && p.slot == 1 {
+                    if let Some(theirs) = (0..f.units.len()).find(|&i| live(i) && f.units[i].owner != me) {
+                        let (mut g, pending) = p.snapshot().restore(&rules).unwrap();
+                        let before = state_hash(&g, &pending);
+                        order(theirs, -1).apply(&mut g, p.empire);
+                        Command::from(ColonyOrder::Ground { planet: home as i32, order: GroundOrder::Move { unit: theirs as i32, x: 1, y: 1 } }).apply(&mut g, p.empire);
+                        assert_eq!(state_hash(&g, &pending), before, "refused");
+                        refused = true;
+                    }
+                }
+            });
+        }
         assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
-        assert_eq!(agree(&s.peers), 150);
+        assert_eq!(agree(&s.peers) as u64, s.peers.iter().map(|(p, _)| p.turn).min().unwrap());
         let (planet, holder) = started.expect("the landing started a real-time ground war");
         assert_eq!(planet, home);
         let g = &s.peers[0].0.game;
         let owner = g.state.mem.u8(va::PLANETS + (home * PLANET_SIZE) as u32 + 0x20);
-        eprintln!("defended {defended}: holder at start {holder:?}, ended {ended:?}, {turns_running} turns running, owner {owner}");
-        if defended {
-            assert_eq!((holder, ended), (None, None));
-            assert!(turns_running > 100);
-            // `WF::Refresh` ran every tick: the call-in timers of every empire reached their caps.
-            let f = g.state.ground_field(home).unwrap();
-            assert!(f.timers.iter().all(|t| *t == (200, 300)), "{:?}", f.timers);
-            assert_eq!(g.state.mem.i32(va::IDO), clock.unwrap());
-        } else {
-            assert_eq!(holder, Some(3));
-            assert_eq!(ended, Some((home, 3)));
-            assert_eq!((owner, g.state.mem.i32(0xBAD13C)), (3, 0), "captured, the MP flag cleared");
-            assert!(g.state.mem.i32(va::IDO) > clock.unwrap(), "the clock runs on");
+        eprintln!("defended {defended}, ordered {ordered}: holder at start {holder:?}, ended {ended:?}, {turns_running} turns running, owner {owner}");
+        match (defended, ordered) {
+            (true, false) => {
+                assert_eq!((holder, ended), (None, None));
+                assert!(turns_running > 100);
+                // `WF::Refresh` ran every tick: the call-in timers of every empire reached their caps.
+                let f = g.state.ground_field(home).unwrap();
+                assert!(f.timers.iter().all(|t| *t == (200, 300)), "{:?}", f.timers);
+                assert_eq!(g.state.mem.i32(va::IDO), clock.unwrap());
+            }
+            (true, true) => {
+                assert!(refused);
+                let (p, h) = ended.expect("the ordered war ended");
+                assert_eq!((p, holder), (home, None));
+                assert!(h == 3 || h == 6);
+                assert_eq!((owner, g.state.mem.i32(0xBAD13C)), (h as u8, 0), "the holder keeps or takes the planet, the MP flag cleared");
+                assert!(g.state.mem.i32(va::IDO) > clock.unwrap(), "the clock runs on");
+            }
+            _ => {
+                assert_eq!(holder, Some(3));
+                assert_eq!(ended, Some((home, 3)));
+                assert_eq!((owner, g.state.mem.i32(0xBAD13C)), (3, 0), "captured, the MP flag cleared");
+                assert!(g.state.mem.i32(va::IDO) > clock.unwrap(), "the clock runs on");
+            }
         }
     }
 }
@@ -626,4 +642,260 @@ fn landing(mut state: SaveState, defended: bool) -> (SaveState, usize) {
     (fl.order, fl.kind, fl.tx, fl.ty) = (ig2_sim::fleet::order::ATTACK, ig2_sim::fleet::order::PLANET, home as f32, 0.0);
     state.store_starmap(&map);
     (state, home)
+}
+
+// ------------------------------------------------------------------------------------------------ ADR 0011
+
+/// The battle slot a peer's events say started, if any.
+fn space_started(p: &Peer) -> Option<usize> {
+    use ig2_sim::game::{GameEvent, RealTimeEvent};
+    p.events.iter().find_map(|e| if let GameEvent::RealTime(RealTimeEvent::SpaceStarted { slot }) = e { Some(*slot) } else { None })
+}
+
+fn space_over(p: &Peer) -> bool {
+    use ig2_sim::game::{GameEvent, RealTimeEvent};
+    p.events.iter().any(|e| matches!(e, GameEvent::RealTime(RealTimeEvent::SpaceOver { .. })))
+}
+
+/// Each of the peer's units in battle `b` attacks the first enemy unit.
+fn attack_all(p: &mut Peer, b: usize) {
+    use ig2_net::BattleOrder;
+    let battle = &p.game.realtime.slots[b];
+    let me = p.empire as i32;
+    let mine: Vec<usize> = (0..battle.units.len()).filter(|&u| battle.units[u].alive && battle.units[u].owner == me).collect();
+    let Some(target) = (0..battle.units.len()).find(|&u| battle.units[u].alive && battle.units[u].owner > 0 && battle.units[u].owner != me) else { return };
+    for u in mine {
+        p.issue(Command::SpaceOrder { battle: b as u8, order: BattleOrder::Attack { unit: u as u16, target: target as u16 } });
+    }
+}
+
+/// Replays the host's bundle log into one `Game` from the start state, as single player runs it (ADR 0011 §7), and
+/// checks every turn's hash against the ones a peer reported. Returns the turns replayed.
+fn replay_log(start: Game, log: &[ig2_net::Bundle], hashes: &[(u64, u64)]) -> usize {
+    let mut g = start;
+    let mut pending: Vec<Command> = Vec::new();
+    for (n, b) in log.iter().enumerate() {
+        assert_eq!(b.turn, n as u64);
+        for k in 0..TURN_TICKS {
+            for c in std::mem::take(&mut pending) {
+                c.apply(&mut g, 0);
+            }
+            if k == 0 {
+                for s in &b.commands {
+                    s.command.apply(&mut g, s.issuer);
+                }
+            }
+            let from = g.events.len();
+            g.advance_clock();
+            g.run_tick();
+            pending.extend(g.events[from..].iter().filter_map(Command::from_event));
+            g.events.clear();
+        }
+        if let Some((_, h)) = hashes.iter().find(|(t, _)| *t == b.turn) {
+            assert_eq!(state_hash(&g, &pending), *h, "turn {}", b.turn);
+        }
+    }
+    log.len()
+}
+
+/// `SpWar_MultiCsata_vegetert[e]`: `e` has left the battle screen.
+fn left_screen(g: &Game, e: u32) -> i32 {
+    g.state.mem.i32(0xBAD118 + 4 * e)
+}
+
+/// Two humans (6, 3) in a session started by `Game::start_multiplayer`, run until their space battle has run a few
+/// ticks; `act` sees each peer at each turn with the battle's slot once it started.
+fn into_space_battle<'r>(rules: &'r GameRules, state: &SaveState, mut act: impl FnMut(&mut Peer<'r>, Option<usize>)) -> (Session<'r>, usize) {
+    let start = |state: SaveState| {
+        let mut g = game(state, rules);
+        g.start_multiplayer(6, &[6, 3]);
+        g
+    };
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, start(state.clone()), DEFAULT_DELAY));
+    s.join(2, 3, |_| Peer::new(2, 3, start(state.clone()), DEFAULT_DELAY));
+    let mut slot = None;
+    for _ in 0..40 {
+        let target = s.peers[0].0.turn + 25;
+        s.run_to(target, |p| {
+            slot = slot.or(space_started(p));
+            p.events.clear();
+            act(p, slot);
+        });
+        if slot.is_some_and(|b| s.peers.iter().all(|(p, _)| p.game.realtime.slots[b].active && p.game.realtime.slots[b].tick > 20)) {
+            return (s, slot.unwrap());
+        }
+    }
+    panic!("no real-time space battle");
+}
+
+/// A human drops in the middle of a space battle (ADR 0011 §4–§5): the host holds the turn clock (nothing moves),
+/// the grace runs out and `PlayerAway` lets the battle go on, the player rejoins from a snapshot and the log while it
+/// still runs and `PlayerBack` puts them on its screen again, so it ends only when both have left. A peer's own
+/// `PlayerAway` is dropped by the host. Every turn agrees, and the host's log replayed into one game gives the same
+/// hashes (§7).
+#[test]
+fn a_player_drops_mid_battle_and_rejoins() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let state = common::space_clash(state);
+    let mut ordered = [false; 2];
+    let (mut s, b) = into_space_battle(&rules, &state, |p, slot| {
+        let Some(b) = slot else { return };
+        let k = p.slot as usize - 1;
+        if !ordered[k] && p.game.realtime.slots[b].active {
+            ordered[k] = true;
+            attack_all(p, b);
+            if p.slot == 1 {
+                p.issue(Command::PlayerAway);
+            }
+        }
+    });
+    let start_state = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.start_multiplayer(6, &[6, 3]);
+        g
+    };
+    s.run_to(s.peers[0].0.turn + 5, |p| p.events.clear());
+    assert!(s.host.log.iter().flat_map(|b| &b.commands).all(|c| c.command != Command::PlayerAway), "a peer's PlayerAway is dropped");
+    assert_eq!(left_screen(&s.peers[0].0.game, 6), 0);
+
+    // Slot 2 drops; a battle runs, so the host holds.
+    assert!(s.peers[0].0.game.realtime_running());
+    s.host.remove_peer(2);
+    let (gone, _) = s.peers.remove(1);
+    s.host.hold(true);
+    s.idle(10);
+    let held_at = s.peers[0].0.turn;
+    s.idle(50);
+    assert_eq!(s.peers[0].0.turn, held_at, "a held session stands still");
+    // The grace runs out: 3 is away, the battle goes on.
+    s.host.inject(3, Command::PlayerAway);
+    s.host.hold(false);
+    let away_at = s.peers[0].0.turn;
+    s.run_to(away_at + 10, |p| p.events.clear());
+    assert_eq!(left_screen(&s.peers[0].0.game, 3), 1, "away counts as having left the screen");
+    assert!(s.peers[0].0.game.realtime.slots[b].active, "the battle still runs");
+
+    // 3 comes back while it runs: a snapshot from 6's machine, the bundles since, and `PlayerBack`.
+    let file = s.peers[0].0.snapshot().to_file(0, true);
+    let (snap, _) = Snapshot::from_file(&file).unwrap();
+    let rules_ref = &rules;
+    s.join(2, 3, |first| Peer::from_snapshot(2, 3, &snap, rules_ref, DEFAULT_DELAY, first).unwrap());
+    s.host.send_log(2, snap.turn);
+    s.host.inject(3, Command::PlayerBack);
+    // Both fight on; each leaves the screen once the battle is over, 6 first: the battle waits for 3.
+    let (mut over, mut sent, mut waited) = ([false; 2], [false; 2], false);
+    for _ in 0..60 {
+        let target = s.peers[0].0.turn + 50;
+        s.run_to(target, |p| {
+            let k = p.slot as usize - 1;
+            over[k] |= space_over(p);
+            p.events.clear();
+            if over[k] && !sent[k] && (k == 0 || waited) {
+                sent[k] = true;
+                p.issue(Command::SpaceBattleLeft);
+            }
+            if k == 1 && left_screen(&p.game, 6) == 1 && left_screen(&p.game, 3) == 0 {
+                assert_eq!(p.game.state.mem.i32(va::MP_SPACE_BATTLE), 1, "6 has left, 3 is back: the battle waits");
+                waited = true;
+            }
+        });
+        if sent.iter().all(|&l| l) && s.peers.iter().all(|(p, _)| p.game.state.mem.i32(va::MP_SPACE_BATTLE) == 0) {
+            break;
+        }
+    }
+    assert!(waited, "the battle waited for the player who came back");
+    assert!(s.peers.iter().all(|(p, _)| !p.game.realtime.slots[b].active), "SpaceWarVege closed the slot");
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    let n = agree(&s.peers);
+    assert!(n > 0);
+    // The log is the single-player path: one game replaying it reproduces 6's hashes, and 3's before it dropped.
+    let turns = replay_log(start_state(state.clone()), &s.host.log, &s.peers[0].0.hashes);
+    assert_eq!(turns as u64, s.host.next_turn());
+    replay_log(start_state(state.clone()), &s.host.log, &gone.hashes);
+    eprintln!("battle slot {b}: held at {held_at}, away at {away_at}, rejoined at {}, {n} turns agreed, {turns} replayed", snap.turn);
+}
+
+/// A peer's battle state drifts (as a stray `rand()` in its battle tick would): the host reports it at that turn, and
+/// the rejoin path resyncs it mid-battle (ADR 0011 §6).
+#[test]
+fn a_desync_inside_a_battle_is_reported_and_resynced() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let state = common::space_clash(state);
+    let (mut s, b) = into_space_battle(&rules, &state, |_, _| {});
+    // Both at the same turn, then slot 2's battle drifts.
+    let at = s.peers.iter().map(|(p, _)| p.turn).max().unwrap();
+    s.run_to(at, |p| p.events.clear());
+    let peer2 = &mut s.peers[1].0;
+    let drift_turn = peer2.turn;
+    let u = peer2.game.realtime.slots[b].units.iter().position(|u| u.alive).unwrap();
+    peer2.game.realtime.slots[b].units[u].alive = false;
+    s.run_to(drift_turn + 5, |p| p.events.clear());
+    s.host.pump().unwrap();
+    let d = s.host.desyncs.first().expect("a desync").clone();
+    assert!(d.turn == drift_turn && d.slots == [2], "{d:?}");
+    // Resync: slot 2 reloads 6's state and the bundles since.
+    s.host.remove_peer(2);
+    s.peers.remove(1);
+    let snap = s.peers[0].0.snapshot();
+    assert!(snap.restore(&rules).unwrap().0.realtime.slots[b].active, "mid-battle");
+    let rules_ref = &rules;
+    s.join(2, 3, |first| Peer::from_snapshot(2, 3, &snap, rules_ref, DEFAULT_DELAY, first).unwrap());
+    s.host.send_log(2, snap.turn);
+    let desyncs = s.host.desyncs.len();
+    let end = s.peers[0].0.turn + 60;
+    s.run_to(end, |p| p.events.clear());
+    assert_eq!(s.host.desyncs.len(), desyncs, "in step again: {:?}", s.host.desyncs);
+    let (p1, p2) = (&s.peers[0].0, &s.peers[1].0);
+    let mut n = 0;
+    for (t, h) in &p2.hashes {
+        if let Some((_, h1)) = p1.hashes.iter().find(|(t1, _)| t1 == t) {
+            assert_eq!(h, h1, "turn {t}");
+            n += 1;
+        }
+    }
+    assert!(n >= 50, "{n}");
+}
+
+/// Every ground-war message recorded from the exe's own `MULTIGET_Colony` (`_local/traces/grt-orders*.jsonl`, the
+/// `gorder` events `ground_rt_trace.rs` replays exactly through `War::order`) crosses the lockstep unchanged: as a
+/// `Command::Colony` in a peer's input and in the host's bundle, it decodes to the same `ColonyOrder`.
+#[test]
+fn recorded_ground_orders_cross_the_wire() {
+    use ig2_net::{wire, Bundle, Msg, Stamped};
+    use ig2_sim::game::ColonyOrder;
+    let dir = std::env::var_os("IG2_TRACE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces"));
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        eprintln!("{} missing; skipping", dir.display());
+        return;
+    };
+    // `"key": value` of a flat JSON number or number array (the trace's own layout, one event per line).
+    let field = |line: &str, key: &str| -> Option<Vec<i32>> {
+        let at = line.find(&format!("\"{key}\": "))? + key.len() + 4;
+        let rest = &line[at..];
+        let end = if rest.starts_with('[') { rest.find(']')? + 1 } else { rest.find([',', '}'])? };
+        Some(rest[..end].trim_matches(['[', ']']).split(',').filter(|s| !s.trim().is_empty()).map(|s| s.trim().parse().unwrap()).collect())
+    };
+    let mut n = 0;
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("grt-orders") || !name.ends_with(".jsonl") {
+            continue;
+        }
+        for line in std::fs::read_to_string(e.path()).unwrap().lines().filter(|l| l.starts_with("{\"k\": \"gorder\"")) {
+            let (t, v) = (field(line, "type").unwrap()[0], field(line, "vals").unwrap());
+            let order = ColonyOrder::from_message(t, &v[1..]).unwrap_or_else(|| panic!("{name}: message {t:#x} {v:?}"));
+            assert!(matches!(order, ColonyOrder::Ground { .. }));
+            let c = Command::from(order);
+            let input: Msg = wire::from_slice(&wire::to_vec(&Msg::Input { turn: 7, commands: vec![c.clone()] }).unwrap()).unwrap();
+            let bundle: Msg = wire::from_slice(&wire::to_vec(&Msg::Bundle(Bundle { turn: 7, commands: vec![Stamped { issuer: v[0] as u8, command: c.clone() }] })).unwrap()).unwrap();
+            let Msg::Input { commands, .. } = input else { panic!() };
+            let Msg::Bundle(b) = bundle else { panic!() };
+            assert_eq!((&commands[0], &b.commands[0].command, b.commands[0].issuer as i32), (&c, &c, v[0]));
+            let Command::Colony { kind, values } = &b.commands[0].command else { panic!() };
+            assert_eq!(ColonyOrder::from_message(*kind, values), Some(order));
+            n += 1;
+        }
+    }
+    eprintln!("{n} recorded ground-war messages crossed the wire");
 }

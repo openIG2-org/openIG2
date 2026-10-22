@@ -14,7 +14,7 @@
 //! None of this runs in [`ViewMode::Classic`]: single player and the trace replays are unchanged.
 
 use super::*;
-use crate::ground::{Clock, GroundEvent, Start};
+use crate::ground::{Clock, GroundEvent, GroundOrder, Start};
 use crate::spacebattle::{
     self, Battle, BattleRules, BattleWorld, Order, SetupBuilding, SetupFleet, SetupInput, SetupPlanet, SetupShip, ShipType, Tick,
 };
@@ -427,6 +427,66 @@ impl Game<'_> {
     pub fn space_battle_left(&mut self, issuer: u8) {
         if self.view != ViewMode::Classic && (1..EMPIRES).contains(&(issuer as usize)) {
             self.state.mem.set_i32(at::SPACE_LEFT + 4 * issuer as u32, 1);
+        }
+    }
+
+    /// Ours (ADR 0011 §1): the start state of a lockstep session whose humans are `humans` (empires 1..=8):
+    /// `MultiPlayerMode` = 1, `PlayerKi` = 1 for exactly those (a former human not among them: 0, AI), and the
+    /// canonical view of `en`. The original's MP routing then sends only human-vs-human battles to real time.
+    pub fn start_multiplayer(&mut self, en: u8, humans: &[u8]) {
+        let m = &mut self.state.mem;
+        m.set_u8(va::MULTIPLAYER, 1);
+        for e in 1..9u8 {
+            let k = va::PLAYER_KI + e as u32;
+            if humans.contains(&e) {
+                m.set_u8(k, 1);
+            } else if m.u8(k) == 1 {
+                m.set_u8(k, 0);
+            }
+        }
+        self.canonical_view(en);
+    }
+
+    /// A real-time battle runs (either MP flag): the strategic clock waits, and a dropped human is worth waiting for
+    /// (ADR 0011 §4).
+    pub fn realtime_running(&self) -> bool {
+        let m = &self.state.mem;
+        self.view != ViewMode::Classic && (m.i32(at::SPACE_RUNNING) != 0 || m.i32(at::GROUND_RUNNING) != 0)
+    }
+
+    /// Ours (ADR 0011 §5): `empire`'s player is away (dropped past the grace period). It counts as having left the
+    /// running space battle's screen; its units fight on without orders.
+    pub fn player_away(&mut self, empire: u8) {
+        if self.state.mem.i32(at::SPACE_RUNNING) != 0 {
+            self.space_battle_left(empire);
+        }
+    }
+
+    /// Ours (ADR 0011 §5): `empire`'s player is back: on the running space battle's screen again.
+    pub fn player_back(&mut self, empire: u8) {
+        if self.view != ViewMode::Classic && self.state.mem.i32(at::SPACE_RUNNING) != 0 && (1..9).contains(&empire) {
+            self.state.mem.set_i32(at::SPACE_LEFT + 4 * empire as u32, 0);
+        }
+    }
+
+    /// Ours (ADR 0011 §2): a ground-war order in the canonical view counts only for the flagged war's planet, for a
+    /// live unit of the issuer's own, and (retreat, air strike) from a participant: the planet's owner or an empire
+    /// with a live unit on the field. The exe takes any unit index a machine sends.
+    pub(super) fn ground_order_allowed(&self, issuer: u8, p: usize, o: GroundOrder) -> bool {
+        let m = &self.state.mem;
+        if m.i32(at::GROUND_RUNNING) == 0 || m.i32(at::GROUND_PLANET) != p as i32 {
+            return false;
+        }
+        let Some(f) = self.state.ground_field(p) else { return false };
+        let mine = |i: usize| f.alive.get(i).copied().unwrap_or(false) && f.units.get(i).is_some_and(|u| u.owner == issuer as i32);
+        match o {
+            GroundOrder::Move { unit, .. }
+            | GroundOrder::Waypoint { unit, .. }
+            | GroundOrder::Target { unit, .. }
+            | GroundOrder::Stop { unit }
+            | GroundOrder::Detonate { unit, .. }
+            | GroundOrder::Mines { unit, .. } => usize::try_from(unit).is_ok_and(mine),
+            GroundOrder::Retreat | GroundOrder::AirStrike { .. } => self.planet_rec(p)[0x20] == issuer || (0..f.units.len()).any(mine),
         }
     }
 

@@ -236,21 +236,11 @@ impl Snapshot {
         out
     }
 
-    /// A save file back; the state must match the stored hash.
+    /// A save file back; the state must match the stored hash. Bytes after the state are left alone (an MP save's
+    /// session, `session::SavedSession`).
     pub fn from_file(b: &[u8]) -> Result<(Self, Header), Error> {
-        if b.len() < HEADER {
-            return Err(if b.starts_with(&MAGIC[..b.len().min(8)]) { Error::Truncated } else { Error::Magic });
-        }
-        if &b[..8] != MAGIC {
-            return Err(Error::Magic);
-        }
-        let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
+        let h = Header::read(b)?;
         let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) as usize;
-        let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
-        let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
-        if h.version != VERSION {
-            return Err(Error::Version(h.version));
-        }
         let (zlen, raw) = (u32_at(44), u32_at(48));
         let z = b.get(HEADER..HEADER + zlen).ok_or(Error::Truncated)?;
         let state = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(z, raw).map_err(|e| Error::Corrupt(format!("{e:?}")))?;
@@ -262,5 +252,30 @@ impl Snapshot {
             return Err(Error::Hash { stored: h.hash, computed });
         }
         Ok((Self { turn: h.turn, tick: h.tick, hash: h.hash, state }, h))
+    }
+
+    /// The length of the save file [`Snapshot::from_file`] reads from the front of `b`.
+    pub fn file_len(b: &[u8]) -> Result<usize, Error> {
+        Header::read(b)?;
+        Ok(HEADER + u32::from_le_bytes(b[44..48].try_into().unwrap()) as usize)
+    }
+}
+
+impl Header {
+    /// A save file's header (magic and version checked; the state isn't read).
+    pub fn read(b: &[u8]) -> Result<Self, Error> {
+        if b.len() < HEADER {
+            return Err(if b.starts_with(&MAGIC[..b.len().min(8)]) { Error::Truncated } else { Error::Magic });
+        }
+        if &b[..8] != MAGIC {
+            return Err(Error::Magic);
+        }
+        let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
+        let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
+        let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
+        if h.version != VERSION {
+            return Err(Error::Version(h.version));
+        }
+        Ok(h)
     }
 }

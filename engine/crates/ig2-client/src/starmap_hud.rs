@@ -28,6 +28,11 @@ impl Console {
     /// coloured lights `smOldalsoFenyekBe` (ELF 0x6d81e0) gives it, 0x7f5d00 and 0x004e7f (`0x00BBGGRR`), which
     /// `smMozgatMainFenyek` circles in front of it [inf: one warm light from the front, the shader has one].
     pub fn load(r: &mut Renderer, install: &Install) -> Result<Self, String> {
+        Self::load_lit(r, install, [0.502 + 0.498, 0.502 + 0.306, 0.502])
+    }
+
+    /// The panel under another parallel light colour `sun` (the battle screen's, re/screens/spacewar.md §5.1).
+    pub fn load_lit(r: &mut Renderer, install: &Install, sun: [f32; 3]) -> Result<Self, String> {
         let light = scene::normalise([0.0, -0.35, 1.0]);
         let model = Model::load(install, "vector/starmap/", "kezel.xvb", "textures/starmap/")?;
         let place = Placement::add_to_scene(model.origin, 0.17).world((0.0, 0.0, 0.0), [0.0, 170.0, -600.0]);
@@ -75,7 +80,7 @@ impl Console {
                 light: [light[0], light[1], light[2], 0.0],
                 // `Init3dStarmap`: ambient 0x404040, the parallel light 0x808080.
                 ambient: [0.251, 0.251, 0.251, 0.0],
-                sun: [0.502 + 0.498, 0.502 + 0.306, 0.502, 0.0],
+                sun: [sun[0], sun[1], sun[2], 0.0],
                 fog: [0.0; 4],
                 fog_range: [1e9, 2e9, 0.0, 1e9],
             },
@@ -86,7 +91,7 @@ impl Console {
         Ok(Self { tex })
     }
 
-    fn draw(&self, f: &mut Frame, v: &Virtual) {
+    pub(crate) fn draw(&self, f: &mut Frame, v: &Virtual) {
         let [x0, y0, x1, y1] = CONSOLE_RECT;
         let c = v.px((x0 + x1) / 2.0, (y0 + y1) / 2.0);
         f.push(self.tex, Blend::Alpha, Instance::new(kind::SPRITE, c, [(x1 - x0) * v.k / 2.0, (y1 - y0) * v.k / 2.0], [1.0; 4]));

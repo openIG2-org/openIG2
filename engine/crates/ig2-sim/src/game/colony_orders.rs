@@ -4,10 +4,11 @@
 //! cursor `ColonyRemoveBuilding`/`ColonyBuildingPlace` 0x99643b/0x99643a, `AktEpulet` 0xB9C074 on the issuer's
 //! screen, the speaker's lines) is the client's: it gets [`ColonyOrderEvent`]s.
 //!
-//! Not here: the ground war's unit orders 0x22 move, 0x23 waypoint, 0x24 target, 0x25 stop, 0x12d detonate, 0x12f
-//! landing zone, 0x130 air strike, 0x134 a unit's hold flag (another task).
+//! The ground war's messages (0x22..=0x25, 0x12d, 0x12f, 0x130, 0x134) carry a [`GroundOrder`] for the planet's
+//! battlefield (`ground/orders.rs`).
 
 use super::*;
+use crate::ground::GroundOrder;
 
 /// One colony message's payload (the handler's `Multi_Get` values after the issuer).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +31,8 @@ pub enum ColonyOrder {
     Priority { planet: i32, slot: i32 },
     /// 0x133: repair building `slot` at once for `EpuletJavitasAr`; refused without the money.
     Repair { planet: i32, slot: i32 },
+    /// 0x22..=0x25, 0x12d, 0x12f, 0x130, 0x134: an order for the ground war on `planet`.
+    Ground { planet: i32, order: GroundOrder },
 }
 
 impl ColonyOrder {
@@ -46,7 +49,21 @@ impl ColonyOrder {
             300 => Self::SelfDestructOff { planet: at(0)? },
             0x132 => Self::Priority { planet: at(0)?, slot: at(1)? },
             0x133 => Self::Repair { planet: at(0)?, slot: at(1)? },
-            _ => return None,
+            _ => {
+                let order = match kind {
+                    0x22 => GroundOrder::Move { unit: at(1)?, x: at(2)?, y: at(3)? },
+                    0x23 => GroundOrder::Waypoint { unit: at(1)?, x: at(2)?, y: at(3)? },
+                    0x24 => GroundOrder::Target { unit: at(1)?, target: at(2)? },
+                    0x25 => GroundOrder::Stop { unit: at(1)? },
+                    0x12d => GroundOrder::Detonate { unit: at(1)?, big: at(2)? },
+                    0x12f => GroundOrder::Retreat,
+                    0x130 => GroundOrder::AirStrike { x: at(1)?, y: at(2)?, kind: at(3)? },
+                    // One byte (`Multi_Get` size 1 into the handler's stack int): only its low byte counts.
+                    0x134 => GroundOrder::Mines { unit: at(1)?, on: at(2)? & 0xff != 0 },
+                    _ => return None,
+                };
+                Self::Ground { planet: at(0)?, order }
+            }
         })
     }
 
@@ -61,6 +78,16 @@ impl ColonyOrder {
             Self::SelfDestructOff { planet } => (300, vec![planet]),
             Self::Priority { planet, slot } => (0x132, vec![planet, slot]),
             Self::Repair { planet, slot } => (0x133, vec![planet, slot]),
+            Self::Ground { planet, order } => match order {
+                GroundOrder::Move { unit, x, y } => (0x22, vec![planet, unit, x, y]),
+                GroundOrder::Waypoint { unit, x, y } => (0x23, vec![planet, unit, x, y]),
+                GroundOrder::Target { unit, target } => (0x24, vec![planet, unit, target]),
+                GroundOrder::Stop { unit } => (0x25, vec![planet, unit]),
+                GroundOrder::Detonate { unit, big } => (0x12d, vec![planet, unit, big]),
+                GroundOrder::Retreat => (0x12f, vec![planet]),
+                GroundOrder::AirStrike { x, y, kind } => (0x130, vec![planet, x, y, kind]),
+                GroundOrder::Mines { unit, on } => (0x134, vec![planet, unit, on as i32]),
+            },
         }
     }
 }
@@ -136,6 +163,13 @@ impl Game<'_> {
                 let Some(p) = planet(p) else { return };
                 let v = if matches!(o, ColonyOrder::SelfDestruct { .. }) { 399 } else { -1 };
                 self.with_war(p, |w| w.field.self_destruct = v);
+            }
+            ColonyOrder::Ground { planet: p, order } => {
+                let Some(p) = planet(p) else { return };
+                if self.view != ViewMode::Classic && !self.ground_order_allowed(issuer, p, order) {
+                    return;
+                }
+                self.with_war(p, |w| w.order(issuer as i32, order));
             }
             ColonyOrder::Repair { planet: p, slot: k } => {
                 let Some(p) = planet(p) else { return };
@@ -213,7 +247,10 @@ mod tests {
             let (t, v) = o.to_message();
             assert_eq!(ColonyOrder::from_message(t, &v), Some(o));
         }
-        assert_eq!(ColonyOrder::from_message(0x22, &[1, 2, 3, 4]), None);
+        assert_eq!(ColonyOrder::from_message(0x22, &[1, 2, 3]), None);
+        let o = ColonyOrder::Ground { planet: 5, order: GroundOrder::AirStrike { x: 3, y: 4, kind: 1 } };
+        let (t, v) = o.to_message();
+        assert_eq!((t, ColonyOrder::from_message(t, &v)), (0x130, Some(o)));
     }
 
     #[test]

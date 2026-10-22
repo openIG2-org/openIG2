@@ -110,7 +110,14 @@ pub enum Action {
     ZoomOut,
     /// `StarmapKozepreAllit(x, y)`: centre the galaxy point.
     Centre { x: f32, y: f32 },
+    /// A sound (`PlaySoundGlobal`, re/screens/audio.md §6.1).
+    Sound(crate::audio::SoundId),
+    /// A sale menu's order (`MULTIGET_Design` 0x34 / 0x35).
+    Design(crate::starmap_info::DesignOrder),
 }
+
+/// `PlaySoundGlobal(0)`.
+const CLICK: Action = Action::Sound(crate::audio::CLICK);
 
 /// The transfer panel (`StarmapTransferMode`): `StarmapTransferFlotta1` on the left, `…Flotta2` (a fleet, or −p
 /// with `StarmapTransferTankMode`) on the right, the first row shown (`StarmapTransferKezdet`).
@@ -155,6 +162,10 @@ pub struct Panels {
     pub p_frame: i32,
     pub product: bool,
     pub transfer: Option<Transfer>,
+    /// The fleet's or the vehicle info panel (re/screens/starmap.md §19–§20).
+    pub info: Option<crate::starmap_info::InfoPanel>,
+    /// The info panels' clicks to play (`PlaySoundGlobal(0)`; the zooms' sound 5 comes with `Action::ZoomIn/ZoomOut`).
+    pub sounds: Vec<crate::audio::SoundId>,
     pub list: Option<DesignList>,
     hold: Option<Hold>,
     /// `StarmapGfx2D_2::addo`: the exit button's width change (+11 production, −10 transfer).
@@ -386,8 +397,13 @@ impl Panels {
             let num = |i: usize| parts.get(i).and_then(|x| x.trim().parse::<i32>().ok()).ok_or(format!("--panel transfer:F1,F2[,tank]: {v}"));
             p.transfer = Some(Transfer { f1: num(0)?, f2: num(1)?, tank_mode: parts.get(2) == Some(&"tank"), first: 0 });
             p.addo = -10;
+        } else if spec == "fleet" || spec == "tanks" {
+            use crate::starmap_info::{InfoPanel, Kind};
+            let kind = if spec == "fleet" { Kind::Fleet } else { Kind::Tanks };
+            p.info = Some(InfoPanel::new(kind, Default::default(), 590.0));
+            p.addo = if kind == Kind::Fleet { -10 } else { 0 };
         } else {
-            return Err(format!("--panel {spec}: production or transfer:F1,F2[,tank]"));
+            return Err(format!("--panel {spec}: production, transfer:F1,F2[,tank], fleet or tanks"));
         }
         Ok(p)
     }
@@ -399,11 +415,73 @@ impl Panels {
 
     /// Something the panels draw is on screen.
     pub fn active(&self) -> bool {
-        self.product || self.p_moving || self.transfer.is_some()
+        self.product || self.p_moving || self.transfer.is_some() || self.info.is_some()
+    }
+
+    /// `StarmapFleetMode`: the info box clicked with the left button in fleet mode on the player's fleet (not
+    /// `fSpec`, flags 0x4400): the panel toggles; a transfer panel up gives way first (re/screens/starmap.md §19.1).
+    /// `zoom_from` = the zoom before any panel's fly (`StarmapInfoOffLastZoom`).
+    pub fn info_box_fleet(&mut self, state: &SaveState, sel: &Selection, names: crate::starmap_info::SaleNames, zoom_from: f32) -> Vec<Action> {
+        use crate::starmap_info::{InfoPanel, Kind};
+        let Some(r) = fleet(state, sel.fleet as i32) else { return Vec::new() };
+        if i16_at(r, 0x52) as u16 & 0x4400 != 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        self.sounds.push(crate::audio::CLICK);
+        if self.info.as_ref().is_some_and(|i| i.kind == Kind::Tanks) {
+            self.info = None;
+        }
+        if self.info.is_some() {
+            self.info = None;
+            out.push(Action::ZoomOut);
+            return out;
+        }
+        let closed = self.transfer.is_some();
+        if let Some(t) = self.transfer {
+            self.sounds.push(crate::audio::CLICK);
+            out.extend(self.close_transfer(state, sel, t.tank_mode));
+        }
+        if r[0x15] == en(state) {
+            if !closed {
+                out.push(Action::ZoomIn { x: f32_at(r, 0x30), y: f32_at(r, 0x34), zoom: 590.0 });
+            }
+            self.info = Some(InfoPanel::new(Kind::Fleet, names, zoom_from));
+        }
+        out
+    }
+
+    /// `AktRopIkon == 9`: the vehicle info panel of the selected planet (no zoom).
+    pub fn open_tanks_info(&mut self, names: crate::starmap_info::SaleNames) {
+        self.sounds.push(crate::audio::CLICK);
+        self.info = Some(crate::starmap_info::InfoPanel::new(crate::starmap_info::Kind::Tanks, names, 590.0));
+    }
+
+    /// The minimap (hot-spot 7) is off: under the production view, the transfer panel and the fleet's zoomed info
+    /// panel (`Starmap_MouseInit2` turns 1..=7 off with `StarmapZoomMode`); the vehicle panel leaves it on.
+    pub fn minimap_off(&self) -> bool {
+        self.product || self.p_moving || self.transfer.is_some() || self.fleet_info()
+    }
+
+    /// The fleet's info panel is up.
+    pub fn fleet_info(&self) -> bool {
+        self.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Fleet)
+    }
+
+    /// The info panel closes (hot-spot 9; the fleet's flies back out).
+    pub fn close_info(&mut self) -> Vec<Action> {
+        match self.info.take() {
+            Some(i) if i.kind == crate::starmap_info::Kind::Fleet => {
+                self.sounds.push(crate::audio::CLICK);
+                vec![Action::ZoomOut]
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// `AktRopIkon == 2` (the production button, hot-spot 11): open, or close when open.
     pub fn toggle_production(&mut self, state: &SaveState, sel: &Selection) -> Vec<Action> {
+        self.info = None;
         let out = self.close_transfer(state, sel, true);
         if !self.production_open() {
             self.p_opening = true;
@@ -466,9 +544,13 @@ impl Panels {
     pub fn tanks_button(&mut self, state: &SaveState, sel: &Selection) -> Vec<Action> {
         let mut out = Vec::new();
         self.close_production();
+        // The fleet's info panel goes without flying out; the zoom stays (no `StarmapBeZoomol`).
+        let zoomed = self.fleet_info();
+        self.info = None;
         match self.transfer {
             Some(t) if t.tank_mode => return self.close_transfer(state, sel, true),
             Some(_) => out.extend(self.close_transfer(state, sel, false)),
+            None if zoomed => {}
             None => {
                 let at = if sel.mode == 2 {
                     fleet(state, sel.fleet as i32).map(|r| (f32_at(r, 0x30), f32_at(r, 0x34)))
@@ -526,6 +608,12 @@ impl Panels {
 
     /// The hot-spots on at `at` (`Starmap_MouseInit2`'s switches for the panels' modes); the lowest id wins [inf].
     pub fn spot(&self, state: &SaveState, sel: &Selection, at: [f32; 2]) -> Option<u32> {
+        if let Some(i) = &self.info {
+            if let Some(id) = i.spot(state, sel, at) {
+                return Some(id);
+            }
+            return SPOTS.iter().filter(|s| matches!(s.0, 8 | 10 | 11) && inside(s.1, at)).map(|s| s.0).min();
+        }
         let on = |id: u32| -> bool {
             if let Some(t) = &self.transfer {
                 let shown = rows(state, t).len().min(8) as u32;
@@ -560,12 +648,26 @@ impl Panels {
         let id = self.spot(state, sel, at)?;
         let mut out = Vec::new();
         let (tanks, product) = Self::buttons(state, sel);
+        // `Starmap_Main` (exe 0x5b2b70): the click of each button on its press. The tanks and production buttons set
+        // `AktRopIkon` and run the radial icon's arm in the same pass, which clicks again.
+        if let Some(i) = &mut self.info {
+            if matches!(id, 9 | 0x43..=0x58) {
+                if i.press(state, sel, id, at) {
+                    out = self.close_info();
+                }
+                if (0x43..=0x52).contains(&id) {
+                    self.sounds.push(crate::audio::CLICK);
+                }
+                return Some(out);
+            }
+        }
         match id {
             8 => return None,
-            10 if tanks => out = self.tanks_button(state, sel),
-            11 if product => out = self.toggle_production(state, sel),
+            10 if tanks => out = [vec![CLICK, CLICK], self.tanks_button(state, sel)].concat(),
+            11 if product => out = [vec![CLICK, CLICK], self.toggle_production(state, sel)].concat(),
             10 | 11 => return None,
             9 => {
+                out.push(CLICK);
                 if self.transfer.is_some() {
                     out = self.close_transfer(state, sel, true);
                 } else {
@@ -583,15 +685,21 @@ impl Panels {
                     }
                 }
                 let r = planet(state, p);
+                out.push(CLICK);
                 out.push(Action::Select(Selection { mode: 1, planet: p, ..*sel }));
                 out.push(Action::Centre { x: f32_at(&r, 0x18), y: f32_at(&r, 0x1c) });
             }
             0xe..=0x15 => {
                 let (l, k) = (((id - 0xe) / 4) as usize, ((id - 0xe) % 4) as usize);
+                out.push(CLICK);
                 out.push(self.edit(state, sel, 3, l, k, 0));
             }
-            0x16..=0x19 => out.push(self.edit(state, sel, 5, 1, (id - 0x16) as usize, 0)),
+            0x16..=0x19 => out.extend([CLICK, self.edit(state, sel, 5, 1, (id - 0x16) as usize, 0)]),
             0x1a..=0x29 | 0x43..=0x52 => {
+                // The count buttons click on the press edge only; the transfer cells don't.
+                if id <= 0x29 {
+                    out.push(CLICK);
+                }
                 self.hold = Some(Hold { spot: id, frames: 0, left });
                 out.extend(self.hold_frame(state, sel, at));
             }
@@ -612,6 +720,9 @@ impl Panels {
     /// One 10 ms UI frame while a button is held (`Starmap_Main::KezdoIdo`): the first frame and every frame after
     /// the seventh send, `(KezdoIdo − 7)/8 + 1` at a time (at most 5 for the counts; a right button moves everything).
     pub fn hold_frame(&mut self, state: &SaveState, sel: &Selection, at: [f32; 2]) -> Vec<Action> {
+        if let Some(i) = &mut self.info {
+            i.hold_frame(state, sel, at);
+        }
         let Some(h) = self.hold else { return Vec::new() };
         let k = h.frames;
         self.hold = Some(Hold { frames: k + 1, ..h });
@@ -652,6 +763,9 @@ impl Panels {
     /// The button went up.
     pub fn release(&mut self, state: &SaveState, sel: &Selection) -> Vec<Action> {
         self.hold = None;
+        if let Some(o) = self.info.as_mut().and_then(|i| i.release()) {
+            return vec![Action::Design(o)];
+        }
         let Some(list) = self.list.take() else { return Vec::new() };
         let r = planet(state, sel.planet);
         let l = list.line;
@@ -661,7 +775,7 @@ impl Panels {
         let stations = i32_at(&r, 0x114) + (0..4).filter(|&k| i16_at(&r, 0x78 + 8 * l + 2 * k) > 0 && station(i16_at(&r, 0x78 + 8 * l + 2 * k) as usize)).count() as i32;
         let current = i16_at(&r, 0x78 + 8 * l + 2 * list.slot) as i32;
         match usize::try_from(list.hovered).ok().and_then(|i| list.designs.get(i).copied()) {
-            Some(d) if (stations < 8 || !station(d) || d == 0) && current != d as i32 => vec![Action::Send(StarmapOrder::Production {
+            Some(d) if (stations < 8 || !station(d) || d == 0) && current != d as i32 => vec![CLICK, Action::Send(StarmapOrder::Production {
                 op: 4,
                 planet: sel.planet as i32,
                 line: l as i32,
@@ -674,6 +788,9 @@ impl Panels {
 
     /// The pointer moved (the open design list follows it).
     pub fn hover(&mut self, at: [f32; 2]) {
+        if let Some(i) = &mut self.info {
+            i.hover(at);
+        }
         if let Some(l) = &mut self.list {
             l.hovered = -1;
             for i in 0..l.designs.len() as i32 {
@@ -753,7 +870,8 @@ impl Panels {
         }
         for _ in 0..frames {
             self.step_frame();
-            let target = if self.product { 0xb } else if self.transfer.is_some() { -10 } else { 0 };
+            let fleet_info = self.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Fleet);
+            let target = if self.product { 0xb } else if self.transfer.is_some() || fleet_info { -10 } else { 0 };
             self.addo += (target - self.addo).signum();
             self.spin_frames += 1.0;
             self.head_frames += 1.0;
@@ -789,6 +907,9 @@ impl Panels {
         if self.p_moving {
             let f = if self.p_frame > 0xc { 0x1e - self.p_frame } else { self.p_frame };
             return f as f32 / 12.0;
+        }
+        if let Some(i) = &self.info {
+            return i.holtart;
         }
         if self.product || self.transfer.is_some() {
             1.0
@@ -844,7 +965,7 @@ impl Draw2d<'_> {
 
 impl Panels {
     /// The faders under the models (`StarmapGfx2D_2`'s and `ShowStarmap`'s), in the original's order.
-    pub fn draw_under(&self, f: &mut Frame, d: &Draw2d, state: &SaveState) {
+    pub fn draw_under(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, sel: &Selection) {
         let (white, v) = (d.white, &d.v);
         if self.p_moving {
             // The opening/closing slide (`StarmapGfx2D_2`, `StarmapPModeIn`).
@@ -901,6 +1022,9 @@ impl Panels {
             fifo(f, [306.0, 29.0, 28.0, 333.0]);
             fifo(f, [310.0, (top + 0x22) as f32, 20.0, (h - 8) as f32]);
         }
+        if let Some(i) = &self.info {
+            i.draw_under(f, d, state, sel);
+        }
         // The exit button (`StarmapGfx2D_2`, `StarmapInfoOffHoltart` > 0).
         let k = self.exit_in();
         if k > 0.0 {
@@ -910,7 +1034,7 @@ impl Panels {
     }
 
     /// The panels' 3D texture, then their texts (`StarmapGfx2D_3`, `StarmapGfx2D_4`'s design list).
-    pub fn draw_over(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, sel: &Selection, models: Option<TexId>) {
+    pub fn draw_over(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, sel: &Selection, rules: &ig2_rules::Rules, models: Option<TexId>) {
         let v = &d.v;
         if let Some(tex) = models {
             f.push(tex, Blend::Alpha, Instance::new(kind::SPRITE, v.px(320.0, 240.0), crate::kit::Wide::new(v).half(v), [1.0; 4]));
@@ -920,6 +1044,9 @@ impl Panels {
         }
         if self.product {
             self.draw_production_texts(f, d, state, sel);
+        }
+        if let Some(i) = &self.info {
+            i.draw_over(f, d, state, sel, rules);
         }
         let k = self.exit_in();
         if k > 0.0 {
@@ -1124,7 +1251,7 @@ impl PanelModels {
     #[allow(clippy::too_many_arguments)]
     pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, p: &Panels, state: &SaveState, sel: &Selection, size: [f32; 2]) -> Option<TexId> {
         let show_prod = p.p_frame != 0 && (p.p_moving || p.product);
-        if !show_prod && p.transfer.is_none() {
+        if !show_prod && p.transfer.is_none() && p.info.is_none() {
             return None;
         }
         let mut dynamic = Vec::new();
@@ -1210,6 +1337,15 @@ impl PanelModels {
                 }
             }
         }
+        if let Some(i) = &p.info {
+            for pose in i.poses(state, sel) {
+                if let Some(u) = self.unit(r, install, rules, pose.hull, pose.digit, pose.owner) {
+                    let m = scene::mul(&pose.rot, &Placement::add_to_scene(u.model.origin, pose.scale).matrix).map(|x| x * 1024.0);
+                    let (model, texs) = (u.model.clone(), u.texs.clone());
+                    bake(&model, &m, pose.at, &texs, 1.0, &mut dynamic, &mut draws);
+                }
+            }
+        }
         if dynamic.is_empty() {
             return None;
         }
@@ -1248,7 +1384,7 @@ impl PanelModels {
 }
 
 /// `RotateObj(π/2, 0, 0)` then `RotateObj2((1, 0, 0), −0.5)`: the panels' models stand up and lean towards the eye.
-fn tilt() -> M3 {
+pub(crate) fn tilt() -> M3 {
     scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], -0.5), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0))
 }
 
