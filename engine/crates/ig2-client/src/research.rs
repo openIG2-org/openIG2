@@ -218,6 +218,8 @@ pub struct Research {
     button_up: bool,
     press_done: bool,
     slot_button: [i32; 5],
+    /// `forgastabla4x/4y`: where each slot's button lines point (rotated with the other slot tables).
+    slot_line: [[i32; 2]; 5],
     pub pressed: Vec<(i32, i32)>,
     /// The tooltip (`UpdateFrame`) and the left button held.
     pub tip: crate::kit::Tooltip,
@@ -235,6 +237,9 @@ pub struct Research {
     lasers: crate::kit::Lasers,
     laser_on: bool,
     sparks_on: bool,
+    /// The button lines (`ResDrawVonalak`, §5.6) and where they point: `ResLastGombX/Y` (−1 before the first press).
+    lines: Lines,
+    last_button: [i32; 2],
 }
 
 impl Research {
@@ -294,6 +299,7 @@ impl Research {
             button_up: false,
             press_done: true,
             slot_button: s.wheel_button,
+            slot_line: s.wheel_line,
             pressed: Vec::new(),
             sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
@@ -305,6 +311,8 @@ impl Research {
             lasers: crate::kit::Lasers::default(),
             laser_on: false,
             sparks_on: false,
+            lines: Lines::default(),
+            last_button: [-1, -1],
         };
         // `kezeloframe = kezeloframeto = 0`, then `Forgotabla(ResearchOldForgato)`: the wheel turns to the saved front
         // category once the screen is open.
@@ -324,6 +332,8 @@ impl Research {
         }
         r.field = r.fields[r.area];
         r.placed = r.area;
+        // `LoadTalalmanyVectorok(ResearchTerulet)`: the lines fly in.
+        r.lines.load();
         r
     }
 
@@ -343,13 +353,15 @@ impl Research {
     fn turn_wheel(&mut self, n: i32) {
         let Some(s) = self.slot_area.iter().position(|&a| a == n) else { return };
         self.turn_left = s == 1 || s == 2;
-        // `ResMelyikGombot = forgastabla3[s]`: the slot's button is pressed.
+        // `ResMelyikGombot = forgastabla3[s]`: the slot's button is pressed; `ResLastGombX/Y = forgastabla4x/4y[s]`.
         self.button = self.slot_button[s];
+        self.last_button = self.slot_line[s];
         if s == 0 {
             return;
         }
         self.slot_area.rotate_right(5 - s);
         self.slot_button.rotate_right(5 - s);
+        self.slot_line.rotate_right(5 - s);
         self.turn_to += ((5 - s) * 10) as f32;
         if self.turn_to >= 50.0 {
             self.turn_to -= 50.0;
@@ -371,6 +383,10 @@ impl Research {
             12 => 0x6a,
             _ => self.button,
         };
+        // `TT_*` (exe 0x524a50..): the off-wheel buttons' `ResLastGombX/Y` (§5.6).
+        if let Some(&(_, xy)) = OFF_WHEEL_LINES.iter().find(|(a, _)| *a == n) {
+            self.last_button = xy;
+        }
         self.button_new = true;
         self.turn_wheel(n as i32);
         self.field = self.fields[n];
@@ -605,6 +621,7 @@ impl Research {
         let en = en(state);
         let techs = state.tech();
         // `FRISSIT_Research2`.
+        self.lines.tick();
         for s in &mut self.spin {
             *s += 0.02;
         }
@@ -647,6 +664,8 @@ impl Research {
         let open_or_closing = self.opened || self.closing;
         // A new category: the models fly out, are reloaded at `ADDZOOMMAX` and fly back in.
         if self.old_area != self.area {
+            // `ResEltuntetVonalkak`.
+            self.lines.hide();
             if self.dir == 0 {
                 (self.dir, self.zoom) = (1, ZOOM_MIN);
             }
@@ -667,6 +686,7 @@ impl Research {
                 }
                 self.near = [0.0; 17];
                 self.near_dir = [0; 17];
+                self.lines.load();
                 self.placed = self.area;
                 self.models_shown = true;
                 self.dir = -1;
@@ -1000,9 +1020,132 @@ fn days_and_cost(state: &SaveState, rules: &ig2_rules::Rules, techs: &TechTable,
 /// The research lasers' colour (`DrawLaser(…, 0, 0x70, 0xe3, …)`).
 const RESEARCH_LASER: [i32; 3] = [0, 0x70, 0xe3];
 
+/// The off-wheel categories' `TT_*` handlers (ELF 0x5e94b0.., exe 0x524a50..): `ResLastGombX/Y` per category.
+const OFF_WHEEL_LINES: [(usize, [i32; 2]); 7] = [
+    (6, [0x1ec, 0x172]),
+    (9, [0x1c0, 0x199]),
+    (8, [0x218, 0x19e]),
+    (7, [0x1ed, 0x1c8]),
+    (12, [0x140, 0x19b]),
+    (10, [0x96, 0x172]),
+    (11, [0x96, 0x1ca]),
+];
+
+/// The button lines (re/screens/research.md §5.6): ten arrowheads circling the last pressed category button, each
+/// with a timer `ResVonalkak[i]` (in over 50 UI ticks, held 60, out over 40), `ResVonalakNovelo` (the ring's turn,
+/// restarting every 501 ticks) and `ResKellVonalTavolodas` (after a category's models load, the arrows fly in).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Lines {
+    pub v: [f32; 10],
+    pub turn: f32,
+    pub fly: bool,
+}
+
+impl Default for Lines {
+    fn default() -> Self {
+        Self { v: [0.0; 10], turn: 0.0, fly: false }
+    }
+}
+
+/// One `DrawArrowAbsolute(p0, p1, colour, 2.0)` of the lines: from `p0` to the tip `p1`, ARGB.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Arrow {
+    pub p0: [f32; 2],
+    pub p1: [f32; 2],
+    pub colour: u32,
+}
+
+impl Lines {
+    /// `ResInitVonalkak` (ELF 0x5e1460): 100, 105, …, 145; no fly-in.
+    pub fn init(&mut self) {
+        for (i, v) in self.v.iter_mut().enumerate() {
+            *v = ((i as f32 as f64 / 10.0) * 50.0 + 100.0) as f32;
+        }
+        self.fly = false;
+    }
+
+    /// `ResEltuntetVonalkak` (ELF 0x5e14d0): out of sight for good (until the next start).
+    pub fn hide(&mut self) {
+        self.v = [100000.0; 10];
+        self.fly = false;
+    }
+
+    /// `LoadTalalmanyVectorok`'s start: the ring from its first turn, flying in.
+    pub fn load(&mut self) {
+        self.turn = 0.0;
+        self.init();
+        self.fly = true;
+    }
+
+    /// `FRISSIT_Research2` (every UI tick): `ResFrissitVonalkak`, then the turn (a restart at 500).
+    pub fn tick(&mut self) {
+        for v in &mut self.v {
+            *v = if *v <= 0.0 { 0.0 } else { *v - 0.5 };
+        }
+        if 500.0 <= self.turn {
+            self.turn = 0.0;
+            self.init();
+        } else {
+            self.turn += 1.0;
+        }
+    }
+
+    /// `ResDrawVonalak(c)` (ELF 0x5e4910, exe 0x51f340): the arrows of the lines alive (`v < 100`), with the exe's
+    /// f32/f64 steps (and its 3.1415).
+    #[allow(clippy::approx_constant)]
+    pub fn arrows(&self, c: [f32; 2]) -> Vec<Arrow> {
+        let (cx, cy) = (c[0] * 639.0 / 639.0, c[1] * 479.0 / 479.0);
+        let spin = ((self.turn as f64 / 500.0) * 3.1415 * 2.0) as f32;
+        let mut out = Vec::new();
+        for (i, &v) in self.v.iter().enumerate() {
+            if v >= 100.0 || v.is_nan() {
+                continue;
+            }
+            let out_by = if self.fly { ((if v <= 50.0 { 0.0 } else { v - 50.0 }) as f64 / 12.0) as f32 } else { 0.0 };
+            let a = if v > 50.0 {
+                ((50.0 - (v - 50.0)) as f64 * 2.56) as f32
+            } else if v > 20.0 {
+                128.0
+            } else {
+                let a = (v as f64 * 6.4) as f32;
+                if a <= 0.0 { 0.001 } else { a }
+            };
+            let th = spin as f64 + (i as f32 / 10.0) as f64 * 3.1415 * 2.0;
+            let sx = (th.sin() * 20.0) as f32 * 639.0 / 639.0;
+            let sy = (th.cos() * 20.0) as f32 * 479.0 / 479.0;
+            let p1 = [cx + sx * (out_by + 1.0), cy + sy * (out_by + 1.0)];
+            let p0 = [(cx as f64 + sx as f64 * (out_by as f64 + 1.5)) as f32, (cy as f64 + sy as f64 * (out_by as f64 + 1.5)) as f32];
+            out.push(Arrow { p0, p1, colour: (a as i32 as u32) << 24 | 0x73_5f5f });
+        }
+        out
+    }
+}
+
+/// `DrawArrowAbsolute`'s head (ELF 0x6efa10, exe 0x593cb0) as a turned square of `nyilhegy`: the triangle tip `p1`
+/// (uv 0.5, 1), base `p1 ± 2.5n − 10d` (uv (0, 0) / (1, 0)), `n = (−d.y, d.x)·2`, is the texture's square laid
+/// 10 × 10 from the base to the tip; the shaft has no area (|p1 − p0| = 10) and is left out. Colour premultiplied
+/// by its alpha (`polygons(…, 1)`: `byte·A >> 8`), added.
+fn draw_arrow(f: &mut Frame, v: &crate::font::Virtual, tex: TexId, a: &Arrow) {
+    let (dx, dy) = (a.p1[0] - a.p0[0], a.p1[1] - a.p0[1]);
+    let len = ((dx * dx + dy * dy) as f64).sqrt() as f32;
+    if len == 0.0 {
+        return;
+    }
+    let (ux, uy) = (dx / len, dy / len);
+    let al = a.colour >> 24;
+    let ch = |s: u32| ((((a.colour >> s) & 0xff) * al) >> 8) as f32 / 255.0;
+    let centre = v.px(a.p1[0] - 5.0 * ux, a.p1[1] - 5.0 * uy);
+    let mut q = Instance::new(kind::SPRITE, centre, [5.0 * v.k, 5.0 * v.k], [ch(16), ch(8), ch(0), 1.0]);
+    // The texture's u runs along −n, its v along d.
+    q.rot = (-ux).atan2(uy);
+    f.push(tex, Blend::GammaAdditive, q);
+}
+
 /// The 2D pass under and over the models.
 pub struct Texts<'a> {
     pub infos: &'a [[Vec<u8>; 3]],
+    /// The button lines' arrowhead texture.
+    pub arrow: Option<TexId>,
 }
 
 impl Research {
@@ -1067,6 +1210,12 @@ impl Research {
         let v = &d.v;
         let en = en(state);
         let techs = state.tech();
+        // `ResearchGfx2D_2` starts with the button lines (`ResLastGombX ≠ −1 && resKINYITVA`).
+        if let Some(tex) = t.arrow.filter(|_| self.last_button[0] != -1 && self.opened && !self.closing) {
+            for a in self.lines.arrows([self.last_button[0] as f32, self.last_button[1] as f32]) {
+                draw_arrow(f, v, tex, &a);
+            }
+        }
         // `ResearchGfx2D_2` writes only while the screen is open (and not closing).
         if self.field == -1 || !self.opened || self.closing {
             return;
@@ -1208,6 +1357,8 @@ pub struct ResearchModels {
     pub centres: Vec<(usize, [f32; 2])>,
     /// The lasers' glow (`laservago`, `InitFader1`: `textures/starmap/laservago.bmp`).
     pub glow: Option<TexId>,
+    /// The button lines' arrowhead (`LoadNyilszar` exe 0x59d8f0: `textures/starmap/nyilhegy.bmp`).
+    pub arrow: Option<TexId>,
 }
 
 /// The camera: `vx = 600·x/w + 320`, `vy = 600·y/w + 250` (w = −z), like the starmap's panels.
@@ -1244,8 +1395,9 @@ impl ResearchModels {
     pub fn new(r: &mut Renderer, install: &Install) -> Self {
         let white = r.add_texture(&crate::assets::Image::white());
         let mask = Self::mask(install);
-        let glow = install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img));
-        Self { frames: HashMap::new(), ball: None, techs: HashMap::new(), textures: HashMap::new(), white, target: None, mask, centres: Vec::new(), glow }
+        let mut load = |name| install.resolve_texture("textures/starmap/", name).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img));
+        let (glow, arrow) = (load("laservago.bmp"), load("nyilhegy.bmp"));
+        Self { frames: HashMap::new(), ball: None, techs: HashMap::new(), textures: HashMap::new(), white, target: None, mask, centres: Vec::new(), glow, arrow }
     }
 
     /// `RESE_MSK.RAW` (kep 0x58): a 32-byte `mhwanh` header (640 × 480), a 768-byte palette, then the pixels.
@@ -1765,6 +1917,7 @@ mod tests {
             button_up: false,
             press_done: true,
             slot_button: [100, 101, 102, 103, 104],
+            slot_line: [[322, 353]; 5],
             pressed: Vec::new(),
             sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
@@ -1776,6 +1929,8 @@ mod tests {
             lasers: crate::kit::Lasers::default(),
             laser_on: false,
             sparks_on: false,
+            lines: Lines::default(),
+            last_button: [-1, -1],
         }
     }
 
@@ -1960,8 +2115,90 @@ mod tests {
         assert_eq!(r.slot_area[0], area);
     }
 
+    /// `ResDrawVonalak`'s arrows as ig2.exe drew them (Frida, `probes/research_lines.js`, quick-1.sav, research-lines.json:
+    /// ui 992 the ring after the opening, 1300 flying in at the tanks button after PgDn, 1150 faded out): `ResVonalkak`,
+    /// `ResVonalakNovelo`, `ResKellVonalTavolodas`, the centre, then the first, second and last `DrawArrowAbsolute`
+    /// (p0, p1 as f32 bits, colour). All 706 calls of the run matched bit for bit.
+    #[test]
+    fn button_lines_match_the_exe() {
+        type Rec = ([u32; 10], u32, [f32; 2], usize, [[u32; 5]; 3]);
+        let recs: [Rec; 3] = [
+            (
+                [0x41c80000, 0x41f00000, 0x420c0000, 0x42200000, 0x42340000, 0x42480000, 0x425c0000, 0x42700000, 0x42820000, 0x428c0000],
+                0x43160000,
+                [322.0, 353.0],
+                10,
+                [
+                    [0x43af4420, 0x43abdd94, 0x43aa82c0, 0x43ad690d, 0x80735f5f],
+                    [0x43a9d153, 0x43a45d8b, 0x43a6e0e2, 0x43a86907, 0x80735f5f],
+                    [0x43bf1d57, 0x43ba4ad0, 0x43ba5c13, 0x43b8bf00, 0x4c735f5f],
+                ],
+            ),
+            (
+                [0x428e0000, 0x42980000, 0x42a20000, 0x42ac0000, 0x42b60000, 0x42c00000, 0x42ca0000, 0x42d40000, 0x42de0000, 0x42e80000],
+                0x42680000,
+                [150.0, 370.0],
+                6,
+                [
+                    [0x43414a2c, 0x43d13e59, 0x433aa139, 0x43cd8387, 0x4a735f5f],
+                    [0x435daa6c, 0x43c0c668, 0x4353e4a3, 0x43bfb6fd, 0x3d735f5f],
+                    [0x429def85, 0x43913661, 0x42ab4111, 0x4394f148, 0x0a735f5f],
+                ],
+            ),
+            (
+                [0; 10],
+                0x439a0000,
+                [322.0, 353.0],
+                10,
+                [
+                    [0x439702d7, 0x43a54f4b, 0x439a573a, 0x43a90a32, 0x00735f5f],
+                    [0x43925766, 0x43ad5165, 0x43973a44, 0x43ae60ee, 0x00735f5f],
+                    [0x439f7faf, 0x43a19348, 0x439fffca, 0x43a68cda, 0x00735f5f],
+                ],
+            ),
+        ];
+        for (v, turn, c, n, want) in recs {
+            let l = Lines { v: v.map(f32::from_bits), turn: f32::from_bits(turn), fly: true };
+            let got: Vec<[u32; 5]> = l.arrows(c).iter().map(|a| [a.p0[0].to_bits(), a.p0[1].to_bits(), a.p1[0].to_bits(), a.p1[1].to_bits(), a.colour]).collect();
+            assert_eq!(got.len(), n);
+            assert_eq!([got[0], got[1], got[n - 1]], want);
+        }
+    }
+
+    #[test]
+    fn button_lines_run_their_course() {
+        let mut l = Lines::default();
+        l.load();
+        assert_eq!(l.v, [100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 130.0, 135.0, 140.0, 145.0]);
+        // The first arrow shows after one tick, the last after 91; all are gone (alpha 0) 200 ticks after their start.
+        l.tick();
+        assert_eq!(l.arrows([0.0, 0.0]).len(), 1);
+        for _ in 0..90 {
+            l.tick();
+        }
+        assert_eq!(l.arrows([0.0, 0.0]).len(), 10);
+        // At 500 the turn restarts without the fly-in; a new category hides them all.
+        for _ in 0..410 {
+            l.tick();
+        }
+        assert!(!l.fly && l.turn == 0.0 && l.v[9] == 145.0);
+        l.hide();
+        l.tick();
+        assert!(l.arrows([0.0, 0.0]).is_empty());
+    }
+
+    #[test]
+    fn the_last_pressed_button_holds_the_lines() {
+        let mut s = screen();
+        s.choose_area(10);
+        assert_eq!(s.last_button, [0x96, 0x172]);
+        s.choose_area(2);
+        assert_eq!(s.last_button, [322, 353]);
+    }
+
     #[test]
     fn printf_fills_the_one_number() {
         assert_eq!(printf_d(b"Cost: %d/day", 12), b"Cost: 12/day".to_vec());
     }
 }
+

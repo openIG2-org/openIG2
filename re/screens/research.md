@@ -267,9 +267,41 @@ open and not closing, the labs while their cone shows (`GombocTransparencyk[i] =
 lab 2, 0x15/0x18 lab 3). Shown like every screen's (`UpdateFrame` 400 ms rest, lowest id, spy.md §6.1): the shared
 `ui::Tooltip`.
 
-### 5.6 Not ported yet
-The lines from the wheel button to the ball (`ResDrawVonalak`, `ResInitVonalkak`/`ResFrissitVonalkak`), the panels'
-design frames (`FadeKerettelKerekitDesign` under `GLOBALKELLDESIGN`), sounds, the ball drag, the screen-select menu
+### 5.6 The button lines (`ResDrawVonalak` ELF 0x5e4910 / exe 0x51f340)
+Not lines from the button to the ball: a ring of ten arrowheads pointing in at the last pressed category button.
+ELF and exe agree in every constant and precision (exe: the helpers inlined or unrolled).
+- **Where**: `ResLastGombX/Y` (ELF 0x118a0d0, exe 0x9185a8; static −1, never set back). `Forgotabla` (ELF 0x5e8230,
+  exe 0x51e360) sets them from `forgastabla4x/4y[slot]` (exe 0x918c50/0x918c64, all five (322, 353): the middle
+  wheel's front button; `Rules::research_screen.wheel_line`), so every middle-wheel category and the screen's entry
+  (`Research_Belep` calls `Forgotabla(ResearchOldForgato)`) put it there. The off-wheel `TT_*` set constants (ELF
+  0x5e94b0.., exe 0x524a50..): civil 6 → (0x1ec, 0x172), power 9 → (0x1c0, 0x199), military 8 → (0x218, 0x19e),
+  research 7 → (0x1ed, 0x1c8), special 12 → (0x140, 0x19b), tanks 10 → (0x96, 0x172), turrets 11 → (0x96, 0x1ca).
+- **State**: `ResVonalkak[10]` (f32, exe 0xddf794), `ResVonalakNovelo` (f32, exe 0xddf674), `ResKellVonalTavolodas`
+  (exe 0xddf62b). Init (`ResInitVonalkak`): `v[i] = (i/10)·50 + 100` (100, 105, …, 145), Kell 0. Hide
+  (`ResEltuntetVonalkak`): `v[i] = 100000`, Kell 0. `LoadTalalmanyVectorok` (ELF 0x5e1520, exe 0x51e900): Novelo 0,
+  Init, Kell 1 (it runs from `Research_Belep` and when a new category's models are loaded after the old ones flew
+  out). `Research3DUpdate`: the first drawn frame after `ResearchTerulet` changes (≠ `OldResearchTerulet`) hides them.
+- **Tick** (`FRISSIT_Research2`, every UI tick on the screen, also while opening): `v = v ≤ 0 ? 0 : v − 0.5`; then
+  `if 500 ≤ Novelo { Novelo = 0; Init } else { Novelo += 1 }` (a 501-tick period, the restart without fly-in).
+- **Draw** (`ResearchGfx2D_2`'s first step, when `ResLastGombX ≠ −1` and `resKINYITVA`), centre `c = (X·639/639,
+  Y·479/479)` (f32), for each `v < 100`:
+  - `f = (v ≤ 50 ? 0 : v − 50)/12` (f64 → f32), 0 unless Kell (the fly-in from radius ~103 px).
+  - alpha `A = (int)(v > 50 ? (100 − v)·2.56 : v > 20 ? 128 : max(v·6.4, 0.001))`: in over 50 ticks, 128 for 60,
+    out over 40 (after Init line i starts 10i + 1 ticks late).
+  - `θ = (f32)(Novelo/500·3.1415·2) + (f32)(i/10f)·3.1415·2` (f64), `s = ((f32)(sin θ·20)·639/639, (f32)(cos θ·20)
+    ·479/479)` (f32); tip `p1 = c + s·(f + 1)` (f32), tail `p0 = c + s·(f + 1.5)` (f64 → f32).
+  - `DrawArrowAbsolute(p0, p1, A << 24 | 0x735f5f, 2.0)` (ELF 0x6efa10, exe 0x593cb0): `d = (p1 − p0)/|p1 − p0|`
+    (f32 squares, f64 sqrt), `n = (−d.y, d.x)·w`; the shaft `nyilszar` quad p0 ± n to p1 ± n − 10d, the head
+    `nyilhegy` triangle tip p1 (uv 0.5, 1), base `p1 ± 2.5n − 10d` (uv (0, 0) / (1, 0)); z = rhw = 0.5;
+    `polygons(…, 1)`: colour premultiplied (`byte·A >> 8`), A 255, additive. |p1 − p0| is always 10, so the shaft
+    has no area: a 10 px head, 10 px across, colour (0x73, 0x5f, 0x5f)·A/256 ≤ (57, 47, 47) added.
+- The exe draws them over the wheel's buttons [obs] (no occlusion by the console). `nyilhegy` is a white triangle on
+  opaque black (base along v = 0, apex at v = 1), so the port adds the whole texture square (`draw_arrow`).
+- Ported in `research.rs` (`Lines`, `draw_arrow`); all 706 calls of a probe run match bit for bit
+  (`probes/research_lines.js`, `button_lines_match_the_exe`; diff-results.md 2026-10-23 button lines).
+
+### 5.7 Not ported yet
+The panels' design frames (`FadeKerettelKerekitDesign` under `GLOBALKELLDESIGN`), sounds, the ball drag, the screen-select menu
 entry. The info box glass's depth against the left wheel while closing (closing 40's `labs`, 12.9).
 
 ## 6. Orders

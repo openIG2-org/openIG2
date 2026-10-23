@@ -21,6 +21,16 @@ impl Game<'_> {
         let mut text = name.to_vec();
         text.push(0);
         m.write(va::PLANETS + (p * PLANET_SIZE) as u32, &text);
+        self.tutorial_check_event(1);
+    }
+
+    /// `TutorialCheckEvent(id)` (exe 0x60bdf0): the awaited event `id` clears `TutorialEvent` and, when paused, sets
+    /// `TutorialUnPause`'s flags (its input resets are the driver's).
+    pub fn tutorial_check_event(&mut self, id: i32) {
+        let m = &mut self.state.mem;
+        if m.i32(va::TUTORIAL_EVENT) != id {
+            return;
+        }
         m.set_i32(va::TUTORIAL_EVENT, 0);
         if m.u8(va::TUTORIAL_PAUSED) != 0 {
             m.set_u8(va::TUTORIAL_PAUSED, 0);

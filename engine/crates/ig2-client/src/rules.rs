@@ -168,6 +168,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
         ground_maps: maps,
         space: space_rules(inst, &r)?,
         satellite_prices: r.satellite_prices.clone(),
+        inbox: ig2_sim::messages::InboxRules::from_install(inst),
     };
     Ok((rules, r.tech_defaults))
 }
@@ -185,7 +186,7 @@ pub fn scenario_globals(inst: &Install) -> Result<Vec<(u32, Vec<u8>)>, String> {
 }
 
 /// The real-time space battle's rules: the exe's weapon, projectile-form and ship-type tables, the buildings' tech
-/// and hit points, and the two formation files.
+/// and hit points, and the ten formation files.
 pub fn space_rules(inst: &Install, r: &ig2_rules::Rules) -> Result<SpaceRules, String> {
     let (weapons, weapon_words) = SpaceRules::weapons_from_table(&r.space_weapon_table());
     let formation = |n: usize| -> Result<Vec<FormationSlot>, String> {
@@ -198,7 +199,7 @@ pub fn space_rules(inst: &Install, r: &ig2_rules::Rules) -> Result<SpaceRules, S
         weapons,
         weapon_words,
         forms: r.shot_forms.iter().map(|f| FormRules { loaded: !f.model.is_empty(), slots: f.slots.max(0) as usize, size: f.size }).collect(),
-        formations: [formation(0)?, formation(1)?],
+        formations: (0..ig2_sim::spacebattle::FORMATION_FILES).map(formation).collect::<Result<_, _>>()?,
         ship_types: r
             .ship_types
             .iter()

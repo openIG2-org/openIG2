@@ -77,6 +77,31 @@ pub struct NewMpGalaxy {
     pub races: Vec<u8>,
 }
 
+/// A skirmish (the skirmish menu's `SetScirmishGameOptions`, exe 0x503e80 → `InitNewGame(ticks, 3, 0, Nehezseg)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewSkirmish {
+    /// The human's empire (`EN`).
+    pub en: i32,
+    /// `HanyGepiJatekos`: the computer opponents, 1..=7 (the start switches off the rest of 1..=8 at random).
+    pub ais: i32,
+    /// `NewgameRandomID`.
+    pub random_id: i32,
+    /// `ScrirmishTechicalLevel` (0..=3): the techs every empire starts with (`ScirmishTalalmanyFejlesztes`).
+    pub tech: i32,
+    /// `ScrirmishPlanetNumber`: `HanyBolygo`.
+    pub planets: i32,
+    /// `ScrirmishStartingMoney`: every empire's.
+    pub money: i32,
+    /// The menu's difficulty 1..=3 (3, hard, is `Nehezseg` 4).
+    pub difficulty: i32,
+    /// `ScrirmishPopulation` (0..=3): the empires' starting colonies and their people.
+    pub population: i32,
+    /// `RandomInit`'s seed (`SDL_GetTicks()`).
+    pub seed: u32,
+    /// `SDL_GetTicks()` when `NEWGAME_Diplomacy` reseeds libc.
+    pub ticks: u32,
+}
+
 /// `InitNewGame`'s arguments (spec §0).
 struct Init {
     mode: i32,
@@ -116,6 +141,16 @@ const STARLOG: u32 = 0xB82990;
 const LANG: u32 = 0x912724;
 const INFO_CHARTS: u32 = 0xB7A000;
 const STORY_ADAT: u32 = 0xF273F8;
+/// `EpuletekLeiro` (0x24-byte building kinds: +0 required tech, +0xc cost, +0x14 energy).
+const BUILDING_KINDS: u32 = 0x8EBA38;
+/// `ScirmishTalalmanyFejlesztes[t]`: the skirmish tech level a tech is given at.
+const SKIRMISH_TECHS: u32 = 0x8EC218;
+/// `HanyGepiJatekos`, `ScrirmishTechicalLevel`, `ScrirmishPlanetNumber`, `ScrirmishPopulation`, `ScrirmishStartingMoney`.
+const SK_AIS: u32 = 0xF21488;
+const SK_TECH: u32 = 0xBAD0D8;
+const SK_PLANETS: u32 = 0xBAD0DC;
+const SK_POPULATION: u32 = 0xBAD0E0;
+const SK_MONEY: u32 = 0xBAD0E4;
 const DESIGN_TEMPLATES: usize = 0x29;
 const DESIGNS: usize = 0x2e;
 
@@ -249,6 +284,26 @@ impl<'r> Game<'r> {
         self.state.rebuild_template();
     }
 
+    /// `SetScirmishGameOptions` (exe 0x503e80, spec §6) on [`Game::before_start`]'s state: the common prologue, the
+    /// human, the menu's choices, then `InitNewGame(seed, 3, 0, Nehezseg)` (a generated galaxy, spec §0, §3).
+    pub fn start_skirmish(&mut self, cfg: &NewSkirmish, data: &StartData) {
+        self.prologue(data, 1);
+        let m = self.m();
+        m.set_i32(va::EN, cfg.en);
+        m.set_u8(va::PLAYER_KI + cfg.en as u32, 1);
+        m.set_i32(0xB7740C, cfg.random_id);
+        m.set_i32(SK_AIS, cfg.ais);
+        m.set_i32(SK_TECH, cfg.tech);
+        m.set_i32(SK_PLANETS, cfg.planets);
+        m.set_i32(SK_MONEY, cfg.money);
+        let difficulty = if cfg.difficulty == 3 { 4 } else { cfg.difficulty };
+        m.set_i32(SK_POPULATION, cfg.population);
+        m.set_i32(va::NEHEZSEG, difficulty);
+        let init = Init { mode: 3, campaign: 0, difficulty, seed: cfg.seed, ticks: cfg.ticks };
+        self.init_new_game(&init, None, data, data.image);
+        self.state.rebuild_template();
+    }
+
     /// `Betolt_Scenario` (exe 0x4f5ba0, spec §6) on [`Game::before_start`]'s state.
     pub fn start_scenario(&mut self, cfg: &NewScenario, data: &StartData) {
         self.prologue(data, 2);
@@ -259,18 +314,7 @@ impl<'r> Game<'r> {
         self.init_new_game(&init, None, data, data.image);
         let techs0 = (data.image)(TALALMANYOK0, TECHS * TECH_SIZE);
         let ops = self.load_scenario(&cfg.text, 0, &techs0);
-        let mut st = self.state.story();
-        for op in ops {
-            match op {
-                ScenarioStory::Var(k, v) => st.v_set(k, v),
-                ScenarioStory::Planet(p, k) => st.b_add_id(p, k),
-                ScenarioStory::Start(id) => {
-                    st.start_story(id, false);
-                }
-                ScenarioStory::SzStart(id, days) => st.sz_start(id, days),
-            }
-        }
-        self.state.store_story(&st);
+        self.scenario_stories(ops);
         // FelfedezBirodalom(i, false) for the empires 1..=8 the human knows.
         let en = self.state.mem.i32(va::EN).clamp(0, 18) as usize;
         let knows: Vec<usize> = (1..9).filter(|&e| self.state.mem.u8(va::EMPIRE_KNOWS + (19 * en + e) as u32) != 0).collect();
@@ -287,6 +331,39 @@ impl<'r> Game<'r> {
         m.set_i32(va::BATTLE_SPEED, 1);
         self.tech_patches();
         self.state.rebuild_template();
+    }
+
+    /// `TutorialSetCampaignGameOptions(n)` (exe 0x504250, re/rules/tutorial.md) on [`Game::before_start`]'s state:
+    /// the §6 prologue (PlayerFaj[17] = 1), EN = 1, PlayerKi[1] = 1, `InitNewGame(ticks, 1, 0, 0)`, then
+    /// `TutorialLoadScenario(n)` = `LoadScenario("tutorial/scn/tutorial<n>.scn", 0)` (`cfg.text`). Unlike
+    /// `Betolt_Scenario` no empire is discovered, no camera set and no step-55 patch repeated.
+    pub fn start_tutorial(&mut self, cfg: &NewScenario, data: &StartData) {
+        self.prologue(data, 1);
+        let m = self.m();
+        m.set_i32(va::EN, 1);
+        m.set_u8(va::PLAYER_KI + 1, 1);
+        let init = Init { mode: 1, campaign: 0, difficulty: cfg.difficulty, seed: cfg.seed, ticks: cfg.ticks };
+        self.init_new_game(&init, None, data, data.image);
+        let techs0 = (data.image)(TALALMANYOK0, TECHS * TECH_SIZE);
+        let ops = self.load_scenario(&cfg.text, 0, &techs0);
+        self.scenario_stories(ops);
+        self.state.rebuild_template();
+    }
+
+    /// The story side of a scenario file's lines (`LoadScenario` mode 0: `V`, `B`, story starts).
+    fn scenario_stories(&mut self, ops: Vec<ScenarioStory>) {
+        let mut st = self.state.story();
+        for op in ops {
+            match op {
+                ScenarioStory::Var(k, v) => st.v_set(k, v),
+                ScenarioStory::Planet(p, k) => st.b_add_id(p, k),
+                ScenarioStory::Start(id) => {
+                    st.start_story(id, false);
+                }
+                ScenarioStory::SzStart(id, days) => st.sz_start(id, days),
+            }
+        }
+        self.state.store_story(&st);
     }
 
     fn m(&mut self) -> &mut Memory {
@@ -445,12 +522,19 @@ impl<'r> Game<'r> {
             } else if human(m, e) && difficulty == 1 {
                 money = 125000.0;
             }
+            if mode == 3 {
+                money = m.i32(SK_MONEY) as f64;
+            }
             m.set_f64(va::MONEY + 8 * e as u32, money);
-            // The multiplayer galaxy only switches the humans on; the lobby set the others.
+            // The multiplayer galaxy only switches the humans on; the lobby set the others. A skirmish has no
+            // computer empires past the eight players.
             if mode != 2 {
                 m.set_u8(va::EMPIRE_ALIVE + e as u32, (e as i32 <= pp2) as u8);
             } else if human(m, e) {
                 m.set_u8(va::EMPIRE_ALIVE + e as u32, 1);
+            }
+            if mode == 3 && !human(m, e) && e > 8 {
+                m.set_u8(va::EMPIRE_ALIVE + e as u32, 0);
             }
             for k in 1..EMPIRES {
                 m.set_u8(va::EMPIRE_KNOWS + (19 * e + k) as u32, 0);
@@ -463,9 +547,28 @@ impl<'r> Game<'r> {
                 m.set_i32(at + 4 * e as u32, 0);
             }
         }
-        // 15: no planets until the campaign map or the scenario; the multiplayer galaxy keeps the lobby's count and
-        // is generated, empire 3 getting three more buildings on each of its planets.
-        if mode == 2 {
+        // 14: a skirmish switches off 7 − HanyGepiJatekos computer empires of 1..=8 at random.
+        let ais = m.i32(SK_AIS);
+        if mode == 3 && ais != 7 && 7 - ais >= 0 {
+            for _ in 0..7 - ais {
+                loop {
+                    let x = self.rnd_stream(1, 1, 8) as u32;
+                    let m = self.m();
+                    if m.u8(va::EMPIRE_ALIVE + x) != 0 && m.u8(va::PLAYER_KI + x) != 1 {
+                        m.set_u8(va::EMPIRE_ALIVE + x, 0);
+                        break;
+                    }
+                }
+            }
+        }
+        let m = self.m();
+        // 15: no planets until the campaign map or the scenario; the multiplayer galaxy keeps the lobby's count, a
+        // skirmish takes the menu's; both are generated, empire 3 getting three more buildings on each of its planets.
+        if mode == 3 {
+            let n = m.i32(SK_PLANETS);
+            m.set_i32(va::PLANET_COUNT, n);
+        }
+        if mode == 2 || mode == 3 {
             let n = m.i32(va::PLANET_COUNT);
             m.set_i32(va::PLANET_COUNT2, n);
             self.generate_stars(data);
@@ -580,12 +683,17 @@ impl<'r> Game<'r> {
                 }
             }
         });
-        // 24: InitAdvancedTalalmanyok(mode): the AIs' head start in a campaign only.
-        self.advanced_techs(if mode == 0 { difficulty } else { 0 });
-        // 26.
+        // 24: InitAdvancedTalalmanyok(mode): the AIs' head start in a campaign, the menu's tech level in a skirmish.
+        self.advanced_techs(mode, difficulty, image);
+        // 25: InitScirmishBolygok.
+        if mode == 3 {
+            self.skirmish_planets(image);
+        }
+        // 26: up to each empire's `OsszHanyTerv` (a skirmish's head start added the human's automatic designs).
+        let counts: Vec<usize> = (0..EMPIRES).map(|e| self.state.mem.i32(0xB9C028 + 4 * e as u32).max(0) as usize).collect();
         self.with_ai(|_, w, _| {
             for e in 1..EMPIRES {
-                for i in DESIGN_TEMPLATES..=DESIGNS {
+                for i in DESIGN_TEMPLATES..=counts[e] {
                     w.auto_design(e, i, 0);
                     w.recompute_design(e, i);
                 }
@@ -896,33 +1004,68 @@ impl<'r> Game<'r> {
         self.money_init(0);
     }
 
-    /// `InitAdvancedTalalmanyok(0)` (exe 0x4e0f70): the AIs' head start by difficulty, then every tech two of the
-    /// first eight empires both own marks each as seen by the other.
-    fn advanced_techs(&mut self, difficulty: i32) {
+    /// `InitAdvancedTalalmanyok(mode)` (exe 0x4e0f70): in a campaign the AIs' head start by difficulty; in a
+    /// skirmish every live empire of 1..=8 gets each tech it may have whose `ScirmishTalalmanyFejlesztes` is at most
+    /// the menu's level (one more for a hard game's AIs), then `Research_TalalmanyUjraSzamol`; then every tech two of
+    /// the first eight empires both own marks each as seen by the other.
+    fn advanced_techs(&mut self, mode: i32, difficulty: i32, image: &dyn Fn(u32, usize) -> Vec<u8>) {
         let g = self.globals();
         let ctx = self.research_context(&g);
-        let mut list = Vec::new();
-        if difficulty > 2 {
-            list.extend([6, 0x12, 0x16]);
-        }
-        if difficulty > 1 {
-            list.push(0x99);
-        }
-        if difficulty > 3 {
-            list.extend([0x92, 0xa2]);
-        }
-        for e in 1..=g.pp2.min(18) {
-            if g.human[e] {
-                continue;
+        let develop = |game: &mut Self, e: usize, t: usize| {
+            let mut techs = game.state.tech();
+            let mut res = game.state.research();
+            let mut events: Vec<ResearchEvent> = Vec::new();
+            research::developed(&mut techs, &mut res, e, t, &game.rules.research, &ctx, &mut events);
+            game.state.store_tech(&techs);
+            game.state.store_research(&res);
+            // `TervezAutomatikus`: the human's new designs.
+            for ev in events {
+                if let ResearchEvent::AutoDesign { empire, tech } = ev {
+                    game.automatic_design(empire as usize, tech);
+                }
             }
-            for &t in &list {
-                let mut techs = self.state.tech();
-                let mut res = self.state.research();
-                let mut events: Vec<ResearchEvent> = Vec::new();
-                research::developed(&mut techs, &mut res, e, t, &self.rules.research, &ctx, &mut events);
-                self.state.store_tech(&techs);
-                self.state.store_research(&res);
+        };
+        if mode == 0 {
+            let mut list = Vec::new();
+            if difficulty > 2 {
+                list.extend([6, 0x12, 0x16]);
             }
+            if difficulty > 1 {
+                list.push(0x99);
+            }
+            if difficulty > 3 {
+                list.extend([0x92, 0xa2]);
+            }
+            for e in 1..=g.pp2.min(18) {
+                if g.human[e] {
+                    continue;
+                }
+                for &t in &list {
+                    develop(self, e, t);
+                }
+            }
+        } else if mode == 3 {
+            let start = image(SKIRMISH_TECHS, 4 * TECHS);
+            let level0 = self.state.mem.i32(SK_TECH);
+            for e in 1..=8usize {
+                let m = &self.state.mem;
+                if m.u8(va::EMPIRE_ALIVE + e as u32) == 0 {
+                    continue;
+                }
+                let level = level0 + (m.u8(va::PLAYER_KI + e as u32) == 2 && difficulty > 3) as i32;
+                for t in 1..TECHS {
+                    let status = self.state.mem.u8(va::TECHS + (t * TECH_SIZE + 0x45 + e) as u32);
+                    let at = i32::from_le_bytes(start[4 * t..4 * t + 4].try_into().unwrap());
+                    if status != 0 && status != 5 && at <= level {
+                        develop(self, e, t);
+                    }
+                }
+            }
+            let g = self.globals();
+            let ctx = self.research_context(&g);
+            let mut techs = self.state.tech();
+            techs.recompute(ctx.players, ctx.all_techs);
+            self.state.store_tech(&techs);
         }
         let m = self.m();
         for t in 1..TECHS as u32 {
@@ -938,6 +1081,151 @@ impl<'r> Game<'r> {
                     }
                 }
             }
+        }
+    }
+
+    /// `InitScirmishBolygok` (exe 0x4e2a10, spec §3): each live empire of 1..=8 a random planet of its own peopled
+    /// by the menu's population setting, more colonies for the larger settings (the free planets nearest it), each
+    /// with the buildings its people need and the power plants to run them.
+    fn skirmish_planets(&mut self, image: &dyn Fn(u32, usize) -> Vec<u8>) {
+        let m = &self.state.mem;
+        let (n, ais) = (m.i32(va::PLANET_COUNT), m.i32(SK_AIS));
+        let (mut first, second) = ([12000, 3500, 8500], [15000, 23000, 18000]);
+        let count = match m.i32(SK_POPULATION) {
+            1 => 1 + (n > 30) as i32 + (n > 60) as i32,
+            2 => {
+                first = [24000, 14000, 21000];
+                n / 15
+            }
+            3 => {
+                first = [51000, 14000, 21000];
+                n / (ais + 3)
+            }
+            _ => 1,
+        };
+        let prod = self.state.mem.read(PGYARTAS0, 0x40);
+        // Without tech 93 no planet holds more than 32000 people (then 31700..=32300).
+        let peopled = |game: &mut Self, p: usize, e: usize, pop: i32| {
+            let mut r = game.prec(p);
+            put_i32(&mut r, 0x28, pop);
+            if game.state.mem.u8(va::TECHS + (93 * TECH_SIZE + 0x45 + e) as u32) != 5 && pop > 32000 {
+                put_i32(&mut r, 0x28, game.rnd_stream(1, 0, 600) + 0x7bd4);
+            }
+            game.put_prec(p, &r);
+            game.civil_buildings(p, image);
+            game.energy_buildings(p, image);
+        };
+        for e in 1..=8usize {
+            if self.state.mem.u8(va::EMPIRE_ALIVE + e as u32) == 0 {
+                continue;
+            }
+            let h = self.random_planet_of(e, 2);
+            let pop = first[0] + self.rnd_stream(1, 0, 600) - 300;
+            peopled(self, h, e, pop);
+            for k in 1..count {
+                let r = self.prec(h);
+                let q = self.nearest_free(rd_f32(&r, 0x18) as i32, rd_f32(&r, 0x1c) as i32);
+                self.generate_planet(q, e, e as u8, true, false, &prod);
+                let pop = if count < 3 {
+                    first[count as usize] + self.rnd_stream(1, 0, 600) - 300
+                } else {
+                    second[(k as u32 % 3) as usize] * self.rnd_stream(1, 80, 120) / 100
+                };
+                peopled(self, q, e, pop);
+            }
+        }
+    }
+
+    /// Whether the owner of `p` has tech `t` (status 5).
+    fn owner_has(&self, p: usize, t: usize) -> bool {
+        let o = self.prec(p)[0x20] as usize;
+        self.state.mem.u8(va::TECHS + (t * TECH_SIZE + 0x45 + o) as u32) == 5
+    }
+
+    /// The kinds of `p`'s used building slots (`Epuletek[p][1..=HanyEpuletLefoglalva[p]]`, the kind byte).
+    fn building_kinds(&self, p: usize) -> Vec<u8> {
+        let n = self.state.mem.i32(va::BUILDING_SLOTS + 4 * p as u32).max(0) as usize;
+        self.state.buildings.get(p).map_or_else(Vec::new, |b| b.iter().skip(1).take(n).map(|r| r[0]).collect())
+    }
+
+    /// `RndClass(5)` over the building kinds `lo..=hi` whose tech `p`'s owner has, the `i`-th kind weighted `i`
+    /// (non-logging draws on stream 5): the pick, `lo` when none.
+    fn pick_kind(&mut self, p: usize, lo: usize, hi: usize, kinds: &[u8]) -> usize {
+        let (mut t, mut total) = (lo, 0);
+        for k in lo..=hi {
+            if self.owner_has(p, kinds[0x24 * k] as usize) {
+                let w = (k - lo + 1) as i32;
+                total += w;
+                if self.rnd_stream(5, 1, total) <= w {
+                    t = k;
+                }
+            }
+        }
+        t
+    }
+
+    /// `GenerateCivilBuildings(p)` (exe 0x5c20c0): living quarters, hospitals, shops, police, a park and the
+    /// amusements, as many as the planet's people call for (the better kinds when the owner has their techs).
+    fn civil_buildings(&mut self, p: usize, image: &dyn Fn(u32, usize) -> Vec<u8>) {
+        let kinds = image(BUILDING_KINDS, 0x24 * 56);
+        let mut n = [0i32; 15];
+        for k in self.building_kinds(p) {
+            if (1..=14).contains(&k) {
+                n[k as usize] += 1;
+            }
+        }
+        let v = i32::from_le_bytes(self.prec(p)[0x28..0x2c].try_into().unwrap());
+        while n[2] * 7000 + 5000 + n[3] * 12000 < v {
+            let t = if self.owner_has(p, 83) { self.rnd_stream(5, 2, 3) as usize } else { 2 };
+            n[t] += 1;
+            self.place(p, t as u8, true, 0);
+        }
+        while n[4] * 9000 + 5000 + n[5] * 18000 < v {
+            let t = if self.owner_has(p, 85) { self.rnd_stream(5, 4, 5) as usize } else { 4 };
+            n[t] += 1;
+            self.place(p, t as u8, true, 0);
+        }
+        for (kind, step) in [(6, 0x1d4c), (7, 10000)] {
+            while n[kind] * step + step < v {
+                self.place(p, kind as u8, true, 0);
+                n[kind] += 1;
+            }
+        }
+        if v > 20000 && n[8] == 0 {
+            self.place(p, 8, true, 0);
+            n[8] += 1;
+        }
+        if self.owner_has(p, kinds[0x24 * 13] as usize) {
+            while n[13] * 30000 + 25000 < v {
+                self.place(p, 13, true, 0);
+                n[13] += 1;
+            }
+        }
+        while n[10] * 4000 + 3000 + n[11] * 8000 + n[12] * 14000 + n[13] * 30000 < v {
+            let t = self.pick_kind(p, 10, 13, &kinds);
+            self.place(p, t as u8, true, 0);
+            n[t] += 1;
+        }
+    }
+
+    /// `GenerateEnergyBuildings(p)` (exe 0x5c23f0): power plants until the planet's buildings have the energy they
+    /// use (the better kinds the owner has).
+    fn energy_buildings(&mut self, p: usize, image: &dyn Fn(u32, usize) -> Vec<u8>) {
+        let kinds = image(BUILDING_KINDS, 0x24 * 56);
+        let field = |k: usize, o: usize| i32::from_le_bytes(kinds[0x24 * k + o..0x24 * k + o + 4].try_into().unwrap());
+        let mut e = 0i32;
+        for k in self.building_kinds(p) {
+            let k = k as usize;
+            if k == 1 || (0x34..=0x37).contains(&k) {
+                e += field(k, 0x14) * 100;
+            } else {
+                e -= field(k, 0xc);
+            }
+        }
+        while e < 0 {
+            let t = self.pick_kind(p, 0x34, 0x37, &kinds);
+            self.place(p, t as u8, true, 0);
+            e += field(t, 0x14) * 100;
         }
     }
 

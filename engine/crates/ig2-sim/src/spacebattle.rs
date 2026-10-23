@@ -243,8 +243,8 @@ pub struct SpaceRules {
     pub weapons: Vec<WeaponRules>,
     pub weapon_words: Vec<Vec<i32>>,
     pub forms: Vec<FormRules>,
-    /// `felallas0` / `felallas1` (`dataraw/spacewar/felallas<n>.bin`).
-    pub formations: [Vec<FormationSlot>; 2],
+    /// `felallas0` .. `felallas9` (`dataraw/spacewar/felallas<n>.bin`, [`FORMATION_FILES`]).
+    pub formations: Vec<Vec<FormationSlot>>,
     /// `tipusnevek` as compiled (the setup rewrites the footprints of the live copy, [`crate::game`] keeps it).
     pub ship_types: Vec<ShipType>,
     /// `EpuletekLeiro[type].+0` (tech) and `+8` (hit points).
@@ -707,6 +707,9 @@ pub struct Battle {
     pub asteroids: Option<[i32; 3]>,
     /// +0x2d85: the human may pick a formation (≥ 6 units, SP) [UI].
     pub formation_choice: bool,
+    /// The human's side's list of ships (side `+0x5c`/`+0x60`, 0x1c-byte entries) as the last `AddFleet` left
+    /// it: what a formation pick places anew ([`Battle::pick_formation`]).
+    pub human_list: Vec<Entry>,
     /// +0x2005: the ground war after the battle has been started.
     pub ground_war_started: bool,
     /// +0x2d84/+0x2d86: an AI tick was due while paused (UI flags kept for fidelity).
@@ -762,8 +765,12 @@ pub enum BattleEvent {
     FightersLost { fighter: usize, count: i32 },
     /// A planet gun's building was destroyed.
     GunDestroyed { gun: usize },
+    /// A shot struck an armoured planet gun (`karikakirak` in `FoldTalalat`): the shield ring's place.
+    ShieldHit { gun: usize, at: V4 },
     /// An empire started to retreat.
     Retreat { empire: i32 },
+    /// A capital ship's voice line (`dechp`): 6 dying (its hull failing), 7 the human's dead, 9 another's.
+    Voice { unit: usize, kind: i32 },
 }
 
 /// The search grid and open list of `Utkeres` (exe 0x6133a0) and its result globals.
@@ -1294,12 +1301,16 @@ impl Battle {
         let left = hp - damage;
         if n == 1 {
             if (left as f32) < 0.0 {
+                if x.kind < 8 {
+                    let kind = if x.owner == self.human { 7 } else { 9 };
+                    t.events.push(BattleEvent::Voice { unit: u, kind });
+                }
                 self.explode(t, u, k, true, true);
                 return;
             }
-            // "Hull failing" speech: draws stream 6 only.
-            if x.kind < 8 && hp < damage + rest * 2 && 0.9 < ((damage as f32 / hp as f32) as f64) {
-                roll(t.rng, 0, 2);
+            // "Hull failing" speech: draws stream 6, the ship speaks on a 0.
+            if x.kind < 8 && hp < damage + rest * 2 && 0.9 < ((damage as f32 / hp as f32) as f64) && roll(t.rng, 0, 2) == 0 {
+                t.events.push(BattleEvent::Voice { unit: u, kind: 6 });
             }
         } else {
             if (left as f32) < 0.0 || hp < damage {
@@ -1802,6 +1813,9 @@ impl Battle {
             return;
         }
         let g = s.target;
+        if self.guns[g].armour > 1.0 {
+            t.events.push(BattleEvent::ShieldHit { gun: g, at: s.pos });
+        }
         let slot = self.guns[g].building;
         if slot != 0 {
             let w = &t.rules.weapons[s.weapon as usize];
@@ -3523,6 +3537,8 @@ const UNIT_REUSE_FROM: usize = 0x77;
 const MAX_GUNS: usize = 50;
 /// Where the scenery designs start (`0x8000 + t`: asteroids of type t).
 pub const SCENERY: i32 = 0x8000;
+/// `felallas0.bin` .. `felallas9.bin`: the set-up's two and the formation phase's nine (`felallas1` both).
+pub const FORMATION_FILES: usize = 10;
 
 /// A formation slot (`felallastipus` record, 0x54 bytes; `dataraw/spacewar/felallas<n>.bin`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -3552,8 +3568,9 @@ pub struct SetupRules {
     /// The live weapon table (`fegyverszamol` leaves it as loaded, spec §2.2).
     pub weapons: Vec<WeaponRules>,
     pub forms: Vec<FormRules>,
-    /// `felallas0` (sides with fewer than six ships) and `felallas1`.
-    pub formations: [Vec<FormationSlot>; 2],
+    /// `felallas<n>` by file number: 0 for sides with fewer than six ships, 1 for the others, 1..=9 the human's
+    /// picks in the formation phase ([`Battle::pick_formation`]).
+    pub formations: Vec<Vec<FormationSlot>>,
     /// `EpuletekLeiro[type].+0`: the tech of each building type (exe 0x8EBA38 × 0x24).
     pub building_tech: Vec<u8>,
 }
@@ -3634,16 +3651,18 @@ pub struct SetupInput<'a> {
     pub defence_fleets: Option<[i32; 8]>,
 }
 
-/// A ship waiting for its unit (`AddFleet`'s per-side list, 0x1c bytes).
+/// A ship waiting for its unit (`AddFleet`'s per-side list, 0x1c bytes: race, design, owner, ship, colour, unit,
+/// experience; the colour is the screen's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Entry {
-    race: i32,
-    design: i32,
-    owner: i32,
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Entry {
+    pub race: i32,
+    pub design: i32,
+    pub owner: i32,
     /// `Hajok` index, −k for defence ship k of the planet.
-    ship: i32,
-    unit: i32,
-    experience: i32,
+    pub ship: i32,
+    pub unit: i32,
+    pub experience: i32,
 }
 
 /// Fighters of one design in one fleet (`AddFleet`'s temporary list, 0xa8 bytes).
@@ -4160,6 +4179,22 @@ impl Battle {
         }
     }
 
+    /// `loadfelallas("felallas<file>")` (exe 0x578850) outside the editor: `SpaceWarFrissit2` calls it when the
+    /// formation phase's pick (`+0x2d88`, file = pick + 1) differs from the loaded one (`+0x2d8c`). With ships in
+    /// the human's list, `FelallasLoad` and `felallit` of the human's side: its units die and its ships get new
+    /// ones in the new formation, turned to face the others (stream 6: each new unit's look and mount timers).
+    /// `inp` needs only `ships` and `designs` (the strategic records); `types` is the global ship-type table.
+    pub fn pick_formation(&mut self, file: usize, inp: &SetupInput, rules: &SetupRules, types: &mut [ShipType], rng: &mut Streams) {
+        let Some(formation) = rules.formations.get(file) else { return };
+        if self.human_list.is_empty() {
+            return;
+        }
+        let mut list = std::mem::take(&mut self.human_list);
+        let mut s = Setup { rules, inp, types, rng, formation: formation.clone() };
+        self.felallit(&mut s, self.human as usize, &mut list);
+        self.human_list = list;
+    }
+
     /// `AddUjVadasz(race, class, owner, fleet, design, count, groups)` (exe 0x566420).
     #[allow(clippy::too_many_arguments)]
     fn add_fighters(&mut self, s: &mut Setup, race: i32, class: i32, owner: i32, fleet: i32, design: i32, count: i32, groups: i32) {
@@ -4335,7 +4370,7 @@ impl Battle {
             if list.is_empty() {
                 continue;
             }
-            s.formation = s.rules.formations[if list.len() < 6 { 0 } else { 1 }].clone();
+            s.formation = s.rules.formations.get(if list.len() < 6 { 0 } else { 1 }).cloned().unwrap_or_default();
             self.felallit(s, e, list);
             if self.sides[e].fighter_count == 0 {
                 fighterless += 1;
@@ -4379,6 +4414,8 @@ impl Battle {
             }
         }
         self.formation_choice = lists.get(self.human as usize).is_some_and(|l| 6 <= l.len()) && !inp.multiplayer;
+        // `AddFleet` frees the lists when it starts, so the human's is the one this call built.
+        self.human_list = lists.get(self.human as usize).cloned().unwrap_or_default();
         self.f2d86 = false;
         self.recount_present();
     }
@@ -4867,7 +4904,7 @@ mod tests {
         let rules = SetupRules {
             weapons,
             forms: vec![FormRules { loaded: true, slots: 3, size: 1.0 }; FORMS],
-            formations: [line(20), line(20)],
+            formations: vec![line(20), line(20)],
             building_tech: Vec::new(),
         };
         let mut types = vec![ShipType::default(); 240];

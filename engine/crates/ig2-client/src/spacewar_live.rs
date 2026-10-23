@@ -29,6 +29,10 @@ pub struct Live {
     ticks100: u64,
     /// The effects (`None` without the exe's tables).
     pub fx: Option<crate::spacewar_fx::Fx>,
+    /// The weapon loops' channels (the shots' handles `+0x84..`), the window's.
+    pub loops: std::collections::HashMap<(usize, usize, u8), usize>,
+    /// The hot-spots' tooltip.
+    tip: crate::kit::tooltip::Tooltip,
 }
 
 impl Live {
@@ -41,7 +45,7 @@ impl Live {
         world.game.sp_battles.on_screen = true;
         world.game.realtime.fx.clear();
         let fx = crate::spacewar_fx::Tables::read(install).map_err(|e| eprintln!("ig2-client: the battle effects' tables: {e}")).ok().map(crate::spacewar_fx::Fx::new);
-        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx })
+        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx, loops: Default::default(), tip: Default::default() })
     }
 
     /// The end check closed the battle (`AktKepKell = 2`): `SpaceWar_Kilep`'s zoom-out.
@@ -61,6 +65,11 @@ impl Live {
         let ticks = (b.tick - self.seen_tick).clamp(0, 8);
         for k in 0..ticks {
             self.ui.battle_ticked(b);
+            if k == 0 {
+                for e in &events {
+                    self.ui.battle_voice(b, e);
+                }
+            }
             if let Some(fx) = self.fx.as_mut() {
                 let (eye, target) = self.ui.eye_target();
                 let back = crate::scene::normalise([eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]]);
@@ -69,6 +78,11 @@ impl Live {
                 out.extend(fx.sounds.drain(..).map(Out::Sound));
             }
         }
+        // `setsounds` after `Update3D`: the loops once a rendered frame.
+        if let Some(fx) = self.fx.as_mut() {
+            fx.frame_loops(b, &world.game.rules.space.weapons);
+            out.extend(fx.loop_out.drain(..).map(Out::Loop));
+        }
         self.seen_tick = b.tick;
         // `Fake_FRISSITES`' 100 Hz loop (exe 0x4de850, `while now − stamp > 10`) runs `FRISSIT_SpaceWar2` and then
         // `SpaceWar_Autoscroll` (off while the tutorial runs) once per UI tick (§7.2).
@@ -76,7 +90,10 @@ impl Live {
         self.ticks100 += due;
         if due > 0 {
             let combat = world.game.state.combat();
-            let plans = crate::spacewar_ui::Plans { designs: &combat.designs, ships: &combat.ships };
+            let tech = &world.game.rules.space.building_tech;
+            let blocks = world.game.state.buildings.get(b.planet.max(0) as usize);
+            let gun_tech = b.guns.iter().map(|g| blocks.and_then(|x| x.get(g.building.max(0) as usize)).filter(|_| g.building > 0).and_then(|x| tech.get(x[0] as usize)).map_or(-1, |&t| t as i32)).collect();
+            let plans = crate::spacewar_ui::Plans { designs: &combat.designs, ships: &combat.ships, gun_tech, firepower: &world.game.rules.ai.design.firepower, fleets: &world.game.state.fleets };
             let scroll = world.game.state.mem.u8(ig2_sim::save::va::TUTORIAL_ACTIVE) == 0;
             for _ in 0..due {
                 self.ui.tick(b, &plans, &mut out);
@@ -86,11 +103,17 @@ impl Live {
             }
         }
         self.ui.frame(b, now, &mut out);
-        // The opening zoom ended: the battle runs, unless the human picks a formation first [inf].
+        // Without a formation phase nothing on this screen unpauses the battle: the top bar's pause button does
+        // (spec §7.4; `IG2_gameUpdate` exe 0x4e0440), and not during the zoom (`nemlehetidotallitani`).
         if !self.zoomed && !self.ui.entering && !self.ui.restoring && self.ui.fade >= 1.0 {
             self.zoomed = true;
-            if !b.formation_choice {
-                out.push(Out::Start);
+        }
+        if due > 0 {
+            if let Some(pick) = self.ui.formation_due() {
+                world.game.pick_formation(self.ui.slot, pick);
+                if let Some(b) = world.game.realtime.slots.get(self.ui.slot) {
+                    self.ui.placed(b);
+                }
             }
         }
         world.game.sp_battles.fade = self.ui.fade;
@@ -115,20 +138,84 @@ impl Live {
         self.ui.hot_spots(b, spot, now, &mut out);
         let mut shown = self.ui.shown(b, tables);
         shown.fx = self.fx.as_ref().map(|fx| (fx, world.game.rules.space.weapons.as_slice()));
+        // The guns' buildings' damaged fraction (`building +4 / EpuletekLeiro[type] +8`).
+        let blocks = world.game.state.buildings.get(b.planet.max(0) as usize);
+        let hp = &world.game.rules.space.building_hp;
+        shown.gun_damage = b
+            .guns
+            .iter()
+            .map(|g| {
+                let Some(x) = blocks.and_then(|x| x.get(g.building.max(0) as usize)).filter(|_| g.building > 0) else { return 0.0 };
+                let max = hp.get(x[0] as usize).copied().unwrap_or(0);
+                if max == 0 { 0.0 } else { i32::from_le_bytes(x[4..8].try_into().unwrap()) as f32 / max as f32 }
+            })
+            .collect();
         let gfx = self.gfx.get_or_insert_with(|| Gfx::load(r, install, &shown));
         crate::spacewar_screen::prepare(v, gfx, assets.white, &shown);
+        v.battle_fade = Some(shown.erosseg);
         let mut frame = v.build(assets, &world.prev, &world.curr, alpha, t);
         let surface = world.curr.planets.iter().find(|p| p.index as i32 == b.planet).map(|p| p.surface);
         crate::spacewar_screen::draw(&mut frame, r, install, gfx, assets, &v.camera, hud, &shown, surface, size);
-        if self.ui.retreat_window {
-            crate::spacewar_hud::retreat_window(&mut frame, hud, &crate::font::Virtual::new(size), mouse);
+        let virt = crate::font::Virtual::new(size);
+        if let Some(big) = &shown.big {
+            crate::spacewar_hud::big_box(&mut frame, hud, &virt, &shown, big);
         }
+        if self.ui.retreat_window {
+            crate::spacewar_hud::retreat_window(&mut frame, hud, &virt, mouse);
+        }
+        // The MP versus banner: the two sides' empires and players (`+0xf01`, `+0xf02`) [inf: the first two humans].
+        if world.game.state.mem.u8(ig2_sim::save::va::MULTIPLAYER) != 0
+            && let Some(t0) = self.ui.start_ms
+        {
+            let ki = world.game.state.mem.read(ig2_sim::save::va::PLAYER_KI, 9);
+            let humans: Vec<usize> = b.present.empires.iter().map(|e| e.0 as usize).filter(|&e| ki.get(e) == Some(&0)).take(2).collect();
+            if humans.len() == 2 {
+                let name = |e: usize| {
+                    let r = world.game.state.mem.read(0xBAE588 + 0xb * e as u32, 0xb);
+                    r[..r.iter().position(|&c| c == 0).unwrap_or(r.len())].to_vec()
+                };
+                let emp = |e: usize| hud.empire_names.get(e).cloned().unwrap_or_default();
+                let mut t = emp(humans[0]);
+                t.extend(b" (");
+                t.extend(name(humans[0]));
+                t.extend(b") vs. ");
+                t.extend(emp(humans[1]));
+                t.extend(b" (");
+                t.extend(name(humans[1]));
+                t.extend(b")");
+                crate::spacewar_hud::banner(&mut frame, hud, &virt, &t, now.saturating_sub(t0), self.ui.fade);
+            }
+        }
+        // The tooltip (`GFX_DateMoneyScrollFade`'s fader pass 3) and the cursor (`UpdateFrame`): `MousePointerType` 0 → 1,
+        // 2 → 5, 3 → 7, 4 → 6; 1 keeps the hot-spots' type 1.
+        let tips = crate::spacewar_hud::tooltips(hud, &shown, self.ui.formation(b));
+        self.tip.moved(mouse);
+        let under = raw.map_or(0, |a| a.saturating_sub(0x1e));
+        let len = tips.get(under as usize).map_or(0, |t| t.len());
+        self.tip.update(now as f64, if len == 0 { 0 } else { under }, len, self.left || self.right);
+        if let (Some(t), Some(font)) = (tips.get(self.tip.shown as usize), hud.font.as_ref()) {
+            self.tip.draw(&mut frame, font, hud.white, &virt, &hud.palette, t);
+        }
+        let kind = match shown.pointer {
+            0 | 1 => 1,
+            2 => 5,
+            3 => 7,
+            4 => 6,
+            _ => 1,
+        };
+        crate::spacewar_hud::cursor(&mut frame, &virt, gfx.cursor, kind, self.ticks100, mouse);
         let (units, guns) = crate::spacewar_screen::pick(gfx, assets, &shown, &v.camera);
         let plane = crate::spacewar_screen::plane_point(&shown, mouse, crate::spacewar_ui::PLANE_H * shown.view.scale);
         let cam = v.camera;
         let pole = |p: [f32; 2], y: f32| crate::spacewar_screen::pole_height(&shown, &cam, p, y);
         self.ui.mouse_frame(b, &units, &guns, plane, pole, shift, spot == Some(0x4c), &mut out);
         (Some(frame), out)
+    }
+
+    /// A left press at `at` (virtual pixels) on the top bar's pause button (hot-spot 2, x < 15, y < 20) once the
+    /// opening zoom is over: the caller toggles the pause.
+    pub fn pause_press(&self, at: [f32; 2]) -> bool {
+        self.zoomed && at[1] < 20.0 && at[0] < 15.0
     }
 
     /// The commands an output becomes (`Multi_Send(.., EN, ..)`); `Out::Click` and `Out::Left` are the caller's.
@@ -142,7 +229,7 @@ impl Live {
                 Command::Starmap { order: StarmapCmd::from(StarmapOrder::Pause { paused: false }) },
             ],
             Out::Left => vec![Command::SpaceBattleLeft],
-            Out::Click | Out::Sound(_) => Vec::new(),
+            Out::Click | Out::Sound(_) | Out::Loop(_) => Vec::new(),
         }
     }
 }
@@ -150,5 +237,6 @@ impl Live {
 /// The screen's view after leaving: the starmap's own camera again.
 pub fn restore_view(v: &mut crate::starmap::View) {
     v.camera.look = None;
+    v.battle_fade = None;
     v.backdrop.clear();
 }

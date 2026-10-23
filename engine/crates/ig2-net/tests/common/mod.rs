@@ -188,6 +188,7 @@ pub fn game_rules(inst: &Install) -> GameRules {
         ground_maps,
         space: space_rules(inst, &r).expect("battle rules"),
         satellite_prices: r.satellite_prices.clone(),
+        inbox: ig2_sim::messages::InboxRules::from_install(inst),
     }
 }
 
@@ -205,7 +206,7 @@ pub fn space_rules(inst: &Install, r: &ig2_rules::Rules) -> Result<SpaceRules, S
         weapons,
         weapon_words,
         forms: r.shot_forms.iter().map(|f| FormRules { loaded: !f.model.is_empty(), slots: f.slots.max(0) as usize, size: f.size }).collect(),
-        formations: [formation(0)?, formation(1)?],
+        formations: (0..ig2_sim::spacebattle::FORMATION_FILES).map(formation).collect::<Result<_, _>>()?,
         ship_types: r
             .ship_types
             .iter()

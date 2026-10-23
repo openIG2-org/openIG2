@@ -9,14 +9,18 @@ use crate::story::StoryEvent;
 /// `MegnyeresEllenoriz`'s story: the last enemy is much weaker (`StartStory(0x195, false)`).
 pub const LAST_ENEMY_STORY: i32 = 0x195;
 
-/// What the death and the victory check hand to the UI (`ExitToMainScreen`, the end animations, `AktKepKell =
-/// 0xF`): the sim goes on, the front end ends the game.
+/// What the death and the victory check hand to the UI (`ExitToMainScreen` exe 0x5117f0, the end animations,
+/// `AktKepKell = 0xF`: the main menu; `re/rules/game-end.md`): the front end ends the game. Only the first one
+/// counts ([`Game::over`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameOver {
     /// `MEGHALAS`: the human's empire died (`misc/end_gameover.bik` after the race's or the generic animation).
     Lost,
-    /// `MEGNYERES(true)`: no enemy left (`misc/end_victory.bik`, or `misc/end_campaign_win.bik` in a campaign).
+    /// `MEGNYERES(true)`: no enemy left, or a story's win (`misc/end_victory.bik`, or `misc/end_campaign_win.bik`
+    /// in a campaign).
     Won,
+    /// `MEGNYERES(false)`: story 863's end of the campaign, which played its own videos; the main menu at once.
+    Ended,
 }
 
 impl Game<'_> {
@@ -35,14 +39,25 @@ impl Game<'_> {
         }
     }
 
-    /// The deaths a story asked for (`DIE()` = `BirodalomMeghal(EN)`), after the story call.
-    pub(super) fn story_deaths(&mut self, events: &[StoryEvent]) {
+    /// The deaths and wins a story asked for, in order, after the story call: `DIE()` = `BirodalomMeghal(EN)`,
+    /// `MEGNYERES(1)` (stories 405, 858, the scenarios' `st_Scen_include`), `MEGNYERES(0)` (story 863).
+    pub fn story_ends(&mut self, events: &[StoryEvent]) {
         for e in events {
-            if let StoryEvent::EmpireDies(x) = *e {
-                if (0..EMPIRES as i32).contains(&x) {
-                    self.empire_dies(x as u8, &[]);
-                }
+            match *e {
+                StoryEvent::EmpireDies(x) if (0..EMPIRES as i32).contains(&x) => self.empire_dies(x as u8, &[]),
+                StoryEvent::Won => self.game_over(GameOver::Won),
+                StoryEvent::CampaignOver => self.game_over(GameOver::Ended),
+                _ => {}
             }
+        }
+    }
+
+    /// `MEGHALAS` / `MEGNYERES`'s `if (GameStarted)`: the first end is reported, `ExitToMainScreen` then clears
+    /// the flag, so later ones do nothing.
+    fn game_over(&mut self, o: GameOver) {
+        if self.over.is_none() {
+            self.over = Some(o);
+            self.events.push(GameEvent::GameOver(o));
         }
     }
 
@@ -61,7 +76,7 @@ impl Game<'_> {
         });
         self.state.mem.set_u8(va::EMPIRE_ALIVE + e as u32, 0);
         if e as usize == self.globals().en {
-            self.events.push(GameEvent::GameOver(GameOver::Lost));
+            self.game_over(GameOver::Lost);
         }
         self.victory_check(later);
     }
@@ -70,7 +85,7 @@ impl Game<'_> {
     /// alive, the human alive and the screen below 0xE → won. SP campaign only: no living non-ally → won; one
     /// empire left, not allied, `StoryAdat+0xc8 == 0`, and the human more than twice its power
     /// (`BirodalomEro`) and planets (`BirodalomHanyBolygo`) → `StoryAdat+0xcc = it`, story 0x195 starts.
-    /// `GameStarted` (the front end's "a game runs") is taken as set.
+    /// `GameStarted` is [`Game::over`] being `None`.
     pub(super) fn victory_check(&mut self, later: &[u8]) {
         let g = self.globals();
         let m = &self.state.mem;
@@ -81,18 +96,18 @@ impl Game<'_> {
         let human = alive(g.en);
         let campaign = m.i32(va::CAMPAIGN_TYPE) > 0;
         if others.is_empty() && human && m.i32(va::AKT_KEP) < 0xe {
-            self.events.push(GameEvent::GameOver(GameOver::Won));
+            self.game_over(GameOver::Won);
         }
         if g.multiplayer || !campaign {
             return;
         }
         if human && enemies == 0 {
-            self.events.push(GameEvent::GameOver(GameOver::Won));
+            self.game_over(GameOver::Won);
         }
         if adat_i32(&self.adat(), 0xc8) == 0 && human && others.len() == 1 && enemies > 0 {
             let last = others[0];
-            let power: [f32; EMPIRES] = m.f32s(va::EMPIRE_POWER);
-            let planets: [i32; EMPIRES] = m.i32s(va::EMPIRE_PLANETS);
+            let power: [f32; EMPIRES] = self.state.mem.f32s(va::EMPIRE_POWER);
+            let planets: [i32; EMPIRES] = self.state.mem.i32s(va::EMPIRE_PLANETS);
             if power[last] * 2.0 < power[g.en] && planets[last] * 2 < planets[g.en] {
                 self.state.mem.set_i32(va::STORY_ADAT + 0xcc, last as i32);
                 self.with_story(|st, _| {

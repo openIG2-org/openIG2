@@ -1,0 +1,15 @@
+{
+ "screen": "trade",
+ "note": "The trade screen, part 2 (re/screens/trade.md §4.3-4.6, §5.4): the first ship row picked (its hull model turns in, the info card and its boxes fade in), the model's block held (the pod list at the pointer, closed on release), the second ship row (the model turns away and the new one turns in), then the first vehicle row (a tank hull). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 200, "press": [150, 67]},
+  {"t": 279, "mouse": [300, 360]},
+  {"t": 280, "press": [300, 360], "hold": 30},
+  {"t": 330, "mouse": [150, 78]},
+  {"t": 331, "press": [150, 78]},
+  {"t": 440, "mouse": [380, 67]},
+  {"t": 441, "press": [380, 67]}
+ ],
+ "grabs": [150, 210, 235, 270, 290, 345, 370, 420, 470, 540],
+ "tail": 20
+}

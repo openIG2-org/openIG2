@@ -49,7 +49,7 @@ recv('config', (m) => {
 // beside it with two of EN's vehicle designs (`FlottaNew`, `TankNew`), `AddTanksToPlanet(f, p, 0)`, `StartGrWar(p)`;
 // then `PlaceAllTanks(100, 100, EN, true)` lands every unit at once (re/rules/ground-combat.md §11.16) and every unit
 // of EN gets flag 8 (selected, colony.md §11). --grwar-arm N: both call-in timers full (`WF+0x7fc/+0x800 + 8(EN − 1)`)
-// and `SpecWeaponMode` (0x99649C) = N.
+// and `SpecWeaponMode` (0x99649C) = N. --grwar-land: no `PlaceAllTanks` (every unit still on board).
 function stageGrWar(p) {
   const nf3 = (a, r, args, abi) => new NativeFunction(va(a), r, args, { abi: abi || 'mscdecl', traps: 'all' });
   const flottaNew = nf3(0x53d400, 'int', ['pointer', 'int', 'int', 'float', 'float', 'float']);
@@ -69,7 +69,7 @@ function stageGrWar(p) {
   addTanks(f, p, 0);
   startGrWar(p);
   const w = va(0x9c3244).add(0x8ec * p);
-  placeAll(w, 100, 100, en, 1);
+  if (!cfg.grwarLand) placeAll(w, 100, 100, en, 1);
   // The planet's war bit, as the next status pass sets it (`+0x64 := GetStatus == −1`, ground-combat.md §10): the
   // capture's clock is paused before that pass runs.
   q.add(0x64).writeU8(1);
@@ -453,19 +453,39 @@ Interceptor.attach(A.Fake_FRISSITES, {
     va(0x912a38).writeU8(1);
     // `MainScr_Kilep` (exe 0x4fecc0) leaves the main menu by looping `UpdateFrame` + `FRISSITES` until its fade
     // counter (f32 0xBBB360, from 100) runs out, flagged by 0xBBB22A; the counter doesn't run in a background window.
-    if (va(0xbbb22a).readU8() !== 0) va(0xbbb360).writeFloat(0);
+    // A script run drives the clock per drawn frame, so its exit animation runs (re/screens/mainscr.md §2.2).
+    if (va(0xbbb22a).readU8() !== 0 && scriptT === null) va(0xbbb360).writeFloat(0);
     // Keep the pointer in the middle of the 640 × 480 screen (`Mouse_Akt_x/y` 0x916008/0x91600C, `Mouse_x/y`
     // 0xDB4654/0xDB4658), so the colony screen's edge scrolling (`Colony_Autoscroll`) stays still.
     // --cam: pin `ColonyXStart/YStart/Zoom/Pitch/Rotate` (0xBA90DC, 0xBA9514, 0xBA9E8C, 0xBA9B64, 0xBA983C).
     if (phase >= 3 && cfg.cam && A.AktKep.readS32() === 3) {
       [0xba90dc, 0xba9514, 0xba9e8c, 0xba9b64, 0xba983c].forEach((x, i) => va(x).writeFloat(cfg.cam[i]));
     }
+    // --colony-info [KIND]: the planet info mode (`ColonyPlanetInfoMod` 0x9963A0, re/screens/colony.md §12) with no
+    // building selected (`AktEpulet` 0xB9C074); KIND (tax | autobuild | priority) holds its menu open as a press on
+    // the hot-spot's centre (450, 297 / 319 / 341) leaves it: the flag (0x996395/6/7), `colSelectX/Y` (0x8ECA04 /
+    // 0x8F1B94) = that point + (12, −20), `AktIkon2` 0xBAE240 and `colSelected` 0x9964A0 under --mouse.
+    if (phase >= 3 && cfg.colonyInfo && A.AktKep.readS32() === 3) {
+      va(0x9963a0).writeU8(1);
+      va(0xb9c074).writeS32(0);
+      const m = { tax: [0x996395, 0x15, 297, 0, 7], autobuild: [0x996396, 0x19, 319, 0, 8], priority: [0x996397, 0x1b, 341, 1, 3] }[cfg.colonyInfo];
+      if (m) {
+        const [flag, spot, cy, first, last] = m, x = 462, y = cy - 20;
+        va(flag).writeU8(1); va(0x8eca04).writeS32(x); va(0x8f1b94).writeS32(y); va(0xbae240).writeS32(spot);
+        let sel = -1;
+        if (cfg.mouse) {
+          const [mx, my] = cfg.mouse, k = Math.floor((my - y) / 13);
+          if (mx >= x && mx <= x + 120 && my >= y && k + first <= last) sel = k + first;
+        }
+        va(0x9964a0).writeS32(sel);
+      }
+    }
     // Keep the clock paused (`IdoPause` 0xBAE264) once the screen is asked for (the loading screen needs it running,
     // and the screens' `_Belep` can restart it), so the save written at the grab is the moment on screen.
     if (phase >= 3 && !cfg.run && va(0xbae264).readU8() === 0) va(0xbae264).writeU8(1);
     // --mouse X,Y puts it elsewhere (a menu's hover; on the spy screen a hot-spot's tooltip).
     if (phase >= 2) {
-      const [mx, my] = scriptT !== null ? scriptMouse : phase >= 3 && cfg.mouse && (staged || ((cfg.kep === 7 || cfg.kep === 4) && A.AktKep.readS32() === cfg.kep)) ? cfg.mouse : [320, 240];
+      const [mx, my] = scriptT !== null ? scriptMouse : phase >= 3 && cfg.mouse && (staged || ((cfg.kep === 7 || cfg.kep === 4 || (cfg.kep === 3 && cfg.colonyInfo)) && A.AktKep.readS32() === cfg.kep)) ? cfg.mouse : [320, 240];
       va(0x916008).writeS32(mx); va(0x91600c).writeS32(my);
       va(0xdb4654).writeS32(mx); va(0xdb4658).writeS32(my);
     }
@@ -514,6 +534,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
         va(0xb84bf4).writeS32(cfg.infoStarlog);
       }
       if (cfg.grwar) send({ k: 'grwar', staged: stageGrWar(cfg.planet) });
+      // --self-destruct N: the planet's self-destruct countdown `WF+0x334` := N (its window, colony.md §11.8).
+      if (cfg.selfDestruct) va(0x9c3244 + 0x8ec * cfg.planet + 0x334).writeS32(cfg.selfDestruct);
       if (cfg.kep >= 0) {
         A.AktKepKell.writeS32(cfg.kep);
         A.AktPlanetKell.writeS32(cfg.planet);
@@ -633,7 +655,8 @@ let scriptT = null, scriptUi0 = 0, scriptMouse = [320, 240], scriptEvents = [], 
 let vt = 0, vtOn = false, realTicks = null, swapHooked = false;
 const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050], enter: [40, 13],
   pageup: [75, 0x4000004b], pagedown: [78, 0x4000004e], escape: [41, 27], d: [7, 100], k: [14, 107], space: [44, 32],
-  c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127], f2: [59, 0x4000003b], backspace: [42, 8] };
+  c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127], f2: [59, 0x4000003b], backspace: [42, 8],
+  kp_plus: [87, 0x40000057], kp_minus: [86, 0x40000056] };
 // The other lower-case letters (`r` = redesign on the design screen, a typed name): scancode 4 + n, sym the character.
 for (let n = 0; n < 26; n++) { const ch = String.fromCharCode(97 + n); if (!SDL_KEYS[ch]) SDL_KEYS[ch] = [4 + n, 97 + n]; }
 // The research screen's clock and selection (`ResearchTerulet` 0xB9A9B4, `ResearchMezo` 0xB9AA04, `ResearchTalalmany`
@@ -744,7 +767,9 @@ function hookSwap() {
       const buf = Memory.alloc(w * h * 4);
       readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
       bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
-      send({ k: 'frame', t: want, ticks, w, h, frames, scriptT, res: resState(), mouse: scriptMouse, kep: A.AktKep.readS32(), thread: Process.getCurrentThreadId() }, buf.readByteArray(w * h * 4));
+      // The colony camera (`ColonyXStart/YStart/Zoom/Pitch/Rotate`, colony.md §11.9).
+      const cam = [0xba90dc, 0xba9514, 0xba9e8c, 0xba9b64, 0xba983c].map((x) => va(x).readFloat());
+      send({ k: 'frame', t: want, ticks, w, h, frames, scriptT, res: resState(), mouse: scriptMouse, kep: A.AktKep.readS32(), cam, thread: Process.getCurrentThreadId() }, buf.readByteArray(w * h * 4));
     },
   });
 }
@@ -760,7 +785,7 @@ function scriptFrame() {
     if (!swapHooked) { hookSwap(); swapHooked = true; }
     if (cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('screendiff'), 2);
     send({ k: 'scriptStart', frames, ui: scriptUi0, res: resState(), clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(),
-      infoTurn: va(0xb85304).readFloat(), tradeEta: va(0xf43428).readS32(), kep: A.AktKep.readS32(), date: date(), paused: va(0xbae264).readU8() });
+      infoTurn: va(0xb85304).readFloat(), tradeEta: va(0xf43428).readS32(), dkm: [va(0xb34c0c).readFloat(), va(0x903548).readFloat(), va(0xb34bac).readFloat()], kep: A.AktKep.readS32(), date: date(), paused: va(0xbae264).readU8() });
   } else {
     // The UI ticks run so far (a frame now and then runs none or two: `scriptT` follows the ticks, not the frames).
     scriptT = va(0xb772a4).readS32() - scriptUi0;

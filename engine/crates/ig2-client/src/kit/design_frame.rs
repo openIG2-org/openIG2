@@ -33,6 +33,16 @@ impl DesignFrame {
         Self { left: 2.0, ..Self::default() }
     }
 
+    /// The frame on a new screen with `dkm`, `dkmcel` and `GfxNovelo` carried over (globals the exe never resets).
+    pub fn with_phase(m: f32, target: f32, novelo: f32) -> Self {
+        Self { m, target, novelo, ..Self::default() }
+    }
+
+    /// The same frame on another screen (`Frissit2_Grafika`'s `DesignKeret1OldKep != AktKep`: the places reset).
+    pub fn new_screen(&self) -> Self {
+        Self::with_phase(self.m, self.target, self.novelo)
+    }
+
     /// `DesignKeret1(x, y, w, h)`'s bookkeeping: a new place starts the morph.
     pub fn ask(&mut self, r: [i32; 4]) {
         if r != self.new {

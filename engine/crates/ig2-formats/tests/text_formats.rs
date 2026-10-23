@@ -299,3 +299,33 @@ fn tutorial_script_and_recordings() {
     }
     assert!(mous.len() > 50);
 }
+
+/// `LoadHighscores` against ig2.exe (re/rules/traces/2026-10-23-game-end.md, `run_gameend.py --plant`): the exe took
+/// the planted `swarm` table (its `_crc` computed as `Table::crc` does) and replaced `lightheart`'s, whose `_crc` was
+/// one off, and the untouched `neighbors` with their `fabscr.txt` lines.
+#[test]
+fn highscores_load_like_the_exe() {
+    use ig2_formats::highscore::Table;
+    use ig2_formats::options::Options;
+    let Some(inst) = installs().into_iter().next() else { return };
+    let seed = misc_text::parse_fabscr(&read_text(&inst, "dataraw/text/fabscr.txt"));
+    let mut swarm = Table::default();
+    for (i, (s, n)) in [(1500, "Ann"), (2450, "Bob"), (2450, "Cy"), (7000, "Dee")].into_iter().enumerate() {
+        (swarm.scores[i], swarm.names[i]) = (s, n.to_string());
+    }
+    let mut light = Table::default();
+    (light.scores[0], light.names[0]) = (100, "Eve".to_string());
+    let mut reg = Options::default();
+    swarm.save(&mut reg, "swarm");
+    light.save(&mut reg, "lightheart");
+    let bad = reg.int("lightheart_crc").unwrap() + 1;
+    reg.set("lightheart_crc", &bad.to_string());
+    assert_eq!(Table::load(&reg, "swarm", &seed), swarm);
+    for key in ["lightheart", "neighbors"] {
+        let t = Table::load(&reg, key, &seed);
+        let want: Vec<_> = seed.iter().filter(|d| d.scenario.eq_ignore_ascii_case(key)).map(|d| (d.score, d.name.clone())).collect();
+        assert!(!want.is_empty(), "{key}");
+        let got: Vec<_> = (0..10).filter(|&i| t.scores[i] != 0).map(|i| (t.scores[i], t.names[i].clone())).collect();
+        assert_eq!(got, want, "{key}");
+    }
+}

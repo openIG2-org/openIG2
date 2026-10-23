@@ -124,6 +124,77 @@ impl Ticker {
     }
 }
 
+/// The line's motion (`FRISSIT_Scroll2` exe 0x556210, spec §2.3): `UzenetStart` 0xE412FC, `UzenetSebesseg`
+/// 0xE41300, `UzenetHatar` 0xE41304 (f32, unsaved UI state), in characters. A text comes in from the right
+/// (`start` −53), slows to a stop at `limit`, holds 400 steps, then speeds away; one step per 10 ms UI tick.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Motion {
+    pub start: f32,
+    pub speed: f32,
+    pub limit: f32,
+}
+
+/// The step's f64 constant (exe 0x859a78): one ulp below 0.0146.
+const STEP: f64 = f64::from_bits(0x3f8d_e69a_d42c_3c9e);
+/// The line's width in characters (exe 0x859a84: the start, −53).
+const WIDTH: f32 = 53.0;
+
+impl Motion {
+    /// A text of `len` bytes taken onto the line (exe 0x556418..0x5564a0).
+    pub fn begin(len: usize) -> Self {
+        let n = len as i32;
+        Self {
+            start: -WIDTH,
+            speed: ((n + 53) as f64 * STEP).sqrt() as f32,
+            limit: -(((53 - n) as f64) as f32 * 0.5),
+        }
+    }
+
+    /// One step of a text on the line (exe 0x55658f..0x556688).
+    pub fn advance(&mut self) {
+        if self.limit > self.start {
+            self.start += self.speed;
+            self.speed = (self.speed as f64 - STEP) as f32;
+            if 0.02f64 > self.speed as f64 {
+                self.speed = 0.02;
+            }
+            if self.start >= self.limit {
+                self.start = self.limit;
+                self.speed = 400.0;
+            }
+        } else if self.start == self.limit {
+            self.speed -= 1.0;
+            if self.speed == 0.0 {
+                self.speed = 0.2;
+                self.start = (self.start as f64 + 0.01) as f32;
+            }
+        } else {
+            self.start += self.speed;
+            self.speed = (self.speed as f64 + STEP) as f32;
+        }
+    }
+}
+
+impl Ticker {
+    /// `FRISSIT_Scroll2`'s step once its gate lets it run (the screen, no dialog: the caller's): when the text
+    /// has left the line (`start ≥ len`) or there is none, the next entry goes on it ([`Ticker::pop`],
+    /// [`Motion::begin`]); then the text moves. Returns the id of a text taken on (its sound plays, spec §2.3).
+    pub fn scroll(&mut self, m: &mut Motion) -> Option<i32> {
+        let len = cstr(&self.on_screen).len();
+        let mut popped = None;
+        if len == 0 || len as f32 <= m.start {
+            popped = self.pop();
+            if popped.is_some() {
+                *m = Motion::begin(cstr(&self.on_screen).len());
+            }
+        }
+        if !cstr(&self.on_screen).is_empty() {
+            m.advance();
+        }
+        popped
+    }
+}
+
 /// `atoi`: leading white space, a sign, digits.
 fn atoi(s: &[u8]) -> i32 {
     let s = &s[s.iter().position(|c| !matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')).unwrap_or(s.len())..];
@@ -285,6 +356,110 @@ impl Inbox {
     }
 }
 
+/// The inbox's static data from the install (`LoadMessagesFile`, `BetoltFajlok`; re/screens/messages.md §5):
+/// `uzenetek.txt`'s kinds (`UzenetFajtak` exe 0xD90DF0) and each conversation's raw `msg%04d.txt`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InboxRules {
+    /// `(id, conversation +4, automatic +5)` in file order (`KerUz` takes the first match).
+    pub kinds: Vec<(i32, bool, bool)>,
+    /// `msg%04d.txt` by id, each made to end in `\r\n` (`BetoltFajlok`).
+    pub scripts: BTreeMap<i32, Vec<u8>>,
+}
+
+impl InboxRules {
+    pub fn from_install(install: &ig2_formats::Install) -> Self {
+        let raw = install.read("dataraw/uzenetek/uzenetek.txt").unwrap_or_default();
+        let kinds: Vec<(i32, bool, bool)> = ig2_formats::dialogue::parse_message_index(&String::from_utf8_lossy(&raw))
+            .into_iter()
+            .map(|k| (k.id as i32, k.conversation, k.automatic))
+            .collect();
+        let scripts = kinds
+            .iter()
+            .filter(|k| k.1)
+            .filter_map(|&(id, ..)| {
+                let mut b = install.read(&format!("dataraw/uzenetek/msg{id:04}.txt")).ok()?;
+                if b.last() != Some(&b'\n') {
+                    b.extend_from_slice(b"\r\n");
+                }
+                Some((id, b))
+            })
+            .collect();
+        Self { kinds, scripts }
+    }
+
+    /// The kind's flags for `id`: the first with this id; none reads the slot past the table (zeros in the exe's
+    /// inlined loops).
+    pub fn kind(&self, id: i32) -> (bool, bool) {
+        self.kinds.iter().find(|k| k.0 == id).map_or((false, false), |k| (k.1, k.2))
+    }
+}
+
+/// One `- PP NN label` line of a block (`Valasztasok`, 0x5c: `+0x50` part, `+0x54` next block).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Choice {
+    pub part: i32,
+    pub next: i32,
+    /// The line's offset (its label starts 8 bytes in).
+    pub at: i32,
+}
+
+/// A two-character `atoi` (the exe copies two bytes and a NUL).
+fn atoi2(b: &[u8]) -> i32 {
+    let s: String = b.iter().take(2).map(|&c| c as char).collect();
+    ig2_formats::dialogue::atoi(&s)
+}
+
+/// `KeresBlokk(n)` (exe 0x505930): the offset of the line after the `%02d` header that starts a line, past empty
+/// lines (lines end in `\r` + one byte), or −1.
+pub fn find_block(msg: &[u8], n: i32) -> i32 {
+    let len = msg.len() as i32;
+    let key = format!("{n:02}").into_bytes();
+    let at = |i: i32| msg.get(i as usize).copied().unwrap_or(0);
+    let mut start = 0;
+    while start < len {
+        if msg[start as usize..].starts_with(&key) {
+            let mut i = start;
+            loop {
+                while i < len && at(i) != b'\r' {
+                    i += 1;
+                }
+                let next = i + 2;
+                if !(next < len && at(i + 2) == b'\r') {
+                    return next;
+                }
+                i = next;
+            }
+        }
+        while start < len && at(start) != b'\r' {
+            start += 1;
+        }
+        start += 2;
+    }
+    -1
+}
+
+/// `KiertekelBlokk`'s parse (exe 0x505c20): the block's `- PP NN` lines from offset `i`.
+pub fn block_choices(msg: &[u8], mut i: i32) -> Vec<Choice> {
+    let len = msg.len() as i32;
+    let at = |i: i32| msg.get(i as usize).copied().unwrap_or(0);
+    let mut out = Vec::new();
+    while i >= 0 && at(i) == b'-' {
+        let field = |k: i32| msg.get((i + k) as usize..).unwrap_or(&[]);
+        out.push(Choice { part: atoi2(field(2)), next: atoi2(field(5)), at: i });
+        loop {
+            let mut j = i;
+            while j < len && at(j) != b'\r' {
+                j += 1;
+            }
+            i = j + 2;
+            if !(i < len && at(j + 2) == b'\r') {
+                break;
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,6 +484,18 @@ mod tests {
         // On the line now: posting it again is a duplicate (history only).
         t.post(b"C", 3, true, false);
         assert_eq!(t.count, 3);
+    }
+
+    #[test]
+    fn blocks_and_choices_follow_keres_and_kiertekel_blokk() {
+        let msg = b"00\r\n\r\n- 01 02 Hello #1#\r\n- -1 03 x\r\n02\r\n+ text\r\n";
+        let off = find_block(msg, 0);
+        // Past the header and the empty line.
+        assert_eq!(off, 6);
+        assert_eq!(block_choices(msg, off), [Choice { part: 1, next: 2, at: 6 }, Choice { part: -1, next: 3, at: 25 }]);
+        assert_eq!(block_choices(msg, find_block(msg, 2)), []);
+        assert_eq!(find_block(msg, 7), -1);
+        assert_eq!(block_choices(msg, -1), []);
     }
 
     #[test]

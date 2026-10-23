@@ -532,7 +532,7 @@ fn battle_ticks_match_trace() {
 // battle screen.
 
 /// The formations and the compiled ship-type table from the user's install (`IG2_INSTALL_DIR`), or None.
-fn install_data() -> Option<([Vec<FormationSlot>; 2], Vec<ShipType>)> {
+fn install_data() -> Option<(Vec<Vec<FormationSlot>>, Vec<ShipType>)> {
     let inst = ig2_formats::Install::from_env(ig2_formats::text::Lang::En)?.ok()?;
     let load = |n: usize| -> Option<Vec<FormationSlot>> {
         let b = inst.read(&format!("dataraw/spacewar/felallas{n}.bin")).ok()?;
@@ -544,7 +544,7 @@ fn install_data() -> Option<([Vec<FormationSlot>; 2], Vec<ShipType>)> {
         .iter()
         .map(|t| ShipType { scale: t.scale, top_speed: t.top_speed, accel: t.accel, turn: t.turn, size_xy: t.size_xy, size_z: t.size_z })
         .collect();
-    Some(([load(0)?, load(1)?], types))
+    Some(((0..FORMATION_FILES).map(load).collect::<Option<_>>()?, types))
 }
 
 fn ship_types(b: &[u8]) -> Vec<ShipType> {
@@ -614,7 +614,7 @@ struct SetupRun {
     undefined: usize,
 }
 
-fn replay_setups(path: &PathBuf, forms: &[Vec<FormationSlot>; 2], compiled: &[ShipType], run: &mut SetupRun) {
+fn replay_setups(path: &PathBuf, forms: &[Vec<FormationSlot>], compiled: &[ShipType], run: &mut SetupRun) {
     let mut first = true;
     let mut pre: Option<Value> = None;
     let mut last: Option<Battle> = None;
@@ -687,7 +687,7 @@ fn replay_setups(path: &PathBuf, forms: &[Vec<FormationSlot>; 2], compiled: &[Sh
     }
 }
 
-fn check_setup(p: &Value, a: &Mem, b: &Mem, st: &Statics, forms: &[Vec<FormationSlot>; 2], run: &mut SetupRun) -> Vec<String> {
+fn check_setup(p: &Value, a: &Mem, b: &Mem, st: &Statics, forms: &[Vec<FormationSlot>], run: &mut SetupRun) -> Vec<String> {
     let mut errs = Vec::new();
     let slot = p["slot"].as_u64().unwrap() as usize;
     let join = p["join"].as_bool().unwrap();
@@ -748,7 +748,7 @@ fn check_setup(p: &Value, a: &Mem, b: &Mem, st: &Statics, forms: &[Vec<Formation
     let rules = SetupRules {
         weapons: br.weapons,
         forms: br.forms,
-        formations: forms.clone(),
+        formations: forms.to_vec(),
         building_tech: g(0x8eba38).chunks(0x24).map(|c| c[0]).collect(),
     };
     let mut types = ship_types(a.global(0x91f488));
@@ -820,6 +820,100 @@ fn check_setup(p: &Value, a: &Mem, b: &Mem, st: &Statics, forms: &[Vec<Formation
         errs.clear();
     }
     errs
+}
+
+/// A formation pick (`loadfelallas` exe 0x578850 → `FelallasLoad`, `felallit`): the slot, the human's list, the
+/// ship-type footprints and the streams before ('preform') and after ('form'), from `run_spwc.py --formation N`.
+fn check_formation(p: &Value, e: &Value, forms: &[Vec<FormationSlot>], moved: &mut usize) -> Vec<String> {
+    let mut errs = Vec::new();
+    let (mut a, mut b) = (Mem::default(), Mem::default());
+    a.apply(&p["regions"]);
+    b.apply(&e["regions"]);
+    let (sa, sb) = (statics(&p["statics"]), statics(&e["statics"]));
+    let mut port = decode(&a, &sa);
+    let ships: Vec<SetupShip> = a.find("hajok@").unwrap().1.chunks(6).map(|c| SetupShip { fleet: i16_at(c, 0), design: i16_at(c, 2), experience: c[4] }).collect();
+    let inp = SetupInput {
+        fleets: Vec::new(),
+        planet: 0,
+        ground_war: false,
+        human: 0,
+        human_controlled: [false; 19],
+        multiplayer: false,
+        asteroids: false,
+        story_pact: [0; 19],
+        story_zachkin: 0,
+        story_retreat: [0; 19],
+        fleet_records: &[],
+        ships: &ships,
+        vehicles: &[],
+        designs: &sa.designs,
+        planet_record: None,
+        defence_fleets: None,
+    };
+    let (br, _) = rules(&a, &sa);
+    let rules = SetupRules { weapons: br.weapons, forms: br.forms, formations: forms.to_vec(), building_tech: Vec::new() };
+    let mut types = ship_types(a.global(0x91f488));
+    let mut rng = Streams::default();
+    for i in 0..21 {
+        rng.set_state(i, u32_at(a.get("seeds"), 4 * i));
+    }
+    port.pick_formation(p["pick"].as_i64().unwrap() as usize + 1, &inp, &rules, &mut types, &mut rng);
+    for i in 0..21 {
+        if rng.state(i) != u32_at(b.get("seeds"), 4 * i) {
+            errs.push(format!("stream {i}"));
+        }
+    }
+    for (k, (x, y)) in types.iter().zip(&ship_types(b.global(0x91f488))).enumerate() {
+        if x != y {
+            errs.push(format!("ship type {k}: {x:?} vs {y:?}"));
+        }
+    }
+    let mut exe = decode(&b, &sb);
+    let before = decode(&a, &sa);
+    *moved += exe.units.iter().zip(&before.units).filter(|(x, y)| x.alive && x.pos != y.pos).count();
+    if port.human_list != exe.human_list {
+        diff_debug("human list", &port.human_list, &exe.human_list, &mut errs);
+    }
+    tidy_setup(&mut port);
+    tidy_setup(&mut exe);
+    if port.units.len() != exe.units.len() {
+        errs.push(format!("units {} vs {}", port.units.len(), exe.units.len()));
+    }
+    compare(&port, &exe, &mut errs);
+    errs
+}
+
+#[test]
+fn formation_pick_matches_exe() {
+    // `spwf-*`: formation traces kept out of the tick replay (spwf-form-2 holds an exe-side stray write into side 6's
+    // strength and lost words at its battle 8, tick 2835, before any pick there).
+    let files: Vec<PathBuf> = traces("spwc").into_iter().chain(traces("spwf")).collect();
+    let Some((forms, _)) = install_data() else { return };
+    let (mut picks, mut placed, mut bad, mut moved) = (0, 0, 0, 0);
+    for path in &files {
+        let mut pre: Option<Value> = None;
+        for line in std::io::BufReader::new(std::fs::File::open(path).unwrap()).lines() {
+            let e: Value = serde_json::from_str(&line.unwrap()).unwrap();
+            match e["k"].as_str().unwrap() {
+                "preform" => pre = Some(e),
+                "form" => {
+                    let p = pre.take().expect("preform before form");
+                    picks += 1;
+                    placed += p["regions"].as_object().unwrap().keys().find(|k| k.starts_with("hlist@")).map_or(0, |_| 1);
+                    let errs = check_formation(&p, &e, &forms, &mut moved);
+                    if !errs.is_empty() {
+                        bad += 1;
+                        if bad <= 4 {
+                            eprintln!("{} battle {} pick {}: {:#?}", path.file_name().unwrap().to_string_lossy(), e["battle"], p["pick"], errs);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    eprintln!("formation picks: {picks} ({placed} with a human list, {moved} units moved); {bad} mismatches");
+    assert_eq!(bad, 0);
 }
 
 #[test]

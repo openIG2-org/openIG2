@@ -86,9 +86,9 @@ fn bar_state(state: &SaveState, en: usize) -> crate::hud::BarState {
     }
 }
 
-/// The scrolling message line's motion (`FRISSIT_Scroll2` ELF 0x66ebd0, one step per 10 ms UI frame), in
+/// The scrolling message line's motion (`FRISSIT_Scroll2` exe 0x556210, one step per 10 ms UI frame), in
 /// characters: a text comes in from the right, slows to a stop at `limit` (centred when shorter than the line),
-/// stays 400 frames, then speeds away to the left.
+/// stays 400 frames, then speeds away to the left ([`ig2_sim::messages::Motion`], verified against the exe).
 #[derive(Debug, Clone, Default)]
 pub struct Scroller {
     pub text: Vec<u8>,
@@ -105,16 +105,13 @@ const LINE: f32 = 53.0;
 impl Scroller {
     /// One UI frame; `next` pops the sim's next message (`ScrollUzenetek[1]`) when the line is free.
     pub fn step(&mut self, next: &mut dyn FnMut() -> Option<(Vec<u8>, bool)>) {
+        let mut m = ig2_sim::messages::Motion { start: self.start, speed: self.speed, limit: self.limit };
         if self.text.is_empty() || self.text.len() as f32 <= self.start {
             match next() {
                 Some((t, imp)) => {
-                    self.speed = (((t.len() as f64 + 53.0) * 0.0146).sqrt()) as f32;
-                    // `UzenetHatar = −(53 − len)/2`; a longer text (never posted: `ScrollUzenet` cuts at 53) would
-                    // take the unsigned conversion of a negative count and never stop.
-                    self.limit = if t.len() <= 53 { -((53.0 - t.len() as f32) / 2.0) } else { -1e19 };
+                    m = ig2_sim::messages::Motion::begin(t.len());
                     self.text = t;
                     self.important = imp;
-                    self.start = -LINE;
                 }
                 None => {
                     self.text.clear();
@@ -122,25 +119,8 @@ impl Scroller {
                 }
             }
         }
-        if self.limit <= self.start {
-            if self.start != self.limit {
-                self.start += self.speed;
-                self.speed += 0.0146;
-            } else {
-                self.speed -= 1.0;
-                if self.speed == 0.0 {
-                    self.start += 0.01;
-                    self.speed = 0.2;
-                }
-            }
-        } else {
-            self.start += self.speed;
-            self.speed = (self.speed - 0.0146).max(0.02);
-            if self.limit <= self.start {
-                self.start = self.limit;
-                self.speed = 400.0;
-            }
-        }
+        m.advance();
+        (self.start, self.speed, self.limit) = (m.start, m.speed, m.limit);
     }
 
     /// `GFX_Scroll` ELF 0x66f270: the 54-character window of 53 spaces + the text at `(start + 53)·6` pixels,
@@ -362,6 +342,9 @@ pub fn inbox_rows(n: usize, first: usize) -> Vec<(usize, usize)> {
 }
 
 /// What the colony screen's HUD takes from its input state.
+/// The `Pictures` key of `MOUSE.BMP` (not a `Kepek` entry).
+const MOUSE_PICTURE: i32 = -1;
+
 pub struct ColonyInput<'a> {
     pub ui: &'a crate::colony_ui::ColonyUi,
     pub sim: &'a ig2_sim::game::GameRules,
@@ -369,6 +352,10 @@ pub struct ColonyInput<'a> {
     pub panel: Option<TexId>,
     /// The pointer in virtual pixels.
     pub cursor: [f32; 2],
+    /// Draw the game's pointer there (the window's own is hidden on the colony screen).
+    pub pointer: bool,
+    /// The unit info's turning model (`crate::colony::ColonyScene::render_info_model`), rendered this frame.
+    pub info_model: Option<TexId>,
     pub now_ms: u32,
     pub time: f32,
 }
@@ -412,6 +399,8 @@ pub struct Hud {
     pub interlace: Option<TexId>,
     /// The HUD's pictures (the bar's sheet, `COLONY_X.BMP`) and the colony and starmap brush tables.
     pub pics: crate::hud::Pictures,
+    /// `UpdateFrame`'s hot points by pointer shape (`ig2_rules::Rules::mouse_hotspot`).
+    mouse_hotspot: Vec<i32>,
     pub colony_brushes: Vec<ig2_rules::Brush>,
     pub starmap_brushes: Vec<ig2_rules::Brush>,
     /// The speed buttons: `IdoSpeed` 0..=2 and `IdoPause`, set by the client each frame.
@@ -458,7 +447,12 @@ impl Hud {
             frame_tex: None,
             clip: None,
             interlace: None,
-            pics: crate::hud::Pictures::load(r, install, &rules.pictures, &[14, 17, 0x13, 33, 97]),
+            pics: {
+                let mut p = crate::hud::Pictures::load(r, install, &rules.pictures, &[14, 17, 0x13, 33, 97]);
+                p.load_named(r, install, MOUSE_PICTURE, "MOUSE.BMP");
+                p
+            },
+            mouse_hotspot: rules.mouse_hotspot.clone(),
             colony_brushes: rules.colony_brushes.clone(),
             starmap_brushes: rules.starmap_brushes.clone(),
             speed: 2,
@@ -497,6 +491,7 @@ impl Hud {
         let ui = input.ui;
         let mut c = crate::colony::hud_state(state, rules, &|t| self.tech_name(t), curr, view, maps, ui.kind, ui.selected);
         c.panel_model = input.panel;
+        c.info = ui.info.as_ref().map(|_| state.mem.read(ig2_sim::save::va::PLANETS + (curr.planet * ig2_sim::save::PLANET_SIZE) as u32, 0x21)[0x20] as i32 == state.mem.i32(ig2_sim::save::va::EN));
         let v = Virtual::new(view.camera.size);
         crate::hud::draw_colony(f, &self.pics, font, self.white, &v, &self.palette, &self.colony_brushes, scene.radar, &c);
         // `ColonyGfx2D_2`: `StarmapRovidInfoKiir(50, 424, 0)` with `StarmapMode` 1, the planet's short info.
@@ -514,16 +509,40 @@ impl Hud {
         let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name };
         let w = crate::colony_war::WarCtx { snap: curr, en: state.mem.i32(ig2_sim::save::va::EN), tutorial_paused: false };
         // `ColonyInfoMod` 1 (units selected) shows the units, 2 (a building selected) `ColonyKisInfo`'s building half.
-        if !ui.war.draw_unit_info(f, &w, &d) && !ui.draw_building_info(f, &ctx, font, self.white, &v, &self.palette) {
+        let units = ui.war.draw_unit_info(f, &w, &d);
+        // `HandleKisInfoObject`'s model, left of the lines (the panel pass's corner of it).
+        if let Some(tex) = input.info_model.filter(|_| units) {
+            let (x0, y0, w0, h0) = (0.0, 400.0, 50.0, 80.0);
+            let mut i = Instance::new(crate::render::kind::SPRITE, v.px(x0 + w0 / 2.0, y0 + h0 / 2.0), [w0 * v.k / 2.0, h0 * v.k / 2.0], [1.0; 4]);
+            let wide = crate::kit::Wide::new(&v);
+            i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
+            f.push(tex, crate::render::Blend::GammaPremul, i);
+        }
+        // `StarmapHosszuInfoKiir(320, 34)` in the planet info mode (colony.md §12.3), before the short info.
+        if let Some(m) = &ui.info {
+            let d = crate::starmap_panels::Draw2d { font, white: self.white, v, palette: &self.palette, texts: &self.texts, time: input.time };
+            let t = crate::starmap_menus::MenuTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names, infostr: &self.infostr };
+            m.draw_colony_info(f, &d, &t, state, rules, curr.planet, counter);
+        }
+        if !units && !ui.draw_building_info(f, &ctx, font, self.white, &v, &self.palette) {
             let info = crate::starmap_hud::InfoBox::new(state, rules, &t, &sel, self.starmap.step(curr.planet, counter), counter);
             for (s, x, y, size, k) in &info.lines {
                 font.text(f, &v, s, *x, *y, 0x13, *size, crate::font::Align::Left, self.palette.get(*k).copied().unwrap_or([1.0; 3]), None);
             }
         }
         ui.draw(f, &ctx, font, self.white, &v, &self.palette, &self.hu17, input.cursor, input.now_ms);
+        crate::colony_war::draw_self_destruct(f, &w, &d);
         // The ground war's buttons, marks and lines (colony.md §11).
         if let Some(gm) = maps.get(curr.map) {
             ui.war.draw(f, &w, &d, view, gm, input.cursor);
+        }
+        // `UpdateFrame` (exe 0x4e3e90): `MOUSE.BMP`'s 20 × 20 cell of column `Mouse_Tipus`, row `(MouseFazis / 5) % 40`,
+        // its hot point at the pointer (colony.md §11.10).
+        if input.pointer {
+            let k = ui.cursor(&ctx, input.cursor);
+            let hot = self.mouse_hotspot.get(k as usize).copied().unwrap_or(0) as f32;
+            let row = (ui.mouse_phase() / 5).rem_euclid(40) as f32;
+            self.pics.blit(f, &v, MOUSE_PICTURE, [k as f32 * 20.0, row * 20.0, 20.0, 20.0], [input.cursor[0] - hot, input.cursor[1] - hot]);
         }
     }
 
@@ -572,8 +591,8 @@ impl Hud {
 
     /// The research screen's 2D passes around its models (re/screens/research.md §3).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_research(&self, f: &mut Frame, r: &mut crate::research::Research, infos: &[[Vec<u8>; 3]], tips: &[Vec<u8>], state: &SaveState, rules: &ig2_rules::Rules, models: (Option<TexId>, Option<TexId>), lines: Vec<crate::render::Instance>, size: [f32; 2], time: f32) {
-        let (models, glow) = models;
+    pub fn draw_research(&self, f: &mut Frame, r: &mut crate::research::Research, infos: &[[Vec<u8>; 3]], tips: &[Vec<u8>], state: &SaveState, rules: &ig2_rules::Rules, models: (Option<TexId>, Option<TexId>, Option<TexId>), lines: Vec<crate::render::Instance>, size: [f32; 2], time: f32) {
+        let (models, glow, arrow) = models;
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
         // The info box's glass (alpha, first), then the wireframes (additive), the models, the faders and lasers.
@@ -585,7 +604,7 @@ impl Hud {
             r.draw_models(f, &d, m);
         }
         r.draw_faders(f, &d, state, glow);
-        r.draw_over(f, &d, state, rules, &crate::research::Texts { infos });
+        r.draw_over(f, &d, state, rules, &crate::research::Texts { infos, arrow });
         if let Some(t) = tips.get(r.tip.shown as usize) {
             r.tip.draw(f, font, self.white, &d.v, &self.palette, t);
         }
@@ -606,10 +625,11 @@ impl Hud {
     }
 
     /// The trade screen's 2D passes over its scene (re/screens/trade.md §5) and the tooltip.
-    pub fn draw_trade(&self, f: &mut Frame, s: &crate::trade::Trade, state: &SaveState, tips: &[Vec<u8>], size: [f32; 2], time: f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_trade(&self, f: &mut Frame, s: &crate::trade::Trade, state: &SaveState, rules: &ig2_rules::Rules, tips: &[Vec<u8>], size: [f32; 2], time: f32) {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
-        s.draw(f, &d, state);
+        s.draw(f, &d, state, rules);
         if let Some(t) = tips.get(s.tip.shown as usize) {
             s.tip.draw(f, font, self.white, &d.v, &self.palette, t);
         }

@@ -1,0 +1,51 @@
+{
+ "screen": "research",
+ "note": "The research screen's button lines (re/screens/research.md 5.6): the ring at the middle wheel's button after the opening, then clicks on the tanks (150, 370) and military (536, 414) buttons (each: the ring hides, flies in again at the new button). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {
+   "t": 300,
+   "mouse": [
+    150,
+    370
+   ]
+  },
+  {
+   "t": 320,
+   "press": [
+    150,
+    370
+   ]
+  },
+  {
+   "t": 600,
+   "mouse": [
+    536,
+    414
+   ]
+  },
+  {
+   "t": 620,
+   "press": [
+    536,
+    414
+   ]
+  }
+ ],
+ "grabs": [
+  150,
+  200,
+  260,
+  310,
+  330,
+  360,
+  400,
+  450,
+  520,
+  600,
+  630,
+  660,
+  700,
+  760,
+  820
+ ]
+}

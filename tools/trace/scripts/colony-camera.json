@@ -1,0 +1,13 @@
+{
+ "screen": "colony",
+ "note": "The colony camera's held keys (re/screens/colony.md §11.9) on an own planet (quick-1.sav, planet 42): the pointer in the middle (no edge scroll), ← held 40 ticks, numpad + held 30, ↑ held 25, then → and numpad − together; the grabs carry the exe's camera (ColonyXStart/YStart/Zoom/Pitch/Rotate). Times are UI ticks.",
+ "events": [
+  {"t": 2, "mouse": [320, 240]},
+  {"t": 20, "key": "left", "hold": 40},
+  {"t": 100, "key": "kp_plus", "hold": 30},
+  {"t": 180, "key": "up", "hold": 25},
+  {"t": 240, "key": "right", "hold": 20},
+  {"t": 240, "key": "kp_minus", "hold": 20}
+ ],
+ "grabs": [10, 20, 30, 40, 60, 80, 100, 115, 130, 160, 180, 195, 210, 240, 250, 260, 290]
+}

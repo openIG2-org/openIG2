@@ -187,8 +187,13 @@ fn speech_tables_name_the_installs_files() {
     assert_eq!((n(&s.starmap, 1, 0), n(&s.starmap, 2, 0), n(&s.starmap, 4, 2), n(&s.starmap, 9, 1)), (14, 13, 9, 5));
     assert_eq!((n(&s.colony, 1, 2), n(&s.colony, 8, 7), n(&s.colony, 9, 7), n(&s.colony, 4, 16)), (5, 9, 7, 11));
     assert!(s.colony.set(8, 7).unwrap().files.iter().any(|f| f.ends_with("Dead/P_soldier3_84.wav")));
+    // `InitSpaceWarSpeech` (exe 0x55e8b0, spacewar.md §7.4): the colony's soldiers, kinds 0..=3 and 5..=10, the same
+    // slip; 606 `Add` calls [obs: the exe's code decoded].
+    assert_eq!((s.spacewar.len(), s.spacewar.sets.len()), (606, 90));
+    assert!(s.spacewar.set(8, 7).unwrap().files.iter().any(|f| f.ends_with("Dead/P_soldier3_84.wav")));
+    assert!(s.spacewar.sets.iter().all(|x| x.kind != 4 && x.kind != 16));
     assert_eq!(s.starmap.sets[0].files[0], "Sounds/Starmap/Speeches/Attack/H_soldier1_08.wav");
-    for f in s.starmap.sets.iter().chain(&s.colony.sets).flat_map(|s| &s.files) {
+    for f in s.starmap.sets.iter().chain(&s.colony.sets).chain(&s.spacewar.sets).flat_map(|s| &s.files) {
         let ogg = format!("dataraw/{}.ogg", f.to_ascii_lowercase().strip_suffix(".wav").unwrap());
         assert!(inst.resolve(&ogg).is_some(), "{ogg}");
     }

@@ -135,7 +135,7 @@ Shipped: 396 fleet lines → 362 records (80 by ship class), every design ID def
 | `text/fajinfo.txt` | `LoadFajInfoText` @0x59aca0 | for `Empire 01`..`03`: the text between the next pair of `"` after the header (1000-byte fields `FajInfo`) |
 | `text/gameinfo.txt` | `LoadGameInfo` @0x6218b0 | `<id> <text>` split at the first space, lines without one skipped; 100 slots, unchecked (91 shipped) |
 | `text/maffia.txt` | `NEWGAME_Colony` @0x4d8e40 | 64 lines, each cut at its first `"` → `MaffiaNev[64]` (pirate names of the buildings; the rest of the line is a note) |
-| `text/fabscr.txt` | `LoadHighscores` @0x629440 | default high scores when the registry has no valid table: `<scenario>/<name>:<score>` with `0 < '/' < ':'` and score > 0, stored × 50, in order, 10 slots unchecked |
+| `text/fabscr.txt` | `LoadHighscores` exe 0x543750 (ELF 0x629440) | default high scores when the registry has no valid table: `<scenario>/<name>:<score>` with `0 < '/' < ':'` and score > 0, stored × 50, in order, 10 slots unchecked |
 | `text/tozsde.txt` | — | unused: its name sits in `ScrollFile` (.data 0x119d8c0), which nothing reads; the stock ticker text comes from `GetString(8, 4)` |
 
 ### Tutorial: `tutorial/main/script/main.tut` and `tutorial/main/*.mou` (`ig2_formats::tutorial`)

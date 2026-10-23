@@ -75,7 +75,7 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
 - **Skip** (`ig2screen::anyEvent`, exe `FUN_007329d0`, ELF 0x425350), while `bink_playing`: the first key, mouse
   button or finger press arms it (`DAT_00fe6438`); the next release of any of them stops the video, **only when
   `fullscreen`**. So the title, credits and every `st_ShowAnim` video (intros, endings, story videos, the
-  tutorial's `anim`) skip on any key or click (on release, after a press made during the video); the message clips
+  console's `anim`) skip on any key or click (on release, after a press made during the video); the message clips
   never skip. ESC has no special case. `MainSkipAllAnims` (0xbbb3f6) only skips the title. SDL_QUIT closes the
   video (`MainCallBackEventHandler` exe 0x4e2df5).
 - **Sound** (fullscreen only): `soundhook` exe 0x7100e0 through `Mix_HookMusic`, outside sgsnd: the game's other
@@ -91,12 +91,12 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
 |---|---|---|---|
 | `StartDemoMode` 0x4fe3c0 (ELF `MainScr_Belep`), call 0x4fe3f6 | `title.bik` | fullscreen, blocking | once per run (`VoltGTLogo` 0xbbb22f); skipped with `DEBUGLEHET` or `MainSkipAllAnims`; `IdoPauseMertAtlepesAlattVan` = 1 around it; then the main menu |
 | `Mainscreen_Update3D` 0x500270, call 0x50147d | `misc/credits.bik`, `force` | fullscreen, blocking | the credits ring; the menu resumes |
-| `CampaignGameStart` 0x4f5e90 (0x4f6008/1f/36) | `intro_human` / `intro_politikus` / `intro_brutal` by `EN` 1/3/5 | `st_ShowAnim` | the starmap |
+| `CampaignGameStart` 0x4f5e90 (0x4f6008/1f/36) | `intro_human.bik` / `intro_politikus.bik` / `intro_brutal.bik` by `EN` 1/3/5 (three plain `if`s: nothing for other races) | `st_ShowAnim`; no guard of its own (no `MainSkipAllAnims`, debug, MP or `CampaignType` test): only `OpenBink`'s cut-scene flag (force 0) | its last step, after `InitNewGame`, `OldIdo`/`OldIdo2`, `ProgramNowStarting = 1`; then `MainScr_Kilep` 0x4fecc0 → `ScreenBetolt(2)`, `FRISSITES_IGAZIT`, `Starmap_Belep` (the music, the start voice) |
 | `st_ShowAnim(name)` 0x602bb0 (ELF 0x739500) | any (empty: nothing) | `OpenBink(name,1,0,0,0)`, `PlayBink(1,0,0)`, `CloseBink`, `FRISSITES_IGAZIT()`; pause flag 0xbae265 around it | the caller goes on |
-| `MEGHALAS` 0x53b630 | `VideoLoss[EN]` (exe 0x919724, char* × 9), then `misc/end_gameover.bik` | `st_ShowAnim` × 2 | high scores |
-| `MEGNYERES` 0x53f6b0 / `MegnyeresEllenoriz` 0x53f8c0 | campaign: `VideoWin[EN]` (0x919748), then `misc/end_campaign_win.bik`; else `misc/altalanos_megnyeres.bik`, then `misc/end_victory.bik` | `st_ShowAnim` × 2 | high scores (`AktKepKell` 0xf) |
+| `MEGHALAS` 0x53b630 | `VideoLoss[PlayerFaj[EN]]` (exe 0x919724, char* × 9; outside a campaign `misc/altalanos_elvesztes.bik`), then `misc/end_gameover.bik` | `st_ShowAnim` × 2 | the main menu (`AktKepKell` 0xf) |
+| `MEGNYERES` 0x53f6b0 / `MegnyeresEllenoriz` 0x53f8c0 | campaign: `VideoWin[PlayerFaj[EN]]` (0x919748), then `misc/end_campaign_win.bik`; else `misc/altalanos_megnyeres.bik`, then `misc/end_victory.bik` | `st_ShowAnim` × 2 | the main menu (`AktKepKell` 0xf) |
 | `Story_Special` 0x5c9550 and ~40 story functions (`video-exe/refs4.txt`), the story script 0x5e6ba0 (two inlined copies) | from the story (`s_anims.txt`, table 6: 57 names (4 more commented out), all resolve) | fullscreen, blocking | the story goes on |
-| `ExecuteString` 0x4dc140 (tutorial `anim <file>`, call 0x4dd9e4) | the script's | `st_ShowAnim` | the tutorial goes on |
+| `ExecuteString` 0x4dc140 (the cheat console's `anim`, call 0x4dd9e4; ELF 0x57dde0) | `animN` → `s_anims.txt` table 6 entry `N` (`atoi` after the 4 letters), else the typed rest as is (no extension or path added) | `st_ShowAnim` | only caller `DoKeyboard` exe 0x4db1a0 (0x4db73c) on Enter in the chat line; cheats need `DEBUGLEHET` (0xbae659, a command-line switch) or `DEBUGX` (0xbae587); not a tutorial command (re/rules/tutorial.md §3 has none) [asm checked at exe 0x4dd9a9..0x4dd9e4: `N == 0` skips the lookup; `_s` 0x542ce0 gets table 6, `N`] |
 | `StartAnim` 0x5095b0 (ELF 0x5a1340) | `AnimFile` (0xd909c0) when `UzenetekRandomKitol[UAktUzenet] == 0`, else the loop clip of `VideoMessageClips[idx]` (exe 0x915e60, {loop, wait} × 15) | `OpenBink(name,0,201,204,1)`, in the screen, silent, forced | `PlayMessagesHang`, `PlayHalkAlienHang` |
 | `MessagesAnimFrissit` 0x506f60 (ELF 0x5a36f0), every frame | – | when the message is open, not closing and `mesframe == 30`: hide sub-mesh 5 of the frame and `PlayBink(0, AnimAkt ≤ 1, 0)` (loop for the first two clips, once for the end clip); then `DrawAnimInterlace` | – |
 | `VegeAzElsoAnimnak` 0x509e40 (ELF 0x5a1890) | `AnimAkt = 1`: the wait clip (`0x915e64 + idx·8`) or `d90ac0` | `CloseBink`, `OpenBink(…,0,201,204,1)`, `StopHalkAlienHang` | chosen by `FRISSIT_Messages2` 0x505180 when the speech ended and the part's flag is set; a failed open → `StartAnim_EndOfMessage` |
@@ -156,11 +156,15 @@ of `InterlaceMover` found (0 assumed).
 - Skip: press-then-release of any key or mouse button, fullscreen only.
 - Callers wired: the title before the main menu (once per run, not when the options' cut-scene flag is 0), the
   credits ring, the story videos (`StoryEvent::Anim`/`AnimFile` → `s_anims.txt` table 6), the endings
-  (`GameEvent::GameOver` → `ig2_rules::Videos` loss/win tables), the message head clips (§5.3,
+  (`GameEvent::GameOver` → `ig2_rules::Videos` loss/win tables, then the main menu), the message head clips (§5.3,
   `video::message::HeadClip`: `TE` parts, the start at the typer's front, the wait and end clips at the typer's
-  end; the interlace over it). Entry points for the rest: push `video::Request::File(name)` onto `World::videos`
-  for `CampaignGameStart`'s intro (`video::intro_name(EN)`, waits for `InitNewGame`) and the tutorial's `anim`;
-  the speech-ended switch of `FRISSIT_Messages2` waits for the message speech (Audio part 3).
+  end; the interlace over it), the campaign intro (`World::campaign_intro` after `World::new_game`: the race
+  menu's `CampaignGameStart` calls the two in turn, `--new-campaign` does now; the window plays it before the first
+  starmap frame, not with the cut-scenes off). The console's `anim` waits for a cheat console (the client has none;
+  it would push `video::Request::File`). The speech-ended switch of `FRISSIT_Messages2` waits for the message speech
+  (Audio part 3).
 - Captures: `tools/trace/run_video.py` (`video.js`: the exe's title with `SDL_GetTicks` driven by the frame
   limiter's sleeps, grabs at video times, injected key/click), `ig2-client --snapshot --screen video:NAME
-  --video-ms T [--video-at X,Y]`; results in `diff-results.md`.
+  --video-ms T [--video-at X,Y] [--video-loop]`; `run_video.py --open NAME [--at X,Y] [--once]` plays a clip in the
+  screen instead (`OpenBink(NAME, 0, X, Y, 1)`, `PlayBink(0, loop, 0)` from `Fake_FRISSITES` over the main menu, the
+  title skipped): the message clips' check; results in `diff-results.md`.

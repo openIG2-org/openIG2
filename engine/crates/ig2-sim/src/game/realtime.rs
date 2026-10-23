@@ -229,12 +229,7 @@ impl Game<'_> {
                 y: f32::from_le_bytes(r[0x34..0x38].try_into().unwrap()),
             })
             .collect();
-        let ships: Vec<SetupShip> = self
-            .state
-            .ships
-            .iter()
-            .map(|c| SetupShip { fleet: i16::from_le_bytes([c[0], c[1]]), design: i16::from_le_bytes([c[2], c[3]]), experience: c[4] })
-            .collect();
+        let ships = self.setup_ships();
         let combat = self.state.combat();
         let planet_record = (bp > 0).then(|| {
             let r = self.planet_rec(bp);
@@ -293,6 +288,47 @@ impl Game<'_> {
             m.set_i32(at::SPACE_LEFT + 4 * e, 0);
         }
         self.events.push(GameEvent::RealTime(RealTimeEvent::SpaceStarted { slot }));
+    }
+
+    /// `Hajok` as the battle set-up reads it.
+    fn setup_ships(&self) -> Vec<SetupShip> {
+        self.state.ships.iter().map(|c| SetupShip { fleet: i16::from_le_bytes([c[0], c[1]]), design: i16::from_le_bytes([c[2], c[3]]), experience: c[4] }).collect()
+    }
+
+    /// The formation phase's pick on the battle screen (`SpaceWarFrissit2` → `loadfelallas`, spec §7.4): formation
+    /// `pick` 0..=8 (`felallas<pick + 1>`) places the human's ships in battle `slot` anew. SP only (the phase is).
+    pub fn pick_formation(&mut self, slot: usize, pick: i32) {
+        if !(0..9).contains(&pick) || self.realtime.slots.get(slot).is_none() {
+            return;
+        }
+        let ships = self.setup_ships();
+        let combat = self.state.combat();
+        let inp = SetupInput {
+            fleets: Vec::new(),
+            planet: 0,
+            ground_war: false,
+            human: 0,
+            human_controlled: [false; spacebattle::EMPIRES],
+            multiplayer: false,
+            asteroids: false,
+            story_pact: [0; spacebattle::EMPIRES],
+            story_zachkin: 0,
+            story_retreat: [0; spacebattle::EMPIRES],
+            fleet_records: &[],
+            ships: &ships,
+            vehicles: &combat.vehicles,
+            designs: &combat.designs,
+            planet_record: None,
+            defence_fleets: None,
+        };
+        let rules = self.rules.space.setup_rules();
+        if self.realtime.types.is_empty() {
+            self.realtime.types = self.rules.space.ship_types.clone();
+        }
+        let mut rng = self.state.rng();
+        let RealTime { slots, types, .. } = &mut self.realtime;
+        slots[slot].pick_formation(pick as usize + 1, &inp, &rules, types, &mut rng);
+        self.state.store_rng(&rng);
     }
 
     /// The tick's switches (`BattleRules`) from the state.
@@ -527,7 +563,9 @@ impl Game<'_> {
             | GroundOrder::Target { unit, .. }
             | GroundOrder::Stop { unit }
             | GroundOrder::Detonate { unit, .. }
-            | GroundOrder::Mines { unit, .. } => usize::try_from(unit).is_ok_and(mine),
+            | GroundOrder::Mines { unit, .. }
+            | GroundOrder::Unplace { unit } => usize::try_from(unit).is_ok_and(mine),
+            GroundOrder::Place { .. } | GroundOrder::PlaceAll { .. } => (0..f.units.len()).any(mine),
             GroundOrder::Retreat | GroundOrder::AirStrike { .. } => self.planet_rec(p)[0x20] == issuer || (0..f.units.len()).any(mine),
         }
     }

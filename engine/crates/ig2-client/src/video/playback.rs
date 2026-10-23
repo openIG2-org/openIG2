@@ -164,7 +164,7 @@ pub fn snapshot(o: &crate::Options, name: &str, out: &std::path::Path) -> Result
         Some(at) => Place::At(at),
         None => Place::Full,
     };
-    let mut p = Playback::open(&install, name, place, false, true).ok_or("the video doesn't open")?;
+    let mut p = Playback::open(&install, name, place, o.video_loop, true).ok_or("the video doesn't open")?;
     let want = (o.video_ms as f32 / (1000.0 / p.player.fps)) as usize;
     let mut img = None;
     for _ in 0..=want {

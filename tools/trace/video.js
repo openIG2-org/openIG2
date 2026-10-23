@@ -3,6 +3,9 @@
 // `videoentity::play` (exe 0x70f870 stores its start in entity +0x2a8). Grabs at the given video times (ms) are read
 // back with glReadPixels at the swap. Logs `OpenBink`/`PlayBink`/`CloseBink`; a key or a mouse button can be pressed
 // and released at given video times (posted to the window: SDL turns them into events for the skip filter).
+// `cfg.open` (the message clips, re/screens/video.md §5): the title is skipped (`VoltGTLogo`) and, at the given
+// call of `Fake_FRISSITES` (exe 0x4de720, the game thread's frame), `OpenBink(name, fullscreen, x, y, force)` and
+// `PlayBink(0, loop, 0)` are called as `StartAnim`/`MessagesAnimFrissit` do.
 'use strict';
 
 const base = Process.getModuleByName('ig2.exe').base;
@@ -23,8 +26,26 @@ recv('config', (m) => {
   const sleep = Process.getModuleByName('kernel32.dll').getExportByName('Sleep');
   const realSleep = new NativeFunction(sleep, 'void', ['uint32'], { abi: 'stdcall' });
   Interceptor.replace(sleep, new NativeCallback((ms) => { if (vtOn && ms > 0) { vt += ms; delays += ms; realSleep(1); } else realSleep(ms); }, 'void', ['uint32'], 'stdcall'));
+  if (cfg.open) { va(0xbbb22f).writeU8(1); hookOpen(); }
   hook();
 });
+
+function hookOpen() {
+  const o = cfg.open;
+  const openBink = new NativeFunction(va(0x7325b0), 'uint8', ['pointer', 'uint8', 'int', 'int', 'uint8'], { abi: 'mscdecl' });
+  const playBink = new NativeFunction(va(0x732660), 'void', ['uint8', 'uint8', 'uint8'], { abi: 'mscdecl' });
+  const name = Memory.allocAnsiString(o.name);
+  let frames = 0, opened = false;
+  Interceptor.attach(va(0x4de720), {
+    onEnter() {
+      if (opened || ++frames < o.after) return;
+      opened = true;
+      const ok = openBink(name, o.fullscreen, o.x, o.y, o.force);
+      if (ok) playBink(0, o.loop, 0);
+      send({ k: 'staged', name: o.name, ok, frames });
+    },
+  });
+}
 
 function hook() {
   Interceptor.attach(va(0x7325b0), {

@@ -419,6 +419,9 @@ pub struct View {
     /// The remaster's clock `game::acttime` (exe 0xFD1520, ms) in seconds, `sg3d_time.x` of the cloud material, when
     /// pinned (`--acttime`, the exe's value at a capture); else the frame time.
     pub acttime: Option<f32>,
+    /// The battle screen's `starmaperosseg` (`starmapszarok`, spacewar.md §3.3, §7.4): the systems' glows × e, the
+    /// planets and fleets hidden at 0 (`starmaphideflottak`, `starmaphalvanyit`).
+    pub battle_fade: Option<f32>,
 }
 
 /// The background's layout: the far stars, `Clouds1`, `Clouds2`, `KodPamacsok`.
@@ -663,7 +666,7 @@ impl View {
     pub fn new(s: &Snapshot, saved: &SavedView, size: (u32, u32), scale: f32) -> Self {
         let camera = Camera::from_save(saved, s, [size.0 as f32, size.1 as f32]);
         let generated = background();
-        Self { camera, scale, hover: None, selected: None, reveal: false, star_scale: None, backdrop: Vec::new(), background: generated.clone(), generated, clouds: 0, fog: fog_particles(), twinkle: Twinkle::new(), futofeny: None, acttime: None }
+        Self { camera, scale, hover: None, selected: None, reveal: false, star_scale: None, backdrop: Vec::new(), background: generated.clone(), generated, clouds: 0, fog: fog_particles(), twinkle: Twinkle::new(), futofeny: None, acttime: None, battle_fade: None }
     }
 
     /// One UI tick of the starmap (`FRISSIT_Starmap2` → `GalaxisGomolygas`).
@@ -767,7 +770,12 @@ impl View {
             }
             let tex = a.stars[(p.surface.max(1) as usize - 1) % 8].unwrap_or(a.white);
             let kind = if tex == a.white { kind::GLOW } else { kind::SPRITE };
-            f.push(tex, Blend::GammaAdditive, Instance::new(kind, c, [half; 2], particle_color(0xff_ffff)));
+            let e = self.battle_fade.unwrap_or(1.0);
+            if e <= 0.0 {
+                continue;
+            }
+            let col = particle_color(0xff_ffff).map(|x| x * e);
+            f.push(tex, Blend::GammaAdditive, Instance::new(kind, c, [half; 2], [col[0], col[1], col[2], 1.0]));
         }
 
         // Planets on their orbits as meshes, spinning (`ShowStarmap`: `RotateObj(0, 0, PlanetRotate · spin · 6)`,
@@ -779,7 +787,8 @@ impl View {
         let clouds = self.star_scale.map(|s| s.0);
         let eye = cam.eye_world();
         f.mark_late();
-        for p in self.planets(curr) {
+        let hidden = self.battle_fade.is_some_and(|e| e <= 0.0);
+        for p in self.planets(curr).filter(|_| !hidden) {
             let at = orbit_position(p, clock);
             let spin = p.look.spin as f32 / 100.0;
             let Frame { scene, late, .. } = &mut f;
@@ -808,7 +817,7 @@ impl View {
         }
 
         // Routes of the human's fleets (`Show_Flottak3d`, spec §4.3).
-        let fleets = curr.fleets_at(prev, alpha);
+        let fleets = if hidden { Vec::new() } else { curr.fleets_at(prev, alpha) };
         for fl in self.shown(&fleets).filter(|f| f.order > 0 && f.flags & 0x20 == 0 && (self.reveal || f.owner == curr.human)) {
             let (Some(t), Some(p)) = (fl.target, cam.to_screen(fl.pos)) else { continue };
             let Some(q) = cam.to_screen(t) else { continue };

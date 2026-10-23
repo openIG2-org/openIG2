@@ -32,6 +32,12 @@ pub struct Stats {
     pub last: i32,
     pub last_kind: i32,
     pub own: i32,
+    /// The selected ships' shield used and shield (`+0x2558`, `+0x255c`).
+    pub shield_used: i32,
+    pub shield: i32,
+    /// `infoszamol`'s battle overview (exe 0xE72D94..0xE72DB4, spec §7.4): ships, fighters and firepower of the
+    /// viewer's side, its enemies and the others.
+    pub sides: [[i32; 3]; 3],
 }
 
 impl Stats {
@@ -49,6 +55,9 @@ impl Stats {
             last: i(0x1ff4),
             last_kind: i(0x1ff8),
             own: i(0x1ffc),
+            shield_used: i(0x1fcc),
+            shield: i(0x1fd0),
+            sides: [[0; 3]; 3],
         }
     }
 }
@@ -139,8 +148,17 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
         let rgb = col(c).map(|x| x * fade);
         font.text(f, v, t, x + dx, y + dy, 0x13, size, Align::Left, rgb, None);
     };
+    let alpha = (fade * 255.0) as i32 as f32 / 255.0;
     if st.total != 0 && st.sel_ships != 0 {
-        text(&format(&s(5), &[(st.sel_ships + st.sel_guns) as i64], &[]), 0.0, 3.0, 2, 3);
+        // One unit: its plan's name and hull tech (`Tervek[owner][design]`, `Talalmanyok[+0x10]`); more: the count.
+        if st.total == 1 {
+            text(&d.title, 0.0, 3.0, 2, 3);
+            if d.title_tech >= 0 && st.last >= 0 {
+                text(&hud.tech_name(d.title_tech as usize), 0.0, 12.0, 2, 0x21);
+            }
+        } else {
+            text(&format(&s(5), &[(st.sel_ships + st.sel_guns) as i64], &[]), 0.0, 3.0, 2, 3);
+        }
         let owner = match st.last_kind {
             2 => b.planet_owner,
             1 => b.units.get(st.last.max(0) as usize).map_or(1, |u| u.owner),
@@ -154,6 +172,57 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
             text(&format(&s(0xc), &[0], &[]), 0.0, 41.0, 1, 0x21);
             crate::colony_ui::hp_stripe(f, hud.white, v, &hud.palette, st.max_hp - st.damage, st.max_hp, x + 44.0, y + 41.0, 66.0);
         }
+    } else if st.total != 0 && st.sel_guns != 0 && st.last_kind == 2 && st.last != -1 {
+        // Case B, planet guns only: the gun building's tech, or the count.
+        if st.total == 1 && d.title_tech >= 0 {
+            text(&hud.tech_name(d.title_tech as usize), 0.0, 3.0, 2, 3);
+        } else {
+            text(&format(&s(0xd), &[st.total as i64], &[]), 0.0, 3.0, 2, 3);
+        }
+        let name = hud.empire_names.get(b.planet_owner.max(0) as usize).cloned().unwrap_or_default();
+        text(&name, 0.0, 23.0, 1, 0x21);
+        if st.ships != 0 && st.max_hp != 0 {
+            text(&format(&s(0xe), &[st.value as i64], &[]), 0.0, 32.0, 1, 0x21);
+            text(&format(&s(0xf), &[0], &[]), 0.0, 41.0, 1, 0x21);
+            crate::colony_ui::hp_stripe(f, hud.white, v, &hud.palette, st.max_hp - st.damage, st.max_hp, x + 44.0, y + 41.0, 66.0);
+        }
+    } else if st.total == 0 {
+        // Case C, the battle overview: firepower (with K or M above 9999 and 999000), ships and fighters of the
+        // viewer's side, its enemies and (when they have any) the others; then the fighters' stance slider.
+        let [ships, fighters, fire] = st.sides;
+        let others = fire[2] != 0 || ships[2] != 0 || fighters[2] != 0;
+        let top = fire.iter().copied().max().unwrap_or(0);
+        let (div, unit): (i32, &[u8]) = if top > 0xf3e58 { (1_000_000, b"M") } else if top > 9999 { (1000, b"K") } else { (1, b"") };
+        text(&s(0x10), 0.0, 3.0, 2, 3);
+        text(&s(0x14), 0.0, 41.0, 1, 0x21);
+        let cols = [(0x2a, 0x29), (0x42, 0x2a), (0x5a, 0x21)];
+        let row = |f: &mut Frame, label: Vec<u8>, dy: f32, vals: [i32; 3], with_unit: bool| {
+            font.text(f, v, &label, x, y + dy, 0x13, 1, Align::Left, col(0x21).map(|z| z * fade), None);
+            for (k, &(dx, c)) in cols.iter().enumerate() {
+                if k == 2 && !others {
+                    continue;
+                }
+                let t = if with_unit { format(b"%d%s", &[(vals[k] / div) as i64], &[unit]) } else { vals[k].to_string().into_bytes() };
+                let rgb = col(c).map(|z| z * fade);
+                font.text(f, v, &t, x + dx as f32, y + dy, 4, 1, Align::Right, rgb, None);
+            }
+        };
+        row(f, format(&s(0x11), &[0], &[]), 14.0, fire, true);
+        row(f, s(0x12), 23.0, ships, false);
+        row(f, s(0x13), 32.0, fighters, false);
+        // `DDFillToScreen3dtRGB(x, y + 0x2a, 0x71, 3, ..)`: red rises and green falls with the stance; the marker a
+        // 3 × 7 fill of colour 2 with a 1 × 5 of colour 0 in it.
+        let st_v = d.stance.clamp(0, 100);
+        let r = (st_v * 0x7f / 100) as f32 / 255.0;
+        let g = (0x7f - st_v * 0x7f / 100) as f32 / 255.0;
+        let fill = |f: &mut Frame, x0: f32, y0: f32, w: f32, h: f32, c: [f32; 3]| {
+            let p = v.px(x0 + w / 2.0, y0 + h / 2.0);
+            f.push(hud.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, p, [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], alpha]));
+        };
+        fill(f, x, y + 42.0, 113.0, 3.0, [r, g, 0.0]);
+        let mx = x + (st_v * 0x71 / 100) as f32;
+        fill(f, mx - 1.0, y + 40.0, 3.0, 7.0, col(2));
+        fill(f, mx, y + 41.0, 1.0, 5.0, col(0));
     }
 }
 
@@ -209,6 +278,130 @@ fn radar(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, d: &Shown) {
         let p = [q[0].trunc(), q[1].trunc()];
         f.push(white, Blend::GammaAdditive, Instance::new(kind::SPRITE, v.px(p[0] + 0.5, p[1] + 0.5), [v.k / 2.0; 2], [rgb[0], rgb[1], rgb[2], 1.0]));
     }
+}
+
+/// The hot-spots' tooltips (`SpaceWar_MouseInit`, spec §4.2, §7.4), by id: the radar 1, the slider 0x19 (on while
+/// nothing is selected), the small box 0x24, the camera cluster 0x28..0x2d (`GetString(0xb, 2, k)`), the column's
+/// shown buttons 3..0xc: the weapon groups' names `GetString(0xb, 3, i + 1)`, in the formation phase the formations'
+/// `GetString(0xb, 3, i + 11)`.
+pub fn tooltips(hud: &crate::ui::Hud, d: &Shown, formation: bool) -> Vec<Vec<u8>> {
+    let mut t = vec![Vec::new(); 0x2f];
+    let s = |k: u16| hud.texts.get(0xb, 2, k);
+    t[1] = s(1);
+    if d.stats.total == 0 {
+        t[0x19] = s(4);
+    }
+    t[0x24] = s(5);
+    for (i, k) in (0x28..=0x2d).zip(6..=11) {
+        t[i] = s(k);
+    }
+    for i in 0..10 {
+        if d.slots[i].counter != 0 {
+            t[3 + i] = hud.texts.get(0xb, 3, if formation { i as u16 + 11 } else { i as u16 + 1 });
+        }
+    }
+    t
+}
+
+/// The cursor (`UpdateFrame` exe 0x4e3e90, spec §7.4): `MOUSE.BMP`'s 20 × 20 cell of column `kind`, row `(MouseFazis/5) %
+/// 40` (`MouseFazis` +1 a UI tick), at the pointer less the hot-spot offset (types 0 and 1: 0; the rest 10).
+pub fn cursor(f: &mut Frame, v: &Virtual, sheet: Option<(crate::render::TexId, [f32; 2])>, kind: i32, ticks: u64, at: [f32; 2]) {
+    let Some((tex, [tw, th])) = sheet else { return };
+    if kind < 0 {
+        return;
+    }
+    let hot = if kind < 2 { 0.0 } else { 10.0 };
+    let row = ((ticks / 5) % 40) as f32;
+    let (x, y) = (at[0] as i32 as f32 - hot, at[1] as i32 as f32 - hot);
+    let mut i = Instance::new(kind::SPRITE, v.px(x + 10.0, y + 10.0), [10.0 * v.k, 10.0 * v.k], [1.0; 4]);
+    i.uv = [kind as f32 * 20.0 / tw, row * 20.0 / th, 20.0 / tw, 20.0 / th];
+    f.push(tex, Blend::GammaAlpha, i);
+}
+
+/// The big info box (`nagyinfokiir` ELF 0x6b5e50 / exe 0x57c9c0, spec §5.2, §7.4) while the info view is on and
+/// something is selected: its box (`nagyinfofader`) sliding in from the right with `f`, one live ship's plan, hull,
+/// owner and fleet, then the hull, shield, value and rank rows, and a single own ship's weapons.
+pub fn big_box(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, d: &Shown, big: &BigInfo) {
+    let st = d.stats;
+    if st.total == 0 {
+        return;
+    }
+    let Some(font) = &hud.font else { return };
+    let fr = big.f.clamp(0.0, 1.0);
+    let x0 = (320.0 + (1.0 - fr) * 350.0) as i32 as f32;
+    crate::kit::fader::fader(f, hud.white, v, [((1.0 - fr) * 350.0 + 319.0) as i32 as f32, 33.0, 302.0, 326.0], [0.0, 15.0, 20.0], 60.0, [0.0, 10.0, 15.0], 30.0);
+    let col = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
+    let s = |k: u16| hud.texts.get(0xb, 1, k);
+    let label = |f: &mut Frame, k: u16, y: f32, len: usize| font.text(f, v, &s(k), x0 + 10.0, y, len, 3, Align::Left, col(1), None);
+    let value = |f: &mut Frame, t: &[u8], y: f32| font.text(f, v, t, x0 + 98.0, y, 0x1a, 3, Align::Left, col(0x21), None);
+    let y0 = 34.0;
+    let mut y = y0 + 10.0;
+    if let Some(ship) = &big.ship {
+        label(f, 0x15, y0 + 10.0, 8);
+        value(f, &ship.plan, y0 + 10.0);
+        label(f, 0x16, y0 + 26.0, 0xb);
+        value(f, &hud.tech_name(ship.tech.max(0) as usize), y0 + 26.0);
+        label(f, 0x17, y0 + 42.0, 0xb);
+        value(f, &hud.empire_names.get(ship.owner.max(0) as usize).cloned().unwrap_or_default(), y0 + 42.0);
+        label(f, 0x18, y0 + 58.0, 0xb);
+        if let Some(n) = &ship.fleet {
+            value(f, n, y0 + 58.0);
+        }
+        y = y0 + 74.0;
+    }
+    label(f, 0x19, y, 0xb);
+    if st.max_hp != 0 {
+        value(f, &format(b"%d%%, %dhp", &[(st.damage * 100 / st.max_hp) as i64, ((st.max_hp - st.damage) / 15) as i64], &[]), y);
+    }
+    y += 16.0;
+    label(f, 0x1a, y, 0xb);
+    if st.ships != 0 {
+        let t = if st.shield == 0 { b"-".to_vec() } else { format(b"%d%%", &[(100 - st.shield_used * 100 / st.shield) as i64], &[]) };
+        value(f, &t, y);
+    }
+    y += 16.0;
+    label(f, 0x1b, y, 0xb);
+    value(f, &format(b"%d", &[st.value as i64], &[]), y);
+    y += 16.0;
+    label(f, 0x1c, y, 0xb);
+    if st.own != 0 && st.ships != 0 {
+        value(f, &rank(hud, st.rank_sum / st.ships), y);
+    }
+    y += 32.0;
+    for (n, (tech, count)) in big.weapons.iter().take(10).enumerate() {
+        let yy = y + n as f32 * 16.0;
+        font.text(f, v, &hud.tech_name(*tech as usize), x0 + 10.0, yy, 0x1e, 3, Align::Left, col(1), None);
+        font.int(f, v, *count as i64, x0 + 260.0, yy, 3, 3, Align::Right, col(0x21));
+    }
+}
+
+/// What the big box shows beyond the statistics, from `infoszamol`'s snapshot: its slide factor and, for one live ship,
+/// the plan's name, hull tech, owner (the fleet's, else the planet's), the fleet's name and the plan's weapons.
+#[derive(Debug, Clone, Default)]
+pub struct BigInfo {
+    pub f: f32,
+    pub ship: Option<BigShip>,
+    pub weapons: Vec<(i32, i32)>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BigShip {
+    pub plan: Vec<u8>,
+    pub tech: i32,
+    pub owner: i32,
+    pub fleet: Option<Vec<u8>>,
+}
+
+/// The MP versus banner (`screenfrissites`, spec §7.4): `"%s (%s) vs. %s (%s)"` at (200, 30), 0x46 cells, size 2,
+/// centred, colour 2, for 9 s from the zoom's end, fading over its last 0.5 s.
+pub fn banner(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, text: &[u8], ms: u32, fade: f32) {
+    let Some(font) = &hud.font else { return };
+    if ms >= 9000 {
+        return;
+    }
+    let k = fade * (((9000 - ms) / 5).min(100) as f32 / 100.0);
+    let c = hud.palette.get(2).copied().unwrap_or([1.0; 3]).map(|x| x * k);
+    font.text(f, v, text, 200.0, 30.0, 0x46, 2, Align::Centre, c, None);
 }
 
 /// `RetreatWindowXSize` (exe 0x926B40): the prompt's length + 2 cells.

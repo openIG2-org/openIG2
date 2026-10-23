@@ -137,5 +137,4 @@ The top bar (money, date, speed buttons, the line's frame) is in re/screens/hud.
 (`StartAnim` 0x5a1340, `uzenetanim_%d`), the voices and typing sounds, the story map (`CreateStoryMap`), the
 automatic messages, `AliasConv`'s aliases beyond `#k#`, the read message's replay (`UzenetPlaybackek`), the
 opening/closing animation. The story hand-offs (`Story_MessageMegnezes`, `Story_MessageSelected`,
-`Story_LetiltasCheck`) and the entry's `+4`/`+5` flags are the sim's and not commands yet: the client shows the
-dialogue but doesn't send them.
+`Story_LetiltasCheck`) and the entry's `+4`/`+5` flags are in rules/info-messages.md §7 and sent as `MessageOrder`s.

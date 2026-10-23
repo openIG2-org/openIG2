@@ -23,6 +23,14 @@ pub enum GroundOrder {
     AirStrike { x: i32, y: i32, kind: i32 },
     /// 0x134: mine laying on or off (`+0x250`; the message carries one byte).
     Mines { unit: i32, on: bool },
+    /// Ours (no packet in the original: the colony screen's mouse handler, exe 0x47b350, calls `WF::PlaceTank`
+    /// directly): the issuer's first unit still on board lands on cell `(x, y)`.
+    Place { x: i32, y: i32 },
+    /// Ours (`WF::UnplaceTank`, called the same way): the issuer's unit `unit` is picked up again.
+    Unplace { unit: i32 },
+    /// Ours (`WF::PlaceAllTanks(x, y, e, false)`, the right click): every unit of the issuer still on board lands
+    /// near `(x, y)`.
+    PlaceAll { x: i32, y: i32 },
 }
 
 /// What a ground-war order did that the colony screen reacts to.
@@ -102,6 +110,14 @@ impl War<'_> {
                     self.um(i).rt.laying = on as u8;
                 }
             }
+            // The screen calls these for EN only; a peer's order is refused for another side's unit.
+            GroundOrder::Place { x, y } => self.place_tank(x, y, e),
+            GroundOrder::Unplace { unit: i } => {
+                if live(self, i) && self.u(i).owner == e {
+                    self.unplace_tank(i);
+                }
+            }
+            GroundOrder::PlaceAll { x, y } => self.place_all_tanks(x, y, e, false),
         }
     }
 

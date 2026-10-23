@@ -83,6 +83,8 @@ pub struct UnitView {
     pub body: M3,
     pub turret: M3,
     pub turret_angle: f32,
+    /// `+0x1c0`: the body's heading (the blob shadow's turn).
+    pub angle: f32,
     /// The weapon pod the turret model shows (`TankTorony` index), `None` without one.
     pub gun: Option<usize>,
     /// What the war's buttons and markers read (spec §11): `+0x1d0` weapons, `+0x288` air-strike units, `+0x250`
@@ -162,6 +164,11 @@ pub struct ColonySnap {
     pub planet_name: Vec<u8>,
     /// The retreat button's test (`Colony_Main` 0x10): no alive unit still to land and every one with `+0x278` bit 0.
     pub all_landed: bool,
+    /// `WF::UsedPosition`'s view (spec §11.7): every alive unit not on board (flag 0x8000000 clear), in slot order:
+    /// `(slot, owner, cell)` (`+0x1a0/+0x1a4`).
+    pub placed: Vec<(usize, i32, (i32, i32))>,
+    /// `WF+0x334`: the self-destruct countdown (−1 idle; spec §11.8).
+    pub self_destruct: i32,
     /// The human sees inside (`WF+0xa1b`, set by `ShowColony`): the owner, or satellites there
     /// (`BolygoTipus::pMuholdakMennyi(EN)` = planet `+0xc4 + EN`; empire 7 counts an empty entry as one). Else
     /// the buildings, roads and units are hidden and only red footprints show (`DrawBuildingBases`).
@@ -213,6 +220,7 @@ impl ColonySnap {
                     body,
                     turret,
                     turret_angle: u.rt.turret_angle,
+                    angle: u.rt.angle,
                     gun,
                     weapons: u.weapons,
                     air: u.air,
@@ -272,6 +280,8 @@ impl ColonySnap {
             planet_name: state.mem.read(ig2_sim::save::va::PLANETS + (planet * ig2_sim::save::PLANET_SIZE) as u32, 0x14).into_iter().take_while(|&b| b != 0).collect(),
             all_landed: field.units.iter().zip(&field.alive).all(|(u, &a)| !a || (u.flags & flag::LANDED == 0 && u.transport & 1 != 0)),
             to_land: field.units.iter().zip(&field.alive).filter(|(u, a)| **a && u.flags & flag::LANDED != 0).map(|(u, _)| (u.owner, u.design)).collect(),
+            placed: field.units.iter().zip(&field.alive).enumerate().filter(|(_, (u, a))| **a && u.flags & flag::LANDED == 0).map(|(i, (u, _))| (i, u.owner, u.cell)).collect(),
+            self_destruct: field.self_destruct,
             visible,
         })
     }
@@ -441,8 +451,236 @@ impl Camera {
         self.y = (self.y + (s * dx + c * dy) * k).clamp(-3800.0, 3800.0);
     }
 
+    /// `Colony_Move(dx, dy)` (exe 0x4688f0; ELF `Colony_Move0` 0x4e2cb0): the start point slides by `(dx, dy)`
+    /// pixels turned by the rotation, x then y, scaled `((600 − Zoom) + 200)/600·0.85` (f32, the angle's cos/sin in f64
+    /// rounded to f32; spec §11.9). The `MaximizeCamera` correction it first takes is the clamp of [`Camera::basis`].
+    pub fn slide(&mut self, dx: i32, dy: i32) {
+        let (c, s) = ((self.rotate as f64).cos() as f32, (self.rotate as f64).sin() as f32);
+        for (dx, dy) in [(dx, 0), (0, dy)] {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let k = (600.0 - self.zoom) + 200.0;
+            let (fx, fy) = (dx as f32, dy as f32);
+            self.x -= (((fx * c - fy * s) * k) / 600.0) * 0.85;
+            self.y -= (((fy * c + fx * s) * k) / 600.0) * 0.85;
+        }
+        // `ShowColony` clamps the start point every frame.
+        self.x = self.x.clamp(-3800.0, 3800.0);
+        self.y = self.y.clamp(-3800.0, 3800.0);
+    }
+
     pub fn zoom_steps(&mut self, steps: f32) {
         self.zoom = (self.zoom + steps * 60.0).clamp(-2500.0, 700.0);
+    }
+}
+
+/// `WF::LoadMesh`'s shadow textures by hull type (`WF+0x1a8 + 8·type`).
+const SHADOW_TEXTURES: [&str; 5] = ["kerekes.bmp", "kozepes.bmp", "lebego.bmp", "mega.bmp", "aknarako.bmp"];
+
+/// `WF_Tank::DrawShadow` (ELF 0x481d80, exe ≈0x473400; spec §11.10): a square of half size `TankShadowSize[hull]`
+/// around the unit's map point shifted `TankShadowTransl[hull]` on both axes, 2 above its height, the texture turned
+/// with the heading (`uv = (cos, sin)(−angle + π/4 + φ)/2 + 0.5` in f64, φ a quarter turn per corner). Riding its
+/// dropship: the colour `dc = (int)(h/200·255 + 255)` (0 at h ≤ −200), the square grown `(255 − dc)/4` and moved with
+/// the dropship's offset. Triangles (−+, ++, +−), (−+, −−, +−) (x, y signs).
+fn blob_shadow(um: &ig2_rules::UnitModels, u: &UnitView) -> [MeshVertex; 6] {
+    let t = u.hull.clamp(0, 4) as usize;
+    let shift = um.shadow_shift.get(t).copied().unwrap_or(0.0);
+    let (mut cx, mut cy, mut s) = (u.pos[1] + shift, u.pos[2] + shift, um.shadow_size.get(t).copied().unwrap_or(0.0));
+    let mut dc = 255;
+    if let Some([h, dx, dy]) = u.ride {
+        if h <= -200.0 {
+            dc = 0;
+        } else {
+            dc = ((h as f64 / 200.0) * 255.0 + 255.0) as i32;
+            s += (255 - dc) as f32 / 4.0;
+            cx += dx;
+            cy += dy;
+        }
+    }
+    let a = -(u.angle as f64) + std::f64::consts::FRAC_PI_4;
+    let uv = |q: f64| {
+        let p = a + q * std::f64::consts::FRAC_PI_2;
+        [(p.cos() * 0.5 + 0.5) as f32, (p.sin() * 0.5 + 0.5) as f32]
+    };
+    let k = dc as f32 / 255.0;
+    let h = u.pos[0] - 2.0;
+    let v = |x: f32, y: f32, q: f64| MeshVertex { pos: [h, x, y], normal: [0.0; 3], uv: uv(q), color: [k, k, k, 1.0] };
+    [v(cx - s, cy + s, 2.0), v(cx + s, cy + s, 1.0), v(cx + s, cy - s, 0.0), v(cx - s, cy + s, 2.0), v(cx - s, cy - s, 3.0), v(cx + s, cy - s, 0.0)]
+}
+
+/// `LandingZone::GenerateKorvonal` (exe 0x478f80, ELF 0x46acd0): the outline of the cells closed to landing, the
+/// zone (`LandingZone::Generate`, `ig2_sim::placement::landing_zone`) or `MapAlloc` (the terrain and every
+/// building with its frame ring), over x, y in 4..=191: an "in" cell's eight neighbours make a mask (bit 0 (x, y − 1),
+/// then counter-clockwise: (x − 1, y − 1), (x − 1, y), (x − 1, y + 1), (x, y + 1), (x + 1, y + 1), (x + 1, y),
+/// (x + 1, y − 1)) that picks one of the 14 edge tiles; inner cells and the other masks get none. Read at
+/// `y·200 + x` (the zone itself is written a row up). `(x, y, tile − 1)` in the exe's order (x outer).
+pub fn landing_outline(gm: &GroundMap, buildings: &[(u8, f32, f32)]) -> Vec<(i32, i32, usize)> {
+    use ig2_sim::placement::{landing_zone, Grid};
+    let zone = landing_zone(buildings, &gm.footprints);
+    let mut alloc = Grid::from_terrain(&gm.terrain.mask);
+    for &(kind, x, y) in buildings.iter().filter(|b| b.0 != 0) {
+        let (w, h) = gm.footprints.get(kind as usize).copied().unwrap_or((0, 0));
+        alloc.allocate(x as i32, y as i32, w, h, true);
+    }
+    let inside = |x: i32, y: i32| {
+        let i = (y * 200 + x) as usize;
+        zone.get(i).is_some_and(|&z| z != 0) || alloc.cells().get(i).is_some_and(|&a| a != 0)
+    };
+    const NEIGHBOURS: [(i32, i32); 8] = [(0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1)];
+    let mut out = Vec::new();
+    for x in 4..192 {
+        for y in 4..192 {
+            if !inside(x, y) {
+                continue;
+            }
+            let mask = NEIGHBOURS.iter().enumerate().fold(0u8, |m, (k, &(dx, dy))| m | ((inside(x + dx, y + dy) as u8) << k));
+            let tile = match mask {
+                0x7c | 0x7e | 0xfc | 0xfe => 1,
+                0x70 | 0x72 | 0x73 | 0x78 | 0x7a | 0xf0 | 0xf2 | 0xf8 => 2,
+                0xf1 | 0xf3 | 0xf9 | 0xfb => 3,
+                0xc1 | 0xc3 | 0xc9 | 0xcd | 0xe1 => 4,
+                0xc7 | 0xcf | 0xe7 | 0xef => 5,
+                0x07 | 0x0f | 0x27 | 0x2f | 0x37 | 0x87 | 0x8f | 0xa7 => 6,
+                0x1f | 0x3f | 0x9f | 0xbf => 7,
+                0x1c | 0x1e | 0x3c | 0x9c | 0xdc => 8,
+                0x7f => 9,
+                0xfd => 10,
+                0xf7 => 11,
+                0xdf => 12,
+                0x77 => 13,
+                0xdd => 14,
+                _ => continue,
+            };
+            out.push((x, y, tile - 1));
+        }
+    }
+    out
+}
+
+/// `LandingZone::GenerateOneSquareVertex` (exe 0x479d90, f32): cell (x, y)'s square, ±20.89 around
+/// `Grid2Real(x + 0.5, y + 0.5)`, each corner 3 above `GetHeight` of its height cell (grid / 4), uv 0.015..0.985;
+/// triangles (P0, P1, P2), (P3, P1, P2).
+fn landing_square(gm: &GroundMap, x: i32, y: i32) -> [MeshVertex; 6] {
+    let (rx, ry) = grid_to_real(x as f32 + 0.5, y as f32 + 0.5);
+    let h = |fx: f32, fy: f32| if fx > 200.0 || fy > 200.0 { 0.0 } else { gm.height(fx.clamp(0.0, 48.99), fy.clamp(0.0, 48.99)) };
+    let (x0, x1, y0, y1) = (x as f32 * 0.25, (x + 1) as f32 * 0.25, y as f32 * 0.25, (y + 1) as f32 * 0.25);
+    let c = [1.0, 0.0, 0.0, 128.0 / 255.0];
+    let v = |hh: f32, px: f32, py: f32, u: f32, w: f32| MeshVertex { pos: [hh - 3.0, px, py], normal: [-1.0, 0.0, 0.0], uv: [u, w], color: c };
+    let (lo, hi) = (0.015, 0.985);
+    let p0 = v(h(x1, y0), rx - 20.89, ry - 20.89, lo, lo);
+    let p1 = v(h(x0, y0), rx + 20.89, ry - 20.89, hi, lo);
+    let p2 = v(h(x1, y1), rx - 20.89, ry + 20.89, lo, hi);
+    let p3 = v(h(x0, y1), rx + 20.89, ry + 20.89, hi, hi);
+    [p0, p1, p2, p3, p1, p2]
+}
+
+/// The camera keys' state (spec §11.9): the held flags of `ColonyKeyboardHandler`, the speeds `Frissit2_Colony`
+/// integrates, the `c` presets' tween and the edge scroll's speeds.
+#[derive(Debug, Clone, Default)]
+pub struct CameraKeys {
+    /// `ColonyTurnLeft/Right`, `ColonyTurnUp/Down` (↓ / ↑), `ColonyZoomIn/Out` (numpad + / −).
+    pub left: bool,
+    pub right: bool,
+    pub up: bool,
+    pub down: bool,
+    pub zoom_in: bool,
+    pub zoom_out: bool,
+    /// Exe 0x997c64, 0x996e94, 0x997c68.
+    rotate_speed: f32,
+    zoom_speed: f32,
+    pitch_speed: f32,
+    /// `NextCameraMode` (0x998248); mode 3 is `TankView` [not ported: the normal camera].
+    pub mode: i32,
+    /// `ColonyTargetZoom/Pitch` and `TransfRotFrame` while `TransfRot`.
+    tween: Option<(f32, f32, i32)>,
+    /// `Colony_Autoscroll`'s `xSpeed/ySpeed` (0xa3eb68/6c).
+    scroll: [i32; 2],
+}
+
+/// The `c` presets (exe 0x8f1d44 zoom, 0x8f1e44 pitch; the rotate table 0x8f1dc4 is never read).
+const PRESETS: [(f32, f32); 3] = [(-240.0, -1.113946), (-666.0, -0.356804), (-1100.0, -0.05)];
+
+impl CameraKeys {
+    /// `c`: the next preset; zoom and pitch glide there over 15 drawn frames.
+    pub fn preset(&mut self) {
+        self.mode = if self.mode + 1 > 3 { 0 } else { self.mode + 1 };
+        if let Some(&(z, p)) = PRESETS.get(self.mode as usize) {
+            self.tween = Some((z, p, 0));
+        }
+    }
+
+    /// `TransformRotation` (ELF 0x4cc070), once per drawn frame: a quarter of the way to the preset.
+    pub fn frame(&mut self, cam: &mut Camera) {
+        if let Some((z, p, n)) = &mut self.tween {
+            cam.zoom += (*z - cam.zoom) / 4.0;
+            cam.pitch += (*p - cam.pitch) / 4.0;
+            *n += 1;
+            if *n >= 15 {
+                self.tween = None;
+            }
+        }
+    }
+
+    /// `Frissit2_Colony`'s camera part (exe 0x477dc0), one 100 Hz UI tick, f32.
+    pub fn tick(&mut self, cam: &mut Camera) {
+        let f = |b: bool| b as i32 as f32;
+        let cap = |v: f32, m: f32| if v.abs() > m { v / v.abs() * m } else { v };
+        let rs = cap(self.rotate_speed - f(self.left) * 0.0035 + f(self.right) * 0.0035, 0.02);
+        let zs = cap(f(self.zoom_in) * 1.7 + self.zoom_speed - f(self.zoom_out) * 1.7, 17.0);
+        let ps = cap(self.pitch_speed - f(self.down) * 0.0025 + f(self.up) * 0.0025, 0.02);
+        cam.rotate += rs;
+        cam.pitch += ps;
+        cam.zoom += zs;
+        self.rotate_speed = rs * 0.9;
+        self.zoom_speed = zs * 0.85;
+        self.pitch_speed = ps * 0.79;
+        cam.pitch = cam.pitch.clamp(-1.4922565, -0.05);
+        cam.zoom = cam.zoom.clamp(-1100.0, 240.0);
+    }
+
+    /// `Colony_Autoscroll` (exe 0x465940), one UI tick: the window pointer `at` within 8 pixels of an edge of
+    /// `size` (no button held) aims at ±30; the speeds step 5 towards it; `Colony_Move(speed / 5)`.
+    pub fn autoscroll(&mut self, cam: &mut Camera, at: [i32; 2], size: [u32; 2], held: bool) {
+        let (mut tx, mut ty) = (0i32, 0i32);
+        if !held {
+            if at[0] < 8 {
+                tx = -30;
+            }
+            if size[0].wrapping_sub(8) < at[0] as u32 {
+                tx = 30;
+            }
+            if at[1] < 8 {
+                ty = -30;
+            }
+            if size[1].wrapping_sub(8) < at[1] as u32 {
+                ty = 30;
+            }
+        }
+        // Normalised in f32; the second axis sees the first's new value [original quirk].
+        let n = |tx: i32, ty: i32| ((tx as f32 * tx as f32 + (ty * ty) as f32) as f64).sqrt() as f32;
+        if tx * tx + ty * ty != 0 {
+            tx = ((tx * 30) as f32 / n(tx, ty)) as i32;
+        }
+        if tx * tx + ty * ty != 0 {
+            ty = ((ty * 30) as f32 / n(tx, ty)) as i32;
+        }
+        for (s, t) in [(0, tx), (1, ty)] {
+            if self.scroll[s] < t {
+                self.scroll[s] += 5;
+            }
+            if t < self.scroll[s] {
+                self.scroll[s] -= 5;
+            }
+        }
+        if self.scroll != [0, 0] {
+            cam.slide((self.scroll[0] as f64 / 5.0) as i32, (self.scroll[1] as f64 / 5.0) as i32);
+        }
+    }
+
+    /// Off the colony screen: the scroll speeds stop.
+    pub fn stop_scroll(&mut self) {
+        self.scroll = [0, 0];
     }
 }
 
@@ -503,6 +741,8 @@ pub struct ColonyScene {
     key: Vec<(usize, u8, i32, i32, bool)>,
     /// Building models for the build cursor (`tempepulet`), by kind.
     buildings: HashMap<u8, Option<UnitMesh>>,
+    /// The unit info's turning model's render target ([`ColonyScene::render_info_model`]).
+    info_target: Option<crate::render::Target>,
 }
 
 fn texture(r: &mut Renderer, install: &Install, cache: &mut HashMap<String, TexId>, white: TexId, path: Option<&str>) -> TexId {
@@ -702,7 +942,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true) });
         }
-        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new() })
+        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -771,6 +1011,35 @@ impl ColonyScene {
             .as_ref()
     }
 
+    /// `HandleKisInfoObject` (exe 0x47d000, ELF 0x4ce840; spec §11.10) with `ColonyInfoMod` 1: the first selected
+    /// unit's model (`GetSelectedMeshPointer` exe 0x47bc20: the hull's, a defence turret's gun) added to `mainxvb5` at
+    /// scale 0.025, stood up (`RotateObj(π/2, 0, 0)`), at (−130, 657, −1100) of the panel's pass (fixed to its camera),
+    /// turning −0.01 a UI frame about (0, 1, 0) (`Frissit2_Colony`'s `RotateObj2`, `turn` frames). Rendered into a
+    /// texture of the window's size; the caller draws the info box's part of it.
+    pub fn render_info_model(&mut self, r: &mut Renderer, install: &Install, um: &UnitModels, u: &UnitView, turn: f32, size: [f32; 2]) -> Option<TexId> {
+        let mesh = if u.flags & flag::TURRET != 0 { self.turret_mesh(r, install, um, u.gun?)? } else { self.unit_mesh(r, install, um, u)? };
+        let (model, texs) = (mesh.model.clone(), mesh.texs.clone());
+        let rot = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], -0.01 * turn), &scene::create_matrix(HALF_PI, 0.0, 0.0));
+        let m: M3 = scene::mul(&rot, &Placement::add_to_scene(model.origin, 0.025).matrix).map(|x| x * 1024.0);
+        let at: V3 = [-130.0, 657.0, -1100.0];
+        let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
+        for (pi, p) in model.parts.iter().enumerate() {
+            let start = dynamic.len() as u32;
+            for v in &p.verts {
+                let q = scene::apply(&m, v.pos);
+                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: scene::normalise(scene::apply(&m, v.normal)), uv: v.uv, color: [1.0; 4] });
+            }
+            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(self.white), glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+        }
+        let (f, px) = crate::colony_ui::panel_pass(size, (500.0, 2000.0), draws, dynamic);
+        let target = match &mut self.info_target {
+            Some(t) if t.size == px => t,
+            _ => self.info_target.insert(r.target(px)),
+        };
+        r.draw_into(&f, target, px, 0.0);
+        Some(target.tex)
+    }
+
     fn turret_mesh(&mut self, r: &mut Renderer, install: &Install, um: &UnitModels, k: usize) -> Option<&UnitMesh> {
         let (textures, white) = (&mut self.textures, self.white);
         self.turrets
@@ -787,7 +1056,7 @@ impl ColonyScene {
 }
 
 /// `TankAlap`/`TankTorony` `+0x34`: the model's vector and texture directories.
-fn model_dirs(dir: i32) -> (&'static str, &'static str) {
+pub fn model_dirs(dir: i32) -> (&'static str, &'static str) {
     match dir {
         0 => ("vector/starmap/transfer/", "textures/starmap/transfer/"),
         1 => ("vector/spacewar/", "textures/spacewar/"),
@@ -940,6 +1209,8 @@ pub struct Overlay {
     /// `DrawBuildingSelection` (ELF 0x482ca0): building slot `slot`'s marker, `size` = `selectionsize`, `alpha` =
     /// `selectionatlatszosag` (0..=255).
     pub selection: Option<(usize, f32, i32)>,
+    /// `LandingZone::Draw` (spec §11.10): the landing zone's outline.
+    pub landing: bool,
 }
 
 /// A flat textured square on the ground (two triangles, `polygons3d`), alpha `alpha` (0..=255).
@@ -1037,6 +1308,12 @@ impl View {
         let um = &rules.unit_models;
         // `WF_Tank::Draw3d`/`Update` hide the units too when the human doesn't see inside.
         for mut u in curr.units_at(prev, alpha).into_iter().filter(|_| curr.visible) {
+            if u.flags & flag::TURRET == 0 {
+                let tex = scene.colony_texture(r, install, SHADOW_TEXTURES[u.hull.clamp(0, 4) as usize]);
+                let base = dynamic.len() as u32;
+                dynamic.extend(blob_shadow(um, &u));
+                draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::Blob, video: false, additive: false, depth_write: false });
+            }
             if let Some(d) = u.ride {
                 u.pos = std::array::from_fn(|k| u.pos[k] + d[k]);
             }
@@ -1147,6 +1424,17 @@ impl View {
                 for (range, pi, _) in rg {
                     draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
                 }
+            }
+        }
+        // `LandingZone::Draw` (exe 0x4712e0): per tile, two triangles a cell, `polygons3d(v, 3, 3)`: additive, the vertex
+        // colour 0x800000ff (red, alpha 128: `RGB·A/256`).
+        if self.overlay.landing && std::env::var_os("IG2_NO_LAND").is_none() {
+            let buildings: Vec<(u8, f32, f32)> = curr.buildings.iter().map(|b| (b.kind, b.x, b.y)).collect();
+            for (x, y, tile) in landing_outline(gm, &buildings) {
+                let tex = scene.colony_texture(r, install, &format!("landz{}.bmp", tile + 1));
+                let base = dynamic.len() as u32;
+                dynamic.extend(landing_square(gm, x, y));
+                draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
             }
         }
         // A building's marker square: centre, half sizes (`w·40·select + grow`) and height.
@@ -1330,6 +1618,18 @@ impl View {
 
 /// The colony HUD's state (re/screens/hud.md §3) for the shown planet, with the build menu on `build_kind`.
 #[allow(clippy::too_many_arguments)]
+/// `ShowColony` while EN has units to land (`CheckPlacing(EN)` false, `GetFirstUnPlacedTank(EN)` exe 0x47ac10;
+/// spec §11.7): `AktEpuletTipus = −10 − design`, so `buildshown` is that unit's hull (`Tervek[EN][design] + 0x44 − 0x13`) in
+/// the colour `min(EN, 10)`.
+pub fn landing_unit(state: &SaveState, curr: &ColonySnap) -> Option<(usize, i32)> {
+    let en = state.mem.i32(ig2_sim::save::va::EN);
+    let &(_, design) = curr.to_land.iter().find(|&&(o, _)| o == en)?;
+    let rec = state.designs.get(usize::try_from(en).ok()?)?.get(usize::try_from(design).ok()?)?;
+    let hull = (i32::from_le_bytes(rec[0x44..0x48].try_into().ok()?) - 0x13).clamp(0, 4) as usize;
+    Some((hull, en.min(10)))
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usize) -> Vec<u8>, curr: &ColonySnap, view: &View, maps: &[GroundMap], build_kind: usize, selected: usize) -> crate::hud::ColonyHud {
     use ig2_sim::save::{va, PLANET_SIZE};
     let en = state.mem.i32(va::EN).clamp(0, 18) as usize;
@@ -1370,6 +1670,12 @@ pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usi
         units,
         view: maps.get(curr.map).and_then(|gm| view.radar_view(gm)),
         panel_model: None,
+        info: None,
+        // `ColonyGfx2D_3`: the first unit of any side still on board, its design's name (spec §11.7).
+        landing_name: curr.to_land.first().filter(|_| curr.to_land.iter().any(|&(o, _)| o == en as i32)).and_then(|&(o, d)| {
+            let rec = state.designs.get(usize::try_from(o).ok()?)?.get(usize::try_from(d).ok()?)?;
+            Some(rec[..0x14].iter().copied().take_while(|&b| b != 0).collect())
+        }),
     }
 }
 
@@ -1429,6 +1735,58 @@ pub fn check(install: &Install, rules: &ig2_sim::game::GameRules, map: usize, su
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The exe's camera at each grab of `tools/trace/scripts/colony-camera.json` (quick-1.sav, planet 42; ← held
+    /// ticks 20..60, numpad + 100..130, ↑ 180..205, → and numpad − 240..260; the injected pointer leaves the
+    /// window's pointer at (0, 0): the corner's edge scroll runs throughout): `(tick, [x, y, zoom, pitch, rotate])`.
+    #[allow(clippy::excessive_precision)]
+    const CAMERA_TRACE: [(i32, [f32; 5]); 17] = [
+        (10, [388.0970458984375, -318.9864501953125, -1100.0, -0.7853981852531433, 0.0]),
+        (20, [510.1741638183594, -198.59678649902344, -1100.0, -0.7853981852531433, 0.0]),
+        (30, [652.6380004882812, -72.67979431152344, -1100.0, -0.7853981852531433, -0.1405971646308899]),
+        (40, [816.1217651367188, 24.165470123291016, -1100.0, -0.7853981852531433, -0.3405971825122833]),
+        (60, [1183.879150390625, 112.13786315917969, -1100.0, -0.7853981852531433, -0.7405970096588135]),
+        (80, [1563.42724609375, 87.79256439208984, -1100.0, -0.7853981852531433, -0.8987132906913757]),
+        (100, [1941.0377197265625, 39.74980545043945, -1100.0, -0.7853981852531433, -0.9179365634918213]),
+        (115, [2216.74072265625, 2.6050467491149902, -988.6122436523438, -0.7853981852531433, -0.9200493693351746]),
+        (130, [2470.102783203125, -31.791284561157227, -823.732421875, -0.7853981852531433, -0.9204843640327454]),
+        (160, [2938.1953125, -95.4498519897461, -760.486572265625, -0.7853981852531433, -0.9205923676490784]),
+        (180, [3247.91064453125, -137.57948303222656, -760.01904296875, -0.7853981852531433, -0.9205964803695679]),
+        (195, [3480.177978515625, -169.174560546875, -760.0018310546875, -0.6503065824508667, -0.9205968976020813]),
+        (210, [3712.443603515625, -200.7694091796875, -760.0003662109375, -0.5015217065811157, -0.9205968976020813]),
+        (240, [3800.0, -263.9591064453125, -760.0003662109375, -0.48779091238975525, -0.9205968976020813]),
+        (250, [3800.0, -275.55426025390625, -821.7551879882812, -0.48778036236763, -0.779999852180481]),
+        (260, [3800.0, -256.06982421875, -924.9340209960938, -0.4877793788909912, -0.5800000429153442]),
+        (290, [3800.0, -81.33546447753906, -986.1958618164062, -0.48777931928634644, -0.4076303541660309]),
+    ];
+
+    /// Frissit2_Colony's integration and Colony_Autoscroll against the trace: the keys reach the camera one tick
+    /// after their event, exactly (f32); the edge scroll's slide from the t20 grab on (the first grab's ten ticks hold
+    /// `Colony_Move`'s one-shot `MaximizeCamera` correction), its speeds' phase found by search.
+    #[test]
+    fn camera_keys_and_edge_scroll_follow_the_exe() {
+        let held = |t: i32, from: i32, n: i32| (from..from + n).contains(&t);
+        let run = |sx: i32, sy: i32| {
+            let [x, y, zoom, pitch, rotate] = CAMERA_TRACE[1].1;
+            let mut cam = Camera { x, y, zoom, pitch, rotate, size: [640.0, 480.0] };
+            let mut k = CameraKeys { scroll: [sx, sy], ..CameraKeys::default() };
+            let (mut pos, mut rest) = (0.0f32, 0.0f32);
+            for t in 21..=290 {
+                let e = t - 1;
+                (k.left, k.zoom_in, k.up) = (held(e, 20, 40), held(e, 100, 30), held(e, 180, 25));
+                (k.right, k.zoom_out) = (held(e, 240, 20), held(e, 240, 20));
+                k.tick(&mut cam);
+                k.autoscroll(&mut cam, [0, 0], [800, 600], false);
+                if let Some((_, want)) = CAMERA_TRACE.iter().find(|(g, _)| *g == t) {
+                    pos = pos.max((cam.x - want[0]).abs()).max((cam.y - want[1]).abs());
+                    rest = rest.max(((cam.zoom - want[2]) / want[2]).abs()).max(((cam.pitch - want[3]) / want[3]).abs()).max(((cam.rotate - want[4]) / want[4].abs().max(0.1)).abs());
+                }
+            }
+            (pos, rest)
+        };
+        let best = (0..36).map(|p| run(-5 * (p % 6), -5 * (p / 6))).min_by(|a, b| a.0.total_cmp(&b.0)).unwrap();
+        assert!(best.0 < 0.01 && best.1 < 1e-6, "{best:?}");
+    }
 
     #[test]
     fn grid_and_height_cells_agree_with_the_map_corners() {

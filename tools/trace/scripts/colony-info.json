@@ -1,0 +1,15 @@
+{
+ "screen": "colony",
+ "note": "The colony's planet info mode (re/screens/colony.md §12) on an own planet (quick-1.sav, planet 42): hot-spot 4 left-clicked (on), tax + (0x18), the tax menu pressed, the pointer moved to item 3 and released, auto-build ALL (0x1a), priority − (0x1d), a click on the screen (0x20: off). Each button clicks on its press (PlaySoundGlobal(0)), the pick on the release; on/off are silent. (A scripted I doesn't toggle the exe's mode: see colony.md §12.1.) Times are UI ticks.",
+ "events": [
+  {"t": 2, "mouse": [320, 240]},
+  {"t": 10, "press": [80, 450], "button": 1, "hold": 3},
+  {"t": 30, "press": [578, 297], "button": 1, "hold": 3},
+  {"t": 50, "press": [450, 297], "button": 1, "hold": 12},
+  {"t": 53, "mouse": [500, 322]},
+  {"t": 80, "press": [521, 319], "button": 1, "hold": 3},
+  {"t": 100, "press": [552, 341], "button": 1, "hold": 3},
+  {"t": 120, "press": [100, 200], "button": 1, "hold": 3}
+ ],
+ "grabs": [20, 57, 70, 130]
+}

@@ -86,8 +86,24 @@ impl TradeScene {
         Some(a.lerp(&b, t))
     }
 
-    /// Draw the scene behind the 2D layer: the wire sphere, then the frame (offscreen, depth-tested).
-    pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, s: &Trade, size: [f32; 2]) {
+    /// `TradeLoadAlap`'s model (`LoadBox` with its `VectorDir`/`TextureDir`), cached by file.
+    fn hull(&mut self, r: &mut Renderer, install: &Install, vdir: &str, name: &str, tdir: &str) -> Option<Model> {
+        let key = format!("{vdir}{name}");
+        if !self.models.contains_key(&key) {
+            let m = Model::load(install, vdir, name, tdir).map_err(|e| eprintln!("ig2-client: {e}")).ok();
+            for p in m.iter().flat_map(|m| &m.parts) {
+                if let Some(t) = &p.texture {
+                    self.texture(r, install, t);
+                }
+            }
+            self.models.insert(key.clone(), m);
+        }
+        self.models.get(&key).cloned().flatten()
+    }
+
+    /// Draw the scene behind the 2D layer: the wire sphere, then the frame and the chosen offer's hull (offscreen,
+    /// depth-tested).
+    pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, s: &Trade, size: [f32; 2]) {
         let vv = Virtual::new(size);
         // The camera: `kamerapont (0, 0, 600)`, `xcenter 320`, `ycenter 240` (`Trade3DUpdate` step 5).
         let project = |p: V3| -> Option<[f32; 2]> {
@@ -132,6 +148,29 @@ impl TradeScene {
                     bake(p, &t, &lights, id, 1.0, o, &mut dynamic, &mut draws);
                 } else {
                     bake(p, &t, &lights, id, o, 1.0, &mut dynamic, &mut draws);
+                }
+            }
+        }
+        // The hull (`ForgatTradeAlap` exe 0x6068a0): `AddToScene(k·0.08)`, turned by its own matrix, at
+        // `(TRADExa − 190 + s, 145, −650)`, `SetObjTransparency(s/s0)`.
+        let clear = 1.0 - s.last_transparency;
+        if let Some((base, race)) = s.hull_model.filter(|_| s.hull_shown() && clear > 0.0) {
+            if let Some((name, vdir, tdir, k)) = crate::trade::hull_file(rules, base, race) {
+                if let Some(m) = self.hull(r, install, vdir, &name, tdir) {
+                    let pl = Placement::add_to_scene(m.origin, k * 0.08);
+                    let t = scene::Transform { matrix: scene::mul(&s.hull_turn, &pl.matrix).map(|x| x * 1024.0), translation: [s.hull_x, 145.0, -650.0] };
+                    for p in &m.parts {
+                        let id = p.texture.clone().and_then(|t| self.texture(r, install, &t).map(|x| x.id)).unwrap_or(self.white);
+                        bake(p, &t, &lights, id, clear, 1.0, &mut dynamic, &mut draws);
+                        // `SetObjTransparency` only turns blending on: the hull keeps its depth write; then its lit
+                        // windows (`selfillumkirak`, design_scene's `glow`).
+                        if let Some(d) = draws.last_mut() {
+                            d.depth_write = true;
+                        }
+                        if let Some(id) = p.self_illum.as_deref().and_then(|t| self.texture(r, install, t).map(|x| x.id)) {
+                            crate::design_scene::glow(p, &t, id, 1.0 - clear, &mut dynamic, &mut draws);
+                        }
+                    }
                 }
             }
         }
@@ -227,6 +266,7 @@ fn sample(img: &Image, uv: [f32; 2]) -> [f32; 3] {
 /// back-face test).
 #[allow(clippy::too_many_arguments)]
 fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: TexId, alpha: f32, k: f32, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+
     let start = out.len() as u32;
     let a = match p.look {
         scene::Look::Glass(g) => g * alpha,

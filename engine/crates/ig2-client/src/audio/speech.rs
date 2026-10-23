@@ -10,6 +10,8 @@ use super::Rand;
 pub enum Who {
     Starmap,
     Colony,
+    /// `SpaceWarSpeaker` (exe 0xe72e84).
+    SpaceWar,
 }
 
 /// The starmap's kinds (`StarmapInitSpeech`).
@@ -90,6 +92,9 @@ impl Director {
 pub struct Speakers {
     pub starmap: Director,
     pub colony: Director,
+    pub spacewar: Director,
+    /// `spwcounter` (exe 0xe60430): +1 a battle-screen UI tick, the refresh past 10 (every 11th).
+    spacewar_counter: i64,
     /// `StarmapCounter`: +1 a UI tick on the starmap (`FRISSIT_Starmap2`).
     starmap_counter: i64,
     /// `ColonyCounter`'s count for the refresh: +1 a UI tick on every screen (`Frissit2_Colony`).
@@ -98,7 +103,7 @@ pub struct Speakers {
 
 impl Speakers {
     pub fn new(t: &ig2_rules::speech::Speech) -> Self {
-        Self { starmap: Director::new(&t.starmap), colony: Director::new(&t.colony), ..Default::default() }
+        Self { starmap: Director::new(&t.starmap), colony: Director::new(&t.colony), spacewar: Director::new(&t.spacewar), ..Default::default() }
     }
 
     /// One 100 Hz UI tick: each director refreshes on every 10th count of its counter.
@@ -115,10 +120,20 @@ impl Speakers {
         }
     }
 
+    /// One UI tick of the battle screen (`SpaceWarFrissit2`): `spwcounter` past 10 → 0 and a refresh.
+    pub fn tick_spacewar(&mut self) {
+        self.spacewar_counter += 1;
+        if self.spacewar_counter > 10 {
+            self.spacewar_counter = 0;
+            self.spacewar.refresh();
+        }
+    }
+
     pub fn director(&mut self, who: Who) -> &mut Director {
         match who {
             Who::Starmap => &mut self.starmap,
             Who::Colony => &mut self.colony,
+            Who::SpaceWar => &mut self.spacewar,
         }
     }
 }

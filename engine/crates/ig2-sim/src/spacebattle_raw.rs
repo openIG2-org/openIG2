@@ -424,6 +424,13 @@ pub fn decode(mem: &Mem, st: &Statics) -> Battle {
     }
     b.asteroids = (o[0x2d70] != 0).then(|| [i32_at(o, 0x2d74), i32_at(o, 0x2d78), i32_at(o, 0x2d7c)]);
     b.formation_choice = o[0x2d85] != 0;
+    // The human's ship list (side `+0x5c` / `+0x60`), when the trace holds it (`--formation`'s snapshots).
+    if let Some((_, l)) = mem.find("hlist@") {
+        b.human_list = l
+            .chunks_exact(0x1c)
+            .map(|c| Entry { race: i32_at(c, 0), design: i32_at(c, 4), owner: i32_at(c, 8), ship: i32_at(c, 0xc), unit: i32_at(c, 0x14), experience: i32_at(c, 0x18) })
+            .collect();
+    }
     b.ground_war_started = o[0x2005] != 0;
     b.f2d84 = o[0x2d84] != 0;
     b.f2d86 = o[0x2d86] != 0;

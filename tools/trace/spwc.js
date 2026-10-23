@@ -14,7 +14,7 @@ const va = (x) => mod.base.add(x - IMAGE_BASE);
 const A = {
   Fake_FRISSITES: va(0x4de720), Betolt_Scenario: va(0x4f5ba0),
   SetIdoSpeed: va(0x541330), SetIdoPause: va(0x541300),
-  SpaceWarIndit: va(0x5a7670), SpaceWarFrissit: va(0x56dff0),
+  SpaceWarIndit: va(0x5a7670), SpaceWarFrissit: va(0x56dff0), loadfelallas: va(0x578850),
   RandSeed: va(0xbaf2d0),
   Flottak: va(0xbb40a4), FlottaCount: va(0xbb40a8),
   Hajok: va(0xbb4100), HajoCount: va(0xbb4104),
@@ -38,8 +38,8 @@ const activeSlots = () => { let n = 0; for (let b = 0; b < 10; b++) if (SPW0.add
 const OBJ = 0x2d9c, UNIT = 600, FIGHTER = 0xa8, GUN = 0xa8, SHOT = 0xa8, SPRITE = 0x4c, WEAPON = 0x70;
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, steps: 3000, battles: 20, seed: 4242,
-  fuzz: false, aiHuman: false, planets: false, join: false, fuzzDesigns: false, every: 4, speed: 4, perBattle: 1500,
-  orders: 0, orderEvery: 5, grabTicks: [], grabSettle: 120, stateSlot: 0, script: null, soundTables: null };
+  fuzz: false, aiHuman: false, planets: false, join: false, fuzzDesigns: false, weapons: [], every: 4, speed: 4, perBattle: 1500,
+  orders: 0, orderEvery: 5, grabTicks: [], grabSettle: 120, stateSlot: 0, script: null, soundTables: null, formation: 0 };
 recv('config', (m) => {
   Object.assign(cfg, m.payload);
   if (cfg.script) hookScript();
@@ -134,6 +134,12 @@ function regions(self) {
       const q = sp.add(0x1c * g), m = q.readS32(), mp = q.add(0x18).readPointer();
       if (m > 0 && m < 200) add('sm' + e + '_' + g + '@' + mp, mp, 4 * m);
     }
+  }
+  // The human's ship list (side +0x5c / +0x60, 0x1c-byte entries): what a formation pick places anew.
+  const h = self.add(0xc3c).readS32();
+  if (h >= 0 && h < 19) {
+    const lp = self.add(0x6c * h + 0x5c).readPointer(), ln = self.add(0x6c * h + 0x60).readS32();
+    if (ln > 0 && ln < 1000) add('hlist@' + lp, lp, 0x1c * ln);
   }
   add('fighters', self.add(0xc24).readPointer(), FIGHTER * self.add(0xc2c).readS32());
   add('guns', self.add(0xc94).readPointer(), GUN * self.add(0xc90).readS32());
@@ -471,7 +477,7 @@ function inditTraced(f1, f2, planet) {
   if (slot < 0) for (let b = 0; b < 10 && slot < 0; b++) if (!slotPtr(b).add(0x1f2e).readU8()) slot = b;
   setupSerial++;
   const self = slotPtr(slot);
-  if (cfg.fuzzDesigns) fuzzDesigns(f2 > 0 ? [f1, f2] : [f1], planet);
+  if (cfg.fuzzDesigns || cfg.weapons.length) fuzzDesigns(f2 > 0 ? [f1, f2] : [f1], planet);
   emit({ k: 'presetup', setup: setupSerial, slot, join, fleets: f2 > 0 ? [f1, f2] : [f1], planet,
     statics: statics(self), regions: full(setupRegions(self, planet)) });
   indit(f1, f2, planet);
@@ -489,7 +495,7 @@ function fuzzDesigns(fleets, planet) {
   const nt = A.TankCount.readS32();
   for (let i = 1; i <= nt; i++) {
     const t = A.Tankok.add(8 * i), fl = t.readS16(), d = t.add(2).readS16();
-    if (d === 0x7fff || !fleets.includes(fl) || rnd(2)) continue;
+    if (d === 0x7fff || !fleets.includes(fl) || !cfg.fuzzDesigns || rnd(2)) continue;
     if (designs(owner(fl)).add(0x84 * d).add(0x36).readU8()) t.add(4).writeS32(30 + rnd(70));
   }
   const owners = new Set(fleets.map(owner));
@@ -499,8 +505,17 @@ function fuzzDesigns(fleets, planet) {
     const cnt = A.TervCount.add(4 * e).readS32();
     for (let d = 1; d <= cnt; d++) {
       const p = designs(e).add(0x84 * d);
-      if (p.add(0x16).readS16() !== 1 || rnd(2)) continue;
+      if (p.add(0x16).readS16() !== 1) continue;
       const slots = Math.min(p.add(0x4c).readS32(), 12);
+      if (cfg.weapons.length) {
+        // --weapons: every slot of every warship design takes the listed techs in turn.
+        for (let k = 1; k <= slots; k++) {
+          p.add(0x50 + k).writeU8(cfg.weapons[(k - 1) % cfg.weapons.length]);
+          p.add(0x5d + k).writeU8(2);
+        }
+        continue;
+      }
+      if (rnd(2)) continue;
       for (let k = 1; k <= slots; k++) {
         const r = rnd(4);
         if (r === 0) continue;
@@ -531,6 +546,39 @@ function joinNow(onto, planet) {
   }
   emit({ k: 'join', battle: battleSerial + 1, fleet: g, onto, planet });
   inditTraced(g, onto, planet);
+}
+
+// --formation N: on the battle screen, with a chance of 1/N per driver frame (at most 3 a battle), a random
+// formation pick 0..8 goes into `+0x2d88`; the exe's own `SpaceWarFrissit2` (exe 0x56d870) then calls
+// `loadfelallas` (0x578850) when it differs from `+0x2d8c`, in the phase or not (the check isn't guarded by
+// `+0x2d85`). 'preform' / 'form' snapshot the slot (with the human's ship list) and the set-up's globals (the
+// ship-type footprints) around that call.
+let formsBattle = -1, formsDone = 0;
+const formRegions = (self) => setupRegions(self, 0);
+function formSnap(k, self) {
+  emit({ k, battle: battleSerial, self: self.toString(), pick: self.add(0x2d88).readS32(), loaded: self.add(0x2d8c).readS32(),
+    human: self.add(0xc3c).readS32(), statics: statics(self), regions: full(formRegions(self)) });
+}
+Interceptor.attach(A.loadfelallas, {
+  onEnter(args) {
+    this.on = cfg.formation > 0 && !cfg.script;
+    if (!this.on) return;
+    this.self = this.context.ecx;
+    this.name = args[0].readAnsiString();
+    formSnap('preform', this.self);
+  },
+  onLeave() {
+    if (this.on) formSnap('form', this.self);
+  },
+});
+function maybePick() {
+  if (!cfg.formation || !lastSelf || !lastSelf.add(0x1f2e).readU8()) return;
+  if (formsBattle !== battleSerial) { formsBattle = battleSerial; formsDone = 0; }
+  if (formsDone >= 3 || rnd(cfg.formation)) return;
+  formsDone++;
+  const pick = rnd(9);
+  emit({ k: 'pick', battle: battleSerial, pick, was: lastSelf.add(0x2d8c).readS32(), tick: battleSteps });
+  lastSelf.add(0x2d88).writeS32(pick);
 }
 
 // ---------------------------------------------------------------- driver
@@ -621,6 +669,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
         if (cfg.script) return;
         if (A.IdoPause.readU8()) setPause(0, 0);
         A.BattleSpeed.writeS32(grabPending ? 0 : cfg.speed);
+        maybePick();
         // A long battle is abandoned (its slot closed) so the session sees more of them.
         if (battleSteps >= cfg.perBattle && lastSelf) {
           lastSelf.add(0x1f2e).writeU8(0);

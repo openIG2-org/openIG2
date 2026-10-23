@@ -83,7 +83,7 @@ call-site table (297 ELF sites): `_local/audio/callsites.md`.
   (`HibaUzenetSzoveg`).
 - **New campaign**, `Starmap_Belep` (ELF 0x6f27bc): `SOUND && HangLejatszasKell > 0` (exe 0xbae26c, set by
   `InitNewGame` to the campaign type 1..3) → `HangLejatszasID = PlayWav("SOUNDS/START/faj%dstart.WAV", 0)`, the music
-  ducked to `M·60/100` (§3), `HangLejatszasKell = 0`; the last thing the entry does.
+  ducked to `M·60/100` (§3), `HangLejatszasKell = 0`; the last thing the entry does. The client plays it (`--new-campaign`: intro, then music + this voice with the duck).
 - **Speakers**, `SpeakingDirector` (ELF `speech.cpp`): a list of `Speaker`s (id), each a list of `Speeches` (kind:
   `+0` count, `+8` the `Speech` list, `+0x10` cooldown), each `Speech` a file name. Built once at start-up
   (exe 0x4dfe46) by `InitColonySpeech` exe 0x47f400 (ELF 0x4d2250, `ColonySpeaker` exe 0xa3ea3c, 753 `Add`s; its

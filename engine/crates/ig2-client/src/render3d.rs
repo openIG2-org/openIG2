@@ -134,6 +134,12 @@ fn fs_opaque_g(i: VO) -> @location(0) vec4<f32> {
     return vec4(c.rgb, 1.0);
 }
 
+// A blob shadow: the texel times the vertex colour, which the blend takes away from what lies below.
+@fragment
+fn fs_blob_g(i: VO) -> @location(0) vec4<f32> {
+    return vec4(textureSample(tex, smp, i.uv).rgb * i.color.rgb, 1.0);
+}
+
 @fragment
 fn fs_glass_g(i: VO) -> @location(0) vec4<f32> {
     let c = shade_cap(i, 1.0, true, 1.0);
@@ -234,6 +240,9 @@ pub enum Shadow {
     None,
     Cast,
     Receive,
+    /// A blob shadow under a unit (`WF_Tank::DrawShadow`'s `polygons3d(v, 3, 2)`: blend ZERO / ONE_MINUS_SRC_COLOR,
+    /// so what lies below is multiplied by `1 − texel·colour`; depth tested, not written; no fog). Gamma pass, glass.
+    Blob,
 }
 
 /// The light-space rows of `rendershadowmap`'s camera (`CameraRotate(0, light)`: `a`, `−b` of its basis).
@@ -297,6 +306,7 @@ pub(crate) struct Pipe3d {
     video_g: wgpu::RenderPipeline,
     add_g: wgpu::RenderPipeline,
     add_gw: wgpu::RenderPipeline,
+    blob_g: wgpu::RenderPipeline,
     cloud: wgpu::RenderPipeline,
     shadow: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
@@ -395,6 +405,11 @@ impl Pipe3d {
         };
         let add_g = pipeline("fs_glass_g", Some(add), false, format.remove_srgb_suffix());
         let add_gw = pipeline_cmp("fs_glass_g", Some(add), true, format.remove_srgb_suffix(), wgpu::CompareFunction::Less);
+        let blob = wgpu::BlendState {
+            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::OneMinusSrc, operation: wgpu::BlendOperation::Add },
+            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
+        };
+        let blob_g = pipeline("fs_blob_g", Some(blob), false, format.remove_srgb_suffix());
         let shadow = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ig2-client shadow map"),
             layout: Some(&layout),
@@ -506,6 +521,7 @@ impl Pipe3d {
             video_g,
             add_g,
             add_gw,
+            blob_g,
             cloud,
             shadow,
             uniform,
@@ -634,6 +650,7 @@ impl Pipe3d {
                 let receives = scene.shadow.is_some() && m.shadow == Shadow::Receive;
                 pass.set_pipeline(match (scene.gamma, glass, receives) {
                     (true, false, _) if m.video => &self.video_g,
+                    (true, true, _) if m.shadow == Shadow::Blob => &self.blob_g,
                     (true, true, _) if m.additive => &self.add_g,
                     (true, false, _) if m.additive => &self.add_gw,
                     (false, true, _) if m.depth_write => &self.glass_w,

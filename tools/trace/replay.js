@@ -59,13 +59,19 @@ const VOLATILE = [
   // The battlefields (re/formats/save.md 4.13): melyikhatter's cursor (the economy prologue's background picker),
   // FRISSIT_Grwar's gvalue counter, the MP space battle flag that skips FRISSIT_Grwar.
   ['bgcursor', 0x996488, 4], ['gvalue', 0x9b2900, 4], ['mpspacewar', 0xbad114, 4],
+  // The messages screen's unsaved dialogue bits (info-messages.md §7): ParbeszedVege/ParbeszedVegeJon, KiirtaMar,
+  // the rows (first unread, AktUzenet0to3, AktValasz0to3, the replay index), AktValasztasok, the first unread's
+  // id, the open block's four choices (part, next block, disabled; ParbeszPlace follows at 0xD8E280).
+  ['msg_over', 0xd909ba, 2], ['msg_typed', 0xda6607, 1], ['msg_rows', 0xd90dc0, 0x18], ['msg_nchoices', 0xdabe3c, 4],
+  ['msg_unread', 0x91494c, 4], ['msg_ch0', 0xd8e160, 9], ['msg_ch1', 0xd8e1bc, 9], ['msg_ch2', 0xd8e218, 9],
+  ['msg_ch3', 0xd8e274, 9],
 ];
 // Story queues outside the save ({ids, dual, n}).
 const QUEUES = [['vegzes', 0xf43290], ['talal', 0xf4329c]];
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, name: 'Replay', speed: 3, ticks: 40,
-  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', tutorialSighting: false, slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
- traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5, orders: 0, ordersEvery: 3, colony: 0, research: 0, researchEvery: 2, info: 0, infoEvery: 2 };
+  seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', messages: false, messagesMode: 'base', scroll2: false, tutorialSighting: false, slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
+ traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5, orders: 0, ordersEvery: 3, colony: 0, research: 0, researchEvery: 2, info: 0, infoEvery: 2, answers: 0, answersEvery: 2 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -674,6 +680,74 @@ function stageDeaths() {
   return out;
 }
 
+// --messages: the scrolling-line posts and the inbox expiry no other recording reaches (re/rules/info-messages.md
+// §3.2, §4). Before save 0 (so the port starts from the same state):
+//   the human's planets (not protected +0x64): the first one loses every building (abandoned, 5); the second gets
+//     morale 150 and unrest 24 (UnrestWarning at 25, 9); the third morale 150 and unrest 30 (rebellion, 8)
+//   two planets of the AI (`aiEmpire`): morale 150, unrest 30, the AI knows the human (rebels may join the
+//     human, 19); every planet of another owner gets the human's spy satellite (+0xc4 + EN = 1: guns expel it, 13)
+//   TRADE_THIS[EN] (0xBAE150) 12345: 1 January posts last year's trade income (21, ~tick 211 at x16)
+//   --messages-mode diplo also: DEBUGX (0xBAE587) on, the AI's contact age with the human -1 and their relation
+//     neutral (3), the diplomacy counter last[ai*9+EN] (0xDAF520) 290: MI_DIPLOMACY sends the human messages (10),
+//     a declaration of war among them (DiplomaciaMegtamadas, 6)
+//   the inbox (Uzenetek 0xDA6620, 0x88 each): four messages with blocks 0x7771..0x7774: expiry Ido + 16*20 and
+//     Ido + 16*60, one kept (+4 = 1) past its expiry, one with expiry 0 (FRISSIT_Messages, Story_MessageElevules)
+function stageMessages() {
+  const en = T.EN.readS32(), ai = cfg.aiEmpire, np = T.HanyBolygo.readS32();
+  const out = { en, ai, skipped: [] };
+  const rec = (p) => T.Bolygok.add(p * 0x188);
+  const unrest = (p) => va(0xb99668).add(4 * p);
+  const free = (p) => rec(p).add(0x64).readU8() === 0 && rec(p).add(0x186).readU8() === 0 && rec(p).add(0x187).readU8() === 0;
+  const mine = [], theirs = [];
+  for (let p = 1; p <= np; p++) {
+    if (owner(p) === en && free(p)) mine.push(p);
+    else if (owner(p) === ai) theirs.push(p);
+  }
+  out.mine = mine;
+  if (mine.length > 3) {
+    // The home planet stays: take the last three.
+    mine.splice(0, mine.length - 3);
+  }
+  if (mine.length >= 1) {
+    const p = mine[0], b = T.Epuletek.add(4 * p).readPointer(), slots = T.Slots.add(4 * p).readS32();
+    for (let j = 1; j <= slots; j++) b.add(j * 0x20).writeU8(0);
+    va(0xba9518).add(4 * p).writeS32(0);
+    out.abandoned = p;
+  } else out.skipped.push('abandoned');
+  if (mine.length >= 2) { rec(mine[1]).add(0x30).writeS32(150); unrest(mine[1]).writeS32(24); out.warning = mine[1]; } else out.skipped.push('warning');
+  if (mine.length >= 3) { rec(mine[2]).add(0x30).writeS32(150); unrest(mine[2]).writeS32(30); out.revolt = mine[2]; } else out.skipped.push('revolt');
+  const rebels = theirs.filter(free).slice(0, 2);
+  for (const p of rebels) { rec(p).add(0x30).writeS32(150); unrest(p).writeS32(30); }
+  va(0xbaebb8).add(ai * 19 + en).writeU8(1);
+  out.rebels = rebels;
+  out.satellites = [];
+  for (let p = 1; p <= np; p++) if (owner(p) !== 0 && owner(p) !== en) { rec(p).add(0xc4 + en).writeU8(1); out.satellites.push(p); }
+  va(0xbae150).add(4 * en).writeS32(12345);
+  out.mode = cfg.messagesMode;
+  if (cfg.messagesMode === 'diplo') stageDiplo(en, ai, out);
+  const box = va(0xda6620), n = va(0xdabdd0), ido = A.Ido.readS32();
+  const msgs = [[0x7771, 0, ido + 16 * 20], [0x7772, 1, ido + 16 * 5], [0x7773, 0, 0], [0x7774, 0, ido + 16 * 60]];
+  msgs.forEach(([block, kept, t], i) => {
+    const m = box.add(i * 0x88);
+    m.writeS32(block); m.add(4).writeU8(kept); m.add(8).writeS32(t);
+  });
+  out.inboxBefore = n.readS32();
+  n.writeS32(msgs.length);
+  out.inbox = msgs;
+  return out;
+}
+
+// --messages-mode diplo: the AI writes to the human (MI_DIPLOMACY, 10) and declares war (6). Not a replay: the
+// message's reason code (MiertValaszoltAztAmitValaszolt exe 0x4c7e80, diplomacy.md §11) isn't ported.
+function stageDiplo(en, ai, out) {
+  va(0xbae587).writeU8(1);
+  va(0xbaed28).add(4 * (ai * 19 + en)).writeS32(-1);
+  const rel = (a, b) => va(0xdabf38).add((a * 19 + b) * 0x26 + 0x25);
+  out.level = [rel(ai, en).readU8(), rel(en, ai).readU8()];
+  rel(ai, en).writeU8(3); rel(en, ai).writeU8(3);
+  va(0xdaf520).add(4 * (ai * 9 + en)).writeS32(290);
+}
+
 // --battles: auto-resolved space battles and ground wars in the first ticks (re/rules/info-messages.md §3.2: the
 // battle outcomes 11/12, 15-18, 22-25). The human's empire is handed to the AI (PlayerKi[EN] = 0; the AI's
 // pass is switched off, every fleet is visible): no battle opens the real-time screen, and SpaceWarIndit/GroundWarIndit
@@ -1124,6 +1198,138 @@ function stageInfo() {
     emit({ k: 'iorder', before: k, libc, type: o[0], vals: [].concat(...o[1]) });
   }
 }
+// --answers N: every --answers-every ticks (from tick 1), N random inbox steps at IdoNapValtozott, before that tick's
+// save (re/rules/info-messages.md §6-§7): the stories' message calls through the exe's own functions (NewMessage
+// 0x508fe0 with SetMessageFajOverride/SetParamStr/SetParamInt, KiszedUzenet 0x506200, KiszedUtolsoUzenet 0x506140,
+// LetiltReszlet 0x5063d0) and the messages screen's steps as the screen makes them: a list row clicked
+// (Messages_Main's code, then KiertekelUjuzenet 0x505d60), an answer (AktValasz0to3 + VoltUjValasz, then
+// ValaszKivalasztva 0x509d10), FRISSIT_Messages2's automatic message (0x5058b0, 0x504a20, 0x505d60), the arrows. The
+// typing end lies inside MessagesGfx2D_2 (exe 0x507b43..0x507c1b) and is transcribed here. Set-up before save 0:
+// the kinds loaded (LoadMessagesFile 0x5063f0), no dialogue running, five messages. Each step is reported as
+// {k: 'morder', before: k, op, vals}: op 'new' [id, days], 'race' [r], 'param' [slot, text], 'paramint' [slot, v],
+// 'remove' [id], 'withdraw' [id], 'disable' [part], or 'order' [type, ...values] (ig2_sim MessageOrder's wire form).
+const MS = {
+  newMessageRaw: nf(va(0x508fe0), 'void', ['int', 'int']),
+  // An automatic kind sets AktKepKell 10 (the screen would open and pause the game): kept as it was.
+  newMessage: (id, days) => { const kk = va(0xbae250).readS32(); MS.newMessageRaw(id, days); va(0xbae250).writeS32(kk); },
+  race: nf(va(0x5094c0), 'void', ['int']),
+  paramStr: nf(va(0x509570), 'void', ['int', 'pointer']),
+  paramInt: nf(va(0x509500), 'void', ['int', 'int']),
+  remove: nf(va(0x506200), 'void', ['int']),
+  withdraw: nf(va(0x506140), 'void', ['int', 'int']),
+  disable: nf(va(0x5063d0), 'void', ['int']),
+  load: nf(va(0x5063f0), 'void', []),
+  open: nf(va(0x505d60), 'void', []),
+  answer: nf(va(0x509d10), 'void', []),
+  findAuto: nf(va(0x5058b0), 'void', []),
+  placeAuto: nf(va(0x504a20), 'void', []),
+  g: (a) => va(a).readS32(), s: (a, v) => va(a).writeS32(v), b: (a) => va(a).readU8(), sb: (a, v) => va(a).writeU8(v),
+};
+// UzenetFajtak (0xD90DF0, 0x110 each: +0 id, +4 conversation, +5 automatic), HanyUzenetFajta 0xDABE38.
+function msKinds() {
+  const n = MS.g(0xdabe38), out = { conv: [], auto: [], plain: [], flags: {} };
+  for (let i = n - 1; i >= 0; i--) {
+    const r = va(0xd90df0 + 0x110 * i);
+    out.flags[r.readS32()] = [r.add(4).readU8(), r.add(5).readU8()];
+  }
+  for (const id in out.flags) {
+    const f = out.flags[id];
+    (f[1] ? out.auto : f[0] ? out.conv : out.plain).push(id | 0);
+  }
+  return out;
+}
+let msK = null;
+function msPick(list) { return list.length ? list[srnd(list.length)] : 1; }
+function msNew() {
+  const r = srnd(10), id = r < 6 ? msPick(msK.conv) : r < 8 ? msPick(msK.auto) : msPick(msK.plain);
+  const days = srnd(3) ? 0 : 1 + srnd(40);
+  MS.newMessage(id, days);
+  emit({ k: 'morder', before: k, op: 'new', vals: [id, days] });
+  if (!srnd(3)) { const x = srnd(16); MS.race(x); emit({ k: 'morder', before: k, op: 'race', vals: [x] }); }
+  if (!srnd(3)) {
+    const slot = srnd(6), t = ['Orion', 'X', 'a long parameter text'][srnd(3)];
+    MS.paramStr(slot, Memory.allocAnsiString(t));
+    emit({ k: 'morder', before: k, op: 'param', vals: [slot, t] });
+  }
+  if (!srnd(4)) {
+    const slot = srnd(6), v = srnd(100000) - 500;
+    MS.paramInt(slot, v);
+    emit({ k: 'morder', before: k, op: 'paramint', vals: [slot, v] });
+  }
+}
+function msOrder(type, vals) { emit({ k: 'morder', before: k, op: 'order', vals: [type].concat(vals) }); }
+// MessagesGfx2D_2's typing end (exe 0x507b43..0x507c1b), transcribed: Szovegvegen; a plain kind clears
+// FolyamatbanU/UH; a dialogue that ends here (ParbeszedVegeJon) is over: the entry read; FolyamatbanPA.
+function msTypedOut() {
+  if (MS.b(0xda6607) === 1) return;
+  MS.sb(0xda6607, 1); MS.s(0xdabde0, 1);
+  const cur = MS.g(0xdabdc0), id = MS.g(0xda6620 + 0x88 * cur), f = msK.flags[id] || [0, 0];
+  if (!f[0]) { MS.s(0xdabda0, -1); MS.s(0xdabda4, -1); }
+  if (MS.b(0xd909bb)) {
+    MS.sb(0xd909ba, 1); MS.s(0xdabda0, -1); MS.s(0xdabda4, -1); MS.s(0xdabdb0, -1);
+    va(0xda6624 + 0x88 * cur).writeU8(1); MS.s(0xdabdb8, -1);
+  }
+  MS.sb(0xda65e7, MS.b(0xd909ba));
+  msOrder(5, []);
+}
+function msStep() {
+  const r = srnd(100), n = MS.g(0xdabdd0);
+  if (r < 14 || n === 0) return msNew();
+  if (r < 18) {
+    const id = MS.g(0xda6620 + 0x88 * srnd(n));
+    if (srnd(2)) { MS.remove(id); emit({ k: 'morder', before: k, op: 'remove', vals: [id] }); }
+    else { MS.withdraw(id, 0); emit({ k: 'morder', before: k, op: 'withdraw', vals: [id] }); }
+    return;
+  }
+  if (r < 21) { const p = 1 + srnd(9); MS.disable(p); emit({ k: 'morder', before: k, op: 'disable', vals: [p] }); return; }
+  if (r < 26) {
+    // The arrows (Messages_Main): one newer / older; the selected row follows the message.
+    let p = MS.g(0xdabdd4), row = MS.g(0xd90dc8);
+    if (srnd(2)) { if (p > 0) { p--; if (row !== -1) row = row < 3 ? row + 1 : -1; } }
+    else if (p + 4 < n) { p++; if (row !== -1) row = row < 1 ? -1 : row - 1; }
+    MS.s(0xdabdd4, p); MS.s(0xd90dc8, row);
+    return msOrder(1, [p, row]);
+  }
+  const running = MS.g(0xdabda0) !== -1 || !MS.b(0xd909ba);
+  if (running) {
+    if (MS.b(0xda6607) !== 1) return msTypedOut();
+    const c = MS.g(0xdabe3c);
+    if (c > 0) {
+      const kk = srnd(c);
+      MS.s(0xd90dcc, kk); MS.s(0xdabdb4, 1); MS.answer();
+      return msOrder(4, [kk]);
+    }
+    return;
+  }
+  if (MS.g(0xdabdd8) === -1 && srnd(3)) {
+    // A list row (Messages_Main's code after its checks: no dialogue, ParbeszedVege, no automatic message).
+    const row = srnd(4);
+    MS.s(0xdabdb8, -1);
+    if (n > row) { MS.s(0xd90dc8, row); MS.s(0xdabdb8, 1); }
+    if (n < MS.g(0xd90dc8)) MS.s(0xd90dc8, -1);
+    MS.placeAuto();
+    if (MS.g(0xdabdb8) === 1) MS.open();
+    return msOrder(2, [row]);
+  }
+  // FRISSIT_Messages2's automatic message.
+  if (MS.g(0xdabdb8) === -1 || (MS.g(0xdabde0) === 1 && MS.b(0xd909ba))) {
+    MS.findAuto();
+    if (MS.g(0xdabdd8) !== -1) { MS.s(0xdabdb8, 1); MS.placeAuto(); MS.open(); }
+  }
+  msOrder(3, []);
+}
+function stageAnswersSetup() {
+  if (MS.g(0xdabe38) === 0) MS.load();
+  msK = msKinds();
+  soSeed = (cfg.seed | 0) ^ 0x3e55;
+  MS.s(0xdabda0, -1); MS.s(0xdabda4, -1); MS.sb(0xd909ba, 1); MS.sb(0xd909bb, 0); MS.sb(0xda6607, 1);
+  MS.s(0xdabdd8, -1); MS.s(0xdabdb8, -1); MS.s(0xdabdc0, -1); MS.s(0xdabdd4, 0); MS.s(0xd90dc8, -1);
+  for (let i = 0; i < 5; i++) MS.newMessage(i < 3 ? msPick(msK.conv) : i < 4 ? msPick(msK.auto) : msPick(msK.plain), 0);
+  return { kinds: [msK.conv.length, msK.auto.length, msK.plain.length], inbox: MS.g(0xdabdd0) };
+}
+function stageAnswers() {
+  for (let i = 0; i < cfg.answers; i++) msStep();
+}
 // --design N: every --design-every ticks (from tick 3), N random design messages go through the exe's own
 // MULTIGET_Design (0x4b4d60, re/rules/design-orders.md) at IdoNapValtozott, before that tick's save, with the
 // starmap orders' stubs (0x33's flag is a byte field) and their set-up (the human's stations and two fleets): 0x33
@@ -1342,6 +1548,42 @@ Interceptor.attach(crt.getExportByName('rand'), {
 });
 Interceptor.attach(va(0x605ed0), { onEnter() { mark(-1); } });
 
+// --messages also logs FRISSIT_Scroll2 (exe 0x556210, the 100 Hz UI step of the scrolling line, info-messages.md
+// §2.3) whenever a call changed the line: [start, speed, limit] (f32 bits) and the text length before and after,
+// and the queue length before and after ('scroll2', batched by 200).
+let scrollRows = [];
+function scrollState() {
+  const t = va(0xe41230).readCString();
+  return [va(0xe412fc).readU32(), va(0xe41300).readU32(), va(0xe41304).readU32(), t ? t.length : 0, va(0xe413d4).readS32()];
+}
+// --scroll2 instead switches to the starmap (AktKepKell 0xBAE250 = 2: FRISSIT_Scroll2 runs only below screen 0xE),
+// writes no per-tick saves and posts test texts through ScrollUzenet (exe 0x556b50) at set times after the load:
+// lengths 4..60 (cut at 53), important ones that cut the line, an interrupt.
+const scrollUzenet = nf(va(0x556b50), 'void', ['pointer', 'int', 'int', 'int']);
+const SCROLL_POSTS = [
+  [1000, 'Abcd', 0x14, 0, 0], [1000, 'A message of twenty-one', 2, 0, 0], [1000, 'x'.repeat(37), 3, 0, 0],
+  [1000, 'y'.repeat(60), 4, 0, 0], [25000, 'Important one', 5, 1, 0], [26000, 'z'.repeat(52), 6, 1, 0],
+  [26000, 'Cut in', 7, 0, 1], [60000, 'Last', 8, 0, 0],
+];
+let scrollT0 = 0, scrollNext = 0;
+function scrollPosts() {
+  const t = Date.now() - scrollT0;
+  while (scrollNext < SCROLL_POSTS.length && SCROLL_POSTS[scrollNext][0] <= t) {
+    const [, text, id, imp, intr] = SCROLL_POSTS[scrollNext++];
+    scrollUzenet(Memory.allocAnsiString(text), id, imp, intr);
+    emit({ k: 'scroll2post', text, id, imp, intr, kep: A.AktKep.readS32() });
+  }
+}
+Interceptor.attach(va(0x556210), {
+  onEnter() { if ((cfg.messages || cfg.scroll2) && phase === 2) this.pre = scrollState(); },
+  onLeave() {
+    if (!this.pre) return;
+    const post = scrollState();
+    if (post.some((v, i) => v !== this.pre[i])) scrollRows.push([...this.pre, ...post]);
+    if (scrollRows.length >= 200) { emit({ k: 'scroll2', rows: scrollRows }); scrollRows = []; }
+  },
+});
+
 function save(where) {
   busy = true;
   const slot = cfg.slotBase + k, ido2 = A.Ido2.readS32();
@@ -1360,6 +1602,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
   onEnter() {
     if (busy) return;
     frames++;
+    if (cfg.scroll2 && phase === 2) scrollPosts();
     if (phase === 0 && frames === cfg.startAfterFrames) {
       betolt(Memory.allocAnsiString(cfg.scenario));
       setSpeed(cfg.speed, 1);
@@ -1379,12 +1622,15 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (cfg.wormholes) emit({ k: 'wormholes', stage: stageWormholes() });
       if (cfg.battles) emit({ k: 'battles', stage: stageBattles() });
       if (cfg.deaths) emit({ k: 'deaths', stage: stageDeaths() });
+      if (cfg.messages) emit({ k: 'messages', stage: stageMessages() });
+      if (cfg.scroll2) { A.AktKepKell.writeS32(2); scrollT0 = Date.now(); }
       if (cfg.tutorialSighting) emit({ k: 'tutorial', stage: stageTutorial() });
       if (cfg.orders || cfg.design) emit({ k: 'orders', stage: stageOrdersSetup() });
       if (cfg.colony) emit({ k: 'colony', stage: stageColonySetup() });
       if (cfg.research) { soSeed = (cfg.seed | 0) ^ 0x5eed; va(0xb77230).writeU8(1); }
       if (cfg.info) { soSeed = (cfg.seed | 0) ^ 0x1f0; va(0xb77230).writeU8(1); }
       if (cfg.design) soSeed = (cfg.seed | 0) ^ 0xd35;
+      if (cfg.answers) emit({ k: 'messages', stage: stageAnswersSetup() });
       if (cfg.stage) {
         const st = stageTrade();
         loadSave(cfg.preSlot, Memory.allocAnsiString(cfg.name + ' pre'), 2);
@@ -1412,8 +1658,14 @@ Interceptor.attach(A.IdoNapValtozott, {
     if (cfg.colony && k >= 1 && k % cfg.ordersEvery === 0) stageColony();
     if (cfg.research && k >= 1 && k % cfg.researchEvery === 0) stageResearch();
     if (cfg.info && k >= 1 && k % cfg.infoEvery === 0) stageInfo();
+    if (cfg.answers && k >= 1 && k % cfg.answersEvery === 0) stageAnswers();
     if (cfg.design && k === 2) doGarrisons();
     if (cfg.design && k >= 3 && k % cfg.designEvery === 0) stageDesign();
+    if (cfg.scroll2) {
+      k++;
+      if (k > cfg.ticks) { emit({ k: 'scroll2', rows: scrollRows }); scrollRows = []; phase = 3; emit({ k: 'done' }); flush(); }
+      return;
+    }
     save('tick');
     srand((cfg.seed + A.Ido2.readS32()) >>> 0);
     if (k > cfg.ticks) { phase = 3; emit({ k: 'done' }); flush(); }

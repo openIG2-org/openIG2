@@ -356,6 +356,12 @@ pub fn rop_places(state: &SaveState, sel: &Selection, panels: &Panels, redirect:
 }
 
 impl Menus {
+    /// The colony screen's planet info mode on `planet` (re/screens/colony.md §12): the long info up, no zoom.
+    pub fn colony_info(planet: usize) -> Self {
+        let info = PlanetInfo { planet, backup: [0.0, 0.0, 600.0], start: [0.0, 0.0, 600.0], phase: InfoPhase::Up };
+        Self { info: Some(info), ..Default::default() }
+    }
+
     /// The long info is on (`StarmapPlanetInfoMod`).
     pub fn info_on(&self) -> bool {
         self.info.is_some()
@@ -771,7 +777,7 @@ impl Menus {
                         }
                     }
                 }
-                self.draw_long_info(f, d, t, state, rules, i.planet, q, counter);
+                self.draw_long_info(f, d, t, state, rules, i.planet, (q * 80.0 * q + 20.0).trunc() / 100.0, counter);
             }
             // The exit button comes in with `(Zoom − BackupZoom)/(600 − BackupZoom)` (`addo` 0: 176 wide).
             let h = ((zoom - i.backup[2]) / (600.0 - i.backup[2])).clamp(0.0, 1.0);
@@ -783,7 +789,8 @@ impl Menus {
             }
         }
         if let Some(m) = &self.menu {
-            self.draw_menu(f, d, t, m);
+            self.draw_menu(f, d, t, m, true);
+            self.draw_menu(f, d, t, m, false);
         }
         if let Some(r) = &self.rop {
             if r.frame >= 30 && self.held {
@@ -800,9 +807,28 @@ impl Menus {
         }
     }
 
-    fn draw_menu(&self, f: &mut Frame, d: &Draw2d, t: &MenuTexts, m: &SelectMenu) {
+    /// The colony screen's info mode (re/screens/colony.md §12.3): the long info at full brightness (`AktKep == 3`),
+    /// the open menu's box over it (`ColonyGfx2D_1`'s second fader pass, drawn after the texts [obs]), then the
+    /// menu's items (`ColonyGfx2D_4`). The panel's faders are `GFX_Colony`'s (`crate::hud::draw_colony`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_colony_info(&self, f: &mut Frame, d: &Draw2d, t: &MenuTexts, state: &SaveState, rules: &ig2_rules::Rules, planet: usize, counter: i32) {
+        self.draw_long_info(f, d, t, state, rules, planet, 1.0, counter);
+        if let Some(m) = &self.menu {
+            self.draw_menu(f, d, t, m, true);
+            self.draw_menu(f, d, t, m, false);
+        }
+    }
+
+    /// An open menu's box (`boxes`) or its items.
+    fn draw_menu(&self, f: &mut Frame, d: &Draw2d, t: &MenuTexts, m: &SelectMenu, boxes: bool) {
         let (x, y) = (m.x as f32, m.y as f32);
         let col = |v: i32| if v == m.hovered { 6 } else { 3 };
+        let menu_box = |f: &mut Frame, d: &Draw2d, r: [f32; 4]| if boxes { menu_box(f, d, r) };
+        let put = |f: &mut Frame, s: &[u8], x: f32, y: f32, len: usize, size: usize, align: u32, c: usize| {
+            if !boxes {
+                d.text(f, s, x, y, len, size, align, c);
+            }
+        };
         match m.kind {
             MenuKind::Tax | MenuKind::AutoBuild => {
                 let n = m.items.len() as f32;
@@ -810,13 +836,13 @@ impl Menus {
                 menu_box(f, d, [x - 6.0, y - 2.0, 130.0, h]);
                 for (i, &v) in m.items.iter().enumerate() {
                     let s = if m.kind == MenuKind::Tax { t.tax(v) } else { t.autobuild(v) };
-                    d.text(f, &s, x, y + 3.0 + 13.0 * i as f32, 20, 2, 4, col(v));
+                    put(f, &s, x, y + 3.0 + 13.0 * i as f32, 20, 2, 4, col(v));
                 }
             }
             MenuKind::Priority => {
                 menu_box(f, d, [x - 6.0, y - 2.0, 130.0, 43.0]);
                 for k in 1..4 {
-                    d.text(f, &t.priority(k), x, y + 13.0 * k as f32 - 10.0, 20, 2, 4, col(k));
+                    put(f, &t.priority(k), x, y + 13.0 * k as f32 - 10.0, 20, 2, 4, col(k));
                 }
             }
             MenuKind::Sale(_) => {
@@ -824,7 +850,7 @@ impl Menus {
                 let fmt = t.hu(5, 45);
                 let s = fill_format(&fmt, &m.texts[0], &m.texts[1]);
                 menu_box(f, d, [x - 6.0, y - 2.0, (s.len() * 6 + 10) as f32, 17.0]);
-                d.text(f, &s, x, y + 3.0, s.len(), 2, 4, col(1));
+                put(f, &s, x, y + 3.0, s.len(), 2, 4, col(1));
             }
             MenuKind::Planets => {
                 let w = 6 * (m.a + m.b + 1);
@@ -833,20 +859,20 @@ impl Menus {
                     let (c, r) = (i as i32 / m.rows, i as i32 % m.rows);
                     let cx = (m.x + w * c) as f32;
                     let (name, text) = split_planet_item(s);
-                    d.text(f, name, cx, y + 3.0 + 13.0 * r as f32, m.a as usize, 2, 4, col(p));
+                    put(f, name, cx, y + 3.0 + 13.0 * r as f32, m.a as usize, 2, 4, col(p));
                     if !text.is_empty() {
-                        d.text(f, text, cx + 2.0 + 6.0 * m.a as f32, y + 4.0 + 13.0 * r as f32, m.b as usize, 1, 4, 1);
+                        put(f, text, cx + 2.0 + 6.0 * m.a as f32, y + 4.0 + 13.0 * r as f32, m.b as usize, 1, 4, 1);
                     }
                 }
             }
         }
     }
 
-    /// `StarmapHosszuInfoKiir(320, 34)` (re/screens/starmap.md §15.2) at brightness `80q² + 20` %.
+    /// `StarmapHosszuInfoKiir(320, 34)` (re/screens/starmap.md §15.2) at brightness `bright` (`KiirStrSzinSzorzo`
+    /// / 100: `80q² + 20` % on the starmap, 100 on the colony screen).
     #[allow(clippy::too_many_arguments)]
-    fn draw_long_info(&self, f: &mut Frame, d: &Draw2d, t: &MenuTexts, state: &SaveState, rules: &ig2_rules::Rules, p: usize, q: f32, counter: i32) {
+    fn draw_long_info(&self, f: &mut Frame, d: &Draw2d, t: &MenuTexts, state: &SaveState, rules: &ig2_rules::Rules, p: usize, bright: f32, counter: i32) {
         let (x0, y0) = (320.0, 34.0);
-        let bright = (q * 80.0 * q + 20.0).trunc() / 100.0;
         let txt = |f: &mut Frame, s: &[u8], x: f32, y: f32, len: usize, size: usize, align: Align, c: usize| {
             let rgb = d.palette.get(c).copied().unwrap_or([1.0; 3]);
             d.font.text(f, &d.v, s, x, y, len, size, align, [rgb[0] * bright, rgb[1] * bright, rgb[2] * bright], None);

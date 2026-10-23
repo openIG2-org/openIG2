@@ -169,9 +169,25 @@ pub struct Pose {
 pub struct Plans<'a> {
     pub designs: &'a [Vec<ig2_sim::spacewar::Design>],
     pub ships: &'a [ig2_sim::spacewar::Ship],
+    /// Per gun, its building's tech (`EpuletekLeiro[type].tech`; −1 none), and `TalalmanyokrEro`.
+    pub gun_tech: Vec<i32>,
+    pub firepower: &'a [i32],
+    /// `Flottak` (0x80 each: the name first, the owner at `+0x15`).
+    pub fleets: &'a [[u8; ig2_sim::save::FLEET_SIZE]],
 }
 
 impl Plans<'_> {
+    /// `Tervek[e][d]`'s name (the record's first bytes).
+    fn plan_name(&self, e: i32, d: i32) -> Vec<u8> {
+        let Some(p) = self.designs.get(e.max(0) as usize).and_then(|x| x.get(d.max(0) as usize)) else { return Vec::new() };
+        p.raw[..p.raw.iter().position(|&c| c == 0).unwrap_or(0x14).min(0x14)].to_vec()
+    }
+
+    /// A fighter group's firepower (`+0x9c`): its design's attack × the count.
+    fn fighter_value(&self, g: &ig2_sim::spacebattle::Fighter) -> i32 {
+        self.designs.get(g.owner.max(0) as usize).and_then(|e| e.get(g.design.max(0) as usize)).map_or(0, |d| d.attack).wrapping_mul(g.count)
+    }
+
     /// A unit's value: a plan-less unit's own design (`+0xc`), else the sum over its ships' designs, by the plan owner
     /// (`+0x1d4`, the original owner).
     fn unit_value(&self, u: &Unit) -> i32 {
@@ -196,6 +212,8 @@ pub enum Out {
     Left,
     /// A battle sound (`PlaySound(&SpWar_Hangok[i])` after the volume write).
     Sound(crate::spacewar_fx::Sound),
+    /// A weapon loop's start, volume or end (`lovedeksound`).
+    Loop(crate::spacewar_fx::Loop),
 }
 
 /// The battle screen's state for battle slot `slot`.
@@ -269,6 +287,7 @@ pub struct SpaceWarUi {
     rotating: bool,
     height: bool,
     pub boxing: bool,
+    box_spoke: bool,
     prev_mouse: [f32; 2],
     pub mouse: [f32; 2],
     /// `+0x2230` hovered index (−1 none), `+0x2234` its kind (1 unit, 2 gun); `+0x2244` the pointer is on the plane.
@@ -299,6 +318,33 @@ pub struct SpaceWarUi {
     /// `Battle::formation_choice` keeps the start value, so the screen keeps the end here.
     pub formation_leaving: bool,
     pub formation_done: bool,
+    /// `+0x3430` / `+0x3434` (exe `+0x2d88` / `+0x2d8c`): the formation chosen in the phase and the one loaded
+    /// (0: `felallas1`, the start's; −1 without the phase). [`SpaceWarUi::formation_due`] places the side anew.
+    pub formation_pick: i32,
+    pub formation_loaded: i32,
+    /// The voices (`SpeakingDirector::Play(&SpaceWarSpeaker, line, kind)`, §7.4) due, and the throttle
+    /// `beszedlasttick` / `acttick2` (+1 a UI tick with the gfx up; 30 ticks between lines).
+    pub voices: Vec<(i32, i32)>,
+    speech_last: i64,
+    acttick2: i64,
+    /// The fighter chase camera (§2.2, §7.4): `spwcameramode` (key C), `vadaszlinked`, `aktvadasz` (the followed group,
+    /// not drawn; −1 none), `elozovadasz`, and this frame's exact follow (eye, target).
+    pub chase: bool,
+    linked: bool,
+    pub chased: i32,
+    prev_chased: i32,
+    chase_view: Option<([f32; 3], [f32; 3])>,
+    /// The guns' marker timers (gun `+0x10`: `kijelolesanim` adds the frame's ms up to 1000; §7.4).
+    pub gun_t: Vec<i32>,
+    /// The guns' selection timers (`+0x8c` grow, `+0x90` fade, `+0x94` attacked; §3.6) and the previous selection.
+    pub gun_timers: Vec<[i32; 3]>,
+    gun_was: Vec<bool>,
+    /// The small box's title (`infoszamol`'s snapshot): one unit's plan name and the tech under it; the big box's.
+    title: Vec<u8>,
+    title_tech: i32,
+    pub big: crate::spacewar_hud::BigInfo,
+    /// `MousePointerType` (0 normal, 2 own unit, 3 attack, 4 the armed fire cursor) and `spwckezdotimer` (ms).
+    pub start_ms: Option<u32>,
     pub group_count: [i32; 10],
     pub group_enabled: [i32; 10],
     pub group_reload: [i32; 10],
@@ -388,6 +434,7 @@ impl SpaceWarUi {
             rotating: false,
             height: false,
             boxing: false,
+            box_spoke: false,
             prev_mouse: [0.0; 2],
             mouse: [0.0; 2],
             hovered: -1,
@@ -408,6 +455,23 @@ impl SpaceWarUi {
             column: [0; 10],
             formation_leaving: false,
             formation_done: false,
+            formation_pick: if b.formation_choice { 0 } else { -1 },
+            formation_loaded: if b.formation_choice { 0 } else { -1 },
+            voices: Vec::new(),
+            speech_last: 0,
+            acttick2: 0,
+            chase: false,
+            linked: false,
+            chased: -1,
+            prev_chased: -1,
+            chase_view: None,
+            gun_t: b.guns.iter().map(|g| g.hits).collect(),
+            gun_timers: vec![[0; 3]; b.guns.len()],
+            gun_was: vec![false; b.guns.len()],
+            title: Vec::new(),
+            title_tech: -1,
+            big: Default::default(),
+            start_ms: None,
             group_count: [0; 10],
             group_enabled: [0; 10],
             group_reload: [0; 10],
@@ -461,7 +525,7 @@ impl SpaceWarUi {
         if self.restoring {
             self.view().eye_target()
         } else {
-            (self.eye, self.target)
+            self.chase_view.unwrap_or((self.eye, self.target))
         }
     }
 
@@ -473,22 +537,47 @@ impl SpaceWarUi {
 
     // ------------------------------------------------------------------------------------------- camera
 
-    /// `kamerabeallit` (spec §2.2): the targets from the fields, then the smoothing (×0.85 a tick).
-    fn kamerabeallit(&mut self) {
+    /// `kamerabeallit` (spec §2.2): the targets from the fields, or the first live fighter group in chase mode (eye
+    /// at the group, looking 10 along its heading), then the smoothing (×0.85 a tick) until the chase links.
+    fn kamerabeallit(&mut self, b: &Battle) {
+        if self.chase && self.restoring {
+            self.chase = false;
+        }
         if (self.tilt as f64) < -1.5607963267948965 {
             self.tilt = TILT_MIN;
         }
         let m = crate::starmap::create_matrix(self.tilt, -self.yaw, HALF_PI);
-        let p = self.pivot;
-        let te: [f32; 3] = std::array::from_fn(|i| m[i][2] * self.zoom + p[i]);
-        if self.init_camera || self.restoring {
+        let mut p = self.pivot;
+        let mut te: [f32; 3] = std::array::from_fn(|i| m[i][2] * self.zoom + p[i]);
+        if !self.chase {
+            (self.linked, self.chased) = (false, -1);
+        } else if let Some(g) = b.fighters.iter().position(|f| f.alive) {
+            if self.prev_chased != g as i32 {
+                (self.prev_chased, self.linked, self.chased) = (g as i32, false, -1);
+            }
+            if self.linked {
+                self.chased = g as i32;
+            }
+            let f = &b.fighters[g];
+            te = [f.pos.x, f.pos.y, f.pos.z];
+            p = [f.pos.x + f.dir.x * 10.0, f.pos.y + f.dir.y * 10.0, f.pos.z + f.dir.z * 10.0];
+        }
+        if self.init_camera {
             self.init_camera = false;
             (self.eye, self.target) = (te, p);
-        } else {
+            return;
+        }
+        let d2: f32 = (0..3).map(|i| (self.eye[i] - te[i]) * (self.eye[i] - te[i])).sum();
+        if self.chase && !self.linked && d2.sqrt() < 1.0 {
+            self.linked = true;
+        }
+        if !self.linked && !self.restoring {
             for i in 0..3 {
                 self.eye[i] = te[i] + (self.eye[i] - te[i]) * 0.85;
                 self.target[i] = p[i] + (self.target[i] - p[i]) * 0.85;
             }
+        } else {
+            (self.eye, self.target) = (te, p);
         }
     }
 
@@ -589,6 +678,10 @@ impl SpaceWarUi {
             (self.t.pan, self.t.zoom) = (pan, zoom);
         }
         let g = crate::spacewar_screen::gorbe(t);
+        // The big box slides with the view animation (`+0x2548`; inverted on the way back).
+        if self.big_info != 0 {
+            self.big.f = if self.back { 1.0 - g } else { g }.clamp(0.0, 1.0);
+        }
         let (o, tt) = (self.o, self.t);
         self.yaw = if !self.back && self.info_mode { o.yaw + Self::gorbe2(t / 2.0) } else { o.yaw + (tt.yaw - o.yaw) * g };
         self.tilt = o.tilt + (tt.tilt - o.tilt) * g;
@@ -629,6 +722,8 @@ impl SpaceWarUi {
                 self.rescale(crate::spacewar_screen::SCENE_SCALE);
                 self.entering = false;
                 self.fade = 1.0;
+                // `spwckezdotimer`: the MP banner's clock starts here.
+                self.start_ms = Some(now_ms);
             }
         }
         self.pan_target = self.pivot;
@@ -708,6 +803,7 @@ impl SpaceWarUi {
     /// `FRISSIT_SpaceWar2` → `SpaceWarFrissit2` (spec §2.4, §7.2), 30 times a second.
     pub fn tick(&mut self, b: &Battle, plans: &Plans, out: &mut Vec<Out>) {
         self.ticks += 1;
+        self.acttick2 += 1;
         if !self.first_frame && !self.entering {
             self.radar = if self.leaving { (self.radar - 1).max(0) } else { (self.radar + 1).min(100) };
         }
@@ -752,7 +848,7 @@ impl SpaceWarUi {
             self.column_tick(b);
         }
         if !self.first_frame {
-            self.kamerabeallit();
+            self.kamerabeallit(b);
         }
         self.zoom_rate = 0.0;
         self.yaw_rate = 0.0;
@@ -852,16 +948,44 @@ impl SpaceWarUi {
         b.formation_choice && !self.formation_done
     }
 
+    /// `SpaceWarFrissit2`'s formation step (exe 0x56d870, after the column; not on the first frame or while
+    /// entering, `+0x1f98` / `+0x1fb9`): a pick that differs from the loaded formation is loaded (`loadfelallas`,
+    /// the caller's `Game::pick_formation`), which re-places the human's side.
+    pub fn formation_due(&mut self) -> Option<i32> {
+        if self.first_frame || self.entering || self.formation_pick == self.formation_loaded {
+            return None;
+        }
+        self.formation_loaded = self.formation_pick;
+        Some(self.formation_pick)
+    }
+
+    /// The units' poses after a re-placement (no battle tick runs in the paused phase).
+    pub fn placed(&mut self, b: &Battle) {
+        if self.units.len() < b.units.len() {
+            self.units.resize(b.units.len(), UnitGfx::default());
+        }
+        for (u, g) in b.units.iter().zip(&mut self.units) {
+            if u.alive {
+                pose(u, g);
+            }
+        }
+    }
+
     // ------------------------------------------------------------------------------------------ frames
 
     /// One frame of `screenfrissites` (spec §3): the view animation, the selection timers, the first frame's block.
     pub fn frame(&mut self, b: &Battle, now_ms: u32, out: &mut Vec<Out>) {
         if self.first_frame {
             self.first_frame = false;
-            self.kamerabeallit();
+            self.kamerabeallit(b);
             self.first_frame = true;
         }
         self.anim_frame(b, self.last_frame_ms, now_ms, out);
+        // `screenfrissites` (§2.3): a linked chase follows the live group exactly.
+        self.chase_view = None;
+        if let (true, true, Some(f)) = (self.chase, self.linked, usize::try_from(self.chased).ok().and_then(|g| b.fighters.get(g))) {
+            self.chase_view = Some(([f.pos.x, f.pos.y, f.pos.z], [f.pos.x + f.dir.x * 10.0, f.pos.y + f.dir.y * 10.0, f.pos.z + f.dir.z * 10.0]));
+        }
         let dt = now_ms.saturating_sub(self.last_frame_ms) as i32;
         self.last_frame_ms = now_ms;
         self.kijelolesanim(b, dt);
@@ -922,12 +1046,81 @@ impl SpaceWarUi {
         for (g, m) in self.units.iter_mut().zip(marked) {
             g.attacked = if m { (g.attacked + dt).min(1000) } else { 0 };
         }
+        // The guns as the units (`+0x89` selected, `+0x8a` previous): grow, fade, attacked while a selected unit's attack
+        // order names the gun.
+        let n = b.guns.len();
+        self.gun_timers.resize(n, [0; 3]);
+        self.gun_was.resize(n, false);
+        let mut hit = vec![false; n];
+        for (i, u) in b.units.iter().enumerate() {
+            if u.alive && u.order == ig2_sim::spacebattle::order::ATTACK && self.units.get(i).is_some_and(|g| g.selected) && u.target_kind == ig2_sim::spacebattle::target_kind::GUN {
+                if let Some(h) = u.target.and_then(|t| hit.get_mut(t)) {
+                    *h = true;
+                }
+            }
+        }
+        for (k, (gun, &h)) in b.guns.iter().zip(&hit).enumerate() {
+            if gun.building == 0 {
+                continue;
+            }
+            let sel = self.guns.get(k).is_some_and(|g| g.0);
+            let t = &mut self.gun_timers[k];
+            if sel != self.gun_was[k] {
+                if sel {
+                    t[0] = 0;
+                }
+                t[1] = 0;
+                self.gun_was[k] = sel;
+            }
+            t[0] = (t[0] + dt).min(1000);
+            if !sel {
+                t[1] = (t[1] + dt).min(1000);
+            }
+            t[2] = if h { (t[2] + dt).min(1000) } else { 0 };
+        }
+        // The guns' marker timers: while set (1 for a foreign planet's, 1000 for the human's), + dt up to 1000.
+        self.gun_t.resize(b.guns.len(), 0);
+        for (t, g) in self.gun_t.iter_mut().zip(&b.guns) {
+            if *t == 0 {
+                *t = g.hits.min(1);
+            }
+            if *t != 0 {
+                *t = (*t + dt).min(1000);
+            }
+        }
     }
 
     // ------------------------------------------------------------------------------------------ selection
 
     fn selectable(b: &Battle, i: usize) -> bool {
         b.units.get(i).is_some_and(|u| u.alive && u.owner == b.human && u.owner != 0 && u.disabled == 0)
+    }
+
+    /// `SpeakingDirector::Play(&SpaceWarSpeaker, line, kind)` behind the screen's throttle (`beszedlasttick + 30 <
+    /// acttick2`): unit `i`'s voice (`i % 3 + 1`) when it is a capital ship (type below 8).
+    pub fn voice(&mut self, b: &Battle, i: usize, kind: i32) {
+        if b.units.get(i).is_some_and(|u| u.kind < 8) && self.speech_last + 30 < self.acttick2 {
+            self.speech_last = self.acttick2;
+            self.voices.push((i as i32 % 3 + 1, kind));
+        }
+    }
+
+    /// The battle's own voices (`dechp`, `retreat`): the dying and the dead (6 the human's dying; 7 / 9 the human's / the
+    /// others' dead) and a retreat (3 the human's, 10 the others'; line 1).
+    pub fn battle_voice(&mut self, b: &Battle, e: &ig2_sim::spacebattle::BattleEvent) {
+        use ig2_sim::spacebattle::BattleEvent;
+        match *e {
+            // `dechp`'s line is the unit's id (`+0x1a8`) % 3 + 1.
+            BattleEvent::Voice { unit, kind } if self.speech_last + 30 < self.acttick2 => {
+                self.speech_last = self.acttick2;
+                self.voices.push((b.units.get(unit).map_or(0, |u| u.id) % 3 + 1, kind));
+            }
+            BattleEvent::Retreat { empire } if self.speech_last + 30 < self.acttick2 => {
+                self.speech_last = self.acttick2;
+                self.voices.push((1, if empire == b.human { 3 } else { 10 }));
+            }
+            _ => {}
+        }
     }
 
     /// `kijelolesleszed(false)`: nothing selected.
@@ -965,6 +1158,25 @@ impl SpaceWarUi {
     pub fn infoszamol(&mut self, b: &Battle, plans: &Plans, out: &mut Vec<Out>) {
         let me = b.human;
         let mut st = crate::spacewar_hud::Stats { rank_sum: -1, ..Default::default() };
+        // The overview (exe 0x574040, the `+0x1f2c` block): own, enemy (the relation byte 1) and other ships,
+        // fighters and firepower; the guns count by their building's tech.
+        let side = |o: i32| if o == me { 0 } else if b.hostile.get(me.max(0) as usize).and_then(|r| r.get(o.max(0) as usize)).copied() == Some(1) { 1 } else { 2 };
+        for u in b.units.iter().filter(|u| u.alive && u.owner != 0) {
+            let k = side(u.owner);
+            st.sides[0][k] += u.ship_count;
+            st.sides[2][k] += plans.unit_value(u);
+        }
+        for g in b.fighters.iter().filter(|g| g.alive) {
+            let k = side(g.owner);
+            st.sides[1][k] += g.count;
+            st.sides[2][k] += plans.fighter_value(g);
+        }
+        for (k, g) in b.guns.iter().enumerate() {
+            let tech = plans.gun_tech.get(k).copied().unwrap_or(-1);
+            if g.building != 0 && g.weapon >= 0 && tech > 0 {
+                st.sides[2][side(b.planet_owner)] += plans.firepower.get(tech as usize).copied().unwrap_or(0);
+            }
+        }
         // The counters (`kijelolesujraszamol`'s count of the live selection).
         for (i, u) in b.units.iter().enumerate() {
             if u.alive && self.units.get(i).is_some_and(|g| g.selected) {
@@ -976,6 +1188,39 @@ impl SpaceWarUi {
             if g.0 && b.guns.get(k).is_some_and(|x| x.building != 0) {
                 (st.total, st.sel_guns, st.last, st.last_kind) = (st.total + 1, st.sel_guns + 1, k as i32, 2);
                 st.own += (b.planet_owner == me) as i32;
+            }
+        }
+        // The title for one unit: a ship's plan name and hull (when it has an owner and a ship list), a gun's building.
+        self.title.clear();
+        self.title_tech = -1;
+        if st.total == 1 && st.sel_ships == 1 {
+            if let Some(u) = b.units.get(st.last.max(0) as usize).filter(|u| u.owner != 0 && u.ships.first().is_some_and(|&s| s != 0)) {
+                self.title = plans.plan_name(u.owner, u.design);
+                self.title_tech = u.model;
+            }
+        } else if st.total == 1 && st.sel_guns == 1 {
+            self.title_tech = plans.gun_tech.get(st.last.max(0) as usize).copied().unwrap_or(-1);
+        }
+        // The big box's ship rows (one live ship) and weapon list (one own ship with a design).
+        self.big.ship = None;
+        self.big.weapons.clear();
+        if st.total == 1 && st.last_kind == 1 {
+            if let Some(u) = b.units.get(st.last.max(0) as usize).filter(|u| u.alive && u.owner != 0) {
+                let fleet = u.ships.first().filter(|&&s| s >= 0).and_then(|&s| plans.ships.get(s as usize)).map(|s| s.fleet as i32).unwrap_or(-1);
+                let rec = (fleet >= 0).then(|| plans.fleets.get(fleet as usize)).flatten();
+                let owner = rec.map_or(b.planet_owner, |r| r[0x15] as i32);
+                let name = rec.map(|r| r[..r.iter().position(|&c| c == 0).unwrap_or(0x14).min(0x14)].to_vec());
+                self.big.ship = Some(crate::spacewar_hud::BigShip { plan: plans.plan_name(u.original_owner, u.design), tech: u.model, owner, fleet: name });
+                if u.design != 0 && st.own != 0 {
+                    if let Some(p) = plans.designs.get(u.original_owner.max(0) as usize).and_then(|e| e.get(u.design.max(0) as usize)) {
+                        let n = i32::from_le_bytes(p.raw[0x4c..0x50].try_into().unwrap()).clamp(0, 12) as usize;
+                        for k in 1..=n {
+                            if p.raw[0x5d + k] != 0 {
+                                self.big.weapons.push((p.raw[0x50 + k] as i32, p.raw[0x5d + k] as i32));
+                            }
+                        }
+                    }
+                }
             }
         }
         if st.total != 0 {
@@ -991,6 +1236,8 @@ impl SpaceWarUi {
                 st.ships += 1;
                 st.damage += u.damage;
                 st.max_hp += u.hp;
+                st.shield_used += u.shield_used;
+                st.shield += u.shield;
                 st.value += plans.unit_value(u);
                 if u.experience >= 0 && u.ship_count != 0 {
                     let q = u.experience / u.ship_count;
@@ -1121,6 +1368,7 @@ impl SpaceWarUi {
                     }
                 } else if !self.suppress && l && ((self.left_at[1] - m[1]).abs() > 5.0 || (self.left_at[0] - m[0]).abs() > 5.0) && !self.restoring {
                     self.boxing = true;
+                    self.box_spoke = false;
                     for g in &mut self.units {
                         g.snapshot = g.selected;
                     }
@@ -1180,6 +1428,14 @@ impl SpaceWarUi {
                 g.selected = shift && g.snapshot;
                 if !g.selected && Self::selectable(b, i) && units.get(i).copied().flatten().is_some_and(|p| inside(p.at)) {
                     g.selected = true;
+                }
+            }
+            // A box that takes its first own unit speaks, during the drag [obs: ui5, the exe at t703 of a drag from
+            // t690; the unit: inf, the first of them].
+            if !self.box_spoke {
+                if let Some(i) = (0..self.units.len()).find(|&i| self.units[i].selected && b.units.get(i).is_some_and(|u| u.alive && u.owner == b.human)) {
+                    self.box_spoke = true;
+                    self.voice(b, i, 1);
                 }
             }
             let mine = b.planet_owner == b.human;
@@ -1275,6 +1531,10 @@ impl SpaceWarUi {
                 if !shift {
                     self.deselect();
                     self.units[i].selected = true;
+                    // `BalClick` (ELF 0x6b13c0): an own live unit selected alone speaks.
+                    if b.units[i].alive && b.units[i].owner == b.human {
+                        self.voice(b, i, 1);
+                    }
                 } else {
                     if !self.own_selected(b) {
                         self.deselect();
@@ -1307,6 +1567,7 @@ impl SpaceWarUi {
             (3, 1) => {
                 for &i in &mine {
                     out.push(Out::Order(Order::Attack { unit: i, target: h as usize }));
+                    self.voice(b, i, 2);
                 }
                 if b.planet_owner == b.human {
                     for (k, g) in self.guns.iter().enumerate() {
@@ -1352,6 +1613,7 @@ impl SpaceWarUi {
                         continue;
                     };
                     out.push(Out::Order(Order::Move { unit: i, x, y, z }));
+                    self.voice(b, i, 0);
                 }
             }
             _ => {}
@@ -1427,6 +1689,8 @@ impl SpaceWarUi {
             if left && k == 9 && !self.formation_leaving {
                 self.formation_leaving = true;
                 out.push(Out::Start);
+            } else if left && k < 9 {
+                self.formation_pick = k as i32;
             }
             return;
         }
@@ -1486,6 +1750,7 @@ impl SpaceWarUi {
             Key::ZoomOut => self.zoom_rate = if down { -1.0 } else { 0.0 },
             _ if !down => {}
             Key::All => self.select_fleet(b),
+            Key::Camera => self.chase = !self.chase,
             Key::Group(n) if ctrl => {
                 if self.own_selected(b) {
                     for g in self.units.iter_mut().filter(|g| g.selected) {
@@ -1544,6 +1809,16 @@ impl SpaceWarUi {
             hidden_button: blink_off.then_some(self.armed as usize),
             boxed: self.boxing.then_some([self.left_at[0], self.left_at[1], self.mouse[0], self.mouse[1]]),
             fx: None,
+            chased: usize::try_from(self.chased).ok(),
+            gun_t: self.gun_t.clone(),
+            gun_timers: self.gun_timers.clone(),
+            gun_damage: Vec::new(),
+            title: self.title.clone(),
+            title_tech: self.title_tech,
+            stance: self.stance,
+            big: (self.big_info != 0).then(|| self.big.clone()),
+            pointer: self.pointer,
+            formation: self.formation(b).then_some(self.formation_pick),
         }
     }
 
@@ -1600,6 +1875,8 @@ pub enum Key {
     /// DEBUGX `r` / Backspace.
     Retreat,
     Explode,
+    /// `c`: the fighter chase camera on or off (`spwcameramode`).
+    Camera,
 }
 
 #[cfg(test)]
@@ -1692,7 +1969,7 @@ mod tests {
                 g.0 = false;
             }
             let mut out = Vec::new();
-            ui.infoszamol(b, &Plans { designs: &[], ships: &[] }, &mut out);
+            ui.infoszamol(b, &Plans { designs: &[], ships: &[], gun_tech: Vec::new(), firepower: &[], fleets: &[] }, &mut out);
             let o = &d.obj;
             let st = ui.stats;
             let want = crate::spacewar_hud::Stats::from_slot(o);
@@ -1728,7 +2005,7 @@ mod tests {
                 eprintln!("{name}: the exe's camera is still easing: target {:?}, pivot {:?}", &c[4..7], v.pivot);
                 continue;
             }
-            ui.kamerabeallit();
+            ui.kamerabeallit(&d.battle);
             for k in 0..3 {
                 assert!((ui.eye[k] - c[k]).abs() < 1e-3 && (ui.target[k] - c[4 + k]).abs() < 1e-3, "{name}: {:?} {:?} vs {c:?}", ui.eye, ui.target);
             }

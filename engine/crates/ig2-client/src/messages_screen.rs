@@ -7,6 +7,7 @@
 //! The texts are raw bytes in the game's code page and every position is a byte offset, as in the original.
 
 use ig2_formats::Install;
+use ig2_sim::game::MessageOrder;
 
 use crate::font::{Align, Font, Virtual};
 use crate::render::{Blend, Frame, Instance, TexId};
@@ -129,6 +130,8 @@ pub struct Dialogue {
     pub conversation: bool,
     /// The talking-head clip's steps since the window last took them (re/screens/video.md §5.3).
     pub clip: Vec<ClipStep>,
+    /// The sim's orders since the window last took them (an answer taken, the typing end).
+    pub orders: Vec<MessageOrder>,
 }
 
 /// What the dialogue asks of the talking-head clip.
@@ -178,6 +181,7 @@ impl Dialogue {
             id,
             conversation,
             clip: vec![ClipStep::Hush],
+            orders: Vec::new(),
         };
         if !conversation {
             d.over = true;
@@ -405,6 +409,7 @@ impl Dialogue {
         if a.disabled {
             return;
         }
+        self.orders.push(MessageOrder::Answer { k: k as i32 });
         self.print_parts(a.part);
         self.ends = false;
         if a.next == -1 {
@@ -431,6 +436,7 @@ impl Dialogue {
                 self.typing.push(Typing::Char { space });
             } else {
                 if !self.typed_all {
+                    self.orders.push(MessageOrder::TypedOut);
                     self.typing.push(Typing::Stop);
                     self.clip.push(ClipStep::TypedOut { plain: !self.conversation, ends: self.ends });
                 }
@@ -574,8 +580,12 @@ pub struct MessagesScreen {
     pub open: Option<Dialogue>,
     /// `LenyomasValtozo`: the arrows take a press only after 5 UI frames.
     pub debounce: u32,
-    /// Inbox entries opened here (their `+4` read flag is the sim's; not sent yet).
+    /// Inbox entries opened here.
     pub read: Vec<usize>,
+    /// `AktUzenet0to3`: the selected row (0 = the bottom one, −1 none; the arrows move it with the list).
+    pub row: i32,
+    /// The sim's orders since the window last took them (`Messages_Main`'s rows and arrows).
+    pub orders: Vec<MessageOrder>,
 }
 
 /// `Messages_MouseInit`'s hot-spots (virtual pixels): 1 up (older first … the list moves), 2 down, 3 the inbox,
@@ -635,12 +645,22 @@ impl MessagesScreen {
         match id {
             Some(2) if self.debounce == 5 => {
                 self.debounce = 0;
-                self.first = self.first.saturating_sub(1);
+                if self.first > 0 {
+                    self.first -= 1;
+                    if self.row != -1 {
+                        self.row = if self.row < 3 { self.row + 1 } else { -1 };
+                    }
+                    self.orders.push(MessageOrder::Scroll { pointer: self.first as i32, row: self.row });
+                }
             }
             Some(1) if self.debounce == 5 => {
                 self.debounce = 0;
                 if self.first + 4 < n {
                     self.first += 1;
+                    if self.row != -1 {
+                        self.row = if self.row < 1 { -1 } else { self.row - 1 };
+                    }
+                    self.orders.push(MessageOrder::Scroll { pointer: self.first as i32, row: self.row });
                 }
             }
             Some(3) if !busy => {
@@ -649,6 +669,8 @@ impl MessagesScreen {
                 let q = UBA.3 / 4;
                 let k = if r <= q { 3 } else if r <= 2 * q { 2 } else if r <= 3 * q { 1 } else { 0 };
                 if k < n {
+                    self.row = k as i32;
+                    self.orders.push(MessageOrder::Open { row: k as i32 });
                     return Press::Open(self.first + k);
                 }
             }
@@ -745,6 +767,7 @@ mod tests {
             id: 1,
             conversation: false,
             clip: Vec::new(),
+            orders: Vec::new(),
         }
     }
 
@@ -810,6 +833,8 @@ mod tests {
         d.advance(10_000.0);
         assert!(d.typed_all && d.over);
         assert!(d.place[..d.length as usize].ends_with(b"No\r"));
+        // The sim hears each answer taken and the typing end (re/rules/info-messages.md §7.3).
+        assert_eq!(d.orders, [MessageOrder::Answer { k: 0 }, MessageOrder::Answer { k: 1 }, MessageOrder::TypedOut]);
     }
 
     #[test]
@@ -822,5 +847,7 @@ mod tests {
         s.press([165.0, 195.0], 6);
         assert_eq!(s.first, 1);
         assert_eq!(s.press([600.0, 100.0], 6), Press::Leave);
+        // Rows 3 then 0 opened; the arrow moves the list and the selected row with it.
+        assert_eq!(s.orders, [MessageOrder::Open { row: 3 }, MessageOrder::Open { row: 0 }, MessageOrder::Scroll { pointer: 1, row: -1 }]);
     }
 }

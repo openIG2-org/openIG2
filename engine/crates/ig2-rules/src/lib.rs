@@ -103,6 +103,11 @@ pub mod layout {
     /// `TankToronySize` (`[hull][9]`), `TankToronyMeret` (defence turrets 0xa1..=0xa8).
     pub const TANK_MODELS: (u32, usize, usize) = (0x8F50D8, 0x38, 5);
     pub const TANK_SCALE: (u32, usize, usize) = (0x8F1BC4, 4, 5);
+    /// `TankShadowSize[hull]` and `TankShadowTransl[hull]` (`WF_Tank::DrawShadow`, read at exe 0x473470..).
+    pub const TANK_SHADOW_SIZE: (u32, usize, usize) = (0x8EC9A0, 4, 5);
+    pub const TANK_SHADOW_SHIFT: (u32, usize, usize) = (0x8EC9B4, 4, 5);
+    /// The pointer's hot point per `Mouse_Tipus` (`UpdateFrame`).
+    pub const MOUSE_HOTSPOT: (u32, usize, usize) = (0x90B608, 4, 10);
     pub const TANK_PIVOT: (u32, usize, usize) = (0x8EC524, 4, 5);
     pub const TURRET_MODELS: (u32, usize, usize) = (0x8EC538, 0x38, 19);
     pub const TURRET_SCALE: (u32, usize, usize) = (0x8F1BD8, 4, 45);
@@ -325,6 +330,10 @@ pub struct UnitModels {
     pub turret_scale: Vec<f32>,
     /// `TankToronyMeret[pod − 0xa1]` for the defence turrets.
     pub defence_scale: Vec<f32>,
+    /// `TankShadowSize[hull]`: the blob shadow's half size; `TankShadowTransl[hull]`: its shift on both map axes
+    /// (`WF_Tank::DrawShadow`, re/screens/colony.md §11.10).
+    pub shadow_size: Vec<f32>,
+    pub shadow_shift: Vec<f32>,
     /// `TransfAlap[hull]`: the starmap's models of the hulls (the production view's head units, the transfer
     /// panel; `+0x34`: 0 and 2 `talalmanyok`, 1 `spacewar`, 3 `colony` there).
     pub transfer: Vec<UnitModel>,
@@ -628,6 +637,9 @@ pub struct Rules {
     /// `Building[k − 1]`'s models, indexed by kind (entry 0 is empty).
     pub building_models: Vec<BuildingModel>,
     pub unit_models: UnitModels,
+    /// The pointer's hot point by `Mouse_Tipus` (exe 0x90b608, read for both axes by `UpdateFrame` exe 0x4e3e90;
+    /// re/screens/colony.md §11.10).
+    pub mouse_hotspot: Vec<i32>,
     pub research_screen: ResearchScreen,
     pub design_screen: DesignScreen,
     /// `utdarabsize[n − 1]`: the `AddToScene` scale of road piece `ut<n>.xvb`, n = 1..=9.
@@ -698,9 +710,9 @@ pub struct Rules {
 /// The video names the exe picks from tables (`re/screens/video.md` §5); `""` where the exe has an empty string.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct Videos {
-    /// By `EN` 0..=8: `MEGHALAS`'s clip before `misc/end_gameover.bik`.
+    /// By the human's race (`PlayerFaj[EN]`) 0..=8: `MEGHALAS`'s campaign clip before `misc/end_gameover.bik`.
     pub loss: Vec<String>,
-    /// By `EN` 0..=8: `MEGNYERES`'s campaign clip before `misc/end_campaign_win.bik`.
+    /// By the human's race (`PlayerFaj[EN]`) 0..=8: `MEGNYERES`'s campaign clip before `misc/end_campaign_win.bik`.
     pub win: Vec<String>,
     /// By the message's head index: (loop, wait) clips.
     pub message_clips: Vec<(String, String)>,
@@ -996,6 +1008,7 @@ impl Rules {
                 let (b, s, n) = tab(layout::STARMAP_BRUSHES)?;
                 (0..n).map(|i| Brush::from_record(&b[i * s..(i + 1) * s])).collect()
             },
+            mouse_hotspot: ints(layout::MOUSE_HOTSPOT)?,
             unit_models: {
                 let models = |t| -> Result<Vec<UnitModel>> {
                     let (b, s, n) = tab(t)?;
@@ -1008,6 +1021,8 @@ impl Rules {
                     turrets: models(layout::TURRET_MODELS)?,
                     turret_scale: floats(layout::TURRET_SCALE)?,
                     defence_scale: floats(layout::DEFENCE_TURRET_SCALE)?,
+                    shadow_size: floats(layout::TANK_SHADOW_SIZE)?,
+                    shadow_shift: floats(layout::TANK_SHADOW_SHIFT)?,
                     transfer: models(layout::TRANSFER_MODELS)?,
                 }
             },

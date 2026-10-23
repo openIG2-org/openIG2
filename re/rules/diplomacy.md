@@ -456,7 +456,7 @@ Callers: `FRISSIT_Viszony`'s death check (§3.2, exe 0x50e12a), the stories' `DI
 4. `e > 18` → abort (the exe's bounds check). `BirodalomEl[e] = 0`.
 5. `e == EN` and `GameStarted` (0xBAE297): `ExitToMainScreen()`, for a race < 9 the race's loss animation
    (`Anim_Meghalas_Nev[race]` in a campaign, `misc/altalanos_elvesztes.bik` otherwise) and
-   `misc/end_gameover.bik`, `AktKepKell = 0xF`. The port reports `GameEvent::GameOver(Lost)`.
+   `misc/end_gameover.bik`, `AktKepKell = 0xF`. The port reports `GameEvent::GameOver(Lost)` (`GameStarted` is `Game::over`: only the first end counts, `game-end.md`).
 6. Tail call `MegnyeresEllenoriz()`.
 
 Nothing else is handed over: planets (a dying empire owns none on the §3.2 path; a story's `DIE()` leaves the
@@ -477,5 +477,5 @@ the death check and the end of `FRISSIT_Viszony` reads fleets or `MegnyeresEllen
      BirodalomEro[EN]` (f32) and `BirodalomHanyBolygo[o]·2 < BirodalomHanyBolygo[EN]`: `StoryAdat+0xcc = o`,
      `StartStory(0x195, false)` (the last enemy's surrender, `campaign.md` §8). Nothing here sets `+0xc8`, so
      the check repeats every tick while it holds (`StartStory` of a running story is the story engine's).
-The port reports a win as `GameEvent::GameOver(Won)` (each time it fires) and takes `GameStarted` as set; the
+The port reports a win as `GameEvent::GameOver(Won)`; `GameStarted` is `Game::over` (only the first end counts, `game-end.md`); the
 front end owns the screens and animations. With no story or campaign, quick.scn never reaches 2.

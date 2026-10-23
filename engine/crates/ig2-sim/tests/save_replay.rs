@@ -19,7 +19,7 @@ use ig2_sim::colony::{BuildingKind, ColonyRules, Curve};
 use ig2_sim::colony_side::{tech_strength, AutobuildMode, AutobuildRules, SideRules};
 use ig2_sim::diplomacy::DiplomacyRules;
 use ig2_sim::fleet::StarmapEvent;
-use ig2_sim::game::{BattleEvent, ColonyOrder, DesignOrder, Fresh, Game, GameEvent, GameRules, InfoOrder, Libc, ResearchOrder, StarmapOrder};
+use ig2_sim::game::{BattleEvent, ColonyOrder, DesignOrder, Fresh, Game, GameEvent, GameRules, InfoOrder, Libc, MessageOrder, ResearchOrder, StarmapOrder};
 use ig2_sim::messages::{cstr, Texts, ENTRY};
 use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
@@ -29,6 +29,7 @@ use ig2_sim::save::va::TRADE_OFFERS;
 use ig2_sim::ground::{GroundMap, GroundRules};
 use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
+use ig2_sim::story::{MessageText, StoryEvent};
 use ig2_sim::trade::{Delivery, TradeEvent, DELIVERY};
 use serde_json::Value;
 
@@ -134,7 +135,8 @@ struct Recording {
     /// `--stage`: the purchases made between `pre.sav` and save 0 (`{"k": "buy", "e", "msg", "accepted"}`).
     buys: Vec<Value>,
     /// `--orders` / `--colony` / `--research` / `--info`: starmap / colony / research / info messages staged before
-    /// save `before` (`{"k": "sorder" | "corder" | "rorder" | "iorder" | "dorder", "before", "type", "vals"}`).
+    /// save `before` (`{"k": "sorder" | "corder" | "rorder" | "iorder" | "dorder", "before", "type", "vals"}`); `--answers`:
+    /// the inbox steps (`{"k": "morder", "before", "op", "vals"}`).
     orders: Vec<Value>,
 }
 
@@ -143,7 +145,14 @@ fn recordings() -> Vec<Recording> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(&dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect()).unwrap_or_default();
     // `IG2_REPLAY_SKIP`: recordings whose name contains it are left out (not ported yet).
     let skip = std::env::var("IG2_REPLAY_SKIP").ok().filter(|s| !s.is_empty());
-    v.retain(|p| p.is_dir() && p.file_name().and_then(|f| f.to_str()).is_some_and(|f| f.starts_with("replay-") && skip.as_ref().is_none_or(|s| !f.contains(s.as_str()))));
+    // `IG2_REPLAY_ONLY`: only the recordings whose name contains it.
+    let only = std::env::var("IG2_REPLAY_ONLY").ok().filter(|s| !s.is_empty());
+    v.retain(|p| {
+        p.is_dir()
+            && p.file_name().and_then(|f| f.to_str()).is_some_and(|f| {
+                f.starts_with("replay-") && skip.as_ref().is_none_or(|s| !f.contains(s.as_str())) && only.as_ref().is_none_or(|s| f.contains(s.as_str()))
+            })
+    });
     v.sort();
     v.into_iter()
         .filter_map(|dir| {
@@ -151,7 +160,7 @@ fn recordings() -> Vec<Recording> {
             let all: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
             let (events, rest): (Vec<Value>, Vec<Value>) = all.into_iter().partition(|e| e["k"] == "save");
             let buys = rest.iter().filter(|e| e["k"] == "buy").cloned().collect();
-            let orders = rest.into_iter().filter(|e| ["sorder", "corder", "rorder", "iorder", "dorder"].iter().any(|k| e["k"] == *k)).collect();
+            let orders = rest.into_iter().filter(|e| ["sorder", "corder", "rorder", "iorder", "dorder", "morder"].iter().any(|k| e["k"] == *k)).collect();
             Some(Recording { dir, events, buys, orders })
         })
         .collect()
@@ -333,6 +342,7 @@ fn game_rules(inst: &Install) -> GameRules {
         ground_maps,
         space: Default::default(),
         satellite_prices: r.satellite_prices.clone(),
+        inbox: ig2_sim::messages::InboxRules::from_install(inst),
     }
 }
 
@@ -436,6 +446,10 @@ fn replay_matches_the_exe_tick_by_tick() {
             for o in rec.orders.iter().filter(|o| o["before"].as_u64() == Some(k as u64)) {
                 if let Some(seed) = o["libc"].as_u64().filter(|_| o == rec.orders.iter().find(|x| x["before"] == o["before"]).unwrap()) {
                     game.libc = Libc(seed as u32);
+                }
+                if o["k"] == "morder" {
+                    inbox_step(&mut game, o);
+                    continue;
                 }
                 let vals: Vec<i32> = o["vals"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
                 let t = o["type"].as_i64().unwrap() as i32;
@@ -740,13 +754,38 @@ fn add_wormhole_matches_the_exe() {
 "));
 }
 
+/// `--answers`' step: a story's message call (through the stories' event path) or a messages screen order.
+fn inbox_step(game: &mut Game, o: &Value) {
+    let v = o["vals"].as_array().unwrap();
+    let int = |i: usize| v[i].as_i64().unwrap() as i32;
+    let en = game.state.mem.i32(va::EN) as u8;
+    match o["op"].as_str().unwrap() {
+        "order" => {
+            let vals: Vec<i32> = (1..v.len()).map(int).collect();
+            game.message_order(en, MessageOrder::from_message(int(0), &vals).expect("a messages screen order"));
+        }
+        "new" => game.inbox_call(StoryEvent::NewMessage { id: int(0), arg: int(1) }),
+        "race" => game.inbox_call(StoryEvent::MessageRace(int(0))),
+        "param" => {
+            let text: &'static str = Box::leak(v[1].as_str().unwrap().to_owned().into_boxed_str());
+            game.inbox_call(StoryEvent::MessageParam { slot: int(0), text: MessageText::Literal(text) });
+        }
+        "paramint" => game.inbox_call(StoryEvent::MessageParamInt { slot: int(0), value: int(1) }),
+        "remove" => game.inbox_call(StoryEvent::RemoveMessage(int(0))),
+        "withdraw" => game.inbox_call(StoryEvent::WithdrawMessage { id: int(0), arg: 0 }),
+        "disable" => game.inbox_call(StoryEvent::DisablePart(int(0))),
+        op => panic!("unknown inbox step {op}"),
+    }
+}
+
 /// The unsaved globals of `replay.js`'s dump that ported systems write (the rest are inputs or UI state).
 const COMPARED_VOLATILE: &[&str] = &[
     "speed", "rnd", "rndossz", "radar2", "radar2sq", "radarsz", "radarszsq", "dipnap", "dipstart", "st_flags", "st_last",
     "st_oldido", "st_szvegzett", "st_delayed", "st_restart", "st_skip", "st_err", "st_signal", "st_addship", "st_special",
     "st_radar", "st_dipl", "st_diplvalasz", "st_arr", "st_gr", "st_youwas", "st_grwin", "st_kem", "abmitepit", "mapcursor",
     "tradeports", "etahonap", "etadays", "infomonth", "spw_fleets", "spw_planetflag", "gvalue", "bgcursor", "tut_active",
-    "tut_paused", "tut_event",
+    "tut_paused", "tut_event", "msg_over", "msg_typed", "msg_rows", "msg_nchoices", "msg_unread", "msg_ch0", "msg_ch1",
+    "msg_ch2", "msg_ch3",
 ];
 
 /// The UI's part between two ticks (`info-messages.md` §2.3): `FRISSIT_Scroll2` takes texts off the scrolling
@@ -848,6 +887,14 @@ fn empire_death_deletes_fleets_and_checks_victory() {
     g.empire_dies(6, &[]);
     assert_eq!((owned(&g, 6), alive(&g, 6)), (0, 0));
     assert_eq!(over(&g), [GameOver::Lost]);
+    // `ExitToMainScreen` cleared `GameStarted`: the last AI's death no longer wins.
+    g.empire_dies(3, &[]);
+    assert_eq!((over(&g), g.over), (vec![GameOver::Lost], Some(GameOver::Lost)));
+
+    // A story's `MEGNYERES(1)` then `MEGNYERES(0)`: the first ends the game.
+    let mut g = Game::new(SaveState::from_save(&save, &tech_defaults), &rules);
+    g.story_ends(&[ig2_sim::story::StoryEvent::Won, ig2_sim::story::StoryEvent::CampaignOver]);
+    assert_eq!(over(&g), [GameOver::Won]);
 }
 
 /// The tutorial's in-place writes (`re/rules/tutorial.md` §3; `Game::tutorial_effect`) on an original save.

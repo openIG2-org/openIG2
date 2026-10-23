@@ -104,6 +104,19 @@ struct Front {
     ui_ms: u32,
     at: [f32; 2],
     quit: bool,
+    /// The scenario list's entries, tables and pictures, read when it first opens.
+    scenarios: Option<crate::mainscr_scenario::Assets>,
+}
+
+impl Front {
+    /// `MainScr_Belep`, `MultiplayerNev` from the settings file (`SaveGlobalRegistrySettings`' value; "Player" without one).
+    fn new(scene: Option<crate::mainscr_scene::MainScene>, ui_ms: u32, settings: &ig2_formats::options::Options) -> Self {
+        let mut s = crate::mainscr::MainScr::enter();
+        if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
+            s.player = n.as_bytes().to_vec();
+        }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None }
+    }
 }
 
 struct App {
@@ -122,6 +135,8 @@ struct App {
     spy: Option<crate::spy_screen::SpyView>,
     /// The message line's 10 ms UI frames done so far.
     ui_frames: u64,
+    /// `FRISSIT_Messages2`'s frame counter (the automatic messages every 11th UI frame).
+    messages_auto: u32,
     /// The diplomacy screen while it is up, and this frame's pointer edges on it.
     diplomacy: Option<crate::diplomacy::Open>,
     dip_input: crate::diplomacy::Input,
@@ -168,6 +183,8 @@ struct App {
     /// The trade screen (re/screens/trade.md), its 3D scene and tooltip texts (`Trade_MouseInit`).
     trade: Option<crate::trade::Trade>,
     trade_scene: Option<crate::trade_scene::TradeScene>,
+    /// The trade screen left for the options screen (Esc): `Trade_Belep` with `OldKep` 0xd follows "back".
+    trade_under_options: Option<crate::trade::Trade>,
     trade_tips: Vec<Vec<u8>>,
     /// Sound and music (re/screens/audio.md), and the screens seen up last frame (their enter/exit sounds).
     audio: crate::audio::Audio,
@@ -205,6 +222,12 @@ struct App {
     volatile: Vec<(u32, Vec<u8>)>,
     /// The pointer in physical window pixels (the battle screen's edge scrolling reads the window, not the frame).
     cursor_px: [i32; 2],
+    /// The mouse buttons held (bit 0 left, bit 1 right): `Mouse_Gomb` stops the colony's edge scroll.
+    mouse_held: u8,
+    /// The pointer is over the window (a `CursorMoved` came, no `CursorLeft` since): the edge scroll reads it.
+    pointer_in: bool,
+    /// The window's pointer is hidden (the colony screen draws its own).
+    cursor_hidden: bool,
 }
 
 /// The Options screen up: its state, its 10 ms UI clock, the lasers' glow, and `OptionsOldIdoPause`.
@@ -221,8 +244,13 @@ enum AfterVideo {
     /// Back to the game (or the main menu) as it was.
     #[default]
     Resume,
+    /// The game ended (`MEGHALAS`, `MEGNYERES`): `AktKepKell = 0xF`, the main menu.
+    MainMenu,
     /// The title before the main menu: `PlayMusicMenu(false, true)` once it ends.
     MenuMusic,
+    /// A new campaign's intro (`CampaignGameStart`): then `Starmap_Belep`'s `PlayMusicMain(0, 0)` and the start voice
+    /// of campaign type N.
+    StarmapEntry(i32),
 }
 
 /// The renderer of a run without a window, its band, and the script's clock (one 10 ms UI tick a frame; the sim
@@ -250,7 +278,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     // The rules live for the whole process; `World` borrows them.
     let rules: &'static ig2_sim::game::GameRules = Box::leak(Box::new(l.rules));
     let tables: &'static ig2_rules::Rules = Box::leak(Box::new(l.tables));
-    let mut world = World::load(&l.save, rules, &l.tech_defaults, &l.volatile);
+    let mut world = crate::start_world(&o, &l.install, l.save.as_ref(), rules, &l.tech_defaults, &l.volatile)?;
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
@@ -266,7 +294,9 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     // off) and the menu's music follows it.
     let title = o.main_menu && crate::video::playback::cutscenes_enabled();
     let music = if o.main_menu { crate::audio::Music::Menu } else { crate::audio::Music::Main };
-    if !title {
+    // A new campaign enters the starmap after its intro (re/screens/mainscr.md §9.1).
+    let start = world.start_voice.take();
+    if !title && start.is_none() {
         audio.play_music(music, o.main_menu, human_race(&world.game.state));
     }
     // The option rows as the exe holds them, their values from the settings file (the registry `SaveOptions` fills).
@@ -278,9 +308,13 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         }
     }
     (app.opt_rows, app.tech_defaults, app.volatile) = (opt_rows, l.tech_defaults, l.volatile);
-    app.front = o.main_menu.then(|| Front { s: crate::mainscr::MainScr::enter(), scene: None, ui_ms: 0, at: [320.0, 240.0], quit: false });
+    app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
     if title {
         app.queue_videos(["title.bik".to_string()], false, AfterVideo::MenuMusic);
+    }
+    if let Some(c) = start {
+        app.take_video_requests();
+        app.after_video = AfterVideo::StarmapEntry(c);
     }
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -296,7 +330,7 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     let l = crate::load(o)?;
     let rules: &'static ig2_sim::game::GameRules = Box::leak(Box::new(l.rules));
     let tables: &'static ig2_rules::Rules = Box::leak(Box::new(l.tables));
-    let mut world = World::load(&l.save, rules, &l.tech_defaults, &l.volatile);
+    let mut world = crate::start_world(o, &l.install, l.save.as_ref(), rules, &l.tech_defaults, &l.volatile)?;
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
@@ -317,7 +351,7 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     if let Some(p) = o.colony {
         app.open_colony(p);
         // The camera of the exe's state save (`--colony-live`, as `colony_snapshot`) or `--colony-cam`.
-        let f = |n: &str| l.save.chunk(n).and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        let f = |n: &str| crate::save_f32(l.save.as_ref(), n);
         if let Some(c) = &mut app.colony {
             if let Some([x, y, zoom, pitch, rotate]) = o.colony_cam {
                 c.view.camera = crate::colony::Camera { x, y, zoom, pitch, rotate, ..c.view.camera };
@@ -384,6 +418,11 @@ fn draw_options(o: &mut OptionsUp, h: &crate::ui::Hud, frame: &mut crate::render
     o.s.draw(frame, &d);
 }
 
+/// The main menu's 2D (`MainScrGfx2D_1/_2`): the scenario list, the name entry.
+fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: &mut crate::render::Frame, size: [f32; 2], now_ms: f64) {
+    crate::mainscr_scene::draw_2d(&mut fr.s, &mut fr.scenarios, h, r, install, frame, size, now_ms);
+}
+
 /// `PlayerFaj[EN]`, the music's race.
 fn human_race(state: &ig2_sim::save::SaveState) -> u8 {
     let en = state.mem.i32(ig2_sim::save::va::EN).max(0) as u32;
@@ -405,6 +444,7 @@ impl App {
             overlay: None,
             spy: None,
             ui_frames: 0,
+            messages_auto: 0,
             diplomacy: None,
             dip_next: None,
             dip_input: Default::default(),
@@ -438,6 +478,7 @@ impl App {
             design_tips: Vec::new(),
             trade: None,
             trade_scene: None,
+            trade_under_options: None,
             trade_tips: Vec::new(),
             audio,
             sound_overlay: None,
@@ -461,6 +502,9 @@ impl App {
             mes_gyorsito: 0,
             clip_lists: None,
             cursor_px: [0; 2],
+            mouse_held: 0,
+            pointer_in: false,
+            cursor_hidden: false,
         }
     }
 
@@ -506,6 +550,8 @@ impl App {
         for id in self.sounds.drain(..) {
             self.audio.play(id);
         }
+        // `UpdateFrame`: the start voice's ducking (the main menu and the start screens are past 0xd).
+        self.audio.start_voice_frame(self.front.is_some());
         // `FRISSIT_Scroll2` (exe 0x556210): a message taken onto the line speaks, unless it is one of the four
         // silent ids; the brutal voice for empire 5 (`EN`), else the human one.
         let en = self.world.game.state.mem.i32(ig2_sim::save::va::EN);
@@ -532,12 +578,21 @@ impl App {
                 self.speech.push(crate::audio::speech::Speak { who: crate::audio::speech::Who::Colony, line, kind });
             }
         }
+        if let Some(sw) = &mut self.spacewar {
+            for (line, kind) in sw.ui.voices.drain(..) {
+                self.speech.push(crate::audio::speech::Speak { who: crate::audio::speech::Who::SpaceWar, line, kind });
+            }
+        }
         for s in std::mem::take(&mut self.speech) {
             self.audio.speak(s, en);
         }
         let on_starmap = self.on_starmap();
+        let on_battle = self.spacewar.is_some();
         for _ in 0..due_ui {
             self.audio.speakers.tick(on_starmap);
+            if on_battle {
+                self.audio.speakers.tick_spacewar();
+            }
         }
         if let Some(h) = &mut self.hud {
             for id in h.info.sounds.drain(..) {
@@ -776,6 +831,10 @@ impl App {
         let closing = self.overlay == Some(crate::ui::Screen::Diplomacy) && !self.leave_diplomacy(Some(s));
         if !closing {
             self.overlay = if self.overlay == Some(s) { None } else { Some(s) };
+            if self.overlay == Some(crate::ui::Screen::Messages) {
+                // `Messages_Belep`'s saved part (re/rules/info-messages.md §7.3).
+                self.world.send(ig2_sim::game::MessageOrder::Enter.into());
+            }
         }
         let next = if closing { Some(s) } else { self.overlay };
         if let (Some(crate::ui::Screen::Info), Some(h)) = (next, &mut self.hud) {
@@ -1356,11 +1415,19 @@ impl App {
         self.audio.frame(human_race(&self.world.game.state));
         fr.s.frame();
         fr.s.hover(fr.at);
+        if let Some(st) = fr.s.take_started() {
+            self.front_start(st);
+            return;
+        }
         let (bw, bh) = g.band();
         let size = [bw as f32, bh as f32];
         let scene = fr.scene.get_or_insert_with(|| crate::mainscr_scene::MainScene::load(&mut g.renderer, &self.install));
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
-        scene.draw(&mut frame, &mut g.renderer, &self.install, &fr.s, &crate::font::Virtual::new(size));
+        fr.s.race_boxes = scene.draw(&mut frame, &mut g.renderer, &self.install, &fr.s, &crate::font::Virtual::new(size));
+        if let Some(h) = &self.hud {
+            let now = self.start.elapsed().as_secs_f64() * 1000.0;
+            draw_front_2d(fr, h, &mut g.renderer, &self.install, &mut frame, size, now);
+        }
         if let (Some(o), Some(h)) = (&mut self.options, &self.hud) {
             draw_options(o, h, &mut frame, size, self.start.elapsed().as_secs_f64() * 1000.0);
         }
@@ -1387,7 +1454,104 @@ impl App {
             Act::LoadGame => self.open_options(true),
             // `Mainscreen_Update3D` exe 0x50147d: `OpenBink("misc/credits.bik", 1, 0, 0, force)`, blocking.
             Act::Credits => self.queue_videos(["misc/credits.bik".to_string()], true, AfterVideo::Resume),
-            other => eprintln!("ig2-client: {other:?}: not ported yet (re/screens/mainscr.md §14)"),
+            Act::Click => self.audio.play(crate::audio::CLICK),
+            Act::OpenScenarios | Act::Campaign => {
+                let Some(f) = &mut self.front else { return };
+                let owned;
+                let texts = match self.hud.as_ref() {
+                    Some(h) => &h.texts,
+                    None => {
+                        owned = crate::ui::UiTexts::load(&self.install);
+                        &owned
+                    }
+                };
+                crate::mainscr_scene::prepare(&mut f.s, a, &mut f.scenarios, &self.install, texts);
+            }
+            // `MainScr_IPEntered`: `SaveGlobalRegistrySettings` (the name into the settings file).
+            Act::NameEntered => {
+                if let Some(f) = &self.front {
+                    let name = String::from_utf8_lossy(&f.s.player).into_owned();
+                    self.settings.set("MultiplayerNev", &name);
+                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| std::fs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
+                    own.set("MultiplayerNev", &name);
+                    if let Some(p) = ig2_formats::options::Options::own_path() {
+                        if let Err(e) = std::fs::write(&p, own.to_bytes()) {
+                            eprintln!("ig2-client: {}: {e}", p.display());
+                        }
+                    }
+                }
+            }
+            // `MainScr_Main` 0x23 / 0x22: the server path and the remaster's matchmaking lead to the multiplayer
+            // lobby (roadmap M5), not built yet.
+            Act::MultiServer | Act::MultiMatchmaking => eprintln!("ig2-client: {a:?}: the multiplayer lobby is M5 (not built yet)"),
+            Act::Tutorial(_) => {}
+        }
+    }
+
+    /// `MainScr_Kilep` step 3 (spec §2.2): the game the menu was left for, built from the install; the starmap
+    /// follows (a campaign after its intro).
+    fn front_start(&mut self, st: crate::mainscr::Start) {
+        use crate::mainscr::Start;
+        let seed = crate::new_game::wall_ticks();
+        let rules = self.rules;
+        let game = match &st {
+            Start::Campaign { race, level } => {
+                // `Nehezseg` by the ring: easy 1, normal (index 2) 2, hard (index 1) 4.
+                let difficulty = [1, 4, 2][(*level as usize).min(2)];
+                let cfg = ig2_sim::game::new_game::NewCampaign { campaign: *race as i32 + 1, difficulty, seed, ticks: seed, storyline: 0, storymap: 0, last_storyline: None };
+                crate::new_game::campaign(&self.install, &cfg, rules)
+            }
+            Start::Scenario { file, .. } => crate::new_game::scenario(&self.install, file, seed, rules),
+            Start::Tutorial(n) => crate::new_game::tutorial(&self.install, *n, seed, rules),
+            // `SetScirmishGameOptions(race, computers, kind, technology, ScenarioKezdoBolygoSzamok[planets],
+            // ScenarioKezdoPenzek[money], difficulty, population)` (spec §2.2 step 3).
+            Start::Skirmish { settings: k, kind } => {
+                let tables = self.front.as_ref().and_then(|f| f.scenarios.as_ref()).map(|a| (a.tables.planets, a.tables.money));
+                match tables {
+                    Some((planets, money)) => {
+                        let cfg = ig2_sim::game::new_game::NewSkirmish {
+                            en: k.race,
+                            ais: k.computers,
+                            random_id: *kind,
+                            tech: k.technology,
+                            planets: planets[k.planets.clamp(0, 4) as usize],
+                            money: money[k.money.clamp(0, 5) as usize],
+                            difficulty: k.difficulty,
+                            population: k.population,
+                            seed,
+                            ticks: seed,
+                        };
+                        crate::new_game::skirmish(&self.install, &cfg, rules)
+                    }
+                    None => Err("no scenario list".into()),
+                }
+            }
+        };
+        match game {
+            Ok(g) => {
+                let mut w = World::new_game(g);
+                let campaign = matches!(st, Start::Campaign { .. });
+                if campaign {
+                    w.campaign_intro();
+                }
+                let voice = w.start_voice.take();
+                self.start_world(w);
+                if let Start::Tutorial(n) = st {
+                    eprintln!("ig2-client: tutorial {n}: the game starts; the script and its overlay (U31) are not run yet");
+                }
+                if campaign {
+                    // The intro first; then `Starmap_Belep`'s music and the start voice.
+                    self.take_video_requests();
+                    self.after_video = AfterVideo::StarmapEntry(voice.unwrap_or(0));
+                } else if let Some(c) = voice {
+                    self.audio.play_start_voice(c);
+                }
+            }
+            Err(e) => {
+                eprintln!("ig2-client: {st:?}: {e}");
+                let scene = self.front.take().and_then(|f| f.scene);
+                self.front = Some(Front::new(scene, self.now_ms(), &self.settings));
+            }
         }
     }
 
@@ -1503,11 +1667,23 @@ impl App {
         out.present();
     }
 
+    /// `ExitToMainScreen` (exe 0x5117f0), then `AktKepKell = 0xF`: `MainScr_Belep` (the rings fly in again, the menu
+    /// music). The world stays as it is until the next game replaces it.
+    fn exit_to_main_menu(&mut self) {
+        let scene = self.front.take().and_then(|f| f.scene);
+        self.front = Some(Front::new(scene, self.now_ms(), &self.settings));
+        self.close_screens();
+        self.audio.play_music(crate::audio::Music::Menu, false, human_race(&self.world.game.state));
+    }
+
     /// What the screen asks once it has faded out (or, for a save, at once).
     fn options_act(&mut self, a: crate::options::Act) {
         use crate::options::Act;
         let Some(o) = self.options.take() else { return };
         self.store_settings_from(&o.s);
+        if a != Act::Back {
+            self.trade_under_options = None;
+        }
         match a {
             Act::Back => {
                 // `SetIdoPause(OptionsOldIdoPause)`.
@@ -1515,14 +1691,13 @@ impl App {
                     self.send(StarmapOrder::Pause { paused: false });
                 }
                 self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
+                // Back to the trade screen it was opened from (`OldKep` 8), entered without its opening.
+                if let Some(old) = self.trade_under_options.take() {
+                    self.trade = Some(crate::trade::Trade::back(&old, &self.world.game.state));
+                    self.overlay = Some(crate::ui::Screen::Trade);
+                }
             }
-            Act::MainMenu => {
-                // `ExitToMainScreen`, then `MainScr_Belep` (the rings fly in again, the menu music).
-                let scene = self.front.take().and_then(|f| f.scene);
-                self.front = Some(Front { s: crate::mainscr::MainScr::enter(), scene, ui_ms: self.now_ms(), at: [320.0, 240.0], quit: false });
-                self.close_screens();
-                self.audio.play_music(crate::audio::Music::Menu, false, human_race(&self.world.game.state));
-            }
+            Act::MainMenu => self.exit_to_main_menu(),
             Act::Load(n) => {
                 let path = o.s.slots.get(n).and_then(Option::as_ref).map(|s| s.file.clone());
                 match path.map(|p| World::load_slot(&p, self.rules, &self.tech_defaults, &self.volatile)) {
@@ -1579,6 +1754,7 @@ impl App {
         self.spy = None;
         self.diplomacy = None;
         self.research = None;
+        self.stop_battle_loops();
         self.spacewar = None;
         self.cam_tween = None;
         self.cam_saved = None;
@@ -1602,7 +1778,10 @@ impl App {
             self.world.game.empire_names = h.empire_names.clone();
         }
         self.front = None;
-        self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+        // A campaign's intro comes first; the music follows it (`AfterVideo::StarmapEntry`).
+        if self.world.videos.is_empty() {
+            self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+        }
         self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
     }
 
@@ -1645,6 +1824,15 @@ impl App {
         self.spacewar_out(out);
     }
 
+    /// The battle screen's weapon loops stop with it (`lovedeksoundend`, `unloadgfx`'s `lovedekfreesound`).
+    fn stop_battle_loops(&mut self) {
+        if let Some(sw) = &mut self.spacewar {
+            for (_, ch) in sw.loops.drain() {
+                self.audio.stop(ch);
+            }
+        }
+    }
+
     /// What the battle screen asked for.
     fn spacewar_out(&mut self, out: Vec<crate::spacewar_ui::Out>) {
         use crate::spacewar_ui::Out;
@@ -1659,9 +1847,31 @@ impl App {
                     self.audio.set_record_volume(s.id, s.volume);
                     self.sounds.push(s.id);
                 }
+                Out::Loop(l) => {
+                    use crate::spacewar_fx::Loop;
+                    let Some(sw) = &mut self.spacewar else { return };
+                    match l {
+                        Loop::Start { key, id } => {
+                            if let Some(ch) = self.audio.start_loop(id) {
+                                sw.loops.insert(key, ch);
+                            }
+                        }
+                        Loop::Volume { key, volume } => {
+                            if let Some(&ch) = sw.loops.get(&key) {
+                                self.audio.set_channel_volume(ch, volume);
+                            }
+                        }
+                        Loop::End { key } => {
+                            if let Some(ch) = sw.loops.remove(&key) {
+                                self.audio.stop(ch);
+                            }
+                        }
+                    }
+                }
                 Out::Left => {
                     // `SpaceWar_Kilep`'s second phase: a finished battle ends (`SpaceWarVege`); one still running stays.
                     self.world.game.sp_battles.on_screen = false;
+                    self.stop_battle_loops();
                     // `Starmap_Belep` exe 0x5b1d74: `PlayMusicMain(0, 0)` unless a battle still runs.
                     if self.spacewar.as_ref().is_some_and(|sw| sw.ended) {
                         self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
@@ -1700,6 +1910,7 @@ impl App {
             (PhysicalKey::Code(KeyCode::NumpadAdd), _) => Some(K::ZoomIn),
             (PhysicalKey::Code(KeyCode::NumpadSubtract), _) => Some(K::ZoomOut),
             (PhysicalKey::Code(KeyCode::KeyA), _) => Some(K::All),
+            (PhysicalKey::Code(KeyCode::KeyC), _) => Some(K::Camera),
             (PhysicalKey::Code(c), _) if (KeyCode::Digit1..=KeyCode::Digit9).contains(&c) => Some(K::Group(c as i32 - KeyCode::Digit1 as i32)),
             (_, Key::Named(NamedKey::Backspace)) => Some(K::Explode),
             (PhysicalKey::Code(KeyCode::KeyR), _) => Some(K::Retreat),
@@ -1738,6 +1949,33 @@ impl App {
         }
     }
 
+    /// A key on the main menu: Esc (`MainScr_ESCPressedWhenMultiplayerselect`), or the name entry's keys.
+    fn front_key(&mut self, k: &Key) {
+        use crate::options::EntryKey;
+        let Some(f) = &mut self.front else { return };
+        if matches!(k.as_ref(), Key::Named(NamedKey::Escape)) {
+            f.s.escape();
+            return;
+        }
+        if f.s.name.is_none() {
+            return;
+        }
+        let key = match k.as_ref() {
+            Key::Named(NamedKey::Enter) => Some(EntryKey::Enter),
+            Key::Named(NamedKey::Backspace) => Some(EntryKey::Back),
+            Key::Named(NamedKey::Home) => Some(EntryKey::Home),
+            Key::Named(NamedKey::End) => Some(EntryKey::End),
+            Key::Named(NamedKey::ArrowLeft) => Some(EntryKey::Left),
+            Key::Named(NamedKey::ArrowRight) => Some(EntryKey::Right),
+            Key::Named(NamedKey::Space) => Some(EntryKey::Char(b' ')),
+            Key::Character(c) => c.bytes().next().filter(|b| b.is_ascii()).map(EntryKey::Char),
+            _ => None,
+        };
+        if let Some(a) = key.and_then(|key| f.s.name_key(key)) {
+            self.front_act(a);
+        }
+    }
+
     /// `st_ShowAnim` for each name in turn (`OpenBink(name, 1, 0, 0, force)`, `PlayBink(1, 0, 0)`, `CloseBink`);
     /// `then` once the last ends.
     fn queue_videos(&mut self, names: impl IntoIterator<Item = String>, force: bool, then: AfterVideo) {
@@ -1746,6 +1984,8 @@ impl App {
     }
 
     /// The sim's video requests (`st_ShowAnim`, `MEGHALAS`, `MEGNYERES`) become the queue.
+    /// A game end (`MEGHALAS`, `MEGNYERES`) plays its videos (none for a race of 9+ or `MEGNYERES(false)`), then
+    /// leaves for the main menu (re/rules/game-end.md §2).
     fn take_video_requests(&mut self) {
         let reqs = std::mem::take(&mut self.world.videos);
         // A headless script run has no screen to play them on.
@@ -1753,10 +1993,14 @@ impl App {
             return;
         }
         let anims = self.anim_names.get_or_insert_with(|| crate::video::anim_names(&self.install));
-        let en = self.world.curr.human as usize;
+        let race = human_race(&self.world.game.state) as usize;
         let campaign = self.world.game.state.mem.i32(ig2_sim::save::va::CAMPAIGN_TYPE) > 0;
-        let names: Vec<String> = reqs.iter().flat_map(|r| r.names(anims, &self.tables.videos, en, campaign)).collect();
-        self.queue_videos(names, false, AfterVideo::Resume);
+        let names: Vec<String> = reqs.iter().flat_map(|r| r.names(anims, &self.tables.videos, race, campaign)).collect();
+        match (reqs.iter().any(crate::video::Request::ends_game), names.is_empty()) {
+            (true, true) => self.exit_to_main_menu(),
+            (true, false) => self.queue_videos(names, false, AfterVideo::MainMenu),
+            (false, _) => self.queue_videos(names, false, AfterVideo::Resume),
+        }
     }
 
     /// A frame while fullscreen videos play: the next one opens when one ends; the game and the menu wait. When the
@@ -1783,8 +2027,14 @@ impl App {
             if let Some(f) = &mut self.front {
                 f.ui_ms = now;
             }
-            if std::mem::take(&mut self.after_video) == AfterVideo::MenuMusic {
-                self.audio.play_music(crate::audio::Music::Menu, true, human_race(&self.world.game.state));
+            match std::mem::take(&mut self.after_video) {
+                AfterVideo::MenuMusic => self.audio.play_music(crate::audio::Music::Menu, true, human_race(&self.world.game.state)),
+                AfterVideo::StarmapEntry(c) => {
+                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                    self.audio.play_start_voice(c);
+                }
+                AfterVideo::MainMenu => self.exit_to_main_menu(),
+                AfterVideo::Resume => {}
             }
             return;
         };
@@ -1991,13 +2241,37 @@ impl App {
         self.ui_frames = now as u64 / 10;
         if let Some(h) = &mut self.hud {
             let world = &mut self.world;
+            let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
             for _ in 0..due_ui {
                 h.scroller.step(&mut || world.pop_message());
                 h.info.ui_frame(&world.ui.info, world.ui.human);
                 h.messages.ui_frame();
+                // `FRISSIT_Messages2`: every 11th UI frame on the screen, the automatic messages.
+                self.messages_auto = (self.messages_auto + 1) % 11;
+                if on_messages && self.messages_auto == 0 {
+                    world.send(ig2_sim::game::MessageOrder::Auto.into());
+                }
+            }
+            if on_messages {
+                // A dialogue the sim opened by itself (an automatic message, one taken up again) is shown.
+                if let Some(i) = ig2_sim::game::dialogue_in_progress(&world.game.state) {
+                    if h.messages.open.as_ref().is_none_or(|d| d.index != i) {
+                        h.open_message(&self.install, &world.ui, i);
+                    }
+                }
             }
             if let Some(d) = &mut h.messages.open {
+                for (k, a) in d.answers.iter_mut().enumerate() {
+                    a.disabled = ig2_sim::game::choice_disabled(&world.game.state, k);
+                }
                 d.advance(due_ui as f32 * 10.0);
+            }
+            let mut orders = std::mem::take(&mut h.messages.orders);
+            if let Some(d) = &mut h.messages.open {
+                orders.append(&mut d.orders);
+            }
+            for o in orders {
+                world.send(o.into());
             }
         }
         self.head_clip_frame(now, due_ui);
@@ -2049,15 +2323,41 @@ impl App {
             let acts = self.panels.toggle_production(&self.world.game.state, &sel);
             self.apply(acts);
         }
+        let win = self.gpu.as_ref().map_or([640, 480], |g| {
+            let s = g.window.inner_size();
+            [s.width, s.height]
+        });
+        // The colony screen draws the game's pointer (`UpdateFrame`): the window's own is hidden there.
+        let hide = self.colony.is_some() && self.overlay.is_none() && self.spy.is_none();
+        if hide != self.cursor_hidden
+            && let Some(g) = &self.gpu
+        {
+            g.window.set_cursor_visible(!hide);
+            self.cursor_hidden = hide;
+        }
         if let (Some(c), Some(s)) = (&mut self.colony, &self.world.colony_curr) {
+            let shown = self.overlay.is_none() && self.spy.is_none();
             for _ in 0..due_ui {
+                // `Frissit2_Colony` runs every UI tick (the camera keys); `Colony_Autoscroll` only on the screen.
+                c.ui.cam_keys.tick(&mut c.view.camera);
+                // [deviation: the port scrolls only while the pointer is over the window; the exe keeps the last
+                // physical position]
+                if shown && self.pointer_in {
+                    c.ui.cam_keys.autoscroll(&mut c.view.camera, self.cursor_px, win, self.mouse_held != 0);
+                } else {
+                    c.ui.cam_keys.stop_scroll();
+                }
                 // `Frissit2_Colony`'s ambients and music only with the screen shown (`AktKep == 3`).
-                if self.overlay.is_none() && self.spy.is_none() {
+                if shown {
                     c.ui.ui_frame(s, self.world.curr.human as i32, &mut c.view.camera);
                     if let Some(m) = c.ui.war_music(s.at_war) {
                         self.audio.play_music(m, false, human_race(&self.world.game.state));
                     }
                 }
+            }
+            // `TransformRotation`, once a drawn frame in `ShowColony`.
+            if shown {
+                c.ui.cam_keys.frame(&mut c.view.camera);
             }
             c.view.overlay = c.ui.overlay(s, self.world.curr.human as i32);
         }
@@ -2159,6 +2459,7 @@ impl App {
             };
         }
         let mut colony_panel = None;
+        let mut colony_info = None;
         // The diplomacy screen: its UI ticks, the frame's input (its commands go to the queue), then its frame.
         if let (Some(d), Some(h), Some(crate::ui::Screen::Diplomacy)) = (&mut self.diplomacy, &self.hud, self.overlay) {
             for _ in 0..due_ui {
@@ -2192,7 +2493,10 @@ impl App {
             }
             (Some(s), ..) => (crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]), s),
             (None, Some(c), Some(prev), Some(curr)) => {
-                colony_panel = c.panel.render(&mut g.renderer, &self.install, self.tables, c.ui.kind, c.ui.spin(), size);
+                let unit = crate::colony::landing_unit(&self.world.game.state, curr);
+                colony_panel = c.panel.render(&mut g.renderer, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), size);
+                let w = crate::colony_war::WarCtx { snap: curr, en: self.world.curr.human as i32, tutorial_paused: false };
+                colony_info = c.ui.war.info_model(&w).and_then(|(u, turn)| c.scene.render_info_model(&mut g.renderer, &self.install, &self.tables.unit_models, u, turn, size));
                 (c.view.build(&mut g.renderer, &self.install, self.tables, self.maps, &mut c.scene, prev, curr, alpha, t), crate::ui::Screen::Colony)
             }
             _ => {
@@ -2206,7 +2510,7 @@ impl App {
             match (screen, &self.colony, &self.world.colony_curr) {
                 (crate::ui::Screen::Colony, Some(c), Some(curr)) => {
                     let cursor = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
-                    let input = crate::ui::ColonyInput { ui: &c.ui, sim: self.world.game.rules, panel: colony_panel, cursor, now_ms: now, time: t };
+                    let input = crate::ui::ColonyInput { ui: &c.ui, sim: self.world.game.rules, panel: colony_panel, cursor, pointer: self.pointer_in, info_model: colony_info, now_ms: now, time: t };
                     h.draw_colony(&mut frame, &self.world.game.state, self.tables, self.maps, &c.view, &c.scene, curr, &input);
                 }
                 (crate::ui::Screen::Starmap, ..) => {
@@ -2230,14 +2534,14 @@ impl App {
                 (crate::ui::Screen::Trade, ..) => {
                     if let Some(tr) = &self.trade {
                         let sc = self.trade_scene.get_or_insert_with(|| crate::trade_scene::TradeScene::new(&mut g.renderer));
-                        sc.draw(&mut frame, &mut g.renderer, &self.install, tr, size);
-                        h.draw_trade(&mut frame, tr, &self.world.game.state, &self.trade_tips, size, t);
+                        sc.draw(&mut frame, &mut g.renderer, &self.install, self.tables, tr, size);
+                        h.draw_trade(&mut frame, tr, &self.world.game.state, self.tables, &self.trade_tips, size, t);
                     }
                 }
                 (crate::ui::Screen::Research, ..) => {
                     if let (Some(r), Some((tex, lines))) = (&mut self.research, research) {
-                        let glow = self.research_models.as_ref().and_then(|m| m.glow);
-                        h.draw_research(&mut frame, r, &self.tech_infos, &self.research_tips, &self.world.game.state, self.tables, (tex, glow), lines, size, t);
+                        let (glow, arrow) = self.research_models.as_ref().map_or((None, None), |m| (m.glow, m.arrow));
+                        h.draw_research(&mut frame, r, &self.tech_infos, &self.research_tips, &self.world.game.state, self.tables, (tex, glow, arrow), lines, size, t);
                     }
                 }
                 _ => {}
@@ -2369,10 +2673,8 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.front.is_some() => {
-                if event.state == ElementState::Pressed && event.logical_key == Key::Named(NamedKey::Escape) {
-                    if let Some(f) = &mut self.front {
-                        f.s.escape();
-                    }
+                if event.state == ElementState::Pressed {
+                    self.front_key(&event.logical_key);
                 }
             }
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { button: MouseButton::Right | MouseButton::Middle, .. } if self.front.is_some() => {}
@@ -2385,8 +2687,10 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
+            WindowEvent::CursorLeft { .. } => self.pointer_in = false,
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_px = [position.x as i32, position.y as i32];
+                self.pointer_in = true;
                 // The band's pixels: the mouse goes through the frame (`IG2_VIRTUAL_POSY`, re/screens/widescreen.md §4).
                 let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
                 let p = [position.x as f32, position.y as f32 - top];
@@ -2401,6 +2705,8 @@ impl ApplicationHandler for App {
                 self.wheel(steps);
             }
             WindowEvent::MouseInput { state, button, .. } if self.spacewar.is_some() => {
+                let at = self.virtual_cursor();
+                let mut pause = false;
                 if let Some(sw) = &mut self.spacewar {
                     let down = state == ElementState::Pressed;
                     match button {
@@ -2408,9 +2714,14 @@ impl ApplicationHandler for App {
                         MouseButton::Right => sw.right = down,
                         _ => {}
                     }
+                    pause = down && button == MouseButton::Left && sw.pause_press(at);
+                }
+                if pause {
+                    self.toggle_pause();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.spacewar.is_some() => self.spacewar_key(&event),
+            WindowEvent::KeyboardInput { event, .. } if self.colony_camera_key(&event) => {}
             WindowEvent::MouseInput { state, button, .. } => self.mouse(button, state == ElementState::Pressed),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 let quit = self.key(event.logical_key.as_ref());
@@ -2500,6 +2811,12 @@ impl App {
     /// A mouse button went down or up.
     fn mouse(&mut self, button: MouseButton, pressed: bool) {
         let state = if pressed { ElementState::Pressed } else { ElementState::Released };
+        let bit = match button {
+            MouseButton::Left => 1,
+            MouseButton::Right => 2,
+            _ => 0,
+        };
+        self.mouse_held = if pressed { self.mouse_held | bit } else { self.mouse_held & !bit };
         if button == MouseButton::Left && self.spy.is_some() {
             let Some(at) = self.spy_virtual(self.cursor) else { return };
             let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
@@ -2619,6 +2936,29 @@ impl App {
         }
     }
 
+    /// `ColonyKeyboardHandler`'s held camera keys (spec §11.9), down and up: the arrows turn and tilt, numpad + / −
+    /// zoom. True when taken.
+    fn colony_camera_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        use winit::keyboard::{KeyCode, PhysicalKey};
+        if self.overlay.is_some() || self.spy.is_some() {
+            return false;
+        }
+        let Some(c) = &mut self.colony else { return false };
+        let k = &mut c.ui.cam_keys;
+        let down = event.state == ElementState::Pressed;
+        let flag = match event.physical_key {
+            PhysicalKey::Code(KeyCode::ArrowLeft) => &mut k.left,
+            PhysicalKey::Code(KeyCode::ArrowRight) => &mut k.right,
+            PhysicalKey::Code(KeyCode::ArrowUp) => &mut k.up,
+            PhysicalKey::Code(KeyCode::ArrowDown) => &mut k.down,
+            PhysicalKey::Code(KeyCode::NumpadAdd) => &mut k.zoom_in,
+            PhysicalKey::Code(KeyCode::NumpadSubtract) => &mut k.zoom_out,
+            _ => return false,
+        };
+        *flag = down;
+        true
+    }
+
     /// A key went down; true = quit.
     fn key(&mut self, key: Key<&str>) -> bool {
         match key {
@@ -2650,7 +2990,7 @@ impl App {
             }
             Key::Named(NamedKey::F8) if self.overlay == Some(crate::ui::Screen::Trade) => {}
             Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Trade) => {
-                self.trade = None;
+                self.trade_under_options = self.trade.take();
                 self.overlay = None;
                 self.open_options(false);
             }
@@ -2704,6 +3044,8 @@ impl App {
             Key::Named(NamedKey::Delete) if self.colony.is_some() && self.modifiers.shift_key() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Demolish)),
             Key::Named(NamedKey::PageUp) if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Prev)),
             Key::Named(NamedKey::PageDown) if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Next)),
+            // `ColonyKeyboardHandler`: I is the planet info mode on the colony screen (colony.md §12.1).
+            Key::Character("i" | "I") if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Info)),
             Key::Character("i" | "I") => self.toggle_screen(crate::ui::Screen::Info),
             Key::Character("m" | "M") => self.toggle_screen(crate::ui::Screen::Messages),
             Key::Character("d" | "D") => {
@@ -2721,6 +3063,12 @@ impl App {
             Key::Named(NamedKey::Tab) => {
                 if let Some(h) = &mut self.hud {
                     h.info.chart = (h.info.chart + 1) % 10;
+                }
+            }
+            // `ColonyKeyboardHandler`: `c` (ch 99 only) cycles the camera presets on the colony screen.
+            Key::Character("c") if self.colony.is_some() && self.overlay.is_none() && self.spy.is_none() => {
+                if let Some(c) = &mut self.colony {
+                    c.ui.cam_keys.preset();
                 }
             }
             Key::Character("c" | "C") => self.toggle_colony(),

@@ -23,12 +23,12 @@ the race, scenario, tutorial and multiplayer screens behind them are not ported 
 | `MainScrGfx2D_1` (faders) / `_2` (texts) / `_3` (disconnect box) | 0x593fc0 / 0x597670 / 0x59a660 | not given / 0x4fc8d0 / not given |
 | `CampaignGameStart` | 0x58a8a0 | 0x4f5e90 |
 | `InitFajvalasztas` / `InitScenarioValasztas` | 0x58bef0 / 0x5899a0 | inlined (see 10) |
-| `SetCampaignGameOptions` / `SetScirmishGameOptions` | 0x59bcd0 / n.a. | 0x503d40 / 0x503e80 (not decompiled) |
+| `SetCampaignGameOptions` / `SetScirmishGameOptions` | 0x59bcd0 / n.a. | 0x503d40 / 0x503e80 (decompiled, `_local/decomp/mainscr3/`) |
 | `TutorialSetCampaignGameOptions` | 0x59c5f0 | 0x504250 |
 | `ElinditTutorial(int)` (ELF); **the exe's `ElinditTutorial` 0x553c20 is `UnLoadScenarioList`** | 0x59c3b0 | 0x553c20 |
 | `MainInitSounds` / `MainDeInitSounds` / `MainPlaySound` | 0x593b60 / 0x593d40 / 0x593860 | 0x4fa9f0 / 0x4fa970 / inlined |
 | Decompiled in pass 2 (`_local/decomp/mainscr2/`) | `HozzaadKorok` 0x58d2d0, `ForgatFajvalasztasDolgai` 0x58af10, `LoadFajValasztasVektor` 0x58bc90, `VisszaAllitFajvalasztasKezdoPoziciok` 0x5893a0, `HandleLoadingMesh` 0x58d670, `MainScrInitNullBoxes` 0x593f00, `MainScr_CancelIPEnter` 0x59ec00, `MainScr_ESCPressedWhenMultiplayerselect` 0x59ecc0, `GenerateUrhajoPosok` 0x58c1d0, `MainSetSoundPan` 0x5939b0, `ChangeGalaxyColors` 0x58c700, `GenerateGalaxy` 0x58cde0, `GenerateKod` 0x58c960, `DeGenerateKod` 0x58cb50, `GenerateKod2` 0x58cc60, `MainInitSounds` 0x593b60 | exe 0x4f8780 (3.1), 0x4f7390 (9.2), 0x4f9410 (9.2), 0x4f89b0 (9.2), 0x4f8620 (4), 0x4fe2c0 (3.1), 0x4fe6f0 + 0x4fe780 (6.4), 0x4f8380 (5.5), 0x500040 (8), 0x4f6040 (3.2); exe `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240 not decompiled (3.2, ELF read; Kod* from the ELF disassembly) |
-| Still not decompiled | `ScenarioGombraRanyomtak` 0x59af90, `KiirFajInfoSzoveg` | exe 0x503bf0, 0x4f9040 (also `FrissitFajInfoSzoveg` 0x4f7c60, `InitKiirInfoSzoveg` 0x4f8ea0, `InfoBelerakSzoveg` 0x4f8910, `FUN_00504380`, `MozgatKor`, `ElkerFajvalasztasKezdoPoziciok`, `FejFenyekBeallitasa`) |
+| Decompiled in pass 3/4 (`_local/decomp/mainscr3/`, `mainscr4/`) | `ScenarioGombraRanyomtak`, `KiirFajInfoSzoveg`, `FrissitFajInfoSzoveg`, `InitKiirInfoSzoveg`, `InfoBelerakSzoveg`, `FUN_00504380`, `MozgatKor` and the rest of part 2 | exe 0x503bf0, 0x4f9040, 0x4f7c60, 0x4f8ea0, 0x4f8910, 0x504380, 0x4fab30, 0x4fe190, 0x503e80, 0x503d40, 0x4f8f80, 0x4f9250, 0x553400, 0x503540, 0x4f7330, 0x4f6270, 0x504870, 0x504120, 0x543750, 0x543150, 0x4fa9f0, 0x4fa970, 0x552fc0 |
 
 ## 1. State
 
@@ -105,6 +105,13 @@ Screen flags (bytes). `Belep` clears all but `Mode_Main`. Floats are f32.
      `GetSubMeshid(LoadingMesh1 0xd84368, sub 0xd84498, 0)`; `ChangeTexture(sub, LoadingTexturak[mcd])`.
    - `Mode_Kilepes = 1; MainScrKilepesValtozo = 100.0; AktKepBackup = AktKep; AktKep = 0xf`; loop while `MainScrKilepesValtozo > 0`: `Mouse_Tipus = -2; ForceUpdateFrame (0xbae2ac) = 1;
      Cel = 6.0; UpdateFrame(); FRISSITES(); ForceUpdateFrame = 0`. Then restore `AktKep`, `Mode_Kilepes = 0`. (200 ticks = 2 s of what 4 and 5 describe.)
+   **Exit animation** (pass 3: `MainScr_Kilep`, `FRISSIT_MainScr2`, `Update3D`, `HandleLoadingMesh` exe 0x4f8620, asm 0x4f86a2..0x4f8774 checked):
+   K = `MainScrKilepesValtozo` −0.5 a UI tick (f64, 0x4f71a5), 200 ticks. The rings fly out (`Cel` 6 forced). Camera (`Update3D` step 1): q = 100 − K,
+   `kamerapont.z −= q·30`, `forgaspont.x = q·5` (f32). K < 25: `GlobalTransparency = (float)(K/25.0)` (f64, 0x4f71df), the scene fades in the last 50 ticks.
+   K < 50: T = `(float)(K/50.0)` (f64); plate 1 (`LoadingMesh1` 0xd84368, `vector/main/loadi1.xv`, its sub-mesh retextured with `load<mcd+1>.bmp`,
+   remaster `textures/main/load<n>_bmt.pvr`): shown, `SetObjTransparency(T)`, `MoveObj(0, −T·100, −1400)`, `RotateObj(0, (float)(T·π/2), 0)`; plate 2
+   (0xd84278, `loadi2.xv`): `MoveObj(0, T·100, −1400)`, `RotateObj(0, (float)(−T·π/2), 0)`. In a race start `Mode_Fajvalasztas` and `StartGame` stay set
+   (the head stays hidden at z 1400). The leave test of `Update3D` is skipped while `Mode_Kilepes`. No sounds.
 2. `Main_NemKellZoom = 0`. If the target is not 0xe / 0x10 / 0xd: `mainOldalsoFenyekKi()`, `MainDeInitSounds()`, `RemoveFajVLight()`. `MainScrRemoveNullBoxes()`.
 3. What is started:
    - `FajValasztasStartGame`: `CampaignGameStart()` (9.1).
@@ -407,25 +414,124 @@ players i = 1..18: `PlayerKi[i]` (0xbae560) = 2, `PlayerFaj[i]` (0xbae574) = i, 
 then `st_ShowAnim` by `EN` (0x912a3c, set inside `InitNewGame`): 1 -> `intro_human.bik`, 3 -> `intro_politikus.bik`, 5 -> `intro_brutal.bik` (how race index 0..2 becomes 1 / 3 / 5: read `InitNewGame`).
 `SetCampaignGameOptions` (ELF 0x59bcd0; the debug Enter path): the same setup with `EN = 1; PlayerKi[1] = 1`, `InitNewGame(seed, AktIkon == 0x2a ? 4 : 0, 0, 0)`, `StartStory(DAT_0144c4b0)` if set.
 
-### 9.2 Race choice (`Mode_Fajvalasztas`)
-`InitFajvalasztas` (ELF 0x58bef0): `LastKijelolt = -1; FajVFrame = 0; FajVKINYITVA = 0; FajVSzetnyilas = 0; FajVSzetnyilasCel = 100; MainKorMozgatoValtozo = 2.5; FajValasztasSelectedRace = -1;
-FajValasztasFajKivalasztva = FajValasztasFajKivalsztvaBecsukas = FajValasztasStartGame = 0; UnhideObj(FajVMainMesh); UnhideObj(submeshes 3..8); FajValasztasNehezsegiSzint = 0; VisszaAllitFajvalasztasKezdoPoziciok()`.
-The race-choice scene (`FajVMainMesh`, `LoadFajValasztasVektor`, texture dirs `textures/main/fejek`, `fejek2`, `fejek3`, race videos `misc/race_0N_loop|wait.bik` per `re/screens/README.md`, the race boxes 0xe..0x10, the info text `LoadFajInfoText` / `InfoBelerakSzoveg` / `KiirFajInfoSzoveg`)
-is in the functions listed as not decompiled. Flow: 6.3 (0x2b opens it with `Cel = 6.0`, the rings fly out; `FajVFrame` runs to 90; a click on a race highlights it, a second click on the same race confirms it: rings come back as difficulty,
-`Cel = 1.3`); a difficulty click closes the spheres (`FajVSzetnyilasCel = 100`), `Update3D` then sets `AktKep = STARTSCREEN`, `Kilep` plays the exit animation and calls 9.1.
+#### 9.1.1 From the start to the first starmap frame (the client's half)
+- Order (`IG2_gameUpdate` exe 0x4e0440): `MainScr_Main` 0x4fefc0 sets `AktKep = STARTSCREEN` (exe 0x927a88 = 2, the
+  starmap) and `Atlepes`; `IG2_gameUpdate` calls `MainScr_Kilep` (exit animation, then `CampaignGameStart`: `InitNewGame`,
+  the intro, **blocking**, before any starmap frame; `Atlepes` still 1, so no sim tick runs), then `ScreenBetolt(2)`,
+  `FRISSITES_IGAZIT` (exe 0x4de690: the clocks re-based, no catch-up after the video), `Starmap_Belep` exe 0x5b19a0.
+- `ProgramNowStarting` (exe 0xbad107) has **no reader** (FindRefs over the exe): written by every start and load,
+  cleared in `Fake_FRISSITES` at 0x4deb45. Nothing to port.
+- The view and the selection come from `InitNewGame` (re/rules/new-game.md §1 steps 31, 46, 52): `StarmapMode` 1,
+  `AktPlanet`/`AktFleet` as the start left them, the camera `Starmap*` = `Target*` (`StarmapSetSideView`: the box of
+  the planets the human sees or owns, pitch −0.95), so `Starmap_Belep`'s tween starts at rest (no fly-in);
+  `StarmapPlanetKering` 0. `Starmap_Belep` doesn't touch `StarmapMode`.
+- `Starmap_Belep`'s new-game tail: `PlayMusicMain(0, 0)` (unless `spacewarbanvanbarkacs`), then, with `SOUND` and
+  `HangLejatszasKell` (exe 0xbae26c, `InitNewGame` step 6: the campaign type) > 0, the start voice
+  `HangLejatszasID` (0x912a44) = `PlayWav("SOUNDS/START/faj%dstart.WAV", 0)`, the music ducked to `M·60/100`,
+  `HangLejatszasKell = 0`; `UpdateFrame` ends the duck when the voice stops (re/screens/audio.md §3, §5).
+- Client (`ig2-client`): `World::new_game(game)` takes a `Game` from any start constructor (mode-agnostic): live
+  real-time battles, the camera from the state's `Starmap*` globals, the orbit clock 0, `HangLejatszasKell` taken
+  (and cleared, as the first `Starmap_Belep` does before any tick) for the start voice, no `FlottakUjraSzamol`
+  (that is `LoadSave`'s); `World::campaign_intro` queues `intro_name(EN)`. `new_game::StartTexts` builds the sim's
+  `StartData` from the install (the Hungarian `txt17` names `StringReadAll` writes, the constellations, the message
+  kinds, the exe image); `new_game::campaign` is `CampaignGameStart`'s `InitNewGame`. The window plays the intro,
+  then `AfterVideo::StarmapEntry`: the main music and the start voice. CLI: `--new-campaign C[,D[,SEED[,TICKS]]]`
+  (no config storyline, no registry entry yet: MainScr part 2 wires the race menu, `init\init` and the registry).
+- Verified: `world::tests::new_campaign_world_matches_the_exes_start` (the 5 `run_newgame.py` starts: camera,
+  selection, planets, fleets, radar, clock = the world loaded from the exe's tick-0 save, apart from the recount's
+  fleet bit 15); `run_screendiff.py … newgame-c1-d2-s4242.sav starmap:66 --client-new-campaign 1,2,4242,96277`
+  (re/screens/diff-results.md, 2026-10-23).
+- Open: `PlayMusicMain`'s `random(3)` stream (the client's own cosmetic pick).
 
-Functions read in the second pass (brief; the next session does the screen):
-- `VisszaAllitFajvalasztasKezdoPoziciok` (exe 0x4f89b0; contains the ELF `InitFajvalasztas` part): `LastKijelolt (0xbbb3e0) = -1; FajVFrame (0xbbb168) = 0; FajVKINYITVA (0xbbb162) = 0; FajVSzetnyilas (0xbbb16c) = 0; Cel (0xbbb170) = 100.0; MainKorMozgatoValtozo (0xbbb174) = 2.5; FajValasztasSelectedRace (0xbbb178) = -1; confirmed (0xbbb163) = 0; FajValasztasFajKivalsztvaBecsukas (0xbbb3f5) = 0; StartGame (0xbbb17c) = 0`; `UnhideObj(FajVMainMesh 0xcc1440)`; unhide sub-meshes 3..8; `0xbbb180 = 0`; then for the sub-meshes 2, 9, 10, 0, 0xb, 0xc, 1, 0xd, 0xe in this order: `MoveObj(sub, saved x, y, z)` (saved triples at 0xbbb198, 1a8, 1b8, 1c8, 1d8, 1e8, 1f8, 208, 218), `SetObjTransparency(0)`, `RotateObj(0, 0, 0)`.
-- `LoadFajValasztasVektor` (exe 0x4f9410; ELF 0x58bc90): dirs `textures/main`, `vector/main`; `LoadBox("kezdo_.xvb", false)` -> `FajVMainMesh` (0xcc1440, id slot also `0xbbb164`), scale 0.611 (0x3f1c28f6), `MoveObj(0, 0, -800)`, `SetRelative(false)`, `PropertiesOff(2)`; parallel light colour 0xdcc8c8 direction (0, 0, -1000) (handle 0xcc1464); byte 0xbbb161 = 1; `HideObj`; ambient lights colour 0x646464 on sub-meshes 2, 0, 1 (handles 0xd842fc, 0xd84308, 0xd84314) each with `PropertiesOn(0x40000)`; `HideObj`; `ElkerFajvalasztasKezdoPoziciok()` (saves the sub-mesh start positions; not read).
-- `ForgatFajvalasztasDolgai` (exe 0x4f7390; ELF 0x58af10), only `AktKep == 0xf`: `Mouse_Szoveg_Off_Range(0xe, 0x10)`; not `Mode_Fajvalasztas`: `HideObj(FajVMainMesh)`; else `UnhideObj`, `FejFenyekBeallitasa()`; until `FajVKINYITVA`: `SetFrame(mesh, FajVFrame)` (the opening animation 0..90); then `PropertiesOff(2)`, hide sub-meshes 3..8, `RotateObjr(sub, 0, 0, +-0.02)` per tick on sub-meshes 9, 11, 14 (+0.02) and 10, 12, 13 (-0.02) (f32 constants 0x3ca3d70a), then by state: (a) neither confirmed nor closing and not `StartGame`, not `_Becsukas`: three spheres k = 0..2 at angle `k/3*2pi + MainKorMozgatoValtozo`, radius `230*t` (t = FajVSzetnyilas/100), blend between the start position (table at exe 0x91408c, 4 floats per sphere) and the circle via `MozgatKor(...)` (exe sin / cos are `libm_sse2_*_precise`, doubles); when `t > 0.999`: race box `0xe + k`, rect (x - 80, y - 80, 160, 160) from `TransformPoint`, text `GetString(0xf, 1, 0x17)`, `Mouse_Szoveg_On`; (b) `_Becsukas`: the three spheres fly back (radius factor `1.5`, `sin((1 - t)*pi)*800 + 900` for z); (c) `StartGame`: the chosen head only (`MozgatKor(.., 0, 0, (1 - t)*700 + t*1400, t)`); (d) confirmed or confirm-closing: the picked sphere (index `FajValasztasSelectedRace`) goes to z `sin((1 - t)*pi)*800 + 700` with scale 0.001, the others scale away (factor 5). (rough reading of the decompile; exact `MozgatKor` argument order: read the asm.)
+### 9.2 Race choice (`Mode_Fajvalasztas`; pass 3, exe decompiles `_local/decomp/mainscr3/`, asm checked at the spots listed)
+Opened by box 0xd (single-player ring 0, `AktIkon` 0x2b, 6.3): `Cel = 6`, `Mode_Fajvalasztas = 1`, `VisszaAllitFajvalasztasKezdoPoziciok()`
+(exe 0x4f89b0), `VanFajVLight1 = 0`. The rings fly out; the race scene `FajVMainMesh` plays its opening, then three heads spread onto
+a circle, a click highlights a race (types its blurb), a second click on it confirms, the rings come back as the difficulty set,
+a difficulty click starts the campaign.
+
+**State** (f32 unless said; "f64 step" = `cvtss2sd`, `addsd`/`subsd` an f64 constant, `cvtsd2ss`). All in `FRISSIT_MainScr2`
+(exe 0x4f65f0) inside its gate, per 10 ms tick:
+
+| var | exe | update |
+|---|---|---|
+| `FajVFrame` | 0xbbb168 | while `< 90`: `+= 0.3` (f64 step, 0x852248, asm 0x4f68d4); reaching `>= 90`: `= 90`, `FajVKINYITVA (0xbbb162) = 1`, `LastKijelolt = 0`, `InitKiirInfoSzoveg()`, `InfoBelerakSzoveg(0)` (race 0 is highlighted and typed when the opening ends) |
+| `MainKorMozgatoValtozo` θ0 | 0xbbb174 | `KINYITVA` only: `+= 0.001` (f64 step, 0x853208, asm 0x4f67d5); 2.5 at open |
+| `FajVSzetnyilas` S / `Cel` | 0xbbb16c / 0xbbb170 | `KINYITVA` only. `Cel < S`: `S -= 0.6` (f64 step, 0x852250, asm 0x4f67f9); on `S <= Cel`: `S = Cel`, and with `Mode_Fajvalasztas_Becsukas`: `Mode_Fajvalasztas = 0; _Becsukas = 0; FUN_00504380()` (the sub-mesh positions restored, not `FajVFrame`/`KINYITVA`/θ0) `; MaxMainKorok = 3; Tav.Cel = 1.0`. `S < Cel`: `S += 1.0f` (asm 0x4f686e); on reaching it: `S = Cel`; if `FajValasztasFajKivalsztvaBecsukas (0xbbb3f5)`: `= 0, MaxMainKorok = 3`; if not `StartGame`: `SelectedRace = -1` |
+| `MozgatKorYadderCel` | 0xbbb3e4 | 0 each tick; −50.0 when `LastKijelolt != -1` and not confirmed (`FrissitFajInfoSzoveg` runs every tick with `LastKijelolt != -1`) |
+| `MozgatKorYadder` Y | 0xbbb3e8 | toward its `Cel` by 0.3 (f64 step, asm 0x4f6780..0x4f679c), clamped; added to every sphere's y |
+| `LastKijelolt` | 0xbbb3e0 | −1 none; set by the opening's end (0) and by clicks only (no hover highlight) |
+
+`MainScr_Main` (exe 0x4fefc0): `AktIkon` 0x2c..0x2e with `Mouse_Lenyom` (the race boxes 0xe..0x10, release flag 0: `AktIkon` = id + 0x1e every
+frame the pointer is on them, the press edge decides): `LastKijelolt == n` → `FajValasztasFajKivalasztva = 1; S.Cel = 0; MaxMainKorok = 3;
+Tav.Cel = 1.3f (0x3fa66666); SelectedRace = n`; else `LastKijelolt = n; InitKiirInfoSzoveg(); InfoBelerakSzoveg(n)`. `AktIkon` 0x2f..0x32 with
+`Mouse_Lenyom`: `StartGame = 1; Kivalasztva = 0; S.Cel = 100; IdoPause… = 0; NehezsegiSzint = id − 0x2f; Tav.Cel = 5.0`. Esc: 6.4 case 5.
+At the end of every `Update3D` (exe 0x500270): `StartGame && S == 100.0f && !Mode_Kilepes` → `AktKep = STARTSCREEN; Atlepes = 1`.
+
+**Boxes.** Race boxes (`ForgatFajvalasztasDolgai` exe 0x4f7390, every drawn frame with `AktKep == 0xf`): `Mouse_Szoveg_Off_Range(0xe, 0x10)`, then only
+in state (a) below with `(double)t > 0.999` (`comisd`, asm 0x4f78f0): `Mouse_Szoveg_Set(0xe + k, 0, (int)(sx − 80), (int)(sy − 80), 160, 160, GetString(15, 1, 0x17), 0, 1)`,
+(sx, sy) = `TransformPoint(MozgatKor's result)` (×639/639, ×479/479). Difficulty boxes (`Update3D` exe 0x500270): while `Tav != 1.0`, `Tav <= 1.333`,
+`Mode_SinglePlayerSelected` and `Mode_Fajvalasztas` (no check of the confirmation): the three ring boxes 0x11..0x13 (lines 0x1f..0x21; 6.1) on the
+ring centres ±40, labels set 4 `fokozatok/easy`, `hard`, `normal`; box 0x14 off.
+
+**The scene** (`LoadFajValasztasVektor` exe 0x4f9410): `vector/main/kezdo_.xv` (root `kezdo_.xvb`, 15 children: 0 `Circle30`, 1 `Circle35`, 2 `Circle01`,
+3..8 `teleszkop05/06/09/07/08/04`, 9..14 `Group02..07`; materials `Faj1` = `HUMAN.bmp`, `Faj2` = `Politikus.bmp`, `Faj3` = `Predator.bmp`, `teleszkop`,
+`belsogyuru`, `kulsogyuru`), scale 0.611, `MoveObj(0, 0, −800)`; a parallel light 0xdcc8c8 along (0, 0, −1000); ambient lights 0x646464 on subs 2, 0, 1
+(handles 0xd842fc, 0xd84308, 0xd84314, `PropertiesOn(0x40000)`). Per race k (0 Human, 1 Politikus, 2 Predator = EN 1 / 3 / 5): head A = sub 2 / 0 / 1,
+ring B = 9 / 0xb / 0xd, ring C = 10 / 0xc / 0xe [guess from the call pattern]. The `fejek*` textures and the `race_0N_*` clips are not used here.
+- Until `KINYITVA`: `SetFrame(FajVMainMesh, FajVFrame)` only (the opening, frames 0..90).
+- Then, per drawn frame: `PropertiesOff(mesh, 2)`, subs 3..8 hidden, `RotateObjr(sub, 0, 0, ±0.02f)`: 9 +, 10 −, 0xb +, 0xc −, 0xd −, 0xe +;
+  `FejFenyekBeallitasa` (exe 0x4f7330): light i colour 0xffffff if i == `LastKijelolt` else 0x646464.
+- `MozgatKor(k, x, y, z, a)` (exe 0x503540): for A, B, C of race k: `MoveObj(sub, x, Y + y, z)` (A: `z + 100.0f`), `SetObjTransparency(a)`, `a > 0.99999`
+  (f64) → hidden; k = 0 also `PropertiesOff(sub, 4)` on 2, 9, 10; returns `GetObjCenter(C)`.
+- t = `(float)((double)S/100.0)` (asm 0x4f764b), u = 1 − t (f32); θk = `((double)k/3.0)·π·2.0 + (double)θ0` (asm 0x4f7668..0x4f7690; CRT
+  `sin`/`cos` 0x819dae / 0x819da8), s = sin θk·230.0, c = cos θk·230.0 (f64); start table Pk (exe 0x914088, f32 x, y, z, stride 0x10). Tested in
+  this order:
+
+| state | race | x | y | z | a |
+|---|---|---|---|---|---|
+| (d) confirmed or un-confirming | picked | `(float)(s·t + (double)(u·0.0f))` | the same with c | `(float)((sin(u·π)·800 + 700)·u + (double)(Pk.z·t))` | 0.001 |
+| | others | `(float)s·5.0f·u + (float)s·t` (f32) | with c | 0 | u |
+| (c) `StartGame` | `SelectedRace` only | 0 | 0 | `u·700.0f + t·1400.0f` | t |
+| (b) `_Becsukas` | all | `(float)((double)(float)s·1.5·u + (double)(t·(float)s))` | with c | `(float)((sin(u·π)·800 + 900)·u + (double)(Pk.z·t))` | u |
+| (a) | all | `(float)(s·t + (double)(Pk.x·u))` | `(float)(c·t + (double)(u·Pk.y))` | Pk.z | 0.001 |
+
+**Race blurb** (`LoadFajInfoText` exe 0x4f9250: `text/fajinfo.txt`, `"Empire 0n"` then the next quoted text, 3 slots of 1000 bytes). A grid of
+5 rows × 50 cells (char, f32 alpha; exe 0xbbb3f8), `col` 0xbbbbc8, `pend` 0xbbbbcc, the text still to type 0xbbc788, `typeCounter` 0xbbb194.
+`InitKiirInfoSzoveg` (0x4f8ea0) blanks the grid, `col = pend = 0`; `InfoBelerakSzoveg(n)` (0x4f8910) loads blurb n; `NewLine` (0x4f8960): `col = 0`,
+rows 1..4 move up, row 4 blank. `FrissitFajInfoSzoveg` (0x4f7c60), per tick while `LastKijelolt != -1`: unless `_Becsukas` `typeCounter++`; every typed
+cell with alpha > 0.5f: `alpha -= 0.05` (f64 step); when `typeCounter > 1`: `typeCounter = 0`, leading `\r`s each start a new line; the next word's length
+(to a space, `\r` or the end) wraps it when it doesn't fit (`50 − col < L` → `NewLine`); spaces at a line start are dropped; one character typed into
+row 4 at `col` with alpha 1.0, `col++`; at `col == 50` `NewLine`. One character per 2 ticks.
+`KiirFajInfoSzoveg` (0x4f9040), after the scene, while `Mode_Fajvalasztas`, `LastKijelolt != -1`, not `StartGame`: cw = ch = 12 (size 4);
+y0 = `(int)(410.0f − (col/50.0f)·14)`, x0 = 20; row r centred on its last non-blank column m: `off = ((49 − m)·12)/2` (signed);
+each cell `KiirStr(c, c·12 + off + 20, 14r + y0, 1, 4, 4, 2)` with `KiirStrSzinSzorzo = (int)(alpha·100)` (closing or confirmed:
+`(int)(S/100·that)` in f64); the cursor (not closing, not confirmed; when nothing is pending it blinks with `AktIdo200`, while typing it shows after a typed
+character): `FillToScreen(col·12 + off(row 4) + 20, y0 + 56, 6, 12, 2)`.
+No sounds in any of these (the meteors' and ships' go on).
+
+Tooltip lines (`txt15` section 1): 0x17 "Select race", 0x1f..0x21 "Easy", "Normal", "Hard" (the boxes 0x11..0x13 carry the lines of
+the rings' order easy, hard, normal: ring 1's tooltip says "Normal" over the "hard" label [obs needed]).
 
 ### 9.3 Scenario / skirmish choice
-Opened by `ScenarioGombraRanyomtak("")` (ELF 0x59af90, exe 0x503bf0, not decompiled; sets `Mode_Scenario_Valasztas`, `SelectedScenario`, ...); also from `Belep` after a finished scenario (name entry for the high score). State: 6.2 boxes, 6.3 rows and buttons, 7.1 / 7.2 draw, 5.1 / 5.2 animation.
+`ScenarioGombraRanyomtak(name)` (exe 0x503bf0): `Mode_Scenario_Valasztas = 1; LoadScenarioValasztasFejek(); ScenarioValasztasNyitottsag = 0; Tav.Cel = 6.0`;
+`name` empty: `ScenarioHighScoreMode = 0`, `ScenarioStart = SelectedScenario = SelectedScenarioOld = 0`, picture of entry 0 loaded; else the entry whose registry
+name matches is selected, `ScenarioStart` = it (at most `count − 23`, at least 0), `ScenarioHighScoreMode = 1`. Then `_Becsukas = 0`,
+`Mode_SinglePlayerSelected = 0`, `KepNyitottsagCel = 100`, `KepNyitottsag = 0`, `InitScirmishValtozok()` (exe 0x4f8f80: a skirmish entry selected →
+race = entry race, computers 3, the rest 2; with byte 0xbad106 set 7, 3, 4, 3, 5, 3).
+`LoadScenarioList` (exe 0x553400, once): `LoadScenarioDescription("scenario\<name>")` (exe 0x552fc0) for the 14 names at exe 0x919774 (attack … tactical;
+a repeated registry name is dropped), then a skirmish entry inserted at 0 (kind 1, title `GetString(0x13, 5, 1)`, picture `..\scenario\pic\spwar\c30068.bmp`).
+A description's file is its name with `.scn`, its registry name the base name; `LoadHighscores` reads the registry, else `fabscr.txt`.
+Timers (`FRISSIT_MainScr2`): `Nyitottsag` ±1.0f a tick (+ while not `_Becsukas` up to 100; − to 0, then `_Becsukas = 0`,
+`Mode_SinglePlayerSelected = 1`, `Mode_Scenario_Valasztas = 0`, `Tav.Cel = 1.0`); `KepNyitottsag` toward its `Cel` by 2.0f: down to the `Cel` → 0, `Cel = 100`,
+`SelectedScenarioOld = SelectedScenario`, the new picture loaded; up (not while `Mode_Kilepes` or `_Becsukas`) to 100.
 Entry record (exe, 32-bit): `+0` name ptr, `+4` file ptr, `+0xc..+0x34` description lines (10 x 4), `+0x34` difficulty index, `+0x38` race, `+0x3c` registry name, `+0x40` scores (10 x 4), `+0x68` names (10 x 4), `+0x90` skirmish kind (> 0 = skirmish).
 ELF (64-bit): `+0` name, `+8` file, `+0x18` lines (8 each), `+0x68` difficulty, `+0x6c` race, `+0x70` registry name, `+0x78` scores, `+0xa0` names, `+0xf0` skirmish kind. Start = 2.2 (scenario file or `SetScirmishGameOptions`).
+Name tables: difficulty `0xbbb248 + 0x14·d` (d = the entry's `difficulty`, or the skirmish's 1..4), technology `0xbbb2b0 + 0x14·n`, population `0xbbb300 + 0x14·n`
+(n 0..3); filled from `txt15` sections 4, 5, 6 [guess: section 4 line d, sections 5/6 line n + 1; check by capture].
 
 ### 9.4 Tutorial
-6.1 (five parts + back), then 2.2 (`TutorialSetCampaignGameOptions` 0x504250, `TutorialStart("main", n)`).
+6.1 (five parts + back), then 2.2 (`TutorialSetCampaignGameOptions` 0x504250, `TutorialStart("main", n)`). Port: `Game::start_tutorial`
+(re/rules/tutorial.md: the §6 prologue with PlayerFaj[17] = 1, `InitNewGame(ticks, 1, 0, 0)`, `LoadScenario("tutorial/scn/tutorial<n>.scn", 0)`).
 
 ### 9.5 Demo (`SelfPlaying`, head of exe 0x4fe3c0; ELF `StartDemoMode` 0x59a870)
 After the title video, scenario list and `LoadFajInfoText`: `ProgramMode = 0; SingleStartGame(); SetIdoSpeed(1, 0);` the 18-player setup of 9.1 with `EN = 1`, `PlayerKi[1] = 1`; `ReadDebugData()`; `InitNewGame(seed, 4, 0, 0)`; `StartStory(0xb77260)` if set;
@@ -465,7 +571,7 @@ After the title video, scenario list and `LoadFajInfoText`: `ProgramMode = 0; Si
 - Whether the ten `szrke{i}.xvb` files differ in geometry or are the same quad; the sub-mesh count of `korke1.xvb` (asset-finder on `vector/main`).
 - The property bits 2, 4, 8, 0x20 (searched `re/screens/render.md`, `re/formats`): semantic unknown.
 - The vertex-colour byte order of particles (which byte is red): not found in the decompiles; check by capture.
-- Exe code not decompiled: `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240, `DeGenerateKod` (~0x4f8170), `GenerateKod2` (symbol address not read), `mainOldalsoFenyekBe` / `Ki`, `ElkerFajvalasztasKezdoPoziciok`, `FejFenyekBeallitasa`, `MozgatKor`, `FUN_00504380` (the exe call in the race-close path of the timer), exe `MainInitSounds` 0x4fa9f0, `MainScrGfx2D_1` 0x4fab30 / `_3` 0x4fe190, `ScenarioGombraRanyomtak` 0x503bf0, `FrissitFajInfoSzoveg` 0x4f7c60, `KiirFajInfoSzoveg` 0x4f9040, `InitKiirInfoSzoveg` 0x4f8ea0, `InfoBelerakSzoveg` 0x4f8910, `GetKameraPos`. `GenerateKod`, `DeGenerateKod`, `GenerateKod2` have **no decompile anywhere under `_local/decomp`**; I read them from the ELF disassembly (`_local/decomp/placement/ig2.asm`, lines 333426..333700).
+- Exe code not decompiled: `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240, `DeGenerateKod` (~0x4f8170), `GenerateKod2` (symbol address not read), `mainOldalsoFenyekBe` / `Ki`, `GetKameraPos`. (The race, scenario and sound functions are decompiled since part 2: header table above.) `GenerateKod`, `DeGenerateKod`, `GenerateKod2` have **no decompile anywhere under `_local/decomp`**; I read them from the ELF disassembly (`_local/decomp/placement/ig2.asm`, lines 333426..333700).
 - The RNG hypothesis of 3.2 (per-frame `srand(400)` making the respawns near-deterministic): not observed at run time.
 - Click sounds of the rings: none in the code read; the generic hot-spot code (`Mouse_Darabol`, `Mouse_Szoveg` tooltip drawing, `Mouse_Tipus`) was not read; tooltip texts are `GetString(15, 1, n)` (asset-finder job).
 - The scene-light mesh at ELF 0x11abab4 (is it `mainmeshid`?) and whether the exe creates the same two lights in the same function.
@@ -504,14 +610,28 @@ from t 180 on, 10.0 at t 360 (the fly-out). The rings, labels and hover sit on t
 left is in `re/deviations.md`: the top-left picture's tint (greener), the galaxy mesh's arms (sharper, ~4 % bright),
 the dust points, the small bottom galaxy, the exe's own mouse pointer (the client draws none yet), the fly-out's shape.
 
-## 14. Port status (`ig2-client::mainscr`, `mainscr_scene`)
-Ported: the 3D scene (rings + labels with the hover texture, galaxy mesh, the four clouds exact, the pictures, the dust,
-meteors, ships), the 10 ms tick (§5.1 items 5–8, §5.2 fade-in, §5.3, §5.5), the ring hit-tests and the menu changes
-(main ↔ single player / multiplayer / tutorial; back), load game (starts the game from `--save`'s save: the Options
-screen's load slots are the next task) and quit. The window starts on the menu unless `--save` is given;
-`ig2-client --snapshot OUT --screen main [--ui-frames N] [--mouse X,Y] [--script S]`.
-The title and credits videos now play (`video.md`). Not yet: the ring boxes' tooltips (the box texts are §6.1; whether the generic
-tooltip draws on this screen is unverified), the exit animation and loading plates (§2.2, `HandleLoadingMesh`), the
-race choice and difficulty (§9.2), the scenario / skirmish list (§9.3, §7), the tutorial start (§9.4), the multiplayer
-name / IP / IRC entry (§6.5, §9.6), the high-score name entry, the meteor and ship sounds (`MainPlaySound`; the menu music `PlayMusicMenu` plays through `ig2-client::audio`), new-game
-setup (`InitNewGame` exe 0x4e1130 is not in `ig2-sim`: §9.1).
+## 13.2 Capture comparison, part 2 (2026-10-23; `run_screendiff.py main --script mainscr-race.json | mainscr-scenario.json | mainscr-multi.json`)
+Best-offset frame mean, pass <= 6 (details `re/screens/diff-results.md`). Race: t 610 11.2 (ring label phase), 700 13.6, 800 9.5,
+905 9.6, 960 10.0, 1010-1250 8.2-9.3, 1350 9.0, 1420 19.7, 1480 10.8, 1550 11.0, 1610 16.0, 1650 38.4, 1700 72.8 (exit mid-zoom),
+1750 10.1, 1800 0.86. The heads' circle, centre, radius and start stack, the race box hits, and the blurb's position, rows,
+colour and cursor match the exe. Scenario list: static frames 4.3-5.2 (pass); transitions 7.8-11.4; the 3 arrow clicks
+`PlaySoundGlobal(0)` at the exe's ticks. Multi (name entry): t 400-510 6.1-6.7, 530-650 ~10.5-11, 700-800 7.1-9.5. Differences are
+deviations 148-155.
+
+## 14. Port status (`ig2-client::mainscr`, `mainscr_scene`, `mainscr_race`, `mainscr_scenario`)
+Part 1: the 3D scene (rings + labels with the hover texture, galaxy mesh, the four clouds exact, the pictures, the dust,
+meteors, ships), the 10 ms tick (§5.1 items 5-8, §5.2 fade-in, §5.3, §5.5), the ring hit-tests and the menu changes,
+load game (from `--save`; Options' load slots) and quit; the title and credits videos (`video.md`).
+Part 2 (ported): the race choice (`mainscr_race.rs`: `FRISSIT_MainScr2` state, the `kezdo_.xv` opening 0..90, `MozgatKor`
+placement, race boxes from the projected ring centres, highlight/confirm, the blurb typer + `KiirFajInfoSzoveg`, Esc cases),
+the difficulty rings (label set 4, at rest at Tav 1.3), `Start::Campaign` -> `Game::new_campaign` -> `World::new_game` + intro,
+`Starmap_Belep` music and start voice; the scenario / skirmish list (`mainscr_scenario.rs`: `LoadScenarioList` order, the
+English "Skirmish" title fallback, fades, rows, scroll knob, 7 skirmish settings with `PlaySoundGlobal(0)` clicks,
+high-score / description toggle, fabscr.txt default scores); scenario start -> `Game::start_scenario`; the tutorial ring ->
+`Game::start_tutorial` (ig2-sim, untraced composition of verified parts) -> starmap; the multiplayer name entry
+(`EnterNameMode`: A-Z a-z 0-9 _, max 9, Enter accepts; stored as `MultiplayerNev` in the remake's settings); the exit
+animation (`MainScrKilepesValtozo` 100 -> 0 over 200 ticks, camera z, meteor speed-up, GT fade, `loadi1`/`loadi2` plates
+with the `load<n>` picture). Tests: `mainscr_race::tests`, `mainscr_scenario::tests`, `world::tests::scenario_and_tutorial_starts_build_worlds`.
+The skirmish start goes to `Game::start_skirmish` (`SetScirmishGameOptions`: race, computers, the entry's kind, technology, the planet and money tables' values, difficulty, population). Not yet: the
+tutorial script/overlay (U31), the local / inet rings (the M5 lobby: logged), the high-score name entry after a scenario, the
+IP / IRC entry and the disconnected box, the meteor and ship sounds (`MainPlaySound`), the demo (§9.5), the ring tooltips.

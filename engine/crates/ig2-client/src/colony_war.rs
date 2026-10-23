@@ -139,6 +139,8 @@ pub struct WarUi {
     was_war: bool,
     pub screen: Vec<OnScreen>,
     pub mods: Mods,
+    /// The info model's unit (`GetSelected(0)`) and the UI frames it has turned since it was put up.
+    info_turn: (Option<usize>, f32),
 }
 
 fn planet_of(c: &WarCtx) -> i32 {
@@ -197,6 +199,43 @@ impl WarUi {
             }
         }
         best.map(|(s, _)| s)
+    }
+
+    /// `WF::MouseOver` (exe 0x48bb00, `MelyikTankFolottVanACursor`): the unit under `p` whose centre is nearest, any
+    /// side.
+    fn under(&self, p: [f32; 2]) -> Option<usize> {
+        let d = |s: &OnScreen| (p[0] - s.at[0]) * (p[0] - s.at[0]) + (p[1] - s.at[1]) * (p[1] - s.at[1]);
+        self.screen.iter().filter(|s| s.radius.is_some_and(|r| d(s) < r * r)).min_by(|a, b| d(a).total_cmp(&d(b))).map(|s| s.slot)
+    }
+
+    /// `Colony_MouseInit2`'s pointer shape over the 3D view (hot-spot 0x14; spec §11.10), else `None` (the
+    /// hot-spot's own): no unit selected: 5 over a unit or a building, 3 with the build cursor; units selected: 2 over
+    /// the ground, over an own unit (or a building on EN's planet) 5, with Ctrl 6; over another's 6, with Alt 2; both
+    /// a unit and a building under the pointer: left as it was (`None`).
+    pub fn cursor(&self, c: &WarCtx, p: [f32; 2], building: bool, build_mode: bool) -> Option<i32> {
+        let t = self.under(p);
+        if self.selected.is_empty() {
+            let mut k = None;
+            if building || t.is_some() {
+                k = Some(5);
+            }
+            if build_mode {
+                k = Some(3);
+            }
+            return k;
+        }
+        let pick = |own: bool| match (own, self.mods.ctrl, self.mods.alt) {
+            (true, false, _) => 5,
+            (true, true, _) => 6,
+            (false, _, false) => 6,
+            (false, _, true) => 2,
+        };
+        match (t, building) {
+            (None, false) => Some(2),
+            (Some(t), false) => Some(pick(c.unit(t).is_some_and(|u| u.owner == c.en))),
+            (None, true) => Some(pick(!c.foreign())),
+            (Some(_), true) => None,
+        }
     }
 
     /// `WF_Tank::SetSelection`: a new selection restarts its ring.
@@ -266,13 +305,16 @@ impl WarUi {
             }
             return out;
         }
-        if !in_view || !c.snap.war_flag {
+        if !in_view || self.armed != 0 {
+            return out;
+        }
+        if self.landing(c, left, &mut out) {
+            return out;
+        }
+        if !c.snap.war_flag {
             return out;
         }
         out.taken = true;
-        if self.armed != 0 {
-            return out;
-        }
         // The right button with units selected gives orders (the press frame only); otherwise either button selects
         // (`GetNearestBuilding`: the order block needs `TankSelected`).
         if !left && !self.selected.is_empty() {
@@ -302,6 +344,49 @@ impl WarUi {
             }
         }
         out
+    }
+
+    /// The unit info's model (`ColonyInfoMod` 1): the first selected unit and its turn in UI frames.
+    pub fn info_model<'a>(&self, c: &'a WarCtx) -> Option<(&'a UnitView, f32)> {
+        let u = c.unit(*self.selected.first()?)?;
+        Some((u, if self.info_turn.0 == Some(u.slot) { self.info_turn.1 } else { 0.0 }))
+    }
+
+    /// `CheckPlacing(EN)` false: a unit of EN still waits on board (flag 0x8000000).
+    pub fn placing(c: &WarCtx) -> bool {
+        c.snap.to_land.iter().any(|&(o, _)| o == c.en)
+    }
+
+    /// `GetNearestBuilding`'s landing clicks (spec §11.7): the left button on a foreign planet lands EN's next unit on
+    /// the cell (`PlaceTank`) or picks up EN's unit standing there (`UnplaceTank`; another side's unit there lets the
+    /// press through to the selection); the right button lands them all near it (`PlaceAllTanks(…, false)`). The exe
+    /// then waits for the release (`Mouse_FelengedesMajdMegvar`): one order per click.
+    fn landing(&mut self, c: &WarCtx, left: bool, out: &mut WarOutcome) -> bool {
+        if !Self::placing(c) {
+            return false;
+        }
+        let (x, y) = self.cell;
+        let o = if left {
+            if !c.foreign() {
+                return false;
+            }
+            // `WF::UsedPosition` (exe 0x4a7950): the first unit off board on the cell decides.
+            match c.snap.placed.iter().find(|&&(_, _, at)| at == (x, y)) {
+                None => GroundOrder::Place { x, y },
+                Some(&(slot, owner, _)) if owner == c.en => GroundOrder::Unplace { unit: slot as i32 },
+                Some(_) => return false,
+            }
+        } else {
+            GroundOrder::PlaceAll { x, y }
+        };
+        out.commands.push(order(c, o));
+        out.taken = true;
+        // `GetNearestBuilding` returned 0: `Colony_Main` drops `AktEpulet` while side EN is on the field.
+        out.drop_building = c.foreign() && c.present();
+        if left {
+            self.box_start = None;
+        }
+        true
     }
 
     fn button_press(&mut self, c: &WarCtx, id: u32, out: &mut WarOutcome) {
@@ -511,6 +596,9 @@ impl WarUi {
         }
         self.banner = (self.banner - 1).max(0);
         self.selected.retain(|&s| c.unit(s).is_some());
+        // `HandleKisInfoObject` puts the model up again when the first selected unit changes.
+        let first = self.selected.first().copied();
+        self.info_turn = if first == self.info_turn.0 { (first, self.info_turn.1 + 1.0) } else { (first, 0.0) };
         if !c.snap.war_flag {
             self.armed = 0;
         }
@@ -679,6 +767,40 @@ pub enum WarKey {
     All,
 }
 
+/// `CheckSelfDestructBuilding(p)` (exe 0x460b20) on EN's planet: a working `'+'` building (`+0x19` bit 0): hot-spot
+/// 10 and its brush (spec §11.8).
+pub fn self_destruct_ready(c: &WarCtx) -> bool {
+    !c.foreign() && c.snap.buildings.iter().any(|b| b.kind == b'+' && b.flags & 1 != 0)
+}
+
+/// The self-destruct's parts (spec §11.8): button 10's brush 19 (`ColonyGfx2D_1`), and while the countdown runs the
+/// window (`ShowSelfDestruct` exe 0x4a3640) and its texts (`WriteSelfDestruct` exe 0x4a82f0): the cancel button and
+/// its label only on EN's planet.
+pub fn draw_self_destruct(f: &mut Frame, c: &WarCtx, d: &Draw2d) {
+    let col = |i: usize| d.palette.get(i).copied().unwrap_or([1.0; 3]);
+    if self_destruct_ready(c)
+        && let Some(b) = d.brushes.get(19)
+    {
+        d.pics.brush(f, d.v, b, 1, None, [1.0; 4]);
+    }
+    let n = c.snap.self_destruct;
+    if n == -1 {
+        return;
+    }
+    let own = !c.foreign();
+    crate::kit::fader::fader(f, d.white, d.v, [380.0, 70.0, 180.0, 100.0], [0.0, 20.0, 30.0], 60.0, [0.0, 15.0, 25.0], 30.0);
+    if own {
+        crate::kit::fader::fader(f, d.white, d.v, [440.0, 135.0, 60.0, 25.0], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
+    }
+    let line = |k: u16| d.texts.get(3, 5, k);
+    d.font.text(f, d.v, &line(1), 415.0, 78.0, 18, 2, Align::Field, col(2), None);
+    d.font.text(f, d.v, &line(2), 400.0, 90.0, 18, 3, Align::Field, col(2), None);
+    d.font.int(f, d.v, (n / 20) as i64, 450.0, 112.0, 3, 4, Align::Field, col(6));
+    if own {
+        d.font.text(f, d.v, &line(3), 452.0, 143.0, 6, 2, Align::Field, col(2), None);
+    }
+}
+
 /// The 2D pass's tools.
 pub struct Draw2d<'a> {
     pub font: &'a Font,
@@ -749,6 +871,7 @@ mod tests {
             body: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             turret: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
             turret_angle: 0.0,
+            angle: 0.0,
             gun: None,
             weapons,
             air: if weapons & weapon::FIGHTER != 0 { 3 } else { 0 },
@@ -789,6 +912,8 @@ mod tests {
             attacker: 0,
             planet_name: b"Sol 10".to_vec(),
             all_landed: true,
+            placed: (0..4).map(|i| (i, if i < 3 { 1 } else { 2 }, (10 + i as i32, 20))).collect(),
+            self_destruct: -1,
             visible: true,
         }
     }
@@ -886,5 +1011,51 @@ mod tests {
         assert_eq!(w.selected, BTreeSet::from([3]));
         w.key(&c, WarKey::Group(0));
         assert_eq!(w.selected, BTreeSet::from([0, 1, 2]));
+    }
+
+    #[test]
+    fn pointer_shapes_over_the_view() {
+        let s = field();
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        // Nothing selected: 5 over a unit, none over the ground, 3 with the build cursor.
+        assert_eq!(w.cursor(&c, [100.0, 200.0], false, false), Some(5));
+        assert_eq!(w.cursor(&c, [400.0, 300.0], false, false), None);
+        assert_eq!(w.cursor(&c, [100.0, 200.0], false, true), Some(3));
+        // Units selected: 2 over the ground; own unit 5 (Ctrl 6); side 2's unit 6 (Alt 2); a building of the foreign
+        // planet 6; a unit and a building at once: left alone.
+        w.seed([0]);
+        assert_eq!(w.cursor(&c, [400.0, 300.0], false, false), Some(2));
+        assert_eq!(w.cursor(&c, [140.0, 200.0], false, false), Some(5));
+        w.mods.ctrl = true;
+        assert_eq!(w.cursor(&c, [140.0, 200.0], false, false), Some(6));
+        w.mods = Mods { alt: true, ..Mods::default() };
+        assert_eq!(w.cursor(&c, [220.0, 200.0], false, false), Some(2));
+        w.mods = Mods::default();
+        assert_eq!(w.cursor(&c, [220.0, 200.0], false, false), Some(6));
+        assert_eq!(w.cursor(&c, [400.0, 300.0], true, false), Some(6));
+        assert_eq!(w.cursor(&c, [220.0, 200.0], true, false), None);
+    }
+
+    #[test]
+    fn landing_clicks_place_pick_up_and_land_all() {
+        let mut s = field();
+        s.to_land = vec![(1, 5)];
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        // A free cell: `PlaceTank`; EN's unit 1 on (11, 20): `UnplaceTank(1)`; side 2's unit 3 on (13, 20): the
+        // selection takes the press.
+        w.pointer(Some((50, 60)));
+        assert_eq!(orders(&w.press(&c, [500.0, 300.0], true, true)), [GroundOrder::Place { x: 50, y: 60 }]);
+        w.pointer(Some((11, 20)));
+        assert_eq!(orders(&w.press(&c, [500.0, 300.0], true, true)), [GroundOrder::Unplace { unit: 1 }]);
+        w.pointer(Some((13, 20)));
+        assert!(orders(&w.press(&c, [500.0, 300.0], true, true)).is_empty());
+        assert_eq!(orders(&w.press(&c, [500.0, 300.0], false, true)), [GroundOrder::PlaceAll { x: 13, y: 20 }]);
+        // Nothing to land, or the planet is EN's (left button): no landing.
+        let own = ColonySnap { owner: 1, ..s.clone() };
+        let c = WarCtx { snap: &own, en: 1, tutorial_paused: false };
+        assert!(orders(&w.press(&c, [500.0, 300.0], true, true)).is_empty());
+        assert_eq!(orders(&w.press(&c, [500.0, 300.0], false, true)), [GroundOrder::PlaceAll { x: 13, y: 20 }]);
     }
 }

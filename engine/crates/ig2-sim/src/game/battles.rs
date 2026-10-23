@@ -59,7 +59,7 @@ pub enum BattleEvent {
 }
 
 impl BattleEvent {
-    /// The scrolling messages `SpaceWarIndit` / `GroundWarIndit` post for `en`: `(id, planet for %1, important)`
+    /// The scrolling messages `SpaceWarIndit` / `GroundWarIndit` and a real-time war's `GroundWarFinished` post for `en`: `(id, planet for %1, important)`
     /// (`info-messages.md` §3.2; exe 0x5a7ad5 and 0x59c4d0..0x59c5cb).
     pub fn messages(&self, en: u8) -> Vec<(i32, Option<usize>, bool)> {
         match *self {
@@ -85,6 +85,17 @@ impl BattleEvent {
                 }
                 if let Some(id) = to_attacker.filter(|_| attacker == en) {
                     v.push((id, Some(planet), true));
+                }
+                v
+            }
+            // A real-time war's end (`GroundWarFinished(p, s, false)`, exe 0x47c982 / 0x47c9ad).
+            BattleEvent::GroundSide { planet, event: GroundEvent::Taken { from, to, story_planet } } => {
+                let mut v = Vec::new();
+                if from == en {
+                    v.push((0x0b, Some(planet), true));
+                }
+                if to == en && planet as i32 != story_planet {
+                    v.push((0x0c, Some(planet), true));
                 }
                 v
             }
@@ -793,5 +804,11 @@ mod tests {
         // No 0x0C for the story planet, nothing for a lost even war.
         assert!(ground(6, 3, false, true, 5).messages(6).is_empty());
         assert!(ground(6, 3, false, false, 0).messages(6).is_empty());
+        // A real-time war's end: the old owner's 0x0B, the winner's 0x0C (not for the story planet).
+        let taken = |from, to, story_planet| BattleEvent::GroundSide { planet: 5, event: GroundEvent::Taken { from, to, story_planet } };
+        assert_eq!(taken(6, 3, 0).messages(6), [(0x0b, Some(5), true)]);
+        assert_eq!(taken(3, 6, 0).messages(6), [(0x0c, Some(5), true)]);
+        assert!(taken(3, 6, 5).messages(6).is_empty());
+        assert!(taken(3, 4, 0).messages(6).is_empty());
     }
 }

@@ -508,6 +508,10 @@ pub enum GroundEvent {
     Captured { owner: u8 },
     /// `BolygoElfoglal(p, 0)`: no building left.
     Abandoned,
+    /// `GroundWarFinished(p, s, false)` (a real-time war, spec §6.1): the planet passes from `from` to `to`;
+    /// the scrolling posts 11/12 (exe 0x47c982 / 0x47c9ad, `info-messages.md` §3.2) come before the capture
+    /// ([`GroundEvent::Captured`] follows). `story_planet` = `StoryAdat+0x40` (no 12 for it).
+    Taken { from: u8, to: u8, story_planet: i32 },
     /// MP: `WF::Refresh` found the field held by side `holder` and ran `GroundWarFinished(p, holder, false)`.
     Ended { holder: i32 },
     /// `WF::ShotSpecWeapon`: the ground AI called an air strike on a cell (before the spread; the bombs or
@@ -2168,6 +2172,7 @@ impl<'a> War<'a> {
             }
         }
         if !sim && owner != s {
+            self.events.push(GroundEvent::Taken { from: owner as u8, to: s as u8, story_planet: self.ctx.story_planet });
             self.events.push(GroundEvent::Captured { owner: s as u8 });
             self.planet.owner = s as u8;
         }

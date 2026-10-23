@@ -134,6 +134,40 @@ impl Market {
     }
 }
 
+/// The hull model's slide out of the card block at `angle` (`ForgatTradeAlap`, `Trade_MouseInit2`; f32 in the exe):
+/// `(1 − cos)·300` to the right while no delivery is under way, else `(1 − cos)·−200`.
+fn slide(angle: f32, right: bool) -> f32 {
+    let c = (angle as f64).cos() as f32;
+    if right {
+        (1.0 - c) * 300.0
+    } else {
+        (1.0 - c) * -200.0
+    }
+}
+
+/// `TradeLoadAlap(base, race)`'s file (exe 0x609c60): the model name, its `VectorDir` and `TextureDir`, and `k` (the
+/// model is added at `k·0.08`). Below 5 and 12..=14 `AlapNevek[base]`; 5..=11 `tipusnevek[(base − 5)/2 + race·12]`;
+/// 15..=24 the hull tech's research model (`TTeruletek[Alapok[base].+0xc − 1]`); 25 `tipusnevek[race·12]`.
+pub fn hull_file(rules: &ig2_rules::Rules, base: i32, race: i16) -> Option<(String, &'static str, &'static str, f32)> {
+    const TAL: (&str, &str) = ("vector/talalmanyok/", "textures/talalmanyok/");
+    const SPW: (&str, &str) = ("vector/spacewar/", "textures/spacewar/");
+    let ship = |k: i32| rules.ship_types.get((k + race as i32 * 12).max(0) as usize).map(|t| t.name.clone());
+    let tech_model = || {
+        let t = rules.hulls.get(base as usize)?.tech;
+        rules.research_screen.models.get((t - 1).max(0) as usize).cloned()
+    };
+    let (name, (v, t), k) = match base {
+        ..=4 => (rules.design_screen.models.get(base.max(0) as usize).cloned(), TAL, 1.0),
+        5..=11 => (ship((base - 5) / 2), SPW, 1.0),
+        12..=14 => (rules.design_screen.models.get(base as usize).cloned(), ("vector/design/alapok/", "textures/spacewar/"), 2.0),
+        15..=18 => (tech_model(), TAL, 1.0),
+        19..=24 => (tech_model(), TAL, if base == 19 { 0.5 } else { 1.0 }),
+        25 => (ship(0), SPW, 1.0),
+        _ => (None, TAL, 1.0),
+    };
+    name.filter(|n| !n.is_empty()).map(|n| (n, v, t, k))
+}
+
 /// The human's planets with a working trade port, or all of them with `DEBUGX` or `TradeCheat` (`HanyTradePortVanAkarmi`
 /// exe 0x606f80).
 pub fn ports(state: &SaveState) -> Vec<i32> {
@@ -214,6 +248,14 @@ pub struct Trade {
     angle_to: f32,
     pub shown_offer: i32,
     pub last_transparency: f32,
+    /// The loaded model's `TradeLoadAlap(base, race)` arguments (offer `+0x44`, `+0x40`), its matrix (`RotateObj`,
+    /// then `matrixforgat(.., 0.03, 0)` a frame) and x (`MoveObj(TRADExa − 190 + s, 145, −650)`).
+    pub hull_model: Option<(i32, i16)>,
+    pub hull_turn: crate::scene::M3,
+    pub hull_x: f32,
+    /// `Trade_GetPodListaMode` and the pointer it was opened at (`Trade_GetPodListaX/Y`).
+    pub pod_list: bool,
+    pub pod_at: [i32; 2],
     /// The ticker: `ScrollQueue[1..]`, `ScrollHova`, its lines, the font's advance (`CharXMeret[ScrollFont]`).
     queue: Vec<usize>,
     hova: f32,
@@ -242,6 +284,15 @@ impl Trade {
     pub fn open(state: &SaveState, animated: bool, before: i32, lines: Vec<Vec<u8>>, advance: f32) -> Self {
         let deliveries = state.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * en(state) as u32);
         Self::with(animated, before, lines, advance, deliveries, !ports(state).is_empty())
+    }
+
+    /// `Trade_Belep` with `OldKep` 0xd: back from the options screen, without the opening; the quantity, the lists'
+    /// positions and `AktEtaDays2` (globals `Trade_Belep` doesn't reset) and the row frame's phase carry over.
+    pub fn back(old: &Trade, state: &SaveState) -> Self {
+        let mut s = Self::open(state, false, 0xd, old.lines.clone(), old.advance);
+        (s.qty, s.pos, s.eta) = (old.qty, old.pos, old.eta);
+        s.list_frame = old.list_frame.new_screen();
+        s
     }
 
     /// [`Trade::open`] on the human's delivery count and whether it has a trade port.
@@ -282,6 +333,11 @@ impl Trade {
             angle_to: 0.0,
             shown_offer: -1,
             last_transparency: 0.0,
+            hull_model: None,
+            hull_turn: crate::scene::create_matrix(0.0, 0.0, 0.0),
+            hull_x: 0.0,
+            pod_list: false,
+            pod_at: [0; 2],
             queue: Vec::new(),
             hova: 0.0,
             lines,
@@ -406,14 +462,30 @@ impl Trade {
         self.qty = 0;
     }
 
-    /// `TradeLoadAlap(base, race)`'s state (exe 0x609c60): a new hull model (part 2 loads and draws it).
+    /// `TradeLoadAlap(base, race)` (exe 0x609c60) on the chosen offer: its model (the file by [`hull_file`]),
+    /// `RotateObj(1.57075, 0.785375, 0)`, hidden until `ForgatTradeAlap` turns it in; the pod list closes.
     fn load_hull(&mut self, m: &Market) {
         if self.which == NONE {
             return;
         }
+        let i = self.offer(m);
+        let r = m.offers.get(i.max(0) as usize);
+        self.hull_model = r.map(|r| (i32_at(r, 0x44), i16_at(r, 0x40)));
+        self.hull_turn = crate::scene::create_matrix(1.57075, 0.785375, 0.0);
         self.hull = true;
         self.hull_init = true;
-        self.shown_offer = self.offer(m);
+        self.shown_offer = i;
+        self.pod_list = false;
+    }
+
+    /// `TradeLoadAlap` has loaded a model (`ForgatTradeAlap` shows it).
+    pub fn hull_shown(&self) -> bool {
+        self.hull
+    }
+
+    /// The hull model is loaded and something is chosen (`PlaceVehicleInfo`, block C).
+    pub fn card_shown(&self) -> bool {
+        self.hull && self.which != NONE
     }
 
     /// The pointer moved.
@@ -459,9 +531,7 @@ impl Trade {
 
     /// `Trade_MouseInit2` (every frame): which hot-spots are on, and 0x25 following the hull model.
     fn mouse_init2(&mut self, state: &SaveState, m: &Market) {
-        let c = (self.angle as f64).cos() as f32;
-        let off = if self.hull_dir { (1.0 - c) * 300.0 } else { (1.0 - c) * -200.0 };
-        self.pod_x = (off as i32 as f32 + self.xa) as i32;
+        self.pod_x = (slide(self.angle, self.hull_dir) as i32 as f32 + self.xa) as i32;
         self.on = [false; 0x26];
         for id in [0x1b, 0x21, 0x22, 0x23, 0x24] {
             self.on[id] = true;
@@ -572,10 +642,12 @@ impl Trade {
                 self.hull_init = false;
                 self.hull_dir = deliveries < 1;
             }
-            let c = (self.angle as f64).cos() as f32;
-            let s = if self.hull_dir { (1.0 - c) * 300.0 } else { (1.0 - c) * -200.0 };
+            let s = slide(self.angle, self.hull_dir);
             let s0 = if self.hull_dir { (1.0 - std::f64::consts::FRAC_PI_2.cos()) * 300.0 } else { (1.0 - std::f64::consts::FRAC_PI_2.cos()) * -200.0 };
             self.last_transparency = s / s0 as f32;
+            // `matrixforgat(M, out, 0.03, 0)`: 0.03 about (0, −0.03, 0) after the old turn, every drawn frame.
+            self.hull_turn = crate::scene::mul(&crate::scene::axis_matrix([0.0, -0.03, 0.0], 0.03), &self.hull_turn);
+            self.hull_x = ((self.xa + 0.0) - 190.0) + s;
         }
         // Step 11: the turned-away model is replaced once it arrived.
         if !self.hull_done && self.angle == self.angle_to {
@@ -621,8 +693,9 @@ impl Trade {
         let (press, release) = (ms.press, ms.release);
         let (bal, jobb) = (ms.left || (ms.press && ms.release), ms.right);
         let mut grab = None;
+        // Step 0: the pod list closes with any release.
         if release {
-            // The pod list closes with any release (part 2 draws it).
+            self.pod_list = false;
         }
         match ikon {
             0x19 if !release => {
@@ -730,6 +803,11 @@ impl Trade {
             self.old = self.which;
             self.old_kind = self.kind;
         }
+        // Step 8: a press on the model's block (`AktIkon2`, the hot-spot under the pointer) opens the pod list there.
+        if under == 0x25 && press {
+            self.pod_list = true;
+            self.pod_at = [ms.at[0] as i32, ms.at[1] as i32];
+        }
         if let Some(g) = grab {
             self.held = Some(g);
         }
@@ -797,7 +875,7 @@ impl Trade {
 
     /// The 2D passes over the scene: fader pass 1 (`GFX_Trade`'s boxes, the ticker's bar), `TradeGfx2D_2`'s texts,
     /// fader pass 2 (the destination list's box), `TradeGfx2D_3` (the destinations), the ticker's text.
-    pub fn draw(&self, f: &mut Frame, d: &Draw2d, state: &SaveState) {
+    pub fn draw(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, rules: &ig2_rules::Rules) {
         let m = Market::of(state);
         let e = en(state);
         let counts = m.counts();
@@ -841,6 +919,19 @@ impl Trade {
         }
         let bf = (bf as f32).max(0.0);
         fade(f, [30.0, 457.0, 575.0, 15.0], [27.0, 76.0, 122.0, (250.0 - bf * 38.0) as i32 as f32], [54.0, 152.0, 244.0, (255.0 - bf * 98.0) as i32 as f32]);
+        // Block C (fader pass 3): the card's boxes under the model, sliding in from both sides while the screen opens.
+        if self.card_shown() {
+            let (mut a, mut off) = (1.0 - self.last_transparency, 0.0);
+            if !self.opened {
+                off = (1.0 - fr) * 100.0;
+                a *= fr;
+            }
+            let x = ((self.xa + 210.0) - 190.0) - 5.0;
+            let g = |t: f32| [0x21 as f32, 0x29 as f32, 0x28 as f32, t as i32 as f32];
+            let (c1, c2) = (g(255.0 - a * 128.0), g(255.0 - a * 228.0));
+            fade(f, [(x + off) as i32 as f32, 0x1b0 as f32, 0xf0 as f32, 0x20 as f32], c1, c2);
+            fade(f, [(x - off) as i32 as f32, 0x127 as f32, 0xf0 as f32, 0x13 as f32], c1, c2);
+        }
         // `TradeGfx2D_2`.
         let label = |k: u16| {
             let mut s = d.texts.get(8, 2, k);
@@ -944,6 +1035,14 @@ impl Trade {
                 text(f, &d.texts.get(8, 2, 14), x, y + 3.0, 0x16, Align::Left, 0x25);
             }
         }
+        // `PlaceVehicleInfo` (from `Trade3DUpdate`) and the pod list (`TradeGfx2D_3`'s box, `Trade_KiirPodNagyLista`).
+        let techs = state.tech();
+        if self.card_shown() {
+            self.card(f, d, state, rules, &techs, &m);
+        }
+        if self.pod_list {
+            self.pods(f, d, rules, &techs, &m);
+        }
         // `TozsdeScrollFrissit`: the ticker's text, clipped to x 35..600, `KiirStrSzinSzorzo = traframe + 50` faded
         // in and out over its first and last 200 pixels (f64).
         if let Some(s) = line {
@@ -957,6 +1056,113 @@ impl Trade {
             let extra = if self.opened { 700.0 - fr * 700.0 } else { 0.0 };
             let x = (640.0 - self.hova - extra) as i32 as f32;
             d.font.text(f, &d.v, s, x, 0x1cc as f32, s.len(), 2, Align::Left, col(0x22, pct as i32 as f32), Some((35.0, 600.0)));
+        }
+    }
+
+    /// `PlaceVehicleInfo(TRADExa + 20, 437)` (exe 0x607500): the shown offer's hull, value, firepower and speed under
+    /// the model, its weapons (one line at a time, `(int)(trakeringeto·10) mod count`) above it; faded with the model
+    /// (`KiirStrSzinSzorzo = (1 − traLastTransparency)·100`) and sliding in from both sides while the screen opens.
+    fn card(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, rules: &ig2_rules::Rules, techs: &ig2_sim::colony_side::TechTable, m: &Market) {
+        let Some(r) = m.offers.get(self.shown_offer.max(0) as usize) else { return };
+        let (x, y) = ((self.xa + 210.0 - 190.0) as i32, 0x1b5);
+        let mut t = (1.0 - self.last_transparency) * 100.0;
+        let mut off = 0.0f32;
+        if !self.opened {
+            t = t * self.frame / 50.0;
+            off = (1.0 - self.frame / 50.0) * 100.0;
+        }
+        let pct = t as i32 as f32;
+        let col = |c: usize| d.palette.get(c).copied().unwrap_or([1.0; 3]).map(|v| v * pct / 100.0);
+        let px = |dx: i32, sign: f32| ((x + dx) as f32 + sign * off) as i32 as f32;
+        let label = |k: u16| {
+            let mut s = d.texts.get(8, 3, k);
+            s.push(b':');
+            s
+        };
+        let text = |f: &mut Frame, s: &[u8], x: f32, y: i32, len: usize, c: usize| d.font.text(f, &d.v, s, x, y as f32, len, 2, Align::Left, col(c), None);
+        let int = |f: &mut Frame, n: i64, x: f32, y: i32, len: usize, align: Align| d.font.int(f, &d.v, n, x, y as f32, len, 2, align, col(2));
+        let name = |t: usize| crate::hud::tech_name(d.texts, t.min(192));
+        let hull_tech = i32_at(r, 0x48);
+        text(f, &label(1), px(0, 1.0), y, 6, 1);
+        text(f, &name(hull_tech.max(0) as usize), px(0x28, 1.0), y, 0x10, 2);
+        // `GetGyartasAr(+0x40, hull tech) + Σ GetGyartasAr(+0x40, pod tech)·amount` over the record's pods (`+0x4c`),
+        // a fifth for fighters (`+0x36`).
+        let owner = i16_at(r, 0x40);
+        let race = state.mem.u8(va::PLAYER_FAJ + owner.clamp(0, 19) as u32);
+        let price = |t: i32| ig2_sim::colony_side::price(techs, race, t.clamp(0, 192) as usize);
+        let mut value = price(hull_tech);
+        for k in 1..=i32_at(r, 0x4c).clamp(0, 12) as usize {
+            let pt = r[0x50 + k] as i8 as i32;
+            if pt != 0 {
+                value = value.wrapping_add(price(pt).wrapping_mul(r[0x5d + k] as i32));
+            }
+        }
+        if r[0x36] != 0 {
+            value /= 5;
+        }
+        text(f, &label(2), px(0x96, 1.0), y, 0xe, 1);
+        int(f, value as i64, px(0xbe, 1.0), y, 10, Align::Left);
+        text(f, &label(3), px(0, 1.0), y + 15, 0xc, 1);
+        int(f, i32_at(r, 0x2c) as i64, px(0x41, 1.0), y + 15, 0x10, Align::Left);
+        text(f, &label(4), px(0x96, 1.0), y + 15, 0x13, 1);
+        // `MULSS 100.0f`, `ADDSD 0.5`, `CVTTSD2SI`.
+        let speed = f32::from_le_bytes(r[0x3c..0x40].try_into().unwrap());
+        int(f, ((speed * 100.0) as f64 + 0.5) as i32 as i64, px(0xbe, 1.0), y + 15, 4, Align::Right);
+        // The weapons: `GetString(8,3,5)` + " %d - " (the used pod's count) + its tech's name, per used slot.
+        let mut lines = Vec::new();
+        for k in 1..=crate::design::pod_count(rules, owner, i32_at(r, 0x44)).min(12) {
+            let pt = r[0x50 + k];
+            if pt != 0 {
+                let mut s = d.texts.get(8, 3, 5);
+                s.extend(format!(" {} - ", lines.len() + 1).bytes());
+                s.extend(name(pt as usize));
+                lines.push(s);
+            }
+        }
+        text(f, &label(6), px(0, -1.0), y - 0x89, 0xd, 1);
+        if lines.is_empty() {
+            text(f, &d.texts.get(8, 3, 7), px(0x3c, -1.0), y - 0x88, 0xd, 0x25);
+        } else {
+            let s = &lines[((self.keringeto * 10.0) as i32 % lines.len() as i32) as usize];
+            text(f, s, px(0x3c, -1.0), y - 0x88, s.len(), 0x25);
+        }
+    }
+
+    /// The pod list while the model is held (`TradeGfx2D_3` pass 3 box, exe 0x6098a0; `Trade_KiirPodNagyLista` exe
+    /// 0x60a390): one line per slot of the shown offer's hull, centred on the pointer it was opened at.
+    fn pods(&self, f: &mut Frame, d: &Draw2d, rules: &ig2_rules::Rules, techs: &ig2_sim::colony_side::TechTable, m: &Market) {
+        let Some(r) = m.offers.get(self.shown_offer.max(0) as usize) else { return };
+        let (race, base) = (i16_at(r, 0x40), i32_at(r, 0x44));
+        let n = crate::design::pod_count(rules, race, base).min(12) as i32;
+        let [x, y] = self.pod_at;
+        // `TradeGetHeightAdder` (exe 0x608c30).
+        let h = if n == 0 { 7 } else { n * 14 / 2 };
+        let g = [0x21 as f32, 0x29 as f32, 0x28 as f32];
+        crate::kit::fader::fader_untinted(f, d.white, &d.v, [(x - 5) as f32, ((y - h) - 5) as f32, 0x10e as f32, (h * 2 + 5) as f32], g, 0x7f as f32, g, 0x1b as f32);
+        let white = d.palette.get(1).copied().unwrap_or([1.0; 3]);
+        let line = |f: &mut Frame, s: &[u8], y: i32, len: usize| d.font.text(f, &d.v, s, x as f32, y as f32, len, 2, Align::Left, white, None);
+        if n == 0 {
+            let mut s = d.texts.get(8, 2, 1);
+            s.push(b'!');
+            line(f, &s, y - 7, 0x1e);
+            return;
+        }
+        let top = y - n * 14 / 2;
+        for k in 1..=n as usize {
+            let slot = crate::design::pod_type_name(d.texts, rules, race, base, k);
+            let mut s = format!("{k} - ").into_bytes();
+            s.extend(&slot);
+            s.extend(b" - ");
+            let t = r[0x50 + k];
+            if t == 0 {
+                s.extend(d.texts.get(8, 2, 2));
+                s.push(b'!');
+            } else {
+                s.extend(crate::hud::tech_name(d.texts, t as usize));
+                let max = crate::design::max_fitted(rules, techs, race, base, k, t as i32);
+                s.extend(format!(" ({} / {max})", r[0x5d + k]).bytes());
+            }
+            line(f, &s, top + (k as i32 - 1) * 14, s.len());
         }
     }
 
@@ -1035,6 +1241,27 @@ mod tests {
         let mut sel = 20;
         s.fit_row(0, &mut sel, 20);
         assert_eq!((sel, s.pos[0]), (20, 12));
+    }
+
+    #[test]
+    fn a_new_model_turns_in_from_the_side_and_the_pod_list_follows_the_held_button() {
+        let mut m = Market { offers: vec![[0; RECORD]; OFFERS + 1], n: 2 };
+        m.offers[1][0x16] = 1;
+        m.offers[1][0x40] = 3;
+        m.offers[1][0x44] = 7;
+        let mut s = blank();
+        (s.which, s.kind, s.pod_list) = (0, 0, true);
+        s.load_hull(&m);
+        assert_eq!((s.hull_model, s.shown_offer, s.pod_list, s.card_shown()), (Some((7, 3)), 1, false, true));
+        // `ForgatTradeAlap`'s start: at π/2 the model is fully transparent, beside the block; at 0 opaque, in place.
+        let s0 = ((1.0 - std::f64::consts::FRAC_PI_2.cos()) * 300.0) as f32;
+        assert_eq!(slide(std::f32::consts::FRAC_PI_2, true) / s0, 1.0);
+        assert_eq!(slide(0.0, true), 0.0);
+        assert!(slide(1.0, false) < 0.0);
+        // Back from the options screen: no opening, the quantity, positions and ETA kept.
+        (s.qty, s.pos, s.eta) = (4, [2, 1], 31);
+        let b = Trade::with(false, 0xd, Vec::new(), 6.0, 0, true);
+        assert!(b.opened && b.sounds.is_empty());
     }
 
     #[test]

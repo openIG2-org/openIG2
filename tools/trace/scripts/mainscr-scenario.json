@@ -1,0 +1,20 @@
+{
+ "screen": "main",
+ "note": "MainScr part 2, the scenario / skirmish list (re/screens/mainscr.md §9.3, §6.2-§7.2): single player (ring 4, t 350), the scenario ring (single set ring 1, t 600): the panel fades in (100 ticks), the picture slides in; row 2 'espion' (t 800), the high-score toggle (t 900), row 0 'Skirmish' (t 1000), the race and computer-player '->' arrows and the money '->' (t 1100-1200), cancel (t 1400): the panel fades out and the single-player rings come back.",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [162, 267], "hold": 3},
+  {"t": 600, "press": [296, 82], "hold": 3},
+  {"t": 800, "press": [500, 102], "hold": 3},
+  {"t": 900, "press": [355, 455], "hold": 3},
+  {"t": 1000, "press": [500, 72], "hold": 3},
+  {"t": 1100, "press": [92, 415], "hold": 3},
+  {"t": 1150, "press": [92, 453], "hold": 3},
+  {"t": 1200, "press": [392, 453], "hold": 3},
+  {"t": 1300, "mouse": [470, 455]},
+  {"t": 1400, "press": [566, 455], "hold": 3},
+  {"t": 1560, "mouse": [320, 240]}
+ ],
+ "grabs": [610, 650, 700, 760, 820, 850, 880, 950, 1050, 1120, 1170, 1250, 1350, 1420, 1460, 1520, 1600],
+ "tail": 10
+}

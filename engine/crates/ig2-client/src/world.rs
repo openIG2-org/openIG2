@@ -243,6 +243,9 @@ fn target(map: &ig2_sim::fleet::Starmap, f: &ig2_sim::fleet::Fleet) -> Option<[f
 /// less).
 const MAX_STEP: f32 = 64.0;
 
+/// `HangLejatszasKell`: the start voice a new campaign's first starmap entry plays.
+const HANG_LEJATSZAS_KELL: u32 = 0xBAE26C;
+
 /// The running game: the sim plus the last two snapshots.
 pub struct World<'r> {
     pub game: Game<'r>,
@@ -272,6 +275,9 @@ pub struct World<'r> {
     pub videos: Vec<crate::video::Request>,
     /// The ground wars' voice lines since the window last took them (planet, `PlaySpeechGrWar` site).
     pub ground_voices: Vec<(usize, Voice)>,
+    /// `HangLejatszasKell` (exe 0xbae26c, `InitNewGame` step 6: the campaign type) as the first `Starmap_Belep`
+    /// takes it for the start voice ([`crate::audio::Audio::play_start_voice`]).
+    pub start_voice: Option<i32>,
 }
 
 /// The ground wars' voice sites among `events` (`GroundSide`, ground-combat.md §11.12).
@@ -309,6 +315,27 @@ impl<'r> World<'r> {
         Ok(Self::load(&save, rules, tech_defaults, volatile))
     }
 
+    /// A game a start constructor just made (`InitNewGame` and its caller's tail, any mode; re/rules/new-game.md
+    /// §1, §6): tick 0, before the first frame. The camera is the one step 52 (`StarmapSetSideView` + the copy to
+    /// `StarmapXStart..`) left in the state, the orbit clock 0 (step 31), the selection `StarmapMode` 1 on
+    /// `AktPlanet` (the last own planet) as the state holds it. Unlike [`World::load`] no `FlottakUjraSzamol`.
+    pub fn new_game(mut game: Game<'r>) -> Self {
+        game.sp_battles.live = true;
+        // `Starmap_Belep` clears `HangLejatszasKell` before the first tick: the world takes it now.
+        let voice = game.state.mem.i32(HANG_LEJATSZAS_KELL);
+        game.state.mem.set_i32(HANG_LEJATSZAS_KELL, 0);
+        let chunks = game.state.chunks();
+        Self { start_voice: (voice > 0).then_some(voice), ..Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned())) }
+    }
+
+    /// `CampaignGameStart`'s tail (exe 0x4f5e90, 0x4f6008/1f/36): the race's intro, `st_ShowAnim` by `EN`, before
+    /// the first starmap frame.
+    pub fn campaign_intro(&mut self) {
+        if let Some(name) = crate::video::intro_name(self.curr.human as i32) {
+            self.videos.push(crate::video::Request::File(name.to_string()));
+        }
+    }
+
     /// The state as the remake's save file (`.ig2s`) holds it.
     pub fn save_file(&self) -> Vec<u8> {
         ig2_net::snapshot::Snapshot::capture(&self.game, &[], 0, 0).to_file(0, false)
@@ -317,7 +344,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new() }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None }
     }
 
     /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
@@ -492,6 +519,105 @@ mod tests {
         let (rules, defaults) = crate::rules::load(&install).unwrap();
         let volatile = crate::rules::scenario_globals(&install).unwrap();
         Some((SaveGame::parse(&bytes).unwrap(), rules, defaults, volatile))
+    }
+
+    /// The main menu's other starts (re/screens/mainscr.md §2.2): every scenario of the list, the five tutorial
+    /// chapters and a skirmish with the menu's defaults build a running world whose human (empire 1 in the
+    /// tutorials) has planets of its own. Untraced: `Game::start_tutorial` reuses the scenario start's verified parts
+    /// (re/rules/new-game.md §13).
+    #[test]
+    fn scenario_and_tutorial_starts_build_worlds() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let texts = crate::ui::UiTexts::load(&install);
+        let entries = crate::mainscr_scenario::Assets::load(&install, &texts).entries;
+        assert_eq!(entries.len(), 15, "the skirmish entry and 14 scenarios");
+        let mut games = Vec::new();
+        for e in entries.iter().filter(|e| !e.skirmish()) {
+            games.push((e.registry.clone(), crate::new_game::scenario(&install, &e.file, 4242, &rules).unwrap()));
+        }
+        for n in 1..=5 {
+            games.push((format!("tutorial{n}"), crate::new_game::tutorial(&install, n, 4242, &rules).unwrap()));
+        }
+        // The skirmish entry's defaults (`InitScirmishValtozok`): race 1, 3 computers, the rest at 2.
+        let exe = ig2_rules::PeImage::parse(&install.read_raw("ig2.exe").unwrap()).map(|pe| crate::mainscr_scenario::Tables::read(&pe)).unwrap();
+        let k = crate::mainscr_scenario::Skirmish::new(1);
+        let cfg = ig2_sim::game::new_game::NewSkirmish { en: k.race, ais: k.computers, random_id: 1, tech: k.technology, planets: exe.planets[k.planets as usize], money: exe.money[k.money as usize], difficulty: k.difficulty, population: k.population, seed: 4242, ticks: 4242 };
+        games.push(("skirmish".into(), crate::new_game::skirmish(&install, &cfg, &rules).unwrap()));
+        for (name, g) in games {
+            let w = World::new_game(g);
+            // A scenario file may set its own `EN` (espion plays empire 3); the tutorials are empire 1's.
+            if name.starts_with("tutorial") {
+                assert_eq!(w.curr.human, 1, "{name}: EN");
+            }
+            let en = w.curr.human;
+            assert!(w.curr.planets.iter().any(|p| p.owner == en), "{name}: the human's planets");
+            assert!(!w.paused(), "{name}: running");
+        }
+    }
+
+    /// A new campaign's world against the exe's: `tools/trace/run_newgame.py` starts campaigns in ig2.exe as the race
+    /// menu does and saves at tick 0 (`IG2_TRACE_DIR/newgame/`); the world built from the port's start shows what the
+    /// world loaded from the exe's save shows: the camera, the selection, the planets, the fleets, the date.
+    #[test]
+    fn new_campaign_world_matches_the_exes_start() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let dir = std::env::var_os("IG2_TRACE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces")).join("newgame");
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            eprintln!("{} missing; skipping", dir.display());
+            return;
+        };
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        // The campaign starts only (the folder also holds the other modes' runs).
+        let mut runs: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json") && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("newgame-"))).collect();
+        runs.sort();
+        let mut checked = 0;
+        for json in &runs {
+            let Ok(bytes) = std::fs::read(json.with_extension("sav")) else { continue };
+            let j: serde_json::Value = serde_json::from_slice(&std::fs::read(json).unwrap()).unwrap();
+            let int = |v: &serde_json::Value| v.as_i64().unwrap_or(0) as i32;
+            let cfg = ig2_sim::game::new_game::NewCampaign {
+                campaign: int(&j["campaign"]),
+                difficulty: int(&j["log"]["init"][3]),
+                seed: j["log"]["srand"][0].as_u64().unwrap() as u32,
+                ticks: j["log"]["srand"][1].as_u64().unwrap() as u32,
+                storyline: int(&j["storyline"]),
+                storymap: int(&j["storymap"]),
+                last_storyline: j["registry"].as_i64().or_else(|| j["registry"].as_str().and_then(|s| s.parse().ok())).map(|v| v as i32),
+            };
+            let mut w = World::new_game(crate::new_game::campaign(&install, &cfg, &rules).unwrap());
+            w.campaign_intro();
+            let exe = World::load(&SaveGame::parse(&bytes).unwrap(), &rules, &defaults, &volatile);
+            let name = json.file_stem().unwrap().to_string_lossy().to_string();
+            assert_eq!(w.view, exe.view, "{name}: camera");
+            assert!(w.view.zoom > 0.0 && w.view.pitch != 0.0, "{name}: the side view's camera");
+            assert_eq!(w.view.orbit, 0.0, "{name}: StarmapPlanetKering");
+            let sel = |w: &World| {
+                let v = w.game.local_view();
+                (v.empire, v.starmap_mode, v.planet, v.fleet)
+            };
+            assert_eq!(sel(&w), sel(&exe), "{name}: selection");
+            assert_eq!(sel(&w).1, 1, "{name}: StarmapMode");
+            assert_eq!((w.curr.tick, w.curr.time, w.curr.human), (exe.curr.tick, exe.curr.time, exe.curr.human), "{name}: clock");
+            assert_eq!(w.curr.planets, exe.curr.planets, "{name}: planets");
+            // Bit 15 of `+0x52` is `FlottakUjraSzamol`'s recount, which only `LoadSave` runs (`World::load`'s `saved`).
+            let fleets = |w: &World| w.curr.fleets.iter().map(|f| (f.slot, f.pos, f.owner, f.visible, f.order, f.flags & !0x8000, f.ships)).collect::<Vec<_>>();
+            assert_eq!(fleets(&w), fleets(&exe), "{name}: fleets");
+            assert_eq!(w.curr.radar, exe.curr.radar, "{name}: radar");
+            assert!(w.game.sp_battles.live && !w.paused(), "{name}: running, live battles");
+            let intro = crate::video::intro_name(w.curr.human as i32).unwrap();
+            assert_eq!(w.videos, [crate::video::Request::File(intro.into())], "{name}: the race's intro");
+            assert_eq!(w.start_voice, Some(cfg.campaign), "{name}: the start voice");
+            checked += 1;
+        }
+        eprintln!("{checked} new campaigns checked");
     }
 
     /// The Options screen's save and load: a game a few ticks on is saved to a slot (`save<n>.ig2s`), the slot list

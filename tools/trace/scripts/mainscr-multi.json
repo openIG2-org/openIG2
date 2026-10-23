@@ -1,0 +1,23 @@
+{
+ "screen": "main",
+ "note": "MainScr part 2, the multiplayer entry (re/screens/mainscr.md §6.5): the multiplayer ring (ring 3, t 350) flies the rings out and opens the name entry ('Player', 9 characters); six backspaces and 'bob' (t 420-470), Enter (t 520): the three multiplayer rings come to rest; Esc (t 680) flies back to the main set.",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [217, 117], "hold": 3},
+  {"t": 420, "key": "backspace", "hold": 2},
+  {"t": 425, "key": "backspace", "hold": 2},
+  {"t": 430, "key": "backspace", "hold": 2},
+  {"t": 435, "key": "backspace", "hold": 2},
+  {"t": 440, "key": "backspace", "hold": 2},
+  {"t": 445, "key": "backspace", "hold": 2},
+  {"t": 455, "key": "b", "hold": 2},
+  {"t": 460, "key": "o", "hold": 2},
+  {"t": 465, "key": "b", "hold": 2},
+  {"t": 520, "key": "enter", "hold": 2},
+  {"t": 600, "mouse": [478, 268]},
+  {"t": 680, "key": "escape", "hold": 2},
+  {"t": 780, "mouse": [320, 240]}
+ ],
+ "grabs": [360, 400, 450, 480, 510, 530, 560, 600, 650, 700, 760, 800],
+ "tail": 10
+}

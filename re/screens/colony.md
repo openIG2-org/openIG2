@@ -192,8 +192,7 @@ bases/selection, `WF::WriteStuff`, the radar, special-weapon buttons), `_2` (pla
 over depth 2300..2800.
 
 ## 7. Not specified here
-The ground war's landing clicks, shadows, landing zone, unit picture and self-destruct window (§11.4), the planet info mode (`ColonyPlanetInfoMod`, `StarmapHosszuInfoKiir`, hot-spots
-0x15..=0x1e: their tax / autobuild / priority drop-downs send starmap message 0x19), renaming the planet (`IOMode`),
+The ground war's landing clicks, shadows, landing zone, unit picture and self-destruct window (§11.4), renaming the planet (`IOMode`),
 `ColonyGestureHandler`, the small turning model beside the building info (`HandleKisInfoObject`), the self-destruct
 buttons (hot-spots 8, 10, `WriteSelfDestruct`), the shadow map (`rendershadowmap`), scenery objects (`LoadScapeObj`), weather particles, lightning, lens flare, building
 effects (`AddBuildingSpecEffect`, `PlaceVillam`), construction cuts and scaffolding, landing zones, the build grid.
@@ -456,9 +455,7 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
 - **Special weapon** (`SpecWeaponMode` 1/2, exe 0x99649c; 0 on entering): selection and orders are skipped; the release
   of either button in the view (`Mouse_Felenged`) sends 0x130 (p, gx, gy, mode − 1) and disarms; the last cell is used
   even when the pointer is off the ground.
-- **Landing** (owner ≠ EN while EN has units to place, `CheckPlacing(EN)` false): the left click places or picks up the
-  unit at the cell (`UsedPosition`/`PlaceTank`/`UnplaceTank`), the right click places them all (`PlaceAllTanks`,
-  ground-combat.md §11.16). These aren't `MULTIGET_Colony` messages [not ported yet].
+- **Landing** (EN has units to place, `CheckPlacing(EN)` false): §11.7.
 
 ### 11.4 Draw list
 - **Rings** (`WF_Tank::DrawSelection` ELF 0x47df60, from `WF::WriteStuff`): every selected unit (mesh loaded, not flag
@@ -477,10 +474,8 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
   number at its projected centre − (8, 8), size 2, colour 2; a retreating one (flag 4) a label below.
 - **Texts** (`ColonyGfx2D_1`, owner ≠ EN, at war, `local_22`): EN's retreat flag on: `GetString(3, 2, 3)` at (220, 40);
   units still to land: `GetString(3, 2, 4)` at (220, 50); both `KiirStr(…, 70 cells, size 2, colour 2)`.
-- Not specified in full or not ported yet: shadows (`DrawShadow`), the landing zone (`LandingZone::Draw`: 14 edge tiles
-  `landz1..14` chosen by an 8-neighbour mask, `GenerateKorvonal` ELF 0x46acd0), the unit info panel (`ColonyKisInfo`,
-  `ColonyInfoMod` 1), the self-destruct window (`ShowSelfDestruct`, hot-spots 8, 9, 10), the attack banner (`_2`), the
-  radar's noise, the cursor shapes, the shots' and explosions' models and particles (§5), the voices. Each ring, target
+- The shadows, landing zone, unit info model, pointer: §11.10; the self-destruct window: §11.8. Not specified yet: the
+  radar's noise, the shots' and explosions' models and particles (§5). Each ring, target
   and shadow triangle draws a libc `rand()` into an unused counter (render only, as §10's marker).
 - **The panel and the view in a war**: the planet panel (brush 12) and its faders only when the planet is EN's and not at
   war or EN still has units to land (`GFX_Colony`, `ColonyGfx2D_3`); the surplus line's two faders only with the line
@@ -496,8 +491,8 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
 - **Unit info** (`ColonyInfoMod` 1, in `StarmapRovidInfoKiir`'s place at (50, 424)): several units: `GetString(3, 2, 33)`
   ("%d units selected.") at (50, 430) size 1, the first one's empire at (50, 439) in colour owner + 0xf, its weapon's
   tech name (the pod, `+0x51` else `+0x52` of the design; a turret's own pod) at (50, 466); one unit: its design's name at
-  (50, 427) size 2 in the owner's colour instead of the count. The exe also draws the unit's picture left of the lines
-  (not specified yet).
+  (50, 427) size 2 in the owner's colour instead of the count. Left of the lines the unit's turning model (`HandleKisInfoObject`,
+  §11.10).
 
 ### 11.5 Sounds
 `PlaySoundGlobal(0)` on each war button press that acts (0xb, 0xc only with a full timer; 0x10 only once every unit has
@@ -517,3 +512,207 @@ ambient `Colony_Hangok` 43 and the ground-war track (`mfx/gwar3.ogg`) at entry. 
 moment with `--colony-ui war`): the attack banner, the retreat button, the unit info's lines and the selection rings
 line up with the exe's; the rest is the colony renderer's known terrain shadow and building texture differences
 (re/screens/diff-results.md).
+
+### 11.7 Landing clicks (`GetNearestBuilding` exe 0x47b350, ELF 0x4c9670)
+`Colony_Main` calls `GetNearestBuilding` every frame the pointer is on hot-spot 0x14 with no `Belep`/`Atlepes`, no armed
+strike (`SpecWeaponMode` 0) and no `Mouse_Felenged`. Before the selection code of §11.3 it tests the **held** buttons
+(no press edge), in this order:
+
+| # | Condition | Call (exe) | Then |
+|---|---|---|---|
+| 1 | left held, `CheckPlacing(EN)` (exe 0x4609d0) false (an alive unit of EN with flag 0x8000000 is still on board), planet owner ≠ EN | `i = WF::UsedPosition(AktBGridX, AktBGridY, EN)` (exe 0x4a7950): the first alive slot with flag 0x8000000 clear standing on the cell (`+0x1a0/+0x1a4`); its slot when its owner (`+0x194`) is EN, else −2; −1 none | −1: `PlaceTank(gx, gy, EN)` (exe 0x48c2c0); ≥ 0: `UnplaceTank(i)` (exe 0x4a4f70: only with the dropship away, ground-combat.md §11.16); both set `Mouse_FelengedesMajdMegvar` (exe 0xdb4669) and return 0; −2 falls through to 2 |
+| 2 | right held, `CheckPlacing(EN)` false (no owner test) | `PlaceAllTanks(gx, gy, EN, false)` (exe 0x48c150) | the same flag, return 0 |
+| 3 | else | §11.3's selection and orders | |
+
+`Mouse_FelengedesMajdMegvar` makes `IG2_gameUpdate` (exe 0x4e0440) wait until the button is up: one click places or
+picks up one unit (or places all). No modifier, `TutorialPaused` or zone test here (`PlaceTank`/`PlaceAllTanks` search
+the zone themselves); no sound, no text, **no message**: the exe changes the battlefield directly, on the clicking machine
+only. The port sends them as lockstep orders of its own (`GroundOrder::Place { x, y }`, `Unplace { unit }`,
+`PlaceAll { x, y }`, message types 0x10000..=0x10002 outside the exe's range; `War::order` calls the same functions
+with the sender as owner and refuses another side's unit) so every peer lands the same units [deviation: ours, MP].
+The returned 0 makes `Colony_Main` drop `AktEpulet` when side EN is on the field; a left press that began the box this
+frame keeps it (it ends at the release, which plays the select voice for an own selected unit as usual).
+
+`AktBGridX/Y` (`ShowColony` exe 0x49f130 at 0x772): a ray that misses the ground (`|y| > 6000` or no hit) zeroes the
+pick point before the cell is computed [the port keeps the last cell: deviations.md].
+
+While `CheckPlacing(EN)` is false and `GetFirstUnPlacedTank(EN)` (exe 0x47ac10) ≠ −1, `ShowColony` turns the build
+cursor into that unit: kind `−10 − design`, mesh `LoadBox(TankAlap + (Tervek[EN][design]+0x44 − 0x13)·0x38)` in the
+colour `min(EN, 10)`, shown on any planet while EN has units to place (else only on EN's own planet at peace).
+`ColonyGfx2D_1` draws the landing zone (§11.4) while the owner ≠ EN and `CheckPlacing(−1)` is false (any side).
+
+### 11.8 Self-destruct (`'+'` building; `WF+0x334` countdown, −1 idle)
+Hot-spots (`Colony_MouseInit` exe 0x4680e0; enabled by `Colony_MouseInit2` exe 0x467990 unless the tutorial's lock
+0xf66ff9 is set):
+
+| Id | Rect | Tooltip | Enabled | Press (`Colony_Main`) |
+|---|---|---|---|---|
+| 8 | 440, 135, 60 × 25 | `GetString(3, 1, 6)` | countdown ≠ −1 and owner = EN | 300 (p) "call it off" + `PlaySoundGlobal(0)` |
+| 9 | 380, 70, 180 × 100 | none | countdown ≠ −1 | nothing (the window's rect takes the clicks) |
+| 10 | 443, 443, 31 × 31 | `GetString(3, 1, 7)` | `CheckSelfDestructBuilding(p)` (exe 0x460b20: a slot with type `'+'` and `+0x19` bit 0) and owner = EN | 0x27 (p) "start" + `PlaySoundGlobal(0)`; still enabled while the countdown runs: a second press restarts it at 399 |
+
+`MULTIGET_Colony` 0x27 sets 399, 300 sets −1 (§9). `FRISSIT_Grwar` counts it down per battle tick and calls
+`SelfDestruct(p)` at 0 (ground-combat.md §11.7).
+
+Draw (countdown ≠ −1 on the shown planet, any owner):
+- `ShowSelfDestruct` (exe 0x4a3640, from `ColonyGfx2D_1` after `WF::WriteStuff`): `FaderHanyadikMenet = 2`;
+  `FadeKerettelKerekit(380, 70, 180, 100, 0, 20, 30, 60, 0, 15, 25, 30, false, 0…)`; owner = EN: the cancel button's
+  `FadeKerettelKerekit(440, 135, 60, 25, 0, 10, 0, 60, 0, 5, 0, 30, false, 0…)`; `FaderHanyadikMenet = 1`.
+- `WriteSelfDestruct` (exe 0x4a82f0, from `ColonyGfx2D_4`): `KiirStr(GetString(3, 5, 1), 415, 78, 18 cells, size 2,
+  5, colour 2)`, `KiirStr(GetString(3, 5, 2), 400, 90, 18, 3, 5, 2)`, `KiirInt(countdown / 20, 450, 112, 3, 4, 5, 6)`
+  (int division: 399 shows 19); owner = EN: `KiirStr(GetString(3, 5, 3), 452, 143, 6, 2, 5, 2)` (the cancel label).
+- Button 10's brush 19 (`BrushToScreen(0x13)`, one frame) when `local_22` (§11.1), the test above and owner = EN.
+
+### 11.9 The camera's keys and edge scroll
+`ColonyKeyboardHandler` (exe 0x4628c0, ELF 0x4dcd10; `(vk, ch, down)`) sets held flags, on key down and up, with no
+tutorial, debug or modifier gate: numpad + (vk 0x6b) `ColonyZoomIn` 0x9964f2, numpad − (0x6d) `ColonyZoomOut` 0x9964f3,
+← (0x25) / → (0x27) `ColonyTurnLeft/Right` 0x9964da/db, ↑ (0x26) 0x9964f1 (pitch +), ↓ (0x28) 0x9964f0 (pitch −).
+Entering the screen (`Colony_Belep`) clears them. The arrows never pan; End (vk 0x23) toggles the building names
+(`SetOptions`, saved), not the camera; PgUp/PgDn change planet (§10).
+
+`c` (ch 99 only, key down, not under the tutorial lock): `NextCameraMode` (0x998248, unsaved, 0 at start) += 1, past 3
+→ 0; `TankView` (0x9963a3) = mode 3; modes 0..=2 set the targets `ColonyTargetZoom/Rotate/Pitch` (0x99824c..) from the
+presets (exe 0x8f1d44 / 0x8f1dc4 / 0x8f1e44: zoom −240, −666, −1100; pitch −1.113946, −0.356804, −0.05; rotate
+5.7494202 for all) and start the tween (`TransfRot` 0x998244 = 1, `TransfRotFrame` 0x998258 = 0). `TransformRotation`
+(ELF 0x4cc070, once per drawn frame in `ShowColony`): `Zoom += (target − Zoom)/4`, `Pitch += (target − Pitch)/4`, after
+15 frames off; the rotate target is never read. Mode 3 follows the selected unit with `ShowColony`'s tank camera [not
+ported: the port keeps the normal camera in mode 3].
+
+`Frissit2_Colony` (exe 0x477dc0, every 100 Hz UI tick, all f32; speeds 0x997c64 rotate, 0x996e94 zoom, 0x997c68 pitch,
+kept across screens):
+```
+rs = rs − L·0.0035 + R·0.0035;  zs = zs + In·1.7 − Out·1.7;  ps = ps − Up·0.0025 + Down·0.0025
+|rs| > 0.02 → ±0.02;  |ps| > 0.02 → ±0.02;  |zs| > 17 → ±17
+Rotate += rs;  Pitch += ps;  Zoom += zs;  rs ·= 0.9;  zs ·= 0.85;  ps ·= 0.79
+Pitch clamped to −1.4922565..=−0.05;  Zoom to −1100..=240
+```
+Edge scroll `Colony_Autoscroll` (exe 0x465940, every UI tick from `Fake_FRISSITES`; off under the tutorial flags 0x90b520 /
+0xf6915d and with `ControlConfig`): on the colony screen (else both speeds 0), with no button held (`Mouse_Gomb`
+0xdb4650), the window pointer within 8 pixels of an edge aims at ±30 on that axis (unsigned `width − 8 < x`); a nonzero
+aim is normalised in f32: `tx = (int)((f32)(30·tx) / (f32)sqrt(tx² + ty²))`, then `ty` likewise with the **new** tx; each
+speed (statics 0xa3eb68/6c) steps 5 towards its aim; while either is nonzero `Colony_Move((int)(sx/5.0), (int)(sy/5.0))`.
+`Colony_Move` (exe 0x4688f0) first takes a pending `MaximizeCamera` correction (`ColonyRealXPos`), then per nonzero
+axis, f32 with the angle's `cos`/`sin` rounded to f32: `k = (600 − Zoom) + 200`;
+`XStart −= ((dx·c − dy·s)·k/600)·0.85`, `YStart −= ((dy·c + dx·s)·k/600)·0.85` (x first, then y).
+The mouse wheel does nothing in the colony (the port's wheel zoom is ours: deviations.md).
+
+Verified (`ig2-client` test `camera_keys_and_edge_scroll_follow_the_exe`): `tools/trace/scripts/colony-camera.json` on
+quick-1.sav planet 42 (`run_screen.py --script`, the grabs carry the exe's camera): ←, numpad +, ↑, → with numpad −
+held; the keys reach the camera one UI tick after their event, zoom, pitch and rotate equal to the bit over 270 ticks;
+the injected pointer leaves the window pointer at (0, 0), so the corner's edge scroll ran throughout: x/y within 0.01
+from the second grab on (the first grab's ten ticks hold `Colony_Move`'s one-shot `MaximizeCamera` correction).
+
+### 11.10 The landing zone, shadows, the info model, the pointer
+- **Landing zone** (`ColonyGfx2D_1` → `LandingZone::Draw` exe 0x4712e0, owner ≠ EN and `CheckPlacing(−1)` false):
+  `GenerateKorvonal` (exe 0x478f80, ELF 0x46acd0; built once) walks x, then y, over 4..=191; a cell is "in" when the
+  zone (`Generate` exe 0x478dd0, `ig2_sim::placement::landing_zone`) or `MapAlloc` (exe 0x998260, the terrain and the
+  buildings with their frame rings, colony-placement.md §8.1) is set at `y·200 + x`. Its eight neighbours make a mask
+  (bit 0 (x, y − 1), 1 (x − 1, y − 1), 2 (x − 1, y), 3 (x − 1, y + 1), 4 (x, y + 1), 5 (x + 1, y + 1), 6 (x + 1, y),
+  7 (x + 1, y − 1)) that picks the texture `landzN.bmp` (textures/colony):
+
+  | N | masks | N | masks |
+  |---|---|---|---|
+  | 1 | 7c 7e fc fe | 8 | 1c 1e 3c 9c dc |
+  | 2 | 70 72 73 78 7a f0 f2 f8 | 9 | 7f |
+  | 3 | f1 f3 f9 fb | 10 | fd |
+  | 4 | c1 c3 c9 cd e1 | 11 | f7 |
+  | 5 | c7 cf e7 ef | 12 | df |
+  | 6 | 07 0f 27 2f 37 87 8f a7 | 13 | 77 |
+  | 7 | 1f 3f 9f bf | 14 | dd |
+
+  (0xff and the other masks: none). `GenerateOneSquareVertex` (exe 0x479d90, f32): around `Grid2Real(x + 0.5,
+  y + 0.5)` ± 20.89, each corner 3 above `GetHeight` of its height cell (grid / 4: P0 (x + 1, y), P1 (x, y), P2
+  (x + 1, y + 1), P3 (x, y + 1)), uv 0.015..0.985, triangles (P0, P1, P2), (P3, P1, P2), colour 0x800000ff (red,
+  alpha 128), `polygons3d(v, 3, 3)`: additive `RGB·A/256`, depth tested, not written.
+- **Shadows** (`WF_Tank::Draw3d` → `DrawShadow`, ELF 0x481d80, exe ≈0x473400; a unit drawn, not a turret or mine, with
+  `OptionsKellArnyek`): half size `TankShadowSize[hull]` (exe 0x8EC9A0, `Rules::unit_models.shadow_size`) around the
+  unit's point shifted `TankShadowTransl[hull]` (0x8EC9B4) on both axes, 2 above its height; uv = `(cos, sin)(−angle +
+  π/4 + φ)/2 + 0.5` (f64) with φ π, π/2, 0 / π, 3π/2, 0 per triangle (corners (−, +), (+, +), (+, −) and (−, +),
+  (−, −), (+, −)); texture by hull type `kerekes`, `kozepes`, `lebego`, `mega`, `aknarako`.bmp (`WF::LoadMesh`);
+  riding the dropship (`+0x278` bit 3): `dc = (int)(h/200·255 + 255)` (0 at h ≤ −200), the square grown
+  `(255 − dc)/4` and moved with the dropship; colour grey `dc`; `polygons3d(v, 3, 2)`: blend ZERO /
+  ONE_MINUS_SRC_COLOR (what lies below × (1 − texel·colour)). Each triangle draws one libc `rand()` (render only).
+- **Unit info model** (`HandleKisInfoObject` exe 0x47d000, ELF 0x4ce840, per frame from `ShowColony`): the first
+  selected unit's model (`GetSelectedMeshPointer` exe 0x47bc20: the hull's, a turret's gun) is cloned into `mainxvb5`
+  (inside `mainxvb3`, drawn by the panel's second `Update3D`, centre (95, 101)) at scale 0.025, `RotateObj(π/2, 0, 0)`,
+  `MoveObj(−130, 657, −1100)` (camera-fixed, property 0x2000000), turning −0.01 a UI frame about (0, 1, 0)
+  (`Frissit2_Colony`); put up again when the unit changes. [The port draws it 36 px lower and smaller than the exe:
+  deviations.md.] With a building selected (`ColonyInfoMod` 2) the same shows the building [not ported].
+- **Landing panel** (`ShowColony` exe 0x49f130 at its top): while `CheckPlacing(EN)` is false and
+  `GetFirstUnPlacedTank(EN)` ≠ −1, `AktEpuletTipus = −10 − design`: `buildshown` becomes `LoadBox(TankAlap[hull])` at
+  scale 2.0 with `tankok/<hull><min(EN, 10)>.bmp` on its first sub-mesh, turned as the building is, and is shown on
+  any planet (otherwise only on EN's at peace); `ColonyGfx2D_3` writes the first waiting unit's design name (any
+  side's; `Tervek[owner] + 0x84·design`) at `KiirStr(44, 141, 20 cells, size 2, flags 5, colour 2)`.
+- **Pointer** (`UpdateFrame` exe 0x4e3e90): `Colony_MouseInit2` (exe 0x467990) may set `Mouse_Tipus`, else the
+  hot-spot under the pointer gives it (`Mouse_Szoveg_Set`'s last argument: 1 for the buttons, 0 for the view 0x14, the
+  windows 3, 7, 9 and "Build" 0x13); then `DDBrushToScreen3d_last("MOUSE.BMP", type·20, ((MouseFazis/5) % 40)·20)` 20
+  × 20 at the pointer less the hot point (exe 0x90b608: 0 for types 0, 1, 10 for the others; `Rules::mouse_hotspot`);
+  `MouseFazis` counts UI ticks. Over the view (`Mouse_Darabol` = 0x32, no `Belep`/`Atlepes`): no unit selected → 5
+  over a unit (`WF::MouseOver`) or a building (`selectedepulet`), 3 with the build cursor; units selected → 2 over the
+  ground, an own unit or a building on EN's planet 5 (Ctrl 6), another's 6 (Alt 2), a unit and a building at once
+  unchanged; an armed strike gives 7 only over "Build" (0x13) [original quirk]. The sheet has 8 columns (160 × 800).
+  The port draws it on the colony screen only (the window's pointer elsewhere).
+
+Verified (capture comparisons `run_screendiff.py … grwar:17`, `grwar:17 --land`, `colony:42 --self-destruct 380`;
+re/screens/diff-results.md): the landing outline, the landing panel's unit and name, the pointer shapes (the exe's
+red cross and brackets at the centre), the self-destruct window line up; tests `landing_clicks_place_pick_up_and_land_all`,
+`pointer_shapes_over_the_view`, `camera_keys_and_edge_scroll_follow_the_exe`.
+
+## 12. The planet info mode (`ColonyPlanetInfoMod`, exe 0x9963A0; `ig2-client::colony_ui`)
+A flag, not an animation: no camera move, zoom or timer reads it (`ShowColony`, `FRISSIT_Colony*`, `Colony_Move`,
+`ColonyMouse` don't), so the 3D view and its camera keys stay live. The long info is the starmap's
+(`StarmapHosszuInfoKiir`, starmap.md §15.2) on the colony's planet; the menus are the colony's own code with
+starmap §16's geometry.
+
+### 12.1 On and off
+- On / off: hot-spot 4 released with the left button (`Colony_Main` ELF 0x4dadf0 / exe 0x4666d0, `AktIkon2 == 4`;
+  the right button's release is the starmap, both buttons a rename), and the key I/i (`ColonyKeyboardHandler` ELF
+  0x4dcd10 / exe 0x4628c0, the character 0x49/0x69; [inf]: a scripted SDL key I (screen.js) doesn't toggle it, the handler's character
+  apparently not reaching it from a bare key event). Switching on also drops the selection (`AktEpulet = 0`) and
+  the build cursor (`ColonyRemoveBuilding` when `ColonyBuildMode`). No sound either way.
+- Off: a press on hot-spot 0x20 (the whole screen, under the panel's dead hot-spot 0x1f), and entering the
+  screen (`Colony_Belep` ELF 0x4d8fd0 / exe 0x465b40 clears it with `ColonySelectTax/AutoBuild/Priority`). The tutorial's
+  opcode 5 (`Colony_BELEP_ABBA_A_KIBASZOTT_PLANETINFOBA`) switches it on like the left release.
+
+### 12.2 Hot-spots (`Colony_MouseInit` ELF 0x4e0b80 / exe 0x4680e0; enabled by `Colony_MouseInit2` 0x4e1d90 / exe 0x467990)
+| Id | Rect | One-shot | `Colony_Main` |
+|---|---|---|---|
+| 0x15 / 0x19 / 0x1b | (400, 289 / 311 / 333) 100 × 16 | no | the tax / auto-build / priority menu (below) |
+| 0x16 / 0x1a / 0x1c | (506, 289 / 311 / 333) 30 × 16 | yes | "ALL": `0x19(AktPlanet, 5 / 6 / 7, 0)` |
+| 0x17 / 0x18 | (542 / 568, 289) 20 × 16 | yes | tax − / +: `0x19(AktPlanet, 1 / 2, 0)` |
+| 0x1d / 0x1e | (542 / 568, 333) 20 × 16 | yes | priority − / +: `0x19(AktPlanet, 3 / 4, 0)` |
+| 0x1f | (320, 34) 300 × 324 | yes | nothing (the panel catches the clicks) |
+| 0x20 | (0, 0) 640 × 480 | yes | the mode off |
+
+- In the mode `Mouse_Szoveg_Off_Range(1, 0x14)` (the buttons 1, 2, the radar 5, the pick list 6, the self-destruct
+  window 8/9, 0x11, "Build" 0x13 and the view 0x14 go), 0x15..=0x1e only when `Bolygok[AktPlanet]+0x20 == EN`
+  (at war too), 0x1f..=0x20 always; 4 stays; the war's bottom-bar buttons (10, 0xb..=0x10, 0x12) are re-enabled
+  by their own tests after it. Outside the mode 0x15..=0x20 are off.
+- One-shot (`Mouse_Szoveg_Set`'s 8th argument true): `AktIkon2` is the hot-spot on the press's frame only, so the
+  buttons and 0x20 act on the press [obs: the click at the press's tick, the message the next; sound-id trace
+  2026-10-23, `tools/trace/scripts/colony-info.json`], each button with `PlaySoundGlobal(0)`; the tax ones also
+  `TutorialCheckEvent(0x24)`.
+- The menus (flags `ColonySelectTax/AutoBuild/Priority` exe 0x996395/6/7): the press opens one at
+  `colSelectX/Y` (exe 0x8ECA04/0x8F1B94) = pointer + (12, −20), taken on the first frame only; while the button is
+  held (`Mouse_Megfogva`) `colSelected` (exe 0x9964A0) is the item under the pointer (starmap §16's rows and
+  `x ≤ mx ≤ x + 120`); on the release (either button) an item sends `0x19(AktPlanet, 8 / 9 / 10, item)` with the click
+  (tax: event 0x24, auto-build: 0x25) [obs: the trace above, the click at the release's tick], no item sends nothing;
+  the flag clears. The item is the one of the last held frame: the release's own frame doesn't look again. Items: tax 0..=7, auto-build 0..=n
+  (n = 6 for race 5, else 8), priority 1..=3.
+
+### 12.3 Pictures
+- `GFX_Colony` (ELF 0x4da050 / exe 0x478760), with the mode on and not `KilepesElott`: the panel
+  `KirakFader(0, cof, 319, 33, 302, 326, 0, 54s, 90s, 100, 0, 90s, 130s, 70)` (the short info's look); for EN's
+  planet per row r = 0..=2 at y = 288 + 22r black `FadeKerettelKerekit` boxes, fill transparency 0x9B, frame 0x4B:
+  (399, y, 102, 18), (505, y, 32, 18) and for rows 0 and 2 (541, y, 22, 18), (567, y, 22, 18). Then the short info's
+  faders with the index one higher [quirk: the panel takes the short info's fader state, the hover pop].
+- `ColonyGfx2D_2` (ELF 0x4e3f60 / exe 0x461900): `StarmapMode = 1`, `StarmapHosszuInfoKiir(320, 34)` before the
+  short info `StarmapRovidInfoKiir(50, 424)` (still drawn). On the colony screen (`AktKep == 3`) the long info's
+  brightness `KiirStrSzinSzorzo` is 100 (ELF 0x708440: the zoom test passes by `AktKep == 3`), so its lines are
+  starmap §15.2's at q = 1, the "ALL" lit while the button is held over it.
+- The menus: the box in `ColonyGfx2D_1` (ELF 0x4e3150 / exe 0x461190) on the second fader pass
+  (`FaderHanyadikMenet = 2`, drawn over the long info's texts: the capture's box hides "ALL" [obs]): `FadeKerettelKerekit(colSelectX − 6, colSelectY − 2, 130, h, 0, 10, 0, 60, 0, 5, 0, 30)`,
+  h = 108 / 13(n + 1) + 4 / 43; the items in `ColonyGfx2D_4` (ELF 0x4e5680), size 2, colour 6 for `colSelected`, else 3
+  (tax `AdoMertek_Nev[i]` and auto-build `AutoBuild_Nev[i]` at y + 3 + 13i, priority `BolygoPrioritas_Nev[k]` at
+  y + 13k − 10).
+- Nothing else reads the flag: the 3D scene, radar, panel, buttons and texts are drawn as without it.

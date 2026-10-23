@@ -25,6 +25,8 @@ pub const LABELS_MAIN: [&str; 6] = ["0_credits.bmp", "0_exitus!.bmp", "0_loadgam
 pub const LABELS_SINGLE: [&str; 3] = ["0__camp.bmp", "0__scenar.bmp", "0__back.bmp"];
 pub const LABELS_MULTI: [&str; 3] = ["0___local.bmp", "0___inet.bmp", "0__back.bmp"];
 pub const LABELS_TUTORIAL: [&str; 6] = ["tutorial/part1.bmp", "tutorial/part2.bmp", "tutorial/part3.bmp", "tutorial/part4.bmp", "tutorial/part5.bmp", "0__back.bmp"];
+/// Set 4, the difficulty rings while the race choice is up (`AktIkon` 0x2f, 0x30, 0x31 = level 0, 1, 2).
+pub const LABELS_LEVEL: [&str; 3] = ["fokozatok/easy.bmp", "fokozatok/hard.bmp", "fokozatok/normal.bmp"];
 
 impl Menu {
     pub fn labels(self) -> &'static [&'static str] {
@@ -48,13 +50,114 @@ pub enum Act {
     LoadGame,
     /// `AktIkon` 0x2b: the race choice (`Mode_Fajvalasztas`).
     Campaign,
-    /// `AktIkon` 0x20: the scenario / skirmish list (`ScenarioGombraRanyomtak("")`).
-    Scenario,
     /// A tutorial part 1..=5 (`TutorialStartMelyik`): the screen is left for the starmap.
     Tutorial(u8),
     /// `AktIkon` 0x23 (ring 0, "local"): the server path; 0x22 (ring 1, "inet"): the remaster's matchmaking.
     MultiServer,
     MultiMatchmaking,
+    /// The single-player ring's scenario list opens (the front end hands it the entries).
+    OpenScenarios,
+    /// A skirmish arrow (`PlaySoundGlobal(0)`).
+    Click,
+    /// The name entry ended (`MainScr_IPEntered`: `SaveGlobalRegistrySettings`).
+    NameEntered,
+}
+
+/// What `MainScr_Kilep` starts (spec §2.2 step 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Start {
+    /// `CampaignGameStart`: race 0..=2, `FajValasztasNehezsegiSzint` 0..=2.
+    Campaign { race: u8, level: u8 },
+    /// `Betolt_Scenario(file)`.
+    Scenario { file: String, registry: String },
+    /// `SetScirmishGameOptions(..)` with the entry's kind (`NewgameRandomID`).
+    Skirmish { settings: crate::mainscr_scenario::Skirmish, kind: i32 },
+    /// `TutorialSetCampaignGameOptions(n)`, `TutorialStart("main", n)`.
+    Tutorial(u8),
+}
+
+impl Start {
+    /// `MainScr_Kilep`'s loading picture `mcd` (index into `load1..3`): the race; a scenario's or skirmish's race 3 → 1,
+    /// 5 → 2, else 0; the tutorial 0.
+    pub fn picture(&self, race_of: impl Fn(&str) -> i32) -> usize {
+        let by = |r: i32| match r {
+            3 => 1,
+            5 => 2,
+            _ => 0,
+        };
+        match self {
+            Start::Campaign { race, .. } => (*race as usize).min(2),
+            Start::Scenario { registry, .. } => by(race_of(registry)),
+            Start::Skirmish { settings, .. } => by(settings.race),
+            Start::Tutorial(_) => 0,
+        }
+    }
+}
+
+/// The multiplayer name entry (`EnterNameMode` 0xbbb364: `IOMode` 1, `IOAzonosito` 0x98, `IOString` =
+/// `MultiplayerNev` exe 0x914800 ("Player"), `IOMaxLen` 9, centred at `IOX` 0x11c, `IOY` 0xe6, size 3, colour 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NameEntry {
+    pub text: Vec<u8>,
+    /// `IOKurzor`.
+    pub cursor: usize,
+}
+
+/// `IOMaxLen` of the name entry.
+pub const NAME_MAX: usize = 9;
+
+impl NameEntry {
+    pub fn new(name: &[u8]) -> Self {
+        Self { text: name.to_vec(), cursor: name.len() }
+    }
+
+    /// A key (`DoKeyboard` ELF, `IOMode`): for 0x98 only `A–Z a–z 0–9 _` go in (a space becomes `_`), at the cursor,
+    /// while it is below `IOMaxLen` (at a full text the last byte drops); Backspace removes the byte before the
+    /// cursor. Enter (`MainScr_IPEntered`): the spaces trimmed, and a non-empty name ends the entry (`true`).
+    pub fn key(&mut self, k: crate::options::EntryKey) -> bool {
+        use crate::options::EntryKey;
+        match k {
+            EntryKey::Char(c) => {
+                let c = if c == b' ' { b'_' } else { c };
+                if (c.is_ascii_alphanumeric() || c == b'_') && self.cursor < NAME_MAX {
+                    self.text.truncate(NAME_MAX - 1);
+                    self.text.insert(self.cursor.min(self.text.len()), c);
+                    self.cursor += 1;
+                }
+            }
+            EntryKey::Back if self.cursor > 0 => {
+                self.cursor -= 1;
+                if self.cursor < self.text.len() {
+                    self.text.remove(self.cursor);
+                }
+            }
+            EntryKey::Left => self.cursor = self.cursor.saturating_sub(1),
+            EntryKey::Right => self.cursor = (self.cursor + 1).min(self.text.len()),
+            EntryKey::Home => self.cursor = 0,
+            EntryKey::End => self.cursor = self.text.len(),
+            EntryKey::Enter => {
+                while self.text.last() == Some(&b' ') {
+                    self.text.pop();
+                }
+                while self.text.first() == Some(&b' ') {
+                    self.text.remove(0);
+                }
+                self.cursor = self.text.len();
+                return !self.text.is_empty();
+            }
+            _ => {}
+        }
+        false
+    }
+}
+
+/// The name the entry starts from: the last one, or "Player".
+fn name_or_player(n: &[u8]) -> &[u8] {
+    if n.is_empty() {
+        b"Player"
+    } else {
+        n
+    }
 }
 
 /// A meteor (`Meteorok`, exe position 0xbbabe4, spin 0xbbac14, speed 0xbbac44, sound byte 0xbbac50).
@@ -113,6 +216,20 @@ pub struct MainScr {
     pub ticks: u64,
     /// `kamerapont`, `elforgatas` as the last drawn frame set them (the ticks read them).
     pub cam: (V3, f32),
+    /// The scenario / skirmish list (`Mode_Scenario_Valasztas`).
+    pub scenario: Option<crate::mainscr_scenario::ScenarioList>,
+    /// The multiplayer name entry (`EnterNameMode`) and `MultiplayerNev` (exe 0x914800, "Player").
+    pub name: Option<NameEntry>,
+    pub player: Vec<u8>,
+    /// The exit animation (`Mode_Kilepes`, `MainScrKilepesValtozo` 100 → 0) and what follows it.
+    pub leaving: Option<(f32, Start)>,
+    /// The screen is left for this (`AktKep = STARTSCREEN; Atlepes = 1`): `MainScr_Kilep` runs on the next tick.
+    pub start: Option<Start>,
+    /// The race choice (`Mode_Fajvalasztas`), the blurbs it types (`LoadFajInfoText`), and the race boxes' centres
+    /// the last drawn frame projected (`ForgatFajvalasztasDolgai`: boxes 0xe..0x10, 160 × 160).
+    pub race: Option<crate::mainscr_race::RaceChoice>,
+    pub blurbs: [Vec<u8>; 3],
+    pub race_boxes: [Option<[f32; 2]>; 3],
 }
 
 /// `kamerapont` and `elforgatas` from `MainScrMozgato` with the y and z amplitudes and offsets of `Update3D` (100, −100,
@@ -173,6 +290,14 @@ impl MainScr {
             ships: [Ship::default(); 8],
             ticks: 0,
             cam: camera(0.0, 200.0, 0.0, 1000.0, 1500.0),
+            scenario: None,
+            name: None,
+            player: b"Player".to_vec(),
+            leaving: None,
+            start: None,
+            race: None,
+            blurbs: Default::default(),
+            race_boxes: [None; 3],
         };
         for i in 0..8 {
             s.respawn_ship(i, &mut r);
@@ -183,7 +308,22 @@ impl MainScr {
     /// The camera (`Mainscreen_Update3D` step 1 [asm 0x5002b0..]): `kamerapont` and `elforgatas`. `M/k` is an f32
     /// division, the sines f64; x and y go on in f32, z and the angle in f64.
     pub fn camera(&self) -> (V3, f32) {
-        camera(self.m, 100.0, -100.0, 100.0, 2000.0)
+        let (mut c, a) = camera(self.m, 100.0, -100.0, 100.0, 2000.0);
+        if let Some(q) = self.exit_q() {
+            c[2] -= q * 30.0;
+        }
+        (c, a)
+    }
+
+    /// `100 − MainScrKilepesValtozo` while the exit animation runs (`Update3D` step 1: `kamerapont.z −= q·30`,
+    /// `forgaspont.x = q·5`).
+    pub fn exit_q(&self) -> Option<f32> {
+        self.leaving.as_ref().map(|(k, _)| 100.0 - k)
+    }
+
+    /// `MainScrKilepesValtozo` while the exit animation runs.
+    pub fn exit_k(&self) -> Option<f32> {
+        self.leaving.as_ref().map(|(k, _)| *k)
     }
 
     /// Per drawn frame: the camera of the frame (what the next ticks read as `kamerapont`).
@@ -220,12 +360,28 @@ impl MainScr {
 
     /// The labels this frame (step 10): the menu's set; `None` while the rings are flying out (`Cel` 5).
     pub fn labels(&self) -> Option<&'static [&'static str]> {
-        (self.cel != 5.0).then(|| self.menu.labels())
+        (self.cel != 5.0).then(|| if self.race.as_ref().is_some_and(|r| r.confirmed || r.start_game) { &LABELS_LEVEL[..] } else { self.menu.labels() })
     }
 
     /// The ring under the virtual point `at`, only while the rings rest (`Tav == 1.0` exactly): a box of ±40 around
     /// each centre (f32 compares, left/top inclusive).
     pub fn ring_at(&self, at: [f32; 2]) -> Option<usize> {
+        // `Update3D` hit-tests only without a text entry (`EnterIPAddressMode`, `EnterNameMode`, …) and outside the
+        // scenario list (its rings are flown out to `Cel` 6).
+        if self.name.is_some() || self.scenario.is_some() || self.leaving.is_some() {
+            return None;
+        }
+        // The difficulty rings (`Update3D`): while `Tav != 1.0`, `Tav <= 1.333` (the rings rest at 1.3).
+        if self.race.is_some() {
+            if self.tav == 1.0 || self.tav > 1.333 {
+                return None;
+            }
+            let (x, y) = (at[0].floor(), at[1].floor());
+            return (0..3).find(|&i| {
+                let c = self.ring_centre(i);
+                c[0] - 40.0 <= x && x < c[0] + 40.0 && c[1] - 40.0 <= y && y < c[1] + 40.0
+            });
+        }
         if self.tav != 1.0 {
             return None;
         }
@@ -240,17 +396,59 @@ impl MainScr {
     /// The pointer this frame (`AktKijelolt`; the hand pointer over a ring).
     pub fn hover(&mut self, at: [f32; 2]) {
         self.hovered = self.ring_at(at);
+        if let Some(sc) = &mut self.scenario {
+            sc.hover(at);
+        }
     }
 
     /// A left press at `at` (the rings that act on `Mouse_Lenyom && Mouse_Bal` in `Update3D`); the box rings act on
     /// the release ([`MainScr::release`]).
     pub fn press(&mut self, at: [f32; 2]) -> Option<Act> {
+        if let Some(sc) = &mut self.scenario {
+            use crate::mainscr_scenario::Act as S;
+            return match sc.press(at)? {
+                S::Click => Some(Act::Click),
+                // §6.3 0x15: `Cel` 6, `AktKep = 2`; the panel closes while the exit animation runs.
+                S::Start => {
+                    let sc = self.scenario.as_ref()?;
+                    let e = sc.chosen()?;
+                    self.cel = 6.0;
+                    self.start = Some(if e.skirmish() {
+                        Start::Skirmish { settings: sc.sk, kind: e.kind }
+                    } else {
+                        Start::Scenario { file: e.file.clone(), registry: e.registry.clone() }
+                    });
+                    None
+                }
+            };
+        }
+        if self.race.is_some() {
+            let ring = self.ring_at(at);
+            let Some(r) = &mut self.race else { return None };
+            // A difficulty ring (`AktIkon` 0x2f..0x31): `Cel` 5, the heads close, then the screen is left.
+            if let Some(i) = ring {
+                r.press_level(i as u8);
+                self.cel = 5.0;
+                return None;
+            }
+            // A race box (0xe..0x10): highlight, or confirm (`MaxMainKorok = 3; Cel = 1.3`).
+            let (x, y) = (at[0].floor(), at[1].floor());
+            let hit = (0..3).find(|&k| r.boxes_on() && self.race_boxes[k].is_some_and(|c| (c[0] - 80.0) as i32 as f32 <= x && x < (c[0] - 80.0) as i32 as f32 + 160.0 && (c[1] - 80.0) as i32 as f32 <= y && y < (c[1] - 80.0) as i32 as f32 + 160.0));
+            if let Some(k) = hit {
+                if r.press_race(k, &self.blurbs) {
+                    self.rings = 3;
+                    self.cel = 1.3;
+                }
+            }
+            return None;
+        }
         let i = self.ring_at(at)?;
         match (self.menu, i) {
             (Menu::Main, 0) => Some(Act::Credits),
             (Menu::Main, 3) => {
-                // The multiplayer menu (the name entry `EnterNameMode` over it is not ported).
+                // §6.5: the multiplayer set flies in under the name entry.
                 self.fly_to(Menu::Multi);
+                self.name = Some(NameEntry::new(name_or_player(&self.player)));
                 None
             }
             (Menu::Main, 4) => {
@@ -261,14 +459,22 @@ impl MainScr {
                 self.fly_to(Menu::Main);
                 None
             }
-            // The exe flies the rings away (`Cel` 6) and leaves for the tutorial; until it is ported they stay.
-            (Menu::Tutorial, k) => Some(Act::Tutorial(k as u8 + 1)),
+            // `Cel` 6, `AktKep = STARTSCREEN`, `Mode_Tutorial_Start`, `TutorialStartMelyik = i + 1`.
+            (Menu::Tutorial, k) => {
+                self.cel = 6.0;
+                self.start = Some(Start::Tutorial(k as u8 + 1));
+                Some(Act::Tutorial(k as u8 + 1))
+            }
             _ => None,
         }
     }
 
     /// A left release at `at` on a box ring (`Mouse_Szoveg_Set(.., 1, 1)`: `MainScr_Main` sees `AktIkon` once).
     pub fn release(&mut self, at: [f32; 2]) -> Option<Act> {
+        if let Some(sc) = &mut self.scenario {
+            sc.release();
+            return None;
+        }
         let i = self.ring_at(at)?;
         match (self.menu, i) {
             (Menu::Main, 1) => Some(Act::Quit),
@@ -280,9 +486,17 @@ impl MainScr {
                 self.fly_to(Menu::Tutorial);
                 None
             }
-            // `Cel` 6 and the race choice in the exe; the rings stay until it is ported.
-            (Menu::Single, 0) => Some(Act::Campaign),
-            (Menu::Single, 1) => Some(Act::Scenario),
+            // `AktIkon` 0x2b: `Cel` 6, `Mode_Fajvalasztas`, `VisszaAllitFajvalasztasKezdoPoziciok`.
+            (Menu::Single, 0) => {
+                self.cel = 6.0;
+                self.race = Some(crate::mainscr_race::RaceChoice::open());
+                Some(Act::Campaign)
+            }
+            // `ScenarioGombraRanyomtak("")`: `Cel` 6, the rings fly away; the front end loads the entries.
+            (Menu::Single, 1) => {
+                self.cel = 6.0;
+                Some(Act::OpenScenarios)
+            }
             (Menu::Multi, 0) => Some(Act::MultiServer),
             (Menu::Multi, 1) => Some(Act::MultiMatchmaking),
             _ => None,
@@ -292,9 +506,44 @@ impl MainScr {
     /// Esc (`MainScr_ESCPressedWhenMultiplayerselect` exe 0x4fe780, the ring menus' case): with the rings at rest,
     /// back to the main set through a fly-out, also from the main set itself; never quits.
     pub fn escape(&mut self) {
-        if self.tav == 1.0 {
+        if let Some(sc) = &mut self.scenario {
+            if !sc.closing {
+                sc.cancel();
+                self.rings = 3;
+            }
+            return;
+        }
+        if let Some(r) = &mut self.race {
+            // Case 5: back to the three heads (`Cel` 6) or the race choice closes (`Cel` 5).
+            match r.escape() {
+                Some(true) => self.cel = 6.0,
+                Some(false) => self.cel = 5.0,
+                None => {}
+            }
+            return;
+        }
+        // The name entry: Esc goes back to the main set (`EnterNameMode` counts as at rest), then
+        // `MainScr_CancelIPEnter` ends the entry.
+        if self.tav == 1.0 || self.name.is_some() {
             self.fly_to(Menu::Main);
         }
+        self.name = None;
+    }
+
+    /// The scenario list opened with `entries` (`ScenarioGombraRanyomtak`).
+    pub fn open_scenarios(&mut self, entries: Vec<crate::mainscr_scenario::Entry>) {
+        self.scenario = Some(crate::mainscr_scenario::ScenarioList::open(entries));
+    }
+
+    /// A key while the name entry is up; `Act::NameEntered` when Enter accepts it.
+    pub fn name_key(&mut self, k: crate::options::EntryKey) -> Option<Act> {
+        let n = self.name.as_mut()?;
+        if n.key(k) {
+            self.player = n.text.clone();
+            self.name = None;
+            return Some(Act::NameEntered);
+        }
+        None
     }
 
     /// A menu change: the rings fly out (`Cel` 5) and come back as `menu`'s set.
@@ -306,6 +555,51 @@ impl MainScr {
     /// One 10 ms UI tick (`FRISSIT_MainScr2`, exe 0x4f65f0, spec §5; the gate `MainElindult` is open once a frame was
     /// drawn).
     pub fn tick(&mut self) {
+        // `MainScr_Kilep` (spec §2.2): the screen is left; its loop runs the exit animation, 0.5 a tick from 100, with
+        // `Cel` held at 6, before the start.
+        if let Some(st) = self.start.take() {
+            self.leaving = Some((100.0, st));
+        }
+        if let Some((k, _)) = &mut self.leaving {
+            self.cel = 6.0;
+            *k = (*k as f64 - 0.5) as f32;
+        }
+        let leaving = self.leaving.is_some();
+        if let Some(k) = self.exit_k() {
+            // The scene fades in the last 50 ticks (`GT = K/25` in f64).
+            if k < 25.0 {
+                self.gt = (k as f64 / 25.0) as f32;
+            }
+        }
+        if let Some(r) = &mut self.race {
+            use crate::mainscr_race::Event;
+            match r.tick(&self.blurbs) {
+                Some(Event::Closed) => {
+                    self.race = None;
+                    self.rings = 3;
+                    self.cel = 1.0;
+                }
+                Some(Event::Unconfirmed) => self.rings = 3,
+                None => {}
+            }
+            // `Update3D`'s leave test: `StartGame && S == 100` → `AktKep = STARTSCREEN` (not while leaving).
+            if let Some(r) = &self.race {
+                if r.start_game && r.s == 100.0 && !leaving && self.start.is_none() {
+                    self.start = Some(Start::Campaign { race: r.selected.unwrap_or(0) as u8, level: r.level });
+                }
+            }
+        }
+        if let Some(sc) = &mut self.scenario {
+            sc.tick(leaving);
+            // Shut: back to the single-player set (`Mode_SinglePlayerSelected = 1; Cel = 1.0`).
+            if sc.closed() {
+                self.scenario = None;
+                if !leaving {
+                    self.menu = Menu::Single;
+                    self.cel = 1.0;
+                }
+            }
+        }
         self.ticks += 1;
         self.ship_timer += 1;
         self.meteor_timer += 1;
@@ -333,7 +627,7 @@ impl MainScr {
             }
         }
         // §5.2: the fade-in (f32 steps of `GlobalTransparencyNovelo` 0.003).
-        if self.gt < 1.0 {
+        if self.gt < 1.0 && self.leaving.is_none() {
             self.gt += 0.003;
             if self.gt > 1.0 {
                 self.gt = 1.0;
@@ -341,14 +635,24 @@ impl MainScr {
         }
     }
 
+    /// The exit animation ended: what the screen was left for (`MainScr_Kilep` step 3).
+    pub fn take_started(&mut self) -> Option<Start> {
+        if self.leaving.as_ref().is_some_and(|(k, _)| *k <= 0.0) {
+            return self.leaving.take().map(|(_, s)| s);
+        }
+        None
+    }
+
     /// §5.3 meteors (k = 1: the exit animation isn't ported).
     fn tick_meteors(&mut self, r: &mut MsvcRand) {
         let camz = self.cam.0[2];
         let mut timer = self.meteor_timer;
+        // While leaving the meteors speed up: `(1 − K/100)·10 + 1`.
+        let k = self.exit_k().map_or(1.0, |k| (1.0 - k / 100.0) * 10.0 + 1.0);
         for m in &mut self.meteors {
             let p = &mut m.pos;
             if p[2] < camz + 1000.0 {
-                p[2] += m.speed;
+                p[2] += m.speed * k;
             }
             for c in [0, 1] {
                 if 0.0 <= p[c] && p[c] < 500.0 {

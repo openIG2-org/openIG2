@@ -9,6 +9,7 @@ pub mod container;
 pub mod dialogue;
 pub mod diplomacy;
 pub mod formation;
+pub mod highscore;
 pub mod locale;
 pub mod mp4;
 pub mod misc_text;

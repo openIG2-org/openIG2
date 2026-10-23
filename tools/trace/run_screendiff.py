@@ -18,6 +18,8 @@ spacewar:<grab.json> (a battle-screen grab of `run_spwc.py --grab-ticks`: the ex
    screen.js leaves the exe's);
 3. compares them with `ig2-screendiff` for the whole frame and the screen's regions (640 × 480 virtual pixels),
    writes `<out>/<name>-{exe,client,heat}.png` and `<out>/<name>.json`, and prints the table.
+--client-new-campaign C,D,SEED,TICKS: the client builds the world from its own campaign start (`World::new_game`)
+instead of the state save; <save> is the exe's tick-0 save of that start (run_newgame.py), which the exe loads.
 The message line is masked by default (it scrolls on the UI clock in both). Exit code 0 = every region matches.
 Images hold game imagery: keep --out under _local/.
 
@@ -53,8 +55,9 @@ SCREENS = {
         TOPBAR, "planet_panel=0,18,223,153", "radar=491,348,149,132", "bottom_info=5,403,162,72",
         "buttons=170,440,320,36", "view=223,20,268,320"]),
     # The colony screen in a real-time ground war (colony.md §11): the exe lands the human on the planet, places and
-    # selects every unit (run_screen.py --grwar); the client seeds its selection from the saved flag 8.
-    "grwar": dict(kep=3, exe=["--grwar"], client=["--colony", "{planet}", "--colony-live", "--colony-ui", "war"], regions=[
+    # selects every unit (run_screen.py --grwar); the client seeds its selection from the saved flag 8. The exe draws its
+    # pointer (`UpdateFrame`, colony.md §11.10) where the capture leaves it, the screen's centre: the client draws it there.
+    "grwar": dict(kep=3, exe=["--grwar"], client=["--colony", "{planet}", "--colony-live", "--colony-ui", "war", "--mouse", "320,240"], regions=[
         TOPBAR, "texts=200,30,300,40", "radar=491,348,149,132", "bottom_info=5,403,162,72",
         "buttons=200,425,260,50", "view=223,20,268,320"]),
     # The info screen opens over 150 UI frames and fades its texts in over 100 more: the grab waits longer.
@@ -75,14 +78,15 @@ SCREENS = {
         TOPBAR, "top_panel=160,22,320,57", "list=5,92,124,234", "right_panel=499,92,136,234",
         "bottom_left=5,365,174,72", "bottom_right=471,365,166,72", "console=170,330,300,150", "hull=140,90,355,250"]),
     # The trade screen (trade.md), part 1: the market at rest and browsed (the lists, the purchase line, the
-    # destinations, the deliveries, the bottom ticker); the chosen offer's hull model and card are part 2.
+    # destinations, the deliveries, the bottom ticker); part 2: the chosen offer's hull model, its card and the pod list
+    # (`scripts/trade-pods.json`).
     "trade": dict(kep=8, wait=1000, script=True, client=["--screen", "trade", "--ui-frames", "240"], regions=[
         TOPBAR, "ships=100,45,200,95", "vehicles=342,45,200,95", "scroll_bars=298,60,40,92", "buy_line=130,190,330,45",
-        "deliveries=262,290,360,180", "ticker=30,455,575,18", "panels=60,20,520,270"]),
+        "deliveries=262,290,360,180", "ticker=30,455,575,18", "panels=60,20,520,270", "model=180,290,280,135", "card=195,425,255,40"]),
     # The same with the exe's TradeCheat (every own planet a trade port) in both, for a purchase script.
     "trade-buy": dict(kep=8, wait=1000, script=True, exe=["--trade-cheat"], client=["--screen", "trade", "--trade-cheat"], regions=[
         TOPBAR, "ships=100,45,200,95", "vehicles=342,45,200,95", "scroll_bars=298,60,40,92", "buy_line=130,190,330,45",
-        "deliveries=262,290,360,180", "ticker=30,455,575,18", "panels=60,20,520,270"]),
+        "deliveries=262,290,360,180", "ticker=30,455,575,18", "panels=60,20,520,270", "model=180,290,280,135", "card=195,425,255,40"]),
     # The main menu (mainscr.md): as the exe boots (run_screen.py --boot), no save; the galaxy clouds and the dust are
     # random particles (statistically alike), the rings and labels are exact. Script only.
     "main": dict(kep=15, script=True, exe=["--boot", "--run"], client=["--screen", "main"], regions=[
@@ -177,6 +181,9 @@ def clock_args(save):
     # The trade screen's delivery time `AktEtaDays` (unsaved, trade.md §2).
     if clocks.get("trade_eta") is not None:
         args += ["--trade-eta", str(clocks["trade_eta"])]
+    # The row frame's global phase (`dkm`, `dkmcel`, `GfxNovelo`: `DesignKeret1`, never reset between screens).
+    if clocks.get("dkm") is not None:
+        args += ["--dkm", ",".join(repr(v) for v in clocks["dkm"])]
     return args
 
 
@@ -291,8 +298,15 @@ def main():
     ap.add_argument("--anim-mouse", "--spy-mouse", dest="anim_mouse",
                     help="spy, research: the pointer rests at the virtual point X,Y in both (a hot-spot's tooltip)")
     ap.add_argument("--arm", type=int, default=0, help="grwar: both call-in timers full and the air strike N armed (run_screen.py --grwar-arm)")
+    ap.add_argument("--self-destruct", type=int, default=0, help="colony: the self-destruct countdown set to N (run_screen.py --self-destruct)")
+    ap.add_argument("--colony-info", nargs="?", const="on", help="colony: the planet info mode, KIND (tax | autobuild | priority) its menu "
+                    "held open (run_screen.py --colony-info; the client's --colony-ui info[:KIND]); --info-mouse X,Y the pointer (the hover)")
+    ap.add_argument("--info-mouse", help="with --colony-info: the pointer's virtual point in both")
+    ap.add_argument("--land", action="store_true", help="grwar: no unit placed yet (run_screen.py --grwar-land)")
     ap.add_argument("--script", help="compare the frame sequence of this input script (re/screens/sound.md §3)")
     ap.add_argument("--exe-seq", help="with --script: reuse this exe run (its run_screen.py out-prefix)")
+    ap.add_argument("--client-new-campaign", help="the client starts this campaign (`--new-campaign C,D,SEED,TICKS`) "
+                    "instead of loading the state save: <save> is run_newgame.py's tick-0 save of the same start")
     a = ap.parse_args()
 
     kind, _, arg = a.screen.partition(":")
@@ -333,6 +347,19 @@ def main():
         held = ["--anim-frame", str(a.anim_frame)]
         held_exe = ["--dip-frame", str(a.anim_frame)]
         name += f"-open{a.anim_frame:g}"
+    if kind == "colony" and a.colony_info:
+        mouse = a.info_mouse or "320,240"
+        held_exe += ["--colony-info", a.colony_info, "--mouse", mouse]
+        held += ["--colony-ui", "info" if a.colony_info == "on" else "info:" + a.colony_info, "--mouse", mouse]
+        name += "-info" if a.colony_info == "on" else "-info-" + a.colony_info
+        # The long info's panel and its setting rows (colony.md §12.3).
+        cfg = dict(cfg, regions=cfg["regions"] + ["info_panel=319,33,302,326", "settings=330,285,260,70"])
+    if kind == "colony" and a.self_destruct:
+        held_exe += ["--self-destruct", str(a.self_destruct)]
+        name += f"-sd{a.self_destruct}"
+    if kind == "grwar" and a.land:
+        held_exe += ["--grwar-land"]
+        name += "-land"
     if kind in ("spy", "research") and a.anim_frame is not None:
         flag = "--spy" if kind == "spy" else "--res"
         held = ["--anim-frame", str(a.anim_frame)] + (["--anim-closing"] if a.anim_closing else [])
@@ -415,7 +442,8 @@ def main():
                     for c, t in st["log"]:
                         f.write(f"{c} {t}\n")
                 args += ["--info-log", log]
-    r = run([CLIENT, "--snapshot", client_png, "--save", save, "--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args, env=env)
+    game = ["--new-campaign", a.client_new_campaign] if a.client_new_campaign else ["--save", save]
+    r = run([CLIENT, "--snapshot", client_png] + game + ["--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args, env=env)
     if r.returncode:
         sys.exit("the client snapshot failed")
 

@@ -4,7 +4,7 @@
 //! Spec: `re/formats/text.md`. Evidence (ELF `ig2`): `InfoString_Read`, `LoadTalalmanyInfok`,
 //! `LoadScenarioDescription` (`../sources_base/save.cpp`), `Help_Belep`, `HelpKikeresKepek`,
 //! `INIT_AutoBuild`, `LoadFajInfoText` @0x59aca0, `LoadGameInfo` @0x6218b0, `NEWGAME_Colony`
-//! @0x4d8e40, `LoadHighscores` @0x629440.
+//! @0x4d8e40, `LoadHighscores` exe 0x543750 (ELF 0x629440).
 
 use crate::dialogue::atoi;
 use crate::text::lines;

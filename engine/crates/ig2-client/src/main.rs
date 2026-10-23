@@ -49,7 +49,10 @@ mod kit;
 mod lighting;
 mod mainscr;
 mod mainscr_scene;
+mod mainscr_race;
+mod mainscr_scenario;
 mod messages_screen;
+mod new_game;
 mod options;
 mod orders;
 mod render;
@@ -95,6 +98,8 @@ use ig2_sim::time::Speed;
 #[derive(Debug, Clone)]
 pub struct Options {
     pub save: PathBuf,
+    /// `--new-campaign`: start this campaign instead of loading `save` (re/rules/new-game.md).
+    pub new_campaign: Option<ig2_sim::game::new_game::NewCampaign>,
     /// The window starts on the main menu (re/screens/mainscr.md), unless `--save` names the game to run.
     pub main_menu: bool,
     pub speed: Speed,
@@ -130,13 +135,18 @@ pub struct Options {
     pub trade_cheat: bool,
     /// `--trade-eta N`: the unsaved `AktEtaDays` (the trade screen's delivery time) as the exe had it.
     pub trade_eta: Option<i32>,
+    /// `--dkm M,CEL,NOVELO`: the row frame's global phase at the script's start (`DesignKeret1`'s `dkm`, `dkmcel`,
+    /// `GfxNovelo`, kept across screens by the exe).
+    pub dkm: Option<[f32; 3]>,
     /// `--spy-frame F [--spy-closing]`: the spy screen with `spyframe` held at F while opening (or closing)
     /// (re/screens/spy.md §1.1, §9).
     pub spy_frame: Option<f32>,
-    /// `--screen video:NAME --video-ms T [--video-at X,Y]`: the window at time `T` of the `.bik` name's video,
-    /// fullscreen or in the screen at `X,Y` of the 640×480 frame (re/screens/video.md §6).
+    /// `--screen video:NAME --video-ms T [--video-at X,Y] [--video-loop]`: the window at time `T` of the `.bik`
+    /// name's video, fullscreen or in the screen at `X,Y` of the 640×480 frame, looping like the message clips'
+    /// loop and wait clips (re/screens/video.md §6).
     pub video_ms: u64,
     pub video_at: Option<[f32; 2]>,
+    pub video_loop: bool,
     pub spy_closing: bool,
     /// `--clouds N`: the starmap clouds' drift clock (re/screens/starmap.md §6.2).
     pub clouds: i32,
@@ -194,6 +204,7 @@ fn default_save() -> PathBuf {
 fn parse(args: &[String]) -> Result<Options, String> {
     let mut o = Options {
         save: default_save(),
+        new_campaign: None,
         main_menu: true,
         speed: Speed::Fastest,
         ticks: 0,
@@ -216,9 +227,11 @@ fn parse(args: &[String]) -> Result<Options, String> {
         ui_frames: 150,
         trade_cheat: false,
         trade_eta: None,
+        dkm: None,
         spy_frame: None,
         video_ms: 0,
         video_at: None,
+        video_loop: false,
         spy_closing: false,
         clouds: 0,
         futofeny: None,
@@ -249,6 +262,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
         match a.as_str() {
             "--save" => {
                 o.save = PathBuf::from(val()?);
+                o.main_menu = false;
+            }
+            "--new-campaign" => {
+                o.new_campaign = Some(new_game::parse_campaign(&val()?)?);
                 o.main_menu = false;
             }
             "--speed" => {
@@ -283,6 +300,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--colony-ui" => o.colony_ui = Some(val()?),
             "--screen" => o.screen = Some(val()?),
             "--video-ms" => o.video_ms = val()?.parse().map_err(|e| format!("--video-ms: {e}"))?,
+            "--video-loop" => o.video_loop = true,
             "--video-at" => {
                 let v = val()?;
                 let (x, y) = v.split_once(',').ok_or("--video-at X,Y")?;
@@ -292,6 +310,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--open-message" => o.open_message = Some(val()?.parse().map_err(|e| format!("--open-message: {e}"))?),
             "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),
             "--trade-cheat" => o.trade_cheat = true,
+            "--dkm" => {
+                let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse().map_err(|e| format!("--dkm: {e}"))).collect::<Result<_, _>>()?;
+                o.dkm = Some(v.try_into().map_err(|_| "--dkm: three numbers".to_string())?);
+            }
             "--trade-eta" => o.trade_eta = Some(val()?.parse().map_err(|e| format!("--trade-eta: {e}"))?),
             "--ui-frames" => o.ui_frames = val()?.parse().map_err(|e| format!("--ui-frames: {e}"))?,
             "--spy-frame" | "--anim-frame" => o.spy_frame = Some(val()?.parse().map_err(|e| format!("--anim-frame: {e}"))?),
@@ -367,7 +389,8 @@ pub struct Loaded {
     pub rules: ig2_sim::game::GameRules,
     pub tech_defaults: Vec<u8>,
     pub volatile: Vec<(u32, Vec<u8>)>,
-    pub save: SaveGame,
+    /// The save of `--save`; `None` with `--new-campaign`.
+    pub save: Option<SaveGame>,
     /// The exe's tables the screens draw with (models, colours).
     pub tables: ig2_rules::Rules,
 }
@@ -376,10 +399,34 @@ pub fn load(o: &Options) -> Result<Loaded, String> {
     let install = open_install(o)?;
     let (rules, tech_defaults) = rules::load(&install)?;
     let volatile = rules::scenario_globals(&install)?;
-    let bytes = std::fs::read(&o.save).map_err(|e| format!("{}: {e}", o.save.display()))?;
-    let save = SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", o.save.display()))?;
+    let save = match o.new_campaign {
+        Some(_) => None,
+        None => {
+            let bytes = std::fs::read(&o.save).map_err(|e| format!("{}: {e}", o.save.display()))?;
+            Some(SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", o.save.display()))?)
+        }
+    };
     let tables = ig2_rules::Rules::from_install(&install)?;
     Ok(Loaded { install, rules, tech_defaults, volatile, save, tables })
+}
+
+/// The session's game: `--new-campaign`'s start (its intro queued), else the save.
+/// Takes [`Loaded`]'s parts: the window keeps the rules for the whole process.
+pub fn start_world<'r>(o: &Options, install: &Install, save: Option<&SaveGame>, rules: &'r ig2_sim::game::GameRules, tech_defaults: &[u8], volatile: &[(u32, Vec<u8>)]) -> Result<world::World<'r>, String> {
+    Ok(match (&o.new_campaign, save) {
+        (Some(c), _) => {
+            let mut w = world::World::new_game(new_game::campaign(install, c, rules)?);
+            w.campaign_intro();
+            w
+        }
+        (None, Some(s)) => world::World::load(s, rules, tech_defaults, volatile),
+        (None, None) => return Err("no game: --save or --new-campaign".into()),
+    })
+}
+
+/// A float chunk of the session's save (0 without one or for a new game).
+pub fn save_f32(save: Option<&SaveGame>, n: &str) -> f32 {
+    save.and_then(|s| s.chunk(n)).and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()))
 }
 
 /// The install from `IG2_INSTALL_DIR` in the texts' language.
@@ -396,7 +443,7 @@ fn language(o: &Options, root: &std::path::Path) -> Lang {
 
 fn info(o: &Options) -> Result<(), String> {
     let l = load(o)?;
-    let mut w = world::World::load(&l.save, &l.rules, &l.tech_defaults, &l.volatile);
+    let mut w = start_world(o, &l.install, l.save.as_ref(), &l.rules, &l.tech_defaults, &l.volatile)?;
     w.set_speed(o.speed);
     for _ in 0..o.ticks {
         w.tick();

@@ -5,9 +5,12 @@ charts every tick of 1,900 (the sample after each load and 17 month changes), th
 year's tax message (twice) and the "enemy fleet spotted" message, the spy reports and messages of a staged spy
 recording (§3.3: the report queue with 26 reports, ids 100, 101, 103, 106, 136, 139–141), the battle outcomes of
 three staged recordings (§3.2: 11, 12, 15–18, 22–25 from fifteen auto-resolved space battles and ground wars, one
-of them a planet battle followed by the winner's landing), the inbox
-(nothing expired), byte-exact against `engine/crates/ig2-sim` (`info.rs`, `messages.rs`, `spy.rs`, `game.rs`,
-`game/battles.rs`, `tests/save_replay.rs`). The other posting sites (§3.2) are ported from the code, not traced.
+of them a planet battle followed by the winner's landing), the posts 2, 3, 4, 7, 26 of other recordings, the staged
+`replay-quick1-messages-x16` (§3.2: 5, 8, 9, 19, 21 and the inbox expiry, §4; `traces/2026-10-23-u25-rest.md`),
+byte-exact against `engine/crates/ig2-sim` (`info.rs`, `messages.rs`, `spy.rs`, `game.rs`, `game/battles.rs`,
+`tests/save_replay.rs`), and the line's motion (§2.3, `tests/scroll_trace.rs`). Posted by the exe but not replayed:
+6 and 10 (`messages-diplo-x16`: the AI's message to the human needs the unported reason codes, `diplomacy.md` §11).
+Not traced: 13 (no staged planet had guns), a real-time ground war's 11/12 (ported from the code).
 
 Three per-tick pieces of the strategic tick (`time-and-rng.md` §1) that only feed the UI, but whose state is in
 every save (`formats/save.md` §4.3–§4.4):
@@ -100,13 +103,34 @@ Entry 0 of each list is never written. Copies go up to the NUL: the bytes after 
 6. Entry `slot` := `t`, `+0x3c` := `important`, `+0x38` := `id`; `db = n`.
 7. If `ScrollFontos == 0 && important`, or `interrupt`: `ScrollSzoveg[0] = 0` (the current text is cut off).
 
-### 2.3 The UI side (`FRISSIT_Scroll2`, not the sim)
-Runs in the UI frame (`Fake_FRISSITES`, after the tick loop), only on some screens and not while a dialog is
-up; it moves the current text by float steps and, when it has left the line (or there is none), takes the next:
-`ScrollSzoveg` := entry 1's text, `ScrollFontos` := entry 1's `+0x3c` (its `+0x38` picks
-`SOUNDS/SCROLL/{HUMAN,BRUTAL}/%04d.WAV` except ids 1, 0x14, 0x15, 0x1a), `db -= 1`, entries 2..=`db + 1` move to
-1..=`db`; with `db == 0` it clears `ScrollSzoveg`. So the main list drains at the display's pace: the sim posts,
-the UI pops (`messages::Ticker::pop`).
+### 2.3 The UI side (`FRISSIT_Scroll2` exe 0x556210, not the sim)
+`Fake_FRISSITES` calls it at 0x4de8ed inside its **10 ms loop** (100 Hz, after `Frissit2_Colony`, before
+`FRISSIT_Start2`) when `AktKep < 0xE`: one deterministic step per 10 ms, no frame time. The state is UI state
+(unsaved): `ScrollSzoveg` 0xE41230 (the text), `ScrollFontos` 0xE412F8, `UzenetStart` 0xE412FC, `UzenetSebesseg`
+0xE41300, `UzenetHatar` 0xE41304 (f32, in characters), the error line `HibaUzenetSzoveg` 0xE41308 / its counter 0xE413D0.
+
+Gate (else nothing moves): not in `IOMode && IOAzonosito == 1` (0xBAE2C3/0xBAE2C4), `Belep` 0xBAE24C, `Atlepes`
+0xBAE24D; an error line (`ScrollHibaUzenet`) counts up to 300 instead and is then cleared; and the screen test (ELF
+0x66ebd0; the exe tests `help_new_available(AktPlanet)` where the ELF has `GetWarfareStatus`): `AktKep` 10, 0xB in SP
+or 0xD, or no pop-up (`VanUzenet`, exe 0x509e00), or (0xB, the colony at war, the options in load-only or battle
+mode) without `DEBUGX`, or 10 with choices; and not (`AktKep == 3 && StoryAdat+0xb4`).
+
+The step (asm 0x55638f..0x556688; `len = strlen(ScrollSzoveg)`, `c` = the f64 at 0x859a78 =
+`0x3f8de69ad42c3c9e`, one ulp below 0.0146):
+1. If `(f32)len <= start` or the text is empty: **pop**. With `db < 1` the text is cleared (nothing moves).
+   Otherwise `ScrollSzoveg` := entry 1's text, `ScrollFontos` := entry 1's `+0x3c` byte, `start = −53.0f`,
+   `speed = (f32) sqrt((f64)(len' + 53) · c)`, `limit = −((f32)(f64)(53 − len') · 0.5f)` (`len'` the new text's
+   length), and unless entry 1's `+0x38` id is 1, 0x14, 0x15 or 0x1A it plays `SOUNDS/SCROLL/BRUTAL/%04d.WAV` (`EN`
+   == 5) or `…/HUMAN/%04d.WAV` (when the sound switch 0x919930 is on); entries 2..=`db` move to 1.., `db −= 1`.
+2. If the text is not empty, it moves:
+   - `limit > start` (arriving): `start += speed` (f32); `speed = (f32)((f64)speed − c)`; if `0.02 > (f64)speed`:
+     `speed = 0.02f`; if `start >= limit`: `start = limit`, `speed = 400.0f`.
+   - `start == limit` (holding): `speed −= 1.0f`; when it reaches 0.0: `speed = 0.2f`, `start = (f32)((f64)start +
+     0.01)` (400 steps = 4 s, then it leaves).
+   - else (leaving): `start += speed`; `speed = (f32)((f64)speed + c)`; the next step after `(f32)len <= start` pops.
+So the main list drains at the display's pace: the sim posts, the UI pops. Port: `messages::Motion`
+(`begin`/`advance`) and `Ticker::scroll` (the pop and the step; returns the popped id for the sound); the client's
+`ui::Scroller` steps with `Motion`. Verified bit-exact over 5,012 exe steps (`rules/traces/2026-10-23-u25-rest.md`).
 
 ## 3. Which messages the tick posts
 
@@ -142,9 +166,14 @@ Every site posts only for the human (`EN` 0x912A3C) as stated; `imp`/`intr` as p
 | 26 | `FelfedezBirodalom(e, true)` 0x4c1def | `1 ≤ e ≤ 8`, `e ≠ EN`, new contact | empire `e` | 1, 0 | `DiploEvent::Discovered` |
 
 The battles run inside the starmap's movement loop (`fleet-movement.md` §4.3; `Game` pauses the loop there and runs
-`SpaceWarIndit` / `GroundWarIndit`, `game::battles`). Not ported: the real-time battles' own posts — a real-time
-ground war's end (`GroundWarFinished(p, s, false)` 0x47c5d0 posts 11/12 there) and the space battle screen's
-result; the routing reports them (`BattleEvent::SpaceRealTime`, `GroundRealTime`) and leaves them. The espionage
+`SpaceWarIndit` / `GroundWarIndit`, `game::battles`). The real-time battles: a real-time ground war's end
+(`GroundWarFinished(p, s, false)` exe 0x47c5d0, `ground-combat.md` §6.1) posts, when the planet changes hands
+(`owner != s`) and before the capture (`BolygoElfoglal(p, s)`, `BattlesWon[s] += 1`): 11 when the old owner is `EN`
+(0x47c982), then 12 when `s == EN` and `p ≠ StoryAdat+0x40` (0x47c9ad), both with the planet's name, 1, 0
+(`GroundEvent::Taken` → `BattleEvent::messages`); with `sim` true it posts nothing (the simulated war's posts are
+`GroundWarIndit`'s). A real-time space battle posts **nothing** at its end: `SpwC::SpaceWarVege` (exe 0x5706f0) only
+sets `SpWarKiNyert`, clears `SpWarVesztesVisszaVonult` and runs `Story_SpaceBattleFinished`; `SpaceWar_Kilep` (exe
+0x562b50) calls it (SP) or sends 0x44d (MP); the ids 15–18 belong to `SpaceWarIndit`'s simulated branch only. The espionage
 posts are §3.3. The UI side
 (§2.3) isn't the sim's either: no recording shows the line draining. The story
 scripts call `ScrollUzenet` directly (§3.4). `LoadSave` posts one message after a load (in the
@@ -255,7 +284,9 @@ first `i` in 0..count with `0 < expiry < Ido`, `+4 == 0` and block ≠ `UAktUzen
 `Story_MessageElevules(block)` (`StoryMessageBlokk` 0xF26574 := block, story event flag 7, `Story_Check`), then
 the three arrays close the gap (entries `i + 1..count` move down one; the last stays duplicated) and the count
 drops by one. At most one message expires per tick. Nothing else in the tick writes the inbox (messages arrive
-through the stories, diplomacy specials and the lockstep queue).
+through the stories, diplomacy specials and the lockstep queue). Caller: `Fake_FRISSITES` 0x4deadb (the thunk 0x5053b0)
+in the 50 ms loop's strategic branch, after `FRISSIT_Story` (0x4dead6) and before `FRISSIT_Diplomacy` (0x4deae0).
+Verified in `replay-quick1-messages-x16` (four staged messages: two expire, one kept, one without expiry).
 
 ## 5. Port
 `ig2-sim::info::Charts` (§1.2–§1.3) with `InfoWorld` (the inputs), `ig2-sim::messages::{Ticker, Texts,
@@ -276,3 +307,98 @@ send lockstep message 0x1b instead of deleting it (`space-combat.md` §5.3): the
 the next tick. The story-caught report's flag byte is the pass's leftover local (0 before the
 first spy that sets it; the exe's is uninitialised); the spy screen's cursor moves (`AktKep` 7) are UI.
 
+
+## 6. The stories' inbox writes
+Called from the story scripts inside `Story_Check`; the port applies their `StoryEvent`s in order after the check
+(`Game::inbox_events`; nothing in a check reads the inbox back). Entry layout as §4, plus `+5` u8 seen (`Megnezes`
+sent), `+0xc` arrival `Ido`, `+0x10 + 0x14·k` parameter `k` (NUL-ended, no length check).
+- `NewMessage(id, days)` (exe **0x508fe0**, ELF 0x5a6d20): `SetIdoLelassit(2)` (exe 0x541270), then only while
+  `UzenetekSzama < 100`: `UVoltUjUzenet` 0xDA65FF := 1, `LastNewMessage` 0xDABDC8 := n (the new index),
+  `UUjUzenetLejarasa` 0xDABDCC := `days == 0 ? 0 : days·50 + Ido`; `UzenetekRandomKitol[n]` := 0; parameters 1..=5 :=
+  `"#=#"` (0 kept); `+0` id, `+8` expiry, `+4` = `+5` = 0, `+0xc` `Ido`; count + 1. An automatic kind (below) with
+  `AktKep ≠ 10` sets `AktKepKell` 0xBAE250 := 10 (the client opens the messages screen; UI). The kinds:
+  `UzenetFajtak` 0xD90DF0 (0x110 each: `+0` id, `+4` conversation, `+5` automatic; count `HanyUzenetFajta` 0xDABE38;
+  the inlined lookups take the first match, none reads the slot past the table).
+- `SetMessageFajOverride(r)` (0x5094c0): `UzenetekRandomKitol[LastNewMessage]` := r for 1..=8, 13, 14, else 1.
+- `SetParamStr(k, s)` / `SetParamInt(k, v)` (0x509570 / 0x509500, `_itoa` base 10): for `k < 6`, the text with its
+  NUL into entry `LastNewMessage`'s parameter `k`. `StoryEvent::Message { id, empire }` = `NewMessage(id, 0)`,
+  parameter 1 the empire's name, its race as the portrait.
+- `KiszedUzenet(id)` (0x506200): the **first** entry with block `id` (read or not) leaves (§4's shift;
+  the loop index runs to the end after the move, asm 0x5062a2..0x5062b9, the ELF the same).
+- `KiszedUtolsoUzenet(id, _)` (0x506140): from index `UzenetekSzama` (one past the end) down, the first entry with
+  block `id`; when its `+4 == 0` the count drops and, below the new count, the rest moves down.
+- `LetiltReszlet(part)` (0x5063d0): `Tiltolista[MaxTiltasok++]` := part (0xDABDE8, 20 slots, no bound check).
+
+Gaps: the parameters `MessageText::Star`, `Planets`, `Design`, `Hero`, `Position`, `Participant`, `Spy` aren't
+resolved by the sim yet (the slot keeps `"#=#"`).
+
+## 7. The messages screen's orders
+The screen's writes to saved state and its story hand-offs. The original makes them in the UI frame without a
+lockstep message; the port makes them `MessageOrder`s (`Command::Message`, ours) that `Game::message_order` applies
+for the human only (an MP player's inbox and stories are open, §7.4). Saved globals (save chunk names):
+`FolyamatbanU`/`UH`/`U3`/`UP` 0xDABDA0.. (the dialogue in progress: block, entry, row, pointer; −1 none),
+`FolyamatbanPA` 0xDA65E7, `FolyamatbanOldBlokk` 0xDABDB0, `VoltUjValasz` 0xDABDB4, `VoltUjUzenet` 0xDABDB8,
+`UAktUzenetFajta` 0xDABDBC, `UAktUzenet` 0xDABDC0, `AktBlokk` 0xDABDC4, `AktUzenetPointer` 0xDABDD4,
+`AutomataUzenet`/`…Hanyadik` 0xDABDD8/DC, `Szovegvegen` 0xDABDE0, `MaxTiltasok`/`Tiltolista` 0xDABDE4/E8,
+`UzenetPlaybackek` (0x54: `+0` count, `+4 + 4·i` the parts played, no bound). Unsaved but read by the next order
+(the port keeps them in memory at the same VAs; `replay.js` dumps them as `msg_*`): `ParbeszedVege` 0xD909BA,
+`ParbeszedVegeJon` 0xD909BB, `KiirtaMar` 0xDA6607, `AktUzenet0to3` 0xD90DC8, `AktValasz0to3` 0xD90DCC,
+`AktValasztasok` 0xDABE3C, `Valasztasok` 0xD8E110 (four of 0x5c: label `+0`, `+0x50` part, `+0x54` next block, `+0x58`
+disabled; `ParbeszPlace`, the dialogue text, follows at 0xD8E280).
+Story hand-offs (`StoryEsemeny` 0xF2F8AC + flag; `MessageSelectedBlokk`/`Reszlet` 0xF26574/78), each then
+`Story_Check(true)`: `Story_MessageSelected(b, r)` exe 0x5c9150 flag 6; `Story_LetiltasCheck(b, r)` 0x5c90a0 flag 8;
+`Story_MessageMegnezes(b)` 0x5c90f0 flag 9, nothing when `b` is in `OlvasasVodor`, else added (0x5430a0).
+
+### 7.1 `KeresBlokk(n)` 0x505930 and `KiertekelBlokk(off)` 0x505c20
+`KeresBlokk`: `FolyamatbanOldBlokk` := n; the first line starting with `%02d` gives the offset past it and past empty
+lines (`\r` + 1 byte per line end) and `AktBlokk` := n; else −1 (`AktBlokk` kept). `KiertekelBlokk`: `MaxTiltasok`
+:= 0, `Story_LetiltasCheck(UAktUzenetFajta, AktBlokk)`; a line not starting with `-` gives `AktValasztasok` := 0 (the
+old choices stay); else each `- PP NN label` line is a choice, written in this order: disabled (`PP` in
+`Tiltolista`), part `PP`, next `NN` (two-character `atoi`), then the label (`mesAtteszSorvegeig` 0x509f20: column 8 to
+the `\n`, kept, no NUL; `#k#` → the open entry's parameter k with its NUL, overwritten by the next byte; **no bound**,
+so a label over 0x50 bytes runs over its own part/next/disabled and on; traced: labels reach `ParbeszPlace`);
+`AktValasztasok` := their count.
+
+### 7.2 `KiertekelUjuzenet` 0x505d60 (an entry opened)
+`UAktUzenet` := `AktUzenetPointer + AktUzenet0to3`; `Szovegvegen` := 0, `KiirtaMar` := 0; `BetoltFajlok` 0x504a90:
+`UAktUzenetFajta` := the entry's block, `msg/txt%04d.txt` loaded. `Folyamatban*` := block, `UAktUzenet`, row, pointer.
+- Plain kind: `ParbeszedVege` := 1, `AktValasztasok` := 0, `+4` := 1; if `+5 == 0`: `+5` := 1 and `Megnezes(block)`.
+- Conversation: unread → `UzenetPlaybackek[e].count` := 0 (read → the replay index 0xD90DD4 := 0);
+  `KiertekelBlokk(KeresBlokk(0))` with `ParbeszedVege` = `…Jon` := 0; with choices, the first's part (unless −1) is
+  recorded when unread, and its next block evaluated. Then if `+5 == 0`: **`Uzenetek[UzenetekSzama].+5`** := 1 (the
+  slot past the end, asm 0x505fea..0x505ff9, the ELF too: the entry's own `+5` stays 0) and `Megnezes(block)`.
+
+### 7.3 The orders
+- `Open { row }` (`Messages_Main` 0x508560, hot-spot 3; only with `FolyamatbanU == −1`, `ParbeszedVege`, no automatic
+  message): `VoltUjUzenet` := −1; a row holding a message: `AktUzenet0to3` := row, `VoltUjUzenet` := 1;
+  `AktUzenet0to3 > UzenetekSzama` → −1; `AutomataUzenetKiertekelo` 0x504a20; `VoltUjUzenet == 1` → §7.2.
+- `Scroll { pointer, row }` (hot-spots 1, 2): the arrows' `AktUzenetPointer` and row.
+- `Answer { k }` (hot-spot 4 once `KiirtaMar`, or `Melyikvalaszfolottvanazeger` 0x506750: one answer alone, or a read
+  message's recorded one): `AktValasz0to3` := k, `VoltUjValasz` := 1, then `ValaszKivalasztva` 0x509d10: unless choice
+  k is disabled, `VoltUjValasz` := 0; unread → `Story_MessageSelected(UAktUzenetFajta, part)` and the part recorded;
+  `ParbeszedVegeJon` := 0; next ≠ −1 → `KiertekelBlokk(KeresBlokk(next))`, else `AktValasztasok` := 0,
+  `ParbeszedVegeJon` := 1, `FolyamatbanOldBlokk` := −1; `KiirtaMar` := 0. (The exe retries a disabled pick every
+  frame while `VoltUjValasz` stays 1; the port tries once per order.)
+- `TypedOut` (`MessagesGfx2D_2`, exe 0x507b43..0x507c1b, once per text: `KiirtaMar` 0 → 1): `Szovegvegen` := 1; a
+  plain kind: `FolyamatbanU`/`UH` := −1; `ParbeszedVegeJon` → `ParbeszedVege` := 1, `FolyamatbanU`/`UH`/`OldBlokk`
+  := −1, `+4` := 1 (the conversation is read), `VoltUjUzenet` := −1; always `FolyamatbanPA` := `ParbeszedVege`.
+- `Auto` (`FRISSIT_Messages2` 0x505180, every 11th UI frame on screen 10): when `VoltUjUzenet == −1` or
+  (`Szovegvegen == 1` and `ParbeszedVege`): `KeresAutomataUzenet` 0x5058b0 (`AutomataUzenet` := the first unread entry
+  of an automatic kind, its index; else −1); found → `VoltUjUzenet` := 1, `AutomataUzenetKiertekelo` (pointer and row
+  so the entry shows), §7.2.
+- `Enter` (`Messages_Belep` 0x507f90): `UAktUzenet ≠ −1` → `BetoltFajlok`. No dialogue in progress
+  (`FolyamatbanU == −1`): after a finished one (`FolyamatbanPA`) the first unread entry (0x505bd0) is scrolled into
+  view (0x509cb0); `KeresAutomataUzenet`; `KiirtaMar` := none found. Else a plain kind opens again (§7.2 from
+  `Folyamatban*`; the exe copies `FolyamatbanU`, the block, into `UAktUzenet`, which §7.2 overwrites); a conversation
+  replays its recorded parts (UI) and, unread with `FolyamatbanOldBlokk ≠ −1`, re-evaluates that block (and its next
+  when the first choice's part is −1). `Messages_Kilep` 0x5083d0 writes nothing saved.
+
+### 7.4 Port and verification
+`ig2-sim::game::message_orders` (`MessageOrder`, `Game::message_order`, `Game::inbox_call` for calls made outside a
+check), `messages::{InboxRules, find_block, block_choices}` (`GameRules::inbox`: `uzenetek.txt`'s kinds, the raw
+`msg%04d.txt`), `ig2-net::Command::Message`. Verified byte-exact in `replay-quick1-answers-x16` (`run_replay.py
+--answers 4 --answers-every 1 --seed 777`, 60 ticks, saved chunks and the `msg_*` bits; `rules/traces/2026-10-23-
+messages-answers.md`). Not traced: `Enter` (calling `Messages_Belep` re-initialises the screen; ported from the
+decompile), `TypedOut` (inside `MessagesGfx2D_2`: the tracer and the port both transcribe the asm). Multiplayer: the
+original keeps the inbox and its stories per player (`campaign/multi.md`); the port's single inbox is the
+`EN`'s, other issuers' orders are ignored (open).

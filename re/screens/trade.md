@@ -198,7 +198,7 @@ Button meshes hidden each frame (`EltuntetGombok`, exe 0x6058e0): for each of th
 | 15..18 | `TTeruletek[Alapok[base].+0xc - 1]` (exe pointer table 0x919294 + 4*v, `Alapok` 0x90BC04 stride 0x24) | `textures/talalmanyok/` / `vector/talalmanyok/` | 1 |
 | 19..24 | same | same | 0.5 for base 19, else 1 |
 | 25 (0x19) | `tipusnevek[race*0x240]` | `textures/spacewar/` / `vector/spacewar/` | 1 |
-`TradeAlap = LoadBox(name, false)` (the exe passes `k` as a 3rd argument to `LoadBox`, the ELF has two); `AddToScene(TradeAlap, mainxvbtradeobject, k * 0.08, mesh); SetRelative(false); MoveObj(mesh, (TRADExa + 0) - 190, 105.0, -650.0); RotateObj(mesh, 1.57075, 0.785375, 0); HideObj(mesh)`; loaded = 1; init flag = 1; `traOldTervmut = KeresAktualisTervSorszamat()`; dirs back to `vector/`, `textures/`; `Trade_GetPodListaMode = 0`; `reloadtextures()` (ELF 0x5ff750; a folded no-op in the exe).
+`TradeAlap = LoadBox(name, false)` (the exe's `LoadBox` 0x452520 takes two arguments as well; the supposed third doesn't exist, `k` only scales `AddToScene`); `AddToScene(TradeAlap, mainxvbtradeobject, k * 0.08, mesh); SetRelative(false); MoveObj(mesh, (TRADExa + 0) - 190, 105.0, -650.0); RotateObj(mesh, 1.57075, 0.785375, 0); HideObj(mesh)`; loaded = 1; init flag = 1; `traOldTervmut = KeresAktualisTervSorszamat()`; dirs back to `vector/`, `textures/`; `Trade_GetPodListaMode = 0`; `reloadtextures()` (ELF 0x5ff750; a folded no-op in the exe).
 `RemoveTradeAlap`: if loaded: `RemoveFromScene(mesh); FreeXVB(xvb, true); loaded = 0`.
 
 ### 4.5 The ticker (bottom line)
@@ -221,7 +221,7 @@ Button meshes hidden each frame (`EltuntetGombok`, exe 0x6058e0): for each of th
 | label (8,3,6) Weapons | x - off, y-0x89 | 13 | 1 |
 | no pod used: (8,3,7) None at (x+0x3c-off, y-0x88), 13, colour 0x25 | | | 0x25 |
 | else: the list of non-empty pods; line n = GetString(8,3,5) followed by the format " d - " with d = n (1-based count of used pods) and then `Talalmanyok[pod tech].name`; the line shown is `(int)(trakeringeto*10) mod count`, at (x+0x3c-off, y-0x88), maxChars = strlen | | | 0x25 |
-`GetMaxPodok(race, base)` exe 0x4b4290, `GetGyartasAr` exe 0x4acaf0. In the ELF the pod lines use strcat of the tech name; the exe copies the same bytes.
+`GetMaxPodok(race, base)` exe 0x4b4290, `GetGyartasAr` exe 0x4acaf0. Confirmed by the exe decompile (2026-10-23): the value is `GetGyartasAr((short)+0x40 = an empire index, looked up via PlayerFaj)`; the weapons lines loop `GetMaxPodok`'s slots; the tech names are the localised txt17 ones. In the ELF the pod lines use strcat of the tech name; the exe copies the same bytes.
 
 ## 5. The 2D passes (draw list)
 
@@ -430,7 +430,11 @@ Vadász to Andromeda 8 in 31 days); every part-1 region 0.1–2.6; what differs 
 boxes: ticker 5.7–6.1, deliveries 4.9–6.0 while the model shows). The 7 sounds match the exe's in order and tick
 (screen19, Click1 ×4, Click3 on OK's press, scrn19ki).
 
-Not yet (part 2): the chosen offer's hull model (`TradeLoadAlap`'s file table, `ForgatTradeAlap` drawn; the state is
-kept), its info card (`PlaceVehicleInfo`, block C's boxes), the pod list (`Trade_KiirPodNagyLista` and its box), the
-row frame's first morph (the exe's frame is still growing 45 ticks after the pick), the tutorial event 0x27, the
-material transparency on the other screens.
+### Part 2 (2026-10-23, `trade-pods`)
+- Hull model: `ig2-client::trade::hull_file` (`TradeLoadAlap` exe 0x609c60, §4.4); `trade_scene.rs` draws it as `AddToScene(k*0.08)`, `RotateObj(1.57075, 0.785375, 0)`, `matrixforgat(.., 0.03, 0)` per frame (`ForgatTradeAlap` exe 0x6068a0), at `(TRADExa-190+s, 145, -650)`, transparency s/s0, depth write, self-illum pass.
+- Info card: `PlaceVehicleInfo` (exe 0x607500) and block C's boxes. Pod list: `Trade_KiirPodNagyLista` (exe 0x60a390: "%d - %s - " + GetString(8,2,2) + "!" or "%d - %s - %s (%d / %d)"; slot name = `GetPodName` exe 0x4b4320 = PodTipusok name; `TradeGetHeightAdder` exe 0x608c30), opened by a press on hot-spot 0x25, closed on any release.
+- Tutorial event 0x27: `ig2_sim::Game::buy` calls `Game::tutorial_check_event(0x27)` (exe `TutorialCheckEvent` 0x60bdf0) for the human's message when the record's hull tech (+0x14+0x48) is 5; `tutorial_sighting` uses the same function.
+- Options return: Esc keeps the trade state; Options "back" re-enters with `Trade::back` (`Trade_Belep` with OldKep 0xd: no opening; quantity, list positions, `AktEtaDays2` and the row frame's phase carried).
+- Row frame's first morph: `DesignKeret1` (exe 0x4cbac0) uses `dkm` (0xB34C0C), `dkmcel` (0x903548), `GfxNovelo` (0xB34BAC), globals never reset between screens (only the places reset on a screen change, `Frissit2_Grafika`; 0xAD0EF5 = `MainScr_Main`'s "jump without morph" flag). The capture tool records them at script start (`ui.json` "dkm" -> `run_screendiff --dkm M,CEL,NOVELO` -> `DesignFrame::with_phase`). The client keeps the phase per screen instance (deviations #135).
+- Results: `diff-results.md` 2026-10-23 (card 0.65-0.85, lists 0.4-3.2, panels 1.1-1.2, model 4.4-4.9).
+- Open: the hull's faces turned from the light are mid-grey vs near-black in the exe (lighting; not the self-illum pass, not unrotated normals; deviations #134); the multi-line pod list and a second offer's turn-away/reload weren't captured (quick-1 has one ship offer, without pods). Material transparency scan (`.xvm` last words): racsszin 0.65 (+0.25 sphere grid) also in desbck, dipbck8, resbck, spybck2/2a/2b; info.xv 0.70; messbck 0.6; spacewar hajoinfo 0.2, infopanel 0.36; starmap cirk11/12 0.5; colony khv* 0.5, mgv* 0.45, several 0.01. Only the trade screen uses `Part::transparency`; re-checking the other screens' captures is open (roadmap §6).

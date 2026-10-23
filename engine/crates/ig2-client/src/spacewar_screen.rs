@@ -162,6 +162,16 @@ impl Dump {
             hidden_button: None,
             boxed: None,
             fx: None,
+            chased: None,
+            gun_t: self.battle.guns.iter().map(|g| g.hits).collect(),
+            gun_timers: Vec::new(),
+            gun_damage: Vec::new(),
+            title: Vec::new(),
+            title_tech: -1,
+            stance: 0,
+            big: None,
+            pointer: 0,
+            formation: None,
         }
     }
 
@@ -213,6 +223,22 @@ pub struct Shown<'a> {
     pub boxed: Option<[f32; 4]>,
     /// The effects and the weapon table (the live screen only).
     pub fx: Option<(&'a crate::spacewar_fx::Fx, &'a [ig2_sim::spacebattle::WeaponRules])>,
+    /// The fighter group the chase camera follows (`aktvadasz`: not drawn), the guns' marker timers (gun `+0x10`).
+    pub chased: Option<usize>,
+    pub gun_t: Vec<i32>,
+    /// The guns' selection timers (grow, fade, attacked) and their buildings' damaged fraction (the live screen).
+    pub gun_timers: Vec<[i32; 3]>,
+    pub gun_damage: Vec<f32>,
+    /// The small box's title for one unit (its plan's name), the tech under it (a ship's hull, a gun's building; −1
+    /// none) and the fighters' stance `gfxvadaszdefendattack`.
+    pub title: Vec<u8>,
+    pub title_tech: i32,
+    pub stance: i32,
+    /// The big info box while the info view is on; `MousePointerType`.
+    pub big: Option<crate::spacewar_hud::BigInfo>,
+    pub pointer: i32,
+    /// The formation phase's chosen formation (`+0x3430`).
+    pub formation: Option<i32>,
 }
 
 /// The battle camera's state (spec §2.1).
@@ -309,20 +335,70 @@ pub struct Panel {
     icons: Vec<Option<Mesh>>,
     no: Option<Mesh>,
     clock: HashMap<usize, Option<Mesh>>,
+    /// `felallastexture` (`final2x.bmp`): the buttons' first sub-mesh in the formation phase.
+    final2x: Option<crate::render::TexId>,
 }
 
 impl Panel {
     pub fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install) -> Self {
         let icons = (0..10).map(|i| Mesh::load(r, install, "vector/spacewar/", &format!("ikon{i}.xvb"), "textures/spacewar/")).collect();
-        Self { icons, no: Mesh::load(r, install, "vector/spacewar/", "no.xvb", "textures/spacewar/"), clock: HashMap::new() }
+        let final2x = crate::assets::Image::load(install, "dataraw/textures/spacewar/final2x_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
+        Self { icons, no: Mesh::load(r, install, "vector/spacewar/", "no.xvb", "textures/spacewar/"), clock: HashMap::new(), final2x }
     }
 
     fn clock(&mut self, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: usize) {
-        self.clock.entry(frame).or_insert_with(|| {
-            let m = crate::scene::Model::load_at(install, "vector/spacewar/", "ora.xvb", "textures/spacewar/", Some(frame)).ok()?;
-            let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.add_texture(&crate::assets::Image::load(install, p.texture.as_deref()?).ok()?)))).collect();
-            Some(Mesh { origin: m.origin, parts })
-        });
+        self.clock.entry(frame).or_insert_with(|| Mesh::load_at(r, install, "ora.xvb", frame));
+    }
+}
+
+impl Mesh {
+    /// A `vector/spacewar/` model posed at animation frame `frame` (`SetFrame`).
+    fn load_at(r: &mut crate::render::Renderer, install: &ig2_formats::Install, name: &str, frame: usize) -> Option<Self> {
+        let m = crate::scene::Model::load_at(install, "vector/spacewar/", name, "textures/spacewar/", Some(frame)).ok()?;
+        let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.add_texture(&crate::assets::Image::load(install, p.texture.as_deref()?).ok()?)))).collect();
+        Some(Mesh { origin: m.origin, parts })
+    }
+
+    /// The model's triangles at `xf` in one colour, into the 3D pass's late draws.
+    fn push(&self, f: &mut crate::render::Frame, xf: &crate::scene::Transform, color: [f32; 4], additive: bool) {
+        let crate::render::Frame { scene, late, .. } = f;
+        let Some(scene) = scene.as_mut() else { return };
+        for (verts, tex) in &self.parts {
+            let start = scene.dynamic.len() as u32;
+            for v in verts {
+                scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color });
+            }
+            let range = start..scene.dynamic.len() as u32;
+            late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: color[3] < 1.0 || additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });
+        }
+    }
+}
+
+/// `CreateMatrix2(d, 0)` (ELF 0x4534e0; spec §6.7.2): `t = normalise(d × (0, 1, 0))`, `u = normalise(d × t)`, the
+/// elements `[−d.x, −u.x, −t.x, −d.y, −u.y, −t.y, −d.z, −u.z, −t.z]`.
+fn create_matrix2(d: [f32; 3]) -> crate::scene::M3 {
+    let d = crate::scene::normalise(d);
+    let t = crate::scene::normalise(cross(d, [0.0, 1.0, 0.0]));
+    let u = crate::scene::normalise(cross(d, t));
+    [-d[0], -u[0], -t[0], -d[1], -u[1], -t[1], -d[2], -u[2], -t[2]]
+}
+
+/// The battle's effect models and textures: the debris (`darab1..3.xvb`), the shield ring `karika.xvb` per frame,
+/// the lightning's `villam.bmp` and `flare.bmp`.
+pub struct FxGfx {
+    debris: [Option<Mesh>; 3],
+    rings: HashMap<usize, Option<Mesh>>,
+    fighter: Option<Mesh>,
+    villam: Option<crate::render::TexId>,
+    flare: Option<crate::render::TexId>,
+}
+
+impl FxGfx {
+    fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install) -> Self {
+        let debris = std::array::from_fn(|i| Mesh::load(r, install, "vector/spacewar/", &format!("darab{}.xvb", i + 1), "textures/spacewar/"));
+        let tex = |r: &mut crate::render::Renderer, n: &str| crate::assets::Image::load(install, &format!("dataraw/textures/spacewar/{n}_bmp.pvr")).map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
+        let fighter = Mesh::load(r, install, "vector/spacewar/", "vad10.xvb", "textures/spacewar/");
+        Self { debris, rings: HashMap::new(), fighter, villam: tex(r, "villam"), flare: tex(r, "flare") }
     }
 }
 
@@ -468,6 +544,8 @@ struct Fixed<'a> {
     size: f32,
     rot: (f32, f32, f32),
     opacity: f32,
+    /// The first sub-mesh's texture instead of its own (the formation phase's `final2x.bmp`).
+    tex0: Option<crate::render::TexId>,
 }
 
 /// Draws camera-fixed models into a texture over the virtual rectangle `rect` (the way the starmap's panel is drawn,
@@ -483,7 +561,8 @@ fn fixed_texture(r: &mut crate::render::Renderer, items: &[Fixed], rect: [f32; 4
         let place = crate::scene::Placement::add_to_scene(it.mesh.origin, it.size);
         let rot = crate::scene::create_matrix(it.rot.0, it.rot.1, it.rot.2);
         let model = crate::scene::mul(&rot, &place.matrix);
-        for (verts, tex) in &it.mesh.parts {
+        for (pi, (verts, tex)) in it.mesh.parts.iter().enumerate() {
+            let tex = if pi == 0 { it.tex0.as_ref().unwrap_or(tex) } else { tex };
             let start = dynamic.len() as u32;
             for v in verts {
                 let e = crate::scene::apply(&model, v.pos).map(|x| x * 1024.0);
@@ -731,6 +810,49 @@ impl<'a> Scene<'a> {
         let m = cam.matrix();
         // `line3`'s one-pixel arms are one screen pixel [obs: s4 t720, the exe's brackets are a pixel thin at 800 × 600].
         let one = 1.0 / v.k;
+        // Pass A, the planet guns (spec §6.1 step 3): r 20 px; the bar, the brackets while selected, the attack ticks.
+        for (k, gun) in b.guns.iter().enumerate() {
+            let Some(&[t1, fd, t3]) = self.shown.gun_timers.get(k) else { continue };
+            if gun.building == 0 {
+                continue;
+            }
+            let (t1, fd, t3) = (t1 as f32, fd as f32, t3 as f32);
+            let brackets = t1 != 0.0 && fd < 250.0;
+            if !brackets && t3 <= 0.0 {
+                continue;
+            }
+            let w = self.world([gun.pos.x, gun.pos.y, gun.pos.z]);
+            let e = cam.eye(&m, w[0], [w[1], w[2]]);
+            let Some((p, _)) = cam.project_eye(e) else { continue };
+            let [x, y] = v.virtual_of(p);
+            let r = 20.0f32;
+            let (g, fa) = if brackets { ((t1 / 250.0).min(1.0), (250.0 - fd) / 250.0) } else { ((t3 / 250.0).min(1.0), 1.0) };
+            let q = self.shown.gun_damage.get(k).copied().unwrap_or(0.0);
+            let yt = (y as f64 - (r * fa) as f64 * 1.2 + 0.0 - 1.0) as f32;
+            let yb = (y as f64 - ((r * fa) as f64 * 1.2 - (r * fa) as f64 / 5.0) - 1.0) as f32;
+            let x0 = x - r * g;
+            let xm = x0 + q * r * 2.0 * g;
+            quad(f, x0, yt, xm, yb, dmg, (0.0, q), false);
+            quad(f, xm, yt, x + r * g, yb, ok, (q, 1.0), false);
+            if brackets {
+                let col = if b.planet_owner == b.human { own } else { foe };
+                let r2 = 9000.0 / t1 - 9.0 + r;
+                let la = r2 * (250.0 - fd) / 500.0;
+                for (cx, cy, sx, sy) in [(-1.0, -1.0, 1.0, 1.0), (1.0, 1.0, -1.0, -1.0), (1.0, -1.0, -1.0, 1.0), (-1.0, 1.0, 1.0, -1.0)] {
+                    let (px0, py0) = (x + cx * r2, y + cy * r2);
+                    quad(f, px0, py0, px0 + sx * la, py0 - sy * one, col, (0.5, 0.5), true);
+                    quad(f, px0, py0, px0 - sx * one, py0 + sy * la, col, (0.5, 0.5), false);
+                }
+            }
+            if t3 > 0.0 {
+                let r3 = 9000.0 / t3 + 20.0 - 9.0;
+                let lt = r3 * 250.0 / 500.0;
+                quad(f, x + r3, y, x + r3 + lt, y + one, atk, (0.5, 0.5), true);
+                quad(f, x - r3, y, x - r3 - lt, y + one, atk, (0.5, 0.5), true);
+                quad(f, x, y + r3, x + one, y + r3 + lt, atk, (0.5, 0.5), false);
+                quad(f, x, y - r3, x + one, y - r3 - lt, atk, (0.5, 0.5), false);
+            }
+        }
         let font = hud.font.as_ref();
         let pal = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
         for (i, u) in b.units.iter().enumerate() {
@@ -790,6 +912,95 @@ impl<'a> Scene<'a> {
         }
     }
 
+    /// The planet guns' markers (`agyukirak` ELF 0x6818c0 / exe 0x571480, spec §6.2; the outer shell's callback, so
+    /// planet battles only): per gun in front of the camera with a building and a timer T, corner brackets of 10 px at
+    /// `r = 9000/T + 2 − 9` (a 12-gon of radius 10 above armour 1), white round the human's own guns, red otherwise,
+    /// alpha `255 − 191·(1 − e)`; added, untextured.
+    fn gun_markers(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, b: &Battle, erosseg: f32) {
+        use crate::render::{kind, Blend, Instance};
+        if b.planet_owner < 0 && b.planet <= 0 {
+            return;
+        }
+        let v = crate::font::Virtual::new(cam.size);
+        let a = (255.0f32 - 191.0 * (1.0 - erosseg)) as i32 as u32;
+        let rgb = if b.planet_owner == b.human { 0x00ff_ffff } else { 0x0000_00ff };
+        let w = word_color(a << 24 | rgb);
+        let t = (255 - a) as f32 / 256.0;
+        let col = [w[0] * t, w[1] * t, w[2] * t, 1.0];
+        let m = cam.matrix();
+        let near = -cam.look.map_or(0.4, |l| l.near);
+        let one = 1.0 / v.k;
+        let quad = |f: &mut crate::render::Frame, x0: f32, y0: f32, x1: f32, y1: f32| {
+            let (lx, hx, ly, hy) = (x0.min(x1), x0.max(x1), y0.min(y1), y0.max(y1));
+            let c = v.px((lx + hx) / 2.0, (ly + hy) / 2.0);
+            f.push(self.assets.white, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [((hx - lx) * v.k / 2.0).max(0.5), ((hy - ly) * v.k / 2.0).max(0.5)], col));
+        };
+        for (k, g) in b.guns.iter().enumerate() {
+            let tt = self.shown.gun_t.get(k).copied().unwrap_or(0);
+            if g.building == 0 || tt == 0 {
+                continue;
+            }
+            let wpos = self.world([g.pos.x, g.pos.y, g.pos.z]);
+            let e = cam.eye(&m, wpos[0], [wpos[1], wpos[2]]);
+            if e[2] >= near {
+                continue;
+            }
+            let Some((p, _)) = cam.project_eye(e) else { continue };
+            let [x, y] = v.virtual_of(p);
+            if g.armour <= 1.0 {
+                let r = (9000.0f32 / tt as f32 + 2.0) - 9.0;
+                for (sx, sy) in [(1.0, -1.0), (1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+                    let (cx, cy) = (x + sx * r, y + sy * r);
+                    quad(f, cx, cy, cx + sx * 10.0, cy - sy * one);
+                    quad(f, cx, cy, cx - sx * one, cy + sy * 10.0);
+                }
+            } else {
+                // `kor(&(X, Y, Z), 10, 12, colour)`: a 12-gon of radius 10.
+                let c = v.px(x, y);
+                for i in 0..12 {
+                    let (a0, a1) = (i as f32 * std::f32::consts::TAU / 12.0, (i + 1) as f32 * std::f32::consts::TAU / 12.0);
+                    let p0 = [c[0] + a0.cos() * 10.0 * v.k, c[1] + a0.sin() * 10.0 * v.k];
+                    let p1 = [c[0] + a1.cos() * 10.0 * v.k, c[1] + a1.sin() * 10.0 * v.k];
+                    f.push(self.assets.white, Blend::GammaAdditive, Instance::line(p0, p1, 1.0, col));
+                }
+            }
+        }
+    }
+
+    /// The fighters (`SpaceVadaszKirajzol` ELF 0x694e50 / exe 0x56d460, spec §3.2, §7.4): one `vad10.xvb` sprite per live
+    /// group (but the chased one) at size 1, turned by `CreateMatrix2(dir, 0)`, in the particles' model mode; a point
+    /// when 2 pixels or smaller.
+    fn fighters(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, b: &Battle, mesh: Option<&Mesh>) {
+        use crate::render::{kind, Blend, Instance};
+        let m = cam.matrix();
+        let near = -cam.look.map_or(0.4, |l| l.near);
+        for (j, g) in b.fighters.iter().enumerate() {
+            if !g.alive || self.shown.chased == Some(j) {
+                continue;
+            }
+            let pos = [g.pos.x, g.pos.y, g.pos.z];
+            let w = self.world(pos);
+            let e = cam.eye(&m, w[0], [w[1], w[2]]);
+            if e[2] >= near {
+                continue;
+            }
+            let Some((c, px)) = cam.project_eye(e) else { continue };
+            // Size 1 in the model mode; the exe's fighters at the default view are 1–2 px points of the set's word
+            // 0x2c2c2c [obs: fx5 t1000, where a size-1 model would be 8 px wide]: the model at a quarter of it (a
+            // calibration, deviation 136).
+            let size = 0.25;
+            let grey = 0x2c as f32 / 255.0;
+            let (Some(mesh), true) = (mesh, size / SCENE_SCALE * px > 2.0) else {
+                f.push(self.assets.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, c, [0.75; 2], [grey, grey, grey, 1.0]));
+                continue;
+            };
+            let place = crate::scene::Placement::add_to_scene(mesh.origin, size / SCENE_SCALE);
+            let xf = crate::scene::Transform { matrix: crate::scene::mul(&create_matrix2([g.dir.x, g.dir.y, g.dir.z]), &place.matrix), translation: w };
+            let lit = (0x40 + 0x80) as f32 / 255.0 * 0.75;
+            mesh.push(f, &xf, [lit, lit, lit, 1.0], false);
+        }
+    }
+
     /// The effect particles (`Particle` ELF 0x5f4ff0, textured mode; spec §6.7.2): screen-aligned squares of half-size
     /// `size·fov/−z`, the colour word's RGB × (255 − T)/256 added; the 25-frame sets step through their 5 × 5 sheet.
     fn particles(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, fx: &crate::spacewar_fx::Fx, textures: &[Option<crate::render::TexId>; 5]) {
@@ -817,6 +1028,77 @@ impl<'a> Scene<'a> {
                 };
                 f.push(tex, Blend::GammaAdditive, Instance { uv, ..Instance::new(kind::SPRITE, c, [half; 2], crate::starmap::particle_color(p.color)) });
             }
+        }
+    }
+
+    /// The lightning (`villamfrissit`, `villam::Update`, `kiralyvonalhuzo`; spec §6.8.4): each bolt's Hermite curve as
+    /// a ribbon of half-width `W·fov/−z` px, `villam.bmp` scrolling along it, added; the flare a `flare.bmp` square.
+    fn bolts(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, fx: &crate::spacewar_fx::Fx, g: &FxGfx) {
+        use crate::render::{kind, Blend, Instance};
+        let m = cam.matrix();
+        let near = -cam.look.map_or(0.4, |l| l.near);
+        let project = |q: [f32; 3]| {
+            let w = self.world(q);
+            let e = cam.eye(&m, w[0], [w[1], w[2]]);
+            if e[2] >= near {
+                return None;
+            }
+            cam.project_eye(e)
+        };
+        let all = fx.shot_bolts.values().flatten().chain(fx.unit_bolts.values()).chain(fx.fighter_bolts.values());
+        for bolt in all {
+            let pts = bolt.samples();
+            let n = pts.len().saturating_sub(1).max(1) as f32;
+            let tex = g.villam.unwrap_or(self.assets.white);
+            for (i, w) in pts.windows(2).enumerate() {
+                let (Some((a, pa)), Some((c, pc))) = (project(w[0].0), project(w[1].0)) else { continue };
+                let (dx, dy) = (c[0] - a[0], c[1] - a[1]);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len <= 0.0 {
+                    continue;
+                }
+                let hw = bolt.width / SCENE_SCALE * (pa + pc) / 2.0;
+                let v0 = i as f32 / n * bolt.texscale + bolt.tex;
+                let v1 = (i + 1) as f32 / n * bolt.texscale + bolt.tex;
+                let mid = [(a[0] + c[0]) / 2.0, (a[1] + c[1]) / 2.0];
+                let col = crate::starmap::particle_color(w[0].1);
+                f.push(tex, Blend::GammaAdditive, Instance { rot: (-dx).atan2(dy), uv: [0.0, v0, 1.0, v1 - v0], ..Instance::new(kind::SPRITE, mid, [hw, len / 2.0], col) });
+            }
+            if let (true, Some(&(q, _))) = (bolt.flare, bolt.cur.last())
+                && let Some((c, px)) = project(q)
+            {
+                let half = bolt.flare_size / SCENE_SCALE * px;
+                f.push(g.flare.unwrap_or(self.assets.white), Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [half; 2], crate::starmap::particle_color(0x80ff_ffff)));
+            }
+        }
+    }
+
+    /// The shield rings (`karikafrissit`, spec §6.8.5): `karika.xvb` at 0.05, `CreateMatrix2(dir, 0)`, at frame `f`,
+    /// unshaded, transparency `f/30`.
+    fn rings(&self, f: &mut crate::render::Frame, r: &mut crate::render::Renderer, install: &ig2_formats::Install, b: &Battle, fx: &crate::spacewar_fx::Fx, g: &mut FxGfx) {
+        if b.planet_owner < 0 {
+            return;
+        }
+        for ring in fx.rings.iter().filter(|x| x.start != 0) {
+            let fr = ring.frame(b.tick);
+            if fr > 30.0 {
+                continue;
+            }
+            let Some(mesh) = g.rings.entry(fr.max(0.0) as usize).or_insert_with(|| Mesh::load_at(r, install, "karika.xvb", fr.max(0.0) as usize)).as_ref() else { continue };
+            let place = crate::scene::Placement::add_to_scene(mesh.origin, 0.05 / SCENE_SCALE);
+            let xf = crate::scene::Transform { matrix: crate::scene::mul(&create_matrix2(ring.dir), &place.matrix), translation: self.world(ring.at) };
+            mesh.push(f, &xf, [1.0, 1.0, 1.0, 1.0 - fr / 30.0], false);
+        }
+    }
+
+    /// The debris (`Darabok`, spec §6.8.6): each shown piece's model at its size, turned by its spin, lit like the ships.
+    fn debris(&self, f: &mut crate::render::Frame, fx: &crate::spacewar_fx::Fx, g: &FxGfx) {
+        for d in fx.debris.iter().filter(|d| d.counter != 0) {
+            let Some(mesh) = g.debris[d.model.min(2)].as_ref() else { continue };
+            let place = crate::scene::Placement::add_to_scene(mesh.origin, d.size / SCENE_SCALE);
+            let xf = crate::scene::Transform { matrix: crate::scene::mul(&d.turn, &place.matrix), translation: self.world(d.pos) };
+            let lit = (0x40 + 0x80) as f32 / 255.0 * 0.75;
+            mesh.push(f, &xf, [lit, lit, lit, 1.0 - d.transparency()], false);
         }
     }
 
@@ -892,15 +1174,25 @@ impl<'a> Scene<'a> {
             if self.shown.hidden_button == Some(i) {
                 continue;
             }
+            let tex0 = self.shown.formation.and(panel.final2x);
             if let Some(Some(m)) = panel.icons.get(i) {
-                items.push(Fixed { mesh: m, at, size: 0.02, rot: (half, 0.0, 0.0), opacity: 1.0 });
+                items.push(Fixed { mesh: m, at, size: 0.02, rot: (half, 0.0, 0.0), opacity: 1.0, tex0 });
+            }
+            // The formation phase (`fegyverpanelfrissit`'s other branch): every button's clock at frame 0 on the
+            // chosen formation (`+0x3430`), 32 on the others; no overlay.
+            if let Some(pick) = self.shown.formation {
+                let fr = if pick == i as i32 { 0 } else { 32 };
+                if let Some(Some(m)) = panel.clock.get(&fr) {
+                    items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None });
+                }
+                continue;
             }
             if i == 9 {
                 continue;
             }
             // The clock shows only while the group reloads [obs: none at a full 0xaa].
             if let (true, Some(Some(m))) = (sl.reload < 0xaa, panel.clock.get(&clock_frame(sl.reload))) {
-                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0 });
+                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None });
             }
             let overlay = match sl.state {
                 3 => Some(0.75),
@@ -908,7 +1200,7 @@ impl<'a> Scene<'a> {
                 _ => None,
             };
             if let (Some(a), Some(m)) = (overlay, &panel.no) {
-                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: a });
+                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: a, tex0: None });
             }
         }
     }
@@ -927,7 +1219,7 @@ impl<'a> Scene<'a> {
         let Some((_, i)) = best else { return };
         let Some((name, _)) = self.shown.types.get(i).cloned().flatten() else { return };
         if let Some(m) = self.models.get(&name, b.units[i].kind >= 8) {
-            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear });
+            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear, tex0: None });
         }
     }
 
@@ -971,6 +1263,9 @@ pub struct Gfx {
     forms: Vec<Option<Mesh>>,
     /// `szar.bmp` (`+0x1890`): the overlays' texture.
     szar: Option<crate::render::TexId>,
+    fx: FxGfx,
+    /// `MOUSE.BMP` (`dataraw/screen/mouse_bmp.pvr`) and its size.
+    pub cursor: Option<(crate::render::TexId, [f32; 2])>,
 }
 
 impl Gfx {
@@ -985,7 +1280,7 @@ impl Gfx {
         });
         let forms = s.fx.map_or_else(Vec::new, |(fx, _)| fx.tables.forms.iter().map(|f| if f.name.is_empty() { None } else { Mesh::load(r, install, "vector/spacewar/", &f.name, "textures/spacewar/") }).collect());
         let szar = crate::assets::Image::load(install, "dataraw/textures/spacewar/szar_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
-        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar }
+        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])) }
     }
 }
 
@@ -1003,13 +1298,22 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
     gfx.models.top_up(r, install, s);
     let scene = Scene { view: &s.view, assets, models: &gfx.models, surface, shown: s };
     scene.draw(f, cam, s.battle, &cam.eye_world());
+    scene.fighters(f, cam, s.battle, gfx.fx.fighter.as_ref());
+    scene.gun_markers(f, cam, s.battle, s.erosseg);
     if let Some((fx, weapons)) = s.fx {
+        scene.debris(f, fx, &gfx.fx);
+        scene.rings(f, r, install, s.battle, fx, &mut gfx.fx);
         scene.shots(f, cam, s.battle, fx, weapons, &gfx.forms);
         scene.particles(f, cam, fx, &gfx.fx_textures);
+        scene.bolts(f, cam, fx, &gfx.fx);
     }
     scene.overlays(f, cam, hud, s.battle, s.erosseg, gfx.szar);
     for sl in &s.slots[..9] {
         gfx.panel.clock(r, install, clock_frame(sl.reload));
+    }
+    if s.formation.is_some() {
+        gfx.panel.clock(r, install, 0);
+        gfx.panel.clock(r, install, 32);
     }
     let virt = crate::font::Virtual::new(size);
     let mut column = Vec::new();
@@ -1173,6 +1477,10 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
                         3 => live.right = *down,
                         _ => {}
                     }
+                    if *down && *button == 1 && live.pause_press(*at) {
+                        let paused = world.paused();
+                        world.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::from(ig2_sim::game::StarmapOrder::Pause { paused: !paused }) });
+                    }
                 }
                 Input::Key { name, down } => {
                     let k = match name.as_str() {
@@ -1183,6 +1491,7 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
                         "add" => Some(Key::ZoomIn),
                         "subtract" => Some(Key::ZoomOut),
                         "a" => Some(Key::All),
+                        "c" => Some(Key::Camera),
                         n if n.len() == 1 && ("1"..="9").contains(&n) => Some(Key::Group(n.as_bytes()[0] as i32 - b'1' as i32)),
                         "shift" => {
                             shift = *down;
@@ -1213,9 +1522,14 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
         let t = now as f32 / 1000.0;
         let (frame, more) = live.frame(world, r, &l.install, &assets, &mut view, hud, &l.tables, mouse, shift, now, 1.0, t, size);
         outs.extend(more);
+        for (line, kind) in live.ui.voices.drain(..) {
+            println!("t {tick}: Voice {{ line: {line}, kind: {kind} }}");
+        }
         let mut left = false;
         for o in &outs {
-            println!("t {tick}: {o:?}");
+            if !matches!(o, Out::Loop(crate::spacewar_fx::Loop::Volume { .. })) {
+                println!("t {tick}: {o:?}");
+            }
             for c in live.commands(o) {
                 world.send(c);
             }

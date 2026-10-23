@@ -30,8 +30,10 @@ pub enum Request {
     File(String),
     /// `MEGHALAS`: the human's empire died.
     Lost,
-    /// `MEGNYERES(true)`: no enemy left.
+    /// `MEGNYERES(true)`: no enemy left, or a story's win.
     Won,
+    /// `MEGNYERES(false)`: story 863's end (it played its own videos): none.
+    Ended,
 }
 
 impl Request {
@@ -43,28 +45,39 @@ impl Request {
             GameEvent::Story(StoryEvent::AnimFile(f)) => Some(Self::File(f.to_string())),
             GameEvent::GameOver(GameOver::Lost) => Some(Self::Lost),
             GameEvent::GameOver(GameOver::Won) => Some(Self::Won),
+            GameEvent::GameOver(GameOver::Ended) => Some(Self::Ended),
             _ => None,
         }
     }
 
-    /// The `.bik` names `st_ShowAnim` plays for it, in order: `MEGHALAS` 0x53b630 (the race's clip, then
-    /// `misc/end_gameover.bik`), `MEGNYERES` 0x53f6b0 (a campaign: the race's win clip and
-    /// `misc/end_campaign_win.bik`; else `misc/altalanos_megnyeres.bik` and `misc/end_victory.bik`).
-    pub fn names(&self, anims: &ig2_formats::strings::KeyedStrings, videos: &ig2_rules::Videos, en: usize, campaign: bool) -> Vec<String> {
-        let pick = |t: &[String]| t.get(en).filter(|n| !n.is_empty()).cloned();
+    /// The `.bik` names `st_ShowAnim` plays for it, in order, by the human's race (`PlayerFaj[EN]`; the endings
+    /// play only for a race < 9, re/rules/game-end.md §2): `MEGHALAS` 0x53b630 (a campaign: the race's loss clip,
+    /// else `misc/altalanos_elvesztes.bik`; then `misc/end_gameover.bik`), `MEGNYERES(true)` 0x53f6b0 (a
+    /// campaign: the race's win clip and `misc/end_campaign_win.bik`; else `misc/altalanos_megnyeres.bik` and
+    /// `misc/end_victory.bik`), `MEGNYERES(false)`: none.
+    pub fn names(&self, anims: &ig2_formats::strings::KeyedStrings, videos: &ig2_rules::Videos, race: usize, campaign: bool) -> Vec<String> {
+        let pick = |t: &[String]| t.get(race).filter(|n| !n.is_empty()).cloned();
+        let two = |a: Option<String>, b: &str| a.into_iter().chain([b.to_string()]).collect();
         match self {
             Self::Anim(id) => anims.get(6, *id as u32).map(str::to_string).into_iter().collect(),
             Self::File(f) => vec![f.clone()],
-            Self::Lost => pick(&videos.loss).into_iter().chain(["misc/end_gameover.bik".to_string()]).collect(),
-            Self::Won if campaign => pick(&videos.win).into_iter().chain(["misc/end_campaign_win.bik".to_string()]).collect(),
-            Self::Won => vec!["misc/altalanos_megnyeres.bik".into(), "misc/end_victory.bik".into()],
+            Self::Lost | Self::Won | Self::Ended if race >= 9 => Vec::new(),
+            Self::Lost if campaign => two(pick(&videos.loss), "misc/end_gameover.bik"),
+            Self::Lost => two(Some("misc/altalanos_elvesztes.bik".into()), "misc/end_gameover.bik"),
+            Self::Won if campaign => two(pick(&videos.win), "misc/end_campaign_win.bik"),
+            Self::Won => two(Some("misc/altalanos_megnyeres.bik".into()), "misc/end_victory.bik"),
+            Self::Ended => Vec::new(),
         }
+    }
+
+    /// `MEGHALAS` / `MEGNYERES`: the game ends (`ExitToMainScreen`, `AktKepKell = 0xF`) once its videos end.
+    pub fn ends_game(&self) -> bool {
+        matches!(self, Self::Lost | Self::Won | Self::Ended)
     }
 }
 
 /// `CampaignGameStart` exe 0x4f5e90's intro by the human's empire `EN` 1/3/5 (0x4f6008/1f/36), played through
 /// `st_ShowAnim` (push it as [`Request::File`] onto `World::videos`).
-#[allow(dead_code)] // the campaign start (`InitNewGame`) isn't ported yet
 pub fn intro_name(en: i32) -> Option<&'static str> {
     match en {
         1 => Some("intro_human.bik"),
@@ -217,15 +230,19 @@ mod tests {
             }
         }
         assert_eq!(n, 57);
-        for en in [1, 3, 5] {
+        for race in [1, 3, 5] {
             for r in [Request::Lost, Request::Won] {
                 for campaign in [false, true] {
-                    let names = r.names(&anims, &rules.videos, en, campaign);
+                    let names = r.names(&anims, &rules.videos, race, campaign);
                     assert_eq!(names.len(), 2);
                     assert!(names.iter().all(|n| install.resolve(&mp4_path(n)).is_some()), "{names:?}");
                 }
             }
         }
+        // Other races in a scenario: the generic pair; race 9+ and `MEGNYERES(false)`: nothing.
+        assert_eq!(Request::Lost.names(&anims, &rules.videos, 2, false), ["misc/altalanos_elvesztes.bik", "misc/end_gameover.bik"]);
+        assert!(Request::Won.names(&anims, &rules.videos, 9, false).is_empty());
+        assert!(Request::Ended.names(&anims, &rules.videos, 1, true).is_empty());
     }
 
     #[test]

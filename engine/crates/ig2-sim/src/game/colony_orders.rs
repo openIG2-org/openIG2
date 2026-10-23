@@ -60,6 +60,9 @@ impl ColonyOrder {
                     0x130 => GroundOrder::AirStrike { x: at(1)?, y: at(2)?, kind: at(3)? },
                     // One byte (`Multi_Get` size 1 into the handler's stack int): only its low byte counts.
                     0x134 => GroundOrder::Mines { unit: at(1)?, on: at(2)? & 0xff != 0 },
+                    kind::PLACE => GroundOrder::Place { x: at(1)?, y: at(2)? },
+                    kind::UNPLACE => GroundOrder::Unplace { unit: at(1)? },
+                    kind::PLACE_ALL => GroundOrder::PlaceAll { x: at(1)?, y: at(2)? },
                     _ => return None,
                 };
                 Self::Ground { planet: at(0)?, order }
@@ -87,9 +90,20 @@ impl ColonyOrder {
                 GroundOrder::Retreat => (0x12f, vec![planet]),
                 GroundOrder::AirStrike { x, y, kind } => (0x130, vec![planet, x, y, kind]),
                 GroundOrder::Mines { unit, on } => (0x134, vec![planet, unit, on as i32]),
+                GroundOrder::Place { x, y } => (kind::PLACE, vec![planet, x, y]),
+                GroundOrder::Unplace { unit } => (kind::UNPLACE, vec![planet, unit]),
+                GroundOrder::PlaceAll { x, y } => (kind::PLACE_ALL, vec![planet, x, y]),
             },
         }
     }
+}
+
+/// Our message types for the landing orders, which the original's screen applies directly (outside the exe's
+/// packet range).
+mod kind {
+    pub const PLACE: i32 = 0x1_0000;
+    pub const UNPLACE: i32 = 0x1_0001;
+    pub const PLACE_ALL: i32 = 0x1_0002;
 }
 
 /// What a colony order did that the issuer's screen reacts to.
@@ -243,6 +257,9 @@ mod tests {
             ColonyOrder::Demolish { planet: 1, slot: 3 },
             ColonyOrder::SelfDestructOff { planet: 9 },
             ColonyOrder::Repair { planet: 2, slot: 1 },
+            ColonyOrder::Ground { planet: 17, order: GroundOrder::Place { x: 100, y: 101 } },
+            ColonyOrder::Ground { planet: 17, order: GroundOrder::Unplace { unit: 4 } },
+            ColonyOrder::Ground { planet: 17, order: GroundOrder::PlaceAll { x: 3, y: 189 } },
         ] {
             let (t, v) = o.to_message();
             assert_eq!(ColonyOrder::from_message(t, &v), Some(o));

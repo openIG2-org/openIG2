@@ -2,7 +2,7 @@
 //! as its `MULTIGET_*` handler applies it.
 
 use ig2_sim::diplomacy::{Answer, Letter, Message, ScreenOp};
-use ig2_sim::game::{ColonyOrder, DesignOrder, Game, GameEvent, InfoOrder, ResearchOrder, StarmapOrder};
+use ig2_sim::game::{ColonyOrder, DesignOrder, Game, GameEvent, InfoOrder, MessageOrder, ResearchOrder, StarmapOrder};
 use ig2_sim::spacebattle::Order;
 use ig2_sim::spy;
 use ig2_sim::trade::{Delivery, DELIVERY};
@@ -278,6 +278,16 @@ pub enum Command {
     /// Packets 0x33..0x35, `MULTIGET_Design` exe 0x4b4d60: a design stored, a design's units sold or refitted
     /// (`ig2_sim::game::DesignOrder`) as its message type and dwords.
     Design { kind: i32, values: Vec<i32> },
+    /// Ours (no packet in the original): the messages screen's writes to the human's inbox and their story
+    /// hand-offs (`ig2_sim::game::MessageOrder`, re/rules/info-messages.md §7) as its kind and values.
+    Message { kind: i32, values: Vec<i32> },
+}
+
+impl From<MessageOrder> for Command {
+    fn from(o: MessageOrder) -> Self {
+        let (kind, values) = o.to_message();
+        Command::Message { kind, values }
+    }
 }
 
 impl From<DesignOrder> for Command {
@@ -364,6 +374,11 @@ impl Command {
             Command::Design { kind, values } => {
                 if let Some(o) = DesignOrder::from_message(*kind, values) {
                     game.design_order(issuer, o);
+                }
+            }
+            Command::Message { kind, values } => {
+                if let Some(o) = MessageOrder::from_message(*kind, values) {
+                    game.message_order(issuer, o);
                 }
             }
         }

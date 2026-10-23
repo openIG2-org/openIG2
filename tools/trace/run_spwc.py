@@ -7,6 +7,8 @@ given defence ships and planet guns; --fuzz: random special pods, weapons, shiel
 --join: right after a battle starts another AI fleet joins it (SpaceWar_NewBattle's join path);
 --fuzz-designs: random weapons, shields and pods in the participants' designs, big fighter wings, armour and
 skipped/switched-off defence buildings.
+--weapons ID,..: every slot of the participants' warship designs takes these tech ids in turn (hex or decimal), two
+barrels each (captures of one weapon's look and sound).
 --orders N [--order-every K]: every K ticks, N random battle-screen orders through the exe's own MULTIGET_SpaceWar
 (the human's in-battle orders, spec §7.12), each an 'order' record with its byte diff.
 --grab-ticks T,.. [--grab-settle F] [--state-out S.sav]: battle-screen captures (re/screens/spacewar.md): at each
@@ -50,6 +52,7 @@ ap.add_argument("--ai-human", action="store_true")
 ap.add_argument("--planets", action="store_true")
 ap.add_argument("--join", action="store_true")
 ap.add_argument("--fuzz-designs", action="store_true")
+ap.add_argument("--weapons", default="")
 ap.add_argument("--speed", type=int, default=4)
 ap.add_argument("--per-battle", type=int, default=1500)
 ap.add_argument("--orders", type=int, default=0)
@@ -58,6 +61,7 @@ ap.add_argument("--grab-ticks", default="")
 ap.add_argument("--grab-settle", type=int, default=120)
 ap.add_argument("--state-out")
 ap.add_argument("--script")
+ap.add_argument("--formation", type=int, default=0, help="N: a random formation pick on the battle screen with a chance of 1/N per driver frame ('preform'/'form' snapshots around loadfelallas)")
 ap.add_argument("--sounds")
 ap.add_argument("--watch", help="T:OFF[:N]: a hardware write watchpoint on the slot's byte OFF from script tick T (the first N writers)")
 a = ap.parse_args()
@@ -155,10 +159,10 @@ script.on("message", on_message)
 script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "steps": a.steps, "battles": a.battles,
                                            "seed": a.seed, "fuzz": a.fuzz, "aiHuman": a.ai_human,
-                                           "planets": a.planets, "join": a.join, "fuzzDesigns": a.fuzz_designs, "speed": a.speed, "perBattle": a.per_battle,
+                                           "planets": a.planets, "join": a.join, "fuzzDesigns": a.fuzz_designs, "weapons": [int(x, 0) for x in a.weapons.split(",") if x], "speed": a.speed, "perBattle": a.per_battle,
                                            "orders": a.orders, "orderEvery": a.order_every, "grabTicks": grab_ticks,
                                            "grabSettle": a.grab_settle, "stateSlot": STATE_SLOT if a.state_out else 0,
-                                           "script": input_script, "soundTables": sound_tables,
+                                           "script": input_script, "soundTables": sound_tables, "formation": a.formation,
                                            "watch": dict(zip(("t", "off", "n"), (int(x, 0) for x in a.watch.split(":")))) if a.watch else None}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")

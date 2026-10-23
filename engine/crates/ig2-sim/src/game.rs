@@ -37,6 +37,7 @@ mod colony_orders;
 mod death;
 mod design_orders;
 mod info_orders;
+mod message_orders;
 mod orders;
 mod realtime;
 mod research_orders;
@@ -46,6 +47,7 @@ pub mod new_game;
 pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
 pub use design_orders::{DesignOrder, DesignRecord};
 pub use info_orders::InfoOrder;
+pub use message_orders::{choice_disabled, dialogue_in_progress, MessageOrder};
 pub use orders::{OrderEvent, StarmapOrder};
 pub use realtime::{RealTime, RealTimeEvent, SpBattles};
 pub use research_orders::ResearchOrder;
@@ -101,6 +103,8 @@ pub struct GameRules {
     pub space: crate::spacebattle::SpaceRules,
     /// `MuholdAr` (exe 0x9138D0): satellite prices by kind (`MULTIGET_Starmap` 0x18).
     pub satellite_prices: Vec<i32>,
+    /// `uzenetek.txt`'s kinds and the conversations' `msg%04d.txt` (the messages screen's orders).
+    pub inbox: messages::InboxRules,
 }
 
 /// The MSVC CRT `rand()` (`holdrand · 214013 + 2531011`, bits 16..30): the unseeded libc draws of the original.
@@ -210,6 +214,9 @@ pub struct Game<'r> {
     pub realtime: RealTime,
     /// The single-player battle screen (ours, classic view; not in the state).
     pub sp_battles: SpBattles,
+    /// How the game ended (`GameStarted` 0xBAE297 cleared by `ExitToMainScreen`): `MEGHALAS` and `MEGNYERES` end
+    /// it only while it is `None` (`game::death`). Not in the state: a loaded game runs again.
+    pub over: Option<GameOver>,
 }
 
 /// One planet's draws in the economy prologue: `(planet, weather, background)` ([`Game::weather_draws`]).
@@ -281,6 +288,7 @@ impl<'r> Game<'r> {
             cosmetic: Libc::default(),
             realtime: RealTime::default(),
             sp_battles: SpBattles::default(),
+            over: None,
         }
     }
 
@@ -616,7 +624,12 @@ impl<'r> Game<'r> {
     }
 
     /// A purchase message from empire `e` (`MULTIGET_Trade`, `re/rules/trade.md` §4); whether it was accepted.
+    /// The sender's `Trade_Main` raises the tutorial's event 0x27 when the offer's hull tech (`+0x14 + 0x48`) is 5
+    /// (re/screens/trade.md §6.2 step 4), here with the human's message.
     pub fn buy(&mut self, e: usize, msg: &Delivery) -> bool {
+        if e as i32 == self.state.mem.i32(va::EN) && i32::from_le_bytes(msg.0[0x5c..0x60].try_into().unwrap()) == 5 {
+            self.tutorial_check_event(0x27);
+        }
         let mut t = self.state.trade();
         let ev = t.buy(e, msg, &mut TradeView { game: self });
         self.state.store_trade(&t);
@@ -888,8 +901,15 @@ impl<'r> Game<'r> {
         self.state.store_rng(&rng);
         self.store_economy_context(&ctx);
         for e in &events {
-            if let SideEvent::RecallAttackers { planet } = *e {
-                self.recall_attackers(planet);
+            match *e {
+                SideEvent::RecallAttackers { planet } => self.recall_attackers(planet),
+                // A rebellion's outcome (`colony-side.md` §3, exe 0x47565e..0x475683): `Story_Special(0x15, p)` when
+                // the planet went independent, `0x16` for result 3. Inside the planet loop in the exe; nothing later
+                // in the step reads the stories.
+                SideEvent::Rebelled { planet, result: r @ (2 | 3), .. } => {
+                    self.story_special([if r == 2 { 0x15 } else { 0x16 }, planet as i32, 0, 0, 0, 0, 0, 0]);
+                }
+                _ => {}
             }
         }
         self.events.extend(events.into_iter().map(GameEvent::Side));
@@ -1385,7 +1405,8 @@ impl<'r> Game<'r> {
                 _ => {}
             }
         }
-        self.story_deaths(&events);
+        self.inbox_events(&events);
+        self.story_ends(&events);
         self.events.extend(events.into_iter().map(GameEvent::Story));
     }
 

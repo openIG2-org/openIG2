@@ -84,6 +84,9 @@ ap.add_argument("--probe", help="append this Frida script to the agent (a screen
 ap.add_argument("--sounds", help="write the sounds the exe starts and the input events to this JSONL (sound.js)")
 ap.add_argument("--grwar", action="store_true", help="colony screen: the human lands on --planet in real time, every unit placed and selected (colony.md §11)")
 ap.add_argument("--grwar-arm", type=int, default=0, help="with --grwar: the air-strike timers full and SpecWeaponMode set to N (1 fighters, 2 big ships)")
+ap.add_argument("--colony-info", nargs="?", const="on", help="colony screen: the planet info mode, with KIND (tax | autobuild | priority) its menu held open (colony.md §12)")
+ap.add_argument("--self-destruct", type=int, default=0, help="colony screen: the planet's self-destruct countdown (WF+0x334) set to N (its window, colony.md §11.8)")
+ap.add_argument("--grwar-land", action="store_true", help="with --grwar: no unit placed (still on board: the landing zone and texts, colony.md §11.3)")
 ap.add_argument("--info-press", help="info screen (--kep 9): press these hot-spots in turn, e.g. 9 (a row's detail), 31,9, 15 (the star log)")
 a = ap.parse_args()
 
@@ -204,13 +207,13 @@ def on(msg, data):
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
                     json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
-                               "res": p.get("res"), "trade_eta": p.get("tradeEta")}, f)
+                               "res": p.get("res"), "trade_eta": p.get("tradeEta"), "dkm": p.get("dkm")}, f)
         if p.get("k") == "scriptDone":
             frames_meta["done"] = p
         if p.get("k") == "particles" and a.particles:
             with open(a.particles, "w", encoding="utf-8") as f:
                 json.dump(p, f)
-        elif p.get("k") in ("verdict", "light") and records:
+        elif p.get("k") in ("verdict", "light", "resline") and records:
             records.write(json.dumps(p) + "\n")
             records.flush()
         else:
@@ -263,7 +266,7 @@ agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet"
                                            "verdict": a.verdict, "verdictSeed": a.verdict_seed, "particles": bool(a.particles), "hide": a.hide,
                                            "infoStarlog": a.info_starlog, "infoPress": [int(x, 0) for x in a.info_press.split(",")] if a.info_press else [],
                                            "infoSelect": [int(x, 0) for x in a.info_select.split(",")] if a.info_select else None,
-                                           "grwar": a.grwar, "grwarArm": a.grwar_arm,
+                                           "grwar": a.grwar, "grwarArm": a.grwar_arm, "grwarLand": a.grwar_land, "selfDestruct": a.self_destruct, "colonyInfo": a.colony_info,
                                            "script": script, "soundTables": sound_tables}})
 device.resume(pid)
 t0, n = time.time(), 0
@@ -293,7 +296,9 @@ finally:
         device.kill(pid)
     except Exception:
         pass
-    os.remove(slot)
+    # A script that starts a game (the main menu's campaign) may have removed the slot already.
+    if os.path.exists(slot):
+        os.remove(slot)
     if os.path.exists(aside):
         shutil.move(aside, slot)
     if state_slot:

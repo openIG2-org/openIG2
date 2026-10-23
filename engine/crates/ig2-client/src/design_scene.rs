@@ -418,7 +418,7 @@ fn sample(img: &Image, uv: [f32; 2]) -> [f32; 3] {
 
 /// `selfillumkirak` (ELF 0x613da0) after `kirak`'s batch: the same triangles again with the second texture, unlit in
 /// `rgbac` = `float2int(255 − t·255)` grey (`Kocka` 0x5f6a40: `t` = the object's transparency), added (`ONE`/`ONE`).
-fn glow(p: &scene::Part, t: &scene::Transform, tex: TexId, transparency: f32, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+pub(crate) fn glow(p: &scene::Part, t: &scene::Transform, tex: TexId, transparency: f32, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     let start = out.len() as u32;
     let g = lighting::float2int(255.0 - transparency * 255.0).clamp(0, 255) as f32 / 255.0;
     for tri in p.verts.chunks_exact(3) {

@@ -56,6 +56,10 @@ pub struct MainScene {
     /// The labels the rings wore last (kept while they fly out, `Update3D` step 10).
     labels: Option<&'static [&'static str]>,
     target: Option<Target>,
+    /// `kezdo_.xv` posed at the opening's integer frames (`SetFrame`), loaded as needed.
+    race_frames: HashMap<usize, Model>,
+    /// `FajVInitPosok` (exe 0x914088), from the user's exe.
+    race_starts: crate::mainscr_race::Starts,
 }
 
 /// `GenerateGalaxy` (ELF 0x58cde0, spec §3.2): a twisted bar in the y–z plane, its thickness along x.
@@ -166,6 +170,8 @@ impl MainScene {
             pictures: Vec::new(),
             labels: None,
             target: None,
+            race_frames: HashMap::new(),
+            race_starts: install.read_raw("ig2.exe").ok().and_then(|b| ig2_rules::PeImage::parse(&b).ok().map(|pe| crate::mainscr_race::read_starts(&pe))).unwrap_or_default(),
         };
         for ((tex, ..), parts) in CLOUDS.iter().zip(clouds()) {
             let tex = s.texture(r, install, TEXTURES, tex);
@@ -218,10 +224,16 @@ impl MainScene {
             .clone()
     }
 
-    /// The frame (`Mainscreen_Update3D`) behind the 2D layer.
-    pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, s: &MainScr, vv: &Virtual) {
+    /// The frame (`Mainscreen_Update3D`) behind the 2D layer; returns the race boxes' centres (`ForgatFajvalasztasDolgai`)
+    /// for the menu's hit-tests.
+    pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, s: &MainScr, vv: &Virtual) -> [Option<[f32; 2]>; 3] {
         let (cam, a) = s.cam;
         let m = scene::create_matrix(a, 0.0, 0.0);
+        // `forgaspont` (the turn's centre; `q·5` along x while leaving): `e = M·(p − f) + f − kamerapont` [guess: the
+        // engine's `CameraRotate2` pivot].
+        let pivot = [s.exit_q().map_or(0.0, |q| q * 5.0), 0.0, 0.0];
+        let mf = scene::apply(&m, pivot);
+        let cam = [cam[0] + mf[0] - pivot[0], cam[1] + mf[1] - pivot[1], cam[2] + mf[2] - pivot[2]];
         let eye = |p: V3| -> V3 {
             let q = scene::apply(&m, p);
             [q[0] - cam[0], q[1] - cam[1], q[2] - cam[2]]
@@ -257,12 +269,71 @@ impl MainScene {
                 sprite(f, c.tex, self.white, eye(scene::apply(&rot, p.p)), p.size, p.color);
             }
         }
-        self.meshes(f, r, install, s, vv, &m, cam);
+        self.meshes(f, r, install, s, vv, &m, cam)
+    }
+
+    /// The race scene this frame: `kezdo_.xv` posed (the opening's frame, then `MozgatKor` per race), its placement, and
+    /// the root children's transparencies (`SetObjTransparency`; above 0.99999 hidden).
+    fn race_posed(&mut self, install: &Install, rc: &crate::mainscr_race::RaceChoice) -> (Model, scene::Transform, HashMap<u16, f32>) {
+        let mut model = self.race_model(install, rc.frame);
+        let place = Placement::add_to_scene(model.origin, 0.611).world((0.0, 0.0, 0.0), [0.0, 0.0, -800.0]);
+        let mut alpha: HashMap<u16, f32> = HashMap::new();
+        if rc.opened {
+            for k in 3..9u16 {
+                alpha.insert(k, 1.0);
+            }
+            let poses = rc.poses(&self.race_starts);
+            for (k, pose) in poses.iter().enumerate() {
+                let (a, b, c) = RACE_SUBS[k];
+                let Some(p) = pose else {
+                    for sub in [a, b, c] {
+                        alpha.insert(sub, 1.0);
+                    }
+                    continue;
+                };
+                for sub in [a, b, c] {
+                    let z = if sub == a { p.at[2] + 100.0 } else { p.at[2] };
+                    let to = [p.at[0] / 1024.0, (rc.y + p.at[1]) / 1024.0, z / 1024.0];
+                    // `RotateObjr(sub, 0, 0, ±0.02)` on the rings, added up.
+                    let roll = RING_ROLL.iter().find(|(n, _)| *n == sub).map(|(_, d)| d * rc.roll);
+                    let rot = roll.map(|c| scene::create_matrix(0.0, 0.0, c));
+                    model.move_child(&[sub], Some(to), rot.as_ref());
+                    alpha.insert(sub, p.a);
+                }
+            }
+        }
+        (model, place, alpha)
+    }
+
+    /// The race boxes' centres this frame without drawing (the menu's hit-tests; `ForgatFajvalasztasDolgai`).
+    pub fn race_boxes(&mut self, install: &Install, s: &MainScr) -> [Option<[f32; 2]>; 3] {
+        match &s.race {
+            Some(rc) if rc.boxes_on() => {
+                let (model, place, _) = self.race_posed(install, rc);
+                race_centres(rc, &model, &place)
+            }
+            _ => [None; 3],
+        }
+    }
+
+    /// `kezdo_.xv` at the opening's `frame` (between two integer frames, `SetFrame` keeps fractions).
+    fn race_model(&mut self, install: &Install, frame: f32) -> Model {
+        let (a, b, w) = scene::frame_keys(frame, 91);
+        for k in [a, b] {
+            self.race_frames.entry(k).or_insert_with(|| {
+                Model::load_at(install, VECTORS, "kezdo_.xvb", TEXTURES, Some(k)).unwrap_or_else(|e| {
+                    eprintln!("ig2-client: {e}");
+                    Model::default()
+                })
+            });
+        }
+        self.race_frames[&a].lerp(&self.race_frames[&b], w)
     }
 
     /// The meshes: the galaxy, the meteors, the rings with their labels; drawn offscreen and laid over the particles.
     #[allow(clippy::too_many_arguments)]
-    fn meshes(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, s: &MainScr, vv: &Virtual, m: &M3, cam: V3) {
+    fn meshes(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, s: &MainScr, vv: &Virtual, m: &M3, cam: V3) -> [Option<[f32; 2]>; 3] {
+        let mut centres = [None; 3];
         let mut dynamic = Vec::new();
         let mut draws = Vec::new();
         let unlit = lighting::Lights::default().ambient(0xffffff);
@@ -338,8 +409,54 @@ impl MainScene {
                 bake(p, &t, &unlit, tex, 0.7, true, &mut dynamic, &mut draws);
             }
         }
+        // The race scene (§9.2): `kezdo_.xv` 0.611 at (0, 0, −800), camera-fixed; its opening by `SetFrame`, then each
+        // race's head (A), rings (B, C) moved by `MozgatKor`, the telescopes (subs 3..8) hidden.
+        if let Some(rc) = &s.race {
+            let (model, place, alpha) = self.race_posed(install, rc);
+            // Its own parallel light and the scene's side lights (`mainOldalsoFenyekBe`) [obs: the rings lit copper].
+            let base = side.clone().parallel(0xdcc8c8, [0.0, 0.0, -1000.0]);
+            for p in &model.parts {
+                let top = p.index.first().copied().unwrap_or(u16::MAX);
+                let a = alpha.get(&top).copied().unwrap_or(0.0);
+                if a as f64 > 0.99999 {
+                    continue;
+                }
+                // `FejFenyekBeallitasa`: each head's own ambient light, white for the highlighted race.
+                // The heads take their own ambient light only (`PropertiesOn(0x40000)`) [obs: the others dim].
+                let lights = match RACE_SUBS.iter().position(|r| r.0 == top) {
+                    Some(k) => lighting::Lights::default().ambient(if rc.last == Some(k) { 0xffffff } else { 0x646464 }),
+                    None => base.clone(),
+                };
+                let tex = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x)).unwrap_or(self.white);
+                bake(p, &place, &lights, tex, 1.0 - a, false, &mut dynamic, &mut draws);
+            }
+            centres = race_centres(rc, &model, &place);
+        }
+        // `HandleLoadingMesh` (§2.2): in the exit animation's last 100 ticks the loading plate (`loadi1.xv` 0.21,
+        // camera-fixed, unlit, additive) turns in at z −1400 with the start's picture `load<n>`.
+        if let (Some(k), Some((_, st))) = (s.exit_k(), &s.leaving) {
+            if k < 50.0 {
+                let t = (k as f64 / 50.0) as f32;
+                let plate = self.model(install, VECTORS, TEXTURES, "loadi1.xvb");
+                let pic = st.picture(|_| 0);
+                let tex = self.texture(r, install, TEXTURES, &format!("load{}.bmp", pic + 1));
+                let rot = ((t as f64) * std::f64::consts::FRAC_PI_2) as f32;
+                let tr = Placement::add_to_scene(plate.origin, 0.21).world((0.0, rot, 0.0), [0.0, -(t * 100.0), -1400.0]);
+                for p in &plate.parts {
+                    let own = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x));
+                    bake(p, &tr, &unlit, tex.or(own).unwrap_or(self.white), 1.0 - t, true, &mut dynamic, &mut draws);
+                }
+                // Plate 2 (`loadi2.xv`, its own picture: the "LOADING" line) turns the other way [obs: shown with plate 1].
+                let plate2 = self.model(install, VECTORS, TEXTURES, "loadi2.xvb");
+                let tr = Placement::add_to_scene(plate2.origin, 0.21).world((0.0, -rot, 0.0), [0.0, t * 100.0, -1400.0]);
+                for p in &plate2.parts {
+                    let own = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x)).unwrap_or(self.white);
+                    bake(p, &tr, &unlit, own, 1.0 - t, true, &mut dynamic, &mut draws);
+                }
+            }
+        }
         if dynamic.is_empty() {
-            return;
+            return centres;
         }
         let wide = crate::kit::Wide::new(vv);
         let px = wide.px;
@@ -355,8 +472,69 @@ impl MainScene {
         r.draw_into(&fr, target, px, 0.0);
         let tex = target.tex;
         f.push(tex, Blend::GammaPremul, Instance::new(kind::SPRITE, vv.px(320.0, 240.0), wide.half(vv), [1.0; 4]));
+        centres
     }
 }
+
+/// The race boxes' centres: ring C's centre (`GetObjCenter`) through `TransformPoint`, while the boxes exist.
+fn race_centres(rc: &crate::mainscr_race::RaceChoice, model: &Model, place: &scene::Transform) -> [Option<[f32; 2]>; 3] {
+    if !rc.boxes_on() {
+        return [None; 3];
+    }
+    std::array::from_fn(|k| {
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for v in model.below(&[RACE_SUBS[k].2]).flat_map(|p| p.verts.iter()) {
+            let q = place.point(v.pos);
+            for i in 0..3 {
+                lo[i] = lo[i].min(q[i]);
+                hi[i] = hi[i].max(q[i]);
+            }
+        }
+        (lo[0] <= hi[0]).then(|| project(std::array::from_fn(|i| (lo[i] + hi[i]) / 2.0)).map(|(p, _)| p)).flatten()
+    })
+}
+
+/// The menu's 2D (`MainScrGfx2D_1/_2`, `KiirFajInfoSzoveg`): the race blurb, the scenario list, the name entry.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Assets>, h: &crate::ui::Hud, r: &mut Renderer, install: &Install, frame: &mut Frame, size: [f32; 2], now_ms: f64) {
+    let Some(font) = &h.font else { return };
+    let d = crate::options::Draw { font, white: h.white, glow: h.white, v: Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
+    let blink = crate::kit::fader_design::blink(now_ms);
+    if let Some(rc) = &s.race {
+        rc.draw_blurb(frame, &d, blink);
+    }
+    if let (Some(sc), Some(a)) = (&mut s.scenario, assets) {
+        a.race_pictures(r, install);
+        if let Some(e) = sc.entry() {
+            let pic = e.pic.clone();
+            a.picture(r, install, &pic);
+        }
+        sc.draw(frame, &d, &a.pics, &a.tables);
+    }
+    if let Some(n) = &s.name {
+        crate::mainscr_scenario::draw_name(frame, &d, n, blink);
+    }
+}
+
+/// What a ring's request needs from the install before the menu goes on (shared by the window and the script run):
+/// the scenario list's entries, the race blurbs.
+pub fn prepare(s: &mut MainScr, a: crate::mainscr::Act, assets: &mut Option<crate::mainscr_scenario::Assets>, install: &Install, texts: &crate::ui::UiTexts) {
+    use crate::mainscr::Act;
+    match a {
+        Act::OpenScenarios => {
+            let a = assets.get_or_insert_with(|| crate::mainscr_scenario::Assets::load(install, texts));
+            s.open_scenarios(a.entries.clone());
+        }
+        Act::Campaign => s.blurbs = crate::mainscr_race::load_blurbs(install, texts),
+        _ => {}
+    }
+}
+
+/// Each race's sub-meshes of `kezdo_.xv` (`MozgatKor`): head A, ring B, ring C (the box anchor); race 0 Human, 1
+/// Politikus, 2 Predator.
+const RACE_SUBS: [(u16, u16, u16); 3] = [(2, 9, 10), (0, 11, 12), (1, 13, 14)];
+/// The rings' roll per tick (`RotateObjr(sub, 0, 0, ±0.02)`), as a sign.
+const RING_ROLL: [(u16, f32); 6] = [(9, 1.0), (10, -1.0), (11, 1.0), (12, -1.0), (13, -1.0), (14, 1.0)];
 
 /// `CreateMatrix2(d, θ)` (ELF 0x4534e0): the columns `−d`, `−c2`, `−c1` with `c1 = |d × (sin θ, cos θ, 0)|`,
 /// `c2 = |d × c1|` (`vektormul`, `normalizevektor`).
@@ -439,11 +617,16 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     let lag = 2;
     // The load ring opens Options in load-only mode over the scene (re/screens/options.md); input goes to it then.
     let mut options: Option<(crate::options::Headless, crate::options::OptionsScreen)> = None;
+    let tables = ig2_rules::Rules::from_install(&install)?;
+    let hud = crate::ui::Hud::load(&mut r, &install, &tables);
+    let mut assets = None;
     for t in 0..=script.end() {
         let mut press = None;
         let mut release = None;
+        let mut keys = Vec::new();
         for e in script.at(t.saturating_sub(lag)).filter(|_| t >= lag) {
             match &e.input {
+                Input::Key { name, down: true } => keys.push(name.clone()),
                 Input::Move(at) => mouse = *at,
                 Input::Button { button: 1, down, at } => {
                     let (down, at) = (*down, *at);
@@ -464,6 +647,27 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         }
         s.frame();
         s.hover(mouse);
+        s.race_boxes = scene.race_boxes(&install, &s);
+        if let Some(st) = s.take_started() {
+            println!("t {t}: start {st:?}");
+        }
+        for k in &keys {
+            use crate::options::EntryKey;
+            let key = match k.to_ascii_lowercase().as_str() {
+                "escape" | "esc" => {
+                    s.escape();
+                    None
+                }
+                "enter" | "return" => Some(EntryKey::Enter),
+                "backspace" => Some(EntryKey::Back),
+                "space" => Some(EntryKey::Char(b' ')),
+                c if c.len() == 1 => Some(EntryKey::Char(k.as_bytes()[0])),
+                _ => None,
+            };
+            if let Some(a) = key.and_then(|key| s.name_key(key)) {
+                println!("t {t}: {a:?}");
+            }
+        }
         if let Some((_, os)) = &mut options {
             os.hover(mouse);
             if let Some(p) = press {
@@ -480,6 +684,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             let acts = [press.and_then(|p| s.press(p)), release.and_then(|p| s.release(p))];
             for a in acts.into_iter().flatten() {
                 println!("t {t}: {a:?}");
+                prepare(&mut s, a, &mut assets, &install, &hud.texts);
                 if a == crate::mainscr::Act::LoadGame {
                     let tables = ig2_rules::Rules::from_install(&install)?;
                     let h = crate::options::Headless::load(&mut r, &install, &tables);
@@ -491,13 +696,14 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         if script.grabs.contains(&t) {
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             scene.draw(&mut frame, &mut r, &install, &s, &vv);
+            draw_2d(&mut s, &mut assets, &hud, &mut r, &install, &mut frame, size, t as f64 * 10.0);
             if let Some((h, os)) = &mut options {
                 h.draw(os, &mut frame, size, t as f64 * 10.0);
             }
             let rgba = r.draw_to_image(&frame, o.size, 0.0);
             let path = crate::script::grab_path(out, t);
             crate::assets::write_snapshot(&path, o, &rgba)?;
-            println!("{}: t {t} | menu {:?} M {} tav {} cel {} gt {} hovered {:?}", path.display(), s.menu, s.m, s.tav, s.cel, s.gt, s.hovered);
+            println!("{}: t {t} | menu {:?} M {} tav {} cel {} gt {} hovered {:?} race {:?}", path.display(), s.menu, s.m, s.tav, s.cel, s.gt, s.hovered, s.race_boxes);
         } else if let Some((h, os)) = &mut options {
             // Options draws (and so fades) every frame, the grab or not.
             h.draw(os, &mut Frame::new([0.0; 4]), size, t as f64 * 10.0);

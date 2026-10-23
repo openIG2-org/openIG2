@@ -11,6 +11,8 @@ const ADD: u32 = 0x563b00;
 /// (function, the director it fills: `StarmapSpeaker` / `ColonySpeaker`).
 const STARMAP: (u32, u32) = (0x5ad820, 0xf17d88);
 const COLONY: (u32, u32) = (0x47f400, 0xa3ea3c);
+/// `InitSpaceWarSpeech` (exe 0x55e8b0) into `SpaceWarSpeaker` (exe 0xe72e84): the colony's soldiers' files.
+const SPACEWAR: (u32, u32) = (0x55e8b0, 0xe72e84);
 
 /// One speaker's lines of one kind (`Speeches`), in the order the exe adds them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -45,13 +47,14 @@ impl Speaker {
 pub struct Speech {
     pub starmap: Speaker,
     pub colony: Speaker,
+    pub spacewar: Speaker,
 }
 
 impl Speech {
     pub fn from_exe(exe: &[u8]) -> Result<Self> {
         crate::check_build(exe)?;
         let img = PeImage::parse(exe)?;
-        Ok(Self { starmap: read(&img, STARMAP)?, colony: read(&img, COLONY)? })
+        Ok(Self { starmap: read(&img, STARMAP)?, colony: read(&img, COLONY)?, spacewar: read(&img, SPACEWAR)? })
     }
 }
 

@@ -934,6 +934,72 @@ from `villamfrissit` exe 0x583830): a Hermite curve through the points, `seg` sa
 0x532b80): a ONE/ONE ribbon of half-width `W·fov/−z` px textured with `villam.bmp`, v = `(i/nseg)·texscale + offset`; the
 flare (`kiralyflarerajzolo` exe 0x5327a0) is a `flare.bmp` billboard at the last point, colour 0x80ffffff.
 
+### 6.8 Part 5's reading: kinds 5–7, the loops, lightning, rings, debris, fighters' deaths (ELF; exe where noted)
+Corrections to 6.7: kind 5's life decrement is `0.2 − (rand(100) − 50)/1000` (the f64 0.2 at ELF 0xd40ab8 and exe
+0x852230), so it lives 4..7 ticks; the trail puff's size is `(1 + ((f32)rand(20) + 80)/2)·L` in f32 (no int division).
+
+#### 6.8.1 Spawners 5, 6, 7 (ELF 0x688270 / 0x688450 / 0x688630; exe 0x57d960 / 0x57daa0 / 0x57dbc0): all in set 3
+| field | pr5 `(n, size, p)` | pr6 `(n, size, p, c)` | pr7 `(n, L, p, D)` |
+|---|---|---|---|
+| pos | `p·s` | `p·s` | `p + D·rand(100)·(s·L)` per component |
+| word | 0x005cff5c | `0xff000000 \| (c<<4>>8)<<16 \| (c<<4>>8)<<8 \| (c<<5>>8)` (c 255 → 0xff0f0f1f) | 0x00ffffff |
+| size | `5·s·size` | `5·s·size` | `(1 + (rand(20) + 80)/2)·s·L` |
+| velocity, damping | 0, 0 | 0, 0 | D, .99 |
+| life factor / decrement | 1 / `0.2 − (rand(100) − 50)/1000` (f64) | .98 / 0 | .6 / 0 |
+Pulse fields 0; frame 0, life 1. Draws: pr5 one `rand(100)`, pr6 none, pr7 `rand(100)` × 3 then `rand(20)`. pr6's A byte is overwritten by the first update (6.7.1 step 5): (31, 15, 15) at c = 255, a faint red.
+
+#### 6.8.2 `SpaceWarLovedekKirajzol`'s kinds (jump table ELF 0xd589c0, exe 0x56e874), per live shot a tick
+1 `particlerobbanas(5, .04, .3, 1)`; 2 `pr2(3, .4)`; 3 `pr3(5, .05)`; 4 `pr4(5, .1)`; 5 `pr5(1, .3)`; 6 (not attached) `pr6(1,
+(f32)(0.5·(f64)(d1/(d2 + d1/5))), p, 0xff)` with `d1 = tav(shooter, target)`, `d2 = tav(shot, target)` (f32: 0.42 at the muzzle to
+2.5 at the target); 7 `t = age·255/T` (f32, T the weapon's life ×10 for shot kind 3), `A = (int)(a0 + (255 − a0)·t/255)`,
+`pr6(1, form.size·t/36, p, 255 − A)`; 8 nothing (the lightning).
+
+#### 6.8.3 The loops (`lovedeksound` ELF 0x69c890 / exe 0x57adb0, once a frame per live shot; `lovedeksoundend` ELF 0x69d980)
+Shot fields: handles `+0x84/+0x88/+0x8c` (−1 none), volumes `+0x90/+0x94`. A loop starts as `Duplicate(rec)` + `Play(h, 4)`
+at `ConvertVolume(0)`; its volume is `SetVolume(h, ConvertVolume(v))` each frame (the record's volume is not used).
+`lovedeksoundend` releases the handles when the shot's shooter is cleared (`SpaceWarLovedekMozgat` ELF 0x69da70).
+- 9 (one-shot 19 at 80) and 10 (36 at 80): loops 37 → h84 and 38 → h88; later frames: not attached `v94 = max(0, v94 − 4)`,
+  `v90 = min(70, v90 + 4)`; attached the other way; past `(L·9)/10` of the life L (ints): both capped at `70 − ((age −
+  L·9/10)·700)/L`.
+- 11 (21 at 80): loop 22 → h84; not attached `v90 = max(0, (int)(d1·20/(d2 + d1/5)))` (f32); attached `A = age − (tick −
+  attach tick)`, `v = (age − A) < (L − A)/2 ? 100 : ((L − age)·100)/((L − A)/2)` (ints; the exe divides by zero when `L − A < 2`).
+- 12: loop 14 → h84, from the next frame at 80.
+
+#### 6.8.4 Lightning (`villam` create ELF 0x7c5c20, `setvillampontok` 0x7c6f20, Refresh 0x7c60c0, Update 0x7c6590)
+- `create(n, W, I, J, seg, flare, texscale, texspeed, frag, life, tex, A, B)`: amplitude `amp = J·W`; base points `A + (B −
+  A)·i/n`, current = base + `randommerolegesvektor(B − A, 1)·amp`, velocity `randommerolegesvektor(B − A, amp/6)` per interior
+  point (`randommerolegesvektor(d, k)`: `normalise(randomvektor × d)·k`, `randomvektor` = three `rand(100) − 50`, normalised);
+  the end points are A and B with the word 0x80ffffff.
+- `setvillampontok(A, B)`: new ends and base points; the current interior points stay.
+- Refresh: `r = rand(100)` once; per interior point `cur += vel`, `c = frag <= r ? rand(128) + 128 : 0`, word `0x80<<24 |
+  (u32)(c·I)·0x010101`, and when `|cur − base|² > (2·amp)²`: a new velocity (`amp/6`) and `cur += (base − cur)·0.4`; the end
+  points take one more such colour; `texoff += texspeed` wrapped into (−1, 1]; flare size `W·4 + rand(100)/100·W·2`.
+- Update: tangents `0.5·(p[i+1] − p[i−1])` inside, `1.5·(p1 − p0) − 0.5·t1` at the ends; `seg` cubic Hermite samples a span
+  (each sample keeps the span's first point's word), then `kiralyvonalhuzo` (ELF 0x5f2650): a ribbon of half-width
+  `W·fov/−z` px across the screen-space direction, ONE/ONE, depth tested; tex 1 = `textures/spacewar/villam.bmp` (2 = villam2);
+  the flare (`kiralyflarerajzolo`): a `flare.bmp` square of half-size `size·fov/−z` at the last point, word 0x80ffffff.
+- Who (`villamfrissit` ELF 0x6821c0 / exe 0x583830 draws them): weapon 12's shot (form 21, shot kind 0) holds 7 arcs from the
+  shooter to the target, made by `Loves2`: (12, 1, 1, 1.6666666, 4, flare), three (12, 1, .2, 1.6666666, 3), three (12, 1, .1,
+  1.6666666, 3), all (texscale 3, texspeed −.05, frag 15, life −1, tex 1); each tick `setvillampontok(shooter, target)` and
+  Refresh. A unit the arc jumps to (the sim's `lightning`) gets (10, .5, .5, 3.3333333, 4, flare) from the target to it, a
+  fighter group (10, .2, .5, 10, 4, flare); each tick `setvillampontok(arc0.cur[9], it)` and Refresh; deleted with its shot.
+
+#### 6.8.5 Shield rings (`karikaload` ELF 0x694910, `karikakirak` 0x69c650, `karikafrissit` 0x6a2bb0)
+20 nodes of `karika.xvb` at `AddToScene` 0.05, unshaded, `PropertiesOff(0xc)`. `FoldTalalat` (ELF 0x69c460), before its
+building test, for weapons other than 9..12 when the gun's armour `+0xa8 > 1`: `karikakirak(shot pos, planet centre (f32)
++0x930..)`: the first free ring at the hit point, `CreateMatrix2(normalise(centre − hit), 0)`. Animation as 3.4 (all f32;
+about 31 ticks), only in planet battles.
+
+#### 6.8.6 Debris (`robbanasdarabok` ELF 0x686830, `Darabok` 0x69a7d0)
+`initgfx` picks each of the 40 nodes' model `darab{random(3) + 1}.xvb` at `AddToScene` 0.0015. Spawn: `size = min(size, .002)`
+(the compare in f64), `ScaleObja(size)`, at p; spin each `((f32)rand(200) + 50)/400·speed`, then three `rand(2)` signs;
+counter 1. Per tick after `Hajtomu`: counter 0 hidden; else moved by the spin, `RotateObjr(spin)`, transparency 0 to counter 30
+then `(f32)((c − 30)·0.02)` (f64), counter + 1, past 80 free.
+
+#### 6.8.7 Fighters' deaths (`vadaszmeghalas` ELF 0x6a2300 / exe 0x582fb0, `VadaszRobban` 0x69c1a0 / 0x5710f0)
+Every call of `VadaszRobban` that spawns (a hit `VadaszTalalat`/`DecVadaszHp`, or a doomed retreating group's end) makes ONE
+`ujparticlerobbanas(0, 0.07, group pos)`; no sound, no debris; a group leaving the arena silently makes none.
+
 ## 7. Input, timers and sounds
 ### 7.1 Input
 
@@ -1049,6 +1115,50 @@ Frame timers (screenfrissites): SDL ticks `+0x22f0`; `+0x2268/+0x226c` (+= dt ms
 - HUD clicks: `PlaySoundGlobal(0)` = `Global_Hangok[0]` ingame/Click1.wav (volume 90). Played by BalClick, JobbClick (once per right release that passes the conditions), camera buttons 0x46 and 0x49 (on every call), 0x47 / 0x48 / 0x4a / 0x4b on `Mouse_Lenyom` only. Not played for: radar, small info box, slider, weapon buttons, retreat window, formation buttons. No other `PlaySound*` index occurs in these functions.
 - Voice lines: `SpeakingDirector::Play(&SpaceWarSpeaker, i % 3 + 1, kind)`: kind 0 on a move order, 1 on a select (click or box), 2 on an attack order; kinds 5..9 are combat events (SpwC::dechp, not HUD). Conditions: unit owned by me, `+0x24b8`, `unit +8 < 8` (capital ship class), 30 ticks since `beszedlasttick`. `SpeakingDirector::Refresh` every 11th tick. Voice files not read (audio.md).
 - The starmap zoom-out sound (`StarmapKiZoomol` plays Global 5) is not in these functions.
+
+### 7.4 Part 5's reading: fighters, gun markers, boxes, voices, formation, retreat, cursors, banner (ELF; exe where noted)
+- **Fighter sprites** (correcting 3.2): the four sets are the plan's fighter class (`Tervek[owner][design] +0x44`, `AddUjVadasz`
+  ELF 0x6918f0 / exe 0x566420: `clamp(class − 1, 0, 3)`), not a relation; all four nodes load `vad10.xvb`; one sprite per
+  GROUP (`AddFleet`: `groups = max(1, (int)(count·min(1, 60/total)))`); particle size 1.0, word 0x2c2c2c, model mode.
+- **Chase camera**: key C toggles `spwcameramode` 0/1 (`SpaceWarKeyboardHandler`); `kamerabeallit` follows the first live group
+  (`zbm = 1`), links (`aktvadasz = g`, then hidden) once the eased camera is within 1.0; ends on the key, a view animation, or
+  moves to the next live group when the followed one dies.
+- **Gun markers** (`agyukirak`, confirmed, all f32): `T` (gun +0x10) is 1000 for the human's guns, else 1 and `+= dt` (cap 1000)
+  in `kijelolesanim`: an enemy gun's brackets close from r ≈ 9000 to 2 in a second.
+- **Small box** (`kisinfokiir`, confirmed against exe 0x577c00): it reads the selection only, no hover; `infoszamol` runs every
+  6th tick (the counter resets to 5 below 0). Case B (no ships, guns, kind 2): title = the gun building's tech (one) or
+  `GetString(0xb,1,0xd)` with the count; owner = planet owner; `0xe` value; `0xf` and the HP stripe. Case C (nothing selected):
+  title `0x10`; rows y+0xe firepower (`0x11`, `"%d%s"` with ""/K/M: divisor 1000 above 9999, 1e6 above 999000), y+0x17 ships
+  (`0x12`), y+0x20 fighters (`0x13`), values at x+0x2a / +0x42 / +0x5a (colours 0x29 own, 0x2a enemy, 0x21 others, the third
+  only when the others have anything; len 4, size 1, flags p+0xe), the slider (5.2) with label `0x14` at y+0x29.
+- **Big box** (`nagyinfokiir`, exe 0x57c9c0 the same): needs big-info mode AND something selected; the ship rows need exactly one
+  live ship; hull `"%d%%, %dhp"` = `dmg·100/max` (damage per cent: an original quirk [u]) and `(max − dmg)/15`; it keeps the
+  caller's fade multiplier.
+- **Starmap fade** (`starmapszarok`, confirmed): `starmaphalvanyit(e)` (ELF 0x6a6b30) multiplies the starmap particle words'
+  RGB by e, sets the starmap objects' alpha `(int)(K − (K − a0)·e)`, and the planets' meshes transparency `1 − e` (hidden at 0).
+- **Voices** (`SpaceWarSpeaker` exe 0xe72e84, filled by `InitSpaceWarSpeech` exe 0x55e8b0 / ELF 0x6765f0 with 606
+  `SpeakingDirector::Add` calls, read like `ig2_rules::speech`'s tables): the colony's `Sounds/Colony/Speech/<Kind>/` files,
+  kinds 0 Move, 1 Selection, 2 Attack, 3 Retreat, 5 Hit, 6 Dying, 7 Dead, 8 enemy_hit, 9 enemy_dead, 10 enemy_retreat; line
+  `id % 3 + 1` (unit id exe +0x19c), the race offset from the human's `EN`. Refresh every 11th UI tick (`spwcounter > 10`);
+  every site also needs `beszedlasttick + 30 < acttick2` and then sets it. Sites: 0/1/2 the HUD orders; 3 (mine) / 10 (others)
+  in `retreat` (ELF 0x6acb40) with the fixed line 1; 6 in `dechp` (a near-dead capital ship, after the sim's `rndlog(6,0,2)`
+  draw); 7 (mine) / 9 when a capital ship dies; 5 and 8 never (their block divides `rand()` by 0 or 1, exe 0x572470).
+- **Formation** (`loadfelallas` ELF 0x6a5a60 / exe 0x578850, `FelallasLoad` exe 0x566eb0, `felallit` exe 0x572ef0): only in SP
+  with 6 or more of my ships (`+0x342d`); the column's buttons 0..8 set `+0x3430 = k` (`final2x.bmp` frame 0 chosen, else 32;
+  tooltips `felallasnevek` = `GetString(0xb,3,i+11)`), button 9 starts (`SetIdoSpeed(1)`, unpause). `SpaceWarFrissit2` (no zoom
+  or fade) loads `felallas{k+1}` when `+0x3430 != +0x3434` and re-places my side (`felallit`: the sim's set-up placement, rotated
+  to face the others). **Without the phase nothing in the screen unpauses**: the player's top-bar pause button does (`IG2_gameUpdate`
+  exe 0x4e0440, blocked during the zoom); in MP the battle is never paused.
+- **Retreat** (8.7.5 resolved): `HandleRetreatWindow`'s only caller is `screenfrissites` (exe 0x57f8db), when the left button is
+  up and the window open; the window opens while the left button is held on button 9, so it is a press-drag-release popup:
+  releasing on the button closes it.
+- **Cursors** (`UpdateFrame` exe 0x4e3e90): `MOUSE.BMP` (`dataraw/screen/mouse_bmp.pvr`), 20 × 20 cells, column = type, row =
+  `(MouseFazis/5) % 40` (one row per 5 UI ticks); hot-spot offset table exe 0x90b608 for x and y (types 0, 1: 0; others 10).
+  `screenfrissites` maps `MousePointerType` 0 → 1, 2 → 5, 3 → 7, 4 → 6 (1 keeps the hot-spot's type, 1); tooltips are the
+  shared ones (spy.md §5; the strings of 4.2, exe immediates confirmed).
+- **MP banner**: while MP, more than one human, and `now − spwckezdotimer < 9000` (set when the zoom ends): `"%s (%s) vs. %s
+  (%s)"` (empire and player names of the two sides) at (200, 30), `KiirStr(.., 200, 30, 0x46, 2, 4, 2)`, faded over its last
+  0.5 s. The formation caption `GetString(0xb,1,4)` sits at the same place, alpha × the column's counter/50.
 
 ## 8. Corrections, exe vs ELF, checks and unknowns
 ### 8.1 Corrections to the 3D draft and resolved questions
@@ -1389,11 +1499,60 @@ their battle state isn't drawn). `re/deviations.md` lists them.
   stations under the console and the lower right round button of the exe; the radar window's hue; the cursor and the
   tooltips.
 
-### 9.7 Not yet (part 5)
-Lightning (§6.7.4) and the looped weapon sounds of 9..12; debris (`robbanasdarabok`, `darab1..3.xvb`); kinds 6 and 7
-(`particlerobbanas6`); shield rings (`karikakirak`); fighters (`SpaceVadaszKirajzol`, `vad10.xvb`) and their deaths; the
-planet-gun markers (`agyukirak`); the trails' size and brightness; the cursor shapes (`MousePointerType`; no screen draws
-one yet) and the hot-spot tooltips; the voice lines (`SpeakingDirector`, §7.3); the small box's hover text and its case
-B/C texts; the big info box (§5.2) and its camera mode; the formation picking (`loadfelallas`); the fighter chase camera;
-the MP versus banner; the starmap's fade-out (`starmapszarok`, §3.3); `HandleRetreatWindow`'s trigger (§8.7.5); who
-unpauses a battle without a formation choice.
+### 9.8 Part 5 (2026-10-23)
+- **Effects** (`spacewar_fx`, §6.8): kinds 5 (the decrement fixed), 6 and 7 (`glow`), weapon 12's bolts and the units' and
+  groups' arcs (`Bolt`: `create`, `setvillampontok`, `Refresh` once a battle tick; drawn as a `villam.bmp` ribbon of segments
+  with the flare), the loops of weapons 9..12 (`Fx::frame_loops` → `Out::Loop` → `Audio::start_loop` / `set_channel_volume`,
+  stopped when the shot ends or the screen goes), the shield rings (`BattleEvent::ShieldHit` from the sim's `hit_gun`;
+  `karika.xvb` per frame), the debris (`darab1..3.xvb`, two per blast), one puff per `FightersLost`, the trail puff's size in f32.
+- **Capture `spacewar_fx5.json`** (`run_spwc.py --script .. --planets --fuzz-designs --weapons 0x1a,0x1b,0x1c,0x1d`, frames in
+  `_local/screendiff/spacewar-fx5b/`): a planet battle of weapons 9..12 without a formation phase, so the script presses the top
+  bar's pause button at t450 (§7.4). The loops start with the exe's one-shots (Paralyzator0 at t2115 against the exe's t2120);
+  the exe's frames show no bolt or ring at the grabs, and the client's battle loses no ship (deviation 125), so the bolts,
+  rings and debris stay unchecked against a capture. On `spacewar_fx.json` (part 4's capture) the view improves at every grab
+  (t720 6.05 → 5.89, t1000 5.77 → 5.68), the other regions unchanged.
+
+- **Second commit** (the screen's own parts):
+  - Fighters: one sprite per group (`vad10.xvb`), drawn as 1-2 px dark-grey points at the default view and as a model at a
+    calibrated quarter size beyond that (deviation 136). The planet guns' markers (`agyukirak`) and pass A of `lovedekekkirak`
+    (the guns' selection brackets, bars, attack ticks). The chase camera (key C).
+  - The small box: case A title (one unit: plan name + hull tech), case B (guns), case C (the overview: firepower K/M, ships,
+    fighters, the stance slider). The big info box (`nagyinfokiir`), sliding with the info view.
+  - Tooltips use the shared kit tooltip; strings `GetString(0xb,2,k)`, weapon names `GetString(0xb,3,i+1)`, formations
+    `GetString(0xb,3,i+11)`. The cursor draws the `MOUSE.BMP` cells. The starmap fade (`battle_fade`): system glows x e,
+    planets and fleets hidden at e = 0. The MP versus banner [inf, not captured].
+  - Voices (`SpaceWarSpeaker`, 606 lines): `BattleEvent::Voice` for 6/7/9, `Retreat` for 3/10; the HUD sites move, attack,
+    select and box.
+  - The formation phase's look: `final2x.bmp` on the buttons, the chosen one's clock frame 0, the others 32; the chosen index
+    is kept.
+- **Capture `spacewar_ui5.json`** (exe frames `_local/screendiff/spacewar-ui5/`): tooltips "3. formacio" (t470) and "Radar"
+  (t660) at the exe's places; case C info_box 5.93 at t660; the big box's rows match (TE 3690, 2460hp, Kezdo) but its camera
+  differs because the formation isn't re-placed; voices: box select t701 vs the exe's t703, and on `spacewar_fx.json` box
+  t651 / move t713 vs the exe's t653 / t714; the weapons region in the formation phase 18.0 -> 15.7; the starmap fade e
+  matches (1 at t100, 0.117 at t300).
+
+### 9.9 Part 6 (2026-10-23): the formation pick's re-placement
+- `Battle::pick_formation` (sim, `space-combat.md` §7.10 "Formation pick") and `Game::pick_formation(slot, pick)`; the screen's
+  `SpaceWarUi::formation_due` keeps `+0x2d88` / `+0x2d8c` and calls it after the UI ticks (not on the first frame or while
+  entering), then re-poses the units. Deviation 137 closed.
+- Capture `spacewar_ui5.json` again (exe frames `_local/screendiff/spacewar-form/`; the tracer's regions now hold the human's
+  list): the client's re-placed formation matches the exe's at t520 and t660 (screendiff-review); view t470 6.91 → 6.72,
+  t520 7.37 → 7.12, t660 5.92 → 5.70, t1100 5.92 → 5.74. t800–t950 got worse (12.27 → 13.02, 15.08 → 18.13, 15.30 → 16.58)
+  although the camera's pivot, zoom and yaw equal the exe's at every one of those grabs: the info view's projection differs
+  (below).
+- The exe's reticle at t300 (§9.7's cursor item) is a unit hover the client can't make: the planet's stations (types 8 and 9,
+  units 0–3 of that battle) have no model in the client. `tipusnevek[race·12 + 8..11]` are "TSCtablazatabol" placeholders in
+  the exe file (and the ELF); a loaded game holds `ur_kurbazis.xvb` / `ur_urbazis.xvb` at `[3·12 + 8]` / `[3·12 + 9]` (the
+  `RESEARCH_MODELS` entries 0x4c / 0x4d, exe 0x9193c8 / 0x9193cc) with the scale unchanged (0.02); the client names models
+  from the compiled table. The writer is not found (no direct reference in either binary; not written during boot): deviation
+  144.
+
+### 9.7 Not yet (after part 6)
+- The planet stations' models (deviation 144): find the writer of `tipusnevek`' types 8..11 (a write watchpoint on exe
+  0x91FCC8 across a scenario load), then the cursor's reticle at t300 should follow.
+- The info view (t800–t950 of `spacewar_ui5`): the same camera numbers as the exe, but the picture is shifted (the review saw
+  the exe's ships ~185 px further left at t850): the view's centre/offset while the big info box is in.
+- The starmap names and the radar's starmap sketch during the opening zoom (deviation 138).
+- The bolts, rings and debris are unchecked against a capture (none at the grabs); the ring model's scale is suspicious
+  (`karika.xvb`'s normalised vertices are ~0.007).
+- The MP banner and the chase camera are uncaptured (no fighters in ui5); the big box sits 5 px left of the exe's.

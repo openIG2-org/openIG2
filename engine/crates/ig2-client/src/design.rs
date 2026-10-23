@@ -985,12 +985,12 @@ fn pod_slots(rules: &ig2_rules::Rules, race: i16, hull: i32) -> Vec<i32> {
 }
 
 /// `min(GetMaxRarakhato(race, hull, k), Talalmanyok[tech].+0x24)`: how many of `tech` pod `k` takes.
-fn max_fitted(rules: &ig2_rules::Rules, techs: &TechTable, race: i16, hull: i32, k: usize, tech: i32) -> i32 {
+pub(crate) fn max_fitted(rules: &ig2_rules::Rules, techs: &TechTable, race: i16, hull: i32, k: usize, tech: i32) -> i32 {
     rules.design_screen.pod_max(race.max(0) as usize, hull.max(0) as usize, k).min(techs.byte(tech.clamp(0, 192) as usize, 0x24) as i32)
 }
 
 /// `PodTipusok[KeresPod(class)]`'s name (`NEWGAME_Design`): an empty slot's class.
-fn pod_type_name(texts: &crate::ui::UiTexts, rules: &ig2_rules::Rules, race: i16, hull: i32, k: usize) -> Vec<u8> {
+pub(crate) fn pod_type_name(texts: &crate::ui::UiTexts, rules: &ig2_rules::Rules, race: i16, hull: i32, k: usize) -> Vec<u8> {
     let class = pod_slots(rules, race, hull).get(k - 1).copied().unwrap_or(0);
     let mut s = rules.design_screen.pod_type_text(class).map(|(sec, i)| texts.get(0x13, sec, i)).unwrap_or_default();
     s.truncate(0xe);

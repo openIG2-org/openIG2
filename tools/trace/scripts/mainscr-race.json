@@ -1,0 +1,81 @@
+{
+ "screen": "main",
+ "note": "MainScr part 2 (re/screens/mainscr.md §9.2, §2.2): single player (ring 4 at t 350), then the campaign ring (single set ring 0, t 600): the race scene's opening (300 ticks) and spread (100); race 1's box twice (highlight + blurb, then confirm, t 1100 / 1300); the difficulty rings rest at Tav 1.3: ring 0 'easy' at t 1500; the heads close (100 ticks), the exit animation (200 ticks) with the loading plate.",
+ "events": [
+  {
+   "t": 1,
+   "mouse": [
+    320,
+    240
+   ]
+  },
+  {
+   "t": 350,
+   "press": [
+    162,
+    267
+   ],
+   "hold": 3
+  },
+  {
+   "t": 600,
+   "press": [
+    469,
+    299
+   ],
+   "hold": 3
+  },
+  {
+   "t": 1100,
+   "press": [
+    320,
+    240
+   ],
+   "hold": 3
+  },
+  {
+   "t": 1300,
+   "press": [
+    320,
+    240
+   ],
+   "hold": 3
+  },
+  {
+   "t": 1500,
+   "press": [
+    349,
+    42
+   ],
+   "hold": 3
+  },
+  {
+   "t": 1900,
+   "mouse": [
+    320,
+    240
+   ]
+  }
+ ],
+ "grabs": [
+  610,
+  700,
+  800,
+  905,
+  960,
+  1010,
+  1080,
+  1150,
+  1250,
+  1350,
+  1420,
+  1480,
+  1550,
+  1610,
+  1650,
+  1700,
+  1750,
+  1800
+ ],
+ "tail": 10
+}

@@ -671,7 +671,7 @@ pub struct Draw<'a> {
 }
 
 impl Draw<'_> {
-    fn col(&self, i: usize, mult: f32) -> [f32; 3] {
+    pub fn col(&self, i: usize, mult: f32) -> [f32; 3] {
         self.palette.get(i).copied().unwrap_or([1.0; 3]).map(|c| c * mult / 100.0)
     }
 }
@@ -1010,7 +1010,7 @@ impl Headless {
 pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     use crate::script::Input;
     let l = crate::load(o)?;
-    let world = crate::world::World::load(&l.save, &l.rules, &l.tech_defaults, &l.volatile);
+    let world = crate::start_world(o, &l.install, l.save.as_ref(), &l.rules, &l.tech_defaults, &l.volatile)?;
     let mut r = crate::render::Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let mut h = Headless::load(&mut r, &l.install, &l.tables);
     let mut s = h.enter(&l.install, false);

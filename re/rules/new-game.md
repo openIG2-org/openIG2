@@ -1,12 +1,12 @@
 # New game: `InitNewGame` (exe 0x4e1130) and the campaign start
 
-Status: **modes 0, 1 and 2 are ported and verified** (`engine/crates/ig2-sim/src/game/new_game.rs`:
+Status: **modes 0, 1, 2 and 3 are ported and verified** (`engine/crates/ig2-sim/src/game/new_game.rs`:
 `Game::new_campaign` / `Game::before_start` + `Game::start_campaign`, `Game::start_scenario` / `new_scenario`,
-`Game::start_mp_galaxy` / `NewMpGalaxy`): 25 starts recorded in ig2.exe (5 campaigns, 15 scenarios, 5 MP galaxies)
-give the same save at tick 0 chunk for chunk (`tests/new_game.rs`, tracer `tools/trace/run_newgame.py` +
-`newgame.js`, seeds `tools/trace/scenario_seeds.py`, trace report `traces/2026-10-23-new-game.md`). **Not ported:**
-the skirmish (mode 3: `InitScirmishBolygok`, Civil/Energy buildings, the AI removal, skirmish money/tech) and the load
-path (mode 5). The galaxy generation of §3 is verified through mode 2; §7's mode-0 keywords through the scenarios.
+`Game::start_mp_galaxy` / `NewMpGalaxy`, `Game::start_skirmish` / `NewSkirmish`): 35 starts recorded in ig2.exe (5 campaigns,
+15 scenarios, 5 MP galaxies, 10 skirmishes) give the same save at tick 0 chunk for chunk (`tests/new_game.rs`, tracer
+`tools/trace/run_newgame.py` + `newgame.js`, seeds `tools/trace/scenario_seeds.py`, trace report
+`traces/2026-10-23-new-game.md`). **Not ported:** the load path (mode 5) and mode 0 with config campaign=0 (falls to
+skirmish defaults). The galaxy generation of §3 is verified through modes 2 and 3; §7's mode-0 keywords through the scenarios.
 Section 13 has what the scenario and MP runs added.
 
 Sources: decompiles `_local/decomp/newgame/{elf,exe}/`, `_local/decomp/campaign2/`. ELF = unstripped x64 `ig2`
@@ -277,6 +277,7 @@ Betolt_Scenario then repeats step 55 of section 1 (techs 89/124/159 and tech 147
 - Deliberate-looking oddities kept by the exe: BirodalomEl[3] literal in the skirmish extras; the LoadScenario spy-remap bound; status defaults indexed by empire (not race) in the LoadScenario tail; Money f32 round-trip; tech 147 +0x2e patched to 7 on every empire iteration; StoryTerroristaCselValoszinusege 0x32 overwritten by 0x1e; the easy-mode human bonus tests PlayerKi==1.
 - Uninitialised: Flottak/Hajok/Epuletek[p]/Tervek[e] heap beyond what is written; Generate_StarData step 3 pick when no candidate scores > 0 (ELF local_18); AddPlanet may return 0 and then write Bolygok[0]; scenario TERV records and DUMMYFLEET records are not zeroed.
 - ELF/exe difference worth a deviation row: exe NEWGAME_Research only loads texts; ELF resets research UI. Also exe InitNewGame has no TradeHanyTradeCuccVan loop and no debug asserts.
+- ig2.exe hung (no return in 450 s) on a skirmish with 200 planets (en 8, 4 AIs, tech 2, pop 3, difficulty 1); 150 planets worked. Cause not investigated.
 - Unknowns: (1) resolved, §13; (2) contents of Bolygok[0] and Kemek0 at new-game time (both BSS, assumed zero); (3) resolved, §13; (4) GroundWarSetBattleStatus (0x47caa0) effect on a fresh game: for owner==0 planets it writes P.+0x64 = 0, for owned ones FUN_0047be90 decides (never reached in InitGrWar because owners are 0 at that point); (5) FUN_00474930(false, 0) second argument meaning is "all planets"; (6) names/text: GetString tables (PlayerNev = Faj_Nev[race], AlapFlottaNev, constellation names _s(0x1d,k), pod names) are localised and part of saved or visible state: the port needs the user language's tables (Game::fleet_name, empire_names exist); (7) none left for spy offsets (sTudas +0x30+k, sIsmerik +0x41+k match espionage.md).
 
 ## 12. Tables and constants read from the exe image (VA, element size, count)
@@ -317,3 +318,22 @@ Corrections to §7 / §10 / §11 (normative):
 Seeds: scenario and MP starts use wall-clock seeds that Frida-made calls don't pass through the `srand` hook;
 `scenario_seeds.py` recovers them from the post dump (diplomacy ticks from the 90 saved draws; `RandomInit`'s seed =
 the latest tick ≤ that whose RandSeed[0] matches).
+
+## 13.1 Skirmish start (mode 3): ported, 2026-10-23
+Port: `Game::start_skirmish(&NewSkirmish, &StartData)` = `SetScirmishGameOptions` (exe 0x503e80; 2nd arg = number of computer
+opponents, `HanyGepiJatekos` 0xF21488, not humans) then `InitNewGame(ticks, 3, 0, Nehezseg)`: the §6 prologue (PlayerFaj[17] = 1),
+EN/PlayerKi, `NewgameRandomID` 0xB7740C, ScrirmishTechicalLevel/PlanetNumber/StartingMoney/Population, `Nehezseg` = d==3 ? 4 : d;
+step 13 skirmish money for all empires and AIs > 8 off; step 14 AI removal (`rndlog(1,1,8)` retries); step 15 `HanyBolygo` =
+ScrirmishPlanetNumber + `Generate_Stars`; step 24 `InitAdvancedTalalmanyok` mode 3; step 25 `InitScirmishBolygok`;
+`GenerateCivilBuildings` / `GenerateEnergyBuildings` (RndClass reservoir on stream 5).
+
+Runtime findings (normative):
+- `TalalmanyKifejlesztve` for the human in the head start raises `ResearchEvent::AutoDesign`; `TervezAutomatikus` adds the human's
+  automatic designs (`OsszHanyTerv[EN]` grows past 0x2e), and step 26 (`TervAutoDesign` + `TervUjraSzamol` for i = 0x29..=`OsszHanyTerv[e]`)
+  refits those too: the loop bound is the live count, not 0x2e.
+- The RndClass draw in Civil/EnergyBuildings is the non-logging `rnd` (exe 0x542ea0) on stream 5, not `rndlog` (same values).
+- Civil counts only the type byte (+0) of slots 1..`HanyEpuletLefoglalva`, types 1..14, with no destroyed/unfinished test. Energy
+  subtracts `EpuletekLeiro[t]`+0xc for every non-power slot (type 0 included) and adds the chosen plant's +0x14*100 per loop whether or
+  not it was placed. Tech-id reads of `EpuletekLeiro` are bytes (exe 0x5c22b9).
+- The exe's `st_bSearch` has no assert: `InitScirmishBolygok` with no planet would write `Bolygok[0]`.
+- Unknown: the 200-planet hang (§11).

@@ -22,17 +22,51 @@ use crate::scene::{self, Model, Placement, M3, V3};
 
 /// `Mouse_Szoveg_Set(id, 0, x, y, w, h, …)` of `Colony_MouseInit`: the hot-spots the building screen uses, in the
 /// order `Mouse_Darabol` tries them (the 3D view 0x14 last).
-const SPOTS: [(u32, [f32; 4]); 9] = [
+const SPOTS: [(u32, [f32; 4]); 11] = [
     (1, [179.0, 443.0, 31.0, 31.0]),
     (2, [212.0, 443.0, 31.0, 31.0]),
     (4, [0.0, 424.0, 166.0, 56.0]),
     (5, [522.0, 362.0, 100.0, 100.0]),
     (6, [25.0, 39.0, 145.0, 99.0]),
+    // The self-destruct window (spec §11.8): call off, the window itself, start.
+    (8, [440.0, 135.0, 60.0, 25.0]),
+    (9, [380.0, 70.0, 180.0, 100.0]),
+    (10, [443.0, 443.0, 31.0, 31.0]),
     (0x11, [245.0, 443.0, 31.0, 31.0]),
     (0x13, [63.0, 148.0, 85.0, 17.0]),
     (0x14, [0.0, 20.0, 640.0, 460.0]),
+];
+
+/// The planet info mode's hot-spots (`Colony_MouseInit` ELF 0x4e0b80, spec §12.2): the menus (0x15, 0x19, 0x1b), the
+/// buttons that fire on the press with their `0x19` setting, the panel (0x1f) and the whole screen (0x20).
+const INFO_SPOTS: [(u32, [f32; 4]); 12] = [
+    (0x15, [400.0, 289.0, 100.0, 16.0]),
+    (0x16, [506.0, 289.0, 30.0, 16.0]),
+    (0x17, [542.0, 289.0, 20.0, 16.0]),
+    (0x18, [568.0, 289.0, 20.0, 16.0]),
+    (0x19, [400.0, 311.0, 100.0, 16.0]),
+    (0x1a, [506.0, 311.0, 30.0, 16.0]),
+    (0x1b, [400.0, 333.0, 100.0, 16.0]),
+    (0x1c, [506.0, 333.0, 30.0, 16.0]),
+    (0x1d, [542.0, 333.0, 20.0, 16.0]),
+    (0x1e, [568.0, 333.0, 20.0, 16.0]),
+    (0x1f, [320.0, 34.0, 300.0, 324.0]),
     (0x20, [0.0, 0.0, 640.0, 480.0]),
 ];
+
+/// The `0x19` setting a released info button sends: tax − / +, ALL tax / auto-build / priority, priority − / +.
+fn info_setting(id: u32) -> Option<i32> {
+    Some(match id {
+        0x17 => 1,
+        0x18 => 2,
+        0x1d => 3,
+        0x1e => 4,
+        0x16 => 5,
+        0x1a => 6,
+        0x1c => 7,
+        _ => return None,
+    })
+}
 
 fn colony(idx: i32) -> SoundId {
     SoundId::new(Table::Colony, idx as u16)
@@ -167,6 +201,10 @@ impl Ctx<'_> {
         let r = self.planet_rec(self.snap.planet);
         r[0x20] as usize == self.en() && r[0x64] & 1 == 0
     }
+    /// The planet is EN's (`Bolygok+0x20`), at war or not.
+    fn owner_is_en(&self) -> bool {
+        self.planet_rec(self.snap.planet)[0x20] as usize == self.en()
+    }
     /// `SearchBuilding(p, 1, true)` (ELF 0x616720) > 0: a finished, working colony hub.
     fn has_hub(&self) -> bool {
         self.snap.buildings.iter().any(|b| b.kind == 1 && b.work_left == 0 && b.flags & 1 != 0)
@@ -236,6 +274,8 @@ pub struct ColonyUi {
     spin: f32,
     /// The ground war's input (spec §11).
     pub war: crate::colony_war::WarUi,
+    /// The camera keys and the edge scroll (spec §11.9).
+    pub cam_keys: crate::colony::CameraKeys,
     /// The sounds the screen started since the window last took them (re/screens/audio.md §6.2).
     pub sounds: Vec<SoundId>,
     /// The units' voice lines (`ColonySpeaker.Play(line, kind)`: selection, move, attack), played by the window with the sounds.
@@ -246,6 +286,9 @@ pub struct ColonyUi {
     volt_harc: bool,
     /// `UpdateRain`'s frames due, in hundredths (60 a second: see [`ColonyUi::thunder`]).
     rain_frames: u32,
+    /// `ColonyPlanetInfoMod` (spec §12): the planet's long info with its select menus (the starmap's code on the
+    /// colony's planet), `None` while off.
+    pub info: Option<crate::starmap_menus::Menus>,
 }
 
 impl Default for ColonyUi {
@@ -270,11 +313,13 @@ impl Default for ColonyUi {
             glide: None,
             spin: 0.0,
             war: Default::default(),
+            cam_keys: Default::default(),
             sounds: Vec::new(),
             voices: Vec::new(),
             rand: Rand(1),
             volt_harc: false,
             rain_frames: 0,
+            info: None,
         }
     }
 }
@@ -342,6 +387,17 @@ impl ColonyUi {
 
     /// The enabled hot-spot under `p` (virtual pixels), per `Colony_MouseInit2` (ELF 0x4e1d90).
     fn spot(&self, c: &Ctx, p: [f32; 2]) -> Option<u32> {
+        // In the info mode `Off_Range(1, 0x14)`: 4 stays, 10 keeps its own test, 0x15..=0x1e only on EN's planet.
+        if self.info.is_some() {
+            let en = c.owner_is_en();
+            let base = SPOTS.iter().filter(|(id, r)| inside(*r, p) && match id {
+                4 => true,
+                10 => crate::colony_war::self_destruct_ready(&c.war()),
+                _ => false,
+            });
+            let info = INFO_SPOTS.iter().filter(|(id, r)| inside(*r, p) && (en || *id >= 0x1f));
+            return base.chain(info).map(|&(id, _)| id).min();
+        }
         let own = c.own();
         let sel = c.building(self.selected).filter(|b| own && b.flags & 0x10 == 0);
         SPOTS.iter().find(|(id, r)| {
@@ -350,9 +406,100 @@ impl ColonyUi {
                     1 => sel.is_some_and(|b| b.damage > 0),
                     2 | 0x11 => sel.is_some(),
                     6 => own,
+                    8 => c.snap.self_destruct != -1 && c.owner_is_en(),
+                    9 => c.snap.self_destruct != -1,
+                    10 => crate::colony_war::self_destruct_ready(&c.war()),
                     _ => true,
                 }
         }).map(|&(id, _)| id)
+    }
+
+    /// `Mouse_Tipus` at `p` (spec §11.10): the hot-spot's own shape (`Mouse_Szoveg_Set`'s last argument: 1 for the
+    /// buttons, 0 for the view, the windows and "Build"), over the view `Colony_MouseInit2`'s rule, and 7 over "Build"
+    /// (hot-spot 0x13) while an air strike is armed [original quirk: not over the view].
+    pub fn cursor(&self, c: &Ctx, p: [f32; 2]) -> i32 {
+        let w = c.war();
+        let war_button = (c.snap.war_flag && self.war.button(&w, p).is_some()).then_some(1);
+        let spot = self.spot(c, p);
+        let mut k = war_button.unwrap_or(match spot {
+            Some(0x13 | 0x14 | 9 | 0x1f) | None => 0,
+            Some(_) => 1,
+        });
+        if war_button.is_none() && spot == Some(0x14)
+            && let Some(t) = self.war.cursor(&w, p, self.footprint_under(c).is_some(), self.build_mode)
+        {
+            k = t;
+        }
+        if self.war.armed != 0 && spot == Some(0x13) {
+            k = 7;
+        }
+        k
+    }
+
+    /// `ColonyMouse`'s frame counter for the pointer's animation (`MouseFazis`, one a UI tick).
+    pub fn mouse_phase(&self) -> i32 {
+        self.counter as i32
+    }
+
+    /// `ColonyPlanetInfoMod` toggled (hot-spot 4's left release, the key I; spec §12.1): on, it drops the selection
+    /// and the build cursor.
+    fn toggle_info(&mut self, c: &Ctx) {
+        if self.info.take().is_none() {
+            self.info = Some(crate::starmap_menus::Menus::colony_info(c.snap.planet));
+            self.selected = 0;
+            self.drop_build();
+        }
+    }
+
+    /// The info mode's press (the hot-spots' one-shot `AktIkon2`): a button sends its setting with the click, a menu
+    /// opens (`colSelectX/Y` = pointer + (12, −20)), 0x20 leaves the mode; `true` = taken.
+    fn info_press(&mut self, c: &Ctx, id: u32, p: [f32; 2], out: &mut Outcome) -> bool {
+        let Some(m) = &mut self.info else { return false };
+        m.pointer = p;
+        m.held = true;
+        let kind = match id {
+            0x15 => crate::starmap_menus::MenuKind::Tax,
+            0x19 => crate::starmap_menus::MenuKind::AutoBuild,
+            0x1b => crate::starmap_menus::MenuKind::Priority,
+            0x20 => {
+                self.info = None;
+                return true;
+            }
+            k if info_setting(k).is_some() => {
+                self.sounds.push(CLICK);
+                let (planet, what) = (c.snap.planet as i32, info_setting(k).unwrap_or(0));
+                out.commands.push(Command::Starmap { order: ig2_sim::game::StarmapOrder::Setting { planet, what, value: 0 }.into() });
+                return true;
+            }
+            _ => return id == 0x1f,
+        };
+        m.open_menu(c.state, kind, p);
+        true
+    }
+
+    /// `Colony_Main`'s pass over an open info menu while the button is held: `colSelected` = the item under the
+    /// pointer (the release's own frame doesn't look again, so a move with the release doesn't change the pick).
+    pub(crate) fn menu_frame(&mut self) {
+        if let Some(m) = self.info.as_mut().filter(|m| m.held) {
+            let p = m.pointer;
+            m.hover(p);
+        }
+    }
+
+    /// The info mode's release: an open menu's pick (either button).
+    fn info_release(&mut self, c: &Ctx, out: &mut Outcome) {
+        let Some(m) = &mut self.info else { return };
+        m.held = false;
+        if m.menu.is_some() {
+            let sel = crate::orders::Selection { mode: 1, planet: c.snap.planet, fleet: 0 };
+            for d in m.release_menu(c.state, &sel) {
+                match d {
+                    crate::starmap_menus::Do::Act(crate::starmap_panels::Action::Send(o)) => out.commands.push(Command::Starmap { order: o.into() }),
+                    crate::starmap_menus::Do::Act(crate::starmap_panels::Action::Sound(s)) => self.sounds.push(s),
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// `ColonyRemoveBuilding`: the build cursor goes.
@@ -366,7 +513,7 @@ impl ColonyUi {
         let mut out = Outcome::default();
         let spot = self.spot(c, p);
         // The war's buttons and its view input come first (`Colony_Main`'s 0xb..=0x12, 0x14 in a war).
-        if c.snap.war_flag || !self.war.selected.is_empty() {
+        if c.snap.war_flag || !self.war.selected.is_empty() || crate::colony_war::WarUi::placing(&c.war()) {
             let w = self.war.press(&c.war(), p, left, spot == Some(0x14));
             out.commands = w.commands;
             out.click = w.click;
@@ -380,6 +527,9 @@ impl ColonyUi {
         }
         let Some(id) = spot else { return out };
         self.held = Some(id);
+        if self.info_press(c, id, p, &mut out) {
+            return out;
+        }
         match id {
             1 if left => {
                 self.window = Some(Confirm::Repair);
@@ -403,6 +553,12 @@ impl ColonyUi {
                 self.hover_picker(c, p);
             }
             0x13 if left => self.start_build(c, &mut out),
+            // `Colony_Main`: 300 calls the self-destruct off, 0x27 starts it (again at 399 while it runs).
+            8 | 10 if left => {
+                self.sounds.push(CLICK);
+                let planet = c.snap.planet as i32;
+                out.commands.push(if id == 8 { ColonyOrder::SelfDestructOff { planet } } else { ColonyOrder::SelfDestruct { planet } }.into());
+            }
             0x14 => {
                 out.pan = left && !self.build_mode && !c.snap.war_flag;
                 self.view_press(c, left, &mut out);
@@ -414,6 +570,10 @@ impl ColonyUi {
 
     /// The pointer moved to `p` with a button held (the frame's `Colony_Main` pass while captured).
     pub fn drag(&mut self, c: &Ctx, p: [f32; 2]) {
+        // The info menus' item follows the pointer once a frame (`menu_frame`), not on the move.
+        if let Some(m) = &mut self.info {
+            m.pointer = p;
+        }
         if self.held == Some(0x14) && self.war.drag(&c.war(), p) {
             self.selected = 0;
         }
@@ -429,6 +589,11 @@ impl ColonyUi {
         let mut out = Outcome::default();
         let held = self.held.take();
         let w = self.war.release(&c.war(), left, self.spot(c, p) == Some(0x14));
+        if self.info.is_some() && held != Some(4) {
+            out.commands = w.commands;
+            self.info_release(c, &mut out);
+            return out;
+        }
         out.commands = w.commands;
         self.voices.extend(w.voice);
         // `ColonyGfx2D_3`: with the left button up an open window takes its answer and shuts.
@@ -465,6 +630,7 @@ impl ColonyUi {
             }
             // Hot-spot 4 (the short info) released with the right button: the starmap; not while the war runs here.
             Some(4) if !left && !c.snap.war_flag && self.spot(c, p) == Some(4) => out.starmap = true,
+            Some(4) if left && self.spot(c, p) == Some(4) => self.toggle_info(c),
             _ => {}
         }
         out
@@ -490,6 +656,7 @@ impl ColonyUi {
                 self.selected = 0;
             }
             Key::Prev | Key::Next if !c.snap.war_flag => out.colony = next_planet(c, k == Key::Next),
+            Key::Info => self.toggle_info(c),
             Key::War(wk) => {
                 let w = self.war.key(&c.war(), wk);
                 out.commands = w.commands;
@@ -581,17 +748,21 @@ impl ColonyUi {
     /// [deviation: the original picks the model hit by the click]; defence posts (kinds 0x20..=0x23, finished)
     /// select their turrets instead and give 0.
     fn building_under(&self, c: &Ctx) -> usize {
-        let Some((gx, gy)) = self.cell else { return 0 };
-        let hit = c.snap.buildings.iter().find(|b| {
-            let (w, h) = c.rules.building_footprints.get(b.kind as usize).copied().unwrap_or((0, 0));
-            let (x, y) = (b.x as i32, b.y as i32);
-            gx >= x - w / 2 && gx < x + w / 2 + w % 2 && gy >= y - h / 2 - h % 2 && gy < y + h / 2
-        });
-        match hit {
+        match self.footprint_under(c) {
             Some(b) if (0x20..0x24).contains(&b.kind) && b.work_left == 0 => 0,
             Some(b) => b.slot,
             None => 0,
         }
+    }
+
+    /// The building whose footprint holds the pointer's cell (`selectedepulet` [deviation: the model hit]).
+    fn footprint_under<'a>(&self, c: &'a Ctx) -> Option<&'a crate::colony::BuildingView> {
+        let (gx, gy) = self.cell?;
+        c.snap.buildings.iter().find(|b| {
+            let (w, h) = c.rules.building_footprints.get(b.kind as usize).copied().unwrap_or((0, 0));
+            let (x, y) = (b.x as i32, b.y as i32);
+            gx >= x - w / 2 && gx < x + w / 2 + w % 2 && gy >= y - h / 2 - h % 2 && gy < y + h / 2
+        })
     }
 
     /// `colony_start_build` (ELF 0x4dcbb0): with the cursor on a free spot, 0x1f for the kind at the spot.
@@ -667,6 +838,7 @@ impl ColonyUi {
     /// glide; and the selection kept on a building that still stands.
     pub fn ui_frame(&mut self, s: &ColonySnap, en: i32, cam: &mut crate::colony::Camera) {
         self.war.ui_frame(&crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false });
+        self.menu_frame();
         self.counter += 1.0;
         self.ambient(s.surface);
         self.thunder(s.weather);
@@ -705,6 +877,9 @@ impl ColonyUi {
             marks: self.war.marks(&crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false }),
             ghost: self.ghost.filter(|_| self.build_mode),
             selection: (self.selected > 0).then_some((self.selected, self.sel_size, self.sel_alpha)),
+            // `ColonyGfx2D_1`: the landing zone while the planet isn't EN's and a unit of any side waits on board
+            // (`CheckPlacing(−1)` false; spec §11.7).
+            landing: s.owner as i32 != en && !s.to_land.is_empty(),
         }
     }
 
@@ -790,6 +965,8 @@ pub(crate) fn hp_stripe(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f3
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Priority,
+    /// I: the planet info mode (spec §12.1).
+    Info,
     Demolish,
     Prev,
     Next,
@@ -840,6 +1017,39 @@ pub struct PanelBuilding {
 pub const PANEL_VIEW: [f32; 4] = [18.0, 36.0, 174.0, 168.0];
 const PANEL_CENTRE: [f32; 2] = [95.0, 101.0];
 
+/// `ShowColony`'s second `Update3D` (the panel's pass): camera space → clip over the virtual 640 × 480 with the
+/// centre at (95, 101): `vx = 600·x/w + 95`, `vy = 600·y/w + 101`; depth over `clip`; lit by `light5x`.
+pub fn panel_pass(size: [f32; 2], clip: (f32, f32), draws: Vec<MeshDraw>, dynamic: Vec<MeshVertex>) -> (Frame, (u32, u32)) {
+    let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
+    let (cx, cy) = (PANEL_CENTRE[0], PANEL_CENTRE[1]);
+    let (near, far) = clip;
+    let (a, b) = (1.0 / (1.0 / near - 1.0 / far) / near, 1.0 / (1.0 / near - 1.0 / far));
+    let rows4 = [[1200.0 / 640.0, 0.0, -(cx - 320.0) / 320.0, 0.0], [0.0, -1200.0 / 480.0, -(1.0 - 2.0 * cy / 480.0), 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
+    let rows4 = wide.rows(rows4);
+    let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
+    // `light5x` from (10, 10, −10) with the h axis flipped for the file normals, as the view's (colony.rs).
+    let light = scene::normalise([-1.0, 1.0, -1.0]);
+    let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
+    f.scene = Some(Scene3d {
+        gamma: true,
+        shadow: None,
+        uniforms: SceneUniforms {
+            view,
+            eye: [0.0; 4],
+            light: [light[0], light[1], light[2], 0.0],
+            // `mainmeshid2`'s ambient 0x404040 and parallel light `light5x` 0xffffff (`Init3dColony`;
+            // `SetEnvironment` only recolours `light2`).
+            ambient: [0.251, 0.251, 0.251, 0.0],
+            sun: [1.0, 1.0, 1.0, 0.0],
+            fog: [0.0; 4],
+            fog_range: [1e9, 2e9, 0.0, 1e9],
+        },
+        draws,
+        dynamic,
+    });
+    (f, wide.px)
+}
+
 impl PanelBuilding {
     fn texture(&mut self, r: &mut Renderer, install: &Install, path: Option<&str>) -> TexId {
         let white = *self.white.get_or_insert_with(|| r.add_texture(&crate::assets::Image::white()));
@@ -853,8 +1063,27 @@ impl PanelBuilding {
     }
 
     /// Render kind `kind` into a texture of the window's size; the caller draws [`PANEL_VIEW`] of it.
-    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, spin: f32, size: [f32; 2]) -> Option<TexId> {
-        if !self.models.contains_key(&kind) {
+    /// `unit`: the hull and colour of the unit to land, shown instead (`AktEpuletTipus < −9`: `LoadBox(TankAlap[hull])`
+    /// at scale 2.0, the first sub-mesh's texture `tankok/<hull><colour>.bmp`; spec §11.7).
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>, spin: f32, size: [f32; 2]) -> Option<TexId> {
+        // Units are kept under keys past the building kinds.
+        let key = unit.map_or(kind, |(h, c)| 1000 + h * 16 + c as usize);
+        if let (Some((hull, colour)), false) = (unit, self.models.contains_key(&key)) {
+            let loaded = rules.unit_models.hulls.get(hull).and_then(|h| {
+                let (vdir, tdir) = crate::colony::model_dirs(h.dir);
+                Model::load(install, vdir, &h.name, tdir).map_err(|e| eprintln!("ig2-client: hull {hull}: {e}")).ok()
+            });
+            let loaded = loaded.map(|m| {
+                let skin = ["kerekes", "kozep", "lebeg", "lanc", "aknarak"].get(hull).and_then(|n| install.resolve_texture("textures/colony/", &format!("tankok/{n}{colour}.bmp")));
+                let first = m.parts.first().map(|p| p.path.split('/').nth(1).unwrap_or("").to_owned()).unwrap_or_default();
+                let paths: Vec<Option<String>> = m.parts.iter().map(|p| if p.path.split('/').nth(1) == Some(first.as_str()) && skin.is_some() { skin.clone() } else { p.texture.clone() }).collect();
+                let texs = paths.into_iter().map(|t| self.texture(r, install, t.as_deref())).collect();
+                (m, texs)
+            });
+            self.models.insert(key, loaded);
+        }
+        if unit.is_none() && !self.models.contains_key(&kind) {
             let loaded = rules.building_models.get(kind).filter(|b| !b.preview.is_empty()).and_then(|b| {
                 Model::load(install, "vector/colony/", &b.preview, "textures/colony/").map_err(|e| eprintln!("ig2-client: preview {kind}: {e}")).ok()
             });
@@ -866,9 +1095,10 @@ impl PanelBuilding {
             });
             self.models.insert(kind, loaded);
         }
-        let (model, texs) = self.models.get(&kind)?.as_ref()?.clone();
-        // `local_e0 = Building+0x54` (1.5 at most below `OptionsBuildingRes` 2, the remaster runs the highest), ×3/2.
-        let s = rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 3.0 / 2.0;
+        let (model, texs) = self.models.get(&key)?.as_ref()?.clone();
+        // `local_e0 = Building+0x54` (1.5 at most below `OptionsBuildingRes` 2, the remaster runs the highest), ×3/2;
+        // a unit 2.0.
+        let s = if unit.is_some() { 2.0 } else { rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 3.0 / 2.0 };
         let tilt = scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], -0.3), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
         let turn = scene::axis_matrix([0.0, (-0.3f32).cos(), (-0.3f32).sin()], 0.012 * spin);
         let m: M3 = scene::mul(&scene::mul(&turn, &tilt), &Placement::add_to_scene(model.origin, s).matrix).map(|x| x * 1024.0);
@@ -887,35 +1117,7 @@ impl PanelBuilding {
             }
             draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
-        let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
-        let px = wide.px;
-        // Camera space → clip over the virtual 640 × 480 with the centre at (95, 101): vx = 600·x/w + 95.
-        let (cx, cy) = (PANEL_CENTRE[0], PANEL_CENTRE[1]);
-        let (near, far) = (20000.0f32, 40000.0f32);
-        let (a, b) = (1.0 / (1.0 / near - 1.0 / far) / near, 1.0 / (1.0 / near - 1.0 / far));
-        let rows4 = [[1200.0 / 640.0, 0.0, -(cx - 320.0) / 320.0, 0.0], [0.0, -1200.0 / 480.0, -(1.0 - 2.0 * cy / 480.0), 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
-        let rows4 = wide.rows(rows4);
-        let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
-        // `light5x` from (10, 10, −10) with the h axis flipped for the file normals, as the view's (colony.rs).
-        let light = scene::normalise([-1.0, 1.0, -1.0]);
-        let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
-        f.scene = Some(Scene3d {
-            gamma: true,
-            shadow: None,
-            uniforms: SceneUniforms {
-                view,
-                eye: [0.0; 4],
-                light: [light[0], light[1], light[2], 0.0],
-                // `mainmeshid2`'s ambient 0x404040 and parallel light `light5x` 0xffffff (`Init3dColony`;
-                // `SetEnvironment` only recolours `light2`).
-                ambient: [0.251, 0.251, 0.251, 0.0],
-                sun: [1.0, 1.0, 1.0, 0.0],
-                fog: [0.0; 4],
-                fog_range: [1e9, 2e9, 0.0, 1e9],
-            },
-            draws,
-            dynamic,
-        });
+        let (f, px) = panel_pass(size, (20000.0, 40000.0), draws, dynamic);
         let target = match &mut self.target {
             Some(t) if t.size == px => t,
             _ => self.target.insert(r.target(px)),
@@ -1133,6 +1335,43 @@ mod tests {
         }
         w.pump();
         assert_eq!(w.colony_curr.as_ref().unwrap().buildings.len(), before);
+    }
+
+    /// The planet info mode on quick-1.sav's planet 42 as the sound-id trace of `tools/trace/scripts/colony-info.json`
+    /// saw it (2026-10-23, spec §12): on silently, tax + sends `0x19(42, 2, 0)` with the click on the press, the tax
+    /// menu's pick of item 3 sends `0x19(42, 8, 3)` with the click on the release, a press on the screen leaves the mode.
+    #[test]
+    fn the_info_mode_sends_the_settings() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let texts = crate::ui::UiTexts::load(&install);
+        let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        w.show_colony(Some(42));
+        let names = |t: usize| crate::hud::tech_name(&texts, t);
+        let snap = w.colony_curr.clone().unwrap();
+        let mut ui = ColonyUi::enter(&snap, true, &w.game.state);
+        let c = Ctx { state: &w.game.state, snap: &snap, rules: &tables, sim: &rules, texts: &texts, tech_name: &names };
+        let setting = |what, value| Command::Starmap { order: ig2_sim::game::StarmapOrder::Setting { planet: 42, what, value }.into() };
+        ui.sounds.clear();
+        ui.press(&c, [80.0, 450.0], true, 0);
+        ui.release(&c, [80.0, 450.0], true, 30);
+        assert!(ui.info.is_some() && ui.selected == 0 && ui.sounds.is_empty());
+        let out = ui.press(&c, [578.0, 297.0], true, 100);
+        assert_eq!((out.commands, std::mem::take(&mut ui.sounds)), (vec![setting(2, 0)], vec![CLICK]));
+        assert!(ui.release(&c, [578.0, 297.0], true, 130).commands.is_empty());
+        ui.press(&c, [450.0, 297.0], true, 200);
+        ui.drag(&c, [500.0, 322.0]);
+        ui.menu_frame();
+        // The release's pointer back on the hot-spot (a script's release) keeps the pick.
+        let out = ui.release(&c, [450.0, 297.0], true, 300);
+        assert_eq!((out.commands, std::mem::take(&mut ui.sounds)), (vec![setting(8, 3)], vec![CLICK]));
+        ui.press(&c, [100.0, 200.0], true, 400);
+        assert!(ui.info.is_none());
     }
 
     #[test]

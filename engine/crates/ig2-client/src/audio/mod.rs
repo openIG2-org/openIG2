@@ -250,6 +250,9 @@ pub struct Audio {
     speak_rand: Rand,
     /// `MessagesHang` (exe 0x91a6e8) as `PlayMessagesHang` left it.
     pub message: MessageSpeech,
+    /// `HangLejatszasID` (exe 0x912a44): the new campaign's start voice (its channel; `None` inside = none played)
+    /// while it ducks the music.
+    start_voice: Option<Option<usize>>,
 }
 
 /// The message speech's state (re/screens/audio.md §5): `PlayMessagesHang`'s start (`SDL_GetTicks` at exe 0x91a800,
@@ -298,6 +301,7 @@ impl Audio {
             sound_volume: opts.int("Sound Volume").unwrap_or(100).clamp(0, 100),
             music_volume: opts.int("Music Volume").unwrap_or(100).clamp(0, 100),
             music: MusicState::default(),
+            start_voice: None,
             ui: 0,
             log: Vec::new(),
             voice_log: Vec::new(),
@@ -378,6 +382,26 @@ impl Audio {
         }
     }
 
+    /// The tail of `Starmap_Belep` (exe 0x5b19a0, ELF 0x6f27bc) on a new campaign (`HangLejatszasKell` = the campaign
+    /// type 1..3): `HangLejatszasID = PlayWav("SOUNDS/START/faj%dstart.WAV", 0)`, the music ducked to `M·60/100`.
+    pub fn play_start_voice(&mut self, campaign: i32) {
+        if !self.sound {
+            return;
+        }
+        self.start_voice = Some(self.play_wav(&format!("SOUNDS/START/faj{campaign}start.WAV")));
+        self.music.duck = self.music_volume * 60 / 100;
+    }
+
+    /// `UpdateFrame` (exe 0x4e3e90): the start voice's ducking ends once it no longer plays, or on a screen past 0xd
+    /// (the message speech's ducking is `Messages_Kilep`'s).
+    pub fn start_voice_frame(&mut self, past_options: bool) {
+        let Some(ch) = self.start_voice else { return };
+        if past_options || ch.is_none_or(|ch| !self.playing(ch)) {
+            self.start_voice = None;
+            self.music.duck = 0;
+        }
+    }
+
     /// `GlobalMusicVolumeCsokkento` (exe 0xe4166c): the music's duck target, 0 = none.
     pub fn set_duck(&mut self, duck: i32) {
         self.music.duck = duck;
@@ -427,6 +451,34 @@ impl Audio {
         });
         m.set_volume(ch, volume);
         m.play(ch, &chunk, 0);
+    }
+
+    /// `SoundEngine::Duplicate(&rec.handle, &h)` then `Play(h, 4)` (the battle's weapon loops, spacewar.md §6.8.3): the
+    /// record's sound looped on a channel of its own, silent until [`Audio::set_channel_volume`].
+    pub fn start_loop(&mut self, id: SoundId) -> Option<usize> {
+        if !self.sound {
+            return None;
+        }
+        if !self.records.contains_key(&id) {
+            let chunk = self.load(id);
+            self.records.insert(id, Voices { chunk, channels: [None; 3] });
+        }
+        let chunk = self.records.get(&id)?.chunk.clone()?;
+        let mixer = self.mixer.clone()?;
+        let mut m = mixer.lock().ok()?;
+        let ch = m.alloc_free();
+        m.set_volume(ch, 0);
+        m.play(ch, &chunk, -1);
+        Some(ch)
+    }
+
+    /// `SoundEngine::SetVolume(h, ConvertVolume(v))`.
+    pub fn set_channel_volume(&mut self, channel: usize, v: i32) {
+        if let Some(m) = &self.mixer
+            && let Ok(mut m) = m.lock()
+        {
+            m.set_volume(channel, mixer_volume(convert_volume(v as f64)));
+        }
     }
 
     /// Write `volume` into the record (`Hang +0x110 = v`): later plays use it.

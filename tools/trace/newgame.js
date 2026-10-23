@@ -8,7 +8,9 @@
 // mode 1 + LoadScenario(file, 0)), dumped and saved around it the same way. `mp` set: the multiplayer galaxy as the
 // host's FRISSIT_Start (exe 0x5bc590) starts it, with the lobby (Start_Init 0x5bfbf0's defaults) emulated by writes:
 // MultiPlayerMode 1, ProgramPlayers2 = ProgramPlayers = 8, the humans, races, live AI empires and planet count, then
-// InitNewGame(seed, 2, 0, 1) (spec new-game.md §0; the lobby's own state writes are listed there). The intro video (st_ShowAnim) is skipped. Addresses are image VAs, rebased at runtime. Output holds game state
+// InitNewGame(seed, 2, 0, 1) (spec new-game.md §0; the lobby's own state writes are listed there). `skirmish` set: the
+// skirmish menu's SetScirmishGameOptions(en, ais, randomId, tech, planets, money, difficulty, population) (exe 0x503e80
+// → InitNewGame(SDL_GetTicks(), 3, 0, Nehezseg); its seeds come from tools/trace/scenario_seeds.py). The intro video (st_ShowAnim) is skipped. Addresses are image VAs, rebased at runtime. Output holds game state
 // derived from the user's install: keep it under _local/.
 'use strict';
 
@@ -17,20 +19,21 @@ const mod = Process.getModuleByName('ig2.exe');
 const va = (x) => mod.base.add(x - IMAGE_BASE);
 
 const A = {
-  Fake_FRISSITES: va(0x4de720), Betolt_Scenario: va(0x4f5ba0), CampaignGameStart: va(0x4f5e90), InitNewGame: va(0x4e1130), LoadSave: va(0x543c80),
+  Fake_FRISSITES: va(0x4de720), SetScirmishGameOptions: va(0x503e80), Betolt_Scenario: va(0x4f5ba0), CampaignGameStart: va(0x4f5e90), InitNewGame: va(0x4e1130), LoadSave: va(0x543c80),
   ReadRegistry: va(0x51b3b0), SaveRegistry: va(0x51b860), GetParam: va(0x53e4c0), ShowAnim: va(0x602bb0),
   DebugSeed: va(0xb7725c), FajStart: va(0xbbb17c), FajSzetnyilas: va(0xbbb16c), FajRace: va(0xbbb178), FajNehezseg: va(0xbbb180),
   Ido: va(0xbae04c),
 };
 const DATA = 0x8de000, DATA_LEN = 0x7924e4;
 
-const cfg = { startAfterFrames: 1200, campaign: 1, difficulty: 2, seed: 4242, slot: 97, registry: 'none', storyline: null, storymap: null, scenario: null, mp: null };
+const cfg = { startAfterFrames: 1200, campaign: 1, difficulty: 2, seed: 4242, slot: 97, registry: 'none', storyline: null, storymap: null, scenario: null, mp: null, skirmish: null };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 const nf = (p, r, a) => new NativeFunction(p, r, a, { abi: 'mscdecl', traps: 'all' });
 const loadSave = nf(A.LoadSave, 'void', ['int', 'pointer', 'int']);
 const betolt = nf(A.Betolt_Scenario, 'void', ['pointer']);
 const initNewGame = nf(A.InitNewGame, 'void', ['int', 'int', 'int', 'int']);
+const setSkirmish = nf(A.SetScirmishGameOptions, 'void', ['int', 'int', 'int', 'int', 'int', 'int', 'int', 'int']);
 
 function dump(tag) {
   send({ type: 'dump', tag }, va(DATA).readByteArray(DATA_LEN));
@@ -106,6 +109,17 @@ Interceptor.attach(A.Fake_FRISSITES, {
       for (let i = 1; i <= 18; i++) w8(0xbae574 + i, { 15: 1, 16: 3, 17: 1, 18: 1 }[i] ?? i);
       for (const [i, r] of Object.entries(mp.races || {})) w8(0xbae574 + Number(i), r);
       initNewGame(mp.seed, 2, 0, 1);
+      dump('post');
+      loadSave(cfg.slot, Memory.allocAnsiString('NewGame'), 2);
+      send({ type: 'save', slot: cfg.slot, log, ido: A.Ido.readS32() });
+      send({ type: 'done' });
+      return;
+    }
+    if (cfg.skirmish) {
+      saved = true;
+      const s = cfg.skirmish;
+      dump('pre');
+      setSkirmish(s.en, s.ais, s.randomId ?? 0, s.tech, s.planets, s.money, s.difficulty, s.population);
       dump('post');
       loadSave(cfg.slot, Memory.allocAnsiString('NewGame'), 2);
       send({ type: 'save', slot: cfg.slot, log, ido: A.Ido.readS32() });

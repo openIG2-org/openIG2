@@ -760,6 +760,15 @@ overlay) except 2.15 at 70 ms (the exe's logo fade starts a few ms later; under 
 (key down+up closes at the next frame; a button down alone doesn't). Message clips: unit-tested, not capture-compared (no
 save with an inbox message). Spec `video.md`; deviations #75-#82.
 
+## 2026-10-23, video (message clips)
+In-screen clips (`run_video.py --open NAME`, `OpenBink(NAME, 0, 201, 204, 1)` over the main menu; client `--screen
+video:NAME --video-at 201,204 [--video-loop]`), the clip rect only (the exe's cursor masked): `misc/race_01_loop`
+looping at 800x600, t 2/1002/3002/6002/12002 ms: mean 1.33-1.36, match; `misc/end_1` once, t 2/1502: 1.56/0.56;
+`misc/race_05_wait` looping at 1280x720, t 1002/4002: the clip at 461,306 498x282 in both (the 4:3 viewport's
+placement, §3), the same frame, mean ~1.9 (`ig2-screendiff`'s 640x480 regions don't map onto that rect in 16:9:
+measured by hand). Placement, scale, pacing, looping and colour as the exe; the interlace overlay and the start/wait/end
+switching are the messages screen's (unit-tested, not captured).
+
 ## 2026-10-23, the faders' hover glow (Options, research, design; hud.md §1.2.1)
 
 Options `buttons` 11.2/9.3/9.3/6.5/6.5 at t100/170/250/320/400 (was 6.8-11.2 at t100/170/320): the rest is the random laser sparks, the random shine on other buttons and different random glow styles, not a missing feature. `slots` 21.4/18.2 at t500/t560 = the client's random shine on the slot list (the exe's fell on other faders). Research: as its 2026-10-22 baseline except right_list t340-400 7-14 (client shine). Design: list t80/100 15.5/16.0 (client shine), the rest random shine/glow on other panels. Frida probe `tools/trace/probes/fader.js`: glow starts, 100 ticks each, shine curve and drift bit-exact. Deviations #83-#86.
@@ -778,3 +787,34 @@ Sequence (t: frame / worst region): 60 0.61; 150 2.58 info 7.94; 230 3.15; 300 9
 
 ## 2026-10-23, the Design screen's hull look (`design --script design-pods.json` / `design-edit.json`, exe runs reused; re/screens/design.md §14.3)
 Hull region passes at every grab: pods 1.8-5.7 (was 6.2-6.5), edit 0.9-3.5 (was 5.3-8.3). Remaining differences outside the hull are the exe's random fader flashes and fade timing (unchanged). Deviations #93 and #113 closed. Open finding, not caused by this change: the transfer panel's left_panel 5.17 -> 10.7 (baseline 2026-10-22) is already on main (a build without this change gives 10.69; the panel background is brighter, luma 41.7 -> 51.2). The transfer/fleet panels' vehicle models also go through the re-measure (the colonizer ~1.17x bigger, closer to the exe's height).
+
+## 2026-10-23, colony ground war part 2 (`grwar:17`, `grwar:17 --land`, `colony:42 --self-destruct 380`; quick-1.sav; re/screens/colony.md §11.7–§11.10)
+grwar:17 frame 13.40 (was 13.45), view 8.18 (was 8.28), bottom_info 15.31 (was 14.95: the info model is drawn ~36 px low, deviation 130), texts 4.81, topbar 2.59, radar 9.03, buttons 52.07 (the exe's terrain shadow band, known). grwar:17 --land (new): frame 13.44 (15.67 before), view 8.32, texts 4.69. colony:42 --self-destruct 380 (new option): frame 9.93, view 11.29, the window lines up. The client's grwar capture draws the pointer at the screen centre (`--mouse 320,240`).
+
+## 2026-10-23, the first starmap frame of a new campaign (`World::new_game`; mainscr.md §9.1.1)
+`run_screendiff.py <install> newgame-c1-d2-s4242.sav starmap:66 --client-new-campaign 1,2,4242,96277`: the exe loads
+its own tick-0 save of the start (`run_newgame.py`), the client builds the world from its own campaign start. Frame
+3.10, topbar 0.07, view 3.18 (all match); the client's frame equals the one it draws from the exe's state save pixel
+for pixel (mean 0.00). The capture selects `--planet` (default 42), so the comparison passes the start's own
+`AktPlanet` (66, the human's planet); with 42 only the selection marker and the planet panel differ.
+## 2026-10-23, the Trade screen, part 2 (`trade --script trade-pods.json`, quick-1.sav; re/screens/trade.md §13)
+Best-offset mean per region: info card 0.65-0.85, ships list with the selection frame 0.4-1.9 (rest = the exe's mouse cursor), ticker 1.6-2.4, deliveries 1.8-3.2, panels 1.1-1.2, hull model 4.4-4.9 (scale, position, spin phase and fade match; the faces turned from the light are mid-grey vs near-black, deviations #134). The pod popup's "no free pod" case matches within 1 px; the multi-line pod list and the turn-away on a second offer weren't exercised (quick-1 has one ship offer, without pods). Sounds match (screen19, Click1 x2). Deviation #135.
+## 2026-10-23, the research screen's button lines (`research --script research-lines.json`, quick-1.sav; re/screens/research.md §5.6)
+The script clicks the tanks button (150, 370) at t 320 and the military button (536, 414) at t 620 (PgDn goes the
+other way in the client, deviation #6, so the earlier script's categories part after its first key). Frida probe
+`probes/research_lines.js` (`run_screen.py --probe … --jsonl`): all 706 `ResDrawVonalak` calls of the run (ui 992–1693,
+centres (322, 353), (150, 370), (536, 414)) give the client's `Lines::arrows` bit for bit (p0, p1, colour). Captures
+(screendiff-review): the rings match in place, size, orientation and brightness at t 260, 600 and 760; none in either
+at t 400/450/700 (the ring hidden and flying back in about 80 ticks after the click, as in the exe); at t 150 the
+client has none because it is still opening (one tick behind, deviation #9). The exe draws them over the wheel's
+buttons (no depth occlusion seen). Best-offset means: topbar 0.05–0.06, info_box 0.8–2.5, start_double 2.1–6.0, labs
+0.1–3.8, wheels 2.3–4.6 except t 150 (10.4, the opening) and t 630 (6.1); left_list 11–15.6 at t 150–360 (the exe's
+hover and tooltip under its pointer), right_list 14 at t 360/400/820 (fader shine), ball 13.6–17.3 from t 450 (the
+models' turn), frame 6–7.6 (shine). Sounds: the exe's three (`Res_Hangok[0]`, `[1]` 80 ticks after each click).
+
+
+## 2026-10-23, colony planet info mode (`colony:42 --colony-info`, `--colony-info tax --info-mouse 500,322`; quick-1.sav; re/screens/colony.md §12)
+colony:42 --colony-info: info_panel 5.52, settings 4.28, frame 8.75. --colony-info tax --info-mouse 500,322: info_panel 5.13, settings 3.27, frame 8.58. bottom_info 17.0-17.6 (the planet short info shows with no building selected: its planet picture is not drawn, a gap shared with the starmap's info box, and the exe's fill is brighter, deviation 139). planet_panel 13.07, buttons 10.0, view 6.8 as on the plain screen. Sounds (`scripts/colony-info.json`): the exe's clicks at t 30 (tax +, on the press), 62 (the tax menu's pick, on the release), 80 (ALL), 100 (priority -); messages 0x19 (42,2,0), (42,8,3), (42,6,0), (42,3,0); the client's clicks at the same ticks; on/off silent in both. Deviations 139-143.
+
+## 2026-10-23, MainScr part 2 (`main --script mainscr-race.json | mainscr-scenario.json | mainscr-multi.json`; re/screens/mainscr.md §13.2)
+Best-offset frame mean (pass <= 6). Race: t 610 11.2, 700 13.6, 800 9.5, 905 9.6, 960 10.0, 1010-1250 8.2-9.3, 1350 9.0, 1420 19.7, 1480 10.8, 1550 11.0, 1610 16.0, 1650 38.4, 1700 72.8, 1750 10.1, 1800 0.86 (heads, race boxes, blurb match; ring frame flatter, blurb 2-4 chars behind, exit mid-zoom lighting). Scenario: static t 700 4.6, 760 5.2, 950 4.3, 1120-1350 4.6-4.8 (pass); transitions 820-880 8.6-11.4, 1050 9.1, 1420-1600 7.8-11.1 (picture slide a few ticks off); sounds: 3 arrow clicks at the exe's ticks. Multi: t 400-510 6.1-6.7, 530-650 ~10.5-11 (the exe keeps the name box ~150 ticks after Enter), 700-800 7.1-9.5. Deviations 145-152.

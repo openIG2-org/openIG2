@@ -873,7 +873,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
         view.camera = crate::colony::Camera { x, y, zoom, pitch, rotate, ..view.camera };
     } else if o.colony_live {
         // The colony screen's own globals, saved as chunks (re/formats/save.md §4: `ColonyXStart/YStart/Rotate/Pitch/Zoom`).
-        let f = |n: &str| l.save.chunk(n).and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()));
+        let f = |n: &str| crate::save_f32(l.save.as_ref(), n);
         view.camera = crate::colony::Camera { x: f("ColonyXStart"), y: f("ColonyYStart"), zoom: f("ColonyZoom"), pitch: f("ColonyPitch"), rotate: f("ColonyRotate"), ..view.camera };
     }
     let t = curr.tick as f32 * 0.05 + o.alpha * 0.05;
@@ -916,18 +916,47 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
                 cursor = [250.0, 440.0];
             }
             m if m.starts_with("war") => {}
-            m => return Err(format!("--colony-ui {m}: pick, demolish, build or war[:N]")),
+            // The planet info mode (colony.md §12), with `:KIND` its menu opened by a press on the hot-spot's centre.
+            m if m == "info" || m.starts_with("info:") => {
+                ui.key(&c, crate::colony_ui::Key::Info);
+                if let Some(kind) = m.strip_prefix("info:") {
+                    let at = match kind {
+                        "tax" => [450.0, 297.0],
+                        "autobuild" => [450.0, 319.0],
+                        "priority" => [450.0, 341.0],
+                        k => return Err(format!("--colony-ui info:{k}: tax, autobuild or priority")),
+                    };
+                    ui.press(&c, at, true, 0);
+                    cursor = at;
+                    if let Some(m) = o.mouse {
+                        ui.drag(&c, m);
+                        ui.menu_frame();
+                    }
+                }
+            }
+            m => return Err(format!("--colony-ui {m}: pick, demolish, build, war[:N] or info[:KIND]")),
         }
     }
     view.overlay = ui.overlay(&curr, world.game.state.mem.i32(ig2_sim::save::va::EN));
     if let Some(gm) = l.rules.ground_maps.get(curr.map) {
         ui.war.project(&view, gm, &curr);
     }
+    // `--mouse X,Y`: the game's pointer there (colony.md §11.10).
+    if let Some(m) = o.mouse {
+        cursor = m;
+        if let Some(gm) = l.rules.ground_maps.get(curr.map) {
+            let px = [m[0] * o.size.0 as f32 / 640.0, m[1] * o.size.1 as f32 / 480.0];
+            ui.cell = crate::colony_ui::cell_under(&view, gm, px);
+            ui.war.pointer(ui.cell);
+        }
+    }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut panel_model = crate::colony_ui::PanelBuilding::default();
-    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, ui.spin(), size);
+    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr), ui.spin(), size);
+    let en = world.game.state.mem.i32(ig2_sim::save::va::EN);
+    let info_model = ui.war.info_model(&crate::colony_war::WarCtx { snap: &curr, en, tutorial_paused: false }).and_then(|(u, turn)| scene.render_info_model(r, &l.install, &l.tables.unit_models, u, turn, size));
     let mut frame = view.build(r, &l.install, &l.tables, &l.rules.ground_maps, &mut scene, &prev, &curr, o.alpha, t);
-    let input = crate::ui::ColonyInput { ui: &ui, sim: &l.rules, panel, cursor, now_ms, time: t };
+    let input = crate::ui::ColonyInput { ui: &ui, sim: &l.rules, panel, cursor, pointer: o.mouse.is_some(), info_model, now_ms, time: t };
     hud.draw_colony(&mut frame, &world.game.state, &l.tables, &l.rules.ground_maps, &view, &scene, &curr, &input);
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Colony, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
@@ -994,7 +1023,7 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
     let t = world.curr.tick as f32 * 0.05;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-    hud.draw_research(&mut frame, &mut s, &infos, &tips, state, &l.tables, (tex, models.glow), lines, size, t);
+    hud.draw_research(&mut frame, &mut s, &infos, &tips, state, &l.tables, (tex, models.glow, models.arrow), lines, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
@@ -1167,6 +1196,9 @@ fn trade_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, 
     let state = &world.game.state;
     let advance = hud.font.as_ref().map_or(6.0, |f| f.advance(2));
     let mut s = crate::trade::Trade::open(state, true, 2, crate::trade::ticker_lines(&hud.texts), advance);
+    if let Some([m, c, n]) = o.dkm {
+        s.list_frame = crate::kit::DesignFrame::with_phase(m, c, n);
+    }
     s.hold_open();
     if let Some(m) = o.mouse {
         s.moved(m);
@@ -1180,8 +1212,8 @@ fn trade_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, 
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-    scene.draw(&mut frame, r, &l.install, &s, size);
-    hud.draw_trade(&mut frame, &s, state, &tips, size, t);
+    scene.draw(&mut frame, r, &l.install, &l.tables, &s, size);
+    hud.draw_trade(&mut frame, &s, state, &l.tables, &tips, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Trade, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
@@ -1203,6 +1235,9 @@ fn trade_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     }
     let advance = hud.font.as_ref().map_or(6.0, |f| f.advance(2));
     let mut s = crate::trade::Trade::open(&world.game.state, true, 2, crate::trade::ticker_lines(&hud.texts), advance);
+    if let Some([m, c, n]) = o.dkm {
+        s.list_frame = crate::kit::DesignFrame::with_phase(m, c, n);
+    }
     s.tip.moved([320.0, 240.0]);
     let tips = crate::trade::tips(&hud.texts);
     let mut scene = crate::trade_scene::TradeScene::new(r);
@@ -1224,8 +1259,8 @@ fn trade_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scr
         }
         if script.grabs.contains(&tick) {
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-            scene.draw(&mut frame, r, &l.install, &s, size);
-            hud.draw_trade(&mut frame, &s, &world.game.state, &tips, size, t);
+            scene.draw(&mut frame, r, &l.install, &l.tables, &s, size);
+            hud.draw_trade(&mut frame, &s, &world.game.state, &l.tables, &tips, size, t);
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Trade, t);
             let rgba = r.draw_to_image(&frame, o.size, t);
             let path = crate::script::grab_path(out, tick);
@@ -1279,7 +1314,7 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
         if script.grabs.contains(&tick) {
             let (tex, lines) = models.render(r, &l.install, &l.tables, &s, &world.game.state, size);
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-            hud.draw_research(&mut frame, &mut s, &infos, &tips, &world.game.state, &l.tables, (tex, models.glow), lines, size, t);
+            hud.draw_research(&mut frame, &mut s, &infos, &tips, &world.game.state, &l.tables, (tex, models.glow, models.arrow), lines, size, t);
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
             let rgba = r.draw_to_image(&frame, o.size, t);
             let path = crate::script::grab_path(out, tick);
@@ -1369,7 +1404,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         return crate::options::snapshot(o, out);
     }
     let l = crate::load(o)?;
-    let mut world = crate::world::World::load(&l.save, &l.rules, &l.tech_defaults, &l.volatile);
+    let mut world = crate::start_world(o, &l.install, l.save.as_ref(), &l.rules, &l.tech_defaults, &l.volatile)?;
     world.set_speed(o.speed);
     world.show_colony(o.colony);
     for _ in 0..o.ticks {

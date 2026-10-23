@@ -1,6 +1,6 @@
 //! A new campaign (`ig2_sim::game::new_game`, spec `re/rules/new-game.md`) against ig2.exe: tools/trace/run_newgame.py
 //! starts campaigns in the GOG exe the way the race menu does (and scenarios the way the scenario menu does,
-//! `--scenario`, their seeds recovered by `tools/trace/scenario_seeds.py`) and saves at tick 0 (`_local/traces/newgame/` or
+//! `--scenario`; skirmishes the way the skirmish menu does, `--skirmish`; their seeds recovered by `tools/trace/scenario_seeds.py`) and saves at tick 0 (`_local/traces/newgame/` or
 //! `IG2_TRACE_DIR/newgame/`: `newgame-*.sav` + `.json` with the seed, the srand seeds and the config/registry reads); the
 //! port starts the same campaign and must write the same save, chunk by chunk. Traces hold game state, so they stay
 //! in `_local/`; the rule tables come from the user's exe. The test skips without them.
@@ -16,7 +16,7 @@ use ig2_formats::save::SaveGame;
 use ig2_formats::strings::{KeyedStrings, UiStrings};
 use ig2_formats::text::{self, Lang};
 use ig2_formats::{dialogue, Install};
-use ig2_sim::game::new_game::{NewCampaign, NewMpGalaxy, NewScenario, StartData};
+use ig2_sim::game::new_game::{NewCampaign, NewMpGalaxy, NewScenario, NewSkirmish, StartData};
 use ig2_sim::ai::AiEvent;
 use ig2_sim::game::{Fresh, Game, GameEvent};
 use ig2_sim::save::group_chunks;
@@ -182,9 +182,22 @@ fn new_campaign_matches_the_exe() {
                 }, |r| r as u8)
             }).collect(),
         });
-        match (&scenario, &mp) {
-            (Some(sc), _) => g.start_scenario(sc, &data),
-            (_, Some(mp)) => g.start_mp_galaxy(mp, &data),
+        let skirmish = j["skirmish"].as_object().map(|s| NewSkirmish {
+            en: int(&s["en"]),
+            ais: int(&s["ais"]),
+            random_id: s.get("randomId").map_or(0, int),
+            tech: int(&s["tech"]),
+            planets: int(&s["planets"]),
+            money: int(&s["money"]),
+            difficulty: int(&s["difficulty"]),
+            population: int(&s["population"]),
+            seed: j["seeds"]["seed"].as_u64().unwrap() as u32,
+            ticks: j["seeds"]["ticks"].as_u64().unwrap() as u32,
+        });
+        match (&scenario, &mp, &skirmish) {
+            (Some(sc), _, _) => g.start_scenario(sc, &data),
+            (_, Some(mp), _) => g.start_mp_galaxy(mp, &data),
+            (_, _, Some(sk)) => g.start_skirmish(sk, &data),
             _ => g.start_campaign(&cfg(), &data),
         }
         // The AI's design names (`DesignPoenosanElnevez`, localised tables the port doesn't render): the exe's.

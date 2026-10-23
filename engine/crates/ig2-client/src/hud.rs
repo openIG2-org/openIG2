@@ -41,6 +41,27 @@ impl Pictures {
         Self { loaded }
     }
 
+    /// A picture by file name (`DDBrushToScreen3d_last("MOUSE.BMP", …)` names its own), kept under `key`.
+    pub fn load_named(&mut self, r: &mut Renderer, install: &Install, key: i32, name: &str) {
+        let path = format!("dataraw/screen/{}.pvr", name.to_ascii_lowercase().replace('.', "_"));
+        match Image::load(install, &path) {
+            Ok(img) => {
+                let size = [img.width as f32, img.height as f32];
+                self.loaded.insert(key, (r.add_texture(&img), size));
+            }
+            Err(e) => eprintln!("ig2-client: {e}"),
+        }
+    }
+
+    /// The source rectangle `src` (x, y, w, h pixels) of picture `key` at virtual `at`, alpha-blended.
+    pub fn blit(&self, f: &mut Frame, v: &Virtual, key: i32, src: [f32; 4], at: [f32; 2]) {
+        let Some(&(tex, [tw, th])) = self.loaded.get(&key) else { return };
+        let [sx, sy, w, h] = src;
+        let mut i = Instance::new(kind::SPRITE, v.px(at[0] + w / 2.0, at[1] + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [1.0; 4]);
+        i.uv = [sx / tw, sy / th, w / tw, h / th];
+        f.push(tex, Blend::GammaAlpha, i);
+    }
+
     /// `BrushToScreenMelyikXY(b, n, at)` → `DDBrushToScreen3d` (§1): frame `n` (1-based) of the brush at `at` (else
     /// its own place), `|w| × |h|` virtual pixels, alpha-blended; a negative size reads the source at 2×.
     pub fn brush(&self, f: &mut Frame, v: &Virtual, b: &Brush, n: i32, at: Option<[f32; 2]>, tint: [f32; 4]) {
@@ -145,6 +166,10 @@ pub struct ColonyHud {
     pub view: Option<[[f32; 2]; 4]>,
     /// The planet panel's turning building, rendered over the whole virtual screen (`crate::colony_ui::PanelBuilding`).
     pub panel_model: Option<TexId>,
+    /// While EN has units to land: the first waiting unit's design name (`ColonyGfx2D_3`, colony.md §11.7).
+    pub landing_name: Option<Vec<u8>>,
+    /// The planet info mode (colony.md §12.3): `Some(the planet is EN's)` (its setting rows' boxes).
+    pub info: Option<bool>,
 }
 
 /// The radar square (`DrawRadar` ELF 0x4cb220: `HatarX1..Y2` = 522..621 × 362..461).
@@ -156,6 +181,21 @@ pub const RADAR: [f32; 4] = [522.0, 362.0, 621.0, 461.0];
 pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], brushes: &[Brush], radar: Option<TexId>, c: &ColonyHud) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
     let full = [1.0; 4];
+    // `GFX_Colony` in the planet info mode: the long info's panel, and on EN's planet (at war too) its setting rows'
+    // black boxes (fill transparency 0x9b, frame 0x4b).
+    if let Some(en) = c.info {
+        crate::starmap_hud::fader(f, white, v, [319.0, 33.0, 302.0, 326.0]);
+        for r in 0..3 {
+            let y = (288 + 22 * r) as f32;
+            let mut boxes = vec![[399.0, y, 102.0, 18.0], [505.0, y, 32.0, 18.0]];
+            if r != 1 {
+                boxes.extend([[541.0, y, 22.0, 18.0], [567.0, y, 22.0, 18.0]]);
+            }
+            for b in boxes.into_iter().filter(|_| en) {
+                crate::kit::fader::fader(f, white, v, b, [0.0; 3], 155.0, [0.0; 3], 75.0);
+            }
+        }
+    }
     // `KirakFader`s behind the bottom-left info; the two over the surplus line only with it (EN's planet, not at war).
     for r in [[6.0, 403.0, 77.0, 17.0], [89.0, 403.0, 77.0, 17.0], [5.0, 423.0, 162.0, 52.0]] {
         if c.own || r[1] > 410.0 {
@@ -212,7 +252,7 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
     }
     // `ColonyGfx2D_3`: the planet panel over the second 3D view of the build menu's building (a dark viewport,
     // 18..173 × 36..167 [obs], with `buildshown` turning in it), and its name and costs.
-    let own_panel = c.own && brushes.len() > 12;
+    let own_panel = (c.own || c.landing_name.is_some()) && brushes.len() > 12;
     if own_panel {
         f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(95.5, 101.5), [77.5 * v.k, 65.5 * v.k], [0.02, 0.03, 0.06, 1.0]));
         if let Some(t) = c.panel_model {
@@ -221,6 +261,9 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
     }
     if let Some(b) = brushes.get(12).filter(|_| c.panel) {
         pics.brush(f, v, b, 1, None, full);
+    }
+    if let Some(name) = &c.landing_name {
+        font.text(f, v, name, 44.0, 141.0, 20, 2, Align::Field, col(2), None);
     }
     if let (true, Some((name, price, energy, workers))) = (c.own, &c.build) {
         font.text(f, v, name, 54.0, 141.0, 16, 2, Align::Field, col(0x25), None);

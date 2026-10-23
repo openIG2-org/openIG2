@@ -556,6 +556,8 @@ scale(unit's race, w_k)·1024` (`w_k := −1`). Then `AddUjUrhajo` for each entr
 every live unit of side `e`: heading `= n(−pos)` (`(0, 0, −1)` at the origin) and, with more than one
 waypoint, `nextwaypoint` (§7.2). `pos(c) = ((c₂ − gz/2)·cell_z, (c₀ − gx/2)·cell_x, (c₁ − gy/2)·cell_y)`.
 
+**Formation pick** (`loadfelallas(name)` exe 0x578850 / ELF 0x6a5a60, outside the editor 0xE72DD3): `SpaceWarFrissit2` (exe 0x56d870) calls it with `"felallas<+0x2d88 + 1>"` whenever `+0x2d88 != +0x2d8c` (then `+0x2d8c = +0x2d88`), once the screen is past its first frame and fade-in (`+0x1f98`, `+0x1fb9`); the check is not guarded by the phase flag `+0x2d85`. With entries in the human's list (side `+0xc3c`: pointer `+0x5c`, count `+0x60`; 0x1c-byte entries race, design, owner, ship, colour, unit, experience; `AddFleet` frees every side's list when it starts, so it is the last `AddFleet`'s): `FelallasLoad` (0x566eb0) into `aktfelallas` 0xE72DB8, `felallit(human)`, `aktfelallas` freed. `felallit` kills the entries' units and `AddUjUrhajo` reuses the first dead slots, so the stream-6 draws are each new unit's look and its mounts' timers (§7.10). Verified bit-exact on 29 exe picks (`run_spwc.py --formation N`, `formation_pick_matches_exe`; `spwc-form-1/3`, `spwf-form-2`: units, the list, the ship-type footprints and all 21 streams).
+
 `helykeres(formation, t, race)` (0x573cd0): with `c = c(t)` (§step 4a): for `c < 8` the slot with the smallest
 `w` such that `c ≤ w ≤ 10` (first of equals); for `c = 11` the first slot with `w = 11`; none → −1. The chosen
 slot then closes every slot `j` (itself included) with `w_j ≥ 0` and `tav(pos(chosen), pos(j)) < scale(race,
