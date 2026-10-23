@@ -829,3 +829,23 @@ Window region (390,215,250x90): diff 0.88 / 0.77 / 0.87 at t 400/2000/4000, over
 - Regressed, fixed: tanksinfo exit 3.44 -> 14.87 (741e3e7 drew the exit fader and the tanks box; `StarmapGfx2D_2` sets `StarmapInfoOffHoltart` only for product/transfer/fleet); 27d518e draws only the (445, 380, 176, 30) box, exit back to 3.44.
 - Regressed, open (deviation 209): fleetinfo exit 2.97 -> 6.42, frame 4.70 -> 6.99; not reproducible at any commit from the stored capture; the client's exit plate is darker (luma 40.6 vs 35.1).
 - Not re-run: diplomacy/spy/research held-frame stills with new exe grabs (every still exe grab came back white, 2785-byte PNG, also with the 9ba8997 tools: environment, likely the locked desktop; script runs grab fine); their stored captures were re-compared and held. colony-info.json is sounds-only (5 sounds match). SpaceWar, Help/credits/demo, tutorial overlay: not re-run (help/tutorial have no captures yet).
+
+## M4 widescreen checks (2026-10-23/24)
+`run_screendiff.py <install> quick-1.sav <screen> --size WxH [--letterbox]` (re/screens/widescreen.md §7; captures in
+`_local/screendiff/wide/<size>/`). Sizes 1920 x 1080, 2520 x 1080, 3840 x 2130 (the 4K window, shrunk by Windows on a
+2560 x 1440 desktop), 1280 x 1024, baseline 800 x 600; the 20 still screens, the main menu and Options scripts at 16:9.
+- Every in-frame region equals the 800 x 600 baseline within ~1 grey level; the strips match (3D full width, same
+  camera) except messages/diplomacy/spy (exe luma 26, client 0: an original stale-texture bug, deviation 4, kept black)
+  and the main menu's left strip (texcsor billboard, deviation 214).
+- 1280 x 1024: the band y 32..991 and the bars line up on starmap, colony, research, messages, info.
+- `--letterbox`: the client's strips exactly black, the frame unchanged (starmap, colony, research, messages).
+- Wire lines now 1 output pixel (the exe's at every size): 4K research ball 12.94 -> 6.28, diplomacy left/right heads
+  9.34/8.15 -> 2.36/2.01, research/design strips 0.70/0.60 -> 0.14/0.11; 800 x 600 research ball 11.32 -> 10.29,
+  diplomacy right_heads 7.48 -> 5.73, design top_panel 17.49 -> 16.66, hull 3.78 -> 3.43; trade model 0.14 -> 0.58
+  (match). The client's 1-px lines are still a little dimmer than the exe's (a quad across pixel edges against GL's
+  aliased lines).
+- Not compared against the exe: SpaceWar (run_spwc.py has no --size; the client at 16:9 fills the strips, HUD in the
+  frame); Help, credits, demo and the tutorial overlay (no capture entry yet).
+
+## 2026-10-24, Help screen (`help --script scripts/help.json`, quick-1.sav; re/screens/help.md §9)
+Rest, clicks, subtopic, drag and close match: text 1.8–3.4, topics 3.0–4.9. Leftovers: the harness draws the exe pointer/tooltip a frame late (t200/240 topics 14, text 12–16), a one-tick input offset mid-drag (t370 text 19.7), the exit box's random shine (t382/410/495 exit 11–19). The opening is not compared (the exe's `Help_Belep` FRISSITES every 10 bytes stalls the scripted clock ~85 ticks; `probes/help.js` verified +2/tick on a real clock). Deviations 200-206.

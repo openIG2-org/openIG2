@@ -1752,7 +1752,8 @@ enum Ink<'a> {
 /// A part as a wireframe (`wirekirak` ELF 0x6083f0: the triangle edges its mask keeps), projected to lines; `cull`
 /// keeps only the triangles facing the camera (the engine's back-face test, re/screens/spy.md §2.2). Edges crossing
 /// the camera plane are clipped to it [obs: the opening's wire sphere passes the camera, its near cells cross the
-/// screen].
+/// screen]. The engine draws them as GL lines one output pixel wide at every window size [obs: 1 px at 800 × 600,
+/// 1920 × 1080 and 3840 × 2130, re/screens/widescreen.md §6].
 fn wire(out: &mut Vec<Instance>, v: &Virtual, p: &scene::Part, m: &M3, at: V3, ink: Ink, cull: bool) {
     for (ti, tri) in p.verts.chunks_exact(3).enumerate() {
         let mask = p.edges.get(ti).copied().unwrap_or(7);
@@ -1778,7 +1779,7 @@ fn wire(out: &mut Vec<Instance>, v: &Virtual, p: &scene::Part, m: &M3, at: V3, i
                     Ink::Lit(..) => [(ends[i][0] + ends[j][0]) / 2.0, (ends[i][1] + ends[j][1]) / 2.0, (ends[i][2] + ends[j][2]) / 2.0, 1.0],
                 };
                 if let Some((a, b)) = clip_near(w[i], w[j]) {
-                    out.push(Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), c));
+                    out.push(Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), 1.0, c));
                 }
             }
         }

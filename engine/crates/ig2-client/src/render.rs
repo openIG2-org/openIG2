@@ -1403,6 +1403,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if o.screen.as_deref() == Some("options") {
         return crate::options::snapshot(o, out);
     }
+    if o.screen.as_deref() == Some("help") {
+        return crate::help::snapshot(o, out);
+    }
     let l = crate::load(o)?;
     let mut world = crate::start_world(o, &l.install, l.save.as_ref(), &l.rules, &l.tech_defaults, &l.volatile)?;
     world.set_speed(o.speed);

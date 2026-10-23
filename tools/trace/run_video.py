@@ -33,6 +33,8 @@ ap.add_argument("--seconds", type=int, default=120)
 ap.add_argument("--real", action="store_true", help="keep the real clock (grabs at the first swap past T)")
 ap.add_argument("--open", help="a video played in the screen (the message clips) instead of the title")
 ap.add_argument("--at", default="201,204", help="--open's position in the 640x480 virtual space")
+ap.add_argument("--full", action="store_true", help="--open plays fullscreen (`OpenBink(NAME, 1, 0, 0, 1)`, the credits)")
+ap.add_argument("--probe", help="a JS file appended to video.js (its send()s go to the log's events)")
 ap.add_argument("--once", action="store_true", help="--open plays once (the end clips) instead of looping")
 ap.add_argument("--after", type=int, default=120, help="--open's frame (Fake_FRISSITES calls) after the start")
 ap.add_argument("--step", type=int, default=0, help="also move the clock N ms a swap")
@@ -86,13 +88,17 @@ pid = device.spawn([os.path.join(a.install, "ig2.exe")], cwd=a.install)
 session = device.attach(pid)
 here = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(here, "video.js"), encoding="utf-8") as f:
-    script = session.create_script(f.read())
+    src = f.read()
+if a.probe:
+    with open(a.probe, encoding="utf-8") as f:
+        src += "\n" + f.read()
+script = session.create_script(src)
 script.on("message", on)
 script.load()
 opened = None
 if a.open:
     x, y = (int(v) for v in a.at.split(","))
-    opened = {"name": a.open, "fullscreen": 0, "x": x, "y": y, "force": 1, "loop": 0 if a.once else 1, "after": a.after}
+    opened = {"name": a.open, "fullscreen": 1 if a.full else 0, "x": x, "y": y, "force": 1, "loop": 0 if a.once else 1, "after": a.after}
 script.post({"type": "config", "payload": {"grabs": grabs, "input": inputs, "step": a.step, "real": a.real, "open": opened}})
 device.resume(pid)
 t0 = time.time()

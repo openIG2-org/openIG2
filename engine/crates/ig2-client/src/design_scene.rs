@@ -232,11 +232,11 @@ impl DesignScene {
         // The sphere is the far background: under the solid models.
         for (a, b, c) in grid {
             if let (Some(pa), Some(pb)) = (project(a), project(b)) {
-                f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), vv.k.max(1.0), c));
+                f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), 1.0, c));
             }
         }
         // The boxes' edges go into the depth-tested pass (the hull hides the parts inside it [obs]).
-        edge_quads(&boxes, self.white, &mut dynamic, &mut draws);
+        edge_quads(&boxes, 1.0 / vv.k, self.white, &mut dynamic, &mut draws);
         if dynamic.is_empty() {
             return;
         }
@@ -295,9 +295,10 @@ impl DesignScene {
     }
 }
 
-/// Lit wireframe edges as camera-facing quads one 640×480 pixel wide (`600·half/−z` = 0.5), depth-tested with the
-/// solid models, in their vertex colours.
-fn edge_quads(edges: &[(V3, V3, [f32; 4])], tex: TexId, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+/// Lit wireframe edges as camera-facing quads one output pixel wide (`px` virtual pixels; `600·half/−z` = px/2: the
+/// engine's GL lines, 1 px at every window size, re/screens/widescreen.md §6), depth-tested with the solid models, in
+/// their vertex colours.
+fn edge_quads(edges: &[(V3, V3, [f32; 4])], px: f32, tex: TexId, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     if edges.is_empty() {
         return;
     }
@@ -316,7 +317,7 @@ fn edge_quads(edges: &[(V3, V3, [f32; 4])], tex: TexId, out: &mut Vec<MeshVertex
             continue;
         }
         let n = [-dy / len, dx / len];
-        let off = |p: V3, w: f32, s: f32| [p[0] + n[0] * 0.5 / 600.0 * w * s, p[1] + n[1] * 0.5 / 600.0 * w * s, p[2]];
+        let off = |p: V3, w: f32, s: f32| [p[0] + n[0] * 0.5 * px / 600.0 * w * s, p[1] + n[1] * 0.5 * px / 600.0 * w * s, p[2]];
         let q = [off(a, wa, -1.0), off(a, wa, 1.0), off(b, wb, 1.0), off(b, wb, -1.0)];
         for i in [0, 1, 2, 0, 2, 3] {
             out.push(MeshVertex { pos: q[i], normal: [0.0, 0.0, 1.0], uv: [0.5, 0.5], color: c });

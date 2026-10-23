@@ -674,6 +674,15 @@ function hookScript() {
     if (e.press) {
       scriptEvents.push({ t: e.t, mouse: e.press, quiet: true }, { t: e.t, down: e.button || 1, at: e.press });
       scriptEvents.push({ t: e.t + (e.hold || 3), up: e.button || 1, at: e.press });
+    } else if (e.drag) {
+      // As the client's script: down at the first point, a step a tick along the line, up at the second `hold` later.
+      const [a, b] = e.drag, hold = Math.max(1, e.hold || 3), btn = e.button || 1;
+      scriptEvents.push({ t: e.t, mouse: a, quiet: true }, { t: e.t, down: btn, at: a });
+      for (let k = 1; k < hold; k++) {
+        const f = k / hold;
+        scriptEvents.push({ t: e.t + k, mouse: [Math.round(a[0] + (b[0] - a[0]) * f), Math.round(a[1] + (b[1] - a[1]) * f)] });
+      }
+      scriptEvents.push({ t: e.t + hold, mouse: b, quiet: true }, { t: e.t + hold, up: btn, at: b });
     } else if (e.key) {
       scriptEvents.push({ t: e.t, keydown: e.key }, { t: e.t + (e.hold || 3), keyup: e.key });
     } else {

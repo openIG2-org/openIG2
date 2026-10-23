@@ -3,6 +3,7 @@
 //! out each frame when the wall clock reaches it, as the remaster's `videoentity` does; its sound goes through the
 //! audio module's mixer (`Audio::play_video`) and does not time the picture.
 
+pub mod credits;
 pub mod decode;
 pub mod message;
 pub mod playback;

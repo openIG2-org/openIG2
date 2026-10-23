@@ -1,0 +1,15 @@
+{
+ "screen": "help",
+ "note": "The Help screen over the game (re/screens/help.md). ig2.exe's Help_Belep calls FRISSITES every 10 bytes of helpmain.txt, which in the scripted clock holds the first drawn frame back about 85 ticks: the opening (helpframe +2 a tick, checked with probes/help.js) is not compared here, the input starts once both are open. The pointer over the second topic (hover colour); a press on it (Starmap: its subtopics, its text from the top); a press on its fourth subtopic (the text jumps to that line); a drag down the scroll track (the thumb runs, the text follows); Esc (the screen closes, helpframe -2.6 a tick).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 200, "mouse": [60, 78]},
+  {"t": 230, "press": [60, 78]},
+  {"t": 290, "press": [60, 138]},
+  {"t": 360, "drag": [[620, 100], [620, 300]], "hold": 20},
+  {"t": 420, "mouse": [320, 240]},
+  {"t": 480, "key": "escape"}
+ ],
+ "grabs": [200, 240, 300, 370, 382, 410, 470, 495, 515],
+ "tail": 20
+}

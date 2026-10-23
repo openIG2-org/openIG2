@@ -6,6 +6,7 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ab_glyph = "0.2.32"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 cpal = "0.16"
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }

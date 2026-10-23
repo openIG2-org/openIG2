@@ -213,6 +213,9 @@ struct App {
     spacewar: Option<crate::spacewar_live::Live>,
     /// The Options screen while it is up (re/screens/options.md), over the main menu (load only) or the game.
     options: Option<OptionsUp>,
+    help: Option<HelpUp>,
+    /// `OldTopicSel` and the line table across visits.
+    help_memory: crate::help::Memory,
     /// What Options needs to start and to load a slot: its rows (from the user's exe), the settings file, the
     /// save's companions.
     opt_rows: Vec<crate::options::Row>,
@@ -237,6 +240,14 @@ struct App {
 }
 
 /// The Options screen up: its state, its 10 ms UI clock, the lasers' glow, and `OptionsOldIdoPause`.
+/// The Help screen up (`AktKep` 1, re/screens/help.md) over whatever screen F1 came from, which comes back after.
+struct HelpUp {
+    s: crate::help::HelpScreen,
+    ui_ms: u32,
+    glow: Option<crate::render::TexId>,
+    pics: crate::help::Pictures,
+}
+
 struct OptionsUp {
     s: crate::options::OptionsScreen,
     ui_ms: u32,
@@ -494,6 +505,8 @@ impl App {
             headless: None,
             spacewar: None,
             options: None,
+            help: None,
+            help_memory: Default::default(),
             opt_rows: Vec::new(),
             settings: ig2_formats::options::Options::load(),
             rules,
@@ -538,6 +551,7 @@ impl App {
             && self.design.is_none()
             && self.spacewar.is_none()
             && self.options.is_none()
+            && self.help.is_none()
     }
 
     /// The colony screen is up with nothing over it (`AktKep == 3`).
@@ -551,6 +565,7 @@ impl App {
             && self.design.is_none()
             && self.spacewar.is_none()
             && self.options.is_none()
+            && self.help.is_none()
     }
 
     fn audio_frame(&mut self, due_ui: u64) {
@@ -1661,6 +1676,64 @@ impl App {
         }
     }
 
+    /// F1: `Help_Belep` over the screen that is up (`HelpElottiScreen`), opening animated; the game time stands until
+    /// it is gone (`IdoPauseMertAtlepesAlattVan`).
+    fn open_help(&mut self) {
+        if self.help.is_some() || self.front.is_some() || self.options.is_some() || self.spacewar.is_some() {
+            return;
+        }
+        let Some(font) = self.hud.as_ref().and_then(|h| h.font.as_ref()) else { return };
+        let (index, read) = crate::help::install_files(&self.install);
+        let s = crate::help::HelpScreen::enter(&index, read, &self.help_memory, true, crate::help::char_y(font));
+        let glow = self.gpu.as_mut().and_then(|g| {
+            self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(&self.install, &p).ok()).map(|img| g.renderer.add_texture(&img))
+        });
+        self.help = Some(HelpUp { s, ui_ms: self.now_ms(), glow, pics: Default::default() });
+    }
+
+    /// A game frame while Help is up: its UI ticks (no game ticks), black behind it (`Copy3hatterkep(0x35)`), the
+    /// screen and the top bar; once it has closed, back to the screen before with the game clock restarted.
+    fn help_game_frame(&mut self) {
+        let now = self.now_ms();
+        let due_ui = (now as u64 / 10).saturating_sub(self.ui_frames).min(50);
+        self.ui_frames = now as u64 / 10;
+        for _ in 0..due_ui {
+            self.audio.tick();
+        }
+        self.audio.frame(human_race(&self.world.game.state));
+        let Some(h) = &mut self.help else { return };
+        while now >= h.ui_ms + 10 {
+            h.ui_ms += 10;
+            h.s.tick();
+        }
+        let (Some(g), Some(hud)) = (&mut self.gpu, &mut self.hud) else { return };
+        h.pics.load(&mut g.renderer, &self.install, &h.s.text.pics);
+        let (bw, bh) = g.band();
+        let size = [bw as f32, bh as f32];
+        let t = now as f32 / 1000.0;
+        let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
+        if let Some(font) = &hud.font {
+            let d = crate::help::Draw { font, white: hud.white, glow: h.glow.unwrap_or(hud.white), v: crate::font::Virtual::new(size), palette: &hud.palette, texts: &hud.texts, pics: &h.pics, now_ms: self.start.elapsed().as_secs_f64() * 1000.0 };
+            h.s.draw(&mut frame, &d, crate::help::char_y(font));
+        }
+        hud.paused = self.world.paused();
+        hud.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Help, t);
+        let done = h.s.done().is_some();
+        if let Ok(out) = g.surface.get_current_texture() {
+            g.present(frame, &out.texture, t);
+            g.window.pre_present_notify();
+            out.present();
+        } else {
+            self.reconfigure();
+        }
+        if done {
+            if let Some(h) = self.help.take() {
+                self.help_memory = h.s.memory();
+            }
+            self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
+        }
+    }
+
     /// A game frame while Options is up: its ticks, the sound clock, black behind it (`Copy3hatterkep(0x35)`'s
     /// picture is black in the captures), the screen and the top bar.
     fn options_game_frame(&mut self) {
@@ -1697,12 +1770,12 @@ impl App {
     /// `ExitToMainScreen` (exe 0x5117f0), then `AktKepKell = 0xF`: `MainScr_Belep` (the rings fly in again, the menu
     /// music). The world stays as it is until the next game replaces it.
     fn tutorial_owns_input(&self) -> bool {
-        self.options.is_none() && self.tutorial.as_ref().is_some_and(|t| t.owns_input(akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some())))
+        self.options.is_none() && self.tutorial.as_ref().is_some_and(|t| t.owns_input(akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some())))
     }
 
     fn tutorial_inputs(&self) -> crate::tutorial_ui::Inputs {
         let counter = self.tutorial.as_ref().map_or(0, |t| t.counter);
-        crate::tutorial_ui::Inputs { screen: akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some()), counter, ..Default::default() }.counts(&self.world.game.state)
+        crate::tutorial_ui::Inputs { screen: akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some()), counter, ..Default::default() }.counts(&self.world.game.state)
     }
 
     /// `TutorialSetCampaignGameOptions` has made the game; `TutorialStart("main", n)` (exe 0x611f80).
@@ -1722,7 +1795,7 @@ impl App {
     /// One UI tick of the tutorial: the recorded input (`Mouse_Tutorial_Kezel`, `ReadNext`) goes to the screens, an
     /// event the game raised resumes the script, then `TutorialFrissit` and its effects.
     fn tutorial_tick(&mut self) {
-        let kep = akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some());
+        let kep = akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some());
         let replay = if self.options.is_some() { None } else { self.tutorial.as_mut().and_then(|t| t.replay_step(kep)) };
         match replay {
             Some(r) => self.tutorial_replay(r),
@@ -2226,7 +2299,7 @@ impl App {
             return;
         };
         let Some(g) = &mut self.gpu else { return };
-        v.frame(&mut g.renderer, &self.install, now as u64);
+        v.frame(&mut g.renderer, &self.install, now as u64, g.config.height);
         let win = [g.config.width as f32, g.config.height as f32];
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         v.draw(&mut frame, win, &crate::font::Virtual::new(win));
@@ -2335,7 +2408,7 @@ impl App {
         }
         h.clip = None;
         if let Some(p) = &mut self.head.playback {
-            p.frame(renderer, &self.install, now as u64);
+            p.frame(renderer, &self.install, now as u64, size.1);
             let win = [size.0 as f32, size.1 as f32];
             h.clip = p.quad(win, &crate::font::Virtual::new(win));
         }
@@ -2355,6 +2428,10 @@ impl App {
         }
         if self.options.is_some() {
             self.options_game_frame();
+            return;
+        }
+        if self.help.is_some() {
+            self.help_game_frame();
             return;
         }
         let now = self.now_ms();
@@ -2750,7 +2827,7 @@ impl App {
             // `GFX_DateMoneyScrollFade`'s fader pass 3 and `Update3D`'s `TutorialSzovegFrissit`: the window over the
             // screen; the pointer the recording moves (`UpdateFrame`).
             if let Some(tu) = &self.tutorial {
-                let kep = akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some());
+                let kep = akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some());
                 h.draw_tutorial(&mut frame, tu, size, kep);
                 if tu.owns_input(kep) && self.tutorial_kind >= 0 {
                     h.draw_pointer(&mut frame, size, self.tutorial_at, self.tutorial_kind);
@@ -2789,6 +2866,7 @@ fn akt_kep(overlay: Option<crate::ui::Screen>, colony: bool, spacewar: bool) -> 
     use crate::ui::Screen as S;
     match overlay {
         _ if spacewar => 11,
+        Some(S::Help) => 1,
         Some(S::Research) => 4,
         Some(S::Design) => 5,
         Some(S::Diplomacy) => 6,
@@ -2886,6 +2964,31 @@ impl ApplicationHandler for App {
                     } else {
                         v.release();
                     }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } if self.help.is_some() => {
+                let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
+                let (bw, bh) = self.gpu.as_ref().map_or((640, 480), |g| g.band());
+                let at = crate::font::Virtual::new([bw as f32, bh as f32]).virtual_of([position.x as f32, position.y as f32 - top]);
+                if let Some(h) = &mut self.help {
+                    h.s.hover(at);
+                }
+            }
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.help.is_some() => {
+                if let Some(h) = &mut self.help {
+                    if state == ElementState::Pressed {
+                        let at = h.s.at;
+                        h.s.press(at);
+                    } else {
+                        h.s.release();
+                    }
+                }
+            }
+            WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.help.is_some() => {}
+            // Esc is the exit hot-spot (`MainCallBackEventHandler` on `AktKep` 1); F1 does nothing there.
+            WindowEvent::KeyboardInput { event, .. } if self.help.is_some() => {
+                if let (ElementState::Pressed, Key::Named(NamedKey::Escape), Some(h)) = (event.state, event.logical_key.as_ref(), &mut self.help) {
+                    h.s.escape();
                 }
             }
             WindowEvent::CursorMoved { position, .. } if self.options.is_some() => {
@@ -3299,6 +3402,8 @@ impl App {
     /// A key went down; true = quit.
     fn key(&mut self, key: Key<&str>) -> bool {
         match key {
+            // `DoKeyboard`: F1 asks for `AktKep` 1, the Help screen (re/screens/help.md §1).
+            Key::Named(NamedKey::F1) => self.open_help(),
             // `DoKeyboard`: F2 asks for the starmap (the closing runs, `Design_Kilep`); F5 on the screen asks for itself.
             // Esc in the viewing mode goes to the options screen at once (`AktKep` 0xd, no closing).
             Key::Named(NamedKey::F2) if self.overlay == Some(crate::ui::Screen::Design) => self.toggle_design(),

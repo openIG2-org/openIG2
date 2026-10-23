@@ -13,7 +13,7 @@ Updated 2026-10-23.
 - [x] Colony war part 2: landing clicks, landing zone and shadows, unit picture, self-destruct window, cursors, camera keys
 - [x] Colony: the planet info mode
 - [x] SpaceWar: formation re-placement (sim, deviation 137; `Battle::pick_formation`, 29 exe picks bit-exact)
-- [ ] SpaceWar: the rest of spec §9.7 (planet stations' models dev 144, the info view, zoom names dev 138, uncaptured effects)
+- [x] SpaceWar: the rest of spec §9.7 (station models, info view, zoom names; view diff t100 17.91→2.10, t300 8.32→4.04, t850 18.13→4.89; not accepted: console/radar regions)
 - [x] Design screen: hull look (Destroyer body and windows, tank hulls)
 - [x] Trade part 2: hull model, info card, pod list, return from Options
 - [x] Info/messages: the answers' orders
@@ -23,14 +23,13 @@ Updated 2026-10-23.
 - [x] Game end: victory/defeat flow and videos, high scores (`rules/game-end.md`; the scenario panel's table draw: MainScr part 2)
 
 ## M3: every screen exact
-- [ ] Help (AktKep 1), credits, demo mode
 - [x] Tutorial overlay (the interpreter is done; window accepted, remaining event sites and gate flags: deviations 199-207)
 - [x] U25's rest: battle posts, UI line, untraced ids, inbox expiry (left: the AI's messages to the human in the save replay, diplomacy §11 reason codes)
 - [x] Sweep: re-run every screen's acceptance, close the open states in `re/screens/diff-results.md` (2026-10-24)
 
 ## M4: input and feel
 - [x] Input audit per screen against the keyboard handlers (2026-10-23, `re/screens/input.md`, deviations 158-198)
-- [ ] 16:9, 21:9 and 4K checks
+- [x] 16:9, 21:9 and 4K checks (2026-10-24, `re/screens/widescreen.md` §7: 20 still screens at 1920x1080, 2520x1080, 3840x2130, 1280x1024 clean; wireframe lines fixed to one pixel; open: deviation 214, SpaceWar exe at wide sizes, Help/credits/demo/tutorial, 2D kit lines)
 
 ## M5: multiplayer playable
 - [ ] Lobby and connection screens on top of `ig2_net::session`
@@ -42,5 +41,5 @@ Updated 2026-10-23.
 ## Done
 Simulation (all systems), campaign scripts, tutorial interpreter, campaign, scenario, MP-galaxy and skirmish new game; MainScr part 1, Options,
 screen kit (widescreen rule, faders), starmap panels, colony ground-war UI, SpaceWar parts 1–5 (spec §9.8), Design parts 1–3,
-Trade part 1, audio parts 1–3 and ground-war voices, video playback; MP engine, real-time battles over the
+Trade part 1, audio parts 1–3 and ground-war voices, video playback, Help, credits text, demo mode (unreachable in the GOG exe); MP engine, real-time battles over the
 network, session layer, rejoin admission, keep-alive, host migration; U16, U19, U25 scripts' messages.

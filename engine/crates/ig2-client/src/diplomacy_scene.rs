@@ -326,7 +326,7 @@ impl DiplomacyScene {
         let line = |f: &mut Frame, list: Vec<(V3, V3, [f32; 4])>| {
             for (a, b, c) in list {
                 if let (Some(pa), Some(pb)) = (project(a, self.yc), project(b, self.yc)) {
-                    f.push(self.white, Blend::Alpha, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), vv.k.max(1.0), c));
+                    f.push(self.white, Blend::Alpha, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), 1.0, c));
                 }
             }
         };

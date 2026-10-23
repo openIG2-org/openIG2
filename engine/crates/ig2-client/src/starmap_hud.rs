@@ -390,7 +390,6 @@ impl StarmapHud {
     #[allow(clippy::too_many_arguments)]
     /// The fader behind the short info is `starf`'s `radar` (`fd`).
     pub fn draw(&self, f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], info: &InfoBox, mini: &Minimap, time: f32, fd: &crate::kit::FaderDesign, radar: usize) {
-        let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
         if let Some(c) = &self.console {
             c.draw(f, v);
         }
@@ -399,16 +398,37 @@ impl StarmapHud {
         // window is dark in the captures]).
         crate::starmap_panels::starf(f, white, v, [5.0, 423.0, 162.0, 52.0], fd, radar);
         f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(271.0 + 49.0, 385.0 + 35.5), [49.0 * v.k, 35.5 * v.k], fade_color([0.0; 3], 1.0 - 0x40 as f32 / 255.0)));
-        for &(b, n, x, y) in &info.brushes {
-            if let Some(b) = brushes.get(b) {
-                pics.brush(f, v, b, n, Some([x, y]), [1.0; 4]);
-            }
+        short_info(f, font, v, palette, pics, brushes, info, 1.0, 0.0);
+        minimap(f, white, v, palette, mini, time, 0.0);
+    }
+}
+
+/// `StarmapRovidInfoKiir`'s brushes and lines; the text colour times `mult` (`KiirStrSzinSzorzo`/100: the battle
+/// screen's `(1 − spacewarelfade)·100`) and the tanks/production buttons (brush 9) `buttons_dy` lower (the battle's
+/// `spacewarelfade·400`; re/screens/spacewar.md §5.2).
+#[allow(clippy::too_many_arguments)]
+pub fn short_info(f: &mut Frame, font: &Font, v: &Virtual, palette: &[[f32; 3]], pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], info: &InfoBox, mult: f32, buttons_dy: f32) {
+    let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
+    for &(b, n, x, y) in &info.brushes {
+        let y = if b == 9 { (y + buttons_dy) as i32 as f32 } else { y };
+        if let Some(b) = brushes.get(b) {
+            pics.brush(f, v, b, n, Some([x, y]), [1.0; 4]);
         }
-        for (s, x, y, size, c) in &info.lines {
-            font.text(f, v, s, *x, *y, 0x13, *size, Align::Left, col(*c), None);
-        }
-        // `GFX_StarmapRadar`: fleets as 2 × 1 dots, then planets 2 × 2, the selected one blinking; the view's
-        // outline in colour 1, clipped to the window.
+    }
+    for (s, x, y, size, c) in &info.lines {
+        font.text(f, v, s, *x, *y, 0x13, *size, Align::Left, col(*c).map(|x| x * mult), None);
+    }
+}
+
+/// `GFX_StarmapRadar` (ELF 0x70e490): fleets as 2 × 1 dots, then planets 2 × 2, the selected one blinking; the view's
+/// outline in colour 1, clipped to the window. On the battle screen (`spacewarelfade` = `fade` > 0) the galaxy
+/// points are scaled by `fade·8 + 1` and everything is drawn at `(1 − fade)·255` (re/screens/spacewar.md §5.2).
+pub fn minimap(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], mini: &Minimap, time: f32, fade: f32) {
+    {
+        let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
+        let k = fade * 8.0 + 1.0;
+        let opacity = ((1.0 - fade) * 255.0) as i32 as f32 / 255.0;
+        let point = |p: [f32; 2]| minimap_point([p[0] * k, p[1] * k]);
         let inside = |q: [f32; 2]| q[0] > 274.0 && q[0] < 366.0 && q[1] > 388.0 && q[1] < 453.0;
         let dot = |f: &mut Frame, q: [f32; 2], w: f32, h: f32, c: [f32; 3], a: f32| {
             let (x, y) = ((q[0] - 1.0).trunc(), (q[1] - 1.0).trunc());
@@ -416,23 +436,23 @@ impl StarmapHud {
         };
         let blink = crate::hud::blink(time, 100.0);
         for &(p, c, sel) in &mini.fleets {
-            let q = minimap_point(p);
+            let q = point(p);
             if inside(q) {
-                dot(f, q, 2.0, 1.0, col(c), if sel { blink } else { 1.0 });
+                dot(f, q, 2.0, 1.0, col(c), opacity * if sel { blink } else { 1.0 });
             }
         }
         for &(p, c, sel) in &mini.planets {
-            let q = minimap_point(p);
+            let q = point(p);
             if inside(q) {
-                dot(f, q, 2.0, 2.0, col(c), if sel { blink } else { 1.0 });
+                dot(f, q, 2.0, 2.0, col(c), opacity * if sel { blink } else { 1.0 });
             }
         }
-        let corner = |i: usize| mini.view[i].map(minimap_point);
+        let corner = |i: usize| mini.view[i].map(point);
         for (a, b) in [(0, 1), (0, 2), (2, 3), (1, 3)] {
             if let (Some(a), Some(b)) = (corner(a), corner(b)) {
                 if let Some((a, b)) = crate::hud::clip_line(a, b, MINIMAP) {
                     let c = col(1);
-                    f.push(white, Blend::GammaAlpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), [c[0], c[1], c[2], 1.0]));
+                    f.push(white, Blend::GammaAlpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), [c[0], c[1], c[2], opacity]));
                 }
             }
         }

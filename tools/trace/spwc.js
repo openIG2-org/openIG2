@@ -62,7 +62,7 @@ const rnd = (n) => { fz ^= fz << 13; fz >>>= 0; fz ^= fz >>> 17; fz ^= fz << 5; 
 const betolt = new NativeFunction(A.Betolt_Scenario, 'void', ['pointer'], { abi: 'mscdecl', traps: 'all' });
 const setSpeed = new NativeFunction(A.SetIdoSpeed, 'void', ['int', 'int'], { abi: 'mscdecl', traps: 'all' });
 const setPause = new NativeFunction(A.SetIdoPause, 'void', ['int', 'int'], { abi: 'mscdecl', traps: 'all' });
-const indit = new NativeFunction(A.SpaceWarIndit, 'void', ['int', 'int', 'int'], { abi: 'mscdecl', traps: 'all' });
+const indit = new NativeFunction(A.SpaceWarIndit, 'void', ['int', 'int', 'int'], { abi: 'mscdecl', traps: 'all', exceptions: 'propagate' });
 const flottaNew = new NativeFunction(A.FlottaNew, 'int', ['pointer', 'int', 'int', 'float', 'float', 'float'], { abi: 'mscdecl', traps: 'all' });
 const hajoNew = new NativeFunction(A.HajoNew, 'void', ['int', 'int'], { abi: 'mscdecl', traps: 'all' });
 const tankNew = new NativeFunction(A.TankNew, 'void', ['int', 'int', 'int'], { abi: 'mscdecl', traps: 'all' });
@@ -651,6 +651,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
     if (!started && frames === cfg.startAfterFrames) {
       started = true; fz = cfg.seed;
       if (cfg.fuzz) va(0xe72dd2).writeU8(1);   // `asteroidak`: battles get scenery
+      // --watch-addr VA[:N]: the writers of an exe global (a string) across the scenario's load and after.
+      if (cfg.watchAddr) watchWrites(va(cfg.watchAddr.addr), cfg.watchAddr.n || 40, true);
       betolt(Memory.allocAnsiString(cfg.scenario));
       setSpeed(3, 1);
       loadedAt = frames;
@@ -884,7 +886,7 @@ function hookScriptSwap() {
 // --watch T:OFF[:N]: from script tick T a hardware write watchpoint on the battle slot's byte OFF (the main
 // thread's), the first N writers as {k: 'write', pc, ret, t, value} (the caller from the stack's top words).
 let watchOn = false;
-function watchWrites(addr, n) {
+function watchWrites(addr, n, str) {
   watchOn = true;
   const th = Process.enumerateThreads().find((x) => x.id === Process.getCurrentThreadId());
   let left = n;
@@ -893,7 +895,7 @@ function watchWrites(addr, n) {
     if (left-- > 0) {
       const sp = d.context.sp, words = [];
       for (let i = 0; i < 24; i++) { const w = sp.add(4 * i).readPointer(); const m = Process.findModuleByAddress(w); if (m && m.name === 'ig2.exe') words.push('0x' + (w.sub(mod.base).toInt32() + IMAGE_BASE).toString(16)); }
-      emit({ k: 'write', pc: '0x' + (d.context.pc.sub(mod.base).toInt32() + IMAGE_BASE).toString(16), stack: words.slice(0, 6), t: scriptT, value: addr.readFloat() });
+      emit({ k: 'write', pc: '0x' + (d.context.pc.sub(mod.base).toInt32() + IMAGE_BASE).toString(16), stack: words.slice(0, 6), t: scriptT, frame: frames, value: str ? addr.readCString() : addr.readFloat() });
     }
     if (left <= 0) th.unsetHardwareWatchpoint(0);
     return true;

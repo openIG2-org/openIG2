@@ -36,6 +36,8 @@ pub struct Playback {
     stopped: bool,
     /// The title's logo texture (`title.bik` only).
     logo: Option<Option<TexId>>,
+    /// The credits line (`credits.bik` only): the window height it was rendered for and its texture.
+    credits: Option<Option<(u32, TexId, [f32; 2])>>,
     /// The clock of the last update and of the first (the overlay's time base).
     now: u64,
     start: Option<u64>,
@@ -56,16 +58,26 @@ impl Playback {
                 return None;
             }
         };
-        let title = bik.to_ascii_lowercase().contains("title.bik");
-        Some(Self { player, place, tex: None, shown: false, armed: false, stopped: false, logo: title.then_some(None), now: 0, start: None })
+        let lower = bik.to_ascii_lowercase();
+        let (title, credits) = (lower.contains("title.bik"), lower.contains("credits.bik"));
+        Some(Self {
+            player, place, tex: None, shown: false, armed: false, stopped: false, logo: title.then_some(None),
+            credits: credits.then_some(None), now: 0, start: None,
+        })
     }
 
-    /// One drawn frame at `now_ms`: the frame that came due goes to the texture.
-    pub fn frame(&mut self, r: &mut Renderer, install: &ig2_formats::Install, now_ms: u64) {
+    /// One drawn frame at `now_ms` on a window `win_h` pixels high: the frame that came due goes to the texture.
+    pub fn frame(&mut self, r: &mut Renderer, install: &ig2_formats::Install, now_ms: u64, win_h: u32) {
         self.now = now_ms;
         self.start.get_or_insert(now_ms);
         if let Some(None) = self.logo {
             self.logo = Some(Image::load(install, TITLE_LOGO).ok().map(|i| r.add_texture(&i)));
+        }
+        if let Some(c) = &mut self.credits {
+            if c.is_none_or(|(h, _, _)| h != win_h) {
+                let img = super::credits::text(install).and_then(|t| super::credits::render(install, &t, win_h));
+                *c = img.map(|i| (win_h, r.add_texture(&i), [i.width as f32, i.height as f32]));
+            }
         }
         if let Some(img) = self.player.update(now_ms) {
             self.upload(r, &img);
@@ -134,6 +146,14 @@ impl Playback {
                 f.push(logo, Blend::GammaAlpha, Instance::new(kind::SPRITE, at, [size[0] / 2.0, size[1] / 2.0], [a, a, a, 1.0]));
             }
         }
+        if let (Some(Some((_, text, size))), Some(a)) = (self.credits, super::credits::alpha(self.elapsed())) {
+            // The shadow first, black at four fifths of the alpha, 2 px right and down (`(W>>1)+2`, `0.96·H + 2`).
+            let at = [(win[0] as u32 >> 1) as f32, win[1] * 0.96];
+            let half = [size[0] / 2.0, size[1] / 2.0];
+            let sa = super::credits::shadow_alpha(a) as f32 / 255.0;
+            f.push(text, Blend::GammaAlpha, Instance::new(kind::SPRITE, [at[0] + 2.0, at[1] + 2.0], half, [0.0, 0.0, 0.0, sa]));
+            f.push(text, Blend::GammaAlpha, Instance::new(kind::SPRITE, at, half, [1.0, 1.0, 1.0, a as f32 / 255.0]));
+        }
     }
 
     /// A key, mouse button or finger went down (`anyEvent` 0x300/0x401/0x700).
@@ -171,7 +191,7 @@ pub fn snapshot(o: &crate::Options, name: &str, out: &std::path::Path) -> Result
         img = p.player.next_blocking();
     }
     let img = img.ok_or("the clip is shorter")?;
-    p.frame(&mut r, &install, 0);
+    p.frame(&mut r, &install, 0, o.window.1);
     p.now = o.video_ms;
     p.upload(&mut r, &img);
     let win = [o.window.0 as f32, o.window.1 as f32];

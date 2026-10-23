@@ -155,7 +155,14 @@ impl Live {
         v.battle_fade = Some(shown.erosseg);
         let mut frame = v.build(assets, &world.prev, &world.curr, alpha, t);
         let surface = world.curr.planets.iter().find(|p| p.index as i32 == b.planet).map(|p| p.surface);
+        // `StarmapGfx2D_1`'s names while `starmaphideflottak` is clear (e > 0; spec §9.10), under the console.
+        if shown.erosseg > 0.0 {
+            hud.draw_starmap_names(&mut frame, v, assets, &world.prev, &world.curr, alpha, t);
+        }
         crate::spacewar_screen::draw(&mut frame, r, install, gfx, assets, &v.camera, hud, &shown, surface, size);
+        let lv = world.game.local_view();
+        let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
+        hud.draw_battle_starmap(&mut frame, &world.game.state, tables, v, &world.prev, &world.curr, &sel, alpha, t, shown.fade);
         let virt = crate::font::Virtual::new(size);
         if let Some(big) = &shown.big {
             crate::spacewar_hud::big_box(&mut frame, hud, &virt, &shown, big);

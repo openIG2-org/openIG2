@@ -98,6 +98,10 @@ SCREENS = {
     # The lasers' sparks are random (statistically alike). Script only.
     "options": dict(kep=13, script=True, client=["--screen", "options"], regions=[
         TOPBAR, "left_panel=9,62,288,384", "buttons=360,60,262,42", "slots=358,113,269,336"]),
+    # The Help screen (help.md): over the game (black behind, the top bar); it opens over 50 UI ticks with a laser
+    # round the text and topic boxes (sparks random). Script only.
+    "help": dict(kep=1, script=True, client=["--screen", "help"], regions=[
+        TOPBAR, "topics=17,44,139,360", "text=168,44,430,390", "track=608,44,26,392", "exit=22,399,126,30"]),
     "options-load": dict(kep=15, script=True, exe=["--boot", "--run"], client=["--screen", "main"], regions=[
         "left_panel=9,62,288,384", "buttons=360,60,262,42", "slots=358,113,269,336", "background=0,0,640,480"]),
     # The starmap's panels (starmap.md §12–§13): the exe presses the icon itself (run_screen.py --rop); the transfer

@@ -179,12 +179,14 @@ pub struct Camera {
 }
 
 /// A look-at camera in the starmap's world `(h, x, y)` (`CameraRotate` ELF 0x5fcf90: the view rows `c`, `−b`, `−d`
-/// from `CreateMatrix2v`), its eye, and the near plane `zbm · 1.05`.
+/// from `CreateMatrix2v`), its eye, the near plane `zbm · 1.05` and the projection's x centre (`xcenter`, 320; 160 in the
+/// info view: `TransformPoint` adds it to every point of the scene, the starmap's too).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Look {
     pub matrix: [[f32; 3]; 3],
     pub eye: [f32; 3],
     pub near: f32,
+    pub xcenter: f32,
 }
 
 /// `CreateMatrix(α, β, γ)` (ELF 0x451ee0), f32 sines and cosines like the original.
@@ -240,6 +242,10 @@ impl Camera {
     fn distance(&self) -> f32 {
         600.0 - self.zoom
     }
+    /// The projection's centre on the virtual screen.
+    fn center(&self) -> [f32; 2] {
+        [self.look.map_or(CENTER[0], |l| l.xcenter), CENTER[1]]
+    }
     /// Physical pixels per virtual pixel.
     pub fn k(&self) -> f32 {
         self.virt().k
@@ -277,9 +283,10 @@ impl Camera {
         let sx = 2.0 * FOV / VIRTUAL_H * self.size[1] / self.size[0];
         let sy = -2.0 * FOV / VIRTUAL_H;
         let cy = 1.0 - 2.0 * CENTER[1] / VIRTUAL_H;
+        let cx = 2.0 * (self.center()[0] - CENTER[0]) / VIRTUAL_H * self.size[1] / self.size[0];
         let zf = FAR / (FAR - near);
         let rows = [
-            e[0].map(|x| x * sx),
+            std::array::from_fn(|c| e[0][c] * sx + w[c] * cx),
             std::array::from_fn(|c| e[1][c] * sy + w[c] * cy),
             std::array::from_fn(|c| w[c] * zf - if c == 3 { near * zf } else { 0.0 }),
             w,
@@ -308,7 +315,8 @@ impl Camera {
             return None;
         }
         let f = FOV / -e[2];
-        Some((self.phys([e[0] * f + CENTER[0], e[1] * f + CENTER[1]]), f * self.k()))
+        let c = self.center();
+        Some((self.phys([e[0] * f + c[0], e[1] * f + c[1]]), f * self.k()))
     }
 
     pub fn project(&self, p: [f32; 2]) -> Option<([f32; 2], f32)> {
@@ -322,7 +330,8 @@ impl Camera {
     /// The galaxy point (height 0) under the screen point `s`, if the ray meets the galaxy plane.
     pub fn to_world(self, s: [f32; 2]) -> Option<[f32; 2]> {
         let v = self.virt().virtual_f(s);
-        let dir = [(v[0] - CENTER[0]) / FOV, (v[1] - CENTER[1]) / FOV, -1.0];
+        let c = self.center();
+        let dir = [(v[0] - c[0]) / FOV, (v[1] - c[1]) / FOV, -1.0];
         let m = self.matrix();
         // d = Mᵀ·(e + (0, 0, D)): the eye sits at e = 0.
         let back = |e: [f32; 3]| -> [f32; 3] { std::array::from_fn(|j| m[0][j] * e[0] + m[1][j] * e[1] + m[2][j] * e[2]) };
@@ -344,8 +353,8 @@ impl Camera {
         if e[2] >= 0.0 {
             return None;
         }
-        let f = FOV / -e[2];
-        Some([e[0] * f + CENTER[0], e[1] * f + CENTER[1]])
+        let (f, c) = (FOV / -e[2], self.center());
+        Some([e[0] * f + c[0], e[1] * f + c[1]])
     }
 
     /// Physical → virtual pixels.

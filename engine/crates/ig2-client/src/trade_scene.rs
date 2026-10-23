@@ -190,7 +190,7 @@ impl TradeScene {
         }
         for (a, b, c) in grid {
             if let (Some(pa), Some(pb)) = (project(a), project(b)) {
-                f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), vv.k.max(1.0), c));
+                f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), 1.0, c));
             }
         }
         if dynamic.is_empty() {

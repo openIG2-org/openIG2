@@ -64,6 +64,7 @@ ap.add_argument("--script")
 ap.add_argument("--formation", type=int, default=0, help="N: a random formation pick on the battle screen with a chance of 1/N per driver frame ('preform'/'form' snapshots around loadfelallas)")
 ap.add_argument("--sounds")
 ap.add_argument("--watch", help="T:OFF[:N]: a hardware write watchpoint on the slot's byte OFF from script tick T (the first N writers)")
+ap.add_argument("--watch-addr", help="VA[:N]: a hardware write watchpoint on an exe global from just before the scenario's load (the first N writers, the value read as a string)")
 a = ap.parse_args()
 input_script = json.load(open(a.script, encoding="utf-8")) if a.script else None
 if input_script:
@@ -163,7 +164,8 @@ script.post({"type": "config", "payload": {"scenario": a.scenario, "steps": a.st
                                            "orders": a.orders, "orderEvery": a.order_every, "grabTicks": grab_ticks,
                                            "grabSettle": a.grab_settle, "stateSlot": STATE_SLOT if a.state_out else 0,
                                            "script": input_script, "soundTables": sound_tables, "formation": a.formation,
-                                           "watch": dict(zip(("t", "off", "n"), (int(x, 0) for x in a.watch.split(":")))) if a.watch else None}})
+                                           "watch": dict(zip(("t", "off", "n"), (int(x, 0) for x in a.watch.split(":")))) if a.watch else None,
+                                           "watchAddr": dict(zip(("addr", "n"), (int(x, 0) for x in a.watch_addr.split(":")))) if a.watch_addr else None}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()

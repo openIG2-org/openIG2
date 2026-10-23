@@ -371,6 +371,8 @@ pub enum Screen {
     Diplomacy,
     /// The spy screen (`crate::spy_screen`): only the top bar here.
     Spy,
+    /// `AktKep` 1 (re/screens/help.md), drawn by [`crate::help::HelpScreen`]: only the top bar here.
+    Help,
     /// `AktKep` 13 (re/screens/options.md), drawn by [`crate::options::OptionsScreen`]: only the top bar here.
     Options,
     /// `AktKep` 4 (re/screens/research.md), drawn by [`crate::research::Research`].
@@ -585,6 +587,28 @@ impl Hud {
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
         let t = crate::starmap_menus::MenuTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names, infostr: &self.infostr };
         m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, (time * 100.0) as i32, &p.faders.starf, p.exit_fader());
+    }
+
+    /// What of `StarmapGfx2D_3` the battle screen keeps during its opening zoom (re/screens/spacewar.md §5.2, §9.10):
+    /// the short info (`StarmapRovidInfoKiir`'s body, after the battle's small box) and `GFX_StarmapRadar` while
+    /// `spacewarelfade` (`fade`) < 1. The minimap's view outline keeps the starmap's last corners (`lastfrom*` refresh
+    /// only at fade 0). `StarmapGfx2D_1`'s names are the caller's, under the console.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_battle_starmap(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, fade: f32) {
+        let Some(font) = &self.font else { return };
+        if fade >= 1.0 {
+            return;
+        }
+        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names };
+        let counter = (time * 100.0) as i32;
+        let step = self.starmap.step(if sel.mode == 1 { sel.planet } else { 0 }, counter);
+        let info = crate::starmap_hud::InfoBox::new(state, rules, &t, sel, step, counter);
+        let fleets = curr.fleets_at(prev, alpha);
+        let starmap = crate::starmap::Camera { look: None, ..view.camera };
+        let mini = crate::starmap_hud::Minimap::new(curr, &fleets, sel, &starmap);
+        let v = Virtual::new(view.camera.size);
+        crate::starmap_hud::short_info(f, font, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, (((1.0 - fade) * 100.0) as i32) as f32 / 100.0, fade * 400.0);
+        crate::starmap_hud::minimap(f, self.white, &v, &self.palette, &mini, time, fade);
     }
 
     /// The starmap's HUD under the top bar (re/screens/starmap.md §11) for the local selection.

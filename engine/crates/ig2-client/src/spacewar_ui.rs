@@ -376,9 +376,10 @@ impl SpaceWarUi {
     /// −YStart)`, yaw `StarmapRotate`, tilt `StarmapPitch`, zoom `600 − Zoom`) shifted by the battle's origin, at scene
     /// scale 0.0004; every own unit selected (`flottafelallit`); the default yaw (step 23).
     pub fn enter(slot: usize, b: &Battle, cam: &crate::starmap::Camera, now_ms: u32) -> Self {
-        let origin = [0.0, b.map_pos[0], -b.map_pos[1]];
         // `initgfx` (exe 0x575050): the starmap camera's pan minus the slot's raw `starmapeltolas` (+0x1f74: h, x,
-        // y as stored, y not negated as the drawing origin's is).
+        // y as stored); `sceneeltol` moves the starmap's objects by the same raw offset, so a battle point q is the
+        // starmap point `+0x1f74 + q` (the dump's origin; the galaxy lines up during the opening zoom).
+        let origin = [0.0, b.map_pos[0], b.map_pos[1]];
         let pivot = [0.0, cam.x - b.map_pos[0], -cam.y - b.map_pos[1]];
         let starmap = Pose { yaw: cam.rotate, tilt: cam.pitch, zoom: 600.0 - cam.zoom, xcenter: 320.0, pan: pivot };
         let mut s = Self {
@@ -1789,7 +1790,7 @@ impl SpaceWarUi {
         let types = b
             .units
             .iter()
-            .map(|u| tables.ship_types.get((u.race * 12 + u.kind).max(0) as usize).map(|t| (t.name.clone(), u.ship_type.scale)))
+            .map(|u| crate::spacewar_screen::type_model(tables, u.race, u.kind).map(|n| (n, u.ship_type.scale)))
             .collect();
         let blink_off = self.pointer == 4 && self.armed >= 0 && self.blink % 50 >= 26;
         crate::spacewar_screen::Shown {

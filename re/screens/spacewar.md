@@ -1547,12 +1547,39 @@ their battle state isn't drawn). `re/deviations.md` lists them.
   from the compiled table. The writer is not found (no direct reference in either binary; not written during boot): deviation
   144.
 
-### 9.7 Not yet (after part 6)
-- The planet stations' models (deviation 144): find the writer of `tipusnevek`' types 8..11 (a write watchpoint on exe
-  0x91FCC8 across a scenario load), then the cursor's reticle at t300 should follow.
-- The info view (t800–t950 of `spacewar_ui5`): the same camera numbers as the exe, but the picture is shifted (the review saw
-  the exe's ships ~185 px further left at t850): the view's centre/offset while the big info box is in.
-- The starmap names and the radar's starmap sketch during the opening zoom (deviation 138).
-- The bolts, rings and debris are unchecked against a capture (none at the grabs); the ring model's scale is suspicious
-  (`karika.xvb`'s normalised vertices are ~0.007).
-- The MP banner and the chase camera are uncaptured (no fighters in ui5); the big box sits 5 px left of the exe's.
+### 9.10 Part 7 (2026-10-24): the rest of §9.7
+- **The stations' models** (deviation 144 closed): `terv2tipus` (exe 0x582010, asm read) is the writer. For a hull tech
+  `t` in 0x4d..=0x50 it copies `TTeruletek[t − 1]` (exe 0x919294 + 4t: `ur_kurbazis.xvb`, `ur_urbazis.xvb`, …) into
+  `tipusnevek[race·12 + t − 0x45]` (exe 0x91F488 + 0x30·i, race = design `+0x40`) before returning `t − 0x45`. Found with a
+  write watchpoint (`run_spwc.py --watch-addr 0x91FCC8`): `AddFleet`'s sort (exe 0x564d25, 0x564df9, 0x564e35) and a later
+  caller (0x56585b) call it at the battle's start, before any unit is added. The ELF has no such copy. Client:
+  `spacewar_screen::type_model` (types 8..=11 from the research models, from `vector/talalmanyok/`).
+- **The info view's picture**: `TransformPoint` adds `xcenter` (`+0x1fc0`: 320, 160 in the info view, animated with the
+  view) to every scene point, the starmap's too. The client's look camera carries it (`starmap::Look::xcenter`, in the clip
+  matrix, `project_eye`, `to_world`, `virtual_point` and the star field). `spacewar_ui5` view t800 13.02 → 5.92, t850
+  18.13 → 4.89, t950 16.58 → 6.81.
+- **The pick radius in the opening zoom**: `TransformTav(type scale · 1000, z)` takes z in scene units, i.e. battle units ×
+  the scene scale (0.0004 until `rescalescene(2500)`), so during the zoom the radius is 2500 × the drawn size and the
+  nearest unit within 400 pixels is hovered: the exe's hover cursor at t300 with no unit under the pointer (the client's
+  `pick` divides by `View::scale`; at t100 neither shows it).
+- **The battle's origin** (spec §9.1): a battle point q is the starmap point `+0x1f74 + q` with the raw y. The live screen
+  had y negated, which put the galaxy elsewhere during the zoom; t100 view 17.91 → 2.10, t300 8.32 → 4.04 (the territories,
+  stars, fleets and names now line up).
+- **The starmap's 2D pass during the zoom** (deviation 138 closed; ELF `StarmapGfx2D_1` 0x6dcb30, `StarmapGfx2D_3`
+  0x6d4a30, both run while `AktKep == 0xb`): the planet and fleet names (`Show_Stars2d3d`, `Show_Flottak2d`) while
+  `starmaphideflottak` is clear (e = `starmaperosseg` > 0), unfaded, under the console; `StarmapRovidInfoKiir`'s short
+  info (after `SpaceWarkisinfo`) while `spacewarelfade` < 1, its text × `(int)((1 − fade)·100)`/100 and the tanks/production
+  buttons at `y + fade·400`; `GFX_StarmapRadar` while fade < 1: dots and outline at `(int)((1 − fade)·255)`, the galaxy
+  points × `fade·8 + 1`, the outline's corners the starmap's last (`lastfrom*` refresh only at fade 0, which the 0.001 clamp
+  never reaches). t100 frame 4.35 → 3.89, info box 19.39 → 11.27.
+- **Effects** (`spacewar_fx6.json`: part 4's battle with grabs right after the hits; `spacewar_fx7.json`: the same with the
+  info view on the selected fleet): view 4.1–5.1 at every grab. Neither the exe nor the client shows debris, a shield ring or
+  a blast in view at these grabs (the hits are off-view); the laser bolts and sparks match in place and colour.
+- **Input audit** (part 7, against audit): the mouse state machine, hot-spots, orders and tooltips match; the key
+  and top-bar differences are deviations 160, 162, 194, 195, 210, 211.
+
+### 9.7 Not yet (after part 7)
+- The bolts, rings and debris are still unchecked against a capture (no grab has them in view); the ring model's scale is
+  suspicious (`karika.xvb`'s normalised vertices are ~0.007).
+- The MP banner and the chase camera are uncaptured; the big box's slide runs −5 / +10 px against the exe's (t800 / t950).
+- In the zoom: the short info's planet picture and the fleet marker's glow are missing; the radar window's hue (deviation 104).

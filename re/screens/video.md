@@ -69,6 +69,13 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
 - **Credits text** (remaster): while `credits.bik` plays, for `t < 12288` ms, "REMASTERED BY GYROSCOPE. PUBLISHED
   BY THQNORDIC" in the platform font (`PlatformUtils::RenderText`, `render/font.material`) at (W/2, 0.96·H) with a
   2 px shadow; alpha `t >> 4` up to 4096 ms, 255 to 8192 ms, then `255 − ((t − 8192) >> 4)`.
+  Rendered once (`ig2screen::render` exe 0x7370f0, cached in 0x92fcc0): `RenderText(text, w = (H>>5)<<6, h = H>>5,
+  size = H>>5, flags 0xc0 = centred)` (exe 0x6e9130) through SDL_ttf (`TTF_RenderUTF8_8Bit_Wrapped` 0x72d2f0; the
+  empty font name resolves to the install's `fonts/jurabook.ttf` [obs: the glyphs are Jura]) into a 4-bit-alpha white
+  texture, both sides rounded up to 4; drawn 1:1 in window pixels (`FUN_007115e0`, quad 1152 × 20 at 800 × 600 [obs:
+  `probes/credits_text.js`]) centred at `((W>>1), 0.96·H)` over a black copy at +2, +2 with `(a·0x333333334)>>34` =
+  4a/5 alpha. The glyphs come out taller and narrower than FreeType's Jura at `H>>5` px: the client's scale (em
+  1.25·`(H>>5)`, width × 0.84) is fitted to the capture (rows equal, 3 px left of the exe; deviation 215).
 
 ## 4. Input and sound
 

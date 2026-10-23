@@ -53,10 +53,18 @@ and after drawing a sub-viewport (`DrawRadar`, `GFX_StarmapRadar`, `ColonyGfx2D_
   sides**, and every 3D object keeps its virtual position. `Hatar*` is the engine's clip and cull range; the D3D
   viewport call is a no-op in the port (`_IDirect3DViewport3::SetViewport2` ELF 0x4FAFE0 returns 0, the exe inlines
   it away) and GL clips at the full-width viewport (the captures have no 1–2 px seam where `m` rounds down).
-- **Background pictures stretch:** `Copy3hatterkep` (ELF 0x534AC0) draws the screen's picture (`Kepek[n]`) over
-  `HatarX1..X2 × 0..479`, stretched horizontally across the whole window. Called from `Research3DUpdate`,
-  `Infoing3DUpdate`, `Messages3DUpdate`, `Spying3DUpdate`, `Diplomacy3DUpdate`, `Design3DUpdate`,
-  `Trade3DUpdate`, `GFX_Options`, `GFX_Help`.
+- **Background pictures are copied 1:1, not stretched:** `Copy3hatterkep(n, colour)` (ELF 0x534AC0, exe 0x4CB690)
+  draws only when `n ≠ 0` and the picture's loaded bit (`Kepek[n]+1` bit 0) is set; it sets `HatarX1..X2`, sets the
+  picture's brush size to `HatarXm × 480` (`Kepek[n]+0x20/+0x24`, the ELF's stride-0x130 entry; exe 0x903558 +
+  n·0x124, width/height at +0x114/+0x118) and calls `DDBrushToScreen3d(&Kepek[n], 0, 0, HatarX1, 0, HatarXm, 480,
+  …, colour, …)`: source rectangle `(0, 0)..(HatarXm, 480)` of the picture at virtual scale from `HatarX1`, so a wider
+  window reads past the picture's 640 columns (whatever the texture holds there) rather than stretching it. Called
+  from `Research3DUpdate`, `Infoing3DUpdate`, `Messages3DUpdate`, `Spying3DUpdate`, `Diplomacy3DUpdate`,
+  `Design3DUpdate`, `Trade3DUpdate`, `GFX_Options`, `GFX_Help`.
+- **Pictures without a texture** (§7.2): the messages screen's `Kepek[0x35]` (`_ESIG_U3.BMP`, the screen before,
+  `SaveScreen(2)`) is flagged loaded but its texture handle is −1 [obs: `Copy3hatterkep(0x35, 0xffeaeaea)` at
+  1920 × 1080, entry words `… 100 0 ffffffff ffffffff 0 18 354 1e0 1`], so the quad is drawn with whatever texture was
+  bound last; inside the frame the screen's own black covers it, the side strips show it (§7.2).
 
 What the captures show (`_local/traces-widescreen/`, `k<kep>-<W>x<H>-0.png`): the 4:3 centre of every widescreen
 capture matches the 800 × 600 capture at offset 0 (mean |diff| 0.7–4.3 grey levels, animation only). Starmap: the
@@ -64,7 +72,7 @@ capture matches the 800 × 600 capture at offset 0 (mean |diff| 0.7–4.3 grey l
 the frame. Colony: the terrain and buildings fill the full width. Research: the background box's grid reaches into
 the sides (dark). Info: the sides stay black (nothing in the scene or picture there). Messages
 (`_local/traces-widescreen/k10-1920x1080.png`, 2026-10-18): the frame models stop at the 4:3 frame's edge and the
-side strips show a stretched picture (re/deviations.md 4).
+side strips show a tiled dark texture (re/deviations.md 4; not a picture: §3, §7.2).
 
 ## 4. Input and other users of the frame
 - **Mouse:** `MainCallBackEventHandler` (ELF 0x579B70) maps the physical position through the virtual frame:
@@ -106,5 +114,48 @@ side strips show a stretched picture (re/deviations.md 4).
 - Checked (2026-10-18): 800 × 600 snapshots of nine screens are pixel-identical to the client before the kit; at
   1920 × 1080 they differ by at most 1 grey level (the reformulated projections) and a 1280 × 1024 snapshot is the
   1280 × 960 one between black bars.
-- Open: edge scrolling at the window's edges (§4) when the autoscroll is ported; the side-strip pictures
-  (`Copy3hatterkep`, re/deviations.md 4).
+- Lines: the engine's wireframes (`wirekirak` ELF 0x6083f0: the research ball and sphere, the design sphere and
+  boxes, the diplomacy cages, the trade model; the spy sphere already was) are one output pixel wide at every window
+  size (§7.3), not one virtual pixel.
+- Open: edge scrolling at the window's edges (§4) when the autoscroll is ported; the side strips' stale texture
+  (§7.2, re/deviations.md 4).
+
+## 7. The M4 checks (2026-10-23/24)
+`run_screendiff.py … --size WxH [--letterbox]` (exe and client at the same window size; `ig2-screendiff` places the
+regions in the centred 4:3 frame by §2 and adds `left_strip`/`right_strip`). Captures of `quick-1.sav` in
+`_local/screendiff/wide/<size>/`; results in re/screens/diff-results.md (M4 widescreen).
+
+### 7.1 Sizes and screens
+1920 × 1080, 2520 × 1080 and 3840 × 2130 (4K class: on a 2560 × 1440 desktop Windows shrinks ig2.exe's 3840 × 2160
+window to 2130 lines; the client at 3840 × 2160 is the same rule), plus 1280 × 1024 (narrower than 4:3) and an
+800 × 600 baseline. Screens: starmap, colony, ground war, info, messages, research, design, trade, production,
+transfer, fleet and vehicle info, diplomacy, spy, the radial and select menus, the planet info; the main menu and
+Options (scripts) at 16:9.
+- 2D stays in the frame and 3D fills the strips with the same camera on every screen; the in-frame regions match the
+  800 × 600 baseline within ~1 grey level (differences there are the screens' own, not the window size's).
+- At 1280 × 1024 the band (y 32..991) and the bars match on every screen tried (starmap, colony, research, messages,
+  info).
+- The letterbox option (`--letterbox`): the client's strips are black and the frame is unchanged (starmap, colony,
+  research, messages at 16:9).
+
+### 7.2 The side strips of messages, diplomacy and spy
+ig2.exe shows a dark tiled "circuit" texture there (luma ~26, pixel-identical on the three screens and at every
+wide size, its tiles at a fixed scale: 21:9 shows more of them), the client black. It is no file of the install
+(every 2D picture and texture tried, stretched and tiled). Cause: `Copy3hatterkep` (§3) draws a picture whose
+texture handle is −1 (messages `Kepek[0x35]`; diplomacy's and spy's `Kepek[0x34]` = `_ESIG_U2.BMP`, not shipped),
+so the quad takes the last-bound texture. An original bug: kept black (re/deviations.md 4).
+
+### 7.3 Wire widths
+The exe's wire lines are 1 px wide at 800 × 600, 1920 × 1080, 2520 × 1080 and 3840 × 2130 [obs: run-width histogram
+of the research ball, mode 1 px at every size]; the client drew `k` px (4–5 px at 4K). Now 1 px: at 4K the research
+ball 12.9 → 6.3, the diplomacy heads 9.3/8.2 → 2.4/2.0, the research/design strips 0.7 → 0.1.
+
+### 7.4 Left open
+- The main menu (and Options' load-only mode over it) at 16:9: the big `texcsor.bmp` billboard (mainscr.md §2 step
+  6) reaches the window's left edge in ig2.exe and ends inside the left strip in the client (strip luma 5–6 vs 1.3;
+  the right strip matches). Cause unknown (re/deviations.md 214).
+- SpaceWar: `run_spwc.py` takes no window size yet; the client at 16:9 fills the strips with the battle and keeps the
+  HUD in the frame (no exe capture to compare). Help, credits, demo and the tutorial overlay have no capture entry
+  or client snapshot path yet.
+- 2D lines drawn through the kit (`ui.rs` charts, `hud.rs`, `starmap_hud.rs`, `colony_war.rs`) still scale with
+  `k`; not checked (no lines in the captured states).

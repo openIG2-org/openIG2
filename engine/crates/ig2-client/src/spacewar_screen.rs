@@ -46,8 +46,20 @@ impl Dump {
             return Some(t.clone());
         }
         let u = self.battle.units.get(i)?;
-        tables.ship_types.get((u.race * 12 + u.kind).max(0) as usize).map(|t| (t.name.clone(), t.scale))
+        let t = tables.ship_types.get((u.race * 12 + u.kind).max(0) as usize)?;
+        Some((type_model(tables, u.race, u.kind)?, t.scale))
     }
+}
+
+/// The model name of ship type `kind` of `race` (`tipusnevek[race·12 + kind]` `+0`). The planet stations' types 8..=11
+/// hold "TSCtablazatabol" in the exe file: `terv2tipus` (exe 0x582010) copies the hull tech's research model
+/// (`TTeruletek[tech − 1]`, tech `kind + 0x45`) into the record whenever it maps a station design, which `AddFleet`'s
+/// sort does before any unit is added (spec §9.10).
+pub fn type_model(tables: &ig2_rules::Rules, race: i32, kind: i32) -> Option<String> {
+    if (8..=11).contains(&kind) {
+        return tables.research_screen.models.get((kind + 0x45 - 1) as usize).cloned();
+    }
+    tables.ship_types.get((race * 12 + kind).max(0) as usize).map(|t| t.name.clone())
 }
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -297,7 +309,7 @@ pub fn starmap_look(v: &View, eye: [f32; 3], target: [f32; 3]) -> Look {
     let k = (v.scale * SCENE_SCALE).max(1e-6);
     let d = sub(eye, target);
     let zbm = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() / 6.0;
-    Look { matrix: look_matrix(eye, target), eye: std::array::from_fn(|i| v.origin[i] + eye[i] / k), near: zbm * 1.05 / k }
+    Look { matrix: look_matrix(eye, target), eye: std::array::from_fn(|i| v.origin[i] + eye[i] / k), near: zbm * 1.05 / k, xcenter: v.xcenter }
 }
 
 /// A model's triangles in its root space with their textures, and the root's half-extents.
@@ -436,7 +448,7 @@ fn star_sprites(white: crate::render::TexId, out: &mut Vec<(crate::render::TexId
             continue;
         }
         let k = 600.0 / -e[2];
-        let at = [e[0] * k + 320.0, e[1] * k + 250.0];
+        let at = [e[0] * k + look.xcenter, e[1] * k + 250.0];
         let half = size * k / 2.0;
         out.push((white, Blend::GammaAdditive, Instance::new(kind::GLOW, v.px(at[0], at[1]), [half * v.k; 2], [g, g, g, 1.0])));
     }
@@ -1336,7 +1348,8 @@ fn to_virtual(cam: &crate::starmap::Camera, view: &View, q: [f32; 3]) -> Option<
 }
 
 /// `SpaceWarMouseMove`'s projections (spec §7.1.2): each live unit's model centre (`GetObjCenter`) and its pick
-/// radius `TransformTav(type scale · 1000, z)`; each gun's position (virtual pixels).
+/// radius `TransformTav(type scale · 1000, z)` (z in scene units: battle units × the scene scale); each gun's position
+/// (virtual pixels).
 pub fn pick(gfx: &Gfx, assets: &crate::starmap::Assets, s: &Shown, cam: &crate::starmap::Camera) -> (Vec<Option<crate::spacewar_ui::Projected>>, Vec<Option<crate::spacewar_ui::Projected>>) {
     let scene = Scene { view: &s.view, assets, models: &gfx.models, surface: None, shown: s };
     let units = s
@@ -1351,8 +1364,10 @@ pub fn pick(gfx: &Gfx, assets: &crate::starmap::Assets, s: &Shown, cam: &crate::
             let w = scene.centre(i, u)?;
             let q: [f32; 3] = std::array::from_fn(|j| (w[j] - s.view.origin[j]) * SCENE_SCALE);
             let (at, px) = to_virtual(cam, &s.view, q)?;
+            // `TransformTav` takes the scene's depth: during the opening zoom (scene scale 0.0004) the radius is 2500
+            // times the drawn size, so the nearest unit within 400 pixels is hovered (the exe's reticle at t300).
             let scale = s.types.get(i).cloned().flatten().map_or(0.0, |t| t.1);
-            Some(crate::spacewar_ui::Projected { at, radius: scale * 1000.0 * px })
+            Some(crate::spacewar_ui::Projected { at, radius: scale * 1000.0 * px / s.view.scale.max(1e-6) })
         })
         .collect();
     let guns = s.battle.guns.iter().map(|g| to_virtual(cam, &s.view, [g.pos.x, g.pos.y, g.pos.z]).map(|(at, _)| crate::spacewar_ui::Projected { at, radius: 10.0 })).collect();

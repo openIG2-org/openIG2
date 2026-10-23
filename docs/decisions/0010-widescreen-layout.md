@@ -30,6 +30,9 @@ So what ADR 0009 offered as an enhanced option is the original's own default.
    resolution, free refresh rate.
 5. The mobile toolbar (`toolbar=1`) is not carried over.
 
+Correction (2026-10-24, M4 checks): `Copy3hatterkep` copies the background picture 1:1 from `HatarX1` (a wider window
+reads past its 640 columns) instead of stretching it (`re/screens/widescreen.md` §3, §7).
+
 ## Consequences
 - `ig2-client` already follows the rule for windows at least as wide as 4:3 (`font::Virtual`), so no screen built so
   far has to be redone. What's still missing (the narrow-window letterbox, one exe-exact layout type, the offscreen

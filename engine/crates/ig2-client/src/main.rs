@@ -44,6 +44,7 @@ mod colony_war;
 mod diplomacy;
 mod diplomacy_scene;
 mod font;
+mod help;
 mod hud;
 mod info_screen;
 mod kit;
