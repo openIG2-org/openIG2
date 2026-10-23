@@ -1029,7 +1029,7 @@ impl View {
         let mut draws: Vec<MeshDraw> = Vec::new();
         for d in scene.statics.iter().filter(|d| d.when.is_none_or(|w| w == curr.visible)) {
             for (range, tex, glass, shadow) in &d.draws {
-                draws.push(MeshDraw { mesh: Some(d.mesh), range: range.clone(), tex: *tex, glass: *glass, cloud: false, shadow: *shadow, video: false, additive: false });
+                draws.push(MeshDraw { mesh: Some(d.mesh), range: range.clone(), tex: *tex, glass: *glass, cloud: false, shadow: *shadow, video: false, additive: false, depth_write: false });
             }
         }
         // Units (spec §4): the hull at `P + body·(0,0,pivot)` with matrix `body·S`, the weapon on top.
@@ -1145,7 +1145,7 @@ impl View {
                 }
                 dynamic.extend(v);
                 for (range, pi, _) in rg {
-                    draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+                    draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
                 }
             }
         }
@@ -1167,7 +1167,7 @@ impl View {
             let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [at[0], at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };
             let base = dynamic.len() as u32;
             dynamic.extend([q(-hx, hy, 0.0, 1.0), q(hx, hy, 1.0, 1.0), q(hx, -hy, 1.0, 0.0), q(-hx, hy, 0.0, 1.0), q(-hx, -hy, 0.0, 0.0), q(hx, -hy, 1.0, 0.0)]);
-            draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive });
+            draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });
         };
         if let Some((slot, size, alpha)) = self.overlay.selection {
             if let Some((at, hx, hy)) = building(slot, size * 2.0) {
@@ -1240,7 +1240,7 @@ fn radar_picture(r: &mut Renderer, terrain: &Drawn) -> TexId {
     let rows = [[0.0, -s, 0.0, 0.0], [0.0, 0.0, -s, 0.0], [1.0 / 20000.0, 0.0, 0.0, 0.5], [0.0, 0.0, 0.0, 1.0]];
     let view = std::array::from_fn(|c| std::array::from_fn(|k| rows[k][c]));
     let l = scene::normalise([-1.0, -1.0, 1.0]);
-    let draws = terrain.draws.iter().map(|(range, tex, glass, _)| MeshDraw { mesh: Some(terrain.mesh), range: range.clone(), tex: *tex, glass: *glass, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false }).collect();
+    let draws = terrain.draws.iter().map(|(range, tex, glass, _)| MeshDraw { mesh: Some(terrain.mesh), range: range.clone(), tex: *tex, glass: *glass, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false }).collect();
     let mut f = Frame::new([0.0, 0.0, 0.0, 1.0]);
     f.scene = Some(Scene3d {
         gamma: false,
@@ -1388,7 +1388,7 @@ fn push_model(model: &Model, texs: &[TexId], xf: &Transform, out: &mut Vec<MeshV
     let base = out.len() as u32;
     out.extend(v);
     for (range, pi, look) in rg {
-        draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: texs[pi], glass: matches!(look, Look::Glass(_)), cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+        draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: texs[pi], glass: matches!(look, Look::Glass(_)), cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
     }
 }
 

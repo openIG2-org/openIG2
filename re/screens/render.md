@@ -61,6 +61,9 @@ From the node's property word `spsorttype+0x6c` (cached `renderstate_*` globals 
 - 0x200 (set when the texture has alpha, `d3dt+4`): alpha test `GREATER 0.5` (`BIT0`) unless `shiti740`;
 - 0x2000: fog on with `fogszin` and blending off (opaque, fogged); else fog off and blending on;
 - 0x800: no texture.
+- the transparency leaves the depth bits alone: a transparent object still writes depth (the design hull, design.md §14.3);
+- after each batch, when the mesh's first material has a second texture, `selfillumkirak` (0x613da0) draws it again
+  additively (`ONE`/`ONE`) with the batch material's second texture, unlit in the grey `255 − t·255` (design.md §14.3).
 
 ### 2.4 Textures (`command_glLoadTexture` 0x426e30, `sg3d::texture_t::load_pvr` 0x86db50)
 `dataraw/<name with . → _>.pvr`; the pass comes from the name: `charset_bmp` → `FONT`, `xx_bmf` → `VIDEO`,

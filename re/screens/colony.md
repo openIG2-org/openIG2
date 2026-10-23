@@ -310,8 +310,8 @@ The 3D view: without the build cursor the left button selects the building under
 `selectedepulet + 1`, the model hit by the click; finished defence posts 0x20..=0x23 select their turrets and give 0)
 and makes its kind `AktEpuletTipus`. With the cursor up (`ShowColony`): the pointer's ground cell `AktBGridX/Y`
 (`Real2Grid` ELF 0x4717e0: `floor((S/2 − x)·99/S/100·99·2)`, `floor((y + S/2)·99/S/100·99·2)`) is searched for the
-kind's first free spot (`LocateActBuildingSuitableLocation` 0x4bc820 = `LocatePos(CheckAllocation, …)` over the road
-grid and the units: the order's own search), and the half-transparent model `tempepulet` stands there
+kind's first free spot (`LocateActBuildingSuitableLocation` exe 0x486460 / ELF 0x4bc820, over the colony screen's grid; differs from
+the order's search: units at their own cell, no centroid; `rules/colony-placement.md` §8), and the half-transparent model `tempepulet` stands there
 (`AktBGridXSarga/YSarga`), lit red when the spot is taken; a left click with a free spot (or the Build button) runs
 `colony_start_build` (ELF 0x4dcbb0: `NemSzabadEpiteni + 1`, `Multi_Send(0x1f, p, AktEpuletTipus, x, y)`, the cursor
 down, `CanModifyAktEpulet`); no spot → the line `GetString(3, 2, 2)` with the name; no hub → `GetString(3, 2, 1)`; the
@@ -507,7 +507,7 @@ kind 1, move kind 0, attack kind 2, detonate kind 4, line `slot % 3 + 1`. Record
 tools/trace/scripts/grwar.json --sounds`, quick-1.sav planet 17): the right press on the ground → one `Speech::Play`
 the next UI tick; the retreat presses before the dropships left, the `a`/S keys and the inactive buttons → nothing; the
 ambient `Colony_Hangok` 43 and the ground-war track (`mfx/gwar3.ogg`) at entry. The client plays the button click
-(`audio::CLICK`); the voices wait for the colony speaker (audio part 2).
+(`audio::CLICK`); the voices are played (ground war's voices, `audio.md` §8).
 
 ### 11.6 Verified
 `ig2-client` tests `clicks_and_the_box_select`, `the_right_button_and_the_buttons_send_the_orders` (every order of

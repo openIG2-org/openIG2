@@ -10,7 +10,7 @@ use crate::{Error, PeImage, Result};
 const RECORD: usize = 0x11c;
 
 /// The tables of the catalogued build, in the order of [`Table`].
-const TABLES: [(u32, usize); 11] = [
+const TABLES: [(u32, usize); 12] = [
     (0x919a60, 11), // Global_Hangok (PlaySoundGlobal)
     (0x8ed140, 58), // Colony_Hangok
     (0x8f51f0, 44), // Gr_Hangok
@@ -22,6 +22,7 @@ const TABLES: [(u32, usize); 11] = [
     (0x91a838, 42), // SpWar_Hangok
     (0x926b90, 3),  // Spy_Hangok
     (0x928af0, 2),  // Trade_Hangok
+    (0x8f1198, 9),  // Colony_Villamok (UpdateRain's thunder)
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -37,17 +38,18 @@ pub enum Table {
     SpWar,
     Spy,
     Trade,
+    Villam,
 }
 
 impl Table {
-    pub const ALL: [Table; 11] = [
+    pub const ALL: [Table; 12] = [
         Table::Global, Table::Colony, Table::Gr, Table::Des, Table::Dip, Table::Mainscr, Table::Mes, Table::Res,
-        Table::SpWar, Table::Spy, Table::Trade,
+        Table::SpWar, Table::Spy, Table::Trade, Table::Villam,
     ];
 
     /// The tracer's name for it (`sound.js`: `Global_Hangok` → `Global`).
     pub fn name(self) -> &'static str {
-        ["Global", "Colony", "Gr", "Des", "Dip", "Mainscr", "Mes", "Res", "SpWar", "Spy", "Trade"][self as usize]
+        ["Global", "Colony", "Gr", "Des", "Dip", "Mainscr", "Mes", "Res", "SpWar", "Spy", "Trade", "Colony_Villamok"][self as usize]
     }
 }
 

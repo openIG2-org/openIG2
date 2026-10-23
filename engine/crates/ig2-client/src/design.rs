@@ -6,10 +6,10 @@
 //! (0x509140 / exe 0x4b2190: the list, the scroll bar, dragging the hull) and `DesignKeyboardHandler` (0x508dc0: up
 //! and down). The 3D scene is [`crate::design_scene`].
 //!
-//! Not yet (re/screens/design.md, the roadmap's "Design screen part 2"): the editing modes (new, redesign, modify,
-//! delete; the pod popups, the name input) and their orders (`Multi_Send` 0x33/0x34, `MULTIGET_Design` in the sim),
-//! the 3D buttons' press animation, the pods' lights (`SzinezPodok`), the 3D pod pick (`PodKivalaszto`), the tech
-//! models opening out of a pod, the fader scan bands (`FadeKerettelKerekitDesign`), the lasers and sparks.
+//! The editing half (the modes 1–3, the popups, the name input, the orders) is [`crate::design_edit`].
+//!
+//! Part 3 (the 3D buttons' press frames, the pods' boxes, lights and pick, the tech models opening out of a pod, the
+//! pod and tech rows' `DesignKeret2` frames) is [`crate::design_pods`]; the opening's lasers are below.
 
 use ig2_formats::Install;
 use ig2_rules::sounds::Table;
@@ -17,7 +17,9 @@ use ig2_sim::colony_side::TechTable;
 use ig2_sim::save::{va, SaveState};
 
 use crate::audio::{SoundId, CLICK};
+use crate::design_edit::{Ctx, Names, NameEntry, Popup};
 use crate::font::Align;
+use crate::design_pods::Pods;
 use crate::kit::{DesignFrame, Tooltip};
 use crate::render::Frame;
 use crate::scene::{self, M3};
@@ -53,10 +55,10 @@ const PLANET_SIZE: u32 = 0x188;
 /// `podkezdx/y` (the pod rows), read from the ELF image (exe 0x902ee4..).
 const KORD1: [f32; 2] = [15.0, 100.0];
 const KORD2X: f32 = 15.0;
-const KORD2Y: [f32; 3] = [375.0, 390.0, 405.0];
-const KORD3X: f32 = 62.0;
+pub(crate) const KORD2Y: [f32; 3] = [375.0, 390.0, 405.0];
+pub(crate) const KORD3X: f32 = 62.0;
 const CSUSZKA: [i32; 2] = [137, 92];
-const POD: [f32; 2] = [508.0, 80.0];
+pub(crate) const POD: [f32; 2] = [508.0, 80.0];
 /// Rows the list shows.
 const ROWS: usize = 15;
 /// `ADDZOOMMAXDES` (exe 0x902f5c): 321.0.
@@ -70,23 +72,42 @@ fn des(i: u16) -> SoundId {
     SoundId::new(Table::Des, i)
 }
 
-/// `Design_MouseInit`'s hot-spots in the viewing mode (exe 0x4b3810, `Mouse_Szoveg_Set(id, colour, x, y, w, h,
-/// GetString(5, 1, tip))`): `(id, mask colour, rect, tip)`. Colour 0 = the whole rectangle.
-pub const SPOTS: [(u32, u8, [i32; 4], u16); 7] = [
+/// `Design_MouseInit`'s hot-spots (exe 0x4b3810, `Mouse_Szoveg_Set(id, colour, x, y, w, h, GetString(5, 1, tip))`):
+/// `(id, mask colour, rect, tip)`, in id order (the first hit wins). Colour 0 = the whole rectangle. The pod cells
+/// 0x35..=0x52 (row k: `0x33 + 2k` −, `0x34 + 2k` +) come between 10 and 0x54 ([`cell_rect`]).
+pub const SPOTS: [(u32, u8, [i32; 4], u16); 12] = [
     (1, 2, [0, 0x128, 0x42, 0x30], 1),
     (2, 3, [0x41, 0x127, 0x43, 0x31], 2),
     (3, 4, [0, 0x157, 0x42, 0x31], 3),
     (4, 5, [0x41, 0x157, 0x44, 0x32], 4),
+    (5, 2, [0, 0x128, 0x42, 0x30], 5),
+    (6, 3, [0x41, 0x127, 0x43, 0x31], 6),
+    (7, 4, [0, 0x157, 0x42, 0x31], 7),
+    (8, 5, [0x41, 0x157, 0x44, 0x32], 8),
     (9, 0, [5, 0x5d, 0x7b, 0xe9], 9),
     (10, 0, [CSUSZKA[0], CSUSZKA[1], 10, 0xea], 10),
     (0x54, 0, [0x1f2, 0x5c, 0x8a, 0xea], 0xb),
+    (0x56, 0, [KORD3X as i32 - 3, KORD2Y[0] as i32 - 3, 0x66, 0xe], 0xc),
 ];
 
-/// The tooltip texts by hot-spot id (`GetString(5, 1, tip)`).
+/// Pod cell `id`'s rectangle (`0x33 + 2k`: `(podkezdx + 0x55, podkezdy + 1 + 15k, 0x14, 0xe)`, `+ 0x6e` for the plus).
+pub fn cell_rect(id: u32) -> [i32; 4] {
+    let k = ((id - 0x33) / 2) as i32;
+    let x = if (id - 0x33) % 2 == 0 { 0x55 } else { 0x6e };
+    [POD[0] as i32 + x, POD[1] as i32 + 1 + 15 * k, 0x14, 0xe]
+}
+
+/// The tooltip texts by hot-spot id (`GetString(5, 1, tip)`; the cells and the 3D buttons `0xd` −, `0xe` +).
 pub fn tips(texts: &crate::ui::UiTexts) -> Vec<Vec<u8>> {
     let mut out = vec![Vec::new(); 0x57];
     for &(id, _, _, k) in &SPOTS {
         out[id as usize] = texts.get(5, 1, k);
+    }
+    // The 3D minus and plus (`Design_MouseInit2`).
+    out[0x20] = texts.get(5, 1, 0xd);
+    out[0x1f] = texts.get(5, 1, 0xe);
+    for id in 0x33..=0x52u32 {
+        out[id as usize] = texts.get(5, 1, if (id - 0x33) % 2 == 0 { 0xd } else { 0xe });
     }
     out
 }
@@ -219,12 +240,46 @@ pub struct Design {
     pod_of: usize,
     /// The pointer and the hot-spot the left button holds (`Mouse_Megfogva`).
     pub mouse: [f32; 2],
-    held: Option<u32>,
+    pub(crate) held: Option<u32>,
+    /// `desf`: the faders' shine, drift and hover glow (`FaderDesignFrissito` in `FRISSIT_Design2`), and the left
+    /// button (down, this frame's press and release edges) as `KirakFader` reads it.
+    faders: crate::kit::FaderDesign,
+    buttons: (bool, bool, bool),
     pub list_frame: DesignFrame,
     pub tip: Tooltip,
     /// UI ticks since the screen opened.
     pub frames: u64,
     pub sounds: Vec<SoundId>,
+    /// `DesignTervezesMod` (0 view, 1 new, 2 redesign, 3 modify), the scratch `DesignTervTervezett`, `CanModify`.
+    pub mode: u8,
+    pub scratch: [u8; 0x84],
+    pub can_modify: bool,
+    /// The open popup and its row under the pointer (`dSelected`, −1 none).
+    pub popup: Option<Popup>,
+    pub selected: i32,
+    /// `Design_Main::KezdoIdo` (the held −/+).
+    pub(crate) repeat: u32,
+    /// The name input (`IOMode`, `IOAzonosito` 0x33).
+    pub entry: Option<NameEntry>,
+    /// The orders the screen sends (0x33, 0x34), taken by the window.
+    pub orders: Vec<ig2_sim::game::DesignOrder>,
+    pub names: Names,
+    /// `DesMelyikGombot` (the 3D button pressed last, −1 none).
+    pub button: i32,
+    /// `SubZoomDes` (the tech models opening out of a pod, 0..=1000).
+    pub sub_zoom: f32,
+    /// Part 3: the pods' boxes, lights and pick, the tech models, the button frames ([`crate::design_pods`]).
+    pub pods: Pods,
+    /// `DesignKeret2`'s frame (the pod and tech rows).
+    pub pod_frame: DesignFrame,
+    /// `DesignGfx2D_1`'s opening lasers and sparks, and their glow texture (`laservago`, from the scene).
+    pub lasers: crate::kit::Lasers,
+    pub laser_glow: Option<crate::render::TexId>,
+    /// `TutorialPaused` (delete is off).
+    pub tutorial_paused: bool,
+    /// Order events waiting for the next frame (`events` since the last frame, `events_due` for this one).
+    pub(crate) events: Vec<ig2_sim::game::OrderEvent>,
+    pub(crate) events_due: Vec<ig2_sim::game::OrderEvent>,
 }
 
 impl Design {
@@ -262,10 +317,30 @@ impl Design {
             pod_of: 0,
             mouse: [320.0, 240.0],
             held: None,
+            faders: crate::kit::FaderDesign::new(1),
+            buttons: (false, false, false),
             list_frame: DesignFrame::default(),
             tip: Tooltip::default(),
             frames: 0,
             sounds: Vec::new(),
+            mode: 0,
+            scratch: [0; 0x84],
+            can_modify: false,
+            popup: None,
+            selected: -1,
+            repeat: 0,
+            entry: None,
+            orders: Vec::new(),
+            names: Names::default(),
+            button: -1,
+            sub_zoom: 0.0,
+            pods: Pods::new(),
+            pod_frame: DesignFrame::second(),
+            lasers: crate::kit::Lasers::default(),
+            laser_glow: None,
+            tutorial_paused: false,
+            events: Vec::new(),
+            events_due: Vec::new(),
         };
         s.scroll_to_pointer();
         if animated {
@@ -316,14 +391,19 @@ impl Design {
 
     /// One UI tick: `FRISSIT_Design2`, then `Design3DUpdate`'s state (the exe runs that per drawn frame; one frame a
     /// tick here, as the captures run).
-    pub fn step(&mut self, state: &SaveState, rules: &ig2_rules::Rules) {
+    pub fn step(&mut self, c: &Ctx, mask: &[u8]) {
+        let (state, rules) = (c.state, c.rules);
         self.frames += 1;
-        self.held_pod(state, rules);
+        crate::design_scene::track_boxes(c, self);
+        self.held_pod(c);
+        self.apply_events(c.state);
+        self.edit_held(c);
         if self.current() != self.pod_of {
             self.pod = 0;
             self.pod_of = self.current();
         }
         // `FRISSIT_Design2`.
+        self.faders.tick();
         self.keringeto += 0.0006;
         self.des_xy += 0.02;
         if self.animated && !self.closing && self.started && !self.opened {
@@ -345,6 +425,7 @@ impl Design {
         if self.loaded != self.model {
             self.add_dir = 1;
         }
+        self.pods_begin(c);
         if self.opened {
             if self.add_dir == -1 {
                 self.add_zoom -= 40.0;
@@ -368,6 +449,7 @@ impl Design {
                     if self.model > 0 {
                         self.sounds.push(des(1));
                     }
+                    self.pods_hull_loaded();
                     self.add_dir = -1;
                 }
             }
@@ -400,9 +482,20 @@ impl Design {
             }
         }
         // `DesignGfx2D_1` (drawn inside `Update3D`, after the above): `AktAlap = Alapok[d.+0x44]+8`.
-        if let Some(d) = self.record(state) {
+        if let Some(d) = self.edited(state) {
             let hull = i32_at(d, field::HULL).clamp(0, 24) as usize;
             self.model = rules.hulls.get(hull).map_or(-1, |h| h.id);
+        }
+        self.pods_end(c, mask);
+        // `DesignGfx2D_1` while opening (`!desKINYITVA`, `desframe/60` not 0 or 1): `DrawLaser(fader, 0x4c, 0x4c, 0x4c,
+        // f/60)` round the five faders from the corners `LaserPos` (F3 with F0's y and height).
+        self.lasers.tick();
+        self.lasers.clear();
+        if !self.closing && !self.opened && self.frame != 0.0 && self.frame != 60.0 {
+            let from = [[0, 0], [639, 479], [0, 479], [639, 0], [320, 0]];
+            for (r, at) in self.faders().into_iter().zip(from) {
+                self.lasers.shoot(r.map(|q| q as i32), at, self.frame / 60.0, [0x4c; 3]);
+            }
         }
         if self.leaving {
             self.leaving = false;
@@ -420,7 +513,7 @@ impl Design {
     }
 
     /// The end of `Design_Main`: the chosen row kept in the window.
-    fn scroll_to_pointer(&mut self) {
+    pub(crate) fn scroll_to_pointer(&mut self) {
         if self.pointer <= self.first && self.pointer > 0 {
             self.first = self.pointer - 1;
         }
@@ -429,49 +522,66 @@ impl Design {
         }
     }
 
-    /// The hot-spot under `at` (`AktIkon2`): the viewing mode's spots that are on (`Design_MouseInit2`).
-    pub fn spot(&self, state: &SaveState, techs: &TechTable, rules: &ig2_rules::Rules, mask: &[u8], at: [f32; 2]) -> u32 {
-        let (x, y) = (at[0] as i32, at[1] as i32);
-        let colour = if (0..640).contains(&x) && (0..480).contains(&y) { mask.get((y * 640 + x) as usize).copied().unwrap_or(0) } else { 0 };
-        for &(id, c, r, _) in &SPOTS {
-            if !self.spot_on(state, techs, rules, id) || !crate::kit::inside(r, at) {
-                continue;
-            }
-            if c == 0 || c == colour {
-                return id;
-            }
-        }
-        0
+    /// The hot-spot under `at` (`AktIkon2`, `Mouse_Darabol` ELF 0x5b7a40): the lowest id that is on and either has
+    /// colour 0 and its rectangle holds the pointer, or has the colour of the mask under it (its rectangle aside).
+    pub fn spot(&self, c: &Ctx, mask: &[u8], at: [f32; 2]) -> u32 {
+        let (x, y) = (at[0].clamp(0.0, 639.0) as i32, at[1].clamp(0.0, 479.0) as i32);
+        let colour = mask.get((y * 640 + x) as usize).copied().unwrap_or(0);
+        let p = [x as f32, y as f32];
+        let hit = |id: u32, col: u8, r: [i32; 4]| self.spot_on(c, id) && if col == 0 { crate::kit::inside(r, p) } else { col == colour };
+        let cells = (0x35..=0x52).map(|id| (id, 0, cell_rect(id)));
+        let buttons = [(0x1f, 6, [0, 0, 0x20, 9]), (0x20, 1, [0, 0, 0x20, 9])];
+        let mut all: Vec<(u32, u8, [i32; 4])> = SPOTS.iter().map(|&(id, col, r, _)| (id, col, r)).chain(buttons).chain(cells).collect();
+        all.sort_by_key(|s| s.0);
+        all.into_iter().find(|&(id, col, r)| hit(id, col, r)).map_or(0, |s| s.0)
     }
 
-    /// `Design_MouseInit2` in the viewing mode: 1 always; 2..=4 with a design whose hull tech isn't obsolete and the
-    /// design itself isn't; 9; 10 with more than 15 designs (`GFX_Design`); 0x54 when the hull has pods.
-    /// Only 0x54 waits for the screen to be open (`desKINYITVA && !desBECSUKAS`); the others are live while it opens
-    /// and closes.
-    pub fn spot_on(&self, state: &SaveState, techs: &TechTable, rules: &ig2_rules::Rules, id: u32) -> bool {
-        (id != 0x54 || (self.opened && !self.closing)) && self.spot_state(state, techs, rules, id)
+    /// `Design_MouseInit2`'s state, with 0x54 waiting for the screen to be open (`desKINYITVA && !desBECSUKAS`);
+    /// the others are live while it opens and closes.
+    pub fn spot_on(&self, c: &Ctx, id: u32) -> bool {
+        (id != 0x54 || (self.opened && !self.closing)) && self.spot_state(c.state, c.techs, c.rules, id)
     }
 
     /// `Design_MouseInit2`'s on/off state for `id`; the 3D buttons keep the last state it set while the screen
-    /// closes (`FrissitGombTexturak` isn't rerun).
+    /// closes (`FrissitGombTexturak` isn't rerun). Viewing: 1, 9 on; 2..=4 with a design whose hull tech isn't
+    /// obsolete and the design itself isn't; 10 with more than 15 designs (`GFX_Design`). Editing: 5..=8; the 3D
+    /// −/+ (0x20, 0x1f) on the chosen pod while `CanModify`, nothing slides and it takes more than one; the cells
+    /// of the fitted pods taking more than one (`DesignGfx2D_1`). 0x54 when the hull has pods; 0x56 always.
     pub fn spot_state(&self, state: &SaveState, techs: &TechTable, rules: &ig2_rules::Rules, id: u32) -> bool {
+        let editing = self.mode != 0;
+        let d = self.edited(state);
+        let fits = |k: usize| {
+            d.is_some_and(|d| {
+                let (race, hull, tech) = (i16_at(d, field::RACE), i32_at(d, field::HULL), d[0x50 + k] as i32);
+                k >= 1 && k <= pod_count(rules, race, hull) && tech != 0 && max_fitted(rules, techs, race, hull, k, tech) > 1
+            })
+        };
         match id {
-            1 | 9 => true,
-            2..=4 => self.record(state).is_some_and(|d| {
-                let hull = i32_at(d, field::HULL).clamp(0, 24) as usize;
-                let tech = rules.hulls.get(hull).map_or(0, |h| h.tech).max(0) as usize;
-                techs.byte(tech, 0x26) & 1 == 0 && d[field::OBSOLETE] == 0
-            }),
-            10 => self.count() > ROWS,
-            0x54 => self.record(state).is_some_and(|d| pod_count(rules, i16_at(d, field::RACE), i32_at(d, field::HULL)) > 0),
+            1 | 9 => !editing,
+            2..=4 => {
+                !editing
+                    && self.record(state).is_some_and(|d| {
+                        let hull = i32_at(d, field::HULL).clamp(0, 24) as usize;
+                        let tech = rules.hulls.get(hull).map_or(0, |h| h.tech).max(0) as usize;
+                        techs.byte(tech, 0x26) & 1 == 0 && d[field::OBSOLETE] == 0
+                    })
+            }
+            5..=8 => editing,
+            10 => !editing && self.count() > ROWS,
+            0x1f | 0x20 => editing && self.sub_zoom == 0.0 && self.add_zoom == 0.0 && self.pod != 0 && self.can_modify && fits(self.pod),
+            0x35..=0x52 => editing && self.opened && !self.closing && fits(((id - 0x33) / 2) as usize),
+            0x54 => d.is_some_and(|d| pod_count(rules, i16_at(d, field::RACE), i32_at(d, field::HULL)) > 0),
+            0x56 => true,
             _ => false,
         }
     }
 
     /// The left button went down at `at` (`Mouse_Lenyom` in `Design_Main`; `AlapfolottLenyomva` starts a drag).
-    pub fn press(&mut self, state: &SaveState, techs: &TechTable, rules: &ig2_rules::Rules, mask: &[u8], at: [f32; 2]) {
+    pub fn press(&mut self, c: &Ctx, mask: &[u8], at: [f32; 2]) {
         self.mouse = at;
-        let id = self.spot(state, techs, rules, mask, at);
+        (self.buttons.0, self.buttons.1) = (true, true);
+        self.pod_edges(true);
+        let id = self.spot(c, mask, at);
         match id {
             9 => {
                 self.sounds.push(CLICK);
@@ -485,22 +595,24 @@ impl Design {
                 self.scroll_bar(at);
             }
             0x54 => {
+                self.sounds.push(CLICK);
                 self.held = Some(0x54);
-                if self.pick_pod(state, rules, at) {
-                    self.sounds.push(CLICK);
+                self.selected = -1;
+                if self.pick_pod(c.state, c.rules, at) {
+                    self.pod_row_press(c);
                 }
             }
-            // New and delete sound on the press; redesign and modify act on the release (`onRelease`), where
-            // `RedesignPlan`/`ModifyPlan` click only on a press: silent. What they start is part 2 (editing).
-            1 | 4 => self.sounds.push(CLICK),
-            _ => {}
+            0x56 => self.name_press(c),
+            _ => {
+                self.edit_press(c, id, at);
+            }
         }
     }
 
-    /// Spot 0x54 while viewing: the pod row under the pointer (`(podkezdx, +0x73) × (podkezdy + 15k, +15]`) becomes
+    /// Spot 0x54: the pod row under the pointer (`(podkezdx, +0x73) × (podkezdy + 15k, +15]`) becomes
     /// `DesignAktPod`.
     fn pick_pod(&mut self, state: &SaveState, rules: &ig2_rules::Rules, at: [f32; 2]) -> bool {
-        let Some(d) = self.record(state) else { return false };
+        let Some(d) = self.edited(state) else { return false };
         let n = pod_count(rules, i16_at(d, field::RACE), i32_at(d, field::HULL));
         for k in 1..=n {
             let y = POD[1] + 15.0 * k as f32;
@@ -520,7 +632,7 @@ impl Design {
         }
     }
 
-    /// The pointer moved (held: the list and the scroll bar follow it).
+    /// The pointer moved (held: the list, the scroll bar and the popups follow it).
     pub fn moved(&mut self, at: [f32; 2]) {
         self.mouse = at;
         self.tip.moved(at);
@@ -529,19 +641,30 @@ impl Design {
             Some(10) => self.scroll_bar(at),
             _ => {}
         }
-    }
-
-    /// Held on the pod panel, the pointer picks the row it is on (`Design_Main` each frame).
-    pub fn held_pod(&mut self, state: &SaveState, rules: &ig2_rules::Rules) {
-        if self.held == Some(0x54) {
-            let at = self.mouse;
-            self.pick_pod(state, rules, at);
+        if self.popup.is_some() {
+            self.hover_popup(at);
         }
     }
 
-    /// A button went up (`Mouse_Felenged`).
-    pub fn release(&mut self) {
+    /// Held on the pod panel without `CanModify`, the pointer picks the row it is on (`Design_Main` each frame).
+    pub fn held_pod(&mut self, c: &Ctx) {
+        if self.held == Some(0x54) && !self.can_modify {
+            let at = self.mouse;
+            self.pick_pod(c.state, c.rules, at);
+        }
+    }
+
+    /// The left button went up (`Mouse_Felenged`).
+    pub fn release(&mut self, c: &Ctx) {
+        (self.buttons.0, self.buttons.2) = (false, true);
+        self.pod_edges(false);
         self.held = None;
+        self.drag = None;
+        self.edit_release(c);
+    }
+
+    /// The right button went up.
+    pub fn release_right(&mut self) {
         self.drag = None;
     }
 
@@ -600,10 +723,11 @@ impl Design {
     }
 
     /// The tooltip: the hot-spot under the pointer once it rested (`UpdateFrame`).
-    pub fn tooltip(&mut self, state: &SaveState, techs: &TechTable, rules: &ig2_rules::Rules, mask: &[u8], tips: &[Vec<u8>], now: f64) {
-        let under = self.spot(state, techs, rules, mask, self.tip.mouse);
+    pub fn tooltip(&mut self, c: &Ctx, mask: &[u8], tips: &[Vec<u8>], now: f64) {
+        let under = self.spot(c, mask, self.tip.mouse);
         let len = tips.get(under as usize).map_or(0, |t| t.len());
-        self.tip.update(now, under, len, self.held.is_some());
+        // Any left press holds the tooltip back (the 3D pod pick too, which holds no hot-spot) [obs: design-pods.json t400].
+        self.tip.update(now, under, len, self.held.is_some() || self.buttons.0);
     }
 
     /// `DesignGetFaderCoordinates` (ELF 0x4ff870): the five panels `[x, y, w, h]` (`t` = 1, closing `2f/60 − 1`).
@@ -621,18 +745,44 @@ impl Design {
     }
 
     /// The faders (`Design3DUpdate`'s `KirakFader` 0..=4, while past frame 30 or not closing) and the scroll bar
-    /// (`GFX_Design`): fill (0, 54, 90)·0.9 at `s·155 + 100`, edge (0, 90, 130)·0.9 at `s·225 + 30`, `s = 1 − f/60`
-    /// (0 closing).
-    pub fn draw_faders(&self, f: &mut Frame, d: &Draw2d) {
-        let s = if self.closing { 0.0 } else { 1.0 - self.frame / 60.0 };
-        let (ft, et) = (s * 155.0 + 100.0, s * 225.0 + 30.0);
-        let b = 0.9;
-        let (fill, edge) = ([0.0, 54.0 * b, 90.0 * b], [0.0, 90.0 * b, 130.0 * b]);
-        if self.frame > 30.0 || !self.closing {
-            for r in self.faders() {
-                crate::kit::fader::kirak_fader(f, d.white, &d.v, r, fill, ft, edge, et);
+    /// (`GFX_Design`): fill (0, 54, 90)·`s` at `a·155 + 100`, edge (0, 90, 130)·`s` at `a·225 + 30`, `a = 1 − f/60`
+    /// (0 closing), `s` the fader's shine. Under them (drawn at once, the faders queued): each panel's scan band at
+    /// `fmod(clock·k, 1)` and its hover glow in (0, s·54, s·90) (re/screens/hud.md §1.2.1).
+    pub fn draw_faders(&mut self, f: &mut Frame, d: &Draw2d) {
+        use crate::kit::fader_design;
+        let a = if self.closing { 0.0 } else { 1.0 - self.frame / 60.0 };
+        let (ft, et) = (a * 155.0 + 100.0, a * 225.0 + 30.0);
+        let boxes = self.faders();
+        let blink = fader_design::blink(d.time as f64 * 1000.0);
+        let clock = self.faders.clock();
+        let bands = [
+            (clock as f64).rem_euclid(1.0),
+            ((clock / 2.0) as f64).rem_euclid(1.0),
+            (clock as f64 / 1.5).rem_euclid(1.0),
+            (clock as f64 * 1.8).rem_euclid(1.0),
+            (clock as f64 * 1.2).rem_euclid(1.0),
+        ];
+        let c = |s: f32| [0, (s * 54.0) as i32, (s * 90.0) as i32];
+        for (i, r) in boxes.iter().enumerate() {
+            let r = r.map(|q| q as i32);
+            fader_design::glow(f, d.white, &d.v, r, c(self.faders.s(i)), bands[i] as f32, 0, blink);
+        }
+        for (i, r) in boxes.iter().enumerate() {
+            if let Some((t, style)) = self.faders.glow(i) {
+                fader_design::glow(f, d.white, &d.v, r.map(|q| q as i32), c(self.faders.s(i)), t, style, blink);
             }
         }
+        if self.frame > 30.0 || !self.closing {
+            let (down, pressed, released) = self.buttons;
+            let free = (!down && !released) || pressed;
+            for (i, r) in boxes.into_iter().enumerate() {
+                let s = self.faders.s(i);
+                let (fill, edge) = ([0.0, 54.0 * s, 90.0 * s], [0.0, 90.0 * s, 130.0 * s]);
+                crate::kit::fader::kirak_fader(f, d.white, &d.v, r, fill, ft, edge, et, self.faders.offset(i));
+                self.faders.enter(i, r, self.mouse, free);
+            }
+        }
+        (self.buttons.1, self.buttons.2) = (false, false);
         if !self.opened || self.closing {
             return;
         }
@@ -665,6 +815,12 @@ impl Design {
             d.font.int(f, &d.v, n, x, y, len, 2, if right { Align::Right } else { Align::Left }, col(c, pct))
         };
         let pct = |n: usize| if n < ROWS { self.fade[n].max(0) } else { 100 };
+        // The lasers while opening, the sparks until frame 60.
+        if let Some(glow) = self.laser_glow {
+            self.lasers.draw(f, d.white, glow, &d.v, !self.opened, self.frame != 60.0);
+        }
+        // While editing the list is dimmed (`KiirStrSzinSzorzo` 50).
+        let list_pct = |n: usize| if self.mode != 0 { 50 } else { pct(n) };
         let hull_obsolete = |r: &[u8]| {
             let t = i32_at(r, field::HULL_TECH).clamp(0, 192) as usize;
             techs.byte(t, 0x26) & 1 != 0
@@ -675,12 +831,12 @@ impl Design {
             let Some(r) = all.get(self.order[i]) else { continue };
             let c = if hull_obsolete(r) || r[field::OBSOLETE] != 0 { 0xc } else { 1 };
             let row = i - self.first;
-            text(f, name(r), KORD1[0], KORD1[1] + row as f32 * 15.0 - 15.0, 16, c, pct(i - self.first - 1));
+            text(f, name(r), KORD1[0], KORD1[1] + row as f32 * 15.0 - 15.0, 16, c, list_pct(i - self.first - 1));
         }
-        if self.opened && self.pointer > self.first && self.pointer <= n.min(self.first + ROWS) {
+        if self.mode == 0 && self.opened && self.pointer > self.first && self.pointer <= n.min(self.first + ROWS) {
             self.list_frame.draw(f, d.white, &d.v, col(0x22, 100));
         }
-        let Some(r) = self.record(state) else { return };
+        let Some(r) = self.edited(state) else { return };
         let tech_name = |t: i32| crate::hud::tech_name(d.texts, t.clamp(0, 192) as usize);
         // The bottom-left panel: name, speed, firepower, hit points.
         text(f, &label(1), KORD2X, KORD2Y[0], 7, 1, pct(8));
@@ -707,9 +863,10 @@ impl Design {
         int(f, i32_at(r, field::PRICE) as i64, 215.0, 42.0, 10, false, 2, pct(5));
         text(f, &label(8), 327.0, 42.0, 19, 1, pct(6));
         int(f, units_of(state, e, self.current()) as i64, 445.0, 42.0, 4, true, 2, pct(7));
-        if r[field::TANKS] != 0 {
+        // The tank capacity of the stored `Tervek[EN][AktTerv]`, also while editing.
+        if let Some(cap) = self.record(state).map(|d| d[field::TANKS]).filter(|&c| c != 0) {
             text(f, &label(9), 327.0, 57.0, 19, 1, pct(6));
-            int(f, r[field::TANKS] as i64, 445.0, 57.0, 4, true, 2, pct(7));
+            int(f, cap as i64, 445.0, 57.0, 4, true, 2, pct(7));
         }
         // The bottom-right panel: with no pod chosen (`DesignAktPod < 1`) "POD: ---" and the hull's name; else the
         // pod's class, its tech (or "---"), the count fitted and how many it takes.
@@ -740,6 +897,30 @@ impl Design {
         if !self.opened {
             return;
         }
+        // `DesignKeret2` (one draw per call this frame) and `CheckIfTalalmanyfolottvan`'s `Keret(…, 3)` outlines
+        // (`FillToScreen` ×4, no corners).
+        for &c in &self.pods.frames2 {
+            self.pod_frame.draw(f, d.white, &d.v, col(c as usize, 100));
+        }
+        for &[x, y, w, h] in &self.pods.outlines {
+            let c = col(3, 100);
+            for (rx, ry, rw, rh) in [(x + 1, y, w - 2, 1), (x + 1, y + h - 1, w - 2, 1), (x, y + 1, 1, h - 2), (x + w - 1, y + 1, 1, h - 2)] {
+                let (cx, cy) = (rx as f32 + rw as f32 / 2.0, ry as f32 + rh as f32 / 2.0);
+                f.push(d.white, crate::render::Blend::GammaAlpha, crate::render::Instance::new(crate::render::kind::SPRITE, d.v.px(cx, cy), [rw as f32 * d.v.k / 2.0, rh as f32 * d.v.k / 2.0], [c[0], c[1], c[2], 1.0]));
+            }
+        }
+        // The tech models are out (`SubZoomDes != 0`): their rows by index, then the "clear" row after the last shown.
+        if self.sub_zoom != 0.0 {
+            let mut last = -2;
+            for (i, e) in self.pods.techs.iter().enumerate().filter(|(_, e)| e.shown) {
+                let y = POD[1] + (i as f32 + 1.0) * 15.0;
+                let n = tech_name(e.tech as i32);
+                text(f, &n, POD[0], y + 5.0, n.len(), 2, 100);
+                last = i as i32;
+            }
+            text(f, &d.texts.get(5, 2, 0xf), POD[0], POD[1] + 45.0 + last as f32 * 15.0 + 5.0, 14, 2, 100);
+            return;
+        }
         // The pod rows (`SubZoomDes == 0`), squeezed by `z = AddZoomDes / ADDZOOMMAXDES` while the hull slides.
         let z = self.add_zoom / ADD_ZOOM_MAX;
         for k in 1..=pod_count(rules, race, hull) {
@@ -768,16 +949,17 @@ impl Design {
                         int(f, count, x, y + 5.0, 2, false, if count >= max { 0x22 } else { 1 }, 100);
                     }
                 }
-                // The minus and plus cells (`BrushToScreenXY`): greyed while viewing (editing with more than one
-                // fitting: live, part 2).
+                // The minus and plus cells (`BrushToScreenXY`): live while editing a pod taking more than one,
+                // else greyed.
                 let brushes = &rules.design_screen.brushes;
+                let live = usize::from(!(self.mode != 0 && max > 1)) * 2;
                 if z < 0.8 {
-                    if let Some(b) = brushes.get(2) {
+                    if let Some(b) = brushes.get(live) {
                         pics.brush(f, &d.v, b, 1, Some([POD[0] + 96.0 - 4.0 - 35.0 * z, y + 4.0]), [1.0; 4]);
                     }
                 }
                 if z < 0.2 {
-                    if let Some(b) = brushes.get(3) {
+                    if let Some(b) = brushes.get(live + 1) {
                         pics.brush(f, &d.v, b, 1, Some([POD[0] + 96.0 + 19.0 - 35.0 * z, y + 4.0]), [1.0; 4]);
                     }
                 }
@@ -886,10 +1068,30 @@ mod tests {
             pod_of: 0,
             mouse: [0.0; 2],
             held: None,
+            faders: crate::kit::FaderDesign::new(1),
+            buttons: (false, false, false),
             list_frame: DesignFrame::default(),
             tip: Tooltip::default(),
             frames: 0,
             sounds: Vec::new(),
+            mode: 0,
+            scratch: [0; 0x84],
+            can_modify: false,
+            popup: None,
+            selected: -1,
+            repeat: 0,
+            entry: None,
+            orders: Vec::new(),
+            names: Names::default(),
+            button: -1,
+            sub_zoom: 0.0,
+            pods: Pods::new(),
+            pod_frame: DesignFrame::second(),
+            lasers: crate::kit::Lasers::default(),
+            laser_glow: None,
+            tutorial_paused: false,
+            events: Vec::new(),
+            events_due: Vec::new(),
         }
     }
 }

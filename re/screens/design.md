@@ -1,4 +1,4 @@
-# The design screen (`AktKep` 5): ship / vehicle designer (from the ELF decompile, exe checked where noted; the viewing mode verified on captures, §14)
+# The design screen (`AktKep` 5): ship / vehicle designer (from the ELF decompile, exe checked where noted; the viewing and editing modes verified on captures and the exe's message stream, §14)
 
 Source: ELF decompiles `_local/decomp/design/0x*.c` (ELF, -O0) and the exe decompiles `_local/decomp/design/exe/`.
 Addresses are ELF unless marked exe. Exe data addresses are read off the exe decompile and are marked (i) = inferred
@@ -55,7 +55,7 @@ Scratch record: `DesignTervTervezett` 0x1432278 [exe 0xb9aa68] (same layout; "-1
 | `DesignTervKezdet` 0x1432270 [0xb9aa0c] | | list scroll offset (first shown row - 1) |
 | `DesignTervezesMod` 0x12c37b8 [0xa3f0b4] | | 0 view, 1 new, 2 redesign copy, 3 modify |
 | `DesignAktPod` 0x12c37b4 [0xa3f0bc] | | chosen pod slot (0 = none) |
-| `CanModify` 0x12c37c8 [0xa3f0c1] | | pods editable; `ModifyPlan` sets it; for modes 1/2 set elsewhere (not found, 13) |
+| `CanModify` 0x12c37c8 [0xa3f0c1] | | pods editable: set by `SetSecondMenu` (exe 0x4b6b30; the new design's release, mode 1), `RedesignPlan` and `ModifyPlan`; cleared by `Design_Belep`, `DesignCancel`, `DesignTervezesOk` (exe inlines `SetFirstMenu` there) |
 | `DesigndSelect{Pod,Pod2,Alap,Delete,RedesignOk}Mode` 0x12c37bc/bd/be/bf/c0 [Pod2 0xa3f0b2]; `dSelected` 0x12c37c4; `dSelectX/Y/M` 0x1171538/3c/40 | | popup menus (pod tech list at the 3D pod / at the row, base list, delete, modify-ok) |
 | `AktAlap` 0x12c67c0, `OldAlap` 0x12c67c4 | | model index of the shown base (`Alapok[base]+8`) / the loaded one |
 | `SelectedPod` 0x12c67c8, `OldPod` 0x12c67cc, `KivalasztottTalalmany` 0x12c4114 | | 3D pod pick |
@@ -107,8 +107,14 @@ lights: ambient 0x141414, parallel 0x808080 dir (0,0,-10); sub-meshes 1..5 of Ma
 `FRISSITES_IGAZIT`, `IdoPauseMertAtlepesAlattVan=0; desKINYITVA=0; desRemoveNullBoxes`.
 
 ## 4. Hot-spots (`Design_MouseInit` 0x50b430 / exe 0x4b3810; `Mouse_Szoveg_Set(id, colour, x, y, w, h, tooltip, onRelease, 1)`)
-`MouseSzovegSzam=0x56`, mask picture kep `0x5f` (`MouseHanyasIkonKep`; `LoadKepToMemory`, `GetMouseKepAddr`); `SetFirstMenu`. Colour != 0 = hit only where the mask has that colour. Tooltip = `GetString(5, 1, n)` (n read from the exe).
-`AktIkon2` = id; ids with `onRelease`=1 fire on release (mainscr.md).
+`MouseSzovegSzam=0x56`, mask picture kep `0x5f` (`MouseHanyasIkonKep`; `LoadKepToMemory`, `GetMouseKepAddr`); `SetFirstMenu`. Tooltip = `GetString(5, 1, n)` (n read from the exe).
+**Hit test** (`Mouse_Darabol` ELF 0x5b7a40, read): the pointer clamped to 0..639 × 0..479; ids from the highest down, the last hit kept (the lowest id
+wins); an on box (`+0x78 < 0x40`) with colour 0 is hit inside its rectangle (`x <= px <= x + w − 1`), one with a colour **where the mask has that
+value, its rectangle ignored**. `DES_MSK` (decoded): 1 = the 3D minus (218..278 × 366..449), 6 = the plus (363..423 × same), 2/3/4/5 = the four
+console buttons (x 274..367; y 355..379, 382..406, 409..433, 436..462), 7/8 = the top bar's ends.
+`AktIkon2` = id. **`onRelease` = 1** (`IG2_gameUpdate` exe 0x4e0440): the box reaches `Design_Main` once, on the press (`Mouse_Lenyom` set: the
+click sounds), then the frame loop runs without the screen's `_Main` until the button is up (no `Mouse_Felenged` pass) [obs: Click1 at the press
+of modify, auto, clear, design-edit.json]. A box with 0 reaches `_Main` every frame while held, and on the release frame.
 
 | id | colour | rect x,y,w,h | tip n | rel. | `Design_Main` action |
 |---|---|---|---|---|---|
@@ -122,12 +128,12 @@ lights: ambient 0x141414, parallel 0x808080 dir (0,0,-10); sub-meshes 1..5 of Ma
 | 8 | 5 | 0x41,0x157,0x44,0x32 | 8 | 1 | `TervClear(EN,-1)` + recalc |
 | 9 | 0 | 5,0x5d,0x7b,0xe9 | 9 | 0 | design list click (select) |
 | 10 | 0 | CsuszkaX,CsuszkaY,10,0xea (=137,92) | 10 | 0 | scroll bar |
-| 0x1f | 6 | 0,0,0x20,9 (set again by `Design_MouseInit2`; moved at run time) | 0xe | 0 | pod count + |
-| 0x20 | 1 | 0,0,0x20,9 | 0xd | 0 | pod count - |
+| 0x1f | 6 | 0,0,0x20,9 (set by `Design_MouseInit2`; colour spot: the mask's plus) | 0xe | 0 | pod count + (the 3D plus) |
+| 0x20 | 1 | 0,0,0x20,9 (the mask's minus) | 0xd | 0 | pod count - (the 3D minus) |
 | 0x33+2k | 0 | podkezdx+0x55, podkezdy+1+15k, 0x14, 0xe | 0xd | 0 | pod k count - (k = 0..15) |
 | 0x34+2k | 0 | podkezdx+0x6e, same y, 0x14, 0xe | 0xe | 0 | pod k count + |
 | 0x54 | 0 | 0x1f2,0x5c,0x8a,0xea (498,92,138,234) | 0xb | 0 | pod list panel (right) |
-| 0x55 | 0 | 0x1f2,0x5c,0x8a,0xea, empty text; re-set each frame by `PodKivalaszto` at the hovered 3D pod (centre = mouse, size 2r; tip `GetString(5,1,0xf)` clickable / `0x10` locked) | - | 0 | 3D pod pick (in `PodKivalaszto`, not `Design_Main`) |
+| 0x55 | 0 | 0x1f2,0x5c,0x8a,0xea, empty text; `PodKivalaszto` re-sets it on a hovered 3D pod (centre = mouse, side `(int)(AlapAranyok·100)`; tip `GetString(5,1,0xf)` techs fit / `0x10` none) and turns it off again in the same call | - | 0 | the 3D pod pick's tooltip (§12) |
 | 0x56 | 0 | Kord3X-3, Kord2Y-3 (59,372), 0x66, 0xe | 0xc | 0 | name field: starts text input |
 Then `Mouse_Szoveg_Off_Range(0xb,0x52)`, `Mouse_Szoveg_Off(0x55)`. Exe `MouseInit` also does `if (PodLightId+8 != 10000) { resOldalsoFenyekKi(&PodLightId); PodLightId+8 = 10000 }` (ELF none).
 
@@ -138,7 +144,9 @@ Then `Mouse_Szoveg_Off_Range(0xb,0x52)`, `Mouse_Szoveg_Off(0x55)`. Exe `MouseIni
   `min(GetMaxRarakhato(race,base,pod), Talalmanyok[d.tech[pod]].+0x24) > 1`: set 0x20 (colour 1, text `GetString(5,1,0xd)`) and 0x1f (colour 6, `0xe`) at (0,0,0x20,9); then `Off_Range(GetMaxPodok+0x1f, 0x32)`.
 - if `desKINYITVA && !desBECSUKAS`: 0x54 on iff `SubZoomDes==0 && GetMaxPodok(race,base) > 0`, else off.
 - `FrissitGombTexturak()`, `Mouse_Szoveg_Off(0xc)`.
-`FrissitGombTexturak` (exe 0x4b3f50; skipped while `DAT_00a3f6ec`): mod 0: the 3D buttons 0..3 (ids 1..4) take the hover colour `DAT_00a3f010` when `FUN_00510860(id)` (hover test) else `...18`; mod != 0: ids 5..8 take `DAT_00a3f014`; ids 0x1f/0x20 likewise (buttons 4, 5).
+`FrissitGombTexturak` (exe 0x4b3f50, read; skipped while `DAT_00a3f6ec`): keyed on **`CanModify`**, not the mode: without it the four console
+buttons (materials 0, 3, 4, 5 = ids 1..4) take `des_panel1` (0xa3f010) when their spot is on (`FUN_00510860(id)`), else `des_panel3` (0xa3f018);
+with it ids 5..8 take `des_panel2` (0xa3f014); the 3D minus/plus (materials 2/1 = ids 0x20/0x1f) `des_panel2` when on.
 
 ## 5. Draw list
 ### 5.1 `Design3DUpdate` (3D scene, per frame; ELF 0x503ea0) in order
@@ -212,13 +220,13 @@ Each call: `old = AktTerv; DesignPodKiuritomod = 0`. Click sound = `PlaySoundGlo
 |---|---|
 | (open, !closing) `AktIkon2==0x54 && SubZoomDes==0` | pod list. Press: `dSelected=-1`. Release (`Mouse_Felenged`): if `dSelected != -1 && CanModify`: 0 -> `d.+0x50[pod]=0; d.+0x5d[pod]=0; TervUjraSzamol(EN,-1,false,true)`; else (t in 0..0xc0 with `TalalmanyRarakhato` true and `t==dSelected`): tutorial event 0xb if `t==0x12 && Alapok[base]+0xc == 5`; `+0x50[pod]=t; +0x5d[pod]=min(GetMaxRarakhato(race,base,pod), Talalmanyok[t].+0x24)`; `TervUjraSzamol`. Then `dSelected=-1`. Rows `k=1..GetMaxPodok`: left held, `!Felenged`, (`Lenyom || !CanModify`): mouse in `(podkezdx, +0x73) x (podkezdy+15k, +15]` -> `DesignAktPod=k` (always) and, if `CanModify`, `DesigndSelectPodMode2=1; Mouse_Megfogva=1`. While `Bal && Megfogva && !Lenyom`: `dSelected=-1`; for the valid techs in order (`n` = 0,1,..): x in `(PodMode2x, +0x6e)` and y in `[n*13 + podkezdy + DesignAktPod*15 + 2, +0xf)` -> `dSelected = t`. (The 3D pod pick sets `DesigndSelectPodMode` in `PodKivalaszto`.) |
 | `AktIkon2==1 && (AlapMode or Lenyom)` | new design. `DesMelyikGombot=0; DesGombNew=1`. While held: first frame `n` = bases `Alapok[1..24]` with hull-tech status `Talalmanyok[t]+0x45+EN == 5` and `+0x26&1==0`; popup origin `dSelectX = mx+12`, `dSelectY = 0x16e - 13n`; `dSelected` = base index of the item under the mouse (x in `[dSelectX, +0x78]`, rows 13 px); `AlapMode=1; Mouse_Megfogva=1`. On release: if `dSelected > 0`: `SetSecondMenu(); DesignTervezesMod=1; TervClear(EN,-1); scratch.+0x44 = dSelected; scratch.+0x40 = PlayerFaj[EN] (byte); TervUjraSzamol; DesignElnevez(EN, Talalmanyok[Alapok[sel]+0xc].name, scratch)`; name edit. `AlapMode=0`. |
-| 2 | `RedesignPlan()` (0x508a60): sound if pressed; `DesMelyikGombot=3; DesGombNew=1; SetSecondMenu(); DesignTervezesMod=2; TervCopy(EN, AktTerv, -1); DesignElnevez(EN, name(AktTerv), scratch)`; name edit. |
-| 3 | `ModifyPlan()` (exe 0x4b5f40; ELF 0x508b70 not read): sound; `DesignTervezesMod=3; TervCopy(EN,AktTerv,-1); CanModify=1;` (exe: drops a pod light, `PodLightId+8=10000`); `DesignAktPod=0`; other pod-select vars reset (exe `DAT_00a3f040/44/4c`, `DAT_00a3ef8e=1`); the scratch name is version-bumped: trailing digits parsed (stopping at v/V), `if (digits != 0 && the char before them is v or V) sprintf("v%d", n+1)`; `IOString` pointer = scratch (`DAT_00bae2c8`; edit not started). |
+| 2 (`onRelease`: the press) | `RedesignPlan()` (0x508a60 / exe 0x4b6940): click on the press; `DesMelyikGombot=3; DesGombNew=1; CanModify=1`; the pod light freed, `SelectedPod=OldPod=-1; DesignAktPod=0; DesignTervezesMod=2; TervCopy(EN, AktTerv, -1); DesignElnevez(EN, name(AktTerv), scratch)`; name edit. |
+| 3 (the press) | `ModifyPlan()` (exe 0x4b5f40): click; `DesignTervezesMod=3; TervCopy(EN,AktTerv,-1); CanModify=1`; the pod light freed, `SelectedPod=OldPod=-1; DesignAktPod=0; DesMelyikGombot=4; DesGombNew=1`; the scratch name's version bumped: from the end, digits (signed-char compares) up to a `v`/`V`: `if (i > 0 && n != 0 && c[i] is v/V) sprintf(&c[i], "v%d", n+1)` (lower-case `v`); `IOString` = scratch, no edit started. |
 | 4 `!TutorialPaused && (DeleteMode or Lenyom)` | delete: `DesMelyikGombot=5; DesGombNew=1`. While held: first frame `dSelectX = mx+16; dSelectY = my-8`; `dSelected=-1`; text = `DesignTorlesValasztasNev[0] + str(TervHajoinakCsokkentettAra(EN,0,AktTerv))` (len*6 px wide, 13 high) -> item 1 `dSelected=1`; `DeleteMode=1; Megfogva=1`. Release: `dSelected>0` -> `Multi_Send(0x34, EN, 4,&AktTerv, 4,&(dSelected+1)=2, 4,&zero)`; `DeleteMode=0; Design_UjraRendez()` (always). |
 | 5 `&& SubZoomDes==0` | OK. Mod 3 (pressed or held): `DesMelyikGombot=0; DesGombNew=1; TervUjraSzamol`; popup at (mx+12 capped to `(dSelectM+1)*-8 + 0x27c`, my-0x22 or my-0x13 if `Tervek[EN][AktTerv].+0x37&1`), width `dSelectM*8`; `cost = max(0,(HanyHajoVanATervbol(EN,0,AktTerv)*scratch.+0x24 - TervHajoinakAra(EN,0,AktTerv))*2)` (`dSelectM` = longer of the option strings); items 1..2 (1 if `+0x37`), 15 px; release: `dSelected==2` or (`+0x37` and `dSelected==1`): if `cost <= money or cost<1` -> `DesignTervezesOk(false)`; else `dSelected==1` -> `DesignTervezesOk(true)`; `RedesignOkMode=0`. Mod != 3: on press: `DesMelyikGombot=0; DesGombNew=1; TervUjraSzamol;` if `AktAlap==6` tutorial event 0xc per filled pod; `DesignTervezesOk(false); Mouse_FelengedesMegvar=1`. |
-| 6 | `DesignCancel()` |
-| 7 | `DesMelyikGombot=4; DesGombNew=1; TervAutoDesign(EN,-1,0); TervUjraSzamol(EN,-1,false,true)` |
-| 8 | `DesMelyikGombot=5; DesGombNew=1; TervClear(EN,-1); TervUjraSzamol` |
+| 6 (the press) | `DesignCancel()` |
+| 7 (the press) | click; `DesMelyikGombot=4; DesGombNew=1; TervAutoDesign(EN,-1,0); TervUjraSzamol(EN,-1,false,true)` |
+| 8 (the press) | click; `DesMelyikGombot=5; DesGombNew=1; TervClear(EN,-1); TervUjraSzamol` |
 | 9 `!Felenged && (Megfogva or Lenyom) && Bal` | list click/drag: on press `PlaySoundGlobal(0)` and `PlaySound(Des_Hangok[2])` (ki1.wav). `AktTervMutato = (my - Kord1Y + 5)/15 + DesignTervKezdet + 1`, clamped to `> Kezdet`, `<= AktHanyTerv`, `<= Kezdet+15`; `AktTerv = DesignRendezo[AktTervMutato]`; `Megfogva=1`. |
 | 10 `Megfogva or Lenyom` | scroll bar: `AktHanyTerv<16` -> `Kezdet=0`; else `h = 3585/AktHanyTerv` (int64; the draw uses 3510); `Kezdet = (((my-0x22) - h/2)*(n-15) + (0xef-h)/2) / (0xef-h)` clamped `[0, n-15]`; `AktTervMutato` clamped into `[Kezdet+1, Kezdet+15]`, `AktTerv` follows; `Megfogva=1`. |
 | 0x1f (+) / 0x20 (-) `SubZoomDes==SubZoom2Des==AddZoomDes==0 && DesignAktPod != 0` | sound on press; held, `!Felenged`: `KezdoIdo` rule; 0x1f: `if count < min(GetMaxRarakhato(race,base,pod), Talalmanyok[tech].+0x24) count++` (race/base from the scratch); 0x20: `if count != 0 count--`; `TervUjraSzamol`; `DesMelyikGombot` 2 (+) / 1 (-); `Megfogva=1`. (pod = `DesignAktPod` at entry.) |
@@ -236,8 +244,11 @@ The name edit also starts from `RedesignPlan` and the new-design release (same `
 | Enter (0xd), same conditions | `ModifyPlan()` (Enter in the text input is `DesignEntertNyomott`) |
 | Esc (0x1b) `down && mod != 0` | `DesignCancel()` (Esc in mod 0 leaves the screen: main loop) |
 `DesignKeyboardEscPressed` (0x509040; mod != 0 only): `SubZoomDirDes==1 && KivalasztottTalalmany==-1 -> -1`; `SubZoomDirDes==1 && Kival != -1 && SubZoom2Des==0 && SubZoomDes==1000 -> SubZoom2Des=1000`; `InitiateDelay=0; RemoveHozzavaloTalalmanyok(); DesigndSelectPodMode=Mode2=0; DesignCancel(); DeleteMenus()`. Always: `IOMode=0` if `IOAzonosito==0x33`.
-`DesignCancel` (0x508d30): sound if pressed; `TervUjraSzamol(EN,-1,false,true); DesMelyikGombot=3; DesGombNew=1; SetFirstMenu(); DesignTervezesMod=0; DesignAktPod=0; Design_UjraRendez();` IO off if id 0x33.
-`DesignTervezesOk(keepOld)` (0x50b310): `SetFirstMenu(); TervUjraSzamol(EN,-1,false,true);` if mod != 0: `if (mod != 2 || !TervEqual(EN, AktTerv, -1)) { TervClearEmpty(EN,-1); Multi_Send(0x33, EN, 4,&mod, 4,&AktTerv, 0x84,scratch, 1,&keepOld, 0) }; DesignTervezesMod = 0`.
+`DesignCancel` (0x508d30 / exe 0x4aee90): click on a press; `TervUjraSzamol(EN,-1,false,true); DesMelyikGombot=3; DesGombNew=1; CanModify=0`; the pod light freed; `DesignTervezesMod=0; DesignAktPod=0; Design_UjraRendez();` IO off if id 0x33.
+`DesignTervezesOk(keepOld)` (0x50b310 / exe 0x4b1b20): `CanModify=0`, the pod light freed; `TervUjraSzamol(EN,-1,false,true);` if mod != 0: `if (mod != 2 || !TervEqual(EN, AktTerv, -1)) { TervClearEmpty(EN,-1); Multi_Send(0x33, EN, 4,&mod, 4,&AktTerv, 0x84,scratch, 1,&keepOld, 0) }; DesignTervezesMod = 0` (the flag byte = the low byte of the argument; callers pass 0, 0, 1).
+`TervEqual(EN, a, −1)` (exe 0x542260 → `TervEqual2` 0x5421e0): `+0x16`, `+0x40` (i16), `+0x44`, `+0x48`, `+0x4c` (i32) equal and, for slots 1..`+0x4c`, the bytes `+0x50+i` and `+0x5d+i`; the name and price aside. `TervClearEmpty(EN, −1)` (exe 0x541c60): slots 1..12 with count 0 lose their tech.
+`TervUjraSzamol` / `TervAutoDesign` / `TervClear` treat index < 1 as the scratch (exe 0xb9aa68) and act on it as on a stored design.
+Popup texts (ELF `StringReadAll` 0x531e40): `DesignTorlesValasztasNev[i] = GetString(0x11, 3, 0x1c+i)` (the screen uses [0]); `DesignModifyOkValasztasNev[i] = GetString(0x11, 3, 0x20+i)`, i = 0..2: [0] keep the old units, [1] refit them (affordable), [2] not enough money (the ELF's `+8`/`+0x10` are [1]/[2] at its 8-byte stride). The sale row = `[0] + decimal(price)`; the refit row = `[1|2] + " - $" + decimal(cost)` [obs: the exe's popup].
 
 ## 7. Orders and `MULTIGET_Design` (0x50c430 / exe 0x4b4d60)
 `Multi_Send(type, from, [len, ptr]..., 0)`; `Multi_Get(type, &from, [&val, &len]..., 0)`; loop `Multi_GetNextTipus(0x33, 0x3b)` until <= 0. Only 0x33, 0x34, 0x35 are handled here (0x36..0x3b belong to other modules; check what `Multi_GetNextTipus` does with an unhandled type, ELF 0x5c1100 / exe 0x513340).
@@ -275,7 +286,7 @@ Then always: `fleet == 0`: `TervDelete(s, slot, 0, true)`; UI (`s==EN && AktKep=
 ## 9. Sounds
 | Event | Sound |
 |---|---|
-| A press (`Mouse_Lenyom`) on new, delete, OK, auto, clear, the pod +/- buttons, the list, a pod row (0x54) [obs]; redesign and modify act on the release (`onRelease`) and `RedesignPlan`/`ModifyPlan` click only on a press: silent; the scroll bar (10) has no sound | `PlaySoundGlobal(0)` |
+| A press (`Mouse_Lenyom`) on new, redesign, modify, delete, OK, cancel, auto, clear, the pod +/- buttons and cells, the list, the pod panel (0x54, also off the rows) [obs: design-edit.json]; the r/Enter/Esc keys are silent (no press); the scroll bar (10) has no sound | `PlaySoundGlobal(0)` |
 | Design list press (id 9) | also `PlaySound(Des_Hangok[2])` = `screens/design/ki1.wav` |
 | Screen opens (not from messages/help/options) | `PlaySound(Des_Hangok[0])` = `screens/design/screen21.wav` |
 | Screen closes | `PlaySound(Des_Hangok[3])` = `screens/design/screen23.wav` |
@@ -311,13 +322,37 @@ Then always: `fleet == 0`: `TervDelete(s, slot, 0, true)`; UI (`s==EN && AktKep=
 17. `Design_Belep` 0x5074e0 (exe 0x4b1be0): `desmozgato` stores 29.0f / 3.0f; `KELLKINYITASDEFAULT & 1` on a byte.
 18. `DesignTervezesOk` 0x50b310: `Multi_Send` payload lengths (4, 4, 0x84, 1) and that the flag is a 1-byte value.
 
-## 12. Helpers not decompiled yet (name, ELF [exe])
+## 12. `PodKivalaszto` (exe 0x4b6260 / ELF 0x502a60, read; part 3 ports it)
+Called by `GFX_Design` each drawn frame while open; skipped with `OldAlap == -1`. For the base model's boxes `POD%02d` (k < `GetMaxPodok`): shown only
+with `CanModify` (`UnhideObj`, transparency `(AddZoomDes ? AddZoomDes + 40 : 0)/ADDZOOMMAXDES` clamped 0.01 / 0.95→1), else hidden: **no 3D pick
+while viewing**. With all zooms 0: the box centre projected (`TransformPoint`, `·639/639` f32), `d` = its distance to the pointer (rounded to f32),
+`R = AlapAranyok[OldAlap]·50`. Hovered (`d < R`, no button, `AktIkon == 0`): the 0x55 tooltip (above) and `Mouse_Tipus = 1` when techs fit. A
+press within `R` (`Lenyom`, `AktIkon` 0 or 0x55) makes a candidate (≤ 10 slots); the nearest-to-camera one (largest z, strict `>`) becomes
+`SelectedPod`, `DesignAktPod = k + 1`, `PlaySoundGlobal(2)` on the press frame; with techs available `InitiateDelay = 1; DelayVar = 0;
+SubZoom2Des = 0` (30 ticks later the tech models open, 5.1). A changed pod frees the old pod light. `DesigndSelectPodMode` (the 3D popup) is never set
+to 1 in any decompiled function (only drawn and cleared): dead; the live tech popup is the row's (`Mode2`). The list route (`DesignAktPodListabol
+kivalasztott`, `VoltPodEbbenaframeban`) is dead too (both constant). `DesignPoenosanElnevez(race, base, out, special)` (exe 0x4b19d0, asm read):
+`_s(0x3b, race·1000 + base·10 + special)`, then `id − 1` (special ≠ 0), then `base·10`, then the hull tech's name.
+
+## 12b. Part 3: pods, tech models, buttons (ELF read; exe checked where marked)
+- **Button frames** (`Design3DUpdate` step 6, exe same): a press sets `DesMelyikGombot` and `DesGombNew`; open and at 60, `DesGombNew` sets the old button back to frame 60 and restarts the rise (`DesGombFrame` is not reset); `+7` up to 10, then `−7` to 0; `desSetGombFrame(b, f)` (ELF 0x503bb0 / exe 0x4b78c0) = `SetFrame(desbck child 6 → b, f + 60)` (ids 100.. / 200.. are children 0xd / 0xf: unused here).
+- **POD boxes** (`PodKivalaszto` exe 0x4b6260, `SzinezPodok` ELF 0x500510 = exe 0x4b6b90, `KijelolPod` ELF = exe 0x4b4690): the first `GetMaxPodok` boxes `POD%02d` show only with `CanModify`, as lit wireframes (properties 0x40 | 0x800) at transparency `(AddZoomDes ? AddZoomDes + 40 : 0)/ADDZOOMMAXDES` (clamped 0.01 / >0.95 → gone), depth-tested with the hull [obs]; the rest are hidden. Each box gets an ambient light `KijelolPod(I, …, noTechs, chosen)`: `I` = 20, or on `DesignAktPod` `(f32)sin(deskeringeto·200)·50 + 50` (sine rounded to f32, exe 0x4b46a9); bytes `(I·255/100, I·32/100, I·32/100)` red when `!CanModify` or no tech fits the pod (`VannakTalalmanyokAPodon` exe 0x4b7530), else green `(I·32/100, I·255/100, I·32/100)` (byte 0 = R [obs: the green boxes]).
+- **The hold**: the pick (§12) with techs to fit sets `InitiateDelay`; `FRISSIT_Design2` adds 1 a UI tick to `DelayVar`; at 30 `SubZoomDirDes = 1` and `BetoltHozzavaloTalalmanyok` (exe 0x4accf0) loads a model for every tech the pod takes at status ≥ 1: `TTeruletek[t − 1]` (`vector/talalmanyok`), 0xa1..=0xb0 without one `TankTorony[t − 0xa1]` (`vector/colony`), else `bugos!.xvb` (`vector/main`); `AddToScene(0.03)`, `SetRelative(false)`, `RotateObj(1.0471667, rand() % 314 / 200 (int: 0 or 1), 0)`, hidden; `KivalasztottTalalmany = −1`. A release before that clears `InitiateDelay`. A reloaded hull removes the models (`RemoveHozzavaloTalalmanyok` exe 0x4b6a70) and `OldPod = SelectedPod = −1`.
+- **Opening**: `SubZoomDes` +140 a frame to 1000 (−140 to 0 folding); the hull moves to `z = AddZoomDes − 1400 − SubZoomDes` (`UnHideAlap` exe 0x4b72e0). `MegkeresHozzavaloTalalmanyok` (ELF 0x501cc0 / **exe 0x4b5890**; 0x4a3730 is a ground-war function) shows the models of status 5 on a ring: `a = (f32)i/(f32)n`, `(sin(a·6.283 + deskeringeto)·90, cos(…)·70 − 15, 50 − SubZoomDes/1000·400)`, transparency `1 − SubZoomDes/1000`, `1 − desframe/60` while opening, `RotateObjr(0, 0.05, 0)` a frame.
+- **Choosing**: still and fully open (`SubZoomDes` 1000, `SubZoom2Des` 0, `AddZoomDes` 0, dir 1), `CheckIfTalalmanyfolottvan` (ELF 0x501380 / exe 0x4ad0d0; run twice a frame) marks the model within 50 px of the pointer (`KijelolTalalmany`: ambient light 0x0e0e86, `Mouse_Tipus 1`, the tech name as tooltip 0x0c within 30 px) and outlines its row (`Keret(podkezdx − 3, …, 0x73, 0xd, 3)` exe 0x4d37a0: four `FillToScreen`, no corners); `DesignGfx2D_1` lists the shown models' names at `(podkezdx, podkezdy + 15(i + 1) + 5)` colour 2 (row index over all loaded techs) and marks the hovered row with `DesignKeret2(…, 1)`; then the "clear" row `GetString(5, 2, 0xf)` after the last shown (`DesignKeret2(…, 2)`, `DesignPodKiuritomod`).
+- **Release**: no model marked → fold (`SubZoomDirDes = −1`); a marked one → `SubZoom2Des = 1000`, −140 a frame: the model flies from the ring to the pod box's centre ×1024 (`x = (sin·(t·90) + 0)·t + u·cx`, `y = (cos·(t·70) − 15)·t + u·cy`, `z = u·cz − t·350`, `t = SubZoom2Des/1000`, `u = 1 − t`, f32 but sin/cos f64; transparency `1 − t`), `KiszamolErtek` (exe 0x4b4980) fitting it every frame (`rec[0x50 + pod] = tech`, count `min(GetMaxRarakhato, Talalmanyok[t].+0x24)`, `TervUjraSzamol`); below 0 → `SubZoom2Lecsokkentve` → fold.
+- **The clear row is dead**: `PodKiurito` (inlined in exe Megkeres at 0x4b5ee6) runs only folded (`SubZoomDes` 0) and reads `DesignPodKiuritomod` (exe 0xa3f0bb), which `Design_Main` zeroes every frame (0x4b21cf) and only `DesignGfx2D_1` sets, after Megkeres, while `SubZoomDes ≠ 0`. The client ports it the same (dead).
+- `DesignKeret2(x, y, w, h, c)` (ELF 0x541940 / exe 0x4cd4c0) = `DesignKeret1`'s frame on its own state (`dk2m`, `dk2old*`, `dk2uj*`), widened half (not a third) to the left; the pod row's frame `(podkezdx − 7, podkezdy + DesignAktPod·15 + 2, 0x84, 0xd, 1)` while folded (deviation 65).
+- Lasers (`DesignGfx2D_1`, opening, `desframe/60` not 0 or 1): `DrawLaser(F_i, 0x4c, 0x4c, 0x4c, f/60)` from (0, 0), (639, 479), (0, 479), (639, 0), (320, 0); sparks while `desframe ≠ 60` (`kit::Lasers`).
+
+## 12a. Helpers not decompiled yet (name, ELF [exe])
 UI: `PodKivalaszto` 0x502a60 [0x4b6260; exe read in part: 3D pod pick, sets id 0x55, `PlaySoundGlobal(2)`, sets `DesigndSelectPodMode`], `PodElsotetito` 0x5028d0 [0x4b60e0], `FrissitGombTexturak` 0x500b30 [0x4b3f50], `desSetGombFrame` 0x503bb0, `desMeshKiBe` 0x4fb6e0, `desMozgatMainFenyek` 0x500010, `desOldalsoFenyekBe/Ki` 0x4fff30 [0x4b7790] / 0x5001b0, `desInitNullBoxes` 0x4fb7b0, `desRemoveNullBoxes` 0x4fb750, `LoadAlapVektor` 0x5006c0 [0x4b4a60], `HideAlap` 0x502820, `UnHideAlap` 0x503490, `InitAlapok2` 0x500470, `SzinezPodok` 0x500510, `AlapfolottLenyomva` 0x503d20, `KijelolTalalmany` 0x500dc0, `UnjelolPod` 0x5027e0, `UnjelolMindet` 0x501310, `MegkeresHozzavaloTalalmanyok` 0x501cc0 [0x4a3730], `BetoltHozzavaloTalalmanyok` 0x501650, `RemoveHozzavaloTalalmanyok` 0x501be0 [0x4b6a70], `VannakTalalmanyok` 0x501ad0, `VannakTalalmanyokAPodon` 0x4ffb70 [0x4b7530], `CheckIfTalalmanyfolottvan` 0x501380 [0x4ad0d0], `RemovePodLightok` 0x500370, `TalalmanyRarakhato` 0x4fb540 [0x4b6ca0], `GetMaxRarakhato` 0x4fb4c0 [0x4b42f0], `GetMaxPodok` 0x4fb390 [0x4b4290], `KeresPod` 0x4fb320, `DesignKeret2` 0x541940 [0x4cd4c0 (i)], `FadeKerettelKerekit` 0x538330 [0x4d1860 (i)], `KirakFader` 0x547920, `DrawLaser` 0x53c200, `DrawSparks` 0x53b870, `SetFirstMenu` / `SetSecondMenu` 0x507470 / 0x507490 [0x4b6b30].
 Sim side: `TervUjraSzamol` 0x61b5f0 [0x5423b0], `TervCopy` 0x61a840 [0x541cd0], `TervCopy2` 0x61aa80, `TervNew` 0x619b80 [0x5422f0], `TervDelete` 0x619f70 [0x541d50], `TervClear` 0x619e80 [0x541be0], `TervClearEmpty` 0x61b070 [0x541c60], `TervEqual` 0x61ada0 [0x542260], `TervAutoDesign` 0x61b100 [0x541920], `TervHajoinakAra` 0x506880, `TervHajoinakCsokkentettAra` 0x506e00, `HanyHajoVanATervbol` 0x506520, `TervAzOsszesHajotAtalalitja` 0x506e70, `TervAzOsszesHajorolAtalalitja` 0x5071d0, `TervRendezoKeres` 0x50c3d0, `WF::CheckDesign` 0x46dd90 [0x45fd20], `st_CheckTradeTervAr` 0x7372c0, `Story_Special` 0x73e8b0 [0x5c9550], `MoneyHozzaadLog` 0x623240, `MoneyMennyi` 0x622720, `rndlog` 0x61e170 [0x542da0], `Multi_GetNextTipus` 0x5c1100 [0x513340], `Multi_Get` 0x5c11e0, `Multi_Send` 0x5ba960 [0x513840].
 
 ## 13. Unknowns
-- Where `DesigndSelectPodMode` (3D pod pick popup), the 0x1f/0x20 rectangles and `DesignAktPodListabolkivalasztott` are set: `PodKivalaszto` not fully read.
-- Who sends `0x35`; what sets `CanModify` for modes 1 and 2 (not in `Design_Main` for mode 1; `ModifyPlan` sets it for 3; look in `SetSecondMenu` ELF 0x507490, `TervUjraSzamol`, `PodKivalaszto`).
+- (closed: `PodKivalaszto` §12, `CanModify` §2, the 0x1f/0x20 mask spots §4; 0x35 is the starmap panels', design-orders.md.)
+- ELF `SetFirstMenu` 0x507470 and `ModifyPlan` 0x508b70 bodies (the exe inlines / was read); the table at exe 0xb9aaf0 (`TervUjraSzamol` flag 3).
+- Why the exe's hull reload (be1) after the new design's release and after OK on a new design comes one frame later than the client's (§14).
 - `DDColor` byte order in `TscVonal` (D3DCOLOR is BGR in memory: byte 0 may be B, then the table 1..8 reads B,G,R).
 - `KiirStr` flags 4 vs 6 and the 5th argument (size 2/3): research.md says size 2, flags 4 = left; 6 = right/centre (guess).
 - Deviation candidates: stored-design rename without a command (MP desync), 3585 vs 3510 in the scroll bar, the unaffordable-modify `bc = 0` quirk, `Tervek[-1]` queue reads, `DesignElnevez` buffer overrun.
@@ -354,10 +389,79 @@ change, screen23 at F2).
 - The exe's faders flash at random (`FaderDesignFrissito`'s glow, ~50 frames, and `FadeKerettelKerekitDesign`'s scan
   band): the only regions over the threshold at rest (one panel at a time, 11–18).
 
-Client (`ig2-client::design`, `design_scene`; F5 opens it, F2 closes it animated, Esc at once): the opening and
-closing, the list (press, drag, up/down), the scroll bar, the right-button hull drag, the panels' texts, the pod rows
-with their greyed −/+ cells, the faders, the tooltips, the 3D buttons' textures, the sounds. Not yet (part 2): the
-editing modes 1–3 and their popups, the name input, the orders 0x33/0x34 (`MULTIGET_Design`, sim port), the
-3D button press frames, the pods' lights (`SzinezPodok`/`KijelolPod`), the 3D pod pick (`PodKivalaszto`), the tech
-models opening out of a pod (`SubZoomDes`), the fader flashes and scan bands, the lasers and sparks of the opening and
-closing.
+### 14.1 Editing (part 2, 2026-10-23)
+Capture: `run_screendiff.py <install> quick-1.sav design --script tools/trace/scripts/design-edit.json` (Destroyer chosen,
+modify, auto, clear, auto, OK into the pay-or-keep popup → keep the old units, new → the last hull, Enter, OK, delete
+→ sell, the redesign button, Esc, F2; 16 grabs). `screen.js` records the script's `Multi_Send` calls (`{k: 'msg'}`).
+- **The orders match the exe's message stream byte for byte**: 0x33 `[3, 43, record, 1]` (the modified Destroyer
+  kept as a copy), 0x33 `[1, 47, record, 0]` (the new tracked tank, `DesignElnevez`'s "… t1"), 0x34 `[51, 2, 0]`
+  [obs: all 0x84 record bytes equal: `TervUjraSzamol`, `TervAutoDesign`, `TervClear`, `TervClearEmpty` on the
+  scratch].
+- The 17 sounds match in order and tick (Click1 on the press of modify, auto, clear, OK, new, delete, redesign;
+  screen23 at F2) but the two hull reloads after the new design's release and after its OK, where the exe's be1
+  comes one tick later (460/530 vs 459/529; unexplained, §13).
+- The exe handles the frame's messages before `Design_Main` (`MultiSendPackets`), so the frame after an order is
+  drawn with the old `AktTerv`: OK on the new tank slides the Destroyer copy's hull out and the tank's back in
+  [obs: be1 after OK]; the client applies order events one frame late (`Design::event`).
+- The popups (pay-or-keep, the hull list, the sale) match in place, size, colours and the highlighted row; the
+  name input draws no box or cursor in the exe [obs: t465] (the client draws none).
+- At rest every region matches but the exe's random fader flashes and scan bands (not in the client at the capture; the screen kit has them since), the hull (the tank hulls ~1.7×
+  too large and steeper in the client: a part-1 viewing difference, re/deviations.md) and, editing, the exe's faint
+  lit `POD` boxes (part 3; the client hides them, as `PodKivalaszto` does while viewing).
+- The tracer's SDL key events carry no text character: `DesignKeyboardHandler`'s `r` and typed names don't reach
+  the exe (the redesign button stands in; Enter and Esc do arrive).
+
+Client (`ig2-client::design`, `design_edit`, `design_scene`; F5 opens it, F2 closes it animated, Esc at once): the
+opening and closing, the list (press, drag, up/down), the scroll bar, the right-button hull drag, the panels' texts,
+the pod rows and their −/+ cells, the faders, the tooltips, the 3D buttons' textures, the sounds; the editing modes
+1–3 (new with its hull popup, redesign, modify), OK with the pay-or-keep popup, cancel, auto, clear, delete with its
+sale popup, the pod counts (cells and the 3D −/+, the `KezdoIdo` repeat), the pod row's tech popup, the name input,
+r/Enter/Esc, the orders 0x33/0x34 and their events; part 3 (§12b, `design_pods`): the 3D button press frames, the
+`POD` boxes and their lights, the 3D pod pick, the tech models opening out of a pod and the fit, the `DesignKeret2`
+frames, the lasers and sparks.
+
+### 14.2 Pods and tech models (part 3, 2026-10-23)
+Capture: `run_screendiff.py <install> quick-1.sav design --script tools/trace/scripts/design-pods.json` (Destroyer,
+modify, a press on a POD box held 70 ticks, the pointer onto the first tech row, the release fits it, Esc; 9 grabs).
+- The pick matches: the exe's `PlaySoundGlobal(2)` (Click3) comes one tick after the press (301 for a press at 300; the
+  button clicks come on the press tick): the client picks a tick late too.
+- The POD boxes match in place and colour (green 20 %, the chosen one pulsing; red where no tech fits) once
+  depth-tested: the edges inside the hull are hidden [obs: t290, one box of four shows].
+- The models open in both between t320 and t340 (30 ticks after the pick), the same two (Könnyű lézer, Tetra lézer),
+  the same ring, rows and "clear" row; the release on row 1 fits Könnyű lézer 4/4 in both (firepower 60 → 40, price
+  22400 at t372); the models fold by t400. Panels and rows match in text; the remaining region differences are the
+  faders' random flashes and the hull (below).
+- A held left button keeps the tooltip back also when it holds no hot-spot (the pick) [obs: t400, no 0x54 tip].
+- The hull: the Destroyer (`romb6_2`, race 6) drew an extra body `Object05` in the client and lacked the exe's lit
+  windows (fixed, §14.3); part 1 compared only the Fighter.
+- Deviation 93 (the tank hulls ~1.7× too large and steeper): not an `AddToScene` slip: ELF 0x4551d0 scales by
+  `origin/max(origin)·s·XVB+0x4c` and `LoadXVB` sets +0x4c to 1.0 and +4..+0xc to the file's origin, as the client.
+  Left then: `LoadBox(name, false)`'s flag and the LOD archive; both turned out not to matter (§14.3).
+
+### 14.3 The hull's look (2026-10-23)
+Capture: the part-2 and part-3 sequences again (`design-edit.json`, `design-pods.json`), exe runs reused (`--exe-seq`).
+The hull region now passes at every grab (pods 1.8–5.7, was 6.2–6.5; edit 0.9–3.5, was 5.3–8.3).
+- **The root is re-measured at load** (`LoadXVBx` 0x602ad0 → `BoxUjraszamol` ELF 0x602750, `kilogasvizsgalat`
+  0x5ecb10, `boxujraszamol` 0x5ed9f0): the vertices are placed under `diag(origin)` from the root's pivot, the root's
+  half-extents become their reach per axis `e` (`max(|min − p|, |max − p|)`, `p` = the pivot (0, 0, 0)), every child
+  and mesh is re-normalised to the new boxes, and `+0x4c = max(e)/1024` only when the file's largest half-extent is
+  exactly 1024. `AddToScene` (0x4551d0) scales by `e/max(e)·s·+0x4c`, so a 1024-wide root draws as before and any
+  other draws scaled by `max(origin)/max(e)`. Skipped (`nemkellboxszamolas`) for a root with more than one child whose
+  first is a node (`XVBStruct` byte 0 clear; `LoadObject` sets it to 1 on meshes), or with more than two frames on its
+  LOD chain (+0x18). The tank hulls' children reach past the file's box (`ltankp`: `e·origin` up to 1.65× the
+  origin) → 0.61× (`ktankp` 0.40, `legptankp` 0.68, `megatracked_pod` 0.52): deviation 93 [obs: t500..t820 match in
+  size and pitch]. Over the install only these, the `talalmanyok` vehicle models, `aknarako`, `cirk1_2`, `kolonizalo`,
+  `terra2`, `vad1`, `vad4` and the spacewar `cirk11`/`cirk12` (±1 %) change; the colony, starmap, spy, diplomacy,
+  main and trade models don't.
+- `LoadBox(name, false)`'s flag reaches only `loadmaterial` → `loadtexture2(texture, flag, …)`; no hull has a LOD archive.
+- **The hull keeps its depth write while transparent**: at rest `UnHideAlap` sets `SetObjTransparency(0.01)`
+  (`AddZoomDes` is 0 again), which only turns blending on (`renderstateallitas` 0x5fa410: alpha 252); the meshes
+  still hide one another. Drawn as depth-less glass, the Destroyer's `Object05` (the outer body, child 7) painted over
+  `Object02` (the top shell, child 4) [obs: t290].
+- **Lit windows: the self-illumination pass** (`kirak` 0x60e160 → `selfillumkirak` 0x613da0): when the mesh's first
+  material has a second texture (`loadmaterial` +0x50), every batch is drawn again with `changeaktmatarialself`
+  (the batch material's second texture; without one the first stays bound), blend `ONE`/`ONE`, the vertex colour
+  `rgbac` = `float2int(255 − t·255)` grey for all four bytes (`Kocka` 0x5f6a40: `t` = the object's transparency, else
+  the first material's +0x30), the same UVs and depth state; then the blend is restored from property bit 8.
+  `romb6_2`'s `MatJ` (`6destt.bmp` + `6desttsi.bmp`) lights the shell's windows [obs: t140, t290]. A second texture
+  `fenyek_2.bmp`/`reflec.bmp` is swapped in `loadmaterial` for a runtime model's texture (not ported).

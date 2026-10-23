@@ -636,15 +636,20 @@ impl Game<'_> {
             // `SetTankPositionAndMatrix` reads the heights of the planet on the colony screen [original quirk].
             let shown = self.planet_rec(m.i32(va::AKT_PLANET).max(0) as usize)[0x23] as usize;
             let view = self.rules.ground_maps.get(shown);
-            let events = {
+            let muted = m.u8(super::realtime::at::VOICE_MUTE) != 0;
+            let (events, muted_after) = {
                 let mut war = War::new(&mut field, &mut planet, &mut world, &self.rules.ground, &ctx, &mut rng, &mut draw, &mut place);
                 war.map = map;
                 war.view_map = view;
+                war.muted = muted;
                 f(&mut war);
-                war.events
+                (war.events, war.muted)
             };
             let at = va::PLANETS + (p * PLANET_SIZE) as u32;
             let m = &mut self.state.mem;
+            if muted_after != muted {
+                m.set_u8(super::realtime::at::VOICE_MUTE, muted_after as u8);
+            }
             m.set_i32(at + 0x58, planet.garrison);
             m.set_i32(at + 0x5c, planet.garrison_strength);
             m.set_u8(at + 0x64, planet.in_war);

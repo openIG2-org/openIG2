@@ -10,7 +10,7 @@
 use ig2_sim::save::{va, SaveState, PLANET_SIZE, TECH_SIZE};
 
 use crate::kit::design_frame::DesignFrame;
-use crate::kit::fader::{kirak_fader, S};
+use crate::kit::FaderDesign;
 use crate::kit::inside;
 use crate::orders::Selection;
 use crate::render::Frame;
@@ -561,11 +561,6 @@ pub struct Pose {
     pub at: V3,
 }
 
-/// `fifo`'s look (`KirakFader(…, 0, 54s, 90s, 100, 0, 60s, 110s, 70)`).
-fn fifo(f: &mut Frame, d: &Draw2d, r: [f32; 4]) {
-    kirak_fader(f, d.white, &d.v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 60.0 * S, 110.0 * S], 70.0);
-}
-
 /// The sale menu's box (§16's look).
 fn menu_box(f: &mut Frame, d: &Draw2d, r: [f32; 4]) {
     crate::kit::fader::fader(f, d.white, &d.v, r, [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
@@ -573,14 +568,17 @@ fn menu_box(f: &mut Frame, d: &Draw2d, r: [f32; 4]) {
 
 impl InfoPanel {
     /// The faders under the models (`ArrangeFleetInfo` / `StarmapTanksInfoFaderKirakas`).
-    pub fn draw_under(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, sel: &Selection) {
+    /// `fifo`'s faders 0.. in the order drawn, the scroll bar's track and thumb one index (5 tanks, 6 fleet).
+    pub fn draw_under(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, sel: &Selection, fd: &FaderDesign) {
+        let fifo = |f: &mut Frame, r: [f32; 4], i: usize| crate::starmap_panels::fifo(f, d.white, &d.v, r, fd, i);
         let mut rects = vec![[28.0, 27.0, 273.0, 334.0], [338.0, 186.0, 273.0, 175.0], [338.0, 27.0, 273.0, 152.0], [30.0, 29.0, 269.0, 17.0]];
         if self.kind == Kind::Fleet {
             rects.push([30.0, 342.0, 269.0, 17.0]);
         }
         rects.push([340.0, 188.0, 269.0, 17.0]);
-        for r in rects {
-            fifo(f, d, r);
+        let bar = rects.len();
+        for (i, r) in rects.into_iter().enumerate() {
+            fifo(f, r, i);
         }
         let n = self.count(&self.rows(state, sel));
         let (mut h, mut top) = if n < 9 { (0x14b, 0) } else { (0xa58 / n, self.first * (0x14b - 0xa58 / n) / (n - 8)) };
@@ -589,8 +587,8 @@ impl InfoPanel {
             h -= over / 2;
             top -= over / 2;
         }
-        fifo(f, d, [306.0, 29.0, 28.0, 333.0]);
-        fifo(f, d, [310.0, (top + 0x22) as f32, 20.0, (h - 8) as f32]);
+        fifo(f, [306.0, 29.0, 28.0, 333.0], bar);
+        fifo(f, [310.0, (top + 0x22) as f32, 20.0, (h - 8) as f32], bar);
     }
 
     /// The texts and the sale menu (`FlottaInfoText2d` / `StarmapTanksInfoSzovegKiirasok`, `StarmapGfx2D_3`'s menu box

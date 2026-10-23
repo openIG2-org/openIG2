@@ -513,6 +513,33 @@ pub enum GroundEvent {
     /// `WF::ShotSpecWeapon`: the ground AI called an air strike on a cell (before the spread; the bombs or
     /// the fighter wave are in [`Field::lists`], `ground-combat.md` §11.15).
     AirStrike { empire: i32, cell: (i32, i32), big_ships: bool },
+    /// A `WF::PlaySpeechGrWar` site was reached (spec §11.12), whether or not anyone watches: the colony screen
+    /// showing the planet plays it.
+    Voice(Voice),
+}
+
+/// A ground-war voice line as the sim reaches it (spec §11.12). Whose the unit is decides the line and kind, and
+/// that depends on the viewer's empire ([`Voice::line`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Voice {
+    /// `WF::Damage`'s `rand() % 15 == 0`: unit `victim` of `owner` was hit by `by`.
+    Hit { victim: i32, owner: i32, by: i32 },
+    /// `WF::RemoveTankGroup`: the last member of group `unit` of `owner` died (the mute byte clear).
+    Dead { unit: i32, owner: i32 },
+    /// The message 0x12f: `empire` retreats (`MULTIGET_Colony`, a direct `ColonySpeaker.Play`).
+    Retreat { empire: i32 },
+}
+
+impl Voice {
+    /// `(line, kind)` for the viewer's empire `en` (C `%`: a building shooter's line can be 0 or negative).
+    pub fn line(self, en: i32) -> (i32, i32) {
+        match self {
+            Voice::Hit { victim, owner, .. } if owner == en => (victim % 3 + 1, 5),
+            Voice::Hit { by, .. } => (by % 3 + 1, 8),
+            Voice::Dead { unit, owner } => (unit % 3 + 1, if owner == en { 7 } else { 9 }),
+            Voice::Retreat { empire } => (1, if empire == en { 3 } else { 10 }),
+        }
+    }
 }
 
 /// What a war did (diagnostics for the trace report; no gameplay effect).
@@ -559,6 +586,8 @@ pub struct War<'a> {
     place_out: (i32, i32),
     /// The colony screen's voice lines ([`War::with_voices`]); without them no line plays.
     pub voices: Option<&'a mut Voices>,
+    /// The mute byte `TankHozzaadas` (exe 0x9B2EBC) without [`War::voices`]: the game keeps it in the state.
+    pub muted: bool,
 }
 
 /// `cvttsd2si`: out of range or NaN → `i32::MIN` (the "integer indefinite" value).
@@ -603,6 +632,7 @@ impl<'a> War<'a> {
             view_map: None,
             place_out: (0, 0),
             voices: None,
+            muted: false,
         }
     }
 
@@ -621,6 +651,18 @@ impl<'a> War<'a> {
         if self.voices.as_deref_mut().is_some_and(|v| v.play(line, kind, en)) {
             (self.libc)();
         }
+    }
+
+    /// A `PlaySpeechGrWar` site for the client ([`GroundEvent::Voice`]): every site outside `Simulate`.
+    fn voice(&mut self, v: Voice) {
+        if !self.field.simulating {
+            self.events.push(GroundEvent::Voice(v));
+        }
+    }
+
+    /// The mute byte (the classic replay's [`Voices`] carry their own).
+    fn muted(&self) -> bool {
+        self.voices.as_ref().map_or(self.muted, |v| v.muted)
     }
 
     /// Use the colony map for placement and heights (else the [`War::place`] hook).
@@ -1148,6 +1190,7 @@ impl<'a> War<'a> {
 
     /// The global `0x9B2EBC` (death voices off while groups merge).
     fn mute(&mut self, on: bool) {
+        self.muted = on;
         if let Some(v) = self.voices.as_deref_mut() {
             v.muted = on;
         }
@@ -1388,6 +1431,7 @@ impl<'a> War<'a> {
         }
         if u >= 0 {
             if (self.libc)() % 15 == 0 {
+                self.voice(Voice::Hit { victim: u, owner: self.u(u).owner, by });
                 // A hit voice: the victim's if it is the human's, else the shooter's.
                 if self.ctx.on_screen && self.u(u).owner == self.ctx.human {
                     self.speak(u % 3 + 1, 5);
@@ -1535,7 +1579,8 @@ impl<'a> War<'a> {
             return;
         }
         // The death voice (`FUN_0045f380` = the cached alive-member count, refreshed here).
-        if self.alive_members(i) == 0 && !self.voices.as_ref().is_some_and(|v| v.muted) {
+        if self.alive_members(i) == 0 && !self.muted() {
+            self.voice(Voice::Dead { unit: i, owner: self.u(i).owner });
             let kind = if self.u(i).owner == self.ctx.human { 7 } else { 9 };
             self.speak(i % 3 + 1, kind);
         }
@@ -2587,6 +2632,53 @@ mod tests {
         });
         assert!(!v.muted);
         assert!(v.lines.iter().all(|l| l.cooldown == 0));
+    }
+
+    fn voice_events(w: &War) -> Vec<Voice> {
+        w.events.iter().filter_map(|e| if let GroundEvent::Voice(v) = *e { Some(v) } else { None }).collect()
+    }
+
+    /// Off screen (the live game) the sites still reach the client, with no draw of their own; under `Simulate`
+    /// and with the mute byte (kept without `Voices`) they don't.
+    #[test]
+    fn voice_events_without_a_screen() {
+        let mut x = fx();
+        let v = with_war(&mut x, |w| {
+            let a = w.add_tank(1, 200, 1, 1, false, 0, 0, 0);
+            let b = w.add_tank(2, 200, 2, -5, false, 0, 0, 0);
+            w.damage(b, 1, a);
+            w.um(b).hp = vec![0];
+            w.remove_group(b);
+            voice_events(w)
+        });
+        assert_eq!(v, [Voice::Hit { victim: 1, owner: 2, by: 0 }, Voice::Dead { unit: 1, owner: 2 }]);
+        // Two objects and the hit's roll.
+        assert_eq!(x.draws, 3);
+        // Empire 2 watching: its unit's line (1 % 3 + 1) speaks; empire 1: the shooter's (0 % 3 + 1).
+        assert_eq!((v[0].line(2), v[0].line(1)), ((2, 5), (1, 8)));
+        assert_eq!((v[1].line(2), v[1].line(1)), ((2, 7), (2, 9)));
+        // ig2.exe (quick-1.sav planet 17, 2026-10-23): 0x12f from empire 6 → `ColonySpeaker.Play(1, 3)`.
+        assert_eq!((Voice::Retreat { empire: 6 }.line(6), Voice::Retreat { empire: 6 }.line(3)), ((1, 3), (1, 10)));
+        // A building shooter (C `%`): slot 1 → line 0 (nothing), slot 2 → −1 (no speaker).
+        assert_eq!((Voice::Hit { victim: 0, owner: 2, by: -1 }.line(1), Voice::Hit { victim: 0, owner: 2, by: -2 }.line(1)), ((0, 8), (-1, 8)));
+        let mut x = fx();
+        x.field.simulating = true;
+        assert!(with_war(&mut x, |w| {
+            let a = w.add_tank(1, 200, 1, 1, false, 0, 0, 0);
+            let b = w.add_tank(2, 200, 2, -5, false, 0, 0, 0);
+            w.damage(b, 1, a);
+            voice_events(w)
+        })
+        .is_empty());
+        let mut x = fx();
+        assert!(with_war(&mut x, |w| {
+            w.muted = true;
+            let b = w.add_tank(2, 200, 2, -5, false, 0, 0, 0);
+            w.um(b).hp = vec![0];
+            w.remove_group(b);
+            voice_events(w)
+        })
+        .is_empty());
     }
 
     #[test]

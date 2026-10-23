@@ -742,6 +742,11 @@ Hungarian texts. Sounds verified with the sound-id tracer (`tools/trace/scripts/
 
 `run_screendiff.py … design` (still) and `design --script` (14 grabs: opening, list press, down/up, pod-row press, F2 closing; `_local/screendiff/run`). At rest every region matches (means 0.05–3.7) except the exe's random fader flash (one panel at a time, 11–18) and the hull (spin phase: about 3 at the still, 7–9 in the sequence). The sequence matches likewise. The 9 sounds match the exe's in order and tick (`tools/trace/scripts/design-sounds.json`). Not drawn: the fader flashes and scan bands, the lasers and sparks, the DesignKeret2 pod-row frame (part 2).
 
+## 2026-10-23, the Trade screen, part 1 (`trade`, `trade-buy`, re/screens/trade.md §13)
+
+`run_screendiff.py … trade` (opening and rest) and `trade-buy` (pick, +2, destination, OK, deliveries, F2 closing; the script sets `TradeCheat` and the exe's `AktEtaDays`). `trade`: every region 0.0–4.4. `trade-buy`: every part-1 region 0.1–2.6; the purchase is identical to the exe (money 107209, 2 Vadász to Andromeda 8, 31 days); 7 sounds match in order and tick. What differs is part 2: the hull model, the info card and its boxes.
+
+---
 ## 2026-10-22, Options (`options`, `options-load`; re/screens/options.md §14)
 
 `run_screendiff.py options --script tools/trace/scripts/options.json` (over a save): every region matches except `buttons` at t100/170/320 (6.8-11.2: random sparks + the unported fader hover glow, deviations.md rows 68-74). Sounds match (Global_Hangok[0] only on the quit press).
@@ -754,3 +759,22 @@ Hungarian texts. Sounds verified with the sound-id tracer (`tools/trace/scripts/
 overlay) except 2.15 at 70 ms (the exe's logo fade starts a few ms later; under 0.1 s), bars 0.00. Skip verified in the exe
 (key down+up closes at the next frame; a button down alone doesn't). Message clips: unit-tested, not capture-compared (no
 save with an inbox message). Spec `video.md`; deviations #75-#82.
+
+## 2026-10-23, the faders' hover glow (Options, research, design; hud.md §1.2.1)
+
+Options `buttons` 11.2/9.3/9.3/6.5/6.5 at t100/170/250/320/400 (was 6.8-11.2 at t100/170/320): the rest is the random laser sparks, the random shine on other buttons and different random glow styles, not a missing feature. `slots` 21.4/18.2 at t500/t560 = the client's random shine on the slot list (the exe's fell on other faders). Research: as its 2026-10-22 baseline except right_list t340-400 7-14 (client shine). Design: list t80/100 15.5/16.0 (client shine), the rest random shine/glow on other panels. Frida probe `tools/trace/probes/fader.js`: glow starts, 100 ticks each, shine curve and drift bit-exact. Deviations #83-#86.
+
+## 2026-10-23, the Design screen, editing (`design --script design-edit.json`, quick-1.sav; re/screens/design.md §14.1)
+16 grabs: all regions match at rest except the exe's random fader flashes and scan bands and the hull (tank hulls scale/pitch, deviations #87-#97). Messages byte-identical to the exe's `Multi_Send` stream (orders 0x33/0x34). Sounds: 17, matching except two `be1` one tick early.
+
+## 2026-10-23, the starmap faders' shine and drift (`starf`/`fifo`, hud.md §1.2.1)
+Frame 3.53 (match), production 4.31 (match; one slide box brighter = random shine), planetinfo 9.87 (panel 3.17, exit 2.66), tanksinfo 6.65 (the new tanks-info box; exit box matches visually), transfer 12.92 (the exe state file was missing: content differs, not the faders). Deviation #83 closed, #47's drift-shine clause trimmed.
+## 2026-10-23, the Design screen, part 3 (`design --script design-pods.json`; re/screens/design.md §12b, §14.2)
+Differing regions: bottom_left/bottom_right (the exe's random fader flashes, text equal) and the hull 6.2-6.5 (the Destroyer's extra body); the rest pass. Pod pick sound tick, POD boxes, tech models (the same two, same time) and the fit (Könnyű lézer 4/4, firepower 60->40) match. Deviations #111-#114.
+
+## 2026-10-23, the Diplomacy opening (`diplomacy --anim-frame F`, `--script scripts/diplomacy.json`; re/screens/diplomacy.md §3.1, §6.1, §7.1)
+Held frames: rest frame 7.99 info 3.96 menu 3.51 name 17.11 ring 19.80 left 8.63 right 7.19; open20 all match, frame 1.10; open50 frame 2.52, info 6.93 differs, rest match; open70 frame 7.06, name 14.41, ring 19.78 differ.
+Sequence (t: frame / worst region): 60 0.61; 150 2.58 info 7.94; 230 3.15; 300 9.30 ring 17.0; 420 6.62; 470 7.22; 600 10.93 name 25.7 (closing, the exe one tick behind); 640 9.84 ring 21.3. Remaining kinds: cage wire brightness/back lines, grid brightness, leader video phase.
+
+## 2026-10-23, the Design screen's hull look (`design --script design-pods.json` / `design-edit.json`, exe runs reused; re/screens/design.md §14.3)
+Hull region passes at every grab: pods 1.8-5.7 (was 6.2-6.5), edit 0.9-3.5 (was 5.3-8.3). Remaining differences outside the hull are the exe's random fader flashes and fade timing (unchanged). Deviations #93 and #113 closed. Open finding, not caused by this change: the transfer panel's left_panel 5.17 -> 10.7 (baseline 2026-10-22) is already on main (a build without this change gives 10.69; the panel background is brighter, luma 41.7 -> 51.2). The transfer/fleet panels' vehicle models also go through the re-measure (the colonizer ~1.17x bigger, closer to the exe's height).

@@ -160,7 +160,17 @@ impl Dump {
             radar: 100,
             spin: 0.0,
             hidden_button: None,
+            boxed: None,
+            fx: None,
         }
+    }
+
+    /// The starmap camera `initgfx` saved at entry (`StarmapXStart`, `StarmapYStart`, rotate, pitch, zoom): the pan
+    /// `+0x1f9c` is the starmap pivot `(0, XStart, −YStart)` minus `starmapeltolas` `+0x1f74`; yaw `+0x1fac`, pitch
+    /// `+0x1fb0`, distance `+0x1fb4` (`600 − StarmapZoom`).
+    pub fn saved_starmap_camera(&self) -> [f32; 5] {
+        let (o, p) = ([self.f(0x1f78), self.f(0x1f7c)], [self.f(0x1fa0), self.f(0x1fa4)]);
+        [p[0] + o[0], -(p[1] + o[1]), self.f(0x1fac), self.f(0x1fb0), 600.0 - self.f(0x1fb4)]
     }
 
     /// The camera fields (exe offsets; spec §2.1): pivot `+0xc5c` (h, x, y), yaw `+0xc80`, tilt `+0xc84`, zoom
@@ -199,6 +209,10 @@ pub struct Shown<'a> {
     pub spin: f32,
     /// The armed weapon group's button in its blink's off phase (§5.1).
     pub hidden_button: Option<usize>,
+    /// The box select's corners (press point, pointer; virtual pixels) while it is drawn.
+    pub boxed: Option<[f32; 4]>,
+    /// The effects and the weapon table (the live screen only).
+    pub fx: Option<(&'a crate::spacewar_fx::Fx, &'a [ig2_sim::spacebattle::WeaponRules])>,
 }
 
 /// The battle camera's state (spec §2.1).
@@ -480,7 +494,7 @@ fn fixed_texture(r: &mut crate::render::Renderer, items: &[Fixed], rect: [f32; 4
                     color: [1.0, 1.0, 1.0, it.opacity],
                 });
             }
-            draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: it.opacity < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+            draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: it.opacity < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
     }
     let [x0, y0, x1, y1] = rect;
@@ -558,12 +572,13 @@ impl<'a> Scene<'a> {
             (eb, cb) = (lerp(eb, ea, t), lerp4(cb, ca, t));
         }
         // A one-pixel band in the 3D pass, so the scene's depth hides it (the engine's `Lines` are depth tested): the
-        // eye-space segment widened across the view ray by half a virtual pixel at each end, back to the world.
+        // eye-space segment widened across the view ray by half a screen pixel at each end, back to the world.
         let Some(look) = cam.look else { return };
         let d = [eb[0] - ea[0], eb[1] - ea[1], eb[2] - ea[2]];
+        let k = cam.k();
         let across = |e: [f32; 3]| {
             let n = crate::scene::normalise(cross(d, e));
-            let hw = 0.5 * -e[2] / 600.0;
+            let hw = 0.5 * -e[2] / (600.0 * k);
             n.map(|x| x * hw)
         };
         let (na, nb) = (across(ea), across(eb));
@@ -578,38 +593,55 @@ impl<'a> Scene<'a> {
         for k in [0, 1, 2, 0, 2, 3] {
             scene.dynamic.push(quad[k]);
         }
-        late.push(crate::render3d::MeshDraw { mesh: None, range: start..scene.dynamic.len() as u32, tex: white, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+        // Added, not blended: the colour times its opacity onto the scene [obs: s4 t1100, a grid pixel (17, 35, 44) →
+        // (17, 42, 59) = + 0x402000 × 0.25; blending would darken the red], writing depth: where the far lines crowd
+        // the exe's grid stays one line bright [obs: s4 t720, the grid's far half].
+        late.push(crate::render3d::MeshDraw { mesh: None, range: start..scene.dynamic.len() as u32, tex: white, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
     }
 
     /// The grid (`initracs`, spec §1.5): 128 lines each way at h = 18, each in three pieces (the outer ends clear),
     /// alpha `255 − 63t` (`t = (64 − |i − 64|)/32`, 0xC0 beyond t = 1), RGB 0x402000.
     fn grid(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, white: crate::render::TexId) {
+        let mut segs = Vec::new();
         for i in 0..CELLS {
             let t = (64 - (i - 64).abs()) as f32 / 32.0;
             let a = if t <= 1.0 { (255.0 - 63.0 * t) as i32 as u32 } else { 0xc0 };
             let on = word_color(a << 24 | 0x40_2000);
-            let off = word_color(0x40_2000);
+            // The outer ends fade out [obs: s4 t720, the exe's grid fades towards its edge; read as the word
+            // 0x00402000 (A = 0, opaque) they would be the brightest part].
+            let off = [0.0; 4];
             let c = (i - 64) as f32 * CELL + 1.5;
             for along_y in [true, false] {
                 let at = |v: f32| if along_y { [PLANE_H, c, v] } else { [PLANE_H, v, c] };
                 let (lo, hi) = (-BOUND, BOUND);
-                self.line(f, cam, white, at(lo), at(lo / 2.0), off, on);
-                self.line(f, cam, white, at(lo / 2.0), at(hi / 2.0), on, on);
-                self.line(f, cam, white, at(hi / 2.0), at(hi), on, off);
+                segs.push((at(lo), at(lo / 2.0), off, on));
+                segs.push((at(lo / 2.0), at(hi / 2.0), on, on));
+                segs.push((at(hi / 2.0), at(hi), on, off));
             }
+        }
+        // Nearest first, so a crowded pixel keeps the nearest line (see `line`).
+        let m = cam.matrix();
+        let depth = |a: [f32; 3], b: [f32; 3]| {
+            let w = self.world(std::array::from_fn(|j| (a[j] + b[j]) / 2.0));
+            cam.eye(&m, w[0], [w[1], w[2]])[2]
+        };
+        segs.sort_by(|p, q| depth(q.0, q.1).total_cmp(&depth(p.0, p.1)));
+        for (a, b, ca, cb) in segs {
+            self.line(f, cam, white, a, b, ca, cb);
         }
     }
 
     /// The drop lines (`SpaceWarhajovonalkirajzol`, spec §1.6): from each live unit to the grid plane, alpha 200,
-    /// green for the viewer's own, 0x0000E0 for allies, 0x00C0E0 for the rest.
+    /// green for the viewer's own, 0x0000E0 (red) for its enemies, 0x00C0E0 for the rest; added like the grid.
     fn drop_lines(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, white: crate::render::TexId, b: &Battle) {
         for u in b.units.iter().filter(|u| u.alive && u.owner != 0 && (u.owner == b.human || !u.cloaked)) {
             let rgb = if u.owner == b.human {
                 0x00_c000
             } else if b.hostile.get(b.human.max(0) as usize).and_then(|r| r.get(u.owner.max(0) as usize)).copied() == Some(1) {
-                0x00_c0e0
-            } else {
+                // Red for an enemy [obs: s4fx t1100, an enemy's line adds (48, 0, 0) = 0xe0 × (255 − 200)/255].
                 0x00_00e0
+            } else {
+                0x00_c0e0
             };
             let c = word_color(200 << 24 | rgb);
             self.line(f, cam, white, [PLANE_H, u.pos.y, u.pos.z], [u.pos.x, u.pos.y, u.pos.z], c, c);
@@ -663,7 +695,7 @@ impl<'a> Scene<'a> {
                     scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [lit, lit, lit, alpha] });
                 }
                 let range = start..scene.dynamic.len() as u32;
-                late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: alpha < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+                late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: alpha < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
             }
         }
     }
@@ -672,7 +704,7 @@ impl<'a> Scene<'a> {
     /// (exe unit `+0x184` grow T1, `+0x188` fade F, `+0x18c` attacked T3), the hit-point bar, the corner brackets while
     /// selected, the attack ticks, and the ship count of a selected group; additive, in virtual pixels. `c = 1 −
     /// starmaperosseg` (0 at the battle's zoom).
-    fn overlays(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, hud: &crate::ui::Hud, b: &Battle, erosseg: f32) {
+    fn overlays(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, hud: &crate::ui::Hud, b: &Battle, erosseg: f32, szar: Option<crate::render::TexId>) {
         use crate::render::{kind, Blend, Instance};
         let v = crate::font::Virtual::new(cam.size);
         let c = 1.0 - erosseg;
@@ -684,14 +716,21 @@ impl<'a> Scene<'a> {
         };
         let (atk, dmg, ok) = (additive(ab << 24 | 0x00_00ff), additive(ab << 24 | 0x40_40ff), additive(ab << 24 | 0x40_ff40));
         let (foe, own) = (additive(ar << 24 | 0x40_40ff), additive(ar << 24 | 0xff_ffff));
-        // `line3`'s quads: screen-aligned rectangles between two corners.
-        let quad = |f: &mut crate::render::Frame, x0: f32, y0: f32, x1: f32, y1: f32, col: [f32; 4]| {
+        // `line3`'s quads (§6.1.1): screen-aligned rectangles between two corners, textured with `szar.bmp`, u from `u0`
+        // to `u1` along x and v 0..1 along y; `swap` (a first vertex's tv ≥ 1) runs u along y and v along x.
+        let tex = szar.unwrap_or(self.assets.white);
+        let quad = |f: &mut crate::render::Frame, x0: f32, y0: f32, x1: f32, y1: f32, col: [f32; 4], u: (f32, f32), swap: bool| {
             let (lx, hx, ly, hy) = (x0.min(x1), x0.max(x1), y0.min(y1), y0.max(y1));
             if hx > lx && hy > ly {
-                f.push(self.assets.white, Blend::GammaAdditive, Instance::new(kind::SPRITE, v.px((lx + hx) / 2.0, (ly + hy) / 2.0), [(hx - lx) * v.k / 2.0, (hy - ly) * v.k / 2.0], col));
+                let (c, w, h) = (v.px((lx + hx) / 2.0, (ly + hy) / 2.0), (hx - lx) * v.k / 2.0, (hy - ly) * v.k / 2.0);
+                let uv = [u.0, 0.0, u.1 - u.0, 1.0];
+                let i = if swap { Instance { rot: std::f32::consts::FRAC_PI_2, uv, ..Instance::new(kind::SPRITE, c, [h, w], col) } } else { Instance { uv, ..Instance::new(kind::SPRITE, c, [w, h], col) } };
+                f.push(tex, Blend::GammaAdditive, i);
             }
         };
         let m = cam.matrix();
+        // `line3`'s one-pixel arms are one screen pixel [obs: s4 t720, the exe's brackets are a pixel thin at 800 × 600].
+        let one = 1.0 / v.k;
         let font = hud.font.as_ref();
         let pal = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
         for (i, u) in b.units.iter().enumerate() {
@@ -718,11 +757,11 @@ impl<'a> Scene<'a> {
             let yb = (y as f64 - ((rr0 * fa) as f64 * 1.2 - (rr0 * fa) as f64 / 5.0) - 1.0) as f32;
             let x0 = x - rr0 * g;
             let xm = x0 + rr0 * q * 2.0 * g;
-            quad(f, x0, yt, xm, yb, dmg);
-            quad(f, xm, yt, x + rr0 * g, yb, ok);
+            quad(f, x0, yt, xm, yb, dmg, (0.0, q), false);
+            quad(f, xm, yt, x + rr0 * g, yb, ok, (q, 1.0), false);
             if u.shield_used < u.shield {
                 let cc = u.shield_used as f32 / u.shield as f32;
-                quad(f, x0 + rr0 * cc * 2.0 * g, yt, x + rr0 * g, yb, dmg);
+                quad(f, x0 + rr0 * cc * 2.0 * g, yt, x + rr0 * g, yb, dmg, (cc, 1.0), false);
             }
             let mut rr = rr0;
             if brackets {
@@ -731,22 +770,110 @@ impl<'a> Scene<'a> {
                 let la = r2 * (250.0 - fd) / 500.0;
                 for (cx, cy, sx, sy) in [(-1.0, -1.0, 1.0, 1.0), (1.0, 1.0, -1.0, -1.0), (1.0, -1.0, -1.0, 1.0), (-1.0, 1.0, 1.0, -1.0)] {
                     let (px0, py0) = (x + cx * r2, y + cy * r2);
-                    quad(f, px0, py0, px0 + sx * la, py0 - sy, col);
-                    quad(f, px0, py0, px0 - sx, py0 + sy * la, col);
+                    quad(f, px0, py0, px0 + sx * la, py0 - sy * one, col, (0.5, 0.5), true);
+                    quad(f, px0, py0, px0 - sx * one, py0 + sy * la, col, (0.5, 0.5), false);
                 }
                 rr = r2;
             }
             if t3 > 0.0 {
                 let r3 = 9000.0 / t3 - 9.0 + rr0;
                 let lt = r3 * 250.0 / 500.0;
-                quad(f, x + r3, y, x + r3 + lt, y + 1.0, atk);
-                quad(f, x - r3, y, x - r3 - lt, y + 1.0, atk);
-                quad(f, x, y + r3, x + 1.0, y + r3 + lt, atk);
-                quad(f, x, y - r3, x + 1.0, y - r3 - lt, atk);
+                quad(f, x + r3, y, x + r3 + lt, y + one, atk, (0.5, 0.5), true);
+                quad(f, x - r3, y, x - r3 - lt, y + one, atk, (0.5, 0.5), true);
+                quad(f, x, y + r3, x + one, y + r3 + lt, atk, (0.5, 0.5), false);
+                quad(f, x, y - r3, x + one, y - r3 - lt, atk, (0.5, 0.5), false);
                 rr = r3;
             }
             if let (true, Some(font)) = (selected && u.ship_count > 1, font) {
                 font.int(f, &v, u.ship_count as i64, (x + rr - 5.0).trunc(), (y + rr - 7.0).trunc(), 5, 2, crate::font::Align::Left, pal(3));
+            }
+        }
+    }
+
+    /// The effect particles (`Particle` ELF 0x5f4ff0, textured mode; spec §6.7.2): screen-aligned squares of half-size
+    /// `size·fov/−z`, the colour word's RGB × (255 − T)/256 added; the 25-frame sets step through their 5 × 5 sheet.
+    fn particles(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, fx: &crate::spacewar_fx::Fx, textures: &[Option<crate::render::TexId>; 5]) {
+        use crate::render::{kind, Blend, Instance};
+        let m = cam.matrix();
+        let near = -cam.look.map_or(0.4, |l| l.near);
+        for (set, ps) in fx.sets.iter().enumerate() {
+            let tex = textures[set].unwrap_or(self.assets.white);
+            let frames = crate::spacewar_fx::SET_FRAMES[set];
+            for p in ps.iter().filter(|p| p.color != 0 && p.size > 0.0) {
+                let w = self.world(p.pos);
+                let e = cam.eye(&m, w[0], [w[1], w[2]]);
+                if e[2] >= near {
+                    continue;
+                }
+                let Some((c, px)) = cam.project_eye(e) else { continue };
+                let half = p.size / SCENE_SCALE * px;
+                let uv = if frames > 0 {
+                    let side = (frames as f32).sqrt() as i32;
+                    let k = (p.frame as i32).clamp(0, frames as i32 - 1);
+                    let d = 1.0 / side as f32;
+                    [(k % side) as f32 * d, (k / side) as f32 * d, d, d]
+                } else {
+                    [0.0, 0.0, 1.0, 1.0]
+                };
+                f.push(tex, Blend::GammaAdditive, Instance { uv, ..Instance::new(kind::SPRITE, c, [half; 2], crate::starmap::particle_color(p.color)) });
+            }
+        }
+    }
+
+    /// The projectiles (`SpaceWarLovedekKirajzol` and `Particle`'s model mode, spec §6.3.1, §6.7.2): each live shot as its
+    /// form's model turned by `CreateMatrix2(dir, 0)` at the shot's size, added with opacity `(255 − A)/256`; a point
+    /// when it is 2 pixels or smaller.
+    fn shots(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, b: &Battle, fx: &crate::spacewar_fx::Fx, weapons: &[ig2_sim::spacebattle::WeaponRules], meshes: &[Option<Mesh>]) {
+        use crate::render::{kind, Blend, Instance};
+        let m = cam.matrix();
+        let near = -cam.look.map_or(0.4, |l| l.near);
+        let forms = &fx.tables.forms;
+        for (fi, pool) in b.pools.iter().enumerate() {
+            let Some(form) = forms.get(fi) else { continue };
+            for s in pool.shots.iter().filter(|s| s.shooter.is_some()) {
+                let (word, size) = crate::spacewar_fx::shot_look(s, weapons, forms, form.size, b.tick);
+                if size <= 0.0 {
+                    continue;
+                }
+                let pos = [s.pos.x, s.pos.y, s.pos.z];
+                let w = self.world(pos);
+                let e = cam.eye(&m, w[0], [w[1], w[2]]);
+                if e[2] >= near {
+                    continue;
+                }
+                let Some((c, px)) = cam.project_eye(e) else { continue };
+                let color = crate::starmap::particle_color(word);
+                let mesh = meshes.get(fi).and_then(|x| x.as_ref());
+                let (Some(mesh), true) = (mesh, size / SCENE_SCALE * px > 2.0) else {
+                    f.push(self.assets.white, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [0.5; 2], color));
+                    continue;
+                };
+                // The spinning sprites: the torpedo form 7 and weapon 11 (f64 sin/cos).
+                let mut d = [s.dir.x, s.dir.y, s.dir.z];
+                let spin = if fi == 7 { Some(3.0) } else if s.weapon == 11 { Some(10.0) } else { None };
+                if let Some(k) = spin {
+                    let a = s.age as f64 / k;
+                    let (x, y) = (a.sin() as f32, a.cos() as f32);
+                    let l = (x * x + y * y).sqrt();
+                    (d[0], d[1]) = (x / l, y / l);
+                }
+                let d = crate::scene::normalise(d);
+                let t = crate::scene::normalise(cross(d, [0.0, 1.0, 0.0]));
+                let u = crate::scene::normalise(cross(d, t));
+                let rot: crate::scene::M3 = [-d[0], -u[0], -t[0], -d[1], -u[1], -t[1], -d[2], -u[2], -t[2]];
+                let place = crate::scene::Placement::add_to_scene(mesh.origin, size / SCENE_SCALE);
+                let xf = crate::scene::Transform { matrix: crate::scene::mul(&rot, &place.matrix), translation: w };
+                let a = (255 - (word >> 24)) as f32 / 256.0;
+                let crate::render::Frame { scene, late, .. } = f;
+                let Some(scene) = scene.as_mut() else { continue };
+                for (verts, tex) in &mesh.parts {
+                    let start = scene.dynamic.len() as u32;
+                    for v in verts {
+                        scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [1.0, 1.0, 1.0, a] });
+                    }
+                    let range = start..scene.dynamic.len() as u32;
+                    late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
+                }
             }
         }
     }
@@ -839,6 +966,11 @@ pub struct Gfx {
     panel: Panel,
     console: Option<crate::starmap_hud::Console>,
     stars: Vec<([f32; 3], f32, f32)>,
+    /// The effect sets' textures (`textures/spacewar/<set>.bmp`) and the projectile forms' models (`Lovedekload`).
+    fx_textures: [Option<crate::render::TexId>; 5],
+    forms: Vec<Option<Mesh>>,
+    /// `szar.bmp` (`+0x1890`): the overlays' texture.
+    szar: Option<crate::render::TexId>,
 }
 
 impl Gfx {
@@ -847,7 +979,13 @@ impl Gfx {
         // 16.3 with the starmap's lights; the exe's panel changes colour with the side lights `smMozgatMainFenyek`
         // circles].
         let console = crate::starmap_hud::Console::load_lit(r, install, [0.0; 3]).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
-        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field() }
+        let fx_textures = std::array::from_fn(|i| {
+            let path = format!("dataraw/textures/spacewar/{}_bmp.pvr", crate::spacewar_fx::SET_TEXTURES[i]);
+            crate::assets::Image::load(install, &path).map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t))
+        });
+        let forms = s.fx.map_or_else(Vec::new, |(fx, _)| fx.tables.forms.iter().map(|f| if f.name.is_empty() { None } else { Mesh::load(r, install, "vector/spacewar/", &f.name, "textures/spacewar/") }).collect());
+        let szar = crate::assets::Image::load(install, "dataraw/textures/spacewar/szar_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
+        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar }
     }
 }
 
@@ -865,7 +1003,11 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
     gfx.models.top_up(r, install, s);
     let scene = Scene { view: &s.view, assets, models: &gfx.models, surface, shown: s };
     scene.draw(f, cam, s.battle, &cam.eye_world());
-    scene.overlays(f, cam, hud, s.battle, s.erosseg);
+    if let Some((fx, weapons)) = s.fx {
+        scene.shots(f, cam, s.battle, fx, weapons, &gfx.forms);
+        scene.particles(f, cam, fx, &gfx.fx_textures);
+    }
+    scene.overlays(f, cam, hud, s.battle, s.erosseg, gfx.szar);
     for sl in &s.slots[..9] {
         gfx.panel.clock(r, install, clock_frame(sl.reload));
     }
@@ -950,7 +1092,8 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     let path = o.battle.as_deref().ok_or("--screen spacewar needs --battle FILE")?;
     let d = Dump::load(path)?;
     if let Some(script) = &o.script {
-        return live(o, out, l, world, r, hud, d.battle, &crate::script::Script::load(script)?);
+        let cam = d.saved_starmap_camera();
+        return live(o, out, l, world, r, hud, d.battle, cam, &crate::script::Script::load(script)?);
     }
     let s = d.shown(&l.tables);
     let t = world.curr.tick as f32 * 0.05;
@@ -989,10 +1132,10 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
 
 /// `--screen spacewar --battle FILE --script S`: the dumped battle as a live battle slot, entered from the save's
 /// starmap camera and run by the script on the 10 ms UI clock (the sim's ticks every 50 ms while unpaused,
-/// `FRISSIT_SpaceWar2` at 30 Hz, a frame per UI tick); a PNG per grab, and a log of what the screen sent (orders,
+/// `FRISSIT_SpaceWar2` every UI tick, a frame per UI tick); a PNG per grab, and a log of what the screen sent (orders,
 /// clicks) on stdout for the (action → sound) table.
 #[allow(clippy::too_many_arguments)]
-fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud, battle: Battle, script: &crate::script::Script) -> Result<(), String> {
+fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud, battle: Battle, cam: [f32; 5], script: &crate::script::Script) -> Result<(), String> {
     use crate::script::Input;
     use crate::spacewar_ui::{Key, Out};
     let g = &mut world.game;
@@ -1011,6 +1154,9 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
     assets.planet_meshes.load_battle(r, &l.install);
     let mut view = crate::starmap::View::new(&world.curr, &world.view, o.size, o.scale);
     view.set_clouds(o.clouds);
+    // The starmap camera the exe entered with (the save's can lag behind it).
+    let c = &mut view.camera;
+    [c.x, c.y, c.rotate, c.pitch, c.zoom] = cam;
     let mut live = crate::spacewar_live::Live::enter(world, 0, &view.camera, &l.install, 0).ok_or("no battle slot")?;
     let (mut mouse, mut next, mut shift) = ([320.0f32, 240.0], 0, false);
     for tick in 0..=script.end() {
@@ -1060,6 +1206,9 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
         if tick % 5 == 0 && !world.paused() {
             world.tick();
         }
+        // The window pixel under the pointer (`MainCallBackEventHandler`'s mapping backwards, as the tracer's).
+        live.pointer = [(mouse[0] * size[0] / 640.0).ceil() as i32, (mouse[1] * size[1] / 480.0).ceil() as i32];
+        live.window = [o.size.0 as i32, o.size.1 as i32];
         outs.extend(live.update(world, now));
         let t = now as f32 / 1000.0;
         let (frame, more) = live.frame(world, r, &l.install, &assets, &mut view, hud, &l.tables, mouse, shift, now, 1.0, t, size);

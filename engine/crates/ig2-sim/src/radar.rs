@@ -230,6 +230,7 @@ impl Starmap {
             list.extend((1..=n2).filter(|&j| ctx.relation_level(a, j) == 5 || a == j));
         }
         let en = ctx.human_empire as usize;
+        let humans = ctx.viewer_list();
         // Who sees inside empire `o`'s circle around a radar planet: its allies, and in SP the human
         // too when the planet's level is above 1 and the point lies within the human's own circle.
         let viewers = |o: usize, level: usize, d: f32, tables: &RadarTables| -> Vec<usize> {
@@ -284,33 +285,38 @@ impl Starmap {
                 if dx * dx + dy * dy < r {
                     self.fleets[f].visible[go] = 1;
                     if is_tracked(g) {
-                        self.fleets[f].visible[en] = 1;
-                    }
-                }
-            }
-            if is_tracked(f) && self.fleets[f].state & 1 == 0 {
-                self.fleets[f].visible[en] = 1;
-            }
-            for w in 1..self.wormholes.len() {
-                let h = self.wormholes[w];
-                for (revealed, end) in [(h.revealed_a, h.fleet_a), (h.revealed_b, h.fleet_b)] {
-                    if revealed {
-                        if let Some(e) = self.fleets.get_mut(end as usize) {
-                            e.visible[en] = 1;
+                        for &h in &humans {
+                            self.fleets[f].visible[h] = 1;
                         }
                     }
                 }
             }
-            let fl = &self.fleets[f];
-            if fl.visible[en] != 0 && old[en] == 0 && fl.order == order::ATTACK && fl.tx > 0.0 {
-                let t = fl.tx as i32 as usize;
-                let target_owner = match fl.kind {
-                    order::PLANET => self.planets.get(t).map(|p| p.owner as usize),
-                    order::FLEET => self.fleets.get(t).map(|g| g.owner as usize),
-                    _ => None,
-                };
-                if target_owner == Some(en) && fl.owner != 0 && fl.story_id != NO_WARNING_ID {
-                    ev.push(StarmapEvent::EnemyApproaching { fleet: f });
+            // The local human's own sightings (§6.4), for every human in canonical MP.
+            for &h in &humans {
+                if is_tracked(f) && self.fleets[f].state & 1 == 0 {
+                    self.fleets[f].visible[h] = 1;
+                }
+                for w in 1..self.wormholes.len() {
+                    let wh = self.wormholes[w];
+                    for (revealed, end) in [(wh.revealed_a, wh.fleet_a), (wh.revealed_b, wh.fleet_b)] {
+                        if revealed {
+                            if let Some(e) = self.fleets.get_mut(end as usize) {
+                                e.visible[h] = 1;
+                            }
+                        }
+                    }
+                }
+                let fl = &self.fleets[f];
+                if fl.visible[h] != 0 && old[h] == 0 && fl.order == order::ATTACK && fl.tx > 0.0 {
+                    let t = fl.tx as i32 as usize;
+                    let target_owner = match fl.kind {
+                        order::PLANET => self.planets.get(t).map(|p| p.owner as usize),
+                        order::FLEET => self.fleets.get(t).map(|g| g.owner as usize),
+                        _ => None,
+                    };
+                    if target_owner == Some(h) && fl.owner != 0 && fl.story_id != NO_WARNING_ID {
+                        ev.push(StarmapEvent::EnemyApproaching { fleet: f, to: h as u8 });
+                    }
                 }
             }
             let owner = self.fleets[f].owner;
@@ -370,9 +376,11 @@ impl Starmap {
                     self.meet(go, po, ev);
                 }
                 if is_tracked(g) {
-                    self.planets[p].visible[en] = 1;
-                    if po != 0 {
-                        self.meet(en, po, ev);
+                    for &h in &humans {
+                        self.planets[p].visible[h] = 1;
+                        if po != 0 {
+                            self.meet(h, po, ev);
+                        }
                     }
                 }
             }
@@ -537,11 +545,52 @@ mod tests {
         let mut ev = Vec::new();
         m.refresh(&[ship(1, 2, 0)], &c, &mut ev);
         assert_eq!(m.fleets[4].visible[1], 1, "a revealed wormhole end stays visible");
-        assert!(ev.contains(&StarmapEvent::EnemyApproaching { fleet: 2 }));
-        assert!(!ev.contains(&StarmapEvent::EnemyApproaching { fleet: 3 }), "story id 0x1F88 is exempt");
+        assert!(ev.contains(&StarmapEvent::EnemyApproaching { fleet: 2, to: 1 }));
+        assert!(!ev.contains(&StarmapEvent::EnemyApproaching { fleet: 3, to: 1 }), "story id 0x1F88 is exempt");
         ev.clear();
         m.refresh(&[ship(1, 2, 0)], &c, &mut ev);
         assert!(!ev.iter().any(|e| matches!(e, StarmapEvent::EnemyApproaching { .. })), "only when newly seen");
+    }
+
+    #[test]
+    fn every_human_gets_its_own_machines_sightings_in_canonical_mp() {
+        use crate::fleet::Wormhole;
+        // Humans 1 and 2; empire 4 attacks a fleet of each; a revealed wormhole end far away.
+        let base = StarmapContext { story_no_supply: true, multiplayer: true, ..ctx() };
+        let setup = || {
+            let mut m = map();
+            m.fleets.push(fleet(1, 0.0));
+            m.fleets.push(fleet(2, 100.0));
+            m.fleets.push(Fleet { order: order::ATTACK, kind: order::FLEET, tx: 1.0, ..fleet(4, 3.0) });
+            m.fleets.push(Fleet { order: order::ATTACK, kind: order::FLEET, tx: 2.0, ..fleet(4, 104.0) });
+            m.fleets.push(fleet(0, 500.0));
+            m.wormholes = vec![Wormhole::default(), Wormhole { revealed_a: true, fleet_a: 5, ..Default::default() }];
+            m
+        };
+        let ships = [ship(1, 2, 0), ship(2, 2, 0)];
+        let run = |c: &StarmapContext| {
+            let mut m = setup();
+            m.radar.refresh(&c.radar_rules, c);
+            let mut ev = Vec::new();
+            m.refresh(&ships, c, &mut ev);
+            (m, ev)
+        };
+        let mut both = base.clone();
+        both.viewers[1] = true;
+        both.viewers[2] = true;
+        let (m, ev) = run(&both);
+        for h in [1u8, 2] {
+            // Each human's bytes are what its own machine (classic, `EN` = h) computes.
+            let (own, own_ev) = run(&StarmapContext { human_empire: h, ..base.clone() });
+            for f in 1..m.fleets.len() {
+                assert_eq!(m.fleets[f].visible[h as usize], own.fleets[f].visible[h as usize], "fleet {f}, human {h}");
+            }
+            let approach = |ev: &[StarmapEvent]| ev.iter().filter(|e| matches!(e, StarmapEvent::EnemyApproaching { to, .. } if *to == h)).count();
+            assert_eq!(approach(&ev), 1);
+            assert_eq!(approach(&own_ev), 1);
+        }
+        assert_eq!((m.fleets[5].visible[1], m.fleets[5].visible[2]), (1, 1), "the wormhole end for both");
+        assert!(ev.contains(&StarmapEvent::EnemyApproaching { fleet: 4, to: 2 }));
     }
 
     #[test]
@@ -552,7 +601,7 @@ mod tests {
             m.fleets.push(fleet(1, 0.0)); // the human's fleet, radar 10
             m.fleets.push(Fleet { order: order::ATTACK, kind: order::FLEET, tx: 1.0, ..fleet(4, 6.0) });
             let ev = m.tick(&[ship(1, 2, 0), ship(2, 0, 0)], &mut c, &mut crate::rng::Streams::default(), &mut ());
-            assert!(ev.contains(&StarmapEvent::EnemyApproaching { fleet: 2 }));
+            assert!(ev.contains(&StarmapEvent::EnemyApproaching { fleet: 2, to: 1 }));
             (c.speed_mult, m.fleets[2].x, ev)
         };
         // The attacker can't see its target, so upkeep turns the attack into a move to its position.

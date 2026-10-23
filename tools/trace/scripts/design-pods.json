@@ -1,0 +1,13 @@
+{
+ "screen": "design",
+ "note": "The design screen's 3D pods (re/screens/design.md §5.1, §12, part 3): the second design (a list press), modify (the POD boxes come up as lit wireframes), a press on a pod box held: the pick (PlaySoundGlobal 2) and, after 30 ticks, the tech models open out of the pod; the pointer goes onto the first tech row and the release fits that tech (it flies into the pod, the models fold); then Esc (cancel). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 100, "press": [40, 121]},
+  {"t": 150, "press": [320, 420]},
+  {"t": 300, "press": [300, 250], "hold": 70},
+  {"t": 345, "mouse": [530, 101]},
+  {"t": 450, "key": "escape"}
+ ],
+ "grabs": [290, 320, 340, 355, 372, 380, 400, 440, 470],
+ "tail": 40
+}

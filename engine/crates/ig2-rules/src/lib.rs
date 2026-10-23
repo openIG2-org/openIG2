@@ -7,6 +7,7 @@
 
 mod pe;
 pub mod sounds;
+pub mod speech;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};

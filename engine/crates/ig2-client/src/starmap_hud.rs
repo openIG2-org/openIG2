@@ -57,7 +57,7 @@ impl Console {
                 }
                 _ => white,
             };
-            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
         let [x0, y0, x1, y1] = CONSOLE_RECT;
         let (w, h) = (x1 - x0, y1 - y0);
@@ -365,7 +365,7 @@ pub(crate) fn production_line(state: &SaveState, r: &[u8], owner: u8, counter: i
 /// l = 0.
 pub fn fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4]) {
     use crate::kit::fader::S;
-    crate::kit::fader::kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
+    crate::kit::fader::kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0, [0.0; 2]);
 }
 
 /// The HUD's resources.
@@ -388,14 +388,16 @@ impl StarmapHud {
 
     /// Draw the panel, the faders, the short info and the minimap (in the original's pass order).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&self, f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], info: &InfoBox, mini: &Minimap, time: f32) {
+    /// The fader behind the short info is `starf`'s `radar` (`fd`).
+    pub fn draw(&self, f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], info: &InfoBox, mini: &Minimap, time: f32, fd: &crate::kit::FaderDesign, radar: usize) {
         let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
         if let Some(c) = &self.console {
             c.draw(f, v);
         }
-        // `StarmapGfx2D_1`: the fader behind the short info, then the minimap's dark window (`FadeScreen(271, 385,
-        // 98, 71, black, 0x40)`; the value is the transparency [obs: the window is dark in the captures]).
-        fader(f, white, v, [5.0, 423.0, 162.0, 52.0]);
+        // `StarmapGfx2D_1`: the fader behind the short info (`starf` 1 after the long info's box, else 0), then the
+        // minimap's dark window (`FadeScreen(271, 385, 98, 71, black, 0x40)`; the value is the transparency [obs: the
+        // window is dark in the captures]).
+        crate::starmap_panels::starf(f, white, v, [5.0, 423.0, 162.0, 52.0], fd, radar);
         f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(271.0 + 49.0, 385.0 + 35.5), [49.0 * v.k, 35.5 * v.k], fade_color([0.0; 3], 1.0 - 0x40 as f32 / 255.0)));
         for &(b, n, x, y) in &info.brushes {
             if let Some(b) = brushes.get(b) {

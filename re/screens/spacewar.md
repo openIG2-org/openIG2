@@ -83,7 +83,8 @@ What the calls do (ELF bodies):
 | SpaceWar_Main (10 slots x SpwC::main) | 0x67c2c0 | 0x562cb0 |
 | SpwC::main (the input handler) | 0x6aed10 | 0x57b9e0 |
 | SpaceWarKeyboardHandler | 0x67e190 | 0x561ef0 |
-| FRISSIT_SpaceWar2 (30 Hz) | 0x67c450 | 0x55e6e0 |
+| FRISSIT_SpaceWar2 (every 100 Hz UI tick, §7.2) | 0x67c450 | 0x55e6e0 |
+| SpaceWar_Autoscroll (every UI tick, §2.6) | 0x67dac0 | 0x5624c0 |
 | SpwC::SpaceWarFrissit2 (per-tick HUD state) | 0x6a3380 | 0x56d870 |
 | SpwC::screenfrissites (frame) | 0x6a7780 | 0x57f800 |
 | SpwC::SpaceWarMouse | 0x6a9490 | 0x56f420 |
@@ -438,6 +439,28 @@ scene scale 1.0 and the fade 1. Exit (`Starmapvisszaallit` 0x6b4020 / 0x570c10):
 `ScaleObj2` on `Starmap_gombmesh2` (and its position x k*1024), planets and clouds (`PlanetId`, `CloudId`, `CloudId2` x HanyBolygo), scales every FStars/DiffStars/effect/star particle
 (+0,+4,+8,+0x14,+0x10) and the lightning (`villam::scale`), rebuilds `SpaceWarhajovonalkirajzol`, `initracs`, `SpaceVadaszKirajzol`, all shots (`SpaceWarLovedekKirajzol` x 40), `RadarRangeKi`, and sets the pan target = pan.
 
+### 2.6 Edge scrolling: `SpaceWar_Autoscroll` (ELF 0x67dac0 / exe 0x5624c0, asm read)
+Every UI tick (`Fake_FRISSITES` 0x4de94d, after `FRISSIT_SpaceWar2`), only with `ControlConfig[0] == 0`, the tutorial off
+(0xF6915D), `AktKep == 0xb` and no screen change (`Atlepes`/`Belep` 0xBAE24D/4C clear):
+- Target per axis from the **physical** pointer (window pixels 0xDB9408/0C, window 0xFD171C/20; widescreen.md §4):
+  `x < 8` (signed) → −30; `x >u W − 8` (unsigned `cmova`) → +30, so a pointer left of / above the window counts as the far
+  edge; y likewise. None while any mouse button is held (`Mouse_Gomb` 0xDB4650).
+- Normalised to length 30, x first, then y **with x's new value**: `x' = trunc(30x / f32(sqrt(f64(f32 x² + y²))))`,
+  `y' = trunc(30y / f32(sqrt(f64(f32 x'² + y²))))` (a corner gives (∓21, ∓24)).
+- Speeds `v` (globals 0xE5DFD8/DC, never reset): `if t > v: v += 5; if t < v: v −= 5` (the second test sees the new v),
+  so v settles on a multiple of 5 next to the target (−21 → −25, 21 → 20).
+- `v ≠ 0`: `SpaceWar_Move(f32(v.x / 5.0), f32(v.y / 5.0))` (exe 0x563450, the f64 5.0 at 0x852390): with `c, s` = f32
+  cos/sin of the yaw `+0xc80` and `K = scale +0x1f88 · plane +0x844 + zoom +0xc88` (f32): for dx `x −= f64(c·dx·K / 600f) ·
+  0.6`, `y += f64(s·dx·K / 600f) · 0.6`; for dy `x −= f64(−s·dy·K / 600f) · 0.6`, `y += f64(c·dy·K / 600f) · 0.6`
+  (f64 0.6, results to f32); after each axis the wanted look-at `+0xc6c..` := the look-at. The exe has no step refusal
+  (the ELF's `SpaceWar_Move` loops `SpaceWar_Move0` and shrinks a refused step): the bound is the per-tick look-at clamp
+  of §2.4 (±(192 − 2·3) = ±186), which the scroll overshoots between two clamps.
+- Runtime check (`run_spwc.py --script`, the real cursor in the window's top-left corner, UI ticks 420 → 421 at yaw π,
+  zoom 436.356): the pivot moves (−2.27178, +2.27178) per tick, bit-exact in `autoscroll_matches_the_exe`.
+- **This was §8.7.5's camera "clamp"**: every capture so far ran with the real cursor outside the game window, so the
+  camera drifted to an arena corner (grab3 −189.03, grab4 −188.8: the ±186 clamp plus the 100 Hz scroll's overshoot).
+  `run_spwc.py` now pins 0xDB9408/0C to the script's pointer.
+
 ## 3. Per-frame order (`screenfrissites` ELF 0x6a7780 / exe 0x57f800); `GFX_SpaceWar` runs it for all 10 slots, each guarded by +0x24b8
 1. `kisinfogfxfrissit()` (0x6860c0): the small info model. On a `kisinfotipus` change (t): free the old model; race = t/12, type = t%12 (t == 5000: fighter `vad11.xvb`; t >= 50000: building, name from
    `TTeruletek` of the planet building list; else `tipusnevek[race*0x240 + type*0x30]` with the dirs of 1.3); `AddToScene(.., spwmainxvb2, 0.03)`, `PropertiesOn(0x2000000)`, `SetRelative(false)`,
@@ -517,7 +540,7 @@ q = InvertMatrix(cmatrix) applied to (0, 0, S*400) = a point toward the camera):
   r = rand(100)/100*5 + 1. c in 16..17: p = pos + (rand(100) - 50)/80 + q, size S*0.1*700, debris (S*r/18, 3.0/r), sound as above. c == 20 and gfx loaded: sound `SpWar_Hangok[rand(3)]` (the big boom).
   c in 26..45: 40 %: q*2, offset /50, set = rand(2), size S*0.05*700, debris (S*r/18, 3.0/r), sound. c > 45: c := 0.
 - scenery with +0x1e0 set: c < 2: `ujparticlerobbanas(0, S*0.4*700, pos)` + sound; 2 <= c < 20: `ujparticlerobbanas(0, (1/(c+5))*S*700, pos)` + sound.
-- `ujparticlerobbanas(set, size, p)` (0x688a50): next ring slot (`+0x1690 + 4*set`, array set `+0x1528 + 0x48*set`, `maxhanyefektparticle[set]` slots, wraps): pos = p * s; colour word +0xc = 0x00800000; size +0x14 =
+- `ujparticlerobbanas(set, size, p)` (0x688a50): next ring slot (`+0x1690 + 4*set`, array set `+0x1528 + 0x48*set`, `maxhanyefektparticle[set]` slots, wraps): pos = p * s; colour word +0xc = 0x00ffffff (§6.7); size +0x14 =
   +0x10 = size * s * 1.3 * 11 * 4; +0x2c = 0, +0x30 = 1.0 (frame), velocity +0x18.. = normalise(random) * 0.0 (zero), +0x34 = 0.88, +0x38 = 0.98, +0x3c = 0.01, +0x40..+0x48 = 0.
   Set 0 uses `animated.bmp`, set 1 `anim2.bmp` (25-frame animations).
 - `robbanasdarabok(p, size, speed)` (0x686830): first free debris node of 40 (+0x18 == 0): size = min(size, 0.002); `ScaleObja(size)`, `MoveObj(p)`; spin (+8, +0xc, +0x10) = (rand(200) + 50)/400 * speed each with a random sign
@@ -634,7 +657,7 @@ Frame, only when `+0x24b8` (gfx up):
 
 ### 5.1 The weapon column (fegyverpanelfrissit ELF 0x6a7150 / exe 0x5727d0; SpaceWarFrissit2 for the counters)
 Ten slots i = 0..9 (meshes: `ikon<i>.xvb` button at scale 0.02, `ora.xvb` reload clock at 0.014, `no.xvb` "off" overlay at 0.014; vector/spacewar/ and textures/spacewar/; created in initgfx at x = 300, y = 42*i - 200 (+15 for i = 9), z = -600).
-Per tick (SpaceWarFrissit2, 30 Hz; only when no intro/fade and `+0x2545` clear): target on = `!(+0x342e) && ( +0x342d || ( count[i] != 0 && +0x2588 != 0 && +0x2578 != 0 ) )`; slot 9 (Retreat): `!(+0x342e) && ( +0x342d || ( side[+0xd2c].+0x70 != 0 && StoryAdat+152 == 0 ) )`;
+Per tick (SpaceWarFrissit2, every UI tick: 50 ticks = 0.5 s; only when no intro/fade and `+0x2545` clear): target on = `!(+0x342e) && ( +0x342d || ( count[i] != 0 && +0x2588 != 0 && +0x2578 != 0 ) )`; slot 9 (Retreat): `!(+0x342e) && ( +0x342d || ( side[+0xd2c].+0x70 != 0 && StoryAdat+152 == 0 ) )`;
 forced off while leaving (`+0x2544`). Counter `c = slot+0x28`: +1 if on else -1, clamped 0..50 (50 ticks = 1.67 s). When c hits 0 while `+0x342e`: formation phase ends (`+0x342e = +0x342d = 0`), the icon materials are restored and the tooltips reset to `fegyvernevek[i]` (`Mouse_Csak_Szoveg_Set`, hot-spot id 3 + i).
 Per frame: `f = (1 - gorbe(1 - c/50)) * 50`; `x = f*150/50 + 150` (150 closed -> 300 open), `y = 42*i - 200` (+15 for slot 9), `z = -200 - f*400/50` (-200 closed -> -600 open); all three meshes `MoveObj(x + 320 - xcenter*639/639, y, z)` (xcenter = 320).
 Icon frame `SetFrame(+8 mesh, (maxreload[i]/10) * 1.65)` (the reload clock), mesh +8 shown with transparency 0. Not in formation mode: state[i] (0x3150): 3 -> overlay (+0x10) alpha 0.75 shown (some mounts of the group disabled); 6 -> alpha 0.5 shown (all disabled); 7 -> overlay hidden (all enabled); -1 (no weapon of the group) -> unchanged. `panelkiirsetszin(state)` stores it at +0x24a8.
@@ -838,6 +861,79 @@ Matches §1–§3 3.8 with these additions: (a) first, for every live **scenery*
 - `SpaceWar_ZoomFinished` (ELF 0x67fc50): if `ControlConfig[0]` and `ControlConfig[1]` (two option bytes: smooth rotate and zoom): `Rotate_Interpolator.SetValue(SpwC+0xd70)` and `Zoom_Interpolator.SetValue(SpwC+0xd78)`
   (`cValueInterpolator2::SetValue` stores `+0x24 = v` and recalculates): snaps the mouse-wheel interpolators to the camera final angle and zoom after the zoom animation. Exe address not located.
 
+### 6.7 Effect particles, their drawing, the battle's sounds, lightning (part 4's reading; ELF / exe)
+Corrections to 3.8, 6.4 and 6.3.1: the colour word of `ujparticlerobbanas` is **0x00ffffff** (ELF 0x688b4c, exe 0x58215f;
+Ghidra prints these words as denormal floats: 2.3509886e-38 = 0x00ffffff, 4.798494e-39 = 0x344040, 4.62751e-41 = 0x80ff);
+kind 1 `particlerobbanas(5, .04, .3, 1.0)` makes 1 orange and **4 grey** puffs (its third loop never runs); a projectile
+form's "sprite" is its **3D model**, drawn through the particle path in model mode.
+
+#### 6.7.1 `ParticleFrissit(arr, n)` (ELF 0x5f43a0 / exe 0x52c500, exe asm read)
+`SpwC::Particlefrissites` (ELF 0x6a15f0 / exe 0x56c820) calls it from every `SpaceWarFrissit` (exe 0x56dff0) while the slot
+is shown, outside the pause block, on the five sets in order (set 0 `animated.bmp`, 1 `anim2.bmp`, 2 `smoke.bmp`, 3
+`star.bmp`, 4 `texcsor.bmp`; exe headers `+0x142c + 0x38·i`, ELF `+0x1528 + 0x48·i`; a sixth array's count is never set).
+Ring sizes `maxhanyefektparticle` (exe 0x926B20, 5 × i32), cursors exe `+0x1544`. Particle (0x4c): +0 pos, +0xc word,
++0x10 base size, +0x14 size, +0x18 velocity, +0x28 roll, +0x2c frame, +0x30 life (1 at spawn), +0x34 velocity damping,
++0x38 life factor, +0x3c life decrement, +0x40 size-pulse amplitude, +0x44 its frequency, +0x48 its random range (read as
+an int). Per call `parttick++` (a static, exe 0xE3E390: +1 per set); per record, f32 unless noted:
+1. `frame = (f32)((f64)frame + 0.7)` for every record, dead or not;
+2. the rest is skipped when the word is 0 (an int compare in the exe);
+3. `pos += vel`, then `vel *= damp`; 4. `life = life·mult − dec`; 5. `T = (u8)(int)((1 − life)·255)` into byte +0xf;
+6. `(f64)life < 0.01` → `life = 0` and word 0 (dead);
+7. `R = range > 0 ? rand() % range : 0`; `size = sin((f64)(parttick·freq + (f32)(R/1000)))·base·amp + base`.
+An explosion (0.98, 0.01) dies after 54 updates, its frame index reaches 24 after 35; an engine puff (0.6, 0) after 10
+(tests `an_explosion_fades_out_in_54_ticks`, `a_trail_puff_lives_ten_ticks`).
+
+Spawners (libc `rand()`; `random(n)` draws nothing below 1):
+- `ujparticlerobbanas(set, param, p)` (ELF 0x688a50 / exe 0x5820c0), only while shown: pos p·s, word 0x00ffffff, size
+  `param·s·1.3·11·4` (1.3 in f64), life 1, three `rand(1000)` draws for a zero velocity, damping .88, life .98 / .01.
+- Kind 1 (exe 0x57dd40, L = 0.04·s): one puff with the word `rand(64)<<16 | 0x50c0`, size `(rand(200)/20 + 1)·L`, velocity
+  normalise(3 × (rand(1000) − 500)) · `(rand(100)/100 + 1.5)·L`, .88, .99 / `.04 − (rand(100) − 50)/10000`, amplitude .2,
+  frequency `rand(100)/200·3`; then four with the word 0x00344040, size `(rand(100)/20 + 1)·L`, speed `(rand(100)/100 + .1)·L`,
+  .94, .98 / `.01 − (rand(100) − 50)/10000`, amplitude .2, the frequency as before.
+- `particlerobbanas7` (ELF 0x688630, exe 0x57dbc0): as in 6.3.2.
+- The hit flash of `Talalat` (ELF 0x69bae0; a non-beam weapon on a ship): `p_i = target_i + (rand(100) − 50)·S·10`,
+  `k = random(2)`, `size = min(S·10, S·30·dmg/30·(k == 1 ? .5 : 1))`, `ujparticlerobbanas(k, size, p)`; S = the target's
+  type scale.
+- `VadaszRobban` (ELF 0x69c1a0): `ujparticlerobbanas(0, 0.07, group pos)` while shown; no sound, no debris.
+- `Hajtomu` (exe 0x567140) reads `hajtomuvek` at exe **0x922188** (record `race·12 + type`, 0x3c B: the kind, then 4 × 3
+  **f32**; the ELF has ints) and the scale at `tipusnevek + 0x10` (0x91F498); runs per battle tick after `Mozgatas`.
+
+#### 6.7.2 Drawing (`Particle(sets, n, M, off, flags)` ELF 0x5f4ff0; the exe's not located)
+Every battle set has the blend selector 100.0 (`+0x20`): ONE/ONE, depth test, no depth write, no fog.
+- Textured mode (the effect sets): per record with a word and a size: `v = M·pos + off`, skipped when `v.z >= zclip`; `k =
+  fov/−(v.z + zclipadd)`; a screen-aligned square of half-size `k·size` px, vertex RGB = byte·(255 − T)/256, A 255. The cell
+  `clamp((int)frame, 0, N − 1)` of an N-cell sheet (`loadanimtexture`: N = 25 for animated, anim2 and smoke; 0 = one cell for
+  star and texcsor): side `(int)sqrtf(N)` = 5, `u = (f % 5)/5`, `v = (f / 5)/5`.
+- Model mode (`+0x18` = 1: the forms' arrays at form +0x40, `Lovedekinit` exe 0x569db0, and the fighter sets): per record
+  with a size: `k·size <= 2` px → one GL point; else (a frustum test of radius size) `Kocka` of the form's model with the matrix
+  `CreateMatrix2(dir, roll)·cmatrix`, every element × size, at v, transparency T/256. `CreateMatrix2(d, a)` (ELF 0x4534e0):
+  `t = normalise(d × (sin a, cos a, 0))`, `u = normalise(d × t)`, elements `[−d.x, −u.x, −t.x, −d.y, −u.y, −t.y, −d.z, −u.z,
+  −t.z]`. `Lovedekload` (exe 0x569ec0) takes the form's xvb, or its first sub-box when it has no animation and several boxes.
+
+#### 6.7.3 Sounds (no positional audio)
+`PlaySound(rec)` (ELF 0x671070): the volume `rec +0x110` (a write sticks) × `GlobalSoundVolume`; three voices per record.
+`lovedeksound(shot)` (ELF 0x69c890 / exe 0x57adb0) runs for each live shot from `setsounds` (ELF 0x69d8a0 / exe 0x5804e0),
+once a rendered frame after `Update3D`; the "new" flag (exe shot +0x67) that `Loves2` sets is cleared on its first call.
+A new shot plays: weapons 0..4 Laser01..05 (29..33) at 70; 5, 6 Neutron_Gun (35) at 70; 7 Foton_Gun (26) at 70; 8 Mezongun (34)
+at 70; 9 Spec5 (19) at 80, then two looped copies of 37 and 38 crossfading ±4 a frame with the attachment; 10 Paralyzator0
+(36) at 80 with the same loops; 11 Antianyag0 (21) at 80 and a loop of 22 by distance and attachment; 12 a loop of 14 at 80;
+13..15 Torpedo1..3 (39..41) at 80; 16, 18 Bomba1 (24) and 17, 19 Bomba2 (25) at 80; 30 Laser01 at 60. `lovedeksoundend` (ELF
+0x69d980) ends the loops. Hits: `lovedeksoundtalalat` (ELF 0x69c0b0 / exe 0x57b480), from `Talalat` only (ship targets): a
+non-beam weapon plays Chainblast6 (13) when `rand(2) == 0`, else Chainblast1 (8), at 60; the beam weapon 11 Antianyag2 (23).
+Fighter and gun hits and fighter deaths play nothing; ship deaths as in 3.8 (55, `8 + rand(6)`; the big boom `rand(3)`).
+
+#### 6.7.4 Lightning (`villam`; ELF vtable 0xd64960, exe 0x8487c0: Refresh exe 0x615940, Update exe 0x615c30)
+`create(n, W, I, J, seg, flare, texscale 3, texspeed −0.05, frag 15, life −1, tex 1, A, B)` (exe 0x616190). The shot of
+weapon 12 (form 21) holds 7 (n 12, W 1, I 1 then .2 .2 .2 .1 .1 .1, J 1.667, seg 4 then 3, a flare on the first); a unit's arc
+is (n 10, W .5, I .5, J 3.333, seg 4, flare); a fighter group's (10, .2, .5, 10, 4, flare). Base points `A + (B − A)·i/n`;
+the current ones are the base plus a random unit vector × `J·W`. Refresh, once a battle tick: `r = rand() % 100`; per interior
+point `cur += vel`; lit = `frag <= r` (one draw for the call); colour `0x80<<24 | c·0x010101` with `c = lit ? (int)((rand() %
+128 + 128)·I) : 0`; a point further than `2·amp` from its base gets a new perpendicular velocity × amp/6 and moves 0.4 of the
+way back; the texture offset moves −0.05 (wrapped to ±1); the flare size is `W·4 + rand() % 100/100·W·2`. Update (the draw,
+from `villamfrissit` exe 0x583830): a Hermite curve through the points, `seg` samples a span, then `kiralyvonalhuzo` (exe
+0x532b80): a ONE/ONE ribbon of half-width `W·fov/−z` px textured with `villam.bmp`, v = `(i/nseg)·texscale + offset`; the
+flare (`kiralyflarerajzolo` exe 0x5327a0) is a `flare.bmp` billboard at the last point, colour 0x80ffffff.
+
 ## 7. Input, timers and sounds
 ### 7.1 Input
 
@@ -936,7 +1032,7 @@ Signature `(int key, int ch, bool down)`: `key` = key code (arrows 0x25..0x28, d
 No other key is handled here. Esc, space (pause), speed keys come from the shared `DoKeyboard` (ELF 0x57fd20, exe 0x4db1a0) -> `DispatchKeyboard`: not read [u].
 
 ### 7.2 Timers and animations
-`FRISSIT_SpaceWar2` (ELF 0x67c450 / exe 0x55e6e0; `AktKep == 0xb && AktSpaceWarp != 0`; 30 Hz, dt 0.033333335 = 1/30 in the interpolators): `SpwC::SpaceWarFrissit2` (below), then `+0x2300 = +0x2304 = 0`. The pitch rate `+0x2308` is not cleared (neither binary): a pitch key stays set until its key-up event. If `ControlConfig[0] && ControlConfig[1]`: `Refresh(1/30)` of the four interpolators (MoveX, MoveY, Zoom, Rotate); if `!(+0x2524) && !(+0x229e)`: zoom `+0xd78 = Zoom.GetValue()`, yaw `+0xd70 = Rotate.GetValue()`; `SpaceWar_Move(MoveX.GetSpeed(), MoveY.GetSpeed())` pans the look-at (the exe and the ELF differ here, see 7.1). The interpolator inputs (pan keys / pad) are set elsewhere [u].
+`FRISSIT_SpaceWar2` (ELF 0x67c450 / exe 0x55e6e0; `AktKep == 0xb && AktSpaceWarp != 0`; **every 100 Hz UI tick**: `Fake_FRISSITES` calls it at exe 0x4de8de inside its `while now − stamp > 10` loop (0x4de850..0x4de97f), right before `SpaceWar_Autoscroll` (0x4de94d); the column counter runs 0 → 49 in 50 UI ticks in the capture of §9.5. The interpolators still take dt 0.033333335 = 1/30): `SpwC::SpaceWarFrissit2` (below), then `+0x2300 = +0x2304 = 0`. The pitch rate `+0x2308` is not cleared (neither binary): a pitch key stays set until its key-up event. If `ControlConfig[0] && ControlConfig[1]`: `Refresh(1/30)` of the four interpolators (MoveX, MoveY, Zoom, Rotate); if `!(+0x2524) && !(+0x229e)`: zoom `+0xd78 = Zoom.GetValue()`, yaw `+0xd70 = Rotate.GetValue()`; `SpaceWar_Move(MoveX.GetSpeed(), MoveY.GetSpeed())` pans the look-at (the exe and the ELF differ here, see 7.1). The interpolator inputs (pan keys / pad) are set elsewhere [u].
 `SpwC::SpaceWarFrissit2` (ELF 0x6a3380 / exe 0x56d870), only with `+0x24b8`, per tick:
 - `acttick2 += 1` (speech throttle clock: `beszedlasttick + 0x1e < acttick2` = 30 ticks = 1 s between voice lines); `spwradarcounter` +1 (to 100), or -1 (to 0) when leaving (`+0x2544`); frozen during intro and fade-in; `futofeny += 1`; `spwvillogas += 1` (blink counter, period 50 ticks, shown for the first 26); `FrissitStarmapParticles`; `FaderDesignFrissito`.
 - No view animation (`+0x229e` clear): zoom `-= zoom / 25 * +0x2300`, clamp `< 5.0 -> 5.0`, zooming out (`+0x2300 < 0`) `> 400 -> 400`; look-at clamp and ease (4.1); `yaw += +0x2304 / 60`; `pitch += +0x2308 / 250`; pitch clamp [-1.5607964, -0.2].
@@ -1121,11 +1217,11 @@ Verified: `spacewar_ui::pose_keeps_the_exe_matrix_of_a_ship_at_rest` (56 resting
 `seturhajopos` keeps the dumped matrix, or moves it one easing step).
 
 #### 8.7.5 Unknowns left
-- The camera's steady state in grab4: the dumped pivot is (−188.8, 188.8) at t300 and t800 while the exe's smoothed
-  target stays at (−186.7, 186.7): something clamps the camera targets (not the ±186 of 2.4, and grab3's pivot −189.03
-  is followed exactly). Check `kamerabeallit` (exe 0x576750) and `SpaceWarFrissit2`'s clamp in the asm.
-- Who unpauses the battle after the opening zoom when there is no formation choice (`SpaceWarIndit` pauses in SP);
-  the client unpauses at the end of the zoom [inf].
+- ~~The camera's steady state in grab3/grab4 (pivot ±188.8..189.03, smoothed target ±186.7)~~ **resolved (part 3)**:
+  `SpaceWar_Autoscroll` (§2.6) with the real cursor off the window, against the ±186 look-at clamp of §2.4.
+- Who unpauses the battle after the opening zoom: **with a formation choice nobody** (§9.5: the exe stays paused through
+  the zoom and after it until the column's tenth button, `+0x342e`, calls `SetIdoPause(false)`). Without a formation choice
+  (fewer than 6 human ships, MP) still open; the client unpauses at the end of the zoom [inf].
 - `HandleRetreatWindow`'s trigger: "every frame without the left button" would close the window the frame after it
   opened; the client takes the next left release after the opening click's [inf].
 
@@ -1217,11 +1313,87 @@ their battle state isn't drawn). `re/deviations.md` lists them.
 - **Acceptance so far**: the four stills of §9.3 give the same numbers after the drawing moved to the shared live/dump
   path; the exe-side battle input script and the frame-sequence comparison are part 3 (9.5).
 
-### 9.5 Not yet (part 3)
-The exe side of a battle input script (`spwc.js` staging + `screen.js`'s script frames on AktKep 11) and the
-frame-sequence comparison with the client's scripted run; the sound-id tracer's (action → sound) table
-(`SpWar_Hangok`, §7.3) and the screen's sounds through client audio (the client plays only the click now); the
-shots, beams, lightning, engine trails, explosions, shield rings, fighters and planet-gun markers (§6); the big info
-box (§5.2) and its camera mode; the formation phase's formation picking (`loadfelallas`) and its texts; the fighter
-chase camera (`c`); the cursor shapes (`MousePointerType`); the small box's case B/C texts; the MP versus banner; the
-starmap's fade-out (`starmapszarok`, §3.3) beyond `starmaperosseg`.
+### 9.5 Part 3 (2026-10-23): the frame-sequence acceptance
+- **Exe side**: `run_spwc.py --script S [--sounds OUT.jsonl] [--state-out S.sav] [--watch T:OFF[:N]]` stages one battle
+  on quick.scn (as §9.2) and, from the first frame `AktKep` is 11, runs `screen.js`-style script frames: `SDL_GetTicks`
+  returns a clock that moves 10 ms a drawn frame (one UI tick a frame), the events go in through
+  `MainCallBackEventHandler` at their tick, the pointer is written each frame (virtual `Mouse_x/y` and the physical
+  0xDB9408/0C), the exe's pause and speeds are left alone. At the first frame the slot is dumped (`<out>-entry.json`,
+  the grab shape) and the exe's save goes to S.sav; grab t → `<out>-t<T>.png` and the screen's state (pause, speeds,
+  battle tick, `AktIkon`, the slot's bytes) in `<out>-frames.json`; per frame `cam` (look-at, wanted, zoom) and `ikon`
+  records in the jsonl; `--watch` a hardware write watchpoint on a slot byte (how §2.6 was found). New script event
+  `drag` (both sides, `script.rs`): down at the first point, a step a tick, up at the second.
+- **Client side**: `ig2-client --snapshot OUT --save S.sav --screen spacewar --battle <out>-entry.json --script S`; it
+  takes the starmap camera the slot saved at entry (`+0x1f9c..+0x1fb4`, `Dump::saved_starmap_camera`; the exe's save
+  can hold another) and feeds the window pointer to the autoscroll. `run_screendiff.py <install> S.sav spacewar --script S
+  [--exe-seq <out>]` compares grab by grab.
+- **Fixed on the way** (each found in the sequence): `FRISSIT_SpaceWar2` every UI tick, not 30 Hz (§7.2);
+  `SpaceWar_Autoscroll` (§2.6); the view animation reads the previous frame's time `+0x22f0` (`NezetVisszaAllitas` runs
+  before `screenfrissites` stores the frame's `SDL_GetTicks`, ELF 0x6a7780: the curve lags 10 ms); the entry look-at is
+  the starmap pivot minus the raw `+0x1f74` (y not negated: `(0, XStart − ox, −YStart − oy)`); the formation phase ends
+  (`+0x2d86` set by the start button, both bytes cleared when a column slot has slid out); the radar sets the wanted
+  look-at on hover (exe 0x57b9e0 has no button test).
+- **Script `tools/trace/scripts/spacewar.json`** (capture s4, 800 × 600): the opening zoom (t10..400), the start button
+  (620,443) at t450, a box select (60,60)→(580,330) at t640, a right-click move at t710, top-down (258,420) at t850,
+  default view (378,420) at t1150, numpad + at t1440. The exe's `AktIkon` follows a pointer move one frame later
+  (`ikon` records), so the pointer moves 10 ticks before each press. Exe vs client per region (mean, best offset):
+
+| t | frame | topbar | view | console | info_box | radar | weapons |
+|---|---|---|---|---|---|---|---|
+| 10 | 21.51 | 2.58 | 19.11 | 29.04 | 24.08 | 11.90 | 12.43 |
+| 200 | 16.78 | 2.84 | 18.09 | 17.14 | 15.24 | 13.09 | 14.93 |
+| 400 | 7.32 | 2.60 | 7.27 | 10.54 | 7.06 | 9.39 | 2.48 ✔ |
+| 520 | 7.32 | 2.60 | 7.25 | 10.51 | 6.99 | 10.05 | 2.89 ✔ |
+| 720 | 7.69 | 2.85 | 7.62 | 9.98 | 9.54 | 10.07 | 5.09 ✔ |
+| 950 | 11.65 | 2.90 | 12.77 | 12.06 | 6.42 | 16.63 | 14.96 |
+| 1180 | 8.86 | 2.85 | 9.15 | 11.71 | 7.18 | 14.96 | 9.03 |
+| 1480 | 11.24 | 2.85 | 10.78 | 15.21 | 7.82 | 14.35 | 9.05 |
+
+  The camera follows the exe (yaw, tilt, zoom and pivot within an animation tick at every grab), the column slides in
+  at the zoom's end and out after the start as the exe's, the battle runs one tick ahead of the exe's (the scripted
+  run's sim clock, `tick % 5`, against the exe's game clock: a harness phase). Still different (screendiff-review): the
+  grid's look (a hard banded slab, too visible), the cursor and the hot-spot tooltips (exe only), the box-select
+  rectangle (exe thin green, client none) and the brackets' size, the info box's hover text (the exe shows the hovered
+  ship; at the zoom's start the starmap's planet info cross-fading), the starmap's fade-out during the zoom
+  (`starmapszarok`), the shots, trails, explosions and stations of §6, the radar frustum's brightness.
+- **Sounds** (`--sounds`, the exe's (action → sound) table on this script): `Global_Hangok[0]` Click1 on the move
+  order's right release (t713 → 714) and on the camera buttons' press (t850, t1150); none for the start button, the box
+  select or the zoom key; `Speech::Play` on the box select (kind 1, t653) and the move order (kind 0, t714); from the
+  sim: `SpWar_Hangok[29]` Laser01 when lasers fire, `[8]` Chainblast1 and `[13]` Chainblast6 on hits and explosions;
+  the music track `mfx/spwar*.ogg` from `SpaceWar_Belep` (t59 after the fade's start). The client plays the clicks and
+  the battle music; the voices and the sim's sounds are part 4.
+
+### 9.6 Part 4 (2026-10-23): the effects, the battle's sounds, the grid's look
+- **Grid and drop lines** (`Scene::grid`, `line`): the engine's `Lines` are **added**, not blended: the colour × its
+  opacity onto the scene [obs: s4 t1100, a grid pixel (17, 35, 44) → (17, 42, 59) = + 0x402000 × 0.25]; one screen pixel
+  wide, nearest first under a strict depth test with depth writes (the renderer's `add_gw`: crowded far lines stay one line
+  bright, as the exe's); the segments' outer ends add nothing (read as the word 0x00402000, A = 0, they would be the
+  brightest part). An enemy's drop line is **0x0000E0** (red), the others' 0x00C0E0 [obs: s4fx t1100, + (48, 0, 0) =
+  0xe0 × 55/255]. The sequence's view: t400 7.27 → 5.69, t720 7.62 → 5.88.
+- **Overlays** (`Scene::overlays`): `line3`'s quads sample `szar.bmp` (u 0.5 and v along each arm on the brackets and the
+  ticks, u 0..q..1 along the bar), one screen pixel thin: the exe's dim, broken brackets.
+- **Box select** (`spacewar_hud::draw`): four one-pixel lines of palette colour 7 = (50, 255, 50) [obs: s4 t655].
+- **Effects** (`spacewar_fx`, from the exe's `maxhanyefektparticle`, `fegyveralakok`, `hajtomuvek`): the five sets (§6.7.1)
+  with the spawners of the projectiles' kinds 1..5, `Talalat`'s hit flashes, `Hajtomu`'s trails, `urhajomeghalas`' explosions
+  and their update per battle tick; drawn as additive screen-aligned squares (§6.7.2; not depth tested); the projectiles as
+  their forms' models, additive at `(255 − A)/256`, `AddToScene`-sized to the shot's size [inf: the laser bolts' length and
+  colour match the exe's in s4 t1100], a point at 2 px or less. The sim's `Talalat` events reach the client through
+  `RealTime::fx` (not synced; only while the battle screen is up); `BattleEvent::Hit` names the weapon.
+- **Sounds** (`spacewar_fx::fire_sound`, `Out::Sound`, `Audio::set_record_volume`): the new-shot sounds of `lovedeksound`,
+  the hit sounds of `lovedeksoundtalalat` and the death blasts of `urhajomeghalas`, each at its record volume. On both
+  scripts the client plays the exe's sounds at the same UI ticks (Laser01 at t1015, 1020, 1240; a Chainblast at 1020,
+  1025, 1045 ×2, 1155, 1190); only the random Chainblast1/6 pick differs.
+- **Capture `spacewar_fx.json`** (`_local/screendiff/spacewar-fx`, the s4 opening, then the default camera on the fight,
+  grabs 720..1500): view 5.7 at every grab from t720 (pass), frame 5.9; console 9.5, info box 6.2, radar 9.9 as before.
+  Still different (screendiff-review): the trail puffs are smaller and whiter than the exe's faint grey ones; the orbital
+  stations under the console and the lower right round button of the exe; the radar window's hue; the cursor and the
+  tooltips.
+
+### 9.7 Not yet (part 5)
+Lightning (§6.7.4) and the looped weapon sounds of 9..12; debris (`robbanasdarabok`, `darab1..3.xvb`); kinds 6 and 7
+(`particlerobbanas6`); shield rings (`karikakirak`); fighters (`SpaceVadaszKirajzol`, `vad10.xvb`) and their deaths; the
+planet-gun markers (`agyukirak`); the trails' size and brightness; the cursor shapes (`MousePointerType`; no screen draws
+one yet) and the hot-spot tooltips; the voice lines (`SpeakingDirector`, §7.3); the small box's hover text and its case
+B/C texts; the big info box (§5.2) and its camera mode; the formation picking (`loadfelallas`); the fighter chase camera;
+the MP versus banner; the starmap's fade-out (`starmapszarok`, §3.3); `HandleRetreatWindow`'s trigger (§8.7.5); who
+unpauses a battle without a formation choice.

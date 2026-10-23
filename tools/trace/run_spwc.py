@@ -13,6 +13,11 @@ skipped/switched-off defence buildings.
 battle tick T the clock pauses, F frames later the window is read back to <out>-t<T>.png and the battle's regions at
 that moment go to <out>-t<T>.json ('init' shape, for ig2-client --screen spacewar --battle); the first grab also
 writes the exe's own save to S (the top bar's state). Use with --battles 1.
+--script S.json [--sounds OUT.jsonl] [--state-out S.sav]: an input script on the battle screen (screen.js's format and
+clock, re/screens/spacewar.md §9.5): at its first frame the battle goes to <out>-entry.json (the grab shape) and the
+exe's save to S.sav, then the events go in on the 10 ms UI clock and each grab t is read back to <out>-t<T>.png, its
+state to <out>-frames.json; the exe's pause and speeds are left alone. --sounds writes every sound the exe starts and
+every input event (sound.js) to OUT.jsonl. Implies --battles 1.
 Every SpaceWarIndit call is wrapped in 'presetup'/'setup' snapshots (the battle setup, spec §7.10), and
 leaving the battle screen records the end globals ('left', §7.11).
 The agent starts real-time battles (human fleet vs AI fleet) and records every SpwC::SpaceWarFrissit call
@@ -52,10 +57,25 @@ ap.add_argument("--order-every", type=int, default=5)
 ap.add_argument("--grab-ticks", default="")
 ap.add_argument("--grab-settle", type=int, default=120)
 ap.add_argument("--state-out")
+ap.add_argument("--script")
+ap.add_argument("--sounds")
+ap.add_argument("--watch", help="T:OFF[:N]: a hardware write watchpoint on the slot's byte OFF from script tick T (the first N writers)")
 a = ap.parse_args()
+input_script = json.load(open(a.script, encoding="utf-8")) if a.script else None
+if input_script:
+    a.battles = 1
+sounds = open(a.sounds, "w", encoding="utf-8") if a.sounds else None
+frames_meta = {"entry": None, "frames": [], "done": None}
 
 exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "spwc.js"), encoding="utf-8").read()
+here = os.path.dirname(os.path.abspath(__file__))
+agent = open(os.path.join(here, "spwc.js"), encoding="utf-8").read()
+sound_tables = None
+if sounds:
+    agent += "\n" + open(os.path.join(here, "sound.js"), encoding="utf-8").read()
+    sys.path.insert(0, here)
+    import sound_tables as _st
+    sound_tables = _st.find(a.install)
 out = open(a.out, "w", encoding="utf-8")
 counts = {}
 finished = False
@@ -84,6 +104,29 @@ def on_message(msg, data):
         print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
         return
     p = msg["payload"]
+    if p.get("k") in ("sound", "input", "music", "track", "fade"):
+        if sounds:
+            sounds.write(json.dumps(p) + "\n")
+            sounds.flush()
+        if p.get("k") == "sound":
+            print(f"sound {p.get('fn')} {p.get('table')}[{p.get('idx')}] {p.get('name')} t={p.get('t')}", flush=True)
+        return
+    if p.get("type") == "entry":
+        frames_meta["entry"] = {k: v for k, v in p.items() if k not in ("regions", "statics", "obj")}
+        with open(f"{stem}-entry.json", "w", encoding="utf-8") as f:
+            json.dump(p, f)
+        print(f"entry: battle tick {p['tick']} paused {p['paused']} speed {p['speed']}/{p['battleSpeed']} -> {stem}-entry.json", flush=True)
+        return
+    if p.get("type") == "frame":
+        path = f"{stem}-t{p['t']}.png"
+        png_rgba_bottom_up(path, p["w"], p["h"], data)
+        frames_meta["frames"].append(dict(p, png=os.path.basename(path)))
+        print(f"frame t={p['t']} ticks={p['ticks']} battle={p['battleSteps']} paused={p['paused']} fade={p['fade']:.3f} -> {path}", flush=True)
+        return
+    if p.get("type") == "scriptDone":
+        frames_meta["done"] = p
+        print(f"script done: {p.get('scriptT')} ticks", flush=True)
+        return
     if p.get("type") == "shot":
         base = f"{stem}-t{p['tick']}"
         png_rgba_bottom_up(base + ".png", p["w"], p["h"], data)
@@ -94,7 +137,7 @@ def on_message(msg, data):
     if p.get("type") == "batch":
         for ev in p["events"]:
             counts[ev["k"]] = counts.get(ev["k"], 0) + 1
-            if ev["k"] in ("error", "start", "started", "populated", "left", "multi", "abandoned", "groundwar", "join", "grabbing"):
+            if ev["k"] in ("write", "watch", "error", "start", "started", "populated", "left", "multi", "abandoned", "groundwar", "join", "grabbing"):
                 print("agent:", ev)
             if ev["k"] == "done":
                 finished = True
@@ -114,7 +157,9 @@ script.post({"type": "config", "payload": {"scenario": a.scenario, "steps": a.st
                                            "seed": a.seed, "fuzz": a.fuzz, "aiHuman": a.ai_human,
                                            "planets": a.planets, "join": a.join, "fuzzDesigns": a.fuzz_designs, "speed": a.speed, "perBattle": a.per_battle,
                                            "orders": a.orders, "orderEvery": a.order_every, "grabTicks": grab_ticks,
-                                           "grabSettle": a.grab_settle, "stateSlot": STATE_SLOT if a.state_out else 0}})
+                                           "grabSettle": a.grab_settle, "stateSlot": STATE_SLOT if a.state_out else 0,
+                                           "script": input_script, "soundTables": sound_tables,
+                                           "watch": dict(zip(("t", "off", "n"), (int(x, 0) for x in a.watch.split(":")))) if a.watch else None}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()
@@ -129,6 +174,12 @@ finally:
         pass
     device.kill(pid)
     out.close()
+    if sounds:
+        sounds.close()
+    if input_script:
+        with open(f"{stem}-frames.json", "w", encoding="utf-8") as f:
+            json.dump(frames_meta, f)
+        print(f"script: {len(frames_meta['frames'])}/{len(input_script.get('grabs', []))} frames, done {frames_meta['done'] is not None}")
     if state_slot:
         if os.path.exists(state_slot):
             shutil.move(state_slot, a.state_out)

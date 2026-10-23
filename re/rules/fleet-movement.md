@@ -322,6 +322,43 @@ Then row 0 of all four tables = the human's row. The function returns the human'
 "Meet" = `BirodalomIsmeri[e][o] = 1`, with story event 0x0B and `FelfedezBirodalom` when `e == EN`. The
 exe tests all these byte flags with `!= 0` (the ELF with `& 1`).
 
+### 6.4 Movement orders and sightings in multiplayer (U16)
+The orders themselves are machine-independent: `MULTIGET_Starmap` (exe 0x59d930, ELF 0x719680) never reads
+`MultiPlayerMode`; 0x15 calls `FlottaMozgat` for any fleet with no owner or issuer check, 0x14 checks the fleet's
+owner against the issuer, 0x16 passes the issuer to `FindNearestKolonizalo`/`…Terraformalo`; the `EN` tests in the
+handler are the issuer's screen only (selection, transfer panel, the 0x18 refusal line, the tutorial's event 0x15,
+UI flags; `re/screens/starmap.md` §10.1). `FlottaMozgat` (§2, exe 0x53d270) keys on `PlayerKi[owner] == 1`, the same on
+every machine. The order upkeep (§4.1) keys a lost target on `PlayerKi`: in MP only AI fleets give up the chase,
+a human's fleet keeps its order and the owner's screen says "contact lost" (`ContactLostNetwork`).
+
+What differs per machine is the visibility pass (§6.3 steps 6–7), which writes the **local** human's sighting byte
+`+0x19 + EN` beyond the radar rule that every empire's byte follows:
+| Exe | What sets `vis[EN]` (or reads it) |
+|---|---|
+| 0x595422..0x595438 | a fleet `g` in range that is the tracked story fleet `T` (`StoryAdat+0x28`, 0xF27420) |
+| 0x59545c..0x59546d | `f == T` and not hidden |
+| 0x595476..0x5954e3 | each revealed wormhole end's fleet (`Wormhole+8`/`+0x14`, `OsszHanyWormhole` 0xBB61A0) |
+| 0x5954e5..0x595570 | newly `vis[EN]`, attacking a planet or fleet of `EN` → message 0x0E and `SetIdoLelassit(1)` (0x541270; MP: back to `ProgramSebesseg`'s multiplier, **gameplay**: the same tick's movement already runs at it) |
+| 0x595575.. | the step-6 meet loop: a newly seen fleet makes every `e` meet its owner (`BirodalomIsmeri`, gameplay; `EN` also gets special 0x0B and `FelfedezBirodalom`) |
+| planet pass (step 7) | `g == T` → `vis[EN]`, `EN` meets the planet's owner; `EN`'s story notices (`+0xbb`, `+0x52` bit 6) |
+
+So two machines' fleets carry different `+0x19 + e` bytes (each machine its own human's extras), meet different
+empires through them, and slow down for different approaching enemies; the original's host-relayed resyncs hid that
+(U7). In lockstep (ours, ADR 0007 §5, `multiplayer.md` §2): every **human** empire `h` (`PlayerKi == 1`) gets the
+extras its own machine would give it, in `h` order after the radar rule: `T` and the wormhole ends set `vis[h]`;
+"enemy approaching" is checked for each `h` (newly `vis[h]`, target owned by `h`) and reported to `h`
+(`StarmapEvent::EnemyApproaching { fleet, to: h }`); one slow-down when any fired (the call is idempotent within a
+tick); the meet loop then runs on these bytes as in the exe. The story notices (`Story_ArrivedToRadarRange*`, special
+0x0B) stay the canonical `EN`'s (stories are SP). Classic SP: `h` = `EN` only, unchanged. "Contact lost" goes to every
+human's fleet (`ContactLostNetwork`, presentation). Port: `StarmapContext::viewers`.
+
+Verification: `run_fleet.py --mp-move` stages, on half the refresh ticks, a **second human**: `MultiPlayerMode` = 1,
+`EN` = another live empire with `PlayerKi` = 1 (the original's other machine), wormholes revealed, staged attacks on
+that `EN` and random orders, for the `FRISSIT_Starmap` call only; the classic port with that snapshot's `EN` and
+`multiplayer` must match every tick (`traces/2026-10-23-mp-movement.md`). The lockstep extension is tested by
+`ig2-net` (`two_humans_give_movement_orders_in_lockstep`) and a projection check: the canonical pass gives each human
+`h` the bytes the classic pass with `EN = h` gives it.
+
 ## 7. Production (every tick, after the clean-up)
 Specified and verified in `production-research.md` §3–§5 (`ig2-sim::production`).
 

@@ -158,7 +158,7 @@ fn sound_tables_name_the_installs_files() {
     let exe = inst.read_raw("ig2.exe").expect("ig2.exe");
     let t = SoundTables::from_exe(&exe).expect("catalogued exe");
     let counts: Vec<usize> = t.tables.iter().map(Vec::len).collect();
-    assert_eq!(counts, [11, 58, 44, 4, 3, 6, 19, 4, 42, 3, 2]);
+    assert_eq!(counts, [11, 58, 44, 4, 3, 6, 19, 4, 42, 3, 2, 9]);
     // Every record has its file except Colony_Hangok[27..=36], ten night bird calls the GOG install lacks
     // (re/screens/sound.md §1).
     for table in Table::ALL {
@@ -171,6 +171,27 @@ fn sound_tables_name_the_installs_files() {
     assert_eq!(t.music.len(), 19);
     assert!(t.music.iter().all(|m| m.starts_with("mfx/") && inst.resolve(m).is_some()));
     assert_eq!(t.music[12], "mfx/menu.ogg");
+}
+
+/// The speakers' lines (`re/screens/audio.md` §5): the counts of the ELF's `StarmapInitSpeech`/`InitColonySpeech`, the
+/// original's slip that gives `P_soldier3_84` to speaker 8, and every file in the install.
+#[test]
+fn speech_tables_name_the_installs_files() {
+    use ig2_rules::speech::Speech;
+    let Some(inst) = Install::from_env(Lang::En) else { return };
+    let inst = inst.expect("valid install");
+    let s = Speech::from_exe(&inst.read_raw("ig2.exe").expect("ig2.exe")).expect("catalogued exe");
+    assert_eq!((s.starmap.len(), s.colony.len()), (220, 753));
+    assert_eq!((s.starmap.sets.len(), s.colony.sets.len()), (27, 108));
+    let n = |sp: &ig2_rules::speech::Speaker, a, k| sp.set(a, k).map_or(0, |s| s.files.len());
+    assert_eq!((n(&s.starmap, 1, 0), n(&s.starmap, 2, 0), n(&s.starmap, 4, 2), n(&s.starmap, 9, 1)), (14, 13, 9, 5));
+    assert_eq!((n(&s.colony, 1, 2), n(&s.colony, 8, 7), n(&s.colony, 9, 7), n(&s.colony, 4, 16)), (5, 9, 7, 11));
+    assert!(s.colony.set(8, 7).unwrap().files.iter().any(|f| f.ends_with("Dead/P_soldier3_84.wav")));
+    assert_eq!(s.starmap.sets[0].files[0], "Sounds/Starmap/Speeches/Attack/H_soldier1_08.wav");
+    for f in s.starmap.sets.iter().chain(&s.colony.sets).flat_map(|s| &s.files) {
+        let ogg = format!("dataraw/{}.ogg", f.to_ascii_lowercase().strip_suffix(".wav").unwrap());
+        assert!(inst.resolve(&ogg).is_some(), "{ogg}");
+    }
 }
 
 /// The video name tables (`re/screens/video.md` §5): every name resolves to a file of the install.

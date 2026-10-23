@@ -41,33 +41,41 @@ pub fn load_fader_texture(r: &mut Renderer, install: &Install) {
 /// frame are tinted by `fadertexture`'s corner texel.
 #[allow(clippy::too_many_arguments)]
 pub fn fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
-    rounded(f, white, v, r, fill, ft, Some((edge, et)), None);
+    rounded(f, white, v, r, fill, ft, Some((edge, et)), None, true);
+}
+
+/// [`fader`] on a screen whose 3D init loads no `dt.bmp` (`Trade3DInit`): the quads take the bare colours
+/// [obs: the trade screen's boxes are `fill·(255 − t)/255` over what lies below, untinted; re/screens/trade.md §5.1].
+#[allow(clippy::too_many_arguments)]
+pub fn fader_untinted(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
+    rounded(f, white, v, r, fill, ft, Some((edge, et)), None, false);
 }
 
 /// `FadeKerekit(x, y, w, h, fill, t, false, 0.005, 0.005, u, v)` (ELF 0x537bd0): the rounded fill alone, textured
 /// by `fadertexture` at `((x + u)·0.005, (y + v)·0.005)` per virtual pixel (`PutDarkeningFace`).
 pub fn fade_kerekit(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], t: f32, off: [f32; 2]) {
-    rounded(f, white, v, r, fill, t, None, Some(off));
+    rounded(f, white, v, r, fill, t, None, Some(off), true);
 }
 
 /// `KirakFader(i, faders, x, y, w, h, fill, t, edge, t', …, 0.005, 0.005)` (ELF 0x547920): `GLOBALKELLDESIGN` is
-/// set (1 in the image, never written), so it passes the texture scale 0.005 and the fader's own offsets
-/// (`+0x1e0`/`+0x258 + 4i`, drifting by `rand()` in `FaderDesignFrissito`; 0 here, as `InitFaderDesignStruktura`
-/// leaves them): the fill samples `fadertexture` at `((x + u)·0.005, (y + v)·0.005)` per virtual pixel; the frame
-/// keeps the scale 0. The callers' colours are × `s` (`+0x168 + 4i` = 0.9 + the occasional shine, [`S`]).
+/// set (1 in the image, never written), so it passes the texture scale 0.005 and the fader's own offsets `off`
+/// ([`super::FaderDesign::offset`], drifting in `FaderDesignFrissito`): the fill samples `fadertexture` at
+/// `((x + u)·0.005, (y + v)·0.005)` per virtual pixel; the frame keeps the scale 0. The callers' colours are × `s`
+/// ([`super::FaderDesign::s`]: 0.9 + the occasional shine); the glow it starts is [`super::FaderDesign::enter`].
 #[allow(clippy::too_many_arguments)]
-pub fn kirak_fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32) {
-    rounded(f, white, v, r, fill, ft, Some((edge, et)), Some([0.0; 2]));
+pub fn kirak_fader(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, edge: [f32; 3], et: f32, off: [f32; 2]) {
+    rounded(f, white, v, r, fill, ft, Some((edge, et)), Some(off), true);
 }
 
 #[allow(clippy::too_many_arguments)]
-/// The fill (textured at 0.005 a pixel from `design`'s offsets, else at the corner texel) and the frame, if any.
-fn rounded(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, frame: Option<([f32; 3], f32)>, design: Option<[f32; 2]>) {
+/// The fill (textured at 0.005 a pixel from `design`'s offsets, else at the corner texel, or untinted without
+/// `tinted`) and the frame, if any.
+fn rounded(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], ft: f32, frame: Option<([f32; 3], f32)>, design: Option<[f32; 2]>, tinted: bool) {
     let [x, y, w, h] = r.map(|c| c as i32 as f32);
     if w <= 0.0 || h <= 0.0 {
         return;
     }
-    let dt = FADER_TEXTURE.get();
+    let dt = FADER_TEXTURE.get().filter(|_| tinted);
     let corner = dt.map_or([1.0; 4], |t| t.corner);
     let quad = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 4], scale: f32, off: [f32; 2]| {
         if w <= 0.0 || h <= 0.0 {
@@ -124,8 +132,8 @@ fn rounded(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3]
     }
 }
 
-/// `FaderDesignFrissito` (ELF 0x547e10) keeps a fader's `s` at 0.9 (the remaster's shine adds to it only with
-/// `GLOBALKELLDESIGN`).
+/// A fader's `s` without its shine (`FaderDesignFrissito`, ELF 0x547e10), for the screens that don't keep a
+/// [`super::FaderDesign`] yet.
 pub const S: f32 = 0.9;
 
 /// The exe's colour `c` (0..255) at opacity `a` as a [`Blend::GammaAlpha`] tint: `FadeScreen`'s quads are the 2D

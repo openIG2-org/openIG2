@@ -220,6 +220,8 @@ pub struct ColonyUi {
     held: Option<u32>,
     /// `AktBGridX/Y`: the grid cell under the pointer; the build cursor's spot (`AktBGridXSarga/YSarga`).
     pub cell: Option<(i32, i32)>,
+    /// The build cursor's search start (`Real2Grid` of the truncated ground point).
+    pub start: Option<(i32, i32)>,
     pub ghost: Option<Ghost>,
     /// `selectionsize`, `selectionatlatszosag`, `selectionzoomirany`, `OldAktEpulet` (`Frissit2_Colony`).
     sel_size: f32,
@@ -236,10 +238,14 @@ pub struct ColonyUi {
     pub war: crate::colony_war::WarUi,
     /// The sounds the screen started since the window last took them (re/screens/audio.md §6.2).
     pub sounds: Vec<SoundId>,
+    /// The units' voice lines (`ColonySpeaker.Play(line, kind)`: selection, move, attack), played by the window with the sounds.
+    pub voices: Vec<(i32, i32)>,
     /// The libc `rand()` of the sound picks (a cosmetic stream, [`Rand`]).
     rand: Rand,
     /// `VoltHarc` (exe 0x99646a): the shown planet's ground war as `Frissit2_Colony` saw it last.
     volt_harc: bool,
+    /// `UpdateRain`'s frames due, in hundredths (60 a second: see [`ColonyUi::thunder`]).
+    rain_frames: u32,
 }
 
 impl Default for ColonyUi {
@@ -254,6 +260,7 @@ impl Default for ColonyUi {
             window: None,
             held: None,
             cell: None,
+            start: None,
             ghost: None,
             sel_size: 300.0,
             sel_alpha: 0,
@@ -264,8 +271,10 @@ impl Default for ColonyUi {
             spin: 0.0,
             war: Default::default(),
             sounds: Vec::new(),
+            voices: Vec::new(),
             rand: Rand(1),
             volt_harc: false,
+            rain_frames: 0,
         }
     }
 }
@@ -289,6 +298,24 @@ impl ColonyUi {
     fn enter_sounds(&mut self, s: &ColonySnap) {
         let e = enter_ambient(&mut self.rand, s.surface, s.weather);
         self.sounds.extend(e);
+    }
+
+    /// `UpdateRain` (ELF 0x4bffb0), one UI tick of it: with `KELLVILLAM` (a rainy field, `InitWeather`;
+    /// [`OptionsKellIdojaras` taken as on]) each drawn frame `random(400) < 1` → `Colony_Villamok[random(4)]` (and
+    /// the light flash, not drawn). The exe draws once a rendered frame; the client draws 60 times a second, the rate
+    /// of a 60 Hz display (re/deviations.md).
+    fn thunder(&mut self, weather: i32) {
+        if weather != 2 {
+            return;
+        }
+        self.rain_frames += 60;
+        while self.rain_frames >= 100 {
+            self.rain_frames -= 100;
+            if self.rand.below(400) < 1 {
+                let r = self.rand.below(4);
+                self.sounds.push(SoundId::new(Table::Villam, r as u16));
+            }
+        }
     }
 
     /// `Frissit2_Colony`'s ambients (exe 0x477dc0), on the colony screen every fifth UI tick (`ColonyCounter`,
@@ -403,6 +430,7 @@ impl ColonyUi {
         let held = self.held.take();
         let w = self.war.release(&c.war(), left, self.spot(c, p) == Some(0x14));
         out.commands = w.commands;
+        self.voices.extend(w.voice);
         // `ColonyGfx2D_3`: with the left button up an open window takes its answer and shuts.
         if let (true, Some(w)) = (left, self.window.take()) {
             let cells = self.window_cells(c, w);
@@ -465,6 +493,7 @@ impl ColonyUi {
             Key::War(wk) => {
                 let w = self.war.key(&c.war(), wk);
                 out.commands = w.commands;
+                self.voices.extend(w.voice);
                 if w.drop_building {
                     self.selected = 0;
                 }
@@ -586,19 +615,22 @@ impl ColonyUi {
     }
 
     /// The pointer over the 3D view at grid cell `cell` (`ShowColony`): the build cursor's spot is the first free
-    /// one for the kind searched from there (`LocateActBuildingSuitableLocation`, the same search the order runs).
-    pub fn hover(&mut self, c: &Ctx, cell: Option<(i32, i32)>) {
+    /// one for the kind searched from there (`LocateActBuildingSuitableLocation` exe 0x486460: over the screen's
+    /// grid, each unit on the map adding 8 to its own cell; colony-placement.md §8).
+    /// `start` is the search's own cell ([`cursor_cell_under`]).
+    pub fn hover(&mut self, c: &Ctx, cell: Option<(i32, i32)>, start: Option<(i32, i32)>) {
         self.war.pointer(cell);
-        if cell == self.cell && (self.ghost.is_some() || !self.build_mode) {
+        if (cell, start) == (self.cell, self.start) && (self.ghost.is_some() || !self.build_mode) {
             return;
         }
         self.cell = cell;
+        self.start = start;
         self.ghost = None;
-        let (Some(at), true) = (cell, self.build_mode) else { return };
+        let (Some(at), true) = (start, self.build_mode) else { return };
         let world = c.state.colony();
         let Some(planet) = world.planets.get(c.snap.planet) else { return };
         let cells = c.state.vehicle_cells(c.snap.planet);
-        if let Some(spot) = c.sim.placement.locate(planet, self.kind as u8, &cells, Some(at)) {
+        if let Some(spot) = c.sim.placement.locate_cursor(planet, self.kind as u8, &cells, at) {
             self.ghost = Some(Ghost { kind: self.kind as u8, at: spot, blocked: false });
         }
     }
@@ -637,6 +669,7 @@ impl ColonyUi {
         self.war.ui_frame(&crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false });
         self.counter += 1.0;
         self.ambient(s.surface);
+        self.thunder(s.weather);
         self.spin += 1.0;
         if !s.buildings.iter().any(|b| b.slot == self.selected) {
             self.selected = 0;
@@ -852,7 +885,7 @@ impl PanelBuilding {
                 let q = scene::apply(&m, v.pos);
                 dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: scene::normalise(scene::apply(&m, v.normal)), uv: v.uv, color: [1.0, 1.0, 1.0, a] });
             }
-            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
         let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
         let px = wide.px;
@@ -988,6 +1021,12 @@ pub fn cell_under(view: &View, gm: &GroundMap, p: [f32; 2]) -> Option<(i32, i32)
     view.ground_at(gm, p).map(|(x, y)| crate::colony::grid_cell(x, y))
 }
 
+/// The pointer's cell for the build cursor's search: `ShowColony` keeps the ground point as ints
+/// (`ColonyActBPosX/Y = (int)x, (int)y`) and searches from `Real2Grid` of those (colony-placement.md §8.3).
+pub fn cursor_cell_under(view: &View, gm: &GroundMap, p: [f32; 2]) -> Option<(i32, i32)> {
+    view.ground_at(gm, p).map(|(x, y)| crate::colony::grid_cell(x.trunc(), y.trunc()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1064,7 +1103,7 @@ mod tests {
             ui.release(&c, at, true, 1000);
             assert!(ui.build_mode);
             assert_eq!(ui.kind, c.kind_of(t));
-            ui.hover(&c, Some((100, 100)));
+            ui.hover(&c, Some((100, 100)), Some((100, 100)));
             (t, ui.ghost.expect("a free spot").at)
         };
         let out = {

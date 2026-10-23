@@ -49,6 +49,10 @@ v1/v2: f32 origin[3]
 v0:    origin = (marker, u16, u16) as floats
 ```
 
+`LoadXVBx` re-measures the root after loading (`BoxUjraszamol` 0x602750): the half-extents become the vertices'
+reach from the pivot, and the root's scale `+0x4c` = `max/1024` when the file's root is exactly 1024 wide
+(re/screens/design.md §14.3).
+
 ## `.xvb` node
 ```
 header
@@ -110,7 +114,8 @@ c–a, bit 1 a–b, bit 2 b–c (face `= a, b, c`). The textured and shadow rend
 char name[16]; char texture[16]; char texture2[16]; u32 flags;
 ```
 The texture names are 1999 `.bmp` names (`panel_4_3.bmp`). `loadmaterial` loads `texture` with
-`loadtexture2` and a non-empty `texture2` with `loadtexture(…, 1)` (a second, environment-style map);
+`loadtexture2` and a non-empty `texture2` with `loadtexture(…, 1)`: a self-illumination map, drawn additively over
+the first by `selfillumkirak` (re/screens/design.md §14.3; ships' `*si*.bmp` window lights);
 `fenyek_2.bmp` and `reflec.bmp` as `texture2` are swapped for a runtime texture.
 Five shipped materials are 48 bytes, with the flags missing.
 
@@ -143,3 +148,4 @@ screen directory (15,958 / 15,983 references resolve).
 ## Open questions
 - None for the file layout. The material `flags` word and the render-flag words of the child records
   (`+0x54`/`+0x58` masks, set at runtime) belong to the renderer port (Phase 3).
+- The trade screen shows the material's last word is an f32 transparency (`re/screens/trade.md` §13).

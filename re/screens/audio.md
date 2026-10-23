@@ -69,7 +69,7 @@ call-site table (297 ELF sites): `_local/audio/callsites.md`.
 - `UpdateFrame` exe 0x4e3e90, every frame: a loaded track that is no longer playing (and not paused) →
   `ZeneEppenJatszott = 0; PlayMusicMain(0, immediate)`: when any track ends (the menu's too) the next main track starts.
 - Callers: `MainScr_Belep` → Menu(immediate); `Starmap_Belep` exe 0x5b19a0 → Main (crossfade; not while a space-war
-  return is pending); `SpaceWar_Belep` exe 0x562680 → SpWar; `Frissit2_Colony` exe 0x477dc0 → GrWar when a ground
+  return is pending); `SpaceWar_Belep` exe 0x562680 → SpWar (the client plays it at entry and the main music on leaving); `Frissit2_Colony` exe 0x477dc0 → GrWar when a ground
   battle starts on the shown planet, Main when it ends. `Pause/UnPauseMainMusic` have no callers.
 
 ## 5. Voices and message audio
@@ -84,30 +84,66 @@ call-site table (297 ELF sites): `_local/audio/callsites.md`.
 - **New campaign**, `Starmap_Belep` (ELF 0x6f27bc): `SOUND && HangLejatszasKell > 0` (exe 0xbae26c, set by
   `InitNewGame` to the campaign type 1..3) → `HangLejatszasID = PlayWav("SOUNDS/START/faj%dstart.WAV", 0)`, the music
   ducked to `M·60/100` (§3), `HangLejatszasKell = 0`; the last thing the entry does.
-- **Speakers**, `SpeakingDirector` (`Play` exe 0x563cd0, `Speeches::Play` 0x563d50): per speaker and kind a set of
-  lines; a play needs the set's cooldown (`+8`) at 0, sets it to 10 and draws `rand() % count` (also when silent);
-  the cooldowns drop by 1 every 10th screen counter. The colony's `ColonySpeaker` (exe 0xA3EA3C, 753 `Add` calls in
-  `InitColonySpeech` ELF 0x4d2250: `Sounds/Colony/Speech/<dir>/<H|B|P>_soldier<n>_<NN>.wav`; speaker = line + 3 for
-  `EN` 4/5, + 6 for 3/7/8; silent for `Lang == 3`) speaks on a left release over the 3D view with an own unit
-  selected (`Play(sel % 3 + 1, 1)`) and from the ground war (ground-combat.md §11.12). The starmap's
-  `StarmapSpeaker` (`StarmapInitSpeech` ELF 0x6f0150, not decompiled; files `starmap/speeches/{attack,move,select}`)
-  speaks for own fleets, line `AktFleet % 3 + 1`: kind 1 on a select, 0 on an order without Shift, 2 on an attack.
+- **Speakers**, `SpeakingDirector` (ELF `speech.cpp`): a list of `Speaker`s (id), each a list of `Speeches` (kind:
+  `+0` count, `+8` the `Speech` list, `+0x10` cooldown), each `Speech` a file name. Built once at start-up
+  (exe 0x4dfe46) by `InitColonySpeech` exe 0x47f400 (ELF 0x4d2250, `ColonySpeaker` exe 0xa3ea3c, 753 `Add`s; its
+  first statement `KELLBESZED = SOUND`) and `StarmapInitSpeech` exe 0x5ad820 (ELF 0x6f0150, `StarmapSpeaker` exe
+  0xf17d88, 220 `Add`s): literal names, no conditions, each `push kind; push speaker; push name; mov ecx, director;
+  call SpeakingDirector::Add` (exe 0x563b00), so the client reads both tables from the user's exe
+  (`ig2_rules::speech`). Speakers 1–3 `H_soldier1..3`, 4–6 `B_…`, 7–9 `P_…`. Kinds: starmap 0 `Move`, 1 `Select`,
+  2 `Attack`; colony 0 `Move`, 1 `Selection`, 2 `Attack`, 3 `Retreat`, 4 `Self-Destruct`, 5 `Hit`, 6 `Dying`, 7
+  `Dead`, 8 `enemy_hit`, 9 `enemy_dead`, 10 `enemy_retreat`, 16 `Weapons` (`Sounds/<Colony/Speech|Starmap/Speeches>/
+  <Dir>/<H|B|P>_soldier<n>_<NN>.wav`). Original slip: `Dead/P_soldier3_84.wav` is added to speaker 8.
+  - `SpeakingDirector::Play(line, kind)` exe 0x563cd0 (ELF 0x67fe30): nothing for line 0 or `Lang == 3`; speaker =
+    line, + 3 for `EN` 4/5, + 6 for 3/7/8 (a missing speaker or kind asserts). `Speeches::Play` (ELF 0x680200): only
+    with the cooldown at 0: cooldown = 10, `random(count)` (libc), the n-th of the list (`Add` prepends: the n-th from
+    the last added), `Speech::Play` (exe 0x563d50: a wave at `ConvertVolume(G)`, only with `KELLBESZED`).
+  - `Refresh` (every set's cooldown −1, floored at 0): the starmap's in `FRISSIT_Starmap2` (ELF 0x719070) every 10th
+    `StarmapCounter` (+1 a UI tick on the starmap), the colony's in `Frissit2_Colony` every 10th `ColonyCounter` (+1
+    a UI tick on every screen): **a line can speak again after 91..100 ticks (about a second)**.
+  - Starmap (`Starmap_Main`, ELF 0x6f50a0): line `AktFleet % 3 + 1` for a fleet of `EN` only: kind 1 when a pick on
+    the map makes a fleet the selection (ELF 0x6f8e3b, exe 0x5b4a7f); after a right-click order (`Multi_Send(0x15)`)
+    kind 0 for `StarmapVillogasMode` 1, 0xd, 0xe without Shift (with Shift `PlaySoundGlobal(0)`; ELF 0x6f81e5, exe
+    0x5b51ac) and kind 2 for 2 (an attack; ELF 0x6f8d1c, exe 0x5b5231).
+  - Colony: a left release on the 3D view (`AktIkon2 == 0x14`, no armed air strike, not `Belep`/`Atlepes`) with
+    `WF::GetSelected(0)` an own unit that isn't a mine (`+0x190 & 0x20000`) → line `sel % 3 + 1`, kind 1 (`Colony_Main`
+    ELF 0x4dc4c7); Ctrl+A (select all own non-pod units) the same (`ColonyKeyboardHandler` ELF 0x4ddb61); the
+    retreat message 0x12f on the shown planet (`MULTIGET_Colony`, line 1, kind 3 own, 10 another's); the ground war's
+    `WF::PlaySpeechGrWar` (exe 0x48c670: shown planet, colony screen, not `Belep`/`Atlepes`/`Simulate`): a hit
+    (kind 5 the human's victim, else 8 the shooter's), a group's death (7 / 9), a move order (0), an attack order
+    (2), a detonation (4: no set). Every site and condition: ground-combat.md §11.12. The client gets the sim's
+    sites as `GroundEvent::Voice` (with owners; the window picks the kind for its `EN`) and plays them while its
+    colony screen shows the war's planet; the sample comes from its cosmetic stream (deviation 38).
 - `PlayMp2` exe 0x563df0 (stream): `TutorialStartMp2_2` exe 0x612430 (`mfx/tutorial/%s`).
 - **Message speech**, `PlayMessagesHang(name, flag)` exe 0x55c9b0 (record `MessagesHang` exe 0x91a6e8, volume 100):
-  `t0 = SDL_GetTicks()`; with a name and `Lang == 1` (exe 0x912724 holds 1 in the GOG install whatever the UI
-  language) and the file `dataraw/messagesounds/<EN>/<name>` there: `StopMessagesHang`, the duck (§3), `PlaySound(&rec,
-  1)` (the name as is). Else the handle is 0: `MessagesHangJatszikMeg` exe 0x55c890 then counts `SDL_GetTicks() − t0 <
-  6000` ms as speech. `flag` only switches `+0x104` 2 → 6. Caller `StartAnim` exe 0x5095b0 (ELF 0x5a1340) at the first
-  plain character of a part tagged `TE` with `MesKellAnimInditas && MsgSzin == 2`: the typer muted, the clip opened,
-  `PlayMessagesHang(SoundFile[0])` (`%04d_%02d.ogg`, message id and part, from `GetUzenetAnimLista`),
-  `PlayHalkAlienHang`. `FRISSIT_Messages2` exe 0x505180 waits for the speech's end (every 11th call) and runs
-  `StartAnim_EndOfMessage` exe 0x5096a0 (`Mes_Hangok[2]` with the end clip `misc/end_<race|x>.bik`) or
-  `VegeAzElsoAnimnak`. `StopMessagesHang` exe 0x55d1e0: `Messages_Kilep` and the three presses of `Messages_Main`
-  (exe 0x508560: the click in the text, the right click that skips all, an inbox row).
+  `t0 = SDL_GetTicks()` (exe 0x91a800); with a name and `Lang == 1` (exe 0x912724 holds 1 in the GOG install whatever
+  the UI language) and the file `dataraw/messagesounds/<EN>/<name>` there (`EN` exe 0x912a3c, the empire number: the
+  install has folders 1, 3, 5 with 591, 668, 265 files, no localised copies): `StopMessagesHang`, the duck (§3),
+  `PlaySound(&rec, 1)`. Else the handle (`+0x100`, exe 0x91a7e8) is 0: `MessagesHangJatszikMeg` exe 0x55c890 then
+  counts `SDL_GetTicks() − t0 < 6000` ms as speech (a message without its file waits 6 s). `flag` only switches
+  `+0x104` 2 → 6.
+  - `StartAnim` exe 0x5095b0 (ELF 0x5a1340; when it fires: video.md §5.3): `MuteSoundGlobal(7)` (the typer), the
+    clip, `PlayMessagesHang(SoundFile + AnimAkt·0x100, 0)` with `AnimAkt` 0, i.e. `SoundFile` = `%04d_%02d.ogg`
+    (message id, part; `GetUzenetAnimLista` sets it for every `TE` part read, the `%04d_00-LOOP.ogg` beside it is
+    never played and no such file exists), `PlayHalkAlienHang`, then `MesHangIndult` (exe 0xd909ad) = 1 when `SOUND`
+    and `Lang == 1`.
+  - **The speech's end**, `FRISSIT_Messages2` exe 0x505180 (ELF 0x5aad60), each UI tick on the open messages screen;
+    every 11th (`MessagesGyorsito` > 10, then 0): `SOUND`, `Lang == 1`, `MesHangIndult`, `AnimAkt == 0`, `SoundFile`
+    holding `ogg`, the speech over (`MessagesHangJatszikMeg` 0) and a message open (`FolyamatbanU != −1`) → for a
+    conversation (`UzenetFajtak[KerUz(id)] + 4`) `VegeAzElsoAnimnak` (the wait clip, `MesHangIndult = SOUND`; the end
+    clip when the wait clip doesn't open: `bink_playing` exe 0xdb9438 0), else `StartAnim_EndOfMessage`.
+  - `StartAnim_EndOfMessage` exe 0x5096a0, once (`AnimAkt` → 2): `StopHalkAlienHang`, the end clip,
+    `PlaySound(&Mes_Hangok[2], 0)` (`screens/messages/messages-end.wav`, exe 0x914b88) and `GlobalMusicVolumeCsokkento
+    = 0`: **the music comes back when the end clip starts**, else at `Messages_Kilep`.
+  - `StopMessagesHang` exe 0x55d1e0 with `StopHalkAlienHang` and `MesHangIndult = 0`: a left or right press in the
+    text (`0xb9 < x < 0x201`, `0 < y < 0xa8`; the right one also `SkipAll`), a new message taken
+    (`VoltUjUzenet == 1` in `Messages_Main` exe 0x508560: an inbox row or an automatic one), `Messages_Kilep`.
 - `PlayHalkAlienHang` exe 0x509120 (ELF 0x5a1470): the message video's alien voice. `idx` from the clip name
-  (`pirate` → 10, `trader` → 9 for `EN` 1/3/5; `misc` clips → `UzenetekRandomKitol − 1` unless it is the player's;
-  `UzenetFaj` overrides), then record `[1→11, 2→9, 3→3, 4→3, 5→1, 6→1, 7→2, 8→8, 9→7, 10→4, 11→15, 12→4, 13→0, 14→0,
-  15→4, 16→4, 17→12, 18→4, 19→10, else 4]` of the 16 `alienhangok/Alien-*.wav` (`PlaySound(&Alien[rec], 0)`).
+  `AnimFile` (`pirate` → 10, `trader` → 9 for `EN` 1/3/5; a `misc` clip → `UzenetekRandomKitol[UAktUzenet] − 1` unless
+  that equals `EN`; `UzenetFaj` exe 0xd90ddc overrides when set), `StopHalkAlienHang` (exe 0x509760: stops all 16),
+  then for `idx != −1` record `[1→11, 2→9, 3→3, 4→3, 5→1, 6→1, 7→2, 8→8, 9→7, 10→4, 11→15, 12→4, 13→0, 14→0, 15→4,
+  16→4, 17→12, 18→4, 19→10, else 4]` of the 16 `alienhangok/Alien-*.wav`, which are `Mes_Hangok[3..=18]` (exe
+  0x914ca4 = `Mes_Hangok + 3·0x11c`): `PlaySound(&Mes_Hangok[3 + rec], 0)`, `Translating` (exe 0xda65ce) = 1.
 
 ## 6. Sounds per screen (exe functions; ELF in `callsites.md`)
 Ids: `Global[0]` Click1 (the click), `[2]` Click3, `[5]` benyilas1 (zoom), `[7]` Kiirashang (the typer), `[10]`
@@ -136,7 +172,7 @@ Planet type = `Bolygok+0x22`; `C[i]` = `Colony_Hangok[i]`, `Gr[i]` = `Gr_Hangok[
 | `C[r(2)]` | the build start (`colony_start_build` exe 0x4a88a0, before `Multi_Send(0x1f)`); the repair window's yes (exe 0x47d170, with or without the building) |
 | `Gr[13+r(4)]` | the demolish window's yes with the building there (exe 0x47ced0, after `Multi_Send(0x20)`); Shift+Delete (`rand()&3`) |
 | `C[3]` / `C[4]` | `Build3dBuilding` exe 0x49c780 / `Remove3dBuilding` 0x497760: any building made or removed on the shown planet (`EpuletNew`/`EpuletDelete`), whoever's |
-| thunder | `UpdateRain` (ELF 0x4bffb0, per drawn frame on a rainy field): `random(400) < 1` → a flash and `Colony_Villamok[random(4)]` (exe 0x8f1198, 9 records; not in the 11 tables) |
+| thunder | `UpdateRain` (ELF 0x4bffb0), called by `ShowColony` every drawn colony frame: with `KELLVILLAM` (`InitWeather` ELF 0x4c1160: the field's weather `WF+0xa00 == 2` and `OptionsKellIdojaras`) `random(400) < 1` → `PlaySound(&Colony_Villamok[random(4)], 0)` (exe 0x8f1198, 9 records `Groundwar/Thunder01..06`, `Thunder-BGR-1..3`, volume 75; only 0..=3 are drawn) and the light `villamid` at (0x60, 0x60, 0x80) for that frame, else black. A frame-rate dependent draw: about 0.15 a second at 60 Hz |
 
 ### 6.3 Info (`Info_Main` exe 0x4e81c0, 10 sites, all G0)
 On the press: chart mode 0xe, star log 0xf, the charts 0x10..0x19, list up/down 0x1e/0x1f and star log scroll
@@ -175,6 +211,13 @@ Des[0]/Des[3], Trade[0]/Trade[1]; Global[0], Global[2] (screens not built).
 - The screens queue their ids (`sounds` on `Research`, `ColonyUi`, `InfoScreen`, `SpyScreen`, diplomacy's `Screen`;
   the starmap's panels and menus return `Action::Sound`; the window's own sites go to `App::sounds`; the typer's steps
   `Dialogue::typing`); `window.rs::audio_frame` plays them after the frame's input and UI ticks.
+- Part 3: `ig2_rules::speech` reads both speakers' tables from the exe; `audio::speech::{Director, Speakers}` keeps
+  the cooldowns (refreshed from `window.rs::audio_frame`: the starmap's only while it is the screen) and plays a line
+  through `play_wav`; the starmap's select/order sites and the colony's release/Ctrl+A queue `Speak`s.
+  `Audio::{play_message_speech, message_speech_playing, stop_message_speech, play_alien, stop_alien, set_duck}` and
+  `window.rs::head_clip_frame` carry `StartAnim`, `FRISSIT_Messages2`'s switch, `StartAnim_EndOfMessage`'s sounds and
+  the stops (`ClipStep::Hush`); `colony_ui::thunder` the thunder (60 draws a second); `SpaceWar_Belep`/the return
+  call `PlayMusicSpWar`/`Main`. Without a sound card a found speech lasts its decoded length.
 - `--snapshot --script S` on the starmap (or with `--colony P`) runs the window's own input and frame code headless
   (`window::script_run`: one UI tick a frame, the sim held, the script's input fed in as window events) and writes
   only the sounds. Scripts: `tools/trace/scripts/{starmap,colony}-sounds.json`.
@@ -200,9 +243,16 @@ Des[0]/Des[3], Trade[0]/Trade[1]; Global[0], Global[2] (screens not built).
   presses) in both. The E key can't be scripted: `ColonyKeyboardHandler`'s character doesn't come from the injected
   key event (the digits reach `DoKeyboard`). Tests: `colony_ui::tests` (entry and ambient picks).
 - All 186 table sounds with a file and the 19 tracks decode (`audio::tests::the_installs_sounds_decode`).
-- In the client and not traced: the info, spy, diplomacy and typer sites (§6.3–§6.6, from the decompiles), the
+- Diplomacy traced 2026-10-23 (diplomacy sequence): `Dip[0]` = screen13.wav only with the opening, `Dip[1]` = screen20.wav when the closing starts (none towards messages/help/options); the client matches.
+- In the client and not traced: the info, spy and typer sites (§6.3–§6.6, from the decompiles), the
   colony's ambients, build/demolish/placed/removed sounds and war music, the scroll messages' voices.
-- Not yet (roadmap): the speakers (`StarmapSpeaker`, `ColonySpeaker`: the colony's ground-war selection isn't in the
-  client and `StarmapInitSpeech` isn't decompiled), the message speech, `Mes[2]`, `PlayHalkAlienHang` and their
-  ducking (they hang on the message videos: Video playback), the new campaign's start voice (the client starts from
-  saves), the thunder, the menu/space-war music callers, other empires' builds' `C[3]`.
+- **Speakers, message speech, alien voices** (2026-10-23, `re/rules/traces/2026-10-23-speech.md`, a probe calling
+  the exe's functions): the cooldown 10 and its refresh every 10th UI tick, the duck target 33 at M 100 and its 0.5
+  steps, the 6000 ms of a missing speech, a found speech not looping, the alien records `Mes_Hangok[7]`, `[15]`, `[6]`
+  as `alien_record` gives. The 220 + 753 lines are read from the exe and every file is in the install
+  (`exe_tables::speech_tables_name_the_installs_files`).
+- In the client from the decompiles and not traced: the speakers' trigger sites, the speech-ended switch, `Mes[2]`
+  at the end clip, the thunder, `PlayMusicSpWar` at `SpaceWar_Belep` and `Main` on the return.
+- **Ground war's voices** (2026-10-23, `re/rules/ground-combat.md` §11.12): the move and retreat calls verified with `run_screen.py --grwar --script tools/trace/scripts/grwar-voices.json --sounds`; the hit/death lines by `ground_rt_trace::battle_tick_matches_trace` (the `Voice` events reproduce the exe's ColonySpeaker cooldowns, 181 lines, 0 mismatches). Detonate (kind 4) plays nothing.
+- Not yet: the space war's speaker (`SpaceWarSpeaker`, deviation 52), the right click's `SkipAll` stop, the thunder's
+  light flash, the new campaign's start voice (the client starts from saves), other empires' builds' `C[3]`.

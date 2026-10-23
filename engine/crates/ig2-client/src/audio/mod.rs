@@ -8,6 +8,7 @@
 pub mod decode;
 pub mod mixer;
 pub mod output;
+pub mod speech;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -114,6 +115,11 @@ pub fn effect_volume(g: i32, vol: i32) -> i32 {
 pub fn music_volume(hangero: f32, m: i32, duck: f32) -> i32 {
     let x = ((hangero as f64 / 100.0) * (m as f32) as f64 - duck as f64) as i32;
     convert_volume(x.max(0) as f64 * 0.9)
+}
+
+/// `PlayMessagesHang`'s duck target for the music volume `m`: `(int)(m / 3.0)` (f64).
+pub fn message_duck(m: i32) -> i32 {
+    (m as f64 / 3.0) as i32
 }
 
 /// The music globals of the exe (re/screens/audio.md §4; exe addresses in the field docs).
@@ -223,6 +229,8 @@ pub struct Audio {
     output: Option<output::Output>,
     mixer: Option<Arc<Mutex<Mixer>>>,
     records: HashMap<SoundId, Voices>,
+    /// Volumes written into a record (`Hang +0x110`; the battle's `lovedeksound` sets them before playing): they stick.
+    volumes: HashMap<SoundId, i32>,
     /// `SOUND` / `MUSIC` (exe 0x919930/0x919931) and the options' volumes (`GlobalSoundVolume` 0x91992c,
     /// `GlobalMusicVolume` 0x919928).
     pub sound: bool,
@@ -237,6 +245,36 @@ pub struct Audio {
     pub voice_log: Vec<(String, u64)>,
     /// The client's stand-in for libc `rand()` in the music picks (cosmetic; the sim's libc draws stay its own).
     seed: u32,
+    /// The starmap's and the colony's speakers (§5) and their libc stand-in (cosmetic).
+    pub speakers: speech::Speakers,
+    speak_rand: Rand,
+    /// `MessagesHang` (exe 0x91a6e8) as `PlayMessagesHang` left it.
+    pub message: MessageSpeech,
+}
+
+/// The message speech's state (re/screens/audio.md §5): `PlayMessagesHang`'s start (`SDL_GetTicks` at exe 0x91a800,
+/// in UI ticks), its channel (the handle `+0x100`; `None` = 0), and the speech's length for a silent client.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MessageSpeech {
+    pub t0: u64,
+    pub channel: Option<usize>,
+    /// The file was there: without a sound card the speech lasts its decoded length (`end`).
+    pub found: bool,
+    pub end: u64,
+    /// `MesHangIndult` (exe 0xd909ad).
+    pub indult: bool,
+}
+
+impl MessageSpeech {
+    /// `MessagesHangJatszikMeg` at UI tick `ui`: the channel's status; with the handle 0, the first 6000 ms (600
+    /// ticks) count as speech.
+    pub fn playing(&self, ui: u64, channel_playing: impl Fn(usize) -> bool) -> bool {
+        match self.channel {
+            Some(ch) => channel_playing(ch),
+            None if self.found => ui < self.end,
+            None => ui.saturating_sub(self.t0) < 600,
+        }
+    }
 }
 
 impl Audio {
@@ -254,6 +292,7 @@ impl Audio {
             output,
             mixer,
             records: HashMap::new(),
+            volumes: HashMap::new(),
             sound: true,
             music_on: true,
             sound_volume: opts.int("Sound Volume").unwrap_or(100).clamp(0, 100),
@@ -263,7 +302,85 @@ impl Audio {
             log: Vec::new(),
             voice_log: Vec::new(),
             seed,
+            speakers: speech::Speakers::default(),
+            speak_rand: Rand::seeded(),
+            message: MessageSpeech::default(),
         }
+    }
+
+    /// The speakers' lines of the user's exe (`StarmapInitSpeech`, `InitColonySpeech`).
+    pub fn set_speech(&mut self, t: &ig2_rules::speech::Speech) {
+        self.speakers = speech::Speakers::new(t);
+    }
+
+    /// `SpeakingDirector::Play(&who, line, kind)` for the human's empire `en`, then `Speech::Play` (a voice at
+    /// `ConvertVolume(G)` with `KELLBESZED`, which is `SOUND`). `Lang` (exe 0x912724) is 1 in the GOG install, never
+    /// the speakers' silent 3.
+    pub fn speak(&mut self, s: speech::Speak, en: i32) {
+        if let Some(file) = self.speakers.director(s.who).play(s.line, s.kind, en, false, &mut self.speak_rand) {
+            self.play_wav(&file);
+        }
+    }
+
+    /// `PlayMessagesHang(name, 0)` exe 0x55c9b0 for the human's empire `en`: the file
+    /// `dataraw/messagesounds/<en>/<name>` there (and `SOUND`) → the previous one stopped, the music ducked to
+    /// `(int)(M / 3.0)`, the speech played at the record's 100 per cent; else the handle is 0.
+    pub fn play_message_speech(&mut self, en: i32, name: &str) {
+        self.message.t0 = self.ui;
+        let path = format!("dataraw/messagesounds/{en}/{name}");
+        if name.is_empty() || self.install.resolve(&path).is_none() {
+            self.message.channel = None;
+            self.message.found = false;
+            return;
+        }
+        self.stop_message_speech();
+        self.music.duck = message_duck(self.music_volume);
+        // `PlaySound(&MessagesHang, 1)`: nothing without `SOUND`.
+        self.message.found = self.sound;
+        if !self.sound {
+            return;
+        }
+        self.voice_log.push((path.clone(), self.ui));
+        let rate = self.mixer.as_ref().and_then(|m| m.lock().ok().map(|m| m.rate)).unwrap_or(48000);
+        let Some(chunk) = self.install.read(&path).ok().and_then(|b| decode::chunk(b, rate).ok()) else { return };
+        self.message.end = self.ui + (chunk.len() as u64 * 100).div_ceil(rate as u64);
+        let Some(mixer) = self.mixer.clone() else { return };
+        let Ok(mut m) = mixer.lock() else { return };
+        let ch = m.alloc_free();
+        m.set_volume(ch, mixer_volume(effect_volume(self.sound_volume, 100)));
+        m.play(ch, &chunk, 0);
+        self.message.channel = Some(ch);
+    }
+
+    /// `MessagesHangJatszikMeg` exe 0x55c890: the speech plays; with the handle 0, the first 6000 ms count as speech.
+    pub fn message_speech_playing(&self) -> bool {
+        self.message.playing(self.ui, |ch| self.playing(ch))
+    }
+
+    /// `StopMessagesHang` exe 0x55d1e0.
+    pub fn stop_message_speech(&mut self) {
+        if let Some(ch) = self.message.channel.take() {
+            self.stop(ch);
+        }
+        self.message.found = false;
+    }
+
+    /// `PlayHalkAlienHang`'s record `rec` (0..16): `PlaySound(&Mes_Hangok[3 + rec], 0)` (re/screens/audio.md §5).
+    pub fn play_alien(&mut self, rec: u16) {
+        self.stop_alien();
+        self.play(SoundId::new(Table::Mes, 3 + rec));
+    }
+
+    /// `StopHalkAlienHang` exe 0x509760: every alien voice.
+    pub fn stop_alien(&mut self) {
+        for i in 3..19 {
+            self.stop_sound(SoundId::new(Table::Mes, i));
+        }
+    }
+
+    /// `GlobalMusicVolumeCsokkento` (exe 0xe4166c): the music's duck target, 0 = none.
+    pub fn set_duck(&mut self, duck: i32) {
+        self.music.duck = duck;
     }
 
     pub fn has_device(&self) -> bool {
@@ -285,7 +402,7 @@ impl Audio {
             return;
         }
         let Some(h) = self.tables.get(id.table, id.idx as usize) else { return };
-        let volume = mixer_volume(effect_volume(self.sound_volume, h.volume));
+        let volume = mixer_volume(effect_volume(self.sound_volume, self.volumes.get(&id).copied().unwrap_or(h.volume)));
         self.log.push(Played { id, ui: self.ui });
         if !self.records.contains_key(&id) {
             let chunk = self.load(id);
@@ -310,6 +427,11 @@ impl Audio {
         });
         m.set_volume(ch, volume);
         m.play(ch, &chunk, 0);
+    }
+
+    /// Write `volume` into the record (`Hang +0x110 = v`): later plays use it.
+    pub fn set_record_volume(&mut self, id: SoundId, volume: i32) {
+        self.volumes.insert(id, volume);
     }
 
     /// The record's first voice (`Hang+0x100`), once it was loaded.
@@ -554,6 +676,41 @@ mod tests {
         assert_eq!(m.duck_real, 33.0);
     }
 
+    /// Observed (speech probe, `_local/traces-audio3/speech*`, 2026-10-23): `PlayMessagesHang` with the music at 100
+    /// sets the duck target 33, `GlobalMusicVolumeCsokkentoReal` then rises 0.5 a UI tick (10.5 after 21, 31.5 after
+    /// 63, 33 after 66) and stays after the speech; without its file the speech counts 6000 ms (`SDL_GetTicks` 9876 →
+    /// 15876).
+    #[test]
+    fn message_speech_ducks_and_waits() {
+        assert_eq!(message_duck(100), 33);
+        assert_eq!(message_duck(50), 16);
+        let mut m = MusicState { duck: message_duck(100), ..MusicState::default() };
+        let mut seen = Vec::new();
+        for i in 1..=70 {
+            m.tick();
+            if [21, 63, 66, 70].contains(&i) {
+                seen.push(m.duck_real);
+            }
+        }
+        assert_eq!(seen, [10.5, 31.5, 33.0, 33.0]);
+        let s = MessageSpeech { t0: 907, ..Default::default() };
+        assert!(s.playing(907 + 599, |_| unreachable!()));
+        assert!(!s.playing(907 + 600, |_| unreachable!()));
+        let s = MessageSpeech { t0: 0, found: true, end: 1701, ..Default::default() };
+        assert!(s.playing(1700, |_| unreachable!()) && !s.playing(1701, |_| unreachable!()));
+        let s = MessageSpeech { channel: Some(3), ..Default::default() };
+        assert!(s.playing(10_000, |ch| ch == 3));
+    }
+
+    /// A message speech decodes (IG2_INSTALL_DIR; skipped without it): 0011_01 of folder 1 is 17.01 s.
+    #[test]
+    fn a_message_speech_decodes() {
+        let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let inst = inst.expect("valid install");
+        let c = decode::chunk(inst.read("dataraw/messagesounds/1/0011_01.ogg").unwrap(), 48000).unwrap();
+        assert_eq!(c.len(), 816275);
+    }
+
     /// Every table sound and music track of the user's install decodes (IG2_INSTALL_DIR; skipped without it).
     #[test]
     fn the_installs_sounds_decode() {
@@ -569,7 +726,7 @@ mod tests {
                 n += 1;
             }
         }
-        assert_eq!(n, 196 - 10);
+        assert_eq!(n, 205 - 10);
         for m in &t.music {
             let mut s = decode::OggStream::new(inst.open_stream(m).unwrap(), 48000).unwrap();
             let mut buf = [[0.0f32; 2]; 4800];

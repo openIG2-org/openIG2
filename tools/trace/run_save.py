@@ -1,7 +1,7 @@
 """Spawn the user's ig2.exe under Frida, run tools/trace/save.js: make original save games plus snapshots.
 
 Usage (project venv): _local/venv/Scripts/python.exe tools/trace/run_save.py <install-dir> <out-dir>
-          [--days 3,40,150] [--slot 97] [--ships] [--seed 4242] [--seconds 300] [--tag NAME] [--mp] [--refit] [--wormholes]
+          [--days 3,40,150] [--slot 97] [--ships] [--seed 4242] [--seconds 300] [--tag NAME] [--mp] [--refit] [--wormholes] [--cursor]
 At each listed day after the scenario starts the agent snapshots the save's source globals and calls the exe's
 `LoadSave(slot, name, 2)` (0x543c80); the game writes `save<slot>.sav` to its data directory
 (%LOCALAPPDATA%/GyroscopeGames/ig2), which this script moves to <out-dir>/<tag>-<idx>.sav next to
@@ -35,6 +35,8 @@ ap.add_argument("--tag", default="quick")
 ap.add_argument("--mp", action="store_true", help="also take the multiplayer state blob (GetSavedGame 0x543670)")
 ap.add_argument("--refit", action="store_true",
                 help="perturb buildings and unit cells, save, call EpuleteketJoHelyreTesz (0x53cd00), save again (2k / 2k+1)")
+ap.add_argument("--cursor", action="store_true",
+                help="move units near buildings, save, probe the build cursor's search (0x486460) on every owned planet")
 ap.add_argument("--wormholes", action="store_true",
                 help="save, call AddWormhole (0x53aec0) with fuzzed coordinates until it returns 0, save again (2k / 2k+1)")
 a = ap.parse_args()
@@ -86,7 +88,8 @@ script.on("message", on_message)
 script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "days": [int(x) for x in a.days.split(",")],
                                            "slot": a.slot, "ships": a.ships, "mp": a.mp, "seed": a.seed,
-                                           "refit": a.refit, "wormholes": a.wormholes}})
+                                           "refit": a.refit, "wormholes": a.wormholes,
+                                           "cursor": a.cursor}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()

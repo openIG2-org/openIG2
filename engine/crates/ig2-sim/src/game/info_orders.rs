@@ -69,7 +69,7 @@ impl Game<'_> {
     /// `MoneyInit(false, e)` (exe 0x540060): every empire's shares from its sliders (`MoneyTeruletSzorzoCalculate`),
     /// then for `e` (every empire for 0) the pools 1..=5 re-dealt from the total by the new shares and their
     /// reserves cleared.
-    fn money_init(&mut self, e: usize) {
+    pub(super) fn money_init(&mut self, e: usize) {
         let mut ai = AiState::default();
         for (x, s) in ai.sliders.iter_mut().enumerate() {
             *s = std::array::from_fn(|k| self.state.mem.f64(va::SLIDERS + (x * 48 + 8 * k) as u32));

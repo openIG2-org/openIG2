@@ -390,6 +390,8 @@ pub enum Screen {
     Research,
     /// `AktKep` 5 (re/screens/design.md), drawn by [`crate::design::Design`] and [`crate::design_scene`].
     Design,
+    /// `AktKep` 8 (re/screens/trade.md), drawn by [`crate::trade::Trade`] and [`crate::trade_scene`].
+    Trade,
 }
 
 /// The 2D layer's resources and UI state.
@@ -546,16 +548,17 @@ impl Hud {
     /// The starmap's radial menu, the planet's long info and the select menus (re/screens/starmap.md §14–§17) at the
     /// camera's zoom.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_starmap_menus(&self, f: &mut Frame, m: &crate::starmap_menus::Menus, state: &SaveState, rules: &ig2_rules::Rules, size: [f32; 2], zoom: f32, time: f32) {
+    pub fn draw_starmap_menus(&self, f: &mut Frame, m: &crate::starmap_menus::Menus, p: &crate::starmap_panels::Panels, state: &SaveState, rules: &ig2_rules::Rules, size: [f32; 2], zoom: f32, time: f32) {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
         let t = crate::starmap_menus::MenuTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names, infostr: &self.infostr };
-        m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, (time * 100.0) as i32);
+        m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, (time * 100.0) as i32, &p.faders.starf, p.exit_fader());
     }
 
     /// The starmap's HUD under the top bar (re/screens/starmap.md §11) for the local selection.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_starmap_hud(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32) {
+    /// `starf` is `faders`; `info_box`: the long info's box took fader 0.
+    pub fn draw_starmap_hud(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, faders: &crate::kit::FaderDesign, info_box: bool) {
         let Some(font) = &self.font else { return };
         let t = crate::starmap_hud::InfoTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names };
         let counter = (time * 100.0) as i32;
@@ -564,12 +567,12 @@ impl Hud {
         let fleets = curr.fleets_at(prev, alpha);
         let mini = crate::starmap_hud::Minimap::new(curr, &fleets, sel, &view.camera);
         let v = Virtual::new(view.camera.size);
-        self.starmap.draw(f, font, self.white, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, &mini, time);
+        self.starmap.draw(f, font, self.white, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, &mini, time, faders, info_box as usize);
     }
 
     /// The research screen's 2D passes around its models (re/screens/research.md §3).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_research(&self, f: &mut Frame, r: &crate::research::Research, infos: &[[Vec<u8>; 3]], tips: &[Vec<u8>], state: &SaveState, rules: &ig2_rules::Rules, models: (Option<TexId>, Option<TexId>), lines: Vec<crate::render::Instance>, size: [f32; 2], time: f32) {
+    pub fn draw_research(&self, f: &mut Frame, r: &mut crate::research::Research, infos: &[[Vec<u8>; 3]], tips: &[Vec<u8>], state: &SaveState, rules: &ig2_rules::Rules, models: (Option<TexId>, Option<TexId>), lines: Vec<crate::render::Instance>, size: [f32; 2], time: f32) {
         let (models, glow) = models;
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
@@ -591,11 +594,22 @@ impl Hud {
     /// The design screen's 2D pass over its scene (re/screens/design.md §5): the faders, the scroll bar, the
     /// texts, the tooltip.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_design(&self, f: &mut Frame, s: &crate::design::Design, state: &SaveState, techs: &ig2_sim::colony_side::TechTable, rules: &ig2_rules::Rules, tips: &[Vec<u8>], size: [f32; 2], time: f32) {
+    pub fn draw_design(&self, f: &mut Frame, s: &mut crate::design::Design, state: &SaveState, techs: &ig2_sim::colony_side::TechTable, rules: &ig2_rules::Rules, tips: &[Vec<u8>], size: [f32; 2], time: f32) {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
         s.draw_faders(f, &d);
         s.draw_texts(f, &d, &self.pics, state, techs, rules);
+        s.draw_popups(f, &d, rules);
+        if let Some(t) = tips.get(s.tip.shown as usize) {
+            s.tip.draw(f, font, self.white, &d.v, &self.palette, t);
+        }
+    }
+
+    /// The trade screen's 2D passes over its scene (re/screens/trade.md §5) and the tooltip.
+    pub fn draw_trade(&self, f: &mut Frame, s: &crate::trade::Trade, state: &SaveState, tips: &[Vec<u8>], size: [f32; 2], time: f32) {
+        let Some(font) = &self.font else { return };
+        let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
+        s.draw(f, &d, state);
         if let Some(t) = tips.get(s.tip.shown as usize) {
             s.tip.draw(f, font, self.white, &d.v, &self.palette, t);
         }

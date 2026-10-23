@@ -28,6 +28,7 @@ ap.add_argument("--fuzz", action="store_true")
 ap.add_argument("--fuzz-radar", action="store_true")
 ap.add_argument("--fuzz-approach", action="store_true")
 ap.add_argument("--mp-radar", action="store_true", help="MultiPlayerMode 1 during half the refresh ticks (MP radar branches)")
+ap.add_argument("--mp-move", action="store_true", help="a second human: MP mode with EN = another empire made human, wormholes, staged attacks (fleet-movement.md 6.4)")
 a = ap.parse_args()
 
 exe = os.path.join(a.install, "ig2.exe")
@@ -62,12 +63,12 @@ script = session.create_script(agent)
 script.on("message", on_message)
 script.load()
 plan = [{"at": 0, "speed": 1}, {"at": 20000, "speed": 3}, {"at": 45000, "speed": 2}]
-if a.fuzz or a.fuzz_radar or a.fuzz_approach or a.mp_radar:
+if a.fuzz or a.fuzz_radar or a.fuzz_approach or a.mp_radar or a.mp_move:
     plan = [{"at": 0, "speed": 3}, {"at": 90000, "speed": 1}]
 script.post({"type": "config", "payload": {"scenario": a.scenario, "startAfterFrames": 1200,
                                            "speedPlan": plan, "ticks": a.ticks, "fuzz": a.fuzz,
                                            "fuzzRadar": a.fuzz_radar, "fuzzApproach": a.fuzz_approach,
-                                           "mpRadar": a.mp_radar}})
+                                           "mpRadar": a.mp_radar, "mpMove": a.mp_move}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; tracing for {a.seconds}s")
 try:

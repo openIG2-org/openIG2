@@ -23,7 +23,7 @@ fn trace_paths() -> Vec<PathBuf> {
         return vec![PathBuf::from(p)];
     }
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces");
-    ["fleet.jsonl", "fleet-fuzz.jsonl", "fleet-approach.jsonl", "fleet-mpradar.jsonl"].iter().map(|f| dir.join(f)).filter(|p| p.exists()).collect()
+    ["fleet.jsonl", "fleet-fuzz.jsonl", "fleet-approach.jsonl", "fleet-mpradar.jsonl", "fleet-mpmove.jsonl"].iter().map(|f| dir.join(f)).filter(|p| p.exists()).collect()
 }
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -186,6 +186,8 @@ fn context(s: &Value, rel: &str, after: &Value) -> StarmapContext {
         in_battle,
         // The 0x1b messages are events, not state.
         sends: [false; 19],
+        // Classic: the snapshot's `EN` alone (in `--mp-move` ticks, the staged second human).
+        viewers: [false; 19],
         transfer: None,
     }
 }

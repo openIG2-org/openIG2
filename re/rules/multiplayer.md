@@ -48,7 +48,8 @@ in the original, so it never runs in MP. "MP" says what the canonical view does.
 | `colony_side::transfer` | `BolygoElfoglal` 0x53b720 | `SideEvent::Met` for `EN` → `FelfedezBirodalom` (contact slot) | G (contact list) | canonical `EN`'s list; see §5 |
 | `colony_side::transfer`, epidemic | `BolygoElfoglal` 0x53b720 | `new != EN` | SP | — |
 | `colony_side` labs start / story lab bonus | `FRISSIT_Planet` 0x474930 | `EN`'s labs | SP | — |
-| `fleet::Starmap::upkeep` | `FRISSIT_Starmap` 0x594ae0 | `ContactLost` (SP) / `ContactLostNetwork` (MP) for `EN`'s fleets | P | canonical `EN`'s |
+| `fleet::Starmap::upkeep` | `FRISSIT_Starmap` 0x594ae0 | `ContactLost` (SP) / `ContactLostNetwork` (MP) for `EN`'s fleets | P | every human's (`ContactLostNetwork`) |
+| `fleet::Starmap` radar pass, local-human sightings | `FRISSIT_Starmap` 0x595422..0x595570 | tracked story fleet, revealed wormhole ends, "enemy approaching" for `EN` | G | every human gets its own (`fleet-movement.md` §6.4) |
 | `radar::Radar::refresh` | `GetENRadarKifejlesztve` 0x53e020 | row 0 (unowned observer) = `EN`'s range; story radar bonus (SP) | G | row 0 = host's |
 | `radar` planet circles | `FRISSIT_Starmap` 0x594ae0 (visibility pass) | the human sees inside radar planets' circles | SP | — |
 | `research::tick` | `FRISSIT_Research` 0x51ddd0 | `EN`'s completion → `SetIdoLelassit` 0x541270 (MP: back to the program speed); `EN`'s cheat; story bonus (SP) | G | canonical `EN`'s completions reset the speed |
@@ -142,7 +143,7 @@ owner.
   counter only on the buyer's machine (`buyer == EN`). Canonical MP: every buyer is recorded in story variable
   `RADAR_BUYERS` (10039, a bit per empire; an id the scripts never use) and the radar pass runs for each recorded
   buyer in empire order (its planets, the enemies of that buyer), plus `EN` when it bought; the fleet visibility it
-  sets is the canonical view's (the host's; per-peer visibility is U16).
+  sets is the canonical view's; every human gets its own machine's sightings (resolved, `fleet-movement.md` §6.4).
 - 1005 (capture the flag): the original writes `EN` into the Flag Carrier design's race field (`flag_carrier(EN)`),
   so the two machines' designs differ. Canonical MP: the design for empire 1 carries 1, for empire 2 carries 2.
 
@@ -150,7 +151,7 @@ owner.
 
 - The unowned planets' richness by the host's race (`GetBolygoGazdagsag`) and radar row 0: a fidelity question
   only; the original machines likely disagreed here.
-- Per-peer fleet visibility (the original's flags are per machine; canonical mode keeps the host's): U16.
+- Per-peer fleet visibility: resolved (U16, `fleet-movement.md` §6.4).
 
 ## 7. The real-time battles (ours; implemented)
 

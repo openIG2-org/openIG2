@@ -45,6 +45,8 @@ pub(super) mod at {
     pub const STORY_RETREAT: u32 = 0xF261A0;
     /// `IdoMultiPlayerBattle`.
     pub const MP_BATTLE_TICKS: u32 = 0xBAE054;
+    /// `TankHozzaadas`: the ground war's death-voice mute byte (ground-combat.md §11.12).
+    pub const VOICE_MUTE: u32 = 0x9B2EBC;
 }
 
 /// The battle slots (`spw[10]`, exe 0xE417C0) and what goes with them. Synced state (in the snapshot).
@@ -57,6 +59,10 @@ pub struct RealTime {
     pub types: Vec<ShipType>,
     /// `AktSpaceWar` (exe 0xE41788): the slot `SpaceWar_NewBattle` used last (`SpaceWarVege` ends it).
     pub current: usize,
+    /// What the battles did for the screen's effects and sounds (slot, event), while the battle screen is up; the
+    /// client takes them. Not synced state.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub fx: Vec<(usize, crate::spacebattle::BattleEvent)>,
 }
 
 /// The single-player battle screen (ours, classic view; per machine, not in the state).
@@ -338,6 +344,9 @@ impl Game<'_> {
             f(&mut self.realtime.slots[slot], &mut t)
         };
         self.state.store_rng(&rng);
+        if self.sp_battles.on_screen && self.realtime.fx.len() < 4096 {
+            self.realtime.fx.extend(events.into_iter().map(|e| (slot, e)));
+        }
         let StateWorld { mut combat, planet, mut buildings, destroyed, .. } = world;
         let fleet_events = std::mem::take(&mut combat.events);
         self.state.store_combat(&combat);

@@ -612,6 +612,10 @@ pub enum ScenarioStory {
     Var(i32, i32),
     /// A planet's `pAzon id` → `st_bAddNewAzonosito(planet, id)`.
     Planet(i32, i32),
+    /// `story id` → `StartStory(id, false)`.
+    Start(i32),
+    /// `szStart id days` → `st_szStart`.
+    SzStart(i32, i32),
 }
 
 /// A story fleet record (`StoryFlottaData`, 0x54 bytes, read from `flotta.txt`; `ig2_formats::story_data`).

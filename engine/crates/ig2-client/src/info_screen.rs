@@ -270,6 +270,8 @@ pub struct InfoScreen {
     /// The heads' fader clock `InfoFejF+0x4d8` (`InitFaderDesignStruktura` on entry, +0.003 a frame in
     /// `FaderDesignFrissito`): the selected head's pulsing light.
     pub head_clock: f32,
+    /// `infof`: `PutFaders`' two `KirakFader` boxes' shine and drift (their colours aren't × `s`; no glow is drawn).
+    pub faders: crate::kit::FaderDesign,
     /// The heads that carry `RarakFenyekFejekre`'s second light (slot 1): every head that was not selected in a
     /// frame since entry (the slot is set, never removed while the screen is open).
     pub head_lit: [bool; 9],
@@ -536,6 +538,7 @@ impl InfoScreen {
             turn: 0.0,
             adders,
             head_clock: 0.0,
+            faders: crate::kit::FaderDesign::new(1),
             head_lit: std::array::from_fn(|e| e != human),
             tri: [319.0, ((50.0 + tri_h()) - tri_h() + tri_h() * 2.0 / 5.6).trunc()],
             pointer: 0,
@@ -688,6 +691,7 @@ impl InfoScreen {
         self.blink += 0.04;
         self.turn += 0.0006;
         self.head_clock += 0.003;
+        self.faders.tick();
         for (e, l) in self.head_lit.iter_mut().enumerate() {
             *l |= e != self.selected;
         }
@@ -1037,7 +1041,7 @@ pub fn draw_faders(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, ui: &In
     }
     let t = 0.0;
     let dark = [0.0, 34.0, 50.0];
-    kirak_fader(f, white, v, [387.0, 271.0, (0xe2 - slide) as f32, 183.0], [0.0, 54.0, 90.0], 100.0, [0.0, 90.0, 130.0], 30.0);
+    kirak_fader(f, white, v, [387.0, 271.0, (0xe2 - slide) as f32, 183.0], [0.0, 54.0, 90.0], 100.0, [0.0, 90.0, 130.0], 30.0, ui.faders.offset(0));
     // `infof+0x4d8`, the fader clock (`Info_Belep` → +0.003 a frame, as the heads').
     let c = ui.head_clock;
     let x0 = (open + 15.0) as i32 as f32;
@@ -1059,18 +1063,18 @@ pub fn draw_faders(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, ui: &In
         fade_kerekit(f, white, v, r, dark, t, [0.0, c * 18.0]);
     }
     let (bar, edge) = ([0.0, 54.0, 90.0], [0.0, 90.0, 130.0]);
-    kirak_fader(f, white, v, [295.0, 267.0, 10.0, 180.0], bar, 100.0, edge, 30.0);
+    kirak_fader(f, white, v, [295.0, 267.0, 10.0, 180.0], bar, 100.0, edge, 30.0, [0.0; 2]);
     let n = s.info.list(ui.selected, s.human).len();
     let (a, b) = if n < 5 { (1.0, 178.0) } else { (180.0 / n as f32 * ui.pointer as f32 + 1.0, 4.0 / n as f32 * 180.0) };
-    kirak_fader(f, white, v, [296.0, ((a + 267.0) as i32) as f32, 8.0, (b as i32) as f32], bar, 100.0, edge, 30.0);
+    kirak_fader(f, white, v, [296.0, ((a + 267.0) as i32) as f32, 8.0, (b as i32) as f32], bar, 100.0, edge, 30.0, [0.0; 2]);
     // The selectors' boxes on the human's planet in detail mode.
     if ui.selected == s.human && matches!(ui.detail_entry(&s.info, s.human), Some(Entry::Planet(_))) {
         for y in [354.0, 368.0, 382.0] {
-            kirak_fader(f, white, v, [133.0, y, 100.0, 13.0], [0.0, 20.0, 30.0], 60.0, [0.0, 15.0, 25.0], 30.0);
+            kirak_fader(f, white, v, [133.0, y, 100.0, 13.0], [0.0, 20.0, 30.0], 60.0, [0.0, 15.0, 25.0], 30.0, [0.0; 2]);
         }
     }
     if ui.selected == s.human {
-        kirak_fader(f, white, v, [280.0, 209.0, 100.0, 8.0], dark, 100.0, [0.0, 60.0, 100.0], 30.0);
+        kirak_fader(f, white, v, [280.0, 209.0, 100.0, 8.0], dark, 100.0, [0.0, 60.0, 100.0], 30.0, ui.faders.offset(1));
     }
 }
 

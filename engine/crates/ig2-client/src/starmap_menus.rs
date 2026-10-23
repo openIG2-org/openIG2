@@ -13,6 +13,7 @@ use crate::font::Align;
 use crate::orders::Selection;
 use crate::render::Frame;
 use crate::kit::fader::fader;
+use crate::kit::FaderDesign;
 use crate::starmap_panels::{Action, Draw2d, Panels};
 
 /// `Starmap_RopIkonX/Y` (exe 0x9270d4/0x9270e8): the places' hit centres from `LastMouseX/Y`, places 1..=4.
@@ -731,10 +732,9 @@ impl MenuTexts<'_> {
     }
 }
 
-/// `KirakFader(…)` in the `starf` look (re/screens/starmap.md §12.2).
-fn starf(f: &mut Frame, d: &Draw2d, r: [f32; 4]) {
-    let s = 0.9;
-    crate::kit::fader::kirak_fader(f, d.white, &d.v, r, [0.0, 54.0 * s, 90.0 * s], 100.0, [0.0, 90.0 * s, 130.0 * s], 70.0);
+/// `KirakFader(i, starf, …)` (re/screens/starmap.md §12.2).
+fn starf(f: &mut Frame, d: &Draw2d, r: [f32; 4], fd: &FaderDesign, i: usize) {
+    crate::starmap_panels::starf(f, d.white, &d.v, r, fd, i);
 }
 
 /// `FadeKerettelKerekit(x − 6, y − 2, w, h, 0, 10, 0, 60, 0, 5, 0, 30)`: a select menu's box.
@@ -743,14 +743,20 @@ fn menu_box(f: &mut Frame, d: &Draw2d, r: [f32; 4]) {
 }
 
 impl Menus {
+    /// `StarmapGfx2D_1` draws the long info's box (`starf` fader 0) at camera zoom `zoom`: the radar box is then 1.
+    pub fn info_box(&self, zoom: f32) -> bool {
+        self.info.is_some_and(|i| i.q(zoom).is_some())
+    }
+
     /// Draw the long info's faders (`StarmapGfx2D_1`), the select menus' boxes (`StarmapGfx2D_2`), then the texts
     /// (`StarmapHosszuInfoKiir`, `StarmapGfx2D_4`) and the radial icons (`StarmapGfx2D_3`), at camera zoom `zoom`.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&self, f: &mut Frame, d: &Draw2d, t: &MenuTexts, state: &SaveState, rules: &ig2_rules::Rules, pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], zoom: f32, counter: i32) {
+    /// `fd` is `starf`; the exit button is its fader `exit` (`StarmapGfx2D_2`'s count).
+    pub fn draw(&self, f: &mut Frame, d: &Draw2d, t: &MenuTexts, state: &SaveState, rules: &ig2_rules::Rules, pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], zoom: f32, counter: i32, fd: &FaderDesign, exit: usize) {
         let e = en(state);
         if let Some(i) = self.info {
             if let Some(q) = i.q(zoom) {
-                starf(f, d, [319.0, 33.0, 302.0, 326.0]);
+                starf(f, d, [319.0, 33.0, 302.0, 326.0], fd, 0);
                 let own = planet(state, i.planet)[0x20] == e;
                 if own {
                     let (ft, et) = ((255.0 - q * 100.0).trunc(), (255.0 - q * 180.0).trunc());
@@ -771,7 +777,7 @@ impl Menus {
             let h = ((zoom - i.backup[2]) / (600.0 - i.backup[2])).clamp(0.0, 1.0);
             if h > 0.0 {
                 let x = ((1.0 - ((h as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0 + 445.0) as f32;
-                starf(f, d, [x, 380.0, 176.0, 30.0]);
+                starf(f, d, [x, 380.0, 176.0, 30.0], fd, exit);
                 let x = ((1.0 - ((h as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0 + 500.0 - 25.0) as f32;
                 d.text(f, &t.texts.get(2, 4, 4), x.trunc(), 390.0, 13, 3, 0xd, 0x25);
             }

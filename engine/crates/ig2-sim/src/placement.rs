@@ -38,11 +38,9 @@ impl PlacementRules {
     /// start point (`EpuletNewSearchLocation` passes none).
     pub fn locate(&self, planet: &Planet, kind: u8, vehicles: &[(i32, i32)], hint: Option<(i32, i32)>) -> Option<(i32, i32)> {
         let terrain = self.terrains.get(planet.colony_map as usize)?;
-        let mut grid = Grid::from_terrain(&terrain.mask);
+        let mut grid = self.screen_grid(planet)?;
         let (mut sx, mut sy, mut n) = (0i32, 0i32, 0i32);
         for b in planet.buildings.iter().filter(|b| b.kind != 0) {
-            let (w, h) = self.footprint(b.kind);
-            grid.allocate(b.x as i32, b.y as i32, w, h, true);
             n += 1;
             sx = (sx as f32 + b.x) as i32;
             sy = (sy as f32 + b.y) as i32;
@@ -59,6 +57,32 @@ impl PlacementRules {
         }
         let (w, h) = self.footprint(kind);
         grid.search(start, w, h)
+    }
+
+    /// The terrain and every building's interior and frame ring in slot order: `DecodedAlloc` as
+    /// `LocateSuitableLocation` builds it (spec §2.1–§2.2), and `MapAlloc` as the colony screen keeps it (§8.1).
+    pub fn screen_grid(&self, planet: &Planet) -> Option<Grid> {
+        let terrain = self.terrains.get(planet.colony_map as usize)?;
+        let mut grid = Grid::from_terrain(&terrain.mask);
+        for b in planet.buildings.iter().filter(|b| b.kind != 0) {
+            let (w, h) = self.footprint(b.kind);
+            grid.allocate(b.x as i32, b.y as i32, w, h, true);
+        }
+        Some(grid)
+    }
+
+    /// `LocateActBuildingSuitableLocation` (exe 0x486460, spec §8): the build cursor's spot for `kind` searched from
+    /// the pointer's cell `at` over `MapAlloc`, each of `units` (the battlefield's units on the map) adding 8 to
+    /// its own cell for the search. `None`: no spot (the cursor turns invalid).
+    pub fn locate_cursor(&self, planet: &Planet, kind: u8, units: &[(i32, i32)], at: (i32, i32)) -> Option<(i32, i32)> {
+        let mut grid = self.screen_grid(planet)?;
+        for &(x, y) in units {
+            if let Some(c) = grid.at(x, y) {
+                *c = c.wrapping_add(8);
+            }
+        }
+        let (w, h) = self.footprint(kind);
+        grid.search(at, w, h)
     }
 
     /// [`Self::locate`] as a [`crate::colony_side::Placement`] result: the position `EpuletNew` stores.
@@ -151,6 +175,11 @@ impl Grid {
             }
         }
         Self(g)
+    }
+
+    /// The 200 × 200 cells, row by row.
+    pub fn cells(&self) -> &[u8] {
+        &self.0
     }
 
     pub fn get(&self, x: i32, y: i32) -> u8 {

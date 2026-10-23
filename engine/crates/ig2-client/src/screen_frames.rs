@@ -253,7 +253,7 @@ impl FrameModels {
             }
             let tex = skin(&p.index).or_else(|| p.texture.clone());
             let tex = self.texture(r, install, tex.as_deref());
-            draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+            draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
     }
 

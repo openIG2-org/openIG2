@@ -7,6 +7,8 @@
 // --refit: at each day, perturb the buildings (positions, damage, work, holes made with the exe's `EpuletDelete`) and
 // the ground units' cells, write a save, call `EpuleteketJoHelyreTesz` (exe 0x53cd00, the end of `LoadScenario`;
 // re/rules/colony-placement.md §6) and write a second save: index 2k before, 2k + 1 after.
+// --cursor: at each day, move units near buildings, write a save and probe the build cursor's search (exe 0x486460,
+// colony-placement.md §8) on every owned planet; grids and probes go into the save's JSON.
 // --wormholes: at each day, set `OsszHanyWormhole` (0xBB61A0) to a start value (0 the first day), write a save, call
 // the exe's `AddWormhole` (0x53aec0) with fuzzed coordinates until one returns 0 (the call after the fifth wormhole)
 // and write a second save (2k / 2k + 1); the calls and their results go into the second save's JSON
@@ -34,9 +36,11 @@ const A = {
   MiGyarthato: va(0xdb28e8), StoryAdat: va(0xf273f8),
   AddWormhole: va(0x53aec0), WormholeCount: va(0xbb61a0),
   Refit: va(0x53cd00), EpuletDelete: va(0x53c730), WfCount: va(0x9c33c4), WfUsed: va(0x9c33cc), WfUnits: va(0x9c3574),
+  CursorSearch: va(0x486460), Decode2LargeMap: va(0x46d8a0), Allocate: va(0x45f3d0), MapAlloc: va(0x998260),
+  AktPlanet: va(0xb9933c), AktEpuletTipus: va(0xb9c0c4), Footprints: va(0x8f1f80),
 };
 
-const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, days: [3, 40, 150], slot: 97, ships: false, mp: false, seed: 4242, refit: false, wormholes: false };
+const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, days: [3, 40, 150], slot: 97, ships: false, mp: false, seed: 4242, refit: false, wormholes: false, cursor: false };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -107,6 +111,75 @@ function fuzzBuildings() {
       out.units++;
     }
   }
+  return out;
+}
+
+const cursorSearch = nf(A.CursorSearch, 'int', ['pointer', 'pointer']);
+const decode2LargeMap = nf(A.Decode2LargeMap, 'void', ['int', 'pointer', 'int', 'int']);
+const allocate = nf(A.Allocate, 'void', ['int', 'int', 'int', 'int', 'int']);
+
+// --cursor: units move near building cells (half of them, ± 6), then the save is written; afterwards, on every
+// owned planet, `MapAlloc` is built as `Init3dColony` builds it (`Decode2LargeMap(m, MapAlloc, 0, p)`, then
+// `Allocate((int)x, (int)y, w, h, 1)` per building in slot order) and the build cursor's search (exe 0x486460,
+// `LocateActBuildingSuitableLocation`) runs from fuzzed starts for fuzzed kinds; `MapAlloc`, `AktPlanet` and
+// `AktEpuletTipus` are restored. The grid (before the units' +8) and the probes go into the save's JSON.
+function fuzzUnits() {
+  let moved = 0;
+  const np = A.HanyBolygo.readS32();
+  for (let p = 1; p <= np; p++) {
+    if (A.Bolygok.add(0x188 * p + 0x20).readU8() === 0) continue;
+    const n = A.HanyEpuletLefoglalva.add(4 * p).readS32(), cells = [];
+    for (let j = 1; j <= n; j++) {
+      const b = A.Epuletek.add(4 * p).readPointer().add(0x20 * j);
+      if (b.readU8() !== 0) cells.push([Math.trunc(b.add(0xc).readFloat()), Math.trunc(b.add(0x10).readFloat())]);
+    }
+    const nu = A.WfCount.add(0x8ec * p).readS32(), used = A.WfUsed.add(0x8ec * p).readPointer(), units = A.WfUnits.add(0x8ec * p).readPointer();
+    if (nu < 1 || used.isNull() || units.isNull() || !cells.length) continue;
+    for (let i = 0; i < nu; i++) {
+      if (!used.add(i).readU8() || rnd(2)) continue;
+      const u = units.add(4 * i).readPointer(), c = cells[rnd(cells.length)];
+      u.add(0x1a0).writeS32(c[0] + rnd(13) - 6); u.add(0x1a4).writeS32(c[1] + rnd(13) - 6);
+      moved++;
+    }
+  }
+  return moved;
+}
+
+function cursorProbes(perPlanet) {
+  const saved = A.MapAlloc.readByteArray(40000), aktP = A.AktPlanet.readS32(), aktT = A.AktEpuletTipus.readS32();
+  const xy = Memory.alloc(8), out = [];
+  const np = A.HanyBolygo.readS32();
+  for (let p = 1; p <= np; p++) {
+    const pl = A.Bolygok.add(0x188 * p);
+    if (pl.add(0x20).readU8() === 0) continue;
+    decode2LargeMap(pl.add(0x23).readU8(), A.MapAlloc, 0, p);
+    const n = A.HanyEpuletLefoglalva.add(4 * p).readS32(), cells = [];
+    for (let j = 1; j <= n; j++) {
+      const b = A.Epuletek.add(4 * p).readPointer().add(0x20 * j), k = b.readU8();
+      if (k === 0) continue;
+      const fp = A.Footprints.add(0x6c * (k - 1));
+      const x = Math.trunc(b.add(0xc).readFloat()), y = Math.trunc(b.add(0x10).readFloat());
+      allocate(x, y, fp.readS32(), fp.add(4).readS32(), 1);
+      cells.push([x, y]);
+    }
+    const grid = hexOf(A.MapAlloc, 40000);
+    A.AktPlanet.writeS32(p);
+    const probes = [];
+    for (let i = 0; i < perPlanet; i++) {
+      const t = 1 + rnd(60), r = rnd(10);
+      let sx, sy;
+      if (r < 7 && cells.length) { const c = cells[rnd(cells.length)]; sx = c[0] + rnd(17) - 8; sy = c[1] + rnd(17) - 8; }
+      else if (r < 9) { sx = rnd(200); sy = rnd(200); }
+      else { sx = rnd(2) ? rnd(14) - 4 : 186 + rnd(20); sy = rnd(210) - 5; }
+      A.AktEpuletTipus.writeS32(t);
+      xy.writeS32(sx); xy.add(4).writeS32(sy);
+      const ok = cursorSearch(xy, xy.add(4)) & 0xff;
+      probes.push([t, sx, sy, ok, xy.readS32(), xy.add(4).readS32()]);
+    }
+    out.push({ p, grid, probes });
+    A.MapAlloc.writeByteArray(saved);
+  }
+  A.AktPlanet.writeS32(aktP); A.AktEpuletTipus.writeS32(aktT);
   return out;
 }
 
@@ -214,6 +287,16 @@ Interceptor.attach(A.Fake_FRISSITES, {
         loadSave(slot, Memory.allocAnsiString('Wormhole ' + idx), 2);
         emit({ k: 'save', idx, slot, name: 'Wormhole ' + idx, frames, snap: {}, mp: '', start, calls: half ? calls : [] });
       }
+      flush();
+      busy = false;
+      next++;
+      if (next >= cfg.days.length) { emit({ k: 'done' }); flush(); phase = 2; }
+      return;
+    }
+    if (cfg.cursor) {
+      const units = fuzzUnits(), slot = cfg.slot + next, name = 'Cursor ' + next;
+      loadSave(slot, Memory.allocAnsiString(name), 2);
+      emit({ k: 'save', idx: next, slot, name, frames, snap: {}, mp: '', units, cursor: cursorProbes(40) });
       flush();
       busy = false;
       next++;

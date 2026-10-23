@@ -178,6 +178,9 @@ pub mod va {
     pub const PLANET_COUNT: u32 = 0x912AC8;
     pub const PLANET_COUNT2: u32 = 0xBB6B58;
     pub const PLANETS: u32 = 0xB85EA8;
+    /// `Warfare[200]` (the ground battlefields, `WF`), exe stride 0x8EC.
+    pub const WARFARE: u32 = 0x9C3B30;
+    pub const WARFARE_STRIDE: u32 = 0x8EC;
     pub const LAST_NEAR_FLEET: u32 = 0xB99340;
     pub const UNREST: u32 = 0xB99668;
     pub const GROUND: u32 = 0xB99990;
@@ -595,6 +598,52 @@ pub fn chunk_va(name: &str) -> Option<u32> {
     })
 }
 
+/// The VA of a saved global the sim doesn't model (UI state: the info screen's selection, the star log, the
+/// on-screen texts' clock, the starmap and colony cameras): a new game writes them from its state
+/// ([`SaveState::rebuild_template`]); a loaded save passes them through.
+pub fn ui_chunk_va(name: &str) -> Option<u32> {
+    Some(match name {
+        // Info_Save (exe 0x4ea780), in save order.
+        "Info_SelectedChart" => 0xB84BF8,
+        "Info_ChartFelbontasSelected" => 0xB84BFC,
+        "InfoTriX" => 0xB84C00,
+        "InfoTriY" => 0xB84C04,
+        "InfoMaxTervekPtr" => 0xB84C08,
+        "InfoMaxTervek" => 0xB84C0C,
+        "Info_ChartMode" => 0xB79FB3,
+        "Info_StarLogMode" => 0xB79FB2,
+        "Info_NagyInfoMode" => 0xB79FB1,
+        "StarlogHanysorfeltoltve" => 0xB84BF4,
+        "StarlogHanyszoveg" => 0xB84BF0,
+        "InfoSelected" => 0xB79FB4,
+        "InfoBolygoFlottaSelected" => 0xB82980,
+        "BolygoFlottaPointer" => 0xB82984,
+        "HanyBolygoFlotta" => 0xB82988,
+        "StarLogPointer" => 0xB84C10,
+        "StarLog" => 0xB82990,
+        "UtolsoSzovegIdo" => 0xF16ED8,
+        "SzovegEltolas" => 0xF16EDC,
+        "GameInfoMut" => 0xE3E3A4,
+        "StarmapXStart" => 0xB9A968,
+        "StarmapYStart" => 0xB9A96C,
+        "StarmapRotate" => 0xB9A970,
+        "StarmapPitch" => 0xB9A974,
+        "StarmapZoom" => 0xB9A978,
+        "StarmapPlanetKering" => 0xB9A97C,
+        "ColonyXStart" => 0xBA90DC,
+        "ColonyYStart" => 0xBA9514,
+        "ColonyRotate" => 0xBA983C,
+        "ColonyPitch" => 0xBA9B64,
+        "ColonyZoom" => 0xBA9E8C,
+        _ => return None,
+    })
+}
+
+/// [`chunk_va`] or [`ui_chunk_va`].
+pub fn static_chunk_va(name: &str) -> Option<u32> {
+    chunk_va(name).or_else(|| ui_chunk_va(name))
+}
+
 // ------------------------------------------------------------------------------------------------ state
 
 /// The four story queues the save carries (`StoryVodor` by bin, `HistoryVodor`, `StartVodor`, `OlvasasVodor`).
@@ -792,38 +841,7 @@ impl SaveState {
                 continue;
             }
             let bytes = match name.as_str() {
-                "Flottak" => self.fleets.concat(),
-                "Hajok" => self.ships.concat(),
                 "Waypointek" if self.waypoints.len() <= 1 => continue,
-                "Waypointek" => self.waypoints.concat(),
-                "Tankok" => self.mem.read(va::VEHICLES, 8 * (self.mem.i32(va::VEHICLE_COUNT).max(0) as usize + 1)),
-                "Bolygok" => self.mem.read(va::PLANETS, PLANET_SIZE * (self.mem.i32(va::PLANET_COUNT).max(0) as usize + 1)),
-                n if n.starts_with("Tervek[") => self.designs[index_of(n)].concat(),
-                "TradeTervek" => self.mem.read(va::TRADE_OFFERS, crate::trade::RECORD * self.mem.i32(va::TRADE_OFFER_COUNT).max(0) as usize),
-                n if n.starts_with("TradeSzallitas[") => {
-                    let e = index_of(n) as u32;
-                    let count = self.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * e).max(0) as usize;
-                    self.mem.read(chunk_va(n).unwrap(), count * crate::trade::DELIVERY)
-                }
-                n if n.starts_with("Epuletek[") => self.buildings[index_of(n)].concat(),
-                n if n.starts_with("Kemek[") => {
-                    let e = index_of(n);
-                    let count = self.mem.i32(va::SPY_COUNT + 4 * e as u32).max(0) as usize + 1;
-                    self.mem.read(chunk_va(n).unwrap(), count * RECORD)
-                }
-                n if n.ends_with(".n") && n.starts_with('s') && chunk_va(n).is_some() => self.mem.read(chunk_va(n).unwrap(), 4),
-                "sBolygok" | "sSzamlalok" | "sLogikaiak" | "sValtozok" => {
-                    let k = ["sBolygok", "sSzamlalok", "sLogikaiak", "sValtozok"].iter().position(|x| x == name).unwrap();
-                    let n = self.mem.i32(va::STORY_LIST_COUNTS + 4 * k as u32).max(0) as usize;
-                    self.mem.read(chunk_va(name).unwrap(), (n + 1) * 8)
-                }
-                "ScrollUzenetek" => self.mem.read(va::SCROLL, ENTRY * (self.mem.i32(va::SCROLL_COUNT).max(0) as usize + 1)),
-                "ScrollUzenetekHistory" => self.mem.read(va::SCROLL_HISTORY, ENTRY * (self.mem.i32(va::SCROLL_HISTORY_COUNT).max(0) as usize + 1)),
-                "KemBeszolasok" => self.mem.read(va::SPY_REPORTS, crate::spy::REPORT * (self.mem.i32(va::SPY_REPORT_COUNT).max(0) as usize + 1)),
-                "st_vOzonviz" => self.mem.read(va::STORY_UNDO, 0xc * self.mem.i32(va::STORY_UNDO_COUNT).max(0) as usize),
-                // A count saved with its array: from the array.
-                "OsszHanyFlotta" => ((self.fleets.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
-                "OsszHanyHajo" => ((self.ships.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
                 // `Waypointek` follows its count only when there are waypoints (re/formats/save.md §4.8).
                 "OsszHanyWaypoint" => {
                     add(name, &((self.waypoints.len() as i32 - 1).max(0)).to_le_bytes());
@@ -832,16 +850,123 @@ impl SaveState {
                     }
                     continue;
                 }
-                // `VanUresBolygo[0]` is saved before the whole array.
-                "VanUresBolygo[0]" => self.mem.read(va::AI_EMPTY_PLANETS, 1),
-                n => match chunk_va(n) {
-                    Some(at) => self.mem.read(at, data.len()),
-                    None => data.clone(),
+                n => match self.record_chunk(n) {
+                    Some(b) => b,
+                    None => match chunk_va(n) {
+                        Some(at) => self.mem.read(at, data.len()),
+                        None => data.clone(),
+                    },
                 },
             };
             add(name, &bytes);
         }
         out
+    }
+}
+
+impl SaveState {
+    /// A chunk whose bytes come from the state's records or a counted array (not a plain global): `None` for the
+    /// others.
+    fn record_chunk(&self, n: &str) -> Option<Vec<u8>> {
+        Some(match n {
+            "Flottak" => self.fleets.concat(),
+            "Hajok" => self.ships.concat(),
+            "Waypointek" => self.waypoints.concat(),
+            "Tankok" => self.mem.read(va::VEHICLES, 8 * (self.mem.i32(va::VEHICLE_COUNT).max(0) as usize + 1)),
+            "Bolygok" => self.mem.read(va::PLANETS, PLANET_SIZE * (self.mem.i32(va::PLANET_COUNT).max(0) as usize + 1)),
+            n if n.starts_with("Tervek[") => self.designs.get(index_of(n)).map_or_else(Vec::new, |d| d.concat()),
+            "TradeTervek" => self.mem.read(va::TRADE_OFFERS, crate::trade::RECORD * self.mem.i32(va::TRADE_OFFER_COUNT).max(0) as usize),
+            n if n.starts_with("TradeSzallitas[") => {
+                let e = index_of(n) as u32;
+                let count = self.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * e).max(0) as usize;
+                self.mem.read(chunk_va(n).unwrap(), count * crate::trade::DELIVERY)
+            }
+            n if n.starts_with("Epuletek[") => self.buildings.get(index_of(n)).map_or_else(Vec::new, |b| b.concat()),
+            n if n.starts_with("Kemek[") => {
+                let e = index_of(n);
+                let count = self.mem.i32(va::SPY_COUNT + 4 * e as u32).max(0) as usize + 1;
+                self.mem.read(chunk_va(n).unwrap(), count * RECORD)
+            }
+            n if n.ends_with(".n") && n.starts_with('s') && chunk_va(n).is_some() => self.mem.read(chunk_va(n).unwrap(), 4),
+            "sBolygok" | "sSzamlalok" | "sLogikaiak" | "sValtozok" => {
+                let k = ["sBolygok", "sSzamlalok", "sLogikaiak", "sValtozok"].iter().position(|x| *x == n).unwrap();
+                let count = self.mem.i32(va::STORY_LIST_COUNTS + 4 * k as u32).max(0) as usize;
+                self.mem.read(chunk_va(n).unwrap(), (count + 1) * 8)
+            }
+            "ScrollUzenetek" => self.mem.read(va::SCROLL, ENTRY * (self.mem.i32(va::SCROLL_COUNT).max(0) as usize + 1)),
+            "ScrollUzenetekHistory" => self.mem.read(va::SCROLL_HISTORY, ENTRY * (self.mem.i32(va::SCROLL_HISTORY_COUNT).max(0) as usize + 1)),
+            "KemBeszolasok" => self.mem.read(va::SPY_REPORTS, crate::spy::REPORT * (self.mem.i32(va::SPY_REPORT_COUNT).max(0) as usize + 1)),
+            "st_vOzonviz" => self.mem.read(va::STORY_UNDO, 0xc * self.mem.i32(va::STORY_UNDO_COUNT).max(0) as usize),
+            // A count saved with its array: from the array.
+            "OsszHanyFlotta" => ((self.fleets.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
+            "OsszHanyHajo" => ((self.ships.len() as i32 - 1).max(0)).to_le_bytes().to_vec(),
+            // `VanUresBolygo[0]` is saved before the whole array.
+            "VanUresBolygo[0]" => self.mem.read(va::AI_EMPTY_PLANETS, 1),
+            _ => return None,
+        })
+    }
+}
+
+/// Exe VA of a battlefield chunk `WF[i]…` (`WF::LoadSave`'s exe offsets, re/formats/save.md §4.13).
+pub fn wf_chunk_va(name: &str) -> Option<u32> {
+    let i = battlefield_of(name)? as u32;
+    let off = match &name[name.find(']')? + 1..] {
+        ".countdown" => 0x148,
+        ".unit_slots" => 0x180,
+        ".rockets" => 0xe0,
+        ".paralysers" => 0xe4,
+        ".lasers" => 0xe8,
+        r => u32::from_str_radix(r.strip_prefix("+0x")?, 16).ok()?,
+    };
+    Some(va::WARFARE + i * va::WARFARE_STRIDE + off)
+}
+
+impl SaveState {
+    /// For a state built in memory (a new game): write the save stream from the state as `LoadSave(.., 2)` would
+    /// (globals from their exe VAs, the records, the story queues; the eight on-screen texts and the game infos
+    /// empty) and make it the chunk template. Returns the stream as a save.
+    pub fn rebuild_template(&mut self) -> SaveGame {
+        let s = &self.story;
+        let all: Vec<(i32, i32)> = s.buckets.iter().flat_map(|q| q.entries.iter().copied()).collect();
+        let mut queued: std::collections::VecDeque<(String, Vec<u8>)> = std::collections::VecDeque::new();
+        for (q, list) in QUEUES.iter().zip([&all, &s.history.entries, &s.starting.entries, &s.read.entries]) {
+            queued.push_back((format!("{q}.n"), (list.len() as i32).to_le_bytes().to_vec()));
+            for &(k, v) in list.iter() {
+                queued.push_back((format!("{q}.key"), k.to_le_bytes().to_vec()));
+                queued.push_back((format!("{q}.value"), v.to_le_bytes().to_vec()));
+            }
+        }
+        let mut seen: BTreeMap<String, u32> = BTreeMap::new();
+        let save = SaveGame::write_stream(false, &mut |name, len| {
+            let k = seen.entry(name.to_string()).or_insert(0);
+            let idx = *k;
+            *k += 1;
+            if QUEUES.iter().any(|q| name.starts_with(q) && name[q.len()..].starts_with('.')) {
+                let (n, b) = queued.pop_front().expect("story queue chunk");
+                assert_eq!(n, name);
+                return b;
+            }
+            match name {
+                "version" => ig2_formats::save::VERSION.to_le_bytes().to_vec(),
+                "Szovegek.len" => vec![0; 4],
+                "SzovegSzin" => self.mem.read(0xF16EB8 + 4 * idx, 4),
+                n => match self.record_chunk(n) {
+                    // A record array shorter than its count (a state still being built): zero-filled.
+                    Some(mut b) => {
+                        b.resize(len, 0);
+                        b
+                    }
+                    None => match static_chunk_va(n).or_else(|| wf_chunk_va(n)) {
+                        Some(at) => self.mem.read(at, len),
+                        None => vec![0; len],
+                    },
+                },
+            }
+        })
+        .expect("a state's own stream follows the schema");
+        self.template = save.chunks.iter().map(|c| (c.name.clone(), save.body[c.range.clone()].to_vec())).collect();
+        self.wf_ranges = wf_ranges(&self.template);
+        save
     }
 }
 

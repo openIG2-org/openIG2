@@ -621,6 +621,61 @@ fn building_refit_matches_the_exe() {
 "));
 }
 
+/// The build cursor's search `LocateActBuildingSuitableLocation` (exe 0x486460, `colony-placement.md` §8) against the
+/// exe: `run_save.py --cursor` moves units near buildings, writes a save (`<tag>-<k>.sav`), then on every owned planet
+/// builds `MapAlloc` with the exe's own `Decode2LargeMap` and `Allocate` (as `Init3dColony` does) and runs the exe's
+/// search from fuzzed starts for fuzzed kinds; the JSON holds each grid and `[kind, x, y, ok, x', y']`. The port's
+/// `PlacementRules::screen_grid` must equal the grid and `locate_cursor` (with `SaveState::vehicle_cells`) each result.
+#[test]
+fn build_cursor_search_matches_the_exe() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let dir = local("IG2_TRACE_DIR", "traces").join("cursor");
+    let mut saves: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "sav")).collect())
+        .unwrap_or_default();
+    saves.retain(|p| p.with_extension("json").exists());
+    saves.sort();
+    if saves.is_empty() {
+        eprintln!("no cursor recording in {}; run tools/trace/run_save.py --cursor", dir.display());
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let (mut bad, mut probes, mut moved, mut grids) = (Vec::new(), 0, 0, 0);
+    for sav in &saves {
+        let state = SaveState::from_save(&load(sav), &tech_defaults);
+        let world = state.colony();
+        let json: Value = serde_json::from_str(&std::fs::read_to_string(sav.with_extension("json")).unwrap()).unwrap();
+        for c in json["cursor"].as_array().unwrap() {
+            let p = c["p"].as_u64().unwrap() as usize;
+            let planet = &world.planets[p];
+            let grid = rules.placement.screen_grid(planet).expect("colony map");
+            if grid.cells() != unhex(c["grid"].as_str().unwrap()).as_slice() {
+                bad.push(format!("{} planet {p}: MapAlloc differs", sav.display()));
+            }
+            grids += 1;
+            let units = state.vehicle_cells(p);
+            for q in c["probes"].as_array().unwrap() {
+                let v: Vec<i32> = q.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
+                let exe = (v[3] != 0).then_some((v[4], v[5]));
+                let port = rules.placement.locate_cursor(planet, v[0] as u8, &units, (v[1], v[2]));
+                if port != exe {
+                    bad.push(format!("{} planet {p} kind {} from ({}, {}): exe {exe:?}, port {port:?}", sav.display(), v[0], v[1], v[2]));
+                }
+                probes += 1;
+                moved += usize::from(exe.is_some_and(|e| e != (v[1], v[2])));
+            }
+        }
+    }
+    eprintln!("{} saves, {grids} grids, {probes} cursor searches ({moved} moved off the start)", saves.len());
+    assert!(bad.is_empty(), "{} mismatches:
+{}", bad.len(), bad[..bad.len().min(20)].join("
+"));
+}
+
 /// `AddWormhole` (exe 0x53aec0, `fleet-movement.md` "Opening a wormhole") against the exe: `run_save.py --wormholes`
 /// sets `OsszHanyWormhole`, writes a save (`<tag>-<2k>.sav`), calls the exe's `AddWormhole` with fuzzed coordinates
 /// until it returns 0 and writes another (`<tag>-<2k+1>.sav`, the calls and results in its JSON); the port loads the

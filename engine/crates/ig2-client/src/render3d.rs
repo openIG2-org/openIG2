@@ -262,8 +262,14 @@ pub struct MeshDraw {
     /// The remaster's `VIDEO` material (a head video's disc; gamma pass only, opaque).
     pub video: bool,
     /// The engine's additive objects (property 8 off: `ONE`/`ONE`, re/screens/render.md §2.3): the colour times the
-    /// opacity added to what lies below, the coverage kept (gamma pass, with the glass).
+    /// opacity added to what lies below, the coverage kept (gamma pass, with the glass). Without `glass`: the same
+    /// blend writing depth under a strict depth test, with the opaque meshes (the engine's `Lines`, drawn nearest
+    /// first: where lines crowd under one pixel only the first counts, so they don't pile up).
     pub additive: bool,
+    /// Glass that keeps writing depth: the engine's transparency only turns blending on (`renderstateallitas` ELF
+    /// 0x5fa410) and leaves the object's depth write, so its meshes hide one another as when opaque (the design
+    /// screen's hull at `SetObjTransparency(0.01)`, re/screens/design.md §14.3).
+    pub depth_write: bool,
 }
 
 /// The 3D part of a frame.
@@ -286,8 +292,11 @@ pub(crate) struct Pipe3d {
     glass_g: wgpu::RenderPipeline,
     opaque_gr: wgpu::RenderPipeline,
     glass_gr: wgpu::RenderPipeline,
+    glass_w: wgpu::RenderPipeline,
+    glass_gw: wgpu::RenderPipeline,
     video_g: wgpu::RenderPipeline,
     add_g: wgpu::RenderPipeline,
+    add_gw: wgpu::RenderPipeline,
     cloud: wgpu::RenderPipeline,
     shadow: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
@@ -330,7 +339,7 @@ impl Pipe3d {
         });
         let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&ubl, tex_layout, &sbl], push_constant_ranges: &[] });
         let attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4];
-        let pipeline = |fs: &str, blend: Option<wgpu::BlendState>, write: bool, format: wgpu::TextureFormat| {
+        let pipeline_cmp = |fs: &str, blend: Option<wgpu::BlendState>, write: bool, format: wgpu::TextureFormat, depth_compare: wgpu::CompareFunction| {
             d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ig2-client meshes"),
                 layout: Some(&layout),
@@ -348,7 +357,7 @@ impl Pipe3d {
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH,
                     depth_write_enabled: write,
-                    depth_compare: wgpu::CompareFunction::LessEqual,
+                    depth_compare,
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -363,6 +372,7 @@ impl Pipe3d {
                 cache: None,
             })
         };
+        let pipeline = |fs: &str, blend: Option<wgpu::BlendState>, write: bool, format: wgpu::TextureFormat| pipeline_cmp(fs, blend, write, format, wgpu::CompareFunction::LessEqual);
         let opaque = pipeline("fs_opaque", None, true, format);
         let glass = pipeline("fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), false, format);
         let opaque_g = pipeline("fs_opaque_g", None, true, format.remove_srgb_suffix());
@@ -376,12 +386,15 @@ impl Pipe3d {
         let glass_g = pipeline("fs_glass_g", Some(over), false, format.remove_srgb_suffix());
         let opaque_gr = pipeline("fs_opaque_gr", None, true, format.remove_srgb_suffix());
         let glass_gr = pipeline("fs_glass_gr", Some(over), false, format.remove_srgb_suffix());
+        let glass_w = pipeline("fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), true, format);
+        let glass_gw = pipeline("fs_glass_g", Some(over), true, format.remove_srgb_suffix());
         let video_g = pipeline("fs_video_g", None, true, format.remove_srgb_suffix());
         let add = wgpu::BlendState {
             color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
             alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
         };
         let add_g = pipeline("fs_glass_g", Some(add), false, format.remove_srgb_suffix());
+        let add_gw = pipeline_cmp("fs_glass_g", Some(add), true, format.remove_srgb_suffix(), wgpu::CompareFunction::Less);
         let shadow = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ig2-client shadow map"),
             layout: Some(&layout),
@@ -488,8 +501,11 @@ impl Pipe3d {
             glass_g,
             opaque_gr,
             glass_gr,
+            glass_w,
+            glass_gw,
             video_g,
             add_g,
+            add_gw,
             cloud,
             shadow,
             uniform,
@@ -619,6 +635,9 @@ impl Pipe3d {
                 pass.set_pipeline(match (scene.gamma, glass, receives) {
                     (true, false, _) if m.video => &self.video_g,
                     (true, true, _) if m.additive => &self.add_g,
+                    (true, false, _) if m.additive => &self.add_gw,
+                    (false, true, _) if m.depth_write => &self.glass_w,
+                    (true, true, false) if m.depth_write => &self.glass_gw,
                     (false, false, _) => &self.opaque,
                     (false, true, _) => &self.glass,
                     (true, false, false) => &self.opaque_g,

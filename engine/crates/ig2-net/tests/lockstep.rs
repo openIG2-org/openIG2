@@ -2,13 +2,14 @@
 //! state, two peers on loopback links run the same ticks from the same commands with identical hashes, a third
 //! rejoins from a snapshot and the command log, a corrupted peer is reported as desynced, and peers playing
 //! different empires and looking at different planets stay identical in the canonical view (ADR 0007 §5), each with
-//! its own contact list and spy report queue (`re/rules/multiplayer.md` §5). The real-time battles (§7, ADR 0011): two
+//! its own contact list and spy report queue (`re/rules/multiplayer.md` §5), two humans' movement orders and
+//! sightings agree (`fleet-movement.md` §6.4). The real-time battles (§7, ADR 0011): two
 //! humans fight in space and on the ground with orders, a player drops and rejoins mid-battle, a battle desync is
 //! reported and resynced, and the host's log replayed into one game gives the peers' hashes.
 
 mod common;
 
-use ig2_net::{loopback, state_hash, Command, Host, Loopback, Peer, Snapshot, SpyOrder, Terms, DEFAULT_DELAY, TURN_TICKS};
+use ig2_net::{loopback, state_hash, Command, Host, Loopback, Peer, Snapshot, SpyOrder, StarmapCmd, Terms, DEFAULT_DELAY, TURN_TICKS};
 use ig2_sim::game::{Game, GameRules, LocalView, ViewMode};
 use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 use ig2_sim::trade::DELIVERY;
@@ -360,6 +361,56 @@ fn each_human_keeps_its_own_contacts_and_reports() {
     let (back, pending) = snap.restore(&rules).unwrap();
     assert_eq!(back.state.humans, p2.game.state.humans);
     assert_eq!(Snapshot::capture(&back, &pending, snap.turn, snap.tick).hash, snap.hash);
+}
+
+/// Two humans steer their fleets (`MULTIGET_Starmap` 0x15, `re/rules/fleet-movement.md` §6.4): the orders cross the
+/// wire stamped with their issuer and both peers carry them out; a revealed wormhole is shown to both humans, as each
+/// one's own machine would (the canonical view gives every human its local sightings), and the hashes agree.
+#[test]
+fn two_humans_give_movement_orders_in_lockstep() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    // 6's and 3's fleets of the battle test, 3's sent far away and idle (no battle).
+    let mut state = common::space_clash(state);
+    let (f6, f3) = (state.fleets.len() - 2, state.fleets.len() - 1);
+    let mut map = state.starmap();
+    (map.fleets[f3].x, map.fleets[f3].y, map.fleets[f3].order) = (250.0, -250.0, 0);
+    state.store_starmap(&map);
+    let e2 = 3u8;
+    let (x6, y6) = (map.fleets[f6].x, map.fleets[f6].y);
+    let (x3, y3) = (map.fleets[f3].x, map.fleets[f3].y);
+    let (f6, f3) = (f6 as i32, f3 as i32);
+    let canonical = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.canonical_view(6);
+        let w = g.add_wormhole(x6 as i32 + 5, y6 as i32 + 5, -250, 250);
+        assert_ne!(w, 0);
+        g.reveal_wormhole(w);
+        g
+    };
+    let to = |x: f32| (x * 0.5).to_bits();
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
+    s.join(2, e2, |_| Peer::new(2, e2, canonical(state.clone()), DEFAULT_DELAY));
+    let turns = 20;
+    s.run_to(turns, |p| match (p.slot, p.turn) {
+        (1, 2) => p.issue(Command::Starmap { order: StarmapCmd::Move { fleet: f6, order: 1, kind: 0, x: to(x6), y: to(y6) } }),
+        (2, 3) => p.issue(Command::Starmap { order: StarmapCmd::Move { fleet: f3, order: 1, kind: 0, x: to(x3), y: to(y3) } }),
+        // Appending a waypoint to the other human's fleet is carried out too (0x15 has no owner check).
+        (2, 4) => p.issue(Command::Starmap { order: StarmapCmd::Move { fleet: f6, order: 13, kind: 0, x: 0f32.to_bits(), y: 0f32.to_bits() } }),
+        _ => {}
+    });
+    assert_eq!(agree(&s.peers) as u64, turns);
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    for (p, _) in &s.peers {
+        let m = p.game.state.starmap();
+        let (a, b) = (&m.fleets[f6 as usize], &m.fleets[f3 as usize]);
+        assert_eq!((a.order, a.tx, a.ty), (1, x6 * 0.5, y6 * 0.5), "6's move");
+        assert!(a.first_waypoint > 0, "the appended waypoint");
+        assert_eq!((b.order, b.tx, b.ty), (1, x3 * 0.5, y3 * 0.5), "the second human's move");
+        let w = m.wormholes.last().expect("the wormhole");
+        let ends = [&m.fleets[w.fleet_a as usize], &m.fleets[w.fleet_b as usize]];
+        assert!(ends.iter().all(|f| f.visible[6] == 1 && f.visible[e2 as usize] == 1), "both humans see the revealed ends");
+    }
 }
 
 /// Two humans' fleets meet: the real-time battle runs on the sim clock in canonical MP (`re/rules/multiplayer.md`

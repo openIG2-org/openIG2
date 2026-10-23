@@ -13,7 +13,8 @@ use ig2_sim::game::StarmapOrder;
 use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 
 use crate::font::{Align, Font, Virtual};
-use crate::kit::fader::{fader, kirak_fader, S};
+use crate::kit::fader::{fader, kirak_fader};
+use crate::kit::FaderDesign;
 use crate::orders::Selection;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, Target, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
@@ -175,6 +176,8 @@ pub struct Panels {
     pub head_frames: f32,
     /// The last drawn-frame time the animations advanced to.
     clock: Option<f32>,
+    /// `starf`, `fifo`: the faders' shine and drift.
+    pub faders: StarmapFaders,
 }
 
 #[cfg(test)]
@@ -917,11 +920,55 @@ impl Panels {
             0.0
         }
     }
+
+    /// `FRISSIT_Starmap2`'s `FaderDesignFrissito`s (ELF 0x719070): `fifo` while the transfer, the fleet info or the
+    /// tanks info is up, `starf` always.
+    pub fn ui_tick(&mut self) {
+        if self.transfer.is_some() || self.info.is_some() {
+            self.faders.fifo.tick();
+        }
+        self.faders.starf.tick();
+    }
+
+    /// `StarmapGfx2D_2`'s `starf` count at the exit button (ELF 0x6de1b0: from 6, one a box drawn: the slide-in's
+    /// ten, then the production view's ten).
+    pub fn exit_fader(&self) -> usize {
+        6 + 10 * (self.p_moving as usize + self.product as usize)
+    }
 }
 
-/// `KirakFader(…, 0, 54s, 90s, 100, 0, 90s, 130s, 70)` (`starf`).
-fn starf(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4]) {
-    kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 90.0 * S, 130.0 * S], 70.0);
+/// The starmap's two `faderstruktura`s (re/screens/hud.md §1.2.1): `starf` (the HUD's, the production view's and
+/// the exit button's faders) and `fifo` (the transfer, fleet info and tanks info panels).
+#[derive(Debug, Clone)]
+pub struct StarmapFaders {
+    pub starf: FaderDesign,
+    pub fifo: FaderDesign,
+}
+
+impl StarmapFaders {
+    /// `Starmap_Belep`: `InitFaderDesignStruktura(fifo)`, then `starf`.
+    pub fn enter() -> Self {
+        let fifo = FaderDesign::new(1);
+        Self { starf: fifo.next(), fifo }
+    }
+}
+
+impl Default for StarmapFaders {
+    fn default() -> Self {
+        Self::enter()
+    }
+}
+
+/// `KirakFader(i, starf, …, 0, 54s, 90s, 100, 0, 90s, 130s, 70)`, `s` and the texture's drift of `starf`'s fader `i`.
+pub(crate) fn starf(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fd: &FaderDesign, i: usize) {
+    let s = fd.s(i);
+    kirak_fader(f, white, v, r, [0.0, 54.0 * s, 90.0 * s], 100.0, [0.0, 90.0 * s, 130.0 * s], 70.0, fd.offset(i));
+}
+
+/// `KirakFader(i, fifo, …, 0, 54s, 90s, 100, 0, 60s, 110s, 70)`: the info panels' look.
+pub(crate) fn fifo(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fd: &FaderDesign, i: usize) {
+    let s = fd.s(i);
+    kirak_fader(f, white, v, r, [0.0, 54.0 * s, 90.0 * s], 100.0, [0.0, 60.0 * s, 110.0 * s], 70.0, fd.offset(i));
 }
 
 /// `FadeKerettelKerekit(x, 80, w, 292, 0, 20, 20, 200, 0, 15, 15, 150)`: the production view's big panels.
@@ -967,6 +1014,12 @@ impl Panels {
     /// The faders under the models (`StarmapGfx2D_2`'s and `ShowStarmap`'s), in the original's order.
     pub fn draw_under(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, sel: &Selection) {
         let (white, v) = (d.white, &d.v);
+        // `StarmapGfx2D_2`'s count (`local_2c`), one a drawn box.
+        let (fd, mut n) = (&self.faders.starf, 6);
+        let mut starf = |f: &mut Frame, r: [f32; 4]| {
+            starf(f, white, v, r, fd, n);
+            n += 1;
+        };
         if self.p_moving {
             // The opening/closing slide (`StarmapGfx2D_2`, `StarmapPModeIn`).
             let fr = if self.p_frame > 0xc { 0x1e - self.p_frame } else { self.p_frame } as f32;
@@ -982,14 +1035,14 @@ impl Panels {
             };
             let s = [slide(0.0, 6.0), slide(2.0, 8.0), slide(4.0, 10.0), slide(6.0, 12.0)];
             for (i, (y, h)) in [(125.0, 60.0), (206.0, 50.0), (261.0, 50.0), (316.0, 50.0)].into_iter().enumerate() {
-                starf(f, white, v, [11.0 - s[i], y, 120.0, h]);
+                starf(f, [11.0 - s[i], y, 120.0, h]);
             }
             for (i, (y, h)) in [(125.0, 60.0), (206.0, 50.0), (261.0, 50.0), (316.0, 50.0)].into_iter().enumerate() {
-                starf(f, white, v, [s[i] + 511.0, y, 120.0, h]);
+                starf(f, [s[i] + 511.0, y, 120.0, h]);
             }
             let g = fr + 1.0;
             for cx in [70.0, 570.0] {
-                starf(f, white, v, [cx - g * 38.0 / 13.0, 103.0 - g * 17.0 / 13.0, g * 76.0 / 13.0, g * 35.0 / 13.0]);
+                starf(f, [cx - g * 38.0 / 13.0, 103.0 - g * 17.0 / 13.0, g * 76.0 / 13.0, g * 35.0 / 13.0]);
             }
             let k = (1.0 - ((fr / 12.0) as f64 * std::f64::consts::FRAC_PI_2).sin()) as f32 * 200.0;
             big_panel(f, white, v, (5.0 - k).trunc(), 190.0);
@@ -1000,17 +1053,18 @@ impl Panels {
             big_panel(f, white, v, 445.0, 191.0);
             for x in [11.0, 511.0] {
                 for (y, h) in [(125.0, 60.0), (206.0, 50.0), (261.0, 50.0), (316.0, 50.0)] {
-                    starf(f, white, v, [x, y, 120.0, h]);
+                    starf(f, [x, y, 120.0, h]);
                 }
             }
-            starf(f, white, v, [32.0, 86.0, 76.0, 35.0]);
-            starf(f, white, v, [532.0, 86.0, 76.0, 35.0]);
+            starf(f, [32.0, 86.0, 76.0, 35.0]);
+            starf(f, [532.0, 86.0, 76.0, 35.0]);
         }
         if let Some(t) = &self.transfer {
             // `ShowStarmap`'s transfer faders (`fifo`): fill (0, 54s, 90s) at 100, frame (0, 60s, 110s) at 70.
-            let fifo = |f: &mut Frame, r: [f32; 4]| kirak_fader(f, white, v, r, [0.0, 54.0 * S, 90.0 * S], 100.0, [0.0, 60.0 * S, 110.0 * S], 70.0);
-            for r in [[28.0, 27.0, 273.0, 334.0], [338.0, 27.0, 273.0, 334.0], [30.0, 29.0, 269.0, 17.0], [30.0, 342.0, 269.0, 17.0], [340.0, 29.0, 269.0, 17.0], [340.0, 342.0, 269.0, 17.0]] {
-                fifo(f, r);
+            // Faders 0..5, the scroll bar's track and thumb both 6.
+            let fifo = |f: &mut Frame, r: [f32; 4], i: usize| fifo(f, white, v, r, &self.faders.fifo, i);
+            for (i, r) in [[28.0, 27.0, 273.0, 334.0], [338.0, 27.0, 273.0, 334.0], [30.0, 29.0, 269.0, 17.0], [30.0, 342.0, 269.0, 17.0], [340.0, 29.0, 269.0, 17.0], [340.0, 342.0, 269.0, 17.0]].into_iter().enumerate() {
+                fifo(f, r, i);
             }
             let n = rows(state, t).len() as i32;
             let (mut h, mut top) = if n < 9 { (0x14b, 0) } else { (0xa58 / n, t.first * (0x14b - 0xa58 / n) / (n - 8)) };
@@ -1019,17 +1073,21 @@ impl Panels {
                 h -= over / 2;
                 top -= over / 2;
             }
-            fifo(f, [306.0, 29.0, 28.0, 333.0]);
-            fifo(f, [310.0, (top + 0x22) as f32, 20.0, (h - 8) as f32]);
+            fifo(f, [306.0, 29.0, 28.0, 333.0], 6);
+            fifo(f, [310.0, (top + 0x22) as f32, 20.0, (h - 8) as f32], 6);
         }
         if let Some(i) = &self.info {
-            i.draw_under(f, d, state, sel);
+            i.draw_under(f, d, state, sel, &self.faders.fifo);
         }
         // The exit button (`StarmapGfx2D_2`, `StarmapInfoOffHoltart` > 0).
         let k = self.exit_in();
         if k > 0.0 {
             let x = ((1.0 - ((k as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0 + 445.0) as f32;
-            starf(f, white, v, [x, 380.0, (self.addo + 0xb0) as f32, 30.0]);
+            starf(f, [x, 380.0, (self.addo + 0xb0) as f32, 30.0]);
+        }
+        // The tanks info's box (`StarmapTanksInfo`), the next count.
+        if self.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Tanks) {
+            starf(f, [445.0, 380.0, 176.0, 30.0]);
         }
     }
 
@@ -1406,13 +1464,35 @@ fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], alpha: f32, out: &mut Vec
             });
         }
         let tex = texs.get(pi).copied().unwrap_or(texs.first().copied().unwrap_or(TexId(0)));
-        draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+        draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn starmap_faders_follow_the_exe_counts() {
+        // `Starmap_Belep`: `fifo` takes the stream's first 60 draws, `starf` the next.
+        let f = StarmapFaders::enter();
+        let mut fifo = FaderDesign::new(1);
+        let mut starf = fifo.next();
+        let mut p = Panels::default();
+        // `FRISSIT_Starmap2`: `starf` always, `fifo` only with a transfer or info panel up.
+        p.ui_tick();
+        starf.tick();
+        assert_eq!((p.faders.starf.s(0), p.faders.starf.offset(3)), (starf.s(0), starf.offset(3)));
+        assert_eq!((p.faders.fifo.s(0), p.faders.fifo.offset(0)), (0.0, [0.0; 2]));
+        assert_eq!(f.fifo.offset(0), [0.0; 2]);
+        p.transfer = Panels::opened("transfer:0,1").unwrap().transfer;
+        p.ui_tick();
+        fifo.tick();
+        assert_eq!((p.faders.fifo.s(5), p.faders.fifo.offset(5)), (fifo.s(5), fifo.offset(5)));
+        // `StarmapGfx2D_2` counts from 6: the exit button after the slide-in's and the production view's ten.
+        assert_eq!(Panels::default().exit_fader(), 6);
+        assert_eq!(Panels::opened("production").unwrap().exit_fader(), 16);
+    }
 
     #[test]
     fn hot_spots_follow_the_exe_table() {

@@ -125,6 +125,8 @@ struct App {
     /// The diplomacy screen while it is up, and this frame's pointer edges on it.
     diplomacy: Option<crate::diplomacy::Open>,
     dip_input: crate::diplomacy::Input,
+    /// The screen the diplomacy screen's closing leads to (`Diplomacy_Kilep`; `None` = the starmap).
+    dip_next: Option<crate::ui::Screen>,
     gpu: Option<Gpu>,
     view: Option<View>,
     clock: TickClock,
@@ -142,6 +144,8 @@ struct App {
     frames: u32,
     /// The production view and transfer panel, their models, and a button held on them (left?).
     panels: Panels,
+    /// The starmap was up on the last frame (its next entry is a `Starmap_Belep`).
+    on_starmap: bool,
     panel_models: Option<PanelModels>,
     panel_held: Option<bool>,
     /// The info and messages screens' 3D frames.
@@ -161,12 +165,18 @@ struct App {
     design: Option<crate::design::Design>,
     design_scene: Option<crate::design_scene::DesignScene>,
     design_tips: Vec<Vec<u8>>,
+    /// The trade screen (re/screens/trade.md), its 3D scene and tooltip texts (`Trade_MouseInit`).
+    trade: Option<crate::trade::Trade>,
+    trade_scene: Option<crate::trade_scene::TradeScene>,
+    trade_tips: Vec<Vec<u8>>,
     /// Sound and music (re/screens/audio.md), and the screens seen up last frame (their enter/exit sounds).
     audio: crate::audio::Audio,
     sound_overlay: Option<crate::ui::Screen>,
     sound_spy: Option<bool>,
     /// The sounds the window's input code started this frame (re/screens/audio.md §6), played by `audio_frame`.
     sounds: Vec<crate::audio::SoundId>,
+    /// The speakers' lines the window's input code started this frame (re/screens/audio.md §5).
+    speech: Vec<crate::audio::speech::Speak>,
     /// A headless script run (`--snapshot --script` on the starmap or colony): its renderer, band and clock.
     headless: Option<Headless>,
     /// The fullscreen video playing (re/screens/video.md): the game waits under it; then the names queued after it
@@ -179,6 +189,8 @@ struct App {
     /// The messages screen's talking-head clip, `MesKellAnimInditas`, and `uzenetanim_<EN>.txt` once read.
     head: crate::video::message::HeadClip,
     head_armed: bool,
+    /// `MessagesGyorsito` (`FRISSIT_Messages2`): the speech's end is looked for every 11th UI tick.
+    mes_gyorsito: u32,
     clip_lists: Option<Vec<ig2_formats::dialogue::ClipGroup>>,
     /// The battle screen (`AktKep` 11) while it is up.
     spacewar: Option<crate::spacewar_live::Live>,
@@ -191,6 +203,8 @@ struct App {
     rules: &'static ig2_sim::game::GameRules,
     tech_defaults: Vec<u8>,
     volatile: Vec<(u32, Vec<u8>)>,
+    /// The pointer in physical window pixels (the battle screen's edge scrolling reads the window, not the frame).
+    cursor_px: [i32; 2],
 }
 
 /// The Options screen up: its state, its 10 ms UI clock, the lasers' glow, and `OptionsOldIdoPause`.
@@ -242,6 +256,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
     let audio_install = ig2_formats::Install::open(l.install.root(), l.install.lang()).map_err(|e| e.to_string())?;
     let mut audio = crate::audio::Audio::new(audio_install, sounds, true);
+    audio.set_speech(&ig2_rules::speech::Speech::from_exe(&exe).unwrap_or_default());
     if !audio.has_device() {
         eprintln!("ig2-client: no sound device; running silent");
     }
@@ -286,7 +301,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
     let audio_install = ig2_formats::Install::open(l.install.root(), l.install.lang()).map_err(|e| e.to_string())?;
-    let audio = crate::audio::Audio::new(audio_install, sounds, false);
+    let mut audio = crate::audio::Audio::new(audio_install, sounds, false);
+    audio.set_speech(&ig2_rules::speech::Speech::from_exe(&exe).unwrap_or_default());
     let mut renderer = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let hud = crate::ui::Hud::load(&mut renderer, &l.install, tables);
     let mut app = App::new(world, l.install, tables, rules, audio);
@@ -390,6 +406,7 @@ impl App {
             spy: None,
             ui_frames: 0,
             diplomacy: None,
+            dip_next: None,
             dip_input: Default::default(),
             gpu: None,
             view: None,
@@ -405,6 +422,7 @@ impl App {
             title_at: start,
             frames: 0,
             panels: Panels::default(),
+            on_starmap: false,
             panel_models: None,
             panel_held: None,
             frame_models: None,
@@ -418,10 +436,14 @@ impl App {
             design: None,
             design_scene: None,
             design_tips: Vec::new(),
+            trade: None,
+            trade_scene: None,
+            trade_tips: Vec::new(),
             audio,
             sound_overlay: None,
             sound_spy: None,
             sounds: Vec::new(),
+            speech: Vec::new(),
             headless: None,
             spacewar: None,
             options: None,
@@ -436,7 +458,9 @@ impl App {
             anim_names: None,
             head: Default::default(),
             head_armed: false,
+            mes_gyorsito: 0,
             clip_lists: None,
+            cursor_px: [0; 2],
         }
     }
 
@@ -449,6 +473,32 @@ impl App {
 
     /// The frame's sounds: the screens' queued ones, the enter/exit sounds of the screens that came or went, the UI
     /// ticks due (`FRISSIT2_SoundSystem`) and `UpdateFrame`'s music watchdog.
+    /// `AktKep == 2`: the starmap is the screen (no other screen or window over it).
+    fn on_starmap(&self) -> bool {
+        self.front.is_none()
+            && self.colony.is_none()
+            && self.overlay.is_none()
+            && self.spy.is_none()
+            && self.diplomacy.is_none()
+            && self.research.is_none()
+            && self.design.is_none()
+            && self.spacewar.is_none()
+            && self.options.is_none()
+    }
+
+    /// The colony screen is up with nothing over it (`AktKep == 3`).
+    fn on_colony(&self) -> bool {
+        self.colony.is_some()
+            && self.front.is_none()
+            && self.overlay.is_none()
+            && self.spy.is_none()
+            && self.diplomacy.is_none()
+            && self.research.is_none()
+            && self.design.is_none()
+            && self.spacewar.is_none()
+            && self.options.is_none()
+    }
+
     fn audio_frame(&mut self, due_ui: u64) {
         use crate::audio::SoundId;
         use crate::ui::Screen;
@@ -465,10 +515,29 @@ impl App {
                 self.audio.play_wav(&format!("sounds/scroll/{voice}/{id:04}.wav"));
             }
         }
+        // `WF::PlaySpeechGrWar` (exe 0x48c670) and the retreat 0x12f: only while the colony screen shows the war's
+        // planet; the line and kind for this player's empire (ground-combat.md §11.12).
+        let shown = self.world.colony.filter(|_| self.on_colony());
+        for (p, v) in std::mem::take(&mut self.world.ground_voices) {
+            if shown == Some(p) {
+                let (line, kind) = v.line(en);
+                self.speech.push(crate::audio::speech::Speak { who: crate::audio::speech::Who::Colony, line, kind });
+            }
+        }
         if let Some(c) = &mut self.colony {
             for id in c.ui.sounds.drain(..) {
                 self.audio.play(id);
             }
+            for (line, kind) in c.ui.voices.drain(..) {
+                self.speech.push(crate::audio::speech::Speak { who: crate::audio::speech::Who::Colony, line, kind });
+            }
+        }
+        for s in std::mem::take(&mut self.speech) {
+            self.audio.speak(s, en);
+        }
+        let on_starmap = self.on_starmap();
+        for _ in 0..due_ui {
+            self.audio.speakers.tick(on_starmap);
         }
         if let Some(h) = &mut self.hud {
             for id in h.info.sounds.drain(..) {
@@ -503,21 +572,23 @@ impl App {
                 self.audio.play(id);
             }
         }
-        // `Messages_Belep`/`_Kilep` exe 0x507f90/0x5083d0, `Diplomacy_Belep`/`_Kilep` 0x4bf530/0x4bf810.
-        if self.overlay != self.sound_overlay {
-            match self.sound_overlay {
-                Some(Screen::Messages) => {
-                    // `Messages_Kilep` (exe 0x5083d0) also stops the typer.
-                    self.audio.stop_sound(SoundId::global(7));
-                    self.audio.play(SoundId::new(Table::Mes, 1));
-                }
-                Some(Screen::Diplomacy) => self.audio.play(SoundId::new(Table::Dip, 1)),
-                _ => {}
+        if let Some(t) = &mut self.trade {
+            for id in t.sounds.drain(..) {
+                self.audio.play(id);
             }
-            match self.overlay {
-                Some(Screen::Messages) => self.audio.play(SoundId::new(Table::Mes, 0)),
-                Some(Screen::Diplomacy) => self.audio.play(SoundId::new(Table::Dip, 0)),
-                _ => {}
+        }
+        // `Messages_Belep`/`_Kilep` exe 0x507f90/0x5083d0 (the diplomacy screen queues its own: `Screen::enter`/`leave`).
+        if self.overlay != self.sound_overlay {
+            if self.sound_overlay == Some(Screen::Messages) {
+                // `Messages_Kilep` (exe 0x5083d0) also stops the typer and the speech, and ends the ducking.
+                self.audio.stop_sound(SoundId::global(7));
+                self.audio.stop_message_speech();
+                self.audio.set_duck(0);
+                self.audio.message.indult = false;
+                self.audio.play(SoundId::new(Table::Mes, 1));
+            }
+            if self.overlay == Some(Screen::Messages) {
+                self.audio.play(SoundId::new(Table::Mes, 0));
             }
             self.sound_overlay = self.overlay;
         }
@@ -701,13 +772,30 @@ impl App {
     /// A starmap order or setting of the local player (`Multi_Send(.., EN, ..)`), applied in the next frame.
     /// Open or close a 2D screen (`I` info, `M` messages): `Info_Belep` starts on the human's empire and chart 0.
     fn toggle_screen(&mut self, s: crate::ui::Screen) {
-        self.overlay = if self.overlay == Some(s) { None } else { Some(s) };
-        if let (Some(crate::ui::Screen::Info), Some(h)) = (self.overlay, &mut self.hud) {
+        // From the diplomacy screen (`Diplomacy_Kilep`): the closing first, except towards the messages screen.
+        let closing = self.overlay == Some(crate::ui::Screen::Diplomacy) && !self.leave_diplomacy(Some(s));
+        if !closing {
+            self.overlay = if self.overlay == Some(s) { None } else { Some(s) };
+        }
+        let next = if closing { Some(s) } else { self.overlay };
+        if let (Some(crate::ui::Screen::Info), Some(h)) = (next, &mut self.hud) {
             // `InfoTriX/Y` keep the knob where it was left (`Info_Belep` only moves the model there).
             let tri = h.info.tri;
             h.info = crate::ui::InfoScreen::enter(self.world.ui.human);
             h.info.tri = tri;
         }
+    }
+
+    /// Leave the diplomacy screen for `next` (`None` = the starmap): true = gone now (towards the messages screen, or
+    /// already closed); else its closing runs and the frame loop goes on to `next` when it ends.
+    fn leave_diplomacy(&mut self, next: Option<crate::ui::Screen>) -> bool {
+        let quiet = next == Some(crate::ui::Screen::Messages);
+        let Some(d) = &mut self.diplomacy else { return true };
+        if d.screen.leave(quiet) {
+            return true;
+        }
+        self.dip_next = next;
+        false
     }
 
     /// A left press on the info or messages screen (`Info_Main`, `Messages_Main`).
@@ -791,6 +879,68 @@ impl App {
         self.overlay = Some(crate::ui::Screen::Research);
     }
 
+    /// Run `f` on the design screen with what it reads ([`crate::design_edit::Ctx`]) and its hot-spot mask, then send
+    /// the orders it made.
+    fn design_do<R>(&mut self, f: impl FnOnce(&mut crate::design::Design, &crate::design_edit::Ctx, &[u8]) -> R) -> Option<R> {
+        let state = &self.world.game.state;
+        let techs = state.tech();
+        let d = self.design.as_mut()?;
+        let c = crate::design_edit::Ctx {
+            install: &self.install,
+            state,
+            techs: &techs,
+            rules: self.tables,
+            sim: &self.world.game.rules.ai,
+            debug: state.mem.i32(ig2_sim::save::va::DESIGN_DEBUG) != 0,
+            texts: self.hud.as_ref().map(|h| &h.texts),
+        };
+        let mask = self.design_scene.as_ref().map_or(&[][..], |s| &s.mask[..]);
+        let r = f(d, &c, mask);
+        for o in std::mem::take(&mut d.orders) {
+            self.world.send(Command::from(o));
+        }
+        Some(r)
+    }
+
+    /// A key in the design screen's name input; the viewing mode's input writes the stored design's name in place
+    /// (re/deviations.md).
+    fn design_entry_key(&mut self, k: &Key<&str>) {
+        use crate::design_edit::EntryKey;
+        let key = match k {
+            Key::Named(NamedKey::Enter) => {
+                if let Some(d) = &mut self.design {
+                    d.entry = None;
+                }
+                return;
+            }
+            Key::Named(NamedKey::Backspace) => EntryKey::Back,
+            Key::Named(NamedKey::Delete) => EntryKey::Delete,
+            Key::Named(NamedKey::Home) => EntryKey::Home,
+            Key::Named(NamedKey::End) => EntryKey::End,
+            Key::Named(NamedKey::ArrowLeft) => EntryKey::Left,
+            Key::Named(NamedKey::ArrowRight) => EntryKey::Right,
+            Key::Named(NamedKey::Space) => EntryKey::Char(b' '),
+            Key::Character(c) => {
+                let b = self.hud.as_ref().map_or_else(|| c.as_bytes().to_vec(), |h| h.texts.encode(c));
+                match b.first().copied().filter(|&b| b >= 0x20) {
+                    Some(b) => EntryKey::Char(b),
+                    None => return,
+                }
+            }
+            _ => return,
+        };
+        let Some(d) = &mut self.design else { return };
+        if let Some((k, name)) = d.entry_key(key) {
+            let state = &mut self.world.game.state;
+            let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
+            if let Some(r) = state.designs.get_mut(en).and_then(|t| t.get_mut(k)) {
+                let n = name.len().min(0x15);
+                r[..n].copy_from_slice(&name[..n]);
+                r[n] = 0;
+            }
+        }
+    }
+
     /// F5 (`DoKeyboard`: F1..F10 ask for `AktKep` 1..10): the design screen opens (`Design_Belep`, animated) or, when
     /// up, closes after its closing animation (`Design_Kilep`).
     fn toggle_design(&mut self) {
@@ -805,8 +955,34 @@ impl App {
             self.design_tips = crate::design::tips(&h.texts);
         }
         self.research = None;
-        self.design = Some(crate::design::Design::open(&self.world.game.state, true));
+        let mut d = crate::design::Design::open(&self.world.game.state, true);
+        if let Some(h) = &self.hud {
+            d.names = crate::design_edit::Names::read(&h.texts);
+        }
+        self.design = Some(d);
         self.overlay = Some(crate::ui::Screen::Design);
+    }
+
+    /// F8 (`DoKeyboard`: F1..F10 ask for `AktKep` 1..10): the trade screen opens (`Trade_Belep`, animated) or, when up,
+    /// closes after its closing animation (`Trade_Kilep` towards the starmap).
+    fn toggle_trade(&mut self) {
+        if self.overlay == Some(crate::ui::Screen::Trade) {
+            if self.trade.as_mut().is_none_or(|t| t.leave(2)) {
+                self.overlay = None;
+                self.trade = None;
+            }
+            return;
+        }
+        let Some(h) = &self.hud else { return };
+        if self.trade_tips.is_empty() {
+            self.trade_tips = crate::trade::tips(&h.texts);
+        }
+        let advance = h.font.as_ref().map_or(6.0, |f| f.advance(2));
+        let lines = crate::trade::ticker_lines(&h.texts);
+        self.research = None;
+        self.design = None;
+        self.trade = Some(crate::trade::Trade::open(&self.world.game.state, true, 2, lines, advance));
+        self.overlay = Some(crate::ui::Screen::Trade);
     }
 
     /// The pointer on the top bar's research button (`HACK_SetBrushok`'s 1005 at (600, 0), 40 × 20).
@@ -1006,6 +1182,10 @@ impl App {
         if let Some(s) = pick {
             self.select(s);
             let s = self.selection();
+            // `Starmap_Main` (ELF 0x6f8e3b): a fleet of the player's picked speaks its line's select.
+            if s.mode == 2 && self.world.game.state.fleets.get(s.fleet).is_some_and(|f| f[0x15] == self.world.curr.human) {
+                self.speech.push(crate::audio::speech::Speak { who: crate::audio::speech::Who::Starmap, line: s.fleet as i32 % 3 + 1, kind: crate::audio::speech::starmap::SELECT });
+            }
             let blink = (self.now_ms() / 100) % 2 == 1;
             let places = crate::starmap_menus::rop_places(&self.world.game.state, &s, &self.panels, self.menus.redirect, (self.menus.sat_sent, self.menus.col_sent), blink);
             self.menus.open_rop(at, places);
@@ -1125,11 +1305,18 @@ impl App {
                 let dos = self.menus.redirect_to(&self.world.game.state, &sel, target);
                 self.apply_do(dos);
             } else if let Some(o) = orders::right_click(&self.world.curr, &v.camera, at, &sel, keys) {
-                // An own fleet's order: a click with Shift (exe 0x5b51b3); without it the fleet's voice
-                // [`StarmapSpeaker`, not ported].
+                // An own fleet's order (`StarmapVillogasMode` 1, 0xd, 0xe): a click with Shift (exe 0x5b51b3), else the
+                // fleet's move line; an attack (2): its attack line (exe 0x5b5231).
                 let own_fleet = sel.mode == 2 && self.world.game.state.fleets.get(sel.fleet).is_some_and(|f| f[0x15] == self.world.curr.human);
-                if own_fleet && keys.shift {
-                    self.sounds.push(crate::audio::CLICK);
+                if let (true, StarmapOrder::Move { order, .. }) = (own_fleet, &o) {
+                    use crate::audio::speech::{starmap, Speak, Who};
+                    let line = sel.fleet as i32 % 3 + 1;
+                    match *order {
+                        1 | 0xd | 0xe if keys.shift => self.sounds.push(crate::audio::CLICK),
+                        1 | 0xd | 0xe => self.speech.push(Speak { who: Who::Starmap, line, kind: starmap::MOVE }),
+                        2 => self.speech.push(Speak { who: Who::Starmap, line, kind: starmap::ATTACK }),
+                        _ => {}
+                    }
                 }
                 self.send(o);
             }
@@ -1435,6 +1622,8 @@ impl App {
                     if let Some(g) = &mut self.gpu {
                         g.assets.planet_meshes.load_battle(&mut g.renderer, &self.install);
                     }
+                    // `SpaceWar_Belep` exe 0x5628ac: `PlayMusicSpWar(1, 0)` (crossfade) when no battle ran yet.
+                    self.audio.play_music(crate::audio::Music::SpWar, false, human_race(&self.world.game.state));
                     self.spacewar = crate::spacewar_live::Live::enter(&mut self.world, slot, &cam, &self.install, now);
                 }
                 RealTimeEvent::SpaceOver { slot, .. } => {
@@ -1447,6 +1636,11 @@ impl App {
             }
         }
         let Some(sw) = &mut self.spacewar else { return };
+        sw.pointer = self.cursor_px;
+        if let Some(g) = &self.gpu {
+            let size = g.window.inner_size();
+            sw.window = [size.width as i32, size.height as i32];
+        }
         let out = sw.update(&mut self.world, now);
         self.spacewar_out(out);
     }
@@ -1461,9 +1655,17 @@ impl App {
             }
             match o {
                 Out::Click => self.sounds.push(crate::audio::CLICK),
+                Out::Sound(s) => {
+                    self.audio.set_record_volume(s.id, s.volume);
+                    self.sounds.push(s.id);
+                }
                 Out::Left => {
                     // `SpaceWar_Kilep`'s second phase: a finished battle ends (`SpaceWarVege`); one still running stays.
                     self.world.game.sp_battles.on_screen = false;
+                    // `Starmap_Belep` exe 0x5b1d74: `PlayMusicMain(0, 0)` unless a battle still runs.
+                    if self.spacewar.as_ref().is_some_and(|sw| sw.ended) {
+                        self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                    }
                     self.spacewar = None;
                     if let Some(v) = &mut self.view {
                         crate::spacewar_live::restore_view(v);
@@ -1600,11 +1802,16 @@ impl App {
         out.present();
     }
 
-    /// The messages screen's talking-head clip (re/screens/video.md §5.3): a `TE` part read sets the clips and arms
-    /// `StartAnim`, which fires when the typer's front reaches the other side's colour (`MessagesGfx2D_2`); the typer's
-    /// end moves to the wait clip, and a plain message or a dialogue's last text to the end clip. Leaving the screen
-    /// closes it (`Messages_Kilep`). Drawn by the HUD at (201, 204) with the interlace over it.
-    fn head_clip_frame(&mut self, now: u32) {
+    /// The messages screen's talking-head clip (re/screens/video.md §5.3) and its speech (re/screens/audio.md §5): a
+    /// `TE` part read sets the clips and arms `StartAnim`, which fires when the typer's front reaches the other side's
+    /// colour (`MessagesGfx2D_2`) and starts the speech and the alien voice; the speech's end (`FRISSIT_Messages2`,
+    /// every 11th UI tick) or the typer's end moves to the wait clip, and a plain message or a dialogue's last text to
+    /// the end clip (`messages-end.wav`, the music back). Leaving the screen closes it (`Messages_Kilep`). Drawn by
+    /// the HUD at (201, 204) with the interlace over it.
+    fn head_clip_frame(&mut self, now: u32, due_ui: u64) {
+        use crate::audio::SoundId;
+        use crate::messages_screen::ClipStep;
+        use ig2_rules::sounds::Table;
         let Some(h) = &mut self.hud else { return };
         let open = self.overlay == Some(crate::ui::Screen::Messages);
         let Some(d) = h.messages.open.as_mut().filter(|_| open) else {
@@ -1620,23 +1827,68 @@ impl App {
         let race = human_race(state);
         let table = &self.tables.videos.message_clips;
         let steps = std::mem::take(&mut d.clip);
+        let audio = &mut self.audio;
+        // `StopMessagesHang`, `StopHalkAlienHang`, `MesHangIndult = 0` (`Messages_Main`'s presses, a new message).
+        if steps.contains(&ClipStep::Hush) {
+            audio.stop_message_speech();
+            audio.stop_alien();
+            audio.message.indult = false;
+        }
+        // `StartAnim_EndOfMessage`'s sounds when its clip starts.
+        let end_sounds = |audio: &mut crate::audio::Audio| {
+            audio.stop_alien();
+            audio.play(SoundId::new(Table::Mes, 2));
+            audio.set_duck(0);
+        };
         for s in &steps {
-            if let crate::messages_screen::ClipStep::PartRead(part) = *s {
+            if let ClipStep::PartRead(part) = *s {
                 self.head.part_read(lists, d.id.max(0) as u32, part);
                 self.head_armed = true;
             }
         }
         if self.head_armed && d.front_colour() == 2 {
+            // `StartAnim` exe 0x5095b0: the typer muted, the clip, the speech, the alien voice.
+            audio.mute(SoundId::global(7), true);
             self.head.start(&self.install, table, k);
+            audio.play_message_speech(en, &self.head.sound);
+            audio.stop_alien();
+            let idx = crate::video::message::alien_index(&self.head.anim, en, k, self.head.face);
+            if let Some(rec) = crate::video::message::alien_record(idx) {
+                audio.play_alien(rec);
+            }
+            audio.message.indult = audio.sound;
             self.head_armed = false;
         }
+        // `FRISSIT_Messages2` exe 0x505180: the speech over → the wait clip (a conversation) or the end clip.
+        for _ in 0..due_ui {
+            self.mes_gyorsito += 1;
+            if self.mes_gyorsito > 10 {
+                self.mes_gyorsito = 0;
+                if audio.sound && audio.message.indult && self.head.akt == 0 && self.head.sound.contains("ogg") && !audio.message_speech_playing() {
+                    let ended = if d.conversation {
+                        audio.message.indult = audio.sound;
+                        self.head.wait(&self.install, table, k, race)
+                    } else {
+                        self.head.end(&self.install, race)
+                    };
+                    if ended {
+                        end_sounds(audio);
+                    }
+                }
+            }
+        }
         for s in &steps {
-            if let crate::messages_screen::ClipStep::TypedOut { plain, ends } = *s {
+            if let ClipStep::TypedOut { plain, ends } = *s {
+                let mut ended = false;
                 if self.head.akt == 0 {
-                    self.head.wait(&self.install, table, k, race);
+                    audio.message.indult = audio.sound;
+                    ended = self.head.wait(&self.install, table, k, race);
                 }
                 if plain || ends {
-                    self.head.end(&self.install, race);
+                    ended |= self.head.end(&self.install, race);
+                }
+                if ended {
+                    end_sounds(audio);
                 }
             }
         }
@@ -1688,6 +1940,9 @@ impl App {
             self.world.colony_events.clear();
         }
         for e in std::mem::take(&mut self.world.order_events) {
+            if let Some(d) = &mut self.design {
+                d.event(&e);
+            }
             if let OrderEvent::Split { empire, fleet, new } = e {
                 if empire == self.world.curr.human {
                     // `MULTIGET_Starmap`: the new fleet is selected and the transfer between the two opens, before the
@@ -1745,12 +2000,20 @@ impl App {
                 d.advance(due_ui as f32 * 10.0);
             }
         }
-        self.head_clip_frame(now);
+        self.head_clip_frame(now, due_ui);
         // `FRISSIT_Starmap2` runs on the starmap only.
         if let (Some(v), None, None) = (&mut self.view, &self.colony, self.overlay) {
+            // `Starmap_Belep` inits `fifo` and `starf` on every entry.
+            if !self.on_starmap {
+                self.panels.faders = crate::starmap_panels::StarmapFaders::enter();
+            }
             for _ in 0..due_ui {
                 v.ui_tick();
+                self.panels.ui_tick();
             }
+            self.on_starmap = true;
+        } else {
+            self.on_starmap = false;
         }
         // The radial menu's frame (`FRISSIT_Starmap2`).
         for _ in 0..due_ui {
@@ -1807,18 +2070,30 @@ impl App {
                 self.overlay = None;
             }
         }
-        if let Some(d) = &mut self.design {
+        let tips = std::mem::take(&mut self.design_tips);
+        self.design_do(|d, c, mask| {
             for _ in 0..due_ui {
-                d.step(&self.world.game.state, self.tables);
+                d.step(c, mask);
             }
-            if d.closed() {
-                self.design = None;
+            d.tooltip(c, mask, &tips, now as f64);
+        });
+        self.design_tips = tips;
+        if self.design.as_ref().is_some_and(|d| d.closed()) {
+            self.design = None;
+            self.overlay = None;
+        }
+        if let Some(tr) = &mut self.trade {
+            for _ in 0..due_ui {
+                tr.step(&self.world.game.state);
+                for delivery in tr.orders.drain(..) {
+                    self.world.send(ig2_net::Command::Buy { delivery });
+                }
+            }
+            tr.tooltip(&self.trade_tips, now as f64);
+            if tr.closed() {
+                self.trade = None;
                 self.overlay = None;
             }
-        }
-        if let (Some(d), Some(sc)) = (&mut self.design, &self.design_scene) {
-            let techs = self.world.game.state.tech();
-            d.tooltip(&self.world.game.state, &techs, self.tables, &sc.mask, &self.design_tips, now as f64);
         }
         if let (Some(r), Some(m)) = (&mut self.research, &self.research_models) {
             r.tip.moved(self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor)));
@@ -1889,6 +2164,9 @@ impl App {
             for _ in 0..due_ui {
                 d.screen.ui_tick();
             }
+            if d.screen.closed() {
+                self.overlay = self.dip_next.take();
+            }
             let vv = crate::font::Virtual::new(size);
             self.dip_input.at = vv.virtual_of(self.cursor);
             for c in d.input(&self.world.game.state, h, self.tables, &self.dip_input) {
@@ -1935,12 +2213,12 @@ impl App {
                     h.draw_starmap_names(&mut frame, v, &g.assets, &self.world.prev, &self.world.curr, alpha, t);
                     let lv = self.world.game.local_view();
                     let sel = Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
-                    h.draw_starmap_hud(&mut frame, &self.world.game.state, self.tables, v, &self.world.prev, &self.world.curr, &sel, alpha, t);
+                    h.draw_starmap_hud(&mut frame, &self.world.game.state, self.tables, v, &self.world.prev, &self.world.curr, &sel, alpha, t, &self.panels.faders.starf, self.menus.info_box(v.camera.zoom));
                     h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, self.tables, &sel, panel_tex, size, t);
-                    h.draw_starmap_menus(&mut frame, &self.menus, &self.world.game.state, self.tables, size, v.camera.zoom, t);
+                    h.draw_starmap_menus(&mut frame, &self.menus, &self.panels, &self.world.game.state, self.tables, size, v.camera.zoom, t);
                 }
                 (crate::ui::Screen::Design, ..) => {
-                    if let Some(d) = &self.design {
+                    if let Some(d) = &mut self.design {
                         let state = &self.world.game.state;
                         let techs = state.tech();
                         let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
@@ -1949,8 +2227,15 @@ impl App {
                         h.draw_design(&mut frame, d, state, &techs, self.tables, &self.design_tips, size, t);
                     }
                 }
+                (crate::ui::Screen::Trade, ..) => {
+                    if let Some(tr) = &self.trade {
+                        let sc = self.trade_scene.get_or_insert_with(|| crate::trade_scene::TradeScene::new(&mut g.renderer));
+                        sc.draw(&mut frame, &mut g.renderer, &self.install, tr, size);
+                        h.draw_trade(&mut frame, tr, &self.world.game.state, &self.trade_tips, size, t);
+                    }
+                }
                 (crate::ui::Screen::Research, ..) => {
-                    if let (Some(r), Some((tex, lines))) = (&self.research, research) {
+                    if let (Some(r), Some((tex, lines))) = (&mut self.research, research) {
                         let glow = self.research_models.as_ref().and_then(|m| m.glow);
                         h.draw_research(&mut frame, r, &self.tech_infos, &self.research_tips, &self.world.game.state, self.tables, (tex, glow), lines, size, t);
                     }
@@ -2101,6 +2386,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_px = [position.x as i32, position.y as i32];
                 // The band's pixels: the mouse goes through the frame (`IG2_VIRTUAL_POSY`, re/screens/widescreen.md §4).
                 let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
                 let p = [position.x as f32, position.y as f32 - top];
@@ -2167,13 +2453,18 @@ impl App {
             if let Some(d) = &mut self.design {
                 d.moved(at);
             }
+            if let Some(tr) = &mut self.trade {
+                tr.moved(at);
+            }
         }
         if self.colony.is_some() {
             self.cursor = p;
-            let gm_cell = self.colony.as_ref().zip(self.world.colony_curr.as_ref()).and_then(|(c, s)| self.maps.get(s.map).and_then(|gm| crate::colony_ui::cell_under(&c.view, gm, p)));
+            let gm = self.colony.as_ref().zip(self.world.colony_curr.as_ref()).and_then(|(c, s)| self.maps.get(s.map).map(|gm| (c, gm)));
+            let gm_cell = gm.and_then(|(c, gm)| crate::colony_ui::cell_under(&c.view, gm, p));
+            let start = gm.and_then(|(c, gm)| crate::colony_ui::cursor_cell_under(&c.view, gm, p));
             self.colony_input(|ui, ctx, at, _| {
                 ui.drag(ctx, at);
-                ui.hover(ctx, gm_cell);
+                ui.hover(ctx, gm_cell, start);
                 Default::default()
             });
         }
@@ -2195,8 +2486,8 @@ impl App {
 
     /// The wheel turned by `steps` notches.
     fn wheel(&mut self, steps: f32) {
-        // `Design_Main` has no wheel.
-        if self.overlay == Some(crate::ui::Screen::Design) {
+        // `Design_Main` and `Trade_Main` have no wheel.
+        if matches!(self.overlay, Some(crate::ui::Screen::Design | crate::ui::Screen::Trade)) {
             return;
         }
         if let Some(c) = &mut self.colony {
@@ -2226,18 +2517,27 @@ impl App {
         match (button, state) {
             (MouseButton::Left | MouseButton::Right, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Design) => {
                 let at = self.virtual_cursor();
-                if let (Some(d), Some(sc)) = (&mut self.design, &self.design_scene) {
-                    let techs = self.world.game.state.tech();
-                    if button == MouseButton::Left {
-                        d.press(&self.world.game.state, &techs, self.tables, &sc.mask, at);
-                    } else {
-                        d.press_right(at);
-                    }
+                if button == MouseButton::Left {
+                    self.design_do(|d, c, mask| d.press(c, mask, at));
+                } else if let Some(d) = &mut self.design {
+                    d.press_right(at);
                 }
             }
             (MouseButton::Left | MouseButton::Right, ElementState::Released) if self.overlay == Some(crate::ui::Screen::Design) => {
-                if let Some(d) = &mut self.design {
-                    d.release();
+                if button == MouseButton::Left {
+                    self.design_do(|d, c, _| d.release(c));
+                } else if let Some(d) = &mut self.design {
+                    d.release_right();
+                }
+            }
+            (MouseButton::Left | MouseButton::Right, _) if self.overlay == Some(crate::ui::Screen::Trade) => {
+                let at = self.virtual_cursor();
+                if let Some(tr) = &mut self.trade {
+                    if pressed {
+                        tr.press(button == MouseButton::Left, at);
+                    } else {
+                        tr.release(button == MouseButton::Left, at);
+                    }
                 }
             }
             (MouseButton::Left, ElementState::Pressed) if self.top_bar_research() => self.toggle_research(),
@@ -2326,7 +2626,47 @@ impl App {
             // Esc in the viewing mode goes to the options screen at once (`AktKep` 0xd, no closing).
             Key::Named(NamedKey::F2) if self.overlay == Some(crate::ui::Screen::Design) => self.toggle_design(),
             Key::Named(NamedKey::F5) if self.overlay == Some(crate::ui::Screen::Design) => {}
-            Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Design) => self.open_options(false),
+            // `DesignKeyboardEscPressed`: the name input ends, an edit is cancelled; else the options screen.
+            Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Design) => {
+                if self.design_do(|d, c, _| d.escape(c)) != Some(true) {
+                    self.open_options(false);
+                }
+            }
+            // The name input (`IOMode`, `IOAzonosito` 0x33): Enter ends it (`DesignEntertNyomott`).
+            _ if self.overlay == Some(crate::ui::Screen::Design) && self.design.as_ref().is_some_and(|d| d.entry.is_some()) => self.design_entry_key(&key),
+            Key::Named(NamedKey::Enter) if self.overlay == Some(crate::ui::Screen::Design) => {
+                self.design_do(|d, c, _| d.edit_key(c, false));
+            }
+            Key::Character("r") if self.overlay == Some(crate::ui::Screen::Design) => {
+                self.design_do(|d, c, _| d.edit_key(c, true));
+            }
+            // The trade screen has no keyboard handler: F2 asks for the starmap, Esc for the options screen.
+            Key::Named(NamedKey::F2) if self.overlay == Some(crate::ui::Screen::Trade) => self.toggle_trade(),
+            // `DoKeyboard`'s F2 (the starmap) from the diplomacy screen: `Diplomacy_Kilep`'s closing first.
+            Key::Named(NamedKey::F2) if self.overlay == Some(crate::ui::Screen::Diplomacy) => {
+                if self.leave_diplomacy(None) {
+                    self.overlay = None;
+                }
+            }
+            Key::Named(NamedKey::F8) if self.overlay == Some(crate::ui::Screen::Trade) => {}
+            Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Trade) => {
+                self.trade = None;
+                self.overlay = None;
+                self.open_options(false);
+            }
+            // F5 on the trade screen: `Trade_Kilep` towards the design screen (the closing first), then F5 again opens it.
+            Key::Named(NamedKey::F5) if self.overlay == Some(crate::ui::Screen::Trade) => {
+                if self.trade.as_mut().is_none_or(|t| t.leave(5)) {
+                    self.trade = None;
+                    self.overlay = None;
+                    self.toggle_design();
+                }
+            }
+            // The other screens' keys do nothing here (no `DispatchKeyboard` target); `DoKeyboard`'s speed keys and
+            // Space stay.
+            Key::Character(c) if self.overlay == Some(crate::ui::Screen::Trade) && !matches!(c, "1" | "2" | "3") => {}
+            Key::Named(NamedKey::Tab | NamedKey::PageUp | NamedKey::PageDown | NamedKey::Delete) if self.overlay == Some(crate::ui::Screen::Trade) => {}
+            Key::Named(NamedKey::F8) => self.toggle_trade(),
             Key::Named(NamedKey::F5) => self.toggle_design(),
             // The starmap's and the other screens' own keys do nothing here (no `DispatchKeyboard` target); the speed
             // keys and Space are `DoKeyboard`'s and stay.
@@ -2368,11 +2708,13 @@ impl App {
             Key::Character("m" | "M") => self.toggle_screen(crate::ui::Screen::Messages),
             Key::Character("d" | "D") => {
                 if self.overlay == Some(crate::ui::Screen::Diplomacy) {
-                    self.overlay = None;
-                } else if let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) {
-                    if self.diplomacy.is_none() {
-                        self.diplomacy = Some(crate::diplomacy::Open::new(&mut g.renderer, &self.install, self.tables, &h.texts, &self.world.game.state));
+                    if self.leave_diplomacy(None) {
+                        self.overlay = None;
                     }
+                } else if let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) {
+                    let d = self.diplomacy.get_or_insert_with(|| crate::diplomacy::Open::new(&mut g.renderer, &self.install, self.tables, &h.texts, &self.world.game.state));
+                    // `Diplomacy_Belep`: no opening (and no sound) back from the messages screen.
+                    d.enter(self.tables, &h.texts, &self.world.game.state, self.overlay != Some(crate::ui::Screen::Messages));
                     self.overlay = Some(crate::ui::Screen::Diplomacy);
                 }
             }

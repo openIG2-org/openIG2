@@ -114,6 +114,16 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
     let fade = d.fade;
     let Some(font) = &hud.font else { return };
     let col = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
+    // The box select (`SpaceWarMouse`, spec §7.1.2): four `Line(.., 7, 0xff)`, one screen pixel of colour 7 [obs: s4
+    // t655, (50, 255, 50) a pixel wide at 800 × 600].
+    if let Some([x0, y0, x1, y1]) = d.boxed {
+        let c = col(7);
+        let ([ax, ay], [bx, by]) = (v.px(x0, y0).map(f32::floor), v.px(x1, y1).map(f32::floor));
+        let (lx, hx, ly, hy) = (ax.min(bx), ax.max(bx) + 1.0, ay.min(by), ay.max(by) + 1.0);
+        for [x, y, w, h] in [[lx, ly, hx - lx, 1.0], [lx, hy - 1.0, hx - lx, 1.0], [lx, ly, 1.0, hy - ly], [hx - 1.0, ly, 1.0, hy - ly]] {
+            f.push(hud.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, [x + w / 2.0, y + h / 2.0], [w / 2.0, h / 2.0], [c[0], c[1], c[2], 1.0]));
+        }
+    }
     if let Some(c) = console {
         c.draw(f, v);
     }

@@ -11,8 +11,7 @@ use crate::world::World;
 pub struct Live {
     pub ui: SpaceWarUi,
     gfx: Option<Gfx>,
-    /// `FRISSIT_SpaceWar2`'s 30 Hz ticks done, the battle tick the poses last saw.
-    ticks30: u64,
+    /// The battle tick the poses last saw.
     seen_tick: i32,
     /// `STAR_M.RAW` (kep 0x1f): the camera cluster's hot-spot mask.
     mask: Vec<u8>,
@@ -21,6 +20,15 @@ pub struct Live {
     pub right: bool,
     /// The opening zoom has ended.
     zoomed: bool,
+    /// The end check closed the battle (`SpaceWarVege` clears `spacewarbanvanbarkacs`, exe 0xF176EE).
+    pub ended: bool,
+    /// The pointer in window pixels and the window's size (`SpaceWar_Autoscroll` reads the physical window), the
+    /// UI ticks done (`Fake_FRISSITES`' 100 Hz loop).
+    pub pointer: [i32; 2],
+    pub window: [i32; 2],
+    ticks100: u64,
+    /// The effects (`None` without the exe's tables).
+    pub fx: Option<crate::spacewar_fx::Fx>,
 }
 
 impl Live {
@@ -31,32 +39,50 @@ impl Live {
         let mask = install.read("dataraw/screen/star_m.raw").ok().and_then(|b| b.get(800..800 + 640 * 480).map(|x| x.to_vec())).unwrap_or_default();
         let seen_tick = b.tick;
         world.game.sp_battles.on_screen = true;
-        Some(Self { ui, gfx: None, ticks30: now as u64 * 30 / 1000, seen_tick, mask, left: false, right: false, zoomed: false })
+        world.game.realtime.fx.clear();
+        let fx = crate::spacewar_fx::Tables::read(install).map_err(|e| eprintln!("ig2-client: the battle effects' tables: {e}")).ok().map(crate::spacewar_fx::Fx::new);
+        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx })
     }
 
     /// The end check closed the battle (`AktKepKell = 2`): `SpaceWar_Kilep`'s zoom-out.
     pub fn over(&mut self, world: &World, now: u32) {
+        self.ended = true;
         if let Some(b) = world.game.realtime.slots.get(self.ui.slot) {
             self.ui.leave(b, now);
         }
     }
 
-    /// The frame's update: the poses after the battle ticks, `FRISSIT_SpaceWar2`'s 30 Hz ticks, the view animation,
+    /// The frame's update: the poses after the battle ticks, the UI ticks (`FRISSIT_SpaceWar2`, `SpaceWar_Autoscroll`), the view animation,
     /// the fade the end check reads.
     pub fn update(&mut self, world: &mut World, now: u32) -> Vec<Out> {
         let mut out = Vec::new();
+        let events: Vec<_> = std::mem::take(&mut world.game.realtime.fx).into_iter().filter(|e| e.0 == self.ui.slot).map(|e| e.1).collect();
         let Some(b) = world.game.realtime.slots.get(self.ui.slot) else { return out };
-        for _ in 0..(b.tick - self.seen_tick).clamp(0, 8) {
+        let ticks = (b.tick - self.seen_tick).clamp(0, 8);
+        for k in 0..ticks {
             self.ui.battle_ticked(b);
+            if let Some(fx) = self.fx.as_mut() {
+                let (eye, target) = self.ui.eye_target();
+                let back = crate::scene::normalise([eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]]);
+                let matrices: Vec<_> = self.ui.units.iter().map(|g| g.matrix).collect();
+                fx.tick(b, &world.game.rules.space.weapons, if k == 0 { &events } else { &[] }, &matrices, back);
+                out.extend(fx.sounds.drain(..).map(Out::Sound));
+            }
         }
         self.seen_tick = b.tick;
-        let due = (now as u64 * 30 / 1000).saturating_sub(self.ticks30).min(10);
-        self.ticks30 += due;
+        // `Fake_FRISSITES`' 100 Hz loop (exe 0x4de850, `while now − stamp > 10`) runs `FRISSIT_SpaceWar2` and then
+        // `SpaceWar_Autoscroll` (off while the tutorial runs) once per UI tick (§7.2).
+        let due = (now as u64 / 10).saturating_sub(self.ticks100).min(10);
+        self.ticks100 += due;
         if due > 0 {
             let combat = world.game.state.combat();
             let plans = crate::spacewar_ui::Plans { designs: &combat.designs, ships: &combat.ships };
+            let scroll = world.game.state.mem.u8(ig2_sim::save::va::TUTORIAL_ACTIVE) == 0;
             for _ in 0..due {
                 self.ui.tick(b, &plans, &mut out);
+                if scroll {
+                    self.ui.autoscroll(self.pointer, self.window, self.left || self.right);
+                }
             }
         }
         self.ui.frame(b, now, &mut out);
@@ -87,7 +113,8 @@ impl Live {
             self.ui.retreat_window_frame(yes, paused, &mut out);
         }
         self.ui.hot_spots(b, spot, now, &mut out);
-        let shown = self.ui.shown(b, tables);
+        let mut shown = self.ui.shown(b, tables);
+        shown.fx = self.fx.as_ref().map(|fx| (fx, world.game.rules.space.weapons.as_slice()));
         let gfx = self.gfx.get_or_insert_with(|| Gfx::load(r, install, &shown));
         crate::spacewar_screen::prepare(v, gfx, assets.white, &shown);
         let mut frame = v.build(assets, &world.prev, &world.curr, alpha, t);
@@ -115,7 +142,7 @@ impl Live {
                 Command::Starmap { order: StarmapCmd::from(StarmapOrder::Pause { paused: false }) },
             ],
             Out::Left => vec![Command::SpaceBattleLeft],
-            Out::Click => Vec::new(),
+            Out::Click | Out::Sound(_) => Vec::new(),
         }
     }
 }

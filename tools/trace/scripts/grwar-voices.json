@@ -1,0 +1,72 @@
+{
+ "screen": "grwar",
+ "note": "The ground war's voices (ground-combat.md \u00a711.12, run_screen.py --grwar --sounds): select all (a), a move (right press), the war running, retreat on and off once landed (0x12f), then the war left to run for hits and deaths. Times are UI ticks.",
+ "events": [
+  {
+   "t": 100,
+   "key": "a"
+  },
+  {
+   "t": 160,
+   "press": [
+    400,
+    250
+   ],
+   "button": 3
+  },
+  {
+   "t": 2400,
+   "key": "a"
+  },
+  {
+   "t": 2460,
+   "press": [
+    425,
+    458
+   ]
+  },
+  {
+   "t": 2520,
+   "press": [
+    425,
+    458
+   ]
+  },
+  {
+   "t": 3000,
+   "key": "a"
+  },
+  {
+   "t": 3600,
+   "key": "a"
+  },
+  {
+   "t": 4200,
+   "key": "a"
+  },
+  {
+   "t": 4800,
+   "key": "a"
+  },
+  {
+   "t": 5400,
+   "key": "a"
+  },
+  {
+   "t": 6000,
+   "key": "a"
+  },
+  {
+   "t": 6600,
+   "key": "a"
+  },
+  {
+   "t": 7200,
+   "key": "a"
+  }
+ ],
+ "grabs": [
+  8000
+ ],
+ "tail": 60
+}

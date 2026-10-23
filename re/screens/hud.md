@@ -72,8 +72,98 @@ into `fade` (0x34 B records) and drawn by `PutDarkening` 0x5391d0 → `PutDarken
   B = 0.37–0.40 (= 1 − 155/255) and A = (0, 14, 24) (= (0, 48.6, 81)·0.61·0.48), which the port now reproduces to
   half a level.]
 
-The port: `starmap_panels::fader` (scale 0) and `kirak_fader` (the texture at offset 0; the `rand()` drift and the
-shine aren't drawn) on `Blend::GammaAlpha`.
+The port: `starmap_panels::fader` (scale 0) and `kit::fader::kirak_fader` (the texture at the fader's offsets, §1.2.1)
+on `Blend::GammaAlpha`.
+
+### 1.2.1 Fader design: the shine, the drift and the hover glow (`GLOBALKELLDESIGN` = 1)
+Each screen keeps a `faderstruktura` (0x5cc B: `optf`, `resf`, `desf`, `starf`, `mainf`, `fifo`, …) for up to 30 faders
+(`i` < 0x1e, larger `i` is ignored). Offsets `+off + 4i`, all f32 unless noted:
+
+| off | meaning | `InitFaderDesignStruktura` ELF 0x547cf0 (exe 0x4d3590), per `i`, in RNG order |
+|---|---|---|
+| +0x000 | shine wait, −1 a tick | `random(1000)` |
+| +0x078 | shine time left | 0 |
+| +0x0f0 | shine 0..1 | 0 |
+| +0x168 | `s`, the callers' colour scale | 0 (0.9 after the first tick) |
+| +0x1e0 / +0x258 | the fill texture's u / v offset (`KirakFader`'s last two) | 0 |
+| +0x2d0 | v drift a tick | `(random(10) + 1) / 30.0f` (f32 `divss`) |
+| +0x348 (s32) | shine axis: 0 jitters v, 1 u | – |
+| +0x3c0 (u8) | set on entering; not read | 0 |
+| +0x3e0 | glow countdown `g`: 1 on entering, 0 idle | 0 |
+| +0x458 (s32) | glow style 1..5 | – |
+| +0x4d0 (s32) | the last fader entered | −1 |
+| +0x4d8 | clock, +0.003 a tick (the scan bands, the info heads' pulse) | 0 |
+
+**`FaderDesignFrissito`** ELF 0x547e10, once per UI tick (`Frissit2_Options` 0x5da990, `FRISSIT_Colony2`, design
+0x50d890, `FRISSIT_Diplomacy2`, `FRISSIT_Info2`, research, starmap): `+0x4d8 = (f32)((f64)+0x4d8 + 0.003)`; then per `i`:
+1. `if g > 0 { g = (f32)((f64)g − 0.01); if g < 0 { g = 0 } }` (about 100 ticks).
+2. If `+0x78 > 0`: `if +0xf0 < 1.0f { +0xf0 = (f32)((f64)+0xf0 + 0.1) }`; `rand() % 100 − 50` (signed) added to `+0x258`
+   (axis 0) or `+0x1e0` (axis 1).
+3. `if +0xf0 > 0 { +0xf0 = (f32)((f64)+0xf0 − 0.02); clamp ≥ 0 }`.
+4. If `+0x000 <= 0`: `+0x78 <= 0` → `+0x000 = random(1000) + 1000`, else `+0x78 −= 1.0f`. Else `+0x000 −= 1.0f`, and
+   if it is then exactly 0: `+0x78 = random(50) + 50`, `+0x348 = random(2)`.
+5. `+0x258 += +0x2d0`.
+6. `+0x168 = (f32)((f64)(+0xf0 · 1.0f) + 0.9)`: 0.9..1.9.
+
+**`KirakFader(i, fs, x, y, w, h, fill, t, edge, t', false, 0.005, 0.005)`** ELF 0x547920: draws the fader
+(`FadeKerettelKerekit` with the texture offsets `(+0x1e0, +0x258)`, §1.2), then starts a glow when, in f32 with the
+mouse as floats, `x < mx < x + w && y < my < y + h` (strict) and `(!Mouse_Bal && !Mouse_Jobb && !Mouse_Felenged) ||
+Mouse_Lenyom` and `+0x4d0 != i` and `g == 0`: `+0x4d0 = i`, `g = 1.0`, `+0x458 = random(5) + 1`, `+0x3c0 = 1`. Nothing
+resets `+0x4d0`, so a box glows again only after another box of the same screen has glowed. `random(n)` (ELF
+0x4f0200) is `rand() % n` (0 for n < 1), the one libc stream.
+
+**`FadeKerettelKerekitDesign(x, y, w, h, r, g, b, a, …4 unused, t, 1.0, style)`** ELF 0x545b60 draws the glow, if
+`r > 1 || g > 1 || b > 1`, as one-pixel lines (`TscVonal` 0x5371e0, coordinates truncated to int; `line2d` 0x5f0700
+additive, src·1 + dst·1, so `a` doesn't matter), colour `C = (r, g, b)`, on the 640 × 480 virtual screen.
+`blink` = `AktIdo200` (on for 200 ms, off for 200 ms):
+
+| style | lines |
+|---|---|
+| 0 | the scan band (not from a hover; `t` = `fmod(clock·k, 1)`): rows `yo = 0, 4, 8, … < h`, `d = |t − yo/h|`; if `d < 0.1f`, `a = (0.1f − d)/0.1f`, ÷ `(h·0.1f)/yo` if `yo < 0.1f·h` (0 at `yo = 0`), × `(h − yo)/(h·0.1f)` if `yo > h − 0.1f·h`; drawn if `(f64)a ≥ 0.1` with `c = (int)(C·a/2.0f)`: `(x, Y)→(x + w/6, Y)` from black to `c`, then `c` to `x + w − w/6`, then `c` to black at `x + w` (`Y = y + yo`, `w/6` integer) |
+| 1 | a point runs round the box: `t < 0.25`: `(x + w·t·4, y)`; `< 0.5`: `(x + w, y + h(t − 0.25)·4)`; `< 0.75`: `(x + w − w(t − 0.5)·4, y + h)`; `< 1`: `(x, y + h − h(t − 0.75)·4)` (only the first in f32, the rest f64). Colour `(int)(C/1.2)` (f64). The lines `(Px, 0)→(Px, 479)` and `(0, Py)→(639, Py)` and a square of half-size `s = 10 + (int)(sin(t·3.1415·10.0)·5.0)` round P |
+| 2 | four lines across the screen close in on the box: `t < 0.5`: `c = (int)(C·t·2.0f)`, `o = (int)((0.5 − t)·200.0)`; else `o = 0`, `c = C` if blink else black. `x − o` and `x + w + o` vertical 0..479, `y − o` and `y + h + o` horizontal 0..639 |
+| 3 | corner marks shrinking onto the box: `d = t < 0.5 ? (f32)((0.5 − t)·200.0) : 0`; at `(x − d, y − d)`, `(x + w + d, y − d)`, `(x + w + d, y + h + d)`, `(x − d, y + h + d)` two 20-pixel strokes pointing out (horizontal and vertical, away from the box), colour `C`, when `blink || t < 0.5` |
+| 4 | the four sides slide in: `q = (f32)(0.5 − t)`; `t < 0.5`: `x0 = t·x·2 + q(x − 300)·2`, `y0 = t·y·2 + q(y − 300)·2`, `x1 = t(x + w)·2 + q(x + w + 300)·2`, `y1 = t(y + h)·2 + q(y + w + 300)·2` (**`y + w`**: the exe's slip, asm 0x5471d1); else the box. Lines `(x0, y)→(x0 + w, y)`, `(x + w, y0)→(x + w, y0 + h)`, `(x1, y + h)→(x1 − w, y + h)`, `(x, y1)→(x, y1 − h)`, colour `C`, when `blink || t < 0.5` |
+| 5 | the outline morphs from the last box that glowed past `t > 0.8` (`fade_oldx/y/sz/ma`, one set for the process, 0 at start): `X0 = x·t + (1 − t)·ox`, `X1 = (x + w)·t + (1 − t)(ox + osz)`, likewise Y; colour `C`, always |
+
+After the lines, `style != 0 && t > 0.8` (f64) saves the box as `fade_old*`. `line2d` draws at once, while
+`KirakFader`/`FadeKerettelKerekit` only queue their boxes, drawn after the screen's 2D pass: every fader of the frame
+covers the glows and scan bands [obs: Options, a style-1 line stops at the slot list's edge; the slot list's scan band
+isn't visible in the exe captures].
+
+Runtime check (2026-10-23, `run_screen.py --kep 13 --script scripts/options.json --probe probes/fader.js`,
+`_local/traces-faderglow`): the clock grows 0.003 a UI tick (one `FaderDesignFrissito` a tick); the glows start on the
+ticks and boxes the spec gives (the save button on entering; the left panel and a tab on the same press, `+0x4d0` = the
+later one; the panel again once its glow ended with the pointer still in it; quit; the slot list), each 100 ticks
+(`g` 0.99, 0.98, … 6.6e−7, then 0); the drift steps are `k/30`; a shine climbs 0.08 a tick to 1.04 (`s` 1.94), holds
+there ±0.02, decays 0.02 a tick to 0.9; all bit-exact in `kit::fader_design`'s test. The styles and the shine times
+come from the one `rand()` stream, so they differ from run to run (and from the client's).
+
+The screens call it right after their faders, unless leaving, with `t = 1 − g`, `C = (0, s·54, s·90)` (truncated):
+- **Options** (`OptionsGfx2D_1` 0x5d49a0, `optf`): glows for faders 0 (load), 1 (save/YES), 2 (quit; in the tutorial
+  both quit-row boxes are fader 2, but the glow tests and draws index 3 at the first box), 3 (the slot list); the
+  left panel (4) and the tabs (6, 7) start glows (and spend `rand()`) but never draw them. Their colours use `s`
+  of `optf` index `local_34 + k`: the quit box 2 (the tutorial's second row 3), the slot list 3, the panel 4 (5 in
+  the tutorial), both tabs 5 (6). At full fade-in the slot list also
+  draws the scan band: style 0, `t = fmod(clock·1.8, 1)`.
+- **Research** (`Research3DUpdate` 0x5e4e10, `resf`): scan bands on the two side boxes (`fmod(clock, 1)`,
+  `fmod(clock/2, 1)`), `C = (0, 54, 90)`; glows for faders 0 and 1 (the side boxes), `C` = `(0, 54, 90)`.
+- **Design** (0x503ea0, `desf`): scan bands on the five boxes (`fmod(clock·k, 1)`, `k` = 1, 1/2 (f32), 1/1.5 (f64),
+  1.8, 1.2), `C = (0, s·54, s·90)` of each; glows for faders 0..4.
+- Starmap, info, colony/main screen (`mainf`): `KirakFader` only (the shine and the drift; their glows aren't drawn).
+  `Starmap_Belep` inits `fifo` then `starf`; `FRISSIT_Starmap2` (ELF 0x719070) ticks `fifo` only while the fleet
+  info, the transfer or the tanks info is up, `starf` always. `starf`'s colours use `s` of the fader's own index;
+  `StarmapGfx2D_1` counts from 0 (the planet info box (319, 33, 302, 326) when shown, then the radar box (5, 423,
+  162, 52)), `StarmapGfx2D_2` from 6 (the product mode's slide-in boxes 6..15, its static boxes and the two (32/532,
+  86, 76, 35) after, then the info-off box and the tanks box: each the next count). Exact: `StarmapGfx2D_1` ELF 0x6dcb30 (planet
+  info box 0 when shown, radar next), `StarmapGfx2D_2` 0x6de1b0 from 6: slide-in 10 boxes, product 10 boxes, exit
+  button, then the tanks-info box (445, 380, 176, 30). Port: `starmap_panels::StarmapFaders { starf, fifo }` in `Panels`
+  (`FaderDesign::next` draws from the one rand() stream, fifo then starf, re-inited on every starmap entry; glows'
+  rand() draw skipped). `fifo`: transfer (`ShowStarmap` 0x6eca50) 0..5 + scroll track/thumb 6, fleet info
+  (`ArrangeFleetInfo` 0x6e5c30) 0..5 + bar 6, tanks info (`StarmapTanksInfoFaderKirakas` 0x6ea720) 0..4 + bar 5
+  (`fifo`'s fill (0, 54s, 90s) at 100, edge (0, 60s, 110s) at
+  70). Info (`PutFaders` ELF 0x55b2c0): `infof` faders 0 (387, 271, 0xe2 − slide, 183) and 1 (280, 209, 100, 8),
+  constant colours (no `s`); `Info_Belep` inits `InfoFejF` then `infof`, `FRISSIT_Info2` ticks both.
 
 ## 2. The top bar (every screen below 0xe)
 Two persistent 2D layers (`GFX_AllandoInit1/2` 0x66d080/0x66d0f0, added by every screen's 3D init) draw it after the

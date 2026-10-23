@@ -56,6 +56,8 @@ mod render;
 mod render3d;
 mod research;
 mod design;
+mod design_edit;
+mod design_pods;
 mod design_scene;
 mod rules;
 mod scene;
@@ -65,6 +67,7 @@ mod starmap;
 mod starmap_hud;
 mod starmap_info;
 mod starmap_menus;
+mod spacewar_fx;
 mod spacewar_hud;
 mod spacewar_live;
 mod spacewar_screen;
@@ -74,6 +77,8 @@ mod spy_screen;
 mod starmap_panels;
 mod starmap_planet;
 mod starmap_radar;
+mod trade;
+mod trade_scene;
 mod ui;
 mod video;
 mod window;
@@ -121,6 +126,10 @@ pub struct Options {
     /// `--show-message ID`: message `ID` open without an inbox entry (checks the dialogue's drawing).
     pub show_message: Option<i32>,
     pub ui_frames: u32,
+    /// `--trade-cheat`: the exe's `TradeCheat` (every own planet counts as a trade port; re/screens/trade.md §5.3).
+    pub trade_cheat: bool,
+    /// `--trade-eta N`: the unsaved `AktEtaDays` (the trade screen's delivery time) as the exe had it.
+    pub trade_eta: Option<i32>,
     /// `--spy-frame F [--spy-closing]`: the spy screen with `spyframe` held at F while opening (or closing)
     /// (re/screens/spy.md §1.1, §9).
     pub spy_frame: Option<f32>,
@@ -205,6 +214,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
         open_message: None,
         show_message: None,
         ui_frames: 150,
+        trade_cheat: false,
+        trade_eta: None,
         spy_frame: None,
         video_ms: 0,
         video_at: None,
@@ -280,6 +291,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--chart" => o.chart = val()?.parse().map_err(|e| format!("--chart: {e}"))?,
             "--open-message" => o.open_message = Some(val()?.parse().map_err(|e| format!("--open-message: {e}"))?),
             "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),
+            "--trade-cheat" => o.trade_cheat = true,
+            "--trade-eta" => o.trade_eta = Some(val()?.parse().map_err(|e| format!("--trade-eta: {e}"))?),
             "--ui-frames" => o.ui_frames = val()?.parse().map_err(|e| format!("--ui-frames: {e}"))?,
             "--spy-frame" | "--anim-frame" => o.spy_frame = Some(val()?.parse().map_err(|e| format!("--anim-frame: {e}"))?),
             "--spy-closing" | "--anim-closing" => o.spy_closing = true,

@@ -1,0 +1,10 @@
+{
+ "screen": "diplomacy",
+ "note": "The diplomacy screen (re/screens/diplomacy.md §3.1, §7.1) on quick-1.sav: the opening (dipframe 0..80 over 280 UI ticks, the frame's turn from 60), the main menu's press (a click) on 'negotiate', its release, and F2 (`DoKeyboard`: the starmap; the closing, screen20.wav). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 450, "press": [40, 377], "hold": 3},
+  {"t": 560, "key": "f2"}
+ ],
+ "grabs": [60, 150, 230, 300, 420, 470, 600, 640],
+ "tail": 120
+}

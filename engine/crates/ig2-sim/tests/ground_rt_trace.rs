@@ -984,6 +984,8 @@ fn battle_tick_matches_trace() {
     let (mut grwars, mut grwar_exact, mut finished, mut elevation_ulps) = (0usize, 0usize, 0usize, 0usize);
     let mut kinds = std::collections::BTreeMap::<String, usize>::new();
     let (mut fighter_ticks, mut bomb_ticks, mut mad_ticks) = (0usize, 0usize, 0usize);
+    // `GroundEvent::Voice` (the client's lines) against the exe's speaker: on-screen ticks checked, lines picked.
+    let (mut voice_ticks, mut voice_plays) = (0usize, 0usize);
     for path in files {
         let mut meta = Value::Null;
         let mut st = Regions::new();
@@ -1070,7 +1072,8 @@ fn battle_tick_matches_trace() {
                     let mut lcg = Lcg(ev["rand"]["seed"].as_u64().unwrap() as u32);
                     let m = before["planet"][0x23] as usize;
                     let mut voices = before.get("voices").map(|b| voices_of(b));
-                    {
+                    let voices_before = voices.clone();
+                    let events = {
                         let mut libc = || lcg.next();
                         let mut place = |_s: Option<(i32, i32)>| (false, (0, 0));
                         let mut war = War::new(&mut field, &mut planet, &mut world, &gr, &ctx, &mut rng, &mut libc, &mut place).with_map(&env.maps[m]);
@@ -1078,6 +1081,21 @@ fn battle_tick_matches_trace() {
                             war = war.with_voices(v);
                         }
                         war.refresh(clock, &watching);
+                        war.events
+                    };
+                    // The client's view: the voice events alone, played on the speaker as it was, give the exe's.
+                    if let (true, Some(mut from_events), Some(w)) = (ctx.on_screen, voices_before, st.get("voices").map(|b| voices_of(b))) {
+                        voice_ticks += 1;
+                        for e in &events {
+                            if let GroundEvent::Voice(v) = *e {
+                                let (line, kind) = v.line(ctx.human);
+                                voice_plays += from_events.play(line, kind, ctx.human) as usize;
+                            }
+                        }
+                        if from_events.lines != w.lines {
+                            *kinds.entry("voice events".into()).or_default() += 1;
+                            fails.push(format!("{tag}: the voice events don't give the exe's speaker"));
+                        }
                     }
                     if let (Some(v), Some(w)) = (&voices, st.get("voices").map(|b| voices_of(b))) {
                         if *v != w {
@@ -1211,6 +1229,7 @@ fn battle_tick_matches_trace() {
     if calls == 0 {
         return;
     }
+    eprintln!("voice events: {voice_ticks} on-screen ticks checked, {voice_plays} lines picked");
     eprintln!("FRISSIT_Grwar passes: {grwars} replayed, {grwar_exact} exact; {finished} end countdowns into GroundWarFinished");
     eprintln!("battle ticks: {calls} replayed, {exact} exact ({heap_debris} with heap-garbage debris slots, {generated} passability map builds generated ({} needing the strip y >= 195 from the trace, {} with the next record's head and exact), {elevation_ulps} gun elevations a few ulps off; {fighter_ticks} with a fighter wave up, {bomb_ticks} with air-strike bombs falling, {mad_ticks} drawing for mad tanks); mismatch kinds {kinds:?}", gen_tail.0, gen_tail.1);
     if !fails.is_empty() {

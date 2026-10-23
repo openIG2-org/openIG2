@@ -160,7 +160,7 @@ impl Mesh {
                 }
             }
             let range = start..scene.dynamic.len() as u32;
-            draws.push(MeshDraw { mesh: None, range, tex: cloud.unwrap_or(part.tex), glass: false, cloud: cloud.is_some(), shadow: crate::render3d::Shadow::None, video: false, additive: false });
+            draws.push(MeshDraw { mesh: None, range, tex: cloud.unwrap_or(part.tex), glass: false, cloud: cloud.is_some(), shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
     }
 }

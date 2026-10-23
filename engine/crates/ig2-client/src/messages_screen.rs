@@ -126,7 +126,7 @@ pub struct Dialogue {
     pub typing: Vec<Typing>,
     /// The message's id (`UAktUzenetFajta`) and whether it is a conversation (`UzenetFajtak[k] + 4`).
     pub id: i32,
-    conversation: bool,
+    pub conversation: bool,
     /// The talking-head clip's steps since the window last took them (re/screens/video.md §5.3).
     pub clip: Vec<ClipStep>,
 }
@@ -139,6 +139,9 @@ pub enum ClipStep {
     /// The typer reached the end (`KiirtaMar` 0 → 1): `VegeAzElsoAnimnak` while the speaking clip plays; then the
     /// end clip for a plain message (`plain`) or a dialogue that ends here (`ParbeszedVegeJon`, `ends`).
     TypedOut { plain: bool, ends: bool },
+    /// `StopMessagesHang` with `StopHalkAlienHang`: a press in the text (`Messages_Main` exe 0x508560) or a new
+    /// message taken (`KiertekelUjuzenet`).
+    Hush,
 }
 
 impl Dialogue {
@@ -174,7 +177,7 @@ impl Dialogue {
             typing: vec![Typing::Start],
             id,
             conversation,
-            clip: Vec::new(),
+            clip: vec![ClipStep::Hush],
         };
         if !conversation {
             d.over = true;
@@ -453,6 +456,7 @@ impl Dialogue {
     /// A left click in the text (x 186..512, y 1..167): type the rest at once (`ParbeszTyperPtrNovelo` = 0.001).
     pub fn hurry(&mut self) {
         self.step = 0.001;
+        self.clip.push(ClipStep::Hush);
     }
 
     /// The drawing pass of `MessagesGfx2D_2` (`ParbeszLength != −1`, `mesframe` 30): from `ParbeszKezdoSor`,

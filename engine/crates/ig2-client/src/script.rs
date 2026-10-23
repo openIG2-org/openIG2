@@ -8,7 +8,9 @@
 //!             {"t": 400, "key": "pagedown", "hold": 3}],
 //!  "grabs": [10, 30, 60]}
 //! ```
-//! A press is the pointer moved there, the button down, and up `hold` ticks later; a key is down and up `hold`
+//! A press is the pointer moved there, the button down, and up `hold` ticks later; a drag
+//! (`{"t": 5, "drag": [[x0, y0], [x1, y1]], "button": 1, "hold": 20}`) the button down at the first point, the pointer
+//! moved a step a tick on the straight line, and up at the second point `hold` ticks later; a key is down and up `hold`
 //! ticks later (names: down, up, right, left, enter, pageup, pagedown, escape, d, k, space, c, e, i, m, s, 1, 2, 3, tab, delete).
 
 use serde_json::Value;
@@ -45,10 +47,11 @@ impl Script {
 
     pub fn parse(text: &str) -> Result<Self, String> {
         let v: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
-        let point = |e: &Value, k: &str| -> Option<[f32; 2]> {
-            let a = e.get(k)?.as_array()?;
+        let point_of = |v: &Value| -> Option<[f32; 2]> {
+            let a = v.as_array()?;
             Some([a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32])
         };
+        let point = |e: &Value, k: &str| e.get(k).and_then(point_of);
         let mut events = Vec::new();
         for e in v.get("events").and_then(Value::as_array).into_iter().flatten() {
             let t = e.get("t").and_then(Value::as_u64).ok_or("an event without t")? as u32;
@@ -58,6 +61,18 @@ impl Script {
                 events.push(Event { t, input: Input::Move(at) });
                 events.push(Event { t, input: Input::Button { button, down: true, at } });
                 events.push(Event { t: t + hold, input: Input::Button { button, down: false, at } });
+            } else if let Some((from, to)) = e.get("drag").and_then(Value::as_array).and_then(|d| Some((point_of(d.first()?)?, point_of(d.get(1)?)?))) {
+                let button = e.get("button").and_then(Value::as_u64).unwrap_or(1) as u8;
+                let hold = hold.max(1);
+                events.push(Event { t, input: Input::Move(from) });
+                events.push(Event { t, input: Input::Button { button, down: true, at: from } });
+                for k in 1..hold {
+                    let f = k as f32 / hold as f32;
+                    let at = [(from[0] + (to[0] - from[0]) * f).round(), (from[1] + (to[1] - from[1]) * f).round()];
+                    events.push(Event { t: t + k, input: Input::Move(at) });
+                }
+                events.push(Event { t: t + hold, input: Input::Move(to) });
+                events.push(Event { t: t + hold, input: Input::Button { button, down: false, at: to } });
             } else if let Some(at) = point(e, "mouse") {
                 events.push(Event { t, input: Input::Move(at) });
             } else if let Some(name) = e.get("key").and_then(Value::as_str) {
@@ -118,6 +133,10 @@ mod tests {
         assert_eq!(s.events[1].input, Input::Button { button: 1, down: true, at: [10.0, 20.0] });
         assert_eq!(s.events[4].input, Input::Key { name: "d".into(), down: false });
         assert_eq!(s.end(), 30);
+        let d = Script::parse(r#"{"events": [{"t": 2, "drag": [[0, 0], [40, 20]], "hold": 4}]}"#).unwrap();
+        let moves: Vec<_> = d.events.iter().filter_map(|e| if let Input::Move(at) = e.input { Some((e.t, at)) } else { None }).collect();
+        assert_eq!(moves, vec![(2, [0.0, 0.0]), (3, [10.0, 5.0]), (4, [20.0, 10.0]), (5, [30.0, 15.0]), (6, [40.0, 20.0])]);
+        assert_eq!(d.events.last().unwrap().input, Input::Button { button: 1, down: false, at: [40.0, 20.0] });
         assert_eq!(grab_path(std::path::Path::new("x/r-client.png"), 30), std::path::PathBuf::from("x/r-client-t30.png"));
     }
 }

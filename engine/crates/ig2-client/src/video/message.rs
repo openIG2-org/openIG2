@@ -38,13 +38,47 @@ pub struct HeadClip {
     /// `AnimFile` and the wait clip (`AnimFile + 0x100`), from the last `TE` part read.
     pub anim: String,
     pub wait: String,
+    /// `SoundFile` (exe 0xd90bc0): `%04d_%02d.ogg` of the last `TE` part read, the speech `StartAnim` plays.
+    pub sound: String,
+    /// `UzenetFaj` (exe 0xd90ddc): the part's `#n` (1..=19, else 1), 0 without one.
+    pub face: i32,
     pub playback: Option<Playback>,
+}
+
+/// `PlayHalkAlienHang` exe 0x509120 (ELF 0x5a1470): the alien voice's index for the speaking clip `anim`
+/// (`AnimFile`), the human's empire `en`, the message's `UzenetekRandomKitol` `k` and `UzenetFaj` `face`; −1 none.
+pub fn alien_index(anim: &str, en: i32, k: i32, face: i32) -> i32 {
+    let mut idx = -1;
+    if matches!(en, 1 | 3 | 5) {
+        if anim.contains("pirate") {
+            idx = 10;
+        }
+        if anim.contains("trader") {
+            idx = 9;
+        }
+    }
+    if anim.contains("misc") && en != k - 1 {
+        idx = k - 1;
+    }
+    if face != 0 {
+        idx = face;
+    }
+    idx
+}
+
+/// The record of `Mes_Hangok[3..]` (`alienhangok/Alien-*.wav`) for an index, from the exe's jump table at 0x509228.
+pub fn alien_record(idx: i32) -> Option<u16> {
+    const REC: [u16; 19] = [11, 9, 3, 3, 1, 1, 2, 8, 7, 4, 15, 4, 0, 0, 4, 4, 12, 4, 10];
+    (idx != -1).then(|| if (1..=19).contains(&idx) { REC[idx as usize - 1] } else { 4 })
 }
 
 impl HeadClip {
     /// `GetTxtFileCommands` on a `TE` part: the clips of `(msg, part)` become `AnimFile`.
     pub fn part_read(&mut self, lists: &[ClipGroup], msg: u32, part: u32) {
         (self.anim, self.wait) = clip_names(lists, msg, part);
+        self.sound = format!("{msg:04}_{part:02}.ogg");
+        let face = lists.iter().find(|g| g.message_ids.contains(&msg)).and_then(|g| g.parts.iter().find(|p| p.part == part)).and_then(|p| p.face);
+        self.face = face.map_or(0, |f| if (1..=19).contains(&f) { f } else { 1 });
     }
 
     fn open(&mut self, install: &Install, name: &str, looping: bool) -> bool {
@@ -61,16 +95,15 @@ impl HeadClip {
         self.open(install, &name, true);
     }
 
-    /// `VegeAzElsoAnimnak`: from the speaking clip to the wait clip; none opens → the end clip.
-    pub fn wait(&mut self, install: &Install, table: &[(String, String)], k: i32, race: u8) {
+    /// `VegeAzElsoAnimnak`: from the speaking clip to the wait clip; none opens → the end clip. Returns whether the
+    /// end clip started (its sounds are the caller's).
+    pub fn wait(&mut self, install: &Install, table: &[(String, String)], k: i32, race: u8) -> bool {
         if self.akt == 0 {
             self.playback = None;
             self.akt = 1;
         }
         let name = if k > 0 { table.get(k as usize).map(|t| t.1.clone()).unwrap_or_default() } else { self.wait.clone() };
-        if !self.open(install, &name, true) {
-            self.end(install, race);
-        }
+        !self.open(install, &name, true) && self.end(install, race)
     }
 
     /// `StartAnim_EndOfMessage`: once, `misc/end_<race>.bik` for races 1, 3, 5, else `misc/end_x.bik`. Returns
@@ -95,6 +128,23 @@ impl HeadClip {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `PlayHalkAlienHang`'s picks: the clip's name, the story's race override, `#n`. Observed (speech probe,
+    /// 2026-10-23, `EN` 1): a pirate clip played `Mes_Hangok[7]`, `UzenetFaj` 17 `[15]`, a misc clip with race 5 `[6]`.
+    #[test]
+    fn alien_voices() {
+        assert_eq!(alien_index("messages/pirate/p01.bik", 1, 0, 0), 10);
+        assert_eq!(alien_index("messages/pirate/p01.bik", 2, 0, 0), -1);
+        assert_eq!(alien_index("messages/trader/k01.bik", 5, 0, 0), 9);
+        assert_eq!(alien_index("misc/race_04_loop.bik", 1, 5, 0), 4);
+        assert_eq!(alien_index("misc/race_04_loop.bik", 4, 5, 0), -1);
+        assert_eq!(alien_index("misc/race_04_loop.bik", 1, 0, 0), -1);
+        assert_eq!(alien_index("messages/trader/k01.bik", 1, 0, 17), 17);
+        let mes = |anim, k, face| alien_record(alien_index(anim, 1, k, face)).map(|r| 3 + r);
+        assert_eq!([mes("messages/pirate/probe", 0, 0), mes("messages/trader/probe", 0, 17), mes("misc/probe", 5, 0)], [Some(7), Some(15), Some(6)]);
+        assert_eq!([10, 9, 4, 17, 13, 20, 0].map(alien_record), [Some(4), Some(7), Some(3), Some(12), Some(0), Some(4), Some(4)]);
+        assert_eq!(alien_record(-1), None);
+    }
 
     #[test]
     fn names_from_the_list() {

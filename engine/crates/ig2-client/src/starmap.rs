@@ -511,6 +511,7 @@ struct Particle {
 }
 
 /// MSVC's `rand()` from `srand(seed)` (the exe's libc).
+#[derive(Debug, Clone)]
 pub(crate) struct MsvcRand(pub(crate) u32);
 
 impl MsvcRand {
@@ -948,7 +949,7 @@ impl View {
         for (verts, tex) in &a.sky {
             let start = dynamic.len() as u32;
             dynamic.extend_from_slice(verts);
-            draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+            draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
         let l = crate::scene::normalise([-1.0, -1.0, 1.0]);
         f.scene = Some(crate::render3d::Scene3d {

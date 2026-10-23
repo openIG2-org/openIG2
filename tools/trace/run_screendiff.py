@@ -6,10 +6,11 @@
 <screen>: starmap | colony:<planet> | info[:IDS] | messages | research | design | production:<planet> | transfer:<planet> | diplomacy |
 spy:<roster|report|verdict|applicant> (run_screen.py --spies stages the human's roster and one report) |
 (spy and research: --anim-frame F [--anim-closing] holds both at frame F of the opening/closing, --anim-mouse X,Y
-rests the pointer there: a tooltip; --spy-* are the same) |
+rests the pointer there: a tooltip; --spy-* are the same; diplomacy: --anim-frame F holds the opening at F) |
 fleetinfo | tanksinfo | rop | planetinfo | tax | autobuild | priority | planets (the starmap's menus on planet 71) |
 spacewar:<grab.json> (a battle-screen grab of `run_spwc.py --grab-ticks`: the exe's PNG beside the JSON, <save.sav> its
---state-out save; re/screens/spacewar.md §9). The tool
+--state-out save; re/screens/spacewar.md §9; with --script just `spacewar`, the battle staged by run_spwc.py --script,
+--exe-seq its out prefix). The tool
 1. captures ig2.exe on <save> at that screen (tools/trace/run_screen.py: Frida loads the save with the exe's
    `LoadSave`, asks for the screen through `AktKepKell`, pauses the clock, writes the exe's own save of the moment
    (`<name>-state.sav`) and grabs the 800 × 600 client area), unless --exe-png gives an earlier capture;
@@ -73,6 +74,15 @@ SCREENS = {
     "design": dict(kep=5, wait=600, script=True, client=["--screen", "design", "--ui-frames", "240"], regions=[
         TOPBAR, "top_panel=160,22,320,57", "list=5,92,124,234", "right_panel=499,92,136,234",
         "bottom_left=5,365,174,72", "bottom_right=471,365,166,72", "console=170,330,300,150", "hull=140,90,355,250"]),
+    # The trade screen (trade.md), part 1: the market at rest and browsed (the lists, the purchase line, the
+    # destinations, the deliveries, the bottom ticker); the chosen offer's hull model and card are part 2.
+    "trade": dict(kep=8, wait=1000, script=True, client=["--screen", "trade", "--ui-frames", "240"], regions=[
+        TOPBAR, "ships=100,45,200,95", "vehicles=342,45,200,95", "scroll_bars=298,60,40,92", "buy_line=130,190,330,45",
+        "deliveries=262,290,360,180", "ticker=30,455,575,18", "panels=60,20,520,270"]),
+    # The same with the exe's TradeCheat (every own planet a trade port) in both, for a purchase script.
+    "trade-buy": dict(kep=8, wait=1000, script=True, exe=["--trade-cheat"], client=["--screen", "trade", "--trade-cheat"], regions=[
+        TOPBAR, "ships=100,45,200,95", "vehicles=342,45,200,95", "scroll_bars=298,60,40,92", "buy_line=130,190,330,45",
+        "deliveries=262,290,360,180", "ticker=30,455,575,18", "panels=60,20,520,270"]),
     # The main menu (mainscr.md): as the exe boots (run_screen.py --boot), no save; the galaxy clouds and the dust are
     # random particles (statistically alike), the rings and labels are exact. Script only.
     "main": dict(kep=15, script=True, exe=["--boot", "--run"], client=["--screen", "main"], regions=[
@@ -99,7 +109,7 @@ SCREENS = {
         TOPBAR, "list=28,27,273,334", "model=338,27,273,152", "data=338,186,273,175", "scroll_bar=306,29,28,333", "exit=445,380,190,30"]),
     # The diplomacy screen (diplomacy.md): the exe opens with a 2.8 s animation, so it waits 1000 frames; the round
     # frame shows the leader's video and the cages turn (animated, judged loosely).
-    "diplomacy": dict(kep=6, wait=1000, client=["--screen", "diplomacy"], regions=[
+    "diplomacy": dict(kep=6, wait=1000, script=True, client=["--screen", "diplomacy"], regions=[
         TOPBAR, "info=455,30,172,100", "menu=21,349,155,101", "name=60,215,155,20", "ring=180,95,280,290",
         "left_heads=15,140,170,200", "right_heads=455,140,180,200"]),
     # The spy screen (spy.md): the exe waits 1200 frames for the opening and the carousel to settle, the client runs as
@@ -107,8 +117,9 @@ SCREENS = {
     "spy": dict(kep=7, wait=1200, exe=["--spies", "{mode}"], client=["--screen", "spy", "--ui-frames", "1200"], regions=[
         TOPBAR, "carousel=0,20,640,215", "left_panel=6,248,172,217", "right_panel=464,248,172,217", "ring=196,226,248,254"]),
     # The space battle (spacewar.md): the exe's grab comes from run_spwc.py --grab-ticks (a battle staged on quick.scn),
-    # the client draws the dumped slot (--battle).
-    "spacewar": dict(kep=11, client=["--screen", "spacewar", "--battle", "{grab}"], regions=[
+    # the client draws the dumped slot (--battle). With --script the exe side is run_spwc.py --script (its entry dump is
+    # the client's --battle).
+    "spacewar": dict(kep=11, script=True, client=["--screen", "spacewar", "--battle", "{grab}"], regions=[
         TOPBAR, "view=0,20,640,340", "console=210,360,220,120", "info_box=5,423,162,52", "radar=274,388,94,67",
         "weapons=595,20,45,440"]),
     # The radial menu, the planet's long info and its select menus, the production view's planet list (starmap.md
@@ -163,6 +174,9 @@ def clock_args(save):
         args += ["--acttime", repr(clocks["acttime"] / 1000)]
     if clocks.get("info_alap") is not None:
         args += ["--info-alap", repr(clocks["info_alap"])]
+    # The trade screen's delivery time `AktEtaDays` (unsaved, trade.md §2).
+    if clocks.get("trade_eta") is not None:
+        args += ["--trade-eta", str(clocks["trade_eta"])]
     return args
 
 
@@ -196,7 +210,16 @@ def sequence(a, kind, cfg, env, masks, planet):
     boot = "--boot" in cfg.get("exe", [])
     if boot:
         state = a.save
-    if not a.exe_seq:
+    if kind == "spacewar":
+        # run_spwc.py --script stages a battle on quick.scn: PREFIX.jsonl, PREFIX-entry.json (the client's --battle),
+        # PREFIX.sav, PREFIX-sounds.jsonl, PREFIX-t<T>.png, PREFIX-frames.json.
+        state, sounds = prefix + ".sav", prefix + "-sounds.jsonl"
+        if not a.exe_seq:
+            r = run([sys.executable, os.path.join(HERE, "run_spwc.py"), a.install, prefix + ".jsonl", "--script", a.script, "--sounds", sounds,
+                     "--state-out", state, "--steps", "100000", "--seconds", "560"])
+            if r.returncode or not os.path.exists(prefix + "-entry.json"):
+                sys.exit("the exe's script run failed")
+    elif not a.exe_seq:
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
                  "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []))
         if r.returncode:
@@ -206,7 +229,7 @@ def sequence(a, kind, cfg, env, masks, planet):
     by_t = {x["t"]: x for x in meta["frames"]}
     client = os.path.join(a.out, f"{name}-client.png")
     # The colony's `--colony-live` camera comes from the state save (the script's first frame).
-    args = [x.format(planet=planet) for x in cfg["client"] if x not in ("--ui-frames", "240")] + ["--script", a.script]
+    args = [x.format(planet=planet, grab=prefix + "-entry.json") for x in cfg["client"] if x not in ("--ui-frames", "240")] + ["--script", a.script]
     r = run([CLIENT, "--snapshot", client, "--save", state, "--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args + clock_args(state), env=env)
     if r.returncode:
         sys.exit("the client's script run failed")
@@ -218,10 +241,12 @@ def sequence(a, kind, cfg, env, masks, planet):
             out.append(dict(t=t, missing=True))
             continue
         rows = diff(exe_png, client_png, os.path.join(a.out, f"{name}-heat-t{t}.png"), cfg["regions"], masks, a)
-        out.append(dict(t=t, exe=by_t.get(t, {}).get("res"), ticks=by_t.get(t, {}).get("ticks"), regions=rows))
-    table = sound_table(sounds if not a.exe_seq else os.path.join(os.path.dirname(prefix), f"{name}-sounds.jsonl"))
+        f = by_t.get(t, {})
+        state_t = f.get("res") or {k: f[k] for k in ("battleSteps", "paused", "fade", "ikon", "mouse") if k in f}
+        out.append(dict(t=t, exe=state_t, ticks=f.get("ticks"), regions=rows))
+    table = sound_table(sounds if not a.exe_seq or kind == "spacewar" else os.path.join(os.path.dirname(prefix), f"{name}-sounds.jsonl"))
     result = dict(screen=kind, script=os.path.basename(a.script), save=os.path.basename(a.save), masks=masks, threshold=float(a.threshold),
-                  start=meta.get("start"), grabs=out, sounds=table)
+                  start=meta.get("start") or meta.get("entry"), grabs=out, sounds=table)
     with open(os.path.join(a.out, f"{name}-seq.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, indent=1)
     regions = [r.split("=")[0] for r in cfg["regions"]]
@@ -276,7 +301,7 @@ def main():
     cfg = SCREENS[kind]
     mode = arg if kind in ("spy", "info") else ""
     grab = arg if kind == "spacewar" else ""
-    if kind == "spacewar":
+    if kind == "spacewar" and not a.script:
         if not grab:
             sys.exit("spacewar:<grab.json>: the dump of run_spwc.py --grab-ticks")
         a.exe_png = a.exe_png or os.path.splitext(grab)[0] + ".png"
@@ -304,6 +329,10 @@ def main():
     if kind == "grwar" and a.arm:
         held_exe += ["--grwar-arm", str(a.arm)]
         name += f"-arm{a.arm}"
+    if kind == "diplomacy" and a.anim_frame is not None:
+        held = ["--anim-frame", str(a.anim_frame)]
+        held_exe = ["--dip-frame", str(a.anim_frame)]
+        name += f"-open{a.anim_frame:g}"
     if kind in ("spy", "research") and a.anim_frame is not None:
         flag = "--spy" if kind == "spy" else "--res"
         held = ["--anim-frame", str(a.anim_frame)] + (["--anim-closing"] if a.anim_closing else [])

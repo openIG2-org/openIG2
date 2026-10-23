@@ -42,10 +42,11 @@ const A = {
   TutorialActive: va(0xf6915d), TutorialPaused: va(0xf66f2a), TutorialEvent: va(0xf66f40),
   // SetIdoLelassit (0x541270) inputs: SP speed lock, MP program speed.
   SpeedLocked: va(0xbad0d4), ProgramSebesseg: va(0xbae54c),
+  AddWormhole: va(0x53aec0),
 };
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, speedPlan: [], ticks: 1500,
-  fuzz: false, fuzzRadar: false, fuzzApproach: false, mpRadar: false };
+  fuzz: false, fuzzRadar: false, fuzzApproach: false, mpRadar: false, mpMove: false };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
 
 let buf = [];
@@ -331,6 +332,51 @@ function mpRadar() {
   A.MultiPlayerMode.writeU8(1);
 }
 
+// --mp-move (fleet-movement.md §6.4): the other machine of a two-human MP game. On half the refresh ticks and a quarter
+// of the others, for the FRISSIT_Starmap call only: MultiPlayerMode 1, EN = another live empire made human
+// (PlayerKi 1), a random ProgramSebesseg (the MP slow-down), staged attacks on that EN (as --fuzz-approach) on
+// refresh ticks. Once at the start two wormholes are opened with the exe's AddWormhole and revealed (one end of the
+// second stays hidden), near live fleets (quick.scn's starmap starts with traders only). Everything is restored in onLeave, after the snapshot.
+const addWormhole = new NativeFunction(A.AddWormhole, 'int', ['int', 'int', 'int', 'int'], 'mscdecl');
+let wormholesMade = false;
+function makeWormholes() {
+  wormholesMade = true;
+  const fl = A.Flottak.readPointer(), nf = A.FlottaCount.readS32();
+  const pts = [];
+  for (let i = 1; i <= nf; i++) {
+    const f = fl.add(0x80 * i), o = f.add(0x15).readU8();
+    if (o !== 0xff) pts.push([f.add(0x30).readFloat(), f.add(0x34).readFloat()]);
+  }
+  for (let k = 0; k < 2 && pts.length; k++) {
+    const [x, y] = pts[rnd(pts.length)], [u, v] = pts[rnd(pts.length)];
+    const w = addWormhole((x + rnd(20) - 10) | 0, (y + rnd(20) - 10) | 0, (u + rnd(40) - 20) | 0, (v + rnd(40) - 20) | 0);
+    if (w === 0) break;
+    const r = A.Wormhole.add(0x1c * w);
+    r.add(8).writeU8(1);
+    if (k === 0) r.add(0x14).writeU8(1);
+  }
+}
+function mpMove(refresh) {
+  if (!wormholesMade) makeWormholes();
+  const en = A.EN.readS32(), cand = [];
+  for (let e = 1; e <= 8; e++) if (e !== en && A.BirodalomEl.add(e).readU8()) cand.push(e);
+  if (!cand.length) return null;
+  const e2 = cand[rnd(cand.length)];
+  const saved = { en, ki: A.PlayerKi.add(e2).readU8(), e2, mp: A.MultiPlayerMode.readU8(), ps: A.ProgramSebesseg.readS32() };
+  A.PlayerKi.add(e2).writeU8(1);
+  A.EN.writeS32(e2);
+  A.MultiPlayerMode.writeU8(1);
+  A.ProgramSebesseg.writeS32(1 + rnd(4));
+  if (refresh && rnd(3) !== 0) fuzzApproach();
+  return saved;
+}
+function mpRestore(s) {
+  A.EN.writeS32(s.en);
+  A.PlayerKi.add(s.e2).writeU8(s.ki);
+  A.MultiPlayerMode.writeU8(s.mp);
+  A.ProgramSebesseg.writeS32(s.ps);
+}
+
 let recorded = 0, rnds = null, ticks = 0;
 Interceptor.attach(A.FRISSIT_Starmap, {
   onEnter() {
@@ -353,6 +399,7 @@ Interceptor.attach(A.FRISSIT_Starmap, {
     this.withShips = ido2 % 10 === 1;
     this.mp = cfg.mpRadar && ido2 % 10 === 1 && rnd(2) === 0;
     if (this.mp) mpRadar();
+    this.move = cfg.mpMove && rnd(ido2 % 10 === 1 ? 2 : 4) === 0 ? mpMove(ido2 % 10 === 1) : null;
     this.before = snapshot(this.withShips);
     this.planets = planets();
     this.rel = relations();
@@ -362,6 +409,7 @@ Interceptor.attach(A.FRISSIT_Starmap, {
     if (!this.on) return;
     const after = snapshot(false);
     if (this.mp) A.MultiPlayerMode.writeU8(0);
+    if (this.move) mpRestore(this.move);
     if (this.unlock) A.SpeedLocked.writeS32(0);
     emit({ k: 'tick', seq: recorded++, before: this.before, after, planets: this.planets,
       planetsAfter: planets(), relations: this.rel, rnds });

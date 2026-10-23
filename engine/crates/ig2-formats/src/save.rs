@@ -200,20 +200,37 @@ pub struct SaveGame {
 // ------------------------------------------------------------------------------------------------
 // Stream walker
 
-struct Walker<'a> {
-    body: &'a [u8],
+/// The chunk source of [`SaveGame::write_stream`]: `(name, len)` → the chunk's `len` bytes.
+pub type ChunkSource<'s> = dyn FnMut(&str, usize) -> Vec<u8> + 's;
+
+/// Walks the stream with the schema: reads `body` (parse), or with a `source` writes each chunk into `body` as
+/// `LoadSaveVariable` saves it (write).
+struct Walker<'s> {
+    body: Vec<u8>,
     pos: usize,
     chunks: Vec<Chunk>,
+    source: Option<&'s mut ChunkSource<'s>>,
 }
 
-impl<'a> Walker<'a> {
+impl Walker<'_> {
     /// The next chunk, whose length must be `len` (`LoadSaveVariable` writes nothing for `len <= 0`).
-    fn take(&mut self, name: impl Into<String>, len: i64) -> Result<&'a [u8]> {
+    fn take(&mut self, name: impl Into<String>, len: i64) -> Result<Vec<u8>> {
         if len <= 0 {
-            return Ok(&[]);
+            return Ok(Vec::new());
         }
         let name = name.into();
         let at = self.pos;
+        if let Some(src) = self.source.as_mut() {
+            let data = src(&name, len as usize);
+            if data.len() != len as usize {
+                return Err(format_err(FMT, format!("{name}: the source gave {} bytes, expected {len}", data.len())));
+            }
+            self.body.extend_from_slice(&(len as i32).to_le_bytes());
+            self.body.extend_from_slice(&data);
+            self.pos = self.body.len();
+            self.chunks.push(Chunk { name, range: at + 4..self.pos });
+            return Ok(data);
+        }
         let Some(head) = self.body.get(at..at + 4) else {
             return Err(format_err(FMT, format!("{name}: stream ends at {at:#x}")));
         };
@@ -225,6 +242,7 @@ impl<'a> Walker<'a> {
         let Some(data) = self.body.get(range.clone()) else {
             return Err(format_err(FMT, format!("{name}: chunk at {at:#x} runs past the stream")));
         };
+        let data = data.to_vec();
         self.pos = range.end;
         self.chunks.push(Chunk { name, range });
         Ok(data)
@@ -236,7 +254,7 @@ impl<'a> Walker<'a> {
         Ok(i32s(self.take(name, 4 * n as i64)?))
     }
     /// A chunk whose length is the previous chunk's value (strings).
-    fn sized(&mut self, name: &str) -> Result<&'a [u8]> {
+    fn sized(&mut self, name: &str) -> Result<Vec<u8>> {
         let n = self.i32(format!("{name}.len"))?;
         self.take(name, n as i64)
     }
@@ -249,8 +267,8 @@ impl<'a> Walker<'a> {
     }
 }
 
-fn i32s(b: &[u8]) -> Vec<i32> {
-    b.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()
+fn i32s(b: impl AsRef<[u8]>) -> Vec<i32> {
+    b.as_ref().chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()
 }
 fn rd_i32(b: &[u8], o: usize) -> i32 {
     i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
@@ -297,15 +315,22 @@ impl SaveGame {
 
     /// Walk a decompressed stream (`LoadSaveVariables`, exe 0x544220).
     pub fn parse_stream(body: Vec<u8>, multiplayer: bool) -> Result<Self> {
-        let (fields, chunks, used) = {
-            let mut w = Walker { body: &body, pos: 0, chunks: Vec::new() };
-            let f = walk(&mut w, multiplayer)?;
-            (f, w.chunks, w.pos)
-        };
+        let mut w = Walker { body, pos: 0, chunks: Vec::new(), source: None };
+        let fields = walk(&mut w, multiplayer)?;
+        let Walker { body, pos: used, chunks, .. } = w;
         if body[used..].iter().any(|&b| b != 0) {
             // The padding is the game's buffer tail (fresh allocation); nonzero bytes mean a schema mismatch.
             return Err(format_err(FMT, format!("{} unparsed nonzero bytes after {used:#x}", body[used..].iter().filter(|&&b| b != 0).count())));
         }
+        Ok(Self { header: None, multiplayer, body, used, chunks, ..fields })
+    }
+
+    /// Write a stream (no padding) as `LoadSaveVariables` saves it: every chunk in schema order comes from
+    /// `source(name, len)`; the counts it returns size the later chunks, as in a parse.
+    pub fn write_stream(multiplayer: bool, source: &mut ChunkSource<'_>) -> Result<Self> {
+        let mut w = Walker { body: Vec::new(), pos: 0, chunks: Vec::new(), source: Some(source) };
+        let fields = walk(&mut w, multiplayer)?;
+        let Walker { body, pos: used, chunks, .. } = w;
         Ok(Self { header: None, multiplayer, body, used, chunks, ..fields })
     }
 

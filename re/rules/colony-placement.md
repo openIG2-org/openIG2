@@ -19,7 +19,8 @@ Callers: every scripted/automatic new building goes through `EpuletNewSearchLoca
 (colonisation's colony hub, autobuild, AI build orders, story/scenario buildings; ~40 call sites in the ELF). The exe
 calls `LocateSuitableLocation` from three places: `EpuletNewSearchLocation`, `EpuleteketJoHelyreTesz` (§6) and a story
 helper 0x5c95b0 (`Story_Check`, `st_Elem`).
-The human's own placement in the colony screen is a separate UI path (not covered here).
+The human's own placement in the colony screen: the build cursor's search (§8) over the screen's grid, then the order 0x1f
+(`re/screens/colony.md` §9) runs `EpuletNewSearchLocation(p, t, false, 0, x, y)` from the cursor's spot (§3).
 
 ## 1. Data
 - **Grid** `DecodedAlloc` (ELF 0x11e99a0, exe 0x9a1ea0): `u8[200 × 200]`, index `y × 200 + x`. Values:
@@ -109,10 +110,47 @@ The search sees the ground units on the map (§1) and the buildings not yet re-p
 The vehicle pass (§1, §2.3) now gets the planet's battlefield (`SaveState::vehicle_cells` =
 `ground::Field::placed_cells`) in the economy step and colonisation arrivals; the refit (§6) is verified with it in
 `traces/2026-10-16-refit.md` (10 fuzzed refits, 2,060 buildings, 569 moved; mutations of the vehicle pass, the start
-hint, `BuildingBuilt` and the damage reset are each caught). Open: the human's own placement on the colony screen.
+hint, `BuildingBuilt` and the damage reset are each caught). The build cursor's search (§8) is verified in
+`traces/2026-10-23-build-cursor.md`.
 
 `traces/2026-10-15-placement.md`: the colony-side replays place every new building with the port
 (`ig2-sim::placement`): 60 colonisation hubs and 161 autobuild purchases land exactly where the game put
 them, and the 9 "no room" outcomes match. Mutations caught 6/9; the per-step centroid truncation and the
 15..=184 edge band rest on the asm (no fractional positions or edge placements in the traces), and the
 interior's frame-cell test is logically redundant (§4).
+
+## 8. The build cursor (`LocateActBuildingSuitableLocation`; the human's placement)
+Evidence (ELF / exe):
+| Function | ELF | exe | Role |
+|---|---|---|---|
+| `LocateActBuildingSuitableLocation(&x, &y)` | 0x4bc820 | 0x486460 | the cursor's search (`ShowColony` 0x49f130 calls it at 0x4a0089 and 0x4a1225) |
+| `CheckAllocation(x, y, w, h)` | 0x4bc2d0 | 0x45fba0 | `DecodedCheckAllocation` (§4) over `MapAlloc` instead of `DecodedAlloc` |
+| `Allocate(x, y, w, h, ring)` | 0x4bf6a0 | 0x45f3d0 | `DecodedAllocate` (§2) into `MapAlloc` |
+| `RemoveAllocation(x, y, w, h, ring)` | 0x4bf8d0 | 0x497960 | the reverse: ring cells `− 0x20`, interior `:= 0` (and `hombar = 10` when `w == 6`) |
+| `Build3dBuilding` / `Remove3dBuilding` | 0x4ca0b0 / 0x4ca7c0 | 0x49c780 / 0x497760 | keep `MapAlloc` current on the shown planet |
+
+### 8.1 The grid `MapAlloc` (ELF 0x11dfd60, exe 0x998260; `u8[200 × 200]`)
+`Init3dColony` (exe 0x47d520, from `Colony_Belep`) builds it like §2.1–§2.2 without the centroid and the vehicles:
+`Decode2LargeMap(m, MapAlloc, false, p)`, then `Allocate((int)x, (int)y, w, h, true)` per building in slot order. While the
+screen shows the planet, `EpuletNew` (when `AktKep == 3`, `p == AktPlanet`, no `Atlepes`) runs `Build3dBuilding` →
+`Allocate`, and `EpuletDelete` (`AktKep == 3`, `p == AktPlanet`) runs `Remove3dBuilding` → `RemoveAllocation` when the
+slot has a 3D model. `RecreateRoadSystem` only sets bit 8 on road cells and clears it again at its end; the landing zone
+reads the grid. As footprints never share an interior cell with terrain or another footprint (§4), the kept grid equals a
+fresh build of the current buildings; a building made during a screen transition (`Atlepes`) or a terrain change while
+the screen is up would leave it stale until the next entry [edge case, not modelled]. Port: `PlacementRules::screen_grid`.
+
+### 8.2 The search
+For every battlefield unit of `AktPlanet` that is used and on the map (the filter of §1; the ELF -O0 build tests only the
+used flag), `MapAlloc[y·200 + x] += 8` at the unit's own cell `(+0x1a0, +0x1a4)` (no bounds check), then
+`LocatePos(CheckAllocation, x, y, &x, &y, w, h)` (§5) with the footprint of `AktEpuletTipus`, then the `+8`s are taken
+back. Differences from the order's search (§2–§3): no building centroid (the start is the pointer's cell), and a unit
+blocks its own cell `(x, y)` (8: caught by both the frame test's `& 0x1f` and the interior test), where
+`LocateSuitableLocation`'s 1 × 1 `DecodedAllocate` blocks `(x, y − 1)`. So the order can move a building off the spot the
+cursor showed, next to a unit [original behaviour]. Port: `PlacementRules::locate_cursor`.
+
+### 8.3 In `ShowColony`
+With the build cursor up: the pointer's world point `(wx, wy)` (the 3D pick) is kept as `ColonyActBPosX/Y = (int)wx,
+(int)wy`; each frame `Real2Grid((f32)ColonyActBPosX, (f32)ColonyActBPosY)` is searched; no spot → `InvalidBuildingPosition`,
+the cursor model hidden, `Epitheto = 0`; else the spot is `AktBGridXSarga/YSarga`, where the half-transparent model
+stands. A second search after `Update3D` from `Real2Grid(wx, wy)` (untruncated) only sets `InvalidBuildingPosition`.
+`colony_start_build` sends `(AktBGridXSarga, AktBGridYSarga)` with 0x1f.

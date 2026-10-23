@@ -1,8 +1,9 @@
 //! `FRISSIT_MI_DESIGN(e, all)` (exe 0x50abf0): the AI's design per slot, with `TervNew`, `TervClear` and
 //! `TervAutoDesign` (`re/rules/ai-empire.md` §10).
 
-use super::{AiEvent, AiHooks, AiState, World, BEST, DESIGN_SLOTS, SPECIAL};
-use crate::spacewar::Design;
+use super::{AiEvent, AiHooks, AiRules, AiState, World, BEST, DESIGN_SLOTS, SPECIAL};
+use crate::colony_side::TechTable;
+use crate::spacewar::{Design, DesignRules};
 
 /// Hull slots 1..=24 (`Alapok[1..25]`).
 const HULL_SLOTS: usize = DESIGN_SLOTS - 1;
@@ -41,7 +42,7 @@ impl World<'_> {
     }
 
     /// `TervUjraSzamol(e, d, false, true)` (`space-combat.md` §2.4).
-    fn recompute_design(&mut self, e: usize, d: usize) {
+    pub(crate) fn recompute_design(&mut self, e: usize, d: usize) {
         let race = self.race(e);
         let rules = &self.rules.design;
         if let Some(x) = self.spy.combat.designs.get_mut(e).and_then(|t| t.get_mut(d)) {
@@ -101,82 +102,14 @@ impl World<'_> {
         self.events.push(AiEvent::DesignNamed { empire: e as u8, design: d, slot: h, special: false });
     }
 
-    /// `TalalmanyRarakhato(h, t, k, min, e, pt)` (§10.3): tech `t` fits slot `k` of hull `h` for pod table `pt`.
-    fn tech_fits(&self, h: usize, t: usize, k: usize, min: u8, e: usize, pt: i16) -> bool {
-        if (0xa1..=0xa9).contains(&t) && self.ctx.design_debug {
-            return true;
-        }
-        if self.spy.colony.tech.status(t, e) < min {
-            return false;
-        }
-        let rules = &self.rules.design;
-        let table = rules.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
-        let Some(&kind) = rules.pod_slot_types.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1)))
-        else {
-            return false;
-        };
-        self.rules.pods.iter().find(|p| p.id == kind).is_some_and(|p| p.techs.contains(&(t as i32)))
-    }
-
-    /// `GetMaxRarakhato(pt, h, k)`.
-    fn slot_max(&self, pt: i16, h: usize, k: usize) -> i32 {
-        let table = self.rules.design.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
-        self.rules.pod_slot_max.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1))).copied().unwrap_or(0)
-    }
-
     /// `TervAutoDesign(e, d, variant)` (§10.3): the best tech the empire has for every slot, as many as fit.
-    fn auto_design(&mut self, e: usize, d: usize, variant: usize) {
+    pub(crate) fn auto_design(&mut self, e: usize, d: usize, variant: usize) {
         let Some(x) = self.des(e, d as i32) else { return };
         let mut raw = x.to_bytes();
-        let race = match self.race(e) {
-            r @ 0..=8 => r as usize,
-            _ => 1,
-        };
-        let hull = rd_i32(&raw, 0x44);
-        let pt = rd_i16(&raw, 0x40);
-        let hu = hull.max(0) as usize;
-        let hull_tech = self.rules.design.hulls.get(hu).map_or(0, |h| h.tech);
-        let tech = &self.spy.colony.tech;
-        let allow = |table: &[u8; 18]| table[9 * variant + race] != 0;
-        let mut k = 1;
-        while k as i32 <= self.rules.design.slot_count(pt, hu) {
-            raw[0x50 + k] = 0;
-            let (mut best, mut pick) = (-1000, 0);
-            for t in 1..=192 {
-                if tech.status(t, e) != 5 {
-                    continue;
-                }
-                if e == self.spy.ctx.human_empire && t == 0x12 && hull_tech == 5 {
-                    self.events.push(AiEvent::Tutorial { id: 0xb });
-                }
-                let mut s = tech.byte(t, 0x3c + race) as i32 + 100;
-                if variant != 0 && GROUND_HULLS.contains(&hull_tech) {
-                    s = self.rules.ground_priority.get(t * 9 + race).copied().unwrap_or(0) as i32 + 100;
-                }
-                if variant == 0 && (0x1a..=0x1d).contains(&t) {
-                    s -= 100;
-                }
-                if !allow(&SHIELDS_OK) && (0x31..=0x36).contains(&t) {
-                    s -= 100;
-                }
-                if !allow(&T41_OK) && (0x41..=0x43).contains(&t) {
-                    s -= 100;
-                }
-                if !allow(&T44_OK) && (0x44..=0x45).contains(&t) {
-                    s -= 100;
-                }
-                if s > 0 && self.tech_fits(hu, t, k, 5, e, pt) && best <= s {
-                    best = s;
-                    pick = t;
-                }
-            }
-            if pick > 0 {
-                raw[0x50 + k] = pick as u8;
-            }
-            let have = tech.byte(raw[0x50 + k] as usize, 0x24);
-            let max = self.slot_max(pt, hu, k);
-            raw[0x5d + k] = if max < have as i32 { max as u8 } else { have };
-            k += 1;
+        let human = e == self.spy.ctx.human_empire;
+        let tutorial = auto_design_record(self.rules, &self.spy.colony.tech, self.ctx.design_debug, &mut raw, e, self.race(e), variant, human);
+        for _ in 0..tutorial {
+            self.events.push(AiEvent::Tutorial { id: 0xb });
         }
         self.edit_design(e, d, |r| *r = raw);
     }
@@ -195,6 +128,96 @@ impl World<'_> {
             }
         }
     }
+}
+
+/// `TalalmanyRarakhato(h, t, k, min, e, pt)` (`ai-empire.md` §10.3, exe 0x4b6ca0): tech `t` fits slot `k` of hull
+/// `h` for pod table `pt` (the record's `+0x40`) when `e` has it at status `min` or better (the 0xa1..=0xa9 debug
+/// techs always with `DesignDebug`).
+#[allow(clippy::too_many_arguments)]
+pub fn tech_fits(rules: &AiRules, tech: &TechTable, debug: bool, h: usize, t: usize, k: usize, min: u8, e: usize, pt: i16) -> bool {
+    if (0xa1..=0xa9).contains(&t) && debug {
+        return true;
+    }
+    if tech.status(t, e) < min {
+        return false;
+    }
+    let table = rules.design.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
+    let Some(&kind) = rules.design.pod_slot_types.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1)))
+    else {
+        return false;
+    };
+    rules.pods.iter().find(|p| p.id == kind).is_some_and(|p| p.techs.contains(&(t as i32)))
+}
+
+/// `GetMaxRarakhato(pt, h, k)` (exe 0x4b42f0): how many units slot `k` of hull `h` takes.
+pub fn slot_max(rules: &AiRules, pt: i16, h: usize, k: usize) -> i32 {
+    let table = rules.design.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
+    rules.pod_slot_max.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1))).copied().unwrap_or(0)
+}
+
+/// `TervAutoDesign(e, d, variant)` (§10.3, exe 0x541920) on a record: the best tech `e` (of race `race`) has for
+/// every slot, as many as fit. Returns how many times it raises the tutorial event 0xb (`human`'s laser on the first
+/// hull, once per slot).
+#[allow(clippy::too_many_arguments)]
+pub fn auto_design_record(rules: &AiRules, tech: &TechTable, debug: bool, raw: &mut [u8; 0x84], e: usize, race: u8, variant: usize, human: bool) -> usize {
+    let race = match race {
+        r @ 0..=8 => r as usize,
+        _ => 1,
+    };
+    let hull = rd_i32(raw, 0x44);
+    let pt = rd_i16(raw, 0x40);
+    let hu = hull.max(0) as usize;
+    let hull_tech = rules.design.hulls.get(hu).map_or(0, |h| h.tech);
+    let allow = |table: &[u8; 18]| table[9 * variant + race] != 0;
+    let mut tutorial = 0;
+    let mut k = 1;
+    while k as i32 <= rules.design.slot_count(pt, hu) {
+        raw[0x50 + k] = 0;
+        let (mut best, mut pick) = (-1000, 0);
+        for t in 1..=192 {
+            if tech.status(t, e) != 5 {
+                continue;
+            }
+            if human && t == 0x12 && hull_tech == 5 {
+                tutorial += 1;
+            }
+            let mut s = tech.byte(t, 0x3c + race) as i32 + 100;
+            if variant != 0 && GROUND_HULLS.contains(&hull_tech) {
+                s = rules.ground_priority.get(t * 9 + race).copied().unwrap_or(0) as i32 + 100;
+            }
+            if variant == 0 && (0x1a..=0x1d).contains(&t) {
+                s -= 100;
+            }
+            if !allow(&SHIELDS_OK) && (0x31..=0x36).contains(&t) {
+                s -= 100;
+            }
+            if !allow(&T41_OK) && (0x41..=0x43).contains(&t) {
+                s -= 100;
+            }
+            if !allow(&T44_OK) && (0x44..=0x45).contains(&t) {
+                s -= 100;
+            }
+            if s > 0 && tech_fits(rules, tech, debug, hu, t, k, 5, e, pt) && best <= s {
+                best = s;
+                pick = t;
+            }
+        }
+        if pick > 0 {
+            raw[0x50 + k] = pick as u8;
+        }
+        let have = tech.byte(raw[0x50 + k] as usize, 0x24);
+        let max = slot_max(rules, pt, hu, k);
+        raw[0x5d + k] = if max < have as i32 { max as u8 } else { have };
+        k += 1;
+    }
+    tutorial
+}
+
+/// `TervUjraSzamol(e, d, false, true)` (`space-combat.md` §2.4) on a record of an empire of race `race`.
+pub fn recompute_record(rules: &DesignRules, race: u8, raw: &mut [u8; 0x84]) {
+    let mut x = Design::from_bytes(raw);
+    x.recompute(rules, race, true);
+    *raw = x.to_bytes();
 }
 
 impl AiState {

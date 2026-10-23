@@ -1,0 +1,24 @@
+{
+ "screen": "design",
+ "note": "The design screen, editing (re/screens/design.md §6, §7): the second design (a list press), modify (acting on the press, with the click), auto, clear, auto again, OK held into the pay-or-keep popup and released on 'keep the old units' (0x33 mode 3, the copy flag), new held into the hull popup and released on its last hull (the name input starts; the tracer's key events don't reach its text input, so no name is typed), Enter, OK (0x33 mode 1), delete held into the sale popup and released on it (0x34), redesign (the button: the tracer's key events carry no text character, which r needs), Esc (cancel), F2 (the closing). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 100, "press": [40, 121]},
+  {"t": 150, "press": [320, 420]},
+  {"t": 200, "press": [320, 420]},
+  {"t": 240, "press": [320, 449]},
+  {"t": 280, "press": [320, 420]},
+  {"t": 320, "press": [320, 367], "hold": 30},
+  {"t": 330, "mouse": [345, 340]},
+  {"t": 420, "press": [320, 367], "hold": 30},
+  {"t": 430, "mouse": [340, 359]},
+  {"t": 490, "key": "enter"},
+  {"t": 520, "press": [320, 367]},
+  {"t": 600, "press": [320, 449], "hold": 30},
+  {"t": 610, "mouse": [345, 446]},
+  {"t": 700, "press": [320, 394]},
+  {"t": 740, "key": "escape"},
+  {"t": 800, "key": "f2"}
+ ],
+ "grabs": [140, 170, 220, 260, 300, 340, 400, 440, 465, 500, 560, 620, 660, 720, 760, 820],
+ "tail": 80
+}

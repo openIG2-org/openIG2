@@ -1040,6 +1040,23 @@ impl ColonyWorld {
         }
     }
 
+    /// The display refresh of every planet, `FRISSIT_Planet(false, 0)` (colony-economy.md §3): the prologue's
+    /// resets and global-morale decay, then each owned planet's building pass (§4), production (§8) and totals.
+    pub fn display_refresh(&mut self, rules: &SideRules, ctx: &mut EconomyContext) {
+        self.reset_totals(ctx);
+        colony::decay_global_morale(ctx);
+        for p in 1..self.planets.len() {
+            if self.planets[p].owner == 0 {
+                continue;
+            }
+            let human = ctx.human_controlled[self.planets[p].owner as usize];
+            let fx = colony::building_pass(&mut self.planets[p], &rules.colony, human);
+            colony::production_capacity(&mut self.planets[p], &fx, &rules.colony, ctx);
+            self.occupied[p] = fx.occupied;
+            self.add_totals(p, &fx, rules, ctx);
+        }
+    }
+
     /// The whole economy step `FRISSIT_Planet(true, 0)` with its side systems (colony-economy.md §3,
     /// colony-side.md §10). Reports are index-aligned with `planets`.
     pub fn economy_step(&mut self, rules: &SideRules, ctx: &mut EconomyContext, rng: &mut Streams, place: Placement) -> (Vec<PlanetReport>, Vec<SideEvent>) {

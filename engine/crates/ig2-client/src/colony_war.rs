@@ -10,6 +10,7 @@ use ig2_net::Command;
 use ig2_sim::game::ColonyOrder;
 use ig2_sim::ground::{flag, weapon, GroundMap, GroundOrder};
 
+use crate::audio::speech::colony as speech;
 use crate::colony::{ColonySnap, Mark, MarkAt, MarkTex, UnitView, View};
 use crate::font::{Align, Font, Virtual};
 use crate::render::{Blend, Frame, Instance, TexId};
@@ -103,6 +104,9 @@ pub struct WarOutcome {
     pub taken: bool,
     /// `AktEpulet = 0`: a unit took the selection.
     pub drop_building: bool,
+    /// `ColonySpeaker.Play(line, kind)`: a unit's voice for the selection, a move or an attack (ground-combat.md
+    /// §11.12).
+    pub voice: Option<(i32, i32)>,
 }
 
 /// The war input state.
@@ -352,6 +356,8 @@ impl WarUi {
             (self.cell.0 - x).abs() <= 1 && (self.cell.1 - y).abs() <= 1
         });
         let attack = |target: i32, out: &mut WarOutcome| {
+            // `AttackWithSelected` (exe 0x45f520): `GetSelected(0)`'s voice first, whoever's it is, unless a turret.
+            out.voice = self.selected.first().and_then(|&s| c.unit(s)).filter(|u| u.flags & flag::TURRET == 0).map(|u| (u.slot as i32 % 3 + 1, speech::ATTACK));
             for u in self.chosen(c).filter(|u| u.owner == c.en && u.flags & 6 == 0) {
                 out.commands.push(order(c, GroundOrder::Target { unit: u.slot as i32, target }));
             }
@@ -360,9 +366,15 @@ impl WarUi {
         // while `TutorialPaused`.
         let move_to = |out: &mut WarOutcome| {
             if !ctrl && !c.tutorial_paused {
+                // `MoveSelectedG` (inlined at exe 0x48be70): the voice of the last unit sent that isn't a turret.
+                let mut last = None;
                 for u in self.chosen(c).filter(|u| u.owner == c.en && u.flags & 4 == 0) {
                     out.commands.push(order(c, GroundOrder::Move { unit: u.slot as i32, x: self.cell.0, y: self.cell.1 }));
+                    if u.flags & flag::TURRET == 0 {
+                        last = Some(u.slot as i32);
+                    }
                 }
+                out.voice = last.map(|s| (s % 3 + 1, speech::MOVE));
             }
         };
         // exe 0x47b350: a foreign unit (an own one with Ctrl) is attacked unless Alt; else a building (foreign planet,
@@ -428,8 +440,17 @@ impl WarUi {
             out.commands.push(order(c, GroundOrder::AirStrike { x: self.cell.0, y: self.cell.1, kind: self.armed as i32 - 1 }));
             self.armed = 0;
             out.taken = true;
+        } else if left && in_view {
+            // `Colony_Main` (ELF 0x4dc4c7): the left release on the view with no strike armed.
+            out.voice = self.selection_voice(c);
         }
         out
+    }
+
+    /// `WF::GetSelected(0)` when it is an own unit that isn't a mine: `ColonySpeaker`'s line `sel % 3 + 1`.
+    fn selection_voice(&self, c: &WarCtx) -> Option<(i32, i32)> {
+        let u = c.unit(*self.selected.first()?)?;
+        (u.owner == c.en && u.flags & flag::MINE == 0).then_some((u.slot as i32 % 3 + 1, speech::SELECTION))
     }
 
     /// The war's keys (`ColonyKeyboardHandler`): Ctrl+4..9 keep a group, 4..9 call it back, S stops, `a` selects
@@ -464,6 +485,8 @@ impl WarUi {
                 for (s, on) in units {
                     self.select(c, s, on);
                 }
+                // `ColonyKeyboardHandler` (ELF 0x4ddb61).
+                out.voice = self.selection_voice(c);
             }
             _ => return out,
         }
@@ -825,10 +848,14 @@ mod tests {
         w.key(&c, WarKey::All);
         assert_eq!(w.selected, BTreeSet::from([0, 1, 2]));
         // Right on the enemy: 0x24 for each own selected unit; on the ground: 0x22; with Shift: 0x23.
-        let o = orders(&w.press(&c, [220.0, 200.0], false, true));
-        assert_eq!(o, (0..3).map(|u| GroundOrder::Target { unit: u, target: 3 }).collect::<Vec<_>>());
-        let o = orders(&w.press(&c, [400.0, 300.0], false, true));
-        assert_eq!(o, (0..3).map(|u| GroundOrder::Move { unit: u, x: 50, y: 60 }).collect::<Vec<_>>());
+        // The voices (ground-combat.md §11.12): the attack `GetSelected(0)`'s (unit 0: line 1, kind 2), the move the last
+        // unit sent's (unit 2: line 3, kind 0; ig2.exe, quick-1.sav planet 17: 0x22 last for unit 12 → line 1).
+        let out = w.press(&c, [220.0, 200.0], false, true);
+        assert_eq!(out.voice, Some((1, 2)));
+        assert_eq!(orders(&out), (0..3).map(|u| GroundOrder::Target { unit: u, target: 3 }).collect::<Vec<_>>());
+        let out = w.press(&c, [400.0, 300.0], false, true);
+        assert_eq!(out.voice, Some((3, 0)));
+        assert_eq!(orders(&out), (0..3).map(|u| GroundOrder::Move { unit: u, x: 50, y: 60 }).collect::<Vec<_>>());
         w.mods.shift = true;
         let o = orders(&w.press(&c, [400.0, 300.0], false, true));
         assert_eq!(o[0], GroundOrder::Waypoint { unit: 0, x: 50, y: 60 });

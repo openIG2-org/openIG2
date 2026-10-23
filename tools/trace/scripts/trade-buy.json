@@ -1,0 +1,18 @@
+{
+ "screen": "trade",
+ "note": "The trade screen with the exe's TradeCheat (run_screen.py / ig2-client --trade-cheat; re/screens/trade.md §13): the opening (screen19), the first ship row picked (Click1), plus twice (Click1 each), the destination button held while the pointer rests on the list's second row and let go on the button (the last row hovered is taken), OK (fires on its release: message 0x51), the deliveries panel sliding in, F2 (scrn19ki, the closing). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 200, "press": [150, 67]},
+  {"t": 230, "press": [220, 222]},
+  {"t": 240, "press": [220, 222]},
+  {"t": 279, "mouse": [370, 222]},
+  {"t": 280, "press": [370, 222], "hold": 20},
+  {"t": 290, "mouse": [400, 208]},
+  {"t": 330, "mouse": [272, 222]},
+  {"t": 331, "press": [272, 222]},
+  {"t": 470, "mouse": [320, 120]},
+  {"t": 480, "key": "f2"}
+ ],
+ "grabs": [150, 205, 245, 295, 320, 340, 400, 460, 500, 540],
+ "tail": 20
+}

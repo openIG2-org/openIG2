@@ -35,6 +35,7 @@ recv('config', (m) => {
   if (cfg.ropMenu || cfg.menu) hookMenus();
   if (cfg.spyFrame !== null) hookSpyFrame();
   if (cfg.resFrame !== null && cfg.resFrame !== undefined) hookResFrame();
+  if (cfg.dipFrame !== null && cfg.dipFrame !== undefined) hookDipFrame();
   if (cfg.lightProbe) hookLightProbe();
   if (cfg.verdict) hookVerdict();
   if (cfg.hide) hideInfoPlanet(cfg.hide);
@@ -212,10 +213,18 @@ function hookResFrame() {
 // word, the light vector +0x28) and every vertex's normal and the colour it got (vertexnormal 0x14 B: xyz, colour
 // +0xc), plus the shade table once. Records {k: 'light', ...} go to --jsonl.
 let resFrames3d = 0, shadeSent = false;
+const tradeProbed = new Set();
 function hookLightProbe() {
   Interceptor.attach(va(0x52f190), {
     onEnter(args) {
-      this.on = A.AktKep.readS32() === 4 && resFrames3d >= 1 && resFrames3d <= 3 && va(0xdff940).readU32() !== 0;
+      // On the trade screen (--kep 8): each object once, after the opening (`traframe` 0xF434B8 at 50).
+      if (cfg.kep === 8) {
+        const key = args[3].toString();
+        this.on = A.AktKep.readS32() === 8 && va(0xf434b8).readFloat() === 50 && !tradeProbed.has(key);
+        if (this.on) tradeProbed.add(key);
+      } else {
+        this.on = A.AktKep.readS32() === 4 && resFrames3d >= 1 && resFrames3d <= 3 && va(0xdff940).readU32() !== 0;
+      }
       if (!this.on) return;
       this.vn = args[1]; this.n = args[2].toInt32(); this.sp = args[3]; this.xvo = args[4]; this.op = args[5].toInt32();
     },
@@ -244,6 +253,17 @@ function hookLightProbe() {
         shadeSent = true;
       }
       send(rec);
+    },
+  });
+}
+
+// --dip-frame F: hold the diplomacy screen's `dipframe` (f32 0xAB768C) at F before every `Diplomacy3DUpdate` (exe
+// 0x4be2d0): the opening's pose (re/screens/diplomacy.md §3.1). `dipKINYITVA` 0xAB6504 then stays clear below 80.
+function hookDipFrame() {
+  Interceptor.attach(va(0x4be2d0), {
+    onEnter() {
+      if (A.AktKep.readS32() !== 6) return;
+      va(0xab768c).writeFloat(cfg.dipFrame);
     },
   });
 }
@@ -469,6 +489,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
       loadSave(cfg.slot, Memory.allocAnsiString('screen'), 1);
       setSpeed(1, 1);
       setPause(cfg.run ? 0 : 1, 0);
+      // --trade-cheat: the exe's `TradeCheat` (0xF43835): every own planet counts as a trade port (trade.md §5.3).
+      if (cfg.tradeCheat) va(0xf43835).writeU8(1);
       send({ k: 'loaded', kep: A.AktKep.readS32(), ido2: A.Ido2.readS32(), date: date() });
       at = frames; phase = 2;
     } else if (phase === 2 && frames >= at + 60 && (A.AktKep.readS32() === 2 || frames >= at + 300)) {
@@ -611,11 +633,15 @@ let scriptT = null, scriptUi0 = 0, scriptMouse = [320, 240], scriptEvents = [], 
 let vt = 0, vtOn = false, realTicks = null, swapHooked = false;
 const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050], enter: [40, 13],
   pageup: [75, 0x4000004b], pagedown: [78, 0x4000004e], escape: [41, 27], d: [7, 100], k: [14, 107], space: [44, 32],
-  c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127], f2: [59, 0x4000003b] };
+  c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127], f2: [59, 0x4000003b], backspace: [42, 8] };
+// The other lower-case letters (`r` = redesign on the design screen, a typed name): scancode 4 + n, sym the character.
+for (let n = 0; n < 26; n++) { const ch = String.fromCharCode(97 + n); if (!SDL_KEYS[ch]) SDL_KEYS[ch] = [4 + n, 97 + n]; }
 // The research screen's clock and selection (`ResearchTerulet` 0xB9A9B4, `ResearchMezo` 0xB9AA04, `ResearchTalalmany`
 // 0xB9AA08, `ResearchOldForgato` 0x919598; re/screens/research.md §1).
 const resState = () => ({ frame: va(0xdc5368).readFloat(), open: va(0xddf322).readU8(), closing: va(0xddf323).readU8(), started: va(0xddf628).readU8(),
-  area: va(0xb9a9b4).readS32(), field: va(0xb9aa04).readS32(), tech: va(0xb9aa08).readS32(), wheel: va(0x919598).readS32() });
+  area: va(0xb9a9b4).readS32(), field: va(0xb9aa04).readS32(), tech: va(0xb9aa08).readS32(), wheel: va(0x919598).readS32(),
+  // The diplomacy screen's opening (re/screens/diplomacy.md §3.1): `dipframe`, `dipKINYITVA`, `dipBECSUKAS`.
+  dipframe: va(0xab768c).readFloat(), dipOpen: va(0xab6504).readU8(), dipClosing: va(0xab6477).readU8() });
 
 function hookScript() {
   const s = cfg.script;
@@ -632,6 +658,23 @@ function hookScript() {
     }
   }
   scriptEnd = Math.max(0, ...scriptGrabs, ...scriptEvents.map((e) => e.t)) + (s.tail || 30);
+  // The lockstep messages the script's input sends (`Multi_Send` exe 0x513840, cdecl `(type, from, [len, ptr]..., 0)`):
+  // {k: 'msg', t, type, from, fields} with 4-byte fields as ints, 1-byte ones as bytes, longer ones as hex.
+  Interceptor.attach(va(0x513840), {
+    onEnter() {
+      if (scriptT === null) return;
+      const sp = this.context.esp, type = sp.add(4).readS32() & 0xffff, fields = [];
+      for (let i = 0; i < 12; i++) {
+        const len = sp.add(12 + 8 * i).readS32();
+        if (len <= 0) break;
+        const ptr = sp.add(16 + 8 * i).readPointer();
+        if (len === 4) fields.push(ptr.readS32());
+        else if (len === 1) fields.push(ptr.readU8());
+        else fields.push(Array.from(new Uint8Array(ptr.readByteArray(len)), (x) => x.toString(16).padStart(2, '0')).join(''));
+      }
+      send({ k: 'msg', t: va(0xb772a4).readS32() - scriptUi0, type, from: sp.add(8).readS32(), fields });
+    },
+  });
   const ticks = va(0x689e80);
   const real = new NativeFunction(ticks, 'uint32', [], { abi: 'mscdecl' });
   realTicks = () => real();
@@ -717,7 +760,7 @@ function scriptFrame() {
     if (!swapHooked) { hookSwap(); swapHooked = true; }
     if (cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('screendiff'), 2);
     send({ k: 'scriptStart', frames, ui: scriptUi0, res: resState(), clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(),
-      infoTurn: va(0xb85304).readFloat(), kep: A.AktKep.readS32(), date: date(), paused: va(0xbae264).readU8() });
+      infoTurn: va(0xb85304).readFloat(), tradeEta: va(0xf43428).readS32(), kep: A.AktKep.readS32(), date: date(), paused: va(0xbae264).readU8() });
   } else {
     // The UI ticks run so far (a frame now and then runs none or two: `scriptT` follows the ticks, not the frames).
     scriptT = va(0xb772a4).readS32() - scriptUi0;

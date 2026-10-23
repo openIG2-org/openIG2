@@ -23,7 +23,7 @@ def elf_tables(elf):
     out = subprocess.run(["nm", "-S", "-C", "--defined-only", elf], capture_output=True, text=True, check=True).stdout
     tabs = {}
     for line in out.splitlines():
-        m = re.match(r"([0-9a-f]+) ([0-9a-f]+) [dD] (\w+_Hangok|MessagesHang)$", line)
+        m = re.match(r"([0-9a-f]+) ([0-9a-f]+) [dD] (\w+_Hangok|MessagesHang|Colony_Villamok)$", line)
         if m:
             tabs[m.group(3)] = (int(m.group(1), 16), int(m.group(2), 16))
     return tabs

@@ -15,16 +15,24 @@ pub struct DesignFrame {
     old: [i32; 4],
     new: [i32; 4],
     novelo: f32,
+    /// How much of the widening goes to the left: a third (`DesignKeret1`) or a half (`DesignKeret2`).
+    left: f32,
 }
 
 impl Default for DesignFrame {
     /// As `Frissit2_Grafika` leaves it on a new screen (`DesignKeret1OldKep != AktKep`): no frame yet.
     fn default() -> Self {
-        Self { m: 0.0, target: 0.0, old: [0, 0, 1, 1], new: [0; 4], novelo: 0.0 }
+        Self { m: 0.0, target: 0.0, old: [0, 0, 1, 1], new: [0; 4], novelo: 0.0, left: 3.0 }
     }
 }
 
 impl DesignFrame {
+    /// `DesignKeret2` (ELF 0x541940 / exe 0x4cd4c0, the design screen's pod and tech rows): the same frame on its
+    /// own state (`dk2m`, `dk2old*`, `dk2uj*`), widened half to the left.
+    pub fn second() -> Self {
+        Self { left: 2.0, ..Self::default() }
+    }
+
     /// `DesignKeret1(x, y, w, h)`'s bookkeeping: a new place starts the morph.
     pub fn ask(&mut self, r: [i32; 4]) {
         if r != self.new {
@@ -66,7 +74,7 @@ impl DesignFrame {
         let fade = 1.0 - (self.m as f64).sin() as f32;
         let [x0, y0, w0, h0] = self.old;
         let w = (w0 as f32 + w0 as f32 * (1.0 - fade)) as i32;
-        let x = (x0 as f32 - (w as f32 * (1.0 - fade)) / 3.0) as i32;
+        let x = (x0 as f32 - (w as f32 * (1.0 - fade)) / self.left) as i32;
         let (y, h) = (y0 - 1, h0 + 1);
         let byte = |k: f32| c.map(|v| ((v * 255.0).round() * k).trunc().clamp(0.0, 255.0) / 255.0);
         let mut seg = |a: [i32; 2], b: [i32; 2], ca: [f32; 3], cb: [f32; 3]| {

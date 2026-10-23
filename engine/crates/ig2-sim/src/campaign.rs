@@ -142,6 +142,15 @@ impl Story {
     /// also 0x32 and 0x34), names the star systems and sets `StoryAdat+0xbc` (campaigns 1, 2) and `+0xb8`
     /// (campaigns 2, 3).
     pub fn init_story(&mut self, mode: i32, w: &mut dyn StoryWorld) {
+        self.init_story_cleared();
+        if mode != 0 {
+            return;
+        }
+        self.init_story_campaign(w);
+    }
+
+    /// `InitStory`'s part for every mode: the buckets, `StoryAdat`, the history, finish and start queues cleared.
+    pub fn init_story_cleared(&mut self) {
         for b in self.buckets.iter_mut() {
             b.entries.clear();
         }
@@ -150,9 +159,9 @@ impl Story {
         self.finished.entries.clear();
         self.starting.entries.clear();
         self.line_story = 0;
-        if mode != 0 {
-            return;
-        }
+    }
+
+    fn init_story_campaign(&mut self, w: &mut dyn StoryWorld) {
         let ct = w.campaign_type();
         let t = w.campaign_tables().clone();
         let mut line = w.config_int("storyline");
@@ -172,6 +181,10 @@ impl Story {
             match op {
                 ScenarioStory::Var(k, v) => self.v_set(k, v),
                 ScenarioStory::Planet(p, k) => self.b_add_id(p, k),
+                ScenarioStory::Start(id) => {
+                    self.start_story(id, false);
+                }
+                ScenarioStory::SzStart(id, days) => self.sz_start(id, days),
             }
         }
         self.v_set(id::V_LINE, line);

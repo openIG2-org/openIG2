@@ -128,6 +128,14 @@ fn saves_parse_and_match_snapshots() {
         // A rebuilt file decodes to the same stream.
         let again = SaveGame::parse(&s.to_file().unwrap()).unwrap();
         assert_eq!(again.body, s.body, "{what}: rebuild");
+        // Writing the chunks back in schema order gives the stream without its padding.
+        let mut it = s.chunks.iter();
+        let written = SaveGame::write_stream(false, &mut |name, len| {
+            let c = it.next().unwrap();
+            assert_eq!((c.name.as_str(), c.range.len()), (name, len), "{what}: write order");
+            s.body[c.range.clone()].to_vec()
+        }).unwrap();
+        assert_eq!(written.body, s.body[..s.used], "{what}: write_stream");
         let json = path.with_extension("json");
         if json.exists() {
             let ev: Value = serde_json::from_slice(&std::fs::read(&json).unwrap()).unwrap();

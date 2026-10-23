@@ -393,7 +393,7 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
         let c = lights.rgb(lighting::normal(&t.matrix, v.lnormal));
         out.push(MeshVertex { pos: t.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], opacity] });
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: opacity < 1.0 || additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: opacity < 1.0 || additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });
 }
 
 /// `ig2-client --snapshot OUT --screen main [--ui-frames N] [--mouse X,Y]`: the main menu after N UI ticks of 10 ms

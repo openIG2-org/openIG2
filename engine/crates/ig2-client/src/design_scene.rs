@@ -97,26 +97,17 @@ impl DesignScene {
     /// textured from `talalmanyok` (m < 5), `spacewar` (5..=14), `urbazis` (15..=18), `tankalapok` (19..=24) or
     /// `alapok`.
     fn hull(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, m: usize, race: i16) -> Option<Model> {
-        let name = rules.design_screen.models.get(m).filter(|n| !n.is_empty())?;
-        let mut name = name.clone().into_bytes();
-        if (5..12).contains(&m) && name.len() > 4 {
-            name[4] = b'0'.wrapping_add(race as u8);
-        }
-        let name = String::from_utf8_lossy(&name).into_owned();
-        let tdir = match m {
-            0..=4 => "textures/talalmanyok/",
-            5..=14 => "textures/spacewar/",
-            15..=18 => "textures/design/urbazis/",
-            19..=24 => "textures/design/tankalapok/",
-            _ => "textures/design/alapok/",
-        };
+        let (name, tdir) = hull_name(rules, m, race)?;
         self.model(r, install, HULL_VECTORS, &name, tdir, None)
     }
 
     /// Draw the scene behind the 2D layer: the wire sphere, the solid models (offscreen, depth-tested).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, s: &Design, state: &SaveState, techs: &TechTable, en: usize, size: [f32; 2]) {
+    pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, s: &mut Design, state: &SaveState, techs: &TechTable, en: usize, size: [f32; 2]) {
         let vv = Virtual::new(size);
+        // The lasers' glow (`InitFader1`: `textures/starmap/laservago.bmp`).
+        s.laser_glow = install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| self.texture(r, install, &p).map(|t| t.id));
+        let s = &*s;
         // The camera: `ycenter = 250 − desframe·10/60` while animated, else 240.
         let yc = if s.animated { 250.0 - s.frame * 10.0 / 60.0 } else { 240.0 };
         let project = |p: V3| -> Option<[f32; 2]> {
@@ -141,19 +132,30 @@ impl DesignScene {
         let z = if s.opened && !s.closing && s.settled { s.add_zoom - 650.0 } else { -650.0 };
         let open = s.opened && !s.closing;
         let panels = [1, 2, 3].map(|i| install.resolve_texture(TEXTURES, &format!("des_panel{i}.bmp")));
+        // `desSetGombFrame(DesMelyikGombot, DesGombFrame)`: the pressed button (child 6 → b) at `f + 60`, once open.
+        let pressed = s.button_frame().filter(|_| s.opened && !s.closing && s.frame >= 60.0);
+        let pressed = pressed.and_then(|(b, f)| Some((b, self.console(r, install, f)?)));
         if let Some(m) = self.console(r, install, s.frame) {
             let t = Placement::add_to_scene(m.origin, 1.1).world((0.0, 0.0, 0.0), [0.0, 0.0, z]);
-            for p in &m.parts {
+            let under = |p: &scene::Part, b: u16| p.index.len() >= 2 && p.index[0] == BUTTONS && p.index[1] == b;
+            let parts: Vec<&scene::Part> = match &pressed {
+                Some((b, pm)) => m.parts.iter().filter(|p| !under(p, *b)).chain(pm.parts.iter().filter(|p| under(p, *b))).collect(),
+                None => m.parts.iter().collect(),
+            };
+            for p in parts {
                 match p.index.first().copied() {
                     Some(WIRE | 1..=5) => continue,
                     Some(COVER) if open => continue,
                     _ => {}
                 }
-                // `FrissitGombTexturak`: a button whose hot-spot is on shows `des_panel1` (viewing), else `des_panel3`.
+                // `FrissitGombTexturak` (exe 0x4b3f50): a button whose hot-spot is on shows `des_panel1` (ids 1..=4,
+                // without `CanModify`) or `des_panel2` (ids 5..=8 with it, the 3D −/+), else `des_panel3`.
                 let tex = if p.index.first() == Some(&BUTTONS) {
                     let i = p.index.get(1).copied().unwrap_or(0) as usize;
-                    let on = BUTTON_SPOT.get(i).is_some_and(|&id| s.spot_state(state, techs, rules, id));
-                    panels[if on { 0 } else { 2 }].clone().or(p.texture.clone())
+                    let id = BUTTON_SPOT.get(i).map(|&id| if s.can_modify && (1..=4).contains(&id) { id + 4 } else { id });
+                    let on = id.is_some_and(|id| s.spot_state(state, techs, rules, id));
+                    let lit = if id.is_some_and(|id| (1..=4).contains(&id)) { 0 } else { 1 };
+                    panels[if on { lit } else { 2 }].clone().or(p.texture.clone())
                 } else {
                     p.texture.clone()
                 };
@@ -181,29 +183,50 @@ impl DesignScene {
         // The hull: `AddToScene(AlapAranyok[m]·0.5)` (smaller for empire 1's models 5..=10), at
         // `(0, −15, AddZoomDes − 1400)` once the screen is open, fading with the slide (`AddZoomDes / ADDZOOMMAXDES`;
         // closing `1 − f/60`).
+        let mut boxes: Vec<(V3, V3, [f32; 4])> = Vec::new();
         if s.loaded >= 0 && s.opened {
             let m = s.loaded as usize;
-            let race = s.record(state).map_or(0, |d| i16::from_le_bytes([d[crate::design::field::RACE], d[crate::design::field::RACE + 1]]));
+            let race = s.edited(state).map_or(0, |d| i16::from_le_bytes([d[crate::design::field::RACE], d[crate::design::field::RACE + 1]]));
             if let Some(model) = self.hull(r, install, rules, m, race) {
-                let mut k = rules.design_screen.scale.get(m).copied().unwrap_or(1.0) * 0.5;
-                if en == 1 {
-                    k *= match m {
-                        5 | 6 => 0.5,
-                        7 | 8 => 0.6,
-                        9 | 10 => 0.8,
-                        _ => 1.0,
-                    };
-                }
-                let pl = Placement::add_to_scene(model.origin, k);
-                let t = scene::Transform { matrix: scene::mul(&s.turn, &pl.matrix).map(|x| x * 1024.0), translation: [0.0, -15.0, s.add_zoom - 1400.0] };
-                let tr = if s.closing { 1.0 - s.frame / 60.0 } else { s.add_zoom / ADD_ZOOM_MAX };
-                let tr = if tr > 0.95 { 1.0 } else { tr.max(0.01) };
+                let pl = Placement::add_to_scene(model.origin, hull_scale(rules, m, en));
+                let t = scene::Transform { matrix: scene::mul(&s.turn, &pl.matrix).map(|x| x * 1024.0), translation: s.hull_at() };
+                let tr = crate::design_pods::transparency(if s.closing { 1.0 - s.frame / 60.0 } else { s.add_zoom / ADD_ZOOM_MAX });
                 if tr < 1.0 {
-                    for p in &model.parts {
+                    for p in model.parts.iter().filter(|p| pod_box(p).is_none()) {
                         let id = p.texture.as_deref().and_then(|t| self.texture(r, install, t).map(|x| x.id)).unwrap_or(self.white);
                         bake(p, &t, &lights, id, 1.0 - tr, true, &mut dynamic, &mut draws);
+                        // `SetObjTransparency` only turns blending on: the hull keeps its depth write.
+                        if let Some(d) = draws.last_mut() {
+                            d.depth_write = true;
+                        }
+                        if let Some(id) = p.self_illum.as_deref().and_then(|t| self.texture(r, install, t).map(|x| x.id)) {
+                            glow(p, &t, id, tr, &mut dynamic, &mut draws);
+                        }
                     }
                 }
+                // The `POD%02d` boxes (`PodKivalaszto` exe 0x4b6260, `SzinezPodok` exe 0x4b6b90): with `CanModify` the
+                // hull's first `GetMaxPodok` boxes as lit wireframes (properties 0x40 | 0x800) at transparency
+                // `(AddZoomDes ? AddZoomDes + 40 : 0)/ADDZOOMMAXDES`, each under its pod's ambient light (`KijelolPod`).
+                let tb = crate::design_pods::transparency(if s.add_zoom != 0.0 { s.add_zoom + 40.0 } else { 0.0 } / ADD_ZOOM_MAX);
+                if s.can_modify && !s.closing && tb < 1.0 {
+                    for p in &model.parts {
+                        let Some(k) = pod_box(p).filter(|&k| k < s.pods.no_techs.len()) else { continue };
+                        let c = crate::design_pods::pod_light(s.keringeto, s.pod == k + 1, s.pods.no_techs[k], s.can_modify);
+                        self.wire(p, &t, &lights.clone().ambient(c), 1.0 - tb, &mut boxes);
+                    }
+                }
+            }
+        }
+        // The tech models out of the chosen pod (`BetoltHozzavaloTalalmanyok` exe 0x4accf0: `AddToScene(0.03)`, placed
+        // by `MegkeresHozzavaloTalalmanyok` exe 0x4b5890), the marked one under `KijelolTalalmany`'s light 0x0e0e86.
+        for e in s.pods.techs.iter().filter(|e| e.shown && e.clear < 1.0) {
+            let Some(model) = self.tech_model(r, install, rules, e.tech) else { continue };
+            let pl = Placement::add_to_scene(model.origin, 0.03);
+            let t = scene::Transform { matrix: pl.rotated(e.turn[0], e.turn[1], e.turn[2]).map(|x| x * 1024.0), translation: e.pos };
+            let l = if e.lit { lights.clone().ambient(0x0e0e86) } else { lights.clone() };
+            for p in &model.parts {
+                let id = p.texture.as_deref().and_then(|t| self.texture(r, install, t).map(|x| x.id)).unwrap_or(self.white);
+                bake(p, &t, &l, id, 1.0 - e.clear, true, &mut dynamic, &mut draws);
             }
         }
         // The sphere is the far background: under the solid models.
@@ -212,6 +235,8 @@ impl DesignScene {
                 f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), vv.k.max(1.0), c));
             }
         }
+        // The boxes' edges go into the depth-tested pass (the hull hides the parts inside it [obs]).
+        edge_quads(&boxes, self.white, &mut dynamic, &mut draws);
         if dynamic.is_empty() {
             return;
         }
@@ -230,6 +255,21 @@ impl DesignScene {
         let tex = target.tex;
         let half = wide.half(&vv);
         f.push(tex, Blend::GammaPremul, Instance::new(kind::SPRITE, vv.px(320.0, 240.0), half, [1.0; 4]));
+    }
+
+    /// `BetoltHozzavaloTalalmanyok`'s model of tech `t`: `TTeruletek[t − 1]` from `talalmanyok`; the weapon pods
+    /// 0xa1..=0xb0 without one take `TankTorony[t − 0xa1]` from `colony`; none: `bugos!.xvb` from `main`.
+    fn tech_model(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, t: usize) -> Option<Model> {
+        let name = rules.research_screen.models.get(t.wrapping_sub(1)).cloned().unwrap_or_default();
+        let (name, vdir, tdir) = if !name.is_empty() {
+            (name, "vector/talalmanyok/", "textures/talalmanyok/")
+        } else if (0xa1..=0xb0).contains(&t) {
+            (rules.unit_models.turrets.get(t - 0xa1).map(|m| m.name.clone()).unwrap_or_default(), "vector/colony/", "textures/colony/")
+        } else {
+            (String::new(), "", "")
+        };
+        let (name, vdir, tdir) = if name.is_empty() { ("bugos!.xvb".to_owned(), "vector/main/", "textures/main/") } else { (name, vdir, tdir) };
+        self.model(r, install, vdir, &name, tdir, None)
     }
 
     /// `wirekirak`: the part's flagged triangle edges as lines, each end in its vertex's lit colour times the
@@ -252,6 +292,101 @@ impl DesignScene {
                 }
             }
         }
+    }
+}
+
+/// Lit wireframe edges as camera-facing quads one 640×480 pixel wide (`600·half/−z` = 0.5), depth-tested with the
+/// solid models, in their vertex colours.
+fn edge_quads(edges: &[(V3, V3, [f32; 4])], tex: TexId, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+    if edges.is_empty() {
+        return;
+    }
+    let start = out.len() as u32;
+    let mut glass = false;
+    for &(a, b, c) in edges {
+        let (wa, wb) = (-a[2], -b[2]);
+        if wa <= 1.0 || wb <= 1.0 {
+            continue;
+        }
+        // The screen direction of the edge and its normal, scaled back to each end's depth.
+        let (sa, sb) = ([a[0] / wa, a[1] / wa], [b[0] / wb, b[1] / wb]);
+        let (dx, dy) = (sb[0] - sa[0], sb[1] - sa[1]);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len == 0.0 {
+            continue;
+        }
+        let n = [-dy / len, dx / len];
+        let off = |p: V3, w: f32, s: f32| [p[0] + n[0] * 0.5 / 600.0 * w * s, p[1] + n[1] * 0.5 / 600.0 * w * s, p[2]];
+        let q = [off(a, wa, -1.0), off(a, wa, 1.0), off(b, wb, 1.0), off(b, wb, -1.0)];
+        for i in [0, 1, 2, 0, 2, 3] {
+            out.push(MeshVertex { pos: q[i], normal: [0.0, 0.0, 1.0], uv: [0.5, 0.5], color: c });
+        }
+        glass |= c[3] < 1.0;
+    }
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+}
+
+/// `LoadAlapVektor(m)`'s file and texture directory: `AlapNevek[m]` (models 5..=11 take the race digit at [4]).
+fn hull_name(rules: &ig2_rules::Rules, m: usize, race: i16) -> Option<(String, &'static str)> {
+    let name = rules.design_screen.models.get(m).filter(|n| !n.is_empty())?;
+    let mut name = name.clone().into_bytes();
+    if (5..12).contains(&m) && name.len() > 4 {
+        name[4] = b'0'.wrapping_add(race as u8);
+    }
+    let tdir = match m {
+        0..=4 => "textures/talalmanyok/",
+        5..=14 => "textures/spacewar/",
+        15..=18 => "textures/design/urbazis/",
+        19..=24 => "textures/design/tankalapok/",
+        _ => "textures/design/alapok/",
+    };
+    Some((String::from_utf8_lossy(&name).into_owned(), tdir))
+}
+
+/// `LoadAlapVektor`'s scale: `AlapAranyok[m]·0.5`, smaller for empire 1's models 5..=10.
+fn hull_scale(rules: &ig2_rules::Rules, m: usize, en: usize) -> f32 {
+    let k = rules.design_screen.scale.get(m).copied().unwrap_or(1.0) * 0.5;
+    if en != 1 {
+        return k;
+    }
+    k * match m {
+        5 | 6 => 0.5,
+        7 | 8 => 0.6,
+        9 | 10 => 0.8,
+        _ => 1.0,
+    }
+}
+
+/// The pod (0-based) a `POD%02d` box part is (`findbox` matches names case-blind).
+fn pod_box(p: &scene::Part) -> Option<usize> {
+    let n = p.path.rsplit('/').next()?;
+    (n.len() == 5 && n[..3].eq_ignore_ascii_case("POD")).then(|| n[3..].parse::<usize>().ok()).flatten().filter(|&k| k >= 1).map(|k| k - 1)
+}
+
+/// The loaded hull's `POD%02d` box centres (`GetObjCenter`: the middle of its extent) after the `AddToScene` scale,
+/// for `PodKivalaszto`; reloaded when the hull changes.
+pub fn track_boxes(c: &crate::design_edit::Ctx, s: &mut Design) {
+    if s.pods.boxes_of == s.loaded {
+        return;
+    }
+    s.pods.boxes_of = s.loaded;
+    s.pods.boxes.clear();
+    let Ok(m) = usize::try_from(s.loaded) else { return };
+    let race = s.edited(c.state).map_or(0, |d| i16::from_le_bytes([d[crate::design::field::RACE], d[crate::design::field::RACE + 1]]));
+    let Some((name, tdir)) = hull_name(c.rules, m, race) else { return };
+    let Ok(model) = Model::load_at(c.install, HULL_VECTORS, &name, tdir, None) else { return };
+    let pl = Placement::add_to_scene(model.origin, hull_scale(c.rules, m, c.en()));
+    for p in &model.parts {
+        let Some(k) = pod_box(p) else { continue };
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for v in &p.verts {
+            for i in 0..3 {
+                lo[i] = lo[i].min(v.pos[i]);
+                hi[i] = hi[i].max(v.pos[i]);
+            }
+        }
+        let mid = std::array::from_fn(|i| (lo[i] + hi[i]) / 2.0);
+        s.pods.boxes.push((k, scene::apply(&pl.matrix, mid).map(|x| x * 1024.0)));
     }
 }
 
@@ -281,6 +416,24 @@ fn sample(img: &Image, uv: [f32; 2]) -> [f32; 3] {
     img.rgba.get(i..i + 3).map_or([1.0; 3], |c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0])
 }
 
+/// `selfillumkirak` (ELF 0x613da0) after `kirak`'s batch: the same triangles again with the second texture, unlit in
+/// `rgbac` = `float2int(255 − t·255)` grey (`Kocka` 0x5f6a40: `t` = the object's transparency), added (`ONE`/`ONE`).
+fn glow(p: &scene::Part, t: &scene::Transform, tex: TexId, transparency: f32, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+    let start = out.len() as u32;
+    let g = lighting::float2int(255.0 - transparency * 255.0).clamp(0, 255) as f32 / 255.0;
+    for tri in p.verts.chunks_exact(3) {
+        let w: [V3; 3] = std::array::from_fn(|i| t.point(tri[i].pos));
+        if crate::research::faces_away(&w) {
+            continue;
+        }
+        for (v, q) in tri.iter().zip(w) {
+            // A zero normal: the colour is the light (no scene lighting).
+            out.push(MeshVertex { pos: q, normal: [0.0; 3], uv: v.uv, color: [g, g, g, 1.0] });
+        }
+    }
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
+}
+
 /// Bake a camera-fixed part with CPU-lit vertex colours; `cull` drops the triangles turned away (the engine's
 /// back-face test).
 #[allow(clippy::too_many_arguments)]
@@ -302,5 +455,5 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
             out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
         }
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
 }

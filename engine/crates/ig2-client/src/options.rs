@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::font::{Align, Font};
-use crate::kit::{fader, inside, DesignFrame, Lasers, Tooltip, Virtual};
+use crate::kit::{fader, fader_design, inside, DesignFrame, FaderDesign, Lasers, Tooltip, Virtual};
 use crate::render::{kind, Blend, Frame, Instance, TexId};
 use crate::ui::UiTexts;
 
@@ -244,7 +244,12 @@ pub struct OptionsScreen {
     /// The slider grabbed (`Mouse_Megfogva`): its index, `CsuszXStart`, `StartBarPos`.
     grab: Option<(usize, i32, i32)>,
     held: bool,
+    /// This frame's press and release edges (`Mouse_Lenyom`, `Mouse_Felenged`), for `KirakFader`.
+    pressed: bool,
+    released: bool,
     pub at: [f32; 2],
+    /// `optf`: the faders' shine, drift and hover glow.
+    faders: FaderDesign,
     lasers: Lasers,
     design: DesignFrame,
     pub tip: Tooltip,
@@ -299,7 +304,10 @@ impl OptionsScreen {
             blokk2: 0.0,
             grab: None,
             held: false,
+            pressed: false,
+            released: false,
             at: [320.0, 240.0],
+            faders: FaderDesign::new(1),
             lasers: Lasers::default(),
             design: DesignFrame::default(),
             tip: Tooltip::default(),
@@ -410,6 +418,7 @@ impl OptionsScreen {
         if let Some((v, _, _)) = &mut self.leaving {
             *v = (*v - 2).max(0);
         }
+        self.faders.tick();
         self.lasers.tick();
         self.design.tick();
     }
@@ -456,6 +465,7 @@ impl OptionsScreen {
     pub fn press(&mut self, at: [f32; 2], sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
         self.hover(at);
         self.held = true;
+        self.pressed = true;
         if self.leaving.is_some() {
             return None;
         }
@@ -547,6 +557,7 @@ impl OptionsScreen {
 
     pub fn release(&mut self) {
         self.held = false;
+        self.released = true;
         self.grab = None;
     }
 
@@ -708,11 +719,24 @@ impl OptionsScreen {
         let (white, v) = (d.white, &d.v);
         let fd = self.fade;
         let leaving = self.leaving.as_ref().map(|l| l.0 as f32);
-        let s = fader::S;
         self.lasers.clear();
-        let kirak = |f: &mut Frame, r: [f32; 4], vv: f32| {
+        // `KirakFader` and `FadeKerettelKerekit` only queue their boxes: they are drawn after the pass, over the
+        // glows' and scan bands' lines (`line2d` draws at once) [obs: a glow's line stops at the slot list].
+        let mut fq = Frame::default();
+        let free = (!self.held && !self.released) || self.pressed;
+        let (at, blink) = (self.at, fader_design::blink(d.now_ms));
+        // `KirakFader(i, optf, …)` with `s` of `optf` index `si`, then, unless leaving, its glow (`C = (0, s·54,
+        // s·90)`) if `glow`.
+        let kirak = |f: &mut Frame, fq: &mut Frame, faders: &mut FaderDesign, i: usize, si: usize, r: [f32; 4], vv: f32, glow: bool| {
             let k = 1.0 - vv / 100.0;
-            fader::kirak_fader(f, white, v, r, [20.0, 54.0 * s, 100.0 * s], k * 195.0 + 60.0, [0.0, 90.0 * s, 130.0 * s], k * 205.0 + 50.0);
+            let s = faders.s(si);
+            fader::kirak_fader(fq, white, v, r, [20.0, 54.0 * s, 100.0 * s], k * 195.0 + 60.0, [0.0, 90.0 * s, 130.0 * s], k * 205.0 + 50.0, faders.offset(i));
+            faders.enter(i, r, at, free);
+            let g = faders.glow(si);
+            if let (true, None, Some((t, style))) = (glow, leaving, g) {
+                let c = [0, (s * 54.0) as i32, (s * 90.0) as i32];
+                fader_design::glow(f, white, v, r.map(|q| q as i32), c, t, style, blink);
+            }
         };
         let mut vv = self.fade_v;
         // The load button: `V = 3F` below 33.
@@ -728,7 +752,7 @@ impl OptionsScreen {
             if let Some(l) = leaving {
                 vv = l;
             }
-            kirak(f, [366.0, 62.0, 78.0, 33.0], vv);
+            kirak(f, &mut fq, &mut self.faders, 0, 0, [366.0, 62.0, 78.0, 33.0], vv, true);
         }
         // The save (or YES) button: `V = 3(F − 33)` between 33 and 66.
         if (!self.multiplayer || self.sure) && ((!self.load_only && !self.battle && (self.sure || self.slot < 0x17)) || self.sure) {
@@ -743,7 +767,7 @@ impl OptionsScreen {
             if let Some(l) = leaving {
                 vv = l;
             }
-            kirak(f, [452.0, 62.0, 78.0, 33.0], vv);
+            kirak(f, &mut fq, &mut self.faders, 1, 1, [452.0, 62.0, 78.0, 33.0], vv, true);
         }
         // The quit button, always: `V = 3(F − 66)` past 66 (102 at F 100, as the exe has it).
         if fd > 66.0 {
@@ -757,7 +781,7 @@ impl OptionsScreen {
         if let Some(l) = leaving {
             vv = l;
         }
-        kirak(f, [541.0, 62.0, 78.0, 33.0], vv);
+        kirak(f, &mut fq, &mut self.faders, 2, 2, [541.0, 62.0, 78.0, 33.0], vv, true);
         // The slot list: `V = 2F` below 50, its laser from the bottom right corner.
         if fd >= 50.0 {
             vv = 100.0;
@@ -770,7 +794,17 @@ impl OptionsScreen {
         if let Some(l) = leaving {
             vv = l;
         }
-        kirak(f, [361.0, 116.0, 265.0, 330.0], vv);
+        kirak(f, &mut fq, &mut self.faders, 3, 3, [361.0, 116.0, 265.0, 330.0], vv, false);
+        // At full fade-in the scan band runs down the slot list (style 0 at `fmod(clock·1.8, 1)`), then its glow.
+        let s = self.faders.s(3);
+        let c = [0, (s * 54.0) as i32, (s * 90.0) as i32];
+        if vv == 100.0 {
+            let t = (self.faders.clock() as f64 * 1.8).rem_euclid(1.0) as f32;
+            fader_design::glow(f, white, v, [0x169, 0x74, 0x109, 0x14a], c, t, 0, blink);
+        }
+        if let (None, Some((t, style))) = (leaving, self.faders.glow(3)) {
+            fader_design::glow(f, white, v, [0x169, 0x74, 0x109, 0x14a], c, t, style, blink);
+        }
         self.blokk1 = vv;
         // The left panel: `V = 2(F − 50)` between 50 and 100, its laser from the top left corner.
         if fd <= 50.0 || fd >= 100.0 {
@@ -788,7 +822,7 @@ impl OptionsScreen {
         if let Some(l) = leaving {
             vv = l;
         }
-        kirak(f, [9.0, 62.0, 288.0, 384.0], vv);
+        kirak(f, &mut fq, &mut self.faders, 4, 4, [9.0, 62.0, 288.0, 384.0], vv, false);
         self.blokk2 = vv;
         // The sliders' boxes (`FadeKerettelKerekit`), brighter under the pointer.
         let k = 1.0 - vv / 100.0;
@@ -796,15 +830,18 @@ impl OptionsScreen {
         for (i, sl) in self.sliders.iter().enumerate().filter(|(_, s)| s.visible) {
             let r = [sl.x as f32, (sl.y - 3) as f32, sl.width as f32, 10.0];
             if hover == id::SLIDER + i as u32 {
-                fader::fader(f, white, v, r, [20.0, 54.0, 150.0], k * 245.0 + 10.0, [230.0; 3], k * 245.0 + 10.0);
+                fader::fader(&mut fq, white, v, r, [20.0, 54.0, 150.0], k * 245.0 + 10.0, [230.0; 3], k * 245.0 + 10.0);
             } else {
-                fader::fader(f, white, v, r, [20.0, 54.0, 100.0], k * 235.0 + 20.0, [230.0; 3], k * 225.0 + 30.0);
+                fader::fader(&mut fq, white, v, r, [20.0, 54.0, 100.0], k * 235.0 + 20.0, [230.0; 3], k * 225.0 + 30.0);
             }
         }
         // The tabs.
-        kirak(f, [13.0, 66.0, 90.0, 20.0], vv);
-        kirak(f, [108.0, 66.0, 90.0, 20.0], vv);
+        // The left panel and the tabs start glows that are never drawn.
+        kirak(f, &mut fq, &mut self.faders, 6, 5, [13.0, 66.0, 90.0, 20.0], vv, false);
+        kirak(f, &mut fq, &mut self.faders, 7, 5, [108.0, 66.0, 90.0, 20.0], vv, false);
+        (self.pressed, self.released) = (false, false);
         self.fade_v = vv;
+        f.append(fq);
         self.lasers.draw(f, white, d.glow, v, true, true);
     }
 

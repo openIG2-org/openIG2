@@ -46,15 +46,16 @@ playable from start to finish.
 | Tutorial interpreter | ✅ done | The tutorial script's 74 commands and events run as a sim state machine (hooks for the later overlay), checked against the original over all five chapters |
 | Story engine and skirmish scenarios | ✅ done | Scenario victory and defeat, the campaign start and driver, the six storylines, the multiplayer game modes |
 | Campaign scripts | ✅ done | `st_Elem_include` complete (part 2g: 844, 856, 862, 863, 0 left) |
+| New game start | 🚧 campaign, scenario, MP galaxy done | `Game::new_campaign`, `start_scenario` and `start_mp_galaxy` build the start state and equal 25 starts recorded in the original; the skirmish start follows |
 | Game client: starmap | 🚧 playable | The original's 3D camera, stars, orbiting planets, fleets, names and selection; speed and pause, selecting, move/attack/waypoint orders through the lockstep commands; the control panel, planet/fleet info box and minimap; the production view and the transfer panel; the radial icon menu, the planet's long info with its tax, auto-build, priority and station-sale menus; the fleet and vehicle info panels (their sales go through `MULTIGET_Design`) |
 | Game client: colony screen | 🚧 playable | Terrain, buildings, roads and ground units, planet panel, radar, building names; select, build (the build menu's list and the placing cursor), repair, demolish and switch buildings, all as the original's commands. The ground war's orders are ported (`ColonyOrder::Ground`). The ground war's controls are in (war buttons, selection, orders, rings, banner, unit info). To do: the planet info mode, the landing clicks, shadows, effects |
 | Game client: HUD, text, info, messages | 🚧 drawn and driven | Top bar (money, date, speed), the game's bitmap font, the scrolling message line; the info screen's 3D frame, race heads, empire panel, spending limit, money triangle, charts, the planet/fleet list with its turning planets and fleets (pick a race or a chart, scroll the list), a row's detail view (click a planet or fleet) and the star log; the planet settings menus in the detail view, the money triangle and the spending limit (sent as lockstep commands); the messages screen's frame, inbox and open messages with their dialogue and answers. To do: the answers' orders |
-| Game client: diplomacy screen | 🚧 playable | The contacts' heads and portraits, the leader's video, the info panel, the proposal and answer menus and the dialogue texts; proposals and answers go out as lockstep commands. To do: the opening animation, the special (story) menu, sounds |
+| Game client: diplomacy screen | 🚧 playable | The contacts' heads and portraits, the leader's video, the info panel, the proposal and answer menus and the dialogue texts; proposals and answers go out as lockstep commands. The opening and closing animation, the special (story) menu and the sounds are in. To do: the MP-only menus, lip sync, the sim writing the special list |
 | Game client: spy screen | 🚧 playable | The roster carousel with the spies' figures, names and status icons, the head video, the spy's stats, the mission planner with its lists and chance, reports, verdicts and applicants; every action through the lockstep commands; the frame's opening and closing animation, the tooltips. To do: sounds |
 | Game client: research screen | 🚧 playable | The console, its category wheels, the ball with the category's tech models, the tech's texts, lists, labs and the running project; start, stop, urgent and the category/tech choice by mouse and keys, as the original's commands; the opening and closing animation with its lasers, the buttons' press animations, the chosen row's animated frame and the tooltips. To do: the button lines, sounds |
 | Game client: main menu | 🚧 playable | The title (with its video) and the main menu with its ring menus, hover labels, the galaxy, clouds, dust, meteors and ships, the credits video; the window starts on it (the load ring opens Options in load-only mode). To do: race choice and difficulty, scenario/skirmish, tutorial, multiplayer entry |
-| Game client: other screens | 🚧 started | The SpaceWar screen is drawn at rest from a capture's dump (`--snapshot --screen spacewar`) and runs live from the starmap's SP battle with camera, selection and orders (part 3: effects, sounds, big info box, exe frame comparison). The Design screen is drawn and driven in the viewing mode (F5; part 2: the editing modes and orders). To do: trade, the ground-war screen, menus |
-| Game client: audio and video | 🚧 audio part 2, video done | Audio: Ogg decoding, a mixer, music with the exe's selection and crossfade, the research, starmap and colony sound ids (verified against the exe), the click sites of info, spy, diplomacy and the typer, colony ambients and build sounds, scroll voices. Video: MP4 (H.264/AAC) decoded with OpenH264 + Symphonia; the title (verified against the exe), credits, story, ending and message-head clips. To do: the speakers, message speech, thunder; the intro videos (wait for the new-game start) |
+| Game client: other screens | 🚧 started | The SpaceWar screen is drawn at rest from a capture's dump (`--snapshot --screen spacewar`) and runs live from the starmap's SP battle with camera, selection and orders (part 4 done: effects, battle sounds, grid look; part 5 next: lightning, fighters, cursor/tooltips, voices). The Design screen is drawn and driven in the viewing and editing modes (F5; orders verified; part 3 done: pod pick, POD boxes, tech models and fit, effects; hull look done). The Trade screen is drawn and driven (F8; purchases through `Command::Buy`, matches the exe's money and delivery; part 2: hull model, info card, pod list). To do: the ground-war screen, menus |
+| Game client: audio and video | 🚧 audio part 3, video done | Audio: Ogg decoding, a mixer, music with the exe's selection and crossfade, the research, starmap and colony sound ids (verified against the exe), the click sites of info, spy, diplomacy and the typer, colony ambients and build sounds, scroll voices. Video: MP4 (H.264/AAC) decoded with OpenH264 + Symphonia; the title (verified against the exe), credits, story, ending and message-head clips. Audio part 3: the speakers, message speech with ducking, alien voices, thunder (verified against the exe). The ground war's voices (verified against the exe). To do: the campaign intro videos, the tutorial's videos |
 | Screen comparison with the original | 🚧 started | Every screen is listed with the original's functions ([`re/screens/`](re/screens/README.md)); a tool captures the original and our client on the same save and diffs them pixel by pixel. Starmap, colony, info, messages and the spy screen are compared; the spy screen's carousel and panels match, no screen passes whole yet ([results](re/screens/diff-results.md)) |
 | Input → game commands | 🚧 started | Speed and pause work; every screen's actions become lockstep commands as they are ported |
 | Multiplayer | 🚧 engine done | Lockstep, desync detection and rejoin, QUIC, LAN discovery, port mapping and the lobby work; real-time battles run in lockstep, the ground war's orders are commands (`ColonyOrder::Ground`); a session layer runs a game from lobby to end (drop grace, rejoin and its admission, host migration, resync, pause, multiplayer saves). To do: the lobby and connection screens |
@@ -83,6 +84,19 @@ playable from start to finish.
 | **Original saves** | Load into the simulation and run whole game ticks, matching the original byte for byte over 2,500 ticks |
 
 </details>
+
+### 🧭 What's left
+
+The full list is tracked in [`TASKS.md`](TASKS.md). In short:
+
+- **Playable start to finish (M2):** scenario and skirmish starts, a client world built from a new game, the
+  main menu's race/difficulty and game setup, the last parts of the colony war, SpaceWar, Design and Trade
+  screens, the campaign intro videos, the game end and high scores.
+- **Every screen exact (M3):** help, credits, demo mode, the tutorial overlay, and a final comparison sweep of
+  every screen against the original.
+- **Input and feel (M4):** a keyboard and mouse audit per screen; 16:9, 21:9 and 4K checks.
+- **Multiplayer (M5):** the lobby and connection screens (the network engine underneath is done).
+- **Polish (M6, after the prototype):** fixes for the original's bugs, enhanced options, graphics upgrades.
 
 ## 🚀 Try it
 
@@ -155,6 +169,7 @@ engine/   Cargo workspace (the crates above)
 docs/     Architecture decision records
 re/       Specs of the original's formats, rules and screens; verification reports
 tools/    Analysis and recording tools used to write the specs
+TASKS.md  The remaining tasks, in short
 ```
 
 ## ⚖️ Legal

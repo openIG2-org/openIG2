@@ -1,0 +1,7 @@
+{
+ "screen": "trade",
+ "note": "The trade screen (re/screens/trade.md): the opening (traframe 0..50 at 4/11 a UI tick, screen19), at rest. Times are UI ticks from the first frame the screen is up.",
+ "events": [],
+ "grabs": [10, 60, 100, 160, 200, 300],
+ "tail": 20
+}

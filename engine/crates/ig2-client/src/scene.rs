@@ -99,6 +99,14 @@ pub struct Part {
     pub look: Look,
     /// Per triangle, the wireframe edge mask (`wirekirak`: bit 0 = c–a, bit 1 = a–b, bit 2 = b–c).
     pub edges: Vec<u8>,
+    /// The material's last word (`.xvm` +0x30, re/formats/xv.md) as an f32: its transparency (0 = opaque) [obs: the
+    /// trade screen's `Racsszin`/`tozs_hk` hold 0.65 and ig2.exe draws them at opacity 89/255; trade.md §4.1].
+    pub transparency: f32,
+    /// The self-illumination pass (`selfillumkirak` ELF 0x613da0): when the mesh's first material has a second
+    /// texture (`.xvm` `texture2`, `loadmaterial`'s +0x50), every batch is drawn again additively and unlit with its
+    /// material's second texture (or, without one, its first: `changeaktmatarialself` binds nothing new). The ship
+    /// hulls' lit windows (`6desttsi.bmp`).
+    pub self_illum: Option<String>,
 }
 
 /// A loaded model: its root node's half-extents (`XVBStruct+4..+0xc`), its parts and the pose of every child.
@@ -149,7 +157,44 @@ impl Model {
             frame,
         };
         w.node(&scene, &IDENTITY, &IDENTITY, [0.0; 3], "", &[]);
-        Ok(Self { origin: scene.header.origin, parts: w.parts, nodes: w.nodes })
+        let mut model = Self { origin: scene.header.origin, parts: w.parts, nodes: w.nodes };
+        if !skips_box_recount(&scene) {
+            model.box_recount();
+        }
+        Ok(model)
+    }
+
+    /// `LoadXVBx`'s `BoxUjraszamol` (ELF 0x602750; `kilogasvizsgalat` 0x5ecb10, `boxujraszamol` 0x5ed9f0): the root's
+    /// half-extents become the vertices' reach from its pivot per axis (`e`), and `+0x4c` = `max(e)/1024` when the
+    /// file's largest half-extent is exactly 1024 (else it stays 1.0). `AddToScene` scales by `e/max(e)·s·+0x4c`, so the
+    /// model as drawn is the file's scaled by `max(origin)/max(e)` for a root that isn't 1024 wide, unchanged otherwise
+    /// (re/screens/design.md §14.3).
+    fn box_recount(&mut self) {
+        let mx = self.origin[0].max(self.origin[1]).max(self.origin[2]);
+        if mx == 1024.0 {
+            return;
+        }
+        let mut e = [0.0f32; 3];
+        for p in self.positions() {
+            for k in 0..3 {
+                e[k] = e[k].max(p[k].abs() * self.origin[k]);
+            }
+        }
+        let me = e[0].max(e[1]).max(e[2]);
+        if me <= 0.0 || !me.is_finite() {
+            return;
+        }
+        let g = mx / me;
+        for p in &mut self.parts {
+            for v in &mut p.verts {
+                v.pos = v.pos.map(|x| x * g);
+            }
+        }
+        for n in &mut self.nodes {
+            n.parent = n.parent.map(|x| x * g);
+            n.matrix = n.matrix.map(|x| x * g);
+            n.at = n.at.map(|x| x * g);
+        }
     }
 
     /// `MoveObj`/`RotateObj` on the child `index` (re/screens/spy.md §2.2): its record translation replaced by `to`
@@ -242,6 +287,27 @@ impl Walk<'_, '_> {
         })
     }
 
+    /// The material's second texture (`texture2`), resolved like the first; `fenyek_2.bmp`/`reflec.bmp` become a
+    /// runtime texture in `loadmaterial` (not loaded here).
+    fn texture2(&self, material: &str) -> Option<String> {
+        let m = self.archive.get(&format!("{}{material}.xvm", self.prefix))?;
+        let mat = Material::parse(m.data).ok()?;
+        if mat.texture2.is_empty() || mat.texture2.eq_ignore_ascii_case("fenyek_2.bmp") || mat.texture2.eq_ignore_ascii_case("reflec.bmp") {
+            return None;
+        }
+        self.install.resolve_texture(self.texture_dir, &mat.texture2).or_else(|| {
+            let screen = self.texture_dir.trim_start_matches("textures/").split('/').next().unwrap_or("");
+            self.install.resolve_model_texture(screen, &mat.texture2)
+        })
+    }
+
+    /// The material's transparency word (an f32; absent or not finite = 0).
+    fn transparency(&self, material: &str) -> f32 {
+        let m = self.archive.get(&format!("{}{material}.xvm", self.prefix));
+        let t = m.and_then(|m| Material::parse(m.data).ok()).and_then(|m| m.flags).map_or(0.0, f32::from_bits);
+        if t.is_finite() { t } else { 0.0 }
+    }
+
     /// `Kocka2`: a child sits at `P·t + T` with matrix `P·M` (the child record's matrix; `RotateObj` is never
     /// applied inside a model).
     fn node(&mut self, n: &Node, p: &M3, pl: &M3, t: V3, path: &str, index: &[u16]) {
@@ -269,6 +335,9 @@ impl Walk<'_, '_> {
                 ChildContent::Node(sub) => self.node(sub, &m, &ml, t2, &path, &index),
                 ChildContent::Mesh(mesh) => {
                     let texs: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture(x)).collect();
+                    let trs: Vec<f32> = mesh.materials.iter().map(|x| self.transparency(x)).collect();
+                    let tex2: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture2(x)).collect();
+                    let lit = tex2.first().is_some_and(Option::is_some);
                     let nm = normal_matrix(&m);
                     let mut by_mat: Vec<Vec<Vert>> = vec![Vec::new(); texs.len().max(1)];
                     let mut edges: Vec<Vec<u8>> = vec![Vec::new(); by_mat.len()];
@@ -294,7 +363,7 @@ impl Walk<'_, '_> {
                     }
                     for (k, (verts, edges)) in by_mat.into_iter().zip(edges).enumerate() {
                         if !verts.is_empty() {
-                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges });
+                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges, transparency: trs.get(k).copied().unwrap_or(0.0), self_illum: if lit { tex2.get(k).cloned().flatten().or_else(|| texs.get(k).cloned().flatten()) } else { None } });
                         }
                     }
                 }
@@ -302,6 +371,14 @@ impl Walk<'_, '_> {
             }
         }
     }
+}
+
+/// `BoxUjraszamol`'s guard: no recount for a root with more than one child whose first is a node (`XVBStruct` byte 0
+/// clear), nor for one with more than two animation frames (the chain through `+0x18` is the LOD archive, not loaded
+/// here).
+fn skips_box_recount(root: &Node) -> bool {
+    let first_is_node = matches!(root.children.first(), Some((_, ChildContent::Node(_))));
+    (root.children.len() > 1 && first_is_node) || root.header.frames() > 2
 }
 
 /// The two integer frames around `frame` (within `n`) and the weight of the second: `SetFrame` keeps
@@ -441,5 +518,28 @@ mod tests {
         for k in 0..3 {
             assert!((both[k] - step[k]).abs() < 1e-5);
         }
+    }
+
+    /// `BoxUjraszamol` (IG2_INSTALL_DIR; skipped without it): the light tank hull `ltankp` (root 6065.9 wide, its body
+    /// reaching 1.65× that) is drawn with its furthest vertex at the `AddToScene` scale, 0.61× the file's size [obs:
+    /// the design screen's tank at t500..t820, re/screens/design.md §14.3]; the 1024-wide Destroyer keeps its size and
+    /// its shell's windows come from `MatJ`'s second texture.
+    #[test]
+    fn roots_are_remeasured_like_box_ujraszamol() {
+        let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let inst = inst.expect("valid install");
+        let reach = |m: &Model| {
+            let mx = m.origin[0].max(m.origin[1]).max(m.origin[2]);
+            m.positions().flat_map(|p| (0..3).map(move |k| (p[k] * m.origin[k] / mx).abs())).fold(0.0f32, f32::max)
+        };
+        let tank = Model::load(&inst, "vector/design/alapok/", "ltankp", "textures/design/tankalapok/").unwrap();
+        assert!((tank.origin[0] - 6065.9).abs() < 0.1 && tank.origin[0] == tank.origin[1], "{:?}", tank.origin);
+        assert!((reach(&tank) - 1.0).abs() < 1e-5, "{}", reach(&tank));
+        let ship = Model::load(&inst, "vector/design/alapok/", "romb6_2", "textures/spacewar/").unwrap();
+        assert!((reach(&ship) - 1.0).abs() < 1e-3, "{}", reach(&ship));
+        let lit = |name: &str| ship.parts.iter().find(|p| p.path.ends_with(name)).and_then(|p| p.self_illum.clone());
+        assert!(lit("Object02").is_some_and(|t| t.contains("6desttsi")));
+        assert!(lit("Object05").is_some_and(|t| t.contains("6destsi1")));
+        assert!(lit("Object08").is_none());
     }
 }

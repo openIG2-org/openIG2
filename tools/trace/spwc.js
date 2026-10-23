@@ -39,8 +39,12 @@ const OBJ = 0x2d9c, UNIT = 600, FIGHTER = 0xa8, GUN = 0xa8, SHOT = 0xa8, SPRITE 
 
 const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, steps: 3000, battles: 20, seed: 4242,
   fuzz: false, aiHuman: false, planets: false, join: false, fuzzDesigns: false, every: 4, speed: 4, perBattle: 1500,
-  orders: 0, orderEvery: 5, grabTicks: [], grabSettle: 120, stateSlot: 0 };
-recv('config', (m) => { Object.assign(cfg, m.payload); });
+  orders: 0, orderEvery: 5, grabTicks: [], grabSettle: 120, stateSlot: 0, script: null, soundTables: null };
+recv('config', (m) => {
+  Object.assign(cfg, m.payload);
+  if (cfg.script) hookScript();
+  if (cfg.soundTables && typeof hookSounds === 'function') hookSounds();
+});
 
 let buf = [];
 function emit(ev) { buf.push(ev); if (buf.length >= 4) flush(); }
@@ -571,6 +575,31 @@ let frames = 0, started = false, loadedAt = 0, populated = false, pending = 0, o
 Interceptor.attach(A.Fake_FRISSITES, {
   onEnter() {
     frames++;
+    if (cfg.script) {
+      // The capture runs in the background: `IsActive` (0x912A38) kept set, the pointer the script's.
+      va(0x912a38).writeU8(1);
+      if (scriptT !== null) {
+        // What the frame before left in the pointer and the hot-spot (`AktIkon` 0xBAE23C): changes are recorded.
+        const seen = [va(0xdb4654).readS32(), va(0xdb4658).readS32()], ikon = va(0xbae23c).readS32();
+        if (ikon !== lastIkon || seen[0] !== scriptMouse[0] || seen[1] !== scriptMouse[1]) {
+          emit({ k: 'ikon', t: scriptT, ikon, seen, mouse: scriptMouse.slice() });
+          lastIkon = ikon;
+        }
+        // The camera each frame (after the frame before): look-at now/wanted (+0xc5c/+0xc6c), zoom, the view
+        // animation flag (+0x1d3e), `ControlConfig[0..1]` (0x90B520).
+        if (scriptSelf) {
+          const s = scriptSelf, fl = (o, n) => Array.from({ length: n }, (_, k) => s.add(o + 4 * k).readFloat());
+          emit({ k: 'cam', t: scriptT, pan: fl(0xc5c, 3), want: fl(0xc6c, 3), zoom: s.add(0xc88).readFloat(), yaw: s.add(0xc80).readFloat(),
+            anim: s.add(0x1d3e).readU8(), cc: [va(0x90b520).readU8(), va(0x90b521).readU8()], move: [va(0x91d6f8).readFloat(), va(0x91d724).readFloat()] });
+        }
+        [[0x916008, 0x91600c], [0xdb4654, 0xdb4658]].forEach(([ax, ay]) => { va(ax).writeS32(scriptMouse[0]); va(ay).writeS32(scriptMouse[1]); });
+        // The physical pointer (window pixels, 0xDB9408/0C) too: `SpaceWar_Autoscroll` (exe 0x5624c0) pans while it
+        // is within 8 pixels of the window's edge, and the real cursor is anywhere.
+        const [wx, wy] = toWindow(scriptMouse);
+        va(0xdb9408).writeS32(wx); va(0xdb940c).writeS32(wy);
+      }
+      if (populated && !scriptFinished) { try { scriptFrame(); } catch (e) { emit({ k: 'error', msg: e.toString(), stack: e.stack }); } }
+    }
     if (!started && frames === cfg.startAfterFrames) {
       started = true; fz = cfg.seed;
       if (cfg.fuzz) va(0xe72dd2).writeU8(1);   // `asteroidak`: battles get scenery
@@ -588,6 +617,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
       if (kep === 0xb) {
         onScreen++;
         pending = 0;
+        // --script: the exe's own pause and speed (what the screen does with them is under test).
+        if (cfg.script) return;
         if (A.IdoPause.readU8()) setPause(0, 0);
         A.BattleSpeed.writeS32(grabPending ? 0 : cfg.speed);
         // A long battle is abandoned (its slot closed) so the session sees more of them.
@@ -671,5 +702,187 @@ function hookSwap() {
   });
 }
 // opengl32.dll is loaded late: the SwapBuffers hook goes in at the first grab.
+
+// ---------------------------------------------------------------- input scripts (--script; re/screens/spacewar.md §9.5)
+// screen.js's script frames on the battle screen: from the first frame `AktKep` is 0xB, `SDL_GetTicks` (exe
+// 0x689e80) returns a clock that moves 10 ms a drawn frame (one UI tick a frame, `Fake_FRISSITES`' 100 Hz loop),
+// `scriptT` counts the UI ticks (0xB772A4) from there, and the script's events go in through the game's own SDL2
+// event filter `MainCallBackEventHandler` (0x4e2db0) at their tick. At that first frame the battle slot is dumped
+// in the grab shape ({type: 'entry'}: regions, statics, the camera globals) and the exe's own save goes to
+// --state-out, so `ig2-client --screen spacewar --battle <entry>.json --script S` starts from the same battle.
+// Grabs: the frame whose swap comes after exactly t UI ticks → {type: 'frame', t, ...state} + RGBA bottom-up.
+// The pause and the speeds are the exe's own throughout (the driver leaves them alone).
+let scriptT = null, scriptUi0 = 0, scriptMouse = [320, 240], scriptEvents = [], scriptGrabs = [], scriptEnd = 0, scriptFinished = false;
+let vt = 0, vtOn = false, realTicks = null, scriptSelf = null, lastIkon = null;
+// SDL2 scancode, keycode.
+const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050],
+  add: [87, 0x40000057], subtract: [86, 0x40000056], escape: [41, 27], backspace: [42, 8], space: [44, 32], enter: [40, 13],
+  shift: [225, 0x400000e1], ctrl: [224, 0x400000e0], a: [4, 97], c: [6, 99], r: [21, 114], i: [12, 105] };
+for (let d = 1; d <= 9; d++) SDL_KEYS[String(d)] = [29 + d, 48 + d];
+
+function hookScript() {
+  const s = cfg.script;
+  scriptGrabs = (s.grabs || []).slice().sort((x, y) => x - y);
+  for (const e of s.events || []) {
+    if (e.press) {
+      scriptEvents.push({ t: e.t, mouse: e.press, quiet: true }, { t: e.t, down: e.button || 1, at: e.press });
+      scriptEvents.push({ t: e.t + (e.hold || 3), up: e.button || 1, at: e.press });
+    } else if (e.drag) {
+      // Down at the first point, a step a tick on the line, up at the second (ig2-client's script.rs the same).
+      const [[x0, y0], [x1, y1]] = e.drag, b = e.button || 1, hold = Math.max(1, e.hold || 3);
+      scriptEvents.push({ t: e.t, mouse: [x0, y0], quiet: true }, { t: e.t, down: b, at: [x0, y0] });
+      for (let k = 1; k < hold; k++) scriptEvents.push({ t: e.t + k, mouse: [Math.round(x0 + ((x1 - x0) * k) / hold), Math.round(y0 + ((y1 - y0) * k) / hold)], quiet: true });
+      scriptEvents.push({ t: e.t + hold, mouse: [x1, y1], quiet: true }, { t: e.t + hold, up: b, at: [x1, y1] });
+    } else if (e.key) {
+      scriptEvents.push({ t: e.t, keydown: e.key }, { t: e.t + (e.hold || 3), keyup: e.key });
+    } else {
+      scriptEvents.push(e);
+    }
+  }
+  // Stable: same-tick events keep their order.
+  scriptEvents.sort((x, y) => x.t - y.t);
+  scriptEnd = Math.max(0, ...scriptGrabs, ...scriptEvents.map((e) => e.t)) + (s.tail || 30);
+  const ticks = va(0x689e80);
+  const real = new NativeFunction(ticks, 'uint32', [], { abi: 'mscdecl' });
+  realTicks = () => real();
+  Interceptor.replace(ticks, new NativeCallback(() => (vtOn ? vt >>> 0 : real()), 'uint32', [], 'mscdecl'));
+}
+
+const sdlHandler = new NativeFunction(va(0x4e2db0), 'uint32', ['pointer'], { abi: 'mscdecl', traps: 'all' });
+const sdlEvent = Memory.alloc(64);
+function sdlSend(type, fill) {
+  for (let i = 0; i < 64; i += 4) sdlEvent.add(i).writeU32(0);
+  sdlEvent.writeU32(type);
+  sdlEvent.add(4).writeU32(vt >>> 0);
+  fill(sdlEvent);
+  sdlHandler(sdlEvent);
+}
+function toWindow([x, y]) {
+  const w = va(0xb770d0).readS32(), h = va(0xb770d4).readS32(), x0 = va(0xb770d8).readS32(), y0 = va(0xb770dc).readS32();
+  return [x0 + Math.ceil((x * w) / 640), y0 + Math.ceil((y * h) / 480)];
+}
+const sndIn = (ev) => { if (typeof sndInput === 'function') sndInput(ev); };
+function applyEvent(e) {
+  if (e.mouse) {
+    scriptMouse = e.mouse.slice();
+    if (!e.quiet) sndIn({ src: 'script', ev: 'move', at: scriptMouse });
+  } else if (e.down || e.up) {
+    const [wx, wy] = toWindow(e.at);
+    sdlSend(e.down ? 0x401 : 0x402, (p) => { p.add(0xc).writeU8(e.down || e.up); p.add(0xd).writeU8(e.down ? 1 : 0); p.add(0xe).writeU8(1); p.add(0x10).writeS32(wx); p.add(0x14).writeS32(wy); });
+    sndIn({ src: 'script', ev: e.down ? 'down' : 'up', button: e.down || e.up, at: e.at, win: [wx, wy] });
+  } else if (e.keydown || e.keyup) {
+    const name = e.keydown || e.keyup, [sc, sym] = SDL_KEYS[name] || [0, 0];
+    if (!sc) emit({ k: 'error', msg: 'unknown script key ' + name });
+    sdlSend(e.keydown ? 0x300 : 0x301, (p) => { p.add(0xc).writeU8(e.keydown ? 1 : 0); p.add(0x10).writeS32(sc); p.add(0x14).writeS32(sym); });
+    sndIn({ src: 'script', ev: e.keydown ? 'keydown' : 'keyup', key: name });
+  }
+}
+
+// The battle screen's state beside each grab: the battle's clocks, the exe's pause and speeds, the smoothed camera,
+// the fade, and the slot itself (the camera fields, the selection, the view animation are offline reads of `obj`).
+function screenState(self) {
+  return { kep: A.AktKep.readS32(), paused: A.IdoPause.readU8(), ikon: va(0xbae23c).readS32(), seen: [va(0xdb4654).readS32(), va(0xdb4658).readS32()], battleSpeed: A.BattleSpeed.readS32(), speed: va(0xbae25c).readS32(),
+    battleSteps, cam: hexOf(new Uint8Array(va(0xe72dd4).readByteArray(0x20))), fade: va(0xf16eb4).readFloat(), zbm: va(0x91965c).readFloat(),
+    erosseg: va(0x927994).readFloat(), acttime: va(0xfd1520).readU32(), futofeny: va(0xf1736c).readFloat(), clouds: va(0xe75918).readS32(),
+    obj: self ? hexOf(new Uint8Array(self.readByteArray(OBJ))) : null };
+}
+
+function activeSelf() {
+  for (let b = 0; b < 10; b++) { const p = SPW0.add(SPW_STRIDE * b); if (p.add(0x1f2e).readU8()) return p; }
+  return null;
+}
+
+let scriptSwapHooked = false;
+function hookScriptSwap() {
+  const gl = Process.getModuleByName('opengl32.dll'), gdi = Process.getModuleByName('gdi32.dll'), user = Process.getModuleByName('user32.dll');
+  const f = (m, n, r, a) => new NativeFunction(m.getExportByName(n), r, a, { abi: 'stdcall' });
+  const readPixels = f(gl, 'glReadPixels', 'void', ['int', 'int', 'int', 'int', 'uint', 'uint', 'pointer']);
+  const getInt = f(gl, 'glGetIntegerv', 'void', ['uint', 'pointer']);
+  const readBuffer = f(gl, 'glReadBuffer', 'void', ['uint']);
+  const pixelStore = f(gl, 'glPixelStorei', 'void', ['uint', 'int']);
+  const getProc = f(gl, 'wglGetProcAddress', 'pointer', ['pointer']);
+  const winOfDc = f(user, 'WindowFromDC', 'pointer', ['pointer']);
+  const clientRect = f(user, 'GetClientRect', 'int', ['pointer', 'pointer']);
+  let bindFb = null, bindBuf = null;
+  const tmp = Memory.alloc(16), rect = Memory.alloc(16);
+  const get = (e) => { getInt(e, tmp); return tmp.readS32(); };
+  Interceptor.attach(gdi.getExportByName('SwapBuffers'), {
+    onEnter(args) {
+      if (scriptT === null || scriptGrabs.length === 0) return;
+      const ticks = va(0xb772a4).readS32() - scriptUi0;
+      if (ticks < scriptGrabs[0]) return;
+      const want = scriptGrabs.shift();
+      try {
+        if (!bindFb) {
+          const p = getProc(Memory.allocAnsiString('glBindFramebuffer')), q = getProc(Memory.allocAnsiString('glBindBuffer'));
+          bindFb = p.isNull() ? () => {} : new NativeFunction(p, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+          bindBuf = q.isNull() ? () => {} : new NativeFunction(q, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+        }
+        clientRect(winOfDc(args[0]), rect);
+        const w = rect.add(8).readS32(), h = rect.add(12).readS32();
+        const fb = get(0x8caa), pack = get(0x88ed), rb = get(0x0c02), align = get(0x0d05);
+        bindFb(0x8ca8, 0); bindBuf(0x88eb, 0); readBuffer(0x0405); pixelStore(0x0d05, 1);
+        const buf = Memory.alloc(w * h * 4);
+        readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
+        bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
+        flush();
+        send({ type: 'frame', t: want, ticks, w, h, frames, mouse: scriptMouse, ...screenState(activeSelf() || scriptSelf) }, buf.readByteArray(w * h * 4));
+      } catch (e) { emit({ k: 'error', msg: e.toString(), stack: e.stack }); }
+    },
+  });
+}
+
+// --watch T:OFF[:N]: from script tick T a hardware write watchpoint on the battle slot's byte OFF (the main
+// thread's), the first N writers as {k: 'write', pc, ret, t, value} (the caller from the stack's top words).
+let watchOn = false;
+function watchWrites(addr, n) {
+  watchOn = true;
+  const th = Process.enumerateThreads().find((x) => x.id === Process.getCurrentThreadId());
+  let left = n;
+  Process.setExceptionHandler((d) => {
+    if (d.type !== 'single-step' && d.type !== 'breakpoint') return false;
+    if (left-- > 0) {
+      const sp = d.context.sp, words = [];
+      for (let i = 0; i < 24; i++) { const w = sp.add(4 * i).readPointer(); const m = Process.findModuleByAddress(w); if (m && m.name === 'ig2.exe') words.push('0x' + (w.sub(mod.base).toInt32() + IMAGE_BASE).toString(16)); }
+      emit({ k: 'write', pc: '0x' + (d.context.pc.sub(mod.base).toInt32() + IMAGE_BASE).toString(16), stack: words.slice(0, 6), t: scriptT, value: addr.readFloat() });
+    }
+    if (left <= 0) th.unsetHardwareWatchpoint(0);
+    return true;
+  });
+  th.setHardwareWatchpoint(0, addr, 4, 'w');
+  emit({ k: 'watch', addr: addr.toString(), thread: th.id });
+}
+
+function scriptFrame() {
+  if (scriptT === null) {
+    if (A.AktKep.readS32() !== 0xb) return;
+    scriptSelf = activeSelf();
+    if (!scriptSelf) return;
+    scriptT = 0;
+    scriptUi0 = va(0xb772a4).readS32();
+    vt = realTicks();
+    va(0xbae278).writeU32((vt - 1) >>> 0);
+    vtOn = true;
+    if (!scriptSwapHooked) { hookScriptSwap(); scriptSwapHooked = true; }
+    const now = grab(regions(scriptSelf)), full = {};
+    for (const k in now) full[k] = { p: now[k].p, full: hexOf(now[k].b) };
+    flush();
+    send({ type: 'entry', tick: battleSteps, n: 0, battle: battleSerial, self: scriptSelf.toString(), frames, ui: scriptUi0,
+      ...screenState(scriptSelf), statics: statics(scriptSelf), regions: full });
+    if (cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('spacewar'), 2);
+  } else {
+    scriptT = va(0xb772a4).readS32() - scriptUi0;
+  }
+  vt += 10;
+  if (cfg.watch && !watchOn && scriptT >= cfg.watch.t) watchWrites(scriptSelf.add(cfg.watch.off), cfg.watch.n || 40);
+  for (const e of scriptEvents) if (!e.done && e.t <= scriptT) { e.done = true; applyEvent(e); }
+  if (scriptT >= scriptEnd && scriptGrabs.length === 0) {
+    scriptFinished = true;
+    flush();
+    send({ type: 'scriptDone', scriptT, vt, ...screenState(null) });
+    emit({ k: 'done' });
+    steps = cfg.steps;
+  }
+}
 
 send({ type: 'ready', base: mod.base.toString() });

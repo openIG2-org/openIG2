@@ -41,6 +41,7 @@ mod orders;
 mod realtime;
 mod research_orders;
 mod tutorial;
+pub mod new_game;
 
 pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
 pub use design_orders::{DesignOrder, DesignRecord};
@@ -761,6 +762,7 @@ impl<'r> Game<'r> {
             radar_rules: self.rules.radar.clone(),
             in_battle: Vec::new(),
             sends: g.sends,
+            viewers: g.sends,
             transfer: (m.i32(va::AKT_KEP) == 2 && m.u8(va::STARMAP_TRANSFER_MODE) != 0)
                 .then(|| (m.i32(va::STARMAP_TRANSFER_FLEETS.0), m.i32(va::STARMAP_TRANSFER_FLEETS.1))),
         }
@@ -2084,6 +2086,10 @@ impl Game<'_> {
         let debug = m.u8(va::DEBUGX) != 0;
         let is_en = |e: u8| e as usize == en;
         let canonical_en = self.globals().en;
+        // A lost contact goes to the fleet's owner (decoded only when there is one).
+        let lost = |e: &GameEvent| matches!(e, GameEvent::Starmap(StarmapEvent::ContactLostNetwork { .. }));
+        let fleets = if events.iter().any(lost) { self.state.starmap().fleets } else { Vec::new() };
+        let fleet_owner = |f: usize| fleets.get(f).map(|x| x.owner as usize);
         // A story line's place in `posts`: its one parameter is the finished text, posted with id 1.
         const STORY_LINE: i32 = i32::MIN;
         // (id, parameters, important, interrupt)
@@ -2160,8 +2166,9 @@ impl Game<'_> {
                 }
                 GameEvent::Starmap(s) | GameEvent::Diplomacy(DiploEvent::Starmap(s)) => match s {
 
-                    StarmapEvent::ContactLost { .. } | StarmapEvent::ContactLostNetwork { .. } => posts.push((4, Vec::new(), false, false)),
-                    StarmapEvent::EnemyApproaching { .. } => posts.push((14, Vec::new(), false, false)),
+                    StarmapEvent::ContactLost { .. } => posts.push((4, Vec::new(), false, false)),
+                    StarmapEvent::ContactLostNetwork { fleet } if fleet_owner(*fleet) == Some(en) => posts.push((4, Vec::new(), false, false)),
+                    StarmapEvent::EnemyApproaching { to, .. } if is_en(*to) => posts.push((14, Vec::new(), false, false)),
                     _ => {}
                 },
                 _ => {}

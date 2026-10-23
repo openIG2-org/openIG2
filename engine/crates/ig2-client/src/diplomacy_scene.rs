@@ -1,4 +1,4 @@
-//! The diplomacy screen's 3D frame (re/screens/diplomacy.md §3), at rest: the background picture, the wire grid of
+//! The diplomacy screen's 3D frame (re/screens/diplomacy.md §3; the opening and closing §3.1): the background picture, the wire grid of
 //! `dipbck8.xvb`, the six head cages (`golya.xvb`, wireframe) with the contacts' portraits (`negyzetN.xvb`), and the
 //! round frame (`tube.xvb`) with the selected leader's video on `kor.xvb`. Vertices are lit on the CPU like the
 //! original's engine (ambient, the white parallel light, the two coloured side lights, the heads' marks); wireframes
@@ -42,6 +42,8 @@ pub struct DiplomacyScene {
     /// The remaster's clock in seconds (`sg3d_time`: the video's scan lines), when pinned (`--acttime`); else the
     /// frame time.
     pub acttime: Option<f32>,
+    /// `ycenter` (`250 − 10·dipframe/80` when the screen animates, §3.1).
+    yc: f32,
 }
 
 impl DiplomacyScene {
@@ -55,6 +57,7 @@ impl DiplomacyScene {
             target: None,
             spin0: [[0.0; 3]; HEADS],
             acttime: None,
+            yc: 240.0,
         };
         let mut seed = 0x2545_f491u32;
         for o in &mut s.spin0 {
@@ -143,13 +146,31 @@ impl DiplomacyScene {
         })
     }
 
+    /// `dipbck8.xvb` at `frame` (`SetFrame` keeps 1/256 steps between two keys; 106 frames).
+    fn posed(&mut self, r: &mut Renderer, install: &Install, frame: f32) -> Option<Model> {
+        let (f0, f1, t) = scene::frame_keys(frame, 106);
+        let a = self.model(r, install, "dipbck8.xvb", Some(f0))?;
+        if t == 0.0 {
+            return Some(a);
+        }
+        let b = self.model(r, install, "dipbck8.xvb", Some(f1))?;
+        Some(a.lerp(&b, t))
+    }
+
     /// Draw the frame behind the 2D layer: background, the solid models (offscreen, depth-tested), the wireframes.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, scr: &Screen, v: &View, vv: &Virtual, size: [f32; 2], time: f32) {
-        // `Copy3hatterkep(0x34, grey 127)`: the picture over the viewport at half brightness.
+        // The opening's pose (§3.1): `s = 1 − dipframe/80`, the main mesh lowered by `(int)(29·s)` while it opens or closes.
+        let fr = scr.dipframe;
+        let s = 1.0 - fr / 80.0;
+        let moving = (scr.animated && !scr.opened) || scr.closing;
+        let lift = if moving { (s * 29.0).trunc() } else { 0.0 };
+        self.yc = if scr.animated { 250.0 - fr * 10.0 / 80.0 } else { 240.0 };
+        // `Copy3hatterkep(0x34, grey 255 − 128·dipframe/80)`: the picture over the viewport (half bright once open).
         if let Some(bg) = self.background {
             let w = 640.0 * vv.k;
-            f.push(bg, Blend::GammaAlpha, Instance::new(kind::SPRITE, vv.px(320.0, 240.0), [w.max(size[0]) / 2.0, size[1] / 2.0], [0.5, 0.5, 0.5, 1.0]));
+            let g = (255 - (fr / 80.0 * 128.0) as i32) as f32 / 255.0;
+            f.push(bg, Blend::GammaAlpha, Instance::new(kind::SPRITE, vv.px(320.0, 240.0), [w.max(size[0]) / 2.0, size[1] / 2.0], [g, g, g, 1.0]));
         }
         let d = rules.diplomacy_screen.clone();
         // Lights (§3): ambient 0x141414, the white parallel light from (0, 0, −10), the two side lights
@@ -163,20 +184,47 @@ impl DiplomacyScene {
         let mut grid: Vec<(V3, V3, [f32; 4])> = Vec::new();
         let mut wires: Vec<(V3, V3, [f32; 4])> = Vec::new();
         let frames = time * 60.0;
-        // The background grid: `dipbck8.xvb` child 0 (`DipWireGomb`), animated over frames 80..90.
-        let wf = 80 + ((frames * 0.25) as usize % 10);
-        if let Some(m) = self.model(r, install, "dipbck8.xvb", Some(wf)) {
+        // The background grid: `dipbck8.xvb` child 0 (`DipWireGomb`) at frame `dipframe + dipwireframe` (80..90 once
+        // open), swinging in from `(0, 200s, −1000s)` turned `(3 sin 2s, 2 sin 2.1s, 0)`, fading in up to frame 40.
+        if let Some(m) = self.posed(r, install, fr + scr.wireframe) {
             let first = m.parts.first().map(|p| p.path.split('/').nth(1).unwrap_or("").to_owned()).unwrap_or_default();
-            let t = Placement::add_to_scene(m.origin, 1.1).world((0.0, 0.0, 0.0), [0.0, 0.0, Z]);
+            let rot = ((2.0 * s as f64).sin() as f32 * 3.0, ((s as f64) * 2.1).sin() as f32 * 2.0, 0.0);
+            let t = Placement::add_to_scene(m.origin, 1.1).world(rot, [0.0, lift + s * 200.0, Z - s * 1000.0]);
+            let alpha = if fr <= 40.0 { 1.0 - (1.35 - fr * 2.0 / 80.0).clamp(0.0, 1.0) } else { 1.0 };
             // Only the ambient light reaches the grid [obs: a uniform `racsszin` × 0x14 on the capture].
+            let from = grid.len();
             for p in m.parts.iter().filter(|p| p.path.split('/').nth(1) == Some(first.as_str())) {
                 self.wire(p, &t, &base, false, &mut grid);
+            }
+            for g in &mut grid[from..] {
+                g.2[3] = alpha;
+            }
+            // The opening ring, child 1 at frame `dipframe`: sub-meshes 0..3 (the telescopes) between frames 40 and
+            // 80, 4..7 (the rings) until frame 60 (`DiplomaciaInitGyuruk`) or while closing; 8 and 9 never.
+            let ring = Placement::add_to_scene(m.origin, 1.1).world((0.0, 0.0, 0.0), [0.0, lift, Z]);
+            for p in &m.parts {
+                let shown = match p.index.as_slice() {
+                    [1, k, ..] if *k < 4 => fr > 40.0 && fr < 80.0,
+                    [1, k, ..] if *k < 8 => fr < 60.0 || scr.closing,
+                    _ => false,
+                };
+                if shown {
+                    let id = p.texture.as_deref().and_then(|t| self.texture(r, install, t).map(|x| x.id)).unwrap_or(self.white);
+                    bake(p, &ring, &base, id, 1.0, &mut dynamic, &mut draws);
+                }
             }
         }
         // The cages and portraits.
         let selected = scr.selected;
+        // The cages swing in from `(820 sin(3s + ⌊k/2⌋)·s, 500 cos(4s + ⌊k/2⌋)·s)` and stay half transparent after an
+        // opening; the port's wires are calibrated on that rest, so their alpha runs 0..1 as the transparency 1..0.5.
+        let cage_alpha = ((1.0 - scr.cage_t) / 0.5).clamp(0.0, 1.0);
+        let swing = |k: usize, h: &[f32; 3]| {
+            let (s, j) = (s as f64, (k / 2) as f64);
+            [h[0] + ((s * 3.0 + j).sin() * 820.0 * s) as f32, h[1] + ((s * 4.0 + j).cos() * 500.0 * s) as f32, h[2]]
+        };
         for (i, h) in d.heads.iter().enumerate().take(HEADS) {
-            let alive = v.alive_slot(i);
+            let alive = v.alive_slot(i) || !scr.opened;
             let spin = if alive { 0.02 * frames } else { -0.005 * frames };
             let o = self.spin0[i];
             let rot = if alive { (o[0] + spin, o[1] + spin, o[2] + spin) } else { (o[0] + spin, o[1], o[2]) };
@@ -195,55 +243,79 @@ impl DiplomacyScene {
                 }
             }
             if let Some(m) = self.model(r, install, "golya.xvb", None) {
-                let t = Placement::add_to_scene(m.origin, 0.04).world(rot, *h);
+                let t = Placement::add_to_scene(m.origin, 0.04).world(rot, swing(i, h));
+                let from = wires.len();
                 for p in &m.parts {
                     self.wire(p, &t, &lights, true, &mut wires);
                 }
+                for w in &mut wires[from..] {
+                    w.2[3] = cage_alpha;
+                }
             }
-            if i >= v.slots.len() {
+            // The portraits fade in once open (`fejetransp`) and swing out with the cages only while closing.
+            let face_alpha = 1.0 - scr.face_t;
+            if i >= v.slots.len() || face_alpha <= 0.0 {
                 continue;
             }
+            let at = if scr.opened && scr.closing { swing(i, h) } else { *h };
             // The portrait square: sub-mesh 0 takes `TexturaNevek[2(race − 1) + blocked]`.
             let e = v.empire(i).clamp(0, 18) as usize;
             let race = v.races[e].max(1) as usize;
             let blocked = v.raw.get(i).and_then(|b| b.get(0x15)).copied().unwrap_or(0) != 0;
             let portrait = d.portraits.get(2 * (race - 1) + blocked as usize).and_then(|n| install.resolve_texture(TEXTURES, n));
             if let Some(m) = self.model(r, install, &format!("negyzet{}.xvb", i + 1), None) {
-                let t = Placement::add_to_scene(m.origin, 0.04).world((0.0, 0.0, 0.0), *h);
+                let t = Placement::add_to_scene(m.origin, 0.04).world((0.0, 0.0, 0.0), at);
                 let first = m.parts.first().map(|p| p.path.split('/').nth(1).unwrap_or("").to_owned()).unwrap_or_default();
                 for p in &m.parts {
                     let tex = if p.path.split('/').nth(1) == Some(first.as_str()) { portrait.clone().or(p.texture.clone()) } else { p.texture.clone() };
                     let id = tex.and_then(|t| self.texture(r, install, &t).map(|x| x.id)).unwrap_or(self.white);
-                    bake(p, &t, &base, id, 1.0, &mut dynamic, &mut draws);
+                    bake(p, &t, &base, id, face_alpha, &mut dynamic, &mut draws);
                 }
             }
         }
-        // The round frame and the leader's video, turned half round (`dipAtvaneFordulva = π`) once at rest.
+        // The round frame (from frame 60, hidden while closing) and the leader's video: `dipAtvaneFordulva` (0 or π)
+        // plus `Atfordulas·π/30` while turning; its two rings spin `dipFrameValtozo/220` and `−/90` about z, the outer
+        // one flipping about y, the inner about x (§3.1).
         if selected >= 0 {
-            let half = (std::f32::consts::PI, 0.0);
-            let turn = if scr.turn >= 30.0 { half.0 } else { scr.turn * 0.104_719_76 };
-            let push = if scr.turn >= 30.0 { 0.0 } else if scr.turn >= 16.0 { (29.0 - scr.turn) * 30.0 } else { scr.turn * 30.0 };
-            let ry = scene::axis_matrix([0.0, 1.0, 0.0], turn);
-            if let Some(m) = self.model(r, install, "tube.xvb", None) {
-                let p0 = Placement::add_to_scene(m.origin, 0.148);
-                let t = scene::Transform { matrix: scene::mul(&ry, &p0.matrix).map(|x| x * 1024.0), translation: [0.0, 0.0, Z + push] };
-                for p in &m.parts {
-                    let id = p.texture.as_deref().and_then(|t| self.texture(r, install, t).map(|x| x.id)).unwrap_or(self.white);
-                    bake(p, &t, &base, id, 1.0, &mut dynamic, &mut draws);
+            let resting = scr.turn as i32 == 30;
+            let angle = scr.flip + if resting { 0.0 } else { scr.turn * 0.104_719_76 };
+            let push = if resting { 0.0 } else if scr.turn >= 16.0 { (29.0 - scr.turn) * 30.0 } else { scr.turn * 30.0 };
+            let ry = scene::axis_matrix([0.0, 1.0, 0.0], angle);
+            if fr >= 60.0 && !scr.closing {
+                if let Some(m) = self.model(r, install, "tube.xvb", None) {
+                    let p0 = Placement::add_to_scene(m.origin, 0.148);
+                    let n = scr.spins as f32;
+                    for p in &m.parts {
+                        let rot = match p.index.first() {
+                            Some(1) => scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], angle), &scene::axis_matrix([0.0, 0.0, 1.0], -n / 90.0)),
+                            _ => scene::mul(&ry, &scene::axis_matrix([0.0, 0.0, 1.0], n / 220.0)),
+                        };
+                        let t = scene::Transform { matrix: scene::mul(&rot, &p0.matrix).map(|x| x * 1024.0), translation: [0.0, 0.0, Z + push] };
+                        let id = p.texture.as_deref().and_then(|t| self.texture(r, install, t).map(|x| x.id)).unwrap_or(self.white);
+                        bake(p, &t, &base, id, 1.0, &mut dynamic, &mut draws);
+                    }
                 }
             }
             let e = v.empire(selected as usize).clamp(0, 18) as usize;
             let race = v.races[e];
             let frame = {
                 let a = self.anim(r, install, rules, race);
-                (!a.is_empty() && scr.turn > 14.0).then(|| a[((time * 25.0) as usize) % a.len()])
+                (!a.is_empty() && (fr >= 60.0 && scr.turn > 14.0 || scr.closing)).then(|| a[((time * 25.0) as usize) % a.len()])
             };
             if let (Some(m), Some(tex)) = (self.model(r, install, "kor.xvb", None), frame) {
                 let p0 = Placement::add_to_scene(m.origin, 0.105);
-                let t = scene::Transform { matrix: scene::mul(&ry, &p0.matrix).map(|x| x * 1024.0), translation: [0.0, 0.0, Z + push] };
+                // Closing: `kor` fades (transparency `s`), backs off to `−650 + 500s` and turns `RotateObjr(0.2, 0, 0)` a
+                // frame: the object's angles rebuilt from `RotateObj(0, 0, 0)`, without the `RotateObj2` flip [obs: the
+                // exe's closing video isn't mirrored, sequence t640].
+                let (rot, z, alpha) = if scr.closing {
+                    (scene::create_matrix(scr.kor_turn, 0.0, 0.0), Z + s * 500.0, 1.0 - s)
+                } else {
+                    (ry, Z + push, 1.0)
+                };
+                let t = scene::Transform { matrix: scene::mul(&rot, &p0.matrix).map(|x| x * 1024.0), translation: [0.0, 0.0, z] };
                 let white = lighting::Lights::default().ambient(0xffffff);
                 for p in &m.parts {
-                    bake(p, &t, &white, tex, 1.0, &mut dynamic, &mut draws);
+                    bake(p, &t, &white, tex, alpha, &mut dynamic, &mut draws);
                     // The video's texture takes the remaster's `VIDEO` material.
                     if let Some(d) = draws.last_mut() {
                         d.video = true;
@@ -253,7 +325,7 @@ impl DiplomacyScene {
         }
         let line = |f: &mut Frame, list: Vec<(V3, V3, [f32; 4])>| {
             for (a, b, c) in list {
-                if let (Some(pa), Some(pb)) = (project(a), project(b)) {
+                if let (Some(pa), Some(pb)) = (project(a, self.yc), project(b, self.yc)) {
                     f.push(self.white, Blend::Alpha, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), vv.k.max(1.0), c));
                 }
             }
@@ -264,7 +336,7 @@ impl DiplomacyScene {
             let wide = crate::kit::Wide::new(vv);
             let px = wide.px;
             let mut fr = Frame::new([0.0, 0.0, 0.0, 0.0]);
-            let mut u = uniforms();
+            let mut u = uniforms(self.yc);
             let rows = wide.rows(std::array::from_fn(|r| std::array::from_fn(|c| u.view[c][r])));
             u.view = std::array::from_fn(|c| std::array::from_fn(|r| rows[r][c]));
             u.eye[3] = self.acttime.unwrap_or(time);
@@ -294,7 +366,7 @@ impl DiplomacyScene {
             let flags = p.edges.get(ti).copied().unwrap_or(7);
             let pts: Vec<V3> = tri.iter().map(|v| t.point(v.pos)).collect();
             if cull {
-                let (Some(a), Some(b), Some(c)) = (project(pts[0]), project(pts[1]), project(pts[2])) else { continue };
+                let (Some(a), Some(b), Some(c)) = (project(pts[0], self.yc), project(pts[1], self.yc), project(pts[2], self.yc)) else { continue };
                 if (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) > 0.0 {
                     continue;
                 }
@@ -310,16 +382,17 @@ impl DiplomacyScene {
     }
 }
 
-/// Camera space → the virtual screen (`fov2` 600, `xcenter` 320, `ycenter` 240; y grows downwards).
-fn project(p: V3) -> Option<[f32; 2]> {
+/// Camera space → the virtual screen (`fov2` 600, `xcenter` 320, `ycenter` `yc`; y grows downwards).
+fn project(p: V3, yc: f32) -> Option<[f32; 2]> {
     let w = -p[2];
-    (w > 1.0).then(|| [600.0 * p[0] / w + 320.0, 600.0 * p[1] / w + 240.0])
+    (w > 1.0).then(|| [600.0 * p[0] / w + 320.0, 600.0 * p[1] / w + yc])
 }
 
-/// The mesh pass's constants: the clip mapping of [`project`], vertex colours carry the light (ambient 1, no sun).
-fn uniforms() -> SceneUniforms {
+/// The mesh pass's constants: the clip mapping of [`project`] (`ycenter` adds `(1 − yc/240)·w` to clip y), vertex
+/// colours carry the light (ambient 1, no sun).
+fn uniforms(yc: f32) -> SceneUniforms {
     let (a, b) = (1.0 / (1.0 / 200.0 - 1.0 / 3000.0) / 200.0, 1.0 / (1.0 / 200.0 - 1.0 / 3000.0));
-    let rows4 = [[1200.0 / 640.0, 0.0, 0.0, 0.0], [0.0, -1200.0 / 480.0, 0.0, 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
+    let rows4 = [[1200.0 / 640.0, 0.0, 0.0, 0.0], [0.0, -1200.0 / 480.0, yc / 240.0 - 1.0, 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
     let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
     SceneUniforms {
         view,
@@ -354,5 +427,5 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
         // The colour bytes multiply the texture in the gamma pass (re/screens/render.md §2).
         out.push(MeshVertex { pos: t.point(v.pos), normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
 }

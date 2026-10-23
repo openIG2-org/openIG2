@@ -231,6 +231,10 @@ pub struct StarmapContext {
     pub in_battle: Vec<usize>,
     /// The empires whose machine sends the original's `Multi_Send(.., EN, ..)` (classic: the local player).
     pub sends: [bool; 19],
+    /// The empires whose own machine adds the local human's sightings to the visibility pass (spec §6.4: the
+    /// tracked story fleet, revealed wormhole ends, "enemy approaching"): canonical MP every human; none set =
+    /// `human_empire` alone (classic).
+    pub viewers: [bool; 19],
     /// The two fleets the starmap's transfer panel shows (`AktKep == 2` and `StarmapTransferMode`:
     /// `StarmapTransferFlotta1/2`); their emptiness isn't reported.
     pub transfer: Option<(i32, i32)>,
@@ -240,6 +244,17 @@ impl StarmapContext {
     /// `Viszony[a][b].+0x25` (5 = alliance); 0 outside the matrix.
     pub fn relation_level(&self, a: usize, b: usize) -> u8 {
         self.relations.get(a).and_then(|r| r.get(b)).map_or(0, |r| r.1)
+    }
+
+    /// [`StarmapContext::viewers`] in empire order.
+    pub fn viewer_list(&self) -> Vec<usize> {
+        let v: Vec<usize> = (0..19).filter(|&e| self.viewers[e]).collect();
+        if v.is_empty() { vec![self.human_empire as usize % 19] } else { v }
+    }
+
+    /// `e` is one of [`StarmapContext::viewers`].
+    pub fn is_viewer(&self, e: usize) -> bool {
+        if self.viewers.iter().any(|&v| v) { self.viewers.get(e).copied().unwrap_or(false) } else { e == self.human_empire as usize }
     }
 
     /// `SetIdoLelassit` ([`crate::time::slowed_down`]).
@@ -297,7 +312,8 @@ pub enum StarmapEvent {
     TerraformerFreed { empire: u8 },
     /// The tracked fleet vanished from radar; the order became a move to its last position.
     ContactLost { fleet: usize },
-    /// MP: the human's fleet lost contact; the order change goes over the network instead.
+    /// MP: a human's fleet lost contact (reported for every human, [`StarmapContext::viewers`]); its order stays,
+    /// the change goes over the network instead.
     ContactLostNetwork { fleet: usize },
     Deleted { fleet: usize },
     /// `Story_FleetArrivedSave(f)` on arrival, with what it stores (the record at that moment): the order's target
@@ -334,8 +350,8 @@ pub enum StarmapEvent {
     FleetSighted { fleet: usize },
     /// `Story_ArrivedToRadarRangeBolygo`.
     PlanetSighted { planet: usize },
-    /// A newly seen fleet is attacking a human planet or fleet: message 0x0E and `SetIdoLelassit(1)`.
-    EnemyApproaching { fleet: usize },
+    /// A fleet newly seen by human `to` is attacking a planet or fleet of `to`'s: message 0x0E and `SetIdoLelassit(1)`.
+    EnemyApproaching { fleet: usize, to: u8 },
     /// Tutorial event 1: the planet gets its name (string 2/4/6) and `TutorialCheckEvent(1)`.
     TutorialPlanetSighted { planet: usize },
 }
@@ -565,7 +581,7 @@ impl Starmap {
                     }
                 }
             } else {
-                if fl.owner == ctx.human_empire && unseen {
+                if ctx.is_viewer(owner) && unseen {
                     ev.push(StarmapEvent::ContactLostNetwork { fleet: f });
                 }
                 if !ctx.human_controlled[owner] && unseen {

@@ -936,6 +936,33 @@ the dust:
   (`RemoveTankGroup`, §11.10): line `u%3 + 1`, kind 7 (the human's) or 9. `RearrangeTankGroups` sets the
   mute byte 0x9B2EBC while it merges groups and **returns early without clearing it** when its split loop
   finds only single-vehicle groups [original quirk].
+  - The gate (ELF 0x45f340, exe 0x48c670, `thiscall` on the field): `AktPlanet` (0xB9933C) = the field's planet
+    (`+0x18c`), `AktKep` (0xBAE0FC) = 3, `Atlepes` (0xBAE24D) and `Belep` (0xBAE24C) clear, the field's
+    `Simulate` byte (`+0x88c`) clear. Kinds (`InitColonySpeech`): 0 move, 1 selection, 2 attack, 3 retreat,
+    5 hit, 6 dying, 7 dead, 8 enemy_hit, 9 enemy_dead, 10 enemy_retreat, 16 weapons; **kind 4 has no set**.
+  - Every ground-war site (ELF `call 45f340` ×7, exe FindRefs of 0x48c670/0x563cd0/0xA3EA3C; the exe inlines
+    the gate into two callers):
+
+    | Site (ELF; exe) | line, kind | Condition |
+    |---|---|---|
+    | `WF::Damage` 0x45fa50; 0x469820 (call 0x469944) | `u%3+1`, 5 | `u ≥ 0` alive, `rand() % 15 == 0` (always drawn), the victim is `EN`'s and on screen |
+    | same | `by%3+1`, 8 | the same roll, else (C `%`: `by` −1 → line 0, nothing; −2 → −1, no speaker) |
+    | `WF::RemoveTankGroup` 0x467f50; 0x497c90 (call 0x497f46) | `u%3+1`, 7 / 9 | the group's last member, the mute byte clear; 7 for `EN`'s group |
+    | `MULTIGET_Colony` 0x12f 0x4ec2e0; 0x48a270 (call 0x48aacb, direct `Play`) | 1, 3 / 10 | the gate without `Simulate`, `AktPlanet` = the message's planet; 3 when the sender is `EN` |
+    | `WF::MoveSelectedG` 0x47d8a0; inlined in 0x48be70 (0x48bf6c) | `last%3+1`, 0 | `Mouse_Lenyom` (0xDB465F); `last` = the last unit sent 0x22 that isn't a turret (0x4000000), else −1 → line 0 |
+    | `WF::AttackWithSelected` 0x497370; 0x45f520 (call 0x45f575) | `GetSelected(0)%3+1`, 2 | not −1/10000, not a turret, `Mouse_Lenyom`; before the 0x24 loop; no owner test |
+    | `WF::DetonateSelected` 0x4abe50; inlined in 0x470cd0 (0x470e37) | `last%3+1`, 4 | a unit was sent 0x12d; kind 4 has no set (the ELF asserts, the exe's lookup yields null) |
+    | `Colony_Main` 0x4dadf0; 0x4666d0 (0x467423, direct) | `sel%3+1`, 1 | the left release on the view (audio.md §5) |
+    | `ColonyKeyboardHandler` 0x4dcd10; 0x4628c0 (0x4630bf, direct) | `sel%3+1`, 1 | `a` (select all) |
+
+  - The port: the first three are the sim's (`War::speak`). Besides the classic replay's draw counting (kept as it
+    was: `ctx.on_screen`, `Voices`), the sim emits `GroundEvent::Voice` at each of them whether or not anyone
+    watches, outside `Simulate` (the retreat without that test), with the owners instead of the kinds: whose the
+    victim or group is depends on the viewer's `EN`. The mute byte lives at 0x9B2EBC in the state (`War::muted`),
+    so a death stays silent across ticks while the quirk holds it. The client plays the event when its colony
+    screen shows the war's planet (no `Belep`/`Atlepes` frames there), drawing the sample from its cosmetic
+    stream: in the exe it is the shared libc stream (deviation 38). Move, attack and the two selections are the
+    client's input (`colony_war.rs`); the detonation's kind 4 plays nothing.
 
 ### 11.13 Passability maps (`PlanetAtjarasMap::GenerateMap` 0x479300, ELF 0x4ae090)
 `FUN_0045f600(p)` (first thing in `grUtkeres`) calls `GenerateMap(p − 1, 0)` when the flag byte

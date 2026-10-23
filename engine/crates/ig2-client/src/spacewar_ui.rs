@@ -194,6 +194,8 @@ pub enum Out {
     Start,
     /// The zoom-out ended (`AktKepKell = starmaphovaleptovabb or 2`): leave for the starmap.
     Left,
+    /// A battle sound (`PlaySound(&SpWar_Hangok[i])` after the volume write).
+    Sound(crate::spacewar_fx::Sound),
 }
 
 /// The battle screen's state for battle slot `slot`.
@@ -214,6 +216,8 @@ pub struct SpaceWarUi {
     pub zoom_rate: f32,
     pub yaw_rate: f32,
     pub tilt_rate: f32,
+    /// `SpaceWar_Autoscroll`'s pan speeds (exe globals 0xE5DFD8/DC, ×5).
+    pub scroll: [i32; 2],
     /// `+0x2514` and `starmapeltolas` (`+0x2500`, exe `+0x1f74`).
     pub scale: f32,
     pub origin: [f32; 3],
@@ -290,6 +294,11 @@ pub struct SpaceWarUi {
     // The weapon column (§5.1) and `infoszamol`'s groups: counters 0..50, then per group the barrels, the enabled
     // barrels, the slowest reload (0..0xaa) and the state (−1 none, 3 some off, 6 all off, 7 all on).
     pub column: [i32; 10],
+    /// The formation phase's end (`+0x2d86`, ELF `+0x342e`): set by the start button, the phase (`+0x2d85`) is over
+    /// once a column slot has slid out. The exe clears both bytes in the screen's tick; the sim's
+    /// `Battle::formation_choice` keeps the start value, so the screen keeps the end here.
+    pub formation_leaving: bool,
+    pub formation_done: bool,
     pub group_count: [i32; 10],
     pub group_enabled: [i32; 10],
     pub group_reload: [i32; 10],
@@ -322,7 +331,9 @@ impl SpaceWarUi {
     /// scale 0.0004; every own unit selected (`flottafelallit`); the default yaw (step 23).
     pub fn enter(slot: usize, b: &Battle, cam: &crate::starmap::Camera, now_ms: u32) -> Self {
         let origin = [0.0, b.map_pos[0], -b.map_pos[1]];
-        let pivot = [0.0 - origin[0], cam.x - origin[1], -cam.y - origin[2]];
+        // `initgfx` (exe 0x575050): the starmap camera's pan minus the slot's raw `starmapeltolas` (+0x1f74: h, x,
+        // y as stored, y not negated as the drawing origin's is).
+        let pivot = [0.0, cam.x - b.map_pos[0], -cam.y - b.map_pos[1]];
         let starmap = Pose { yaw: cam.rotate, tilt: cam.pitch, zoom: 600.0 - cam.zoom, xcenter: 320.0, pan: pivot };
         let mut s = Self {
             slot,
@@ -338,6 +349,7 @@ impl SpaceWarUi {
             zoom_rate: 0.0,
             yaw_rate: 0.0,
             tilt_rate: 0.0,
+            scroll: [0; 2],
             scale: SCALE_START,
             origin,
             defaults: Pose::default(),
@@ -394,6 +406,8 @@ impl SpaceWarUi {
             armed: -1,
             armed_marker: -1,
             column: [0; 10],
+            formation_leaving: false,
+            formation_done: false,
             group_count: [0; 10],
             group_enabled: [0; 10],
             group_reload: [0; 10],
@@ -562,12 +576,14 @@ impl SpaceWarUi {
         }
     }
 
-    /// `NezetVisszaAllitas()` (spec §2.5), every frame while an animation runs.
-    fn anim_frame(&mut self, b: &Battle, now_ms: u32, out: &mut Vec<Out>) {
+    /// `NezetVisszaAllitas()` (spec §2.5), every frame while an animation runs. It reads the frame time `+0x22f0`
+    /// before `screenfrissites` stores this frame's (exe 0x57f800, ELF 0x6a7780: the call precedes `SDL_GetTicks`),
+    /// so the curve runs on the previous frame's clock (`prev_ms`).
+    fn anim_frame(&mut self, b: &Battle, prev_ms: u32, now_ms: u32, out: &mut Vec<Out>) {
         if !self.restoring {
             return;
         }
-        let t = (now_ms as f32 - self.anim_start) / self.anim_frames * self.anim_mult / 50.0;
+        let t = (prev_ms as f32 - self.anim_start) / self.anim_frames * self.anim_mult / 50.0;
         if self.follow != -1 && !self.back && self.info_mode {
             let (pan, zoom, _) = self.selection_centre(b);
             (self.t.pan, self.t.zoom) = (pan, zoom);
@@ -687,7 +703,7 @@ impl SpaceWarUi {
         }
     }
 
-    // ------------------------------------------------------------------------------------------ the 30 Hz tick
+    // ------------------------------------------------------------------------- the UI tick (100 Hz, §7.2)
 
     /// `FRISSIT_SpaceWar2` → `SpaceWarFrissit2` (spec §2.4, §7.2), 30 times a second.
     pub fn tick(&mut self, b: &Battle, plans: &Plans, out: &mut Vec<Out>) {
@@ -743,6 +759,65 @@ impl SpaceWarUi {
     }
 
     /// The pivot clamp (§2.4): two cells inside the arena on each axis.
+    /// `SpaceWar_Autoscroll` (ELF 0x67dac0 / exe 0x5624c0), every UI tick (re/screens/spacewar.md §2.6): the
+    /// pointer within 8 pixels of the window's edge (`win` in window pixels, the window `size`) pans the view, unless
+    /// a mouse button is held; the speed ramps by 5 towards ±30 per axis.
+    pub fn autoscroll(&mut self, win: [i32; 2], size: [i32; 2], button: bool) {
+        let edge = |p: i32, n: i32| {
+            let mut v = 0;
+            if p < 8 {
+                v = -30;
+            }
+            // An unsigned compare: a pointer left of (above) the window counts as past the far edge.
+            if p as u32 > n.wrapping_sub(8) as u32 {
+                v = 30;
+            }
+            v
+        };
+        let (mut x, mut y) = if button { (0, 0) } else { (edge(win[0], size[0]), edge(win[1], size[1])) };
+        // The length to the unit circle of 30, y's with x's new value (f32, the root in f64).
+        let y2 = y * y;
+        let norm = |a: i32, b2: i32| ((30 * a) as f32 / (((a as f32) * (a as f32) + b2 as f32) as f64).sqrt() as f32) as i32;
+        if x * x + y2 != 0 {
+            x = norm(x, y2);
+        }
+        if x * x + y2 != 0 {
+            y = norm(y, x * x);
+        }
+        for (v, t) in self.scroll.iter_mut().zip([x, y]) {
+            if t > *v {
+                *v += 5;
+            }
+            if t < *v {
+                *v -= 5;
+            }
+        }
+        if self.scroll != [0, 0] {
+            self.move_view((self.scroll[0] as f64 / 5.0) as f32, (self.scroll[1] as f64 / 5.0) as f32);
+        }
+    }
+
+    /// `SpaceWar_Move` (exe 0x563450; the ELF's 0x67c5e0 shrinks a refused step, the exe has no such loop): the pivot
+    /// moves `(dx, dy)` screen steps turned by the yaw, `(scale · plane + zoom) / 600 · 0.6` each, and the wanted
+    /// point with it.
+    fn move_view(&mut self, dx: f32, dy: f32) {
+        let k = self.scale * PLANE_H + self.zoom;
+        let (c, s) = ((self.yaw as f64).cos() as f32, (self.yaw as f64).sin() as f32);
+        let mut step = |a: f32, b: f32| {
+            self.pivot[1] = (self.pivot[1] as f64 - (a * k / 600.0) as f64 * 0.6) as f32;
+            self.pivot[2] = ((b * k / 600.0) as f64 * 0.6 + self.pivot[2] as f64) as f32;
+        };
+        if dx.abs() > 0.0 {
+            step(c * dx, s * dx);
+        }
+        if dy.abs() > 0.0 {
+            step(-(s * dy), c * dy);
+        }
+        if dx.abs() > 0.0 || dy.abs() > 0.0 {
+            self.pan_target = self.pivot;
+        }
+    }
+
     fn clamp_pan(&mut self, b: &Battle) {
         let (lo, hi) = (|k: usize, c: f32| b.bounds[k] + 2.0 * c, |k: usize, c: f32| b.bounds[k] - 2.0 * c);
         self.pivot[0] = self.pivot[0].clamp(lo(4, b.cell[2]), hi(5, b.cell[2]).max(lo(4, b.cell[2])));
@@ -755,15 +830,26 @@ impl SpaceWarUi {
     fn column_tick(&mut self, b: &Battle) {
         let may_retreat = b.sides.get(b.human.max(0) as usize).is_some_and(|s| s.may_retreat);
         for i in 0..10 {
-            let on = if self.leaving {
+            let formation = self.formation(b);
+            let on = if self.leaving || self.formation_leaving {
                 false
             } else if i == 9 {
-                b.formation_choice || may_retreat
+                formation || may_retreat
             } else {
-                b.formation_choice || (self.group_count[i] != 0 && self.stats.own != 0 && self.stats.sel_ships != 0)
+                formation || (self.group_count[i] != 0 && self.stats.own != 0 && self.stats.sel_ships != 0)
             };
-            self.column[i] = (self.column[i] + if on { 1 } else { -1 }).clamp(0, 50);
+            let c = self.column[i] + if on { 1 } else { -1 };
+            // A slot slid out while the phase ends: the formation phase is over (exe 0x56d870, `+0x2d85` as a u16 = 0).
+            if c < 0 && self.formation_leaving {
+                (self.formation_leaving, self.formation_done) = (false, true);
+            }
+            self.column[i] = c.clamp(0, 50);
         }
+    }
+
+    /// The formation phase (`+0x2d85`): the human picks a formation before the battle starts (§7.1.3).
+    pub fn formation(&self, b: &Battle) -> bool {
+        b.formation_choice && !self.formation_done
     }
 
     // ------------------------------------------------------------------------------------------ frames
@@ -775,7 +861,7 @@ impl SpaceWarUi {
             self.kamerabeallit();
             self.first_frame = true;
         }
-        self.anim_frame(b, now_ms, out);
+        self.anim_frame(b, self.last_frame_ms, now_ms, out);
         let dt = now_ms.saturating_sub(self.last_frame_ms) as i32;
         self.last_frame_ms = now_ms;
         self.kijelolesanim(b, dt);
@@ -1211,7 +1297,7 @@ impl SpaceWarUi {
 
     /// `JobbClick` (ELF 0x6b0210, exe 0x569190; spec §7.1.3): orders for the selected own units.
     fn jobb_click(&mut self, b: &Battle, out: &mut Vec<Out>) {
-        if b.ended || self.restoring || b.formation_choice {
+        if b.ended || self.restoring || self.formation(b) {
             return;
         }
         out.push(Out::Click);
@@ -1286,10 +1372,10 @@ impl SpaceWarUi {
                 let (dx, dy) = (self.mouse[0] - 321.0, self.mouse[1] - 421.0);
                 let th = self.snap_yaw as f64;
                 let (s, c) = (th.sin() as f32, th.cos() as f32);
-                if any {
-                    self.pan_target[1] = -((c * dx + s * dy) / (94.0 / (b.bounds[1] - b.bounds[0])));
-                    self.pan_target[2] = (c * dy - s * dx) / (67.0 / (b.bounds[3] - b.bounds[2]));
-                }
+                // Every call, hovering too (exe `SpwC::main` 0x57b9e0 has no button test; a button only latches the
+                // hot-spot through `Mouse_Megfogva`).
+                self.pan_target[1] = -((c * dx + s * dy) / (94.0 / (b.bounds[1] - b.bounds[0])));
+                self.pan_target[2] = (c * dy - s * dx) / (67.0 / (b.bounds[3] - b.bounds[2]));
             }
             Some(id @ (0x46 | 0x49)) if press => {
                 out.push(Out::Click);
@@ -1336,8 +1422,10 @@ impl SpaceWarUi {
     /// The weapon column's buttons (spec §7.1.3): right arms the fire cursor, left toggles the group's mounts, the
     /// tenth opens the retreat window; in the formation phase the tenth starts the battle.
     fn weapon_button(&mut self, b: &Battle, k: usize, left: bool, out: &mut Vec<Out>) {
-        if b.formation_choice {
-            if left && k == 9 {
+        if self.formation(b) {
+            // `+0x342e = 1; SetIdoSpeed(1); SetIdoPause(false)`: the column slides out, then the phase ends.
+            if left && k == 9 && !self.formation_leaving {
+                self.formation_leaving = true;
                 out.push(Out::Start);
             }
             return;
@@ -1454,6 +1542,8 @@ impl SpaceWarUi {
             radar: self.radar,
             spin: self.spin,
             hidden_button: blink_off.then_some(self.armed as usize),
+            boxed: self.boxing.then_some([self.left_at[0], self.left_at[1], self.mouse[0], self.mouse[1]]),
+            fx: None,
         }
     }
 
@@ -1515,6 +1605,34 @@ pub enum Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `SpaceWar_Autoscroll` with the pointer in the window's top-left corner, against the exe (`run_spwc.py --script`
+    /// with the real cursor there, per-frame `cam` records of UI ticks 420 and 421): the targets (−21, −24) settle
+    /// the ramp at (−25, −25), and one UI tick moves the pivot by `5 · (zoom + scale · 18) / 600 · 0.6` along both axes.
+    #[test]
+    fn autoscroll_matches_the_exe() {
+        let b = Battle::slot();
+        let mut ui = SpaceWarUi::enter(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+        (ui.yaw, ui.zoom, ui.scale) = (std::f32::consts::PI, 436.35565, 1.0);
+        ui.pivot = [0.0, -45.435562, 45.435566];
+        ui.scroll = [-25, -25];
+        ui.autoscroll([0, 0], [800, 600], false);
+        assert_eq!(ui.scroll, [-25, -25]);
+        assert_eq!(ui.pivot, [0.0, -47.70734, 47.707344]);
+        assert_eq!(ui.pan_target, ui.pivot);
+        // From rest the ramp climbs 5 a tick; a held button stops it again.
+        let mut ui = SpaceWarUi::enter(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+        for want in [[-5, -5], [-10, -10], [-15, -15], [-20, -20], [-25, -25], [-25, -25]] {
+            ui.autoscroll([3, 5], [800, 600], false);
+            assert_eq!(ui.scroll, want);
+        }
+        ui.autoscroll([3, 5], [800, 600], true);
+        assert_eq!(ui.scroll, [-20, -20]);
+        // Left of the window counts as the right edge (an unsigned compare).
+        let mut ui = SpaceWarUi::enter(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+        ui.autoscroll([-4, 300], [800, 600], false);
+        assert_eq!(ui.scroll, [5, 0]);
+    }
 
     /// `creatematrixfromaxis` is a rotation by the angle about the axis (det 1, the axis fixed).
     #[test]
@@ -1606,7 +1724,7 @@ mod tests {
             (ui.pivot, ui.yaw, ui.tilt, ui.zoom, ui.scale) = (v.pivot, v.yaw, v.tilt, v.zoom, v.scale);
             (ui.eye, ui.target, ui.init_camera, ui.restoring) = ([c[0], c[1], c[2]], [c[4], c[5], c[6]], false, false);
             if (0..3).any(|k| (c[4 + k] - v.pivot[k]).abs() > 1e-3) {
-                // Still easing when the capture froze (the screen's 30 Hz tick stops with the battle).
+                // Still easing when the capture froze (the grabs ran with the real pointer off the window: `SpaceWar_Autoscroll`).
                 eprintln!("{name}: the exe's camera is still easing: target {:?}, pivot {:?}", &c[4..7], v.pivot);
                 continue;
             }

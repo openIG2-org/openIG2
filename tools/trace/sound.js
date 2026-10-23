@@ -9,6 +9,9 @@
 // - `PlaySoundGlobal(id)` exe 0x55d0b0 = `PlaySound(&Global_Hangok[id], 0)` (Global_Hangok exe 0x919a60).
 // - `PlayWav(name, loop)` 0x563e60, `PlayMp2` 0x563df0, `Speech::Play` 0x563d50, `PlayMessagesHang(name, bool)`
 //   0x55c9b0: voices and message audio (names as given).
+// - `WF::PlaySpeechGrWar(line, kind)` 0x48c670 (thiscall on the field: planet +0x18c, `Simulate` byte +0x88c; with
+//   the gate's globals `AktPlanet` 0xb9933c, `Belep`/`Atlepes` 0xbae24c/d) and `SpeakingDirector::Play(line, kind)`
+//   0x563cd0 (thiscall on the director, `ColonySpeaker` 0xa3ea3c): the voice sites (ground-combat.md §11.12).
 // - Input: `MainCallBackEventHandler` exe 0x4e2db0 (the SDL2 event filter): 0x300/0x301 key down/up (keysym +0x10:
 //   scancode, +0x14 sym), 0x401/0x402 button down/up (button +0xc, window x/y +0x10/+0x14); screen.js's injected
 //   events report through `sndInput` (Frida doesn't run our hooks inside our own NativeFunction calls).
@@ -17,7 +20,7 @@
 //   `ZeneEppenJatszott` 0xe3e3ac / `ZeneRegiMainZene` 0xe3e3b0 and the race `PlayerFaj[EN]`; `SoundEngine::LoadWave`
 //   with flags 0x10 (a track starts) → {k: 'track', name}; `FRISSIT2_SoundSystem` 0x55c4f0 → {k: 'fade'} whenever
 //   `ZeneHangero` 0xe4167c / `ZeneHangeroCel` 0x91a694 / the duck levels 0xe4166c, 0xe41678 change.
-const SND = { PlaySound: 0x55cd20, PlaySoundGlobal: 0x55d0b0, PlayWav: 0x563e60, PlayMp2: 0x563df0, SpeechPlay: 0x563d50,
+const SND = { PlaySound: 0x55cd20, PlaySoundGlobal: 0x55d0b0, PlayWav: 0x563e60, PlayMp2: 0x563df0, SpeechPlay: 0x563d50, GrWarSpeech: 0x48c670, DirectorPlay: 0x563cd0,
   PlayMessagesHang: 0x55c9b0, MusicExistCheck: 0x540430, LoadWave: 0x55dfb0, SoundSystem: 0x55c4f0, Eppen: 0xe3e3ac,
   Regi: 0xe3e3b0, Hangero: 0xe4167c, Cel: 0x91a694, Duck: 0xe4166c, DuckReal: 0xe41678, En: 0x912a3c, Faj: 0xbae574,
   Handler: 0x4e2db0, UiFrame: 0xb772a4, SoundOn: 0x919930, MouseX: 0xdb4654, MouseY: 0xdb4658 };
@@ -104,6 +107,15 @@ function hookSounds() {
   Interceptor.attach(va(SND.PlayMp2), { onEnter(args) { sndRecord('PlayMp2', { name: sndStr(args[0]), arg1: args[1].toInt32() }); } });
   // `Speech::Play`: its arguments aren't pinned yet; the first two stack words as given.
   Interceptor.attach(va(SND.SpeechPlay), { onEnter(args) { sndRecord('Speech::Play', { name: sndStr(args[0]), arg1: args[1].toInt32(), ecx: this.context.ecx.toString() }); } });
+  Interceptor.attach(va(SND.GrWarSpeech), { onEnter(args) {
+    const wf = this.context.ecx;
+    sndRecord('PlaySpeechGrWar', { line: args[0].toInt32(), kind: args[1].toInt32(), planet: wf.add(0x18c).readS32(), simulate: wf.add(0x88c).readU8(),
+      akt_planet: va(0xb9933c).readS32(), belep: va(0xbae24c).readU8(), atlepes: va(0xbae24d).readU8() });
+  } });
+  Interceptor.attach(va(SND.DirectorPlay), { onEnter(args) {
+    const d = this.context.ecx;
+    sndRecord('SpeakingDirector::Play', { line: args[0].toInt32(), kind: args[1].toInt32(), colony: d.equals(va(0xa3ea3c)) });
+  } });
   Interceptor.attach(va(SND.PlayMessagesHang), { onEnter(args) { sndRecord('PlayMessagesHang', { name: sndStr(args[0]), arg1: args[1].toInt32() & 0xff }); } });
   Interceptor.attach(va(SND.Handler), {
     onEnter(args) {

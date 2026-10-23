@@ -66,7 +66,9 @@ ap.add_argument("--spy-frame", type=float, help="spy screen: hold spyframe at F 
 ap.add_argument("--spy-closing", action="store_true")
 ap.add_argument("--res-frame", type=float, help="research screen: hold resframe at F (its opening; with --res-closing its closing)")
 ap.add_argument("--res-closing", action="store_true")
+ap.add_argument("--dip-frame", type=float, help="diplomacy screen: hold dipframe at F (its opening)")
 ap.add_argument("--res-keringeto", type=float, default=0.0, help="research screen (--res-frame): pin the side lights' clock reskeringeto at K")
+ap.add_argument("--trade-cheat", action="store_true", help="trade screen: set the exe's TradeCheat (every own planet is a trade port)")
 ap.add_argument("--light-probe", action="store_true", help="research screen: record the engine's per-vertex lighting of the first lit frames to --jsonl")
 ap.add_argument("--verdict", type=int, default=0, help="spy screen (--spies verdict): press the verdict buttons N times, fuzzed")
 ap.add_argument("--verdict-seed", type=int, default=1)
@@ -180,12 +182,14 @@ def png_rgba_bottom_up(path, w, h, rgba):
 def on(msg, data):
     if msg["type"] == "send":
         p = msg["payload"]
-        if p.get("k") in ("sound", "input", "music", "track", "fade"):
+        if p.get("k") in ("sound", "input", "music", "track", "fade", "msg"):
             if sounds:
                 sounds.write(json.dumps(p) + "\n")
                 sounds.flush()
             if p.get("k") == "sound":
                 print(f"sound {p.get('fn')} {p.get('table')}[{p.get('idx')}] {p.get('name')} t={p.get('t')} ui={p.get('ui')}", flush=True)
+            if p.get("k") == "msg":
+                print(f"msg 0x{p['type']:x} from {p['from']} t={p['t']} {p['fields']}", flush=True)
             if p.get("k") in ("music", "track"):
                 print(f"{p['k']} {p.get('id', p.get('name'))} ui={p.get('ui')} kep={p.get('kep')} eppen={p.get('eppen')} regi={p.get('regi')} hangero={p.get('hangero')}", flush=True)
             return
@@ -200,7 +204,7 @@ def on(msg, data):
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
                     json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
-                               "res": p.get("res")}, f)
+                               "res": p.get("res"), "trade_eta": p.get("tradeEta")}, f)
         if p.get("k") == "scriptDone":
             frames_meta["done"] = p
         if p.get("k") == "particles" and a.particles:
@@ -254,8 +258,8 @@ agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet"
                                            "spies": a.spies, "aiEmpire": a.ai_empire,
                                            "ropMenu": point(a.rop_menu), "menu": menu(a.menu), "mouse": point(a.mouse),
                                            "spyFrame": a.spy_frame, "spyClosing": a.spy_closing,
-                                           "resFrame": a.res_frame, "resClosing": a.res_closing,
-                                           "resKeringeto": a.res_keringeto, "lightProbe": a.light_probe,
+                                           "resFrame": a.res_frame, "resClosing": a.res_closing, "dipFrame": a.dip_frame,
+                                           "resKeringeto": a.res_keringeto, "lightProbe": a.light_probe, "tradeCheat": a.trade_cheat,
                                            "verdict": a.verdict, "verdictSeed": a.verdict_seed, "particles": bool(a.particles), "hide": a.hide,
                                            "infoStarlog": a.info_starlog, "infoPress": [int(x, 0) for x in a.info_press.split(",")] if a.info_press else [],
                                            "infoSelect": [int(x, 0) for x in a.info_select.split(",")] if a.info_select else None,

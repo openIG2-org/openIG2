@@ -222,6 +222,10 @@ pub struct Research {
     /// The tooltip (`UpdateFrame`) and the left button held.
     pub tip: crate::kit::Tooltip,
     pub held: bool,
+    /// `resf`: the faders' shine, drift and hover glow (`FaderDesignFrissito` in `FRISSIT_Research2`).
+    faders: crate::kit::FaderDesign,
+    /// [`Research::held`] at the last drawn frame (its change is the press or release edge).
+    was_held: bool,
     /// The chosen row's frame (`DesignKeret1`, asked for by every drawn frame while open, stepped every UI frame)
     /// and the list font's cell (`CharXMeret[2]`, `CharYMeret[2]`).
     design: crate::kit::DesignFrame,
@@ -294,6 +298,8 @@ impl Research {
             sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
             held: false,
+            faders: crate::kit::FaderDesign::new(1),
+            was_held: false,
             design: Default::default(),
             cell: [rules.charset.width.get(2).copied().unwrap_or(6), rules.charset.height.get(2).copied().unwrap_or(7)],
             lasers: crate::kit::Lasers::default(),
@@ -604,6 +610,7 @@ impl Research {
         }
         self.res_xy += 0.02;
         self.keringeto += 0.0006;
+        self.faders.tick();
         // `Frissit2_Grafika`: the sparks, the chosen row's frame.
         self.lasers.tick();
         self.design.tick();
@@ -1000,27 +1007,51 @@ pub struct Texts<'a> {
 
 impl Research {
     /// The lasers and the faders over the models (`Research3DUpdate`'s `KirakFader` 0..=4, open: full height): the
-    /// two side panels, their bottom bars, the running project's box.
-    pub fn draw_faders(&self, f: &mut Frame, d: &Draw2d, state: &SaveState, glow: Option<TexId>) {
+    /// two side panels, their bottom bars, the running project's box; the side panels' scan bands and glows
+    /// (re/screens/hud.md §1.2.1), drawn at once and so under the faders, which are queued.
+    pub fn draw_faders(&mut self, f: &mut Frame, d: &Draw2d, state: &SaveState, glow: Option<TexId>) {
+        use crate::kit::fader_design;
         self.lasers.draw(f, d.white, glow.unwrap_or(d.white), &d.v, self.laser_on, self.sparks_on);
-        // Past frame 30 only. Opening, the panels are whole and fade from opaque (`l = f/30 − 1`: fill
-        // `(1 − l)·150 + 105`, edge `(1 − l)·205 + 50`); closing, they fold up to y 124 (height `l·106`).
-        if self.frame <= 30.0 {
-            return;
-        }
         let l = (self.frame / 60.0) * 2.0 - 1.0;
         let (grow, fade) = if self.closing { (l, 1.0) } else { (1.0, l) };
         let (white, v) = (d.white, &d.v);
-        let s = 0.9;
-        let (ft, et) = ((1.0 - fade) * 150.0 + 105.0, (1.0 - fade) * 205.0 + 50.0);
-        let kirak = |f: &mut Frame, r: [f32; 4]| crate::kit::fader::kirak_fader(f, white, v, r, [0.0, 54.0 * s, 90.0 * s], ft, [0.0, 90.0 * s, 130.0 * s], et);
+        // `research_fader_*`: closing, the side panels fold up to y 124 (height `l·106`).
         let (y, h) = (124.0 - grow * 43.0, grow * 106.0);
-        kirak(f, [3.0, y, 135.0, h]);
-        kirak(f, [500.0, y, 135.0, h]);
-        kirak(f, [5.0, y + h - 15.0, 131.0, 13.0]);
-        kirak(f, [502.0, y + h - 15.0, 131.0, 13.0]);
+        let sides = [[3, y as i32, 135, h as i32], [500, y as i32, 135, h as i32]];
+        // `GLOBALKELLDESIGN`: the scan bands at `fmod(clock, 1)` and `fmod(clock/2, 1)`, then the glows of faders 0
+        // and 1, all in (0, 54, 90).
+        let blink = fader_design::blink(d.time as f64 * 1000.0);
+        let c = [0, 54, 90];
+        let clock = self.faders.clock() as f64;
+        fader_design::glow(f, white, v, sides[0], c, clock.rem_euclid(1.0) as f32, 0, blink);
+        fader_design::glow(f, white, v, sides[1], c, (clock / 2.0).rem_euclid(1.0) as f32, 0, blink);
+        for (i, r) in sides.into_iter().enumerate() {
+            if let Some((t, style)) = self.faders.glow(i) {
+                fader_design::glow(f, white, v, r, c, t, style, blink);
+            }
+        }
+        // Past frame 30 only. Opening, the panels are whole and fade from opaque (`l = f/30 − 1`: fill
+        // `(1 − l)·150 + 105`, edge `(1 − l)·205 + 50`).
+        if self.frame <= 30.0 {
+            return;
+        }
+        let (ft, et) = ((1.0 - fade) * 150.0 + 105.0, (1.0 - fade) * 205.0 + 50.0);
+        // `(!Mouse_Bal && !Mouse_Felenged) || Mouse_Lenyom` from the button now and at the last drawn frame: free
+        // unless it was down then.
+        let (at, free) = (self.tip.mouse, !self.was_held);
+        self.was_held = self.held;
+        let faders = &mut self.faders;
+        let mut kirak = |f: &mut Frame, i: usize, r: [f32; 4]| {
+            let s = faders.s(i);
+            crate::kit::fader::kirak_fader(f, white, v, r, [0.0, 54.0 * s, 90.0 * s], ft, [0.0, 90.0 * s, 130.0 * s], et, faders.offset(i));
+            faders.enter(i, r, at, free);
+        };
+        kirak(f, 0, [3.0, y, 135.0, h]);
+        kirak(f, 1, [500.0, y, 135.0, h]);
+        kirak(f, 2, [5.0, y + h - 15.0, 131.0, 13.0]);
+        kirak(f, 3, [502.0, y + h - 15.0, 131.0, 13.0]);
         if state.mem.i32(va::RESEARCHING + 4 * en(state) as u32) != 0 {
-            kirak(f, [1.0, 26.0, 108.0, 42.0]);
+            kirak(f, 4, [1.0, 26.0, 108.0, 42.0]);
         }
     }
 
@@ -1660,7 +1691,7 @@ fn bake_part(p: &scene::Part, m: &M3, at: V3, tex: TexId, alpha: f32, lights: &l
             out.push(MeshVertex { pos: q, normal: n, uv: x.uv, color: [rgb[0], rgb[1], rgb[2], a] });
         }
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
 }
 
 /// Bake glass at opacity `a`: unlit (the normal along the light, the tint undoing `LIT`), blended in the gamma pass
@@ -1680,7 +1711,7 @@ fn bake_glass(p: &scene::Part, m: &M3, at: V3, tex: TexId, a: f32, out: &mut Vec
             out.push(MeshVertex { pos: q, normal, uv: x.uv, color: [tint[0], tint[1], tint[2], a] });
         }
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
 }
 
 #[cfg(test)]
@@ -1738,6 +1769,8 @@ mod tests {
             sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
             held: false,
+            faders: crate::kit::FaderDesign::new(1),
+            was_held: false,
             design: Default::default(),
             cell: [6, 7],
             lasers: crate::kit::Lasers::default(),

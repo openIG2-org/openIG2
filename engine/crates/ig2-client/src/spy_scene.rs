@@ -545,7 +545,7 @@ impl Builder {
         }
         // The opaque video disc takes the remaster's `VIDEO` material.
         let video = matches!(look, Look::Flat);
-        let d = MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: x.tex, glass: matches!(look, Look::Glass(_)), cloud: false, shadow: crate::render3d::Shadow::None, video, additive: false };
+        let d = MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: x.tex, glass: matches!(look, Look::Glass(_)), cloud: false, shadow: crate::render3d::Shadow::None, video, additive: false, depth_write: false };
         if d.glass {
             self.glass.push(d);
         } else {
@@ -574,7 +574,7 @@ impl Builder {
         for q in [off(a, 1.0), off(a, -1.0), off(b, 1.0), off(b, -1.0), off(b, 1.0), off(a, -1.0)] {
             self.dynamic.push(MeshVertex { pos: q, normal: n, uv: [0.0, 0.0], color: [rgb[0], rgb[1], rgb[2], o] });
         }
-        self.glass.push(MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: white, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false });
+        self.glass.push(MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: white, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
     }
 
     fn finish(mut self, size: [f32; 2]) -> Scene3d {

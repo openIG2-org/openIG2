@@ -754,8 +754,8 @@ pub trait BattleWorld {
 pub enum BattleEvent {
     /// A projectile left `shooter` (kind per [`shot_kind`]).
     Fired { shot: ShotRef, kind: i32 },
-    /// A projectile struck unit `unit` for `damage` (a beam strikes every tick it holds).
-    Hit { unit: usize, damage: i32, beam: bool },
+    /// A projectile of `weapon` struck unit `unit` for `damage` (a beam strikes every tick it holds).
+    Hit { unit: usize, damage: i32, beam: bool, weapon: i32 },
     /// One ship of the unit is gone (`felrobban`).
     ShipLost { unit: usize },
     /// Fighters lost.
@@ -1751,7 +1751,7 @@ impl Battle {
                 self.guns[g].active = true;
             }
         }
-        t.events.push(BattleEvent::Hit { unit: u, damage: dmg, beam: w.beam });
+        t.events.push(BattleEvent::Hit { unit: u, damage: dmg, beam: w.beam, weapon: s2.weapon });
         let beam = w.beam;
         self.take_damage(t, u, k, dmg);
         if !beam {

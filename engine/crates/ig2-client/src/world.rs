@@ -8,7 +8,8 @@
 
 use ig2_formats::save::SaveGame;
 use ig2_net::Command;
-use ig2_sim::game::{ColonyOrderEvent, Game, GameEvent, GameRules, OrderEvent};
+use ig2_sim::game::{BattleEvent, ColonyOrderEvent, Game, GameEvent, GameRules, OrderEvent};
+use ig2_sim::ground::{GroundEvent, Voice};
 use ig2_sim::save::{va, SaveState};
 use ig2_sim::time::{GameTime, Speed};
 
@@ -269,6 +270,16 @@ pub struct World<'r> {
     pub realtime: Vec<ig2_sim::game::RealTimeEvent>,
     /// The videos the sim asked for since the window last took them (`st_ShowAnim`, the game's end).
     pub videos: Vec<crate::video::Request>,
+    /// The ground wars' voice lines since the window last took them (planet, `PlaySpeechGrWar` site).
+    pub ground_voices: Vec<(usize, Voice)>,
+}
+
+/// The ground wars' voice sites among `events` (`GroundSide`, ground-combat.md §11.12).
+fn ground_voices(events: &[GameEvent]) -> impl Iterator<Item = (usize, Voice)> + '_ {
+    events.iter().filter_map(|e| match *e {
+        GameEvent::Battle(BattleEvent::GroundSide { planet, event: GroundEvent::Voice(v) }) => Some((planet, v)),
+        _ => None,
+    })
 }
 
 impl<'r> World<'r> {
@@ -306,7 +317,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new() }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new() }
     }
 
     /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
@@ -334,6 +345,7 @@ impl<'r> World<'r> {
             GameEvent::ColonyOrder(o) => Some(*o),
             _ => None,
         }));
+        self.ground_voices.extend(ground_voices(&self.game.events[from..]));
         if let Some(p) = self.colony {
             self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
         }
@@ -402,6 +414,7 @@ impl<'r> World<'r> {
         self.game.run_tick();
         // At once: a battle starts paused, so no next tick would hand them over.
         self.realtime.extend(self.game.events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
+        self.ground_voices.extend(ground_voices(&self.game.events));
         let mut next = Snapshot::read(&self.game);
         // `FRISSIT_Starmap` (ELF 0x7132b0) ends with `StarmapPlanetKering += IdoSpeedSzorzo / 1500`.
         let speed = self.game.state.mem.i32(va::IDO_SPEED);

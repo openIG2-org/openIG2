@@ -245,6 +245,14 @@ impl Frame {
     pub fn len(&self) -> usize {
         self.instances.len()
     }
+    /// Push `o`'s quads after these (its clear colour, scene and late parts are dropped).
+    pub fn append(&mut self, o: Frame) {
+        for b in &o.batches {
+            for i in b.range.clone() {
+                self.push(b.tex, b.blend, o.instances[i as usize]);
+            }
+        }
+    }
     /// The quads pushed so far go below [`Frame::late`].
     pub fn mark_late(&mut self) {
         self.late_at = self.batches.len();
@@ -766,16 +774,25 @@ fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
     out
 }
 
-/// `--snapshot --screen diplomacy`: the diplomacy screen at rest (re/screens/diplomacy.md).
+/// `--snapshot --screen diplomacy`: the diplomacy screen at rest (re/screens/diplomacy.md), or with `--anim-frame F`
+/// its opening held at frame F after 1000 frames (run_screendiff.py's wait, §3.1).
 fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let state = &world.game.state;
     let mut d = crate::diplomacy::Open::new(r, &l.install, &l.tables, &hud.texts, state);
     d.scene.acttime = o.acttime;
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
-    d.screen.settle();
-    let _ = d.input(state, hud, &l.tables, &crate::diplomacy::Input::default());
-    d.screen.settle();
+    match o.spy_frame {
+        Some(f) => {
+            d.screen.hold(f, 1000);
+            let _ = d.input(state, hud, &l.tables, &crate::diplomacy::Input::default());
+        }
+        None => {
+            d.screen.settle();
+            let _ = d.input(state, hud, &l.tables, &crate::diplomacy::Input::default());
+            d.screen.settle();
+        }
+    }
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
     d.draw(&mut frame, r, &l.install, &l.tables, hud, state, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Diplomacy, t);
@@ -783,6 +800,65 @@ fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Load
     crate::assets::write_snapshot(out, o, &rgba)?;
     let v = crate::diplomacy::View::read(state);
     println!("{}: diplomacy | selected {} | contacts {:?} | menus {:?}", out.display(), d.screen.selected, v.slots.iter().map(|s| (s.empire, s.waiting, s.answered)).collect::<Vec<_>>(), d.screen.shown);
+    Ok(())
+}
+
+/// `--snapshot --screen diplomacy --script S`: the diplomacy screen opened animated (`Diplomacy_Belep` with
+/// `KELLKINYITASDEFAULT`), run tick by tick with the script's input (re/screens/sound.md §3): one drawn frame a tick
+/// (`Diplomacy3DUpdate`, then `FRISSIT_Diplomacy2`, then the 2D passes with the input of the events before the
+/// tick), commands applied at once, F2 (or the client's D) `Diplomacy_Kilep`; grab t is drawn after t ticks.
+fn diplomacy_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &mut crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    use crate::script::Input;
+    let mut d = crate::diplomacy::Open::new(r, &l.install, &l.tables, &hud.texts, &world.game.state);
+    d.enter(&l.tables, &hud.texts, &world.game.state, true);
+    d.scene.acttime = o.acttime;
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let mut inp = crate::diplomacy::Input::default();
+    let mut heard: Vec<(Option<u32>, crate::audio::SoundId)> = d.screen.sounds.drain(..).map(|id| (None, id)).collect();
+    for tick in 0..=script.end() {
+        if tick > 0 {
+            d.screen.frame3d();
+            d.screen.ui_tick();
+            let cmds = d.input(&world.game.state, hud, &l.tables, &inp);
+            inp.pressed = false;
+            inp.released = false;
+            heard.extend(d.screen.sounds.drain(..).map(|id| (Some(tick - 1), id)));
+            if !cmds.is_empty() {
+                for c in cmds {
+                    world.send(c);
+                }
+                world.pump();
+            }
+        }
+        if script.grabs.contains(&tick) {
+            let t = tick as f32 * 0.01;
+            let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+            d.paint(&mut frame, r, &l.install, &l.tables, hud, &world.game.state, size, t);
+            hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Diplomacy, t);
+            let rgba = r.draw_to_image(&frame, o.size, t);
+            let path = crate::script::grab_path(out, tick);
+            crate::assets::write_snapshot(&path, o, &rgba)?;
+            println!("{}: t {tick} | dipframe {} open {} closing {} | selected {} menus {:?}", path.display(), d.screen.dipframe, d.screen.opened, d.screen.closing, d.screen.selected, d.screen.shown);
+        }
+        for e in script.at(tick) {
+            match &e.input {
+                Input::Move(at) => inp.at = *at,
+                Input::Button { button: 1, down: true, at } => {
+                    (inp.at, inp.pressed, inp.held) = (*at, true, true);
+                }
+                Input::Button { button: 1, down: false, at } => {
+                    (inp.at, inp.released, inp.held) = (*at, true, false);
+                }
+                Input::Key { name, down: true } if name == "f2" || name == "d" => {
+                    d.screen.leave(false);
+                }
+                _ => {}
+            }
+            heard.extend(d.screen.sounds.drain(..).map(|id| (Some(tick), id)));
+        }
+    }
+    let path = crate::script::write_sounds(out, &heard)?;
+    println!("{}: {} sounds", path.display(), heard.len());
     Ok(())
 }
 
@@ -832,7 +908,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
                     ui.release(&c, cursor, true, now_ms);
                     let gm = &l.rules.ground_maps[curr.map];
                     let px = [o.size.0 as f32 * 0.5, o.size.1 as f32 * 0.55];
-                    ui.hover(&c, crate::colony_ui::cell_under(&view, gm, px));
+                    ui.hover(&c, crate::colony_ui::cell_under(&view, gm, px), crate::colony_ui::cursor_cell_under(&view, gm, px));
                 }
             }
             "demolish" => {
@@ -918,12 +994,25 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
     let t = world.curr.tick as f32 * 0.05;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-    hud.draw_research(&mut frame, &s, &infos, &tips, state, &l.tables, (tex, models.glow), lines, size, t);
+    hud.draw_research(&mut frame, &mut s, &infos, &tips, state, &l.tables, (tex, models.glow), lines, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
     println!("{}: research area {} field {} tech {} | models at {:?}", out.display(), s.area, s.field, s.tech, models.centres);
     Ok(())
+}
+
+/// What the design screen reads ([`crate::design_edit::Ctx`]).
+fn design_ctx<'a>(state: &'a ig2_sim::save::SaveState, techs: &'a ig2_sim::colony_side::TechTable, l: &'a crate::Loaded, world: &'a crate::world::World, hud: &'a crate::ui::Hud) -> crate::design_edit::Ctx<'a> {
+    crate::design_edit::Ctx {
+        install: &l.install,
+        state,
+        techs,
+        rules: &l.tables,
+        sim: &world.game.rules.ai,
+        debug: state.mem.i32(ig2_sim::save::va::DESIGN_DEBUG) != 0,
+        texts: Some(&hud.texts),
+    }
 }
 
 /// `--snapshot --screen design`: the design screen on the save's chosen design after `--ui-frames` 10 ms frames,
@@ -938,16 +1027,19 @@ fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     }
     let tips = crate::design::tips(&hud.texts);
     let mut scene = crate::design_scene::DesignScene::new(r, &l.install);
-    for _ in 0..o.ui_frames.max(1) {
-        s.step(state, &l.tables);
-        s.tooltip(state, &techs, &l.tables, &scene.mask, &tips, s.frames as f64 * 10.0);
+    {
+        let c = design_ctx(state, &techs, l, world, hud);
+        for _ in 0..o.ui_frames.max(1) {
+            s.step(&c, &scene.mask);
+            s.tooltip(&c, &scene.mask, &tips, s.frames as f64 * 10.0);
+        }
     }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-    scene.draw(&mut frame, r, &l.install, &l.tables, &s, state, &techs, en, size);
-    hud.draw_design(&mut frame, &s, state, &techs, &l.tables, &tips, size, t);
+    scene.draw(&mut frame, r, &l.install, &l.tables, &mut s, state, &techs, en, size);
+    hud.draw_design(&mut frame, &mut s, state, &techs, &l.tables, &tips, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
@@ -957,52 +1049,197 @@ fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
 
 /// `--snapshot --screen design --script S`: the design screen opened animated (`Design_Belep` with
 /// `KELLKINYITASDEFAULT`), run tick by tick with the script's input (re/screens/sound.md §3): the pointer, the left
-/// button as `Design_Main`'s press, the right one turning the hull, up and down (`DesignKeyboardHandler`), Esc
-/// (`Design_Kilep`); grab t is drawn after t ticks. Viewing sends no orders.
-fn design_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+/// button as `Design_Main`'s press and release, the right one turning the hull, up and down
+/// (`DesignKeyboardHandler`), r and Enter (redesign, modify; Enter ends the name input), Esc
+/// (`DesignKeyboardEscPressed`), a typed name (keys of one character), F2 (`Design_Kilep`); the orders are applied at
+/// once as the exe's `MULTIGET_Design` and their events go back to the screen; grab t is drawn after t ticks.
+fn design_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &mut crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     use crate::design::Key;
+    use crate::design_edit::EntryKey;
     use crate::script::Input;
-    let state = &world.game.state;
-    let techs = state.tech();
-    let mut s = crate::design::Design::open(state, true);
+    let mut s = crate::design::Design::open(&world.game.state, true);
+    s.names = crate::design_edit::Names::read(&hud.texts);
     s.tip.moved([320.0, 240.0]);
     let tips = crate::design::tips(&hud.texts);
     let mut scene = crate::design_scene::DesignScene::new(r, &l.install);
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
-    let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
+    let en = world.game.state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
     let mut heard: Vec<(Option<u32>, crate::audio::SoundId)> = s.sounds.drain(..).map(|id| (None, id)).collect();
+    let mut sent = Vec::new();
     for tick in 0..=script.end() {
         if tick > 0 {
-            s.step(state, &l.tables);
-            s.tooltip(state, &techs, &l.tables, &scene.mask, &tips, s.frames as f64 * 10.0);
+            let techs = world.game.state.tech();
+            let c = design_ctx(&world.game.state, &techs, l, world, hud);
+            s.step(&c, &scene.mask);
+            s.tooltip(&c, &scene.mask, &tips, s.frames as f64 * 10.0);
             heard.extend(s.sounds.drain(..).map(|id| (Some(tick - 1), id)));
         }
         if script.grabs.contains(&tick) {
+            let state = &world.game.state;
+            let techs = state.tech();
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-            scene.draw(&mut frame, r, &l.install, &l.tables, &s, state, &techs, en, size);
-            hud.draw_design(&mut frame, &s, state, &techs, &l.tables, &tips, size, t);
+            scene.draw(&mut frame, r, &l.install, &l.tables, &mut s, state, &techs, en, size);
+            hud.draw_design(&mut frame, &mut s, state, &techs, &l.tables, &tips, size, t);
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
             let rgba = r.draw_to_image(&frame, o.size, t);
             let path = crate::script::grab_path(out, tick);
             crate::assets::write_snapshot(&path, o, &rgba)?;
-            println!("{}: t {tick} | design {} rank {} first {} | desframe {} open {} model {} zoom {}", path.display(), s.current(), s.pointer, s.first, s.frame, s.opened, s.loaded, s.add_zoom);
+            println!("{}: t {tick} | design {} rank {} first {} | mode {} pod {} | desframe {} open {} model {} zoom {}", path.display(), s.current(), s.pointer, s.first, s.mode, s.pod, s.frame, s.opened, s.loaded, s.add_zoom);
+        }
+        for e in script.at(tick) {
+            let mut rename = None;
+            {
+                let techs = world.game.state.tech();
+                let c = design_ctx(&world.game.state, &techs, l, world, hud);
+                match &e.input {
+                    Input::Move(at) => s.moved(*at),
+                    Input::Button { button: 1, down: true, at } => s.press(&c, &scene.mask, *at),
+                    Input::Button { button: 3, down: true, at } => s.press_right(*at),
+                    Input::Button { button: 1, down: false, .. } => s.release(&c),
+                    Input::Button { down: false, .. } => s.release_right(),
+                    Input::Key { name, down: true } if s.entry.is_some() && name != "escape" => {
+                        let k = match name.as_str() {
+                            "enter" => {
+                                s.entry = None;
+                                None
+                            }
+                            "back" | "backspace" => Some(EntryKey::Back),
+                            "delete" => Some(EntryKey::Delete),
+                            "space" => Some(EntryKey::Char(b' ')),
+                            n if n.len() == 1 => Some(EntryKey::Char(n.as_bytes()[0])),
+                            _ => None,
+                        };
+                        rename = k.and_then(|k| s.entry_key(k));
+                    }
+                    Input::Key { name, down: true } => match name.as_str() {
+                        "up" => s.key(Key::Up),
+                        "down" => s.key(Key::Down),
+                        "r" => s.edit_key(&c, true),
+                        "enter" => s.edit_key(&c, false),
+                        "escape" => {
+                            s.escape(&c);
+                        }
+                        // F2 asks for the starmap (the closing runs).
+                        "f2" => {
+                            s.leave();
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            if let Some((k, name)) = rename {
+                if let Some(rec) = world.game.state.designs.get_mut(en).and_then(|t| t.get_mut(k)) {
+                    let n = name.len().min(0x15);
+                    rec[..n].copy_from_slice(&name[..n]);
+                    rec[n] = 0;
+                }
+            }
+            for o in std::mem::take(&mut s.orders) {
+                sent.push(format!("t {tick}: {o:?}"));
+                world.send(ig2_net::Command::from(o));
+            }
+            world.pump();
+            for ev in std::mem::take(&mut world.order_events) {
+                s.event(&ev);
+            }
+            heard.extend(s.sounds.drain(..).map(|id| (Some(tick), id)));
+        }
+    }
+    for line in &sent {
+        println!("order {line}");
+    }
+    let path = crate::script::write_sounds(out, &heard)?;
+    println!("{}: {} sounds", path.display(), heard.len());
+    Ok(())
+}
+
+/// `--snapshot --screen trade`: the trade screen after `--ui-frames` 10 ms frames, open, the pointer resting at
+/// `--mouse X,Y` (a hot-spot's tooltip).
+fn trade_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    if o.trade_cheat {
+        world.game.state.mem.set_u8(ig2_sim::save::va::TRADE_CHEAT, 1);
+    }
+    if let Some(d) = o.trade_eta {
+        world.game.state.mem.set_i32(ig2_sim::save::va::TRADE_ETA_DAYS, d);
+    }
+    let state = &world.game.state;
+    let advance = hud.font.as_ref().map_or(6.0, |f| f.advance(2));
+    let mut s = crate::trade::Trade::open(state, true, 2, crate::trade::ticker_lines(&hud.texts), advance);
+    s.hold_open();
+    if let Some(m) = o.mouse {
+        s.moved(m);
+    }
+    let tips = crate::trade::tips(&hud.texts);
+    let mut scene = crate::trade_scene::TradeScene::new(r);
+    for _ in 0..o.ui_frames.max(1) {
+        s.step(state);
+        s.tooltip(&tips, s.frames as f64 * 10.0);
+    }
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let t = world.curr.tick as f32 * 0.05;
+    let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+    scene.draw(&mut frame, r, &l.install, &s, size);
+    hud.draw_trade(&mut frame, &s, state, &tips, size, t);
+    hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Trade, t);
+    let rgba = r.draw_to_image(&frame, o.size, t);
+    crate::assets::write_snapshot(out, o, &rgba)?;
+    println!("{}: trade | ports {:?} | which {} kind {} qty {} planet {} | traframe {} open {}", out.display(), crate::trade::ports(state), s.which, s.kind, s.qty, s.planet, s.frame, s.opened);
+    Ok(())
+}
+
+/// `--snapshot --screen trade --script S`: the trade screen opened animated (`Trade_Belep` with
+/// `KELLKINYITASDEFAULT`), run tick by tick with the script's input (re/screens/sound.md §3): events at t go in before
+/// tick t + 1 (the pointer, both buttons as `Trade_Main`'s input, F2 `Trade_Kilep`); OK's message 0x51 is applied at
+/// once as the exe's `MULTIGET_Trade`; grab t is drawn after t ticks.
+fn trade_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &mut crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    use crate::script::Input;
+    if o.trade_cheat {
+        world.game.state.mem.set_u8(ig2_sim::save::va::TRADE_CHEAT, 1);
+    }
+    if let Some(d) = o.trade_eta {
+        world.game.state.mem.set_i32(ig2_sim::save::va::TRADE_ETA_DAYS, d);
+    }
+    let advance = hud.font.as_ref().map_or(6.0, |f| f.advance(2));
+    let mut s = crate::trade::Trade::open(&world.game.state, true, 2, crate::trade::ticker_lines(&hud.texts), advance);
+    s.tip.moved([320.0, 240.0]);
+    let tips = crate::trade::tips(&hud.texts);
+    let mut scene = crate::trade_scene::TradeScene::new(r);
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let t = world.curr.tick as f32 * 0.05;
+    let mut heard: Vec<(Option<u32>, crate::audio::SoundId)> = s.sounds.drain(..).map(|id| (None, id)).collect();
+    for tick in 0..=script.end() {
+        if tick > 0 {
+            s.step(&world.game.state);
+            s.tooltip(&tips, s.frames as f64 * 10.0);
+            heard.extend(s.sounds.drain(..).map(|id| (Some(tick - 1), id)));
+            let orders = std::mem::take(&mut s.orders);
+            if !orders.is_empty() {
+                for delivery in orders {
+                    world.send(ig2_net::Command::Buy { delivery });
+                }
+                world.pump();
+            }
+        }
+        if script.grabs.contains(&tick) {
+            let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+            scene.draw(&mut frame, r, &l.install, &s, size);
+            hud.draw_trade(&mut frame, &s, &world.game.state, &tips, size, t);
+            hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Trade, t);
+            let rgba = r.draw_to_image(&frame, o.size, t);
+            let path = crate::script::grab_path(out, tick);
+            crate::assets::write_snapshot(&path, o, &rgba)?;
+            println!("{}: t {tick} | which {} kind {} qty {} planet {} | traframe {} open {}", path.display(), s.which, s.kind, s.qty, s.planet, s.frame, s.opened);
         }
         for e in script.at(tick) {
             match &e.input {
                 Input::Move(at) => s.moved(*at),
-                Input::Button { button: 1, down: true, at } => s.press(state, &techs, &l.tables, &scene.mask, *at),
-                Input::Button { button: 3, down: true, at } => s.press_right(*at),
-                Input::Button { down: false, .. } => s.release(),
-                Input::Key { name, down: true } => match name.as_str() {
-                    "up" => s.key(Key::Up),
-                    "down" => s.key(Key::Down),
-                    // Esc goes to the options screen at once (no closing, no sound); F2 asks for the starmap.
-                    "f2" => {
-                        s.leave();
-                    }
-                    _ => {}
-                },
+                Input::Button { button, down: true, at } => s.press(*button == 1, *at),
+                Input::Button { button, down: false, at } => s.release(*button == 1, *at),
+                Input::Key { name, down: true } if name == "f2" => {
+                    s.leave(2);
+                }
                 _ => {}
             }
             heard.extend(s.sounds.drain(..).map(|id| (Some(tick), id)));
@@ -1042,7 +1279,7 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
         if script.grabs.contains(&tick) {
             let (tex, lines) = models.render(r, &l.install, &l.tables, &s, &world.game.state, size);
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-            hud.draw_research(&mut frame, &s, &infos, &tips, &world.game.state, &l.tables, (tex, models.glow), lines, size, t);
+            hud.draw_research(&mut frame, &mut s, &infos, &tips, &world.game.state, &l.tables, (tex, models.glow), lines, size, t);
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
             let rgba = r.draw_to_image(&frame, o.size, t);
             let path = crate::script::grab_path(out, tick);
@@ -1200,10 +1437,21 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     if let (Some("design"), Some(path)) = (o.screen.as_deref(), &o.script) {
         let script = crate::script::Script::load(path)?;
-        return design_sequence(o, out, &script, &l, &world, &mut r, &mut hud);
+        return design_sequence(o, out, &script, &l, &mut world, &mut r, &mut hud);
     }
     if o.screen.as_deref() == Some("design") {
         return design_snapshot(o, out, &l, &world, &mut r, &mut hud);
+    }
+    if let (Some("trade"), Some(path)) = (o.screen.as_deref(), &o.script) {
+        let script = crate::script::Script::load(path)?;
+        return trade_sequence(o, out, &script, &l, &mut world, &mut r, &mut hud);
+    }
+    if o.screen.as_deref() == Some("trade") {
+        return trade_snapshot(o, out, &l, &mut world, &mut r, &mut hud);
+    }
+    if let (Some("diplomacy"), Some(path)) = (o.screen.as_deref(), &o.script) {
+        let script = crate::script::Script::load(path)?;
+        return diplomacy_sequence(o, out, &script, &l, &mut world, &mut r, &mut hud);
     }
     if o.screen.as_deref() == Some("research") {
         return research_snapshot(o, out, &l, &world, &mut r, &mut hud);
@@ -1294,11 +1542,16 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
     let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
-    hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t);
     let mut panels = match &o.panel {
         Some(panel) => crate::starmap_panels::Panels::opened(panel)?,
         None => crate::starmap_panels::Panels::default(),
     };
+    // `--ui-frames` of `FRISSIT_Starmap2` since `Starmap_Belep`: the faders' shine and drift.
+    for _ in 0..o.ui_frames.max(1) {
+        panels.ui_tick();
+    }
+    // The staged long info is drawn at zoom 599 at least: its box is up.
+    hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info);
     // An info panel at rest: its selection frame morphed in (re/screens/starmap.md §19.4).
     if let Some(i) = &mut panels.info {
         i.advance(&world.game.state, &sel, t, view.camera.zoom, 0);
@@ -1314,7 +1567,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if o.planet_info || o.rop_menu.is_some() || o.menu.is_some() {
         let c = &view.camera;
         let (menus, _) = crate::starmap_menus::staged(&world.game.state, &sel, &panels, [c.x, c.y, c.zoom, c.rotate], o.planet_info, o.rop_menu, o.menu.as_deref(), o.mouse, t)?;
-        hud.draw_starmap_menus(&mut frame, &menus, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], view.camera.zoom.max(if menus.info_on() { 599.0 } else { 0.0 }), t);
+        hud.draw_starmap_menus(&mut frame, &menus, &panels, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], view.camera.zoom.max(if menus.info_on() { 599.0 } else { 0.0 }), t);
     }
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     let rgba = r.draw_to_image(&frame, o.size, t);

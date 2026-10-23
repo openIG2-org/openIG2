@@ -78,6 +78,7 @@ impl War<'_> {
                 // `LandingZone::Free` (and its outline, `FUN_00477d40`): generated again at the next landing.
                 self.field.landing = None;
                 // `ColonySpeaker.Play(1, 3 | 10)` direct (no `Simulate` test): a picked line costs a libc draw.
+                self.events.push(GroundEvent::Voice(Voice::Retreat { empire: e }));
                 if self.ctx.on_screen {
                     let (kind, en) = (if e == self.ctx.human { 3 } else { 10 }, self.ctx.human);
                     if self.voices.as_deref_mut().is_some_and(|v| v.play(1, kind, en)) {

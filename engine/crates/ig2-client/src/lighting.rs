@@ -24,7 +24,7 @@ fn shade_table() -> &'static [u16; 8192] {
 }
 
 /// `float2int` (exe 0x542d80): `x + 2²³` in f32, the mantissa (round to nearest, ties to even).
-fn float2int(x: f32) -> i32 {
+pub(crate) fn float2int(x: f32) -> i32 {
     ((x + 8_388_608.0).to_bits() & 0x7f_ffff) as i32
 }
 

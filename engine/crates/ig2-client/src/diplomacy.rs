@@ -45,20 +45,23 @@ pub mod menu {
     pub const INFO: usize = 0x3c;
     pub const FOR_INFO: usize = 0x3d;
     pub const ALLIES: usize = 0x3f;
+    /// The empire's story specials (`FeltoltMenupontokSpecials`, §6.1).
+    pub const SPECIAL: usize = 0x32;
     pub const COUNT: usize = 0x42;
 }
 
-/// One menu entry (0x40 bytes): text, `+0x34` value, `+0x38` sub-menu.
+/// One menu entry (0x40 bytes): text, `+0x34` value, `+0x38` sub-menu, `+0x3c` disabled (colour 1, not pickable).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Entry {
     pub text: Vec<u8>,
     pub value: i32,
     pub sub: i32,
+    pub off: bool,
 }
 
 impl Entry {
     fn new(text: Vec<u8>, value: i32, sub: i32) -> Self {
-        Self { text, value, sub }
+        Self { text, value, sub, off: false }
     }
 }
 
@@ -200,6 +203,16 @@ pub struct Texts {
     pub techs: Vec<Vec<u8>>,
     /// Whether `a2az` converts articles (`Lang == 4`, Hungarian).
     pub hungarian: bool,
+    /// `SpecialLeiro` (`diplomac/special.eng`, `Diplomacy_ReadSpecials`): title, text A, text B, (option, result)s.
+    pub specials: Vec<Special>,
+}
+
+/// One `special.eng` entry in the file's bytes.
+#[derive(Debug, Clone, Default)]
+pub struct Special {
+    pub title: Vec<u8>,
+    pub text: [Vec<u8>; 2],
+    pub options: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 impl Texts {
@@ -213,6 +226,16 @@ impl Texts {
             races: (0..20).map(|r| ui.get(0x11, 1, r + 5)).collect(),
             techs: (0..TECHS).map(|t| crate::hud::tech_name(ui, t)).collect(),
             hungarian: install.lang() == ig2_formats::text::Lang::Hu,
+            specials: {
+                // The parser works on text; Latin-1 keeps every byte of the file's code page.
+                let raw = file("special.eng");
+                let s: String = raw.iter().map(|&c| c as char).collect();
+                let b = |s: &str| s.chars().map(|c| c as u8).collect::<Vec<u8>>();
+                ig2_formats::diplomacy::parse_specials(&s)
+                    .iter()
+                    .map(|x| Special { title: b(&x.title), text: [b(&x.text_a), b(&x.text_b)], options: x.options.iter().map(|(o, r)| (b(o), b(r))).collect() })
+                    .collect()
+            },
         }
     }
     fn phrase(&self, k: usize) -> &[u8] {
@@ -381,6 +404,10 @@ pub struct View {
     pub greeted: Vec<u8>,
     /// `Bolygok[p]` names (index 0 unused).
     pub planet_names: Vec<Vec<u8>>,
+    /// `SpecialLista` (exe 0xA42DE8, `SpecialListaMut` 0xA41DC4 entries): `(id, empire, SpecialLeiro index)`, §6.1.
+    pub specials: Vec<[i32; 3]>,
+    /// `Money[EN]`.
+    pub money: f64,
 }
 
 impl View {
@@ -409,6 +436,8 @@ impl View {
                     b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())].to_vec()
                 })
                 .collect(),
+            specials: (0..m.i32(0xA41DC4).clamp(0, 200) as u32).map(|i| std::array::from_fn(|f| m.i32(0xA42DE8 + 12 * i + 4 * f as u32))).collect(),
+            money: m.f64(ig2_sim::save::va::MONEY + 8 * m.i32(va::EN).clamp(0, 18) as u32),
         }
     }
     pub fn empire(&self, k: usize) -> i32 {
@@ -532,6 +561,22 @@ pub struct Screen {
     /// `Atfordulas` (0..30 after a new selection) and the UI ticks since entering.
     pub turn: f32,
     pub ui_ticks: u64,
+    /// The opening and the closing (§3.1): `dipframe` (0..80), `dipKELLKINYITAS`, `dipKINYITVA`, `dipBECSUKAS`,
+    /// `dipELINDULT`, `dipAtvaneFordulva` (0 or π).
+    pub dipframe: f32,
+    pub animated: bool,
+    pub opened: bool,
+    pub closing: bool,
+    started: bool,
+    pub flip: f32,
+    /// Per drawn frame (`Diplomacy3DUpdate`): the cages' transparency (`Fejek[k] + 0x48`), `fejetransp`,
+    /// `dipwireframe`, `dipFrameValtozo`, the closing's frames drawn at 0 (`voltnulla`) and `kor`'s turn while closing.
+    pub cage_t: f32,
+    pub face_t: f32,
+    pub wireframe: f32,
+    pub spins: u32,
+    zero_frames: u32,
+    pub kor_turn: f32,
     /// The client's own generator for the unseeded text variants (ADR 0003: not the sim's libc stream).
     rng: u32,
     /// Variant memory so a text doesn't change every frame.
@@ -584,6 +629,18 @@ impl Screen {
             other_fade: 0.0,
             turn: 30.0,
             ui_ticks: 0,
+            dipframe: 80.0,
+            animated: false,
+            opened: true,
+            closing: false,
+            started: false,
+            flip: std::f32::consts::PI,
+            cage_t: 0.0,
+            face_t: 0.0,
+            wireframe: 0.0,
+            spins: 0,
+            zero_frames: 0,
+            kor_turn: 0.0,
             rng: 0x1234_5678,
             cache: None,
         };
@@ -604,26 +661,133 @@ impl Screen {
     /// `FRISSIT_Diplomacy2` (§4), one 10 ms UI tick on an open screen.
     pub fn ui_tick(&mut self) {
         self.ui_ticks += 1;
-        for f in &mut self.row_fade {
-            *f = (*f + 1).min(100);
+        if self.animated && !self.closing && !self.opened && self.started {
+            self.dipframe = (self.dipframe + 0.285_714_3).min(80.0);
+        }
+        if self.animated && self.closing {
+            self.dipframe = (self.dipframe - 0.6).max(0.0);
+        }
+        // From frame 60 the round frame turns; each finished turn flips `dipAtvaneFordulva` (0 ↔ π).
+        if self.dipframe >= 60.0 && self.turn as i32 != 30 {
+            self.turn = (self.turn + 0.2).min(30.0);
+            if self.turn as i32 == 30 {
+                self.flip = if self.flip == 0.0 { std::f32::consts::PI } else { 0.0 };
+            }
+        }
+        if self.opened {
+            for f in &mut self.row_fade {
+                *f = (*f + 1).min(100);
+            }
         }
         if self.selected != -1 && self.info_fade < 127.0 {
             self.info_fade = (self.info_fade + 1.6).min(127.0);
         }
         self.own_fade = if self.own_text.is_empty() { (self.own_fade - 1.6).max(0.0) } else { (self.own_fade + 16.0).min(127.0) };
         self.other_fade = if self.other_text.is_empty() { (self.other_fade - 1.6).max(0.0) } else { (self.other_fade + 1.6).min(127.0) };
-        if self.turn < 30.0 {
-            self.turn = (self.turn + 0.2).min(30.0);
+    }
+
+    /// `Diplomacy_Belep` + `Diplomacy3DInit` (§3.1): `animated` = the opening runs (not back from the messages, help
+    /// or options screen); it starts with `Dip_Hangok[0]`. The frame's first turn runs either way.
+    pub fn enter(&mut self, animated: bool) {
+        self.animated = animated;
+        self.opened = !animated;
+        self.closing = false;
+        self.started = false;
+        self.dipframe = if animated { 0.0 } else { 80.0 };
+        self.turn = 0.0;
+        self.flip = 0.0;
+        self.cage_t = if animated { 1.0 } else { 0.0 };
+        self.face_t = if animated { 1.0 } else { 0.0 };
+        self.wireframe = 0.0;
+        self.spins = 0;
+        self.zero_frames = 0;
+        self.kor_turn = 0.0;
+        self.row_fade = std::array::from_fn(|k| -10 * k as i32);
+        if animated {
+            self.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 0));
         }
     }
 
-    /// The screen opened at rest (no opening animation; the snapshot and the capture comparison).
+    /// `Diplomacy_Kilep` (§3.1): leaving for the messages, help or options screen (`quiet`) closes at once and
+    /// silently; else the closing starts with `screen20.wav` (`Dip_Hangok[1]`). True = closed now.
+    pub fn leave(&mut self, quiet: bool) -> bool {
+        if quiet || !self.opened {
+            return true;
+        }
+        if !self.closing {
+            self.closing = true;
+            self.animated = true;
+            self.kor_turn = 0.0;
+            self.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 1));
+        }
+        false
+    }
+
+    /// The closing has drawn its frame at 0 (`Diplomacy_Kilep::voltnulla`).
+    pub fn closed(&self) -> bool {
+        self.closing && self.zero_frames >= 1
+    }
+
+    /// The 2D passes run (`dipKINYITVA && !dipBECSUKAS`).
+    pub fn live(&self) -> bool {
+        self.opened && !self.closing
+    }
+
+    /// `Diplomacy3DUpdate`'s steps (§3.1), once per drawn frame.
+    pub fn frame3d(&mut self) {
+        if !self.opened && self.dipframe >= 80.0 {
+            self.opened = true;
+        }
+        self.started = true;
+        if self.opened {
+            self.face_t = if self.closing { (self.face_t + 0.09).min(1.0) } else { (self.face_t - 0.03).max(0.0) };
+        }
+        if self.cage_t > 0.5 {
+            self.cage_t -= 0.02;
+        }
+        if self.dipframe == 80.0 {
+            self.wireframe += 0.25;
+            if self.wireframe >= 10.0 {
+                self.wireframe = 0.0;
+            }
+        }
+        if self.dipframe >= 60.0 && !self.closing {
+            self.spins += 1;
+        }
+        if self.closing {
+            self.kor_turn += 0.2;
+            if self.dipframe == 0.0 {
+                self.zero_frames += 1;
+            }
+        }
+    }
+
+    /// The screen opened at rest after its opening (the snapshot and the capture comparison).
     pub fn settle(&mut self) {
         self.row_fade = [100; 10];
         self.info_fade = 127.0;
         self.own_fade = if self.own_text.is_empty() { 0.0 } else { 127.0 };
         self.other_fade = if self.other_text.is_empty() { 0.0 } else { 127.0 };
         self.turn = 30.0;
+        self.flip = std::f32::consts::PI;
+        self.dipframe = 80.0;
+        self.opened = true;
+        self.closing = false;
+        self.cage_t = 0.5;
+        self.face_t = 0.0;
+    }
+
+    /// `--anim-frame F`: the opening held at frame `F` after `n` UI ticks and drawn frames (run_screendiff.py's
+    /// `--dip-frame`, which writes `dipframe` before every `Diplomacy3DUpdate`).
+    pub fn hold(&mut self, f: f32, n: usize) {
+        self.enter(true);
+        for _ in 0..n {
+            self.dipframe = f;
+            self.frame3d();
+            self.dipframe = f;
+            self.ui_tick();
+        }
+        self.dipframe = f;
     }
 
     fn row_bright(&self, k: usize) -> f32 {
@@ -665,7 +829,7 @@ impl Screen {
             self.menus[sub].y = self.menus[root].y + row as i32 * 0x12;
             self.menus[sub].fit(&m);
             self.shown.push(sub);
-            if let Some(r) = self.menus[sub].row_at(&m, inp.at) {
+            if let Some(r) = self.menus[sub].row_at(&m, inp.at).filter(|&r| !self.menus[sub].entries[r].off) {
                 c.sub_row = Some(r);
             }
             self.hover.push((sub, c.sub_row));
@@ -680,7 +844,7 @@ impl Screen {
                     if let (true, Some(lr)) = (inp.released, lr) {
                         chosen = Some((row, sub, Pick { menu: leaf, row: lr }));
                     }
-                } else if leaf < 0 && inp.released && self.menus[sub].row_at(&m, inp.at) == Some(sr) {
+                } else if leaf < 0 && inp.released && self.menus[sub].row_at(&m, inp.at) == Some(sr) && !self.menus[sub].entries[sr].off {
                     chosen = Some((row, sub, Pick { menu: sub, row: sr }));
                 }
             }
@@ -721,8 +885,18 @@ impl Screen {
             Entry::new(s(3), 0, menu::OFFER as i32),
             Entry::new(s(4), 0, menu::FOR as i32),
             Entry::new(s(5), 0, menu::OFFER as i32),
-            Entry::new(s(6), 0, -1),
+            Entry::new(s(6), 0, menu::SPECIAL as i32),
         ];
+        // `FeltoltMenupontokSpecials`: the selected empire's specials, in list order; 8571 needs 2 000 000 credits.
+        self.menus[menu::SPECIAL].entries = v
+            .specials
+            .iter()
+            .filter(|s| s[0] != 0 && s[1] == e as i32)
+            .map(|s| {
+                let title = t.specials.get(s[2].max(0) as usize).map_or(Vec::new(), |x| x.title.iter().copied().take(20).collect());
+                Entry { off: s[0] == 0x217b && v.money < 2_000_000.0, ..Entry::new(title, s[2], -1) }
+            })
+            .collect();
         let trade = rel.trade != 0;
         let n = |i| ui.get(6, 8, i);
         let neg: Vec<Entry> = match rel.level {
@@ -851,6 +1025,10 @@ impl Screen {
         self.hover.clear();
         self.own_text.clear();
         self.other_text.clear();
+        // While the screen opens or closes there is no input, no menu and no text (§3.1).
+        if !self.live() {
+            return out;
+        }
         // `CheckAndColorize`: a press within 40 px of a living empire's head selects it.
         if inp.pressed {
             for k in 0..v.slots.len().min(HEADS) {
@@ -938,6 +1116,12 @@ impl Screen {
                         let cat = if row == 3 { 2 } else { 3 };
                         let lines = self.text(&t.files[0], [cat, 0, reason, -1], [&race1, &item, b""], false, -1);
                         self.proposal = Some(Proposal { declaration: false, terms: Terms { cat, sub, value, sub2: -1, value2: -1 }, lines, greeting: false });
+                    }
+                    // A special (§6.1): its own two lines, sent as cat 4 with the `SpecialLeiro` index.
+                    5 => {
+                        let x = self.menus[p.menu].entries[p.row].value;
+                        let lines = t.specials.get(x.max(0) as usize).map_or(Vec::new(), |s| s.text.to_vec());
+                        self.proposal = Some(Proposal { declaration: false, terms: Terms { cat: 4, sub: x, value: 0, sub2: 0, value2: 0 }, lines, greeting: false });
                     }
                     _ => {}
                 }
@@ -1128,6 +1312,11 @@ impl Screen {
     fn answer_text(&mut self, v: &View, t: &Texts, names: &[Vec<u8>], k: usize) -> Vec<Vec<u8>> {
         let s = v.slots[k];
         let a = s.answer;
+        // A special's answer: its option `value` and that option's result (§6.1).
+        if a.msg.cat == 4 {
+            let o = t.specials.get(a.msg.sub.max(0) as usize).and_then(|x| x.options.get(a.msg.value.max(0) as usize));
+            return o.map_or(Vec::new(), |(o, r)| vec![o.clone(), r.clone()]);
+        }
         let (reason, variant) = (v.raw_i32(k, 0x90), v.raw_i32(k, 0x8c));
         let name = |x: i32| names.get(x.clamp(0, 18) as usize).cloned().unwrap_or_default();
         let _ = name;
@@ -1166,14 +1355,21 @@ impl Screen {
         let fader = |f: &mut Frame, r: [f32; 4], ft: f32, et: f32| design_fader(f, design, white, vv, r, fill, ft, edge, et);
         let [ix, iy] = d.info_xy.map(|x| x as f32);
         let [mx, _] = d.menu_xy.map(|x| x as f32);
-        // The faders of `Diplomacy3DUpdate` (open: f = 1).
-        fader(f, [ix - 10.0, iy - 10.0, 172.0, 100.0], 255.0 - self.info_fade, 255.0 - 2.0 * self.info_fade);
-        let lines = |n: usize| (14 * n + 10) as f32;
+        // The faders of `Diplomacy3DUpdate`, from frame 40 on, `f = 2·dipframe/80 − 1` (§3.1; open: f = 1).
+        if self.dipframe <= 40.0 {
+            return;
+        }
+        let k = self.dipframe / 80.0 * 2.0 - 1.0;
+        fader(f, [ix - 10.0, ((iy + 40.0) - k * 50.0).trunc(), 172.0, (k * 100.0).trunc()], 255.0 - self.info_fade, 255.0 - 2.0 * self.info_fade);
+        let lines = |n: usize| ((14 * n + 10) as f32 * k).trunc();
         if self.own_fade > 0.0 {
             fader(f, [160.0, 0x18b as f32 - 9.0, 465.0, lines(self.own_text.len().max(1))], 255.0 - self.own_fade, 255.0 - 2.0 * self.own_fade);
         }
         if self.other_fade > 0.0 {
-            fader(f, [mx - 23.0, iy + 15.0 - 25.0, 440.0, lines(self.other_text.len().max(1))], 255.0 - self.other_fade, 255.0 - 2.0 * self.other_fade);
+            fader(f, [mx - 23.0, ((iy + 15.0) - k * 25.0).trunc(), 440.0, lines(self.other_text.len().max(1))], 255.0 - self.other_fade, 255.0 - 2.0 * self.other_fade);
+        }
+        if !self.live() {
+            return;
         }
         // The menus: frames, then texts (`KirakMenu` passes 1 and 2).
         let m = &self.metrics;
@@ -1192,7 +1388,7 @@ impl Screen {
                 let sub = en.sub;
                 let listy = sub >= 0
                     && (lists.contains(&(sub as usize)) || (menu::TECHS as i32..=0x10).contains(&sub) || (menu::FOR_TECHS as i32..=0x24).contains(&sub) || sub == 0x32);
-                if listy && self.menus[sub as usize].entries.is_empty() || (id == menu::MAIN && i == 5) {
+                if listy && self.menus[sub as usize].entries.is_empty() || en.off {
                     c = 1;
                 }
                 let text = if t.hungarian { a2az(&en.text) } else { en.text.clone() };
@@ -1314,13 +1510,22 @@ pub struct Open {
     pub scene: crate::diplomacy_scene::DiplomacyScene,
     /// `fadertexture` (`dt.bmp`).
     pub design: Option<TexId>,
+    /// The time of the last `Diplomacy3DUpdate` step (they run per drawn frame, counted at 60 a second).
+    last3d: Option<f32>,
 }
 
 impl Open {
     pub fn new(r: &mut crate::render::Renderer, install: &Install, rules: &ig2_rules::Rules, ui: &UiTexts, state: &SaveState) -> Self {
         let v = View::read(state);
         let design = install.resolve_texture("textures/design/screen/", "dt.bmp").and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img));
-        Self { screen: Screen::new(rules, ui, &v), texts: Texts::load(install, ui), scene: crate::diplomacy_scene::DiplomacyScene::load(r, install, rules), design }
+        Self { screen: Screen::new(rules, ui, &v), texts: Texts::load(install, ui), scene: crate::diplomacy_scene::DiplomacyScene::load(r, install, rules), design, last3d: None }
+    }
+
+    /// `Diplomacy_Belep` (§3.1): the screen's state afresh, with the opening unless `animated` is false.
+    pub fn enter(&mut self, rules: &ig2_rules::Rules, ui: &UiTexts, state: &SaveState, animated: bool) {
+        self.screen = Screen::new(rules, ui, &View::read(state));
+        self.screen.enter(animated);
+        self.last3d = None;
     }
 
     /// One frame's input and dialogue: the commands for the lockstep queue.
@@ -1332,6 +1537,20 @@ impl Open {
     /// Draw the screen (3D frame, then the 2D layer) into `f`; the HUD's top bar goes over it afterwards.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(&mut self, f: &mut Frame, r: &mut crate::render::Renderer, install: &Install, rules: &ig2_rules::Rules, hud: &crate::ui::Hud, state: &SaveState, size: [f32; 2], time: f32) {
+        let last = *self.last3d.get_or_insert(time - 1.0 / 60.0);
+        let steps = ((time - last) * 60.0).floor().clamp(0.0, 30.0) as usize;
+        for _ in 0..steps {
+            self.screen.frame3d();
+        }
+        if steps > 0 {
+            self.last3d = Some(if time - last > 0.5 { time } else { last + steps as f32 / 60.0 });
+        }
+        self.paint(f, r, install, rules, hud, state, size, time);
+    }
+
+    /// Draw the screen as it stands (no `Diplomacy3DUpdate` step: an input script steps it once a tick).
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint(&mut self, f: &mut Frame, r: &mut crate::render::Renderer, install: &Install, rules: &ig2_rules::Rules, hud: &crate::ui::Hud, state: &SaveState, size: [f32; 2], time: f32) {
         let Some(font) = &hud.font else { return };
         let v = View::read(state);
         let vv = Virtual::new(size);
@@ -1426,6 +1645,116 @@ mod tests {
         }
         world.pump();
         assert_eq!(View::read(&world.game.state).slots[0].answered, 0);
+    }
+
+    /// quick-1.sav with two specials staged in `SpecialLista` for the Shinari (slot 0): the menu lists both, 8571 is
+    /// disabled under 2 000 000 credits, picking the other composes its two lines and sends cat 4 with its
+    /// `SpecialLeiro` index; the AI says no and the answer shows the special's option and result (§6.1).
+    #[test]
+    fn quick1_a_special_is_listed_sent_and_answered() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let mut world = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        let ui = UiTexts::load(&install);
+        let names = crate::ui::empire_names(&crate::ui::hungarian_txt17(&install));
+        let t = Texts::load(&install, &ui);
+        let ids: Vec<i32> = ig2_formats::diplomacy::parse_specials(&String::from_utf8_lossy(&install.read("dataraw/diplomac/special.eng").unwrap())).iter().map(|s| s.id).collect();
+        let (Some(a), Some(b)) = (ids.iter().position(|&i| i == 8571), ids.iter().position(|&i| i == 8581)) else { return };
+        let heads = tables.diplomacy_screen.heads.clone();
+        let e = View::read(&world.game.state).empire(0);
+        let m = &mut world.game.state.mem;
+        m.set_i32(0xA41DC4, 3);
+        for (i, rec) in [[8571, e, a as i32], [0, 0, 0], [8581, e, b as i32]].iter().enumerate() {
+            for (f, x) in rec.iter().enumerate() {
+                m.set_i32(0xA42DE8 + 12 * i as u32 + 4 * f as u32, *x);
+            }
+        }
+        let mut s = Screen::new(&tables, &ui, &View::read(&world.game.state));
+        let step = |s: &mut Screen, w: &crate::world::World, inp: Input| s.frame(&View::read(&w.game.state), &w.game.state, &ui, &t, &names, &heads, &inp);
+        let at = |s: &Screen, id: usize, row: usize| {
+            let p = s.menus[id].text_at(&s.metrics, row);
+            [p[0] + 3.0, p[1] + 3.0]
+        };
+        step(&mut s, &world, Input::default());
+        let list = &s.menus[menu::SPECIAL].entries;
+        assert_eq!(list.iter().map(|x| (x.value, x.off)).collect::<Vec<_>>(), [(a as i32, View::read(&world.game.state).money < 2_000_000.0), (b as i32, false)]);
+        assert_eq!(s.menus[menu::MAIN].entries[5].sub, menu::SPECIAL as i32);
+        let p = at(&s, menu::MAIN, 5);
+        step(&mut s, &world, Input { at: p, pressed: true, held: true, ..Default::default() });
+        let q = at(&s, menu::SPECIAL, 1);
+        step(&mut s, &world, Input { at: q, held: true, ..Default::default() });
+        step(&mut s, &world, Input { at: q, released: true, ..Default::default() });
+        let prop = s.proposal.clone().expect("a proposal");
+        assert_eq!((prop.terms.cat, prop.terms.sub, prop.terms.value), (4, b as i32, 0));
+        assert_eq!(prop.lines, t.specials[b].text);
+        step(&mut s, &world, Input::default());
+        let send = at(&s, menu::SEND, 0);
+        for c in step(&mut s, &world, Input { at: send, pressed: true, held: true, ..Default::default() }) {
+            world.send(c);
+        }
+        world.pump();
+        let v = View::read(&world.game.state);
+        assert_eq!(v.slots[0].answered, 1);
+        assert!(!v.slots[0].answer.yes, "the AI hands a special to the story and says no");
+        step(&mut s, &world, Input::default());
+        let (o, r) = &t.specials[b].options[0];
+        assert_eq!(s.other_text, [o.clone(), r.clone()]);
+    }
+
+    /// `Diplomacy_Belep` → `FRISSIT_Diplomacy2` / `Diplomacy3DUpdate` (§3.1): 280 UI ticks open the screen (one drawn
+    /// frame a tick), no input on the way, the frame turns from 60 on and flips to π; leaving closes in 134 ticks.
+    #[test]
+    fn the_opening_and_closing_run_their_frames() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let world = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        let ui = UiTexts::load(&install);
+        let v = View::read(&world.game.state);
+        let mut s = Screen::new(&tables, &ui, &v);
+        s.enter(true);
+        assert_eq!(s.sounds, [crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 0)]);
+        let mut ticks = 0;
+        while !s.opened {
+            s.frame3d();
+            s.ui_tick();
+            assert!(!s.live() || s.opened);
+            ticks += 1;
+            assert!(ticks < 400);
+        }
+        // In f32 280 steps of 0.2857143 stay just under 80: the 281st reaches it, the next frame sees it.
+        assert_eq!(ticks, 282);
+        assert!(s.turn > 0.0 && s.turn < 30.0);
+        assert_eq!(s.row_fade[0], 1, "the row fades start once open");
+        while s.turn < 30.0 {
+            s.frame3d();
+            s.ui_tick();
+        }
+        assert_eq!(s.flip, std::f32::consts::PI);
+        assert!((s.cage_t - 0.5).abs() < 0.03 && s.face_t == 0.0);
+        assert!(!s.leave(false) && s.closing && !s.live());
+        assert_eq!(s.sounds.last(), Some(&crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 1)));
+        let mut n = 0;
+        while !s.closed() {
+            s.ui_tick();
+            s.frame3d();
+            n += 1;
+        }
+        assert_eq!(n, 134);
+        // Back from the messages screen: at rest, silent; leaving for it: at once, silent.
+        let mut s = Screen::new(&tables, &ui, &v);
+        s.enter(false);
+        assert!(s.live() && s.sounds.is_empty() && s.dipframe == 80.0);
+        assert!(s.leave(true) && s.sounds.is_empty());
     }
 
     /// quick-1.sav: the Shinari (3) offer a cease-fire; the screen shows their text with "we agree / forget it", and
