@@ -157,7 +157,7 @@ The screens call it right after their faders, unless leaving, with `t = 1 − g`
   162, 52)), `StarmapGfx2D_2` from 6 (the product mode's slide-in boxes 6..15, its static boxes and the two (32/532,
   86, 76, 35) after, then the info-off box and the tanks box: each the next count). Exact: `StarmapGfx2D_1` ELF 0x6dcb30 (planet
   info box 0 when shown, radar next), `StarmapGfx2D_2` 0x6de1b0 from 6: slide-in 10 boxes, product 10 boxes, exit
-  button, then the tanks-info box (445, 380, 176, 30). Port: `starmap_panels::StarmapFaders { starf, fifo }` in `Panels`
+  button (only when `StarmapInfoOffHoltart` > 0, which the tanks info leaves at 0), then the tanks-info box (445, 380, 176, 30). Port: `starmap_panels::StarmapFaders { starf, fifo }` in `Panels`
   (`FaderDesign::next` draws from the one rand() stream, fifo then starf, re-inited on every starmap entry; glows'
   rand() draw skipped). `fifo`: transfer (`ShowStarmap` 0x6eca50) 0..5 + scroll track/thumb 6, fleet info
   (`ArrangeFleetInfo` 0x6e5c30) 0..5 + bar 6, tanks info (`StarmapTanksInfoFaderKirakas` 0x6ea720) 0..4 + bar 5

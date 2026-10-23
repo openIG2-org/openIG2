@@ -22,12 +22,14 @@ use crate::scene::{self, Model, Placement, M3, V3};
 
 /// `Mouse_Szoveg_Set(id, 0, x, y, w, h, …)` of `Colony_MouseInit`: the hot-spots the building screen uses, in the
 /// order `Mouse_Darabol` tries them (the 3D view 0x14 last).
-const SPOTS: [(u32, [f32; 4]); 11] = [
+const SPOTS: [(u32, [f32; 4]); 12] = [
     (1, [179.0, 443.0, 31.0, 31.0]),
     (2, [212.0, 443.0, 31.0, 31.0]),
     (4, [0.0, 424.0, 166.0, 56.0]),
     (5, [522.0, 362.0, 100.0, 100.0]),
     (6, [25.0, 39.0, 145.0, 99.0]),
+    // The left panel's dead window (no `Colony_Main` case): it swallows the presses over the panel.
+    (7, [16.0, 20.0, 163.0, 124.0]),
     // The self-destruct window (spec §11.8): call off, the window itself, start.
     (8, [440.0, 135.0, 60.0, 25.0]),
     (9, [380.0, 70.0, 180.0, 100.0]),
@@ -405,7 +407,7 @@ impl ColonyUi {
                 && match id {
                     1 => sel.is_some_and(|b| b.damage > 0),
                     2 | 0x11 => sel.is_some(),
-                    6 => own,
+                    6 | 7 => own,
                     8 => c.snap.self_destruct != -1 && c.owner_is_en(),
                     9 => c.snap.self_destruct != -1,
                     10 => crate::colony_war::self_destruct_ready(&c.war()),
@@ -422,7 +424,7 @@ impl ColonyUi {
         let war_button = (c.snap.war_flag && self.war.button(&w, p).is_some()).then_some(1);
         let spot = self.spot(c, p);
         let mut k = war_button.unwrap_or(match spot {
-            Some(0x13 | 0x14 | 9 | 0x1f) | None => 0,
+            Some(0x13 | 0x14 | 7 | 9 | 0x1f) | None => 0,
             Some(_) => 1,
         });
         if war_button.is_none() && spot == Some(0x14)

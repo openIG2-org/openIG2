@@ -25,12 +25,11 @@ use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
 use ig2_sim::research::ResearchRules;
 use ig2_sim::save::{group_chunks, modelled, va, SaveState};
-use ig2_sim::save::va::TRADE_OFFERS;
 use ig2_sim::ground::{GroundMap, GroundRules};
 use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
 use ig2_sim::story::{MessageText, StoryEvent};
-use ig2_sim::trade::{Delivery, TradeEvent, DELIVERY};
+use ig2_sim::trade::{Delivery, DELIVERY};
 use serde_json::Value;
 
 fn local(var: &str, sub: &str) -> PathBuf {
@@ -348,7 +347,7 @@ fn game_rules(inst: &Install) -> GameRules {
 
 /// The texts (`uzenet.txt`, the story table) in the language the recordings' exe ran in: the one whose texts begin the
 /// messages on the recordings' scrolling lines (the remaster's language setting when none shows one).
-fn message_texts(recs: &[Recording]) -> Texts {
+fn message_texts(recs: &[Recording]) -> (Texts, Lang) {
     let mut shown: Vec<(i32, Vec<u8>)> = Vec::new();
     for rec in recs {
         let last = load(&rec.dir.join(format!("{}.sav", rec.events.len() - 1)));
@@ -369,12 +368,22 @@ fn message_texts(recs: &[Recording]) -> Texts {
             t.format(*id, &[]).is_some_and(|f| text.starts_with(&f[..f.windows(2).position(|w| w[0] == b'%').unwrap_or(f.len())]))
         };
         if !shown.is_empty() && shown.iter().all(fits) {
-            return t;
+            return (t, lang);
         }
     }
     // No line to tell by: the language the remaster runs in (the tutorial's planet name, `tutorial.md` §4).
     let lang = std::env::var_os("IG2_INSTALL_DIR").map_or(Lang::En, |d| ig2_formats::locale::exe_language(std::path::Path::new(&d)).0);
-    texts(lang).unwrap_or_default()
+    (texts(lang).unwrap_or_default(), lang)
+}
+
+/// `_s(0x3b, n)` (`s_design.txt`) in `lang`: the names `DesignPoenosanElnevez` gives.
+fn design_texts(lang: Lang) -> BTreeMap<i32, Vec<u8>> {
+    let Some(inst) = Install::from_env(lang).and_then(|i| i.ok()) else { return BTreeMap::new() };
+    let mut keyed = ig2_formats::strings::KeyedStrings::default();
+    if let Ok(b) = inst.read("dataraw/text/s_design.txt") {
+        keyed.add_file(0x3b, &text::decode(&b, lang));
+    }
+    keyed.table(0x3b).map(|(n, s)| (n as i32, lang.encoding().encode(s).0.into_owned())).collect()
 }
 
 // ------------------------------------------------------------------------------------------------ the replay
@@ -391,7 +400,9 @@ fn replay_matches_the_exe_tick_by_tick() {
         return;
     }
     let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
-    let rules = GameRules { messages: message_texts(&recs), ..game_rules(&inst) };
+    let (messages, lang) = message_texts(&recs);
+    let rules = GameRules { messages, ..game_rules(&inst) };
+    let designs = design_texts(lang);
     let mut failed = Vec::new();
     for rec in recs {
         // A staged recording starts before the purchases (`pre.sav`); they are replayed and checked against save 0.
@@ -403,6 +414,7 @@ fn replay_matches_the_exe_tick_by_tick() {
         let next: Rc<RefCell<Option<SaveGame>>> = Rc::default();
         let mut game = Game::new(state, &rules);
         game.fleet_name = Some(rec.events[0]["vol"]["alapnev"].as_str().unwrap().as_bytes().to_vec());
+        game.design_texts = designs.clone();
         if let Some(names) = rec.events[0]["vol"]["empnames"].as_array() {
             game.empire_names = names.iter().map(|n| unhex(n.as_str().unwrap_or_default())).collect();
         }
@@ -805,34 +817,14 @@ fn ui_between_ticks(s: &mut SaveState, exe: &SaveGame, ev: &Value) {
     }
 }
 
-/// Localised names given in the last tick (the AI's and the story merchant's `DesignPoenosanElnevez`,
-/// `MiFoFlottaNev`: text tables the port doesn't render), taken from the exe's save.
+/// Localised names given in the last tick (`MiFoFlottaNev`: a text table the port doesn't render), taken from the
+/// exe's save.
 fn import_names(s: &mut SaveState, exe: &SaveGame, events: &[GameEvent]) {
     for e in events {
-        match e {
-            GameEvent::Ai(AiEvent::DesignNamed { empire, design, .. }) => {
-                let (e, d) = (*empire as usize, *design);
-                if let (Some(a), Some(b)) = (s.designs.get_mut(e).and_then(|v| v.get_mut(d)), exe.designs.get(e).and_then(|v| v.get(d))) {
-                    a[..0x15].copy_from_slice(&b[..0x15]);
-                }
+        if let GameEvent::Ai(AiEvent::MainFleetNamed { fleet, .. }) = e {
+            if let (Some(a), Some(b)) = (s.fleets.get_mut(*fleet), exe.fleets.get(*fleet)) {
+                a[..0x14].copy_from_slice(&b[..0x14]);
             }
-            GameEvent::Trade(TradeEvent::OfferNamed { slot, .. }) => {
-                // The whole name as the exe built it (`name + " " + design name`, which may run past +0x14), over
-                // as many bytes as the longer of the two strings covers.
-                let theirs = exe.chunk("TradeTervek").unwrap();
-                let at = TRADE_OFFERS + (slot * 0x84) as u32;
-                if let Some(b) = theirs.get(slot * 0x84..(slot + 1) * 0x84) {
-                    let ours = s.mem.read(at, 0x84);
-                    let end = |r: &[u8]| r.iter().position(|&c| c == 0).map_or(0x84, |i| i + 1);
-                    s.mem.write(at, &b[..end(b).max(end(&ours))]);
-                }
-            }
-            GameEvent::Ai(AiEvent::MainFleetNamed { fleet, .. }) => {
-                if let (Some(a), Some(b)) = (s.fleets.get_mut(*fleet), exe.fleets.get(*fleet)) {
-                    a[..0x14].copy_from_slice(&b[..0x14]);
-                }
-            }
-            _ => {}
         }
     }
 }

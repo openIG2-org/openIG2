@@ -146,7 +146,7 @@ the AI attacking the human (24) and the human attacking the AI (25). All 16 tick
 
 - ~~Unported `FRISSIT_Trade`~~: ported since (`2026-10-16-trade.md`); the recordings were re-made with the market's
   unsaved globals, and two staged ones (purchases, deliveries) added.
-- Localised names (`DesignPoenosanElnevez`, the main fleet's name) and the uninitialised bytes of appended
+- Localised names (`DesignPoenosanElnevez` is ported since, new-game.md §14; the main fleet's name) and the uninitialised bytes of appended
   records (`Game::uninit`, as the AI replay's `fresh_design`) come from the exe's save.
 - ~~Unported info charts and messages~~: ported since (`rules/info-messages.md`): `InfoCharts`,
   `InfoChartsSmoothed`, `BattlesWon`, the inbox (`Uzenetek`, `UzenetekRandomKitol`, `UzenetPlaybackek`, the

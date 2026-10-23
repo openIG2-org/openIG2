@@ -44,7 +44,7 @@ playable from start to finish.
 |---|---|---|
 | Game simulation | ✅ done | Economy, fleets, radar, research, production, diplomacy, espionage, trade, the AI empires, auto-resolved and real-time space and ground battles, info and messages; original saves run whole game days identical to the original |
 | Game end and high scores | ✅ done | Victory/defeat/ended flow, the end videos by race, then the main menu; the high-score table format and insert (the original never records a score), checked against the original; the table draw comes with the main menu |
-| Tutorial interpreter | ✅ done | The tutorial script's 74 commands and events run as a sim state machine (hooks for the later overlay), checked against the original over all five chapters |
+| Tutorial interpreter | ✅ done | The tutorial script's 74 commands and events run as a sim state machine, checked against the original over all five chapters; the client plays it as an overlay on the game screens (window matches the original; some event sites and gate flags still open) |
 | Story engine and skirmish scenarios | ✅ done | Scenario victory and defeat, the campaign start and driver, the six storylines, the multiplayer game modes |
 | Campaign scripts | ✅ done | `st_Elem_include` complete (part 2g: 844, 856, 862, 863, 0 left) |
 | New game start | 🚧 campaign, scenario, MP galaxy, skirmish done | `Game::new_campaign`, `start_scenario`, `start_mp_galaxy` and `start_skirmish` build the start state and equal 35 starts recorded in the original; the client builds its world from a new campaign (`--new-campaign`); the load path follows |

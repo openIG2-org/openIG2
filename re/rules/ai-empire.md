@@ -386,7 +386,7 @@ if d == 0:
     if d == 0: d = TervNew(e, 0); redo = true
     if d < 1: next
     if redo: TervClear(e, d)
-    design d: +0x44 = s; +0x00..+0x14 = 0; name (SP: DesignPoenosanElnevez(e, s, v) — a localised text;
+    design d: +0x44 = s; +0x00..+0x14 = 0; name (SP: DesignPoenosanElnevez(e, s, v) — a localised text, ported: new-game.md §14;
               MP: the hull tech's name); slot[v][e][s] = d; +0x20 = 0
 if d > 0:            (d < 0 is skipped; a fresh d is never 0 here)
     old = design d.+0x20 (build time)

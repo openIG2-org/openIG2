@@ -134,7 +134,7 @@ Tech (`Talalmanyok`, stride 0x114; ELF 0x1433960, exe 0xb9c0c8): state byte for 
    that colour; >= 0x40 with colour-0x40 and `KiirStrSzinSzorzo = Szin` (blink), reset to 100 afterwards.
 
 **Drawing** (not part of the interpreter, for the client). `TutorialKeretFrissit` (ELF 0x7b4440, called from `GFX_DateMoneyScrollFade` with
-`FaderHanyadikMenet=3`; **inlined in the exe** into that function, exact site UNCERTAIN): if `AktKep != 0xd && !DisableTextWindow && TextShown &&
+`FaderHanyadikMenet=3`; in the exe a function of its own, 0x611ba0, called from `GFX_DateMoneyScrollFade` exe 0x554500; the client's overlay: `re/screens/tutorial.md`): if `AktKep != 0xd && !DisableTextWindow && TextShown &&
 (Active||Paused)`: `FadeKerettelKerekit(x=(int)(TKActX-5.0), y=(int)(TKActY-5.0), w=min(CharXMeret[2]*40+10, 0x27f-x), h=(CharYMeret[2]+3)*8+10,
 0, 0x36,0x5a,0x1e, 0,0x5a,0x82, 0, false, 0,0,0,0)`.
 `TutorialSzovegFrissit` (ELF 0x7b45a0 / exe 0x612740, called from `Update3D` at exe 0x52d397): nothing if `AktKep==0xd`. If neither Active nor Paused
@@ -342,7 +342,7 @@ then `Mouse_Akt_Bal=Jobb=Gomb=0; ActMouseAllapot = 0`. A new PLAYMOUSE replaces 
 3. Playing: if `!Active || index == Max || index == -1`: when Active and AktKep != 0xd the pointer is parked: `Mouse_x=0x140; Mouse_y=200; Mouse_Jobb=Bal=Gomb=0; Mouse_Tipus=-2` (exe 0xdb4654/58/52/51/50, 0xdb9414).
    Else (AktKep != 0xd): `Mouse_Akt_x/y = sample.x/y; Mouse_Akt_Gomb/Bal/Jobb = byte & 1; if Bal: Mouse_LastPressed_Bal = (Mouse_x, Mouse_y); if Jobb: same for Jobb; KeyAlt = mods&1; KeyShift = (mods&2)!=0; KeyCtrl = (mods&4)!=0; Mouse_Move(x, y, true)`.
    (exe globals: Mouse_Akt_x/y 0x916008/0x91600c, Akt_Gomb/Bal/Jobb 0xdb467d/e/f, KeyAlt/Shift/Ctrl 0xbae294/0xbae295/0xbae27f, LastPressed 0xdb9424.. / 0xdb942c..).
-Keys: `ReadNext` (elf2/ReadNext.c, exe 0x57f9b0): when Active and AktKep != 0xd live keys are not returned; if `index != -1` and the sample flag == 1 it returns the first non-zero key slot of sample `index` (`Key_Buffer = key[i]; Key_Virt = virt[i]`) and zeroes that slot
+Keys: `ReadNext` (elf2/ReadNext.c, exe 0x4e3660; 0x57f9b0 is the ELF's): when Active and AktKep != 0xd live keys are not returned; if `index != -1` and the sample flag == 1 it returns the first non-zero key slot of sample `index` (`Key_Buffer = key[i]; Key_Virt = virt[i]`) and zeroes that slot
 (each recorded key is delivered once; up to 4 per sample, one per call). When recording it stores the live key (`FKBuf[fk_from]`) into the first free slot of the current sample and sets the flag. `Mouse_Lekerdez` copies `Mouse_Akt_*` into `Mouse_*` directly while Active or recording.
 SDL layer (`MainCallBackEventHandler`): while Active and AktKep != 0xd the mouse motion and button events and the Shift/Ctrl/Alt key events are dropped, so only the recording drives the pointer. `TutorialCounter` stops while Paused, so a sample is consumed once per UI tick of Active play.
 
@@ -397,7 +397,7 @@ SDL layer (`MainCallBackEventHandler`): while Active and AktKep != 0xd the mouse
 * What `FRISSIT_Spy` (two sites), `FRISSIT_Starmap` and `MIvisszavonulasvizsgalat` change while Active/Paused (only the sites found by xref; their bodies were not read).
 * `TutorialRepeatLastSzovegReszlet` (elf2) and `TutorialStartMp2` (ELF 0x7b4b20, old numbered files `Ncom_tutp%d_%03d.mp2`) have no caller found.
 * Events 0x0e and 0x12 have no `TutorialCheckEvent` caller (not used by `main.tut`).
-* Exe site of the inlined `TutorialKeretFrissit`; `DemoMode_*` and the `TEXTURE` consumer (`DemoMode_Poll`) not read.
+* `DemoMode_*` and the `TEXTURE` consumer (`DemoMode_Poll`) not read.
 * `ctut` / `demo.tut`: `demo.tut` is not shipped, so `StartDemoMode` would fail to open it (not checked what `DatFile::dopen` does then).
 
 Resolved at runtime (§11): `SEEKCHAPTER` for a chapter the script lacks leaves the pointer at the end and the

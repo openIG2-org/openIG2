@@ -1605,6 +1605,12 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         hud.draw_starmap_menus(&mut frame, &menus, &panels, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], view.camera.zoom.max(if menus.info_on() { 599.0 } else { 0.0 }), t);
     }
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
+    // `--tutorial-window FILE`: the tutorial's window as the exe's probe logged it (re/rules/tutorial.md §2).
+    if let Some(path) = &o.tutorial_window {
+        let line = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let tu = crate::tutorial_ui::TutorialUi::from_record(line.lines().next().unwrap_or_default())?;
+        hud.draw_tutorial(&mut frame, &tu, [o.size.0 as f32, o.size.1 as f32], 2);
+    }
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
     let (y, m, d) = world.curr.date();

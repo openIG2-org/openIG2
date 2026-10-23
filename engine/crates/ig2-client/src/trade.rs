@@ -23,6 +23,17 @@ use crate::starmap_panels::Draw2d;
 
 /// `TradeWhichVehicle` with nothing chosen.
 pub const NONE: i32 = 50000;
+
+/// Keys of the trade screen's keyboard handler (exe 0x609ae0): numpad + / −, the arrows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    More,
+    Less,
+    Up,
+    Down,
+    Left,
+    Right,
+}
 /// Rows each list shows.
 const ROWS: i32 = 8;
 /// `Gombokx1/y1`, `Gombokx2/y2` (exe 0x928da0..): the purchase line's two halves.
@@ -791,17 +802,8 @@ impl Trade {
             }
             _ => {}
         }
-        // A new row: the model is loaded at once the first time, else the shown one turns away first.
-        if matches!(ikon, 0x23 | 0x24) && (bal || jobb) && !release && (self.old != -1 || self.which != NONE) && (self.which != self.old || self.old_kind != self.kind) {
-            if self.old == -1 {
-                self.load_hull(m);
-            } else {
-                self.hull_done = false;
-                self.angle_to = std::f32::consts::FRAC_PI_2;
-                self.hull_dir = deliveries < 1;
-            }
-            self.old = self.which;
-            self.old_kind = self.kind;
+        if matches!(ikon, 0x23 | 0x24) && (bal || jobb) && !release {
+            self.row_change(m, deliveries);
         }
         // Step 8: a press on the model's block (`AktIkon2`, the hot-spot under the pointer) opens the pod list there.
         if under == 0x25 && press {
@@ -816,6 +818,57 @@ impl Trade {
         }
         self.mouse.press = false;
         self.mouse.release = false;
+    }
+
+    /// A new row (exe 0x607b60): the model is loaded at once the first time, else the shown one turns away first.
+    fn row_change(&mut self, m: &Market, deliveries: i32) {
+        if (self.old != -1 || self.which != NONE) && (self.which != self.old || self.old_kind != self.kind) {
+            if self.old == -1 {
+                self.load_hull(m);
+            } else {
+                self.hull_done = false;
+                self.angle_to = std::f32::consts::FRAC_PI_2;
+                self.hull_dir = deliveries < 1;
+            }
+            self.old = self.which;
+            self.old_kind = self.kind;
+        }
+    }
+
+    /// The trade screen's keyboard handler (exe 0x609ae0, key down only): numpad + / − step the quantity, ↑/↓ the
+    /// row in the list in use (`TradeIgazit…Poz`, `TradeSelect…`), → / ← switch to the other list when it has rows.
+    pub fn key(&mut self, state: &SaveState, k: Key) {
+        let deliveries = state.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * en(state) as u32);
+        self.market_key(&Market::of(state), deliveries, k);
+    }
+
+    fn market_key(&mut self, m: &Market, deliveries: i32, k: Key) {
+        let counts = m.counts();
+        let to = match k {
+            Key::More => {
+                if self.which != NONE && self.qty < self.left {
+                    self.qty += 1;
+                }
+                return;
+            }
+            Key::Less => {
+                if self.which != NONE && self.qty != 0 {
+                    self.qty -= 1;
+                }
+                return;
+            }
+            Key::Down | Key::Up if self.kind < 2 => Some((self.kind, self.which + if k == Key::Down { 1 } else { -1 })),
+            Key::Right if self.kind == 0 && counts[1] >= 1 => Some((1, self.which)),
+            Key::Left if self.kind == 1 && counts[0] > 0 => Some((0, self.which)),
+            _ => None,
+        };
+        if let Some((kind, mut sel)) = to {
+            self.kind = kind;
+            self.fit_row(kind, &mut sel, counts[kind]);
+            self.which = sel;
+            self.select(m, counts);
+        }
+        self.row_change(m, deliveries);
     }
 
     /// `TradeIgazitShipPoz` / `TankPoz` (ELF 0x7ad8d0 / 0x7ada00): a row outside the window scrolls it by one.
@@ -1241,6 +1294,40 @@ mod tests {
         let mut sel = 20;
         s.fit_row(0, &mut sel, 20);
         assert_eq!((sel, s.pos[0]), (20, 12));
+    }
+
+    #[test]
+    fn keys_step_the_quantity_the_row_and_the_list() {
+        // Two ships (offers 0, 1) and a vehicle (offer 2), five of each left.
+        let mut m = Market { offers: vec![[0; RECORD]; OFFERS + 1], n: 3 };
+        for (i, class) in [1, 1, 2].into_iter().enumerate() {
+            m.offers[i][0x16] = class;
+            m.offers[i][0x6c] = 5;
+        }
+        let mut s = blank();
+        // Nothing chosen: + does nothing; ↓ from `NONE` lands on the last ship (`TradeSelectShip`'s clamp).
+        s.market_key(&m, 0, Key::More);
+        assert_eq!(s.qty, 0);
+        (s.which, s.kind) = (0, 0);
+        s.market_key(&m, 0, Key::Down);
+        assert_eq!((s.which, s.kind, s.left), (1, 0, 5));
+        for _ in 0..7 {
+            s.market_key(&m, 0, Key::More);
+        }
+        assert_eq!(s.qty, 5);
+        s.market_key(&m, 0, Key::Less);
+        assert_eq!(s.qty, 4);
+        // → to the vehicles keeps the row (clamped to the list) and drops the quantity; ← back.
+        s.market_key(&m, 0, Key::Right);
+        assert_eq!((s.which, s.kind, s.qty), (0, 1, 0));
+        s.market_key(&m, 0, Key::Left);
+        assert_eq!((s.which, s.kind), (0, 0));
+        // ← on the ships, ↑ at the top: the row stays.
+        s.market_key(&m, 0, Key::Left);
+        s.market_key(&m, 0, Key::Up);
+        assert_eq!((s.which, s.kind), (0, 0));
+        // The first row chosen loads its model.
+        assert!(s.hull_shown());
     }
 
     #[test]

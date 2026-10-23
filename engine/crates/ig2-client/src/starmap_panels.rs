@@ -1079,14 +1079,16 @@ impl Panels {
         if let Some(i) = &self.info {
             i.draw_under(f, d, state, sel, &self.faders.fifo);
         }
-        // The exit button (`StarmapGfx2D_2`, `StarmapInfoOffHoltart` > 0).
+        // The exit button (`StarmapGfx2D_2`, `StarmapInfoOffHoltart` > 0). The tanks info leaves the holtart at 0
+        // (only the product, transfer and fleet modes set it) and draws its own box below instead.
+        let tanks = self.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Tanks);
         let k = self.exit_in();
-        if k > 0.0 {
+        if k > 0.0 && !tanks {
             let x = ((1.0 - ((k as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0 + 445.0) as f32;
             starf(f, [x, 380.0, (self.addo + 0xb0) as f32, 30.0]);
         }
         // The tanks info's box (`StarmapTanksInfo`), the next count.
-        if self.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Tanks) {
+        if tanks {
             starf(f, [445.0, 380.0, 176.0, 30.0]);
         }
     }

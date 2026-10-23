@@ -1,6 +1,7 @@
 """Capture comparison of one screen: ig2.exe vs ig2-client (ADR 0009 §4, re/screens/README.md §5).
 
     run_screendiff.py <install> <save.sav> <screen> [--out _local/screendiff] [--exe-png PNG] [--wait 240]
+                      [--size WxH] [--letterbox]
                       [--build] [--threshold T] [--shift N] [--mask X,Y,W,H]... [--no-default-masks]
 
 <screen>: starmap | colony:<planet> | info[:IDS] | messages | research | design | production:<planet> | transfer:<planet> | diplomacy |
@@ -162,6 +163,15 @@ def diff(exe_png, client_png, heat, regions, masks, a):
     return json.loads(r.stdout)
 
 
+def size_suffix(a):
+    """Captures at another window size than the acceptance's 800 × 600 (re/screens/widescreen.md) are named -WxH."""
+    return "" if a.size == "800x600" else "-" + a.size
+
+
+def size_exe(a):
+    return [] if a.size == "800x600" else ["--size", a.size]
+
+
 def clock_args(save):
     """The exe's UI clocks a state save doesn't hold (run_screen.py writes them beside it)."""
     ui = save + ".ui.json"
@@ -207,7 +217,7 @@ def sound_table(path):
 
 def sequence(a, kind, cfg, env, masks, planet):
     stem = os.path.splitext(os.path.basename(a.script))[0]
-    name = f"{kind}-seq-{stem}" if stem != kind else f"{kind}-seq"
+    name = (f"{kind}-seq-{stem}" if stem != kind else f"{kind}-seq") + size_suffix(a)
     with open(a.script, encoding="utf-8") as f:
         grabs = sorted(json.load(f).get("grabs", []))
     state = os.path.join(a.out, f"{name}-state.sav")
@@ -228,7 +238,7 @@ def sequence(a, kind, cfg, env, masks, planet):
                 sys.exit("the exe's script run failed")
     elif not a.exe_seq:
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
-                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []))
+                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []) + size_exe(a))
         if r.returncode:
             sys.exit("the exe's script run failed")
     with open(prefix + "-frames.json", encoding="utf-8") as f:
@@ -237,7 +247,7 @@ def sequence(a, kind, cfg, env, masks, planet):
     client = os.path.join(a.out, f"{name}-client.png")
     # The colony's `--colony-live` camera comes from the state save (the script's first frame).
     args = [x.format(planet=planet, grab=prefix + "-entry.json") for x in cfg["client"] if x not in ("--ui-frames", "240")] + ["--script", a.script]
-    r = run([CLIENT, "--snapshot", client, "--save", state, "--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args + clock_args(state), env=env)
+    r = run([CLIENT, "--snapshot", client, "--save", state, "--size", a.size, "--ticks", "0", "--speed", "1", "--paused"] + args + clock_args(state), env=env)
     if r.returncode:
         sys.exit("the client's script run failed")
     out = []
@@ -305,9 +315,13 @@ def main():
     ap.add_argument("--land", action="store_true", help="grwar: no unit placed yet (run_screen.py --grwar-land)")
     ap.add_argument("--script", help="compare the frame sequence of this input script (re/screens/sound.md §3)")
     ap.add_argument("--exe-seq", help="with --script: reuse this exe run (its run_screen.py out-prefix)")
+    ap.add_argument("--size", default="800x600", help="the window size WxH of both (run_screen.py --size; the client's --size); "
+                    "regions stay in the centred 4:3 frame, wider sizes add left_strip/right_strip (re/screens/widescreen.md)")
+    ap.add_argument("--letterbox", action="store_true", help="the client with its letterbox option (ADR 0010 §2): the strips black")
     ap.add_argument("--client-new-campaign", help="the client starts this campaign (`--new-campaign C,D,SEED,TICKS`) "
                     "instead of loading the state save: <save> is run_newgame.py's tick-0 save of the same start")
     a = ap.parse_args()
+    a.size = a.size.lower()
 
     kind, _, arg = a.screen.partition(":")
     if kind not in SCREENS:
@@ -369,6 +383,7 @@ def main():
         held += ["--mouse", a.anim_mouse]
         held_exe += ["--mouse", a.anim_mouse]
         name += "-mouse" + a.anim_mouse.replace(",", "_")
+    name += size_suffix(a) + ("-lb" if a.letterbox else "")
     os.makedirs(a.out, exist_ok=True)
     env = dict(os.environ, IG2_INSTALL_DIR=os.path.abspath(a.install))
     if a.lang:
@@ -394,7 +409,7 @@ def main():
         state = os.path.join(a.out, f"{name}-state.sav")
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
                  "--planet", str(planet), "--wait", str(a.wait or cfg.get("wait", 240)), "--shots", "1", "--state-out", state,
-                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])] + held_exe)
+                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])] + held_exe + size_exe(a))
         if r.returncode or not os.path.exists(prefix + "-0.png"):
             sys.exit("the exe capture failed")
         shutil.move(prefix + "-0.png", exe_png)
@@ -403,7 +418,7 @@ def main():
         save = state
 
     client_png = os.path.join(a.out, f"{name}-client.png")
-    args = [x.format(planet=planet, grab=os.path.abspath(grab) if grab else "") for x in cfg["client"]] + held
+    args = [x.format(planet=planet, grab=os.path.abspath(grab) if grab else "") for x in cfg["client"]] + held + (["--letterbox"] if a.letterbox else [])
     if kind == "grwar" and a.arm:
         args[args.index("war")] = f"war:{a.arm}"
     # The exe's starmap clocks at the grab (run_screen.py writes them beside the state save).
@@ -443,7 +458,7 @@ def main():
                         f.write(f"{c} {t}\n")
                 args += ["--info-log", log]
     game = ["--new-campaign", a.client_new_campaign] if a.client_new_campaign else ["--save", save]
-    r = run([CLIENT, "--snapshot", client_png] + game + ["--size", "800x600", "--ticks", "0", "--speed", "1", "--paused"] + args, env=env)
+    r = run([CLIENT, "--snapshot", client_png] + game + ["--size", a.size, "--ticks", "0", "--speed", "1", "--paused"] + args, env=env)
     if r.returncode:
         sys.exit("the client snapshot failed")
 

@@ -4,7 +4,9 @@
 //! `ig2-screendiff <exe.png> <client.png> [--region NAME=X,Y,W,H]… [--mask X,Y,W,H]… [--shift N]
 //!                 [--threshold T] [--heat out.png] [--json]`
 //!
-//! Regions and masks are in the original's 640 × 480 virtual pixels (scaled by the capture's width / 640). For
+//! Regions and masks are in the original's 640 × 480 virtual pixels, placed in the capture's virtual frame by the
+//! remaster's widescreen rule (re/screens/widescreen.md §2: the centred 4:3 frame; wider captures also get the
+//! regions `left_strip`/`right_strip` beside it). For
 //! every region the tool searches the offset `(dx, dy)` within ±`shift` output pixels (default 2) that makes the
 //! client's picture closest to the exe's, and reports the mean difference at offset 0 and at the best offset
 //! (per pixel: the mean of |ΔR|, |ΔG|, |ΔB|, 0..255) and the share of pixels whose largest channel differs by more
@@ -55,15 +57,29 @@ struct Rect {
     y1: usize,
 }
 
-fn rect(spec: &str, k: f32, w: usize, h: usize) -> Result<Rect, String> {
+/// Where the 640 × 480 virtual frame sits in a `w` × `h` capture (`ig2_resize`, re/screens/widescreen.md §2):
+/// `(x, y, k)`, the frame's corner in pixels and the pixels per virtual pixel. Wider than 4:3 the frame is the centred
+/// `H·640/480` columns; narrower, the centred `W·480/640` band.
+fn frame_of(w: usize, h: usize) -> (f32, f32, f32) {
+    if w * 3 >= h * 4 {
+        let fw = h * 640 / 480;
+        (((w - fw) / 2) as f32, 0.0, h as f32 / 480.0)
+    } else {
+        let fh = w * 480 / 640;
+        (0.0, ((h - fh) / 2) as f32, w as f32 / 640.0)
+    }
+}
+
+fn rect(spec: &str, f: (f32, f32, f32), w: usize, h: usize) -> Result<Rect, String> {
     let (name, nums) = match spec.split_once('=') {
         Some((n, r)) => (n.to_string(), r),
         None => (String::new(), spec),
     };
     let v: Vec<f32> = nums.split(',').map(|x| x.trim().parse::<f32>().map_err(|e| format!("{spec}: {e}"))).collect::<Result<_, _>>()?;
     let [x, y, rw, rh] = v[..] else { return Err(format!("{spec}: X,Y,W,H")) };
-    let px = |v: f32, max: usize| ((v * k).round().max(0.0) as usize).min(max);
-    Ok(Rect { name, x0: px(x, w), y0: px(y, h), x1: px(x + rw, w), y1: px(y + rh, h) })
+    let (fx, fy, k) = f;
+    let px = |v: f32, o: f32, max: usize| ((o + v * k).round().max(0.0) as usize).min(max);
+    Ok(Rect { name, x0: px(x, fx, w), y0: px(y, fy, h), x1: px(x + rw, fx, w), y1: px(y + rh, fy, h) })
 }
 
 struct Score {
@@ -166,15 +182,22 @@ fn run(args: &[String]) -> Result<bool, String> {
     if (a.w, a.h) != (b.w, b.h) {
         return Err(format!("sizes differ: exe {}x{}, client {}x{}", a.w, a.h, b.w, b.h));
     }
-    let k = a.w as f32 / 640.0;
+    let f = frame_of(a.w, a.h);
+    let k = f.2;
     let (mut regions, mut masks) = (vec![Rect { name: "frame".into(), x0: 0, y0: 0, x1: a.w, y1: a.h }], vec![]);
+    // Wider than 4:3: the strips beside the frame (the 3D scenes and stretched pictures, widescreen.md §3).
+    let fx = f.0 as usize;
+    if fx > 0 {
+        regions.push(Rect { name: "left_strip".into(), x0: 0, y0: 0, x1: fx, y1: a.h });
+        regions.push(Rect { name: "right_strip".into(), x0: a.w - fx, y0: 0, x1: a.w, y1: a.h });
+    }
     let (mut shift, mut threshold, mut heat, mut json) = (2, 6.0, None, false);
     let mut it = rest.iter();
     while let Some(arg) = it.next() {
         let mut val = || it.next().cloned().ok_or(format!("{arg} needs a value"));
         match arg.as_str() {
-            "--region" => regions.push(rect(&val()?, k, a.w, a.h)?),
-            "--mask" => masks.push(rect(&val()?, k, a.w, a.h)?),
+            "--region" => regions.push(rect(&val()?, f, a.w, a.h)?),
+            "--mask" => masks.push(rect(&val()?, f, a.w, a.h)?),
             "--shift" => shift = val()?.parse().map_err(|e| format!("--shift: {e}"))?,
             "--threshold" => threshold = val()?.parse().map_err(|e| format!("--threshold: {e}"))?,
             "--heat" => heat = Some(val()?),
@@ -257,6 +280,18 @@ mod tests {
         assert_eq!(s.best, (1, 2));
         assert_eq!(s.mean, 0.0);
         assert!(s.mean0 > 10.0);
+    }
+
+    #[test]
+    fn regions_sit_in_the_virtual_frame() {
+        // widescreen.md §2's observed IG2_VIRTUAL_* (x, y, k = width / 640).
+        for (w, h, x, y, fw) in [(800, 600, 0, 0, 800), (1920, 1080, 240, 0, 1440), (2520, 1080, 540, 0, 1440),
+            (1366, 768, 171, 0, 1024), (1280, 1024, 0, 32, 1280), (1000, 1000, 0, 125, 1000), (3840, 2160, 480, 0, 2880)] {
+            let f = frame_of(w, h);
+            assert_eq!((f.0, f.1, f.2), (x as f32, y as f32, fw as f32 / 640.0), "{w}x{h}");
+        }
+        let r = rect("r=0,0,640,480", frame_of(1920, 1080), 1920, 1080).unwrap();
+        assert_eq!((r.x0, r.y0, r.x1, r.y1), (240, 0, 1680, 1080));
     }
 
     #[test]

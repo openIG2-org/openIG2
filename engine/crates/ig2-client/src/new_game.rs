@@ -17,6 +17,7 @@ pub struct StartTexts {
     tech_names: Vec<Vec<u8>>,
     design_names: Vec<Vec<u8>>,
     fleet_name: Vec<u8>,
+    design_texts: std::collections::BTreeMap<i32, Vec<u8>>,
     message_kinds: i32,
 }
 
@@ -36,6 +37,9 @@ impl StartTexts {
         if let Ok(b) = inst.read("dataraw/text/s_stname.txt") {
             keyed.add_file(29, &text::decode(&b, inst.lang()));
         }
+        if let Ok(b) = inst.read("dataraw/text/s_design.txt") {
+            keyed.add_file(0x3b, &text::decode(&b, inst.lang()));
+        }
         let kinds = inst.read("dataraw/uzenetek/uzenetek.txt").map(|b| dialogue::parse_message_index(&text::decode(&b, inst.lang())).len()).unwrap_or(0);
         Ok(Self {
             exe,
@@ -44,6 +48,7 @@ impl StartTexts {
             tech_names: (0..193u16).map(|t| if t == 0 { Vec::new() } else { hu_bytes(hu.get(0x11, 8 + (t - 1) / 48, (t - 1) % 48 + 1)) }).collect(),
             design_names: (0..47u16).map(|k| hu_bytes(hu.get(0x11, 7, k + 1))).collect(),
             fleet_name: hu_bytes(hu.get(17, 5, 46)),
+            design_texts: keyed.table(0x3b).map(|(n, s)| (n as i32, enc(s))).collect(),
             message_kinds: kinds as i32,
         })
     }
@@ -61,6 +66,7 @@ impl StartTexts {
             tech_names: self.tech_names.clone(),
             design_names: self.design_names.clone(),
             fleet_name: self.fleet_name.clone(),
+            design_texts: self.design_texts.clone(),
             message_kinds: self.message_kinds,
         };
         Ok(f(&data))

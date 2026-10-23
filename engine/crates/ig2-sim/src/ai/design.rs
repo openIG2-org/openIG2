@@ -19,6 +19,24 @@ const SHIELDS_OK: [u8; 18] = [0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 0,
 const T41_OK: [u8; 18] = [0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1];
 const T44_OK: [u8; 18] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 0];
 
+/// `DesignPoenosanElnevez(e, hull, out, special)` (exe 0x4b19d0, ELF 0x5087c0; `re/rules/ai-empire.md` §10.1): the
+/// first non-empty of `_s(0x3b, e·1000 + hull·10 + special)`, with `special` that key − 1, `_s(0x3b, hull·10)` and
+/// the hull tech's name. `text` is `_s(0x3b, ·)`; the result has no terminator.
+pub fn generated_name(text: &mut dyn FnMut(i32) -> Vec<u8>, e: i32, hull: i32, special: i32, tech_name: impl FnOnce() -> Vec<u8>) -> Vec<u8> {
+    let n = special + (e * 100 + hull) * 10;
+    let mut s = text(n);
+    if s.is_empty() && special != 0 {
+        s = text(n - 1);
+    }
+    if s.is_empty() {
+        s = text(hull * 10);
+    }
+    if s.is_empty() {
+        s = tech_name();
+    }
+    s
+}
+
 fn rd_i16(b: &[u8], o: usize) -> i16 {
     i16::from_le_bytes([b[o], b[o + 1]])
 }
@@ -288,6 +306,20 @@ impl AiState {
                         }
                     });
                     if !mp {
+                        let tech = w.rules.design.hulls.get(s).map_or(0, |h| h.tech.max(0) as usize);
+                        let mut text = |n| hooks.design_text(n);
+                        let mut name = generated_name(&mut text, e as i32, s as i32, v as i32, || {
+                            let mut n = w.spy.colony.tech.name_bytes(tech);
+                            if n.last() == Some(&0) {
+                                n.pop();
+                            }
+                            n
+                        });
+                        name.push(0);
+                        w.edit_design(e, du, |r| {
+                            let n = name.len().min(r.len());
+                            r[..n].copy_from_slice(&name[..n]);
+                        });
                         w.events.push(AiEvent::DesignNamed { empire: e as u8, design: du, slot: s, special: v == SPECIAL });
                     }
                     self.designs[v][e][s] = d as i16;

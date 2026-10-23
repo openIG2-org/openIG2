@@ -1,0 +1,6 @@
+{
+ "screen": "starmap",
+ "note": "The tutorial's text window over the starmap (re/rules/tutorial.md §2 'Drawing'; run with --probe probes/tutorial.js --tutorial 1): chapter 1 starts at t 0 over the save; the welcome line typed (t 400), the second text half typed (t 2000), the window full and scrolled, the cursor typing (t 4000).",
+ "events": [],
+ "grabs": [400, 2000, 4000]
+}

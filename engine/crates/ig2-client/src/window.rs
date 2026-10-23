@@ -228,6 +228,12 @@ struct App {
     pointer_in: bool,
     /// The window's pointer is hidden (the colony screen draws its own).
     cursor_hidden: bool,
+    /// A running tutorial (re/rules/tutorial.md), its replayed pointer (virtual pixels) and buttons.
+    tutorial: Option<crate::tutorial_ui::TutorialUi>,
+    tutorial_at: [i32; 2],
+    tutorial_buttons: (bool, bool),
+    /// `Mouse_Tipus` of the replayed pointer (−2 while parked: none drawn).
+    tutorial_kind: i32,
 }
 
 /// The Options screen up: its state, its 10 ms UI clock, the lasers' glow, and `OptionsOldIdoPause`.
@@ -505,6 +511,10 @@ impl App {
             mouse_held: 0,
             pointer_in: false,
             cursor_hidden: false,
+            tutorial: None,
+            tutorial_at: crate::tutorial_ui::PARKED,
+            tutorial_buttons: (false, false),
+            tutorial_kind: -2,
         }
     }
 
@@ -755,14 +765,15 @@ impl App {
         }
     }
 
-    /// A key of the war (`ColonyKeyboardHandler`): 4..9 the groups, S stop, `a` every own unit; only while the shown
-    /// planet is at war.
+    /// A key of the war (`ColonyKeyboardHandler`): 4..9 the groups, S stop, `a` every own unit; S on every colony
+    /// screen (`StopSelected`, exe 0x4628c0), the others while the shown planet is at war.
     fn colony_war_key(&self, ch: &str) -> Option<crate::colony_war::WarKey> {
         use crate::colony_war::WarKey;
-        self.world.colony_curr.as_ref().filter(|s| self.colony.is_some() && s.war_flag)?;
+        let snap = self.world.colony_curr.as_ref().filter(|_| self.colony.is_some() && !self.under_screen())?;
         match ch {
-            "4" | "5" | "6" | "7" | "8" | "9" => Some(WarKey::Group(ch.as_bytes()[0] as usize - b'4' as usize)),
             "s" | "S" => Some(WarKey::Stop),
+            _ if !snap.war_flag => None,
+            "4" | "5" | "6" | "7" | "8" | "9" => Some(WarKey::Group(ch.as_bytes()[0] as usize - b'4' as usize)),
             "a" => Some(WarKey::All),
             _ => None,
         }
@@ -842,6 +853,20 @@ impl App {
             let tri = h.info.tri;
             h.info = crate::ui::InfoScreen::enter(self.world.ui.human);
             h.info.tri = tri;
+        }
+    }
+
+    /// D or F6: the diplomacy screen opens (`Diplomacy_Belep`) or, when up, leaves for the starmap.
+    fn toggle_diplomacy(&mut self) {
+        if self.overlay == Some(crate::ui::Screen::Diplomacy) {
+            if self.leave_diplomacy(None) {
+                self.overlay = None;
+            }
+        } else if let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) {
+            let d = self.diplomacy.get_or_insert_with(|| crate::diplomacy::Open::new(&mut g.renderer, &self.install, self.tables, &h.texts, &self.world.game.state));
+            // `Diplomacy_Belep`: no opening (and no sound) back from the messages screen.
+            d.enter(self.tables, &h.texts, &self.world.game.state, self.overlay != Some(crate::ui::Screen::Messages));
+            self.overlay = Some(crate::ui::Screen::Diplomacy);
         }
     }
 
@@ -954,6 +979,8 @@ impl App {
             texts: self.hud.as_ref().map(|h| &h.texts),
         };
         let mask = self.design_scene.as_ref().map_or(&[][..], |s| &s.mask[..]);
+        // `Design_Main`'s delete (spot 4) waits for `!TutorialPaused`.
+        d.tutorial_paused = state.mem.u8(ig2_sim::save::va::TUTORIAL_PAUSED) != 0;
         let r = f(d, &c, mask);
         for o in std::mem::take(&mut d.orders) {
             self.world.send(Command::from(o));
@@ -1537,7 +1564,7 @@ impl App {
                 let voice = w.start_voice.take();
                 self.start_world(w);
                 if let Start::Tutorial(n) = st {
-                    eprintln!("ig2-client: tutorial {n}: the game starts; the script and its overlay (U31) are not run yet");
+                    self.start_tutorial(n as i32);
                 }
                 if campaign {
                     // The intro first; then `Starmap_Belep`'s music and the start voice.
@@ -1669,7 +1696,165 @@ impl App {
 
     /// `ExitToMainScreen` (exe 0x5117f0), then `AktKepKell = 0xF`: `MainScr_Belep` (the rings fly in again, the menu
     /// music). The world stays as it is until the next game replaces it.
+    fn tutorial_owns_input(&self) -> bool {
+        self.options.is_none() && self.tutorial.as_ref().is_some_and(|t| t.owns_input(akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some())))
+    }
+
+    fn tutorial_inputs(&self) -> crate::tutorial_ui::Inputs {
+        let counter = self.tutorial.as_ref().map_or(0, |t| t.counter);
+        crate::tutorial_ui::Inputs { screen: akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some()), counter, ..Default::default() }.counts(&self.world.game.state)
+    }
+
+    /// `TutorialSetCampaignGameOptions` has made the game; `TutorialStart("main", n)` (exe 0x611f80).
+    fn start_tutorial(&mut self, chapter: i32) {
+        let inputs = self.tutorial_inputs();
+        match crate::tutorial_ui::TutorialUi::start(&self.install, chapter, inputs) {
+            Ok((t, effects)) => {
+                t.push(&mut self.world.game.state.mem);
+                self.tutorial = Some(t);
+                (self.tutorial_at, self.tutorial_buttons) = (crate::tutorial_ui::PARKED, (false, false));
+                self.tutorial_effects(effects);
+            }
+            Err(e) => eprintln!("ig2-client: tutorial {chapter}: {e}"),
+        }
+    }
+
+    /// One UI tick of the tutorial: the recorded input (`Mouse_Tutorial_Kezel`, `ReadNext`) goes to the screens, an
+    /// event the game raised resumes the script, then `TutorialFrissit` and its effects.
+    fn tutorial_tick(&mut self) {
+        let kep = akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some());
+        let replay = if self.options.is_some() { None } else { self.tutorial.as_mut().and_then(|t| t.replay_step(kep)) };
+        match replay {
+            Some(r) => self.tutorial_replay(r),
+            // The live input takes over (`Mouse_Lekerdez` reads the live buttons again): a recorded button held is let go.
+            None => {
+                let (left, right) = std::mem::take(&mut self.tutorial_buttons);
+                if left {
+                    self.mouse(MouseButton::Left, false);
+                }
+                if right {
+                    self.mouse(MouseButton::Right, false);
+                }
+            }
+        }
+        let inputs = self.tutorial_inputs();
+        let now = self.now_ms();
+        let Some(t) = &mut self.tutorial else { return };
+        t.entered(kep, &mut self.world.game);
+        t.pull(&self.world.game.state.mem);
+        t.ms = now;
+        let effects = t.tick(&self.install, inputs);
+        t.push(&mut self.world.game.state.mem);
+        self.tutorial_effects(effects);
+    }
+
+    /// The recording's pointer, buttons and keys as live input.
+    fn tutorial_replay(&mut self, r: crate::tutorial_ui::Replay) {
+        self.tutorial_kind = if r.parked { -2 } else { 0 };
+        if r.at != self.tutorial_at {
+            self.tutorial_at = r.at;
+            let (bw, bh) = self.gpu.as_ref().map_or((640, 480), |g| g.band());
+            let p = crate::font::Virtual::new([bw as f32, bh as f32]).px(r.at[0] as f32, r.at[1] as f32);
+            self.cursor_moved(p);
+        }
+        // `KeyAlt`, `KeyShift`, `KeyCtrl` from the recording (1, 2, 4).
+        let mut m = winit::keyboard::ModifiersState::empty();
+        m.set(winit::keyboard::ModifiersState::ALT, r.modifiers & 1 != 0);
+        m.set(winit::keyboard::ModifiersState::SHIFT, r.modifiers & 2 != 0);
+        m.set(winit::keyboard::ModifiersState::CONTROL, r.modifiers & 4 != 0);
+        self.modifiers = m;
+        let (left, right) = self.tutorial_buttons;
+        self.tutorial_buttons = (r.left, r.right);
+        if r.left != left {
+            self.mouse(MouseButton::Left, r.left);
+        }
+        if r.right != right {
+            self.mouse(MouseButton::Right, r.right);
+        }
+        for (kind, code) in r.keys {
+            if let Some(k) = recorded_key(kind, code) {
+                self.key(k.as_ref());
+            }
+        }
+    }
+
+    /// What the script does outside the interpreter (re/rules/tutorial.md §3): the game's in-place writes, the
+    /// starmap's selection, the clock, leaving.
+    fn tutorial_effects(&mut self, effects: Vec<ig2_sim::tutorial::Effect>) {
+        use ig2_sim::tutorial::Effect as E;
+        for e in effects {
+            if self.world.game.tutorial_effect(&e) {
+                continue;
+            }
+            match e {
+                E::ReturnToMainMenu => self.exit_to_main_menu(),
+                E::Quit => {
+                    self.exit_to_main_menu();
+                    if let Some(f) = &mut self.front {
+                        f.quit = true;
+                    }
+                }
+                E::End => self.world.local_lines.push(b"Tutorial END.".to_vec()),
+                // The music ducking and the battle debug flags aren't ported.
+                E::Stopped { .. } => {}
+                E::CenterFleet | E::FindFleet(_) | E::FindPlanet(_) | E::CenterPlanet | E::CenterUncolonisedPlanet => self.tutorial_centre(&e),
+                E::GameSpeed(0) | E::Pause(true) => {
+                    if !self.world.paused() {
+                        self.send(StarmapOrder::Pause { paused: true });
+                    }
+                }
+                E::GameSpeed(n) => {
+                    self.set_speed(n);
+                    if self.world.paused() {
+                        self.send(StarmapOrder::Pause { paused: false });
+                    }
+                }
+                E::Pause(false) => {
+                    if self.world.paused() {
+                        self.send(StarmapOrder::Pause { paused: false });
+                    }
+                }
+                e => eprintln!("ig2-client: tutorial: {e:?} isn't carried out yet"),
+            }
+        }
+    }
+
+    /// `CENTERFLEET`, `FIND FLEET`, `FIND PLANET`, `CENTERPLANET`, `CENTERUNCOLONISEDPLANET`: select the first match
+    /// and centre it (`StarmapKozepreAllit`).
+    fn tutorial_centre(&mut self, e: &ig2_sim::tutorial::Effect) {
+        use ig2_sim::tutorial::Effect as E;
+        let state = &self.world.game.state;
+        let en = state.mem.i32(ig2_sim::save::va::EN);
+        let name = |b: &[u8]| b.split(|&c| c == 0).next().unwrap_or_default().to_vec();
+        let f32_at = |b: &[u8], o: usize| f32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+        let fleet = |want: Option<&[u8]>| {
+            state.fleets.iter().enumerate().skip(1).find(|(_, f)| f[0x15] as i32 == en && want.is_none_or(|w| name(&f[..0x15]) == w)).map(|(i, f)| (i, f32_at(f, 0x30), f32_at(f, 0x34)))
+        };
+        let planet = |test: &dyn Fn(&[u8]) -> bool| {
+            (1..=state.planet_count()).find_map(|p| {
+                let r = state.mem.read(ig2_sim::save::va::PLANETS + (p * ig2_sim::save::PLANET_SIZE) as u32, ig2_sim::save::PLANET_SIZE);
+                test(&r).then(|| (p, f32_at(&r, 0x18), f32_at(&r, 0x1c)))
+            })
+        };
+        let k = 0xd8 + 2 * en.clamp(0, 18) as usize;
+        let explored = |r: &[u8]| i16::from_le_bytes([r[k], r[k + 1]]) == 1;
+        let cur = self.selection();
+        let hit = match e {
+            E::CenterFleet => fleet(None).map(|(i, x, y)| (Selection { mode: 2, fleet: i, ..cur }, x, y)),
+            E::FindFleet(n) => fleet(Some(n)).map(|(i, x, y)| (Selection { mode: 2, fleet: i, ..cur }, x, y)),
+            E::FindPlanet(n) => planet(&|r| r[0x20] as i32 == en && name(&r[..0x18]) == *n).map(|(p, x, y)| (Selection { mode: 1, planet: p, ..cur }, x, y)),
+            E::CenterPlanet => planet(&|r| r[0x20] as i32 == en).map(|(p, x, y)| (Selection { mode: 1, planet: p, ..cur }, x, y)),
+            E::CenterUncolonisedPlanet => planet(&|r| r[0x20] == 0 && explored(r)).map(|(p, x, y)| (Selection { mode: 1, planet: p, ..cur }, x, y)),
+            _ => None,
+        };
+        if let Some((s, x, y)) = hit {
+            self.apply(vec![Action::Select(s), Action::Centre { x, y }]);
+        }
+    }
+
     fn exit_to_main_menu(&mut self) {
+        // `ExitToMainScreen`: `TutorialStop`.
+        self.tutorial = None;
         let scene = self.front.take().and_then(|f| f.scene);
         self.front = Some(Front::new(scene, self.now_ms(), &self.settings));
         self.close_screens();
@@ -1765,6 +1950,7 @@ impl App {
     /// A loaded slot (`Options_Main`'s load: `LoadSave(slot, "", 1)`, `SetIdoSpeed(1, 0)`, unpaused, the starmap).
     fn start_world(&mut self, w: World<'static>) {
         self.close_screens();
+        self.tutorial = None;
         self.world = w;
         self.world.set_speed(ig2_sim::time::Speed::Normal);
         if self.world.paused() {
@@ -1963,6 +2149,7 @@ impl App {
         let key = match k.as_ref() {
             Key::Named(NamedKey::Enter) => Some(EntryKey::Enter),
             Key::Named(NamedKey::Backspace) => Some(EntryKey::Back),
+            Key::Named(NamedKey::Delete) => Some(EntryKey::Delete),
             Key::Named(NamedKey::Home) => Some(EntryKey::Home),
             Key::Named(NamedKey::End) => Some(EntryKey::End),
             Key::Named(NamedKey::ArrowLeft) => Some(EntryKey::Left),
@@ -2207,6 +2394,9 @@ impl App {
         if !self.world.paused() && self.headless.is_none() {
             for _ in 0..due {
                 self.world.tick();
+                if let Some(t) = &mut self.tutorial {
+                    t.counter += 1;
+                }
             }
         }
         if let Some(s) = self.world.fix_selection() {
@@ -2239,6 +2429,16 @@ impl App {
         // The message line runs on the 100 Hz UI clock (`FRISSIT_Scroll2`), also while paused.
         let due_ui = (now as u64 / 10).saturating_sub(self.ui_frames).min(50);
         self.ui_frames = now as u64 / 10;
+        // `Fake_FRISSITES`' tutorial part per UI tick (re/rules/tutorial.md §2).
+        for _ in 0..due_ui {
+            if self.tutorial.is_none() || self.front.is_some() {
+                break;
+            }
+            self.tutorial_tick();
+        }
+        if self.front.is_some() {
+            return;
+        }
         if let Some(h) = &mut self.hud {
             let world = &mut self.world;
             let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
@@ -2547,6 +2747,15 @@ impl App {
                 _ => {}
             }
             h.draw(&mut frame, size, &self.world.ui, self.tables, screen, t);
+            // `GFX_DateMoneyScrollFade`'s fader pass 3 and `Update3D`'s `TutorialSzovegFrissit`: the window over the
+            // screen; the pointer the recording moves (`UpdateFrame`).
+            if let Some(tu) = &self.tutorial {
+                let kep = akt_kep(self.overlay, self.colony.is_some(), self.spacewar.is_some());
+                h.draw_tutorial(&mut frame, tu, size, kep);
+                if tu.owns_input(kep) && self.tutorial_kind >= 0 {
+                    h.draw_pointer(&mut frame, size, self.tutorial_at, self.tutorial_kind);
+                }
+            }
         }
         let out = match g.surface.get_current_texture() {
             Ok(out) => out,
@@ -2572,6 +2781,49 @@ impl App {
             self.title_at = Instant::now();
             self.frames = 0;
         }
+    }
+}
+
+/// `AktKep` of what the client shows (re/screens/README.md).
+fn akt_kep(overlay: Option<crate::ui::Screen>, colony: bool, spacewar: bool) -> i32 {
+    use crate::ui::Screen as S;
+    match overlay {
+        _ if spacewar => 11,
+        Some(S::Research) => 4,
+        Some(S::Design) => 5,
+        Some(S::Diplomacy) => 6,
+        Some(S::Spy) => 7,
+        Some(S::Trade) => 8,
+        Some(S::Info) => 9,
+        Some(S::Messages) => 10,
+        Some(S::Options) => ig2_sim::tutorial::SCREEN_OPTIONS,
+        Some(S::Colony) => 3,
+        Some(S::Starmap) | None if colony => 3,
+        Some(S::Starmap) | None => 2,
+    }
+}
+
+/// A recorded key (`ReadNext`'s slots: kind 0 a character, 1 a key going down, 2 up; Windows key codes) as the
+/// client's key: the characters, and the keys that make none.
+fn recorded_key(kind: u8, code: u32) -> Option<Key> {
+    let named = |n| Some(Key::Named(n));
+    const F: [NamedKey; 12] = [
+        NamedKey::F1, NamedKey::F2, NamedKey::F3, NamedKey::F4, NamedKey::F5, NamedKey::F6, NamedKey::F7, NamedKey::F8, NamedKey::F9,
+        NamedKey::F10, NamedKey::F11, NamedKey::F12,
+    ];
+    match (kind, code) {
+        (0, 0x20..=0x7e) => Some(Key::Character(char::from(code as u8).to_string().into())),
+        (1, 0x08) => named(NamedKey::Backspace),
+        (1, 0x0d) => named(NamedKey::Enter),
+        (1, 0x1b) => named(NamedKey::Escape),
+        (1, 0x21) => named(NamedKey::PageUp),
+        (1, 0x22) => named(NamedKey::PageDown),
+        (1, 0x25) => named(NamedKey::ArrowLeft),
+        (1, 0x26) => named(NamedKey::ArrowUp),
+        (1, 0x27) => named(NamedKey::ArrowRight),
+        (1, 0x28) => named(NamedKey::ArrowDown),
+        (1, k @ 0x70..=0x7b) => named(F[k as usize - 0x70]),
+        _ => None,
     }
 }
 
@@ -2686,6 +2938,51 @@ impl ApplicationHandler for App {
                     self.front_act(a);
                 }
             }
+            // While the script plays (`MainCallBackEventHandler`): the live pointer and buttons are dropped; `t` shows or
+            // hides the window, `o` opens the options screen.
+            // The OS pointer is still tracked (`MainCallBackEventHandler` stores the raw position first).
+            WindowEvent::CursorMoved { position, .. } if self.tutorial_owns_input() => {
+                self.cursor_px = [position.x as i32, position.y as i32];
+                self.pointer_in = true;
+            }
+            WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } | WindowEvent::ModifiersChanged(_) if self.tutorial_owns_input() => {}
+            WindowEvent::KeyboardInput { event, .. } if self.tutorial_owns_input() => {
+                if event.state == ElementState::Pressed {
+                    match event.logical_key.as_ref() {
+                        // Esc keeps its live path (not tutorial-gated in the exe).
+                        Key::Named(NamedKey::Escape) => {
+                            if self.key(event.logical_key.as_ref()) {
+                                el.exit();
+                            }
+                        }
+                        Key::Character("t" | "T") => {
+                            if let Some(t) = &mut self.tutorial {
+                                t.t.gates.text_shown ^= true;
+                            }
+                        }
+                        Key::Character("o" | "O") => self.open_options(false),
+                        _ => {}
+                    }
+                }
+            }
+            // Paused (live input): `t` still shows or hides the window and `o` opens the options screen, then the key goes
+            // on to the screen.
+            WindowEvent::KeyboardInput { ref event, .. }
+                if event.state == ElementState::Pressed && matches!(event.logical_key.as_ref(), Key::Character("t" | "T" | "o" | "O")) && self.tutorial.as_ref().is_some_and(|t| t.running()) && self.options.is_none() =>
+            {
+                if matches!(event.logical_key.as_ref(), Key::Character("o" | "O")) {
+                    self.open_options(false);
+                    return;
+                }
+                if let Some(t) = &mut self.tutorial {
+                    t.t.gates.text_shown ^= true;
+                }
+                if self.spacewar.is_some() {
+                    self.spacewar_key(event);
+                } else if !self.colony_camera_key(event) && self.key(event.logical_key.as_ref()) {
+                    el.exit();
+                }
+            }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::CursorLeft { .. } => self.pointer_in = false,
             WindowEvent::CursorMoved { position, .. } => {
@@ -2721,7 +3018,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.spacewar.is_some() => self.spacewar_key(&event),
-            WindowEvent::KeyboardInput { event, .. } if self.colony_camera_key(&event) => {}
+            WindowEvent::KeyboardInput { event, .. } if self.colony_camera_key(&event) || self.trade_key(&event) => {}
             WindowEvent::MouseInput { state, button, .. } => self.mouse(button, state == ElementState::Pressed),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 let quit = self.key(event.logical_key.as_ref());
@@ -2795,10 +3092,15 @@ impl App {
         self.cursor = p;
     }
 
+    /// A 2D screen (`overlay`) or the spy screen is up over the starmap or the colony.
+    fn under_screen(&self) -> bool {
+        self.overlay.is_some() || self.spy.is_some()
+    }
+
     /// The wheel turned by `steps` notches.
     fn wheel(&mut self, steps: f32) {
-        // `Design_Main` and `Trade_Main` have no wheel.
-        if matches!(self.overlay, Some(crate::ui::Screen::Design | crate::ui::Screen::Trade)) {
+        // None of the 2D screens (`Design_Main`, `Trade_Main`, `Research_Main`, …, `Spy_Main`) has a wheel.
+        if self.under_screen() {
             return;
         }
         if let Some(c) = &mut self.colony {
@@ -2817,6 +3119,12 @@ impl App {
             _ => 0,
         };
         self.mouse_held = if pressed { self.mouse_held | bit } else { self.mouse_held & !bit };
+        if button != MouseButton::Left && self.spy.is_some() {
+            // `Spy_Main` has no right-button input; nothing reaches the starmap under it.
+            self.drag = None;
+            self.right_down = None;
+            return;
+        }
         if button == MouseButton::Left && self.spy.is_some() {
             let Some(at) = self.spy_virtual(self.cursor) else { return };
             let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
@@ -2877,6 +3185,12 @@ impl App {
             (MouseButton::Left, ElementState::Pressed) if self.overlay.is_some() => {
                 let s = self.overlay.unwrap();
                 self.screen_press(s);
+            }
+            // The other 2D screens' right button doesn't reach the starmap or colony under them (no camera drag, no
+            // order).
+            (MouseButton::Right, _) if self.overlay.is_some() => {
+                self.drag = None;
+                self.right_down = None;
             }
             (MouseButton::Left, ElementState::Pressed) if self.colony.is_some() => self.colony_input(|ui, ctx, at, now| ui.press(ctx, at, true, now)),
             (MouseButton::Left, ElementState::Released) if self.colony.is_some() => {
@@ -2959,6 +3273,29 @@ impl App {
         true
     }
 
+    /// The trade screen's keyboard handler (exe 0x609ae0): numpad + / − and the arrows, by virtual key, down only.
+    /// True when taken.
+    fn trade_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        use crate::trade::Key as T;
+        use winit::keyboard::{KeyCode, PhysicalKey};
+        if self.overlay != Some(crate::ui::Screen::Trade) {
+            return false;
+        }
+        let k = match event.physical_key {
+            PhysicalKey::Code(KeyCode::NumpadAdd) => T::More,
+            PhysicalKey::Code(KeyCode::NumpadSubtract) => T::Less,
+            PhysicalKey::Code(KeyCode::ArrowUp) => T::Up,
+            PhysicalKey::Code(KeyCode::ArrowDown) => T::Down,
+            PhysicalKey::Code(KeyCode::ArrowLeft) => T::Left,
+            PhysicalKey::Code(KeyCode::ArrowRight) => T::Right,
+            _ => return false,
+        };
+        if let (ElementState::Pressed, Some(tr)) = (event.state, &mut self.trade) {
+            tr.key(&self.world.game.state, k);
+        }
+        true
+    }
+
     /// A key went down; true = quit.
     fn key(&mut self, key: Key<&str>) -> bool {
         match key {
@@ -3004,20 +3341,48 @@ impl App {
             }
             // The other screens' keys do nothing here (no `DispatchKeyboard` target); `DoKeyboard`'s speed keys and
             // Space stay.
-            Key::Character(c) if self.overlay == Some(crate::ui::Screen::Trade) && !matches!(c, "1" | "2" | "3") => {}
+            Key::Character(c) if self.overlay == Some(crate::ui::Screen::Trade) && !matches!(c, "1" | "2" | "3" | "p" | "P") => {}
             Key::Named(NamedKey::Tab | NamedKey::PageUp | NamedKey::PageDown | NamedKey::Delete) if self.overlay == Some(crate::ui::Screen::Trade) => {}
             Key::Named(NamedKey::F8) => self.toggle_trade(),
             Key::Named(NamedKey::F5) => self.toggle_design(),
+            // `DoKeyboard`'s other F-keys (`AktKepKell = key − 0x6f`, nothing on the screen asked for), the way the
+            // client's own screen keys go; the design and trade screens keep only theirs (re/deviations.md).
+            Key::Named(f @ (NamedKey::F3 | NamedKey::F4 | NamedKey::F6 | NamedKey::F7 | NamedKey::F9 | NamedKey::F10))
+                if !matches!(self.overlay, Some(crate::ui::Screen::Design | crate::ui::Screen::Trade)) =>
+            {
+                use crate::ui::Screen;
+                match f {
+                    NamedKey::F3 if self.colony.is_none() => self.toggle_colony(),
+                    NamedKey::F4 if self.overlay != Some(Screen::Research) => self.toggle_research(),
+                    NamedKey::F6 if self.overlay != Some(Screen::Diplomacy) => self.toggle_diplomacy(),
+                    NamedKey::F7 if self.spy.is_none() => self.toggle_spy(),
+                    NamedKey::F9 if self.overlay != Some(Screen::Info) => self.toggle_screen(Screen::Info),
+                    NamedKey::F10 if self.overlay != Some(Screen::Messages) => self.toggle_screen(Screen::Messages),
+                    _ => {}
+                }
+            }
             // The starmap's and the other screens' own keys do nothing here (no `DispatchKeyboard` target); the speed
-            // keys and Space are `DoKeyboard`'s and stay.
-            Key::Character(c) if self.overlay == Some(crate::ui::Screen::Design) && !matches!(c, "1" | "2" | "3") => {}
+            // keys, P and Space are `DoKeyboard`'s and stay.
+            Key::Character(c) if self.overlay == Some(crate::ui::Screen::Design) && !matches!(c, "1" | "2" | "3" | "p" | "P") => {}
             Key::Named(NamedKey::Tab | NamedKey::PageUp | NamedKey::PageDown | NamedKey::Delete) if self.overlay == Some(crate::ui::Screen::Design) => {}
             Key::Named(k @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) if self.overlay == Some(crate::ui::Screen::Design) => {
                 if let Some(d) = &mut self.design {
                     d.key(if k == NamedKey::ArrowUp { crate::design::Key::Up } else { crate::design::Key::Down });
                 }
             }
-            Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Messages) => self.overlay = None,
+            // Esc on the messages screen does nothing while answers are pending or the text is typing.
+            Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Messages) => {
+                if self.hud.as_ref().is_none_or(|h| h.messages.open.as_ref().is_none_or(|d| d.answers.is_empty() && d.typed_all)) {
+                    self.overlay = None;
+                }
+            }
+            // `MessagesKeyboardHandler` (exe 0x507eb0): a..d answer; M asks for the screen it is on (nothing).
+            Key::Character(c @ ("a" | "b" | "c" | "d")) if self.overlay == Some(crate::ui::Screen::Messages) => {
+                if let Some(h) = &mut self.hud {
+                    h.messages.key(c);
+                }
+            }
+            Key::Character("m" | "M") if self.overlay == Some(crate::ui::Screen::Messages) => {}
             // The ground war's keys (`ColonyKeyboardHandler`, colony.md §11.2) while the shown planet is at war.
             Key::Character(ch) if self.colony_war_key(ch).is_some() => {
                 if let Some(k) = self.colony_war_key(ch) {
@@ -3048,18 +3413,7 @@ impl App {
             Key::Character("i" | "I") if self.colony.is_some() => self.colony_input(|ui, ctx, _, _| ui.key(ctx, crate::colony_ui::Key::Info)),
             Key::Character("i" | "I") => self.toggle_screen(crate::ui::Screen::Info),
             Key::Character("m" | "M") => self.toggle_screen(crate::ui::Screen::Messages),
-            Key::Character("d" | "D") => {
-                if self.overlay == Some(crate::ui::Screen::Diplomacy) {
-                    if self.leave_diplomacy(None) {
-                        self.overlay = None;
-                    }
-                } else if let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) {
-                    let d = self.diplomacy.get_or_insert_with(|| crate::diplomacy::Open::new(&mut g.renderer, &self.install, self.tables, &h.texts, &self.world.game.state));
-                    // `Diplomacy_Belep`: no opening (and no sound) back from the messages screen.
-                    d.enter(self.tables, &h.texts, &self.world.game.state, self.overlay != Some(crate::ui::Screen::Messages));
-                    self.overlay = Some(crate::ui::Screen::Diplomacy);
-                }
-            }
+            Key::Character("d" | "D") => self.toggle_diplomacy(),
             Key::Named(NamedKey::Tab) => {
                 if let Some(h) = &mut self.hud {
                     h.info.chart = (h.info.chart + 1) % 10;
@@ -3071,8 +3425,10 @@ impl App {
                     c.ui.cam_keys.preset();
                 }
             }
-            Key::Character("c" | "C") => self.toggle_colony(),
-            Key::Named(NamedKey::Space) => self.toggle_pause(),
+            // `ColonyKeyboardHandler` takes only the lower-case c.
+            Key::Character("c" | "C") if self.colony.is_none() => self.toggle_colony(),
+            // `DoKeyboard`: Space and P pause.
+            Key::Named(NamedKey::Space) | Key::Character("p" | "P") => self.toggle_pause(),
             Key::Character(c @ ("1" | "2" | "3")) => {
                 // `DoKeyboard` (ELF 0x5800d0): the keys sound whatever the speed was, single player only.
                 if !self.multiplayer() && !self.speed_locked() {
@@ -3084,6 +3440,8 @@ impl App {
                     self.send(StarmapOrder::Pause { paused: false });
                 }
             }
+            // The starmap camera's keys below act only on the starmap itself, not under another screen.
+            Key::Character("q" | "Q" | "e" | "E" | "r" | "R") | Key::Named(NamedKey::PageUp | NamedKey::PageDown) if self.under_screen() || self.colony.is_some() => {}
             Key::Character("q" | "Q" | "e" | "E") => {
                 if let Some(v) = &mut self.view {
                     // Five keyboard frames per key event (the original turns per 10 ms frame while held).

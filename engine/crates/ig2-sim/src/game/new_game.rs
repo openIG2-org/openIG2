@@ -127,6 +127,8 @@ pub struct StartData<'a> {
     pub design_names: Vec<Vec<u8>>,
     /// `AlapFlottaNev` (the localised default fleet name).
     pub fleet_name: Vec<u8>,
+    /// `_s(0x3b, n)` ([`Game::design_texts`]).
+    pub design_texts: std::collections::BTreeMap<i32, Vec<u8>>,
     /// `HanyUzenetFajta`: the message kinds `LoadMessagesFile` read.
     pub message_kinds: i32,
 }
@@ -238,6 +240,7 @@ impl<'r> Game<'r> {
         state.story.buckets = vec![story::Queue::default(); story::BUCKETS];
         let mut g = Game::new(state, rules);
         g.fleet_name = Some(data.fleet_name.clone());
+        g.design_texts = data.design_texts.clone();
         g
     }
 

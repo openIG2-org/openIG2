@@ -151,6 +151,11 @@ impl KeyedStrings {
         let key = (table as u32) << 16 | n;
         self.entries.iter().find(|(k, _)| *k == key).map(|(_, s)| s.as_str())
     }
+
+    /// Every line of `table` as `(n, text)`.
+    pub fn table(&self, table: u16) -> impl Iterator<Item = (u32, &str)> {
+        self.entries.iter().filter(move |(k, _)| k >> 16 == table as u32).map(|(k, s)| (k & 0xffff, s.as_str()))
+    }
 }
 
 #[cfg(test)]

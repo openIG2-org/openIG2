@@ -19,7 +19,8 @@
 //!           X,Y, `--mouse X,Y` the pointer (the menus' hover, a hot-spot's tooltip); `--screen spy` the spy screen,
 //!           `--spy-frame F [--spy-closing]` held at frame F of its opening (closing); the research screen takes the
 //!           same as `--anim-frame F [--anim-closing]` and `--script S` (an input script, one `OUT-t<T>.png` per
-//!           grab, re/screens/sound.md §3); `--clouds N` drifts the starmap's clouds as after N UI ticks
+//!           grab, re/screens/sound.md §3); `--tutorial-window FILE` draws the tutorial's window from a probe
+//!           record (re/rules/tutorial.md §2); `--clouds N` drifts the starmap's clouds as after N UI ticks
 //!           on the starmap (the exe's `GomolygasCounter`; default 0); `--futofeny F` pins the starmap's UI clock
 //!           (star twinkle, pulse and the planets' spin, fleet sprite frames; default ticks × 5); `--acttime S` the
 //!           remaster's clock in seconds (the long info planet's cloud drift; default the frame time); `--info-turn K`
@@ -81,6 +82,7 @@ mod starmap_panels;
 mod starmap_planet;
 mod starmap_radar;
 mod trade;
+mod tutorial_ui;
 mod trade_scene;
 mod ui;
 mod video;
@@ -150,6 +152,8 @@ pub struct Options {
     pub spy_closing: bool,
     /// `--clouds N`: the starmap clouds' drift clock (re/screens/starmap.md §6.2).
     pub clouds: i32,
+    /// `--tutorial-window FILE`: draw the tutorial's window from a `tutwin` record (`tools/trace/probes/tutorial.js`).
+    pub tutorial_window: Option<std::path::PathBuf>,
     /// `--futofeny F`: the starmap's UI clock (re/screens/starmap.md §6.4).
     pub futofeny: Option<f32>,
     /// `--acttime S`: the remaster's clock in seconds, which drifts the long info planet's clouds
@@ -234,6 +238,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         video_loop: false,
         spy_closing: false,
         clouds: 0,
+        tutorial_window: None,
         futofeny: None,
         acttime: None,
         info_alap: None,
@@ -318,6 +323,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--ui-frames" => o.ui_frames = val()?.parse().map_err(|e| format!("--ui-frames: {e}"))?,
             "--spy-frame" | "--anim-frame" => o.spy_frame = Some(val()?.parse().map_err(|e| format!("--anim-frame: {e}"))?),
             "--spy-closing" | "--anim-closing" => o.spy_closing = true,
+            "--tutorial-window" => o.tutorial_window = Some(val()?.into()),
             "--clouds" => o.clouds = val()?.parse().map_err(|e| format!("--clouds: {e}"))?,
             "--futofeny" => o.futofeny = Some(val()?.parse().map_err(|e| format!("--futofeny: {e}"))?),
             "--info-turn" => o.info_turn = val()?.parse().map_err(|e| format!("--info-turn: {e}"))?,

@@ -17,8 +17,7 @@ use ig2_formats::strings::{KeyedStrings, UiStrings};
 use ig2_formats::text::{self, Lang};
 use ig2_formats::{dialogue, Install};
 use ig2_sim::game::new_game::{NewCampaign, NewMpGalaxy, NewScenario, NewSkirmish, StartData};
-use ig2_sim::ai::AiEvent;
-use ig2_sim::game::{Fresh, Game, GameEvent};
+use ig2_sim::game::{Fresh, Game};
 use ig2_sim::save::group_chunks;
 use serde_json::Value;
 
@@ -104,6 +103,7 @@ fn new_campaign_matches_the_exe() {
     let enc = |s: &str| inst.lang().encoding().encode(s).0.into_owned();
     let mut keyed = KeyedStrings::default();
     keyed.add_file(29, &text::decode(&inst.read("dataraw/text/s_stname.txt").unwrap(), inst.lang()));
+    keyed.add_file(0x3b, &text::decode(&inst.read("dataraw/text/s_design.txt").unwrap(), inst.lang()));
     let kinds = dialogue::parse_message_index(&text::decode(&inst.read("dataraw/uzenetek/uzenetek.txt").unwrap(), inst.lang()));
     let data = StartData {
         image: &image,
@@ -114,6 +114,7 @@ fn new_campaign_matches_the_exe() {
         design_names: (0..47u16).map(|k| hu_bytes(hu.get(0x11, 7, k + 1))).collect(),
         // `StringReadAll` sets `AlapFlottaNev` from the Hungarian txt17 too.
         fleet_name: hu_bytes(hu.get(17, 5, 46)),
+        design_texts: keyed.table(0x3b).map(|(n, s)| (n as i32, enc(s))).collect(),
         message_kinds: kinds.len() as i32,
     };
     let mut bad = Vec::new();
@@ -199,15 +200,6 @@ fn new_campaign_matches_the_exe() {
             (_, Some(mp), _) => g.start_mp_galaxy(mp, &data),
             (_, _, Some(sk)) => g.start_skirmish(sk, &data),
             _ => g.start_campaign(&cfg(), &data),
-        }
-        // The AI's design names (`DesignPoenosanElnevez`, localised tables the port doesn't render): the exe's.
-        for ev in &g.events {
-            if let GameEvent::Ai(AiEvent::DesignNamed { empire, design, .. }) = *ev {
-                let (e, d) = (empire as usize, design);
-                if let (Some(a), Some(b)) = (g.state.designs.get_mut(e).and_then(|v| v.get_mut(d)), want.designs.get(e).and_then(|v| v.get(d))) {
-                    a[..0x15].copy_from_slice(&b[..0x15]);
-                }
-            }
         }
         let mut got = g.state.chunks();
         let mut want = group_chunks(&want);

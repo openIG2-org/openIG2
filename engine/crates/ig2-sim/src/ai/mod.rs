@@ -217,7 +217,7 @@ pub enum AiEvent {
     MainFleetNamed { empire: u8, fleet: usize, race: u8 },
     /// A ship was sold on day 20 (its resale price was credited, `HajoDelete` ran).
     ShipSold { empire: u8, ship: usize, design: i16, price: i32 },
-    /// A new design's name: `DesignPoenosanElnevez(empire, slot, special)` (localised text, SP).
+    /// A design was named: `DesignPoenosanElnevez(empire, slot, special)` (SP) or `TervezAutomatikus`'s tech name.
     DesignNamed { empire: u8, design: usize, slot: usize, special: bool },
     /// `TutorialCheckEvent(id)`.
     Tutorial { id: i32 },
@@ -246,6 +246,11 @@ pub trait AiHooks {
     /// The bytes of design record `d` appended to `e`'s table by `TervNew` (uninitialised in the original).
     fn fresh_design(&mut self, _e: usize, _d: usize) -> [u8; 0x84] {
         [0; 0x84]
+    }
+    /// `_s(0x3b, n)`: line `n` of `s_design.txt` in the game's language, without a terminator ("" when missing,
+    /// like the original).
+    fn design_text(&mut self, _n: i32) -> Vec<u8> {
+        Vec::new()
     }
 }
 

@@ -546,6 +546,19 @@ impl Hud {
         }
     }
 
+    /// The tutorial's text window (re/rules/tutorial.md §2 "Drawing") on screen `kep`.
+    pub fn draw_tutorial(&self, f: &mut Frame, t: &crate::tutorial_ui::TutorialUi, size: [f32; 2], kep: i32) {
+        if let Some(font) = &self.font {
+            t.draw(f, font, self.white, &Virtual::new(size), &self.palette, kep);
+        }
+    }
+
+    /// `UpdateFrame` (exe 0x4e3e90): `MOUSE.BMP`'s 20 × 20 cell of column `kind`, its hot point at `at` (virtual).
+    pub fn draw_pointer(&self, f: &mut Frame, size: [f32; 2], at: [i32; 2], kind: i32) {
+        let hot = self.mouse_hotspot.get(kind as usize).copied().unwrap_or(0) as f32;
+        self.pics.blit(f, &Virtual::new(size), MOUSE_PICTURE, [kind as f32 * 20.0, 0.0, 20.0, 20.0], [at[0] as f32 - hot, at[1] as f32 - hot]);
+    }
+
     /// The starmap's planet and fleet names (re/screens/hud.md §4.2, §4.3).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_starmap_names(&self, f: &mut Frame, view: &crate::starmap::View, assets: &crate::starmap::Assets, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, alpha: f32, time: f32) {

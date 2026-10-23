@@ -81,6 +81,7 @@ ap.add_argument("--size", help="window size WxH (ig2.settings width/height for t
 ap.add_argument("--script", help="an input script on the screen --kep (JSON: events, grabs; re/screens/sound.md §3)")
 ap.add_argument("--boot", action="store_true", help="the main menu as the exe starts: no scenario, no save (use with --kep 15 --run)")
 ap.add_argument("--probe", help="append this Frida script to the agent (a screen's own probe, e.g. probes/mainscr.js; its records go to stdout)")
+ap.add_argument("--tutorial", type=int, default=1, help="with --probe probes/tutorial.js: the chapter its TutorialStart runs; its 'tutwin' records go to <out>-tutwin.jsonl")
 ap.add_argument("--sounds", help="write the sounds the exe starts and the input events to this JSONL (sound.js)")
 ap.add_argument("--grwar", action="store_true", help="colony screen: the human lands on --planet in real time, every unit placed and selected (colony.md §11)")
 ap.add_argument("--grwar-arm", type=int, default=0, help="with --grwar: the air-strike timers full and SpecWeaponMode set to N (1 fighters, 2 big ships)")
@@ -196,6 +197,10 @@ def on(msg, data):
             if p.get("k") in ("music", "track"):
                 print(f"{p['k']} {p.get('id', p.get('name'))} ui={p.get('ui')} kep={p.get('kep')} eppen={p.get('eppen')} regi={p.get('regi')} hangero={p.get('hangero')}", flush=True)
             return
+        if p.get("k") in ("tutwin", "tutstart"):
+            with open(f"{a.out}-tutwin.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(p) + "\n")
+            return
         if p.get("k") == "frame":
             path = f"{a.out}-t{p['t']}.png"
             png_rgba_bottom_up(path, p["w"], p["h"], data)
@@ -245,7 +250,7 @@ session = device.attach(pid)
 here = os.path.dirname(os.path.abspath(__file__))
 source = open(os.path.join(here, "screen.js"), encoding="utf-8").read() + "\n" + open(os.path.join(here, "sound.js"), encoding="utf-8").read()
 if a.probe:
-    source += "\n" + open(a.probe, encoding="utf-8").read()
+    source += "\n" + open(a.probe, encoding="utf-8").read().replace("TUT_CHAPTER", str(a.tutorial))
 agent = session.create_script(source)
 agent.on("message", on)
 agent.load()

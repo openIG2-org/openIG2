@@ -200,6 +200,9 @@ pub struct Game<'r> {
     pub empire_names: Vec<Vec<u8>>,
     /// `KemCsaladtag_Nev[x]` (exe 0xBB6968, unsaved, localised): the family members the kidnap message names.
     pub family_names: Vec<Vec<u8>>,
+    /// `_s(0x3b, n)`: `s_design.txt` in the game's language (encoded, no terminator), the names
+    /// `DesignPoenosanElnevez` gives the AI's and the story merchant's designs. Empty: the hull techs' names.
+    pub design_texts: std::collections::BTreeMap<i32, Vec<u8>>,
     /// Classic (the view in the state) or canonical (multiplayer). Synced.
     pub view: ViewMode,
     /// This peer's view in [`ViewMode::Canonical`] (unused in classic mode, where the state holds it). Per peer:
@@ -282,6 +285,7 @@ impl<'r> Game<'r> {
             events: Vec::new(),
             empire_names: Vec::new(),
             family_names: Vec::new(),
+            design_texts: Default::default(),
             hand_offs: 0,
             view: ViewMode::Classic,
             local: LocalView::default(),
@@ -1162,7 +1166,7 @@ impl<'r> Game<'r> {
         let planet_count = m.i32s(va::EMPIRE_PLANETS);
         let mut known = self.state.known_since();
         let mut story = |_: StoryCheck| false;
-        let mut hooks = WarHooks { wars: Vec::new(), uninit: self.uninit.as_mut() };
+        let mut hooks = WarHooks { wars: Vec::new(), uninit: self.uninit.as_mut(), texts: &self.design_texts };
         let waypoints = self.state.waypoints.len();
         let (events, spy_events) = {
             let mut w = ai::World {
@@ -1704,6 +1708,19 @@ impl Market for TradeView<'_, '_> {
     fn hull_tech(&self, hull: i32) -> i32 {
         usize::try_from(hull).ok().and_then(|h| self.game.rules.ai.design.hulls.get(h)).map_or(0, |h| h.tech)
     }
+    fn design_name(&mut self, owner: i16, hull: i32, special: i32) -> Vec<u8> {
+        let texts = &self.game.design_texts;
+        let mut text = |n| texts.get(&n).cloned().unwrap_or_default();
+        let mut name = ai::design::generated_name(&mut text, owner as i32, hull, special, || {
+            let mut n = self.tech_name(self.hull_tech(hull));
+            if n.last() == Some(&0) {
+                n.pop();
+            }
+            n
+        });
+        name.push(0);
+        name
+    }
     fn design_count(&self, e: usize) -> usize {
         self.game.state.designs.get(e).map_or(0, |t| t.len().saturating_sub(1))
     }
@@ -1902,6 +1919,7 @@ impl Arrivals for StarmapHooks<'_> {
 struct WarHooks<'a, 'r> {
     wars: Vec<(usize, usize)>,
     uninit: Option<&'a mut Box<dyn FnMut(Fresh) -> Vec<u8> + 'r>>,
+    texts: &'a std::collections::BTreeMap<i32, Vec<u8>>,
 }
 
 impl WarHooks<'_, '_> {
@@ -1927,6 +1945,10 @@ impl AiHooks for WarHooks<'_, '_> {
 
     fn fresh_design(&mut self, e: usize, d: usize) -> [u8; 0x84] {
         self.fresh(Fresh::Design { empire: e, design: d })
+    }
+
+    fn design_text(&mut self, n: i32) -> Vec<u8> {
+        self.texts.get(&n).cloned().unwrap_or_default()
     }
 }
 

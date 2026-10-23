@@ -6,7 +6,8 @@ Updated 2026-10-23.
 
 ## M2: playable start to finish
 - [x] New game: skirmish start (mode 3; `Game::start_skirmish`, `new-game.md` §13.1)
-- [ ] New game leftovers: the AI's design names, the campaign stories in `Game`'s story tick
+- [x] New game leftovers: the AI's design names (`ai::design::generated_name`, `new-game.md` §14)
+- [ ] New game leftovers: the campaign stories in `Game`'s story tick (4 items in `docs/roadmap.md` §6, `new-game.md` §15)
 - [x] Client: build a `World` from a new `Game` (`World::new_game`, `--new-campaign`; `mainscr.md` §9.1.1)
 - [x] MainScr part 2: race and difficulty, scenario/skirmish setup, tutorial start, multiplayer name entry, exit animation (skirmish start through `Game::start_skirmish`; MP lobby M5)
 - [x] Colony war part 2: landing clicks, landing zone and shadows, unit picture, self-destruct window, cursors, camera keys
@@ -23,12 +24,12 @@ Updated 2026-10-23.
 
 ## M3: every screen exact
 - [ ] Help (AktKep 1), credits, demo mode
-- [ ] Tutorial overlay (the interpreter is done)
+- [x] Tutorial overlay (the interpreter is done; window accepted, remaining event sites and gate flags: deviations 199-207)
 - [x] U25's rest: battle posts, UI line, untraced ids, inbox expiry (left: the AI's messages to the human in the save replay, diplomacy §11 reason codes)
-- [ ] Sweep: re-run every screen's acceptance, close the open states in `re/screens/diff-results.md`
+- [x] Sweep: re-run every screen's acceptance, close the open states in `re/screens/diff-results.md` (2026-10-24)
 
 ## M4: input and feel
-- [ ] Input audit per screen against the keyboard handlers
+- [x] Input audit per screen against the keyboard handlers (2026-10-23, `re/screens/input.md`, deviations 158-198)
 - [ ] 16:9, 21:9 and 4K checks
 
 ## M5: multiplayer playable

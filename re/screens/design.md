@@ -315,7 +315,7 @@ Then always: `fleet == 0`: `TervDelete(s, slot, 0, true)`; UI (`s==EN && AktKep=
 10. `FaderDesignFrissito` 0x547e10: libc `rand() % 100` vs the game `random()` (exe 0x819978); the `<= 1.0 && != 1.0` patterns are plain `< 1.0`.
 11. `DesignKeret1` 0x53f780: `sin(x + const)` + `fmod` chain, integer shift idioms for `/4`, `/2` of `local_14 - 8`; colour truncations `(int)(f32*f32) & 0xff`; same routine as research.md 5.4.
 12. `DesignElnevez` 0x5083a0: the 12-char cut (`local_f8[12]` written past a 12-byte buffer) and the `isdigit` scans (char signedness, decrementing index).
-13. `DesignPoenosanElnevez` 0x5087c0 (exe 0x4b19d0): the decompile calls `_s(0x3b)` and ignores `a*1000 + b*10 + d`; the real string id is probably that sum (argument hidden): check the asm. Fallback `Talalmanyok[Alapok[b]+0xc].name`.
+13. `DesignPoenosanElnevez` 0x5087c0 (exe 0x4b19d0): the decompile calls `_s(0x3b)` and ignores `a*1000 + b*10 + d`; the real string id is that sum (answered, ported as `ai::design::generated_name`: new-game.md §14). Fallback `Talalmanyok[Alapok[b]+0xc].name`.
 14. `Design_MouseInit2` 0x50be70 (exe 0x4b34f0): the real positions of ids 0x1f/0x20 (set in `PodKivalaszto`); `FrissitGombTexturak` hover logic (exe 0x4b3f50, `FUN_00510860`).
 15. `GFX_Design` 0x507ed0: `(int)(local_30*155.0 + 100.0)` f32 to int; thumb `fVar3 + 1.0 + (float)local_18` f32.
 16. `Design_Kilep` 0x507bb0: the `VoltNulla` static and the `SelfPlaying` truth table of `local_e`.

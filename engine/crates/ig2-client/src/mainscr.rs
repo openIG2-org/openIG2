@@ -131,6 +131,10 @@ impl NameEntry {
                     self.text.remove(self.cursor);
                 }
             }
+            // `DoKeyboard` (exe 0x4db1a0, 0x2e): the byte at the cursor.
+            EntryKey::Delete if self.cursor < self.text.len() => {
+                self.text.remove(self.cursor);
+            }
             EntryKey::Left => self.cursor = self.cursor.saturating_sub(1),
             EntryKey::Right => self.cursor = (self.cursor + 1).min(self.text.len()),
             EntryKey::Home => self.cursor = 0,

@@ -537,9 +537,10 @@ impl Design {
     }
 
     /// `Design_MouseInit2`'s state, with 0x54 waiting for the screen to be open (`desKINYITVA && !desBECSUKAS`);
-    /// the others are live while it opens and closes.
+    /// the others are live while it opens and closes; every one is off while the tech models are out
+    /// (`SubZoomDes != 0`: `Mouse_Szoveg_Off_Range(1, ..)`).
     pub fn spot_on(&self, c: &Ctx, id: u32) -> bool {
-        (id != 0x54 || (self.opened && !self.closing)) && self.spot_state(c.state, c.techs, c.rules, id)
+        self.sub_zoom == 0.0 && (id != 0x54 || (self.opened && !self.closing)) && self.spot_state(c.state, c.techs, c.rules, id)
     }
 
     /// `Design_MouseInit2`'s on/off state for `id`; the 3D buttons keep the last state it set while the screen

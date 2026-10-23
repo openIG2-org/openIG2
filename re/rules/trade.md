@@ -239,6 +239,6 @@ production. Nothing else draws stream 11 in a strategic tick.
 `Trade` (offers, deliveries, `TradeOldNap`, `OldEtaHonap`, `AktEtaDays`) with `Trade::tick(&mut dyn Market)` and
 `Trade::buy(e, &Delivery, &mut dyn Market)`; the market hook reaches the other systems: designs, planets, trade
 ports, money, the story design data and the arrival (`Legyart` + `Story_Special`, done by `game.rs`). Events:
-`Arrived`, `Refunded`, `Retargeted`, `Offered`, `OfferNamed` (a localised `DesignPoenosanElnevez` name to render),
+`Arrived`, `Refunded`, `Retargeted`, `Offered`, `OfferNamed` (a localised `DesignPoenosanElnevez` name to render; `Market::design_name` via `Game::design_texts`, new-game.md §14),
 `OfferWithdrawn` (the screen's selection may need to drop), `Bought`. `TradeAr` is `trade::price`. ADR 0003: the libc draw only feeds the UI; in MP the delivery time is part
 of the purchase message, so it is synchronised already.

@@ -603,10 +603,6 @@ pub const SPOTS: [(u32, [i32; 4]); 10] = [
     (10, [0, 0, 0x27f, 0x1df]),
 ];
 
-pub fn spot_at(at: [f32; 2]) -> Option<u32> {
-    SPOTS.iter().find(|(_, [x, y, w, h])| at[0] >= *x as f32 && at[0] < (x + w) as f32 && at[1] >= *y as f32 && at[1] < (y + h) as f32).map(|(id, _)| *id)
-}
-
 /// What a press asks of the client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Press {
@@ -638,12 +634,37 @@ impl MessagesScreen {
         }
     }
 
+    /// The screen's keyboard handler (exe 0x507eb0, the character): `a`..`d` take that answer once the text is
+    /// typed (`KiirtaMar`).
+    pub fn key(&mut self, ch: &str) {
+        let Some(k) = ["a", "b", "c", "d"].iter().position(|&c| c == ch) else { return };
+        if let Some(d) = self.open.as_mut().filter(|d| d.typed_all && k < d.answers.len()) {
+            d.choose(k);
+        }
+    }
+
     /// A left press (`Messages_Main`) on inbox of `n` messages.
     pub fn press(&mut self, at: [f32; 2], n: usize) -> Press {
-        let id = spot_at(at);
         let busy = self.open.as_ref().is_some_and(|d| !d.over);
+        // `Messages_MouseInit2` (exe 0x508940): 5 and 10 off; 7..=9 only with no answers pending and the text typed.
+        let idle = self.open.as_ref().is_none_or(|d| d.answers.is_empty() && d.typed_all);
+        let id = SPOTS
+            .iter()
+            .filter(|(id, _)| match id {
+                5 | 10 => false,
+                7..=9 => idle,
+                _ => true,
+            })
+            .find(|(_, [x, y, w, h])| at[0] >= *x as f32 && at[0] < (x + w) as f32 && at[1] >= *y as f32 && at[1] < (y + h) as f32)
+            .map(|(id, _)| *id);
+        // `Messages_Main`: a press in the text's box hurries it whatever hot-spot it hits.
+        if (0xba..0x201).contains(&(at[0] as i32)) && (1..0xa8).contains(&(at[1] as i32)) {
+            if let Some(d) = &mut self.open {
+                d.hurry();
+            }
+        }
         match id {
-            Some(2) if self.debounce == 5 => {
+            Some(2) if self.debounce == 5 && !busy => {
                 self.debounce = 0;
                 if self.first > 0 {
                     self.first -= 1;
@@ -653,7 +674,7 @@ impl MessagesScreen {
                     self.orders.push(MessageOrder::Scroll { pointer: self.first as i32, row: self.row });
                 }
             }
-            Some(1) if self.debounce == 5 => {
+            Some(1) if self.debounce == 5 && !busy => {
                 self.debounce = 0;
                 if self.first + 4 < n {
                     self.first += 1;
@@ -683,14 +704,7 @@ impl MessagesScreen {
                     }
                 }
             }
-            Some(5 | 6) => {
-                if let Some(d) = &mut self.open {
-                    if (0xba..0x201).contains(&(at[0] as i32)) && (1..0xa8).contains(&(at[1] as i32)) {
-                        d.hurry();
-                    }
-                }
-            }
-            Some(7..=10) => return Press::Leave,
+            Some(7..=9) => return Press::Leave,
             _ => {}
         }
         Press::None
@@ -849,5 +863,31 @@ mod tests {
         assert_eq!(s.press([600.0, 100.0], 6), Press::Leave);
         // Rows 3 then 0 opened; the arrow moves the list and the selected row with it.
         assert_eq!(s.orders, [MessageOrder::Open { row: 3 }, MessageOrder::Open { row: 0 }, MessageOrder::Scroll { pointer: 1, row: -1 }]);
+        // Spot 10 (the whole screen) is off: a press outside the others does nothing.
+        assert_eq!(s.press([300.0, 470.0], 6), Press::None);
+    }
+
+    #[test]
+    fn a_running_dialogue_holds_the_leave_spots_arrows_and_takes_keys() {
+        let msg = b"00\r\n- 01 -1 Yes.\r\n- 02 -1 No.\r\n";
+        let txt = b"01 0001 12 EN\r\n+ Yes\r\n02 0001 12 EN\r\n+ No\r\n";
+        let mut d = dialogue(msg, txt);
+        let b = d.find_block(0);
+        d.eval_block(b);
+        let mut s = MessagesScreen { debounce: 5, open: Some(d), first: 1, ..Default::default() };
+        // Typing: no leave (`Messages_MouseInit2`), no arrows (`Messages_Main`), no answer key yet; a press in the
+        // text's box (x 186..512, y 1..167), here over spot 7's corner, hurries the typer.
+        assert_eq!(s.press([190.0, 100.0], 6), Press::None);
+        assert_eq!(s.open.as_ref().unwrap().step, 0.001);
+        s.press([165.0, 195.0], 6);
+        assert_eq!(s.first, 1);
+        s.key("b");
+        assert!(s.orders.is_empty() && s.open.as_ref().unwrap().orders.is_empty());
+        // Typed out, two answers: `b` takes the second; the spots stay off until the answers are gone.
+        s.open.as_mut().unwrap().advance(10_000.0);
+        s.key("b");
+        assert_eq!(s.open.as_ref().unwrap().orders.last(), Some(&MessageOrder::Answer { k: 1 }));
+        s.open.as_mut().unwrap().advance(10_000.0);
+        assert_eq!(s.press([600.0, 100.0], 6), Press::Leave);
     }
 }

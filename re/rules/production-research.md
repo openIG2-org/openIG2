@@ -104,7 +104,7 @@ The first hull `h` in `Alapok[1..25]` whose tech (`+0xc`) is `t`; none → nothi
 `TervUjraSzamol(e, d, false, true)`, `TervAutoDesign(e, d, 0)` (§10.3), `TervUjraSzamol` again. On the design
 screen it also re-sorts the list (UI). Port: `ai::World::automatic_design`, run by `Game` for the
 `ResearchEvent::AutoDesign` of the research tick and of message 0x31; the name is reported
-(`AiEvent::DesignNamed`).
+(`AiEvent::DesignNamed`; the SP name is `ai::design::generated_name`, new-game.md §14).
 
 ### 2.4 The research screen's orders (`MULTIGET_Research` exe 0x51ee70, ELF 0x5ec6e0; verified byte-exact)
 Lockstep messages from `Research_Main` (re/screens/research.md §6), also in SP. Values after the issuer `e`:

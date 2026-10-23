@@ -43,8 +43,8 @@ Sources: decompiles `_local/decomp/newgame/{elf,exe}/`, `_local/decomp/campaign2
 - **Heap records** (never zeroed: fleet and ship slot 0, a new fleet's fields `FlottaNew` doesn't write, design
   records past the templates, building blocks `OldReallocate` grows by 20, including those `LoadScenario` grows)
   hold the heap's bytes; the port takes them from `Game::uninit` (zero without it), the test feeds the exe's.
-- **Not ported**: the AI's design names (`DesignPoenosanElnevez`, localised tables): the port reports
-  `AiEvent::DesignNamed`, the test copies the exe's names (as the save replay does).
+- **The AI's design names** (`DesignPoenosanElnevez`, §14): ported; the test no longer copies the exe's names
+  (a key off by one makes 7 chunk groups differ on every campaign and skirmish start).
 - `NEWGAME_Diplomacy` reseeds libc with `SDL_GetTicks()`: [`NewCampaign::ticks`]; the port leaves `Game::libc` at
   that seed after the 90 draws.
 
@@ -337,3 +337,37 @@ Runtime findings (normative):
   not it was placed. Tech-id reads of `EpuletekLeiro` are bytes (exe 0x5c22b9).
 - The exe's `st_bSearch` has no assert: `InitScirmishBolygok` with no planet would write `Bolygok[0]`.
 - Unknown: the 200-planet hang (§11).
+
+## 14. `DesignPoenosanElnevez(e, hull, out, special)` (exe 0x4b19d0, ELF 0x5087c0): ported, 2026-10-23
+Exe decompile (`_local/decomp/design/exe/004b19d0_DesignPoenosanElnevez.c`): `n = special + (e·100 + hull)·10`;
+the name is the first non-empty of `_s(0x3b, n)`, `_s(0x3b, n − 1)` (only with `special ≠ 0`), `_s(0x3b, hull·10)`
+and `Talalmanyok[Alapok[hull].tech].name` (exe 0x90bc04 + hull·0x24, 0xb9c0c8 + t·0x114), built in a 52-byte local
+and `strcpy`'d to `out`. `_s` (ELF 0x623f20) returns `CString("")` (ELF 0xd4eeab) for a missing key, so the chain
+is live. Table 0x3b = `dataraw/text/s_design.txt` (the GOG install ships no localised copy) (keys `e·1000 + hull·10 + special`, empires 0..8; the
+longest name is 16 characters, so a table name never runs past the record's `+0x14`). `e` is the empire, not its
+race. Callers: `FRISSIT_MI_DESIGN` (SP only; MP takes the hull tech's name; `ai-empire.md` §10.1) and the story
+merchant's generated offers (`trade.md`, `TradeEvent::OfferNamed`). `TervezAutomatikus` doesn't call it (it copies
+the tech's name, production-research.md §2.3).
+Port: `ai::design::generated_name`; the table is `Game::design_texts` (`StartData::design_texts` for a new game),
+read through `AiHooks::design_text` and `Market::design_name`. Verified: `tests/new_game.rs` (35 starts) and the save
+replay, both byte-exact without copying names; the mutation above is caught.
+
+## 15. The campaign stories in `Game`'s story tick: not wired yet (2026-10-23)
+`Game::story` and the other story hooks (`with_story`: game.rs, game/battles.rs, game/realtime.rs,
+game/message_orders.rs) run `ScenarioStories` only. The campaign chain (`Story_Check`'s order: Begin, Rnd, BRnd,
+Fable, Scen, Line, Elem, Multi, as `tests/campaign_trace.rs` builds it) can't simply be swapped in: Game's
+`StoryView` holds `&SaveState` and implements 22 of the `StoryWorld` methods; the other ~96 default to
+0 / false / empty, so the campaign scripts would read zeros and misfire. Missing:
+- **Reads** (~80): planets, fleets, ships, tanks, buildings, designs, techs, research, spies, trade, wormholes,
+  battlefields, the campaign tables; most map to `SaveState` accessors. No helper yet for `st_IsInRR`,
+  `st_GetTerv`, `MiTervMutato`, `BirodalomEro`, `CTF_value`, `LaborSzint`.
+- **Creators** (`story_design`, `new_fleet`, `new_design`, `new_design_raw`, `copy_design_new`, `new_spy`) and
+  the queries `in_radar_range`, `near_fleet(_ex)`, `conquest_ends_epidemic`: they need a `&mut Game` world like
+  `InitWorld` (game/new_game.rs).
+- **Effects**: Game carries out 15 of the ~120 `StoryEvent` kinds the campaign scripts raise (StopFleet,
+  Wormhole, RevealWormhole, the inbox events, EmpireDies / Won / CampaignOver); the rest (fleets, designs,
+  planets and buildings, ground war, money / techs / trade, diplomacy, spies) are only forwarded.
+- **Verification**: the campaign replay checks the scripts against a recorded oracle (`W`), not through `Game`;
+  wiring needs a save-replay recording from a campaign start ticking through story 400's opening.
+Plan (roadmap): reads → creators and fleet/design events → planet/tech/diplomacy/spy events → swap the
+chain in and record.
