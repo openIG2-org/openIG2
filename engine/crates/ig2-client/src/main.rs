@@ -54,6 +54,7 @@ mod mainscr_scene;
 mod mainscr_race;
 mod mainscr_scenario;
 mod messages_screen;
+mod mp_lobby;
 mod new_game;
 mod options;
 mod orders;

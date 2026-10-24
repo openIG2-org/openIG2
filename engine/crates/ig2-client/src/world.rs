@@ -278,6 +278,9 @@ pub struct World<'r> {
     /// `HangLejatszasKell` (exe 0xbae26c, `InitNewGame` step 6: the campaign type) as the first `Starmap_Belep`
     /// takes it for the start voice ([`crate::audio::Audio::play_start_voice`]).
     pub start_voice: Option<i32>,
+    /// A multiplayer game (ADR 0014 §5): the session whose peer runs the sim, and the session's clock. The world
+    /// holds the game between pumps (the peer holds a stand-in), so the screens read it as in single player.
+    pub net: Option<(crate::mp_lobby::Session<'r>, std::time::Instant)>,
 }
 
 /// The ground wars' voice sites among `events` (`GroundSide`, ground-combat.md §11.12).
@@ -344,7 +347,48 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None }
+    }
+
+    /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
+    /// starts from the same one; nothing here may write it outside the lockstep).
+    pub fn new_mp(mut net: crate::mp_lobby::Session<'r>, rules: &'r GameRules) -> Self {
+        let stand_in = Game::new(SaveState::from_parts(Default::default(), Vec::new()), rules);
+        let game = std::mem::replace(&mut net.peer_mut().game, stand_in);
+        let chunks = game.state.chunks();
+        let mut w = Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned()));
+        w.net = Some((net, std::time::Instant::now()));
+        w
+    }
+
+    /// A multiplayer world's turn step, in place of [`World::tick`]: the game goes back into the peer, the session
+    /// pumps (one turn at most: two ticks), the game comes out again; the turn's events feed the screens.
+    fn mp_tick(&mut self) {
+        let Some((net, epoch)) = &mut self.net else { return };
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        let r = net.pump(epoch.elapsed(), 1);
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        let events = std::mem::take(&mut net.peer_mut().events);
+        match r {
+            Ok((0, _)) => return,
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("ig2-client: multiplayer: {e}");
+                return;
+            }
+        }
+        self.videos.extend(events.iter().filter_map(crate::video::Request::of));
+        self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
+        self.ground_voices.extend(ground_voices(&events));
+        let mut next = Snapshot::read(&self.game);
+        let speed = self.game.state.mem.i32(va::IDO_SPEED);
+        next.orbit = (self.curr.orbit as f64 + 2.0 * speed as f64 / 1500.0) as f32;
+        self.prev = std::mem::replace(&mut self.curr, next);
+        self.ui = crate::ui::UiSnap::read(&self.game.state);
+        self.colony_prev = self.colony_curr.take();
+        if let Some(p) = self.colony {
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+        }
     }
 
     /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
@@ -356,6 +400,13 @@ impl<'r> World<'r> {
     /// while the clock is paused; the screens see the result at once.
     pub fn pump(&mut self) {
         if self.outbox.is_empty() {
+            return;
+        }
+        // Multiplayer: the commands go out with the next input and run on every peer `delay` turns later.
+        if let Some((net, _)) = &mut self.net {
+            for c in std::mem::take(&mut self.outbox) {
+                net.peer_mut().issue(c);
+            }
             return;
         }
         let human = self.curr.human;
@@ -420,6 +471,10 @@ impl<'r> World<'r> {
 
     /// The speed the session starts with (`SetIdoSpeed(level, false)`: 1/2/3 = ×1/×4/×16 in single player).
     pub fn set_speed(&mut self, speed: Speed) {
+        // Multiplayer: the speed is the session's (a local write would desync).
+        if self.net.is_some() {
+            return;
+        }
         let level = match speed {
             Speed::Normal => 1,
             Speed::Fast => 2,
@@ -431,6 +486,10 @@ impl<'r> World<'r> {
     /// One 50 ms sim tick, as the original's frame runs it: the lockstep messages the last tick sent first
     /// (`Game::fleet_emptied`), then `FRISSIT_Datum` and the rest of the tick.
     pub fn tick(&mut self) {
+        if self.net.is_some() {
+            self.mp_tick();
+            return;
+        }
         // The client keeps no event history yet (the UI that shows them comes later).
         let events = self.game.take_events();
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));

@@ -315,6 +315,8 @@ Corrections to §7 / §10 / §11 (normative):
   the lobby (20/40/60/80). The lobby: `Start_Init` exe 0x5bfbf0, click handler 0x5c0120, AI pick 0x5bd6c0, status
   msg 2 layout (decompiles in `_local/decomp/newgame-mp/`).
 
+`NewMpGalaxy` also carries shape / battle_status / server_time (0xBAE554 / 558 / 55C); the room is `re/screens/start.md` (ADR 0014).
+
 Seeds: scenario and MP starts use wall-clock seeds that Frida-made calls don't pass through the `srand` hook;
 `scenario_seeds.py` recovers them from the post dump (diplomacy ticks from the 90 saved draws; `RandomInit`'s seed =
 the latest tick ≤ that whose RandSeed[0] matches).

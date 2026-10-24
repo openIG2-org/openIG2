@@ -106,6 +106,10 @@ struct Front {
     quit: bool,
     /// The scenario list's entries, tables and pictures, read when it first opens.
     scenarios: Option<crate::mainscr_scenario::Assets>,
+    /// Our MP screens (ADR 0014), their links, and the session a started room built (the starmap takes it).
+    mp: Option<crate::mp_lobby::MpScreen>,
+    net: crate::mp_lobby::QuicNet,
+    session: Option<crate::mp_lobby::Session<'static>>,
 }
 
 impl Front {
@@ -115,7 +119,7 @@ impl Front {
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None }
     }
 }
 
@@ -438,6 +442,10 @@ fn draw_options(o: &mut OptionsUp, h: &crate::ui::Hud, frame: &mut crate::render
 /// The main menu's 2D (`MainScrGfx2D_1/_2`): the scenario list, the name entry.
 fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: &mut crate::render::Frame, size: [f32; 2], now_ms: f64) {
     crate::mainscr_scene::draw_2d(&mut fr.s, &mut fr.scenarios, h, r, install, frame, size, now_ms);
+    if let (Some(mp), Some(font)) = (&fr.mp, &h.font) {
+        let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
+        mp.draw(frame, &d, crate::kit::fader_design::blink(now_ms));
+    }
 }
 
 /// `PlayerFaj[EN]`, the music's race.
@@ -1444,19 +1452,30 @@ impl App {
     fn front_frame(&mut self) {
         self.options_tick();
         let now = self.now_ms();
-        let (Some(fr), Some(g)) = (&mut self.front, &mut self.gpu) else { return };
+        let (Some(fr), true) = (&mut self.front, self.gpu.is_some()) else { return };
         let mut due = 0;
+        let mut outs = Vec::new();
         while now >= fr.ui_ms + 10 {
             fr.ui_ms += 10;
             fr.s.tick();
+            if let Some(mp) = &mut fr.mp {
+                outs.extend(mp.tick(&mut fr.net));
+            }
             due += 1;
         }
+        for o in outs {
+            self.front_mp_out(o);
+        }
+        let (Some(fr), Some(g)) = (&mut self.front, &mut self.gpu) else { return };
         for _ in 0..due {
             self.audio.tick();
         }
         self.audio.frame(human_race(&self.world.game.state));
         fr.s.frame();
         fr.s.hover(fr.at);
+        if let Some(mp) = &mut fr.mp {
+            mp.hover(fr.at);
+        }
         if let Some(st) = fr.s.take_started() {
             self.front_start(st);
             return;
@@ -1523,10 +1542,49 @@ impl App {
                     }
                 }
             }
-            // `MainScr_Main` 0x23 / 0x22: the server path and the remaster's matchmaking lead to the multiplayer
-            // lobby (roadmap M5), not built yet.
-            Act::MultiServer | Act::MultiMatchmaking => eprintln!("ig2-client: {a:?}: the multiplayer lobby is M5 (not built yet)"),
+            // `MainScr_Main` 0x23 / 0x22: the server path and the remaster's matchmaking; ours: our MP screens
+            // (ADR 0014 §4; "inet" is the same screen without matchmaking).
+            Act::MultiServer | Act::MultiMatchmaking => {
+                let rules = self.install.read_raw("ig2.exe").map(|exe| ig2_net::session::rules_fingerprint(&exe)).unwrap_or_default();
+                let Some(f) = &mut self.front else { return };
+                let name = String::from_utf8_lossy(&f.s.player).into_owned();
+                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules));
+            }
             Act::Tutorial(_) => {}
+        }
+    }
+
+    /// What our MP screens ask (ADR 0014): the click, leaving them, or the room's start: the game built here
+    /// (`mp_lobby::launch`), then the menu's exit animation into the starmap.
+    fn front_mp_out(&mut self, o: crate::mp_lobby::Out) {
+        use crate::mp_lobby::Out;
+        match o {
+            Out::Click => self.audio.play(crate::audio::CLICK),
+            Out::Close => {
+                if let Some(f) = &mut self.front {
+                    f.mp = None;
+                    f.s.close_mp();
+                }
+            }
+            Out::Start(b) => {
+                let rules = self.rules;
+                let ticks = crate::new_game::wall_ticks();
+                let built = crate::new_game::StartTexts::read(&self.install).and_then(|t| t.with(&self.install, |data| crate::mp_lobby::launch(b, data, rules, ticks))).and_then(|r| r);
+                let Some(f) = &mut self.front else { return };
+                match built {
+                    Ok(s) => {
+                        f.session = Some(s);
+                        f.mp = None;
+                        f.s.start_mp();
+                    }
+                    Err(e) => {
+                        eprintln!("ig2-client: multiplayer start: {e}");
+                        if let Some(mp) = &mut f.mp {
+                            mp.line = e.into_bytes();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1534,6 +1592,16 @@ impl App {
     /// follows (a campaign after its intro).
     fn front_start(&mut self, st: crate::mainscr::Start) {
         use crate::mainscr::Start;
+        if let Start::Multiplayer = st {
+            match self.front.as_mut().and_then(|f| f.session.take()) {
+                Some(s) => self.start_world(World::new_mp(s, self.rules)),
+                None => {
+                    let scene = self.front.take().and_then(|f| f.scene);
+                    self.front = Some(Front::new(scene, self.now_ms(), &self.settings));
+                }
+            }
+            return;
+        }
         let seed = crate::new_game::wall_ticks();
         let rules = self.rules;
         let game = match &st {
@@ -1545,6 +1613,7 @@ impl App {
             }
             Start::Scenario { file, .. } => crate::new_game::scenario(&self.install, file, seed, rules),
             Start::Tutorial(n) => crate::new_game::tutorial(&self.install, *n, seed, rules),
+            Start::Multiplayer => unreachable!("handled above"),
             // `SetScirmishGameOptions(race, computers, kind, technology, ScenarioKezdoBolygoSzamok[planets],
             // ScenarioKezdoPenzek[money], difficulty, population)` (spec §2.2 step 3).
             Start::Skirmish { settings: k, kind } => {
@@ -2208,10 +2277,33 @@ impl App {
         }
     }
 
-    /// A key on the main menu: Esc (`MainScr_ESCPressedWhenMultiplayerselect`), or the name entry's keys.
+    /// A key on the main menu: Esc (`MainScr_ESCPressedWhenMultiplayerselect`), or the name entry's keys; our MP
+    /// screens take every key while they are up.
     fn front_key(&mut self, k: &Key) {
         use crate::options::EntryKey;
         let Some(f) = &mut self.front else { return };
+        if let Some(mp) = &mut f.mp {
+            let escape = matches!(k.as_ref(), Key::Named(NamedKey::Escape));
+            let key = match k.as_ref() {
+                Key::Named(NamedKey::Enter) => Some(EntryKey::Enter),
+                Key::Named(NamedKey::Backspace) => Some(EntryKey::Back),
+                Key::Named(NamedKey::Delete) => Some(EntryKey::Delete),
+                Key::Named(NamedKey::Home) => Some(EntryKey::Home),
+                Key::Named(NamedKey::End) => Some(EntryKey::End),
+                Key::Named(NamedKey::ArrowLeft) => Some(EntryKey::Left),
+                Key::Named(NamedKey::ArrowRight) => Some(EntryKey::Right),
+                Key::Named(NamedKey::Space) => Some(EntryKey::Char(b' ')),
+                Key::Character(c) => {
+                    let b = self.hud.as_ref().map_or_else(|| c.as_bytes().to_vec(), |h| h.texts.encode(c));
+                    b.first().copied().filter(|&b| b >= 0x20).map(EntryKey::Char)
+                }
+                _ => None,
+            };
+            if let Some(o) = mp.key(key, escape, &mut f.net) {
+                self.front_mp_out(o);
+            }
+            return;
+        }
         if matches!(k.as_ref(), Key::Named(NamedKey::Escape)) {
             f.s.escape();
             return;
@@ -2468,7 +2560,8 @@ impl App {
         }
         self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
         let due = self.clock.advance(now);
-        if !self.world.paused() && self.headless.is_none() {
+        // Multiplayer: the session is pumped while paused too (its keep-alive and the others' commands).
+        if (!self.world.paused() || self.world.net.is_some()) && self.headless.is_none() {
             for _ in 0..due {
                 self.world.tick();
                 if let Some(t) = &mut self.tutorial {
@@ -3030,6 +3123,15 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event, .. } if self.front.is_some() => {
                 if event.state == ElementState::Pressed {
                     self.front_key(&event.logical_key);
+                }
+            }
+            // Our MP screens: either button's press.
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: button @ (MouseButton::Left | MouseButton::Right), .. } if self.front.as_ref().is_some_and(|f| f.mp.is_some()) => {
+                let Some(f) = &mut self.front else { return };
+                let at = f.at;
+                let Some(mp) = &mut f.mp else { return };
+                if let Some(o) = mp.press(at, button == MouseButton::Right, &mut f.net) {
+                    self.front_mp_out(o);
                 }
             }
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { button: MouseButton::Right | MouseButton::Middle, .. } if self.front.is_some() => {}

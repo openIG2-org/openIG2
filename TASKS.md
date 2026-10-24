@@ -2,7 +2,7 @@
 
 What is left to reach a playable 1:1 client, then polish. Tick `[x]` and move the line to **Done** when a task is
 pushed; the detail (specs, agents, acceptance) lives in [`docs/roadmap.md`](docs/roadmap.md) §6.
-Updated 2026-10-23.
+Updated 2026-10-24.
 
 ## M2: playable start to finish
 - [x] New game: skirmish start (mode 3; `Game::start_skirmish`, `new-game.md` §13.1)
@@ -32,10 +32,19 @@ Updated 2026-10-23.
 - [x] 16:9, 21:9 and 4K checks (2026-10-24, `re/screens/widescreen.md` §7: 20 still screens at 1920x1080, 2520x1080, 3840x2130, 1280x1024 clean; wireframe lines fixed to one pixel; open: deviation 214, SpaceWar exe at wide sizes, Help/credits/demo/tutorial, 2D kit lines)
 
 ## M5: multiplayer playable
-- [ ] Lobby and connection screens on top of `ig2_net::session`
+- [x] Lobby and connection screens on top of `ig2_net::session` (ADR 0014)
 
 ## M6: fixes and polish (after the prototype)
-- [ ] Triage `re/deviations.md` (fix / enhanced option / keep)
+- [x] Triage `re/deviations.md` (fix / enhanced option / keep) (2026-10-24: 129 fix, 31 investigate, 6 enhanced, 18 keep, 38 closed; queue FX1-FX16 in `docs/roadmap.md` §6)
+- [ ] FX6 tutorial wiring: event sites, gate flags, effects, recorded keys
+- [ ] FX1 global input: F-keys and gates, extra letter keys out, top bar and screen menu everywhere, key repeat
+- [ ] FX2 + FX3 pointer, tooltips, right button as left
+- [ ] FX5 colony and ground war input and looks
+- [ ] FX4 starmap input; FX10 options and trade; FX13 render phases and looks
+- [ ] FX7 SpaceWar leftovers
+- [ ] FX8 design; FX9 research/diplomacy/info/messages/spy; FX11 MainScr; FX12 video and Help
+- [ ] FX14 sound leftovers, FX15 MP teardown and gates
+- [ ] Owner: decide the enhanced proposals (#5, #96, #133, #146, #159, #169, #197), then ADRs; ADR lines for the deliberate keeps
 - [ ] Sharper text, upscaled textures, graphics upgrades
 
 ## Done

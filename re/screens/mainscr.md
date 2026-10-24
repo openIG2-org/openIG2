@@ -634,6 +634,6 @@ high-score / description toggle, fabscr.txt default scores); scenario start -> `
 (`EnterNameMode`: A-Z a-z 0-9 _, max 9, Enter accepts; stored as `MultiplayerNev` in the remake's settings); the exit
 animation (`MainScrKilepesValtozo` 100 -> 0 over 200 ticks, camera z, meteor speed-up, GT fade, `loadi1`/`loadi2` plates
 with the `load<n>` picture). Tests: `mainscr_race::tests`, `mainscr_scenario::tests`, `world::tests::scenario_and_tutorial_starts_build_worlds`.
-The skirmish start goes to `Game::start_skirmish` (`SetScirmishGameOptions`: race, computers, the entry's kind, technology, the planet and money tables' values, difficulty, population). Not yet: the
-tutorial script/overlay (U31), the local / inet rings (the M5 lobby: logged), the high-score name entry after a scenario, the
+The skirmish start goes to `Game::start_skirmish` (`SetScirmishGameOptions`: race, computers, the entry's kind, technology, the planet and money tables' values, difficulty, population). The local / inet rings open our MP screens (`mp_lobby.rs`, `start.md`, ADR 0014). Not yet: the
+tutorial script/overlay (U31), the high-score name entry after a scenario, the
 IP / IRC entry and the disconnected box, the meteor and ship sounds (`MainPlaySound`), the demo (§9.5), the ring tooltips.

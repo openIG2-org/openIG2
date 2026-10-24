@@ -365,6 +365,14 @@ impl<'r> Peer<'r> {
         Ok(p)
     }
 
+    /// A peer starting at turn 0 from a state it built itself (a generated galaxy, ADR 0014 §2); `first_input` =
+    /// [`Host::add_peer`]'s answer.
+    pub fn from_game(slot: u8, empire: u8, game: Game<'r>, delay: u64, first_input: u64) -> Self {
+        let mut p = Self::new(slot, empire, game, delay);
+        p.next_input = first_input;
+        p
+    }
+
     /// The synced state now (a turn boundary).
     pub fn snapshot(&self) -> Snapshot {
         Snapshot::capture(&self.game, &self.pending, self.turn, self.tick)

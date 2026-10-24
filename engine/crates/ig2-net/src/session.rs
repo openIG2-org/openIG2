@@ -28,11 +28,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use ig2_sim::game::new_game::StartData;
 use ig2_sim::game::{Game, GameRules, Libc};
 use serde::{Deserialize, Serialize};
 
 use crate::command::Command;
-use crate::lobby::{Door, LobbyClient, LobbyHost, LobbyMsg, Refusal, SessionInfo, Settings, Start, Status};
+use crate::galaxy::GalaxyStart;
+use crate::lobby::{Door, LobbyClient, LobbyHost, LobbyMsg, Refusal, SessionInfo, Settings, Start, Started, Status};
 use crate::lockstep::{Bundle, Host, Msg, Peer, DEFAULT_DELAY};
 use crate::snapshot::{self, Header, Snapshot};
 use crate::transport::{loopback, Loopback, Transport};
@@ -140,6 +142,19 @@ pub enum Error {
     Rules,
     #[error("corrupt session block: {0}")]
     Corrupt(&'static str),
+    /// A galaxy's start built here differs from the host's (another install or language, ADR 0014 §2).
+    #[error("the generated start state differs from the host's (hash {got:#x}, the host's {want:#x})")]
+    StartMismatch { want: u64, got: u64 },
+    /// A galaxy's start needs the install's start data ([`ClientSession::new_galaxy`]); a snapshot start doesn't.
+    #[error("the start kind doesn't match: {0}")]
+    StartKind(&'static str),
+}
+
+/// The rules fingerprint lobbies and saves compare (ADR 0005 §4): SHA-256 of the user's `ig2.exe`, the image every
+/// rule table is read from (`ig2_rules`).
+pub fn rules_fingerprint(exe: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(exe).into()
 }
 
 /// The rules fingerprint as a save header stores it (its first 8 bytes).
@@ -272,6 +287,28 @@ impl<'r> HostSession<'r> {
         Self::launch(lobby, file, rules, settings)
     }
 
+    /// Start a generated galaxy's room (`LobbyHost::new_galaxy`, ADR 0014 §2): `GalaxyStart::build` with the room's
+    /// options, races and AIs, the host's empire as `EN` and `ticks` (the host's clock) for the seed and the diplomacy
+    /// reseed; every member builds the same state and checks its hash. Refused (the lobby back) unless
+    /// `LobbyHost::can_start` in a galaxy room.
+    pub fn start_galaxy(lobby: LobbyHost, data: &StartData, rules: &'r GameRules, settings: SessionSettings, ticks: u32) -> Result<Self, Box<LobbyHost>> {
+        let st = lobby.state();
+        let Some(options) = st.galaxy.filter(|_| lobby.can_start()) else { return Err(Box::new(lobby)) };
+        let humans: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let mut races = [0u8; 8];
+        for s in &st.slots {
+            if (1..=8).contains(&s.empire) {
+                races[s.empire as usize - 1] = s.race;
+            }
+        }
+        let mut galaxy = GalaxyStart::new(ticks, options, races, st.ais());
+        let game = galaxy.build_hashed(data, rules, humans[0], &humans, lobby.session());
+        let fingerprint = lobby.rules();
+        let started = lobby.start_galaxy(galaxy, &settings)?;
+        let own = Peer::from_game(0, started.own.empire, game, settings.delay, started.own.first_input);
+        Ok(Self::assemble(started, own, fingerprint, settings))
+    }
+
     /// Resume an MP save: the lobby's members must hold exactly the saved humans' empires. The state goes on from the
     /// saved turn with the saved settings. Refused (the lobby back) otherwise.
     pub fn resume(lobby: LobbyHost, save: &MpSave, rules: &'r GameRules) -> Result<Self, Box<LobbyHost>> {
@@ -292,10 +329,14 @@ impl<'r> HostSession<'r> {
         let fingerprint = lobby.rules();
         let started = lobby.start_with(file, &settings)?;
         let own = started.own.peer(rules).expect("our own start state loads");
+        Ok(Self::assemble(started, own, fingerprint, settings))
+    }
+
+    fn assemble(started: Started, own: Peer<'r>, fingerprint: [u8; 32], settings: SessionSettings) -> Self {
         let info = started.own.session.clone();
         let names: BTreeMap<u8, String> = info.names.iter().cloned().collect();
         let humans = started.own.humans.iter().map(|&(slot, empire)| Human { slot, empire, name: names[&slot].clone(), presence: Presence::Here, heard: None }).collect();
-        Ok(Self {
+        Self {
             host: started.host,
             own,
             link: started.link,
@@ -312,7 +353,7 @@ impl<'r> HostSession<'r> {
             sent: HoldStatus::default(),
             alive_sent: None,
             queued: Vec::new(),
-        })
+        }
     }
 
     /// Take over a session whose host is gone (ADR 0012): `client` is the elected successor (first of its
@@ -670,7 +711,7 @@ impl<'r> HostSession<'r> {
         let first_input = self.host.next_turn().max(delay);
         let humans = self.humans.iter().map(|h| (h.slot, h.empire)).collect();
         let session = self.info.clone();
-        let start = Start { slot, empire, delay, first_input, humans, session, snapshot: snap.to_file(rules_id(self.fingerprint), true) };
+        let start = Start { slot, empire, delay, first_input, humans, session, snapshot: snap.to_file(rules_id(self.fingerprint), true), galaxy: None };
         link.send(&Msg::Lobby(LobbyMsg::Start(Box::new(start))));
         let from = self.host.add_peer(slot, empire, link);
         debug_assert_eq!(from, first_input);
@@ -756,8 +797,31 @@ pub struct ClientSession<'r> {
 impl<'r> ClientSession<'r> {
     /// From the lobby's start (`LobbyClient::into_game`), or a rejoin's ([`ClientSession::wait_start`]).
     pub fn new(start: &Start, link: Box<dyn Transport>, rules: &'r GameRules) -> Result<Self, Error> {
-        Ok(Self {
-            peer: start.peer(rules)?,
+        if start.galaxy.is_some() {
+            return Err(Error::StartKind("a generated galaxy needs the install's start data (new_galaxy)"));
+        }
+        let peer = start.peer(rules)?;
+        Ok(Self::with_peer(start, peer, link, rules))
+    }
+
+    /// From a generated galaxy's lobby start (ADR 0014 §2): the state built here from `data`
+    /// (`GalaxyStart::build`, the host's empire as `EN`), refused unless its hash is the host's.
+    pub fn new_galaxy(start: &Start, link: Box<dyn Transport>, data: &StartData, rules: &'r GameRules) -> Result<Self, Error> {
+        let Some(g) = &start.galaxy else { return Self::new(start, link, rules) };
+        let humans: Vec<u8> = start.humans.iter().map(|h| h.1).collect();
+        let host = start.humans.iter().find(|h| h.0 == start.session.host).map_or(humans[0], |h| h.1);
+        let game = g.build(data, rules, host, &humans, start.session.id);
+        let got = snapshot::state_hash(&game, &[]);
+        if got != g.hash {
+            return Err(Error::StartMismatch { want: g.hash, got });
+        }
+        let peer = Peer::from_game(start.slot, start.empire, game, start.delay, start.first_input);
+        Ok(Self::with_peer(start, peer, link, rules))
+    }
+
+    fn with_peer(start: &Start, peer: Peer<'r>, link: Box<dyn Transport>, rules: &'r GameRules) -> Self {
+        Self {
+            peer,
             link,
             rules,
             info: start.session.clone(),
@@ -771,7 +835,7 @@ impl<'r> ClientSession<'r> {
             heard: None,
             alive_sent: None,
             silent: false,
-        })
+        }
     }
 
     /// A rejoiner's first message: the host's [`Start`] (anything before it is dropped).

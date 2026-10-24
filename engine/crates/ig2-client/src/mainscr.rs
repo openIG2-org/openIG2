@@ -74,6 +74,8 @@ pub enum Start {
     Skirmish { settings: crate::mainscr_scenario::Skirmish, kind: i32 },
     /// `TutorialSetCampaignGameOptions(n)`, `TutorialStart("main", n)`.
     Tutorial(u8),
+    /// Our MP room started (re/screens/start.md §4): the session the front end built.
+    Multiplayer,
 }
 
 impl Start {
@@ -89,7 +91,7 @@ impl Start {
             Start::Campaign { race, .. } => (*race as usize).min(2),
             Start::Scenario { registry, .. } => by(race_of(registry)),
             Start::Skirmish { settings, .. } => by(settings.race),
-            Start::Tutorial(_) => 0,
+            Start::Tutorial(_) | Start::Multiplayer => 0,
         }
     }
 }
@@ -224,6 +226,8 @@ pub struct MainScr {
     pub scenario: Option<crate::mainscr_scenario::ScenarioList>,
     /// The multiplayer name entry (`EnterNameMode`) and `MultiplayerNev` (exe 0x914800, "Player").
     pub name: Option<NameEntry>,
+    /// Our MP screens are up (`mp_lobby`, ADR 0014): the rings are flown out (`Cel` 6) as for the scenario list.
+    pub mp: bool,
     pub player: Vec<u8>,
     /// The exit animation (`Mode_Kilepes`, `MainScrKilepesValtozo` 100 → 0) and what follows it.
     pub leaving: Option<(f32, Start)>,
@@ -296,6 +300,7 @@ impl MainScr {
             cam: camera(0.0, 200.0, 0.0, 1000.0, 1500.0),
             scenario: None,
             name: None,
+            mp: false,
             player: b"Player".to_vec(),
             leaving: None,
             start: None,
@@ -372,7 +377,7 @@ impl MainScr {
     pub fn ring_at(&self, at: [f32; 2]) -> Option<usize> {
         // `Update3D` hit-tests only without a text entry (`EnterIPAddressMode`, `EnterNameMode`, …) and outside the
         // scenario list (its rings are flown out to `Cel` 6).
-        if self.name.is_some() || self.scenario.is_some() || self.leaving.is_some() {
+        if self.name.is_some() || self.scenario.is_some() || self.mp || self.leaving.is_some() {
             return None;
         }
         // The difficulty rings (`Update3D`): while `Tav != 1.0`, `Tav <= 1.333` (the rings rest at 1.3).
@@ -501,10 +506,34 @@ impl MainScr {
                 self.cel = 6.0;
                 Some(Act::OpenScenarios)
             }
-            (Menu::Multi, 0) => Some(Act::MultiServer),
-            (Menu::Multi, 1) => Some(Act::MultiMatchmaking),
+            // Ours: the rings fly away and our MP screens open (ADR 0014 §4).
+            (Menu::Multi, 0) => {
+                self.cel = 6.0;
+                self.mp = true;
+                Some(Act::MultiServer)
+            }
+            (Menu::Multi, 1) => {
+                self.cel = 6.0;
+                self.mp = true;
+                Some(Act::MultiMatchmaking)
+            }
             _ => None,
         }
+    }
+
+    /// Our MP screens were left: the multiplayer set comes back.
+    pub fn close_mp(&mut self) {
+        self.mp = false;
+        self.menu = Menu::Multi;
+        self.rings = 3;
+        self.cel = 1.0;
+    }
+
+    /// Our MP room started: the menu leaves for the starmap (the exit animation, as a start ring's).
+    pub fn start_mp(&mut self) {
+        self.mp = false;
+        self.cel = 6.0;
+        self.start = Some(Start::Multiplayer);
     }
 
     /// Esc (`MainScr_ESCPressedWhenMultiplayerselect` exe 0x4fe780, the ring menus' case): with the rings at rest,

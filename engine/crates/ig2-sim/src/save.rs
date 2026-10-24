@@ -241,6 +241,10 @@ pub mod va {
     pub const STORY_GROUND_WON: u32 = 0xF26532;
     pub const STORY_YOU_WERE_IN_BATTLE: u32 = 0xF26531;
     pub const STORY_SPY_KIND: u32 = 0xF26588;
+    /// `CTF_value[3]` (i32): the attack each side lost in the last auto-resolved battle.
+    pub const CTF_VALUE: u32 = 0xF261EC;
+    /// `spFlottak` (i16 at 0xBAA1C6 and 0xBAA1CC): the fleets of the space battle starting.
+    pub const BATTLE_FLEETS: u32 = 0xBAA1C6;
 
     pub const AUTOBUILD_PICK: u32 = 0x996530;
     pub const MAP_CURSOR: u32 = 0x996420;

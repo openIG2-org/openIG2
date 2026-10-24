@@ -6,6 +6,7 @@
 //!                    ◀──────────────── Hash{turn} ─────────────── (Host compares → Desync)
 //! rejoin: Snapshot (to_file/from_file) + Host::send_log(turn)
 //! session: HostSession / ClientSession (start, drops and grace, rejoin, desync resync, pause, MP saves, host migration)
+//! galaxy: the generated MP galaxy's room options and the start every machine builds (ADR 0014)
 //! ```
 //!
 //! Transports: the in-process [`transport::Loopback`] (no sockets) and, with feature `quic`, `quic::QuicHost` /
@@ -13,6 +14,7 @@
 
 pub mod command;
 pub mod discovery;
+pub mod galaxy;
 pub mod lobby;
 pub mod lockstep;
 pub mod portmap;

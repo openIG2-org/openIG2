@@ -72,6 +72,13 @@ pub struct NewMpGalaxy {
     pub alive: Vec<i32>,
     /// `ProgramSebesseg` (4: the host controls the speed).
     pub speed: i32,
+    /// `ProgramGalaxyShape` (exe 0xBAE554, the room's 1..=2; no reader in the generated galaxy).
+    pub shape: i32,
+    /// `MultiplayerBattleStatusz` (exe 0xBAE558): 0 space and ground battles in real time, 1 space only, 2 ground
+    /// only, 3 neither (re/screens/start.md §1).
+    pub battle_status: i32,
+    /// `OnlyServerCanModifyTime` (exe 0xBAE55C): 0 or 1.
+    pub server_time: i32,
     /// `PlayerFaj` of empires 1..=18 (index 0 unused); empty: `Start_Init`'s (exe 0x5bfbf0) defaults, each empire
     /// its own race, 15..=18 races 1, 3, 1, 1.
     pub races: Vec<u8>,
@@ -270,7 +277,9 @@ impl<'r> Game<'r> {
         m.set_i32(va::PROGRAM_PLAYERS2, 8);
         m.set_i32(va::PLANET_COUNT, cfg.planets);
         m.set_i32(0xBAE54C, cfg.speed);
-        m.set_i32(0xBAE554, 1);
+        m.set_i32(0xBAE554, cfg.shape);
+        m.set_i32(0xBAE558, cfg.battle_status);
+        m.set_i32(0xBAE55C, cfg.server_time);
         m.set_i32(0xBAE544, 0);
         for i in 1..EMPIRES as i32 {
             let race = cfg.races.get(i as usize).copied().unwrap_or(match i {

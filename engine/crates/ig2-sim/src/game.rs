@@ -41,6 +41,8 @@ mod message_orders;
 mod orders;
 mod realtime;
 mod research_orders;
+mod story_effects;
+mod story_world;
 mod tutorial;
 pub mod new_game;
 
@@ -53,6 +55,7 @@ pub use realtime::{RealTime, RealTimeEvent, SpBattles};
 pub use research_orders::ResearchOrder;
 
 pub use battles::BattleEvent;
+use story_world::GameStory;
 pub use death::{GameOver, LAST_ENEMY_STORY};
 
 use crate::ai::{self, AiContext, AiHooks, AiRules};
@@ -70,7 +73,7 @@ use crate::rng::Streams;
 use crate::save::{fleet_totals_put, put_fleet, put_wormhole, va, HumanSide, SaveState, PLANET_SIZE};
 use crate::spacewar::{CombatFleet, CombatWorld, Ship, Vehicle, NO_DESIGN};
 use crate::spy::{self, SpyContext, SpyEvent, SpyRules, StoryCheck};
-use crate::story::{ScenarioStories, StoryEvent, StoryWorld};
+use crate::story::{ScenarioStories, StoryEvent};
 use crate::time::GameTime;
 use crate::trade::{self, Delivery, Market, MarketContext, TradeEvent};
 
@@ -105,6 +108,33 @@ pub struct GameRules {
     pub satellite_prices: Vec<i32>,
     /// `uzenetek.txt`'s kinds and the conversations' `msg%04d.txt` (the messages screen's orders).
     pub inbox: messages::InboxRules,
+    /// What the campaign scripts read from the user's exe and install (`game::story_world`).
+    pub story: StoryRules,
+}
+
+/// The campaign scripts' tables (`re/rules/campaign.md` §8, `re/rules/new-game.md` §15).
+#[derive(Debug, Clone, Default)]
+pub struct StoryRules {
+    /// The campaign tables (`ig2_rules::Rules::campaign_words`).
+    pub campaign: crate::campaign::CampaignTables,
+    /// `st_Rnd` 138's recruit names (exe 0x85e0bc + 8·k, `k` 0..7: static data).
+    pub recruit_names: Vec<Vec<u8>>,
+    /// `InfoStrings[..].id` (exe 0xBAA1F0, `infostr.txt` in file order: `InfoString_Read`).
+    pub info_strings: Vec<i16>,
+}
+
+impl StoryRules {
+    /// From the exe's campaign words and recruit names (`ig2_rules::Rules::campaign_words`,
+    /// `story_recruit_names`) and the install's `infostr.txt`.
+    pub fn new(campaign_words: Vec<i32>, recruit_names: Vec<Vec<u8>>, install: &ig2_formats::Install) -> Self {
+        let info = install.read("dataraw/text/infostr.txt").unwrap_or_default();
+        let info_strings = ig2_formats::misc_text::parse_infostr(&ig2_formats::text::decode(&info, install.lang())).0;
+        Self {
+            campaign: crate::campaign::CampaignTables::new(campaign_words),
+            recruit_names,
+            info_strings: info_strings.iter().map(|s| s.id).collect(),
+        }
+    }
 }
 
 /// The MSVC CRT `rand()` (`holdrand · 214013 + 2531011`, bits 16..30): the unseeded libc draws of the original.
@@ -1381,34 +1411,17 @@ impl<'r> Game<'r> {
         self.with_story(|st, w| st.tick(&ScenarioStories, w));
     }
 
-    /// Run `f` on the story engine (its state decoded from the save state, stored back afterwards); the
-    /// scripts' requests to other systems that the replay needs are carried out.
-    fn with_story(&mut self, f: impl FnOnce(&mut crate::story::Story, &mut StoryView)) {
-        let g = self.globals();
+    /// Run `f` on the story engine (its state decoded from the save state, stored back afterwards). The scripts'
+    /// requests to other systems are carried out as they make them (`game::story_world`); the inbox, the deaths and
+    /// the UI get them afterwards.
+    fn with_story(&mut self, f: impl FnOnce(&mut crate::story::Story, &mut GameStory)) {
         let mut st = self.state.story();
-        let mut rng = self.state.rng();
         let events = {
-            let mut w = StoryView { state: &self.state, g: &g, rng: &mut rng, events: Vec::new() };
+            let mut w = GameStory::new(self);
             f(&mut st, &mut w);
-            w.events
+            w.finish()
         };
         self.state.store_story(&st);
-        self.state.store_rng(&rng);
-        let mut made = 0;
-        for e in &events {
-            match *e {
-                StoryEvent::StopFleet(f) => {
-                    let ctx = self.starmap_context(&g);
-                    let mut map = self.state.starmap();
-                    let mut ev = Vec::new();
-                    map.order(f.max(0) as usize, 0, 0, 0.0, 0.0, &ctx, &mut ev);
-                    self.state.store_starmap(&map);
-                }
-                StoryEvent::Wormhole { x1, y1, x2, y2 } => made = self.add_wormhole(x1, y1, x2, y2),
-                StoryEvent::RevealWormhole if made != 0 => self.reveal_wormhole(made),
-                _ => {}
-            }
-        }
         self.inbox_events(&events);
         self.story_ends(&events);
         self.events.extend(events.into_iter().map(GameEvent::Story));
@@ -1949,95 +1962,6 @@ impl AiHooks for WarHooks<'_, '_> {
 
     fn design_text(&mut self, n: i32) -> Vec<u8> {
         self.texts.get(&n).cloned().unwrap_or_default()
-    }
-}
-
-/// The story engine's view of the state.
-struct StoryView<'a> {
-    state: &'a SaveState,
-    g: &'a Globals,
-    rng: &'a mut Streams,
-    events: Vec<StoryEvent>,
-}
-
-impl StoryView<'_> {
-    fn planet(&self, p: i32) -> Vec<u8> {
-        self.state.mem.read(va::PLANETS + (p.max(0) as usize * PLANET_SIZE) as u32, PLANET_SIZE)
-    }
-    fn fleet(&self, f: i32) -> Option<&[u8; 0x80]> {
-        self.state.fleets.get(f.max(0) as usize)
-    }
-}
-
-impl StoryWorld for StoryView<'_> {
-    fn ido(&self) -> i32 {
-        self.g.tick
-    }
-    fn canonical(&self) -> bool {
-        self.g.canonical
-    }
-    fn speed_mult(&self) -> i32 {
-        self.g.speed
-    }
-    fn human(&self) -> i32 {
-        self.g.en as i32
-    }
-    fn difficulty(&self) -> i32 {
-        self.g.difficulty
-    }
-    fn multiplayer(&self) -> bool {
-        self.g.multiplayer
-    }
-    fn rng(&mut self) -> &mut Streams {
-        self.rng
-    }
-    fn planet_count(&self) -> i32 {
-        self.state.planet_count() as i32
-    }
-    fn planet_owner(&self, p: i32) -> i32 {
-        self.planet(p)[0x20] as i32
-    }
-    fn planet_value(&self, p: i32) -> i32 {
-        i32::from_le_bytes(self.planet(p)[0x28..0x2c].try_into().unwrap())
-    }
-    fn planet_visibility(&self, p: i32) -> i32 {
-        let e = self.g.en;
-        let r = self.planet(p);
-        i16::from_le_bytes([r[0xd8 + 2 * e], r[0xd9 + 2 * e]]) as i32
-    }
-    fn fleet_count(&self) -> i32 {
-        self.state.fleets.len() as i32 - 1
-    }
-    fn fleet_owner(&self, f: i32) -> i32 {
-        self.fleet(f).map_or(0xff, |r| r[0x15] as i32)
-    }
-    fn fleet_id(&self, f: i32) -> i32 {
-        self.fleet(f).map_or(0, |r| i16::from_le_bytes([r[0x16], r[0x17]]) as i32)
-    }
-    fn empire_alive(&self, e: i32) -> bool {
-        self.g.alive.get(e.max(0) as usize).copied().unwrap_or(false)
-    }
-    fn planets_of(&self, e: i32) -> i32 {
-        self.state.mem.i32(va::EMPIRE_PLANETS + 4 * e.max(0) as u32)
-    }
-    fn money(&self, e: i32) -> f64 {
-        self.state.treasuries()[e.clamp(0, EMPIRES as i32 - 1) as usize].available(0)
-    }
-    fn tech_status(&self, tech: i32, e: i32) -> i32 {
-        self.state.mem.u8(va::TECHS + (tech.max(0) as usize * crate::save::TECH_SIZE) as u32 + 0x45 + e.max(0) as u32) as i32
-    }
-    fn relation_level(&self, a: i32, b: i32) -> i32 {
-        self.state.mem.u8(va::RELATIONS + ((a.max(0) as usize * EMPIRES + b.max(0) as usize) * 0x26) as u32 + 0x25) as i32
-    }
-    fn planet_infected(&self, p: i32) -> bool {
-        let r = self.planet(p);
-        i16::from_le_bytes([r[0xb8], r[0xb9]]) > 0
-    }
-    fn fleet_infected(&self, f: i32) -> bool {
-        self.fleet(f).is_some_and(|r| r[0x15] != 0xff && r[0x52] & 4 != 0)
-    }
-    fn event(&mut self, ev: StoryEvent) {
-        self.events.push(ev);
     }
 }
 

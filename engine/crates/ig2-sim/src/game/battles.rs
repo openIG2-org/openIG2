@@ -322,6 +322,8 @@ impl Game<'_> {
         });
         let centres: Vec<(i32, i32)> =
             (0..EMPIRES as u32).map(|e| (self.state.mem.i32(va::AI_CENTRE_X + 4 * e), self.state.mem.i32(va::AI_CENTRE_Y + 4 * e))).collect();
+        // `CTF_value` (exe 0xF261EC): the attack (`+0x60`) each side lost, from before the battle.
+        let attack = [self.fleet_i32(f1, 0x60), if f2 == 0 { 0 } else { self.fleet_i32(f2, 0x60) }];
         let mut rng = self.state.rng();
         let out = combat.simulate(f1, f2, planet.as_mut(), &self.rules.guns, &centres, &mut rng);
         self.state.store_rng(&rng);
@@ -344,6 +346,11 @@ impl Game<'_> {
             for (k, d) in slots.iter().enumerate().skip(1) {
                 self.state.mem.write(at + 0xfe + 2 * k as u32, &d.to_le_bytes());
             }
+        }
+        // exe 0x5a7430..0x5a7469: `[1]` and `[2]` (`[0]` is never written); a side without ships lost all of it.
+        for (k, (f, a)) in [(f1, attack[0]), (f2, attack[1])].into_iter().enumerate() {
+            let lost = if f2 == 0 && k == 1 { 0 } else if self.fleet_i32(f, 0x54) != 0 { a.wrapping_sub(self.fleet_i32(f, 0x60)) } else { a };
+            self.state.mem.set_i32(va::CTF_VALUE + 4 * (k as u32 + 1), lost);
         }
         self.with_story(|st, w| st.space_battle_finished(&list, false, &ScenarioStories, w));
         self.combat_aftermath(fleet_events, g.sends);

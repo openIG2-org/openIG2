@@ -173,6 +173,9 @@ fn new_campaign_matches_the_exe() {
             humans: mp["humans"].as_array().unwrap().iter().map(int).collect(),
             alive: mp["alive"].as_array().unwrap().iter().map(int).collect(),
             speed: int(&mp["speed"]),
+            shape: mp.get("shape").map_or(1, int),
+            battle_status: mp.get("battle").map_or(0, int),
+            server_time: mp.get("serverTime").map_or(0, int),
             // Start_Init's races with the lobby's picks.
             races: (0..19u8).map(|i| {
                 let pick = mp.get("races").and_then(|r| r.get(i.to_string())).and_then(Value::as_u64);

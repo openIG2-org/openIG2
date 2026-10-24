@@ -435,7 +435,7 @@ impl Trade {
                 break (id, owned);
             }
         };
-        let d = story_design(STORY_EMPIRE, id, 3, ctx, m);
+        let d = story_design(STORY_EMPIRE, id, 3, &ctx.story_designs, m);
         let hull_tech = m.design(STORY_EMPIRE, d).map_or(0, |r| rd_i32(&r, 0x48));
         let n = if hull_tech < 5 { 5 } else { 1 };
         let r = if owned { m.rnd(80, 120) } else { m.rnd(110, 140) };
@@ -580,14 +580,14 @@ fn random_story_design(ctx: &MarketContext, m: &mut dyn Market) -> Option<(i32, 
 }
 
 /// `st_GetTerv(e, id, def)`: the design of `e` made from story design `id`, made on first use (spec §3.5).
-fn story_design(e: usize, id: i32, def: usize, ctx: &MarketContext, m: &mut dyn Market) -> usize {
+pub(crate) fn story_design(e: usize, id: i32, def: usize, story_designs: &[[u8; STORY_DESIGN]], m: &mut dyn Market) -> usize {
     let n = m.design_count(e);
     if n >= FIRST_STORY_DESIGN {
         if let Some(k) = (FIRST_STORY_DESIGN..=n).find(|&k| m.design(e, k).is_some_and(|r| rd_i32(&r, 0x80) == id)) {
             return k;
         }
     }
-    let Some(s) = ctx.story_designs.iter().find(|s| rd_i32(&s[..], 0) == id) else { return def };
+    let Some(s) = story_designs.iter().find(|s| rd_i32(&s[..], 0) == id) else { return def };
     let k = m.new_design(e, rd_i32(s, 0x20));
     let mut r = m.design(e, k).unwrap_or([0; RECORD]);
     strcpy(&mut r, &s[4..]);

@@ -184,6 +184,9 @@ pub mod layout {
     /// The campaign tables `StoryEleje`, `StoryElejeSeq`, `StoryLine`, `StoryScenario`, `RndStoryk`,
     /// `RndStoryValasztas`, `StoryHosok`, `RndHosok`, `StoryKuldetes` (contiguous; `re/rules/campaign.md` §8.1).
     pub const CAMPAIGN: (u32, usize, usize) = (0x928340, 4, 423);
+    /// `st_Rnd` 138's recruit names: 8-byte `char[8]` slots in `.rdata` (`re/rules/campaign/rnd.md` §138; the story
+    /// draws 0..=6).
+    pub const STORY_RECRUITS: (u32, usize, usize) = (0x85E0BC, 8, 7);
     /// The end videos by the human's empire `EN` (`re/screens/video.md` §5, char*): `MEGHALAS`'s loss clip and
     /// `MEGNYERES`'s campaign win clip.
     pub const VIDEO_LOSS: (u32, usize, usize) = (0x919724, 4, 9);
@@ -701,6 +704,8 @@ pub struct Rules {
     /// The campaign tables as the exe's words from VA 0x928340 (`re/rules/campaign.md` §8.1); the story
     /// engine indexes them like the exe (`ig2_sim::campaign::CampaignTables`).
     pub campaign_words: Vec<i32>,
+    /// `st_Rnd` 138's recruit names (static data at exe 0x85E0BC, 8 bytes each, NUL-terminated).
+    pub story_recruit_names: Vec<Vec<u8>>,
     /// Slope limits of the passability layers 0..5 (exe 0x8F8574, f32 × 5; `GenerateMap` uses 1..=4).
     pub ground_slope_limits: Vec<f32>,
     pub diplomacy_screen: DiplomacyScreen,
@@ -1116,6 +1121,10 @@ impl Rules {
             ground_turn_speeds: floats(layout::GROUND_TURN_SPEEDS)?,
             ground_armour: floats(layout::GROUND_ARMOUR)?,
             campaign_words: ints(layout::CAMPAIGN)?,
+            story_recruit_names: {
+                let (b, s, n) = tab(layout::STORY_RECRUITS)?;
+                (0..n).map(|i| b[i * s..(i + 1) * s].iter().take_while(|&&c| c != 0).copied().collect()).collect()
+            },
             ground_slope_limits: floats(layout::GROUND_SLOPE_LIMITS)?,
             diplomacy_screen: {
                 let names = |t| -> Result<Vec<String>> {

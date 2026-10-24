@@ -10,6 +10,285 @@ effects), `timing` (animation, pacing), `sound`, `feature` (missing or extra beh
 kept for fidelity unless decided otherwise). Original bugs the sim keeps on purpose for bit-exactness are already
 listed in the specs ("quirks kept"); add one here only when a player would notice it.
 
+## Triage (M6, 2026-10-24)
+
+Every row below got a class. **fix**: a port difference, ours to match the original. **enhanced**: an
+original bug or limitation worth an opt-in option (proposal; the owner decides, then an ADR). **keep**: the original's
+behaviour stays, or the difference is harmless or deliberate. **investigate**: the cause or the exe's behaviour is not
+known yet; settle it inside its fix group before changing code. **closed**: already done. Size: S small, M medium,
+L large. The fix groups (FX1..FX16) are the queue in `docs/roadmap.md` §6.
+A new row is **untriaged** until it is added to the table below with a class.
+
+| Class | Rows |
+|---|---|
+| fix | 129 |
+| investigate | 31 |
+| enhanced | 6 |
+| keep | 18 |
+| closed | 38 |
+| total | 222 |
+
+| Group | Fix/keep | Investigate | Effort (rough) | Contents |
+|---|---|---|---|---|
+| FX1 | 10 | 2 | ~5 | Global input: `DoKeyboard` F-keys and gates, the extra letter keys out, top bar and screen-select menu on every screen, key repeat, Options/Help F-keys (rows 63, 72, 73, 109, 122, 158, 159, 160, 161, 162, 163, 184) |
+| FX2 | 9 | 0 | ~2 | Pointer and tooltips in the kit: MOUSE.BMP pointer on every screen and in snapshots, hand shape, hot-spot tooltips and their 20-tick delay (rows 10, 11, 19, 48, 111, 132, 140, 171, 192) |
+| FX3 | 2 | 4 | ~1 | Right button acts as left (`Mouse_Lenyom` any button): one probe, then every screen (rows 87, 176, 183, 186, 188, 193) |
+| FX4 | 10 | 1 | ~3 | Starmap input: camera keys, PgUp/PgDn stepping, `c` colonise, console buttons, minimap drag, edge scroll, panel keys and scroll bar, rename, hero designs (rows 42, 43, 44, 45, 46, 164, 165, 166, 167, 168, 170) |
+| FX5 | 16 | 4 | ~4 | Colony and ground war: keys, groups, camera drag, rename, pick, edge scroll, info-mode render gaps, war banner and route crosses (rows 28, 29, 31, 33, 35, 36, 37, 39, 128, 129, 130, 131, 139, 142, 143, 172, 173, 175, 177, 178) |
+| FX6 | 12 | 2 | ~5 | Tutorial wiring: the screens' `TutorialCheckEvent` sites, gate flags, effects, WAITFORATLEPES, recorded keys, F-key blocks, Options layout (rows 74, 97, 141, 174, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207) |
+| FX7 | 19 | 4 | ~4 | SpaceWar: render looks, keys, held rates, cross-fade, console stations, fx5 strategic clock (rows 21, 22, 24, 26, 49, 51, 55, 56, 57, 58, 102, 104, 115, 119, 120, 125, 136, 194, 195, 210, 211, 212, 213) |
+| FX8 | 8 | 2 | ~2 | Design: hull-drag centre, name entry keys, held +/-, Esc with tech models, tooltips, timing (rows 62, 88, 89, 90, 92, 95, 112, 114, 181, 182) |
+| FX9 | 11 | 3 | ~2 | Research, diplomacy, info, messages, spy: keys, drags, timing, fader thresholds, cage alpha (rows 6, 7, 8, 9, 85, 86, 121, 124, 145, 179, 180, 185, 187, 189) |
+| FX10 | 6 | 1 | ~1 | Options and trade: re-enter the screen before, load into a war colony, slot drag, save camera, trade glass and frame phase (rows 70, 71, 108, 110, 135, 190, 191) |
+| FX11 | 9 | 1 | ~2 | MainScr looks and timing: race ring, portraits, scenario list, blurb, exit zoom, name box, widescreen billboard (rows 20, 148, 149, 150, 151, 152, 153, 154, 155, 214) |
+| FX12 | 8 | 4 | ~2 | Video and Help: video input edges, message clip opening, Help gates/keys/return screen/toolbar, credits glyph scale (rows 76, 78, 79, 81, 215, 216, 217, 218, 219, 220, 221, 222) |
+| FX13 | 3 | 2 | ~2 | Render phases and looks: the faders' rand phase from the exe, panel models' lighting, exit plate, trade hull faces, font glyph (rows 27, 47, 134, 208, 209) |
+| FX14 | 2 | 0 | ~1 | Sound leftovers: the space-war speaker rest, SkipAll stop, thunder flash, campaign start voice, other empires' build sounds (rows 12, 40) |
+| FX15 | 4 | 0 | ~2 | Multiplayer: the lobby (M5), game-end teardown, MP gates and owners in the ground war, chat/console (rows 32, 34, 147, 157) |
+| FX16 | 1 | 1 | ~1 | Sim and story: the campaign story tick (in progress), the tutorial start trace (rows 106, 156) |
+
+Proposed enhanced options (awaiting the owner; classic keeps the original's behaviour):
+
+- **#5**: Campaign 834: the siege fleets of empire 1 start at planet 8340, not at planet −1's (0, 0) (sim; enhanced ruleset only, classic stays bit-exact).
+- **#96**: Design rename travels as an order (fixes the original's MP desync; worth making the MP default).
+- **#133**: Colony: mouse-wheel zoom (the original has none).
+- **#146**: Scenario high-score entry after a won scenario (dead code in the original; score = Ido − scenario_kezdesi_ido [guess]).
+- **#159**: A V hotkey for vsync (the client's V today; the original has none; else move it to Options).
+- **#169**: Starmap: right-drag pan and wheel zoom (classic: the right-click order on the press, no pan, no wheel).
+- **#197**: Skip videos in any window mode (the original skips only in fullscreen).
+
+Deliberate keeps that still need an ADR line: tick-bound rates for high refresh rates (#98, #107, #123); MP-safe
+local actions (#13, #127); our own settings and save files beside the original's (#69, #70).
+
+| # | Class | Size | Group | Note |
+|---|---|---|---|---|
+| 1 | closed | - | - | ADR 0010 |
+| 2 | closed | - | - | umbrella; superseded by the per-screen rows 158-222 |
+| 3 | closed | - | - | main menu start done; `--save` stays a dev option |
+| 4 | keep | - | - | decided 2026-10-24 (black strips) |
+| 5 | enhanced | M | EN | original bug; classic keeps it bit-exact |
+| 6 | investigate | S | FX9 | static reading says ours is right; trace the PgUp/PgDn order first |
+| 7 | fix | S | FX9 |  |
+| 8 | fix | S | FX9 | with #184 |
+| 9 | fix | S | FX9 | one-tick phase |
+| 10 | fix | S | FX2 | kit tooltip delay: 20 UI ticks |
+| 11 | fix | M | FX2 | draw the game pointer in snapshots (with #132) |
+| 12 | fix | M | FX14 | the listed remaining sound sites |
+| 13 | keep | - | - | ours deliberate (MP-safe); note it in an ADR |
+| 14 | keep | - | - | exe reads freed memory; ours is the intended path |
+| 15 | keep | - | - | ADR 0003 (cosmetic rng) |
+| 16 | keep | - | - | ours stops instead of hanging; no shipped script hits it |
+| 17 | closed | - | - | MainScr part 2; the MP rings are #157 |
+| 18 | closed | - | - |  |
+| 19 | fix | S | FX2 | same as #192/#193 |
+| 20 | fix | M | FX11 |  |
+| 21 | fix | M | FX7 | panel side lights |
+| 22 | fix | S | FX7 |  |
+| 23 | closed | - | - |  |
+| 24 | fix | S | FX7 | depth test |
+| 25 | keep | - | - | spin phase only (cosmetic) |
+| 26 | fix | S | FX7 |  |
+| 27 | investigate | S | FX13 | shared font glyph or a texture |
+| 28 | investigate | S | FX5 | unverified held-button repeat |
+| 29 | fix | M | FX5 | re-check after colony war part 2; overlaps #172/#173 |
+| 30 | closed | - | - |  |
+| 31 | fix | S | FX5 |  |
+| 32 | fix | S | FX15 | MP: send as each unit's owner |
+| 33 | fix | M | FX5 | selection groups into the save (ADR 0007 chunk) |
+| 34 | fix | S | FX15 | MP gate; TutorialPaused with FX6 |
+| 35 | fix | S | FX5 |  |
+| 36 | fix | S | FX5 | depth-tested route crosses |
+| 37 | investigate | S | FX5 | colony war part 2 drew most; check what is left (dropships?) |
+| 38 | keep | - | - | ADR 0003 (cosmetic rng) |
+| 39 | investigate | S | FX5 | not traced |
+| 40 | fix | S | FX14 |  |
+| 41 | closed | - | - |  |
+| 42 | fix | S | FX4 |  |
+| 43 | fix | S | FX4 |  |
+| 44 | fix | S | FX4 | same as #165 |
+| 45 | fix | M | FX4 | fleet/planet rename (IOMode) |
+| 46 | fix | M | FX4 | needs `Story_Special(0x19)` |
+| 47 | fix | M | FX13 |  |
+| 48 | fix | S | FX2 | starmap tooltips (with #171) |
+| 49 | fix | S | FX7 | port the writes, stale pointer included |
+| 50 | closed | - | - | answered by #126 |
+| 51 | investigate | S | FX7 | [inf] |
+| 52 | closed | - | - |  |
+| 53 | closed | - | - |  |
+| 54 | closed | - | - |  |
+| 55 | fix | S | FX7 | apply the held rates per UI tick |
+| 56 | investigate | S | FX7 | [u] |
+| 57 | fix | S | FX7 | typed character, not position |
+| 58 | fix | M | FX7 | with #194 |
+| 59 | closed | - | - |  |
+| 60 | closed | - | - |  |
+| 61 | closed | - | - |  |
+| 62 | fix | S | FX8 |  |
+| 63 | fix | M | FX1 | part of #158 |
+| 64 | closed | - | - |  |
+| 65 | closed | - | - |  |
+| 66 | keep | - | - | turn phase only (cosmetic) |
+| 67 | closed | - | - |  |
+| 68 | closed | - | - |  |
+| 69 | keep | - | - | deliberate: the original's file is never rewritten |
+| 70 | keep | S | FX10 | ADR 0007 format kept; fix: write the camera chunks back |
+| 71 | fix | M | FX10 | leave and re-enter the screen before |
+| 72 | fix | M | FX1 |  |
+| 73 | fix | S | FX1 |  |
+| 74 | fix | M | FX6 |  |
+| 75 | closed | - | - |  |
+| 76 | fix | S | FX12 |  |
+| 77 | keep | - | - | focus-gain skip not reproduced (harmless) |
+| 78 | fix | S | FX12 |  |
+| 79 | fix | M | FX12 | needs the message screen's opening |
+| 80 | closed | - | - |  |
+| 81 | investigate | S | FX12 | UV mapping unverified |
+| 82 | keep | - | - | under 0.1 s |
+| 83 | closed | - | - |  |
+| 84 | keep | - | - | inherent (ADR 0003) |
+| 85 | fix | S | FX9 |  |
+| 86 | fix | S | FX9 |  |
+| 87 | investigate | S | FX3 | one probe for every right-as-left row |
+| 88 | investigate | S | FX8 | ELF only; read exe DoKeyboard |
+| 89 | fix | S | FX8 |  |
+| 90 | fix | S | FX8 |  |
+| 91 | closed | - | - |  |
+| 92 | fix | S | FX8 |  |
+| 93 | closed | - | - |  |
+| 94 | closed | - | - |  |
+| 95 | investigate | S | FX8 | frame timing |
+| 96 | enhanced | S | EN | original MP desync |
+| 97 | fix | S | FX6 |  |
+| 98 | keep | - | - | deliberate tick-bound rate (high refresh); ADR to write |
+| 99 | keep | - | - | headless only |
+| 100 | closed | - | - |  |
+| 101 | closed | - | - |  |
+| 102 | fix | S | FX7 | planet-info cross-fade |
+| 103 | closed | - | - |  |
+| 104 | fix | S | FX7 | with #22 |
+| 105 | closed | - | - |  |
+| 106 | fix | L | FX16 | in progress: story tick 1/4-4/4 |
+| 107 | keep | - | - | deliberate tick-bound rate; ADR to write |
+| 108 | investigate | S | FX10 | probably done by trade part 2; re-check |
+| 109 | fix | S | FX1 |  |
+| 110 | fix | S | FX10 |  |
+| 111 | fix | S | FX2 |  |
+| 112 | fix | S | FX8 |  |
+| 113 | closed | - | - |  |
+| 114 | fix | S | FX8 |  |
+| 115 | fix | S | FX7 |  |
+| 116 | closed | - | - |  |
+| 117 | closed | - | - |  |
+| 118 | closed | - | - |  |
+| 119 | fix | S | FX7 |  |
+| 120 | fix | M | FX7 |  |
+| 121 | fix | S | FX9 |  |
+| 122 | fix | S | FX1 | with #159 |
+| 123 | keep | - | - | deliberate tick-bound rate; ADR to write |
+| 124 | fix | S | FX9 |  |
+| 125 | investigate | M | FX7 | strategic ticks during the scripted run |
+| 126 | closed | - | - |  |
+| 127 | keep | - | - | deliberate (MP lockstep orders); note it in an ADR |
+| 128 | fix | S | FX5 |  |
+| 129 | fix | S | FX5 |  |
+| 130 | fix | M | FX5 |  |
+| 131 | fix | S | FX5 |  |
+| 132 | fix | M | FX2 | the game pointer on every screen |
+| 133 | enhanced | S | EN | classic: no wheel zoom |
+| 134 | fix | M | FX13 | roadmap item (material transparency) |
+| 135 | fix | S | FX10 |  |
+| 136 | fix | S | FX7 | calibrated size and colour |
+| 137 | closed | - | - |  |
+| 138 | closed | - | - |  |
+| 139 | fix | M | FX5 |  |
+| 140 | fix | S | FX2 |  |
+| 141 | fix | S | FX6 |  |
+| 142 | fix | S | FX5 |  |
+| 143 | investigate | S | FX5 | [inf] |
+| 144 | closed | - | - |  |
+| 145 | fix | S | FX9 |  |
+| 146 | enhanced | S | EN | dead code in the original |
+| 147 | fix | M | FX15 |  |
+| 148 | fix | M | FX11 |  |
+| 149 | fix | S | FX11 |  |
+| 150 | fix | M | FX11 |  |
+| 151 | fix | S | FX11 |  |
+| 152 | fix | S | FX11 | size-1 font accents |
+| 153 | fix | S | FX11 |  |
+| 154 | fix | S | FX11 |  |
+| 155 | fix | S | FX11 |  |
+| 156 | investigate | M | FX16 | needs a tutorial-start trace |
+| 157 | fix | L | FX15 | M5 lobby |
+| 158 | fix | L | FX1 |  |
+| 159 | fix | M | FX1 | remove the extra letter keys (V: see the enhanced list) |
+| 160 | fix | M | FX1 |  |
+| 161 | fix | L | FX1 |  |
+| 162 | investigate | S | FX1 | [u] exe key repeat |
+| 163 | fix | M | FX1 | MP parts with FX15 |
+| 164 | fix | M | FX4 |  |
+| 165 | fix | S | FX4 |  |
+| 166 | fix | S | FX4 |  |
+| 167 | investigate | M | FX4 | [u] real hit areas |
+| 168 | fix | M | FX4 |  |
+| 169 | enhanced | M | EN | classic: order on the press, no pan/wheel |
+| 170 | fix | S | FX4 |  |
+| 171 | fix | M | FX2 |  |
+| 172 | fix | S | FX5 |  |
+| 173 | fix | S | FX5 |  |
+| 174 | fix | S | FX6 |  |
+| 175 | fix | S | FX5 |  |
+| 176 | investigate | S | FX3 | [inf] |
+| 177 | fix | M | FX5 |  |
+| 178 | fix | M | FX5 |  |
+| 179 | fix | M | FX9 |  |
+| 180 | fix | S | FX9 |  |
+| 181 | fix | S | FX8 |  |
+| 182 | fix | S | FX8 |  |
+| 183 | investigate | S | FX3 | [inf] |
+| 184 | investigate | S | FX1 | [u] |
+| 185 | investigate | S | FX9 | [u] |
+| 186 | fix | M | FX3 |  |
+| 187 | fix | S | FX9 |  |
+| 188 | fix | S | FX3 |  |
+| 189 | investigate | S | FX9 | effect of AktIkonKell 0x25 not read |
+| 190 | fix | S | FX10 |  |
+| 191 | fix | S | FX10 |  |
+| 192 | fix | S | FX2 |  |
+| 193 | investigate | S | FX3 | [u] needs a press/release capture |
+| 194 | fix | S | FX7 |  |
+| 195 | fix | S | FX7 |  |
+| 196 | closed | - | - |  |
+| 197 | enhanced | S | EN | classic: skip in fullscreen only |
+| 198 | fix | M | FX6 |  |
+| 199 | fix | L | FX6 | blocks tutorial chapters |
+| 200 | fix | L | FX6 |  |
+| 201 | fix | M | FX6 |  |
+| 202 | fix | S | FX6 |  |
+| 203 | fix | S | FX6 |  |
+| 204 | fix | S | FX6 |  |
+| 205 | investigate | S | FX6 | remapKeyCodes not decompiled |
+| 206 | investigate | S | FX6 |  |
+| 207 | fix | S | FX6 |  |
+| 208 | fix | M | FX13 | dump the exe's fader structs into .ui.json |
+| 209 | investigate | S | FX13 |  |
+| 210 | fix | S | FX7 |  |
+| 211 | fix | S | FX7 |  |
+| 212 | investigate | S | FX7 |  |
+| 213 | fix | S | FX7 |  |
+| 214 | investigate | S | FX11 | cause unknown |
+| 215 | investigate | S | FX12 | read `TTF_RenderUTF8_8Bit_Wrapped` |
+| 216 | fix | S | FX12 |  |
+| 217 | fix | S | FX12 |  |
+| 218 | fix | S | FX12 |  |
+| 219 | fix | M | FX12 |  |
+| 220 | investigate | S | FX12 | probe the top bar over Help |
+| 221 | fix | S | FX12 |  |
+| 222 | investigate | S | FX12 |  |
+| 223 | keep | S |  | ADR 0014 §3 |
+
+
+## Ledger
+
 | # | Tag | Where | What differs (ours vs the original) | Evidence | Decision |
 |---|---|---|---|---|---|
 | 1 | layout | all screens | the original remaster anchors/stretches some elements at 16:9; we letterbox the 800 × 600 layout | owner, 2026-10-18; roadmap §4; `re/screens/widescreen.md` | **fix** (ADR 0010, 2026-10-18): the remaster's rule is the default; at 16:9/21:9 the client already matched (2D in the 4:3 frame, 3D full width). The screen kit (`ig2-client::kit`, 2026-10-18) closed the rest: the exe-exact layout (`kit::Layout`), windows narrower than 4:3 letterboxed top and bottom, the offscreen 3D targets as wide as the window, the `--letterbox` option. **Closed** |
@@ -234,3 +513,4 @@ listed in the specs ("quirks kept"); add one here only when a player would notic
 | 220 | input | Help, top bar | the top bar's common hot-spots (pause, speed, screen menu, message line) likely stay active over Help (not probed); the client sends every left press to the Help screen | exe `IG2_gameUpdate` 0x4e0440, `MOUSE_SelectScreens` 0x555470; window.rs (input-audit 2026-10-24; confirm with a probe) | open |
 | 221 | input | Help, mouse access | the screen-select menu lists Help (entry 1) and the remaster toolbar's help button (`help_callback` 0x4d8650 / `help_press_f1` 0x4d8b40, `help_new` overlays) opens/closes it; the client has F1 only | exe `MOUSE_SelectScreens` 0x555470, `help_callback`; help.md §11 (input-audit 2026-10-24) | open |
 | 222 | input | Help, hot-spot overlap | spots 3 (topic list, y 44..402) and 6 (exit, y 401..426) share rows 401-402; the port lets the lowest id win, the exe's order not read | exe `Help_MouseInit` 0x4d7640; help.rs `spot_at` (input-audit 2026-10-24; low) | open |
+| 223 | multiplayer | generated-galaxy start, diplomacy reseed | the host's `SDL_GetTicks` for `NEWGAME_Diplomacy`'s libc reseed is shared with every machine; the original lets each machine use its own, so the machines' states differ there; lockstep needs one state | exe `FRISSIT_Start` 0x5bc590 / `ReceiveStartData` 0x5bc9d0 → `InitNewGame(seed,2,0,1)`; ADR 0014 §3 | deliberate, kept |

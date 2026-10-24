@@ -620,9 +620,13 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     let tables = ig2_rules::Rules::from_install(&install)?;
     let hud = crate::ui::Hud::load(&mut r, &install, &tables);
     let mut assets = None;
+    // Our MP screens (ADR 0014), offline: hosting works on a listener nobody reaches, nothing touches the network.
+    let mut mp: Option<crate::mp_lobby::MpScreen> = None;
+    let mut net = crate::mp_lobby::OfflineNet;
     for t in 0..=script.end() {
         let mut press = None;
         let mut release = None;
+        let mut right = None;
         let mut keys = Vec::new();
         for e in script.at(t.saturating_sub(lag)).filter(|_| t >= lag) {
             match &e.input {
@@ -637,6 +641,10 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                         release = Some(at);
                     }
                 }
+                Input::Button { button: 3, down: true, at } => {
+                    mouse = *at;
+                    right = Some(*at);
+                }
                 _ => {}
             }
         }
@@ -650,6 +658,43 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         s.race_boxes = scene.race_boxes(&install, &s);
         if let Some(st) = s.take_started() {
             println!("t {t}: start {st:?}");
+        }
+        if let Some(m) = &mut mp {
+            use crate::mp_lobby::Out;
+            m.hover(mouse);
+            let mut outs: Vec<Out> = m.tick(&mut net).into_iter().collect();
+            for (p, rt) in [(press, false), (right, true)] {
+                if let Some(p) = p {
+                    outs.extend(m.press(p, rt, &mut net));
+                }
+            }
+            for k in &keys {
+                use crate::options::EntryKey;
+                let lower = k.to_ascii_lowercase();
+                let key = match lower.as_str() {
+                    "enter" | "return" => Some(EntryKey::Enter),
+                    "backspace" => Some(EntryKey::Back),
+                    "space" => Some(EntryKey::Char(b' ')),
+                    c if c.len() == 1 => Some(EntryKey::Char(k.as_bytes()[0])),
+                    _ => None,
+                };
+                outs.extend(m.key(key, matches!(lower.as_str(), "escape" | "esc"), &mut net));
+            }
+            for o in outs {
+                match o {
+                    Out::Click => println!("t {t}: mp click"),
+                    Out::Close => {
+                        println!("t {t}: mp close");
+                        mp = None;
+                        s.close_mp();
+                        break;
+                    }
+                    Out::Start(_) => println!("t {t}: mp start"),
+                }
+            }
+            keys.clear();
+            press = None;
+            release = None;
         }
         for k in &keys {
             use crate::options::EntryKey;
@@ -685,6 +730,10 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             for a in acts.into_iter().flatten() {
                 println!("t {t}: {a:?}");
                 prepare(&mut s, a, &mut assets, &install, &hud.texts);
+                if matches!(a, crate::mainscr::Act::MultiServer | crate::mainscr::Act::MultiMatchmaking) {
+                    let name = String::from_utf8_lossy(&s.player).into_owned();
+                    mp = Some(crate::mp_lobby::MpScreen::open(a == crate::mainscr::Act::MultiMatchmaking, &name, [0; 32]));
+                }
                 if a == crate::mainscr::Act::LoadGame {
                     let tables = ig2_rules::Rules::from_install(&install)?;
                     let h = crate::options::Headless::load(&mut r, &install, &tables);
@@ -697,6 +746,10 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             scene.draw(&mut frame, &mut r, &install, &s, &vv);
             draw_2d(&mut s, &mut assets, &hud, &mut r, &install, &mut frame, size, t as f64 * 10.0);
+            if let (Some(m), Some(font)) = (&mp, &hud.font) {
+                let d = crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: t as f64 * 10.0 };
+                m.draw(&mut frame, &d, crate::kit::fader_design::blink(t as f64 * 10.0));
+            }
             if let Some((h, os)) = &mut options {
                 h.draw(os, &mut frame, size, t as f64 * 10.0);
             }
