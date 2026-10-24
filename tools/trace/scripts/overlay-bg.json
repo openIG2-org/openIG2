@@ -1,0 +1,16 @@
+{
+ "screen": "starmap",
+ "note": "The overlay screens' background over a running game (re/screens/overlay-background.md): the starmap with the clock running; F4 opens research (picture 0x34 = SaveScreen(1) of the starmap without its HUD, dimmed to half as resframe runs to 60), Esc back; F9 the info screen (0x34); Esc; o the options screen (0x35 = SaveScreen(2), the starmap with its HUD; the clock paused); Esc; F10 the messages screen (0x35; paused).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 100, "key": "f4"},
+  {"t": 330, "key": "escape"},
+  {"t": 450, "key": "f9"},
+  {"t": 640, "key": "escape"},
+  {"t": 760, "key": "o"},
+  {"t": 1000, "key": "escape"},
+  {"t": 1150, "key": "f10"}
+ ],
+ "grabs": [90, 130, 300, 440, 480, 620, 750, 790, 980, 1140, 1180, 1300],
+ "tail": 20
+}

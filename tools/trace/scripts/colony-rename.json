@@ -1,0 +1,15 @@
+{
+ "screen": "colony",
+ "note": "FX5: the colony's planet name entry (Colony_Main hot-spot 4 with both buttons, IOAzonosito 0x1f; re/screens/colony.md §10) on quick-1.sav planet 17 (an AI planet: nothing selected, the short info shows the planet): left and right down on the short info, both up (no info mode, no starmap), the text X and y replace the name, Enter ends it. Times are UI ticks.",
+ "events": [
+  {"t": 2, "mouse": [60, 450]},
+  {"t": 10, "down": 1, "at": [60, 450]},
+  {"t": 12, "down": 3, "at": [60, 450]},
+  {"t": 16, "up": 3, "at": [60, 450]},
+  {"t": 17, "up": 1, "at": [60, 450]},
+  {"t": 30, "text": "X"},
+  {"t": 34, "text": "y"},
+  {"t": 40, "key": "enter"}
+ ],
+ "grabs": [8, 20, 25, 36, 50]
+}

@@ -402,8 +402,10 @@ pub struct SpaceWarUi {
     pub button: i32,
     pub button_phase: i32,
     pub button_frame: f32,
-    /// The info model's turn (`matrixforgat(.., 0.05)` a frame).
+    /// The info model's turn (`matrixforgat(.., 0.05)` a frame, after the draw) and its type (`kisinfotipus`,
+    /// exe 0xE60444): a new type rebuilds the model at turn 0.
     pub spin: f32,
+    info_type: i32,
     /// The weapon-group masks (`fegyvernevek[g]` record `+0x20`: weapon kind bits).
     pub masks: [u32; 10],
 }
@@ -535,6 +537,7 @@ impl SpaceWarUi {
             button_phase: 0,
             button_frame: 0.0,
             spin: 0.0,
+            info_type: -1,
             masks: GROUP_MASKS,
         };
         s.defaults.yaw = Self::default_yaw(b);
@@ -1343,6 +1346,18 @@ impl SpaceWarUi {
             }
         }
         self.stats = st;
+        // `selectkisinfourhajo` (ELF 0x694340): the selected live units' highest `race·12 + type`, else a selected
+        // gun's building slot + 50000, else 5000 (the fighter); `kisinfogfxfrissit` (exe 0x5778c0) rebuilds the
+        // model when it changes, drawn at turn 0 (this frame's turn comes first here).
+        let mut t = b.units.iter().enumerate().filter(|&(i, u)| u.alive && self.units.get(i).is_some_and(|g| g.selected)).map(|(_, u)| u.race * 12 + u.kind).max();
+        if t.is_none() {
+            t = b.guns.iter().enumerate().filter(|&(k, x)| x.building != 0 && self.guns.get(k).is_some_and(|g| g.0)).map(|(_, x)| x.building + 50000).max();
+        }
+        let t = t.unwrap_or(5000);
+        if t != self.info_type {
+            self.info_type = t;
+            self.spin = -0.05;
+        }
         // The sides' flag B (ELF side `+0x70`, exe 0x574040): a live unit of the side's original owner that is
         // neither paralysed (`+0x1c0`), taken over (`+0x1c4`) nor retreating (`+0x1d4`) and can move (type `+0x14`),
         // or a live fighter group not retreating. Slot 9 (Retreat) shows on the viewer's (§5.1).

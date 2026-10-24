@@ -52,6 +52,8 @@ TOPBAR = "topbar=0,0,640,20"
 # The regions each screen is judged by, in virtual pixels (re/screens/hud.md, info.md, messages.md).
 SCREENS = {
     "starmap": dict(kep=2, script=True, client=[], regions=[TOPBAR, "view=0,20,640,460"]),
+    # The top bar's drop-downs over the starmap (re/screens/hud.md §2.1, `scripts/topbar-menus.json`).
+    "topbar-menus": dict(kep=2, script=True, client=[], regions=[TOPBAR, "screens_menu=490,16,146,186", "research_menu=310,16,322,280", "view=0,20,640,460"]),
     "colony": dict(kep=3, script=True, client=["--colony", "{planet}", "--colony-live"], regions=[
         TOPBAR, "planet_panel=0,18,223,153", "radar=491,348,149,132", "bottom_info=5,403,162,72",
         "buttons=170,440,320,36", "view=223,20,268,320"]),
@@ -173,7 +175,8 @@ def size_suffix(a):
 
 
 def size_exe(a):
-    return [] if a.size == "800x600" else ["--size", a.size]
+    # Always set: the install's ig2.settings may hold another size (run_screen.py puts the file back after the run).
+    return ["--size", a.size]
 
 
 def clock_args(save):
@@ -222,6 +225,20 @@ def sound_table(path):
     return rows
 
 
+def sim_phase(trace):
+    """The exe's 50 ms clock against the script's 10 ms frames: the frame (mod 5) whose sim loop ran the battle's
+    first tick (run_spwc.py logs a `cam` record per UI tick, from `FRISSIT_SpaceWar2`, which runs before the sim loop
+    in `Fake_FRISSITES`)."""
+    last = None
+    with open(trace, encoding="utf-8") as f:
+        for line in f:
+            if '"cam"' in line[:20]:
+                last = json.loads(line).get("t")
+            elif '"step"' in line[:20] and last is not None:
+                return last % 5
+    return 0
+
+
 def sequence(a, kind, cfg, env, masks, planet):
     stem = os.path.splitext(os.path.basename(a.script))[0]
     name = (f"{kind}-seq-{stem}" if stem != kind else f"{kind}-seq") + size_suffix(a)
@@ -245,7 +262,8 @@ def sequence(a, kind, cfg, env, masks, planet):
                 sys.exit("the exe's script run failed")
     elif not a.exe_seq:
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
-                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []) + size_exe(a))
+                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []) + size_exe(a)
+                + (["--via-starmap", str(a.via_starmap)] if a.via_starmap else []))
         if r.returncode:
             sys.exit("the exe's script run failed")
     with open(prefix + "-frames.json", encoding="utf-8") as f:
@@ -254,6 +272,9 @@ def sequence(a, kind, cfg, env, masks, planet):
     client = os.path.join(a.out, f"{name}-client.png")
     # The colony's `--colony-live` camera comes from the state save (the script's first frame).
     args = [x.format(planet=planet, grab=prefix + "-entry.json") for x in cfg["client"] if x not in ("--ui-frames", "240")] + ["--script", a.script]
+    if kind == "spacewar":
+        args += ["--sim-phase", str(sim_phase(prefix + ".jsonl"))]
+    args += ["--backdrop"] if a.via_starmap else []
     r = run([CLIENT, "--snapshot", client, "--save", state, "--size", a.size, "--ticks", "0", "--speed", "1", "--paused"] + args + clock_args(state), env=env)
     if r.returncode:
         sys.exit("the client's script run failed")
@@ -298,6 +319,8 @@ def main():
     ap.add_argument("screen")
     ap.add_argument("--out", default=os.path.join(ROOT, "_local", "screendiff"))
     ap.add_argument("--exe-png", help="use this capture of ig2.exe instead of making one")
+    ap.add_argument("--client-arg", action="append", default=[], help="pass this argument on to the client's still (e.g. "
+                    "--client-arg=--top-menu --client-arg=research with an --exe-png grab of a script run)")
     ap.add_argument("--exe-state", help="with --exe-png: the exe's save of that moment (default: <save>)")
     ap.add_argument("--wait", type=int, help="frames the exe shows the screen before the grab (default: the screen's, else 240)")
     ap.add_argument("--build", action="store_true", help="cargo build --release the client and the comparator first")
@@ -325,6 +348,10 @@ def main():
     ap.add_argument("--size", default="800x600", help="the window size WxH of both (run_screen.py --size; the client's --size); "
                     "regions stay in the centred 4:3 frame, wider sizes add left_strip/right_strip (re/screens/widescreen.md)")
     ap.add_argument("--letterbox", action="store_true", help="the client with its letterbox option (ADR 0010 §2): the strips black")
+    ap.add_argument("--via-starmap", type=int, default=0, metavar="F",
+                    help="the exe opens the starmap first and the screen F frames later (run_screen.py --via-starmap): the overlay "
+                    "screens over the starmap's picture as in a running game; the client draws it too (--backdrop; "
+                    "re/screens/overlay-background.md)")
     ap.add_argument("--client-new-campaign", help="the client starts this campaign (`--new-campaign C,D,SEED,TICKS`) "
                     "instead of loading the state save: <save> is run_newgame.py's tick-0 save of the same start")
     a = ap.parse_args()
@@ -386,6 +413,13 @@ def main():
         held = ["--anim-frame", str(a.anim_frame)] + (["--anim-closing"] if a.anim_closing else [])
         held_exe = [flag + "-frame", str(a.anim_frame)] + ([flag + "-closing"] if a.anim_closing else [])
         name += f"-{'close' if a.anim_closing else 'open'}{a.anim_frame:g}"
+    if kind == "info" and a.info_mouse and not a.select:
+        # The pointer at rest on a hot-spot: its tooltip (`Info_MouseInit`'s texts) beside it (FX9).
+        held += ["--mouse", a.info_mouse]
+        held_exe += ["--mouse", a.info_mouse]
+        name += "-mouse" + a.info_mouse.replace(",", "_")
+        mx, my = (int(v) for v in a.info_mouse.split(","))
+        cfg = dict(cfg, regions=cfg["regions"] + [f"tip={mx},{my},240,22"])
     if kind in ("spy", "research") and a.anim_mouse:
         held += ["--mouse", a.anim_mouse]
         held_exe += ["--mouse", a.anim_mouse]
@@ -416,7 +450,8 @@ def main():
         state = os.path.join(a.out, f"{name}-state.sav")
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
                  "--planet", str(planet), "--wait", str(a.wait or cfg.get("wait", 240)), "--shots", "1", "--state-out", state,
-                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])] + held_exe + size_exe(a))
+                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])] + held_exe + size_exe(a)
+                + (["--via-starmap", str(a.via_starmap)] if a.via_starmap else []))
         if r.returncode or not os.path.exists(prefix + "-0.png"):
             sys.exit("the exe capture failed")
         shutil.move(prefix + "-0.png", exe_png)
@@ -426,6 +461,8 @@ def main():
 
     client_png = os.path.join(a.out, f"{name}-client.png")
     args = [x.format(planet=planet, grab=os.path.abspath(grab) if grab else "") for x in cfg["client"]] + held + (["--letterbox"] if a.letterbox else [])
+    args += a.client_arg
+    args += ["--backdrop"] if a.via_starmap else []
     if kind == "grwar" and a.arm:
         args[args.index("war")] = f"war:{a.arm}"
     # The exe's starmap clocks at the grab (run_screen.py writes them beside the state save).

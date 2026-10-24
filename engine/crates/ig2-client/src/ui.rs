@@ -358,6 +358,10 @@ pub struct ColonyInput<'a> {
     pub info_model: Option<TexId>,
     pub now_ms: u32,
     pub time: f32,
+    /// `KellEpuletnevKiiras` (options row 202): `ShowBuildings` writes the building names (exe 0x4c9220).
+    pub names: bool,
+    /// The planet's name entry (`IOAzonosito` 0x1f), drawn by `ColonyGfx2D_4`.
+    pub rename: Option<&'a crate::starmap_menus::Rename>,
 }
 
 /// Which screen is up.
@@ -410,6 +414,8 @@ pub struct Hud {
     /// The speed buttons: `IdoSpeed` 0..=2 and `IdoPause`, set by the client each frame.
     pub speed: usize,
     pub paused: bool,
+    /// The message line's history drop-down, while the right button holds it (`ScreensScrollHistoryMode`).
+    pub history_open: bool,
     /// The starmap's panel, faders, short info and minimap (re/screens/starmap.md §11).
     pub starmap: crate::starmap_hud::StarmapHud,
     /// `BirodalomNev[e]`: the empire names (the Hungarian `txt17` §1 even in other languages [obs]).
@@ -418,6 +424,9 @@ pub struct Hud {
     pub hu17: UiStrings,
     /// `infostr.txt` (`InfoString_Get`: the planets' info texts in the starmap's long info), in the game's code page.
     pub infostr: Vec<(i16, Vec<u8>)>,
+    /// The top bar's drop-downs (re/screens/hud.md §2.1) and what they show, read by the window while one is open.
+    pub top: crate::topbar_menus::TopMenus,
+    pub top_data: crate::topbar_menus::Data,
 }
 
 impl Hud {
@@ -447,6 +456,8 @@ impl Hud {
             palette,
             scroller: Scroller::default(),
             chat: Default::default(),
+            top: Default::default(),
+            top_data: Default::default(),
             info: crate::info_screen::InfoScreen::enter(0),
             messages: Default::default(),
             frame_tex: None,
@@ -462,6 +473,7 @@ impl Hud {
             starmap_brushes: rules.starmap_brushes.clone(),
             speed: 2,
             paused: false,
+            history_open: false,
         }
     }
 
@@ -492,7 +504,9 @@ impl Hud {
     pub fn draw_colony(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, maps: &[ig2_sim::ground::GroundMap], view: &crate::colony::View, scene: &crate::colony::ColonyScene, curr: &crate::colony::ColonySnap, input: &ColonyInput) {
         let Some(font) = &self.font else { return };
         let by_kind = |k: u8| rules.buildings.get(k as usize).map_or_else(Vec::new, |b| self.tech_name(b.tech as usize));
-        view.names(f, font, &self.palette, &by_kind, scene, maps, curr);
+        if input.names {
+            view.names(f, font, &self.palette, &by_kind, scene, maps, curr);
+        }
         let ui = input.ui;
         let mut c = crate::colony::hud_state(state, rules, &|t| self.tech_name(t), curr, view, maps, ui.kind, ui.selected);
         c.panel_model = input.panel;
@@ -511,7 +525,8 @@ impl Hud {
             let pod = if u.flags & ig2_sim::ground::flag::TURRET != 0 { u.design as usize } else { record(u).map_or(0, |r| if r[0x51] != 0 { r[0x51] } else { r[0x52] } as usize) };
             if pod == 0 { Vec::new() } else { self.tech_name(pod) }
         };
-        let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name };
+        let player_name = |e: i32| state.mem.read(0xBAE588 + 11 * e.clamp(0, 18) as u32, 11).iter().copied().take_while(|&b| b != 0).collect::<Vec<u8>>();
+        let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name, player_name: &player_name };
         let w = crate::colony_war::WarCtx { snap: curr, en: state.mem.i32(ig2_sim::save::va::EN), tutorial_paused: false };
         // `ColonyInfoMod` 1 (units selected) shows the units, 2 (a building selected) `ColonyKisInfo`'s building half.
         let units = ui.war.draw_unit_info(f, &w, &d);
@@ -538,8 +553,11 @@ impl Hud {
         ui.draw(f, &ctx, font, self.white, &v, &self.palette, &self.hu17, input.cursor, input.now_ms);
         crate::colony_war::draw_self_destruct(f, &w, &d);
         // The ground war's buttons, marks and lines (colony.md §11).
-        if let Some(gm) = maps.get(curr.map) {
-            ui.war.draw(f, &w, &d, view, gm, input.cursor);
+        ui.war.draw(f, &w, &d, input.cursor);
+        // `ColonyGfx2D_4`: the name entry over the short info (as `StarmapGfx2D_3`'s, re/screens/starmap.md §10.7).
+        if let Some(r) = input.rename {
+            let d = crate::starmap_panels::Draw2d { font, white: self.white, v, palette: &self.palette, texts: &self.texts, time: input.time };
+            r.draw(f, &d, input.time * 1000.0);
         }
         // `UpdateFrame` (exe 0x4e3e90): `MOUSE.BMP`'s 20 × 20 cell of column `Mouse_Tipus`, row `(MouseFazis / 5) % 40`,
         // its hot point at the pointer (colony.md §11.10).
@@ -560,8 +578,40 @@ impl Hud {
 
     /// `UpdateFrame` (exe 0x4e3e90): `MOUSE.BMP`'s 20 × 20 cell of column `kind`, its hot point at `at` (virtual).
     pub fn draw_pointer(&self, f: &mut Frame, size: [f32; 2], at: [i32; 2], kind: i32) {
+        self.draw_pointer_phase(f, size, at, kind, 0);
+    }
+
+    /// A snapshot's pointer at `--mouse` (the exe's capture draws its pointer there, `UpdateFrame`): over the top bar's
+    /// spots their tooltip (the pointer at rest) and the hand, else the arrow; phase 0.
+    pub fn snapshot_pointer(&self, f: &mut Frame, size: [f32; 2], mouse: Option<[f32; 2]>) {
+        if let Some(m) = mouse {
+            self.snapshot_tip_pointer(f, size, m, None, 0, 0);
+        }
+    }
+
+    /// [`Self::snapshot_pointer`] with the screen's own tooltip text and pointer type (`kind`), which the bar's spots
+    /// override.
+    pub fn snapshot_tip_pointer(&self, f: &mut Frame, size: [f32; 2], m: [f32; 2], screen_tip: Option<&[u8]>, kind: i32, phase: u64) {
+        let spot = crate::hud::bar_tip_spot(m);
+        let text = match spot {
+            Some(n) => Some(self.texts.get(18, 1, n as u16 - 1)),
+            None => screen_tip.map(<[u8]>::to_vec),
+        };
+        if let (Some(text), Some(font)) = (text, &self.font) {
+            let mut tip = crate::kit::Tooltip::default();
+            tip.moved(m);
+            tip.update(1000.0, 1, text.split(|&b| b == 0).next().map_or(0, <[u8]>::len), false);
+            tip.draw(f, font, self.white, &Virtual::new(size), &self.palette, &text);
+        }
+        let kind = if spot.is_some() { 1 } else { kind };
+        self.draw_pointer_phase(f, size, [m[0] as i32, m[1] as i32], kind, phase);
+    }
+
+    /// [`Self::draw_pointer`] at phase `MouseFazis` (one a 10 ms UI tick): the cell's row `(phase / 5) % 40`.
+    pub fn draw_pointer_phase(&self, f: &mut Frame, size: [f32; 2], at: [i32; 2], kind: i32, phase: u64) {
         let hot = self.mouse_hotspot.get(kind as usize).copied().unwrap_or(0) as f32;
-        self.pics.blit(f, &Virtual::new(size), MOUSE_PICTURE, [kind as f32 * 20.0, 0.0, 20.0, 20.0], [at[0] as f32 - hot, at[1] as f32 - hot]);
+        let row = ((phase / 5) % 40) as f32;
+        self.pics.blit(f, &Virtual::new(size), MOUSE_PICTURE, [kind as f32 * 20.0, row * 20.0, 20.0, 20.0], [at[0] as f32 - hot, at[1] as f32 - hot]);
     }
 
     /// The starmap's planet and fleet names (re/screens/hud.md §4.2, §4.3).
@@ -723,6 +773,19 @@ impl Hud {
             Some(e) => e.draw(f, font, self.white, &v, &self.palette, time),
             None => self.scroller.draw(f, font, &v, &self.palette, time),
         }
+        // The history drop-down (`GFX_DateMoneyScrollFade` ELF 0x66d160, `GFX_ScrollHistory` exe 0x556ac0): the frame
+        // `FadeKerettelKerekit(0x10c, 0x16, 0x146, n·10 + 5)` in (0, 10, 0) at 60 with a (0, 5, 0) edge at 30, entry i
+        // at (0x10c, 0x1a + 10(i − 1)) centred in 0x36 cells, size 2, colour 0x21.
+        if self.history_open {
+            let n = s.history.len() as f32;
+            crate::kit::fader::fader(f, self.white, &v, [268.0, 22.0, 326.0, n * 10.0 + 5.0], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
+            let c = self.palette.get(0x21).copied().unwrap_or([1.0; 3]);
+            for (i, t) in s.history.iter().enumerate() {
+                font.text(f, &v, t, 268.0, 26.0 + 10.0 * i as f32, 0x36, 2, Align::Field, c, None);
+            }
+        }
+        // `GFX_SelectScreens` after `GFX_IdospeedPenzDatum`, its boxes from `GFX_DateMoneyScrollFade`.
+        self.top.draw(f, font, self.white, &v, &self.palette, &self.top_data);
         // `StarmapGfx2D_3`: the chat ring, on the starmap only.
         self.chat.ring.tick(time as f64 * 1000.0);
         if screen == Screen::Starmap {

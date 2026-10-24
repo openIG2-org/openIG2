@@ -1,0 +1,12 @@
+{
+ "screen": "starmap",
+ "note": "FX2 part 2: the starmap's tooltips with the pointer at rest: the info box (hot-spot 8, its text per mode plus the single-player suffix), the minimap (7), the tanks button (0xa), the production button (0xb).",
+ "events": [
+  {"t": 1, "mouse": [80, 450]},
+  {"t": 120, "mouse": [320, 410]},
+  {"t": 240, "mouse": [196, 454]},
+  {"t": 360, "mouse": [444, 454]}
+ ],
+ "grabs": [100, 220, 340, 460],
+ "tail": 10
+}

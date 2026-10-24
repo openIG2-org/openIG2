@@ -173,9 +173,6 @@ pub struct Outcome {
     pub colony: Option<usize>,
     /// `ScrollHibaUzenet`: a red line on the message ticker.
     pub error: Option<Vec<u8>>,
-    /// The press went to the 3D view outside the build cursor: a left drag pans the camera [deviation: the original
-    /// scrolls at the window's edges; in a war the left drag is the box, §11].
-    pub pan: bool,
     /// `PlaySoundGlobal(0)`.
     pub click: bool,
 }
@@ -257,6 +254,9 @@ pub struct ColonyUi {
     /// `NemSzabadEpiteni`: build orders on their way (the pick list stays shut meanwhile).
     pub pending: i32,
     picker: Option<Picker>,
+    /// The left button held on the view after a press on no building: `GetNearestBuilding`'s building rule runs again
+    /// each frame of the hold (row 39).
+    sweep: bool,
     /// `TutorialEpuletekLetiltva[class]` (0x3c entries, by the tech's `+0x27` building class), set by the window while
     /// a tutorial runs: a locked entry is drawn in colour 0xc and can't be picked (`Colony_Main` ELF lines 170, 187;
     /// `ColonyGfx2D_4` line 76).
@@ -315,6 +315,7 @@ impl Default for ColonyUi {
             all_off: false,
             pending: 0,
             picker: None,
+            sweep: false,
             window: None,
             held: None,
             cell: None,
@@ -417,7 +418,7 @@ impl ColonyUi {
             return base.chain(info).map(|&(id, _)| id).min();
         }
         let own = c.own();
-        let sel = c.building(self.selected).filter(|b| own && b.flags & 0x10 == 0);
+        let sel = c.building(self.target(c)).filter(|b| own && b.flags & 0x10 == 0);
         SPOTS.iter().find(|(id, r)| {
             inside(*r, p)
                 && match id {
@@ -453,6 +454,41 @@ impl ColonyUi {
             k = 7;
         }
         k
+    }
+
+    /// The tooltip at `p` (re/screens/input.md §8): the enabled hot-spot under it (the war's buttons first) and its text,
+    /// `Colony_MouseInit`'s `GetString(3, 1, n)` (exe 0x4680e0); hot-spot 4's is rebuilt every frame
+    /// (`Colony_MouseInit2` exe 0x467990): `(3, 3, 1)`, `(3, 3, 2)` in the planet info mode, with nothing selected
+    /// (`ColonyInfoMod` 0) and in single player `(3, 3, 3)` after it; 0x13 carries the literal "Build". The id is the
+    /// hot-spot's (its slot less 0x1e).
+    pub fn tip(&self, c: &Ctx, p: [f32; 2]) -> Option<(u32, Vec<u8>)> {
+        let w = c.war();
+        let id = c.snap.war_flag.then(|| self.war.button(&w, p)).flatten().or_else(|| self.spot(c, p))?;
+        let line = |n: u16| c.texts.get(3, 1, n);
+        let text = match id {
+            1 | 2 => line(id as u16),
+            5 | 6 | 8 => line(id as u16 - 1),
+            0xa..=0x12 => line(id as u16 - 3),
+            0x13 => b"Build".to_vec(),
+            0x15..=0x1e => line(id as u16 - 5),
+            0x20 => line(0x1a),
+            4 => {
+                let info_mod = if !self.war.selected.is_empty() { 1 } else if self.selected != 0 { 2 } else { 0 };
+                if info_mod != 0 {
+                    c.texts.get(3, 3, 1)
+                } else {
+                    let mut t = c.texts.get(3, 3, if self.info.is_some() { 2 } else { 1 });
+                    if c.state.mem.u8(va::MULTIPLAYER) == 0 {
+                        t.truncate(t.iter().position(|&b| b == 0).unwrap_or(t.len()));
+                        t.extend(c.texts.get(3, 3, 3).into_iter().take_while(|&b| b != 0));
+                        t.truncate(0x46);
+                    }
+                    t
+                }
+            }
+            _ => Vec::new(),
+        };
+        Some((id, text))
     }
 
     /// `ColonyMouse`'s frame counter for the pointer's animation (`MouseFazis`, one a UI tick).
@@ -549,38 +585,41 @@ impl ColonyUi {
         if self.info_press(c, id, p, &mut out) {
             return out;
         }
+        // `IG2_gameUpdate` sets `AktIkon2` for either button and only hot-spot 4 tests which (`Colony_Main` exe
+        // 0x4666d0): a right press on the buttons acts like a left one (FX3; exe trace `rightbutton`).
         match id {
-            1 if left => {
+            1 => {
                 self.window = Some(Confirm::Repair);
                 self.drop_build();
             }
-            2 if left => {
+            2 => {
                 self.window = Some(Confirm::Demolish);
                 self.drop_build();
             }
-            0x11 if left => {
+            0x11 => {
                 self.sounds.push(CLICK);
-                out.commands.push(ColonyOrder::Priority { planet: c.snap.planet as i32, slot: self.selected as i32 }.into());
+                if let Some(slot) = self.switched(c) {
+                    out.commands.push(ColonyOrder::Priority { planet: c.snap.planet as i32, slot: slot as i32 }.into());
+                }
             }
-            5 if left => {
+            5 => {
                 self.sounds.push(CLICK);
                 self.radar(p);
             }
-            6 if left && self.pending == 0 => {
+            6 if self.pending == 0 => {
                 self.sounds.push(CLICK);
                 self.picker = Some(Picker { at: [p[0] + 12.0, p[1] - 17.0], pressed_ms: now_ms, hovered: -1 });
                 self.hover_picker(c, p);
             }
-            0x13 if left => self.start_build(c, &mut out),
+            0x13 => self.start_build(c, &mut out),
             // `Colony_Main`: 300 calls the self-destruct off, 0x27 starts it (again at 399 while it runs).
-            8 | 10 if left => {
+            8 | 10 => {
                 self.sounds.push(CLICK);
                 let planet = c.snap.planet as i32;
                 out.commands.push(if id == 8 { ColonyOrder::SelfDestructOff { planet } } else { ColonyOrder::SelfDestruct { planet } }.into());
             }
             0x14 => {
-                out.pan = left && !self.build_mode && !c.snap.war_flag;
-                self.view_press(c, left, &mut out);
+                self.view_press(c, p, left, &mut out);
             }
             _ => {}
         }
@@ -593,8 +632,17 @@ impl ColonyUi {
         if let Some(m) = &mut self.info {
             m.pointer = p;
         }
-        if self.held == Some(0x14) && self.war.drag(&c.war(), p) {
-            self.selected = 0;
+        if self.held == Some(0x14) {
+            match self.war.drag(&c.war(), p) {
+                // The box (`WarfareKeretesKijeloles`) or a unit: the building selection goes; past 15 pixels the
+                // building rule still picks (and clicks) once, the box undoing it the next frame.
+                Some(true) => {
+                    self.selected = 0;
+                    self.sweep_building(c, true);
+                }
+                Some(false) => self.sweep_building(c, false),
+                None => {}
+            }
         }
         match self.held {
             Some(5) => self.radar(p),
@@ -607,6 +655,7 @@ impl ColonyUi {
     pub fn release(&mut self, c: &Ctx, p: [f32; 2], left: bool, now_ms: u32) -> Outcome {
         let mut out = Outcome::default();
         let held = self.held.take();
+        self.sweep = false;
         let w = self.war.release(&c.war(), left, self.spot(c, p) == Some(0x14));
         if self.info.is_some() && held != Some(4) {
             out.commands = w.commands;
@@ -655,24 +704,18 @@ impl ColonyUi {
         out
     }
 
-    /// A key (`ColonyKeyboardHandler`): `E` the priority switch, Shift+Delete demolishes at once, PageUp/PageDown
-    /// the previous/next own planet's colony.
+    /// A key (`ColonyKeyboardHandler`): `E` the priority switch, the previous/next own planet's colony (the handler's
+    /// Shift+Delete never arrives in the GOG exe: `remapKeyCodes` exe 0x4e4670 drops SDLK_DELETE).
     pub fn key(&mut self, c: &Ctx, k: Key) -> Outcome {
         let mut out = Outcome::default();
         let planet = c.snap.planet as i32;
         match k {
             Key::Priority if c.own() => {
-                if self.selected != 0 {
-                    out.commands.push(ColonyOrder::Priority { planet, slot: self.selected as i32 }.into());
+                if let Some(slot) = self.switched(c) {
+                    out.commands.push(ColonyOrder::Priority { planet, slot: slot as i32 }.into());
                 }
                 // `ColonyKeyboardHandler` (exe 0x462a7e): the click after the (maybe empty) send.
                 self.sounds.push(CLICK);
-            }
-            Key::Demolish if c.own() && c.building(self.selected).is_some() => {
-                out.commands.push(ColonyOrder::Demolish { planet, slot: self.selected as i32 }.into());
-                let r = self.rand.rand() & 3;
-                self.sounds.push(SoundId::new(Table::Gr, 13 + r as u16));
-                self.selected = 0;
             }
             Key::Prev | Key::Next if !c.snap.war_flag => out.colony = next_planet(c, k == Key::Next),
             Key::Info => self.toggle_info(c),
@@ -687,6 +730,24 @@ impl ColonyUi {
             _ => {}
         }
         out
+    }
+
+    /// The building the buttons 1, 2 and 0x11 stand for (`Colony_MouseInit2` exe 0x467990): the selected one, else
+    /// with only one fortress's turrets selected on EN's planet (`OnlyOneFortressSelected`) that fortress.
+    fn target(&self, c: &Ctx) -> usize {
+        match self.war.one_fortress(&c.war()) {
+            Some(b) if self.selected == 0 && c.owner_is_en() => b,
+            _ => self.selected,
+        }
+    }
+
+    /// The building E and hot-spot 0x11 switch (0x132): the selected one, else `GetSelected(0)`'s when it is a defence
+    /// turret (exe 0x462a7e, 0x46708c).
+    fn switched(&self, c: &Ctx) -> Option<usize> {
+        if self.selected != 0 {
+            return Some(self.selected);
+        }
+        self.war.turret_building(&c.war())
     }
 
     /// `TutorialEpuletekLetiltva[Talalmanyok[t].+0x27]`.
@@ -735,8 +796,29 @@ impl ColonyUi {
         }
     }
 
+    /// `Colony_Main` hot-spot 0x14 during the left hold with nothing under the pointer near the press (row 39): the
+    /// building under the pointer is picked again every frame, with the click when it changes; once one is picked
+    /// `Mouse_FelengedesMajdMegvar` stops the hold.
+    fn sweep_building(&mut self, c: &Ctx, boxed: bool) {
+        if !self.sweep || self.build_mode || !c.snap.visible || c.snap.owner as usize != c.en() {
+            return;
+        }
+        let under = self.building_under(c);
+        if under != self.selected {
+            self.sounds.push(CLICK);
+        }
+        self.selected = if boxed { 0 } else { under };
+        if let Some(b) = c.building(under) {
+            if !boxed {
+                self.kind = b.kind as usize;
+                self.can_modify = false;
+            }
+            self.sweep = false;
+        }
+    }
+
     /// The 3D view pressed (hot-spot 0x14): select the building under the pointer, or build at the cursor.
-    fn view_press(&mut self, c: &Ctx, left: bool, out: &mut Outcome) {
+    fn view_press(&mut self, c: &Ctx, p: [f32; 2], left: bool, out: &mut Outcome) {
         if !self.build_mode {
             if left && c.snap.visible && c.snap.owner as usize == c.en() {
                 let under = self.building_under(c);
@@ -745,6 +827,10 @@ impl ColonyUi {
                     self.sounds.push(CLICK);
                 }
                 self.selected = under;
+                self.sweep = under == 0;
+                if !c.snap.war_flag {
+                    self.war.hold(p);
+                }
                 if let Some(b) = c.building(self.selected) {
                     self.kind = b.kind as usize;
                     self.can_modify = false;
@@ -898,8 +984,10 @@ impl ColonyUi {
 
     /// The 3D pass's additions.
     pub fn overlay(&self, s: &ColonySnap, en: i32) -> crate::colony::Overlay {
+        let w = crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false };
         crate::colony::Overlay {
-            marks: self.war.marks(&crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false }),
+            marks: self.war.marks(&w),
+            routes: self.war.routes(&w),
             ghost: self.ghost.filter(|_| self.build_mode),
             selection: (self.selected > 0).then_some((self.selected, self.sel_size, self.sel_alpha)),
             // `ColonyGfx2D_1`: the landing zone while the planet isn't EN's and a unit of any side waits on board
@@ -1002,7 +1090,6 @@ pub enum Key {
     Priority,
     /// I: the planet info mode (spec §12.1).
     Info,
-    Demolish,
     Prev,
     Next,
     /// The war's keys (spec §11.2).
@@ -1245,6 +1332,11 @@ impl ColonyUi {
             line(f, &s, (label.len() * 6) as f32, 32.0, 7, 2, Align::Left, 0x23);
         }
         true
+    }
+
+    /// `ColonySelectEpuletMode`: the build menu's pick list is open.
+    pub fn picking(&self) -> bool {
+        self.picker.is_some()
     }
 
     /// The panel's spin in frames.

@@ -1,0 +1,27 @@
+{
+ "screen": "starmap",
+ "note": "FX1 (re/screens/input.md §1): DoKeyboard's F-keys and their gates from the starmap: F4 research (opening), F5 (research's closing, then design's opening), F8 (design's closing, trade's opening), F2 (trade's closing), F9 info, F10 messages from info, P refused on messages, F2 back, 2 (speed sound), M messages, M again (nothing), Esc out, F3 colony, F2 back, O options, F4 from options (research), F4 again (nothing), Esc (options at once), Esc (back to research). O, M and P are typed characters (SDL_TEXTINPUT).",
+ "events": [
+  {"t": 20, "key": "f4"},
+  {"t": 200, "key": "f5"},
+  {"t": 450, "key": "f8"},
+  {"t": 700, "key": "f2"},
+  {"t": 850, "key": "f9"},
+  {"t": 900, "key": "f10"},
+  {"t": 950, "text": "p"},
+  {"t": 980, "key": "f2"},
+  {"t": 1020, "key": "2"},
+  {"t": 1060, "text": "m"},
+  {"t": 1100, "text": "m"},
+  {"t": 1140, "key": "escape"},
+  {"t": 1180, "key": "f3"},
+  {"t": 1350, "key": "f2"},
+  {"t": 1400, "text": "o"},
+  {"t": 1500, "key": "f4"},
+  {"t": 1700, "key": "f4"},
+  {"t": 1750, "key": "escape"},
+  {"t": 1850, "key": "escape"}
+ ],
+ "grabs": [100, 300, 560, 800, 870, 930, 1000, 1080, 1160, 1300, 1380, 1450, 1650, 1800, 1950],
+ "tail": 30
+}

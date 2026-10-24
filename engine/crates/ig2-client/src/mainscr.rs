@@ -197,6 +197,11 @@ pub struct Ship {
 pub const METMAX: f32 = -50000.0;
 /// `METKOZ` (ELF 0x1184638): where a meteor has faded in.
 pub const METKOZ: f32 = -48000.0;
+/// The scenario ring's release acts this many UI ticks late [obs: `ScenarioGombraRanyomtak`'s resets land between UI
+/// ticks 658 and 659 for a release that reached the screen at 653, `tools/trace/probes/mainscr-fades.js`, mainscr.md
+/// §13.2; the other box rings (the race choice's) and the list's presses act at once; cause unknown, perhaps the
+/// list's load].
+pub const SCENARIO_RELEASE_TICKS: u8 = 5;
 
 /// The main menu's state.
 #[derive(Debug, Clone)]
@@ -216,6 +221,8 @@ pub struct MainScr {
     pub meteor_timer: i32,
     /// `AktKijelolt` (0xbbb3dc): the ring under the pointer this frame.
     pub hovered: Option<usize>,
+    /// `Mouse_Tipus` 1 this frame: a ring, or any box (`Mouse_Szoveg_Set(…, 1)`) under the pointer.
+    pub hand: bool,
     pub meteors: [Meteor; 3],
     pub ships: [Ship; 8],
     /// The UI ticks run.
@@ -228,6 +235,8 @@ pub struct MainScr {
     pub name: Option<NameEntry>,
     /// Our MP screens are up (`mp_lobby`, ADR 0014): the rings are flown out (`Cel` 6) as for the scenario list.
     pub mp: bool,
+    /// The scenario ring released, acting [`SCENARIO_RELEASE_TICKS`] UI ticks later: the ring and the ticks left.
+    released: Option<(usize, u8)>,
     pub player: Vec<u8>,
     /// The exit animation (`Mode_Kilepes`, `MainScrKilepesValtozo` 100 → 0) and what follows it.
     pub leaving: Option<(f32, Start)>,
@@ -294,6 +303,7 @@ impl MainScr {
             ship_timer: 0,
             meteor_timer: 0,
             hovered: None,
+            hand: false,
             meteors,
             ships: [Ship::default(); 8],
             ticks: 0,
@@ -301,6 +311,7 @@ impl MainScr {
             scenario: None,
             name: None,
             mp: false,
+            released: None,
             player: b"Player".to_vec(),
             leaving: None,
             start: None,
@@ -408,6 +419,15 @@ impl MainScr {
         if let Some(sc) = &mut self.scenario {
             sc.hover(at);
         }
+        // Every main-menu box passes cursor type 1: the scenario panel's 0x15..=0x27, the race spheres 0xe..=0x10.
+        self.hand = self.hovered.is_some() || self.scenario.as_ref().is_some_and(|sc| sc.spot_at(at) != 0) || self.race_box_at(at).is_some();
+    }
+
+    /// The race box (0xe..=0x10) under `at`: the 160 × 160 square round the sphere's projected centre, while they're on.
+    fn race_box_at(&self, at: [f32; 2]) -> Option<usize> {
+        let r = self.race.as_ref()?;
+        let (x, y) = (at[0].floor(), at[1].floor());
+        (0..3).find(|&k| r.boxes_on() && self.race_boxes[k].is_some_and(|c| (c[0] - 80.0) as i32 as f32 <= x && x < (c[0] - 80.0) as i32 as f32 + 160.0 && (c[1] - 80.0) as i32 as f32 <= y && y < (c[1] - 80.0) as i32 as f32 + 160.0))
     }
 
     /// A left press at `at` (the rings that act on `Mouse_Lenyom && Mouse_Bal` in `Update3D`); the box rings act on
@@ -441,9 +461,8 @@ impl MainScr {
                 return None;
             }
             // A race box (0xe..0x10): highlight, or confirm (`MaxMainKorok = 3; Cel = 1.3`).
-            let (x, y) = (at[0].floor(), at[1].floor());
-            let hit = (0..3).find(|&k| r.boxes_on() && self.race_boxes[k].is_some_and(|c| (c[0] - 80.0) as i32 as f32 <= x && x < (c[0] - 80.0) as i32 as f32 + 160.0 && (c[1] - 80.0) as i32 as f32 <= y && y < (c[1] - 80.0) as i32 as f32 + 160.0));
-            if let Some(k) = hit {
+            if let Some(k) = self.race_box_at(at) {
+                let Some(r) = &mut self.race else { return None };
                 if r.press_race(k, &self.blurbs) {
                     self.rings = 3;
                     self.cel = 1.3;
@@ -478,13 +497,34 @@ impl MainScr {
         }
     }
 
-    /// A left release at `at` on a box ring (`Mouse_Szoveg_Set(.., 1, 1)`: `MainScr_Main` sees `AktIkon` once).
+    /// A left release at `at` on a box ring (`Mouse_Szoveg_Set(.., 1, 1)`: `MainScr_Main` sees `AktIkon` once); the
+    /// scenario ring acts [`SCENARIO_RELEASE_TICKS`] UI ticks later ([`MainScr::due`]).
     pub fn release(&mut self, at: [f32; 2]) -> Option<Act> {
         if let Some(sc) = &mut self.scenario {
             sc.release();
             return None;
         }
         let i = self.ring_at(at)?;
+        if (self.menu, i) == (Menu::Single, 1) {
+            self.released = Some((i, SCENARIO_RELEASE_TICKS));
+            return None;
+        }
+        self.act_released(i)
+    }
+
+    /// After every UI tick: the delayed scenario ring's action once its ticks have run out.
+    pub fn due(&mut self) -> Option<Act> {
+        let (i, n) = self.released.as_mut()?;
+        if *n > 1 {
+            *n -= 1;
+            return None;
+        }
+        let i = *i;
+        self.released = None;
+        self.act_released(i)
+    }
+
+    fn act_released(&mut self, i: usize) -> Option<Act> {
         match (self.menu, i) {
             (Menu::Main, 1) => Some(Act::Quit),
             (Menu::Main, 2) => {
@@ -539,6 +579,7 @@ impl MainScr {
     /// Esc (`MainScr_ESCPressedWhenMultiplayerselect` exe 0x4fe780, the ring menus' case): with the rings at rest,
     /// back to the main set through a fly-out, also from the main set itself; never quits.
     pub fn escape(&mut self) {
+        self.released = None;
         if let Some(sc) = &mut self.scenario {
             if !sc.closing {
                 sc.cancel();
@@ -717,6 +758,8 @@ impl MainScr {
     /// §5.3 ships.
     fn tick_ships(&mut self, r: &mut MsvcRand) {
         let mut timer = self.ship_timer;
+        // While leaving the ships speed up too: `(1 − K/100)·5 + 1` (exe 0x4f65f0, `Mode_Kilepes`).
+        let k = self.exit_k().map_or(1.0, |k| (1.0 - k / 100.0) * 5.0 + 1.0);
         for i in 0..8 {
             let s = &mut self.ships[i];
             let p = &mut s.pos;
@@ -739,7 +782,7 @@ impl MainScr {
             s.roll = s.roll.clamp(-2.0, 2.0);
             if (s.pos[2] - s.target[2]).abs() >= 50.0 {
                 for c in 0..3 {
-                    s.pos[c] += s.speed[c];
+                    s.pos[c] += s.speed[c] * k;
                 }
             } else if timer > 200 {
                 self.respawn_ship(i, r);
@@ -762,8 +805,9 @@ impl MainScr {
         let (cam, a) = self.cam;
         // The eye in the world: the inverse of `CreateMatrix(elforgatas, 0, 0)` (a rotation: its transpose).
         let m = crate::scene::create_matrix(a, 0.0, 0.0);
+        // Plus `forgaspont` (0xde0130: `q·5` along x while leaving).
         let p = [
-            m[0] * cam[0] + m[3] * cam[1] + m[6] * cam[2],
+            m[0] * cam[0] + m[3] * cam[1] + m[6] * cam[2] + self.exit_q().map_or(0.0, |q| q * 5.0),
             m[1] * cam[0] + m[4] * cam[1] + m[7] * cam[2],
             m[2] * cam[0] + m[5] * cam[1] + m[8] * cam[2],
         ];

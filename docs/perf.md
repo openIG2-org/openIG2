@@ -13,7 +13,7 @@ cd engine
 cargo run --release -p ig2-client -- --save path/to/save.sav
 ```
 
-Always `--release`. `V` toggles vsync in the window; `IG2_VSYNC=0` starts with it off.
+Always `--release`. `IG2_VSYNC=0` starts with vsync off (the classic client has no vsync key, re/deviations.md #159; the tour's `vsync` step toggles it).
 
 ## Measuring: `IG2_PROFILE`
 
@@ -103,3 +103,18 @@ our crates (`[profile.dev.package."*"]` already optimises the dependencies).
 `replay-campaign-opening-c1-x16` tick 11: 93). It fails the same way with `save.rs` as on `main` (checked 2026-10-24), so
 it predates this change. Captures: colony 42 and research unchanged or better; the SpaceWar sequence's weapons region
 better, its console region within 0.3 of the last stored run (another client build).
+
+## The live overlay background (ADR 0015, 2026-10-24)
+
+Live mode draws the starmap or colony behind the overlay screens every frame (phase `backdrop`). Same set-up as
+above, `IG2_PROFILE_TOUR=vsync,-,F9,-,F4,-,F5,-,F8,…`, `--background classic` vs `live`:
+
+| Screen | fps classic | fps live | worst classic | worst live | `backdrop` ms/frame live |
+|---|---|---|---|---|---|
+| Info | 2152 | 826 | 2.4 ms | 5.4 ms | 0.61 |
+| Research | 1254 | 586 | 3.4 ms | 4.2 ms | 0.69 |
+| Design | 1596 | 735 | 2.8 ms | 3.5 ms | 0.63 |
+| Trade | 2089 | 820 | 2.5 ms | 3.6 ms | 0.62 |
+
+The depth buffer is cached per target size (`render3d::Pipe3d::depth`): with a single one the backdrop and the
+screens' offscreen models recreated it twice a frame (live info was at 344 fps).

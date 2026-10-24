@@ -15,6 +15,7 @@ use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 use crate::font::{Align, Font, Virtual};
 use crate::kit::fader::{fader, kirak_fader};
 use crate::kit::FaderDesign;
+use crate::lighting;
 use crate::orders::Selection;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, Target, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
@@ -714,6 +715,11 @@ impl Panels {
     /// A press on the screen (`Mouse_Lenyom`): the panels' hot-spots. `None` = not theirs.
     pub fn press(&mut self, state: &SaveState, sel: &Selection, at: [f32; 2], left: bool) -> Option<Vec<Action>> {
         let id = self.spot(state, sel, at)?;
+        self.press_id(state, sel, id, at, left)
+    }
+
+    /// Hot-spot `id` pressed (also `AktIkonKell`'s presses without the pointer: Esc's 9). `None` = not theirs.
+    pub fn press_id(&mut self, state: &SaveState, sel: &Selection, id: u32, at: [f32; 2], left: bool) -> Option<Vec<Action>> {
         if self.transfer.is_some() && (0x44..=0x52).contains(&id) && state.mem.i32(ig2_sim::save::va::TUTORIAL_EVENT) == 5 {
             self.split_ok = true;
         }
@@ -1401,9 +1407,10 @@ impl PanelModels {
         self.units.get(&key).and_then(|l| l.as_ref())
     }
 
-    /// Render the panels' models into their texture (`None` when nothing is shown). `size` = the window in pixels.
+    /// Render the panels' models into their texture (`None` when nothing is shown). `size` = the window in pixels,
+    /// `cam` the starmap camera's rotation (its rows), which turns the scene's light.
     #[allow(clippy::too_many_arguments)]
-    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, p: &Panels, state: &SaveState, sel: &Selection, size: [f32; 2]) -> Option<TexId> {
+    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, p: &Panels, state: &SaveState, sel: &Selection, cam: &[[f32; 3]; 3], size: [f32; 2]) -> Option<TexId> {
         let show_prod = p.p_frame != 0 && (p.p_moving || p.product);
         if !show_prod && p.transfer.is_none() && p.info.is_none() {
             return None;
@@ -1412,6 +1419,11 @@ impl PanelModels {
         let mut draws = Vec::new();
         let e = en(state);
         let races = state.races();
+        // Every panel model is lit per vertex by the starmap scene's lights (`Init3dStarmap`: ambient 0x404040, the
+        // parallel 0x808080 at (10, 10, −10)), the light turned into camera space by the camera's rotation; the
+        // console's two side lights don't reach them [obs: light probe on the fleet panel, deviations #47].
+        let l = [10.0, 10.0, -10.0];
+        let lights = lighting::Lights::default().ambient(0x404040).parallel(0x808080, std::array::from_fn(|i| cam[i][0] * l[0] + cam[i][1] * l[1] + cam[i][2] * l[2]));
         if show_prod {
             let frame = p.p_frame.clamp(0, 30) as usize;
             if let std::collections::hash_map::Entry::Vacant(slot) = self.prod.entry(frame) {
@@ -1447,7 +1459,8 @@ impl PanelModels {
                         self.texture(r, install, tex.as_deref())
                     })
                     .collect();
-                bake(&m, &place.matrix, place.translation, &texs, 1.0, &mut dynamic, &mut draws);
+                // `Init3dStarmap` gives `gyartas` an ambient 0x0a0a0a of its own, after the scene's lights.
+                bake(&m, &place.matrix, place.translation, &texs, 1.0, &lights.clone().ambient(0x0a0a0a), &mut dynamic, &mut draws);
             }
             // The head units (`ProductGFX`): the ship line's at (−540, −350, −1600) ×0.375, the vehicles' at
             // (540, −350, −1600) ×0.28, turning 0.05 a frame, as solid as the unit is built (5..95 %).
@@ -1464,7 +1477,7 @@ impl PanelModels {
                     if let Some(u) = self.unit(r, install, rules, hull, digit, owner) {
                         let m = scene::mul(&spin, &Placement::add_to_scene(u.model.origin, s).matrix).map(|x| x * 1024.0);
                         let (model, texs) = (u.model.clone(), u.texs.clone());
-                        bake(&model, &m, at, &texs, t, &mut dynamic, &mut draws);
+                        bake(&model, &m, at, &texs, t, &lights, &mut dynamic, &mut draws);
                     }
                 }
             }
@@ -1486,8 +1499,8 @@ impl PanelModels {
                     let (model, texs) = (u.model.clone(), u.texs.clone());
                     // An empty side's model is three quarters transparent.
                     let a = |n: i32| if n == 0 { 0.25 } else { 1.0 };
-                    bake(&model, &m, [x - 229.0, y, -600.0], &texs, a(row.left), &mut dynamic, &mut draws);
-                    bake(&model, &m, [x + 99.0, y, -600.0], &texs, a(row.right), &mut dynamic, &mut draws);
+                    bake(&model, &m, [x - 229.0, y, -600.0], &texs, a(row.left), &lights, &mut dynamic, &mut draws);
+                    bake(&model, &m, [x + 99.0, y, -600.0], &texs, a(row.right), &lights, &mut dynamic, &mut draws);
                 }
             }
         }
@@ -1496,7 +1509,7 @@ impl PanelModels {
                 if let Some(u) = self.unit(r, install, rules, pose.hull, pose.digit, pose.owner) {
                     let m = scene::mul(&pose.rot, &Placement::add_to_scene(u.model.origin, pose.scale).matrix).map(|x| x * 1024.0);
                     let (model, texs) = (u.model.clone(), u.texs.clone());
-                    bake(&model, &m, pose.at, &texs, 1.0, &mut dynamic, &mut draws);
+                    bake(&model, &m, pose.at, &texs, 1.0, &lights, &mut dynamic, &mut draws);
                 }
             }
         }
@@ -1514,7 +1527,7 @@ impl PanelModels {
         let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
         let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
         f.scene = Some(Scene3d {
-            gamma: false,
+            gamma: true,
             shadow: None,
             uniforms: SceneUniforms {
                 view,
@@ -1543,7 +1556,9 @@ pub(crate) fn tilt() -> M3 {
 }
 
 /// Bake a camera-fixed model (`SetRelative(false)`) at `at` with matrix `m`; `alpha` < 1 draws it as glass.
-fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], alpha: f32, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+/// Bake a camera-fixed model with the engine's vertex colours (the shader's pre-lit path: no normal).
+#[allow(clippy::too_many_arguments)]
+fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], alpha: f32, lights: &lighting::Lights, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     for (pi, p) in model.parts.iter().enumerate() {
         let start = out.len() as u32;
         let a = match p.look {
@@ -1552,12 +1567,8 @@ fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], alpha: f32, out: &mut Vec
         };
         for v in &p.verts {
             let q = scene::apply(m, v.pos);
-            out.push(MeshVertex {
-                pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]],
-                normal: scene::normalise(scene::apply(m, v.normal)),
-                uv: v.uv,
-                color: [1.0, 1.0, 1.0, a],
-            });
+            let c = lights.rgb(lighting::normal(m, v.lnormal));
+            out.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], a] });
         }
         let tex = texs.get(pi).copied().unwrap_or(texs.first().copied().unwrap_or(TexId(0)));
         draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });

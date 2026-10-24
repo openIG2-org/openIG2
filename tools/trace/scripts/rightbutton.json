@@ -1,0 +1,12 @@
+{
+ "screen": "starmap",
+ "note": "FX3 probe: the right button on the top bar's speed spots (x1 at t 200, x3 at t 300, x2 with the left at t 400 as the control), and on the message line's left action (t 500). Does a right press act like a left one (Mouse_Lenyom is any button)?",
+ "events": [
+  {"t": 200, "press": [20, 5], "button": 3},
+  {"t": 300, "press": [65, 5], "button": 3},
+  {"t": 400, "press": [40, 5]},
+  {"t": 500, "press": [5, 5], "button": 3}
+ ],
+ "grabs": [250, 350, 450, 550],
+ "tail": 30
+}

@@ -352,7 +352,8 @@ pub struct Models {
 pub struct Panel {
     icons: Vec<Option<Mesh>>,
     no: Option<Mesh>,
-    clock: HashMap<usize, Option<Mesh>>,
+    /// `ora.xvb` per `SetFrame` value (8.8 fixed point).
+    clock: HashMap<i32, Option<Mesh>>,
     /// `felallastexture` (`final2x.bmp`): the buttons' first sub-mesh in the formation phase.
     final2x: Option<crate::render::TexId>,
 }
@@ -364,8 +365,12 @@ impl Panel {
         Self { icons, no: Mesh::load(r, install, "vector/spacewar/", "no.xvb", "textures/spacewar/"), clock: HashMap::new(), final2x }
     }
 
-    fn clock(&mut self, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: usize) {
-        self.clock.entry(frame).or_insert_with(|| Mesh::load_at(r, install, "ora.xvb", frame));
+    fn clock(&mut self, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: f32) {
+        self.clock.entry(fixed_frame(frame)).or_insert_with(|| Mesh::load_lerp(r, install, "ora.xvb", frame));
+    }
+
+    fn clock_at(&self, frame: f32) -> Option<&Mesh> {
+        self.clock.get(&fixed_frame(frame)).and_then(Option::as_ref)
     }
 }
 
@@ -373,6 +378,20 @@ impl Mesh {
     /// A `vector/spacewar/` model posed at animation frame `frame` (`SetFrame`).
     fn load_at(r: &mut crate::render::Renderer, install: &ig2_formats::Install, name: &str, frame: usize) -> Option<Self> {
         let m = crate::scene::Model::load_at(install, "vector/spacewar/", name, "textures/spacewar/", Some(frame)).ok()?;
+        let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.add_texture(&crate::assets::Image::load(install, p.texture.as_deref()?).ok()?)))).collect();
+        Some(Mesh { origin: m.origin, parts })
+    }
+
+    /// A `vector/spacewar/` model at a fractional `SetFrame` value: the two frames around it blended (8.8 fixed point,
+    /// as `kirak` 0x60e160 lerps the vertex frames).
+    fn load_lerp(r: &mut crate::render::Renderer, install: &ig2_formats::Install, name: &str, frame: f32) -> Option<Self> {
+        let at = |f| crate::scene::Model::load_at(install, "vector/spacewar/", name, "textures/spacewar/", Some(f)).ok();
+        // `load_at` clamps a frame past the last one, so the key count only needs to be large here.
+        let (f0, f1, w) = crate::scene::frame_keys(frame, usize::MAX);
+        let mut m = at(f0)?;
+        if w > 0.0 {
+            m = m.lerp(&at(f1)?, w);
+        }
         let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.add_texture(&crate::assets::Image::load(install, p.texture.as_deref()?).ok()?)))).collect();
         Some(Mesh { origin: m.origin, parts })
     }
@@ -569,10 +588,11 @@ struct Fixed<'a> {
 /// Draws camera-fixed models into a texture over the virtual rectangle `rect` (the way the starmap's panel is drawn,
 /// `starmap_hud::Console`), to lay over the scene: they sit in front of everything [inf]. Lit by their own ambient
 /// light 0x808080 and a front light [inf].
-fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::render::Target>, items: &[Fixed], rect: [f32; 4]) -> Option<crate::render::TexId> {
+fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::render::Target>, items: &[Fixed], rect: [f32; 4], kering: f32) -> Option<crate::render::TexId> {
     if items.is_empty() {
         return None;
     }
+    let lights = crate::starmap_hud::scene_lights(&[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], kering);
     let mut dynamic = Vec::new();
     let mut draws = Vec::new();
     for it in items {
@@ -584,11 +604,16 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
             let start = dynamic.len() as u32;
             for v in verts {
                 let e = crate::scene::apply(&model, v.pos).map(|x| x * 1024.0);
+                // A camera-fixed record's lighting normal: its rotation (+0x64) applied to the file normal with z negated,
+                // against the lights' own vectors (the chain stops at the record) [obs fx8b: weapons 2.6-4.4; turned by
+                // the camera 4.3-8.6].
+                let w = crate::scene::normalise(crate::scene::apply(&rot, [v.normal[0], v.normal[1], -v.normal[2]]));
+                let c = crate::starmap_hud::engine_light(&lights, [w[0], w[1], -w[2]]);
                 dynamic.push(crate::render3d::MeshVertex {
                     pos: [e[0] + it.at[0], e[1] + it.at[1], e[2] + it.at[2]],
-                    normal: crate::scene::normalise(crate::scene::apply(&rot, v.normal)),
+                    normal: [0.0; 3],
                     uv: v.uv,
-                    color: [1.0, 1.0, 1.0, it.opacity],
+                    color: [c[0], c[1], c[2], it.opacity],
                 });
             }
             draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: it.opacity < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
@@ -606,17 +631,16 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
         [0.0, 0.0, -1.0, 0.0],
     ];
     let view = std::array::from_fn(|c| std::array::from_fn(|k| rows[k][c]));
-    let light = crate::scene::normalise([0.0, -0.35, 1.0]);
     let mut f = crate::render::Frame::new([0.0, 0.0, 0.0, 0.0]);
     f.scene = Some(crate::render3d::Scene3d {
-        gamma: false,
+        gamma: true,
         shadow: None,
         uniforms: crate::render3d::SceneUniforms {
             view,
             eye: [0.0; 4],
-            light: [light[0], light[1], light[2], 0.0],
-            ambient: [0.502, 0.502, 0.502, 0.0],
-            sun: [0.25, 0.25, 0.25, 0.0],
+            light: [0.0, 0.0, 1.0, 0.0],
+            ambient: [0.0; 4],
+            sun: [0.0; 4],
             fog: [0.0; 4],
             fog_range: [1e9, 2e9, 0.0, 1e9],
         },
@@ -1223,8 +1247,8 @@ impl<'a> Scene<'a> {
             // The formation phase (`fegyverpanelfrissit`'s other branch): every button's clock at frame 0 on the
             // chosen formation (`+0x3430`), 32 on the others; no overlay.
             if let Some(pick) = self.shown.formation {
-                let fr = if pick == i as i32 { 0 } else { 32 };
-                if let Some(Some(m)) = panel.clock.get(&fr) {
+                let fr = if pick == i as i32 { 0.0 } else { 32.0 };
+                if let Some(m) = panel.clock_at(fr) {
                     items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None });
                 }
                 continue;
@@ -1233,7 +1257,7 @@ impl<'a> Scene<'a> {
                 continue;
             }
             // The clock shows only while the group reloads [obs: none at a full 0xaa].
-            if let (true, Some(Some(m))) = (sl.reload < 0xaa, panel.clock.get(&clock_frame(sl.reload))) {
+            if let (true, Some(m)) = (sl.reload < 0xaa, panel.clock_at(clock_frame(sl.reload))) {
                 items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None });
             }
             let overlay = match sl.state {
@@ -1288,9 +1312,16 @@ fn planet_light() -> [f32; 3] {
     [-10.0, -10.0, 10.0]
 }
 
-/// `ora.xvb`'s frame for a reload `0..0xaa`: `SetFrame((reload/10)·1.65)` (int division, the frame truncated).
-fn clock_frame(reload: i32) -> usize {
-    ((reload / 10) as f32 * 1.65) as usize
+/// `ora.xvb`'s frame for a reload `0..0xaa`: `SetFrame((reload/10)·1.65)` (int division; the fraction blends the
+/// next vertex frame).
+fn clock_frame(reload: i32) -> f32 {
+    (reload / 10) as f32 * 1.65
+}
+
+/// `SetFrame`'s 8.8 fixed-point value of a frame.
+fn fixed_frame(frame: f32) -> i32 {
+    let (f0, _, w) = crate::scene::frame_keys(frame, usize::MAX);
+    (f0 as i32) * 256 + (w * 256.0) as i32
 }
 
 /// The battle screen's own models: the ships, the weapon column, the control panel under the ambient light, the star
@@ -1357,16 +1388,16 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
         gfx.panel.clock(r, install, clock_frame(sl.reload));
     }
     if s.formation.is_some() {
-        gfx.panel.clock(r, install, 0);
-        gfx.panel.clock(r, install, 32);
+        gfx.panel.clock(r, install, 0.0);
+        gfx.panel.clock(r, install, 32.0);
     }
     let virt = crate::font::Virtual::new(size);
     let mut column = Vec::new();
     scene.weapons(&mut column, &gfx.panel);
-    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT), COLUMN_RECT);
+    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT, s.kering), COLUMN_RECT);
     let mut info = Vec::new();
     scene.info_model(&mut info, s.battle, s.spin, 1.0 - s.fade);
-    let info_tex = fixed_texture(r, &mut gfx.info_target, &info, INFO_MODEL_RECT);
+    let info_tex = fixed_texture(r, &mut gfx.info_target, &info, INFO_MODEL_RECT, s.kering);
     if let Some(c) = gfx.console.as_mut() {
         c.relight(r, s.kering, &cam.matrix());
     }
@@ -1505,9 +1536,9 @@ pub fn go_live(world: &mut crate::world::World, battle: Battle) {
 }
 
 /// `--screen spacewar --battle FILE --script S`: the dumped battle as a live battle slot, entered from the save's
-/// starmap camera and run by the script on the 10 ms UI clock (the sim's ticks every 50 ms while unpaused,
-/// `FRISSIT_SpaceWar2` every UI tick, a frame per UI tick); a PNG per grab, and a log of what the screen sent (orders,
-/// clicks) on stdout for the (action → sound) table.
+/// starmap camera and run by the script on the 10 ms UI clock (the sim's ticks every 50 ms while unpaused, on the
+/// frames `t % 5 == --sim-phase`; `FRISSIT_SpaceWar2` every UI tick, a frame per UI tick); a PNG per grab, and a log
+/// of what the screen sent (orders, clicks) on stdout for the (action → sound) table.
 #[allow(clippy::too_many_arguments)]
 fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud, battle: Battle, cam: [f32; 5], kering: f32, script: &crate::script::Script) -> Result<(), String> {
     use crate::script::Input;
@@ -1574,7 +1605,7 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
                 world.game.set_pause(true, false);
             }
         }
-        if tick % 5 == 0 && !world.paused() {
+        if tick % 5 == o.sim_phase && !world.paused() {
             world.tick();
         }
         // The window pixel under the pointer (`MainCallBackEventHandler`'s mapping backwards, as the tracer's).

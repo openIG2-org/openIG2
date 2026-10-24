@@ -961,3 +961,82 @@ fn battle_setup_matches_trace() {
     );
     assert_eq!(run.bad, 0);
 }
+
+/// Free-running replay (no per-tick resync): the port steps its own state from the first recorded tick on and is
+/// compared with the exe after every tick; the exe's between-tick writes are not applied. `SPWC_FREE=<trace path>`
+/// (one `spwc-*.jsonl`); prints the first ticks that differ. A diagnostic, not part of the regression suite.
+#[test]
+fn battle_free_run() {
+    let Some(path) = std::env::var_os("SPWC_FREE").map(PathBuf::from) else { return };
+    let mut mem = Mem::default();
+    let mut st: Option<Statics> = None;
+    let mut port: Option<(Battle, Streams, RawWorld)> = None;
+    let (mut ticks, mut bad) = (0, 0);
+    for line in std::io::BufReader::new(std::fs::File::open(&path).unwrap()).lines() {
+        let e: Value = serde_json::from_str(&line.unwrap()).unwrap();
+        match e["k"].as_str().unwrap() {
+            "init" => {
+                mem = Mem::default();
+                mem.apply(&e["regions"]);
+                st = Some(statics(&e["statics"]));
+            }
+            "between" => {
+                if std::env::var_os("SPWC_FREE_BETWEEN").is_some() {
+                    let before = decode(&mem, st.as_ref().unwrap());
+                    mem.apply(&e["d"]);
+                    let after = decode(&mem, st.as_ref().unwrap());
+                    let mut errs = Vec::new();
+                    compare(&before, &after, &mut errs);
+                    if !errs.is_empty() {
+                        eprintln!("between before tick {}: {errs:#?}", e["n"]);
+                    }
+                } else {
+                    let before = decode(&mem, st.as_ref().unwrap());
+                    mem.apply(&e["d"]);
+                    let after = decode(&mem, st.as_ref().unwrap());
+                    for (k, (x, y)) in before.sides.iter().zip(&after.sides).enumerate() {
+                        if x.strength != y.strength {
+                            eprintln!("strength written before tick {}: side {k} {} -> {}", ticks + 1, x.strength, y.strength);
+                        }
+                    }
+                }
+            }
+            "step" => {
+                let st = st.as_ref().unwrap();
+                let (b, rng, wd) = port.get_or_insert_with(|| {
+                    let mut rng = Streams::default();
+                    let seeds = mem.get("seeds").to_vec();
+                    for i in 0..21 {
+                        rng.set_state(i, u32_at(&seeds, 4 * i));
+                    }
+                    (decode(&mem, st), rng, world(&mem, st))
+                });
+                let (rules, words) = rules(&mem, st);
+                let mut events = Vec::new();
+                let mut t = Tick { rules: &rules, weapon_words: &words, rng, world: wd, events: &mut events };
+                b.step(&mut t);
+                mem.apply(&e["d"]);
+                let mut after = decode(&mem, st);
+                let mut mine = b.clone();
+                tidy(&mut mine);
+                tidy(&mut after);
+                let mut errs = Vec::new();
+                compare(&mine, &after, &mut errs);
+                if ticks == 1 && !errs.is_empty() {
+                    eprintln!("scalars port {:?}
+  exe {:?}", (b.human_retreated, b.ai_retreated, b.victory, b.f2d84, b.f2d86, b.finished), (after.human_retreated, after.ai_retreated, after.victory, after.f2d84, after.f2d86, after.finished));
+                }
+                errs.retain(|x| !x.starts_with("scalars"));
+                ticks += 1;
+                if !errs.is_empty() {
+                    bad += 1;
+                    if bad <= 3 {
+                        eprintln!("free run tick {} (n {}): {errs:#?}", ticks, e["n"]);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    eprintln!("free run: {ticks} ticks, {bad} differ");
+}

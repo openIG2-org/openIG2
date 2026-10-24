@@ -1,0 +1,10 @@
+{
+ "screen": "info",
+ "note": "FX3 probe on the info screen: a right press on chart button 17 (t 120; Info_Main clicks and picks the chart on Mouse_Lenyom, either button), a right press on the star-log button 15 (t 250).",
+ "events": [
+  {"t": 120, "press": [370, 320], "button": 3},
+  {"t": 250, "press": [370, 440], "button": 3}
+ ],
+ "grabs": [110, 200, 330],
+ "tail": 20
+}

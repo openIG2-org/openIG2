@@ -151,9 +151,9 @@ of the research ball, mode 1 px at every size]; the client drew `k` px (4–5 px
 ball 12.9 → 6.3, the diplomacy heads 9.3/8.2 → 2.4/2.0, the research/design strips 0.7 → 0.1.
 
 ### 7.4 Left open
-- The main menu (and Options' load-only mode over it) at 16:9: the big `texcsor.bmp` billboard (mainscr.md §2 step
-  6) reaches the window's left edge in ig2.exe and ends inside the left strip in the client (strip luma 5–6 vs 1.3;
-  the right strip matches). Cause unknown (re/deviations.md 214).
+- The main menu at 16:9 (fixed 2026-10-24, deviation 214): the `texcsor.bmp` billboard draws at its null box's position plus
+  its particle's own (mainscr.md §3 step 6), so it sits 400 units further left and reaches the window's edge; every 16:9 main
+  grab is now under 6.
 - SpaceWar: `run_spwc.py` takes no window size yet; the client at 16:9 fills the strips with the battle and keeps the
   HUD in the frame (no exe capture to compare). Help, credits, demo and the tutorial overlay have no capture entry
   or client snapshot path yet.

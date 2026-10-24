@@ -83,8 +83,8 @@ render list `GFX_AllandoInit1` (top bar), `HelpGfx2D_1` + `InitFader1`, `HelpGfx
 `f = helpframe / 100` (f32), `g = 1 − f`.
 
 `GFX_Help`: `hlpELINDULT = 1`; a release ends the drag (`HelpCsuszkaMode = 0`); `GFX_DateMoneyScrollFade` (the top bar);
-`Copy3hatterkep(0x35, grey 255 − min(128, (int)(f·128)))` (`DESIG_U3.BMP`'s slot; black in the GOG captures, as on
-Options); the scene's 2D passes; then, while not closing, the hover glows of the text and topic boxes:
+`Copy3hatterkep(0x35, grey 255 − min(128, (int)(f·128)))` (`DESIG_U3.BMP`'s slot; black in the bare-jump GOG captures only, which have no picture; otherwise the screen before, see
+[`overlay-background.md`](overlay-background.md)); the scene's 2D passes; then, while not closing, the hover glows of the text and topic boxes:
 `FadeKerettelKerekitDesign` with `helpf`'s colour scale `s0` / `s1` (the box colours `(0, s·54, s·90)` fill and
 `(0, s·90, s·130)` edge, fill transparency `g·155 + 100`, edge `g·225 + 30`), the scan band at `fmod(helpf clock, 1)`,
 and each box's glow `1 − glow[i]` with its style while it runs (`helpf` +0x3e0/+0x458).

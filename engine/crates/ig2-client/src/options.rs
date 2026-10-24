@@ -400,6 +400,11 @@ impl OptionsScreen {
         }
     }
 
+    /// `GFX_Options`' `F`: `OptionsFelfadeles`, or `KilepesValtozo` while leaving.
+    pub fn fade_level(&self) -> f32 {
+        self.leaving.as_ref().map_or(self.fade, |(k, ..)| *k as f32)
+    }
+
     /// Leave for `act` through the fade-out (`Options_Kilep`: `KilepesValtozo = (int)OptionsFelfadeles`).
     fn leave(&mut self, act: Act) {
         if self.leaving.is_none() {
@@ -715,6 +720,8 @@ impl OptionsScreen {
         let under = if self.held { 0 } else { self.spot_at(self.tip.mouse) };
         let text = self.tip_text(d.texts, under);
         self.tip.update(d.now_ms, if text.is_empty() { 0 } else { under }, text.len(), self.held);
+        // The pointer's hand: every spot passes cursor 1, a text or not.
+        self.tip.under = under;
         let shown = self.tip_text(d.texts, self.tip.shown);
         self.tip.draw(f, d.font, d.white, &d.v, d.palette, &shown);
     }
@@ -1011,8 +1018,9 @@ impl Headless {
 }
 
 /// `ig2-client --snapshot OUT --screen options [--ui-frames N] [--mouse X,Y] [--script S]`: the Options screen
-/// opened on the save's game (black behind it, the top bar over it) after N UI ticks of 10 ms, one drawn frame each;
-/// with a script one grab per `t` (re/screens/sound.md §3: the events at t, the tick, the frame).
+/// opened on the save's game (black behind it, or with `--backdrop` the starmap's picture, the top bar over it) after
+/// N UI ticks of 10 ms, one drawn frame each; with a script one grab per `t` (re/screens/sound.md §3: the events at t,
+/// the tick, the frame).
 pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     use crate::script::Input;
     let l = crate::load(o)?;
@@ -1021,6 +1029,8 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     let mut h = Headless::load(&mut r, &l.install, &l.tables);
     let mut s = h.enter(&l.install, false);
     let size = [o.size.0 as f32, o.size.1 as f32];
+    // `SaveScreen(2)` of the starmap with its HUD, as `Starmap_Kilep` leaves it (crate::backdrop).
+    let pic = o.backdrop.then(|| crate::render::starmap_picture(o, &l, &world, &mut r, &mut h.hud, crate::backdrop::Pic::Before));
     let script = o.script.as_deref().map(crate::script::Script::load).transpose()?;
     let (end, grabs) = match &script {
         Some(sc) => (sc.end(), sc.grabs.clone()),
@@ -1051,6 +1061,7 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
         }
         // Each t a drawn frame (the fade starts with the first, `OptionsVoltElsoframe`).
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+        frame.backdrop = pic.map(|tex| (tex, crate::backdrop::options(s.fade_level())));
         h.draw(&mut s, &mut frame, size, t as f64 * 10.0);
         if grabs.contains(&t) {
             h.hud.paused = true;

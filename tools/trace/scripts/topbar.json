@@ -1,0 +1,22 @@
+{
+ "screen": "starmap",
+ "note": "FX1 part 2 (re/screens/input.md §6): the top bar's plain spots on every screen. Pause, x1, x2 on the starmap; x3 on the info screen (F9); x1 on the messages screen (F10: refused); the message line's left press on the starmap (the messages screen while a message is unread); its right button held (the history, grab 1080); x2 over Help (F1).",
+ "events": [
+  {"t": 200, "press": [5, 5]},
+  {"t": 250, "press": [20, 5]},
+  {"t": 300, "press": [40, 5]},
+  {"t": 350, "key": "f9"},
+  {"t": 450, "press": [65, 5]},
+  {"t": 500, "key": "f10"},
+  {"t": 600, "press": [20, 5]},
+  {"t": 650, "key": "f2"},
+  {"t": 850, "press": [400, 5]},
+  {"t": 950, "key": "f2"},
+  {"t": 1150, "press": [400, 5], "button": 3, "hold": 60},
+  {"t": 1300, "key": "f1"},
+  {"t": 1450, "press": [40, 5]},
+  {"t": 1550, "key": "f2"}
+ ],
+ "grabs": [900, 1100, 1180, 1400],
+ "tail": 30
+}

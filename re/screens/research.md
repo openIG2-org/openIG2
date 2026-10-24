@@ -3,6 +3,7 @@
 The original's research screen as `ig2-client` rebuilds it (ADR 0009). Addresses are ELF unless marked exe; the
 exe's own versions were checked where they differ. Port: `engine/crates/ig2-client/src/research.rs`; the orders are
 `ig2_sim::game::ResearchOrder` (re/rules/production-research.md §2.4).
+The picture behind the scene (the saved starmap, dimmed): [`overlay-background.md`](overlay-background.md).
 
 | Part | ELF | exe |
 |---|---|---|
@@ -173,12 +174,41 @@ that colour (`Mouse_Szoveg_Set(id, colour, …)`; colour 0 = the rectangle). `Re
 research cheat 0xB7727C) → `Multi_Send(0x2a, EN, 4, ResearchTalalmany)`; a project running →
 `Multi_Send(0x29, EN, 4, ResearchAktFejlesztett[EN])`. `ButtonPressed` until the handler clears it.
 
-Keys (`ResearchKeyboardHandler`): ↓/↑ next/previous known field, →/← the field 8 on/back in the other column,
-Enter start/stop, D urgent, PgUp/PgDn the previous/next category in `Terulet_Melyik` order (exe 0x919234: tanks,
-turrets, radars, ships, bombs, shields, weapons, special, civil, power, research, military).
+Keys (`ResearchKeyboardHandler`, ELF 0x5e9aa0 / exe 0x523020): ↓/↑ next/previous known field, →/← the field 8
+on/back in the other column, Enter start/stop, PgUp/PgDn the previous/next category in `Terulet_Melyik` order (exe
+0x919234: tanks, turrets, radars, ships, bombs, shields, weapons, special, civil, power, research, military), each
+`TT_*` → `Forgotabla` (ELF 0x5e8230), which clicks (`PlaySoundGlobal(0)`) while `resKINYITVA`. `remapKeyCodes` swaps
+the keys (input.md §1): the PageUp key is vk 0x22, so it steps to the **next** category [obs: research-fx9.json, turrets
+11 → radars 3 → civil 1, a click each]. The handler's vk 0x44 (D, `ResearchDoubleGomb`) never arrives (no letter key
+down is queued). Enter fires only when the handler's last call was not a key down: `oldEnterlenyomva`/`oldDlenyomva`
+(exe 0xDDFFEE/0xDDFFED) take the down flag of **every** call (every key up, every character, every queued key
+down), so a held Enter's OS repeats do nothing until any key goes up [obs: Enter at 210 starts tech 2, the lone repeat
+at 225 does nothing, ← up at 233, Enter at 245 stops it]. `ResearchStartStop` (ELF 0x5e9190) clicks only on
+`Mouse_Lenyom`: Enter is silent [obs].
 
-The client opens the screen with the top bar's research button (1005, (600, 0) 40 × 20) and K, closes it with Esc
-or the button.
+Esc is `ESC_Pressed` (options.md §5.1): the options screen at once, no closing, no sound; the top bar's spots are over
+the screen's (input.md §6). The client: `window.rs` (`research_key`, `research_key_seen`), and `render.rs`'s script
+sequence the same way.
+
+### 4.1 The mouse: the ball drag, the model grab, the faders' hover
+The frame reads the buttons of the last `Mouse_Lekerdez` poll (ELF 0x5b7720, once per `IG2_gameUpdate` loop **after**
+`UpdateFrame`): `Mouse_Gomb` any button, `Mouse_Lenyom` (exe 0xDB465F) its rising and `Mouse_Felenged` (0xDB465C) its
+falling edge, `Mouse_Bal`/`Mouse_Jobb` (0xDB4651/52). `Research3DUpdate` (exe 0x51fd10; ELF 0x5e4e10 lines 25-28,
+222-231, 434-473), per drawn frame: `resGyX/Y` (exe 0xDC4728/0xDC472C) ×0.8; `Felenged` drops the model's grip;
+open and the grab test → `MouseOld = Mouse` (0xDC538C/0xDDF31C); `Update3D`, `KellMozgatni`; open: `matrixforgat(ball,
+resGyX, resGyY)` (exe 0x4523b0: axis `normalize(b, −a, 0)`, angle `√(a² + b²)`), `Felenged` drops the ball's grip
+(`ResearchGombMegfogva` 0xDDF321), the grab test takes it; gripped and no model held: `resGy = 0.9·resGy +
+(MouseOld − Mouse)/30·0.1` and `MouseOld = Mouse`; not gripped: the idle `matrixforgat(0.002, 0)`. The grab test
+(`GombfolottLenyomva` ELF 0x5e2190, inlined in the exe): the ball's projected centre within 160 pixels, `Mouse_Lenyom`
+and `Mouse_Jobb` (the right button pressed first; a left press, or the left already down, never grabs).
+A model press (`CheckIfTalalmanyokFolottVan` ELF 0x5e2720: within 30 pixels, `Lenyom && Bal`) →
+`TalalmanyKivalasztva` (exe 0x524f60): a model not on its way (`KozelitesDirection` 0) is held
+(`Research_Talalmany_Megfogva` 0xDC471D), and every call takes `MouseOld = Mouse`; `KellMozgatni` (exe 0x51e790) sets
+the held model's turn to `(MouseOldX − Mouse_x)/100` (absolute) every frame; `FRISSIT_Research2` turns every model
++0.02 a tick but the held one. `KirakFader` (exe 0x4d3880) lights a fader under the pointer (strict rectangle) when
+`(!Bal && !Jobb && !Felenged) || Lenyom` and it isn't the last lit one. Verified (research-fx9.json, t 330..390): the
+client's ball and models turn with the right-button drag as the exe's. Client: `Research::{buttons, poll, edge, gy,
+mouse_old, ball_grip, model_grip}`.
 
 ## 5. Opening, closing and presses
 ### 5.1 The opening and closing (`Research3DUpdate`, `FRISSIT_Research2`, `Research_Kilep`)
@@ -301,8 +331,8 @@ ELF and exe agree in every constant and precision (exe: the helpers inlined or u
   (`probes/research_lines.js`, `button_lines_match_the_exe`; diff-results.md 2026-10-23 button lines).
 
 ### 5.7 Not ported yet
-The panels' design frames (`FadeKerettelKerekitDesign` under `GLOBALKELLDESIGN`), sounds, the ball drag, the screen-select menu
-entry. The info box glass's depth against the left wheel while closing (closing 40's `labs`, 12.9).
+The panels' design frames (`FadeKerettelKerekitDesign` under `GLOBALKELLDESIGN`), sounds, the screen-select menu
+entry. Who reads `resLenyomta` (0xDC5388, written by the ball's grab) [u]. The info box glass's depth against the left wheel while closing (closing 40's `labs`, 12.9).
 
 ## 6. Orders
 `MULTIGET_Research`: re/rules/production-research.md §2.4 (verified byte-exact, traces/2026-10-17-research-orders.md).

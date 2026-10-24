@@ -11,7 +11,8 @@
 //! A press is the pointer moved there, the button down, and up `hold` ticks later; a drag
 //! (`{"t": 5, "drag": [[x0, y0], [x1, y1]], "button": 1, "hold": 20}`) the button down at the first point, the pointer
 //! moved a step a tick on the straight line, and up at the second point `hold` ticks later; a key is down and up `hold`
-//! ticks later (names: down, up, right, left, enter, pageup, pagedown, escape, d, k, space, c, e, i, m, s, 1, 2, 3, tab, delete).
+//! ticks later (names: down, up, right, left, enter, pageup, pagedown, escape, d, k, space, c, e, i, m, s, 1, 2, 3, tab, delete);
+//! `{"t": 5, "keydown": "enter"}` / `{"t": 9, "keyup": "enter"}` send one key event alone (a held key's OS repeats).
 
 use serde_json::Value;
 
@@ -75,6 +76,13 @@ impl Script {
                 events.push(Event { t: t + hold, input: Input::Button { button, down: false, at: to } });
             } else if let Some(at) = point(e, "mouse") {
                 events.push(Event { t, input: Input::Move(at) });
+            } else if let Some(name) = e.get("text").and_then(Value::as_str) {
+                // A typed character alone (the exe's SDL_TEXTINPUT): the client's key down with that character.
+                events.push(Event { t, input: Input::Key { name: name.to_string(), down: true } });
+            } else if let Some((name, down)) = e.get("keydown").map(|v| (v, true)).or_else(|| e.get("keyup").map(|v| (v, false))) {
+                // A lone key down (an OS repeat when the key is already down) or up, as screen.js passes them on.
+                let name = name.as_str().ok_or("keydown/keyup without a name")?;
+                events.push(Event { t, input: Input::Key { name: name.to_string(), down } });
             } else if let Some(name) = e.get("key").and_then(Value::as_str) {
                 events.push(Event { t, input: Input::Key { name: name.to_string(), down: true } });
                 events.push(Event { t: t + hold, input: Input::Key { name: name.to_string(), down: false } });

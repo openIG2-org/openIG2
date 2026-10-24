@@ -322,6 +322,9 @@ pub struct InfoScreen {
     /// below it, 0 after a drag).
     pub tri_held: bool,
     pub tri_novelo: f32,
+    /// `infoFelfadeles` (exe 0xB85264): 0 at an animated `Info_Belep`, +1 a UI frame once open up to 100
+    /// (`FRISSIT_Info2` exe 0x4e5570); 100 at once without the opening, which the client doesn't have yet.
+    pub fade_in: f32,
     /// The last shares sent (the exe sends them every frame of a drag; the port only when they change).
     tri_sent: Option<[f64; 3]>,
     /// UI frames since entry (`Counter` steps every fifth).
@@ -564,6 +567,7 @@ impl InfoScreen {
             held: None,
             tri_held: false,
             tri_novelo: 100.0,
+            fade_in: 100.0,
             tri_sent: None,
             frames: 0,
         }
@@ -688,6 +692,9 @@ impl InfoScreen {
         if self.tri_novelo < 100.0 {
             self.tri_novelo = (self.tri_novelo + 1.0).min(100.0);
         }
+        if self.fade_in < 100.0 {
+            self.fade_in = (self.fade_in + 1.0).min(100.0);
+        }
         self.blink += 0.04;
         self.turn += 0.0006;
         self.head_clock += 0.003;
@@ -775,7 +782,12 @@ impl InfoScreen {
     /// The mouse over hot-spot `id` (`Info_Main`): 1..=8 pick the empire as soon as the mouse is over its column.
     /// Another empire also starts its list from the top (`BolygoFlottaPointer = 0`).
     /// Another empire also leaves the detail mode and reloads the slots (`LoadBolygoUrhajok`: home, unturned).
+    /// The pointer over hot-spot `id`: a race column shows that empire. Not while a held button keeps another spot
+    /// (`Mouse_Megfogva`: `IG2_gameUpdate` exe 0x4e0440 doesn't re-pick `AktIkon` during a menu, triangle or limit drag).
     pub fn hover(&mut self, id: Option<u32>) {
+        if self.held.is_some() {
+            return;
+        }
         if let Some(e @ 1..=8) = id {
             if self.selected != e as usize {
                 self.pointer = 0;
@@ -915,8 +927,8 @@ impl InfoScreen {
         out
     }
 
-    /// `Info_MouseInit2` (exe 0x4e9530): whether hot-spot `id` is on now. 13 never; 9 + k for the rows shown and
-    /// 37 only in detail mode; 26..=28 in detail mode on the human's planet; the race columns for the empires alive
+    /// `Info_MouseInit2` (exe 0x4e9530): whether hot-spot `id` is on now. 13 never; 9 + k for the rows shown, 33
+    /// outside the detail mode and 37 only in it; 26..=28 in detail mode on the human's planet; the race columns for the empires alive
     /// and met; the chart buttons and 15 in chart mode, 35/36 in star-log mode.
     pub fn spot_on(&self, id: u32, s: &UiSnap) -> bool {
         let n = s.info.list(self.selected, s.human).len();
@@ -925,6 +937,7 @@ impl InfoScreen {
             9..=12 => !self.detail && (id as usize - 9) + self.pointer < n,
             13 => false,
             15..=25 => !self.star_log,
+            33 => !self.detail,
             26..=28 => self.detail && self.selected == s.human && matches!(self.detail_entry(&s.info, s.human), Some(Entry::Planet(_))),
             35 | 36 => self.star_log,
             37 => self.detail,
@@ -934,11 +947,35 @@ impl InfoScreen {
 
     /// The first hot-spot on now under the virtual point `at` (14 sits on the star-log button in star-log mode).
     pub fn spot_at(&self, name_x: &[i32], at: [f32; 2], s: &UiSnap) -> Option<u32> {
+        // 33 is `56·min(HanyBolygoFlotta, 4)` high, set again every frame.
+        let n = s.info.list(self.selected, s.human).len().min(4) as i32;
         spots(name_x)
             .into_iter()
             .map(|(id, r)| if id == 14 && self.star_log { (id, [0x15e, r[1], r[2], r[3]]) } else { (id, r) })
+            .map(|(id, r)| if id == 33 { (id, [r[0], r[1], r[2], 0x38 * n]) } else { (id, r) })
             .find(|(id, [x, y, w, h])| self.spot_on(*id, s) && at[0] >= *x as f32 && at[0] < (x + w) as f32 && at[1] >= *y as f32 && at[1] < (y + h) as f32)
             .map(|(id, _)| id)
+    }
+}
+
+impl InfoScreen {
+    /// The hot-spot's tooltip (`Info_MouseInit`'s `Mouse_Szoveg_Set` texts, exe 0x4e9900): the race columns their
+    /// empire's name, the others `GetString(9, 1, k)` (re/screens/info.md §5).
+    pub fn tip_text(&self, id: u32, texts: &crate::ui::UiTexts, names: &[Vec<u8>]) -> Vec<u8> {
+        let k = match id {
+            1..=8 => return names.get(id as usize).cloned().unwrap_or_default(),
+            9..=12 => 1,
+            13 => 2,
+            // `Info_MouseInit2` sets 15 again in chart mode with text 0x1a.
+            15 if !self.star_log => 0x1a,
+            14..=31 => id - 11,
+            32 => return Vec::new(),
+            // 27 instead when `CheckMelyikFolottVan()` is 0 [u].
+            33 => 21,
+            34..=37 => id - 12,
+            _ => return Vec::new(),
+        };
+        texts.get(9, 1, k as u16)
     }
 }
 
@@ -956,8 +993,8 @@ pub fn scroll_to(n: usize, y: f32) -> usize {
 /// `Info_MouseInit`'s hot-spots in id order (`Mouse_Szoveg_Set(id, 0, x, y, w, h, …)`, virtual pixels): 1..=8
 /// the race columns, 9..=12 the planet/fleet rows, 13 the list, 14 charts, 15 star log, 16..=25 the chart buttons,
 /// 26..=28 the tax/auto-build/priority selectors, 29 the triangle, 30/31 list up/down, 32 the spending limit, 33
-/// the list's left edge, 34 its scroll bar, 35/36 star log up/down, 37 back from the detail (the list's height
-/// is `min(HanyBolygoFlotta, 4)·56`; 4 rows here).
+/// the list's left edge, 34 its scroll bar, 35/36 star log up/down, 37 back from the detail (13 and 37 are 224
+/// high; 33 here too, [`InfoScreen::spot_at`] cuts it to the list's rows).
 pub fn spots(name_x: &[i32]) -> Vec<(u32, [i32; 4])> {
     let h = tri_h();
     let mut v = Vec::new();
@@ -1039,7 +1076,11 @@ pub fn draw_faders(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, ui: &In
         open = 1.0 - (fr - 30.0) / 15.0;
         slide = (open * 200.0) as i32;
     }
-    let t = 0.0;
+    // `PutFaders` (exe 0x4ed410): the rows' fill `(int)((1 − infoFelfadeles/100)·255)`; the limit box `KirakFader(1,
+    // infof, …)` fades in with `F = 1 − infoFelfadeles/100`: fill `F·155 + 100`, edge `F·225 + 30` (`(int)` in
+    // `KirakFader`).
+    let fade = 1.0 - ui.fade_in / 100.0;
+    let t = ((fade * 255.0) as i32) as f32;
     let dark = [0.0, 34.0, 50.0];
     kirak_fader(f, white, v, [387.0, 271.0, (0xe2 - slide) as f32, 183.0], [0.0, 54.0, 90.0], 100.0, [0.0, 90.0, 130.0], 30.0, ui.faders.offset(0));
     // `infof+0x4d8`, the fader clock (`Info_Belep` → +0.003 a frame, as the heads').
@@ -1074,7 +1115,8 @@ pub fn draw_faders(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, ui: &In
         }
     }
     if ui.selected == s.human {
-        kirak_fader(f, white, v, [280.0, 209.0, 100.0, 8.0], dark, 100.0, [0.0, 60.0, 100.0], 30.0, ui.faders.offset(1));
+        let (ft, et) = (((fade * 155.0 + 100.0) as i32) as f32, ((fade * 225.0 + 30.0) as i32) as f32);
+        kirak_fader(f, white, v, [280.0, 209.0, 100.0, 8.0], dark, ft, [0.0, 60.0, 100.0], et, ui.faders.offset(1));
     }
 }
 
@@ -1608,5 +1650,10 @@ mod tests {
         s.turn = 0.5;
         // (int)(150) % 55 = 40 → 80 − 27.
         assert_eq!(s.sweep(0), 53.0);
+    }
+
+    #[test]
+    fn spots_13_and_37_are_224_high() {
+        assert_eq!(spots(&[40; 8]).iter().find(|(id, _)| *id == 37).unwrap().1[3], 224);
     }
 }

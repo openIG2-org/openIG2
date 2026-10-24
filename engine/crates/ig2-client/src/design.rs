@@ -307,6 +307,9 @@ const ORDER_FRAMES: u64 = 4;
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MainInput {
     Press([f32; 2]),
+    /// The right button's press: `Design_Main` acts on it like a left one but for spots 9 and 0x54, which test
+    /// `Mouse_Bal` (exe 0x509140; FX3).
+    PressRight([f32; 2]),
     Move([f32; 2]),
     Release,
 }
@@ -628,6 +631,8 @@ impl Design {
         for m in std::mem::take(&mut self.main) {
             match m {
                 MainInput::Press(at) => self.main_press(c, mask, at),
+                MainInput::PressRight(at) if !matches!(self.spot(c, mask, at), 9 | 0x54) => self.main_press(c, mask, at),
+                MainInput::PressRight(_) => {}
                 MainInput::Move(at) => self.main_moved(at),
                 MainInput::Release => self.main_release(c),
             }
@@ -706,9 +711,11 @@ impl Design {
     /// The right button went down: `AlapfolottLenyomva` (ELF 0x503d20) starts turning the hull by hand.
     pub fn press_right(&mut self, at: [f32; 2]) {
         self.mouse = at;
+        self.pods.right = true;
         if self.opened && !self.closing && self.over_hull(at) {
             self.drag = Some(at);
         }
+        self.main.push(MainInput::PressRight(at));
     }
 
     /// The pointer moved (held: the list, the scroll bar and the popups follow it).
@@ -754,7 +761,10 @@ impl Design {
 
     /// The right button went up.
     pub fn release_right(&mut self) {
+        self.pods.right = false;
         self.drag = None;
+        // `Mouse_Felenged` is either button's: the held popup acts and the hold ends.
+        self.main.push(MainInput::Release);
     }
 
     /// `AlapfolottLenyomva` (ELF 0x503d20 / exe 0x4acbc0): a hull is loaded and slid in, not on the first frame

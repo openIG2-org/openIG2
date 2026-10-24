@@ -70,12 +70,13 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
   BY THQNORDIC" in the platform font (`PlatformUtils::RenderText`, `render/font.material`) at (W/2, 0.96·H) with a
   2 px shadow; alpha `t >> 4` up to 4096 ms, 255 to 8192 ms, then `255 − ((t − 8192) >> 4)`.
   Rendered once (`ig2screen::render` exe 0x7370f0, cached in 0x92fcc0): `RenderText(text, w = (H>>5)<<6, h = H>>5,
-  size = H>>5, flags 0xc0 = centred)` (exe 0x6e9130) through SDL_ttf (`TTF_RenderUTF8_8Bit_Wrapped` 0x72d2f0; the
-  empty font name resolves to the install's `fonts/jurabook.ttf` [obs: the glyphs are Jura]) into a 4-bit-alpha white
-  texture, both sides rounded up to 4; drawn 1:1 in window pixels (`FUN_007115e0`, quad 1152 × 20 at 800 × 600 [obs:
+  size = H>>5, flags 0xc0 = centred)` (exe 0x6e9130); `GetFont` 0x6e84b0 returns 0 for the empty font name, so
+  `RenderTextToSurface` 0x6e9670 takes its GDI fallback 0x6f0e90 (not SDL_ttf): `CreateFontA(nHeight = +p = H>>5, weight 400,
+  ANTIALIASED, "Arial")`, `DrawTextW` DT_CENTER top-aligned in a (p<<6) x p box, the blue byte as coverage, the top 4 bits as
+  alpha, white texture, both sides rounded up to 4; drawn 1:1 in window pixels (`FUN_007115e0`, quad 1152 × 20 at 800 × 600 [obs:
   `probes/credits_text.js`]) centred at `((W>>1), 0.96·H)` over a black copy at +2, +2 with `(a·0x333333334)>>34` =
-  4a/5 alpha. The glyphs come out taller and narrower than FreeType's Jura at `H>>5` px: the client's scale (em
-  1.25·`(H>>5)`, width × 0.84) is fitted to the capture (rows equal, 3 px left of the exe; deviation 215).
+  4a/5 alpha. GDI Arial 18 gives capitals on rows 3..14 and 457 px, the exe's capture 456 [obs]; the client calls the same GDI
+  functions on Windows (`video/credits.rs` `gdi`; an outline stand-in elsewhere; deviation 215, fixed 2026-10-24).
 
 ## 4. Input and sound
 
@@ -156,13 +157,6 @@ layout `VIDEO_INTERLACE_UV`; not captured, no talking-head capture).
 
 ### 5.4 Open
 - Which music follows `title.bik`; re-layout on a window resize during a video (none found).
-- The credits overlay's glyph scale (deviation 215, narrowed 2026-10-24): the line is the splash text of
-  `ig2screen::render` 0x7370f0 -> `PlatformUtils::RenderText` 0x6e9130 -> `RenderTextToSurface` 0x6e9670 -> `GetFont` 0x6e84b0
-  (empty font name) + `TTF_RenderUTF8_8Bit_Wrapped` 0x72d2f0; ptsize = H>>5 (asm 0x6e84e4/0x6e864e into `TTF_OpenFontRW`),
-  SDL_ttf sets `FT_Set_Char_Size(0, ptsize<<6, 0, 0)` (72 dpi: em = ptsize px). FreeType's Jura at 18 px (800x600) is 436 px
-  wide with caps on 11 rows; the exe's line is 456 wide, caps on 14 rows (rows 3..16): 1.25x taller, 1.05x wider than
-  the stated size gives, so the scaling sits in the wrapped renderer or the upload (0x72d2f0 asm, 1198 lines, unread).
-  The install's other font (inconsolata.otf) and Windows fonts don't fit.
 
 ## 6. The client (`ig2-client::video`)
 

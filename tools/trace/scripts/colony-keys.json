@@ -1,0 +1,13 @@
+{
+ "screen": "colony",
+ "note": "FX5 keys on an own planet at peace (quick-1.sav, planet 42; re/screens/colony.md §11.2, §12.1): End (vk 0x23) changes nothing (remapKeyCodes exe 0x4e4670 queues no key down for SDLK_END), the character i (SDL_TEXTINPUT; a bare key down carries only the virtual key) turns the info mode on, a key down of i alone does nothing, I (text) turns it off and End again changes nothing. Times are UI ticks.",
+ "events": [
+  {"t": 2, "mouse": [320, 240]},
+  {"t": 20, "key": "end"},
+  {"t": 40, "key": "i"},
+  {"t": 60, "text": "i"},
+  {"t": 80, "text": "I"},
+  {"t": 100, "key": "end"}
+ ],
+ "grabs": [15, 35, 55, 75, 95, 115]
+}

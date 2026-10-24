@@ -432,13 +432,14 @@ impl Assets {
         Self { entries, tables, pics: Pictures::default() }
     }
 
-    /// The race pictures (`MainScrBrushok` 4..10: keps 65..71, `_ESIG_S1..6`, `_ESIG_0`, 64 × 64): the remaster has no
-    /// file of those names; its `textures/main/fejek2/<race>.bmp` heads stand in [obs: the same head, drawn larger than the exe's; re/deviations.md].
+    /// The race pictures (`MainScrBrushok` 4..10: keps 65..71, `_ESIG_S1..6`, `_ESIG_0`, 64 × 64): the remaster loads
+    /// them from `textures/main/fejek3/<race>a.bmp` (exe string 0x8568e8, its one reference 0x4f961b) [obs: the
+    /// Antari's head as the capture shows it, 1:1].
     pub fn race_pictures(&mut self, r: &mut crate::render::Renderer, install: &Install) {
         if !self.pics.races.is_empty() {
             return;
         }
-        self.pics.races = (1..=8).map(|k| install.resolve_texture("textures/main/fejek2/", &format!("{k}.bmp")).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img))).collect();
+        self.pics.races = (1..=8).map(|k| install.resolve_texture("textures/main/fejek3/", &format!("{k}a.bmp")).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img))).collect();
     }
 
     /// `SetKepName(0x3e, entry + 8)`, `LoadKepToMemory(0x3e)`: the shown entry's picture, loaded when it changes.
@@ -519,8 +520,10 @@ impl ScenarioList {
     /// `MainScrGfx2D_2`'s list part (spec §7.2).
     fn draw_texts(&mut self, f: &mut Frame, d: &Draw, pics: &Pictures, tables: &Tables) {
         let v = &d.v;
-        let fade = self.open;
-        let pfade = self.open * self.pic / 100.0;
+        // `KiirStrSzinSzorzo` takes integers: `O` (`(int)Nyitottsag`) for the panel's own lines, `P =
+        // (int)(KepNyitottsag·Nyitottsag/100.0)` for the entry's (exe 0x4fc8d0).
+        let fade = self.open.trunc();
+        let pfade = (self.pic as f64 * self.open as f64 / 100.0) as i32 as f32;
         let hover = self.spot_at(self.at);
         let text = |f: &mut Frame, s: &[u8], x: i32, y: i32, len: usize, size: usize, a: Align, c: usize, m: f32| d.font.text(f, v, s, x as f32, y as f32, len, size, a, d.col(c, m), None);
         let colon = |mut s: Vec<u8>| {
@@ -532,10 +535,15 @@ impl ScenarioList {
         if let (false, Some(e)) = (self.high_score, &e) {
             let race = if e.skirmish() { self.sk.race } else { e.race };
             if let Some(Some(tex)) = pics.races.get((race - 1).max(0) as usize) {
-                let c = self.pic / 100.0;
-                let a = (1.0 - c) * 32.0;
-                let r = [a + 42.0, a + 340.0, c * 64.0, c * 64.0];
-                f.push(*tex, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0), [r[2] * v.k / 2.0, r[3] * v.k / 2.0], [1.0, 1.0, 1.0, fade / 100.0]));
+                // `a = (int)((1 − P/100)·32)`, `w = (int)(P/100·64)`: the picture's centre `w × w` at 1:1 (it grows
+                // from the middle, unscaled), white, no fade of its own.
+                let c = pfade / 100.0;
+                let a = ((1.0 - c) * 32.0) as i32 as f32;
+                let w = (c * 64.0) as i32 as f32;
+                let r = [a + 42.0, a + 340.0, w, w];
+                let mut i = Instance::new(kind::SPRITE, v.px(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0), [r[2] * v.k / 2.0, r[3] * v.k / 2.0], [1.0; 4]);
+                i.uv = [a / 64.0, a / 64.0, w / 64.0, w / 64.0];
+                f.push(*tex, Blend::GammaAlpha, i);
             }
         }
         text(f, &colon(d.texts.get(15, 2, 1)), 0x1b8, 0x28, 0x1e, 3, Align::Left, 1, fade);
@@ -551,7 +559,9 @@ impl ScenarioList {
             self.frame.draw(f, d.white, v, d.col(0x22, fade));
         }
         let Some(e) = e else { return };
-        text(f, &colon(d.texts.get(15, 2, 4)), 0x28, 0x28, 0x1e, 2, Align::Left, 0x25, pfade);
+        text(f, &colon(d.texts.get(15, 2, 4)), 0x28, 0x28, 0x1e, 2, Align::Left, 0x25, fade);
+        // The difficulty label for every entry, skirmish too (fade `O`).
+        text(f, &colon(d.texts.get(15, 2, 6)), 0xfa, 0x28, 0x1e, 2, Align::Left, 0x25, fade);
         text(f, &e.name, 100, 0x28, 0x1e, 2, Align::Left, 0x22, pfade);
         if !self.high_score {
             let race = if e.skirmish() { self.sk.race } else { e.race };
@@ -589,8 +599,7 @@ impl ScenarioList {
             label(f, colon(d.texts.get(15, 2, 0xc)), 0x77, 0x160);
             val(f, &d.texts.get(15, 6, sk.population as u16 + 1), 0x77, 0x170);
         } else {
-            text(f, &d.texts.get(15, 2, if self.high_score { 0xe } else { 0xd }), 0x163, 0x1c4, 0x1e, 2, Align::Centre, if hover == 0x27 { 2 } else { 0x25 }, pfade);
-            text(f, &colon(d.texts.get(15, 2, 6)), 0xfa, 0x28, 0x1e, 2, Align::Left, 0x25, pfade);
+            text(f, &d.texts.get(15, 2, if self.high_score { 0xe } else { 0xd }), 0x163, 0x1c4, 0x1e, 2, Align::Centre, if hover == 0x27 { 2 } else { 0x25 }, fade);
             text(f, &d.texts.get(15, 4, e.difficulty.max(0) as u16), 0x143, 0x28, 0x1e, 2, Align::Left, 0x22, pfade);
         }
         if self.high_score || e.skirmish() {
@@ -636,10 +645,12 @@ pub fn draw_name(f: &mut Frame, d: &Draw, n: &crate::mainscr::NameEntry, blink: 
     }
 }
 
-/// `sprintf(fmt, n)` for the one `%d` the texts carry.
+/// `sprintf(fmt, n)` for the one `%d` the texts carry (the texts are code-page bytes, kept as they are).
 fn fmt1(fmt: &[u8], n: i32) -> Vec<u8> {
-    let s = String::from_utf8_lossy(fmt);
-    s.replacen("%d", &n.to_string(), 1).into_bytes()
+    match fmt.windows(2).position(|w| w == b"%d") {
+        Some(i) => [&fmt[..i], n.to_string().as_bytes(), &fmt[i + 2..]].concat(),
+        None => fmt.to_vec(),
+    }
 }
 
 /// `sprintf(fmt, s)` for one `%s`.
@@ -653,6 +664,14 @@ fn fmts(fmt: &[u8], s: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The texts' accented bytes stay single bytes (the `%d` line "JÁTÉKOS" in Latin-2: the exe's `sprintf` copies
+    /// them, `KiirStr` draws one glyph each).
+    #[test]
+    fn formats_keep_code_page_bytes() {
+        assert_eq!(fmt1(b"%d J\xc1T\xc9KOS", 5), b"5 J\xc1T\xc9KOS");
+        assert_eq!(fmts(b"%s BOLYG\xd3", b"60"), b"60 BOLYG\xd3");
+    }
 
     fn list(n: usize) -> ScenarioList {
         let mut e: Vec<Entry> = (0..n).map(|i| Entry { name: format!("s{i}").into_bytes(), registry: format!("s{i}"), ..Default::default() }).collect();

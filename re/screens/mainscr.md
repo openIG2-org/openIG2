@@ -136,6 +136,7 @@ Fresh entry only. `LoadBox(name, lit)`, `AddToScene(xvb, scene, scale, mesh)`; d
    `n2.bmp` n 3500 (0xdac) rgb (0.1, 0.1, 0.1) alpha 200 scale 1.4; `felho2.bmp` 3500 (1, 1, 1) 100 scale 2.0; `n2.bmp` 3500 (0.5, 0.7, 1.0) 200 scale 3.0; `n2.bmp` 3300 (0xce4) (0.5, 0.7, 1.0) 200 scale 0.8.
    The particles are static random points (the colour word is built with a factor 0.0, so black until recoloured); `ChangeGalaxyColors` recolours them every frame (4.5). Layout, draw order and distribution: 3.2.
 6. Three background billboards (one particle each): `texcsor.bmp` at (-400, -400, -100) size 1350 colour 0x64ffffff; `galaxy_1.bmp` at (-500, 1500, -3000) size 300 colour 0x8cffffff; `galaxy_1.bmp` at (-900, 1900, -3000) size 200 colour 0x8cffffff.
+   Each is a null box (`AddNullBox` + `SetParticle(box, rec, 1)`) whose one particle keeps the record's (x, y, z) as its **box-local** position; `Update3D` moves boxes 0 and 1 (4.4), so those two draw at the sum (2x, 2y, z' + z); box 2 stays at the origin [obs 2026-10-24: the sum takes the menu sequence from 6.6–8.0 to 2.9–4.2 at 4:3 and every 16:9 grab under 6, deviations 20, 214].
    `hanyhattergalaxis` (0xbbd13c) = **2** (the index of the last; `Update3D` moves entries 0 and 1 only, so the third stays where it was made).
 7. Three dust systems ("kod"; exe 0xcc1470 / 0xd023c0 / 0xd43310): `GenerateKod` n 3500, no texture, (0.5, 0.5, 0.5); `GenerateKod2` n 1750 `torpedo.bmp` (0, 0, 0); `GenerateKod2` n 1750 `n2.bmp` (0.5, 0.5, 0.5);
    all with offset (-1000, -800, -1800) and scale 30.0 (3.2; their `srand(400)` fixes the RNG state for step 8).
@@ -168,7 +169,7 @@ Fresh entry only. `LoadBox(name, lit)`, `AddToScene(xvb, scene, scale, mesh)`; d
 - The label goes on **sub-mesh 0 of B** (`Update3D` step 10: `GetSubMeshid(B_i, sub, 0)`; `ChangeTexture(sub, tex)`); the ring A has no label. Whether the ten `szrke{i}` files differ in geometry: not checked (asset-finder: `vector/main/szrke0..9.xvb`, `korke1.xvb`).
 - Transparency 0.3 on both; `Update3D` never touches the rings' transparency again (only meteors, ships and the loading plates get `SetObjTransparency` there). The engine's transparency is "0 = opaque" [evidence: meteors use `1 - GlobalTransparency` and fade IN as `GT` goes 0 -> 1].
 - Property bits 8, 4, 2 (off) and 0x20 (on): no spec documents them (`re/screens/render.md` only has the inherit rule); `galaxy.xvb` uses the same pattern (off 8, 4; on 0x20). Meaning [unknown]; copy the pattern, don't interpret it.
-- The rings are **unlit** (`LoadBox(.., false)` + `SetObjShade(false)`): the scene lights don't change them. Scene lights, created once (guard byte ELF 0x1618b51) by `mainOldalsoFenyekBe` (ELF 0x58c5b0; exe address not read; `mainOldalsoFenyekKi` = ELF 0x58c520): two `CreateLightParalell` on the global mesh at ELF 0x11abab4 [probably `mainmeshid`, unverified], handles ELF 0x1618030 / 0x161803c: L1 colour bytes (0x64, 0x64, 0xc8) direction (200, -1000, 500); L2 colour (0xff, 0x9c, 0x82) direction (0, 1400, 500) (constants read from the ELF data; colour byte order as stored in the struct). `mainMozgatMainFenyek` (ELF 0x58c690) is an **empty function** (`ret`): the side lights never move. They light only lit models (ships, race scene, probably the loading plates [their lit flag not checked]).
+- The rings are **unlit** (`LoadBox(.., false)` + `SetObjShade(false)`): the scene lights don't change them. Scene lights, created once (guard byte ELF 0x1618b51) by `mainOldalsoFenyekBe` (ELF 0x58c5b0 = **exe 0x5047d0**, which the ported names call `mesOldalsoFenyekBe`; guard byte exe 0xbbb17e; `mainOldalsoFenyekKi` = ELF 0x58c520): two `CreateLightParalell` on `mainmeshid` (exe 0x93da40, the `mainxvb` scene's root: the design, diplomacy and trade screens light their models through it too), handles exe 0xcc1448 / 0xd84488: L1 colour word **0xc86464** direction (200, -1000, 500); L2 **0x829cff** direction (0, 1400, 500) (exe immediates; as `0xBBGGRR` words L1 is blue, L2 warm). Every lit model of the scene sees them first (`Kocka`), then its own: the ships their 0x323238, the race scene its 0xdcc8c8. The meteors (`LoadBox("meteor.xvb", 0)`, no light of their own) draw near black in the captures; lit by these two they come out grey [obs], so the client keeps them on a dim light (deviation 150). `mainMozgatMainFenyek` (ELF 0x58c690) is an **empty function** (`ret`): the side lights never move. They light only lit models (ships, race scene, probably the loading plates [their lit flag not checked]).
 - `MainScrInitNullBoxes` (exe 0x4fe2c0; ELF 0x593f00): `GFX_AllandoInit1(); InitFader1(); AddNullBox(mainxvb, cb1 = exe 0xd84360); SetRenderOther(cb1, MainScrGfx2D_1 = exe 0x4fab30, 0); InitFader2(); AddNullBox(mainxvb, cb2 = exe 0xcc145c); SetRenderOther(cb2, MainScrGfx2D_2 = exe 0x4fc8d0, 0); AddNullBox(mainxvb, cb3 = exe 0xcc1438); SetRenderOther(cb3, MainScrGfx2D_3 = exe 0x4fe190, 0); GFX_AllandoInit2(); InitFader3()`. The three 2D passes are draw callbacks of null boxes added after the 3D objects; exe `_1` / `_3` = 0x4fab30 / 0x4fe190 (not decompiled).
 
 ### 3.2 Particle generators (clouds and dust of `Main3DInit` steps 4, 5, 7; recoloured in `Update3D` steps 2, 5)
@@ -195,7 +196,7 @@ Shape: a bar up to 650 long and 50 wide per cloud, twisted by up to ~3 rad at th
 Called from `GFX_MainScr` unless `SelfPlaying`. Order [exe; ELF agrees unless noted]:
 1. `MainElindult = 1`. **Camera** (`kamerapont` exe 0xde0148, `elforgatas` 0xde0158; double math, stored f32; M = `MainScrMozgato`):
    x = cos(M/50)*100 + 100; y = sin(M/82)*100 - 100; z = sin(M/165 + pi/2)*100 + 2000; `elforgatas` = cos(M/150 + pi)/3 + 0.2; `forgaspont` (0xde0130, 3 floats) = 0.
-   While `Mode_Kilepes`, with q = 100 - `MainScrKilepesValtozo`: z -= q*30; `forgaspont.x` = q*5.
+   While `Mode_Kilepes`, with q = 100 - `MainScrKilepesValtozo`: z -= q*30; `forgaspont.x` = q*5. `renderscene(0)` takes `CameraRotate2` (ELF 0x5fd340): **e = M·(p − forgaspont) − kamerapont** for the relative objects (no `+forgaspont` back) [obs: the exit grabs t 1650 / 1700 from 38 / 73 to 16 / 26].
 2. `DeGenerateKod` for the three dust systems (args (0.5, 0.5, 0.5), (0, 0, 0), (0.5, 0.5, 0.5), alpha arg 0): each call re-seeds `srand(400)` and recolours; see 3.2 (RNG trap).
 3. `AktKep == 0xf`: `Mouse_Szoveg_Off_Range(0x11, 0x14)`.
 4. Background billboards i < `hanyhattergalaxis` (= 2): `MoveObj(mesh, p.x, p.y, camz/1.2 - 3000 + i/10)` (integer i/10 = 0); colour word `A<<24 | c<<16 | c<<8 | c`, `A = (int)(GT*140*GT)`, `c = (uint)(GT*255)`, GT = `GlobalTransparency`
@@ -256,7 +257,7 @@ Ship i = 0..7 (pos 0xbbac60 + 0x10*i, start 0xbbace0, target 0xbbad60, speed 0xb
 1. `rand() % 6 == 0` -> `UnhideObj(ship i)`, else `HideObj` (a ship is shown with 1/6 chance per respawn).
 2. Camera position `P` = inverse(`CreateMatrix(elforgatas)`) (nine floats m0..m8) applied to `kamerapont` (c = 0xde0148 / 4c / 50) plus `forgaspont` (0xde0130 / 34 / 38): `P.x = m0*cx + m1*cy + m2*cz + fp.x`, `P.y = m3*cx + m4*cy + m5*cz + fp.y`, `P.z = m6*cx + m7*cy + m8*cz + fp.z` [reading order of the decompile; rows vs columns not verified].
 3. `UrhajoElforgatasok[i] = 0`; draws in order: start.x = `rand() % 3000 - 1000`; start.y = `rand() % 3000 - 1500`; start.z = `rand() % 2000 - 9000`; target = (P.x, P.y, P.z + 3000.0); alpha = 1.0; pos = start; `s = (float)(rand() % 50)/10.0 + 2.0` (2.0..6.9); speed = `(target - start)*s/8000.0` per axis; `UrhajoVoltHangjamar[i] = 0`.
-(The ELF takes the target x / y from `GetKameraPos()`'s two return registers; same value.)
+(The ELF takes the target x / y from `GetKameraPos()`'s two return registers; same value.) While leaving the ships move `speed·((1 − K/100)·5 + 1)` per tick (exe 0x4f65f0, `Mode_Kilepes`), as the meteors `·((1 − K/100)·10 + 1)`; a respawn also needs `MINDENEGYSZERRE` (0xbbb3d0) or the timer > 200.
 
 ## 6. Input
 
@@ -528,6 +529,20 @@ Entry record (exe, 32-bit): `+0` name ptr, `+4` file ptr, `+0xc..+0x34` descript
 ELF (64-bit): `+0` name, `+8` file, `+0x18` lines (8 each), `+0x68` difficulty, `+0x6c` race, `+0x70` registry name, `+0x78` scores, `+0xa0` names, `+0xf0` skirmish kind. Start = 2.2 (scenario file or `SetScirmishGameOptions`).
 Name tables: difficulty `0xbbb248 + 0x14·d` (d = the entry's `difficulty`, or the skirmish's 1..4), technology `0xbbb2b0 + 0x14·n`, population `0xbbb300 + 0x14·n`
 (n 0..3); filled from `txt15` sections 4, 5, 6 [guess: section 4 line d, sections 5/6 line n + 1; check by capture].
+**The 2D pass** (`MainScrGfx2D_2` exe 0x4fc8d0; `FRISSIT_MainScr2` changes O = `Nyitottsag` 0xbbb2ac and K = `KepNyitottsag` 0xbbb048, the draw
+only reads them): `KiirStrSzinSzorzo` takes integers, `O` = `(int)O` for the panel's own lines and `P = (int)(K·O/100.0)` for the entry's.
+On `O`: the title (line 1 + ":", always), line 4 + ":" at (0x28, 0x28), the difficulty label (line 6 + ":") at (0xfa, 0x28) **for every entry,
+skirmish too**, the info / high-score toggle (0xd / 0xe); on `P`: the entry's name, difficulty value (count > 0), race, settings, description, scores.
+The selected row: `DesignKeret1(0x1b5, 0x43 + 0xf·(Sel − Start), 0xa5, 0xf, 0x22)` (exe 0x4cbac0), drawn last, fade `O`.
+The race portrait (drawn first, not in high-score mode): `Brush3(MainScrBrushok[race + 3], a, a, a + 42, a + 340, w, w)`, `a = (int)((1 − P/100)·32)`,
+`w = (int)(P/100·64)`: the 64 × 64 picture's centre `w × w` at 1:1, white, no fade of its own; the remaster's pictures are
+`textures/main/fejek3/<race>a.bmp` (exe string 0x8568e8, reference 0x4f961b; race 8 reads past the 7-picture table). The settings' `%d` / `%s`
+lines go through `sprintf` on the code page's bytes (deviation 152 was the client's UTF-8 round trip). Description lines: `x = 0x2a + (row < 5 ||
+skirmish ? 0x48 : 0)`, y `0x15a + 0xd·row`, drawn when `!HighScoreMode || skirmish` [decompile; the client draws all rows at 0x2a and none for a
+skirmish entry: deviation]. Timing [obs, `probes/mainscr-fades.js`]: the ring press (script t 600) sets `Mode_Scenario_Valasztas` and `O`
+counts from it, but `ScenarioGombraRanyomtak`'s resets (O, K = 0, `Cel` 6) land 5 UI ticks after the release reached the screen (between UI
+ticks 658/659 for a release at 653); the list's own presses act on the next tick. Cause unknown (perhaps the list's first load); the client
+delays the scenario ring's release by 5 ticks (`SCENARIO_RELEASE_TICKS`), the other rings act at once.
 
 ### 9.4 Tutorial
 6.1 (five parts + back), then 2.2 (`TutorialSetCampaignGameOptions` 0x504250, `TutorialStart("main", n)`). Port: `Game::start_tutorial`
@@ -576,7 +591,7 @@ After the title video, scenario list and `LoadFajInfoText`: `ProgramMode = 0; Si
 - Exe code not decompiled: `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240, `DeGenerateKod` (~0x4f8170), `GenerateKod2` (symbol address not read), `mainOldalsoFenyekBe` / `Ki`, `GetKameraPos`. (The race, scenario and sound functions are decompiled since part 2: header table above.) `GenerateKod`, `DeGenerateKod`, `GenerateKod2` have **no decompile anywhere under `_local/decomp`**; I read them from the ELF disassembly (`_local/decomp/placement/ig2.asm`, lines 333426..333700).
 - The RNG hypothesis of 3.2 (per-frame `srand(400)` making the respawns near-deterministic): not observed at run time.
 - Click sounds of the rings: none in the code read; the generic hot-spot code (`Mouse_Darabol`, `Mouse_Szoveg` tooltip drawing, `Mouse_Tipus`) was not read; tooltip texts are `GetString(15, 1, n)` (asset-finder job).
-- The scene-light mesh at ELF 0x11abab4 (is it `mainmeshid`?) and whether the exe creates the same two lights in the same function.
+- The race scene's rings (`kezdo_` subs 9..14) light differently: their light normals are radial in the client, so its 0xdcc8c8 from (0, 0, −1000) adds nothing and only the side lights tint them (blue top, warm bottom); the exe shows a neutral lit stone with a faint tint the same way round (deviation 148).
 
 ## 13. Runtime observations (`tools/trace/probes/mainscr.js`, `run_screen.py --boot`)
 `run_screen.py <install> <save> <out> --kep 15 --run --boot --script tools/trace/scripts/mainscr.json --probe
@@ -619,6 +634,12 @@ Best-offset frame mean, pass <= 6 (details `re/screens/diff-results.md`). Race: 
 colour and cursor match the exe. Scenario list: static frames 4.3-5.2 (pass); transitions 7.8-11.4; the 3 arrow clicks
 `PlaySoundGlobal(0)` at the exe's ticks. Multi (name entry): t 400-510 6.1-6.7, 530-650 ~10.5-11, 700-800 7.1-9.5. Differences are
 deviations 148-155.
+FX11 (2026-10-24, the same exe captures): race t 610 8.3, 700 10.8, 800-960 7.0-8.0, 1010-1350 5.3-6.7, 1420 17.6, 1480-1610 8.1-9.5,
+1650 15.6, 1700 26.5 (from 38 / 73), 1750 5.1, 1800 0.6; scenario static 2.4-3.3, t 650 4.0 (from 20.9), 820 8.5, 880 9.0, 1050 5.6,
+1420-1600 3.8-7.7; multi t 400-510 3.2-4.2, 530-650 7.5-8.2 (the exe's name box stays open: its name was empty, the scripted keys never typed
+into it, and `MultiOpenInfoSocket` 0x4fe950 refuses an empty name; the client's typed "bob" closes it); main 4:3 t 5-700 2.6-5.3 except the
+fly-out t 360 7.8, 16:9 all under 6. What is left: the meteors' material (near black, faintly lit in the exe), the race rings' tint (§3.1), and
+3D RNG/pose (the saucer that respawns in the exe's exit, meteor positions).
 
 ## 14. Port status (`ig2-client::mainscr`, `mainscr_scene`, `mainscr_race`, `mainscr_scenario`)
 Part 1: the 3D scene (rings + labels with the hover texture, galaxy mesh, the four clouds exact, the pictures, the dust,

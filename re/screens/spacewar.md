@@ -1134,7 +1134,9 @@ Frame timers (screenfrissites): SDL ticks `+0x22f0`; `+0x2268/+0x226c` (+= dt ms
   live ship; hull `"%d%%, %dhp"` = `dmg·100/max` (damage per cent: an original quirk [u]) and `(max − dmg)/15`; it keeps the
   caller's fade multiplier.
 - **Starmap fade** (`starmapszarok`, confirmed): `starmaphalvanyit(e)` (ELF 0x6a6b30) multiplies the starmap particle words'
-  RGB by e, sets the starmap objects' alpha `(int)(K − (K − a0)·e)`, and the planets' meshes transparency `1 − e` (hidden at 0).
+  RGB by e (drawn colour `+0xc` = stored `+0x48` with RGB × e; FStars 0x173eea0, stride 0x48, sets 1, 2, 4..10 and a second
+  block of 8 sets at 0x17a0e80; sets 0 = far stars and 3 = ring untouched; e = `starmaperosseg` = 0 at battle zoom, so the
+  galaxy clouds vanish: the client drew them purple), sets the starmap objects' alpha `(int)(K − (K − a0)·e)`, and the planets' meshes transparency `1 − e` (hidden at 0).
 - **Voices** (`SpaceWarSpeaker` exe 0xe72e84, filled by `InitSpaceWarSpeech` exe 0x55e8b0 / ELF 0x6765f0 with 606
   `SpeakingDirector::Add` calls, read like `ig2_rules::speech`'s tables): the colony's `Sounds/Colony/Speech/<Kind>/` files,
   kinds 0 Move, 1 Selection, 2 Attack, 3 Retreat, 5 Hit, 6 Dying, 7 Dead, 8 enemy_hit, 9 enemy_dead, 10 enemy_retreat; line
@@ -1467,7 +1469,8 @@ their battle state isn't drawn). `re/deviations.md` lists them.
 
   The camera follows the exe (yaw, tilt, zoom and pivot within an animation tick at every grab), the column slides in
   at the zoom's end and out after the start as the exe's, the battle runs one tick ahead of the exe's (the scripted
-  run's sim clock, `tick % 5`, against the exe's game clock: a harness phase). Still different (screendiff-review): the
+  run's sim clock, `tick % 5`, against the exe's game clock: a harness phase; since 2026-10-24 the client takes the
+  exe run's phase, `--sim-phase`, see §9.11). Still different (screendiff-review): the
   grid's look (a hard banded slab, too visible), the cursor and the hot-spot tooltips (exe only), the box-select
   rectangle (exe thin green, client none) and the brackets' size, the info box's hover text (the exe shows the hovered
   ship; at the zoom's start the starmap's planet info cross-fading), the starmap's fade-out during the zoom
@@ -1608,3 +1611,25 @@ their battle state isn't drawn). `re/deviations.md` lists them.
   2.0. Wrong guesses on the way: lights in camera space (a quarter turn off), linear light (the swing compressed), the
   full vector negated instead of z (6.5).] The starmap screen's console keeps its still frame (the same lights
   apply there).
+- **The weapon clocks' "drift" was the harness's clock phase** (2026-10-24, acceptance): the sim free-runs exact from
+  the entry dump (`battle_free_run`, `SPWC_FREE=<trace>`: 376 ticks, only the UI-written gun marker `+0x10` (the sim's
+  `+1` per hit, the UI's `+dt` up to 1000), `infoszamol`'s side strengths and `+0x2d86` differ), and the client's script
+  run draws stream 6 identically on every tick. The exe's 50 ms clock (`Fake_FRISSITES` 0x4de720: the 10 ms loop with
+  `FRISSIT_SpaceWar2`, then the `> 50` sim loop) ran the battle on the frames `t ≡ 3 (mod 5)` (first tick at t453), the
+  client on `t ≡ 0`: one tick ahead at every grab. The client now takes the exe run's phase (`--sim-phase`, read by
+  `run_screendiff.py` from the trace's `cam`/`step` order); the groups' reloads then equal the exe's (`+0x2a58`). [obs
+  fx8b: weapons 6.7–7.0 before and after: the region's remaining difference is drawing, not state.]
+- **The reload clock's arc** (same day): `ora.xvb` is a vertex-animated mesh (`kirak` 0x60e160, re/formats/xv.md); the
+  client's `Model::load_at` applied only node keys, so every clock drew frame 0 (a full ring). It now takes a mesh's
+  vertex frame, and the clock blends the two frames around `(reload/10)·1.65` (8.8 fixed point); `karika.xvb` (the shield
+  rings) gets its vertex frames the same way. [obs fx8b: weapons 6.7–7.0 → 5.8–6.7, the arcs sweep as the exe's; the rest
+  is the buttons' static look (the retreat button differs as much: 10.3 raw).]
+- **Camera-fixed models' light** (weapon column, info model; acceptance 2026-10-24): lit per vertex as `fenyekszamolasa`
+  with the record rotation applied to the file normal (z negated) against the lights' own vectors (ambient 0x404040,
+  parallel 0x808080 (10, 10, −10), the two side lights), NOT turned by the camera. [obs fx8b: weapons 5.8–6.7 → 2.6–4.4;
+  turned by the camera 4.3–8.6.]
+- **The info model's turn**: `selectkisinfourhajo` (ELF 0x694340, run at the end of `infoszamol`) picks the type; the turn
+  restarts at 0 when the type changes, then +0.05 per drawn frame, after the draw (`kisinfogfxfrissit` ELF 0x6860c0 /
+  exe 0x5778c0; §5.2). The starmap fade (§ "Starmap fade") removes the galaxy clouds at battle zoom.
+- **Accepted** (2026-10-24, fx8b sequence; numbers in `diff-results.md`). Orders were not compared byte-exact (no
+  MULTIGET harness for SpaceWar): `infoszamol`'s Strengths equal the exe's between-tick writes.

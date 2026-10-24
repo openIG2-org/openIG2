@@ -1,0 +1,11 @@
+{
+ "screen": "starmap",
+ "note": "FX1 probe: F4, F7 and F3 on the starmap with probes/fx1_keys.js (why the exe refused them in fkeys/fkeys2).",
+ "events": [
+  {"t": 100, "key": "f4"},
+  {"t": 300, "key": "f7"},
+  {"t": 500, "key": "f3"}
+ ],
+ "grabs": [700],
+ "tail": 20
+}

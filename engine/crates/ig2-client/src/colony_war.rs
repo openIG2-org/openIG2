@@ -126,6 +126,8 @@ pub struct WarUi {
     targets: HashMap<i32, Pulse>,
     /// `WF::SaveSelection` groups 0..=5 (keys 4..9).
     groups: [BTreeSet<usize>; 6],
+    /// A group was kept since the last [`WarUi::take_groups`].
+    groups_kept: bool,
     /// `LastSelectedTank`: the owner of the last unit selected.
     last_owner: i32,
     /// `SpecWeaponMode`: 1 fighters armed, 2 big ships.
@@ -141,10 +143,12 @@ pub struct WarUi {
     /// Hot-spot 0x12 (`Colony_MouseInit2`): off without an own selected unit, on while one moves (flag 0x100 or
     /// 0x400), else left as it was.
     stop_on: bool,
-    /// `TamadasSzovegCounter` (exe 0x9ABAE0): the attack banner's frames left (900 from the war's start).
+    /// `TamadasSzovegCounter` (exe 0x9ABAE0): the attack banner's frames left (`StartGrWar` sets 900 for any planet,
+    /// the screen takes the window's value on entry).
     pub banner: i32,
-    /// The planet was at war last frame (the banner starts when the war does).
-    was_war: bool,
+    /// The flag 0x998245: the counter was running at this screen's last UI frame (`Colony_Belep` clears it, so the
+    /// banner waits for the screen's first UI frame).
+    banner_on: bool,
     pub screen: Vec<OnScreen>,
     pub mods: Mods,
     /// The info model's unit (`GetSelected(0)`) and the UI frames it has turned since it was put up.
@@ -160,15 +164,16 @@ fn order(c: &WarCtx, o: GroundOrder) -> Command {
 }
 
 impl WarUi {
-    /// The units' projected centres for this frame's input (`TransformPoint` of the object centre) [inf: the hull's
-    /// base point stands for `GetObjCenter`'s mesh centre].
-    pub fn project(&mut self, view: &View, gm: &GroundMap, snap: &ColonySnap) {
+    /// The units' projected centres for this frame's input (`TransformPoint` of `GetObjCenter`: `centres` from the
+    /// last drawn frame, else the unit's point).
+    pub fn project(&mut self, view: &View, gm: &GroundMap, snap: &ColonySnap, centres: &[(usize, crate::scene::V3)]) {
         let basis = view.camera.basis(gm);
         self.screen = snap
             .units
             .iter()
             .filter_map(|u| {
-                let (at, z) = view.camera.project_virtual(&basis, u.pos)?;
+                let centre = centres.iter().find(|(s, _)| *s == u.slot).map_or(u.pos, |&(_, c)| c);
+                let (at, z) = view.camera.project_virtual(&basis, centre)?;
                 let turret = u.flags & flag::TURRET != 0;
                 let blind = u.flags & 0x20 != 0 || (turret && ((0xa1..=0xa4).contains(&u.design) || !u.has_gun));
                 Some(OnScreen { slot: u.slot, at, radius: (!blind).then(|| (35.0 * 600.0 / z).max(10.0)) })
@@ -184,11 +189,10 @@ impl WarUi {
         }
     }
 
-    /// The pointer's cell (`ShowColony`): `None` off the ground (`InvalidBuildingPosition`; the last cell stays).
+    /// The pointer's cell (`ShowColony`, `AktBGridX/Y`): `None` off the ground; the exe zeroes the pick point then
+    /// (exe 0x49f130 at 0x772), so the orders and landing clicks go to `Real2Grid(0, 0)`.
     pub fn pointer(&mut self, cell: Option<(i32, i32)>) {
-        if let Some(c) = cell {
-            self.cell = c;
-        }
+        self.cell = cell.unwrap_or_else(|| crate::colony::grid_cell(0.0, 0.0));
     }
 
     /// `WF::CheckTanks` (exe 0x460b70): of the units under `p` (own ones, or all while side EN is on the field), the
@@ -267,6 +271,25 @@ impl WarUi {
         self.selected.iter().filter_map(|&s| c.unit(s))
     }
 
+    /// `WF::GetSelected(0)`'s building when it is a defence turret (`+0x238`): what E and hot-spot 0x11 switch with
+    /// no building selected (`ColonyKeyboardHandler` exe 0x462a7e, `Colony_Main` 0x46708c).
+    pub fn turret_building(&self, c: &WarCtx) -> Option<usize> {
+        self.chosen(c).next().filter(|u| u.flags & flag::TURRET != 0).and_then(|u| usize::try_from(u.building).ok())
+    }
+
+    /// `WF::OnlyOneFortressSelected` (ELF 0x4633f0): every selected unit is a defence turret of one building; that
+    /// building (`Colony_MouseInit2` exe 0x467990 enables 1, 2 and 0x11 for it on EN's planet).
+    pub fn one_fortress(&self, c: &WarCtx) -> Option<usize> {
+        let mut b = None;
+        for u in self.chosen(c) {
+            if u.flags & flag::TURRET == 0 || b.is_some_and(|b| b != u.building) {
+                return None;
+            }
+            b = Some(u.building);
+        }
+        b.and_then(|b| usize::try_from(b).ok())
+    }
+
     /// `CheckWeaponSelected(EN, w)`.
     fn armed_with(&self, c: &WarCtx, w: u32) -> bool {
         self.chosen(c).any(|u| u.owner == c.en && u.weapons & w != 0)
@@ -306,14 +329,13 @@ impl WarUi {
         BUTTONS.iter().find(|&&(id, x, _)| crate::kit::inside_f([x, 443.0, 31.0, 31.0], p) && self.enabled(c, id)).map(|&(id, _, _)| id)
     }
 
-    /// A button pressed at `p`: the war buttons (once, on the press), then the 3D view.
+    /// A button pressed at `p`: the war buttons (once, on the press, either button), then the 3D view.
     pub fn press(&mut self, c: &WarCtx, p: [f32; 2], left: bool, in_view: bool) -> WarOutcome {
         let mut out = WarOutcome::default();
         if let Some(id) = self.button(c, p) {
+            // Either button (`AktIkon2`, FX3).
             out.taken = true;
-            if left {
-                self.button_press(c, id, &mut out);
-            }
+            self.button_press(c, id, &mut out);
             return out;
         }
         if !in_view || self.armed != 0 {
@@ -492,11 +514,26 @@ impl WarUi {
         }
     }
 
-    /// The pointer moved to `p` with the left button held: the box (`WarfareKeretesKijeloles`).
-    pub fn drag(&mut self, c: &WarCtx, p: [f32; 2]) -> bool {
-        let Some(s) = self.box_start else { return false };
+    /// The pointer moved to `p` with the left button held on the view. `Colony_Main` runs `GetNearestBuilding` every
+    /// frame of the hold (hot-spot 0x14 isn't one-shot): each unit's selection is kept in `+0x146` again, and within
+    /// 16 pixels of the press the unit under the pointer is picked as on the press (without Shift the rest goes, with
+    /// Shift it adds up); further away the box (`WarfareKeretesKijeloles`) decides, with Shift adding the kept
+    /// selection, so a Shift box only grows. `None`: no hold; `Some(true)`: units decided (the building selection
+    /// goes); `Some(false)`: nothing under the pointer near the press (the building rule's turn).
+    pub fn drag(&mut self, c: &WarCtx, p: [f32; 2]) -> Option<bool> {
+        let s = self.box_start?;
+        self.kept = self.selected.clone();
         if (p[0] - s[0]).abs() + (p[1] - s[1]).abs() <= 15.0 {
-            return false;
+            let t = self.hit(c, p);
+            if !self.mods.shift {
+                self.selected.retain(|&s| Some(s) == t);
+            }
+            let Some(t) = t else { return Some(false) };
+            let own = c.unit(t).is_some_and(|u| u.owner == c.en);
+            if !self.mods.shift || (own && (self.last_owner == c.en || self.selected.is_empty())) {
+                self.select(c, t, true);
+            }
+            return Some(true);
         }
         let first = self.hit(c, s);
         let (x0, x1) = (s[0].min(p[0]), s[0].max(p[0]));
@@ -522,8 +559,16 @@ impl WarUi {
                 self.select(c, s, true);
             }
         }
-        true
+        Some(true)
     }
+
+    /// A left press on the view outside a war (nothing armed, no build cursor): the box runs there too
+    /// (`WarfareKeretesKijeloles` from `ShowColony` [obs: the frame over quick-1.sav planet 42,
+    /// `tools/trace/scripts/colony-sweep.json`]).
+    pub fn hold(&mut self, p: [f32; 2]) {
+        self.box_start = Some(p);
+    }
+
 
     /// A button released: the box ends; an armed air strike goes to the pointer's cell (0x130).
     /// `Colony_Main` fires on the release of either button (`Mouse_Felenged`).
@@ -549,6 +594,24 @@ impl WarUi {
         (u.owner == c.en && u.flags & flag::MINE == 0).then_some((u.slot as i32 % 3 + 1, speech::SELECTION))
     }
 
+    /// The groups from the units' saved bytes `+0x13c + n` (`WF::LoadSelection` reads them; `WF_Tank::LoadSave` exe
+    /// 0x4859a0 saves them): `(slot, bytes)` of the battlefield's units.
+    pub fn seed_groups(&mut self, units: impl IntoIterator<Item = (usize, [u8; 10])>) {
+        self.groups = Default::default();
+        for (slot, b) in units {
+            for (n, g) in self.groups.iter_mut().enumerate() {
+                if b[n] != 0 {
+                    g.insert(slot);
+                }
+            }
+        }
+    }
+
+    /// The groups after a Ctrl+4..9 (`WF::SaveSelection`: every unit's byte `+0x13c + n` := its flag 8), once.
+    pub fn take_groups(&mut self) -> Option<&[BTreeSet<usize>; 6]> {
+        std::mem::take(&mut self.groups_kept).then_some(&self.groups)
+    }
+
     /// The war's keys (`ColonyKeyboardHandler`): Ctrl+4..9 keep a group, 4..9 call it back, S stops, `a` selects
     /// every own unit.
     pub fn key(&mut self, c: &WarCtx, k: WarKey) -> WarOutcome {
@@ -557,6 +620,7 @@ impl WarUi {
             WarKey::Group(n) if n < 6 => {
                 if self.mods.ctrl {
                     self.groups[n] = self.selected.clone();
+                    self.groups_kept = true;
                     for s in &self.selected {
                         self.rings.insert(*s, Pulse::NEW);
                     }
@@ -594,18 +658,16 @@ impl WarUi {
     /// target markers pulse.
     pub fn ui_frame(&mut self, c: &WarCtx) {
         self.counter += 1.0;
-        // `StartGrWar` sets the counter to 900, `Frissit2_Colony` counts it down on the colony screen, `Colony_Kilep`
-        // zeroes it [deviation: the port starts it when the screen first sees the war, colony.md §11.4].
-        if c.snap.war_flag && !self.was_war {
-            self.banner = 900;
-        }
-        self.was_war = c.snap.war_flag;
+        // `Frissit2_Colony` (exe 0x477dc0) on the colony screen: the flag is the counter's state, then it counts down.
+        self.banner_on = self.banner != 0;
         if !self.chosen(c).any(|u| u.owner == c.en) {
             self.stop_on = false;
         } else if self.chosen(c).any(|u| u.owner == c.en && u.flags & 0x500 != 0) {
             self.stop_on = true;
         }
-        self.banner = (self.banner - 1).max(0);
+        if self.banner_on {
+            self.banner -= 1;
+        }
         self.selected.retain(|&s| c.unit(s).is_some());
         // `HandleKisInfoObject` puts the model up again when the first selected unit changes.
         let first = self.selected.first().copied();
@@ -627,6 +689,13 @@ impl WarUi {
     }
 
     /// The 3D pass's rings and target markers (`DrawSelection`, `DrawTarget`).
+    /// The route crosses (`WF_Tank::Draw3d` ELF 0x481890): for each selected own unit its waiting waypoints' cells,
+    /// and the crosses' half length `sin(gvalue/10)·3 + 6` (drawn in the 3D pass, depth-tested).
+    pub fn routes(&self, c: &WarCtx) -> (Vec<(i32, i32)>, f32) {
+        let half = ((self.counter as f64 / 10.0).sin() * 3.0 + 6.0) as f32;
+        (self.chosen(c).filter(|u| u.owner == c.en).flat_map(|u| u.route.iter().copied()).collect(), half)
+    }
+
     pub fn marks(&self, c: &WarCtx) -> Vec<Mark> {
         let mut out = Vec::new();
         for u in self.chosen(c).filter(|u| u.flags & 0x20 == 0) {
@@ -671,7 +740,7 @@ impl WarUi {
     /// The war's 2D parts: the buttons and charge bars (`ColonyGfx2D_1`), the route crosses and group sizes
     /// (`WF::WriteStuff`), the box, the retreat/landing lines.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&self, f: &mut Frame, c: &WarCtx, d: &Draw2d, view: &View, gm: &GroundMap, p: [f32; 2]) {
+    pub fn draw(&self, f: &mut Frame, c: &WarCtx, d: &Draw2d, p: [f32; 2]) {
         let col = |i: usize| d.palette.get(i).copied().unwrap_or([1.0; 3]);
         let v = d.v;
         let fill = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, k: usize| {
@@ -683,11 +752,15 @@ impl WarUi {
         // `ColonyGfx2D_2`: the attack banner while `TamadasSzovegCounter` runs, its brightness `min(100, 2·counter)` %
         // (`KiirStrSzinSzorzo`): EN's planet: "The %s attacked your planet %s!" (3, 2, 5) with the attacker and the
         // planet; else "You attacked the planet %s of the %s!" (3, 2, 6) with the planet and its owner (the other
-        // way round in language 4) [MP: "%s (%s) vs. %s (%s)" with the players' names, not ported].
-        if self.banner > 0 {
+        // way round with `Lang` 4, which the GOG exe never has: re/formats/locale.md §2); in multiplayer
+        // `"%s (%s) vs. %s (%s)"`: the attacker's empire and player (`PlayerNev`), then the owner's.
+        if self.banner_on {
             let k = (2 * self.banner).min(100) as f32 / 100.0;
             let owner = d.empire_names.get(c.snap.owner as usize).cloned().unwrap_or_default();
-            let text = if c.foreign() {
+            let text = if c.snap.multiplayer {
+                let side = |e: i32| [d.empire_names.get(e.clamp(0, 18) as usize).cloned().unwrap_or_default(), b" (".to_vec(), (d.player_name)(e), b")".to_vec()].concat();
+                Some([side(c.snap.attacker), b" vs. ".to_vec(), side(c.snap.owner as i32)].concat())
+            } else if c.foreign() {
                 Some(sprintf_s(&d.line(6), &[&c.snap.planet_name, &owner]))
             } else {
                 (1..0x10).contains(&c.snap.attacker).then(|| sprintf_s(&d.line(5), &[&d.empire_names[c.snap.attacker as usize], &c.snap.planet_name]))
@@ -699,23 +772,6 @@ impl WarUi {
         }
         if !c.snap.war_flag && self.selected.is_empty() {
             return;
-        }
-        // Route crosses: `line3d(0x80be8882)` around each waiting waypoint, 10 above the ground.
-        let basis = view.camera.basis(gm);
-        let gvalue = self.counter as f64;
-        let half = ((gvalue / 10.0).sin() * 3.0 + 6.0) as f32;
-        let line_col = [0xbe as f32 / 255.0, 0x88 as f32 / 255.0, 0x82 as f32 / 255.0, 0x80 as f32 / 255.0];
-        for u in self.chosen(c).filter(|u| u.owner == c.en) {
-            for &(gx, gy) in &u.route {
-                let (x, y) = crate::colony::grid_to_real(gx as f32, gy as f32);
-                let h = crate::colony::height(gm, x, y) - 10.0;
-                let ends = [([h, x - half, y], [h, x + half, y]), ([h, x, y - half], [h, x, y + half])];
-                for (a, b) in ends {
-                    if let (Some(a), Some(b)) = (view.camera.project(&basis, a), view.camera.project(&basis, b)) {
-                        f.push(d.white, Blend::Alpha, Instance::line(a, b, v.k.max(1.0), line_col));
-                    }
-                }
-            }
         }
         // Group sizes at the projected centre − (8, 8) (`WF_Tank::WriteStuff`).
         for s in &self.screen {
@@ -827,6 +883,8 @@ pub struct Draw2d<'a> {
     /// `Tervek[side] + 0x84·design`'s name; the weapon's tech name (`GiveOneTankWeaponName`).
     pub design_name: &'a dyn Fn(&UnitView) -> Vec<u8>,
     pub weapon_name: &'a dyn Fn(&UnitView) -> Vec<u8>,
+    /// `PlayerNev[e]` (exe 0xBAE588 + 11·e).
+    pub player_name: &'a dyn Fn(i32) -> Vec<u8>,
 }
 
 /// `sprintf` with `%s` arguments in order.
@@ -894,6 +952,8 @@ mod tests {
             route: Vec::new(),
             members: 1,
             ride: None,
+            building: 0,
+            dropship: None,
         }
     }
 
@@ -972,12 +1032,12 @@ mod tests {
         assert_eq!(w.selected, BTreeSet::from([3]));
         // A box over all four: the enemy goes again (more than one selected).
         w.press(&c, [60.0, 150.0], true, true);
-        assert!(w.drag(&c, [260.0, 250.0]));
+        assert_eq!(w.drag(&c, [260.0, 250.0]), Some(true));
         assert_eq!(w.selected, BTreeSet::from([0, 1, 2]));
         // A box under 16 pixels isn't one.
         w.release(&c, true, true);
         w.press(&c, [60.0, 150.0], true, true);
-        assert!(!w.drag(&c, [70.0, 155.0]));
+        assert_eq!(w.drag(&c, [70.0, 155.0]), Some(false));
     }
 
     #[test]
@@ -1000,9 +1060,11 @@ mod tests {
         let o = orders(&w.press(&c, [400.0, 300.0], false, true));
         assert_eq!(o[0], GroundOrder::Waypoint { unit: 0, x: 50, y: 60 });
         w.mods.shift = false;
-        // Off the ground: the move goes to the last cell; with Ctrl none; Alt on the enemy moves instead.
+        // Off the ground: the pick point is zeroed, the move goes to `Real2Grid(0, 0)` = (98, 98) (exe 0x49f130 at
+        // 0x772); with Ctrl none; Alt on the enemy moves instead.
         w.pointer(None);
-        assert_eq!(orders(&w.press(&c, [400.0, 300.0], false, true))[0], GroundOrder::Move { unit: 0, x: 50, y: 60 });
+        assert_eq!(orders(&w.press(&c, [400.0, 300.0], false, true))[0], GroundOrder::Move { unit: 0, x: 98, y: 98 });
+        w.pointer(Some((50, 60)));
         w.mods.ctrl = true;
         assert!(orders(&w.press(&c, [400.0, 300.0], false, true)).is_empty());
         w.mods = Mods { alt: true, ..Mods::default() };
@@ -1026,6 +1088,90 @@ mod tests {
         assert_eq!(w.selected, BTreeSet::from([3]));
         w.key(&c, WarKey::Group(0));
         assert_eq!(w.selected, BTreeSet::from([0, 1, 2]));
+    }
+
+    /// Row 28: `GetNearestBuilding` runs every frame of the left hold. Units 0..=3 eight pixels apart: with Shift the
+    /// units the pointer passes near the press add up; a Shift box keeps what it once held, a plain one doesn't.
+    #[test]
+    fn the_held_left_button_keeps_selecting() {
+        let s = field();
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        w.screen = (0..4).map(|i| OnScreen { slot: i, at: [100.0 + 8.0 * i as f32, 200.0], radius: Some(3.0) }).collect();
+        w.press(&c, [100.0, 200.0], true, true);
+        w.mods.shift = true;
+        assert_eq!(w.drag(&c, [108.0, 200.0]), Some(true));
+        assert_eq!(w.selected, BTreeSet::from([0, 1]));
+        // The box over 0..=2, then back over 0 alone: Shift keeps 1 and 2.
+        assert_eq!(w.drag(&c, [117.0, 210.0]), Some(true));
+        assert_eq!(w.selected, BTreeSet::from([0, 1, 2]));
+        w.drag(&c, [80.0, 190.0]);
+        assert_eq!(w.selected, BTreeSet::from([0, 1, 2]));
+        w.mods.shift = false;
+        w.drag(&c, [117.0, 210.0]);
+        w.drag(&c, [80.0, 190.0]);
+        assert_eq!(w.selected, BTreeSet::from([0]));
+        w.release(&c, true, true);
+        assert_eq!(w.drag(&c, [90.0, 200.0]), None);
+    }
+
+    /// Row 35: `StartGrWar`'s 900 counts down on the colony screen only, the banner from its first UI frame
+    /// (`Frissit2_Colony` exe 0x477dc0), at `min(100, 2·counter)` % until 0.
+    #[test]
+    fn the_attack_banner_runs_from_start_gr_war() {
+        let s = field();
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = WarUi { banner: 900, ..WarUi::default() };
+        assert!(!w.banner_on);
+        w.ui_frame(&c);
+        assert!(w.banner_on && w.banner == 899);
+        for _ in 0..899 {
+            w.ui_frame(&c);
+        }
+        assert_eq!(w.banner, 0);
+        w.ui_frame(&c);
+        assert!(!w.banner_on && w.banner == 0);
+    }
+
+    /// Row 33: the groups come from the units' bytes `+0x13c + n` and go back after Ctrl+4..9 (once per keep).
+    #[test]
+    fn groups_round_trip_through_the_unit_bytes() {
+        let s = field();
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        let mut b = [0u8; 10];
+        b[1] = 1;
+        w.seed_groups([(0, b), (2, b), (3, [0; 10])]);
+        assert!(w.take_groups().is_none());
+        w.key(&c, WarKey::Group(1));
+        assert_eq!(w.selected, BTreeSet::from([0, 2]));
+        w.selected = BTreeSet::from([1]);
+        w.mods.ctrl = true;
+        w.key(&c, WarKey::Group(5));
+        let g = w.take_groups().expect("kept");
+        assert_eq!((g[1].clone(), g[5].clone()), (BTreeSet::from([0, 2]), BTreeSet::from([1])));
+        assert!(w.take_groups().is_none());
+    }
+
+    #[test]
+    fn fortress_turrets_stand_for_their_building() {
+        // `WF::OnlyOneFortressSelected` / `GetSelected(0)`'s `+0x238` (exe 0x467990, 0x462a7e): units 1 and 2 are
+        // turrets of building 5, unit 3 one of building 6.
+        let mut s = field();
+        for (i, b) in [(1, 5), (2, 5), (3, 6)] {
+            s.units[i].flags |= flag::TURRET;
+            s.units[i].building = b;
+        }
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        w.selected = BTreeSet::from([1, 2]);
+        assert_eq!((w.one_fortress(&c), w.turret_building(&c)), (Some(5), Some(5)));
+        w.selected = BTreeSet::from([1, 3]);
+        assert_eq!((w.one_fortress(&c), w.turret_building(&c)), (None, Some(5)));
+        w.selected = BTreeSet::from([0, 1]);
+        assert_eq!((w.one_fortress(&c), w.turret_building(&c)), (None, None));
+        w.selected.clear();
+        assert_eq!((w.one_fortress(&c), w.turret_building(&c)), (None, None));
     }
 
     #[test]

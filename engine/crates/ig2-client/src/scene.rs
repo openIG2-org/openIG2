@@ -72,7 +72,8 @@ pub struct Vert {
     pub normal: V3,
     pub uv: [f32; 2],
     /// The lighting normal (`lighting`): the file normal with z negated, turned by the nodes' rotation chain
-    /// (`spsorttype+0x24`: animated nodes' key rotations, the records' matrices else; no `AddToScene` scale).
+    /// (`spsorttype+0x24`: animated nodes' key rotations; a record's matrix never enters it, `LoadXVB` resets the
+    /// child's `+100` to the identity; no `AddToScene` scale).
     pub lnormal: V3,
 }
 
@@ -139,7 +140,8 @@ impl Model {
 
     /// [`Model::load`] posed at animation frame `frame` (`SetFrame`): every node with more than two frames places
     /// its children by their keys (`Kocka` ELF 0x5f6a40: the key's matrix, the record's translation moved by the
-    /// key's change since frame 0).
+    /// key's change since frame 0), and every mesh with more than two frames takes that frame's vertex positions
+    /// (`kirak` 0x60e160; the shipped ones: `spacewar/ora`, `spacewar/karika`, `colony/teszt`).
     pub fn load_at(install: &Install, vector_dir: &str, name: &str, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {
         let stem = name.trim_end_matches(".xvb").trim_end_matches(".XVB");
         let path = format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase();
@@ -315,7 +317,9 @@ impl Walk<'_, '_> {
         for (i, (c, content)) in n.children.iter().enumerate() {
             let mut ct = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
             let mut cm = c.matrix;
-            let mut cl = c.matrix;
+            // The lighting chain: `LoadXVB` copies the record's matrix to the child's `+100`, then resets `+100` to
+            // the identity (only `+0x88` = record·`+100` keeps it), so an un-keyed child turns no normal (row 134).
+            let mut cl = IDENTITY;
             if let (Some(f), true) = (self.frame, frames > 2) {
                 if let (Some(k), Some(k0)) = (n.header.key(f.min(frames - 1), i), n.header.key(0, i)) {
                     cm = k.matrix;
@@ -339,6 +343,7 @@ impl Walk<'_, '_> {
                     let tex2: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture2(x)).collect();
                     let lit = tex2.first().is_some_and(Option::is_some);
                     let nm = normal_matrix(&m);
+                    let vf = self.frame.filter(|_| mesh.is_vertex_animated()).map(|f| f.min(mesh.frames() as usize - 1));
                     let mut by_mat: Vec<Vec<Vert>> = vec![Vec::new(); texs.len().max(1)];
                     let mut edges: Vec<Vec<u8>> = vec![Vec::new(); by_mat.len()];
                     for (fi, f) in mesh.faces.iter().enumerate() {
@@ -348,7 +353,8 @@ impl Walk<'_, '_> {
                         }
                         for &i in &f.idx {
                             let Some(v) = mesh.vertices.get(i as usize) else { continue };
-                            let q = apply(&m, v.pos);
+                            let pos = vf.and_then(|f| mesh.frame_vertex(f, i as usize)).map_or(v.pos, |x| x.0);
+                            let q = apply(&m, pos);
                             by_mat[k].push(Vert {
                                 pos: [q[0] + t2[0], q[1] + t2[1], q[2] + t2[2]],
                                 normal: normalise(apply(&nm, v.normal)),
@@ -541,5 +547,25 @@ mod tests {
         assert!(lit("Object02").is_some_and(|t| t.contains("6desttsi")));
         assert!(lit("Object05").is_some_and(|t| t.contains("6destsi1")));
         assert!(lit("Object08").is_none());
+    }
+
+    /// The lighting normals of `talalmanyok/vad1` (one child scaled diag(0.85, 1.90, 0.18)) are the file normals with
+    /// z negated, the record's matrix left out: every normal the exe lit on the trade screen's hull [obs:
+    /// `light-trade.jsonl` record 5, 305 of them, re/screens/trade.md §13 part 5] is one of the client's.
+    #[test]
+    fn lighting_normals_skip_the_record_matrix() {
+        let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let inst = inst.expect("valid install");
+        let dir = std::env::var_os("IG2_TRACE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces"));
+        let Ok(text) = std::fs::read_to_string(dir.join("light-trade.jsonl")) else { return };
+        let hull = Model::load(&inst, "vector/talalmanyok/", "vad1", "textures/talalmanyok/").unwrap();
+        let ln: Vec<V3> = hull.parts.iter().flat_map(|p| p.verts.iter().map(|v| v.lnormal)).collect();
+        let r: serde_json::Value = text.lines().filter_map(|l| serde_json::from_str(l).ok()).find(|r: &serde_json::Value| r["verts"].as_array().is_some_and(|v| v.len() == 305)).unwrap();
+        for v in r["verts"].as_array().unwrap() {
+            let n: V3 = std::array::from_fn(|i| v[i].as_f64().unwrap() as f32);
+            assert!(ln.iter().any(|l| (l[0] - n[0]).abs() < 1e-5 && (l[1] - n[1]).abs() < 1e-5 && (l[2] + n[2]).abs() < 1e-5), "{n:?}");
+        }
     }
 }

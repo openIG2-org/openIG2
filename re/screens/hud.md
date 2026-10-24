@@ -192,6 +192,60 @@ screen's own passes, unless options (0xd) runs as the self-playing demo or the l
   50, widths 15, 14, 21, 23, height 20; the others 1012..=1015 = src x 77, 92, 106, 127, same places. [obs: the
   capture's bar matches: money box from x 75, "$109090" centred at x 90, the year at 172.]
 
+### 2.1 The two drop-downs: screens and quick research (2026-10-24)
+Input `MOUSE_SelectScreens` (ELF 0x66ba60, exe 0x555470), texts `GFX_SelectScreens` (ELF 0x66ace0, exe 0x554d90; no
+difference), boxes `GFX_DateMoneyScrollFade` (ELF 0x66d160, exe 0x554500, fader pass 2). Exe globals: open flags
+0xe40c5c (screens), 0xe40c5d (research), 0xe40c5e (history); `SelectX/Y/Sz/Ma` 0x912ad4/0x912f38/0x912f3c/0x912f40,
+`Selected` 0xbaf330. Both draw on every screen 1..=0xd (not the load-only options), after the bar.
+- **Hot-spots** (`Mouse_Init` exe 0x555df0 / ELF 0x6697c0, `Mouse_Szoveg_Set`; `AktIkon` = slot + 0x1e; the GOG build,
+  `IG2_TOOLBAR` 0 (exe 0xfe6532)): 6 = (619, 0, 21, 20) the arrow, tooltip `GetString(0x12, 1, 5)`; 7 = (270, 0, 323,
+  20) the message line (`GetString(0x12, 1, 6)`); 8 = (598, 0, 21, 20) the lightning, `GetString(0x12, 1, 7)`. None
+  fires on release; no screen switches them off. While a menu is open `Mouse_Megfogva` keeps `AktIkon` (the menu owns
+  the pointer until the release). **No sound** in any of these functions (the target screen's `Belep` may play one).
+- **Screens menu** (hot-spot 6): a press with the left button not held (a right press) asks for the starmap
+  (`AktKepKell = 2`) unless `AktKep` is 2 or `KepernyokLetiltva[2]`. A left press opens it at `SelectX = Mouse_x −
+  0x81`, `SelectY = 0x14` (frozen while open). Rows: screens i = 1..=`HanyTaskbarElem` (13, static) without 11 and 12
+  (the battles), row r counted without them. Each held frame `Selected` = the row whose `[SelectX, SelectX + 0x7e] ×
+  [SelectY + 16r, SelectY + 16r + 16)` holds the pointer, else −1. The release asks for `Selected` when > 0, not the
+  current screen and not `KepernyokLetiltva[Selected]` (the tutorial's event 0x1c gate: the switch raises
+  `TutorialCheckEvent(0x1c)` unless the shown planet is `Tutorial_MainBolygoNeve`), and always closes.
+  Box `FadeKerettelKerekit(SelectX − 6, SelectY − 2, 0x88, 16n + 4)` (n = 11 rows), fill (0, 10, 0) at 60, edge (0, 5,
+  0) at 30 (the info screen's select boxes' colours). Per row: colour 0x21, 6 when `Selected`, 1 when disabled (wins);
+  the key `Taskbar_Key_Names[i]` (static: "F1-".."F9-", "F10", 13 = "o -") at (SelectX, SelectY + 16r + 6), 13 cells,
+  size 1, left; the name `Taskbar_Names[i]` = `GetString(0x12, 6, i)` at (SelectX + 0x13, SelectY + 16r + 3), 13
+  cells, size 3, left. `KepernyokLetiltva` (exe 0xf66f2c, 20 bytes): the tutorial's DISABLE/ENABLE SCREEN commands;
+  all set during a real-time space battle (`SpaceWar_Belep`/`_Kilep` save and restore it); per frame (`Fake_FRISSITES`
+  exe 0x4de720) 6 = no other players met (`!KigyujtPlayerek()`, while 2 is enabled), 6/7/8 for race 5 and when
+  `Diplomacia/Spy/TradeEngedelyezve` is 0.
+- **Quick-research menu** (hot-spot 8): on the press and every held frame: `SelectSz = 3`, `SelectMa` = the most
+  researchable techs (status 3 at `Talalmanyok[t].+0x45 + EN`) in one column, `SelectX = 0x140`, `SelectY = 0x14`
+  (`0x1de − 16·Ma` if `16·Ma + 0x16 > 0x1e0`); it opens only when `Ma > 0`. Columns: `FastResearchHanyadikSor[(t −
+  1)/16]` (static: categories 1..5 → 0 ships, 6..9 → 1 buildings, 10..12 → 2 tanks); row = the count of earlier
+  status-3 techs in that column. `Selected` = the tech whose `[0x140 + 0x66c, +0x60] × [SelectY + 16row + 0xe, +16)`
+  holds the pointer (the text is at +0x11). The release: with `Selected > 0`, nothing researched, status 3 and the
+  labs enough (or the cheat 0xb7727c): `ResearchAtvaltTalalmanyra(t)` (the research screen's category and field jump
+  to it), `Multi_Send(0x2a, t)` (start, `MULTIGET_Research`); on the research screen showing t, its start button
+  goes in (`ResMelyikGombot 0xcc`, `ResGombNew`, `ButtonPressed`). With `Selected < 1` and a project running: a
+  release inside the STOP rect sends `Multi_Send(0x29, current)` (stop). Then it closes; it also closes whenever no
+  button is held (`Mouse_Gomb`).
+  Texts: headers `GetString(0x11, 3, 0x26 + c)` (SPACESHIPS, BUILDINGS, TANKS) at (SelectX + 0x66(c − 1), SelectY +
+  4), 16 cells, size 2, centred in the cells, colour 6; items the tech's name (`Talalmanyok[t]` +0, 16 bytes) at
+  (SelectX + 0x66col, SelectY + 16row + 0x11), 16 cells, size 2, left; colour 3, 6 when `Selected`, 0x21 while a
+  project runs, then 1 when a lab level is short (no cheat). Footer, `M = 16·Ma + 0x30`: idle with `Selected > 0`
+  and its labs enough: `GetString(0x12, 3, 4) + ":   %d"` (the cost) at (SelectX + 9, SelectY + M − 0x17), size 2,
+  colour 3. Researching: `GetString(0x12, 3, 1) + ":  " + name + "  " + pct + "%"` at (SelectX + 9, SelectY + M −
+  0x17), 0x28 cells, colour 3; `GetString(0x12, 3, 2)` (STOP) centred on x = SelectX + 0x66·Sz − 0x22, same y, 10
+  cells, colour 6 under the pointer in `[SelectX + 0x66Sz − 0x3f, +0x37] × [SelectY + M − 0x20, +0x19]`, else 3;
+  `GetString(0x12, 3, 3) + "   %d"` (money left) at (SelectX + 9, SelectY + M + 7). pct = `(int)((f64)((f32)(prog·100)
+  / ((f32)time · IdoSzorzo)) + 0.5)`; amounts `(int)((Ido·t − prog)·(cost·Money)/(Ido·t))` in f32 (the research
+  screen's daily cost formula), doubled when urgent; the tech is the running one, or `Selected` when idle.
+  Boxes (fill/edge as above), `h = 16Ma + 0x12`, `16Ma + 0x30` when idle and `Selected` can start, `16Ma + 0x4e`
+  while researching (exe 0x554500's `iVar5`: replaced, not added; the texts sit 9 px inside the strips):
+  (SelectX − 6, SelectY − 2, 0x66Sz + 3, h); idle-and-startable the cost strip (SelectX − 1, SelectY + h − 0x20,
+  0x66Sz − 7, 0x19); researching the progress strip (SelectX − 1, SelectY + h − 0x3e, 0x66Sz − 0x43, 0x19), the STOP
+  button (SelectX + 0x66Sz − 0x3f, SelectY + h − 0x3e, 0x37, 0x19), the cost strip (SelectX − 1, SelectY + h − 0x20,
+  0x66Sz − 0x43, 0x19).
+
 ## 3. The colony screen's HUD (`AktKep` 3)
 `GFX_Colony` 0x4da050 draws faders (`KirakFader` (6, 403, 77 × 17), (89, 403, 77 × 17), (5, 423, 162 × 52) for the
 bottom-left info, the build menu's when open), `GFX_DateMoneyScrollFade`, then hooks the 2D passes

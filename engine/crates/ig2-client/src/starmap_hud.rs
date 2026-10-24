@@ -28,6 +28,42 @@ pub struct Console {
 /// The panel's frame, its target size and the scene's parallel light.
 type PanelFrame = (Frame, (u32, u32), [f32; 3]);
 
+/// The battle screen's parallel lights in camera space for `smkeringeto` = `kering` (see [`Console::relight`]): the
+/// starmap scene's 0x808080 at (10, 10, −10) and `smOldalsoFenyekBe`'s two side lights, each with its colour.
+pub fn scene_lights(m: &[[f32; 3]; 3], kering: f32) -> [([f32; 3], [f32; 3]); 3] {
+    let a = (kering * 20.0) as f64;
+    // The engine compares the vertex normal with z negated (`n'`) against the light's vector, so the camera-space
+    // light is used with z negated [obs fx8b: the console ring 2.0 against 10 without the lights].
+    let cam = |d: [f32; 3]| {
+        let l = scene::normalise(std::array::from_fn(|i| m[i][0] * d[0] + m[i][1] * d[1] + m[i][2] * d[2]));
+        [l[0], l[1], -l[2]]
+    };
+    let side = |t: f64| cam([(t.sin() * 300.0) as f32, (t.cos() * 200.0) as f32, 0.0]);
+    [(cam([10.0, 10.0, -10.0]), rgb(0x808080)), (side(a), rgb(0x7f5d00)), (side(a + 1.57075), rgb(0x004e7f))]
+}
+
+/// Colour words are the bytes [r, g, b] (`0x00BBGGRR`).
+fn rgb(c: u32) -> [f32; 3] {
+    [(c & 0xff) as f32 / 255.0, ((c >> 8) & 0xff) as f32 / 255.0, ((c >> 16) & 0xff) as f32 / 255.0]
+}
+
+/// One vertex's light as `fenyekszamolasa` sums it: the ambient 0x404040 plus each parallel light's
+/// `shade[float2int(|n − L|²·2047)]` of `SetLights(2, 0.15)` (`sqrt(1 − i/2896)·255`, `>> 8`), saturating.
+pub fn engine_light(lights: &[([f32; 3], [f32; 3])], n: [f32; 3]) -> [f32; 3] {
+    let shade = |c: f32| {
+        let i = ((2.0 - 2.0 * c) * 2047.0).round();
+        if i < 2896.0 { ((1.0 - i / 2896.0).sqrt() * 255.0).floor() / 256.0 } else { 0.0 }
+    };
+    let mut c = rgb(0x404040);
+    for (l, col) in lights {
+        let d = shade(n[0] * l[0] + n[1] * l[1] + n[2] * l[2]);
+        for k in 0..3 {
+            c[k] += col[k] * d;
+        }
+    }
+    c.map(|x| x.min(1.0))
+}
+
 /// The console's frame kept for lighting it on the CPU: the vertices' normals, the scene's lights, the target.
 struct Sides {
     frame: Frame,
@@ -73,33 +109,12 @@ impl Console {
     /// turned into camera space by the camera's rows `m` (the root's rotation chain is the camera's `cmatrix`).
     pub fn relight(&mut self, r: &mut Renderer, kering: f32, m: &[[f32; 3]; 3]) {
         let Some(sd) = self.sides.as_deref_mut() else { return };
-        let a = (kering * 20.0) as f64;
-        // The engine compares the vertex normal with z negated (`n'`) against the light's vector, so the camera-space
-        // light is used with z negated [obs fx8b: the console ring 2.0 against 10 without the lights].
-        let cam = |d: [f32; 3]| {
-            let l = scene::normalise(std::array::from_fn(|i| m[i][0] * d[0] + m[i][1] * d[1] + m[i][2] * d[2]));
-            [l[0], l[1], -l[2]]
-        };
-        let side = |t: f64| cam([(t.sin() * 300.0) as f32, (t.cos() * 200.0) as f32, 0.0]);
-        // Colour words are the bytes [r, g, b] (`0x00BBGGRR`).
-        let rgb = |c: u32| [(c & 0xff) as f32 / 255.0, ((c >> 8) & 0xff) as f32 / 255.0, ((c >> 16) & 0xff) as f32 / 255.0];
-        // `shade[float2int(|n − L|²·2047)]` of `SetLights(2, 0.15)`: `sqrt(1 − i/2896)·255`, `>> 8`.
-        let shade = |c: f32| {
-            let i = ((2.0 - 2.0 * c) * 2047.0).round();
-            if i < 2896.0 { ((1.0 - i / 2896.0).sqrt() * 255.0).floor() / 256.0 } else { 0.0 }
-        };
-        let lights = [(cam([10.0, 10.0, -10.0]), rgb(0x808080)), (side(a), rgb(0x7f5d00)), (side(a + 1.57075), rgb(0x004e7f))];
+        let lights = scene_lights(m, kering);
         if let Some(sc) = sd.frame.scene.as_mut() {
             for (v, n) in sc.dynamic.iter_mut().zip(&sd.normals) {
-                let mut c = rgb(0x404040);
-                for (l, col) in &lights {
-                    let d = shade(n[0] * l[0] + n[1] * l[1] + n[2] * l[2]);
-                    for k in 0..3 {
-                        c[k] += col[k] * d;
-                    }
-                }
+                let c = engine_light(&lights, *n);
                 v.normal = [0.0; 3];
-                v.color = [c[0].min(1.0), c[1].min(1.0), c[2].min(1.0), 0.0];
+                v.color = [c[0], c[1], c[2], 0.0];
             }
         }
         r.draw_into(&sd.frame, &mut sd.target, sd.size, 0.0);

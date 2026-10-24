@@ -36,14 +36,16 @@ Updated 2026-10-24.
 
 ## M6: fixes and polish (after the prototype)
 - [x] Triage `re/deviations.md` (fix / enhanced option / keep) (2026-10-24: 129 fix, 31 investigate, 6 enhanced, 18 keep, 38 closed; queue FX1-FX16 in `docs/roadmap.md` §6)
-- [ ] FX6 tutorial wiring: event sites, gate flags, effects, recorded keys
-- [ ] FX1 global input: F-keys and gates, extra letter keys out, top bar and screen menu everywhere, key repeat
-- [ ] FX2 + FX3 pointer, tooltips, right button as left
-- [ ] FX5 colony and ground war input and looks
-- [ ] FX4 starmap input; FX10 options and trade; FX13 render phases and looks
-- [ ] FX7 SpaceWar leftovers
-- [ ] FX8 design; FX9 research/diplomacy/info/messages/spy; FX11 MainScr; FX12 video and Help
-- [ ] FX14 sound leftovers, FX15 MP teardown and gates
+- [x] FX1 global input; FX2 pointer and tooltips; FX3 right button as left
+- [x] FX4 starmap input; FX5 colony and ground war; FX8 design; FX10 options and trade
+- [x] FX9 research, diplomacy, info, messages, spy
+- [x] FX7 SpaceWar, FX12 video and Help, FX13 render phases, FX15 MP teardown and gates: the done parts (detail in `docs/roadmap.md` §6)
+- [ ] FX6 tutorial wiring: the rest
+- [x] FX11 MainScr looks and timing
+- [ ] FX14 sound leftovers; FX16 a tutorial-start trace
+- [ ] FX7 render-look rest
+- [ ] FX15 rest: console commands, MP pause/speed messages, joiner migration, resuming an MP save from a room
+- [ ] Leftover rows the FX boxes left open: 10, 111, 124 (calibration), 130, 139, 163's console, 186's scroll bar, 188's `SkipAll`, 224, 225, 227, 240, 241, 47's rest, 79, 114, 267, 276-278, 280-284
 - [ ] Owner: decide the enhanced proposals (#5, #96, #133, #146, #159, #169, #197), then ADRs; ADR lines for the deliberate keeps
 - [ ] Sharper text, upscaled textures, graphics upgrades
 

@@ -1,0 +1,17 @@
+{
+ "screen": "colony",
+ "note": "FX5: ShowColony's both-button turn (re/screens/colony.md §2.1) on quick-1.sav planet 42: left down at (300, 200), right down two ticks later, the pointer moves right 40 then up 20, right up, left up, then a right press and drag alone (nothing turns). The grabs carry the exe's camera (cam: x, y, zoom, pitch, rotate). Times are UI ticks.",
+ "events": [
+  {"t": 2, "mouse": [300, 200]},
+  {"t": 10, "down": 1, "at": [300, 200]},
+  {"t": 12, "down": 3, "at": [300, 200]},
+  {"t": 14, "mouse": [340, 200]},
+  {"t": 17, "mouse": [340, 180]},
+  {"t": 20, "up": 3, "at": [340, 180]},
+  {"t": 21, "up": 1, "at": [340, 180]},
+  {"t": 30, "down": 3, "at": [340, 180]},
+  {"t": 32, "mouse": [400, 240]},
+  {"t": 36, "up": 3, "at": [400, 240]}
+ ],
+ "grabs": [8, 13, 16, 19, 25, 34, 40]
+}

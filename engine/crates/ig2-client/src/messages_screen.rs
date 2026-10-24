@@ -586,6 +586,10 @@ pub struct MessagesScreen {
     pub row: i32,
     /// The sim's orders since the window last took them (`Messages_Main`'s rows and arrows).
     pub orders: Vec<MessageOrder>,
+    /// `VoltUjValasz` and `AktValasz` (exe 0xDABDB4, 0xD90DCC): an answer asked for and not taken yet. `ValaszKivalasztva`
+    /// (exe 0x509d10, the end of every `Messages_Main` frame) takes it once the answer isn't disabled; it is
+    /// forgotten only at `Messages_Belep` (re/rules/info-messages.md §7.3).
+    pub pending: Option<usize>,
 }
 
 /// `Messages_MouseInit`'s hot-spots (virtual pixels): 1 up (older first … the list moves), 2 down, 3 the inbox,
@@ -634,11 +638,22 @@ impl MessagesScreen {
         }
     }
 
-    /// The screen's keyboard handler (exe 0x507eb0, the character): `a`..`d` take that answer once the text is
-    /// typed (`KiirtaMar`).
+    /// The screen's keyboard handler (exe 0x507eb0, the character): `a`..`d` ask for that answer once the text is
+    /// typed (`KiirtaMar`) and try it at once.
     pub fn key(&mut self, ch: &str) {
         let Some(k) = ["a", "b", "c", "d"].iter().position(|&c| c == ch) else { return };
-        if let Some(d) = self.open.as_mut().filter(|d| d.typed_all && k < d.answers.len()) {
+        if self.open.as_ref().is_some_and(|d| d.typed_all && k < d.answers.len()) {
+            self.pending = Some(k);
+            self.answer();
+        }
+    }
+
+    /// `ValaszKivalasztva` (exe 0x509d10): the answer asked for, unless the story disabled it (then it stays asked
+    /// for and is tried again the next frame).
+    pub fn answer(&mut self) {
+        let (Some(k), Some(d)) = (self.pending, self.open.as_mut()) else { return };
+        if d.answers.get(k).is_some_and(|a| !a.disabled) {
+            self.pending = None;
             d.choose(k);
         }
     }
@@ -646,12 +661,15 @@ impl MessagesScreen {
     /// A left press (`Messages_Main`) on inbox of `n` messages.
     pub fn press(&mut self, at: [f32; 2], n: usize) -> Press {
         let busy = self.open.as_ref().is_some_and(|d| !d.over);
-        // `Messages_MouseInit2` (exe 0x508940): 5 and 10 off; 7..=9 only with no answers pending and the text typed.
+        // `Messages_MouseInit2` (exe 0x508940): 5 and 10 off; 7..=9 only with no answers pending and the text typed;
+        // 4 and 6 only at `mesframe` 30 (a message open: the client has no `mesframe` between 15 and 30).
         let idle = self.open.as_ref().is_none_or(|d| d.answers.is_empty() && d.typed_all);
+        let at_30 = self.open.is_some();
         let id = SPOTS
             .iter()
             .filter(|(id, _)| match id {
                 5 | 10 => false,
+                4 | 6 => at_30,
                 7..=9 => idle,
                 _ => true,
             })
@@ -696,12 +714,10 @@ impl MessagesScreen {
                 }
             }
             Some(4) => {
-                if let Some(d) = &mut self.open {
-                    if d.typed_all {
-                        if let Some(k) = d.hover {
-                            d.choose(k);
-                        }
-                    }
+                if let Some(k) = self.open.as_ref().filter(|d| d.typed_all).and_then(|d| d.hover) {
+                    // `VoltUjValasz = 1`; the frame's `ValaszKivalasztva` follows at once.
+                    self.pending = Some(k);
+                    self.answer();
                 }
             }
             Some(7..=9) => return Press::Leave,
@@ -889,5 +905,28 @@ mod tests {
         assert_eq!(s.open.as_ref().unwrap().orders.last(), Some(&MessageOrder::Answer { k: 1 }));
         s.open.as_mut().unwrap().advance(10_000.0);
         assert_eq!(s.press([600.0, 100.0], 6), Press::Leave);
+    }
+
+    #[test]
+    fn a_disabled_answer_waits_until_it_is_allowed() {
+        let msg = b"00\r\n- 01 02 -----\r\n02\r\n- 02 -1 Fine.\r\n- 03 -1 No.\r\n";
+        let txt = b"01 0001 12 TE\r\n+ Hello\r\n02 0001 12 EN\r\n+ Fine\r\n03 0001 12 EN\r\n+ No\r\n";
+        let mut d = dialogue(msg, txt);
+        let b = d.find_block(0);
+        d.eval_block(b);
+        d.choose(0);
+        d.orders.clear();
+        d.typed_all = true;
+        d.answers[1].disabled = true;
+        let mut m = MessagesScreen { open: Some(d), ..Default::default() };
+        // `VoltUjValasz` stays 1 while the story keeps it disabled; `ValaszKivalasztva` takes it the frame it isn't.
+        m.key("b");
+        assert_eq!(m.pending, Some(1));
+        m.answer();
+        assert!(m.open.as_ref().unwrap().orders.is_empty());
+        m.open.as_mut().unwrap().answers[1].disabled = false;
+        m.answer();
+        assert_eq!(m.pending, None);
+        assert_eq!(m.open.as_ref().unwrap().orders, [MessageOrder::Answer { k: 1 }]);
     }
 }

@@ -20,6 +20,9 @@ pub enum Align {
     Centre,
 }
 
+/// A pixel's fraction past the rasteriser's sub-pixel grid (1/256).
+const TIE: f32 = 1.0 / 64.0;
+
 pub struct Font {
     tex: TexId,
     cs: Charset,
@@ -72,9 +75,11 @@ impl Font {
             if b != b' ' && visible {
                 let g = self.glyph[b as usize] as f32;
                 let (u, vv) = ((g % per_row).floor() * sx, (g / per_row).floor() * sy + y0);
+                // The exe's GL fills a pixel whose centre lies exactly on the glyph's bottom edge, not on its top
+                // edge (wgpu does the opposite): the quad moves `TIE` pixels down, its uv with it (row 27).
                 let p = v.px(x + w / 2.0, y + h / 2.0);
-                let mut i = Instance::new(kind::SPRITE, p, [w * v.k / 2.0, h * v.k / 2.0], [rgb[0], rgb[1], rgb[2], 1.0]);
-                i.uv = [u / 256.0, vv / 256.0, w / 256.0, h / 256.0];
+                let mut i = Instance::new(kind::GLYPH, [p[0], p[1] + TIE], [w * v.k / 2.0, h * v.k / 2.0], [rgb[0], rgb[1], rgb[2], 1.0]);
+                i.uv = [u / 256.0, (vv + TIE / v.k) / 256.0, w / 256.0, h / 256.0];
                 f.push(self.tex, Blend::GammaAdditive, i);
             }
             x += w;

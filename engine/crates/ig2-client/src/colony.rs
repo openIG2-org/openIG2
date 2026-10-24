@@ -100,6 +100,11 @@ pub struct UnitView {
     /// Riding its dropship (`+0x278` bit 3): the model is drawn `(h, x, y)` = (`+0x284`, `+0x27c`, `+0x280`) off
     /// its place (spec §4); the rings stay on the ground.
     pub ride: Option<V3>,
+    /// `+0x238`: a defence turret's building slot.
+    pub building: i32,
+    /// The dropship (`WF_Hordozo`, `+0x264..+0x26c`) while it is shown (state `+0x278` bit 0 clear, not a turret or
+    /// a 0x20000 unit): its offset `(h, x, y)` from the unit.
+    pub dropship: Option<V3>,
 }
 
 /// A shot in flight: `(h, x, y)`, the list it is in (0 shells, 1 missiles/debris, 2 bolts) and its kind.
@@ -234,6 +239,8 @@ impl ColonySnap {
                     route: u.rt.waypoints.iter().skip(u.rt.wp_cursor.max(0) as usize).copied().collect(),
                     members: u.hp.iter().filter(|&&h| h > 0).count() as i32,
                     ride: (u.transport & 8 != 0).then_some([u.rt.drop[2], u.rt.drop[0], u.rt.drop[1]]),
+                    building: u.building,
+                    dropship: (u.flags & 0x4020000 == 0 && u.transport & 1 == 0).then_some([u.rt.drop[2], u.rt.drop[0], u.rt.drop[1]]),
                 }
             })
             .collect();
@@ -443,20 +450,6 @@ impl Camera {
         std::array::from_fn(|c| std::array::from_fn(|r| rows[r][c]))
     }
 
-    /// The original's mouse controls (`ShowColony`: both buttons drag rotate/pitch by 1/200 per pixel, pitch
-    /// clamped −1.4922565..−0.05).
-    pub fn turn(&mut self, dx: f32, dy: f32) {
-        self.rotate -= dx / 200.0;
-        self.pitch = (self.pitch + dy / 200.0).clamp(-1.4922565, -0.05);
-    }
-
-    pub fn pan(&mut self, dx: f32, dy: f32) {
-        let (s, c) = (self.rotate.sin(), self.rotate.cos());
-        let k = (800.0 - self.zoom).max(100.0) / 400.0;
-        self.x = (self.x + (c * dx - s * dy) * k).clamp(-3800.0, 3800.0);
-        self.y = (self.y + (s * dx + c * dy) * k).clamp(-3800.0, 3800.0);
-    }
-
     /// `Colony_Move(dx, dy)` (exe 0x4688f0; ELF `Colony_Move0` 0x4e2cb0): the start point slides by `(dx, dy)`
     /// pixels turned by the rotation, x then y, scaled `((600 − Zoom) + 200)/600·0.85` (f32, the angle's cos/sin in f64
     /// rounded to f32; spec §11.9). The `MaximizeCamera` correction it first takes is the clamp of [`Camera::basis`].
@@ -602,12 +595,37 @@ pub struct CameraKeys {
     tween: Option<(f32, f32, i32)>,
     /// `Colony_Autoscroll`'s `xSpeed/ySpeed` (0xa3eb68/6c).
     scroll: [i32; 2],
+    /// `balclickx/y` (virtual pixels), `Colony_LastRotate`, `Colony_LastZoom` (the pitch) of the first press;
+    /// `None` = `ujclick` (the next press takes them).
+    turn_from: Option<([f32; 2], f32, f32)>,
 }
 
 /// The `c` presets (exe 0x8f1d44 zoom, 0x8f1e44 pitch; the rotate table 0x8f1dc4 is never read).
 const PRESETS: [(f32, f32); 3] = [(-240.0, -1.113946), (-666.0, -0.356804), (-1100.0, -0.05)];
 
 impl CameraKeys {
+    /// `ShowColony` (exe 0x49f130, outside the pick list): a press of either button while `ujclick` keeps the pointer,
+    /// Rotate and Pitch.
+    pub fn mouse_press(&mut self, cam: &Camera, at: [f32; 2]) {
+        if self.turn_from.is_none() {
+            self.turn_from = Some(([at[0].trunc(), at[1].trunc()], cam.rotate, cam.pitch));
+        }
+    }
+
+    /// A release of either button: `ujclick` again.
+    pub fn mouse_release(&mut self) {
+        self.turn_from = None;
+    }
+
+    /// Both buttons held: `Rotate = last − (x0 − x)/200`, `Pitch = last + (y0 − y)/200` clamped −1.4922565..−0.05
+    /// (`at` in virtual pixels, from the first button's press).
+    pub fn mouse_turn(&self, cam: &mut Camera, at: [f32; 2]) {
+        if let Some((p, r, q)) = self.turn_from {
+            cam.rotate = (r as f64 - (p[0] - at[0].trunc()) as f64 / 200.0) as f32;
+            cam.pitch = ((q as f64 + (p[1] - at[1].trunc()) as f64 / 200.0) as f32).clamp(-1.4922565, -0.05);
+        }
+    }
+
     /// `c`: the next preset; zoom and pitch glide there over 15 drawn frames.
     pub fn preset(&mut self) {
         self.mode = if self.mode + 1 > 3 { 0 } else { self.mode + 1 };
@@ -747,6 +765,11 @@ pub struct ColonyScene {
     key: Vec<(usize, u8, i32, i32, bool)>,
     /// Building models for the build cursor (`tempepulet`), by kind.
     buildings: HashMap<u8, Option<UnitMesh>>,
+    /// `hordozo.xvb` (`WF::LoadMesh` exe 0x483f70), loaded on the first dropship.
+    dropship: Option<Option<UnitMesh>>,
+    /// The drawn units' `GetObjCenter` (their posed hull's box centre, a defence turret's gun), by slot: the hit test's
+    /// point (`WF_Tank::MouseOver` exe 0x48bc90).
+    pub unit_centres: Vec<(usize, V3)>,
     /// The unit info's turning model's render target ([`ColonyScene::render_info_model`]).
     info_target: Option<crate::render::Target>,
 }
@@ -948,7 +971,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true) });
         }
-        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None })
+        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, dropship: None, unit_centres: Vec::new() })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -1044,6 +1067,19 @@ impl ColonyScene {
         };
         r.draw_into(&f, target, px, 0.0);
         Some(target.tex)
+    }
+
+    /// The dropship's model with its own textures (no per-owner skin, no tint).
+    fn dropship_mesh(&mut self, r: &mut Renderer, install: &Install) -> Option<&UnitMesh> {
+        let (textures, white) = (&mut self.textures, self.white);
+        self.dropship
+            .get_or_insert_with(|| {
+                let (vdir, tdir) = model_dirs(3);
+                let model = Model::load(install, vdir, "hordozo", tdir).map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
+                let texs = model.parts.iter().map(|p| texture(r, install, textures, white, p.texture.as_deref())).collect();
+                Some(UnitMesh { model, texs })
+            })
+            .as_ref()
     }
 
     fn turret_mesh(&mut self, r: &mut Renderer, install: &Install, um: &UnitModels, k: usize) -> Option<&UnitMesh> {
@@ -1217,6 +1253,8 @@ pub struct Overlay {
     pub selection: Option<(usize, f32, i32)>,
     /// `LandingZone::Draw` (spec §11.10): the landing zone's outline.
     pub landing: bool,
+    /// The route crosses' cells and half length ([`crate::colony_war::WarUi::routes`]).
+    pub routes: (Vec<(i32, i32)>, f32),
 }
 
 /// A flat textured square on the ground (two triangles, `polygons3d`), alpha `alpha` (0..=255).
@@ -1312,6 +1350,7 @@ impl View {
         // Units (spec §4): the hull at `P + body·(0,0,pivot)` with matrix `body·S`, the weapon on top.
         let mut dynamic = Vec::new();
         let um = &rules.unit_models;
+        scene.unit_centres.clear();
         // `WF_Tank::Draw3d`/`Update` hide the units too when the human doesn't see inside.
         for mut u in curr.units_at(prev, alpha).into_iter().filter(|_| curr.visible) {
             if u.flags & flag::TURRET == 0 {
@@ -1319,6 +1358,15 @@ impl View {
                 let base = dynamic.len() as u32;
                 dynamic.extend(blob_shadow(um, &u));
                 draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::Blob, video: false, additive: false, depth_write: false });
+            }
+            // `WF_Hordozo::Update` (exe 0x4a5ab0): `MoveObj((h + off_h) − 20, x + off0, y + off1)`; `WF_Tank::LoadMesh`
+            // (exe 0x4847a0) added it at `AddToScene` scale 0.04 turned (0, π/2, 0) once, so it never turns.
+            if let Some(d) = u.dropship {
+                if let Some(mesh) = scene.dropship_mesh(r, install) {
+                    let at = [u.pos[0] + d[0] - 20.0, u.pos[1] + d[1], u.pos[2] + d[2]];
+                    let xf = Placement::add_to_scene(mesh.model.origin, 0.04).world((0.0, HALF_PI, 0.0), at);
+                    push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                }
             }
             if let Some(d) = u.ride {
                 u.pos = std::array::from_fn(|k| u.pos[k] + d[k]);
@@ -1334,6 +1382,9 @@ impl View {
                     let rec = Placement::genesis(mesh.model.origin, s);
                     let xf = Transform { matrix: scene::mul(&u.body, &rec.matrix).map(|x| x * 1024.0), translation: base };
                     push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                    if let Some(c) = box_centre(&mesh.model, &xf) {
+                        scene.unit_centres.push((u.slot, c));
+                    }
                 }
             }
             let Some(k) = u.gun else { continue };
@@ -1355,6 +1406,9 @@ impl View {
                 let rec = Placement::genesis(mesh.model.origin, s);
                 let xf = Transform { matrix: scene::mul(&m, &rec.matrix).map(|x| x * 1024.0), translation: at };
                 push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                if let Some(c) = box_centre(&mesh.model, &xf).filter(|_| turret_unit) {
+                    scene.unit_centres.push((u.slot, c));
+                }
             }
         }
         self.overlay_models(r, install, rules, gm, scene, curr, &mut dynamic, &mut draws);
@@ -1442,6 +1496,31 @@ impl View {
                 dynamic.extend(landing_square(gm, x, y));
                 draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
             }
+        }
+        // Route crosses: two `line3d(0x80be8882)` a waypoint along the map axes, 10 above the ground: the engine's
+        // `Lines` (re/screens/render.md §2.3), 1 pixel wide, depth-tested and added at alpha 0x80 (thin quads facing
+        // the eye).
+        let (cells, half) = &self.overlay.routes;
+        if !cells.is_empty() {
+            let basis = self.camera.basis(gm);
+            let px = 480.0 / self.camera.size[1].max(1.0) / 600.0;
+            let c = [0xbe as f32 / 255.0, 0x88 as f32 / 255.0, 0x82 as f32 / 255.0, 0x80 as f32 / 255.0];
+            let base = dynamic.len() as u32;
+            for &(gx, gy) in cells {
+                let (x, y) = grid_to_real(gx as f32, gy as f32);
+                let h = height(gm, x, y) - 10.0;
+                for (a, b) in [([h, x - half, y], [h, x + half, y]), ([h, x, y - half], [h, x, y + half])] {
+                    let mid: V3 = std::array::from_fn(|k| (a[k] + b[k]) / 2.0);
+                    let to_eye: V3 = std::array::from_fn(|k| basis.eye[k] - mid[k]);
+                    let dist = dot(to_eye, to_eye).sqrt();
+                    let side = scene::normalise(cross(std::array::from_fn(|k| b[k] - a[k]), to_eye));
+                    let w = dist * px / 2.0;
+                    let off: V3 = side.map(|s| s * w);
+                    let q = |p: V3, s: f32| MeshVertex { pos: std::array::from_fn(|k| p[k] + off[k] * s), normal: [0.0; 3], uv: [0.0; 2], color: c };
+                    dynamic.extend([q(a, -1.0), q(b, -1.0), q(b, 1.0), q(a, -1.0), q(b, 1.0), q(a, 1.0)]);
+                }
+            }
+            draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: scene.white, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
         }
         // A building's marker square: centre, half sizes (`w·40·select + grow`) and height.
         let building_at = scene.building_at.clone();
@@ -1694,6 +1773,19 @@ fn axis_x(angle: f32) -> M3 {
     [1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c]
 }
 
+/// `GetObjCenter`: the middle of the posed model's extent.
+fn box_centre(model: &Model, xf: &Transform) -> Option<V3> {
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in model.parts.iter().flat_map(|p| &p.verts) {
+        let p = xf.point(v.pos);
+        for j in 0..3 {
+            lo[j] = lo[j].min(p[j]);
+            hi[j] = hi[j].max(p[j]);
+        }
+    }
+    (lo[0] <= hi[0]).then(|| std::array::from_fn(|j| (lo[j] + hi[j]) / 2.0))
+}
+
 fn push_model(model: &Model, texs: &[TexId], xf: &Transform, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     let (mut v, mut rg) = (Vec::new(), Vec::new());
     bake(model, xf, [1.0; 3], 1.0, &mut v, &mut rg);
@@ -1769,6 +1861,25 @@ mod tests {
     /// Frissit2_Colony's integration and Colony_Autoscroll against the trace: the keys reach the camera one tick
     /// after their event, exactly (f32); the edge scroll's slide from the t20 grab on (the first grab's ten ticks hold
     /// `Colony_Move`'s one-shot `MaximizeCamera` correction), its speeds' phase found by search.
+    /// `ShowColony`'s both-button turn against ig2.exe (`tools/trace/scripts/colony-turn.json`, quick-1.sav planet 42):
+    /// left down at (300, 200), right down, the pointer 40 right → rotate 0 → 0.2, then 20 up → pitch −0.7854 →
+    /// −0.6854; a right drag alone turns nothing.
+    #[test]
+    fn both_buttons_turn_the_camera_as_the_exe() {
+        let mut cam = Camera { x: 0.0, y: 0.0, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.0, size: [640.0, 480.0] };
+        let mut k = CameraKeys::default();
+        k.mouse_press(&cam, [300.0, 200.0]);
+        k.mouse_press(&cam, [300.0, 200.0]);
+        k.mouse_turn(&mut cam, [340.0, 200.0]);
+        assert_eq!((cam.rotate, cam.pitch), (0.2, -std::f32::consts::FRAC_PI_4));
+        k.mouse_turn(&mut cam, [340.0, 180.0]);
+        assert!((cam.pitch - -0.6854).abs() < 1e-4 && cam.rotate == 0.2);
+        k.mouse_release();
+        k.mouse_press(&cam, [340.0, 180.0]);
+        k.mouse_turn(&mut cam, [340.0, 180.0]);
+        assert_eq!(cam.rotate, 0.2);
+    }
+
     #[test]
     fn camera_keys_and_edge_scroll_follow_the_exe() {
         let held = |t: i32, from: i32, n: i32| (from..from + n).contains(&t);

@@ -229,11 +229,11 @@ impl MainScene {
     pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, s: &MainScr, vv: &Virtual) -> [Option<[f32; 2]>; 3] {
         let (cam, a) = s.cam;
         let m = scene::create_matrix(a, 0.0, 0.0);
-        // `forgaspont` (the turn's centre; `q·5` along x while leaving): `e = M·(p − f) + f − kamerapont` [guess: the
-        // engine's `CameraRotate2` pivot].
+        // `forgaspont` (the turn's centre; `q·5` along x while leaving): `e = M·(p − f) − kamerapont` (`CameraRotate2`
+        // ELF 0x5fd340).
         let pivot = [s.exit_q().map_or(0.0, |q| q * 5.0), 0.0, 0.0];
         let mf = scene::apply(&m, pivot);
-        let cam = [cam[0] + mf[0] - pivot[0], cam[1] + mf[1] - pivot[1], cam[2] + mf[2] - pivot[2]];
+        let cam = [cam[0] + mf[0], cam[1] + mf[1], cam[2] + mf[2]];
         let eye = |p: V3| -> V3 {
             let q = scene::apply(&m, p);
             [q[0] - cam[0], q[1] - cam[1], q[2] - cam[2]]
@@ -248,7 +248,9 @@ impl MainScene {
         let grey = (gt * 255.0) as u32 & 0xff;
         let pcol = ((gt * 140.0 * gt) as u32) << 24 | grey << 16 | grey << 8 | grey;
         for (i, (at, size, tex)) in self.pictures.iter().enumerate() {
-            let p = if i < 2 { [at[0], at[1], cam[2] / 1.2 - 3000.0] } else { *at };
+            // `MoveObj` puts the null box at (x, y, z′) while its one particle keeps the record's own (x, y, z) inside
+            // it (exe 0x500270 / `Main3DInit` 0x4f96a0 step 6): the picture sits at the sum. The third box never moves.
+            let p = if i < 2 { [2.0 * at[0], 2.0 * at[1], cam[2] / 1.2 - 3000.0 + at[2]] } else { *at };
             sprite(f, *tex, self.white, eye(p), *size, if i < 2 { pcol } else { 0x8cff_ffff });
         }
         // Step 2: the dust, recoloured every frame.
@@ -337,11 +339,15 @@ impl MainScene {
         let mut dynamic = Vec::new();
         let mut draws = Vec::new();
         let unlit = lighting::Lights::default().ambient(0xffffff);
-        // The scene's lights (`mainOldalsoFenyekBe` ELF 0x58c5b0) for the lit models.
-        // The meteors see a dim light only [obs: near black in the captures]; the ships their own parallel light
-        // (0x323238 from (−1000, 0, 2000)) and the scene's side lights (`mainOldalsoFenyekBe` ELF 0x58c5b0).
-        let lit = lighting::Lights::default().parallel(0x323238, [-1000.0, 0.0, 2000.0]);
-        let side = lit.clone().parallel(0x6464c8, [200.0, -1000.0, 500.0]).parallel(0xff9c82, [0.0, 1400.0, 500.0]);
+        // The scene's side lights (`mainOldalsoFenyekBe` exe 0x5047d0, ported as `mesOldalsoFenyekBe`; on `mainmeshid`,
+        // the scene's root, so every lit model sees them first, `Kocka`): colour words 0xc86464 from (200, −1000, 500)
+        // and 0x829cff from (0, 1400, 500). Each ship adds its own parallel light (0x323238 from (−1000, 0, 2000),
+        // `Main3DInit` step 9), the race scene its 0xdcc8c8 from (0, 0, −1000) (`LoadFajValasztasVektor` 0x4f9410).
+        // The meteors (`LoadBox(.., 0)`, no light of their own) draw near black in the exe [obs: lit by the side lights
+        // they come out grey; re/deviations.md 150]: a dim light only.
+        let dim = lighting::Lights::default().parallel(0x323238, [-1000.0, 0.0, 2000.0]);
+        let side = lighting::Lights::default().parallel(0xc86464, [200.0, -1000.0, 500.0]).parallel(0x829cff, [0.0, 1400.0, 500.0]);
+        let ship = side.clone().parallel(0x323238, [-1000.0, 0.0, 2000.0]);
         let relative = |t: scene::Transform| -> scene::Transform {
             let mm = scene::mul(m, &t.matrix);
             let q = scene::apply(m, t.translation);
@@ -367,7 +373,7 @@ impl MainScene {
             let t = Placement::add_to_scene(met.origin, mt.scale).world((mt.angles[0], mt.angles[1], mt.angles[2]), mt.pos);
             for p in &met.parts {
                 let tex = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x)).unwrap_or(self.white);
-                bake(p, &t, &lit, tex, 1.0 - tr, false, &mut dynamic, &mut draws);
+                bake(p, &t, &dim, tex, 1.0 - tr, false, &mut dynamic, &mut draws);
             }
         }
         // Step 7: the ships shown (`flag{i+1}0.xvb` 0.5, camera-fixed, lit by their own parallel light 0x323238 from
@@ -381,7 +387,7 @@ impl MainScene {
             let b = scene::create_matrix(0.0, 0.0, if spin2 { s.m / 20.0 } else { 0.0 } + 1.570_796_4);
             let p0 = Placement::add_to_scene(model.origin, 0.5);
             let t = scene::Transform { matrix: scene::mul(&scene::mul(&a, &b), &p0.matrix).map(|x| x * 1024.0), translation: sh.pos };
-            let lights = side.clone();
+            let lights = ship.clone();
             for p in &model.parts {
                 let tex = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x)).unwrap_or(self.white);
                 bake(p, &t, &lights, tex, 1.0 - (sh.alpha * s.gt + (1.0 - s.gt)), false, &mut dynamic, &mut draws);
@@ -413,7 +419,7 @@ impl MainScene {
         // race's head (A), rings (B, C) moved by `MozgatKor`, the telescopes (subs 3..8) hidden.
         if let Some(rc) = &s.race {
             let (model, place, alpha) = self.race_posed(install, rc);
-            // Its own parallel light and the scene's side lights (`mainOldalsoFenyekBe`) [obs: the rings lit copper].
+            // The scene's side lights, then its own parallel light.
             let base = side.clone().parallel(0xdcc8c8, [0.0, 0.0, -1000.0]);
             for p in &model.parts {
                 let top = p.index.first().copied().unwrap_or(u16::MAX);
@@ -650,8 +656,10 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         }
         // The screen's first frame comes two UI ticks after the script's start (`MainElindult` gates the ticks until
         // it) [obs: `Update3D`'s first call at t 2, M 0].
+        let mut due = None;
         if t > 2 {
             s.tick();
+            due = s.due();
         }
         s.frame();
         s.hover(mouse);
@@ -726,7 +734,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 println!("t {t}: options {a:?}");
             }
         } else {
-            let acts = [press.and_then(|p| s.press(p)), release.and_then(|p| s.release(p))];
+            let acts = [due, press.and_then(|p| s.press(p)), release.and_then(|p| s.release(p))];
             for a in acts.into_iter().flatten() {
                 println!("t {t}: {a:?}");
                 prepare(&mut s, a, &mut assets, &install, &hud.texts);
@@ -752,11 +760,15 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             }
             if let Some((h, os)) = &mut options {
                 h.draw(os, &mut frame, size, t as f64 * 10.0);
+            } else if s.leaving.is_none() {
+                // `UpdateFrame`'s pointer at the script's point, the hand over a ring or a box (`MainScr_Kilep`'s loop
+                // hides it: −2; phase 0: deviation 277).
+                hud.draw_pointer(&mut frame, size, [mouse[0] as i32, mouse[1] as i32], s.hand as i32);
             }
             let rgba = r.draw_to_image(&frame, o.size, 0.0);
             let path = crate::script::grab_path(out, t);
             crate::assets::write_snapshot(&path, o, &rgba)?;
-            println!("{}: t {t} | menu {:?} M {} tav {} cel {} gt {} hovered {:?} race {:?}", path.display(), s.menu, s.m, s.tav, s.cel, s.gt, s.hovered, s.race_boxes);
+            println!("{}: t {t} | menu {:?} M {} tav {} cel {} gt {} hovered {:?} hand {} race {:?}", path.display(), s.menu, s.m, s.tav, s.cel, s.gt, s.hovered, s.hand, s.race_boxes);
         } else if let Some((h, os)) = &mut options {
             // Options draws (and so fades) every frame, the grab or not.
             h.draw(os, &mut Frame::new([0.0; 4]), size, t as f64 * 10.0);

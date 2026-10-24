@@ -722,6 +722,9 @@ band, not the buttons: the retreat button matches), view 8.28; the rings line up
 regressions (frame 10.24, bottom_info 8.10 better). Sound log: a move order plays Speech::Play; the buttons click only
 when they act.
 
+## 2026-10-24, colony ground war part 3 (`grwar:17`; re/screens/colony.md §5, §11.3, §11.4)
+grwar:17 frame 13.44, view 8.16, bottom_info 14.93, texts 4.70, buttons 52.08 (the record); `--wait 90` the same. The dropships are above the view in both captures. Open: the info model's placement (deviation 130), the solar plant's glow and the hospital's look (268).
+
 ## 2026-10-22, the starmap's fleet and vehicle info panels (`starmap-fleet-panels`, re/screens/starmap.md §19–§20)
 `ig2-client::starmap_info` draws the fleet panel (`StarmapFleetMode`: the info box's left release in fleet mode) and
 the vehicle panel (`StarmapTanksInfo`: radial icon 9): cells, faders, texts, the preview model, the DesignKeret1 frame,
@@ -737,6 +740,8 @@ Left: the preview models' spin phase (vehicles) and the fleet preview's pitch/ma
 mapped to pi - t [obs at t = 0.91 and 2.69]); the models' warmer, darker lighting; the faders' random texture
 drift/shine (hud.md §1.2, not drawn); the fleet glow on the map under the scroll bar is slightly brighter. The exe runs
 Hungarian texts. Sounds verified with the sound-id tracer (`tools/trace/scripts/fleetinfo.json`). Deviations #41-#48.
+
+Lighting fix 2026-10-24 (the exe's panel lights, starmap.md §19.3; row 47), mean before -> after: production name_plate 7.06 -> 2.72, left_panel 4.98 -> 3.63, right_panel 5.41 -> 3.77, frame 3.80 -> 3.13; tanksinfo model 8.43 -> 7.76, list 10.78 -> 10.45; transfer right_panel 4.33 -> 3.96; fleetinfo model 7.35 -> 7.66 (the big preview's pose/pitch dominates).
 
 ## 2026-10-22, the Design screen, viewing mode (`design`, re/screens/design.md §14)
 
@@ -799,6 +804,7 @@ for pixel (mean 0.00). The capture selects `--planet` (default 42), so the compa
 `AktPlanet` (66, the human's planet); with 42 only the selection marker and the planet panel differ.
 ## 2026-10-23, the Trade screen, part 2 (`trade --script trade-pods.json`, quick-1.sav; re/screens/trade.md §13)
 Best-offset mean per region: info card 0.65-0.85, ships list with the selection frame 0.4-1.9 (rest = the exe's mouse cursor), ticker 1.6-2.4, deliveries 1.8-3.2, panels 1.1-1.2, hull model 4.4-4.9 (scale, position, spin phase and fade match; the faces turned from the light are mid-grey vs near-black, deviations #134). The pod popup's "no free pod" case matches within 1 px; the multi-line pod list and the turn-away on a second offer weren't exercised (quick-1 has one ship offer, without pods). Sounds match (screen19, Click1 x2). Deviation #135.
+Row 134 fixed (2026-10-24, trade.md §13 part 5; `trade-pods` vs the fx13d exe run): hull model 4.4-5.0 -> 0.7-1.0, deliveries 2.1-3.1 -> 0.7-0.8, frame 1.24-1.36 -> 0.80-0.87; shared-code side effects: design hull 3.63 -> 2.11, design frame 2.66 -> 2.25, the other screens unchanged (+-0.2).
 ## 2026-10-23, the research screen's button lines (`research --script research-lines.json`, quick-1.sav; re/screens/research.md §5.6)
 The script clicks the tanks button (150, 370) at t 320 and the military button (536, 414) at t 620 (PgDn goes the
 other way in the client, deviation #6, so the earlier script's categories part after its first key). Frida probe
@@ -876,4 +882,44 @@ Stills (2026-10-22 grabs, no light phase: smkeringeto defaults to 0 there), best
 | console | 8.2 / 7.9 / 8.9 / 3.9 | differs (grabs carry no light phase) |
 
 Sounds: the same moments (a fixed 4-tick harness phase), lasers identical; the chain-blast variant per hit differs early (Chainblast1 vs 6); after ~t1500 the battles diverge (deaths).
-Acceptance: NOT accepted. Blockers: the info box (row 27, font) and the weapon clocks' battle-state drift; the command stream was not compared byte-exact (no MULTIGET harness for SpaceWar orders).
+Acceptance: NOT accepted at this point; accepted later the same day, see "2026-10-24, SpaceWar accepted" below.
+
+## 2026-10-24, SpaceWar accepted (fx8b sequence; `_local/traces-fx8b`, `run_screendiff.py spacewar --script spacewar_fx8.json --exe-seq ...`, out `_local/screendiff/spacewar-accept`; spacewar.md §9.11)
+16 grabs t800..t2300, best-offset means. Fixes since FX7: the harness clock phase (`--sim-phase`), vertex-animated `ora.xvb`, camera-fixed models' light, the info model's turn, the starmap clouds' fade, glyph row (deviation 27).
+
+| region | mean | verdict |
+|---|---|---|
+| frame | 3.45-4.20 | match |
+| topbar | 2.56 | match |
+| view | 3.78-4.82 | match |
+| console | 2.80-3.12 | match |
+| radar | 5.10-5.30 | match |
+| weapons | 2.60-4.41 | match |
+| info_box | 3.91-4.50 | match at 14 of 16; t1800 10.31 and t1900 13.48 = the exe's box fader mid-shine (libc `rand()`, deviation 84, inherent; row 273) |
+
+Sounds: 201 of 232 exe sounds match by (tick, kind), the exe's labels one tick later (its sim loop runs after the frame's UI tick); all lasers and big-blast moments match; the rest are the chain-blast timings and Chainblast/BigBlast variants after ~t1600 (libc `rand()`, cosmetic) and three lasers after the client run's last frame.
+Orders: the only orders in this script are `infoszamol`'s Strengths; the values equal the exe's between-tick writes (780->680, 680->580 + 8220->6795, 6795->5370, 580->480, 5370->3945), timing within one `infoszamol` period of 5 ticks. There is no byte-exact MULTIGET comparison harness for SpaceWar orders.
+Acceptance: ACCEPTED. Left: shield rings never in view (not captured), looks 236-239, deviations 268-274.
+
+## 2026-10-24, the top bar's drop-downs (`topbar-menus`, hud.md §2.1)
+`run_screendiff.py <install> quick-1.sav topbar-menus --script tools/trace/scripts/topbar-menus.json` (exe grabs) against client stills (`--client-arg=--top-menu --client-arg=screens:630|research|research+2 --client-arg=--top-mouse --client-arg=X,Y`, 1920x1080). Best-offset means: screens_menu 4.3-4.7 (t170/185/205), research_menu 2.2-2.4 (t110/125), research running (t235) 6.9 (the view behind the box: exe camera drift). By eye no difference inside the menus; the gaps are the pointer (staging) and the camera drift. Exe script grabs before t 100 fire late (logged at ticks 102-104): start grabs after t 100.
+
+## 2026-10-24, overlay backgrounds (`run_screendiff.py --via-starmap 120`, 800x600, quick-1.sav, classic mode; `_local/screendiff/overlay-bg`; re/screens/overlay-background.md §5, ADR 0015)
+The exe opens each overlay from the starmap (`--via-starmap F`), so the `SaveScreen` picture exists; the earlier accepted references were bare `--kep` jumps (black behind). `size_exe` now always passes `--size` (the install's ig2.settings was 1920x1080, so earlier 800x600 runs compared 1920x1080 exe captures).
+| Screen | Frame | Notes |
+|---|---|---|
+| info | 2.12 | all regions match except race_names 6.00 (the selected name plate's fill, not the background) |
+| messages | 0.61 | all regions match |
+| research | 5.84 | info_box 9.25, start_double 7.55, wheels 6.06, ball 10.19: the known kinds (glyphs, wire lines, model pose) |
+| options (script) | 3.2-4.5 during the fade | backdrop matches; later frames differ because the client opened on page 2 / slot 3 from the local ig2-rework-options.dat (environment) |
+| design | 3.86 | bottom_left/right = the exe's random fader flash (pre-existing) |
+| trade | 5.79 | ships 14.76, buy_line 18.76, ticker 15.35, panels 9.75 NEW: the exe's list panels, buy line and ticker bar are translucent and show the backdrop, the client's are opaque (hidden by black before): deviation 260 |
+| diplomacy | 8.61 | baseline ~9-9.7; name/ring/heads the same kinds as before |
+
+Backdrop content differences (review): the exe's backdrop under trade/design/diplomacy shows a dark curved grid (deviation 261); the red radar zones look like filled discs, the client's fill is fainter, and the nebula tint is bluer in the exe (deviation 262). Live mode (deviation 263): by eye the starmap keeps rendering behind research/info; backdrop phase 0.6-0.7 ms/frame, worst frames info 5.4, research 4.2, design 3.5, trade 3.6 ms (`docs/perf.md`). Client regression sweep: 207 tests pass, clippy clean, bare-jump screens identical to main.
+
+## 2026-10-24, FX9 (research, diplomacy, info, messages, spy; re/screens/research.md §4.1, diplomacy.md §3.1, info.md §5, messages.md §6, spy.md §8)
+- `research --script research-fx9.json`: sounds match (clicks t170/180, silent Enter, screen17 t249); frame 2.2-6.4; the ball and list kinds as known.
+- `diplomacy --script diplomacy-fx9.json`: dipframe identical at every grab (80/79.4/78.8 at t401/402/403); frame t401 5.83, t402-410 4.0-5.0; screen20.wav at t400 both.
+- `info --info-mouse 370,290`: all regions match, tooltip frame 4.09.
+- Regression sweep: 228+3 tests pass, clippy clean, the accepted stills unchanged (research 5.57 against research-exe.png).

@@ -69,7 +69,7 @@ ap.add_argument("--res-closing", action="store_true")
 ap.add_argument("--dip-frame", type=float, help="diplomacy screen: hold dipframe at F (its opening)")
 ap.add_argument("--res-keringeto", type=float, default=0.0, help="research screen (--res-frame): pin the side lights' clock reskeringeto at K")
 ap.add_argument("--trade-cheat", action="store_true", help="trade screen: set the exe's TradeCheat (every own planet is a trade port)")
-ap.add_argument("--light-probe", action="store_true", help="research screen: record the engine's per-vertex lighting of the first lit frames to --jsonl")
+ap.add_argument("--light-probe", action="store_true", help="research (--kep 4), trade (8) or starmap (2) screen: record the engine's per-vertex lighting (fenyekszamolasa) to --jsonl")
 ap.add_argument("--verdict", type=int, default=0, help="spy screen (--spies verdict): press the verdict buttons N times, fuzzed")
 ap.add_argument("--verdict-seed", type=int, default=1)
 ap.add_argument("--particles", help="starmap: write the exe's background particle sets (`FStars` 0xF16F38) of the grabbed moment to this JSON file")
@@ -78,6 +78,8 @@ ap.add_argument("--jsonl", help="write the 'verdict' records here")
 ap.add_argument("--info-starlog", type=int, default=0, help="info screen: stage N lines in the (unsaved) star log first")
 ap.add_argument("--info-select", help="info screen: hold the planet-settings menu K (26 tax, 27 auto-build, 28 priority) open at X,Y on item I: K,X,Y,I")
 ap.add_argument("--size", help="window size WxH (ig2.settings width/height for this run; re/screens/widescreen.md)")
+ap.add_argument("--via-starmap", type=int, default=0, metavar="F",
+                help="open the starmap first and --kep F frames later (the overlays' SaveScreen pictures, re/screens/overlay-background.md)")
 ap.add_argument("--script", help="an input script on the screen --kep (JSON: events, grabs; re/screens/sound.md §3)")
 ap.add_argument("--exe-args", nargs="*", default=[], help="command-line arguments for ig2.exe (e.g. demomode: re/screens/mainscr.md §9.5)")
 ap.add_argument("--boot", action="store_true", help="the main menu as the exe starts: no scenario, no save (use with --kep 15 --run)")
@@ -260,7 +262,7 @@ if a.sounds:
     sys.path.insert(0, here)
     import sound_tables
     sound_tables = sound_tables.find(a.install)
-agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "shots": a.shots, "run": a.run, "boot": a.boot,
+agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "viaStarmap": a.via_starmap, "shots": a.shots, "run": a.run, "boot": a.boot,
                                            "cam": [float(v) for v in a.cam.split(",")] if a.cam else None,
                                            "stateSlot": a.slot + 1 if a.state_out else 0, "debug": a.debug,
                                            "fleets": a.fleets, "planetTanks": a.planet_tanks, "rop": a.rop, "ropFleet": a.rop_fleet,

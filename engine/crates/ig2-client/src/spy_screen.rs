@@ -1274,6 +1274,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut frame = v.build(hud, &d, size, l.install.lang() == ig2_formats::text::Lang::Hu);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Spy, t);
+    hud.snapshot_pointer(&mut frame, size, o.mouse);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
     let s = &v.screen;

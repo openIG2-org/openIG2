@@ -1,0 +1,20 @@
+{
+ "screen": "starmap",
+ "note": "FX1 second run (re/screens/input.md §1): F4 research from the starmap (its opening), F6 (research's closing, diplomacy's opening), F10 (diplomacy towards messages: quiet), F6 (from messages: no opening), F2 (diplomacy's closing), F7 spy, F2 (spy's closing), M messages, O on messages (idle: options), Esc (back), F1 help, F2 from help.",
+ "events": [
+  {"t": 100, "key": "f4"},
+  {"t": 300, "key": "f6"},
+  {"t": 600, "key": "f10"},
+  {"t": 800, "key": "f6"},
+  {"t": 1000, "key": "f2"},
+  {"t": 1200, "key": "f7"},
+  {"t": 1400, "key": "f2"},
+  {"t": 1600, "text": "m"},
+  {"t": 1800, "text": "o"},
+  {"t": 1900, "key": "escape"},
+  {"t": 2100, "key": "f1"},
+  {"t": 2300, "key": "f2"}
+ ],
+ "grabs": [200, 400, 700, 900, 1100, 1300, 1500, 1700, 1850, 2000, 2200, 2400],
+ "tail": 30
+}

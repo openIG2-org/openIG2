@@ -318,7 +318,9 @@ pub(crate) struct Pipe3d {
     shadow_pass_bg: wgpu::BindGroup,
     meshes: Vec<wgpu::Buffer>,
     dynamic: Option<(wgpu::Buffer, u64)>,
-    depth: Option<(wgpu::TextureView, (u32, u32))>,
+    /// The depth buffers by target size, the last used first (a frame draws targets of a few sizes: the window, a
+    /// screen's models, the overlay's backdrop).
+    depth: Vec<(wgpu::TextureView, (u32, u32))>,
 }
 
 pub(crate) const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -532,7 +534,7 @@ impl Pipe3d {
             shadow_pass_bg,
             meshes: Vec::new(),
             dynamic: None,
-            depth: None,
+            depth: Vec::new(),
         }
     }
 
@@ -547,8 +549,8 @@ impl Pipe3d {
         self.meshes.clear();
     }
 
-    /// Record the 3D pass into `enc`: clears colour (with `clear`; `None` keeps it and reuses the scene's buffers,
-    /// for [`crate::render::Frame::late`]) and depth, draws `draws`' opaque parts then glass parts in order, then
+    /// Record the 3D pass into `enc`: on the `first` pass the scene's buffers go up (the others reuse them, for
+    /// [`crate::render::Frame::late`]); clears colour with `clear` (`None` keeps it: the late parts, a backdrop) and depth, draws `draws`' opaque parts then glass parts in order, then
     /// the cloud parts on `raw`, the target's view without the sRGB conversion.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode(
@@ -558,12 +560,15 @@ impl Pipe3d {
         enc: &mut wgpu::CommandEncoder,
         (target, raw): (&wgpu::TextureView, &wgpu::TextureView),
         size: (u32, u32),
-        clear: Option<[f64; 4]>,
+        (first, clear): (bool, Option<[f64; 4]>),
         scene: &Scene3d,
         draws: &[MeshDraw],
         (textures, textures_raw): (&[wgpu::BindGroup], &[wgpu::BindGroup]),
     ) {
-        if self.depth.as_ref().is_none_or(|(_, s)| *s != size) {
+        if let Some(i) = self.depth.iter().position(|(_, s)| *s == size) {
+            let hit = self.depth.remove(i);
+            self.depth.insert(0, hit);
+        } else {
             let t = d.create_texture(&wgpu::TextureDescriptor {
                 label: Some("depth"),
                 size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
@@ -574,9 +579,10 @@ impl Pipe3d {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
-            self.depth = Some((t.create_view(&Default::default()), size));
+            self.depth.insert(0, (t.create_view(&Default::default()), size));
+            self.depth.truncate(4);
         }
-        if clear.is_some() {
+        if first {
             q.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&scene.uniforms));
         }
         let bytes: &[u8] = bytemuck::cast_slice(&scene.dynamic);
@@ -592,17 +598,17 @@ impl Pipe3d {
             self.dynamic = Some((buf, cap));
         }
         let (dynbuf, _) = self.dynamic.as_ref().unwrap();
-        if !bytes.is_empty() && clear.is_some() {
+        if !bytes.is_empty() && first {
             q.write_buffer(dynbuf, 0, bytes);
         }
         // With `gamma` the clear colour is stored as given (`glClearColor` on the remaster's non-sRGB frame).
         let load = clear.map_or(wgpu::LoadOp::Load, |[r, g, b, a]| wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }));
-        if clear.is_some() {
+        if first {
             let [a, b] = scene.shadow.map_or([[0.0; 3]; 2], |m| m.rows);
             let t = scene.uniforms.eye[3];
             q.write_buffer(&self.shadow_uniform, 0, bytemuck::cast_slice(&[a[0], a[1], a[2], 0.0, b[0], b[1], b[2], 0.0, size.1 as f32, t - t.floor(), 0.0, 0.0]));
         }
-        if let (Some(_), true) = (scene.shadow, clear.is_some()) {
+        if let (Some(_), true) = (scene.shadow, first) {
             // `command_glSetTarget(1)` (ELF 0x427c00): the map cleared to white, then the casters.
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow map"),
@@ -636,7 +642,7 @@ impl Pipe3d {
                 ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &self.depth.as_ref().unwrap().0,
+                view: &self.depth[0].0,
                 depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
                 stencil_ops: None,
             }),

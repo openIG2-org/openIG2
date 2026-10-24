@@ -189,6 +189,55 @@ pub fn right_click(s: &Snapshot, cam: &Camera, at: [f32; 2], sel: &Selection, ke
     })
 }
 
+/// What the view pointer depends on besides the snapshot and the camera.
+pub struct ViewCtx {
+    pub sel: Selection,
+    /// `StarmapProductMode`: the production panel picks the player's planets.
+    pub production: bool,
+    /// `StarmapAtiranyitasMode`: the radial menu's redirect pick is on.
+    pub redirect: bool,
+    /// `KeyAlt` (0xbae294).
+    pub alt: bool,
+    /// The selected fleet's `+0x5c` (0: it can't attack a planet).
+    pub fleet_5c: i32,
+}
+
+/// `Starmap_MouseInit2` (exe 0x5b8950) over the map view (hot-spot 0x35): the pointer type by the selection and the
+/// unit under the pointer (`SelectNearestUnit` at radius 1 cycling from the selection, or `SelectNearestPlanet` in
+/// production mode). Something under it 5; the player's fleet selected: nothing 2, a foreign fleet or an owned
+/// foreign planet 6 (2 with Alt, and 2 for a free planet or a fleet whose `+0x5c` is 0); a planet selected with the
+/// redirect pick on 6, 7 over the player's own planet. `None` keeps the spot's own type (0).
+pub fn view_pointer(s: &Snapshot, cam: &Camera, at: [f32; 2], c: &ViewCtx) -> Option<i32> {
+    let sel = &c.sel;
+    let under = if c.production {
+        select_nearest_planet(s, cam, at, 1.0).map(Unit::Planet)
+    } else {
+        let exclude = if sel.mode == 2 { sel.fleet as i32 } else { -(sel.planet as i32) };
+        select_nearest_unit(s, cam, at, 1.0, exclude, sel, false, false)
+    };
+    let en = s.human;
+    let fleet_owner = |f: usize| s.fleets.iter().find(|v| v.slot == f).map(|v| v.owner);
+    let planet_owner = |p: usize| s.planets.iter().find(|v| v.index == p).map_or(0, |v| v.owner);
+    let attack = if c.alt { 2 } else { 6 };
+    if sel.mode == 2 {
+        if fleet_owner(sel.fleet) != Some(en) {
+            return under.map(|_| 5);
+        }
+        return Some(match under {
+            None => 2,
+            Some(Unit::Fleet(f)) if fleet_owner(f).is_some_and(|o| o != en) => attack,
+            Some(Unit::Planet(p)) if planet_owner(p) != en => {
+                if planet_owner(p) == 0 || c.fleet_5c == 0 { 2 } else { attack }
+            }
+            Some(_) => 5,
+        });
+    }
+    if sel.mode == 1 && c.redirect {
+        return Some(if matches!(under, Some(Unit::Planet(p)) if planet_owner(p) == en) { 7 } else { 6 });
+    }
+    under.map(|_| 5)
+}
+
 /// A left press on the map (`Starmap_Main`, which then opens the radial menu): the next unit under the cursor (`SelectNearestUnit` at
 /// radius 1, cycling from the current selection) becomes the selection.
 pub fn left_click(s: &Snapshot, cam: &Camera, at: [f32; 2], sel: &Selection) -> Option<Selection> {
@@ -245,5 +294,40 @@ mod tests {
         let c = minimap_target([320.0, 420.5]);
         assert!(c[0].abs() < 1e-3 && c[1].abs() < 1e-3);
         assert_eq!(minimap_target([400.0, 420.5])[0], -299.9);
+    }
+
+    #[test]
+    fn view_pointer_follows_starmap_mouse_init2() {
+        use crate::world::{FleetView, PlanetLook, PlanetView};
+        let planet = |index: usize, x: f32, owner: u8| PlanetView { index, pos: [x, 0.0], owner, surface: 1, name: String::new(), known: true, blink: false, friendly: false, look: PlanetLook::default() };
+        let fleet = |slot: usize, x: f32, owner: u8| FleetView { slot, pos: [x, 50.0], owner, visible: true, target: None, order: 0, flags: 0, name: Vec::new(), ships: 1, story_id: 0, kind: 0, target_index: 0 };
+        // The human (1): planet 1 at x −100 (own), planet 2 at 0 (empire 2), planet 3 at 100 (free); fleet 1 (own) far off,
+        // fleet 2 (empire 2).
+        let s = Snapshot { human: 1, planets: vec![planet(1, -100.0, 1), planet(2, 0.0, 2), planet(3, 100.0, 0)], fleets: vec![fleet(1, -300.0, 1), fleet(2, 200.0, 2)], ..Default::default() };
+        let cam = Camera { x: 0.0, y: 0.0, rotate: 0.0, pitch: -1.5, zoom: 400.0, size: [640.0, 480.0], look: None };
+        let at = |p: [f32; 2]| cam.virtual_point(p).unwrap();
+        let mut c = ViewCtx { sel: Selection { mode: 2, planet: 1, fleet: 1 }, production: false, redirect: false, alt: false, fleet_5c: 3 };
+        // The own fleet: nothing 2, a foreign fleet 6 (Alt 2), an owned foreign planet 6, a free one 2, its own 5.
+        assert_eq!(view_pointer(&s, &cam, [320.0, 5.0], &c), Some(2));
+        assert_eq!(view_pointer(&s, &cam, at([200.0, 50.0]), &c), Some(6));
+        assert_eq!(view_pointer(&s, &cam, at([0.0, 0.0]), &c), Some(6));
+        assert_eq!(view_pointer(&s, &cam, at([100.0, 0.0]), &c), Some(2));
+        assert_eq!(view_pointer(&s, &cam, at([-100.0, 0.0]), &c), Some(5));
+        c.alt = true;
+        assert_eq!(view_pointer(&s, &cam, at([200.0, 50.0]), &c), Some(2));
+        c.alt = false;
+        c.fleet_5c = 0;
+        assert_eq!(view_pointer(&s, &cam, at([0.0, 0.0]), &c), Some(2));
+        // A foreign fleet selected: 5 over a unit, else the spot's own.
+        c.sel = Selection { mode: 2, planet: 1, fleet: 2 };
+        assert_eq!(view_pointer(&s, &cam, at([0.0, 0.0]), &c), Some(5));
+        assert_eq!(view_pointer(&s, &cam, [320.0, 5.0], &c), None);
+        // A planet selected: 5 over a unit; the redirect pick 6, 7 over the player's planet.
+        c.sel = Selection { mode: 1, planet: 3, fleet: 1 };
+        assert_eq!(view_pointer(&s, &cam, at([0.0, 0.0]), &c), Some(5));
+        c.redirect = true;
+        assert_eq!(view_pointer(&s, &cam, at([0.0, 0.0]), &c), Some(6));
+        assert_eq!(view_pointer(&s, &cam, at([-100.0, 0.0]), &c), Some(7));
+        assert_eq!(view_pointer(&s, &cam, [320.0, 5.0], &c), Some(6));
     }
 }

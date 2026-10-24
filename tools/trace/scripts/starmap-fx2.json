@@ -1,0 +1,11 @@
+{
+ "screen": "starmap",
+ "note": "FX2 rest: the view pointer (Starmap_MouseInit2 exe 0x5b8950) with the player's planet selected: 5 over another planet, the spot's own arrow over empty space. Every point is after the entry (no UpdateFrame for ~100 ticks) and away from the screen's edges.",
+ "events": [
+  {"t": 150, "mouse": [418, 206]},
+  {"t": 250, "mouse": [340, 270]},
+  {"t": 350, "mouse": [248, 314]}
+ ],
+ "grabs": [200, 300, 400],
+ "tail": 10
+}

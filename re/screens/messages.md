@@ -27,6 +27,15 @@ nothing. `len` caps the bytes; flags & 3: 1 centres in `len` cells, 2 right-alig
 `HatarX1..X2 × HatarY1..Y2` by whole glyphs. `KiirInt` writes a number the same way. Texts are raw bytes in the
 game's code page (`uzenet.txt`, planet names).
 
+**The glyph quad as drawn** (row 27, 2026-10-24): every vertex (exe 0x4a9e60, ELF 0x4f8570) also carries the cell
+inset by half a texel, `(u0 + 0.5/W, v0 + 0.5/H)` in `z, rhw` and `(u1 − 0.5/W, v1 − 0.5/H)` in the second uv
+(`W × H` = the sheet's pixels); the `FONT` pass (`ig2_vertex_font`/`ig2_fragment_font`) clamps the sampled uv into it.
+Quad and uv are exactly `width × height` virtual pixels (no rounding). At 800 × 600 a glyph is 8.75 px tall, and when
+its bottom edge lands on a pixel centre (`y + height ≡ 2 mod 4`, e.g. the SpaceWar info box's title at y 427, edge
+542.5) the exe's GL fills that row (the clamped last texel row: the descenders of `y`, `g`), where wgpu's top-left
+rule leaves it out [obs: `_local/screendiff/spacewar` grab3 t600 rows 542 and 587; every other row equal]. The client
+draws glyphs as `kind::GLYPH` (the clamp) moved 1/64 px down with their uv, so ties fall as in the exe.
+
 ## 2. The scrolling message line
 `FRISSIT_Scroll2` 0x66ebd0 runs in the 10 ms UI frame (not while entering/leaving a screen); `GFX_Scroll` 0x66f270
 draws it. Both run when the screen is the messages screen (10), the space battle in SP (0xb) or options (0xd), or
@@ -84,7 +93,7 @@ projection as the info screen's (`xcenter` 320, `ycenter` 240, focal 600); lit p
 capture matches to 0.3]. Sub-meshes 1/6, 2/7 and 4/0 are 40 % transparent. `mesframe` runs to 15 at +1/3 a UI frame (the list panel); opening a message
 (`KELLKINYITAS2`) runs it on to 30 (the text and answer panels), where the exe saves the screen (`SaveScreen(3)`) and
 from then on draws that picture (0x36) instead of the model. Under the model `Copy3hatterkep(0x35, 0xff − 195·min(
-mesframe, 15)/15)` (the screen before, `SaveScreen(2)` in `Messages_Belep`; black in the captures). The buttons 0 and 3
+mesframe, 15)/15)` (the screen before, `SaveScreen(2)` in `Messages_Belep`; black only in bare-jump captures, see [`overlay-background.md`](overlay-background.md)). The buttons 0 and 3
 press in by moving their sub-mesh 0 in z (`mesSetGombFrame` 0x5a0d60).
 
 ## 5. The open message (`KiertekelUjuzenet` 0x5a8550 and the dialogue)
@@ -131,6 +140,13 @@ only after `LenyomasValtozo` reached 5 UI frames); 3 the inbox `(UBAXSz, 218, 15
 `MessagesElottiScreen`. A press inside x 186..512, y 1..167 types the rest at once (`Novelo` 0.001; right button:
 `SkipAll` too) and stops the voice. `FRISSIT_Messages2` (every 10th UI frame) starts the automatic messages
 (`KeresAutomataUzenet`).
+`Messages_MouseInit2` (exe 0x508940, every frame): 3 on per `DAT_00da65e5`; 4 and 6 only at `mesframe == 30`; 5 and 10
+off; 7..=9 only with no choices pending and the text typed (`AktValasztasok == 0 && KiirtaMar`). Esc
+(`MainCallBackEventHandler` exe 0x4e2db0) in that idle state sets `AktIkonKell = 0x25`, a press on hot-spot 7
+(`IG2_gameUpdate` 0x4e0440): the screen leaves for `MessagesElottiScreen` as a click there does; otherwise Esc does
+nothing. An answer asked for (hot-spot 4, a..d, `Melyikvalaszfolottvanazeger`) sets `VoltUjValasz` (0xDABDB4);
+`ValaszKivalasztva` (0x509d10) runs at the end of every `Messages_Main` and takes it once the choice isn't disabled,
+so a disabled answer stays asked for (only `Messages_Belep` clears it). Client: `MessagesScreen::{pending, answer}`.
 
 ## 7. Not specified here
 The top bar (money, date, speed buttons, the line's frame) is in re/screens/hud.md §2. The talking heads and videos

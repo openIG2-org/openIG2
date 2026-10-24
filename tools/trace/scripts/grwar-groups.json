@@ -1,0 +1,13 @@
+{
+ "screen": "colony",
+ "note": "FX5 selection groups in a ground war (run_screen.py --grwar, quick-1.sav planet 17: every human unit placed and selected; re/screens/colony.md §11.2): Ctrl+4 keeps the group, a left click on empty ground deselects, numpad 4 (vk 0x64) does nothing, the top row's 4 (vk 0x34) calls the group back. Times are UI ticks.",
+ "events": [
+  {"t": 2, "mouse": [600, 60]},
+  {"t": 20, "key": "lctrl", "hold": 10},
+  {"t": 24, "key": "4"},
+  {"t": 40, "press": [600, 60]},
+  {"t": 60, "key": "kp_4"},
+  {"t": 80, "key": "4"}
+ ],
+ "grabs": [15, 35, 55, 75, 95]
+}

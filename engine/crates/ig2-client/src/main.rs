@@ -38,6 +38,7 @@
 
 mod assets;
 mod audio;
+mod backdrop;
 mod chat;
 mod colony;
 mod colony_ui;
@@ -85,7 +86,9 @@ mod spy_screen;
 mod starmap_panels;
 mod starmap_planet;
 mod starmap_radar;
+mod starmap_tip;
 mod trade;
+mod topbar_menus;
 mod tutorial_ui;
 mod trade_scene;
 mod ui;
@@ -115,6 +118,12 @@ pub struct Options {
     /// The window (`size` is its band, [`kit::Layout::band`]); `--letterbox`: the 3D stops at the 4:3 frame.
     pub window: (u32, u32),
     pub letterbox: bool,
+    /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
+    /// `LiveBackground`, live by default).
+    pub background: Option<bool>,
+    /// `--backdrop` (with `--snapshot`): the overlay screens over the starmap's picture, as after a starmap exit
+    /// (`run_screen.py --via-starmap`); without it they are over black, as the exe's bare screen jumps.
+    pub backdrop: bool,
     pub scale: f32,
     pub hover: Option<(f32, f32)>,
     pub select_fleet: Option<usize>,
@@ -191,6 +200,10 @@ pub struct Options {
     /// `--screen spacewar --battle FILE`: a battle-screen capture's dump (`run_spwc.py --grab-ticks`,
     /// re/screens/spacewar.md §9) drawn as the exe drew it.
     pub battle: Option<String>,
+    /// `--sim-phase P` (with `--battle` and `--script`): the script frames whose sim tick runs are those with
+    /// `t % 5 == P`, the exe run's phase of its 50 ms clock against the scripted 10 ms one (run_screendiff.py reads
+    /// it from the exe's trace).
+    pub sim_phase: u32,
     /// Show the clock as paused (`--paused`; the capture tool pauses the exe).
     pub paused: bool,
     /// `--panel production` or `--panel transfer:F1,F2[,tank]`: the starmap's production view or transfer panel up.
@@ -199,6 +212,10 @@ pub struct Options {
     pub planet_info: bool,
     pub rop_menu: Option<[f32; 2]>,
     pub menu: Option<String>,
+    /// `--top-menu screens:X | research | research+T` and `--top-mouse X,Y`: a top-bar drop-down held open (pressed
+    /// at x X; with T started first) and the pointer over it (re/screens/hud.md §2.1).
+    pub top_menu: Option<String>,
+    pub top_mouse: Option<[f32; 2]>,
     pub mouse: Option<[f32; 2]>,
     /// `--lang CODE`: the texts' language (default: the exe's own choice).
     pub lang: Option<Lang>,
@@ -222,6 +239,8 @@ fn parse(args: &[String]) -> Result<Options, String> {
         size: (1920, 1080),
         window: (1920, 1080),
         letterbox: false,
+        background: None,
+        backdrop: false,
         scale: 1.0,
         hover: None,
         select_fleet: None,
@@ -259,11 +278,14 @@ fn parse(args: &[String]) -> Result<Options, String> {
         info_log: None,
         script: None,
         battle: None,
+        sim_phase: 0,
         paused: false,
         panel: None,
         planet_info: false,
         rop_menu: None,
         menu: None,
+        top_menu: None,
+        top_mouse: None,
         mouse: None,
         lang: None,
     };
@@ -303,6 +325,14 @@ fn parse(args: &[String]) -> Result<Options, String> {
             }
             "--reveal" => o.reveal = true,
             "--letterbox" => o.letterbox = true,
+            "--backdrop" => o.backdrop = true,
+            "--background" => {
+                o.background = Some(match val()?.as_str() {
+                    "live" => true,
+                    "classic" => false,
+                    v => return Err(format!("--background: {v} (classic or live)")),
+                })
+            }
             "--paused" => o.paused = true,
             "--colony-cam" => {
                 let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse::<f32>().map_err(|e| format!("--colony-cam: {e}"))).collect::<Result<_, _>>()?;
@@ -368,12 +398,19 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--info-log" => o.info_log = Some(val()?),
             "--script" => o.script = Some(val()?),
             "--battle" => o.battle = Some(val()?),
+            "--sim-phase" => o.sim_phase = val()?.parse::<u32>().map_err(|e| format!("--sim-phase: {e}"))? % 5,
             "--acttime" => o.acttime = Some(val()?.parse().map_err(|e| format!("--acttime: {e}"))?),
             "--info-alap" => o.info_alap = Some(val()?.parse().map_err(|e| format!("--info-alap: {e}"))?),
             "--colony" => o.colony = Some(val()?.parse().map_err(|e| format!("--colony: {e}"))?),
             "--panel" => o.panel = Some(val()?),
             "--planet-info" => o.planet_info = true,
             "--menu" => o.menu = Some(val()?),
+            "--top-menu" => o.top_menu = Some(val()?),
+            "--top-mouse" => {
+                let v = val()?;
+                let (x, y) = v.split_once(',').ok_or("--top-mouse X,Y")?;
+                o.top_mouse = Some([num(x.into())?, num(y.into())?]);
+            }
             "--rop-menu" | "--mouse" => {
                 let v = val()?;
                 let (x, y) = v.split_once(',').ok_or(format!("{a} X,Y"))?;

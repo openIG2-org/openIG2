@@ -1,0 +1,12 @@
+{
+ "screen": "research",
+ "note": "FX2 rest: the urgent button's tooltip 400 ms after the pointer arrives (Mouse_Lekerdez sees the scripted move), the hand over a list row (ResearchGfx2D_2) and the right column's. Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 300, "mouse": [507, 50]},
+  {"t": 400, "mouse": [40, 90]},
+  {"t": 450, "mouse": [560, 90]},
+  {"t": 500, "mouse": [300, 460]}
+ ],
+ "grabs": [320, 338, 345, 410, 460, 510],
+ "tail": 10
+}

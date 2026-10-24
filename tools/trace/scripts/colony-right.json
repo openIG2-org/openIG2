@@ -1,0 +1,10 @@
+{
+ "screen": "colony",
+ "note": "FX3 probe on the colony (quick-1.sav planet 42): a right press on the radar's corner (spot 5) at t 120 (the camera glides there if the right button acts like the left), then a left press on the opposite corner at t 300 as the control.",
+ "events": [
+  {"t": 120, "press": [530, 370], "button": 3},
+  {"t": 300, "press": [614, 454]}
+ ],
+ "grabs": [110, 200, 290, 380],
+ "tail": 20
+}

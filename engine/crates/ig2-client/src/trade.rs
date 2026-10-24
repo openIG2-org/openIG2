@@ -389,6 +389,11 @@ impl Trade {
         false
     }
 
+    /// Leaving or closing (a screen change is under way).
+    pub fn changing(&self) -> bool {
+        self.closing || self.leaving
+    }
+
     /// The closing has finished.
     pub fn closed(&self) -> bool {
         self.closing && self.frame <= 0.0

@@ -42,8 +42,9 @@ estimate bit for bit against 600 exe calls, the verdict roll against 600 exe pre
 `SpyInitNewMission`; no list, dialog or kill question; `SpyEsemenyEllenoriz` (§4); `spyKELLKINYITAS =
 KELLKINYITASDEFAULT & 1` (the opening animation: `spyframe` 0 → 50; off → 50 at once; `KELLKINYITASDEFAULT` exe 0x912A39 is a registry setting, 1 on this host
 [obs: the tracer reads `spyKELLKINYITAS` exe 0xE75430 = 1]); `Spying3DInit`. The screen
-loads no picture (`Screens[7]` is empty, `ScreenBetolt` ELF 0x669670): the background is black, and
-`Copy3hatterkep(0x34, …)` in `Spying3DUpdate` draws nothing (kep 0x34 is the design screen's, not loaded).
+loads no picture (`Screens[7]` is empty, `ScreenBetolt` ELF 0x669670): the screen's own background is black, but
+`Copy3hatterkep(0x34, …)` in `Spying3DUpdate` draws `SaveScreen`'s picture (the starmap without HUD) dimmed over it (the earlier
+note that kep 0x34 is not loaded held only for bare `--kep` jumps, which have no picture): see [`overlay-background.md`](overlay-background.md).
 
 `Spy_Kilep`: unless leaving for messages (10), help (1) or options (13), it plays the closing (`spyBECSUKAS` exe
 0xE75383, `spyframe` 50 → 0 by 0.6 a UI frame, sound `screens/spy/scrn08ki.wav`) in a loop of `UpdateFrame` +
@@ -75,7 +76,7 @@ With `f = spyframe/50` (exe f32 0xE75504):
 - Closing: the disc fades (`spySetObjTransparencyH(spyKorId, 1 − f)`) and drops to `(0, (1 − f)·70 + 182, −1000 −
   (1 − f)·700)`.
 - `SpyPalast` (the carousel) drops in from `(0, −125 − (1 − f)·150, −1000·f)` turning `−sin((1 − f)·π)` (§2.2).
-- `Copy3hatterkep(0x34, …)` draws nothing (§1.1); `spyANIMBARKACS` (the 2D video path) is off.
+- `Copy3hatterkep(0x34, …)` draws the saved starmap picture (§1.1 and [`overlay-background.md`](overlay-background.md); nothing only after a bare jump); `spyANIMBARKACS` (the 2D video path) is off.
 
 ### 1.2 `FRISSIT_Spy2` (100 Hz UI frame)
 - `KemNevVillogtato` runs 0 → 100 → 0 by 1 (the selected name's blink); `spyKiirSzinSzorzo` += 1 up to 100 once
@@ -309,8 +310,10 @@ In the original's MP these UI draws moved each machine's own stream 0 (a desync 
 draws is the original's. The verdict roll is verified against the exe (§6.2).
 
 ## 8. Port notes and what is missing
-The client opens the screen with S (`window.rs`) animated, and S or Escape closes it after the closing animation
-(`SpyScreen::leave`/`closed`); `--snapshot --screen spy --ui-frames N` renders it after N UI frames (the carousel
+The client opens the screen with S (`window.rs`) animated, and S closes it after the closing animation
+(`SpyScreen::leave`/`closed`); Esc opens the options as in the exe (`ESC_Pressed`: `SpyKeyboardHandler` exe 0x58cb20
+has only ←/→; back to the spy screen after); the top bar's spots stay live (`Spy_MouseInit`'s ids 3/4 are table
+indices 0x21/0x22, the bar's 2..8, input.md §6); `--snapshot --screen spy --ui-frames N` renders it after N UI frames (the carousel
 settles, the names fade in), animated as the exe (the sphere's `MoveObj` applies at rest too); `--spy-frame F
 [--spy-closing]` holds `spyframe` at F like the tracer holds the exe's; `--mouse X,Y` rests the pointer (a tooltip);
 `IG2_LANG` picks the game's language (the captures here are Hungarian). The frame's poses are cached at the integer

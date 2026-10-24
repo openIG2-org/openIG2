@@ -1,0 +1,10 @@
+{
+ "screen": "starmap",
+ "note": "FX2 part 2 recheck: the info box's tooltip with the pointer moved there after the starmap's post-load Belep.",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 200, "mouse": [80, 450]}
+ ],
+ "grabs": [330],
+ "tail": 10
+}

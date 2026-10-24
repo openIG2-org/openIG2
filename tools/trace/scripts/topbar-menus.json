@@ -1,0 +1,15 @@
+{
+ "screen": "topbar-menus",
+ "note": "The top bar's drop-downs (re/screens/hud.md §2.1): the quick-research menu held open (no hover, the first item), the screen menu held open (no hover, the starmap row, the diplomacy row), a drag that starts the first item, the research menu again with the project running. Neither menu plays a sound. The first grabs come after t 100 (earlier ones fired late in the exe). Times are UI ticks from the script's first frame.",
+ "events": [
+  {"t": 100, "press": [608, 10], "hold": 50},
+  {"t": 115, "mouse": [336, 38]},
+  {"t": 155, "mouse": [630, 10]},
+  {"t": 160, "press": [630, 10], "hold": 60},
+  {"t": 175, "mouse": [540, 44]},
+  {"t": 195, "mouse": [540, 108]},
+  {"t": 240, "drag": [[608, 10], [336, 38]], "hold": 20},
+  {"t": 290, "press": [608, 10], "hold": 50}
+ ],
+ "grabs": [110, 125, 170, 185, 205, 270, 305]
+}

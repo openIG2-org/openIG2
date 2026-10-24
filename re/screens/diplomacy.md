@@ -77,7 +77,7 @@ panels]); the viewport is the 4:3 one widened by `ModifyViewPort`.
   while the human's message awaits its answer), `JelolFej3` 0x0E860E (green, blinking: a message of that empire
   waits for the human). All lit by the engine's model (research.md §2.1; the cages' wires per vertex, `wirekirak`).
 - Background: `Copy3hatterkep(0x34, grey 255 − 128·dipframe/80)`: picture 52 (`_ESIG_U2.BMP`) stretched over the
-  viewport, half bright once open.
+  viewport, half bright once open. The picture is the saved starmap, see [`overlay-background.md`](overlay-background.md).
 - Faders (`FadeKerettelKerekit`, fill (0, 54, 90), edge (0, 90, 130); `f = 2·dipframe/80 − 1`, 1 when open): the
   info panel `(InfonevX − 10, InfonevY + 40 − 50f, 172, 100f)` at transparency `255 − infotransp` / `255 −
   2·infotransp`; the human's own text `(160, szovegy − 9, 465, (14·n + 10)·f)` with `mymstransp`; the other side's
@@ -103,8 +103,10 @@ Per drawn frame, `Diplomacy3DUpdate` (ELF 0x51b2f0, exe 0x4be2d0), with `s = 1 �
   is never written: zero [obs: the sequence matches at t 150]), turned `(3 sin 2s, 2 sin 2.1s, 0)`, frame `dipframe + dipwireframe` (at 80 the
   `dipwireframe` cycles 0..10 by 0.25 a frame), transparency `1.35 − 2·dipframe/80` up to `dipframe` 40, then 0.
 - The cages (`Fejek[k]`) at `GombPoziciok[k] + (820 sin(3s + ⌊k/2⌋)·s, 500 cos(4s + ⌊k/2⌋)·s, 0)` (sin/cos in f64),
-  spinning `+0.02` on each axis also while not open; transparency −0.02 a frame while above 0.5: after an opening
-  the cages **stay half transparent**, at rest (no opening) opaque.
+  spinning `+0.02` on each axis also while not open; transparency −0.02 a frame while above 0.5 (exe 0x4be2d0 lines
+  79-90): after an opening the cages **stay about half transparent** (26 steps from 1 end at 0.48000047), at rest (no
+  opening) opaque. Without property 8 the engine draws them additively, the lit colour scaled by `≈ 1 − t`; the
+  client's wire alpha `2(1 − t)` carries its doubled wire light (the factor is calibrated, not derived).
 - The portraits (`Fejek[k]+0x10`): `fejetransp` −0.03 a frame once open (+0.09 while closing); they swing with the
   cages only while closing (they stand at their places, invisible, during the opening).
 - The round frame: from `dipframe` 60 as in §3 (the turn, `dipFrameValtozo`'s ring spins: sub-mesh 0 `Rz(n/220)`
@@ -122,7 +124,10 @@ three faders' frames. The row fades (`FRISSIT_Diplomacy2`) start once open.
 `Diplomacy_Kilep` (ELF 0x52a4d0, exe 0x4bf810): towards any screen but messages, help and options, when animating:
 `dipBECSUKAS`, child 1's sub-meshes 0..7 shown again, `DipKozep` hidden, the ring's rotation cleared,
 `PlaySound("screens/diplomac/screen20.wav")` (= `Dip_Hangok[1]`), then it draws frames (`dipframe −0.6` a UI tick)
-until a frame has been drawn at 0 (`voltnulla`). Towards messages, help or options: no closing, no sound (the screen
+until a frame has been drawn at 0 (`voltnulla`). The order (`IG2_gameUpdate` exe 0x4e0440): the key sets `AktKepKell`
+inside a tick; the frame after it is still open; then `Diplomacy_Kilep` draws its first frame at 80 at once (no tick
+between) and steps: the captures after t + 1 ticks show the open screen at 80, after t + 2 ticks 79.4 [obs:
+diplomacy-fx9.json, F2 at 400: 80 / 79.4 / 78.8 at 401 / 402 / 403, the sound at 400, the client the same]. Towards messages, help or options: no closing, no sound (the screen
 is drawn once more for `SaveScreen(2)`).
 
 ## 4. `FRISSIT_Diplomacy2` (every 10 ms UI tick on screen 6)
@@ -248,7 +253,7 @@ Observations from the captures that shaped the port [obs]: the panels' fills are
 (`textures/design/screen/dt.bmp`, mean grey 0.5); the background grid is lit by the ambient light only (a uniform
 `racsszin` × 0x14); the cages' wire colours reach white (the port doubles the light on wires); the video is
 interlaced (every other row dark, `DrawAnimInterlace`); the cages hide their back lines (the port culls back faces);
-picture 52 (`_ESIG_U2.BMP`) isn't in the GOG install, so `Copy3hatterkep` draws nothing. Results:
+picture 52 (`_ESIG_U2.BMP`) isn't in the GOG install, so `Copy3hatterkep` draws nothing after a bare jump (a screen entered from the starmap has the `SaveScreen` picture: [`overlay-background.md`](overlay-background.md)). Results:
 `re/screens/diff-results.md` (2026-10-17).
 
 Verified in tests (`ig2-client::diplomacy`, quick-1.sav): composing "negotiate → cease-fire", sending it, the AI's

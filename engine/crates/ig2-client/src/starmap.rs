@@ -1087,7 +1087,17 @@ impl View {
                 continue;
             }
             let Some((c, px)) = cam.project_eye(e) else { continue };
-            let color = particle_color(if i < FAR_STARS { self.twinkle.color(i, futofeny) } else { p.color });
+            let mut color = particle_color(if i < FAR_STARS { self.twinkle.color(i, futofeny) } else { p.color });
+            // The battle screen's `starmaphalvanyit(e)` (ELF 0x6a6b30): every FStars set but the far stars (0) and the
+            // ring (3) drawn at its colour's RGB × e (gone at 0, the battle's zoom).
+            if let (Some(e), true) = (self.battle_fade, p.set != 0) {
+                if e <= 0.0 {
+                    continue;
+                }
+                for c in &mut color[..3] {
+                    *c *= e;
+                }
+            }
             match p.set {
                 0 => {
                     if c[0] < 0.0 || c[1] < 0.0 || c[0] > cam.size[0] || c[1] > cam.size[1] {

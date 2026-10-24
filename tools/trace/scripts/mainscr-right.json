@@ -1,0 +1,11 @@
+{
+ "screen": "main",
+ "note": "FX3 probe on the main menu: a right press on the single-player ring (ring 4, as scripts/mainscr.json's left press at t 350). Does it fly the rings out (Mouse_Lenyom is either button's)? Grabs before and after.",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [163, 268], "button": 3},
+  {"t": 700, "mouse": [320, 240]}
+ ],
+ "grabs": [400, 520],
+ "tail": 30
+}

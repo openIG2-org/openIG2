@@ -314,6 +314,17 @@ pub fn tech_name(texts: &crate::ui::UiTexts, t: usize) -> Vec<u8> {
     texts.get(17, (8 + (t - 1) / 48) as u16, ((t - 1) % 48 + 1) as u16)
 }
 
+/// Every spot of the bar with its tooltip (`GetString(18, 1, id − 1)`), the drop-downs' 6 and 8 included.
+const TIP_SPOTS: [(u32, [i32; 4]); 7] =
+    [(2, [0, 0, 15, 20]), (3, [16, 0, 14, 20]), (4, [30, 0, 21, 20]), (5, [50, 0, 23, 20]), (6, [619, 0, 21, 20]), (7, [270, 0, 323, 20]), (8, [598, 0, 21, 20])];
+
+/// The bar's spot (2..=8) under the virtual point, for its tooltip and the hand pointer (`Mouse_Szoveg_Set`'s last
+/// argument is 1 on all of them).
+pub fn bar_tip_spot(at: [f32; 2]) -> Option<u32> {
+    let (x, y) = (at[0].clamp(0.0, 639.0) as i32, at[1].clamp(0.0, 479.0) as i32);
+    TIP_SPOTS.iter().filter(|(_, r)| r[0] <= x && x < r[0] + r[2] && r[1] <= y && y < r[1] + r[3]).map(|s| s.0).min()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

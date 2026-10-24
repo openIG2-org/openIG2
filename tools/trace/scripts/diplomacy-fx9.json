@@ -1,0 +1,9 @@
+{
+ "screen": "diplomacy",
+ "note": "FX9 (re/deviations.md 121, 124) on quick-1.sav: the opening to rest (the cages settle), F2 at 400 and the closing's first frames (the exe applies AktKepKell after the frame it draws next; Diplomacy_Kilep draws one frame at dipframe 80 before its first step). Times are UI ticks from the first frame the screen is up.",
+ "events": [
+  {"t": 400, "key": "f2"}
+ ],
+ "grabs": [300, 399, 401, 402, 403, 405, 410, 430, 470],
+ "tail": 150
+}

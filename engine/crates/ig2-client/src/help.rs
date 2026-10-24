@@ -551,6 +551,8 @@ impl HelpScreen {
         let under = if self.held { 0 } else { self.spot_at(self.tip.mouse) };
         let text = self.tip_text(d.texts, under);
         self.tip.update(d.now_ms, if text.is_empty() { 0 } else { under }, text.len(), self.held);
+        // The pointer's hand: every spot passes cursor 1, a text or not.
+        self.tip.under = under;
         let shown = self.tip_text(d.texts, self.tip.shown);
         self.tip.draw(f, d.font, d.white, &d.v, d.palette, &shown);
         if self.released {

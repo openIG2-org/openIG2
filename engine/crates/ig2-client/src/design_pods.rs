@@ -70,6 +70,11 @@ pub struct Pods {
     /// The tooltip 0x0c (`KijelolTalalmany`'s `Mouse_Szoveg_Set(0xc, …)`): the marked model's tech and its 30 × 30
     /// spot's corner, while on.
     pub tip: Option<(usize, [f32; 2])>,
+    /// `Mouse_Tipus = 1` this frame: a pickable pod under the pointer (`PodKivalaszto`) or a tech model within 50
+    /// pixels (`CheckIfTalalmanyfolottvan`).
+    pub hand: bool,
+    /// `Mouse_Jobb`: the right button is down.
+    pub right: bool,
     /// The cosmetic `rand()` of the models' turn.
     seed: u32,
 }
@@ -259,6 +264,7 @@ impl Design {
     /// `Design3DUpdate` steps 6, 10, 11 and the rest of the frame (`DesignGfx2D_1`'s rows, `PodKivalaszto`,
     /// `CheckIfTalalmanyfolottvan`).
     pub(crate) fn pods_end(&mut self, c: &Ctx, mask: &[u8]) {
+        self.pods.hand = false;
         self.pods.frames2.clear();
         self.pods.outlines.clear();
         let n = self.edited(c.state).map_or(0, |d| pod_count(c.rules, rd_i16(d, field::RACE), self.loaded.max(0)));
@@ -371,7 +377,11 @@ impl Design {
             let Some(p) = self.pod_centre(k) else { continue };
             let Some(s) = self.screen(p) else { continue };
             let dist = (((s[0] - self.mouse[0]) * (s[0] - self.mouse[0]) + (s[1] - self.mouse[1]) * (s[1] - self.mouse[1])) as f64).sqrt() as f32;
-            // The 0x55 tooltip is set and switched off again on the same frame (never shown).
+            // The 0x55 tooltip is set and switched off again on the same frame (never shown); hovered with no button
+            // down and techs that fit, the hand (exe 0x4b6260).
+            if dist < r && free && !self.pods.down && !self.pods.right && self.techs_on(c, k + 1) {
+                self.pods.hand = true;
+            }
             if dist < r && pressed && free && best.is_none_or(|b| p[2] > b.1) {
                 best = Some((k, p[2]));
             }
@@ -486,6 +496,8 @@ impl Design {
                 if d >= 50.0 {
                     self.pods.techs[i].lit = false;
                 } else if !self.pods.marked {
+                    // `CheckIfTalalmanyfolottvan` (exe 0x4ad0d0): the hand over every model within 50 pixels.
+                    self.pods.hand = true;
                     self.mark(i);
                     self.pods.outlines.push([POD[0] as i32 - 3, POD[1] as i32 + (i as i32 + 1) * 15 + 2, 0x73, 0xd]);
                 }

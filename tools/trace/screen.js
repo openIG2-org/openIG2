@@ -132,7 +132,7 @@ function hideInfoPlanet(what) {
   }
 }
 
-let frames = 0, phase = 0, at = 0, shot = 0, ropDone = false, setupDone = false, staged = false, mainCalls = 0, gfx1Calls = 0, spyStage = null;
+let frames = 0, phase = 0, at = 0, shot = 0, ropDone = false, setupDone = false, viaDone = false, staged = false, mainCalls = 0, gfx1Calls = 0, spyStage = null;
 
 // --spies MODE: a roster for the human's spy screen (`Kemek` 0xBAFCC8 [9][13] × 0x4c, `OsszHanyKem` 0xBB1F84;
 // re/rules/espionage.md §1.1): five spies of different races and states (at home with skill points, on a mission
@@ -221,6 +221,12 @@ function hookLightProbe() {
       if (cfg.kep === 8) {
         const key = args[3].toString();
         this.on = A.AktKep.readS32() === 8 && va(0xf434b8).readFloat() === 50 && !tradeProbed.has(key);
+        if (this.on) tradeProbed.add(key);
+      } else if (cfg.kep === 2) {
+        // On the starmap (the info panels' models, deviations #47): each object (XVOStruct) once in the last frames
+        // before the grab (the sort slots are reused every frame).
+        const key = args[4].toString();
+        this.on = A.AktKep.readS32() === 2 && phase === 3 && (!cfg.rop || ropDone) && frames >= at + cfg.wait - 3 && !tradeProbed.has(key);
         if (this.on) tradeProbed.add(key);
       } else {
         this.on = A.AktKep.readS32() === 4 && resFrames3d >= 1 && resFrames3d <= 3 && va(0xdff940).readU32() !== 0;
@@ -485,9 +491,14 @@ Interceptor.attach(A.Fake_FRISSITES, {
     if (phase >= 3 && !cfg.run && va(0xbae264).readU8() === 0) va(0xbae264).writeU8(1);
     // --mouse X,Y puts it elsewhere (a menu's hover; on the spy screen a hot-spot's tooltip).
     if (phase >= 2) {
-      const [mx, my] = scriptT !== null ? scriptMouse : phase >= 3 && cfg.mouse && (staged || ((cfg.kep === 7 || cfg.kep === 4 || (cfg.kep === 3 && cfg.colonyInfo)) && A.AktKep.readS32() === cfg.kep)) ? cfg.mouse : [320, 240];
+      const [mx, my] = scriptT !== null ? scriptMouse : phase >= 3 && cfg.mouse && (staged || ((cfg.kep === 7 || cfg.kep === 4 || cfg.kep === 9 || (cfg.kep === 3 && cfg.colonyInfo)) && A.AktKep.readS32() === cfg.kep)) ? cfg.mouse : [320, 240];
       va(0x916008).writeS32(mx); va(0x91600c).writeS32(my);
-      va(0xdb4654).writeS32(mx); va(0xdb4658).writeS32(my);
+      // A script leaves `Mouse_x/y` to `Mouse_Lekerdez` (exe 0x5105d0), which copies `Mouse_Akt` and on a move of more
+      // than a pixel restarts the tooltip's 400 ms rest (`LastMouseMove` 0xBAE268), as a real move does.
+      if (scriptT === null) { va(0xdb4654).writeS32(mx); va(0xdb4658).writeS32(my); }
+      // The physical pointer in window pixels (0xDB9408/0xDB940C, `Starmap_Autoscroll` exe 0x5b17d0 scrolls within 8 px
+      // of the window's edge): a script's point, else the capture window (no pointer in it) reads (0, 0) and the map drifts.
+      if (scriptT !== null) { const [wx, wy] = toWindow([mx, my]); va(0xdb9408).writeS32(wx); va(0xdb940c).writeS32(wy); }
     }
     // --debug: the dispatcher's state (`AktKep`, `AktKepKell` 0xBAE250, `Atlepes` 0xBAE24D, `Belep` 0xBAE24C,
     // `OldKep` 0xBAE19C, `IdoPause`) every 120 frames.
@@ -537,10 +548,19 @@ Interceptor.attach(A.Fake_FRISSITES, {
       // --self-destruct N: the planet's self-destruct countdown `WF+0x334` := N (its window, colony.md §11.8).
       if (cfg.selfDestruct) va(0x9c3244 + 0x8ec * cfg.planet + 0x334).writeS32(cfg.selfDestruct);
       if (cfg.kep >= 0) {
-        A.AktKepKell.writeS32(cfg.kep);
+        // --via-starmap F: the starmap first and the screen F frames later, so `Starmap_Kilep` takes the overlay
+        // screens' pictures as in a running game (`SaveScreen`, re/screens/overlay-background.md).
+        A.AktKepKell.writeS32(cfg.viaStarmap && cfg.kep !== 2 ? 2 : cfg.kep);
         A.AktPlanetKell.writeS32(cfg.planet);
       }
       at = frames; phase = 3;
+    } else if (phase === 3 && cfg.viaStarmap && cfg.kep !== 2 && !viaDone) {
+      if (A.AktKep.readS32() === 2 && frames >= at + cfg.viaStarmap) {
+        A.AktKepKell.writeS32(cfg.kep);
+        viaDone = true;
+        at = frames;
+        send({ k: 'via', kep: cfg.kep });
+      }
     } else if (phase === 3 && !setupDone && (cfg.rop || cfg.fleets || cfg.planetTanks || cfg.ropMenu || cfg.menu) && A.AktKep.readS32() === 2 && frames >= at + 60) {
       // The starmap is up: make the fleets, select one (--rop-fleet K: `StarmapMode` 0xB9998C = 2, `AktFleet`
       // 0xB99664 = the K-th made), then press the icon and wait from there.
@@ -647,8 +667,8 @@ Interceptor.attach(A.Fake_FRISSITES, {
 // 10 ms a drawn frame, so `Fake_FRISSITES`' 100 Hz loop (UI counter 0xB772A4, `uiStamp` 0xBAE278) runs exactly one
 // UI tick a frame and the run is the same at any drawing speed; `scriptT` counts the UI ticks from there. Events at t
 // go in at frame t's entry, before its tick, through the game's own SDL2 event filter `MainCallBackEventHandler`
-// (0x4e2db0): {t, mouse: [x, y]} moves the pointer (virtual pixels: `Mouse_Akt`/`Mouse_x` as screen.js already
-// writes them), {t, press: [x, y], button: 1|3, hold: 3} a button down there and up `hold` frames later (window
+// (0x4e2db0): {t, mouse: [x, y]} moves the pointer (virtual pixels: `Mouse_Akt`; `Mouse_Lekerdez` takes it into
+// `Mouse_x` and sees the move), {t, press: [x, y], button: 1|3, hold: 3} a button down there and up `hold` frames later (window
 // pixels from `ig2_resize`'s virtual frame 0xB770D0..DC: w, h, x0, y0), {t, key: NAME, hold: 3} an SDL2 key down and
 // up (keysym +0x10 scancode, +0x14 sym; `remapKeyCodes` maps it). Grabs: the frame whose swap (gdi32 `SwapBuffers`)
 // comes after exactly t UI ticks is read back with glReadPixels (the default framebuffer's back buffer, the GL state
@@ -659,9 +679,12 @@ let vt = 0, vtOn = false, realTicks = null, swapHooked = false;
 const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050], enter: [40, 13],
   pageup: [75, 0x4000004b], pagedown: [78, 0x4000004e], escape: [41, 27], d: [7, 100], k: [14, 107], space: [44, 32],
   c: [6, 99], e: [8, 101], i: [12, 105], m: [16, 109], s: [22, 115], a: [4, 97], 4: [33, 52], 1: [30, 49], 2: [31, 50], 3: [32, 51], tab: [43, 9], delete: [76, 127], f2: [59, 0x4000003b], backspace: [42, 8],
-  kp_plus: [87, 0x40000057], kp_minus: [86, 0x40000056] };
+  kp_plus: [87, 0x40000057], kp_minus: [86, 0x40000056], kp_4: [92, 0x4000005c], end: [77, 0x4000004d],
+  5: [34, 53], 6: [35, 54], 7: [36, 55], 8: [37, 56], 9: [38, 57], lctrl: [224, 0x400000e0], lshift: [225, 0x400000e1] };
 // The other lower-case letters (`r` = redesign on the design screen, a typed name): scancode 4 + n, sym the character.
 for (let n = 0; n < 26; n++) { const ch = String.fromCharCode(97 + n); if (!SDL_KEYS[ch]) SDL_KEYS[ch] = [4 + n, 97 + n]; }
+// F1..F11 (FX1): scancode 58 + n, sym 0x4000003a + n.
+for (let n = 0; n < 11; n++) SDL_KEYS['f' + (n + 1)] = [58 + n, 0x4000003a + n];
 // The research screen's clock and selection (`ResearchTerulet` 0xB9A9B4, `ResearchMezo` 0xB9AA04, `ResearchTalalmany`
 // 0xB9AA08, `ResearchOldForgato` 0x919598; re/screens/research.md §1).
 const resState = () => ({ frame: va(0xdc5368).readFloat(), open: va(0xddf322).readU8(), closing: va(0xddf323).readU8(), started: va(0xddf628).readU8(),
@@ -688,6 +711,10 @@ function hookScript() {
       scriptEvents.push({ t: e.t + hold, mouse: b, quiet: true }, { t: e.t + hold, up: btn, at: b });
     } else if (e.key) {
       scriptEvents.push({ t: e.t, keydown: e.key }, { t: e.t + (e.hold || 3), keyup: e.key });
+    } else if (e.text) {
+      // The characters the keyboard handlers test (`ch`) come only from SDL_TEXTINPUT (0x303; exe 0x4e2db0 queues
+      // text[0] as a character event, a key down only its virtual key): {t, text: "i"}.
+      scriptEvents.push({ t: e.t, text: e.text });
     } else {
       scriptEvents.push(e);
     }
@@ -734,7 +761,7 @@ function toWindow([x, y]) {
 function applyEvent(e) {
   if (e.mouse) {
     scriptMouse = e.mouse.slice();
-    [[0x916008, 0x91600c], [0xdb4654, 0xdb4658]].forEach(([ax, ay]) => { va(ax).writeS32(scriptMouse[0]); va(ay).writeS32(scriptMouse[1]); });
+    va(0x916008).writeS32(scriptMouse[0]); va(0x91600c).writeS32(scriptMouse[1]);
     if (!e.quiet) sndInput({ src: 'script', ev: 'move', at: scriptMouse });
   } else if (e.down || e.up) {
     const [wx, wy] = toWindow(e.at);
@@ -744,6 +771,9 @@ function applyEvent(e) {
     const name = e.keydown || e.keyup, [sc, sym] = SDL_KEYS[name] || [0, 0];
     sdlSend(e.keydown ? 0x300 : 0x301, (p) => { p.add(0xc).writeU8(e.keydown ? 1 : 0); p.add(0x10).writeS32(sc); p.add(0x14).writeS32(sym); });
     sndInput({ src: 'script', ev: e.keydown ? 'keydown' : 'keyup', key: name });
+  } else if (e.text) {
+    sdlSend(0x303, (p) => { p.add(0xc).writeU8(e.text.charCodeAt(0)); });
+    sndInput({ src: 'script', ev: 'text', key: e.text });
   }
 }
 
@@ -782,7 +812,7 @@ function hookSwap() {
       // The colony camera (`ColonyXStart/YStart/Zoom/Pitch/Rotate`, colony.md §11.9).
       const cam = [0xba90dc, 0xba9514, 0xba9e8c, 0xba9b64, 0xba983c].map((x) => va(x).readFloat());
       const fh = (at) => Array.from(new Uint8Array(va(at).readByteArray(0x5cc)), (x) => x.toString(16).padStart(2, '0')).join('');
-      send({ k: 'frame', t: want, ticks, w, h, frames, scriptT, res: resState(), mouse: scriptMouse, kep: A.AktKep.readS32(), cam, faders: { fifo: fh(0xf152f0), starf: fh(0xf168e8) }, thread: Process.getCurrentThreadId() }, buf.readByteArray(w * h * 4));
+      send({ k: 'frame', t: want, ticks, w, h, frames, scriptT, res: resState(), mouse: scriptMouse, kep: A.AktKep.readS32(), planet: A.AktPlanet.readS32(), aktEpulet: va(0xb9c074).readS32(), cam, faders: { fifo: fh(0xf152f0), starf: fh(0xf168e8) }, thread: Process.getCurrentThreadId() }, buf.readByteArray(w * h * 4));
     },
   });
 }

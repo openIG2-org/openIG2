@@ -59,8 +59,12 @@ Heights are `(h, x, y)` with **up = −h**. `renderscene(1)` 0x6034f0-area uses 
 (`xcenter` 320, `ycenter` 240). Scene objects are in units of 1/1024 (`MoveObj` divides by 1024;
 `renderscene`/`dumpvertexlist` multiply the camera matrix by 1024): every world value below is in world units.
 
-Mouse (`ShowColony`): both buttons held → `Rotate = last − dx/200`, `Pitch = last + dy/200` clamped
-[−1.4922565, −0.05]; edge scrolling `Colony_Autoscroll` 0x4e2e40 (pointer within 8 px of a window edge, speed ramps
+Mouse (`ShowColony` exe 0x49f130, outside the pick list): a press of either button while `ujclick` keeps the pointer
+(`balclickx/y`, virtual pixels), `Colony_LastRotate` and `Colony_LastZoom` (the pitch) and clears `ujclick`; a release
+of either sets it again; while both are held `Rotate = last − (balclickx − Mouse_x)/200`, `Pitch = last +
+(balclicky − Mouse_y)/200` clamped [−1.4922565, −0.05] [obs: `tools/trace/scripts/colony-turn.json`, quick-1.sav
+planet 42: 40 right → rotate +0.2, 20 up → pitch −0.7854 → −0.6854; a right drag alone turns nothing]. No other drag
+moves the camera; edge scrolling `Colony_Autoscroll` 0x4e2e40 (pointer within 8 px of a window edge, speed ramps
 by 5 to 30, `Colony_Move`); zoom/pitch tweens `0x998244..` (×0.25 per frame for 15 frames, exe).
 
 ### 2.2 Terrain object
@@ -174,8 +178,15 @@ and placed (bit 2 clear). Exe unit offsets are ELF − 8 from `+0x164` on, −0x
 The battlefield's projectile lists (shells `+0xd4`, missiles/bombs/debris `+0xd8`, bolts `+0xdc`; `ig2-sim`
 `Lists`) are drawn with `rocket laser racs2 paralyze biglaser1..5 akna vad manipulator manipulated hordozo megashot
 heavyshot lightshot repesz1..3` (`.xvb`) and particle textures (`star rcloud flare lens/* epuletkosz tankkosz`); the
-fighters of an air strike (`WF+0x1f4 + 0x40k`) and dropships (`hordozo.xvb`) are models too. The client draws them as
-glowing points (shells yellow, missiles orange, debris dim, bolts blue, fighters white) [deviation, cosmetic].
+fighters of an air strike (`WF+0x1f4 + 0x40k`) are models too. The client draws them as glowing points (shells
+yellow, missiles orange, debris dim, bolts blue, fighters white) [deviation, cosmetic].
+
+The dropships (`WF_Hordozo`, inlined at the unit's exe `+0x264..+0x278` / ELF `+0x27c..+0x290`): `WF::LoadMesh` (exe
+0x483f70) loads `hordozo.xvb` once a planet; `WF_Tank::LoadMesh` (exe 0x4847a0) adds one per unit without flag
+0x4000000 (`AddToScene(…, mainxvb4, 0.04)`, `RotateObj(0, π/2, 0)` once: it never turns); `WF_Tank::Update` (exe
+0x4a5b20, units without 0x4020000) calls `WF_Hordozo::Update` (exe 0x4a5ab0): `MoveObj((h + off_h) − 20, x + off0,
+y + off1)` with the unit's point (`+0x1d4..+0x1dc`) and the offsets `+0x264/+0x268/+0x26c`, hidden while the state
+`+0x278` bit 0 is set. No tint, no per-owner texture: the model's own.
 
 ## 6. HUD layout (`ColonyBrushok` 0x115a570, exe 0x8ECA08; `COLONY_X.BMP` = kep 17)
 Records `(src x, src y, dst x, dst y, w, h, step x, step y, frames per row, kep)`, a negative size = source in the
@@ -326,8 +337,21 @@ button's press and take their answer once the left button is up (`HandleRepairWi
 also drops `AktEpulet`), anything else shuts it: the answer is a press on the button, a drag to "Yes" and the
 release.
 
-Keys (`ColonyKeyboardHandler`): E = 0x132 for the selected building, Shift+Delete = 0x20 at once, PageUp/PageDown =
-the previous/next planet the human owns and sees (`+0xd8 + 2·EN > 0`), I = the planet info mode.
+Keys (`ColonyKeyboardHandler` exe 0x4628c0, `(vk, ch, down)`): E (ch) = 0x132 for the selected building, else for
+`GetSelected(0)`'s building when that unit is a defence turret (flag 0x4000000, `+0x238`; exe 0x462a7e), with the
+click either way; vk 0x21/0x22 = the previous/next planet the human owns and sees (`+0xd8 + 2·EN > 0`); I (ch) = the
+planet info mode. With only one fortress's turrets selected on EN's planet (`WF::OnlyOneFortressSelected`)
+`Colony_MouseInit2` (exe 0x467990) enables buttons 1, 2 and 0x11 for that fortress, and 0x11 sends its 0x132
+(`Colony_Main` 0x46708c).
+
+**What reaches the handler** (`MainCallBackEventHandler` exe 0x4e2db0, `remapKeyCodes` exe 0x4e4670): a key down is
+queued as a vk only when `remapKeyCodes` knows its SDL sym: Backspace, Enter, Esc, Space, the top row's 1..9, F1..F12,
+the arrows, numpad +/−, Ctrl, Shift, Alt, and **PageUp → vk 0x22, PageDown → 0x21** (swapped: PageUp is the next
+planet [obs: quick-1.sav planet 42, PageUp → 43 → 46, PageDown → 43]); Delete, End, Home, Tab, 0, the letters and the
+numpad digits queue nothing, so the handler's Shift+Delete demolish (0x20) and End (the names toggle, below) never run
+in the GOG exe. The characters (`ch`) come only from SDL_TEXTINPUT (0x303: `text[0]` when `text[1] = 0`), with the
+OS's auto-repeat; a bare key down of a letter carries no character [obs: `tools/trace/scripts/colony-keys.json`: a key
+down of i does nothing, the text i / I turn the info mode on and off].
 
 The selection marker (`DrawBuildingSelection` ELF 0x482ca0): `epkij.bmp` on two flat triangles at the building's placed
 height `+0x14` plus `allvanypoziciok[k − 1]` − 20 (exe 0x8F3878, 60 floats, `ig2-rules::scaffold_heights`), half sizes
@@ -359,9 +383,26 @@ per UI frame about `(0, cos −0.3, sin −0.3)`; the second `Update3D` draws it
 on (95, 101) (`ShowColony`'s `HatarX1..`, `xcenter`, `ycenter`). A unit being placed shows its hull instead
 (`AktEpuletTipus = −10 − design`).
 
+The hold: hot-spot 0x14 is not one-shot, so `Colony_Main` runs `GetNearestBuilding` every frame the left button is
+held on the view (until `Mouse_FelengedesMajdMegvar`). A press on no building drops the selection; while the pointer
+stays within 15 pixels of the press the building under it is picked (the click when it changes) and the first one
+picked ends the picks; past 15 pixels the box (`WarfareKeretesKijeloles`, also on a planet at peace: its frame is
+drawn) zeroes `AktEpulet` every frame, so a building passed then clicks once and stays unselected [obs:
+`tools/trace/scripts/colony-sweep.json` with `--cam 382.385,-314.574,-1100,-0.7854,0`: the press on the ground
+clicks and drops the hub, the drag onto the hub's edge clicks once, `AktEpulet` stays 0, the box's frame shows].
+
+The planet's name entry (`Colony_Main` exe 0x4667fb, without `ControlConfig[0]`, the touch mode 0x90b520): both buttons
+held on hot-spot 4 with `ColonyInfoMod` 0 (nothing selected; any planet) start `IOMode` with `IOAzonosito` 0x1f,
+`IOString` = the planet's name (record +0), `IOMaxLen` 15, at (50, 427) size 2 colour 0x22, `IOKurzor` its length,
+`IOGombnyomasraTorles` 1, and `Mouse_FelengedesMajdMegvar` (the releases do nothing: no info mode, no starmap); no
+sound. `ColonyGfx2D_4` draws it as the starmap's (starmap.md §10.7); `DoKeyboard` edits it, Enter ends it on
+`AktKep` 3 with no tutorial event; presses don't end it; `ColonyKisInfo` (ELF 0x4edb40) ends it with `ColonyInfoMod`
+1 or 2, copying `IOStringBackup` back (which this path never sets: the last starmap rename's backup [original bug];
+the port restores the name the entry started with) [obs: `tools/trace/scripts/colony-rename.json`, planet 17: the
+entry shows, "Xy" replaces the name, Enter keeps it].
+
 Deviations in the client: the building under the pointer is the one whose footprint holds the pointer's cell (the
-original tests the model hit by the click); a left drag on the view pans the camera (the original scrolls at the
-window's edges and box-selects units with it); the build cursor's red light is a tint.
+original tests the model hit by the click); the build cursor's red light is a tint.
 
 Verified: `ig2-client`'s test `building_through_the_screen_reaches_the_sim` drives quick-1.sav's planet 42 through the
 pick list, the cursor, a click (0x1f: the building stands where the cursor showed and is selected) and the demolish
@@ -413,10 +454,10 @@ Hot-spot 4 released with the right button (the starmap) and PageUp/PageDown are 
 ### 11.2 Keys (`ColonyKeyboardHandler`)
 | Key | Effect |
 |---|---|
-| Ctrl + 4..9 | `WF::SaveSelection(n − 4)`: each unit's byte `+0x13c + n` := its flag 8; the rings restart (`ForceSelectionAnim`) |
-| 4..9 | `WF::LoadSelection(n − 4)`: flag 8 := the saved byte (no ring restart, `LastSelectedTank` untouched) |
+| Ctrl + 4..9 | vk 0x34..=0x39 (the top row; the numpad's digits never arrive, §10), at war or not: `WF::SaveSelection(n − 4)`: each unit's byte `+0x13c + n` := its flag 8; the rings restart (`ForceSelectionAnim`) |
+| 4..9 | `WF::LoadSelection(n − 4)`: flag 8 := the saved byte (no ring restart, `LastSelectedTank` untouched); the bytes are saved with the unit (`WF_Tank::LoadSave` exe 0x4859a0, `ig2-sim` `UnitTail::f13c`): the port seeds the screen's groups from them on entry and writes them back after each Ctrl+4..9 (single player; in multiplayer each peer keeps its own) [obs: `tools/trace/scripts/grwar-groups.json`: Ctrl+4, a click on the ground, numpad 4 (nothing), 4 (the seven units again)] |
 | S | `StopSelected` (0x25 per selected own unit; no click sound) |
-| a | the building selection goes; every alive unit with flags & 2 = 0, not 0x40000000, flags2 bit 2 clear (the exe's filter): selected when its owner is EN and it isn't a defence turret, else deselected; then the select voice |
+| a | (ch 0x61, at war or not, not under the tutorial's colony lock 0xf66ff9, like `c` and End) the building selection goes; every alive unit with flags & 2 = 0, not 0x40000000, flags2 bit 2 clear (the exe's filter): selected when its owner is EN and it isn't a defence turret, else deselected; then the select voice |
 | R | only with the debug switch (`DEBUGX` exe 0xBAE587); retreat is the button in normal play |
 | E, Shift+Delete | building on/off, demolish: not at war |
 
@@ -427,9 +468,13 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
 - **Hit test** (`WF::CheckTanks` exe 0x460b70): among the alive units with flags & 2 = 0 whose owner is EN, or all when
   side EN has units on the field (`WF+0x8b1 + EN`), those under the pointer (`WF_Tank::MouseOver` exe 0x48bc90 via
   `WF::MouseOver`'s test: not flag 0x20, not a defence turret of pods 0xa1..=0xa4; the object centre (`GetObjCenter` of
-  the hull mesh, the gun mesh for a turret) projected; radius `TransformTav(35.0, z)` = 35·600/−z, at least 10.0; hit
+  the hull mesh, the gun mesh for a turret: the middle of the posed model's extent; the port takes the last drawn
+  frame's) projected; radius `TransformTav(35.0, z)` = 35·600/−z, at least 10.0; hit
   when `dx² + dy² < r²`, f32); of those the one whose projected centre is nearest to the pointer; −1 none.
 - **Left press** (nothing armed, no build cursor): the box starts (`KeretesKijeloles`, `keretstart` = the pointer).
+  The press's selection step below runs again every frame of the hold (hot-spot 0x14 is not one-shot; §10's hold):
+  `+0x146` is taken again each frame, so with Shift the units the pointer passes near the press add up and a Shift
+  box keeps every unit it once held.
   `GetNearestBuilding` (exe 0x47b350): each unit's selection is first kept in `+0x146`; without Shift and outside a drag
   of `|dx| + |dy| ≥ 16`, everything but the unit under the pointer is deselected (`DeSelectAll`); the unit under the
   pointer is selected (any one without Shift; with Shift only an own one, when `LastSelectedTank = EN` or nothing is
@@ -469,7 +514,8 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
   target per frame.
 - **Route crosses** (`WF_Tank::Draw3d` ELF 0x481890): for each selected own unit each waiting waypoint (cursor ..
   count) two `line3d` (0x80be8882) crossing at the cell, 10 above the ground, half length `sin(gvalue/10)·3 + 6` along
-  the map axes.
+  the map axes; the engine's lines are depth-tested 1-pixel lines added at alpha 0x80 (the port: thin quads facing
+  the eye in the 3D pass).
 - **Group size** (`WF_Tank::WriteStuff` ELF 0x47dc30): a unit standing for more than one (`AliveTankNum > 1`) shows the
   number at its projected centre − (8, 8), size 2, colour 2; a retreating one (flag 4) a label below.
 - **Texts** (`ColonyGfx2D_1`, owner ≠ EN, at war, `local_22`): EN's retreat flag on: `GetString(3, 2, 3)` at (220, 40);
@@ -483,11 +529,14 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
   on the field (`WF+0x8b1 + EN`, as `GetStatus` sets it); else the red footprints of §3.3. A unit riding its dropship
   (`+0x278` bit 3) is drawn at its dropship's offset (`+0x27c..+0x284`, §4), its ring stays on the ground. The rings and
   target markers add their texture (black is clear).
-- **Attack banner** (`ColonyGfx2D_2` exe 0x461900): while `TamadasSzovegCounter` (exe 0x9ABAE0; `StartGrWar` sets 900,
-  `Frissit2_Colony` counts it down per UI frame on the colony screen, `Colony_Kilep` zeroes it) runs: EN's planet:
+- **Attack banner** (`ColonyGfx2D_2` exe 0x461900): `TamadasSzovegCounter` (exe 0x9ABAE0) is global: `StartGrWar` (exe
+  0x4a4a70) sets 900 for any planet whose field is contested (`WF::GetStatus` −1 or −10); `Frissit2_Colony` (exe
+  0x477dc0) on the colony screen sets the flag 0x998245 = counter ≠ 0 and then counts it down; `Colony_Belep` clears
+  the flag, `Colony_Kilep` zeroes the counter. While the flag is set (whatever the shown planet's war): EN's planet:
   `GetString(3, 2, 5)` with the attacking fleet's owner (`Flottak[WF+0x338]+0x15`, 1..=15) and the planet's name; else
-  `GetString(3, 2, 6)` with the planet's name and its owner's (swapped in language 4); MP: `"%s (%s) vs. %s (%s)"` with
-  the players' names; `KiirStr(…, 200, 30, 70, 2, 4, 2)` at `min(100, 2·counter)` % brightness.
+  `GetString(3, 2, 6)` with the planet's name and its owner's (swapped with `Lang` 4, never on GOG); MP (0xbae2c0):
+  `"%s (%s) vs. %s (%s)"` = the attacker's empire and `PlayerNev` (exe 0xBAE588 + 11·e), then the owner's;
+  `KiirStr(…, 200, 30, 70, 2, 4, 2)` at `min(100, ((900 − c)·−10 + 9000)/5)` = `min(100, 2c)` % brightness.
 - **Unit info** (`ColonyInfoMod` 1, in `StarmapRovidInfoKiir`'s place at (50, 424)): several units: `GetString(3, 2, 33)`
   ("%d units selected.") at (50, 430) size 1, the first one's empire at (50, 439) in colour owner + 0xf, its weapon's
   tech name (the pod, `+0x51` else `+0x52` of the design; a turret's own pod) at (50, 466); one unit: its design's name at
@@ -534,7 +583,7 @@ The returned 0 makes `Colony_Main` drop `AktEpulet` when side EN is on the field
 frame keeps it (it ends at the release, which plays the select voice for an own selected unit as usual).
 
 `AktBGridX/Y` (`ShowColony` exe 0x49f130 at 0x772): a ray that misses the ground (`|y| > 6000` or no hit) zeroes the
-pick point before the cell is computed [the port keeps the last cell: deviations.md].
+pick point before the cell is computed: the orders, strikes and landing clicks then go to `Real2Grid(0, 0)` = (98, 98).
 
 While `CheckPlacing(EN)` is false and `GetFirstUnPlacedTank(EN)` (exe 0x47ac10) ≠ −1, `ShowColony` turns the build
 cursor into that unit: kind `−10 − design`, mesh `LoadBox(TankAlap + (Tervek[EN][design]+0x44 − 0x13)·0x38)` in the
@@ -567,8 +616,9 @@ Draw (countdown ≠ −1 on the shown planet, any owner):
 `ColonyKeyboardHandler` (exe 0x4628c0, ELF 0x4dcd10; `(vk, ch, down)`) sets held flags, on key down and up, with no
 tutorial, debug or modifier gate: numpad + (vk 0x6b) `ColonyZoomIn` 0x9964f2, numpad − (0x6d) `ColonyZoomOut` 0x9964f3,
 ← (0x25) / → (0x27) `ColonyTurnLeft/Right` 0x9964da/db, ↑ (0x26) 0x9964f1 (pitch +), ↓ (0x28) 0x9964f0 (pitch −).
-Entering the screen (`Colony_Belep`) clears them. The arrows never pan; End (vk 0x23) toggles the building names
-(`SetOptions`, saved), not the camera; PgUp/PgDn change planet (§10).
+Entering the screen (`Colony_Belep`) clears them. The arrows never pan; End (vk 0x23) would toggle the building names
+(`KellEpuletnevKiiras` 0x996468, option row id 202, `SetOptions`, saved; `ShowBuildings` exe 0x4c9220 draws them only
+while it is on) but never arrives (§10): the names follow the options row; PgUp/PgDn change planet (§10).
 
 `c` (ch 99 only, key down, not under the tutorial lock): `NextCameraMode` (0x998248, unsaved, 0 at start) += 1, past 3
 → 0; `TankView` (0x9963a3) = mode 3; modes 0..=2 set the targets `ColonyTargetZoom/Rotate/Pitch` (0x99824c..) from the
@@ -594,7 +644,8 @@ speed (statics 0xa3eb68/6c) steps 5 towards its aim; while either is nonzero `Co
 `Colony_Move` (exe 0x4688f0) first takes a pending `MaximizeCamera` correction (`ColonyRealXPos`), then per nonzero
 axis, f32 with the angle's `cos`/`sin` rounded to f32: `k = (600 − Zoom) + 200`;
 `XStart −= ((dx·c − dy·s)·k/600)·0.85`, `YStart −= ((dy·c + dx·s)·k/600)·0.85` (x first, then y).
-The mouse wheel does nothing in the colony (the port's wheel zoom is ours: deviations.md).
+The window position is the last physical one: the scroll goes on with the pointer outside the window. The mouse
+wheel does nothing in the colony (the port's wheel zoom is ours: deviations.md).
 
 Verified (`ig2-client` test `camera_keys_and_edge_scroll_follow_the_exe`): `tools/trace/scripts/colony-camera.json` on
 quick-1.sav planet 42 (`run_screen.py --script`, the grabs carry the exe's camera): ←, numpad +, ↑, → with numpad −
@@ -667,8 +718,7 @@ starmap §16's geometry.
 ### 12.1 On and off
 - On / off: hot-spot 4 released with the left button (`Colony_Main` ELF 0x4dadf0 / exe 0x4666d0, `AktIkon2 == 4`;
   the right button's release is the starmap, both buttons a rename), and the key I/i (`ColonyKeyboardHandler` ELF
-  0x4dcd10 / exe 0x4628c0, the character 0x49/0x69; [inf]: a scripted SDL key I (screen.js) doesn't toggle it, the handler's character
-  apparently not reaching it from a bare key event). Switching on also drops the selection (`AktEpulet = 0`) and
+  0x4dcd10 / exe 0x4628c0, the character 0x49/0x69 from SDL_TEXTINPUT, auto-repeat included, §10). Switching on also drops the selection (`AktEpulet = 0`) and
   the build cursor (`ColonyRemoveBuilding` when `ColonyBuildMode`). No sound either way.
 - Off: a press on hot-spot 0x20 (the whole screen, under the panel's dead hot-spot 0x1f), and entering the
   screen (`Colony_Belep` ELF 0x4d8fd0 / exe 0x465b40 clears it with `ColonySelectTax/AutoBuild/Priority`). The tutorial's

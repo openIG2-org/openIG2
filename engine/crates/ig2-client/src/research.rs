@@ -203,6 +203,9 @@ pub struct Research {
     started: bool,
     closed_once: bool,
     pub pin: Option<f32>,
+    /// `oldEnterlenyomva`/`oldDlenyomva` (exe 0xDDFFEE/0xDDFFED): the down flag of the last key event the handler
+    /// saw, whatever the key (§4).
+    key_old: bool,
     /// `OldResearchTerulet` (the category of the last drawn frame) and whether the category's models show
     /// (`LoadTalalmanyVectorok` hides them, `UnHideMeglevoTalalmanyok` shows the known ones, `HideAllTalalmany`).
     old_area: usize,
@@ -229,8 +232,18 @@ pub struct Research {
     pub held: bool,
     /// `resf`: the faders' shine, drift and hover glow (`FaderDesignFrissito` in `FRISSIT_Research2`).
     faders: crate::kit::FaderDesign,
-    /// [`Research::held`] at the last drawn frame (its change is the press or release edge).
-    was_held: bool,
+    /// The buttons down now (bit 0 left, bit 1 right: the window's events), at the last two `Mouse_Lekerdez` polls
+    /// (one a frame, after the frame is drawn), and the flags the last drawn frame read from them.
+    pub buttons: u8,
+    poll: [u8; 2],
+    edge: Edge,
+    /// The drags (§4.1): `resGyX/resGyY` (exe 0xDC4728/0xDC472C, the ball's turn a frame), `MouseOldX/Y`
+    /// (0xDC538C/0xDDF31C), `ResearchGombMegfogva` (0xDDF321, the ball held) and `Research_Talalmany_Megfogva`
+    /// (0xDC471D, the chosen model held).
+    gy: [f32; 2],
+    mouse_old: [i32; 2],
+    ball_grip: bool,
+    model_grip: bool,
     /// The chosen row's frame (`DesignKeret1`, asked for by every drawn frame while open, stepped every UI frame)
     /// and the list font's cell (`CharXMeret[2]`, `CharYMeret[2]`).
     pub(crate) design: crate::kit::DesignFrame,
@@ -289,9 +302,12 @@ impl Research {
             animated,
             opened: !animated,
             closing: false,
-            started: false,
+            // `resELINDULT`: `Research_Belep`'s frame is drawn before the first UI tick, so the opening moves from tick 1
+            // [obs: `resframe` 4.0 at tick 10, open at tick 150; sequence diff 2026-10-22].
+            started: true,
             closed_once: false,
             pin: None,
+            key_old: false,
             old_area: 0,
             models_shown: false,
             ball_at: BALL,
@@ -309,7 +325,13 @@ impl Research {
             tip: crate::kit::Tooltip::default(),
             held: false,
             faders: crate::kit::FaderDesign::new(1),
-            was_held: false,
+            buttons: 0,
+            poll: [0; 2],
+            edge: Edge::default(),
+            gy: [0.0; 2],
+            mouse_old: [0; 2],
+            ball_grip: false,
+            model_grip: false,
             design: Default::default(),
             cell: [rules.charset.width.get(2).copied().unwrap_or(6), rules.charset.height.get(2).copied().unwrap_or(7)],
             lasers: crate::kit::Lasers::default(),
@@ -322,8 +344,11 @@ impl Research {
         // category once the screen is open.
         r.turn_wheel(m.i32(at::FRONT));
         r.slot_kep = s.wheel_kep;
-        // `Research_Belep` exe 0x523540: the opening's sound.
-        r.sounds.push(SoundId::new(Table::Res, 0));
+        // `Research_Belep` exe 0x523540: the opening's sound (none without the opening: from the options screen the
+        // exe plays only the field's `Res_Hangok[1]`, 31 ticks in; FX1 trace `fkeys`).
+        if animated {
+            r.sounds.push(SoundId::new(Table::Res, 0));
+        }
         r.button = -1;
         r.old_area = r.area;
         // `SetDoubleTexture`: the urgent button starts pressed in.
@@ -397,8 +422,14 @@ impl Research {
         self.tech = self.field + (n as i32 - 1) * 16;
     }
 
-    /// `TalalmanyKivalasztva(k)` (ELF 0x5e24a0): field `k` of the category; its model moves in front of the ball.
+    /// `TalalmanyKivalasztva(k)` (ELF 0x5e24a0 / exe 0x524f60): field `k` of the category; its model moves in front of
+    /// the ball. On a press (`Mouse_Lenyom`) a model not on its way grabs it (`Research_Talalmany_Megfogva`); every call
+    /// takes `MouseOld` from the pointer.
     fn choose_field(&mut self, k: i32) {
+        if self.edge.press && self.near_dir[k.clamp(0, 16) as usize] == 0 {
+            self.model_grip = true;
+        }
+        self.mouse_old = self.pointer();
         self.field = k;
         self.fields[self.area] = k;
         self.tech = k + (self.area as i32 - 1) * 16;
@@ -412,6 +443,15 @@ impl Research {
             }
             self.near_dir[k] = 1;
         }
+    }
+
+    /// The top bar's quick-research pick (`MOUSE_SelectScreens`, re/screens/hud.md §2.1): `ResearchAtvaltTalalmanyra(t)`,
+    /// then, the screen showing t, its start button goes in (`ResMelyikGombot = 0xcc`, `ResGombNew`, `ButtonPressed`;
+    /// no sound).
+    pub fn quick_start(&mut self, t: i32) {
+        self.jump_to(t);
+        self.button_pressed = true;
+        (self.button, self.button_new) = (0xcc, true);
     }
 
     /// `ResearchAtvaltTalalmanyra(t)`: the running project's category and field.
@@ -494,7 +534,7 @@ impl Research {
         let mut out = Vec::new();
         let en = en(state);
         match self.spot(state, mask, at) {
-            Some(1) => out = self.start_stop(state),
+            Some(1) => out = self.start_stop(state, true),
             Some(4) => out = self.double(),
             Some(0x12) => {
                 // The info box: every line out at once.
@@ -530,6 +570,12 @@ impl Research {
         out
     }
 
+    /// `Mouse_Tipus = 1` at `at`: a list row (`ResearchGfx2D_2` exe 0x5221a0) or, with the models in, one's projected
+    /// centre within 30 pixels (`CheckIfTalalmanyokFolottVan` ELF 0x5e2720).
+    pub fn hand(&self, state: &SaveState, at: [f32; 2], models: &[(usize, [f32; 2])]) -> bool {
+        self.list_row(state, at).is_some() || (self.zoom == ZOOM_MIN && models.iter().any(|(k, c)| self.near_dir[*k] == 0 && (c[0] - at[0]).hypot(c[1] - at[1]) < 30.0))
+    }
+
     /// The list row under `at` (`ResearchGfx2D_2`: rows of 21 cells, 10 lines apart, the human's known techs).
     fn list_row(&self, state: &SaveState, at: [f32; 2]) -> Option<i32> {
         let en = en(state);
@@ -545,10 +591,14 @@ impl Research {
         })
     }
 
-    /// `ResearchKeyboardHandler` (ELF 0x5e9aa0): ↓/↑ the next/previous known field, →/← the other column (±8),
-    /// Enter `ResearchStartStop`, D `ResearchDoubleGomb`, PgUp/PgDn the previous/next category in
-    /// `Terulet_Melyik`'s order (exe 0x919234).
+    /// `ResearchKeyboardHandler` (ELF 0x5e9aa0 / exe 0x523020) on a key down: ↓/↑ the next/previous known field, →/←
+    /// the other column (±8), Enter `ResearchStartStop` unless the handler's last event was a down too
+    /// (`oldEnterlenyomva`: a held Enter's repeats fire again after any key up), PgUp/PgDn the previous/next category
+    /// in `Terulet_Melyik`'s order (exe 0x919234; `remapKeyCodes` swaps the keys, the window maps them). The exe's D
+    /// (vk 0x44, `ResearchDoubleGomb`) never arrives: `remapKeyCodes` queues no key down for letters
+    /// (re/screens/input.md §1).
     pub fn key(&mut self, state: &SaveState, k: Key) -> Vec<Act> {
+        let old = std::mem::replace(&mut self.key_old, true);
         let en = en(state);
         let techs = state.tech();
         let known = |f: i32| f > 0 && f < 0x11 && techs.status(((self.area as i32 - 1) * 16 + f) as usize, en) > 1;
@@ -559,11 +609,15 @@ impl Research {
             Key::Up if f > 1 => moved = (1..f).rev().find(|&x| known(x)),
             Key::Right if f != -1 && f < 9 && known(f + 8) => moved = Some(f + 8),
             Key::Left if f > 8 && known(f - 8) => moved = Some(f - 8),
-            Key::Enter => return self.start_stop(state),
-            Key::Double => return self.double(),
+            Key::Enter if old => {}
+            Key::Enter => return self.start_stop(state, false),
             Key::PageUp | Key::PageDown if !self.button_pressed => {
                 let at = AREA_ORDER.iter().position(|&a| a == self.area).unwrap_or(0);
                 let next = if k == Key::PageUp { (at + 11) % 12 } else { (at + 1) % 12 };
+                // `TT_*` → `Forgotabla` (ELF 0x5e8230): the wheel's click while open [obs: research-fx9.json t 170, 180].
+                if self.opened {
+                    self.sounds.push(CLICK);
+                }
                 self.choose_area(AREA_ORDER[next]);
             }
             _ => {}
@@ -574,9 +628,16 @@ impl Research {
         Vec::new()
     }
 
+    /// Any other event the handler sees (`FUN_004db040` passes every key up, every character as a down, and the key
+    /// downs it has no case for): only `oldEnterlenyomva` follows it.
+    pub fn key_seen(&mut self, down: bool) {
+        self.key_old = down;
+    }
+
     /// `ResearchStartStop` (ELF 0x5e9190): start the shown tech when nothing runs and it can start, stop the running
     /// project otherwise.
-    fn start_stop(&mut self, state: &SaveState) -> Vec<Act> {
+    /// It clicks only on a press (`Mouse_Lenyom`): Enter is silent [obs: research-fx9.json t 210, 245].
+    fn start_stop(&mut self, state: &SaveState, press: bool) -> Vec<Act> {
         let mut out = Vec::new();
         if self.button_pressed {
             return out;
@@ -586,13 +647,17 @@ impl Research {
         if current == 0 && self.can_start(state) {
             self.button_pressed = true;
             (self.button, self.button_new) = (0xcc, true);
-            self.sounds.push(CLICK);
+            if press {
+                self.sounds.push(CLICK);
+            }
             out.push(Act::Send(Command::Research { order: ResearchCmd::Start { tech: self.tech } }));
         }
         if current > 0 {
             self.button_pressed = true;
             (self.button, self.button_new) = (0xcc, true);
-            self.sounds.push(CLICK);
+            if press {
+                self.sounds.push(CLICK);
+            }
             out.push(Act::Send(Command::Research { order: ResearchCmd::Stop { tech: current } }));
         }
         out
@@ -627,8 +692,11 @@ impl Research {
         let techs = state.tech();
         // `FRISSIT_Research2`.
         self.lines.tick();
-        for s in &mut self.spin {
-            *s += 0.02;
+        // `ResearchTalalmanyForgas`: the held model doesn't turn by itself.
+        for (k, s) in self.spin.iter_mut().enumerate() {
+            if !(self.model_grip && k as i32 == self.field) {
+                *s += 0.02;
+            }
         }
         self.res_xy += 0.02;
         self.keringeto += 0.0006;
@@ -661,11 +729,35 @@ impl Research {
         }
         self.draw_frame(en, &techs);
         self.button_pressed = false;
+        // `Mouse_Lekerdez` after `UpdateFrame`: the next frame reads these.
+        self.poll = [self.buttons, self.poll[0]];
+    }
+
+    /// The pointer as `Mouse_x`/`Mouse_y` (whole virtual pixels, 0..639 × 0..479).
+    fn pointer(&self) -> [i32; 2] {
+        [self.tip.mouse[0].clamp(0.0, 639.0) as i32, self.tip.mouse[1].clamp(0.0, 479.0) as i32]
+    }
+
+    /// `GombfolottLenyomva` (ELF 0x5e2190, inlined in exe 0x51fd10): the right button pressed (no button down before)
+    /// within 160 pixels of the ball's projected centre.
+    fn ball_pressed(&self) -> bool {
+        let p = self.pointer();
+        let near = project(BALL).is_some_and(|c| ((c[0] - p[0] as f32).powi(2) + (c[1] - p[1] as f32).powi(2)).sqrt() < 160.0);
+        near && self.edge.press && self.edge.buttons & 2 != 0
     }
 
     /// `Research3DUpdate`'s state steps and `ResearchGfx2D_2`'s.
     fn draw_frame(&mut self, en: usize, techs: &TechTable) {
         self.started = true;
+        self.edge = Edge::of(self.poll);
+        // `Research3DUpdate` (exe 0x51fd10): the ball's drag fades ×0.8 a frame; a release lets the model go.
+        self.gy = self.gy.map(|g| g * 0.8);
+        if self.edge.release {
+            self.model_grip = false;
+        }
+        if self.opened && self.ball_pressed() {
+            self.mouse_old = self.pointer();
+        }
         let open_or_closing = self.opened || self.closing;
         // A new category: the models fly out, are reloaded at `ADDZOOMMAX` and fly back in.
         if self.old_area != self.area {
@@ -804,6 +896,10 @@ impl Research {
                 if self.near_dir[k] == 1 && self.near[k] < 700.0 {
                     self.near[k] = (self.near[k] + 80.0).min(700.0);
                 }
+                // The held model turns with the pointer: `(MouseOldX − Mouse_x)/100` from where it was grabbed.
+                if self.near_dir[k] == 1 && self.model_grip {
+                    self.spin[k] = (self.mouse_old[0] - self.pointer()[0]) as f32 / 100.0;
+                }
                 if self.near_dir[k] == -1 && self.near[k] > 0.0 {
                     self.near[k] -= 80.0;
                     if self.near[k] <= 0.0 {
@@ -812,8 +908,25 @@ impl Research {
                     }
                 }
             }
-            // The ball turns 0.002 a frame (`matrixforgat(m, 0.002, 0)`).
-            self.ball = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], 0.002), &self.ball);
+            // The drag's turn (`matrixforgat(m, resGyX, resGyY)`), then the grip: a release drops it, a right press near
+            // the ball takes it; held, the pointer's move a frame feeds the turn; free, the ball turns 0.002 a frame.
+            self.ball = turn(self.gy, &self.ball);
+            if self.edge.release {
+                self.ball_grip = false;
+            }
+            if self.ball_pressed() {
+                self.ball_grip = true;
+            }
+            if !self.model_grip && self.ball_grip {
+                let p = self.pointer();
+                for ((g, old), now) in self.gy.iter_mut().zip(self.mouse_old).zip(p) {
+                    *g = *g * 0.9 + (old - now) as f32 / 30.0 * 0.1;
+                }
+                self.mouse_old = p;
+            }
+            if !self.ball_grip {
+                self.ball = turn([0.002, 0.0], &self.ball);
+            }
         }
         // `ResearchGfx2D_2`: a category without a remembered field takes the first known one; the info lines start
         // over (at `InfoSorok[i]+0xb8`: 0, −20, −40, −60) for a new tech and come out 1.4 characters a frame.
@@ -942,9 +1055,33 @@ pub enum Key {
     Right,
     Left,
     Enter,
-    Double,
     PageUp,
     PageDown,
+}
+
+/// What a frame reads from the last `Mouse_Lekerdez` polls (ELF 0x5b7720): `Mouse_Bal`/`Mouse_Jobb`, `Mouse_Lenyom`
+/// (any button down, none at the poll before) and `Mouse_Felenged` (none down, one before).
+#[derive(Debug, Clone, Copy, Default)]
+struct Edge {
+    buttons: u8,
+    press: bool,
+    release: bool,
+}
+
+impl Edge {
+    fn of(poll: [u8; 2]) -> Self {
+        Self { buttons: poll[0], press: poll[0] != 0 && poll[1] == 0, release: poll[0] == 0 && poll[1] != 0 }
+    }
+}
+
+/// `matrixforgat(m, a, b)` (exe 0x4523b0): `m` turned by `√(a² + b²)` about the screen axis across (a, b), in the
+/// client's matrix order (`a` alone turns about y, as the idle spin).
+fn turn(g: [f32; 2], m: &scene::M3) -> scene::M3 {
+    let angle = (g[0] * g[0] + g[1] * g[1]).sqrt();
+    if angle == 0.0 {
+        return *m;
+    }
+    scene::mul(&scene::axis_matrix([-g[1], g[0], 0.0], angle), m)
 }
 
 /// `Terulet_Melyik` (exe 0x919234) inverted: the categories in the order PgUp/PgDn step through them.
@@ -956,12 +1093,12 @@ fn rules_wheel_area(k: usize) -> i32 {
     [3, 2, 4, 5, 1][k]
 }
 
-fn en(state: &SaveState) -> usize {
+pub(crate) fn en(state: &SaveState) -> usize {
     state.mem.i32(va::EN).clamp(0, 8) as usize
 }
 
 /// `LaborSzint[e][1..=3]`.
-fn labs(state: &SaveState, e: usize) -> [i32; 4] {
+pub(crate) fn labs(state: &SaveState, e: usize) -> [i32; 4] {
     std::array::from_fn(|i| state.mem.i32(va::LABS + 16 * e as u32 + 4 * i as u32))
 }
 
@@ -990,7 +1127,7 @@ pub fn tech_infos(install: &Install) -> Vec<[Vec<u8>; 3]> {
 }
 
 /// The race's research time and money multipliers (`FajSpeckoKutatasIdoSzorzo/MoneySzorzo`).
-fn race_mults(state: &SaveState, rules: &ig2_rules::Rules, en: usize) -> (f32, f32) {
+pub(crate) fn race_mults(state: &SaveState, rules: &ig2_rules::Rules, en: usize) -> (f32, f32) {
     let race = state.mem.u8(at::RACES + en as u32) as usize;
     (rules.race_research_time_mult.get(race).copied().unwrap_or(1.0), rules.race_research_money_mult.get(race).copied().unwrap_or(1.0))
 }
@@ -1184,10 +1321,9 @@ impl Research {
             return;
         }
         let (ft, et) = ((1.0 - fade) * 150.0 + 105.0, (1.0 - fade) * 205.0 + 50.0);
-        // `(!Mouse_Bal && !Mouse_Felenged) || Mouse_Lenyom` from the button now and at the last drawn frame: free
-        // unless it was down then.
-        let (at, free) = (self.tip.mouse, !self.was_held);
-        self.was_held = self.held;
+        // `KirakFader` (exe 0x4d3880): `(!Mouse_Bal && !Mouse_Jobb && !Mouse_Felenged) || Mouse_Lenyom`, the last poll's.
+        let e = self.edge;
+        let (at, free) = (self.tip.mouse, (e.buttons == 0 && !e.release) || e.press);
         let faders = &mut self.faders;
         let mut kirak = |f: &mut Frame, i: usize, r: [f32; 4]| {
             let s = faders.s(i);
@@ -1913,6 +2049,7 @@ mod tests {
             started: true,
             closed_once: false,
             pin: None,
+            key_old: false,
             old_area: 3,
             models_shown: true,
             ball_at: BALL,
@@ -1930,7 +2067,13 @@ mod tests {
             tip: crate::kit::Tooltip::default(),
             held: false,
             faders: crate::kit::FaderDesign::new(1),
-            was_held: false,
+            buttons: 0,
+            poll: [0; 2],
+            edge: Edge::default(),
+            gy: [0.0; 2],
+            mouse_old: [0; 2],
+            ball_grip: false,
+            model_grip: false,
             design: Default::default(),
             cell: [6, 7],
             lasers: crate::kit::Lasers::default(),
@@ -2091,6 +2234,7 @@ mod tests {
             let acts = r.key(&w.game.state, Key::Enter);
             send(&mut w, acts);
             r.button_pressed = false;
+            r.key_seen(false);
             assert_eq!(w.game.state.mem.i32(va::RESEARCHING + 4 * e as u32), 0);
         }
         let t = (1..193).find(|&t| {
@@ -2207,5 +2351,34 @@ mod tests {
     fn printf_fills_the_one_number() {
         assert_eq!(printf_d(b"Cost: %d/day", 12), b"Cost: 12/day".to_vec());
     }
-}
 
+    #[test]
+    fn a_right_press_near_the_ball_drags_it() {
+        let mut s = screen();
+        let techs = TechTable::default();
+        let frame = |s: &mut Research| {
+            s.draw_frame(0, &techs);
+            s.poll = [s.buttons, s.poll[0]];
+        };
+        let c = project(BALL).unwrap();
+        s.tip.moved(c);
+        frame(&mut s);
+        // The press is seen a frame late (`Mouse_Lekerdez` after the draw); then the pointer's move feeds the turn.
+        s.buttons = 2;
+        frame(&mut s);
+        frame(&mut s);
+        assert!(s.ball_grip && s.gy == [0.0, 0.0]);
+        s.tip.moved([c[0] + 30.0, c[1]]);
+        frame(&mut s);
+        assert!((s.gy[0] + 0.1).abs() < 1e-6 && s.gy[1] == 0.0);
+        // A left press doesn't grab it; a release lets it go and the turn fades ×0.8 a frame.
+        s.buttons = 0;
+        frame(&mut s);
+        frame(&mut s);
+        assert!(!s.ball_grip);
+        s.buttons = 1;
+        frame(&mut s);
+        frame(&mut s);
+        assert!(!s.ball_grip);
+    }
+}

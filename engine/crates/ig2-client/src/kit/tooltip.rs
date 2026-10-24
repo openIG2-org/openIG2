@@ -13,6 +13,9 @@ pub struct Tooltip {
     /// The hot-spot shown (`OldIkonKiir`, 0 none) and its place (`Mouse_Kiiras_x/y`).
     pub shown: u32,
     pub at: [i32; 2],
+    /// The enabled hot-spot under the pointer at the last update (`AktIkon`, 0 none): `UpdateFrame`'s pointer takes its
+    /// cursor type (`Mouse_Szoveg_Set`'s last argument, 1 the hand on every screen's spots; re/screens/input.md §8).
+    pub under: u32,
     /// The pointer (virtual pixels), its last move and the clock (`LastMouseMove`, `AktIdo`, ms).
     pub mouse: [f32; 2],
     last_move: f64,
@@ -33,6 +36,7 @@ impl Tooltip {
     /// it and restarts the wait. The box follows the pointer, kept on the 640-pixel screen (`len·6 + 0x18` wide).
     pub fn update(&mut self, now: f64, under: u32, len: usize, held: bool) {
         self.now = now;
+        self.under = under;
         if under < 1 || (now <= self.last_move + 400.0 && under != self.shown) || held {
             self.shown = 0;
             if held {
@@ -44,6 +48,13 @@ impl Tooltip {
             self.at = [if x + w > 0x280 { 0x280 - w } else { x }, y];
             self.shown = under;
         }
+    }
+
+    /// [`Self::update`] without the rest and the held button: the starmap's radial icons show their names at once
+    /// (`UpdateFrame`'s `AktRopIkon2` case).
+    pub fn update_now(&mut self, now: f64, under: u32, len: usize) {
+        self.last_move = f64::MIN;
+        self.update(now, under, len, false);
     }
 
     /// The box: `FadeKerettelKerekit(x + 15, y − 1, len·6 + 10, 13)` in (0, 10, 30) at 30 with a (0, 13, 31) edge at

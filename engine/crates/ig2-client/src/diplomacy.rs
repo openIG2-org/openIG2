@@ -527,6 +527,9 @@ struct Cascade {
 pub struct Input {
     pub at: [f32; 2],
     pub pressed: bool,
+    /// The right button's press (`Mouse_Lenyom` is either button's): a menu clicks (`InitAlmenuk`), but the cascade
+    /// opens only with `Mouse_Bal` (`DiplomGfx2D_1` exe 0x4b89e0; FX3).
+    pub right_pressed: bool,
     pub held: bool,
     pub released: bool,
 }
@@ -577,6 +580,10 @@ pub struct Screen {
     pub spins: u32,
     zero_frames: u32,
     pub kor_turn: f32,
+    /// The closing asked for (`AktKepKell`) and the open frame drawn since (`IG2_gameUpdate` applies the request after
+    /// it; `Diplomacy_Kilep` then draws its frame at `dipframe` 80 at once, before its first `FRISSITES` step).
+    close_asked: bool,
+    close_drawn: bool,
     /// The client's own generator for the unseeded text variants (ADR 0003: not the sim's libc stream).
     rng: u32,
     /// Variant memory so a text doesn't change every frame.
@@ -641,6 +648,8 @@ impl Screen {
             spins: 0,
             zero_frames: 0,
             kor_turn: 0.0,
+            close_asked: false,
+            close_drawn: false,
             rng: 0x1234_5678,
             cache: None,
         };
@@ -664,6 +673,7 @@ impl Screen {
         if self.animated && !self.closing && !self.opened && self.started {
             self.dipframe = (self.dipframe + 0.285_714_3).min(80.0);
         }
+        self.begin_closing();
         if self.animated && self.closing {
             self.dipframe = (self.dipframe - 0.6).max(0.0);
         }
@@ -702,6 +712,7 @@ impl Screen {
         self.spins = 0;
         self.zero_frames = 0;
         self.kor_turn = 0.0;
+        (self.close_asked, self.close_drawn) = (false, false);
         self.row_fade = std::array::from_fn(|k| -10 * k as i32);
         if animated {
             self.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 0));
@@ -709,18 +720,28 @@ impl Screen {
     }
 
     /// `Diplomacy_Kilep` (§3.1): leaving for the messages, help or options screen (`quiet`) closes at once and
-    /// silently; else the closing starts with `screen20.wav` (`Dip_Hangok[1]`). True = closed now.
+    /// silently; else the closing starts with `screen20.wav` (`Dip_Hangok[1]`). True = closed now. The exe applies
+    /// the request (`AktKepKell`, `IG2_gameUpdate` exe 0x4e0440) after the frame it draws next, and `Diplomacy_Kilep`
+    /// draws its first frame before its first tick: one open frame, one closing frame at 80, then −0.6 a tick.
     pub fn leave(&mut self, quiet: bool) -> bool {
         if quiet || !self.opened {
             return true;
         }
-        if !self.closing {
-            self.closing = true;
-            self.animated = true;
-            self.kor_turn = 0.0;
+        if !self.closing && !self.close_asked {
+            (self.close_asked, self.close_drawn) = (true, false);
             self.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 1));
         }
         false
+    }
+
+    /// `Diplomacy_Kilep`'s start, the tick after the open frame that followed the request: `dipBECSUKAS` and the
+    /// frame at 80 (drawn between two ticks, no capture holds it; the sound came with the request).
+    fn begin_closing(&mut self) {
+        if self.close_asked && self.close_drawn && !self.closing {
+            (self.close_asked, self.closing, self.animated, self.kor_turn) = (false, true, true, 0.0);
+            self.kor_turn += 0.2;
+            self.face_t = (self.face_t + 0.09).min(1.0);
+        }
     }
 
     /// The closing has drawn its frame at 0 (`Diplomacy_Kilep::voltnulla`).
@@ -735,6 +756,7 @@ impl Screen {
 
     /// `Diplomacy3DUpdate`'s steps (§3.1), once per drawn frame.
     pub fn frame3d(&mut self) {
+        self.close_drawn |= self.close_asked;
         if !self.opened && self.dipframe >= 80.0 {
             self.opened = true;
         }
@@ -756,6 +778,7 @@ impl Screen {
         }
         if self.closing {
             self.kor_turn += 0.2;
+            self.face_t = (self.face_t + 0.09).min(1.0);
             if self.dipframe == 0.0 {
                 self.zero_frames += 1;
             }
@@ -773,7 +796,11 @@ impl Screen {
         self.dipframe = 80.0;
         self.opened = true;
         self.closing = false;
-        self.cage_t = 0.5;
+        // `cage + 0x40 −= 0.02` while above 0.5 (exe 0x4be2d0): 26 steps from 1 stop at 0.48000047.
+        self.cage_t = 1.0;
+        while self.cage_t > 0.5 {
+            self.cage_t -= 0.02;
+        }
         self.face_t = 0.0;
     }
 
@@ -801,10 +828,12 @@ impl Screen {
         self.menus[root].fit(&m);
         self.shown.push(root);
         let root_row = self.menus[root].row_at(&m, inp.at);
-        if inp.pressed && root_row.is_some() {
+        if (inp.pressed || inp.right_pressed) && root_row.is_some() {
             // `DiplomGfx2D_1` (exe 0x4b89e0): a press on a menu clicks.
             self.sounds.push(crate::audio::CLICK);
-            self.cascade = Some(Cascade { root, row: root_row, sub_row: None });
+            if inp.pressed {
+                self.cascade = Some(Cascade { root, row: root_row, sub_row: None });
+            }
         }
         let Some(mut c) = self.cascade.filter(|c| c.root == root) else {
             self.hover.push((root, root_row));
@@ -1741,7 +1770,12 @@ mod tests {
         }
         assert_eq!(s.flip, std::f32::consts::PI);
         assert!((s.cage_t - 0.5).abs() < 0.03 && s.face_t == 0.0);
-        assert!(!s.leave(false) && s.closing && !s.live());
+        // The request waits for the next drawn frame, which is still open; the next tick starts the closing.
+        assert!(!s.leave(false) && !s.closing && s.live());
+        s.frame3d();
+        assert!(!s.closing && s.live());
+        s.ui_tick();
+        assert!(s.closing && !s.live() && s.dipframe == 79.4);
         assert_eq!(s.sounds.last(), Some(&crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 1)));
         let mut n = 0;
         while !s.closed() {
@@ -1749,7 +1783,7 @@ mod tests {
             s.frame3d();
             n += 1;
         }
-        assert_eq!(n, 134);
+        assert_eq!(n, 133);
         // Back from the messages screen: at rest, silent; leaving for it: at once, silent.
         let mut s = Screen::new(&tables, &ui, &v);
         s.enter(false);

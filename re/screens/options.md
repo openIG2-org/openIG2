@@ -100,7 +100,7 @@ while the screen is up**); `OptionsRemoveNullBoxes`; `OptionsRefreshSlots`; `Opt
   `fadertexture = dt.bmp`.
 - `GFX_Options` [elf]: load only (or `Options_Kell3DHatter`): `Mainscreen_Update3D()` — **the main menu's scene runs on
   behind**. Else the frozen game picture `Copy3hatterkep(0x35, grey c)` with `c = 0xff − min(0x80, (int)(F/100·128))`,
-  `F` = `OptionsFelfadeles` (or `KilepesValtozo` while leaving): it dims to half as the screen fades in, then `Update3D`.
+  `F` = `OptionsFelfadeles` (or `KilepesValtozo` while leaving): it dims to half as the screen fades in, then `Update3D`. (The picture is black only in bare-jump captures; see [`overlay-background.md`](overlay-background.md).)
 - `Frissit2_Options` [elf], per tick: `FaderDesignFrissito(optf)`; once `VoltElsoframe`, `OptionsFelfadeles += 0.6`
   up to 100 (≈ 167 ticks); while leaving, `KilepesValtozo −= 2` down to 0.
 - **Kilep** (0x51a100): `OptionsKilepes = 1`, `KilepesValtozo = (int)OptionsFelfadeles`; `SaveGlobalRegistrySettings`

@@ -63,7 +63,7 @@ planet settings menus, the money triangle and the spending limit (§7).
 - The triangle's knob `hszog0.xvb` ×0.03 at `(InfoTriX·4.5 − 1438, InfoTriY·4.5 − 1050, −2650)`, transparency
   `1 − infoframe/45`; `Info_InitializeTriangleToMidPosition` 0x55e5d0 puts it at (319, `(int)(50 + 2√2700/5.6)`).
 - Under the frame `Copy3hatterkep(0x34, 0xff − infoframe/45·128)`: picture `0x33 + n` is `SaveScreen(n)` (0x5deb20,
-  a copy of the screen); in the captures it is black.
+  a copy of the screen); black only after a bare jump, otherwise the starmap without HUD (see [`overlay-background.md`](overlay-background.md)).
 
 ## 2. The chart (`Info_PutChart` 0x55dbf0)
 Drawn only while the screen is open (`infoKINYITVA`, not closing) and the opening is done or in its last 15 frames.
@@ -117,6 +117,13 @@ All drawn only while open and not closing, the texts times `infoFelfadeles`.
 21..=25 charts 5..9 `(588, 283 + 27k, 45, 20)`; 26..=28 tax / auto-build / priority `(135, 354 + 14k, 100, 13)`; 29 the
 triangle; 30/31 list up/down `(290, 247 / 450, 18, 19)`; 32 the limit `(280, 209, 100, 8)`; 33 `(0, 249, 55, …)`; 34 the
 scroll bar `(290, 266, 18, 203)`; 35/36 star log up/down `(621, 274 / 431, 18, 19)`; 37 back from the detail.
+Heights (`Info_MouseInit` exe 0x4e9900, `Info_MouseInit2` 0x4e9530 every frame): 13 and 37 are a fixed 224 (13 always
+off, 37 only in detail mode); 33 is `56·min(HanyBolygoFlotta, 4)` (0xB82988), on only outside the detail mode while
+open. Tooltips (`GetString(9, 1, k)`, drawn by `UpdateFrame` as every screen's, input.md §8): 1..=8 the race's name;
+9..=12 k 1; 13 k 2; 14..=31 k = id − 11 (15 in chart mode 0x1a); 32 none; 33 k 21 (27 when `CheckMelyikFolottVan()`
+is 0 [u]); 34..=37 k = id − 12 [obs: 16 → "Teljes bevétel", exe and client alike, `info --info-mouse 370,290`].
+`Mouse_Megfogva` is set by 26..=28 (a menu open or held), 29 (`Lenyom && Bal`), 32 (every frame it is `AktIkon2`) and
+34: while it holds, passing over a race column doesn't switch the empire.
 `Info_Main`: the mouse **over** 1..=8 selects that empire (`InfoSelected`, no click needed); a press on 14 / 15
 switches chart / star-log mode; 16..=25 picks `Info_SelectedChart = id − 16` (the button animates, sound 0);
 9..=12 open a row's detail (`Info_NagyInfoMode`); 26..=28 open the select menus and send `Multi_Send(0x19, …)`
