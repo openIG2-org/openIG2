@@ -188,7 +188,7 @@ pub(super) fn seized(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort>
         let e = s.v_get(E);
         let e2 = s.v_get(E);
         let at = s.b_search(e2.wrapping_neg(), 0, w);
-        s.f_new_ex("", e, P, 0.05, 2, at, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x5ab), e, P, 0.05, 2, at, w);
         super::move_to_planet(s, P, P, w);
     }
     if s.arrived_planet(P, 0, w) {
@@ -286,7 +286,7 @@ pub(super) fn swap_147(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
         } else {
             let e = s.v_get(E);
             let at = s.b_search(P, 0, w);
-            s.f_new_ex("", e, P, 0.05, 2, at, w);
+            s.f_new_ex(crate::story::FleetName::Text(0x5bf), e, P, 0.05, 2, at, w);
             super::move_to_planet(s, P, 0x5c0, w);
         }
     }
@@ -342,7 +342,7 @@ pub(super) fn swap_148(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
         } else {
             let e = s.v_get(E);
             let at = s.b_search(P, 0, w);
-            s.f_new_ex("", e, P, 0.05, 2, at, w);
+            s.f_new_ex(crate::story::FleetName::Text(0x5c9), e, P, 0.05, 2, at, w);
             super::move_to_planet(s, P, Q, w);
         }
     }

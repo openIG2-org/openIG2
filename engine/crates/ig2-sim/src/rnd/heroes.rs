@@ -61,7 +61,7 @@ fn design_gone(s: &Story, w: &dyn StoryWorld, story: i32) -> bool {
 
 /// The fleet for hire: `st_fNewEx(_s(5, id), owner, id, 0.0, 1, 0)`.
 fn hire(s: &mut Story, owner: i32, id: i32, w: &mut dyn StoryWorld) -> i32 {
-    s.f_new_ex("", owner, id, 0.0, 1, 0, w)
+    s.f_new_ex(crate::story::FleetName::Text(id), owner, id, 0.0, 1, 0, w)
 }
 
 /// `FlottaMozgat(f, 1, 1, last_fn_b, 0)`: to the planet `st_fNewEx` placed it by.
@@ -272,7 +272,7 @@ pub(super) fn hero_179(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
     }
     if answered(s, ID, 4) || promoted(s, ID) {
         let e = random_empire(w, 0, 0, 0)?;
-        s.f_new_ex("", e, ID, 0.0, 2, 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x6ff), e, ID, 0.0, 2, 0, w);
         s.remove_fleet_id(ID, w);
         s.win(0, true, w);
     }
@@ -702,7 +702,7 @@ pub(super) fn hero_178(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
                     let (g, d) = w.ship(k);
                     if g == a && d != 0x7fff && w.design_key(en, d) / 10 == 0xb2 && w.fleet_owner(g) == en {
                         if nf == 0 {
-                            nf = s.f_new_ex("", 10, 0, 0.0, -1, 0, w);
+                            nf = s.f_new_ex(crate::story::FleetName::Text(0x6f5), 10, 0, 0.0, -1, 0, w);
                             let (x, y) = w.fleet_xy(a);
                             w.event(StoryEvent::SetFleetPos { fleet: nf, x, y });
                         }
@@ -717,7 +717,7 @@ pub(super) fn hero_178(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
                     let (g, d, count) = w.tank(k);
                     if g == a && d != 0x7fff && w.design_key(en, d) / 10 == 0xb2 && w.fleet_owner(g) == en {
                         if nf == 0 {
-                            nf = s.f_new_ex("", 10, 0, 0.0, -1, 0, w);
+                            nf = s.f_new_ex(crate::story::FleetName::Text(0x6f5), 10, 0, 0.0, -1, 0, w);
                             let (x, y) = w.fleet_xy(a);
                             w.event(StoryEvent::SetFleetPos { fleet: nf, x, y });
                         }
@@ -861,7 +861,7 @@ pub(super) fn hero_184(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
         if super::rnd(w, 0, 99) < 0x46 {
             let e = random_empire(w, 0, 0, 0)?;
             let p = s.b_search(e.wrapping_neg(), 0, w);
-            let f = s.f_new_ex("", e, ID, 0.0, 2, p, w);
+            let f = s.f_new_ex(crate::story::FleetName::Text(0x731), e, ID, 0.0, 2, p, w);
             w.event(StoryEvent::SetFleetId { fleet: f, id: 0 });
         }
         s.win(0, true, w);
@@ -1399,7 +1399,7 @@ pub(super) fn spy_ship_190(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), 
     }
     if battle_starts_with(s, ID, w) && battle_owner(s, &*w, en) {
         let f = s.f_search(ID, w);
-        let g = s.f_new_ex("", 9, ESCORT, 0.06, 4, f, w);
+        let g = s.f_new_ex(crate::story::FleetName::Text(0x76e), 9, ESCORT, 0.06, 4, f, w);
         w.event(StoryEvent::JoinBattle(g));
         s.battle_pact[9] = 1;
         add_adat_set(s, 0x88);

@@ -213,7 +213,7 @@ def on(msg, data):
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
                     json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
-                               "res": p.get("res"), "trade_eta": p.get("tradeEta"), "dkm": p.get("dkm")}, f)
+                               "res": p.get("res"), "trade_eta": p.get("tradeEta"), "dkm": p.get("dkm"), "faders": p.get("faders")}, f)
         if p.get("k") == "scriptDone":
             frames_meta["done"] = p
         if p.get("k") == "particles" and a.particles:
@@ -230,7 +230,7 @@ def on(msg, data):
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
                     json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
-                               "info_list": p.get("infoList")}, f)
+                               "info_list": p.get("infoList"), "faders": p.get("faders")}, f)
     else:
         print(msg, flush=True)
         done.append(1)

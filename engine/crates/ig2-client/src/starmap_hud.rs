@@ -21,6 +21,19 @@ const CONSOLE_SCALE: f32 = 4.0;
 /// (0, 170, −600), not rotated), drawn once into a texture over [`CONSOLE_RECT`].
 pub struct Console {
     tex: TexId,
+    /// The battle screen's console, lit again each frame with the circling side lights ([`Console::relight`]).
+    sides: Option<Box<Sides>>,
+}
+
+/// The panel's frame, its target size and the scene's parallel light.
+type PanelFrame = (Frame, (u32, u32), [f32; 3]);
+
+/// The console's frame kept for lighting it on the CPU: the vertices' normals, the scene's lights, the target.
+struct Sides {
+    frame: Frame,
+    normals: Vec<[f32; 3]>,
+    target: crate::render::Target,
+    size: (u32, u32),
 }
 
 impl Console {
@@ -33,6 +46,67 @@ impl Console {
 
     /// The panel under another parallel light colour `sun` (the battle screen's, re/screens/spacewar.md §5.1).
     pub fn load_lit(r: &mut Renderer, install: &Install, sun: [f32; 3]) -> Result<Self, String> {
+        let (f, size, _) = Self::frame(r, install, sun)?;
+        let tex = r.render_texture(&f, size);
+        Ok(Self { tex, sides: None })
+    }
+
+    /// The panel with `smOldalsoFenyekBe`'s two parallel lights on it (ELF 0x6d81e0: colours 0x7f5d00 and 0x004e7f,
+    /// `0x00BBGGRR`), which `smMozgatMainFenyek` (ELF 0x6d8290) moves every frame to `(sin a·300, cos a·200, 0)` and
+    /// the same at `a + 1.57075`, `a = smkeringeto·20` (exe 0xF176DC); lit per vertex on the CPU ([`Console::relight`]).
+    pub fn load_sides(r: &mut Renderer, install: &Install, kering: f32, m: &[[f32; 3]; 3]) -> Result<Self, String> {
+        let (mut frame, size, _) = Self::frame(r, install, [0.0; 3])?;
+        // The engine multiplies the texture by the vertex colour on the stored values (the remaster's gamma pass).
+        if let Some(sc) = frame.scene.as_mut() {
+            sc.gamma = true;
+        }
+        let normals = frame.scene.as_ref().map_or(Vec::new(), |s| s.dynamic.iter().map(|v| v.normal).collect());
+        let target = r.target(size);
+        let mut c = Self { tex: target.tex, sides: Some(Box::new(Sides { frame, normals, target, size })) };
+        c.relight(r, kering, m);
+        Ok(c)
+    }
+
+    /// Light the side-lit panel for `smkeringeto` = `kering` as the engine's `fenyekszamolasa` does (re/screens/research.md
+    /// §2.1, per vertex, saturating; the shader's pre-lit path, in gamma space): the starmap scene's ambient 0x404040 and
+    /// parallel light 0x808080 at (10, 10, −10) (`Init3dStarmap`) and the two side lights, world vectors `(h, x, y)`
+    /// turned into camera space by the camera's rows `m` (the root's rotation chain is the camera's `cmatrix`).
+    pub fn relight(&mut self, r: &mut Renderer, kering: f32, m: &[[f32; 3]; 3]) {
+        let Some(sd) = self.sides.as_deref_mut() else { return };
+        let a = (kering * 20.0) as f64;
+        // The engine compares the vertex normal with z negated (`n'`) against the light's vector, so the camera-space
+        // light is used with z negated [obs fx8b: the console ring 2.0 against 10 without the lights].
+        let cam = |d: [f32; 3]| {
+            let l = scene::normalise(std::array::from_fn(|i| m[i][0] * d[0] + m[i][1] * d[1] + m[i][2] * d[2]));
+            [l[0], l[1], -l[2]]
+        };
+        let side = |t: f64| cam([(t.sin() * 300.0) as f32, (t.cos() * 200.0) as f32, 0.0]);
+        // Colour words are the bytes [r, g, b] (`0x00BBGGRR`).
+        let rgb = |c: u32| [(c & 0xff) as f32 / 255.0, ((c >> 8) & 0xff) as f32 / 255.0, ((c >> 16) & 0xff) as f32 / 255.0];
+        // `shade[float2int(|n − L|²·2047)]` of `SetLights(2, 0.15)`: `sqrt(1 − i/2896)·255`, `>> 8`.
+        let shade = |c: f32| {
+            let i = ((2.0 - 2.0 * c) * 2047.0).round();
+            if i < 2896.0 { ((1.0 - i / 2896.0).sqrt() * 255.0).floor() / 256.0 } else { 0.0 }
+        };
+        let lights = [(cam([10.0, 10.0, -10.0]), rgb(0x808080)), (side(a), rgb(0x7f5d00)), (side(a + 1.57075), rgb(0x004e7f))];
+        if let Some(sc) = sd.frame.scene.as_mut() {
+            for (v, n) in sc.dynamic.iter_mut().zip(&sd.normals) {
+                let mut c = rgb(0x404040);
+                for (l, col) in &lights {
+                    let d = shade(n[0] * l[0] + n[1] * l[1] + n[2] * l[2]);
+                    for k in 0..3 {
+                        c[k] += col[k] * d;
+                    }
+                }
+                v.normal = [0.0; 3];
+                v.color = [c[0].min(1.0), c[1].min(1.0), c[2].min(1.0), 0.0];
+            }
+        }
+        r.draw_into(&sd.frame, &mut sd.target, sd.size, 0.0);
+    }
+
+    /// The panel's frame: the model at its place under the scene's lights, and the target size.
+    fn frame(r: &mut Renderer, install: &Install, sun: [f32; 3]) -> Result<PanelFrame, String> {
         let light = scene::normalise([0.0, -0.35, 1.0]);
         let model = Model::load(install, "vector/starmap/", "kezel.xvb", "textures/starmap/")?;
         let place = Placement::add_to_scene(model.origin, 0.17).world((0.0, 0.0, 0.0), [0.0, 170.0, -600.0]);
@@ -87,8 +161,7 @@ impl Console {
             draws,
             dynamic,
         });
-        let tex = r.render_texture(&f, ((w * CONSOLE_SCALE) as u32, (h * CONSOLE_SCALE) as u32));
-        Ok(Self { tex })
+        Ok((f, ((w * CONSOLE_SCALE) as u32, (h * CONSOLE_SCALE) as u32), light))
     }
 
     pub(crate) fn draw(&self, f: &mut Frame, v: &Virtual) {

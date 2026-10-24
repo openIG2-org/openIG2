@@ -849,3 +849,31 @@ Window region (390,215,250x90): diff 0.88 / 0.77 / 0.87 at t 400/2000/4000, over
 
 ## 2026-10-24, Help screen (`help --script scripts/help.json`, quick-1.sav; re/screens/help.md §9)
 Rest, clicks, subtopic, drag and close match: text 1.8–3.4, topics 3.0–4.9. Leftovers: the harness draws the exe pointer/tooltip a frame late (t200/240 topics 14, text 12–16), a one-tick input offset mid-drag (t370 text 19.7), the exit box's random shine (t382/410/495 exit 11–19). The opening is not compared (the exe's `Help_Belep` FRISSITES every 10 bytes stalls the scripted clock ~85 ticks; `probes/help.js` verified +2/tick on a real clock). Deviations 200-206.
+
+## 2026-10-24, SpaceWar FX7 (fx8b sequence and the stills; spacewar.md §9.7, §9.11)
+`_local/traces-fx8b` (`spacewar_fx8.json` re-recorded with `kering` = smkeringeto in every dump), `run_screendiff.py spacewar --script`; 16 grabs t800..t2300, best-offset means after the console side lights (row 21), the radar outline/dots, the planet's parallel light (row 22) and the depth-tested particles (row 119):
+
+| region | mean | verdict |
+|---|---|---|
+| frame | 5.1-5.9 (was 8.0-8.4) | match at every grab |
+| topbar | 2.69 | match |
+| view | 5.5-6.5 (t1800 6.02, t2100 6.50) | match at 14 of 16 |
+| console | 2.8-3.1 | match |
+| radar | 5.1-5.3 | match |
+| weapons | 6.7-7.0 | differs: the exe's mounts reload, ours are ready (the live battle's state drifts from the exe's after ~t1500) |
+| info_box | 7.6-12.7 (t1900 12.7) | differs: row 27's accented glyphs in "egység"/"kijelölt", the portrait model's spin/pose |
+
+Stills (2026-10-22 grabs, no light phase: smkeringeto defaults to 0 there), best-offset means in grab order:
+
+| region | means | verdict |
+|---|---|---|
+| frame | 3.9 / 3.9 / 5.8 / 5.3 | match |
+| view | 3.0 / 3.0 / 6.0 / 6.0 | match |
+| topbar | 2.6 | match |
+| radar | 4.2 / 4.2 / 3.7 / 3.8 | match |
+| info_box | 5.4 / 5.3 / 6.1 / 6.0 | differs (row 27) |
+| weapons | 6.1 / 6.1 / 3.0 / 3.0 | formation-phase grabs differ |
+| console | 8.2 / 7.9 / 8.9 / 3.9 | differs (grabs carry no light phase) |
+
+Sounds: the same moments (a fixed 4-tick harness phase), lasers identical; the chain-blast variant per hit differs early (Chainblast1 vs 6); after ~t1500 the battles diverge (deaths).
+Acceptance: NOT accepted. Blockers: the info box (row 27, font) and the weapon clocks' battle-state drift; the command stream was not compared byte-exact (no MULTIGET harness for SpaceWar orders).

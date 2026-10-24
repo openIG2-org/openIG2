@@ -162,7 +162,7 @@ The screens call it right after their faders, unless leaving, with `t = 1 − g`
   rand() draw skipped). `fifo`: transfer (`ShowStarmap` 0x6eca50) 0..5 + scroll track/thumb 6, fleet info
   (`ArrangeFleetInfo` 0x6e5c30) 0..5 + bar 6, tanks info (`StarmapTanksInfoFaderKirakas` 0x6ea720) 0..4 + bar 5
   (`fifo`'s fill (0, 54s, 90s) at 100, edge (0, 60s, 110s) at
-  70). Info (`PutFaders` ELF 0x55b2c0): `infof` faders 0 (387, 271, 0xe2 − slide, 183) and 1 (280, 209, 100, 8),
+  70). The capture tools dump the exe's `fifo` (0xF152F0) and `starf` (0xF168E8), 0x5cc B each, into `<state>.ui.json` ("faders"); the client loads them with `--faders` (FX13a, row 208). Info (`PutFaders` ELF 0x55b2c0): `infof` faders 0 (387, 271, 0xe2 − slide, 183) and 1 (280, 209, 100, 8),
   constant colours (no `s`); `Info_Belep` inits `InfoFejF` then `infof`, `FRISSIT_Info2` ticks both.
 
 ## 2. The top bar (every screen below 0xe)

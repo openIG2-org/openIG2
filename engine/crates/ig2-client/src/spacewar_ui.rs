@@ -171,6 +171,8 @@ pub struct Plans<'a> {
     pub ships: &'a [ig2_sim::spacewar::Ship],
     /// Per gun, its building's tech (`EpuletekLeiro[type].tech`; −1 none), and `TalalmanyokrEro`.
     pub gun_tech: Vec<i32>,
+    /// Per gun, its building's damage (`+4`) and hit points (`EpuletekLeiro[type] +8`).
+    pub gun_hp: Vec<[i32; 2]>,
     pub firepower: &'a [i32],
     /// `Flottak` (0x80 each: the name first, the owner at `+0x15`).
     pub fleets: &'a [[u8; ig2_sim::save::FLEET_SIZE]],
@@ -186,6 +188,36 @@ impl Plans<'_> {
     /// A fighter group's firepower (`+0x9c`): its design's attack × the count.
     fn fighter_value(&self, g: &ig2_sim::spacebattle::Fighter) -> i32 {
         self.designs.get(g.owner.max(0) as usize).and_then(|e| e.get(g.design.max(0) as usize)).map_or(0, |d| d.attack).wrapping_mul(g.count)
+    }
+
+    /// `infoszamol`'s per-side firepower (exe 0x574040, into side `+0x54`): a live owned unit adds its mounts' `+0x28`
+    /// when it has no ship list, else its ships' plan values; a live fighter group its value; a gun with a building and
+    /// a weapon its building's tech `TalalmanyokrEro` to the planet's owner.
+    pub fn side_strengths(&self, b: &Battle) -> [i32; ig2_sim::spacebattle::EMPIRES] {
+        let mut v = [0i32; ig2_sim::spacebattle::EMPIRES];
+        let mut add = |e: i32, x: i32| {
+            if let Some(s) = v.get_mut(e.max(0) as usize) {
+                *s = s.wrapping_add(x);
+            }
+        };
+        for u in b.units.iter().filter(|u| u.alive && u.owner != 0) {
+            // A plan-less unit sums its mounts' `+0x28` here (step 2), not its design's value (step 3).
+            let x = match u.ships.first() {
+                Some(&s) if s >= 0 => self.unit_value(u),
+                _ => u.mounts.iter().fold(0i32, |a, m| a.wrapping_add(m.damage4)),
+            };
+            add(u.owner, x);
+        }
+        for g in b.fighters.iter().filter(|g| g.alive) {
+            add(g.owner, self.fighter_value(g));
+        }
+        for (k, g) in b.guns.iter().enumerate() {
+            let tech = self.gun_tech.get(k).copied().unwrap_or(-1);
+            if g.building != 0 && g.weapon >= 0 && tech > 0 {
+                add(b.planet_owner, self.firepower.get(tech as usize).copied().unwrap_or(0));
+            }
+        }
+        v
     }
 
     /// A unit's value: a plan-less unit's own design (`+0xc`), else the sum over its ships' designs, by the plan owner
@@ -234,6 +266,17 @@ pub struct SpaceWarUi {
     pub zoom_rate: f32,
     pub yaw_rate: f32,
     pub tilt_rate: f32,
+    /// The 60 Hz step clock of the held yaw and pitch buttons (`hot_spots`).
+    held_tick: u64,
+    /// `smkeringeto` (exe 0xF176DC): `+= 0.0002` per UI tick (`SpaceWarFrissit2`, spec §2.4).
+    pub kering: f32,
+    /// The last [`Order::Strengths`] and whether [`Order::Outgunned`] went out (each peer sends its own).
+    strengths_sent: Option<[i32; ig2_sim::spacebattle::EMPIRES]>,
+    outgunned_sent: bool,
+    /// The viewer's side's flag B (`infoszamol`): the retreat button shows, unless the story bans the retreat
+    /// (`StoryAdat+152`, set by the caller).
+    can_retreat: bool,
+    pub story_no_retreat: bool,
     /// `SpaceWar_Autoscroll`'s pan speeds (exe globals 0xE5DFD8/DC, ×5).
     pub scroll: [i32; 2],
     /// `+0x2514` and `starmapeltolas` (`+0x2500`, exe `+0x1f74`).
@@ -351,9 +394,8 @@ pub struct SpaceWarUi {
     pub group_state: [i32; 10],
     infoszamol_timer: i32,
     pub stats: crate::spacewar_hud::Stats,
-    /// `SPWRetreatWindow`, and the opening click not yet released.
+    /// `SPWRetreatWindow`.
     pub retreat_window: bool,
-    retreat_opening: bool,
     /// `gfxvadaszdefendattack` (0..100).
     pub stance: i32,
     /// The camera cluster's button animation (`MelyikGombot`, `GombFazis`, `KezeloGombFrame`).
@@ -396,6 +438,12 @@ impl SpaceWarUi {
             zoom_rate: 0.0,
             yaw_rate: 0.0,
             tilt_rate: 0.0,
+            held_tick: 0,
+            kering: 0.0,
+            strengths_sent: None,
+            outgunned_sent: false,
+            can_retreat: false,
+            story_no_retreat: false,
             scroll: [0; 2],
             scale: SCALE_START,
             origin,
@@ -472,7 +520,9 @@ impl SpaceWarUi {
             title: Vec::new(),
             title_tech: -1,
             big: Default::default(),
-            start_ms: None,
+            // `spwckezdotimer`: `screenfrissites` sets it with the opening zoom's set-up (the intro flag `+0x2524`, exe
+            // 0x57f800), on the screen's first frame.
+            start_ms: Some(now_ms),
             group_count: [0; 10],
             group_enabled: [0; 10],
             group_reload: [0; 10],
@@ -480,7 +530,6 @@ impl SpaceWarUi {
             infoszamol_timer: 0,
             stats: Default::default(),
             retreat_window: false,
-            retreat_opening: false,
             stance: b.sides.get(b.human.max(0) as usize).map_or(0, |s| s.fighter_aggression),
             button: 0,
             button_phase: 0,
@@ -723,8 +772,6 @@ impl SpaceWarUi {
                 self.rescale(crate::spacewar_screen::SCENE_SCALE);
                 self.entering = false;
                 self.fade = 1.0;
-                // `spwckezdotimer`: the MP banner's clock starts here.
-                self.start_ms = Some(now_ms);
             }
         }
         self.pan_target = self.pivot;
@@ -752,7 +799,7 @@ impl SpaceWarUi {
 
     /// `bezoomolasztav` (0x6a9ed0): 2.5 × the farthest live unit from the origin, 200 with none.
     fn bezoomolasztav(b: &Battle) -> f32 {
-        let far = b.units.iter().filter(|u| u.alive && u.disabled == 0).map(|u| tav([0.0; 3], [u.pos.x, u.pos.y, u.pos.z])).fold(0.0f32, f32::max);
+        let far = b.units.iter().filter(|u| u.alive && !u.retreating).map(|u| tav([0.0; 3], [u.pos.x, u.pos.y, u.pos.z])).fold(0.0f32, f32::max);
         if far == 0.0 {
             200.0
         } else {
@@ -805,6 +852,7 @@ impl SpaceWarUi {
     pub fn tick(&mut self, b: &Battle, plans: &Plans, out: &mut Vec<Out>) {
         self.ticks += 1;
         self.acttick2 += 1;
+        self.kering += 0.0002;
         if !self.first_frame && !self.entering {
             self.radar = if self.leaving { (self.radar - 1).max(0) } else { (self.radar + 1).min(100) };
         }
@@ -925,7 +973,7 @@ impl SpaceWarUi {
     /// The column's slide counters (§5.1): a group's button shows while own ships are selected that carry it; the
     /// retreat button while the side may retreat; all of them in the formation phase.
     fn column_tick(&mut self, b: &Battle) {
-        let may_retreat = b.sides.get(b.human.max(0) as usize).is_some_and(|s| s.may_retreat);
+        let may_retreat = self.can_retreat && !self.story_no_retreat;
         for i in 0..10 {
             let formation = self.formation(b);
             let on = if self.leaving || self.formation_leaving {
@@ -1094,7 +1142,7 @@ impl SpaceWarUi {
     // ------------------------------------------------------------------------------------------ selection
 
     fn selectable(b: &Battle, i: usize) -> bool {
-        b.units.get(i).is_some_and(|u| u.alive && u.owner == b.human && u.owner != 0 && u.disabled == 0)
+        b.units.get(i).is_some_and(|u| u.alive && u.owner == b.human && u.owner != 0 && !u.retreating)
     }
 
     /// `SpeakingDirector::Play(&SpaceWarSpeaker, line, kind)` behind the screen's throttle (`beszedlasttick + 30 <
@@ -1154,8 +1202,7 @@ impl SpaceWarUi {
     /// `infoszamol` (ELF 0x6a4080, exe 0x574040; spec §5.2, §7.1.3): the selection's statistics and the weapon groups
     /// (both only while something is selected; the groups keep their last values otherwise), the fighter stance's
     /// message while the slider differs from the side's. `plans` gives a design's firepower (`Tervek[e][d] +0x2c`) and a
-    /// ship's design (`Hajok[s] +2`). Not ported: its writes to the sim (the sides' outmatched flag and the `Hajok +4`
-    /// counter of the last ship, `re/deviations.md`).
+    /// ship's design (`Hajok[s] +2`). Its writes to the sim leave as [`Order::Strengths`] and [`Order::Outgunned`].
     pub fn infoszamol(&mut self, b: &Battle, plans: &Plans, out: &mut Vec<Out>) {
         let me = b.human;
         let mut st = crate::spacewar_hud::Stats { rank_sum: -1, ..Default::default() };
@@ -1248,7 +1295,8 @@ impl SpaceWarUi {
                     continue;
                 }
                 for m in u.mounts.iter().filter(|m| m.weapon >= 0) {
-                    let k = (m.kind & 31) as usize;
+                    // The group bits are weapon ids (`fegyvernevek` masks; [obs fx8: weapons 9..12 show groups 2..5]).
+                    let k = (m.weapon & 31) as usize;
                     sum[k] += m.count;
                     if (u.weapon_mask >> k) & 1 != 0 {
                         en[k] += m.count;
@@ -1259,9 +1307,16 @@ impl SpaceWarUi {
                     maxr[k] = maxr[k].max(v.clamp(0, 0xaa));
                 }
             }
+            // The selected guns (exe 0x574040): count, the building's damage and hit points, its tech's firepower.
             for (k, g) in self.guns.iter().enumerate() {
-                if g.0 && b.guns.get(k).is_some_and(|x| x.building != 0) {
-                    st.ships += 1;
+                let Some(x) = b.guns.get(k).filter(|x| g.0 && x.building != 0) else { continue };
+                st.ships += 1;
+                let [d, m] = plans.gun_hp.get(k).copied().unwrap_or([0; 2]);
+                st.damage += d;
+                st.max_hp += m;
+                let tech = plans.gun_tech.get(k).copied().unwrap_or(-1);
+                if x.weapon >= 0 && tech > 0 {
+                    st.value += plans.firepower.get(tech as usize).copied().unwrap_or(0);
                 }
             }
             for g in 0..10 {
@@ -1288,9 +1343,25 @@ impl SpaceWarUi {
             }
         }
         self.stats = st;
+        // The sides' flag B (ELF side `+0x70`, exe 0x574040): a live unit of the side's original owner that is
+        // neither paralysed (`+0x1c0`), taken over (`+0x1c4`) nor retreating (`+0x1d4`) and can move (type `+0x14`),
+        // or a live fighter group not retreating. Slot 9 (Retreat) shows on the viewer's (§5.1).
+        self.can_retreat = b.units.iter().any(|u| u.alive && u.original_owner == me && u.disabled == 0 && u.taken == 0 && !u.retreating && u.ship_type.top_speed != 0.0)
+            || b.fighters.iter().any(|g| g.alive && g.owner == me && !g.retreating);
         let side = me.max(0) as usize;
         if b.sides.get(side).is_some_and(|s| s.fighter_aggression != self.stance) {
             out.push(Out::Order(Order::FighterStance { side, value: self.stance }));
+        }
+        // Its writes to the battle: the sides' firepower (`+0x54`, every run; sent when it changes), then the one-shot
+        // block (`+0x2d98`) once.
+        let values = plans.side_strengths(b);
+        if b.sides.iter().zip(values).any(|(s, v)| s.strength != v) && self.strengths_sent != Some(values) {
+            out.push(Out::Order(Order::Strengths { values }));
+            self.strengths_sent = Some(values);
+        }
+        if b.f2d98 && !self.outgunned_sent {
+            out.push(Out::Order(Order::Outgunned));
+            self.outgunned_sent = true;
         }
     }
 
@@ -1527,7 +1598,7 @@ impl SpaceWarUi {
         let h = self.hovered;
         match self.hover_kind {
             0 => self.deselect(),
-            1 if b.units[h as usize].disabled == 0 => {
+            1 if !b.units[h as usize].retreating => {
                 let i = h as usize;
                 if !shift {
                     self.deselect();
@@ -1630,6 +1701,12 @@ impl SpaceWarUi {
         if !any {
             self.button_phase = 2;
         }
+        // The exe steps the held yaw and pitch buttons once per `SpwC::main` call, i.e. per rendered frame; the
+        // client steps them at a 60 Hz display's rate whatever the refresh rate (as the colony's thunder, deviation
+        // #98), and at least once on the press.
+        let tick = now_ms as u64 * 60 / 1000;
+        let steps = (tick.saturating_sub(self.held_tick).min(6) as i32).max(press as i32);
+        self.held_tick = tick;
         match spot {
             Some(0x1f) => {
                 let (dx, dy) = (self.mouse[0] - 321.0, self.mouse[1] - 421.0);
@@ -1657,7 +1734,9 @@ impl SpaceWarUi {
                     out.push(Out::Click);
                 }
                 let s = if id == 0x47 { -1.0 } else { 1.0 };
-                self.yaw += if l { 0.1 * s } else { -0.1 * s };
+                for _ in 0..steps {
+                    self.yaw += if l { 0.1 * s } else { -0.1 * s };
+                }
                 (self.button_phase, self.button) = (1, if id == 0x47 { 5 } else { 2 });
             }
             Some(0x4a) if any && !release => {
@@ -1671,7 +1750,9 @@ impl SpaceWarUi {
                 if press {
                     out.push(Out::Click);
                 }
-                self.tilt = (self.tilt + if l { 0.0314159 } else { -0.0314159 }).clamp(TILT_MIN, TILT_MAX);
+                for _ in 0..steps {
+                    self.tilt = (self.tilt + if l { 0.0314159 } else { -0.0314159 }).clamp(TILT_MIN, TILT_MAX);
+                }
                 (self.button_phase, self.button) = (1, 3);
             }
             Some(0x42) if press => self.info_toggle(b, now_ms),
@@ -1707,7 +1788,6 @@ impl SpaceWarUi {
         }
         if k == 9 {
             self.retreat_window = true;
-            self.retreat_opening = true;
             return;
         }
         if self.group_state[k] < 0 {
@@ -1722,15 +1802,11 @@ impl SpaceWarUi {
         }
     }
 
-    /// `HandleRetreatWindow` (spec §5.4): "Yes" retreats; the click closes the window either way. Taken on the next
-    /// left release after the one of the opening click [inf: the spec's "every frame without the left button" would
-    /// close it the frame after it opened].
+    /// `HandleRetreatWindow` (spec §5.4, §7.4): "Yes" retreats; the window closes either way. `screenfrissites` calls it
+    /// while the left button is up (exe 0x57f8db) and the window opens on the press on button 9, so it is a popup: the
+    /// release of the opening press answers it.
     pub fn retreat_window_frame(&mut self, yes_hovered: bool, tutorial_paused: bool, out: &mut Vec<Out>) {
         if !self.retreat_window || !(self.release && !self.held.0) {
-            return;
-        }
-        if self.retreat_opening {
-            self.retreat_opening = false;
             return;
         }
         if yes_hovered && !tutorial_paused {
@@ -1820,6 +1896,7 @@ impl SpaceWarUi {
             big: (self.big_info != 0).then(|| self.big.clone()),
             pointer: self.pointer,
             formation: self.formation(b).then_some(self.formation_pick),
+            kering: self.kering,
         }
     }
 
@@ -1829,6 +1906,18 @@ impl SpaceWarUi {
         let (x, y) = (at[0], at[1]);
         let inside = |r: [f32; 4]| x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3];
         let colour = mask.get(y.clamp(0.0, 479.0) as usize * 640 + x.clamp(0.0, 639.0) as usize).copied().unwrap_or(0);
+        // The top bar's speed buttons, the global hot-spots 2..=5 (the lowest ids; `IG2_gameUpdate` acts on them, the
+        // battlefield doesn't see the click [obs fx8: `AktIkon` 2 at (6, 8)]).
+        if y < 20.0 {
+            return Some(match x {
+                x if x < 15.0 => 2,
+                x if x < 29.0 => 3,
+                x if x < 50.0 => 4,
+                x if x < 73.0 => 5,
+                // The bar's other common hot-spots (6 the screen-select menu, 7 messages, 8 the MP menu; extents [u]).
+                _ => 6,
+            });
+        }
         if inside([274.0, 388.0, 94.0, 67.0]) {
             return Some(0x1f);
         }
@@ -1970,7 +2059,7 @@ mod tests {
                 g.0 = false;
             }
             let mut out = Vec::new();
-            ui.infoszamol(b, &Plans { designs: &[], ships: &[], gun_tech: Vec::new(), firepower: &[], fleets: &[] }, &mut out);
+            ui.infoszamol(b, &Plans { designs: &[], ships: &[], gun_tech: Vec::new(), gun_hp: Vec::new(), firepower: &[], fleets: &[] }, &mut out);
             let o = &d.obj;
             let st = ui.stats;
             let want = crate::spacewar_hud::Stats::from_slot(o);
@@ -1980,6 +2069,33 @@ mod tests {
                 let exe = (i32_at(o, 0x2a30 + 4 * g), i32_at(o, 0x2a80 + 4 * g), i32_at(o, 0x2a58 + 4 * g), i32_at(o, 0x2aa8 + 4 * g));
                 assert_eq!((ui.group_count[g], ui.group_enabled[g], ui.group_reload[g], ui.group_state[g]), exe, "{name} group {g}");
             }
+            checked += 1;
+        }
+        eprintln!("{checked} dumps checked");
+    }
+
+    /// `infoszamol`'s per-side firepower against the exe's side `+0x54` in the dumps (written by its last run, at most
+    /// 6 UI ticks before the grab), with the designs and ships of the capture's save (`grab<n>.sav`).
+    #[test]
+    fn side_strengths_match_the_exe() {
+        let Some(dir) = std::env::var_os("IG2_GRAB_DIR") else { return };
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let mut checked = 0;
+        for (name, sav) in [("grab3-t600.json", "grab3.sav"), ("grab3-t1200.json", "grab3.sav"), ("grab4-t300.json", "grab4.sav"), ("grab4-t800.json", "grab4.sav")] {
+            let dir = std::path::Path::new(&dir);
+            let (Ok(d), Ok(bytes)) = (crate::spacewar_screen::Dump::load(&dir.join(name).to_string_lossy()), std::fs::read(dir.join(sav))) else { continue };
+            let w = crate::world::World::load(&ig2_formats::save::SaveGame::parse(&bytes).unwrap(), &rules, &defaults, &volatile);
+            let b = &d.battle;
+            let combat = w.game.state.combat();
+            let tech = &w.game.rules.space.building_tech;
+            let blocks = w.game.state.buildings.get(b.planet.max(0) as usize);
+            let gun_tech = b.guns.iter().map(|g| blocks.and_then(|x| x.get(g.building.max(0) as usize)).filter(|_| g.building > 0).and_then(|x| tech.get(x[0] as usize)).map_or(-1, |&t| t as i32)).collect();
+            let plans = Plans { designs: &combat.designs, ships: &combat.ships, gun_tech, gun_hp: Vec::new(), firepower: &w.game.rules.ai.design.firepower, fleets: &w.game.state.fleets };
+            let ours = plans.side_strengths(b);
+            let exe: Vec<i32> = b.sides.iter().map(|s| s.strength).collect();
+            assert_eq!(ours.to_vec(), exe, "{name}");
             checked += 1;
         }
         eprintln!("{checked} dumps checked");

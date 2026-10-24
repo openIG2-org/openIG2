@@ -377,7 +377,7 @@ pub fn random_building(p: i32, kind: i32, w: &mut dyn StoryWorld) -> i32 {
 
 /// A story fleet `(owner, id, speed)` with the given ships and tanks at planet `at` (`st_fNewEx(…, 2, at)`).
 fn story_fleet(s: &mut Story, (owner, id, speed): (i32, i32, f32), at: i32, ships: &[(i32, i32)], tanks: i32, w: &mut dyn StoryWorld) -> i32 {
-    let f = s.f_new_ex("", owner, id, speed, 2, at, w);
+    let f = s.f_new_ex(crate::story::FleetName::Text(id), owner, id, speed, 2, at, w);
     for &(design, n) in ships {
         s.f_add_ship(id, design, n, w);
     }
@@ -554,7 +554,7 @@ fn plague(s: &mut Story, w: &mut dyn StoryWorld, _: &dyn Script) -> Result<(), A
         let p = s.b_search(41, 0, w);
         if w.planet_owner(p) == en {
             let p = s.b_search(41, 0, w);
-            let f = s.f_new_ex("", 10, 41, 0.04, 1, p << 16, w);
+            let f = s.f_new_ex(crate::story::FleetName::Text(41), 10, 41, 0.04, 1, p << 16, w);
             s.add_info_line(41, InfoLine::Blank, -1, w);
             // It stops `k` short of the planet (f32 throughout).
             let (px, py) = w.planet_xy(p);
@@ -627,7 +627,7 @@ fn hunter(s: &mut Story, w: &mut dyn StoryWorld, _: &dyn Script) -> Result<(), A
             return Err(Abort);
         }
         let speed = Story::diff(n, 5, 6, 7, 8) as f32;
-        s.f_new_ex("", 13, 51, speed, 1, 120, w);
+        s.f_new_ex(crate::story::FleetName::Text(51), 13, 51, speed, 1, 120, w);
         s.sz_start(51, 1);
         attack_planet(s, 51, 51, w);
         message(w, 51, 0);
@@ -1561,7 +1561,7 @@ fn fugitive(s: &mut Story, w: &mut dyn StoryWorld, _: &dyn Script) -> Result<(),
     let en = w.human();
     if s.starting_now() {
         let speed = by_difficulty(&*w, [0, 6, 7, 7, 8]) as f32;
-        let f = s.f_new_ex("", 9, 231, speed, 1, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(231), 9, 231, speed, 1, 0, w);
         s.f_add_ship(231, 3, 2, w);
         message(w, 231, 0);
         s.sz_start(231, (w.difficulty() * 5 + 20) * 8);
@@ -1616,7 +1616,7 @@ fn fugitive(s: &mut Story, w: &mut dyn StoryWorld, _: &dyn Script) -> Result<(),
             return Err(Abort);
         }
         let at = s.b_search(en.wrapping_neg(), 0, w);
-        let g = s.f_new_ex("", 9, 232, 0.0, 2, at, w);
+        let g = s.f_new_ex(crate::story::FleetName::Text(232), 9, 232, 0.0, 2, at, w);
         s.f_add_ship(232, 3, 3, w);
         s.f_add_ship(232, 2, 5, w);
         move_fleet(w, g, 1, 2, f as f32, 0.0);

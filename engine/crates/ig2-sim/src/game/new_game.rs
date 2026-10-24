@@ -1243,7 +1243,7 @@ impl<'r> Game<'r> {
 
     /// `EpuletNewSearchLocation(p, kind, done, dmg, −1, −1)` (exe 0x53cca0): the first free spot, the record, the
     /// building's turrets.
-    fn place(&mut self, p: usize, kind: u8, done: bool, damage: i32) {
+    pub(super) fn place(&mut self, p: usize, kind: u8, done: bool, damage: i32) {
         let g = self.globals();
         let econ = self.economy_context(&g);
         let mut c = self.state.colony();
@@ -2225,6 +2225,16 @@ impl<'r> Game<'r> {
 
     /// `Generate_Planet(p, owner, race, done, extra, 0, 0)` (exe 0x59af50): colonised, a colony hub, and with
     /// `extra` the first buildings; each placement draws a (zero) damage first.
+    /// `Generate_Planet(p, owner, race, done, extra, 0, 0)` (exe 0x59af50) as the stories call it during a game, with
+    /// the production template `pGyartas0` from the image in the state.
+    pub(super) fn story_colonise(&mut self, p: usize, owner: usize, race: u8, done: bool, extra: bool) {
+        let prod = match &self.rules.story.production_template {
+            t if t.len() == 0x40 => t.clone(),
+            _ => self.state.mem.read(PGYARTAS0, 0x40),
+        };
+        self.generate_planet(p, owner, race, done, extra, &prod);
+    }
+
     fn generate_planet(&mut self, p: usize, owner: usize, race: u8, done: bool, extra: bool, prod: &[u8]) {
         self.generate_planet0(p, owner, race, prod, extra);
         let dmg = self.rnd_stream(1, 0, 0);

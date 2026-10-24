@@ -319,7 +319,7 @@ pub(super) fn story_802(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         }
         s.v_set(8025, 1);
         let owner = s.v_get(8029);
-        s.f_new_ex(&format!("story:{}", 8020), owner, 8020, 0.05, p.wrapping_neg(), 1, w);
+        s.f_new_ex(crate::story::FleetName::Text(8020), owner, 8020, 0.05, p.wrapping_neg(), 1, w);
         s.f_add_ship(8020, 3, 3, w);
         let q = s.b_search(8021, 0, w);
         w.event(StoryEvent::RemovePlanetInfo { planet: q, info: -8021 });
@@ -746,7 +746,7 @@ pub(super) fn story_824(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                     p = q;
                 }
             }
-            let f = s.f_new_ex(&format!("story:{}", 8241), en, 0, 0.0, 2, p, w);
+            let f = s.f_new_ex(crate::story::FleetName::Text(8241), en, 0, 0.0, 2, p, w);
             for (key, n) in [(8241, 2), (8242, 2), (8243, 1)] {
                 let d = w.story_design(en, key, 3);
                 s.f_add_ship(f.wrapping_neg(), d, n, w);

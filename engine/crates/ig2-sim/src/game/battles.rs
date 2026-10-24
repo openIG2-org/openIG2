@@ -4,6 +4,7 @@
 //! whole state, before the step resumes. Auto-resolved battles are carried out (`SimulateSpBattle`, `WF::Simulate`);
 //! a battle the routing sends to the real-time screen is reported and left alone (the screens are the UI's).
 
+use super::story_chain;
 use super::*;
 use crate::ground::{self, GroundContext, GroundEvent, GroundPlanet, GroundRoute, War};
 use crate::save::building_from;
@@ -237,7 +238,7 @@ impl Game<'_> {
         self.state.store_tech(&tech);
         let (mut forbidden, mut simulate_ban) = (false, false);
         self.with_story(|st, w| {
-            st.space_battle_started(f1 as i32, f2 as i32, &ScenarioStories, w);
+            st.space_battle_started(f1 as i32, f2 as i32, &story_chain(), w);
             (forbidden, simulate_ban) = (st.space_forbidden, st.space_simulate_forbidden);
         });
         if adat_i32(&self.adat(), ADAT_NO_INCIDENT) == 0 || g.multiplayer {
@@ -352,7 +353,7 @@ impl Game<'_> {
             let lost = if f2 == 0 && k == 1 { 0 } else if self.fleet_i32(f, 0x54) != 0 { a.wrapping_sub(self.fleet_i32(f, 0x60)) } else { a };
             self.state.mem.set_i32(va::CTF_VALUE + 4 * (k as u32 + 1), lost);
         }
-        self.with_story(|st, w| st.space_battle_finished(&list, false, &ScenarioStories, w));
+        self.with_story(|st, w| st.space_battle_finished(&list, false, &story_chain(), w));
         self.combat_aftermath(fleet_events, g.sends);
         winner
     }
@@ -456,7 +457,7 @@ impl Game<'_> {
         let lopsided = ground::lopsided(&input);
         let simulate = matches!(ground::route(&input), GroundRoute::Simulate { .. });
         self.with_war(p, |w| w.land(f as i32, simulate));
-        self.with_story(|st, w| st.ground_battle_started(f as i32, p as i32, po as i32, &ScenarioStories, w));
+        self.with_story(|st, w| st.ground_battle_started(f as i32, p as i32, po as i32, &story_chain(), w));
         if adat_i32(&self.adat(), ADAT_NO_INCIDENT) == 0 || g.multiplayer {
             self.with_diplomacy(|d, w| d.war(w, fo as usize, po as usize, false, 0));
         }
@@ -720,6 +721,10 @@ impl Game<'_> {
             if e == GroundEvent::Abandoned {
                 self.capture(p, 0);
             }
+            // `GroundWarFinished`'s step 4: `TutorialCheckEvent(0x21)` when EN won.
+            if e == (GroundEvent::Finished { winner: g.en as i32 }) {
+                self.tutorial_check_event(0x21);
+            }
             self.events.push(GameEvent::Battle(BattleEvent::GroundSide { planet: p, event: e }));
         }
     }
@@ -764,12 +769,12 @@ impl Game<'_> {
     /// `Story_SpaceBattleFinishedCheck`, `Story_FleetArrivedCheck`, `Story_GroundBattleFinishedCheck` (exe
     /// 0x5c9200, 0x5c8c90, 0x5c8d80): the end of an arrival's step.
     pub(super) fn arrival_checks(&mut self) {
-        self.with_story(|st, w| st.space_battle_finished_check(&ScenarioStories, w));
-        self.with_story(|st, w| st.fleet_arrived_check(&ScenarioStories, w));
+        self.with_story(|st, w| st.space_battle_finished_check(&story_chain(), w));
+        self.with_story(|st, w| st.fleet_arrived_check(&story_chain(), w));
         let p = self.state.story().ground.planet.max(0) as usize;
         let buildings = self.state.mem.i32(va::BUILDINGS_OCCUPIED + 4 * p as u32);
         let owner = self.planet_owner(p) as i32;
-        self.with_story(|st, w| st.ground_battle_finished_check(buildings, owner, &ScenarioStories, w));
+        self.with_story(|st, w| st.ground_battle_finished_check(buildings, owner, &story_chain(), w));
     }
 }
 

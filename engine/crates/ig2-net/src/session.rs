@@ -82,6 +82,26 @@ pub enum SessionMsg {
     Resume { turn: u64, bundles: Vec<Bundle> },
     /// New host → survivor: go on from your own state; send inputs from turn `from` on (the log follows).
     Resumed { from: u64 },
+    /// Either way: this machine's player leaves the game (`ExitToMainScreen`'s teardown, game-end.md §2: its game
+    /// ended, or it quit to the menu). Peer → host: away at once, without the grace; host → peers: the host is gone
+    /// (the survivors migrate at once instead of waiting for the keep-alive).
+    Leave,
+    /// Peer → host: the player's chat line (`ExecuteString`'s `Multi_Send(0x3fc, EN, …)`; at most [`MAX_CHAT`]
+    /// bytes).
+    Say(String),
+    /// Host → peers, the sender included: `empire`'s chat line (`MULTIGET_Starmap`'s 0x3fc receiver).
+    Said { empire: u8, text: String },
+}
+
+/// The chat entry's length (`IOMaxLen` 0x34, its NUL included).
+pub const MAX_CHAT: usize = 0x33;
+
+fn chat_text(t: &str) -> String {
+    let mut n = t.len().min(MAX_CHAT);
+    while !t.is_char_boundary(n) {
+        n -= 1;
+    }
+    t[..n].to_string()
 }
 
 /// Why the session stands still, and who is gone.
@@ -122,6 +142,10 @@ pub enum SessionEvent {
     /// `empire`'s peer diverged at `turn` and was restarted from the host's state at `at`.
     Resynced { empire: u8, turn: u64, at: u64 },
     Paused { empire: u8, on: bool },
+    /// `empire`'s player left the game ([`SessionMsg::Leave`]): away at once.
+    Left { empire: u8 },
+    /// `empire`'s chat line (the host's own included).
+    Said { empire: u8, text: String },
     /// A connection was turned away at the admission.
     Refused(Refusal),
 }
@@ -466,8 +490,11 @@ impl<'r> HostSession<'r> {
     pub fn pump(&mut self, now: Duration, max_turns: usize) -> Result<Vec<SessionEvent>, Error> {
         self.host.pump()?;
         for (slot, m) in self.host.take_inbox() {
-            if let (SessionMsg::Pause(on), Some(empire)) = (m, self.host.empire_of(slot)) {
-                self.set_pause(empire, on);
+            match (m, self.host.empire_of(slot)) {
+                (SessionMsg::Pause(on), Some(empire)) => self.set_pause(empire, on),
+                (SessionMsg::Leave, Some(_)) => self.left(slot)?,
+                (SessionMsg::Say(text), Some(empire)) => self.said(empire, &text),
+                _ => {}
             }
         }
         for slot in self.host.closed() {
@@ -516,6 +543,23 @@ impl<'r> HostSession<'r> {
         let h = self.humans.iter().find(|h| h.empire == empire).ok_or(Error::NotInSession(empire))?;
         let slot = h.slot;
         self.dropped(slot, now)
+    }
+
+    /// The host's own player says `text` (the chat line).
+    pub fn say(&mut self, text: &str) {
+        self.said(self.own.empire, text);
+    }
+
+    fn said(&mut self, empire: u8, text: &str) {
+        let text = chat_text(text);
+        self.host.broadcast(&Msg::Session(SessionMsg::Said { empire, text: text.clone() }));
+        self.queued.push(SessionEvent::Said { empire, text });
+    }
+
+    /// The host's own player leaves the game (`ExitToMainScreen`: `MultiCloseServer`): the peers are told, the caller
+    /// drops the session (its links close); the survivors migrate (ADR 0012).
+    pub fn leave(&mut self) {
+        self.host.broadcast(&Msg::Session(SessionMsg::Leave));
     }
 
     /// `empire`'s player is back on `link` (admitted by the glue): it gets the host's state now, the bundles since,
@@ -669,6 +713,24 @@ impl<'r> HostSession<'r> {
         }
     }
 
+    /// `slot`'s player left ([`SessionMsg::Leave`]): its link goes, its empire is away at once (out of a running
+    /// battle too: nobody waits for a player who quit).
+    fn left(&mut self, slot: u8) -> Result<(), Error> {
+        self.host.remove_peer(slot);
+        let Some(i) = self.humans.iter().position(|h| h.slot == slot && h.presence == Presence::Here) else { return Ok(()) };
+        let empire = self.humans[i].empire;
+        if self.paused.remove(&empire) {
+            self.queued.push(SessionEvent::Paused { empire, on: false });
+        }
+        self.catch_up()?;
+        if self.own.game.realtime_running() {
+            self.host.inject(empire, Command::PlayerAway);
+        }
+        self.humans[i].presence = Presence::Away;
+        self.queued.push(SessionEvent::Left { empire });
+        Ok(())
+    }
+
     fn dropped(&mut self, slot: u8, now: Duration) -> Result<(), Error> {
         self.host.remove_peer(slot);
         let Some(i) = self.humans.iter().position(|h| h.slot == slot && h.presence == Presence::Here) else { return Ok(()) };
@@ -792,6 +854,10 @@ pub struct ClientSession<'r> {
     alive_sent: Option<Duration>,
     /// The host was silent for `keep_alive` at the last pump.
     silent: bool,
+    /// The host left the game ([`SessionMsg::Leave`]).
+    host_left: bool,
+    /// The chat lines `(empire, text)` received since the glue last took them.
+    pub chat: Vec<(u8, String)>,
 }
 
 impl<'r> ClientSession<'r> {
@@ -835,6 +901,8 @@ impl<'r> ClientSession<'r> {
             heard: None,
             alive_sent: None,
             silent: false,
+            host_left: false,
+            chat: Vec::new(),
         }
     }
 
@@ -860,9 +928,10 @@ impl<'r> ClientSession<'r> {
         }
         let mut run = 0;
         loop {
-            let mut tap = Tap { link: &mut *self.link, start: None, status: None, heard: false };
+            let mut tap = Tap { link: &mut *self.link, start: None, status: None, heard: false, left: false, chat: &mut self.chat };
             run += self.peer.poll(&mut tap, max_turns.saturating_sub(run))?;
             let (start, status) = (tap.start, tap.status);
+            self.host_left |= tap.left;
             if tap.heard || self.heard.is_none() {
                 self.heard = Some(now);
             }
@@ -889,6 +958,11 @@ impl<'r> ClientSession<'r> {
         &self.info
     }
 
+    /// The session's humans `(slot, empire)` from the last `Start`.
+    pub fn humans(&self) -> &[(u8, u8)] {
+        &self.humans
+    }
+
     /// Who takes over if the host is gone (ADR 0012 §2), in the order to try: the session's humans by slot, without
     /// the host and the empires the last status lists away, awaited or reconnecting. The first is the elected one;
     /// if that's this peer's slot, the glue calls [`HostSession::migrate`], else [`ClientSession::migrate`] with a link
@@ -910,6 +984,7 @@ impl<'r> ClientSession<'r> {
         self.refused = None;
         self.heard = None;
         self.silent = false;
+        self.host_left = false;
     }
 
     /// A migration in progress (the door, or waiting for the new host's answer).
@@ -962,10 +1037,21 @@ impl<'r> ClientSession<'r> {
         self.link.send(&Msg::Session(SessionMsg::Pause(on)));
     }
 
+    /// The local player's chat line (the host relays it to every peer, this one included).
+    pub fn say(&mut self, text: &str) {
+        self.link.send(&Msg::Session(SessionMsg::Say(chat_text(text))));
+    }
+
+    /// The local player leaves the game (`ExitToMainScreen`: `MultiCloseClient`): the host is told, the caller drops
+    /// the session (its link closes).
+    pub fn leave(&mut self) {
+        self.link.send(&Msg::Session(SessionMsg::Leave));
+    }
+
     /// The host is gone: the link closed, or the host was silent for `keep_alive` at the last pump (never during a
     /// migration: [`ClientSession::refused`] and the glue's connect timeout tell that one).
     pub fn closed(&self) -> bool {
-        self.migration.is_none() && (self.link.closed() || self.silent)
+        self.migration.is_none() && (self.link.closed() || self.silent || self.host_left)
     }
 }
 
@@ -984,6 +1070,9 @@ struct Tap<'a> {
     status: Option<HoldStatus>,
     /// Anything came from the host.
     heard: bool,
+    /// The host's `Leave` came.
+    left: bool,
+    chat: &'a mut Vec<(u8, String)>,
 }
 
 impl Transport for Tap<'_> {
@@ -1004,6 +1093,8 @@ impl Transport for Tap<'_> {
                     return Ok(None);
                 }
                 Some(Msg::Session(SessionMsg::Status(s))) => self.status = Some(s),
+                Some(Msg::Session(SessionMsg::Leave)) => self.left = true,
+                Some(Msg::Session(SessionMsg::Said { empire, text })) => self.chat.push((empire, chat_text(&text))),
                 other => return Ok(other),
             }
         }

@@ -97,6 +97,8 @@ pub enum BattleOrder {
     FighterStance { side: u8, value: i32 },
     DirectFire { unit: u16, target: u16, mount: u16 },
     Weapons { unit: u16, keep: u32, set: u32 },
+    Strengths { values: [i32; ig2_sim::spacebattle::EMPIRES] },
+    Outgunned,
 }
 
 impl From<BattleOrder> for Order {
@@ -113,6 +115,8 @@ impl From<BattleOrder> for Order {
             BattleOrder::FighterStance { side, value } => Order::FighterStance { side: side as usize, value },
             BattleOrder::DirectFire { unit, target, mount } => Order::DirectFire { unit: u(unit), target: u(target), mount: u(mount) },
             BattleOrder::Weapons { unit, keep, set } => Order::Weapons { unit: u(unit), keep, set },
+            BattleOrder::Strengths { values } => Order::Strengths { values },
+            BattleOrder::Outgunned => Order::Outgunned,
         }
     }
 }
@@ -131,6 +135,8 @@ impl From<Order> for BattleOrder {
             Order::FighterStance { side, value } => BattleOrder::FighterStance { side: side as u8, value },
             Order::DirectFire { unit, target, mount } => BattleOrder::DirectFire { unit: u(unit), target: u(target), mount: u(mount) },
             Order::Weapons { unit, keep, set } => BattleOrder::Weapons { unit: u(unit), keep, set },
+            Order::Strengths { values } => BattleOrder::Strengths { values },
+            Order::Outgunned => BattleOrder::Outgunned,
         }
     }
 }
@@ -281,6 +287,9 @@ pub enum Command {
     /// Ours (no packet in the original): the messages screen's writes to the human's inbox and their story
     /// hand-offs (`ig2_sim::game::MessageOrder`, re/rules/info-messages.md §7) as its kind and values.
     Message { kind: i32, values: Vec<i32> },
+    /// Ours (no packet: the exe calls it straight from the fleet panel's sale menu, single player only): a story hero's
+    /// design sent back (`Story_Special(0x19, fleet, design)`, re/screens/starmap.md §19.7).
+    HeroSentBack { fleet: i32, design: i32 },
 }
 
 impl From<MessageOrder> for Command {
@@ -345,6 +354,7 @@ impl Command {
                 game.diplomacy_answer(Answer { from: issuer as i32, to: *to, msg: (*terms).into(), counter: *counter, reply: *reply, yes: *yes });
             }
             Command::StoryChoice { id } => game.story_special([15, issuer as i32, *id, 0, 0, 0, 0, 0]),
+            Command::HeroSentBack { fleet, design } => game.story_special([0x19, *fleet, *design, 0, 0, 0, 0, 0]),
             Command::FleetEmptied { fleet } => game.fleet_emptied(*fleet as usize),
             Command::Spy { order } => game.spy_order(issuer as usize, (*order).into()),
             Command::StoryStart { id } => game.story_start(*id),

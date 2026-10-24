@@ -119,20 +119,88 @@ pub struct StoryRules {
     pub campaign: crate::campaign::CampaignTables,
     /// `st_Rnd` 138's recruit names (exe 0x85e0bc + 8·k, `k` 0..7: static data).
     pub recruit_names: Vec<Vec<u8>>,
-    /// `InfoStrings[..].id` (exe 0xBAA1F0, `infostr.txt` in file order: `InfoString_Read`).
-    pub info_strings: Vec<i16>,
+    /// `InfoStrings[..]` (exe 0xBAA1F0, `infostr.txt` in file order: `InfoString_Read`): the id and the `II` flag
+    /// (`BolygoInfoAdd` counts it in planet `+0xba`).
+    pub info_strings: Vec<(i16, bool)>,
+    /// `SpecialLeiro[..].id` (`special.eng` in file order: `Diplomacy_ReadSpecials`).
+    pub diplomacy_specials: Vec<i32>,
+    /// `Tervek0[0..=0x28]` as the game holds them (the exe's records, named by `StringReadAll` from `txt17` 7/k+1):
+    /// story 908 resets every empire's designs to them.
+    pub design_templates: Vec<[u8; crate::save::DESIGN_SIZE]>,
+    /// `pGyartas0` (exe 0x90B8A8): the production queue `Generate_Planet` gives a new colony (a loaded save's memory
+    /// image doesn't hold it).
+    pub production_template: Vec<u8>,
+    /// `values.txt`, `fleet.txt`, `building.txt` (`ReadValues`, `ReadFlottaData`, `ReadBuildingData` at start-up:
+    /// `re/rules/story-data.md`).
+    pub values: Vec<(i32, i32)>,
+    pub fleets: Vec<crate::story::FleetData>,
+    pub buildings: Vec<crate::story::BuildingData>,
+}
+
+/// `Story_Check`'s scripts in its order (`re/rules/campaign.md` §2): `st_Begin_include`, `st_Rnd_include`,
+/// `st_BRnd_include`, `st_Fable_include`, `st_Scen_include`, `st_Line_include`, `st_Elem_include`,
+/// `st_Multi_include`. A script acts on its own running stories only, so a scenario or multiplayer game runs the
+/// same chain.
+pub type StoryChain = (
+    crate::begin::BeginStories,
+    (crate::rnd::RndStories, (crate::brnd::BRndStories, (crate::fable::FableStories, (ScenarioStories, (crate::storyline::LineStories, (crate::elem::ElemStories, crate::multi::MultiStories)))))),
+);
+
+pub fn story_chain() -> StoryChain {
+    use crate::*;
+    (
+        begin::BeginStories,
+        (rnd::RndStories::default(), (brnd::BRndStories, (fable::FableStories, (ScenarioStories, (storyline::LineStories, (elem::ElemStories::default(), multi::MultiStories)))))),
+    )
 }
 
 impl StoryRules {
-    /// From the exe's campaign words and recruit names (`ig2_rules::Rules::campaign_words`,
-    /// `story_recruit_names`) and the install's `infostr.txt`.
-    pub fn new(campaign_words: Vec<i32>, recruit_names: Vec<Vec<u8>>, install: &ig2_formats::Install) -> Self {
+    /// From the exe's tables (`ig2_rules::Rules::campaign_words`, `story_recruit_names`, `design_templates`) and the
+    /// install's `infostr.txt`, `special.eng` and `txt17.txt` (the design names `StringReadAll` reads: the Hungarian
+    /// file, as the exe does).
+    pub fn new(campaign_words: Vec<i32>, recruit_names: Vec<Vec<u8>>, design_templates: &[Vec<u8>], production_template: Vec<u8>,
+        install: &ig2_formats::Install) -> Self {
+        use ig2_formats::text::{self, Lang};
         let info = install.read("dataraw/text/infostr.txt").unwrap_or_default();
-        let info_strings = ig2_formats::misc_text::parse_infostr(&ig2_formats::text::decode(&info, install.lang())).0;
+        let info_strings = ig2_formats::misc_text::parse_infostr(&text::decode(&info, install.lang())).0;
+        let specials = install.read("dataraw/diplomac/special.eng").unwrap_or_default();
+        let mut hu = ig2_formats::strings::UiStrings::default();
+        if let Ok(b) = install.read("localization/hu/dataraw/text/txt17.txt").or_else(|_| install.read("dataraw/text/txt17.txt")) {
+            hu.add_file(&text::decode(&b, Lang::Hu));
+        }
+        let design_templates = design_templates
+            .iter()
+            .enumerate()
+            .map(|(k, raw)| {
+                let mut r = [0u8; crate::save::DESIGN_SIZE];
+                let n = raw.len().min(r.len());
+                r[..n].copy_from_slice(&raw[..n]);
+                let name = Lang::Hu.encoding().encode(hu.get(0x11, 7, k as u16 + 1)).0;
+                for (i, c) in r.iter_mut().take(0x14).enumerate() {
+                    *c = name.get(i).copied().unwrap_or(0);
+                }
+                r
+            })
+            .collect();
+        let data = |f: &str| text::decode(&install.read(&format!("dataraw/text/{f}")).unwrap_or_default(), install.lang());
+        use ig2_formats::story_data;
         Self {
+            values: story_data::parse_values(&data("values.txt")),
+            fleets: story_data::parse_fleets(&data("fleet.txt"))
+                .fleets
+                .into_iter()
+                .map(|f| crate::story::FleetData { story: f.story, fleet: f.fleet, design: f.design, counts: f.counts })
+                .collect(),
+            buildings: story_data::parse_buildings(&data("building.txt"))
+                .into_iter()
+                .map(|b| crate::story::BuildingData { story: b.story, planet: b.planet, kind: b.building_type, level: b.damage })
+                .collect(),
+            production_template,
             campaign: crate::campaign::CampaignTables::new(campaign_words),
             recruit_names,
-            info_strings: info_strings.iter().map(|s| s.id).collect(),
+            info_strings: info_strings.iter().map(|s| (s.id, s.flag)).collect(),
+            diplomacy_specials: ig2_formats::diplomacy::parse_specials(&String::from_utf8_lossy(&specials)).iter().map(|s| s.id).collect(),
+            design_templates,
         }
     }
 }
@@ -580,7 +648,7 @@ impl<'r> Game<'r> {
     /// `FRISSIT_Datum`: `Ido += IdoSpeedSzorzo`, `Ido2 += 1`, the calendar.
     pub fn advance_clock(&mut self) {
         self.space_battles_settle();
-        if self.mp_battle_running() {
+        if self.mp_battle_running() || self.sp_screen_frozen() {
             return;
         }
         let m = &mut self.state.mem;
@@ -599,6 +667,13 @@ impl<'r> Game<'r> {
             self.battle_tick();
             return;
         }
+        if self.sp_screen_frozen() {
+            self.sp_frozen_tick();
+            return;
+        }
+        // `MULTIGET_Spy` runs every frame and ends in the `HanyKemVan` recount (`espionage.md` §8): a save written
+        // before any frame (a new campaign's) holds a stale count.
+        self.with_spies(|sp, w| sp.recount(w));
         let m = &mut self.state.mem;
         let (nap, old) = (m.i32(va::NAP), m.i32(va::OLD_NAP));
         let first_event = self.events.len();
@@ -1080,6 +1155,11 @@ impl<'r> Game<'r> {
         self.libc = libc;
         self.cosmetic = cosmetic;
         self.store_diplomacy_world(&d, &ctx, &pl, &map, &tech, &rng);
+        for e in &events {
+            if let DiploEvent::Tutorial(id) = *e {
+                self.tutorial_check_event(id);
+            }
+        }
         self.events.extend(events.into_iter().map(GameEvent::Diplomacy));
     }
 
@@ -1268,9 +1348,11 @@ impl<'r> Game<'r> {
                 SpyEvent::Discovered { empire, by } => self.with_diplomacy(|d, w| d.discover_by(w, by as usize, empire as usize)),
                 SpyEvent::Report(r) => {
                     self.state.push_spy_report(&r);
-                    self.with_story(|st, w| st.spy_event(&ScenarioStories, w));
+                    self.with_story(|st, w| st.spy_event(&story_chain(), w));
                 }
                 SpyEvent::ReportTo { to, report } => self.state.push_spy_report_to(to, &report),
+                // `FRISSIT_Spy`'s stolen laser 2.0 / heavy destroyer (exe 0x5862b5; any thief).
+                SpyEvent::Tutorial(id) => self.tutorial_check_event(id as i32),
                 SpyEvent::Combat(crate::spacewar::CombatEvent::HumanFleetEmptied { fleet }) => {
                     self.events.push(GameEvent::FleetEmptied { fleet });
                 }
@@ -1381,6 +1463,15 @@ impl<'r> Game<'r> {
             match *e {
                 ResearchEvent::AutoDesign { empire, tech } => self.automatic_design(empire as usize, tech),
                 ResearchEvent::Completed { empire, tech } => {
+                    // `FRISSIT_Research` (exe 0x51e200 / 0x51e219): EN's laser 2.0 (0x12) → 9, heavy destroyer (6)
+                    // → 0xa, before `TalalmanyKifejlesztve`.
+                    if empire as usize == self.globals().en {
+                        match tech {
+                            0x12 => self.tutorial_check_event(9),
+                            6 => self.tutorial_check_event(0xa),
+                            _ => {}
+                        }
+                    }
                     self.story_special([0x0d, empire as i32, tech as i32, 0, 0, 0, 0, 0]);
                     self.with_ai(|st, w, hooks| st.design(w, empire as usize, false, hooks));
                 }
@@ -1397,7 +1488,7 @@ impl<'r> Game<'r> {
 
     /// `Story_Special(data)`: the story engine checks the scripts against it.
     pub fn story_special(&mut self, data: [i32; 8]) {
-        self.with_story(|st, w| st.story_special(data, &ScenarioStories, w));
+        self.with_story(|st, w| st.story_special(data, &story_chain(), w));
     }
 
     /// `MULTIGET_Story`'s message 0x65 (ELF 0x740670): `StartStory(id, false)` (queued for the next check).
@@ -1408,7 +1499,7 @@ impl<'r> Game<'r> {
     }
 
     fn story(&mut self) {
-        self.with_story(|st, w| st.tick(&ScenarioStories, w));
+        self.with_story(|st, w| st.tick(&story_chain(), w));
     }
 
     /// Run `f` on the story engine (its state decoded from the save state, stored back afterwards). The scripts'
@@ -1416,6 +1507,10 @@ impl<'r> Game<'r> {
     /// the UI get them afterwards.
     fn with_story(&mut self, f: impl FnOnce(&mut crate::story::Story, &mut GameStory)) {
         let mut st = self.state.story();
+        let rules = &self.rules.story;
+        st.values.clone_from(&rules.values);
+        st.fleet_data.clone_from(&rules.fleets);
+        st.building_data.clone_from(&rules.buildings);
         let events = {
             let mut w = GameStory::new(self);
             f(&mut st, &mut w);
@@ -1553,7 +1648,7 @@ impl<'r> Game<'r> {
                 continue;
             };
             if pending && matches!(e, StarmapEvent::Arrived { .. }) {
-                self.with_story(|st, w| st.fleet_arrived_check(&ScenarioStories, w));
+                self.with_story(|st, w| st.fleet_arrived_check(&story_chain(), w));
             }
             if !(0..=2).contains(&kind) {
                 pending = false;
@@ -1576,7 +1671,7 @@ impl<'r> Game<'r> {
             pending = !battle;
         }
         if pending {
-            self.with_story(|st, w| st.fleet_arrived_check(&ScenarioStories, w));
+            self.with_story(|st, w| st.fleet_arrived_check(&story_chain(), w));
         }
     }
 
@@ -1990,7 +2085,7 @@ impl Game<'_> {
         self.with_story(|st, w| {
             st.message.0 = block;
             st.flags[crate::story::flag::PROMOTED] = true;
-            st.check(true, &ScenarioStories, w);
+            st.check(true, &story_chain(), w);
         });
     }
 

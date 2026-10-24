@@ -261,7 +261,7 @@ pub(super) fn story_858(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
             param(w, 1, MessageText::Planet(best));
             s.add_info_line(8581, InfoLine::Planet { planet: best, count: None }, -1, w);
             s.b_show(8580, -1, w);
-            s.f_new_ex("", E, 8581, 0.09, 2, best, w);
+            s.f_new_ex(crate::story::FleetName::Text(8581), E, 8581, 0.09, 2, best, w);
         }
     }
     if human_landed(s, 8580, w) && s.ground.attacker_won && s.v_get(8582) == 0 {

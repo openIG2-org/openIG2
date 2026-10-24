@@ -586,7 +586,7 @@ impl Spies {
     }
 
     /// `HanyKemVan[e]` (§7).
-    fn recount(&mut self, w: &World) {
+    pub(crate) fn recount(&mut self, w: &World) {
         for e in 1..ROSTERS {
             self.working[e] = 0;
             if w.ctx.race(e) != 5 && w.ctx.alive(e) {

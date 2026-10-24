@@ -52,7 +52,7 @@ Helpers (exe; the ELF's are functions, the exe inlines some):
   undo entry `(8, p, StoryLastChecked)`. `WIN`'s type-8 undo calls it with `on = 0`, which registers `(8, p, id)`
   again (§2.3: the first free slot, or appended past the cursor; the loop re-reads the count and applies that one
   too, which moves it into the slot just zeroed), so an extra-marked planet's undo entry outlives its story.
-- **`st_bAddInfo(x, info, owner)`** (0x603170): `BolygoInfoAdd(p, info, true)` and the undo entry `(6, p << 16 | info &
+- **`st_bAddInfo(x, info, owner)`** (0x603170): `BolygoInfoAdd(p, info, true)` (third argument = allow duplicates, not shown) and the undo entry `(6, p << 16 | info &
   0xffff, owner)` (`owner == −1`: `StoryLastChecked`); `StoryError` = no planet. **`st_bSetRadarMsg(id, on)`**
   (inlined): planet `+0xbb`.
 - **`st_SetBolygoCoord(p, w)`** (0x6025d0; `w` 0 → 40): up to 999 tries: `q = st_bSearch(−EN, 0)` (none → false), `r

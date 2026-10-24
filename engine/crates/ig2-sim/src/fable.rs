@@ -640,7 +640,7 @@ fn ambush_311(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         } else {
             w.event(StoryEvent::Anim(3094));
             message(w, 3094, 0);
-            let f = s.f_new_ex("", 9, TRADER, 0.03, 1, 0, w);
+            let f = s.f_new_ex(crate::story::FleetName::Text(4041), 9, TRADER, 0.03, 1, 0, w);
             let b = s.last_fn[crate::story::last_fn::B];
             w.event(StoryEvent::MoveFleet { fleet: f, kind: 1, mode: 1, x: b as f32, y: 0.0 });
             fleet_bit(s, w, TRADER, bits::VISIBLE, true);
@@ -651,7 +651,7 @@ fn ambush_311(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             let (lx, ly) = (s.last_fn[crate::story::last_fn::X], s.last_fn[crate::story::last_fn::Y]);
             let x = trunc(px - (px - lx as f32) * 2.0) as f32;
             let y = trunc(ly.wrapping_mul(2) as f32 - py) as f32;
-            let p = w.new_fleet("", 10, PIRATE, x, y, 7.0);
+            let p = w.new_fleet(&crate::story::FleetName::Text(3111), 10, PIRATE, x, y, 7.0);
             s.auto_add_ship(p, PIRATE, w);
             // st_fAttackFleet(3111, 4041).
             let (a, t) = (s.f_search(PIRATE, w), s.f_search(TRADER, w));

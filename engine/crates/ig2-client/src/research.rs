@@ -152,6 +152,9 @@ pub struct Research {
     pub fields: [i32; 13],
     pub field: i32,
     pub tech: i32,
+    /// `TalalmanyKivalasztva` picked tech 0xa2 since the window last looked (its `TutorialCheckEvent(8)`, exe
+    /// 0x524fdb).
+    pub picked_turret: bool,
     /// The middle wheel per slot (front = 0): category (`forgastabla2`), button id (`forgastabla3`), line start
     /// (`forgastabla4x/4y`); the mask colour of each slot stays (`forgastabla` is the inverse permutation).
     slot_area: [i32; 5],
@@ -230,7 +233,7 @@ pub struct Research {
     was_held: bool,
     /// The chosen row's frame (`DesignKeret1`, asked for by every drawn frame while open, stepped every UI frame)
     /// and the list font's cell (`CharXMeret[2]`, `CharYMeret[2]`).
-    design: crate::kit::DesignFrame,
+    pub(crate) design: crate::kit::DesignFrame,
     cell: [i32; 2],
     /// `ResearchGfx2D_1`: the opening's lasers and sparks, and whether this frame draws them (`resELINDULT`, not
     /// closing; the lasers while opening, the sparks unless at frame 60).
@@ -258,6 +261,7 @@ impl Research {
             fields,
             field: m.i32(at::FIELD),
             tech: m.i32(at::TECH),
+            picked_turret: false,
             slot_area: s.wheel_area,
             slot_kep: s.wheel_kep,
             turn: 0.0,
@@ -398,6 +402,7 @@ impl Research {
         self.field = k;
         self.fields[self.area] = k;
         self.tech = k + (self.area as i32 - 1) * 16;
+        self.picked_turret |= self.tech == 0xa2;
         let k = k.clamp(0, 16) as usize;
         if self.near_dir[k] != 1 {
             for d in self.near_dir.iter_mut() {
@@ -1877,6 +1882,7 @@ mod tests {
             fields: [1; 13],
             field: 1,
             tech: 33,
+            picked_turret: false,
             slot_area: [3, 2, 4, 5, 1],
             slot_kep: [9, 16, 11, 5, 12],
             turn: 0.0,

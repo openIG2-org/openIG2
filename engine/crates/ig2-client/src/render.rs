@@ -471,6 +471,8 @@ impl Renderer {
     }
 
     fn upload(&mut self, img: &Image, format: wgpu::TextureFormat) -> TexId {
+        crate::prof::count("tex", 1);
+        crate::prof::count("tex_kb", img.rgba.len() as u64 / 1024);
         let mips = mip_chain(img);
         let size = wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 };
         let tex = self.device.create_texture_with_data(
@@ -566,6 +568,7 @@ impl Renderer {
     }
 
     pub fn add_mesh(&mut self, verts: &[crate::render3d::MeshVertex]) -> crate::render3d::MeshId {
+        crate::prof::count("mesh", 1);
         self.pipe3d.add_mesh(&self.device, verts)
     }
 
@@ -575,6 +578,9 @@ impl Renderer {
 
     /// Draw `frame` into `target` (`size` in physical pixels; made with [`Renderer::view_formats`]).
     pub fn draw(&mut self, frame: &Frame, target: &wgpu::Texture, size: (u32, u32), time: f32) {
+        crate::prof::count("passes", 1);
+        crate::prof::count("quads", frame.instances.len() as u64);
+        crate::prof::count("batches", frame.batches.len() as u64);
         let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, _pad: 0.0 };
         self.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         let bytes: &[u8] = bytemuck::cast_slice(&frame.instances);
@@ -683,6 +689,7 @@ impl Renderer {
     }
 
     fn target_texture(&mut self, size: (u32, u32)) -> (wgpu::Texture, [wgpu::BindGroup; 4]) {
+        crate::prof::count("target", 1);
         let size = (size.0.max(1), size.1.max(1));
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rendered"),
@@ -1103,6 +1110,15 @@ fn design_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::sc
             s.step(&c, &scene.mask);
             s.tooltip(&c, &scene.mask, &tips, s.frames as f64 * 10.0);
             heard.extend(s.sounds.drain(..).map(|id| (Some(tick - 1), id)));
+            // The tick's `Design_Main` sent them: `MULTIGET_Design` at the next frame's start.
+            for o in std::mem::take(&mut s.orders) {
+                sent.push(format!("t {}: {o:?}", tick - 1));
+                world.send(ig2_net::Command::from(o));
+            }
+            world.pump();
+            for ev in std::mem::take(&mut world.order_events) {
+                s.event(&ev);
+            }
         }
         if script.grabs.contains(&tick) {
             let state = &world.game.state;
@@ -1587,6 +1603,10 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     // `--ui-frames` of `FRISSIT_Starmap2` since `Starmap_Belep`: the faders' shine and drift.
     for _ in 0..o.ui_frames.max(1) {
         panels.ui_tick();
+    }
+    // `--faders`: the exe's own `fifo` / `starf` at the grab (their `rand()`-driven shine and drift, deviation 208).
+    if let Some(f) = &o.faders {
+        panels.faders = f.clone();
     }
     // The staged long info is drawn at zoom 599 at least: its box is up.
     hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info);

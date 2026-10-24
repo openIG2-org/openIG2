@@ -27,15 +27,15 @@ impl Game<'_> {
     /// `TutorialCheckEvent(id)` (exe 0x60bdf0): the awaited event `id` clears `TutorialEvent` and, when paused, sets
     /// `TutorialUnPause`'s flags (its input resets are the driver's).
     pub fn tutorial_check_event(&mut self, id: i32) {
-        let m = &mut self.state.mem;
-        if m.i32(va::TUTORIAL_EVENT) != id {
-            return;
-        }
-        m.set_i32(va::TUTORIAL_EVENT, 0);
-        if m.u8(va::TUTORIAL_PAUSED) != 0 {
-            m.set_u8(va::TUTORIAL_PAUSED, 0);
-            m.set_u8(va::TUTORIAL_ACTIVE, 1);
-        }
+        crate::save::tutorial_check_event(&mut self.state.mem, id);
+    }
+
+    /// The new fleets' planet: EN's last of 1..HanyBolygo−1 (strict), planet 0 with none (the exe; spec §8).
+    fn tutorial_spot(&self, en: usize) -> (f32, f32) {
+        let n = self.state.planet_count();
+        let rec = |p: usize| va::PLANETS + (p * PLANET_SIZE) as u32;
+        let p = (1..n).rev().find(|&p| self.state.mem.u8(rec(p) + 0x20) as usize == en).unwrap_or(0);
+        (self.state.mem.f32(rec(p) + 0x18), self.state.mem.f32(rec(p) + 0x1c))
     }
 
     /// Carry out a tutorial command's effect on the game, if it is one of the in-place writes; false otherwise
@@ -97,6 +97,47 @@ impl Game<'_> {
                     }
                 }
             }
+            // `GIVE KILLER FLEET e` (exe 0x610dc8 area, re/rules/tutorial.md §3 61): for EN "Terminator" beside EN's last
+            // planet of 1..HanyBolygo−1 (f32 ±20.0; planet 0 with none) with 0x19 vehicles of design 2, three ships of
+            // design 3 and one of 6, and every planet of empire 6 explored by EN; for another empire "Unbeatable" at
+            // ((6 − e)·20, 300) with a hundred ships of design 0x2b.
+            Effect::KillerFleet(e) => {
+                let e = (*e).clamp(0, EMPIRES as i32 - 1) as usize;
+                if e == en {
+                    let (x, y) = self.tutorial_spot(en);
+                    let f = self.new_fleet(b"Terminator", en as u8, 0, x + 20.0, y - 20.0, 0.0) as i32;
+                    self.new_vehicles(f, 2, 0x19);
+                    for d in [3, 3, 3, 6] {
+                        self.new_ship(f, d);
+                    }
+                    for p in 1..=planets {
+                        if self.state.mem.u8(planet(p) + 0x20) == 6 {
+                            self.state.mem.write(planet(p) + 0xd8 + 2 * en as u32, &1i16.to_le_bytes());
+                        }
+                    }
+                } else {
+                    let f = self.new_fleet(b"Unbeatable", e as u8, 0, ((6 - e as i32) * 0x14) as f32, 300.0, 0.0) as i32;
+                    for _ in 0..100 {
+                        self.new_ship(f, 0x2b);
+                    }
+                }
+            }
+            // `GIVE KOLONIZALO FLEET` (§3 62): "Colonization" beside EN's last planet with one ship of design 4.
+            Effect::ColonizationFleet => {
+                let (x, y) = self.tutorial_spot(en);
+                let f = self.new_fleet(b"Colonization", en as u8, 0, x + 20.0, y - 20.0, 0.0) as i32;
+                self.new_ship(f, 4);
+            }
+            // `ADD DESTROYERS TO TRADE`: `DestoryerATradereTutorialhoz()` four times (exe 0x6057f0).
+            Effect::DestroyersToTrade => {
+                for _ in 0..4 {
+                    self.destroyer_for_sale();
+                }
+            }
+            // `DISABLE AI` / `ENABLE AI`: the debug AI-off flag (exe 0xB77244).
+            Effect::AiDisabled(off) => self.state.mem.set_i32(va::AI_OFF, *off as i32),
+            // `SEND MESSAGE n`: `NewMessage(n, 0)`.
+            Effect::SendMessage(n) => self.new_message(*n, 0),
             _ => return false,
         }
         true

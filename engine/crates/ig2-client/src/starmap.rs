@@ -392,6 +392,159 @@ impl Camera {
     pub fn tilt(&mut self, frames: f32) {
         self.pitch = (self.pitch + 0.00628318 * frames).clamp(-1.560795, -0.2);
     }
+
+    /// `Starmap_Move0` (ELF 0x6fe570): the pivot moves by the screen-turned `(mx, my)` scaled by the zoom; a move out
+    /// of the ±300 square is refused (false).
+    fn move0(&mut self, mx: f32, my: f32) -> bool {
+        let (s, c) = ((self.rotate as f64).sin(), (self.rotate as f64).cos());
+        let k = |v: f64| v as f32 * (600.0 - self.zoom) / 600.0 * 0.85;
+        let x = self.x - k(c * mx as f64 - s * my as f64);
+        let y = self.y - k(c * my as f64 + s * mx as f64);
+        if x.abs() > PAN_LIMIT || y.abs() > PAN_LIMIT {
+            return false;
+        }
+        (self.x, self.y) = (x, y);
+        true
+    }
+
+    /// `Starmap_Move` (ELF 0x6fe780): each axis on its own, one unit shorter at a time until it fits.
+    pub fn slide(&mut self, mx: f32, my: f32) {
+        for (mut m, x) in [(mx, true), (my, false)] {
+            while m.abs() > 0.0 && !(if x { self.move0(m, 0.0) } else { self.move0(0.0, m) }) {
+                m -= m.signum();
+            }
+        }
+    }
+
+    /// `StarmapSetTopView` (ELF 0x6fdae0): the targets `[XStart, YStart, Zoom, Rotate, Pitch]` over the planets the
+    /// human knows or owns (box from ±1000, zoom ÷ 1.7); without any, the pivot and zoom stay (no move starts).
+    pub fn top_view(&self, s: &Snapshot) -> ([f32; 5], bool) {
+        let (mut hi, mut lo) = ([-1000.0f32; 2], [1000.0f32; 2]);
+        let mut n = 0;
+        for p in s.planets.iter().filter(|p| p.known || p.owner == s.human) {
+            for k in 0..2 {
+                hi[k] = hi[k].max(p.pos[k]);
+                lo[k] = lo[k].min(p.pos[k]);
+            }
+            n += 1;
+        }
+        if n == 0 {
+            return ([self.x, self.y, self.zoom, 0.0, -1.5608], false);
+        }
+        let zx = ((hi[0] - lo[0]).abs() / 2.0 * 600.0 / 320.0 - 600.0).abs();
+        let zy = ((-hi[1] - -lo[1]).abs() / 2.0 * 600.0 / 240.0 - 600.0).abs();
+        ([(hi[0] + lo[0]) / 2.0, -(hi[1] + lo[1]) / 2.0, zx.min(zy) / 1.7, 0.0, -1.5608], true)
+    }
+}
+
+/// The starmap's held camera input (re/screens/starmap.md §10.6): `StarmapKeyboardHandler`'s flags (the arrows,
+/// numpad + / −, a 20-frame zoom step per `=` / `-` character; the console buttons set the same flags), stepped every 10 ms UI
+/// frame by `StarmapKeyboardDoModifies` (ELF 0x705630), and `Starmap_Autoscroll`'s speeds (ELF 0x6fe890).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CamKeys {
+    /// `KeyboardZoomBe` / `KeyboardZoomKi`, `KeyboardZoomBe2` / `KeyboardZoomKi2` (frames left).
+    pub zoom_in: bool,
+    pub zoom_out: bool,
+    pub zoom_in_steps: i32,
+    pub zoom_out_steps: i32,
+    /// `KeyboardRotateBal` / `Jobb`, `KeyboardPitchFel` / `Le`.
+    pub left: bool,
+    pub right: bool,
+    pub up: bool,
+    pub down: bool,
+    /// `Starmap_Autoscroll::xSpeed` / `ySpeed`.
+    scroll: [i32; 2],
+}
+
+/// A key `StarmapKeyboardHandler` takes for the camera.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CamKey {
+    /// VK 0x6b / 0x6d (numpad + / −), held.
+    ZoomIn,
+    ZoomOut,
+    /// VK 0x25..=0x28, held.
+    Left,
+    Up,
+    Right,
+    Down,
+    /// The characters `=` / `-`: 20 frames of zoom unless the held key is down.
+    StepIn,
+    StepOut,
+}
+
+impl CamKeys {
+    /// The handler's first part (only with no long info, zoom or fleet panel: the caller's gate); `down` is the
+    /// event's state (a character is always down).
+    pub fn key(&mut self, k: CamKey, down: bool) {
+        match k {
+            CamKey::ZoomIn => (self.zoom_in_steps, self.zoom_in) = (0, down),
+            CamKey::ZoomOut => (self.zoom_out_steps, self.zoom_out) = (0, down),
+            CamKey::Left => self.left = down,
+            CamKey::Right => self.right = down,
+            CamKey::Up => self.up = down,
+            CamKey::Down => self.down = down,
+            CamKey::StepIn if !self.zoom_in => self.zoom_in_steps = down as i32 * 20,
+            CamKey::StepOut if !self.zoom_out => self.zoom_out_steps = down as i32 * 20,
+            CamKey::StepIn | CamKey::StepOut => {}
+        }
+    }
+
+    /// `StarmapKeyboardDoModifies`: one UI frame of the flags.
+    pub fn tick(&mut self, cam: &mut Camera) {
+        if self.zoom_in_steps != 0 || self.zoom_out_steps != 0 {
+            cam.zoom_steps(if self.zoom_in_steps != 0 { 1.0 } else { -1.0 });
+            self.zoom_in_steps -= self.zoom_in_steps.signum();
+            self.zoom_out_steps -= self.zoom_out_steps.signum();
+        }
+        if self.zoom_in || self.zoom_out {
+            cam.zoom_steps(if self.zoom_in { 1.0 } else { -1.0 });
+        }
+        if self.left || self.right {
+            cam.turn(if self.left { -1.0 } else { 1.0 });
+        }
+        if self.up || self.down {
+            cam.tilt(if self.down { 1.0 } else { -1.0 });
+        }
+    }
+
+    /// `Starmap_Autoscroll`, one UI frame: the pointer (physical pixels) within 8 of the window's edge with no button
+    /// held sets a target speed of 30 (normalised like the colony's, the second axis seeing the first's new value),
+    /// the speeds step 5 towards it, and the view slides by speed / 5.
+    pub fn autoscroll(&mut self, cam: &mut Camera, at: [i32; 2], size: [u32; 2], held: bool) {
+        let (mut tx, mut ty) = (0i32, 0i32);
+        if !held {
+            if at[0] < 8 {
+                tx = -30;
+            }
+            if size[0].wrapping_sub(8) < at[0] as u32 {
+                tx = 30;
+            }
+            if at[1] < 8 {
+                ty = -30;
+            }
+            if size[1].wrapping_sub(8) < at[1] as u32 {
+                ty = 30;
+            }
+        }
+        let n = |tx: i32, ty: i32| ((tx as f32 * tx as f32 + (ty * ty) as f32) as f64).sqrt();
+        if tx * tx + ty * ty != 0 {
+            tx = ((tx * 30) as f64 / n(tx, ty)) as i32;
+        }
+        if tx * tx + ty * ty != 0 {
+            ty = ((ty * 30) as f64 / n(tx, ty)) as i32;
+        }
+        for (s, t) in [(0, tx), (1, ty)] {
+            if self.scroll[s] < t {
+                self.scroll[s] += 5;
+            }
+            if t < self.scroll[s] {
+                self.scroll[s] -= 5;
+            }
+        }
+        if self.scroll != [0, 0] {
+            cam.slide(self.scroll[0] as f32 / 5.0, self.scroll[1] as f32 / 5.0);
+        }
+    }
 }
 
 /// Something on the map under the cursor or selected.
@@ -1087,6 +1240,60 @@ mod tests {
         assert!((after[0] - w[0]).abs() < 1e-2 && (after[1] - w[1]).abs() < 1e-2);
         c.pan([0.0, 1000.0], [1900.0, 0.0]);
         assert!(c.x.abs() <= PAN_LIMIT && c.y.abs() <= PAN_LIMIT);
+    }
+
+    #[test]
+    fn held_keys_step_every_ui_frame_and_characters_give_twenty() {
+        // `StarmapKeyboardDoModifies`: ← turns −0.02, ↑ tilts −0.00628318 a frame; `=` zooms in for 20 frames, a held
+        // numpad + cancels a running step.
+        let (mut k, mut c) = (CamKeys::default(), cam(1.0, -0.95));
+        k.key(CamKey::Left, true);
+        k.key(CamKey::Up, true);
+        k.tick(&mut c);
+        assert_eq!((c.rotate, c.pitch), (1.0 - 0.02, (-0.95f32 - 0.00628318).clamp(-1.560795, -0.2)));
+        k.key(CamKey::Left, false);
+        k.key(CamKey::Up, false);
+        let mut z = cam(0.0, -0.95);
+        k.key(CamKey::StepIn, true);
+        for _ in 0..25 {
+            k.tick(&mut c);
+            z.zoom_steps(1.0);
+        }
+        let mut w = cam(0.0, -0.95);
+        w.zoom_steps(20.0);
+        assert_eq!(c.zoom, w.zoom);
+        k.key(CamKey::StepIn, true);
+        k.key(CamKey::ZoomIn, true);
+        k.key(CamKey::StepIn, true);
+        assert_eq!((k.zoom_in_steps, k.zoom_in), (0, true));
+        assert!(z.zoom > c.zoom);
+    }
+
+    #[test]
+    fn edge_scroll_ramps_and_the_pivot_stays_in_the_square() {
+        // `Starmap_Autoscroll`: speed 5, 10, … towards 30 at the left edge; `Starmap_Move` cuts the step to fit.
+        let (mut k, mut c) = (CamKeys::default(), cam(0.0, -0.95));
+        let x0 = c.x;
+        k.autoscroll(&mut c, [2, 500], [1920, 1080], false);
+        assert_eq!(k.scroll, [-5, 0]);
+        // −1 unit right-to-left: XStart += 1·(600 − 300)/600·0.85.
+        assert_eq!(c.x, x0 + 1.0 * (600.0 - 300.0) / 600.0 * 0.85);
+        k.autoscroll(&mut c, [2, 500], [1920, 1080], true);
+        assert_eq!(k.scroll, [0, 0]);
+        c.x = 299.9;
+        c.slide(-6.0, 0.0);
+        assert!(c.x <= PAN_LIMIT);
+    }
+
+    #[test]
+    fn top_view_frames_the_known_planets_from_a_thousand() {
+        let s = Snapshot { planets: vec![planet(1, -100.0, -60.0), planet(2, 100.0, 60.0)], ..Default::default() };
+        let (t, moves) = cam(1.0, -0.5).top_view(&s);
+        let zx = (100.0f32 * 600.0 / 320.0 - 600.0).abs();
+        let zy = (60.0f32 * 600.0 / 240.0 - 600.0).abs();
+        assert!(moves);
+        assert_eq!(t, [0.0, 0.0, zx.min(zy) / 1.7, 0.0, -1.5608]);
+        assert!(!cam(1.0, -0.5).top_view(&Snapshot::default()).1);
     }
 
     #[test]

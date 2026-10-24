@@ -310,8 +310,8 @@ footprint as four lines between `get_radarpos` of the virtual corners (−320, �
 (320, 240).
 
 ## 9. Not specified here
-The hot-spots' tooltips, `StarmapKeyboardHandler`'s keys beyond the camera, the console's own buttons (hot-spots 4..6: side view, zoom and
-pitch while held), wormhole particles, `starmapszarok`'s brightness change.
+The hot-spots' tooltips, the console buttons' press animation (`KezeloGombFrame`, `GombFazis`, `MelyikGombot`), wormhole particles,
+`starmapszarok`'s brightness change.
 
 ## 10. Input → orders (lockstep messages)
 The screen never changes the game state itself: every order goes out as `Multi_Send(type, EN, …)` and is carried
@@ -373,8 +373,66 @@ Port: `StarmapEvent::FleetEmptied` (`StarmapContext::sends`, `transfer`).
   `0x15(fleet, mode, kind, (f32)target, 0)`, or for no pick (or Shift) a point: `get_pos` (the galaxy point under
   the cursor, `SikMetszespont` on h = 0) pulled within 600 of the centre, mode 13 (append a waypoint) with Shift,
   14 (patrol) when the click is on the fleet itself (`Tavolsag < max(225, (Zoom/20)²)/4`).
-- Minimap (hot-spot 7, `Mouse_Szoveg_Set(7, …, 261, 367, 118, 83)`): the view's target pivot
-  `XStart = −((x − 274)/92 − 0.5)·600`, `YStart = −((y − 388)/65 − 0.5)·600` (±299.9), tweened over 4 frames.
+- Minimap (hot-spot 7, `STAR_M.RAW` colour 0xd, §10.6): on the press and every frame while held (`Mouse_Megfogva`,
+  not on the release frame) the view's target pivot `XStart = −((x − 274)/92 − 0.5)·600`, `YStart = −((y − 388)/65 −
+  0.5)·600` (±299.9), tweened over 4 frames (`TargetFrame` 4, zoom/rotate/pitch kept): a drag; `PlaySoundGlobal(0)` on
+  the press.
+
+### 10.6 Keys, console and edge scroll
+- `StarmapKeyboardHandler(vk, ch, down)` (ELF 0x704580, exe 0x5aeab0; `DoKeyboard` passes a key down as `(vk, 0, 1)`,
+  a key up as `(vk, 0, 0)`, a character as `(0, ch, 1)`, re/screens/input.md §1):
+  - With no long info (`StarmapPlanetInfoMod`), zoom (`StarmapZoomMode`) or fleet panel (`StarmapFleetMode`), down and
+    up: numpad + / − (0x6b / 0x6d) set `KeyboardZoomBe` / `Ki` (and clear `…2`), ← → ↑ ↓ set `KeyboardRotateBal` /
+    `Jobb`, `KeyboardPitchFel` / `Le`; the characters `=` / `-` set `KeyboardZoomBe2` / `Ki2 = 20` unless the held flag
+    is on (so numpad −'s own `-` is ignored).
+  - Fleet panel up, down: ↑ ↓ move `ActInfoItem2` by ∓2, ← → by ∓1, clamped to `[0, InfoHanyHely − 1]`; `Kezdet`
+    steps by 2 to keep it in the 8 shown; changed → `InfoBetoltAlap`, `ActInfoItem = ActInfoItem2`.
+  - `DAT_0144c4cc` (debug) moves the planet by ±5 with the arrows; not ported.
+  - Unless `TutorialStarmapMindenLetiltvaKiveveAKurzorMozgatoBillentyuket`, down only: PgUp / PgDn (0x21 / 0x22) with
+    no select menu (tax, auto-build, priority, station sale), long info fly (`StarmapPlanetInfoZoomMod`), fleet panel
+    or transfer: planet mode (the human owns a planet, or Shift): `AktPlanet` steps back / on (cyclic, 1-based) to the
+    next planet the human owns (any with Shift) and knows (`+0xd8 + 2EN ≥ 1`, or `DEBUGX`); the long info's
+    `StarSize` hiding moves with it; `AktEpulet = 0`, `StarmapProductPlanetChange`, `StarmapKozepreAllit(+0x18, +0x1c)`,
+    `TanksInfoFirst/Selected = 0`, `DeleteMenus`. Fleet mode (the human has a fleet): `AktFleet` steps to the next
+    own fleet (`+0x15 == EN`), `StarmapKozepreAllit(+0x30, +0x34)`, `DeleteMenus`. `c` (99): planet mode, a free planet,
+    `!StarmapKolonizaloElkuldve`, `OsszHanyKolonizalo[EN] > 0`, `!IndultEKolonizalo`, no info −0x2094 →
+    `Multi_Send(0x16, planet, kind 1)`, `StarmapKolonizaloElkuldve = 1`. `DEBUGX` only: Home (copies the queues to the
+    empty own planets, 0x1a), End (`HanyEpuletLefoglalva = 0`), `l` (+10000 population); not ported.
+- `StarmapKeyboardDoModifies` (ELF 0x705630), every 10 ms UI frame on every screen (`Fake_FRISSITES`): a running
+  `…2` step zooms one key step (in when `ZoomBe2`) and counts both down; a held zoom flag one step; rotate ±0.02
+  (`Bal` −), pitch ±0.00628318 (`Le` +) with the §2.4 clamps.
+- The console and the minimap are mask hot-spots (`Starmap_MouseInit` 0x6feb70: `MouseHanyasIkonKep = 0x1f`, kep
+  0x1f = `STAR_M.RAW`, 640 × 480 colours; `Mouse_Darabol` takes the colour under the pointer, the rectangles are
+  unused; on together, `Mouse_Szoveg_On_Range(1, 7)`, off under the long info, the production view, the transfer
+  and the fleet panel). Colours and boxes: 1 top view 0xf (244..276 × 376..461), 2 rotate right 0x10 (218..271 ×
+  384..461), 3 rotate left 0x11 (385..421 × 384..453), 4 side view 0x12 (361..395 × 377..461), 5 zoom 0xb (278..361 ×
+  366..386), 6 pitch 0xc (277..362 × 452..473), 7 minimap 0xd (272..367 × 387..452). `Starmap_Main` lines 163-257:
+  1 (on the release) `PlaySoundGlobal(0)`, `StarmapSetTopView` (§2.4, tweened 8 frames when a planet counts); 4 (on
+  the release) the sound, `TargetMozogj`, 8 frames, `StarmapSetSideView`; 2 / 3 while held `KeyboardRotateJobb` /
+  `Bal` (the other cleared), cleared on the release; 5 while held left `KeyboardZoomBe`, right `KeyboardZoomKi`; 6
+  left `KeyboardPitchFel`, right `Le`; 2, 3, 5, 6 click on the press. Not with `ControlConfig[0]`.
+- `Starmap_Autoscroll` (ELF 0x6fe890), every UI frame unless entering/leaving a screen: on the starmap (`AktKep` 2),
+  no `ControlConfig[0]`, no tutorial, long info or zoom; no button held and the physical pointer within 8 px of the
+  window's edge → a target ±30 per axis, normalised to length 30 (f64, the second axis seeing the first's new value);
+  `xSpeed`/`ySpeed` step 5 towards it; non-zero → `Starmap_Move(xSpeed/5, ySpeed/5)` (§2.4).
+- Port: `starmap::CamKeys`, `window.rs` `starmap_key`, `console_press`/`console_release`, `step_selection`
+  (starmap_panels.rs), `InfoPanel::key`.
+
+### 10.7 The rename (`IOMode`, `IOAzonosito` 0x15 planet / 0x16 fleet)
+- Start (`Starmap_Main` ELF 0x6f50a0, the info box branch, `ControlConfig[0]` clear): hot-spot 8 with both buttons held.
+  Planet mode, any planet (after the branch's `PlaySoundGlobal(5)`): `IOString` = the planet's name (record +0),
+  `IOMaxLen` 0xf, colour 0x22. Fleet mode, `EN`'s fleet (not `fSpec`): `PlaySoundGlobal(0)`, the fleet's name (+0),
+  `IOMaxLen` 0x13, colour 3, the fleet's `+0x52 |= 0x800` while editing. Both: `IOStringBackup` = the old name, `IOX`
+  0x32, `IOY` 0x1ab, `IOCharSize` 2, `IOKurzor` = its length, `IOGombnyomasraTorles` 1, `Mouse_FelengedesMajdMegvar`.
+- The name is edited in place (no message; every machine keeps its own). Keys: `DoKeyboard`'s editing branch
+  (re/screens/input.md §1); Enter ends it (`TutorialCheckEvent(4)` fleet, `(3)` planet); Esc restores the backup.
+  Any press ends it (`Starmap_Main` line 157), the backup restored unless the press is on hot-spot 8. `FlottaDelete` /
+  `FlottaOsszevon` end a fleet's rename when the fleet goes.
+- Drawn by `StarmapGfx2D_3` (ELF 0x6d4a30): until the first key a colour-0x27 box (`FillToScreen(IOX − 1, IOY − 1,
+  len·cw + 2, ch + 2)`), `KiirStr(IOString, IOX, IOY, IOMaxLen, 2, 4, IOColor)`, on `AktIdo200` odd the cursor bar
+  `FillToScreen(IOX + IOKurzor·cw, IOY + ch, cw, 2, 1)` (on the last cell once full).
+- Port: `starmap_menus::Rename`, `window.rs` `start_rename`/`rename_key`/`write_rename`. Not ported: the `0x800` flag,
+  the tutorial events 3/4.
 
 ### 10.4 The selection fix-up
 After every message pass: with `StarmapMode` 2 and `AktFleet` gone (owner 0xFF) or no longer seen (`+0x19 + EN`
@@ -887,7 +945,11 @@ The exit button (hot-spot 9) is §12.2's: `StarmapGfx2D_2`'s `starf` fader `((1 
   `Name[3]` when the vehicles wouldn't fit); row 2 `Name[1]` (`Name[2]` when unaffordable) with `cost = max(0,
   (count·Tervek[owner][D +0x1c] +0x24 − TervHajoinakAra(owner, fleet, d))·2)`.
 - `SellShipMehet(1)`: `count·D +0x28 ≤ fleet +0x78 − fleet +0x5c`; `(2)`: `cost < 1` or `cost ≤ MoneyMennyi(EN, 0)`.
-- The release on a row it allows: `GetTervEladasOszto < 0` → `Story_Special(0x19, AktFleet, d)` (SP; no message);
+- `GetHosElkuldesStr(owner, d, SellShipMehet(1))` (ELF 0x73e960): for `EN`'s design with story key (`+0x80`) / 10 = 180
+  `_s(5, 0x70a)` ("Send back to academy"; 0x70b "Unable to …" when it doesn't fit), / 10 = 235 `_s(5, 0x930)`
+  ("Unable to sell"); else `_s(5, 0x6e2)` ("Terminate contract"; 0x6e3 "Unable to …").
+- The release on a row it allows: `GetTervEladasOszto < 0` → `Story_Special(0x19, AktFleet, d)` (SP; no message; the
+  port sends `Command::HeroSentBack`, single player only);
   row 1 → `0x34(d, 2, AktFleet)`; row 2 → `0x35(d, AktFleet)` (`MULTIGET_Design` ELF 0x50c430: 0x34 sells the fleet's
   units of the design for `TervHajoinakCsokkentettAra`, logs the design's retirement, offers a copy on the market,
   `TervDelete`; 0x35 refits them to the upgrade target for the cost; ported: `re/rules/design-orders.md`). The menu closes. No sound.

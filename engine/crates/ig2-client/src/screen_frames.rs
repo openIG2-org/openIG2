@@ -11,6 +11,7 @@
 //! info heads' marks) and drawn in the remaster's gamma-space mesh pass (re/screens/render.md §2, §5).
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use ig2_formats::Install;
 
@@ -137,11 +138,14 @@ fn head_lights(s: &InfoFrame, k: usize, mut l: Lights) -> Lights {
 pub struct FrameModels {
     white: TexId,
     textures: HashMap<String, TexId>,
-    info: HashMap<usize, Option<Model>>,
-    globes: HashMap<usize, Option<Model>>,
-    flag: Option<Option<Model>>,
-    marker: Option<Option<Model>>,
-    knob: Option<Option<Model>>,
+    /// The info screen's models, shared with each frame's pass (not copied).
+    info: HashMap<usize, Option<Rc<Model>>>,
+    globes: HashMap<usize, Option<Rc<Model>>>,
+    /// A list globe with its texture's `uv_mul` applied, by slot and texture (read from the `.pvr` once).
+    globes_scaled: HashMap<(usize, String), Rc<Model>>,
+    flag: Option<Option<Rc<Model>>>,
+    marker: Option<Option<Rc<Model>>>,
+    knob: Option<Option<Rc<Model>>>,
     messages: HashMap<usize, Option<Model>>,
     target: Option<Target>,
 }
@@ -194,6 +198,7 @@ impl FrameModels {
             textures: HashMap::new(),
             info: HashMap::new(),
             globes: HashMap::new(),
+            globes_scaled: HashMap::new(),
             flag: None,
             marker: None,
             knob: None,
@@ -298,9 +303,9 @@ impl FrameModels {
     /// The info screen's frame at `infoframe` (`SetFrame(InfoMainMesh, infoframe)`, whole frames [inf]).
     pub fn render_info(&mut self, r: &mut Renderer, install: &Install, s: &InfoFrame, size: [f32; 2]) -> Option<TexId> {
         let pose = s.frame.max(0.0) as usize;
-        let info = self.info.entry(pose).or_insert_with(|| load(install, "vector/info/", "info.xvb", "textures/info/", Some(pose))).clone()?;
-        let marker = self.marker.get_or_insert_with(|| load(install, "vector/info/", "negyzet1.xvb", "textures/info/", None)).clone();
-        let knob = self.knob.get_or_insert_with(|| load(install, "vector/info/", "hszog0.xvb", "textures/info/", None)).clone();
+        let info = self.info.entry(pose).or_insert_with(|| load(install, "vector/info/", "info.xvb", "textures/info/", Some(pose)).map(Rc::new)).clone()?;
+        let marker = self.marker.get_or_insert_with(|| load(install, "vector/info/", "negyzet1.xvb", "textures/info/", None).map(Rc::new)).clone();
+        let knob = self.knob.get_or_insert_with(|| load(install, "vector/info/", "hszog0.xvb", "textures/info/", None).map(Rc::new)).clone();
         let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
         let place = Placement::add_to_scene(info.origin, 1.22);
         let m = place.rotated(std::f32::consts::FRAC_PI_2, 0.0, 0.0).map(|x| x * 1024.0);
@@ -380,9 +385,9 @@ impl FrameModels {
         for (k, g) in s.globes.iter().enumerate() {
             let Some(g) = g else { continue };
             let model = if g.fleet {
-                self.flag.get_or_insert_with(|| load_last(install, "vector/spacewar/", "flag10.xvb", "textures/spacewar/")).clone()
+                self.flag.get_or_insert_with(|| load_last(install, "vector/spacewar/", "flag10.xvb", "textures/spacewar/").map(Rc::new)).clone()
             } else {
-                self.globes.entry(k).or_insert_with(|| load(install, "vector/info/", &format!("bolygo_{k}.xvb"), "textures/info/", None)).clone()
+                self.globes.entry(k).or_insert_with(|| load(install, "vector/info/", &format!("bolygo_{k}.xvb"), "textures/info/", None).map(Rc::new)).clone()
             };
             let Some(model) = model else { continue };
             let place = Placement::add_to_scene(model.origin, if g.fleet { 0.025 } else { 0.029 });
@@ -396,15 +401,19 @@ impl FrameModels {
             let tex = (!g.fleet).then(|| install.resolve_texture("textures/starmap/", &format!("p{n}.bmp"))).flatten();
             let skin = |ix: &[u16]| if ix.first() == Some(&0) { tex.clone() } else { None };
             // The remaster's `ig2_vertex.shader` scales the UVs by the texture's `uv_mul` (re/screens/starmap.md §3.3).
-            let mut model = model;
-            if let Some(t) = &tex {
-                let k = crate::assets::Image::uv_mul(install, t);
-                for p in model.parts.iter_mut().filter(|p| p.index.first() == Some(&0)) {
-                    for v in &mut p.verts {
-                        v.uv = [v.uv[0] * k[0], v.uv[1] * k[1]];
+            let model = match &tex {
+                Some(t) => self.globes_scaled.entry((k, t.clone())).or_insert_with(|| {
+                    let k = crate::assets::Image::uv_mul(install, t);
+                    let mut model = model;
+                    for p in Rc::make_mut(&mut model).parts.iter_mut().filter(|p| p.index.first() == Some(&0)) {
+                        for v in &mut p.verts {
+                            v.uv = [v.uv[0] * k[0], v.uv[1] * k[1]];
+                        }
                     }
-                }
-            }
+                    model
+                }).clone(),
+                None => model,
+            };
             let l = match g.red {
                 Some(c) => root.clone().ambient(c),
                 None => root.clone(),

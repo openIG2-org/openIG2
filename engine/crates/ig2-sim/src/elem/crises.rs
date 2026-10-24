@@ -42,7 +42,7 @@ fn add_adat(s: &mut Story, off: usize, x: i32) {
 /// `st_fNewPos(name, owner, id, x, y, speed)` as the exe inlines it: `FlottaNew` at the truncated point, then
 /// `AutoAddship(f, id)`.
 fn fleet_at(s: &mut Story, owner: i32, id: i32, x: f32, y: f32, speed: f32, w: &mut dyn StoryWorld) -> i32 {
-    let f = w.new_fleet("", owner, id, x as i32 as f32, y as i32 as f32, speed);
+    let f = w.new_fleet(&crate::story::FleetName::Text(id), owner, id, x as i32 as f32, y as i32 as f32, speed);
     s.auto_add_ship(f, id, w);
     f
 }
@@ -380,7 +380,7 @@ pub(super) fn story_804(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
     if s.starting_now() {
         for id in [8040, 8041] {
             let p = s.b_search(id, 0, w);
-            s.f_new_ex("", 10, id, 0.06, p.wrapping_neg(), 5, w);
+            s.f_new_ex(crate::story::FleetName::Text(id), 10, id, 0.06, p.wrapping_neg(), 5, w);
         }
         s.f_add_ship(8041, 3, 1, w);
         s.f_add_ship(8041, 3, 1, w);
@@ -740,7 +740,7 @@ pub(super) fn story_807(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         s.sz_start(8074, 60);
     }
     if s.counter(8074) {
-        let f = s.f_new_ex("", en, 8074, 0.1, 1, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(8074), en, 8074, 0.1, 1, 0, w);
         let b = s.last_fn[last_fn::B];
         w.event(StoryEvent::MoveFleet { fleet: f, kind: 1, mode: 1, x: b as f32, y: 0.0 });
         s.remove_fleet_id(8074, w);
@@ -770,7 +770,7 @@ pub(super) fn story_807(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         }
     }
     if escort {
-        let f = s.f_new_ex("", 10, 8072, 0.0, 1, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(8072), 10, 8072, 0.0, 1, 0, w);
         // `st_fShow(8072)`, inlined.
         let g = s.f_search(8072, w);
         if g >= 1 {
@@ -830,7 +830,7 @@ pub(super) fn story_809(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         s.sz_start(8099, 5);
         for id in 8092..=8094 {
             let p = s.b_search(id - 1, 0, w);
-            s.f_new_ex("", 13, id, 0.0, 2, p, w);
+            s.f_new_ex(crate::story::FleetName::Text(id), 13, id, 0.0, 2, p, w);
         }
     }
     if s.counter(8099) {

@@ -413,7 +413,8 @@ building count (exe 0xBA9518) −1; `RemoveTarget(−slot)`.
    weapons & 0x28 ? size : 0`.
 2. The attacking fleet (`WF.+0x338 > 0`) loses its in-battle bit (`+0x52 &= ~1`); planet `+0x64 := 0`.
 3. `s == −10` → `s :=` planet owner.
-4. Not `sim`: story save, tutorial, screen restore (UI).
+4. Not `sim`: story save and screen restore (UI); simulated or not: `s == EN` → `TutorialCheckEvent(0x21)`
+   (ELF 0x4968c0 line 31).
 5. **Re-embarking**: each alive unit with side ≠ planet owner, not a partner or mine (0x28000):
    fleet `g = origin[0]` (< 0 → 0; owner ≠ side → 0); if `g` is full (`+0x5c ≥ +0x78`) or 0, search fleets
    `1..=n` of that owner with room within Manhattan distance ≤ 20 of **fleet `g`'s position**

@@ -37,6 +37,13 @@ const VOLATILE = [
   ['st_dipl', 0xf2656c, 8], ['st_diplvalasz', 0xf42660, 4], ['st_arr', 0xf2654c, 20], ['st_gr', 0xf26538, 20],
   ['st_youwas', 0xf26531, 1], ['st_grwin', 0xf26532, 2], ['st_kem', 0xf26588, 4], ['st_spw', 0xf265c4, 8],
   ['st_locked', 0xf265dc, 4],
+  // The story statics the save leaves out (Game keeps them at these addresses: save.rs va::STORY_MESSAGE & co.):
+  // StoryMessageBlokk/Resz, DisableAddShip, last_fn_q/b/x/y, last_fn_r, the storyline story and map, nearest_bir_planet,
+  // st_bGet3BestProd/st_bGet3Nearest/st_bGet4Brutal's statics, KemkedesAzonosito, KemkedesTulaj/Valasz/AktKem,
+  // last_hajo_kigyujt_flotta + CounterIntelligence_kem, KemEsemeny.
+  ['st_msg', 0xf26574, 8], ['st_noaddship', 0xf273f0, 4], ['st_lastfn', 0xf27520, 0x10], ['st_lastfn_r', 0xf273f4, 4],
+  ['st_line', 0xb77288, 8], ['st_nearest', 0xf2652c, 4], ['st_best', 0xf432b8, 0x28], ['st_kemazon', 0xf26584, 4],
+  ['st_kemtulaj', 0xf26598, 12], ['st_hajokigy', 0xf265cc, 8], ['kemesemeny', 0xf2f874, 0x38],
   // Colony side: AutoBuildMitEpit, NextColonyMap's cursor, HanyTradePortVan, TalalmanyEroHP.
   ['abmitepit', 0x996530, 0x80], ['mapcursor', 0x996420, 8], ['tradeports', 0xbb23f4, 0x24], ['erohp', 0xba9210, 193 * 4],
   // Unsaved bytes inside saved blocks: the tail of contact slot -1, the cell between DiplomaciaMikorHivtaUtoljara
@@ -73,6 +80,8 @@ const cfg = { scenario: 'scenario/quick.scn', startAfterFrames: 1200, slot: 99, 
   seed: 4242, stage: false, traders: false, spies: false, spiesMode: 'base', merges: false, wormholes: false, battles: false, battlesMode: 'space', deaths: false, deathsMode: 'base', messages: false, messagesMode: 'base', scroll2: false, tutorialSighting: false, slotBase: 100, preSlot: 98, lopsidedTanks: 40, evenTanks: 16, lostTanks: 3, landShips: 30,
  traderNear: 0.5, storyCountdown: 100, aiEmpire: 3, randlog: false, extraOffers: 5, orders: 0, ordersEvery: 3, colony: 0, research: 0, researchEvery: 2, info: 0, infoEvery: 2, answers: 0, answersEvery: 2 };
 recv('config', (m) => { Object.assign(cfg, m.payload); });
+// --warmup N: the game runs N ticks after the load before save 0 (no saves; libc reseeded as in the saved ticks).
+let warm = 0, warmSave = false;
 
 let buf = [];
 function emit(ev) { buf.push(ev); if (buf.length >= 4) flush(); }
@@ -1602,6 +1611,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
   onEnter() {
     if (busy) return;
     frames++;
+    if (warmSave) { warmSave = false; save('warmup'); }
     if (cfg.scroll2 && phase === 2) scrollPosts();
     if (phase === 0 && frames === cfg.startAfterFrames) {
       betolt(Memory.allocAnsiString(cfg.scenario));
@@ -1645,7 +1655,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
       }
       busy = false;
       emit({ k: 'loaded', ido: A.Ido.readS32(), ido2: A.Ido2.readS32(), kep: A.AktKep.readS32(), home: homeKep });
-      save('load');
+      if (!cfg.warmup) save('load');
       phase = 2;
     }
   },
@@ -1654,6 +1664,12 @@ Interceptor.attach(A.Fake_FRISSITES, {
 Interceptor.attach(A.IdoNapValtozott, {
   onEnter() {
     if (busy || phase !== 2) return;
+    if (warm < (cfg.warmup | 0)) {
+      warm++;
+      srand((cfg.seed + A.Ido2.readS32()) >>> 0);
+      if (warm === cfg.warmup) warmSave = true;
+      return;
+    }
     if (cfg.orders && k >= 1 && k % cfg.ordersEvery === 0) stageOrders();
     if (cfg.colony && k >= 1 && k % cfg.ordersEvery === 0) stageColony();
     if (cfg.research && k >= 1 && k % cfg.researchEvery === 0) stageResearch();

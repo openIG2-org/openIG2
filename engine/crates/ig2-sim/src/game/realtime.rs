@@ -17,10 +17,11 @@
 //! screen is up (`AktKep == 0xB`), the human's orders arrive as in MP (`MULTIGET_SpaceWar` runs in SP too), and
 //! leaving a finished battle's screen ends it (`SpaceWar_Kilep` → `SpaceWarVege`).
 
+use super::story_chain;
 use super::*;
 use crate::ground::{Clock, GroundEvent, GroundOrder, Start};
 use crate::spacebattle::{
-    self, Battle, BattleRules, BattleWorld, Order, SetupBuilding, SetupFleet, SetupInput, SetupPlanet, SetupShip, ShipType, Tick,
+    self, Battle, BattleRules, BattleWorld, Order, SetupBuilding, SetupFleet, SetupInput, SetupPlanet, SetupShip, ShipType, Tick, WeaponRules,
 };
 use crate::spacewar::CombatWorld;
 use crate::story::Participant;
@@ -176,6 +177,23 @@ impl Game<'_> {
             && (self.state.mem.i32(at::SPACE_RUNNING) != 0 || self.state.mem.i32(at::GROUND_RUNNING) != 0)
     }
 
+    /// Single player with the battle screen up (`AktKep == 0xB`, [`SpBattles::on_screen`]): `Fake_FRISSITES` freezes the
+    /// strategic time (`re/rules/time-and-rng.md` §1): no `FRISSIT_Datum`, no daily block, no strategic systems.
+    pub fn sp_screen_frozen(&self) -> bool {
+        self.view == ViewMode::Classic && self.sp_battles.live && self.sp_battles.on_screen && !self.globals().multiplayer
+    }
+
+    /// `Fake_FRISSITES`'s frozen SP branch ([`Game::sp_screen_frozen`]): `GroundWarSetBattleStatus` (exe 0x47caa0),
+    /// `IdoMultiPlayerBattle` += 1, no `FRISSIT_Grwar`/`FRISSIT_Colony` (the screen is SpaceWar), `FRISSIT_SpaceWar`.
+    pub(super) fn sp_frozen_tick(&mut self) {
+        let first_event = self.events.len();
+        self.ground_battle_status();
+        let m = &mut self.state.mem;
+        m.set_i32(at::MP_BATTLE_TICKS, m.i32(at::MP_BATTLE_TICKS).wrapping_add(1));
+        self.space_tick();
+        self.post_messages(first_event);
+    }
+
     /// `Fake_FRISSITES`'s branch while an MP battle runs: no clock step, no strategic systems; only
     /// `GroundWarSetBattleStatus` (exe 0x47caa0), `IdoMultiPlayerBattle`, `FRISSIT_Grwar` unless a space battle
     /// runs, and `FRISSIT_SpaceWar` (`MULTISEND_SpWarSynch` only keeps the original's resync alive).
@@ -263,7 +281,8 @@ impl Game<'_> {
             planet_record: planet_record.as_ref(),
             defence_fleets: None,
         };
-        let rules = self.rules.space.setup_rules();
+        let mut rules = self.rules.space.setup_rules();
+        rules.weapons = self.live_weapons().0;
         if self.realtime.types.is_empty() {
             self.realtime.types = self.rules.space.ship_types.clone();
         }
@@ -321,7 +340,8 @@ impl Game<'_> {
             planet_record: None,
             defence_fleets: None,
         };
-        let rules = self.rules.space.setup_rules();
+        let mut rules = self.rules.space.setup_rules();
+        rules.weapons = self.live_weapons().0;
         if self.realtime.types.is_empty() {
             self.realtime.types = self.rules.space.ship_types.clone();
         }
@@ -332,6 +352,14 @@ impl Game<'_> {
     }
 
     /// The tick's switches (`BattleRules`) from the state.
+    /// The weapon table as `InitSpaceWar` leaves it (`fegyverszamol`: the damages from the techs' firepower), and its
+    /// records' words.
+    fn live_weapons(&self) -> (Vec<WeaponRules>, Vec<Vec<i32>>) {
+        let (mut w, mut words) = (self.rules.space.weapons.clone(), self.rules.space.weapon_words.clone());
+        crate::spacebattle::fegyverszamol(&mut w, &mut words, &self.rules.ai.design.firepower);
+        (w, words)
+    }
+
     fn battle_rules(&self) -> BattleRules {
         let m = &self.state.mem;
         let adat = |o: u32| m.i32(va::STORY_ADAT + o);
@@ -356,7 +384,8 @@ impl Game<'_> {
     /// (ships, fleets, the battle planet, destroyed buildings, the follow-ups of deleted fleets).
     fn with_battle<T>(&mut self, slot: usize, f: impl FnOnce(&mut Battle, &mut Tick) -> T) -> T {
         let g = self.globals();
-        let rules = self.battle_rules();
+        let (weapons, words) = self.live_weapons();
+        let rules = BattleRules { weapons, ..self.battle_rules() };
         let bp = self.realtime.slots[slot].planet.max(0) as usize;
         let mut world = StateWorld {
             combat: self.state.combat(),
@@ -376,7 +405,7 @@ impl Game<'_> {
         let mut rng = self.state.rng();
         let mut events = Vec::new();
         let out = {
-            let mut t = Tick { rules: &rules, weapon_words: &self.rules.space.weapon_words, rng: &mut rng, world: &mut world, events: &mut events };
+            let mut t = Tick { rules: &rules, weapon_words: &words, rng: &mut rng, world: &mut world, events: &mut events };
             f(&mut self.realtime.slots[slot], &mut t)
         };
         self.state.store_rng(&rng);
@@ -476,10 +505,20 @@ impl Game<'_> {
             | Order::DirectFire { unit, .. } | Order::Weapons { unit, .. } => own_unit(unit),
             Order::GunTarget { .. } => b.planet_owner == issuer as i32,
             Order::FighterStance { side, .. } => side == issuer as usize,
-            Order::Retreat | Order::ArmAll => true,
+            Order::Retreat | Order::ArmAll | Order::Strengths { .. } | Order::Outgunned => true,
         };
         if !mine {
             return false;
+        }
+        if let Order::Outgunned = o {
+            // The screen writes `Hajok[s] +4` (the ship's experience byte) directly.
+            let ships = self.realtime.slots[slot].outgunned();
+            for s in ships {
+                if let Some(c) = self.state.ships.get_mut(s) {
+                    c[4] = c[4].wrapping_add(1);
+                }
+            }
+            return true;
         }
         // The screen only sends points inside the arena (`Battle::screen_point`); a peer's packet gets the same clamp.
         let o = match o {
@@ -597,7 +636,7 @@ impl Game<'_> {
         m.set_u8(at::SP_LOSER_RETREATED, 0);
         let list: Vec<Participant> =
             r.participants.iter().map(|p| Participant { owner: p.owner, slot_id: p.fleet, fleet_id: p.story_id }).collect();
-        self.with_story(|st, w| st.space_battle_finished(&list, true, &ScenarioStories, w));
+        self.with_story(|st, w| st.space_battle_finished(&list, true, &story_chain(), w));
         self.events.push(GameEvent::RealTime(RealTimeEvent::SpaceEnded { slot, winner: r.winner }));
     }
 
@@ -626,7 +665,7 @@ impl Game<'_> {
     fn ground_finished(&mut self, p: usize, s: i32) {
         let buildings = self.state.mem.i32(va::BUILDINGS_OCCUPIED + 4 * p as u32);
         let owner = self.planet_owner(p) as i32;
-        self.with_story(|st, w| st.ground_battle_finished_check(buildings, owner, &ScenarioStories, w));
+        self.with_story(|st, w| st.ground_battle_finished_check(buildings, owner, &story_chain(), w));
         self.state.mem.set_i32(at::GROUND_RUNNING, 0);
         self.events.push(GameEvent::RealTime(RealTimeEvent::GroundEnded { planet: p, holder: s }));
     }
@@ -652,6 +691,17 @@ impl Game<'_> {
         if let Some(s) = ended {
             self.ground_finished(p, s);
         }
+    }
+
+    /// `GetWarfareStatus(p)` (ELF 0x4a4f10): 1 while planet `p`'s field is contested (`WF::GetStatus() == −1`; like the
+    /// exe, the call refreshes the field's cached status). The planets without a field are 0.
+    pub fn warfare_status(&mut self, p: usize) -> i32 {
+        if p == 0 || p > self.state.planet_count() || self.state.ground_field(p).is_none() {
+            return 0;
+        }
+        let mut s = crate::ground::EMPTY;
+        self.with_war(p, |w| s = w.status());
+        (s == crate::ground::CONTESTED) as i32
     }
 
     /// `KiMelyikBolygonVan[k]` (exe 0x9ABAE8): the planet on empire k + 1's colony screen; none in the canonical

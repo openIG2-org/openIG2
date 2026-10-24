@@ -86,6 +86,14 @@ impl WarCtx<'_> {
     fn present(&self) -> bool {
         self.snap.present.get(self.en as usize).copied().unwrap_or(0) != 0
     }
+    /// `ColonyGfx2D_1`'s `local_22`: single player, or the MP war's planet with EN its owner or on the field.
+    fn shows(&self) -> bool {
+        !self.snap.multiplayer || (self.snap.mp_war_here && (!self.foreign() || self.present()))
+    }
+    /// `Colony_MouseInit2`'s tail: a bystander of the MP war on its planet gets no war buttons 0xb..=0x10.
+    fn bystander(&self) -> bool {
+        self.snap.multiplayer && self.snap.mp_war_here && self.foreign() && !self.present()
+    }
     fn timers(&self) -> (i32, i32) {
         self.snap.timers.get((self.en - 1).max(0) as usize).copied().unwrap_or((0, 0))
     }
@@ -277,6 +285,9 @@ impl WarUi {
 
     /// `Colony_MouseInit2`: the war button `id` is enabled.
     pub fn enabled(&self, c: &WarCtx, id: u32) -> bool {
+        if (0xb..=0x10).contains(&id) && c.bystander() {
+            return false;
+        }
         match id {
             0xb => self.call_in(c, weapon::FIGHTER),
             0xc => self.call_in(c, weapon::BIG_SHIP),
@@ -727,7 +738,8 @@ impl WarUi {
         let full = [1.0; 4];
         let (fighters, ships) = c.timers();
         for &(id, x, brush) in &BUTTONS {
-            if !self.enabled(c, id) {
+            // Brushes 21, 24..=27 only with `local_22`; 20 (0xb) and 30 (0x12) without.
+            if !self.enabled(c, id) || ((0xc..=0x10).contains(&id) && !c.shows()) {
                 continue;
             }
             let frame = match id {
@@ -746,8 +758,8 @@ impl WarUi {
                 fill(f, x, 427.0, (t as f64 * 31.0 / 200.0) as i32 as f32, 5.0, 7);
             }
         }
-        // `ColonyGfx2D_1`: the retreat and landing lines (owner ≠ EN).
-        if c.foreign() {
+        // `ColonyGfx2D_1`: the retreat and landing lines (owner ≠ EN, `local_22`).
+        if c.foreign() && c.shows() {
             if c.retreating() {
                 d.font.text(f, v, &d.line(3), 220.0, 40.0, 70, 2, Align::Left, col(2), None);
             }
@@ -779,6 +791,7 @@ pub fn self_destruct_ready(c: &WarCtx) -> bool {
 pub fn draw_self_destruct(f: &mut Frame, c: &WarCtx, d: &Draw2d) {
     let col = |i: usize| d.palette.get(i).copied().unwrap_or([1.0; 3]);
     if self_destruct_ready(c)
+        && c.shows()
         && let Some(b) = d.brushes.get(19)
     {
         d.pics.brush(f, d.v, b, 1, None, [1.0; 4]);
@@ -908,6 +921,8 @@ mod tests {
             retreat: [0; 18],
             present,
             war_flag: true,
+            multiplayer: false,
+            mp_war_here: false,
             to_land: Vec::new(),
             attacker: 0,
             planet_name: b"Sol 10".to_vec(),
@@ -1057,5 +1072,33 @@ mod tests {
         let c = WarCtx { snap: &own, en: 1, tutorial_paused: false };
         assert!(orders(&w.press(&c, [500.0, 300.0], true, true)).is_empty());
         assert_eq!(orders(&w.press(&c, [500.0, 300.0], false, true)), [GroundOrder::PlaceAll { x: 13, y: 20 }]);
+    }
+
+    /// `Colony_MouseInit2`'s MP tail and `ColonyGfx2D_1`'s `local_22` (spec §11.1): a bystander of the MP war on its
+    /// planet (not the owner, no units on the field) gets no war buttons; a participant keeps them; single player has
+    /// no gate.
+    #[test]
+    fn mp_bystanders_get_no_war_buttons() {
+        let mut w = ui();
+        w.selected = BTreeSet::from([0, 1, 2]);
+        let s = ColonySnap { multiplayer: true, mp_war_here: true, ..field() };
+        let on = |w: &WarUi, c: &WarCtx| (0xb..=0x10).filter(|&id| w.enabled(c, id)).collect::<Vec<_>>();
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let all = on(&w, &c);
+        assert!(all.contains(&0x10) && all.contains(&0xb), "{all:x?}");
+        assert!(c.shows() && !c.bystander());
+        let mut present = s.present;
+        present[1] = 0;
+        let by = ColonySnap { present, ..s.clone() };
+        let c = WarCtx { snap: &by, en: 1, tutorial_paused: false };
+        assert!(on(&w, &c).is_empty() && !c.shows());
+        // Another planet than the MP war's: the buttons stay, the gated brushes and lines don't show.
+        let elsewhere = ColonySnap { mp_war_here: false, ..s.clone() };
+        let c = WarCtx { snap: &elsewhere, en: 1, tutorial_paused: false };
+        assert_eq!(on(&w, &c), all);
+        assert!(!c.shows());
+        let sp = ColonySnap { present, multiplayer: false, ..s };
+        let c = WarCtx { snap: &sp, en: 1, tutorial_paused: false };
+        assert!(c.shows() && !c.bystander());
     }
 }

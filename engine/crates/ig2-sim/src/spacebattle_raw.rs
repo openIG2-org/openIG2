@@ -71,7 +71,8 @@ pub struct Statics {
     pub designs: Vec<Vec<Design>>,
 }
 
-pub fn rules(mem: &Mem, st: &Statics) -> (BattleRules, Vec<Vec<i32>>) {
+/// The trace's live weapon table (`fegyverek` as `InitSpaceWar` left it) and each record's 46 words.
+pub fn weapons(st: &Statics) -> (Vec<WeaponRules>, Vec<Vec<i32>>) {
     let mut weapons = Vec::new();
     let mut words = Vec::new();
     for w in 0..40 {
@@ -101,6 +102,11 @@ pub fn rules(mem: &Mem, st: &Statics) -> (BattleRules, Vec<Vec<i32>>) {
             if o + 4 <= st.weapons.len() { i32_at(&st.weapons, o) } else { 0 }
         }).collect());
     }
+    (weapons, words)
+}
+
+pub fn rules(mem: &Mem, st: &Statics) -> (BattleRules, Vec<Vec<i32>>) {
+    let (weapons, words) = weapons(st);
     let forms = (0..40)
         .map(|f| {
             let b = mem.get(&format!("form{f}"));
@@ -363,6 +369,7 @@ pub fn decode(mem: &Mem, st: &Statics) -> Battle {
             }
         }
         b.sides.push(Side {
+            outgunned: s[0] != 0,
             centre: v3_at(s, 0x1c),
             rotation: [f32_at(s, 0x2c), f32_at(s, 0x30), f32_at(s, 0x34)],
             fighter_count: i32_at(s, 0x64),
@@ -434,6 +441,7 @@ pub fn decode(mem: &Mem, st: &Statics) -> Battle {
     b.ground_war_started = o[0x2005] != 0;
     b.f2d84 = o[0x2d84] != 0;
     b.f2d86 = o[0x2d86] != 0;
+    b.f2d98 = o[0x2d98] != 0;
     b.human_retreated = o[0x2d90] != 0;
     b.ai_retreated = o[0x2d91] != 0;
     for k in 0..19 {

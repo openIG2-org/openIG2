@@ -130,13 +130,18 @@ pub struct TutorialUi {
     pub counter: i32,
     /// `AktKep` at the last tick: an entry raises the screen's `*_Belep` event.
     kep: i32,
+    /// `DISABLE OVERRUN`'s saved battle debug flags (`DebugData_Battle`, `DebugDatagrBattle`, `GrSpOverrun`,
+    /// `GrNoOverrun`: exe 0xB77230..0xB7723C), put back by `TutorialStop` (`KellOverrunVisszaAllitas`).
+    pub overrun: Option<[i32; 4]>,
+    /// The debug AI-off flag (exe 0xB77244) at `TutorialStart`, put back by `TutorialStop`.
+    pub ai_off: Option<i32>,
 }
 
 impl TutorialUi {
     /// `TutorialStart("main", chapter)` (exe 0x611f80).
     pub fn start(install: &Install, chapter: i32, i: Inputs) -> Result<(Self, Vec<Effect>), String> {
         let script = install.read(SCRIPT).map_err(|e| format!("{SCRIPT}: {e}"))?;
-        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2 };
+        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2, overrun: None, ai_off: None };
         let mut effects = Vec::new();
         let mut h = Host { i, install, mou: &mut ui.mou, effects: &mut effects };
         ui.t.start(script, chapter, &mut h);
@@ -170,6 +175,11 @@ impl TutorialUi {
 
     /// The screens' entry events (re/rules/tutorial.md §4): `Starmap_Belep` 0x1a, `Colony_Belep` 7,
     /// `Diplomacy_Belep` 0x28; `SpaceWar_Belep` ends `WAITFORBATTLE`.
+    /// The screen the last tick saw (`entered`'s `AktKep`).
+    pub fn screen(&self) -> i32 {
+        self.kep
+    }
+
     pub fn entered(&mut self, kep: i32, game: &mut ig2_sim::game::Game) {
         if kep == self.kep {
             return;
@@ -205,6 +215,8 @@ impl TutorialUi {
         mem.set_u8(va::TUTORIAL_ACTIVE, self.t.active as u8);
         mem.set_u8(va::TUTORIAL_PAUSED, self.t.paused as u8);
         mem.set_i32(va::TUTORIAL_EVENT, self.t.event);
+        // `TutorialUjKemekLetiltva`, read by `FRISSIT_Spy` (the sim's `no_recruits`).
+        mem.set_u8(va::TUTORIAL_NO_RECRUITS, self.t.gates.new_spies as u8);
     }
 
     /// A running tutorial as `tools/trace/probes/tutorial.js` logged it (`--tutorial-window`, a `tutwin` record): the
@@ -224,7 +236,7 @@ impl TutorialUi {
         t.blink = num("blink")? as i32;
         (t.active, t.paused) = (num("active")? != 0.0, num("paused")? != 0.0);
         (t.gates.text_shown, t.gates.text_window) = (num("shown")? != 0.0, num("disabled")? != 0.0);
-        Ok(TutorialUi { t, mou: Vec::new(), ms: num("stamp")? as u32, counter: 0, kep: 2 })
+        Ok(TutorialUi { t, mou: Vec::new(), ms: num("stamp")? as u32, counter: 0, kep: 2, overrun: None, ai_off: None })
     }
 
     /// `TutorialKeretFrissit` and `TutorialSzovegFrissit` (re/rules/tutorial.md §2 "Drawing"): the window's box,
@@ -310,7 +322,7 @@ mod tests {
 
     #[test]
     fn parked_pointer_without_a_recording() {
-        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2 };
+        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2, overrun: None, ai_off: None };
         assert_eq!(ui.replay_step(2), None);
         ui.t.active = true;
         ui.t.mouse = -1;

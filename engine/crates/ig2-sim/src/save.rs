@@ -268,6 +268,26 @@ pub mod va {
     pub const SPY_REPORTS: u32 = 0xBAF338;
     /// `Story_KemEsemeny`'s data (0xF2F874.., unsaved).
     pub const SPY_EVENT: u32 = 0xF2F874;
+    /// The story engine's unsaved statics (`story::Story`'s fields of the same names; the exe keeps them between
+    /// checks): `StoryMessageBlokk`/`Resz`, `DisableAddShip`, `last_fn_b`/`_r`/`_q`/`_x`/`_y`, the storyline story and
+    /// map, `nearest_bir_planet`, `st_bGet3BestProd::best`, `CounterIntelligence_kem`, `KemkedesAzonosito`,
+    /// `KemkedesValasz`, `KemkedesTulaj`, `KemkedesAktKem`, `last_hajo_kigyujt_flotta`, `st_bGet3Nearest::best`,
+    /// `st_bGet4Brutal`'s planets.
+    pub const STORY_MESSAGE: u32 = 0xF26574;
+    pub const STORY_DISABLE_ADD_SHIP: u32 = 0xF273F0;
+    pub const STORY_LAST_FN: [u32; 5] = [0xF27524, 0xF273F4, 0xF27520, 0xF27528, 0xF2752C];
+    pub const STORY_LINE_STORY: u32 = 0xB77288;
+    pub const STORY_SCENARIO: u32 = 0xB7728C;
+    pub const STORY_NEAREST_PLANET: u32 = 0xF2652C;
+    pub const STORY_BEST_PROD: u32 = 0xF432B8;
+    pub const STORY_COUNTER_SPY: u32 = 0xF265D0;
+    pub const STORY_SPY_STORY: u32 = 0xF26584;
+    pub const STORY_SPY_ANSWER: u32 = 0xF2659C;
+    pub const STORY_SPY_OWNER: u32 = 0xF26598;
+    pub const STORY_SPY_SLOT: u32 = 0xF265A0;
+    pub const STORY_LAST_COLLECT_FLEET: u32 = 0xF265CC;
+    pub const STORY_NEAREST3: u32 = 0xF432C4;
+    pub const STORY_BRUTAL4: u32 = 0xF432D0;
     pub const INBOX: u32 = 0xDA6620;
     pub const INBOX_RANDOM: u32 = 0xDABC10;
     pub const INBOX_PLAYBACK: u32 = 0xDA9B40;
@@ -297,32 +317,58 @@ impl Memory {
     /// `len` bytes at `at`; bytes no run covers read 0.
     pub fn read(&self, at: u32, len: usize) -> Vec<u8> {
         let mut out = vec![0; len];
-        let end = at as u64 + len as u64;
-        for (&s, run) in self.runs.range(..end.min(u32::MAX as u64) as u32) {
+        self.read_into(at, &mut out);
+        out
+    }
+
+    /// [`Memory::read`] into `out`. The runs don't overlap, so their ends rise with their starts: the ones `out`
+    /// covers are the last runs starting before its end, back to the first that ends at or before `at`.
+    fn read_into(&self, at: u32, out: &mut [u8]) {
+        let end = at as u64 + out.len() as u64;
+        for (&s, run) in self.runs.range(..end.min(u32::MAX as u64) as u32).rev() {
             let e = s as u64 + run.len() as u64;
             if e <= at as u64 {
-                continue;
+                break;
             }
             let lo = (s as u64).max(at as u64);
             let hi = e.min(end);
             out[(lo - at as u64) as usize..(hi - at as u64) as usize].copy_from_slice(&run[(lo - s as u64) as usize..(hi - s as u64) as usize]);
         }
+    }
+
+    fn fixed<const N: usize>(&self, at: u32) -> [u8; N] {
+        let mut out = [0; N];
+        self.read_into(at, &mut out);
         out
     }
 
-    /// Write `bytes` at `at`, merging the runs it touches.
+    /// Write `bytes` at `at`, merging the runs it touches (the runs that overlap it or end or start right at it).
     pub fn write(&mut self, at: u32, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
         let end = at as u64 + bytes.len() as u64;
+        // As in `read_into`: the touched runs are the last ones starting at or before `end`, back to the first that
+        // ends before `at`.
+        let mut touched = self.runs.range(..=end.min(u32::MAX as u64) as u32).rev().take_while(|&(&s, r)| s as u64 + r.len() as u64 >= at as u64);
+        let first = touched.next().map(|(&s, r)| (s, r.len()));
+        // The common case, one run around the bytes and none next to them: written in place.
+        if let (Some((s, len)), None) = (first, touched.next())
+            && s <= at
+            && s as u64 + len as u64 >= end
+        {
+            let run = self.runs.get_mut(&s).unwrap();
+            run[(at - s) as usize..(at - s) as usize + bytes.len()].copy_from_slice(bytes);
+            return;
+        }
         let touched: Vec<u32> = self
             .runs
             .range(..=end.min(u32::MAX as u64) as u32)
-            .filter(|&(&s, r)| s as u64 + r.len() as u64 >= at as u64)
+            .rev()
+            .take_while(|&(&s, r)| s as u64 + r.len() as u64 >= at as u64)
             .map(|(&s, _)| s)
             .collect();
-        let lo = touched.first().map_or(at, |&s| s.min(at));
+        let lo = touched.last().map_or(at, |&s| s.min(at));
         let hi = touched.iter().map(|&s| s as u64 + self.runs[&s].len() as u64).fold(end, u64::max);
         let mut merged = vec![0; (hi - lo as u64) as usize];
         for s in touched {
@@ -334,19 +380,19 @@ impl Memory {
     }
 
     pub fn u8(&self, at: u32) -> u8 {
-        self.read(at, 1)[0]
+        self.fixed::<1>(at)[0]
     }
     pub fn i16(&self, at: u32) -> i16 {
-        i16::from_le_bytes(self.read(at, 2).try_into().unwrap())
+        i16::from_le_bytes(self.fixed(at))
     }
     pub fn i32(&self, at: u32) -> i32 {
-        i32::from_le_bytes(self.read(at, 4).try_into().unwrap())
+        i32::from_le_bytes(self.fixed(at))
     }
     pub fn f32(&self, at: u32) -> f32 {
         f32::from_bits(self.i32(at) as u32)
     }
     pub fn f64(&self, at: u32) -> f64 {
-        f64::from_le_bytes(self.read(at, 8).try_into().unwrap())
+        f64::from_le_bytes(self.fixed(at))
     }
     pub fn set_u8(&mut self, at: u32, v: u8) {
         self.write(at, &[v]);
@@ -376,7 +422,7 @@ impl Memory {
         self.write(at, &b);
     }
     pub fn bytes<const N: usize>(&self, at: u32) -> [u8; N] {
-        self.read(at, N).try_into().unwrap()
+        self.fixed(at)
     }
     pub fn flags<const N: usize>(&self, at: u32) -> [bool; N] {
         self.bytes::<N>(at).map(|b| b != 0)
@@ -387,6 +433,19 @@ impl Memory {
 
 /// Where a save chunk lives in the exe (a static global), by the reader's chunk name. `None` = held elsewhere
 /// (pointer arrays, the story queues) or not modelled (the chunk passes through unchanged).
+/// `TutorialCheckEvent(id)` (exe 0x60bdf0) on the state's copies: the awaited event `id` clears `TutorialEvent` and,
+/// when paused, sets `TutorialUnPause`'s flags (its input resets are the driver's).
+pub fn tutorial_check_event(m: &mut Memory, id: i32) {
+    if m.i32(va::TUTORIAL_EVENT) != id {
+        return;
+    }
+    m.set_i32(va::TUTORIAL_EVENT, 0);
+    if m.u8(va::TUTORIAL_PAUSED) != 0 {
+        m.set_u8(va::TUTORIAL_PAUSED, 0);
+        m.set_u8(va::TUTORIAL_ACTIVE, 1);
+    }
+}
+
 pub fn chunk_va(name: &str) -> Option<u32> {
     if let Some(rest) = name.strip_prefix("Talalmanyok[") {
         let (t, field) = rest.split_once(']')?;
@@ -725,6 +784,17 @@ impl SaveState {
         &self.template
     }
 
+    /// A UI global the sim doesn't model ([`ui_chunk_va`]: the cameras, …) set by the client before a save: the
+    /// template's bytes (a loaded save passes them through) and the memory image both.
+    pub fn set_ui_chunk(&mut self, name: &str, bytes: &[u8]) {
+        if let Some(at) = ui_chunk_va(name) {
+            self.mem.write(at, bytes);
+        }
+        if let Some((_, b)) = self.template.iter_mut().find(|(n, _)| n == name) {
+            *b = bytes.to_vec();
+        }
+    }
+
     /// A state from its memory image and chunk template, with empty record arrays and queues (a snapshot fills them).
     pub fn from_parts(mem: Memory, template: Vec<(String, Vec<u8>)>) -> Self {
         let wf_ranges = wf_ranges(&template);
@@ -851,6 +921,14 @@ impl SaveState {
                     add(name, &((self.waypoints.len() as i32 - 1).max(0)).to_le_bytes());
                     if self.waypoints.len() > 1 && !self.template.iter().any(|(n, _)| n == "Waypointek") {
                         add("Waypointek", &self.waypoints.concat());
+                    }
+                    continue;
+                }
+                // `st_vOzonviz` follows its count only when there are undo entries (a fresh campaign's save has none).
+                "st_vOzonvizMut" => {
+                    add(name, &self.mem.read(va::STORY_UNDO_COUNT, 4));
+                    if self.mem.i32(va::STORY_UNDO_COUNT) > 0 && !self.template.iter().any(|(n, _)| n == "st_vOzonviz") {
+                        add("st_vOzonviz", &self.record_chunk("st_vOzonviz").unwrap_or_default());
                     }
                     continue;
                 }
@@ -1611,6 +1689,25 @@ impl SaveState {
     }
 
     pub fn store_colony(&mut self, w: &ColonyWorld) {
+        // `EpuletNew` (exe 0x53c8eb): a building of these kinds on an `EN` planet is the tutorial's event
+        // (`re/rules/tutorial.md` §4).
+        let en = self.mem.i32(va::EN);
+        for (p, kind) in w.built.take() {
+            let event = match kind {
+                2 => 0x13,
+                7 => 0x1d,
+                0x34 => 0x14,
+                0x13 => 0x17,
+                0x15 => 0x18,
+                0xe => 0x23,
+                0x32 => 0x26,
+                4 => 0x29,
+                _ => continue,
+            };
+            if w.planets.get(p).is_some_and(|pl| pl.owner as i32 == en) {
+                tutorial_check_event(&mut self.mem, event);
+            }
+        }
         for (p, pl) in w.planets.iter().enumerate() {
             let mut r = self.planet_record(p);
             put_planet(&mut r, pl);
@@ -2157,6 +2254,33 @@ impl SaveState {
         };
         st.you_were_in_battle = m.u8(va::STORY_YOU_WERE_IN_BATTLE) != 0;
         st.spy_kind = m.i32(va::STORY_SPY_KIND);
+        st.all_fleets_visible = m.u8(va::STORY_ALL_FLEETS_VISIBLE);
+        st.message = (m.i32(va::STORY_MESSAGE), m.i32(va::STORY_MESSAGE + 4));
+        st.disable_add_ship = m.i32(va::STORY_DISABLE_ADD_SHIP);
+        st.last_fn = va::STORY_LAST_FN.map(|a| m.i32(a));
+        st.line_story = m.i32(va::STORY_LINE_STORY);
+        st.scenario = m.i32(va::STORY_SCENARIO);
+        st.nearest_planet = m.i32(va::STORY_NEAREST_PLANET);
+        st.best_prod = m.i32s(va::STORY_BEST_PROD);
+        let k: [i32; 14] = m.i32s(va::SPY_EVENT);
+        st.kem = story::KemNews {
+            news: k[0],
+            spy: k[1],
+            died: k[2],
+            success: m.u8(va::SPY_EVENT + 0xc) != 0,
+            mission: k[5],
+            target: k[6],
+            tech: k[7],
+            techs: [k[9], k[10], k[11], k[12], k[13]],
+        };
+        st.counter_spy = m.i32(va::STORY_COUNTER_SPY);
+        st.spy_story = m.i32(va::STORY_SPY_STORY);
+        st.spy_answer = m.i32(va::STORY_SPY_ANSWER);
+        st.spy_owner = m.i32(va::STORY_SPY_OWNER);
+        st.spy_slot = m.i32(va::STORY_SPY_SLOT);
+        st.last_collect_fleet = m.i32(va::STORY_LAST_COLLECT_FLEET);
+        st.nearest3 = m.i32s(va::STORY_NEAREST3);
+        st.brutal4 = m.i32s(va::STORY_BRUTAL4);
         st
     }
 
@@ -2214,6 +2338,29 @@ impl SaveState {
         m.write(va::STORY_GROUND_WON, &[g.attacker_won as u8, g.defender_won as u8]);
         m.set_u8(va::STORY_YOU_WERE_IN_BATTLE, st.you_were_in_battle as u8);
         m.set_i32(va::STORY_SPY_KIND, st.spy_kind);
+        m.set_u8(va::STORY_ALL_FLEETS_VISIBLE, st.all_fleets_visible);
+        m.set_i32s(va::STORY_MESSAGE, &[st.message.0, st.message.1]);
+        m.set_i32(va::STORY_DISABLE_ADD_SHIP, st.disable_add_ship);
+        for (a, v) in va::STORY_LAST_FN.iter().zip(st.last_fn) {
+            m.set_i32(*a, v);
+        }
+        m.set_i32(va::STORY_LINE_STORY, st.line_story);
+        m.set_i32(va::STORY_SCENARIO, st.scenario);
+        m.set_i32(va::STORY_NEAREST_PLANET, st.nearest_planet);
+        m.set_i32s(va::STORY_BEST_PROD, &st.best_prod);
+        let k = &st.kem;
+        m.set_i32s(va::SPY_EVENT, &[k.news, k.spy, k.died]);
+        m.set_u8(va::SPY_EVENT + 0xc, k.success as u8);
+        m.set_i32s(va::SPY_EVENT + 0x14, &[k.mission, k.target, k.tech]);
+        m.set_i32s(va::SPY_EVENT + 0x24, &k.techs);
+        m.set_i32(va::STORY_COUNTER_SPY, st.counter_spy);
+        m.set_i32(va::STORY_SPY_STORY, st.spy_story);
+        m.set_i32(va::STORY_SPY_ANSWER, st.spy_answer);
+        m.set_i32(va::STORY_SPY_OWNER, st.spy_owner);
+        m.set_i32(va::STORY_SPY_SLOT, st.spy_slot);
+        m.set_i32(va::STORY_LAST_COLLECT_FLEET, st.last_collect_fleet);
+        m.set_i32s(va::STORY_NEAREST3, &st.nearest3);
+        m.set_i32s(va::STORY_BRUTAL4, &st.brutal4);
     }
 }
 
@@ -2232,5 +2379,57 @@ mod tests {
         m.write(5, &[4, 4, 4, 4, 4]);
         assert_eq!(m.read(5, 7), [4, 4, 4, 4, 4, 1, 2]);
         assert_eq!(m.runs.len(), 1);
+    }
+
+    /// The scan-every-run `write` the in-place one replaced (docs/perf.md): the same runs after any writes.
+    fn write_by_scan(runs: &mut std::collections::BTreeMap<u32, Vec<u8>>, at: u32, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let end = at as u64 + bytes.len() as u64;
+        let touched: Vec<u32> = runs.range(..=end as u32).filter(|&(&s, r)| s as u64 + r.len() as u64 >= at as u64).map(|(&s, _)| s).collect();
+        let lo = touched.first().map_or(at, |&s| s.min(at));
+        let hi = touched.iter().map(|&s| s as u64 + runs[&s].len() as u64).fold(end, u64::max);
+        let mut merged = vec![0; (hi - lo as u64) as usize];
+        for s in touched {
+            let r = runs.remove(&s).unwrap();
+            merged[(s - lo) as usize..(s - lo) as usize + r.len()].copy_from_slice(&r);
+        }
+        merged[(at - lo) as usize..(at - lo) as usize + bytes.len()].copy_from_slice(bytes);
+        runs.insert(lo, merged);
+    }
+
+    #[test]
+    fn memory_writes_in_place_keep_the_runs_of_the_merging_write() {
+        let mut x = 0x2545_f491u32;
+        let mut next = move |n: u32| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x % n
+        };
+        for round in 0..200 {
+            let mut m = Memory::default();
+            let mut want = std::collections::BTreeMap::new();
+            for k in 0..60 {
+                let (at, len) = (next(400), next(12) as usize);
+                let bytes: Vec<u8> = (0..len).map(|i| (round + k + i) as u8).collect();
+                m.write(at, &bytes);
+                write_by_scan(&mut want, at, &bytes);
+                assert_eq!(m.runs, want, "round {round} write {k} at {at} len {len}");
+                let (at, len) = (next(420), next(20) as usize);
+                let mut read = vec![0; len];
+                for (&s, r) in &want {
+                    for (i, &b) in r.iter().enumerate() {
+                        let a = s as usize + i;
+                        if a >= at as usize && a < at as usize + len {
+                            read[a - at as usize] = b;
+                        }
+                    }
+                }
+                assert_eq!(m.read(at, len), read);
+                assert_eq!(m.i32(at), i32::from_le_bytes(m.read(at, 4).try_into().unwrap()));
+            }
+        }
     }
 }

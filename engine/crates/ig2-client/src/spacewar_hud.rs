@@ -167,10 +167,11 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
         let name = hud.empire_names.get(owner.max(0) as usize).cloned().unwrap_or_default();
         text(&name, 0.0, 23.0, 1, 0x21);
         if st.ships != 0 && st.max_hp != 0 {
-            let r = if st.own == 0 { Vec::new() } else { rank(hud, st.rank_sum / st.ships) };
+            // `kisinfokiir` tests `0 <= (f32)sum / (f32)n` first: a sum still −1 (no ranked ship) shows "-".
+            let r = if st.own == 0 { Vec::new() } else if (st.rank_sum as f32 / st.ships as f32) < 0.0 { b"-".to_vec() } else { rank(hud, st.rank_sum / st.ships) };
             text(&format(&s(0xb), &[st.value as i64], &[&r]), 0.0, 32.0, 1, 0x21);
             text(&format(&s(0xc), &[0], &[]), 0.0, 41.0, 1, 0x21);
-            crate::colony_ui::hp_stripe(f, hud.white, v, &hud.palette, st.max_hp - st.damage, st.max_hp, x + 44.0, y + 41.0, 66.0);
+            crate::colony_ui::hp_stripe_alpha(f, hud.white, v, &hud.palette, st.max_hp - st.damage, st.max_hp, x + 44.0, y + 41.0, 66.0, (fade * 255.0) as i32);
         }
     } else if st.total != 0 && st.sel_guns != 0 && st.last_kind == 2 && st.last != -1 {
         // Case B, planet guns only: the gun building's tech, or the count.
@@ -184,7 +185,7 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
         if st.ships != 0 && st.max_hp != 0 {
             text(&format(&s(0xe), &[st.value as i64], &[]), 0.0, 32.0, 1, 0x21);
             text(&format(&s(0xf), &[0], &[]), 0.0, 41.0, 1, 0x21);
-            crate::colony_ui::hp_stripe(f, hud.white, v, &hud.palette, st.max_hp - st.damage, st.max_hp, x + 44.0, y + 41.0, 66.0);
+            crate::colony_ui::hp_stripe_alpha(f, hud.white, v, &hud.palette, st.max_hp - st.damage, st.max_hp, x + 44.0, y + 41.0, 66.0, (fade * 255.0) as i32);
         }
     } else if st.total == 0 {
         // Case C, the battle overview: firepower (with K or M above 9999 and 999000), ships and fighters of the
@@ -252,21 +253,30 @@ fn radar(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, d: &Shown) {
             [((c * a + s * b) * 94.0 / ARENA + RADAR_CENTRE[0]) * kv, ((c * b - s * a) * 94.0 / ARENA + RADAR_CENTRE[1]) * kv]
         })
     };
-    let cs = [corner(0.0, 0.0), corner(640.0, 0.0), corner(0.0, 480.0), corner(640.0, 480.0)];
-    let lc = hud.palette.get(2).copied().unwrap_or([1.0; 3]);
-    for (a, b) in [(0, 1), (0, 2), (2, 3), (1, 3)] {
-        if let (Some(a), Some(b)) = (cs[a], cs[b]) {
-            if let Some((a, b)) = crate::hud::clip_line(a, b, [274.0, 388.0, 367.0, 454.0]) {
-                f.push(white, Blend::GammaAlpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), 2.0 * v.k, [lc[0], lc[1], lc[2], 1.0]));
-            }
-        }
-    }
-    // The window: colour word 0x40000020 (transparency 0x40; its 0x20 blue [obs: navy, not red]), over the starmap's own
+    // The window: colour word 0x40000020 (its 0x20 blue at 0x40/255 opacity [obs: grabs 3 and 4, the exe's window is
+    // (4, 9, 12), which 25 % fits and 75 % doesn't]), over the starmap's own
     // dark window (`StarmapGfx2D_1`'s `FadeScreen(271, 385, 98, 71, black, 0x40)`, still drawn on this screen [obs: the
     // exe's window is near black]).
     f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(271.0 + 49.0, 385.0 + 35.5), [49.0 * v.k, 35.5 * v.k], crate::kit::fader::fade_color([0.0; 3], 1.0 - 0x40 as f32 / 255.0)));
     let [x0, y0, x1, y1] = RADAR_RECT;
-    f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px((x0 + x1) / 2.0, (y0 + y1) / 2.0), [(x1 - x0) * v.k / 2.0, (y1 - y0) * v.k / 2.0], [0.0, 0.0, 0x20 as f32 / 255.0, 1.0 - 0x40 as f32 / 255.0]));
+    f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px((x0 + x1) / 2.0, (y0 + y1) / 2.0), [(x1 - x0) * v.k / 2.0, (y1 - y0) * v.k / 2.0], [0.0, 0.0, 0x20 as f32 / 255.0, 0x40 as f32 / 255.0]));
+    // The outline: `LineClip`'s 1 px `line2d` goes over the queued window (`line3`) [obs grab4 t800: a full white
+    // line, not dimmed].
+    let cs = [corner(0.0, 0.0), corner(640.0, 0.0), corner(0.0, 480.0), corner(640.0, 480.0)];
+    // `DDColor[2]` at alpha 0xff: white [obs fx8b: (255, 255, 255), one device pixel wide, stepped per pixel].
+    for (a, b) in [(0, 1), (0, 2), (2, 3), (1, 3)] {
+        if let (Some(a), Some(b)) = (cs[a], cs[b]) {
+            if let Some((a, b)) = crate::hud::clip_line(a, b, [274.0, 388.0, 367.0, 454.0]) {
+                let (p, q) = (v.px(a[0], a[1]), v.px(b[0], b[1]));
+                let n = (q[0] - p[0]).abs().max((q[1] - p[1]).abs()).ceil().max(1.0) as usize;
+                for i in 0..=n {
+                    let t = i as f32 / n as f32;
+                    let c = [(p[0] + (q[0] - p[0]) * t).floor() + 0.5, (p[1] + (q[1] - p[1]) * t).floor() + 0.5];
+                    f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, c, [0.5; 2], [1.0; 4]));
+                }
+            }
+        }
+    }
     let b: &Battle = d.battle;
     for u in b.units.iter().filter(|u| u.alive && (u.owner == b.human || !u.cloaked)) {
         let (y, z) = (u.pos.y, u.pos.z);
@@ -276,7 +286,9 @@ fn radar(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, d: &Shown) {
         }
         let rgb = if u.owner == b.human { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
         let p = [q[0].trunc(), q[1].trunc()];
-        f.push(white, Blend::GammaAdditive, Instance::new(kind::SPRITE, v.px(p[0] + 0.5, p[1] + 0.5), [v.k / 2.0; 2], [rgb[0], rgb[1], rgb[2], 1.0]));
+        // A 2 × 2 device-pixel point at 800 × 600 [obs fx8b].
+        let c = v.px(p[0], p[1]).map(|z| z.floor() + 1.0);
+        f.push(white, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [v.k.max(1.0) * 0.8; 2], [rgb[0], rgb[1], rgb[2], 1.0]));
     }
 }
 
@@ -393,13 +405,14 @@ pub struct BigShip {
 }
 
 /// The MP versus banner (`screenfrissites`, spec §7.4): `"%s (%s) vs. %s (%s)"` at (200, 30), 0x46 cells, size 2,
-/// centred, colour 2, for 9 s from the zoom's end, fading over its last 0.5 s.
+/// centred, colour 2, for 9 s from the opening zoom's start (`spwckezdotimer`), fading over its last 0.5 s.
 pub fn banner(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, text: &[u8], ms: u32, fade: f32) {
     let Some(font) = &hud.font else { return };
     if ms >= 9000 {
         return;
     }
-    let k = fade * (((9000 - ms) / 5).min(100) as f32 / 100.0);
+    // `KiirStrSzinSzorzo = (int)(spacewarelfade·100)`, then `· min(100, (9000 − ms)/5) / 100` (ints).
+    let k = ((fade * 100.0) as i32 * ((9000 - ms) / 5).min(100) as i32 / 100) as f32 / 100.0;
     let c = hud.palette.get(2).copied().unwrap_or([1.0; 3]).map(|x| x * k);
     font.text(f, v, text, 200.0, 30.0, 0x46, 2, Align::Centre, c, None);
 }

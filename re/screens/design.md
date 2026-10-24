@@ -213,7 +213,7 @@ Items `KiirStr(name, x, y, 16, 2, 4, c)`, `c` = 2 if the item is `dSelected` els
 pod-tech popup: valid techs (`TalalmanyRarakhato(base, t, DesignAktPod, 5, EN, race)`, t = 0..0xc0) at (dSelectX, dSelectY + 3 + 13n); row popup at (PodMode2x, podkezdy + 5 + 15*DesignAktPod + 13n); base popup: bases 1..24 whose hull tech has status `Talalmanyok[t]+0x45+EN == 5` and `+0x26&1 == 0`, hull tech name, at (dSelectX, dSelectY+3+13n); delete popup (1 item, 40 chars): `DesignTorlesValasztasNev[0] + str(TervHajoinakCsokkentettAra(EN,0,AktTerv))` at (dSelectX, dSelectY + 3); modify-ok popup (size 3 flags 4, strlen chars): items 1..(`d.+0x37` ? 1 : 2) at (dSelectX, dSelectY - 12 + 15*i): item 2 (or item 1 when `+0x37`): option text + " - $" + cost (`DesignModifyOkValasztasNev + 8` if affordable, `+ 0x10` if not), `cost = max(0, (HanyHajo*scratch.+0x24 - TervHajoinakAra)*2)`, affordable = `cost <= MoneyMennyi(EN,0) || cost < 1`; other item = `DesignModifyOkValasztasNev[0]`.
 
 ## 6. Input (`Design_Main` 0x509140 / exe 0x4b2190)
-Each call: `old = AktTerv; DesignPodKiuritomod = 0`. Click sound = `PlaySoundGlobal(0)` on `Mouse_Lenyom` for every button below (exe agrees). `KezdoIdo` = one function-static counter shared by all repeat buttons: reset to 0 on press, +1 per call while held; acts when `== 1 || > 7`.
+Each call: `old = AktTerv; DesignPodKiuritomod = 0`. Click sound = `PlaySoundGlobal(0)` on `Mouse_Lenyom` for every button below (exe agrees). `KezdoIdo` = the repeat counter (the exe has four, one per button kind, equivalent to one; §14.4): reset to 0 on press, +1 per call while held; acts when `== 1 || > 7`.
 
 ### 6.1 per hot-spot
 | id / condition | Action |
@@ -322,6 +322,8 @@ Then always: `fleet == 0`: `TervDelete(s, slot, 0, true)`; UI (`s==EN && AktKep=
 17. `Design_Belep` 0x5074e0 (exe 0x4b1be0): `desmozgato` stores 29.0f / 3.0f; `KELLKINYITASDEFAULT & 1` on a byte.
 18. `DesignTervezesOk` 0x50b310: `Multi_Send` payload lengths (4, 4, 0x84, 1) and that the flag is a 1-byte value.
 
+FX8 capture: `run_screendiff.py <install> quick-1.sav design --script tools/trace/scripts/design-fx8.json`; probe `tools/trace/probes/design_zoom.js` (§14.4).
+
 ## 12. `PodKivalaszto` (exe 0x4b6260 / ELF 0x502a60, read; part 3 ports it)
 Called by `GFX_Design` each drawn frame while open; skipped with `OldAlap == -1`. For the base model's boxes `POD%02d` (k < `GetMaxPodok`): shown only
 with `CanModify` (`UnhideObj`, transparency `(AddZoomDes ? AddZoomDes + 40 : 0)/ADDZOOMMAXDES` clamped 0.01 / 0.95→1), else hidden: **no 3D pick
@@ -352,7 +354,7 @@ Sim side: `TervUjraSzamol` 0x61b5f0 [0x5423b0], `TervCopy` 0x61a840 [0x541cd0], 
 ## 13. Unknowns
 - (closed: `PodKivalaszto` §12, `CanModify` §2, the 0x1f/0x20 mask spots §4; 0x35 is the starmap panels', design-orders.md.)
 - ELF `SetFirstMenu` 0x507470 and `ModifyPlan` 0x508b70 bodies (the exe inlines / was read); the table at exe 0xb9aaf0 (`TervUjraSzamol` flag 3).
-- Why the exe's hull reload (be1) after the new design's release and after OK on a new design comes one frame later than the client's (§14).
+- (closed 2026-10-24: the exe's be1 reload one tick later = its frame order and `NemkellTexturaCsere`, §14.4.)
 - `DDColor` byte order in `TscVonal` (D3DCOLOR is BGR in memory: byte 0 may be B, then the table 1..8 reads B,G,R).
 - `KiirStr` flags 4 vs 6 and the 5th argument (size 2/3): research.md says size 2, flags 4 = left; 6 = right/centre (guess).
 - Deviation candidates: stored-design rename without a command (MP desync), 3585 vs 3510 in the scroll bar, the unaffordable-modify `bc = 0` quirk, `Tervek[-1]` queue reads, `DesignElnevez` buffer overrun.
@@ -399,7 +401,7 @@ modify, auto, clear, auto, OK into the pay-or-keep popup → keep the old units,
   scratch].
 - The 17 sounds match in order and tick (Click1 on the press of modify, auto, clear, OK, new, delete, redesign;
   screen23 at F2) but the two hull reloads after the new design's release and after its OK, where the exe's be1
-  comes one tick later (460/530 vs 459/529; unexplained, §13).
+  comes one tick later (460/530 vs 459/529; explained and ported, §14.4).
 - The exe handles the frame's messages before `Design_Main` (`MultiSendPackets`), so the frame after an order is
   drawn with the old `AktTerv`: OK on the new tank slides the Destroyer copy's hull out and the tank's back in
   [obs: be1 after OK]; the client applies order events one frame late (`Design::event`).
@@ -465,3 +467,13 @@ The hull region now passes at every grab (pods 1.8–5.7, was 6.2–6.5; edit 0.
   the first material's +0x30), the same UVs and depth state; then the blend is restored from property bit 8.
   `romb6_2`'s `MatJ` (`6destt.bmp` + `6desttsi.bmp`) lights the shell's windows [obs: t140, t290]. A second texture
   `fenyek_2.bmp`/`reflec.bmp` is swapped in `loadmaterial` for a runtime model's texture (not ported).
+
+### 14.4 FX8 (2026-10-24)
+Capture: `run_screendiff.py <install> quick-1.sav design --script tools/trace/scripts/design-fx8.json`; probe `probes/design_zoom.js` on `design-edit.json`. Deviation rows 62, 88-90, 92, 95, 112, 114, 181, 182, 229.
+- **Hull drag (62):** `AlapfolottLenyomva` exe 0x4acbc0 (from `Design3DUpdate` exe 0x4ad8e0 on the right button's press): gate `OldAlap != -1`, `AddZoomDes == 0`, `desMessagesUtaniLegelsoBejoves` (exe 0xa3f0c0) == 0; distance f32 sum, double sqrt, `< 160` from `GetObjCenter(hull)` + `TransformPoint` (639/639). The flag is set by `Design_Belep` (exe 0x4b1be0) on return from messages/help/options and cleared at the end of the first `Design3DUpdate`. Client: the centre is the hull's place incl. `SubZoomDes` (the re-measured root's box is centred on its pivot); refused on that first frame.
+- **Name entry (88-90):** exe `DoKeyboard` 0x4db1a0: Enter calls `DesignEntertNyomott` (exe 0x4af2c0) and goes to the next event, no `DesignKeyboardHandler`/`ModifyPlan` after it (the ELF reading was wrong; the client already matched). With `IOMode` on, the F-key block (F1..F11, `key-0x70 < 0xb`, sets the pending screen 0xbae250) runs before the IO switch, so F-keys still act (the other F-keys are FX1's); Space, digits and Up/Down as VK keys are dropped; characters go into the text. Insertion (type-0 path): accepted when `0x1f < key && key != 0x81`; `IOGombnyomasraTorles` clears the text first; inserts at the cursor while `cursor < IOMaxLen` (0x10), `n = min(strlen, MaxLen-1)`, shift, `s[n+1]=0`: a full text loses its last char. Backspace/Delete clear the flagged text; End/Home/Left/Right only drop the flag. Test `a_full_name_takes_a_key_at_the_cursor_and_drops_its_last`.
+- **Frame order (92, 95):** the exe frame is msgs, `Design3DUpdate`, draw (`DesignGfx2D_1` sets `AktAlap`), `Design_Main`. `NemkellTexturaCsere` (exe 0xa3f6ec), set when `Design_Main` picks another design, starts the slide at the next 3D update (list press: load 9 frames after); a mode change waits for `AktAlap` (release of new / OK: 10 frames). The exe's own orders come back at the 4th frame's start (OK 0x33 sent at 521, `AktTerv` changes at 525; sale 0x34 at 631, 635). Client: `Design::design_main` runs at the end of the tick after the 3D update and draw, `NemkellTexturaCsere` ported (`retexture`), orders held `ORDER_FRAMES` = 4 (`in_flight`, flushed when the screen goes), the one-frame event delay removed. design-sounds, design-edit, design-pods: every sound matches the exe in order and tick (be1 460/530 included); the list (rows, frame) matches at t620/660/760 of design-edit.json. Deviation 229: this order likely holds on every screen (the exe's grab t shows frame t-1's result; Esc's cancel at 352 in the client, 353+ in the exe).
+- **Tech tooltip (112):** `KijelolTalalmany` exe 0x4b47d0 sets tooltip 0x0c = the tech's name on a 30x30 spot round the pointer (`Mouse_Szoveg_Set(0xc, 0, mx-15, my-15, 30, 30, name)`) while the model's projection is within 30 px, else off; callers `CheckIfTalalmanyfolottvan` exe 0x4ad0d0 (50 px) and `DesignGfx2D_1`'s row hover. Ported (`Pods::tip`); not seen in captures (a held button holds tooltips back and the models are only out while held).
+- **Tint (114), still open:** at design-pods t355 the unmarked tech model's colour matches (exe RGB ~75,48,28 vs client 75,44,28); the marked one (`KijelolTalalmany`'s ambient 0x0e0e86, red 0x86) is redder in the exe (~72,52,29 vs 54,42,28). `LoadBox(..., true)`'s flag does nothing (`loadtexture2` ignores it); the models hang under mainxvb (ELF 0x501650 `AddToScene(..., mainxvb, 0.03)`).
+- **Held 3D +/- (181):** exe `Design_Main`: 0x1f/0x20 gated on `SubZoomDes`, `SubZoom2Des`, `AddZoomDes` == 0 and `DesignAktPod != 0` (no click otherwise); `DesMelyikGombot` (2 +, 1 -) and `DesGombNew` are set on every held call (the 3D button stays pressed); counters 0xa41be8 (+), 0xa41bec (-), 0xa41bf0 (cells -), 0xa41bf4 (cells +), each reset by a press of its kind, act at 1 and > 7: one counter is equivalent. `Mouse_Megfogva` keeps `AktIkon` (`IG2_gameUpdate` exe 0x4e0440 reads the hot-spot only while not grabbed), so the repeat goes on off the cell in the exe too (the old "AktIkon2 == id" claim was wrong). Steps at frames 201 (press), 208, 209, 210 in both.
+- **Esc (182):** `DesignKeyboardEscPressed` exe 0x4b17a0 (called by `DoKeyboard`'s IO Esc and the main loop exe 0x4e2db0 when `AktKep` 5 and mode != 0), as §6.2; client `pods_escape`, test `esc_folds_the_open_tech_models`.

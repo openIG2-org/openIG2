@@ -776,7 +776,7 @@ pub trait StoryWorld {
         default
     }
     /// `FlottaNew(name, owner, id, x, y, speed)` (exe 0x53d400): the new fleet's slot.
-    fn new_fleet(&mut self, _name: &str, _owner: i32, _id: i32, _x: f32, _y: f32, _speed: f32) -> i32 {
+    fn new_fleet(&mut self, _name: &FleetName, _owner: i32, _id: i32, _x: f32, _y: f32, _speed: f32) -> i32 {
         0
     }
     /// `ConfigFile.GetParam(key, "0")` → `atoi` (`storyline`, `storymap`).
@@ -1154,6 +1154,25 @@ pub struct KemNews {
     pub tech: i32,
     /// `+0x24`: a list of 5 techs (mission 4).
     pub techs: [i32; 5],
+}
+
+/// A story fleet's name as the exe makes it (`FlottaNew`'s first argument).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetName {
+    /// The bytes as written (`""`, `"Flotta"`, `"dummy"`).
+    Bytes(Vec<u8>),
+    /// `_s(5, id)`: a story text.
+    Text(i32),
+    /// `sprintf(_s(5, fmt), _s(5, arg))` (story 404's escorts).
+    Format(i32, i32),
+    /// A design's name (`Tervek[e][d]`, its first field).
+    Design { empire: i32, design: i32 },
+}
+
+impl From<&str> for FleetName {
+    fn from(s: &str) -> Self {
+        FleetName::Bytes(s.as_bytes().to_vec())
+    }
 }
 
 /// A design record's size (`Tervek[e][d]`, the `.scn` `TERV` layout).
@@ -1924,7 +1943,7 @@ impl Story {
     /// 350 round the centre; anything else at (0, 0). The fleet gets `AutoAddship`'s ships; `last_addship`
     /// remembers it (one ship of design 3 at the end of the check unless the script adds ships).
     #[allow(clippy::too_many_arguments)]
-    pub fn f_new_ex(&mut self, name: &str, owner: i32, id: i32, speed: f32, mode: i32, param: i32, w: &mut dyn StoryWorld) -> i32 {
+    pub fn f_new_ex(&mut self, name: impl Into<FleetName>, owner: i32, id: i32, speed: f32, mode: i32, param: i32, w: &mut dyn StoryWorld) -> i32 {
         if self.last_addship != 0 {
             self.f_add_ship(self.last_addship, 3, 1, w);
         }
@@ -2007,7 +2026,7 @@ impl Story {
             self.last_fn[last_fn::Y] = y;
         }
         let speed = if speed > 1.0 { speed } else { speed * 100.0 };
-        let f = w.new_fleet(name, owner, id, x as f32, y as f32, speed);
+        let f = w.new_fleet(&name.into(), owner, id, x as f32, y as f32, speed);
         self.auto_add_ship(f, id, w);
         f
     }

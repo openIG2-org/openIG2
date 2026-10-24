@@ -14,10 +14,6 @@ fn move_fleet(w: &mut dyn StoryWorld, fleet: i32, kind: i32, mode: i32, x: f32, 
     w.event(StoryEvent::MoveFleet { fleet, kind, mode, x, y });
 }
 
-fn name(w: &dyn StoryWorld, text: i32) -> String {
-    String::from_utf8_lossy(&w.story_text(text)).into_owned()
-}
-
 /// `st_Letilt(b, 0)` (exe 0x5eb6b0): message `b` asks which of its answers to disable (flag 8).
 fn disabling(s: &Story, b: i32) -> bool {
     s.flags[flag::DISABLED] && s.message.0 == b
@@ -49,7 +45,7 @@ pub(super) fn story_844(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         let b = random_empire(w, a, 0, 0)?;
         s.v_set(8448, b);
         message(w, 8441);
-        s.f_new_ex(&name(w, 8443), 10, 8443, 8.0, 1, 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(8443), 10, 8443, 8.0, 1, 0, w);
         s.f_add_ship(8443, 3, 3, w);
         s.f_add_ship(8443, 2, 10, w);
         let (cx, cy) = empire_centre(w.human(), &*w);
@@ -76,10 +72,9 @@ pub(super) fn story_844(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         if !w.empire_alive(a) {
             return Err(Abort);
         }
-        let text = name(w, 8441);
         let a = s.v_get(8449);
         let p = s.b_search(-a, 0, w);
-        let f = s.f_new_ex(&text, 9, 8441, 6.0, 2, p, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(8441), 9, 8441, 6.0, 2, p, w);
         let b = s.v_get(8448);
         let q = s.b_search(-b, 0, w);
         s.b_add_id(q, 8441);
@@ -258,7 +253,7 @@ pub(super) fn story_856(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         s.add_info_line(8561, InfoLine::Planet { planet: p, count: None }, -1, w);
     }
     if s.counter(8569) && w.empire_alive(5) {
-        s.f_new_ex(&name(w, 8561), 5, 8561, 0.08, 2, 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(8561), 5, 8561, 0.08, 2, 0, w);
         let p = s.b_search(8560, 0, w);
         let a = w.rng().range(STREAM, -10, 10);
         let b = w.rng().range(STREAM, -10, 10);
@@ -395,7 +390,7 @@ fn point_in_dist(a: (f32, f32), b: (f32, f32), d: f32) -> (f32, f32) {
 /// then `AutoAddship(f, id)`.
 fn fleet_at(s: &mut Story, owner: i32, id: i32, x: i32, y: i32, speed: f32, w: &mut dyn StoryWorld) {
     let speed = if speed <= 1.0 { speed * 100.0 } else { speed };
-    let f = w.new_fleet(&name(w, id), owner, id, x as f32, y as f32, speed);
+    let f = w.new_fleet(&crate::story::FleetName::Text(id), owner, id, x as f32, y as f32, speed);
     s.auto_add_ship(f, id, w);
 }
 
@@ -423,7 +418,7 @@ pub(super) fn story_862(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         }
         s.b_add_id(p, 8620);
         s.b_show(8620, -1, w);
-        s.f_new_ex(&name(w, 8621), 5, 8621, 0.12, -p, 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(8621), 5, 8621, 0.12, -p, 0, w);
         let d = w.story_design(5, 8621, 3);
         s.f_add_ship(8621, d, 50, w);
         message(w, 8620);
@@ -628,7 +623,7 @@ pub(super) fn story_863(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
             message(w, 8631);
             s.sz_start(8631, 80);
             w.event(StoryEvent::AddMoney { empire: en, amount: -500_000.0 });
-            s.f_new_ex(&name(w, 8638), 1, 8631, 0.09, 2, 0, w);
+            s.f_new_ex(crate::story::FleetName::Text(8638), 1, 8631, 0.09, 2, 0, w);
             s.remove_fleet_id(8631, w);
         }
     }

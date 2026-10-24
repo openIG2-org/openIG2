@@ -118,7 +118,6 @@ impl TradeScene {
         let k2 = k as f64 + 1.57075;
         let second = [(k2.sin() * 300.0) as f32, (k2.cos() * 200.0) as f32, -850.0];
         let lights = lighting::Lights::default().ambient(0x141414).parallel(0x808080, [0.0, 0.0, -10.0]).parallel(0x7f5d00, first).parallel(0x004e7f, second);
-        let ambient = lighting::Lights::default().ambient(0x141414);
         let mut dynamic = Vec::new();
         let mut draws = Vec::new();
         let mut grid: Vec<(V3, V3, [f32; 4])> = Vec::new();
@@ -183,8 +182,10 @@ impl TradeScene {
                 let (to, rot) = s.wire_pose();
                 m.move_child(&[WIRE], Some(to.map(|c| c / 1024.0)), Some(&rot));
                 let t = Placement::add_to_scene(m.origin, 1.15).world((0.0, 0.0, 0.0), at);
+                // `wirekirak`: each end lit by the scene's lights times the texture, the faces turned away culled (as
+                // the research screen's sphere) [the exe's lines are ~3x brighter and wider: deviations].
                 for p in m.below(&[WIRE]) {
-                    self.wire(p, &t, &ambient, 1.0 - v, &mut grid);
+                    self.wire(p, &t, &lights, 1.0 - v, &mut grid);
                 }
             }
         }
@@ -225,6 +226,10 @@ impl TradeScene {
         for (ti, tri) in p.verts.chunks_exact(3).enumerate() {
             let flags = p.edges.get(ti).copied().unwrap_or(7);
             let pts: Vec<V3> = tri.iter().map(|v| t.point(v.pos)).collect();
+            // The engine culls the triangles facing away, wireframes too (as the research screen's sphere).
+            if crate::research::faces_away(&[pts[0], pts[1], pts[2]]) {
+                continue;
+            }
             let cols: Vec<[f32; 3]> = tri.iter().map(colour).collect();
             for (bit, (a, b)) in [(0, (2, 0)), (1, (0, 1)), (2, (1, 2))] {
                 if flags & (1 << bit) != 0 {

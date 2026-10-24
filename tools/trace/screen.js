@@ -631,7 +631,10 @@ Interceptor.attach(A.Fake_FRISSITES, {
           ptr: va(0xb84c08).readS32(), n: va(0xb84c0c).readS32(), texts: [va(0x90b8a0).readS32(), va(0xb85e94).readS32(), va(0xb85e98).readS32()] },
         star: { mode: va(0xb79fb2).readU8(), frame: va(0xb85260).readFloat(), pointer: va(0xb84c10).readS32(), filled: va(0xb84bf4).readS32(),
           log: Array.from({ length: 200 }, (_, i) => { const r = va(0xb82990 + 0x2c * i); const t = r.add(8).readByteArray(0x24); const b = new Uint8Array(t); const n = b.indexOf(0); return [r.readS32(), hexs(r.add(8), n < 0 ? 0x24 : n)]; }) } };
-      send({ k: 'grab', clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoAlap: va(0xf158c0).readFloat(), infoAlapOn: va(0xe83701).readU8(), fifo: [0, 1, 2, 3, 4, 5, 6, 7].map(k => va(0xf154d0 + 4 * k).readFloat()), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
+      // The starmap's `faderstruktura`s `fifo` (exe 0xF152F0) and `starf` (0xF168E8), 0x5cc bytes each (hud.md §1.2.1):
+      // their shine and drift phase, which the client can't replay.
+      const faders = { fifo: hexs(va(0xf152f0), 0x5cc), starf: hexs(va(0xf168e8), 0x5cc) };
+      send({ k: 'grab', faders, clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoAlap: va(0xf158c0).readFloat(), infoAlapOn: va(0xe83701).readU8(), fifo: [0, 1, 2, 3, 4, 5, 6, 7].map(k => va(0xf154d0 + 4 * k).readFloat()), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
       shot++;
       at = frames;
       if (shot >= cfg.shots) phase = 4;
@@ -778,7 +781,8 @@ function hookSwap() {
       bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
       // The colony camera (`ColonyXStart/YStart/Zoom/Pitch/Rotate`, colony.md §11.9).
       const cam = [0xba90dc, 0xba9514, 0xba9e8c, 0xba9b64, 0xba983c].map((x) => va(x).readFloat());
-      send({ k: 'frame', t: want, ticks, w, h, frames, scriptT, res: resState(), mouse: scriptMouse, kep: A.AktKep.readS32(), cam, thread: Process.getCurrentThreadId() }, buf.readByteArray(w * h * 4));
+      const fh = (at) => Array.from(new Uint8Array(va(at).readByteArray(0x5cc)), (x) => x.toString(16).padStart(2, '0')).join('');
+      send({ k: 'frame', t: want, ticks, w, h, frames, scriptT, res: resState(), mouse: scriptMouse, kep: A.AktKep.readS32(), cam, faders: { fifo: fh(0xf152f0), starf: fh(0xf168e8) }, thread: Process.getCurrentThreadId() }, buf.readByteArray(w * h * 4));
     },
   });
 }
@@ -793,7 +797,8 @@ function scriptFrame() {
     vtOn = true;
     if (!swapHooked) { hookSwap(); swapHooked = true; }
     if (cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('screendiff'), 2);
-    send({ k: 'scriptStart', frames, ui: scriptUi0, res: resState(), clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(),
+    const fhex = (at) => Array.from(new Uint8Array(va(at).readByteArray(0x5cc)), (b) => b.toString(16).padStart(2, '0')).join('');
+    send({ k: 'scriptStart', faders: { fifo: fhex(0xf152f0), starf: fhex(0xf168e8) }, frames, ui: scriptUi0, res: resState(), clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(),
       infoTurn: va(0xb85304).readFloat(), tradeEta: va(0xf43428).readS32(), dkm: [va(0xb34c0c).readFloat(), va(0x903548).readFloat(), va(0xb34bac).readFloat()], kep: A.AktKep.readS32(), date: date(), paused: va(0xbae264).readU8() });
   } else {
     // The UI ticks run so far (a frame now and then runs none or two: `scriptT` follows the ticks, not the frames).

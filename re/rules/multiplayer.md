@@ -147,6 +147,11 @@ owner.
 - 1005 (capture the flag): the original writes `EN` into the Flag Carrier design's race field (`flag_carrier(EN)`),
   so the two machines' designs differ. Canonical MP: the design for empire 1 carries 1, for empire 2 carries 2.
 
+### 5.4 EN in the client (ours; FX15)
+
+The shared state's EN is the host's empire. `ig2-client::world::local_en` writes the local empire into EN while the
+world holds the game and puts the canonical one back before the game goes into the peer, so hashes and snapshots are unchanged.
+
 ## 6. Open
 
 - The unowned planets' richness by the host's race (`GetBolygoGazdagsag`) and radar row 0: a fidelity question

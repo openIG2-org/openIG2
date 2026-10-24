@@ -120,7 +120,27 @@ impl Game<'_> {
             StarmapOrder::Split { fleet } => self.split(issuer, fleet),
             StarmapOrder::Move { fleet, order, kind, x, y } => {
                 let Some(f) = self.fleet_slot(fleet) else { return };
-                self.with_ai(|_, w, _| w.order(f, order as i16, kind as i16, x, y));
+                let g = self.globals();
+                let en = g.en;
+                let mut sent = None;
+                self.with_ai(|_, w, _| {
+                    w.order(f, order as i16, kind as i16, x, y);
+                    sent = Some(w.starmap.fleets[f].owner as usize);
+                });
+                // The tutorial's 0x15 (exe `MULTIGET_Starmap`, ELF 0x719680 lines 191-212): an own fleet sent
+                // (order ≠ 0) farther than the radar's reach (`RadarHatotav[GetENRadarKifejlesztve()]`) from the
+                // last own planet (1.0, 1.0 with none), in f32.
+                let m = &self.state.mem;
+                let tutorial = m.u8(va::TUTORIAL_ACTIVE) != 0 || m.u8(va::TUTORIAL_PAUSED) != 0;
+                if tutorial && sent == Some(en) && order != 0 && m.i32(va::TUTORIAL_EVENT) == 0x15 {
+                    let level = crate::radar::RadarTables::default().refresh(&self.rules.radar, &self.starmap_context(&g));
+                    let range = self.rules.radar.range(level.max(0) as usize);
+                    let c = self.state.colony();
+                    let (px, py) = (1..=planets).rev().find(|&p| c.planets[p].owner as usize == en).map_or((1.0f32, 1.0f32), |p| (c.planets[p].x, c.planets[p].y));
+                    if range < ((x - px) * (x - px) + (y - py) * (y - py)).sqrt() {
+                        self.tutorial_check_event(0x15);
+                    }
+                }
             }
             StarmapOrder::Colonise { planet: p, kind } => {
                 let Some(p) = planet(p) else { return };

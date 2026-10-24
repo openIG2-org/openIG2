@@ -229,6 +229,96 @@ pub fn exit_spot(at: [f32; 2]) -> bool {
 
 use crate::kit::inside;
 
+/// A planet's or fleet's rename (`IOMode`, `IOAzonosito` 0x15 / 0x16, `Starmap_Main` ELF 0x6f50a0; re/screens/starmap.md
+/// §10.7): the name is edited in place (`IOString` points at the record), `IOStringBackup` restores it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rename {
+    pub fleet: bool,
+    pub index: usize,
+    pub text: Vec<u8>,
+    /// `IOKurzor`.
+    pub cursor: usize,
+    /// `IOGombnyomasraTorles`: the first key replaces the text.
+    pub clear: bool,
+    pub backup: Vec<u8>,
+}
+
+/// A key of the rename (`DoKeyboard` with `IOMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenameKey {
+    Char(u8),
+    Back,
+    Delete,
+    Left,
+    Right,
+    Home,
+    End,
+}
+
+impl Rename {
+    pub fn new(fleet: bool, index: usize, name: &[u8]) -> Self {
+        Self { fleet, index, text: name.to_vec(), cursor: name.len(), clear: true, backup: name.to_vec() }
+    }
+
+    /// `IOMaxLen`: 0xf for a planet, 0x13 for a fleet.
+    pub fn max(&self) -> usize {
+        if self.fleet { 0x13 } else { 0xf }
+    }
+
+    /// A key: a character goes in at the cursor up to `IOMaxLen`; Backspace and Delete (the first key with
+    /// `IOGombnyomasraTorles` clears the text instead), the arrows, Home and End move the cursor.
+    pub fn key(&mut self, k: RenameKey) {
+        let clear = std::mem::take(&mut self.clear);
+        if clear && matches!(k, RenameKey::Char(_) | RenameKey::Back | RenameKey::Delete) {
+            self.text.clear();
+            self.cursor = 0;
+            if !matches!(k, RenameKey::Char(_)) {
+                return;
+            }
+        }
+        match k {
+            RenameKey::Char(c) if self.cursor < self.max() => {
+                self.text.insert(self.cursor.min(self.text.len()), c);
+                self.text.truncate(self.max());
+                self.cursor += 1;
+            }
+            RenameKey::Back if self.cursor > 0 => {
+                self.cursor -= 1;
+                self.text.remove(self.cursor);
+            }
+            RenameKey::Delete if self.cursor < self.text.len() => {
+                self.text.remove(self.cursor);
+            }
+            RenameKey::Left => self.cursor = self.cursor.saturating_sub(1),
+            RenameKey::Right => self.cursor = (self.cursor + 1).min(self.text.len()),
+            RenameKey::Home => self.cursor = 0,
+            RenameKey::End => self.cursor = self.text.len(),
+            _ => {}
+        }
+    }
+
+    /// `StarmapGfx2D_3`'s entry (ELF 0x6d4a30): until the first key a colour-0x27 box behind the text, the text at
+    /// (50, 427) size 2 (colour 0x22 for a planet, 3 for a fleet), the cursor bar (colour 1, 2 px under the character
+    /// cell) on the 200 ms blink, held on the last cell once the text is full.
+    pub fn draw(&self, f: &mut Frame, d: &Draw2d, now_ms: f32) {
+        use crate::render::{kind, Blend, Instance};
+        let (x, y) = (50.0, 427.0);
+        let (w, h) = (d.font.advance(2), d.font.height(2));
+        let col = |i: usize| d.palette.get(i).copied().unwrap_or([1.0; 3]);
+        let fill = |f: &mut Frame, r: [f32; 4], c: [f32; 3]| {
+            f.push(d.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, d.v.px(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0), [r[2] * d.v.k / 2.0, r[3] * d.v.k / 2.0], [c[0], c[1], c[2], 1.0]));
+        };
+        if self.clear {
+            fill(f, [x - 1.0, y - 1.0, w * self.text.len() as f32 + 2.0, h + 2.0], col(0x27));
+        }
+        d.font.text(f, &d.v, &self.text, x, y, self.max(), 2, Align::Left, col(if self.fleet { 3 } else { 0x22 }), None);
+        if (now_ms / 200.0) as i64 % 2 == 1 {
+            let c = self.cursor.min(self.max() - 1) as f32;
+            fill(f, [x + w * c, y + h, w, 2.0], col(1));
+        }
+    }
+}
+
 /// The screen's menus and modes (the original's screen globals).
 #[derive(Debug, Clone, Default)]
 pub struct Menus {
@@ -242,6 +332,7 @@ pub struct Menus {
     pub split_sent: bool,
     pub info: Option<PlanetInfo>,
     pub menu: Option<SelectMenu>,
+    pub rename: Option<Rename>,
     /// The pointer (virtual) and whether a button is held (`Mouse_Gomb`).
     pub pointer: [f32; 2],
     pub held: bool,
@@ -261,6 +352,16 @@ fn colony_ship_heading(state: &SaveState, e: u8, p: usize) -> bool {
 /// `BolygoInfoIs(p, info)`: one of the planet's info slots 1..=5 (`+0x16a`) holds `info`.
 fn info_is(r: &[u8], info: i16) -> bool {
     (0..5).any(|h| i16_at(r, 0x16a + 2 * h) == info)
+}
+
+/// The `c` key's test (`StarmapKeyboardHandler`, character 99): planet `p` is free, the human has a colony ship in
+/// the pool (`OsszHanyKolonizalo`), none heading there (`IndultEKolonizalo`) and no -0x2094 info on it.
+pub fn can_send_colony_ship(state: &SaveState, p: usize) -> bool {
+    if p < 1 || p > state.planet_count() {
+        return false;
+    }
+    let (e, r) = (en(state), planet(state, p));
+    r[0x20] == 0 && state.mem.i32(va::COLONY_SHIP_POOL + 4 * e as u32) > 0 && !colony_ship_heading(state, e, p) && !info_is(&r, -0x2094)
 }
 
 /// The researched status (5) of tech `t` for `e` (`Talalmanyok + 0x45 + e`).
@@ -1105,5 +1206,23 @@ mod tests {
     fn sale_line_fills_the_format() {
         assert_eq!(fill_format(b"Sell %s. Credits: $%d", b"Base", b"3400"), b"Sell Base. Credits: $3400".to_vec());
         assert_eq!(split_planet_item(b"Earth 45%-Destroyer"), (&b"Earth "[..], &b"45%-Destroyer"[..]));
+    }
+
+    #[test]
+    fn rename_keys_follow_the_io_entry() {
+        // The first character replaces the text, a planet's name stops at 15, Backspace and the cursor keys edit.
+        let mut r = Rename::new(false, 3, b"Old");
+        r.key(RenameKey::Char(b'A'));
+        assert_eq!((r.text.as_slice(), r.cursor), (&b"A"[..], 1));
+        for _ in 0..20 {
+            r.key(RenameKey::Char(b'b'));
+        }
+        assert_eq!(r.text.len(), 15);
+        r.key(RenameKey::Home);
+        r.key(RenameKey::Delete);
+        assert_eq!(r.text[0], b'b');
+        let mut q = Rename::new(true, 1, b"Fleet");
+        q.key(RenameKey::Back);
+        assert_eq!((q.text.len(), q.max()), (0, 0x13));
     }
 }

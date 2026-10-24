@@ -235,6 +235,19 @@ pub struct Design {
     pub turn: M3,
     gy: [f32; 2],
     drag: Option<[f32; 2]>,
+    /// `desMessagesUtaniLegelsoBejoves` (exe 0xa3f0c0): back from the messages, help or options screen, until the
+    /// end of the first `Design3DUpdate` (no hull drag starts on that frame).
+    back: bool,
+    /// `NemkellTexturaCsere` (exe 0xa3f6ec): `Design_Main` chose another design (not an order's event or a key);
+    /// the hull slides out at the next `Design3DUpdate` even before `AktAlap` follows; off when it is all out.
+    pub(crate) retexture: bool,
+    /// The left button's input waiting for this tick's `Design_Main` (the exe runs it after the frame's 3D update and
+    /// draw; the edges `KirakFader` and the pick read are taken at once).
+    main: Vec<MainInput>,
+    /// The orders `Design_Main` sent, with the tick they reach `MULTIGET_Design`: the exe's own messages come back
+    /// at the fourth frame's start [obs: the OK's 0x33 sent at 521 changes `AktTerv` at 525, the sale's 0x34 at 631
+    /// at 635; probes/design_zoom.js].
+    in_flight: Vec<(u64, ig2_sim::game::DesignOrder)>,
     /// `DesignAktPod` (0 = none) and the design it belongs to (a new design clears it, `Design_Main`).
     pub pod: usize,
     pod_of: usize,
@@ -247,9 +260,14 @@ pub struct Design {
     buttons: (bool, bool, bool),
     pub list_frame: DesignFrame,
     pub tip: Tooltip,
+    /// The text of the tooltip 0x0c (the tech model's name).
+    pub tip_text: Vec<u8>,
     /// UI ticks since the screen opened.
     pub frames: u64,
     pub sounds: Vec<SoundId>,
+    /// `TutorialCheckEvent` ids the screen raised (0xb: laser 2.0 on a hull of tech 5; 0xc: OK on hull model 6 with
+    /// a pod fitted), for the window to carry out.
+    pub tutorial: Vec<i32>,
     /// `DesignTervezesMod` (0 view, 1 new, 2 redesign, 3 modify), the scratch `DesignTervTervezett`, `CanModify`.
     pub mode: u8,
     pub scratch: [u8; 0x84],
@@ -277,9 +295,20 @@ pub struct Design {
     pub laser_glow: Option<crate::render::TexId>,
     /// `TutorialPaused` (delete is off).
     pub tutorial_paused: bool,
-    /// Order events waiting for the next frame (`events` since the last frame, `events_due` for this one).
+    /// Order events for the next frame (`MultiSendPackets` before its `Design3DUpdate`: the tick's `Design_Main`
+    /// sent them).
     pub(crate) events: Vec<ig2_sim::game::OrderEvent>,
-    pub(crate) events_due: Vec<ig2_sim::game::OrderEvent>,
+}
+
+/// Frames from the `Design_Main` that sends an order to the one whose start applies it.
+const ORDER_FRAMES: u64 = 4;
+
+/// The left button's input as `Design_Main` takes it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum MainInput {
+    Press([f32; 2]),
+    Move([f32; 2]),
+    Release,
 }
 
 impl Design {
@@ -313,6 +342,10 @@ impl Design {
             turn: scene::create_matrix(HULL_TURN.0, HULL_TURN.1, HULL_TURN.2),
             gy: [0.0; 2],
             drag: None,
+            back: false,
+            retexture: false,
+            main: Vec::new(),
+            in_flight: Vec::new(),
             pod: 0,
             pod_of: 0,
             mouse: [320.0, 240.0],
@@ -321,8 +354,10 @@ impl Design {
             buttons: (false, false, false),
             list_frame: DesignFrame::default(),
             tip: Tooltip::default(),
+            tip_text: Vec::new(),
             frames: 0,
             sounds: Vec::new(),
+            tutorial: Vec::new(),
             mode: 0,
             scratch: [0; 0x84],
             can_modify: false,
@@ -340,9 +375,9 @@ impl Design {
             laser_glow: None,
             tutorial_paused: false,
             events: Vec::new(),
-            events_due: Vec::new(),
         };
         s.scroll_to_pointer();
+        s.back = !animated;
         if animated {
             s.sounds.push(des(0));
         }
@@ -395,9 +430,7 @@ impl Design {
         let (state, rules) = (c.state, c.rules);
         self.frames += 1;
         crate::design_scene::track_boxes(c, self);
-        self.held_pod(c);
         self.apply_events(c.state);
-        self.edit_held(c);
         if self.current() != self.pod_of {
             self.pod = 0;
             self.pod_of = self.current();
@@ -422,7 +455,7 @@ impl Design {
         }
         self.list_frame.tick();
         // `Design3DUpdate` (`AktAlap` as the last frame's `DesignGfx2D_1` left it).
-        if self.loaded != self.model {
+        if self.loaded != self.model || self.retexture {
             self.add_dir = 1;
         }
         self.pods_begin(c);
@@ -454,6 +487,10 @@ impl Design {
                 }
             }
         }
+        // Step 13 (`AddZoomDes == ADDZOOMMAXDES`): `NemkellTexturaCsere = 0`.
+        if self.add_zoom == ADD_ZOOM_MAX {
+            self.retexture = false;
+        }
         self.started = true;
         if self.frame == 60.0 {
             self.wire += 0.25;
@@ -481,6 +518,7 @@ impl Design {
                 }
             }
         }
+        self.back = false;
         // `DesignGfx2D_1` (drawn inside `Update3D`, after the above): `AktAlap = Alapok[d.+0x44]+8`.
         if let Some(d) = self.edited(state) {
             let hull = i32_at(d, field::HULL).clamp(0, 24) as usize;
@@ -497,6 +535,7 @@ impl Design {
                 self.lasers.shoot(r.map(|q| q as i32), at, self.frame / 60.0, [0x4c; 3]);
             }
         }
+        self.design_main(c, mask);
         if self.leaving {
             self.leaving = false;
             self.closing = true;
@@ -577,11 +616,50 @@ impl Design {
         }
     }
 
-    /// The left button went down at `at` (`Mouse_Lenyom` in `Design_Main`; `AlapfolottLenyomva` starts a drag).
-    pub fn press(&mut self, c: &Ctx, mask: &[u8], at: [f32; 2]) {
+    /// This tick's `Design_Main` (exe 0x4b2190, after the frame's `Design3DUpdate` and draw): the held hot-spot's
+    /// frame (none on the release's), then the input since the last tick; another design chosen sets
+    /// `NemkellTexturaCsere`.
+    fn design_main(&mut self, c: &Ctx, mask: &[u8]) {
+        let old = self.current();
+        if !self.main.iter().any(|m| matches!(m, MainInput::Release)) {
+            self.held_pod(c);
+            self.edit_held(c);
+        }
+        for m in std::mem::take(&mut self.main) {
+            match m {
+                MainInput::Press(at) => self.main_press(c, mask, at),
+                MainInput::Move(at) => self.main_moved(at),
+                MainInput::Release => self.main_release(c),
+            }
+        }
+        if self.current() != old {
+            self.retexture = true;
+        }
+        let due = self.frames + ORDER_FRAMES - 1;
+        self.in_flight.extend(self.orders.drain(..).map(|o| (due, o)));
+        let frames = self.frames;
+        let (now, later) = std::mem::take(&mut self.in_flight).into_iter().partition(|o| o.0 <= frames);
+        self.in_flight = later;
+        self.orders = now.into_iter().map(|o: (u64, _)| o.1).collect();
+    }
+
+    /// The orders not handed out yet (the screen goes).
+    pub fn flush_orders(&mut self) -> Vec<ig2_sim::game::DesignOrder> {
+        let mut out = std::mem::take(&mut self.orders);
+        out.extend(self.in_flight.drain(..).map(|o| o.1));
+        out
+    }
+
+    /// The left button went down at `at` (`Mouse_Lenyom`; its hot-spot acts in the tick's `Design_Main`).
+    pub fn press(&mut self, _c: &Ctx, _mask: &[u8], at: [f32; 2]) {
         self.mouse = at;
         (self.buttons.0, self.buttons.1) = (true, true);
         self.pod_edges(true);
+        self.main.push(MainInput::Press(at));
+    }
+
+    /// `Design_Main` on `Mouse_Lenyom`: the hot-spot under `at` acts.
+    fn main_press(&mut self, c: &Ctx, mask: &[u8], at: [f32; 2]) {
         let id = self.spot(c, mask, at);
         match id {
             9 => {
@@ -637,6 +715,11 @@ impl Design {
     pub fn moved(&mut self, at: [f32; 2]) {
         self.mouse = at;
         self.tip.moved(at);
+        self.main.push(MainInput::Move(at));
+    }
+
+    /// `Design_Main` with the pointer at `at`: the held list, scroll bar or popup follows it.
+    fn main_moved(&mut self, at: [f32; 2]) {
         match self.held {
             Some(9) => self.pick_row(at),
             Some(10) => self.scroll_bar(at),
@@ -656,11 +739,16 @@ impl Design {
     }
 
     /// The left button went up (`Mouse_Felenged`).
-    pub fn release(&mut self, c: &Ctx) {
+    pub fn release(&mut self, _c: &Ctx) {
         (self.buttons.0, self.buttons.2) = (false, true);
         self.pod_edges(false);
-        self.held = None;
         self.drag = None;
+        self.main.push(MainInput::Release);
+    }
+
+    /// `Design_Main` on `Mouse_Felenged`: the held popup acts and the hold ends.
+    fn main_release(&mut self, c: &Ctx) {
+        self.held = None;
         self.edit_release(c);
     }
 
@@ -669,12 +757,17 @@ impl Design {
         self.drag = None;
     }
 
-    /// `AlapfolottLenyomva` (ELF 0x503d20): a hull is loaded and slid in, and the pointer is within 160 pixels of
-    /// its projected centre (`GetObjCenter` + `TransformPoint`; here its place (0, −15, −1400)).
+    /// `AlapfolottLenyomva` (ELF 0x503d20 / exe 0x4acbc0): a hull is loaded and slid in, not on the first frame
+    /// back from another screen, and the pointer is within 160 pixels of its projected centre (`GetObjCenter` +
+    /// `TransformPoint`, ·639/639; f32 sum, double root). The re-measured root's box is centred on its pivot, so the
+    /// centre is the hull's place (`UnHideAlap`: `SubZoomDes` moves it back while the tech models are out).
     fn over_hull(&self, at: [f32; 2]) -> bool {
-        let c = [320.0, 600.0 * -15.0 / 1400.0 + 240.0];
-        let d = (((c[0] - at[0]) * (c[0] - at[0]) + (c[1] - at[1]) * (c[1] - at[1])) as f64).sqrt();
-        self.loaded != -1 && self.add_zoom == 0.0 && d < 160.0
+        if self.loaded == -1 || self.add_zoom != 0.0 || self.back {
+            return false;
+        }
+        let Some(c) = self.screen(self.hull_at()) else { return false };
+        let d = (((c[0] - at[0]) * (c[0] - at[0]) + (c[1] - at[1]) * (c[1] - at[1])) as f64).sqrt() as f32;
+        d < 160.0
     }
 
     /// Hot-spot 9: `AktTervMutato = (my − Kord1Y + 5)/15 + Kezdet + 1`, kept on a shown row.
@@ -725,8 +818,16 @@ impl Design {
 
     /// The tooltip: the hot-spot under the pointer once it rested (`UpdateFrame`).
     pub fn tooltip(&mut self, c: &Ctx, mask: &[u8], tips: &[Vec<u8>], now: f64) {
-        let under = self.spot(c, mask, self.tip.mouse);
-        let len = tips.get(under as usize).map_or(0, |t| t.len());
+        let mut under = self.spot(c, mask, self.tip.mouse);
+        let mut len = tips.get(under as usize).map_or(0, |t| t.len());
+        // The tech models' spot 0x0c (`KijelolTalalmany`) where no other hot-spot is.
+        let m = self.tip.mouse;
+        if let (0, Some((t, o))) = (under, self.pods.tip) {
+            if o[0] <= m[0] && m[0] < o[0] + 30.0 && o[1] <= m[1] && m[1] < o[1] + 30.0 {
+                self.tip_text = c.texts.map_or_else(Vec::new, |x| crate::hud::tech_name(x, t));
+                (under, len) = (0x0c, self.tip_text.len());
+            }
+        }
         // Any left press holds the tooltip back (the 3D pod pick too, which holds no hot-spot) [obs: design-pods.json t400].
         self.tip.update(now, under, len, self.held.is_some() || self.buttons.0);
     }
@@ -1033,6 +1134,56 @@ mod tests {
     }
 
     #[test]
+    fn a_full_name_takes_a_key_at_the_cursor_and_drops_its_last() {
+        use crate::design_edit::{EntryKey, NameEntry};
+        let entry = |text: &[u8], cursor, clear| Some(NameEntry { text: text.to_vec(), cursor, clear, stored: Some(4) });
+        let mut s = Design { entry: entry(b"ABCDEFGHIJKLMNOP", 3, false), ..blank() };
+        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"ABCxDEFGHIJKLMNO".to_vec())));
+        // The cursor at `IOMaxLen`: nothing goes in.
+        s.entry = entry(b"ABCDEFGHIJKLMNOP", 16, false);
+        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"ABCDEFGHIJKLMNOP".to_vec())));
+        // The first key replaces the text, the cursor keys only drop the flag.
+        s.entry = entry(b"ABCDEFGHIJKLMNOP", 16, true);
+        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"x".to_vec())));
+        s.entry = entry(b"Hawk", 4, true);
+        s.entry_key(EntryKey::Home);
+        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"xHawk".to_vec())));
+    }
+
+    #[test]
+    fn esc_folds_the_open_tech_models() {
+        let mut s = blank();
+        s.pods.sub_dir = 1;
+        s.pods.picked = -1;
+        s.pods_escape();
+        assert_eq!(s.pods.sub_dir, -1);
+        // A picked model flies into its pod once they are all out.
+        s.pods.sub_dir = 1;
+        s.pods.picked = 0;
+        s.sub_zoom = 1000.0;
+        s.pods_escape();
+        assert_eq!((s.pods.sub_dir, s.pods.sub2), (1, 1000.0));
+    }
+
+    #[test]
+    fn the_hull_drag_starts_near_the_hull_and_not_on_the_frame_back() {
+        let mut s = Design { loaded: 5, add_zoom: 0.0, opened: true, ..blank() };
+        s.press_right([320.0, 380.0]);
+        assert!(s.drag.is_some());
+        s.drag = None;
+        s.press_right([320.0, 400.0]);
+        assert!(s.drag.is_none());
+        // The tech models out push the hull back (z −2400): its centre moves up.
+        s.sub_zoom = 1000.0;
+        s.press_right([320.0, 236.25 + 159.0]);
+        assert!(s.drag.is_some());
+        s.drag = None;
+        s.back = true;
+        s.press_right([320.0, 240.0]);
+        assert!(s.drag.is_none());
+    }
+
+    #[test]
     fn the_idle_hull_turns_about_the_vertical() {
         let mut s = blank();
         s.turn = scene::IDENTITY;
@@ -1065,6 +1216,10 @@ mod tests {
             turn: scene::IDENTITY,
             gy: [0.0; 2],
             drag: None,
+            back: false,
+            retexture: false,
+            main: Vec::new(),
+            in_flight: Vec::new(),
             pod: 0,
             pod_of: 0,
             mouse: [0.0; 2],
@@ -1073,8 +1228,10 @@ mod tests {
             buttons: (false, false, false),
             list_frame: DesignFrame::default(),
             tip: Tooltip::default(),
+            tip_text: Vec::new(),
             frames: 0,
             sounds: Vec::new(),
+            tutorial: Vec::new(),
             mode: 0,
             scratch: [0; 0x84],
             can_modify: false,
@@ -1092,7 +1249,6 @@ mod tests {
             laser_glow: None,
             tutorial_paused: false,
             events: Vec::new(),
-            events_due: Vec::new(),
         }
     }
 }

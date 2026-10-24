@@ -844,8 +844,8 @@ fn heroes(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         let h = at(k);
         add_money(w, h[5].wrapping_mul(-1000) as f64);
         // The fleet is named after the design (`st_GetTerv` once for the name, once for the ship).
-        w.story_design(en, h[0], 3);
-        let f = s.f_new_ex("", en, 0, 0.0, 1, 0, w);
+        let named = w.story_design(en, h[0], 3);
+        let f = s.f_new_ex(crate::story::FleetName::Design { empire: en, design: named }, en, 0, 0.0, 1, 0, w);
         let design = w.story_design(en, h[0], 3);
         w.event(StoryEvent::NewShip { fleet: f, design });
         let b = s.last_fn[last_fn::B];

@@ -36,15 +36,24 @@ Data (static values read from the exe [asm]): `MAXFRAMES` 100.0f (0x90af68), `hl
 
 ## 1. Entry and exit
 
-Opened by F1 (`DoKeyboard`: F*n* asks for `AktKep` *n*; not on `AktKep` 1 itself, not while a screen change runs; the
-screen-enable rules are `GetScreenCanBeChanged` ELF 0x550990, deviation 72) and by the remaster's toolbar help button
+Opened by F1 (`DoKeyboard` F-key block, exe 0x4db1a0, key-down only, also with the chat open: F*n* asks for `AktKep` *n*; not on
+`AktKep` 1 itself; needs no pending switch (0xbae24c/24d/250); `AktKep` 0xb (space battle) or 3 with
+`GetWarfareStatus(planet) == 1` need DEBUGX (0xbae587); Options (0xd) passes with neither `OptionsCsakLoadLehet` nor
+`OptionsHarcFolyik`, with HarcFolyik only under DEBUGX, never with CsakLoadLehet; Messages (10) only when
+`AktValasztasok == 0 && KiirtaMar`; `AktKep` >= 0xe blocked; `KepernyokLetiltva[n]` (0xf66f2c) or DEBUGX; F11 needs one
+of the per-slot flags 0xe436ee... (stride 0x2d9c); F3 with tutorial step 0x1c checks a planet name. The ELF
+`GetScreenCanBeChanged` 0x550990 differs: no Messages or >= 0xe rule. Client `open_help` applies these gates for F1, a
+colony at war taken as the planet's war flag +0x64 bit 0 [assumed = `GetWarfareStatus` 1]. Deviations 72, 216) and by the remaster's toolbar help button
 (`help_callback`: on screens where `help_new_available` (starmap without fleet/transfer mode, 3..9, 0xb) it shows a
 `help_new\help_<screen>.bmp` overlay first; a second press, or a screen without one, sends F1 through
 `help_press_f1`, which pushes F1, or Esc on `AktKep` 1). The overlay is the toolbar's (not ported here: §11).
 
-`Help_Belep`:
-1. `hlpELINDULT = hlpBECSUKAS = 0`. `HelpElottiScreen = OldKep` unless `OldKep == 1`; from Messages (10)
-   `MessagesElottiScreen`, from Options (0xd) `OptionsElottiKep`.
+`Help_Belep` (exe 0x4d7060):
+1. `hlpELINDULT = hlpBECSUKAS = 0`. `HelpElottiScreen` (0xb77058) `= OldKep` unless `OldKep == 1`; from Messages (10)
+   `MessagesElottiScreen` (0xda65b4), from Options (0xd) `OptionsElottiKep` (0xbae2b4); `Messages_Belep` 0x507f90 and
+   `Options_Belep` 0x519790 resolve Help the same way, so Options/Messages opened from Help return to the screen before
+   Help. Exit: `AktKep = HelpElottiScreen`. Client: F1 from Options closes Options (as its Back: pause restored) and from
+   Messages closes the messages screen, then opens Help; Help's exit lands on the screen before them (deviations 217, 218).
 2. `hlpKELLKINYITAS = OldKep != 1 && default (1)`; `hlpKINYITVA = !KELLKINYITAS`; `helpframe = KINYITVA ? 100 : 0`;
    `IdoPauseMertAtlepesAlattVan = !KINYITVA`: the game time stands from here until `Help_Kilep` clears it (nothing in
    between does), so for the whole visit when it opened animated.
@@ -169,8 +178,10 @@ and the byte after it is skipped; `x = 178 + col·CharX[font at the line's start
 
 `Help_Main` [asm constants]: over the track (0x22) the mouse is held (`Mouse_Megfogva`), a press starts the drag,
 `SubTopicSel = −1`; while dragging `TopicActSorPtr = 0` for `N < 37`, else `h = 13212/N`, `d = 367 − h`, `m = N −
-36`, `ptr = ((y − 66 − h/2)·m + d/2)/d` clamped to `0..=m`. Exit (6, or Esc, which `MainCallBackEventHandler` maps to
-`AktIkon 0x24` on this screen): `AktKep = HelpElottiScreen`. F1 does nothing here.
+36`, `ptr = ((y − 66 − h/2)·m + d/2)/d` clamped to `0..=m`. Exit (6, or Esc, a faked press on spot 6 via 0xb77208 = 0x24 in `MainCallBackEventHandler`): `AktKep =
+HelpElottiScreen`. F1 does nothing here. The picker `FUN_00510390` scans from the highest id down without a break, so the
+lowest id wins; rects are inclusive `x..x+w-1`: spot 3 (y 44..401) wins over spot 6 on row 401, as `spot_at` does
+(deviation 222).
 
 Clicks on the list (`HelpGfx2D_2`, at draw time; left button, the press frame, no drag): a topic → `TopicSel =
 OldTopicSel = i`, `SubTopicSel = −1`, reload (§4), `TopicActSorPtr = 0` (the current topic too); a subtopic `k` →
@@ -178,7 +189,15 @@ OldTopicSel = i`, `SubTopicSel = −1`, reload (§4), `TopicActSorPtr = 0` (the 
 remain below it, `SubTopicPos` = the last line from which ≥ 383 px remain (`j` from `N − 1` down while `rest(j) <
 383 && j > 0`). The view then follows `SubTopicPos` until the track is touched.
 
-No mouse wheel and no keys besides Esc in the Help code (the touch scroll of `FRISSIT_Help2`, `(y0 − y)/10` lines over
+No mouse wheel and no keyboard handler in the Help code (`FUN_004db040` has no case 1), but `DoKeyboard` stays live: F2..F10
+leave Help for their screen (§1's gates), O (char event) -> Options, M -> Messages (if `KepernyokLetiltva[10]` is 0),
+P/Space toggle the pause, 1/2/3 set the speed with sound 10 (SP, `AktKep < 0xd`, no speed lock), Enter/backquote open the
+chat in MP or debug, Esc via the faked exit press. Client: the Help key arm routes F2..F10/O/M (Help closes at once, then
+the key; the F-key of the screen under Help only closes Help) and Space/P/1/2/3; the chat keys are not ported. The
+tracer's key events carry no text character, so O/M weren't checked on the exe; a run confirmed F1 does nothing on Help
+and Esc returns to `HelpElottiScreen` (deviation 219). The top bar's spots (pause 0,0,15,20; speeds 16/30/50; screen menu
+619,0,21,20; message line 270,0,323,20; research 598,0,21,20) are registered once at start-up (exe 0x555df0) and stay live
+over Help (`Help_MouseInit` 0x4d7640 sets only `db4680 = 6`): moved to FX1 part 2 (deviation 220). (The touch scroll of `FRISSIT_Help2`, `(y0 − y)/10` lines over
 the text box, is the mobile build's).
 
 ## 6. Clock
@@ -212,5 +231,9 @@ button close it and the screen before comes back with the game clock restarted. 
 live on between visits (`help::Memory`).
 
 ## 11. Not ported / open
-- The remaster's toolbar help button and its `help_new` overlays (`help_callback`, `ig2_toolbar_*`).
+- The remaster's toolbar help button and its `help_new` overlays (`help_callback`, `ig2_toolbar_*`): `help_callback` 0x4d8650 /
+  `help_press_f1` 0x4d8b40 push F1 (Esc on Help) through the normal key path, or load the `help_new` sprites when
+  `FUN_004d8af0` says the screen has one (AktKep 2 under conditions, 3..9, 0xb). `MOUSE_SelectScreens` 0x555470's menu row 0
+  = screen 1 = Help (no gate but `KepernyokLetiltva`). Both moved to FX1 part 2 (top bar and screen menu on every
+  screen; deviations 220, 221).
 - The mobile touch scroll.

@@ -12,7 +12,7 @@ use std::time::Duration;
 use ig2_net::discovery::{Announcement, Found};
 use ig2_net::galaxy::{GalaxyOptions, MAX_AIS, PLANETS};
 use ig2_net::lobby::{LobbyClient, LobbyHost, LobbyState, Refusal, Settings, SlotKind, Start, Status};
-use ig2_net::session::{ClientSession, HostSession, SessionEvent, SessionSettings};
+use ig2_net::session::{ClientSession, HoldStatus, HostSession, SessionEvent, SessionSettings};
 use ig2_net::{Peer, Transport};
 use ig2_sim::game::new_game::StartData;
 use ig2_sim::game::GameRules;
@@ -827,6 +827,53 @@ impl<'r> Session<'r> {
         }
     }
 
+    /// What holds the session now (the host's own view, a joiner's last word from the host).
+    pub fn status(&self, now: Duration) -> HoldStatus {
+        match self {
+            Session::Host { session, .. } => session.status(now),
+            Session::Client(c) => c.status.clone(),
+        }
+    }
+
+    /// A joiner's host is gone (left, the link closed or silent). The joiners don't migrate yet (ADR 0012's glue needs
+    /// the survivors' addresses): the game ends for them as it did in the original (`MultiCloseServer`).
+    pub fn host_gone(&self) -> bool {
+        match self {
+            Session::Host { .. } => false,
+            Session::Client(c) => c.closed(),
+        }
+    }
+
+    /// The local player's chat line (`ExecuteString`'s 0x3fc): every machine shows it, this one included.
+    pub fn say(&mut self, text: &str) {
+        match self {
+            Session::Host { session, .. } => session.say(text),
+            Session::Client(c) => c.say(text),
+        }
+    }
+
+    /// The name `empire`'s player had in the room.
+    pub fn name_of(&self, empire: u8) -> String {
+        match self {
+            Session::Host { session, .. } => session.humans().find(|h| h.0 == empire).map(|h| h.1.to_string()),
+            Session::Client(c) => {
+                let slot = c.humans().iter().find(|h| h.1 == empire).map(|h| h.0);
+                c.info().names.iter().find(|n| Some(n.0) == slot).map(|n| n.1.clone())
+            }
+        }
+        .unwrap_or_else(|| format!("Empire {empire}"))
+    }
+
+    /// `ExitToMainScreen`'s teardown (game-end.md §2: `MultiCloseServer` / `MultiCloseClient`): the others are told
+    /// this player left (a joiner is away at once; the host's survivors migrate), then the links close as the session
+    /// drops. A `Leave` lost on the way is the drop path's (closed link, keep-alive).
+    pub fn leave(mut self) {
+        match &mut self {
+            Session::Host { session, .. } => session.leave(),
+            Session::Client(c) => c.leave(),
+        }
+    }
+
     /// At `now`: admit rejoiners (host), receive, send, run up to `max_turns` turns. Returns the turns run and the
     /// host's session events.
     pub fn pump(&mut self, now: Duration, max_turns: usize) -> Result<(usize, Vec<SessionEvent>), String> {
@@ -839,19 +886,25 @@ impl<'r> Session<'r> {
                 let events = session.pump(now, max_turns).map_err(|e| e.to_string())?;
                 Ok(((session.own.turn - before) as usize, events))
             }
-            Session::Client(c) => Ok((c.pump(now, max_turns).map_err(|e| e.to_string())?, Vec::new())),
+            Session::Client(c) => {
+                let run = c.pump(now, max_turns).map_err(|e| e.to_string())?;
+                Ok((run, c.chat.drain(..).map(|(empire, text)| SessionEvent::Said { empire, text }).collect()))
+            }
         }
     }
 }
 
 /// The room's start on this machine (ADR 0014 §2): the host builds the galaxy and starts the session with `ticks`
-/// (its clock); a joiner builds the same galaxy from the host's `GalaxyStart` and checks its hash.
+/// (its clock); a joiner builds the same galaxy from the host's `GalaxyStart` and checks its hash, or, joining a
+/// running game under its old name, starts from the host's snapshot (the rejoin, `rules/multiplayer.md` §7.2).
 pub fn launch<'r>(b: Begun, data: &StartData, rules: &'r GameRules, ticks: u32) -> Result<Session<'r>, String> {
     match b {
         Begun::Host { lobby, listener } => {
             let s = HostSession::start_galaxy(*lobby, data, rules, SessionSettings::default(), ticks).map_err(|_| "the room can't start yet".to_string())?;
             Ok(Session::Host { session: Box::new(s), listener })
         }
+        // A rejoin to a running game (the host's door matched the name to an away human): the host's state now.
+        Begun::Joiner { start, link } if start.galaxy.is_none() => ClientSession::new(&start, link, rules).map(|c| Session::Client(Box::new(c))).map_err(|e| e.to_string()),
         Begun::Joiner { start, link } => ClientSession::new_galaxy(&start, link, data, rules).map(|c| Session::Client(Box::new(c))).map_err(|e| e.to_string()),
     }
 }
@@ -1047,6 +1100,98 @@ mod tests {
             let stand_in = &worlds[0].net.as_ref().unwrap().0.peer().game;
             assert!(stand_in.state.fleets.is_empty(), "the peer holds the stand-in between pumps");
         }
+    }
+
+    /// The game loop on three machines (FX15): each world's screens see its own `EN`; a chat line reaches every
+    /// machine; the host's MP save reads back, a joiner has none; a joiner who leaves is away on the others and
+    /// comes back through the room's Join under its name (the rejoin's snapshot start); the peers agree throughout;
+    /// once the host leaves the joiners' sessions end.
+    #[test]
+    fn the_mp_game_loop_chats_saves_leaves_and_rejoins() {
+        use crate::world::World;
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(2, &mut net);
+        for g in &mut guests {
+            click(g, spot::READY, false, &mut net);
+        }
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
+        let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 77)).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
+        let mut worlds = vec![mk(b)];
+        worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
+        let en = |w: &World| w.game.state.mem.i32(ig2_sim::save::va::EN);
+        assert_eq!(worlds.iter().map(en).collect::<Vec<_>>(), [1, 2, 3], "each machine's own EN");
+        let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
+        let t = std::time::Instant::now();
+        let step = |worlds: &mut Vec<World<'static>>, done: &dyn Fn(&[World]) -> bool| {
+            while !done(worlds) {
+                for w in worlds.iter_mut() {
+                    w.pump();
+                    w.tick();
+                }
+                assert!(t.elapsed() < Duration::from_secs(90), "stalled");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= 10));
+        assert_eq!(worlds.iter().map(en).collect::<Vec<_>>(), [1, 2, 3], "the shared EN went back in for every pump");
+
+        // Chat: Guest0's line on every machine, its own included.
+        worlds[1].say(b"hello there");
+        step(&mut worlds, &|w| w.iter().all(|w| w.chat_lines.iter().any(|l| l == b"Guest0: hello there")));
+
+        // The MP save: the host's reads back with the three humans; a joiner can't.
+        let save = worlds[0].mp_save().unwrap().unwrap();
+        let back = ig2_net::session::MpSave::read(&save, RULES).unwrap();
+        assert_eq!(back.session.humans.iter().map(|h| (h.empire, h.name.as_str())).collect::<Vec<_>>(), [(1, "Host"), (2, "Guest0"), (3, "Guest1")]);
+        assert!(worlds[1].mp_save().unwrap().is_err());
+        assert!(worlds[2].mp_save().unwrap().is_err());
+
+        // Guest1 leaves: away on the others at once, who play on.
+        let (gone, _) = worlds.pop().unwrap().net.unwrap();
+        gone.leave();
+        step(&mut worlds, &|w| w.iter().all(|w| w.local_lines.iter().any(|l| l == b"Guest1 has left the game.")));
+        let at = turn(&worlds[0]);
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 10));
+
+        // It joins again by the room's Join under the same name: the host's door sends the state now.
+        let mut again = MpScreen::open(false, "Guest1", RULES);
+        type_text(&mut again, "local", &mut net);
+        let t2 = std::time::Instant::now();
+        let b = loop {
+            for w in worlds.iter_mut() {
+                w.pump();
+                w.tick();
+            }
+            if let Some(Out::Start(b)) = again.tick(&mut net) {
+                break b;
+            }
+            assert!(t2.elapsed() < Duration::from_secs(10), "no rejoin");
+        };
+        assert!(matches!(&b, Begun::Joiner { start, .. } if start.galaxy.is_none() && !start.snapshot.is_empty()));
+        worlds.push(mk(b));
+        assert_eq!(en(&worlds[2]), 3);
+        step(&mut worlds, &|w| w[0].local_lines.iter().any(|l| l == b"Guest1 is back."));
+        let at = turn(&worlds[0]);
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 20));
+        let hashes = |w: &World| w.net.as_ref().unwrap().0.peer().hashes.clone();
+        let h0 = hashes(&worlds[0]);
+        for w in &worlds[1..] {
+            let h = hashes(w);
+            assert!(h.iter().filter(|x| h0.contains(x)).count() >= 10, "the peers agree");
+            assert!(h.iter().all(|(t, x)| h0.iter().find(|(t0, _)| t0 == t).is_none_or(|(_, x0)| x0 == x)));
+        }
+        let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!() };
+        assert!(session.host.desyncs.is_empty(), "{:?}", session.host.desyncs);
+
+        // The host leaves: the joiners' sessions end.
+        let (h, _) = worlds.remove(0).net.unwrap();
+        h.leave();
+        step(&mut worlds, &|w| w.iter().all(|w| w.net_over));
+        assert!(worlds.iter().all(|w| w.local_lines.iter().any(|l| l == b"The host has left the game.")));
     }
 
     #[test]

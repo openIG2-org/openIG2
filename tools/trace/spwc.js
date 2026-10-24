@@ -739,7 +739,7 @@ function hookSwap() {
         for (const k in now) full[k] = { p: now[k].p, full: hexOf(now[k].b) };
         flush();
         send({ type: 'shot', tick: grabPending.tick, n: grabsDone, w, h, battle: battleSerial, self: self.toString(),
-          acttime: va(0xfd1520).readU32(), futofeny: va(0xf1736c).readFloat(), clouds: va(0xe75918).readS32(),
+          acttime: va(0xfd1520).readU32(), futofeny: va(0xf1736c).readFloat(), kering: va(0xf176dc).readFloat(), clouds: va(0xe75918).readS32(),
           // The smoothed camera `spwkamerapont`/`spwforgaspont` (eye, target: h, x, y, w), `spacewarelfade`, `zbm`.
           cam: hexOf(new Uint8Array(va(0xe72dd4).readByteArray(0x20))), fade: va(0xf16eb4).readFloat(), zbm: va(0x91965c).readFloat(), erosseg: va(0x927994).readFloat(),
           statics: statics(self), regions: full }, buf.readByteArray(w * h * 4));
@@ -834,7 +834,7 @@ function applyEvent(e) {
 function screenState(self) {
   return { kep: A.AktKep.readS32(), paused: A.IdoPause.readU8(), ikon: va(0xbae23c).readS32(), seen: [va(0xdb4654).readS32(), va(0xdb4658).readS32()], battleSpeed: A.BattleSpeed.readS32(), speed: va(0xbae25c).readS32(),
     battleSteps, cam: hexOf(new Uint8Array(va(0xe72dd4).readByteArray(0x20))), fade: va(0xf16eb4).readFloat(), zbm: va(0x91965c).readFloat(),
-    erosseg: va(0x927994).readFloat(), acttime: va(0xfd1520).readU32(), futofeny: va(0xf1736c).readFloat(), clouds: va(0xe75918).readS32(),
+    erosseg: va(0x927994).readFloat(), acttime: va(0xfd1520).readU32(), futofeny: va(0xf1736c).readFloat(), kering: va(0xf176dc).readFloat(), clouds: va(0xe75918).readS32(),
     obj: self ? hexOf(new Uint8Array(self.readByteArray(OBJ))) : null };
 }
 

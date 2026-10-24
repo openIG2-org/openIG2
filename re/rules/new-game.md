@@ -354,22 +354,37 @@ Port: `ai::design::generated_name`; the table is `Game::design_texts` (`StartDat
 read through `AiHooks::design_text` and `Market::design_name`. Verified: `tests/new_game.rs` (35 starts) and the save
 replay, both byte-exact without copying names; the mutation above is caught.
 
-## 15. The campaign stories in `Game`'s story tick: not wired yet (2026-10-23)
-`Game::story` and the other story hooks (`with_story`: game.rs, game/battles.rs, game/realtime.rs,
-game/message_orders.rs) run `ScenarioStories` only. The campaign chain (`Story_Check`'s order: Begin, Rnd, BRnd,
-Fable, Scen, Line, Elem, Multi, as `tests/campaign_trace.rs` builds it) can't simply be swapped in: Game's
-`StoryView` holds `&SaveState` and implements 22 of the `StoryWorld` methods; the other ~96 default to
-0 / false / empty, so the campaign scripts would read zeros and misfire. Missing:
-- **Reads** (~80): planets, fleets, ships, tanks, buildings, designs, techs, research, spies, trade, wormholes,
-  battlefields, the campaign tables; most map to `SaveState` accessors. No helper yet for `st_IsInRR`,
-  `st_GetTerv`, `MiTervMutato`, `BirodalomEro`, `CTF_value`, `LaborSzint`.
-- **Creators** (`story_design`, `new_fleet`, `new_design`, `new_design_raw`, `copy_design_new`, `new_spy`) and
-  the queries `in_radar_range`, `near_fleet(_ex)`, `conquest_ends_epidemic`: they need a `&mut Game` world like
-  `InitWorld` (game/new_game.rs).
-- **Effects**: Game carries out 15 of the ~120 `StoryEvent` kinds the campaign scripts raise (StopFleet,
-  Wormhole, RevealWormhole, the inbox events, EmpireDies / Won / CampaignOver); the rest (fleets, designs,
-  planets and buildings, ground war, money / techs / trade, diplomacy, spies) are only forwarded.
-- **Verification**: the campaign replay checks the scripts against a recorded oracle (`W`), not through `Game`;
-  wiring needs a save-replay recording from a campaign start ticking through story 400's opening.
-Plan (roadmap): reads → creators and fleet/design events → planet/tech/diplomacy/spy events → swap the
-chain in and record.
+## 15. The campaign stories in `Game`'s story tick (done 2026-10-24)
+`game::story_chain` runs the whole `Story_Check` chain (Begin, Rnd, BRnd, Fable, Scen, Line, Elem, Multi) at every
+story call site (game.rs, game/battles.rs, game/realtime.rs, game/message_orders.rs), not `ScenarioStories` only.
+- **Reads**: `game::story_world::GameStory` (a `StoryWorld` over `&mut Game`, replacing `StoryView`) answers every
+  read from the save state in the exe's layouts. New helpers: `st_IsInRR` (exe 0x5eb300, `GetENRadarKifejlesztve`
+  first), `InfoString_GetIndex` (infostr.txt, the II flag), `CTF_value` (written by the auto-resolved space battle,
+  exe 0x5a7430..0x5a7469, [1] and [2]). `GameRules.story` (`StoryRules`) holds the campaign tables, st_Rnd 138's
+  recruit names (exe 0x85E0BC), info strings, special.eng ids, `Tervek0` (named from Hungarian txt17 7/k+1 as
+  `StringReadAll` does), `pGyartas0` (exe 0x90B8A8) and values/fleet/building.txt (`ig2-rules`:
+  `story_recruit_names`, `design_templates`, `production_template`).
+- **Creators** made in the game at once: `FlottaNew`, `TervNew` (+`TervUjraSzamol`), `TervCopy2`, `st_GetTerv`
+  (`trade::story_design`), `Spy_New`. Fleet names are `FleetName` (story text/bytes/sprintf/design name); ~50 call
+  sites that passed "" now pass the exe's `_s(5, N)`.
+- **Effects** (`game/story_effects.rs`): every world-reaching `StoryEvent` is carried out when the script raises it:
+  fleets, ships, units (the AI's ports); designs (incl. 8's sale, 840's discount, 908's reset); planets
+  (`SetBolygoTulaj`, `st_Colonise`/`Generate_Planet`, `st_BolygoDestroy`, `Story_VulkanKitores`, razing,
+  `BolygoInfoAdd`/`Remove` (+0xba from the infostr flag; third arg = allow duplicates), `Virus_CheckAdd`, buildings,
+  battlefields); techs (`st_SetTalalmanyAllapot`, all states), money, trade prices, relations, `BirodalomBeketKot`,
+  `Diplomacy_AddSpecial/RemoveSpecial`, spies (records, `KemJelentesAdd`, story agent 310, 138's recruits, story
+  missions); undo types 1, 2, 3, 5, 6, 9, 10, 11.
+- **Statics**: the story statics the save leaves out (`save.rs va::STORY_MESSAGE..STORY_BRUTAL4`, `KemEsemeny`,
+  `Story_Minden_Flotta_Latszik`) are kept at their exe addresses between checks. Fixes on the way: the `st_vOzonviz`
+  chunk was emitted after its count when the loaded save had none; `MULTIGET_Spy`'s per-frame `HanyKemVan` recount
+  now runs at the start of `run_tick` (a new campaign's save holds a stale count).
+- **Verification**: two campaign-start save replays recorded in ig2.exe from `_local/traces/newgame/newgame-c1-d1-s5150.sav`
+  (campaign 1, difficulty 1): `replay-campaign-c1-x16` (60 ticks) and `replay-campaign-opening-c1-x16`
+  (`run_replay.py --warmup 685 --ticks 40`: story 401's first opening episode starts at tick 10, pirate base planet 111
+  with buildings and garrison, pirate fleet "Khan kalóz" attacking), both byte-exact tick by tick (chunks and the
+  compared unsaved globals, incl. the story statics and CTF). All earlier save replays stay byte-exact.
+- **Not modelled** (still only forwarded as `GameEvent::Story`; deviations 230-232): the GameInfo lines
+  (`st_AddGameInfo`/`RemoveGameInfo`, undo 4; the list at 0xE3E3A0 is saved and passes through as loaded);
+  `SpyOrder` (0x49) and `SendStorySpecial` (0x66) lockstep messages (a driver must deliver them); `SaveStoryline`
+  (registry); `HoldGroundWar`'s pause and the 0xF261F8 hold; Earthquake/Anim/notices (UI); `JoinBattle` writes
+  `spFlottak` (0xBAA1C0) but the battle code doesn't read it back; undo 7 `st_RemoveTerv` (no ported script registers it).

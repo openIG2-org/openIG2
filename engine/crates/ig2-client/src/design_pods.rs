@@ -67,6 +67,9 @@ pub struct Pods {
     pub outlines: Vec<[i32; 4]>,
     /// Per pod of the loaded hull: no tech fits it (`VannakTalalmanyokAPodon` false; `SzinezPodok`'s red light).
     pub no_techs: Vec<bool>,
+    /// The tooltip 0x0c (`KijelolTalalmany`'s `Mouse_Szoveg_Set(0xc, …)`): the marked model's tech and its 30 × 30
+    /// spot's corner, while on.
+    pub tip: Option<(usize, [f32; 2])>,
     /// The cosmetic `rand()` of the models' turn.
     seed: u32,
 }
@@ -161,11 +164,26 @@ impl Design {
         self.pods.picked = -1;
     }
 
+    /// `DesignKeyboardEscPressed`'s part-3 steps (exe 0x4b17a0, editing): open models with nothing picked fold
+    /// (`SubZoomDirDes = −1`), a picked one flies in when they are all out (`SubZoom2Des = 1000`); the held pick
+    /// stops (`InitiateDelay`) and the models go (`RemoveHozzavaloTalalmanyok`).
+    pub(crate) fn pods_escape(&mut self) {
+        if self.pods.sub_dir == 1 && self.pods.picked == -1 {
+            self.pods.sub_dir = -1;
+        }
+        if self.pods.sub_dir == 1 && self.pods.picked != -1 && self.pods.sub2 == 0.0 && self.sub_zoom == 1000.0 {
+            self.pods.sub2 = 1000.0;
+        }
+        self.pods.initiate = false;
+        self.remove_techs();
+    }
+
     /// `RemoveHozzavaloTalalmanyok` (ELF 0x501be0 / exe 0x4b6a70).
     fn remove_techs(&mut self) {
         if self.pods.loaded {
             self.pods.techs.clear();
         }
+        self.pods.tip = None;
     }
 
     /// The hull's place (`UnHideAlap` ELF 0x503490): `(0, −15, AddZoomDes − 1400 − SubZoomDes)`.
@@ -205,7 +223,7 @@ impl Design {
         if self.pods.initiate {
             self.pods.delay += 1.0;
         }
-        if self.loaded != self.model {
+        if self.loaded != self.model || self.retexture {
             self.pods.sub_dir = 0;
             self.sub_zoom = 0.0;
         }
@@ -479,7 +497,13 @@ impl Design {
     }
 
     /// `KijelolTalalmany(i)` (ELF 0x500dc0): its light on, it is the pick.
+    /// `KijelolTalalmany` (exe 0x4b47d0) also sets the tooltip 0x0c: the tech's name on a 30 × 30 spot round the
+    /// pointer while the model's projection is within 30 pixels of it (f32 sum, double root), else it goes off.
     fn mark(&mut self, i: usize) {
+        let e = self.pods.techs[i];
+        let m = self.mouse;
+        let near = self.screen(e.pos).is_some_and(|s| ((((s[0] - m[0]) * (s[0] - m[0]) + (s[1] - m[1]) * (s[1] - m[1])) as f64).sqrt() as f32) < 30.0);
+        self.pods.tip = near.then_some((e.tech, [(m[0] as i32 - 0xf) as f32, (m[1] as i32 - 0xf) as f32]));
         self.pods.techs[i].lit = true;
         self.pods.marked = true;
         self.pods.picked = i as i32;

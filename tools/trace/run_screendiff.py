@@ -186,6 +186,9 @@ def clock_args(save):
     args = []
     if clocks.get("clouds") is not None:
         args += ["--clouds", str(clocks["clouds"])]
+    # The starmap's fader phases (`fifo`, `starf`) at the grab: the client reads them from the file.
+    if clocks.get("faders"):
+        args += ["--faders", os.path.abspath(ui)]
     if clocks.get("futofeny") is not None:
         args += ["--futofeny", repr(clocks["futofeny"])]
     if clocks.get("acttime") is not None:
@@ -432,6 +435,8 @@ def main():
             clocks = json.load(f)
         if clocks.get("clouds") is not None:
             args += ["--clouds", str(clocks["clouds"])]
+        if clocks.get("faders"):
+            args += ["--faders", os.path.abspath(ui)]
         if clocks.get("futofeny") is not None:
             args += ["--futofeny", repr(clocks["futofeny"])]
         if clocks.get("acttime") is not None:

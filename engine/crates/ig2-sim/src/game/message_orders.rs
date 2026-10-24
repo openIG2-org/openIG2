@@ -9,6 +9,7 @@
 //! The dialogue's unsaved bits the next order reads (the open block's choices, `AktValasztasok`, `ParbeszedVege`,
 //! `ParbeszedVegeJon`, `KiirtaMar`, the rows) are kept in the state's memory at the exe's addresses.
 
+use super::story_chain;
 use super::*;
 use crate::messages::{block_choices, find_block, Inbox, MESSAGE, PLAYBACK};
 use crate::save::va;
@@ -161,6 +162,8 @@ impl Game<'_> {
                 StoryEvent::MessageParamInt { slot, value } => self.set_param(slot, value.to_string().as_bytes()),
                 StoryEvent::RemoveMessage(id) => self.remove_message(id),
                 StoryEvent::WithdrawMessage { id, .. } => self.withdraw_message(id),
+                // Undo type 10 (`campaign.md` §2.3): `KiszedUtolsoUzenet(a, 1)`.
+                StoryEvent::Undo { kind: 10, value } => self.withdraw_message(value),
                 StoryEvent::DisablePart(part) => {
                     let n = self.g(at::DISABLED_COUNT);
                     self.set(at::DISABLED + 4 * n as u32, part);
@@ -185,7 +188,7 @@ impl Game<'_> {
     /// `NewMessage(id, days)` (exe 0x508fe0; the slow-down `SetIdoLelassit(2)` is the story's): a new entry at the
     /// end, parameters 1..=5 `"#=#"`, read and seen cleared, the arrival date. The kind's automatic flag switches
     /// to the messages screen (`AktKepKell` 10: the client's, from the event).
-    fn new_message(&mut self, id: i32, days: i32) {
+    pub(super) fn new_message(&mut self, id: i32, days: i32) {
         let mut b = self.state.inbox();
         if b.count >= 100 {
             return;
@@ -340,7 +343,7 @@ impl Game<'_> {
         self.with_story(|st, w| {
             st.message = (block, part);
             st.flags[flag] = true;
-            st.check(true, &ScenarioStories, w);
+            st.check(true, &story_chain(), w);
         });
     }
 
@@ -353,7 +356,7 @@ impl Game<'_> {
             st.message.0 = id;
             st.flags[flag::READ] = true;
             st.read.add(id, 0);
-            st.check(true, &ScenarioStories, w);
+            st.check(true, &story_chain(), w);
         });
     }
 

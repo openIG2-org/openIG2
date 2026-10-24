@@ -274,8 +274,8 @@ is posted (§2.2).
 Port: the scripts emit `StoryEvent::ScrollText { text, important }`, `ScrollSabotage`, `ScrollNumber(s)` and
 `ScrollEmpirePlanet`; `messages::story_line` renders them (`Texts::with_story`, `printf`) and `Game::messages_for`
 posts them with id 1 in event order. Verified: 574 lines of the campaign recordings exact (all but 308's, which no
-recording reaches; `traces/2026-10-22-story-ticker.md`). `Game`'s own story tick runs only the scenario's scripts so
-far, so a save replay doesn't reach these lines yet.
+recording reaches; `traces/2026-10-22-story-ticker.md`). `Game`'s story tick runs the whole campaign chain now
+(`new-game.md` §15), so a campaign-start save replay reaches these lines.
 
 ## 4. The inbox expiry (`FRISSIT_Messages`)
 `Uzenetek` 0xDA6620 (100 × 0x88: `+0` block id, `+4` u8 kept, `+8` i32 expiry `Ido`), `UzenetekRandomKitol`

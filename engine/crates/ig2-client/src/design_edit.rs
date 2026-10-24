@@ -278,12 +278,11 @@ impl Design {
         self.events.push(*e);
     }
 
-    /// The events of the orders sent before the last frame (`step`'s start).
+    /// The events of the orders the last tick's `Design_Main` sent (`step`'s start).
     pub(crate) fn apply_events(&mut self, state: &SaveState) {
-        for e in std::mem::take(&mut self.events_due) {
+        for e in std::mem::take(&mut self.events) {
             self.apply_event(state, &e);
         }
-        self.events_due = std::mem::take(&mut self.events);
     }
 
     fn apply_event(&mut self, state: &SaveState, e: &OrderEvent) {
@@ -343,15 +342,21 @@ impl Design {
                     self.held = Some(5);
                     self.hover_popup(at);
                 } else {
-                    // The tutorial's event 0xc per fitted pod on the first hull (`AktAlap == 6`) isn't raised here.
+                    // `Design_Main` (exe 0x4b29e0): the tutorial's 0xc on hull model 6 (`AktAlap`) with a pod fitted.
+                    let pods = self.scratch.get(0x4c).copied().unwrap_or(0) as usize;
+                    if self.model == 6 && (1..=pods).any(|i| self.scratch.get(0x50 + i).is_some_and(|&t| t != 0)) {
+                        self.tutorial.push(0xc);
+                    }
                     self.store(c, false);
                 }
             }
+            // The 3D −/+ only with nothing sliding and a pod chosen (no click otherwise).
+            0x1f | 0x20 if !self.buttons_free() => {}
             0x1f | 0x20 | 0x35..=0x52 => {
                 self.sounds.push(CLICK);
                 self.held = Some(id);
-                self.repeat = 1;
-                self.step_count(c, id);
+                self.repeat = 0;
+                self.count_held(c, id);
             }
             // The `onRelease` spots: `IG2_gameUpdate` (exe 0x4e0440) hands them to `Design_Main` once, on the press
             // (`Mouse_Lenyom`: their click), then runs frames until the button is up.
@@ -453,17 +458,33 @@ impl Design {
         }
     }
 
-    /// One `KezdoIdo` step of a held −/+ (`== 1 || > 7`): the count of pod `k` down or up to what it takes (the 3D
-    /// buttons 0x20 −, 0x1f + on `DesignAktPod`, `DesMelyikGombot` 1 / 2; the cells on their row).
+    /// The 3D −/+ take a press: `SubZoomDes`, `SubZoom2Des` and `AddZoomDes` at 0 and a pod chosen.
+    fn buttons_free(&self) -> bool {
+        self.sub_zoom == 0.0 && self.pods.sub2 == 0.0 && self.add_zoom == 0.0 && self.pod != 0
+    }
+
+    /// One held frame of a −/+ (`Design_Main` exe 0x4b2190, `AktIkon2` kept by `Mouse_Megfogva` while held, also
+    /// off the cell): the counter (0xa41be8 +, 0xa41bec −, 0xa41bf0 the cells' −, 0xa41bf4 their +, each reset by a
+    /// press of its kind, so one counter here) counts up and acts at 1 and past 7; the 3D buttons are pressed again
+    /// every held frame (`DesMelyikGombot` 2 + / 1 −, `DesGombNew`), the cells press none.
+    fn count_held(&mut self, c: &Ctx, id: u32) {
+        if id == 0x1f || id == 0x20 {
+            self.push_button(if id == 0x20 { 1 } else { 2 });
+        }
+        self.repeat += 1;
+        if self.repeat == 1 || self.repeat > 7 {
+            self.step_count(c, id);
+        }
+    }
+
+    /// One `KezdoIdo` step of a held −/+: the count of pod `k` down or up to what it takes (the 3D buttons 0x20 −,
+    /// 0x1f + on `DesignAktPod`; the cells on their row).
     fn step_count(&mut self, c: &Ctx, id: u32) {
         let (k, minus) = match id {
             0x1f => (self.pod, false),
             0x20 => (self.pod, true),
             _ => (((id - 0x33) / 2) as usize, (id - 0x33) % 2 == 0),
         };
-        if id == 0x1f || id == 0x20 {
-            self.push_button(if minus { 1 } else { 2 });
-        }
         if k == 0 || k > 12 {
             return;
         }
@@ -477,11 +498,10 @@ impl Design {
 
     /// Each UI tick while a −/+ is held.
     pub fn edit_held(&mut self, c: &Ctx) {
-        if let Some(id @ (0x1f | 0x20 | 0x35..=0x52)) = self.held {
-            self.repeat += 1;
-            if self.repeat > 7 {
-                self.step_count(c, id);
-            }
+        match self.held {
+            Some(0x1f | 0x20) if !self.buttons_free() => {}
+            Some(id @ (0x1f | 0x20 | 0x35..=0x52)) => self.count_held(c, id),
+            _ => {}
         }
     }
 
@@ -527,6 +547,12 @@ impl Design {
                         self.scratch[0x50 + k] = 0;
                         self.scratch[0x5d + k] = 0;
                     } else if items.contains(&(self.selected as usize)) {
+                        // `Design_Main` (exe 0x4b2304) and the flight's `KiszamolErtek` (exe 0x4b4a14): laser 2.0 (0x12)
+                        // into a pod of a hull whose tech (`Alapok+0xc`) is 5.
+                        let hull = rd_i32(&self.scratch, field::HULL);
+                        if self.selected == 0x12 && c.rules.hulls.get(hull.max(0) as usize).is_some_and(|h| h.tech == 5) {
+                            self.tutorial.push(0xb);
+                        }
                         self.scratch[0x50 + k] = self.selected as u8;
                         self.scratch[0x5d + k] = self.scratch_max(c, k).clamp(0, 255) as u8;
                     }
@@ -538,7 +564,10 @@ impl Design {
         self.selected = -1;
     }
 
-    /// The name input took a key (`DoKeyboard` with `IOMode`): the name is written as typed.
+    /// The name input took a key (`DoKeyboard` with `IOMode`, exe 0x4db1a0): the name is written as typed. A
+    /// character clears the text first while `IOGombnyomasraTorles` holds, then goes in at the cursor while it is
+    /// before `IOMaxLen`; a full text loses its last character to it. Backspace and Delete clear the flagged text;
+    /// the cursor keys only drop the flag.
     pub fn entry_key(&mut self, k: EntryKey) -> Option<(usize, Vec<u8>)> {
         let e = self.entry.as_mut()?;
         let clear = std::mem::take(&mut e.clear);
@@ -547,7 +576,8 @@ impl Design {
             e.cursor = 0;
         }
         match k {
-            EntryKey::Char(ch) if e.text.len() < NAME_MAX => {
+            EntryKey::Char(ch) if e.cursor < NAME_MAX => {
+                e.text.truncate(NAME_MAX - 1);
                 e.text.insert(e.cursor.min(e.text.len()), ch);
                 e.cursor += 1;
             }
@@ -597,11 +627,12 @@ impl Design {
         }
     }
 
-    /// `DesignKeyboardEscPressed` (0x509040): the input ends; while editing the edit is cancelled and the menus
-    /// close. True = it was the screen's (the viewing mode's Esc leaves the screen).
+    /// `DesignKeyboardEscPressed` (0x509040 / exe 0x4b17a0): the input ends; while editing the tech models fold,
+    /// the edit is cancelled and the menus close. True = it was the screen's (the viewing mode's Esc leaves the screen).
     pub fn escape(&mut self, c: &Ctx) -> bool {
         let had = self.entry.take().is_some();
         if self.mode != 0 {
+            self.pods_escape();
             self.popup = None;
             self.cancel(c);
             return true;

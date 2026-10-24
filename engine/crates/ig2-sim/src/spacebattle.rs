@@ -627,7 +627,10 @@ pub struct Side {
     pub ai_turns: i32,
     /// +0x50: the battle AI plays this empire.
     pub ai: bool,
-    /// +0x54: strength at the start; +0x58 attack lost.
+    /// +0: flag A, set by the screen's `infoszamol` once per battle ([`Battle::outgunned`]; no reader found yet).
+    pub outgunned: bool,
+    /// +0x54: the side's firepower as the battle screen's `infoszamol` last wrote it ([`Order::Strengths`]; the sim
+    /// itself never writes it); +0x58 attack lost.
     pub strength: i32,
     pub lost: i32,
     /// +0x64: fighters the last `AddFleet` brought for it.
@@ -715,6 +718,8 @@ pub struct Battle {
     /// +0x2d84/+0x2d86: an AI tick was due while paused (UI flags kept for fidelity).
     pub f2d84: bool,
     pub f2d86: bool,
+    /// +0x2d98: `infoszamol`'s one-shot block is due (`InitSpaceWar` sets it; [`Battle::outgunned`] clears it).
+    pub f2d98: bool,
     /// +0x2d90 / +0x2d91: the human / an AI started retreating.
     pub human_retreated: bool,
     pub ai_retreated: bool,
@@ -837,6 +842,46 @@ impl WeaponRules {
         } else {
             raw.get((2 + kind) as usize).copied().unwrap_or(0)
         }
+    }
+}
+
+/// `fegyverszamol` (ELF 0x68c5c0, called by `InitSpaceWar` ELF 0x68c840): the damage of every weapon a tech
+/// arms, all 12 target types alike, from the tech's firepower `TalalmanyokrEro[t]` (`firepower`) and the weapon's
+/// reload: pod techs 0x11..=0x20 → weapon `t − 0x11`, `fp · reload / 250` (weapons 11 and 12: `/ 3500`); techs
+/// 0x41..=0x47 → weapon `t − 0x34` with `fp · 25` from 0x44; weapons 20..=24 from techs 0x71..=0x75. The words of
+/// [`SpaceRules::weapon_words`] that hold a rewritten damage (its own record's and the next one's) follow.
+/// [obs: the live table of `spwc-fx8`, test `fegyverszamol_matches_the_live_table`.]
+pub fn fegyverszamol(weapons: &mut [WeaponRules], words: &mut [Vec<i32>], firepower: &[i32]) {
+    let fp = |t: usize| firepower.get(t).copied().unwrap_or(0);
+    let reload = |w: usize| weapons.get(w).map_or(0, |x| x.reload);
+    let mut out = Vec::new();
+    for t in 0x11..0x21usize {
+        let w = t - 0x11;
+        let div = if w == 11 || w == 12 { 3500 } else { 250 };
+        out.push((w, fp(t).wrapping_mul(reload(w)) / div));
+    }
+    for t in 0x41..0x48usize {
+        let w = t - 0x34;
+        let f = if t > 0x43 { fp(t).wrapping_mul(25) } else { fp(t) };
+        out.push((w, f.wrapping_mul(reload(w)) / 250));
+    }
+    for w in 0x14..0x19usize {
+        out.push((w, fp(w + 0x5d).wrapping_mul(reload(w)) / 250));
+    }
+    let mut set = |w: usize, d: i32| {
+        if let Some(x) = weapons.get_mut(w) {
+            x.damage = [d; 12];
+        }
+        for (r, base) in [(w, 2), (w.wrapping_sub(1), 2 + 23)] {
+            if let Some(ws) = words.get_mut(r) {
+                for k in base..(base + 12).min(ws.len()) {
+                    ws[k] = d;
+                }
+            }
+        }
+    };
+    for (w, d) in out {
+        set(w, d);
     }
 }
 
@@ -3441,6 +3486,12 @@ pub enum Order {
     DirectFire { unit: usize, target: usize, mount: usize },
     /// 0x44f, `FegyverKibeKapcsol(unit, keep, set)` (0x566e80): weapon mask `+0x1bc := (mask & keep) | set`.
     Weapons { unit: usize, keep: u32, set: u32 },
+    /// No message: the battle screen's `infoszamol` (exe 0x574040, every 6th UI tick) writes each side's firepower into
+    /// `+0x54` ([`Side::strength`], read by the AI's retreat check). Ours travels as an order so every peer applies it.
+    Strengths { values: [i32; EMPIRES] },
+    /// No message: `infoszamol`'s one-shot block (exe 0x574ee1, `+0x2d98`, once per battle): the outgunned flags and
+    /// the experience of the last unit slot's ships ([`Battle::outgunned`]); the caller applies the experience.
+    Outgunned,
 }
 
 impl Battle {
@@ -3462,8 +3513,32 @@ impl Battle {
             Order::AttackGun { unit: u, gun: g } | Order::GunTarget { gun: g, unit: u } => unit(u) && gun(g),
             Order::DirectFire { unit: u, target, mount } => unit(u) && unit(target) && mount < self.units[u].mounts.len(),
             Order::FighterStance { side, .. } => side < self.sides.len(),
-            Order::Retreat | Order::ArmAll => true,
+            Order::Retreat | Order::ArmAll | Order::Strengths { .. } => true,
+            Order::Outgunned => self.f2d98,
         }
+    }
+
+    /// `infoszamol`'s one-shot block (exe 0x574ee1..0x574f2b; ELF 0x6a4080): every side with firepower gets flag A
+    /// (`+0`) when an enemy's (relation 1) is more than a third of its own (`own < enemy · 3`); then the ships to
+    /// credit with one experience point each (`Hajok[s] +4 += 1`), repeated once per unit slot. The exe walks the slots
+    /// but reads them through the pointer the earlier loops left on the last slot (an original bug, kept): so it is
+    /// the last slot's ships, `units.len()` times, when that unit is alive, owned, has a ship list and its owner got the
+    /// flag. Clears the block (`+0x2d98`).
+    pub fn outgunned(&mut self) -> Vec<usize> {
+        self.f2d98 = false;
+        let strength: Vec<i32> = self.sides.iter().map(|s| s.strength).collect();
+        for a in 0..self.sides.len().min(EMPIRES) {
+            if strength[a] != 0 && (0..strength.len().min(EMPIRES)).any(|b| self.hostile[a][b] == 1 && strength[a] < strength[b].wrapping_mul(3)) {
+                self.sides[a].outgunned = true;
+            }
+        }
+        let Some(u) = self.units.last() else { return Vec::new() };
+        let flagged = self.sides.get(u.owner.max(0) as usize).is_some_and(|s| s.outgunned);
+        if !(u.alive && u.owner != 0 && u.ships.first().is_some_and(|&s| s >= 0) && flagged) {
+            return Vec::new();
+        }
+        let ships: Vec<usize> = u.ships.iter().take(u.ship_count.max(0) as usize).filter_map(|&s| usize::try_from(s).ok()).collect();
+        (0..self.units.len()).flat_map(|_| ships.iter().copied()).collect()
     }
 
     /// Carry out an order of empire `issuer` (spec §7.12). [`Order::ArmAll`] is the caller's ([`Battle::arm_all`]
@@ -3482,7 +3557,12 @@ impl Battle {
                 }
             }
             Order::GunTarget { gun, unit } => self.guns[gun].target = unit as i32,
-            Order::ArmAll => {}
+            Order::Strengths { values } => {
+                for (s, v) in self.sides.iter_mut().zip(values) {
+                    s.strength = v;
+                }
+            }
+            Order::ArmAll | Order::Outgunned => {}
             Order::Explode { unit } => {
                 for _ in 0..self.units[unit].ship_count.max(0) {
                     self.explode(t, unit, 0, true, true);
@@ -3565,7 +3645,7 @@ impl FormationSlot {
 /// Rule values the setup reads.
 #[derive(Debug, Clone, Default)]
 pub struct SetupRules {
-    /// The live weapon table (`fegyverszamol` leaves it as loaded, spec §2.2).
+    /// The live weapon table (after `fegyverszamol`, [`fegyverszamol`]).
     pub weapons: Vec<WeaponRules>,
     pub forms: Vec<FormRules>,
     /// `felallas<n>` by file number: 0 for sides with fewer than six ships, 1 for the others, 1..=9 the human's
@@ -3821,6 +3901,7 @@ impl Battle {
             planet_owner: -1,
             pod_timer: 1,
             f2d84: true,
+            f2d98: true,
             ..Default::default()
         };
         b.sides = (0..EMPIRES)
@@ -4977,5 +5058,27 @@ mod tests {
         b.winner = 6;
         let r = b.finish();
         assert_eq!((r.winner, r.human_took_part, r.participants.len(), r.loser_retreated, b.active), (6, true, 3, false, false));
+    }
+
+    /// `infoszamol`'s one-shot block as decompiled (exe 0x574ee1): side 3's 200 against side 6's 40 (enemies both
+    /// ways) flags side 6 only (40 < 600, 200 >= 120); the experience goes to the last slot's ships, once per slot, and
+    /// only because that unit's owner (6) is flagged; a second call does nothing (the block is cleared).
+    #[test]
+    fn outgunned_flags_the_weak_side_and_credits_the_last_slot() {
+        let mut b = battle(vec![ship(3, V4::new(0.0, 0.0, 0.0)), ship(6, V4::new(1.0, 0.0, 0.0)), ship(6, V4::new(2.0, 0.0, 0.0))]);
+        b.units[2].ships = vec![11, 12];
+        b.units[2].ship_count = 2;
+        b.hostile[3][6] = 1;
+        b.hostile[6][3] = 1;
+        b.sides[3].strength = 200;
+        b.sides[6].strength = 40;
+        b.f2d98 = true;
+        assert!(b.order_valid(&Order::Outgunned));
+        assert_eq!(b.outgunned(), vec![11, 12, 11, 12, 11, 12]);
+        assert_eq!((b.sides[3].outgunned, b.sides[6].outgunned, b.f2d98), (false, true, false));
+        assert!(!b.order_valid(&Order::Outgunned));
+        b.units[2].owner = 3;
+        b.f2d98 = true;
+        assert!(b.outgunned().is_empty());
     }
 }

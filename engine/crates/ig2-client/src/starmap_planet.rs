@@ -62,7 +62,20 @@ impl Planets {
     #[allow(clippy::too_many_arguments)]
     pub fn add_battle_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, light: [f32; 3]) {
         if let Some(Some(m)) = self.battle.get((surface.max(1) as usize - 1) % 8) {
-            m.add(scene, draws, scale, rot, at, eye, None, normalise(light));
+            // The engine's parallel light (re/screens/research.md §2.1): the world vector turned by the camera's rows, against
+            // the normal with z negated, `shade[|n' − L|²·2047]`, over the ambient [obs: the battle planet ~17 % too bright
+            // with a Lambert term; fx8b view 8.5 → 5.5; deviation 22].
+            let (m3, l) = (eye.matrix, normalise(light));
+            let cam = |d: [f32; 3]| -> [f32; 3] { std::array::from_fn(|i| m3[i][0] * d[0] + m3[i][1] * d[1] + m3[i][2] * d[2]) };
+            let lc = cam(l);
+            let lit = |n: [f32; 3]| {
+                let nc = cam(n);
+                let c = nc[0] * lc[0] + nc[1] * lc[1] - nc[2] * lc[2];
+                let i = ((2.0 - 2.0 * c) * 2047.0).round();
+                let sh = if i < 2896.0 { ((1.0 - i / 2896.0).sqrt() * 255.0).floor() / 256.0 } else { 0.0 };
+                (AMBIENT + SUN * sh).min(1.0)
+            };
+            m.add(scene, draws, scale, rot, at, eye, None, &lit);
         }
     }
 
@@ -75,7 +88,7 @@ impl Planets {
     #[allow(clippy::too_many_arguments)]
     pub fn add_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, size: u8, spin: f32, at: [f32; 3], eye: &Eye) {
         if let Some(m) = &self.meshes[(surface.max(1) as usize - 1) % 8] {
-            m.add(scene, draws, scale(size) / 8.0, (0.0, 0.0, spin), at, eye, None, eye.matrix[2]);
+            m.add(scene, draws, scale(size) / 8.0, (0.0, 0.0, spin), at, eye, None, &lambert(eye.matrix[2]));
         }
     }
 
@@ -86,9 +99,14 @@ impl Planets {
     #[allow(clippy::too_many_arguments)]
     pub fn add_clouds(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, size: u8, turn: f32, at: [f32; 3], eye: &Eye) {
         if let Some(m) = &self.cloud {
-            m.add(scene, draws, (scale(size) + 0.0001) / 8.0, (turn, 5.0, 0.0), at, eye, Some(self.noise), eye.matrix[2]);
+            m.add(scene, draws, (scale(size) + 0.0001) / 8.0, (turn, 5.0, 0.0), at, eye, Some(self.noise), &lambert(eye.matrix[2]));
         }
     }
+}
+
+/// The planets' light towards `l`: ambient plus a Lambert term, gamma-space like the remaster (re/screens/render.md §2).
+fn lambert(l: [f32; 3]) -> impl Fn([f32; 3]) -> f32 {
+    move |n: [f32; 3]| (AMBIENT + SUN * (n[0] * l[0] + n[1] * l[1] + n[2] * l[2]).max(0.0)).min(1.0)
 }
 
 /// `Init3dStarmap`: `bolygomeret/200000 + 0.002`.
@@ -137,10 +155,9 @@ impl Mesh {
     /// the meshes' own are mirrored in x and y, and the captures match outward ones [obs].
     /// `cloud`: the noise texture of the `CLOUD` material, drawn over the planet in gamma space.
     #[allow(clippy::too_many_arguments)]
-    fn add(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, light: [f32; 3]) {
+    fn add(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, lit: &dyn Fn([f32; 3]) -> f32) {
         let xf = Placement::add_to_scene(self.origin, scale).world(rot, at);
         let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-        let towards_eye = light;
         for part in &self.parts {
             let start = scene.dynamic.len() as u32;
             for tri in part.verts.chunks_exact(3) {
@@ -153,8 +170,7 @@ impl Mesh {
                 }
                 for k in 0..3 {
                     let n = normalise(std::array::from_fn(|j| pos[k][j] - at[j]));
-                    // Gamma-space like the remaster (re/screens/render.md §2).
-                    let lit = (AMBIENT + SUN * dot(n, towards_eye).max(0.0)).min(1.0);
+                    let lit = lit(n);
                     let uv = [tri[k].uv[0] * part.uv_mul[0], tri[k].uv[1] * part.uv_mul[1]];
                     scene.dynamic.push(MeshVertex { pos: pos[k], normal: [0.0; 3], uv, color: [lit, lit, lit, 1.0] });
                 }

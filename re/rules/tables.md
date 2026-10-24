@@ -25,7 +25,7 @@ from the user's own `ig2.exe` (`engine/crates/ig2-rules`, ADR 0004). No values a
 | `HanyasFajPodTablazatatHasznalja` | 0x902F10 | 4 × 19 | race → pod table (races 9–18 share table 1) | = file |
 | `Alapok` | 0x90BBF8 | 36 × 25 | hull records: class, role flags, id, hull tech (`space-combat.md` §2.1) | = file |
 | `Tervek0` | 0x90BF80 | 132 × 201 | default designs, same layout as live `Tervek[e]` (`space-combat.md` §2.3) | names localised (0–19) |
-| `fegyverek` | 0x91D858 | 92 × 40 | space weapons: kind, reload, damage per target type (`fegyverszamol` recomputes it from tech firepower; live values matched the file), hit chance, spread, speed, duration, range, graphics, flags (`space-combat.md` §2.2) | = file |
+| `fegyverek` | 0x91D858 | 92 × 40 | space weapons: kind, reload, damage per target type (`fegyverszamol` recomputes the damages from tech firepower at every `InitSpaceWar`: the live table differs from the file), hit chance, spread, speed, duration, range, graphics, flags (`space-combat.md` §2.2) | damages recomputed |
 | `TankAlapSpeed` | 0x8EC9D4 | f32 × 5 | ground hull base speeds (hull techs 145..=149; design speed = value / 100) | = file (ELF bytes identical) |
 | `FajBolygoViszony` | 0x90B9D8 | 4 × 15 × 9 | race × planet surface affinity [inf] | = file |
 | `Research_MeretSzorzok` | 0x9185D0 | f32 × 192 | research size multipliers (all 1.0) | = file |

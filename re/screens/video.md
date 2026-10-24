@@ -83,8 +83,13 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
   button or finger press arms it (`DAT_00fe6438`); the next release of any of them stops the video, **only when
   `fullscreen`**. So the title, credits and every `st_ShowAnim` video (intros, endings, story videos, the
   console's `anim`) skip on any key or click (on release, after a press made during the video); the message clips
-  never skip. ESC has no special case. `MainSkipAllAnims` (0xbbb3f6) only skips the title. SDL_QUIT closes the
-  video (`MainCallBackEventHandler` exe 0x4e2df5).
+  never skip. ESC has no special case. `MainSkipAllAnims` (0xbbb3f6) only skips the title.
+- **After the skip logic** `anyEvent` (exe 0x7329d0; `bink_playing` 0xdb9438, armed 0xfe6438): a gate (`this+0x270`, its
+  byte +0x20, an unknown object) swallows only 0x300/0x301/0x303/0x401/0x700; the button and finger releases (0x402,
+  0x701) always reach `FUN_004df9b0` -> `FUN_004e2cd0`, the game's handler (`MainCallBackEventHandler` 0x4e2db0 sets the
+  mouse state 0xdb467d..f on 0x402). So a release that skips a video is also seen by the game (deviation 76, not
+  captured). SDL_QUIT (`MainCallBackEventHandler`): `CloseBink` if a video plays, `TutorialStop(0)`,
+  `SaveGlobalRegistrySettings`, `MouseIkonKep = 0`, quit flag 0xb771e0 = 1 (deviation 78).
 - **Sound** (fullscreen only): `soundhook` exe 0x7100e0 through `Mix_HookMusic`, outside sgsnd: the game's other
   sounds keep playing, the options' volumes are not applied (raw S16 stereo at the mixer's 44.1 kHz). The first
   0xe5b = 3675 frames (83.3 ms) of each play are silence, and an empty queue (underrun) resets that count (another
@@ -116,8 +121,11 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
 
 ### 5.2 The interlace overlay
 `DrawAnimInterlace` (ELF 0x5a37a0, exe via `FUN_00504fb0`): a quad of `finalinter.bmp` over the clip (x 201..533,
-y `InterlaceMover + 204` .. `+188`), vertex colour 0x19ffffff (alpha 25/255), every frame with the clip. No writer
-of `InterlaceMover` found (0 assumed).
+y `InterlaceMover + 204` .. `+392`; two triangles), vertex colour 0x19ffffff (alpha 25/255), size 2^-16, rhw 0.5,
+every frame with the clip. No writer of `InterlaceMover` found (0 assumed). The texture coordinates run `lmin`..`lmax`
+both ways from the exe's floats 0x9148cc/0x9148d0 (the ELF's initial values -0.0049 / 1.4649): the texture repeats
+~1.47 times (PVR `TXNV` 11 = repeat), not stretched (deviation 81; exe 0x504fb0; `ig2_rules::Videos::interlace_uv`,
+layout `VIDEO_INTERLACE_UV`; not captured, no talking-head capture).
 
 ### 5.3 The talking-head clip (ELF decompiles, checked against the exe)
 - **Names**: `GetTxtFileCommands` (ELF 0x5a7c70) on a part whose header says `TE` (the other side) sets
@@ -147,8 +155,14 @@ of `InterlaceMover` found (0 assumed).
   (`KELLKINYITAS2`), −0.6 closing; the clip waits for exactly 30.
 
 ### 5.4 Open
-- Whether the release that skips a video also reaches the game's key ring; which music follows `title.bik`;
-  re-layout on a window resize during a video (none found).
+- Which music follows `title.bik`; re-layout on a window resize during a video (none found).
+- The credits overlay's glyph scale (deviation 215, narrowed 2026-10-24): the line is the splash text of
+  `ig2screen::render` 0x7370f0 -> `PlatformUtils::RenderText` 0x6e9130 -> `RenderTextToSurface` 0x6e9670 -> `GetFont` 0x6e84b0
+  (empty font name) + `TTF_RenderUTF8_8Bit_Wrapped` 0x72d2f0; ptsize = H>>5 (asm 0x6e84e4/0x6e864e into `TTF_OpenFontRW`),
+  SDL_ttf sets `FT_Set_Char_Size(0, ptsize<<6, 0, 0)` (72 dpi: em = ptsize px). FreeType's Jura at 18 px (800x600) is 436 px
+  wide with caps on 11 rows; the exe's line is 456 wide, caps on 14 rows (rows 3..16): 1.25x taller, 1.05x wider than
+  the stated size gives, so the scaling sits in the wrapped renderer or the upload (0x72d2f0 asm, 1198 lines, unread).
+  The install's other font (inconsolata.otf) and Windows fonts don't fit.
 
 ## 6. The client (`ig2-client::video`)
 
@@ -160,7 +174,9 @@ of `InterlaceMover` found (0 assumed).
   lead-in (scaled to the device rate); a blocking play stops the music (`Mixer::stop_music`); the music restarts through
   `Audio::frame` afterwards like the exe.
 - Placement: fullscreen over the whole window (§3, black around), in-screen through `Virtual::px`.
-- Skip: press-then-release of any key or mouse button, fullscreen only.
+- Skip: press-then-release of any key or mouse button, fullscreen only; the mouse release of a skipped video also reaches
+  the game (§4). The window closing during a video drops the video first, then quits. The interlace quad's uv is
+  `interlace_uv` (§5.2).
 - Callers wired: the title before the main menu (once per run, not when the options' cut-scene flag is 0), the
   credits ring, the story videos (`StoryEvent::Anim`/`AnimFile` → `s_anims.txt` table 6), the endings
   (`GameEvent::GameOver` → `ig2_rules::Videos` loss/win tables, then the main menu), the message head clips (§5.3,

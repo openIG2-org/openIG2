@@ -109,6 +109,24 @@ while the screen is up**); `OptionsRemoveNullBoxes`; `OptionsRefreshSlots`; `Opt
   `TutorialStop(1)`, `ExitToMainScreen` (closes a multiplayer session). Else `UnPauseTutorialMp2`. Then
   `SetIdoPause(OptionsOldIdoPause)` (and pause if `UtanPauseModbanInduljon`), clear `HarcFolyik`.
 
+### 3.1 The screen before (`IG2_gameUpdate` exe 0x4e0440: the old screen's `_Kilep`, then the new one's `_Belep`)
+Every game screen's `_Kilep` / `_Belep` special-cases `AktKep` / `OldKep` ∈ {1, 10, 0xd}:
+
+| Screen | `_Kilep` towards Options | `_Belep` back (`OldKep` 0xd) |
+|---|---|---|
+| Starmap 2 (0x5b2200 / 0x5b19a0) | no animation or sound; a long info zooms out first (blocking); a transfer, fleet or production panel cancels the change | full re-init (faders `fifo`/`starf`, modes off), no opening; the camera kept; `PlayMusicMain` keeps a main track playing |
+| Colony 3 (0x466390 / 0x465b40) | no animation; everything freed, the camera written to `Warfare[p]` | full rebuild from `Warfare[p]`'s camera; the planet's ambience sound again (`random`) |
+| Research 4, Diplomacy 6, Info 9 (0x5239b0 / 0x523540, 0x4bf810 / 0x4bf530, 0x4e7fa0 / 0x4e7d30) | no closing animation or sound (`SaveScreen(2)`) | open at once, no sound; the selection and menus reset (Info: `InfoSelected = EN`, the chart counters `rand() % 400 + 200`) |
+| Design 5 (0x4b1f20 / 0x4b1be0) | no closing animation or sound | open at once; keeps `des_xy`, the spin, wireframe and `AktAlap` (`OptionsElottiKep == 5`) |
+| Spy 7 (0x58d250 / 0x58cd50) | no closing animation or sound | `OldKep` not read: the opening animation and sound again |
+| Trade 8 (0x60a630 / 0x60a1e0) | no closing animation or sound | open at once, the selection reset |
+| Messages 10 (0x5083d0 / 0x507f90), Help 1 (0x4d7440 / 0x4d7060) | the closing animation plays (no `AktKep` test) | Options goes back to the screen before them (`MessagesElottiScreen`, `HelpElottiScreen`) |
+| SpaceWar 0xb (0x562b50) | no exit, `OptionsHarcFolyik` | back via the starmap (`starmaphovaleptovabb = 0xb`, the battle view restored) |
+
+Port: back from Options re-opens the spy screen (with its opening) and re-enters the starmap (its faders); Options
+from the messages screen returns under it; trade comes back through `Trade::back`. Not ported: the other screens'
+state resets on the return, the colony's rebuild (ambience sound), Messages' closing animation (deviations).
+
 ## 4. Hot-spots
 
 `Mouse_Szoveg_Set(id, 0, x, y, w, h, tooltip, wait_release, 1)`; `AktIkon = id + 0x1e`; tooltips (13,1,n).
@@ -295,6 +313,12 @@ the slot title after it). Settings go to `ig2-rework-options.dat` beside the ori
 the load ring. Tests: the hot-spot order, the hover slot pick, the relative slider drag (the asm's precision), the quit
 question, the rows' toggles and dependencies, the name entry, the slot title, and a save → slot list → load round
 trip (same state hash, camera and next 40 ticks).
+FX10 part 1 (2026-10-24): a save writes the live starmap camera back (`World::store_view` -> `SaveState::set_ui_chunk`, the
+template chunks `StarmapXStart`..`StarmapPlanetKering`; a loaded save passes them through; round-trip test extended,
+deviation 70). The load opens the colony screen of the last planet whose ground war runs (`Game::warfare_status`,
+`WF::GetStatus() == -1`, `GetWarfareStatus == 1`; quick saves give none, the positive case is decompile-only, deviation
+190). The slot-list press grabs (`Mouse_Megfogva`): while held the pick follows the pointer's y outside the list (test
+added, deviation 191; the `DEBUGX` save-in-battle half is still open).
 
 Acceptance (2026-10-22, `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json`): over the game every region matches at every grab (frame ≤ 3.9, top bar ≤ 1.1, left

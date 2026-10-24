@@ -246,3 +246,75 @@ fn a_different_start_is_refused() {
         assert!(matches!(ClientSession::new(&s, Box::new(l2), &rules), Err(session::Error::StartKind(_))));
     });
 }
+
+/// `ExitToMainScreen` in multiplayer (game-end.md §2): a joiner's empire dies, only its machine's game ends; it leaves
+/// and is away at once on the host; the other two run on in step; then the host leaves and the survivor sees it gone.
+#[test]
+fn a_lost_player_leaves_and_the_others_play_on() {
+    let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
+    let rules = common::game_rules(&inst);
+    with_start_data(&inst, |data| {
+        use ig2_net::session::SessionEvent;
+        use ig2_sim::game::{GameEvent, GameOver};
+        let mut h = LobbyHost::new_galaxy(settings(), 0xD1E, RULES, "Host");
+        assert!(h.set_options(GalaxyOptions { planets: 20, ais: 1, ..GalaxyOptions::default() }));
+        let mut a = join(&mut h, "Alice");
+        let mut b = join(&mut h, "Bob");
+        pump(&mut h, &mut [&mut a, &mut b], |h, c| h.state().members.len() == 3 && synced(h, c));
+        a.ready(true);
+        b.ready(true);
+        pump(&mut h, &mut [&mut a, &mut b], |h, _| h.state().members.iter().skip(1).all(|m| m.ready));
+        assert!(h.set_ready(0, true));
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242).ok().expect("the room starts");
+        let mut clients = vec![started(a, data, &rules).unwrap(), started(b, data, &rules).unwrap()];
+        let alice = clients[0].peer.empire;
+
+        // Every machine at turn 20, then Alice's empire dies on each (as the same turn's death would).
+        let mut now = Duration::ZERO;
+        let step = |hs: &mut HostSession, clients: &mut [ClientSession], until: u64, now: &mut Duration| {
+            while hs.own.turn < until || clients.iter().any(|c| c.peer.turn < until) {
+                *now += Duration::from_millis(10);
+                hs.pump(*now, (hs.own.turn < until) as usize).unwrap();
+                for c in clients.iter_mut() {
+                    let n = (c.peer.turn < until) as usize;
+                    c.pump(*now, n).unwrap();
+                }
+                assert!(*now < Duration::from_secs(120), "stalled at {}", hs.own.turn);
+            }
+        };
+        step(&mut hs, &mut clients, 20, &mut now);
+        hs.own.game.events.clear();
+        hs.own.game.empire_dies(alice, &[]);
+        for c in &mut clients {
+            c.peer.game.events.clear();
+            c.peer.game.empire_dies(alice, &[]);
+        }
+        let game_over = |p: &Peer| p.game.events.iter().filter_map(|e| if let GameEvent::GameOver(o) = e { Some(*o) } else { None }).collect::<Vec<_>>();
+        assert_eq!(game_over(&clients[0].peer), [GameOver::Lost], "Alice's machine");
+        assert!(game_over(&hs.own).is_empty() && game_over(&clients[1].peer).is_empty(), "nobody else's");
+
+        // Alice leaves: away at once, no hold.
+        let mut alice_session = clients.remove(0);
+        alice_session.leave();
+        drop(alice_session);
+        let mut left = false;
+        while !left {
+            now += Duration::from_millis(10);
+            left = hs.pump(now, 0).unwrap().contains(&SessionEvent::Left { empire: alice });
+            assert!(now < Duration::from_secs(130));
+        }
+        assert!(hs.status(now).away.contains(&alice) && !hs.status(now).held());
+        assert_eq!(hs.humans().filter(|h| h.2).count(), 2);
+        step(&mut hs, &mut clients, 60, &mut now);
+        assert!(agree(&hs.own, &clients[0].peer) >= 60);
+        assert!(hs.host.desyncs.is_empty(), "{:?}", hs.host.desyncs);
+
+        // The host leaves: Bob sees it gone at once (no keep-alive wait).
+        hs.leave();
+        assert!(!clients[0].closed());
+        now += Duration::from_millis(10);
+        clients[0].pump(now, 0).unwrap();
+        assert!(clients[0].closed());
+        assert_eq!(clients[0].successors(), vec![clients[0].peer.slot], "Bob takes over");
+    });
+}

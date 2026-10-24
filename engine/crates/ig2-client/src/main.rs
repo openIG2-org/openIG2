@@ -38,6 +38,7 @@
 
 mod assets;
 mod audio;
+mod chat;
 mod colony;
 mod colony_ui;
 mod colony_war;
@@ -58,6 +59,7 @@ mod mp_lobby;
 mod new_game;
 mod options;
 mod orders;
+mod prof;
 mod render;
 mod render3d;
 mod research;
@@ -154,6 +156,8 @@ pub struct Options {
     pub spy_closing: bool,
     /// `--clouds N`: the starmap clouds' drift clock (re/screens/starmap.md §6.2).
     pub clouds: i32,
+    /// `--faders UI_JSON`: the starmap's `fifo` / `starf` fader phases at the exe's grab (re/screens/hud.md §1.2.1).
+    pub faders: Option<crate::starmap_panels::StarmapFaders>,
     /// `--tutorial-window FILE`: draw the tutorial's window from a `tutwin` record (`tools/trace/probes/tutorial.js`).
     pub tutorial_window: Option<std::path::PathBuf>,
     /// `--futofeny F`: the starmap's UI clock (re/screens/starmap.md §6.4).
@@ -240,6 +244,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         video_loop: false,
         spy_closing: false,
         clouds: 0,
+        faders: None,
         tutorial_window: None,
         futofeny: None,
         acttime: None,
@@ -327,6 +332,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--spy-closing" | "--anim-closing" => o.spy_closing = true,
             "--tutorial-window" => o.tutorial_window = Some(val()?.into()),
             "--clouds" => o.clouds = val()?.parse().map_err(|e| format!("--clouds: {e}"))?,
+            "--faders" => o.faders = Some(crate::starmap_panels::StarmapFaders::from_ui_json(std::path::Path::new(&val()?))?),
             "--futofeny" => o.futofeny = Some(val()?.parse().map_err(|e| format!("--futofeny: {e}"))?),
             "--info-turn" => o.info_turn = val()?.parse().map_err(|e| format!("--info-turn: {e}"))?,
             "--info-list" => {

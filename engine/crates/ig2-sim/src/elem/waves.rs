@@ -13,10 +13,6 @@ fn move_fleet(w: &mut dyn StoryWorld, fleet: i32, kind: i32, mode: i32, x: f32, 
     w.event(StoryEvent::MoveFleet { fleet, kind, mode, x, y });
 }
 
-fn name(w: &dyn StoryWorld, text: i32) -> String {
-    String::from_utf8_lossy(&w.story_text(text)).into_owned()
-}
-
 /// `st_fGetNearest((int) fx, (int) fy, EN)` from fleet `f`'s position.
 fn nearest_to(f: i32, w: &dyn StoryWorld) -> i32 {
     let (fx, fy) = w.fleet_xy(f);
@@ -41,7 +37,7 @@ pub(super) fn story_836(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
             s.win(0, true, w);
         } else {
             let b = s.b_search(-1, 0, w);
-            s.f_new_ex(&name(&*w, 8360), 1, 8360, 0.09, 2, b, w);
+            s.f_new_ex(crate::story::FleetName::Text(8360), 1, 8360, 0.09, 2, b, w);
             s.attack_planet(8360, 8351, w);
         }
         let p = s.b_search(8351, 0, w);
@@ -77,7 +73,7 @@ pub(super) fn story_836(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
             s.win(0, true, w);
         } else {
             let b = s.b_search(-1, 0, w);
-            s.f_new_ex(&name(&*w, 8361), 1, 8361, 0.09, 2, b, w);
+            s.f_new_ex(crate::story::FleetName::Text(8361), 1, 8361, 0.09, 2, b, w);
             s.attack_planet(8361, 8351, w);
         }
     }
@@ -87,7 +83,7 @@ pub(super) fn story_836(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         if b == 0 {
             s.win(0, true, w);
         } else {
-            s.f_new_ex(&name(&*w, 8362), 1, 8362, 0.09, 2, b, w);
+            s.f_new_ex(crate::story::FleetName::Text(8362), 1, 8362, 0.09, 2, b, w);
             s.attack_planet(8362, 8351, w);
         }
     }
@@ -168,7 +164,7 @@ pub(super) fn story_839(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
     if s.starting_now() {
         init_839(s, w)?;
         let b = s.b_search(8391, 0, w);
-        s.f_new_ex(&name(&*w, 8390), 10, 8390, 0.08, 2, b, w);
+        s.f_new_ex(crate::story::FleetName::Text(8390), 10, 8390, 0.08, 2, b, w);
         s.f_add_ship(8390, 3, 1000, w);
         move_to_planet(s, 8390, 8392, w);
         s.sz_start(8399, 600);
@@ -349,7 +345,7 @@ pub(super) fn story_840(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         s.v_set(8409, 2);
         message(w, 8405);
         s.sz_start(8408, 20);
-        let f = s.f_new_ex(&name(&*w, 8401), en, 0, 0.06, 1, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(8401), en, 0, 0.06, 1, 0, w);
         s.auto_add_ship(f, 8401, w);
         // To the point (planet index, 0): `last_fn_b` passed as an x coordinate.
         move_fleet(w, f, 1, 0, s.last_fn[last_fn::B] as f32, 0.0);
@@ -370,7 +366,7 @@ const RAIDERS: [(i32, i32); 3] = [(8430, 8340), (8431, 8341), (8432, 8342)];
 /// One raider fleet of empire 10 next to planet 8044, sent 300 further out on the bearing it was placed on.
 fn raider(s: &mut Story, id: i32, text: i32, w: &mut dyn StoryWorld) {
     let p = s.b_search(8044, 0, w);
-    s.f_new_ex(&name(&*w, text), 10, id, 0.04, p.wrapping_neg(), 5, w);
+    s.f_new_ex(crate::story::FleetName::Text(text), 10, id, 0.04, p.wrapping_neg(), 5, w);
     s.f_add_ship(id, 2, 5, w);
     s.f_add_ship(id, 3, 2, w);
     let f = s.f_search(id, w);

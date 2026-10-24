@@ -206,6 +206,9 @@ fn video_tables_resolve() {
     let inst = ig2_formats::Install::from_env(ig2_formats::text::Lang::En).unwrap().unwrap();
     let v = &r.videos;
     assert_eq!((v.loss.len(), v.win.len(), v.message_clips.len()), (9, 9, 15));
+    // `DrawAnimInterlace`'s `lmin`/`lmax` (exe 0x9148cc): the interlace runs a little past one repeat both ways.
+    let [lo, hi] = v.interlace_uv;
+    assert!((-0.01..0.0).contains(&lo) && (1.4..1.5).contains(&hi), "{lo} {hi}");
     let names = v.loss.iter().chain(&v.win).chain(v.message_clips.iter().flat_map(|(a, b)| [a, b]));
     let mut n = 0;
     for name in names.filter(|n| !n.is_empty()) {

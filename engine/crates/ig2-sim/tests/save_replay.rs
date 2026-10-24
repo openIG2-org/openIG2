@@ -342,7 +342,7 @@ fn game_rules(inst: &Install) -> GameRules {
         space: Default::default(),
         satellite_prices: r.satellite_prices.clone(),
         inbox: ig2_sim::messages::InboxRules::from_install(inst),
-        story: ig2_sim::game::StoryRules::new(r.campaign_words.clone(), r.story_recruit_names.clone(), inst),
+        story: ig2_sim::game::StoryRules::new(r.campaign_words.clone(), r.story_recruit_names.clone(), &r.design_templates, r.production_template.clone(), inst),
     }
 }
 
@@ -793,6 +793,8 @@ fn inbox_step(game: &mut Game, o: &Value) {
 
 /// The unsaved globals of `replay.js`'s dump that ported systems write (the rest are inputs or UI state).
 const COMPARED_VOLATILE: &[&str] = &[
+    "st_msg", "st_noaddship", "st_lastfn", "st_lastfn_r", "st_line", "st_nearest", "st_best", "st_kemazon", "st_kemtulaj",
+    "st_hajokigy", "kemesemeny", "ctf",
     "speed", "rnd", "rndossz", "radar2", "radar2sq", "radarsz", "radarszsq", "dipnap", "dipstart", "st_flags", "st_last",
     "st_oldido", "st_szvegzett", "st_delayed", "st_restart", "st_skip", "st_err", "st_signal", "st_addship", "st_special",
     "st_radar", "st_dipl", "st_diplvalasz", "st_arr", "st_gr", "st_youwas", "st_grwin", "st_kem", "abmitepit", "mapcursor",
@@ -923,4 +925,102 @@ fn tutorial_effects_write_the_game() {
     assert!(g.tutorial_effect(&Effect::ExploreEmpire { empire: 6, diplomacy: false }));
     assert_eq!(g.state.mem.u8(va::EMPIRE_KNOWS + 6 + 0x13 * en as u32), 1);
     assert!(!g.tutorial_effect(&Effect::CenterFleet));
+}
+
+/// `GetWarfareStatus` (ELF 0x4a4f10) on the quick saves (no ground war running when saved): no field is contested, so
+/// `Options_Main`'s load stays on the starmap. (`WF::GetStatus` itself: the ground tests.)
+#[test]
+fn warfare_status_is_zero_without_a_running_war() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    for name in ["quick-0.sav", "quick-1.sav", "quick-2.sav"] {
+        let p = local("IG2_SAVE_DIR", "saves").join(name);
+        if !p.exists() {
+            eprintln!("no {}; skipping", p.display());
+            continue;
+        }
+        let mut g = Game::new(SaveState::from_save(&load(&p), &tech_defaults), &rules);
+        let n = g.state.planet_count();
+        assert!((0..=n + 1).all(|q| g.warfare_status(q) == 0), "{name}");
+    }
+}
+
+/// The tutorial's sim-side events (`re/rules/tutorial.md` §4): `EpuletNew`'s small house on an `EN` planet (0x13),
+/// and `MULTIGET_Starmap`'s 0x15 for an own fleet sent past the radar's reach from the last own planet (not for a
+/// near move).
+#[test]
+fn tutorial_events_from_buildings_and_moves() {
+    let Some(inst) = install() else { return };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-1.sav");
+    if !p.exists() {
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let mut g = Game::new(SaveState::from_save(&load(&p), &tech_defaults), &rules);
+    let en = g.state.mem.i32(va::EN) as u8;
+    let c = g.state.colony();
+    let n = g.state.planet_count();
+    let own = (1..=n).find(|&q| c.planets[q].owner == en).expect("an own planet");
+    let last = (1..=n).rev().find(|&q| c.planets[q].owner == en).unwrap();
+    let (lx, ly) = (c.planets[last].x, c.planets[last].y);
+    let waiting = |g: &mut Game, id: i32| {
+        g.state.mem.set_u8(va::TUTORIAL_PAUSED, 1);
+        g.state.mem.set_u8(va::TUTORIAL_ACTIVE, 0);
+        g.state.mem.set_i32(va::TUTORIAL_EVENT, id);
+    };
+    let event = |g: &Game| (g.state.mem.i32(va::TUTORIAL_EVENT), g.state.mem.u8(va::TUTORIAL_PAUSED), g.state.mem.u8(va::TUTORIAL_ACTIVE));
+
+    // A small house (kind 2) on an own planet.
+    assert!(g.tutorial_effect(&ig2_sim::tutorial::Effect::GiveMoney(1_000_000)));
+    waiting(&mut g, 0x13);
+    g.colony_order(en, ColonyOrder::Build { planet: own as i32, kind: 2, x: 20, y: 20 });
+    assert_eq!(event(&g), (0, 0, 1), "TutorialCheckEvent(0x13) unpaused the script");
+    waiting(&mut g, 0x14);
+    g.colony_order(en, ColonyOrder::Build { planet: own as i32, kind: 2, x: 20, y: 20 });
+    assert_eq!(event(&g).0, 0x14, "another kind's event stays awaited");
+
+    // A trader made ours: a near move keeps 0x15 awaited, one past the radar's reach raises it.
+    let f = g.state.fleets.iter().skip(1).position(|f| f[0x15] == 9).expect("a trader's fleet") + 1;
+    g.state.fleets[f][0x15] = en;
+    waiting(&mut g, 0x15);
+    g.starmap_order(en, StarmapOrder::Move { fleet: f as i32, order: 1, kind: 0, x: lx + 1.0, y: ly });
+    assert_eq!(event(&g).0, 0x15);
+    g.starmap_order(en, StarmapOrder::Move { fleet: f as i32, order: 0, kind: 0, x: lx + 5000.0, y: ly });
+    assert_eq!(event(&g).0, 0x15, "order 0 doesn't count");
+    g.starmap_order(en, StarmapOrder::Move { fleet: f as i32, order: 1, kind: 0, x: lx + 5000.0, y: ly });
+    assert_eq!(event(&g), (0, 0, 1));
+}
+
+/// `GIVE KILLER FLEET` / `GIVE KOLONIZALO FLEET` (`re/rules/tutorial.md` §3 61, 62): EN's "Terminator" beside its
+/// last planet with four ships and empire 6's planets explored; another empire's "Unbeatable" at ((6 − e)·20, 300);
+/// "Colonization" with one ship.
+#[test]
+fn tutorial_fleets() {
+    use ig2_sim::tutorial::Effect;
+    let Some(inst) = install() else { return };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-1.sav");
+    if !p.exists() {
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let mut g = Game::new(SaveState::from_save(&load(&p), &tech_defaults), &rules);
+    let en = g.state.mem.i32(va::EN) as u8;
+    let named = |g: &Game, n: &[u8]| g.state.fleets.iter().position(|f| f[..n.len()] == *n && f[n.len()] == 0);
+    let f32_at = |b: &[u8], o: usize| f32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+    assert!(g.tutorial_effect(&Effect::KillerFleet(en as i32)));
+    let t = named(&g, b"Terminator").expect("the Terminator");
+    assert_eq!(g.state.fleets[t][0x15], en);
+    assert!(i16::from_le_bytes([g.state.fleets[t][0x54], g.state.fleets[t][0x55]]) >= 4, "four ships");
+    let other = if en == 3 { 4 } else { 3 };
+    assert!(g.tutorial_effect(&Effect::KillerFleet(other as i32)));
+    let u = named(&g, b"Unbeatable").expect("the Unbeatable");
+    assert_eq!((g.state.fleets[u][0x15], f32_at(&g.state.fleets[u], 0x30), f32_at(&g.state.fleets[u], 0x34)), (other, (6 - other as i32) as f32 * 20.0, 300.0));
+    assert!(g.tutorial_effect(&Effect::ColonizationFleet));
+    assert!(named(&g, b"Colonization").is_some());
 }

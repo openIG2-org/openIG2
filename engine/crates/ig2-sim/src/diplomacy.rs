@@ -550,6 +550,8 @@ pub struct DiploPlanet {
 /// Effects other systems or the UI carry out.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DiploEvent {
+    /// `TutorialCheckEvent(id)` from `FeldolgozValasz` (exe 0x4c16ff, `re/rules/tutorial.md` §4).
+    Tutorial(i32),
     /// `BirodalomMeghal(e)` (exe 0x53b630): `alive[e]` is cleared here, the rest is the empire system's.
     EmpireDied { empire: u8 },
     /// A message and, for an AI receiver, its answer (`None` = it waits for the human).
@@ -1638,6 +1640,16 @@ impl Diplomacy {
             s.screen = 0;
             s.answer = answer;
         });
+        // The tutorial's two answers from empire 6 (exe 0x4c16ff; `yes` not tested): 0x2a for (1, 3, 0x12, 3, 0xf),
+        // 0xd for (6, 2, ..).
+        let m = answer.msg;
+        if answer.from == 6 {
+            if (m.cat, m.sub, m.value, m.sub2, m.value2) == (1, 3, 0x12, 3, 0xf) {
+                w.events.push(DiploEvent::Tutorial(0x2a));
+            } else if (m.cat, m.sub) == (6, 2) {
+                w.events.push(DiploEvent::Tutorial(0xd));
+            }
+        }
         w.events.push(DiploEvent::Answered(answer));
         if w.ctx.tutorial || !answer.yes {
             return;

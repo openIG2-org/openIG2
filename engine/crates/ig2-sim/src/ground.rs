@@ -514,6 +514,10 @@ pub enum GroundEvent {
     Taken { from: u8, to: u8, story_planet: i32 },
     /// MP: `WF::Refresh` found the field held by side `holder` and ran `GroundWarFinished(p, holder, false)`.
     Ended { holder: i32 },
+    /// `GroundWarFinished(p, s, sim)`'s step 4 (simulated or not: ELF 0x4968c0 tests `s == EN` outside the `!sim`
+    /// blocks): side `winner` (`s`, −10 resolved to the planet's owner) won; the tutorial's event 0x21 when it is
+    /// `EN` (`re/rules/tutorial.md` §4).
+    Finished { winner: i32 },
     /// `WF::ShotSpecWeapon`: the ground AI called an air strike on a cell (before the spread; the bombs or
     /// the fighter wave are in [`Field::lists`], `ground-combat.md` §11.15).
     AirStrike { empire: i32, cell: (i32, i32), big_ships: bool },
@@ -1678,6 +1682,25 @@ impl<'a> War<'a> {
         }
     }
 
+    /// Story 854's riot (`StoryEvent::RiotUnit`): `TankDelete(−p, +0x15c, +0x190)`'s core (the garrison record), then a
+    /// unit not leaving or carried (`+0x188 & 0x4020000` clear) goes over to empire 10 (`WF_Tank::SetSide(10)` exe 0x49c4e0,
+    /// `+0x198 := 10`), its vehicles' origin `fleet`, moved (`+0x285`), the battlefield's status cache dropped.
+    pub fn riot(&mut self, u: i32, fleet: i32) {
+        if !(0..self.field.units.len() as i32).contains(&u) {
+            return;
+        }
+        let (d, n) = (self.u(u).design, self.u(u).hp.len() as i32);
+        self.tank_delete(-self.planet.index, d, n);
+        let g = self.um(u);
+        if g.flags & 0x0402_0000 == 0 {
+            g.owner = 10;
+            g.side = 10;
+            g.origin.iter_mut().for_each(|o| *o = fleet);
+            g.rt.moved = 1;
+            self.field.status_valid = false;
+        }
+    }
+
     /// `EpuletDelete(p, slot)` from outside the ground war (a planet gun destroyed in a space battle).
     pub fn delete_building(&mut self, slot: i32) {
         self.building_delete(slot);
@@ -2131,6 +2154,7 @@ impl<'a> War<'a> {
         self.planet.in_war = 0;
         let owner = self.planet.owner as i32;
         let s = if status == EMPTY { owner } else { status };
+        self.events.push(GroundEvent::Finished { winner: s });
         for i in 0..self.n() as i32 {
             if !self.alive(i) {
                 continue;

@@ -390,6 +390,8 @@ pub struct Hud {
     pub white: TexId,
     pub palette: Vec<[f32; 3]>,
     pub scroller: Scroller,
+    /// The multiplayer chat: the entry in the top bar's line, the ring on the starmap.
+    pub chat: crate::chat::Chat,
     /// The info screen's and the messages screen's UI state, and the frame texture of the screen shown
     /// ([`crate::screen_frames::FrameModels`]).
     pub info: crate::info_screen::InfoScreen,
@@ -444,6 +446,7 @@ impl Hud {
             white: r.add_texture(&crate::assets::Image::white()),
             palette,
             scroller: Scroller::default(),
+            chat: Default::default(),
             info: crate::info_screen::InfoScreen::enter(0),
             messages: Default::default(),
             frame_tex: None,
@@ -586,6 +589,10 @@ impl Hud {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
         let t = crate::starmap_menus::MenuTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names, infostr: &self.infostr };
+        // `StarmapGfx2D_3`'s rename entry, over the short info.
+        if let Some(r) = &m.rename {
+            r.draw(f, &d, time * 1000.0);
+        }
         m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, (time * 100.0) as i32, &p.faders.starf, p.exit_fader());
     }
 
@@ -656,7 +663,8 @@ impl Hud {
         s.draw_faders(f, &d);
         s.draw_texts(f, &d, &self.pics, state, techs, rules);
         s.draw_popups(f, &d, rules);
-        if let Some(t) = tips.get(s.tip.shown as usize) {
+        let t = if s.tip.shown == 0x0c { Some(&s.tip_text) } else { tips.get(s.tip.shown as usize) };
+        if let Some(t) = t {
             s.tip.draw(f, font, self.white, &d.v, &self.palette, t);
         }
     }
@@ -690,11 +698,15 @@ impl Hud {
             Screen::Info => draw_info(f, font, self.white, &v, s, &self.texts, &self.infostr, &self.hu17, rules, &self.palette, &self.empire_names, &self.info),
             Screen::Messages => {
                 // The clip over the frame, the interlace over the clip: `finalinter.bmp` at x 201..533,
-                // y 204..392 (`InterlaceMover` 0), vertex colour 0x19ffffff.
+                // y 204..392 (`InterlaceMover` 0), vertex colour 0x19ffffff, its texture repeated from `lmin` to
+                // `lmax` both ways (`DrawAnimInterlace` exe 0x504fb0; the PVR's `TXNV` 11 repeats).
                 if let Some((tex, c, half)) = self.clip {
                     f.push(tex, Blend::GammaAlpha, Instance::new(crate::render::kind::SPRITE, c, half, [1.0; 4]));
                     if let Some(il) = self.interlace {
-                        f.push(il, Blend::GammaAlpha, Instance::new(crate::render::kind::SPRITE, c, half, [1.0, 1.0, 1.0, 25.0 / 255.0]));
+                        let [lo, hi] = rules.videos.interlace_uv;
+                        let mut q = Instance::new(crate::render::kind::SPRITE, c, half, [1.0, 1.0, 1.0, 25.0 / 255.0]);
+                        q.uv = [lo, lo, hi - lo, hi - lo];
+                        f.push(il, Blend::GammaAlpha, q);
                     }
                 }
                 draw_inbox(f, font, &v, s, &self.texts, &self.palette, self.messages.first, &self.messages.read);
@@ -706,7 +718,16 @@ impl Hud {
         // yet, so it always shows).
         let bar = crate::hud::BarState { speed: self.speed, paused: self.paused, ..s.bar };
         crate::hud::draw_bar(f, &self.pics, font, &v, &self.palette, &bar);
-        self.scroller.draw(f, font, &v, &self.palette, time);
+        // The chat entry takes the line's place while it is open (`GFX_Scroll` is skipped).
+        match &self.chat.entry {
+            Some(e) => e.draw(f, font, self.white, &v, &self.palette, time),
+            None => self.scroller.draw(f, font, &v, &self.palette, time),
+        }
+        // `StarmapGfx2D_3`: the chat ring, on the starmap only.
+        self.chat.ring.tick(time as f64 * 1000.0);
+        if screen == Screen::Starmap {
+            self.chat.ring.draw(f, font, &v, &self.palette);
+        }
     }
 }
 

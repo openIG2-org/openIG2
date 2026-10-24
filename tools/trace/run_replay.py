@@ -36,6 +36,7 @@ ap.add_argument("--seconds", type=float, default=400)
 ap.add_argument("--scenario", default="scenario/quick.scn")
 ap.add_argument("--stage", action="store_true", help="stage trade purchases and deliveries before save 0")
 ap.add_argument("--randlog", action="store_true", help="report the callers of libc rand() per tick ('rands')")
+ap.add_argument("--warmup", type=int, default=0, help="run N ticks after the load before save 0 (a campaign's opening episode starts ~800 ticks in)")
 ap.add_argument("--story-countdown", type=int, default=100, help="--stage: StoryAdat+0xc4 (story merchant) in Ido")
 ap.add_argument("--traders", action="store_true",
                 help="give empire planets trade centres/banks and move traders near their targets before save 0")
@@ -148,7 +149,7 @@ script.load()
 script.post({"type": "config", "payload": {"scenario": a.scenario, "slot": a.slot, "speed": a.speed, "ticks": a.ticks,
                                            "seed": a.seed, "stage": a.stage,
                                            "traders": a.traders, "traderNear": a.trader_near, "spies": a.spies, "spiesMode": a.spies_mode, "merges": a.merges, "wormholes": a.wormholes, "battles": a.battles, "deaths": a.deaths, "messages": a.messages, "messagesMode": a.messages_mode, "scroll2": a.scroll2, "deathsMode": a.deaths_mode, "tutorialSighting": a.tutorial_sighting, "slotBase": a.slot_base, "preSlot": a.pre_slot, "battlesMode": a.battles_mode, "lopsidedTanks": a.lopsided_tanks, "evenTanks": a.even_tanks, "lostTanks": a.lost_tanks, "landShips": a.land_ships,
-                                           "storyCountdown": a.story_countdown,
+                                           "storyCountdown": a.story_countdown, "warmup": a.warmup,
                                            "randlog": a.randlog, "orders": a.orders, "ordersEvery": a.orders_every, "colony": a.colony,
                                            "research": a.research, "researchEvery": a.research_every,
                                            "info": a.info, "infoEvery": a.info_every,

@@ -243,6 +243,9 @@ pub struct OptionsScreen {
     pub blokk2: f32,
     /// The slider grabbed (`Mouse_Megfogva`): its index, `CsuszXStart`, `StartBarPos`.
     grab: Option<(usize, i32, i32)>,
+    /// The slot list pressed and still held (`Mouse_Megfogva`: `AktIkon` stays 4, the pick follows the pointer's y
+    /// outside the list).
+    slot_grab: bool,
     held: bool,
     /// This frame's press and release edges (`Mouse_Lenyom`, `Mouse_Felenged`), for `KirakFader`.
     pressed: bool,
@@ -251,7 +254,7 @@ pub struct OptionsScreen {
     /// `optf`: the faders' shine, drift and hover glow.
     faders: FaderDesign,
     lasers: Lasers,
-    design: DesignFrame,
+    pub(crate) design: DesignFrame,
     pub tip: Tooltip,
     /// The settings changed since the last write (`SaveGlobalRegistrySettings`).
     pub dirty: bool,
@@ -303,6 +306,7 @@ impl OptionsScreen {
             blokk1: 0.0,
             blokk2: 0.0,
             grab: None,
+            slot_grab: false,
             held: false,
             pressed: false,
             released: false,
@@ -450,7 +454,7 @@ impl OptionsScreen {
             s.value = s.value.clamp(0, 100);
             return;
         }
-        if self.spot_at(at) == id::SLOTS {
+        if self.slot_grab || self.spot_at(at) == id::SLOTS {
             // `(Mouse_y − 0x82) / 0xc + 1` (C division), taken if filled or below 23, clamped to 1..=24. Rows 25..=27
             // (the box's bottom) read past the titles in the exe: not taken.
             let n = (at[1] as i32 - 0x82) / 0xc + 1;
@@ -464,6 +468,7 @@ impl OptionsScreen {
     /// entry up only the slot list is off (a save press starts the entry again).
     pub fn press(&mut self, at: [f32; 2], sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
         self.hover(at);
+        self.slot_grab = self.spot_at(at) == id::SLOTS;
         self.held = true;
         self.pressed = true;
         if self.leaving.is_some() {
@@ -559,6 +564,7 @@ impl OptionsScreen {
         self.held = false;
         self.released = true;
         self.grab = None;
+        self.slot_grab = false;
     }
 
     /// Esc (`ESC_Pressed` ELF 0x581440 on screen 13: back to `OptionsElottiKep`, the main menu when load only; in
@@ -1103,6 +1109,19 @@ mod tests {
         assert_eq!(o.slot, 24);
         // Slot 24 can't be saved to.
         assert!(!o.spot_on(id::SAVE));
+    }
+
+    #[test]
+    fn slot_pick_follows_a_held_press_out_of_the_list() {
+        // `Mouse_Megfogva`: pressed on the list, the pick goes on by y outside it (above: slot 1).
+        let mut o = screen();
+        o.press([400.0, (0x82 + 12 * 4 + 3) as f32], &mut |_| {});
+        o.hover([10.0, 20.0]);
+        assert_eq!(o.slot, 1);
+        o.release();
+        o.hover([400.0, (0x82 + 12 * 4 + 3) as f32]);
+        o.hover([10.0, 20.0]);
+        assert_eq!(o.slot, 5);
     }
 
     #[test]

@@ -50,7 +50,7 @@ strength.
 |---|---|---|---|
 | +0 | i32 | kind (2 is left out of a unit's min/max weapon range) | `SpwC::fegyverhozzaad` |
 | +4 | i32 | reload time (battle ticks); a weapon starts at a random point `rndlog(6, 2·r/3, r−1)` | `fegyverhozzaad` |
-| +8 | i32 × 12 | damage per target type 0..=11 (type < 8 = capital ships); `fegyverszamol` recomputes it as `firepower(tech) × reload / 250` (weapons 11/12: `/ 3500`; techs 0x44..0x47: firepower × 25; the live table matched the file, `tables.md`) | `fegyverszamol`, `SpwC::Talalat` |
+| +8 | i32 × 12 | damage per target type 0..=11 (type < 8 = capital ships); `fegyverszamol` recomputes it as `firepower(tech) × reload / 250` (weapons 11/12: `/ 3500`; techs 0x41..0x47 → weapons 13..19, firepower × 25 from 0x44; techs 0x71..0x75 → weapons 20..24; `InitSpaceWar` calls it, so a battle's live table is the recomputed one [obs: all 14 `spwc` traces' tables, test `fegyverszamol_matches_the_live_table`]; the file holds placeholders (10, 0, 3, …)) | `fegyverszamol`, `SpwC::Talalat` |
 | +0x38 | i32 | hit chance % (human SP: `100 − (100 − c)/((bonus₁+bonus₂)/100 + 1)`, story bonuses `StoryAdat+0x78/+0x7c`) | `SpwC::Loves2` |
 | +0x3c | f32 | aim spread (`/1000`, per axis × (rnd(0..99) − 50)) | `Loves2` |
 | +0x40 | f32 | [unk] | |
@@ -445,7 +445,9 @@ the whole count, timer `rndlog(6, 0, r/3 − 1) + r`. Chain lightning kills `max
 First turn: squads (`MIcsapatokraoszt2(e, 2)`): `(n − 1)/2 + 1` units each, grown greedily (truncated
 squared distances) from the unit farthest from the centre, each next unit nearest to the squad's centre.
 Then: the retreat check (MP, or the human / no story ban, and no scripted lock): with more than 2 units,
-`(f64)strength < (f64)lost·0.6` and `2·strength < Σ hostile strengths` → retreat; all its units' weapon masks
+`(f64)strength < (f64)lost·0.6` and `2·strength < Σ hostile strengths` → retreat (`strength` = side `+0x54`, written
+only by the battle screen's `infoszamol`, every 6th UI tick: each side's current firepower, re/screens/spacewar.md
+§8.7.1; a battle nobody watches keeps the last values); all its units' weapon masks
 := all. Retreat (if allowed, +0x68; story ban for the human): mobile units of that original owner start
 retreating (`rndlog(6, 0, 2) < 1` explodes later), fighters head 600 away (`rndlog(6, 0, 2) < 1` doomed), its
 fleets back off on the starmap (exe 0x597cb0, = `FlottaArrebPakol`). Attack: squad centres; gathering squads

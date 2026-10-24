@@ -29,6 +29,8 @@ pub struct Dump {
     pub cam: Option<[f32; 8]>,
     pub acttime: Option<u32>,
     pub futofeny: Option<f32>,
+    /// `smkeringeto` (exe 0xF176DC), the console's side lights' phase, when the capture has it.
+    pub kering: Option<f32>,
     /// The units as dumped (600 bytes each, exe layout).
     pub units_raw: Vec<u8>,
     /// `starmaperosseg` (exe 0x927994): how much of the starmap shows (0 at the battle's zoom).
@@ -124,6 +126,7 @@ impl Dump {
             cam,
             acttime: v["acttime"].as_u64().map(|x| x as u32),
             futofeny: v["futofeny"].as_f64().map(|x| x as f32),
+            kering: v["kering"].as_f64().map(|x| x as f32),
             units_raw,
             erosseg: v["erosseg"].as_f64().map(|x| x as f32),
             types,
@@ -184,6 +187,7 @@ impl Dump {
             big: None,
             pointer: 0,
             formation: None,
+            kering: self.kering.unwrap_or(0.0),
         }
     }
 
@@ -251,6 +255,8 @@ pub struct Shown<'a> {
     pub pointer: i32,
     /// The formation phase's chosen formation (`+0x3430`).
     pub formation: Option<i32>,
+    /// `smkeringeto` (exe 0xF176DC): the console's side lights circle with it (`smMozgatMainFenyek`).
+    pub kering: f32,
 }
 
 /// The battle camera's state (spec §2.1).
@@ -563,7 +569,7 @@ struct Fixed<'a> {
 /// Draws camera-fixed models into a texture over the virtual rectangle `rect` (the way the starmap's panel is drawn,
 /// `starmap_hud::Console`), to lay over the scene: they sit in front of everything [inf]. Lit by their own ambient
 /// light 0x808080 and a front light [inf].
-fn fixed_texture(r: &mut crate::render::Renderer, items: &[Fixed], rect: [f32; 4]) -> Option<crate::render::TexId> {
+fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::render::Target>, items: &[Fixed], rect: [f32; 4]) -> Option<crate::render::TexId> {
     if items.is_empty() {
         return None;
     }
@@ -617,7 +623,13 @@ fn fixed_texture(r: &mut crate::render::Renderer, items: &[Fixed], rect: [f32; 4
         draws,
         dynamic,
     });
-    Some(r.render_texture(&f, ((w * 4.0) as u32, (h * 4.0) as u32)))
+    let px = ((w * 4.0) as u32, (h * 4.0) as u32);
+    let t = match target {
+        Some(t) => t,
+        None => target.insert(r.target(px)),
+    };
+    r.draw_into(&f, t, px, 0.0);
+    Some(t.tex)
 }
 
 /// A texture of [`fixed_texture`] over its rectangle.
@@ -1014,22 +1026,25 @@ impl<'a> Scene<'a> {
     }
 
     /// The effect particles (`Particle` ELF 0x5f4ff0, textured mode; spec §6.7.2): screen-aligned squares of half-size
-    /// `size·fov/−z`, the colour word's RGB × (255 − T)/256 added; the 25-frame sets step through their 5 × 5 sheet.
+    /// `size·fov/−z`, the colour word's RGB × (255 − T)/256 added; the 25-frame sets step through their 5 × 5 sheet. Depth
+    /// tested without a depth write (`ZENABLE`, no `ZWRITEENABLE`, `BLEND(1, 1)`): billboards of the mesh pass on the
+    /// camera's axes, behind the hulls where the exe hides them (deviation 119).
     fn particles(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, fx: &crate::spacewar_fx::Fx, textures: &[Option<crate::render::TexId>; 5]) {
-        use crate::render::{kind, Blend, Instance};
         let m = cam.matrix();
         let near = -cam.look.map_or(0.4, |l| l.near);
+        let crate::render::Frame { scene, late, .. } = f;
+        let Some(scene) = scene.as_mut() else { return };
         for (set, ps) in fx.sets.iter().enumerate() {
             let tex = textures[set].unwrap_or(self.assets.white);
             let frames = crate::spacewar_fx::SET_FRAMES[set];
+            let start = scene.dynamic.len() as u32;
             for p in ps.iter().filter(|p| p.color != 0 && p.size > 0.0) {
                 let w = self.world(p.pos);
                 let e = cam.eye(&m, w[0], [w[1], w[2]]);
                 if e[2] >= near {
                     continue;
                 }
-                let Some((c, px)) = cam.project_eye(e) else { continue };
-                let half = p.size / SCENE_SCALE * px;
+                let half = p.size / SCENE_SCALE;
                 let uv = if frames > 0 {
                     let side = (frames as f32).sqrt() as i32;
                     let k = (p.frame as i32).clamp(0, frames as i32 - 1);
@@ -1038,7 +1053,20 @@ impl<'a> Scene<'a> {
                 } else {
                     [0.0, 0.0, 1.0, 1.0]
                 };
-                f.push(tex, Blend::GammaAdditive, Instance { uv, ..Instance::new(kind::SPRITE, c, [half; 2], crate::starmap::particle_color(p.color)) });
+                let color = crate::starmap::particle_color(p.color);
+                // The eye's x and y (down) axes in the world: the camera's rows.
+                let corner = |sx: f32, sy: f32| -> crate::render3d::MeshVertex {
+                    let pos = std::array::from_fn(|i| w[i] + (m[0][i] * sx + m[1][i] * sy) * half);
+                    let u = [uv[0] + (sx + 1.0) / 2.0 * uv[2], uv[1] + (sy + 1.0) / 2.0 * uv[3]];
+                    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv: u, color }
+                };
+                for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                    scene.dynamic.push(corner(sx, sy));
+                }
+            }
+            let range = start..scene.dynamic.len() as u32;
+            if !range.is_empty() {
+                late.push(crate::render3d::MeshDraw { mesh: None, range, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
             }
         }
     }
@@ -1108,7 +1136,9 @@ impl<'a> Scene<'a> {
         for d in fx.debris.iter().filter(|d| d.counter != 0) {
             let Some(mesh) = g.debris[d.model.min(2)].as_ref() else { continue };
             let place = crate::scene::Placement::add_to_scene(mesh.origin, d.size / SCENE_SCALE);
-            let xf = crate::scene::Transform { matrix: crate::scene::mul(&d.turn, &place.matrix), translation: self.world(d.pos) };
+            // `ScaleObja(size)` on a node scaled like the ships' (`AddToScene` 0.0015 against their type scales): the
+            // same ×1024 as `pose` [obs fx8 t2100: the exe's pieces are a third to a half of a ship].
+            let xf = crate::scene::Transform { matrix: crate::scene::mul(&d.turn, &place.matrix).map(|x| x * 1024.0), translation: self.world(d.pos) };
             let lit = (0x40 + 0x80) as f32 / 255.0 * 0.75;
             mesh.push(f, &xf, [lit, lit, lit, 1.0 - d.transparency()], false);
         }
@@ -1278,6 +1308,9 @@ pub struct Gfx {
     fx: FxGfx,
     /// `MOUSE.BMP` (`dataraw/screen/mouse_bmp.pvr`) and its size.
     pub cursor: Option<(crate::render::TexId, [f32; 2])>,
+    /// The weapon column's and the small info box's textures ([`fixed_texture`]), drawn into again each frame.
+    column_target: Option<crate::render::Target>,
+    info_target: Option<crate::render::Target>,
 }
 
 impl Gfx {
@@ -1285,14 +1318,14 @@ impl Gfx {
         // The panel under the ambient light alone [obs: console diff 11.4 and 10.1 in two battles against 19.4 and
         // 16.3 with the starmap's lights; the exe's panel changes colour with the side lights `smMozgatMainFenyek`
         // circles].
-        let console = crate::starmap_hud::Console::load_lit(r, install, [0.0; 3]).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
+        let console = crate::starmap_hud::Console::load_sides(r, install, s.kering, &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
         let fx_textures = std::array::from_fn(|i| {
             let path = format!("dataraw/textures/spacewar/{}_bmp.pvr", crate::spacewar_fx::SET_TEXTURES[i]);
             crate::assets::Image::load(install, &path).map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t))
         });
         let forms = s.fx.map_or_else(Vec::new, |(fx, _)| fx.tables.forms.iter().map(|f| if f.name.is_empty() { None } else { Mesh::load(r, install, "vector/spacewar/", &f.name, "textures/spacewar/") }).collect());
         let szar = crate::assets::Image::load(install, "dataraw/textures/spacewar/szar_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
-        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])) }
+        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])), column_target: None, info_target: None }
     }
 }
 
@@ -1330,10 +1363,13 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
     let virt = crate::font::Virtual::new(size);
     let mut column = Vec::new();
     scene.weapons(&mut column, &gfx.panel);
-    put_fixed(f, &virt, fixed_texture(r, &column, COLUMN_RECT), COLUMN_RECT);
+    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT), COLUMN_RECT);
     let mut info = Vec::new();
     scene.info_model(&mut info, s.battle, s.spin, 1.0 - s.fade);
-    let info_tex = fixed_texture(r, &info, INFO_MODEL_RECT);
+    let info_tex = fixed_texture(r, &mut gfx.info_target, &info, INFO_MODEL_RECT);
+    if let Some(c) = gfx.console.as_mut() {
+        c.relight(r, s.kering, &cam.matrix());
+    }
     crate::spacewar_hud::draw(f, hud, gfx.console.as_ref(), &virt, s);
     put_fixed(f, &virt, info_tex, INFO_MODEL_RECT);
 }
@@ -1412,7 +1448,8 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     let d = Dump::load(path)?;
     if let Some(script) = &o.script {
         let cam = d.saved_starmap_camera();
-        return live(o, out, l, world, r, hud, d.battle, cam, &crate::script::Script::load(script)?);
+        let kering = d.kering.unwrap_or(0.0);
+        return live(o, out, l, world, r, hud, d.battle, cam, kering, &crate::script::Script::load(script)?);
     }
     let s = d.shown(&l.tables);
     let t = world.curr.tick as f32 * 0.05;
@@ -1428,6 +1465,10 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     let surface = world.curr.planets.iter().find(|p| p.index as i32 == d.battle.planet).map(|p| p.surface);
     let size = [o.size.0 as f32, o.size.1 as f32];
     draw(&mut frame, r, &l.install, &mut gfx, &assets, &view.camera, hud, &s, surface, size);
+    // The speed buttons: `run_spwc.py --grab-ticks` grabs a running battle (the exe's bar shows the speed, not the
+    // pause); `--paused` only holds the save's clock still here.
+    hud.speed = (world.game.speed_level() - 1).clamp(0, 2) as usize;
+    hud.paused = false;
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     let rgba = r.draw_to_image(&frame, o.size, t);
     crate::assets::write_snapshot(out, o, &rgba)?;
@@ -1449,14 +1490,8 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     Ok(())
 }
 
-/// `--screen spacewar --battle FILE --script S`: the dumped battle as a live battle slot, entered from the save's
-/// starmap camera and run by the script on the 10 ms UI clock (the sim's ticks every 50 ms while unpaused,
-/// `FRISSIT_SpaceWar2` every UI tick, a frame per UI tick); a PNG per grab, and a log of what the screen sent (orders,
-/// clicks) on stdout for the (action → sound) table.
-#[allow(clippy::too_many_arguments)]
-fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud, battle: Battle, cam: [f32; 5], script: &crate::script::Script) -> Result<(), String> {
-    use crate::script::Input;
-    use crate::spacewar_ui::{Key, Out};
+/// A dumped battle as the live battle in slot 0, the sim as `SpaceWarIndit` leaves it in SP (speed 1, paused).
+pub fn go_live(world: &mut crate::world::World, battle: Battle) {
     let g = &mut world.game;
     g.realtime.slots = (0..10).map(|_| Battle::slot()).collect();
     let mut battle = battle;
@@ -1465,9 +1500,19 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
     g.realtime.types = g.rules.space.ship_types.clone();
     g.realtime.current = 0;
     g.sp_battles.live = true;
-    // `SpaceWarIndit` in SP: speed 1, paused.
     g.set_speed(1, false);
     g.set_pause(true, false);
+}
+
+/// `--screen spacewar --battle FILE --script S`: the dumped battle as a live battle slot, entered from the save's
+/// starmap camera and run by the script on the 10 ms UI clock (the sim's ticks every 50 ms while unpaused,
+/// `FRISSIT_SpaceWar2` every UI tick, a frame per UI tick); a PNG per grab, and a log of what the screen sent (orders,
+/// clicks) on stdout for the (action → sound) table.
+#[allow(clippy::too_many_arguments)]
+fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mut crate::world::World, r: &mut crate::render::Renderer, hud: &mut crate::ui::Hud, battle: Battle, cam: [f32; 5], kering: f32, script: &crate::script::Script) -> Result<(), String> {
+    use crate::script::Input;
+    use crate::spacewar_ui::{Key, Out};
+    go_live(world, battle);
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut assets = crate::starmap::Assets::load(r, &l.install);
     assets.planet_meshes.load_battle(r, &l.install);
@@ -1477,6 +1522,7 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
     let c = &mut view.camera;
     [c.x, c.y, c.rotate, c.pitch, c.zoom] = cam;
     let mut live = crate::spacewar_live::Live::enter(world, 0, &view.camera, &l.install, 0).ok_or("no battle slot")?;
+    live.ui.kering = kering;
     let (mut mouse, mut next, mut shift) = ([320.0f32, 240.0], 0, false);
     for tick in 0..=script.end() {
         let now = tick * 10;
@@ -1492,7 +1538,7 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
                         3 => live.right = *down,
                         _ => {}
                     }
-                    if *down && *button == 1 && live.pause_press(*at) {
+                    if *down && *button == 1 && live.bar_press(*at, false) == Some(0) {
                         let paused = world.paused();
                         world.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::from(ig2_sim::game::StarmapOrder::Pause { paused: !paused }) });
                     }
@@ -1507,7 +1553,8 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
                         "subtract" => Some(Key::ZoomOut),
                         "a" => Some(Key::All),
                         "c" => Some(Key::Camera),
-                        n if n.len() == 1 && ("1"..="9").contains(&n) => Some(Key::Group(n.as_bytes()[0] as i32 - b'1' as i32)),
+                        // `DoKeyboard` keeps 1..3 (the speed); 4..9 reach the screen.
+                        n if n.len() == 1 && ("4"..="9").contains(&n) => Some(Key::Group(n.as_bytes()[0] as i32 - b'1' as i32)),
                         "shift" => {
                             shift = *down;
                             None

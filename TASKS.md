@@ -7,7 +7,7 @@ Updated 2026-10-24.
 ## M2: playable start to finish
 - [x] New game: skirmish start (mode 3; `Game::start_skirmish`, `new-game.md` §13.1)
 - [x] New game leftovers: the AI's design names (`ai::design::generated_name`, `new-game.md` §14)
-- [ ] New game leftovers: the campaign stories in `Game`'s story tick (4 items in `docs/roadmap.md` §6, `new-game.md` §15)
+- [x] New game leftovers: the campaign stories in `Game`'s story tick (4 items in `docs/roadmap.md` §6, `new-game.md` §15)
 - [x] Client: build a `World` from a new `Game` (`World::new_game`, `--new-campaign`; `mainscr.md` §9.1.1)
 - [x] MainScr part 2: race and difficulty, scenario/skirmish setup, tutorial start, multiplayer name entry, exit animation (skirmish start through `Game::start_skirmish`; MP lobby M5)
 - [x] Colony war part 2: landing clicks, landing zone and shadows, unit picture, self-destruct window, cursors, camera keys

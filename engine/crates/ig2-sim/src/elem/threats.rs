@@ -284,7 +284,7 @@ pub(super) fn story_821(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
             let t = w.rng().range(STREAM, 150, 200);
             s.sz_start(BASE, t);
             p = s.b_search(en.wrapping_neg(), 0, w);
-            s.f_new_ex(&String::from_utf8_lossy(&w.story_text(8206)), 9, CONVOY, 0.06, 2, p, w);
+            s.f_new_ex(crate::story::FleetName::Text(8206), 9, CONVOY, 0.06, 2, p, w);
             s.f_add_ship(CONVOY, 8, 1, w);
             // `st_fSetBarat(8207, 1)` and `st_fShow(8207)` inlined: `+0x52` bits 0x200 and 0x100.
             let f = s.f_search(CONVOY, w);
@@ -370,7 +370,7 @@ pub(super) fn story_821(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         let b = s.b_search(BASE, 0, w);
         if w.planet_owner(b) == 10 {
             let b = s.b_search(BASE, 0, w);
-            s.f_new_ex(&String::from_utf8_lossy(&w.story_text(8202)), 10, PIRATES, 0.08, 2, b, w);
+            s.f_new_ex(crate::story::FleetName::Text(8202), 10, PIRATES, 0.08, 2, b, w);
             let n = s.v_get(8211).wrapping_mul(4).wrapping_add(3);
             s.f_add_ship(PIRATES, 3, n, w);
             s.v_set(8211, 0);
@@ -453,7 +453,7 @@ pub(super) fn story_832(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         message(w, 8320);
         for id in 8320..=8322 {
             let p = s.b_search(id, 0, w);
-            s.f_new_ex(&String::from_utf8_lossy(&w.story_text(id)), 13, id, 0.09, 2, p, w);
+            s.f_new_ex(crate::story::FleetName::Text(id), 13, id, 0.09, 2, p, w);
         }
     }
     if s.daily() {
@@ -556,7 +556,7 @@ pub(super) fn story_834(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         if s.b_search(-1, 0, w) == 0 {
             s.win(0, true, w);
         } else {
-            s.f_new_ex(&String::from_utf8_lossy(&w.story_text(id)), 1, id, 0.09, 2, -1, w);
+            s.f_new_ex(crate::story::FleetName::Text(id), 1, id, 0.09, 2, -1, w);
             move_to_planet(s, id, 8340, w);
             if id == 8344 {
                 s.v_set(8349, 1);

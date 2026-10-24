@@ -345,7 +345,7 @@ pub(super) fn race(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             let p = s.b_search(e.wrapping_neg(), 0, w);
             s.b_add_id(p, fleet);
             let at = s.b_search(fleet, 0, w);
-            s.f_new_ex("", e, fleet, 0.05, at.wrapping_neg(), 0, w);
+            s.f_new_ex(crate::story::FleetName::Text(fleet), e, fleet, 0.05, at.wrapping_neg(), 0, w);
             s.f_add_ship(fleet, 4, 1, w);
             s.f_add_ship(fleet, 3, ships, w);
             s.f_add_tank(fleet, 1, ships, w);
@@ -457,7 +457,7 @@ pub(super) fn deserter(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
     if s.starting_now() {
         let p = s.nearest_unknown(w)?;
         s.b_add_id(p, PLANET);
-        s.f_new_ex("", 10, FLEET, 0.07, 1, 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x552), 10, FLEET, 0.07, 1, 0, w);
         let b = s.last_fn[last_fn::B];
         s.b_add_id(b, FLEET);
         let at = (s.last_fn[last_fn::X] as f32, s.last_fn[last_fn::Y] as f32);

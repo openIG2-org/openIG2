@@ -38,6 +38,11 @@ impl DesignFrame {
         Self { m, target, novelo, ..Self::default() }
     }
 
+    /// `dkm`, `dkmcel`, `GfxNovelo`: the globals every screen's frame shares.
+    pub fn phase(&self) -> [f32; 3] {
+        [self.m, self.target, self.novelo]
+    }
+
     /// The same frame on another screen (`Frissit2_Grafika`'s `DesignKeret1OldKep != AktKep`: the places reset).
     pub fn new_screen(&self) -> Self {
         Self::with_phase(self.m, self.target, self.novelo)

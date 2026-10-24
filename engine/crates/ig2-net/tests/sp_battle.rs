@@ -68,7 +68,8 @@ fn a_single_player_battle_runs_on_the_battle_screen() {
         }
     }
     assert!(over, "the battle ended");
-    assert!(g.state.mem.i32(va::IDO) > clock, "SP keeps the strategic clock running");
+    // `Fake_FRISSITES` freezes the strategic time while the SP battle screen is up (time-and-rng.md §1; obs fx8).
+    assert_eq!(g.state.mem.i32(va::IDO), clock, "SP freezes the strategic clock on the battle screen");
     assert!(g.realtime.slots[b].active, "the slot stays until the screen is left");
     Command::SpaceBattleLeft.apply(&mut g, me as u8);
     assert!(!g.realtime.slots[b].active, "SpaceWarVege closed the slot");

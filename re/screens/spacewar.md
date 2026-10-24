@@ -151,7 +151,7 @@ SpaceWar_Main / GFX_SpaceWar run once per slot (10 slots, AktSpaceWarp pointed a
 | notices own / enemy ships retreating | 0x3438 / 0x3439 | 0x2d90 / 0x2d91 |
 | panel records A / B / C (0x4c each, id base at +0x40) | 0x230c / 0x2358 / 0x23a4 (bases 0x234c / 0x2398 / 0x23e4) | bases 0x1dec / 0x1e38 / 0x1e84 |
 | weapon-column slot i: meshes +0, +8, +0x10; x,y,z +0x18/+0x1c/+0x20; slide counter +0x28; on-target +0x2c | 0x29f8 + i*0xb0 | 0x2468 + i*0x94 |
-| ship record: stride 0x290 (exe 600); selected +0x189 (exe +0x181); owner +0x14; group +0x1c4 (exe +0x1b8); disabled +0x1e0 (exe +0x1d4) | | |
+| ship record: stride 0x290 (exe 600); selected +0x189 (exe +0x181); owner +0x14; group +0x1c4 (exe +0x1b8); retreating +0x1e0 (exe +0x1d4) | | |
 | SPWRetreatWindow | | exe byte 0xE72DD1 |
 
 ### 0.2 The overlays' functions
@@ -657,7 +657,7 @@ Frame, only when `+0x24b8` (gfx up):
 
 ### 5.1 The weapon column (fegyverpanelfrissit ELF 0x6a7150 / exe 0x5727d0; SpaceWarFrissit2 for the counters)
 Ten slots i = 0..9 (meshes: `ikon<i>.xvb` button at scale 0.02, `ora.xvb` reload clock at 0.014, `no.xvb` "off" overlay at 0.014; vector/spacewar/ and textures/spacewar/; created in initgfx at x = 300, y = 42*i - 200 (+15 for i = 9), z = -600).
-Per tick (SpaceWarFrissit2, every UI tick: 50 ticks = 0.5 s; only when no intro/fade and `+0x2545` clear): target on = `!(+0x342e) && ( +0x342d || ( count[i] != 0 && +0x2588 != 0 && +0x2578 != 0 ) )`; slot 9 (Retreat): `!(+0x342e) && ( +0x342d || ( side[+0xd2c].+0x70 != 0 && StoryAdat+152 == 0 ) )`;
+Per tick (SpaceWarFrissit2, every UI tick: 50 ticks = 0.5 s; only when no intro/fade and `+0x2545` clear): target on = `!(+0x342e) && ( +0x342d || ( count[i] != 0 && +0x2588 != 0 && +0x2578 != 0 ) )`; slot 9 (Retreat): `!(+0x342e) && ( +0x342d || ( side[+0xd2c].+0x70 != 0 && StoryAdat+152 == 0 ) )` (the viewer's flag B, ELF side `+0x70`, set by `infoszamol`; not `may_retreat` `+0x68`);
 forced off while leaving (`+0x2544`). Counter `c = slot+0x28`: +1 if on else -1, clamped 0..50 (50 ticks = 1.67 s). When c hits 0 while `+0x342e`: formation phase ends (`+0x342e = +0x342d = 0`), the icon materials are restored and the tooltips reset to `fegyvernevek[i]` (`Mouse_Csak_Szoveg_Set`, hot-spot id 3 + i).
 Per frame: `f = (1 - gorbe(1 - c/50)) * 50`; `x = f*150/50 + 150` (150 closed -> 300 open), `y = 42*i - 200` (+15 for slot 9), `z = -200 - f*400/50` (-200 closed -> -600 open); all three meshes `MoveObj(x + 320 - xcenter*639/639, y, z)` (xcenter = 320).
 Icon frame `SetFrame(+8 mesh, (maxreload[i]/10) * 1.65)` (the reload clock), mesh +8 shown with transparency 0. Not in formation mode: state[i] (0x3150): 3 -> overlay (+0x10) alpha 0.75 shown (some mounts of the group disabled); 6 -> alpha 0.5 shown (all disabled); 7 -> overlay hidden (all enabled); -1 (no weapon of the group) -> unchanged. `panelkiirsetszin(state)` stores it at +0x24a8.
@@ -712,8 +712,7 @@ Radar rectangle on screen: **x 274..368 (94 px), y 388..455 (67 px)**, centre (3
    (0,0)->(640,0), (640,0)->(640,480), (640,480)->(0,480), (0,480)->(0,0), i.e. the screen outline projected on the grid plane. `LineClip` clips to the rect and draws 1 px lines via `TscVonal` + `line2d(.., false, true)`;
    colour = `DDColor[2] * alpha/256` per byte.
 3. Clip rect reset to the full 640x480 plus the widescreen offset `d = (IG2_WINDOW_WIDTH*480/IG2_WINDOW_HEIGHT - 640)/2`.
-4. **Backdrop**: `line3` with one vertex pair (274,388) - (368,455), z 0.5, colour **0x40000020** (A 0x40, R 0x20: dark red), normal blend with alpha 0xbf (75 %), no texture, no depth test. Drawn *after* the cone lines
-   (so the cone is dimmed if line2d and line3 are queued in order; the exe has the same order).
+4. **Backdrop**: `line3` with one vertex pair (274,388) - (368,455), z 0.5, colour **0x40000020**, no texture, no depth test. [obs grabs 3/4, 2026-10-24: the exe's window is (4, 9, 12) over the starmap's black `FadeScreen`: the 0x20 is blue and the 0x40 its opacity (25 %); the cone's `line2d` lines are full white over it: the immediate 2D line goes over the queued `line3`.]
 5. **Dots**: `k2 = (1-k)*9 + 1`; every live unit with `owner == EN` (human empire global) or **not cloaked** (+0x1e3): `a = -cs*x + sn*y`, `b = cs*y - (-sn)*x` (x = +0x4c, y = +0x50),
    `X = a*94*k2/384 + 321`, `Y = b*67*k2/384 + 421`; kept when `274 < X < 368` and `388 < Y < 455`. Colour: owner == +0xd2c (own) **0x8000FF00** (green), else **0x800000FF** (red).
    `pixel(buf, n, depth=false, additive=true)`: 1 px points at `((int)X, (int)Y)` (truncation), alpha forced 0xff. The buffer is the stack array that also held the backdrop (40 B per vertex, about 119 vertices).
@@ -1095,7 +1094,7 @@ Signature `(int key, int ch, bool down)`: `key` = key code (arrows 0x25..0x28, d
 | DEBUGX: ch `r`, not `TutorialPaused` | down | `Multi_Send(0x72, EN, 4,&AktSpaceWar, 0)` = `Retreat` |
 | DEBUGX: key 8 | down | for every selected unit: `felrobban(.., 0, 0, true, true)` once per ship (`+0x1bc` count): blow up |
 | editor mode only | down | ch `c`: reverse the order of the selected units; arrows: move selected units by one racs cell in y/z (Shift + up/down: x); PgUp/PgDn change the unit type (`+8`, 0..0xb); key 0x2e (Delete) deletes (with Ctrl: sets the unit single waypoint) |
-No other key is handled here. Esc, space (pause), speed keys come from the shared `DoKeyboard` (ELF 0x57fd20, exe 0x4db1a0) -> `DispatchKeyboard`: not read [u].
+No other key is handled here. The shared `DoKeyboard` (exe 0x4db1a0, `re/screens/input.md` §1) runs first and keeps some keys: the top row's 1..3 (vk 0x31..0x33, jump table 0x4dc024 / index 0x4dc038, target 0x4db434: sound 10, `SetIdoSpeed(n)`, unpause; never passed on, so only 4..9 pick or assign groups 3..8 here), Space and the character P (pause toggle), O (options); these and the top bar's speed buttons (`IG2_gameUpdate` 0x4e07d6, AktIkon 2..5) need `nemlehetidotallitani` (exe 0xBAD0D4) clear in SP, i.e. not during the opening zoom (§2.5). Esc reaches `ESC_Pressed` (options.md §5.1): it opens the options too (`KepernyokLetiltva[0xd]` is restored at the zoom's end); `SpaceWar_Kilep` keeps a running battle (§4.1), and the exe comes back through the starmap (`OptionsElottiKep` 0xb -> 2, `DAT_00f176e0 = 0xb`). The letters come as character events (`FUN_004db040(0, ch, 1)`), so they follow the typed character, not the key position. The client (2026-10-24): all of these; g/G (`+0xc98`) and ScrollLock (`chm`) have no reader in the screen's functions and stay unmapped, DEBUGX q (`initgfx`) and u (a local write of `side[EN] +0x50`, not sent) too.
 
 ### 7.2 Timers and animations
 `FRISSIT_SpaceWar2` (ELF 0x67c450 / exe 0x55e6e0; `AktKep == 0xb && AktSpaceWarp != 0`; **every 100 Hz UI tick**: `Fake_FRISSITES` calls it at exe 0x4de8de inside its `while now − stamp > 10` loop (0x4de850..0x4de97f), right before `SpaceWar_Autoscroll` (0x4de94d); the column counter runs 0 → 49 in 50 UI ticks in the capture of §9.5. The interpolators still take dt 0.033333335 = 1/30): `SpwC::SpaceWarFrissit2` (below), then `+0x2300 = +0x2304 = 0`. The pitch rate `+0x2308` is not cleared (neither binary): a pitch key stays set until its key-up event. If `ControlConfig[0] && ControlConfig[1]`: `Refresh(1/30)` of the four interpolators (MoveX, MoveY, Zoom, Rotate); if `!(+0x2524) && !(+0x229e)`: zoom `+0xd78 = Zoom.GetValue()`, yaw `+0xd70 = Rotate.GetValue()`; `SpaceWar_Move(MoveX.GetSpeed(), MoveY.GetSpeed())` pans the look-at (the exe and the ELF differ here, see 7.1). The interpolator inputs (pan keys / pad) are set elsewhere [u].
@@ -1156,9 +1155,12 @@ Frame timers (screenfrissites): SDL ticks `+0x22f0`; `+0x2268/+0x226c` (+= dt ms
   `(MouseFazis/5) % 40` (one row per 5 UI ticks); hot-spot offset table exe 0x90b608 for x and y (types 0, 1: 0; others 10).
   `screenfrissites` maps `MousePointerType` 0 → 1, 2 → 5, 3 → 7, 4 → 6 (1 keeps the hot-spot's type, 1); tooltips are the
   shared ones (spy.md §5; the strings of 4.2, exe immediates confirmed).
-- **MP banner**: while MP, more than one human, and `now − spwckezdotimer < 9000` (set when the zoom ends): `"%s (%s) vs. %s
-  (%s)"` (empire and player names of the two sides) at (200, 30), `KiirStr(.., 200, 30, 0x46, 2, 4, 2)`, faded over its last
-  0.5 s. The formation caption `GetString(0xb,1,4)` sits at the same place, alpha × the column's counter/50.
+- **MP banner** (exe 0x57f800, read 2026-10-24): while MP (`DAT_00bae2c0`), more than one empire present (`+0xe30`), and
+  `now (+0x1d90) − spwckezdotimer (0xE72E18) < 9000` (set on the screen's first frame, with the opening zoom's set-up of the
+  intro flag `+0x2524`): `"%s (%s) vs. %s (%s)"` with `Birodalom_Nev` and `PlayerNev` (0xBAE588, 11 bytes) of the present
+  list's first two empires (`+0xe09`, `+0xe0a`; not only humans), through `a2az`, at (200, 30), `KiirStr(.., 200, 30, 0x46, 2,
+  4, 2)`; `KiirStrSzinSzorzo = (int)(spacewarelfade·100) · min(100, (9000 − ms)/5) / 100` (ints), so it fades over its last
+  0.5 s. Client: `spacewar_live` (not seen in an exe capture: MP). The formation caption `GetString(0xb,1,4)` sits at the same place, alpha × the column's counter/50.
 
 ## 8. Corrections, exe vs ELF, checks and unknowns
 ### 8.1 Corrections to the 3D draft and resolved questions
@@ -1294,10 +1296,14 @@ Read from `_local/decomp/spacewar-screen-elf*`, `spwc-elf/`, `spwc-exe*/` and th
 4. The guns' armour product `+0x3428` (f32, from 1.0), `selectkisinfourhajo()`; with gfx up: the slider hot-spot 0x19
    on iff nothing is selected, the fighter stance message 0x77 while the slider differs from `side[me] +0x44` (every
    call), the small box's case-C totals (ships, fighters, firepower for own / enemy / other), the sides' flag B (`+0x70`).
-5. The one-shot block (`+0x3448`, exe `+0x2d98`) writes the sim: each side whose firepower is below a third of an
-   enemy's gets flag A (`+0`); then, through a stale pointer to the last ship record (an original bug, same in the exe
-   at 0x574ee1..0x574f2b), `Hajok[slot] +4` += 1 for each of that ship's slots, n times. Not ported (a screen writing
-   the sim; `re/deviations.md`).
+5. The one-shot block (`+0x3448`, exe `+0x2d98`, set by `InitSpaceWar`) writes the sim: each side with firepower
+   gets flag A (`+0`) when an enemy's (relation 1) is more than a third of its own (`own < enemy · 3`, exe 0x574ee1);
+   then, through the pointer the earlier loops left on the last unit slot (an original bug, same in the exe at
+   0x574ee1..0x574f2b), `Hajok[s] +4` (the ship's experience) += 1 for each of that unit's ships, once per unit slot,
+   when it is alive, owned, has a ship list and its owner has flag A. The firepower of step 2 is the side's `+0x54`
+   (exe; ELF `+0x58`): the screen writes it every run, and the sim's AI retreat check (`MIvisszavonulasvizsgalat`)
+   reads it; the sim itself never writes it. Ported (2026-10-24) as the battle orders `Strengths` (sent when the values
+   change) and `Outgunned` (once; `Battle::outgunned`), so every peer applies the same writes in lockstep.
 Verified: `spacewar_ui::infoszamol_matches_the_exe` (four dumps: the counters, damage, max hp, rank and the ten groups'
 barrels, enabled barrels, reload and state, with the ELF table's masks).
 
@@ -1397,7 +1403,7 @@ their battle state isn't drawn). `re/deviations.md` lists them.
 - **The sim** (`game::realtime`, `SpBattles`): single player's real-time battles run when the client asks
   (`sp_battles.live`; off for the replays): a real-time route starts the battle as `SpaceWarIndit` does in SP (speed 1,
   paused, `RealTimeEvent::SpaceStarted`), the slots tick only while the battle screen is up (`on_screen`, `AktKep ==
-  0xB`) with the screen's fade in the end check, the strategic clock runs on beside it, the human's orders come through
+  0xB`) with the screen's fade in the end check, the strategic clock stands while the screen is up in single player (`Fake_FRISSITES` freezes it; FX7 part 2, §9.11), the human's orders come through
   `Command::SpaceOrder` (`Game::space_order`, own units only), and leaving a finished battle's screen ends it
   (`Command::SpaceBattleLeft` → `SpaceWarVege`). Tested by `ig2-net/tests/sp_battle.rs`.
 - **The screen** (`spacewar_ui::SpaceWarUi`, `spacewar_live::Live`): entered from the starmap camera at scene scale
@@ -1410,7 +1416,7 @@ their battle state isn't drawn). `re/deviations.md` lists them.
   cluster, zoom/pitch buttons, the small info box, the stance slider, the weapon column: right arms the fire cursor,
   left toggles the group's mounts, the tenth opens the retreat window), `SpaceWarMouse` (select, shift-toggle, box
   select with its snapshot, both-button rotate, the right-drag height mode, `JobbClick`'s attack / gun / direct-fire /
-  move orders with the arena clamp), the keys of §7.1.5 (arrows, numpad ± one tick per key event, A, 1–9 with Ctrl,
+  move orders with the arena clamp), the keys of §7.1.5 (arrows, numpad ± one tick per key event, A, 4–9 with Ctrl,
   DEBUGX R and Backspace). The retreat window (§5.4) is drawn and answered. Orders leave as commands in SP too.
 - **Scripted runs**: `ig2-client --snapshot OUT --save S.sav --screen spacewar --battle <grab>.json --script S` puts the
   dumped battle into slot 0 as a live battle, enters from the save's starmap camera and runs the script on the 10 ms UI
@@ -1581,5 +1587,24 @@ their battle state isn't drawn). `re/deviations.md` lists them.
 ### 9.7 Not yet (after part 7)
 - The bolts, rings and debris are still unchecked against a capture (no grab has them in view); the ring model's scale is
   suspicious (`karika.xvb`'s normalised vertices are ~0.007).
-- The MP banner and the chase camera are uncaptured; the big box's slide runs −5 / +10 px against the exe's (t800 / t950).
+- The MP banner (done in FX7 part 1, exe 0x57f800; not seen in a capture, MP) and the chase camera are uncaptured; the big box's slide runs −5 / +10 px against the exe's (t800 / t950).
 - In the zoom: the short info's planet picture and the fleet marker's glow are missing; the radar window's hue (deviation 104).
+
+
+### 9.11 FX7 (2026-10-24): live battles against a new capture
+- `spacewar_fx8.json` (`run_spwc.py --planets --fuzz-designs --weapons 0x1a,0x1b,0x1c,0x1d`; lasers, lightning, explosions and debris in view, grabs t800..t2300; its 376 battle ticks replay bit-exact). Fixes: `fegyverszamol` (ELF 0x68c5c0, from InitSpaceWar) fills the weapon damages from the techs (the exe file's table holds placeholders), so client battles kill ships as the exe's; in SP the strategic clock and money stand while the screen is up (`Game::sp_screen_frozen`, time-and-rng.md §1); the top bar's speed buttons are hot-spots 2..5 (a press on pause no longer reaches the battlefield); weapon groups by the mount's weapon id; slot 9 (Retreat) on flag B (§5.1); `+0x1e0` (exe `+0x1d4`) is *retreating*, not disabled (selection, groups, box, BalClick, bezoomolasztav test it). Numbers: weapons 12.9 -> 7.6, info box 19.9 -> 9.3, top bar 5.7 -> 2.7, view 10.8 -> 8.8 (t2100); the selection count matches (8, then 6). No shield ring in view yet. Open looks: deviations 236-239.
+- **Then** (same capture): the debris pieces take the ships' ×1024 node scale (they were drawn ~1000× too small); the small
+  box adds the selected guns (count, building damage +4, `EpuletekLeiro` hp, tech firepower to the value, exe 0x574040), a
+  plan-less unit's value stays its design's (`+0xc`), the rank skips negative experience and `kisinfokiir` shows "-" when
+  `(f32)sum / (f32)n < 0`: the box reads "TE: 2860 -" / "TE: 2680 -" as the exe's (info box 9.2 → 8.2).
+- **The console's side lights** (deviation 21, `spacewar_fx8.json` again as `_local/traces-fx8b` with `smkeringeto`, exe
+  0xF176DC, in every dump: 0.0008 at the entry, `+ 0.0002` per UI tick): `kezel.xvb` is lit as the engine's
+  `fenyekszamolasa` (re/screens/research.md §2.1) with the starmap scene's ambient 0x404040, its parallel light 0x808080 at
+  (10, 10, −10) and `smOldalsoFenyekBe`'s two (ELF 0x6d81e0: 0x7f5d00 and 0x004e7f, bytes [r, g, b]) that
+  `smMozgatMainFenyek` (ELF 0x6d8290) sets to `(sin a·300, cos a·200, 0)` and `a + 1.57075`, `a = smkeringeto·20`: each a
+  world vector `(h, x, y)` turned by the camera's rows (the root's rotation chain), compared with the vertex normal with z
+  negated, `shade[|n' − L|²·2047]`, saturating, in gamma space. `Console::load_sides`/`relight` (`starmap_hud.rs`)
+  light it on the CPU every frame. [obs fx8b: console region 7.6–9.5 → 3.0 (match) at all 16 grabs; the ring alone 10.1 →
+  2.0. Wrong guesses on the way: lights in camera space (a quarter turn off), linear light (the swing compressed), the
+  full vector negated instead of z (6.5).] The starmap screen's console keeps its still frame (the same lights
+  apply there).

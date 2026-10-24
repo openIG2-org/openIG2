@@ -230,7 +230,9 @@ impl Ctx<'_> {
     }
     /// The war input's view of the planet (spec §11).
     fn war(&self) -> crate::colony_war::WarCtx<'_> {
-        crate::colony_war::WarCtx { snap: self.snap, en: self.en() as i32, tutorial_paused: false }
+        // `TutorialPaused` (exe 0xF66F2A) gates the retreat button and the view's orders (colony.md §11).
+        let paused = self.state.mem.u8(va::TUTORIAL_PAUSED) != 0;
+        crate::colony_war::WarCtx { snap: self.snap, en: self.en() as i32, tutorial_paused: paused }
     }
 }
 
@@ -255,6 +257,14 @@ pub struct ColonyUi {
     /// `NemSzabadEpiteni`: build orders on their way (the pick list stays shut meanwhile).
     pub pending: i32,
     picker: Option<Picker>,
+    /// `TutorialEpuletekLetiltva[class]` (0x3c entries, by the tech's `+0x27` building class), set by the window while
+    /// a tutorial runs: a locked entry is drawn in colour 0xc and can't be picked (`Colony_Main` ELF lines 170, 187;
+    /// `ColonyGfx2D_4` line 76).
+    pub locked: Vec<bool>,
+    /// `TutorialDisableEpuletLerombolas` (demolish, hot-spot 2, off) and `TutorialColonyMindenLetiltvaKiveveAPageupot`
+    /// (every hot-spot off: `Mouse_Szoveg_Off_Range(1, n)`), from the window while a tutorial runs.
+    pub no_demolish: bool,
+    pub all_off: bool,
     window: Option<Confirm>,
     /// The hot-spot a button press captured (`Mouse_Megfogva`).
     held: Option<u32>,
@@ -300,6 +310,9 @@ impl Default for ColonyUi {
             kind: 1,
             build_mode: false,
             can_modify: false,
+            locked: Vec::new(),
+            no_demolish: false,
+            all_off: false,
             pending: 0,
             picker: None,
             window: None,
@@ -389,6 +402,9 @@ impl ColonyUi {
 
     /// The enabled hot-spot under `p` (virtual pixels), per `Colony_MouseInit2` (ELF 0x4e1d90).
     fn spot(&self, c: &Ctx, p: [f32; 2]) -> Option<u32> {
+        if self.all_off {
+            return None;
+        }
         // In the info mode `Off_Range(1, 0x14)`: 4 stays, 10 keeps its own test, 0x15..=0x1e only on EN's planet.
         if self.info.is_some() {
             let en = c.owner_is_en();
@@ -406,7 +422,8 @@ impl ColonyUi {
             inside(*r, p)
                 && match id {
                     1 => sel.is_some_and(|b| b.damage > 0),
-                    2 | 0x11 => sel.is_some(),
+                    2 => sel.is_some() && !self.no_demolish,
+                    0x11 => sel.is_some(),
                     6 | 7 => own,
                     8 => c.snap.self_destruct != -1 && c.owner_is_en(),
                     9 => c.snap.self_destruct != -1,
@@ -672,6 +689,12 @@ impl ColonyUi {
         out
     }
 
+    /// `TutorialEpuletekLetiltva[Talalmanyok[t].+0x27]`.
+    fn is_locked(&self, c: &Ctx, t: usize) -> bool {
+        let class = c.state.mem.u8(va::TECHS + (t.min(ig2_sim::save::TECHS - 1) * ig2_sim::save::TECH_SIZE) as u32 + 0x27) as usize;
+        self.locked.get(class).copied().unwrap_or(false)
+    }
+
     /// `colSelected` for the pointer at `p`: the offered tech whose row is under it.
     fn hover_picker(&mut self, c: &Ctx, p: [f32; 2]) {
         let Some(mut pk) = self.picker else { return };
@@ -679,7 +702,7 @@ impl ColonyUi {
         let hub = c.has_hub();
         for (t, col, row) in layout(&c.offered()) {
             let (x, y) = (pk.at[0] + (col * 0x78) as f32, pk.at[1] + (row * 0xd + 0xe) as f32);
-            if p[0] >= x && p[0] <= x + 114.0 && p[1] >= y && p[1] < y + 13.0 && (hub || t == 0x51) {
+            if p[0] >= x && p[0] <= x + 114.0 && p[1] >= y && p[1] < y + 13.0 && !self.is_locked(c, t) && (hub || t == 0x51) {
                 pk.hovered = t as i32;
                 // Hovering an entry drops the build cursor (`ColonyRemoveBuilding`).
                 if self.build_mode {
@@ -698,7 +721,7 @@ impl ColonyUi {
     /// the current kind; else the entry under the pointer becomes the kind with the cursor up.
     fn pick(&mut self, c: &Ctx, pk: Picker, now_ms: u32) {
         let sel = if now_ms.wrapping_sub(pk.pressed_ms) < 301 { 0 } else { pk.hovered };
-        if !(c.has_hub() || sel == 0x51 || (self.kind == 1 && sel == -1)) {
+        if self.is_locked(c, sel.max(0) as usize) || !(c.has_hub() || sel == 0x51 || (self.kind == 1 && sel == -1)) {
             return;
         }
         if sel < 1 {
@@ -911,6 +934,9 @@ impl ColonyUi {
             for (t, colm, row) in layout(&offered) {
                 let (x, y) = (pk.at[0] + (colm * 0x78) as f32, pk.at[1] + (row * 0xd) as f32);
                 let mut colour = if !hub && t != 0x51 { 1 } else { 3 };
+                if self.is_locked(c, t) {
+                    colour = 0xc;
+                }
                 if t as i32 == pk.hovered {
                     colour = 6;
                 }
@@ -951,10 +977,17 @@ impl ColonyUi {
 /// colour 7 above half, 3 above a quarter, else 6.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn hp_stripe(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], value: i32, max: i32, x: f32, y: f32, w: f32) {
+    hp_stripe_alpha(f, white, v, palette, value, max, x, y, w, 255);
+}
+
+/// `DrawHpStripe` with its last argument, the alpha (the battle's small box passes `(int)(spacewarelfade · 255)`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hp_stripe_alpha(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], value: i32, max: i32, x: f32, y: f32, w: f32, alpha: i32) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
+    let a = alpha.clamp(0, 255) as f32 / 255.0;
     let fill = |f: &mut Frame, x: f32, y: f32, w: f32, h: f32, c: [f32; 3]| {
         if w > 0.0 {
-            f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
+            f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], a]));
         }
     };
     fill(f, x, y, w, 5.0, col(0));

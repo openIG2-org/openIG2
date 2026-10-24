@@ -63,7 +63,16 @@ the script `dataraw/tutorial/main/script/main.tut` through `Install::read`, so t
 Raised now: 1 (the planet sighting, `FRISSIT_Starmap`), 0x27 (`Trade_Main`'s purchase), 0x22 (the countdown),
 2/0x19/0x1e (`TutorialCheckEvents`' polling while paused), and from the screen id's change: 0x1a (`Starmap_Belep`
 0x5b1cc3), 7 (`Colony_Belep` 0x465cf0), 0x28 (`Diplomacy_Belep` 0x4bf7f0); entering the battle screen ends
-`WAITFORBATTLE` (`SpaceWar_Belep`). The other call sites (exe address, id) are not raised yet:
+`WAITFORBATTLE` (`SpaceWar_Belep`). Every other call site below is raised since 2026-10-24 (FX6 parts 1-2; row 199 closed): in the sim `EpuletNew` (building kinds
+2→0x13, 7→0x1d, 0x34→0x14, 0x13→0x17, 0x15→0x18, 0xe→0x23, 0x32→0x26, 4→0x29 on an EN planet, raised when the colony world is
+stored), `GroundWarFinished` 0x21 when s == EN (simulated or not), `MULTIGET_Starmap` 0x15 (own fleet, order ≠ 0, farther than
+RadarHatotav[radar level] from the last own planet), `FRISSIT_Research`/`FRISSIT_Spy` 9/0xa (EN completes, or any thief steals,
+tech 0x12/6), `FeldolgozValasz` 0x2a / 0xd; in the client, from the commands the screens send (`World::send`): colony tax and
+auto-build 0x24/0x25, production pick of a kind-5 design 6, satellites 0x2b, spy missions 0xf/0x10, PgUp/PgDn 0x1b, the ways
+into a non-main colony 0x1c (the main planet stays shut), transfer split 5 (`Tutorial_Split_Ok`), research pick 8, design 0xb/0xc,
+starmap attack 0x11 then 0x1f, SpaceWar exit 0x20, leaving the planet info 0x16, the rename's Enter 4/3. Approximations: 0x11/0x1f
+fire only when an order is really sent; the 0x24/0x25/6/0x2b/0xf/0x10 sites fire from the command the screen sends; design 0xb
+fires once on the pick (the exe also fires it every frame of the flight, same effect). Original sites (exe address, id):
 `ColonyKeyboardHandler` 0x462caa/0x462df6 0x1b; `Colony_Main` 0x46745b/0x467482/0x467586 0x24, 0x4675ea 0x25;
 `Design_Main` 0x4b2304 0xb, 0x4b29e0 0xc; 0x4b4a14 0xb; `TervAutoDesign` 0x541a7f 0xb; `FeldolgozValasz` 0x4c16ff
 0xd or 0x2a; `DoKeyboard` 0x4db3eb 0x1c ('r'), 0x4db9a7 4, 0x4db9c0 3 (the renames); `FRISSIT_Research` 0x51e200 9,
@@ -73,7 +82,7 @@ Raised now: 1 (the planet sighting, `FRISSIT_Starmap`), 0x27 (`Trade_Main`'s pur
 sim: `GroundWarFinished` (exe 0x47c5d0, the names file's "KiszamolErtek") 0x21 when EN wins, `EpuletNew` 0x53c8eb by
 building type (2→0x13, 7→0x1d, 0x34→0x14, 0x13→0x17, 0x15→0x18, 0xe→0x23, 0x32→0x26, 4→0x29, owner EN),
 `FRISSIT_Starmap` 0x596964 0x1c, `MULTIGET_Starmap` 0x59dd1f 0x15. Until they are, a chapter stops at the first
-`WAITFOREVENT` on one of them (`re/deviations.md`).
+`WAITFOREVENT` on one of them is no longer the case (`re/deviations.md`).
 
 ## 5. Verification
 

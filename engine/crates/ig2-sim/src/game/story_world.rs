@@ -11,7 +11,7 @@ use crate::colony_side::EMPIRES;
 use crate::messages::cstr;
 use crate::rng::Streams;
 use crate::save::{va, PLANET_SIZE, TECH_SIZE};
-use crate::story::{FieldUnit, SpyRecord, StoryEvent, StoryWorld, DESIGN};
+use crate::story::{FieldUnit, FleetName, SpyRecord, StoryEvent, StoryWorld, DESIGN};
 
 fn rd_i16(b: &[u8], o: usize) -> i32 {
     i16::from_le_bytes([b[o], b[o + 1]]) as i32
@@ -244,8 +244,14 @@ impl StoryWorld for GameStory<'_, '_> {
         let designs = self.game.state.story_designs();
         self.with_game(|g| crate::trade::story_design(e as usize, key, default.max(0) as usize, &designs, &mut TradeView { game: g }) as i32)
     }
-    fn new_fleet(&mut self, name: &str, owner: i32, id: i32, x: f32, y: f32, speed: f32) -> i32 {
-        self.with_game(|g| g.new_fleet(name.as_bytes(), owner as u8, id as i16, x, y, speed) as i32)
+    fn new_fleet(&mut self, name: &FleetName, owner: i32, id: i32, x: f32, y: f32, speed: f32) -> i32 {
+        let name = match *name {
+            FleetName::Bytes(ref b) => b.clone(),
+            FleetName::Text(t) => self.story_text(t),
+            FleetName::Format(f, a) => crate::messages::printf(&self.story_text(f), &[crate::messages::Arg::Str(cstr(&self.story_text(a)))]),
+            FleetName::Design { empire, design } => self.design(empire, design).map_or(Vec::new(), |r| cstr(&r[..0x16]).to_vec()),
+        };
+        self.with_game(|g| g.new_fleet(&name, owner as u8, id as i16, x, y, speed) as i32)
     }
     fn info_string(&self, info: i32) -> bool {
         self.game.info_string(info)
@@ -546,7 +552,7 @@ impl Game<'_> {
 
     /// `InfoString_GetIndex(info) != 0` (exe 0x53ec40): `infostr.txt` has `info` past its first record.
     pub(super) fn info_string(&self, info: i32) -> bool {
-        self.rules.story.info_strings.iter().position(|&id| id as i32 == info).is_some_and(|k| k > 0)
+        self.rules.story.info_strings.iter().position(|&(id, _)| id as i32 == info).is_some_and(|k| k > 0)
     }
 }
 
@@ -558,7 +564,7 @@ mod tests {
 
     #[test]
     fn reads_follow_the_exe_layouts() {
-        let rules = GameRules { story: crate::game::StoryRules { info_strings: vec![0, -1381, -10011], ..Default::default() }, ..Default::default() };
+        let rules = GameRules { story: crate::game::StoryRules { info_strings: vec![(0, false), (-1381, true), (-10011, true)], ..Default::default() }, ..Default::default() };
         let mut state = SaveState::from_parts(crate::save::Memory::default(), Vec::new());
         let m = &mut state.mem;
         m.write(va::PLANETS, &vec![0; 3 * PLANET_SIZE]);

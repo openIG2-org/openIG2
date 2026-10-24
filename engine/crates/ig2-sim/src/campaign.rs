@@ -696,7 +696,8 @@ fn escorts(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         if missing >= 0 && w.planet_owner(home) == OWNER {
             let id = ESCORT + missing;
             let p = s.b_search(BASE, 0, w);
-            s.f_new_ex("", OWNER, id, 0.08, 2, p, w);
+            // `sprintf(_s(5, 4030), _s(5, 4031 + k))` (exe 0x5c718b).
+            s.f_new_ex(crate::story::FleetName::Format(4030, 4031 + missing), OWNER, id, 0.08, 2, p, w);
             s.f_add_ship(id, 3, 3, w);
             s.f_add_ship(id, 2, 8, w);
             s.f_add_tank(id, 1, 3, w);
@@ -711,7 +712,7 @@ fn refit(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     if s.starting_now() {
         let f = s.f_search(TRADER, w);
         if f == 0 {
-            s.f_new_ex("", 9, TRADER, 0.1, 1, 0, w);
+            s.f_new_ex(crate::story::FleetName::Text(4041), 9, TRADER, 0.1, 1, 0, w);
         } else {
             w.event(StoryEvent::SetFleetSpeed { fleet: f, speed: 0.1 });
         }
@@ -855,7 +856,7 @@ fn ships_904(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
 /// 905: fleet 8072 of empire 10 appears near one of the human's planets and heads for it.
 fn fleet_905(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     if s.starting_now() {
-        let f = s.f_new_ex("", 10, 0x1f88, 0.0, 1, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(0x1f88), 10, 0x1f88, 0.0, 1, 0, w);
         w.event(StoryEvent::MoveFleet { fleet: f, kind: 1, mode: 1, x: s.last_fn[last_fn::B] as f32, y: 0.0 });
         s.win(0, true, w);
     }

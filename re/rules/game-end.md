@@ -54,8 +54,11 @@ Every end goes through `MEGHALAS` (the human dies) or `MEGNYERES(videos)` (the h
   loaded game runs again (`GameStarted` is set by the load).
 - `ig2-client`: `video::Request::names(…, race, campaign)` (§2's names; none for race ≥ 9 or `Ended`), then
   `AfterVideo::MainMenu` → `exit_to_main_menu` (`MainScr::enter`, the menu music), at once when there is no video.
-  The world is kept until a new game or a load replaces it. Multiplayer: the session's teardown is the lobby's
-  (`ig2-net`), not ported here.
+  The world is kept until a new game or a load replaces it. Multiplayer: `exit_to_main_menu` calls
+  `mp_lobby::Session::leave` (`SessionMsg::Leave`: a peer is away at once, no grace; the host leaving closes every
+  peer's session at once; lobby protocol v4); a joiner whose host is gone ends with "The host has left the game."
+  (no migration in the client yet). The game end is per machine in canonical MP: `empire_dies`/`victory_check` use
+  `local_view().empire` and skip the "screen < 0xE" test.
 
 ## 4. The high-score table
 Ten slots per scenario (kind 0 entries of the scenario list only; skirmish and campaign have none), in the
@@ -110,7 +113,7 @@ is a scenario. Fade `KiirStrSzinSzorzo = (int)(ScenarioKepNyitottsag · Scenario
 The panel itself is MainScr part 2's (`ig2-client::mainscr`); it reads `ig2_formats::highscore::Table::load`.
 
 ## 8. Not covered
-The multiplayer teardown (`ExitToMainScreen`'s socket part) waits for the lobby port. Whether quitting flushes a
+The multiplayer teardown (`ExitToMainScreen`'s socket part) is ported as `SessionMsg::Leave` (§3). Whether quitting flushes a
 registry changed by `SaveHighscores` is moot (§6).
 
 ## 9. Exe vs ELF

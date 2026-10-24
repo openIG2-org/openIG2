@@ -187,12 +187,18 @@ pub mod layout {
     /// `st_Rnd` 138's recruit names: 8-byte `char[8]` slots in `.rdata` (`re/rules/campaign/rnd.md` §138; the story
     /// draws 0..=6).
     pub const STORY_RECRUITS: (u32, usize, usize) = (0x85E0BC, 8, 7);
+    /// `Tervek0[0..=0x28]`: the design templates (0x84-byte records; `InitNewGame` and story 908 copy them).
+    pub const DESIGN_TEMPLATES: (u32, usize, usize) = (0x90BF80, 0x84, 0x29);
+    /// `pGyartas0`: the production queue a new colony starts with (planet `+0x78..+0xb8`, `Generate_Planet`).
+    pub const PRODUCTION_TEMPLATE: (u32, usize, usize) = (0x90B8A8, 0x40, 1);
     /// The end videos by the human's empire `EN` (`re/screens/video.md` §5, char*): `MEGHALAS`'s loss clip and
     /// `MEGNYERES`'s campaign win clip.
     pub const VIDEO_LOSS: (u32, usize, usize) = (0x919724, 4, 9);
     pub const VIDEO_WIN: (u32, usize, usize) = (0x919748, 4, 9);
     /// `StartAnim`/`VegeAzElsoAnimnak`'s head clips {loop, wait} by sender index (char* pairs, 15 records).
     pub const VIDEO_MESSAGE_CLIPS: (u32, usize, usize) = (0x915e60, 4, 30);
+    /// `DrawAnimInterlace`'s texture coordinates (exe 0x504fb0 / ELF 0x5a37a0: `lmin`, `lmax`).
+    pub const VIDEO_INTERLACE_UV: (u32, usize, usize) = (0x9148cc, 4, 2);
 }
 
 fn cstr(b: &[u8]) -> String {
@@ -534,7 +540,7 @@ pub struct SpaceWeapon {
     pub kind: i32,
     /// +4: reload time in battle ticks (also scales the derived damage, `fegyverszamol`).
     pub reload: i32,
-    /// +8: damage per target type 0..=11 (recomputed by `fegyverszamol` from tech firepower; the live table matched the file).
+    /// +8: damage per target type 0..=11 (placeholders: `fegyverszamol` recomputes them from tech firepower at `InitSpaceWar`).
     pub damage: [i32; 12],
     /// +0x38: hit chance in percent.
     pub accuracy: i32,
@@ -706,6 +712,10 @@ pub struct Rules {
     pub campaign_words: Vec<i32>,
     /// `st_Rnd` 138's recruit names (static data at exe 0x85E0BC, 8 bytes each, NUL-terminated).
     pub story_recruit_names: Vec<Vec<u8>>,
+    /// `Tervek0[0..=0x28]` as the exe image holds them (exe 0x90BF80, 0x84 bytes each; unnamed until `StringReadAll`).
+    pub design_templates: Vec<Vec<u8>>,
+    /// `pGyartas0` (exe 0x90B8A8, 0x40 bytes).
+    pub production_template: Vec<u8>,
     /// Slope limits of the passability layers 0..5 (exe 0x8F8574, f32 × 5; `GenerateMap` uses 1..=4).
     pub ground_slope_limits: Vec<f32>,
     pub diplomacy_screen: DiplomacyScreen,
@@ -713,7 +723,7 @@ pub struct Rules {
 }
 
 /// The video names the exe picks from tables (`re/screens/video.md` §5); `""` where the exe has an empty string.
-#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Videos {
     /// By the human's race (`PlayerFaj[EN]`) 0..=8: `MEGHALAS`'s campaign clip before `misc/end_gameover.bik`.
     pub loss: Vec<String>,
@@ -721,6 +731,8 @@ pub struct Videos {
     pub win: Vec<String>,
     /// By the message's head index: (loop, wait) clips.
     pub message_clips: Vec<(String, String)>,
+    /// `DrawAnimInterlace`'s `lmin`, `lmax`: the interlace quad's texture coordinates, the same in u and v.
+    pub interlace_uv: [f32; 2],
 }
 
 /// The diplomacy screen's layout (`re/screens/diplomacy.md` §2).
@@ -1121,6 +1133,11 @@ impl Rules {
             ground_turn_speeds: floats(layout::GROUND_TURN_SPEEDS)?,
             ground_armour: floats(layout::GROUND_ARMOUR)?,
             campaign_words: ints(layout::CAMPAIGN)?,
+            production_template: tab(layout::PRODUCTION_TEMPLATE)?.0.to_vec(),
+            design_templates: {
+                let (b, s, n) = tab(layout::DESIGN_TEMPLATES)?;
+                (0..n).map(|i| b[i * s..(i + 1) * s].to_vec()).collect()
+            },
             story_recruit_names: {
                 let (b, s, n) = tab(layout::STORY_RECRUITS)?;
                 (0..n).map(|i| b[i * s..(i + 1) * s].iter().take_while(|&&c| c != 0).copied().collect()).collect()
@@ -1189,6 +1206,10 @@ impl Rules {
                     loss: names(layout::VIDEO_LOSS)?,
                     win: names(layout::VIDEO_WIN)?,
                     message_clips: clips.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect(),
+                    interlace_uv: {
+                        let uv = floats(layout::VIDEO_INTERLACE_UV)?;
+                        [uv[0], uv[1]]
+                    },
                 }
             },
         })

@@ -999,7 +999,7 @@ impl StoryWorld for W<'_> {
             None => default,
         }
     }
-    fn new_fleet(&mut self, _name: &str, owner: i32, id: i32, x: f32, y: f32, speed: f32) -> i32 {
+    fn new_fleet(&mut self, _name: &ig2_sim::story::FleetName, owner: i32, id: i32, x: f32, y: f32, speed: f32) -> i32 {
         let what = format!("FlottaNew({owner}, {id}, {x}, {y}, {speed})");
         let Some(a) = self.take("fleetnew", &what) else { return 0 };
         let want = [v(owner), v(id), v(x.to_bits()), v(y.to_bits()), v(speed.to_bits())];

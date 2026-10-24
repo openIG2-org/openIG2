@@ -145,12 +145,26 @@ mod tests {
     /// stays in `_local/traces` (`IG2_TRACE_DIR` elsewhere); the test skips without it.
     #[test]
     fn research_probe_matches_the_exe() {
+        let (n, lit) = replay_probe("light-research.jsonl");
+        assert!(n == 0 || (n > 6000 && lit > 1000), "{n} vertices, {lit} lit by the parallel lights");
+    }
+
+    /// The trade screen's objects (`run_screen.py --kep 8 --script scripts/trade-pods.json --light-probe`,
+    /// 2026-10-24: the panels, the card and the first offer's hull turning in): every vertex colour.
+    #[test]
+    fn trade_probe_matches_the_exe() {
+        let (n, lit) = replay_probe("light-trade.jsonl");
+        assert!(n == 0 || (n > 800 && lit > 50), "{n} vertices, {lit} lit by the parallel lights");
+    }
+
+    /// Replays a `--light-probe` trace through [`Lights::accumulate`]: (vertices, those not at the ambient alone).
+    fn replay_probe(name: &str) -> (usize, usize) {
         let dir = std::env::var_os("IG2_TRACE_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces"));
-        let Ok(text) = std::fs::read_to_string(dir.join("light-research.jsonl")) else {
-            eprintln!("skipped: no light-research.jsonl");
-            return;
+        let Ok(text) = std::fs::read_to_string(dir.join(name)) else {
+            eprintln!("skipped: no {name}");
+            return (0, 0);
         };
         let f = |v: &serde_json::Value| v.as_f64().unwrap() as f32;
         let (mut n, mut lit) = (0, 0);
@@ -182,9 +196,9 @@ mod tests {
                 }
                 assert_eq!(c, bytes(v[3].as_u64().unwrap() as u32), "{line:.80}");
                 n += 1;
-                lit += (c != [0x20; 3]) as usize;
+                lit += (c != [0x20; 3] && c != [0x14; 3]) as usize;
             }
         }
-        assert!(n > 6000 && lit > 1000, "{n} vertices, {lit} lit by the parallel lights");
+        (n, lit)
     }
 }

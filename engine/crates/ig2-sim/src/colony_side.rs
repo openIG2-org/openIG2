@@ -425,6 +425,9 @@ pub struct ColonyWorld {
     /// `BolygoUtolsoKozeliFlotta[p]`.
     pub last_near_fleet: Vec<i32>,
     pub strength: PlanetStrength,
+    /// `EpuletNew`'s tutorial check (exe 0x53c8eb): the `(planet, kind)` of each building made since the world was
+    /// last stored ([`crate::save::SaveState::store_colony`] raises the events and empties it).
+    pub built: std::cell::RefCell<Vec<(usize, u8)>>,
     pub empires: EmpireTables,
     pub money: [Treasury; EMPIRES],
     pub tech: TechTable,
@@ -557,6 +560,7 @@ impl ColonyWorld {
             y = (y as f64 * 1.5) as i32 as u8;
         }
         let owner = planet.owner;
+        self.built.borrow_mut().push((p, kind));
         let b = &mut planet.buildings[slot - 1];
         *b = colony::Building {
             kind,

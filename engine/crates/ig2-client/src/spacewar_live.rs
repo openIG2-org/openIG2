@@ -93,8 +93,11 @@ impl Live {
             let tech = &world.game.rules.space.building_tech;
             let blocks = world.game.state.buildings.get(b.planet.max(0) as usize);
             let gun_tech = b.guns.iter().map(|g| blocks.and_then(|x| x.get(g.building.max(0) as usize)).filter(|_| g.building > 0).and_then(|x| tech.get(x[0] as usize)).map_or(-1, |&t| t as i32)).collect();
-            let plans = crate::spacewar_ui::Plans { designs: &combat.designs, ships: &combat.ships, gun_tech, firepower: &world.game.rules.ai.design.firepower, fleets: &world.game.state.fleets };
+            let hp = &world.game.rules.space.building_hp;
+            let gun_hp = b.guns.iter().map(|g| blocks.and_then(|x| x.get(g.building.max(0) as usize)).filter(|_| g.building > 0).map_or([0; 2], |x| [i32::from_le_bytes(x[4..8].try_into().unwrap()), hp.get(x[0] as usize).copied().unwrap_or(0)])).collect();
+            let plans = crate::spacewar_ui::Plans { designs: &combat.designs, ships: &combat.ships, gun_tech, gun_hp, firepower: &world.game.rules.ai.design.firepower, fleets: &world.game.state.fleets };
             let scroll = world.game.state.mem.u8(ig2_sim::save::va::TUTORIAL_ACTIVE) == 0;
+            self.ui.story_no_retreat = world.game.state.mem.i32(ig2_sim::save::va::STORY_ADAT + 0x98) != 0;
             for _ in 0..due {
                 self.ui.tick(b, &plans, &mut out);
                 if scroll {
@@ -170,28 +173,29 @@ impl Live {
         if self.ui.retreat_window {
             crate::spacewar_hud::retreat_window(&mut frame, hud, &virt, mouse);
         }
-        // The MP versus banner: the two sides' empires and players (`+0xf01`, `+0xf02`) [inf: the first two humans].
+        // The MP versus banner (exe 0x57f800): with more than one empire present (`+0xe30`), the first two of the
+        // list (`+0xe09`, `+0xe0a`) with their players' names (`PlayerNev` 0xBAE588, 11 bytes each).
         if world.game.state.mem.u8(ig2_sim::save::va::MULTIPLAYER) != 0
+            && b.present.empires.len() > 1
             && let Some(t0) = self.ui.start_ms
         {
-            let ki = world.game.state.mem.read(ig2_sim::save::va::PLAYER_KI, 9);
-            let humans: Vec<usize> = b.present.empires.iter().map(|e| e.0 as usize).filter(|&e| ki.get(e) == Some(&0)).take(2).collect();
-            if humans.len() == 2 {
-                let name = |e: usize| {
-                    let r = world.game.state.mem.read(0xBAE588 + 0xb * e as u32, 0xb);
-                    r[..r.iter().position(|&c| c == 0).unwrap_or(r.len())].to_vec()
-                };
-                let emp = |e: usize| hud.empire_names.get(e).cloned().unwrap_or_default();
-                let mut t = emp(humans[0]);
-                t.extend(b" (");
-                t.extend(name(humans[0]));
-                t.extend(b") vs. ");
-                t.extend(emp(humans[1]));
-                t.extend(b" (");
-                t.extend(name(humans[1]));
-                t.extend(b")");
-                crate::spacewar_hud::banner(&mut frame, hud, &virt, &t, now.saturating_sub(t0), self.ui.fade);
-            }
+            let name = |e: usize| {
+                let r = world.game.state.mem.read(0xBAE588 + 0xb * e as u32, 0xb);
+                r[..r.iter().position(|&c| c == 0).unwrap_or(r.len())].to_vec()
+            };
+            let emp = |e: usize| hud.empire_names.get(e).cloned().unwrap_or_default();
+            let (a, c) = (b.present.empires[0].0 as usize, b.present.empires[1].0 as usize);
+            let mut t = emp(a);
+            t.extend(b" (");
+            t.extend(name(a));
+            t.extend(b") vs. ");
+            t.extend(emp(c));
+            t.extend(b" (");
+            t.extend(name(c));
+            t.extend(b")");
+            // `a2az` (Hungarian articles; the other languages' texts have no markers).
+            let t = if hud.texts.lang == ig2_formats::text::Lang::Hu { crate::diplomacy::a2az(&t) } else { t };
+            crate::spacewar_hud::banner(&mut frame, hud, &virt, &t, now.saturating_sub(t0), self.ui.fade);
         }
         // The tooltip (`GFX_DateMoneyScrollFade`'s fader pass 3) and the cursor (`UpdateFrame`): `MousePointerType` 0 → 1,
         // 2 → 5, 3 → 7, 4 → 6; 1 keeps the hot-spots' type 1.
@@ -219,10 +223,26 @@ impl Live {
         (Some(frame), out)
     }
 
-    /// A left press at `at` (virtual pixels) on the top bar's pause button (hot-spot 2, x < 15, y < 20) once the
-    /// opening zoom is over: the caller toggles the pause.
-    pub fn pause_press(&self, at: [f32; 2]) -> bool {
-        self.zoomed && at[1] < 20.0 && at[0] < 15.0
+    /// A left press at `at` (virtual pixels) on the top bar's speed buttons (`IG2_gameUpdate` exe 0x4e07d6, hot-spots
+    /// 2..=5 at x 0, 15, 29, 50, y < 20) once the opening zoom is over: 0 = pause (the caller toggles it), 1..=3 a
+    /// speed (the caller's `set_speed`).
+    /// In MP the zoom doesn't hold them (`IG2_gameUpdate` tests `nemlehetidotallitani` in its SP branch only).
+    pub fn bar_press(&self, at: [f32; 2], multiplayer: bool) -> Option<i32> {
+        if !(multiplayer || self.clock_free()) || at[1] >= 20.0 || at[0] >= 73.0 {
+            return None;
+        }
+        Some(match at[0] {
+            x if x < 15.0 => 0,
+            x if x < 29.0 => 1,
+            x if x < 50.0 => 2,
+            _ => 3,
+        })
+    }
+
+    /// `nemlehetidotallitani` (exe 0xBAD0D4) clear: `SpaceWar_Belep` sets it and the opening zoom's end clears it (spec
+    /// §2.5), so the pause and speed keys and buttons wait for the zoom (`DoKeyboard`, `IG2_gameUpdate`).
+    pub fn clock_free(&self) -> bool {
+        self.zoomed
     }
 
     /// The commands an output becomes (`Multi_Send(.., EN, ..)`); `Out::Click` and `Out::Left` are the caller's.

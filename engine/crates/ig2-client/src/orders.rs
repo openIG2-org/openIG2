@@ -219,8 +219,21 @@ pub fn minimap_target(at: [f32; 2]) -> [f32; 2] {
     [c(-((at[0] - 274.0) / 92.0 - 0.5) * 600.0), c(-((at[1] - 388.0) / 65.0 - 0.5) * 600.0)]
 }
 
-/// The minimap's hot-spot (`Mouse_Szoveg_Set(7, …, 0x105, 0x16f, 0x76, 0x53)`).
-pub const MINIMAP_SPOT: [f32; 4] = [261.0, 367.0, 379.0, 450.0];
+/// The starmap's console and minimap hot-spots by their `STAR_M.RAW` colour (`Starmap_MouseInit` exe 0x6feb70:
+/// `Mouse_Szoveg_Set(id, colour, …)`, the rectangles unused): 1 top view (0xf), 2 rotate right (0x10), 3 rotate left
+/// (0x11), 4 side view (0x12), 5 zoom (0xb), 6 pitch (0xc), 7 the minimap (0xd).
+pub fn console_spot(colour: u8) -> Option<u32> {
+    match colour {
+        0xf => Some(1),
+        0x10 => Some(2),
+        0x11 => Some(3),
+        0x12 => Some(4),
+        0xb => Some(5),
+        0xc => Some(6),
+        0xd => Some(7),
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod tests {

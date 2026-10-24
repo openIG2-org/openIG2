@@ -115,6 +115,20 @@ pub enum Action {
     Sound(crate::audio::SoundId),
     /// A sale menu's order (`MULTIGET_Design` 0x34 / 0x35).
     Design(crate::starmap_info::DesignOrder),
+    /// A story hero's design sent back from the sale menu (`Story_Special(0x19, fleet, design)`, single player).
+    HeroBack { fleet: i32, design: i32 },
+    /// `TutorialCheckEvent(id)` (re/rules/tutorial.md §4).
+    Tutorial(i32),
+}
+
+/// The tutorial's starmap gates: `TutorialProductionDisabled` (the production button, hot-spot 11, and the radial
+/// icon 2), `TutorialExitGombDisabled` (the production view's exit, hot-spot 9: `Starmap_Main` ELF line 1545) and
+/// `TutorialSplitDisabled` (the radial split icon 0xd).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TutorialLocks {
+    pub production: bool,
+    pub exit: bool,
+    pub split: bool,
 }
 
 /// `PlaySoundGlobal(0)`.
@@ -169,6 +183,11 @@ pub struct Panels {
     pub sounds: Vec<crate::audio::SoundId>,
     pub list: Option<DesignList>,
     hold: Option<Hold>,
+    /// The tutorial's gates on the panels (re/rules/tutorial.md §5), set by the window every frame.
+    pub locks: TutorialLocks,
+    /// `Tutorial_Split_Ok`: a transfer button (0x44..=0x52) was pressed while the tutorial awaited 5 (`Starmap_Main`);
+    /// the panel's closing then raises it (`TransferOff` exe 0x5bbcda). Never cleared, as in the exe.
+    split_ok: bool,
     /// `StarmapGfx2D_2::addo`: the exit button's width change (+11 production, −10 transfer).
     addo: i32,
     /// Drawn frames since the transfer panel's models were made (their spin) and the head units' spin.
@@ -219,6 +238,49 @@ fn design(state: &SaveState, e: u8, d: usize) -> Option<&[u8]> {
 
 fn fleet(state: &SaveState, f: i32) -> Option<&[u8]> {
     usize::try_from(f).ok().and_then(|f| state.fleets.get(f)).map(|r| &r[..])
+}
+
+/// `StarmapKeyboardHandler`'s PgUp / PgDn (VK 0x21 / 0x22, re/screens/starmap.md §10.6): in planet mode the previous /
+/// next planet the human owns and knows (any known one with Shift; `DEBUGX` lifts "known"), when it owns one or Shift
+/// is held; in fleet mode the previous / next own fleet, when it has one. The new selection and the point to centre
+/// (`StarmapKozepreAllit`, galaxy coordinates).
+pub fn step_selection(state: &SaveState, sel: &Selection, next: bool, shift: bool) -> Option<(Selection, [f32; 2])> {
+    let e = en(state);
+    match sel.mode {
+        1 => {
+            let n = state.planet_count();
+            let own = (1..=n).filter(|&p| planet(state, p)[0x20] == e).count();
+            if n == 0 || (own == 0 && !shift) {
+                return None;
+            }
+            let debug = state.mem.u8(va::DEBUGX) != 0;
+            let mut p = sel.planet.clamp(1, n);
+            for _ in 0..n {
+                p = if next { p % n + 1 } else { (p + n - 2) % n + 1 };
+                let r = planet(state, p);
+                if (shift || r[0x20] == e) && (i16_at(&r, 0xd8 + 2 * e as usize) >= 1 || debug) {
+                    return Some((Selection { mode: 1, planet: p, ..*sel }, [f32_at(&r, 0x18), f32_at(&r, 0x1c)]));
+                }
+            }
+            None
+        }
+        2 => {
+            let n = state.fleets.len().saturating_sub(1);
+            if !state.fleets.iter().skip(1).any(|f| f[0x15] == e) {
+                return None;
+            }
+            let (mut f, m) = (sel.fleet as i64, n as i64);
+            for _ in 0..n {
+                f = if next { (f + m) % m + 1 } else { (f + m - 2).rem_euclid(m) + 1 };
+                let r = &state.fleets[f as usize];
+                if r[0x15] == e {
+                    return Some((Selection { mode: 2, fleet: f as usize, ..*sel }, [f32_at(r, 0x30), f32_at(r, 0x34)]));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 /// `SearchBolygohozKozeliFlotta(p, 20, true, false, false, true, 0)` (exe 0x540f50, `production.md` §4): the
@@ -519,6 +581,9 @@ impl Panels {
         if zoom_out {
             out.push(Action::ZoomOut);
         }
+        if !t.tank_mode && self.split_ok {
+            out.push(Action::Tutorial(5));
+        }
         let empty = |f: i32| fleet(state, f).is_none_or(|r| i32_at(r, 0x54) < 1);
         let mut f = sel.fleet as i32;
         if empty(f) && f == t.f2 && t.f1 > 0 {
@@ -649,6 +714,9 @@ impl Panels {
     /// A press on the screen (`Mouse_Lenyom`): the panels' hot-spots. `None` = not theirs.
     pub fn press(&mut self, state: &SaveState, sel: &Selection, at: [f32; 2], left: bool) -> Option<Vec<Action>> {
         let id = self.spot(state, sel, at)?;
+        if self.transfer.is_some() && (0x44..=0x52).contains(&id) && state.mem.i32(ig2_sim::save::va::TUTORIAL_EVENT) == 5 {
+            self.split_ok = true;
+        }
         let mut out = Vec::new();
         let (tanks, product) = Self::buttons(state, sel);
         // `Starmap_Main` (exe 0x5b2b70): the click of each button on its press. The tanks and production buttons set
@@ -667,7 +735,8 @@ impl Panels {
         match id {
             8 => return None,
             10 if tanks => out = [vec![CLICK, CLICK], self.tanks_button(state, sel)].concat(),
-            11 if product => out = [vec![CLICK, CLICK], self.toggle_production(state, sel)].concat(),
+            11 if product && !self.locks.production => out = [vec![CLICK, CLICK], self.toggle_production(state, sel)].concat(),
+            9 if self.transfer.is_none() && self.locks.exit => {}
             10 | 11 => return None,
             9 => {
                 out.push(CLICK);
@@ -707,7 +776,11 @@ impl Panels {
                 out.extend(self.hold_frame(state, sel, at));
             }
             0x2a..=0x31 => self.open_list(state, sel, id, at),
-            0x57 => self.scroll(state, at),
+            // The scroll bar follows the pointer every frame while held (`Mouse_Megfogva`).
+            0x57 => {
+                self.hold = Some(Hold { spot: id, frames: 0, left });
+                self.scroll(state, at);
+            }
             _ => {}
         }
         Some(out)
@@ -727,6 +800,10 @@ impl Panels {
             i.hold_frame(state, sel, at);
         }
         let Some(h) = self.hold else { return Vec::new() };
+        if h.spot == 0x57 {
+            self.scroll(state, at);
+            return Vec::new();
+        }
         let k = h.frames;
         self.hold = Some(Hold { frames: k + 1, ..h });
         if k != 0 && k < 7 {
@@ -766,8 +843,10 @@ impl Panels {
     /// The button went up.
     pub fn release(&mut self, state: &SaveState, sel: &Selection) -> Vec<Action> {
         self.hold = None;
-        if let Some(o) = self.info.as_mut().and_then(|i| i.release()) {
-            return vec![Action::Design(o)];
+        match self.info.as_mut().and_then(|i| i.release()) {
+            Some(crate::starmap_info::SaleOrder::Design(o)) => return vec![Action::Design(o)],
+            Some(crate::starmap_info::SaleOrder::HeroBack { fleet, design }) => return vec![Action::HeroBack { fleet, design }],
+            None => {}
         }
         let Some(list) = self.list.take() else { return Vec::new() };
         let r = planet(state, sel.planet);
@@ -950,6 +1029,21 @@ impl StarmapFaders {
     pub fn enter() -> Self {
         let fifo = FaderDesign::new(1);
         Self { starf: fifo.next(), fifo }
+    }
+}
+
+impl StarmapFaders {
+    /// The exe's `fifo` and `starf` at a capture's grab (`--faders`: the `ui.json` beside the state save, hex strings
+    /// of 0x5cc bytes each, run_screen.py).
+    pub fn from_ui_json(path: &std::path::Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let j: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let one = |k: &str| -> Result<FaderDesign, String> {
+            let h = j["faders"][k].as_str().ok_or_else(|| format!("{}: no faders.{k}", path.display()))?;
+            let b: Vec<u8> = (0..h.len() / 2).filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()).collect();
+            FaderDesign::from_exe(&b).ok_or_else(|| format!("{}: faders.{k} too short", path.display()))
+        };
+        Ok(Self { fifo: one("fifo")?, starf: one("starf")? })
     }
 }
 

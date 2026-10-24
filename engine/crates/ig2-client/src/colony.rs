@@ -157,6 +157,10 @@ pub struct ColonySnap {
     pub retreat: [u8; 18],
     pub present: [u8; 19],
     pub war_flag: bool,
+    /// `MultiPlayerMode` (exe 0xBAE2C0), and the MP ground war (`GrWar_MultiCsata_folyamatban` 0xBAD13C) runs on this
+    /// planet (`GrWar_MultiCsata_bolygo` 0xBAD140): the gates of `Colony_MouseInit2` and `ColonyGfx2D_1` (spec §11.1).
+    pub multiplayer: bool,
+    pub mp_war_here: bool,
     /// Alive units still to land (flag 0x8000000), of any side: `(owner, design)` in slot order.
     pub to_land: Vec<(i32, i32)>,
     /// The attacking fleet's owner (`Flottak[WF+0x338]+0x15`, 0 none) and the planet's name (`+0`).
@@ -276,6 +280,8 @@ impl ColonySnap {
             retreat: field.retreat,
             present,
             war_flag: state.mem.u8(ig2_sim::save::va::PLANETS + (planet * ig2_sim::save::PLANET_SIZE) as u32 + 0x64) & 1 != 0,
+            multiplayer: state.mem.u8(ig2_sim::save::va::MULTIPLAYER) & 1 != 0,
+            mp_war_here: state.mem.i32(0xBAD13C) != 0 && state.mem.i32(0xBAD140) == planet as i32,
             attacker: usize::try_from(field.attack_fleet).ok().filter(|&f| f > 0).and_then(|f| state.fleets.get(f)).map_or(0, |r| r[0x15] as i32),
             planet_name: state.mem.read(ig2_sim::save::va::PLANETS + (planet * ig2_sim::save::PLANET_SIZE) as u32, 0x14).into_iter().take_while(|&b| b != 0).collect(),
             all_landed: field.units.iter().zip(&field.alive).all(|(u, &a)| !a || (u.flags & flag::LANDED == 0 && u.transport & 1 != 0)),

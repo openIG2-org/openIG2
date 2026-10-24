@@ -85,7 +85,7 @@ fn back_to_trade(f: i32, b: i32, w: &mut dyn StoryWorld) {
 /// : speed)` and `AutoAddship(f, id)`.
 pub(super) fn fleet_at(s: &mut Story, owner: i32, id: i32, x: i32, y: i32, speed: f32, w: &mut dyn StoryWorld) -> i32 {
     let speed = if speed <= 1.0 { speed * 100.0 } else { speed };
-    let f = w.new_fleet("", owner, id, x as f32, y as f32, speed);
+    let f = w.new_fleet(&crate::story::FleetName::Text(id), owner, id, x as f32, y as f32, speed);
     s.auto_add_ship(f, id, w);
     f
 }
@@ -128,7 +128,7 @@ pub(super) fn escort_101(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Ab
     }
     if s.counter(LATER) {
         let p = s.b_search(TRADER, 0, w);
-        s.f_new_ex("", 9, TRADER, 0.04, 1, p << 16, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x3f3), 9, TRADER, 0.04, 1, p << 16, w);
         fleet_bit(s, TRADER, 0x200, true, w);
         move_to_planet(s, TRADER, TRADER, w);
     }
@@ -168,7 +168,7 @@ pub(super) fn escort_101(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Ab
     }
     if s.counter(TRADER) {
         let q = s.b_search(PIRATE, 0, w);
-        s.f_new_ex("", 10, PIRATE, 0.05, q.wrapping_neg(), 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x3f4), 10, PIRATE, 0.05, q.wrapping_neg(), 0, w);
         attack_fleet(s, PIRATE, TRADER, w);
     }
     if battle_starts(s, TRADER, &*w) && battle_starts(s, PIRATE, &*w) {
@@ -233,7 +233,7 @@ pub(super) fn escort_102(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Ab
     }
     if s.counter(LATER) {
         let p = s.b_search(TRADER, 0, w);
-        s.f_new_ex("", 9, TRADER, 0.04, 1, p << 16, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x3fd), 9, TRADER, 0.04, 1, p << 16, w);
         fleet_bit(s, TRADER, 0x200, true, w);
         move_to_planet(s, TRADER, TRADER, w);
     }
@@ -261,7 +261,7 @@ pub(super) fn escort_102(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Ab
     }
     if s.counter(TRADER) {
         let q = s.b_search(DEST, 0, w);
-        s.f_new_ex("", 10, DEST, 0.06, q.wrapping_neg(), 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x3fe), 10, DEST, 0.06, q.wrapping_neg(), 0, w);
         s.f_add_ship(DEST, 3, 4, w);
         s.f_add_ship(DEST, 2, 16, w);
         attack_fleet(s, DEST, TRADER, w);
@@ -313,7 +313,7 @@ pub(super) fn chase(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
     if s.starting_now() {
         let p = s.b_search(en.wrapping_neg(), 0, w);
         s.b_add_id(p, TRADER);
-        s.f_new_ex("", 9, TRADER, 0.03, 1, p << 16, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x439), 9, TRADER, 0.03, 1, p << 16, w);
         s.f_add_ship(TRADER, 8, 3, w);
         fleet_bit(s, TRADER, 0x200, true, w);
         let f = s.f_search(TRADER, w);
@@ -454,7 +454,7 @@ pub(super) fn prey(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         } else {
             s.v_set(PIRATE, e);
             let mut r = super::rnd(w, 10, 15);
-            s.f_new_ex("", 9, TRADER, 0.03, 1, 0, w);
+            s.f_new_ex(crate::story::FleetName::Text(0x4da), 9, TRADER, 0.03, 1, 0, w);
             s.f_add_ship(TRADER, 8, 2, w);
             fleet_bit(s, TRADER, 0x200, true, w);
             let mut tries = 100;
@@ -630,12 +630,12 @@ pub(super) fn scientist(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
     }
     if s.counter(FROM) {
         let p = s.b_search(FROM, 0, w);
-        s.f_new_ex("", 9, FROM, 0.01, 2, p, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x51f), 9, FROM, 0.01, 2, p, w);
         move_to_planet(s, FROM, TO, w);
         fleet_bit(s, FROM, 0x200, true, w);
         show_fleet(s, FROM, true, w);
         let q = s.b_search(TO, 0, w);
-        s.f_new_ex("", 10, TO, 0.06, 1, q << 16, w);
+        s.f_new_ex(crate::story::FleetName::Text(0x520), 10, TO, 0.06, 1, q << 16, w);
         attack_fleet(s, TO, FROM, w);
         message(w, 0x522, 0x14);
         let q = s.b_search(TO, 0, w);
@@ -706,7 +706,7 @@ pub(super) fn monster(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort
     if s.starting_now() {
         let p = s.b_search(en.wrapping_neg(), 0, w);
         s.b_add_id(p, ID);
-        let f = s.f_new_ex("", 0, ID, 0.07, 3, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(0x5e7), 0, ID, 0.07, 3, 0, w);
         s.last_addship = 0;
         w.event(StoryEvent::FleetFlags { fleet: f, set: 0x4000, clear: 0 });
         w.event(StoryEvent::MoveFleet { fleet: f, kind: 2, mode: 1, x: p as f32, y: 0.0 });

@@ -249,6 +249,8 @@ Not used by shipped `main.tut`: TIME, COUNT, LOADSAVEGAME, IRRITATEME, GOTO SCRE
 
 Event ids are hexadecimal below (as in the code).
 
+Port status (2026-10-24, FX6 parts 1-2): every firing site below is raised except the two with no caller (0x0e, 0x12); the sites and approximations are in `re/screens/tutorial.md` §4.
+
 | id | name | fired by (ELF function: condition) |
 |---|---|---|
 | 0x01 | exploreaplanet | `FRISSIT_Starmap`: a radar sweep explores a planet for the first time while Active/Paused and event==1; **also renames that planet** (`strcpy(planet name, GetString(2,4,6))`; see below) |
@@ -414,8 +416,7 @@ reached through `TutorialHost` (the screen, the 20 Hz `Counter`, transitions, th
 `.mou` sample count, the planet/vehicle counts) and everything a command does outside the interpreter goes out as an
 `Effect` (§3; *sim* ones are tagged). `Game::tutorial_effect` (`game/tutorial.rs`) carries out the in-place writes:
 money, tech state, `SHOW PLANET`, `EXPLORE EMPIRE` (and `FelfedezBirodalom` for the diplomacy form), autobuild,
-traders, the planets' +0x186 mark. New fleets/vehicles/ships, the trade market's destroyers, `IRRITATEME`, messages,
-the clock and `LOADSAVEGAME` are left to their systems (not wired yet). The overlay reads `Tutorial::window` (grid,
+traders, the planets' +0x186 mark. Also (FX6 part 4): GIVE KILLER/KOLONIZALO FLEET, ADD DESTROYERS TO TRADE and DISABLE OVERRUN (`story_effects.rs` `new_vehicles`; the client restores the saved debug flags in `TutorialStop`). `IRRITATEME` and `LOADSAVEGAME` are not wired yet. The overlay reads `Tutorial::window` (grid,
 position, cursor column, `blink` brightness), `Tutorial::gates` and `Tutorial::mouse_sample`. The tutorial is single
 player; its *sim* effects belong in the lockstep queue at the tick they happen. Deviation: a quoted name across a line
 break where the exe hangs stops the tutorial (`Effect::Hang`, `re/deviations.md`).

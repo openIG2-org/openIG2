@@ -447,7 +447,7 @@ fn mercenary(s: &mut Story, w: &mut dyn StoryWorld, c: &Mercenary) -> Result<(),
         if let Some(price) = c.price {
             w.event(StoryEvent::AddMoney { empire: en, amount: -price as f64 });
         }
-        let f = s.f_new_ex("", en, m, 0.0, 1, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(m), en, m, 0.0, 1, 0, w);
         let b = s.last_fn[crate::story::last_fn::B];
         w.event(StoryEvent::MoveFleet { fleet: f, kind: 1, mode: 1, x: b as f32, y: 0.0 });
         s.remove_fleet_id(m, w);
@@ -474,7 +474,7 @@ fn mercenary(s: &mut Story, w: &mut dyn StoryWorld, c: &Mercenary) -> Result<(),
         if m == 2270 {
             // 227: the refused mercenaries come as an enemy and chase the human's nearest fleet.
             if refused {
-                s.f_new_ex("", 10, m, 0.0, 1, 0, w);
+                s.f_new_ex(crate::story::FleetName::Text(m), 10, m, 0.0, 1, 0, w);
             }
             if s.counter(CHASE) || refused {
                 let f = s.f_search(m, w);
@@ -833,7 +833,7 @@ fn tax(s: &mut Story, w: &mut dyn StoryWorld, c: &Tax) -> Result<(), Abort> {
         let big = (paid.wrapping_sub(lo * 1000) / (hi - lo)).wrapping_mul(n) / 1000;
         let big = if big > n { n } else { big.max(0) };
         message(w, 2351, 0);
-        let f = s.f_new_ex("", en, 0, 0.0, 1, 0, w);
+        let f = s.f_new_ex(crate::story::FleetName::Text(0x92f), en, 0, 0.0, 1, 0, w);
         let b = s.last_fn[crate::story::last_fn::B];
         w.event(StoryEvent::MoveFleet { fleet: f, kind: 1, mode: 1, x: b as f32, y: 0.0 });
         let d = w.story_design(en, 2350 + k as i32, 3);
@@ -892,11 +892,11 @@ fn refugees(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         w.event(StoryEvent::SetPlanetValue { planet: p, value: 0x2800 });
         s.auto_add_building(2360, w);
         s.auto_add_tank(2360, w);
-        s.f_new_ex("", en, 2360, 0.0, p.wrapping_neg(), 20, w);
+        s.f_new_ex(crate::story::FleetName::Text(2360), en, 2360, 0.0, p.wrapping_neg(), 20, w);
         s.f_add_ship(2360, 3, 3, w);
         s.f_add_ship(2360, 2, 5, w);
         s.remove_fleet_id(2360, w);
-        s.f_new_ex("", en, 2361, 0.0, p.wrapping_neg(), 20, w);
+        s.f_new_ex(crate::story::FleetName::Text(2361), en, 2361, 0.0, p.wrapping_neg(), 20, w);
         s.remove_fleet_id(2361, w);
         s.win(0, true, w);
     }
@@ -993,7 +993,7 @@ fn wormhole(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     if answered(s, 2390, 2) {
         s.v_set(2391, 1);
         let p = s.b_search(2390, 0, w);
-        s.f_new_ex("", en, 2390, 0.0, 2, p, w);
+        s.f_new_ex(crate::story::FleetName::Text(2390), en, 2390, 0.0, 2, p, w);
         s.f_add_ship(2390, 0x1c, 1, w);
         s.remove_fleet_id(2390, w);
     }

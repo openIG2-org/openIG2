@@ -215,16 +215,40 @@ impl Sale {
 }
 
 /// The texts the menus are made of: `DesignTorlesValasztasNev[0..4]` (`GetString(0x11, 3, 0x1c..=0x1f)`) and
-/// `GetString(2, 4, 7)` ("unable to sell").
+/// `GetString(2, 4, 7)` ("unable to sell"), and `GetHosElkuldesStr`'s story texts `_s(5, n)` for n = 0x70a, 0x70b,
+/// 0x930, 0x6e2, 0x6e3.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SaleNames {
     pub names: [Vec<u8>; 4],
     pub unable: Vec<u8>,
+    pub heroes: [Vec<u8>; 5],
 }
 
+/// The sale menu's release: a design order, or a story hero's design sent back.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SaleOrder {
+    Design(DesignOrder),
+    HeroBack { fleet: i32, design: i32 },
+}
+
+/// `_s(5, n)`'s keys `GetHosElkuldesStr` reads.
+pub const HERO_TEXTS: [i32; 5] = [0x70a, 0x70b, 0x930, 0x6e2, 0x6e3];
+
 impl SaleNames {
-    pub fn load(t: &crate::ui::UiTexts) -> Self {
-        Self { names: std::array::from_fn(|k| t.get(0x11, 3, 0x1c + k as u16)), unable: t.get(2, 4, 7) }
+    pub fn load(t: &crate::ui::UiTexts, story: impl Fn(i32) -> Vec<u8>) -> Self {
+        Self { names: std::array::from_fn(|k| t.get(0x11, 3, 0x1c + k as u16)), unable: t.get(2, 4, 7), heroes: HERO_TEXTS.map(story) }
+    }
+
+    /// `GetHosElkuldesStr(owner, d, fits)` (ELF 0x73e960): the human's academy designs (story key / 10 = 180) "send
+    /// back" (0x70a, 0x70b when it doesn't fit), its 235x designs "unable to sell" (0x930); else "terminate contract"
+    /// (0x6e2, 0x6e3).
+    pub fn hero(&self, human: bool, key: i32, fits: bool) -> &[u8] {
+        let k = match (human, key / 10) {
+            (true, 0xb4) => if fits { 0 } else { 1 },
+            (true, 0xeb) => 2,
+            _ => if fits { 3 } else { 4 },
+        };
+        &self.heroes[k]
     }
 }
 
@@ -343,6 +367,32 @@ impl InfoPanel {
         false
     }
 
+    /// `StarmapKeyboardHandler` with the fleet's panel up (ELF 0x704580): an arrow moves `ActInfoItem2` by ∓2 (up,
+    /// down) or ∓1 (left, right) within the rows, the list scrolls by a row pair to keep it shown, and the item becomes
+    /// the selected one (`InfoBetoltAlap`).
+    pub fn key(&mut self, state: &SaveState, sel: &Selection, step: i32) {
+        if self.kind != Kind::Fleet {
+            return;
+        }
+        let n = self.count(&self.rows(state, sel));
+        let (old, old_first) = (self.preview, self.first);
+        let mut item = self.preview + step;
+        if item >= n {
+            item = n - 1;
+        }
+        item = item.max(0);
+        if item < self.first {
+            self.first -= 2;
+        }
+        if self.first + 8 <= item {
+            self.first += 2;
+        }
+        if item != old || self.first != old_first {
+            self.preview = item;
+            self.selected = item;
+        }
+    }
+
     /// The cell branch of `Starmap_Main` (each UI frame while held, and on the press): the item becomes the selected
     /// one, and on the owner's units the sale menu follows the pointer (placed on its first frame).
     fn cell(&mut self, state: &SaveState, sel: &Selection, k: i32, at: [f32; 2], first_frame: bool) {
@@ -400,8 +450,8 @@ impl InfoPanel {
         };
         let mut one = number(&names[0], row.count * resale);
         if oszto < 0.0 {
-            // `GetHosElkuldesStr` (the story heroes' texts) [the port shows "unable to sell"].
-            one = self.names.unable.clone();
+            let key = rec.map_or(0, |r| i32_at(r, 0x80));
+            one = self.names.hero(owner == en(state), key, fits).to_vec();
         } else if !fits {
             one = names[3].clone();
         }
@@ -429,20 +479,23 @@ impl InfoPanel {
 
     /// The button went up: a sale row under the pointer that is allowed sends 0x34 (row 1, mode 2) or 0x35 (row 2);
     /// the menu closes.
-    pub fn release(&mut self) -> Option<DesignOrder> {
+    pub fn release(&mut self) -> Option<SaleOrder> {
         self.held = None;
         self.scrolling = false;
         let s = self.sale.take()?;
         let row = usize::try_from(s.hovered - 1).ok().and_then(|i| s.rows.get(i))?;
-        if !row.1 || !s.sellable {
-            // `Story_Special(0x19, AktFleet, d)` for a story design (single player only, not ported).
+        if !row.1 {
             return None;
         }
-        Some(if s.hovered < 2 {
+        // A story hero's design (`GetTervEladasOszto < 0`) on the first row: `Story_Special(0x19, AktFleet, d)`.
+        if !s.sellable {
+            return (s.hovered == 1 && self.kind == Kind::Fleet).then_some(SaleOrder::HeroBack { fleet: s.holder, design: s.design as i32 });
+        }
+        Some(SaleOrder::Design(if s.hovered < 2 {
             DesignOrder::Sell { design: s.design as i32, mode: s.hovered + 1, holder: s.holder }
         } else {
             DesignOrder::Refit { design: s.design as i32, holder: s.holder }
-        })
+        }))
     }
 
     /// The pointer moved: the open menu follows it.
@@ -764,7 +817,7 @@ mod tests {
         let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
         let e = en(&w.game.state);
         let p = (1..=w.game.state.planet_count()).find(|&p| planet(&w.game.state, p)[0x20] == e).unwrap();
-        let names = SaleNames { names: [b"S".to_vec(), b"U".to_vec(), b"N".to_vec(), b"R".to_vec()], unable: b"X".to_vec() };
+        let names = SaleNames { names: [b"S".to_vec(), b"U".to_vec(), b"N".to_vec(), b"R".to_vec()], unable: b"X".to_vec(), heroes: [b"H0", b"H1", b"H2", b"H3", b"H4"].map(|h| h.to_vec()) };
         // Two vehicle entries on the planet.
         let state = &mut w.game.state;
         let all = state.designs[e as usize].len();
@@ -870,5 +923,16 @@ mod tests {
             s.x = 0x280 - (w + 4);
         }
         assert_eq!(s.x, 516);
+    }
+
+    #[test]
+    fn hero_texts_follow_the_design_key_and_the_fit() {
+        // `GetHosElkuldesStr` (ELF 0x73e960): academy designs 1800..=1809, the 235x designs, the rest.
+        let n = SaleNames { heroes: [b"H0", b"H1", b"H2", b"H3", b"H4"].map(|h| h.to_vec()), ..Default::default() };
+        assert_eq!(n.hero(true, 1803, true), b"H0");
+        assert_eq!(n.hero(true, 1803, false), b"H1");
+        assert_eq!(n.hero(true, 2352, false), b"H2");
+        assert_eq!(n.hero(false, 1803, true), b"H3");
+        assert_eq!(n.hero(true, 1700, false), b"H4");
     }
 }

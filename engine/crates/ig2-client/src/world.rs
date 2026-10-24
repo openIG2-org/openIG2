@@ -281,6 +281,56 @@ pub struct World<'r> {
     /// A multiplayer game (ADR 0014 §5): the session whose peer runs the sim, and the session's clock. The world
     /// holds the game between pumps (the peer holds a stand-in), so the screens read it as in single player.
     pub net: Option<(crate::mp_lobby::Session<'r>, std::time::Instant)>,
+    /// The session's hold status the message line last told (ours: who paused, dropped, left or came back).
+    pub net_seen: ig2_net::session::HoldStatus,
+    /// The chat lines received (`name: text`) for the ring (`MULTIGET_Starmap`'s 0x3fc: `AddSzoveg(.., 3)`).
+    pub chat_lines: Vec<Vec<u8>>,
+    /// The session ended under this machine (the host is gone, or the link failed): the window goes to the main menu.
+    pub net_over: bool,
+}
+
+/// Canonical multiplayer: the screens read the local player's `EN` from the state, as every machine of the original
+/// does (`re/rules/multiplayer.md` §5); the shared state holds the host's. The world writes the local one (`local`)
+/// while it holds the game and puts the shared one back before the game goes into the peer: the sim reads
+/// `ViewMode::Canonical`, the hashes and snapshots see the shared state. Classic games are left alone.
+fn local_en(game: &mut Game, local: bool) {
+    let ig2_sim::game::ViewMode::Canonical { en } = game.view else { return };
+    let e = if local { game.local.empire } else { en };
+    game.state.mem.set_i32(va::EN, e as i32);
+}
+
+/// The message line's words for a change of the session's hold status (ours, in English: the original's MP had no
+/// such lines). `name` = the player of an empire.
+fn status_lines(was: &ig2_net::session::HoldStatus, now: &ig2_net::session::HoldStatus, name: impl Fn(u8) -> String) -> Vec<Vec<u8>> {
+    let waiting = |s: &ig2_net::session::HoldStatus, e: u8| s.waiting.iter().any(|w| w.0 == e);
+    let gone = |s: &ig2_net::session::HoldStatus, e: u8| waiting(s, e) || s.away.contains(&e);
+    let mut lines = Vec::new();
+    for &e in &now.paused {
+        if !was.paused.contains(&e) {
+            lines.push(format!("{} paused the game.", name(e)));
+        }
+    }
+    for &e in &was.paused {
+        if !now.paused.contains(&e) && !gone(now, e) {
+            lines.push(format!("{} resumed the game.", name(e)));
+        }
+    }
+    for &(e, ms) in &now.waiting {
+        if !waiting(was, e) {
+            lines.push(format!("{} lost the connection: waiting {} s for a rejoin.", name(e), ms.div_ceil(1000)));
+        }
+    }
+    for &e in &now.away {
+        if !was.away.contains(&e) {
+            lines.push(format!("{} has left the game.", name(e)));
+        }
+    }
+    for e in was.away.iter().copied().chain(was.waiting.iter().map(|w| w.0)) {
+        if !gone(now, e) && !now.migrating.contains(&e) {
+            lines.push(format!("{} is back.", name(e)));
+        }
+    }
+    lines.into_iter().map(String::into_bytes).collect()
 }
 
 /// The ground wars' voice sites among `events` (`GroundSide`, ground-combat.md §11.12).
@@ -309,7 +359,10 @@ impl<'r> World<'r> {
     pub fn load_slot(path: &std::path::Path, rules: &'r GameRules, tech_defaults: &[u8], volatile: &[(u32, Vec<u8>)]) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         if bytes.starts_with(ig2_net::snapshot::MAGIC) {
-            let (snap, _) = ig2_net::snapshot::Snapshot::from_file(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (snap, header) = ig2_net::snapshot::Snapshot::from_file(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            if header.flags & 1 != 0 {
+                return Err(format!("{}: a multiplayer save (resume it from a multiplayer room)", path.display()));
+            }
             let (game, _) = snap.restore(rules).map_err(|e| format!("{}: {e}", path.display()))?;
             let chunks = game.state.chunks();
             return Ok(Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned())));
@@ -339,7 +392,33 @@ impl<'r> World<'r> {
         }
     }
 
+    /// Multiplayer: the host's MP save (`HostSession::save`: the shared state at the next turn and the session's humans,
+    /// `rules/multiplayer.md` §7.2), resumed from a room; `None` in single player. A joiner has none (ours: only the
+    /// host saves, so one file holds the session).
+    pub fn mp_save(&mut self) -> Option<Result<Vec<u8>, String>> {
+        let (net, _) = self.net.as_mut()?;
+        let crate::mp_lobby::Session::Host { session, .. } = net else { return Some(Err("Only the host can save a multiplayer game.".into())) };
+        local_en(&mut self.game, false);
+        std::mem::swap(&mut self.game, &mut session.own.game);
+        // The turns it catches up on leave their events in the peer for the next `mp_tick`.
+        let r = session.save().map_err(|e| e.to_string());
+        std::mem::swap(&mut self.game, &mut session.own.game);
+        local_en(&mut self.game, true);
+        Some(r)
+    }
+
     /// The state as the remake's save file (`.ig2s`) holds it.
+    /// The live starmap camera into the state's `StarmapXStart` … `StarmapPlanetKering` (exe 0xB9A968..), as
+    /// `LoadSave(…, 2)` saves them; the view a load reads back.
+    pub fn store_view(&mut self, c: &crate::starmap::Camera) {
+        self.view = SavedView { x: c.x, y: c.y, rotate: c.rotate, pitch: c.pitch, zoom: c.zoom, orbit: self.curr.orbit };
+        let v = self.view;
+        let names = ["StarmapXStart", "StarmapYStart", "StarmapRotate", "StarmapPitch", "StarmapZoom", "StarmapPlanetKering"];
+        for (n, f) in names.iter().zip([v.x, v.y, v.rotate, v.pitch, v.zoom, v.orbit]) {
+            self.game.state.set_ui_chunk(n, &f.to_le_bytes());
+        }
+    }
+
     pub fn save_file(&self) -> Vec<u8> {
         ig2_net::snapshot::Snapshot::capture(&self.game, &[], 0, 0).to_file(0, false)
     }
@@ -347,14 +426,15 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
     /// starts from the same one; nothing here may write it outside the lockstep).
     pub fn new_mp(mut net: crate::mp_lobby::Session<'r>, rules: &'r GameRules) -> Self {
         let stand_in = Game::new(SaveState::from_parts(Default::default(), Vec::new()), rules);
-        let game = std::mem::replace(&mut net.peer_mut().game, stand_in);
+        let mut game = std::mem::replace(&mut net.peer_mut().game, stand_in);
+        local_en(&mut game, true);
         let chunks = game.state.chunks();
         let mut w = Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned()));
         w.net = Some((net, std::time::Instant::now()));
@@ -365,15 +445,32 @@ impl<'r> World<'r> {
     /// pumps (one turn at most: two ticks), the game comes out again; the turn's events feed the screens.
     fn mp_tick(&mut self) {
         let Some((net, epoch)) = &mut self.net else { return };
+        local_en(&mut self.game, false);
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
         let r = net.pump(epoch.elapsed(), 1);
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        local_en(&mut self.game, true);
         let events = std::mem::take(&mut net.peer_mut().events);
+        if let Ok((_, said)) = &r {
+            for e in said {
+                if let ig2_net::session::SessionEvent::Said { empire, text } = e {
+                    self.chat_lines.push(format!("{}: {text}", net.name_of(*empire)).into_bytes());
+                }
+            }
+        }
+        let status = net.status(epoch.elapsed());
+        self.local_lines.extend(status_lines(&self.net_seen, &status, |e| net.name_of(e)));
+        self.net_seen = status;
+        if net.host_gone() && !self.net_over {
+            self.local_lines.push(b"The host has left the game.".to_vec());
+            self.net_over = true;
+        }
         match r {
             Ok((0, _)) => return,
             Ok(_) => {}
             Err(e) => {
                 eprintln!("ig2-client: multiplayer: {e}");
+                self.net_over = true;
                 return;
             }
         }
@@ -391,9 +488,41 @@ impl<'r> World<'r> {
         }
     }
 
+    /// The local player's chat line (multiplayer only).
+    pub fn say(&mut self, text: &[u8]) {
+        if let Some((net, _)) = &mut self.net {
+            net.say(&String::from_utf8_lossy(text));
+        }
+    }
+
     /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
     pub fn send(&mut self, c: Command) {
+        if self.net.is_none() {
+            self.tutorial_sites(&c);
+        }
         self.outbox.push(c);
+    }
+
+    /// The screens' `TutorialCheckEvent` sites that sit right at a message they send (`re/rules/tutorial.md` §4; a
+    /// no-op unless the script awaits that id): `Colony_Main`'s tax buttons and menu (0x24) and auto-build menu
+    /// (0x25), `Starmap_Main`'s destroyer in a production slot (6, design kind `+0x48` = 5) and satellites (0x2b),
+    /// `Spy_Main`'s new mission (0xf: kind 2 on empire 7; 0x10: kind 0xd).
+    fn tutorial_sites(&mut self, c: &Command) {
+        use ig2_net::{SpyOrder, StarmapCmd};
+        let en = self.game.state.mem.i32(va::EN).clamp(0, EMPIRES as i32 - 1) as usize;
+        let id = match c {
+            Command::Starmap { order: StarmapCmd::Setting { what: 1 | 2 | 8, .. } } if self.colony.is_some() => 0x24,
+            Command::Starmap { order: StarmapCmd::Setting { what: 9, .. } } if self.colony.is_some() => 0x25,
+            Command::Starmap { order: StarmapCmd::Production { op: 4, value, .. } } => {
+                let kind = self.game.state.designs.get(en).and_then(|d| d.get((*value).max(0) as usize)).map_or(0, |r| r[0x48]);
+                if kind == 5 { 6 } else { return }
+            }
+            Command::Starmap { order: StarmapCmd::Satellite { .. } } => 0x2b,
+            Command::Spy { order: SpyOrder::Send { mission: 2, target: 7, .. } } => 0xf,
+            Command::Spy { order: SpyOrder::Send { mission: 0xd, .. } } => 0x10,
+            _ => return,
+        };
+        self.game.tutorial_check_event(id);
     }
 
     /// The frame's message pass (`MULTIGET_*`): the queued commands are applied for the human, in order, also
@@ -496,17 +625,25 @@ impl<'r> World<'r> {
         for f in events.iter().filter_map(GameEvent::emptied_fleet) {
             self.game.fleet_emptied(f);
         }
+        crate::prof::count("ticks", 1);
+        let run = crate::prof::scope("t_run");
         self.game.advance_clock();
         self.game.run_tick();
+        drop(run);
         // At once: a battle starts paused, so no next tick would hand them over.
         self.realtime.extend(self.game.events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.ground_voices.extend(ground_voices(&self.game.events));
+        let snap = crate::prof::scope("t_snap");
         let mut next = Snapshot::read(&self.game);
+        drop(snap);
         // `FRISSIT_Starmap` (ELF 0x7132b0) ends with `StarmapPlanetKering += IdoSpeedSzorzo / 1500`.
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
         next.orbit = (self.curr.orbit as f64 + speed as f64 / 1500.0) as f32;
         self.prev = std::mem::replace(&mut self.curr, next);
+        let ui = crate::prof::scope("t_ui");
         self.ui = crate::ui::UiSnap::read(&self.game.state);
+        drop(ui);
+        let _colony = crate::prof::scope("t_colony");
         self.colony_prev = self.colony_curr.take();
         if let Some(p) = self.colony {
             self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
@@ -688,6 +825,9 @@ mod tests {
         for _ in 0..30 {
             w.tick();
         }
+        // The camera as moved since the load goes into the save.
+        let cam = crate::starmap::Camera { x: 12.5, y: -40.0, rotate: 1.25, pitch: -0.7, zoom: 333.0, size: [640.0, 480.0], look: None };
+        w.store_view(&cam);
         let dir = std::env::temp_dir().join(format!("ig2-slots-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (y, m, d) = w.curr.date();
@@ -700,6 +840,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(ig2_net::snapshot::state_hash(&back.game, &[]), ig2_net::snapshot::state_hash(&w.game, &[]));
         assert_eq!(back.view, w.view);
+        assert_eq!((back.view.x, back.view.zoom, back.view.rotate), (12.5, 333.0, 1.25));
         for _ in 0..40 {
             w.tick();
             back.tick();

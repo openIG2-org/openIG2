@@ -505,6 +505,34 @@ fn strategic(mem: &Mem, st: &Statics, rng: &Streams, wd: &RawWorld, errs: &mut V
     }
 }
 
+/// `fegyverszamol` (run by `InitSpaceWar`) on the install's weapon table and the techs' firepower against the live
+/// table every battle trace dumped at its `init`: the whole record, damages and the rest.
+#[test]
+fn fegyverszamol_matches_the_live_table() {
+    let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+    let r = ig2_rules::Rules::from_install(&inst).expect("catalogued exe");
+    let (base, base_words) = ig2_sim::spacebattle::SpaceRules::weapons_from_table(&r.space_weapon_table());
+    let firepower: Vec<i32> = r.techs.iter().map(|t| t.firepower).collect();
+    let mut checked = 0;
+    for p in traces("spwc-") {
+        for line in std::io::BufReader::new(std::fs::File::open(&p).unwrap()).lines() {
+            let e: Value = serde_json::from_str(&line.unwrap()).unwrap();
+            if e["k"].as_str() != Some("init") {
+                continue;
+            }
+            let st = statics(&e["statics"]);
+            let (live, live_words) = weapons(&st);
+            let (mut w, mut words) = (base.clone(), base_words.clone());
+            fegyverszamol(&mut w, &mut words, &firepower);
+            assert_eq!(w, live, "{}", p.display());
+            assert_eq!(words, live_words, "{}", p.display());
+            checked += 1;
+            break;
+        }
+    }
+    eprintln!("{checked} live weapon tables checked");
+}
+
 #[test]
 fn battle_ticks_match_trace() {
     let mut files = traces("spwc-");

@@ -50,6 +50,31 @@ impl FaderDesign {
         Self::from_rng(self.rng.clone())
     }
 
+    /// A `faderstruktura` as the exe holds it (0x5cc bytes, hud.md §1.2.1, a capture's `ui.json` "faders"): the
+    /// shine and drift phase the client can't replay. The `rand()` stream goes on from seed 1 (not replayed).
+    pub fn from_exe(b: &[u8]) -> Option<Self> {
+        if b.len() < 0x4dc {
+            return None;
+        }
+        let f = |o: usize, i: usize| f32::from_le_bytes(b[o + 4 * i..o + 4 * i + 4].try_into().unwrap());
+        let d = |o: usize, i: usize| i32::from_le_bytes(b[o + 4 * i..o + 4 * i + 4].try_into().unwrap());
+        Some(Self {
+            wait: std::array::from_fn(|i| f(0x0, i)),
+            shine_left: std::array::from_fn(|i| f(0x78, i)),
+            shine: std::array::from_fn(|i| f(0xf0, i)),
+            s: std::array::from_fn(|i| f(0x168, i)),
+            u: std::array::from_fn(|i| f(0x1e0, i)),
+            v: std::array::from_fn(|i| f(0x258, i)),
+            dv: std::array::from_fn(|i| f(0x2d0, i)),
+            axis: std::array::from_fn(|i| d(0x348, i)),
+            glow: std::array::from_fn(|i| f(0x3e0, i)),
+            style: std::array::from_fn(|i| d(0x458, i)),
+            last: d(0x4d0, 0),
+            clock: f(0x4d8, 0),
+            rng: MsvcRand(1),
+        })
+    }
+
     fn from_rng(mut rng: MsvcRand) -> Self {
         let (mut wait, mut dv) = ([0.0; N], [0.0; N]);
         for i in 0..N {
@@ -406,5 +431,19 @@ mod tests {
         assert_eq!(d.s(0), 0.0);
         d.tick();
         assert_eq!(d.s(0), 0.9);
+    }
+
+    #[test]
+    fn a_dumped_faderstruktura_reads_back() {
+        // ig2.exe's `fifo` (exe 0xF152F0) as `screen.js` dumps it: `s` at +0x168, the offsets at +0x1e0 / +0x258.
+        let mut b = vec![0u8; 0x5cc];
+        let put = |b: &mut Vec<u8>, o: usize, v: f32| b[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        put(&mut b, 0x168 + 4 * 2, 1.25);
+        put(&mut b, 0x1e0 + 4 * 2, 149.0);
+        put(&mut b, 0x258 + 4 * 2, 64.0);
+        b[0x4d0..0x4d4].copy_from_slice(&3i32.to_le_bytes());
+        let f = FaderDesign::from_exe(&b).unwrap();
+        assert_eq!((f.s(2), f.offset(2), f.last), (1.25, [149.0, 64.0], 3));
+        assert!(FaderDesign::from_exe(&b[..0x100]).is_none());
     }
 }

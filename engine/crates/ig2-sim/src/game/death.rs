@@ -75,7 +75,8 @@ impl Game<'_> {
             }
         });
         self.state.mem.set_u8(va::EMPIRE_ALIVE + e as u32, 0);
-        if e as usize == self.globals().en {
+        // Each machine's own `EN` (game-end.md §2): in canonical multiplayer the peer's local empire, not the shared one.
+        if e == self.local_view().empire {
             self.game_over(GameOver::Lost);
         }
         self.victory_check(later);
@@ -85,17 +86,21 @@ impl Game<'_> {
     /// alive, the human alive and the screen below 0xE → won. SP campaign only: no living non-ally → won; one
     /// empire left, not allied, `StoryAdat+0xc8 == 0`, and the human more than twice its power
     /// (`BirodalomEro`) and planets (`BirodalomHanyBolygo`) → `StoryAdat+0xcc = it`, story 0x195 starts.
-    /// `GameStarted` is [`Game::over`] being `None`.
+    /// `GameStarted` is [`Game::over`] being `None`. Canonical multiplayer: the first test is each peer's own (its
+    /// local empire; the sim runs only while a game screen is up), the result per peer only (`over`, the events).
     pub(super) fn victory_check(&mut self, later: &[u8]) {
         let g = self.globals();
+        let canonical = self.view != super::ViewMode::Classic;
+        let own = self.local_view().empire as usize;
         let m = &self.state.mem;
         let alive = |e: usize| g.alive[e] || later.contains(&(e as u8));
         let level = |e: usize| m.u8(va::RELATIONS + ((g.en * EMPIRES + e) * Relation::SIZE) as u32 + 0x25);
         let others: Vec<usize> = (1..=g.pp.min(EMPIRES - 1)).filter(|&e| alive(e) && e != g.en).collect();
+        let rivals = (1..=g.pp.min(EMPIRES - 1)).any(|e| alive(e) && e != own);
         let enemies = others.iter().filter(|&&e| level(e) != 5).count();
         let human = alive(g.en);
         let campaign = m.i32(va::CAMPAIGN_TYPE) > 0;
-        if others.is_empty() && human && m.i32(va::AKT_KEP) < 0xe {
+        if !rivals && alive(own) && (canonical || m.i32(va::AKT_KEP) < 0xe) {
             self.game_over(GameOver::Won);
         }
         if g.multiplayer || !campaign {

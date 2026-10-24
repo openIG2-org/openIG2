@@ -169,7 +169,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
         space: space_rules(inst, &r)?,
         satellite_prices: r.satellite_prices.clone(),
         inbox: ig2_sim::messages::InboxRules::from_install(inst),
-        story: ig2_sim::game::StoryRules::new(r.campaign_words.clone(), r.story_recruit_names.clone(), inst),
+        story: ig2_sim::game::StoryRules::new(r.campaign_words.clone(), r.story_recruit_names.clone(), &r.design_templates, r.production_template.clone(), inst),
     };
     Ok((rules, r.tech_defaults))
 }

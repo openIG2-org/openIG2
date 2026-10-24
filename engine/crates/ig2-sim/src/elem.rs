@@ -427,7 +427,7 @@ fn story_816(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     }
     if s.counter(8189) {
         let p = s.b_search(BASE, 0, w);
-        s.f_new_ex("", 10, 8185, 0.06, 2, p, w);
+        s.f_new_ex(crate::story::FleetName::Text(8185), 10, 8185, 0.06, 2, p, w);
         s.send_away(8185, w);
         s.v_set(8181, 1);
     }
@@ -450,7 +450,7 @@ fn story_817(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     const F: i32 = 8170;
     let en = w.human();
     if s.starting_now() {
-        s.f_new_ex("", 11, F, 0.07, 3, 0, w);
+        s.f_new_ex(crate::story::FleetName::Text(8170), 11, F, 0.07, 3, 0, w);
         let target = if s.v_get(7250) != 0 {
             en.wrapping_neg()
         } else {
@@ -519,7 +519,7 @@ fn story_820(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         s.b_set_radar_msg(P, true, w);
         let p = s.b_search(P, 0, w);
         s.set_planet_coord(p, 50, w);
-        s.f_new_ex("", 10, 8201, 0.06, 2, p, w);
+        s.f_new_ex(crate::story::FleetName::Text(8201), 10, 8201, 0.06, 2, p, w);
         s.sz_start(8209, 420);
     }
     if (s.radar_planet_is(P, w) || s.counter(8209)) && s.v_get(8209) == 0 {
@@ -744,7 +744,7 @@ fn story_837(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         }
         if own.wrapping_mul(3) > seen.wrapping_mul(2) {
             w.event(StoryEvent::ScrollText { text: 8371, important: true });
-            let f = s.f_new_ex("", en, F, 0.0, 1, 0, w);
+            let f = s.f_new_ex(crate::story::FleetName::Text(8370), en, F, 0.0, 1, 0, w);
             let b = s.last_fn[crate::story::last_fn::B];
             w.event(StoryEvent::MoveFleet { fleet: f, kind: 1, mode: 1, x: b as f32, y: 0.0 });
             w.event(StoryEvent::Anim(F));

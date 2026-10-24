@@ -65,3 +65,14 @@ Port: `ig2-client::trade::Trade::key`.
 The character: `a`..`d` take that answer (`AktValasz0to3`, `FUN_00509d10`) when the text is typed
 (`DAT_00da6607 == 1`) and the answer exists. `DEBUGX`: q/w/a/s nudge two layout values by 0.0005.
 Port: `ig2-client::messages_screen::MessagesScreen::key`.
+
+## 5. MP chat entry (exe `DoKeyboard` 0x4db1a0; FX15)
+
+Enter / backquote open the entry in MP on game screens (`IOMaxLen` 0x34 at (0x112, 6), size 2, colour 3; cursor
+`FillToScreen` colour 1, height 2, blinking on `AktIdo200`); editing keys edit, Esc drops, F-keys close it and switch.
+Enter sends `ExecuteString`'s 0x3fc chat (exe 0x4dc140). Receiver `MULTIGET_Starmap` (0x59d930) calls `AddSzoveg`
+(0x591360, `name + ": " + text`, colour 3): a ring of 8 drawn on the starmap only by `StarmapGfx2D_3` (0x5aaba0) at
+(0x14, i*10+0x32-shift), one pixel per 100 ms, the top slot faded (9-shift)*10 %. Port: `ig2-client::chat`; the text
+travels as `SessionMsg::Say` and the host relays `Said{empire,text}` to everyone, sender included. Not ported:
+`ExecuteString`'s debug commands (DEBUGLEHET/DEBUGX), `/kick` `/kill` `/clearlog`, the 0x3fd system lines, MP
+pause/speed 0x407/0x406 with `OnlyServerCanModifyTime` (0xbae55c); the timer details (0x5ab310) are untraced.
