@@ -100,14 +100,40 @@ pub struct Part {
     pub look: Look,
     /// Per triangle, the wireframe edge mask (`wirekirak`: bit 0 = c–a, bit 1 = a–b, bit 2 = b–c).
     pub edges: Vec<u8>,
-    /// The material's last word (`.xvm` +0x30, re/formats/xv.md) as an f32: its transparency (0 = opaque) [obs: the
-    /// trade screen's `Racsszin`/`tozs_hk` hold 0.65 and ig2.exe draws them at opacity 89/255; trade.md §4.1].
+    /// The mesh's FIRST material's last word (`.xvm` +0x30, re/formats/xv.md) as an f32: the transparency `Kocka`
+    /// (exe 0x5281f0) falls back to when the object's own is 0 (0 = opaque) [obs: the trade screen's
+    /// `Racsszin`/`tozs_hk` hold 0.65 and ig2.exe draws them at opacity 89/255; trade.md §4.1]. See [`Part::opacity`].
     pub transparency: f32,
     /// The self-illumination pass (`selfillumkirak` ELF 0x613da0): when the mesh's first material has a second
     /// texture (`.xvm` `texture2`, `loadmaterial`'s +0x50), every batch is drawn again additively and unlit with its
     /// material's second texture (or, without one, its first: `changeaktmatarialself` binds nothing new). The ship
     /// hulls' lit windows (`6desttsi.bmp`).
     pub self_illum: Option<String>,
+}
+
+impl Part {
+    /// `Kocka` (exe 0x5281f0): the drawn opacity for the object transparency `object` (`SetObjTransparency`, 0 = none):
+    /// the object's own when non-zero, else the mesh's first material's ([`Part::transparency`]), as the byte
+    /// `float2int(255 − t·255)` (the vertex alpha, `fenyekszamolasa`; below 255 `renderstateallitas` blends).
+    pub fn opacity(&self, object: f32) -> f32 {
+        let t = if object != 0.0 { object } else { self.transparency };
+        crate::lighting::float2int(255.0 - t * 255.0).clamp(0, 255) as f32 / 255.0
+    }
+
+    /// The drawn opacity of this part at the screen's opacity `alpha` (`1 −` the object transparency) and its
+    /// [`Look`]: opaque (no object transparency) falls back to the material's ([`Part::opacity`]).
+    pub fn alpha(&self, alpha: f32) -> f32 {
+        let a = match self.look {
+            Look::Glass(g) => g * alpha,
+            _ => alpha,
+        };
+        if a >= 1.0 { self.opacity(0.0) } else { a }
+    }
+
+    /// Whether only the material makes this part transparent (the exe's blend keeps the depth write).
+    pub fn material_glass(&self, alpha: f32) -> bool {
+        self.transparency != 0.0 && !matches!(self.look, Look::Glass(_)) && alpha >= 1.0
+    }
 }
 
 /// A loaded model: its root node's half-extents (`XVBStruct+4..+0xc`), its parts and the pose of every child.
@@ -136,6 +162,33 @@ impl Model {
     /// game's lookup in `texture_dir`.
     pub fn load(install: &Install, vector_dir: &str, name: &str, texture_dir: &str) -> Result<Self, String> {
         Self::load_at(install, vector_dir, name, texture_dir, None)
+    }
+
+    /// The level of `name`'s level-of-detail chain ([`lod_chain`]) that `Kocka` draws for the model added with
+    /// `AddToScene(…, s)` at camera depth `z` under the screen's `valtashatar` ([`lod_level`]), loaded and placed by
+    /// the chain head's half-extents: `AddToScene` sizes the head and `AddToXVB` hands that slot to every node of the
+    /// chain (re/formats/xv.md, LOD).
+    pub fn load_lod(install: &Install, vector_dir: &str, name: &str, texture_dir: &str, s: f32, z: f32, valtashatar: i32) -> Result<Self, String> {
+        let mut chain = lod_chain(install, vector_dir, name)
+            .iter()
+            .map(|n| Self::load(install, vector_dir, &format!("{n}.xvb"), texture_dir))
+            .collect::<Result<Vec<_>, _>>()?;
+        let level = lod_level(lod_extent(&chain), s, z, valtashatar, chain.len());
+        let origin = chain[0].origin;
+        let mut model = chain.swap_remove(level);
+        model.origin = origin;
+        Ok(model)
+    }
+
+    /// The vertices' reach from the pivot per axis, in the file's units (`max |p|·origin`).
+    fn reach(&self) -> V3 {
+        let mut e = [0.0f32; 3];
+        for p in self.positions() {
+            for k in 0..3 {
+                e[k] = e[k].max(p[k].abs() * self.origin[k]);
+            }
+        }
+        e
     }
 
     /// [`Model::load`] posed at animation frame `frame` (`SetFrame`): every node with more than two frames places
@@ -369,7 +422,7 @@ impl Walk<'_, '_> {
                     }
                     for (k, (verts, edges)) in by_mat.into_iter().zip(edges).enumerate() {
                         if !verts.is_empty() {
-                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges, transparency: trs.get(k).copied().unwrap_or(0.0), self_illum: if lit { tex2.get(k).cloned().flatten().or_else(|| texs.get(k).cloned().flatten()) } else { None } });
+                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges, transparency: trs.first().copied().unwrap_or(0.0), self_illum: if lit { tex2.get(k).cloned().flatten().or_else(|| texs.get(k).cloned().flatten()) } else { None } });
                         }
                     }
                 }
@@ -385,6 +438,69 @@ impl Walk<'_, '_> {
 fn skips_box_recount(root: &Node) -> bool {
     let first_is_node = matches!(root.children.first(), Some((_, ChildContent::Node(_))));
     (root.children.len() > 1 && first_is_node) || root.header.frames() > 2
+}
+
+/// The stems of `name`'s level-of-detail chain, the head first: each root's `lod_archive` names the next level
+/// (`LoadObject` ELF: `+0x18` = the next node, `+0x10` = 1.0 while one follows; `flag10` → `flag11` → `flag12`,
+/// `romb60` → `romb61` → `romb62`).
+pub fn lod_chain(install: &Install, vector_dir: &str, name: &str) -> Vec<String> {
+    let mut chain = vec![name.trim_end_matches(".xvb").to_string()];
+    while chain.len() < 16 {
+        let stem = chain.last().unwrap();
+        let next = install.read(&format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase()).ok().and_then(|b| {
+            let ar = Archive::parse(&b).ok()?;
+            let h = ig2_formats::xv::NodeHeader::parse(ar.root(Some(stem))?.data).ok()?;
+            (!h.lod_archive.is_empty()).then(|| h.lod_archive.trim_end_matches(".xvb").to_string())
+        });
+        match next {
+            Some(n) => chain.push(n),
+            None => break,
+        }
+    }
+    chain
+}
+
+/// `AddToScene`'s diagonal for a scale of 1, in world units, of a model and its level-of-detail chain (the head
+/// first): the head's half-extents after `BoxUjraszamol` (`e`, the reach of every level's vertices: the recount runs
+/// down the `+0x18` chain [obs: `romb60`'s box takes x and y from `romb60`, z from `romb61`/`romb62`]) over their
+/// maximum, times `+0x4c` = `max(e)/1024` for a root 1024 wide (so `e` itself), times 1024.
+pub fn lod_extent(chain: &[Model]) -> V3 {
+    let mut e = [0.0f32; 3];
+    for m in chain {
+        let r = m.reach();
+        for k in 0..3 {
+            e[k] = e[k].max(r[k]);
+        }
+    }
+    let me = e[0].max(e[1]).max(e[2]);
+    let o = chain.first().map_or([0.0; 3], |m| m.origin);
+    if o[0].max(o[1]).max(o[2]) == 1024.0 || me <= 0.0 {
+        e
+    } else {
+        e.map(|x| x / me * 1024.0)
+    }
+}
+
+/// `Kocka`'s level-of-detail step (ELF 0x5f6a40, exe 0x5281f0): the box's size is `|M·(1, 1, 1)|²·(fov/−z)²` (`M`
+/// its matrix, set by its parent before the recursion; `fov` 600, `z` clamped to −0.001 in scene units), times 4 on
+/// entry; the renderer steps to the next node of the chain while `valtashatar·30^level < 4·size·lod²` (`lod` 1.0
+/// as `LoadObject` sets it on every node with a successor; re/formats/xv.md, Level of detail), up to 10 levels. `M`'s rotation drops out of the length, so `extent·s` (the
+/// `AddToScene` diagonal in world units, [`lod_extent`]) stands in for it; `z` is in world units.
+/// [obs: probes/lod.js on the fleet panel: `romb60` at s 0.04 has size 3119.55, at 0.08 12478.14; `valtashatar` 1600
+/// (`Starmap_Belep`)].
+pub fn lod_level(extent: V3, s: f32, z: f32, valtashatar: i32, levels: usize) -> usize {
+    const FOV: f32 = 600.0;
+    let z = z / 1024.0;
+    let k = if z <= -0.001 { -(FOV / z) } else { FOV / -0.001 };
+    let v = extent.map(|e| e * s / 1024.0);
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    let size = len * len * k * k;
+    let (mut level, mut thr) = (0, valtashatar as f32);
+    while level + 1 < levels && level < 10 && thr < size * 4.0 {
+        level += 1;
+        thr *= 30.0;
+    }
+    level
 }
 
 /// The two integer frames around `frame` (within `n`) and the weight of the second: `SetFrame` keeps
@@ -549,6 +665,27 @@ mod tests {
         assert!(lit("Object08").is_none());
     }
 
+    /// The fleet panel's Destroyer (`romb60` → `romb61` → `romb62`): `AddToScene`'s diagonal is the head's re-measured
+    /// box and `Kocka`'s sizes are the exe's [obs: probes/lod.js, fx13g: matrix column lengths (0.04, 0.03351,
+    /// 0.01588) at s 0.04, sizes 3119.55 and 12478.14 at z −0.5859]; under the starmap's `valtashatar` 1600 the
+    /// cells draw `romb61` and the big preview `romb62`.
+    #[test]
+    fn panel_hulls_step_down_their_lod_chain_like_kocka() {
+        let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let inst = inst.expect("valid install");
+        let chain: Vec<Model> = ["romb60", "romb61", "romb62"].iter().map(|n| Model::load(&inst, "vector/spacewar/", &format!("{n}.xvb"), "textures/spacewar/").unwrap()).collect();
+        let (head, e) = (&chain[0], lod_extent(&chain));
+        for (k, want) in [0.04f32, 0.03351, 0.01588].into_iter().enumerate() {
+            assert!((e[k] * 0.04 / 1024.0 - want).abs() < 1e-5, "{e:?}");
+        }
+        assert_eq!(lod_chain(&inst, "vector/spacewar/", "romb60.xvb"), ["romb60", "romb61", "romb62"]);
+        assert_eq!(lod_level(e, 0.04, -600.0, 1600, 3), 1);
+        assert_eq!(lod_level(e, 0.08, -600.0, 1600, 3), 2);
+        assert_eq!(lod_level(e, 0.08, -600.0, 1600, 2), 1);
+        let cell = Model::load_lod(&inst, "vector/spacewar/", "romb60.xvb", "textures/spacewar/", 0.04, -600.0, 1600).unwrap();
+        assert!(cell.parts.iter().any(|p| p.path.ends_with("Object13")) && cell.origin == head.origin);
+    }
+
     /// The lighting normals of `talalmanyok/vad1` (one child scaled diag(0.85, 1.90, 0.18)) are the file normals with
     /// z negated, the record's matrix left out: every normal the exe lit on the trade screen's hull [obs:
     /// `light-trade.jsonl` record 5, 305 of them, re/screens/trade.md §13 part 5] is one of the client's.
@@ -567,5 +704,24 @@ mod tests {
             let n: V3 = std::array::from_fn(|i| v[i].as_f64().unwrap() as f32);
             assert!(ln.iter().any(|l| (l[0] - n[0]).abs() < 1e-5 && (l[1] - n[1]).abs() < 1e-5 && (l[2] + n[2]).abs() < 1e-5), "{n:?}");
         }
+    }
+
+    /// `Kocka`'s fallback (IG2_INSTALL_DIR; skipped without it): the trade screen's panels (`Racsszin`, material 0.65)
+    /// come out at the opacity byte 89 [obs: `run_screen.py --kep 8 --light-probe`, trade.md §13], the sphere grid at
+    /// 191 (0.25), and an object transparency replaces the material's.
+    #[test]
+    fn material_transparency_is_the_fallback() {
+        let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let inst = inst.expect("valid install");
+        let m = Model::load(&inst, "vector/trade/", "tozs1bck.xvb", "textures/trade/").unwrap();
+        let byte = |p: &Part, t: f32| (p.opacity(t) * 255.0).round() as u32;
+        let panel = m.parts.iter().find(|p| p.path.ends_with("/kep01")).unwrap();
+        assert_eq!(byte(panel, 0.0), 89);
+        assert_eq!(byte(panel, 0.8), 51);
+        let grid = m.parts.iter().find(|p| p.path.ends_with("/Sphere01")).unwrap();
+        assert_eq!(byte(grid, 0.0), 191);
+        assert_eq!(byte(grid, 1e-6), 255);
+        assert_eq!(panel.alpha(1.0), panel.opacity(0.0));
+        assert!(panel.material_glass(1.0) && !panel.material_glass(0.5));
     }
 }

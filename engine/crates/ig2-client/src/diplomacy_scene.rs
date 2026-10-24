@@ -402,6 +402,7 @@ fn uniforms(yc: f32) -> SceneUniforms {
         sun: [0.0; 4],
         fog: [0.0; 4],
         fog_range: [1e9, 2e9, 0.0, 1e9],
+        flash: [[0.0; 4]; 2],
     }
 }
 
@@ -417,15 +418,12 @@ fn sample(img: &Image, uv: [f32; 2]) -> [f32; 3] {
 /// Bake a camera-fixed part with CPU-lit vertex colours.
 fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: TexId, alpha: f32, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     let start = out.len() as u32;
-    let a = match p.look {
-        scene::Look::Glass(g) => g * alpha,
-        _ => alpha,
-    };
+    let a = p.alpha(alpha);
     for v in &p.verts {
         let n = scene::normalise(scene::apply(&t.matrix, v.normal));
         let c = lights.rgb(lighting::normal(&t.matrix, v.lnormal));
         // The colour bytes multiply the texture in the gamma pass (re/screens/render.md §2).
         out.push(MeshVertex { pos: t.point(v.pos), normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });
 }

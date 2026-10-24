@@ -772,6 +772,8 @@ pub struct ColonyScene {
     pub unit_centres: Vec<(usize, V3)>,
     /// The unit info's turning model's render target ([`ColonyScene::render_info_model`]).
     info_target: Option<crate::render::Target>,
+    /// The info box's planet globes `b<k>0.xvb` ([`ColonyScene::render_info_globe`]).
+    globes: HashMap<usize, Option<UnitMesh>>,
 }
 
 fn texture(r: &mut Renderer, install: &Install, cache: &mut HashMap<String, TexId>, white: TexId, path: Option<&str>) -> TexId {
@@ -971,7 +973,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true) });
         }
-        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, dropship: None, unit_centres: Vec::new() })
+        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, unit_centres: Vec::new() })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -1048,9 +1050,41 @@ impl ColonyScene {
     pub fn render_info_model(&mut self, r: &mut Renderer, install: &Install, um: &UnitModels, u: &UnitView, turn: f32, size: [f32; 2]) -> Option<TexId> {
         let mesh = if u.flags & flag::TURRET != 0 { self.turret_mesh(r, install, um, u.gun?)? } else { self.unit_mesh(r, install, um, u)? };
         let (model, texs) = (mesh.model.clone(), mesh.texs.clone());
+        Some(self.render_kis_info(r, &model, &texs, turn, size))
+    }
+
+    /// `HandleKisInfoObject` with `ColonyInfoMod` 0 (nothing selected; `GetSelectedMeshPointer` exe 0x47bc20): the
+    /// planet's globe `vector/starmap/b<(surface − 1) % 8>0.xvb` (`LoadBox`, not cloned; the finest level of its detail
+    /// chain, property 0x4000000, scaled by the chain head's extents), at scale 0.025 as the unit's.
+    pub fn render_info_globe(&mut self, r: &mut Renderer, install: &Install, surface: u8, turn: f32, size: [f32; 2]) -> Option<TexId> {
+        let k = (surface.max(1) as usize - 1) % 8;
+        if !self.globes.contains_key(&k) {
+            let loaded = load_lod_finest(install, "vector/starmap/", &format!("b{k}0.xvb"), "textures/starmap/").map(|mut model| {
+                // The remaster's `ig2_vertex.shader` scales the UVs by the texture's `uv_mul` (starmap.md §3.3).
+                // The meshes' own normals are mirrored in x and y (starmap_planet.rs); in this pass's lighting the
+                // centre-pointing ones match the capture [obs: colony:42 --colony-info, bottom_info 14.9 -> 8.7].
+                for p in &mut model.parts {
+                    let k = p.texture.as_deref().map_or([1.0; 2], |t| crate::assets::Image::uv_mul(install, t));
+                    for v in &mut p.verts {
+                        v.uv = [v.uv[0] * k[0], v.uv[1] * k[1]];
+                        v.normal = scene::normalise([-v.pos[0], -v.pos[1], -v.pos[2]]);
+                    }
+                }
+                let texs = model.parts.iter().map(|p| texture(r, install, &mut self.textures, self.white, p.texture.as_deref())).collect();
+                UnitMesh { model, texs }
+            });
+            self.globes.insert(k, loaded);
+        }
+        let mesh = self.globes.get(&k)?.as_ref()?;
+        let (model, texs) = (mesh.model.clone(), mesh.texs.clone());
+        Some(self.render_kis_info(r, &model, &texs, turn, size))
+    }
+
+    /// The info box's model at scale 0.025, stood up, at [`KIS_INFO_AT`] of the panel's pass, turned `turn` frames.
+    fn render_kis_info(&mut self, r: &mut Renderer, model: &Model, texs: &[TexId], turn: f32, size: [f32; 2]) -> TexId {
         let rot = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], -0.01 * turn), &scene::create_matrix(HALF_PI, 0.0, 0.0));
         let m: M3 = scene::mul(&rot, &Placement::add_to_scene(model.origin, 0.025).matrix).map(|x| x * 1024.0);
-        let at: V3 = [-130.0, 657.0, -1100.0];
+        let at = KIS_INFO_AT;
         let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
         for (pi, p) in model.parts.iter().enumerate() {
             let start = dynamic.len() as u32;
@@ -1066,7 +1100,7 @@ impl ColonyScene {
             _ => self.info_target.insert(r.target(px)),
         };
         r.draw_into(&f, target, px, 0.0);
-        Some(target.tex)
+        target.tex
     }
 
     /// The dropship's model with its own textures (no per-owner skin, no tint).
@@ -1095,6 +1129,30 @@ impl ColonyScene {
             })
             .as_ref()
     }
+}
+
+/// `HandleKisInfoObject`'s `MoveObj(−130, 657, −1100)`: the info box's model, fixed to the panel pass's camera.
+pub const KIS_INFO_AT: V3 = [-130.0, 657.0, -1100.0];
+
+/// `LoadBox(name)` as the info box draws it (property 0x4000000): the last level of the detail chain
+/// (`lod_archive`), with the chain head's extents, which `AddToScene` scales by.
+fn load_lod_finest(install: &Install, vdir: &str, name: &str, tdir: &str) -> Option<Model> {
+    let root = Model::load(install, vdir, name, tdir).map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
+    let mut stem = name.trim_end_matches(".xvb").to_string();
+    for _ in 0..8 {
+        let next = install.read(&format!("dataraw/{vdir}{stem}.xv")).ok().and_then(|b| {
+            let ar = ig2_formats::xv::Archive::parse(&b).ok()?;
+            let h = ig2_formats::xv::NodeHeader::parse(ar.root(Some(&stem))?.data).ok()?;
+            (!h.lod_archive.is_empty()).then(|| h.lod_archive.trim_end_matches(".xvb").to_string())
+        });
+        match next {
+            Some(n) => stem = n,
+            None => break,
+        }
+    }
+    let mut last = Model::load(install, vdir, &format!("{stem}.xvb"), tdir).ok()?;
+    last.origin = root.origin;
+    Some(last)
 }
 
 /// `TankAlap`/`TankTorony` `+0x34`: the model's vector and texture directories.
@@ -1255,6 +1313,8 @@ pub struct Overlay {
     pub landing: bool,
     /// The route crosses' cells and half length ([`crate::colony_war::WarUi::routes`]).
     pub routes: (Vec<(i32, i32)>, f32),
+    /// `UpdateRain`'s lightning lights this frame (`villamid`).
+    pub flash: bool,
 }
 
 /// A flat textured square on the ground (two triangles, `polygons3d`), alpha `alpha` (0..=255).
@@ -1434,6 +1494,13 @@ impl View {
                 sun: [0.784, 0.784, 0.784, 0.0],
                 fog: [fog[0], fog[1], fog[2], 0.0],
                 fog_range: [2000.0, 2000.0 + 200.0 / 0.03, 0.0, MAP_SIZE / 2.0],
+                // `villamid` (`Init3dColony`: `CreateLightParalell(0, (1, 1, 0))` on `mainmeshid1`), `UpdateRain`'s
+                // 0x806060 for the thunder's frame, else black; seen at (−1, 1, 0) as `light2` above. Its specular
+                // flag (`SetLightSpecular`) adds nothing here: the client has no material specular tables.
+                flash: [if self.overlay.flash { [0x60 as f32 / 255.0, 0x60 as f32 / 255.0, 0x80 as f32 / 255.0, 0.0] } else { [0.0; 4] }, {
+                    let f = scene::normalise([-1.0, 1.0, 0.0]);
+                    [f[0], f[1], f[2], 0.0]
+                }],
             },
             draws,
             dynamic,
@@ -1533,8 +1600,8 @@ impl View {
             // Flat at the building's placed height (`+0x14`) plus `allvanypoziciok[k − 1] − 20` (up is −h).
             Some(([at[0] + lift, at[1], at[2]], (w * 0x28) as f32 * k + grow, (h * 0x28) as f32 * k + grow))
         };
-        // `polygons3d(v, 3, 3)`: the war's marks add their texture (black is clear) [obs: the exe's rings over snow];
-        // the building marker keeps its alpha.
+        // `polygons3d(v, 3, 3)`: additive `RGB·A/256` (black is clear) [obs: the exe's rings over snow], the building
+        // marker's too (`DrawBuildingSelection`; deviation 310).
         let mut square = |tex: TexId, at: V3, hx: f32, hy: f32, alpha: i32, additive: bool| {
             let c = [1.0, 1.0, 1.0, alpha.clamp(0, 255) as f32 / 255.0];
             let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [at[0], at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };
@@ -1545,7 +1612,7 @@ impl View {
         if let Some((slot, size, alpha)) = self.overlay.selection {
             if let Some((at, hx, hy)) = building(slot, size * 2.0) {
                 let tex = scene.marker_texture(r, install);
-                square(tex, at, hx, hy, alpha, false);
+                square(tex, at, hx, hy, alpha, true);
             }
         }
         for m in &self.overlay.marks {
@@ -1626,6 +1693,7 @@ fn radar_picture(r: &mut Renderer, terrain: &Drawn) -> TexId {
             sun: [0.784, 0.784, 0.784, 0.0],
             fog: [0.0; 4],
             fog_range: [1e9, 2e9, 0.0, 1e9],
+            flash: [[0.0; 4]; 2],
         },
         draws,
         dynamic: Vec::new(),

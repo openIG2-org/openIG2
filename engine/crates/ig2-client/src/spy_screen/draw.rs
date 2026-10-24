@@ -208,7 +208,8 @@ impl SpyScreen {
         match p.list {
             List::Mission => {
                 for (n, (m, text, _)) in self.rows(d, g.t, p.list).into_iter().enumerate() {
-                    let col = money_col(m == p.selected, d.money < d.cost(m, 1) as f64);
+                    // Greyed as unaffordable when the tutorial forbids it (`SpyGfx2D_3` exe 0x58c1d0).
+                    let col = money_col(m == p.selected, d.tutorial_forbids(m) || d.money < d.cost(m, 1) as f64);
                     g.t2(f, &text, x, y + n as i32 * 13 + 3, 0x16, col);
                 }
             }

@@ -264,6 +264,19 @@ impl Game<'_> {
         }
     }
 
+    /// `SetIdoLelassit` (exe 0x541270, [`crate::time::slow_down`]): an enemy fleet near, a research done, a message,
+    /// a space battle's end. It sets the speed button (`IdoSpeed`) too, which the top bar lights (row 307).
+    pub(crate) fn slow_down(&mut self) {
+        let m = &mut self.state.mem;
+        let s = crate::time::slow_down(m.u8(va::MULTIPLAYER) != 0, m.i32(va::SPEED_LOCKED) != 0, m.i32(va::PROGRAM_SEBESSEG));
+        let Some(s) = s else { return };
+        m.set_i32(at::SPEED_LEVEL, s.level);
+        if let Some((ido, battle)) = s.mult {
+            m.set_i32(va::IDO_SPEED, ido);
+            m.set_i32(va::BATTLE_SPEED, battle);
+        }
+    }
+
     /// `SetIdoPause(paused, net)` (exe 0x541300): MP never pauses unless the host lets the players choose
     /// (`ProgramSebesseg` 4) and the call comes from a lockstep message.
     pub fn set_pause(&mut self, paused: bool, net: bool) {
@@ -473,6 +486,28 @@ mod tests {
             q[UI + k] = k as u8;
         }
         q
+    }
+
+    /// Row 307: a slow-down (here a message's, `NewMessage` → `SetIdoLelassit`) lights the speed button it sets.
+    #[test]
+    fn a_slow_down_moves_the_speed_button() {
+        let rules = GameRules::default();
+        let mut game = Game::new(crate::save::SaveState::from_parts(crate::save::Memory::default(), Vec::new()), &rules);
+        game.set_speed(3, false);
+        assert_eq!((game.speed_level(), game.state.mem.i32(va::IDO_SPEED), game.state.mem.i32(va::BATTLE_SPEED)), (3, 16, 4));
+        game.inbox_call(crate::story::StoryEvent::NewMessage { id: 0x0e, arg: 0 });
+        assert_eq!((game.speed_level(), game.state.mem.i32(va::IDO_SPEED), game.state.mem.i32(va::BATTLE_SPEED)), (1, 1, 1));
+        // MP: back to the program speed; with the players picking (4) nothing changes.
+        let m = &mut game.state.mem;
+        m.set_u8(va::MULTIPLAYER, 1);
+        m.set_i32(va::PROGRAM_SEBESSEG, 2);
+        m.set_i32(at::SPEED_LEVEL, 3);
+        game.slow_down();
+        assert_eq!((game.speed_level(), game.state.mem.i32(va::IDO_SPEED), game.state.mem.i32(va::BATTLE_SPEED)), (2, 8, 2));
+        game.state.mem.set_i32(va::PROGRAM_SEBESSEG, 4);
+        game.state.mem.set_i32(at::SPEED_LEVEL, 3);
+        game.slow_down();
+        assert_eq!(game.speed_level(), 3);
     }
 
     #[test]

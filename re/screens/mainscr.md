@@ -218,7 +218,7 @@ Called from `GFX_MainScr` unless `SelfPlaying`. Order [exe; ELF agrees unless no
 10. Label textures, when `Cel != 5.0`: for each ring i < `MaxMainKorok`: `GetSubMeshid(B_i, sub, 0)`; `ChangeTexture(sub, selected[i])` if `AktKijelolt == i` (ELF: and `ControlConfig[0]` (touch mode) clear), else `unselected[i]`.
     Set: `Mode_Main` -> set 1; `Mode_SinglePlayerSelected` and neither race confirmed nor closing -> set 2; single with race confirmed or closing -> set 4; `Mode_MultiPlayerSelected` -> set 3; `Mode_Tutorial_Valasztas` -> set 5;
     `Mode_Main` loops 6 rings, the others `MaxMainKorok`.
-11. `mainMozgatMainFenyek()` [ELF], `ForgatFajvalasztasDolgai()`, `HandleLoadingMesh()` if `AktKep == 0xf`; `AktKep == 2` is treated as 0xf around `Update3D(null, null, 0)` (this scene draws while the starmap is being entered);
+11. `mainMozgatMainFenyek()` [ELF only: an empty function; the exe has no call here and no light is touched after `Main3DInit`: the handles 0xcc1448 / 0xd84488 are written only by 0x5047d0 and freed by 0x504870 (FX17b, decompile of exe 0x500270 / 0x4f96a0)], `ForgatFajvalasztasDolgai()`, `HandleLoadingMesh()` if `AktKep == 0xf`; `AktKep == 2` is treated as 0xf around `Update3D(null, null, 0)` (this scene draws while the starmap is being entered);
     `KiirFajInfoSzoveg()` (exe 0x4f9040); exe: `if FajValasztasStartGame && FajVSzetnyilas == 100.0 && !Mode_Kilepes { AktKep = STARTSCREEN; Atlepes = 1 }` (ELF: `CheckCampaignGameStart()`).
 `HandleLoadingMesh` (exe 0x4f8620; ELF 0x58d670), only while `Mode_Kilepes && K < 50.0` (the last 100 ticks of the exit animation, K = `MainScrKilepesValtozo`): `T = K/50` (exe: **f64** division `divsd 50.0` at 0x4f8654, stored f32; ELF f32). Both plates (`LoadingMesh1` 0xd84368, `LoadingMesh2` 0xd84278): `UnhideObj`, `SetObjTransparency(T)` (T falls 1 -> 0 = fades in). Plate 1: `MoveObj(0, -(T*100), -1400)`, `RotateObj(0, T*(pi/2), 0)`; plate 2: `MoveObj(0, +T*100, -1400)`, `RotateObj(0, -T*(pi/2), 0)` (exe: `(float)((double)T*1.5707963267948966 + 0.0)`, `mulsd` 0x4f86ed; ELF f32 1.5707964). So the two plates slide together from y = -+100 to 0 and swing from +-90 degrees yaw to 0 at z = -1400 while the rings are flying away (`Cel = 6.0`); their textures are `LoadingTexturak[mcd]` (2.2).
 
@@ -591,7 +591,7 @@ After the title video, scenario list and `LoadFajInfoText`: `ProgramMode = 0; Si
 - Exe code not decompiled: `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240, `DeGenerateKod` (~0x4f8170), `GenerateKod2` (symbol address not read), `mainOldalsoFenyekBe` / `Ki`, `GetKameraPos`. (The race, scenario and sound functions are decompiled since part 2: header table above.) `GenerateKod`, `DeGenerateKod`, `GenerateKod2` have **no decompile anywhere under `_local/decomp`**; I read them from the ELF disassembly (`_local/decomp/placement/ig2.asm`, lines 333426..333700).
 - The RNG hypothesis of 3.2 (per-frame `srand(400)` making the respawns near-deterministic): not observed at run time.
 - Click sounds of the rings: none in the code read; the generic hot-spot code (`Mouse_Darabol`, `Mouse_Szoveg` tooltip drawing, `Mouse_Tipus`) was not read; tooltip texts are `GetString(15, 1, n)` (asset-finder job).
-- The race scene's rings (`kezdo_` subs 9..14) light differently: their light normals are radial in the client, so its 0xdcc8c8 from (0, 0, −1000) adds nothing and only the side lights tint them (blue top, warm bottom); the exe shows a neutral lit stone with a faint tint the same way round (deviation 148).
+- The race scene's rings (`kezdo_` subs 9..14) [FX17b part 3, probe `race_rings.js`]: the client's CPU lighting matches the exe's (the exe's per-vertex colours are exactly `fenyekszamolasa`'s from the same file normals and rotation chains; mean error 0; front light about 56 per channel). The drawn faces in the client took the other side's lighting, so the normals of rings B and C are z-mirrored in `mainscr_scene.rs` (empirical; the cause is open, deviation 148); the rings are neutral lit stone like the exe's.
 
 ## 13. Runtime observations (`tools/trace/probes/mainscr.js`, `run_screen.py --boot`)
 `run_screen.py <install> <save> <out> --kep 15 --run --boot --script tools/trace/scripts/mainscr.json --probe
@@ -638,8 +638,15 @@ FX11 (2026-10-24, the same exe captures): race t 610 8.3, 700 10.8, 800-960 7.0-
 1650 15.6, 1700 26.5 (from 38 / 73), 1750 5.1, 1800 0.6; scenario static 2.4-3.3, t 650 4.0 (from 20.9), 820 8.5, 880 9.0, 1050 5.6,
 1420-1600 3.8-7.7; multi t 400-510 3.2-4.2, 530-650 7.5-8.2 (the exe's name box stays open: its name was empty, the scripted keys never typed
 into it, and `MultiOpenInfoSocket` 0x4fe950 refuses an empty name; the client's typed "bob" closes it); main 4:3 t 5-700 2.6-5.3 except the
-fly-out t 360 7.8, 16:9 all under 6. What is left: the meteors' material (near black, faintly lit in the exe), the race rings' tint (§3.1), and
+fly-out t 360 7.8, 16:9 all under 6. FX17b (row 305): the difficulty labels (KÖNNYŰ/NEHÉZ/NORMÁL) and flares are drawn over the race ring and head in the exe (t 1420); the client's `szrke{i}` label rings (additive, no depth write) now come after the race scene's opaque models: t 1420 17.6 -> 14.3, 1480 8.5 -> 7.8. What is left: the meteors' material (near black, faintly lit in the exe), the race rings' tint (§3.1), and
 3D RNG/pose (the saucer that respawns in the exe's exit, meteor positions).
+
+### 13.3 The galaxy over time (FX17b, row 315; `scripts/mainscr-long.json`, grabs t 400..4000)
+The exe changes no light or colour after the fade-in (GT reaches 1.0 at t ~333): what moves is the camera (§4 step 1), the galaxy
+mesh's and the four clouds' turns. The galaxy's brightness still swings about ±25 % (mean RGB of the galaxy region 40..56 red at
+t 400..3400, twice that at t 4000 when the core fills the view) as the core turns towards or away from the camera; the client
+follows it within 1..5 units at 6 of 7 grabs (galaxy region best-offset 5.4..10.7, t 2200 30.0 from a meteor that hangs over the
+core in the exe and elsewhere in the client). The rest is the meteors' and ships' respawn poses (§3.2 RNG trap, deviations 150).
 
 ## 14. Port status (`ig2-client::mainscr`, `mainscr_scene`, `mainscr_race`, `mainscr_scenario`)
 Part 1: the 3D scene (rings + labels with the hover texture, galaxy mesh, the four clouds exact, the pictures, the dust,
@@ -651,7 +658,7 @@ the difficulty rings (label set 4, at rest at Tav 1.3), `Start::Campaign` -> `Ga
 `Starmap_Belep` music and start voice; the scenario / skirmish list (`mainscr_scenario.rs`: `LoadScenarioList` order, the
 English "Skirmish" title fallback, fades, rows, scroll knob, 7 skirmish settings with `PlaySoundGlobal(0)` clicks,
 high-score / description toggle, fabscr.txt default scores); scenario start -> `Game::start_scenario`; the tutorial ring ->
-`Game::start_tutorial` (ig2-sim, untraced composition of verified parts) -> starmap; the multiplayer name entry
+`Game::start_tutorial` (ig2-sim, verified byte-exact, `new-game.md` §16) -> starmap; the multiplayer name entry
 (`EnterNameMode`: A-Z a-z 0-9 _, max 9, Enter accepts; stored as `MultiplayerNev` in the remake's settings); the exit
 animation (`MainScrKilepesValtozo` 100 -> 0 over 200 ticks, camera z, meteor speed-up, GT fade, `loadi1`/`loadi2` plates
 with the `load<n>` picture). Tests: `mainscr_race::tests`, `mainscr_scenario::tests`, `world::tests::scenario_and_tutorial_starts_build_worlds`.

@@ -743,6 +743,8 @@ Hungarian texts. Sounds verified with the sound-id tracer (`tools/trace/scripts/
 
 Lighting fix 2026-10-24 (the exe's panel lights, starmap.md §19.3; row 47), mean before -> after: production name_plate 7.06 -> 2.72, left_panel 4.98 -> 3.63, right_panel 5.41 -> 3.77, frame 3.80 -> 3.13; tanksinfo model 8.43 -> 7.76, list 10.78 -> 10.45; transfer right_panel 4.33 -> 3.96; fleetinfo model 7.35 -> 7.66 (the big preview's pose/pitch dominates).
 
+Panel models 2026-10-24 (FX13: the fleet preview's yaw t, the spin phase `InfoPanel::drawn_frames`, row 47; the info box's fleet picture, row 317), quick-1.sav planet 71 wait 420, old -> new mean: fleetinfo model 7.66 -> 5.37, list 5.56 -> 3.90, frame -> 3.57, data 2.88, scroll_bar 4.98, exit 1.27; tanksinfo model 7.76 -> 3.57, list 10.45 -> 3.09, frame 2.97, data 2.21, scroll_bar 2.21, exit 2.34; new screen `fleetbox` (`--fleets 2 --rop-fleet 1`): picture 3.36 (3.08 at the exe's phase), info_box 2.15. Open: the colony ship cell model (row 47), hull texture detail (row 321).
+
 ## 2026-10-22, the Design screen, viewing mode (`design`, re/screens/design.md §14)
 
 `run_screendiff.py … design` (still) and `design --script` (14 grabs: opening, list press, down/up, pod-row press, F2 closing; `_local/screendiff/run`). At rest every region matches (means 0.05–3.7) except the exe's random fader flash (one panel at a time, 11–18) and the hull (spin phase: about 3 at the still, 7–9 in the sequence). The sequence matches likewise. The 9 sounds match the exe's in order and tick (`tools/trace/scripts/design-sounds.json`). Not drawn: the fader flashes and scan bands, the lasers and sparks, the DesignKeret2 pod-row frame (part 2).
@@ -923,3 +925,59 @@ Backdrop content differences (review): the exe's backdrop under trade/design/dip
 - `diplomacy --script diplomacy-fx9.json`: dipframe identical at every grab (80/79.4/78.8 at t401/402/403); frame t401 5.83, t402-410 4.0-5.0; screen20.wav at t400 both.
 - `info --info-mouse 370,290`: all regions match, tooltip frame 4.09.
 - Regression sweep: 228+3 tests pass, clippy clean, the accepted stills unchanged (research 5.57 against research-exe.png).
+
+## 2026-10-24, FX17b part 1 (rows 304, 305, 310, 311; mainscr.md §13.2, colony.md §6/§10)
+- `main --script mainscr-race.json`: the difficulty labels now after the race scene's models: t1420 frame 17.58 -> 14.33, t1480 8.47 -> 7.81, other ticks unchanged.
+- Colony sweep: colony:42 planet_panel 13.02 -> 9.30, frame 10.25 -> 9.01, view 12.14 -> 9.34, bottom_info 8.70 -> 7.65; colony-info planet_panel 13.02 -> 9.22; grwar:17 within 0.2.
+- 231 client tests pass, clippy clean.
+
+## 2026-10-24, FX17b part 2 (rows 312, 315; research.md §2/§7, mainscr.md §13.3)
+- `research --script research.json`: ball region 8.4-15.5 -> 2.7-3.5, frame -> 1.8-2.6 (depth fade, ball turn sign, hard wire lines).
+- `main --script mainscr-long.json` (t 400-4000): within 1-5 RGB units at 6 of 7 grabs; the rest is the meteor/ship respawn poses (row 150).
+
+## 2026-10-24, FX12 (messages opening/closing; re/screens/messages.md §4.1, §6, video.md §5.3)
+- `run_screendiff.py <install> replay-quick1-messages-x16/230.sav messages --script messages-open.json | messages-esc.json`: the exe's `mesframe` equals the client's at every grab (opening 46 ticks to 15; closing 50 ticks from 30; Esc at mesframe 10 closes from 10.333, gone at t+20).
+- Every region matches during the opening and the closings: the Esc run all <= 0.6, the open run <= 1.7 except the inbox caption and the hover tooltip/row frame (rows 324, 325).
+
+## 2026-10-25, FX13 leftovers (fleet/vehicle panel models, faders; xv.md "Level of detail", deviations rows 47, 208, 323)
+- Fresh stills with `--faders` (`_local/screendiff/fx13g/fresh`), mean diff: fleetinfo frame 5.16, list 4.59 (was 12.50), model 5.19 (dy 2), data 5.72; transfer frame 2.93, left_panel 3.24 (was ~10.7), right 2.69, scroll_bar 7.58 differs (background ring/glow phase behind the bar); tanksinfo frame 3.70, list 3.82, model 6.51 differs (dy 1; row 334). Fleetinfo model region 5.37 -> 3.35 against the same exe (LOD steps, fx13rest/final).
+- Open: row 333 (transfer rows' two sides turn out of step), row 334 (tanksinfo preview pose, camo).
+
+## 2026-10-25, material transparency (xv.md → Material transparency)
+- A/B (rule on vs off, same exe captures, `quick-1.sav`, 800x600, out `_local/screendiff/mat`): info heads 3.48 -> 3.42 (the heads keep `Infoing3DInit`'s 0.01); research, design, messages-still, starmap, planetinfo, spy roster unchanged; trade panels 1.05, model 0.57.
+- `messages-open.json` (230.sav): t129 5.17 -> 0.81, t132 5.97 -> 0.82, t290 2.62 -> 0.58; t140 11.60 -> 16.62 and t281 18.83 -> 23.79 are the exe's message clip in the viewport, which the client's sequence doesn't draw (the panel under it is darker now; row 333).
+
+## 2026-10-24, SpaceWar FX7 rest
+`run_screendiff.py spacewar --script` with the stored exe runs. Best-offset means, before → after this task:
+- fx8b (`spacewar_fx8.json`, `--exe-seq _local/traces-fx8b/fx8`, 16 grabs): frame 3.45–4.20 → 3.39–4.19, view 3.78–4.82 → 3.77–4.81 (depth-tested overlays, the matrix seed), info box 3.91–4.50 → 3.84–4.30 at 14 of 16 (t1800/t1900 the exe's fader shine, deviation 84); topbar, console, radar, weapons unchanged.
+- fx7 (`spacewar_fx7.json`, `--exe-seq _local/screendiff/spacewar-fx7/…-exe`, big box open from t900): weapons 5.04–8.64 → 2.77–5.90 (the column's projection centre), view 3.07–4.10 → 2.95–3.91; radar 5.0–8.1 unchanged (older exe run).
+- New `spacewar_info.json` (exe run at 1920 × 1080, `_local/screendiff/spacewar-info`; a click on empty space clears the selection at t450): frame 2.26–2.94, view 2.5, console 2.7–2.8, info box 3.3–3.5 (the fighter `vad11.xvb` as the exe's; t700 15.7 = the exe's box shine), radar 3.7–4.3, weapons 2.4 / 5.1 (t500 on).
+
+## 2026-10-25, FX17b part 3 (rows 130, 139, 148; colony.md §11.10, mainscr.md §12)
+- quick-1.sav `colony:42` (main building selected): bottom_info 7.84 -> 8.31 (the building's small model is now drawn, lit darker), planet_panel 9.30 -> 8.55; `colony:42 --colony-info` (nothing selected): bottom_info 14.91 -> 8.73 (the planet globe). `grwar:17` bottom_info 14.93 -> 14.35, the unit model lines up.
+- `mainscr-race` t 1010-1250: race rings 5.3-6.7 (record 8.2-9.3; the exe's galaxy is random).
+
+## 2026-10-25, the full sweep's starmap finding settled
+Not a regression: the sweep compared against the old top-level `_local/screendiff/{starmap,planets}-exe.png`
+(2026-10-17 02:07 and 12:47, from before the starmap background and without the `.ui.json` clocks); those give
+exactly its 3.42 / 3.51 / 1.93, at 3c20aa0 and at 48f35af alike. The recorded baseline is the `bg/` captures:
+`run_screendiff.py <install> quick-1.sav <screen> --exe-png _local/screendiff/bg/<screen>-exe.png --exe-state
+_local/screendiff/bg/<screen>-state.sav` (the state's `.ui.json` carries the clouds/light clocks). **Sweeps use the
+`bg/` captures for these nine screens.** 3c20aa0 and 48f35af give the same numbers, so 681a182, 83e59e1, ef5dda1,
+a1b96b5 and 48f35af don't move them. Now (48f35af, out `_local/screendiff/g-sm`), against the `starmap-background` table:
+
+| Screen | Region | recorded | now |
+|---|---|---|---|
+| starmap | frame / view | 2.77 / 2.84 | 2.67 / 2.74 |
+| planets | frame / menu | 3.63 / 1.62 | 3.09 / 0.86 |
+| rop | frame / icons | 2.68 / 1.71 | 2.57 / 1.71 |
+| planetinfo | frame / panel / planet / exit | 9.28 / 3.19 / 22.12 / 2.77 | 9.05 / 2.71 / 22.12 / 2.44 |
+| tax / autobuild / priority | frame | 9.55 / 9.62 / 9.52 | 9.27 / 9.35 / 9.27 (menus 0.71 / 1.35 / 2.30) |
+| transfer | frame / left / right / scroll_bar / exit | 4.53 / 5.05 / 4.42 / 20.19 / 2.77 | 5.87 / 10.18 / 3.81 / 20.23 / 2.50 (left: deviation 208, the faders' rand stream) |
+| production | frame / name_plate / left / right / exit | 3.64 / 7.40 / 5.06 / 4.24 / 3.57 | 3.04 / 2.72 / 3.63 / 3.77 / 3.32 |
+
+The only spot screendiff-review flagged as new, planets' right column slot 2 (640,258,148x62) drawn bright in the client,
+is the `fifo`/`starf` faders' shine phase (deviation 208's mechanism): the `bg/` captures predate the `--faders` dump,
+so the client draws its own phase. With another dumped phase (`fx13g/fresh/transfer`'s `faders` added to a copy of
+`bg/planets-state.sav.ui.json`) the slot matches the exe (crop mean RGB 5.4/24.8/38.1 vs 5.5/24.7/38.2) and planets
+frame is 2.78. Fresh exe captures with the dump would settle the phase on all nine screens.

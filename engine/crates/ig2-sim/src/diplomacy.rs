@@ -1147,6 +1147,12 @@ impl Diplomacy {
         self.receive_message(w, &mut (), Letter { from: a as i32, to: b as i32, declaration, msg });
     }
 
+    /// `DiplomaciaTalkAbout(a, b, sub, third)` (exe 0x4bdac0): `a` tells `b` a talk line as a declaration
+    /// (`ElkuldUzenetMI(a, b, 1, TALK, sub, third, …)`; the `MiertValaszoltAztAmitValaszolt` reason only picks a text).
+    pub fn talk_about(&mut self, w: &mut World, a: usize, b: usize, sub: i32, third: i32) {
+        self.send(w, a, b, true, Message::ai(cat::TALK, sub, third));
+    }
+
     fn draw_text(w: &mut World) {
         let value = match w.view_libc.as_mut() {
             Some(draw) => draw(),

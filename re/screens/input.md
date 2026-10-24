@@ -177,7 +177,7 @@ Port: `ig2-client` `colony_ui::press`/`colony_war::press` (no left test on the b
   when `ControlConfig[0]` (0x90b520) and `UseSystemMouse` (0xb772ad) are 0 and `Mouse_Tipus` (0xdb9414) > −1; then
   `Mouse_Tipus = −1`. −1 takes the type of the hot-spot under the pointer: `Mouse_Szoveg_Set`'s last argument, kept in
   the slot's `+0x78` (which is also its enable flag, on while < 0x40); no spot → 0; a type outside 0..9 → 0. −2 hides
-  it (`MainScr_Kilep`'s loop, the tutorial's parked pointer). `MouseFazis` (0xb77204) +1 every 10 ms UI tick
+  it (`MainScr_Kilep`'s loop, the tutorial's parked pointer). The client sets `pointer_in` on every CursorMoved/CursorEntered before the per-screen arms (FX17b; the main menu, Options and Help lacked it, so no pointer showed). `MouseFazis` (0xb77204) +1 every 10 ms UI tick
   (`Fake_FRISSITES` 0x4de720), on every screen. Screen writers: the main menu's rings 1 (`Mainscreen_Update3D`
   0x500270) and every main-menu box (`Mouse_Szoveg_Set(…, 1)`: the scenario panel's 0x15..=0x27, the race spheres
   0xe..=0x10), the starmap's view spot 0x35 (whole screen, type 0; FX2 rest below), the colony's view 0x32 and build

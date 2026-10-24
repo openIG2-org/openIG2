@@ -819,14 +819,14 @@ pub fn info_pivot(q: [f32; 2], rotate: f32) -> [f32; 2] {
 /// The name tables `StringReadAll` fills from the Hungarian `txt17.txt` and the texts the long info needs.
 pub struct MenuTexts<'a> {
     pub texts: &'a crate::ui::UiTexts,
-    pub hu17: &'a ig2_formats::strings::UiStrings,
+    pub txt17: &'a crate::ui::UiTexts,
     pub empire_names: &'a [Vec<u8>],
     pub infostr: &'a [(i16, Vec<u8>)],
 }
 
 impl MenuTexts<'_> {
     fn hu(&self, section: u16, index: u16) -> Vec<u8> {
-        crate::ui::hu_bytes(self.hu17.get(0x11, section, index))
+        self.txt17.get(0x11, section, index)
     }
     fn tax(&self, k: i32) -> Vec<u8> {
         self.hu(5, (22 + k).clamp(0, 52) as u16)

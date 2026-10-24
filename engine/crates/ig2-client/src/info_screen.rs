@@ -1146,10 +1146,10 @@ fn richness(r: &[u8], s: &UiSnap, rules: &ig2_rules::Rules, mp: bool) -> i32 {
 /// The detail mode's panel (re/screens/info.md §6.6): `InfoNagyKiirBolygo(61, 253, p)` (exe 0x4e6500) or
 /// `InfoNagyKiirFlotta(61, 253, f)` (exe 0x4e6ea0), rows 13 apart, size 2.
 #[allow(clippy::too_many_arguments)]
-fn draw_detail(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], hu17: &ig2_formats::strings::UiStrings, rules: &ig2_rules::Rules, col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
+fn draw_detail(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], txt17: &crate::ui::UiTexts, rules: &ig2_rules::Rules, col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
     let (x, y0) = (61.0, 253.0);
     let put = |f: &mut Frame, t: &[u8], x: f32, y: f32, len: usize, align: Align, c: usize| font.text(f, v, t, x, y, len, 2, align, col(c), None);
-    let hu = |section: u16, k: i32| crate::ui::hu_bytes(hu17.get(0x11, section, k.clamp(0, 99) as u16));
+    let hu = |section: u16, k: i32| txt17.get(0x11, section, k.clamp(0, 99) as u16);
     let en = s.human;
     match ui.detail_entry(d, en) {
         Some(Entry::Planet(i)) => {
@@ -1282,7 +1282,7 @@ fn replace_s(fmt: &[u8], s: &[u8]) -> Vec<u8> {
 /// `KirakBolygoFlottakat(70, 249)` (exe 0x4eb700): the rows from `BolygoFlottaPointer`, 56 apart
 /// (re/screens/info.md §6.2), each line `KiirStrAlap(s, 70, y + dy, 0x13, size, 0xc, colour)`.
 #[allow(clippy::too_many_arguments)]
-fn draw_rows(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, hu17: &ig2_formats::strings::UiStrings, names: &[Vec<u8>], col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
+fn draw_rows(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, txt17: &crate::ui::UiTexts, names: &[Vec<u8>], col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
     let cat = |parts: &[&[u8]]| parts.concat();
     let put = |f: &mut Frame, t: &[u8], y: f32, size: usize, c: usize| font.text(f, v, t, 70.0, y, 0x13, size, Align::Left, col(c), None);
     let empire = |e: u8| names.get(e as usize).cloned().unwrap_or_default();
@@ -1305,9 +1305,9 @@ fn draw_rows(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, 
                     let (step, slot, _) = ui.problem_rows[k];
                     let text = if step < 1 {
                         let morale = p.morale / 100;
-                        cat(&[&texts.get(2, 3, 2), b": ", &crate::ui::hu_bytes(hu17.get(0x11, 4, (41 + morale).clamp(0, 99) as u16))])
+                        cat(&[&texts.get(2, 3, 2), b": ", &txt17.get(0x11, 4, (41 + morale).clamp(0, 99) as u16)])
                     } else {
-                        cat(&[format!("{}% ", p.problems[slot] / 10000).as_bytes(), &crate::ui::hu_bytes(hu17.get(0x11, 4, (21 + slot) as u16))])
+                        cat(&[format!("{}% ", p.problems[slot] / 10000).as_bytes(), &txt17.get(0x11, 4, (21 + slot) as u16)])
                     };
                     put(f, &text, y + 33.0, 1, 0x23);
                     if let Some(q) = &p.queue[((ui.counter / 30) % 2 == 0) as usize] {
@@ -1376,12 +1376,12 @@ fn draw_star_log(f: &mut Frame, font: &Font, v: &Virtual, col: &dyn Fn(usize) ->
 
 /// The 2D passes beside the chart (`InfoGfx2D_2`, `_3`), drawn over the frame.
 #[allow(clippy::too_many_arguments)]
-pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], hu17: &ig2_formats::strings::UiStrings, rules: &ig2_rules::Rules, names: &[Vec<u8>], palette: &[[f32; 3]], ui: &InfoScreen) {
+pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], txt17: &crate::ui::UiTexts, rules: &ig2_rules::Rules, names: &[Vec<u8>], palette: &[[f32; 3]], ui: &InfoScreen) {
     let name_x = &rules.race_name_x[..];
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
-    draw_rows(f, font, v, s, d, texts, hu17, names, &col, ui);
+    draw_rows(f, font, v, s, d, texts, txt17, names, &col, ui);
     if ui.detail {
-        draw_detail(f, font, v, s, d, texts, infostr, hu17, rules, &col, ui);
+        draw_detail(f, font, v, s, d, texts, infostr, txt17, rules, &col, ui);
     }
     draw_star_log(f, font, v, &col, ui);
     let label = |k: u16| {
@@ -1450,7 +1450,7 @@ pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, d
         font.text(f, v, &pct(d.shares[1]), 243.0, 40.0, 0x14, 1, Align::Left, c, None);
         font.text(f, v, &pct(d.shares[2]), 380.0, 40.0, 0x14, 1, Align::Left, c, None);
     }
-    draw_select(f, font, white, v, d, hu17, &col, ui);
+    draw_select(f, font, white, v, d, txt17, &col, ui);
 }
 
 /// An open planet-settings menu (re/screens/info.md §7.1): `PutFaders`' box on fader pass 2 (after `InfoGfx2D_2`,
@@ -1458,7 +1458,7 @@ pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, d
 /// auto-build mode + 4, 43 for the priorities), then `InfoGfx2D_3`'s items `KiirStr(name, x, y + 13i + 3, 20, 2, …,
 /// colour 3, 6 under the pointer)`: `AdoMertek_Nev`, `AutoBuild_Nev`, `BolygoPrioritas_Nev` (the Hungarian `txt17`).
 #[allow(clippy::too_many_arguments)]
-fn draw_select(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, d: &InfoData, hu17: &ig2_formats::strings::UiStrings, col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
+fn draw_select(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, d: &InfoData, txt17: &crate::ui::UiTexts, col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
     let Some(k) = ui.select else { return };
     let [x, y] = ui.select_at.map(|c| c as f32);
     let items = select_items(k, d.race);
@@ -1474,7 +1474,7 @@ fn draw_select(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, d: &InfoDa
         _ => (41, 1),
     };
     for i in items {
-        let s = crate::ui::hu_bytes(hu17.get(0x11, 5, (base + i) as u16));
+        let s = txt17.get(0x11, 5, (base + i) as u16);
         let c = if i == ui.select_item { 6 } else { 3 };
         font.text(f, v, &s, x, y + ((i - first) * 0xd + 3) as f32, 0x14, 2, Align::Left, col(c), None);
     }

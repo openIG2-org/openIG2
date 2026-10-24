@@ -105,8 +105,12 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
             let rgb = mix(vec3(0.0), v.color.rgb, inner);
             return vec4(rgb, a * v.color.a);
         }
-        // Solid quad with soft long edges (lines).
+        // Solid quad with soft long edges (lines); param.x > 0.5: hard edges, every pixel whose centre the quad
+        // covers at full colour (the exe's aliased GL lines, `Instance::hard_line`).
         case 4u: {
+            if v.param.x > 0.5 {
+                return v.color;
+            }
             let a = cover(abs(q.y) - 1.0 + 0.5 * fwidth(q.y));
             return vec4(v.color.rgb, v.color.a * a);
         }
@@ -173,6 +177,12 @@ impl Instance {
             rot: dy.atan2(dx),
             ..Self::new(kind::LINE, [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0], [len / 2.0, width / 2.0], color)
         }
+    }
+
+    /// A line as the engine's GL lines draw it (`glBegin(GL_LINES)`, one output pixel wide, not smoothed): the
+    /// pixels whose centres lie within half a pixel of it at full colour, no soft edge.
+    pub fn hard_line(a: [f32; 2], b: [f32; 2], color: [f32; 4]) -> Self {
+        Self { param: [1.0, 0.0], ..Self::line(a, b, 1.0, color) }
     }
 }
 
@@ -1018,7 +1028,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let mut panel_model = crate::colony_ui::PanelBuilding::default();
     let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr), ui.spin(), size);
     let en = world.game.state.mem.i32(ig2_sim::save::va::EN);
-    let info_model = ui.war.info_model(&crate::colony_war::WarCtx { snap: &curr, en, tutorial_paused: false }).and_then(|(u, turn)| scene.render_info_model(r, &l.install, &l.tables.unit_models, u, turn, size));
+    let info_model = crate::colony_ui::render_kis_info(r, &l.install, &l.tables, &ui, &mut scene, &mut panel_model, &curr, en, size);
     let mut frame = view.build(r, &l.install, &l.tables, &l.rules.ground_maps, &mut scene, &prev, &curr, o.alpha, t);
     // The drawn units' `GetObjCenter`s for the labels.
     if let Some(gm) = l.rules.ground_maps.get(curr.map) {
@@ -1488,6 +1498,96 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
     Ok(())
 }
 
+/// `--snapshot --screen messages --script`: the screen entered at tick 0 (`Messages_Belep`, the opening from
+/// `mesframe` 0, re/screens/messages.md §4.1), each tick one drawn frame as in the exe's script runs: the UI tick, then
+/// the render (`Messages_Kilep`'s loop test, `Messages3DUpdate`), the grab, then the events before the next tick. Black
+/// under the frame (a bare jump); the talking-head clip isn't played.
+fn messages_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &mut crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
+    use crate::audio::SoundId;
+    use crate::messages_screen::Press;
+    use crate::script::Input;
+    use ig2_rules::sounds::Table;
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let t = world.curr.tick as f32 * 0.05;
+    let mut models = crate::screen_frames::FrameModels::new(r);
+    hud.messages.debounce = 5;
+    hud.messages.enter(true);
+    let mut heard: Vec<(Option<u32>, SoundId)> = vec![(None, SoundId::new(Table::Mes, 0))];
+    let mut mouse = [320.0, 240.0];
+    for tick in 0..=script.end() {
+        if tick > 0 {
+            let m = &mut hud.messages;
+            m.ui_frame();
+            m.tick();
+            m.answer();
+            let typing = m.text_up();
+            if let Some(d) = m.open.as_mut().filter(|_| typing) {
+                d.advance(10.0);
+            }
+        }
+        if hud.messages.render_step() {
+            println!("t {tick}: the closing has run out, the screen goes");
+            break;
+        }
+        if script.grabs.contains(&tick) {
+            hud.frame_tex = models.render_messages(r, &l.install, hud.messages.frame, size);
+            let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+            hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Messages, t);
+            hud.snapshot_pointer(&mut frame, size, Some(mouse));
+            let rgba = r.draw_to_image(&frame, o.size, t);
+            let path = crate::script::grab_path(out, tick);
+            crate::assets::write_snapshot(&path, o, &rgba)?;
+            let m = &hud.messages;
+            println!("{}: t {tick} | mesframe {} open {} closing {} message {}", path.display(), m.frame, m.opened, m.closing, m.open.is_some());
+        }
+        if tick > 0 {
+            // The input of the frame before, after this frame's ticks and render: `IG2_gameUpdate` and `Messages_Main`
+            // come last in the exe's frame (an Esc or a press at t is taken after the render of t + 1; the closing's
+            // first step is tick t + 2).
+            for e in script.at(tick - 1) {
+                match &e.input {
+                    Input::Move(at) => {
+                        mouse = *at;
+                        hud.messages.hover(*at);
+                    }
+                    Input::Button { button: 1 | 3, down: true, at } => {
+                        mouse = *at;
+                        match hud.messages.press(*at, world.ui.inbox.len()) {
+                            Press::Open(i) => hud.open_message(&l.install, &world.ui, i),
+                            Press::Leave => {
+                                hud.messages.leave();
+                            }
+                            Press::None => {}
+                        }
+                    }
+                    Input::Key { name, down: true } if name == "escape" => {
+                        let idle = hud.messages.open.as_ref().is_none_or(|d| d.answers.is_empty() && d.typed_all);
+                        if idle && !hud.messages.closing {
+                            hud.messages.leave();
+                        }
+                    }
+                    Input::Key { name, down: true } => hud.messages.key(name),
+                    _ => {}
+                }
+                let mut orders = std::mem::take(&mut hud.messages.orders);
+                if let Some(d) = &mut hud.messages.open {
+                    orders.append(&mut d.orders);
+                }
+                for c in orders {
+                    world.send(c.into());
+                }
+                world.pump();
+            }
+            if std::mem::take(&mut hud.messages.kilep) {
+                heard.push((Some(tick), SoundId::new(Table::Mes, 1)));
+            }
+        }
+    }
+    let path = crate::script::write_sounds(out, &heard)?;
+    println!("{}: {} sounds", path.display(), heard.len());
+    Ok(())
+}
+
 /// `--snapshot --backdrop`: the starmap as a running game's exit leaves it in `pic` (crate::backdrop): without its
 /// HUD (`SaveScreen(1)`), or with it (`SaveScreen(2)`, messages and options).
 pub fn starmap_picture(o: &crate::Options, l: &crate::Loaded, world: &crate::world::World<'_>, r: &mut Renderer, hud: &mut crate::ui::Hud, pic: crate::backdrop::Pic) -> TexId {
@@ -1504,7 +1604,9 @@ pub fn starmap_picture(o: &crate::Options, l: &crate::Loaded, world: &crate::wor
             panels.faders = f.clone();
         }
         hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
-        hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, false);
+        let mut models = crate::starmap_panels::PanelModels::new(r);
+        let globe = models.render_globe(r, &l.install, &world.game.state, &sel, &view.camera.matrix(), [o.size.0 as f32, o.size.1 as f32], o.ui_frames as f32);
+        hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, false, globe);
         hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
     }
     r.render_texture(&frame, o.size)
@@ -1554,6 +1656,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let mut hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
+    hud.set_one_language(&l.install, o.texts == Some(true));
     hud.info = crate::ui::InfoScreen::enter(world.ui.human);
     hud.info.chart = o.chart.min(9);
     hud.info.at_turn(o.info_turn);
@@ -1638,6 +1741,10 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if o.screen.as_deref() == Some("research") {
         return research_snapshot(o, out, &l, &world, &mut r, &mut hud);
     }
+    if let (Some("messages"), Some(path)) = (o.screen.as_deref(), &o.script) {
+        let script = crate::script::Script::load(path)?;
+        return messages_sequence(o, out, &script, &l, &mut world, &mut r, &mut hud);
+    }
     let screen = match o.screen.as_deref() {
         Some("info") => Some(crate::ui::Screen::Info),
         Some("messages") => Some(crate::ui::Screen::Messages),
@@ -1662,9 +1769,11 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
                 }
             }
         }
+        // The screen at rest: the list (`mesframe` 15), or the message open (30).
+        hud.messages.hold_open();
         hud.frame_tex = match screen {
             crate::ui::Screen::Info => models.render_info(&mut r, &l.install, &hud.info.frame_view(&world.ui), size),
-            _ => models.render_messages(&mut r, &l.install, if hud.messages.open.is_some() { 30 } else { 15 }, size),
+            _ => models.render_messages(&mut r, &l.install, hud.messages.frame, size),
         };
         // Black under the frame: the exe's `Copy3hatterkep(0x34)` picture (`SaveScreen(1)`, the screen before) is
         // black in the captures (re/screens/info.md §1.1).
@@ -1741,7 +1850,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         panels.faders = f.clone();
     }
     // The staged long info is drawn at zoom 599 at least: its box is up.
-    hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info);
+    let mut models = crate::starmap_panels::PanelModels::new(&mut r);
+    let globe = models.render_globe(&mut r, &l.install, &world.game.state, &sel, &view.camera.matrix(), [o.size.0 as f32, o.size.1 as f32], o.ui_frames as f32);
+    hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info, globe);
     // An info panel at rest: its selection frame morphed in (re/screens/starmap.md §19.4).
     if let Some(i) = &mut panels.info {
         i.advance(&world.game.state, &sel, t, view.camera.zoom, 0);
@@ -1749,7 +1860,6 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         i.turn = o.info_alap;
     }
     if o.panel.is_some() {
-        let mut models = crate::starmap_panels::PanelModels::new(&mut r);
         let size = [o.size.0 as f32, o.size.1 as f32];
         let tex = models.render(&mut r, &l.install, &l.tables, &panels, &world.game.state, &sel, &view.camera.matrix(), size);
         hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &l.tables, &sel, tex, size, t);

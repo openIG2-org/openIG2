@@ -250,11 +250,14 @@ pub fn draw_colony(f: &mut Frame, pics: &Pictures, font: &Font, white: TexId, v:
             pics.brush(f, v, &brushes[29], if flags & 0x20 != 0 { 2 } else { 1 }, None, full);
         }
     }
-    // `ColonyGfx2D_3`: the planet panel over the second 3D view of the build menu's building (a dark viewport,
-    // 18..173 × 36..167 [obs], with `buildshown` turning in it), and its name and costs.
+    // `GFX_Colony` (ELF 0x4da050): the four dark-blue `FadeScreen`s behind the planet panel's opening, then
+    // `ColonyGfx2D_3`: the panel over the second 3D view of the build menu's building (`buildshown` turning in it),
+    // and its name and costs.
     let own_panel = (c.own || c.landing_name.is_some()) && brushes.len() > 12;
     if own_panel {
-        f.push(white, Blend::Alpha, Instance::new(kind::SPRITE, v.px(95.5, 101.5), [77.5 * v.k, 65.5 * v.k], [0.02, 0.03, 0.06, 1.0]));
+        for r in [[34.0, 35.0, 120.0, 126.0], [16.0, 48.0, 18.0, 64.0], [154.0, 46.0, 24.0, 83.0], [154.0, 135.0, 44.0, 13.0]] {
+            crate::kit::fader::fade_screen(f, white, v, r, [0.0, 30.0, 60.0], 100.0);
+        }
         if let Some(t) = c.panel_model {
             crate::colony_ui::PanelBuilding::draw(f, v, t);
         }

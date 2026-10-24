@@ -121,6 +121,9 @@ pub struct Options {
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
     /// `LiveBackground`, live by default).
     pub background: Option<bool>,
+    /// `--texts classic|one`: the name tables in the exe's Hungarian or in the game's language (ADR 0017; else the
+    /// settings file's `OneLanguage`, one language by default; `--snapshot` classic, as the captures it is compared with).
+    pub texts: Option<bool>,
     /// `--backdrop` (with `--snapshot`): the overlay screens over the starmap's picture, as after a starmap exit
     /// (`run_screen.py --via-starmap`); without it they are over black, as the exe's bare screen jumps.
     pub backdrop: bool,
@@ -240,6 +243,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         window: (1920, 1080),
         letterbox: false,
         background: None,
+        texts: None,
         backdrop: false,
         scale: 1.0,
         hover: None,
@@ -331,6 +335,13 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     "live" => true,
                     "classic" => false,
                     v => return Err(format!("--background: {v} (classic or live)")),
+                })
+            }
+            "--texts" => {
+                o.texts = Some(match val()?.as_str() {
+                    "one" => true,
+                    "classic" => false,
+                    v => return Err(format!("--texts: {v} (classic or one)")),
                 })
             }
             "--paused" => o.paused = true,

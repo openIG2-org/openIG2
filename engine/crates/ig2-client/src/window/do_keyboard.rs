@@ -74,6 +74,12 @@ impl App {
             || self.trade.as_ref().is_some_and(|t| t.changing())
             || self.spy.as_ref().is_some_and(|s| s.screen.closing)
             || (self.overlay == Some(Screen::Diplomacy) && self.diplomacy.as_ref().is_some_and(|d| d.screen.closing))
+            || (self.overlay == Some(Screen::Messages) && self.hud.as_ref().is_some_and(|h| h.messages.closing))
+    }
+
+    /// `Messages_Kilep` towards another screen: true = gone now (its closing has run out, or there is none).
+    fn leave_messages_screen(&mut self) -> bool {
+        self.overlay != Some(Screen::Messages) || self.hud.as_mut().is_none_or(|h| h.messages.leave())
     }
 
     fn debugx(&self) -> bool {
@@ -136,6 +142,10 @@ impl App {
     pub(super) fn screen_change_step(&mut self) {
         let Some(k) = self.kep_kell else { return };
         if k.to == 1 {
+            // From the messages screen `Messages_Kilep`'s closing first.
+            if !self.leave_messages_screen() {
+                return;
+            }
             self.kep_kell = None;
             self.open_help();
             return;
@@ -186,7 +196,13 @@ impl App {
                     self.trade = None;
                     self.overlay = None;
                 }
-                9 | 10 => self.overlay = None,
+                9 => self.overlay = None,
+                10 => {
+                    if !self.leave_messages_screen() {
+                        return;
+                    }
+                    self.overlay = None;
+                }
                 3 if k.to == 2 => self.toggle_colony(),
                 2 | 3 => break,
                 // The space battle and the main menu aren't left by a key.

@@ -164,6 +164,7 @@ fn context(s: &Value, rel: &str, after: &Value) -> StarmapContext {
         // Older traces don't record the SetIdoLelassit inputs (and never slow down).
         speed_locked: s.get("speedLocked").and_then(Value::as_i64).unwrap_or(0) != 0,
         program_speed: s.get("programSpeed").and_then(Value::as_i64).unwrap_or(0) as i32,
+        slowed: false,
         human_empire: s["en"].as_i64().unwrap() as u8,
         human_controlled: std::array::from_fn(|e| ki[e] == 1),
         alive: std::array::from_fn(|e| alive[e] != 0),

@@ -138,6 +138,9 @@ impl Game<'_> {
             Effect::AiDisabled(off) => self.state.mem.set_i32(va::AI_OFF, *off as i32),
             // `SEND MESSAGE n`: `NewMessage(n, 0)`.
             Effect::SendMessage(n) => self.new_message(*n, 0),
+            // `IRRITATEME` (exe 0x60c570): `DiplomaciaTalkAbout(6, EN, 4, −1)`, empire 6's insult waits in EN's contact
+            // list (the screen doesn't open). Unused by main.tut.
+            Effect::Irritate => self.with_diplomacy(|d, w| d.talk_about(w, 6, en, crate::diplomacy::talk::INSULT, -1)),
             _ => return false,
         }
         true

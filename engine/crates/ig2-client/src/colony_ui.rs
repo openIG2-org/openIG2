@@ -70,6 +70,11 @@ fn info_setting(id: u32) -> Option<i32> {
     })
 }
 
+/// The buildings as the 3D scene holds them, one per slot.
+fn scene_buildings(s: &ColonySnap) -> Vec<(usize, u8)> {
+    s.buildings.iter().map(|b| (b.slot, b.kind)).collect()
+}
+
 fn colony(idx: i32) -> SoundId {
     SoundId::new(Table::Colony, idx as u16)
 }
@@ -241,6 +246,15 @@ fn format_s(f: &[u8], arg: &[u8]) -> Vec<u8> {
     }
 }
 
+/// `GetSelectedMeshPointer`'s pick (exe 0x47bc20, spec §11.10) with `AktEpuletTipus` (a change puts it up again):
+/// `ColonyInfoMod` 0 the planet's globe, 1 the first selected unit (its slot), 2 the build menu's kind (`buildshown`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KisInfo {
+    Globe(usize),
+    Unit(usize, usize),
+    Building(usize),
+}
+
 /// The colony screen's input state.
 pub struct ColonyUi {
     /// `AktEpulet`: the selected building slot (0 = none).
@@ -284,6 +298,8 @@ pub struct ColonyUi {
     glide: Option<([f32; 2], i32)>,
     /// `buildshown`'s spin (frames turned).
     spin: f32,
+    /// `HandleKisInfoObject`'s model in the info box and the UI frames it has turned since it was put up.
+    kis: (KisInfo, f32),
     /// The ground war's input (spec §11).
     pub war: crate::colony_war::WarUi,
     /// The camera keys and the edge scroll (spec §11.9).
@@ -298,6 +314,11 @@ pub struct ColonyUi {
     volt_harc: bool,
     /// `UpdateRain`'s frames due, in hundredths (60 a second: see [`ColonyUi::thunder`]).
     rain_frames: u32,
+    /// The thunder struck since the last drawn frame: `villamid` lights the next one ([`crate::colony::Overlay::flash`]).
+    pub flash: bool,
+    /// The shown planet's buildings (slot, kind) as the 3D scene last held them: `Build3dBuilding` and
+    /// `Remove3dBuilding` sound for the differences ([`ColonyUi::building_sounds`]).
+    scene_buildings: Vec<(usize, u8)>,
     /// `ColonyPlanetInfoMod` (spec §12): the planet's long info with its select menus (the starmap's code on the
     /// colony's planet), `None` while off.
     pub info: Option<crate::starmap_menus::Menus>,
@@ -328,6 +349,7 @@ impl Default for ColonyUi {
             counter: 0.0,
             glide: None,
             spin: 0.0,
+            kis: (KisInfo::Globe(0), 0.0),
             war: Default::default(),
             cam_keys: Default::default(),
             sounds: Vec::new(),
@@ -335,6 +357,8 @@ impl Default for ColonyUi {
             rand: Rand(1),
             volt_harc: false,
             rain_frames: 0,
+            flash: false,
+            scene_buildings: Vec::new(),
             info: None,
         }
     }
@@ -350,7 +374,30 @@ impl ColonyUi {
             ui.selected = s.buildings.first().map_or(0, |b| b.slot);
         }
         ui.enter_sounds(s);
+        // `Init3dColony` builds the meshes in a loop of its own: no `Cracking1` at the entry.
+        ui.scene_buildings = scene_buildings(s);
         ui
+    }
+
+    /// `Build3dBuilding` (exe 0x45f640, ELF 0x4ca0b0) and `Remove3dBuilding` (exe 0x497760), which `EpuletNew` and
+    /// `EpuletDelete` call for the shown planet (`AktPlanet`) with the colony screen up (`AktKep == 3`): `Colony_Hangok[3]`
+    /// (`Cracking1`) for a building made, whoever's and whatever made it (an order, the queue, the AI, a story), at
+    /// its construction start; `Colony_Hangok[4]` (`Cracking2`) for one gone (demolished, destroyed in the ground war,
+    /// sabotaged, bombed). Once a frame, after the frame's ticks; off the screen the list follows silently.
+    /// `EpuletNew`'s `!Atlepes` gate needs no state of its own: `IG2_gameUpdate` (exe 0x4e0440) sets `Atlepes` with
+    /// the new `AktKep`/`AktPlanet` after the frame's sim and clears it (0x4e0c07) before `Colony_Belep` and the sim of
+    /// the next frame, so no sim code sees it in single player; a planet change on the screen is a new `enter`.
+    pub fn building_sounds(&mut self, s: &ColonySnap, shown: bool) {
+        let now = scene_buildings(s);
+        if shown {
+            if now.iter().any(|b| !self.scene_buildings.contains(b)) {
+                self.sounds.push(colony(3));
+            }
+            if self.scene_buildings.iter().any(|b| !now.contains(b)) {
+                self.sounds.push(colony(4));
+            }
+        }
+        self.scene_buildings = now;
     }
 
 
@@ -362,8 +409,8 @@ impl ColonyUi {
     }
 
     /// `UpdateRain` (ELF 0x4bffb0), one UI tick of it: with `KELLVILLAM` (a rainy field, `InitWeather`;
-    /// [`OptionsKellIdojaras` taken as on]) each drawn frame `random(400) < 1` → `Colony_Villamok[random(4)]` (and
-    /// the light flash, not drawn). The exe draws once a rendered frame; the client draws 60 times a second, the rate
+    /// [`OptionsKellIdojaras` taken as on]) each drawn frame `random(400) < 1` → `Colony_Villamok[random(4)]` and
+    /// `villamid` 0x806060 for that frame (exe 0x4a6d30; else black). The exe draws once a rendered frame; the client draws 60 times a second, the rate
     /// of a 60 Hz display (re/deviations.md).
     fn thunder(&mut self, weather: i32) {
         if weather != 2 {
@@ -375,6 +422,7 @@ impl ColonyUi {
             if self.rand.below(400) < 1 {
                 let r = self.rand.below(4);
                 self.sounds.push(SoundId::new(Table::Villam, r as u16));
+                self.flash = true;
             }
         }
     }
@@ -504,6 +552,17 @@ impl ColonyUi {
             self.selected = 0;
             self.drop_build();
         }
+    }
+
+    /// `KURVAANYAD` (`Colony_BELEP_ABBA_A_KIBASZOTT_PLANETINFOBA`, re/rules/tutorial.md §3 5): `ColonyPlanetInfoMod = 1;
+    /// AktEpulet = 0`, the build cursor dropped; on, not toggled.
+    pub fn planet_info(&mut self, c: &Ctx) -> Outcome {
+        if self.info.is_none() {
+            self.info = Some(crate::starmap_menus::Menus::colony_info(c.snap.planet));
+        }
+        self.selected = 0;
+        self.drop_build();
+        Outcome::default()
     }
 
     /// The info mode's press (the hot-spots' one-shot `AktIkon2`): a button sends its setting with the click, a menu
@@ -922,10 +981,7 @@ impl ColonyUi {
         for e in events {
             match *e {
                 ColonyOrderEvent::Built { empire, planet: p, slot } if empire == human => {
-                    // `Build3dBuilding` (exe 0x49c780, from `EpuletNew` on the shown planet): `Cracking1`.
-                    if p == planet {
-                        self.sounds.push(colony(3));
-                    }
+                    // Its `Cracking1`: [`ColonyUi::building_sounds`].
                     self.pending = (self.pending - 1).max(0);
                     if p == planet && self.can_modify && slot > 0 {
                         self.selected = slot;
@@ -936,8 +992,7 @@ impl ColonyUi {
                     self.drop_build();
                 }
                 ColonyOrderEvent::Demolished { planet: p, .. } if p == planet => {
-                    // `Remove3dBuilding` (exe 0x497760, from `EpuletDelete`): `Cracking2`.
-                    self.sounds.push(colony(4));
+                    // `EpuletDelete`'s `AktEpulet = 0`; its `Cracking2`: [`ColonyUi::building_sounds`].
                     self.selected = 0;
                 }
                 _ => {}
@@ -980,6 +1035,29 @@ impl ColonyUi {
             cam.y += (t[1] - cam.y) / 2.0;
             self.glide = (n > 1).then_some((t, n - 1));
         }
+        self.kis_frame();
+    }
+
+    /// `HandleKisInfoObject` puts the info box's model up again (turn 0) when it or `AktEpuletTipus` changes;
+    /// `Frissit2_Colony` turns it a frame.
+    fn kis_frame(&mut self) {
+        let kis = self.kis_key();
+        self.kis = if kis == self.kis.0 { (kis, self.kis.1 + 1.0) } else { (kis, 0.0) };
+    }
+
+    /// `FRISSIT_Colony2`'s `ColonyInfoMod` (units selected first, then a building, else 0) as the model it shows.
+    fn kis_key(&self) -> KisInfo {
+        match (self.war.selected.first(), self.selected) {
+            (Some(&u), _) => KisInfo::Unit(u, self.kind),
+            (None, 0) => KisInfo::Globe(self.kind),
+            _ => KisInfo::Building(self.kind),
+        }
+    }
+
+    /// The info box's model ([`KisInfo`]) and the UI frames it has turned.
+    pub fn kis_info(&self) -> (KisInfo, f32) {
+        let k = self.kis_key();
+        (k, if k == self.kis.0 { self.kis.1 } else { 0.0 })
     }
 
     /// The 3D pass's additions.
@@ -993,6 +1071,7 @@ impl ColonyUi {
             // `ColonyGfx2D_1`: the landing zone while the planet isn't EN's and a unit of any side waits on board
             // (`CheckPlacing(−1)` false; spec §11.7).
             landing: s.owner as i32 != en && !s.to_land.is_empty(),
+            flash: self.flash,
         }
     }
 
@@ -1003,7 +1082,7 @@ impl ColonyUi {
 
     /// `ColonyGfx2D_1`/`_4`'s pick list and `ColonyGfx2D_3`/`_4`'s windows (faders, then texts), at pointer `p`.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&self, f: &mut Frame, c: &Ctx, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], hu17: &ig2_formats::strings::UiStrings, p: [f32; 2], now_ms: u32) {
+    pub fn draw(&self, f: &mut Frame, c: &Ctx, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], txt17: &crate::ui::UiTexts, p: [f32; 2], now_ms: u32) {
         let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
         if let Some(pk) = self.picker.filter(|pk| now_ms.wrapping_sub(pk.pressed_ms) > 300) {
             let offered = c.offered();
@@ -1011,7 +1090,7 @@ impl ColonyUi {
             crate::kit::fader::fader(f, white, v, [pk.at[0] - 6.0, pk.at[1] - 2.0, (4 * 0x78 + 3) as f32, (rows * 0xd + 0x12) as f32], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
             // `Epulet_Terulet_Nev[1..=4]` (txt17 §3, 0x22 + k, the Hungarian file's `StringReadAll`).
             for k in 1..=4u16 {
-                let name = crate::ui::hu_bytes(hu17.get(0x11, 3, 0x22 + k));
+                let name = txt17.get(0x11, 3, 0x22 + k);
                 font.text(f, v, &name, pk.at[0] + ((k - 1) * 0x78 + 0x36) as f32, pk.at[1] + 3.0, 0x12, 2, Align::Centre, col(6), None);
             }
             let hub = c.has_hub();
@@ -1126,21 +1205,27 @@ fn next_planet(c: &Ctx, forward: bool) -> Option<usize> {
 /// The planet panel's turning building (`buildshown`, `ShowColony` + `Frissit2_Colony`): the build menu's kind's
 /// preview model (`Building[k − 1] + 0x28`, `AddToScene(…, 1.5 · preview scale)`), stood up and leant back 0.3,
 /// turning 0.012 a frame about `(0, cos −0.3, sin −0.3)`, 30000 in front of a camera of its own centred on
-/// (95, 101) and clipped to 18..173 × 36..167 (the second `Update3D`).
+/// [`PANEL_CENTRE`] and clipped to 18..173 × 36..167 (the second `Update3D`).
 #[derive(Default)]
 pub struct PanelBuilding {
     models: HashMap<usize, Option<(Model, Vec<TexId>)>>,
     textures: HashMap<String, TexId>,
     white: Option<TexId>,
     target: Option<Target>,
+    /// `HandleKisInfoObject`'s copy in the info box ([`PanelBuilding::render_info`]).
+    info_target: Option<Target>,
 }
 
-/// The panel's viewport (`HatarX1..Y2` = 0x12..0xad × 0x24..0xa7) and its centre (`xcenter`, `ycenter`).
+/// The panel's viewport (`HatarX1..Y2` = 0x12..0xad × 0x24..0xa7, `ShowColony`'s before its second `Update3D`).
 pub const PANEL_VIEW: [f32; 4] = [18.0, 36.0, 174.0, 168.0];
-const PANEL_CENTRE: [f32; 2] = [95.0, 101.0];
+/// The pass's projection centre (`xcenter`, `ycenter`): `ShowColony` sets (95, 101) before the second `Update3D`, but
+/// the remaster's `ColonyGfx2D_2` (exe 0x461900, its last lines; not in the ELF) leaves `HatarX1..Y2` 0x1b..0xa9 ×
+/// 0x28..0x88 and the centre (98, 88), which the pass draws with [obs: `probes/colony_pass2.js` reads (98, 88) in
+/// every lighting call of the pass, at 800 × 600 and 1280 × 720; the info box's model and globe land there].
+const PANEL_CENTRE: [f32; 2] = [98.0, 88.0];
 
 /// `ShowColony`'s second `Update3D` (the panel's pass): camera space → clip over the virtual 640 × 480 with the
-/// centre at (95, 101): `vx = 600·x/w + 95`, `vy = 600·y/w + 101`; depth over `clip`; lit by `light5x`.
+/// centre at [`PANEL_CENTRE`]: `vx = 600·x/w + 98`, `vy = 600·y/w + 88`; depth over `clip`; lit by `light5x`.
 pub fn panel_pass(size: [f32; 2], clip: (f32, f32), draws: Vec<MeshDraw>, dynamic: Vec<MeshVertex>) -> (Frame, (u32, u32)) {
     let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
     let (cx, cy) = (PANEL_CENTRE[0], PANEL_CENTRE[1]);
@@ -1165,6 +1250,7 @@ pub fn panel_pass(size: [f32; 2], clip: (f32, f32), draws: Vec<MeshDraw>, dynami
             sun: [1.0, 1.0, 1.0, 0.0],
             fog: [0.0; 4],
             fog_range: [1e9, 2e9, 0.0, 1e9],
+            flash: [[0.0; 4]; 2],
         },
         draws,
         dynamic,
@@ -1189,6 +1275,45 @@ impl PanelBuilding {
     /// at scale 2.0, the first sub-mesh's texture `tankok/<hull><colour>.bmp`; spec §11.7).
     #[allow(clippy::too_many_arguments)]
     pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>, spin: f32, size: [f32; 2]) -> Option<TexId> {
+        let (model, texs) = self.model(r, install, rules, kind, unit)?;
+        // `local_e0 = Building+0x54` (1.5 at most below `OptionsBuildingRes` 2, the remaster runs the highest), ×3/2;
+        // a unit 2.0.
+        let s = if unit.is_some() { 2.0 } else { rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 3.0 / 2.0 };
+        let tilt = scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], -0.3), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
+        let turn = scene::axis_matrix([0.0, (-0.3f32).cos(), (-0.3f32).sin()], 0.012 * spin);
+        let m: M3 = scene::mul(&scene::mul(&turn, &tilt), &Placement::add_to_scene(model.origin, s).matrix).map(|x| x * 1024.0);
+        let (draws, dynamic) = bake_panel(&model, &texs, &m, [0.0, 0.0, -30000.0]);
+        let (f, px) = panel_pass(size, (20000.0, 40000.0), draws, dynamic);
+        let target = match &mut self.target {
+            Some(t) if t.size == px => t,
+            _ => self.target.insert(r.target(px)),
+        };
+        r.draw_into(&f, target, px, 0.0);
+        Some(target.tex)
+    }
+
+    /// `HandleKisInfoObject` with `ColonyInfoMod` 2 (spec §11.10): a clone of `buildshown` (kind `kind`'s preview)
+    /// at `AddToScene` scale `Building+0x54 · 0.015` (the 1.5 cap only below `OptionsBuildingRes` 2), stood up by
+    /// `RotateObj(π/2, 0, 0)`, camera-fixed at (−130, 657, −1100) and turned −0.01 a UI frame about (0, 1, 0) for
+    /// `turn` frames; into a texture of the window's size of which the caller draws the info box's corner.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_info(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, turn: f32, size: [f32; 2]) -> Option<TexId> {
+        let (model, texs) = self.model(r, install, rules, kind, None)?;
+        let s = rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 0.015;
+        let rot = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], -0.01 * turn), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
+        let m: M3 = scene::mul(&rot, &Placement::add_to_scene(model.origin, s).matrix).map(|x| x * 1024.0);
+        let (draws, dynamic) = bake_panel(&model, &texs, &m, crate::colony::KIS_INFO_AT);
+        let (f, px) = panel_pass(size, (500.0, 2000.0), draws, dynamic);
+        let target = match &mut self.info_target {
+            Some(t) if t.size == px => t,
+            _ => self.info_target.insert(r.target(px)),
+        };
+        r.draw_into(&f, target, px, 0.0);
+        Some(target.tex)
+    }
+
+    /// Kind `kind`'s preview model (or the landing unit's hull) with its textures, loaded once.
+    fn model(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>) -> Option<(Model, Vec<TexId>)> {
         // Units are kept under keys past the building kinds.
         let key = unit.map_or(kind, |(h, c)| 1000 + h * 16 + c as usize);
         if let (Some((hull, colour)), false) = (unit, self.models.contains_key(&key)) {
@@ -1217,35 +1342,7 @@ impl PanelBuilding {
             });
             self.models.insert(kind, loaded);
         }
-        let (model, texs) = self.models.get(&key)?.as_ref()?.clone();
-        // `local_e0 = Building+0x54` (1.5 at most below `OptionsBuildingRes` 2, the remaster runs the highest), ×3/2;
-        // a unit 2.0.
-        let s = if unit.is_some() { 2.0 } else { rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 3.0 / 2.0 };
-        let tilt = scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], -0.3), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
-        let turn = scene::axis_matrix([0.0, (-0.3f32).cos(), (-0.3f32).sin()], 0.012 * spin);
-        let m: M3 = scene::mul(&scene::mul(&turn, &tilt), &Placement::add_to_scene(model.origin, s).matrix).map(|x| x * 1024.0);
-        let at: V3 = [0.0, 0.0, -30000.0];
-        let mut dynamic = Vec::new();
-        let mut draws = Vec::new();
-        for (pi, p) in model.parts.iter().enumerate() {
-            let start = dynamic.len() as u32;
-            let a = match p.look {
-                scene::Look::Glass(g) => g,
-                _ => 1.0,
-            };
-            for v in &p.verts {
-                let q = scene::apply(&m, v.pos);
-                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: scene::normalise(scene::apply(&m, v.normal)), uv: v.uv, color: [1.0, 1.0, 1.0, a] });
-            }
-            draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
-        }
-        let (f, px) = panel_pass(size, (20000.0, 40000.0), draws, dynamic);
-        let target = match &mut self.target {
-            Some(t) if t.size == px => t,
-            _ => self.target.insert(r.target(px)),
-        };
-        r.draw_into(&f, target, px, 0.0);
-        Some(target.tex)
+        self.models.get(&key)?.clone()
     }
 
     /// Draw the panel's viewport of the rendered texture.
@@ -1259,10 +1356,45 @@ impl PanelBuilding {
     }
 }
 
+/// `HandleKisInfoObject` (exe 0x47d000, spec §11.10): the info box's turning model for `ui`'s [`KisInfo`], rendered
+/// into a texture of the window's size (the caller draws the box's corner of it).
+#[allow(clippy::too_many_arguments)]
+pub fn render_kis_info(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, ui: &ColonyUi, scene: &mut crate::colony::ColonyScene, panel: &mut PanelBuilding, s: &ColonySnap, en: i32, size: [f32; 2]) -> Option<TexId> {
+    let (kis, turn) = ui.kis_info();
+    match kis {
+        KisInfo::Unit(..) => {
+            let w = crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false };
+            let (u, _) = ui.war.info_model(&w)?;
+            scene.render_info_model(r, install, &rules.unit_models, u, turn, size)
+        }
+        KisInfo::Building(kind) => panel.render_info(r, install, rules, kind, turn, size),
+        KisInfo::Globe(_) => scene.render_info_globe(r, install, s.surface, turn, size),
+    }
+}
+
+/// A panel model's parts under `m` (×1024) at camera point `at`, its glass parts translucent.
+fn bake_panel(model: &Model, texs: &[TexId], m: &M3, at: V3) -> (Vec<MeshDraw>, Vec<MeshVertex>) {
+    let mut dynamic = Vec::new();
+    let mut draws = Vec::new();
+    for (pi, p) in model.parts.iter().enumerate() {
+        let start = dynamic.len() as u32;
+        let a = match p.look {
+            scene::Look::Glass(g) => g,
+            _ => 1.0,
+        };
+        for v in &p.verts {
+            let q = scene::apply(m, v.pos);
+            dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: scene::normalise(scene::apply(m, v.normal)), uv: v.uv, color: [1.0, 1.0, 1.0, a] });
+        }
+        draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+    }
+    (draws, dynamic)
+}
+
 impl ColonyUi {
     /// `ColonyKisInfo(50, 424)` (ELF 0x4edb40) with `ColonyInfoMod` 2 (`FRISSIT_Colony2`: a building selected): the
     /// building's name, its damage bar, working state and product; `false` when nothing is selected (the planet's
-    /// short info then). The small turning copy of the model beside it (`HandleKisInfoObject`) is not drawn.
+    /// short info then). The small turning copy of the model beside it is [`PanelBuilding::render_info`].
     #[allow(clippy::too_many_arguments)]
     pub fn draw_building_info(&self, f: &mut Frame, c: &Ctx, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]]) -> bool {
         let Some(b) = c.building(self.selected) else { return false };
@@ -1360,6 +1492,38 @@ pub fn cursor_cell_under(view: &View, gm: &GroundMap, p: [f32; 2]) -> Option<(i3
 mod tests {
     use super::*;
 
+    /// `GetSelectedMeshPointer`'s pick (units first, then a building, else the globe) and its turn: a new pick, or
+    /// a new `AktEpuletTipus`, starts the turn again (`HandleKisInfoObject`, spec §11.10).
+    #[test]
+    fn info_box_model_follows_the_selection() {
+        let mut ui = ColonyUi { kind: 1, ..ColonyUi::default() };
+        ui.kis_frame();
+        ui.kis_frame();
+        assert_eq!(ui.kis_info(), (KisInfo::Globe(1), 1.0));
+        ui.selected = 4;
+        assert_eq!(ui.kis_info(), (KisInfo::Building(1), 0.0));
+        ui.kis_frame();
+        ui.kis_frame();
+        assert_eq!(ui.kis_info(), (KisInfo::Building(1), 1.0));
+        ui.kind = 7;
+        assert_eq!(ui.kis_info(), (KisInfo::Building(7), 0.0));
+        ui.war.selected.insert(12);
+        assert_eq!(ui.kis_info(), (KisInfo::Unit(12, 7), 0.0));
+    }
+
+    /// The panel pass's projection (`kirak2`, focal 600) about the centre the remaster's `ColonyGfx2D_2` leaves,
+    /// (98, 88) [obs: `probes/colony_pass2.js` on colony:42]: the info box's model point (−130, 657, −1100) lands at
+    /// virtual (27.1, 446.4) [obs: the exe's globe centre ≈ (29, 448), the main building's ≈ (27, 449)].
+    #[test]
+    fn panel_pass_centre_is_the_remasters() {
+        let (f, _) = panel_pass([640.0, 480.0], (500.0, 2000.0), Vec::new(), Vec::new());
+        let v = f.scene.unwrap().uniforms.view;
+        let p = crate::colony::KIS_INFO_AT;
+        let clip: [f32; 4] = std::array::from_fn(|r| v[0][r] * p[0] + v[1][r] * p[1] + v[2][r] * p[2] + v[3][r]);
+        let (x, y) = ((clip[0] / clip[3] + 1.0) * 320.0, (1.0 - clip[1] / clip[3]) * 240.0);
+        assert!((x - (98.0 - 130.0 * 600.0 / 1100.0)).abs() < 0.01 && (y - (88.0 + 657.0 * 600.0 / 1100.0)).abs() < 0.01, "({x}, {y})");
+    }
+
     /// Observed (sound-id trace, quick-1.sav planet 42, surface 8, 2026-10-22): `Colony_Belep` played
     /// `Colony_Hangok[54]` (Rock-windatmos2) at the script's first frame, one of the type's three.
     #[test]
@@ -1373,6 +1537,39 @@ mod tests {
         assert!(e.len() == 2 && (12..=13).contains(&e[0].idx) && (37..=39).contains(&e[1].idx));
         assert_eq!(enter_ambient(&mut r, 7, 0), vec![colony(43)]);
         assert!(enter_ambient(&mut r, 0, 0).is_empty());
+    }
+
+    /// `Build3dBuilding`/`Remove3dBuilding` (exe 0x45f640, 0x497760): a building made on the shown planet sounds
+    /// `Cracking1` whoever's, one gone `Cracking2`; the entry and the screen hidden are silent.
+    #[test]
+    fn buildings_made_or_gone_sound_whoevers() {
+        let b = |slot, kind| crate::colony::BuildingView { slot, kind, x: 0.0, y: 0.0, work_left: 100, damage: 0, flags: 0, yield_pct: 100, efficiency: 256 };
+        let mut s = crate::colony_war::tests::field();
+        s.buildings = vec![b(1, 5)];
+        let mut ui = ColonyUi { scene_buildings: scene_buildings(&s), ..ColonyUi::default() };
+        ui.building_sounds(&s, true);
+        assert!(ui.sounds.is_empty());
+        // Planet owner 2's queue starts a building: the human (EN 1) hears it.
+        s.buildings.push(b(2, 9));
+        ui.building_sounds(&s, true);
+        assert_eq!(std::mem::take(&mut ui.sounds), vec![colony(3)]);
+        // Destroyed in the war while another screen covers the colony: silent, and not again afterwards.
+        s.buildings.remove(0);
+        ui.building_sounds(&s, false);
+        ui.building_sounds(&s, true);
+        assert!(ui.sounds.is_empty());
+        s.buildings.clear();
+        ui.building_sounds(&s, true);
+        assert_eq!(std::mem::take(&mut ui.sounds), vec![colony(4)]);
+        // Another planet's colony screen (`AktPlanetKell`, `Colony_Kilep` + `Colony_Belep`): `Init3dColony` builds its
+        // buildings silently, the next one made there sounds (`Atlepes` already clear).
+        s.buildings = vec![b(4, 2), b(7, 3)];
+        let mut ui = ColonyUi { scene_buildings: scene_buildings(&s), ..ColonyUi::default() };
+        ui.building_sounds(&s, true);
+        assert!(ui.sounds.is_empty());
+        s.buildings.push(b(8, 5));
+        ui.building_sounds(&s, true);
+        assert_eq!(ui.sounds, vec![colony(3)]);
     }
 
     /// The ambients' draws (exe 0x477dc0): about 4 checks in 1000 sound, within the type's groups; type 4 never.

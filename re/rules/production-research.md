@@ -89,7 +89,7 @@ v = min(v, limit − (f32)progress);   v = max(v, 1.0)
 
 The slow-down (exe 0x541270) acts **at once**: SP, unless the speed is locked (`nemlehetidotallitani`
 0xBAD0D4): `IdoSpeed = IdoSpeedSzorzo = 1` (and the battle multiplier); MP: back to `ProgramSebesseg`
-(0xBAE54C) 1/2/3 → ×4/×8/×16 (4: unchanged). Empires after the human in this loop, and the rest of the
+(0xBAE54C) 1/2/3 → ×4/×8/×16 (4: unchanged). It also writes `IdoSpeed` 0xBAE258 (the lit speed button; SP: = `IdoSpeedSzorzo` = battle multiplier = 1; MP: `ProgramSebesseg` 1/2/3 → `IdoSpeed` 1/2/3, battle multiplier 1/2/2; any other value → only `IdoSpeed = ProgramSebesseg`); the argument is ignored (ELF 0x623740 = `SetIdoSpeed(1, false)`); callers `FRISSIT_Research` 0x51e1b2, `SpaceWarFrissit` 0x56e15d, radar pass 0x595570, `NewMessage` 0x508fe5 (its first statement). Empires after the human in this loop, and the rest of the
 tick (`FRISSIT_Starmap` movement and production), run at the new multiplier (found by the fuzzed trace).
 
 ### 2.1 `TalalmanyKifejlesztve(e, t)`

@@ -191,12 +191,15 @@ pub struct Entry {
     pub clear: bool,
 }
 
-/// The screen's hot-spot ids (`Mouse_Szoveg_Set`; the tutorial's shifted ids aren't used).
+/// The screen's hot-spot ids (`Mouse_Szoveg_Set`). Under the tutorial the exe numbers the tabs, the panel and the
+/// back spot one higher (`10 + s` …, `s` = 1); only their order matters here, so the ids stay.
 mod id {
     pub const LOAD: u32 = 1;
     pub const SAVE: u32 = 2;
     pub const QUIT: u32 = 3;
     pub const SLOTS: u32 = 4;
+    /// "Continue tutorial" (`Options_MouseInit2` sets it only under the tutorial).
+    pub const CONTINUE: u32 = 9;
     pub const SLIDER: u32 = 5;
     pub const SOUND: u32 = 10;
     pub const GAME: u32 = 11;
@@ -224,9 +227,20 @@ pub struct OptionsScreen {
     pub slots: Vec<Option<Slot>>,
     pub rows: Vec<Row>,
     pub load_only: bool,
-    /// `OptionsHarcFolyik`: a battle runs (no saving).
+    /// `OptionsHarcFolyik` (exe 0xbae24f): a battle runs (no saving without `DEBUGX`). Set by `SpaceWar_Kilep`
+    /// towards Options (exe 0x562c0f) and `Colony_Kilep` with a ground war on the planet (exe 0x466631).
     pub battle: bool,
+    /// `DEBUGX` (exe 0xbae587): saving in a battle allowed.
+    pub debug: bool,
+    /// `MultiPlayerMode` (exe 0xbae2c0): no load; the exe has no save either.
     pub multiplayer: bool,
+    /// Ours: the multiplayer host saves the session from here (ADR 0007's MP saves; the exe greys Save in MP).
+    pub mp_save: bool,
+    /// Opened from the space battle (`OptionsElottiKep` 0xb): `Options_EnterPressed` (exe 0x51a090) goes back only
+    /// when `OptionsElottiKep < 0xb`, so a save there leaves the screen up (its `== 0xb` arm is dead).
+    pub from_battle: bool,
+    /// The tutorial layout: `(TutorialActive || TutorialPaused) && !SelfPlaying` (re/screens/options.md §4).
+    pub tutorial: bool,
     /// `OptionsAreYouSureToQuitMode`.
     pub sure: bool,
     pub entry: Option<Entry>,
@@ -295,7 +309,11 @@ impl OptionsScreen {
             rows,
             load_only,
             battle: false,
+            debug: false,
             multiplayer,
+            mp_save: false,
+            from_battle: false,
+            tutorial: false,
             sure: false,
             entry: None,
             fade: 0.0,
@@ -347,11 +365,25 @@ impl OptionsScreen {
         self.slots.get(n).is_some_and(Option::is_some)
     }
 
+    /// `OptionsHarcFolyik && !DEBUGX`: Save off (`Options_MouseInit2` 0x51a8fd, the button pass 0x51790b, the label
+    /// 0x518da7).
+    pub fn battle_lock(&self) -> bool {
+        self.battle && !self.debug
+    }
+
+    /// `MultiPlayerMode` turns Save off (exe 0x51a932, 0x51790b, 0x518da7), but for our host's MP save.
+    fn mp_lock(&self) -> bool {
+        self.multiplayer && !self.mp_save
+    }
+
     /// `Options_MouseInit2` (exe 0x51a8a0): whether hot-spot `id` is on.
     fn spot_on(&self, id: u32) -> bool {
         match id {
+            // Under the tutorial: no load, save or slots (`Off(2)`, id 1 forced off); "continue" on.
+            id::LOAD | id::SAVE | id::SLOTS if self.tutorial => false,
+            id::CONTINUE => self.tutorial,
             id::LOAD => self.filled(self.slot) && !self.sure && !self.multiplayer,
-            id::SAVE => (!self.load_only && !self.battle && !self.multiplayer && self.slot < 23) || self.sure,
+            id::SAVE => (!self.load_only && !self.battle_lock() && !self.mp_lock() && self.slot < 23) || self.sure,
             id::SLOTS => self.entry.is_none(),
             5..=7 => self.sliders[(id - 5) as usize].visible,
             _ => true,
@@ -363,7 +395,9 @@ impl OptionsScreen {
         Some(match id {
             id::LOAD => [0x16e, 0x3e, 0x4e, 0x25],
             id::SAVE => [0x1c4, 0x3e, 0x4e, 0x25],
+            id::QUIT if self.tutorial => [441, 62, 178, 37],
             id::QUIT => [0x21d, 0x3e, 0x4e, 0x25],
+            id::CONTINUE => [441, 102, 178, 37],
             id::SLOTS => [0x166, 0x71, 0x10d, 0x150],
             5..=7 => {
                 let s = &self.sliders[(id - 5) as usize];
@@ -387,6 +421,7 @@ impl OptionsScreen {
     /// The tooltip of hot-spot `id` (`GetString(13, 1, n)`; the sliders show their title; the panel none).
     pub fn tip_text(&self, texts: &UiTexts, id: u32) -> Vec<u8> {
         match id {
+            id::QUIT | id::CONTINUE if self.tutorial => Vec::new(),
             id::LOAD => texts.get(13, 1, 1),
             id::SAVE => texts.get(13, 1, 2),
             id::QUIT if self.load_only => texts.get(13, 1, 13),
@@ -427,6 +462,11 @@ impl OptionsScreen {
         if let Some((v, _, _)) = &mut self.leaving {
             *v = (*v - 2).max(0);
         }
+        // `Options_Main` tests the hover id 9 every call (exe 0x51a7e3): "continue tutorial" goes also when the screen
+        // opens under a still pointer.
+        if self.tutorial && self.leaving.is_none() && !self.sure && self.spot_at(self.at) == id::CONTINUE {
+            self.leave(Act::Back);
+        }
         self.faders.tick();
         self.lasers.tick();
         self.design.tick();
@@ -449,6 +489,12 @@ impl OptionsScreen {
         self.at = at;
         self.tip.moved(at);
         if self.leaving.is_some() || self.sure {
+            return;
+        }
+        // "Continue tutorial" goes back on the hover alone (`Options_Main` exe 0x51a7e3 tests the hover id 9 with no
+        // button and no fade test).
+        if self.tutorial && self.spot_at(at) == id::CONTINUE {
+            self.leave(Act::Back);
             return;
         }
         if let Some((i, start, bar)) = self.grab {
@@ -501,7 +547,8 @@ impl OptionsScreen {
                     return None;
                 }
                 sound(crate::audio::CLICK);
-                if self.load_only {
+                // Under the tutorial no question: `AktKep = 0xf` (`Options_Kilep`: `TutorialStop(1)`, `ExitToMainScreen`).
+                if self.load_only || self.tutorial {
                     self.leave(Act::MainMenu);
                 } else {
                     self.sure = true;
@@ -625,10 +672,13 @@ impl OptionsScreen {
         None
     }
 
-    /// After a save: the slots again, and back to the screen before (`Options_EnterPressed`).
+    /// After a save: the slots again, and back to the screen before (`Options_EnterPressed`), unless that was the
+    /// space battle.
     pub fn saved(&mut self, slots: Vec<Option<Slot>>) {
         self.slots = slots;
-        self.leave(Act::Back);
+        if !self.from_battle {
+            self.leave(Act::Back);
+        }
     }
 
     /// `Options_EnterPressed` when `LoadSave` failed: the slots again, the screen stays.
@@ -752,8 +802,9 @@ impl OptionsScreen {
             }
         };
         let mut vv = self.fade_v;
-        // The load button: `V = 3F` below 33.
-        if self.filled(self.slot) && !self.multiplayer && !self.sure {
+        let t = self.tutorial;
+        // The load button: `V = 3F` below 33 (not under the tutorial).
+        if self.filled(self.slot) && !self.multiplayer && !self.sure && !t {
             if fd >= 33.0 {
                 vv = 100.0;
             } else {
@@ -768,7 +819,7 @@ impl OptionsScreen {
             kirak(f, &mut fq, &mut self.faders, 0, 0, [366.0, 62.0, 78.0, 33.0], vv, true);
         }
         // The save (or YES) button: `V = 3(F − 33)` between 33 and 66.
-        if (!self.multiplayer || self.sure) && ((!self.load_only && !self.battle && (self.sure || self.slot < 0x17)) || self.sure) {
+        if !t && (!self.mp_lock() || self.sure) && ((!self.load_only && !self.battle_lock() && (self.sure || self.slot < 0x17)) || self.sure) {
             if fd <= 33.0 || fd >= 66.0 {
                 vv = if fd >= 33.0 { 100.0 } else { 0.0 };
             } else {
@@ -782,11 +833,16 @@ impl OptionsScreen {
             }
             kirak(f, &mut fq, &mut self.faders, 1, 1, [452.0, 62.0, 78.0, 33.0], vv, true);
         }
-        // The quit button, always: `V = 3(F − 66)` past 66 (102 at F 100, as the exe has it).
+        // The quit button, always: `V = 3(F − 66)` past 66 (102 at F 100, as the exe has it). Under the tutorial it is
+        // 100 wider to the left and "continue tutorial" sits under it, both on fader 2 (ELF `OptionsGfx2D_1` 0x5d49a0).
+        let (qx, qw) = if t { (441, 178) } else { (0x21d, 0x4e) };
         if fd > 66.0 {
             vv = (fd - 66.0) * 3.0;
             if fd != 100.0 && leaving.is_none() {
-                self.lasers.shoot([0x21d, 0x3e, 0x4e, 0x21], [0x27f, 0], vv / 100.0, LASER);
+                self.lasers.shoot([qx, 0x3e, qw, 0x21], [0x27f, 0], vv / 100.0, LASER);
+                if t {
+                    self.lasers.shoot([qx, 0x66, qw, 0x21], [0x27f, 0], vv / 100.0, LASER);
+                }
             }
         } else if fd < 66.0 {
             vv = 0.0;
@@ -794,29 +850,41 @@ impl OptionsScreen {
         if let Some(l) = leaving {
             vv = l;
         }
-        kirak(f, &mut fq, &mut self.faders, 2, 2, [541.0, 62.0, 78.0, 33.0], vv, true);
-        // The slot list: `V = 2F` below 50, its laser from the bottom right corner.
+        kirak(f, &mut fq, &mut self.faders, 2, 2, [qx as f32, 62.0, qw as f32, 33.0], vv, !t);
+        // Under the tutorial the hover glow reads fader 3's (the slot list's, not drawn then) at the quit button's place.
+        if t {
+            kirak(f, &mut fq, &mut self.faders, 2, 3, [qx as f32, 102.0, qw as f32, 33.0], vv, false);
+            let s = self.faders.s(3);
+            if let (None, Some((g, style))) = (leaving, self.faders.glow(3)) {
+                fader_design::glow(f, white, v, [qx, 0x3e, qw, 0x21], [0, (s * 54.0) as i32, (s * 90.0) as i32], g, style, blink);
+            }
+        }
+        // The later faders' `optf` indices are one higher under the tutorial.
+        let si = t as usize;
+        // The slot list: `V = 2F` below 50, its laser from the bottom right corner (neither under the tutorial).
         if fd >= 50.0 {
             vv = 100.0;
         } else {
             vv = fd * 2.0;
-            if leaving.is_none() {
+            if leaving.is_none() && !t {
                 self.lasers.shoot([0x169, 0x74, 0x109, 0x14a], [0x27f, 0x1df], vv / 100.0, LASER);
             }
         }
         if let Some(l) = leaving {
             vv = l;
         }
-        kirak(f, &mut fq, &mut self.faders, 3, 3, [361.0, 116.0, 265.0, 330.0], vv, false);
-        // At full fade-in the scan band runs down the slot list (style 0 at `fmod(clock·1.8, 1)`), then its glow.
-        let s = self.faders.s(3);
-        let c = [0, (s * 54.0) as i32, (s * 90.0) as i32];
-        if vv == 100.0 {
-            let t = (self.faders.clock() as f64 * 1.8).rem_euclid(1.0) as f32;
-            fader_design::glow(f, white, v, [0x169, 0x74, 0x109, 0x14a], c, t, 0, blink);
-        }
-        if let (None, Some((t, style))) = (leaving, self.faders.glow(3)) {
-            fader_design::glow(f, white, v, [0x169, 0x74, 0x109, 0x14a], c, t, style, blink);
+        if !t {
+            kirak(f, &mut fq, &mut self.faders, 3, 3, [361.0, 116.0, 265.0, 330.0], vv, false);
+            // At full fade-in the scan band runs down the slot list (style 0 at `fmod(clock·1.8, 1)`), then its glow.
+            let s = self.faders.s(3);
+            let c = [0, (s * 54.0) as i32, (s * 90.0) as i32];
+            if vv == 100.0 {
+                let t = (self.faders.clock() as f64 * 1.8).rem_euclid(1.0) as f32;
+                fader_design::glow(f, white, v, [0x169, 0x74, 0x109, 0x14a], c, t, 0, blink);
+            }
+            if let (None, Some((t, style))) = (leaving, self.faders.glow(3)) {
+                fader_design::glow(f, white, v, [0x169, 0x74, 0x109, 0x14a], c, t, style, blink);
+            }
         }
         self.blokk1 = vv;
         // The left panel: `V = 2(F − 50)` between 50 and 100, its laser from the top left corner.
@@ -835,7 +903,7 @@ impl OptionsScreen {
         if let Some(l) = leaving {
             vv = l;
         }
-        kirak(f, &mut fq, &mut self.faders, 4, 4, [9.0, 62.0, 288.0, 384.0], vv, false);
+        kirak(f, &mut fq, &mut self.faders, 4, 4 + si, [9.0, 62.0, 288.0, 384.0], vv, false);
         self.blokk2 = vv;
         // The sliders' boxes (`FadeKerettelKerekit`), brighter under the pointer.
         let k = 1.0 - vv / 100.0;
@@ -850,8 +918,8 @@ impl OptionsScreen {
         }
         // The tabs.
         // The left panel and the tabs start glows that are never drawn.
-        kirak(f, &mut fq, &mut self.faders, 6, 5, [13.0, 66.0, 90.0, 20.0], vv, false);
-        kirak(f, &mut fq, &mut self.faders, 7, 5, [108.0, 66.0, 90.0, 20.0], vv, false);
+        kirak(f, &mut fq, &mut self.faders, 6, 5 + si, [13.0, 66.0, 90.0, 20.0], vv, false);
+        kirak(f, &mut fq, &mut self.faders, 7, 5 + si, [108.0, 66.0, 90.0, 20.0], vv, false);
         (self.pressed, self.released) = (false, false);
         self.fade_v = vv;
         f.append(fq);
@@ -896,17 +964,23 @@ impl OptionsScreen {
         let lab = |f: &mut Frame, s: u16, x: i32, spot: u32| {
             text(f, &d.texts.get(13, 5, s), x as f32, 0x48 as f32, 9, 3, Align::Centre, d.col(if hover == spot { 2 } else { 1 }, b2));
         };
-        if self.filled(self.slot) && !self.sure && !self.multiplayer {
+        if self.tutorial {
+            // `OptionsGfx2D_2` (exe 0x518a30) under the tutorial: "quit" and "continue tutorial" left-aligned at 464.
+            let col = |spot: u32| d.col(if hover == spot { 2 } else { 1 }, b2);
+            text(f, &d.texts.get(13, 5, 7), 464.0, 0x48 as f32, 0xf, 3, Align::Left, col(id::QUIT));
+            text(f, &d.texts.get(13, 5, 8), 464.0, 0x70 as f32, 0x14, 3, Align::Left, col(id::CONTINUE));
+        } else if self.filled(self.slot) && !self.sure && !self.multiplayer {
             lab(f, 1, 0x195, id::LOAD);
         }
-        if !self.load_only {
+        if !self.tutorial && !self.load_only {
             if self.sure {
                 lab(f, 2, 0x1eb, id::SAVE);
-            } else if self.slot <= 0x16 && !self.battle && !self.multiplayer {
+            } else if self.slot <= 0x16 && !self.battle_lock() && !self.mp_lock() {
                 lab(f, 3, 0x1eb, id::SAVE);
             }
         }
         match (self.load_only, self.sure) {
+            _ if self.tutorial => {}
             (false, true) => lab(f, 5, 0x249, id::QUIT),
             (false, false) => lab(f, 6, 0x244, id::QUIT),
             (true, _) => lab(f, 4, 0x244, id::QUIT),
@@ -1169,6 +1243,59 @@ mod tests {
             act = act.or(o.done());
         }
         assert_eq!(act, Some(Act::MainMenu));
+    }
+
+    #[test]
+    fn battle_and_multiplayer() {
+        // `Options_MouseInit2` exe 0x51a8a0: Save needs `!(HarcFolyik && !DEBUGX) && !MultiPlayerMode`; Load is off in MP.
+        let mut o = screen();
+        assert!(o.spot_on(id::SAVE));
+        o.battle = true;
+        assert!(!o.spot_on(id::SAVE));
+        o.debug = true;
+        assert!(o.spot_on(id::SAVE), "DEBUGX saves in a battle");
+        let mut o = screen();
+        o.slot = 24;
+        o.multiplayer = true;
+        assert!(!o.spot_on(id::LOAD) && !o.spot_on(id::SAVE));
+        o.mp_save = true;
+        assert!(!o.spot_on(id::LOAD));
+        o.slot = 1;
+        assert!(o.spot_on(id::SAVE), "ours: the host's MP save");
+        // `Options_EnterPressed` exe 0x51a090: back only when `OptionsElottiKep < 0xb`.
+        let mut o = screen();
+        o.saved(Vec::new());
+        assert!(o.leaving());
+        let mut o = screen();
+        o.from_battle = true;
+        o.saved(Vec::new());
+        assert!(!o.leaving(), "a save from the space battle leaves the screen up");
+    }
+
+    #[test]
+    fn tutorial_layout() {
+        // `Options_MouseInit2` exe 0x51a8a0 under the tutorial: no load/save/slots, quit (441, 62, 178, 37) without a
+        // question, "continue" (441, 102, 178, 37) leaving on the hover alone (0x51a7e3).
+        let mut o = screen();
+        o.tutorial = true;
+        assert_eq!(o.spot_at([480.0, 70.0]), id::QUIT);
+        assert_eq!(o.spot_at([450.0, 120.0]), id::CONTINUE);
+        assert_eq!(o.spot_at([400.0, 200.0]), 0, "no slot list");
+        let mut sounds = Vec::new();
+        o.press([480.0, 70.0], &mut |s| sounds.push(s));
+        assert!(!o.sure && o.leaving() && sounds.len() == 1);
+        let mut o = screen();
+        o.tutorial = true;
+        o.hover([450.0, 120.0]);
+        assert!(o.leaving());
+        let mut act = None;
+        for _ in 0..200 {
+            o.tick();
+            act = act.or(o.done());
+        }
+        assert_eq!(act, Some(Act::Back));
+        // Outside the tutorial there is no spot 9.
+        assert_eq!(screen().spot_at([450.0, 120.0]), id::SLOTS);
     }
 
     #[test]

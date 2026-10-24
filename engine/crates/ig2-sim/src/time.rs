@@ -67,23 +67,37 @@ impl Speed {
     }
 }
 
-/// `SetIdoLelassit` (exe 0x541270): the `IdoSpeedSzorzo` after a slow-down. SP drops to ×1 unless the
-/// speed is locked (`nemlehetidotallitani`, exe 0xBAD0D4); MP returns to the program speed
-/// (`ProgramSebesseg` 0xBAE54C: 1/2/3 → ×4/×8/×16, 4 = unchanged). It writes the global at once, so the
-/// rest of the running sim tick already sees the new value (research loop, starmap movement).
-pub fn slowed_down(speed_mult: i32, multiplayer: bool, speed_locked: bool, program_speed: i32) -> i32 {
-    if multiplayer {
-        match program_speed {
-            1 => Speed::Normal.ido_per_tick(true),
-            2 => Speed::Fast.ido_per_tick(true),
-            3 => Speed::Fastest.ido_per_tick(true),
-            _ => speed_mult,
-        }
-    } else if speed_locked {
-        speed_mult
-    } else {
-        1
+/// What `SetIdoLelassit` (exe 0x541270, `SetIdoSpeed(1, false)` in the ELF) writes: `IdoSpeed` 0xBAE258 (the
+/// speed button the top bar lights) and, for a level 1..=3, `IdoSpeedSzorzo` 0xBAE25C with the battle
+/// multiplier 0xBAE260 (`mult`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlowDown {
+    pub level: i32,
+    pub mult: Option<(i32, i32)>,
+}
+
+/// `SetIdoLelassit` (exe 0x541270; its argument is ignored): SP drops to level 1 (×1, battles ×1) unless the
+/// speed is locked (`nemlehetidotallitani`, exe 0xBAD0D4: nothing written); MP returns to the program speed
+/// (`ProgramSebesseg` 0xBAE54C: 1/2/3 → ×4/×8/×16, battles 1/2/2; 4 = nothing written; any other value only
+/// sets `IdoSpeed`). It writes the globals at once, so the rest of the running sim tick already sees the new
+/// multiplier (research loop, starmap movement).
+pub fn slow_down(multiplayer: bool, speed_locked: bool, program_speed: i32) -> Option<SlowDown> {
+    if !multiplayer {
+        return (!speed_locked).then_some(SlowDown { level: 1, mult: Some((1, 1)) });
     }
+    let speed = match program_speed {
+        4 => return None,
+        1 => Some(Speed::Normal),
+        2 => Some(Speed::Fast),
+        3 => Some(Speed::Fastest),
+        _ => None,
+    };
+    Some(SlowDown { level: program_speed, mult: speed.map(|s| (s.ido_per_tick(true), s.battle_multiplier(true))) })
+}
+
+/// The `IdoSpeedSzorzo` after [`slow_down`].
+pub fn slowed_down(speed_mult: i32, multiplayer: bool, speed_locked: bool, program_speed: i32) -> i32 {
+    slow_down(multiplayer, speed_locked, program_speed).and_then(|s| s.mult).map_or(speed_mult, |(m, _)| m)
 }
 
 /// Wall-clock → tick scheduler with the original's catch-up rules: a tick fires while
@@ -195,6 +209,20 @@ mod tests {
         assert_eq!(slowed_down(16, false, true, 3), 16, "speed locked");
         assert_eq!((slowed_down(16, true, false, 1), slowed_down(4, true, false, 2), slowed_down(4, true, false, 3)), (4, 8, 16));
         assert_eq!(slowed_down(16, true, false, 4), 16, "program speed 4: unchanged");
+    }
+
+    /// Row 307: the slow-down also sets `IdoSpeed`, the lit speed button (exe 0x541270).
+    #[test]
+    fn slow_down_sets_the_speed_level_and_battle_multiplier() {
+        let s = |level, mult| Some(SlowDown { level, mult });
+        assert_eq!(slow_down(false, false, 3), s(1, Some((1, 1))));
+        assert_eq!(slow_down(false, true, 3), None, "speed locked");
+        assert_eq!(
+            (slow_down(true, false, 1), slow_down(true, false, 2), slow_down(true, false, 3)),
+            (s(1, Some((4, 1))), s(2, Some((8, 2))), s(3, Some((16, 2))))
+        );
+        assert_eq!(slow_down(true, false, 4), None, "the players pick the speed");
+        assert_eq!(slow_down(true, false, 0), s(0, None), "only IdoSpeed");
     }
 
     #[test]

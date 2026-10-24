@@ -67,7 +67,8 @@ SCREENS = {
     "info": dict(kep=9, wait=1500, client=["--screen", "info"], regions=[
         TOPBAR, "heads=20,40,600,90", "race_names=30,110,580,20", "triangle=230,30,180,110", "empire_panel=110,140,420,90",
         "list=0,245,290,235", "chart=388,272,224,180", "buttons=345,280,55,170"]),
-    "messages": dict(kep=10, client=["--screen", "messages"], regions=[TOPBAR, "panel=0,160,190,300", "inbox=0,190,250,210"]),
+    "messages": dict(kep=10, script=True, client=["--screen", "messages"], regions=[TOPBAR, "panel=0,160,190,300", "inbox=0,190,250,210",
+                                                                                "text=200,10,350,170", "answers=200,425,350,55"]),
     # The research screen (research.md): the ball and its models turn with the frames drawn, so "ball" compares
     # their place and size more than their pixels. The exe opens it over ~250 frames after loading the save: the
     # grab waits 1000 (at 240 it is mid-opening; held frames, --anim-frame 60 included, don't wait for it).
@@ -116,6 +117,10 @@ SCREENS = {
     # the first of two new human fleets) and 9 (planet mode, three vehicle entries put on the planet first); the grab waits 420 frames.
     "fleetinfo": dict(kep=2, wait=420, exe=["--fleets", "2", "--rop", "0xf", "--rop-fleet", "1"], client=["--panel", "fleet"], regions=[
         TOPBAR, "list=28,27,273,334", "model=338,27,273,152", "data=338,186,273,175", "scroll_bar=306,29,28,333", "exit=445,380,190,30"]),
+    # The info box in fleet mode (starmap.md §11): the first of two new human fleets selected; the fleet picture
+    # (`StarmapLoadInfoFlottak`) left of the texts.
+    "fleetbox": dict(kep=2, exe=["--fleets", "2", "--rop-fleet", "1"], client=[], regions=[
+        TOPBAR, "info_box=5,423,162,52", "picture=6,434,32,32"]),
     "tanksinfo": dict(kep=2, wait=420, exe=["--planet-tanks", "3", "--rop", "9"], client=["--panel", "tanks"], regions=[
         TOPBAR, "list=28,27,273,334", "model=338,27,273,152", "data=338,186,273,175", "scroll_bar=306,29,28,333", "exit=445,380,190,30"]),
     # The diplomacy screen (diplomacy.md): the exe opens with a 2.8 s animation, so it waits 1000 frames; the round
@@ -368,7 +373,7 @@ def main():
             sys.exit("spacewar:<grab.json>: the dump of run_spwc.py --grab-ticks")
         a.exe_png = a.exe_png or os.path.splitext(grab)[0] + ".png"
         arg = ""
-    planet = int(arg) if arg and not mode else (71 if kind in ("production", "transfer", "fleetinfo", "tanksinfo", "rop", "planetinfo", "tax", "autobuild", "priority", "planets") else 42)
+    planet = int(arg) if arg and not mode else (71 if kind in ("production", "transfer", "fleetinfo", "fleetbox", "tanksinfo", "rop", "planetinfo", "tax", "autobuild", "priority", "planets") else 42)
     name = f"{kind}{planet}" if kind in ("colony", "grwar") else f"spy-{mode or 'roster'}" if kind == "spy" else kind
     if grab:
         name = "spacewar-" + os.path.splitext(os.path.basename(grab))[0]

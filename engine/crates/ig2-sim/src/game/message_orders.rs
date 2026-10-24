@@ -174,21 +174,17 @@ impl Game<'_> {
         }
     }
 
-    /// A message call made outside a story check (the replay's staged calls): as the stories' events, and a
-    /// `NewMessage`'s own slow-down (`SetIdoLelassit(2)`).
+    /// A message call made outside a story check (the replay's staged calls): as the stories' events.
     pub fn inbox_call(&mut self, ev: StoryEvent) {
-        if matches!(ev, StoryEvent::NewMessage { .. }) {
-            let g = self.globals();
-            let speed = crate::time::slowed_down(self.g(va::IDO_SPEED), g.multiplayer, g.speed_locked, g.program_speed);
-            self.set(va::IDO_SPEED, speed);
-        }
         self.inbox_events(&[ev]);
     }
 
-    /// `NewMessage(id, days)` (exe 0x508fe0; the slow-down `SetIdoLelassit(2)` is the story's): a new entry at the
+    /// `NewMessage(id, days)` (exe 0x508fe0): first the slow-down `SetIdoLelassit` (even when the inbox is full; a
+    /// story check's own already ran as the script made the call, `GameStory::event`), then a new entry at the
     /// end, parameters 1..=5 `"#=#"`, read and seen cleared, the arrival date. The kind's automatic flag switches
     /// to the messages screen (`AktKepKell` 10: the client's, from the event).
     pub(super) fn new_message(&mut self, id: i32, days: i32) {
+        self.slow_down();
         let mut b = self.state.inbox();
         if b.count >= 100 {
             return;

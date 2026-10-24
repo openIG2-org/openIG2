@@ -159,18 +159,7 @@ fn load(install: &Install, dir: &str, name: &str, tex: &str, frame: Option<usize
 /// placed by the chain head's half-extents (`AddToScene`).
 fn load_last(install: &Install, dir: &str, name: &str, tex: &str) -> Option<Model> {
     let head = load(install, dir, name, tex, None)?;
-    let mut stem = name.trim_end_matches(".xvb").to_string();
-    for _ in 0..8 {
-        let next = install.read(&format!("dataraw/{dir}{stem}.xv")).ok().and_then(|b| {
-            let ar = ig2_formats::xv::Archive::parse(&b).ok()?;
-            let h = ig2_formats::xv::NodeHeader::parse(ar.root(Some(&stem))?.data).ok()?;
-            (!h.lod_archive.is_empty()).then(|| h.lod_archive.trim_end_matches(".xvb").to_string())
-        });
-        match next {
-            Some(n) => stem = n,
-            None => break,
-        }
-    }
+    let stem = scene::lod_chain(install, dir, name).pop()?;
     let mut last = load(install, dir, &format!("{stem}.xvb"), tex, None)?;
     last.origin = head.origin;
     Some(last)
@@ -231,10 +220,7 @@ impl FrameModels {
             if !keep(&p.index) {
                 continue;
             }
-            let a = match p.look {
-                Look::Glass(g) => g * alpha,
-                _ => alpha,
-            };
+            let a = p.alpha(alpha);
             let start = out.len() as u32;
             let l = lights(&p.index);
             for tri in p.verts.chunks_exact(3) {
@@ -258,7 +244,7 @@ impl FrameModels {
             }
             let tex = skin(&p.index).or_else(|| p.texture.clone());
             let tex = self.texture(r, install, tex.as_deref());
-            draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+            draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });
         }
     }
 
@@ -288,6 +274,7 @@ impl FrameModels {
                 sun: [0.0; 4],
                 fog: [0.0; 4],
                 fog_range: [1e9, 2e9, 0.0, 1e9],
+                flash: [[0.0; 4]; 2],
             },
             draws,
             dynamic,
@@ -303,7 +290,20 @@ impl FrameModels {
     /// The info screen's frame at `infoframe` (`SetFrame(InfoMainMesh, infoframe)`, whole frames [inf]).
     pub fn render_info(&mut self, r: &mut Renderer, install: &Install, s: &InfoFrame, size: [f32; 2]) -> Option<TexId> {
         let pose = s.frame.max(0.0) as usize;
-        let info = self.info.entry(pose).or_insert_with(|| load(install, "vector/info/", "info.xvb", "textures/info/", Some(pose)).map(Rc::new)).clone()?;
+        // `Infoing3DInit` (ELF): `SetObjTransparency(…, 0.01)` on every head (3/ring/1/0), so their material's 0.7 never
+        // applies (`Kocka`: a non-zero object transparency wins).
+        let info = self
+            .info
+            .entry(pose)
+            .or_insert_with(|| {
+                load(install, "vector/info/", "info.xvb", "textures/info/", Some(pose)).map(|mut m| {
+                    for p in m.parts.iter_mut().filter(|p| p.index.len() >= 4 && p.index[0] == 3 && p.index[2] == 1 && p.index[3] == 0) {
+                        p.look = Look::Glass(1.0 - 0.01);
+                    }
+                    Rc::new(m)
+                })
+            })
+            .clone()?;
         let marker = self.marker.get_or_insert_with(|| load(install, "vector/info/", "negyzet1.xvb", "textures/info/", None).map(Rc::new)).clone();
         let knob = self.knob.get_or_insert_with(|| load(install, "vector/info/", "hszog0.xvb", "textures/info/", None).map(Rc::new)).clone();
         let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
@@ -429,9 +429,13 @@ impl FrameModels {
         self.finish(r, dynamic, draws, size)
     }
 
-    /// The messages screen's frame at `mesframe` = `frame` (15 = the list, 30 = a message open).
-    pub fn render_messages(&mut self, r: &mut Renderer, install: &Install, frame: usize, size: [f32; 2]) -> Option<TexId> {
-        let model = self.messages.entry(frame).or_insert_with(|| load(install, "vector/messages/", "messbck.xvb", "textures/messages/", Some(frame))).clone()?;
+    /// The messages screen's frame at `mesframe` = `frame` (15 = the list, 30 = a message open; `SetFrame` keeps 1/256
+    /// steps between two keys, 31 keys).
+    pub fn render_messages(&mut self, r: &mut Renderer, install: &Install, frame: f32, size: [f32; 2]) -> Option<TexId> {
+        let (f0, f1, t) = scene::frame_keys(frame, 31);
+        let mut key = |k: usize| self.messages.entry(k).or_insert_with(|| load(install, "vector/messages/", "messbck.xvb", "textures/messages/", Some(k))).clone();
+        let a = key(f0)?;
+        let model = if t == 0.0 { a } else { a.lerp(&key(f1)?, t) };
         let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
         let m = Placement::add_to_scene(model.origin, 0.9).rotated(0.0, 0.0, 0.0).map(|x| x * 1024.0);
         // `Messages3DUpdate`: sub-meshes 1/6, 2/7 and 4/0 are 40 % transparent.

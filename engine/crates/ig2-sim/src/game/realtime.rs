@@ -463,16 +463,13 @@ impl Game<'_> {
 
     /// The tick's step 4 on the (shown) battle (spec §7.11).
     fn space_over(&mut self, slot: usize) {
-        let g = self.globals();
         let b = &mut self.realtime.slots[slot];
         b.ended = true;
         let winner = b.winner;
-        let mem = &self.state.mem;
         let fleets = &self.state.fleets;
         let due = b.ground_war_due(|f| fleets.get(f.max(0) as usize).map_or(0, |r| i32::from_le_bytes(r[0x5c..0x60].try_into().unwrap())));
         let planet = b.planet.max(0) as usize;
-        let speed = crate::time::slowed_down(mem.i32(va::IDO_SPEED), g.multiplayer, g.speed_locked, g.program_speed);
-        self.state.mem.set_i32(va::IDO_SPEED, speed);
+        self.slow_down();
         self.events.push(GameEvent::RealTime(RealTimeEvent::SpaceOver { slot, winner }));
         if let Some(f) = due {
             self.ground_war(f as usize, planet);

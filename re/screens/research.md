@@ -15,7 +15,8 @@ The picture behind the scene (the saved starmap, dimmed): [`overlay-background.m
 | `ResearchKeyboardHandler` | 0x5e9aa0 | — |
 | `ResearchStartStop` / `ResearchDoubleGomb` / `ResearchAtvaltTalalmanyra` | 0x5e9190 / 0x5e93c0 / 0x5ea060 | 0x523420 / — / — |
 | `Forgotabla` (middle wheel) / `rotate_table` | 0x5e8230 / 0x5e8080 | 0x51e360 / 0x525740 |
-| `LoadTalalmanyVectorok` / `ElforgatTalalmanyok` / `ForgatObjectek` | 0x5e1520 / 0x5e3270 / 0x5e2290 | 0x51e900 / — / — |
+| `LoadTalalmanyVectorok` / `ElforgatTalalmanyok` / `ForgatObjectek` | 0x5e1520 / 0x5e3270 / 0x5e2290 | 0x51e900 / 0x51d600 / — |
+| `SetTTransp` / `FenyHozzarendel` (= `UnHideMeglevoTalalmanyok`'s body) | 0x5e2af0 / 0x5e2c30 | 0x5248a0 / 0x525060 |
 | `TalalmanyKivalasztva` / `IgazitTeruletAkt` / `KellMozgatni` | 0x5e24a0 / 0x5e86d0 / 0x5e36e0 | 0x524f60 / 0x51e730 / — |
 | `MULTIGET_Research` | 0x5ec6e0 | 0x51ee70 |
 
@@ -119,9 +120,25 @@ by every 3D screen.
   Research_MeretSzorzok[t − 1]·0.04)`. Place (`ElforgatTalalmanyok`): `TPozX/Y/Z[k]` (exe 0x9190F8, 0x919140,
   0x919188) ×2.2, turned by the ball's matrix, ×`(sin(AddZoom)·5 + 1)`, + (0, −35, −950); the chosen one
   (`Kozelites` +80 a frame up to 700) moves towards (0, −50, −1000) and is scaled ×`4·Kozelites/700`. Rotation
-  (`ForgatObjectek`): `RotateObj(0, 0, spin)` then `RotateObj2((1, 0, 0), 1.3)`. Shown when status ≥ 2: owned (5)
-  solid, else wireframe (properties 0x40 | 0x800) lit by an ambient light per model (`FenyHozzarendel`: seen
-  (0, 32, 32), researchable (0, 64, 64), researching (64, 64, 0)).
+  (`ForgatObjectek`): `RotateObj(0, 0, spin)` then `RotateObj2((1, 0, 0), 1.3)`; `spin` (`ResearchTalalmanyForgas`)
+  +0.02 a UI tick, reset to 0 for every model `LoadTalalmanyVectorok` loads. Shown when status ≥ 2: owned (5)
+  solid, else wireframe (properties 0x40 | 0x800) lit by an ambient light per model (`FenyHozzarendel` exe 0x525060:
+  colour words 0x202000 seen, 0x404000 researchable, 0x004040 researching, i.e. bytes (0, 32, 32), (0, 64, 64),
+  (64, 64, 0)).
+- **Depth fade** (`SetTTransp` exe 0x5248a0, FX17b; the ELF's 0x5e2af0 adds to the old transparency instead, the exe's
+  runs): inside each step of the exe's `ElforgatTalalmanyok` (0x51d600, before that model's `MoveObj`), for all 16
+  models from the z of their last `MoveObj` (×1024): `t = 0.01` if z > −950 (in front of the ball's centre), `−(z +
+  950)/100` for −1050 ≤ z ≤ −950, 1 behind; `t += AddZoom/ADDZOOMMAX`, at most 1; `HideAlboxok(t ≤ 0.99)` (above 0.99
+  every sub-mesh hidden); `SetObjTransparency(t)` (< 0.0001 → 0, > 0.99 → 1). So the far half of the orbit is
+  invisible, the models near the ball's centre half faded, and the chosen one (pulled to z −1000) is drawn at 0.5
+  [obs: `probes/research_items.js` on `scripts/research.json`: opacity bytes 252 in front, 128 / 134 near the
+  centre]. The solid models take the opacity as alpha (property 8); the wireframes' lit colours are scaled by it.
+- **Wireframes as drawn** [obs, FX17b probe of `fenyekszamolasa` at t 250/400/500/560]: the ball's vertices are white
+  (the four lights saturate) or 0x202020 and every edge draws (the far ones dim), in the texture's colour (49, 154,
+  255); the tech models' edges take the lit vertex colour alone (0xfbfbfb white, 0x5e5e1f teal), no texture colour.
+  Lines are aliased GL lines (one pixel, full colour; an edge two faces share draws once: the second fails the depth
+  test). The ball's chain at t 250 is (0.9797, 0, −0.2006 | 0, 1, 0 | 0.2006, 0, 0.9797) (row-major, as the
+  lighting probe's): `matrixforgat(m, 0.002, 0)` turns it −0.002 about y in `axis_matrix`'s sense.
 - A new category: `TalalmanyDir = 1`, `AddZoom` rises 0.01 a frame (`FRISSIT_Research2`) to `ADDZOOMMAX` (exe
   0x918bd0, π/4): the models fly out; then they are reloaded and fly in (−0.15 a frame to `ADDZOOMMIN` = 0), and
   the remembered field is chosen (`TalalmanyKivalasztva`).
@@ -348,3 +365,7 @@ pins the light clock at K instead (the light probe, §2.1). `--anim-mouse X,Y` r
 pointer there (a tooltip). The client: `--anim-frame`, `--anim-closing`, `--mouse`. Without a held frame the exe grab
 waits 1000 frames (the screen opens over ~250 after the save loads). Results of the held frames:
 diff-results.md (`research-anim-captures`).
+FX17b (2026-10-24, row 312; `research --script research.json`, quick-1.sav): with the depth fade, the ball's turn sign,
+the untextured lit model edges, aliased deduplicated lines and the spin reset the `ball` region goes from 8.4–10.5 (at
+rest) / 14.1–15.5 (after the category change) to 2.7–3.5 / 3.1–3.5, `frame` from 3.9–6.4 to 1.8–2.6, `wheels` 3.0–4.2
+→ 1.6–2.2 (t 60 4.45 → 3.17). Left: the left/right lists' known differences (t 100–150, 340–420).

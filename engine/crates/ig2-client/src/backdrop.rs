@@ -139,9 +139,10 @@ pub fn info(infoframe: f32) -> f32 {
     grey((infoframe / 45.0 * 128.0) as i32)
 }
 
-/// Messages (`Messages3DUpdate` ELF 0x5a3ad0): `c = (int)(195·min(mesframe, 15)/15)`.
+/// Messages (`Messages3DUpdate` exe 0x506c50, asm 0x506e2e..0x506e56): `c = mesframe ≥ 15 ? 195 :
+/// (int)(mesframe / 15 · 195)` in f32.
 pub fn messages(mesframe: f32) -> f32 {
-    grey((195.0 * mesframe.min(15.0) / 15.0) as i32)
+    grey(if mesframe >= 15.0 { 195 } else { (mesframe / 15.0 * 195.0) as i32 })
 }
 
 /// Options (`GFX_Options` exe 0x516f30): `c = min(128, (int)(F/100·128))`.

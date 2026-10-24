@@ -153,6 +153,13 @@ impl Live {
                 if max == 0 { 0.0 } else { i32::from_le_bytes(x[4..8].try_into().unwrap()) as f32 / max as f32 }
             })
             .collect();
+        // A selected gun's building's model (`kisinfogfxfrissit` ELF 0x6860c0): `TTeruletek[t − 1]` of its
+        // `EpuletekLeiro` tech `t` (+0), with 0x71 and 0x73 swapped.
+        if self.ui.info_type >= 50000 {
+            let kind = blocks.and_then(|x| x.get((self.ui.info_type - 50000) as usize)).map_or(0, |x| x[0]);
+            let tech = tables.buildings.get(kind as usize).filter(|_| kind != 0).map(|x| match x.tech { 0x71 => 0x73, 0x73 => 0x71, t => t });
+            shown.info_other = tech.and_then(|t| tables.research_screen.models.get((t as usize).wrapping_sub(1)).filter(|n| !n.is_empty()).map(|n| (n.clone(), true)));
+        }
         let gfx = self.gfx.get_or_insert_with(|| Gfx::load(r, install, &shown));
         crate::spacewar_screen::prepare(v, gfx, assets.white, &shown);
         v.battle_fade = Some(shown.erosseg);

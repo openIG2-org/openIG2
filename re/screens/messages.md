@@ -96,6 +96,46 @@ from then on draws that picture (0x36) instead of the model. Under the model `Co
 mesframe, 15)/15)` (the screen before, `SaveScreen(2)` in `Messages_Belep`; black only in bare-jump captures, see [`overlay-background.md`](overlay-background.md)). The buttons 0 and 3
 press in by moving their sub-mesh 0 in z (`mesSetGombFrame` 0x5a0d60).
 
+### 4.1 The opening and the closing (`mesframe`, exe 0xdabe44, f32)
+Exe flags: `mesKELLKINYITAS` 0x914943 (= the options' screen-animation switch 0x912a39, default 1), `mesKINYITVA`
+0xda65e5 (open), `mesBECSUKAS` 0xda65cf (closing), `KELLKINYITAS2` 0xda65e6, `ELINDULT1` 0xda65fd (the first
+render done), `MessagesKellKepMentes` 0xd909ae (save the screen).
+- **Enter** (`Messages_Belep` exe 0x507f90, `Messages3DInit` 0x506970): `mesframe` 0, or 15 with the switch off;
+  `mesKINYITVA = !switch`, the other flags 0; `KELLKINYITAS2 = 1` at once when a message is already selected
+  (`DAT_00dabda0 != −1`), else only when an entry is opened (`KiertekelUjuzenet` exe 0x505d60). The game clock stays
+  (`IdoPauseMertAtlepesAlattVan` 0xbae265) until the screen is open. Sound `screen23.wav` (with the switch on).
+- **Each UI tick** (`FRISSIT_Messages2` exe 0x505180, 10 ms; asm 0x5052c0..0x5053a3, every step
+  `(float)((double)mesframe ± c)`):
+  1. switch on, not closing, `ELINDULT1`, `mesframe < 15`: `+ 1/3` (the double 0x857038), over 15 → 15;
+  2. `mesKINYITVA`, `KELLKINYITAS2`, not closing, `mesframe < 30`: `+ 1/3`; `≥ 30` → 30 and `MessagesKellKepMentes = 1`;
+  3. switch on and closing: `− 0.6` (0x852250), below 0 → 0.
+  From 0: 46 ticks to 15, 45 more to 30 (30.0000248 clamps). Nothing takes `mesframe` back from 30 to 15: a second
+  message opened at 30 replays nothing.
+- **Each render** (`Messages3DUpdate` = exe 0x506c50): `ELINDULT1 = 1`; `mesKINYITVA = 1` once `mesframe ≥ 15` (and
+  the game clock runs); `SetFrame(MesMainMesh, mesframe)` (exe 0x452f30: 8.8 fixed point, the key `⌊f⌋` blended to the
+  next by the 1/256 steps); the background `Copy3hatterkep(0x35, 255 − c)`, `c = mesframe ≥ 15 ? 195 :
+  (int)(mesframe / 15 · 195)` (f32 `divss`, `mulss`, `cvttss2si`, asm 0x506e2e..0x506e56). At 30 the render with
+  `MessagesKellKepMentes` draws the model without the top bar and the 2D pass, then `SaveScreen(3)`; from then on
+  picture 0x36 instead of the model until the closing, which draws the live model again.
+- **2D** (`MessagesGfx2D_2` exe 0x507020, skipped in the save render): the list rows while `mesKINYITVA` and not
+  closing; the message's text, its typing and the answers only at `mesframe == 30` and not closing; the clip gate
+  (§5.3, exe 0x506f60) likewise.
+- **Leave** (`Messages_Kilep` exe 0x5083d0): the typer, the speech and the alien voice stop, the clip closes, sub-mesh
+  5/0 shown again; with the switch on: `mesBECSUKAS = 1`, `scrn23ki.wav`, then a loop of `UpdateFrame` +
+  `FRISSITES` (one render and the UI ticks due, wall-clock) until a pass begins at `mesframe == 0` a second time
+  (asm 0x5084b1..0x50850e: one more render at 0). From 30: 50 ticks; from wherever the opening stood. Then the screen
+  asked for (`MessagesElottiScreen` 0xda65b4, or the key's).
+- **Input**: hot-spot 3 only when `mesKINYITVA`; 4 and 6 at `mesframe == 30`; 7..=9 (and Esc, `MainCallBackEventHandler`
+  exe 0x4e2db0, no `mesframe` test) live during the opening: leaving mid-opening closes from where it stood. Inside
+  the closing loop the main loop's mouse pass doesn't run and `bae24d` refuses Esc and the screen keys.
+- **Measured** (`run_screen.py --script scripts/messages-{open,esc}.json` over a replay save with inbox messages,
+  `mesframe`/`mesKINYITVA`/`mesBECSUKAS` per grab, 2026-10-24): 0 → 15 in 46 ticks (`mesKINYITVA` at the next render);
+  an Esc or a press at UI tick t is taken after the render of t + 1 (`IG2_gameUpdate`/`Messages_Main` come after the
+  frame's ticks and render), so the closing's first −0.6 is tick t + 2; an inbox row pressed at t starts 15 → 30 at
+  tick t + 3 (`KELLKINYITAS2` a tick after the open; `Kiirashang` at t + 1); Esc at `mesframe` 10 closes from 10.333
+  and the screen is gone at the second pass at 0. `ig2-client --snapshot --screen messages --script` matches every
+  grab's `mesframe` (screendiff `messages --script`).
+
 ## 5. The open message (`KiertekelUjuzenet` 0x5a8550 and the dialogue)
 Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzenetek/msg%04d.txt` and `txt%04d.txt`
 (`BetoltFajlok` 0x5a83d0, each made to end in `
@@ -134,7 +174,8 @@ Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzene
 ## 6. Hot-spots and input (`Messages_MouseInit` 0x5aa340, `Messages_Main` 0x5a9c50)
 1 `(160, 189, 13, 19)` and 2 `(160, 400, 13, 19)`: the list one newer / older (`AktUzenetPointer` ±1, kept in range;
 only after `LenyomasValtozo` reached 5 UI frames); 3 the inbox `(UBAXSz, 218, 157, 176)`: the row by quarters (top =
-`AktUzenet0to3` 3), only rows holding a message, only when no dialogue is running (`FolyamatbanU == −1` and
+`AktUzenet0to3` 3), only rows holding a message, only when no dialogue is running and no message picked still types (`DAT_00dabda0 == −1`, reset by `MessagesGfx2D_2`
+once typed; `FolyamatbanU == −1` and
 `ParbeszedVege`); 4 the answers `(210, 430, 340, 46)` by quarters; 5 the map `(201, 204, 334, 188)`; 6 the text
 `(210, 18, 333, 156)`; 7 `(0, 0, 195, 180)`, 8 `(586, 0, 54, 392)`, 9 `(0, 410, 143, 70)`, 10 the whole screen: back to
 `MessagesElottiScreen`. A press inside x 186..512, y 1..167 types the rest at once (`Novelo` 0.001; right button:
@@ -151,6 +192,5 @@ so a disabled answer stays asked for (only `Messages_Belep` clears it). Client: 
 ## 7. Not specified here
 The top bar (money, date, speed buttons, the line's frame) is in re/screens/hud.md §2. The talking heads and videos
 (`StartAnim` 0x5a1340, `uzenetanim_%d`), the voices and typing sounds, the story map (`CreateStoryMap`), the
-automatic messages, `AliasConv`'s aliases beyond `#k#`, the read message's replay (`UzenetPlaybackek`), the
-opening/closing animation. The story hand-offs (`Story_MessageMegnezes`, `Story_MessageSelected`,
+automatic messages, `AliasConv`'s aliases beyond `#k#`, the read message's replay (`UzenetPlaybackek`). The story hand-offs (`Story_MessageMegnezes`, `Story_MessageSelected`,
 `Story_LetiltasCheck`) and the entry's `+4`/`+5` flags are in rules/info-messages.md §7 and sent as `MessageOrder`s.

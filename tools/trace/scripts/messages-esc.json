@@ -1,0 +1,10 @@
+{
+ "screen": "messages",
+ "note": "Esc during the messages screen's opening (re/screens/messages.md §4.1): entered at t 0, Esc at 30 (mesframe 10): MainCallBackEventHandler has no mesframe test; the closing runs from where the opening stood.",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 30, "key": "escape"}
+ ],
+ "grabs": [0, 20, 29, 30, 31, 32, 33, 35, 40, 45, 46, 47, 48],
+ "tail": 20
+}

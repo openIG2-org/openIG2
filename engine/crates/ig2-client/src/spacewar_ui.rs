@@ -108,6 +108,19 @@ pub struct UnitGfx {
     pub snapshot: bool,
 }
 
+impl UnitGfx {
+    /// A new unit's drawn matrix as `AddUjUrhajo` (ELF 0x68a730) seeds it, `CreateMatrix(spin.x, spin.y + π, spin.z)`:
+    /// `seturhajopos` takes its third column as the first up vector (an identity seed collapses the pose of a ship
+    /// heading along y, deviation 212).
+    fn new(u: &Unit) -> Self {
+        Self { matrix: create_matrix(u.spin[0], u.spin[1] + std::f32::consts::PI, u.spin[2]), ..Default::default() }
+    }
+    fn top_up(units: &mut Vec<Self>, b: &Battle) {
+        let n = units.len();
+        units.extend(b.units[n.min(b.units.len())..].iter().map(Self::new));
+    }
+}
+
 impl Default for UnitGfx {
     fn default() -> Self {
         Self { matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], turn: [0.0; 3], selected: false, was_selected: false, grow: 0, fade: 0, attacked: 0, group: 0, snapshot: false }
@@ -405,7 +418,8 @@ pub struct SpaceWarUi {
     /// The info model's turn (`matrixforgat(.., 0.05)` a frame, after the draw) and its type (`kisinfotipus`,
     /// exe 0xE60444): a new type rebuilds the model at turn 0.
     pub spin: f32,
-    info_type: i32,
+    /// `kisinfotipus`: `race·12 + type`, 50000 + a gun's building slot, 5000 the fighter (`selectkisinfourhajo`).
+    pub info_type: i32,
     /// The weapon-group masks (`fegyvernevek[g]` record `+0x20`: weapon kind bits).
     pub masks: [u32; 10],
 }
@@ -428,7 +442,7 @@ impl SpaceWarUi {
         let starmap = Pose { yaw: cam.rotate, tilt: cam.pitch, zoom: 600.0 - cam.zoom, xcenter: 320.0, pan: pivot };
         let mut s = Self {
             slot,
-            units: vec![UnitGfx::default(); b.units.len()],
+            units: b.units.iter().map(UnitGfx::new).collect(),
             guns: vec![(false, false); b.guns.len()],
             pivot,
             pan_target: pivot,
@@ -1013,9 +1027,7 @@ impl SpaceWarUi {
 
     /// The units' poses after a re-placement (no battle tick runs in the paused phase).
     pub fn placed(&mut self, b: &Battle) {
-        if self.units.len() < b.units.len() {
-            self.units.resize(b.units.len(), UnitGfx::default());
-        }
+        UnitGfx::top_up(&mut self.units, b);
         for (u, g) in b.units.iter().zip(&mut self.units) {
             if u.alive {
                 pose(u, g);
@@ -1050,9 +1062,7 @@ impl SpaceWarUi {
     /// After every battle tick: the drawn poses (`seturhajopos` from `Mozgatas`) and the asteroids' turn
     /// (`frissit2`, §6.6).
     pub fn battle_ticked(&mut self, b: &Battle) {
-        if self.units.len() < b.units.len() {
-            self.units.resize(b.units.len(), UnitGfx::default());
-        }
+        UnitGfx::top_up(&mut self.units, b);
         if self.guns.len() < b.guns.len() {
             self.guns.resize(b.guns.len(), (false, false));
         }
@@ -1723,12 +1733,13 @@ impl SpaceWarUi {
         let steps = (tick.saturating_sub(self.held_tick).min(6) as i32).max(press as i32);
         self.held_tick = tick;
         match spot {
-            Some(0x1f) => {
+            // `SpwC::main` 0x57b9e0 has no button test, but `IG2_gameUpdate` (ELF 0x587400 / exe 0x4e0440) calls it for a
+            // flag-0 hot-spot only while a button is held and on the release (deviation 56): a hover never pans.
+            Some(0x1f) if any || release => {
                 let (dx, dy) = (self.mouse[0] - 321.0, self.mouse[1] - 421.0);
                 let th = self.snap_yaw as f64;
                 let (s, c) = (th.sin() as f32, th.cos() as f32);
-                // Every call, hovering too (exe `SpwC::main` 0x57b9e0 has no button test; a button only latches the
-                // hot-spot through `Mouse_Megfogva`).
+                // A button latches the hot-spot through `Mouse_Megfogva`.
                 self.pan_target[1] = -((c * dx + s * dy) / (94.0 / (b.bounds[1] - b.bounds[0])));
                 self.pan_target[2] = (c * dy - s * dx) / (67.0 / (b.bounds[3] - b.bounds[2]));
             }
@@ -1905,6 +1916,7 @@ impl SpaceWarUi {
             gun_t: self.gun_t.clone(),
             gun_timers: self.gun_timers.clone(),
             gun_damage: Vec::new(),
+            info_other: (self.info_type == 5000).then(|| ("vad11.xvb".to_owned(), false)),
             title: self.title.clone(),
             title_tech: self.title_tech,
             stance: self.stance,

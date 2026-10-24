@@ -224,8 +224,9 @@ function hookLightProbe() {
         if (this.on) tradeProbed.add(key);
       } else if (cfg.kep === 2) {
         // On the starmap (the info panels' models, deviations #47): each object (XVOStruct) once in the last frames
-        // before the grab (the sort slots are reused every frame).
-        const key = args[4].toString();
+        // before the grab (the sort slots are reused every frame); an XVO drawn under several rotations (the fleet
+        // panel's big preview shares its model with a cell) once per rotation.
+        const key = args[4].toString() + [0, 1, 2, 3, 4, 5].map((i) => args[3].add(0x24 + 4 * i).readFloat().toFixed(3)).join(',');
         this.on = A.AktKep.readS32() === 2 && phase === 3 && (!cfg.rop || ropDone) && frames >= at + cfg.wait - 3 && !tradeProbed.has(key);
         if (this.on) tradeProbed.add(key);
       } else {
@@ -250,7 +251,9 @@ function hookLightProbe() {
         verts.push([v.readFloat(), v.add(4).readFloat(), v.add(8).readFloat(), v.add(0xc).readU32()]);
       }
       const mat = this.xvo.add(0x34).readPointer().readPointer();
-      const rec = { k: 'light', frame: resFrames3d, sp: sp.toString(), m, flags, opacity: this.op, lights, verts, keringeto: va(0xddf6bc).readFloat() };
+      // The whole sort record before the flags (its other matrices, e.g. the geometry's), on the starmap only.
+      const raw = cfg.kep === 2 ? Array.from({ length: 0x68 / 4 }, (_, i) => sp.add(4 * i).readFloat()) : undefined;
+      const rec = { k: 'light', frame: resFrames3d, sp: sp.toString(), m, raw, flags, opacity: this.op, lights, verts, keringeto: va(0xddf6bc).readFloat() };
       if (!shadeSent) {
         const t = mat.add(0x34).readPointer(), sp2 = mat.add(0x38).readPointer();
         rec.shade = Array.from(new Uint16Array(t.readByteArray(0x4000 + 0x4000)));
@@ -690,7 +693,9 @@ for (let n = 0; n < 11; n++) SDL_KEYS['f' + (n + 1)] = [58 + n, 0x4000003a + n];
 const resState = () => ({ frame: va(0xdc5368).readFloat(), open: va(0xddf322).readU8(), closing: va(0xddf323).readU8(), started: va(0xddf628).readU8(),
   area: va(0xb9a9b4).readS32(), field: va(0xb9aa04).readS32(), tech: va(0xb9aa08).readS32(), wheel: va(0x919598).readS32(),
   // The diplomacy screen's opening (re/screens/diplomacy.md §3.1): `dipframe`, `dipKINYITVA`, `dipBECSUKAS`.
-  dipframe: va(0xab768c).readFloat(), dipOpen: va(0xab6504).readU8(), dipClosing: va(0xab6477).readU8() });
+  dipframe: va(0xab768c).readFloat(), dipOpen: va(0xab6504).readU8(), dipClosing: va(0xab6477).readU8(),
+  // The messages screen's (re/screens/messages.md §4.1): `mesframe`, `mesKINYITVA`, `mesBECSUKAS`.
+  mesframe: va(0xdabe44).readFloat(), mesOpen: va(0xda65e5).readU8(), mesClosing: va(0xda65cf).readU8() });
 
 function hookScript() {
   const s = cfg.script;

@@ -123,18 +123,7 @@ impl Mesh {
     fn load(r: &mut Renderer, install: &Install, name: &str) -> Option<Self> {
         let load = |n: &str| Model::load(install, "vector/starmap/", n, "textures/starmap/");
         let root = load(name).map_err(|e| eprintln!("ig2-client: {e} (no starmap mesh)")).ok()?;
-        let mut stem = name.trim_end_matches(".xvb").to_string();
-        for _ in 0..8 {
-            let next = install.read(&format!("dataraw/vector/starmap/{stem}.xv")).ok().and_then(|b| {
-                let ar = ig2_formats::xv::Archive::parse(&b).ok()?;
-                let h = ig2_formats::xv::NodeHeader::parse(ar.root(Some(&stem))?.data).ok()?;
-                (!h.lod_archive.is_empty()).then(|| h.lod_archive.trim_end_matches(".xvb").to_string())
-            });
-            match next {
-                Some(n) => stem = n,
-                None => break,
-            }
-        }
+        let stem = crate::scene::lod_chain(install, "vector/starmap/", name).pop()?;
         let parts = load(&format!("{stem}.xvb"))
             .ok()?
             .parts

@@ -16,6 +16,8 @@ struct U {
     sun: vec4<f32>,
     fog: vec4<f32>,
     fog_range: vec4<f32>,
+    flash: vec4<f32>,
+    flash_dir: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(1) @binding(0) var tex: texture_2d<f32>;
@@ -105,7 +107,9 @@ fn shade_cap(i: VO, cap: f32, engine: bool, shadow: f32) -> vec4<f32> {
     let n = normalize(select(i.n, vec3(1.0, 0.0, 0.0), prelit));
     let d = dot(n, u.light.xyz);
     let lambert = u.ambient.rgb + u.sun.rgb * abs(d) * u.light.w + u.sun.rgb * max(d, 0.0) * (1.0 - u.light.w);
-    let lit = select(select(lambert, u.ambient.rgb + u.sun.rgb * engine_shade(d), engine), vec3(1.0), prelit);
+    // The engine path's second parallel light (the colony's lightning, `villamid`; black elsewhere).
+    let flash = u.flash.rgb * engine_shade(dot(n, u.flash_dir.xyz));
+    let lit = select(select(lambert, u.ambient.rgb + u.sun.rgb * engine_shade(d) + flash, engine), vec3(1.0), prelit);
     var rgb = t.rgb * shadow * i.color.rgb * min(lit, vec3(cap));
     let f = max(clamp((i.dist - u.fog_range.x) / max(u.fog_range.y - u.fog_range.x, 1.0), 0.0, 1.0) * u.fog_range.z, i.border) * i.color.a;
     rgb = mix(rgb, u.fog.rgb, f);
@@ -230,6 +234,9 @@ pub struct SceneUniforms {
     pub fog: [f32; 4],
     /// Fog start, end, strength, the map's half-size (border fog).
     pub fog_range: [f32; 4],
+    /// A second parallel light of the engine path (`gamma`): its colour, then the direction towards it (the colony's
+    /// lightning flash, `UpdateRain`); zero lights nothing.
+    pub flash: [[f32; 4]; 2],
 }
 
 /// A part's role in the remaster's shadow map (re/screens/render.md §4): property 0x400000 casts (drawn into the

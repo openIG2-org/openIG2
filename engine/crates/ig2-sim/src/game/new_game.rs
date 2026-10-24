@@ -348,13 +348,15 @@ impl<'r> Game<'r> {
     /// `TutorialSetCampaignGameOptions(n)` (exe 0x504250, re/rules/tutorial.md) on [`Game::before_start`]'s state:
     /// the §6 prologue (PlayerFaj[17] = 1), EN = 1, PlayerKi[1] = 1, `InitNewGame(ticks, 1, 0, 0)`, then
     /// `TutorialLoadScenario(n)` = `LoadScenario("tutorial/scn/tutorial<n>.scn", 0)` (`cfg.text`). Unlike
-    /// `Betolt_Scenario` no empire is discovered, no camera set and no step-55 patch repeated.
+    /// `Betolt_Scenario` no empire is discovered, no camera set and no step-55 patch repeated. Verified byte-exact
+    /// against chapters 1..=5 started in ig2.exe (`run_newgame.py --tutorial N`, tests/new_game.rs).
     pub fn start_tutorial(&mut self, cfg: &NewScenario, data: &StartData) {
         self.prologue(data, 1);
         let m = self.m();
         m.set_i32(va::EN, 1);
         m.set_u8(va::PLAYER_KI + 1, 1);
-        let init = Init { mode: 1, campaign: 0, difficulty: cfg.difficulty, seed: cfg.seed, ticks: cfg.ticks };
+        // The exe passes difficulty 0 (exe 0x504250); the scenario file sets the game's own.
+        let init = Init { mode: 1, campaign: 0, difficulty: 0, seed: cfg.seed, ticks: cfg.ticks };
         self.init_new_game(&init, None, data, data.image);
         let techs0 = (data.image)(TALALMANYOK0, TECHS * TECH_SIZE);
         let ops = self.load_scenario(&cfg.text, 0, &techs0);

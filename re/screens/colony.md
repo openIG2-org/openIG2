@@ -195,7 +195,7 @@ original's pixels on the doubled remaster picture (pinned in re/screens/hud.md �
 13 = radar frame (491, 348; 149 × 132) with the minimap drawn by the second `Update3D` and `DrawRadar`, 14 = the
 build/info panel (455, 23; 182 × 148), 1–11, 19–27, 29–30 = buttons (31 × 31, 39 × 20, 20 × 39, 72 × 19 cells),
 17/22/23 `STAR_W.BMP` (kep 97), 18 `TALAJ.BMP`, 28 `FUV6.BMP`, 31 `ZAJ.BMP` (radar noise). `GFX_Colony` also draws
-the faders behind the panels and `GFX_DateMoneyScrollFade` (only faders: the top bar itself is the persistent layers'
+the faders behind the panels (when the planet is EN's and not at war or EN still has units to land: four `FadeScreen`s colour (0, 0x1e, 0x3c), transparency 100 (opacity 155/255), texture scale 0 (tinted by fadertexture's corner texel), at (34,35,120,126), (16,48,18,64), (154,46,24,83), (154,135,44,13), behind panel 12 whose opening is fully transparent: the terrain shows through the tint; row 311) and `GFX_DateMoneyScrollFade` (only faders: the top bar itself is the persistent layers'
 `GFX_IdospeedPenzDatum`, re/screens/hud.md §2). The 2D passes: `ColonyGfx2D_0` (lens flare), `_1` (landing zones, build grid, building
 bases/selection, `WF::WriteStuff`, the radar, special-weapon buttons), `_2` (planet info text, rain/sandstorm),
 `_3` (repair/demolish windows, prices), `_4` (texts, self-destruct). `ShowBuildings` 0x4c9220: building names
@@ -356,7 +356,7 @@ down of i does nothing, the text i / I turn the info mode on and off].
 The selection marker (`DrawBuildingSelection` ELF 0x482ca0): `epkij.bmp` on two flat triangles at the building's placed
 height `+0x14` plus `allvanypoziciok[k − 1]` − 20 (exe 0x8F3878, 60 floats, `ig2-rules::scaffold_heights`), half sizes
 `w·40·Building[k − 1].select + 2·selectionsize` and `h·40·… ` (exe `+0x68`, ELF `+0x6c`, `ig2-rules::BuildingModel::select`),
-alpha `selectionatlatszosag`. `Frissit2_Colony` animates it per UI frame: a new selection starts at size 300, shrinking
+alpha `selectionatlatszosag`, blended additively (`polygons3d(v, 3, 3)` = mode 3, `RGB·A/256`; an alpha blend shows a black square: row 310). `Frissit2_Colony` animates it per UI frame: a new selection starts at size 300, shrinking
 ×0.95 (alpha `(255 − (size − 3))/3`) until it reaches `sin(ColonyCounter/30)·3 + 3`, then it pulses with alpha
 `−sin(ColonyCounter/30)·64 + 128`. (Each triangle draws a libc `rand()` into an unused counter: render-only.)
 
@@ -380,7 +380,7 @@ The panel's turning building (`ShowColony`, `buildshown`): when `AktEpuletTipus`
 `OptionsBuildingRes` 2), its `_A_`/`_B_`/`_C_` children as the buildings', `RotateObj(π/2, 0, 0)`,
 `RotateObj2((1, 0, 0), −0.3)`, camera-fixed (`SetRelative(false)`) at (0, 0, −30000); `Frissit2_Colony` turns it 0.012
 per UI frame about `(0, cos −0.3, sin −0.3)`; the second `Update3D` draws it in the viewport 18..173 × 36..167 centred
-on (95, 101) (`ShowColony`'s `HatarX1..`, `xcenter`, `ycenter`). A unit being placed shows its hull instead
+on (98, 88) (the centre the remaster's `ColonyGfx2D_2` leaves, §11.10; `ShowColony` sets (95, 101)). A unit being placed shows its hull instead
 (`AktEpuletTipus = −10 − design`).
 
 The hold: hot-spot 0x14 is not one-shot, so `Colony_Main` runs `GetNearestBuilding` every frame the left button is
@@ -683,12 +683,28 @@ from the second grab on (the first grab's ten ticks hold `Colony_Move`'s one-sho
   riding the dropship (`+0x278` bit 3): `dc = (int)(h/200·255 + 255)` (0 at h ≤ −200), the square grown
   `(255 − dc)/4` and moved with the dropship; colour grey `dc`; `polygons3d(v, 3, 2)`: blend ZERO /
   ONE_MINUS_SRC_COLOR (what lies below × (1 − texel·colour)). Each triangle draws one libc `rand()` (render only).
-- **Unit info model** (`HandleKisInfoObject` exe 0x47d000, ELF 0x4ce840, per frame from `ShowColony`): the first
-  selected unit's model (`GetSelectedMeshPointer` exe 0x47bc20: the hull's, a turret's gun) is cloned into `mainxvb5`
-  (inside `mainxvb3`, drawn by the panel's second `Update3D`, centre (95, 101)) at scale 0.025, `RotateObj(π/2, 0, 0)`,
-  `MoveObj(−130, 657, −1100)` (camera-fixed, property 0x2000000), turning −0.01 a UI frame about (0, 1, 0)
-  (`Frissit2_Colony`); put up again when the unit changes. [The port draws it 36 px lower and smaller than the exe:
-  deviations.md.] With a building selected (`ColonyInfoMod` 2) the same shows the building [not ported].
+- **Info box model** (`HandleKisInfoObject` exe 0x47d000, ELF 0x4ce840, per drawn frame from `ShowColony`): one object
+  `KisInfoMeshId` (exe 0xa3e9d8) in `mainxvb5` (inside `mainxvb3`, drawn by the panel's second `Update3D`). Its mesh is
+  `GetSelectedMeshPointer` (exe 0x47bc20, ELF 0x4b9730) by `ColonyInfoMod` (exe 0x99646c; `FRISSIT_Colony2` exe 0x474610:
+  1 with units selected, else 2 with a building selected, else 0; `Colony_Belep` 0):
+  - 0: the planet's globe `vector/starmap/b<(surface − 1) % 8>0.xvb` (`LoadBox`, loaded once while mode 0 lasts,
+    `legutobbbolygovoltbetoltve`; modes 1 and 2 clear the flag); not cloned. Drawn at its detail chain's last level
+    (property 0x4000000), scaled by the chain head's extents (the sphere comes out an upright oval, as in the exe).
+  - 1: the first selected unit's model (`WF::GetSelected(0)`: the hull's `+0x160`, a turret's gun `+0x168`), cloned.
+  - 2: `buildshown` (the build menu's kind's preview), cloned.
+  When the mesh pointer or `AktEpuletTipus` changes (`LastEpuletTipus` exe 0x8ec9ec) it is removed and added again:
+  `AddToScene(m, mainxvb5, s)` with s = 0.025, or in mode 2 with a kind `Building[kind − 1] + 0x54 · 0.015` (capped at
+  1.5 before the factor below `OptionsBuildingRes` 2; the remaster runs the highest), property 0x2000000,
+  `SetRelative(false)`, `RotateObj(π/2, 0, 0)`, `MoveObj(−130, 657, −1100)` (camera space), properties 0x8000000
+  (`kirak2`: no clip flags, no near test) and 0x4000000 (finest level). `Frissit2_Colony` (exe 0x477dc0) turns it
+  `RotateObj2(id, (0, 1, 0), −0.01)` a UI frame (accumulating), so a new pick starts its turn from 0.
+- **The panel pass's projection**: `ShowColony` sets `HatarX1..Y2` 0x12..0xad × 0x24..0xa7 and the centre (95, 101)
+  before the second `Update3D`, but the remaster's `ColonyGfx2D_2` (exe 0x461900, its last lines, not in the ELF) leaves
+  `HatarX1..Y2` 0x1b..0xa9 × 0x28..0x88 (`Xm` 0x8f, `Ym` 0x61) and the centre **(98, 88)**, and the pass draws with
+  those [obs: `tools/trace/probes/colony_pass2.js`: every lighting call of the pass reads (98, 88), the focal `fov2`
+  0xE033E0 is 600 and the depth offset 0x91971C −0.0001, at 800 × 600 and 1280 × 720]. So `vx = 600·x/−z + 98`,
+  `vy = 600·y/−z + 88`: the info box's model point lands at virtual (27.1, 446.4) [obs: the globe's centre ≈ (29, 448),
+  the main building's ≈ (27, 449), a unit's ≈ (28, 445)]; the panel's `buildshown` is centred there too.
 - **Landing panel** (`ShowColony` exe 0x49f130 at its top): while `CheckPlacing(EN)` is false and
   `GetFirstUnPlacedTank(EN)` ≠ −1, `AktEpuletTipus = −10 − design`: `buildshown` becomes `LoadBox(TankAlap[hull])` at
   scale 2.0 with `tankok/<hull><min(EN, 10)>.bmp` on its first sub-mesh, turned as the building is, and is shown on

@@ -912,7 +912,7 @@ impl Draw2d<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -958,7 +958,7 @@ mod tests {
     }
 
     /// Planet 7 of empire 2 at war; EN = 1 attacks with units 0 (fighters), 1 (mine layer), 2 (kamikaze); unit 3 is 2's.
-    fn field() -> ColonySnap {
+    pub(crate) fn field() -> ColonySnap {
         let mut present = [0; 19];
         present[1] = 1;
         present[2] = 1;

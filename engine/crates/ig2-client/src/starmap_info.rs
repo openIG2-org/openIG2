@@ -547,9 +547,14 @@ impl InfoPanel {
         }
     }
 
-    /// Drawn frames since the panel opened (the cells' spin, 60 Hz [inf]).
+    /// Drawn frames since the panel opened (the cells' spin, 60 Hz [inf]). With a capture's `InfoAlapRotation` (one
+    /// UI tick a drawn frame there) the cells have turned one frame fewer than it has stepped [obs: the light probe
+    /// on the fleet panel, `InfoAlapRotation` 1.66 with the cells at 164.6 turns, re/screens/starmap.md §19.3].
     fn drawn_frames(&self) -> f32 {
-        ((self.now - self.opened.unwrap_or(self.now)) * 60.0).floor()
+        match self.turn {
+            Some(t) => ((t * 100.0).round() - 1.0).max(0.0),
+            None => ((self.now - self.opened.unwrap_or(self.now)) * 60.0).floor(),
+        }
     }
 
     /// The models to draw: per shown cell the row's hull at scale 0.04 turning `(i % 3 + 1)·0.03` a drawn frame, and
@@ -575,8 +580,7 @@ impl InfoPanel {
                 continue;
             }
             let Some((hull, digit)) = unit(row.design) else { continue };
-            let turn = ((i % 3 + 1) as f64 * 0.03) as f32;
-            let rot = scene::mul(&scene::axis_matrix(spin_axis, turn * frames), &crate::starmap_panels::tilt());
+            let rot = cell_rot(i, frames);
             let at = [((k % 2) * 0x81 - 0xe5) as f32, ((k / 2) * 0x46 - 0x9c) as f32, -600.0];
             out.push(Pose { hull, digit, owner: skin, rot, scale: 0.04, at });
         }
@@ -589,10 +593,7 @@ impl InfoPanel {
                 // `RotateObj(0, 0, InfoAlapRotation)`, `RotateObj2((1, 0, 0), 1.3)`; +0.01 a 10 ms UI frame.
                 Kind::Fleet => {
                     let turn = self.turn.unwrap_or((self.now - self.opened.unwrap_or(self.now)) * 100.0 * 0.01);
-                    // [obs: the exe's view at `InfoAlapRotation` t is the port's at π − t (captures at t = 0.91 and
-                    // 2.69, re/screens/starmap.md §19.3); the model axes' handedness is the likely cause.]
-                    let yaw = std::f32::consts::PI - turn;
-                    (scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], 1.3), &scene::create_matrix(0.0, 0.0, yaw)), 0.08)
+                    (preview_rot(turn), 0.08)
                 }
                 Kind::Tanks => (scene::mul(&scene::axis_matrix(spin_axis, 0.03 * frames), &crate::starmap_panels::tilt()), 0.1),
             };
@@ -600,6 +601,18 @@ impl InfoPanel {
         }
         out
     }
+}
+
+/// Cell `i`'s rotation after `frames` drawn frames: §19.3's stand-up and lean, turned `(i % 3 + 1)·0.03` a frame.
+fn cell_rot(i: usize, frames: f32) -> M3 {
+    let turn = ((i % 3 + 1) as f64 * 0.03) as f32;
+    scene::mul(&scene::axis_matrix([0.0, (-0.5f32).cos(), (-0.5f32).sin()], turn * frames), &crate::starmap_panels::tilt())
+}
+
+/// The fleet preview's rotation at `InfoAlapRotation` `t` (`InfoForgatAlap`: `RotateObj(0, 0, t)`, `RotateObj2((1, 0,
+/// 0), 1.3)`) [obs: the light probe's rotation and geometry matrices, re/screens/starmap.md §19.3].
+fn preview_rot(t: f32) -> M3 {
+    scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], 1.3), &scene::create_matrix(0.0, 0.0, t))
 }
 
 /// A camera-fixed model of the panel: the hull (`TransfAlap`), the race digit and the vehicle skin's owner, its
@@ -792,6 +805,23 @@ impl InfoPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn near(a: &M3, b: &[f32; 9], tol: f32) -> bool {
+        a.iter().zip(b).all(|(x, y)| (x - y).abs() <= tol)
+    }
+
+    /// The fleet panel's rotations as the exe's light probe read them at the grab (quick-1.sav, two new fleets,
+    /// `InfoAlapRotation` 1.66; re/screens/starmap.md §19.3): the preview exactly, the cells to the probe's 0.4 of a
+    /// frame (164.6 turns against 165).
+    #[test]
+    fn panel_rotations_match_the_exe_probe() {
+        assert!(near(&preview_rot(1.66), &[-0.089, -0.996, 0.0, 0.266, -0.024, -0.964, 0.960, -0.086, 0.267], 2e-3));
+        let frames = InfoPanel { turn: Some(1.66), ..InfoPanel::new(Kind::Fleet, SaleNames::default(), 0.0) }.drawn_frames();
+        assert_eq!(frames, 165.0);
+        assert!(near(&cell_rot(0, frames), &[0.223, -0.975, 0.0, 0.467, 0.107, -0.878, 0.856, 0.195, 0.479], 0.02));
+        assert!(near(&cell_rot(1, frames), &[-0.901, -0.434, 0.0, 0.208, -0.432, -0.878, 0.381, -0.791, 0.479], 0.03));
+        assert!(near(&cell_rot(2, frames), &[-0.624, 0.782, 0.0, -0.375, -0.299, -0.878, -0.686, -0.547, 0.479], 0.04));
+    }
 
     #[test]
     fn cells_follow_the_left_panels_hot_spots() {

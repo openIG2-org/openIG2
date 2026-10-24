@@ -80,6 +80,30 @@ children of nodes with ≥ 3 frames, frame 0's translation equals `t` for 995 (g
 Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB`, otherwise
 `<prefix><name>.xvo` via `LoadObject`. A missing member leaves a NULL child.
 
+### Level of detail (verified 2026-10-25, FX13 leftovers)
+- **Chain.** `LoadObject` (ELF) reads the 16-byte `lod_archive`; a non-empty name gives `+0x18` = the next level's
+  object and `+0x10` = 1.0f (the file's `lod_param` word is not used; screens may set it later: the starmap planets' heads run
+  at 5 [obs: `probes/lod.js`]), an empty one `+0x10` = `+0x18` = 0. Shipped
+  chains: `spacewar/rombX0` → `rombX1` → `rombX2` (the destroyers: 1, 4, 4 meshes), `flagX0` → `X1` → `X2`, the
+  starmap planets `bXY0` → … → `bXY3`.
+- **Choice** (`Kocka` ELF 0x5f6a40, exe 0x5281f0; per sort record, so the root and every child box decide alone):
+  `size = |M·(1, 1, 1)|²·(fov/−z)²` (`M` the record's matrix `+0..+0x20`, `z` its depth `+0x50` in scene units clamped
+  to −0.001, `fov` = 600·zoom, exe 0xE033E0; the root record's size is the literal 3147076), stored at `+0x7c`/`+0x84`
+  by the parent; on entry `size·4`; then `level = 0, thr = valtashatar` and, while the node has a next level, `level < 10` (or `maxlevelszint`
+  with flag 0x10000000) and `thr < 4·size·lod·lod` (skipped with flag 0x4000000: down to the chain's end):
+  `level += 1`, `thr *= 30` (all f32). `valtashatar` is per screen: `Starmap_Belep` 1600, `Main3DInit` 3600,
+  `Infoing3DInit` 2400, `ShowColony` 5625, `Research3DInit` 10000. The chosen level's boxes and vertices are drawn
+  under the head's record (`AddToScene` sizes only the head; `AddToXVB` hands its slot to every level).
+- **The head's box spans the chain**: `BoxUjraszamol` measures the vertices down the `+0x18` chain, so `romb60`'s box
+  (1024, 857.8, 406.6) takes x and y from `romb60`, z from `romb61`/`romb62`.
+- [obs: `probes/lod.js` on the starmap fleet panel: `romb60` at `AddToScene` 0.04 (the cells) has size 3119.55,
+  at 0.08 (the big preview) 12478.14, `z` −0.5859, `valtashatar` 1600: the cells draw `romb61`, the preview `romb62`;
+  test `scene::tests::panel_hulls_step_down_their_lod_chain_like_kocka`.]
+- **Drawing** (`kirak` ELF 0x60e160, exe 0x531460; `kirak2` exe 0x530b20): every vertex as stored in the `.xvo`
+  (no header scale), `X = row0·v + pos.x` etc. with the box's own record; a child box's record is
+  `parent·(box +0x88)` with `+0x88` = `diag(origin/e)·M` after the recount [obs: `probes/kocka.js`, `probes/kirak.js`
+  on `kolonizalo`: all 21 children match to 1e-4, the drawn vertices are the file's].
+
 ## `.xvo` mesh
 ```
 header
@@ -148,4 +172,28 @@ screen directory (15,958 / 15,983 references resolve).
 ## Open questions
 - None for the file layout. The material `flags` word and the render-flag words of the child records
   (`+0x54`/`+0x58` masks, set at runtime) belong to the renderer port (Phase 3).
-- The trade screen shows the material's last word is an f32 transparency (`re/screens/trade.md` §13).
+- (Settled 2026-10-24.) The material's last word is an f32 transparency, used as below.
+
+## Material transparency (`.xvm` +0x30)
+- `loadmaterial` (ELF 0x5ff760 / exe 0x534470) reads it into the material's +0x30 (absent file: 0; the five 48-byte
+  `.xvm`s leave it as uninitialised heap in both binaries). Nothing writes it after load; `changeaktmatarial(self)`
+  never read it.
+- `Kocka` (ELF 0x5f6a40 / exe 0x5281f0), per drawn mesh: `t = node.t != 0 ? node.t : material[0].t`: the object's
+  transparency (`SetObjTransparency` ELF 0x456d10 / exe 0x4533a0, box +0x60 ELF / +0x58 exe, no clamp; screen
+  wrappers such as `spySetObjTransparencyH` clamp to ≥ 1e-6) wins when non-zero; else the mesh's FIRST material's,
+  whatever the batch. Never multiplied or maxed. A child node takes its own `t` (a file child) or `1 − (1 − parent)(1 −
+  own)` (a hierarchical child, box +0xe8 bit 0).
+- Opacity byte `o = float2int(255 − 255·t)` (exe 0x542d80, f32 round-to-nearest-even, no clamp): 0.65 → 89 [obs: the
+  trade panels' light probe], 0.25 → 191, 0.7 → 76. `fenyekszamolasa` (exe 0x52f190) puts `o` in the vertex alpha
+  (property bit 8, the default) or scales RGB by `o/256` additively (bit 8 clear); `rgbac` = `o` drives the
+  self-illumination pass. `renderstateallitas` (exe 0x536f90): `o != 255` turns blending on; the depth write stays.
+  Engine-wide, no screen gate.
+- Port: `scene::Part::transparency` (first material), `Part::opacity(object_t)`, `Part::alpha` (the screens' bakes);
+  test `scene::tests::material_transparency_is_the_fallback`.
+- Where it shows (inventory of every shipped model, 2026-10-24): trade panels/backdrop (0.65) and grid (0.25), and the
+  messages frame's `messbck` 5/0/0 (0.6 → 102/255; drawn until the clip hides it) [obs: `messages-open.json`
+  t129/t132 5.2/6.0 → 0.8, t290 2.6 → 0.6]. Elsewhere the exe overrides or hides every material-transparent part:
+  design `desbck` 1..5 and diplomacy `dipbck8` 1/8, 1/9 hidden; research `resbck` Box01 (`KELLVILLOGAS`), spy pedestals
+  and figures (`spySetObjTransparencyH`, ≥ 1e-6), spy `Object05/06` (0.8), info heads (`Infoing3DInit` 0.01) and list
+  discs, messages 1/6, 2/7, 4/0 (0.4), colony `_A_` (0.6), spacewar shells `bolygo3` (0.7) set their own; spacewar shots are particles (form alpha), not `Kocka` meshes. Not drawn by the
+  client: `main/csillag` 0.9, `starmap/cirk11/12` 0.5, `spacewar/hajoinfo` 0.2, `infopanel` 0.36, `halal` 0.5.

@@ -1024,3 +1024,24 @@ fn tutorial_fleets() {
     assert!(g.tutorial_effect(&Effect::ColonizationFleet));
     assert!(named(&g, b"Colonization").is_some());
 }
+
+/// `IRRITATEME` (`re/rules/tutorial.md` §3 65, exe 0x60c570): `DiplomaciaTalkAbout(6, EN, 4, −1)`, empire 6's insult
+/// to EN as a declaration: the two meet and EN's `MESSAGES` toward 6 grows by 1000 (`FeldolgozAjanlat`).
+#[test]
+fn tutorial_irritate() {
+    use ig2_sim::diplomacy::field::MESSAGES;
+    use ig2_sim::tutorial::Effect;
+    let Some(inst) = install() else { return };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-1.sav");
+    if !p.exists() {
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let mut g = Game::new(SaveState::from_save(&load(&p), &tech_defaults), &rules);
+    let en = g.state.mem.i32(va::EN) as usize;
+    let before = g.state.diplomacy().relations[en][6].v[MESSAGES];
+    assert!(g.tutorial_effect(&Effect::Irritate));
+    let after = g.state.diplomacy().relations[en][6].v[MESSAGES];
+    assert_eq!(after as i32, (before as i32 + 1000).min(i16::MAX as i32), "6 → EN: Viszony[EN][6].MESSAGES += 1000");
+}

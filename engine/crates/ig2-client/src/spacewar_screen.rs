@@ -181,6 +181,7 @@ impl Dump {
             gun_t: self.battle.guns.iter().map(|g| g.hits).collect(),
             gun_timers: Vec::new(),
             gun_damage: Vec::new(),
+            info_other: None,
             title: Vec::new(),
             title_tech: -1,
             stance: 0,
@@ -245,6 +246,9 @@ pub struct Shown<'a> {
     /// The guns' selection timers (grow, fade, attacked) and their buildings' damaged fraction (the live screen).
     pub gun_timers: Vec<[i32; 3]>,
     pub gun_damage: Vec<f32>,
+    /// The info model when no ship is selected (`kisinfogfxfrissit`, spec §5.2): the model's name and whether it is
+    /// from `talalmanyok` (else `spacewar`): `vad11.xvb` for type 5000, a selected gun's building's for 50000 + slot.
+    pub info_other: Option<(String, bool)>,
     /// The small box's title for one unit (its plan's name), the tech under it (a ship's hull, a gun's building; −1
     /// none) and the fighters' stance `gfxvadaszdefendattack`.
     pub title: Vec<u8>,
@@ -530,6 +534,11 @@ impl Models {
 
     /// Load the models of units that came since (`AddUjUrhajo` mid-battle).
     pub fn top_up(&mut self, r: &mut crate::render::Renderer, install: &ig2_formats::Install, s: &Shown) {
+        if let Some((name, small)) = &s.info_other {
+            if let std::collections::hash_map::Entry::Vacant(e) = self.ships.entry((name.clone(), *small)) {
+                e.insert(Self::mesh(r, install, name, *small));
+            }
+        }
         for (i, u) in s.battle.units.iter().enumerate() {
             let Some(Some((name, _))) = s.types.get(i).cloned() else { continue };
             let key = (name, u.kind >= 8);
@@ -588,11 +597,14 @@ struct Fixed<'a> {
 /// Draws camera-fixed models into a texture over the virtual rectangle `rect` (the way the starmap's panel is drawn,
 /// `starmap_hud::Console`), to lay over the scene: they sit in front of everything [inf]. Lit by their own ambient
 /// light 0x808080 and a front light [inf].
-fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::render::Target>, items: &[Fixed], rect: [f32; 4], kering: f32) -> Option<crate::render::TexId> {
+fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::render::Target>, items: &[Fixed], rect: [f32; 4], kering: f32, sides: bool, xcenter: f32) -> Option<crate::render::TexId> {
     if items.is_empty() {
         return None;
     }
     let lights = crate::starmap_hud::scene_lights(&[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], kering);
+    // The info model takes the parallel light without the side lights [obs fx8b: its picture 5.63 -> 5.35, ambient
+    // only 5.71].
+    let lights = if sides { &lights[..] } else { &lights[..1] };
     let mut dynamic = Vec::new();
     let mut draws = Vec::new();
     for it in items {
@@ -608,7 +620,7 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
                 // against the lights' own vectors (the chain stops at the record) [obs fx8b: weapons 2.6-4.4; turned by
                 // the camera 4.3-8.6].
                 let w = crate::scene::normalise(crate::scene::apply(&rot, [v.normal[0], v.normal[1], -v.normal[2]]));
-                let c = crate::starmap_hud::engine_light(&lights, [w[0], w[1], -w[2]]);
+                let c = crate::starmap_hud::engine_light(lights, [w[0], w[1], -w[2]]);
                 dynamic.push(crate::render3d::MeshVertex {
                     pos: [e[0] + it.at[0], e[1] + it.at[1], e[2] + it.at[2]],
                     normal: [0.0; 3],
@@ -621,11 +633,11 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
     }
     let [x0, y0, x1, y1] = rect;
     let (w, h) = (x1 - x0, y1 - y0);
-    // Camera space → clip for the virtual window: vx = 600·x/−z + 320, vy = 600·y/−z + 250; depth 0..1 over −z =
+    // Camera space → clip for the virtual window: vx = 600·x/−z + xcenter, vy = 600·y/−z + 250; depth 0..1 over −z =
     // 100..2000.
     let (a, b) = (-2000.0 / 1900.0, -100.0 * 2000.0 / 1900.0);
     let rows = [
-        [1200.0 / w, 0.0, -(2.0 * (320.0 - x0) / w - 1.0), 0.0],
+        [1200.0 / w, 0.0, -(2.0 * (xcenter - x0) / w - 1.0), 0.0],
         [0.0, -1200.0 / h, -(1.0 - 2.0 * (250.0 - y0) / h), 0.0],
         [0.0, 0.0, a, b],
         [0.0, 0.0, -1.0, 0.0],
@@ -643,6 +655,7 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
             sun: [0.0; 4],
             fog: [0.0; 4],
             fog_range: [1e9, 2e9, 0.0, 1e9],
+            flash: [[0.0; 4]; 2],
         },
         draws,
         dynamic,
@@ -809,7 +822,10 @@ impl<'a> Scene<'a> {
         let light = crate::scene::normalise(planet_light());
         let _ = eye;
         for (i, u) in b.units.iter().enumerate() {
-            if !u.alive || (u.cloaked && u.owner != b.human) {
+            // A dead ship stays shown through its explosion's first 0x29 ticks unless it retreated (`seturhajopos`,
+            // spec §6.5: ELF `+0x184`, exe `+0x17c`) [obs fx8 t2300: the exe's hull beside the blast].
+            let shown = if u.alive { !(u.cloaked && u.owner != b.human) } else { u.owner != 0 && (1..=0x29).contains(&u.exploding) && !u.retreating };
+            if !shown {
                 continue;
             }
             let Some((mesh, m, xf)) = self.pose(i, u) else { continue };
@@ -830,7 +846,8 @@ impl<'a> Scene<'a> {
     /// `lovedekekkirak`'s pass B (ELF 0x6823c0, exe 0x578d20; spec §6.1): per live unit with its selection timers
     /// (exe unit `+0x184` grow T1, `+0x188` fade F, `+0x18c` attacked T3), the hit-point bar, the corner brackets while
     /// selected, the attack ticks, and the ship count of a selected group; additive, in virtual pixels. `c = 1 −
-    /// starmaperosseg` (0 at the battle's zoom).
+    /// starmaperosseg` (0 at the battle's zoom). The units' quads are depth tested (`line3(.., depth = true, ..)`, the
+    /// vertices at `1 − zbm/−Z`, deviation 24): billboards of the mesh pass at the unit's eye depth; the guns' are not.
     fn overlays(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, hud: &crate::ui::Hud, b: &Battle, erosseg: f32, szar: Option<crate::render::TexId>) {
         use crate::render::{kind, Blend, Instance};
         let v = crate::font::Virtual::new(cam.size);
@@ -903,6 +920,7 @@ impl<'a> Scene<'a> {
         }
         let font = hud.font.as_ref();
         let pal = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
+        let mut depth: Vec<crate::render3d::MeshVertex> = Vec::new();
         for (i, u) in b.units.iter().enumerate() {
             let Some(g) = self.shown.units.get(i) else { continue };
             if !u.alive {
@@ -918,6 +936,27 @@ impl<'a> Scene<'a> {
             let e = cam.eye(&m, w[0], [w[1], w[2]]);
             let Some((p, px)) = cam.project_eye(e) else { continue };
             let [x, y] = v.virtual_of(p);
+            // `line3`'s rectangle in the plane through the unit's centre that faces the camera: a virtual pixel there
+            // is `−Z/fov` eye units along the camera's rows (x right, y down).
+            let unit = -e[2] / crate::starmap::FOV;
+            let quad = |_: &mut crate::render::Frame, x0: f32, y0: f32, x1: f32, y1: f32, col: [f32; 4], u: (f32, f32), swap: bool| {
+                let (lx, hx, ly, hy) = (x0.min(x1), x0.max(x1), y0.min(y1), y0.max(y1));
+                if !(hx > lx && hy > ly) {
+                    return;
+                }
+                // u from `u.0` at x0 to `u.1` at x1 along x, v 0..1 from y0 to y1; `swap`: u along y, v 1..0 along x.
+                let corner = |cx: f32, cy: f32| -> crate::render3d::MeshVertex {
+                    let (a, bb) = ((cx - x0) / (x1 - x0), (cy - y0) / (y1 - y0));
+                    let uv = if swap { [u.0 + bb * (u.1 - u.0), 1.0 - a] } else { [u.0 + a * (u.1 - u.0), bb] };
+                    let (dx, dy) = ((cx - x) * unit, (cy - y) * unit);
+                    let pos = std::array::from_fn(|j| w[j] + m[0][j] * dx + m[1][j] * dy);
+                    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv, color: col }
+                };
+                for (cx, cy) in [(lx, ly), (hx, ly), (hx, hy), (lx, ly), (hx, hy), (lx, hy)] {
+                    depth.push(corner(cx, cy));
+                }
+            };
+            let mut quad = quad;
             let scale = self.shown.types.get(i).cloned().flatten().map_or(0.0, |t| t.1);
             let rr0 = scale * 1000.0 / SCENE_SCALE * px / v.k;
             let (g, fa) = if brackets { ((t1 / 250.0).min(1.0), (250.0 - fd) / 250.0) } else { ((t3 / 250.0).min(1.0), 1.0) };
@@ -957,6 +996,13 @@ impl<'a> Scene<'a> {
             if let (true, Some(font)) = (selected && u.ship_count > 1, font) {
                 font.int(f, &v, u.ship_count as i64, (x + rr - 5.0).trunc(), (y + rr - 7.0).trunc(), 5, 2, crate::font::Align::Left, pal(3));
             }
+        }
+        let crate::render::Frame { scene, late, .. } = f;
+        if let (Some(scene), false) = (scene.as_mut(), depth.is_empty()) {
+            let start = scene.dynamic.len() as u32;
+            scene.dynamic.extend(depth);
+            let range = start..scene.dynamic.len() as u32;
+            late.push(crate::render3d::MeshDraw { mesh: None, range, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
         }
     }
 
@@ -1273,8 +1319,12 @@ impl<'a> Scene<'a> {
 
     /// The info box's model (`kisinfogfxfrissit` ELF 0x6860c0, exe 0x5778c0; spec §5.2): the selection's highest
     /// `race·12 + type` (`selectkisinfourhajo`) at 0.03, turned π/2 about x, at (−545, 365, −1100), spinning 0.05 a
-    /// frame (the phase isn't dumped: `spin`).
+    /// frame (the phase isn't dumped: `spin`); with no ship selected the fighter's or a gun's building's model.
     fn info_model(&self, items: &mut Vec<Fixed<'a>>, b: &Battle, spin: f32, clear: f32) {
+        if let Some(m) = self.shown.info_other.as_ref().and_then(|(name, small)| self.models.get(name, *small)) {
+            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear, tex0: None });
+            return;
+        }
         let mut best: Option<(i32, usize)> = None;
         for (i, u) in b.units.iter().enumerate() {
             let sel = self.shown.units.get(i).is_some_and(|g| g.selected);
@@ -1392,12 +1442,14 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
         gfx.panel.clock(r, install, 32.0);
     }
     let virt = crate::font::Virtual::new(size);
+    // The column's projection follows `xcenter` (its place takes `320 − xcenter` back), the info model's stays at 320
+    // [obs fx7 t1000..t1245 with the big box open: weapons 5.0-8.6 -> 2.8-6.0; the info model then left its box].
     let mut column = Vec::new();
     scene.weapons(&mut column, &gfx.panel);
-    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT, s.kering), COLUMN_RECT);
+    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT, s.kering, true, s.view.xcenter), COLUMN_RECT);
     let mut info = Vec::new();
     scene.info_model(&mut info, s.battle, s.spin, 1.0 - s.fade);
-    let info_tex = fixed_texture(r, &mut gfx.info_target, &info, INFO_MODEL_RECT, s.kering);
+    let info_tex = fixed_texture(r, &mut gfx.info_target, &info, INFO_MODEL_RECT, s.kering, false, 320.0);
     if let Some(c) = gfx.console.as_mut() {
         c.relight(r, s.kering, &cam.matrix());
     }

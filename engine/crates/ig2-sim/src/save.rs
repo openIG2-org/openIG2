@@ -77,6 +77,8 @@ pub mod va {
     pub const TUTORIAL_ACTIVE: u32 = 0xF6915D;
     pub const TUTORIAL_PAUSED: u32 = 0xF66F2A;
     pub const TUTORIAL_EVENT: u32 = 0xF66F40;
+    /// `TutorialSpyMelyikLehet` (`SPY MISSION m`; -1 = any).
+    pub const TUTORIAL_SPY_MISSION: u32 = 0x928EA4;
     pub const TUTORIAL_NO_RECRUITS: u32 = 0xF66F2B;
     pub const RND_N: u32 = 0xBAEB64;
     pub const RND_TOTAL: u32 = 0xBAEBB4;

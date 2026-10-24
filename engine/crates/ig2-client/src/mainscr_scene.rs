@@ -300,6 +300,19 @@ impl MainScene {
                     let roll = RING_ROLL.iter().find(|(n, _)| *n == sub).map(|(_, d)| d * rc.roll);
                     let rot = roll.map(|c| scene::create_matrix(0.0, 0.0, c));
                     model.move_child(&[sub], Some(to), rot.as_ref());
+                    // The rings' faces towards the camera take the scene's front light 0xdcc8c8 in the exe (lit stone
+                    // with a faint blue top and warm bottom); here the lighting normals of the drawn faces point the
+                    // other way along z, so only the side lights tinted them. Mirrored in z they match the capture
+                    // [obs: `probes/race_rings.js`: the exe's per-vertex colours are `fenyekszamolasa`'s exactly from
+                    // the same file normals and chains as these; the averages agree, the drawn side doesn't; cause
+                    // open, deviation 148; mainscr-race t 1010-1250 frame 5.3-6.7, rings neutral].
+                    if sub != a {
+                        for p in model.parts.iter_mut().filter(|p| p.index.first() == Some(&sub)) {
+                            for v in &mut p.verts {
+                                v.lnormal[2] = -v.lnormal[2];
+                            }
+                        }
+                    }
                     alpha.insert(sub, p.a);
                 }
             }
@@ -393,28 +406,6 @@ impl MainScene {
                 bake(p, &t, &lights, tex, 1.0 - (sh.alpha * s.gt + (1.0 - s.gt)), false, &mut dynamic, &mut draws);
             }
         }
-        // Steps 8 and 10: the rings (`korke1` 0.7 turned, `szrke{i}` 0.3 with the label on child 0), transparency 0.3,
-        // additive, unlit.
-        if let Some(l) = s.labels() {
-            self.labels = Some(l);
-        }
-        let ring = self.model(install, VECTORS, TEXTURES, "korke1.xvb");
-        for i in 0..s.rings {
-            let at = s.ring_pos(i);
-            let t = Placement::add_to_scene(ring.origin, 0.7).world(s.ring_rot(i), at);
-            for p in &ring.parts {
-                let tex = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x)).unwrap_or(self.white);
-                bake(p, &t, &unlit, tex, 0.7, true, &mut dynamic, &mut draws);
-            }
-            let face = self.model(install, VECTORS, TEXTURES, &format!("szrke{i}.xvb"));
-            let label = self.labels.and_then(|l| l.get(i)).and_then(|n| self.texture(r, install, if s.hovered == Some(i) { SELECTED } else { UNSELECTED }, n));
-            let t = Placement::add_to_scene(face.origin, 0.3).world((0.0, 0.0, 0.0), at);
-            for p in &face.parts {
-                let own = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x));
-                let tex = if p.index.first() == Some(&0) { label.or(own) } else { own }.unwrap_or(self.white);
-                bake(p, &t, &unlit, tex, 0.7, true, &mut dynamic, &mut draws);
-            }
-        }
         // The race scene (§9.2): `kezdo_.xv` 0.611 at (0, 0, −800), camera-fixed; its opening by `SetFrame`, then each
         // race's head (A), rings (B, C) moved by `MozgatKor`, the telescopes (subs 3..8) hidden.
         if let Some(rc) = &s.race {
@@ -437,6 +428,29 @@ impl MainScene {
                 bake(p, &place, &lights, tex, 1.0 - a, false, &mut dynamic, &mut draws);
             }
             centres = race_centres(rc, &model, &place);
+        }
+        // Steps 8 and 10: the rings (`korke1` 0.7 turned, `szrke{i}` 0.3 with the label on child 0), transparency 0.3,
+        // additive, unlit; after the race scene's opaque models, as the engine draws its transparent objects last
+        // [obs: the difficulty labels and their flares over the race ring and the head; deviation 305].
+        if let Some(l) = s.labels() {
+            self.labels = Some(l);
+        }
+        let ring = self.model(install, VECTORS, TEXTURES, "korke1.xvb");
+        for i in 0..s.rings {
+            let at = s.ring_pos(i);
+            let t = Placement::add_to_scene(ring.origin, 0.7).world(s.ring_rot(i), at);
+            for p in &ring.parts {
+                let tex = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x)).unwrap_or(self.white);
+                bake(p, &t, &unlit, tex, 0.7, true, &mut dynamic, &mut draws);
+            }
+            let face = self.model(install, VECTORS, TEXTURES, &format!("szrke{i}.xvb"));
+            let label = self.labels.and_then(|l| l.get(i)).and_then(|n| self.texture(r, install, if s.hovered == Some(i) { SELECTED } else { UNSELECTED }, n));
+            let t = Placement::add_to_scene(face.origin, 0.3).world((0.0, 0.0, 0.0), at);
+            for p in &face.parts {
+                let own = p.texture.as_deref().and_then(|x| self.texture_path(r, install, x));
+                let tex = if p.index.first() == Some(&0) { label.or(own) } else { own }.unwrap_or(self.white);
+                bake(p, &t, &unlit, tex, 0.7, true, &mut dynamic, &mut draws);
+            }
         }
         // `HandleLoadingMesh` (§2.2): in the exit animation's last 100 ticks the loading plate (`loadi1.xv` 0.21,
         // camera-fixed, unlit, additive) turns in at z −1400 with the start's picture `load<n>`.
@@ -566,6 +580,7 @@ fn uniforms() -> SceneUniforms {
         sun: [0.0; 4],
         fog: [0.0; 4],
         fog_range: [1e9, 2e9, 0.0, 1e9],
+        flash: [[0.0; 4]; 2],
     }
 }
 
@@ -780,6 +795,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
 
     /// The first three particles of each cloud as the exe built them (`tools/trace/probes/mainscr.js`, `--boot`).
     #[test]

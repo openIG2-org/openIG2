@@ -150,7 +150,7 @@ pub(crate) fn particle_color(c: u32) -> [f32; 4] {
 }
 
 /// `fov` (`calculateclipplanes`: `zoom · 600`, zoom 1).
-const FOV: f32 = 600.0;
+pub(crate) const FOV: f32 = 600.0;
 /// `xcenter`, `ycenter` as `ShowStarmap` sets them.
 const CENTER: [f32; 2] = [320.0, 250.0];
 /// The virtual screen's height (`HatarY2 + 1`).
@@ -202,11 +202,11 @@ pub(crate) fn create_matrix(a: f32, b: f32, c: f32) -> [[f32; 3]; 3] {
 }
 
 impl Camera {
-    /// The view a new game starts with (`StarmapSetSideView` ELF 0x6fde80) over the planets the human sees.
+    /// The view a new game starts with (`StarmapSetSideView` ELF 0x6fde80) over the planets the human sees or owns.
     pub fn side_view(s: &Snapshot, size: [f32; 2]) -> Self {
         let (mut hi, mut lo) = ([-300.0f32; 2], [300.0f32; 2]);
         let mut n = 0;
-        for p in s.planets.iter().filter(|p| p.known) {
+        for p in s.planets.iter().filter(|p| p.known || p.owner == s.human) {
             for k in 0..2 {
                 hi[k] = hi[k].max(p.pos[k]);
                 lo[k] = lo[k].min(p.pos[k]);
@@ -365,14 +365,6 @@ impl Camera {
     /// `get_pos` / `SikMetszespont`: the galaxy point under the virtual point `v`.
     pub fn virtual_to_world(&self, v: [f32; 2]) -> Option<[f32; 2]> {
         self.to_world(self.phys(v))
-    }
-
-    /// Drag the galaxy so the point under `from` ends under `to`; the pivot stays in the pan square.
-    pub fn pan(&mut self, from: [f32; 2], to: [f32; 2]) {
-        if let (Some(a), Some(b)) = (self.to_world(from), self.to_world(to)) {
-            self.x = (self.x + a[0] - b[0]).clamp(-PAN_LIMIT, PAN_LIMIT);
-            self.y = (self.y - (a[1] - b[1])).clamp(-PAN_LIMIT, PAN_LIMIT);
-        }
     }
 
     /// `steps` zoom key presses (`StarmapKeyboardDoModifies`: `Zoom ± (640 − Zoom)/50`, clamp [2, 580]).
@@ -978,15 +970,34 @@ impl View {
             }
         }
 
-        // Routes of the human's fleets (`Show_Flottak3d`, spec §4.3).
+        // Routes of the human's fleets and story fleet 0x1f88 (`Show_Flottak3d`, spec §4.3).
         let fleets = if hidden { Vec::new() } else { curr.fleets_at(prev, alpha) };
-        for fl in self.shown(&fleets).filter(|f| f.order > 0 && f.flags & 0x20 == 0 && (self.reveal || f.owner == curr.human)) {
-            let (Some(t), Some(p)) = (fl.target, cam.to_screen(fl.pos)) else { continue };
-            let Some(q) = cam.to_screen(t) else { continue };
-            let color = if fl.order == 2 { [1.0, 0.0, 0.0, 0.5] } else { [0x46 as f32 / 255.0, 0x4b as f32 / 255.0, 0x5f as f32 / 255.0, 0.5] };
+        let arrow = |f: &mut Frame, p: [f32; 2], q: [f32; 2], color: [f32; 4]| {
             f.push(a.white, Blend::Alpha, Instance::line(p, q, 3.0 * k, color));
             let rot = (q[1] - p[1]).atan2(q[0] - p[0]);
             f.push(a.white, Blend::Alpha, Instance { rot, ..Instance::new(kind::MARKER, q, [5.0 * k; 2], color) });
+        };
+        let grey = [0x46 as f32 / 255.0, 0x4b as f32 / 255.0, 0x5f as f32 / 255.0, 0.5];
+        for fl in self.shown(&fleets).filter(|f| f.order > 0 && f.flags & 0x20 == 0 && (self.reveal || f.owner == curr.human || f.story_id == 0x1f88)) {
+            let (Some(t), Some(p)) = (fl.target, cam.to_screen(fl.pos)) else { continue };
+            let Some(q) = cam.to_screen(t) else { continue };
+            arrow(&mut f, p, q, if fl.order == 2 { [1.0, 0.0, 0.0, 0.5] } else { grey });
+        }
+        // The selected fleet's waypoint chain from its order's target, one arrow a segment: the segment `i` (0 first)
+        // with `(waypointvillogo − i) % 15 == 0` is `0x80be968c`; `waypointvillogo` counts every second frame.
+        if let Some(Pick::Fleet(slot)) = self.selected {
+            let chain = curr.waypoints.iter().find(|(s, _)| *s == slot).map(|(_, c)| c.as_slice()).unwrap_or_default();
+            let start = fleets.iter().find(|fl| fl.slot == slot).and_then(|fl| fl.target.or(Some(fl.pos)));
+            if let (Some(mut from), false) = (start, chain.is_empty()) {
+                let blink = (ui / 2.0) as i32;
+                let lit = [0x8c as f32 / 255.0, 0x96 as f32 / 255.0, 0xbe as f32 / 255.0, 0.5];
+                for (i, &to) in chain.iter().enumerate() {
+                    if let (Some(p), Some(q)) = (cam.to_screen(from), cam.to_screen(to)) {
+                        arrow(&mut f, p, q, if (blink - i as i32) % 15 == 0 { lit } else { grey });
+                    }
+                    from = to;
+                }
+            }
         }
 
         // The selection ring (spec §5).
@@ -1145,6 +1156,7 @@ impl View {
                 sun: [sun; 4],
                 fog: [0.0; 4],
                 fog_range: [1.0e9, 1.0e9, 0.0, 1.0e9],
+                flash: [[0.0; 4]; 2],
             },
             draws,
             dynamic,
@@ -1238,18 +1250,6 @@ mod tests {
                 assert!((back[0] - w[0]).abs() < 1e-2 && (back[1] - w[1]).abs() < 1e-2, "{r} {p} {w:?} → {back:?}");
             }
         }
-    }
-
-    #[test]
-    fn pan_keeps_the_grabbed_point_and_the_pan_square() {
-        let mut c = cam(0.7, -0.95);
-        let (from, to) = ([900.0, 500.0], [1000.0, 560.0]);
-        let w = c.to_world(from).unwrap();
-        c.pan(from, to);
-        let after = c.to_world(to).unwrap();
-        assert!((after[0] - w[0]).abs() < 1e-2 && (after[1] - w[1]).abs() < 1e-2);
-        c.pan([0.0, 1000.0], [1900.0, 0.0]);
-        assert!(c.x.abs() <= PAN_LIMIT && c.y.abs() <= PAN_LIMIT);
     }
 
     #[test]

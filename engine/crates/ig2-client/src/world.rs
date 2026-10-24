@@ -28,7 +28,8 @@ pub struct PlanetView {
     pub surface: u8,
     /// `+0x00`: the name (the game's code page, NUL-terminated).
     pub name: String,
-    /// Seen by the human (`+0xd8 + 2·EN`).
+    /// Seen by the human: `+0xd8 + 2·EN` (i16) > 0, or `DEBUGX` (`rotate_stars`, `Show_Stars2d3d`; re/screens/starmap.md
+    /// §3.4). −1 (never seen; a campaign starts with dozens) and 0 are hidden, the human's own planets too.
     pub known: bool,
     /// `+0xba`: the name blinks (`Show_Stars2d3d`, re/screens/hud.md §4.2).
     pub blink: bool,
@@ -144,6 +145,9 @@ pub struct Snapshot {
     pub orbit: f32,
     /// The radar ranges the starmap shows (re/screens/starmap.md §6.3).
     pub radar: crate::starmap_radar::Rings,
+    /// The waypoint chains (`+0x50`, `Waypointek` +0/+4, next +8) of the fleets whose routes are drawn (the human's
+    /// and story fleet 0x1f88), by slot: `Show_Flottak3d` draws the selected one's (re/screens/starmap.md §4.3).
+    pub waypoints: Vec<(usize, Vec<[f32; 2]>)>,
 }
 
 impl Snapshot {
@@ -153,6 +157,7 @@ impl Snapshot {
         let en = m.i32(va::EN).clamp(0, EMPIRES as i32 - 1) as usize;
         let map = state.starmap();
         let n = state.planet_count();
+        let debug = m.u8(va::DEBUGX) != 0;
         let planets = (1..=n)
             .map(|p| {
                 let r = m.read(va::PLANETS + (p * ig2_sim::save::PLANET_SIZE) as u32, ig2_sim::save::PLANET_SIZE);
@@ -164,7 +169,7 @@ impl Snapshot {
                     owner: sp.owner,
                     surface: r[0x22],
                     name: name.iter().map(|&b| b as char).collect(),
-                    known: sp.visible[en] != 0 || sp.owner as usize == en,
+                    known: sp.visible[en] > 0 || debug,
                     blink: r[0xba] != 0,
                     friendly: r[0xbc] & 1 != 0,
                     look: PlanetLook::read(&r),
@@ -195,7 +200,25 @@ impl Snapshot {
             .collect();
         let (circles, planet_circles) = crate::starmap_radar::circles(state, &map, &game.radar_tables(), en);
         let radar = crate::starmap_radar::rings(&circles, planet_circles);
-        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar }
+        let waypoints = map
+            .fleets
+            .iter()
+            .enumerate()
+            .skip(1)
+            .filter(|(_, f)| f.alive() && f.first_waypoint > 0 && (f.owner as usize == en || f.story_id == 0x1f88))
+            .map(|(slot, f)| {
+                let mut chain = Vec::new();
+                let mut w = f.first_waypoint;
+                // A free node's `next` is −1; the length cap guards a corrupt chain.
+                while w > 0 && (w as usize) < map.waypoints.len() && chain.len() < map.waypoints.len() {
+                    let n = map.waypoints[w as usize];
+                    chain.push([n.x, n.y]);
+                    w = n.next;
+                }
+                (slot, chain)
+            })
+            .collect();
+        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, waypoints }
     }
 
     /// The fleets between `prev` (alpha 0) and `self` (alpha 1). A fleet pairs with the same slot in `prev`; one
@@ -390,6 +413,11 @@ impl<'r> World<'r> {
         if let Some(name) = crate::video::intro_name(self.curr.human as i32) {
             self.videos.push(crate::video::Request::File(name.to_string()));
         }
+    }
+
+    /// Multiplayer and this machine hosts the session (only the host saves it, [`Self::mp_save`]).
+    pub fn mp_host(&self) -> bool {
+        matches!(self.net, Some((crate::mp_lobby::Session::Host { .. }, _)))
     }
 
     /// Multiplayer: the host's MP save (`HostSession::save`: the shared state at the next turn and the session's humans,
@@ -719,8 +747,8 @@ mod tests {
 
     /// The main menu's other starts (re/screens/mainscr.md §2.2): every scenario of the list, the five tutorial
     /// chapters and a skirmish with the menu's defaults build a running world whose human (empire 1 in the
-    /// tutorials) has planets of its own. Untraced: `Game::start_tutorial` reuses the scenario start's verified parts
-    /// (re/rules/new-game.md §13).
+    /// tutorials) has planets of its own. `Game::start_tutorial` is verified against ig2.exe in ig2-sim's
+    /// tests/new_game.rs (re/rules/new-game.md §16).
     #[test]
     fn scenario_and_tutorial_starts_build_worlds() {
         let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
@@ -871,6 +899,53 @@ mod tests {
         assert_eq!((g.order, g.target), (1, Some([10.0, -20.0])));
     }
 
+    /// Shift + right click (re/screens/starmap.md §10.3, deviation 306): a moving fleet's mode-13 orders append
+    /// waypoints, and the snapshot carries the chain `Show_Flottak3d` draws for the selected fleet (`ships-0.sav`:
+    /// the human has fleets).
+    #[test]
+    fn shift_orders_chain_waypoints() {
+        use ig2_net::StarmapCmd;
+        let Some((_, rules, defaults, volatile)) = quick1() else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("ships-0.sav")) else { return };
+        let mut w = World::load(&SaveGame::parse(&bytes).unwrap(), &rules, &defaults, &volatile);
+        let human = w.curr.human;
+        let f = w.curr.fleets.iter().find(|g| g.owner == human && g.flags & 1 == 0).unwrap().slot as i32;
+        for (order, x, y) in [(1, 10.0, -20.0), (13, 30.0, -20.0), (13, 30.0, 40.0)] {
+            let o = ig2_sim::game::StarmapOrder::Move { fleet: f, order, kind: 0, x, y };
+            w.send(Command::Starmap { order: StarmapCmd::from(o) });
+        }
+        w.pump();
+        let g = w.curr.fleets.iter().find(|g| g.slot == f as usize).unwrap();
+        assert_eq!((g.order, g.target), (1, Some([10.0, -20.0])));
+        let chain = w.curr.waypoints.iter().find(|(s, _)| *s == f as usize).map(|(_, c)| c.clone());
+        assert_eq!(chain, Some(vec![[30.0, -20.0], [30.0, 40.0]]));
+    }
+
+    /// Deviation 314: a campaign starts with dozens of planets at visibility −1 and 0; the starmap shows only those
+    /// at `+0xd8 + 2·EN` > 0 (`rotate_stars`, `Show_Stars2d3d`, `GFX_StarmapRadar`, `SelectNearestUnit`), the
+    /// exe's campaign-start saves (`IG2_TRACE_DIR/newgame/`) as loaded.
+    #[test]
+    fn a_campaign_start_shows_only_the_seen_planets() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let dir = std::env::var_os("IG2_TRACE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../_local/traces")).join("newgame");
+        let Ok(bytes) = std::fs::read(dir.join("newgame-c1-d1-s5150.sav")) else {
+            eprintln!("{} missing; skipping", dir.display());
+            return;
+        };
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let w = World::load(&SaveGame::parse(&bytes).unwrap(), &rules, &defaults, &volatile);
+        let map = w.game.state.starmap();
+        let en = w.curr.human as usize;
+        let hidden = w.curr.planets.iter().filter(|p| map.planets[p.index].visible[en] < 0).count();
+        assert!(hidden > 20, "{hidden} planets never seen");
+        let known: Vec<usize> = w.curr.planets.iter().filter(|p| p.known).map(|p| p.index).collect();
+        let seen: Vec<usize> = (1..map.planets.len()).filter(|&p| map.planets[p].visible[en] > 0).collect();
+        assert_eq!(known, seen);
+        assert_eq!(known.len(), 3);
+    }
+
     /// The real thing: `quick-1.sav` in the sim (skips without the install and the save).
     #[test]
     fn quick1_fleets_move_in_the_sim() {
@@ -906,3 +981,4 @@ mod tests {
         assert!((mid.pos[0] - (p.pos[0] + f.pos[0]) / 2.0).abs() < 1e-4);
     }
 }
+

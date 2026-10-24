@@ -1,0 +1,14 @@
+{
+ "screen": "messages",
+ "note": "The messages screen's opening and closing (re/screens/messages.md §4.1) over a save with inbox messages, entered at t 0: mesframe 0 to 15 (46 UI ticks), the bottom row opened at 85 (15 to 30, 45 ticks; the text types from 30), a press in the text's box hurries it, hot-spot 8 leaves at 280 (the closing from 30, 50 ticks, gone at the second pass at 0).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 80, "mouse": [60, 370]},
+  {"t": 85, "press": [60, 370]},
+  {"t": 200, "press": [300, 100]},
+  {"t": 260, "mouse": [610, 100]},
+  {"t": 280, "press": [610, 100]}
+ ],
+ "grabs": [0, 1, 5, 15, 30, 45, 46, 47, 60, 85, 86, 87, 88, 89, 100, 115, 129, 130, 131, 132, 140, 281, 290, 300, 320, 329, 330, 331],
+ "tail": 20
+}

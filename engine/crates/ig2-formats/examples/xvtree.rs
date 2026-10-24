@@ -13,7 +13,7 @@ fn mesh(m: &Mesh) -> String {
 
 fn walk(n: &Node, depth: usize) {
     let pad = "  ".repeat(depth);
-    println!("{pad}node origin {:?} frames {} children {}", n.header.origin, n.header.frames(), n.children.len());
+    println!("{pad}node origin {:?} frames {} children {} lod {:?} {}", n.header.origin, n.header.frames(), n.children.len(), n.header.lod_archive, n.header.lod_param);
     for (i, (c, content)) in n.children.iter().enumerate() {
         let t = c.translation();
         match content {

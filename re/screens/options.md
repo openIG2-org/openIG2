@@ -42,7 +42,7 @@ UI tick (`Frissit2_Options`). **T** = the tutorial layout: `(TutorialActive 0xf6
 | `SaveAktivSlot` | 0x916058 | Selected slot 1..24 (default 1). Saved as `Save slot`. |
 | `SaveLeiro` | 0xdb9768 | Slot titles, `[slot] × 0x34` (entry 0 unused; section 5.3). |
 | `OptionsCsakLoadLehet` | 0xbae24e | Load only (from the main menu's load ring). |
-| `OptionsHarcFolyik` | 0xbae24f | A battle is running (no save). Belep clears it unless `OptionsElottiKep` is 3 or 0xb. |
+| `OptionsHarcFolyik` | 0xbae24f | A battle is running (no save without `DEBUGX` 0xbae587). Set by `SpaceWar_Kilep` 0x562b50 towards Options (0x562c0f, also gated by `PTR_DAT_0091a830[0x1fb8]`, meaning unknown) and by every `Colony_Kilep` 0x466390 as `WF::GetStatus(Warfare[VisiblePlanet−1]) == −1` (0x466631, the planet's ground war runs; `GetWarfareStatus` inlined). Belep (0x51a074) clears it unless `OptionsElottiKep` is 3 or 0xb; Kilep (0x51a2aa) clears it. Readers: Options_MouseInit2 (id 2), the button pass 0x517580, `OptionsGfx2D_2`'s Save label (0x518da7), `DoKeyboard`'s F-key gate, the colony handlers. |
 | `OptionsAreYouSureToQuitMode` | 0xdb975a | The quit question is up (Save → YES, Quit → NO). |
 | `OptionsElottiKep` | 0xbae2b4 | The screen to go back to. |
 | `OptionsFelfadeles` (f32) | 0xdb9c84 | Fade-in 0..100. |
@@ -127,6 +127,15 @@ Port: back from Options re-opens the spy screen (with its opening) and re-enters
 from the messages screen returns under it; trade comes back through `Trade::back`. Not ported: the other screens'
 state resets on the return, the colony's rebuild (ambience sound), Messages' closing animation (deviations).
 
+### 3.2 Multiplayer (`MultiPlayerMode` 0xbae2c0)
+Read in Options only by `CheckOptionsDependencies` 0x516e10 (rows without the MP flag off), `Options_MouseInit2`
+0x51a8a0 (ids 1 and 2 off, 0x51a8fd / 0x51a932), the button pass 0x517580 (no Load button, 0x5175d9; the Save
+button only with `AreYouSure`, 0x51790b), `OptionsGfx2D_2` (no "Load" label 0x518cc6, no "Save" label 0x518da7) and
+`ExitToMainScreen` 0x5117f0 (YES on the quit question: `ig2server_sendinfo("nam:,stat:0")`, then
+`MultiCloseClient(1)` for a joiner or the host's teardown, `MultiPlayerMode = 0`). Belep, Main, Kilep and the slot
+code have none; Belep's `SetIdoPause(1, 0)` is ignored in MP (`SetIdoPause` 0x541272). Port (FX6 rest): the client
+passes MP into the screen; ours: the MP host keeps Save for ADR 0007's MP save (`mp_save`), a joiner has neither.
+
 ## 4. Hot-spots
 
 `Mouse_Szoveg_Set(id, 0, x, y, w, h, tooltip, wait_release, 1)`; `AktIkon = id + 0x1e`; tooltips (13,1,n).
@@ -137,7 +146,7 @@ makes `IG2_gameUpdate` (ELF 0x587400) wait for the button to come up afterwards 
 |---|---|---|---|---|
 | 1 Load | 366,62,78,37 | 1 | yes | slot filled, not T, not AreYouSure, not MP |
 | 2 Save / YES | 452,62,78,37 | 2 | no | AreYouSure, or `!LoadOnly && !(HarcFolyik && !DEBUGX) && !MP && slot ≤ 22 && !T` |
-| 3 Quit / BACK / NO | 541,62,78,37 (T: 441,62,178,37) | 3; load only 13; T "" | no | always |
+| 3 Quit / BACK / NO | 541,62,78,37 (T: 441,62,178,37) | 3; load only 13; T "" | no | always (T: plays the click, goes to the main menu without the question: `Options_Kilep` 0x51a100 `TutorialStop(1)` + `ExitToMainScreen`) |
 | 9 (T) continue tutorial | 441,102,178,37 | "" | yes | T |
 | 4 slot list | 358,113,269,336 | 4 | no | `!IOMode && !T` |
 | 10+s tab sound | 13,66,90,20 | 5 | yes | always |
@@ -167,7 +176,7 @@ While a handler holds `Mouse_Megfogva` (a slider grab) `AktIkon` isn't recompute
 | id 9 (T) | the same back. |
 | tab 10+s / 11+s | `OptionsMelyikMod = 0` / `2`. |
 | Esc / `O` (`ESC_Pressed` ELF 0x581440 / `DoKeyboard`, outside the text entry) | Toggle: on Options, back to `OptionsElottiKep` (no `OptionsFelfadeles == 100` test, unlike id 18; load only: the main menu, `OptionsElottiKep` 0xf); on a game screen (`AktKep < 0xe`) open Options. Esc reaches `ESC_Pressed` from every game screen except the starmap with a panel up (`AktIkonKell 0x27`), the colony with its planet info (0x3d), messages (0x25) and the designer's edit mode (`MainCallBackEventHandler`). Blocked by `KepernyokLetiltva[0xd]`. F-keys / screen keys are refused while load only or a battle runs. |
-| Esc / Enter in the text entry | `Options_EscPressed`: `IOMode = 0`, refresh. `Options_EnterPressed` (0x51a090): `IOMode = 0`, `LoadSave(slot, IOString, 2)`, refresh; if `OptionsElottiKep ≤ 10` go back there (0xb → 2). |
+| Esc / Enter in the text entry | `Options_EscPressed`: `IOMode = 0`, refresh. `Options_EnterPressed` (0x51a090): `IOMode = 0`, `LoadSave(slot, IOString, 2)`, refresh; if `OptionsElottiKep < 0xb` go back there; its inner `== 0xb` arm (→ 2, `starmaphovaleptovabb = 0xb`) is dead code, so a save opened from the space battle leaves Options up (ELF 0x5dc740 the same). |
 
 ### 5.2 The slot list (`Gfx2D_2`)
 
@@ -325,4 +334,6 @@ scripts/options-loadonly.json`): over the game every region matches at every gra
 panel ≤ 5.2, slots ≤ 5.6) except `buttons` at t 100/170/320 (6.8–11.2: the random sparks, and the hover glow
 `FadeKerettelKerekitDesign` that isn't ported); the fade-in tracks the exe's to a tick; the sound table matches. Load
 only: the same panels within 1–2 ticks over the random galaxy (frame 6–9 from t 300). Open: the hover glow (a shared
-kit item), the software cursor of the captures, the tutorial layout, multiplayer's states.
+kit item), the software cursor of the captures, multiplayer's states.
+
+Tutorial layout (FX6 part 5, `options.rs` `tutorial`, test `tutorial_layout`; not capture-compared): `Options_MouseInit2` 0x51a8a0 turns load/save/slots off, quit (441,62,178,37), continue id 9 (441,102,178,37), empty tooltips. Continue leaves on the hover alone, tested every tick (asm 0x51a7e3, hover id 0xbae240, no button or fade test). Texts (13,5,7)/(13,5,8) left-aligned at x 464, y 72/112 (`Gfx2D_2` 0x518a30). Faders follow the ELF `OptionsGfx2D_1` 0x5d49a0 (the exe's isn't located): quit 441/178 wide, continue under it on fader 2 with optf index 3, lasers for both, slot-list fader skipped, later optf indices +1, the hover glow reads optf 3 at the quit rect (ELF quirk, unverified in the exe).

@@ -850,6 +850,7 @@ impl<'r> Game<'r> {
             players: g.pp2 as i32,
             speed_locked: g.speed_locked,
             program_speed: g.program_speed,
+            slowed: false,
         }
     }
 
@@ -864,6 +865,7 @@ impl<'r> Game<'r> {
             multiplayer: g.multiplayer,
             speed_locked: g.speed_locked,
             program_speed: g.program_speed,
+            slowed: false,
             human_empire: g.en as u8,
             human_controlled: g.human,
             alive: g.alive,
@@ -1456,6 +1458,9 @@ impl<'r> Game<'r> {
         self.state.store_research(&res);
         self.state.store_treasuries(&money);
         self.state.mem.set_i32(va::IDO_SPEED, ctx.speed_mult);
+        if ctx.slowed {
+            self.slow_down();
+        }
         // A finished project: story special 0x0D(e, t), then the AI's designs `FRISSIT_MI_DESIGN(e, false)`
         // (production-research.md §2; inside the empire loop in the exe, which nothing later in it reads).
         // A human's hull tech: `TervezAutomatikus` inside `TalalmanyKifejlesztve`.
@@ -1530,6 +1535,9 @@ impl<'r> Game<'r> {
         let ships = self.state.ship_designs();
         let (events, paused) = self.starmap_pass(&mut ctx, |map, ctx, rng, hooks| map.tick_until_battle(&ships, ctx, rng, hooks));
         self.state.mem.set_i32(va::IDO_SPEED, ctx.speed_mult);
+        if ctx.slowed {
+            self.slow_down();
+        }
         // The human met an empire: story special 0x0B(EN, o) and `FelfedezBirodalom(o)` (fleet-movement.md §6.3;
         // inside the radar pass in the exe, which nothing after it in the tick reads).
         for e in &events {

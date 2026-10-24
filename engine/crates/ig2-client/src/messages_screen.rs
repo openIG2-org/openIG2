@@ -590,6 +590,30 @@ pub struct MessagesScreen {
     /// (exe 0x509d10, the end of every `Messages_Main` frame) takes it once the answer isn't disabled; it is
     /// forgotten only at `Messages_Belep` (re/rules/info-messages.md §7.3).
     pub pending: Option<usize>,
+    /// `mesframe` (exe 0xdabe44): the frame's pose, 0 → 15 the opening, → 30 a message open, → 0 the closing
+    /// (re/screens/messages.md §4.1).
+    pub frame: f32,
+    /// `mesKELLKINYITAS` (the options' screen animation switch): the opening and the closing run.
+    pub animated: bool,
+    /// `mesKINYITVA`: the list is up (the first render at `mesframe` ≥ 15).
+    pub opened: bool,
+    /// `mesBECSUKAS`: `Messages_Kilep`'s closing runs.
+    pub closing: bool,
+    /// `KELLKINYITAS2`: a message was opened, the frame goes on to 30.
+    pub want_open: bool,
+    /// A message opened from the inbox: `KELLKINYITAS2` is set after the next tick's steps (the exe's 15 → 30 begins
+    /// two ticks after the press is taken, `run_screen.py` capture of 2026-10-24).
+    pub open_asked: bool,
+    /// `ELINDULT1`: the screen has been drawn once (the opening's ticks wait for it).
+    started: bool,
+    /// `Messages_Kilep`'s loop has begun a pass at `mesframe` 0 (`DAT_00dabf30`).
+    zero_seen: bool,
+    /// The closing has run out: the screen goes.
+    gone: bool,
+    /// `Messages_Kilep` began and its sounds are still to be made (taken by the window).
+    pub kilep: bool,
+    /// `Messages_Kilep` has begun.
+    pub left: bool,
 }
 
 /// `Messages_MouseInit`'s hot-spots (virtual pixels): 1 up (older first … the list moves), 2 down, 3 the inbox,
@@ -624,9 +648,99 @@ impl MessagesScreen {
         }
     }
 
+    /// `Messages_Belep` (exe 0x507f90) and `Messages3DInit` (0x506970): `mesframe` 0 (15 without the animation); a
+    /// message already chosen opens on to 30 at once.
+    pub fn enter(&mut self, animated: bool) {
+        self.animated = animated;
+        self.frame = if animated { 0.0 } else { 15.0 };
+        self.opened = !animated;
+        self.want_open = self.open.is_some();
+        self.open_asked = false;
+        (self.closing, self.started, self.zero_seen, self.gone, self.kilep, self.left) = (false, false, false, false, false, false);
+    }
+
+    /// Hold the screen open (snapshots): the list, or the message at 30.
+    pub fn hold_open(&mut self) {
+        self.enter(false);
+        if self.open.is_some() {
+            self.frame = 30.0;
+        }
+    }
+
+    /// The frame's steps of one UI tick (`FRISSIT_Messages2` exe 0x505180, asm 0x5052c0..0x5053a3): each step is
+    /// `(float)((double)mesframe ± c)`.
+    pub fn tick(&mut self) {
+        const THIRD: f64 = 1.0 / 3.0;
+        if self.animated && !self.closing && self.started && self.frame < 15.0 {
+            self.frame = (self.frame as f64 + THIRD) as f32;
+            if self.frame > 15.0 {
+                self.frame = 15.0;
+            }
+        }
+        if self.opened && self.want_open && !self.closing && self.frame < 30.0 {
+            self.frame = (self.frame as f64 + THIRD) as f32;
+            if self.frame >= 30.0 {
+                self.frame = 30.0;
+            }
+        }
+        if self.animated && self.closing {
+            self.frame = (self.frame as f64 - 0.6) as f32;
+            if self.frame < 0.0 {
+                self.frame = 0.0;
+            }
+        }
+        if std::mem::take(&mut self.open_asked) {
+            self.want_open = true;
+        }
+    }
+
+    /// Before each render (`Messages_Kilep`'s loop test, asm 0x5084b1..0x50850e, then `Messages3DUpdate` exe
+    /// 0x506c50): the closing is over when a pass begins at `mesframe` 0 the second time; else the render marks the
+    /// screen drawn and open from 15 on. True = the screen is gone (nothing more to draw).
+    pub fn render_step(&mut self) -> bool {
+        if self.closing && self.frame == 0.0 {
+            if self.zero_seen {
+                self.gone = true;
+            }
+            self.zero_seen = true;
+        }
+        if self.gone {
+            return true;
+        }
+        self.started = true;
+        if !self.opened && self.frame >= 15.0 {
+            self.opened = true;
+        }
+        false
+    }
+
+    /// `Messages_Kilep` (exe 0x5083d0): the closing starts (with the animation) or the screen goes at once; true =
+    /// gone now.
+    pub fn leave(&mut self) -> bool {
+        if !self.left {
+            (self.kilep, self.left) = (true, true);
+            if !self.animated {
+                return true;
+            }
+            self.closing = true;
+        }
+        self.gone || !self.animated
+    }
+
+    /// The message's text, typing and answers (`MessagesGfx2D_2`: `mesframe == 30` and not closing).
+    pub fn text_up(&self) -> bool {
+        self.frame == 30.0 && !self.closing
+    }
+
+    /// The inbox's rows (`mesKINYITVA` and not closing).
+    pub fn list_up(&self) -> bool {
+        self.opened && !self.closing
+    }
+
     /// The mouse over the answers (`Melyikvalaszfolottvanazeger`): quarters of `AnswYSz` from `AnswY`.
     pub fn hover(&mut self, at: [f32; 2]) {
-        if let Some(d) = &mut self.open {
+        let up = self.text_up();
+        if let Some(d) = self.open.as_mut().filter(|_| up) {
             d.hover = None;
             let (x, y, w, h, _) = ANSW;
             let (mx, my) = (at[0] as i32, at[1] as i32);
@@ -642,6 +756,10 @@ impl MessagesScreen {
     /// typed (`KiirtaMar`) and try it at once.
     pub fn key(&mut self, ch: &str) {
         let Some(k) = ["a", "b", "c", "d"].iter().position(|&c| c == ch) else { return };
+        // Inside `Messages_Kilep`'s loop the keys aren't taken.
+        if self.closing {
+            return;
+        }
         if self.open.as_ref().is_some_and(|d| d.typed_all && k < d.answers.len()) {
             self.pending = Some(k);
             self.answer();
@@ -660,15 +778,21 @@ impl MessagesScreen {
 
     /// A left press (`Messages_Main`) on inbox of `n` messages.
     pub fn press(&mut self, at: [f32; 2], n: usize) -> Press {
+        // Inside `Messages_Kilep`'s loop the main loop's mouse pass doesn't run.
+        if self.closing {
+            return Press::None;
+        }
         let busy = self.open.as_ref().is_some_and(|d| !d.over);
-        // `Messages_MouseInit2` (exe 0x508940): 5 and 10 off; 7..=9 only with no answers pending and the text typed;
-        // 4 and 6 only at `mesframe` 30 (a message open: the client has no `mesframe` between 15 and 30).
+        // `Messages_MouseInit2` (exe 0x508940): 5 and 10 off; 3 once open (`mesKINYITVA`); 4 and 6 only at `mesframe`
+        // 30; 7..=9 only with no answers pending and the text typed (also during the opening).
         let idle = self.open.as_ref().is_none_or(|d| d.answers.is_empty() && d.typed_all);
-        let at_30 = self.open.is_some();
+        let at_30 = self.frame == 30.0;
+        let opened = self.opened;
         let id = SPOTS
             .iter()
             .filter(|(id, _)| match id {
                 5 | 10 => false,
+                3 => opened,
                 4 | 6 => at_30,
                 7..=9 => idle,
                 _ => true,
@@ -702,7 +826,9 @@ impl MessagesScreen {
                     self.orders.push(MessageOrder::Scroll { pointer: self.first as i32, row: self.row });
                 }
             }
-            Some(3) if !busy => {
+            // `Messages_Main` (exe 0x508560): also not while a message picked types (`DAT_00dabda0` is −1 again only when
+            // `MessagesGfx2D_2` has typed it out), so not through the 15 → 30 opening either.
+            Some(3) if !busy && self.open.as_ref().is_none_or(|d| d.typed_all) => {
                 // `AktUzenet0to3` = 3 − the row (quarters of `UBAYSzsz`), only rows that hold a message.
                 let r = at[1] as i32 - UBA.1;
                 let q = UBA.3 / 4;
@@ -733,15 +859,20 @@ pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f
     let col = |i: i32| palette.get(i.max(0) as usize).copied().unwrap_or([1.0; 3]);
     let blink = (time * 1000.0 / 200.0) as i64 % 2 == 1;
     let first = ui.first;
+    let (list_up, text_up) = (ui.list_up(), ui.text_up());
     let Some(d) = &mut ui.open else { return };
     // The open message's row: `Keret(UBAXSz + 1, UBAYSz + slot·45 − 1, 155, 43, 0x26)` while it types or talks.
     for (i, slot) in crate::ui::inbox_rows(n, first) {
-        if i == d.index && (!d.typed_all || !d.over) {
+        if list_up && i == d.index && (!d.typed_all || !d.over) {
             let (x, y, w, h) = ((UBA.0 + 1) as f32, (UBA.1 + slot as i32 * 45 - 1) as f32, (UBA.2 - 2) as f32, 43.0);
             for (rx, ry, rw, rh) in [(x + 1.0, y, w - 2.0, 1.0), (x + 1.0, y + h - 1.0, w - 2.0, 1.0), (x, y + 1.0, 1.0, h - 2.0), (x + w - 1.0, y + 1.0, 1.0, h - 2.0)] {
                 rect(f, white, v, rx, ry, rw, rh, col(0x26));
             }
         }
+    }
+    // The text, the answers and the cursor wait for `mesframe` 30.
+    if !text_up {
+        return;
     }
     let (runs, cursor) = d.layout(blink);
     for (x, y, t, c) in runs {
@@ -869,7 +1000,7 @@ mod tests {
 
     #[test]
     fn inbox_rows_and_arrows_follow_messages_main() {
-        let mut s = MessagesScreen { debounce: 5, ..Default::default() };
+        let mut s = MessagesScreen { debounce: 5, opened: true, ..Default::default() };
         // Row 0 (y 218..262) is entry first + 3.
         assert_eq!(s.press([50.0, 230.0], 6), Press::Open(3));
         assert_eq!(s.press([50.0, 380.0], 6), Press::Open(0));
@@ -905,6 +1036,63 @@ mod tests {
         assert_eq!(s.open.as_ref().unwrap().orders.last(), Some(&MessageOrder::Answer { k: 1 }));
         s.open.as_mut().unwrap().advance(10_000.0);
         assert_eq!(s.press([600.0, 100.0], 6), Press::Leave);
+    }
+
+    #[test]
+    fn the_opening_and_closing_run_as_frissit_messages2() {
+        let mut s = MessagesScreen { debounce: 5, ..Default::default() };
+        s.enter(true);
+        // The ticks wait for the first render (`ELINDULT1`); the list and spot 3 for `mesKINYITVA`.
+        s.tick();
+        assert_eq!(s.frame, 0.0);
+        let ticks = |s: &mut MessagesScreen, to: f32| {
+            let mut n = 0;
+            while s.frame < to {
+                assert!(!s.render_step());
+                s.tick();
+                n += 1;
+            }
+            n
+        };
+        // `(float)((double)f + 1/3)`: 46 ticks to 15 (clamped), the list up at the next render.
+        assert_eq!(ticks(&mut s, 15.0), 46);
+        assert!(!s.list_up() && s.press([50.0, 230.0], 6) == Press::None);
+        s.render_step();
+        assert!(s.list_up());
+        // A row opened: no other while the first is still to type (`DAT_00dabda0`).
+        let msg = b"00
+";
+        let txt = b"01 0001 12 EN
++ Hi
+";
+        assert_eq!(s.press([50.0, 380.0], 6), Press::Open(0));
+        s.open = Some(dialogue(msg, txt));
+        assert_eq!(s.press([50.0, 230.0], 6), Press::None);
+        s.open = None;
+        // Without a message open the frame stays at 15; with one, 45 more ticks to 30 (30.0000248 clamps).
+        s.tick();
+        assert_eq!(s.frame, 15.0);
+        s.open_asked = true;
+        s.tick();
+        assert_eq!(s.frame, 15.0);
+        assert_eq!(ticks(&mut s, 30.0), 45);
+        assert_eq!(s.frame, 30.0);
+        assert!(s.text_up());
+        // `Messages_Kilep`: −0.6 a tick, 50 ticks from 30; gone at the second pass that begins at 0.
+        assert!(!s.leave());
+        assert!(s.kilep && s.closing && !s.text_up());
+        let mut n = 0;
+        while s.frame > 0.0 {
+            assert!(!s.render_step());
+            s.tick();
+            n += 1;
+        }
+        assert_eq!(n, 50);
+        assert!(!s.render_step());
+        assert!(s.render_step() && s.leave());
+        // Without the animation the screen goes at once.
+        s.enter(false);
+        assert!(s.list_up() && s.frame == 15.0 && s.leave());
     }
 
     #[test]

@@ -51,6 +51,16 @@ pub fn fader_untinted(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fil
     rounded(f, white, v, r, fill, ft, Some((edge, et)), None, false);
 }
 
+/// `FadeScreen(x, y, w, h, r, g, b, t, false, 0, 0, 0, 0)` (ELF 0x537890): one square quad of `c` at opacity
+/// `(255 − t)/255`, tinted by `fadertexture`'s corner texel (texture scale 0, as [`fader`]'s quads).
+pub fn fade_screen(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], c: [f32; 3], t: f32) {
+    let corner = FADER_TEXTURE.get().map_or([1.0; 4], |t| t.corner);
+    let [x, y, w, h] = r;
+    let a = (255.0 - t.clamp(0.0, 255.0)) / 255.0;
+    let col = [c[0] / 255.0 * corner[0], c[1] / 255.0 * corner[1], c[2] / 255.0 * corner[2], a * corner[3]];
+    f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], col));
+}
+
 /// `FadeKerekit(x, y, w, h, fill, t, false, 0.005, 0.005, u, v)` (ELF 0x537bd0): the rounded fill alone, textured
 /// by `fadertexture` at `((x + u)·0.005, (y + v)·0.005)` per virtual pixel (`PutDarkeningFace`).
 pub fn fade_kerekit(f: &mut Frame, white: TexId, v: &Virtual, r: [f32; 4], fill: [f32; 3], t: f32, off: [f32; 2]) {

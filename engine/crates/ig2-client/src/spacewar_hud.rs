@@ -195,7 +195,6 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
         let top = fire.iter().copied().max().unwrap_or(0);
         let (div, unit): (i32, &[u8]) = if top > 0xf3e58 { (1_000_000, b"M") } else if top > 9999 { (1000, b"K") } else { (1, b"") };
         text(&s(0x10), 0.0, 3.0, 2, 3);
-        text(&s(0x14), 0.0, 41.0, 1, 0x21);
         let cols = [(0x2a, 0x29), (0x42, 0x2a), (0x5a, 0x21)];
         let row = |f: &mut Frame, label: Vec<u8>, dy: f32, vals: [i32; 3], with_unit: bool| {
             font.text(f, v, &label, x, y + dy, 0x13, 1, Align::Left, col(0x21).map(|z| z * fade), None);
@@ -224,6 +223,8 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
         let mx = x + (st_v * 0x71 / 100) as f32;
         fill(f, mx - 1.0, y + 40.0, 3.0, 7.0, col(2));
         fill(f, mx, y + 41.0, 1.0, 5.0, col(0));
+        // The label last, over the bar (exe 0x577c00) [obs spacewar_info t500: the exe's label is over the bar].
+        font.text(f, v, &s(0x14), x, y + 41.0, 0x13, 1, Align::Left, col(0x21).map(|z| z * fade), None);
     }
 }
 

@@ -66,6 +66,8 @@ pub struct ResearchContext {
     pub speed_locked: bool,
     /// `ProgramSebesseg` (exe 0xBAE54C): the MP game speed 1..=4.
     pub program_speed: i32,
+    /// Out: `SetIdoLelassit` ran (the caller writes `IdoSpeed` and the battle multiplier, [`crate::time::slow_down`]).
+    pub slowed: bool,
 }
 
 impl ResearchContext {
@@ -73,6 +75,7 @@ impl ResearchContext {
     /// same research loop, and the rest of the tick, run at the new `IdoSpeedSzorzo`.
     pub fn slow_down(&mut self) {
         self.speed_mult = slowed_down(self.speed_mult, self.multiplayer, self.speed_locked, self.program_speed);
+        self.slowed = true;
     }
 }
 

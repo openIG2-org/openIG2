@@ -172,6 +172,7 @@ impl Console {
                 sun: [sun[0], sun[1], sun[2], 0.0],
                 fog: [0.0; 4],
                 fog_range: [1e9, 2e9, 0.0, 1e9],
+                flash: [[0.0; 4]; 2],
             },
             draws,
             dynamic,
@@ -231,7 +232,7 @@ const ICON_FRAME: [i32; 20] = [0, 13, 9, 10, 8, 1, 2, 6, 7, 5, 0, 0, 0, 3, 4, 0,
 pub struct InfoTexts<'a> {
     pub texts: &'a crate::ui::UiTexts,
     /// `StringReadAll`'s source (`Moral_Nev`, `Problemak_Nev`).
-    pub hu17: &'a ig2_formats::strings::UiStrings,
+    pub txt17: &'a crate::ui::UiTexts,
     pub empire_names: &'a [Vec<u8>],
 }
 
@@ -241,7 +242,7 @@ impl InfoTexts<'_> {
     }
     /// `txt17` §4 from the Hungarian file: `Problemak_Nev[p]` = 21 + p, `Moral_Nev[k]` = 41 + k.
     fn names(&self, index: u16) -> Vec<u8> {
-        crate::ui::hu_bytes(self.hu17.get(0x11, 4, index))
+        self.txt17.get(0x11, 4, index)
     }
     fn empire(&self, e: u8) -> Vec<u8> {
         self.empire_names.get(e as usize).cloned().unwrap_or_default()
@@ -477,7 +478,7 @@ impl StarmapHud {
     /// Draw the panel, the faders, the short info and the minimap (in the original's pass order).
     #[allow(clippy::too_many_arguments)]
     /// The fader behind the short info is `starf`'s `radar` (`fd`).
-    pub fn draw(&self, f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], info: &InfoBox, mini: &Minimap, time: f32, fd: &crate::kit::FaderDesign, radar: usize) {
+    pub fn draw(&self, f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], pics: &crate::hud::Pictures, brushes: &[ig2_rules::Brush], info: &InfoBox, mini: &Minimap, time: f32, fd: &crate::kit::FaderDesign, radar: usize, globe: Option<TexId>) {
         if let Some(c) = &self.console {
             c.draw(f, v);
         }
@@ -485,6 +486,11 @@ impl StarmapHud {
         // minimap's dark window (`FadeScreen(271, 385, 98, 71, black, 0x40)`; the value is the transparency [obs: the
         // window is dark in the captures]).
         crate::starmap_panels::starf(f, white, v, [5.0, 423.0, 162.0, 52.0], fd, radar);
+        // The info box's globe (`StarmapFrissitBolygoUrhajok`): over the box's fader, as the exe draws it (its
+        // `PropertiesOn(0x2000000)` [obs: the capture's globe is undimmed by the fill]).
+        if let Some(tex) = globe {
+            f.push(tex, Blend::Alpha, Instance::new(kind::SPRITE, v.px(320.0, 240.0), crate::kit::Wide::new(v).half(v), [1.0; 4]));
+        }
         f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(271.0 + 49.0, 385.0 + 35.5), [49.0 * v.k, 35.5 * v.k], fade_color([0.0; 3], 1.0 - 0x40 as f32 / 255.0)));
         short_info(f, font, v, palette, pics, brushes, info, 1.0, 0.0);
         minimap(f, white, v, palette, mini, time, 0.0);

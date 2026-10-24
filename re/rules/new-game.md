@@ -388,3 +388,17 @@ story call site (game.rs, game/battles.rs, game/realtime.rs, game/message_orders
   `SpyOrder` (0x49) and `SendStorySpecial` (0x66) lockstep messages (a driver must deliver them); `SaveStoryline`
   (registry); `HoldGroundWar`'s pause and the 0xF261F8 hold; Earthquake/Anim/notices (UI); `JoinBattle` writes
   `spFlottak` (0xBAA1C0) but the battle code doesn't read it back; undo 7 `st_RemoveTerv` (no ported script registers it).
+
+## 16. Tutorial start (done 2026-10-24)
+- **Recording**: `tools/trace/run_newgame.py --tutorial N` (newgame.js calls the exe's `TutorialSetCampaignGameOptions(n)`,
+  exe 0x504250, as `MainScr_Kilep` does at exe 0x4feec2; `TutorialStart("main", n)` (script, gate flags, music) is left
+  out; seeds from `scenario_seeds.py` as for scenarios) -> `_local/traces/newgame/tutorial-{1..5}.*`.
+- **Test**: `new_campaign_matches_the_exe` (`tests/new_game.rs`) has a tutorial branch -> `Game::start_tutorial`: all five
+  chapters equal the exe's save at tick 0 (0 differing chunk groups).
+- **Replays**: `run_replay.py` from tutorial-1.sav and tutorial-4.sav, 60 ticks at x16 (`replay-tutorial1-x16`,
+  `replay-tutorial4-x16`): `replay_matches_the_exe_tick_by_tick` byte-exact. The tutorial interpreter does not run in
+  them (the save is loaded); it is verified separately (`tutorial.md` §11).
+- **Sim**: `Game::start_tutorial` passes `InitNewGame`'s difficulty 0 as the exe does (`InitNewGame(SDL_GetTicks(), 1, 0, 0)`),
+  not `cfg.difficulty`; output unchanged (the scn file sets Nehezseg).
+- **Data quirk** (shipped, not fixed): tutorial4.scn and tutorial5.scn share the same date (Ev 2342 9/1, Ido 42168045)
+  and both carry TITLE "Tutorial 2"; they differ in one FLEET line.

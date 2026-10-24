@@ -255,6 +255,7 @@ fn uniforms() -> SceneUniforms {
         sun: [0.0; 4],
         fog: [0.0; 4],
         fog_range: [1e9, 2e9, 0.0, 1e9],
+        flash: [[0.0; 4]; 2],
     }
 }
 

@@ -40,6 +40,17 @@ impl Clip {
         }
     }
 
+    /// The silent frames (at 44.1 kHz) before the sound reaches `soundhook`'s queue: `workerfunc` (exe 0x7104d0)
+    /// decodes the sound only as it reads the packets on its way to the next picture, and it runs [`DECODE_AHEAD`]
+    /// frames ahead of the shown one, so the first sound waits for the picture to near the file's first sound
+    /// chunk; every hook call (1024 frames) before that is an underrun (re/screens/video.md §4).
+    pub fn sound_wait(&self) -> u64 {
+        let Some(a) = self.mp4.audio.as_ref().and_then(|a| a.samples.first()) else { return 0 };
+        let before = self.video().samples.iter().filter(|s| s.offset < a.offset).count();
+        let ms = before.saturating_sub(DECODE_AHEAD) as f64 * 1000.0 / self.fps() as f64;
+        (ms * 44.1 / HOOK_FRAMES as f64).ceil() as u64 * HOOK_FRAMES
+    }
+
     /// The stream's frame rate: the timescale over the first sample's duration (`stts`).
     pub fn fps(&self) -> f32 {
         let v = self.video();
@@ -146,8 +157,17 @@ fn shade(y: f32, cb: f32, cr: f32) -> [u8; 3] {
 /// `soundhook` exe 0x7100e0: the first 0xe5b frames of a play at 44.1 kHz are silence.
 pub const LEAD_IN: u64 = 0xe5b;
 
+/// The frames one `soundhook` call fills (the mixer's 4096-byte buffer, S16 stereo; observed).
+const HOOK_FRAMES: u64 = 1024;
+
+/// The pictures `workerfunc` decodes ahead of the shown one: the ring's 2 (`Loader_Video_Entity` exe 0x70e7d0,
+/// entity `+0x2a4`) and the H.264 decoder's reorder delay. Observed 4 (`run_video.py --real` + a `soundhook`
+/// probe, 2026-10-24): `title.mp4`'s first sound chunk follows 13 pictures and the hook's queue stays empty for 16
+/// calls (16384 frames: the picture reaching frame 9 at 360 ms); `misc/credits.mp4`'s follows 1 and waits none.
+const DECODE_AHEAD: usize = 4;
+
 /// The video's sound as a mixer stream: AAC packets decoded as the mixer asks, made stereo and resampled, after
-/// [`LEAD_IN`]'s silence. `played` counts the frames handed out at the mixer's rate.
+/// [`LEAD_IN`]'s silence and the clip's [`Clip::sound_wait`]. `played` counts the frames handed out at the mixer's rate.
 pub struct Sound {
     clip: Arc<Clip>,
     dec: Box<dyn AudioDecoder>,
@@ -172,7 +192,8 @@ impl Sound {
             .with_extra_data(config.clone().into_boxed_slice());
         let dec = symphonia::default::codecs::AacDecoder::try_new(&p, &AudioDecoderOptions::default()).ok()?;
         let rs = crate::audio::decode::Resampler::new(*sample_rate, rate);
-        Some(Self { clip, dec: Box::new(dec), next: 0, rs, pending: Vec::new(), at: 0, buf: Vec::new(), lead: LEAD_IN * rate as u64 / 44100, played: Arc::new(AtomicU64::new(0)) })
+        let lead = (LEAD_IN + clip.sound_wait()) * rate as u64 / 44100;
+        Some(Self { clip, dec: Box::new(dec), next: 0, rs, pending: Vec::new(), at: 0, buf: Vec::new(), lead, played: Arc::new(AtomicU64::new(0)) })
     }
 
     /// Decodes the next packet into `pending`; false at the end.
@@ -253,8 +274,32 @@ mod tests {
         let mut buf = vec![[0.0f32; 2]; 4096];
         while s.read(&mut buf) == buf.len() {}
         let secs = s.played.load(Ordering::Relaxed) as f64 / 48000.0;
-        let want = (a.samples.len() as f64 * 1024.0 + LEAD_IN as f64) / 44100.0;
+        let want = (a.samples.len() as f64 * 1024.0 + (LEAD_IN + c.sound_wait()) as f64) / 44100.0;
         assert!((secs - want).abs() < 0.01, "{secs} vs {want}");
+    }
+
+    /// The sound starts where the exe's does (owner report 2026-10-24: `title.mp4` is one clip, both logos and the
+    /// intro, and its music sounds from the start of the clip, under the logos, in the exe too). Observed
+    /// (`run_video.py --real` + a `soundhook` probe, 2026-10-24): the hook's first non-zero frame is 22310 for the
+    /// title (the lead-in, 16 empty calls, then the track sample-exact) and 4042 for `misc/credits.mp4`.
+    #[test]
+    fn sound_starts_as_the_exe() {
+        for (name, want) in [("title", 22310), ("misc/credits", 4042)] {
+            let Some(c) = clip(&format!("anim/mpeg4/{name}.mp4")) else { return };
+            let mut s = Sound::new(c, 44100).unwrap();
+            // The hook's S16 output: decoder noise under half a step is silence.
+            let mut buf = vec![[0.0f32; 2]; 1024];
+            let mut at = 0;
+            let first = loop {
+                let n = s.read(&mut buf);
+                assert!(n > 0, "{name}: no sound");
+                if let Some(i) = buf[..n].iter().position(|f| f.iter().any(|x| (x * 32768.0).round() != 0.0)) {
+                    break at + i;
+                }
+                at += n;
+            };
+            assert!(first.abs_diff(want) <= 1, "{name}: {first} vs {want}");
+        }
     }
 
     /// The remaster's shader arithmetic: 8-bit 128 is 0.502 in GL, so grey carries a faint magenta (R and B +1/255, white G 254).

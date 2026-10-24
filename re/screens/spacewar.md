@@ -597,7 +597,7 @@ Two phases, because leaving first plays the zoom-out to the starmap:
 ### 4.2 Hot-spots (SpaceWar_MouseInit, ELF 0x67c7d0 / exe 0x562d10)
 Globals first: `MouseSzovegSzam = 0x2e` (exe 0xDB4680), `MouseHanyasIkonKep = 0x1f` (exe 0xDB4684). `colour` (arg 2, stored at +0x7c): 0 = the rectangle is the
 hot-spot; non-zero = the pixel value of mask kep 0x1f that selects it (research.md section 4: `Mouse_Darabol` ELF 0x5b7a40; the lowest id wins).
-`flag` (+0x74): 1 = acts once on the mouse change (assumed: on release), 0 = the handler runs every frame while the button is held [u, see section 7].
+`flag` (+0x74): `IG2_gameUpdate` (ELF 0x587400 / exe 0x4e0440) renders frames in a loop and returns to the screen (exe 0x562cb0 → `SpwC::main` per slot) only when: a button is down over a hot-spot whose flag is 0 (every frame of the hold), or whose flag is 1 and `Mouse_Valtozas` is set (the press edge, once), or a button came up (`Valtozas`) over the same flag-0 hot-spot as the last frame (the release, once). After a flag-1 press `Mouse_FelengedesMajdMegvar` keeps the loop rendering until the release and then returns `AktIkon = 0`. A hover alone never runs `SpwC::main` (the radar does not pan on hover). (Variables: `Mouse_Gomb` exe 0xdb4650, `Mouse_Valtozas` 0xdb4653, `MajdMegvar` 0xdb4669, `OldIkon` 0x912a40; settled 2026-10-24, deviation 56.)
 All entries have type +0x78 = 1 (on). Strings via `GetString(0xb, 2, k)` (k from the exe immediates).
 
 | id (AktIkon) | colour | rect x,y,w,h | flag | tooltip | start state | role |
@@ -1633,3 +1633,40 @@ their battle state isn't drawn). `re/deviations.md` lists them.
   exe 0x5778c0; §5.2). The starmap fade (§ "Starmap fade") removes the galaxy clouds at battle zoom.
 - **Accepted** (2026-10-24, fx8b sequence; numbers in `diff-results.md`). Orders were not compared byte-exact (no
   MULTIGET harness for SpaceWar): `infoszamol`'s Strengths equal the exe's between-tick writes.
+
+### 9.12 FX7 rest (2026-10-24): hot-spot calls, depth-tested overlays, the drawn-matrix seed, the info model
+- **When `SpwC::main` runs** (deviation 56, §4.2): `IG2_gameUpdate` (ELF 0x587400 / exe 0x4e0440) loops over frames and
+  returns to the screen (exe 0x562cb0 → 0x57b9e0 per slot) only on a flag-0 hot-spot held (every frame) or released over
+  the same spot (once), or a flag-1 press edge (once; then `Mouse_FelengedesMajdMegvar` renders frames until the release
+  and returns `AktIkon = 0`). The client acted on press edges already; the radar now pans only while a button is down or
+  on its release (it panned on hover).
+- **Unit overlays depth tested** (deviation 24): pass B's `line3(.., depth = true, ..)` quads (§6.1.1) are billboards of
+  the mesh pass at the unit's eye depth (a virtual pixel = `−Z/600` eye units along the camera's rows), additive, no
+  depth write; the guns' pass A stays undepthed. [obs fx8b: view 3.97 → 3.93 at t800.]
+- **The drawn matrix's seed** (deviations 212, 115): `AddUjUrhajo` (ELF 0x68a730) sets unit `+0xe8` (exe `+0xe4`) to
+  `CreateMatrix(spin.x, spin.y + π, spin.z)`; `seturhajopos` takes its third column as the first up vector. The client
+  seeded the identity, whose up `(0, 0, −1)` is parallel to a heading along y: `CreateMatrix2v`'s cross products vanish
+  (`normalizevektor` ELF 0x4522d0 leaves vectors under 1e-5 as they are), the matrix stays rank 1 and the hull is a line
+  (only its engine glows showed: the "bright points" of 212 and the "puff" of 115). [obs fx8b: the entry dump's matrices
+  all have third column (−1, 0, 0); the hulls at t800/t1500 now match the exe's poses.]
+- **Dying hulls** (deviation 236): a dead unit's node stays shown while its explosion tick (ELF `+0x184`, exe `+0x17c`) is
+  1..=0x29 and it did not retreat (§6.5). [obs fx8b t2300: the exe's hull beside the left blast.]
+- **The weapon column follows `xcenter`** (deviation 120): its places take `320 − xcenter` back (§5.1), so its fixed
+  projection centre is `xcenter` (the big box moves it); the info model's stays at 320. [obs fx7, big box open t1000..t1245:
+  weapons 5.0–8.6 → 2.8–5.9; the retreat button and the top button show as the exe's.]
+- **The info model** (deviation 274; `kisinfogfxfrissit` ELF 0x6860c0): `kisinfotipus` 5000 → `vad11.xvb` from
+  `vector/spacewar/`; 50000 + slot → `TTeruletek[t − 1]` from `talalmanyok`, `t` = `EpuletekLeiro[Epuletek[planet][slot]
+  .type].+0` with 0x71 and 0x73 swapped; else `tipusnevek[race·12 + type]`. Lit by the parallel light without the side
+  lights [obs fx8b: its picture 5.63 → 5.35; ambient only 5.71]. Checked: `spacewar_info.json` (a click on empty space
+  clears the selection at t450; exe run at 1920 × 1080) shows the fighter as the exe's. Not checked: the gun's building
+  model (no capture selects only guns); property 0x2000000 (depth `1 − 1/−z`) is not modelled; the turn's phase counts
+  drawn frames, so it differs with the frame rate.
+- **The overview's slider**: the label "Defend/Attack" (`GetString(0xb, 1, 0x14)`) is drawn after the bar and marker
+  [obs spacewar_info t500].
+- Seen, not fixed: in `spacewar_info` (the default battle) the overview's firepower reads 3690 / 708 (own / enemy) in the exe
+  and 3865 / 1080 in the client (`infoszamol`'s side strengths; the client's first Strengths order sends 3865); the debris pieces are smaller
+  and fewer than the exe's though `robbanasdarabok` (ELF 0x686830: `min(size, .002)`, `ScaleObja` sets the scale) is ported
+  as read; the explosions' white core is ~35 % larger at fx8b t1800.
+- Settled by the fx8b review (no difference found): the plasma bolts (237) and laser bolts (238) are present with the
+  exe's size and colour, the engine glows (239) are the exe's size, the fighters (136) match in size and point colour; no
+  orbital station is under the console in any capture (120).

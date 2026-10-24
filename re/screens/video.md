@@ -94,7 +94,22 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
 - **Sound** (fullscreen only): `soundhook` exe 0x7100e0 through `Mix_HookMusic`, outside sgsnd: the game's other
   sounds keep playing, the options' volumes are not applied (raw S16 stereo at the mixer's 44.1 kHz). The first
   0xe5b = 3675 frames (83.3 ms) of each play are silence, and an empty queue (underrun) resets that count (another
-  lead-in after a stall). In-screen clips decode no sound. No music ducking: a blocking play stops the music, and
+  lead-in after a stall). In-screen clips decode no sound.
+- **When the sound starts** [obs: `probes/video_sound.js` with `run_video.py --real`, 2026-10-24]: the hook runs from
+  `play()` on, but `workerfunc` (exe 0x7104d0) decodes the sound (`fill_audio`) only from the packets
+  `SDL_ffmpeg_get_next` reads on its way to the next picture, and it decodes at most the ring's 2 pictures
+  (`Loader_Video_Entity` 0x70e7d0 sets `+0x2a4 = 2`; `play()` hands it 2 semaphore permits and waits for the first
+  picture) plus the H.264 reorder delay ahead of the shown one: **4 pictures** observed. Until the picture nears the
+  file's first sound chunk every hook call (1024 frames) is an underrun, then the lead-in, then the track sample-exact
+  (the hook's output equals FFmpeg's decode delayed, no gap later). `title.mp4` (and the other 640×400 clips:
+  `intro_*`, `arriving`, `altalanos_*`, `tutorial`) store 13 pictures before the first sound chunk: 16 empty calls
+  (picture frame 9 = 360 ms), first non-zero frame 22310 = 3675 + 16384 + the track's own 2251, at video time 495 ms;
+  the hook then stays 16-17 ms ahead of the picture clock to 30 s. `misc/credits.mp4` stores 1: no wait, first
+  non-zero frame 4042. Nothing else sounds during the title (no `SoundEngine::Play`).
+- **The title's music is the clip's own** (owner report 2026-10-24, "the intro's sound starts over the two logos"):
+  `title.mp4` is one 88 s clip, the Imperium Galactica II logo (with the THQ Nordic overlay, §3) to ~6 s, the Digital
+  Reality logo to ~12 s, then the intro; its single sound track (84.3 s) is continuous music from 0.5 s. The exe plays
+  that music under both logos too: the remake matches, not a client bug. No music ducking: a blocking play stops the music, and
   once the game runs again `UpdateFrame` (exe 0x4e3e90) starts the next main track because the loaded one stopped
   (`audio.md` §4). [unknown: SDL_mixer applies no music volume to a hook; not read in the asm]
 
@@ -153,7 +168,10 @@ layout `VIDEO_INTERLACE_UV`; not captured, no talking-head capture).
 - Answering, the next part or a new message close nothing: the next `TE` text's `StartAnim` does. `Messages_Kilep`
   closes the clip; `Messages_Belep` resets `AnimAkt` and the flag.
 - `mesframe` (exe 0xdabe44, f32): +1/3 a UI update to 15 (opening), to 30 once a message is opened
-  (`KELLKINYITAS2`), −0.6 closing; the clip waits for exactly 30.
+  (`KELLKINYITAS2`), −0.6 closing; the clip waits for exactly 30 (messages.md §4.1). Hiding sub-mesh 5/0 shows
+  nothing: from 30 on the exe draws the screen saved at 30 (`SaveScreen(3)`, before the 2D pass that hides it) instead
+  of the model, and `Messages_Kilep` shows it again before the closing draws the model. Client: `head_clip_frame` and
+  the typing wait for `MessagesScreen::text_up` (row 79).
 
 ### 5.4 Open
 - Which music follows `title.bik`; re-layout on a window resize during a video (none found).
@@ -165,7 +183,8 @@ layout `VIDEO_INTERLACE_UV`; not captured, no talking-head capture).
 - `Player::update(now)`: §3's pacing on the caller's clock (frame `n` at `n·1000/fps` ms, at most the newest due
   frame shown, late ones dropped, loops counted on).
 - Sound: `Audio::play_video` puts the AAC stream in the mixer's video slot at full volume after the 3675-frame
-  lead-in (scaled to the device rate); a blocking play stops the music (`Mixer::stop_music`); the music restarts through
+  lead-in and `Clip::sound_wait` (§4: the pictures stored before the first sound chunk less 4, in whole 1024-frame
+  hook calls; both scaled to the device rate; test `sound_starts_as_the_exe`: title 22310, credits 4042); a blocking play stops the music (`Mixer::stop_music`); the music restarts through
   `Audio::frame` afterwards like the exe.
 - Placement: fullscreen over the whole window (§3, black around), in-screen through `Virtual::px`.
 - Skip: press-then-release of any key or mouse button, fullscreen only; the mouse release of a skipped video also reaches

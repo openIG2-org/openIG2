@@ -1631,7 +1631,7 @@ mod tests {
         let tables = ig2_rules::Rules::from_install(&install).unwrap();
         let mut world = crate::world::World::load(&save, &rules, &defaults, &volatile);
         let ui = UiTexts::load(&install);
-        let names = crate::ui::empire_names(&crate::ui::hungarian_txt17(&install));
+        let names = crate::ui::empire_names(&crate::ui::names_txt17(&install, false));
         let t = Texts::load(&install, &ui);
         let heads = tables.diplomacy_screen.heads.clone();
         let mut s = Screen::new(&tables, &ui, &View::read(&world.game.state));
@@ -1690,7 +1690,7 @@ mod tests {
         let tables = ig2_rules::Rules::from_install(&install).unwrap();
         let mut world = crate::world::World::load(&save, &rules, &defaults, &volatile);
         let ui = UiTexts::load(&install);
-        let names = crate::ui::empire_names(&crate::ui::hungarian_txt17(&install));
+        let names = crate::ui::empire_names(&crate::ui::names_txt17(&install, false));
         let t = Texts::load(&install, &ui);
         let ids: Vec<i32> = ig2_formats::diplomacy::parse_specials(&String::from_utf8_lossy(&install.read("dataraw/diplomac/special.eng").unwrap())).iter().map(|s| s.id).collect();
         let (Some(a), Some(b)) = (ids.iter().position(|&i| i == 8571), ids.iter().position(|&i| i == 8581)) else { return };
@@ -1804,7 +1804,7 @@ mod tests {
         let tables = ig2_rules::Rules::from_install(&install).unwrap();
         let mut world = crate::world::World::load(&save, &rules, &defaults, &volatile);
         let ui = UiTexts::load(&install);
-        let names = crate::ui::empire_names(&crate::ui::hungarian_txt17(&install));
+        let names = crate::ui::empire_names(&crate::ui::names_txt17(&install, false));
         let t = Texts::load(&install, &ui);
         let heads = tables.diplomacy_screen.heads.clone();
         // The AI's message to the human (`FeldolgozAjanlat` stores it in the human's slot, §5.4).

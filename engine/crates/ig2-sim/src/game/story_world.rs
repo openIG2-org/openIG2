@@ -168,6 +168,11 @@ impl StoryWorld for GameStory<'_, '_> {
         self.fleet(f).is_some_and(|r| r[0x15] != 0xff && r[0x52] & 4 != 0)
     }
     fn event(&mut self, ev: StoryEvent) {
+        // `NewMessage` slows the game at once: the same tick's later counters count at the new speed.
+        if matches!(ev, StoryEvent::NewMessage { .. } | StoryEvent::Message { .. }) {
+            self.with_game(|g| g.slow_down());
+            self.g.speed = self.mem().i32(va::IDO_SPEED);
+        }
         self.carry_out(&ev);
         self.events.push(ev);
     }

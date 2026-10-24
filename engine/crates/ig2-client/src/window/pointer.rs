@@ -98,7 +98,7 @@ impl App {
 
     /// Once a frame: the top bar's tooltip (`Mouse_Init`'s texts `GetString(18, 1, n)` on every screen below 0xe,
     /// `UpdateFrame`'s rest timer) and the pointer `UpdateFrame` draws: none while a screen changes, outside the window,
-    /// or where the screen draws its own (the colony, the space battle, the tutorial's recording); the hand (1) over the
+    /// or where the screen draws its own (the colony, the space battle, the tutorial's parked recording); the hand (1) over the
     /// bar's spots, the main menu's rings and boxes, research's rows and models and design's pods and models, the
     /// starmap view's types 2/5/6/7, else the arrow (0).
     pub(super) fn frame_overlay(&mut self) -> Overlay {
@@ -164,8 +164,12 @@ impl App {
                 out.tip = Some((self.bar_tip, text));
             }
         }
-        let own = self.spacewar.is_some() || self.tutorial_owns_input();
-        if self.pointer_in && !own && !self.screen_changing() {
+        // The tutorial's recording moves the pointer (`Mouse_Tutorial_Kezel`); its shape is the hot-spot's under the
+        // replayed spot as for a live one (`UpdateFrame`'s `Mouse_Tipus == -1` hit test, exe 0x4e3e90), none while parked
+        // (`Mouse_Tipus = -2`).
+        let replay = self.tutorial_owns_input();
+        let own = self.spacewar.is_some() || (replay && self.tutorial_kind < 0);
+        if (self.pointer_in || replay) && !own && !self.screen_changing() {
             out.pointer = Some(match &colony {
                 // The colony's own type (spec §11.10), but the hand over the bar.
                 Some(c) => {

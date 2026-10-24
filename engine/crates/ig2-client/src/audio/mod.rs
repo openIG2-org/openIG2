@@ -122,6 +122,11 @@ pub fn message_duck(m: i32) -> i32 {
     (m as f64 / 3.0) as i32
 }
 
+/// `TutorialStart`'s duck target for the music volume `m` (exe 0x612278..0x6122cc): `(int)((double)m * 0.4)`.
+pub fn tutorial_duck(m: i32) -> i32 {
+    (m as f64 * 0.4) as i32
+}
+
 /// The music globals of the exe (re/screens/audio.md §4; exe addresses in the field docs).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MusicState {
@@ -734,6 +739,7 @@ mod tests {
     /// 15876).
     #[test]
     fn message_speech_ducks_and_waits() {
+        assert_eq!(tutorial_duck(100), 40);
         assert_eq!(message_duck(100), 33);
         assert_eq!(message_duck(50), 16);
         let mut m = MusicState { duck: message_duck(100), ..MusicState::default() };

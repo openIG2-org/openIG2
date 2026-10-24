@@ -19,7 +19,7 @@ use crate::lighting;
 use crate::orders::Selection;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, Target, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
-use crate::scene::{self, Look, Model, Placement, M3, V3};
+use crate::scene::{self, Model, Placement, M3, V3};
 
 /// `Starmap_MouseInit`'s hot-spots the panels use (`Mouse_Szoveg_Set(id, …, x, y, w, h)`, virtual pixels).
 const SPOTS: &[(u32, [i32; 4])] = &[
@@ -1329,16 +1329,27 @@ impl Panels {
 struct Loaded {
     model: Model,
     texs: Vec<TexId>,
+    /// Per part, its self-illumination texture (`Part::self_illum`).
+    glows: Vec<Option<TexId>>,
 }
 
 /// The panels' models on the GPU side: `gyartas.xvb` by animation frame, the hull models, their textures, and the
 /// texture they are drawn into.
 pub struct PanelModels {
     prod: HashMap<usize, Model>,
-    units: HashMap<(usize, u8, u8), Option<Loaded>>,
+    units: HashMap<(usize, u8, u8, u32, u32), Option<Loaded>>,
     textures: HashMap<String, TexId>,
     white: TexId,
     target: Option<Target>,
+    /// The info box's globe (`vector/info/bolygo_1.xvb`, loaded once; its sub-mesh 0's UVs scaled per surface) and
+    /// its own target.
+    globe: Option<Option<Model>>,
+    globes: HashMap<u8, Model>,
+    globe_target: Option<Target>,
+    /// The fleet picture `flag<race>0.xvb` per race, and the fleet it was last loaded for with the frame it was
+    /// (`SInfoOldFleet`: a new fleet starts the turn again).
+    flags: HashMap<u8, Option<Loaded>>,
+    flag_fleet: Option<(usize, f32)>,
 }
 
 /// `TransfAlap` `+0x34`: where the hull's model and its textures are (`ShowStarmap`, `ProductGFX`).
@@ -1353,7 +1364,100 @@ fn transfer_dirs(dir: i32) -> (&'static str, &'static str) {
 impl PanelModels {
     pub fn new(r: &mut Renderer) -> Self {
         let white = r.add_texture(&crate::assets::Image::white());
-        Self { prod: HashMap::new(), units: HashMap::new(), textures: HashMap::new(), white, target: None }
+        Self { prod: HashMap::new(), units: HashMap::new(), textures: HashMap::new(), white, target: None, globe: None, globes: HashMap::new(), globe_target: None, flags: HashMap::new(), flag_fleet: None }
+    }
+
+    /// The info box's planet picture (`StarmapLoadInfoBolygo` ELF 0x6d3950, `StarmapFrissitBolygoUrhajok` 0x6d3d40,
+    /// re/screens/starmap.md §11): in planet mode `bolygo_1.xvb` at `AddToScene` scale 0.029, camera-fixed at (−545,
+    /// 365, −1100) (virtual ≈ (23, 449)), stood up by `RotateObj(π/2, 0, 0)` and turned by `matrixforgat(M, M, 0.05,
+    /// 0)` every drawn frame (`frames` of them), sub-mesh 0 skinned with `BolygoTexturak[surface − 1]`; lit like the
+    /// panels' models. In fleet mode the fleet picture instead (`render_flag`). The caller draws it over
+    /// `StarmapGfx2D_1`'s fader. `None` in neither mode.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_globe(&mut self, r: &mut Renderer, install: &Install, state: &SaveState, sel: &Selection, cam: &[[f32; 3]; 3], size: [f32; 2], frames: f32) -> Option<TexId> {
+        if sel.mode == 2 {
+            return self.render_flag(r, install, state, sel, cam, size, frames);
+        }
+        if sel.mode != 1 || sel.planet == 0 || sel.planet > state.planet_count() {
+            return None;
+        }
+        let surface = state.mem.u8(va::PLANETS + (sel.planet * PLANET_SIZE) as u32 + 0x22);
+        // `BolygoTexturak[surface − 1]` = `textures/starmap/p<surface>.bmp` (the ninth is p1 again).
+        let n = if (1..=8).contains(&surface) { surface } else { 1 };
+        let base = self.globe.get_or_insert_with(|| Model::load(install, "vector/info/", "bolygo_1.xvb", "textures/info/").map_err(|e| eprintln!("ig2-client: {e}")).ok()).clone()?;
+        let skin = install.resolve_texture("textures/starmap/", &format!("p{n}.bmp"));
+        let model = self
+            .globes
+            .entry(n)
+            .or_insert_with(|| {
+                // The remaster's `ig2_vertex.shader` scales the UVs by the texture's `uv_mul` (§3.3).
+                let k = skin.as_deref().map_or([1.0; 2], |t| crate::assets::Image::uv_mul(install, t));
+                let mut m = base;
+                for p in m.parts.iter_mut().filter(|p| p.index.first() == Some(&0)) {
+                    for v in &mut p.verts {
+                        v.uv = [v.uv[0] * k[0], v.uv[1] * k[1]];
+                    }
+                }
+                m
+            })
+            .clone();
+        let texs: Vec<TexId> = model
+            .parts
+            .iter()
+            .map(|p| {
+                let path = if p.index.first() == Some(&0) { skin.clone() } else { p.texture.clone() };
+                self.texture(r, install, path.as_deref())
+            })
+            .collect();
+        Some(self.render_box_model(r, &model, &texs, 0.029, [-545.0, 365.0, -1100.0], cam, size, frames))
+    }
+
+    /// The info box's fleet picture (`StarmapLoadInfoFlottak` ELF 0x6d3b10, re/screens/starmap.md §11): in fleet mode,
+    /// not for a special fleet (`fSpec`, flags 0x4400) or an ownerless one, `vector/spacewar/flag<race>0.xvb` of the
+    /// owner's race (`PlayerFaj`; above 8 the sixth) at scale 0.03, camera-fixed at (−535, 365, −1100), stood up and
+    /// turned as the globe from the frame its fleet was selected.
+    #[allow(clippy::too_many_arguments)]
+    fn render_flag(&mut self, r: &mut Renderer, install: &Install, state: &SaveState, sel: &Selection, cam: &[[f32; 3]; 3], size: [f32; 2], frames: f32) -> Option<TexId> {
+        let f = state.fleets.get(sel.fleet).filter(|_| sel.fleet > 0)?;
+        if u16::from_le_bytes([f[0x52], f[0x53]]) & 0x4400 != 0 || f[0x15] == 0xff {
+            return None;
+        }
+        let race = state.races().get(f[0x15] as usize).copied().unwrap_or(0);
+        let d = if race > 8 { 6 } else { race };
+        if d == 0 {
+            return None;
+        }
+        // The first fleet seen turns from frame 0 (a still's clock); a later change restarts the turn.
+        let since = match self.flag_fleet {
+            Some((k, at)) if k == sel.fleet => at,
+            Some(_) => frames,
+            None => 0.0,
+        };
+        self.flag_fleet = Some((sel.fleet, since));
+        if !self.flags.contains_key(&d) {
+            let loaded = Model::load(install, "vector/spacewar/", &format!("flag{d}0.xvb"), "textures/spacewar/").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|model| {
+                let paths: Vec<Option<String>> = model.parts.iter().map(|p| p.texture.clone()).collect();
+                let texs = paths.iter().map(|p| self.texture(r, install, p.as_deref())).collect();
+                Loaded { model, texs, glows: Vec::new() }
+            });
+            self.flags.insert(d, loaded);
+        }
+        let (model, texs) = self.flags.get(&d)?.as_ref().map(|l| (l.model.clone(), l.texs.clone()))?;
+        Some(self.render_box_model(r, &model, &texs, 0.03, [-535.0, 365.0, -1100.0], cam, size, frames - since))
+    }
+
+    /// One of the info box's camera-fixed pictures: `RotateObj(π/2, 0, 0)`, turned by `matrixforgat(M, M, 0.05, 0)`
+    /// a drawn frame, lit like the panels' models.
+    #[allow(clippy::too_many_arguments)]
+    fn render_box_model(&mut self, r: &mut Renderer, model: &Model, texs: &[TexId], scale: f32, at: V3, cam: &[[f32; 3]; 3], size: [f32; 2], frames: f32) -> TexId {
+        let l = [10.0, 10.0, -10.0];
+        let lights = lighting::Lights::default().ambient(0x404040).parallel(0x808080, std::array::from_fn(|i| cam[i][0] * l[0] + cam[i][1] * l[1] + cam[i][2] * l[2]));
+        let spin = scene::axis_matrix([0.0, -0.05, 0.0], 0.05 * frames.floor());
+        let rot = scene::mul(&spin, &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
+        let m = scene::mul(&rot, &Placement::add_to_scene(model.origin, scale).matrix).map(|x| x * 1024.0);
+        let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
+        bake(model, &m, at, texs, &[], 1.0, &lights, &mut dynamic, &mut draws);
+        finish(r, &mut self.globe_target, dynamic, draws, size)
     }
 
     fn texture(&mut self, r: &mut Renderer, install: &Install, path: Option<&str>) -> TexId {
@@ -1373,9 +1477,11 @@ impl PanelModels {
     }
 
     /// The model of hull `hull` (`TransfAlap`) with race digit `digit` in a spacewar hull's name (hulls < 12), and
-    /// a ground hull's skin `tankok/<kind><owner>.bmp` on its first sub-mesh (owner capped at 10).
-    fn unit(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, hull: usize, digit: u8, owner: u8) -> Option<&Loaded> {
-        let key = (hull, digit, owner);
+    /// a ground hull's skin `tankok/<kind><owner>.bmp` on its first sub-mesh (owner capped at 10), at the level of
+    /// detail `Kocka` draws it at for `AddToScene(…, s)` at depth `z` (`Starmap_Belep`: `valtashatar` 1600).
+    #[allow(clippy::too_many_arguments)]
+    fn unit(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, hull: usize, digit: u8, owner: u8, s: f32, z: f32) -> Option<&Loaded> {
+        let key = (hull, digit, owner, s.to_bits(), z.to_bits());
         if !self.units.contains_key(&key) {
             let loaded = (|| {
                 let m = rules.unit_models.transfer.get(hull)?;
@@ -1388,7 +1494,7 @@ impl PanelModels {
                     name[4] = (b'0' + digit).min(b'8');
                 }
                 let name = String::from_utf8_lossy(&name).into_owned();
-                let model = Model::load(install, vdir, &name, tdir).map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
+                let model = Model::load_lod(install, vdir, &name, tdir, s, z, 1600).map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
                 let skin = (hull > 0x12)
                     .then(|| ["kerekes", "kozep", "lebeg", "lanc", "aknarak"].get(hull - 0x13).map(|k| format!("tankok/{k}{}.bmp", owner.min(10))))
                     .flatten()
@@ -1400,7 +1506,8 @@ impl PanelModels {
                     .map(|p| if skin.is_some() && p.path.split('/').nth(1) == Some(first.as_str()) { skin.clone() } else { p.texture.clone() })
                     .collect();
                 let texs = paths.iter().map(|p| self.texture(r, install, p.as_deref())).collect();
-                Some(Loaded { model, texs })
+                let glows = model.parts.iter().map(|p| p.self_illum.as_deref().map(|t| self.texture(r, install, Some(t)))).collect();
+                Some(Loaded { model, texs, glows })
             })();
             self.units.insert(key, loaded);
         }
@@ -1460,7 +1567,7 @@ impl PanelModels {
                     })
                     .collect();
                 // `Init3dStarmap` gives `gyartas` an ambient 0x0a0a0a of its own, after the scene's lights.
-                bake(&m, &place.matrix, place.translation, &texs, 1.0, &lights.clone().ambient(0x0a0a0a), &mut dynamic, &mut draws);
+                bake(&m, &place.matrix, place.translation, &texs, &[], 1.0, &lights.clone().ambient(0x0a0a0a), &mut dynamic, &mut draws);
             }
             // The head units (`ProductGFX`): the ship line's at (−540, −350, −1600) ×0.375, the vehicles' at
             // (540, −350, −1600) ×0.28, turning 0.05 a frame, as solid as the unit is built (5..95 %).
@@ -1474,10 +1581,10 @@ impl PanelModels {
                     let hull = i32_at(rec, 0x44).max(0) as usize;
                     let digit = if l == 0 { races.get(i16_at(rec, 0x40).clamp(0, 18) as usize).copied().unwrap_or(0) } else { races.get(e as usize).copied().unwrap_or(0) };
                     let t = q[l].progress.map_or(0.05, |w| (w as f32 / 76.0).clamp(0.05, 0.95));
-                    if let Some(u) = self.unit(r, install, rules, hull, digit, owner) {
+                    if let Some(u) = self.unit(r, install, rules, hull, digit, owner, s, at[2]) {
                         let m = scene::mul(&spin, &Placement::add_to_scene(u.model.origin, s).matrix).map(|x| x * 1024.0);
-                        let (model, texs) = (u.model.clone(), u.texs.clone());
-                        bake(&model, &m, at, &texs, t, &lights, &mut dynamic, &mut draws);
+                        let (model, texs, glows) = (u.model.clone(), u.texs.clone(), u.glows.clone());
+                        bake(&model, &m, at, &texs, &glows, t, &lights, &mut dynamic, &mut draws);
                     }
                 }
             }
@@ -1494,28 +1601,35 @@ impl PanelModels {
                 let digit = i16_at(rec, 0x40).clamp(0, 9) as u8;
                 let spin = scene::mul(&scene::axis_matrix([0.0, (-0.5f32).cos(), (-0.5f32).sin()], (i % 3 + 1) as f32 * 0.03 * p.spin_frames), &tilt());
                 let (x, y) = ((k % 2 * 0x81) as f32, (k / 2 * 0x46 - 0x9c) as f32);
-                if let Some(u) = self.unit(r, install, rules, hull, digit, owner) {
+                if let Some(u) = self.unit(r, install, rules, hull, digit, owner, 0.04, -600.0) {
                     let m = scene::mul(&spin, &Placement::add_to_scene(u.model.origin, 0.04).matrix).map(|x| x * 1024.0);
-                    let (model, texs) = (u.model.clone(), u.texs.clone());
+                    let (model, texs, glows) = (u.model.clone(), u.texs.clone(), u.glows.clone());
                     // An empty side's model is three quarters transparent.
                     let a = |n: i32| if n == 0 { 0.25 } else { 1.0 };
-                    bake(&model, &m, [x - 229.0, y, -600.0], &texs, a(row.left), &lights, &mut dynamic, &mut draws);
-                    bake(&model, &m, [x + 99.0, y, -600.0], &texs, a(row.right), &lights, &mut dynamic, &mut draws);
+                    bake(&model, &m, [x - 229.0, y, -600.0], &texs, &glows, a(row.left), &lights, &mut dynamic, &mut draws);
+                    bake(&model, &m, [x + 99.0, y, -600.0], &texs, &glows, a(row.right), &lights, &mut dynamic, &mut draws);
                 }
             }
         }
         if let Some(i) = &p.info {
             for pose in i.poses(state, sel) {
-                if let Some(u) = self.unit(r, install, rules, pose.hull, pose.digit, pose.owner) {
+                if let Some(u) = self.unit(r, install, rules, pose.hull, pose.digit, pose.owner, pose.scale, pose.at[2]) {
                     let m = scene::mul(&pose.rot, &Placement::add_to_scene(u.model.origin, pose.scale).matrix).map(|x| x * 1024.0);
-                    let (model, texs) = (u.model.clone(), u.texs.clone());
-                    bake(&model, &m, pose.at, &texs, 1.0, &lights, &mut dynamic, &mut draws);
+                    let (model, texs, glows) = (u.model.clone(), u.texs.clone(), u.glows.clone());
+                    bake(&model, &m, pose.at, &texs, &glows, 1.0, &lights, &mut dynamic, &mut draws);
                 }
             }
         }
         if dynamic.is_empty() {
             return None;
         }
+        Some(finish(r, &mut self.target, dynamic, draws, size))
+    }
+}
+
+/// Draw baked camera-fixed models into `target` (made at the window's size on first use) and give its texture.
+fn finish(r: &mut Renderer, target: &mut Option<Target>, dynamic: Vec<MeshVertex>, draws: Vec<MeshDraw>, size: [f32; 2]) -> TexId {
+    {
         let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
         let px = wide.px;
         let light = scene::normalise([0.0, -0.35, 1.0]);
@@ -1537,16 +1651,17 @@ impl PanelModels {
                 sun: [1.0, 0.808, 0.502, 0.0],
                 fog: [0.0; 4],
                 fog_range: [1e9, 2e9, 0.0, 1e9],
+                flash: [[0.0; 4]; 2],
             },
             draws,
             dynamic,
         });
-        let target = match &mut self.target {
+        let target = match target {
             Some(t) => t,
-            None => self.target.insert(r.target(px)),
+            None => target.insert(r.target(px)),
         };
         r.draw_into(&f, target, px, 0.0);
-        Some(target.tex)
+        target.tex
     }
 }
 
@@ -1556,22 +1671,25 @@ pub(crate) fn tilt() -> M3 {
 }
 
 /// Bake a camera-fixed model (`SetRelative(false)`) at `at` with matrix `m`; `alpha` < 1 draws it as glass.
-/// Bake a camera-fixed model with the engine's vertex colours (the shader's pre-lit path: no normal).
+/// Bake a camera-fixed model with the engine's vertex colours (the shader's pre-lit path: no normal), then each
+/// part's self-illumination (`selfillumkirak`: an additive unlit pass in the grey `255 − t·255`, `t` the object's
+/// transparency, else the material's; re/screens/design.md §14.3).
 #[allow(clippy::too_many_arguments)]
-fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], alpha: f32, lights: &lighting::Lights, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], glows: &[Option<TexId>], alpha: f32, lights: &lighting::Lights, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     for (pi, p) in model.parts.iter().enumerate() {
         let start = out.len() as u32;
-        let a = match p.look {
-            Look::Glass(g) => g * alpha,
-            _ => alpha,
-        };
+        let a = p.alpha(alpha);
         for v in &p.verts {
             let q = scene::apply(m, v.pos);
             let c = lights.rgb(lighting::normal(m, v.lnormal));
             out.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], a] });
         }
         let tex = texs.get(pi).copied().unwrap_or(texs.first().copied().unwrap_or(TexId(0)));
-        draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+        draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });
+        if let Some(&Some(g)) = glows.get(pi) {
+            let t = if alpha < 1.0 { 1.0 - alpha } else { p.transparency };
+            crate::design_scene::glow(p, &scene::Transform { matrix: *m, translation: at }, g, t, out, draws);
+        }
     }
 }
 

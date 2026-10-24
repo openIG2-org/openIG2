@@ -300,7 +300,8 @@ Then row 0 of all four tables = the human's row. The function returns the human'
      planet (kind 1) or fleet (kind 2) owned by `EN`, owner ≠ 0, story id ≠ 0x1F88 → message 0x0E and
      slow-down (`SetIdoLelassit(1)`, call @ 0x595570). `SetIdoLelassit` (0x541270) writes
      `IdoSpeedSzorzo` at once (SP: 1 unless `nemlehetidotallitani` 0xBAD0D4; MP: ×4/×8/×16 from
-     `ProgramSebesseg` 0xBAE54C, 4 = unchanged), and the movement step (§4.2) reloads the global for every
+     `ProgramSebesseg` 0xBAE54C, 4 = unchanged) and `IdoSpeed` 0xBAE258 (the lit speed button; MP 1/2/3 → 1/2/3,
+     battle multiplier 1/2/2; argument ignored, see production-research.md §2), and the movement step (§4.2) reloads the global for every
      fleet (`movd 0xbae25c` @ 0x596424): **the same tick's movement already runs at the slowed speed**,
      for every fleet (earlier ones included, the radar block precedes the movement loop).
    - For `e` in 1..=`ProgramPlayers`: if `vis[e]` and (`old[e] == 0` or bit6): bit6 and `e == EN` → clear

@@ -76,7 +76,7 @@ call-site table (297 ELF sites): `_local/audio/callsites.md`.
 - `PlayWav(name, loop)` exe 0x563e60: a wave of its own at `ConvertVolume(G)`, only with `SOUND`. `Speech::Play`
   exe 0x563d50 the same, only with `KELLBESZED` (exe 0x996469, = `SOUND` at `Colony_Belep`). The file goes through
   `SE_GetRealName` (§1); the VFS takes `localization/<lang>/` first (es, fr, hu, it have every voice; de only the
-  scroll set).
+  scroll set). Message speech (`PlayMessagesHang`, `Lang == 1` only) has no localised copies in any language folder: English everywhere, as the exe.
 - **Scroll messages**, `FRISSIT_Scroll2` exe 0x556210 (ELF 0x66ebd0): when a sim message is taken onto the free line,
   its id (`ScrollUzenetek+0x38`) speaks unless it is 1, 0x14, 0x15 or 0x1a: `PlayWav("SOUNDS/SCROLL/BRUTAL/%04d.WAV",
   1)` when `EN == 5`, else `…/HUMAN/%04d.WAV` (64 files each, `0001`..). Not for the screens' own error lines
@@ -136,8 +136,13 @@ call-site table (297 ELF sites): `_local/audio/callsites.md`.
     `PlaySound(&Mes_Hangok[2], 0)` (`screens/messages/messages-end.wav`, exe 0x914b88) and `GlobalMusicVolumeCsokkento
     = 0`: **the music comes back when the end clip starts**, else at `Messages_Kilep`.
   - `StopMessagesHang` exe 0x55d1e0 with `StopHalkAlienHang` and `MesHangIndult = 0`: a left or right press in the
-    text (`0xb9 < x < 0x201`, `0 < y < 0xa8`; the right one also `SkipAll`), a new message taken
+    text (`0xb9 < x < 0x201`, `0 < y < 0xa8`, `Messages_Main` exe 0x508560; the right one also `SkipAll`, below), a new message taken
     (`VoltUjUzenet == 1` in `Messages_Main` exe 0x508560: an inbox row or an automatic one), `Messages_Kilep`.
+  - `SkipAll` (exe 0xd90dc4; 4 code references in the exe): set to 1 by the right press above (store ~0x5086dd),
+    to 0 by `KiertekelUjuzenet` (exe 0x505d60, every message opened) and `Messages_Belep` (0x508390). Its one reader
+    is `MessagesGfx2D_2`'s typer (exe 0x507ae0): `PlayBack && byte == '|' && !SkipAll` → `ParbeszTyperPtrNovelo =
+    Sebesseg/OSZTO`, a pause at a `|`. `PlayBack` (exe 0xd909b8) is only ever written 0 (`KiertekelUjuzenet`,
+    `Messages_Belep`), so `SkipAll` changes nothing: the right press stops the same as the left (FX14, row 188).
 - `PlayHalkAlienHang` exe 0x509120 (ELF 0x5a1470): the message video's alien voice. `idx` from the clip name
   `AnimFile` (`pirate` → 10, `trader` → 9 for `EN` 1/3/5; a `misc` clip → `UzenetekRandomKitol[UAktUzenet] − 1` unless
   that equals `EN`; `UzenetFaj` exe 0xd90ddc overrides when set), `StopHalkAlienHang` (exe 0x509760: stops all 16),
@@ -171,8 +176,8 @@ Planet type = `Bolygok+0x22`; `C[i]` = `Colony_Hangok[i]`, `Gr[i]` = `Gr_Hangok[
 | G0 | radar 5 and build menu 6 (own, `NemSzabadEpiteni == 0`) on the press; the on/off switch 0x11; E (owner `== EN`, the planet's `+0x44` clear) after its maybe empty 0x132; 3 (deselect); the 3D view 0x14 when another building becomes the selection, and its right click that drops the build cursor; the ground war's buttons 8, 0xa..0x12; the info modes 0x16..0x1e; the menus 0x15/0x19/0x1b on a release over an item |
 | `C[r(2)]` | the build start (`colony_start_build` exe 0x4a88a0, before `Multi_Send(0x1f)`); the repair window's yes (exe 0x47d170, with or without the building) |
 | `Gr[13+r(4)]` | the demolish window's yes with the building there (exe 0x47ced0, after `Multi_Send(0x20)`); Shift+Delete (`rand()&3`) |
-| `C[3]` / `C[4]` | `Build3dBuilding` exe 0x49c780 / `Remove3dBuilding` 0x497760: any building made or removed on the shown planet (`EpuletNew`/`EpuletDelete`), whoever's |
-| thunder | `UpdateRain` (ELF 0x4bffb0), called by `ShowColony` every drawn colony frame: with `KELLVILLAM` (`InitWeather` ELF 0x4c1160: the field's weather `WF+0xa00 == 2` and `OptionsKellIdojaras`) `random(400) < 1` → `PlaySound(&Colony_Villamok[random(4)], 0)` (exe 0x8f1198, 9 records `Groundwar/Thunder01..06`, `Thunder-BGR-1..3`, volume 75; only 0..=3 are drawn) and the light `villamid` at (0x60, 0x60, 0x80) for that frame, else black. A frame-rate dependent draw: about 0.15 a second at 60 Hz |
+| `C[3]` / `C[4]` | `Build3dBuilding` exe 0x45f640 (ELF 0x4ca0b0; the ported name at 0x49c780 is wrong: that one rebuilds a mesh's vertex list for `Init3dColony`) plays `C[3]` as its first statement; its one caller `EpuletNew` (exe 0x53c7d0, call 0x53cc3d) calls it for `AktKep == 3`, the planet `== AktPlanet` and not `Atlepes` (no `Belep` test): any building made on the shown planet, whoever's, at its construction start (the order 0x1f, `FRISSIT_Planet`'s queue, `AutoAddBuilding`, the stories, …). The `Atlepes` gate (exe 0xBAE24D) never closes in single player: `IG2_gameUpdate` (exe 0x4e0440) sets it together with the new `AktKep`/`AktPlanet` from `AktKepKell` at the end of a frame body, after that frame's `Fake_FRISSITES` (stores 0x4e05fe, 0x4e0760), and clears it (0x4e0c07) after `ScreenBetolt` and before the new screen's `_Belep` in the same pass; the sim is skipped while it is set (`Fake_FRISSITES`'s daily block needs `!IdoPauseMertAtlepesAlattVan && !Atlepes` or MP), so a building is never made with `AktKep == 3` and `Atlepes` set; `Init3dColony` then builds the entered planet's buildings silently. Only MP socket callbacks (`OnReceive` 0x515620) could land in the window [not traced]. `Remove3dBuilding` exe 0x497760 (ELF 0x4ca7c0) plays `C[4]` when the building's mesh exists; `EpuletDelete` (exe 0x53c730) calls it for `AktKep == 3` and the shown planet: demolish 0x20, the ground war (`WF::Damage`, `DamageBuilding`, `RemoveTankGroup`, `SelfDestruct`), `EpuletDamageSnow`, spy sabotage, space-battle bombardment, the stories. A capture deletes nothing. `Init3dColony`'s own loop is silent |
+| thunder | `UpdateRain` (ELF 0x4bffb0), called by `ShowColony` every drawn colony frame: with `KELLVILLAM` (`InitWeather` ELF 0x4c1160: the field's weather `WF+0xa00 == 2` and `OptionsKellIdojaras`) `random(400) < 1` → `PlaySound(&Colony_Villamok[random(4)], 0)` (exe 0x8f1198, 9 records `Groundwar/Thunder01..06`, `Thunder-BGR-1..3`, volume 75; only 0..=3 are drawn) and the light `villamid` at (0x60, 0x60, 0x80) for that frame, else black. A frame-rate dependent draw: about 0.15 a second at 60 Hz. Exe `UpdateRain` 0x4a6d30 (call 0x4a0c63 in `ShowColony` 0x49f130, after `SetEnvironment`, `UpdateSnow`): `rand() % 400` first, `rand() % 4` only on a hit; `SetLightColor(villamid, hit ? 0x806060 : 0)` every frame. `villamid` (exe 0xa3e644): `Init3dColony`'s `CreateLightParalell(0, (1, 1, 0))` on `mainmeshid1` with `SetLightSpecular`: it lights everything under the root (background, terrain, buildings, units), not the building panel. The client: a second engine-path parallel light in the mesh shader (`SceneUniforms::flash`) for one drawn frame, without the specular term |
 
 ### 6.3 Info (`Info_Main` exe 0x4e81c0, 10 sites, all G0)
 On the press: chart mode 0xe, star log 0xf, the charts 0x10..0x19, list up/down 0x1e/0x1f and star log scroll
@@ -210,7 +215,9 @@ Des[0]/Des[3], Trade[0]/Trade[1]; Global[0], Global[2] (screens not built).
   `<out>-sounds.jsonl` in the tracer's record shape, for `run_screendiff.py --script`).
 - The screens queue their ids (`sounds` on `Research`, `ColonyUi`, `InfoScreen`, `SpyScreen`, diplomacy's `Screen`;
   the starmap's panels and menus return `Action::Sound`; the window's own sites go to `App::sounds`; the typer's steps
-  `Dialogue::typing`); `window.rs::audio_frame` plays them after the frame's input and UI ticks.
+  `Dialogue::typing`); `window.rs::audio_frame` plays them after the frame's input and UI ticks. The colony's
+  `C[3]`/`C[4]` come from `ColonyUi::building_sounds`, once a frame: the shown planet's buildings against the list
+  the scene last held (so every source of a building sounds, as `EpuletNew`/`EpuletDelete` do).
 - Part 3: `ig2_rules::speech` reads both speakers' tables from the exe; `audio::speech::{Director, Speakers}` keeps
   the cooldowns (refreshed from `window.rs::audio_frame`: the starmap's only while it is the screen) and plays a line
   through `play_wav`; the starmap's select/order sites and the colony's release/Ctrl+A queue `Speak`s.
@@ -254,5 +261,7 @@ Des[0]/Des[3], Trade[0]/Trade[1]; Global[0], Global[2] (screens not built).
 - In the client from the decompiles and not traced: the speakers' trigger sites, the speech-ended switch, `Mes[2]`
   at the end clip, the thunder, `PlayMusicSpWar` at `SpaceWar_Belep` and `Main` on the return.
 - **Ground war's voices** (2026-10-23, `re/rules/ground-combat.md` §11.12): the move and retreat calls verified with `run_screen.py --grwar --script tools/trace/scripts/grwar-voices.json --sounds`; the hit/death lines by `ground_rt_trace::battle_tick_matches_trace` (the `Voice` events reproduce the exe's ColonySpeaker cooldowns, 181 lines, 0 mismatches). Detonate (kind 4) plays nothing.
-- Not yet: the space war's speaker (`SpaceWarSpeaker`, deviation 52), the right click's `SkipAll` stop, the thunder's
-  light flash, the new campaign's start voice (the client starts from saves), other empires' builds' `C[3]`.
+- FX14 (2026-10-24, decompiles; `colony_ui::tests::buildings_made_or_gone_sound_whoevers`): every building made or
+  gone on the shown planet sounds, whoever's; the thunder's light flash; the right press's `SkipAll` settled as a
+  no-op. Every site of the tables is now in the client; the space war's speaker (deviation 52) and the new campaign's
+  start voice were done before.

@@ -145,12 +145,26 @@ function startChapter() {
   emit({ k: 'start', chapter: cfg.chapters[chapterIx], frame: frames });
 }
 
+// 'music' the music volume `GlobalMusicVolume` (0x919928) and its duck `GlobalMusicVolumeCsokkento` (0xE4166C) when
+//         they change; 'ptr' the pointer `Mouse_Tipus` (0xDB9414) at `Mouse_x/y` (0xDB4654/58) when the shape changes.
+let lastMusic = '', lastPtr = '';
+function watch() {
+  const vol = va(0x919928).readS32(), duck = va(0xe4166c).readS32();
+  if (`${vol},${duck}` !== lastMusic) { lastMusic = `${vol},${duck}`; emit({ k: 'music', vol, duck, frame: frames, kep: A.AktKep.readS32() }); }
+  const tipus = va(0xdb9414).readS32();
+  if (`${tipus}` !== lastPtr) {
+    lastPtr = `${tipus}`;
+    emit({ k: 'ptr', tipus, x: va(0xdb4654).readS32(), y: va(0xdb4658).readS32(), frame: frames, kep: A.AktKep.readS32(), mo: A.Mouse.readS32() });
+  }
+}
+
 // Skip the title video (`VoltGTLogo` 0xBBB22F, as screen.js does).
 va(0xbbb22f).writeU8(1);
 
 Interceptor.attach(A.Fake_FRISSITES, {
   onEnter() {
     frames++;
+    watch();
     // `IsActive` (0x912A38): the game runs in a background window too; `MainScr_Kilep`'s exit fade (0xBBB360,
     // flagged by 0xBBB22A) doesn't run there (screen.js).
     va(0x912a38).writeU8(1);

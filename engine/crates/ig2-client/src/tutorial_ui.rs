@@ -15,6 +15,8 @@ use crate::font::{Align, Font, Virtual};
 use crate::render::{Frame, TexId};
 
 /// `tutorialpath` + `tutorialactpath` ("tutorial/" + "main/").
+/// `TutorialDisableHajokEladasa`.
+const SELL_SHIPS_OFF: u32 = 0xF66FFD;
 const DIR: &str = "dataraw/tutorial/main/";
 /// `TutorialStart("main", n)`: `tutorial/main/script/main.tut`.
 const SCRIPT: &str = "dataraw/tutorial/main/script/main.tut";
@@ -217,6 +219,9 @@ impl TutorialUi {
         mem.set_i32(va::TUTORIAL_EVENT, self.t.event);
         // `TutorialUjKemekLetiltva`, read by `FRISSIT_Spy` (the sim's `no_recruits`).
         mem.set_u8(va::TUTORIAL_NO_RECRUITS, self.t.gates.new_spies as u8);
+        // `TutorialDisableHajokEladasa` (exe 0xf66ffd), read by the fleet info's sale menu.
+        mem.set_u8(SELL_SHIPS_OFF, self.t.gates.sell_ships as u8);
+        mem.set_i32(va::TUTORIAL_SPY_MISSION, self.t.gates.spy_mission);
     }
 
     /// A running tutorial as `tools/trace/probes/tutorial.js` logged it (`--tutorial-window`, a `tutwin` record): the

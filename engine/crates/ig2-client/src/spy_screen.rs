@@ -61,8 +61,8 @@ pub fn tip_index(id: u32) -> u16 {
 }
 
 impl SpyTexts {
-    pub fn new(texts: &crate::ui::UiTexts, hu17: &ig2_formats::strings::UiStrings) -> Self {
-        let h = |s: u16, i: u16| crate::ui::hu_bytes(hu17.get(17, s, i));
+    pub fn new(texts: &crate::ui::UiTexts, txt17: &crate::ui::UiTexts) -> Self {
+        let h = |s: u16, i: u16| txt17.get(17, s, i);
         let tbl = |n: u16, f: &dyn Fn(u16) -> Vec<u8>| (0..=n).map(|k| if k == 0 { Vec::new() } else { f(k) }).collect::<Vec<_>>();
         Self {
             missions: tbl(26, &|k| h(2, k + 20)),
@@ -75,8 +75,8 @@ impl SpyTexts {
             races: tbl(14, &|k| h(1, k + 5)),
             training: tbl(5, &|k| texts.get(7, 6, k)),
             target_kinds: tbl(5, &|k| texts.get(7, 6, k + 5)),
-            morale: (0..=20).map(|k| crate::ui::hu_bytes(hu17.get(17, 4, 41 + k))).collect(),
-            empires: crate::ui::empire_names(hu17),
+            morale: (0..=20).map(|k| txt17.get(17, 4, 41 + k)).collect(),
+            empires: crate::ui::empire_names(txt17),
             tips: (0..=0x25).map(|id| match tip_index(id) {
                 0 => Vec::new(),
                 k => texts.get(7, 1, k),
@@ -170,6 +170,15 @@ impl<'a> SpyData<'a> {
         self.rules.spy.missions.get(m.max(0) as usize).copied().unwrap_or_default()
     }
     /// `KemKuldetesek[m].+0`: the mission is on offer (the story toggles them).
+    /// `TutorialSpyMelyikLehet` (exe 0x928ea4): the only mission the tutorial lets the player pick (< 1: any).
+    pub fn tutorial_mission(&self) -> i32 {
+        self.state.mem.i32(va::TUTORIAL_SPY_MISSION)
+    }
+    /// The tutorial forbids mission `m` (`SpyGfx2D_3` greys it, `Spy_Main` drops the pick).
+    pub fn tutorial_forbids(&self, m: i32) -> bool {
+        let allowed = self.tutorial_mission();
+        allowed > 0 && m != allowed
+    }
     fn enabled(&self, m: i32) -> bool {
         self.spies.enabled.get(m.max(0) as usize).copied().unwrap_or(0) != 0
     }
@@ -1056,6 +1065,8 @@ impl SpyScreen {
         let s = p.selected;
         match p.list {
             List::Mission => {
+                // `Spy_Main` exe 0x58d410: a mission the tutorial forbids is dropped (no message).
+                let s = if s > 0 && d.tutorial_forbids(s) { -1 } else { s };
                 if s > 0 && (d.money) < d.cost(s, 1) as f64 {
                     // "Nincs elég pénzed." on the message line (`ScrollHibaUzenet`).
                     self.errors.push(t.no_money.clone());
@@ -1170,7 +1181,7 @@ impl SpyView {
         Ok(Self {
             screen: SpyScreen::enter(d, opening),
             scene: crate::spy_scene::SpyScene::load(r, install)?,
-            texts: SpyTexts::new(&hud.texts, &hud.hu17),
+            texts: SpyTexts::new(&hud.texts, &hud.txt17),
             head: None,
             head_race: None,
             head_start: 0.0,
@@ -1387,7 +1398,7 @@ mod tests {
         let Some((install, save, rules, tables, defaults, volatile)) = quick1() else { return };
         let mut w = World::load(&save, &rules, &defaults, &volatile);
         let en = stage(&mut w);
-        let b = Bench { rules: &rules, tables: &tables, t: SpyTexts::new(&crate::ui::UiTexts::load(&install), &crate::ui::hungarian_txt17(&install)), en };
+        let b = Bench { rules: &rules, tables: &tables, t: SpyTexts::new(&crate::ui::UiTexts::load(&install), &crate::ui::names_txt17(&install, false)), en };
         let mut s = SpyScreen::enter(&b.data(&w), false);
         assert_eq!((s.akt, s.dialog), (1, 0));
         assert!(s.plan.on, "a spy at home gets a plan");

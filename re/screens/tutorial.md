@@ -46,7 +46,7 @@ the script `dataraw/tutorial/main/script/main.tut` through `Install::read`, so t
   toggles `TextShown`, `o` is `ESC_Pressed` (the options screen), `j` stops the tutorial only with DEBUGLEHET
   (0xbae659, off in the shipped game). Other keys go into the 20-slot ring; `ReadNext` (exe 0x4e3660; the spec's
   0x57f9b0 is the ELF's) returns only the recorded keys under G and leaves the ring alone, which `ClearKeyboardBuffer`
-  empties on unpause; Esc keeps its live path (not tutorial-gated). The client drops the live pointer (tracking the
+  empties on unpause; Esc keeps its live path (not tutorial-gated). `MainCallBackEventHandler` handles no `SDL_MOUSEWHEEL` (0x403) at all (the classic game ignores the wheel), so dropping it under G is right. The client drops the live pointer (tracking the
   OS position only), buttons, wheel, modifiers and keys under G, handles `t`, `o` and Esc, and takes the modifiers from
   the recording (Alt 1, Shift 2, Ctrl 4); while paused `t` toggles the window and goes on to the screen, `o` opens the
   options screen. When the replay stops (paused, options), a recorded button still held is let go (`Mouse_Lekerdez`
@@ -56,7 +56,7 @@ the script `dataraw/tutorial/main/script/main.tut` through `Install::read`, so t
 * **Pointer** (`UpdateFrame` exe 0x4e3e90, last): `MOUSE.BMP` cell `Mouse_Tipus` at `Mouse_x/y` minus the hot point when
   `Mouse_Tipus > −1`. While a sample plays it is the normal pointer at the recorded spot (its shape from the hot-spot
   under it); parked (no sample: `Mouse_x/y` = (0x140, 200), `Mouse_Tipus = −2`) nothing is drawn [obs: no pointer in
-  the captures]. The client draws `MOUSE.BMP` cell 0 at the recorded spot, none while parked.
+  the captures]. `Mouse_Move` (exe 0x510790) only stores the position; `UpdateFrame` takes `Mouse_Tipus` from the hot-spot under it when it is -1. The client draws it through the normal pointer overlay (`window/pointer.rs`), none while parked (FX6 part 5).
 
 ## 4. Events the screens raise (`TutorialCheckEvent` exe 0x60bdf0)
 
@@ -97,4 +97,4 @@ building type (2→0x13, 7→0x1d, 0x34→0x14, 0x13→0x17, 0x15→0x18, 0xe→
   `IG2_TRACE_DIR/tutorial-overlay/tutwin-grabs.jsonl`, Hungarian). The capture's save load enters the starmap, whose
   transition holds the script's first `WAITFORATLEPES` to t 102 (the exe's first `TYPE`); the test holds it as long.
 * Not compared: the replayed pointer and clicks on the screens (the recordings drive screens whose own input is
-  accepted elsewhere), the options screen's tutorial layout, a whole chapter played through.
+  accepted elsewhere), a whole chapter played through.

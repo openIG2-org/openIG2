@@ -22,7 +22,7 @@ use crate::font::{Align, Virtual};
 use ig2_rules::sounds::Table;
 use crate::render::{kind, Blend, Frame, Instance, Renderer, Target, TexId};
 use crate::render3d::{MeshDraw, MeshVertex, Scene3d, SceneUniforms};
-use crate::scene::{self, Look, Model, Placement, M3, V3};
+use crate::scene::{self, Model, Placement, M3, V3};
 use crate::lighting;
 use crate::starmap_panels::Draw2d;
 
@@ -664,7 +664,7 @@ impl Research {
     }
 
     /// `ResearchDoubleGomb` (ELF 0x5e93c0): the urgent button's look flips at once, the order toggles the flag.
-    fn double(&mut self) -> Vec<Act> {
+    pub fn double(&mut self) -> Vec<Act> {
         if self.button_pressed {
             return Vec::new();
         }
@@ -783,6 +783,9 @@ impl Research {
                 }
                 self.near = [0.0; 17];
                 self.near_dir = [0; 17];
+                // ... and every loaded model's `ResearchTalalmanyForgas[k] = 0` [obs: FX17b, the models' turn at t 560
+                // of `scripts/research.json` counts from the reload].
+                self.spin = [0.0; 17];
                 self.lines.load();
                 self.placed = self.area;
                 self.models_shown = true;
@@ -833,7 +836,7 @@ impl Research {
                 let (sn, cs) = (((g / 1000.0) as f64).sin(), ((g / 1000.0) as f64).cos());
                 let h = (g / 2000.0) as f64;
                 self.ball_at = [(sn * 200.0 * h) as f32, (cs * 150.0 * h + -35.0) as f32, -950.0 - g / 10.0];
-                self.ball = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], 0.002), &scene::create_matrix(sn as f32, 0.0, 0.0));
+                self.ball = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], -0.002), &scene::create_matrix(sn as f32, 0.0, 0.0));
                 self.wire_fade = 0.0;
             }
         }
@@ -1074,14 +1077,16 @@ impl Edge {
     }
 }
 
-/// `matrixforgat(m, a, b)` (exe 0x4523b0): `m` turned by `√(a² + b²)` about the screen axis across (a, b), in the
-/// client's matrix order (`a` alone turns about y, as the idle spin).
+/// `matrixforgat(m, a, b)` (exe 0x44fbc0, ELF 0x4523b0): `m` turned by `√(a² + b²)` about the screen axis across
+/// (a, b), in the client's matrix order (`a` alone turns about y, as the idle spin: −a in `axis_matrix`'s sense [obs:
+/// FX17b, the exe's ball chain at t 250 of `scripts/research.json` is (0.9797, 0, −0.2006 | 0, 1, 0 | 0.2006, 0,
+/// 0.9797), 101 idle steps after the opening]).
 fn turn(g: [f32; 2], m: &scene::M3) -> scene::M3 {
     let angle = (g[0] * g[0] + g[1] * g[1]).sqrt();
     if angle == 0.0 {
         return *m;
     }
-    scene::mul(&scene::axis_matrix([-g[1], g[0], 0.0], angle), m)
+    scene::mul(&scene::axis_matrix([-g[1], g[0], 0.0], -angle), m)
 }
 
 /// `Terulet_Melyik` (exe 0x919234) inverted: the categories in the order PgUp/PgDn step through them.
@@ -1778,13 +1783,14 @@ impl ResearchModels {
             }
         }
         // The ball: `AddToScene(focilabda, 0.22)`, wireframe (property 0x40), from frame 30 (at (0, −35, −950) once
-        // open), turning.
+        // open), turning. Every edge draws: the far side's in the ambient colour [obs: FX17b, the exe's ball vertices
+        // are white (all four lights saturate) or 0x202020, and its far edges show dim].
         if let (Some(m), true) = (self.ball.clone(), s.ball_shown || s.opened) {
             let pl = Placement::add_to_scene(m.origin, 0.22);
             let mm = scene::mul(&s.ball, &pl.matrix).map(|x| x * 1024.0);
             let at = if s.opened { BALL } else { s.ball_at };
             for p in &m.parts {
-                wire(&mut lines, &v, p, &mm, at, Ink::Lit(BALL_INK, &lights), true);
+                wire(&mut lines, &v, p, &mm, at, Ink::Lit(BALL_INK, &lights), false);
             }
         }
         // The category's tech models (status ≥ 2): owned ones solid, the others as wireframes in their light's
@@ -1804,6 +1810,12 @@ impl ResearchModels {
                 let size_mult = rules.research_size_mult.get(t - 1).copied().unwrap_or(1.0);
                 let Some(m) = self.tech_model(install, rules, &techs, race, s.placed, k).cloned() else { continue };
                 let (at, grow) = s.model_at(orbit, k);
+                // `SetTTransp` (exe 0x5248a0): the depth fades the models behind the ball's centre and hides the far ones.
+                let tr = item_transparency(at[2], s.zoom);
+                if tr > 0.99 {
+                    continue;
+                }
+                let opacity = lighting::float2int(255.0 - tr * 255.0) as f32;
                 let pl = Placement::add_to_scene(m.origin, size_mult * 0.04).scaled([grow; 3]);
                 // `ForgatObjectek`: `RotateObj(0, 0, spin)` then `RotateObj2((1, 0, 0), 1.3)`.
                 let rot = scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], 1.3), &scene::create_matrix(0.0, 0.0, s.spin[k]));
@@ -1812,18 +1824,25 @@ impl ResearchModels {
                     self.centres.push((k, c));
                 }
                 if st == 5 {
+                    // Property 8: the opacity goes to alpha.
                     for p in &m.parts {
                         let tex = self.texture(r, install, p.texture.as_deref());
-                        bake_part(p, &mm, at, tex, 1.0, &lights, &mut dynamic, &mut draws);
+                        bake_part(p, &mm, at, tex, opacity / 255.0, &lights, &mut dynamic, &mut draws);
                     }
                 } else {
-                    let c = match st {
-                        2 => [0.25, 0.5, 0.5, 1.0],
-                        3 => [0.4, 0.9, 0.9, 1.0],
-                        _ => [0.9, 0.9, 0.4, 1.0],
+                    // `UnHideMeglevoTalalmanyok`: properties 0x40 | 0x800, not 8, and the model's own ambient light
+                    // (`FenyHozzarendel`, exe 0x525060) besides the screen's; each edge end takes its lit colour, which
+                    // (without property 8) the opacity scales (`>> 8`, research.md §2.1), and no texture colour [obs:
+                    // FX17b, the exe's edges are white where `fenyekszamolasa` gave 0xfbfbfb and teal where 0x5e5e1f;
+                    // a texture's colour made them pink and dim, ball region 5.8 → 3.3 at t 250].
+                    let own = match st {
+                        2 => 0x202000,
+                        3 => 0x404000,
+                        _ => 0x004040,
                     };
+                    let item_lights = lights.clone().ambient(own);
                     for p in &m.parts {
-                        wire(&mut lines, &v, p, &mm, at, Ink::Flat(c), false);
+                        wire(&mut lines, &v, p, &mm, at, Ink::Shade(&item_lights, opacity / 256.0), false);
                     }
                 }
             }
@@ -1853,6 +1872,7 @@ impl ResearchModels {
                 sun: [0.0; 4],
                 fog: [0.0; 4],
                 fog_range: [1e9, 2e9, 0.0, 1e9],
+                flash: [[0.0; 4]; 2],
             },
             draws,
             dynamic,
@@ -1888,14 +1908,43 @@ enum Ink<'a> {
     Flat([f32; 4]),
     /// The texture's colour lit per vertex (`wirekirak`: each line end takes its vertex's colour).
     Lit([f32; 3], &'a lighting::Lights),
+    /// The lit colour per vertex times a factor (the opacity of an object without property 8), untextured.
+    Shade(&'a lighting::Lights, f32),
+}
+
+/// `SetTTransp` (exe 0x5248a0, every tech model at each `ElforgatTalalmanyok` step, exe 0x51d600) from the camera
+/// depth `z` of the model's `MoveObj` point: 0.01 in front of the ball's centre (z > −950), rising to 1 at z = −1050,
+/// 1 behind; plus `AddZoom / ADDZOOMMAX`, at most 1. Above 0.99 the model is hidden (`HideAlboxok`), else shown at
+/// that transparency (below 0.0001 → 0, above 0.99 → 1). The ELF's version (0x5e2af0) adds to the old transparency
+/// instead; the exe's is the one that runs [obs: opacity bytes 252 in front, 128 for the chosen model at z −1000].
+fn item_transparency(z: f32, zoom: f32) -> f32 {
+    let depth = if z > -950.0 {
+        0.01
+    } else if z >= -1050.0 {
+        -(z + 950.0) / 100.0
+    } else {
+        1.0
+    };
+    let t = (depth + zoom / ZOOM_MAX).min(1.0);
+    if t < 0.0001 {
+        0.0
+    } else if t > 0.99 {
+        1.0
+    } else {
+        t
+    }
 }
 
 /// A part as a wireframe (`wirekirak` ELF 0x6083f0: the triangle edges its mask keeps), projected to lines; `cull`
 /// keeps only the triangles facing the camera (the engine's back-face test, re/screens/spy.md §2.2). Edges crossing
 /// the camera plane are clipped to it [obs: the opening's wire sphere passes the camera, its near cells cross the
-/// screen]. The engine draws them as GL lines one output pixel wide at every window size [obs: 1 px at 800 × 600,
+/// screen]. The engine draws them as aliased GL lines one output pixel wide at every window size [obs: 1 px at 800 × 600,
 /// 1920 × 1080 and 3840 × 2130, re/screens/widescreen.md §6].
 fn wire(out: &mut Vec<Instance>, v: &Virtual, p: &scene::Part, m: &M3, at: V3, ink: Ink, cull: bool) {
+    // An edge two faces share draws once: the second line lies at the same depth and fails the engine's depth test
+    // [obs: FX17b, the exe's ball edges are one even colour, not doubled].
+    let mut drawn = std::collections::HashSet::new();
+    let key = |a: V3| a.map(f32::to_bits);
     for (ti, tri) in p.verts.chunks_exact(3).enumerate() {
         let mask = p.edges.get(ti).copied().unwrap_or(7);
         let w: [V3; 3] = std::array::from_fn(|i| {
@@ -1912,15 +1961,20 @@ fn wire(out: &mut Vec<Instance>, v: &Virtual, p: &scene::Part, m: &M3, at: V3, i
                 let l = lights.shade(lighting::normal(m, tri[i].lnormal));
                 std::array::from_fn(|k| (tex[k] * l[k] as f32 / 255.0).floor() / 255.0)
             }
+            Ink::Shade(lights, f) => {
+                let l = lights.shade(lighting::normal(m, tri[i].lnormal));
+                std::array::from_fn(|k| (l[k] as f32 * f).floor() / 255.0)
+            }
         });
         for (bit, (i, j)) in [(1u8, (2, 0)), (2, (0, 1)), (4, (1, 2))] {
-            if mask & bit != 0 {
+            let (ka, kb) = (key(tri[i].pos), key(tri[j].pos));
+            if mask & bit != 0 && drawn.insert(if ka <= kb { (ka, kb) } else { (kb, ka) }) {
                 let c = match ink {
                     Ink::Flat(c) => c,
-                    Ink::Lit(..) => [(ends[i][0] + ends[j][0]) / 2.0, (ends[i][1] + ends[j][1]) / 2.0, (ends[i][2] + ends[j][2]) / 2.0, 1.0],
+                    Ink::Lit(..) | Ink::Shade(..) => [(ends[i][0] + ends[j][0]) / 2.0, (ends[i][1] + ends[j][1]) / 2.0, (ends[i][2] + ends[j][2]) / 2.0, 1.0],
                 };
                 if let Some((a, b)) = clip_near(w[i], w[j]) {
-                    out.push(Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), 1.0, c));
+                    out.push(Instance::hard_line(v.px(a[0], a[1]), v.px(b[0], b[1]), c));
                 }
             }
         }
@@ -1964,10 +2018,7 @@ fn sub(a: V3, b: V3) -> V3 {
 #[allow(clippy::too_many_arguments)]
 fn bake_part(p: &scene::Part, m: &M3, at: V3, tex: TexId, alpha: f32, lights: &lighting::Lights, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     let start = out.len() as u32;
-    let a = match p.look {
-        Look::Glass(g) => g * alpha,
-        _ => alpha,
-    };
+    let a = p.alpha(alpha);
     for tri in p.verts.chunks_exact(3) {
         let w: [V3; 3] = std::array::from_fn(|i| {
             let q = scene::apply(m, tri[i].pos);
@@ -1985,7 +2036,7 @@ fn bake_part(p: &scene::Part, m: &M3, at: V3, tex: TexId, alpha: f32, lights: &l
             out.push(MeshVertex { pos: q, normal: n, uv: x.uv, color: [rgb[0], rgb[1], rgb[2], a] });
         }
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });
 }
 
 /// Bake glass at opacity `a`: unlit (the normal along the light, the tint undoing `LIT`), blended in the gamma pass
@@ -2011,6 +2062,20 @@ fn bake_glass(p: &scene::Part, m: &M3, at: V3, tex: TexId, a: f32, out: &mut Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `SetTTransp` (exe 0x5248a0) against the opacity bytes the engine drew with (`fenyekszamolasa`'s argument,
+    /// `probes/research_items.js` on `scripts/research.json`, t 250/400): 252 for the models in front, 128 for the
+    /// chosen one pulled to z −1000; hidden behind −1050; the zoom-out adds `AddZoom / ADDZOOMMAX`.
+    #[test]
+    fn item_transparency_follows_depth() {
+        let byte = |z: f32, zoom: f32| lighting::float2int(255.0 - item_transparency(z, zoom) * 255.0);
+        assert_eq!(byte(-900.0, 0.0), 252);
+        assert_eq!(byte(-1000.0, 0.0), 128);
+        assert_eq!(item_transparency(-1049.5, 0.0), 1.0);
+        assert!(item_transparency(-1100.0, 0.0) > 0.99);
+        assert_eq!(item_transparency(-800.0, ZOOM_MAX), 1.0);
+        assert!((item_transparency(-800.0, ZOOM_MAX / 2.0) - 0.51).abs() < 1e-6);
+    }
 
     fn screen() -> Research {
         Research {

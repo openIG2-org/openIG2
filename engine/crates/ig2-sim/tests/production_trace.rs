@@ -138,6 +138,7 @@ fn research_context(g: &Value, s: &Regions) -> ResearchContext {
         players: n("pp2"),
         speed_locked: g["locked"].as_i64().unwrap_or(0) != 0,
         program_speed: g["progSpeed"].as_i64().unwrap_or(0) as i32,
+        slowed: false,
     }
 }
 

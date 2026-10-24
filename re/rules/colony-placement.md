@@ -127,7 +127,7 @@ Evidence (ELF / exe):
 | `CheckAllocation(x, y, w, h)` | 0x4bc2d0 | 0x45fba0 | `DecodedCheckAllocation` (§4) over `MapAlloc` instead of `DecodedAlloc` |
 | `Allocate(x, y, w, h, ring)` | 0x4bf6a0 | 0x45f3d0 | `DecodedAllocate` (§2) into `MapAlloc` |
 | `RemoveAllocation(x, y, w, h, ring)` | 0x4bf8d0 | 0x497960 | the reverse: ring cells `− 0x20`, interior `:= 0` (and `hombar = 10` when `w == 6`) |
-| `Build3dBuilding` / `Remove3dBuilding` | 0x4ca0b0 / 0x4ca7c0 | 0x49c780 / 0x497760 | keep `MapAlloc` current on the shown planet |
+| `Build3dBuilding` / `Remove3dBuilding` | 0x4ca0b0 / 0x4ca7c0 | 0x45f640 / 0x497760 (not 0x49c780: audio.md §6.2) | keep `MapAlloc` current on the shown planet |
 
 ### 8.1 The grid `MapAlloc` (ELF 0x11dfd60, exe 0x998260; `u8[200 × 200]`)
 `Init3dColony` (exe 0x47d520, from `Colony_Belep`) builds it like §2.1–§2.2 without the centroid and the vehicles:
@@ -136,8 +136,9 @@ screen shows the planet, `EpuletNew` (when `AktKep == 3`, `p == AktPlanet`, no `
 `Allocate`, and `EpuletDelete` (`AktKep == 3`, `p == AktPlanet`) runs `Remove3dBuilding` → `RemoveAllocation` when the
 slot has a 3D model. `RecreateRoadSystem` only sets bit 8 on road cells and clears it again at its end; the landing zone
 reads the grid. As footprints never share an interior cell with terrain or another footprint (§4), the kept grid equals a
-fresh build of the current buildings; a building made during a screen transition (`Atlepes`) or a terrain change while
-the screen is up would leave it stale until the next entry [edge case, not modelled]. Port: `PlacementRules::screen_grid`.
+fresh build of the current buildings. `Atlepes` never coincides with a building made in single player (it is set after
+the frame's sim and cleared before `Colony_Belep`, `re/screens/audio.md` §6.2); a terrain change while the screen is up
+would leave the grid stale until the next entry [edge case, not modelled]. Port: `PlacementRules::screen_grid`.
 
 ### 8.2 The search
 For every battlefield unit of `AktPlanet` that is used and on the map (the filter of §1; the ELF -O0 build tests only the

@@ -405,6 +405,7 @@ fn uniforms(yc: f32) -> SceneUniforms {
         sun: [0.0; 4],
         fog: [0.0; 4],
         fog_range: [1e9, 2e9, 0.0, 1e9],
+        flash: [[0.0; 4]; 2],
     }
 }
 
@@ -440,10 +441,7 @@ pub(crate) fn glow(p: &scene::Part, t: &scene::Transform, tex: TexId, transparen
 #[allow(clippy::too_many_arguments)]
 fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: TexId, alpha: f32, cull: bool, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     let start = out.len() as u32;
-    let a = match p.look {
-        scene::Look::Glass(g) => g * alpha,
-        _ => alpha,
-    };
+    let a = p.alpha(alpha);
     for tri in p.verts.chunks_exact(3) {
         let w: [V3; 3] = std::array::from_fn(|i| t.point(tri[i].pos));
         if cull && crate::research::faces_away(&w) {
@@ -456,5 +454,5 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
             out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
         }
     }
-    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+    draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });
 }

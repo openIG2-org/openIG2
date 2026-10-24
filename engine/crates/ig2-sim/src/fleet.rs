@@ -195,6 +195,8 @@ pub struct StarmapContext {
     pub speed_locked: bool,
     /// `ProgramSebesseg` (exe 0xBAE54C): the MP game speed 1..=4.
     pub program_speed: i32,
+    /// Out: `SetIdoLelassit` ran (the caller writes `IdoSpeed` and the battle multiplier, [`crate::time::slow_down`]).
+    pub slowed: bool,
     pub human_empire: u8,
     pub human_controlled: [bool; 19],
     /// `BirodalomEl[e]`.
@@ -260,6 +262,7 @@ impl StarmapContext {
     /// `SetIdoLelassit` ([`crate::time::slowed_down`]).
     pub fn slow_down(&mut self) {
         self.speed_mult = slowed_down(self.speed_mult, self.multiplayer, self.speed_locked, self.program_speed);
+        self.slowed = true;
     }
 }
 

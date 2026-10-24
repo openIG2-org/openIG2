@@ -132,6 +132,13 @@ fn new_campaign_matches_the_exe() {
             // The config has no `Difficulty`: GetParam's default "2".
             difficulty: 2,
         });
+        // The main menu's tutorial start: `TutorialSetCampaignGameOptions(n)` with `tutorial/scn/tutorial<n>.scn`.
+        let tutorial = j["tutorial"].as_i64().map(|n| NewScenario {
+            text: text::decode(&inst.read(&format!("dataraw/tutorial/scn/tutorial{n}.scn")).unwrap(), inst.lang()),
+            seed: j["seeds"]["seed"].as_u64().unwrap() as u32,
+            ticks: j["seeds"]["ticks"].as_u64().unwrap() as u32,
+            difficulty: 0,
+        });
         let cfg = || NewCampaign {
             campaign: int(&j["campaign"]),
             difficulty: int(&j["log"]["init"][3]),
@@ -199,6 +206,7 @@ fn new_campaign_matches_the_exe() {
             ticks: j["seeds"]["ticks"].as_u64().unwrap() as u32,
         });
         match (&scenario, &mp, &skirmish) {
+            _ if tutorial.is_some() => g.start_tutorial(tutorial.as_ref().unwrap(), &data),
             (Some(sc), _, _) => g.start_scenario(sc, &data),
             (_, Some(mp), _) => g.start_mp_galaxy(mp, &data),
             (_, _, Some(sk)) => g.start_skirmish(sk, &data),

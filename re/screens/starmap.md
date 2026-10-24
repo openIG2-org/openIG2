@@ -158,7 +158,9 @@ Verified against captures of the long info (`run_screen.py --hide clouds|planet`
 
 ### 3.4 Which planets are drawn
 Only planets the human sees: `Bolygok[p] + 0xd8 + 2·EN` (i16) **> 0** (or the debug switch `DEBUGX`); others are
-hidden (`rotate_stars`, `Show_Stars2d3d` 0x6e22e0) and planets beyond `HanyBolygo` too.
+hidden (`rotate_stars`, `Show_Stars2d3d` 0x6e22e0) and planets beyond `HanyBolygo` too. A campaign starts with dozens at −1
+(never seen) and most others at 0 [obs: the exe's start saves, `newgame-c1-d1-s5150`: 31 at −1, 84 at 0, 3 above].
+Port: `world::Snapshot` `PlanetView::known`; the side view's box also takes the human's own planets (§2.4).
 
 **(−300, −300)**: quick.scn (and so quick-1.sav) holds the home worlds of all eight races; the six whose races aren't
 in play (`pFaj` 1, 2, 4, 5, 7, 8; human 6, AI 3) are parked at (−300, −300), the corner of the pan square (§2.4), with
@@ -201,8 +203,11 @@ For the human's fleets (and debug views) with an order (`+0x40` > 0) and `+0x52`
 to its target (`+0x42`: 0 = point `+0x44/+0x48`, 1 = planet `(int)+0x44`'s star, 2 = fleet `(int)+0x44`), colour
 `0x800000ff` (red, half transparent) when the order is 2 (attack), else `0x805f4b46`; `DrawArrow` 0x6e2930 projects both
 ends, draws the `nyilszar` texture as a strip 2·1.5 virtual pixels wide and a 10-pixel head. The selected own fleet
-(`AktFleet`, `StarmapMode == 2`) also gets its waypoint chain (`Waypointek` +0/+4, next +8), blinking `0x80be968c`
-every 15th segment.
+(`AktFleet`, `StarmapMode == 2`, `KellSelect`; also story fleet 0x1f88's and the DEBUGX views') also gets its waypoint
+chain from `+0x50` (`Waypointek` +0/+4, next +8): one arrow a segment, the first from the order's target, each
+`0x805f4b46` except segment `i` (0 first) with `(waypointvillogo − i) % 15 == 0`, `0x80be968c`; `waypointvillogo`
+counts every second call (`waypointvillogok`), so the lit segment walks along the chain. Port: `world::Snapshot`
+`waypoints`, `starmap.rs` (the clock: UI ticks / 2).
 
 ## 5. Selection (`GFX_Starmap`, `rotate_stars`, `ShowStarmap`)
 40 `select.bmp` particles (`Selection`, additive) on a circle of radius `10/√(600/D)` world units around the selected
@@ -487,8 +492,19 @@ Drawn in the original's order: the 3D pass with the control panel, then the 2D p
   - `BirodalomNev`, `Moral_Nev`, `Problemak_Nev` come from `StringReadAll` out of the **Hungarian** `txt17.txt`
     whatever the language [obs: "GODAN KIRALYSAG", "MOR: Jó" in an English run]: section 1 index 33 + e, section 4
     index 21 + p and 41 + k.
-  - Open: the planet picture left of the text in the GOG build (between the two icon lines, virtual ≈ 6..38 ×
-    434..466) isn't drawn by these passes (a remaster addition, not found).
+  - The picture left of the text (between the two icon lines, virtual ≈ 6..38 × 434..466) is a 3D object, not a
+    2D pass: `StarmapLoadInfoBolygo` (ELF 0x6d3950, from `Starmap_Belep`) loads `vector/info/bolygo_1.xvb`
+    (`VectorDir` `vector/info/`, `TextureDir` `textures/info/`) as `SBolygoId`: `AddToScene(…, 0.029)`,
+    `SetRelative(false)`, `RotateObj(π/2, 0, 0)`, `MoveObj(−545, 365, −1100)` (camera-fixed, projecting to ≈ (23,
+    449)), `PropertiesOn(0x2000000)`, `PropertiesOff(2)`, hidden, its matrix kept in `SBolygoMatrix`.
+    `StarmapFrissitBolygoUrhajok` (ELF 0x6d3d40, every `ShowStarmap`) hides it and the fleet picture `SFlottaId`,
+    and while `spacewarelfade` < 1 and not `KilepesElott` (transparency `spacewarelfade`): in planet mode unhides it,
+    `SetObjMatrix(SBolygoMatrix)` then `matrixforgat(SBolygoMatrix, SBolygoMatrix, 0.05, 0)` (a turn a drawn frame)
+    and gives sub-mesh 0 `BolygoTexturak[surface − 1]`; in fleet mode (not a special fleet) it unhides `SFlottaId`
+    (`StarmapLoadInfoFlottak(race of the fleet's owner)` when `AktFleet` changed, turned the same way). The globe is
+    drawn over `StarmapGfx2D_1`'s fader [obs: 2026-10-24 capture, quick-1.sav planet 42: undimmed by the fill; with
+    the port drawing it there the globe region differs 7.9 (the spin phase), the box 2.5]. Port:
+    `PanelModels::render_globe` (planet mode); in fleet mode it draws the fleet picture over the box's fader like the globe (`PanelModels::render_flag`, via `render_globe`, shared `render_box_model`). Exe `StarmapLoadInfoFlottak(race)` ELF 0x6d3b10 (race > 8 → 6): `vector/spacewar/flag<race>0.xvb` (textures/spacewar), `AddToScene(…, 0.03)`, `SetRelative(false)`, `PropertiesOn(0x2000000)` (no `PropertiesOff(2)`, unlike the globe), `RotateObj(π/2, 0, 0)`, `MoveObj(−535, 365, −1100)`, hidden, matrix kept in `SFlottaMatrix`; `StarmapInfoRemoveUrhajok` 0x6d3930 = `RemoveFromScene(SFlottaId)`. `StarmapFrissitBolygoUrhajok` reloads it when `AktFleet` ≠ `SInfoOldFleet`, the fleet isn't `fSpec` and its owner (+0x15) isn't 0xff, with race `PlayerFaj[owner]`, so a new fleet restarts the turn. [obs: light probe: flags 0x200000F, ambient 0x404040 + parallel 0x808080, turning −0.05 a frame about y like the globe; capture `run_screendiff.py … fleetbox` (`--fleets 2 --rop-fleet 1`): picture 3.36, info_box 2.15; at the exe's phase (`--ui-frames 193`) the pose is the exe's, picture 3.08.] Left (deviation 317): a still's phase counts from frame 0 (the exe's from the selection); the port keeps turning while hidden (the exe turns `SFlottaMatrix` only while drawn in fleet mode).
 
 ### 11.1 Reference captures
 `run_screen.py <install> quick-1.sav <out> --kep 2 --planet 71` (the tool sets `AktPlanetKell`, so `--planet` picks
@@ -881,8 +897,9 @@ makes `GFX_Starmap` re-run `CopyFleets`: the same designs → only the counts ch
 - The selected design (`InfoBetoltAlap(item)`: row 0 on load, `ActInfoItem2` on every cell press): the same model at
   scale 0.08, posed every frame by `InfoForgatAlap`: `RotateObj(0, 0, InfoAlapRotation)`, `RotateObj2((1, 0, 0),
   1.3)`, `MoveObj(150 + fifo slide x, −150 + slide y, −600)` (screen ≈ (470, 90)); `InfoAlapRotation += 0.01` per
-  100 Hz UI frame (`FRISSIT_Starmap2`, also for §13 and §20). Exe: `InfoForgatAlap` 0x59C780, `InfoAlapRotation` 0xF158C0, `FlottaInfoTscAlapIdBetoltve` 0xE83701, the slides 0xF1584C / 0xF157D4 (`fifo` 0xF15368). [obs: the exe's view at rotation t is the port's `create_matrix(0, 0, π − t)` (captures at t = 0.91 and 2.69); the pitch still differs a little, re/deviations.md.]
+  100 Hz UI frame (`FRISSIT_Starmap2`, also for §13 and §20). Exe: `InfoForgatAlap` 0x59C780, `InfoAlapRotation` 0xF158C0, `FlottaInfoTscAlapIdBetoltve` 0xE83701, the slides 0xF1584C / 0xF157D4 (`fifo` 0xF15368). [obs 2026-10-24: the preview's yaw is `InfoAlapRotation` t itself, not π − t (the old fit was wrong), and its pitch was never wrong: the light probe (`screen.js --light-probe` on kep 2, sort record `raw[0..9]` = geometry matrix = rotation·diag(scale)) shows rotation = axis(x, 1.3)·create(0, 0, t) exactly at t 1.62/1.64/1.66; A/B on a t = 1.08 capture: model region 8.68 with t vs 9.16 with π − t. Spin phase: `InfoAlapRotation` (reset only in `Starmap_Belep`, steps while a panel is up) and the cells' turns are in step (at t = 1.66 the cells had turned 164.6 frames); with a capture's `--info-alap` the client takes round(100·t) − 1 drawn frames (`InfoPanel::drawn_frames`; test `starmap_info::tests::panel_rotations_match_the_exe_probe`). Open (deviation 47): the colony ship's cell model (`kolonizalo.xvb`) is drawn along y, the exe's along the model's local x, though the exe's `AddToScene` 0x451720 box after `BoxUjraszamol` equals the port's; suspect the per-child re-normalisation `boxujraszamol` 0x5ed9f0.]
 - Lighting (all the panels' models: §13's cells and heads, §19, §20, `gyartas`) [obs: `run_screen.py --kep 2 --light-probe` on the fleet panel, 2026-10-24, `_local/traces/light-fleetinfo.jsonl`]: per vertex (`fenyekszamolasa`, lighting.rs) by the scene's ambient 0x404040 and parallel 0x808080, whose camera-space vector is the starmap camera's rotation times (10, 10, −10) (fitted to 5e−4 with the console's side lights, which only `kezel` gets); `gyartas` adds its own ambient 0x0a0a0a. The client bakes them so (`starmap_panels::bake`, gamma space). Probe objects other than the console: one rotation chain per model, e.g. an 87-normal model at [0.96, 0.30, 0; 0, 0, −1; −0.30, 0.96, 0] (the big preview's pitch is still open, deviations #47).
+- Level of detail: the panels' hulls step down the model's LOD chain like `Kocka` (`romb61` in the cells, `romb62` in the big preview) and draw the self-illumination pass: the rule is in `re/formats/xv.md` "Level of detail" (row 323).
 - The selection ring around the fleet (`ShowStarmap`) is 75 % transparent (alpha 0x40) while the mode is on and fades
   back over the exit zoom (`(7 − TargetFrame)·0x17 + 0x40`).
 

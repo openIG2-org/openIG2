@@ -177,25 +177,23 @@ impl UiTexts {
     }
 }
 
-/// The Hungarian `txt17.txt`: `StringReadAll` fills its name tables from it whatever the game's language [obs: the
-/// empire names in the live table and the morale name on the starmap of an English run].
-pub fn hungarian_txt17(install: &Install) -> UiStrings {
-    let mut hu = UiStrings::default();
-    let file = install.read("localization/hu/dataraw/text/txt17.txt").or_else(|_| install.read("dataraw/text/txt17.txt"));
+/// The `txt17.txt` the name tables come from (`BirodalomNev`, `Moral_Nev`, `Problemak_Nev`, the planet menus' names,
+/// …), its texts in its own code page. Classic (`one` false): the Hungarian file, which `StringReadAll` (exe
+/// 0x531e40) reads whatever the game's language [obs: the empire names in the live table and the morale name on the
+/// starmap of an English run]. `one`: the game's own language's file (ADR 0017; the same sections and indices).
+pub fn names_txt17(install: &Install, one: bool) -> UiTexts {
+    let lang = if one { install.lang() } else { ig2_formats::text::Lang::Hu };
+    let mut strings = UiStrings::default();
+    let file = if one { install.read("dataraw/text/txt17.txt") } else { install.read("localization/hu/dataraw/text/txt17.txt").or_else(|_| install.read("dataraw/text/txt17.txt")) };
     if let Ok(b) = file {
-        hu.add_file(&text::decode(&b, ig2_formats::text::Lang::Hu));
+        strings.add_file(&text::decode(&b, lang));
     }
-    hu
+    UiTexts { strings, kinds: Vec::new(), lang }
 }
 
-/// `BirodalomNev[e]` = `GetString(0x11, 1, 33 + e)` of the Hungarian `txt17.txt`.
-pub fn empire_names(hu17: &UiStrings) -> Vec<Vec<u8>> {
-    (0..19u16).map(|e| if e == 0 { Vec::new() } else { hu_bytes(hu17.get(0x11, 1, 33 + e)) }).collect()
-}
-
-/// A Hungarian text's bytes as the game reads them (code page 1250).
-pub fn hu_bytes(s: &str) -> Vec<u8> {
-    ig2_formats::text::Lang::Hu.encoding().encode(s).0.into_owned()
+/// `BirodalomNev[e]` = `GetString(0x11, 1, 33 + e)` of [`names_txt17`].
+pub fn empire_names(txt17: &UiTexts) -> Vec<Vec<u8>> {
+    (0..19u16).map(|e| if e == 0 { Vec::new() } else { txt17.get(0x11, 1, 33 + e) }).collect()
 }
 
 /// `sprintf` for the screens' formats: `%d` takes the next number, `%%` is a per cent sign.
@@ -256,9 +254,9 @@ pub fn draw_chart(f: &mut Frame, white: TexId, v: &Virtual, s: &UiSnap, palette:
 /// The info screen (`AktKep` 9, re/screens/info.md) over its frame: the panels (`InfoGfx2D_2`), the chart in chart
 /// mode, the race names on their columns (`KirakFajNeveket(40, 117)`, `InfoGfx2D_3`).
 #[allow(clippy::too_many_arguments)]
-pub fn draw_info(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], hu17: &UiStrings, rules: &ig2_rules::Rules, palette: &[[f32; 3]], names: &[Vec<u8>], ui: &crate::info_screen::InfoScreen) {
+pub fn draw_info(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSnap, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], txt17: &UiTexts, rules: &ig2_rules::Rules, palette: &[[f32; 3]], names: &[Vec<u8>], ui: &crate::info_screen::InfoScreen) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
-    crate::info_screen::draw(f, font, white, v, s, &s.info, texts, infostr, hu17, rules, names, palette, ui);
+    crate::info_screen::draw(f, font, white, v, s, &s.info, texts, infostr, txt17, rules, names, palette, ui);
     // `Info_PutChart` draws at `infoframe` 45 in chart mode (and fading out between 45 and 60 [not drawn here]).
     if !ui.star_log && ui.frame <= crate::screen_frames::INFO_MAX_FRAMES {
         draw_chart(f, white, v, s, palette, ui.chart, &|k| ui.sweep(k));
@@ -421,7 +419,7 @@ pub struct Hud {
     /// `BirodalomNev[e]`: the empire names (the Hungarian `txt17` §1 even in other languages [obs]).
     pub empire_names: Vec<Vec<u8>>,
     /// The Hungarian `txt17.txt` `StringReadAll` fills its name tables from (`Moral_Nev`, `Problemak_Nev`, …).
-    pub hu17: UiStrings,
+    pub txt17: UiTexts,
     /// `infostr.txt` (`InfoString_Get`: the planets' info texts in the starmap's long info), in the game's code page.
     pub infostr: Vec<(i16, Vec<u8>)>,
     /// The top bar's drop-downs (re/screens/hud.md §2.1) and what they show, read by the window while one is open.
@@ -430,6 +428,13 @@ pub struct Hud {
 }
 
 impl Hud {
+    /// ADR 0017: the name tables in the game's own language (`one`) or, classic, the exe's Hungarian ones. The game's
+    /// own copy (`Game::empire_names`, quoted in the posts the game state keeps) stays classic.
+    pub fn set_one_language(&mut self, install: &Install, one: bool) {
+        self.txt17 = names_txt17(install, one);
+        self.empire_names = empire_names(&self.txt17);
+    }
+
     pub fn load(r: &mut crate::render::Renderer, install: &Install, rules: &ig2_rules::Rules) -> Self {
         let palette = crate::starmap::read_palette(install).unwrap_or_else(|e| {
             eprintln!("ig2-client: palette: {e}");
@@ -437,7 +442,7 @@ impl Hud {
         });
         crate::kit::fader::load_fader_texture(r, install);
         let console = crate::starmap_hud::Console::load(r, install).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
-        let hu17 = hungarian_txt17(install);
+        let txt17 = names_txt17(install, false);
         let infostr = install
             .read("dataraw/text/infostr.txt")
             .map(|b| ig2_formats::misc_text::parse_infostr(&text::decode(&b, install.lang())).0)
@@ -448,8 +453,8 @@ impl Hud {
         Self {
             infostr,
             starmap: crate::starmap_hud::StarmapHud { console, rotation: Default::default() },
-            empire_names: empire_names(&hu17),
-            hu17,
+            empire_names: empire_names(&txt17),
+            txt17,
             font: Font::load(r, install, rules),
             texts: UiTexts::load(install),
             white: r.add_texture(&crate::assets::Image::white()),
@@ -483,6 +488,8 @@ impl Hud {
         let conversation = self.texts.kinds.iter().find(|k| k.id as i32 == id).is_some_and(|k| k.conversation);
         let params = s.inbox_params.get(i).cloned().unwrap_or_default();
         self.messages.open = Some(crate::messages_screen::Dialogue::open(install, i, id, params, conversation, kept & 1 != 0));
+        // `KELLKINYITAS2` (after the next tick): the frame goes on to 30.
+        self.messages.open_asked = true;
         if !self.messages.read.contains(&i) {
             self.messages.read.push(i);
         }
@@ -492,6 +499,8 @@ impl Hud {
     pub fn show_message(&mut self, install: &Install, id: i32) {
         let conversation = self.texts.kinds.iter().find(|k| k.id as i32 == id).is_some_and(|k| k.conversation);
         self.messages.open = Some(crate::messages_screen::Dialogue::open(install, usize::MAX, id, Vec::new(), conversation, false));
+        // `KELLKINYITAS2`: the frame goes on to 30.
+        self.messages.want_open = true;
     }
 
     /// A tech's localised name (`txt17.txt`, re/screens/hud.md §4.1).
@@ -514,7 +523,7 @@ impl Hud {
         let v = Virtual::new(view.camera.size);
         crate::hud::draw_colony(f, &self.pics, font, self.white, &v, &self.palette, &self.colony_brushes, scene.radar, &c);
         // `ColonyGfx2D_2`: `StarmapRovidInfoKiir(50, 424, 0)` with `StarmapMode` 1, the planet's short info.
-        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names };
+        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
         let counter = (input.time * 100.0) as i32;
         let sel = crate::orders::Selection { mode: 1, planet: curr.planet, fleet: 0 };
         let ctx = crate::colony_ui::Ctx { state, snap: curr, rules, sim: input.sim, texts: &self.texts, tech_name: &|t| self.tech_name(t) };
@@ -531,7 +540,7 @@ impl Hud {
         // `ColonyInfoMod` 1 (units selected) shows the units, 2 (a building selected) `ColonyKisInfo`'s building half.
         let units = ui.war.draw_unit_info(f, &w, &d);
         // `HandleKisInfoObject`'s model, left of the lines (the panel pass's corner of it).
-        if let Some(tex) = input.info_model.filter(|_| units) {
+        if let Some(tex) = input.info_model {
             let (x0, y0, w0, h0) = (0.0, 400.0, 50.0, 80.0);
             let mut i = Instance::new(crate::render::kind::SPRITE, v.px(x0 + w0 / 2.0, y0 + h0 / 2.0), [w0 * v.k / 2.0, h0 * v.k / 2.0], [1.0; 4]);
             let wide = crate::kit::Wide::new(&v);
@@ -541,7 +550,7 @@ impl Hud {
         // `StarmapHosszuInfoKiir(320, 34)` in the planet info mode (colony.md §12.3), before the short info.
         if let Some(m) = &ui.info {
             let d = crate::starmap_panels::Draw2d { font, white: self.white, v, palette: &self.palette, texts: &self.texts, time: input.time };
-            let t = crate::starmap_menus::MenuTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names, infostr: &self.infostr };
+            let t = crate::starmap_menus::MenuTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names, infostr: &self.infostr };
             m.draw_colony_info(f, &d, &t, state, rules, curr.planet, counter);
         }
         if !units && !ui.draw_building_info(f, &ctx, font, self.white, &v, &self.palette) {
@@ -550,7 +559,7 @@ impl Hud {
                 font.text(f, &v, s, *x, *y, 0x13, *size, crate::font::Align::Left, self.palette.get(*k).copied().unwrap_or([1.0; 3]), None);
             }
         }
-        ui.draw(f, &ctx, font, self.white, &v, &self.palette, &self.hu17, input.cursor, input.now_ms);
+        ui.draw(f, &ctx, font, self.white, &v, &self.palette, &self.txt17, input.cursor, input.now_ms);
         crate::colony_war::draw_self_destruct(f, &w, &d);
         // The ground war's buttons, marks and lines (colony.md §11).
         ui.war.draw(f, &w, &d, input.cursor);
@@ -638,7 +647,7 @@ impl Hud {
     pub fn draw_starmap_menus(&self, f: &mut Frame, m: &crate::starmap_menus::Menus, p: &crate::starmap_panels::Panels, state: &SaveState, rules: &ig2_rules::Rules, size: [f32; 2], zoom: f32, time: f32) {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
-        let t = crate::starmap_menus::MenuTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names, infostr: &self.infostr };
+        let t = crate::starmap_menus::MenuTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names, infostr: &self.infostr };
         // `StarmapGfx2D_3`'s rename entry, over the short info.
         if let Some(r) = &m.rename {
             r.draw(f, &d, time * 1000.0);
@@ -656,7 +665,7 @@ impl Hud {
         if fade >= 1.0 {
             return;
         }
-        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names };
+        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
         let counter = (time * 100.0) as i32;
         let step = self.starmap.step(if sel.mode == 1 { sel.planet } else { 0 }, counter);
         let info = crate::starmap_hud::InfoBox::new(state, rules, &t, sel, step, counter);
@@ -670,17 +679,18 @@ impl Hud {
 
     /// The starmap's HUD under the top bar (re/screens/starmap.md §11) for the local selection.
     #[allow(clippy::too_many_arguments)]
-    /// `starf` is `faders`; `info_box`: the long info's box took fader 0.
-    pub fn draw_starmap_hud(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, faders: &crate::kit::FaderDesign, info_box: bool) {
+    /// `starf` is `faders`; `info_box`: the long info's box took fader 0; `globe`: the info box's planet picture
+    /// (`PanelModels::render_globe`), over the box's fader.
+    pub fn draw_starmap_hud(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, faders: &crate::kit::FaderDesign, info_box: bool, globe: Option<TexId>) {
         let Some(font) = &self.font else { return };
-        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, hu17: &self.hu17, empire_names: &self.empire_names };
+        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
         let counter = (time * 100.0) as i32;
         let step = self.starmap.step(if sel.mode == 1 { sel.planet } else { 0 }, counter);
         let info = crate::starmap_hud::InfoBox::new(state, rules, &t, sel, step, counter);
         let fleets = curr.fleets_at(prev, alpha);
         let mini = crate::starmap_hud::Minimap::new(curr, &fleets, sel, &view.camera);
         let v = Virtual::new(view.camera.size);
-        self.starmap.draw(f, font, self.white, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, &mini, time, faders, info_box as usize);
+        self.starmap.draw(f, font, self.white, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, &mini, time, faders, info_box as usize, globe);
     }
 
     /// The research screen's 2D passes around its models (re/screens/research.md §3).
@@ -745,7 +755,7 @@ impl Hud {
             }
         }
         match screen {
-            Screen::Info => draw_info(f, font, self.white, &v, s, &self.texts, &self.infostr, &self.hu17, rules, &self.palette, &self.empire_names, &self.info),
+            Screen::Info => draw_info(f, font, self.white, &v, s, &self.texts, &self.infostr, &self.txt17, rules, &self.palette, &self.empire_names, &self.info),
             Screen::Messages => {
                 // The clip over the frame, the interlace over the clip: `finalinter.bmp` at x 201..533,
                 // y 204..392 (`InterlaceMover` 0), vertex colour 0x19ffffff, its texture repeated from `lmin` to
@@ -759,7 +769,9 @@ impl Hud {
                         f.push(il, Blend::GammaAlpha, q);
                     }
                 }
-                draw_inbox(f, font, &v, s, &self.texts, &self.palette, self.messages.first, &self.messages.read);
+                if self.messages.list_up() {
+                    draw_inbox(f, font, &v, s, &self.texts, &self.palette, self.messages.first, &self.messages.read);
+                }
                 crate::messages_screen::draw(f, font, self.white, &v, &self.palette, &mut self.messages, s.inbox.len(), time);
             }
             _ => {}
@@ -797,6 +809,20 @@ impl Hud {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0017: classic, the name tables are the Hungarian `txt17` in code page 1250 whatever the game's language;
+    /// with one language, the game's own `txt17` (the same text the screens' `GetString(17, …)` gives).
+    #[test]
+    fn name_tables_follow_the_language_option() {
+        let Some(Ok(en)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let (classic, one, texts) = (names_txt17(&en, false), names_txt17(&en, true), UiTexts::load(&en));
+        assert_eq!(classic.lang, ig2_formats::text::Lang::Hu);
+        for (s, i) in [(1, 34), (4, 42), (5, 23)] {
+            assert_eq!(one.get(17, s, i), texts.get(17, s, i));
+            assert_ne!(classic.get(17, s, i), one.get(17, s, i));
+        }
+        assert_eq!(empire_names(&one)[1], texts.get(17, 1, 34));
+    }
 
     #[test]
     fn the_line_glides_in_holds_and_leaves() {
