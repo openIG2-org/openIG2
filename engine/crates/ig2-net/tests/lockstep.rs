@@ -26,7 +26,7 @@ fn game<'r>(state: SaveState, rules: &'r GameRules) -> Game<'r> {
 fn tick(g: &mut Game) {
     g.advance_clock();
     g.run_tick();
-    g.events.clear();
+    g.take_events();
 }
 
 #[test]
@@ -881,8 +881,8 @@ fn replay_log(start: Game, log: &[ig2_net::Bundle], hashes: &[(u64, u64)]) -> us
             let from = g.events.len();
             g.advance_clock();
             g.run_tick();
-            pending.extend(g.events[from..].iter().filter_map(Command::from_event));
-            g.events.clear();
+            let events = g.take_events();
+            pending.extend(events[from..].iter().filter_map(Command::from_event));
         }
         if let Some((_, h)) = hashes.iter().find(|(t, _)| *t == b.turn) {
             assert_eq!(state_hash(&g, &pending), *h, "turn {}", b.turn);

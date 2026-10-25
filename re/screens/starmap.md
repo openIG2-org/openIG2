@@ -737,17 +737,20 @@ All four places cleared, then:
   (production), place 3 = 3 (redirect). Someone else's planet (or a free one): place 1 = 5 (satellite) when the player
   has none there (`+0xc4 + EN` = 0), hasn't sent one (`StarmapSatelliteElkuldve` 0xE75A72) and tech 15 (Satellite)
   is researched (status `+0x45 + EN` = 5); place 1 = 6 (spy satellite) instead when that level is below 2, nothing is
-  sent and tech 16 is researched; place 3 = 0x12 (gigabomb) for an owned planet of empire 1..=8 when the story allows
-  it (`StoryAdat + 0x44` and `st_bRakhatoNovabomb(p)`). A free planet (owner 0) without a colony ship sent
+  sent and tech 16 is researched; place 3 = 0x12 (gigabomb) for a planet of another empire 1..=8 when story 402
+  armed it (`StoryAdat + 0x44`) and `st_bRakhatoNovabomb(p)` (ELF 0x7315f0, exe 0x603ca0: no `sBolygok` entry's
+  planet byte, +4, is `p`). A free planet (owner 0) without a colony ship sent
   (`StarmapKolonizaloElkuldve` 0xE75A71), none heading there (`IndultEKolonizalo(EN, p)`: an `EN` fleet ordered to the
   planet with flag 0x8 or 0x10) and no "don't colonise" mark (`BolygoInfoIs(p, −0x2094)`): place 4 = 8 (colonise)
   with colony ships in the pool (`OsszHanyKolonizalo[EN]` exe 0xBB4108), place 3 = 7 (terraform) with terraformers
   (`OsszHanyTerraformalo[EN]` 0xBB4158).
 - Fleet mode, the player's fleet: place 1 = 0xd (split) with more than one ship (`+0x54`), place 2 = 0xe (join) when
   `StarmapAktFleethezKozeliSajatFlotta` (§13.1) exists, place 3 = 1 (tanks) when the player's planet is near
-  (`SearchFlottahozKozeliBolygo(f, 20, true, true)`), 0x11 (virus alert) instead for flag 0x2000. A story fleet of
-  empire 9 (`StoryAdat + 0x30`, story id 10000..10999) heading for a planet with `+0xb8 > 0` within the player's radar
-  range: place 1 = 0x10 (wormhole). A fleet in battle (`+0x52` bit 0) loses 0xd, 0xe and 1.
+  (`SearchFlottahozKozeliBolygo(f, 20, true, true)`), 0x11 (virus alert) instead for flag 0x2000 (set while the
+  fleet holds a ship of design 0x1c). Someone else's fleet: with `StoryAdat + 0x30` (`Virus_CheckAdd`), a fleet of
+  empire 9 with id 10000..=10999 under order 1/1 (`+0x40`, `+0x42`) to planet `(int)+0x44` with `+0xb8 > 0` (infected),
+  `dx² + dy² < RadarHatotav[GetENRadarKifejlesztve()]²` in f32 from the planet's `+0x18`/`+0x1c`: place 1 = 0x10
+  (wormhole). A fleet in battle (`+0x52` bit 0) loses 0xd, 0xe and 1.
 - The redirect mode (`StarmapAtiranyitasMode` 0xE75A58) on the player's planet puts 3 in place 2 every other blink
   (`AktIdo100` bit 0); on another planet it ends the mode.
 
@@ -772,11 +775,16 @@ under the pointer the tooltip shows `StarmapRopIkon_Nev[AktRopIkon2]` (`txt17` �
 | 0xd | 3 | split: zoom in to 590, `0x14(AktFleet)` unless one is pending (`StarmapTransferOnElkuldve`) |
 | 0xe | 4 | the transfer between the selected fleet and the nearest own one (§13.1) |
 | 0xf | 0 | the long info (§15; no place offers it, the info box's left click does the same) |
-| 0x10 | 11 | SP only: the story fleet `FlottaMozgat`s to a random owned planet (`RndValasztas`) |
-| 0x11 | 12 | SP only: `Story_Special(0x11, AktFleet)` and `HajoDelete` of its first design-0x1c ship |
-| 0x12 | 14 | `Story_Special(0x12, AktPlanet)` |
+| 0x10 | 11 | SP only: a click, `RndInitValasztas`, then `RndValasztas(0, 1)` for each planet with an owner in index order (the last accepted wins); `FlottaMozgat(AktFleet, 1, 1, p, 0)` when one was |
+| 0x11 | 12 | SP only, with a ship of design 0x1c in `AktFleet` (the first in `Hajok` order): a click, `Story_Special(0x11, AktFleet)` (story 902's wormhole, story 239's end), `HajoDelete` of that ship |
+| 0x12 | 14 | no click: `Story_Special(0x12, AktPlanet)` (story 402 reads `AktPlanet` itself) |
 
-The story icons call the sim directly, outside the lockstep queue.
+(`Starmap_Main` exe 0x5b5f2c..0x5b6147, ELF 0x6f50a0 lines 1230-1266.) The story icons call the sim directly, outside
+the lockstep queue; ours sends `Command::StoryIcon` (`Game::story_icon`). Checked against ig2.exe on quick-1.sav
+(`run_screen.py --kep 2 --rop 0x10|0x11|0x12 --probe probes/story_icons.js`; test `story_icons_match_the_exe`):
+`RandSeed[0]` 30689 over ten owned planets picked planet 54 and left 1671738591; 0x11 called `Story_Special(0x11,
+f)` and deleted the ship; 0x12 on planet 17 with story 402 just started gave +0x44 0, planet id 4021, counter 4022 =
+3000, `v(4021)` 1.
 
 ## 15. The planet's long info (`StarmapPlanetInfoMod` exe 0xF16EF7)
 The info box (hot-spot 8) left-clicked in planet mode (or `AktRopIkon` 0xf) zooms onto the planet and shows its long
@@ -1082,8 +1090,9 @@ animation), `starmap_panels.rs` (§12, §13), `starmap_menus.rs` (radial menu, l
 `topbar_menus.rs`. Orders: `ig2_sim` `StarmapOrder` / `Game::starmap_order`, `ig2_net::Command::Starmap`; §10.5's
 replay is byte-exact. Camera steps, background particles and radar dots are bit-exact (tests
 `camera_steps_match_the_exe_bits`, `the_background_matches_the_exes_records`, `quick1_rings_match_the_exes_particles`).
-Missing: the radial menu's story icons 0x10, 0x11, 0x12 (story wormhole, virus alert, gigabomb) do nothing, and 0x10 /
-0x12 are not offered (`rop_places`); planets and clouds always at the last LOD level, no per-mesh light cache (§3.3);
+The radial menu's story icons 0x10, 0x11, 0x12 (story wormhole, virus alert, gigabomb) are ported: offered in
+`rop_places`, fired through `Command::StoryIcon` into `Game::story_icon` (tests `story_icons_match_the_exe` in
+`ig2-sim` tests/save_replay.rs, `menus_reach_the_sim` in `starmap_menus.rs`). Missing: planets and clouds always at the last LOD level, no per-mesh light cache (§3.3);
 the production view's sinking buttons and wireframe twins (§12.2); the long info's stations (§15.2); an emptied fleet
 always goes by 0x1b, also in SP (§13.1). Open deviations: 47, 317.
 Captures: `run_screen.py … --kep 2 --planet P` with the flags of §11.1, §13.5, §18, §20.5 against `ig2-client

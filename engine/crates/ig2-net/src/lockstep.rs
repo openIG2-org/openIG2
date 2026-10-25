@@ -496,8 +496,12 @@ impl<'r> Peer<'r> {
             }
             self.game.advance_clock();
             self.game.run_tick();
-            self.pending.extend(self.game.events[from..].iter().filter_map(Command::from_event));
-            self.events.append(&mut self.game.events);
+            // `take_events`, not the vector itself: it finishes the battlefield hand-offs and resets their place in
+            // the list (emptied behind its back, the next tick's first hand-offs were skipped, more or fewer on each
+            // peer as their events differ).
+            let events = self.game.take_events();
+            self.pending.extend(events[from..].iter().filter_map(Command::from_event));
+            self.events.extend(events);
             self.tick += 1;
         }
         self.turn += 1;

@@ -385,9 +385,16 @@ pub fn resale(state: &SaveState, e: u8, d: usize) -> i32 {
     (i32_at(r, 0x24) as f32 / f) as i32
 }
 
-/// `Starmap_MouseInit2`'s four places (re/screens/starmap.md §14.3); `blink` = `AktIdo100` bit 0. The story icons
-/// (0x10, 0x12) aren't offered (not ported).
-pub fn rop_places(state: &SaveState, sel: &Selection, panels: &Panels, redirect: bool, sent: (bool, bool), blink: bool) -> [i32; 4] {
+/// `st_bRakhatoNovabomb(p)` (ELF 0x7315f0, exe 0x603ca0): no story planet id (`sBolygok`, the byte at +4) names `p`.
+fn gigabomb_allowed(state: &SaveState, p: usize) -> bool {
+    let m = &state.mem;
+    let n = m.i32(va::STORY_LIST_COUNTS).max(0) as u32;
+    (1..=n).all(|i| m.u8(va::STORY_PLANETS + 8 * i + 4) as usize != p)
+}
+
+/// `Starmap_MouseInit2`'s four places (ELF 0x7024b0, exe 0x5b8950; re/screens/starmap.md §14.3); `blink` =
+/// `AktIdo100` bit 0, `radar` = `RadarHatotav[GetENRadarKifejlesztve()]` (the story fleet's wormhole icon).
+pub fn rop_places(state: &SaveState, sel: &Selection, panels: &Panels, redirect: bool, sent: (bool, bool), blink: bool, radar: f32) -> [i32; 4] {
     let mut pl = [0; 4];
     if panels.active() {
         return pl;
@@ -409,6 +416,11 @@ pub fn rop_places(state: &SaveState, sel: &Selection, panels: &Panels, redirect:
             }
             if sats < 2 && !sent.0 && researched(state, 16, e) {
                 pl[0] = 6;
+            }
+            // The gigabomb (story 402): another empire's planet the story allows.
+            let story = state.mem.i32(va::STORY_ADAT + 0x44) != 0;
+            if owner != 0 && owner < 9 && story && gigabomb_allowed(state, sel.planet) {
+                pl[2] = 0x12;
             }
         }
         if owner == 0 {
@@ -443,6 +455,16 @@ pub fn rop_places(state: &SaveState, sel: &Selection, panels: &Panels, redirect:
             }
             if i16_at(f, 0x52) as u16 & 0x2000 != 0 {
                 pl[2] = 0x11;
+            }
+        } else if state.mem.i32(va::STORY_ADAT + 0x30) != 0 && f[0x15] == 9 && (10000..11000).contains(&i16_at(f, 0x16)) {
+            // A story fleet heading (order 1/1) for an infected planet (`+0xb8`) within the radar's reach: its wormhole.
+            let p = f32_at(f, 0x44) as i32;
+            if i16_at(f, 0x40) == 1 && i16_at(f, 0x42) == 1 && p >= 1 && p as usize <= state.planet_count() {
+                let r = planet(state, p as usize);
+                let (dx, dy) = (f32_at(f, 0x30) - f32_at(&r, 0x18), f32_at(f, 0x34) - f32_at(&r, 0x1c));
+                if i16_at(&r, 0xb8) > 0 && dy * dy + dx * dx < radar * radar {
+                    pl[0] = 0x10;
+                }
             }
         }
         if i16_at(f, 0x52) & 1 != 0 {
@@ -535,6 +557,17 @@ impl Menus {
             9 => out.push(Do::TanksInfo),
             0xe => out.push(Do::Join),
             0xf if sel.mode == 2 => out.push(Do::FleetInfo),
+            // The story icons click (but 0x12) and call the sim (single player only but 0x12: the window decides).
+            0x10 => out.push(Do::Act(Action::StoryIcon { icon, target: sel.fleet as i32, click: true })),
+            0x11 => {
+                // Only with a ship of design 0x1c in the fleet (`HajoDelete` takes the first).
+                let fleet = sel.fleet as i32;
+                let half = |s: &[u8; 6], o: usize| i16::from_le_bytes([s[o], s[o + 1]]);
+                if state.ships.iter().skip(1).any(|s| half(s, 0) as i32 == fleet && half(s, 2) == 0x1c) {
+                    out.push(Do::Act(Action::StoryIcon { icon, target: fleet, click: true }));
+                }
+            }
+            0x12 => out.push(Do::Act(Action::StoryIcon { icon, target: p, click: false })),
             _ => {}
         }
         out
@@ -779,7 +812,7 @@ pub fn staged(state: &SaveState, sel: &Selection, panels: &Panels, cam: [f32; 4]
     }
     if let Some(at) = rop {
         let blink = (time * 10.0) as i64 % 2 == 1;
-        let places = rop_places(state, sel, panels, false, (false, false), blink);
+        let places = rop_places(state, sel, panels, false, (false, false), blink, 0.0);
         m.rop = Some(Rop { at: [at[0] as i32, at[1] as i32], frame: 50, places, hover: 0 });
         m.held = true;
     }
@@ -1158,7 +1191,7 @@ mod tests {
         let p = (1..=w.game.state.planet_count()).find(|&p| planet(&w.game.state, p)[0x20] == e).unwrap();
         let sel = Selection { mode: 1, planet: p, fleet: 0 };
         // The player's planet: production left, colony below, redirect right, tank info above.
-        assert_eq!(rop_places(&w.game.state, &sel, &Panels::default(), false, (false, false), false), [2, 4, 3, 9]);
+        assert_eq!(rop_places(&w.game.state, &sel, &Panels::default(), false, (false, false), false, 0.0), [2, 4, 3, 9]);
         let mut m = Menus::default();
         m.enter_info(p, [0.0, 0.0, 400.0]);
         // The tax menu (hot-spot 0x5a): row 3 under the pointer on the release.
@@ -1200,6 +1233,37 @@ mod tests {
         assert!(m.sat_sent);
         run(&mut w, dos);
         assert_eq!(planet(&w.game.state, q)[0xc4 + e as usize], 1);
+        // The gigabomb (story 402 running): on the AI's planet, not on the player's; it arms the bomb.
+        let mut st = w.game.state.story();
+        st.start_story(402, true);
+        w.game.state.store_story(&st);
+        assert_eq!(rop_places(&w.game.state, &other, &Panels::default(), false, (false, false), false, 0.0)[2], 0, "not offered yet");
+        w.game.state.mem.set_i32(va::STORY_ADAT + 0x44, 1);
+        assert_eq!(rop_places(&w.game.state, &other, &Panels::default(), false, (false, false), false, 0.0)[2], 0x12);
+        assert_eq!(rop_places(&w.game.state, &sel, &Panels::default(), false, (false, false), false, 0.0), [2, 4, 3, 9]);
+        let dos = m.fire(0x12, &w.game.state, &other);
+        assert_eq!(dos, vec![Do::Act(Action::StoryIcon { icon: 0x12, target: q as i32, click: false })]);
+        w.send(Command::StoryIcon { icon: 0x12, target: q as i32 });
+        w.pump();
+        assert_eq!(w.game.state.mem.i32(va::STORY_ADAT + 0x44), 0, "the bomb is armed");
+        // The story fleet's wormhole: a trader (empire 9, id 10000..11000) heading for an infected planet in radar range.
+        let f = w.game.state.fleets.iter().skip(1).position(|f| f[0x15] == 9).unwrap() + 1;
+        let trader = Selection { mode: 2, planet: 0, fleet: f };
+        let r = planet(&w.game.state, q);
+        let mut infected = r.clone();
+        infected[0xb8..0xba].copy_from_slice(&20i16.to_le_bytes());
+        w.game.state.mem.write(va::PLANETS + (q * PLANET_SIZE) as u32, &infected);
+        let rec = &mut w.game.state.fleets[f];
+        rec[0x16..0x18].copy_from_slice(&10000i16.to_le_bytes());
+        rec[0x30..0x38].copy_from_slice(&r[0x18..0x20]);
+        rec[0x40..0x44].copy_from_slice(&[1, 0, 1, 0]);
+        rec[0x44..0x48].copy_from_slice(&(q as f32).to_le_bytes());
+        w.game.state.mem.set_i32(va::STORY_ADAT + 0x30, 1);
+        assert_eq!(rop_places(&w.game.state, &trader, &Panels::default(), false, (false, false), false, 10.0)[0], 0x10);
+        assert_eq!(rop_places(&w.game.state, &trader, &Panels::default(), false, (false, false), false, 0.0)[0], 0, "out of radar range");
+        assert_eq!(m.fire(0x10, &w.game.state, &trader), vec![Do::Act(Action::StoryIcon { icon: 0x10, target: f as i32, click: true })]);
+        // The virus alert needs a ship of design 0x1c in the fleet.
+        assert!(m.fire(0x11, &w.game.state, &trader).is_empty());
     }
 
     #[test]

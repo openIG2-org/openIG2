@@ -178,6 +178,8 @@ struct App {
     clock: TickClock,
     start: Instant,
     vsync: bool,
+    /// The display settings as last applied (crate::display).
+    display: crate::display::Display,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -398,6 +400,10 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
     app.backdrop.live = o.background.unwrap_or(app.settings.int("LiveBackground") != Some(0));
     app.one_language = o.texts.unwrap_or(app.settings.int("OneLanguage") != Some(0));
+    // The display rows' settings (crate::display), `IG2_VSYNC` and `--letterbox` over them.
+    app.display = crate::display::Display::from_settings(&app.settings);
+    app.vsync = std::env::var("IG2_VSYNC").map_or(app.display.vsync, |v| v != "0");
+    crate::kit::layout::set_letterbox(o.letterbox || app.display.letterbox);
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
         crate::spacewar_screen::go_live(&mut app.world, crate::spacewar_screen::Dump::load(&p)?.battle);
@@ -573,6 +579,7 @@ impl App {
             clock: TickClock::new(SIM_TICK_MS, 0),
             start,
             vsync: std::env::var("IG2_VSYNC").map_or(true, |v| v != "0"),
+            display: crate::display::Display::from_settings(&ig2_formats::options::Options::default()),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
             left_down: None,
@@ -815,8 +822,18 @@ impl App {
     }
 
     fn init_gpu(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
-        let attrs = Window::default_attributes().with_title("Imperium Galactica II").with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0));
+        let d = self.display;
+        let attrs = Window::default_attributes().with_title("Imperium Galactica II");
+        let attrs = match d.size {
+            Some((w, h)) if d.mode == crate::display::Mode::Window => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+            _ => attrs.with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0)),
+        };
+        let attrs = attrs.with_fullscreen(d.fullscreen(el.primary_monitor()));
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
+        // The Options screen's display rows, offering the monitor's sizes.
+        let now = window.inner_size();
+        self.opt_rows.retain(|r| !r.ours);
+        self.opt_rows.extend(crate::display::rows(&self.settings, &crate::display::sizes(window.current_monitor().as_ref()), (now.width, now.height)));
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -834,7 +851,7 @@ impl App {
             format,
             width: size.width.max(1),
             height: size.height.max(1),
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if self.vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync },
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
             view_formats: Renderer::view_formats(format),
@@ -1538,6 +1555,14 @@ impl App {
                         self.world.send(Command::HeroSentBack { fleet, design });
                     }
                 }
+                Action::StoryIcon { icon, target, click } => {
+                    if icon == 0x12 || !self.multiplayer() {
+                        if click {
+                            self.sounds.push(crate::audio::CLICK);
+                        }
+                        self.world.send(Command::StoryIcon { icon, target });
+                    }
+                }
                 Action::Centre { x, y } => {
                     let zoom = self.camera3()[2];
                     self.tween_to([x, -y, zoom], 8);
@@ -1669,7 +1694,8 @@ impl App {
                 self.speech.push(crate::audio::speech::Speak { who: crate::audio::speech::Who::Starmap, line: s.fleet as i32 % 3 + 1, kind: crate::audio::speech::starmap::SELECT });
             }
             let blink = (self.now_ms() / 100) % 2 == 1;
-            let places = crate::starmap_menus::rop_places(&self.world.game.state, &s, &self.panels, self.menus.redirect, (self.menus.sat_sent, self.menus.col_sent), blink);
+            let radar = self.world.game.en_radar_range();
+            let places = crate::starmap_menus::rop_places(&self.world.game.state, &s, &self.panels, self.menus.redirect, (self.menus.sat_sent, self.menus.col_sent), blink, radar);
             self.menus.open_rop(at, places);
         }
         true
@@ -2795,6 +2821,36 @@ impl App {
                 r.value = n.value;
             }
         }
+        self.apply_display();
+    }
+
+    /// The display rows' settings (crate::display) applied where they changed: the window's mode and size, vsync,
+    /// the letterbox, the live background and the names' language.
+    fn apply_display(&mut self) {
+        let d = crate::display::Display::from_settings(&self.settings);
+        let old = std::mem::replace(&mut self.display, d);
+        if let Some(g) = &self.gpu {
+            if (d.mode, d.size) != (old.mode, old.size) {
+                g.window.set_fullscreen(d.fullscreen(g.window.current_monitor()));
+                if let (crate::display::Mode::Window, Some((w, h))) = (d.mode, d.size) {
+                    let _ = g.window.request_inner_size(winit::dpi::PhysicalSize::new(w, h));
+                }
+            }
+        }
+        if (d.vsync, d.letterbox) != (old.vsync, old.letterbox) {
+            self.vsync = d.vsync;
+            crate::kit::layout::set_letterbox(d.letterbox);
+            self.reconfigure();
+        }
+        if d.live_background != old.live_background {
+            self.backdrop.live = d.live_background;
+        }
+        if d.one_language != old.one_language {
+            self.one_language = d.one_language;
+            if let Some(h) = &mut self.hud {
+                h.set_one_language(&self.install, d.one_language);
+            }
+        }
     }
 
     /// `Options_EnterPressed`: `LoadSave(slot, name, 2)` as the remake's own save (`save<n>.ig2s`), the slots read
@@ -2861,6 +2917,10 @@ impl App {
         self.research_place = None;
         self.akt_planet = None;
         self.world = w;
+        // `_s(0x3b, n)` is the install's table, not the save's: a loaded game names the AI's designs too.
+        if self.world.game.design_texts.is_empty() {
+            self.world.game.design_texts = crate::new_game::design_texts(&self.install);
+        }
         self.world.set_speed(ig2_sim::time::Speed::Normal);
         if self.world.paused() {
             self.send(StarmapOrder::Pause { paused: false });

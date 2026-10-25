@@ -467,16 +467,23 @@ impl<'r> World<'r> {
     /// it, or the remake's own `save<n>.ig2s` (ADR 0007 §4: the snapshot restored as it was saved).
     pub fn load_slot(path: &std::path::Path, rules: &'r GameRules, tech_defaults: &[u8], volatile: &[(u32, Vec<u8>)]) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Self::load_bytes(&bytes, rules, tech_defaults, volatile).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// [`World::load_slot`] of a slot's bytes.
+    pub fn load_bytes(bytes: &[u8], rules: &'r GameRules, tech_defaults: &[u8], volatile: &[(u32, Vec<u8>)]) -> Result<Self, String> {
         if bytes.starts_with(ig2_net::snapshot::MAGIC) {
-            let (snap, header) = ig2_net::snapshot::Snapshot::from_file(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (snap, header) = ig2_net::snapshot::Snapshot::from_file(bytes).map_err(|e| e.to_string())?;
             if header.flags & 1 != 0 {
-                return Err(format!("{}: a multiplayer save (resume it from a multiplayer room)", path.display()));
+                return Err("a multiplayer save (resume it from a multiplayer room)".into());
             }
-            let (game, _) = snap.restore(rules).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (mut game, _) = snap.restore(rules).map_err(|e| e.to_string())?;
+            // As `World::load`: the client shows single player's real-time battles.
+            game.sp_battles.live = true;
             let chunks = game.state.chunks();
             return Ok(Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned())));
         }
-        let save = SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let save = SaveGame::parse(bytes).map_err(|e| e.to_string())?;
         Ok(Self::load(&save, rules, tech_defaults, volatile))
     }
 

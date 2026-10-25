@@ -57,5 +57,20 @@ The full key and hot-spot tables per screen are in `re/screens/input.md`.
 Our own saves go to the Options screen's slots (`IG2_SLOT_DIR`); original `.sav` files load with `--save`. Our
 settings are kept in our own file (`IG2_OPTIONS_DIR`), never in the original's.
 
+### Display settings
+Options → the game tab, under the original's rows and a "Remake" heading. A press cycles the row; changes apply
+at once and are saved in `ig2-rework-options.dat`.
+
+| Row (key) | |
+|---|---|
+| Display (`DisplayMode`) | Window, borderless, or exclusive fullscreen (`0`, `1`, `2`) |
+| Resolution (`Resolution`, `WxH`) | The window size, or the fullscreen mode; the monitor's modes plus common sizes that fit it, largest first. A size the monitor has no mode for falls back to borderless. Disabled while borderless |
+| Vertical sync (`VSync`) | On by default; `IG2_VSYNC` overrides at start |
+| Letterbox 4:3 (`Letterbox`) | Off by default; `--letterbox` overrides at start |
+| Live background (`LiveBackground`) | Overlay screens redraw the map live (ADR 0015) |
+| Names in game language (`OneLanguage`) | ADR 0017 |
+
+The window opens at 1600x900 until a size is saved.
+
 ## Asset viewer
 `cargo run --release -p ig2-viewer` browses the install's models, textures, colony maps, animations and messages.

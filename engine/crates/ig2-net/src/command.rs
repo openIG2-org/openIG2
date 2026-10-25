@@ -19,6 +19,33 @@ pub struct Terms {
     pub value2: i32,
 }
 
+impl Terms {
+    /// Terms a diplomacy screen can build (`re/rules/diplomacy.md` §6.3): every item's index in range. The original
+    /// only ever receives what its own screen built; a peer's terms are checked here, so a malformed message is
+    /// dropped on every machine alike instead of indexing past the empire, planet or tech tables.
+    pub fn in_range(&self, planets: usize) -> bool {
+        use ig2_sim::diplomacy::{cat, item};
+        let empire = |v: i32| (1..=8).contains(&v);
+        let item = |sub: i32, value: i32| match sub {
+            item::MONEY => value >= 0,
+            item::RADAR | item::WAR | item::PEACE => empire(value),
+            item::PLANET => (1..=planets as i32).contains(&value),
+            item::TECH => (0..ig2_sim::colony_side::TECHS as i32).contains(&value),
+            item::HOSTAGE => (1..=5).contains(&value),
+            _ => false,
+        };
+        match self.cat {
+            // The third empire (`WAR_TOGETHER`, the AI's `target`), any of the 19 empire slots.
+            cat::NEGOTIATE => (0..=8).contains(&self.sub) && (-1..19).contains(&self.value),
+            cat::OFFER_FOR => item(self.sub, self.value) && item(self.sub2, self.value2),
+            cat::DEMAND | cat::OFFER => item(self.sub, self.value),
+            cat::SPECIAL => (0..0x100).contains(&self.sub),
+            cat::TALK => (0..=9).contains(&self.sub),
+            _ => false,
+        }
+    }
+}
+
 impl From<Terms> for Message {
     fn from(t: Terms) -> Self {
         Message { cat: t.cat, sub: t.sub, value: t.value, sub2: t.sub2, value2: t.value2 }
@@ -291,6 +318,10 @@ pub enum Command {
     /// Ours (no packet: the exe calls it straight from the fleet panel's sale menu, single player only): a story hero's
     /// design sent back (`Story_Special(0x19, fleet, design)`, re/screens/starmap.md §19.7).
     HeroSentBack { fleet: i32, design: i32 },
+    /// Ours (no packet: the exe calls the sim straight from `Starmap_Main`): the radial menu's story icon `icon`
+    /// (0x10 story fleet's wormhole, 0x11 virus alert, 0x12 gigabomb) on fleet or planet `target`
+    /// ([`Game::story_icon`], re/screens/starmap.md §14.5).
+    StoryIcon { icon: i32, target: i32 },
     /// The story's own 0x66 (`SendStorySpecial`) with its sender: `Story_Special(15, sender, id)`. Sim-originated (the
     /// answering human's, `re/rules/multiplayer.md` §5.3); a peer's copy is dropped ([`Command::host_only`]).
     StoryFrom { sender: u8, id: i32 },
@@ -363,6 +394,8 @@ impl Command {
                     game.buy(issuer as usize, &Delivery(raw));
                 }
             }
+            Command::DiplomacyMessage { to, terms, .. } | Command::DiplomacyAnswer { to, terms, .. }
+                if !(1..=8).contains(to) || !terms.in_range(game.state.planet_count()) => {}
             Command::DiplomacyMessage { to, declaration, terms } => {
                 game.diplomacy_message(Letter { from: issuer as i32, to: *to, declaration: *declaration, msg: (*terms).into() });
             }
@@ -373,6 +406,7 @@ impl Command {
             Command::StoryFrom { sender, id } => game.story_special([15, *sender as i32, *id, 0, 0, 0, 0, 0]),
             Command::Rename { fleet, index, name, custom } => game.rename(issuer, *fleet, *index as usize, name, *custom),
             Command::HeroSentBack { fleet, design } => game.story_special([0x19, *fleet, *design, 0, 0, 0, 0, 0]),
+            Command::StoryIcon { icon, target } => game.story_icon(*icon, *target),
             Command::FleetEmptied { fleet } => game.fleet_emptied(*fleet as usize),
             Command::Spy { order } => game.spy_order(issuer as usize, (*order).into()),
             Command::StoryStart { id } => game.story_start(*id),
@@ -460,5 +494,16 @@ mod tests {
         );
         assert_eq!(Command::from_event(&GameEvent::FleetEmptied { fleet: 4 }), Some(Command::FleetEmptied { fleet: 4 }));
         assert_eq!(Command::from_event(&GameEvent::Story(StoryEvent::ShowPlanet(2))), None);
+    }
+
+    #[test]
+    fn terms_out_of_range_are_refused() {
+        let t = |cat, sub, value, sub2, value2| Terms { cat, sub, value, sub2, value2 }.in_range(20);
+        assert!(t(6, 8, 0, -1, -1), "a greeting");
+        assert!(t(0, 1, -1, -1, -1) && t(0, 7, 4, -1, -1), "negotiations, with or without a third empire");
+        assert!(t(3, 3, 192, -1, -1) && !t(3, 3, 193, -1, -1), "techs 0..193");
+        assert!(t(2, 2, 20, -1, -1) && !t(2, 2, 21, -1, -1) && !t(2, 2, 0, -1, -1), "planets 1..=20");
+        assert!(t(1, 0, 500, 6, 3) && !t(1, 0, 500, 6, 1069), "both sides of an exchange");
+        assert!(!t(3, 0, -5, -1, -1) && !t(3, 7, 0, -1, -1) && !t(5, 0, 0, -1, -1) && !t(0, 9, 0, -1, -1));
     }
 }

@@ -70,13 +70,13 @@ State: **verified** = matched against the exe at runtime (Frida or capture); **p
 - **U8** Text codepages not checked against the charset glyph images. Blocks correct non-ASCII text.
 - **U13** Shipped data defects (broken dialogue refs, unreachable msg scripts, 3 missing diplomacy specials in DE/FR/ES/IT, 3 missing clips): classic vs enhanced fix needs an ADR.
 - **U14** Unpinned table fields: hull +0x10..+0x23, weapon +0x40/+0x48/+0x59, tech +28/+36/+60.., building +1/+24/+28 (`rules/tables.md`).
-- **U15** Colony side: MP economy steps untraced; story yields `st_v(0x5FB/0x60F)` in `EpuletNew`; the `+0xba` counter of `BolygoInfoRemove`.
+- **U15** Colony side: MP economy steps untraced (the desync soak found no peer-to-peer desync here, `rules/multiplayer.md` §7.1.1); story yields `st_v(0x5FB/0x60F)` in `EpuletNew`; the `+0xba` counter of `BolygoInfoRemove`.
 - **U17** Real-time space battle: MP, chain lightning, the victory flight, several battles at once (shared pools), > 2 participants untraced.
-- **U18** Production/research: MP paths, MP slow-down, station rally untraced.
+- **U18** Production/research: MP paths, MP slow-down, station rally untraced (soak: no peer desync).
 - **U20** Diplomacy: reason codes (`MiertValaszolt…`) and `vv_*` flags, `Story_Diplomacy_Special` routing (`SpecialLista` never written), `NEWGAME_Diplomacy`, MP, `ProgramPlayers` 18. Blocks AI-to-human message texts (also U25 ids 6/10).
 - **U21** Espionage: story missions (`StoryEredmenyKem*`), `EpuletDelete`'s colony-screen/ground-war targets; spy screen sounds.
-- **U22** AI empire: MP untraced; `ProgramPlayers` 18 overflows (`Kemek`, `MiTervMutato`); `INIT_MI_KIESETT` (dropped player) only unit-tested.
-- **U23** Ground war: `GenerateMap` editor mode, `Refresh2` visuals, `UpgradeTanks`, MP, stealth, mines untraced; planet deals don't reach the battlefield.
+- **U22** AI empire: MP untraced (soak: no peer desync); `ProgramPlayers` 18 overflows (`Kemek`, `MiTervMutato`); `INIT_MI_KIESETT` (dropped player) only unit-tested.
+- **U23** Ground war: `GenerateMap` editor mode, `Refresh2` visuals, `UpgradeTanks`, MP (soak: no peer desync), stealth, mines untraced; planet deals don't reach the battlefield.
 - **U25** Messages: ids 6, 10 (need U20), 13; a recorded real-time ground war's end; `Grwar8020hoz`; save replays don't run campaign story lines yet.
 - **U26–U32** Screen gaps (starmap, colony, info/messages, audio, video, unfinished screens, diplomacy): listed in each screen spec's open items and in `deviations.md`; load (mode 5) is unported in `ig2-sim`.
 
@@ -101,6 +101,7 @@ State: **verified** = matched against the exe at runtime (Frida or capture); **p
 ### Saves ([`formats/save.md`](formats/save.md))
 - `LoadSave` 0x543c80: 80-byte header `VERS0002`, then zlib of the whole buffer **capacity** (zero tail); `LoadSaveVariables` 0x544220 writes `[i32 len][bytes]` chunks in a fixed order; same stream on Win32 and x64. `GetSavedGame` 0x543670 = the MP blob.
 - **Every `LoadSave`, also writing a save, ends with `FlottakUjraSzamol()`**: the replay calls `Game::saved()` after each traced save.
+- Whole-game save/load round trips run in the play-through harness (`docs/BUILDING.md` → Play-through harness).
 
 ### Colony, placement, fleets, radar
 - `FRISSIT_Planet` 0x474930 (not in the ported table); planet event codes are slots 1..=5 at +0x16a (not +0x168); planet `+0x23` = colony map. `Bolygok` 0xB85EA8 (0x188 B, 1-based).

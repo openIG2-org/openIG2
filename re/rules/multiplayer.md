@@ -264,6 +264,31 @@ back, the battle waits for the returning player; the host's log replayed into on
 `a_desync_inside_a_battle_is_reported_and_resynced` and `recorded_ground_orders_cross_the_wire` (the 407 ground-war
 messages of the `grt-orders` recordings survive the input and bundle encoding).
 
+### 7.1.1 Desync soak (ours; `ig2-net/tests/soak.rs`)
+
+Generated-galaxy MP games of 2-4 humans plus AIs on loopback links (`HostSession`/`ClientSession`); every peer issues
+random orders of every kind from its own state (fleets, planets, production, colony buildings, research, designs,
+info shares, trade, diplomacy, spies, message-screen orders, renames), fights the real-time space battles and ground
+wars, with an MP save (restored and re-hashed) at a third and a drop + rejoin at a half. Every pair of peers must agree
+on every common turn's hash and the host must report no desync. Tests: `two_humans_and_two_ais_stay_in_step` (3000
+turns, "even wars": debug switch 0xB7723C plus a staged invasion so a human-vs-human ground war runs in real time),
+`four_humans_stay_in_step` (1500), `the_seed_one_game_stays_in_step` (6000), `a_long_soak` (`#[ignore]`).
+Env: `IG2_SOAK_TURNS`, `IG2_SOAK_SEED`, `IG2_SOAK_SEEDS` (games of the long soak), `IG2_SOAK_STOP=T` (every peer stops
+at turn T and prints the differing state parts and memory bytes, via `ig2_net::part_hashes`), `SOAK_EVENTS=1`
+(event-kind histogram). Result: 6 long seeds x 6000 turns plus the defaults, no desync after the two fixes below; the
+games contained real-time and auto-resolved battles, ground wars, conquests, empire deaths, trade, spies, designs.
+It compares our peers with each other, not with the exe, so it does not close the untraced MP paths (U15, U18, U22, U23).
+
+- Events go through `Game::take_events()`: `Peer::run_turn` used to drain `game.events` with `append`, leaving
+  `Game::hand_offs` (the battlefield hand-offs' place in the event list, `battlefield_hand_offs`) unreset, so the next
+  tick skipped as many garrison hand-offs as the previous tick had events, which differ between peers (view-dependent
+  events): planet records and a tank slot differed on one machine. Also fixes MP garrison hand-offs skipped on all peers.
+- `Command::apply` drops a `DiplomacyMessage`/`DiplomacyAnswer` whose `to` is not 1..=8 or whose terms fail
+  `Terms::in_range(planets)` (money >= 0; radar/war/peace empire 1..=8; planet 1..=planet count; tech 0..193; hostage
+  1..=5; negotiate sub 0..=8 with third empire -1..19; talk sub 0..=9; special sub 0..0x100; other categories refused).
+  Out-of-range terms crashed `Diplomacy::deal_value` and `make_peace`; the original only receives what its own screen
+  built, so the drop is the same on every machine (unit test `command::tests::terms_out_of_range_are_refused`).
+
 ### 7.2 The session layer (ours, ADR 0011 §4–§6; `ig2_net::session`)
 
 No UI; the lobby screens sit on top. Time is the caller's (`now`, any monotonic origin), so the policy is

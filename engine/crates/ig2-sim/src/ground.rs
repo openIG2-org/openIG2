@@ -577,8 +577,9 @@ pub struct War<'a> {
     pub rng: &'a mut Streams,
     /// libc `rand()` (0..=32767; ADR 0003): a voice pick per hit, one per new unit object, a mine's sound.
     pub libc: &'a mut dyn FnMut() -> i32,
-    /// `LocateTankSuitablePosition(p, &x, &y, start)` (not ported): `None` start = the default; returns
-    /// whether a cell was found and the cell.
+    /// `LocateTankSuitablePosition(p, &x, &y, start)` for a war without the planet's colony map ([`War::map`]
+    /// `None`: rules built without the install's maps; with them the port `placement::locate_tank` runs): `None` start
+    /// = the default; returns whether a cell was found and the cell.
     pub place: &'a mut PlaceFn<'a>,
     pub events: Vec<GroundEvent>,
     pub stats: WarStats,

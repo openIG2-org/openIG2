@@ -133,8 +133,7 @@ impl Game<'_> {
                 let m = &self.state.mem;
                 let tutorial = m.u8(va::TUTORIAL_ACTIVE) != 0 || m.u8(va::TUTORIAL_PAUSED) != 0;
                 if tutorial && sent == Some(en) && order != 0 && m.i32(va::TUTORIAL_EVENT) == 0x15 {
-                    let level = crate::radar::RadarTables::default().refresh(&self.rules.radar, &self.starmap_context(&g));
-                    let range = self.rules.radar.range(level.max(0) as usize);
+                    let range = self.en_radar_range();
                     let c = self.state.colony();
                     let (px, py) = (1..=planets).rev().find(|&p| c.planets[p].owner as usize == en).map_or((1.0f32, 1.0f32), |p| (c.planets[p].x, c.planets[p].y));
                     if range < ((x - px) * (x - px) + (y - py) * (y - py)).sqrt() {
@@ -230,6 +229,61 @@ impl Game<'_> {
         }
         // `TankAtpakol` puts garrisons on (or takes them off) the battlefield at once.
         self.battlefield_hand_offs();
+    }
+
+    /// `RadarHatotav[GetENRadarKifejlesztve()]`: the reach of the local player's radar tech.
+    pub fn en_radar_range(&self) -> f32 {
+        let g = self.globals();
+        let level = crate::radar::RadarTables::default().refresh(&self.rules.radar, &self.starmap_context(&g));
+        self.rules.radar.range(level.max(0) as usize)
+    }
+
+    /// The radial menu's story icons (`Starmap_Main` exe 0x5b5f2c..0x5b6147, ELF 0x6f50a0; re/screens/starmap.md
+    /// §14.5), which the exe calls straight into the sim (no message; ours goes through the lockstep): 0x10 sends the
+    /// story fleet `target` to a random owned planet (`RndValasztas(0, 1)` over the planets with an owner, the last
+    /// accepted wins; `FlottaMozgat(f, 1, 1, p, 0)`), 0x11 runs `Story_Special(0x11, target)` and deletes the
+    /// fleet's first ship of design 0x1c (`HajoDelete`; nothing without one), 0x12 runs `Story_Special(0x12,
+    /// target)` (the gigabomb on planet `target`, which becomes `AktPlanet` in the classic view).
+    pub fn story_icon(&mut self, icon: i32, target: i32) {
+        match icon {
+            0x10 => {
+                let Some(f) = self.fleet_slot(target) else { return };
+                let planets = self.state.planet_count();
+                let owned: Vec<bool> = { let c = self.state.colony(); (1..=planets).map(|p| c.planets[p].owner != 0).collect() };
+                self.with_ai(|_, w, _| {
+                    w.spy.rng.choice_begin();
+                    let mut pick = 0;
+                    for (i, &o) in owned.iter().enumerate() {
+                        if o && w.spy.rng.choice_offer(0, 1) {
+                            pick = i + 1;
+                        }
+                    }
+                    if pick > 0 {
+                        w.order(f, 1, 1, pick as f32, 0.0);
+                    }
+                });
+            }
+            0x11 => {
+                let Some(f) = self.fleet_slot(target) else { return };
+                let ships = &self.state.ships;
+                let half = |k: usize, o: usize| i16::from_le_bytes([ships[k][o], ships[k][o + 1]]);
+                let Some(k) = (1..ships.len()).find(|&k| half(k, 0) as usize == f && half(k, 2) == 0x1c) else { return };
+                self.story_special([0x11, target, 0, 0, 0, 0, 0, 0]);
+                self.with_ai(|_, w, _| {
+                    if k < w.spy.combat.ships.len() {
+                        w.delete_ship(k);
+                    }
+                });
+            }
+            0x12 => {
+                // Story 402 reads `AktPlanet`, which in the exe is the target at the call.
+                if matches!(self.view, ViewMode::Classic) {
+                    self.state.mem.set_i32(va::AKT_PLANET, target);
+                }
+                self.story_special([0x12, target, 0, 0, 0, 0, 0, 0]);
+            }
+            _ => {}
+        }
     }
 
     /// `SetIdoSpeed(level, net)` (exe 0x541330): SP 1/2/3 → `IdoSpeedSzorzo` 1/4/16 (battles 1/2/4) unless the

@@ -5,8 +5,17 @@ One line per finished feature, newest milestone first. Detail lives in the specs
 ## M7: playable 1.0 (in progress)
 - The host of an internet game can switch on UPnP / NAT-PMP port mapping in the room and sees the address players
   can reach it at.
+- Long multiplayer games (2-4 humans plus AIs, thousands of turns, every order type, real-time battles, saves and
+  rejoins) stay in step; a desync that followed garrisons entering a battlefield is fixed, and a malformed
+  diplomacy message can no longer crash every player.
 - A host can make the room private and share a join code (copy and paste); a joiner pastes it into the address
   field and connects to the host's LAN or mapped address.
+- Starmap story icons: the story fleet's wormhole, the virus alert and the gigabomb can be used from the radial menu, so the campaign episodes that need them can be completed.
+- The Options screen's game page has display settings: window, borderless or exclusive fullscreen, resolution,
+  vsync, the 4:3 letterbox, live background and one-language names; they apply at once and are saved.
+- Attacking the campaign's story planet (8620) now plays out as in the original: the fleet is removed and the story message appears once.
+- Play-through harness (`ig2-client --playthrough`): whole games run headless with save/load on the way; fixed a
+  loaded remake save never showing a real-time battle, and every load losing the AI's design names.
 - Docs restructured: one task queue (`TASKS.md`), this changelog, `CONTRIBUTING.md`, `docs/ARCHITECTURE.md`,
   `docs/BUILDING.md`, `docs/USER_GUIDE.md`, `re/README.md` as the knowledge index; `re/deviations.md` keeps only
   the open, keep and enhanced rows (closed rows: git history).

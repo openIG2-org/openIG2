@@ -1049,3 +1049,122 @@ fn tutorial_irritate() {
     let after = g.state.diplomacy().relations[en][6].v[MESSAGES];
     assert_eq!(after as i32, (before as i32 + 1000).min(i16::MAX as i32), "6 → EN: Viszony[EN][6].MESSAGES += 1000");
 }
+
+/// The radial menu's story icons on `quick-1.sav` (`Game::story_icon`, re/screens/starmap.md §14.5), against what
+/// ig2.exe's `Starmap_Main` did with them (`run_screen.py --kep 2 --rop 0x10|0x11|0x12 --probe
+/// probes/story_icons.js`, the exe's own fleet 10 there; a trader's fleet here): 0x10 picked planet 54 from
+/// `RandSeed[0]` 30689 over the ten owned planets and left 1671738591; 0x11 ran `Story_Special(0x11, f)` and deleted
+/// the fleet's design-0x1c ship; 0x12 on planet 17 (empire 3) with story 402 just started armed the bomb.
+#[test]
+fn story_icons_match_the_exe() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-1.sav");
+    if !p.exists() {
+        eprintln!("no {}; skipping", p.display());
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let save = load(&p);
+    let fresh = || Game::new(SaveState::from_save(&save, &tech_defaults), &rules);
+    let g = fresh();
+    let owned: Vec<usize> = (1..=g.state.planet_count()).filter(|&p| g.state.colony().planets[p].owner != 0).collect();
+    assert_eq!(owned, [17, 19, 42, 43, 46, 49, 54, 67, 71, 74], "quick-1's owned planets as the exe saw them");
+    let f: usize = g.state.fleets.iter().skip(1).position(|f| f[0x15] == 9).expect("a trader's fleet") + 1;
+
+    // 0x10: the story fleet's wormhole.
+    let mut g = fresh();
+    let mut r = g.state.rng();
+    r.set_state(0, 30689);
+    g.state.store_rng(&r);
+    g.story_icon(0x10, f as i32);
+    let rec = &g.state.fleets[f];
+    let half = |o: usize| i16::from_le_bytes([rec[o], rec[o + 1]]);
+    let fl = |o: usize| f32::from_le_bytes(rec[o..o + 4].try_into().unwrap());
+    assert_eq!((half(0x40), half(0x42), fl(0x44), fl(0x48)), (1, 1, 54.0, 0.0));
+    assert_eq!(g.state.rng().state(0), 1671738591);
+
+    // 0x11: the virus alert, only with a ship of design 0x1c; the first one goes.
+    let mut g = fresh();
+    let ships = g.state.ships.len();
+    g.story_icon(0x11, f as i32);
+    assert_eq!(g.state.mem.i32(va::STORY_SPECIAL), 0, "no design-0x1c ship: nothing");
+    let mut rec = [0u8; 6];
+    rec[..2].copy_from_slice(&(f as i16).to_le_bytes());
+    rec[2..4].copy_from_slice(&0x1ci16.to_le_bytes());
+    g.state.ships.push(rec);
+    g.story_icon(0x11, f as i32);
+    let s: [i32; 8] = g.state.mem.i32s(va::STORY_SPECIAL);
+    assert_eq!((s[0], s[1]), (0x11, f as i32));
+    assert_eq!(i16::from_le_bytes([g.state.ships[ships][2], g.state.ships[ships][3]]), 0x7fff, "the ship deleted");
+
+    // 0x12: the gigabomb.
+    let mut g = fresh();
+    let mut st = g.state.story();
+    st.start_story(402, true);
+    g.state.store_story(&st);
+    g.story_icon(0x12, 17);
+    let m = &g.state.mem;
+    let list = |k: u32, at: u32| -> Vec<(i32, i32)> { (1..=m.i32(va::STORY_LIST_COUNTS + 4 * k) as u32).map(|i| (m.i32(at + 8 * i), m.i32(at + 8 * i + 4))).collect() };
+    assert_eq!(m.i32(va::STORY_ADAT + 0x44), 0);
+    assert_eq!(list(0, va::STORY_PLANETS).last(), Some(&(4021, 17)));
+    assert_eq!(list(1, va::STORY_COUNTERS), [(4022, 3000)]);
+    assert_eq!(list(3, va::STORY_VARS), [(500, 10), (4021, 1)]);
+    assert_eq!(m.i32(va::AKT_PLANET), 17);
+    // 60 days on the planet blows up (or went free first) and the episode is won.
+    g.set_pause(false, false);
+    g.set_speed(3, false);
+    let mut ticks = 0;
+    while g.state.story().is_running(402) && ticks < 5000 {
+        g.advance_clock();
+        g.run_tick();
+        ticks += 1;
+    }
+    assert!(!g.state.story().is_running(402), "story 402 still running after {ticks} ticks");
+    assert!(g.events.iter().any(|e| matches!(e, GameEvent::Story(StoryEvent::DestroyPlanet(17)))) || g.state.colony().planets[17].owner == 0);
+    eprintln!("story 402 won after {ticks} ticks");
+}
+
+/// `Grwar8020hoz` (story 862's planet 8620, info −0x21ac) on `quick-1.sav`, against ig2.exe calling it on two fleets
+/// in turn (`run_screen.py --kep 2 --planet 42 --fleets 2 --probe probes/grwar8020.js`): each fleet is deleted (owner
+/// 0xff), the first call posts a message and sets `v(8622)` = 1 (the variables then `[(500, 10), (8622, 1)]`), the
+/// second posts none.
+#[test]
+fn story_planet_ground_war_matches_the_exe() {
+    let Some(inst) = install() else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-1.sav");
+    if !p.exists() {
+        eprintln!("no {}; skipping", p.display());
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let mut g = Game::new(SaveState::from_save(&load(&p), &tech_defaults), &rules);
+    // Every planet's colony map (`+0x23`) is among the install's, so `War::locate_tank` always runs the port: the
+    // `War::place` hook (cell (100, 100)) only serves rules without the maps.
+    let unmapped: Vec<usize> = (1..=g.state.planet_count()).filter(|&q| rules.ground_maps.get(g.state.mem.u8(va::PLANETS + (q * ig2_sim::save::PLANET_SIZE) as u32 + 0x23) as usize).is_none()).collect();
+    assert!(unmapped.is_empty(), "planets without a colony map: {unmapped:?}");
+    let at = va::PLANETS + (17 * ig2_sim::save::PLANET_SIZE) as u32 + 0x16a;
+    g.state.mem.write(at, &(-0x21ac_i16).to_le_bytes());
+    let traders: Vec<usize> = (1..g.state.fleets.len()).filter(|&f| g.state.fleets[f][0x15] == 9).take(2).collect();
+    assert_eq!(traders.len(), 2);
+    let vars = |g: &Game| -> Vec<(i32, i32)> {
+        let m = &g.state.mem;
+        (1..=m.i32(va::STORY_LIST_COUNTS + 12) as u32).map(|i| (m.i32(va::STORY_VARS + 8 * i), m.i32(va::STORY_VARS + 8 * i + 4))).collect()
+    };
+    for (k, &f) in traders.iter().enumerate() {
+        g.state.fleets[f][0x5c..0x60].copy_from_slice(&1i32.to_le_bytes());
+        let before = g.events.len();
+        g.ground_war(f, 17);
+        let posted = g.events[before..].iter().filter(|e| matches!(e, GameEvent::Story(StoryEvent::NewMessage { id: 8624, .. }))).count();
+        assert_eq!(g.state.fleets[f][0x15], 0xff, "fleet {f} deleted");
+        assert_eq!(posted, (k == 0) as usize);
+        assert_eq!(vars(&g), [(500, 10), (8622, 1)]);
+    }
+}

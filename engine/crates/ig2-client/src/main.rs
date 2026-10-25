@@ -30,6 +30,8 @@
 //!           E,S,L,P` the detail mode on entry E (slot S, leaving, design pointer) with `--info-texts H,OC,OP`;
 //!           `--info-star F` the star log at `infoframe` F and `--info-log FILE` its records (§6.8);
 //!           `--info-select K,X,Y,I` the planet-settings menu of hot-spot K open at (X, Y) on item I (§7.1).
+//! Play-through: `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]` plays whole
+//!           games headless (`playthrough.rs`, docs/BUILDING.md).
 //! Info:     `ig2-client --info [--save <file.sav>] [--ticks N]` prints the starmap's planets and fleets.
 //!
 //! The install comes from `IG2_INSTALL_DIR`, else the one found (`install_root`; the window says so when there is none,
@@ -49,6 +51,7 @@ mod colony_war;
 mod colony_weather;
 mod diplomacy;
 mod diplomacy_scene;
+mod display;
 mod font;
 mod help;
 mod hud;
@@ -65,6 +68,7 @@ mod mp_wait;
 mod new_game;
 mod options;
 mod orders;
+mod playthrough;
 mod prof;
 mod render;
 mod render3d;
@@ -603,6 +607,7 @@ fn main() {
             Some(out) => parse(&args[2..]).and_then(|o| render::snapshot(&o, std::path::Path::new(out))),
             None => Err("usage: --snapshot <out.png> [options]".into()),
         },
+        Some("--playthrough") => playthrough::main(&args[1..]),
         Some("--info") => parse(&args[1..]).and_then(|o| info(&o)),
         Some("--colony-check") => match &args[1..] {
             [map, surface] => colony_check(map, surface),

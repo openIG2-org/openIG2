@@ -118,6 +118,9 @@ pub enum Action {
     Design(crate::starmap_info::DesignOrder),
     /// A story hero's design sent back from the sale menu (`Story_Special(0x19, fleet, design)`, single player).
     HeroBack { fleet: i32, design: i32 },
+    /// The radial menu's story icon `icon` on fleet or planet `target` (`Starmap_Main`: 0x10 and 0x11 in single
+    /// player only, after a click when `click`; 0x12 always, silent).
+    StoryIcon { icon: i32, target: i32, click: bool },
     /// `TutorialCheckEvent(id)` (re/rules/tutorial.md §4).
     Tutorial(i32),
 }

@@ -50,7 +50,7 @@ pub mod new_game;
 pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
 pub use design_orders::{DesignOrder, DesignRecord};
 pub use info_orders::InfoOrder;
-pub use message_orders::{choice_disabled, dialogue_in_progress, MessageOrder};
+pub use message_orders::{choice_count, choice_disabled, dialogue_in_progress, MessageOrder};
 pub use orders::{OrderEvent, StarmapOrder};
 pub use realtime::{RealTime, RealTimeEvent, SpBattles};
 pub use research_orders::ResearchOrder;
@@ -1410,6 +1410,18 @@ impl<'r> Game<'r> {
 
     fn ai(&mut self) {
         self.with_ai(|st, w, hooks| st.daily(w, hooks));
+    }
+
+    /// Ours (the play-through harness, `docs/BUILDING.md`): empire `e` is handed to the computer as the original
+    /// hands a dropped multiplayer human (`PlayerKi` 2, `BirodalomMIzik` on, `INIT_MI_KIESETT`). `EN` stays, so the
+    /// stories, messages and the end checks still treat `e` as the player's; its battles route as the AI's.
+    pub fn autopilot(&mut self, e: usize) {
+        if !(1..EMPIRES).contains(&e) {
+            return;
+        }
+        self.state.mem.set_u8(va::PLAYER_KI + e as u32, 2);
+        self.state.mem.set_u8(va::AI_EMPIRE + e as u32, 1);
+        self.with_ai(|st, w, hooks| st.init_dropped(w, e, hooks));
     }
 
     /// Run `f` on the AI's world (decoded from the state, stored back afterwards).

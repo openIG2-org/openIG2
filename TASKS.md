@@ -8,15 +8,17 @@ at the next cleanup.
 ## M7: playable 1.0
 
 ### Finish the game
-- [ ] **Starmap story actions**: the radial icons 0x10/0x11/0x12: the gigabomb (story 402), the story
+- [x] **Starmap story actions**: the radial icons 0x10/0x11/0x12: the gigabomb (story 402), the story
   fleet's wormhole, the virus alert. 0x11 is offered but does nothing; 0x10/0x12 are never offered
   (`ig2-client/src/starmap_menus.rs` `rop_places`/`fire`, `re/screens/starmap.md`); the campaign episodes that need
   them must be completable.
-- [ ] **The story-planet ground war**: `Grwar8020hoz` (`ig2-sim/src/game/battles.rs`, `GroundScripted`),
+- [x] **The story-planet ground war**: `Grwar8020hoz` (`ig2-sim/src/game/battles.rs`, `GroundScripted`),
   and `War::locate_tank`'s fallback without a colony map (fixed cell 100,100), `re/rules/ground-combat.md`.
-- [ ] **Play-through harness**: drive a campaign, a scenario and a skirmish headless at high speed to
-  victory/defeat (scripted orders or the AI playing the human's side), save and load on the way; report every
-  panic, hang and story that never fires. Then the same for a 2-peer loopback MP game (desync check).
+- [x] **Play-through harness**: `ig2-client --playthrough` drives whole games headless with the AI
+  playing the human's side, saving and loading on the way (`docs/BUILDING.md` → Play-through harness).
+- [ ] **Story-aware play-through driver**: the AI-played human loses all three campaigns, so later
+  episodes, CampaignOver and the campaign end videos are never reached headless; drive the campaigns to their end.
+- [ ] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check).
 - [ ] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
   recorded input replacing the live mouse (deviations 141, 174, 198).
 - [ ] **Diplomacy and spy leftovers**: diplomacy's MP-only menus (0x2e) and lip sync; the spy screen's
@@ -25,7 +27,7 @@ at the next cleanup.
 ### Ship it
 - [x] **Install detection**: find the GOG install (registry, default paths, GOG Galaxy) when
   `IG2_INSTALL_DIR` is unset; a clear message when none is found; check the `ig2.exe` hash.
-- [ ] **Display settings**: window/fullscreen/borderless, resolution, vsync and the letterbox option in
+- [x] **Display settings**: window/fullscreen/borderless, resolution, vsync and the letterbox option in
   the Options screen (enhanced-styled), saved in our settings file.
 - [ ] **Release bundle**: a `--release` build script per platform (Windows first), version from a
   `VERSION` file, a zip with the exe and a readme; no game data.
@@ -35,7 +37,7 @@ at the next cleanup.
 ### Multiplayer over the internet
 - [x] **Port mapping in the client**: wire `ig2-net::portmap` (UPnP/NAT-PMP) into hosting, opt-in.
 - [x] **Join codes and private rooms**: in the MP room UI.
-- [ ] **Desync soak**: long loopback MP games with every order type; trace the untraced MP paths when a
+- [x] **Desync soak**: long loopback MP games with every order type; trace the untraced MP paths when a
   desync shows (U15 economy, U18 production, U22 AI, U23 ground war; `re/README.md` → Open unknowns).
 - [ ] **Rendezvous / relay service**.
 

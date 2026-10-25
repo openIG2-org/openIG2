@@ -147,6 +147,37 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
     }
 }
 
+/// [`state_hash`]'s parts, each hashed on its own: which part of two states differs (a desync's diagnosis).
+pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)> {
+    fn h<T: Serialize + ?Sized>(x: &T) -> u64 {
+        let mut d = <sha2::Sha256 as sha2::Digest>::new();
+        wire::to_sink(x, &mut d).expect("the state encodes");
+        u64::from_le_bytes(sha2::Digest::finalize(d)[..8].try_into().unwrap())
+    }
+    let v = view(game, pending);
+    vec![
+        ("mem", h(&v.mem)),
+        ("template", h(&v.template)),
+        ("fleets", h(&v.fleets)),
+        ("ships", h(&v.ships)),
+        ("waypoints", h(&v.waypoints)),
+        ("designs", h(&v.designs)),
+        ("buildings", h(&v.buildings)),
+        ("story", h(&v.story)),
+        ("buckets", h(&v.buckets)),
+        ("multiplayer_blob", h(&v.multiplayer_blob)),
+        ("fresh_buildings", h(&v.fresh_buildings)),
+        ("libc", h(&v.libc)),
+        ("names", h(&(&v.fleet_name, &v.empire_names, &v.family_names))),
+        ("ground_fields", h(&v.ground_fields)),
+        ("view", h(&v.view)),
+        ("humans", h(&v.humans)),
+        ("realtime", h(&v.realtime)),
+        ("pending", h(&v.pending)),
+        ("inboxes", h(&v.inboxes)),
+    ]
+}
+
 /// The state hash (ADR 0007 §3): the first 8 bytes of SHA-256 over the snapshot encoding of `game` and `pending`.
 pub fn state_hash(game: &Game, pending: &[Command]) -> u64 {
     let mut h = <sha2::Sha256 as sha2::Digest>::new();

@@ -53,7 +53,7 @@ pub enum BattleEvent {
     Ground { fleet: usize, planet: usize, attacker: u8, owner: u8, lopsided: bool, won: bool, story_planet: i32 },
     /// The routing chose the real-time ground war (`StartGrWar`): not run here.
     GroundRealTime { fleet: usize, planet: usize },
-    /// A story planet (`BolygoInfoIs(p, −0x21ac)`): `Grwar8020hoz` (campaign), not ported.
+    /// A story planet (`BolygoInfoIs(p, −0x21ac)`): `Grwar8020hoz` ran instead of a ground war.
     GroundScripted { fleet: usize, planet: usize },
     /// The ground war's side effects (`EpuletDelete`, mines, abandonment).
     GroundSide { planet: usize, event: GroundEvent },
@@ -409,14 +409,31 @@ impl Game<'_> {
         }
     }
 
+    /// `Grwar8020hoz(f)` (exe 0x5c28e0, ELF 0x72f950; `ground-combat.md` §2 step 1): story 862's planet 8620 (info
+    /// −0x21ac) takes no ground war: the attacking fleet is deleted (`FlottaDelete`) and, the first time (`v(8622)`),
+    /// message 8624 is posted; its `SetParamStr(8624, …)` names a slot past 5, so nothing is written.
+    fn grwar_8020(&mut self, f: usize) {
+        use crate::story::{MessageText, StoryEvent, StoryWorld};
+        self.with_story(|st, w| {
+            w.event(StoryEvent::DeleteFleet(f as i32));
+            if st.v_get(8622) == 0 {
+                st.v_set(8622, 1);
+                w.event(StoryEvent::NewMessage { id: 8624, arg: 0 });
+                let p = st.b_search(8622, 0, w);
+                w.event(StoryEvent::MessageParam { slot: 8624, text: MessageText::Planet(p) });
+            }
+        });
+    }
+
     /// `GroundWarIndit(f, p)` (exe 0x59c2d0, `ground-combat.md` §2, §6.3–§6.4).
-    pub(super) fn ground_war(&mut self, f: usize, p: usize) {
+    pub fn ground_war(&mut self, f: usize, p: usize) {
         if self.fleet_i32(f, 0x5c) < 1 {
             return;
         }
         let g = self.globals();
         let r = self.planet_rec(p);
         if (0..5).any(|k| i16::from_le_bytes([r[0x16a + 2 * k], r[0x16b + 2 * k]]) == -0x21ac) {
+            self.grwar_8020(f);
             self.events.push(GameEvent::Battle(BattleEvent::GroundScripted { fleet: f, planet: p }));
             return;
         }

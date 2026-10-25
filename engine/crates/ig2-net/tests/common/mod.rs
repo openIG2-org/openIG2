@@ -268,3 +268,25 @@ pub fn space_clash(mut state: SaveState) -> SaveState {
     state.store_starmap(&map);
     state
 }
+
+/// The install's start data with placeholder texts (both ends use the same, so the states agree).
+#[allow(dead_code)]
+pub fn with_start_data<T>(inst: &ig2_formats::Install, f: impl FnOnce(&ig2_sim::game::new_game::StartData) -> T) -> T {
+    let exe = inst.read_raw("ig2.exe").unwrap();
+    let pe = ig2_rules::PeImage::parse(&exe).unwrap();
+    let image = |at: u32, len: usize| pe.read_loaded(at, len).unwrap_or_else(|_| vec![0; len]);
+    let scenario = |_: i32| None;
+    let names = |n: usize, p: &str| (0..n).map(|i| format!("{p}{i}").into_bytes()).collect::<Vec<_>>();
+    let data = ig2_sim::game::new_game::StartData {
+        image: &image,
+        scenario: &scenario,
+        race_names: names(20, "race"),
+        constellations: names(15, "Const"),
+        tech_names: names(193, "tech"),
+        design_names: names(47, "design"),
+        fleet_name: b"Fleet".to_vec(),
+        design_texts: Default::default(),
+        message_kinds: 0,
+    };
+    f(&data)
+}

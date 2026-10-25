@@ -35,8 +35,9 @@ cargo clippy --all-targets
 | `IG2_SAVE_DIR` | Where saves are read from (default `_local/saves`) |
 | `IG2_SLOT_DIR`, `IG2_OPTIONS_DIR` | Our save slots and settings file |
 | `IG2_TRACE_DIR` | Recordings for the replay tests |
-| `IG2_VSYNC` | `0` turns vsync off at start (V toggles it) |
+| `IG2_VSYNC` | `0` turns vsync off at start (V toggles it; the Options screen's `VSync` setting is the saved default) |
 | `IG2_PROFILE`, `IG2_PROFILE_BATTLE`, `IG2_PROFILE_STEP`, `IG2_PROFILE_TOUR` | Per-phase frame timings (`docs/perf.md`) |
+| `IG2_SOAK_TURNS`, `IG2_SOAK_SEED`, `IG2_SOAK_SEEDS`, `IG2_SOAK_STOP`, `SOAK_EVENTS` | Desync soak (`ig2-net/tests/soak.rs`, `re/rules/multiplayer.md` §7.1.1) |
 | `IG2_GRAB_DIR` | Where headless capture frames go |
 | `IG2_NO_LAND`, `IG2_DIP_DEBUG`, `IG2_DIP_DUMP`, `IG2_SPWC_INFO` | Debug switches for specific screens |
 
@@ -45,3 +46,23 @@ cargo clippy --all-targets
 frame or an input script's frames without a window; it is used by the capture comparison
 (`tools/trace/run_screendiff.py`, `tools/README.md`). The full flag list is the doc comment at the top of
 `engine/crates/ig2-client/src/main.rs`.
+
+## Play-through harness
+`ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]` plays whole games headless at
+the fastest speed on the player's path (`World::tick`, the commands a screen sends), with the sim's AI playing the
+human's empire (`Game::autopilot`). Runs: `campaign:C[:D]` (campaign 1..=3, difficulty 1/2/4), `scenario:<name|all>`,
+`skirmish[:RACE[:AIS]]`, or `all` (the three campaigns, every scenario of the menu, a skirmish). The harness reads
+the inbox (the first answer each dialogue allows), leaves finished real-time battles, takes the pause off and saves
+and loads our `.ig2s` every M game months (default 6). Each run ends in victory, defeat, the tick budget (default
+400,000 ticks of 50 ms), a stall (nothing changed hands and no story moved for M months, default 36) or a stuck
+clock, and reports panics, broken invariants (money, fleets or planets of dead empires, empty fleets, a save that
+changes the state), the stories left running and what the client was asked to show (videos, real-time battles).
+`--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets
+the units fight it out) and the diplomacy questions reach its inbox. The exit code is 1 when a run failed (a panic,
+a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit.
+
+The same as a test, off by default (it takes minutes per run):
+```bash
+cd engine
+IG2_PLAYTHROUGH=campaign:1,skirmish IG2_PLAYTHROUGH_TICKS=100000 cargo test --release -p ig2-client playthrough -- --ignored --nocapture
+```

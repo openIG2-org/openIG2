@@ -29,8 +29,8 @@ const ROWS: usize = 17;
 /// `DrawLaser(…, 0x3c, 0x50, 0xfa, …)`.
 const LASER: [i32; 3] = [0x3c, 0x50, 0xfa];
 
-/// An option row (`KirakMenuPontok` exe 0x5171f0's table).
-#[derive(Debug, Clone, PartialEq)]
+/// An option row (`KirakMenuPontok` exe 0x5171f0's table), or one of the remake's own (`crate::display`).
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Row {
     pub name: Vec<u8>,
     pub key: String,
@@ -41,6 +41,10 @@ pub struct Row {
     pub id: i32,
     pub dep: i32,
     pub mp_ok: bool,
+    /// Ours: the value's texts (else the game's on/off and low/medium/high).
+    pub labels: Vec<Vec<u8>>,
+    /// Ours: a remake row, drawn after the page's own under the "Remake" heading.
+    pub ours: bool,
 }
 
 /// The rows from the user's exe, named as `Options_LoadStrings` (exe 0x51a2c0) names them: row k gets
@@ -61,6 +65,7 @@ pub fn read_rows(exe: &ig2_rules::PeImage, texts: &UiTexts) -> Vec<Row> {
             id: i32_at(r, 0x210),
             dep: i32_at(r, 0x214),
             mp_ok: r[0x228] != 0,
+            ..Row::default()
         })
         .collect()
 }
@@ -80,6 +85,7 @@ pub fn check_dependencies(rows: &mut [Row], multiplayer: bool) {
             r.enabled = false;
         }
     }
+    crate::display::dependencies(rows);
 }
 
 /// A slider (`OptCsuszkak`, 0x2a0 bytes each).
@@ -598,7 +604,7 @@ impl OptionsScreen {
 
     /// The row of the page under `at` that a press toggles (enabled only).
     fn row_at(&self, at: [f32; 2]) -> Option<usize> {
-        for (n, (k, r)) in self.rows.iter().enumerate().filter(|(_, r)| r.page == self.page).enumerate() {
+        for (n, k, r) in self.page_rows() {
             let y = self.row_y(n as i32);
             let (x, py) = (at[0] as i32, at[1] as i32);
             if r.enabled && py >= y && py < y + 0xf && (0x1f..=0x117).contains(&x) {
@@ -606,6 +612,11 @@ impl OptionsScreen {
             }
         }
         None
+    }
+
+    /// The page's rows with their line (ours one line lower, under the heading) and index.
+    fn page_rows(&self) -> impl Iterator<Item = (usize, usize, &Row)> {
+        self.rows.iter().enumerate().filter(|(_, r)| r.page == self.page).enumerate().map(|(n, (k, r))| (n + r.ours as usize, k, r))
     }
 
     fn row_y(&self, n: i32) -> i32 {
@@ -701,7 +712,10 @@ impl OptionsScreen {
             o.set(k, &v.to_string());
         }
         for r in &self.rows {
-            o.set(&r.key, &r.value.to_string());
+            match r.labels.get(r.value.max(0) as usize) {
+                Some(l) if r.ours && r.key == crate::display::RESOLUTION => o.set(&r.key, &String::from_utf8_lossy(l)),
+                _ => o.set(&r.key, &r.value.to_string()),
+            }
         }
     }
 }
@@ -946,13 +960,18 @@ impl OptionsScreen {
             }
         }
         // The page's rows (`KirakMenuPontok`).
-        for (n, r) in self.rows.iter().filter(|r| r.page == self.page).enumerate() {
+        let mut heading = true;
+        for (n, _, r) in self.page_rows() {
             let y = self.row_y(n as i32) as f32;
+            if r.ours && std::mem::take(&mut heading) {
+                text(f, b"Remake", 0x1e as f32, y - 0xf as f32, 6, 2, Align::Left, d.col(1, b2));
+            }
             let (px, py) = (self.at[0] as i32, self.at[1] as i32);
             let over = py >= y as i32 && py < y as i32 + 0xf && (0x1f..=0x117).contains(&px) && self.grab.is_none();
             let (cn, cv) = if !r.enabled { (1, 1) } else if over { (2, 2) } else { (0x22, 0x25) };
             text(f, &r.name, 0x1e as f32, y, r.name.len(), 2, Align::Left, d.col(cn, b2));
             let (val, c) = match (r.states, r.value) {
+                _ if !r.labels.is_empty() => (r.labels.get(r.value.max(0) as usize).cloned().unwrap_or_default(), cv),
                 (1, 1) => (d.texts.get(13, 3, 1), cv),
                 (1, _) => (d.texts.get(13, 3, 2), cv),
                 (2, 0..=2) => (d.texts.get(13, 3, 3 + r.value as u16), 2),
@@ -1159,9 +1178,9 @@ mod tests {
     fn screen() -> OptionsScreen {
         let texts = UiTexts { strings: Default::default(), kinds: Vec::new(), lang: ig2_formats::text::Lang::En };
         let rows = vec![
-            Row { name: b"Auto Save".to_vec(), key: "OptionsKellAutoSave".into(), enabled: true, value: 1, states: 1, page: 2, id: 101, dep: 0, mp_ok: true },
-            Row { name: b"GB sim".to_vec(), key: "DebugData_grBattle".into(), enabled: true, value: 0, states: 1, page: 2, id: 102, dep: 0, mp_ok: true },
-            Row { name: b"GB overrun".to_vec(), key: "DebugData_GrNoOverrun".into(), enabled: true, value: 1, states: 1, page: 2, id: 103, dep: -102, mp_ok: true },
+            Row { name: b"Auto Save".to_vec(), key: "OptionsKellAutoSave".into(), enabled: true, value: 1, states: 1, page: 2, id: 101, dep: 0, mp_ok: true, ..Row::default() },
+            Row { name: b"GB sim".to_vec(), key: "DebugData_grBattle".into(), enabled: true, value: 0, states: 1, page: 2, id: 102, dep: 0, mp_ok: true, ..Row::default() },
+            Row { name: b"GB overrun".to_vec(), key: "DebugData_GrNoOverrun".into(), enabled: true, value: 1, states: 1, page: 2, id: 103, dep: -102, mp_ok: true, ..Row::default() },
         ];
         let s = Settings { music: 100, sound: 50, gamma: 0, gamma_enabled: false, page: 0, slot: 1, gfx_detail: 0 };
         let mut slots = vec![None; SLOTS + 1];
@@ -1313,6 +1332,30 @@ mod tests {
         let mut f = ig2_formats::options::Options::default();
         o.store(&mut f);
         assert_eq!((f.int("Music Volume"), f.int("OptionsMelyikMod"), f.int("DebugData_grBattle")), (Some(100), Some(2), Some(0)));
+    }
+
+    /// The remake's rows (`crate::display`) sit a line below the page's own, cycle their labels and store the
+    /// resolution as its text.
+    #[test]
+    fn remake_rows() {
+        let mut o = screen();
+        let mut f = ig2_formats::options::Options::default();
+        f.set(crate::display::MODE, "0");
+        o.rows.extend(crate::display::rows(&f, &[(1920, 1080), (1280, 720)], (1920, 1080)));
+        o.press([150.0, 75.0], &mut |_| {});
+        // Three own rows, the heading on line 3, ours from line 4: the resolution on line 5.
+        let y = |n: i32| (0x5c + n * 15 + 2) as f32;
+        o.press([40.0, y(5)], &mut |_| {});
+        let mut f = ig2_formats::options::Options::default();
+        o.store(&mut f);
+        assert_eq!(f.get(crate::display::RESOLUTION), Some("1280x720"));
+        o.press([40.0, y(5)], &mut |_| {});
+        o.press([40.0, y(4)], &mut |_| {});
+        assert_eq!(o.rows[3].value, 1, "borderless");
+        assert!(!o.rows[4].enabled);
+        o.press([40.0, y(5)], &mut |_| {});
+        o.store(&mut f);
+        assert_eq!((f.get(crate::display::RESOLUTION), f.int(crate::display::MODE)), (Some("1920x1080"), Some(1)));
     }
 
     #[test]

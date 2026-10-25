@@ -2,14 +2,14 @@
 
 Port status: §2–§6 (routing, landing, the auto-resolved war) are ported in `engine/crates/ig2-sim/src/ground.rs`
 and `Game::ground_war` (`game/battles.rs`), verified at runtime (§10, `traces/2026-10-16-ground.md`). The
-**real-time** ground war (§11) is ported in `ground/`; §9 lists what is left. Not ported:
-- `Grwar8020hoz` (the campaign's story-planet ground war, `BolygoInfoIs(p, −0x21ac)`, §2 step 1): `Game` only
-  reports `BattleEvent::GroundScripted` (`engine/crates/ig2-sim/src/game/battles.rs:56`).
-- `LocateTankSuitablePosition` without a colony map (§3.1 step 5, `HalveGroupC`, `AddOwnTankToPlanet`):
-  `War::locate_tank` runs the port (`placement::locate_tank`, §11.1) when the war has the planet's map (`War::map`,
-  from `GameRules::ground_maps`, `game/battles.rs:664`); without one it falls back to the `War::place` hook
-  (`engine/crates/ig2-sim/src/ground.rs:580`, documented there as not ported), for which `Game` passes a fixed
-  cell (100, 100) (`game/battles.rs:663`).
+**real-time** ground war (§11) is ported in `ground/`; §9 lists what is left.
+- `Grwar8020hoz` (the campaign's story-planet ground war, `BolygoInfoIs(p, −0x21ac)`, §2 step 1) is ported as
+  `Game::grwar_8020` (`game/battles.rs`), verified against ig2.exe (`tools/trace/probes/grwar8020.js`, test
+  `story_planet_ground_war_matches_the_exe`); `BattleEvent::GroundScripted` still follows it.
+- `LocateTankSuitablePosition` (§3.1 step 5, `HalveGroupC`, `AddOwnTankToPlanet`): `War::locate_tank` runs
+  `placement::locate_tank` (§11.1) with the planet's map (`War::map`, from `GameRules::ground_maps`, built from
+  every surface in the install, so always present in play). The `War::place` hook with the fixed cell (100, 100)
+  only serves rules built without the install's maps (headless tests).
 
 A ground war starts when a fleet carrying ground vehicles (design class 2, `space-combat.md` §1) wins a
 planet battle or arrives at an undefended enemy planet: `GroundWarIndit(fleet, planet)` (called from
@@ -147,7 +147,9 @@ Weapons (`+0x1d0`) and their `WF_Weapons` entry (§1.3): 1 → W0, 0x2000 → W1
 
 ## 2. Routing (`GroundWarIndit(f, p)`)
 1. Fleet `f` without ground vehicles (`+0x5c < 1`) → nothing. `BolygoInfoIs(p, −0x21ac)` (a story
-   planet) → `Grwar8020hoz(f)` (campaign) and nothing else.
+   planet) → `Grwar8020hoz(f)` (exe 0x5c28e0, `Game::grwar_8020`; campaign) and nothing else: `FlottaDelete(f)`, then the
+   first time (`v(8622)` = 0) `v(8622) := 1`, `NewMessage(8624, 0)` (its `SetParamStr(8624, …)` is a slot past 5:
+   nothing written).
 2. `KemkedesFoldiharcLekezel(f, p)` (exe 0x53ef00): for owners < 9, the planet's owner sees every class-2 vehicle
    design of `f` and the attacker every class-2 design of the garrison (vehicles with fleet `−p`)
    (`KemkedesTervLekezel` 0x53f060: hull tech and pod techs, `space-combat.md` §4 step 2), and the attacker sees
@@ -524,10 +526,6 @@ the passability heights read past the colony map's grid (§11.13), the auto-aim 
 the same shot (§11.10).
 
 ## 9. Not ported
-- `Grwar8020hoz` (story planets, §2 step 1): `Game` only reports `BattleEvent::GroundScripted`
-  (`engine/crates/ig2-sim/src/game/battles.rs:56`).
-- The `War::place` hook (`ground.rs:580`) is not wired to `placement::locate_tank`: `Game` passes a fixed cell
-  (100, 100) (`game/battles.rs:663`), used whenever the war has no colony map (Port status above).
 - Real time (§11.11): `GenerateMap`'s editor mode, the rest of `Refresh2` (visuals), `UpgradeTanks`, the MP
   battle protocol.
 
@@ -924,8 +922,8 @@ and 4 for the weapons 2 and 0x100), then remembers the cell.
   point, which gives the same armour side (§11.10).
 - An AI-against-AI battle on screen has no end in `WF::Refresh` (§11.7 step 9).
 - `UpgradeTanks`.
-- `LocateTankSuitablePosition` is ported (`placement::locate_tank`, §11.1), but the `War::place` fallback without a
-  colony map is the fixed cell (100, 100) (Port status above).
+- `LocateTankSuitablePosition` is ported (`placement::locate_tank`, §11.1); the `War::place` fixed cell (100, 100)
+  only serves rules without the install's maps (Port status above).
 
 ### 11.12 Cosmetic libc draws
 libc `rand()` decides nothing here, but every draw is replayed in order because debris occupies list-B

@@ -55,6 +55,11 @@ pub fn choice_disabled(state: &crate::save::SaveState, k: usize) -> bool {
     k < 4 && state.mem.u8(at::CHOICES + at::CHOICE * k as u32 + 8) != 0
 }
 
+/// The open block's answers (`AktValasztasok`, written by the last order).
+pub fn choice_count(state: &crate::save::SaveState) -> usize {
+    state.mem.i32(at::CHOICE_COUNT).clamp(0, 4) as usize
+}
+
 /// The entry of the dialogue in progress (`FolyamatbanU ≠ −1`: `UAktUzenet`), for the screen to show.
 pub fn dialogue_in_progress(state: &crate::save::SaveState) -> Option<usize> {
     (state.mem.i32(at::FOLYAMATBAN_U) != -1).then(|| state.mem.i32(at::CURRENT)).filter(|&i| i >= 0).map(|i| i as usize)

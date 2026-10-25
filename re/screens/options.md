@@ -327,8 +327,9 @@ Quit reads BACK with the tooltip (13,1,13). Sounds (`--sounds`, `tools/trace/scr
 dependencies, slots, name entry, quit question, tutorial layout, MP states (the MP host keeps Save for ADR 0007's MP
 save, a joiner has neither), Back re-entering the screen before as its `_Belep` with OldKep 0xd. Load reads an original
 `save<n>.sav` or our `save<n>.ig2s`; save writes ADR 0007's format plus the live starmap camera chunk (row 70); settings
-go to `ig2-rework-options.dat` (row 69). Missing: the faders' hover glow `FadeKerettelKerekitDesign`, the
-research design-return flags (row 359, kept); load into a war colony and the held slot pick are decompile-only (rows
+go to `ig2-rework-options.dat` (row 69). The game page adds six "Remake" rows below the original's seven (enhanced,
+row 402; `display.rs`): display mode, resolution, vsync, letterbox, live background, one-language names. Missing:
+the faders' hover glow `FadeKerettelKerekitDesign`, the research design-return flags (row 359, kept); load into a war colony and the held slot pick are decompile-only (rows
 190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open
 differences are the random sparks and the hover glow.

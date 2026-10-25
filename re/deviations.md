@@ -6,7 +6,7 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (401).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (403).
 
 ## Open: player-visible
 
@@ -78,6 +78,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 378 | MP wait overlay | no joining question (mode 2): the door admits returning humans by name and refuses newcomers | minor | input.md §9 |
 | 384 | colony, rain | the exe's GL lines give ~2× the streak pixels of our thin quads (same lines, length, direction) | no | colony.md §2.6 |
 | 395 | MP rename | a fleet/planet rename travels as `Command::Rename` to every peer; the exe renames on its own machine only | minor | multiplayer.md §5.6 |
+| 401 | starmap, story icons 0x10-0x12 | the exe calls `Story_Special`/`FlottaMozgat`/`HajoDelete` straight from the screen; ours sends `Command::StoryIcon` through the lockstep (0x10/0x11 single player only, as the exe) | no | starmap.md §14.5 |
 
 ## Enhanced proposals (owner decides)
 
@@ -87,8 +88,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 96 | design, rename in MP | proposal: the design rename travels as an order (the exe writes it in place: an MP desync); worth making the MP default | minor | design.md §13 |
 | 133 | colony camera | ours zooms with the mouse wheel; the original has no wheel zoom (classic: none) | minor | colony.md §11.9 |
 | 146 | game end, high scores | proposal: a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
-| 159 | all screens, V key | proposal: a V hotkey for vsync (the original has none; else move it to Options; today `IG2_VSYNC=0`) | minor | input.md |
+| 159 | all screens, V key | a V hotkey for vsync (the original has none); also a "Vertical sync" row in Options (row 402) | minor | input.md |
 | 169 | starmap, wheel | proposal: wheel zoom (and right-drag pan) on the starmap; classic has neither | minor | starmap.md |
 | 197 | videos, skip | ours skips a video in any window mode; the exe only in fullscreen (`anyEvent` 0x7329d0) | minor | video.md §4 |
 | 263 | overlay screens, background | the default redraws the starmap/colony live under the overlay (`LiveBackground`); classic = the exe's frozen `SaveScreen` picture (ADR 0015) | minor | overlay-background.md |
 | 322 | title video | proposal: music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
+| 402 | options, game page | six "Remake" rows under the original's seven (display mode, resolution, vsync, 4:3 letterbox, live background, one-language names), saved in `ig2-rework-options.dat`; their names and the mode/resolution labels are English only (the game has no strings for them); captures and `--snapshot` stay classic | minor | options.md §14 |

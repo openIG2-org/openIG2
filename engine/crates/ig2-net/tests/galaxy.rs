@@ -124,27 +124,6 @@ fn a_lone_host_needs_an_ai_to_start() {
     assert!(h.can_start());
 }
 
-/// The install's start data with placeholder texts (both ends use the same, so the states agree).
-fn with_start_data<T>(inst: &Install, f: impl FnOnce(&StartData) -> T) -> T {
-    let exe = inst.read_raw("ig2.exe").unwrap();
-    let pe = ig2_rules::PeImage::parse(&exe).unwrap();
-    let image = |at: u32, len: usize| pe.read_loaded(at, len).unwrap_or_else(|_| vec![0; len]);
-    let scenario = |_: i32| None;
-    let names = |n: usize, p: &str| (0..n).map(|i| format!("{p}{i}").into_bytes()).collect::<Vec<_>>();
-    let data = StartData {
-        image: &image,
-        scenario: &scenario,
-        race_names: names(20, "race"),
-        constellations: names(15, "Const"),
-        tech_names: names(193, "tech"),
-        design_names: names(47, "design"),
-        fleet_name: b"Fleet".to_vec(),
-        design_texts: Default::default(),
-        message_kinds: 0,
-    };
-    f(&data)
-}
-
 fn started<'r>(mut c: LobbyClient, data: &StartData, rules: &'r GameRules) -> Result<ClientSession<'r>, session::Error> {
     let start = Instant::now();
     while c.status != Status::Started {
@@ -174,7 +153,7 @@ fn every_machine_builds_the_galaxy_and_runs_in_step() {
         return;
     };
     let rules = common::game_rules(&inst);
-    with_start_data(&inst, |data| {
+    common::with_start_data(&inst, |data| {
         let mut h = LobbyHost::new_galaxy(settings(), 0xBEEF, RULES, "Host");
         assert!(h.set_options(GalaxyOptions { planets: 20, ais: 1, ..GalaxyOptions::default() }));
         let mut a = join(&mut h, "Alice");
@@ -225,7 +204,7 @@ fn every_machine_builds_the_galaxy_and_runs_in_step() {
 fn a_different_start_is_refused() {
     let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
     let rules = common::game_rules(&inst);
-    with_start_data(&inst, |data| {
+    common::with_start_data(&inst, |data| {
         let mut h = LobbyHost::new_galaxy(settings(), 0xF00D, RULES, "Host");
         let mut a = join(&mut h, "Alice");
         pump(&mut h, &mut [&mut a], |h, c| h.state().members.len() == 2 && synced(h, c));
@@ -253,7 +232,7 @@ fn a_different_start_is_refused() {
 fn a_lost_player_leaves_and_the_others_play_on() {
     let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
     let rules = common::game_rules(&inst);
-    with_start_data(&inst, |data| {
+    common::with_start_data(&inst, |data| {
         use ig2_net::session::SessionEvent;
         use ig2_sim::game::{GameEvent, GameOver};
         let mut h = LobbyHost::new_galaxy(settings(), 0xD1E, RULES, "Host");
@@ -283,10 +262,10 @@ fn a_lost_player_leaves_and_the_others_play_on() {
             }
         };
         step(&mut hs, &mut clients, 20, &mut now);
-        hs.own.game.events.clear();
+        hs.own.game.take_events();
         hs.own.game.empire_dies(alice, &[]);
         for c in &mut clients {
-            c.peer.game.events.clear();
+            c.peer.game.take_events();
             c.peer.game.empire_dies(alice, &[]);
         }
         let game_over = |p: &Peer| p.game.events.iter().filter_map(|e| if let GameEvent::GameOver(o) = e { Some(*o) } else { None }).collect::<Vec<_>>();
