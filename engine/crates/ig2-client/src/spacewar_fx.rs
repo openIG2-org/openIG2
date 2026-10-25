@@ -644,7 +644,7 @@ impl Fx {
         }
     }
 
-    /// `robbanasdarabok(p, size, speed)` (ELF 0x686830): the first free piece, spinning.
+    /// `robbanasdarabok(p, size, speed)` (ELF 0x686830, exe 0x57f170): the first free piece, spinning.
     fn piece(&mut self, p: [f32; 3], size: f32, speed: f32) {
         let size = if size as f64 > 0.002 { 0.002 } else { size };
         let Some(i) = self.debris.iter().position(|d| d.counter == 0) else { return };
@@ -657,9 +657,10 @@ impl Fx {
                 *s = -*s;
             }
         }
+        // `ScaleObja` keeps the record's rotation `+0x5c`: a reused piece starts at the turn its last life left
+        // (exe 0x57f170 has no `RotateObj`) [obs fx8 t2100: the exe's fresh pieces show every face, not one pose].
         let d = &mut self.debris[i];
         (d.size, d.pos, d.spin, d.counter) = (size, p, spin, 1);
-        d.turn = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
     }
 
     /// `Darabok` (ELF 0x69a7d0): the shown pieces move by their spin and turn by it, until counter 80.
@@ -977,6 +978,22 @@ mod tests {
             ticks += 1;
         }
         assert_eq!(ticks, 80);
+    }
+
+    /// `robbanasdarabok` (exe 0x57f170) sets scale, place, spin and counter but no rotation: a reused piece keeps the
+    /// turn of its last life [obs fx8 dumps: the pieces' records at counter 2..7 are turned, not the identity].
+    #[test]
+    fn a_reused_piece_keeps_its_turn() {
+        let mut fx = Fx::new(Tables { pools: [4, 4, 4, 4, 4], ..Default::default() });
+        fx.piece([0.0; 3], 0.001, 1.0);
+        let d = fx.debris.iter().position(|d| d.counter != 0).unwrap();
+        while fx.debris[d].counter != 0 {
+            fx.debris_tick();
+        }
+        let turn = fx.debris[d].turn;
+        assert_ne!(turn, [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]);
+        fx.piece([0.0; 3], 0.001, 1.0);
+        assert_eq!((fx.debris[d].counter, fx.debris[d].turn), (1, turn));
     }
 
     #[test]

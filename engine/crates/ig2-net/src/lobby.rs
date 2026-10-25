@@ -24,7 +24,7 @@ use crate::transport::{loopback, Loopback, Transport};
 use crate::wire;
 
 /// The lobby protocol version (checked in the hello).
-pub const LOBBY_VERSION: u32 = 4;
+pub const LOBBY_VERSION: u32 = 5;
 /// The host answers a wrong password after this long (one guess per connection).
 pub const WRONG_PASSWORD_DELAY: Duration = Duration::from_secs(1);
 /// A joiner that hasn't finished the admission by then is dropped.

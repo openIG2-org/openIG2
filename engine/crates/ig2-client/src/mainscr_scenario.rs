@@ -602,25 +602,26 @@ impl ScenarioList {
             text(f, &d.texts.get(15, 2, if self.high_score { 0xe } else { 0xd }), 0x163, 0x1c4, 0x1e, 2, Align::Centre, if hover == 0x27 { 2 } else { 0x25 }, fade);
             text(f, &d.texts.get(15, 4, e.difficulty.max(0) as u16), 0x143, 0x28, 0x1e, 2, Align::Left, 0x22, pfade);
         }
-        if self.high_score || e.skirmish() {
-            if !e.skirmish() {
-                text(f, &fmts(&d.texts.get(15, 2, 0xf), &e.name), 0x2d, 0x15a, 0x32, 3, Align::Left, 1, pfade);
-                for k in 0..HIGHSCORE_SLOTS {
-                    let (x, y) = (if k >= 5 { 0xe1 } else { 0x2d }, 0x173 + 0xd * (k % 5) as i32);
-                    text(f, format!("{:02}.", k + 1).as_bytes(), x, y, 3, 2, Align::Left, 2, pfade);
-                    match e.scores.get(k) {
-                        Some((name, score)) => {
-                            text(f, name, x + 0x16, y, 0x14, 2, Align::Left, 2, pfade);
-                            let days = [format!("{} ", score / 0x32).into_bytes(), d.texts.get(15, 2, 0x10)].concat();
-                            text(f, &days, x + 0x5c, y, 0xc, 2, Align::Left, 2, pfade);
-                        }
-                        None => text(f, &d.texts.get(15, 2, 0x11), x + 0x16, y, 0x14, 2, Align::Left, 1, pfade),
+        if self.high_score && !e.skirmish() {
+            text(f, &fmts(&d.texts.get(15, 2, 0xf), &e.name), 0x2d, 0x15a, 0x32, 3, Align::Left, 1, pfade);
+            for k in 0..HIGHSCORE_SLOTS {
+                let (x, y) = (if k >= 5 { 0xe1 } else { 0x2d }, 0x173 + 0xd * (k % 5) as i32);
+                text(f, format!("{:02}.", k + 1).as_bytes(), x, y, 3, 2, Align::Left, 2, pfade);
+                match e.scores.get(k) {
+                    Some((name, score)) => {
+                        text(f, name, x + 0x16, y, 0x14, 2, Align::Left, 2, pfade);
+                        let days = [format!("{} ", score / 0x32).into_bytes(), d.texts.get(15, 2, 0x10)].concat();
+                        text(f, &days, x + 0x5c, y, 0xc, 2, Align::Left, 2, pfade);
                     }
+                    None => text(f, &d.texts.get(15, 2, 0x11), x + 0x16, y, 0x14, 2, Align::Left, 1, pfade),
                 }
             }
         } else {
-            for (k, l) in e.lines.iter().enumerate() {
-                text(f, l, 0x2a, 0x15a + 0xd * k as i32, l.len(), 2, Align::Left, 0x22, pfade);
+            // The ten description strings (exe 0x4fc8d0, entry +0xc..+0x30, empty ones skipped): rows 0..=4 beside the
+            // race picture at x 0x2a + 0x48, the rest under it at 0x2a; a skirmish entry's all at 0x2a + 0x48.
+            for (k, l) in e.lines.iter().enumerate().filter(|(_, l)| !l.is_empty()) {
+                let x = 0x2a + if k < 5 || e.skirmish() { 0x48 } else { 0 };
+                text(f, l, x, 0x15a + 0xd * k as i32, l.len(), 2, Align::Left, 0x22, pfade);
             }
         }
     }
@@ -643,6 +644,23 @@ pub fn draw_name(f: &mut Frame, d: &Draw, n: &crate::mainscr::NameEntry, blink: 
         let c = d.col(1, 100.0);
         f.push(d.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(x as f32 + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
     }
+}
+
+/// The disconnected box (`YouAreDisconnectedVolt`): `MainScrGfx2D_1`'s two faders (111, 163, 420 × 98) and the OK
+/// button (270, 220, 100 × 30), then `FUN_004fe190` (exe, a `SetRenderOther` box of `MainScrInitNullBoxes`):
+/// `GetString(0x13, 6, 1)` at (0x140, 0xb4) and the reason `GetString(0x12, 4, n)` at (0x140, 200), both 0x28 cells,
+/// size 3, centred, colour 2; "OK" (exe 0x856adc) at (0x140, 0xe5), colour 2 with the pointer on it (x 270..370,
+/// y 220..250), else 1.
+pub fn draw_disconnected(f: &mut Frame, d: &Draw, reason: u16, at: [f32; 2]) {
+    let v = &d.v;
+    for r in [[111.0, 163.0, 420.0, 98.0], [270.0, 220.0, 100.0, 30.0]] {
+        fader::kirak_fader(f, d.white, v, r, [0.0, 54.0, 90.0], 100.0, [0.0, 90.0, 130.0], 30.0, [0.0, 0.0]);
+    }
+    d.font.text(f, v, &d.texts.get(0x13, 6, 1), 0x140 as f32, 0xb4 as f32, 0x28, 3, Align::Centre, d.col(2, 100.0), None);
+    d.font.text(f, v, &d.texts.get(0x12, 4, reason), 0x140 as f32, 200.0, 0x28, 3, Align::Centre, d.col(2, 100.0), None);
+    let (x, y) = (at[0].floor() as i32, at[1].floor() as i32);
+    let on = ((x - 0x10e) as u32) < 0x65 && ((y - 0xdc) as u32) < 0x1f;
+    d.font.text(f, v, b"OK", 0x140 as f32, 0xe5 as f32, 0x28, 3, Align::Centre, d.col(if on { 2 } else { 1 }, 100.0), None);
 }
 
 /// `sprintf(fmt, n)` for the one `%d` the texts carry (the texts are code-page bytes, kept as they are).

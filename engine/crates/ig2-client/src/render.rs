@@ -1026,9 +1026,10 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut panel_model = crate::colony_ui::PanelBuilding::default();
-    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr), ui.spin(), size);
+    let light = view.panel_light(&l.rules.ground_maps, curr.map);
+    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr), ui.spin(), light, size);
     let en = world.game.state.mem.i32(ig2_sim::save::va::EN);
-    let info_model = crate::colony_ui::render_kis_info(r, &l.install, &l.tables, &ui, &mut scene, &mut panel_model, &curr, en, size);
+    let info_model = crate::colony_ui::render_kis_info(r, &l.install, &l.tables, &ui, &mut scene, &mut panel_model, &curr, en, light, size);
     let mut frame = view.build(r, &l.install, &l.tables, &l.rules.ground_maps, &mut scene, &prev, &curr, o.alpha, t);
     // The drawn units' `GetObjCenter`s for the labels.
     if let Some(gm) = l.rules.ground_maps.get(curr.map) {
@@ -1514,6 +1515,14 @@ fn messages_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
     hud.messages.enter(true);
     let mut heard: Vec<(Option<u32>, SoundId)> = vec![(None, SoundId::new(Table::Mes, 0))];
     let mut mouse = [320.0, 240.0];
+    let mut tip = crate::kit::Tooltip::default();
+    // The talking-head clip as the window plays it (`App::message_clip`; re/screens/video.md §5.3), on the script's
+    // clock; no speech, so the speaking clip runs until the text is typed.
+    let mut head = crate::video::message::HeadClip::default();
+    let (mut armed, mut lists) = (false, None);
+    if hud.interlace.is_none() {
+        hud.interlace = crate::assets::Image::load(&l.install, "dataraw/textures/messages/finalinter_bmp.pvr").ok().map(|i| r.add_texture(&i));
+    }
     for tick in 0..=script.end() {
         if tick > 0 {
             let m = &mut hud.messages;
@@ -1521,24 +1530,75 @@ fn messages_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
             m.tick();
             m.answer();
             let typing = m.text_up();
-            if let Some(d) = m.open.as_mut().filter(|_| typing) {
-                d.advance(10.0);
+            if let Some(d) = m.open.as_mut() {
+                if typing { d.advance(10.0) } else { d.wait(10.0) }
             }
+            match m.open.as_mut().filter(|_| typing) {
+                None => {
+                    head.close();
+                    armed = false;
+                }
+                Some(d) => {
+                    use crate::messages_screen::ClipStep;
+                    let state = &world.game.state;
+                    let en = state.mem.i32(ig2_sim::save::va::EN);
+                    let lists = lists.get_or_insert_with(|| crate::video::message::load_lists(&l.install, en));
+                    let k = state.mem.i32(ig2_sim::save::va::INBOX_RANDOM + 4 * d.index as u32);
+                    let race = crate::window::human_race(state);
+                    let table = &l.tables.videos.message_clips;
+                    let steps = std::mem::take(&mut d.clip);
+                    for s in &steps {
+                        if let ClipStep::PartRead(part) = *s {
+                            head.part_read(lists, d.id.max(0) as u32, part);
+                            armed = true;
+                        }
+                    }
+                    if armed && d.front_colour() == 2 {
+                        head.start(&l.install, table, k);
+                        armed = false;
+                    }
+                    for s in &steps {
+                        if let ClipStep::TypedOut { plain, ends } = *s {
+                            if head.akt == 0 {
+                                head.wait(&l.install, table, k, race);
+                            }
+                            if plain || ends {
+                                head.end(&l.install, race);
+                            }
+                            head.fresh = true;
+                        }
+                    }
+                }
+            }
+        }
+        hud.clip = None;
+        let fresh = std::mem::take(&mut head.fresh);
+        if let Some(p) = head.playback.as_mut().filter(|_| !fresh) {
+            p.frame_blocking(r, tick as u64 * 10);
+            hud.clip = p.quad(size, &crate::font::Virtual::new(size));
         }
         if hud.messages.render_step() {
             println!("t {tick}: the closing has run out, the screen goes");
             break;
         }
+        // `UpdateFrame`'s tooltip, every drawn frame (one a UI tick): the top bar's slots win over the screen's
+        // (`Messages_MouseInit`'s texts, re/screens/messages.md §6).
+        let (slot, text) = match crate::hud::bar_tip_spot(mouse) {
+            Some(n) => (n, hud.texts.get(18, 1, n as u16 - 1)),
+            None => hud.messages.spot_at(mouse).map_or((0, Vec::new()), |id| (id + 0x1e, crate::messages_screen::MessagesScreen::tip_text(id, &hud.texts))),
+        };
+        tip.moved(mouse);
+        tip.update(tick as f64 * 10.0, slot, text.split(|&b| b == 0).next().map_or(0, <[u8]>::len), false);
         if script.grabs.contains(&tick) {
             hud.frame_tex = models.render_messages(r, &l.install, hud.messages.frame, size);
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Messages, t);
-            hud.snapshot_pointer(&mut frame, size, Some(mouse));
+            hud.snapshot_timed_tip(&mut frame, size, &tip, &text);
             let rgba = r.draw_to_image(&frame, o.size, t);
             let path = crate::script::grab_path(out, tick);
             crate::assets::write_snapshot(&path, o, &rgba)?;
             let m = &hud.messages;
-            println!("{}: t {tick} | mesframe {} open {} closing {} message {}", path.display(), m.frame, m.opened, m.closing, m.open.is_some());
+            println!("{}: t {tick} | mesframe {} open {} closing {} message {}", path.display(), m.frame, m.opened, m.closing, m.open.as_ref().map(|d| (d.typed_all, d.over)).map_or("none".into(), |x| format!("{x:?}")));
         }
         if tick > 0 {
             // The input of the frame before, after this frame's ticks and render: `IG2_gameUpdate` and `Messages_Main`
@@ -1858,6 +1918,13 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         i.advance(&world.game.state, &sel, t, view.camera.zoom, 0);
         i.advance(&world.game.state, &sel, t, view.camera.zoom, 200);
         i.turn = o.info_alap;
+        // The vehicle panel's cells and preview turn per drawn frame: `drawn_frames` = round(100·t) − 1.
+        if let (Some(n), crate::starmap_info::Kind::Tanks) = (o.spin_frames, i.kind) {
+            i.turn = Some((n + 1.0) / 100.0);
+        }
+    }
+    if let Some(n) = o.spin_frames {
+        panels.spin_frames = n;
     }
     if o.panel.is_some() {
         let size = [o.size.0 as f32, o.size.1 as f32];

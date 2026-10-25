@@ -981,3 +981,16 @@ is the `fifo`/`starf` faders' shine phase (deviation 208's mechanism): the `bg/`
 so the client draws its own phase. With another dumped phase (`fx13g/fresh/transfer`'s `faders` added to a copy of
 `bg/planets-state.sav.ui.json`) the slot matches the exe (crop mean RGB 5.4/24.8/38.1 vs 5.5/24.7/38.2) and planets
 frame is 2.78. Fresh exe captures with the dump would settle the phase on all nine screens.
+## 2026-10-25, FX12/material follow-ups
+- `messages-open.json` (230.sav): the inbox captions and the hover tooltip match (t129-140 identical); the message clip is drawn by the sequence now, t140 16.4 -> 1.9, t281 23.7 -> 1.8.
+- Info `quick-1.sav`: heads region 3.42 -> 2.12 (own slot ambients only), all regions match.
+- `messages-close-press.json --via-starmap 60`: exe-only result, a press during the closing never reaches the starmap; same as the client (row 326).
+
+## 2026-10-25, FX17b follow-up and FX13 rows 333/334
+- 800x600, quick-1.sav, exe grabs reused. Panel pass lights: `colony:42` planet_panel 8.55 -> 6.55, bottom_info 8.31 -> 8.00, frame 8.97 -> 8.73; `colony:42 --colony-info` planet_panel 8.73 -> 7.01, bottom_info 8.73 -> 8.04, frame 7.66 -> 7.44; `grwar:17` bottom_info 14.35 -> 14.29.
+- `transfer` (new exe grab `lanef/transfer2-0.png`, `--spin-frames`): left_panel 3.52 -> 2.70, right_panel 3.19 -> 2.38, frame 2.71; scroll_bar 7.55 stays (exe grab has the pointer, the tooltip and the glow rings at another phase).
+- `tanksinfo` (`lanef/tanks-0.png`): model 6.15 -> 3.00, list 3.61 -> 2.99, frame 3.71 -> 3.08.
+
+## 2026-10-25, SpaceWar FX7 leftovers
+- fx8b sequence (`_local/screendiff/spacewar-debris3`, `--exe-seq _local/traces-fx8b/fx8`): frame 3.36-4.18 (was 3.45-4.20), view 3.73-4.79 (3.78-4.82), weapons 2.48-3.47 (2.60-4.41), topbar 2.56, console 2.80-3.17, radar 5.10-5.30, info_box as before (t1800/t1900 fader shine).
+- `spacewar_info` (1920x1080, `_local/screendiff/spacewar-info2`): frame 2.10-2.86 (2.26-2.94), view 2.21-2.34, weapons 3.99 from t500 (5.1), info box 3.0-3.5 (t700 15.5 = the exe's box shine).

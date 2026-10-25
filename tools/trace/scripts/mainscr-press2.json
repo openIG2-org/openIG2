@@ -1,0 +1,15 @@
+{
+ "screen": "main",
+ "note": "Rows 286/287/288 probe (probes/mainscr-input.js): single player (t 350); the scenario ring (box 2, AktIkon 0x20) held 30 frames with the right button (t 600), then with the left (t 700): press or release, and the 5-tick delay; the high-score toggle 0x27 held 40 frames (t 950), then a right press on it (t 1050).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [162, 267], "hold": 3},
+  {"t": 600, "press": [296, 82], "hold": 30, "button": 3},
+  {"t": 700, "press": [296, 82], "hold": 30},
+  {"t": 950, "press": [355, 455], "hold": 40},
+  {"t": 1050, "press": [355, 455], "hold": 3, "button": 3},
+  {"t": 1100, "mouse": [320, 240]}
+ ],
+ "grabs": [690, 900, 1000, 1080],
+ "tail": 20
+}

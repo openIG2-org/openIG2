@@ -157,6 +157,15 @@ mod tests {
         assert!(n == 0 || (n > 800 && lit > 50), "{n} vertices, {lit} lit by the parallel lights");
     }
 
+    /// The colony screen's panel pass (`run_screen.py --kep 3 --planet 42 --probe probes/colony_lights.js`, quick-1.sav,
+    /// 2026-10-25): the panel building under `mainmeshid2` (ambient 0x404040, `light5x` 0xffffff), the info box's model
+    /// under `mainmeshid5` (`light5` 0xffffff, ambient 0x4b4b4b) and one object of the main view.
+    #[test]
+    fn colony_panel_probe_matches_the_exe() {
+        let (n, lit) = replay_probe("light-colony42.jsonl");
+        assert!(n == 0 || (n > 300 && lit > 50), "{n} vertices, {lit} lit by the parallel lights");
+    }
+
     /// Replays a `--light-probe` trace through [`Lights::accumulate`]: (vertices, those not at the ambient alone).
     fn replay_probe(name: &str) -> (usize, usize) {
         let dir = std::env::var_os("IG2_TRACE_DIR")

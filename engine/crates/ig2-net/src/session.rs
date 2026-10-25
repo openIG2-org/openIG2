@@ -91,6 +91,23 @@ pub enum SessionMsg {
     Say(String),
     /// Host → peers, the sender included: `empire`'s chat line (`MULTIGET_Starmap`'s 0x3fc receiver).
     Said { empire: u8, text: String },
+    /// Host → the kicked peer: the host's `/kick` (`ExecuteString` → `MultiKickClient(client, 2)`, exe 0x512410:
+    /// socket packet 99, reason 2); the link goes, and the door refuses the name from then on.
+    Kicked,
+    /// Peer → host: where this machine takes over a host migration (rules/multiplayer.md §7.3): its listener's port
+    /// and the fingerprint of the listener's certificate.
+    Reach { port: u16, cert: [u8; 32] },
+    /// Host → peers: where each connected human's machine can be reached if the host goes (ADR 0012 §2).
+    Reachable(Vec<Candidate>),
+}
+
+/// A human's machine a survivor can connect to in a host migration: the address the host saw its link come from with
+/// the port it listens on, and its certificate's fingerprint (the survivor pins the connection by it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Candidate {
+    pub slot: u8,
+    pub addr: String,
+    pub cert: [u8; 32],
 }
 
 /// The chat entry's length (`IOMaxLen` 0x34, its NUL included).
@@ -146,6 +163,8 @@ pub enum SessionEvent {
     Left { empire: u8 },
     /// `empire`'s chat line (the host's own included).
     Said { empire: u8, text: String },
+    /// The host kicked `empire`'s player ([`HostSession::kick`]): away at once.
+    Kicked { empire: u8 },
     /// A connection was turned away at the admission.
     Refused(Refusal),
 }
@@ -264,6 +283,10 @@ struct Human {
     presence: Presence,
     /// `Host::heard` for its slot, and when that last changed (`None`: (re)started, noted at the next pump).
     heard: Option<(u64, Duration)>,
+    /// Kicked by the host: the door refuses the name.
+    kicked: bool,
+    /// Where its machine takes over a migration (its `Reach`; cleared when it drops).
+    reach: Option<Candidate>,
 }
 
 /// The host's side of a running game: the lockstep relay, the host's own player and the session policy.
@@ -292,6 +315,8 @@ pub struct HostSession<'r> {
     sent: HoldStatus,
     /// When the last `SessionMsg::Alive` went out.
     alive_sent: Option<Duration>,
+    /// The candidates last sent (`SessionMsg::Reachable`); `None`: send them again.
+    reachable: Option<Vec<Candidate>>,
     queued: Vec<SessionEvent>,
 }
 
@@ -359,7 +384,7 @@ impl<'r> HostSession<'r> {
     fn assemble(started: Started, own: Peer<'r>, fingerprint: [u8; 32], settings: SessionSettings) -> Self {
         let info = started.own.session.clone();
         let names: BTreeMap<u8, String> = info.names.iter().cloned().collect();
-        let humans = started.own.humans.iter().map(|&(slot, empire)| Human { slot, empire, name: names[&slot].clone(), presence: Presence::Here, heard: None }).collect();
+        let humans = started.own.humans.iter().map(|&(slot, empire)| Human { slot, empire, name: names[&slot].clone(), presence: Presence::Here, heard: None, kicked: false, reach: None }).collect();
         Self {
             host: started.host,
             own,
@@ -376,6 +401,7 @@ impl<'r> HostSession<'r> {
             desyncs_seen: 0,
             sent: HoldStatus::default(),
             alive_sent: None,
+            reachable: None,
             queued: Vec::new(),
         }
     }
@@ -411,7 +437,7 @@ impl<'r> HostSession<'r> {
                 } else {
                     Presence::Migrating { since: now }
                 };
-                Human { slot, empire, name: names.get(&slot).cloned().unwrap_or_default(), presence, heard: None }
+                Human { slot, empire, name: names.get(&slot).cloned().unwrap_or_default(), presence, heard: None, kicked: false, reach: None }
             })
             .collect();
         info.host = peer.slot;
@@ -432,6 +458,7 @@ impl<'r> HostSession<'r> {
             desyncs_seen: 0,
             sent: HoldStatus::default(),
             alive_sent: None,
+            reachable: None,
             queued: Vec::new(),
         };
         s.update_hold(now);
@@ -494,6 +521,7 @@ impl<'r> HostSession<'r> {
                 (SessionMsg::Pause(on), Some(empire)) => self.set_pause(empire, on),
                 (SessionMsg::Leave, Some(_)) => self.left(slot)?,
                 (SessionMsg::Say(text), Some(empire)) => self.said(empire, &text),
+                (SessionMsg::Reach { port, cert }, Some(_)) => self.reached(slot, port, cert),
                 _ => {}
             }
         }
@@ -529,7 +557,32 @@ impl<'r> HostSession<'r> {
         }
         self.in_battle = running;
         self.update_hold(now);
+        self.send_reachable();
         Ok(std::mem::take(&mut self.queued))
+    }
+
+    /// `slot`'s machine listens on `port` with certificate `cert` (`SessionMsg::Reach`), at the address its link
+    /// comes from.
+    fn reached(&mut self, slot: u8, port: u16, cert: [u8; 32]) {
+        let Some(ip) = self.host.remote(slot) else { return };
+        let addr = std::net::SocketAddr::new(ip, port).to_string();
+        if let Some(h) = self.humans.iter_mut().find(|h| h.slot == slot) {
+            h.reach = Some(Candidate { slot, addr, cert });
+        }
+    }
+
+    /// The connected humans' machines a survivor could migrate to.
+    pub fn candidates(&self) -> Vec<Candidate> {
+        self.humans.iter().filter(|h| h.presence == Presence::Here).filter_map(|h| h.reach.clone()).collect()
+    }
+
+    /// Send the candidates to every peer when they changed or a peer was (re)added.
+    fn send_reachable(&mut self) {
+        let now = self.candidates();
+        if self.reachable.as_ref() != Some(&now) {
+            self.host.broadcast(&Msg::Session(SessionMsg::Reachable(now.clone())));
+            self.reachable = Some(now);
+        }
     }
 
     /// The host's own player pauses or resumes.
@@ -560,6 +613,22 @@ impl<'r> HostSession<'r> {
     /// drops the session (its links close); the survivors migrate (ADR 0012).
     pub fn leave(&mut self) {
         self.host.broadcast(&Msg::Session(SessionMsg::Leave));
+    }
+
+    /// The host's `/kick` (input.md §5.1): `empire`'s connected player (not the host's own) hears `Kicked`, its link
+    /// goes and its empire is away at once (the original's computer takeover, 0x404); the door refuses its name from
+    /// then on (`Refusal::Kicked`).
+    pub fn kick(&mut self, empire: u8, now: Duration) -> Result<(), Error> {
+        let own = self.own.slot;
+        let i = self.humans.iter().position(|h| h.empire == empire && h.presence == Presence::Here && h.slot != own).ok_or(Error::NotInSession(empire))?;
+        if let Some(mut link) = self.host.remove_peer(self.humans[i].slot) {
+            link.send(&Msg::Session(SessionMsg::Kicked));
+        }
+        self.humans[i].kicked = true;
+        self.away_now(i)?;
+        self.queued.push(SessionEvent::Kicked { empire });
+        self.update_hold(now);
+        Ok(())
     }
 
     /// `empire`'s player is back on `link` (admitted by the glue): it gets the host's state now, the bundles since,
@@ -680,6 +749,7 @@ impl<'r> HostSession<'r> {
             self.host.send_to(slot, &Msg::Session(SessionMsg::Resumed { from }));
             self.host.send_log(slot, frontier);
             self.host.send_to(slot, &Msg::Session(SessionMsg::Status(self.sent.clone())));
+            self.reachable = None;
             self.queued.push(SessionEvent::Resumed { empire, turn: frontier });
         } else {
             let turn = self.restart(slot, link)?;
@@ -718,6 +788,13 @@ impl<'r> HostSession<'r> {
     fn left(&mut self, slot: u8) -> Result<(), Error> {
         self.host.remove_peer(slot);
         let Some(i) = self.humans.iter().position(|h| h.slot == slot && h.presence == Presence::Here) else { return Ok(()) };
+        let empire = self.away_now(i)?;
+        self.queued.push(SessionEvent::Left { empire });
+        Ok(())
+    }
+
+    /// `humans[i]` is away without the grace (it left, or was kicked).
+    fn away_now(&mut self, i: usize) -> Result<u8, Error> {
         let empire = self.humans[i].empire;
         if self.paused.remove(&empire) {
             self.queued.push(SessionEvent::Paused { empire, on: false });
@@ -727,8 +804,8 @@ impl<'r> HostSession<'r> {
             self.host.inject(empire, Command::PlayerAway);
         }
         self.humans[i].presence = Presence::Away;
-        self.queued.push(SessionEvent::Left { empire });
-        Ok(())
+        self.humans[i].reach = None;
+        Ok(empire)
     }
 
     fn dropped(&mut self, slot: u8, now: Duration) -> Result<(), Error> {
@@ -747,6 +824,7 @@ impl<'r> HostSession<'r> {
         self.catch_up()?;
         let waiting = self.own.game.realtime_running();
         self.humans[i].presence = if waiting { Presence::Waiting { since: now } } else { Presence::Away };
+        self.humans[i].reach = None;
         self.queued.push(SessionEvent::Dropped { empire, waiting });
         Ok(())
     }
@@ -779,6 +857,7 @@ impl<'r> HostSession<'r> {
         debug_assert_eq!(from, first_input);
         self.host.send_log(slot, snap.turn);
         self.host.send_to(slot, &Msg::Session(SessionMsg::Status(self.sent.clone())));
+        self.reachable = None;
         Ok(snap.turn)
     }
 
@@ -825,6 +904,9 @@ fn returning(humans: &[Human], name: &str) -> Result<usize, Refusal> {
     if named.peek().is_none() {
         return Err(Refusal::Started);
     }
+    if humans.iter().any(|h| h.name == name && h.kicked) {
+        return Err(Refusal::Kicked);
+    }
     named.find(|(_, h)| h.presence != Presence::Here).map(|(i, _)| i).ok_or(Refusal::Connected)
 }
 
@@ -856,8 +938,14 @@ pub struct ClientSession<'r> {
     silent: bool,
     /// The host left the game ([`SessionMsg::Leave`]).
     host_left: bool,
+    /// The host kicked this player ([`SessionMsg::Kicked`]): closed for good, no migration.
+    kicked: bool,
     /// The chat lines `(empire, text)` received since the glue last took them.
     pub chat: Vec<(u8, String)>,
+    /// This machine's migration listener (`SessionMsg::Reach`), told to every new host.
+    reach: Option<(u16, [u8; 32])>,
+    /// The host's last word on where each human's machine can be reached (`SessionMsg::Reachable`).
+    pub candidates: Vec<Candidate>,
 }
 
 impl<'r> ClientSession<'r> {
@@ -902,7 +990,10 @@ impl<'r> ClientSession<'r> {
             alive_sent: None,
             silent: false,
             host_left: false,
+            kicked: false,
             chat: Vec::new(),
+            reach: None,
+            candidates: Vec::new(),
         }
     }
 
@@ -928,10 +1019,11 @@ impl<'r> ClientSession<'r> {
         }
         let mut run = 0;
         loop {
-            let mut tap = Tap { link: &mut *self.link, start: None, status: None, heard: false, left: false, chat: &mut self.chat };
+            let mut tap = Tap { link: &mut *self.link, start: None, status: None, heard: false, left: false, kicked: false, chat: &mut self.chat, candidates: &mut self.candidates };
             run += self.peer.poll(&mut tap, max_turns.saturating_sub(run))?;
             let (start, status) = (tap.start, tap.status);
             self.host_left |= tap.left;
+            self.kicked |= tap.kicked;
             if tap.heard || self.heard.is_none() {
                 self.heard = Some(now);
             }
@@ -950,7 +1042,26 @@ impl<'r> ClientSession<'r> {
         self.humans = start.humans.clone();
         self.delay = start.delay;
         self.restarts += 1;
+        self.send_reach();
         Ok(())
+    }
+
+    /// This machine takes over a host migration on `port` with certificate `cert` (rules/multiplayer.md §7.3): the
+    /// host is told, and each new host after it.
+    pub fn reach(&mut self, port: u16, cert: [u8; 32]) {
+        self.reach = Some((port, cert));
+        self.send_reach();
+    }
+
+    fn send_reach(&mut self) {
+        if let Some((port, cert)) = self.reach {
+            self.link.send(&Msg::Session(SessionMsg::Reach { port, cert }));
+        }
+    }
+
+    /// Where the human of `slot` can be reached, by the host's last word.
+    pub fn candidate(&self, slot: u8) -> Option<&Candidate> {
+        self.candidates.iter().find(|c| c.slot == slot)
     }
 
     /// The session as every member knows it.
@@ -968,6 +1079,9 @@ impl<'r> ClientSession<'r> {
     /// if that's this peer's slot, the glue calls [`HostSession::migrate`], else [`ClientSession::migrate`] with a link
     /// to it.
     pub fn successors(&self) -> Vec<u8> {
+        if self.kicked {
+            return Vec::new();
+        }
         let s = &self.status;
         let gone = |e: u8| s.away.contains(&e) || s.migrating.contains(&e) || s.waiting.iter().any(|w| w.0 == e);
         let mut slots: Vec<u8> = self.humans.iter().filter(|&&(slot, e)| slot != self.info.host && !gone(e)).map(|h| h.0).collect();
@@ -1018,6 +1132,7 @@ impl<'r> ClientSession<'r> {
                     self.peer.resume(from);
                     self.info.host = host;
                     self.migration = None;
+                    self.send_reach();
                     return Ok(true);
                 }
                 Msg::Lobby(LobbyMsg::Start(s)) => {
@@ -1026,6 +1141,7 @@ impl<'r> ClientSession<'r> {
                     return Ok(true);
                 }
                 Msg::Session(SessionMsg::Status(s)) => self.status = s,
+                Msg::Session(SessionMsg::Reachable(c)) => self.candidates = c,
                 _ => {}
             }
         }
@@ -1051,7 +1167,12 @@ impl<'r> ClientSession<'r> {
     /// The host is gone: the link closed, or the host was silent for `keep_alive` at the last pump (never during a
     /// migration: [`ClientSession::refused`] and the glue's connect timeout tell that one).
     pub fn closed(&self) -> bool {
-        self.migration.is_none() && (self.link.closed() || self.silent || self.host_left)
+        self.kicked || self.migration.is_none() && (self.link.closed() || self.silent || self.host_left)
+    }
+
+    /// The host kicked this player (input.md §5.1): [`ClientSession::closed`], and there is no one to migrate to.
+    pub fn kicked(&self) -> bool {
+        self.kicked
     }
 }
 
@@ -1072,7 +1193,10 @@ struct Tap<'a> {
     heard: bool,
     /// The host's `Leave` came.
     left: bool,
+    /// The host's `Kicked` came.
+    kicked: bool,
     chat: &'a mut Vec<(u8, String)>,
+    candidates: &'a mut Vec<Candidate>,
 }
 
 impl Transport for Tap<'_> {
@@ -1094,7 +1218,9 @@ impl Transport for Tap<'_> {
                 }
                 Some(Msg::Session(SessionMsg::Status(s))) => self.status = Some(s),
                 Some(Msg::Session(SessionMsg::Leave)) => self.left = true,
+                Some(Msg::Session(SessionMsg::Kicked)) => self.kicked = true,
                 Some(Msg::Session(SessionMsg::Said { empire, text })) => self.chat.push((empire, chat_text(&text))),
+                Some(Msg::Session(SessionMsg::Reachable(c))) => *self.candidates = c,
                 other => return Ok(other),
             }
         }

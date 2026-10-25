@@ -112,6 +112,9 @@ pub struct Dialogue {
     /// `ParbeszTyperPtrNovelo` and `MsgElteltMp`.
     step: f32,
     elapsed: f32,
+    /// The milliseconds since `MsgOldTime` not typed yet: the open (`KiertekelUjuzenet`) and `Messages_Belep` set it,
+    /// and only a typing pass (at `mesframe` 30) moves it on, so the first pass types the whole wait at once.
+    held: f32,
     /// `ParbeszKezdoSor`: the first line shown (the text scrolls past 13 lines).
     pub first_line: i32,
     pub answers: Vec<Answer>,
@@ -170,6 +173,7 @@ impl Dialogue {
             typed: 0,
             step: 0.4,
             elapsed: 0.0,
+            held: 0.0,
             first_line: 0,
             answers: Vec::new(),
             typed_all: false,
@@ -422,11 +426,17 @@ impl Dialogue {
         self.typed_all = false;
     }
 
+    /// `ms` milliseconds without a typing pass (before `mesframe` 30): `MsgOldTime` stays.
+    pub fn wait(&mut self, ms: f32) {
+        self.held += ms;
+    }
+
     /// The typer for `ms` milliseconds (`MsgElteltMp += ms/500`, a character per `ParbeszTyperPtrNovelo`); at the
     /// end `KiirtaMar`, and a conversation whose last answer led nowhere is over. A lone answer is taken as soon
     /// as the text is typed (`Melyikvalaszfolottvanazeger`).
     pub fn advance(&mut self, ms: f32) {
-        self.elapsed += ms / 500.0;
+        // `MsgElteltMp += (MsgActTime − MsgOldTime) / 500` (exe 0x507020), one add for the whole interval.
+        self.elapsed += (std::mem::take(&mut self.held) + ms) / 500.0;
         while self.step < self.elapsed {
             self.elapsed -= self.step;
             if self.typed < self.length {
@@ -656,6 +666,10 @@ impl MessagesScreen {
         self.opened = !animated;
         self.want_open = self.open.is_some();
         self.open_asked = false;
+        // `Messages_Belep`: `MsgOldTime = SDL_GetTicks()`.
+        if let Some(d) = &mut self.open {
+            d.held = 0.0;
+        }
         (self.closing, self.started, self.zero_seen, self.gone, self.kilep, self.left) = (false, false, false, false, false, false);
     }
 
@@ -776,6 +790,31 @@ impl MessagesScreen {
         }
     }
 
+    /// The lowest enabled hot-spot under the pointer. `Messages_MouseInit2` (exe 0x508940): 5 and 10 off; 3 once open
+    /// (`mesKINYITVA`); 4 and 6 only at `mesframe` 30; 7..=9 only with no answers pending and the text typed (also
+    /// during the opening).
+    pub fn spot_at(&self, at: [f32; 2]) -> Option<u32> {
+        let idle = self.open.as_ref().is_none_or(|d| d.answers.is_empty() && d.typed_all);
+        let at_30 = self.frame == 30.0;
+        SPOTS
+            .iter()
+            .filter(|(id, _)| match id {
+                5 | 10 => false,
+                3 => self.opened,
+                4 | 6 => at_30,
+                7..=9 => idle,
+                _ => true,
+            })
+            .find(|(_, [x, y, w, h])| at[0] >= *x as f32 && at[0] < (x + w) as f32 && at[1] >= *y as f32 && at[1] < (y + h) as f32)
+            .map(|(id, _)| *id)
+    }
+
+    /// The hot-spot's tooltip (`Messages_MouseInit` exe 0x508b10, `Mouse_Szoveg_Set` texts): `GetString(10, 1, id)`
+    /// for 1..=6, `GetString(10, 1, 7)` for the leaving spots 7..=10.
+    pub fn tip_text(id: u32, texts: &crate::ui::UiTexts) -> Vec<u8> {
+        texts.get(10, 1, id.min(7) as u16)
+    }
+
     /// A left press (`Messages_Main`) on inbox of `n` messages.
     pub fn press(&mut self, at: [f32; 2], n: usize) -> Press {
         // Inside `Messages_Kilep`'s loop the main loop's mouse pass doesn't run.
@@ -783,22 +822,7 @@ impl MessagesScreen {
             return Press::None;
         }
         let busy = self.open.as_ref().is_some_and(|d| !d.over);
-        // `Messages_MouseInit2` (exe 0x508940): 5 and 10 off; 3 once open (`mesKINYITVA`); 4 and 6 only at `mesframe`
-        // 30; 7..=9 only with no answers pending and the text typed (also during the opening).
-        let idle = self.open.as_ref().is_none_or(|d| d.answers.is_empty() && d.typed_all);
-        let at_30 = self.frame == 30.0;
-        let opened = self.opened;
-        let id = SPOTS
-            .iter()
-            .filter(|(id, _)| match id {
-                5 | 10 => false,
-                3 => opened,
-                4 | 6 => at_30,
-                7..=9 => idle,
-                _ => true,
-            })
-            .find(|(_, [x, y, w, h])| at[0] >= *x as f32 && at[0] < (x + w) as f32 && at[1] >= *y as f32 && at[1] < (y + h) as f32)
-            .map(|(id, _)| *id);
+        let id = self.spot_at(at);
         // `Messages_Main`: a press in the text's box hurries it whatever hot-spot it hits.
         if (0xba..0x201).contains(&(at[0] as i32)) && (1..0xa8).contains(&(at[1] as i32)) {
             if let Some(d) = &mut self.open {
@@ -917,6 +941,7 @@ mod tests {
             typed: 0,
             step: 0.4,
             elapsed: 0.0,
+            held: 0.0,
             first_line: 0,
             answers: Vec::new(),
             typed_all: false,
@@ -947,6 +972,24 @@ mod tests {
         d.clip.clear();
         d.advance(1000.0);
         assert_eq!(d.clip, [ClipStep::TypedOut { plain: true, ends: false }]);
+    }
+
+    /// `MsgOldTime` stays from the open until the first typing pass at `mesframe` 30, which types the whole wait at
+    /// once [obs: `messages-open.json` over 230.sav, 2026-10-25: opened at t 86, typed out (the end clip's sound) at
+    /// t 133, the first pass at 30].
+    #[test]
+    fn the_first_typing_pass_takes_the_wait_since_the_open() {
+        let txt = b"01 0001 12 TE
++ one two three
+";
+        let mut d = dialogue(b"", txt);
+        d.print_parts(1);
+        for _ in 0..45 {
+            d.wait(10.0);
+        }
+        assert_eq!(d.typed, 0);
+        d.advance(10.0);
+        assert!(d.typed_all, "{} of {}", d.typed, d.length);
     }
 
     #[test]

@@ -5,6 +5,8 @@
 //! machine (`HostSession::start_galaxy` / `ClientSession::new_galaxy`).
 //!
 //! Links come from a [`Net`]: QUIC and LAN discovery ([`QuicNet`]) in the client, in-process loopback ends in tests.
+//! The connection page also hosts a room for an MP save ([`MpScreen::host_save`]); a joiner's [`Session`] takes part in
+//! a host migration (rules/multiplayer.md §7.3).
 
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
@@ -12,7 +14,7 @@ use std::time::Duration;
 use ig2_net::discovery::{Announcement, Found};
 use ig2_net::galaxy::{GalaxyOptions, MAX_AIS, PLANETS};
 use ig2_net::lobby::{LobbyClient, LobbyHost, LobbyState, Refusal, Settings, SlotKind, Start, Status};
-use ig2_net::session::{ClientSession, HoldStatus, HostSession, SessionEvent, SessionSettings};
+use ig2_net::session::{ClientSession, HoldStatus, HostSession, MpSave, SessionEvent, SessionSettings};
 use ig2_net::{Peer, Transport};
 use ig2_sim::game::new_game::StartData;
 use ig2_sim::game::GameRules;
@@ -57,6 +59,11 @@ pub trait Net {
     fn sessions(&mut self) -> Vec<Found>;
     /// Connect to `addr` ("host" or "host:port"), pinned by `pin` (a LAN announcement's fingerprint).
     fn connect(&mut self, addr: &str, pin: Option<[u8; 32]>) -> Connecting;
+    /// A running game's listener on a joiner's machine (a host migration's successor takes the survivors on it):
+    /// no LAN announcement.
+    fn listen_game(&mut self) -> Result<Box<dyn Listener>, String> {
+        self.listen()
+    }
 }
 
 /// QUIC links and LAN discovery (ADR 0008).
@@ -102,6 +109,12 @@ impl Net for QuicNet {
         let host = ig2_net::quic::QuicHost::bind(any(GAME_PORT)).or_else(|_| ig2_net::quic::QuicHost::bind(any(0))).map_err(|e| e.to_string())?;
         let announcer = ig2_net::discovery::Announcer::bind_lan().map_err(|e| eprintln!("ig2-client: LAN announcement: {e}")).ok();
         Ok(Box::new(QuicListener { host, announcer }))
+    }
+
+    fn listen_game(&mut self) -> Result<Box<dyn Listener>, String> {
+        let any = |port| std::net::SocketAddr::from(([0, 0, 0, 0], port));
+        let host = ig2_net::quic::QuicHost::bind(any(GAME_PORT)).or_else(|_| ig2_net::quic::QuicHost::bind(any(0))).map_err(|e| e.to_string())?;
+        Ok(Box::new(QuicListener { host, announcer: None }))
     }
 
     fn sessions(&mut self) -> Vec<Found> {
@@ -226,10 +239,32 @@ pub enum Role {
     Joiner(Box<LobbyClient>),
 }
 
-/// The room's start, for [`launch`].
+/// The room's start, for [`launch`]: the host's room (`save`: the MP save it resumes), or a joiner's start.
 pub enum Begun {
-    Host { lobby: Box<LobbyHost>, listener: Box<dyn Listener> },
-    Joiner { start: Box<Start>, link: Box<dyn Transport> },
+    Host { lobby: Box<LobbyHost>, listener: Box<dyn Listener>, save: Option<Box<MpSave>> },
+    Joiner { start: Box<Start>, link: Box<dyn Transport>, me: Me },
+}
+
+/// An MP save in the save folder (the connection page's "Saved game" list).
+pub struct SavedGame {
+    /// The slot's name and date.
+    pub title: Vec<u8>,
+    pub save: Box<MpSave>,
+}
+
+/// The MP saves among `dir`'s slots that `rules` can resume (`options::read_slots`, `MpSave::read`).
+pub fn saved_games(dir: Option<&std::path::Path>, rules: [u8; 32]) -> Vec<SavedGame> {
+    crate::options::read_slots(dir)
+        .into_iter()
+        .flatten()
+        .filter(|s| s.ours)
+        .filter_map(|s| {
+            let save = MpSave::read(&std::fs::read(&s.file).ok()?, rules).ok()?;
+            let mut title = s.name.clone();
+            title.extend_from_slice(format!("  {}.{:02}.{:02}", s.date[0], s.date[1], s.date[2]).as_bytes());
+            Some(SavedGame { title, save: Box::new(save) })
+        })
+        .collect()
 }
 
 /// What a press or a key asks of the main menu.
@@ -250,6 +285,7 @@ mod spot {
     pub const HOST: u32 = 0x32;
     pub const JOIN: u32 = 0x33;
     pub const CANCEL: u32 = 0x34;
+    pub const SAVED: u32 = 0x35;
     pub const RACE: u32 = 0x40;
     pub const HOLDER: u32 = 0x50;
     /// Option k's left arrow = OPTION + 2k, its right arrow + 1.
@@ -260,6 +296,24 @@ mod spot {
 
 /// The options rows (spec §6).
 const OPTIONS: usize = 5;
+/// The connection page's buttons' left edges (Host, Join, Saved game, Cancel).
+const BUTTONS: [f32; 4] = [130.0, 227.0, 323.0, 420.0];
+
+/// Seat the room's members whose names are the save's humans in their saved empires, once each (a member may move
+/// on afterwards); `seated` = the members done.
+fn seat_saved(lobby: &mut LobbyHost, save: &MpSave, seated: &mut Vec<u8>) {
+    let st = lobby.state().clone();
+    for m in &st.members {
+        if seated.contains(&m.id) {
+            continue;
+        }
+        seated.push(m.id);
+        let Some(h) = save.session.humans.iter().find(|h| h.name == m.name) else { continue };
+        if st.empire_of(m.id).is_none() && st.slots.iter().any(|s| s.empire == h.empire && s.kind == SlotKind::Open) {
+            lobby.pick(m.id, Some(h.empire));
+        }
+    }
+}
 
 /// The multiplayer screens while they are up.
 pub struct MpScreen {
@@ -283,6 +337,14 @@ pub struct MpScreen {
     pub chat: Vec<(String, String)>,
     pub entry: Field,
     pub at: [f32; 2],
+    /// The password typed for the room this machine joined (kept for a host migration's door).
+    joined_password: Option<String>,
+    /// The connection page lists the save folder's MP saves instead of the LAN's sessions.
+    pub saves: Option<Vec<SavedGame>>,
+    /// Where the saves are (`options::slot_dir`).
+    pub save_dir: Option<std::path::PathBuf>,
+    /// The host's room resumes this save; the members already seated in their saved empires.
+    resume: Option<(Box<MpSave>, Vec<u8>)>,
 }
 
 /// Our English words where the original has none (ADR 0014 §4).
@@ -302,6 +364,10 @@ mod words {
     pub const SPEED_BY: [&[u8]; 2] = [b"everyone", b"host"];
     pub const NEED_TWO: &[u8] = b"Two empires are needed to start";
     pub const WAITING: &[u8] = b"Waiting for every player to be ready";
+    pub const SAVED: &[u8] = b"Saved game";
+    pub const LAN: &[u8] = b"LAN games";
+    pub const NO_SAVES: &[u8] = b"No multiplayer saves";
+    pub const NEED_SAVED: &[u8] = b"Every saved empire needs its player";
 }
 
 fn refusal_text(r: Refusal) -> &'static [u8] {
@@ -340,6 +406,10 @@ impl MpScreen {
             chat: Vec::new(),
             entry: Field::new(ig2_net::lobby::MAX_CHAT),
             at: [0.0; 2],
+            joined_password: None,
+            saves: None,
+            save_dir: crate::options::slot_dir(),
+            resume: None,
         }
     }
 
@@ -375,10 +445,39 @@ impl MpScreen {
                 let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name);
                 self.chat.clear();
                 self.role = Some(Role::Host { lobby: Box::new(lobby), listener });
+                self.resume = None;
                 self.line.clear();
             }
             Err(e) => self.line = format!("Can't host: {e}").into_bytes(),
         }
+    }
+
+    /// Host a room for the listed save `i` (rules/multiplayer.md §7.3): a scenario-style room of the saved humans'
+    /// empires, the host in the one of its name (else the first).
+    pub fn host_save(&mut self, i: usize, net: &mut dyn Net) {
+        let Some(save) = self.saves.as_ref().and_then(|s| s.get(i)).map(|s| s.save.clone()) else { return };
+        match net.listen() {
+            Ok(listener) => {
+                let s = &save.session;
+                let settings = Settings { name: s.name.clone(), scenario: s.scenario.clone(), private: false, password: self.password() };
+                let slots: Vec<(u8, u8)> = s.humans.iter().map(|h| (h.empire, 0)).collect();
+                let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name);
+                let mine = s.humans.iter().find(|h| h.name == lobby.state().members[0].name).or(s.humans.first()).map(|h| h.empire);
+                lobby.pick(0, mine);
+                self.chat.clear();
+                self.role = Some(Role::Host { lobby: Box::new(lobby), listener });
+                self.resume = Some((save, vec![0]));
+                self.saves = None;
+                self.selected = None;
+                self.line.clear();
+            }
+            Err(e) => self.line = format!("Can't host: {e}").into_bytes(),
+        }
+    }
+
+    /// The connection page's list: the LAN's sessions, or the MP saves.
+    fn rows(&self) -> usize {
+        self.saves.as_ref().map_or(self.list.len(), Vec::len)
     }
 
     /// Join the selected LAN session, else the typed address.
@@ -395,6 +494,7 @@ impl MpScreen {
     /// Join over `link` (a connection that just came up).
     pub fn join_link(&mut self, link: Box<dyn Transport>, password: Option<String>) {
         self.chat.clear();
+        self.joined_password = password.clone();
         self.role = Some(Role::Joiner(Box::new(LobbyClient::join(link, &self.name, self.rules, password, None))));
         self.line.clear();
         self.lost = false;
@@ -451,6 +551,9 @@ impl MpScreen {
                     }
                     Err(e) => eprintln!("ig2-client: lobby: {e}"),
                 }
+                if let Some((save, seated)) = &mut self.resume {
+                    seat_saved(lobby, save, seated);
+                }
                 let a = lobby.announcement(listener.port(), listener.fingerprint());
                 listener.announce(a);
                 None
@@ -478,7 +581,8 @@ impl MpScreen {
                     Status::Started => {
                         let Some(Role::Joiner(c)) = self.role.take() else { unreachable!() };
                         let (start, link) = (*c).into_game()?;
-                        Some(Out::Start(Begun::Joiner { start: Box::new(start), link }))
+                        let me = Me { name: self.name.clone(), password: self.joined_password.clone(), rules: self.rules };
+                        Some(Out::Start(Begun::Joiner { start: Box::new(start), link, me }))
                     }
                     Status::Refused(r) => {
                         self.role = None;
@@ -501,16 +605,13 @@ impl MpScreen {
         }
         match self.state() {
             None => {
-                for i in 0..self.list.len().min(LIST_ROWS) {
+                for i in 0..self.rows().min(LIST_ROWS) {
                     v.push((spot::LIST + i as u32, [130.0, 82.0 + 16.0 * i as f32, 380.0, 16.0]));
                 }
-                v.extend([
-                    (spot::ADDRESS, [130.0, 280.0, 380.0, 22.0]),
-                    (spot::PASSWORD, [130.0, 328.0, 380.0, 22.0]),
-                    (spot::HOST, [130.0, 392.0, 120.0, 30.0]),
-                    (spot::JOIN, [260.0, 392.0, 120.0, 30.0]),
-                    (spot::CANCEL, [390.0, 392.0, 120.0, 30.0]),
-                ]);
+                v.extend([(spot::ADDRESS, [130.0, 280.0, 380.0, 22.0]), (spot::PASSWORD, [130.0, 328.0, 380.0, 22.0])]);
+                for (k, id) in [spot::HOST, spot::JOIN, spot::SAVED, spot::CANCEL].into_iter().enumerate() {
+                    v.push((id, [BUTTONS[k], 392.0, 90.0, 30.0]));
+                }
             }
             Some(_) => {
                 for i in 0..8 {
@@ -554,15 +655,28 @@ impl MpScreen {
                     self.selected = None;
                 }
                 spot::PASSWORD => self.focus = Focus::Password,
+                spot::HOST if self.saves.is_some() => {
+                    if let Some(k) = self.selected {
+                        self.host_save(k, net);
+                    }
+                }
                 spot::HOST => self.host(net),
+                spot::JOIN if self.saves.is_some() => {}
                 spot::JOIN => self.join(net),
+                spot::SAVED => {
+                    self.saves = if self.saves.is_some() { None } else { Some(saved_games(self.save_dir.as_deref(), self.rules)) };
+                    self.selected = None;
+                }
                 spot::CANCEL => return Some(Out::Close),
                 i if (spot::LIST..spot::LIST + LIST_ROWS as u32).contains(&i) => {
                     let k = (i - spot::LIST) as usize;
-                    if self.selected == Some(k) {
-                        self.join(net);
-                    }
+                    let again = self.selected == Some(k);
                     self.selected = Some(k);
+                    match (again, self.saves.is_some()) {
+                        (true, true) => self.host_save(k, net),
+                        (true, false) => self.join(net),
+                        _ => {}
+                    }
                 }
                 _ => {}
             }
@@ -580,10 +694,22 @@ impl MpScreen {
                     // The host's press is its ready and the start (exe 0x5c0120's button 0x44).
                     Role::Host { lobby, .. } => {
                         lobby.set_ready(0, true);
+                        let saved = self.resume.as_ref().map(|(s, _)| {
+                            let mut want: Vec<u8> = s.session.humans.iter().map(|h| h.empire).collect();
+                            let mut held: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+                            want.sort_unstable();
+                            held.sort_unstable();
+                            want == held
+                        });
+                        if saved == Some(false) {
+                            self.line = words::NEED_SAVED.to_vec();
+                            return Some(Out::Click);
+                        }
                         if lobby.can_start() {
                             let Some(Role::Host { lobby, mut listener }) = self.role.take() else { unreachable!() };
                             listener.announce(None);
-                            return Some(Out::Start(Begun::Host { lobby, listener }));
+                            let save = self.resume.take().map(|r| r.0);
+                            return Some(Out::Start(Begun::Host { lobby, listener, save }));
                         }
                         let two = st.members.len() + st.ais().len() >= 2;
                         self.line = if two { words::WAITING } else { words::NEED_TWO }.to_vec();
@@ -708,15 +834,20 @@ impl MpScreen {
             for r in [[120.0, 40.0, 400.0, 400.0], [125.0, 45.0, 390.0, 24.0], [125.0, 76.0, 390.0, 172.0], [130.0, 280.0, 380.0, 22.0], [130.0, 328.0, 380.0, 22.0]] {
                 box_(f, r);
             }
-            for x in [130.0, 260.0, 390.0] {
-                box_(f, [x, 392.0, 120.0, 30.0]);
+            for x in BUTTONS {
+                box_(f, [x, 392.0, 90.0, 30.0]);
             }
             let title = d.texts.get(15, 1, if self.inet { 30 } else { 29 });
             text(f, &title, 320.0, 50.0, 3, Align::Centre, 1);
-            if self.list.is_empty() {
-                text(f, words::NONE_FOUND, 320.0, 150.0, 2, Align::Centre, 0x25);
+            if self.rows() == 0 {
+                text(f, if self.saves.is_some() { words::NO_SAVES } else { words::NONE_FOUND }, 320.0, 150.0, 2, Align::Centre, 0x25);
             }
-            for (i, s) in self.list.iter().take(LIST_ROWS).enumerate() {
+            for (i, s) in self.saves.iter().flatten().take(LIST_ROWS).enumerate() {
+                let c = if self.selected == Some(i) { 2 } else { 0x22 };
+                text(f, &s.title, 136.0, 84.0 + 16.0 * i as f32, 2, Align::Left, c);
+                text(f, format!("{}", s.save.session.humans.len()).as_bytes(), 500.0, 84.0 + 16.0 * i as f32, 2, Align::Right, c);
+            }
+            for (i, s) in self.list.iter().take(LIST_ROWS).enumerate().filter(|_| self.saves.is_none()) {
                 let a = &s.announcement;
                 let y = 84.0 + 16.0 * i as f32;
                 let c = if self.selected == Some(i) { 2 } else if a.rules != self.rules || a.started { 0x25 } else { 0x22 };
@@ -735,9 +866,12 @@ impl MpScreen {
             }
             let line = if self.lost && self.line.is_empty() { d.texts.get(14, 5, 3) } else { self.line.clone() };
             text(f, &line, 320.0, 364.0, 2, Align::Centre, 2);
-            text(f, words::HOST, 190.0, 400.0, 3, Align::Centre, hot(spot::HOST));
-            text(f, &d.texts.get(16, 3, 3), 320.0, 400.0, 3, Align::Centre, hot(spot::JOIN));
-            text(f, &d.texts.get(15, 3, 7), 450.0, 400.0, 3, Align::Centre, hot(spot::CANCEL));
+            let saved = if self.saves.is_some() { words::LAN } else { words::SAVED };
+            let join_c = if self.saves.is_some() { 0x25 } else { hot(spot::JOIN) };
+            let labels: [(&[u8], usize); 4] = [(words::HOST, hot(spot::HOST)), (&d.texts.get(16, 3, 3), join_c), (saved, hot(spot::SAVED)), (&d.texts.get(15, 3, 7), hot(spot::CANCEL))];
+            for (k, (label, c)) in labels.into_iter().enumerate() {
+                text(f, label, BUTTONS[k] + 45.0, 402.0, 2, Align::Centre, c);
+            }
             return;
         };
         // The room.
@@ -750,8 +884,13 @@ impl MpScreen {
             let y = 58.0 + 32.0 * i as f32;
             let own = me.is_some_and(|m| s.kind == SlotKind::Human(m));
             text(f, format!("{}", s.empire).as_bytes(), 26.0, y, 2, Align::Left, if own { 2 } else { 0x25 });
-            let race_c = if hover == spot::RACE + i as u32 && (own || self.is_host()) { 2 } else { 0x22 };
-            text(f, &d.texts.get(0x11, 1, (s.race.clamp(0, 19) + 5) as u16), 48.0, y, 2, Align::Left, race_c);
+            if st.galaxy.is_some() {
+                let race_c = if hover == spot::RACE + i as u32 && (own || self.is_host()) { 2 } else { 0x22 };
+                text(f, &d.texts.get(0x11, 1, (s.race.clamp(0, 19) + 5) as u16), 48.0, y, 2, Align::Left, race_c);
+            } else if let Some(h) = self.resume.as_ref().and_then(|(sv, _)| sv.session.humans.iter().find(|h| h.empire == s.empire)) {
+                // A resumed save: whose empire it was.
+                text(f, h.name.as_bytes(), 48.0, y, 2, Align::Left, 0x25);
+            }
             let (who, ready): (Vec<u8>, bool) = match s.kind {
                 SlotKind::Human(m) => st.members.iter().find(|x| x.id == m).map_or((Vec::new(), false), |x| (x.name.as_bytes().to_vec(), x.ready)),
                 SlotKind::Ai => (words::COMPUTER.to_vec(), false),
@@ -808,7 +947,94 @@ impl MpScreen {
 /// The running MP game on this machine.
 pub enum Session<'r> {
     Host { session: Box<HostSession<'r>>, listener: Box<dyn Listener> },
-    Client(Box<ClientSession<'r>>),
+    Client(Box<ClientSession<'r>>, Box<Survivor>),
+    /// Only inside [`Session::pump`], while a joiner becomes the host.
+    Handover,
+}
+
+/// How long a survivor waits for a successor's connection before it tries the next one.
+pub const MIGRATE_CONNECT: Duration = Duration::from_secs(5);
+
+/// What a joiner's machine keeps for a host migration (rules/multiplayer.md §7.3): its name in the room, the password it
+/// typed and the rules fingerprint (the successor's door checks all three).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Me {
+    pub name: String,
+    pub password: Option<String>,
+    pub rules: [u8; 32],
+}
+
+/// A joiner's side of a host migration (ADR 0012 §2): its own listener, where links to the successors come from, and
+/// the election as far as it got.
+pub struct Survivor {
+    net: Box<dyn Net>,
+    listener: Option<Box<dyn Listener>>,
+    me: Me,
+    /// A migration runs: the successors not tried yet.
+    left: Option<Vec<u8>>,
+    /// The connection to the successor tried now: its slot, the attempt and when it began.
+    attempt: Option<(u8, Connecting, Duration)>,
+    /// No successor answered: the game ends here.
+    failed: bool,
+}
+
+/// What the election asks of the session.
+enum Step {
+    Wait,
+    /// This machine is the first successor left: it hosts.
+    TakeOver,
+}
+
+impl Survivor {
+    /// The listener opens and the host is told where it is (`ClientSession::reach`).
+    fn new(mut net: Box<dyn Net>, me: Me, c: &mut ClientSession) -> Self {
+        let listener = net.listen_game().map_err(|e| eprintln!("ig2-client: migration listener: {e}")).ok();
+        if let Some(l) = &listener {
+            c.reach(l.port(), l.fingerprint());
+        }
+        Self { net, listener, me, left: None, attempt: None, failed: false }
+    }
+
+    /// One round of the election at `now` (the session's clock).
+    fn step(&mut self, c: &mut ClientSession, now: Duration) -> Step {
+        if c.kicked() || self.failed {
+            return Step::Wait;
+        }
+        if c.refused.take().is_none() {
+            if c.migrating() {
+                return Step::Wait;
+            }
+            if !c.closed() {
+                self.left = None;
+                return Step::Wait;
+            }
+        }
+        let left = self.left.get_or_insert_with(|| c.successors());
+        if let Some((slot, rx, since)) = &self.attempt {
+            match rx.try_recv() {
+                Ok(Ok(link)) => {
+                    let (slot, link) = (*slot, link as Box<dyn Transport>);
+                    self.attempt = None;
+                    c.migrate(slot, link, &self.me.name, self.me.password.clone(), self.me.rules);
+                    return Step::Wait;
+                }
+                Err(mpsc::TryRecvError::Empty) if now.saturating_sub(*since) < MIGRATE_CONNECT => return Step::Wait,
+                _ => self.attempt = None,
+            }
+        }
+        while !left.is_empty() {
+            let slot = left.remove(0);
+            if slot == c.peer.slot {
+                return Step::TakeOver;
+            }
+            if let Some(to) = c.candidate(slot) {
+                self.attempt = Some((slot, self.net.connect(&to.addr, Some(to.cert)), now));
+                return Step::Wait;
+            }
+        }
+        self.failed = true;
+        Step::Wait
+    }
 }
 
 impl<'r> Session<'r> {
@@ -816,14 +1042,16 @@ impl<'r> Session<'r> {
     pub fn peer(&self) -> &Peer<'r> {
         match self {
             Session::Host { session, .. } => &session.own,
-            Session::Client(c) => &c.peer,
+            Session::Client(c, _) => &c.peer,
+            Session::Handover => unreachable!("the handover is inside pump"),
         }
     }
 
     pub fn peer_mut(&mut self) -> &mut Peer<'r> {
         match self {
             Session::Host { session, .. } => &mut session.own,
-            Session::Client(c) => &mut c.peer,
+            Session::Client(c, _) => &mut c.peer,
+            Session::Handover => unreachable!("the handover is inside pump"),
         }
     }
 
@@ -831,24 +1059,59 @@ impl<'r> Session<'r> {
     pub fn status(&self, now: Duration) -> HoldStatus {
         match self {
             Session::Host { session, .. } => session.status(now),
-            Session::Client(c) => c.status.clone(),
+            Session::Client(c, _) => c.status.clone(),
+            Session::Handover => HoldStatus::default(),
         }
     }
 
-    /// A joiner's host is gone (left, the link closed or silent). The joiners don't migrate yet (ADR 0012's glue needs
-    /// the survivors' addresses): the game ends for them as it did in the original (`MultiCloseServer`).
+    /// A joiner's host is gone (left, the link closed or silent) and no successor took over (ADR 0012, rules/
+    /// multiplayer.md §7.3), or the host kicked it: the game ends for it as it did in the original (`MultiCloseServer`).
     pub fn host_gone(&self) -> bool {
         match self {
-            Session::Host { .. } => false,
-            Session::Client(c) => c.closed(),
+            Session::Client(c, s) => c.kicked() || s.failed && c.closed(),
+            _ => false,
         }
+    }
+
+    /// The slot of the machine that hosts the session (a migration changes it).
+    pub fn host_slot(&self) -> u8 {
+        match self {
+            Session::Host { session, .. } => session.info().host,
+            Session::Client(c, _) => c.info().host,
+            Session::Handover => 0,
+        }
+    }
+
+    /// This machine runs the session (`SuperVisor`).
+    pub fn is_host(&self) -> bool {
+        matches!(self, Session::Host { .. })
+    }
+
+    /// The host kicked this joiner (`SessionMsg::Kicked`).
+    pub fn kicked(&self) -> bool {
+        matches!(self, Session::Client(c, _) if c.kicked())
+    }
+
+    /// The host's humans still playing (`PlayerKi == 1`, the kick's targets; input.md §5.1), `races` =
+    /// `Faj_Nev`. Empty on a joiner (only the host kicks).
+    pub fn players(&self, races: &[Vec<u8>]) -> Vec<crate::console::Player> {
+        let Session::Host { session, .. } = self else { return Vec::new() };
+        let race = |e: u8| races.get(e as usize).cloned().unwrap_or_default();
+        session.humans().filter(|h| h.2).map(|(empire, name, _)| crate::console::Player { empire, name: name.as_bytes().to_vec(), race: race(empire) }).collect()
+    }
+
+    /// The host's `/kick` of `empire` ([`HostSession::kick`]).
+    pub fn kick(&mut self, empire: u8, now: Duration) -> Result<(), String> {
+        let Session::Host { session, .. } = self else { return Err("only the host kicks".into()) };
+        session.kick(empire, now).map_err(|e| e.to_string())
     }
 
     /// The local player's chat line (`ExecuteString`'s 0x3fc): every machine shows it, this one included.
     pub fn say(&mut self, text: &str) {
         match self {
             Session::Host { session, .. } => session.say(text),
-            Session::Client(c) => c.say(text),
+            Session::Client(c, _) => c.say(text),
+            Session::Handover => {}
         }
     }
 
@@ -856,12 +1119,23 @@ impl<'r> Session<'r> {
     pub fn name_of(&self, empire: u8) -> String {
         match self {
             Session::Host { session, .. } => session.humans().find(|h| h.0 == empire).map(|h| h.1.to_string()),
-            Session::Client(c) => {
+            Session::Client(c, _) => {
                 let slot = c.humans().iter().find(|h| h.1 == empire).map(|h| h.0);
                 c.info().names.iter().find(|n| Some(n.0) == slot).map(|n| n.1.clone())
             }
+            Session::Handover => None,
         }
         .unwrap_or_else(|| format!("Empire {empire}"))
+    }
+
+    /// The name of the player in `slot`.
+    pub fn name_in(&self, slot: u8) -> String {
+        let info = match self {
+            Session::Host { session, .. } => session.info(),
+            Session::Client(c, _) => c.info(),
+            Session::Handover => return String::new(),
+        };
+        info.names.iter().find(|n| n.0 == slot).map_or_else(|| format!("Player {slot}"), |n| n.1.clone())
     }
 
     /// `ExitToMainScreen`'s teardown (game-end.md §2: `MultiCloseServer` / `MultiCloseClient`): the others are told
@@ -870,13 +1144,22 @@ impl<'r> Session<'r> {
     pub fn leave(mut self) {
         match &mut self {
             Session::Host { session, .. } => session.leave(),
-            Session::Client(c) => c.leave(),
+            Session::Client(c, _) => c.leave(),
+            Session::Handover => {}
         }
     }
 
-    /// At `now`: admit rejoiners (host), receive, send, run up to `max_turns` turns. Returns the turns run and the
-    /// host's session events.
+    /// At `now`: admit rejoiners (host), receive, send, run up to `max_turns` turns; a joiner whose host is gone runs
+    /// the election and may become the host. Returns the turns run and the host's session events.
     pub fn pump(&mut self, now: Duration, max_turns: usize) -> Result<(usize, Vec<SessionEvent>), String> {
+        if let Session::Client(c, s) = self {
+            if let Step::TakeOver = s.step(c, now) {
+                let Session::Client(c, mut s) = std::mem::replace(self, Session::Handover) else { unreachable!() };
+                let session = HostSession::migrate(*c, s.me.rules, s.me.password.take(), now);
+                let listener = s.listener.take().unwrap_or_else(|| Box::new(Unreached));
+                *self = Session::Host { session: Box::new(session), listener };
+            }
+        }
         match self {
             Session::Host { session, listener } => {
                 while let Some(l) = listener.accept() {
@@ -886,26 +1169,38 @@ impl<'r> Session<'r> {
                 let events = session.pump(now, max_turns).map_err(|e| e.to_string())?;
                 Ok(((session.own.turn - before) as usize, events))
             }
-            Session::Client(c) => {
+            Session::Client(c, _) => {
                 let run = c.pump(now, max_turns).map_err(|e| e.to_string())?;
                 Ok((run, c.chat.drain(..).map(|(empire, text)| SessionEvent::Said { empire, text }).collect()))
             }
+            Session::Handover => unreachable!("the handover is inside pump"),
         }
     }
 }
 
 /// The room's start on this machine (ADR 0014 §2): the host builds the galaxy and starts the session with `ticks`
-/// (its clock); a joiner builds the same galaxy from the host's `GalaxyStart` and checks its hash, or, joining a
-/// running game under its old name, starts from the host's snapshot (the rejoin, `rules/multiplayer.md` §7.2).
-pub fn launch<'r>(b: Begun, data: &StartData, rules: &'r GameRules, ticks: u32) -> Result<Session<'r>, String> {
+/// (its clock), or resumes the room's MP save; a joiner builds the same galaxy from the host's `GalaxyStart` and
+/// checks its hash, or, joining a running game under its old name or a resumed save, starts from the host's snapshot
+/// (the rejoin, `rules/multiplayer.md` §7.2). A joiner's `net` gives it its migration listener and the links to a
+/// successor (§7.3).
+pub fn launch<'r>(b: Begun, data: &StartData, rules: &'r GameRules, ticks: u32, net: Box<dyn Net>) -> Result<Session<'r>, String> {
     match b {
-        Begun::Host { lobby, listener } => {
+        Begun::Host { lobby, listener, save: Some(save) } => {
+            let s = HostSession::resume(*lobby, &save, rules).map_err(|_| String::from_utf8_lossy(words::NEED_SAVED).into_owned())?;
+            Ok(Session::Host { session: Box::new(s), listener })
+        }
+        Begun::Host { lobby, listener, save: None } => {
             let s = HostSession::start_galaxy(*lobby, data, rules, SessionSettings::default(), ticks).map_err(|_| "the room can't start yet".to_string())?;
             Ok(Session::Host { session: Box::new(s), listener })
         }
-        // A rejoin to a running game (the host's door matched the name to an away human): the host's state now.
-        Begun::Joiner { start, link } if start.galaxy.is_none() => ClientSession::new(&start, link, rules).map(|c| Session::Client(Box::new(c))).map_err(|e| e.to_string()),
-        Begun::Joiner { start, link } => ClientSession::new_galaxy(&start, link, data, rules).map(|c| Session::Client(Box::new(c))).map_err(|e| e.to_string()),
+        Begun::Joiner { start, link, me } => {
+            // A rejoin to a running game (the host's door matched the name to an away human) or a resumed save: the
+            // host's state now.
+            let c = if start.galaxy.is_none() { ClientSession::new(&start, link, rules) } else { ClientSession::new_galaxy(&start, link, data, rules) };
+            let mut c = Box::new(c.map_err(|e| e.to_string())?);
+            let s = Survivor::new(net, me, &mut c);
+            Ok(Session::Client(c, Box::new(s)))
+        }
     }
 }
 
@@ -917,37 +1212,43 @@ mod tests {
 
     const RULES: [u8; 32] = [0x3c; 32];
 
-    /// In-process links: a host's listener takes the loopback ends joiners connect with.
-    type Hub = Rc<RefCell<Option<mpsc::Sender<Box<dyn Transport>>>>>;
+    /// In-process links: listener `k` (port `k + 1`) takes the loopback ends joiners connect with.
+    type Hub = Rc<RefCell<Vec<mpsc::Sender<Box<dyn Transport>>>>>;
 
     #[derive(Clone, Default)]
     struct LoopNet {
         hub: Hub,
     }
 
-    struct LoopListener(Receiver<Box<dyn Transport>>);
+    struct LoopListener(Receiver<Box<dyn Transport>>, u16);
 
     impl Listener for LoopListener {
         fn accept(&mut self) -> Option<Box<dyn Transport>> {
             self.0.try_recv().ok()
+        }
+
+        fn port(&self) -> u16 {
+            self.1
         }
     }
 
     impl Net for LoopNet {
         fn listen(&mut self) -> Result<Box<dyn Listener>, String> {
             let (tx, rx) = mpsc::channel();
-            *self.hub.borrow_mut() = Some(tx);
-            Ok(Box::new(LoopListener(rx)))
+            self.hub.borrow_mut().push(tx);
+            Ok(Box::new(LoopListener(rx, self.hub.borrow().len() as u16)))
         }
 
         fn sessions(&mut self) -> Vec<Found> {
             Vec::new()
         }
 
-        fn connect(&mut self, _addr: &str, _pin: Option<[u8; 32]>) -> Connecting {
+        /// "host:port" reaches that listener, anything else the first.
+        fn connect(&mut self, addr: &str, _pin: Option<[u8; 32]>) -> Connecting {
             let (tx, rx) = mpsc::channel();
             let (a, b) = ig2_net::loopback();
-            let r = match self.hub.borrow().as_ref() {
+            let port = addr.rsplit_once(':').and_then(|(_, p)| p.parse::<usize>().ok()).unwrap_or(1);
+            let r = match self.hub.borrow().get(port.wrapping_sub(1)) {
                 Some(h) => h.send(Box::new(b)).map(|_| Box::new(a) as Box<dyn Transport + Send>).map_err(|e| e.to_string()),
                 None => Err("nobody hosts".into()),
             };
@@ -1060,7 +1361,8 @@ mod tests {
             }
             sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
             let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
-            let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242)).unwrap().map(|s| crate::world::World::new_mp(s, rules)).unwrap();
+            let hub = net.clone();
+            let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242, Box::new(hub.clone()))).unwrap().map(|s| crate::world::World::new_mp(s, rules)).unwrap();
             // The host builds first: its start sends every joiner its `Start`.
             let mut worlds = vec![mk(b)];
             let begun = started(&mut guests, &mut net);
@@ -1105,7 +1407,7 @@ mod tests {
     /// The game loop on three machines (FX15): each world's screens see its own `EN`; a chat line reaches every
     /// machine; the host's MP save reads back, a joiner has none; a joiner who leaves is away on the others and
     /// comes back through the room's Join under its name (the rejoin's snapshot start); the peers agree throughout;
-    /// once the host leaves the joiners' sessions end.
+    /// once the host leaves, the last joiner takes the session over alone.
     #[test]
     fn the_mp_game_loop_chats_saves_leaves_and_rejoins() {
         use crate::world::World;
@@ -1119,7 +1421,8 @@ mod tests {
         }
         sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
         let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
-        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 77)).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 77, Box::new(hub.clone()))).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
         let mut worlds = vec![mk(b)];
         worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
         let en = |w: &World| w.game.state.mem.i32(ig2_sim::save::va::EN);
@@ -1140,8 +1443,8 @@ mod tests {
         assert_eq!(worlds.iter().map(en).collect::<Vec<_>>(), [1, 2, 3], "the shared EN went back in for every pump");
 
         // Chat: Guest0's line on every machine, its own included.
-        worlds[1].say(b"hello there");
-        step(&mut worlds, &|w| w.iter().all(|w| w.chat_lines.iter().any(|l| l == b"Guest0: hello there")));
+        worlds[1].say(b"hello there", &[]);
+        step(&mut worlds, &|w| w.iter().all(|w| w.chat_lines.iter().any(|l| l.0 == b"Guest0: hello there")));
 
         // The MP save: the host's reads back with the three humans; a joiner can't.
         let save = worlds[0].mp_save().unwrap().unwrap();
@@ -1187,11 +1490,157 @@ mod tests {
         let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!() };
         assert!(session.host.desyncs.is_empty(), "{:?}", session.host.desyncs);
 
-        // The host leaves: the joiners' sessions end.
+        // The console (input.md §5.1): a joiner's `/kick` is chat; the host's failed kicks are its own red lines; its
+        // `/kill guest1` ends Guest1's session, who is away on the others.
+        worlds[1].say(b"/kick 3", &[]);
+        step(&mut worlds, &|w| w.iter().all(|w| w.chat_lines.iter().any(|l| l.0 == b"Guest0: /kick 3")));
+        let red = |w: &World, t: &[u8]| w.chat_lines.iter().any(|l| l.0 == t && l.1 == crate::console::RED);
+        worlds[0].say(b"/kick 1", &[]);
+        worlds[0].say(b"/kick Nobody", &[]);
+        assert!(red(&worlds[0], crate::console::CANNOT_KICK_YOURSELF) && red(&worlds[0], crate::console::NO_SUCH_PLAYER));
+        assert!(!worlds[1..].iter().any(|w| w.chat_lines.iter().any(|l| l.1 == crate::console::RED)));
+        worlds[0].say(b"/kill guest1", &[]);
+        step(&mut worlds, &|w| w[2].net_over && w[..2].iter().all(|w| w.net_seen.away == [3]));
+        assert!(worlds[2].local_lines.iter().any(|l| l == b"The host has kicked you from the game."));
+        assert!(worlds[2].net.as_ref().unwrap().0.kicked());
+        worlds.pop();
+        let at = turn(&worlds[0]);
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 10));
+        let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!() };
+        assert!(session.host.desyncs.is_empty(), "the kick caught the real game up: {:?}", session.host.desyncs);
+
+        // The host leaves: Guest0, the only survivor, hosts the session alone and plays on.
         let (h, _) = worlds.remove(0).net.unwrap();
         h.leave();
-        step(&mut worlds, &|w| w.iter().all(|w| w.net_over));
-        assert!(worlds.iter().all(|w| w.local_lines.iter().any(|l| l == b"The host has left the game.")));
+        step(&mut worlds, &|w| w[0].mp_host() && w[0].local_lines.iter().any(|l| l == b"The host has left the game. Guest0 hosts it now."));
+        let at = turn(&worlds[0]);
+        step(&mut worlds, &|w| turn(&w[0]) >= at + 10);
+        assert!(!worlds[0].net_over);
+        assert_eq!(worlds[0].net_seen.away, [1, 3]);
+    }
+
+    /// Host migration in the client (ADR 0012, rules/multiplayer.md §7.3) and an MP save resumed from the room: three
+    /// machines; every joiner learns where the others listen; the host leaves, Guest0 (the lowest slot left) takes
+    /// over on its own listener and Guest1 connects there and resumes from its own state; they agree on every turn.
+    /// The new host's MP save, written as a save slot, is listed by a new room's "Saved game"; its humans come back
+    /// under their names, are seated in their empires and the game goes on from the saved turn.
+    #[test]
+    fn survivors_migrate_and_a_saved_game_resumes_from_the_room() {
+        use crate::world::World;
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let ready_start = |host: &mut MpScreen, guests: &mut Vec<MpScreen>, net: &mut LoopNet| {
+            for g in guests.iter_mut() {
+                click(g, spot::READY, false, net);
+            }
+            sync(host, guests, net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
+            let Some(Out::Start(b)) = click(host, spot::READY, false, net) else { panic!("no start") };
+            b
+        };
+        let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
+        let t = std::time::Instant::now();
+        let step = |worlds: &mut Vec<World<'static>>, done: &dyn Fn(&[World]) -> bool| {
+            while !done(worlds) {
+                for w in worlds.iter_mut() {
+                    w.pump();
+                    w.tick();
+                }
+                assert!(t.elapsed() < Duration::from_secs(120), "stalled");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        let agree = |worlds: &[World]| {
+            let hashes = |w: &World| w.net.as_ref().unwrap().0.peer().hashes.clone();
+            let h0 = hashes(&worlds[0]);
+            for w in &worlds[1..] {
+                let h = hashes(w);
+                assert!(h.iter().filter(|x| h0.contains(x)).count() >= 10, "the peers agree");
+                assert!(h.iter().all(|(t, x)| h0.iter().find(|(t0, _)| t0 == t).is_none_or(|(_, x0)| x0 == x)));
+            }
+            let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!("the host's world first") };
+            assert!(session.host.desyncs.is_empty(), "{:?}", session.host.desyncs);
+        };
+
+        let mut net = LoopNet::default();
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 99, Box::new(hub.clone()))).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
+        let (mut host, mut guests) = room(2, &mut net);
+        let b = ready_start(&mut host, &mut guests, &mut net);
+        let mut worlds = vec![mk(b)];
+        worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= 10) && w[1..].iter().all(|w| matches!(&w.net, Some((Session::Client(c, _), _)) if c.candidates.len() == 2)));
+        let Some((Session::Client(c, _), _)) = &worlds[2].net else { panic!() };
+        // The host's listener is port 1, the joiners' migration listeners 2 and 3 (`listen_game`).
+        assert_eq!(c.candidates.iter().map(|c| (c.slot, c.addr.as_str())).collect::<Vec<_>>(), [(1, "127.0.0.1:2"), (2, "127.0.0.1:3")]);
+
+        // The host leaves: Guest0 takes over, Guest1 resumes on it (no restart).
+        let (h, _) = worlds.remove(0).net.unwrap();
+        h.leave();
+        let line: &[u8] = b"The host has left the game. Guest0 hosts it now.";
+        step(&mut worlds, &|w| w[0].mp_host() && w.iter().all(|w| w.local_lines.iter().any(|l| l == line)) && w.iter().all(|w| w.net_seen.away == [1]));
+        let at = turn(&worlds[0]);
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 20));
+        agree(&worlds);
+        let Some((Session::Client(c, _), _)) = &worlds[1].net else { panic!() };
+        assert_eq!(c.restarts, 0, "resumed from its own state");
+        assert_eq!(c.info().host, 1);
+        assert!(!worlds.iter().any(|w| w.net_over));
+
+        // The new host's MP save, as a save slot.
+        let save = worlds[0].mp_save().unwrap().unwrap();
+        let back = MpSave::read(&save, RULES).unwrap();
+        assert_eq!(back.session.humans.iter().map(|h| (h.empire, h.name.as_str())).collect::<Vec<_>>(), [(1, "Host"), (2, "Guest0"), (3, "Guest1")]);
+        let dir = std::env::temp_dir().join(format!("ig2-mp-resume-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("save3.ig2s"), crate::options::slot_file(save, b"three of us", [3001, 1, 2])).unwrap();
+        for w in worlds.drain(..) {
+            w.net.unwrap().0.leave();
+        }
+
+        // A new room: Guest0 hosts the save, Host and Guest1 join and are seated in their saved empires.
+        let mut net = LoopNet::default();
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 5, Box::new(hub.clone()))).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
+        let mut host = MpScreen::open(false, "Guest0", RULES);
+        host.save_dir = Some(dir.clone());
+        let mut guests = vec![MpScreen::open(false, "Host", RULES), MpScreen::open(false, "Guest1", RULES)];
+        for _ in 0..25 {
+            host.tick(&mut net);
+            guests.iter_mut().for_each(|g| drop(g.tick(&mut net)));
+        }
+        click(&mut host, spot::SAVED, false, &mut net);
+        assert_eq!(host.saves.as_ref().map(|s| s.iter().map(|s| s.title.clone()).collect::<Vec<_>>()), Some(vec![b"three of us  3001.01.02".to_vec()]));
+        click(&mut host, spot::LIST, false, &mut net);
+        click(&mut host, spot::LIST, false, &mut net);
+        assert!(host.is_host());
+        let st = host.state().unwrap();
+        assert!(st.galaxy.is_none());
+        assert_eq!(st.slots.iter().map(|s| s.empire).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(st.empire_of(0), Some(2), "the host sits in its saved empire");
+        for g in &mut guests {
+            type_text(g, "local", &mut net);
+        }
+        sync(&mut host, &mut guests, &mut net, |h| {
+            let st = h.state().unwrap();
+            st.members.len() == 3 && st.members.iter().all(|m| st.empire_of(m.id).is_some())
+        });
+        let st = host.state().unwrap().clone();
+        let by_name = |n: &str| st.members.iter().find(|m| m.name == n).and_then(|m| st.empire_of(m.id));
+        assert_eq!((by_name("Host"), by_name("Guest1")), (Some(1), Some(3)), "seated by name");
+        let b = ready_start(&mut host, &mut guests, &mut net);
+        assert!(matches!(&b, Begun::Host { save: Some(_), .. }));
+        let mut worlds = vec![mk(b)];
+        let begun = started(&mut guests, &mut net);
+        assert!(begun.iter().all(|b| matches!(b, Begun::Joiner { start, .. } if start.galaxy.is_none() && !start.snapshot.is_empty())));
+        worlds.extend(begun.into_iter().map(mk));
+        assert!(worlds.iter().all(|w| turn(w) == back.snapshot.turn), "the game goes on from the saved turn");
+        let en = |w: &World| w.game.state.mem.i32(ig2_sim::save::va::EN);
+        assert_eq!(worlds.iter().map(en).collect::<Vec<_>>(), [2, 1, 3]);
+        let at = back.snapshot.turn;
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 20));
+        agree(&worlds);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

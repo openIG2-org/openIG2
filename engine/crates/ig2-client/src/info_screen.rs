@@ -329,6 +329,55 @@ pub struct InfoScreen {
     tri_sent: Option<[f64; 3]>,
     /// UI frames since entry (`Counter` steps every fifth).
     frames: u32,
+    /// The buttons' press animation (`LekezelGombok`).
+    pub buttons: Buttons3d,
+}
+
+/// `LekezelGombok` (ELF 0x559850, from `Infoing3DUpdate`): one button `GombMeshek[which]` at a time sinks in by
+/// `InfoGombFrame` 0, 7, 10 and comes out 3, 0. `InfoGombNew` (set by a press, or every frame a button is held on the
+/// list or star-log arrows) restarts the sink, so a held arrow stays in at 10. The frame is shared: a button left
+/// while another starts keeps the depth it had (`infoSetGombFrame` moves only `which`'s mesh).
+#[derive(Debug, Clone)]
+pub struct Buttons3d {
+    /// `InfoGombNew`, `InfoMelyikGombot` (−1 none, `Infoing3DInit`), `InfoGombFrame`, `InfoGombFrameCsokkent`.
+    pub new: bool,
+    pub which: i32,
+    pub frame: i32,
+    pub falling: bool,
+    /// The frame each `GombMeshek` button was last put at.
+    pub depth: [i32; 19],
+}
+
+impl Default for Buttons3d {
+    fn default() -> Self {
+        Self { new: false, which: -1, frame: 0, falling: false, depth: [0; 19] }
+    }
+}
+
+impl Buttons3d {
+    /// `InfoGombNew = 1; InfoMelyikGombot = which`.
+    pub fn start(&mut self, which: i32) {
+        (self.new, self.which) = (true, which);
+    }
+
+    /// One frame of `LekezelGombok` (the screen is open: the client has no opening or closing animation).
+    pub fn step(&mut self) {
+        if self.new {
+            (self.new, self.falling) = (false, false);
+        }
+        if self.which < 0 {
+            return;
+        }
+        if !self.falling {
+            self.frame = (self.frame + 7).min(10);
+            self.falling = self.frame == 10;
+        } else if self.frame != 0 {
+            self.frame = (self.frame - 7).max(0);
+        } else {
+            return;
+        }
+        self.depth[self.which as usize] = self.frame;
+    }
 }
 
 /// The pointer's state in a frame of `Info_Main`: the press and release edges (`Mouse_Lenyom`, `Mouse_Felenged`),
@@ -570,6 +619,7 @@ impl InfoScreen {
             fade_in: 100.0,
             tri_sent: None,
             frames: 0,
+            buttons: Buttons3d::default(),
         }
     }
 
@@ -658,8 +708,13 @@ impl InfoScreen {
         }
     }
 
-    /// One 10 ms UI frame (`FRISSIT_Info2`): the blink, the sweeps, the star log's opening.
-    pub fn ui_frame(&mut self, d: &InfoData, human: usize) {
+    /// One 10 ms UI frame (`FRISSIT_Info2`): the blink, the sweeps, the star log's opening; with a button `down` over
+    /// hot-spot `spot` at virtual `y`, `Info_Main`'s per-frame spots before it, and `LekezelGombok` after it (the exe
+    /// runs both once a drawn frame; once a UI tick here, ADR 0016 §1).
+    pub fn ui_frame(&mut self, d: &InfoData, human: usize, spot: Option<u32>, y: f32, down: bool) {
+        if down {
+            self.held_frame(spot, y, d, human);
+        }
         self.frames += 1;
         if self.frames % 5 == 0 {
             self.counter += 1;
@@ -709,6 +764,7 @@ impl InfoScreen {
         if !self.star_log && max < self.frame {
             self.frame = (self.frame - 0.3).max(max);
         }
+        self.buttons.step();
     }
 
     /// `InfoChartSzamlalok[k]` = `((int)(infokeringeto·adder[k]) % 55 << 1) − 27`.
@@ -732,6 +788,7 @@ impl InfoScreen {
             head_lit: std::array::from_fn(|k| self.head_lit[k + 1] || k + 1 != self.selected),
             globes: self.globe_views(&s.info, s.human),
             star_log: self.star_log,
+            buttons: self.buttons.depth,
         }
     }
 
@@ -811,6 +868,13 @@ impl InfoScreen {
         if matches!(id, Some(14..=25 | 30 | 31 | 35 | 36)) {
             self.sounds.push(crate::audio::CLICK);
         }
+        // `InfoMelyikGombot`: 14 → `GombMeshek[0xb]`, 15 → 5, a chart `c` → `c`, past 4 → `c + 1`.
+        match id {
+            Some(14) => self.buttons.start(0xb),
+            Some(15) => self.buttons.start(5),
+            Some(c @ 16..=25) => self.buttons.start(if c - 16 > 4 { c as i32 - 0xf } else { c as i32 - 16 }),
+            _ => {}
+        }
         match id {
             Some(14) => self.star_log = false,
             Some(15) => self.star_log = true,
@@ -843,9 +907,47 @@ impl InfoScreen {
                 self.pointer += 1;
                 self.swap_globes(true);
             }
-            Some(34) if !self.detail => self.pointer = scroll_to(n, y),
-            Some(35) if self.log_filled > 16 && self.log_pointer < self.log_filled - 16 => self.log_pointer += 1,
-            Some(36) if self.log_filled > 16 && self.log_pointer > 0 => self.log_pointer -= 1,
+            // `Mouse_Megfogva = 1`: the bar keeps following the pointer while held ([`InfoScreen::ui_frame`]).
+            Some(34) if !self.detail => {
+                self.pointer = scroll_to(n, y);
+                self.held = Some(34);
+            }
+            // 35/36 step every frame a button is held on them ([`InfoScreen::ui_frame`]); the press only clicks.
+            _ => {}
+        }
+    }
+
+    /// The release over hot-spot `id`: `IG2_gameUpdate` calls `Info_Main` once more over the spot the button was held
+    /// on (a release flag 0 spot; 34's `Mouse_Megfogva` is already clear) [obs: `fx3-rest/infohold`, 36 held 15
+    /// frames steps the log 16 times].
+    pub fn release(&mut self, id: Option<u32>, d: &InfoData, human: usize) {
+        if id != Some(34) {
+            self.held_frame(id, 0.0, d, human);
+        }
+    }
+
+    /// `Info_Main`'s per-frame spots (exe 0x4e81c0, its tail) on a frame a button is held on hot-spot `id` at virtual
+    /// `y` (or on the spot `Mouse_Megfogva` keeps). `IG2_gameUpdate` calls `Info_Main` only while a button is down
+    /// (and once on its release), never for the pointer alone [obs: `fx3-rest/infohold`, the pointer resting on 35
+    /// 40 frames: no call, no step]. The scroll bar 34 held in list mode follows `y`, past its edges too; the
+    /// star-log arrows 35/36 step the log; the list and star-log arrows (30/31, 35/36) keep their buttons sunk in.
+    fn held_frame(&mut self, id: Option<u32>, y: f32, d: &InfoData, human: usize) {
+        match self.held.or(id) {
+            Some(34) if self.held == Some(34) && !self.detail => self.pointer = scroll_to(d.list(self.selected, human).len(), y),
+            Some(30) => self.buttons.start(0xc),
+            Some(31) => self.buttons.start(0xd),
+            Some(35) => {
+                if self.log_filled > 16 && self.log_pointer < self.log_filled - 16 {
+                    self.log_pointer += 1;
+                }
+                self.buttons.start(0x11);
+            }
+            Some(36) => {
+                if self.log_filled > 16 && self.log_pointer > 0 {
+                    self.log_pointer -= 1;
+                }
+                self.buttons.start(0x12);
+            }
             _ => {}
         }
     }
@@ -1525,6 +1627,73 @@ mod tests {
         assert_eq!(s.pointer, 0);
     }
 
+    /// `fx3-rest/infohold` (quick-1.sav, five entries): the bar pressed at y 280 and dragged down and off it follows
+    /// `Mouse_y` every held frame (pointer 0 at y 348, 1 from 357); the release at 450 moves nothing.
+    #[test]
+    fn scroll_bar_follows_the_held_pointer() {
+        let mut s = InfoScreen::enter(6);
+        let d = InfoData { fleets: vec![ListFleet { owner: 6, ..Default::default() }; 5], ..Default::default() };
+        s.press(Some(34), &d, 6, 280.0);
+        assert_eq!((s.pointer, s.held), (0, Some(34)));
+        for (y, p) in [(348.0, 0), (357.0, 1), (442.0, 1)] {
+            s.ui_frame(&d, 6, None, y, true);
+            assert_eq!(s.pointer, p);
+        }
+        s.release(Some(34), &d, 6);
+        // The pointer alone never moves it.
+        s.held = None;
+        s.ui_frame(&d, 6, Some(34), 266.0, false);
+        assert_eq!(s.pointer, 1);
+    }
+
+    /// `fx3-rest/infohold` (40 star-log lines): resting on 35 steps nothing; 35 held 30 frames (+ the release frame)
+    /// stops at 24 = 40 − 16, 36 held 15 frames with the right button steps 16 times (24 → 8). The button sinks 7, 10,
+    /// stays at 10 while held, comes out 10, 3, 0 after the release (`InfoGombFrame` 0xB8531C).
+    #[test]
+    fn star_log_arrows_step_while_held() {
+        let mut s = InfoScreen::enter(6);
+        let d = InfoData::default();
+        (s.star_log, s.log_filled) = (true, 40);
+        for _ in 0..40 {
+            s.ui_frame(&d, 6, Some(35), 0.0, false);
+        }
+        assert_eq!((s.log_pointer, s.buttons.frame), (0, 0));
+        s.press(Some(35), &d, 6, 0.0);
+        let mut frames = Vec::new();
+        for _ in 0..30 {
+            s.ui_frame(&d, 6, Some(35), 0.0, true);
+            frames.push(s.buttons.frame);
+        }
+        s.release(Some(35), &d, 6);
+        for _ in 0..3 {
+            s.ui_frame(&d, 6, Some(35), 0.0, false);
+            frames.push(s.buttons.frame);
+        }
+        assert_eq!(s.log_pointer, 24);
+        assert_eq!(&frames[..3], [7, 10, 10]);
+        assert_eq!(&frames[29..], [10, 10, 3, 0]);
+        assert_eq!(s.buttons.depth[0x11], 0);
+        for _ in 0..15 {
+            s.ui_frame(&d, 6, Some(36), 0.0, true);
+        }
+        s.release(Some(36), &d, 6);
+        assert_eq!(s.log_pointer, 8);
+        assert_eq!(s.buttons.which, 0x12);
+    }
+
+    /// A chart button's press (`fx3-rest/infohold`, chart 17 → `GombMeshek[1]`): 7, 10, 3, 0, once.
+    #[test]
+    fn chart_button_dips_once() {
+        let mut s = InfoScreen::enter(6);
+        let d = InfoData::default();
+        s.press(Some(17), &d, 6, 0.0);
+        let frames: Vec<i32> = (0..5).map(|_| {
+            s.ui_frame(&d, 6, None, 0.0, false);
+            s.buttons.frame
+        }).collect();
+        assert_eq!((s.buttons.which, frames), (1, vec![7, 10, 3, 0, 0]));
+    }
+
     fn planet(owner: u8, problems: &[(usize, i32)], morale: i32) -> ListPlanet {
         let mut p = ListPlanet { owner, seen: true, morale, ..Default::default() };
         for &(i, v) in problems {
@@ -1565,7 +1734,7 @@ mod tests {
         assert_eq!((s.sel_entry, s.sel_slot, s.sel_pick), (1, 1, Some(Entry::Planet(1))));
         // 40 UI frames to (−43, 28, −150); the globe 70 % transparent there, the others hidden.
         for _ in 0..41 {
-            s.ui_frame(&d, 6);
+            s.ui_frame(&d, 6, None, 0.0, false);
         }
         assert_eq!(s.globes[1].pos, DETAIL_AT);
         let v = s.globe_views(&d, 6);
@@ -1575,7 +1744,7 @@ mod tests {
         s.press(Some(37), &d, 6, 0.0);
         assert!(s.leaving);
         for _ in 0..41 {
-            s.ui_frame(&d, 6);
+            s.ui_frame(&d, 6, None, 0.0, false);
         }
         assert!(!s.detail && !s.leaving);
         assert_eq!(s.globes[1].pos, Globe::home(1));
@@ -1638,7 +1807,7 @@ mod tests {
         s.press(Some(12), &d, 6, 0.0);
         assert!(s.detail);
         let fewer = InfoData { planets: vec![planet(6, &[], 300); 3], ..Default::default() };
-        s.ui_frame(&fewer, 6);
+        s.ui_frame(&fewer, 6, None, 0.0, false);
         assert!(!s.detail);
         assert_eq!(s.globes[3].pos, Globe::home(3));
     }

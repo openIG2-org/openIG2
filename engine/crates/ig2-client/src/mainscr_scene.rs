@@ -534,6 +534,9 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
     if let Some(n) = &s.name {
         crate::mainscr_scenario::draw_name(frame, &d, n, blink);
     }
+    if let Some(reason) = s.disconnected {
+        crate::mainscr_scenario::draw_disconnected(frame, &d, reason, s.at);
+    }
 }
 
 /// What a ring's request needs from the install before the menu goes on (shared by the window and the script run):
@@ -666,6 +669,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                     mouse = *at;
                     right = Some(*at);
                 }
+                Input::Button { button: 3, down: false, .. } => s.release_right(),
                 _ => {}
             }
         }
@@ -718,6 +722,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             keys.clear();
             press = None;
             release = None;
+            right = None;
         }
         for k in &keys {
             use crate::options::EntryKey;
@@ -749,7 +754,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 println!("t {t}: options {a:?}");
             }
         } else {
-            let acts = [due, press.and_then(|p| s.press(p)), release.and_then(|p| s.release(p))];
+            let acts = [due, press.and_then(|p| s.press(p)), right.and_then(|p| s.press_right(p)), release.and_then(|p| s.release(p))];
             for a in acts.into_iter().flatten() {
                 println!("t {t}: {a:?}");
                 prepare(&mut s, a, &mut assets, &install, &hud.texts);

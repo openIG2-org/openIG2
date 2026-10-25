@@ -5,6 +5,7 @@ use ig2_sim::diplomacy::{Answer, Letter, Message, ScreenOp};
 use ig2_sim::game::{ColonyOrder, DesignOrder, Game, GameEvent, InfoOrder, MessageOrder, ResearchOrder, StarmapOrder};
 use ig2_sim::spacebattle::Order;
 use ig2_sim::spy;
+use ig2_sim::story::StoryEvent;
 use ig2_sim::trade::{Delivery, DELIVERY};
 use serde::{Deserialize, Serialize};
 
@@ -333,9 +334,18 @@ impl Command {
         matches!(self, Command::PlayerAway | Command::PlayerBack)
     }
 
-    /// The sim-originated command a tick's event sends (the sim's own `Multi_Send`), if any.
+    /// The sim-originated command a tick's event sends (the sim's own `Multi_Send`), if any; the driver applies it
+    /// for [`Game::sender`] before the next tick, where the original's `MultiSendPackets` hands it to the handlers
+    /// (rules/multiplayer.md §5.5): 0x1b (an emptied fleet), the story's 0x66 (`MULTIGET_Story` →
+    /// `Story_Special(15, sender, id)`) and 0x49 (`MULTIGET_Spy`: the spy screen's send with target 0 and 10 days).
     pub fn from_event(e: &GameEvent) -> Option<Command> {
-        e.emptied_fleet().map(|f| Command::FleetEmptied { fleet: f as u32 })
+        match e {
+            GameEvent::Story(StoryEvent::SendStorySpecial(id)) => Some(Command::StoryChoice { id: *id }),
+            GameEvent::Story(StoryEvent::SpyOrder { spy, mission }) => Some(Command::Spy {
+                order: SpyOrder::Send { spy: *spy as u8, mission: *mission as u16, target: 0, param1: 0, param2: 0, days: 10 },
+            }),
+            _ => e.emptied_fleet().map(|f| Command::FleetEmptied { fleet: f as u32 }),
+        }
     }
 
     /// Apply it for empire `issuer`, as the handler does. Invalid input is refused by the sim's own checks (or
@@ -427,5 +437,20 @@ mod tests {
         assert_eq!(DesignOrder::from_message(kind, &values), Some(o));
         // A block that isn't 64 bytes is refused.
         assert!(StarmapCmd::Queue { planet: 1, block: vec![0; 3] }.order().is_none());
+    }
+
+    /// Deviation 231: the story's own `Multi_Send`s become commands the driver applies before the next tick, as
+    /// `MultiSendPackets` hands them to `MULTIGET_Story` (0x66 → `Story_Special(15, sender, id)`) and `MULTIGET_Spy`
+    /// (0x49: the elem stories' `Multi_Send(0x49, EN, spy, mission, 0, 0, 0, 10)`, exe 0x5d4b70).
+    #[test]
+    fn story_messages_become_commands() {
+        use ig2_sim::story::StoryEvent;
+        assert_eq!(Command::from_event(&GameEvent::Story(StoryEvent::SendStorySpecial(10031))), Some(Command::StoryChoice { id: 10031 }));
+        assert_eq!(
+            Command::from_event(&GameEvent::Story(StoryEvent::SpyOrder { spy: 3, mission: 17 })),
+            Some(Command::Spy { order: SpyOrder::Send { spy: 3, mission: 17, target: 0, param1: 0, param2: 0, days: 10 } })
+        );
+        assert_eq!(Command::from_event(&GameEvent::FleetEmptied { fleet: 4 }), Some(Command::FleetEmptied { fleet: 4 }));
+        assert_eq!(Command::from_event(&GameEvent::Story(StoryEvent::ShowPlanet(2))), None);
     }
 }

@@ -180,6 +180,7 @@ impl Live {
         if self.ui.retreat_window {
             crate::spacewar_hud::retreat_window(&mut frame, hud, &virt, mouse);
         }
+        crate::spacewar_hud::notices(&mut frame, hud, &virt, [b.human_retreated, b.ai_retreated, self.ui.formation(b)], self.ui.column[0], self.ui.fade);
         // The MP versus banner (exe 0x57f800): with more than one empire present (`+0xe30`), the first two of the
         // list (`+0xe09`, `+0xe0a`) with their players' names (`PlayerNev` 0xBAE588, 11 bytes each).
         if world.game.state.mem.u8(ig2_sim::save::va::MULTIPLAYER) != 0

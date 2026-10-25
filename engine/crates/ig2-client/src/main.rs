@@ -40,6 +40,7 @@ mod assets;
 mod audio;
 mod backdrop;
 mod chat;
+mod console;
 mod colony;
 mod colony_ui;
 mod colony_war;
@@ -179,6 +180,9 @@ pub struct Options {
     pub acttime: Option<f32>,
     /// `--info-alap A`: the fleet info panel's model turn (`InfoAlapRotation`, re/screens/starmap.md §19.3).
     pub info_alap: Option<f32>,
+    /// `--spin-frames N`: drawn frames since the transfer or vehicle panel opened (its cells' turn; run_screen.py's
+    /// `rop_frames`, re/screens/starmap.md §13.3).
+    pub spin_frames: Option<f32>,
     /// `--info-turn K`: the info screen's `infokeringeto` (re/screens/info.md §1.1).
     pub info_turn: f32,
     /// `--info-list P,H,C`: the list's `BolygoFlottaPointer`, its problem step and `Counter` (re/screens/info.md §6.2).
@@ -272,6 +276,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         futofeny: None,
         acttime: None,
         info_alap: None,
+        spin_frames: None,
         info_turn: 0.0,
         info_list: None,
         info_globes: Vec::new(),
@@ -411,6 +416,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--battle" => o.battle = Some(val()?),
             "--sim-phase" => o.sim_phase = val()?.parse::<u32>().map_err(|e| format!("--sim-phase: {e}"))? % 5,
             "--acttime" => o.acttime = Some(val()?.parse().map_err(|e| format!("--acttime: {e}"))?),
+            "--spin-frames" => o.spin_frames = Some(val()?.parse().map_err(|e| format!("--spin-frames: {e}"))?),
             "--info-alap" => o.info_alap = Some(val()?.parse().map_err(|e| format!("--info-alap: {e}"))?),
             "--colony" => o.colony = Some(val()?.parse().map_err(|e| format!("--colony: {e}"))?),
             "--panel" => o.panel = Some(val()?),

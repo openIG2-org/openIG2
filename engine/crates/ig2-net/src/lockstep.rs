@@ -127,6 +127,11 @@ impl Host {
         self.injected.push(Stamped { issuer: empire, command });
     }
 
+    /// The address `slot`'s link comes from ([`Transport::remote`]).
+    pub fn remote(&self, slot: u8) -> Option<std::net::IpAddr> {
+        self.slots.get(&slot)?.link.remote()
+    }
+
     /// The empire `slot` plays, while it's in the session.
     pub fn empire_of(&self, slot: u8) -> Option<u8> {
         self.slots.get(&slot).map(|s| s.empire)
@@ -471,7 +476,8 @@ impl<'r> Peer<'r> {
     fn run_turn(&mut self, b: &Bundle) {
         for k in 0..TURN_TICKS {
             for c in std::mem::take(&mut self.pending) {
-                c.apply(&mut self.game, self.empire);
+                let sender = self.game.sender();
+                c.apply(&mut self.game, sender);
             }
             if k == 0 {
                 for s in &b.commands {

@@ -43,6 +43,9 @@ pub struct HeadClip {
     /// `UzenetFaj` (exe 0xd90ddc): the part's `#n` (1..=19, else 1), 0 without one.
     pub face: i32,
     pub playback: Option<Playback>,
+    /// A clip opened by the typing pass (`MessagesGfx2D_2`'s end of text, after `MessagesAnimFrissit` drew): it
+    /// plays from the next drawn frame.
+    pub fresh: bool,
 }
 
 /// `PlayHalkAlienHang` exe 0x509120 (ELF 0x5a1470): the alien voice's index for the speaking clip `anim`

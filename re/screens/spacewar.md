@@ -1670,3 +1670,37 @@ their battle state isn't drawn). `re/deviations.md` lists them.
 - Settled by the fx8b review (no difference found): the plasma bolts (237) and laser bolts (238) are present with the
   exe's size and colour, the engine glows (239) are the exe's size, the fighters (136) match in size and point colour; no
   orbital station is under the console in any capture (120).
+### 9.13 FX7 leftovers (2026-10-25): debris, the overview's firepower, the formation caption, additive clocks
+- **The debris' size** (deviation 236). `ScaleObja(id, a, b, c)` (ELF 0x457140, exe 0x452e30) *replaces* the record's
+  scale matrix `+0x10` with `diag(a, b, c)` and re-multiplies `+0x88` (exe `+0x80`) = scale·rotation; it does not
+  multiply what `AddToScene` set. `AddToScene` (exe 0x451720) put `diag(ext/max(ext)·s·+0x38)` there, and
+  `BoxUjraszamol` (ELF 0x602750) leaves every vertex normalised per axis by the box's own extent (`v' = v_root/ext`,
+  re/formats/xv.md, Drawing), so after `ScaleObja(size)` each axis of a piece spans ±size: the flat `darab` plates
+  (boxes (851, 210, 1024), (645, 1024, 380), (694, 195, 1024)) are drawn as blocks, up to 5× thicker on their flat
+  axis. `robbanasdarabok` (exe 0x57f170 = the ELF's, an unrolled first-free search) sets no rotation, so a reused piece
+  starts at the turn its last life left. [obs `run_spwc.py --records` on the fx8 battle (`_local/traces-fx8rec`): the
+  ships root record is the identity; the piece records hold `diag(size)`·R with sizes 0.00016–0.0013 and counts
+  24/26/40/40/34/40 at t1800..t2300; the client's sizes and counts (26/30/38/40/38/40) agree; the darab child records
+  `diag(2, 2, 2)` at (−1, 1, 1), `diag(1, 2, 1)`, `diag(1.041, 1.723, 1.027)`.] The client scales each axis by
+  `size / reach` (`mesh_reach`), lights the pieces per vertex as the ships and draws them after the blasts' sprites
+  (the exe's stay dark over the white cores). The white core's size matched within ±10 % at five blasts (phase noise;
+  libc `rand()` places every blast differently in the two binaries).
+- **The overview's firepower** (deviation 331, `infoszamol` exe 0x574040): own/enemy/other add each unit's `+0x250`
+  (exe; ELF `+0x284`), the value the first loop cached for the side strengths `+0x54` (a plan-less unit's mounts'
+  `+0x28`), and each fighter group's `+0x9c` (ELF `+0xac`), which only `AddUjVadasz` (exe 0x566420) writes, with 0: fighters
+  never add firepower to the overview, though the side strengths count `Tervek[o][d] +0x2c × count` for them. [obs
+  spacewar_info t500: 3690 / 708 in both; test `overview_firepower_matches_the_exe`.]
+- **The notices** (deviation 332, `screenfrissites` exe 0x57f800 lines 177–196): §3 step 12's three lines, `KiirStr(..,
+  200, y, 0x46, 2, flags 6 (right-aligned in the 70 cells), colour 2)`: own ships retreating (`+0x2d90`) at y 30, an
+  AI's (`+0x2d91`) next, the formation caption `GetString(0xb, 1, 4)` next with `KiirStrSzinSzorzo = (int)(fade·100)·
+  ((slot-0 counter·100)/50)/100`. "Weapon button 1 lit" was the formation phase's pick (`SetFrame(ora, 0)` on slot
+  `+0x2d88`), not an empty selection. [obs spacewar_info t500: the caption pixel-equal.]
+- **`ora.xvb` and `no.xvb` are additive**: `initgfx` gives them `PropertiesOff(0xf)` (the buttons `PropertiesOff(6)`),
+  clearing bit 8, so they are added (`ONE`/`ONE`, RGB × the opacity byte) over the buttons (re/screens/render.md §2.3).
+  [obs: weapons fx8b 2.60–4.41 → 2.48–3.47, spacewar_info 4.47 → 3.99; the rings and arcs take the exe's light blue.]
+- **The shield rings: still not captured.** `run_spwc.py --planets --shield` stages a planet battle at a human
+  planet whose first armed building is armour (an armour gun, armour 1.5, weapon −1), and `--records` dumps the ring
+  nodes (exe `+0x1a88 + 0xc·i`, start tick `+8`); with the designs given anti-planet weapons (`--weapons
+  0x1a,0x44,0x45,0x46`: weapons 16..18, kind 2) no shot hit the armour gun in the whole battle (client replay: 1144
+  ticks, 0 rings). A ring needs a hit on an armoured gun (`FoldTalalat`, §6.8.5): an `AttackGun` order on it (`Lov3`)
+  or a `Lov2` pick; next try a human attack on an AI planet with the order scripted.

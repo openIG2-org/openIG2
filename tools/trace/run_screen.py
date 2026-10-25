@@ -69,7 +69,7 @@ ap.add_argument("--res-closing", action="store_true")
 ap.add_argument("--dip-frame", type=float, help="diplomacy screen: hold dipframe at F (its opening)")
 ap.add_argument("--res-keringeto", type=float, default=0.0, help="research screen (--res-frame): pin the side lights' clock reskeringeto at K")
 ap.add_argument("--trade-cheat", action="store_true", help="trade screen: set the exe's TradeCheat (every own planet is a trade port)")
-ap.add_argument("--light-probe", action="store_true", help="research (--kep 4), trade (8) or starmap (2) screen: record the engine's per-vertex lighting (fenyekszamolasa) to --jsonl")
+ap.add_argument("--light-probe", action="store_true", help="research (--kep 4), trade (8), starmap (2) or info (9) screen: record the engine's per-vertex lighting (fenyekszamolasa) to --jsonl")
 ap.add_argument("--verdict", type=int, default=0, help="spy screen (--spies verdict): press the verdict buttons N times, fuzzed")
 ap.add_argument("--verdict-seed", type=int, default=1)
 ap.add_argument("--particles", help="starmap: write the exe's background particle sets (`FStars` 0xF16F38) of the grabbed moment to this JSON file")
@@ -232,7 +232,7 @@ def on(msg, data):
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
                     json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
-                               "info_list": p.get("infoList"), "faders": p.get("faders")}, f)
+                               "info_list": p.get("infoList"), "faders": p.get("faders"), "rop_frames": p.get("ropFrames")}, f)
     else:
         print(msg, flush=True)
         done.append(1)

@@ -51,15 +51,16 @@ impl Layout {
     /// `ModifyViewPort`: `m = ((W·480)/H − 640)/2` virtual pixels each side of the frame.
     pub fn hatar(&self) -> Hatar {
         let [_, _, w, h] = self.window;
-        let m = ((w * 480) / h - 640) / 2;
+        let m = ((w * 480) / h.max(1) - 640) / 2;
         let (x1, x2) = (m * -639 / 639, (m + 639) * 639 / 639);
         Hatar { x1, x2, y1: 0, y2: 479, xm: x2 - x1 + 1, ym: 480 }
     }
 
     /// `MainCallBackEventHandler`: a window pixel → virtual pixels through the frame, unclamped.
     pub fn mouse(&self, p: [i32; 2]) -> [i32; 2] {
+        // A minimised or display-off window has a 0-wide frame (deviations #264): no division by zero.
         let [x, y, w, h] = self.frame;
-        [(p[0] - x) * 640 / w, (p[1] - y) * 480 / h]
+        [(p[0] - x) * 640 / w.max(1), (p[1] - y) * 480 / h.max(1)]
     }
 }
 
@@ -230,6 +231,10 @@ mod tests {
         // Unclamped, truncated towards zero in the side strips.
         assert_eq!(l.mouse([0, 0]), [-106, 0]);
         assert_eq!(l.mouse([1919, 0]), [746, 0]);
+        // A minimised window: a 1 × 1 size gives a 0-high frame (deviations #264), no panic.
+        let l = Layout::new(0, 0);
+        assert_eq!(l.frame[3], 0);
+        let _ = (l.mouse([5, 5]), l.hatar());
     }
 
     #[test]

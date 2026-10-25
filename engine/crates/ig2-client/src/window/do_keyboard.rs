@@ -52,7 +52,29 @@ pub(super) fn exe_queues_key_down(event: &winit::event::KeyEvent) -> bool {
     }
 }
 
+/// A numpad digit (with Num Lock on, a `Key::Character`): the exe queues no key down for it, but its SDL_TEXTINPUT
+/// character still types into a text entry (`remapKeyCodes` exe 0x4e4670; deviations #253).
+pub(super) fn numpad_digit(event: &winit::event::KeyEvent) -> bool {
+    numpad_digit_key(event.physical_key, event.logical_key.as_ref())
+}
+
+fn numpad_digit_key(physical: winit::keyboard::PhysicalKey, logical: Key<&str>) -> bool {
+    use winit::keyboard::{KeyCode, PhysicalKey};
+    matches!(physical, PhysicalKey::Code(KeyCode::Numpad0 | KeyCode::Numpad1 | KeyCode::Numpad2 | KeyCode::Numpad3
+        | KeyCode::Numpad4 | KeyCode::Numpad5 | KeyCode::Numpad6 | KeyCode::Numpad7 | KeyCode::Numpad8 | KeyCode::Numpad9))
+        && matches!(logical, Key::Character(c) if c.bytes().all(|b| b.is_ascii_digit()))
+}
+
 impl App {
+    /// A text entry has the keys: the characters a key event carries type into it.
+    pub(super) fn entry_up(&self) -> bool {
+        self.front.as_ref().is_some_and(|f| f.mp.is_some() || f.s.name.is_some())
+            || self.options.as_ref().is_some_and(|o| o.s.entry.is_some())
+            || self.hud.as_ref().is_some_and(|h| h.chat.entry.is_some())
+            || self.menus.rename.is_some()
+            || (self.overlay == Some(Screen::Design) && self.design.as_ref().is_some_and(|d| d.entry.is_some()))
+    }
+
     /// `AktKep`: the screen up.
     pub(super) fn akt_kep_now(&self) -> i32 {
         match () {
@@ -163,7 +185,7 @@ impl App {
                     if !self.research.as_mut().is_none_or(|r| r.leave()) {
                         return;
                     }
-                    self.research = None;
+                    self.drop_research();
                     self.overlay = None;
                 }
                 5 => {
@@ -243,7 +265,7 @@ impl App {
         self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
         self.trade_under_options = None;
         self.overlay = None;
-        self.research = None;
+        self.drop_research();
         self.drop_design();
         self.trade = None;
         self.spy = None;
@@ -308,9 +330,32 @@ impl App {
     }
 }
 
+/// The MP sender's gate on 0x406/0x407 (`DoKeyboard` exe 0x4db484/0x4db535/0x4dbee9, `IG2_gameUpdate` 0x4e0831/
+/// 0x4e08e9): `OnlyServerCanModifyTime == 0 || SuperVisor`.
+pub(super) fn mp_time_gate(only_server: i32, host: bool) -> bool {
+    only_server == 0 || host
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_host_sets_the_time_when_the_room_says_so() {
+        assert!(mp_time_gate(0, false) && mp_time_gate(0, true));
+        assert!(!mp_time_gate(1, false));
+        assert!(mp_time_gate(1, true));
+    }
+
+    #[test]
+    fn numpad_digits_type_into_entries() {
+        use winit::keyboard::{KeyCode, PhysicalKey};
+        // With Num Lock on a numpad digit is its character; off, it is a navigation key and types nothing.
+        assert!(numpad_digit_key(PhysicalKey::Code(KeyCode::Numpad5), Key::Character("5")));
+        assert!(!numpad_digit_key(PhysicalKey::Code(KeyCode::Numpad5), Key::Named(NamedKey::Clear)));
+        assert!(!numpad_digit_key(PhysicalKey::Code(KeyCode::Digit5), Key::Character("5")));
+        assert!(!numpad_digit_key(PhysicalKey::Code(KeyCode::NumpadAdd), Key::Character("+")));
+    }
 
     #[test]
     fn f_keys_ask_for_their_screen() {

@@ -421,11 +421,14 @@ function armPlanet(pl) {
     for (let k = 1; k <= n; k++) p.add(0xfe + 2 * k).writeS16(ships[rnd(ships.length)]);
   }
   const nb = A.HanyEpulet.add(4 * pl).readS32();
+  let shield = !cfg.shield;
   for (let k = 0; k < 4 && nb > 0; k++) {
     const b = A.Epuletek.add(4 * pl).readPointer().add(0x20 * (1 + rnd(nb)));
     if (b.readU8() === 0) continue;
-    // Guns 28..31; with --fuzz-designs also techs the setup skips (32..35) and armour (36..38), some switched off.
-    b.writeU8(cfg.fuzzDesigns ? 28 + rnd(11) : 28 + rnd(4));
+    // Guns 28..31; with --fuzz-designs also techs the setup skips (32..35) and armour (36..38), some switched off;
+    // --shield: the first one armour (the shield rings, `karikakirak`).
+    b.writeU8(!shield ? 36 + rnd(3) : cfg.fuzzDesigns ? 28 + rnd(11) : 28 + rnd(4));
+    shield = true;
     b.add(4).writeS32(0);
     b.add(8).writeS16(0);
     if (cfg.fuzzDesigns) b.add(0x19).writeU8(rnd(5) ? 1 : 0);
@@ -595,7 +598,7 @@ function startBattle() {
   const h = human[rnd(human.length)], f = ai[rnd(ai.length)];
   A.DebugNoLopsided.writeS32(1);
   A.DebugAlwaysSim.writeS32(0);
-  if (cfg.planets && rnd(3)) {
+  if (cfg.planets && (rnd(3) || cfg.shield)) {
     // At one of the human's planets, armed for the occasion.
     const np = A.HanyBolygo.readS32(), mine = [];
     for (let q = 1; q <= np; q++) if (A.Bolygok.add(0x188 * q + 0x20).readU8() === en) mine.push(q);
@@ -843,6 +846,52 @@ function activeSelf() {
   return null;
 }
 
+// --records: at each script grab the scene records (exe record stride 0x140: +0 translation, +0x10 scale matrix,
+// +0x5c rotation, +0x80 their product) of the live debris nodes (+0x2008 + 0x1c*i, counter +0x18), the ships root
+// (+0x1c18) and every unit's model (unit +0x34; units at *(+0xc20), stride 600, count +0xc28): what `ScaleObja` and
+// `AddToScene` left. A meshid is (key +0, record index +4); the key's XVB is found in the std::map at *0x93DA34, as
+// exe 0x451210 does.
+function meshRecord(id) {
+  const m = va(0x93da34).readPointer();
+  if (m.isNull()) return null;
+  const head = m.readPointer(), key = id.readU32();
+  let n = head.add(4).readPointer(), best = head;
+  while (n.add(0xd).readU8() === 0) {
+    if (n.add(0x10).readU32() < key) n = n.add(8).readPointer();
+    else { best = n; n = n.readPointer(); }
+  }
+  if (best.equals(head) || key < best.add(0x10).readU32()) return null;
+  const xvb = best.add(0x14).readPointer();
+  return xvb.add(0x20).readPointer().add(id.add(4).readS32() * 0x140);
+}
+function sceneRecords(self, t) {
+  if (!self) return;
+  const fl = (p, o, n) => Array.from({ length: n }, (_, k) => p.add(o + 4 * k).readFloat());
+  const rec = (id) => { try { const r = meshRecord(id); return r && { at: fl(r, 0, 3), s: fl(r, 0x10, 9), m: fl(r, 0x80, 9) }; } catch (e) { return { err: e.toString() }; } };
+  const debris = [];
+  for (let i = 0; i < 40; i++) {
+    const d = self.add(0x2008 + 0x1c * i), c = d.add(0x18).readS32();
+    if (c === 0) continue;
+    // The model's own XVB (record +0x44): its header (+4..+0xc the box half-extents `AddToScene` reads, +0x38 the
+    // root scale) and its first two child records.
+    let model = null;
+    try {
+      const r = meshRecord(d), x = r.add(0x44).readPointer(), kids = x.add(0x20).readPointer();
+      model = { xvb: x.toString(), box: fl(x, 4, 3), k: x.add(0x38).readFloat(), kids: [0, 1].map((j) => ({ at: fl(kids.add(0x140 * j), 0, 3), s: fl(kids.add(0x140 * j), 0x10, 9), m: fl(kids.add(0x140 * j), 0x80, 9) })) };
+    } catch (e) { model = { err: e.toString() }; }
+    debris.push({ i, c, spin: fl(d, 8, 3), rec: rec(d), model });
+  }
+  const units = [], base = self.add(0xc20).readPointer(), nu = self.add(0xc28).readS32();
+  for (let i = 0; i < nu && i < 64; i++) units.push({ i, rec: rec(base.add(600 * i + 0x34)) });
+  // The shield rings (`karikaload` exe 0x576e40: 20 nodes at +0x1a88 + 0xc*i, +8 the start tick, 0 = free).
+  const rings = [];
+  for (let i = 0; i < 20; i++) {
+    const g = self.add(0x1a88 + 0xc * i), st = g.add(8).readS32();
+    if (st !== 0) rings.push({ i, start: st, rec: rec(g) });
+  }
+  emit({ k: 'records', t, root: rec(self.add(0x1c18)), debris, units, rings });
+}
+
 let scriptSwapHooked = false;
 function hookScriptSwap() {
   const gl = Process.getModuleByName('opengl32.dll'), gdi = Process.getModuleByName('gdi32.dll'), user = Process.getModuleByName('user32.dll');
@@ -876,6 +925,7 @@ function hookScriptSwap() {
         const buf = Memory.alloc(w * h * 4);
         readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
         bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
+        if (cfg.records) sceneRecords(activeSelf() || scriptSelf, want);
         flush();
         send({ type: 'frame', t: want, ticks, w, h, frames, mouse: scriptMouse, ...screenState(activeSelf() || scriptSelf) }, buf.readByteArray(w * h * 4));
       } catch (e) { emit({ k: 'error', msg: e.toString(), stack: e.stack }); }

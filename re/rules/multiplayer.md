@@ -152,6 +152,25 @@ owner.
 The shared state's EN is the host's empire. `ig2-client::world::local_en` writes the local empire into EN while the
 world holds the game and puts the canonical one back before the game goes into the peer, so hashes and snapshots are unchanged.
 
+### 5.5 The sim's own messages (deviation 231)
+
+`Multi_Send` (exe 0x513840) only appends to the outgoing composer; `MultiSendPackets` (exe 0x5126b0), called by
+`Fake_FRISSITES` (exe 0x4de720) after the whole tick body, stamps it into the turn ring and, once the slot is ready (at
+once in single player; every machine's ack in MP, 4 turns ahead), runs the `MULTIGET_*` handlers on it. So a message a
+tick raises reaches the handlers before the next tick's body, on every machine with the sender's `EN` from the message.
+Three come from the sim itself, and every peer raises them identically, so the driver delivers each before the next
+tick (`Command::from_event` → `pending` in `ig2_net::lockstep::Peer::run_turn`; `World::tick` in single player) for
+`Game::sender` (the state's `EN`, the canonical one in lockstep):
+- 0x1b, an emptied fleet → `Game::fleet_emptied`;
+- 0x66 (`st_Multi_include`, mode 1003, exe 0x5ee4d0: answer 2 to message 0x2347, payload 10031) →
+  `MULTIGET_Story` (exe 0x5c2f00, ELF 0x740670) → `Story_Special(15, sender, id)` = `Command::StoryChoice`;
+- 0x49 (the elem stories, exe 0x5d4b70: `Multi_Send(0x49, EN, spy, st_GetKuldetesID(id), 0, 0, 0, 10)`) →
+  `MULTIGET_Spy` (exe 0x5883c0) = the spy screen's send: `SpyOrder::Send { target 0, 0, 0, days 10 }`. Campaign only.
+
+In canonical MP the story's human is the canonical `EN` and only its machine's message answers reach the story
+(`Game::message_order`), so the 1003 radar offer goes to the host's player only, where the original offered it to
+every human on its own machine (open: per-human story hand-offs).
+
 ## 6. Open
 
 - The unowned planets' richness by the host's race (`GetBolygoGazdagsag`) and radar row 0: a fidelity question
@@ -313,3 +332,31 @@ resumes from its own state (no restart), 6 is awaited for the grace then away, 7
 to the old host's and each other's, and an MP save afterwards has all three humans; outside a battle with a survivor
 a few turns behind, 6 is away at once and its player comes back through the successor's door. Every turn's hashes
 agree.
+
+### 7.3 The client glue (ours, ADR 0012 §2 and §6, ADR 0014 §4; `ig2-client::mp_lobby`)
+
+- **Where a survivor can be reached.** Every joiner's client opens its own listener when its game starts
+  (`Net::listen`: QUIC on `GAME_PORT`, else any port; no LAN announcement) and tells the host
+  `SessionMsg::Reach { port, cert }` (`ClientSession::reach`; the port and the listener certificate's fingerprint).
+  The host pairs it with the address it sees the joiner's link come from (`Transport::remote`, QUIC's remote address;
+  a loopback link is `127.0.0.1`) and sends every connected human's `Candidate { slot, addr, cert }` to every peer as
+  `SessionMsg::Reachable` whenever the list changes, and to a rejoiner, a resynced or a resumed peer. A survivor sends
+  its `Reach` again to each new host (after `Resumed` or a `Start`). The old host's own address is never needed. The
+  certificate travels from the trusted host, so a survivor pins the successor's listener by it.
+- **Election and connect** (`Session::pump` when `ClientSession::closed()` and not kicked): the candidates are
+  `ClientSession::successors()`, tried in order. This machine's own slot first → `HostSession::migrate(client, rules
+  fingerprint, the password typed for the room, now)` and the joiner's listener becomes the new host's (it accepts the
+  survivors through the door). Else `Net::connect(addr, pin = cert)` to the first candidate with an address; on a
+  link, `ClientSession::migrate(slot, link, name, password, fingerprint)`; a connect error, `MIGRATE_CONNECT`
+  (5 s) without a link or the door's `Refused` → the next candidate. No candidate left → the game ends for this machine
+  as before ("The host has left the game.", main menu; `MultiCloseServer`). The message line says
+  "The host has left the game. <name> hosts it now." on every survivor (ours, English).
+- **Resuming an MP save from the room.** The connection page has a fourth button, "Saved game" (ours): the list shows
+  the save folder's slots (`options::read_slots`) that read as MP saves with these rules (`MpSave::read`), titled by the
+  slot name and date. Pressing a row selects it; Host (or a second press) opens a scenario-style room
+  (`LobbyHost::new`, ADR 0008's rules: no galaxy options, every member must hold an empire and be ready) for the saved
+  humans' empires, named after the saved session, with the typed password. The host sits in the saved empire of its
+  name (else the first); a joiner whose name is a saved human's is seated in that empire as it joins (it may move to
+  another open one). Start (the host's ready) needs the members to hold exactly the saved empires
+  (`HostSession::resume`), else the line says "Every saved empire needs its player". Joiners start from the host's
+  snapshot (`Start::snapshot`, as a rejoin), so they need no save file.

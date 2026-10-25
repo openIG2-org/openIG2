@@ -66,8 +66,10 @@ messages they take the bottom rows, newest first. Row `r` is at `y = UBAY − (3
 `UBAX` 3, `UBAY` 352, `UBAFont1` 2, `UBAFont2` 3, `UBASzin1` 1, `UBASzin2` 2, `UBASzin4` 34; `UBAXSzsz` 157,
 `UBAYSz` 218 for the selection frame):
 - the sender `UzenetFajtak[KerUz(id)]+7` (`uzenetek/uzenetek.txt`, `ig2-formats::dialogue::MessageKind::sender`;
-  `KerUz` 0x5a5b90 = the kind with that id), via `AliasConv`, 0x13 bytes, size `UBAFont2`, colour `UBASzin4`, or
-  `UBASzin1` when `+4` is set;
+  `KerUz` 0x5a5b90 = the kind with that id; an id not in the table gives `HanyUzenetFajta`, the 1000-entry table's
+  first unused, zeroed entry, so the sender and both subject lines are empty [obs: 230.sav's ids 30578/30579, no
+  caption in the exe]), via `AliasConv`, 0x13 bytes, size `UBAFont2`, colour `UBASzin4`, or `UBASzin1` when `+4` is
+  set;
 - the date at `y + 13`: year `Ido / 18000` (`Ido2Ev` 0x6206a0, 4 digits), month `Ido / 1500 % 12 + 1`, day
   `Ido / 50 % 30 + 1` with dots, size `UBAFont1`, colour `UBASzin2`;
 - the two subject lines `+0x1b`, `+0x2f` at `y + 23`, `y + 32`, 0x14 bytes;
@@ -119,7 +121,9 @@ render done), `MessagesKellKepMentes` 0xd909ae (save the screen).
   picture 0x36 instead of the model until the closing, which draws the live model again.
 - **2D** (`MessagesGfx2D_2` exe 0x507020, skipped in the save render): the list rows while `mesKINYITVA` and not
   closing; the message's text, its typing and the answers only at `mesframe == 30` and not closing; the clip gate
-  (§5.3, exe 0x506f60) likewise.
+  (§5.3, exe 0x506f60) likewise. `MessagesAnimFrissit` draws the clip before the typing pass, so a clip the typer's
+  end opens (`StartAnim_EndOfMessage`, `VegeAzElsoAnimnak`) shows from the next frame and its clock starts there
+  [obs: end clip first drawn at t 133].
 - **Leave** (`Messages_Kilep` exe 0x5083d0): the typer, the speech and the alien voice stop, the clip closes, sub-mesh
   5/0 shown again; with the switch on: `mesBECSUKAS = 1`, `scrn23ki.wav`, then a loop of `UpdateFrame` +
   `FRISSITES` (one render and the UI ticks due, wall-clock) until a pass begins at `mesframe == 0` a second time
@@ -127,7 +131,10 @@ render done), `MessagesKellKepMentes` 0xd909ae (save the screen).
   asked for (`MessagesElottiScreen` 0xda65b4, or the key's).
 - **Input**: hot-spot 3 only when `mesKINYITVA`; 4 and 6 at `mesframe == 30`; 7..=9 (and Esc, `MainCallBackEventHandler`
   exe 0x4e2db0, no `mesframe` test) live during the opening: leaving mid-opening closes from where it stood. Inside
-  the closing loop the main loop's mouse pass doesn't run and `bae24d` refuses Esc and the screen keys.
+  the closing loop the main loop's mouse pass doesn't run and `bae24d` refuses Esc and the screen keys. A button pressed
+  inside the closing loop never reaches the next screen [obs: `scripts/messages-close-press.json` with
+  `--via-starmap 60`, 2026-10-25: a left down on the starmap's screens arrow during the closing, released after the
+  starmap is up, opens no menu].
 - **Measured** (`run_screen.py --script scripts/messages-{open,esc}.json` over a replay save with inbox messages,
   `mesframe`/`mesKINYITVA`/`mesBECSUKAS` per grab, 2026-10-24): 0 → 15 in 46 ticks (`mesKINYITVA` at the next render);
   an Esc or a press at UI tick t is taken after the render of t + 1 (`IG2_gameUpdate`/`Messages_Main` come after the
@@ -159,7 +166,12 @@ Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzene
 ` (the `` kept) gets `#k#` = the entry's parameter `k` (`+0x10 + 0x14·k`; "#=#" →
   "(~verror~s)"; in `~f…~s` when the other side speaks); `a2az` converts it for Hungarian (`Lang` 4); then each word
   follows a space if `width + strxlen(word) + 1 < 0x36`, else a `` and the word starts the line.
-- Typing (`MessagesGfx2D_2`): `MsgElteltMp += ms/500`, one more byte per `ParbeszTyperPtrNovelo`; at the end
+- Typing (`MessagesGfx2D_2`): `MsgElteltMp += (MsgActTime − MsgOldTime)/500` (`SDL_GetTicks`), one more byte per
+  `ParbeszTyperPtrNovelo`, then `MsgOldTime = MsgActTime`. Only that pass (at `mesframe` 30) and the open
+  (`KiertekelUjuzenet`) or `Messages_Belep` set `MsgOldTime` (the ELF's reset in `Messages3DUpdate` tests
+  `mesframe < 30 && mesframe == 30`, never true, and the exe has none), so the first pass takes the whole 15 → 30
+  wait at once: ~460 ms, a short message typed out in that frame [obs: `messages-open.json`, opened at t 86, typed
+  out at t 133]. At the end
   `KiirtaMar`, `Novelo = 0.4`, a plain message's end-of-message clip, and a dialogue whose answer led to −1 is over
   (`ParbeszedVege`, the entry's `+4` set). Drawing from line `ParbeszKezdoSor` (its colour by
   `ScanLastParbeszedColor`): `|C` n sets colour n, `~c` a colour code (`SzinKarakter` "spkfzv " → `SzinTomb` 2, 6, 8,
@@ -181,6 +193,10 @@ once typed; `FolyamatbanU == −1` and
 `MessagesElottiScreen`. A press inside x 186..512, y 1..167 types the rest at once (`Novelo` 0.001; right button:
 `SkipAll` too) and stops the voice. `FRISSIT_Messages2` (every 10th UI frame) starts the automatic messages
 (`KeresAutomataUzenet`).
+Tooltips (`Messages_MouseInit` exe 0x508b10: `Mouse_Szoveg_Set(id, 0, rect, GetString(10, 1, n), wait, 1)`, the hand
+on every spot): n = id for 1..=6, 7 for 7..=10; shown by `UpdateFrame` after the 400 ms rest (input.md §8) on the lowest
+enabled spot under the pointer; the "lit frame" over a hovered row is that tooltip's fader box [obs: messages-open.json
+t 129, the inbox's "Üzenetek" box at the pointer]. Client: `MessagesScreen::{spot_at, tip_text}`.
 `Messages_MouseInit2` (exe 0x508940, every frame): 3 on per `DAT_00da65e5`; 4 and 6 only at `mesframe == 30`; 5 and 10
 off; 7..=9 only with no choices pending and the text typed (`AktValasztasok == 0 && KiirtaMar`). Esc
 (`MainCallBackEventHandler` exe 0x4e2db0) in that idle state sets `AktIkonKell = 0x25`, a press on hot-spot 7

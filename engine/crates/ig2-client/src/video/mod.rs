@@ -194,6 +194,23 @@ impl Player {
         out
     }
 
+    /// [`Self::update`] waiting for the decoder (captures on a script clock): every frame due by `now_ms`, the last
+    /// returned.
+    pub fn update_blocking(&mut self, now_ms: u64) -> Option<Image> {
+        let t = self.target(now_ms);
+        let mut out = None;
+        while !self.ended && (self.next as i64) <= t {
+            match self.waiting.take().or_else(|| self.rx.recv().ok()) {
+                Some(img) => {
+                    self.next += 1;
+                    out = Some(img);
+                }
+                None => self.ended = true,
+            }
+        }
+        out
+    }
+
     /// The next frame in display order, waiting for the decoder (`None` at the end).
     pub fn next_blocking(&mut self) -> Option<Image> {
         let img = self.waiting.take().or_else(|| self.rx.recv().ok())?;

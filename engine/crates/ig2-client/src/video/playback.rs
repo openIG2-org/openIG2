@@ -84,6 +84,16 @@ impl Playback {
         }
     }
 
+    /// [`Self::frame`] waiting for the decoder: a capture on the script's clock shows the frame due, not the one
+    /// decoded by then.
+    pub fn frame_blocking(&mut self, r: &mut Renderer, now_ms: u64) {
+        self.now = now_ms;
+        self.start.get_or_insert(now_ms);
+        if let Some(img) = self.player.update_blocking(now_ms) {
+            self.upload(r, &img);
+        }
+    }
+
     /// Shows `img` as the current frame (also the snapshot's still).
     pub fn upload(&mut self, r: &mut Renderer, img: &Image) {
         let tex = *self.tex.get_or_insert_with(|| r.video_texture(img.width, img.height));

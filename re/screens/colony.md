@@ -108,7 +108,7 @@ the half-size fog 0.5 and beyond 99 % full fog; `fogalap.xvb` (scale 12.1, moved
 remaster's GL renderer shows **no distance fog** in the reference captures (§8) [obs]; the client keeps the border
 fog only. The terrain and buildings sit under `mainmeshid1` (ambient `light1` 0x1e1e1e, the parallel `light2`
 0xc8c8c8; the lightning `villamid` is black), the building panel's model under `mainmeshid2` (0x404040 and `light5x`
-0xffffff from (10, 10, −10)); the remaster draws them in gamma space with the shadow map: render.md §4–§5.
+0xffffff, §11.10 Lights); the remaster draws them in gamma space with the shadow map: render.md §4–§5.
 
 The background: `melyikhatter = WF+0xa04` (exe `+0x8d4`, `Field::background`, `InitWeather` 0x4c1160), `LoadBox(Hatterek[bg])`
 (`[hatter]` sections of `terepleiro.txt`), `AddToScene(…, 11.0)`, `ScaleObj(1, 1, 1.1)`, `RotateObj(0, π/2, 0)`,
@@ -698,6 +698,7 @@ from the second grab on (the first grab's ten ticks hold `Colony_Move`'s one-sho
   `SetRelative(false)`, `RotateObj(π/2, 0, 0)`, `MoveObj(−130, 657, −1100)` (camera space), properties 0x8000000
   (`kirak2`: no clip flags, no near test) and 0x4000000 (finest level). `Frissit2_Colony` (exe 0x477dc0) turns it
   `RotateObj2(id, (0, 1, 0), −0.01)` a UI frame (accumulating), so a new pick starts its turn from 0.
+- **Lights of the panel pass** (`ColonyMasodikUpdate3d` 0x998247 set) [obs, probe `tools/trace/probes/colony_lights.js`, `run_screen.py --kep 3 --planet 42`]: `fenyekszamolasa` (exe 0x52f190) lights the pass's models per vertex on the CPU like every other engine object (no shader light). The panel building (`mainmeshid2`): ambient 0x404040 (`light4x`) + parallel `light5x` 0xffffff; the info box's models (`mainmeshid5` under `mainmeshid3`, `Init3dColony` ELF): parallel `light5` 0xffffff + the node's own ambient 0x4b4b4b. Both lights point from (10, 10, −10), turned by the COLONY CAMERA's rotation into the pass's camera space although the models are fixed to the pass's camera (probe vector (−0.5774, 0, −0.8165) at pitch −π/4, rotate 0 = the view basis rows · normalise(10, 10, −10)). Port: `View::panel_light`, `colony::kis_info_lights`, `colony_ui::bake_panel` (`lighting::Lights`, zero normals = the pre-lit path); the globe has no special normals. Tests `lighting::tests::colony_panel_probe_matches_the_exe` (every probed vertex colour), `colony::tests::panel_light_turns_with_the_colony_camera`. Left: the panel building's glass is less blue than the exe's.
 - **The panel pass's projection**: `ShowColony` sets `HatarX1..Y2` 0x12..0xad × 0x24..0xa7 and the centre (95, 101)
   before the second `Update3D`, but the remaster's `ColonyGfx2D_2` (exe 0x461900, its last lines, not in the ELF) leaves
   `HatarX1..Y2` 0x1b..0xa9 × 0x28..0x88 (`Xm` 0x8f, `Ym` 0x61) and the centre **(98, 88)**, and the pass draws with

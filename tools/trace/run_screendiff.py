@@ -48,6 +48,9 @@ TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ENGINE, "target")
 CLIENT = os.path.join(TARGET, "release", "ig2-client" + EXE_SUFFIX)
 DIFF = os.path.join(TARGET, "release", "ig2-screendiff" + EXE_SUFFIX)
 
+# Drawn frames between screen.js asking for a still and the frame it reads back, plus the cells' first turn after
+# the icon press (calibrated on the transfer panel's light probe, 2026-10-25).
+ROP_SPIN_LAG = 2
 TOPBAR = "topbar=0,0,640,20"
 # The regions each screen is judged by, in virtual pixels (re/screens/hud.md, info.md, messages.md).
 SCREENS = {
@@ -485,6 +488,10 @@ def main():
             args += ["--acttime", repr(clocks["acttime"] / 1000)]
         if clocks.get("info_alap") is not None:
             args += ["--info-alap", repr(clocks["info_alap"])]
+        # The transfer and vehicle panels' cells turn per drawn frame since the icon press (starmap.md §13.3): the
+        # exe's count when the grab was asked for plus the still's lag.
+        if clocks.get("rop_frames") is not None and kind in ("transfer", "tanksinfo"):
+            args += ["--spin-frames", str(clocks["rop_frames"] + ROP_SPIN_LAG)]
         if clocks.get("info_turn") is not None and kind == "info":
             args += ["--info-turn", repr(clocks["info_turn"])]
         il = clocks.get("info_list")

@@ -21,6 +21,11 @@ pub trait Transport {
     fn closed(&self) -> bool {
         false
     }
+    /// The address the other end's messages come from, if the link has one (a host migration's candidates,
+    /// rules/multiplayer.md §7.3).
+    fn remote(&self) -> Option<std::net::IpAddr> {
+        None
+    }
 }
 
 /// An in-process link. Messages cross it encoded, as they would cross a network, and the ends may live on
@@ -40,6 +45,11 @@ pub fn loopback() -> (Loopback, Loopback) {
 }
 
 impl Transport for Loopback {
+    /// Both ends are in this process.
+    fn remote(&self) -> Option<std::net::IpAddr> {
+        Some(std::net::Ipv4Addr::LOCALHOST.into())
+    }
+
     fn send(&mut self, msg: &Msg) {
         if self.tx.send(wire::to_vec(msg).expect("messages encode")).is_err() {
             self.closed = true;

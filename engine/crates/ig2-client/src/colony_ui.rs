@@ -1225,7 +1225,8 @@ pub const PANEL_VIEW: [f32; 4] = [18.0, 36.0, 174.0, 168.0];
 const PANEL_CENTRE: [f32; 2] = [98.0, 88.0];
 
 /// `ShowColony`'s second `Update3D` (the panel's pass): camera space → clip over the virtual 640 × 480 with the
-/// centre at [`PANEL_CENTRE`]: `vx = 600·x/w + 98`, `vy = 600·y/w + 88`; depth over `clip`; lit by `light5x`.
+/// centre at [`PANEL_CENTRE`]: `vx = 600·x/w + 98`, `vy = 600·y/w + 88`; depth over `clip`; the models lit per vertex
+/// by their nodes' lights ([`View::panel_light`]).
 pub fn panel_pass(size: [f32; 2], clip: (f32, f32), draws: Vec<MeshDraw>, dynamic: Vec<MeshVertex>) -> (Frame, (u32, u32)) {
     let wide = crate::kit::Wide::new(&crate::font::Virtual::new(size));
     let (cx, cy) = (PANEL_CENTRE[0], PANEL_CENTRE[1]);
@@ -1234,8 +1235,6 @@ pub fn panel_pass(size: [f32; 2], clip: (f32, f32), draws: Vec<MeshDraw>, dynami
     let rows4 = [[1200.0 / 640.0, 0.0, -(cx - 320.0) / 320.0, 0.0], [0.0, -1200.0 / 480.0, -(1.0 - 2.0 * cy / 480.0), 0.0], [0.0, 0.0, -a, -b], [0.0, 0.0, -1.0, 0.0]];
     let rows4 = wide.rows(rows4);
     let view = std::array::from_fn(|c| std::array::from_fn(|k| rows4[k][c]));
-    // `light5x` from (10, 10, −10) with the h axis flipped for the file normals, as the view's (colony.rs).
-    let light = scene::normalise([-1.0, 1.0, -1.0]);
     let mut f = Frame::new([0.0, 0.0, 0.0, 0.0]);
     f.scene = Some(Scene3d {
         gamma: true,
@@ -1243,11 +1242,10 @@ pub fn panel_pass(size: [f32; 2], clip: (f32, f32), draws: Vec<MeshDraw>, dynami
         uniforms: SceneUniforms {
             view,
             eye: [0.0; 4],
-            light: [light[0], light[1], light[2], 0.0],
-            // `mainmeshid2`'s ambient 0x404040 and parallel light `light5x` 0xffffff (`Init3dColony`;
-            // `SetEnvironment` only recolours `light2`).
-            ambient: [0.251, 0.251, 0.251, 0.0],
-            sun: [1.0, 1.0, 1.0, 0.0],
+            // The pass's models come lit per vertex (`fenyekszamolasa`, [`bake_panel`]): no scene light.
+            light: [0.0; 4],
+            ambient: [0.0; 4],
+            sun: [0.0; 4],
             fog: [0.0; 4],
             fog_range: [1e9, 2e9, 0.0, 1e9],
             flash: [[0.0; 4]; 2],
@@ -1274,7 +1272,7 @@ impl PanelBuilding {
     /// `unit`: the hull and colour of the unit to land, shown instead (`AktEpuletTipus < −9`: `LoadBox(TankAlap[hull])`
     /// at scale 2.0, the first sub-mesh's texture `tankok/<hull><colour>.bmp`; spec §11.7).
     #[allow(clippy::too_many_arguments)]
-    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>, spin: f32, size: [f32; 2]) -> Option<TexId> {
+    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>, spin: f32, light: V3, size: [f32; 2]) -> Option<TexId> {
         let (model, texs) = self.model(r, install, rules, kind, unit)?;
         // `local_e0 = Building+0x54` (1.5 at most below `OptionsBuildingRes` 2, the remaster runs the highest), ×3/2;
         // a unit 2.0.
@@ -1282,7 +1280,10 @@ impl PanelBuilding {
         let tilt = scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], -0.3), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
         let turn = scene::axis_matrix([0.0, (-0.3f32).cos(), (-0.3f32).sin()], 0.012 * spin);
         let m: M3 = scene::mul(&scene::mul(&turn, &tilt), &Placement::add_to_scene(model.origin, s).matrix).map(|x| x * 1024.0);
-        let (draws, dynamic) = bake_panel(&model, &texs, &m, [0.0, 0.0, -30000.0]);
+        // `mainmeshid2`'s ambient 0x404040 (`light4x`) and `light5x` 0xffffff (`Init3dColony`) [obs:
+        // `probes/colony_lights.js`].
+        let lights = crate::lighting::Lights::default().ambient(0x404040).parallel(0xffffff, light);
+        let (draws, dynamic) = bake_panel(&model, &texs, &m, [0.0, 0.0, -30000.0], &lights);
         let (f, px) = panel_pass(size, (20000.0, 40000.0), draws, dynamic);
         let target = match &mut self.target {
             Some(t) if t.size == px => t,
@@ -1297,12 +1298,12 @@ impl PanelBuilding {
     /// `RotateObj(π/2, 0, 0)`, camera-fixed at (−130, 657, −1100) and turned −0.01 a UI frame about (0, 1, 0) for
     /// `turn` frames; into a texture of the window's size of which the caller draws the info box's corner.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_info(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, turn: f32, size: [f32; 2]) -> Option<TexId> {
+    pub fn render_info(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, turn: f32, light: V3, size: [f32; 2]) -> Option<TexId> {
         let (model, texs) = self.model(r, install, rules, kind, None)?;
         let s = rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 0.015;
         let rot = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], -0.01 * turn), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
         let m: M3 = scene::mul(&rot, &Placement::add_to_scene(model.origin, s).matrix).map(|x| x * 1024.0);
-        let (draws, dynamic) = bake_panel(&model, &texs, &m, crate::colony::KIS_INFO_AT);
+        let (draws, dynamic) = bake_panel(&model, &texs, &m, crate::colony::KIS_INFO_AT, &crate::colony::kis_info_lights(light));
         let (f, px) = panel_pass(size, (500.0, 2000.0), draws, dynamic);
         let target = match &mut self.info_target {
             Some(t) if t.size == px => t,
@@ -1359,21 +1360,22 @@ impl PanelBuilding {
 /// `HandleKisInfoObject` (exe 0x47d000, spec §11.10): the info box's turning model for `ui`'s [`KisInfo`], rendered
 /// into a texture of the window's size (the caller draws the box's corner of it).
 #[allow(clippy::too_many_arguments)]
-pub fn render_kis_info(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, ui: &ColonyUi, scene: &mut crate::colony::ColonyScene, panel: &mut PanelBuilding, s: &ColonySnap, en: i32, size: [f32; 2]) -> Option<TexId> {
+pub fn render_kis_info(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, ui: &ColonyUi, scene: &mut crate::colony::ColonyScene, panel: &mut PanelBuilding, s: &ColonySnap, en: i32, light: V3, size: [f32; 2]) -> Option<TexId> {
     let (kis, turn) = ui.kis_info();
     match kis {
         KisInfo::Unit(..) => {
             let w = crate::colony_war::WarCtx { snap: s, en, tutorial_paused: false };
             let (u, _) = ui.war.info_model(&w)?;
-            scene.render_info_model(r, install, &rules.unit_models, u, turn, size)
+            scene.render_info_model(r, install, &rules.unit_models, u, turn, light, size)
         }
-        KisInfo::Building(kind) => panel.render_info(r, install, rules, kind, turn, size),
-        KisInfo::Globe(_) => scene.render_info_globe(r, install, s.surface, turn, size),
+        KisInfo::Building(kind) => panel.render_info(r, install, rules, kind, turn, light, size),
+        KisInfo::Globe(_) => scene.render_info_globe(r, install, s.surface, turn, light, size),
     }
 }
 
-/// A panel model's parts under `m` (×1024) at camera point `at`, its glass parts translucent.
-fn bake_panel(model: &Model, texs: &[TexId], m: &M3, at: V3) -> (Vec<MeshDraw>, Vec<MeshVertex>) {
+/// A panel model's parts under `m` (×1024) at camera point `at`, lit per vertex by `lights` (`fenyekszamolasa`,
+/// lighting.rs), its glass parts translucent.
+fn bake_panel(model: &Model, texs: &[TexId], m: &M3, at: V3, lights: &crate::lighting::Lights) -> (Vec<MeshDraw>, Vec<MeshVertex>) {
     let mut dynamic = Vec::new();
     let mut draws = Vec::new();
     for (pi, p) in model.parts.iter().enumerate() {
@@ -1384,7 +1386,8 @@ fn bake_panel(model: &Model, texs: &[TexId], m: &M3, at: V3) -> (Vec<MeshDraw>, 
         };
         for v in &p.verts {
             let q = scene::apply(m, v.pos);
-            dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: scene::normalise(scene::apply(m, v.normal)), uv: v.uv, color: [1.0, 1.0, 1.0, a] });
+            let c = lights.rgb(crate::lighting::normal(m, v.lnormal));
+            dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], a] });
         }
         draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
     }

@@ -306,7 +306,9 @@ pub fn draw_inbox(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, texts: &U
         let Some(&(block, kept, date)) = s.inbox.get(i) else { continue };
         let y = 352.0 - (3 - slot) as f32 * 45.0;
         let kind = texts.kinds.iter().find(|k| k.id as i32 == block);
-        let sender = kind.map(|k| texts.encode(&k.sender)).unwrap_or_else(|| format!("#{block}").into_bytes());
+        // An unknown id: `KerUz` (ELF 0x5a5b90) runs out at `HanyUzenetFajta`, the 1000-entry table's first unused,
+        // zeroed entry, so the sender and subjects are empty.
+        let sender = kind.map(|k| texts.encode(&k.sender)).unwrap_or_default();
         font.text(f, v, &sender, x, y, 0x13, 3, Align::Left, col(if kept & 1 != 0 || read.contains(&i) { 1 } else { 34 }), None);
         let (year, month, day) = (date / 18000, date / 1500 % 12 + 1, date / 50 % 30 + 1);
         font.int(f, v, year as i64, x, y + 13.0, 4, 2, Align::Left, col(2));
@@ -614,6 +616,15 @@ impl Hud {
         }
         let kind = if spot.is_some() { 1 } else { kind };
         self.draw_pointer_phase(f, size, [m[0] as i32, m[1] as i32], kind, phase);
+    }
+
+    /// A script run's tooltip `tip` (kept by the caller with its rest timer) and the pointer at its place: the hand over
+    /// a hot-spot.
+    pub fn snapshot_timed_tip(&self, f: &mut Frame, size: [f32; 2], tip: &crate::kit::Tooltip, text: &[u8]) {
+        if let Some(font) = &self.font {
+            tip.draw(f, font, self.white, &Virtual::new(size), &self.palette, text);
+        }
+        self.draw_pointer_phase(f, size, [tip.mouse[0] as i32, tip.mouse[1] as i32], (tip.under != 0) as i32, 0);
     }
 
     /// [`Self::draw_pointer`] at phase `MouseFazis` (one a 10 ms UI tick): the cell's row `(phase / 5) % 40`.

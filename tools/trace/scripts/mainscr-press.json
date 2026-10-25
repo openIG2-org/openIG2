@@ -1,0 +1,11 @@
+{
+ "screen": "main",
+ "note": "Rows 285/287 probe (probes/mainscr-input.js): the load ring (box 7, AktIkon 0x25; ring 2 at (404, 107) at t 250) held 30 frames with the right button: does a box ring take it? Then held 30 frames with the left at t 400: does AktIkon fire on the press or the release?",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 250, "press": [404, 107], "hold": 30, "button": 3},
+  {"t": 400, "press": [404, 107], "hold": 30}
+ ],
+ "grabs": [300, 445],
+ "tail": 20
+}

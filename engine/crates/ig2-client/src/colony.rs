@@ -1047,27 +1047,25 @@ impl ColonyScene {
     /// scale 0.025, stood up (`RotateObj(π/2, 0, 0)`), at (−130, 657, −1100) of the panel's pass (fixed to its camera),
     /// turning −0.01 a UI frame about (0, 1, 0) (`Frissit2_Colony`'s `RotateObj2`, `turn` frames). Rendered into a
     /// texture of the window's size; the caller draws the info box's part of it.
-    pub fn render_info_model(&mut self, r: &mut Renderer, install: &Install, um: &UnitModels, u: &UnitView, turn: f32, size: [f32; 2]) -> Option<TexId> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_info_model(&mut self, r: &mut Renderer, install: &Install, um: &UnitModels, u: &UnitView, turn: f32, light: V3, size: [f32; 2]) -> Option<TexId> {
         let mesh = if u.flags & flag::TURRET != 0 { self.turret_mesh(r, install, um, u.gun?)? } else { self.unit_mesh(r, install, um, u)? };
         let (model, texs) = (mesh.model.clone(), mesh.texs.clone());
-        Some(self.render_kis_info(r, &model, &texs, turn, size))
+        Some(self.render_kis_info(r, &model, &texs, turn, light, size))
     }
 
     /// `HandleKisInfoObject` with `ColonyInfoMod` 0 (nothing selected; `GetSelectedMeshPointer` exe 0x47bc20): the
     /// planet's globe `vector/starmap/b<(surface − 1) % 8>0.xvb` (`LoadBox`, not cloned; the finest level of its detail
     /// chain, property 0x4000000, scaled by the chain head's extents), at scale 0.025 as the unit's.
-    pub fn render_info_globe(&mut self, r: &mut Renderer, install: &Install, surface: u8, turn: f32, size: [f32; 2]) -> Option<TexId> {
+    pub fn render_info_globe(&mut self, r: &mut Renderer, install: &Install, surface: u8, turn: f32, light: V3, size: [f32; 2]) -> Option<TexId> {
         let k = (surface.max(1) as usize - 1) % 8;
         if !self.globes.contains_key(&k) {
             let loaded = load_lod_finest(install, "vector/starmap/", &format!("b{k}0.xvb"), "textures/starmap/").map(|mut model| {
                 // The remaster's `ig2_vertex.shader` scales the UVs by the texture's `uv_mul` (starmap.md §3.3).
-                // The meshes' own normals are mirrored in x and y (starmap_planet.rs); in this pass's lighting the
-                // centre-pointing ones match the capture [obs: colony:42 --colony-info, bottom_info 14.9 -> 8.7].
                 for p in &mut model.parts {
                     let k = p.texture.as_deref().map_or([1.0; 2], |t| crate::assets::Image::uv_mul(install, t));
                     for v in &mut p.verts {
                         v.uv = [v.uv[0] * k[0], v.uv[1] * k[1]];
-                        v.normal = scene::normalise([-v.pos[0], -v.pos[1], -v.pos[2]]);
                     }
                 }
                 let texs = model.parts.iter().map(|p| texture(r, install, &mut self.textures, self.white, p.texture.as_deref())).collect();
@@ -1077,20 +1075,23 @@ impl ColonyScene {
         }
         let mesh = self.globes.get(&k)?.as_ref()?;
         let (model, texs) = (mesh.model.clone(), mesh.texs.clone());
-        Some(self.render_kis_info(r, &model, &texs, turn, size))
+        Some(self.render_kis_info(r, &model, &texs, turn, light, size))
     }
 
-    /// The info box's model at scale 0.025, stood up, at [`KIS_INFO_AT`] of the panel's pass, turned `turn` frames.
-    fn render_kis_info(&mut self, r: &mut Renderer, model: &Model, texs: &[TexId], turn: f32, size: [f32; 2]) -> TexId {
+    /// The info box's model at scale 0.025, stood up, at [`KIS_INFO_AT`] of the panel's pass, turned `turn` frames,
+    /// lit per vertex by [`kis_info_lights`].
+    fn render_kis_info(&mut self, r: &mut Renderer, model: &Model, texs: &[TexId], turn: f32, light: V3, size: [f32; 2]) -> TexId {
         let rot = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], -0.01 * turn), &scene::create_matrix(HALF_PI, 0.0, 0.0));
         let m: M3 = scene::mul(&rot, &Placement::add_to_scene(model.origin, 0.025).matrix).map(|x| x * 1024.0);
         let at = KIS_INFO_AT;
+        let lights = kis_info_lights(light);
         let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
         for (pi, p) in model.parts.iter().enumerate() {
             let start = dynamic.len() as u32;
             for v in &p.verts {
                 let q = scene::apply(&m, v.pos);
-                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: scene::normalise(scene::apply(&m, v.normal)), uv: v.uv, color: [1.0; 4] });
+                let c = lights.rgb(crate::lighting::normal(&m, v.lnormal));
+                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], 1.0] });
             }
             draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(self.white), glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
@@ -1133,6 +1134,12 @@ impl ColonyScene {
 
 /// `HandleKisInfoObject`'s `MoveObj(−130, 657, −1100)`: the info box's model, fixed to the panel pass's camera.
 pub const KIS_INFO_AT: V3 = [-130.0, 657.0, -1100.0];
+
+/// The info box's models' lights (`mainmeshid5` under `mainmeshid3`, `Init3dColony`): `light5` 0xffffff
+/// ([`View::panel_light`]) and the node's own ambient 0x4b4b4b [obs: `probes/colony_lights.js`].
+pub fn kis_info_lights(light: V3) -> crate::lighting::Lights {
+    crate::lighting::Lights::default().parallel(0xffffff, light).ambient(0x4b4b4b)
+}
 
 /// `LoadBox(name)` as the info box draws it (property 0x4000000): the last level of the detail chain
 /// (`lod_archive`), with the chain head's extents, which `AddToScene` scales by.
@@ -1377,6 +1384,16 @@ impl View {
             }
         }
         Self { camera, scale, overlay: Overlay::default() }
+    }
+
+    /// The panel pass's parallel light (`light5x` / `light5`, both 0xffffff at (10, 10, −10), `Init3dColony`) in that
+    /// pass's camera space: `Kocka` turns it by the colony camera's rotation, though the pass's models are fixed to
+    /// its own camera [obs: `probes/colony_lights.js`, colony 42 at pitch −π/4: (−0.5774, 0, −0.8165)].
+    pub fn panel_light(&self, maps: &[GroundMap], map: usize) -> V3 {
+        let Some(gm) = maps.get(map) else { return scene::normalise([-1.0, 0.0, -2f32.sqrt()]) };
+        let rows = self.camera.basis(gm).rows;
+        let l = scene::normalise([10.0, 10.0, -10.0]);
+        rows.map(|w| w[0] * l[0] + w[1] * l[1] + w[2] * l[2])
     }
 
     pub fn resize(&mut self, size: (u32, u32), scale: f32) {
@@ -2032,5 +2049,17 @@ mod tests {
         // Up on screen is −h.
         let up = cam.project(&b, [target[0] - 50.0, target[1], target[2]]).unwrap();
         assert!(up[1] < p[1]);
+    }
+
+    /// The panel pass's parallel light in its camera space against ig2.exe (`probes/colony_lights.js`, quick-1.sav
+    /// planet 42, the camera at pitch −π/4, rotate 0): `vec` (−0.5774, 0, −0.8165) on every object of the pass.
+    #[test]
+    fn panel_light_turns_with_the_colony_camera() {
+        let camera = Camera { x: 375.67, y: -333.1, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.0, size: [640.0, 480.0] };
+        let terrain = ig2_sim::placement::Terrain { mask: [0; 650], kind: 0, start: (0, 0) };
+        let map = GroundMap { terrain, heights: vec![0; 2500], base: 0.0, footprints: Vec::new() };
+        let l = View { camera, scale: 1.0, overlay: Overlay::default() }.panel_light(&[map], 0);
+        let exe = [-0.5774, 0.0, -0.8165];
+        assert!((0..3).all(|i| (l[i] - exe[i]).abs() < 1e-4), "{l:?}");
     }
 }

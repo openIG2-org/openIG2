@@ -1,0 +1,12 @@
+{
+ "screen": "main",
+ "note": "Row 290 probe (probes/mainscr-input.js): the multiplayer ring (t 350) opens the name entry while the rings fly out and in; Esc at t 390 (Tav != 1.0): does the menu go back to the main set?",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [217, 117], "hold": 3},
+  {"t": 390, "key": "escape", "hold": 2},
+  {"t": 700, "mouse": [320, 240]}
+ ],
+ "grabs": [410, 600, 690],
+ "tail": 10
+}

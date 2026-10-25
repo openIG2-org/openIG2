@@ -26,7 +26,7 @@ Not editing (`DAT_00bae2c3 == 0`):
 | char | `v`/`V` | `DAT_00b772c0 = SDL_GetTicks()` (no visible effect) |
 | char | `` ` `` | the console entry (`ExecuteString` on Enter), with `DEBUGLEHET` or in MP, `AktKep < 0xd` |
 | char | any other | `FUN_004db040(0, ch, 1)` |
-| down | F1..F11 (0x70..0x7a) | `AktKepKell = key − 0x6f` (1 help … 10 messages, 11 SpaceWar), lines 191-265, also while a text entry is up (the F-key block comes before the `IOMode` branch; the key then reaches no entry); gates in order: no change pending (`Belep` 0xbae24c, `Atlepes` 0xbae24d, `AktKepKell` 0xbae250 all 0); `AktKep` 0xb or 3 with `help_new_available(AktPlanet) == 1` (a ground war) only with `DEBUGX` 0xbae587; options (0xd): not load-only (`bae24e`, never, even with `DEBUGX`) and in a battle (`bae24f`) only with `DEBUGX`; messages (10) only idle (`dabe3c == 0 && da6607`, leaving it; entering it has no idle test); else `AktKep < 0xe`; then not the screen it is on, and `KepernyokLetiltva[n]` (`(&DAT_00f66ebd)[vk]` = 0xf66f2c + n) clear unless `DEBUGX`; F11 only with a battle-pending flag (bytes from 0xe436ee, stride 0x2d9c, 10 slots); F3 while `TutorialEvent` (0xf66f40) is 0x1c: the planet `AktPlanet` named `Tutorial_MainBolygoNeve` (0xf66f88) asks for nothing, any other raises `TutorialCheckEvent(0x1c)` first. The key then also goes to the screen's handler (`FUN_004db040(vk, 0, 1)`) |
+| down | F1..F11 (0x70..0x7a) | `AktKepKell = key − 0x6f` (1 help … 10 messages, 11 SpaceWar), lines 191-265, also while a text entry is up (the F-key block comes before the `IOMode` branch; the key then reaches no entry); gates in order: no change pending (`Belep` 0xbae24c, `Atlepes` 0xbae24d, `AktKepKell` 0xbae250 all 0); `AktKep` 0xb or 3 with `help_new_available(AktPlanet) == 1` (a ground war) only with `DEBUGX` 0xbae587; options (0xd): not load-only (`bae24e`, never, even with `DEBUGX`) and in a battle (`bae24f`) only with `DEBUGX`; messages (10) only idle (`dabe3c == 0 && da6607`, leaving it; entering it has no idle test); else `AktKep < 0xe`; then not the screen it is on, and `KepernyokLetiltva[n]` (`(&DAT_00f66ebd)[vk]` = 0xf66f2c + n) clear unless `DEBUGX`; F11 only with a battle-pending flag (bytes from 0xe436ee, stride 0x2d9c, 10 slots; `spw[b]+0x1f2e`, set by `AddFleet` 0x5646b0, cleared by `EndSpaceWar` 0x566c30; `SpaceWarIndit` sets `AktKepKell` = 0xb at once and `SpaceWar_Belep` disables the screens for the whole battle, so in practice only with DEBUGX, ADR 0016 §4); F3 while `TutorialEvent` (0xf66f40) is 0x1c: the planet `AktPlanet` named `Tutorial_MainBolygoNeve` (0xf66f88) asks for nothing, any other raises `TutorialCheckEvent(0x1c)` first. The key then also goes to the screen's handler (`FUN_004db040(vk, 0, 1)`) |
 | down | Space | pause toggle: SP `SetIdoPause` when `AktKep != 10`, `< 0xd`, `DAT_00bad0d4 == 0`; MP `Multi_Send(0x407)` |
 | down | `1`..`3` | SP: sound 10, `SetIdoSpeed(n)`, unpause (same gates); MP `Multi_Send(0x406)` then 0x407 |
 | down | `0` | `FUN_00614700()`, `DAT_00b77268 = 1` (unidentified) |
@@ -107,9 +107,68 @@ Enter / backquote open the entry in MP on game screens (`IOMaxLen` 0x34 at (0x11
 Enter sends `ExecuteString`'s 0x3fc chat (exe 0x4dc140). Receiver `MULTIGET_Starmap` (0x59d930) calls `AddSzoveg`
 (0x591360, `name + ": " + text`, colour 3): a ring of 8 drawn on the starmap only by `StarmapGfx2D_3` (0x5aaba0) at
 (0x14, i*10+0x32-shift), one pixel per 100 ms, the top slot faded (9-shift)*10 %. Port: `ig2-client::chat`; the text
-travels as `SessionMsg::Say` and the host relays `Said{empire,text}` to everyone, sender included. Not ported:
-`ExecuteString`'s debug commands (DEBUGLEHET/DEBUGX), `/kick` `/kill` `/clearlog`, the 0x3fd system lines, MP
-pause/speed 0x407/0x406 with `OnlyServerCanModifyTime` (0xbae55c); the timer details (0x5ab310) are untraced.
+travels as `SessionMsg::Say` and the host relays `Said{empire,text}` to everyone, sender included. The timer
+details (0x5ab310) are untraced.
+
+### 5.1 `ExecuteString` (exe 0x4dc140, ELF 0x57a980; FX15)
+
+Enter in the entry runs the line (at most 0x33 bytes) through two stages; decompile and asm in
+`_local/decomp/fx15-console/` (`exe/ExecuteString_head.asm` = 0x4dc140..0x4dc400).
+
+Stage A, only in MP (`MultiPlayerMode` 0xbae2c0), first match wins:
+
+| line | gate | effect |
+|---|---|---|
+| `/clearlog` (`_stricmp`, exact, any case; str 0x854258) | `DAT_00b7726c == 0` (asm 0x4dc192) | `Multi_Send(0x405, EN, 0)`; every machine's receiver runs `ClearLogfiles` (exe 0x53c230: truncates `senddump.!`, `truedump.!`, `recvdump.!`, `hexdump.!`, again only with `b7726c == 0`) |
+| `/kick ` or `/kill ` (`_strnicmp` 6, the same code; str 0x854264 / 0x85426c) | `SuperVisor` (0x912a3a, the host) | the target below; nothing is sent to the others |
+| anything else, a non-host's `/kick` and a `/clearlog` with `b7726c != 0` included | | the chat: `Multi_Send(0x3fc, EN, strlen + 1, line)` (asm 0x4dc34c) |
+
+`b7726c` = (`DAT_00fe6530` == 0) in `IG2_gameInit` (exe 0x4dfae5); no writer of 0xfe6530 was found in any
+decompile, so the packet dumps are off and `/clearlog` goes out as an ordinary chat line [inf: 0xfe6530 is a
+zero-initialised switch]. Ours: always the chat.
+
+The kick target: skip spaces after index 6; a first byte `'1'..='8'` (asm 0x4dc212 `cmp al,0x31; jl`, `cmp al,0x38;
+jg`) is the empire number (only that one digit is read); else the first empire `i` in 1..`ProgramPlayers` (0x912acc)
+with `PlayerKi[i]` (0xbae560 + i) == 1 (a human still playing) whose `Faj_Nev[i]` (the race name list indexed by the
+empire number, `GetString(0x11, 1, i + 5)`, as `diplomacy.rs` already does) equals the rest of the line
+(`_stricmp`: the whole rest, any case); else the same walk against `PlayerNev[i]` (0xbae588 + i·0xb). Then: no match
+or `PlayerKi[i] != 1` → `AddSzoveg("No such player.", 6)` (str 0x85428c); `i == EN` → `AddSzoveg("Cannot kick
+yourself.", 6)` (0x854274, asm 0x4dc305); else `MultiKickClient(PlayerHanyasKliens[i] (short 0xbae65c + 2i), 2)`
+(exe 0x512410, asm 0x4dc31e-0x4dc329). Both lines are local and red (colour 6; `dsz`'s test lines: 6 red, 2 white,
+3 chat, 7 system). `MultiKickClient` sends socket packet 99 with the reason (2 = console; 1 = the DrawOver player
+menu, 7 = lobby full) and drops the socket; the kicked machine's `ReceiveData` (exe 0x515910, state 10) sets
+`DAT_00db94f4 = 1`, `DAT_00db94f8 = reason` (its disconnect), and the host's drop path makes the empire a computer
+one (0x404, `PlayerKi = 2`), so a second kick of it is "No such player.".
+
+Ours (`ig2-client::console`, `World::say`, `HostSession::kick`): a kickable empire is a session human still
+connected, `PlayerNev` its lobby name, `Faj_Nev` the language's race names. The host sends `SessionMsg::Kicked`
+and lets the link go; the empire is away at once, as a player who left (`PlayerAway` in a running battle, no
+grace: the original's computer takeover); its name is refused at the door from then on (`Refusal::Kicked`; the
+original has no way back at all; not kept in an MP save or across a host migration). The kicked joiner's
+`ClientSession::kicked()`: closed, no successors (it never migrates); its message line says so (ours). The kick
+runs on the state at the next turn, so the client swaps its game into the peer around it (as for the MP save).
+
+Stage B, only with `DEBUGLEHET` (0xbae659) or `DEBUGX` (0xbae587), runs after stage A (a chat line too): a
+`_strnicmp` prefix chain of about 90 cheats (`debug` toggles `DEBUGX` and sends the 0x3fd line "enabled/disabled
+cheat mode"; `allweapons` and `destroy` send 0x75/0x76 and a 0x3fd line; `win`, `m `, `kill`, `r`, `story`, `ctut`,
+`seten`, toggles of debug draws, …; `dest` (3 bytes) shadows `desynch` and `destroy`). `DEBUGLEHET` is set only
+from `init/config`'s `debugmode` (exe 0x4dfb6a); the GOG install has no `init/config`, and `DEBUGX` is set only by
+stage B's `debug`, so on a GOG install stage B and every 0x3fd line are unreachable. Not ported (a keep, ADR 0016:
+the cheats act on one machine and would desync the lockstep). The 0x3fd receiver (`MULTIGET_Starmap`, asm
+0x59ec41): `AddSzoveg(PlayerNev[sender] + " " + text, 7)`.
+
+### 5.2 MP pause and speed (0x406/0x407; FX15)
+
+The sender alone is gated: `DoKeyboard` (Space and `p`/`P` lines 80-90/301-311, `1`..`3` lines 316-331; the same in
+the ELF at lines 83, 409, 429) and `IG2_gameUpdate`'s top-bar spots 2..5 (exe 0x4e0831, 0x4e08e9) send only when
+`OnlyServerCanModifyTime` (0xbae55c) == 0 or `SuperVisor`. Pause: `Multi_Send(0x407, EN, 1, &(IdoPause == 0))` (the
+new value from the sender's own `IdoPause`); a speed: `Multi_Send(0x406, EN, 4, &n)` then 0x407 with 0. No screen or
+`nemlehetidotallitani` test in MP. The receiver (`MULTIGET_Starmap` asm 0x59f364/0x59f3a7) runs `SetIdoSpeed(n, 1)`
+/ `SetIdoPause(b, 1)` with no sender test; their own gate is `ProgramSebesseg` (4 = the players set the speed;
+otherwise the room's fixed speed and no pause; ported in `Game::set_speed`/`set_pause`). The flag is the room's
+(`Start_Main` ids 0x28/0x29 → 0/1, sent in the start status, saved; ours `GalaxyOptions::host_time`). Ours:
+`ig2-client` `Window::time_mp_allowed` (`do_keyboard::mp_time_gate`) reads the flag from the shared state and the
+host from the session; the keys, the top bar and SpaceWar's keys send through `toggle_pause`/`set_speed`.
 
 ## 6. The top bar's spots on every screen (FX1 part 2)
 
@@ -132,7 +191,7 @@ lines 147-181): single player not on the messages (10) or options (0xd) screen a
 (0xbad0d4); MP `Multi_Send(0x407/0x406)` with no screen gate. Spot 7 (`MOUSE_SelectScreens` exe 0x555470 lines 90-121):
 the left button held, the history closed, `AktKep != 10` and `VanUzenet` (exe 0x509e00: an inbox entry with `+4 == 0`,
 unread) → `AktKepKell = 10` (the space battle, a colony at war and the options screen when load-only or in a battle
-only with `DEBUGX`); no sound. The right button: `ScreensScrollHistoryMode` (0xe40c5e) while held, cleared on the
+only with `DEBUGX`); no sound. FX1: the left button is tested every held frame (no press edge) while the hold began on the line (`bar_line_held`), so a message arriving while held, or the pointer coming back onto the line, asks for the messages screen (`IG2_gameUpdate` 0x4e0440 l.51-53 re-hits `AktIkon` only while `Mouse_Megfogva` is 0; a hold begun elsewhere: deviations 340). The right button: `ScreensScrollHistoryMode` (0xe40c5e) while held, cleared on the
 release; `GFX_DateMoneyScrollFade` draws `FadeKerettelKerekit(0x10c, 0x16, 0x146, n·10 + 5, 0, 10, 0, 0x3c, 0, 5, 0,
 0x1e)` (fader pass 2) and `GFX_ScrollHistory` (exe 0x556ac0) entry i (`UzenetekDbHistory` 0xe413d8 entries of 0x40
 bytes from 0xe40fb0) as `KiirStrAlap(s, 0x10c, 0x1a + 10(i − 1), 0x36, 2, 5, 0x21)` (size 2, centred in 0x36 cells;
@@ -163,6 +222,17 @@ Per screen (the spots that test `Mouse_Bal` or the button keep their own rule):
 | diplomacy (`DiplomGfx2D_1` 0x4b89e0) | the menus' click (`InitAlmenuk`) | the cascade (`ActFomenu` needs `Mouse_Bal`) |
 | info (`Info_Main` 0x4e81c0) | 9..=12, 14..=25, 30/31, 35/36, 37 | 13 and the triangle/menus (their own right rules) |
 | messages (`Messages_Main` 0x508560) | the rows, arrows, answers, leave and the text box's hurry; plus `SkipAll` (0xd90dc4 = 1, FX14) | |
+
+**Held frames (FX3 rest).** `IG2_gameUpdate` (exe 0x4e0440) calls a screen's `_Main` only on frames a button is down over a
+hot-spot (every held frame for a release-flag-0 spot, the press frame only for flag 1) and once on the release over the
+same flag-0 spot; never for the pointer alone (a spot rested on 40 frames with no button: nothing). Info: the star-log
+arrows 35/36 (exe ids 0x23/0x24) step `StarLogPointer` once a held frame, the release frame included (36 held 15 frames:
+16 steps), either button; click only on the press. The scroll bar 34 (0x22) in list mode follows `Mouse_y` every held
+frame, past the bar's edges too (`Mouse_Megfogva`), formula = the client's `scroll_to` (y 348 -> 0, 357 -> 1 with 5
+entries); the release moves nothing. Main menu: a right press acts like the left on the scenario panel boxes 0x15..0x27
+(row pick, arrows with their click, cancel, the high-score toggle 0x27), the race spheres and the difficulty rings; never
+on a menu ring (`mainscr-right.json`, `mainscr-right-boxes.json`, `mainscr-right-race.json`). Detail: mainscr.md §6.3,
+info.md §5. Client: `mainscr.rs` `press_right`/`release_right`, `window.rs` front-end right-button arm.
 
 Port: `ig2-client` `colony_ui::press`/`colony_war::press` (no left test on the buttons), `design::MainInput::PressRight`,
 `diplomacy::Input::right_pressed`, `window.rs` `info_right_press` and the messages arm, `window/top_bar.rs`.
@@ -253,3 +323,19 @@ pointer too (phase 0, row 277). Verified: `starmap-fx2.json` (quick-1.sav, Magel
 arrow on empty space, as the exe; `research-fx2.json` the tooltip's rest as above and the pointer per grab (the hand on
 the urgent button, a row and the bottom ring, the arrow on an empty row); `design-pods.json` (stored exe run) and
 `mainscr-race.json` / `mainscr-scenario.json` (stored FX11 runs): arrow/hand per grab as the exe.
+
+## 9. The MP wait overlay (`GFX_DrawOver`; row 296, not ported: the multiplayer work's)
+
+An in-game multiplayer modal, not part of the main menu. `MOUSE_DrawOver` (exe 0x4c95b0, from `IG2_gameUpdate` 0x4e0440 every frame) opens it
+when `db9748 != 0 && bae587 == 0` (`aba978 = SDL_GetTicks()` at the open) and sets the hovered item `aba974` (9 = the exit button);
+`FUN_004c8f80` (from `UpdateFrame` 0x4e3e90, after `WaitForDrawing`) draws it. Title: `GetString(18, 5, 1)` "Connecting..." if `e4162c`, else
+`GetString(18, 5, 2)` "Waiting for players to reconnect..." if `db94e8`, at (0x28, 0x28, 0x28, 4, 4, 3).
+- `aba970 == 1`, the players list: per connected player slot (`FUN_00510fd0(i)` or `bae587`) a 0x8c-pixel cell, 4 a row, from (`aba97c` + 10,
+  `aba980` + 10): `GetString(18, 5, 3)` "Slow connection!" at +10, the name (`bb6730[i]`) at +0x1e, the slot text (`bae593 + 0xb·i`) at +0x32, all
+  (0x14, 2, 5, 0x25); after 4000 ms and on the host (`912a3a`) `GetString(18, 5, 4)` "Close connection" at +0x5a, colour 0x25 if `aba974 == i`
+  else 1. After 4000 ms `GetString(18, 5, 5)` "EXIT GAME" at (0x140, `aba988 + aba980 + 0x14`, 0x46, 3, 7), colour 0x25 if hovered.
+- `aba970 == 2`, the joining question: `GetString(18, 5, 8)` (joiner) / 7 / 6 (host, by `f21490`) at (0x140, `aba980` + 0x28 / 0x3c, 0x46, 3, 7, 1);
+  on the host "Connecting: " + the joiner's slot and "Selected race: " + its race (strings 9, 10) at `aba980 + 0x14`, and the answer buttons by `aba974`.
+- The pointer: `if (aba970 > 0) Mouse_Tipus = (aba974 > 0)` (the hand over an item). A press (`db4650`) on an item closes it and calls
+  `FUN_00512410(bae65c[aba974], 1)` (drop that player); item 9 calls `ExitToMainScreen`.
+Strings from `txt18.txt` (sub 5 lines 1..10). The client has no lockstep-stall modal yet (ig2-net would supply who is late).

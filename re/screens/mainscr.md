@@ -72,7 +72,11 @@ Screen flags (bytes). `Belep` clears all but `Mode_Main`. Floats are f32.
 
 `AktIkon` / `AktIkon2` (`IG2_gameUpdate`, ELF 0x587400 / exe 0x4e0440): `AktIkon = Mouse_Darabol()` = the hot-spot index, which for a
 `Mouse_Szoveg_Set(id, ...)` box is `id + 0x1e`; `AktIkon2 = AktIkon - 0x1e` = the id under the pointer, every frame. A box whose 8th argument is 1
-(`MouseSzoveg[...+0x74]`) fires on the release (`Mouse_FelengedesMajdMegvar`), so `MainScr_Main` sees `AktIkon` = `id + 0x1e` once. So its
+(`MouseSzoveg[...+0x74]`) dispatches once, on either button's press frame, and `IG2_gameUpdate` then sets `Mouse_FelengedesMajdMegvar` and runs frames
+until the release, which reaches `_Main` only as two passes with `AktIkon` 0; a flag-0 box dispatches on the press and every held frame, plus once on
+the release over the same spot; a frame with no button down and no release dispatches nothing (exe 0x4e0440 lines 26-37, 88-132; [obs]
+`probes/mainscr-input.js` + `scripts/mainscr-press.json` / `mainscr-press2.json`: a right press on the load ring calls `MainScr_Main` with
+`AktIkon` 0x25, `Mouse_Lenyom` 1, `Mouse_Bal` 0 on its press frame, Options opens; on the scenario ring 0x20 the same). So `MainScr_Main` sees `AktIkon` = `id + 0x1e` once. So its
 `AktIkon` 0x1f..0x32 are box ids 1..0x14 and its `AktIkon2` 0x15..0x27 are box ids.
 
 ## 2. Enter and leave
@@ -264,7 +268,10 @@ Ship i = 0..7 (pos 0xbbac60 + 0x10*i, start 0xbbace0, target 0xbbad60, speed 0xb
 ### 6.1 Ring hit-testing and boxes (inside `Update3D`; only while `Tav == 1.0` exactly, else nothing is active)
 Ring centre = projected centre of mesh B (ELF `MainGetMeshCenter`, not decompiled; exe inline: `GetObjPos(mesh)`, each coordinate x 1024, `TransformPoint`, then x*639/639 and y*479/479), virtual pixels.
 A ring is hit when `cx - 40 <= Mouse_x < cx + 40` and `cy - 40 <= Mouse_y < cy + 40` (f32 compare). The ring boxes are `Mouse_Szoveg_Set(id, 0, cx - 40, cy - 40, 80, 80, text, 1, 1)` + `Mouse_Szoveg_On(id)`
-(AktIkon2 == id sets `AktKijelolt`). A direct ring acts on `Mouse_Lenyom && Mouse_Bal` in `Update3D`; a box ring acts through `MainScr_Main` on the release. Hover (both kinds): `AktKijelolt = i`, `Mouse_Tipus = 1` (hand).
+(AktIkon2 == id sets `AktKijelolt`). A direct ring acts on `Mouse_Lenyom && Mouse_Bal` in `Update3D` (left only); a box ring acts through `MainScr_Main` on the press frame, either button
+(§1). The box is the int rectangle `x0 = (int)(cx - 40)`, `x0 <= x <= x0 + 79` (hit test exe 0x510390); the direct ring's test is the f32 one above.
+`Update3D` tests rings only when `AktKep == 0xf` and none of `EnterIPAddressMode`, `EnterNameMode`, `YouAreDisconnectedVolt`, `EnterIRCAddressMode` is set
+(exe 0x500270 line 316; `EnterHighScoreNameMode` not in the guard). Hover (both kinds): `AktKijelolt = i`, `Mouse_Tipus = 1` (hand).
 Ring i, mesh B = exe 0xd84378 + 0x1c*i. Tooltip text = `GetString(15, 1, line)`.
 
 | Mode (and condition) | ring | action | label texture | box id (text line) -> `AktIkon` |
@@ -315,7 +322,7 @@ Ids 1..8 and 0xe..0x14 are set at run time (ring boxes above; 0xe..0x10 are the 
 then off: 1..8, 0xc, 0xd, 0xe..0x14; 0x18..0x1b and 0x1d..0x26 on and 0x27 off only if `Mode_Scenario_Valasztas`, the list is non-empty, entry `SelectedScenarioOld` (0xbbb354) is a skirmish (kind > 0) and `ScenarioKepNyitottsag == 100`, otherwise they are off and 0x27 on;
 0x1c on iff `Mode_Scenario_Valasztas`, list non-empty and `ScenarioKepNyitottsag == 100`; with `EnterHighScoreNameMode`: 0x15..0x27 all off.
 
-### 6.3 `MainScr_Main` (exe 0x4fefc0), every frame; `AktIkon` = once on release, `AktIkon2` = held
+### 6.3 `MainScr_Main` (exe 0x4fefc0), on every dispatch pass (§1); `AktIkon` = the box under the pointer on the pass, `AktIkon2` = its id
 | value | action |
 |---|---|
 | `AktIkon` 0x2b | `Cel = 6.0; Mode_Fajvalasztas = 1;` race-choice init (ELF `InitFajvalasztas()`; exe calls 0x4f89b0); `VanFajVLight1 = 0`. Then (same frame) `EnterIPAddressMode = 0; MultiCloseInfoSocket(true)` |
@@ -335,7 +342,7 @@ then off: 1..8, 0xc, 0xd, 0xe..0x14; 0x18..0x1b and 0x1d..0x26 on and 0x27 off o
 | 0x17, `Mouse_Lenyom` | row r = clamp((`Mouse_y` - 0x41)/0xf, 0, 0x16) + `ScenarioStart`; if r < count and r != `SelectedScenario`: `SelectedScenario = r`; if the entry is a skirmish (kind > 0) `ScenarioHighScoreMode = 0`; `InitScirmishValtozok()` (exe 0x4f8f80); if `ScenarioKepNyitottsag != 0`: `ScenarioKepNyitottsagCel = 0` |
 | 0x18..0x26, `Mouse_Lenyom` | `PlaySoundGlobal(0)`, then +-1 (the first id of each pair 0x18/0x19, 0x1a/0x1b, 0x1d/0x1e, 0x1f/0x20, 0x21/0x22, 0x23/0x24, 0x25/0x26 decrements, the second increments): race 1..8, computers 1..7, difficulty 1..4, planets 0..4, technology 0..3, money 0..5, population 0..3 |
 | 0x1c, `Mouse_Lenyom` or `Mouse_Megfogva` | `ScenarioStart = (int)(((float)Mouse_y - 64.0)/364.0*(float)count - 11.5)`, then clamp: < 0 -> 0; `count < ScenarioStart + 23` -> `count - 23`; < 0 -> 0; `Mouse_Megfogva = 1; DesignKeretAzonnalMorph (0xad0ef5) = 1` |
-| 0x27 | `ScenarioHighScoreMode = !ScenarioHighScoreMode` (every frame the box is held, no edge test) |
+| 0x27 | `ScenarioHighScoreMode = !ScenarioHighScoreMode` (once per press: a flag-1 spot fires on the press edge, the frame loop then waits for the release; either button, input.md §7) |
 
 ### 6.4 Keyboard (`MainscrKeyboardHandler`, exe 0x5000c0)
 Only when `DEBUGLEHET` is set (command line): key 13 (Enter) pressed and not `YouAreDisconnectedVolt`: `HanyGepiJatekos (0xf21488) = 7; Main_NemKellZoom = 1; AktIkon = 0x1f; MainScr_Main(); AktIkon` restored (debug quick start).
@@ -383,7 +390,8 @@ Scenario list (`Mode_Scenario_Valasztas`):
   labels at y 0x1a1 (style 0x25): computers `sprintf(line 5, computers + 1)` at x 0x2c; difficulty name (table exe 0xbbb248, stride 0x14) at 0x77 with label line 6 at (0x77, 0x1a1); planets `sprintf(line 7, ScenarioKezdoBolygoSzamok[n])` at 0xc2 with label line 8 + ":";
   technology `sprintf(line 9, name table exe 0xbbb2b0 + 0x14*n)` at 0x10d with label line 10 + ":"; money `"$ %d"` (ScenarioKezdoPenzek) at 0x158 with label line 0xb + ":"; population name (exe 0xbbb300 + 0x14*n) at (0x77, 0x170) with label line 0xc + ":" at (0x77, 0x160).
 - right header: line 6 + ":" at (0xfa, 0x28, 0x1e, 2, 4, 0x25) and the entry difficulty name (exe 0xbbb248 + 0x14*entry[+0x34]) at (0x143, 0x28, 0x1e, 2, 4, 0x22).
-- description lines (10 strings of the entry) at (0x2a, +0x48 for rows 5..9 of a scenario; 0x15a + 0xd*k; len, 2, 4, 0x22).
+- description lines (10 strings of the entry, +0xc..+0x30; empty ones skipped) at (0x2a + 0x48 for rows 0..4 and every row of a skirmish entry, else
+  0x2a; 0x15a + 0xd*k; len, 2, 4, 0x22), drawn when `!ScenarioHighScoreMode || skirmish` (exe 0x4fc8d0 lines 338-361).
 - high-score table (high-score mode, or a skirmish entry): line 0xf formatted with the scenario name at (0x2d, 0x15a, 0x32, 3, 4, 1); rows k = 0..9: `"%02d."` at (0x2d, or 0xe1 for k >= 5; 0x173 + 0xd*(k mod 5)); the name (entry strings) at (x + 0x16, y + 0x15a - 0x173..., 0x14, 2, 4, 2)
   or line 0x11 (empty slot, style 1); the score = line 0x10 formatted with `score/0x32` at (x + 0x5c, ..., 0xc, 2, 4, 2). Selected row frame: `DesignKeret1(0x1b5, 0x43 + 0xf*(SelectedScenario - ScenarioStart), 0xa5, 0xf, 0x22)`.
 Dialogs by `IOMode` / `IOAzonosito`:
@@ -541,8 +549,11 @@ lines go through `sprintf` on the code page's bytes (deviation 152 was the clien
 skirmish ? 0x48 : 0)`, y `0x15a + 0xd·row`, drawn when `!HighScoreMode || skirmish` [decompile; the client draws all rows at 0x2a and none for a
 skirmish entry: deviation]. Timing [obs, `probes/mainscr-fades.js`]: the ring press (script t 600) sets `Mode_Scenario_Valasztas` and `O`
 counts from it, but `ScenarioGombraRanyomtak`'s resets (O, K = 0, `Cel` 6) land 5 UI ticks after the release reached the screen (between UI
-ticks 658/659 for a release at 653); the list's own presses act on the next tick. Cause unknown (perhaps the list's first load); the client
-delays the scenario ring's release by 5 ticks (`SCENARIO_RELEASE_TICKS`), the other rings act at once.
+ticks 658/659 for a release at 653); the list's own presses act on the next tick. Cause [obs, `probes/mainscr-input.js`, `mainscr-press2.json`]:
+the ring acts on its press (UI 650); `ScenarioGombraRanyomtak` sets `Mode_Scenario_Valasztas = 1`, then `LoadScenarioValasztasFejek` runs ticks
+651..658 inside the call (the panel fades in by 8), and only then come `Nyitottsag = 0`, `Cel = 6`, the other resets; `MainScr_Main` returns at 659.
+The script clock moves one tick a drawn frame, so 8 is the load's frame count there; in real play it is wall-clock. The client acts on the press and
+lands the resets 8 ticks later (`SCENARIO_LOAD_TICKS`), ignoring Esc meanwhile.
 
 ### 9.4 Tutorial
 6.1 (five parts + back), then 2.2 (`TutorialSetCampaignGameOptions` 0x504250, `TutorialStart("main", n)`). Port: `Game::start_tutorial`

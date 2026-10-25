@@ -592,6 +592,9 @@ struct Fixed<'a> {
     opacity: f32,
     /// The first sub-mesh's texture instead of its own (the formation phase's `final2x.bmp`).
     tex0: Option<crate::render::TexId>,
+    /// Property bit 8 clear (`PropertiesOff(0xf)`: `ora.xvb`, `no.xvb`): added (`ONE`/`ONE`, RGB × the opacity) over
+    /// what is under it (re/screens/render.md §2.3).
+    additive: bool,
 }
 
 /// Draws camera-fixed models into a texture over the virtual rectangle `rect` (the way the starmap's panel is drawn,
@@ -625,10 +628,10 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
                     pos: [e[0] + it.at[0], e[1] + it.at[1], e[2] + it.at[2]],
                     normal: [0.0; 3],
                     uv: v.uv,
-                    color: [c[0], c[1], c[2], it.opacity],
+                    color: if it.additive { [c[0] * it.opacity, c[1] * it.opacity, c[2] * it.opacity, 1.0] } else { [c[0], c[1], c[2], it.opacity] },
                 });
             }
-            draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: it.opacity < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+            draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: it.opacity < 1.0 || it.additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: it.additive, depth_write: false });
         }
     }
     let [x0, y0, x1, y1] = rect;
@@ -1203,14 +1206,33 @@ impl<'a> Scene<'a> {
 
     /// The debris (`Darabok`, spec §6.8.6): each shown piece's model at its size, turned by its spin, lit like the ships.
     fn debris(&self, f: &mut crate::render::Frame, fx: &crate::spacewar_fx::Fx, g: &FxGfx) {
+        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let light = crate::scene::normalise(planet_light());
         for d in fx.debris.iter().filter(|d| d.counter != 0) {
             let Some(mesh) = g.debris[d.model.min(2)].as_ref() else { continue };
-            let place = crate::scene::Placement::add_to_scene(mesh.origin, d.size / SCENE_SCALE);
-            // `ScaleObja(size)` on a node scaled like the ships' (`AddToScene` 0.0015 against their type scales): the
-            // same ×1024 as `pose` [obs fx8 t2100: the exe's pieces are a third to a half of a ship].
-            let xf = crate::scene::Transform { matrix: crate::scene::mul(&d.turn, &place.matrix).map(|x| x * 1024.0), translation: self.world(d.pos) };
-            let lit = (0x40 + 0x80) as f32 / 255.0 * 0.75;
-            mesh.push(f, &xf, [lit, lit, lit, 1.0 - d.transparency()], false);
+            // `ScaleObja(size)` (ELF 0x457140) overwrites the record's scale matrix `+0x10` with `diag(size)`, dropping
+            // `AddToScene`'s `diag(ext·s/1024)`; `BoxUjraszamol` (ELF 0x602750) left the vertices normalised per axis by
+            // the box's extent, so each axis of the piece spans ±size: the flat plates become blocks. Same ×1024 as
+            // `pose` [obs fx8: the exe's records hold diag(size), its darab boxes (851, 210, 1024) etc.].
+            let s = d.size / SCENE_SCALE;
+            let r = mesh_reach(mesh);
+            let xf = crate::scene::Transform { matrix: crate::scene::mul(&d.turn, &crate::scene::scale(std::array::from_fn(|k| s / r[k]))).map(|x| x * 1024.0), translation: self.world(d.pos) };
+            // Lit per vertex like the ships (ambient 0x40, the planet's parallel light 0x80), opaque until counter 30;
+            // over the blasts' sprites, after them in the translucent pass [obs fx8 t2100: the exe's pieces stay dark in
+            // front of the white core].
+            let crate::render::Frame { scene, late, .. } = &mut *f;
+            let Some(scene) = scene.as_mut() else { return };
+            let alpha = 1.0 - d.transparency();
+            for (verts, tex) in &mesh.parts {
+                let start = scene.dynamic.len() as u32;
+                for v in verts {
+                    let n = crate::scene::normalise(crate::scene::apply(&d.turn, v.normal));
+                    let lit = (0x40 as f32 / 255.0 + 0x80 as f32 / 255.0 * dot(n, light).max(0.0)).min(1.0);
+                    scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [lit, lit, lit, alpha] });
+                }
+                let range = start..scene.dynamic.len() as u32;
+                late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+            }
         }
     }
 
@@ -1288,14 +1310,14 @@ impl<'a> Scene<'a> {
             }
             let tex0 = self.shown.formation.and(panel.final2x);
             if let Some(Some(m)) = panel.icons.get(i) {
-                items.push(Fixed { mesh: m, at, size: 0.02, rot: (half, 0.0, 0.0), opacity: 1.0, tex0 });
+                items.push(Fixed { mesh: m, at, size: 0.02, rot: (half, 0.0, 0.0), opacity: 1.0, tex0, additive: false });
             }
             // The formation phase (`fegyverpanelfrissit`'s other branch): every button's clock at frame 0 on the
             // chosen formation (`+0x3430`), 32 on the others; no overlay.
             if let Some(pick) = self.shown.formation {
                 let fr = if pick == i as i32 { 0.0 } else { 32.0 };
                 if let Some(m) = panel.clock_at(fr) {
-                    items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None });
+                    items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None, additive: true });
                 }
                 continue;
             }
@@ -1304,7 +1326,7 @@ impl<'a> Scene<'a> {
             }
             // The clock shows only while the group reloads [obs: none at a full 0xaa].
             if let (true, Some(m)) = (sl.reload < 0xaa, panel.clock_at(clock_frame(sl.reload))) {
-                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None });
+                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: 1.0, tex0: None, additive: true });
             }
             let overlay = match sl.state {
                 3 => Some(0.75),
@@ -1312,7 +1334,7 @@ impl<'a> Scene<'a> {
                 _ => None,
             };
             if let (Some(a), Some(m)) = (overlay, &panel.no) {
-                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: a, tex0: None });
+                items.push(Fixed { mesh: m, at, size: 0.014, rot: (0.0, 0.0, 0.0), opacity: a, tex0: None, additive: true });
             }
         }
     }
@@ -1322,7 +1344,7 @@ impl<'a> Scene<'a> {
     /// frame (the phase isn't dumped: `spin`); with no ship selected the fighter's or a gun's building's model.
     fn info_model(&self, items: &mut Vec<Fixed<'a>>, b: &Battle, spin: f32, clear: f32) {
         if let Some(m) = self.shown.info_other.as_ref().and_then(|(name, small)| self.models.get(name, *small)) {
-            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear, tex0: None });
+            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear, tex0: None, additive: false });
             return;
         }
         let mut best: Option<(i32, usize)> = None;
@@ -1335,7 +1357,7 @@ impl<'a> Scene<'a> {
         let Some((_, i)) = best else { return };
         let Some((name, _)) = self.shown.types.get(i).cloned().flatten() else { return };
         if let Some(m) = self.models.get(&name, b.units[i].kind >= 8) {
-            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear, tex0: None });
+            items.push(Fixed { mesh: m, at: [-545.0, 365.0, -1100.0], size: 0.03, rot: (std::f32::consts::FRAC_PI_2, spin, 0.0), opacity: 1.0 - clear, tex0: None, additive: false });
         }
     }
 
@@ -1358,6 +1380,17 @@ impl<'a> Scene<'a> {
 
 /// The starmap scene's parallel light (`Init3dStarmap`: 0x808080 along (10, 10, −10), the direction it shines in):
 /// towards it is (−10, −10, 10) [obs: of the eight sign choices the capture matches this one, mean diff 7.3 vs ≥ 17.6].
+/// A model's half-extent per axis from its pivot (`BoxUjraszamol`'s `ext / 1024` for a root 1024 wide), at least 1e-6.
+fn mesh_reach(mesh: &Mesh) -> [f32; 3] {
+    let mut r = [1e-6f32; 3];
+    for v in mesh.parts.iter().flat_map(|(vs, _)| vs) {
+        for (r, p) in r.iter_mut().zip(v.pos) {
+            *r = r.max(p.abs());
+        }
+    }
+    r
+}
+
 fn planet_light() -> [f32; 3] {
     [-10.0, -10.0, 10.0]
 }
@@ -1427,10 +1460,10 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
     scene.fighters(f, cam, s.battle, gfx.fx.fighter.as_ref());
     scene.gun_markers(f, cam, s.battle, s.erosseg);
     if let Some((fx, weapons)) = s.fx {
-        scene.debris(f, fx, &gfx.fx);
         scene.rings(f, r, install, s.battle, fx, &mut gfx.fx);
         scene.shots(f, cam, s.battle, fx, weapons, &gfx.forms);
         scene.particles(f, cam, fx, &gfx.fx_textures);
+        scene.debris(f, fx, &gfx.fx);
         scene.bolts(f, cam, fx, &gfx.fx);
     }
     scene.overlays(f, cam, hud, s.battle, s.erosseg, gfx.szar);

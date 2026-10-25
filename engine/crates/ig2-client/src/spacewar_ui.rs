@@ -198,7 +198,16 @@ impl Plans<'_> {
         p.raw[..p.raw.iter().position(|&c| c == 0).unwrap_or(0x14).min(0x14)].to_vec()
     }
 
-    /// A fighter group's firepower (`+0x9c`): its design's attack × the count.
+    /// A unit's firepower as `infoszamol`'s first loop caches it in unit `+0x250` (exe 0x574040): a plan-less unit
+    /// (first ship id < 0) sums its mounts' `+0x28`, not its design's value; else its ships' plan values.
+    fn unit_strength(&self, u: &ig2_sim::spacebattle::Unit) -> i32 {
+        match u.ships.first() {
+            Some(&s) if s >= 0 => self.unit_value(u),
+            _ => u.mounts.iter().fold(0i32, |a, m| a.wrapping_add(m.damage4)),
+        }
+    }
+
+    /// A fighter group's firepower in the side strengths: its design's attack × the count.
     fn fighter_value(&self, g: &ig2_sim::spacebattle::Fighter) -> i32 {
         self.designs.get(g.owner.max(0) as usize).and_then(|e| e.get(g.design.max(0) as usize)).map_or(0, |d| d.attack).wrapping_mul(g.count)
     }
@@ -214,12 +223,7 @@ impl Plans<'_> {
             }
         };
         for u in b.units.iter().filter(|u| u.alive && u.owner != 0) {
-            // A plan-less unit sums its mounts' `+0x28` here (step 2), not its design's value (step 3).
-            let x = match u.ships.first() {
-                Some(&s) if s >= 0 => self.unit_value(u),
-                _ => u.mounts.iter().fold(0i32, |a, m| a.wrapping_add(m.damage4)),
-            };
-            add(u.owner, x);
+            add(u.owner, self.unit_strength(u));
         }
         for g in b.fighters.iter().filter(|g| g.alive) {
             add(g.owner, self.fighter_value(g));
@@ -1222,15 +1226,16 @@ impl SpaceWarUi {
         // The overview (exe 0x574040, the `+0x1f2c` block): own, enemy (the relation byte 1) and other ships,
         // fighters and firepower; the guns count by their building's tech.
         let side = |o: i32| if o == me { 0 } else if b.hostile.get(me.max(0) as usize).and_then(|r| r.get(o.max(0) as usize)).copied() == Some(1) { 1 } else { 2 };
+        // A unit adds its cached `+0x250` (the side strengths' value); a fighter group its `+0x9c`, which only
+        // `AddUjVadasz` (exe 0x566420) writes, with 0: fighters never add firepower here [obs spacewar_info t500: own
+        // 3690 = 3865 less 7 fighters × 25].
         for u in b.units.iter().filter(|u| u.alive && u.owner != 0) {
             let k = side(u.owner);
             st.sides[0][k] += u.ship_count;
-            st.sides[2][k] += plans.unit_value(u);
+            st.sides[2][k] += plans.unit_strength(u);
         }
         for g in b.fighters.iter().filter(|g| g.alive) {
-            let k = side(g.owner);
-            st.sides[1][k] += g.count;
-            st.sides[2][k] += plans.fighter_value(g);
+            st.sides[1][side(g.owner)] += g.count;
         }
         for (k, g) in b.guns.iter().enumerate() {
             let tech = plans.gun_tech.get(k).copied().unwrap_or(-1);
@@ -2126,6 +2131,32 @@ mod tests {
             checked += 1;
         }
         eprintln!("{checked} dumps checked");
+    }
+
+    /// The overview's firepower (exe 0x574040 into 0xE72DAC/0xE72DB0) on `spacewar_info`'s entry: units add their
+    /// cached `+0x250`, fighter groups their never-written `+0x9c` (0) [obs spacewar_info t500: 3690 / 708; the side
+    /// strengths with the fighters are 3865 for the own side]. `IG2_SPWC_INFO` = the exe run's prefix
+    /// (`<prefix>-entry.json`, `<prefix>.sav`).
+    #[test]
+    fn overview_firepower_matches_the_exe() {
+        let Some(prefix) = std::env::var_os("IG2_SPWC_INFO") else { return };
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let prefix = prefix.to_string_lossy().into_owned();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let d = crate::spacewar_screen::Dump::load(&format!("{prefix}-entry.json")).unwrap();
+        let bytes = std::fs::read(format!("{prefix}.sav")).unwrap();
+        let w = crate::world::World::load(&ig2_formats::save::SaveGame::parse(&bytes).unwrap(), &rules, &defaults, &volatile);
+        let b = &d.battle;
+        let combat = w.game.state.combat();
+        let tech = &w.game.rules.space.building_tech;
+        let blocks = w.game.state.buildings.get(b.planet.max(0) as usize);
+        let gun_tech = b.guns.iter().map(|g| blocks.and_then(|x| x.get(g.building.max(0) as usize)).filter(|_| g.building > 0).and_then(|x| tech.get(x[0] as usize)).map_or(-1, |&t| t as i32)).collect();
+        let plans = Plans { designs: &combat.designs, ships: &combat.ships, gun_tech, gun_hp: Vec::new(), firepower: &w.game.rules.ai.design.firepower, fleets: &w.game.state.fleets };
+        let mut ui = SpaceWarUi::enter(0, b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+        ui.infoszamol(b, &plans, &mut Vec::new());
+        assert_eq!([ui.stats.sides[2][0], ui.stats.sides[2][1]], [3690, 708]);
+        assert_eq!(plans.side_strengths(b)[b.human.max(0) as usize], 3865);
     }
 
     /// `kamerabeallit` on the exe's settled camera: from the dumped fields (pivot, yaw, tilt, zoom) the targets are

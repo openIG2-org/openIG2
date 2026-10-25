@@ -1,0 +1,15 @@
+{
+ "screen": "main",
+ "note": "FX3 row 193 probe: the race spheres and difficulty rings with the right button. Left: single player (t 350), the campaign ring (t 600). Right: race 1's box twice (highlight, then confirm; t 1100 / 1300), the 'easy' ring (t 1500).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [162, 267], "hold": 3},
+  {"t": 600, "press": [469, 299], "hold": 3},
+  {"t": 1100, "press": [320, 240], "hold": 3, "button": 3},
+  {"t": 1300, "press": [320, 240], "hold": 3, "button": 3},
+  {"t": 1500, "press": [349, 42], "hold": 3, "button": 3},
+  {"t": 1900, "mouse": [320, 240]}
+ ],
+ "grabs": [1080, 1150, 1350, 1480, 1550, 1650, 1800],
+ "tail": 10
+}

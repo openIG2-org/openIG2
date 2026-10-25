@@ -636,7 +636,7 @@ mode), group 3 vehicles (`+0x16 == 2`), designs ascending, only designs either s
   and a vehicle skin's owner is `AktFleet`'s), `AddToScene(…, 0.04)`, camera-fixed at ((c·129 − 229) or
   (c·129 + 99), r·70 − 156, −600), `RotateObj(π/2, 0, 0)` + `RotateObj2((1, 0, 0), −0.5)`, turning
   `RotateObj2((0, cos −0.5, sin −0.5), (i % 3 + 1)·0.03)` per frame; a side holding none is three quarters
-  transparent.
+  transparent. Phase [obs, 2026-10-25]: both copies of a row turn in step (identical rotation chains and geometry matrices in every probed frame, `light-transfer.jsonl`; the look of "out of step" is perspective, x −229/−100 vs 99/228 at z −600); cell i = 0/1/2 turns 0.03/0.06/0.09 a frame, and at drawn frame n after the icon press the cells have turned n − 1 frames (`ropFrames` in the grab, client `--spin-frames`; `InfoAlapRotation` is not in step with them here).
 - Texts (`StarmapGfx2D_3`): fleet 1's name at (156, 32), fleet 2's (or the planet's) at (484, 32), size 3 centred,
   colour 3; `ShowFlottaTankCap(110 or 420, 347, f)` (0x6d4560: `GetString(2, 5, 2)` + `" %d/%d"` of `+0x5c`/`+0x78`,
   or `+ GetString(2, 5, 3)` without capacity) / `ShowBolygoTankCap` (`GetString(2, 5, 4)` + `" %d"` of planet
@@ -1001,7 +1001,7 @@ kerekes, kozepes, lebego, lanctalp, aknarako) with sub-mesh 0 skinned `textures/
 lanc, aknarak}<min(EN, 10)>.bmp`, `AddToScene(…, 0.04)` at `((i % 2)·129 − 229, (i / 2)·70 − 156, −600)`, posed and
 turning as §19.3's cells; the selected one (`Selected − First` in 0..8) also at scale 0.1, `MoveObj(150, −150, −600)`,
 `RotateObj2((1, 0, 0), −0.5)` once, then `RotateObj2((0, cos −0.5, sin −0.5), 0.03)` per frame (not
-`InfoForgatAlap`'s pose).
+`InfoForgatAlap`'s pose). The preview (`SetSpecificMeshId` ELF 0x6ec190) carries cell 0's rotation chain exactly [obs, `light-tanks.jsonl`]: its apparent pitch is the spin phase (tilted axis), and the same phase rule as §13.3 holds (n − 1 frames after the press; client `InfoPanel.turn = (N+1)/100`).
 
 ### 20.3 Pictures and texts
 - Faders (`StarmapTanksInfoFaderKirakas`, §13.3's call): (28, 27, 273, 334), (338, 186, 273, 175), (338, 27, 273,

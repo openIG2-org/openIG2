@@ -1,0 +1,18 @@
+{
+ "screen": "main",
+ "note": "FX3 row 193 probe: the scenario panel's boxes with the right button. Left: single player (t 350), the scenario ring (t 600). Right: row 2 'espion' (t 800), the high-score toggle 0x27 held 40 frames (t 900: toggles once or every frame?), row 0 'Skirmish' (t 1000), the race '->' arrow (t 1100), cancel (t 1400).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [162, 267], "hold": 3},
+  {"t": 600, "press": [296, 82], "hold": 3},
+  {"t": 800, "press": [500, 102], "hold": 3, "button": 3},
+  {"t": 900, "press": [355, 455], "hold": 40, "button": 3},
+  {"t": 1000, "press": [500, 72], "hold": 3, "button": 3},
+  {"t": 1100, "press": [92, 415], "hold": 3, "button": 3},
+  {"t": 1300, "mouse": [470, 455]},
+  {"t": 1400, "press": [566, 455], "hold": 3, "button": 3},
+  {"t": 1560, "mouse": [320, 240]}
+ ],
+ "grabs": [790, 850, 950, 1050, 1150, 1460, 1600],
+ "tail": 10
+}

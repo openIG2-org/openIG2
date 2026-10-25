@@ -79,6 +79,18 @@ pub struct InfoFrame {
     pub globes: [Option<GlobeView>; 4],
     /// `Info_StarLogMode`: the left buttons wear `info_ures.bmp` / `info_j6.bmp` (`SetUresTexturak`, §6.8).
     pub star_log: bool,
+    /// The depth (`InfoGombFrame` 0..=10) each `GombMeshek` button was last put at (`LekezelGombok`).
+    pub buttons: [i32; 19],
+}
+
+/// `infoSetGombFrame` (ELF 0x557670): the z `MoveObj` gives button `id`'s mesh at depth `f` (v units), from the table
+/// it copies (ELF 0xd4dbe0); button 0xd (the list's down arrow) moves the other way.
+fn button_z(id: usize, f: i32) -> f32 {
+    const BASE: [f32; 19] = [
+        594.882, 363.387, 133.056, -98.439, -321.221, -638.109, 668.1, 407.482, 148.175, -112.444, -363.252, -720.005, 907.497,
+        -817.299, -638.109, -638.109, -638.109, 720.23, -703.135,
+    ];
+    if id == 0xd { BASE[id] - (f * 3) as f32 } else { (f * 3) as f32 + BASE[id] }
 }
 
 /// A list slot's model: a planet `vector/info/bolygo_k.xvb` with `textures/starmap/p<surface>.bmp`, or the fleet
@@ -111,11 +123,17 @@ fn info_lights(s: &InfoFrame) -> (Lights, Lights) {
     (root, frame)
 }
 
+/// The heads' drawn opacity: `float2int(255 − 255·(1 − 0.99²))` = 250.
+const HEAD_OPACITY: f32 = 250.0 / 255.0;
+
 /// `RarakFenyekFejekre` (ELF 0x554790): the ambient lights on head `e`'s node `InfoFejek[e]` (3/ring/1/0). Slot 0 is
 /// the selected head's, grey `(int)(sin(t·20)·127/2 + 192)` with `t` the heads' fader clock; slot 1 (kept once set)
 /// red (200, 50, 50) for a dead empire, else `(100 − x, 100 − x/2, 100 + x)` with `x = (int)(s·100) − 89` clamped
-/// to 0..100 and `s` = the fader's `+0x168 + 4e` = 0.9 (without its random shine) [inf: x = 0, the ELF's f64 product].
-fn head_lights(s: &InfoFrame, k: usize, mut l: Lights) -> Lights {
+/// to 0..100 and `s` = the fader's `+0x168 + 4e` = 0.9 (without its random shine): x = 1, the exe's f32 product. These
+/// are the head's only lights: the frame's don't reach it [obs: `--kep 9 --light-probe`, 2026-10-25: the selected
+/// head lit by 0xa2a2a2 alone, another by 0x656463].
+fn head_lights(s: &InfoFrame, k: usize) -> Lights {
+    let mut l = Lights::default();
     let e = k + 1;
     if e == s.selected {
         let p = (((s.head_clock as f64) * 20.0).sin() * 127.0) as f32;
@@ -127,7 +145,7 @@ fn head_lights(s: &InfoFrame, k: usize, mut l: Lights) -> Lights {
         l = l.ambient(if !s.alive[k] {
             rgb(200, 50, 50)
         } else {
-            let x = (((0.9f32 as f64) * 100.0) as i32 - 89).clamp(0, 100) as u32;
+            let x = ((0.9f32 * 100.0) as i32 - 89).clamp(0, 100) as u32;
             rgb(100 - x, 100 - x / 2, 100 + x)
         });
     }
@@ -291,19 +309,35 @@ impl FrameModels {
     pub fn render_info(&mut self, r: &mut Renderer, install: &Install, s: &InfoFrame, size: [f32; 2]) -> Option<TexId> {
         let pose = s.frame.max(0.0) as usize;
         // `Infoing3DInit` (ELF): `SetObjTransparency(…, 0.01)` on every head (3/ring/1/0), so their material's 0.7 never
-        // applies (`Kocka`: a non-zero object transparency wins).
+        // applies (`Kocka`: a non-zero object transparency wins). The exe draws them at opacity 250 [obs: the light
+        // probe], `1 − 0.99²` (0.01 twice down the hierarchy, xv.md) [inf].
         let info = self
             .info
             .entry(pose)
             .or_insert_with(|| {
                 load(install, "vector/info/", "info.xvb", "textures/info/", Some(pose)).map(|mut m| {
                     for p in m.parts.iter_mut().filter(|p| p.index.len() >= 4 && p.index[0] == 3 && p.index[2] == 1 && p.index[3] == 0) {
-                        p.look = Look::Glass(1.0 - 0.01);
+                        p.look = Look::Glass(HEAD_OPACITY);
                     }
                     Rc::new(m)
                 })
             })
             .clone()?;
+        // `LekezelGombok` → `infoSetGombFrame`: `MoveObj` keeps a pressed button's x and y, its z from the table. A
+        // button never pressed keeps the pose's own place.
+        let info = if s.buttons.iter().all(|&f| f == 0) {
+            info
+        } else {
+            let mut m = (*info).clone();
+            for (id, &f) in s.buttons.iter().enumerate().filter(|(_, f)| **f != 0) {
+                let at: Vec<u16> = BUTTON_MESH[id].iter().take_while(|&&i| i >= 0).map(|&i| i as u16).collect();
+                if let Some(n) = m.nodes.iter().find(|n| n.index == at) {
+                    let r = n.record;
+                    m.move_child(&at, Some([r[0], r[1], button_z(id, f) / 1024.0]), None);
+                }
+            }
+            Rc::new(m)
+        };
         let marker = self.marker.get_or_insert_with(|| load(install, "vector/info/", "negyzet1.xvb", "textures/info/", None).map(Rc::new)).clone();
         let knob = self.knob.get_or_insert_with(|| load(install, "vector/info/", "hszog0.xvb", "textures/info/", None).map(Rc::new)).clone();
         let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
@@ -350,7 +384,7 @@ impl FrameModels {
         let right = |ix: &[u16]| ix.len() >= 4 && ix[..3] == [1, 7, 0] && (1..=6).contains(&ix[3]);
         let fade = ((s.frame - INFO_MAX_FRAMES) / 30.0).clamp(0.0, 1.0);
         let (root, framel) = info_lights(s);
-        let heads_l: Vec<Lights> = (0..8).map(|k| head_lights(s, k, framel.clone())).collect();
+        let heads_l: Vec<Lights> = (0..8).map(|k| head_lights(s, k)).collect();
         let lights = |ix: &[u16]| -> Lights {
             if ix.len() >= 4 && ix[0] == 3 && ix[2] == 1 && ix[3] == 0 {
                 if let Some(k) = HEAD_RING.iter().position(|&h| h == ix[1]) {
@@ -462,3 +496,32 @@ pub fn draw(f: &mut Frame, tex: TexId, v: &crate::font::Virtual) {
     f.push(tex, Blend::GammaPremul, Instance::new(kind::SPRITE, c, crate::kit::Wide::frame(v).half(v), [1.0; 4]));
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `run_screen.py quick-1.sav --kep 9 --light-probe` (2026-10-25): an unselected alive head is lit by
+    /// `(99, 100, 101)` alone and drawn at opacity 250; the frame's ambient and parallel lights don't reach it.
+    #[test]
+    fn heads_take_only_their_own_lights() {
+        let s = InfoFrame { selected: 1, alive: [true; 8], head_lit: [false, true, false, false, false, false, false, false], ..InfoFrame::default() };
+        assert_eq!(head_lights(&s, 1).shade([0.0, 0.0, 1.0]), [99, 100, 101]);
+        assert_eq!(head_lights(&s, 2).shade([0.0, 0.0, 1.0]), [0, 0, 0]);
+        assert_eq!(crate::lighting::float2int(255.0 * HEAD_OPACITY), 250);
+    }
+
+    /// `infoSetGombFrame`'s table is where the open frame (pose 45) has each button: a button let out to frame 0 stands
+    /// where it was before its first press (skips without the install).
+    #[test]
+    fn button_table_is_the_open_pose() {
+        let Ok(root) = std::env::var("IG2_INSTALL_DIR") else { return };
+        let install = Install::open(root, ig2_formats::text::Lang::En).unwrap();
+        let m = load(&install, "vector/info/", "info.xvb", "textures/info/", Some(INFO_MAX_FRAMES as usize)).unwrap();
+        for (id, b) in BUTTON_MESH.iter().enumerate() {
+            let at: Vec<u16> = b.iter().take_while(|&&i| i >= 0).map(|&i| i as u16).collect();
+            let n = m.nodes.iter().find(|n| n.index == at).unwrap();
+            assert!((n.record[2] * 1024.0 - button_z(id, 0)).abs() < 0.5, "button {id}: pose z {} table {}", n.record[2] * 1024.0, button_z(id, 0));
+        }
+    }
+}

@@ -45,8 +45,11 @@ planet settings menus, the money triangle and the spending limit (§7).
   `t` = the heads' fader clock `InfoFejF+0x4d8` (`InitFaderDesignStruktura` in `Info_Belep`, +0.003 a frame in
   `FaderDesignFrissito` 0x547e10); slot 1, on every other head and never removed while the screen is open, is red
   (200, 50, 50) for a dead empire, else `(100 − x, 100 − x/2, 100 + x)`, `x = (int)(InfoFejF[0x168 + 4e]·100) − 89`
-  clamped to 0..100 (the fader's `s` = 0.9 + its random shine: x = 0 with the ELF's f64 product [inf: the exe's f32
-  product would give 1]). Alive heads that were selected at some point keep their slot 1 too. With
+  clamped to 0..100 (the fader's `s` = 0.9 + its random shine: x = 1, the exe's f32 product). These slot lights are
+  the head's only lights: neither the frame's ambient nor its parallel lights reach it, and it is drawn at opacity
+  250 (`1 − 0.99²` [inf]) [obs: `run_screen.py quick-1.sav --kep 9 --light-probe`, 2026-10-25: the selected head lit
+  by 0xa2a2a2 alone, the other by 0x656463 = (99, 100, 101)]. Alive heads that were selected at some point keep their
+  slot 1 too. With
   `GLOBALKELLDESIGN` the shining heads also get two `FadeKerettelKerekitDesign` frames [not ported].
 - `info.xvb` (`vector/info/`, `textures/info/`) `AddToScene(…, 1.22)`, `RotateObj(π/2, 0, 0)`, `MoveObj(0, 15, −650)`,
   property 0x200, posed by `SetFrame(InfoMainMesh, infoframe)`. Hidden: node 1's children 0xe..0x13 (init) and
@@ -117,6 +120,14 @@ All drawn only while open and not closing, the texts times `infoFelfadeles`.
 21..=25 charts 5..9 `(588, 283 + 27k, 45, 20)`; 26..=28 tax / auto-build / priority `(135, 354 + 14k, 100, 13)`; 29 the
 triangle; 30/31 list up/down `(290, 247 / 450, 18, 19)`; 32 the limit `(280, 209, 100, 8)`; 33 `(0, 249, 55, …)`; 34 the
 scroll bar `(290, 266, 18, 203)`; 35/36 star log up/down `(621, 274 / 431, 18, 19)`; 37 back from the detail.
+Held frames (input.md §7): 34 (scroll bar) follows `Mouse_y` every held frame; 35/36 step `StarLogPointer` every held frame,
+release included. Button animation `LekezelGombok` (ELF 0x559850, from `Infoing3DUpdate`; exe `InfoGombNew` 0xB85310,
+`InfoGombFrameCsokkent` 0xB85311, `InfoMelyikGombot` 0xB85314, `InfoGombFrame` 0xB8531C): a press of 14/15/16..25 sinks
+`GombMeshek[0xb / 5 / c or c+1]` through frames 7, 10, 3, 0 [obs]; the list arrows 30/31 (0xc/0xd) and star-log arrows
+(0x11/0x12) restart it every held frame, so they stay in at 10 while held and come out 10, 3, 0 after the release [obs].
+`infoSetGombFrame` (ELF 0x557670) `MoveObj`s the mesh to z = table (ELF 0xd4dbe0, 19 f32) + 3*frame (0xd: - 3*frame); the
+table equals the open pose's node depths (test `button_table_is_the_open_pose`). There is no hover animation. Client:
+info_screen.rs `Buttons3d`, screen_frames.rs `button_z`, once a UI tick (ADR 0016 §1).
 Heights (`Info_MouseInit` exe 0x4e9900, `Info_MouseInit2` 0x4e9530 every frame): 13 and 37 are a fixed 224 (13 always
 off, 37 only in detail mode); 33 is `56·min(HanyBolygoFlotta, 4)` (0xB82988), on only outside the detail mode while
 open. Tooltips (`GetString(9, 1, k)`, drawn by `UpdateFrame` as every screen's, input.md §8): 1..=8 the race's name;

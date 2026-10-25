@@ -63,6 +63,8 @@ ap.add_argument("--state-out")
 ap.add_argument("--script")
 ap.add_argument("--formation", type=int, default=0, help="N: a random formation pick on the battle screen with a chance of 1/N per driver frame ('preform'/'form' snapshots around loadfelallas)")
 ap.add_argument("--sounds")
+ap.add_argument("--records", action="store_true", help="at each script grab the scene records of the debris, the ships root and the units ('records')")
+ap.add_argument("--shield", action="store_true", help="with --planets: every planet battle, the first armed building armour (shield rings)")
 ap.add_argument("--watch", help="T:OFF[:N]: a hardware write watchpoint on the slot's byte OFF from script tick T (the first N writers)")
 ap.add_argument("--watch-addr", help="VA[:N]: a hardware write watchpoint on an exe global from just before the scenario's load (the first N writers, the value read as a string)")
 a = ap.parse_args()
@@ -163,7 +165,7 @@ script.post({"type": "config", "payload": {"scenario": a.scenario, "steps": a.st
                                            "planets": a.planets, "join": a.join, "fuzzDesigns": a.fuzz_designs, "weapons": [int(x, 0) for x in a.weapons.split(",") if x], "speed": a.speed, "perBattle": a.per_battle,
                                            "orders": a.orders, "orderEvery": a.order_every, "grabTicks": grab_ticks,
                                            "grabSettle": a.grab_settle, "stateSlot": STATE_SLOT if a.state_out else 0,
-                                           "script": input_script, "soundTables": sound_tables, "formation": a.formation,
+                                           "script": input_script, "soundTables": sound_tables, "formation": a.formation, "records": a.records, "shield": a.shield,
                                            "watch": dict(zip(("t", "off", "n"), (int(x, 0) for x in a.watch.split(":")))) if a.watch else None,
                                            "watchAddr": dict(zip(("addr", "n"), (int(x, 0) for x in a.watch_addr.split(":")))) if a.watch_addr else None}})
 device.resume(pid)

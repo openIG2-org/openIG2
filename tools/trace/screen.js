@@ -132,7 +132,7 @@ function hideInfoPlanet(what) {
   }
 }
 
-let frames = 0, phase = 0, at = 0, shot = 0, ropDone = false, setupDone = false, viaDone = false, staged = false, mainCalls = 0, gfx1Calls = 0, spyStage = null;
+let frames = 0, phase = 0, at = 0, shot = 0, ropFrame = 0, ropDone = false, setupDone = false, viaDone = false, staged = false, mainCalls = 0, gfx1Calls = 0, spyStage = null;
 
 // --spies MODE: a roster for the human's spy screen (`Kemek` 0xBAFCC8 [9][13] × 0x4c, `OsszHanyKem` 0xBB1F84;
 // re/rules/espionage.md §1.1): five spies of different races and states (at home with skill points, on a mission
@@ -222,12 +222,12 @@ function hookLightProbe() {
         const key = args[3].toString();
         this.on = A.AktKep.readS32() === 8 && va(0xf434b8).readFloat() === 50 && !tradeProbed.has(key);
         if (this.on) tradeProbed.add(key);
-      } else if (cfg.kep === 2) {
-        // On the starmap (the info panels' models, deviations #47): each object (XVOStruct) once in the last frames
+      } else if (cfg.kep === 2 || cfg.kep === 9) {
+        // On the starmap (the info panels' models, deviations #47) and the info screen (the race heads, #329): each object (XVOStruct) once in the last frames
         // before the grab (the sort slots are reused every frame); an XVO drawn under several rotations (the fleet
         // panel's big preview shares its model with a cell) once per rotation.
         const key = args[4].toString() + [0, 1, 2, 3, 4, 5].map((i) => args[3].add(0x24 + 4 * i).readFloat().toFixed(3)).join(',');
-        this.on = A.AktKep.readS32() === 2 && phase === 3 && (!cfg.rop || ropDone) && frames >= at + cfg.wait - 3 && !tradeProbed.has(key);
+        this.on = A.AktKep.readS32() === cfg.kep && phase === 3 && (!cfg.rop || ropDone) && frames >= at + cfg.wait - 3 && !tradeProbed.has(key);
         if (this.on) tradeProbed.add(key);
       } else {
         this.on = A.AktKep.readS32() === 4 && resFrames3d >= 1 && resFrames3d <= 3 && va(0xdff940).readU32() !== 0;
@@ -253,7 +253,7 @@ function hookLightProbe() {
       const mat = this.xvo.add(0x34).readPointer().readPointer();
       // The whole sort record before the flags (its other matrices, e.g. the geometry's), on the starmap only.
       const raw = cfg.kep === 2 ? Array.from({ length: 0x68 / 4 }, (_, i) => sp.add(4 * i).readFloat()) : undefined;
-      const rec = { k: 'light', frame: resFrames3d, sp: sp.toString(), m, raw, flags, opacity: this.op, lights, verts, keringeto: va(0xddf6bc).readFloat() };
+      const rec = { k: 'light', frame: resFrames3d, frames: frames - ropFrame, sp: sp.toString(), m, raw, flags, opacity: this.op, lights, verts, keringeto: va(0xddf6bc).readFloat() };
       if (!shadeSent) {
         const t = mat.add(0x34).readPointer(), sp2 = mat.add(0x38).readPointer();
         rec.shade = Array.from(new Uint16Array(t.readByteArray(0x4000 + 0x4000)));
@@ -392,7 +392,7 @@ function hookRop() {
   const hit = Memory.scanSync(va(0x5b2b70), 0x200, pattern)[0];
   if (!hit) { send({ k: 'error', what: 'AktRopIkon store not found' }); return; }
   Interceptor.attach(hit.address.add(10), function () {
-    if (cfg.ropNow && !ropDone) { target.writeS32(cfg.rop); ropDone = true; send({ k: 'rop', rop: cfg.rop }); }
+    if (cfg.ropNow && !ropDone) { target.writeS32(cfg.rop); ropDone = true; ropFrame = frames; send({ k: 'rop', rop: cfg.rop }); }
   });
 }
 // --rop-menu X,Y: hold the radial menu open at the virtual point (`StarmapRopIkonMod` 0xF16F18, `RopIkonFazis`
@@ -657,7 +657,7 @@ Interceptor.attach(A.Fake_FRISSITES, {
       // The starmap's `faderstruktura`s `fifo` (exe 0xF152F0) and `starf` (0xF168E8), 0x5cc bytes each (hud.md §1.2.1):
       // their shine and drift phase, which the client can't replay.
       const faders = { fifo: hexs(va(0xf152f0), 0x5cc), starf: hexs(va(0xf168e8), 0x5cc) };
-      send({ k: 'grab', faders, clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoAlap: va(0xf158c0).readFloat(), infoAlapOn: va(0xe83701).readU8(), fifo: [0, 1, 2, 3, 4, 5, 6, 7].map(k => va(0xf154d0 + 4 * k).readFloat()), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
+      send({ k: 'grab', faders, clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoAlap: va(0xf158c0).readFloat(), infoAlapOn: va(0xe83701).readU8(), ropFrames: ropDone ? frames - ropFrame : null, fifo: [0, 1, 2, 3, 4, 5, 6, 7].map(k => va(0xf154d0 + 4 * k).readFloat()), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
       shot++;
       at = frames;
       if (shot >= cfg.shots) phase = 4;

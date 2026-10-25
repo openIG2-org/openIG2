@@ -1,4 +1,4 @@
-# ADR 0016: Deliberate keeps: tick-bound rates, MP-safe local actions, our own settings and save files
+# ADR 0016: Deliberate keeps: tick-bound rates, MP-safe local actions, our own settings and save files, the developers' cheats, load and frame latency, unused build modes
 
 Date: 2026-10-24. Status: accepted. A record of differences from the classic client (ADR 0009) that the remake keeps on
 purpose, with no classic option, because the original's behaviour depends on the frame rate, breaks multiplayer, or
@@ -38,6 +38,22 @@ the user's install is read, never changed):
      format, read over the original's); `options.dat` stays as it is (options.md §7, §14).
    - #70, saves: slot saves are ADR 0007's format as `save<n>.ig2s`, listed over a `save<n>.sav` of the same slot;
      the original's `.sav` files load as before (options.md §5.4, §14).
+4. **The developers' cheats** (added 2026-10-25, FX15). `ExecuteString`'s debug commands (stage B, about 90 cheats,
+   input.md §5.1) need `DEBUGLEHET`, set only from an `init/config` file the GOG install doesn't have, or `DEBUGX`,
+   set only by stage B's own `debug`; they act on the typing machine alone (a desync in multiplayer). They are not
+   ported, and neither are the 0x3fd system lines only they send. Rows: #163 (its debug part), #244 (the battle's
+   `DEBUGX` keys). The client's `DEBUGX` readers stay, so a save with the flag set behaves as in the exe.
+5. **Load times and frame latency** (added 2026-10-25, FX1). The original's waits that come from its loading or its
+   frame loop, not from a rule, aren't reproduced:
+   - #248, keys during a load: the exe refuses keys while a screen's synchronous `_Belep` load runs (its `FRISSITES`
+     catch-up ticks run `DoKeyboard` with `Belep` set, ~120 ticks after a load onto the starmap). The client's loads
+     don't take those ticks; the closing animations, which are timed by rule, still refuse keys (input.md §1.1).
+   - #250, the opening sound: the exe plays a screen's opening sound two rendered frames after the key
+     (`IG2_gameUpdate` carries the change out in the next frame, the screen's first `Main` sounds it; 1-2 UI ticks in
+     the FX1 trace, frames 2003 → 2005 and 2708 → 2710), the client at the key. The closing sounds are at the key in both.
+6. **Build modes the GOG release doesn't use** (added 2026-10-25, FX1): #259, the remaster's mobile toolbar
+   (`IG2_TOOLBAR` exe 0xfe6532, `toolbar=1`, off by default: spots 2..5 at 28 × 18, spot 7 at x 310, the history
+   text x + 0x28, the touch sidebars; widescreen.md §5, input.md §6) is not modelled; the client draws the classic bar.
 
 ## Consequences
 - These rows stay `keep` in `re/deviations.md`; their keep lines point at this ADR.

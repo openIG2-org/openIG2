@@ -1491,6 +1491,16 @@ impl<'r> Game<'r> {
         self.with_ai(|_, w, hooks| w.automatic_design(e, t, hooks));
     }
 
+    /// The `EN` a message the sim itself sends carries (`Multi_Send(type, EN, …)` from a tick: the story's 0x49 and
+    /// 0x66, the 0x1b of an emptied fleet): the state's `EN`, the canonical one in lockstep multiplayer (every peer
+    /// raises the same message, so they all apply it for the same empire).
+    pub fn sender(&self) -> u8 {
+        match self.view {
+            ViewMode::Classic => self.state.mem.i32(va::EN).clamp(0, EMPIRES as i32 - 1) as u8,
+            ViewMode::Canonical { en } => en,
+        }
+    }
+
     /// `Story_Special(data)`: the story engine checks the scripts against it.
     pub fn story_special(&mut self, data: [i32; 8]) {
         self.with_story(|st, w| st.story_special(data, &story_chain(), w));

@@ -34,6 +34,7 @@ impl App {
                 return false;
             }
             self.bar_held = None;
+            self.bar_line_held = false;
             // The history goes with the release (`ScreensScrollHistoryMode = 0`).
             if let Some(h) = &mut self.hud {
                 h.history_open = false;
@@ -45,27 +46,15 @@ impl App {
             return false;
         }
         self.bar_held = Some(button);
-        let s = self.akt_kep_now();
+        self.bar_line_held = spot == 7 && button == MouseButton::Left;
         match (spot, button) {
             // Pause and the speeds (`Mouse_FelengedesMajdMegvar`: once, on the press): single player not on the messages
             // or options screen, nor while the time can't be set; the speeds only when paused or at another speed.
             // Either button (`Mouse_Lenyom`; exe trace `rightbutton`: a right press on ×1 and ×3 sounds and sets the speed).
             (2, _) if self.time_keys_allowed() || self.multiplayer() => self.toggle_pause(),
             (n @ 3..=5, _) if self.time_keys_allowed() || self.multiplayer() => self.set_speed(n as i32 - 2),
-            // The message line's left button: the messages screen while a message is unread, not from it; the space
-            // battle, a colony at war and the options screen when load-only or in a battle only with `DEBUGX`.
-            (7, MouseButton::Left) => {
-                let debug = self.world.game.state.mem.u8(va::DEBUGX) != 0;
-                let pass = match s {
-                    11 => debug,
-                    3 if self.colony_war_up() => debug,
-                    0xd => self.options.as_ref().is_some_and(|o| !(o.s.load_only || o.s.battle) || debug),
-                    _ => true,
-                };
-                if s != 10 && pass && self.kep_kell.is_none() && self.unread_message() {
-                    self.request_screen(10);
-                }
-            }
+            // The message line's left button: [`Self::top_bar_frame`] on this frame and every held one.
+            (7, MouseButton::Left) => self.messages_from_bar(),
             // The right button: the history while it is held (`GFX_ScrollHistory`).
             (7, MouseButton::Right) => {
                 if let Some(h) = &mut self.hud {
@@ -75,6 +64,40 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// Every frame: the left button held over the message line asks for the messages screen (`MOUSE_SelectScreens`
+    /// exe 0x555470 lines 90-121 test `Mouse_Bal`, no press edge; `IG2_gameUpdate` 0x4e0440 hit-tests `AktIkon` again
+    /// each held frame unless a spot holds the pointer, `Mouse_Megfogva` 0xdb466a), so a message that arrives while
+    /// the line is held, or the pointer coming back onto it, asks too. A hold that began elsewhere stays with that
+    /// spot (the screens' mains grab the pointer, the bar's flag-1 spots wait for the release).
+    pub(super) fn top_bar_frame(&mut self) {
+        if !self.bar_line_held || self.mouse_held & 1 == 0 || self.front.is_some() {
+            return;
+        }
+        let Some(h) = &self.hud else { return };
+        if h.history_open || h.top.open != crate::topbar_menus::Open::None {
+            return;
+        }
+        if bar_spot(self.virtual_cursor()) == Some(7) {
+            self.messages_from_bar();
+        }
+    }
+
+    /// The message line's left button: the messages screen while a message is unread, not from it; the space battle,
+    /// a colony at war and the options screen when load-only or in a battle only with `DEBUGX`.
+    fn messages_from_bar(&mut self) {
+        let s = self.akt_kep_now();
+        let debug = self.world.game.state.mem.u8(va::DEBUGX) != 0;
+        let pass = match s {
+            11 => debug,
+            3 if self.colony_war_up() => debug,
+            0xd => self.options.as_ref().is_some_and(|o| !(o.s.load_only || o.s.battle) || debug),
+            _ => true,
+        };
+        if s != 10 && pass && self.kep_kell.is_none() && self.unread_message() {
+            self.request_screen(10);
+        }
     }
 }
 

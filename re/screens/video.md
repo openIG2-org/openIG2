@@ -182,6 +182,7 @@ layout `VIDEO_INTERLACE_UV`; not captured, no talking-head capture).
   turned into RGBA with §3's shader arithmetic on the decoder thread (`Player`, four frames ahead).
 - `Player::update(now)`: §3's pacing on the caller's clock (frame `n` at `n·1000/fps` ms, at most the newest due
   frame shown, late ones dropped, loops counted on).
+- `Player::update_blocking` / `Playback::frame_blocking` (captures): decode blocks on the script clock instead of running four frames ahead; a clip opened by the typing pass shows from the next frame (`HeadClip::fresh`).
 - Sound: `Audio::play_video` puts the AAC stream in the mixer's video slot at full volume after the 3675-frame
   lead-in and `Clip::sound_wait` (§4: the pictures stored before the first sound chunk less 4, in whole 1024-frame
   hook calls; both scaled to the device rate; test `sound_starts_as_the_exe`: title 22310, credits 4042); a blocking play stops the music (`Mixer::stop_music`); the music restarts through

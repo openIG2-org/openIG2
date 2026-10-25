@@ -115,11 +115,15 @@ impl App {
         let colony = self.colony_shown().then(|| self.colony_overlay()).flatten();
         let starmap_shown = game && self.colony.is_none() && self.overlay.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.spacewar.is_none();
         let starmap = if starmap_shown && crate::hud::bar_tip_spot(at).is_none() { self.starmap_tip(at) } else { None };
-        // The info screen's hot-spots (`Info_MouseInit`'s texts); a held one keeps its own (`Mouse_Megfogva`).
+        // The info and messages screens' hot-spots (`Info_MouseInit`'s texts); a held one keeps its own (`Mouse_Megfogva`).
         let info = match (&self.hud, self.overlay) {
             (Some(h), Some(crate::ui::Screen::Info)) if game => {
                 let id = h.info.held.or_else(|| h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui));
                 id.map(|id| (id, h.info.tip_text(id, &h.texts, &h.empire_names)))
+            }
+            // The messages screen's (`Messages_MouseInit`'s texts).
+            (Some(h), Some(crate::ui::Screen::Messages)) if game => {
+                h.messages.spot_at(at).map(|id| (id, crate::messages_screen::MessagesScreen::tip_text(id, &h.texts)))
             }
             _ => None,
         };
@@ -135,7 +139,7 @@ impl App {
             Some(crate::ui::Screen::Research) => (spot(self.research.as_ref().map(|r| &r.tip)) || self.research_hand(at)) as i32,
             Some(crate::ui::Screen::Design) => self.design.as_ref().is_some_and(|d| d.tip.under != 0 || d.pods.hand) as i32,
             Some(crate::ui::Screen::Trade) => spot(self.trade.as_ref().map(|t| &t.tip)) as i32,
-            Some(crate::ui::Screen::Info) => info.is_some() as i32,
+            Some(crate::ui::Screen::Info | crate::ui::Screen::Messages) => info.is_some() as i32,
             None if starmap_shown => match starmap.as_ref().map(|t| t.id) {
                 Some(id) if ![0x33, 0x34, 0x35, 0x58, 0x59, 100, 0x6f].contains(&id) => 1,
                 id => self.starmap_view_pointer(at, id).unwrap_or(0),

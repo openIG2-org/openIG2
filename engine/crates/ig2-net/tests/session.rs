@@ -442,6 +442,35 @@ fn a_rejoiner_is_admitted_mid_battle_like_a_joiner() {
 }
 
 #[test]
+fn a_kicked_player_is_away_at_once_and_turned_away_at_the_door() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let state = common::space_clash(state);
+    let mut net = start(&rules, &state);
+    let b = into_battle(&mut net);
+    assert!(net.hs.kick(6, net.now).is_err(), "the host can't kick itself");
+    net.hs.kick(3, net.now).unwrap();
+    assert!(net.hs.kick(3, net.now).is_err(), "a second kick: no such player");
+    // The joiner hears it: closed for good, no host migration.
+    net.idle(3);
+    assert!(net.took(&SessionEvent::Kicked { empire: 3 }), "{:?}", net.events);
+    let c = &net.clients[0];
+    assert!(c.kicked() && c.closed() && c.successors().is_empty());
+    net.clients.clear();
+    // In the battle it is away without the grace: `PlayerAway`, and the session runs on.
+    let s = net.hs.status(net.now);
+    assert_eq!(s.away, [3]);
+    assert!(!s.held());
+    let at = net.turn();
+    net.run_to(at + 30, |p| p.events.clear());
+    assert!(net.hs.host.log.iter().flat_map(|b| &b.commands).any(|c| c.issuer == 3 && matches!(c.command, Command::PlayerAway)));
+    assert!(net.hs.own.game.realtime.slots[b].tick > 0);
+    // Its name stays out.
+    let mut c = knock(&mut net, "Guest", RULES, None, None);
+    assert_eq!(come_back(&mut net, &mut c), Status::Refused(Refusal::Kicked));
+    assert!(net.took(&SessionEvent::Refused(Refusal::Kicked)), "{:?}", net.events);
+}
+
+#[test]
 fn a_silent_peer_is_dropped_after_the_keep_alive_and_comes_back() {
     let Some((rules, state)) = common::setup(SAVE) else { return };
     let state = common::space_clash(state);

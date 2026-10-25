@@ -405,6 +405,34 @@ pub struct BigShip {
     pub fleet: Option<Vec<u8>>,
 }
 
+/// `screenfrissites`' notices (exe 0x57f800, spec §3 step 12): at (200, y) in 0x46 cells, size 2, right-aligned in
+/// them (flags 6), colour 2, `KiirStrSzinSzorzo = (int)(spacewarelfade·100)`: own ships retreating (`+0x2d90`,
+/// `GetString(0xb, 1, 2)`) at y 30, an AI's (`+0x2d91`, `(0xb, 1, 3)`) on the next line (+10), and in the formation
+/// phase (`+0x2d85`) `(0xb, 1, 4)` on the next, its multiplier scaled by `(slot-0 counter·100/50)/100` (ints), so it
+/// slides in and out with the weapon column [obs spacewar_info t500: the exe's caption right-aligned at x 620].
+pub fn notices(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, [own, ai, formation]: [bool; 3], slot0: i32, fade: f32) {
+    let Some(font) = &hud.font else { return };
+    let base = (fade * 100.0) as i32;
+    let colour = |k: i32| hud.palette.get(2).copied().unwrap_or([1.0; 3]).map(|x| x * k as f32 / 100.0);
+    let line = |f: &mut Frame, line: u16, y: f32, k: i32| {
+        let t = hud.texts.get(0xb, 1, line);
+        let t = t.split(|&c| c == 0).next().unwrap_or(&[]);
+        font.text(f, v, t, 200.0, y, 0x46, 2, Align::Right, colour(k), None);
+    };
+    let mut y = 30.0;
+    if own {
+        line(f, 2, y, base);
+        y = 40.0;
+    }
+    if ai {
+        line(f, 3, y, base);
+        y += 10.0;
+    }
+    if formation {
+        line(f, 4, y, base * (slot0 * 100 / 0x32) / 100);
+    }
+}
+
 /// The MP versus banner (`screenfrissites`, spec §7.4): `"%s (%s) vs. %s (%s)"` at (200, 30), 0x46 cells, size 2,
 /// centred, colour 2, for 9 s from the opening zoom's start (`spwckezdotimer`), fading over its last 0.5 s.
 pub fn banner(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, text: &[u8], ms: u32, fade: f32) {

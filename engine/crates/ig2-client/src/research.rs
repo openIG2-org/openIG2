@@ -143,6 +143,45 @@ pub enum Act {
     Send(Command),
 }
 
+/// The screen's place, kept between its visits (`ResearchTerulet`, `ResearchMezo`, `ResearchTalalmany`,
+/// `Terulet_Akt[13]`, `ResearchOldForgato`): the exe's globals; the client keeps them per peer, off the shared state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Place {
+    pub area: usize,
+    pub field: i32,
+    pub tech: i32,
+    pub fields: [i32; 13],
+    pub front: i32,
+}
+
+impl Place {
+    /// The saved place (the game's start or a loaded save).
+    pub fn read(state: &SaveState) -> Self {
+        let m = &state.mem;
+        Self {
+            area: m.i32(at::AREA).clamp(1, 12) as usize,
+            field: m.i32(at::FIELD),
+            tech: m.i32(at::TECH),
+            fields: std::array::from_fn(|k| m.i32(at::FIELDS + 4 * k as u32)),
+            front: m.i32(at::FRONT),
+        }
+    }
+
+    /// `ResearchAtvaltTalalmanyra(t)` (exe 0x521f20) with the screen down (the top bar's quick-research pick): the
+    /// category's `TT_*` (a middle-wheel one turns to the front, `ResearchOldForgato = forgastabla2[0]`), then the
+    /// tech, its field and the category's remembered field.
+    pub fn jump_to(&mut self, t: i32, rules: &ig2_rules::Rules) {
+        let n = ((t - 1).max(0) / 16 + 1).clamp(1, 12) as usize;
+        self.area = n;
+        if rules.research_screen.wheel_area.contains(&(n as i32)) {
+            self.front = n as i32;
+        }
+        self.tech = t;
+        self.field = t - (n as i32 - 1) * 16;
+        self.fields[n] = self.field;
+    }
+}
+
 /// The screen's state (one peer's UI; the original keeps it in globals, `Terulet_Akt` and the selection are saved).
 #[derive(Debug, Clone)]
 pub struct Research {
@@ -262,18 +301,19 @@ impl Research {
     /// `Research_Belep` on the state's saved selection. `animated` = `resKELLKINYITAS` (`KELLKINYITASDEFAULT`,
     /// unless coming back from the messages, help or options screens): the screen opens from `resframe` 0.
     pub fn open(state: &SaveState, rules: &ig2_rules::Rules, animated: bool) -> Self {
+        Self::open_at(state, rules, animated, Place::read(state))
+    }
+
+    /// `Research_Belep` at the place the screen was left (or the quick-research pick moved it to).
+    pub fn open_at(state: &SaveState, rules: &ig2_rules::Rules, animated: bool, place: Place) -> Self {
         let m = &state.mem;
         let en = en(state);
-        let mut fields = [0; 13];
-        for (k, f) in fields.iter_mut().enumerate() {
-            *f = m.i32(at::FIELDS + 4 * k as u32);
-        }
         let s = &rules.research_screen;
         let mut r = Self {
-            area: m.i32(at::AREA).clamp(1, 12) as usize,
-            fields,
-            field: m.i32(at::FIELD),
-            tech: m.i32(at::TECH),
+            area: place.area,
+            fields: place.fields,
+            field: place.field,
+            tech: place.tech,
             picked_turret: false,
             slot_area: s.wheel_area,
             slot_kep: s.wheel_kep,
@@ -342,7 +382,7 @@ impl Research {
         };
         // `kezeloframe = kezeloframeto = 0`, then `Forgotabla(ResearchOldForgato)`: the wheel turns to the saved front
         // category once the screen is open.
-        r.turn_wheel(m.i32(at::FRONT));
+        r.turn_wheel(place.front);
         r.slot_kep = s.wheel_kep;
         // `Research_Belep` exe 0x523540: the opening's sound (none without the opening: from the options screen the
         // exe plays only the field's `Res_Hangok[1]`, 31 ticks in; FX1 trace `fkeys`).
@@ -452,6 +492,11 @@ impl Research {
         self.jump_to(t);
         self.button_pressed = true;
         (self.button, self.button_new) = (0xcc, true);
+    }
+
+    /// The place the screen leaves at (`Research_Kilep`: the globals stay as they are).
+    pub fn place(&self) -> Place {
+        Place { area: self.area, field: self.field, tech: self.tech, fields: self.fields, front: self.slot_area[0] }
     }
 
     /// `ResearchAtvaltTalalmanyra(t)`: the running project's category and field.
@@ -2269,6 +2314,34 @@ mod tests {
         assert_eq!(at, [0.0, -50.0, -1000.0]);
         s.choose_field(5);
         assert_eq!((s.near_dir[4], s.near_dir[5]), (-1, 1));
+    }
+
+    /// The top bar's quick pick with the screen down moves the place it opens at (`ResearchAtvaltTalalmanyra` exe
+    /// 0x521f20; deviations #254); the place the screen leaves at comes back on the next visit (needs the install and
+    /// `quick-1.sav`).
+    #[test]
+    fn the_quick_pick_moves_the_place_the_screen_opens_at() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        let wheel = tables.research_screen.wheel_area;
+        // A middle-wheel category turns to the front; one off the wheel (7, research) leaves the front alone.
+        let mut p = Place::read(&w.game.state);
+        let a = wheel[2];
+        p.jump_to((a - 1) * 16 + 5, &tables);
+        assert_eq!((p.area, p.field, p.tech, p.fields[a as usize], p.front), (a as usize, 5, (a - 1) * 16 + 5, 5, a));
+        p.jump_to(6 * 16 + 2, &tables);
+        assert_eq!((p.area, p.field, p.fields[7], p.front), (7, 2, 2, a));
+        // The screen opens there and leaves at the same place (the wheel's front is its first slot).
+        let r = Research::open_at(&w.game.state, &tables, false, p);
+        assert_eq!((r.area, r.tech, r.slot_area[0]), (7, 6 * 16 + 2, a));
+        let back = r.place();
+        assert_eq!((back.area, back.tech, back.front, back.fields[a as usize]), (7, 6 * 16 + 2, a, r.fields[a as usize]));
     }
 
     /// The screen's keys and hot-spots reach the sim through `MULTIGET_Research`'s commands (needs the install and

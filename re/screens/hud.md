@@ -227,7 +227,8 @@ difference), boxes `GFX_DateMoneyScrollFade` (ELF 0x66d160, exe 0x554500, fader 
   to it), `Multi_Send(0x2a, t)` (start, `MULTIGET_Research`); on the research screen showing t, its start button
   goes in (`ResMelyikGombot 0xcc`, `ResGombNew`, `ButtonPressed`). With `Selected < 1` and a project running: a
   release inside the STOP rect sends `Multi_Send(0x29, current)` (stop). Then it closes; it also closes whenever no
-  button is held (`Mouse_Gomb`).
+  button is held (`Mouse_Gomb`; the client too since FX1, `top_menus_frame`). The pick also moves the research place
+  with the screen down (`ResearchTerulet`/`Mezo`/`Talalmany`, `Terulet_Akt`, `ResearchOldForgato`; `research::Place`, deviations 254).
   Texts: headers `GetString(0x11, 3, 0x26 + c)` (SPACESHIPS, BUILDINGS, TANKS) at (SelectX + 0x66(c − 1), SelectY +
   4), 16 cells, size 2, centred in the cells, colour 6; items the tech's name (`Talalmanyok[t]` +0, 16 bytes) at
   (SelectX + 0x66col, SelectY + 16row + 0x11), 16 cells, size 2, left; colour 3, 6 when `Selected`, 0x21 while a

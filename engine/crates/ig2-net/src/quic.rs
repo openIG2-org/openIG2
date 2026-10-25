@@ -104,6 +104,10 @@ impl QuicLink {
 }
 
 impl Transport for QuicLink {
+    fn remote(&self) -> Option<std::net::IpAddr> {
+        Some(self.remote().ip())
+    }
+
     fn send(&mut self, msg: &Msg) {
         let _ = self.out.send(wire::to_vec(msg).expect("messages encode"));
     }

@@ -156,6 +156,8 @@ struct App {
     kep_kell: Option<do_keyboard::KepKell>,
     /// The button whose press the top bar took (`top_bar`): its release is the bar's too.
     bar_held: Option<MouseButton>,
+    /// The left button went down on the message line (spot 7) and is still held.
+    bar_line_held: bool,
     /// The top bar's tooltip (`window/pointer.rs`).
     bar_tip: crate::kit::Tooltip,
     gpu: Option<Gpu>,
@@ -189,6 +191,10 @@ struct App {
     menus: Menus,
     /// The research screen (re/screens/research.md): its state, models and the techs' info texts.
     research: Option<crate::research::Research>,
+    /// `AktPlanet` (exe 0xb9933c) once a planet was picked on the starmap or shown (none = the saved one).
+    akt_planet: Option<usize>,
+    /// The research screen's place while it is down (`ResearchTerulet`, `Terulet_Akt`, ..; none = the save's).
+    research_place: Option<crate::research::Place>,
     research_models: Option<crate::research::ResearchModels>,
     tech_infos: Vec<[Vec<u8>; 3]>,
     /// The research screen's tooltip texts by hot-spot (`Research_MouseInit`).
@@ -500,7 +506,7 @@ fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Rend
 }
 
 /// `PlayerFaj[EN]`, the music's race.
-fn human_race(state: &ig2_sim::save::SaveState) -> u8 {
+pub(crate) fn human_race(state: &ig2_sim::save::SaveState) -> u8 {
     let en = state.mem.i32(ig2_sim::save::va::EN).max(0) as u32;
     state.mem.u8(ig2_sim::save::va::PLAYER_FAJ + en)
 }
@@ -524,6 +530,7 @@ impl App {
             dip_next: None,
             kep_kell: None,
             bar_held: None,
+            bar_line_held: false,
             bar_tip: Default::default(),
             dip_input: Default::default(),
             gpu: None,
@@ -548,6 +555,8 @@ impl App {
             cam_saved: None,
             menus: Menus::default(),
             research: None,
+            research_place: None,
+            akt_planet: None,
             research_models: None,
             tech_infos: Vec::new(),
             research_tips: Vec::new(),
@@ -853,11 +862,25 @@ impl App {
         selected.or_else(|| self.world.curr.planets.iter().find(|p| p.owner == human).map(|p| p.index))
     }
 
+    /// `AktPlanet` (exe 0xb9933c): the colony shown, else the planet last picked on the starmap (`Starmap_Main` exe
+    /// 0x5b2b70 sets it on a planet pick, a fleet pick leaves it) or shown, else the saved one.
+    fn akt_planet(&mut self) -> usize {
+        let selected = match self.view.as_ref().and_then(|v| v.selected) {
+            Some(crate::starmap::Pick::Planet(p)) => Some(p),
+            _ => None,
+        };
+        if let Some(p) = self.world.colony.or(selected) {
+            self.akt_planet = Some(p);
+        }
+        self.akt_planet.unwrap_or_else(|| self.world.game.state.mem.i32(ig2_sim::save::va::AKT_PLANET).max(0) as usize)
+    }
+
     /// The starmap's ways to the colony screen (F3 `DoKeyboard` 0x4db3eb, the screen menu `MOUSE_SelectScreens`
     /// 0x55555f, the colony icon 0x5b5b51 and the planet picture 0x5b6533 of `Starmap_Main`): while the tutorial awaits
-    /// 0x1c, the main planet (`Tutorial_MainBolygoNeve`) stays shut (false) and any other raises the event.
+    /// 0x1c, the main planet (`Tutorial_MainBolygoNeve`) stays shut (false) and any other raises the event. The test
+    /// reads `AktPlanet` ([`Self::akt_planet`]), whatever the screen.
     fn colony_tutorial_gate(&mut self) -> bool {
-        let Some(p) = self.colony_target() else { return false };
+        let p = self.akt_planet();
         if self.world.game.state.mem.i32(ig2_sim::save::va::TUTORIAL_EVENT) == 0x1c {
             let main = self.tutorial.as_ref().map(|t| t.t.gates.main_planet.clone()).unwrap_or_default();
             let rec = self.world.game.state.mem.read(ig2_sim::save::va::PLANETS + (p * ig2_sim::save::PLANET_SIZE) as u32, 0x18);
@@ -1075,6 +1098,9 @@ impl App {
         let Some(h) = &mut self.hud else { return };
         let id = h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui);
         self.info_down = press;
+        if !press {
+            h.info.release(id, &self.world.ui.info, self.world.ui.human);
+        }
         let b = crate::info_screen::Buttons { press, release: !press, down: press, left: !right, right };
         for c in h.info.orders(id, at, b, &self.world.ui.info, self.world.ui.human) {
             self.world.send(c);
@@ -1085,24 +1111,38 @@ impl App {
         self.world.send(Command::Starmap { order: StarmapCmd::from(o) });
     }
 
-    /// The top bar's pause button (hot-spot 2, `IG2_gameUpdate`): SP toggles `IdoPause` unless the speed is locked.
+    /// The top bar's pause button (hot-spot 2, `IG2_gameUpdate`), Space and P: SP toggles `IdoPause` unless the speed is
+    /// locked; MP sends 0x407 with the toggled value when this machine may set the time ([`Self::time_mp_allowed`]).
     fn toggle_pause(&mut self) {
-        if !self.speed_locked() {
+        let mp = self.multiplayer();
+        if if mp { self.time_mp_allowed() } else { !self.speed_locked() } {
             let paused = self.world.paused();
             self.send(StarmapOrder::Pause { paused: !paused });
         }
     }
 
-    /// A speed button (hot-spots 3..=5): `SetIdoSpeed(n)` and unpause, when paused or at another speed.
+    /// A speed button (hot-spots 3..=5) and the keys 1..3: SP `SetIdoSpeed(n)` and unpause, when paused or at another
+    /// speed; MP 0x406 then 0x407(0) whatever the speed (`IG2_gameUpdate` exe 0x4e08e9), when it may set the time.
     fn set_speed(&mut self, level: i32) {
-        if !self.speed_locked() && (self.world.paused() || self.world.game.speed_level() != level) {
-            // `IG2_gameUpdate` (exe 0x4e08c6): the speed buttons' sound, single player only.
-            if !self.multiplayer() {
-                self.sounds.push(crate::audio::SoundId::global(10));
+        if self.multiplayer() {
+            if self.time_mp_allowed() {
+                self.send(StarmapOrder::Speed { level });
+                self.send(StarmapOrder::Pause { paused: false });
             }
+        } else if !self.speed_locked() && (self.world.paused() || self.world.game.speed_level() != level) {
+            // `IG2_gameUpdate` (exe 0x4e08c6): the speed buttons' sound, single player only.
+            self.sounds.push(crate::audio::SoundId::global(10));
             self.send(StarmapOrder::Speed { level });
             self.send(StarmapOrder::Pause { paused: false });
         }
+    }
+
+    /// MP pause and speed (input.md §5.2: `DoKeyboard`, `IG2_gameUpdate` exe 0x4e0831/0x4e08e9): the room lets every
+    /// player set the time (`OnlyServerCanModifyTime` 0xBAE55C == 0) or this machine is the host (`SuperVisor`); no
+    /// screen, `nemlehetidotallitani` or speed test (the receiver's `SetIdoSpeed`/`SetIdoPause` gate on `ProgramSebesseg`).
+    fn time_mp_allowed(&self) -> bool {
+        const ONLY_SERVER_CAN_MODIFY_TIME: u32 = 0xBAE55C;
+        do_keyboard::mp_time_gate(self.world.game.state.mem.i32(ONLY_SERVER_CAN_MODIFY_TIME), self.world.net.as_ref().is_some_and(|(n, _)| n.is_host()))
     }
 
     /// `Research_Belep` from screen `from` (`OldKep`): animated (`KELLKINYITASDEFAULT`) unless from the messages, help
@@ -1114,8 +1154,16 @@ impl App {
         if let (true, Some(h)) = (self.research_tips.is_empty(), &self.hud) {
             self.research_tips = crate::research::tips(&h.texts);
         }
-        self.research = Some(crate::research::Research::open(&self.world.game.state, self.tables, opens_animated(from)));
+        let place = self.research_place.unwrap_or_else(|| crate::research::Place::read(&self.world.game.state));
+        self.research = Some(crate::research::Research::open_at(&self.world.game.state, self.tables, opens_animated(from), place));
         self.overlay = Some(crate::ui::Screen::Research);
+    }
+
+    /// The research screen goes; its place stays for the next visit (`Research_Kilep` leaves the globals as they are).
+    fn drop_research(&mut self) {
+        if let Some(r) = self.research.take() {
+            self.research_place = Some(r.place());
+        }
     }
 
     /// Run `f` on the design screen with what it reads ([`crate::design_edit::Ctx`]) and its hot-spot mask, then send
@@ -1200,7 +1248,7 @@ impl App {
         if let (true, Some(h)) = (self.design_tips.is_empty(), &self.hud) {
             self.design_tips = crate::design::tips(&h.texts);
         }
-        self.research = None;
+        self.drop_research();
         let mut d = crate::design::Design::open(&self.world.game.state, opens_animated(from));
         if let Some(h) = &self.hud {
             d.names = crate::design_edit::Names::read(&h.texts);
@@ -1217,7 +1265,7 @@ impl App {
         }
         let advance = h.font.as_ref().map_or(6.0, |f| f.advance(2));
         let lines = crate::trade::ticker_lines(&h.texts);
-        self.research = None;
+        self.drop_research();
         self.drop_design();
         self.trade = Some(crate::trade::Trade::open(&self.world.game.state, opens_animated(from), from, lines, advance));
         self.overlay = Some(crate::ui::Screen::Trade);
@@ -1234,8 +1282,18 @@ impl App {
     /// Every frame a drop-down is open: its data again and `Selected` under the pointer (`MOUSE_SelectScreens` runs
     /// every held frame).
     fn top_menus_frame(&mut self) {
+        self.akt_planet();
+        self.top_bar_frame();
         if self.hud.as_ref().is_none_or(|h| h.top.open == crate::topbar_menus::Open::None) {
             return;
+        }
+        // `MOUSE_SelectScreens`' tail (exe 0x5557ce..): the research menu (`e40c5d`) shuts on any frame with no button
+        // down (`Mouse_Gomb` 0xdb4650), a release lost outside the window included; the screen menu waits for one.
+        if self.mouse_held == 0 {
+            if let Some(h) = self.hud.as_mut().filter(|h| h.top.open == crate::topbar_menus::Open::Research) {
+                h.top.open = crate::topbar_menus::Open::None;
+                return;
+            }
         }
         let at = self.virtual_cursor().map(|c| c as i32);
         let d = self.top_menus_data();
@@ -1269,9 +1327,13 @@ impl App {
             Pick::Screen(n) if pressed => self.request_screen(n),
             Pick::Screen(n) => self.top_menu_screen(n),
             Pick::Start(t) => {
-                // `ResearchAtvaltTalalmanyra(t)`; on the research screen its start button goes in.
+                // `ResearchAtvaltTalalmanyra(t)`; on the research screen its start button goes in, with the screen down
+                // the place it opens at next moves (exe 0x521f20).
                 if let Some(r) = &mut self.research {
                     r.quick_start(t);
+                } else {
+                    let state = &self.world.game.state;
+                    self.research_place.get_or_insert_with(|| crate::research::Place::read(state)).jump_to(t, self.tables);
                 }
                 self.world.send(Command::Research { order: ig2_net::ResearchCmd::Start { tech: t } });
             }
@@ -1327,7 +1389,7 @@ impl App {
     /// `MultiPlayerMode`.
     /// `DoKeyboard`'s chat entry in multiplayer (`IOMode` 1, exe 0x4db1a0 cases 0xd and 0x60): Enter or the
     /// backquote opens it on a game screen (`AktKep` < 0xd); while open the keys type into it and Enter sends the line
-    /// (`ExecuteString`: the 0x3fc chat; the debug commands aren't ported), Esc drops it; the F-keys still switch
+    /// (`ExecuteString`, `crate::console`: the host's `/kick`, else the 0x3fc chat), Esc drops it; the F-keys still switch
     /// screens, which closes it (`IG2_gameUpdate`). True when the key was taken. Enter that opens it still reaches
     /// the screen (the exe's case 0xd falls into the screen's handler); the backquote doesn't.
     fn chat_key(&mut self, key: &Key<&str>) -> bool {
@@ -1361,7 +1423,8 @@ impl App {
         if let Some(line) = k.and_then(|k| e.key(k)) {
             h.chat.entry = None;
             if !line.is_empty() {
-                self.world.say(&line);
+                let races: Vec<Vec<u8>> = (0..20).map(|r| h.texts.get(0x11, 1, r + 5)).collect();
+                self.world.say(&line, &races);
             }
         }
         true
@@ -1921,7 +1984,7 @@ impl App {
             Out::Start(b) => {
                 let rules = self.rules;
                 let ticks = crate::new_game::wall_ticks();
-                let built = crate::new_game::StartTexts::read(&self.install).and_then(|t| t.with(&self.install, |data| crate::mp_lobby::launch(b, data, rules, ticks))).and_then(|r| r);
+                let built = crate::new_game::StartTexts::read(&self.install).and_then(|t| t.with(&self.install, |data| crate::mp_lobby::launch(b, data, rules, ticks, Box::new(crate::mp_lobby::QuicNet::default())))).and_then(|r| r);
                 let Some(f) = &mut self.front else { return };
                 match built {
                     Ok(s) => {
@@ -2656,7 +2719,7 @@ impl App {
         self.overlay = None;
         self.spy = None;
         self.diplomacy = None;
-        self.research = None;
+        self.drop_research();
         self.stop_battle_loops();
         self.spacewar = None;
         self.cam_tween = None;
@@ -2669,6 +2732,8 @@ impl App {
     fn start_world(&mut self, w: World<'static>) {
         self.close_screens();
         self.tutorial = None;
+        self.research_place = None;
+        self.akt_planet = None;
         self.world = w;
         self.world.set_speed(ig2_sim::time::Speed::Normal);
         if self.world.paused() {
@@ -2814,6 +2879,10 @@ impl App {
         use crate::spacewar_ui::Key as K;
         use winit::keyboard::{KeyCode, PhysicalKey};
         let down = event.state == ElementState::Pressed;
+        // MP: `DoKeyboard`'s chat entry (input.md §5; `AktKep` 0xb < 0xd) opens and takes the keys here too (row 243).
+        if down && self.chat_key(&event.logical_key.as_ref()) {
+            return;
+        }
         // `DoKeyboard` (re/screens/input.md §1) first: the top row's 1..3 set the speed and unpause (sound 10) and
         // never reach the screen, Space and P pause, O and Esc (`ESC_Pressed`) open the options; the pause and speed
         // keys wait for the opening zoom (`nemlehetidotallitani`).
@@ -2834,10 +2903,10 @@ impl App {
                 return;
             }
             if let Some(n @ 1..=3) = digit {
-                if free && !self.speed_locked() {
-                    if !self.multiplayer() {
-                        self.sounds.push(crate::audio::SoundId::global(10));
-                    }
+                if self.multiplayer() {
+                    self.set_speed(n);
+                } else if free && !self.speed_locked() {
+                    self.sounds.push(crate::audio::SoundId::global(10));
                     self.send(StarmapOrder::Speed { level: n });
                     self.send(StarmapOrder::Pause { paused: false });
                 }
@@ -3092,6 +3161,7 @@ impl App {
                 if plain || ends {
                     ended |= self.head.end(&self.install, race);
                 }
+                self.head.fresh = true;
                 if ended {
                     end_sounds(audio);
                 }
@@ -3102,7 +3172,8 @@ impl App {
             h.interlace = crate::assets::Image::load(&self.install, "dataraw/textures/messages/finalinter_bmp.pvr").ok().map(|i| renderer.add_texture(&i));
         }
         h.clip = None;
-        if let Some(p) = &mut self.head.playback {
+        let fresh = std::mem::take(&mut self.head.fresh);
+        if let Some(p) = self.head.playback.as_mut().filter(|_| !fresh) {
             p.frame(renderer, &self.install, now as u64, size.1);
             let win = [size.0 as f32, size.1 as f32];
             h.clip = p.quad(win, &crate::font::Virtual::new(win));
@@ -3182,6 +3253,11 @@ impl App {
         if self.world.net_over {
             self.world.net_over = false;
             self.exit_to_main_menu();
+            // `FRISSIT_MainScr` (exe 0x4f7300): the drop's `YouAreDisconnectedVolt` box on the main menu; the joiner's
+            // reason when the host is gone (`MultiPlayer::ReceiveData` 0x515910: 0xb).
+            if let Some(f) = &mut self.front {
+                f.s.disconnected = Some(0xb);
+            }
             return;
         }
         if let Some(s) = self.world.fix_selection() {
@@ -3226,16 +3302,21 @@ impl App {
         if self.front.is_some() {
             return;
         }
+        let at = self.virtual_cursor();
+        let on_info = self.overlay == Some(crate::ui::Screen::Info) && self.pointer_in;
+        let info_down = self.info_down;
         if let Some(h) = &mut self.hud {
             let world = &mut self.world;
             let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
             let now_ms = now as f64;
-            for line in world.chat_lines.drain(..) {
-                h.chat.ring.add(line, crate::chat::CHAT_COLOUR, now_ms);
+            for (line, colour) in world.chat_lines.drain(..) {
+                h.chat.ring.add(line, colour, now_ms);
             }
             for _ in 0..due_ui {
                 h.scroller.step(&mut || world.pop_message());
-                h.info.ui_frame(&world.ui.info, world.ui.human);
+                // `Info_Main`'s per-frame spots see the hot-spot under the pointer (`AktIkon2`).
+                let spot = if on_info { h.info.spot_at(&self.tables.race_name_x, at, &world.ui) } else { None };
+                h.info.ui_frame(&world.ui.info, world.ui.human, spot, at[1], info_down);
                 h.messages.ui_frame();
                 if on_messages {
                     h.messages.tick();
@@ -3265,8 +3346,8 @@ impl App {
             }
             // `MessagesGfx2D_2` types only at `mesframe` 30.
             let typing = on_messages && h.messages.text_up();
-            if let Some(d) = h.messages.open.as_mut().filter(|_| typing) {
-                d.advance(due_ui as f32 * 10.0);
+            if let Some(d) = h.messages.open.as_mut().filter(|_| on_messages) {
+                if typing { d.advance(due_ui as f32 * 10.0) } else { d.wait(due_ui as f32 * 10.0) }
             }
             let mut orders = std::mem::take(&mut h.messages.orders);
             if let Some(d) = &mut h.messages.open {
@@ -3412,7 +3493,7 @@ impl App {
                 r.step(&self.world.game.state);
             }
             if r.closed() {
-                self.research = None;
+                self.drop_research();
                 self.overlay = None;
                 self.screen_change_step();
             }
@@ -3566,8 +3647,9 @@ impl App {
             (Some(s), ..) => (crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]), s),
             (None, Some(c), Some(prev), Some(curr)) => {
                 let unit = crate::colony::landing_unit(&self.world.game.state, curr);
-                colony_panel = c.panel.render(&mut g.renderer, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), size);
-                colony_info = crate::colony_ui::render_kis_info(&mut g.renderer, &self.install, self.tables, &c.ui, &mut c.scene, &mut c.panel, curr, self.world.curr.human as i32, size);
+                let light = c.view.panel_light(self.maps, curr.map);
+                colony_panel = c.panel.render(&mut g.renderer, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), light, size);
+                colony_info = crate::colony_ui::render_kis_info(&mut g.renderer, &self.install, self.tables, &c.ui, &mut c.scene, &mut c.panel, curr, self.world.curr.human as i32, light, size);
                 (c.view.build(&mut g.renderer, &self.install, self.tables, self.maps, &mut c.scene, prev, curr, alpha, t), crate::ui::Screen::Colony)
             }
             _ => {
@@ -3940,8 +4022,10 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.help.is_some() => {}
-            // `remapKeyCodes` (exe 0x4e4670): the key downs the exe never queues reach nothing (the key ups go on).
-            WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && !do_keyboard::exe_queues_key_down(event) => {}
+            // `remapKeyCodes` (exe 0x4e4670): the key downs the exe never queues reach nothing (the key ups go on); a
+            // numpad digit's character still types into an entry up (its SDL_TEXTINPUT).
+            WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && !do_keyboard::exe_queues_key_down(event)
+                && !(do_keyboard::numpad_digit(event) && self.entry_up()) => {}
             // Esc is the exit hot-spot (`MainCallBackEventHandler` on `AktKep` 1); F1 does nothing there. Help has no
             // keyboard handler of its own, but `DoKeyboard` stays live (exe 0x4db1a0): F2..F10, O and M leave it for
             // their screen (`AktKep` changes, `Help_Kilep`), Space, P and 1/2/3 pause and set the speed.
@@ -4034,7 +4118,19 @@ impl ApplicationHandler for App {
                     self.front_mp_out(o);
                 }
             }
-            WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { button: MouseButton::Right | MouseButton::Middle, .. } if self.front.is_some() => {}
+            // The main menu's boxes, race spheres and difficulty rings take either button (`Mouse_Lenyom`, FX3).
+            WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if self.front.is_some() => {
+                let Some(f) = &mut self.front else { return };
+                let at = f.at;
+                if state == ElementState::Pressed {
+                    if let Some(a) = f.s.press_right(at) {
+                        self.front_act(a);
+                    }
+                } else {
+                    f.s.release_right();
+                }
+            }
+            WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { button: MouseButton::Middle, .. } if self.front.is_some() => {}
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.front.is_some() => {
                 let Some(f) = &mut self.front else { return };
                 let at = f.at;
@@ -4919,16 +5015,16 @@ impl App {
                 }
             }
             // `DoKeyboard`: Space and P pause.
+            // `DoKeyboard`: Space and P pause; MP on any screen (input.md §5.2).
             Key::Named(NamedKey::Space) | Key::Character("p" | "P") => {
-                if self.time_keys_allowed() {
+                if self.time_keys_allowed() || self.multiplayer() {
                     self.toggle_pause();
                 }
             }
+            Key::Character(c @ ("1" | "2" | "3")) if self.multiplayer() => self.set_speed(c.parse().unwrap_or(1)),
             Key::Character(c @ ("1" | "2" | "3")) if self.time_keys_allowed() => {
                 // `DoKeyboard` (ELF 0x5800d0): the keys sound whatever the speed was, single player only.
-                if !self.multiplayer() {
-                    self.sounds.push(crate::audio::SoundId::global(10));
-                }
+                self.sounds.push(crate::audio::SoundId::global(10));
                 let level = c.parse().unwrap_or(1);
                 if self.world.paused() || self.world.game.speed_level() != level {
                     self.send(StarmapOrder::Speed { level });

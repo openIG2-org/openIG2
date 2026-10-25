@@ -1,0 +1,14 @@
+{
+ "screen": "messages",
+ "note": "A press during the messages screen's closing (re/screens/messages.md §4.1, deviation row 326): entered at t 0, hot-spot 8 leaves at 60 (the closing from 15, ~25 ticks); a left button down on the top bar's screens arrow (spot 6, 619..640 x 0..20) at 70, inside Messages_Kilep's loop, released at 120 after the next screen is up. If the down reaches the next screen, its screens menu opens. Exe only (raw down/up events; the client's script runner takes presses): run with --via-starmap 60 so the next screen is the starmap. 2026-10-25: the menu never opens (the press is lost, as in the client).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 55, "mouse": [610, 100]},
+  {"t": 60, "press": [610, 100]},
+  {"t": 68, "mouse": [629, 10]},
+  {"t": 70, "down": 1, "at": [629, 10]},
+  {"t": 120, "up": 1, "at": [629, 10]}
+ ],
+ "grabs": [0, 46, 60, 62, 70, 75, 80, 85, 90, 95, 100, 110, 119, 121, 125, 140],
+ "tail": 20
+}

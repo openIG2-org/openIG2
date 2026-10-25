@@ -1,7 +1,7 @@
 # ADR 0012: Host migration
 
 Date: 2026-10-22. Status: accepted. Builds on ADR 0005 §5 (host leaving: "host migration picks the next host"),
-ADR 0007 (lockstep, hashes, snapshots) and ADR 0011 (holds, away/back). Spec: `re/rules/multiplayer.md` §7.2
+ADR 0007 (lockstep, hashes, snapshots) and ADR 0011 (holds, away/back). Spec: `re/rules/multiplayer.md` §7.2 (client glue: §7.3)
 (host migration); implemented by `ig2_net::session` and `ig2_net::lockstep`.
 
 ## Context

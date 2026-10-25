@@ -102,7 +102,11 @@ Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB
 - **Drawing** (`kirak` ELF 0x60e160, exe 0x531460; `kirak2` exe 0x530b20): every vertex as stored in the `.xvo`
   (no header scale), `X = row0·v + pos.x` etc. with the box's own record; a child box's record is
   `parent·(box +0x88)` with `+0x88` = `diag(origin/e)·M` after the recount [obs: `probes/kocka.js`, `probes/kirak.js`
-  on `kolonizalo`: all 21 children match to 1e-4, the drawn vertices are the file's].
+  on `kolonizalo`: all 21 children match to 1e-4, the drawn vertices are the file's]. After the recount a child's
+  `+0x10` = `diag(ec/E)` and `+0` = `(o_c − o)/E` (`boxujraszamol` ELF 0x5ed9f0: its own box extent `ec` and pivot `o_c`
+  over the parent's `E`, `o`), the vertices `(v_root − o)/ext` per axis: `AddToScene`'s `diag(ext·s/1024)` restores the
+  shape, and `ScaleObja` (which replaces `+0x10`) stretches every axis to the same size [obs: the SpaceWar debris,
+  re/screens/spacewar.md §9.13].
 
 ## `.xvo` mesh
 ```

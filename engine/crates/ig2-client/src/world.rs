@@ -307,9 +307,11 @@ pub struct World<'r> {
     /// The session's hold status the message line last told (ours: who paused, dropped, left or came back).
     pub net_seen: ig2_net::session::HoldStatus,
     /// The chat lines received (`name: text`) for the ring (`MULTIGET_Starmap`'s 0x3fc: `AddSzoveg(.., 3)`).
-    pub chat_lines: Vec<Vec<u8>>,
+    pub chat_lines: Vec<(Vec<u8>, usize)>,
     /// The session ended under this machine (the host is gone, or the link failed): the window goes to the main menu.
     pub net_over: bool,
+    /// The slot of the session's host at the last pump (a host migration changes it, rules/multiplayer.md §7.3).
+    pub net_host: Option<u8>,
 }
 
 /// Canonical multiplayer: the screens read the local player's `EN` from the state, as every machine of the original
@@ -454,7 +456,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -482,15 +484,23 @@ impl<'r> World<'r> {
         if let Ok((_, said)) = &r {
             for e in said {
                 if let ig2_net::session::SessionEvent::Said { empire, text } = e {
-                    self.chat_lines.push(format!("{}: {text}", net.name_of(*empire)).into_bytes());
+                    self.chat_lines.push((format!("{}: {text}", net.name_of(*empire)).into_bytes(), crate::chat::CHAT_COLOUR));
                 }
             }
         }
         let status = net.status(epoch.elapsed());
         self.local_lines.extend(status_lines(&self.net_seen, &status, |e| net.name_of(e)));
         self.net_seen = status;
+        let host = net.host_slot();
+        if self.net_host.is_some_and(|h| h != host) {
+            // Ours, in English: a survivor took the session over (ADR 0012).
+            self.local_lines.push(format!("The host has left the game. {} hosts it now.", net.name_in(host)).into_bytes());
+        }
+        self.net_host = Some(host);
         if net.host_gone() && !self.net_over {
-            self.local_lines.push(b"The host has left the game.".to_vec());
+            // Ours, in English (the original's kicked machine only ends its game: `ReceiveData`'s packet 99).
+            let line: &[u8] = if net.kicked() { b"The host has kicked you from the game." } else { b"The host has left the game." };
+            self.local_lines.push(line.to_vec());
             self.net_over = true;
         }
         match r {
@@ -516,11 +526,28 @@ impl<'r> World<'r> {
         }
     }
 
-    /// The local player's chat line (multiplayer only).
-    pub fn say(&mut self, text: &[u8]) {
-        if let Some((net, _)) = &mut self.net {
-            net.say(&String::from_utf8_lossy(text));
+    /// The chat entry's line (multiplayer only; `ExecuteString`, input.md §5.1): the host's `/kick` / `/kill`, else the
+    /// chat line. `races` = `Faj_Nev` (the kick's race names); a failed kick is a local red line.
+    pub fn say(&mut self, text: &[u8], races: &[Vec<u8>]) {
+        let Some((net, epoch)) = &mut self.net else { return };
+        if let crate::console::Line::Kick(arg) = crate::console::line(text, net.is_host()) {
+            match crate::console::kick_target(arg, &net.players(races), net.peer().empire) {
+                Ok(e) => {
+                    // The kick decides on the state at the next turn (it catches the peer up): the game goes in.
+                    local_en(&mut self.game, false);
+                    std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+                    let r = net.kick(e, epoch.elapsed());
+                    std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+                    local_en(&mut self.game, true);
+                    if let Err(e) = r {
+                        eprintln!("ig2-client: kick: {e}");
+                    }
+                }
+                Err(line) => self.chat_lines.push((line.to_vec(), crate::console::RED)),
+            }
+            return;
         }
+        net.say(&String::from_utf8_lossy(text));
     }
 
     /// Queue a command of the local player (`Multi_Send(.., EN, ..)`).
@@ -641,7 +668,8 @@ impl<'r> World<'r> {
     }
 
     /// One 50 ms sim tick, as the original's frame runs it: the lockstep messages the last tick sent first
-    /// (`Game::fleet_emptied`), then `FRISSIT_Datum` and the rest of the tick.
+    /// (`Command::from_event`: 0x1b, the story's 0x49 and 0x66, for `Game::sender`), then `FRISSIT_Datum` and the
+    /// rest of the tick.
     pub fn tick(&mut self) {
         if self.net.is_some() {
             self.mp_tick();
@@ -650,8 +678,9 @@ impl<'r> World<'r> {
         // The client keeps no event history yet (the UI that shows them comes later).
         let events = self.game.take_events();
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
-        for f in events.iter().filter_map(GameEvent::emptied_fleet) {
-            self.game.fleet_emptied(f);
+        for c in events.iter().filter_map(Command::from_event) {
+            let sender = self.game.sender();
+            c.apply(&mut self.game, sender);
         }
         crate::prof::count("ticks", 1);
         let run = crate::prof::scope("t_run");

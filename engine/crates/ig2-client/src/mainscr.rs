@@ -197,11 +197,21 @@ pub struct Ship {
 pub const METMAX: f32 = -50000.0;
 /// `METKOZ` (ELF 0x1184638): where a meteor has faded in.
 pub const METKOZ: f32 = -48000.0;
-/// The scenario ring's release acts this many UI ticks late [obs: `ScenarioGombraRanyomtak`'s resets land between UI
-/// ticks 658 and 659 for a release that reached the screen at 653, `tools/trace/probes/mainscr-fades.js`, mainscr.md
-/// §13.2; the other box rings (the race choice's) and the list's presses act at once; cause unknown, perhaps the
-/// list's load].
-pub const SCENARIO_RELEASE_TICKS: u8 = 5;
+/// The UI ticks `ScenarioGombraRanyomtak` (exe 0x503bf0) spends in `LoadScenarioValasztasFejek` between
+/// `Mode_Scenario_Valasztas = 1` and its resets (`Nyitottsag` 0, `KepNyitottsag` 0, `Cel` 6) [obs:
+/// `probes/mainscr-input.js`, `mainscr-press2.json`: `MainScr_Main` enters at UI 650 on the press and returns at 659,
+/// ticks 651..=658 run inside the load with the panel fading in; mainscr.md §9.3]. One tick a drawn frame in the
+/// script clock; the real load's length is wall-clock.
+pub const SCENARIO_LOAD_TICKS: u8 = 8;
+/// Box 0x27 (`Mouse_Szoveg_Set(0x27, 0, 300, 446, 110, 19, .., 1, 1)`, exe 0x4ff980): the scenario info / high-score
+/// toggle, live on the plain ring menus too.
+pub const TOGGLE_BOX: [i32; 4] = [300, 446, 110, 19];
+
+/// The exe's hot-spot test (exe 0x510390): `x0 <= x <= x0 + w - 1` on the pointer's integer pixel.
+pub fn in_box(at: [f32; 2], r: [i32; 4]) -> bool {
+    let (x, y) = (at[0].floor() as i32, at[1].floor() as i32);
+    r[0] <= x && x < r[0] + r[2] && r[1] <= y && y < r[1] + r[3]
+}
 
 /// The main menu's state.
 #[derive(Debug, Clone)]
@@ -235,8 +245,14 @@ pub struct MainScr {
     pub name: Option<NameEntry>,
     /// Our MP screens are up (`mp_lobby`, ADR 0014): the rings are flown out (`Cel` 6) as for the scenario list.
     pub mp: bool,
-    /// The scenario ring released, acting [`SCENARIO_RELEASE_TICKS`] UI ticks later: the ring and the ticks left.
-    released: Option<(usize, u8)>,
+    /// The scenario list's load after the ring's press: the UI ticks left until `ScenarioGombraRanyomtak`'s resets.
+    loading: Option<u8>,
+    /// `YouAreDisconnectedVolt` (0xbbd144) and the reason `GetString(0x12, 4, n)` (0xdb94f8): set by `FRISSIT_MainScr`
+    /// (exe 0x4f7300) on the main menu after a multiplayer drop (`MultiPlayer::ReceiveData` 0x515910: 0xb, 0xc or the
+    /// host's); OK or Esc clears it.
+    pub disconnected: Option<u16>,
+    /// The pointer (virtual pixels) the last hover saw.
+    pub at: [f32; 2],
     pub player: Vec<u8>,
     /// The exit animation (`Mode_Kilepes`, `MainScrKilepesValtozo` 100 → 0) and what follows it.
     pub leaving: Option<(f32, Start)>,
@@ -311,7 +327,9 @@ impl MainScr {
             scenario: None,
             name: None,
             mp: false,
-            released: None,
+            loading: None,
+            disconnected: None,
+            at: [320.0, 240.0],
             player: b"Player".to_vec(),
             leaving: None,
             start: None,
@@ -383,31 +401,48 @@ impl MainScr {
         (self.cel != 5.0).then(|| if self.race.as_ref().is_some_and(|r| r.confirmed || r.start_game) { &LABELS_LEVEL[..] } else { self.menu.labels() })
     }
 
-    /// The ring under the virtual point `at`, only while the rings rest (`Tav == 1.0` exactly): a box of ±40 around
-    /// each centre (f32 compares, left/top inclusive).
+    /// The ring under the virtual point `at`, only while the rings rest (`Tav == 1.0` exactly; the difficulty rings at
+    /// `Tav <= 1.333`), box rings first: their hot-spot is `Mouse_Szoveg_Set(id, 0, (int)(cx − 40), (int)(cy − 40), 80,
+    /// 80, ..)`, an int box `x0 <= x <= x0 + 79` (exe 0x500270, hit test 0x510390); a direct ring tests the pointer in
+    /// f32, `cx − 40 <= x < cx + 40` (spec §6.1).
     pub fn ring_at(&self, at: [f32; 2]) -> Option<usize> {
-        // `Update3D` hit-tests only without a text entry (`EnterIPAddressMode`, `EnterNameMode`, …) and outside the
-        // scenario list (its rings are flown out to `Cel` 6).
-        if self.name.is_some() || self.scenario.is_some() || self.mp || self.leaving.is_some() {
+        self.box_ring_at(at).or_else(|| self.direct_ring_at(at))
+    }
+
+    /// The rings `Update3D` tests at all: `None` while a text entry (`EnterNameMode`; the IP, IRC and disconnected
+    /// states) is up, the scenario list or our MP screens are (their rings are flown out to `Cel` 6), or the screen is
+    /// left; else the count and whether they are the difficulty rings.
+    fn rings_live(&self) -> Option<(usize, bool)> {
+        if self.name.is_some() || self.disconnected.is_some() || self.scenario.is_some() || self.mp || self.leaving.is_some() {
             return None;
         }
-        // The difficulty rings (`Update3D`): while `Tav != 1.0`, `Tav <= 1.333` (the rings rest at 1.3).
         if self.race.is_some() {
-            if self.tav == 1.0 || self.tav > 1.333 {
-                return None;
-            }
-            let (x, y) = (at[0].floor(), at[1].floor());
-            return (0..3).find(|&i| {
-                let c = self.ring_centre(i);
-                c[0] - 40.0 <= x && x < c[0] + 40.0 && c[1] - 40.0 <= y && y < c[1] + 40.0
-            });
+            return (self.tav != 1.0 && self.tav <= 1.333).then_some((3, true));
         }
-        if self.tav != 1.0 {
-            return None;
-        }
-        let n = if self.menu == Menu::Main { 6 } else { self.rings };
+        (self.tav == 1.0).then_some((if self.menu == Menu::Main { 6 } else { self.rings }, false))
+    }
+
+    /// Whether ring `i` of this set has a hot-spot box (`MainScr_Main` acts on it) rather than a direct press test.
+    fn is_box_ring(&self, level: bool, i: usize) -> bool {
+        level || matches!((self.menu, i), (Menu::Main, 1 | 2 | 5) | (Menu::Single, 0 | 1) | (Menu::Multi, 0..=2))
+    }
+
+    /// The box ring whose hot-spot holds `at` (the lowest id wins; the boxes follow the ring order here).
+    fn box_ring_at(&self, at: [f32; 2]) -> Option<usize> {
+        let (n, level) = self.rings_live()?;
+        let (x, y) = (at[0].floor() as i32, at[1].floor() as i32);
+        (0..n).filter(|&i| self.is_box_ring(level, i)).find(|&i| {
+            let c = self.ring_centre(i);
+            let (x0, y0) = ((c[0] - 40.0) as i32, (c[1] - 40.0) as i32);
+            x0 <= x && x < x0 + 80 && y0 <= y && y < y0 + 80
+        })
+    }
+
+    /// The direct ring under `at` (the multiplayer set's back ring is both: box 6 without a handler and a direct back).
+    fn direct_ring_at(&self, at: [f32; 2]) -> Option<usize> {
+        let (n, level) = self.rings_live()?;
         let (x, y) = (at[0].floor(), at[1].floor());
-        (0..n).find(|&i| {
+        (0..n).filter(|&i| !self.is_box_ring(level, i) || (self.menu, i) == (Menu::Multi, 2)).find(|&i| {
             let c = self.ring_centre(i);
             c[0] - 40.0 <= x && x < c[0] + 40.0 && c[1] - 40.0 <= y && y < c[1] + 40.0
         })
@@ -415,12 +450,16 @@ impl MainScr {
 
     /// The pointer this frame (`AktKijelolt`; the hand pointer over a ring).
     pub fn hover(&mut self, at: [f32; 2]) {
+        self.at = at;
         self.hovered = self.ring_at(at);
         if let Some(sc) = &mut self.scenario {
             sc.hover(at);
         }
-        // Every main-menu box passes cursor type 1: the scenario panel's 0x15..=0x27, the race spheres 0xe..=0x10.
-        self.hand = self.hovered.is_some() || self.scenario.as_ref().is_some_and(|sc| sc.spot_at(at) != 0) || self.race_box_at(at).is_some();
+        // Every main-menu box passes cursor type 1: the scenario panel's 0x15..=0x27, the race spheres 0xe..=0x10, and
+        // 0x27 (300, 446, 110 × 19) also outside the list: `MainScr_MouseInit2` (exe 0x4ff7b0) switches it on whenever
+        // the skirmish settings are off, `Mode_Scenario_Valasztas` 0 included.
+        let toggle = self.scenario.is_none() && in_box(at, TOGGLE_BOX);
+        self.hand = self.hovered.is_some() || toggle || self.scenario.as_ref().is_some_and(|sc| sc.spot_at(at) != 0) || self.race_box_at(at).is_some();
     }
 
     /// The race box (0xe..=0x10) under `at`: the 160 × 160 square round the sphere's projected centre, while they're on.
@@ -430,9 +469,34 @@ impl MainScr {
         (0..3).find(|&k| r.boxes_on() && self.race_boxes[k].is_some_and(|c| (c[0] - 80.0) as i32 as f32 <= x && x < (c[0] - 80.0) as i32 as f32 + 160.0 && (c[1] - 80.0) as i32 as f32 <= y && y < (c[1] - 80.0) as i32 as f32 + 160.0))
     }
 
-    /// A left press at `at` (the rings that act on `Mouse_Lenyom && Mouse_Bal` in `Update3D`); the box rings act on
-    /// the release ([`MainScr::release`]).
+    /// A left press at `at`: a box ring or a direct ring (`Mouse_Lenyom && Mouse_Bal` in `Update3D`), the race boxes,
+    /// the scenario panel's boxes, the disconnected box's OK.
     pub fn press(&mut self, at: [f32; 2]) -> Option<Act> {
+        self.press_button(at, true)
+    }
+
+    /// A right press: everything a left press does but the direct rings (they test `Mouse_Bal`). The hot-spots (box
+    /// rings, scenario panel, race spheres, difficulty rings) take either button: `IG2_gameUpdate` (exe 0x4e0440)
+    /// dispatches a release-flag-1 box on either button's press frame [obs: `mainscr-press.json`, a right press on the
+    /// load ring opens Options; `mainscr-press2.json`, on the scenario ring the list; `mainscr-right.json`, nothing on
+    /// the direct single-player ring].
+    pub fn press_right(&mut self, at: [f32; 2]) -> Option<Act> {
+        self.press_button(at, false)
+    }
+
+    fn press_button(&mut self, at: [f32; 2], left: bool) -> Option<Act> {
+        // The list's load runs inside `MainScr_Main`: a press then is lost.
+        if self.loading.is_some() {
+            return None;
+        }
+        // `FUN_004fe190` (exe): `Mouse_Gomb && Mouse_Lenyom` on OK (x 270..370, y 220..250) clears the box.
+        if self.disconnected.is_some() {
+            let (x, y) = (at[0].floor() as i32, at[1].floor() as i32);
+            if ((x - 0x10e) as u32) < 0x65 && ((y - 0xdc) as u32) < 0x1f {
+                self.disconnected = None;
+            }
+            return None;
+        }
         if let Some(sc) = &mut self.scenario {
             use crate::mainscr_scenario::Act as S;
             return match sc.press(at)? {
@@ -452,7 +516,7 @@ impl MainScr {
             };
         }
         if self.race.is_some() {
-            let ring = self.ring_at(at);
+            let ring = self.box_ring_at(at);
             let Some(r) = &mut self.race else { return None };
             // A difficulty ring (`AktIkon` 0x2f..0x31): `Cel` 5, the heads close, then the screen is left.
             if let Some(i) = ring {
@@ -470,7 +534,17 @@ impl MainScr {
             }
             return None;
         }
-        let i = self.ring_at(at)?;
+        // A box ring acts on the press frame, then the frame loop waits for the release (`Mouse_FelengedesMajdMegvar`).
+        let boxed = self.box_ring_at(at);
+        let direct = self.direct_ring_at(at).filter(|_| left);
+        if let Some(a) = direct.and_then(|i| self.act_direct(i)) {
+            return Some(a);
+        }
+        boxed.and_then(|i| self.act_box(i))
+    }
+
+    /// A direct ring's action (`Update3D`).
+    fn act_direct(&mut self, i: usize) -> Option<Act> {
         match (self.menu, i) {
             (Menu::Main, 0) => Some(Act::Credits),
             (Menu::Main, 3) => {
@@ -497,34 +571,41 @@ impl MainScr {
         }
     }
 
-    /// A left release at `at` on a box ring (`Mouse_Szoveg_Set(.., 1, 1)`: `MainScr_Main` sees `AktIkon` once); the
-    /// scenario ring acts [`SCENARIO_RELEASE_TICKS`] UI ticks later ([`MainScr::due`]).
-    pub fn release(&mut self, at: [f32; 2]) -> Option<Act> {
+    /// A right release: ends the scenario list's knob drag (0x1c, `Mouse_Megfogva` clears with either button).
+    pub fn release_right(&mut self) {
         if let Some(sc) = &mut self.scenario {
             sc.release();
-            return None;
         }
-        let i = self.ring_at(at)?;
-        if (self.menu, i) == (Menu::Single, 1) {
-            self.released = Some((i, SCENARIO_RELEASE_TICKS));
-            return None;
-        }
-        self.act_released(i)
     }
 
-    /// After every UI tick: the delayed scenario ring's action once its ticks have run out.
+    /// A left release: only the scenario list's knob drag ends; a box ring acted on the press, and the exe's frame
+    /// loop swallows its release.
+    pub fn release(&mut self, _at: [f32; 2]) -> Option<Act> {
+        if let Some(sc) = &mut self.scenario {
+            sc.release();
+        }
+        None
+    }
+
+    /// After every UI tick: the scenario list's load ends [`SCENARIO_LOAD_TICKS`] ticks after the press, and
+    /// `ScenarioGombraRanyomtak`'s resets land (the panel's and the picture's fades back to 0, the list from its top,
+    /// `Cel` 6).
     pub fn due(&mut self) -> Option<Act> {
-        let (i, n) = self.released.as_mut()?;
+        let n = self.loading.as_mut()?;
         if *n > 1 {
             *n -= 1;
             return None;
         }
-        let i = *i;
-        self.released = None;
-        self.act_released(i)
+        self.loading = None;
+        if let Some(sc) = self.scenario.take() {
+            self.scenario = Some(crate::mainscr_scenario::ScenarioList::open(sc.entries));
+        }
+        self.cel = 6.0;
+        None
     }
 
-    fn act_released(&mut self, i: usize) -> Option<Act> {
+    /// A box ring's action (`MainScr_Main` exe 0x4fefc0, `AktIkon` = box id + 0x1e).
+    fn act_box(&mut self, i: usize) -> Option<Act> {
         match (self.menu, i) {
             (Menu::Main, 1) => Some(Act::Quit),
             (Menu::Main, 2) => {
@@ -541,9 +622,10 @@ impl MainScr {
                 self.race = Some(crate::mainscr_race::RaceChoice::open());
                 Some(Act::Campaign)
             }
-            // `ScenarioGombraRanyomtak("")`: `Cel` 6, the rings fly away; the front end loads the entries.
+            // `ScenarioGombraRanyomtak("")`: `Mode_Scenario_Valasztas = 1`, then the heads' load
+            // (`LoadScenarioValasztasFejek`) runs [`SCENARIO_LOAD_TICKS`] ticks before the rest ([`MainScr::due`]).
             (Menu::Single, 1) => {
-                self.cel = 6.0;
+                self.loading = Some(SCENARIO_LOAD_TICKS);
                 Some(Act::OpenScenarios)
             }
             // Ours: the rings fly away and our MP screens open (ADR 0014 §4).
@@ -579,12 +661,19 @@ impl MainScr {
     /// Esc (`MainScr_ESCPressedWhenMultiplayerselect` exe 0x4fe780, the ring menus' case): with the rings at rest,
     /// back to the main set through a fly-out, also from the main set itself; never quits.
     pub fn escape(&mut self) {
-        self.released = None;
+        // The list's load runs inside `MainScr_Main`: no key is read until it returns.
+        if self.loading.is_some() {
+            return;
+        }
         if let Some(sc) = &mut self.scenario {
             if !sc.closing {
                 sc.cancel();
                 self.rings = 3;
             }
+            return;
+        }
+        // Case 2: `YouAreDisconnectedVolt` cleared.
+        if self.disconnected.take().is_some() {
             return;
         }
         if let Some(r) = &mut self.race {
@@ -597,7 +686,8 @@ impl MainScr {
             return;
         }
         // The name entry: Esc goes back to the main set (`EnterNameMode` counts as at rest), then
-        // `MainScr_CancelIPEnter` ends the entry.
+        // `MainScr_CancelIPEnter` ends the entry; also while the rings fly out or in [obs: `mainscr-esc-a/b.json`, the
+        // Esc handler runs before `MainScr_CancelIPEnter`, at `Tav` 2.9 going out and 2.6 coming in].
         if self.tav == 1.0 || self.name.is_some() {
             self.fly_to(Menu::Main);
         }
@@ -889,5 +979,98 @@ mod tests {
         s.menu = Menu::Single;
         s.escape();
         assert_eq!(s.menu, Menu::Single);
+    }
+
+    /// The right button: nothing on a menu ring (`mainscr-right.json`); the race spheres' boxes take it as the left
+    /// (`fx3-rest/mr-race`: the press picks the sphere, the second confirms).
+    #[test]
+    fn right_press_only_on_boxes() {
+        let mut s = MainScr::enter();
+        s.tav = 1.0;
+        let c = s.ring_centre(4);
+        assert_eq!(s.press_right(c), None);
+        assert_eq!(s.menu, Menu::Main);
+        s.race = Some(crate::mainscr_race::RaceChoice::open());
+        s.race_boxes = [Some([320.0, 240.0]); 3];
+        let mut left = MainScr::enter();
+        left.race = Some(crate::mainscr_race::RaceChoice::open());
+        left.race_boxes = s.race_boxes;
+        for _ in 0..2 {
+            s.press_right([320.0, 240.0]);
+            left.press([320.0, 240.0]);
+            assert_eq!((s.cel, s.rings), (left.cel, left.rings));
+        }
+    }
+
+    /// A box ring acts on the press, either button, and its release does nothing [obs: `mainscr-press.json`: a right
+    /// press on the load ring dispatches `AktIkon` 0x25 on its press frame; `mainscr-press2.json` the same for 0x20].
+    #[test]
+    fn box_rings_act_on_the_press() {
+        for right in [false, true] {
+            let mut s = MainScr::enter();
+            s.tav = 1.0;
+            let c = s.ring_centre(2);
+            let a = if right { s.press_right(c) } else { s.press(c) };
+            assert_eq!(a, Some(Act::LoadGame));
+            assert_eq!(s.release(c), None);
+        }
+    }
+
+    /// The scenario ring: the list mode at once, `ScenarioGombraRanyomtak`'s resets and `Cel` 6 after the heads'
+    /// load, 8 ticks (`mainscr-press2.json`: press at UI 650, `MainScr_Main` returns at 659).
+    #[test]
+    fn scenario_ring_loads_eight_ticks() {
+        let mut s = MainScr::enter();
+        (s.menu, s.rings, s.tav) = (Menu::Single, 3, 1.0);
+        let c = s.ring_centre(1);
+        assert_eq!(s.press_right(c), Some(Act::OpenScenarios));
+        s.open_scenarios(Vec::new());
+        for _ in 0..SCENARIO_LOAD_TICKS {
+            assert_eq!(s.cel, 1.0);
+            s.tick();
+            s.due();
+        }
+        assert_eq!(s.cel, 6.0);
+        assert_eq!(s.scenario.as_ref().map(|sc| sc.open), Some(0.0));
+    }
+
+    /// The ring boxes are `(int)(c − 40)`, 80 × 80 (exe 0x500270); the direct rings keep the f32 test.
+    #[test]
+    fn ring_box_is_truncated() {
+        let mut s = MainScr::enter();
+        s.tav = 1.0;
+        let c = s.ring_centre(2);
+        let x0 = (c[0] - 40.0) as i32 as f32;
+        assert_eq!(s.ring_at([x0, c[1]]), Some(2));
+        assert_eq!(s.ring_at([x0 + 79.5, c[1]]), Some(2));
+        assert_eq!(s.ring_at([x0 + 80.0, c[1]]).filter(|&i| i == 2), None);
+    }
+
+    /// Box 0x27 shows the hand on the plain ring menus (`MainScr_MouseInit2` exe 0x4ff7b0).
+    #[test]
+    fn toggle_box_hand_outside_the_list() {
+        let mut s = MainScr::enter();
+        s.hover([300.0, 446.0]);
+        assert!(s.hand);
+        s.hover([299.0, 446.0]);
+        assert!(!s.hand);
+    }
+
+    /// The disconnected box: no ring input under it; OK (either button) or Esc clears it (exe 0x4fe190, 0x4fe780).
+    #[test]
+    fn disconnected_box() {
+        let mut s = MainScr::enter();
+        s.tav = 1.0;
+        s.disconnected = Some(0xb);
+        let c = s.ring_centre(4);
+        assert_eq!(s.ring_at(c), None);
+        s.press_right([269.0, 230.0]);
+        assert!(s.disconnected.is_some());
+        s.press_right([270.0, 220.0]);
+        assert!(s.disconnected.is_none());
+        s.disconnected = Some(0xb);
+        s.escape();
+        assert!(s.disconnected.is_none());
+        assert_eq!(s.cel, 1.0);
     }
 }
