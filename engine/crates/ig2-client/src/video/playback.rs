@@ -188,7 +188,8 @@ impl Playback {
 /// `--snapshot --screen video:NAME --video-ms T`: the window at the clip's time `T` (frame `⌊T / 40⌋`, the overlay at
 /// `T`), for the comparison with `run_video.py`'s grabs.
 pub fn snapshot(o: &crate::Options, name: &str, out: &std::path::Path) -> Result<(), String> {
-    let install = ig2_formats::Install::from_env(ig2_formats::text::Lang::En).ok_or("set IG2_INSTALL_DIR")?.map_err(|e| e.to_string())?;
+    let root = crate::install_root().map_err(|_| "no Imperium Galactica II install found; set IG2_INSTALL_DIR")?;
+    let install = ig2_formats::Install::open(&root, ig2_formats::text::Lang::En).map_err(|e| e.to_string())?;
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let place = match o.video_at {
         Some(at) => Place::At(at),

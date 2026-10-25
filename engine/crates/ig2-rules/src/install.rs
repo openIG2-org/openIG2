@@ -1,13 +1,17 @@
 //! Finding the user's IG2 install when `IG2_INSTALL_DIR` is unset (docs/USER_GUIDE.md → Installing).
 //!
-//! The places, in order: `IG2_INSTALL_DIR`, the folder the remake remembered in its settings file, the GOG
-//! installers' registry keys (`HKLM\SOFTWARE\[WOW6432Node\]GOG.com\Games\<id>`, written by the offline installer and
-//! by GOG Galaxy alike: the entry whose `gameName` names the game or whose `exeFile` is `ig2.exe`, its `path`), the
-//! default folders (`<drive>:\GOG Games\*`, `<drive>:\Program Files (x86)\GOG Galaxy\Games\*`, any subfolder named
-//! "Imperium Galactica…"), and the remake's own folder and its parent (the zip unpacked into the install). A place
+//! The places, in order: `IG2_INSTALL_DIR`, the folder the remake remembered in its settings file, the remake's own
+//! folder and its parent (the exe put into the install, or the zip unpacked into it: that install wins over any
+//! other on the machine), the GOG installers' registry keys (`HKLM\SOFTWARE\[WOW6432Node\]GOG.com\Games\<id>`,
+//! written by the offline installer and by GOG Galaxy alike: the entry whose `gameName` names the game or whose
+//! `exeFile` is `ig2.exe`, its `path`), and the default folders (`<drive>:\GOG Games\*`,
+//! `<drive>:\Program Files (x86)\GOG Galaxy\Games\*`, any subfolder named "Imperium Galactica…"). A place
 //! counts when it holds `dataraw/text/scenario.txt` and an `ig2.exe` of the catalogued build ([`crate::GOG_2017_SHA256`]).
 
 use std::path::{Path, PathBuf};
+
+/// The remake's settings file key (`ig2_formats::options::Options::own_path`) for the install folder.
+pub const SETTINGS_KEY: &str = "InstallDir";
 
 /// Where a candidate folder came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,17 +122,18 @@ pub fn candidates(remembered: Option<&Path>) -> Vec<Candidate> {
     if std::env::var("IG2_INSTALL_SEARCH").is_ok_and(|v| v == "0") {
         return out;
     }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        let up = dir.parent().map(Path::to_path_buf);
+        add(dir, Source::BesideRemake);
+        if let Some(up) = up {
+            add(up, Source::BesideRemake);
+        }
+    }
     for p in registry::gog_paths() {
         add(p, Source::Registry);
     }
     for p in default_folders() {
         add(p, Source::DefaultFolder);
-    }
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
-        if let Some(up) = dir.parent() {
-            add(up.to_path_buf(), Source::BesideRemake);
-        }
-        add(dir, Source::BesideRemake);
     }
     out
 }
@@ -186,6 +191,8 @@ mod registry {
     const HKEY_LOCAL_MACHINE: usize = 0x8000_0002;
     const KEY_READ: u32 = 0x2_0019;
     const RRF_RT_REG_SZ: u32 = 0x2;
+    /// The GOG product id of *Imperium Galactica II: Alliances* (the install's `goggame-1254614904.info`).
+    const GOG_ID: &str = "1254614904";
 
     #[link(name = "advapi32")]
     unsafe extern "system" {
@@ -229,7 +236,8 @@ mod registry {
                 let sub: Vec<u16> = name[..len as usize].iter().copied().chain([0]).collect();
                 let game = value(key, &sub, "gameName").unwrap_or_default().to_ascii_lowercase();
                 let exe = value(key, &sub, "exeFile").unwrap_or_default();
-                if game.contains("imperium galactica ii") || game.contains("imperium galactica 2") || exe.eq_ignore_ascii_case("ig2.exe") {
+                let id = String::from_utf16_lossy(&name[..len as usize]);
+                if id == GOG_ID || game.contains("imperium galactica ii") || game.contains("imperium galactica 2") || exe.eq_ignore_ascii_case("ig2.exe") {
                     if let Some(p) = value(key, &sub, "path") {
                         out.push(PathBuf::from(p));
                     }
@@ -282,6 +290,21 @@ mod tests {
         assert_eq!(check(Path::new(&root)), Verdict::Ok);
         let c = find(None).unwrap();
         assert_eq!((c.path, c.source), (PathBuf::from(root), Source::Env));
+    }
+
+    #[test]
+    fn own_folder_before_registry_and_default_folders() {
+        if std::env::var("IG2_INSTALL_SEARCH").is_ok_and(|v| v == "0") {
+            return;
+        }
+        let c = candidates(None);
+        let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let first = |s: Source| c.iter().position(|c| c.source == s);
+        let own = first(Source::BesideRemake).unwrap();
+        assert_eq!(c[own].path, exe_dir);
+        for later in [Source::Registry, Source::DefaultFolder] {
+            assert!(first(later).is_none_or(|i| i > own), "{later:?} before the exe's folder");
+        }
     }
 
     #[test]

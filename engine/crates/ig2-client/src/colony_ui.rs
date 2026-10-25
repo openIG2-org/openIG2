@@ -285,6 +285,8 @@ pub struct ColonyUi {
     /// (every hot-spot off: `Mouse_Szoveg_Off_Range(1, n)`), from the window while a tutorial runs.
     pub no_demolish: bool,
     pub all_off: bool,
+    /// `KepernyokLetiltva[2]`: the tutorial has turned the starmap off (hot-spot 4's right release stays).
+    pub starmap_off: bool,
     window: Option<Confirm>,
     /// The hot-spot a button press captured (`Mouse_Megfogva`).
     held: Option<u32>,
@@ -340,6 +342,7 @@ impl Default for ColonyUi {
             locked: Vec::new(),
             no_demolish: false,
             all_off: false,
+            starmap_off: false,
             pending: 0,
             picker: None,
             sweep: false,
@@ -655,8 +658,11 @@ impl ColonyUi {
             return out;
         }
         // `IG2_gameUpdate` sets `AktIkon2` for either button and only hot-spot 4 tests which (`Colony_Main` exe
-        // 0x4666d0): a right press on the buttons acts like a left one (FX3; exe trace `rightbutton`).
+        // 0x4666d0): a right press on the buttons acts like a left one (FX3; exe trace `rightbutton`). The demolish
+        // (2) and priority (0x11) presses do nothing while the tutorial waits for the player (`TutorialPaused`).
+        let paused = c.state.mem.u8(va::TUTORIAL_PAUSED) != 0;
         match id {
+            2 | 0x11 if paused => {}
             1 => {
                 self.window = Some(Confirm::Repair);
                 self.drop_build();
@@ -765,8 +771,9 @@ impl ColonyUi {
                     self.pick(c, pk, now_ms);
                 }
             }
-            // Hot-spot 4 (the short info) released with the right button: the starmap; not while the war runs here.
-            Some(4) if !left && !c.snap.war_flag && self.spot(c, p) == Some(4) => out.starmap = true,
+            // Hot-spot 4 (the short info) released with the right button: the starmap; not while the war runs here,
+            // nor while the tutorial has the starmap off (`KepernyokLetiltva[2]`, exe 0x4666d0 0xf66f2e).
+            Some(4) if !left && !c.snap.war_flag && !self.starmap_off && self.spot(c, p) == Some(4) => out.starmap = true,
             Some(4) if left && self.spot(c, p) == Some(4) => self.toggle_info(c),
             _ => {}
         }

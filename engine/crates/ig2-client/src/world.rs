@@ -297,6 +297,9 @@ pub struct World<'r> {
     pub popped: Vec<i32>,
     /// What the real-time battles did since the screen last looked (start, end).
     pub realtime: Vec<ig2_sim::game::RealTimeEvent>,
+    /// A ground war went to the real-time screen since the window last looked (`GroundWarIndit`'s `StartGrWar`
+    /// branch, single player's included): it ends the tutorial's `WAITFORBATTLE`.
+    pub ground_war_routed: bool,
     /// The story's UI effects since the window last took them (single player).
     pub story_ui: Vec<StoryUi>,
     /// The videos the sim asked for since the window last took them (`st_ShowAnim`, the game's end).
@@ -547,7 +550,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, scenario: false }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, scenario: false }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -606,6 +609,7 @@ impl<'r> World<'r> {
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
         self.take_notices(&events);
         self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
+        self.ground_war_routed |= events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
         self.ground_voices.extend(ground_voices(&events));
         let mut next = Snapshot::read(&self.game);
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
@@ -727,6 +731,7 @@ impl<'r> World<'r> {
             c.apply(&mut self.game, human);
         }
         self.realtime.extend(self.game.events[from..].iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
+        self.ground_war_routed |= self.game.events[from..].iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
         self.order_events.extend(self.game.events[from..].iter().filter_map(|e| match e {
             GameEvent::Order(o) => Some(*o),
             _ => None,
@@ -821,6 +826,7 @@ impl<'r> World<'r> {
         drop(run);
         // At once: a battle starts paused, so no next tick would hand them over.
         self.realtime.extend(self.game.events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
+        self.ground_war_routed |= self.game.events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
         self.ground_voices.extend(ground_voices(&self.game.events));
         let snap = crate::prof::scope("t_snap");
         let mut next = Snapshot::read(&self.game);
@@ -942,6 +948,24 @@ mod tests {
             assert!(w.curr.planets.iter().any(|p| p.owner == en), "{name}: the human's planets");
             assert!(!w.paused(), "{name}: running");
         }
+    }
+
+    /// The main menu without a save stands on campaign 1's start, but as no started campaign: no start voice and no
+    /// clips queued, so the title is followed by the menu's music, not the human's start voice.
+    #[test]
+    fn menu_stand_in_is_not_a_started_campaign() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let mut o = crate::parse(&[]).unwrap();
+        o.save = std::path::PathBuf::from("no-such-save.sav");
+        assert!(o.main_menu);
+        let w = crate::start_world(&o, &install, None, &rules, &defaults, &volatile).unwrap();
+        assert_eq!(w.start_voice, None);
+        assert!(w.videos.is_empty());
     }
 
     /// A new campaign's world against the exe's: `tools/trace/run_newgame.py` starts campaigns in ig2.exe as the race

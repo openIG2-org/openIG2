@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openIG2</title>
+<meta name="description" content="openIG2: an open-source engine for Imperium Galactica II. The original game, built for multiplayer, modern displays and today's hardware.">
+<meta property="og:title" content="openIG2">
+<meta property="og:description" content="An open-source engine for Imperium Galactica II.">
+<meta property="og:image" content="https://openig2-org.github.io/openIG2/assets/screens/main-menu.jpg">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas>
+
+<header class="nav">
+  <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="32" height="32"><span>open<b>IG2</b></span></a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#screens">Screenshots</a>
+    <a href="#play">How to play</a>
+    <a href="#docs">Docs</a>
+    <a class="gh" href="https://github.com/openIG2-org/openIG2">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <img class="hero-logo" src="assets/logo.svg" alt="openIG2 logo" width="168" height="168">
+    <h1>open<b>IG2</b></h1>
+    <p class="tagline">The 1999 space strategy classic <em>Imperium Galactica II</em>, on a new open-source engine:
+      the original game, built for multiplayer, modern displays and today's hardware.</p>
+    <div class="cta">
+      <a class="btn primary" id="download" href="https://github.com/openIG2-org/openIG2/releases/latest">
+        <span>Download for Windows</span><small id="dl-version">latest release</small></a>
+      <a class="btn" href="https://github.com/openIG2-org/openIG2">Source on GitHub</a>
+    </div>
+    <p class="note">Free and open source (AGPL-3.0). You need your own copy of the game from GOG.</p>
+  </section>
+
+  <section id="features" class="features">
+    <h2>What you get</h2>
+    <div class="grid">
+      <article><h3>The whole game</h3><p>Campaigns, scenarios, skirmish, the tutorial and multiplayer, with every
+        screen of the original: starmap, colonies, ground war, space battles, research, design, trade, diplomacy and
+        espionage.</p></article>
+      <article><h3>Rules, bit for bit</h3><p>The simulation matches recordings of the original game tick for tick.
+        Your original save games load and play on.</p></article>
+      <article><h3>Multiplayer first</h3><p>LAN discovery, direct IP, private rooms with join codes, optional port
+        mapping, rejoin after a drop, host migration and multiplayer saves.</p></article>
+      <article><h3>Modern displays</h3><p>Any resolution and refresh rate, smoothly interpolated. High DPI, 4K and
+        ultrawide; window, borderless or fullscreen.</p></article>
+      <article><h3>Classic by default</h3><p>It looks, sounds and handles like the original. Every deliberate
+        change is an opt-in enhanced option.</p></article>
+      <article><h3>No assets included</h3><p>The engine reads graphics, text, voices and rules from your own
+        install, so nothing of the original is copied.</p></article>
+    </div>
+  </section>
+
+  <section id="screens" class="screens">
+    <h2>Screenshots</h2>
+    <p class="sub">Captured from openIG2 running on the player's own copy of the game.</p>
+    <div class="gallery" id="gallery"></div>
+  </section>
+
+  <section id="play" class="play">
+    <h2>How to play</h2>
+    <ol class="steps">
+      <li><b>Own the game.</b> Install <em>Imperium Galactica II</em> from <a href="https://www.gog.com/">GOG</a>.</li>
+      <li><b>Download openIG2.</b> Get the latest zip from the
+        <a href="https://github.com/openIG2-org/openIG2/releases/latest">releases page</a>.</li>
+      <li><b>Unzip and play.</b> Put it into the game's folder and run <code>ig2-client.exe</code>. It also finds
+        the game on its own if you unzip it elsewhere.</li>
+    </ol>
+  </section>
+
+  <section id="docs" class="docs">
+    <h2>Documentation</h2>
+    <div class="links">
+      <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/USER_GUIDE.md"><b>User guide</b><span>Installing, keys, settings</span></a>
+      <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/BUILDING.md"><b>Building</b><span>Toolchain, tests, release builds</span></a>
+      <a href="https://github.com/openIG2-org/openIG2/blob/main/CHANGELOG.md"><b>Changelog</b><span>What changed in each version</span></a>
+      <a href="https://github.com/openIG2-org/openIG2/blob/main/re/README.md"><b>Knowledge base</b><span>The original's formats and rules</span></a>
+      <a href="https://github.com/openIG2-org/openIG2/blob/main/CONTRIBUTING.md"><b>Contributing</b><span>How to help</span></a>
+      <a href="https://github.com/openIG2-org/openIG2/issues"><b>Issues</b><span>Report a bug</span></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>openIG2 is an independent, non-commercial fan project, not affiliated with or endorsed by the rights holders
+    of <em>Imperium Galactica II</em> or by GOG. No game files are included in the repository or the releases.</p>
+  <p>Code licensed under the <a href="https://github.com/openIG2-org/openIG2/blob/main/LICENSE">GNU AGPL-3.0</a>.</p>
+</footer>
+
+<div class="lightbox" id="lightbox" hidden><img alt=""><p></p></div>
+<script src="site.js"></script>
+</body>
+</html>

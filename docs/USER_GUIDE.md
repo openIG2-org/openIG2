@@ -1,15 +1,16 @@
 # User guide
 
 ## Installing
-You need the GOG release of *Imperium Galactica II*; the remake ships no game data and reads your copy. At start
-it looks, in this order, in:
-1. `IG2_INSTALL_DIR` (an override; wins over everything);
+You need the GOG release of *Imperium Galactica II*; openIG2 ships no game data and reads your copy. The simplest
+setup: unzip the release into the game's folder and run `ig2-client.exe`. Nothing else is needed. At start the
+client looks, in this order, in:
+1. `IG2_INSTALL_DIR` (optional: an override that wins over everything);
 2. the folder remembered in our settings file (`ig2-rework-options.dat`, key `InstallDir`, next to the original's
    `options.dat` under `%LOCALAPPDATA%\GyroscopeGames\ig2`, or `IG2_OPTIONS_DIR`);
-3. the GOG registry entries (GOG Galaxy writes the same ones);
-4. the default folders `<drive>:\GOG Games\*`, `<drive>:\Games\*` and `<drive>:\Program Files [(x86)]\GOG
-   Galaxy\Games\*` (subfolders named "Imperium Galactica…");
-5. the remake's own folder and its parent.
+3. the client's own folder and its parent (the release unzipped into the game's folder);
+4. the GOG registry entries (GOG Galaxy writes the same ones);
+5. the default folders `<drive>:\GOG Games\*`, `<drive>:\Games\*` and `<drive>:\Program Files [(x86)]\GOG
+   Galaxy\Games\*` (subfolders named "Imperium Galactica…").
 
 A folder counts when it has `dataraw/text/scenario.txt` and the GOG 2017 build of `ig2.exe` (checked by hash). A
 folder found by the search is remembered, so later starts skip it. If nothing is found, a window says so, lists
@@ -17,7 +18,9 @@ each place tried and why it failed, and takes the game's folder (or its `ig2.exe
 remembered, and the game restarts. Esc quits. On other systems than Windows the message goes to stderr.
 
 ## Running
-Until there is a release build (see `TASKS.md`), run from source (`docs/BUILDING.md`):
+Download `openig2-<version>-windows-x64.zip` from the
+[releases](https://github.com/openIG2-org/openIG2/releases/latest), unzip it into the game's folder (or anywhere)
+and run `ig2-client.exe`. Or run from source (`docs/BUILDING.md`):
 ```bash
 cd engine
 cargo run --release -p ig2-client
@@ -71,6 +74,12 @@ at once and are saved in `ig2-rework-options.dat`.
 | Names in game language (`OneLanguage`) | ADR 0017 |
 
 The window opens at 1600x900 until a size is saved.
+
+## Checking your install
+`ig2-check [INSTALL_DIR] [--quick]` (in the release zip, or `cargo run --release -p ig2-check`) loads every asset,
+table and script of your install the way the game does and lists what fails; it finds the install like the client
+when no folder is given. `--quick` skips the sound and video decoding. Exit code 0 = all ok, 1 = failures, 2 = no
+install. A full run takes about a minute.
 
 ## Asset viewer
 `cargo run --release -p ig2-viewer` browses the install's models, textures, colony maps, animations and messages.

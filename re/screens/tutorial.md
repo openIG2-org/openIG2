@@ -79,10 +79,12 @@ recorded pointer, button edges and keys to the screens; `pull`, `tick`, `push` t
 `Game::tutorial_effect`, the window, text and cursor (§2), §3's input drops and `t`/`o`/Esc, the pointer through
 `window/pointer.rs`, Options' tutorial layout. Every §4 site is raised: the sim's in the sim (`EpuletNew` when the
 colony world is stored), the screens' from the commands they send (`World::send`); approximations: 0x11/0x1f fire only
-when an order is really sent, the 0x24/0x25/6/0x2b/0xf/0x10 sites from the command, design 0xb once on the pick.
-Missing: the tutorial input locks (rows 141, 174, 198). Verified: `run_screen.py <install> quick-1.sav <out> --kep 2
+when an order is really sent, the 0x24/0x25/6/0x2b/0xf/0x10 sites from the command, design 0xb once on the pod pick (and per slot from the auto design).
+Input locks ported (`topbar_menus::screens_off` for F-keys and the screen menu, colony and edge-scroll locks, `o`/`t`,
+the window on the battle and spy screens); `ig2-client --tutorial N` starts chapter N, and all five chapters were
+played in the live window (chapter 4's last step, the ground battle, waits on single-player real-time ground wars,
+row 404). Verified: `run_screen.py <install> quick-1.sav <out> --kep 2
 --script scripts/tutorial.json --probe probes/tutorial.js --tutorial 1 --state-out S` logs the exe's window per tick
 (`<out>-tutwin.jsonl`); the client draws the logged state (`--snapshot … --tutorial-window <record>`) and the window
 region matches; `tutorial_ui::tests::chapter_1_window_matches_the_exe` reproduces chapter 1's window exactly (the save
-load's transition holds the first `WAITFORATLEPES` to t 102). Not compared: the replayed pointer and clicks, a whole
-chapter played through.
+load's transition holds the first `WAITFORATLEPES` to t 102). Not compared: the replayed pointer and clicks against the exe, the chapters' windows beyond chapter 1.

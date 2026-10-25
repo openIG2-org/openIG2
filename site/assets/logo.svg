@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="openIG2 logo">
+  <defs>
+    <radialGradient id="planet" cx="38%" cy="32%" r="75%">
+      <stop offset="0" stop-color="#9fd8ff"/><stop offset=".45" stop-color="#3a7bd5"/><stop offset="1" stop-color="#101a3c"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" x2="1"><stop offset="0" stop-color="#ffb347" stop-opacity=".1"/><stop offset=".5" stop-color="#ffcf6e"/><stop offset="1" stop-color="#ff7a3c" stop-opacity=".2"/></linearGradient>
+    <clipPath id="front"><rect x="0" y="256" width="512" height="256"/></clipPath>
+  </defs>
+  <circle cx="256" cy="256" r="240" fill="#070b1d"/>
+  <g fill="#fff"><circle cx="110" cy="120" r="2.5"/><circle cx="400" cy="96" r="2"/><circle cx="430" cy="380" r="2.5"/><circle cx="90" cy="360" r="1.8"/><circle cx="330" cy="440" r="1.6"/><circle cx="170" cy="70" r="1.4"/></g>
+  <ellipse cx="256" cy="256" rx="210" ry="58" fill="none" stroke="url(#ring)" stroke-width="14" transform="rotate(-18 256 256)"/>
+  <circle cx="256" cy="256" r="120" fill="url(#planet)"/>
+  <text x="256" y="300" text-anchor="middle" font-family="Orbitron, 'Segoe UI', Arial, sans-serif" font-weight="800" font-size="128" fill="#f4f8ff" letter-spacing="6">II</text>
+  <ellipse cx="256" cy="256" rx="210" ry="58" fill="none" stroke="url(#ring)" stroke-width="14" transform="rotate(-18 256 256)" clip-path="url(#front)"/>
+  <circle cx="452" cy="198" r="9" fill="#ffcf6e"/>
+</svg>

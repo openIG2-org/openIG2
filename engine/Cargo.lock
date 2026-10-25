@@ -1835,6 +1835,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ig2-check"
+version = "0.1.0"
+dependencies = [
+ "ig2-formats",
+ "ig2-rules",
+ "lewton",
+ "openh264",
+]
+
+[[package]]
 name = "ig2-client"
 version = "0.1.0"
 dependencies = [

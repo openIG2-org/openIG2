@@ -376,7 +376,10 @@ impl Design {
                 self.sounds.push(CLICK);
                 self.push_button(4);
                 let (en, race) = (c.en(), c.race());
-                auto_design_record(c.sim, c.techs, c.debug, &mut self.scratch, en, race, 0, false);
+                // `TervAutoDesign` (exe 0x541a7f) raises the tutorial's 0xb per slot it fills while the human has laser
+                // 2.0 (tech 0x12) on a hull of tech 5.
+                let raised = auto_design_record(c.sim, c.techs, c.debug, &mut self.scratch, en, race, 0, true);
+                self.tutorial.extend(std::iter::repeat_n(0xb, raised));
                 self.recompute(c);
             }
             8 => {

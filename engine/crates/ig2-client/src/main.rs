@@ -1,7 +1,7 @@
 //! IG2 game client (ADR 0006): loads an original save into the simulation, runs it at the original's 20 Hz and
 //! renders the starmap at the display's refresh rate.
 //!
-//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3]`: the main menu (re/screens/mainscr.md; its load ring opens
+//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3] [--tutorial N]`: the main menu (re/screens/mainscr.md; its load ring opens
 //!           the Options screen's slots, re/screens/options.md), or the game of `--save` at once.
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
@@ -121,6 +121,8 @@ pub struct Options {
     pub new_campaign: Option<ig2_sim::game::new_game::NewCampaign>,
     /// The window starts on the main menu (re/screens/mainscr.md), unless `--save` names the game to run.
     pub main_menu: bool,
+    /// `--tutorial N`: the window starts tutorial part N (1..=5) as the main menu's tutorial ring does.
+    pub tutorial: Option<u8>,
     pub speed: Speed,
     pub ticks: u32,
     pub alpha: f32,
@@ -244,6 +246,15 @@ pub struct Options {
     pub lang: Option<Lang>,
 }
 
+/// The release's version, in the window's title and `--version`: `OPENIG2_VERSION` at build time (the release
+/// build's MAJOR.MINOR.N, docs/VERSIONING.md), else the repository's `VERSION` with `-dev`.
+pub fn version() -> &'static str {
+    static V: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        option_env!("OPENIG2_VERSION").map_or_else(|| format!("{}-dev", include_str!("../../../../VERSION").trim()), str::to_owned)
+    });
+    &V
+}
+
 fn default_save() -> PathBuf {
     std::env::var_os("IG2_SAVE_DIR")
         .map(PathBuf::from)
@@ -256,6 +267,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         save: default_save(),
         new_campaign: None,
         main_menu: true,
+        tutorial: None,
         speed: Speed::Fastest,
         ticks: 0,
         alpha: 1.0,
@@ -330,6 +342,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 o.new_campaign = Some(new_game::parse_campaign(&val()?)?);
                 o.main_menu = false;
             }
+            "--tutorial" => o.tutorial = Some(val()?.parse().map_err(|e| format!("--tutorial: {e}"))?),
             "--speed" => {
                 o.speed = match val()?.as_str() {
                     "1" => Speed::Normal,
@@ -512,8 +525,14 @@ pub fn start_world<'r>(o: &Options, install: &Install, save: Option<&SaveGame>, 
             w
         }
         (None, Some(s)) => world::World::load(s, rules, tech_defaults, volatile),
-        // The main menu without the default save: campaign 1's start stands in until the player picks a game.
-        (None, None) if o.main_menu => world::World::new_game(new_game::campaign(install, &new_game::parse_campaign("1")?, rules)?),
+        // The main menu without the default save: campaign 1's start stands in until the player picks a game. It is
+        // not a started campaign: no start voice (it would replace the title's menu music) and no queued clips.
+        (None, None) if o.main_menu => {
+            let mut w = world::World::new_game(new_game::campaign(install, &new_game::parse_campaign("1")?, rules)?);
+            w.start_voice = None;
+            w.videos.clear();
+            w
+        }
         (None, None) => return Err("no game: --save or --new-campaign".into()),
     })
 }
@@ -609,6 +628,10 @@ fn main() {
         },
         Some("--playthrough") => playthrough::main(&args[1..]),
         Some("--info") => parse(&args[1..]).and_then(|o| info(&o)),
+        Some("--version") => {
+            println!("ig2-client {}", version());
+            Ok(())
+        }
         Some("--colony-check") => match &args[1..] {
             [map, surface] => colony_check(map, surface),
             _ => Err("usage: --colony-check <map> <surface>".into()),

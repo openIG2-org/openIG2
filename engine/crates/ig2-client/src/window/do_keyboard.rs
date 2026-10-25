@@ -108,12 +108,15 @@ impl App {
         self.world.game.state.mem.u8(va::DEBUGX) != 0
     }
 
-    /// `KepernyokLetiltva[n]` (0xf66f2c + n): the tutorial has turned screen `n` off.
-    /// A battle (on screen or parked under Options) locks every screen but Options: its opening zoom sets all of
+    /// `KepernyokLetiltva[n]` (0xf66f2c + n): the tutorial, or `Fake_FRISSITES`' rewrite of [6..=8], has turned
+    /// screen `n` off ([`crate::topbar_menus::screens_off`]). A battle (on screen or parked under Options) locks every screen but Options: its opening zoom sets all of
     /// `KepernyokLetiltva`, its end restores them (`SpaceWar_Kilep` exe 0x562b50), the zoom's end only [0xd].
     fn screen_off(&self, n: i32) -> bool {
         (n != 0xd && (self.spacewar.is_some() || self.spacewar_parked.is_some()))
-            || self.tutorial.as_ref().is_some_and(|t| t.t.gates.screens.get(n as usize).copied().unwrap_or(false))
+            || crate::topbar_menus::screens_off(&self.world.game.state, self.tutorial.as_ref().map(|t| &t.t.gates.screens))
+                .get(n as usize)
+                .copied()
+                .unwrap_or(false)
     }
 
     /// The messages screen is idle (`DAT_00dabe3c == 0 && DAT_00da6607`): no answers wait and the text is typed out.
@@ -312,6 +315,13 @@ impl App {
     pub(super) fn o_key_allowed(&self) -> bool {
         let s = self.akt_kep_now();
         (s != 10 || self.messages_idle()) && !self.screen_off(0xd) && s < 0xe && !self.screen_changing()
+    }
+
+    /// The tutorial's `o` (`MainCallBackEventHandler` exe 0x4e2db0 → `ESC_Pressed` 0x4dc0b0): not in a text entry
+    /// (`IOMode`), not when the options screen is turned off (`DAT_00f66f39`), only below the main menu
+    /// (`AktKep < 0xe`) and with no change under way.
+    pub(super) fn tutorial_o_allowed(&self) -> bool {
+        !self.entry_up() && !self.screen_off(0xd) && self.akt_kep_now() < 0xe && !self.screen_changing()
     }
 
     /// Space, P and 1..3 (`DoKeyboard` lines 80-90, 301-331): single player, not on the messages screen, the options

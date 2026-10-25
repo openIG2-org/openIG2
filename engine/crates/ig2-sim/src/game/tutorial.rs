@@ -97,6 +97,26 @@ impl Game<'_> {
                     }
                 }
             }
+            // `WAITFORBATTLE` (exe 0x60fd1f): `TankNew(f, 9, 2)` for every fleet 1..=OsszHanyFlotta of EN's with no
+            // vehicle entry (`CountMyTanksInFleet` 0x60b6d0: the `Tankok` entries held by f, design ≠ 0x7fff, whose
+            // EN design has +0x36 = 0).
+            Effect::BattleVehicles => {
+                let n = self.state.mem.i32(va::VEHICLE_COUNT).max(0) as usize;
+                let raw = self.state.mem.read(va::VEHICLES, 8 * (n + 1));
+                let designs = self.state.designs.get(en).cloned().unwrap_or_default();
+                let held = |f: i32| {
+                    raw.chunks_exact(8).skip(1).any(|c| {
+                        let (holder, d) = (i16::from_le_bytes([c[0], c[1]]), i16::from_le_bytes([c[2], c[3]]));
+                        holder as i32 == f && d != 0x7fff && designs.get(d.max(0) as usize).is_some_and(|r| r[0x36] == 0)
+                    })
+                };
+                let own: Vec<i32> = (1..self.state.fleets.len() as i32).filter(|&f| self.state.fleets[f as usize][0x15] as usize == en).collect();
+                for f in own {
+                    if !held(f) {
+                        self.new_vehicles(f, 9, 2);
+                    }
+                }
+            }
             // `GIVE KILLER FLEET e` (exe 0x610dc8 area, re/rules/tutorial.md §3 61): for EN "Terminator" beside EN's last
             // planet of 1..HanyBolygo−1 (f32 ±20.0; planet 0 with none) with 0x19 vehicles of design 2, three ships of
             // design 3 and one of 6, and every planet of empire 6 explored by EN; for another empire "Unbeatable" at

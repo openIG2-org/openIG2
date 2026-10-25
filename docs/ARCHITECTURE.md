@@ -12,7 +12,7 @@ against recordings of the original.
 | Simulation | `ig2-sim` | The whole game, deterministic: `time`/`rng` (20 Hz clock, 21 seeded streams), colonies, fleets and radar, production, research, trade, diplomacy, espionage, the AI (`ai/`), space battles (auto and real-time `spacebattle`), ground war (`ground/`), the story engine and campaign scripts (`story`, `elem/`, `campaign`, `fable`), the tutorial interpreter, saves (`save/`), and `game/` which applies player orders and runs the tick |
 | Network | `ig2-net` | Lockstep (`lockstep`, `command`, `wire`), QUIC transport, LAN discovery, UPnP/NAT-PMP port mapping, the lobby and the session layer (drops, rejoin, resync, host migration, MP saves) |
 | Client | `ig2-client` | The game: winit window and wgpu renderer (`render`, `render3d`, `lighting`, `font`), the screen kit (`kit/`), one module group per screen (`mainscr*`, `starmap*`, `colony*`, `spacewar*`, `research`, `design*`, `trade*`, `diplomacy*`, `spy*`, `info_screen`, `messages_screen`, `options`, `help`, `tutorial_ui`, `mp_lobby`), audio and video, input scripts for headless captures |
-| Tools | `ig2-viewer`, `ig2-screendiff` | An asset browser; the pixel comparison of client captures with captures of the original |
+| Tools | `ig2-viewer`, `ig2-screendiff`, `ig2-check` | An asset browser; the pixel comparison of client captures with captures of the original; the install check (every asset, table and script loads) |
 
 ## Data flow
 ```

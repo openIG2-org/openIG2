@@ -244,7 +244,7 @@ Not used by shipped `main.tut`: TIME, COUNT, LOADSAVEGAME, IRRITATEME, GOTO SCRE
 `strcasecmp` ladder, first hit wins; an unknown name leaves `TutorialEvent` unchanged (a stale or 0 id: nothing resumes it).
 `TutorialCheckEvent(id)` (ELF 0x7b3560 / exe 0x60bdf0): `if (TutorialEvent == id) { TutorialEvent = 0; TutorialUnPause() }`.
 `TutorialUnPause` (elf2): `if Paused { StarmapResetKeyboardAndMouse() (exe 0x5afc10); ClearKeyboardBuffer() (fk_from=fk_to; exe 0x4db030); ColonyInitKeyboard() (exe 0x462890); Paused=0; Active=1; KeyShift=0 }`.
-`TutorialInitEvents` (elf2; exe inlined, call 0x611a30): FelfedezettBolygokSzama = number of planets with `explored[EN]==1`; BirtokoltBolygokSzama = planets owned by EN; TankokSzamaFlottaimban = `CountMyTanks()` (own fleet vehicles + ground-war units).
+`TutorialInitEvents` (elf2; exe inlined, call 0x611a30): FelfedezettBolygokSzama = number of planets with `explored[EN]==1`; BirtokoltBolygokSzama = planets owned by EN; TankokSzamaFlottaimban = `CountMyTanks()` (exe 0x60b5d0): one per Tankok entry (entries, not units) of EN's fleets + every battlefield's alive units without flag 0x4028000 (group size +0x190), any owner; 1,2,2,26,26 at the five chapter starts (test `count_my_tanks_matches_the_exe_at_each_chapter_start`).
 `TutorialCheckEvents` (ELF 0x7b39a0 / exe 0x60be40, called every tick while Paused): event 2 if `Birtokolt < owned planets now`; event 0x19 if `CountMyTanks() >= baseline + 3`; event 0x1e if the vehicles of own fleets named "Assault fleet" (case-insensitive) whose design byte +0x36 is 0 sum to more than 3 (ELF tests bit 0 only, the exe tests the whole byte: see section 8).
 
 Event ids are hexadecimal below (as in the code).
@@ -316,7 +316,11 @@ Verified byte-exact in a staged save replay (`traces/2026-10-22-story-ticker.md`
 | TutorialDisableHajokEladasa (exe 0xf66ffd; **the sell flag**; 0xf66fff is TutorialExitGombDisabled) | `Starmap_Main` (exe 0x5b718a: the sale pop-up only, the row stays selected, the click still plays), the fleet info's sale menu | |
 | TutorialExitGombDisabled | `Starmap_Main` (production panel exit, `AktIkon2==9`) | |
 | TutorialStarmapMinden... (exe 0xf66ff8) | `StarmapKeyboardHandler` 0x5aed29, `Starmap_MouseInit2` 0x5b898f (its only readers) | the handler skips everything after the arrow/zoom block; MouseInit2 switches every hot-spot off (`Mouse_Szoveg_Off_Range(1, n)`) and back on only 1..=7 (console, minimap) when neither the long info nor the zoom mode is up, and skips its normal setup. Port: `window.rs` `starmap_locked` (presses, clicks, panels; tips and pointer already) |
-| TutorialColonyMinden... | `ColonyKeyboardHandler`, `Colony_MouseInit2` | PageUp/Down keys removed |
+| TutorialColonyMinden... (exe 0xf66ff9) | `ColonyKeyboardHandler` 0x4628c0 | gates only `a`, `c` and End (it returns after the PageUp/Down blocks; "KiveveAPageupot" = all but PageUp) |
+| TutorialPaused (0xf66f2a) | `Colony_Main` 0x4666d0 | demolish (hot-spot 2) and priority (0x11) presses ignored; E has no tutorial gate |
+| KepernyokLetiltva[2] (0xf66f2e) | `Colony_Main` 0x4666d0 | hot-spot 4's right release (to the starmap) blocked |
+| KepernyokLetiltva after `Fake_FRISSITES` (exe 0x4de720) | `DoKeyboard`, screen menu | [6] set when no contacts unless [2] off; race 5 → [6..8]; [6]/[7]/[8] when diplomacy 0xbae3ad / spy 0xbae3af / trade 0xbae3ae not enabled. Port: `topbar_menus::screens_off`, also used outside the tutorial (F6/F7/F8 refused when greyed) |
+| TutorialActive (not Paused) | `Starmap_Autoscroll`, `Colony_Autoscroll` (ELF 0x4e2e40) | edge scroll off |
 | TutorialDisableEpuletLerombolas | `Colony_MouseInit2` (`Mouse_Szoveg_Off(2)` = demolish tooltip) | |
 | TutorialSpyMelyikLehet (exe 0x928ea4, `va::TUTORIAL_SPY_MISSION`) | `Spy_Main` (exe 0x58d410: a forbidden pick is dropped, -1, no message, before the money check), `SpyGfx2D_3` (exe 0x58c1d0: greyed 0xc, 0x25 selected) | |
 | TutorialUjKemekLetiltva | `FRISSIT_Spy` (blocks AI spy creation; the `rndlog(4,0,..)` draw happens first, so the RNG stream is unchanged) | SIM |
@@ -420,6 +424,15 @@ traders, the planets' +0x186 mark. Also GIVE KILLER/KOLONIZALO FLEET, ADD DESTRO
 position, cursor column, `blink` brightness), `Tutorial::gates` and `Tutorial::mouse_sample`. The tutorial is single
 player; its *sim* effects belong in the lockstep queue at the tick they happen. Deviation: a quoted name across a line
 break where the exe hangs stops the tutorial (`Effect::Hang`, `re/deviations.md`).
+The client (`window.rs`) holds the game until the first `TutorialFrissit` has run (the exe's runs at `Counter` 0, so
+the chapter's `DISABLE AI` and gates come before the first game tick; without it chapter 4's defender got an AI order
+and the attack skipped its space battle); the tick's effects track `IdoPause` among themselves (`GAMESPEED 1` then
+`PAUSE` in one tick leaves the game paused); `GAMESPEED n` = `SetIdoSpeed` (skipped while `nemlehetidotallitani`, no
+UI sound) and `SetIdoPause(false)`; `WAITFORBATTLE`'s `TankNew(f, 9, 2)` goes to every EN fleet without a counted
+entry (`CountMyTanksInFleet` exe 0x60b6d0: design `+0x36 == 0`); `StartGrWar` (exe 0x4a4a70, which clears
+`WaitForBattle` first) is stood for by the routing's real-time ground-war branch; on the battle screen the recorded keys
+go to its own handler (`SpaceWarKeyboardHandler` behind `DoKeyboard`); `TervAutoDesign` raises 0xb per slot for the
+human with tech 0x12 on a hull of tech 5 (exe 0x541a7f).
 
 **Verification** (`tools/trace/run_tutorial.py` + `tutorial.js`): the tracer picks the chapter the way the main menu
 does (`Mode_Tutorial_Start` 0xbbb22c, `TutorialStartMelyik` 0xbbb230, `AktKepKell = 2`), records every

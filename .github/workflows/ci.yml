@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Tests that need the game's files skip without an install.
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  guard:
+    name: No game data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check files
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python3 -I tools/check_tree.py --base "origin/${{ github.base_ref }}"
+          else
+            python3 -I tools/check_tree.py
+          fi
+
+  windows:
+    name: Windows build, tests, clippy
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: Version
+        shell: bash
+        run: echo "OPENIG2_VERSION=$(python -I tools/release/version.py)" >> "$GITHUB_ENV"
+      - name: Build
+        working-directory: engine
+        run: cargo build --release --workspace
+      - name: Test
+        working-directory: engine
+        run: cargo test --release --workspace
+      - name: Clippy
+        working-directory: engine
+        run: cargo clippy --release --all-targets -- -D warnings
+
+  linux:
+    name: Linux build and tests
+    runs-on: ubuntu-latest
+    # Linux is not a release platform yet; its failures don't block.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: Build
+        working-directory: engine
+        run: cargo build --release --workspace
+      - name: Test
+        working-directory: engine
+        run: cargo test --release --workspace

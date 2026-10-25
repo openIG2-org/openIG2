@@ -6,16 +6,15 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (403).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (406).
 
 ## Open: player-visible
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
-| 141 | tutorial, colony info mode | tutorial opcode 5 (`Colony_BELEP_ABBA_A_KIBASZOTT_PLANETINFOBA`, exe 0x4666d0) has no entry point, so the script can't put the colony into planet info | yes | colony.md §12 |
-| 174 | tutorial, colony locks | `a`, `c`, End (lock `DAT_00f66ff9`) and E (hot-spot 0x11, `DAT_00f66f2a`) ignore the tutorial's gate flags; the exe blocks them | yes | colony.md (exe 0x4628c0, `Colony_Main` 0x4666d0) |
-| 198 | tutorial, gates | while a tutorial runs, ours doesn't block F-keys/screens (`DAT_00f66ebd`, `KepernyokLetiltva`), grey the screen-select entries or read the starmap/colony/building locks | yes | tutorial.md §5-§6 |
+| 404 | ground war, single player | `Game::ground_war` calls `ground_real_time` only when canonical and nothing ticks `WF::MI`/Refresh in single player (`grwar_mp` is canonical-only): an invasion routed to real time lands the vehicles and sits (tutorial chapter 4's ground battle can't be won) | yes | ground-combat.md §2, §11 |
 | 396 | colony, building pick | ours picks a building by its footprint cell, the exe by model hit (`GetNearestBuilding` 0x47b350), so clicks on a building's upper part differ | yes | colony.md §11.3 |
+| 403 | video, credits | `anim/mpeg4/misc/credits.mp4`'s first 251 frames (~10 s) don't decode with OpenH264 (IDR: bitstream error, then reference lost), so the client's credits video stays black until frame 251; the exe shows it from the start. Cause unknown (perhaps a coding feature OpenH264 lacks); found by `ig2-check` | yes | video.md §6 |
 
 ## Open: minor
 
@@ -32,6 +31,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 380 | SpaceWar, end zoom-out | the battle planet is ~25 levels less red than the exe's; the cursor kind is 3 where the exe shows 2 | minor | spacewar.md §9 |
 | 397 | colony, hot-spot 0x14 | with the right button held the exe skips the click and select (`DAT_00db4652`), ours doesn't; the ring timer 0x9964c4 isn't ported | minor | colony.md §11.3 |
 | 398 | colony, TankView | the exe keeps TankView and TankViewLastAngle across re-entry (ours restarts); ours lacks the `+0x18c & 4` test in the unit choice | minor | colony.md §11.9 |
+| 405 | colony, ground-war lock | `Colony_MouseInit2` (exe 0x467990) switches every hot-spot off in a ground war, the war buttons and view included; ours only the non-war ones (the tutorial never locks during a war) | no | colony.md §11 |
 
 ## Keep
 

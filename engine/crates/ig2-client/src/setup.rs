@@ -15,8 +15,7 @@ use winit::window::{Window, WindowId};
 
 use crate::render::{kind, Blend, Frame, Instance, Renderer, TexId};
 
-/// The settings file's key for the install folder.
-pub const INSTALL_KEY: &str = "InstallDir";
+pub use ig2_rules::install::SETTINGS_KEY as INSTALL_KEY;
 
 /// The message's lines and their colours (linear RGB).
 pub fn lines(tried: &[(Candidate, Verdict)], status: Option<&str>) -> Vec<(String, [f32; 3])> {
@@ -100,7 +99,7 @@ const LINE: u32 = 20;
 
 impl Setup {
     fn init(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
-        let attrs = Window::default_attributes().with_title("Imperium Galactica II").with_inner_size(winit::dpi::LogicalSize::new(1000.0, 520.0));
+        let attrs = Window::default_attributes().with_title(format!("Imperium Galactica II — openIG2 {}", crate::version())).with_inner_size(winit::dpi::LogicalSize::new(1000.0, 520.0));
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;

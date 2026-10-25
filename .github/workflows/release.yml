@@ -1,0 +1,54 @@
+name: Release
+
+# Beta: run by hand (Actions -> Release -> Run workflow) -> a pre-release vMAJOR.MINOR.N.
+# Stable: push a tag vMAJOR.MINOR.N that matches tools/release/version.py -> a full release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows zip
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-gnu
+      - name: Version
+        id: v
+        shell: bash
+        run: |
+          v=$(python -I tools/release/version.py)
+          if [ "${{ github.ref_type }}" = "tag" ] && [ "${{ github.ref_name }}" != "v$v" ]; then
+            echo "tag ${{ github.ref_name }} does not match the computed version v$v" >&2; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "OPENIG2_VERSION=$v" >> "$GITHUB_ENV"
+      - name: MinGW g++ with static libraries
+        shell: bash
+        run: g++ --version && g++ -print-file-name=libstdc++.a
+      - name: Build the zip
+        shell: bash
+        run: python -I tools/release/build_windows.py --out dist
+      - name: Release notes
+        shell: bash
+        run: |
+          minor=$(cut -d. -f1,2 <<< "${{ steps.v.outputs.version }}")
+          awk -v h="## $minor" 'index($0, h) == 1 {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          printf '\nNeeds your own copy of Imperium Galactica II (GOG). Unzip into the game folder and run `ig2-client.exe`.\n' >> notes.md
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: openIG2 ${{ steps.v.outputs.version }}${{ github.ref_type != 'tag' && ' (beta)' || '' }}
+          prerelease: ${{ github.ref_type != 'tag' }}
+          body_path: notes.md
+          files: dist/openig2-${{ steps.v.outputs.version }}-windows-x64.zip

@@ -928,6 +928,27 @@ fn tutorial_effects_write_the_game() {
     assert!(g.state.fleets.iter().skip(1).filter(|f| f[0x15] == 9).all(|f| f[0x18] & 1 == 0));
     assert!(g.tutorial_effect(&Effect::ExploreEmpire { empire: 6, diplomacy: false }));
     assert_eq!(g.state.mem.u8(va::EMPIRE_KNOWS + 6 + 0x13 * en as u32), 1);
+    // `WAITFORBATTLE`: every fleet of EN's without a vehicle entry gets one entry of two design-9 vehicles; the others
+    // keep theirs.
+    let entries = |g: &Game, f: usize| {
+        let n = g.state.mem.i32(va::VEHICLE_COUNT).max(0) as usize;
+        let raw = g.state.mem.read(va::VEHICLES, 8 * (n + 1));
+        raw.chunks_exact(8).skip(1).filter(|c| i16::from_le_bytes([c[0], c[1]]) as usize == f).map(|c| (i16::from_le_bytes([c[2], c[3]]), i32::from_le_bytes([c[4], c[5], c[6], c[7]]))).collect::<Vec<_>>()
+    };
+    // quick-1's human has no fleet: the tutorial's own two, one with vehicles and one without.
+    assert!(g.tutorial_effect(&Effect::KillerFleet(en as i32)));
+    assert!(g.tutorial_effect(&Effect::ColonizationFleet));
+    let own: Vec<usize> = (1..g.state.fleets.len()).filter(|&f| g.state.fleets[f][0x15] as usize == en).collect();
+    let before: Vec<_> = own.iter().map(|&f| entries(&g, f)).collect();
+    assert_eq!((own.len(), before.iter().filter(|e| e.is_empty()).count()), (2, 1), "Terminator's vehicles, none in Colonization");
+    // `CountMyTanksInFleet` counts only entries whose design has +0x36 = 0; Terminator's design 2 hasn't, so it gets
+    // the two as well.
+    let counted = |d: i16| g.state.designs[en][d as usize][0x36] == 0;
+    let expect: Vec<Vec<(i16, i32)>> = before.iter().map(|b| if b.iter().any(|e| counted(e.0)) { b.clone() } else { [b.clone(), vec![(9, 2)]].concat() }).collect();
+    assert!(g.tutorial_effect(&Effect::BattleVehicles));
+    for ((&f, e), b) in own.iter().zip(&expect).zip(&before) {
+        assert_eq!(&entries(&g, f), e, "fleet {f} (before {b:?})");
+    }
     assert!(!g.tutorial_effect(&Effect::CenterFleet));
 }
 

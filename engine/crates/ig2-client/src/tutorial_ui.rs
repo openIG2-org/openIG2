@@ -47,15 +47,16 @@ impl Inputs {
         let planets = state.planet_count();
         self.explored = (1..=planets).filter(|&p| m.i16(planet(p) + 0xd8 + 2 * en.clamp(0, 18) as u32) == 1).count() as i32;
         self.owned = (1..=planets).filter(|&p| m.u8(planet(p) + 0x20) as i32 == en).count() as i32;
-        // `CountMyTanks()`: the units of the `Tankok` entries held by EN's fleets; `TutorialCheckEvents`' count: those
-        // of the fleets named "Assault fleet" whose design has byte +0x36 = 0.
+        // `CountMyTanks()` (exe 0x60b5d0), its fleet half: one per `Tankok` entry held by EN's fleets (entries, not
+        // units; the battlefields' half is [`field_tanks`]); `TutorialCheckEvents`' count: the units of the fleets
+        // named "Assault fleet" whose design has byte +0x36 = 0.
         let n = m.i32(va::VEHICLE_COUNT).max(0) as usize;
         let raw = m.read(va::VEHICLES, 8 * (n + 1));
         let (mut tanks, mut assault) = (0, 0);
         for c in raw.chunks_exact(8).skip(1) {
             let (holder, design, count) = (i16::from_le_bytes([c[0], c[1]]), i16::from_le_bytes([c[2], c[3]]), i32::from_le_bytes([c[4], c[5], c[6], c[7]]));
             let Some(f) = state.fleets.get(holder.max(0) as usize).filter(|f| holder > 0 && design != 0x7fff && f[0x15] as i32 == en) else { continue };
-            tanks += count;
+            tanks += 1;
             let grunt = state.designs.get(en.max(0) as usize).and_then(|d| d.get(design.max(0) as usize)).is_some_and(|r| r[0x36] == 0);
             if f[..0x15].split(|&b| b == 0).next() == Some(b"Assault fleet".as_slice()) && grunt {
                 assault += count;
@@ -66,9 +67,21 @@ impl Inputs {
     }
 }
 
+/// `CountMyTanks()`' second half (exe 0x60b5d0): every planet's battlefield (`Warfare[p − 1]`), each alive unit
+/// (`WF+0x188`) without flag 0x4028000 (unit `+0x188`) adds its group size (`+0x190`), whoever owns it. Built
+/// tanks stand there, not in a fleet.
+pub fn field_tanks(state: &ig2_sim::save::SaveState) -> i32 {
+    (1..=state.planet_count())
+        .filter_map(|p| state.ground_field(p))
+        .map(|f| f.units.iter().zip(&f.alive).filter(|(u, alive)| **alive && u.flags & 0x402_8000 == 0).map(|(u, _)| u.hp.len() as i32).sum::<i32>())
+        .sum()
+}
+
 /// The interpreter's view of the client.
 struct Host<'a> {
     i: Inputs,
+    /// The game, for the counts read only at a wait ([`field_tanks`]).
+    state: Option<&'a ig2_sim::save::SaveState>,
     install: &'a Install,
     mou: &'a mut Vec<MouseFrame>,
     effects: &'a mut Vec<Effect>,
@@ -98,7 +111,7 @@ impl TutorialHost for Host<'_> {
         self.i.owned
     }
     fn my_tanks(&self) -> i32 {
-        self.i.tanks
+        self.i.tanks + self.state.map_or(0, field_tanks)
     }
     fn assault_tanks(&self) -> i32 {
         self.i.assault
@@ -137,17 +150,20 @@ pub struct TutorialUi {
     pub overrun: Option<[i32; 4]>,
     /// The debug AI-off flag (exe 0xB77244) at `TutorialStart`, put back by `TutorialStop`.
     pub ai_off: Option<i32>,
+    /// The first `TutorialFrissit` has run. The exe's runs at `Counter` 0 (traces `tutorial-ch1..5`), so the
+    /// chapter's opening commands (`DISABLE AI`, the gates) come before the game's first tick.
+    pub ticked: bool,
 }
 
 impl TutorialUi {
     /// `TutorialStart("main", chapter)` (exe 0x611f80).
-    pub fn start(install: &Install, chapter: i32, i: Inputs) -> Result<(Self, Vec<Effect>), String> {
+    pub fn start(install: &Install, chapter: i32, i: Inputs, state: Option<&ig2_sim::save::SaveState>) -> Result<(Self, Vec<Effect>), String> {
         let script = install.read(SCRIPT).map_err(|e| format!("{SCRIPT}: {e}"))?;
-        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2, overrun: None, ai_off: None };
+        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2, overrun: None, ai_off: None, ticked: false };
         let mut effects = Vec::new();
-        let mut h = Host { i, install, mou: &mut ui.mou, effects: &mut effects };
+        let mut h = Host { i, state, install, mou: &mut ui.mou, effects: &mut effects };
         ui.t.start(script, chapter, &mut h);
-        (ui.t.explored, ui.t.owned, ui.t.tanks) = (i.explored, i.owned, i.tanks);
+        (ui.t.explored, ui.t.owned, ui.t.tanks) = (i.explored, i.owned, h.my_tanks());
         Ok((ui, effects))
     }
 
@@ -204,9 +220,10 @@ impl TutorialUi {
     }
 
     /// `TutorialFrissit` and `TutorialCounter++` (after the screens' updates); the effects in the script's order.
-    pub fn tick(&mut self, install: &Install, i: Inputs) -> Vec<Effect> {
+    pub fn tick(&mut self, install: &Install, i: Inputs, state: Option<&ig2_sim::save::SaveState>) -> Vec<Effect> {
+        self.ticked = true;
         let mut effects = Vec::new();
-        let mut h = Host { i, install, mou: &mut self.mou, effects: &mut effects };
+        let mut h = Host { i, state, install, mou: &mut self.mou, effects: &mut effects };
         self.t.frissit(&mut h);
         self.t.count_tick();
         effects
@@ -241,7 +258,7 @@ impl TutorialUi {
         t.blink = num("blink")? as i32;
         (t.active, t.paused) = (num("active")? != 0.0, num("paused")? != 0.0);
         (t.gates.text_shown, t.gates.text_window) = (num("shown")? != 0.0, num("disabled")? != 0.0);
-        Ok(TutorialUi { t, mou: Vec::new(), ms: num("stamp")? as u32, counter: 0, kep: 2, overrun: None, ai_off: None })
+        Ok(TutorialUi { t, mou: Vec::new(), ms: num("stamp")? as u32, counter: 0, kep: 2, overrun: None, ai_off: None, ticked: true })
     }
 
     /// `TutorialKeretFrissit` and `TutorialSzovegFrissit` (re/rules/tutorial.md §2 "Drawing"): the window's box,
@@ -306,7 +323,7 @@ mod tests {
         let Ok(lines) = std::fs::read_to_string(std::path::Path::new(&dir).join("tutorial-overlay/tutwin-grabs.jsonl")) else { return };
         let install = Install::open(root, ig2_formats::text::Lang::Hu).unwrap();
         let i = Inputs { screen: 2, ..Default::default() };
-        let (mut ui, _) = TutorialUi::start(&install, 1, i).unwrap();
+        let (mut ui, _) = TutorialUi::start(&install, 1, i, None).unwrap();
         let mut t = 0;
         for line in lines.lines() {
             let want = TutorialUi::from_record(line).unwrap();
@@ -316,7 +333,7 @@ mod tests {
                 ui.replay_step(2);
                 // The capture's save load enters the starmap: its transition holds `WAITFORATLEPES` until the tick the
                 // first `TYPE` ran [obs: queue 0 at t 101, 51 at t 102].
-                ui.tick(&install, Inputs { transition: t < 102, ..i });
+                ui.tick(&install, Inputs { transition: t < 102, ..i }, None);
             }
             let (w, e) = (&ui.t.window, &want.t.window);
             assert_eq!((w.x, w.y, w.column, w.queue_len), (e.x, e.y, e.column, e.queue_len), "t {t}");
@@ -325,9 +342,24 @@ mod tests {
         }
     }
 
+    /// `CountMyTanks()` at each chapter's first traced tick in the exe (`traces/tutorial-ch1..5.jsonl`, `tanks`,
+    /// 2026-10-22): 1, 2, 2, 26, 26 (chapters 4 and 5: 2 fleet entries and 24 on the battlefields).
+    #[test]
+    fn count_my_tanks_matches_the_exe_at_each_chapter_start() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let mut got = Vec::new();
+        for n in 1..=5 {
+            let w = crate::world::World::new_game(crate::new_game::tutorial(&install, n, 4242, &rules).unwrap());
+            let s = &w.game.state;
+            got.push(Inputs::default().counts(s).tanks + field_tanks(s));
+        }
+        assert_eq!(got, [1, 2, 2, 26, 26]);
+    }
+
     #[test]
     fn parked_pointer_without_a_recording() {
-        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2, overrun: None, ai_off: None };
+        let mut ui = TutorialUi { t: Tutorial::default(), mou: Vec::new(), ms: 0, counter: 0, kep: 2, overrun: None, ai_off: None, ticked: false };
         assert_eq!(ui.replay_step(2), None);
         ui.t.active = true;
         ui.t.mouse = -1;

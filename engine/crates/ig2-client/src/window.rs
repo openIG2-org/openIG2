@@ -409,7 +409,9 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         crate::spacewar_screen::go_live(&mut app.world, crate::spacewar_screen::Dump::load(&p)?.battle);
         app.world.realtime.push(ig2_sim::game::RealTimeEvent::SpaceStarted { slot: 0 });
     }
-    if title {
+    if let Some(n) = o.tutorial.filter(|_| o.main_menu) {
+        app.front_start(crate::mainscr::Start::Tutorial(n));
+    } else if title {
         app.queue_videos(["title.bik".to_string()], false, AfterVideo::MenuMusic);
     }
     if let Some(c) = start {
@@ -823,7 +825,7 @@ impl App {
 
     fn init_gpu(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
         let d = self.display;
-        let attrs = Window::default_attributes().with_title("Imperium Galactica II");
+        let attrs = Window::default_attributes().with_title(format!("Imperium Galactica II — openIG2 {}", crate::version()));
         let attrs = match d.size {
             Some((w, h)) if d.mode == crate::display::Mode::Window => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
             _ => attrs.with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0)),
@@ -904,6 +906,11 @@ impl App {
         if let Some(p) = self.colony_target() {
             self.open_colony(p);
         }
+    }
+
+    /// `TutorialActive` (exe 0xf6915d): the script plays (its recording drives the input), not waiting for the player.
+    fn tutorial_playing(&self) -> bool {
+        self.tutorial.as_ref().is_some_and(|t| t.t.active)
     }
 
     /// `KepernyokLetiltva[n]` (exe 0xf66f2c + n): the tutorial has turned screen `n` off.
@@ -2450,13 +2457,22 @@ impl App {
 
     /// `ExitToMainScreen` (exe 0x5117f0), then `AktKepKell = 0xF`: `MainScr_Belep` (the rings fly in again, the menu
     /// music). The world stays as it is until the next game replaces it.
+    /// `AktKep` as the tutorial reads it: the help screen 1, the spy screen 7 (up over the screen it came from), else
+    /// the overlay's or the base screen's.
+    fn tutorial_kep(&self) -> i32 {
+        if self.spy.is_some() && self.help.is_none() && self.spacewar.is_none() {
+            return 7;
+        }
+        akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some())
+    }
+
     fn tutorial_owns_input(&self) -> bool {
-        self.options.is_none() && self.tutorial.as_ref().is_some_and(|t| t.owns_input(akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some())))
+        self.options.is_none() && self.tutorial.as_ref().is_some_and(|t| t.owns_input(self.tutorial_kep()))
     }
 
     fn tutorial_inputs(&self) -> crate::tutorial_ui::Inputs {
         let counter = self.tutorial.as_ref().map_or(0, |t| t.counter);
-        let screen = akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some());
+        let screen = self.tutorial_kep();
         // `Atlepes || Belep` (`WAITFORATLEPES`): the whole change runs inside one `IG2_gameUpdate` (exe 0x4e0440), so the
         // ticks that see them are the old screen's closing loop (`*_Kilep`: research, design, trade, spy, diplomacy,
         // messages; 84 ticks in the chapter 3/5 traces) and the tick the screen changes.
@@ -2467,7 +2483,7 @@ impl App {
     /// `TutorialSetCampaignGameOptions` has made the game; `TutorialStart("main", n)` (exe 0x611f80).
     fn start_tutorial(&mut self, chapter: i32) {
         let inputs = self.tutorial_inputs();
-        match crate::tutorial_ui::TutorialUi::start(&self.install, chapter, inputs) {
+        match crate::tutorial_ui::TutorialUi::start(&self.install, chapter, inputs, Some(&self.world.game.state)) {
             Ok((mut t, effects)) => {
                 t.ai_off = Some(self.world.game.state.mem.i32(ig2_sim::save::va::AI_OFF));
                 t.push(&mut self.world.game.state.mem);
@@ -2485,7 +2501,7 @@ impl App {
     /// One UI tick of the tutorial: the recorded input (`Mouse_Tutorial_Kezel`, `ReadNext`) goes to the screens, an
     /// event the game raised resumes the script, then `TutorialFrissit` and its effects.
     fn tutorial_tick(&mut self) {
-        let kep = akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some());
+        let kep = self.tutorial_kep();
         let replay = if self.options.is_some() { None } else { self.tutorial.as_mut().and_then(|t| t.replay_step(kep)) };
         match replay {
             Some(r) => self.tutorial_replay(r),
@@ -2502,17 +2518,23 @@ impl App {
         }
         let inputs = self.tutorial_inputs();
         let now = self.now_ms();
+        let routed = std::mem::take(&mut self.world.ground_war_routed);
         let Some(t) = &mut self.tutorial else { return };
+        // `StartGrWar` (exe 0x4a4a70) clears `TutorialWaitForBattle` first thing; single player's real-time ground
+        // war has no `StartGrWar` of its own here, so the routing's real-time branch stands for it.
+        if routed {
+            t.t.battle_started();
+        }
         t.entered(kep, &mut self.world.game);
         t.pull(&self.world.game.state.mem);
         t.ms = now;
-        let effects = t.tick(&self.install, inputs);
+        let effects = t.tick(&self.install, inputs, Some(&self.world.game.state));
         t.push(&mut self.world.game.state.mem);
         let g = &t.t.gates;
         self.panels.locks = crate::starmap_panels::TutorialLocks { production: g.production, exit: g.exit_button, split: g.split };
         if let Some(c) = &mut self.colony {
             c.ui.locked = g.buildings.to_vec();
-            (c.ui.no_demolish, c.ui.all_off) = (g.demolish, g.colony);
+            (c.ui.no_demolish, c.ui.all_off, c.ui.starmap_off) = (g.demolish, g.colony, g.screens[2]);
         }
         self.tutorial_effects(effects);
     }
@@ -2541,6 +2563,28 @@ impl App {
             self.mouse(MouseButton::Right, r.right);
         }
         for (kind, code) in r.keys {
+            // On the battle screen the recorded keys go to its handler as live ones do (`SpaceWarKeyboardHandler`
+            // behind `DoKeyboard`): Space by its code, the top row's digits and the numpad's + / − by their keys.
+            if self.spacewar.is_some() {
+                use winit::keyboard::{KeyCode, NativeKeyCode, PhysicalKey};
+                let physical = match (kind, code) {
+                    (0, d @ 0x31..=0x39) => PhysicalKey::Code([KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9][(d - 0x31) as usize]),
+                    (1 | 2, 0x6b) => PhysicalKey::Code(KeyCode::NumpadAdd),
+                    (1 | 2, 0x6d) => PhysicalKey::Code(KeyCode::NumpadSubtract),
+                    _ => PhysicalKey::Unidentified(NativeKeyCode::Unidentified),
+                };
+                let logical = match (kind, code) {
+                    (0, 0x20) => Some(Key::Named(NamedKey::Space)),
+                    (1 | 2, 0x6b) => Some(Key::Character("+".into())),
+                    (1 | 2, 0x6d) => Some(Key::Character("-".into())),
+                    (2, c) => recorded_key(1, c),
+                    _ => recorded_key(kind, code),
+                };
+                if let Some(k) = logical {
+                    self.spacewar_key_by(k.as_ref(), physical, kind != 2);
+                }
+                continue;
+            }
             // The held keys (arrows, numpad + / −) go down and up through the screens' held-key handlers, as live
             // ones do; the other key-ups have no reader.
             if matches!(kind, 1 | 2) {
@@ -2577,6 +2621,9 @@ impl App {
     /// starmap's selection, the clock, leaving.
     fn tutorial_effects(&mut self, effects: Vec<ig2_sim::tutorial::Effect>) {
         use ig2_sim::tutorial::Effect as E;
+        // `IdoPause` as the tick's commands leave it: the pause orders reach the game at the next pump, so a
+        // `GAMESPEED 1` then `PAUSE` in one tick (chapter 4's battle) must see the first one's unpause.
+        let mut paused = self.world.paused();
         for e in effects {
             if self.world.game.tutorial_effect(&e) {
                 // The new fleet of EN is selected and centred (`AktFleet`, `StarmapMode = 2`, `KellSelect`).
@@ -2637,24 +2684,30 @@ impl App {
                 E::PlanetInfo => self.colony_input(|ui, c, _, _| ui.planet_info(c)),
                 E::CenterFleet | E::FindFleet(_) | E::FindPlanet(_) | E::CenterPlanet | E::CenterUncolonisedPlanet => self.tutorial_centre(&e),
                 E::GameSpeed(0) | E::Pause(true) => {
-                    if !self.world.paused() {
+                    if !paused {
                         self.send(StarmapOrder::Pause { paused: true });
+                        paused = true;
                     }
                 }
+                // `SetIdoSpeed(n, false)` (skipped while `nemlehetidotallitani`, no sound), then `SetIdoPause(false)`.
                 E::GameSpeed(n) => {
-                    self.set_speed(n);
-                    if self.world.paused() {
+                    if !self.speed_locked() && self.world.game.speed_level() != n {
+                        self.send(StarmapOrder::Speed { level: n });
+                    }
+                    if paused {
                         self.send(StarmapOrder::Pause { paused: false });
+                        paused = false;
                     }
                 }
                 E::Pause(false) => {
-                    if self.world.paused() {
+                    if paused {
                         self.send(StarmapOrder::Pause { paused: false });
+                        paused = false;
                     }
                 }
                 // `GOTO SCREEN n` (`AktKepKell = n`): as the F-key of that screen (F1 = 1 .. F11 = 11) when another is up.
                 E::GotoScreen(n) if (1..=11).contains(&n) => {
-                    let now = akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some());
+                    let now = self.tutorial_kep();
                     const F: [NamedKey; 11] = [
                         NamedKey::F1, NamedKey::F2, NamedKey::F3, NamedKey::F4, NamedKey::F5, NamedKey::F6, NamedKey::F7, NamedKey::F8,
                         NamedKey::F9, NamedKey::F10, NamedKey::F11,
@@ -2960,11 +3013,19 @@ impl App {
                     self.audio.play_music(crate::audio::Music::SpWar, false, human_race(&self.world.game.state));
                     self.spacewar = crate::spacewar_live::Live::enter(&mut self.world, slot, &cam, &self.install, now);
                 }
-                // `StartGrWar` (exe 0x4a4a70): 900 when the field is contested (`WF::GetStatus` −1 or −10), any planet.
-                RealTimeEvent::GroundStarted { holder: None, .. } => match &mut self.colony {
-                    Some(c) => c.ui.war.banner = 900,
-                    None => self.attack_banner = 900,
-                },
+                // `StartGrWar` (exe 0x4a4a70): 900 when the field is contested (`WF::GetStatus` −1 or −10), any planet;
+                // it also ends the tutorial's `WAITFORBATTLE` (re/rules/tutorial.md §1).
+                RealTimeEvent::GroundStarted { holder, .. } => {
+                    if let Some(t) = &mut self.tutorial {
+                        t.t.battle_started();
+                    }
+                    if holder.is_none() {
+                        match &mut self.colony {
+                            Some(c) => c.ui.war.banner = 900,
+                            None => self.attack_banner = 900,
+                        }
+                    }
+                }
                 RealTimeEvent::SpaceOver { slot, .. } => {
                     // Under the options screen (MP: the time runs on): the battle ends without its screen.
                     if self.spacewar_parked.as_ref().is_some_and(|sw| sw.ui.slot == slot) {
@@ -3144,27 +3205,31 @@ impl App {
     /// `SpaceWarKeyboardHandler` (spec §7.1.5), with the shared keys it leaves to `DoKeyboard`: space pauses, Esc
     /// leaves the screen (`SpaceWar_Kilep`'s zoom-out) [u: `DoKeyboard` not read].
     fn spacewar_key(&mut self, event: &winit::event::KeyEvent) {
+        self.spacewar_key_by(event.logical_key.as_ref(), event.physical_key, event.state == ElementState::Pressed);
+    }
+
+    /// [`Self::spacewar_key`] by its parts: a live key, or one the tutorial's recording plays (`ReadNext`).
+    fn spacewar_key_by(&mut self, logical: Key<&str>, physical: winit::keyboard::PhysicalKey, down: bool) {
         use crate::spacewar_ui::Key as K;
         use winit::keyboard::{KeyCode, PhysicalKey};
-        let down = event.state == ElementState::Pressed;
         // MP: `DoKeyboard`'s chat entry (input.md §5; `AktKep` 0xb < 0xd) opens and takes the keys here too.
-        if down && self.chat_key(&event.logical_key.as_ref()) {
+        if down && self.chat_key(&logical) {
             return;
         }
         // `DoKeyboard` (re/screens/input.md §1) first: the top row's 1..3 set the speed and unpause (sound 10) and
         // never reach the screen, Space and P pause, O and Esc (`ESC_Pressed`) open the options; the pause and speed
         // keys wait for the opening zoom (`nemlehetidotallitani`).
-        let ch = match event.logical_key.as_ref() {
+        let ch = match logical {
             Key::Character(c) => c.chars().next().map(|c| c.to_ascii_lowercase()),
             _ => None,
         };
-        let digit = match event.physical_key {
+        let digit = match physical {
             PhysicalKey::Code(c) if (KeyCode::Digit1..=KeyCode::Digit9).contains(&c) => Some(c as i32 - KeyCode::Digit0 as i32),
             _ => None,
         };
         if down {
             let free = self.multiplayer() || self.spacewar.as_ref().is_some_and(|sw| sw.clock_free());
-            if matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Space)) || ch == Some('p') {
+            if matches!(logical, Key::Named(NamedKey::Space)) || ch == Some('p') {
                 if free {
                     self.toggle_pause();
                 }
@@ -3182,19 +3247,19 @@ impl App {
             }
             // Every key repeats while held (`MainCallBackEventHandler` exe 0x4e2db0 pushes the OS repeats into the
             // key ring: no repeat test); the zoom-out holds the repeats off (`nemlehetidotallitani`).
-            if matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape)) || ch == Some('o') {
+            if matches!(logical, Key::Named(NamedKey::Escape)) || ch == Some('o') {
                 self.leave_battle(0xd);
                 return;
             }
         }
         // `SpaceWarKeyboardHandler`: the letters by the typed character (the char events), the rest by key code.
-        let k = match (event.logical_key.as_ref(), ch, digit) {
+        let k = match (logical, ch, digit) {
             (Key::Named(NamedKey::ArrowLeft), ..) => Some(K::Left),
             (Key::Named(NamedKey::ArrowRight), ..) => Some(K::Right),
             (Key::Named(NamedKey::ArrowUp), ..) => Some(K::Up),
             (Key::Named(NamedKey::ArrowDown), ..) => Some(K::Down),
-            _ if event.physical_key == PhysicalKey::Code(KeyCode::NumpadAdd) => Some(K::ZoomIn),
-            _ if event.physical_key == PhysicalKey::Code(KeyCode::NumpadSubtract) => Some(K::ZoomOut),
+            _ if physical == PhysicalKey::Code(KeyCode::NumpadAdd) => Some(K::ZoomIn),
+            _ if physical == PhysicalKey::Code(KeyCode::NumpadSubtract) => Some(K::ZoomOut),
             (_, Some('a'), _) => Some(K::All),
             (_, Some('c'), _) => Some(K::Camera),
             (_, Some('r'), _) => Some(K::Retreat),
@@ -3620,7 +3685,9 @@ impl App {
         self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
         let due = self.clock.advance(now);
         // Multiplayer: the session is pumped while paused too (its keep-alive and the others' commands).
-        if (!self.world.paused() || self.world.net.is_some()) && self.headless.is_none() {
+        // A tutorial just started holds the game until its first tick has run (`ticked`).
+        let held = self.tutorial.as_ref().is_some_and(|t| !t.ticked);
+        if (!self.world.paused() || self.world.net.is_some()) && self.headless.is_none() && !held {
             for _ in 0..due {
                 self.world.tick();
                 if let Some(t) = &mut self.tutorial {
@@ -3740,8 +3807,9 @@ impl App {
         }
         self.head_clip_frame(now, due_ui);
         // `StarmapKeyboardDoModifies` runs every UI frame whatever the screen; `Starmap_Autoscroll` on the starmap only,
-        // not under the long info, the zoom or a tutorial; the minimap held retargets every frame.
-        let scroll = self.colony.is_none() && self.spacewar.is_none() && !self.under_screen() && !self.menus.info_on() && self.cam_saved.is_none() && self.tutorial.is_none();
+        // not under the long info, the zoom or a playing tutorial (`TutorialActive`, ELF `Starmap_Autoscroll`; the player's
+        // turns scroll); the minimap held retargets every frame.
+        let scroll = self.colony.is_none() && self.spacewar.is_none() && !self.under_screen() && !self.menus.info_on() && self.cam_saved.is_none() && !self.tutorial_playing();
         let win = self.gpu.as_ref().map_or([640, 480], |g| {
             let s = g.window.inner_size();
             [s.width, s.height]
@@ -3857,6 +3925,7 @@ impl App {
             }
             self.menus.rename = None;
         }
+        let tutorial_playing = self.tutorial_playing();
         if let (Some(c), Some(s)) = (&mut self.colony, &self.world.colony_curr) {
             let shown = self.overlay.is_none() && self.spy.is_none();
             for _ in 0..due_ui {
@@ -3864,7 +3933,8 @@ impl App {
                 c.ui.cam_keys.tick(&mut c.view.camera);
                 // The pointer's last window position, also once it has left the window (the exe reads the last
                 // physical position, colony.md §11.9).
-                if shown {
+                // `Colony_Autoscroll` (ELF 0x4e2e40) stops while the tutorial's script plays (`TutorialActive`).
+                if shown && !tutorial_playing {
                     c.ui.cam_keys.autoscroll(&mut c.view.camera, self.cursor_px, win, self.mouse_held != 0);
                 } else {
                     c.ui.cam_keys.stop_scroll();
@@ -3974,6 +4044,7 @@ impl App {
         let backdrop_time = crate::prof::scope("backdrop");
         let backdrop = if self.overlay.is_some() || (self.spy.is_some() && self.spacewar.is_none()) { self.backdrop() } else { None };
         drop(backdrop_time);
+        let kep = self.tutorial_kep();
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
         let size = { let (w, h) = g.band(); [w as f32, h as f32] };
@@ -3994,6 +4065,10 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.paused = paused;
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Starmap, t);
+            // The tutorial's window over the battle too (`GFX_DateMoneyScrollFade` pass 3, every `AktKep` but 0xd).
+            if let Some(tu) = &self.tutorial {
+                h.draw_tutorial(&mut frame, tu, size, 11);
+            }
             ov.draw(&mut frame, h, size);
             if let Ok(out) = g.surface.get_current_texture() {
                 self.backdrop.last = Some((g.present(frame, &out.texture, t), t));
@@ -4017,6 +4092,9 @@ impl App {
             let mut frame = spy.build(h, &d, size, self.install.lang() == ig2_formats::text::Lang::Hu);
             frame.backdrop = backdrop;
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Spy, t);
+            if let Some(tu) = &self.tutorial {
+                h.draw_tutorial(&mut frame, tu, size, 7);
+            }
             ov.draw(&mut frame, h, size);
             if let Ok(out) = g.surface.get_current_texture() {
                 self.backdrop.last = Some((g.present(frame, &out.texture, t), t));
@@ -4133,7 +4211,6 @@ impl App {
             // `GFX_DateMoneyScrollFade`'s fader pass 3 and `Update3D`'s `TutorialSzovegFrissit`: the window over the
             // screen (the pointer the recording moves is the overlay's).
             if let Some(tu) = &self.tutorial {
-                let kep = akt_kep(if self.help.is_some() { Some(crate::ui::Screen::Help) } else { self.overlay }, self.colony.is_some(), self.spacewar.is_some());
                 h.draw_tutorial(&mut frame, tu, size, kep);
             }
             ov.draw(&mut frame, h, size);
@@ -4165,7 +4242,7 @@ impl App {
             let (y, m, d) = self.world.curr.date();
             let speed = self.world.game.state.mem.i32(ig2_sim::save::va::IDO_SPEED);
             let state = if paused { "paused".to_string() } else { format!("×{speed}") };
-            g.window.set_title(&format!("Imperium Galactica II — {y}-{m:02}-{d:02} {state} — {fps:.0} fps"));
+            g.window.set_title(&format!("Imperium Galactica II — {y}-{m:02}-{d:02} {state} — {fps:.0} fps — openIG2 {}", crate::version()));
             self.title_at = Instant::now();
             self.frames = 0;
         }
@@ -4344,7 +4421,7 @@ fn research_key(k: NamedKey) -> Option<crate::research::Key> {
         NamedKey::ArrowRight => K::Right,
         NamedKey::ArrowLeft => K::Left,
         NamedKey::Enter => K::Enter,
-        // `remapKeyCodes` swaps them: PgUp comes as vk 0x22 (PgDn's), PgDn as 0x21.
+        // `remapKeyCodes` swaps them: PgUp comes as vk 0x22 (PgDn's), PgDn as 0x21 (FX5).
         NamedKey::PageUp => K::PageDown,
         NamedKey::PageDown => K::PageUp,
         _ => return None,
@@ -4615,12 +4692,12 @@ impl ApplicationHandler for App {
                                 el.exit();
                             }
                         }
-                        Key::Character("t" | "T") => {
+                        Key::Character("t" | "T") if !self.entry_up() => {
                             if let Some(t) = &mut self.tutorial {
                                 t.t.gates.text_shown ^= true;
                             }
                         }
-                        Key::Character("o" | "O") => self.ask_options(),
+                        Key::Character("o" | "O") if self.tutorial_o_allowed() => self.ask_options(),
                         _ => {}
                     }
                 }
@@ -4628,10 +4705,12 @@ impl ApplicationHandler for App {
             // Paused (live input): `t` still shows or hides the window and `o` opens the options screen, then the key goes
             // on to the screen.
             WindowEvent::KeyboardInput { ref event, .. }
-                if event.state == ElementState::Pressed && matches!(event.logical_key.as_ref(), Key::Character("t" | "T" | "o" | "O")) && self.tutorial.as_ref().is_some_and(|t| t.running()) && self.options.is_none() =>
+                if event.state == ElementState::Pressed && matches!(event.logical_key.as_ref(), Key::Character("t" | "T" | "o" | "O")) && self.tutorial.as_ref().is_some_and(|t| t.running()) && self.options.is_none() && !self.entry_up() =>
             {
                 if matches!(event.logical_key.as_ref(), Key::Character("o" | "O")) {
-                    self.ask_options();
+                    if self.tutorial_o_allowed() {
+                        self.ask_options();
+                    }
                     return;
                 }
                 if let Some(t) = &mut self.tutorial {
@@ -5237,7 +5316,7 @@ impl App {
         }
         match logical.clone() {
             Key::Named(k @ (NamedKey::PageUp | NamedKey::PageDown)) => {
-                // `remapKeyCodes` swaps them: PgUp comes as vk 0x22, the step on.
+                // `remapKeyCodes` swaps them: PgUp comes as vk 0x22, the step on (FX5).
                 self.starmap_step(k == NamedKey::PageUp);
                 true
             }

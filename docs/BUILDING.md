@@ -12,6 +12,18 @@ cargo build --release -p ig2-client
 ```
 Always use `--release` to play: the debug build runs at a few fps.
 
+## Release bundle
+`python -I tools/release/build_windows.py [--out DIR] [--keep-target]` builds `ig2-client` and `ig2-check` in
+`_local/release-target` (its own target dir, about 2 GB, removed afterwards unless `--keep-target`) and stages
+`_local/release/openig2-<version>-windows-x64/` (both exes, `README.txt`, `VERSION.txt`) plus the zip (about
+14 MB; no game data). The version is MAJOR.MINOR.N (`docs/VERSIONING.md`, `tools/release/version.py`), shown in the client's window title,
+`ig2-client --version` and `ig2-check`; builds outside the release script show `VERSION` with `-dev`. The gnu toolchain's C++ runtime (openh264) and C runtime are linked
+statically (`CXXSTDLIB=static=stdc++`, `crt-static`), which needs a MinGW-w64 `g++` with static libs (e.g. WinLibs)
+on the PATH; the script fails if a binary imports a non-system DLL. A full build takes about 5 minutes.
+The release workflow (`.github/workflows/release.yml`) runs it and publishes the zip.
+
+`ig2-check` (`engine/crates/ig2-check`) validates an install: `cargo run --release -p ig2-check -- [DIR] [--quick]`.
+
 ## Tests
 ```bash
 cd engine

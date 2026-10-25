@@ -19,8 +19,12 @@ at the next cleanup.
 - [ ] **Story-aware play-through driver**: the AI-played human loses all three campaigns, so later
   episodes, CampaignOver and the campaign end videos are never reached headless; drive the campaigns to their end.
 - [ ] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check).
-- [ ] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
-  recorded input replacing the live mouse (deviations 141, 174, 198).
+- [x] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
+  recorded input replacing the live mouse (deviations 141, 174, 198). Chapter 4's last step ("win in groundbattle")
+  waits on the single-player real-time ground war below.
+- [ ] **Single-player real-time ground war**: `Game::ground_war` (`ig2-sim/src/game/battles.rs`) calls
+  `ground_real_time` only when canonical and nothing ticks `WF::MI`/Refresh in single player (`grwar_mp` is
+  canonical-only), so an invasion routed to real time lands the vehicles and sits; `re/rules/ground-combat.md` §2, §11.
 - [ ] **Diplomacy and spy leftovers**: diplomacy's MP-only menus (0x2e) and lip sync; the spy screen's
   2D video path and the tutorial's spy limits.
 
@@ -29,9 +33,9 @@ at the next cleanup.
   `IG2_INSTALL_DIR` is unset; a clear message when none is found; check the `ig2.exe` hash.
 - [x] **Display settings**: window/fullscreen/borderless, resolution, vsync and the letterbox option in
   the Options screen (enhanced-styled), saved in our settings file.
-- [ ] **Release bundle**: a `--release` build script per platform (Windows first), version from a
+- [x] **Release bundle**: a `--release` build script per platform (Windows first), version from a
   `VERSION` file, a zip with the exe and a readme; no game data.
-- [ ] **Install check tool**: `ig2-check`, like openOMSI's `omsi-check`: loads every asset, table and
+- [x] **Install check tool**: `ig2-check`, like openOMSI's `omsi-check`: loads every asset, table and
   script of the user's install and reports what fails to parse.
 
 ### Multiplayer over the internet

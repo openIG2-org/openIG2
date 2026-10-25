@@ -1,0 +1,15 @@
+[package]
+name = "ig2-check"
+version = "0.1.0"
+description = "Checks a user's Imperium Galactica II install: every file through the engine's loaders. Ships no game data."
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
+ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
+lewton = "0.10"
+openh264 = "0.9.9"
