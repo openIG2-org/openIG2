@@ -99,7 +99,8 @@ const nf = (p, r, a) => new NativeFunction(p, r, a, { abi: 'mscdecl', traps: 'al
 const betolt = nf(A.Betolt_Scenario, 'void', ['pointer']);
 const setSpeed = nf(A.SetIdoSpeed, 'void', ['int', 'int']);
 const setPause = nf(A.SetIdoPause, 'void', ['int', 'int']);
-const loadSave = nf(A.LoadSave, 'void', ['int', 'pointer', 'int']);
+// Exceptions propagate: a --watch-addr watchpoint can fire inside the save.
+const loadSave = new NativeFunction(A.LoadSave, 'void', ['int', 'pointer', 'int'], { abi: 'mscdecl', traps: 'all', exceptions: 'propagate' });
 const crt = Process.getModuleByName('msvcr120.dll');
 const srand = nf(crt.getExportByName('srand'), 'void', ['uint']);
 
@@ -1604,7 +1605,31 @@ function save(where) {
   emit(ev);
   flush();
   busy = false;
+  if (k === 0 && cfg.watchAddr) watchWrites(va(cfg.watchAddr), cfg.watchN || 40);
   k++;
+}
+
+// --watch-addr VA[:N]: after save 0 a hardware write watchpoint on an exe global (the game thread's), the first N
+// writes as {k: 'write', pc, stack, ido2, value} (the callers from the stack's top words).
+function watchWrites(addr, n) {
+  const th = Process.enumerateThreads().find((x) => x.id === Process.getCurrentThreadId());
+  let left = n;
+  Process.setExceptionHandler((d) => {
+    if (d.type !== 'single-step' && d.type !== 'breakpoint') return false;
+    if (left-- > 0) {
+      const sp = d.context.sp, words = [];
+      for (let i = 0; i < 32; i++) {
+        const w = sp.add(4 * i).readPointer(), m = Process.findModuleByAddress(w);
+        if (m && m.name === 'ig2.exe') words.push('0x' + (w.sub(mod.base).toInt32() + IMAGE_BASE).toString(16));
+      }
+      emit({ k: 'write', pc: '0x' + (d.context.pc.sub(mod.base).toInt32() + IMAGE_BASE).toString(16), stack: words.slice(0, 8),
+        ido2: A.Ido2.readS32(), save: k, value: addr.readS32() });
+    }
+    if (left <= 0) th.unsetHardwareWatchpoint(0);
+    return true;
+  });
+  th.setHardwareWatchpoint(0, addr, 4, 'w');
+  emit({ k: 'watch', addr: addr.toString(), thread: th.id });
 }
 
 Interceptor.attach(A.Fake_FRISSITES, {

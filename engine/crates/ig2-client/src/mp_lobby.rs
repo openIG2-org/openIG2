@@ -1100,6 +1100,29 @@ impl<'r> Session<'r> {
         session.humans().filter(|h| h.2).map(|(empire, name, _)| crate::console::Player { empire, name: name.as_bytes().to_vec(), race: race(empire) }).collect()
     }
 
+    /// Who the lockstep waits for (the wait overlay's cells, `crate::mp_wait`): the empires the session awaits (dropped
+    /// in a battle, a migration's survivors) and, on the host, those whose input for the next turn hasn't come; a
+    /// joiner that knows of none waits for the host.
+    pub fn late(&self, now: Duration) -> Vec<u8> {
+        let s = self.status(now);
+        let mut v: Vec<u8> = s.waiting.iter().map(|w| w.0).chain(s.migrating.iter().copied()).collect();
+        match self {
+            Session::Host { session, .. } => v.extend(session.late()),
+            Session::Client(c, _) if v.is_empty() => v.extend(c.humans().iter().find(|h| h.0 == c.info().host).map(|h| h.1)),
+            _ => {}
+        }
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// The host's "Close connection" in the wait overlay (`MultiKickClient(client, 1)`): `empire`'s player takes the
+    /// drop path ([`HostSession::drop_player`]: it may come back through the door).
+    pub fn drop_player(&mut self, empire: u8, now: Duration) -> Result<(), String> {
+        let Session::Host { session, .. } = self else { return Err("only the host closes a connection".into()) };
+        session.drop_player(empire, now).map_err(|e| e.to_string())
+    }
+
     /// The host's `/kick` of `empire` ([`HostSession::kick`]).
     pub fn kick(&mut self, empire: u8, now: Duration) -> Result<(), String> {
         let Session::Host { session, .. } = self else { return Err("only the host kicks".into()) };
@@ -1641,6 +1664,51 @@ mod tests {
         step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 20));
         agree(&worlds);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The wait overlay's cells (`Session::late`, `crate::mp_wait`): a joiner that stops sending is late on the host
+    /// (its input for the next turn hasn't come) and the host stands still; the joiner, knowing of no one, waits for
+    /// the host.
+    #[test]
+    fn a_silent_joiner_is_late_on_the_host() {
+        use crate::world::World;
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let mut net = LoopNet::default();
+        let hub = net.clone();
+        let (mut host, mut guests) = room(1, &mut net);
+        click(&mut guests[0], spot::READY, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
+        let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 3, Box::new(hub.clone()))).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
+        let mut worlds = vec![mk(b)];
+        worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
+        let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
+        let t = std::time::Instant::now();
+        while worlds.iter().any(|w| turn(w) < 10) {
+            for w in &mut worlds {
+                w.pump();
+                w.tick();
+            }
+            assert!(t.elapsed() < Duration::from_secs(60), "stalled");
+        }
+        // Only the host pumps now: it runs out of the joiner's inputs.
+        let mut last = turn(&worlds[0]);
+        loop {
+            worlds[0].pump();
+            worlds[0].tick();
+            let now = turn(&worlds[0]);
+            if now == last && worlds[0].wait_view().unwrap().late.iter().any(|l| l.0 == 2) {
+                break;
+            }
+            last = now;
+            assert!(t.elapsed() < Duration::from_secs(60), "the host never waited");
+        }
+        let v = worlds[0].wait_view().unwrap();
+        assert_eq!((v.paused, v.reconnecting, v.host, v.late), (false, false, true, vec![(2, "Guest0".to_string())]));
+        let v = worlds[1].wait_view().unwrap();
+        assert_eq!((v.host, v.late), (false, vec![(1, "Host".to_string())]));
     }
 
     #[test]

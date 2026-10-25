@@ -107,6 +107,15 @@ impl StoryWorld for GameStory<'_, '_> {
     fn ido(&self) -> i32 {
         self.g.tick
     }
+    fn other_humans(&self) -> Vec<i32> {
+        if !self.g.canonical {
+            return Vec::new();
+        }
+        (1..crate::colony_side::EMPIRES).filter(|&e| self.g.human[e] && e != self.g.en).map(|e| e as i32).collect()
+    }
+    fn answering(&self) -> i32 {
+        self.game.answering.map_or(self.g.en as i32, i32::from)
+    }
     fn canonical(&self) -> bool {
         self.g.canonical
     }

@@ -33,6 +33,11 @@ pub struct Live {
     pub loops: std::collections::HashMap<(usize, usize, u8), usize>,
     /// The hot-spots' tooltip.
     tip: crate::kit::tooltip::Tooltip,
+    /// The zoom-out runs towards the options screen (`starmaphovaleptovabb = 0xd`, `SpaceWar_Kilep` phase 1).
+    pub to_options: bool,
+    /// The zoom-out runs towards another screen (an F-key or the top bar's spot 7, both only with `DEBUGX`): its
+    /// `AktKep`. At its end the battle is parked and the starmap asks for it again at once (re/screens/spacewar.md §9.15).
+    pub to_screen: Option<i32>,
 }
 
 impl Live {
@@ -45,7 +50,7 @@ impl Live {
         world.game.sp_battles.on_screen = true;
         world.game.realtime.fx.clear();
         let fx = crate::spacewar_fx::Tables::read(install).map_err(|e| eprintln!("ig2-client: the battle effects' tables: {e}")).ok().map(crate::spacewar_fx::Fx::new);
-        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx, loops: Default::default(), tip: Default::default() })
+        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx, loops: Default::default(), tip: Default::default(), to_options: false, to_screen: None })
     }
 
     /// The end check closed the battle (`AktKepKell = 2`): `SpaceWar_Kilep`'s zoom-out.
@@ -54,6 +59,36 @@ impl Live {
         if let Some(b) = world.game.realtime.slots.get(self.ui.slot) {
             self.ui.leave(b, now);
         }
+    }
+
+    /// Esc or O (`ESC_Pressed`, `AktKepKell = 0xd`): `SpaceWar_Kilep`'s phase 1 (exe 0x562b50) plays the zoom-out to
+    /// the starmap first; the options screen opens when it ends (phase 2, `OptionsHarcFolyik = 1`).
+    pub fn leave_for_options(&mut self, world: &World, now: u32) {
+        if let Some(b) = world.game.realtime.slots.get(self.ui.slot) {
+            self.ui.leave_at(b, now, 5.0);
+            self.to_options = true;
+        }
+    }
+
+    /// `AktKepKell = to` for another screen (`SpaceWar_Kilep` phase 1, exe 0x562b50): the zoom-out at the normal speed,
+    /// `starmaphovaleptovabb = to`.
+    pub fn leave_for_screen(&mut self, world: &World, now: u32, to: i32) {
+        if let Some(b) = world.game.realtime.slots.get(self.ui.slot) {
+            self.ui.leave(b, now);
+            self.to_screen = Some(to);
+        }
+    }
+
+    /// Back from the options screen: `AktKep = OptionsElottiKep` (0xb → 2) with `starmaphovaleptovabb = 0xb`, and the
+    /// starmap asks for the battle again at once; `SpaceWar_Belep` keeps the screen's state (`initgfx` is guarded) and
+    /// plays the opening zoom from the starmap again (the intro flag, exe trace 2026-10-25). The exe shows the
+    /// starmap for its `_Belep` load (~100 ticks); the client loads without those ticks (re/screens/input.md §1.1).
+    pub fn reenter(&mut self, world: &mut World) {
+        world.game.sp_battles.on_screen = true;
+        self.to_options = false;
+        self.to_screen = None;
+        self.zoomed = false;
+        self.ui.reenter();
     }
 
     /// The frame's update: the poses after the battle ticks, the UI ticks (`FRISSIT_SpaceWar2`, `SpaceWar_Autoscroll`), the view animation,
@@ -133,6 +168,7 @@ impl Live {
         let raw = self.ui.spot(&self.mask, mouse);
         let spot = self.ui.latch(raw);
         self.ui.buttons(self.left, self.right, spot == Some(0x4c));
+        self.ui.megfogva_update(spot);
         if !self.left && self.ui.retreat_window {
             let yes = crate::spacewar_hud::retreat_hover(hud, mouse) == 1;
             let paused = world.game.state.mem.u8(ig2_sim::save::va::TUTORIAL_PAUSED) != 0;
@@ -231,26 +267,10 @@ impl Live {
         (Some(frame), out)
     }
 
-    /// A left press at `at` (virtual pixels) on the top bar's speed buttons (`IG2_gameUpdate` exe 0x4e07d6, hot-spots
-    /// 2..=5 at x 0, 15, 29, 50, y < 20) once the opening zoom is over: 0 = pause (the caller toggles it), 1..=3 a
-    /// speed (the caller's `set_speed`).
-    /// In MP the zoom doesn't hold them (`IG2_gameUpdate` tests `nemlehetidotallitani` in its SP branch only).
-    pub fn bar_press(&self, at: [f32; 2], multiplayer: bool) -> Option<i32> {
-        if !(multiplayer || self.clock_free()) || at[1] >= 20.0 || at[0] >= 73.0 {
-            return None;
-        }
-        Some(match at[0] {
-            x if x < 15.0 => 0,
-            x if x < 29.0 => 1,
-            x if x < 50.0 => 2,
-            _ => 3,
-        })
-    }
-
     /// `nemlehetidotallitani` (exe 0xBAD0D4) clear: `SpaceWar_Belep` sets it and the opening zoom's end clears it (spec
     /// §2.5), so the pause and speed keys and buttons wait for the zoom (`DoKeyboard`, `IG2_gameUpdate`).
     pub fn clock_free(&self) -> bool {
-        self.zoomed
+        self.zoomed && !self.ui.leaving
     }
 
     /// The commands an output becomes (`Multi_Send(.., EN, ..)`); `Out::Click` and `Out::Left` are the caller's.

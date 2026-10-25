@@ -9,14 +9,17 @@ pub struct Image {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// The smaller levels the PVR holds, largest first (empty: the renderer filters its own).
+    pub mips: Vec<Vec<u8>>,
 }
 
 impl Image {
     pub fn load(install: &Install, path: &str) -> Result<Self, String> {
         let bytes = install.read(path).map_err(|e| format!("{path}: {e}"))?;
         let pvr = Pvr::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-        let img = pvr.decode_rgba8().map_err(|e| format!("{path}: {e}"))?;
-        Ok(Self { width: img.width, height: img.height, rgba: img.pixels })
+        let mut levels = pvr.decode_levels().map_err(|e| format!("{path}: {e}"))?.into_iter().map(|l| l.pixels);
+        let rgba = levels.next().ok_or(format!("{path}: no pixels"))?;
+        Ok(Self { width: pvr.width, height: pvr.height, rgba, mips: levels.collect() })
     }
 
     /// The texture's `uv_mul` (its PVR's `CNST` metadata, `ig2_vertex.shader` scales the mesh UVs by it), else (1, 1).
@@ -27,7 +30,7 @@ impl Image {
 
     /// A 1×1 white image (untextured shapes).
     pub fn white() -> Self {
-        Self { width: 1, height: 1, rgba: vec![255; 4] }
+        Self { width: 1, height: 1, rgba: vec![255; 4], mips: Vec::new() }
     }
 }
 

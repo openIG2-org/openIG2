@@ -91,7 +91,7 @@ fn outline(install: &ig2_formats::Install, text: &str, h: u32) -> Option<Image> 
             rgba[i + 3] = rgba[i + 3].max(a as u8);
         });
     }
-    Some(Image { width: tw, height: th, rgba })
+    Some(Image { width: tw, height: th, rgba, mips: Vec::new() })
 }
 
 /// The GDI fallback `FUN_006f0e90` (exe 0x6f0e90) with flags 0xc0: a screen-compatible bitmap `(w + 3) & !3` × `h`,
@@ -193,7 +193,7 @@ mod gdi {
                 rgba[i..i + 4].copy_from_slice(&[255, 255, 255, a]);
             }
         }
-        Some(Image { width: tw, height: th, rgba })
+        Some(Image { width: tw, height: th, rgba, mips: Vec::new() })
     }
 }
 

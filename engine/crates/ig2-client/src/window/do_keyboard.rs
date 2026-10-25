@@ -109,8 +109,11 @@ impl App {
     }
 
     /// `KepernyokLetiltva[n]` (0xf66f2c + n): the tutorial has turned screen `n` off.
+    /// A battle (on screen or parked under Options) locks every screen but Options: its opening zoom sets all of
+    /// `KepernyokLetiltva`, its end restores them (`SpaceWar_Kilep` exe 0x562b50), the zoom's end only [0xd].
     fn screen_off(&self, n: i32) -> bool {
-        self.tutorial.as_ref().is_some_and(|t| t.t.gates.screens.get(n as usize).copied().unwrap_or(false))
+        (n != 0xd && (self.spacewar.is_some() || self.spacewar_parked.is_some()))
+            || self.tutorial.as_ref().is_some_and(|t| t.t.gates.screens.get(n as usize).copied().unwrap_or(false))
     }
 
     /// The messages screen is idle (`DAT_00dabe3c == 0 && DAT_00da6607`): no answers wait and the text is typed out.
@@ -141,8 +144,13 @@ impl App {
             return;
         }
         // F11 asks for the space battle only while one is pending (bytes from 0xe436ee, stride 0x2d9c); the client's
-        // battles start by themselves (re/deviations.md).
+        // battles start by themselves (re/deviations.md). From Options over a parked battle (`DEBUGX`) `SpaceWar_Belep`
+        // resumes it at once (exe 0x562680: no redirect with `OldKep == 0xd` and the battle alive).
         if to == 11 {
+            if s == 0xd && self.spacewar_parked.is_some() {
+                self.leave_options();
+                self.resume_parked_battle();
+            }
             return;
         }
         // F3 while the tutorial awaits 0x1c (exe 0x4db3eb): the main planet stays shut, any other raises the event.
@@ -227,6 +235,13 @@ impl App {
                 }
                 3 if k.to == 2 => self.toggle_colony(),
                 2 | 3 => break,
+                // `SpaceWar_Kilep` (exe 0x562b50): `Starmapvisszaallit` cancels the change and the zoom-out runs;
+                // what follows is in `Window::spacewar_out`.
+                11 => {
+                    self.kep_kell = None;
+                    self.leave_battle(k.to);
+                    return;
+                }
                 // The space battle and the main menu aren't left by a key.
                 _ => {
                     self.kep_kell = None;
@@ -237,7 +252,7 @@ impl App {
         self.kep_kell = None;
         match k.to {
             3 => {
-                if let Some(p) = self.colony_target() {
+                if let Some(p) = self.planet_kell.take().or_else(|| self.colony_target()) {
                     self.open_colony(p);
                 }
             }
@@ -256,7 +271,7 @@ impl App {
 
     /// `Options_Kilep` towards another screen: the settings kept, the time as it was (`SetIdoPause(OptionsOldIdoPause)`);
     /// the screen it was opened over isn't entered again.
-    fn leave_options(&mut self) {
+    pub(super) fn leave_options(&mut self) {
         let Some(o) = self.options.take() else { return };
         self.store_settings_from(&o.s);
         if !o.was_paused {
@@ -279,6 +294,7 @@ impl App {
         let s = self.akt_kep_now();
         let debug = self.debugx();
         let pass = match s {
+            // The battle's screen locks hold M off even with `DEBUGX` (`screen_off`).
             11 => debug,
             3 if self.colony_war_up() => debug,
             0xd => self.options.as_ref().is_some_and(|o| !(o.s.load_only || o.s.battle) || debug),
@@ -302,7 +318,7 @@ impl App {
     /// screen or the main menu (`AktKep < 0xd`), not while the time can't be set (`nemlehetidotallitani`).
     pub(super) fn time_keys_allowed(&self) -> bool {
         let s = self.akt_kep_now();
-        s != 10 && s < 0xd && !self.speed_locked()
+        s != 10 && s < 0xd && !self.speed_locked() && self.spacewar.as_ref().is_none_or(|sw| sw.clock_free())
     }
 
     /// Esc on the starmap with a panel up (`MainCallBackEventHandler` exe 0x4e2db0: the production view, the transfer,
@@ -336,6 +352,21 @@ pub(super) fn mp_time_gate(only_server: i32, host: bool) -> bool {
     only_server == 0 || host
 }
 
+/// `ColonyKeyboardHandler`'s held camera keys (exe 0x4628c0: vk 0x25..=0x28 by the logical key, so a NumLock-off
+/// numpad's arrows too, deviation 375; numpad + / − by the physical one): left, right, up, down, +, − as 0..=5.
+pub(super) fn colony_camera_key(physical: winit::keyboard::PhysicalKey, logical: Key<&str>) -> Option<usize> {
+    use winit::keyboard::{KeyCode, PhysicalKey};
+    Some(match (physical, logical) {
+        (PhysicalKey::Code(KeyCode::NumpadAdd), _) => 4,
+        (PhysicalKey::Code(KeyCode::NumpadSubtract), _) => 5,
+        (_, Key::Named(NamedKey::ArrowLeft)) => 0,
+        (_, Key::Named(NamedKey::ArrowRight)) => 1,
+        (_, Key::Named(NamedKey::ArrowUp)) => 2,
+        (_, Key::Named(NamedKey::ArrowDown)) => 3,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +386,16 @@ mod tests {
         assert!(!numpad_digit_key(PhysicalKey::Code(KeyCode::Numpad5), Key::Named(NamedKey::Clear)));
         assert!(!numpad_digit_key(PhysicalKey::Code(KeyCode::Digit5), Key::Character("5")));
         assert!(!numpad_digit_key(PhysicalKey::Code(KeyCode::NumpadAdd), Key::Character("+")));
+    }
+
+    #[test]
+    fn colony_arrows_come_by_their_virtual_key() {
+        use winit::keyboard::{KeyCode, PhysicalKey};
+        assert_eq!(colony_camera_key(PhysicalKey::Code(KeyCode::ArrowLeft), Key::Named(NamedKey::ArrowLeft)), Some(0));
+        // A NumLock-off numpad 8 sends VK_UP.
+        assert_eq!(colony_camera_key(PhysicalKey::Code(KeyCode::Numpad8), Key::Named(NamedKey::ArrowUp)), Some(2));
+        assert_eq!(colony_camera_key(PhysicalKey::Code(KeyCode::Numpad8), Key::Character("8")), None);
+        assert_eq!(colony_camera_key(PhysicalKey::Code(KeyCode::NumpadSubtract), Key::Character("-")), Some(5));
     }
 
     #[test]

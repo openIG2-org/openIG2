@@ -175,8 +175,13 @@ impl DesignScene {
                     m.move_child(&[WIRE], Some([0.0, 0.0, (200.0 + (1.0 - s.frame / 60.0) * 1000.0) / 1024.0]), None);
                 }
                 let t = Placement::add_to_scene(m.origin, 1.1).world((0.0, 0.0, 0.0), [0.0, 0.0, z]);
+                // Blended at the opacity (property 8), not scaled: open, its dark lines lie over the overlay's picture
+                // [obs: deviations #261].
                 for p in m.below(&[WIRE]) {
-                    self.wire(p, &t, &ambient, 1.0 - tr, &mut grid);
+                    self.wire(p, &t, &ambient, 1.0, &mut grid);
+                }
+                for g in &mut grid {
+                    g.2[3] = 1.0 - tr;
                 }
             }
         }
@@ -231,8 +236,9 @@ impl DesignScene {
         }
         // The sphere is the far background: under the solid models.
         for (a, b, c) in grid {
-            if let (Some(pa), Some(pb)) = (project(a), project(b)) {
-                f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), 1.0, c));
+            // Cut where it passes the camera plane (research.rs `wire`) [obs: the opening's near cells].
+            if let Some((Some(pa), Some(pb))) = crate::research::cut_near(a, b).map(|(a, b)| (project(a), project(b))) {
+                f.push(self.white, Blend::GammaAlpha, Instance::hard_line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), c));
             }
         }
         // The boxes' edges go into the depth-tested pass (the hull hides the parts inside it [obs]).
@@ -281,12 +287,16 @@ impl DesignScene {
             let tc = img.map_or([1.0; 3], |im| sample(im, v.uv));
             [l[0] * tc[0] * opacity, l[1] * tc[1] * opacity, l[2] * tc[2] * opacity]
         };
+        // An edge two faces share draws once (the second fails the engine's depth test, research.rs `wire`).
+        let mut drawn = std::collections::HashSet::new();
+        let key = |a: V3| a.map(f32::to_bits);
         for (ti, tri) in p.verts.chunks_exact(3).enumerate() {
             let flags = p.edges.get(ti).copied().unwrap_or(7);
             let pts: Vec<V3> = tri.iter().map(|v| t.point(v.pos)).collect();
             let cols: Vec<[f32; 3]> = tri.iter().map(colour).collect();
             for (bit, (a, b)) in [(0, (2, 0)), (1, (0, 1)), (2, (1, 2))] {
-                if flags & (1 << bit) != 0 {
+                let (ka, kb) = (key(tri[a].pos), key(tri[b].pos));
+                if flags & (1 << bit) != 0 && drawn.insert(if ka <= kb { (ka, kb) } else { (kb, ka) }) {
                     let c = [(cols[a][0] + cols[b][0]) / 2.0, (cols[a][1] + cols[b][1]) / 2.0, (cols[a][2] + cols[b][2]) / 2.0, 1.0];
                     out.push((pts[a], pts[b], c));
                 }

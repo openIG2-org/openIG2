@@ -141,7 +141,7 @@ impl DiplomacyScene {
             }
             // `PlayAnimVector` (ELF 0x45ea70) uploads the frames as they are; the scan lines are the `VIDEO` material's
             // (re/screens/render.md §3).
-            frames.into_iter().map(|f| r.add_texture(&Image { width: w, height: h, rgba: f.rgba }))
+            frames.into_iter().map(|f| r.add_texture(&Image { width: w, height: h, rgba: f.rgba, mips: Vec::new() }))
                 .collect()
         })
     }
@@ -217,8 +217,10 @@ impl DiplomacyScene {
         // The cages and portraits.
         let selected = scr.selected;
         // The cages swing in from `(820 sin(3s + ⌊k/2⌋)·s, 500 cos(4s + ⌊k/2⌋)·s)` and stay half transparent after an
-        // opening; the port's wires are calibrated on that rest, so their alpha runs 0..1 as the transparency 1..0.5.
-        let cage_alpha = ((1.0 - scr.cage_t) / 0.5).clamp(0.0, 1.0);
+        // opening (0.48000047). Without property 8 the engine adds them, the lit colour × `1 − t`; the port's wire light
+        // is calibrated on the opened rest, so its colour runs × `(1 − t)/0.52` (row 124: about twice as bright at the
+        // unanimated rest, t 0).
+        let cage_k = (1.0 - scr.cage_t) / 0.52;
         let swing = |k: usize, h: &[f32; 3]| {
             let (s, j) = (s as f64, (k / 2) as f64);
             [h[0] + ((s * 3.0 + j).sin() * 820.0 * s) as f32, h[1] + ((s * 4.0 + j).cos() * 500.0 * s) as f32, h[2]]
@@ -249,7 +251,7 @@ impl DiplomacyScene {
                     self.wire(p, &t, &lights, true, &mut wires);
                 }
                 for w in &mut wires[from..] {
-                    w.2[3] = cage_alpha;
+                    w.2 = [w.2[0] * cage_k, w.2[1] * cage_k, w.2[2] * cage_k, 1.0];
                 }
             }
             // The portraits fade in once open (`fejetransp`) and swing out with the cages only while closing.
@@ -323,15 +325,23 @@ impl DiplomacyScene {
                 }
             }
         }
+        // The cages' wires, added in gamma space as the remaster's mesh pass draws them [obs: `diplomacy-fx9.json`, heads
+        // t 300 6.9/5.6 → 6.0/4.8 against the alpha blend].
         let line = |f: &mut Frame, list: Vec<(V3, V3, [f32; 4])>| {
             for (a, b, c) in list {
                 if let (Some(pa), Some(pb)) = (project(a, self.yc), project(b, self.yc)) {
-                    f.push(self.white, Blend::Alpha, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), 1.0, c));
+                    f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), 1.0, c));
                 }
             }
         };
-        // The grid is the far background: under the solid models.
-        line(f, grid);
+        // The grid is the far background: under the solid models. Aliased lines one output pixel wide, blended in
+        // gamma space at the opacity: open, the camera is inside it and its dark lines lie over the overlay's picture
+        // [obs: deviations #261].
+        for (a, b, c) in grid {
+            if let Some((Some(pa), Some(pb))) = crate::research::cut_near(a, b).map(|(a, b)| (project(a, self.yc), project(b, self.yc))) {
+                f.push(self.white, Blend::GammaAlpha, Instance::hard_line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), c));
+            }
+        }
         if !dynamic.is_empty() {
             let wide = crate::kit::Wide::new(vv);
             let px = wide.px;

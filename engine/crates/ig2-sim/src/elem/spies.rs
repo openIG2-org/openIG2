@@ -241,14 +241,14 @@ pub(super) fn story_802(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
     }
     if answered(s, 8020, 2) || answered(s, 9020, 2) {
         s.spy_mission(8021, true, w);
-        s.add_game_info(8021, 0, -1, w);
+        s.add_info_line(8021, InfoLine::Blank, -1, w);
     }
     if promoted(s, 8020) || promoted(s, 9020) {
         message2(w, 8021, 9021, 0);
         let p = s.b_search(8020, 0, w);
         param(w, 1, MessageText::Planet(p));
         s.spy_mission(8021, true, w);
-        s.add_game_info(8021, 0, -1, w);
+        s.add_info_line(8021, InfoLine::Blank, -1, w);
     }
     if spy_caught(s, 8021) {
         s.spy_answer = 0;
@@ -258,7 +258,7 @@ pub(super) fn story_802(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         if s.spy_answer != 0 {
             s.spy_mission(8021, false, w);
             s.remove_game_info(8021, w);
-            s.add_game_info(8022, 0, -1, w);
+            s.add_info_line(8022, InfoLine::Blank, -1, w);
             let e = s.nearest_empire_808(w)?;
             s.v_set(8029, e);
             let mut q = s.b_search(8021, 0, w);
@@ -374,7 +374,7 @@ pub(super) fn story_802(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
     if s.counter(8021) {
         message2(w, 8028, 9028, 0);
         cheaper = true;
-        s.add_game_info(8023, 0, -1, w);
+        s.add_info_line(8023, InfoLine::Blank, -1, w);
         s.v_set(8020, 1);
         s.set_adat_i32(0x6c, s.adat_i32(0x6c).wrapping_add(25));
         s.set_tech_state_to(183, 3, en, w);
@@ -1024,7 +1024,7 @@ pub(super) fn story_861(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         s.protect_empire(1);
         message(w, 8610, 0);
         s.spy_mission(8611, true, w);
-        s.add_game_info(8611, 0, -1, w);
+        s.add_info_line(8611, InfoLine::Blank, -1, w);
     }
     if spy_caught(s, 8611) {
         s.spy_answer = (spy_chance(s, 1, 30, 50, 100, w) == 0) as i32;

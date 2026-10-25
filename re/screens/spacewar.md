@@ -589,7 +589,7 @@ Two phases, because leaving first plays the zoom-out to the starmap:
   `infoelmegy = +0x2548` if outside 0..1. Then `starmaphovaleptovabb = requested AktKep` (0 if the request was the starmap 2), `nemlehetidotallitani = 1`, `SetIdoPause(true, false)`; return.
 - When the zoom-out ends (`NezetVisszaAllitas`, factor >= 1 with +0x2544 set): `AktKepKell = starmaphovaleptovabb` (or 2 if 0), spacewarelfade = 0.001: the change is requested again and Kilep runs again.
 - Phase 2 (+0x2544 set): `SpwC::unloadgfx` (ELF 0x691f70 / exe 0x582280). If the target is not 2/0xd: `starmaphovaleptovabb = AktKep; AktKep = 2; Atlepes = 1` (it always leaves via the starmap).
-  If the target is 0xd (options): `KilepesElott2 = KilepesElott = 0; GFX_Starmap(); SaveScreen(2); OptionsHarcFolyik = 1` (exe 0xBAE24F). (The ELF also lists 10 and 1 in that test; after the redirect they can never hold, so same behaviour.)
+  If the target is 0xd (options): `KilepesElott2 = KilepesElott = 0; GFX_Starmap(); SaveScreen(2); OptionsHarcFolyik = 1` (exe 0xBAE24F; gate `PTR_DAT_0091a830[0x1fb8]` = the leaving flag +0x2544, §9.14). (The ELF also lists 10 and 1 in that test; after the redirect they can never hold, so same behaviour.)
   Battle not over (`+0x2546` clear, exe +0x1fba): `nemlehetidotallitani = 1; SetIdoPause(true, false)`; `DeInitSounds(SpWar_Hangok, 0x2a)`; return (the battle continues, e.g. after options).
   Battle over: SP -> `SpwC::SpaceWarVege` (ELF 0x6a1560 / exe 0x5706f0); MP -> `Multi_Send(0x44d, EN, 0)` (space-combat.md 7.13); `spacewarbanvanbarkacs = 0`;
   `KepernyokLetiltva[i] = backKepernyokLetiltva[i] & 1`; `nemlehetidotallitani = 0`; `DeInitSounds`.
@@ -1094,7 +1094,7 @@ Signature `(int key, int ch, bool down)`: `key` = key code (arrows 0x25..0x28, d
 | DEBUGX: ch `r`, not `TutorialPaused` | down | `Multi_Send(0x72, EN, 4,&AktSpaceWar, 0)` = `Retreat` |
 | DEBUGX: key 8 | down | for every selected unit: `felrobban(.., 0, 0, true, true)` once per ship (`+0x1bc` count): blow up |
 | editor mode only | down | ch `c`: reverse the order of the selected units; arrows: move selected units by one racs cell in y/z (Shift + up/down: x); PgUp/PgDn change the unit type (`+8`, 0..0xb); key 0x2e (Delete) deletes (with Ctrl: sets the unit single waypoint) |
-No other key is handled here. The shared `DoKeyboard` (exe 0x4db1a0, `re/screens/input.md` §1) runs first and keeps some keys: the top row's 1..3 (vk 0x31..0x33, jump table 0x4dc024 / index 0x4dc038, target 0x4db434: sound 10, `SetIdoSpeed(n)`, unpause; never passed on, so only 4..9 pick or assign groups 3..8 here), Space and the character P (pause toggle), O (options); these and the top bar's speed buttons (`IG2_gameUpdate` 0x4e07d6, AktIkon 2..5) need `nemlehetidotallitani` (exe 0xBAD0D4) clear in SP, i.e. not during the opening zoom (§2.5). Esc reaches `ESC_Pressed` (options.md §5.1): it opens the options too (`KepernyokLetiltva[0xd]` is restored at the zoom's end); `SpaceWar_Kilep` keeps a running battle (§4.1), and the exe comes back through the starmap (`OptionsElottiKep` 0xb -> 2, `DAT_00f176e0 = 0xb`). The letters come as character events (`FUN_004db040(0, ch, 1)`), so they follow the typed character, not the key position. The client (2026-10-24): all of these; g/G (`+0xc98`) and ScrollLock (`chm`) have no reader in the screen's functions and stay unmapped, DEBUGX q (`initgfx`) and u (a local write of `side[EN] +0x50`, not sent) too.
+No other key is handled here. The shared `DoKeyboard` (exe 0x4db1a0, `re/screens/input.md` §1) runs first and keeps some keys: the top row's 1..3 (vk 0x31..0x33, jump table 0x4dc024 / index 0x4dc038, target 0x4db434: sound 10, `SetIdoSpeed(n)`, unpause; never passed on, so only 4..9 pick or assign groups 3..8 here), Space and the character P (pause toggle), O (options); these and the top bar's speed buttons (`IG2_gameUpdate` 0x4e07d6, AktIkon 2..5) need `nemlehetidotallitani` (exe 0xBAD0D4) clear in SP, i.e. not during the opening zoom (§2.5). Esc reaches `ESC_Pressed` (options.md §5.1): it opens the options too (`KepernyokLetiltva[0xd]` is restored at the zoom's end); `SpaceWar_Kilep` keeps a running battle (§4.1), and the exe comes back through the starmap (`OptionsElottiKep` 0xb -> 2, `DAT_00f176e0 = 0xb`; details and the client's park/re-enter: §9.14). The letters come as character events (`FUN_004db040(0, ch, 1)`), so they follow the typed character, not the key position. The client (2026-10-24): all of these; g/G (`+0xc98`) and ScrollLock (`chm`) have no reader in the screen's functions and stay unmapped, DEBUGX q (`initgfx`) and u (a local write of `side[EN] +0x50`, not sent) too.
 
 ### 7.2 Timers and animations
 `FRISSIT_SpaceWar2` (ELF 0x67c450 / exe 0x55e6e0; `AktKep == 0xb && AktSpaceWarp != 0`; **every 100 Hz UI tick**: `Fake_FRISSITES` calls it at exe 0x4de8de inside its `while now − stamp > 10` loop (0x4de850..0x4de97f), right before `SpaceWar_Autoscroll` (0x4de94d); the column counter runs 0 → 49 in 50 UI ticks in the capture of §9.5. The interpolators still take dt 0.033333335 = 1/30): `SpwC::SpaceWarFrissit2` (below), then `+0x2300 = +0x2304 = 0`. The pitch rate `+0x2308` is not cleared (neither binary): a pitch key stays set until its key-up event. If `ControlConfig[0] && ControlConfig[1]`: `Refresh(1/30)` of the four interpolators (MoveX, MoveY, Zoom, Rotate); if `!(+0x2524) && !(+0x229e)`: zoom `+0xd78 = Zoom.GetValue()`, yaw `+0xd70 = Rotate.GetValue()`; `SpaceWar_Move(MoveX.GetSpeed(), MoveY.GetSpeed())` pans the look-at (the exe and the ELF differ here, see 7.1). The interpolator inputs (pan keys / pad) are set elsewhere [u].
@@ -1589,7 +1589,7 @@ their battle state isn't drawn). `re/deviations.md` lists them.
 
 ### 9.7 Not yet (after part 7)
 - The bolts, rings and debris are still unchecked against a capture (no grab has them in view); the ring model's scale is
-  suspicious (`karika.xvb`'s normalised vertices are ~0.007).
+  suspicious (`karika.xvb`'s normalised vertices are ~0.007). [Settled 2026-10-25: the scale was 1024x off, §9.13.]
 - The MP banner (done in FX7 part 1, exe 0x57f800; not seen in a capture, MP) and the chase camera are uncaptured; the big box's slide runs −5 / +10 px against the exe's (t800 / t950).
 - In the zoom: the short info's planet picture and the fleet marker's glow are missing; the radar window's hue (deviation 104).
 
@@ -1698,9 +1698,176 @@ their battle state isn't drawn). `re/deviations.md` lists them.
 - **`ora.xvb` and `no.xvb` are additive**: `initgfx` gives them `PropertiesOff(0xf)` (the buttons `PropertiesOff(6)`),
   clearing bit 8, so they are added (`ONE`/`ONE`, RGB × the opacity byte) over the buttons (re/screens/render.md §2.3).
   [obs: weapons fx8b 2.60–4.41 → 2.48–3.47, spacewar_info 4.47 → 3.99; the rings and arcs take the exe's light blue.]
-- **The shield rings: still not captured.** `run_spwc.py --planets --shield` stages a planet battle at a human
-  planet whose first armed building is armour (an armour gun, armour 1.5, weapon −1), and `--records` dumps the ring
-  nodes (exe `+0x1a88 + 0xc·i`, start tick `+8`); with the designs given anti-planet weapons (`--weapons
-  0x1a,0x44,0x45,0x46`: weapons 16..18, kind 2) no shot hit the armour gun in the whole battle (client replay: 1144
-  ticks, 0 rings). A ring needs a hit on an armoured gun (`FoldTalalat`, §6.8.5): an `AttackGun` order on it (`Lov3`)
-  or a `Lov2` pick; next try a human attack on an AI planet with the order scripted.
+- **The shield rings, captured (2026-10-25).** `run_spwc.py --planets --shield --records --weapons 0x1a,0x44,0x45,0x46`
+  (`--shield` now arms only the armour building, its only gun; `--records` dumps the ring nodes, exe `+0x1a88 + 0xc·i`,
+  start tick `+8`), script `shield.json` (unpause t450, radar centre t600, zoom out t650): rings live at grabs t3000
+  (9, starts 494..510) and t3200/t3400 (18); the battle ended at tick 543 (planet side won, ground war). Exe records:
+  ring `s` = diag(0.05), `at` = hit point / 1024; the client's sim made the same 9 rings at tick 510. Fix: the client
+  drew them 1024x too small (`add_to_scene(origin, 0.05/2500)`); now `create_matrix2(dir) · diag(0.05·1024/2500)`
+  (`karika.xvb`'s box is ±1024, so the vertex frames are already normalised: ±0.007 at frame 0 to ±0.97 at frame 30).
+  `run_screendiff.py spacewar --script shield.json --exe-seq _local/traces/shield2/s`: view 1.98 at t3000 (2.00
+  with no rings), position and size match. Open (deviations row 355): the client's rings show a blocky grid where the
+  exe's are smooth (filtering/mipmaps or alpha), and at t3200 the exe ring is ~4x brighter and ~70 vs 62 px
+  (blend/fade or the zoom-out phase).
+
+### 9.14 Input rows 233, 258, 268-272, 338 (2026-10-25)
+- **Leaving (233, 338).** `SpaceWar_Kilep` (exe 0x562b50) gates `OptionsHarcFolyik` on `PTR_DAT_0091a830[0x1fb8]`, the
+  battle's leaving flag (ELF `+0x2544`) that `Starmapvisszaallit` (0x570c10) sets; so HarcFolyik is set only in phase 2,
+  after the zoom-out (client: window.rs, `Out::Left` to_options arm). Esc/O starts the zoom-out (`Live::leave_for_options`,
+  pause in SP only); at its end the battle is parked (`spacewar_parked`), the starmap view restored and Options opens over
+  the starmap; Back re-enters (`Live::reenter`, `SpaceWarUi::reenter`: leaving cleared, first-frame block, so the opening
+  zoom plays again, anim mult 1). No `SpaceBattleLeft` is sent for a running battle towards Options (the exe returns
+  before `SpaceWarVege`/`Multi_Send` 0x44d). Exe trace (`run_spwc.py --script opt.json --globals`,
+  `_local/traces/opt*.jsonl`): Esc t500 sets +0x1fb8 = 1, `starmaphovaleptovabb` 0xf176e0 = 13,
+  `nemlehetidotallitani` 0xbad0d4 = 1; t581 AktKep 13, HarcFolyik 1, `OptionsElottiKep` 0xbae2b4 = 11; Esc t1300:
+  AktKep 2 at t1352, AktKepKell 11 at t1353, Belep 0xbae24c held until t1454, AktKep 11 at t1455 with leave = 0 and the
+  intro flag +0x1f98 = 1 (the opening zoom replays; lock clears t1535). The ~100 ticks on the starmap are its Belep
+  load (catch-up ticks, input.md §1.1), which the client skips (deviations row 356).
+- **Mouse latch (269).** `Mouse_Megfogva` (0xDB466A) is cleared on a frame with no button held (`IG2_gameUpdate`
+  0x4e05bc) and the hit test is skipped while it is set (0x4e054a). `SpwC::main` (0x57b9e0) sets it for 0x1f and 0x4c on
+  a press edge (0x57bb44, 0x57bb6f/0x57bb93) and for 0x47/0x48/0x4b/0x4a and the slider 0x37 on non-release frames
+  (0x57bcea, 0x57bdb8, 0x57bf8a, 0x57bed2, 0x57bff3); 0x57c1bf also for panel B's drag spot 0x36 (dead). 0x46/0x49,
+  the weapons and the info buttons never latch. Client: `SpaceWarUi::latch` + `megfogva_update`, test
+  `only_the_drag_spots_latch`.
+- **Keys (270, 272).** `MainCallBackEventHandler` (exe 0x4e2db0, the only writer of the key ring 0xb773a8/0xb77394,
+  write index 0xb773fc) pushes SDL2 KEYDOWN (0x300, keys `remapKeyCodes` 0x4e4670 accepts) and TEXTINPUT (0x303) with no
+  repeat test (the only `[+0xd]` test, 0x4e31b1, is the text's second char), so every held key repeats at the OS rate on
+  every screen, SpaceWar included; a full ring (19 entries) drops. Client: the Esc/O repeat filter is gone; the zoom-out
+  (`clock_free` false) holds them off. V: `DoKeyboard` 0x4db1a0 at 0x4dbf2f stores `SDL_GetTicks` in 0xB772C0 for a v/V
+  text event when no text entry is up (0xbae2c3 == 0), on every screen, and eats the key; its only reader,
+  `UpdateFrame` 0x4e3e90 at 0x4e43a7, draws the string "Not Relevant Anymore" at (10, 470) via `FUN_004a9e60(str, 10,
+  0x1d6, 0x3c, 2, 4, 3)` for 1000 ms. Not ported (client eats V, draws nothing; deviations row 272).
+- **Top bar (258, 271).** Spots 2..5 (flag 1) act on the press edge of "any button held" (`FUN_005105d0` 0x5105d0
+  snapshot: 0xdb4650 any held, 0xdb4653 changed; `IG2_gameUpdate` 0x4e07d6 pause, 0x4e086d speed): a right press acts like
+  a left, a second button while one is held does nothing, releases do nothing. Client: SpaceWar's mouse goes through the
+  shared `top_bar_mouse` on the first press of either button; `time_keys_allowed` also needs `clock_free`. Spot 7 is
+  handled in `MOUSE_SelectScreens` (exe 0x555470): a left press in SpaceWar needs DEBUGX 0xbae587 and an unread message
+  (`VanUzenet` 0x509e00) -> AktKepKell 10 (0x555788); the right button is the history (0xe40c5e) on the press edge while
+  left is not held, closed on release, ungated. The client's history works; `request_screen(10)` from AktKep 11 is
+  dropped in `screen_change_step` (deviations row 352).
+- **Voice (268).** `jobb_click` (3,2) AttackGun plays the unit voice (kind 2) per selected unit (ELF `SpwC::JobbClick`
+  lines 64-68).
+
+### 9.15 Rows 352-356, the shield rings' look (2026-10-25)
+- **The shield rings (355).** Three causes. (1) `PropertiesOff(0xc)` (`karikaload` exe 0x576e40) clears property bits 4
+  and 8: no depth write, `ONE`/`ONE` (`renderstateallitas` exe 0x536f90); the client blended them. (2) The brick pattern
+  was the battle grid cutting the rings: `renderscene` draws `Kocka` (opaque and translucent objects) before `Lines`,
+  and the client drew its depth-writing lines with the opaque meshes; render3d now draws the engine's lines (additive,
+  not glass) after the glass, the colony's alike. (3) The light: `Kocka` path B (exe 0x5281f0) hands `fenyekszamolasa`
+  (0x52f190) the ring's own byte `float2int(255 − 255·t)`, `t = f/30` (young = bright) [obs: probe of 0x52f190's arg 6
+  per ring draw, `run_spwc.py --records` `lights` records: t3000 66, 170 .. 255; t3200 60, 157 .. 0], but its body only
+  runs when `DAT_00dff940` = the mesh's `+0x90` flag (set by `SetFrame`/`SetObjTransparency` when a value changes and
+  by `MoveObj`/`RotateObj`/`AddToScene`, exe 0x453630) and writes the colours of the ONE `karika` mesh all 20 nodes
+  share: the first ring drawn after a battle step lights it for every ring until the next change. `kirak` (0x531460)
+  re-lerps each node's own 8.8 frame (record `+0xdc`) per draw, so sizes are per ring. Hence at t3000 every ring at
+  494's 66 (a dim halo, dim young rings) and at t3200 (the battle over at tick 543, no more steps) every ring at 526's
+  60, the seven frame-30 rings (513-515, ±1.0 at frame 30, 147× frame 0) stacking into the bright 70 px torus whose
+  hole is the texture's (`kekring_bmp.pvr`, 128², RGB565, one planar ring image; UVs 0..1). `frissit2` (0x573b40) runs
+  from `SpaceWarFrissit` (0x56dff0), `karikafrissit` (0x576c40) only while `+0xc8c != −1`. Client:
+  `spacewar_fx::ring_light` (test `shield_rings_share_the_first_rings_light`), `Mesh::push_lerp`, render3d's line phase.
+  `run_screendiff.py spacewar --script shield.json`: view t3000 1.98 → 1.99, t3200 4.65 → 3.82; left: the young rings
+  in the t3200 hole are a little brighter in the client.
+- **Leaving a running battle for another screen (352, 258).** F1..F11 in the battle pass only with `DEBUGX` (`DoKeyboard`
+  0x4db29c, the lock array bypassed); M is held off even then (`KepernyokLetiltva[10]`: the opening zoom sets all of
+  them, its end restores only [0xd], the battle's end the rest); spot 7 (`MOUSE_SelectScreens` 0x555788) needs
+  `DEBUGX` and an unread message. Each makes `SpaceWar_Kilep` (0x562b50) phase 1: `TutorialCheckEvent(0x20)` unless the
+  target is 0xd, 1 or 10, `Starmapvisszaallit` (0x570c10: the change cancelled, the zoom-out), `starmaphovaleptovabb =
+  target`, `SetIdoPause(1, 0)`; the zoom's end asks for the target, phase 2 sends the 0x20 again, keeps the battle
+  (`spacewarbanvanbarkacs` 0xf176ee stays 1, no `SpaceWarVege`) and enters the starmap with the target in 0xf176e0;
+  there `FUN_00594a40` (from `Fake_FRISSITES` 0x4de788, only on the starmap) sees the battle alive and asks for 0xb at
+  once: the target is dropped and the battle re-entered with its opening zoom. Towards Options the zoom-out runs
+  five times faster (`visszaallitasidoszorzo = 5.0`, 800 ms; trace: Esc t500, Options t581); test
+  `the_options_zoom_out_is_five_times_faster`. Client: `Window::leave_battle`, `Live::leave_for_screen`,
+  `resume_parked_battle` (any frame on the starmap with a parked battle), `screen_off` holds every screen but Options
+  while a battle is up or parked.
+- **Options over a parked battle (353).** An F-key (`DEBUGX` only, `OptionsHarcFolyik`): `Options_Kilep` (0x51a100),
+  the target entered, the battle stays parked until the next starmap frame; F11 resumes it at once (`SpaceWar_Belep`
+  0x562680: no redirect when `OldKep == 0xd` and the battle alive). Help from Options takes `OptionsElottiKep` (0xb) as
+  `HelpElottiScreen` (`Help_Belep` 0x4d7060), so Help's Back goes through the starmap to the battle. The end check is
+  skipped while the leaving flag is set, so the exe's battle can't end during the options zoom-out; the client's MP
+  sim can, and then Options still opens (phase 2's 0xd branch runs before the end path, `HarcFolyik = 1`). The
+  tutorial's O goes through the zoom-out like the battle's own O (`ask_options`).
+- **MP (354).** `SetIdoPause` (exe 0x541300) changes nothing in MP (with `+0xbae54c != 4` it clears the pause): the
+  client sends no pause for Options in MP, nor its restore.
+- **Kept (356, 273).** The ~100 starmap ticks of the exe's Belep load on the way back stay skipped (input.md §1.1). The
+  small info box's fader shine runs at libc-`rand()` times (deviations row 273): not re-checked.
+
+### 9.16 The battle planet's light after row 371 (2026-10-25)
+- A change (row 371) moved the starmap planets and clouds onto the engine's own light: the scene root's
+  parallel light (`Init3dStarmap`, 0x808080 along (10, 10, −10)) turned back by the object's rotation, against the
+  object-space normals, over the ambient 0x404040 (`starmap_planet::engine_light`, tested on probed vertex colours).
+  The battle planet kept its camera-turned model (the light and the normals turned by the camera rows), which matched
+  only near the battle's default camera and went dark as the end zoom-out turned the camera towards the starmap pose
+  (shield t3400: a black sphere where the exe's is lit). The battle planet is a node of the same scene
+  (`initgfx`: `AddToScene(…, R·1.16)`, `RotateObj(π/2, π/2, 0)`), so it takes the same light; `add_battle_planet` now
+  uses `engine_light(rot)`. [obs: `run_screendiff.py spacewar --script shield.json` view ~2.0 → ~1.4 on every grab,
+  t3200 3.82 → 2.37, t3400 3.70 → 3.63; fx8 view 3.73..4.78 → 2.58..3.64.] Re-captured both sequences first: 631faf5
+  itself changed nothing in SpaceWar (both identical to the runs before it).
+- Left: at t3400 (mid end zoom-out) the exe's planet is brown, the client's grey, and a moon sits elsewhere and grey
+  (client ~(447, 130)) where the exe's is reddish (~(493, 160)); the young shield rings (frames 0..11.5) in the t3200
+  torus hole show in the client, not in the exe: their hit points match the exe's to 0.1 unit (1011..1037 from the
+  planet centre, the old rings 1065..1108) and the planet's limb matches to the pixel, so it isn't the radius; cause
+  not found (deviations rows 355, 380).
+
+### 9.17 The young shield rings under the planet (2026-10-25)
+Probe (`run_spwc.py --records`, the `kirak` records: every `kirak` (exe 0x531460) and static (`0x530b20`) draw of the
+grabbed frame, with the node's 8.8 frame `+0x64`, flags `+0x68`, `t` `+0x60`, its matrix, and the screen box and depth
+of what it hands the rasteriser `0x4ac580`; `_local/traces/shield4`, `shield5`):
+- The exe draws every ring at its own frame, also when frozen (t3200: frames 0 .. 30, 72 vertices each), and on frames
+  between battle steps (t3001-t3003 identical): per-node geometry, shared light (§9.15). Animated nodes skip the frustum
+  cull (`Kocka` 0x528c3f); both draw paths write depth `1 + k/z` with `k` = `DAT_0091965c` (0.0301276 here) and the
+  same camera z; their x/y constants agree (`dff8e8`·`dff910` = `dff8ec`·`dff910`·`dff918` = `e033e4` = 600).
+- So the young rings are hidden by the depth test: at t3200 ring 543's depth is 0.93431/0.93497, the planet's vertex
+  beside it (static, (430.9, 153.3) virtual) 0.93411, the frame-30 rings 0.9285 .. 0.9294. Back in camera space
+  (`|z| = k/(1 − d)`, x/y through 600/|z| about (320, 250)) the planet's centre is at z −0.8634, that vertex 0.4114 from
+  it and the two 543 rings 0.4110 and 0.4067: just under the surface. In the client the same rings lie 0.6 and 1.6 %
+  above its planet (vertex radius 0.40208 world, rings 0.40442/0.40861 from the centre), so they pass. Relative to the
+  battle's unit positions the exe's planet radius (and with it the camera distance, the limb matching to the pixel) is
+  ~1.7 % larger than the client's; scaling the client's planet alone by 1.02 breaks the whole view (shield view
+  ~1.4 → 4.7), so the gap lies in how the planet's size and the camera distance map into the battle's units (the box
+  normalisation of `b{k}2.xvb`'s level chain, `AddToScene(…, R·1.16)`), not in the rings. Not fixed: settled as an
+  open investigate row (row 389), the effect only the young rings' visibility over the planet (cause corrected in §9.18: the cloud shells).
+
+### 9.18 The planet's cloud shells; row 389's cause (2026-10-25)
+§9.17's "planet 1.7 % larger" was a misreading: the occluding vertex belonged to a shell, not the planet. The probe's
+static draws (`kirak` records, `_local/traces/shield5`) at the frame where the client's ring nodes match the
+exe's camera-space translations to 1e-5: the planet `b{k}2` (528 faces) has node scale 1005.2 battle units and its
+centre at the client's P exactly; the two 375-face draws with `t` 0.7 are `bolygo3.xvb` (one `Sphere01`, 216
+vertices at |v| = 1 under a 0.99876 child matrix, a partial shell; material `ETHCLDBP.bmp` → the remaster's `CLOUD`
+pass), node scales ~1041 and ~1061.5, centres 6.6 units off P (the child translation). `initgfx` (exe 0x575425..
+0x575572) loads it once and adds it twice after the planet: `AddToScene(R·1.02)` / `(R·1.04)` (f64 products, f32),
+`RotateObj(0, π/2, 0)`, `MoveObj(P)`, `SetObjTransparency(0.7)`, the outer one `SetRenderOther(agyukirak)`; then
+`karikaload`. `frissit2` (0x573bff, 0x573c36) turns them each step: `(tick/900, 0, 0)` and `(tick/−1200, π/2, 0)`
+(f32 divisions; nothing hides them). Lit by default; byte 76 alpha-blended, depth write kept — and the remaster's cloud
+shader takes its alpha from the procedural cloud, not the byte. Drawn before the rings, the shells' depth hides every
+ring point under them: the young rings (1029..1037 units from P, below the outer shell) vanish, the old ones
+(1065..1108) stay. The client never drew them. Now: `Planets::add_battle_shell` draws each shell's front faces
+depth-only among the translucent draws (before the rings, in `initgfx`'s order) and then through the cloud pass with
+the planet's engine light. [obs: shield t3200 view 2.37 → 2.25, the torus hole dark as the exe's; other grabs within
+±0.02; fx8 unchanged; test `the_outer_cloud_shell_covers_the_young_shield_rings`.] Row 389 fixed; row 355's residual
+  gone. Left: the client's outer shell spans 1057..1070 units from P, the exe's ~1.5 % less (a shell vertex 1028.4 from
+  the inner node at scale 1041.45: the partial shell's box re-measure, not modelled), so ring 526 (1065.4) may be
+  partly hidden in the client and not in the exe.
+
+### 9.19 Row 380: the end zoom-out at shield t3400 (2026-10-25)
+At t3400 the exe is still on SpaceWar (fade 0.34, `starmaperosseg` e ≈ 0.65), the camera most of the way to the starmap.
+- **The moon and the asteroid were starmap planets that had moved.** During an on-screen SP battle `Fake_FRISSITES` takes
+  its frozen branch (`Game::sp_screen_frozen`), which runs no `FRISSIT_Starmap`, so `StarmapPlanetKering` (the orbits)
+  stands; the client advanced it every tick, so the battle's own planet (#46, "TR") had orbited 3.7 world units off and
+  showed up as a grey "moon" ~(447, 130), the exe's at ~(493, 160). Now `World` keeps the orbit while frozen: both small
+  bodies sit within a few pixels of the exe's.
+- **The planets fade in.** `starmaphalvanyit(e)` gives the starmap planets the transparency `1 − e` [obs: the
+  `planetlights` records, `_local/traces/shield7`: a 266-vertex planet at opacity byte 166 at t3400, e 0.65,
+  the depth kept]; the client drew them opaque. `starmap.rs` now passes the byte `float2int(255·e)` to
+  `Planets::add_planet` (translucent, depth-writing).
+- **Open: the battle planet's tint.** The disc under "TR" is the battle planet (b42, p5) in both; the exe's is rosier,
+  mean (116, 85, 79) against (88, 81, 77), only inside the disc. Not the light (both grey: the node sees ambient 0x404040
+  and parallel 0x808080, the planet's vertex words 0xff8a8a8a), not fog (the vertices' fog byte +0x17 is 0), not the
+  mips (the client uploads p5's own levels; their averages stay (141, 129, 123)). Left for a probe of the texels sampled
+  (the vertices' uv at +0x18 against the client's at the same screen point).
+- **Open: the "marker" near (400, 50) is the cursor.** The script parks the pointer at virtual (320, 40). With the scene
+  scale back at 0.0004 the hover radius is 2500× (as in the opening zoom), so both hover one of the units the end check
+  flew to the planet. The exe's `MousePointerType` (0xDE01B4, `--globals`) is 2 from t3164 (the brackets, `Mouse_Tipus`
+  5); the client's is 3 (the attack reticle): it hovers enemy unit 3 (owner 3, human 6) with own units 5, 6 and the gun
+  still selected and no enemy among them. The exe must see "nothing selected" (`+0x16f8 == 0`) or hover an own unit:
+  left for a probe of the exe's selection count (ELF `+0x16f8`) and hovered index (`+0x2230`) at the end.

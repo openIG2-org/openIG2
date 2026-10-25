@@ -146,6 +146,22 @@ impl Game<'_> {
         for e in events {
             match *e {
                 StoryEvent::NewMessage { id, arg } => self.new_message(id, arg),
+                StoryEvent::HumanMessage { empire, id, arg } => {
+                    let name = self.message_text(MessageText::Player(empire));
+                    let h = empire.clamp(0, 255) as u8;
+                    let mine = h as i32 == self.g(va::EN);
+                    let put = |g: &mut Self| {
+                        g.new_message(id, arg);
+                        if let Some(t) = &name {
+                            g.set_param(1, t);
+                        }
+                    };
+                    if mine {
+                        put(self);
+                    } else if self.own_inboxes().contains(&h) {
+                        self.with_inbox_of(h, put);
+                    }
+                }
                 StoryEvent::Message { id, empire } => {
                     self.new_message(id, 0);
                     let name = self.empire_name(empire.clamp(0, 255) as u8);
@@ -278,8 +294,16 @@ impl Game<'_> {
     /// nothing (each player's inbox in multiplayer is open: re/rules/info-messages.md §7.6).
     pub fn message_order(&mut self, issuer: u8, o: MessageOrder) {
         if issuer as i32 != self.g(va::EN) {
+            // Canonical multiplayer: another human's order runs in its own inbox (multiplayer.md §5.3).
+            if self.own_inboxes().contains(&issuer) {
+                self.with_inbox_of(issuer, |g| g.own_message_order(o));
+            }
             return;
         }
+        self.own_message_order(o);
+    }
+
+    fn own_message_order(&mut self, o: MessageOrder) {
         match o {
             MessageOrder::Enter => self.enter_messages(),
             MessageOrder::Scroll { pointer, row } => {

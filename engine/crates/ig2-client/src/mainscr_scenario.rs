@@ -169,6 +169,10 @@ pub struct ScenarioList {
     pub starting: bool,
     /// The scroll knob is held (`Mouse_Megfogva` on box 0x1c).
     drag: bool,
+    /// The buttons held (bit 0 left, bit 1 right: `Mouse_Gomb` 0xdb4650 = either).
+    held: u8,
+    /// Frames box 0x1c still acts after the drag ended: the release frame keeps `AktIkon` (row 360).
+    latch: u8,
     /// The pointer (virtual pixels) and the hot-spot id under it (`AktIkon2`).
     pub at: [f32; 2],
     /// `DesignKeret1` round the selected row.
@@ -201,6 +205,8 @@ impl ScenarioList {
             sk: Skirmish::new(race),
             starting: false,
             drag: false,
+            held: 0,
+            latch: 0,
             at: [0.0; 2],
             frame: DesignFrame::default(),
         };
@@ -296,9 +302,21 @@ impl ScenarioList {
         b.into_iter().find(|&(_, r)| r[0] <= x && x < r[0] + r[2] && r[1] <= y && y < r[1] + r[3]).map_or(0, |(id, _)| id)
     }
 
-    /// A left press (`MainScr_Main`'s `AktIkon2` cases with `Mouse_Lenyom`).
-    pub fn press(&mut self, at: [f32; 2]) -> Option<Act> {
+    /// The hot-spot that acts (`AktIkon`): box 0x1c while the knob is held, `IG2_gameUpdate` (exe 0x4e0440) skips the
+    /// hot-spot test while `Mouse_Megfogva` is set; else the one under the pointer.
+    pub fn hot(&self) -> u32 {
+        if self.drag || self.latch > 0 { 0x1c } else { self.spot_at(self.at) }
+    }
+
+    /// A press of either button (`MainScr_Main`'s `AktIkon2` cases with `Mouse_Lenyom`); while the knob is held the
+    /// drag keeps the press (no hot-spot test).
+    pub fn press(&mut self, at: [f32; 2], left: bool) -> Option<Act> {
         self.at = at;
+        self.held |= if left { 1 } else { 2 };
+        if self.drag {
+            self.scroll_to(at[1]);
+            return None;
+        }
         if self.closing || self.starting {
             return None;
         }
@@ -361,13 +379,36 @@ impl ScenarioList {
     /// The pointer moved (with the knob held: `Mouse_Megfogva` keeps box 0x1c's case running).
     pub fn hover(&mut self, at: [f32; 2]) {
         self.at = at;
+        self.latch = self.latch.saturating_sub(1);
         if self.drag {
             self.scroll_to(at[1]);
         }
     }
 
-    pub fn release(&mut self) {
+    /// A button's release: `Mouse_Megfogva` clears once no button is held (`Mouse_Gomb == 0`, exe 0x4e0440), so with
+    /// both held the drag outlives the first release.
+    pub fn release(&mut self, left: bool) {
+        self.held &= if left { !1 } else { !2 };
+        if self.held == 0 {
+            self.end_drag();
+        }
+    }
+
+    /// The drag's end: `IG2_gameUpdate` tests the hot-spots (line 51, skipped while `Mouse_Megfogva` is set) before it
+    /// clears the flag (lines 62-64), so the release frame still has `AktIkon` 0x1c (its hover and pointer); the
+    /// window's per-frame [`Self::hover`] counts that frame off. The release moves nothing (input.md §7).
+    fn end_drag(&mut self) {
+        if self.drag {
+            self.latch = 2;
+        }
         self.drag = false;
+    }
+
+    /// A middle press or release: `MainCallBackEventHandler` (exe 0x4e2db0) sends any button but 1 and 3 to the block
+    /// at 0x4e345a, which zeroes the held bytes 0xdb467d..f (and Shift/Ctrl/Alt): the drag ends.
+    pub fn middle(&mut self) {
+        self.held = 0;
+        self.end_drag();
     }
 
     /// Box 0x1c: `ScenarioStart = (int)(((float)Mouse_y − 64)/364·count − 11.5)`, clamped to the list.
@@ -381,6 +422,8 @@ impl ScenarioList {
             s = n - ROWS as i32;
         }
         self.first = s.max(0) as usize;
+        // `DesignKeretAzonnalMorph = 1`: the row frame follows the scroll without a morph.
+        self.frame.at_once();
     }
 
     /// Cancel (box 0x16) or Esc (`MainScr_ESCPressedWhenMultiplayerselect` case 1): the panel fades out; the caller
@@ -517,6 +560,16 @@ impl ScenarioList {
         self.draw_texts(f, d, pics, tables);
     }
 
+    /// The selected row's `DesignKeret1(0x1b5, 0x43 + 0xf·(Sel − Start), 0xa5, 0xf)` place, asked for while the row
+    /// is in view (false: not drawn).
+    pub fn ask_frame(&mut self) -> bool {
+        let on = self.selected >= self.first && self.selected < self.first + ROWS;
+        if on {
+            self.frame.ask([0x1b5, 0x43 + 0xf * (self.selected - self.first) as i32, 0xa5, 0xf]);
+        }
+        on
+    }
+
     /// `MainScrGfx2D_2`'s list part (spec §7.2).
     fn draw_texts(&mut self, f: &mut Frame, d: &Draw, pics: &Pictures, tables: &Tables) {
         let v = &d.v;
@@ -524,7 +577,7 @@ impl ScenarioList {
         // (int)(KepNyitottsag·Nyitottsag/100.0)` for the entry's (exe 0x4fc8d0).
         let fade = self.open.trunc();
         let pfade = (self.pic as f64 * self.open as f64 / 100.0) as i32 as f32;
-        let hover = self.spot_at(self.at);
+        let hover = self.hot();
         let text = |f: &mut Frame, s: &[u8], x: i32, y: i32, len: usize, size: usize, a: Align, c: usize, m: f32| d.font.text(f, v, s, x as f32, y as f32, len, size, a, d.col(c, m), None);
         let colon = |mut s: Vec<u8>| {
             s.push(b':');
@@ -554,8 +607,7 @@ impl ScenarioList {
             let c = if k == self.selected { 2 } else if en.skirmish() { 0x25 } else { 0x22 };
             text(f, &en.name, 0x1b9, 0x46 + 0xf * (k - self.first) as i32, en.name.len(), 2, Align::Left, c, fade);
         }
-        if self.selected >= self.first && self.selected < self.first + ROWS {
-            self.frame.ask([0x1b5, 0x43 + 0xf * (self.selected - self.first) as i32, 0xa5, 0xf]);
+        if self.ask_frame() {
             self.frame.draw(f, d.white, v, d.col(0x22, fade));
         }
         let Some(e) = e else { return };
@@ -707,7 +759,7 @@ mod tests {
         }
         assert_eq!((s.open, s.pic), (100.0, 100.0));
         // Row 2 (y 0x41 + 2·15).
-        assert_eq!(s.press([500.0, 0x41 as f32 + 30.0]), None);
+        assert_eq!(s.press([500.0, 0x41 as f32 + 30.0], true), None);
         assert_eq!((s.selected, s.shown, s.pic_cel), (2, 0, 0.0));
         for _ in 0..50 {
             s.tick(false);
@@ -723,14 +775,44 @@ mod tests {
             s.tick(false);
         }
         assert_eq!(s.sk, Skirmish::new(1));
-        assert_eq!(s.press([40.0, 409.0]), Some(Act::Click));
+        assert_eq!(s.press([40.0, 409.0], true), Some(Act::Click));
         assert_eq!(s.sk.race, 1, "race 1 can't go lower");
-        assert_eq!(s.press([77.0, 409.0]), Some(Act::Click));
+        assert_eq!(s.press([77.0, 409.0], true), Some(Act::Click));
         assert_eq!(s.sk.race, 2);
-        s.press([620.0, 427.0]);
+        s.press([620.0, 427.0], true);
         assert_eq!(s.first, 17);
-        s.release();
-        s.press([620.0, 64.0]);
+        s.release(true);
+        s.press([620.0, 64.0], true);
         assert_eq!(s.first, 0);
+    }
+
+    /// The knob drag (rows 344-346): exclusive while held (a press elsewhere scrolls, `AktIkon` stays 0x1c), it ends
+    /// only once neither button is held, and a middle press drops both.
+    #[test]
+    fn knob_drag_holds() {
+        let mut s = list(40);
+        for _ in 0..100 {
+            s.tick(false);
+        }
+        s.press([620.0, 64.0], true);
+        assert_eq!(s.hot(), 0x1c);
+        // The right button over the race arrow: the drag keeps it, nothing steps.
+        assert_eq!(s.press([77.0, 409.0], false), None);
+        assert_eq!(s.sk.race, 1);
+        s.release(true);
+        s.hover([300.0, 427.0]);
+        assert_eq!((s.first, s.hot()), (17, 0x1c), "right still held");
+        s.release(false);
+        // The release frame keeps 0x1c (row 360), the next frame tests the spots again.
+        s.hover([300.0, 427.0]);
+        assert_eq!((s.first, s.hot()), (17, 0x1c));
+        s.hover([300.0, 427.0]);
+        assert_eq!(s.hot(), 0);
+        s.press([620.0, 64.0], true);
+        s.middle();
+        s.hover([620.0, 427.0]);
+        s.hover([620.0, 427.0]);
+        assert_eq!(s.first, 0, "a middle press ends the drag");
+        s.release(true);
     }
 }

@@ -701,6 +701,9 @@ ours (#6). Sounds of the run: re/screens/sound.md §4.
 
 `run_screendiff.py main --script tools/trace/scripts/mainscr.json` (the exe booted to the menu with `run_screen.py --boot`, no save). Frame mean 2.6 / 4.0 / 5.5 at t 5 / 60 / 120 (pass), 6.6–8.0 from t 180, 10.0 at t 360 (the fly-out). Rings, labels and hover match; the leftovers are deviations.md rows 17–20 (row 3 updated). Sounds: no PlaySound-family call on any ring action; the scene's sounds go through `MainPlaySound` (mainscr.md §13).
 
+## 2026-10-25, main menu description lines (row 291; mainscr.md §13.4)
+`main --script tools/trace/scripts/mainscr-desc.json` (rows 2/5/1 selected, grabs t 790-1500): description lines match the exe at t 1000/1250/1500 (x 114 for k 0..4, 42 from k 5, y 0x15a+0xd k, count); static frames 2.2-3.6; fade grabs t 900/1150/1400 9.0-12.8 (picture fade phase). Skirmish row's selected frame at t 790 differs (row 362).
+
 ## 2026-10-22, the SpaceWar screen at rest (`spacewar-screen`, re/screens/spacewar.md §9)
 `run_screendiff.py <install> S.sav spacewar:<grab>.json` (grabs from `run_spwc.py --grab-ticks`; two battles, two moments each, 800 x 600; regions topbar, view, console, info_box, radar, weapons; `_local/screendiff/spacewar/`). Best-offset means:
 
@@ -994,3 +997,78 @@ frame is 2.78. Fresh exe captures with the dump would settle the phase on all ni
 ## 2026-10-25, SpaceWar FX7 leftovers
 - fx8b sequence (`_local/screendiff/spacewar-debris3`, `--exe-seq _local/traces-fx8b/fx8`): frame 3.36-4.18 (was 3.45-4.20), view 3.73-4.79 (3.78-4.82), weapons 2.48-3.47 (2.60-4.41), topbar 2.56, console 2.80-3.17, radar 5.10-5.30, info_box as before (t1800/t1900 fader shine).
 - `spacewar_info` (1920x1080, `_local/screendiff/spacewar-info2`): frame 2.10-2.86 (2.26-2.94), view 2.21-2.34, weapons 3.99 from t500 (5.1), info box 3.0-3.5 (t700 15.5 = the exe's box shine).
+
+## 2026-10-25, the open render rows
+- 339: the faint sphere in the transfer panel's second cell is a starmap planet behind the translucent panel (hiding the transfer models leaves it). Lit mean (34,47,57) vs exe (32,47,57); size/position differ with the starmap camera behind the panel (fleet markers ~13 px). Settled (`_local/screendiff/lanef/transfer2-0.png`).
+- 241: wirekirak (ELF 0x6083f0) draws every face's edges (no culling, far side ambient-lit) as aliased 1 px GL lines in the vertex's lit colour, alpha = opacity (property 8). Trade opening t60: line pixels 5614 vs exe 5574, median (4,51,59) vs (4,52,59) (was (1,15,18), 1304 px); a small pose-phase offset remains (t60/t100 model 1.98 -> 3.33, 0.83 -> 0.95).
+- 260: trade panels are glass at 0.35 with the depth write kept. Overlay still (`--via-starmap 120`): frame 5.84 -> 2.16, ships 14.48 -> 2.15, buy_line 18.67 -> 1.40, panels 9.72 -> 1.92; ticker 15.3 is the scrolling text's phase.
+- 261: the dark grid is the screen's own wire sphere (camera inside, far faces lit by ambient only), drawn GammaAlpha. Design grid dips -6.5/-13.7/-19.8/-11.7/-8.0/-5.3 vs exe -5.5/-13.7/-21.6/-13.6/-6.8/-5.4 (rows y 142..438); trade's line at y 268 in both; design frame 3.62 -> 3.36, diplomacy 8.54 -> 8.66 (wire-animation phase).
+- 262: radar discs and nebula within ~1-2 levels (trade (700,500,80,60) exe (11.0,20.1,32.6) client (10.1,19.4,31.7); `--clouds` 0..100 moves it < 2). Design's bottom-right excess ((7,31,50) vs (7,22,36)) is the screen's random fader flash.
+- 265: matching (overlay-background.md §4). 277: `research --anim-mouse 300,200` pointer pixels mean abs diff 52.7 at phase 0 -> 15.0 at the exe's 1226.
+- 275 (fixed): environment mapping (render.md §2.5) and the building particles (colony.md §3.1). `grwar:17` (`quick-1.sav`, exe grab `lanef/grwar17-exe.png`, state `fx17b3/grwar17-state.sav`): frame 13.44 -> 13.23, view 8.16 -> 7.62; the hospital (blue glass, red cross), the solar plant's blades and orb glow match. Left in the view: construction cut and scaffolding (row 366), snow (367), smoke (368).
+
+## 2026-10-25, colony construction, weather, smoke
+- 366 (fixed): the cut at the built height + scaffolding; `grwar:17` (`quick-1.sav`, exe grab `lanef/grwar17-exe.png`, state `fx17b3/grwar17-state.sav`): view 7.62 -> 6.41, frame 13.23 -> 12.96; radar 9.02 -> 9.32 (the radar picture is drawn from the terrain with the new PVR mips; client-guessed [unk]). Scaffold geometry exact against the probe (test `quick1_planet17_construction_matches_the_exe`).
+- 367 (fixed): snow on `grwar:17` matches in look; rain on `colony:6` (`scripts/colony-weather.json` through `run_screen.py --script`: still exe grabs come back white) matches in direction and length, the exe streaks look a little fainter/denser (row 384).
+- 368 (fixed): `colony:42` with the camera on the Park: the Park fire and the Élelmiszergyár's chimney smoke match in kind; the exe's fire core is brighter (row 385).
+- 370: closed, no difference (nothing references `valami.xvb`).
+- PVR mips: the client uses each PVR's own levels on all screens. Same-binary sweep against e6135bd: research labs 3.25 -> 0.65, labs_right 3.14 -> 0.48, colony:42 view 9.00 -> 8.85; slightly worse: research wheels 5.72 -> 6.06 (now differs), info triangle 6.27 -> 6.98, colony radar +0.4 (the radar picture is client-guessed), spy roster ring +0.3; starmap family unchanged.
+- Noticed, open (rows 381-383, 386, 387): scaffold collapse, finished-building blink, bottom height off by 0.045, sand storm, and the trees (`fak*`) near-black in the client where the exe's are green with shadows (with and without the mip change).
+
+## 2026-10-25, the starmap screens' baseline "bg-gl"
+The `bg/` exe captures (PrintWindow) predate the faders' dump (`--faders`), so the client drew its own `fifo`/`starf`
+phase there (transfer left_panel 10.18 in the full sweep), and PrintWindow takes the OS pointer and its tooltip
+(scroll_bar ~20) and grabs pure white while the display is off. New: `run_screen.py`/`run_screendiff.py --gl-grab`
+reads the still back in the game at the next `SwapBuffers` (as `--script`'s grabs). Fresh captures of quick-1.sav,
+`run_screendiff.py <install> quick-1.sav <screen> --gl-grab --out _local/screendiff/bg-gl` (main 2b62986 client), the
+state's `.ui.json` carrying the faders' dump. **Sweeps use `bg-gl/` for these nine screens** (`--exe-png
+_local/screendiff/bg-gl/<screen>-exe.png --exe-state _local/screendiff/bg-gl/<screen>-state.sav`).
+
+| Screen | Region | `bg/` (48f35af table) | `bg-gl` |
+|---|---|---|---|
+| starmap | frame / view | 2.67 / 2.74 | 2.59 / 2.66 |
+| planets | frame / menu | 3.09 / 0.86 | 2.39 / 0.84 |
+| rop | frame / icons | 2.57 / 1.71 | 2.53 / 1.77 |
+| planetinfo | frame / panel / planet / exit | 9.05 / 2.71 / 22.12 / 2.44 | 1.84 / 0.68 / 2.63 / 0.88 (row 371; was 4.41 / 10.45) |
+| tax / autobuild / priority | frame | 9.27 / 9.35 / 9.27 | 1.82 / 2.08 / 2.04 (row 371; menus 0.47 / 1.16 / 2.19) |
+| transfer | frame / left / right / scroll_bar / exit | 5.87 / 10.18 / 3.81 / 20.23 / 2.50 | 2.63 / 2.73 / 2.72 / 2.46 / 1.06 |
+| production | frame / name_plate / left / right / exit | 3.04 / 2.72 / 3.63 / 3.77 / 3.32 | 2.41 / 2.70 / 2.79 / 1.62 / 1.73 |
+
+Every region matches (planetinfo's planet since row 371; before it: the same globe at the same surface phase (luma 78.6 / 78.8, no shift helps); the rest is its limb (the exe's bluish atmosphere glow and soft falloff, the client's disc ~3-7 px larger up-left), also behind tax/autobuild/priority (screendiff-review)).
+
+## 2026-10-25, main menu rows 360-362
+- `main --script mainscr-desc.json --exe-seq`: t 790 rings_top 3.33 -> 2.70, frame 3.58 -> 3.25 (the selected-row frame now on the Skirmish row, row 362); t 1000-1500 unchanged (2.2-2.6). Row 360 is input only (unit test `knob_drag_holds`).
+- Sweep: client 277 + screendiff 3 tests pass, clippy clean. Observed in the same sweep, cause unknown (those paths do not use the changed code): options t500/t560 slots 18-21 and the research ball 11.06 are above their recorded numbers.
+
+## 2026-10-25, the long info planet's light
+The planets and clouds now take the scene root's parallel light (10, 10, −10) in the object's space instead of a light
+along the eye; on the `bg-gl` captures: planetinfo frame 4.41 → 1.84, planet 10.45 → 2.63 (match); tax / autobuild /
+priority frame 4.40 / 4.58 / 4.54 → 1.82 / 2.08 / 2.04; starmap, planets, rop, transfer, production unchanged. The A/B
+on the way (`--exe-arg=--hide --exe-arg=…`, the client's experiment switch removed): planet alone 9.76, clouds alone
+6.26 before; the LOD level isn't it (level 3 is best for both); a light at the eye point gave the planet 6.86.
+
+## 2026-10-25, colony leftovers
+- Rows 381 (scaffold collapse) and 382 (blink) are not compared on a capture (they need a building finishing / story 806's strike); unit tests only.
+- 383: `getbottomvertex` measures the finest LOD level: grwar:17 slot 18 -15.129608 = the exe (was -15.1746). 387: the trees and the Park lit flat (190 a channel): colony:42 Park crop 21.5 -> 17.5, view 12.78 -> 11.52; grwar:17 view 6.52 (what is left is the snow noise).
+- 384 rain: same lines as the exe, the exe has ~2x the streak pixels (GL lines vs quads, keep). 385 Park fire: within the particles' randomness. 386 sand storm: dead code in the exe.
+- Open: 390 (LOD by distance), 391 (the Park's shadows), 392 (the trees' tone).
+
+## 2026-10-25, colony rows 390-392
+- 390: grwar:17 of quick-1.sav view 6.52 -> 6.41, frame 12.91 -> 12.84; probe `lod_colony.js`: all 14 chained buildings' sizes match the exe (slot 18 kind 26 level 1, slot 16 kind 53 level 0).
+- 391: colony:42 Park view (camera on the Park) 11.52 -> 10.95, park region 10.74 -> 10.22; the trees' diagonal shadows now fall on the paving.
+- 392: settled, no difference: tree vertices 190 in both; tree pixel means exe (56.0, 62.3, 32.2) vs client (55.5, 61.2, 32.7).
+
+## 2026-10-25, design row 114
+- 114 settled, no client change: probe `design_lights.js` shows the marked model's lights equal the client's; t355 colour means marked exe (74.8, 47.5, 30.7) vs client (78.3, 47.5, 31.8), unmarked (54.3, 41.9, 26.9) vs (57.4, 43.5, 28.3) (`design --script design-pods.json`; the old gap 72,52,29 vs 54,42,28 is gone). Kept: the exe's first marked frame tints only the meshes drawn after the hit test (t355 drum still beige, t372 all red).
+- Noticed: at t372 the exe still shows the marked model while the client's has already flown into the pod; new row 393.
+
+## 2026-10-25, rows batch (rows 19, 124, 131, 153, 267; colony.md §11.3, §11.9, diplomacy.md §3.1, research.md §5.4)
+- 153: `mainscr-desc.json` frame box (540,80)-(760,240) mean abs diff t790/1000/1250/1500 5.17/4.15/4.86/4.72 -> 4.00/3.97/4.08/4.51 (`ROW_EDGE`).
+- 124: `diplomacy-fx9.json` heads t300 left/right 6.88/5.61 -> 6.03/4.79, t399 7.13/6.59 -> 6.28/5.73, t403 6.82/6.49 -> 6.01/5.68, t410 6.27/5.77 -> 5.55/5.04; name improved; nothing worse.
+- 267: new `colony-sweep-war.json` on `grwar:17`: the exe clicks once at t31, the client now once at t50 (row 396). 131: unit test only (decompile constants). 19: no code change.
+- Sweep: client 292 + screendiff 3 tests pass, clippy clean; colony:42, trade-pods, research, design-edit, options at or better than recorded; grwar:17 texts 4.7 -> 5.17 (still a match), mainscr-race t1420 14.3 -> 16.0 (random galaxy; not reachable from these changes).
+
+## 2026-10-25, rows 393/399/400
+- 393 fixed (`release_late`): design-pods.json same run, hull t372 1.56 → 0.94, t380 5.32 → 0.86.
+- 399 settled: bisect bbd3997 … 260a647 against the stored colony42 capture, frame 8.30 → 8.23 (better); radar region only 5.27 → 5.64 at d8acbd1 (mips); render sizes 32..200 px didn't recover it (best 5.47 at 100); kept.
+- 400 settled, no regression: info race_names 7.25 → 7.51 at d8acbd1 against a stale exe shot (other race head, no texts); on the shared head (Godan) 6.63 → 6.54; 2D pedestals pixel-identical. The info capture needs refreshing (a fresh `--gl-grab` came back near-black, luma 6.5).

@@ -36,6 +36,7 @@ ap.add_argument("--seconds", type=float, default=400)
 ap.add_argument("--scenario", default="scenario/quick.scn")
 ap.add_argument("--stage", action="store_true", help="stage trade purchases and deliveries before save 0")
 ap.add_argument("--randlog", action="store_true", help="report the callers of libc rand() per tick ('rands')")
+ap.add_argument("--watch-addr", default=None, help="VA[:N]: after save 0 log the first N writes to an exe global ({k: write}, pc and callers)")
 ap.add_argument("--warmup", type=int, default=0, help="run N ticks after the load before save 0 (a campaign's opening episode starts ~800 ticks in)")
 ap.add_argument("--story-countdown", type=int, default=100, help="--stage: StoryAdat+0xc4 (story merchant) in Ido")
 ap.add_argument("--traders", action="store_true",
@@ -154,7 +155,9 @@ script.post({"type": "config", "payload": {"scenario": a.scenario, "slot": a.slo
                                            "research": a.research, "researchEvery": a.research_every,
                                            "info": a.info, "infoEvery": a.info_every,
                                            "design": a.design, "designEvery": a.design_every,
-                                           "answers": a.answers, "answersEvery": a.answers_every}})
+                                           "answers": a.answers, "answersEvery": a.answers_every,
+                                           "watchAddr": int(a.watch_addr.split(":")[0], 16) if a.watch_addr else None,
+                                           "watchN": int(a.watch_addr.split(":")[1]) if a.watch_addr and ":" in a.watch_addr else 40}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
 t0 = time.time()

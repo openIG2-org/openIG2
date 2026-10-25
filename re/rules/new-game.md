@@ -383,11 +383,26 @@ story call site (game.rs, game/battles.rs, game/realtime.rs, game/message_orders
   (`run_replay.py --warmup 685 --ticks 40`: story 401's first opening episode starts at tick 10, pirate base planet 111
   with buildings and garrison, pirate fleet "Khan kalóz" attacking), both byte-exact tick by tick (chunks and the
   compared unsaved globals, incl. the story statics and CTF). All earlier save replays stay byte-exact.
-- **Not modelled** (still only forwarded as `GameEvent::Story`; deviations 230-232): the GameInfo lines
-  (`st_AddGameInfo`/`RemoveGameInfo`, undo 4; the list at 0xE3E3A0 is saved and passes through as loaded);
-  `SpyOrder` (0x49) and `SendStorySpecial` (0x66) lockstep messages (a driver must deliver them); `SaveStoryline`
-  (registry); `HoldGroundWar`'s pause and the 0xF261F8 hold; Earthquake/Anim/notices (UI); `JoinBattle` writes
-  `spFlottak` (0xBAA1C0) but the battle code doesn't read it back; undo 7 `st_RemoveTerv` (no ported script registers it).
+- **Now modelled** (2026-10-25, rows 230/232, b9efb9b): the GameInfo list (§2.3), the `JoinBattle` read-back in `Game::space_war`
+  (exe 0x5a77f2, 0x5a7b19, `SpaceWar_NewBattle` 0x563700), and `LoadSaveVariables`' last reads (exe 0x545a1c: 0xB77288 = st_vGet(4003),
+  0xB7728C = st_vGet(4002)); `replay-scen-swarm-x16` (story 371's countdown, 14 adds / 13 removes) is byte-exact.
+- **Carried out by the client** (2026-10-25, deviation 231; `ig2-client::world::StoryUi`, single player): `SaveStoryline` →
+  `SaveRegistrySetting(StoryRegString(ct), line)` (exe 0x51b860, 0x5c5540: key `Fable_<ct>`, the decimal index; ours writes
+  `options.dat` at once, the exe at the next `SaveGlobalRegistrySettings`), read back by the next campaign's `InitStory`
+  (`NewCampaign::last_storyline`); `Earthquake(p)` (`st_Foldrenges`) → the colony screen of `p` and `ShowColony`'s jolt (exe 0x49f130:
+  `rand() % 31 − 15` on the pivot's x then y after the clamp, while `Colony_foldrenges` is the shown planet; 10000 ms from the first
+  colony draw, `FRISSIT_Story`); `HoldGroundWar` → the colony screen and `SetIdoPause(1, 0)` (exe 0x541300; ignored in MP). The
+  0xF261F8 hold skips one `WF::Refresh` of the shown planet only when its colony screen is already up (`FRISSIT_Grwar` exe
+  0x4747c0, cleared every call): not ported (the strategic sim has no per-screen refresh). The 0x49/0x66 messages:
+  `multiplayer.md` §5.5. Undo 7 `st_RemoveTerv` is unreachable (no `st_Ozonviz(7, …)` among the ELF's 22 calls).
+- **Starmap texts** (2026-10-25): `StoryEvent::Notice` → `AddSzoveg(text, colour)` (exe 0x591360, the chat's ring) on the
+  machine whose `EN` the exe tests (`ig2-client::world::notice_line`): Winner colour 7 in 1001 (push 0x5ee7db), 2 in 1002/1003;
+  "You cannot colonize …!", the flag lines, "TOUCHDOWN!!!" colour 2 (0x5efcc1, 0x5eff5b, 0x5f00ea, 0x5f0241, 0x5f029e, 0x5f0808,
+  0x5f08ff); `_s(5, 8560)` colour 1 (0x5de609, 0x5e318d). In canonical MP the sim raises them for every empire concerned and
+  each client picks its own.
+- **The 0xF261F8 hold** has no effect here: `FRISSIT_Grwar` (exe 0x4747c0) skips only the shown planet's `WF::Refresh` (after
+  `WF::MI`) in that one call, and our strategic sim runs neither for the shown colony in single player (`Game::grwar`;
+  `grwar_mp` is the exe's MP branch, which never tests it). It comes with an SP real-time ground tick, if one is ported.
 
 ## 16. Tutorial start (done 2026-10-24)
 - **Recording**: `tools/trace/run_newgame.py --tutorial N` (newgame.js calls the exe's `TutorialSetCampaignGameOptions(n)`,

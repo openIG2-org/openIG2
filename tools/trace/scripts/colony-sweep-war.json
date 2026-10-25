@@ -1,0 +1,17 @@
+{
+ "screen": "colony",
+ "note": "Row 267 (run as grwar:17 on quick-1.sav: the human lands on planet 17, every unit placed and selected): a left press on the view, then the pointer dragged across the middle of the field (past the 15-pixel box threshold) over the defender's buildings and the landed units, and the release; the box selects the units inside it, the passed buildings click once and stay unselected. Times are UI ticks.",
+ "events": [
+  {"t": 2, "mouse": [120, 200]},
+  {"t": 10, "down": 1, "at": [120, 200]},
+  {"t": 14, "mouse": [130, 205]},
+  {"t": 20, "mouse": [220, 250]},
+  {"t": 30, "mouse": [320, 290]},
+  {"t": 40, "mouse": [420, 330]},
+  {"t": 50, "mouse": [520, 370]},
+  {"t": 60, "up": 1, "at": [520, 370]},
+  {"t": 61, "mouse": [600, 120]}
+ ],
+ "grabs": [8, 16, 25, 35, 45, 55, 65, 80],
+ "tail": 10
+}

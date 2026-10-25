@@ -93,6 +93,7 @@ So the original freezes the **picture**, not the game: the date runs on behind r
 - `--snapshot --backdrop` draws the save's starmap as the picture (0x34 without HUD; 0x35 with it for messages and
   options) at the held frame's grey; `run_screendiff.py --via-starmap F` passes it with `run_screen.py
   --via-starmap F` (the exe opens the starmap first, the screen F frames later).
+- The running client already takes the last presented frame for messages/options/help from screens 4-9 (`backdrop_switch`); only `--snapshot --backdrop` stages a starmap exit, the exe run's own path (deviations 265, matching, 2026-10-25).
 
 ## 5. Captures
 - `run_screen.py quick-1.sav --kep 2 --run --script scripts/overlay-bg.json` (`_local/traces/overlay-bg/run1-*`,

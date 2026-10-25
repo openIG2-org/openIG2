@@ -23,6 +23,7 @@ the 2D parts it owns (§10), the ground war's input and 2D parts (§11). The res
 - Per drawn frame: `GFX_Colony` 0x4da050 (HUD faders, `ColonyMouse`, the 2D hooks) → `ShowColony` 0x4ced80 (exe
   0x49f130: visibility, building states, camera, `Update3D(…, 1)` → `renderscene(1)`), then a second
   `Update3D` into the radar panel's viewport (`HatarX1..` = 0x12..0xad × 0x24..0xa7, centre (95, 100)).
+- The client's radar picture is its own terrain-from-above render (how the GOG build fills the radar's kep 1 is unknown, U27); the PVR mip levels (d8acbd1) worsened that region 5.27 → 5.64 against the exe's blurrier picture; kept faithful (deviations 399).
 - `Colony_Kilep` 0x4d9b90 writes the camera back into the battlefield (`WF+0x2a8..+0x2b8`, exe `+0x1a8..+0x1b8`).
 - Per sim tick nothing of the view changes; the battlefield's units move in `FRISSIT_Grwar` (re/rules/ground-combat.md
   §11) and buildings in the colony economy.
@@ -73,8 +74,8 @@ by 5 to 30, `Colony_Move`); zoom/pitch tweens `0x998244..` (×0.25 per frame for
 `AddToScene(…, mainxvb1, 1.0)`, `ScaleObj(4, 4, 4)`, `RotateObj(0, π/2, 0)`, `MoveObj(Terepek+0x8c, 0, 0)` (the map's
 base height `200 − b`), then `TEREPMAXX1` = the largest vertex x (`dumpvertexlist`), `ScaleObj(k, k, k)` with
 `k = 4096 / TEREPMAXX1` and the rotation again: the terrain spans ±4096 (`TEREPMIN/MAXX/Y`; asserted equal to
-`TEREPXSIZE/YSIZE` = 8192). Child names: `Group*` (`FixLandscape`), `tt*` and `fak*` (trees: alpha-tested, no
-lighting 0x100/0x200), `gejzir*`, `tavak*` (lakes: surfaces 1 and 5 swap in the dome's texture at transparency 0.28,
+`TEREPXSIZE/YSIZE` = 8192). Child names: `Group*` (`FixLandscape`), `tt*` and `fak*` (trees: alpha-tested, flat light:
+§3.1), `gejzir*`, `tavak*` (lakes: surfaces 1 and 5 swap in the dome's texture at transparency 0.28,
 others 0.4), `lava`, `VIZ` (water, transparency 0.63).
 
 **Verified** (`ig2-client --colony-check <map> <surface>`): with this transform the terrain's vertices sit on the
@@ -115,6 +116,24 @@ The background: `melyikhatter = WF+0xa04` (exe `+0x8d4`, `Field::background`, `I
 `MoveObj(−3000, 0, 0)`, unlit and unfogged. Weather `WF+0xa00` (exe `+0x8d0`): 1 snow, 2 rain with lightning
 (`OptionsKellIdojaras`).
 
+### 2.6 Weather (`InitWeather` exe 0x483b00; `ig2-client::colony_weather`)
+Set once per colony entry from `WF+0x8d0` (exe; 1 snow, 2 rain) and `OptionsKellIdojaras`: `InitSnow` 0x4837f0 / `InitRain`
+0x4836e0 fill 1000 particles in a volume of ±`TEREPXSIZE`/10 (819.2) around the camera focus (`ColonyXStart`, −`ColonyYStart`),
+height 0 down to −819 (first coordinate; not terrain-following). Stepped per drawn frame (`ShowColony`), not per UI tick.
+- Snow (`UpdateSnow` 0x4a6f80): `s = sin(ColonyCounter/600)` (f64), count `n = 500 + sgn(s)·(int)(500·⁴√|s|)` (0..1000; only
+  the first `n` move and draw); per step `p += v`, v = (10, −3..2, −3..2); past 0 the flake respawns at −819.2 with a new
+  y/z/size (`(r%50/30 + 1)·2`) and velocity. Drawn as `hopehely.bmp` quads (`Particle`, header 100.0 not 99.0: additive,
+  depth test, no write, no fog), grey 126 (colour `0x80ffffff`).
+- Rain (`UpdateRain` 0x4a6d30, `ShowRain` 0x4a34a0 from `ColonyGfx2D_2`): velocity (50, 17, 0), respawn as snow; per drop a
+  1-px `line3d2` from P to P + (25, 8.5, 0) (half the step), alpha 0x10 → 0x80 along it, colour (150, 150, 192) [obs: the
+  word `0xc09696` is BGR], blended `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`, depth test without write. Thunder: audio.md.
+- Random draws are stand-ins (row 369 style). The sand storm (`UpdateHomokVihar` 0x4a6b50) is dead code: `HANYHOMOKVIHAR`
+  (exe 0x9b2908) is BSS and never written, every loop runs 0 times (row 386).
+Verified by capture only: `grwar:17` (snow) and `colony:6` (rain, `tools/trace/scripts/colony-weather.json`, run through
+`run_screen.py --script` because the still exe grabs come back white): `probes/rain.js` shows the exe draws 1000 `line3d2` lines a
+frame like the client, same length and direction (words 0x80c09696 / 0x10c09696, brightest at the lower end, so the client
+puts 0x80 there); the exe has ~2× the streak pixels (GL line rasterization vs the client's thin quads; row 384, keep).
+
 ## 3. Buildings and roads
 
 ### 3.1 Buildings (`Init3dColony` building loop)
@@ -122,16 +141,42 @@ For each used slot `Epuletek[p][k]` (32 bytes; kind `+0`, grid position `+0xc/+0
 `+0x19`): the model `Building[kind − 1]` (exe 0x8F1F28, stride 0x6c: name `+0`, preview name `+0x28`, scale `+0x50`,
 preview scale `+0x54`, footprint `+0x58/+0x5c`; `ig2-rules::building_models`) by `LoadMaxLevelBox` (highest LOD,
 `OptionsBuildingRes`), `AddToSceneGenesis(model, scale/1024/1000)`, `RotateObj(0, π/2, 0)`; children `_A_` get
-transparency 0.6, `_B_` the dome's texture (environment-mapped, 0xc000), `_C_` both. Position:
-`Grid2Real(x + (w odd)·0.5, y − (h odd)·0.5)` and height `getbottomvertex` 0x47c750 − 1: over the model's lowest
-vertices (within 0.5 % of its height range) the largest `GetHeight(under the vertex) − vertex h` — the model is
-lowered until every bottom corner touches the ground; the result is stored in the slot's `+0x14`. Then
+transparency 0.6, `_B_` the dome's texture (environment-mapped, 0xc000; `render.md` §2.5), `_C_` both. Position:
+`Grid2Real(x + (w odd)·0.5, y − (h odd)·0.5)` and height `getbottomvertex` (exe 0x4a89a0, ELF 0x47c750; the exe's 0x47c750 is
+`KiszamolErtek`) − 1: `dumpvertexlist` walks `Kocka2` at depth zero, so the LOD chain's finest level is measured (kind 26
+`kemv0` → `kemv2`); min/max seeded with 0; over the vertices with `(h − min)/(max − min)` > 0.995 (strict) the largest
+`GetHeight(under the vertex) − vertex h` — the model is lowered until every bottom corner touches the ground. `Init3dColony`
+stores the raw result in the slot's `+0x14` and moves the model to result − 1; `Build3dBuilding` (exe 0x45f640; buildings
+placed in play) stores result − 1. So `+0x14` = the placement + 1 for screen-entry buildings (row 383; the cut, scaffolds and
+the solar plant's particles use it). Then
 `Allocate(x, y, w, h, true)` (§3.2), lights and effects (`SetLangPlaces`, `PlaceVillam`, `AddBuildingSpecEffect`).
 
 `ShowColony` per frame: finished buildings are opaque, except flag `+0x19` bit 4 (`sin(ColonyCounter/15 + k)·0.25 +
-0.26` transparency: blinking); unfinished ones are cut at `1 − work_left/(EpuletekLeiro[kind]+4 · 50)` (÷1.5 for
-race 4) of their height (`SetEpuletVagas`) and get scaffolding (`EpuletAllvanyok::AddAllvanyok`, 10 steps). The client
-draws unfinished buildings see-through instead [deviation, cosmetic].
+0.26` transparency, k the 1-based slot: the blink, §3.4); unfinished ones are cut at `1 − work_left/(EpuletekLeiro[kind]+4 · 50)` (÷1.5 for
+race 4) of their height (`SetEpuletVagas`) and get scaffolding (`EpuletAllvanyok::AddAllvanyok`, 10 steps), both opaque:
+§3.4 (rows 366, 381, 382).
+
+`Init3dColony` also lights the trees: on every `fak*` node (case-insensitive substring) it sets 0x10000, 0x200, 0x100, 0x20 and
+clears 0x1; with 1 clear and 0x100 set `fenyekszamolasa` (exe 0x52f190) lights flat: the ambient sum + each parallel light's
+colour·`shade[1024]`(205)>>8 = 190 a channel on the colony, the same for every vertex and angle (render.md §2.3; client
+`FLAT_LIGHT`). The Park (kind 10) gets the same on its whole model. colony:42 Park crop 21.5 → 17.5, view 12.78 → 11.52 (row
+387). Verified 190 by probe (`probes/flat.js`: the exe's tree vertices are 0xffbebebe, fog adds under 1 level since the colony fog table stays 254 up
+to depth 2000; trees go through `kirak2` exe 0x530b20; pixel means exe (56.0, 62.3, 32.2) vs client (55.5, 61.2, 32.7); row 392). The Park's `+r+Rectangle01/2`
+tree quads live in the child archive `prkv2-fa.xvb`, which the `+r` pass never searches: they keep casting and don't receive (render.md §4; row 391).
+Buildings step their LOD chain per frame like `Kocka` (xv.md, Level of detail; `building_levels`, `lod_pick`, `Model::recounted`; row 390); most draw
+level 1 at the default zoom [obs, `probes/lod_colony.js`, grwar:17 of quick-1.sav: all 14 chained buildings' sizes match the exe, e.g. slot 18 kind 26: 3075.7 at depth 2361.1 → level 1,
+slot 16 kind 53: 1118.05 → level 0].
+
+Building effects (`AddBuildingSpecEffect` exe 0x457dd0, ELF 0x4c1380; `colony::building_particles`, `billboard`): only kinds 52
+and 53, added per building by `Init3dColony` when `OptionsKellSpecFX & 1` and the planet is seen (own, or the war/spy flag), at the
+slot's `Grid2Real` position and height `H` = slot `+0x14`. Kind 53 (Naperomu): one `flare.bmp` at `H − 30` (half size 20 + rand%10,
+redrawn every step, colour (254, 254, 254)) and 16 `rcloud.bmp` halos (colour (13, 73, 103), half size 5 + rand%2) circling at
+radius `f·15`, angle `i + ColonyCounter/(f·60)`, `f = sin(i/31)·0.15 + 1`. Kind 52: 32 `rcloud.bmp` fire-coloured (`r` 255 − rand%100,
+`g` 163 − rand%130, `b` rand%50) swinging `sin(i + ColonyCounter/60)·45` at `H − 10`. Stepped in `WF::Refresh2` (exe 0x48ce10) when
+`(int)ColonyCounter % 5 == 0`; shown only for a finished working building (`+0x19` bit 0 set, bit 5 clear) on a planet the human sees
+inside; they die with the building. Drawn by `DrawParticles` exe 0x472800 → `ParticleOwner::Draw` exe 0x526f80: screen-aligned quads
+(`size · fov/−z` px), `ONE`/`ONE`, depth test without write, fog off, skipped while `Atlepes`. The `rand()` draws are a hash, not the
+libc stream (row 369). The smoke of `SetBuildingSpecialEffects` and `KemenyFust`: §3.5. The solar plant's cyan orb glow is these particles; its blades are the env-mapped `_B_` meshes.
 
 ### 3.2 Roads (`RecreateRoadSystem` 0x4bee90, option `OptionsKellUt`)
 `MapAlloc` (200 × 200) = the map's build mask as 4 × 4 blocks (`Decode2LargeMap`, re/rules/colony-placement.md) plus
@@ -151,6 +196,48 @@ unsaved runtime flag) or the planet of an MP ground battle. `pMuholdakMennyi(e)`
 hidden (`HideObj`), so are the units (`WF_Tank::Draw3d`/`Update` test the flag), and `ColonyGfx2D_1` draws
 `DrawBuildingBases` 0x4d2150: per building a quad of `hazalap.bmp` (`WF+0x220`), ±w·41/2 × ±h·41/2 around its
 centre, colour 0x800000ff (red, half transparent). Verified by capture (§8).
+
+### 3.4 Buildings under construction: the cut and the scaffolding (row 366)
+Per frame in `ShowColony` (exe 0x49f130, asm 0x49f3a0..0x49f5a4) for each slot with work left `u16 +8` > 0:
+`total = EpuletekLeiro[kind]+4 · 50` (÷1.5 truncated for race 4), `frac = 1 − left/total` (f32, clamped below at 0),
+`cut = bottom − (f32)(apos·frac)·2.1 + apos` in f64 then f32, with `bottom` = slot `+0x14` and
+`apos = allvanypoziciok[kind−1]` (`ig2-rules` `scaffold_heights`). `setvagashatar` (exe 0x4542e0) stores it in the root
+node (`+0x104`) together with property 0x1000000; `Kocka` copies it to the sort record (`+0x74`; 0.0 inherits the parent's).
+`clippolygonvagashatar` (exe 0x52e410, called per triangle after back-face culling, before the near clip) keeps the vertices whose
+world first coordinate (more negative = higher) is ≥ `cut`, clips the edges (colours and uv lerped, `cliptlvertexvh` 0x52ea60),
+no cap. The shadow map (`Kockashadow`) draws the building whole (`Shadow::CastOnly`). Unfinished buildings are opaque.
+Scaffolding: `step = (int)(frac·10)` (0..9), grown only (`Epulet3d[k−1]+0x50`); `AddAllvanyok` (exe 0x4578c0) puts one
+`allvany<level+1>.xvb` box per footprint cell at `level = min(step, magas[kind−1][row·10+col])` (`magas` exe 0x8F3968, 60 × 100
+bytes, `Building+0x60` filled by `InitEpuletek` 0x482bf0; `ig2-rules` `scaffold_masks`), `ModifyAllvany` (0x48b390) scale
+`allvanymeretszorzo[level]·0.038` (exe 0x8F85C8; `scaffold_scales`), `MoveObj(apos + (int)bottom, Grid2Real(cx+0.5, cy+0.5))`,
+`RotateObj(0, π/2, 0)`, in the alpha-tested layer. Hidden with the planet (`EpuletAllvanyok::Refresh` 0x48fb40).
+The collapse when a building is finished or demolished (`DoljLe` 0x470e50, `EpuletAllvany::Refresh` 0x48f920; row 381): per box a
+delay rand()%30 UI ticks, then it turns about (0, dz, −dy)/len from the building centre, angle −= vel, vel += 0.005 a tick,
+transparent from −π/4 ((−angle−π/4)/(π/4)), gone at −π/2 (26 turning ticks; test `falling_scaffold_lasts_26_ticks_after_its_delay`).
+The colony scene, reloaded when the buildings change, carries the live state over (`ColonyScene::carry_from`: smoke, weather,
+falling boxes) and starts the collapse there; not compared on a capture (needs a building finishing during a grab).
+The blink (row 382): `+0x19` bit 4 = story 806's police strike (`st_Elem_include`, exe 0x5d4b70): set on the human planet's intact
+police stations (kind 7) and shields (0x20..0x23), later random intact buildings; cleared by the story's daily check, C(8061) and
+`EpuletNew` (exe 0x53c7d0); no timer. `ShowColony` (asm 0x49f4c3..0x49f51a) sets finished ones' transparency
+(f32)(sin(ColonyCounter/15 + k)·0.25 + 0.26), k the 1-based slot (0.01..0.51); client `blinks`, `blink_transparency`, test
+`blink_stays_between_001_and_051`; not compared on a capture (needs the strike). Bit 4 also blocks the demolish icon
+(`Colony_Main` 0x4666d0), hides the repair/demolish icons (`ColonyGfx2D_2` 0x461900) and their hot-spot texts (`Colony_MouseInit2`).
+Verified at runtime with `tools/trace/probes/scaffold.js` (grwar:17 of `quick-1.sav`: slot 18, kind 26, 21400 left, bottom
+−15.1296 → cut 44.16639, its 36 boxes' levels and positions): test `colony::tests::quick1_planet17_construction_matches_the_exe`;
+`probes/scaffold_kocka.js` logs the sort records (the scaffold boxes are 84 tall in the exe too). grwar:17 view 7.62 → 6.41.
+`probes/bottom.js` logs `getbottomvertex`: slot 18 is −15.129608 = the exe's `+0x14` (the client's was −15.1746); the test checks it.
+
+### 3.5 Smoke (`ig2-client::colony_smoke`; rows 368, 369)
+Every fifth UI tick (`(int)ColonyCounter % 5 == 0`), `Atlepes` clear, owner 1 (`rcloud.bmp`, additive, as §3.1's particles):
+- `SetBuildingSpecialEffects` (exe 0x49a760): kind 10 (the Park, working, `OptionsKellSpecFX`): 3 orange type-3 puffs a step at
+  `H − 15`; damage smoke at three `vonalmetszes` points on the building for damage > hp/4, 2·hp/4, 3·hp/4 (hp =
+  `EpuletekLeiro[kind]+8`), 2 puffs each. Type 3 ageing in `WF::Refresh2` (exe 0x48ce10): `a += 15` (4 from 190), `P += v`,
+  `v *= 0.97`, size +0.5, colour averaged towards grey past 190, deleted at `a ≥ 241` (24 updates).
+- `KemenyFust` chimneys (children `fust1…` of the building mesh, empty nodes; `SetLangPlaces` 0x49bd50): a type-10 grey (100, 100, 90)
+  puff per step while the building works; `a += 3` from 0x80, `vy/vz += 0.08`, size +0.3, 40 updates. Needs `NodePose.path`.
+Random draws are stand-ins (the exe's tables come from `srand(SDL_GetTicks())`). Capture `colony:42` with the camera on the Park
+(`run_screen.py --cam=-793.6,-1002.6,-1100,-0.7853982,0` + the client's `--colony-cam`): the Park fire and the Élelmiszergyár's
+chimney smoke match in kind (the fire matches within the particles' randomness: row 385).
 
 ## 4. Units (`WF_Tank`, re/rules/ground-combat.md §11)
 
@@ -390,6 +477,10 @@ picked ends the picks; past 15 pixels the box (`WarfareKeretesKijeloles`, also o
 drawn) zeroes `AktEpulet` every frame, so a building passed then clicks once and stays unselected [obs:
 `tools/trace/scripts/colony-sweep.json` with `--cam 382.385,-314.574,-1100,-0.7854,0`: the press on the ground
 clicks and drops the hub, the drag onto the hub's edge clicks once, `AktEpulet` stays 0, the box's frame shows].
+In a war the building rule's gate (hot-spot 0x14, `Colony_Main` 0x4666d0) is planet owner == EN or `WF+0x8b1+EN` (side EN on
+the field), not the owner alone (client `colony_ui.rs` `Ctx::picks`; a unit taking the press also clicks when it drops a
+selected building) [obs: `tools/trace/scripts/colony-sweep-war.json` on `grwar:17`: the exe clicks once at t 31 as the
+drag passes a building; the client clicks at t 50, rows 396/397].
 
 The planet's name entry (`Colony_Main` exe 0x4667fb, without `ControlConfig[0]`, the touch mode 0x90b520): both buttons
 held on hot-spot 4 with `ColonyInfoMod` 0 (nothing selected; any planet) start `IOMode` with `IOAzonosito` 0x1f,
@@ -625,8 +716,14 @@ while it is on) but never arrives (§10): the names follow the options row; PgUp
 presets (exe 0x8f1d44 / 0x8f1dc4 / 0x8f1e44: zoom −240, −666, −1100; pitch −1.113946, −0.356804, −0.05; rotate
 5.7494202 for all) and start the tween (`TransfRot` 0x998244 = 1, `TransfRotFrame` 0x998258 = 0). `TransformRotation`
 (ELF 0x4cc070, once per drawn frame in `ShowColony`): `Zoom += (target − Zoom)/4`, `Pitch += (target − Pitch)/4`, after
-15 frames off; the rotate target is never read. Mode 3 follows the selected unit with `ShowColony`'s tank camera [not
-ported: the port keeps the normal camera in mode 3].
+15 frames off; the rotate target is never read. Mode 3 follows the selected unit (`ShowColony` 0x49f130, tank block asm 0x4a097e..0x4a0be4): while `TankView`, the
+first selected unit by slot (flags 8, not 2, not 0x40000000, not `+0x18c & 4`) gives `a_new = (f32)(f64(−heading +0x1c0) − π/2)`;
+with `TankViewLastAngle` 0x8ec9f0 (−1000 at start, never reset) `d = a_new − last`, and if `|d| ≥ 0.025` (f64 compare) the
+angle steps `a = last + sign(d)·0.025` else `a = a_new`; target `(h − 30, x, y)`, eye `(h − 90, sin(a)·130 + x, cos(a)·130 + y)`.
+The normal block (clamps, ground rule, quake jolt) is skipped; projection, picking and HUD are unchanged; keys and edge
+scroll move the hidden camera; with no qualifying unit `TankView` = 0 that frame (mode stays 3). Client: `colony.rs`
+`Camera::tank`, `CameraKeys::tank`, test `colony_war::tests::tank_view_follows_the_first_selected` (decompile constants,
+not runtime-captured). Open: row 398.
 
 `Frissit2_Colony` (exe 0x477dc0, every 100 Hz UI tick, all f32; speeds 0x997c64 rotate, 0x996e94 zoom, 0x997c68 pitch,
 kept across screens):

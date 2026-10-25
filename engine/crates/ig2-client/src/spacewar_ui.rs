@@ -354,6 +354,8 @@ pub struct SpaceWarUi {
     pub hovered: i32,
     /// `Mouse_Bal`/`Mouse_Jobb` and this frame's `Mouse_Lenyom`/`Mouse_Felenged`.
     held: (bool, bool),
+    /// `Mouse_Megfogva` (exe 0xDB466A): the hot-spot is held ([`Self::megfogva_update`]).
+    megfogva: bool,
     latched: Option<u32>,
     press: bool,
     release: bool,
@@ -508,6 +510,7 @@ impl SpaceWarUi {
             mouse: [0.0; 2],
             hovered: -1,
             held: (false, false),
+            megfogva: false,
             latched: None,
             press: false,
             release: false,
@@ -830,6 +833,13 @@ impl SpaceWarUi {
 
     /// `SpwC::Starmapvisszaallit` (0x6b4020, spec §4.1.2): the closing zoom back to the saved starmap camera.
     pub fn leave(&mut self, b: &Battle, now_ms: u32) {
+        self.leave_at(b, now_ms, 1.0);
+    }
+
+    /// [`SpaceWarUi::leave`] at `mult` times the speed: `SpaceWar_Kilep` (exe 0x562b50) sets `visszaallitasidoszorzo =
+    /// 5.0` after `Starmapvisszaallit` when the options screen asked (800 ms) [obs: exe trace 2026-10-25, Esc at t500,
+    /// Options up at t581].
+    pub fn leave_at(&mut self, b: &Battle, now_ms: u32, mult: f32) {
         if self.leaving {
             return;
         }
@@ -839,6 +849,15 @@ impl SpaceWarUi {
         self.defaults = self.starmap;
         self.info_mode = false;
         self.anim_set(b, now_ms);
+        self.anim_mult = mult;
+    }
+
+    /// `SpaceWar_Belep` after the options screen (exe trace 2026-10-25: `+0x1fb8` cleared, the intro flag `+0x1f98`
+    /// set): the zoom-out's end state stays (scene scale 0.0004, the starmap pose) and the first frame's block runs
+    /// the opening zoom again.
+    pub fn reenter(&mut self) {
+        self.leaving = false;
+        self.first_frame = true;
     }
 
     /// `infomodeonoff` (spec §7.1.4): the camera flies to the selection and the big box slides in, or back.
@@ -1397,14 +1416,30 @@ impl SpaceWarUi {
 
     // ------------------------------------------------------------------------------------------ input
 
-    /// `Mouse_Darabol`'s `AktIkon` with `Mouse_Megfogva`: while a button stays down the hot-spot it went down on stays
-    /// the one under the pointer (`SpwC::main` latches 0x1f, 0x47, 0x48, 0x4a, 0x4b, 0x4c; the others act once).
-    /// The release frame still sees the latched spot.
+    /// `Mouse_Darabol`'s `AktIkon` with `Mouse_Megfogva` (exe 0xDB466A): while it is set the hit test is skipped
+    /// (`IG2_gameUpdate` 0x4e054a), so the spot stays the one it was set on, the release frame included.
     pub fn latch(&mut self, raw: Option<u32>) -> Option<u32> {
-        if !(self.held.0 || self.held.1) {
+        if !self.megfogva {
             self.latched = raw;
         }
         self.latched
+    }
+
+    /// After [`Self::buttons`]: `Mouse_Megfogva` is cleared on a frame with no button held (exe 0x4e05bc) and set by
+    /// `SpwC::main` (exe 0x57b9e0) only for its drag spots: the radar 0x1f and the battlefield 0x4c on a press edge
+    /// (0x57bb44, 0x57bb6f/93), the yaw/pitch/zoom buttons 0x47/0x48/0x4b and 0x4a and the Defend/Attack slider 0x37
+    /// on every frame but a release (0x57bcea, 0x57bdb8, 0x57bf8a, 0x57bed2, 0x57bff3). Any other spot is hit-tested
+    /// again each frame of the hold, so a drag off it reaches what lies under the pointer.
+    pub fn megfogva_update(&mut self, spot: Option<u32>) {
+        if !(self.held.0 || self.held.1) {
+            self.megfogva = false;
+            return;
+        }
+        match spot {
+            Some(0x1f | 0x4c) if self.press => self.megfogva = true,
+            Some(0x37 | 0x47 | 0x48 | 0x4a | 0x4b) if !self.release => self.megfogva = true,
+            _ => {}
+        }
     }
 
     /// The mouse buttons as `Mouse_Lekerdez` reports them (`left`/`right` held now): the edges for the hot-spots
@@ -1682,6 +1717,7 @@ impl SpaceWarUi {
             (3, 2) => {
                 for &i in &mine {
                     out.push(Out::Order(Order::AttackGun { unit: i, gun: h as usize }));
+                    self.voice(b, i, 2);
                 }
             }
             (4, 1) if self.armed >= 0 => {
@@ -2004,6 +2040,52 @@ pub enum Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Mouse_Megfogva` (exe 0x57b9e0's latch sites, cleared at 0x4e05bc): a drag that starts on the yaw button stays
+    /// on it, one that starts on the camera button 0x46 (no latch) reaches the battlefield under the pointer, and the
+    /// release frame still sees the latched spot.
+    #[test]
+    fn only_the_drag_spots_latch() {
+        let b = Battle::slot();
+        let mut ui = SpaceWarUi::enter(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+        let step = |ui: &mut SpaceWarUi, raw: u32, left: bool| {
+            let spot = ui.latch(Some(raw));
+            ui.buttons(left, false, spot == Some(0x4c));
+            ui.megfogva_update(spot);
+            spot
+        };
+        assert_eq!(step(&mut ui, 0x47, true), Some(0x47));
+        assert_eq!(step(&mut ui, 0x4c, true), Some(0x47));
+        assert_eq!(step(&mut ui, 0x4c, false), Some(0x47));
+        assert_eq!(step(&mut ui, 0x46, true), Some(0x46));
+        assert_eq!(step(&mut ui, 0x4c, true), Some(0x4c));
+        assert_eq!(step(&mut ui, 0x4c, false), Some(0x4c));
+        assert_eq!(step(&mut ui, 0x1f, false), Some(0x1f));
+        assert_eq!(step(&mut ui, 0x1f, true), Some(0x1f));
+        assert_eq!(step(&mut ui, 0x4c, true), Some(0x1f));
+    }
+
+    /// `SpaceWar_Kilep`'s zoom-out (exe 0x562b50): towards Options at five times the speed (`visszaallitasidoszorzo =
+    /// 5.0`) [obs: exe trace 2026-10-25 (`opt.jsonl`), Esc at UI tick 500, `AktKep` 13 at 581], else its 80 frames
+    /// at 50 a second.
+    #[test]
+    fn the_options_zoom_out_is_five_times_faster() {
+        let b = Battle::slot();
+        let left_at = |mult: f32| {
+            let mut ui = SpaceWarUi::enter(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+            (ui.first_frame, ui.last_frame_ms) = (false, 1000);
+            ui.leave_at(&b, 1000, mult);
+            (1000..10_000).step_by(10).find(|&now| {
+                let mut out = Vec::new();
+                ui.frame(&b, now, &mut out);
+                out.contains(&Out::Left)
+            })
+        };
+        let fast = left_at(5.0).unwrap() - 1000;
+        let slow = left_at(1.0).unwrap() - 1000;
+        assert!((780..=830).contains(&fast), "{fast}");
+        assert!((3980..=4030).contains(&slow), "{slow}");
+    }
 
     /// `SpaceWar_Autoscroll` with the pointer in the window's top-left corner, against the exe (`run_spwc.py --script`
     /// with the real cursor there, per-frame `cam` records of UI ticks 420 and 421): the targets (−21, −24) settle

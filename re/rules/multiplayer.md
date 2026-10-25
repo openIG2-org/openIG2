@@ -147,6 +147,28 @@ owner.
 - 1005 (capture the flag): the original writes `EN` into the Flag Carrier design's race field (`flag_carrier(EN)`),
   so the two machines' designs differ. Canonical MP: the design for empire 1 carries 1, for empire 2 carries 2.
 
+- 1003's radar offer per human (deviation 388, ours since 2026-10-25). Each machine of the original runs its own offer
+  (counter 10034, 50 days; `NewMessage(0x2347, 300)` with `PlayerNev[EN]`; answer 2 buys with `Multi_Send(0x66, EN, …)`,
+  4 asks again in 50 days, the entry's expiry 100) from its own inbox. Canonical MP:
+  - **A per-human inbox.** The inbox (only story and tutorial messages reach it) and the messages screen's dialogue
+    globals (`INBOX`, `INBOX_RANDOM`, `INBOX_PLAYBACK`, `INBOX_COUNT`, 0xDABDA0..0xDABE40, 0xDA65E7, 0xDA65FF,
+    0xDA6607, 0xD90DC0..0xD90DD8, 0x91494C, `Valasztasok` 0xD8E160 + 4·0x5c, 0xD909BA..BB) are the canonical `EN`'s in the
+    state; every other human keeps its own copy in `HumanSide::inbox` (created with an empty inbox and the start's
+    dialogue state by `per_human_copies`; in the snapshot and the hash). `Game::with_inbox_of(h, …)` swaps it in and out
+    (symmetric, so the state is the canonical one outside it).
+  - **Orders.** A messages-screen order from human `h ≠ EN` runs inside `h`'s inbox (classic: other issuers' orders do
+    nothing, as before); a story hand-off from it (an answer) runs with `StoryWorld::answering()` = `h`. The expiry pass
+    (`FRISSIT_Messages`) runs for each human's inbox in turn, its promotion answered by that human.
+  - **1003.** At the start each other human `h` gets counter `10060 + h` (50 days; 10061..10068 unused by every story);
+    when it fires `StoryEvent::HumanMessage { empire: h, id: 0x2347, arg: 300 }` puts the offer into `h`'s inbox with
+    `PlayerNev[h]`. Answer 2 raises `SendStorySpecial { id: 10031, sender: answering }` (the special's sender is the
+    answering human: `Command::StoryFrom`, sim-originated, never taken from a peer; the 0x66 lists above it name its
+    sender); answer 4 and the promotion re-arm
+    the answering human's counter (10034 for `EN`). The purchase and the radar pass were per buyer already
+    (`RADAR_BUYERS`).
+  - **Client.** `world::local_en` also swaps the local human's inbox in while the world holds the game, so a joiner's
+    messages screen shows its own inbox; its orders travel as commands as before.
+  - The slow-down of `NewMessage` stays synced (the original slowed only the receiving machine).
 ### 5.4 EN in the client (ours; FX15)
 
 The shared state's EN is the host's empire. `ig2-client::world::local_en` writes the local empire into EN while the
@@ -160,7 +182,8 @@ once in single player; every machine's ack in MP, 4 turns ahead), runs the `MULT
 tick raises reaches the handlers before the next tick's body, on every machine with the sender's `EN` from the message.
 Three come from the sim itself, and every peer raises them identically, so the driver delivers each before the next
 tick (`Command::from_event` → `pending` in `ig2_net::lockstep::Peer::run_turn`; `World::tick` in single player) for
-`Game::sender` (the state's `EN`, the canonical one in lockstep):
+`Game::sender` (the state's `EN`, the canonical one in lockstep; a message raised while a bundle's order runs, such as an
+answer's 0x66 on the messages screen, counts too: the original's UI loop sends it and it arrives after the next tick):
 - 0x1b, an emptied fleet → `Game::fleet_emptied`;
 - 0x66 (`st_Multi_include`, mode 1003, exe 0x5ee4d0: answer 2 to message 0x2347, payload 10031) →
   `MULTIGET_Story` (exe 0x5c2f00, ELF 0x740670) → `Story_Special(15, sender, id)` = `Command::StoryChoice`;
@@ -170,6 +193,17 @@ tick (`Command::from_event` → `pending` in `ig2_net::lockstep::Peer::run_turn`
 In canonical MP the story's human is the canonical `EN` and only its machine's message answers reach the story
 (`Game::message_order`), so the 1003 radar offer goes to the host's player only, where the original offered it to
 every human on its own machine (open: per-human story hand-offs).
+
+### 5.6 Renames (ours; deviation 395)
+
+The original renames a fleet or a planet on its own machine only (`Starmap_Main` / `Colony_Main` with `IOMode`, no
+message): the machines' names differ. In canonical MP the names are synced state (in the snapshot and the hash), so a
+rename travels as `Command::Rename { fleet, index, name, custom }` when it ends (Enter, Esc with the old name, a press
+elsewhere); `Game::rename` writes the name (a fleet: at most 0x13 characters, only its owner's; a planet: at most 0x17,
+any one, as the original's rename allows) and a fleet's custom-name bit (`+0x52 |= 0x800`, kept for good, also after
+Esc). While the rename runs and until the lockstep has carried it the client shows the typed name and the bit from
+`Game::local_names` (`edit_local_name`), put in while it holds the game and taken out before the game goes into the
+lockstep (`show_local_names`, with `world::local_en`), so every peer's hash sees only the shared names.
 
 ## 6. Open
 

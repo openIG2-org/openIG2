@@ -17,7 +17,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -79,10 +79,13 @@ struct View<'a> {
     humans: Vec<(u8, Bytes<'a>, Bytes<'a>, i32, Bytes<'a>)>,
     realtime: &'a RealTime,
     pending: &'a [Command],
+    /// The other humans' own inboxes (`HumanSide::inbox`, multiplayer.md §5.3; since version 5).
+    inboxes: Vec<(u8, Bytes<'a>)>,
 }
 
+/// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state).
 #[derive(Deserialize)]
-struct Owned {
+struct Owned<I = Vec<(u8, ByteBuf)>> {
     mem: Vec<(u32, ByteBuf)>,
     template: Vec<(String, ByteBuf)>,
     fleets: ByteBuf,
@@ -103,6 +106,14 @@ struct Owned {
     humans: Vec<(u8, ByteBuf, ByteBuf, i32, ByteBuf)>,
     realtime: RealTime,
     pending: Vec<Command>,
+    inboxes: I,
+}
+
+impl Owned<()> {
+    fn upgrade(self) -> Owned {
+        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, .. } = self;
+        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: Vec::new() }
+    }
 }
 
 fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
@@ -132,6 +143,7 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
         humans: s.humans.iter().map(|(&e, h)| (e, Bytes(&h.contacts), Bytes(&h.ghost), h.shown, Bytes(&h.reports))).collect(),
         realtime: &g.realtime,
         pending,
+        inboxes: s.humans.iter().filter(|(_, h)| !h.inbox.is_empty()).map(|(&e, h)| (e, Bytes(&h.inbox))).collect(),
     }
 }
 
@@ -183,7 +195,10 @@ impl Snapshot {
     /// The game and its pending sim-originated commands. `uninit` stays `None`: appended records start zeroed, the
     /// same on every peer. The per-peer parts (`Game::local`, `Game::cosmetic`) are the joiner's to set.
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
-        let o: Owned = wire::from_slice(&self.state)?;
+        let o: Owned = match wire::from_slice(&self.state) {
+            Ok(o) => o,
+            Err(e) => wire::from_slice::<Owned<()>>(&self.state).map(Owned::upgrade).map_err(|_| e)?,
+        };
         let mut s = SaveState::from_parts(Memory::from_runs(o.mem.into_iter().map(|(at, b)| (at, b.0)).collect()), o.template.into_iter().map(|(n, b)| (n, b.0)).collect());
         s.fleets = records(&o.fleets)?;
         s.ships = records(&o.ships)?;
@@ -205,8 +220,11 @@ impl Snapshot {
         s.humans = o
             .humans
             .into_iter()
-            .map(|(e, contacts, ghost, shown, reports)| (e, HumanSide { contacts: contacts.0, ghost: ghost.0, shown, reports: reports.0 }))
+            .map(|(e, contacts, ghost, shown, reports)| (e, HumanSide { contacts: contacts.0, ghost: ghost.0, shown, reports: reports.0, inbox: Vec::new() }))
             .collect();
+        for (e, inbox) in o.inboxes {
+            s.humans.entry(e).or_default().inbox = inbox.0;
+        }
         let mut g = Game::new(s, rules);
         g.libc = Libc(o.libc);
         g.fleet_name = o.fleet_name.map(|b| b.0);
@@ -273,7 +291,8 @@ impl Header {
         let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
-        if h.version != VERSION {
+        // Version 4 states lack the inboxes (read as none).
+        if h.version != VERSION && h.version != 4 {
             return Err(Error::Version(h.version));
         }
         Ok(h)

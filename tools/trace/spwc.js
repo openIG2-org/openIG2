@@ -432,6 +432,8 @@ function armPlanet(pl) {
     b.add(4).writeS32(0);
     b.add(8).writeS16(0);
     if (cfg.fuzzDesigns) b.add(0x19).writeU8(rnd(5) ? 1 : 0);
+    // --shield: the armour is the planet's only gun, so the attackers' gun picks (`Lov2`) land on it.
+    if (cfg.shield) break;
   }
 }
 
@@ -643,6 +645,11 @@ Interceptor.attach(A.Fake_FRISSITES, {
           emit({ k: 'cam', t: scriptT, pan: fl(0xc5c, 3), want: fl(0xc6c, 3), zoom: s.add(0xc88).readFloat(), yaw: s.add(0xc80).readFloat(),
             anim: s.add(0x1d3e).readU8(), cc: [va(0x90b520).readU8(), va(0x90b521).readU8()], move: [va(0x91d6f8).readFloat(), va(0x91d724).readFloat()] });
         }
+        // --globals: the listed exe globals (and `slot+OFF` bytes of the battle) each frame, on change.
+        if (cfg.globals) for (const g of cfg.globals) {
+          const v = g.slot ? scriptSelf.add(g.addr).readU8() : g.size === 1 ? va(g.addr).readU8() : va(g.addr).readS32();
+          if (v !== g.last) { emit({ k: 'glob', t: scriptT, frame: frames, a: g.name, v }); g.last = v; }
+        }
         [[0x916008, 0x91600c], [0xdb4654, 0xdb4658]].forEach(([ax, ay]) => { va(ax).writeS32(scriptMouse[0]); va(ay).writeS32(scriptMouse[1]); });
         // The physical pointer (window pixels, 0xDB9408/0C) too: `SpaceWar_Autoscroll` (exe 0x5624c0) pans while it
         // is within 8 pixels of the window's edge, and the real cursor is anywhere.
@@ -771,7 +778,7 @@ let vt = 0, vtOn = false, realTicks = null, scriptSelf = null, lastIkon = null;
 // SDL2 scancode, keycode.
 const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050],
   add: [87, 0x40000057], subtract: [86, 0x40000056], escape: [41, 27], backspace: [42, 8], space: [44, 32], enter: [40, 13],
-  shift: [225, 0x400000e1], ctrl: [224, 0x400000e0], a: [4, 97], c: [6, 99], r: [21, 114], i: [12, 105] };
+  shift: [225, 0x400000e1], ctrl: [224, 0x400000e0], a: [4, 97], c: [6, 99], r: [21, 114], i: [12, 105], o: [18, 111], p: [19, 112], v: [25, 118] };
 for (let d = 1; d <= 9; d++) SDL_KEYS[String(d)] = [29 + d, 48 + d];
 
 function hookScript() {
@@ -887,7 +894,13 @@ function sceneRecords(self, t) {
   const rings = [];
   for (let i = 0; i < 20; i++) {
     const g = self.add(0x1a88 + 0xc * i), st = g.add(8).readS32();
-    if (st !== 0) rings.push({ i, start: st, rec: rec(g) });
+    if (st !== 0) {
+      // The whole record: transparency +0x58 (`SetObjTransparency` exe 0x4533a0), the 8.8 frame +0xdc (`SetFrame`
+      // 0x452f30), the property words +0x4c/+0x50.
+      let raw = null;
+      try { const r = meshRecord(g); raw = r && hexOf(new Uint8Array(r.readByteArray(0x140))); } catch (e) {}
+      rings.push({ i, start: st, rec: rec(g), raw });
+    }
   }
   emit({ k: 'records', t, root: rec(self.add(0x1c18)), debris, units, rings });
 }
@@ -906,8 +919,78 @@ function hookScriptSwap() {
   let bindFb = null, bindBuf = null;
   const tmp = Memory.alloc(16), rect = Memory.alloc(16);
   const get = (e) => { getInt(e, tmp); return tmp.readS32(); };
+  // --records: every `fenyekszamolasa` (exe 0x52f190) call of the grabbed frame: the node (arg 4), its mesh (arg 5),
+  // the opacity byte `Kocka` hands it (arg 6) and the node's +0x60 (`Kocka`'s `t`): the shield rings' brightness.
+  let lightCalls = [], planetLights = [];
+  // ... and every `kirak` (exe 0x531460, cdecl, arg 0 the node) draw of the frame: the node, its 8.8 frame (+0x64),
+  // flags (+0x68), `t` (+0x60), the mesh (arg 7), the triangles, and what it hands the rasteriser (`0x4ac580` from
+  // inside it: arg 1 the projected vertices, stride 0x28: sx, sy, depth; arg 2 the count): count, screen box, depth.
+  let kirakCalls = [], inKirak = null;
+  if (cfg.records) {
+    Interceptor.attach(va(0x531460), {
+      onEnter(a) {
+        const n = a[0];
+        inKirak = { node: n.toString(), mesh: a[7].toString(), frame: n.add(0x64).readS32(), flags: n.add(0x68).readU32(), t: n.add(0x60).readFloat(), tris: a[1].toInt32(), v: 0, box: [1e9, 1e9, -1e9, -1e9], z: [1e9, -1e9], m: Array.from({ length: 21 }, (_, i) => n.add(4 * i).readFloat()), g: [0xdff8e8, 0xdff8ec, 0xdff910, 0xdff918, 0xe033e4, 0x91965c, 0x919650, 0x919654].map((x) => va(x).readFloat()) };
+      },
+      onLeave() { if (inKirak && kirakCalls.length < 2000) kirakCalls.push(inKirak); inKirak = null; },
+    });
+    // The static draw (`0x530b20`, same arguments) of every node: kept as `kirak` records with `static: true`.
+    Interceptor.attach(va(0x530b20), {
+      onEnter(a) {
+        const n = a[0];
+        inKirak = { static: true, node: n.toString(), mesh: a[7].toString(), frame: n.add(0x64).readS32(), flags: n.add(0x68).readU32(), t: n.add(0x60).readFloat(), tris: a[1].toInt32(), v: 0, box: [1e9, 1e9, -1e9, -1e9], z: [1e9, -1e9], near: [], m: Array.from({ length: 21 }, (_, i) => n.add(4 * i).readFloat()) };
+      },
+      onLeave() { if (inKirak && kirakCalls.length < 2000) kirakCalls.push(inKirak); inKirak = null; },
+    });
+    Interceptor.attach(va(0x4ac580), {
+      onEnter(a) {
+        if (!inKirak) return;
+        const p = a[1], n = a[2].toInt32(), k = inKirak;
+        for (let i = 0; i < n && i < 4000; i++) {
+          const q = p.add(0x28 * i), x = q.readFloat(), y = q.add(4).readFloat(), z = q.add(8).readFloat();
+          k.box = [Math.min(k.box[0], x), Math.min(k.box[1], y), Math.max(k.box[2], x), Math.max(k.box[3], y)];
+          k.z = [Math.min(k.z[0], z), Math.max(k.z[1], z)];
+          // The fog byte (+0x17, the remaster's `var_specular.w`) and the vertex colour (+0x10) handed on.
+          const fog = q.add(0x17).readU8();
+          k.fog = [Math.min(k.fog ? k.fog[0] : 255, fog), Math.max(k.fog ? k.fog[1] : 0, fog)];
+          if (!k.col) k.col = (q.add(0x10).readU32() >>> 0).toString(16);
+          // A static mesh's vertices around the shield capture's rings (virtual 640x480).
+          if (k.near && x > 380 && x < 450 && y > 110 && y < 185 && k.near.length < 200) k.near.push([+x.toFixed(1), +y.toFixed(1), +z.toFixed(5)]);
+        }
+        k.v += n;
+      },
+    });
+    Interceptor.attach(va(0x52f190), {
+      onEnter(a) {
+        if (lightCalls.length < 4000) lightCalls.push([a[3].toString(), a[4].toString(), a[5].toInt32() & 0xff, a[3].add(0x60).readFloat(), a[3].add(0x68).readU32()]);
+        // Objects of 100 vertices or more (the planet, its shells): the lights the node sees (+0x6c/+0x70: type, colour,
+        // vector +0x28), the relight flag (0xDFF940) and, after the call, a sample of the colours it left (+0xc).
+        const n = a[2].toInt32();
+        if (n >= 100 && planetLights.length < 64) {
+          const sp = a[3], nl = sp.add(0x70).readS32(), lights = [];
+          for (let i = 0; i < nl && i < 16; i++) {
+            const l = sp.add(0x6c).readPointer().add(4 * i).readPointer();
+            lights.push({ type: l.readS32(), color: l.add(4).readU32() >>> 0, vec: [0x28, 0x2c, 0x30].map((o) => +l.add(o).readFloat().toFixed(4)) });
+          }
+          this.pl = { n, node: sp.toString(), dirty: va(0xdff940).readU32(), opacity: a[5].toInt32() & 0xff, lights, vn: a[1] };
+        }
+      },
+      onLeave() {
+        const k = this.pl;
+        if (!k) return;
+        k.colors = [];
+        for (let i = 0; i < k.n; i += Math.max(1, (k.n / 12) | 0)) k.colors.push((k.vn.add(0x14 * i + 0xc).readU32() >>> 0).toString(16));
+        delete k.vn;
+        planetLights.push(k);
+      },
+    });
+  }
   Interceptor.attach(gdi.getExportByName('SwapBuffers'), {
     onEnter(args) {
+      const lights = lightCalls, kiraks = kirakCalls, plights = planetLights;
+      lightCalls = [];
+      planetLights = [];
+      kirakCalls = [];
       if (scriptT === null || scriptGrabs.length === 0) return;
       const ticks = va(0xb772a4).readS32() - scriptUi0;
       if (ticks < scriptGrabs[0]) return;
@@ -925,7 +1008,12 @@ function hookScriptSwap() {
         const buf = Memory.alloc(w * h * 4);
         readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
         bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
-        if (cfg.records) sceneRecords(activeSelf() || scriptSelf, want);
+        if (cfg.records) {
+          sceneRecords(activeSelf() || scriptSelf, want);
+          emit({ k: 'lights', t: want, calls: lights });
+          emit({ k: 'kirak', t: want, calls: kiraks });
+          emit({ k: 'planetlights', t: want, calls: plights });
+        }
         flush();
         send({ type: 'frame', t: want, ticks, w, h, frames, mouse: scriptMouse, ...screenState(activeSelf() || scriptSelf) }, buf.readByteArray(w * h * 4));
       } catch (e) { emit({ k: 'error', msg: e.toString(), stack: e.stack }); }

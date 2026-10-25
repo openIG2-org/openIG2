@@ -44,6 +44,8 @@ mod at {
 /// `ADDZOOMMAX` (exe 0x918bd0: 0x3f490e56, a little under π/4); `ADDZOOMMIN` is a zeroed global.
 const ZOOM_MAX: f32 = f32::from_bits(0x3f49_0e56);
 const ZOOM_MIN: f32 = 0.0;
+/// The model tooltip's hot-spot (`CheckIfTalalmanyokFolottVan`).
+const MODEL_TIP: u32 = 0x11;
 /// `InfoSorok[i]+0xb8` (`NEWGAME_Research`): where each info line's typing starts over.
 const INFO_START: [f32; 4] = [0.0, -20.0, -40.0, -60.0];
 /// The ball's centre (`MoveObj(FociMesh, 0, −35, −950)`).
@@ -167,6 +169,17 @@ impl Place {
         }
     }
 
+    /// Into the state's globals, as the exe's save finds them (`ResearchTerulet`, `ResearchMezo`, `ResearchTalalmany`,
+    /// `Terulet_Akt[13]`, `ResearchOldForgato`: `LoadSave(…, 2)` writes the live values; re/deviations.md row 341).
+    pub fn write(&self, state: &mut SaveState) {
+        let m = &mut state.mem;
+        m.set_i32(at::AREA, self.area as i32);
+        m.set_i32(at::FIELD, self.field);
+        m.set_i32(at::TECH, self.tech);
+        m.set_i32s(at::FIELDS, &self.fields);
+        m.set_i32(at::FRONT, self.front);
+    }
+
     /// `ResearchAtvaltTalalmanyra(t)` (exe 0x521f20) with the screen down (the top bar's quick-research pick): the
     /// category's `TT_*` (a middle-wheel one turns to the front, `ResearchOldForgato = forgastabla2[0]`), then the
     /// tech, its field and the category's remembered field.
@@ -206,6 +219,10 @@ pub struct Research {
     reveal: [f32; 16],
     info_reveal: [f32; 4],
     info_tech: i32,
+    /// `ResearchTalalmany` as the frame's `ResearchGfx2D_2` reads it for the info lines (as `drawn_area`: a mouse
+    /// press's tech a frame later) [obs: research-left.json t 400 and 510, the lines typed 1.4 characters a frame
+    /// from the frame after the press; row 365].
+    drawn_tech: i32,
     /// `reswireframe`, the ball's matrix (`FociMesh`), `AddZoom`, `TalalmanyDir`, `Kozelites`/`KozelitesDirection`,
     /// `ResearchTalalmanyForgas`, `reskeringeto`, `GombocTransparencyk` (the lab cones' fade).
     wire: f32,
@@ -248,7 +265,14 @@ pub struct Research {
     /// `OldResearchTerulet` (the category of the last drawn frame) and whether the category's models show
     /// (`LoadTalalmanyVectorok` hides them, `UnHideMeglevoTalalmanyok` shows the known ones, `HideAllTalalmany`).
     old_area: usize,
+    /// `ResearchTerulet` as the frame's `Research3DUpdate` reads it: the exe draws before `Research_Main`, so a
+    /// category chosen by a mouse press (not a key) shows in the next frame's pass (taken at the end of
+    /// [`Research::step`]) [obs: research-left.json, the running project 0x19 pressed at t 450, its `Res_Hangok[1]`
+    /// at t 460, row 349].
+    drawn_area: usize,
     models_shown: bool,
+    /// Tooltip 0x11 (`CheckIfTalalmanyokFolottVan`): the model's tech and the pointer it was set at.
+    model_tip: Option<(usize, [f32; 2])>,
     /// The ball while it flies in (`MoveObj(FociMesh, …)` from frame 30; hidden before) and the wire sphere's
     /// transparency (`resSetObjTransparencyH(ResWireGomb, …)`, kept once open).
     ball_at: V3,
@@ -323,6 +347,7 @@ impl Research {
             reveal: std::array::from_fn(|i| -((i % 8) as f32)),
             info_reveal: INFO_START,
             info_tech: -1,
+            drawn_tech: -1,
             wire: 0.0,
             ball: scene::IDENTITY,
             zoom: ZOOM_MAX,
@@ -349,7 +374,9 @@ impl Research {
             pin: None,
             key_old: false,
             old_area: 0,
+            drawn_area: 0,
             models_shown: false,
+            model_tip: None,
             ball_at: BALL,
             ball_shown: !animated,
             wire_fade: 0.0,
@@ -390,7 +417,7 @@ impl Research {
             r.sounds.push(SoundId::new(Table::Res, 0));
         }
         r.button = -1;
-        r.old_area = r.area;
+        (r.old_area, r.drawn_area, r.drawn_tech) = (r.area, r.area, r.tech);
         // `SetDoubleTexture`: the urgent button starts pressed in.
         if r.urgent {
             r.set_button_frame(0xc9, 10);
@@ -437,8 +464,14 @@ impl Research {
         }
     }
 
-    /// `TT_*` (ELF 0x5e9430..): category `n` (`ResearchTerulet`), its remembered field.
+    /// `TT_*` (ELF 0x5e9430..): category `n` (`ResearchTerulet`), its remembered field. The middle wheel's categories
+    /// (1..=5) go through `Forgotabla` (exe 0x51e360), which clicks while the screen is open (`resKINYITVA`); the
+    /// others set theirs silently (exe 0x524a50..) [obs: research-right.json and its left run, t 380 power, t 450
+    /// the running civil project].
     fn choose_area(&mut self, n: usize) {
+        if self.opened && (1..=5).contains(&n) {
+            self.sounds.push(CLICK);
+        }
         self.area = n;
         // The categories off the middle wheel press their own button (`TT_*`: 1 tanks and 3 turrets on the left
         // wheel, 0x12d..=0x130 civil, military, research, power on the right one, 0x6a = the middle wheel's SPEC).
@@ -483,6 +516,12 @@ impl Research {
             }
             self.near_dir[k] = 1;
         }
+    }
+
+    /// The exe's own `resf` at a capture's start (`--faders`): its `rand()`-driven shine and drift, which the
+    /// screen's own generator can't replay (row 365).
+    pub fn set_faders(&mut self, f: crate::kit::FaderDesign) {
+        self.faders = f;
     }
 
     /// The top bar's quick-research pick (`MOUSE_SelectScreens`, re/screens/hud.md §2.1): `ResearchAtvaltTalalmanyra(t)`,
@@ -573,10 +612,17 @@ impl Research {
         state.mem.i32(va::RESEARCH_CHEAT) != 0 || techs.labs_needed(t).iter().enumerate().all(|(i, &n)| n as i32 <= labs[i + 1])
     }
 
-    /// A left press at virtual `at`: `Research_Main` for the hot-spot under it, else a list row (`ResearchGfx2D_2`)
-    /// or a model (`CheckIfTalalmanyokFolottVan`).
-    pub fn press(&mut self, state: &SaveState, rules: &ig2_rules::Rules, mask: &[u8], at: [f32; 2], models: &[(usize, [f32; 2])]) -> Vec<Act> {
+    /// A press at virtual `at` (`left`: `Mouse_Bal`): `Research_Main` for the hot-spot under it, either button
+    /// (exe 0x523c10 tests no button), else with the left one a list row (`ResearchGfx2D_2`) or a model
+    /// (`CheckIfTalalmanyokFolottVan`, which `Research3DUpdate` runs while closing too).
+    pub fn press(&mut self, state: &SaveState, rules: &ig2_rules::Rules, mask: &[u8], at: [f32; 2], models: &[(usize, [f32; 2])], left: bool) -> Vec<Act> {
         let mut out = Vec::new();
+        if self.closing {
+            if left {
+                self.pick_model(at, models);
+            }
+            return out;
+        }
         let en = en(state);
         match self.spot(state, mask, at) {
             Some(1) => out = self.start_stop(state, true),
@@ -591,40 +637,51 @@ impl Research {
             }
             Some(id) => {
                 if let Some(&(_, a)) = SPOT_AREA.iter().find(|&&(s, _)| s == id) {
-                    // `Forgotabla` (ELF 0x5e8230): the wheel's click.
-                    self.sounds.push(CLICK);
                     self.choose_area(a);
                 }
             }
-            None => {
-                if let Some(k) = self.list_row(state, at) {
-                    // `ResearchGfx2D_2` (ELF 0x5dfb9a): a known tech's row.
-                    self.sounds.push(CLICK);
-                    self.choose_field(k);
-                } else if self.zoom == ZOOM_MIN {
-                    // A model's projected centre within 30 pixels.
-                    if let Some(&(k, _)) = models.iter().find(|(k, c)| self.near_dir[*k] == 0 && (c[0] - at[0]).hypot(c[1] - at[1]) < 30.0) {
-                        // `CheckIfTalalmanyokFolottVan` (ELF 0x5e2a9b): `PlaySoundGlobal(2)`.
-                        self.sounds.push(SoundId::global(2));
-                        self.choose_field(k as i32);
-                    }
-                }
-            }
+            // A known tech's row is `ResearchGfx2D_2`'s, in the next frame's draw (`draw_frame`).
+            None if left && self.list_row(en, &state.tech(), at).is_none() => self.pick_model(at, models),
+            None => {}
         }
         let _ = rules;
         out
     }
 
-    /// `Mouse_Tipus = 1` at `at`: a list row (`ResearchGfx2D_2` exe 0x5221a0) or, with the models in, one's projected
-    /// centre within 30 pixels (`CheckIfTalalmanyokFolottVan` ELF 0x5e2720).
-    pub fn hand(&self, state: &SaveState, at: [f32; 2], models: &[(usize, [f32; 2])]) -> bool {
-        self.list_row(state, at).is_some() || (self.zoom == ZOOM_MIN && models.iter().any(|(k, c)| self.near_dir[*k] == 0 && (c[0] - at[0]).hypot(c[1] - at[1]) < 30.0))
+    /// `CheckIfTalalmanyokFolottVan`'s pick (exe 0x51d2d0): the first model under `at` plays `PlaySoundGlobal(2)` and
+    /// is chosen.
+    fn pick_model(&mut self, at: [f32; 2], models: &[(usize, [f32; 2])]) {
+        let first = self.models_under(at, models).next();
+        if let Some(k) = first {
+            self.sounds.push(SoundId::global(2));
+            self.choose_field(k as i32);
+        }
     }
 
-    /// The list row under `at` (`ResearchGfx2D_2`: rows of 21 cells, 10 lines apart, the human's known techs).
-    fn list_row(&self, state: &SaveState, at: [f32; 2]) -> Option<i32> {
-        let en = en(state);
-        let techs = state.tech();
+    /// The models `CheckIfTalalmanyokFolottVan` (exe 0x51d2d0) finds at `at`, in `k` order: it runs while the screen
+    /// is open (`resKINYITVA` 0xddf322, closing too) with `AddZoom` at its minimum, for the loaded and shown models
+    /// (`+0x2a`, `+0x28`) not flying (`KozelitesDirection`); `models` = their projected centres, those with
+    /// `z·1024 > −1050` ([`ResearchModels::centres`]). The distance in f32, its root in f64, `< 30` strict.
+    fn models_under<'a>(&'a self, at: [f32; 2], models: &'a [(usize, [f32; 2])]) -> impl Iterator<Item = usize> + 'a {
+        let on = (self.opened || self.closing) && self.zoom == ZOOM_MIN;
+        models.iter().filter(move |(k, c)| {
+            let (dx, dy) = (c[0] - at[0], c[1] - at[1]);
+            on && self.near_dir[*k] == 0 && (((dx * dx + dy * dy) as f64).sqrt() as f32) < 30.0
+        }).map(|&(k, _)| k)
+    }
+
+    /// `Mouse_Tipus = 1` at `at`: a list row (`ResearchGfx2D_2` exe 0x5221a0) or a model under it
+    /// (`CheckIfTalalmanyokFolottVan` exe 0x51d2d0).
+    pub fn hand(&self, state: &SaveState, at: [f32; 2], models: &[(usize, [f32; 2])]) -> bool {
+        self.list_row(en(state), &state.tech(), at).is_some() || self.models_under(at, models).next().is_some()
+    }
+
+    /// The list row under `at` (`ResearchGfx2D_2`: rows of 21 cells, 10 lines apart, the human's known techs), only
+    /// while open and not closing (`DAT_00ddf322 != 0 && DAT_00ddf323 == 0`, exe 0x5221a0).
+    fn list_row(&self, en: usize, techs: &TechTable, at: [f32; 2]) -> Option<i32> {
+        if !self.opened || self.closing {
+            return None;
+        }
         (0..16).find_map(|k| {
             let t = (self.area - 1) * 16 + k + 1;
             if techs.status(t.min(192), en) < 2 {
@@ -659,10 +716,7 @@ impl Research {
             Key::PageUp | Key::PageDown if !self.button_pressed => {
                 let at = AREA_ORDER.iter().position(|&a| a == self.area).unwrap_or(0);
                 let next = if k == Key::PageUp { (at + 11) % 12 } else { (at + 1) % 12 };
-                // `TT_*` → `Forgotabla` (ELF 0x5e8230): the wheel's click while open [obs: research-fx9.json t 170, 180].
-                if self.opened {
-                    self.sounds.push(CLICK);
-                }
+                // `TT_*` (`Forgotabla`'s click for the wheel's categories) [obs: research-fx9.json t 170, 180].
                 self.choose_area(AREA_ORDER[next]);
             }
             _ => {}
@@ -670,6 +724,9 @@ impl Research {
         if let Some(m) = moved {
             self.choose_field(m);
         }
+        // Keys come through the event filter before the frame's draw: its pass sees them at once [obs:
+        // research-left.json, PgUp at t 180, the reload's `Res_Hangok[1]` at t 249].
+        (self.drawn_area, self.drawn_tech) = (self.area, self.tech);
         Vec::new()
     }
 
@@ -776,6 +833,7 @@ impl Research {
         self.button_pressed = false;
         // `Mouse_Lekerdez` after `UpdateFrame`: the next frame reads these.
         self.poll = [self.buttons, self.poll[0]];
+        (self.drawn_area, self.drawn_tech) = (self.area, self.tech);
     }
 
     /// The pointer as `Mouse_x`/`Mouse_y` (whole virtual pixels, 0..639 × 0..479).
@@ -803,9 +861,19 @@ impl Research {
         if self.opened && self.ball_pressed() {
             self.mouse_old = self.pointer();
         }
+        // `ResearchGfx2D_2` (exe 0x5221a0, l.281-301): a left press (`Mouse_Lenyom && Bal`) on a known tech's row
+        // clicks and chooses it; drawn before the frame's `_Main`, it sees a press a frame after the hot-spots do [obs:
+        // research-left.json, the row at t 520 clicks at t 521, row 349].
+        if self.edge.press && self.edge.buttons & 1 != 0 {
+            let p = self.pointer();
+            if let Some(k) = self.list_row(en, techs, [p[0] as f32, p[1] as f32]) {
+                self.sounds.push(CLICK);
+                self.choose_field(k);
+            }
+        }
         let open_or_closing = self.opened || self.closing;
         // A new category: the models fly out, are reloaded at `ADDZOOMMAX` and fly back in.
-        if self.old_area != self.area {
+        if self.old_area != self.drawn_area {
             // `ResEltuntetVonalkak`.
             self.lines.hide();
             if self.dir == 0 {
@@ -815,7 +883,7 @@ impl Research {
                 self.dir = 1;
             }
         }
-        self.old_area = self.area;
+        self.old_area = self.drawn_area;
         if open_or_closing && self.dir == 1 && ZOOM_MAX < self.zoom {
             self.zoom = ZOOM_MAX;
             self.models_shown = false;
@@ -832,7 +900,7 @@ impl Research {
                 // of `scripts/research.json` counts from the reload].
                 self.spin = [0.0; 17];
                 self.lines.load();
-                self.placed = self.area;
+                self.placed = self.drawn_area;
                 self.models_shown = true;
                 self.dir = -1;
             }
@@ -991,8 +1059,8 @@ impl Research {
             self.design.ask([x as i32 - 5, y as i32 - 2, self.cell[0] * 20 + 10, self.cell[1] + 4]);
         }
         if self.field != -1 {
-            if self.info_tech != self.tech {
-                self.info_tech = self.tech;
+            if self.info_tech != self.drawn_tech {
+                self.info_tech = self.drawn_tech;
                 self.info_reveal = INFO_START;
             }
             if self.opened {
@@ -1066,11 +1134,41 @@ impl Research {
     }
 
     /// The hot-spots' tooltip once per drawn frame (`UpdateFrame` with `Research_MouseInit2`'s on/off states); `now`
-    /// in ms.
-    pub fn tooltip(&mut self, state: &SaveState, mask: &[u8], tips: &[Vec<u8>], now: f64) {
-        let under = self.tip_spot(state, mask, self.tip.mouse).unwrap_or(0);
-        let len = tips.get(under as usize).map_or(0, |t| t.split(|&b| b == 0).next().unwrap_or_default().len());
+    /// in ms. `models` as for [`Research::press`]; `texts` give the model tooltip's tech name ([`Research::tip_text`]).
+    pub fn tooltip(&mut self, state: &SaveState, mask: &[u8], tips: &[Vec<u8>], texts: &crate::ui::UiTexts, models: &[(usize, [f32; 2])], now: f64) {
+        self.model_tip_step(models);
+        let mut under = self.tip_spot(state, mask, self.tip.mouse).unwrap_or(0);
+        // `Mouse_Szoveg_Set(0x11, 0, x − 15, y − 15, 30, 30, ..)` at the pointer of the frame it was set; of several
+        // hot-spots the lowest id wins.
+        let inside = |c: [f32; 2], m: [f32; 2]| (c[0] - 15.0..c[0] + 15.0).contains(&m[0]) && (c[1] - 15.0..c[1] + 15.0).contains(&m[1]);
+        if self.model_tip.is_some_and(|(_, c)| inside(c, self.tip.mouse)) && (under == 0 || under > MODEL_TIP) {
+            under = MODEL_TIP;
+        }
+        let len = self.tip_text(tips, texts, under).len();
         self.tip.update(now, under, len, self.held);
+    }
+
+    /// `CheckIfTalalmanyokFolottVan`'s tooltip 0x11 (exe 0x51d2d0, once a 3D update while open): on over a model (the
+    /// last one found sets the text, the tech's name), off when none is under the pointer unless a model flies
+    /// (`Vankinntalalmany` exe 0x525280: it keeps what it was).
+    fn model_tip_step(&mut self, models: &[(usize, [f32; 2])]) {
+        if !(self.opened || self.closing) {
+            return;
+        }
+        if let Some(k) = self.models_under(self.tip.mouse, models).last() {
+            self.model_tip = Some(((self.placed.max(1) - 1) * 16 + k, self.tip.mouse));
+        } else if self.near_dir.iter().all(|&d| d == 0) {
+            self.model_tip = None;
+        }
+    }
+
+    /// The text of the tooltip `id` shows: the hot-spots' `Research_MouseInit` texts, 0x11 the model's tech name.
+    pub fn tip_text(&self, tips: &[Vec<u8>], texts: &crate::ui::UiTexts, id: u32) -> Vec<u8> {
+        let t = match (id, self.model_tip) {
+            (MODEL_TIP, Some((t, _))) => crate::hud::tech_name(texts, t),
+            _ => tips.get(id as usize).cloned().unwrap_or_default(),
+        };
+        t.split(|&b| b == 0).next().unwrap_or_default().to_vec()
     }
 
     /// Where model `k` (1..=16) of the shown category sits and how big it is (`ElforgatTalalmanyok` ELF 0x5e3270):
@@ -1502,27 +1600,31 @@ impl Research {
             let pc = c22.map(|x| x * pulse / 100.0);
             d.font.text(f, v, &name, 4.0, 0x1e as f32, name.len(), 2, Align::Left, pc, None);
             let (days, cost) = days_and_cost(state, rules, &techs, ct, en);
-            let s1 = printf_d(&d.texts.get(4, 2, 3), cost);
+            let s1 = printf_d(&d.texts.get(4, 2, 3), b":%d", cost);
             d.font.text(f, v, &s1, 4.0, 0x2a as f32, s1.len(), 2, Align::Left, pc, None);
-            let s2 = printf_d(&d.texts.get(4, 2, 4), days);
+            let s2 = printf_d(&d.texts.get(4, 2, 4), b": %d%", days);
             d.font.text(f, v, &s2, 4.0, 0x36 as f32, s2.len(), 2, Align::Left, pc, None);
         }
         let _ = money_mult;
         // The shown tech's days and daily cost under the panels, unless owned.
         if status < 5 {
             let (days, cost) = days_and_cost(state, rules, &techs, tech, en);
-            let s1 = printf_d(&d.texts.get(4, 2, 5), days);
+            let s1 = printf_d(&d.texts.get(4, 2, 5), b": %d%", days);
             d.font.text(f, v, &s1, 0x1fb as f32, 0xaf as f32, s1.len(), 2, Align::Left, c22, None);
-            let s2 = printf_d(&d.texts.get(4, 2, 6), cost);
+            let s2 = printf_d(&d.texts.get(4, 2, 6), b": %d", cost);
             d.font.text(f, v, &s2, 10.0, 0xaf as f32, 0x10, 2, Align::Left, c22, None);
         }
     }
 }
 
-/// `sprintf(fmt, n)` for the one `%d` the research strings hold.
-fn printf_d(fmt: &[u8], n: u32) -> Vec<u8> {
-    let s = String::from_utf8_lossy(fmt);
-    s.replacen("%d", &n.to_string(), 1).replace("%%", "%").into_bytes()
+/// `sprintf(GetString(..) + suffix, n)`: the texts hold no format; `ResearchGfx2D_2` (exe 0x5221a0) appends `":%d"`
+/// (0x854cf0, money left), `": %d%"` (0x8585a8, the days) or `": %d"` (0x854c78, the cost) with `CString::operator+`
+/// (exe 0x4a92a0). The text's own bytes stay (its code page); MSVC's `sprintf` prints nothing for the lone trailing
+/// `%` [obs: research-left.json t 510, Hungarian: "Idő kell: 100"].
+fn printf_d(text: &[u8], suffix: &[u8], n: u32) -> Vec<u8> {
+    let fmt = [text, suffix].concat();
+    let fmt = fmt.strip_suffix(b"%").filter(|f| !f.ends_with(b"%")).unwrap_or(&fmt);
+    crate::ui::sprintf(fmt, &[n as i64])
 }
 
 /// `FillToScreen(x, y, w, h, 0xc)`: the typing cursor.
@@ -1544,7 +1646,8 @@ pub struct ResearchModels {
     target: Option<Target>,
     /// `RESE_MSK.RAW` (kep 0x58): 640 × 480 hot-spot colours.
     pub mask: Vec<u8>,
-    /// The tech models' projected centres of the last frame (for clicks).
+    /// The tech models' projected centres of the last frame (for clicks, the hand and tooltip 0x11): the shown ones
+    /// with `z·1024 > −1050` (`MoveObj`'s units; `CheckIfTalalmanyokFolottVan` exe 0x51d34d), however faded.
     pub centres: Vec<(usize, [f32; 2])>,
     /// The lasers' glow (`laservago`, `InitFader1`: `textures/starmap/laservago.bmp`).
     pub glow: Option<TexId>,
@@ -1841,10 +1944,12 @@ impl ResearchModels {
         // The category's tech models (status ≥ 2): owned ones solid, the others as wireframes in their light's
         // colour (`FenyHozzarendel`: seen (0, 32, 32), researchable (0, 64, 64), researching (64, 64, 0)); hidden
         // until the zoom-in after the opening ends (`LoadTalalmanyVectorok` hides them, `UnHideMeglevoTalalmanyok`).
+        // Flying out after a new category they still draw, fading with `AddZoom` [obs: research-left.json t 400, the
+        // civil models 20 ticks after the press on category 9; row 365].
         self.centres.clear();
         let race = state.mem.u8(at::RACES + en as u32);
         let sr = &rules.research_screen;
-        if s.dir != 1 && s.models_shown {
+        if s.models_shown {
             for k in 1..17 {
                 let t = (s.placed - 1) * 16 + k;
                 let st = techs.status(t.min(192), en);
@@ -1855,6 +1960,11 @@ impl ResearchModels {
                 let size_mult = rules.research_size_mult.get(t - 1).copied().unwrap_or(1.0);
                 let Some(m) = self.tech_model(install, rules, &techs, race, s.placed, k).cloned() else { continue };
                 let (at, grow) = s.model_at(orbit, k);
+                if at[2] > -1050.0 {
+                    if let Some(c) = project(at) {
+                        self.centres.push((k, c));
+                    }
+                }
                 // `SetTTransp` (exe 0x5248a0): the depth fades the models behind the ball's centre and hides the far ones.
                 let tr = item_transparency(at[2], s.zoom);
                 if tr > 0.99 {
@@ -1865,9 +1975,6 @@ impl ResearchModels {
                 // `ForgatObjectek`: `RotateObj(0, 0, spin)` then `RotateObj2((1, 0, 0), 1.3)`.
                 let rot = scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], 1.3), &scene::create_matrix(0.0, 0.0, s.spin[k]));
                 let mm = scene::mul(&rot, &pl.matrix).map(|x| x * 1024.0);
-                if let Some(c) = project(at) {
-                    self.centres.push((k, c));
-                }
                 if st == 5 {
                     // Property 8: the opacity goes to alpha.
                     for p in &m.parts {
@@ -2028,6 +2135,13 @@ fn wire(out: &mut Vec<Instance>, v: &Virtual, p: &scene::Part, m: &M3, at: V3, i
 
 /// The segment `a`–`b` projected, cut where it passes the plane `w = 1` before the camera.
 fn clip_near(a: V3, b: V3) -> Option<([f32; 2], [f32; 2])> {
+    let (a2, b2) = cut_near(a, b)?;
+    Some((project(a2)?, project(b2)?))
+}
+
+/// The segment `a`–`b` (camera space) cut where it passes the plane `w = 1` before the camera; `None` when it lies
+/// wholly in front of it.
+pub(crate) fn cut_near(a: V3, b: V3) -> Option<(V3, V3)> {
     const NEAR: f32 = 1.0001;
     let (wa, wb) = (-a[2], -b[2]);
     if wa < NEAR && wb < NEAR {
@@ -2039,7 +2153,7 @@ fn clip_near(a: V3, b: V3) -> Option<([f32; 2], [f32; 2])> {
     };
     let a2 = if wa < NEAR { cut(a, b, wa, wb) } else { a };
     let b2 = if wb < NEAR { cut(b, a, wb, wa) } else { b };
-    Some((project(a2)?, project(b2)?))
+    Some((a2, b2))
 }
 
 fn normal(w: &[V3; 3]) -> V3 {
@@ -2137,6 +2251,7 @@ mod tests {
             reveal: [0.0; 16],
             info_reveal: [0.0; 4],
             info_tech: -1,
+            drawn_tech: -1,
             wire: 0.0,
             ball: scene::IDENTITY,
             zoom: 0.0,
@@ -2161,7 +2276,9 @@ mod tests {
             pin: None,
             key_old: false,
             old_area: 3,
+            drawn_area: 3,
             models_shown: true,
+            model_tip: None,
             ball_at: BALL,
             ball_shown: true,
             wire_fade: 0.0,
@@ -2202,6 +2319,42 @@ mod tests {
         }
     }
 
+    /// `CheckIfTalalmanyokFolottVan` (exe 0x51d2d0): a model within 30 pixels (strict) at the zoom's minimum and not
+    /// flying is under the pointer; the left button picks it (a right press doesn't), tooltip 0x11 gets its tech.
+    #[test]
+    fn models_follow_the_exe_hit_test() {
+        let mut s = screen();
+        let models = [(4, [100.0, 100.0]), (5, [120.0, 100.0])];
+        assert_eq!(s.models_under([125.0, 100.0], &models).collect::<Vec<_>>(), [4, 5]);
+        assert_eq!(s.models_under([130.0, 100.0], &models).collect::<Vec<_>>(), [5]);
+        assert_eq!(s.models_under([150.0, 100.0], &models).next(), None);
+        s.tip.mouse = [110.0, 100.0];
+        s.model_tip_step(&models);
+        assert_eq!(s.model_tip, Some((2 * 16 + 5, [110.0, 100.0])));
+        // While a model flies the tooltip keeps what it was.
+        s.near_dir[4] = 1;
+        s.tip.mouse = [300.0, 300.0];
+        s.model_tip_step(&models);
+        assert!(s.model_tip.is_some());
+        s.near_dir[4] = 0;
+        s.model_tip_step(&models);
+        assert_eq!(s.model_tip, None);
+        s.zoom = 0.5;
+        assert_eq!(s.models_under([100.0, 100.0], &models).next(), None);
+    }
+
+    /// `Forgotabla` (exe 0x51e360) clicks for the middle wheel's categories; the off-wheel buttons' `TT_*` (exe
+    /// 0x524a50..) don't [obs: research-left.json and research-right.json on quick-1.sav: power (9) at t 380 silent,
+    /// the running civil project (1) through 0x19 at t 450 a click].
+    #[test]
+    fn only_the_wheel_categories_click() {
+        let mut s = screen();
+        s.choose_area(9);
+        assert!(s.sounds.is_empty());
+        s.choose_area(1);
+        assert_eq!(s.sounds, [CLICK]);
+    }
+
     #[test]
     fn a_press_goes_in_and_out_before_the_wheel_turns() {
         // Ships sit in slot 4: its button (forgastabla3 = 104) goes in 7, 10 and back out 3, 0 (`resSetGombFrame`),
@@ -2210,7 +2363,7 @@ mod tests {
         s.choose_area(1);
         assert_eq!((s.button, s.button_new), (104, true));
         // (The models' flight out and back, which also holds the wheel, is left out here.)
-        s.old_area = s.area;
+        (s.old_area, s.drawn_area) = (s.area, s.area);
         let mut seen = Vec::new();
         for _ in 0..4 {
             frames(&mut s, 1);
@@ -2342,6 +2495,10 @@ mod tests {
         assert_eq!((r.area, r.tech, r.slot_area[0]), (7, 6 * 16 + 2, a));
         let back = r.place();
         assert_eq!((back.area, back.tech, back.front, back.fields[a as usize]), (7, 6 * 16 + 2, a, r.fields[a as usize]));
+        // A save writes the place into the globals and a load reads it back (row 341).
+        let mut state = w.game.state.clone();
+        back.write(&mut state);
+        assert_eq!(Place::read(&state), back);
     }
 
     /// The screen's keys and hot-spots reach the sim through `MULTIGET_Research`'s commands (needs the install and
@@ -2389,7 +2546,7 @@ mod tests {
         r.button_pressed = false;
         let at = (0..640 * 480).find(|&i| mask[i] == 0x12).map(|i| [(i % 640) as f32, (i / 640) as f32]).unwrap();
         let before = w.game.state.mem.u8(va::URGENT + e as u32);
-        let acts = r.press(&w.game.state, &tables, &mask, at, &[]);
+        let acts = r.press(&w.game.state, &tables, &mask, at, &[], true);
         send(&mut w, acts);
         assert_ne!(w.game.state.mem.u8(va::URGENT + e as u32), before);
         // A middle-wheel category through its slot's mask colour turns the wheel (once it stands still: the
@@ -2399,7 +2556,7 @@ mod tests {
         let kep = r.slot_kep[3] as u8;
         let area = r.slot_area[3];
         let at = (0..640 * 480).find(|&i| mask[i] == kep).map(|i| [(i % 640) as f32, (i / 640) as f32]).unwrap();
-        r.press(&w.game.state, &tables, &mask, at, &[]);
+        r.press(&w.game.state, &tables, &mask, at, &[], true);
         assert_eq!(r.area as i32, area);
         assert_eq!(r.slot_area[0], area);
     }
@@ -2487,7 +2644,8 @@ mod tests {
 
     #[test]
     fn printf_fills_the_one_number() {
-        assert_eq!(printf_d(b"Cost: %d/day", 12), b"Cost: 12/day".to_vec());
+        assert_eq!(printf_d(b"Id\xf5 kell", b": %d%", 100), b"Id\xf5 kell: 100".to_vec());
+        assert_eq!(printf_d(b"P\xe9nz kell", b":%d", 7), b"P\xe9nz kell:7".to_vec());
     }
 
     #[test]

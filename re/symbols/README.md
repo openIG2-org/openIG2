@@ -33,3 +33,8 @@ build. Columns: `exe_entry, elf_entry, name, method, exe_size, elf_size`.
 REA's Windows Ghidra provider is read-only ("Windows Ghidra P0 does not admit database mutation"),
 and its auto-analysis of `ig2.exe` exceeds the MCP request timeout. So the Ghidra project plus this
 table are the naming source of truth. REA is used for runtime work (Frida) against these addresses.
+
+## Known wrong names
+
+- `0x49c780` -> `Build3dBuilding` is wrong: that function rebuilds a mesh's vertex list for `Init3dColony`; the real `Build3dBuilding` is exe `0x45f640` (ELF 0x4ca0b0).
+- ELF `getbottomvertex` 0x47c750 is exe `0x4a89a0`; the exe's 0x47c750 is `KiszamolErtek` (a bare ELF address in a spec is not an exe address).

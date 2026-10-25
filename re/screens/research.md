@@ -254,7 +254,9 @@ State (exe): `resframe` f32 0xDC5368, `resKINYITVA` 0xDDF322 (open), `resBECSUKA
 - `ResearchGfx2D_2` writes nothing until open; the lists and labs stop when closing. The info lines restart at
   `InfoSorok[i]+0xb8` (0, −20, −40, −60: `NEWGAME_Research`) for a new tech and type on only while open.
 - The tech models: `LoadTalalmanyVectorok` hides them; they show after the zoom-in that follows the opening
-  (`UnHideMeglevoTalalmanyok` when open and `TalalmanyDir == 0`) or at a category's reload.
+  (`UnHideMeglevoTalalmanyok` when open and `TalalmanyDir == 0`) or at a category's reload. They keep drawing while
+  flying out (`TalalmanyDir == 1`, fading with `AddZoom`) and hide only at the reload. The list/frame shine is
+  the `resf` faders (exe 0xDC4758); `ResearchGfx2D_2` restarts the info lines on a new tech before `Research_Main`.
 - `Research_Kilep` (animated, not to screens 10/1/13): `resBECSUKAS`, the turning wheel hidden and the closed one
   shown, the models fly out (`TalalmanyDir` 1, from `ADDZOOMMIN` when they stood), sound `scrn01ki.wav`; then
   `resKINYITVA = 0`, `UpdateFrame` + `FRISSITES` in a loop until frame 0 was drawn once (`VoltNulla`). Closing at
@@ -296,13 +298,13 @@ puts it in (10, `SetDoubleTexture`) or out (0, `DoubleGombFelenged`) at once; `R
 `DesignKeret1(x − 5, y − 2, 20 cells + 10, h + 4, 1)` every drawn frame while open. A new place starts a morph
 (`dkmcel = π/2`); `Frissit2_Grafika` (ELF 0x5481c0, every UI frame) runs `dkm` +0.05 to π/2, jumps to the new place,
 then back to 0 (`dkoldx == 0` after a screen change keeps it hidden until the first place arrives; asked on the very
-first frame it would never show). Drawn with `f = 1 − sin(dkm)`, `w' = w(2 − f)`, `x' = x − w(1 − f)/3`, colour
+first frame it would never show). Boot values (.data): dkm 0xB34C0C = 0, dkmcel 0x903548 = π/2, GfxNovelo 0xB34BAC = 0; with no place asked `Frissit2_Grafika` (exe 0x4d2ed0) saw-tooths dkm π/2 → 0, so the first ask morphs in unless it lands on dkm == π/2 (1 tick in ~32). `DesignKeretAzonnalMorph` (0xad0ef5): the next new place jumps without a morph (the main menu's scroll drag; client `DesignFrame::at_once`). Drawn with `f = 1 − sin(dkm)`, `w' = w(2 − f)`, `x' = x − w(1 − f)/3`, colour
 `DDColor[1]` × `KiirStrSzinSzorzo` (100): per row of `h + 1` from `y − 1` a glow of half the colour times a triangle
 peaking mid-height, dark at both ends over a tenth of the width (`line3` gives a segment's first colour to its far
 end); the border as 18 one-pixel segments (top right to left, the left corner, side and corner, bottom left to
 right, the right corner, side and corner), segment k `frac((sin(GfxNovelo + k·20°) + 1)/2)` bright (`GfxNovelo`
 +0.02 a UI frame, a light running round); all additive (`line3(…, true)`). Port: `ui::DesignFrame` (the info
-screen's race frame can use it too).
+screen's race frame can use it too). Device rows: each virtual pixel fills its own device rectangle, but a device row whose centre lies exactly on a virtual row's top edge (every 5th at 800x600) takes the row above's value in the exe; the kit's quads nudge down by `ROW_EDGE` = 0.01 device px (`kit/design_frame.rs`, row 153).
 
 ### 5.5 Tooltips
 `Research_MouseInit` (exe 0x524080) gives each hot-spot `GetString(4, 1, k)` (from the asm's immediates): 1 → 6 (and
@@ -346,6 +348,8 @@ ELF and exe agree in every constant and precision (exe: the helpers inlined or u
   opaque black (base along v = 0, apex at v = 1), so the port adds the whole texture square (`draw_arrow`).
 - Ported in `research.rs` (`Lines`, `draw_arrow`); all 706 calls of a probe run match bit for bit
   (`probes/research_lines.js`, `button_lines_match_the_exe`; diff-results.md 2026-10-23 button lines).
+
+Model tooltip 0x11 (`CheckIfTalalmanyokFolottVan`, exe 0x51d2d0; FX3 rest): over a model the text is the tech's name (`Talalmanyok` name, 0xb9c1dc + i*0x114), rect 30x30 at that frame's pointer, release flag 0, cursor 1; off with no model under it unless one flies (FUN_00525280); runs only while resKINYITVA. Model hit: resKINYITVA (open or closing), AddZoom == min (0xddfc78 == 0xdc4754), entry +0x2a loaded and +0x28 shown, KozelitesDirection[k] == 0, MoveObj z*1024 > -1050 (asm 0x51d34d), f32 squared distance, < 30 strict. `DAT_00ddf322` = resKINYITVA (set by `Research_Belep` 0x523540 when unanimated, by `Research3DUpdate` at resframe >= 60; cleared by `Research_Kilep` 0x5239b0), `DAT_00ddf323` = resBECSUKAS (closing); list-row pick and hand need open && !closing. Client: `Research::model_tip`, `ResearchModels::centres`/`models_under`. [u] the exe's centre is `GetObjCenter` (0x452280), the client's the orbit point.
 
 ### 5.7 Not ported yet
 The panels' design frames (`FadeKerettelKerekitDesign` under `GLOBALKELLDESIGN`), sounds, the screen-select menu

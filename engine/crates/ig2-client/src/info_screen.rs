@@ -644,6 +644,25 @@ impl InfoScreen {
         d.list(self.selected, human).into_iter().skip(self.pointer).take(4).collect()
     }
 
+    /// `CheckMelyikFolottVan` (exe 0x4e5320): a shown row's globe (`GetObjPos`, projected by `TransformPoint`: the
+    /// screen's camera, `vx = 600·x/w + 320`, `vy = 600·y/w + 240`) strictly inside a ±30 pixel box around `at`.
+    /// Only a planet row (kind 0, its point scaled `·639/639`, `·479/479` in f32) answers yes; a fleet row's hit
+    /// (kind 1) ends the search with no (0x4e54f6 jumps to the `xor al,al` exit: an original bug, row 348).
+    fn over_globe(&self, d: &InfoData, human: usize, at: [f32; 2]) -> bool {
+        let inside = |x: f32, y: f32| x - 30.0 < at[0] && at[0] < x + 30.0 && y - 30.0 < at[1] && at[1] < y + 30.0;
+        for (k, e) in self.rows(d, human).iter().enumerate() {
+            let p = self.globes[k].pos;
+            let w = -p[2];
+            let (x, y) = (600.0 * p[0] / w + 320.0, 600.0 * p[1] / w + 240.0);
+            match e {
+                Entry::Planet(_) if inside(x * 639.0 / 639.0, y * 479.0 / 479.0) => return true,
+                Entry::Fleet(_) if inside(x, y) => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// One frame of `KirakBolygoFlottakat`'s problem bookkeeping (re/screens/info.md §6.2): per planet row
     /// `VanNagyProblema` then `KirakBolygoInfo`'s step `h` (every 30 `Counter`, wrapping after the planet's count;
     /// shared by the rows, so a planet with fewer problems resets it for the rows below). `InfoProblemaRendezo`'s
@@ -1031,14 +1050,17 @@ impl InfoScreen {
 
     /// `Info_MouseInit2` (exe 0x4e9530): whether hot-spot `id` is on now. 13 never; 9 + k for the rows shown, 33
     /// outside the detail mode and 37 only in it; 26..=28 in detail mode on the human's planet; the race columns for the empires alive
-    /// and met; the chart buttons and 15 in chart mode, 35/36 in star-log mode.
+    /// and met; the chart buttons and 15 in chart mode, 35/36 in star-log mode; 14 and 15 only with a
+    /// `MainScenarioDescriptor` (0xbbd140, a game started as a scenario).
     pub fn spot_on(&self, id: u32, s: &UiSnap) -> bool {
         let n = s.info.list(self.selected, s.human).len();
         match id {
             1..=8 => s.alive[id as usize] && s.known[id as usize],
             9..=12 => !self.detail && (id as usize - 9) + self.pointer < n,
             13 => false,
-            15..=25 => !self.star_log,
+            14 => s.scenario,
+            15 => s.scenario && !self.star_log,
+            16..=25 => !self.star_log,
             33 => !self.detail,
             26..=28 => self.detail && self.selected == s.human && matches!(self.detail_entry(&s.info, s.human), Some(Entry::Planet(_))),
             35 | 36 => self.star_log,
@@ -1062,8 +1084,8 @@ impl InfoScreen {
 
 impl InfoScreen {
     /// The hot-spot's tooltip (`Info_MouseInit`'s `Mouse_Szoveg_Set` texts, exe 0x4e9900): the race columns their
-    /// empire's name, the others `GetString(9, 1, k)` (re/screens/info.md §5).
-    pub fn tip_text(&self, id: u32, texts: &crate::ui::UiTexts, names: &[Vec<u8>]) -> Vec<u8> {
+    /// empire's name, the others `GetString(9, 1, k)` (re/screens/info.md §5); the pointer at virtual `at`.
+    pub fn tip_text(&self, id: u32, texts: &crate::ui::UiTexts, names: &[Vec<u8>], s: &UiSnap, at: [f32; 2]) -> Vec<u8> {
         let k = match id {
             1..=8 => return names.get(id as usize).cloned().unwrap_or_default(),
             9..=12 => 1,
@@ -1072,8 +1094,9 @@ impl InfoScreen {
             15 if !self.star_log => 0x1a,
             14..=31 => id - 11,
             32 => return Vec::new(),
-            // 27 instead when `CheckMelyikFolottVan()` is 0 [u].
-            33 => 21,
+            // `Info_MouseInit2` sets 33 again every frame: 21 over a row's globe (`CheckMelyikFolottVan`), else 27.
+            33 if self.over_globe(&s.info, s.human, at) => 21,
+            33 => 0x1b,
             34..=37 => id - 12,
             _ => return Vec::new(),
         };
@@ -1585,6 +1608,24 @@ fn draw_select(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, d: &InfoDa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Info_MouseInit2` (exe 0x4e9530): 14 and 15 only with a `MainScenarioDescriptor` [obs: fx3-rest `infohold`
+    /// on quick-1.sav, none]; 33's text 21 over a row's globe (`CheckMelyikFolottVan` exe 0x4e5320: the first row's
+    /// home (−310, 40, −650) projects to (33.8, 276.9), a ±30 box), else 0x1b.
+    #[test]
+    fn scenario_spots_and_the_globe_test() {
+        let s = InfoScreen::enter(6);
+        let mut ui = UiSnap { human: 6, ..Default::default() };
+        ui.info.planets = vec![ListPlanet { owner: 6, seen: true, ..Default::default() }];
+        assert!(!s.spot_on(14, &ui) && !s.spot_on(15, &ui) && s.spot_on(16, &ui));
+        ui.scenario = true;
+        assert!(s.spot_on(14, &ui) && s.spot_on(15, &ui));
+        assert!(s.over_globe(&ui.info, 6, [34.0, 277.0]));
+        assert!(s.over_globe(&ui.info, 6, [63.0, 300.0]));
+        assert!(!s.over_globe(&ui.info, 6, [64.0, 277.0]));
+        // The second row's globe has no entry to show.
+        assert!(!s.over_globe(&ui.info, 6, [34.0, 331.0]));
+    }
 
     #[test]
     fn chart_buttons_follow_info_mouse_init() {

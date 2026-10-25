@@ -116,11 +116,27 @@ impl<'a> Pvr<'a> {
 
     /// Decode the top mip level of the first surface, face and slice.
     pub fn decode_rgba8(&self) -> Result<Rgba8> {
-        let (w, h) = (self.width, self.height);
+        self.decode_level(0, self.width, self.height)
+    }
+
+    /// Every mip level the file holds (`mip_count`, largest first; one surface, face and slice), as `load_pvr` hands
+    /// them to GL: the remaster's own smaller levels, not ones filtered from the top.
+    pub fn decode_levels(&self) -> Result<Vec<Rgba8>> {
+        let (mut w, mut h, mut at) = (self.width, self.height, 0);
+        let mut out = Vec::new();
+        for _ in 0..self.mip_count {
+            out.push(self.decode_level(at, w, h)?);
+            at += self.level_size(w, h);
+            (w, h) = ((w / 2).max(1), (h / 2).max(1));
+        }
+        Ok(out)
+    }
+
+    fn decode_level(&self, at: usize, w: u32, h: u32) -> Result<Rgba8> {
         let size = self.level_size(w, h);
         let src = self
             .data
-            .get(..size)
+            .get(at..at + size)
             .ok_or_else(|| format_err("PVR", "pixel data truncated"))?;
         let pixels = match self.format {
             PixelFormat::Generic { channels, bits } => decode_generic(src, w, h, channels, bits)?,

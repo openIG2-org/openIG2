@@ -148,6 +148,8 @@ pub struct Snapshot {
     /// The waypoint chains (`+0x50`, `Waypointek` +0/+4, next +8) of the fleets whose routes are drawn (the human's
     /// and story fleet 0x1f88), by slot: `Show_Flottak3d` draws the selected one's (re/screens/starmap.md §4.3).
     pub waypoints: Vec<(usize, Vec<[f32; 2]>)>,
+    /// `MultiPlayerMode` (exe 0xBAE2C0) without `DEBUGX`: `Show_Flottak2d` draws only the human's own fleets' names.
+    pub own_names_only: bool,
 }
 
 impl Snapshot {
@@ -218,7 +220,8 @@ impl Snapshot {
                 (slot, chain)
             })
             .collect();
-        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, waypoints }
+        let own_names_only = m.u8(va::MULTIPLAYER) != 0 && !debug;
+        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, waypoints, own_names_only }
     }
 
     /// The fleets between `prev` (alpha 0) and `self` (alpha 1). A fleet pairs with the same slot in `prev`; one
@@ -294,6 +297,8 @@ pub struct World<'r> {
     pub popped: Vec<i32>,
     /// What the real-time battles did since the screen last looked (start, end).
     pub realtime: Vec<ig2_sim::game::RealTimeEvent>,
+    /// The story's UI effects since the window last took them (single player).
+    pub story_ui: Vec<StoryUi>,
     /// The videos the sim asked for since the window last took them (`st_ShowAnim`, the game's end).
     pub videos: Vec<crate::video::Request>,
     /// The ground wars' voice lines since the window last took them (planet, `PlaySpeechGrWar` site).
@@ -312,6 +317,81 @@ pub struct World<'r> {
     pub net_over: bool,
     /// The slot of the session's host at the last pump (a host migration changes it, rules/multiplayer.md §7.3).
     pub net_host: Option<u8>,
+    /// `MainScenarioDescriptor` (exe 0xbbd140) is set: the game was started as a scenario from the main menu
+    /// (`StoreScenarioDescription` 0x504120); `InitNewGame` (every other start and every `LoadSave`) clears it.
+    pub scenario: bool,
+}
+
+/// The session as the wait overlay sees it (`crate::mp_wait`, [`World::wait_view`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaitView {
+    /// The local peer's turn.
+    pub turn: u64,
+    /// A player's pause holds the session.
+    pub paused: bool,
+    /// The session awaits a dropped or migrating player.
+    pub reconnecting: bool,
+    pub host: bool,
+    /// The late players `(empire, name)`.
+    pub late: Vec<(u8, String)>,
+}
+
+/// A story effect the window carries out (deviation 231; `rules/campaign.md`): the screens, the pause and the
+/// registry are the UI's. Single player only: in canonical MP the story is the canonical `EN`'s, and the original's MP
+/// ignores `SetIdoPause(1, 0)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoryUi {
+    /// Story 400 at counter 4002: `SaveRegistrySetting(StoryRegString(campaign), value)` (exe 0x51b860, 0x5c5540):
+    /// `Fable_<campaign>` in the options registry, the storyline the next campaign avoids (`InitStory`).
+    Storyline { campaign: i32, value: i32 },
+    /// `st_Foldrenges(p)`: `AktKepKell := 3`, `AktPlanetKell := p`, `Colony_foldrenges := p` (the camera shakes).
+    Earthquake(usize),
+    /// Story 854's riot: `AktKepKell := 3`, `AktPlanetKell := p`, `SetIdoPause(1, 0)` (exe 0x541300).
+    Hold(usize),
+}
+
+impl StoryUi {
+    fn of(e: &GameEvent) -> Option<Self> {
+        use ig2_sim::story::StoryEvent;
+        match e {
+            GameEvent::Story(StoryEvent::SaveStoryline { campaign, value }) => Some(Self::Storyline { campaign: *campaign, value: *value }),
+            GameEvent::Story(StoryEvent::Earthquake(p)) if *p > 0 => Some(Self::Earthquake(*p as usize)),
+            GameEvent::Story(StoryEvent::HoldGroundWar { planet }) if *planet > 0 => Some(Self::Hold(*planet as usize)),
+            _ => None,
+        }
+    }
+}
+
+/// The message ring's line (`AddSzoveg(text, colour)`, exe 0x591360) for a story's starmap text (`StoryEvent::Notice`)
+/// on the machine of empire `en` (each machine of the original tests its own `EN`; `st_Multi_include` exe 0x5ee4d0,
+/// stories 834/856 exe 0x5de61e / 0x5e31a2), `None` when it isn't this machine's.
+fn notice_line(n: &ig2_sim::story::Notice, en: i32, game: &Game) -> Option<(Vec<u8>, usize)> {
+    use ig2_sim::story::Notice;
+    let m = &game.state.mem;
+    let player = |e: i32| ig2_sim::messages::cstr(&m.read(0xBAE588 + 11 * e.clamp(0, 18) as u32, 11)).to_vec();
+    let cat = |parts: &[&[u8]]| parts.concat();
+    Some(match *n {
+        Notice::Winner { empire, amazing, colour } => {
+            let t = match (empire == en, amazing) {
+                (true, true) => b"AMAZING! YOU ARE THE WINNER!".to_vec(),
+                (true, false) => b"YOU ARE THE WINNER!".to_vec(),
+                (false, _) => cat(&[&player(empire), b" is the winner!"]),
+            };
+            (t, colour as usize)
+        }
+        Notice::CannotColonise { planet, by } if by == en => {
+            let name = ig2_sim::messages::cstr(&m.read(va::PLANETS + (planet.max(0) as usize * ig2_sim::save::PLANET_SIZE) as u32, 0x20)).to_vec();
+            (cat(&[b"You cannot colonize ", &name, b"!"]), 2)
+        }
+        Notice::FlagTaken { by, from } if by == en => (cat(&[b"You have the flag of ", &player(from), b"!"]), 2),
+        Notice::FlagTaken { by, from } if from == en => (cat(&[&player(by), b" has your flag!"]), 2),
+        Notice::Touchdown { by } if by == en => (b"TOUCHDOWN!!!".to_vec(), 2),
+        Notice::Touchdown { by } if 3 - by == en => (cat(&[&player(by), b" has captured your flag!"]), 2),
+        Notice::FlagLost { by } if by == en => (b"You have lost the flag!".to_vec(), 2),
+        Notice::FlagLost { by } if 3 - by == en => (b"Your flag has been returned!".to_vec(), 2),
+        Notice::StoryText(id) => (game.rules.messages.story_text(id).to_vec(), 1),
+        _ => return None,
+    })
 }
 
 /// Canonical multiplayer: the screens read the local player's `EN` from the state, as every machine of the original
@@ -322,6 +402,10 @@ fn local_en(game: &mut Game, local: bool) {
     let ig2_sim::game::ViewMode::Canonical { en } = game.view else { return };
     let e = if local { game.local.empire } else { en };
     game.state.mem.set_i32(va::EN, e as i32);
+    // The local human's own inbox too (`Game::show_inbox`, re/rules/multiplayer.md §5.3): its messages screen.
+    game.show_inbox((local && e != en).then_some(e));
+    // And the names it renamed that the lockstep hasn't carried yet (deviation 395).
+    game.show_local_names(local);
 }
 
 /// The message line's words for a change of the session's hold status (ours, in English: the original's MP had no
@@ -456,7 +540,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, scenario: false }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -513,17 +597,54 @@ impl<'r> World<'r> {
             }
         }
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
+        self.take_notices(&events);
         self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.ground_voices.extend(ground_voices(&events));
         let mut next = Snapshot::read(&self.game);
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
         next.orbit = (self.curr.orbit as f64 + 2.0 * speed as f64 / 1500.0) as f32;
         self.prev = std::mem::replace(&mut self.curr, next);
-        self.ui = crate::ui::UiSnap::read(&self.game.state);
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
         self.colony_prev = self.colony_curr.take();
         if let Some(p) = self.colony {
             self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
         }
+    }
+
+    /// The story's starmap texts for this machine's empire (`StoryEvent::Notice`, [`notice_line`]) into the message ring.
+    fn take_notices(&mut self, events: &[GameEvent]) {
+        let en = self.game.local.empire as i32;
+        let en = if self.net.is_some() { en } else { self.game.state.mem.i32(va::EN) };
+        for e in events {
+            if let GameEvent::Story(ig2_sim::story::StoryEvent::Notice(n)) = e {
+                if let Some(line) = notice_line(n, en, &self.game) {
+                    self.chat_lines.push(line);
+                }
+            }
+        }
+    }
+
+    /// The host's "Close connection" in the wait overlay (`crate::mp_wait`): the drop decides on the state at the next
+    /// turn (it catches the peer up), so the game goes in for it.
+    pub fn drop_player(&mut self, empire: u8) {
+        let Some((net, epoch)) = &mut self.net else { return };
+        local_en(&mut self.game, false);
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        let r = net.drop_player(empire, epoch.elapsed());
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        local_en(&mut self.game, true);
+        if let Err(e) = r {
+            eprintln!("ig2-client: close connection: {e}");
+        }
+    }
+
+    /// The wait overlay's view of the session now.
+    pub fn wait_view(&self) -> Option<WaitView> {
+        let (net, epoch) = self.net.as_ref()?;
+        let now = epoch.elapsed();
+        let s = net.status(now);
+        let late = net.late(now).into_iter().map(|e| (e, net.name_of(e))).collect();
+        Some(WaitView { turn: net.peer().turn, paused: !s.paused.is_empty(), reconnecting: !s.waiting.is_empty() || !s.migrating.is_empty(), host: net.is_host(), late })
     }
 
     /// The chat entry's line (multiplayer only; `ExecuteString`, input.md §5.1): the host's `/kick` / `/kill`, else the
@@ -613,7 +734,7 @@ impl<'r> World<'r> {
         }
         // Same tick: the fleets keep gliding from `prev`.
         self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game) };
-        self.ui = crate::ui::UiSnap::read(&self.game.state);
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
     }
 
     /// `IdoPause`.
@@ -678,12 +799,16 @@ impl<'r> World<'r> {
         // The client keeps no event history yet (the UI that shows them comes later).
         let events = self.game.take_events();
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
+        self.story_ui.extend(events.iter().filter_map(StoryUi::of));
+        self.take_notices(&events);
         for c in events.iter().filter_map(Command::from_event) {
             let sender = self.game.sender();
             c.apply(&mut self.game, sender);
         }
         crate::prof::count("ticks", 1);
         let run = crate::prof::scope("t_run");
+        // `Fake_FRISSITES`' frozen SP branch (a battle on screen) runs no `FRISSIT_Starmap`: the orbits stand.
+        let frozen = self.game.sp_screen_frozen();
         self.game.advance_clock();
         self.game.run_tick();
         drop(run);
@@ -695,10 +820,10 @@ impl<'r> World<'r> {
         drop(snap);
         // `FRISSIT_Starmap` (ELF 0x7132b0) ends with `StarmapPlanetKering += IdoSpeedSzorzo / 1500`.
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
-        next.orbit = (self.curr.orbit as f64 + speed as f64 / 1500.0) as f32;
+        next.orbit = if frozen { self.curr.orbit } else { (self.curr.orbit as f64 + speed as f64 / 1500.0) as f32 };
         self.prev = std::mem::replace(&mut self.curr, next);
         let ui = crate::prof::scope("t_ui");
-        self.ui = crate::ui::UiSnap::read(&self.game.state);
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
         drop(ui);
         let _colony = crate::prof::scope("t_colony");
         self.colony_prev = self.colony_curr.take();
@@ -718,7 +843,7 @@ impl<'r> World<'r> {
         let text: Vec<u8> = t.on_screen.iter().copied().take_while(|&b| b != 0).collect();
         let important = t.on_screen_important != 0;
         self.game.state.store_ticker(&t);
-        self.ui = crate::ui::UiSnap::read(&self.game.state);
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
         Some((text, important))
     }
 
@@ -1008,6 +1133,32 @@ mod tests {
         let p = w.prev.fleets.iter().find(|p| p.slot == f.slot).unwrap();
         let mid = w.curr.fleets_at(&w.prev, 0.5).into_iter().find(|m| m.slot == f.slot).unwrap();
         assert!((mid.pos[0] - (p.pos[0] + f.pos[0]) / 2.0).abs() < 1e-4);
+    }
+
+    /// The MP modes' starmap texts on the machine of empire 1 (`st_Multi_include`'s `AddSzoveg` calls, exe 0x5ee4d0:
+    /// each machine tests its own `EN`; the colours pushed at 0x5ee7db, 0x5eeca1, 0x5ef5ed, 0x5efcc1, …).
+    #[test]
+    fn story_notices_are_this_machines_lines() {
+        use ig2_sim::story::Notice;
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let rules: &'static GameRules = Box::leak(Box::new(rules));
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let mut w = World::load(&SaveGame::parse(&bytes).unwrap(), rules, &defaults, &volatile);
+        w.game.state.mem.write(0xBAE588 + 22, b"Bob\0");
+        let planet = ig2_sim::messages::cstr(&w.game.state.mem.read(va::PLANETS + ig2_sim::save::PLANET_SIZE as u32, 0x20)).to_vec();
+        let line = |n: Notice| notice_line(&n, 1, &w.game);
+        assert_eq!(line(Notice::Winner { empire: 1, amazing: true, colour: 7 }), Some((b"AMAZING! YOU ARE THE WINNER!".to_vec(), 7)));
+        assert_eq!(line(Notice::Winner { empire: 2, amazing: false, colour: 2 }), Some((b"Bob is the winner!".to_vec(), 2)));
+        assert_eq!(line(Notice::CannotColonise { planet: 1, by: 1 }), Some(([b"You cannot colonize ".as_slice(), &planet, b"!"].concat(), 2)));
+        assert_eq!(line(Notice::CannotColonise { planet: 1, by: 2 }), None);
+        assert_eq!(line(Notice::FlagTaken { by: 1, from: 2 }), Some((b"You have the flag of Bob!".to_vec(), 2)));
+        assert_eq!(line(Notice::FlagTaken { by: 2, from: 1 }), Some((b"Bob has your flag!".to_vec(), 2)));
+        assert_eq!(line(Notice::Touchdown { by: 2 }), Some((b"Bob has captured your flag!".to_vec(), 2)));
+        assert_eq!(line(Notice::FlagLost { by: 2 }), Some((b"Your flag has been returned!".to_vec(), 2)));
+        assert_eq!(line(Notice::FlagLost { by: 1 }), Some((b"You have lost the flag!".to_vec(), 2)));
     }
 }
 

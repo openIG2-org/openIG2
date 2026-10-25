@@ -14,7 +14,7 @@ numpad +/− (0x6b/0x6d), Ctrl, Shift and Alt; Delete, Home, End, Insert, Tab, '
 the letters queue no key down (so `DoKeyboard`'s `0` case and the entries' Delete/Home/End never run), SDL_KEYUP (0x301) a key up, SDL_TEXTINPUT (0x303) `text[0]` as a character (multi-byte text is
 dropped); the characters `DoKeyboard` and the screens test come only from the text events. No path reads the event's
 repeat byte (+0xd), so an OS key repeat is a new key down (and a new character): a held O toggles the options screen,
-held Space toggles the pause, held 1..3 sound again (FX1, row 162; the client does the same).
+held Space toggles the pause, held 1..3 sound again (FX1, row 162; the client does the same, SpaceWar included: row 270, no repeat test in 0x4e2db0; spacewar.md §9.14).
 
 Not editing (`DAT_00bae2c3 == 0`):
 
@@ -63,6 +63,8 @@ took ~80 ticks). `Belep` (0xbae24c) is set from the old screen's `_Kilep` (its c
 new screen's synchronous `_Belep` load to its first `Main` (`IG2_gameUpdate` lines 82-103, 388-392); the loads call
 `FRISSITES` (e.g. `Init3dStarmap` exe 0x59c850, once per planet), whose catch-up ticks run `DoKeyboard` and refuse the
 keys. The client loads without those ticks: only the closings refuse keys (re/deviations.md).
+
+Frame order (`IG2_gameUpdate` lines 38-53): the frame's ticks, the draw, the mouse poll and hit-test, then the screen's `_Main`, so a press's 2D effect is drawn one rendered frame later than in the client (kept, ADR 0016 §5, row 229).
 
 Editing (`DAT_00bae2c3 != 0`, `IOMode`): characters ≥ 0x20 are inserted (a name field 0x98 takes `A-Z a-z 0-9 _`,
 Space as `_`); Backspace, Delete (the byte at the cursor), Home, End, ←, → edit; Enter ends it per screen (options
@@ -191,7 +193,7 @@ lines 147-181): single player not on the messages (10) or options (0xd) screen a
 (0xbad0d4); MP `Multi_Send(0x407/0x406)` with no screen gate. Spot 7 (`MOUSE_SelectScreens` exe 0x555470 lines 90-121):
 the left button held, the history closed, `AktKep != 10` and `VanUzenet` (exe 0x509e00: an inbox entry with `+4 == 0`,
 unread) → `AktKepKell = 10` (the space battle, a colony at war and the options screen when load-only or in a battle
-only with `DEBUGX`); no sound. FX1: the left button is tested every held frame (no press edge) while the hold began on the line (`bar_line_held`), so a message arriving while held, or the pointer coming back onto the line, asks for the messages screen (`IG2_gameUpdate` 0x4e0440 l.51-53 re-hits `AktIkon` only while `Mouse_Megfogva` is 0; a hold begun elsewhere: deviations 340). The right button: `ScreensScrollHistoryMode` (0xe40c5e) while held, cleared on the
+only with `DEBUGX`); no sound. FX1: the left button is tested every held frame (no press edge) while the hold began on the line (`bar_line_held`), so a message arriving while held, or the pointer coming back onto the line, asks for the messages screen (`IG2_gameUpdate` 0x4e0440 l.51-53 re-hits `AktIkon` only while `Mouse_Megfogva` is 0; a hold that began over no hot-spot (`AktIkon` 0) and reaches the line asks too, client `bar_free_hold`, never over the starmap view: deviations 340, closed). The right button: `ScreensScrollHistoryMode` (0xe40c5e) while held, cleared on the
 release; `GFX_DateMoneyScrollFade` draws `FadeKerettelKerekit(0x10c, 0x16, 0x146, n·10 + 5, 0, 10, 0, 0x3c, 0, 5, 0,
 0x1e)` (fader pass 2) and `GFX_ScrollHistory` (exe 0x556ac0) entry i (`UzenetekDbHistory` 0xe413d8 entries of 0x40
 bytes from 0xe40fb0) as `KiirStrAlap(s, 0x10c, 0x1a + 10(i − 1), 0x36, 2, 5, 0x21)` (size 2, centred in 0x36 cells;
@@ -222,6 +224,10 @@ Per screen (the spots that test `Mouse_Bal` or the button keep their own rule):
 | diplomacy (`DiplomGfx2D_1` 0x4b89e0) | the menus' click (`InitAlmenuk`) | the cascade (`ActFomenu` needs `Mouse_Bal`) |
 | info (`Info_Main` 0x4e81c0) | 9..=12, 14..=25, 30/31, 35/36, 37 | 13 and the triangle/menus (their own right rules) |
 | messages (`Messages_Main` 0x508560) | the rows, arrows, answers, leave and the text box's hurry; plus `SkipAll` (0xd90dc4 = 1, FX14) | |
+| research (`Research_Main` 0x523c10) | every spot: start/stop, urgent, categories, the running project 0x19 (it tests no button; `Felenged` = "not a release frame") | the list rows and model pick (`ResearchGfx2D_2` 0x5221a0, 0x51d2d0 need `Lenyom`&&`Bal`) |
+| spy (`Spy_Main` 0x58d410) | every spot (it tests only `Lenyom`/`Felenged`): kill 0x47 (spot 2), recall 0x48 (4), send 0xe, cancel 0xf, the lists 0x10..0x13 (3 is a list), verdict 0x14..0x17, skills 0x19..0x1c, hire/reject/later 0x1e..0x20, repeat 0x21 | |
+
+Probes (FX3 rest, 2026-10-25, `_local/traces/`, scripts `tools/trace/scripts/research-right.json`, `research-left.json`, `spy-right.json`): research start/stop, urgent, the power category and the running project act identically for both buttons, a list row picks only with the left; spy: a right press on "later" 0x20 clicks, sends msg 0x4b and plays `Spy_Hangok[1]`, on the mission list 0x10 it clicks. Client: `window.rs` research arm sends either press to `research_press` (`Research::press(.., left)` gates rows and models); the spy arm presses on the first button down and releases on the last up. `Mouse_Lekerdez` (exe 0x510694..0x510717) takes the edges from the any-button `Mouse_Gomb`, so a second button's edge while one is held is none (deviations row 351, settled). The category click is `Forgotabla`'s (exe 0x51e360, `PlaySoundGlobal(0)` while open), reached only by the middle wheel's categories 1..=5 (`choose_area`); the off-wheel TT_* handlers (0x524a50..) are silent.
 
 **Held frames (FX3 rest).** `IG2_gameUpdate` (exe 0x4e0440) calls a screen's `_Main` only on frames a button is down over a
 hot-spot (every held frame for a release-flag-0 spot, the press frame only for flag 1) and once on the release over the
@@ -247,7 +253,7 @@ Port: `ig2-client` `colony_ui::press`/`colony_war::press` (no left test on the b
   when `ControlConfig[0]` (0x90b520) and `UseSystemMouse` (0xb772ad) are 0 and `Mouse_Tipus` (0xdb9414) > −1; then
   `Mouse_Tipus = −1`. −1 takes the type of the hot-spot under the pointer: `Mouse_Szoveg_Set`'s last argument, kept in
   the slot's `+0x78` (which is also its enable flag, on while < 0x40); no spot → 0; a type outside 0..9 → 0. −2 hides
-  it (`MainScr_Kilep`'s loop, the tutorial's parked pointer). The client sets `pointer_in` on every CursorMoved/CursorEntered before the per-screen arms (FX17b; the main menu, Options and Help lacked it, so no pointer showed). `MouseFazis` (0xb77204) +1 every 10 ms UI tick
+  it (`MainScr_Kilep`'s loop, the tutorial's parked pointer). The client sets `pointer_in` on every CursorMoved/CursorEntered before the per-screen arms (FX17b; the main menu, Options and Help lacked it, so no pointer showed). `MouseFazis` (0xb77204) +1 every 10 ms UI tick Stills (row 277, 2026-10-25): screen.js records it per grab (`ui.json` mouse_phase), run_screendiff.py passes `--mouse-phase N`, the snapshot pointer draws row (N/5)%40; script sequences still start at their own phase.
   (`Fake_FRISSITES` 0x4de720), on every screen. Screen writers: the main menu's rings 1 (`Mainscreen_Update3D`
   0x500270) and every main-menu box (`Mouse_Szoveg_Set(…, 1)`: the scenario panel's 0x15..=0x27, the race spheres
   0xe..=0x10), the starmap's view spot 0x35 (whole screen, type 0; FX2 rest below), the colony's view 0x32 and build
@@ -324,18 +330,49 @@ arrow on empty space, as the exe; `research-fx2.json` the tooltip's rest as abov
 the urgent button, a row and the bottom ring, the arrow on an empty row); `design-pods.json` (stored exe run) and
 `mainscr-race.json` / `mainscr-scenario.json` (stored FX11 runs): arrow/hand per grab as the exe.
 
-## 9. The MP wait overlay (`GFX_DrawOver`; row 296, not ported: the multiplayer work's)
+## 9. The MP wait overlay (`GFX_DrawOver`; row 296, ported 2026-10-25: `ig2-client::mp_wait`)
 
-An in-game multiplayer modal, not part of the main menu. `MOUSE_DrawOver` (exe 0x4c95b0, from `IG2_gameUpdate` 0x4e0440 every frame) opens it
-when `db9748 != 0 && bae587 == 0` (`aba978 = SDL_GetTicks()` at the open) and sets the hovered item `aba974` (9 = the exit button);
-`FUN_004c8f80` (from `UpdateFrame` 0x4e3e90, after `WaitForDrawing`) draws it. Title: `GetString(18, 5, 1)` "Connecting..." if `e4162c`, else
-`GetString(18, 5, 2)` "Waiting for players to reconnect..." if `db94e8`, at (0x28, 0x28, 0x28, 4, 4, 3).
-- `aba970 == 1`, the players list: per connected player slot (`FUN_00510fd0(i)` or `bae587`) a 0x8c-pixel cell, 4 a row, from (`aba97c` + 10,
-  `aba980` + 10): `GetString(18, 5, 3)` "Slow connection!" at +10, the name (`bb6730[i]`) at +0x1e, the slot text (`bae593 + 0xb·i`) at +0x32, all
-  (0x14, 2, 5, 0x25); after 4000 ms and on the host (`912a3a`) `GetString(18, 5, 4)` "Close connection" at +0x5a, colour 0x25 if `aba974 == i`
-  else 1. After 4000 ms `GetString(18, 5, 5)` "EXIT GAME" at (0x140, `aba988 + aba980 + 0x14`, 0x46, 3, 7), colour 0x25 if hovered.
-- `aba970 == 2`, the joining question: `GetString(18, 5, 8)` (joiner) / 7 / 6 (host, by `f21490`) at (0x140, `aba980` + 0x28 / 0x3c, 0x46, 3, 7, 1);
-  on the host "Connecting: " + the joiner's slot and "Selected race: " + its race (strings 9, 10) at `aba980 + 0x14`, and the answer buttons by `aba974`.
-- The pointer: `if (aba970 > 0) Mouse_Tipus = (aba974 > 0)` (the hand over an item). A press (`db4650`) on an item closes it and calls
-  `FUN_00512410(bae65c[aba974], 1)` (drop that player); item 9 calls `ExitToMainScreen`.
-Strings from `txt18.txt` (sub 5 lines 1..10). The client has no lockstep-stall modal yet (ig2-net would supply who is late).
+An in-game multiplayer modal, not part of the main menu. `MultiSendPackets` (exe 0x5126b0) sets `WaitingForVector` 0xdb9748
+once a turn (≥ 14) has lacked its data for 5000 ms (1000 ms with a join pending, `db94b4 > 0`) and clears it when the data
+comes. `MOUSE_DrawOver` (exe 0x4c95b0, ELF 0x5306a0; from `IG2_gameUpdate` 0x4e0440) then opens the overlay (`DrawOverMode`
+aba970 = 1, = 2 with a join pending; `acttime` aba978 = `SDL_GetTicks()` at the open; never with `DEBUGX` bae587) and runs its
+own loop (`WaitForDrawing`, `Fake_FRISSITES`: the sim and `MultiSendPackets` still run, `UpdateFrame`, the mouse poll) until it
+closes: the screens' handlers take no input. The boxes are `FUN_004c8b80` (fader pass 3, `FUN_004d1860` =
+`FadeKerettelKerekit` untextured), the texts `GFX_DrawOver` (exe 0x4c8f80, ELF 0x52f920; `KiirStr(s, x, y, len, size, flags,
+colour)`, flags & 3 = alignment). Geometry: literals (`DrawOverX/Y/Xm/Ym` = 0x28, 0x32, 0x230, 0x10e; 0x5a in mode 2).
+- Panel (40, 50, 560, 270), fill (0, 0x14, 0x1e) 0x3c, frame (0, 0xf, 0x19) 0x1e; the exit strip (40, 330, 560, 30) after
+  4000 ms, the same colours.
+- Title `GetString(18, 5, 1)` "Connecting..." if `SocketConnectingMode` e4162c (no writer in the exe), else (18, 5, 2) "Waiting
+  for players to reconnect..." if `MultiPlayerReconnectingMode` db94e8 (`OnCloseSocket` 0x5142b0's reconnect wait), at (40, 40),
+  len 0x28, size 4, left, colour 3; none otherwise.
+- Mode 1, a cell per late slot (`FUN_00510fd0(i)`: on the host the slots whose data is missing, on a joiner the host's late
+  list, else the host), k-th at (50 + 140·(k % 4), 60 + 140·(k / 4)), box 120 × 70, fill (0, 10, 0) 0x3c, frame (0, 5, 0) 0x1e:
+  (18, 5, 3) "Slow connection!" at +10, the name at +0x1e, the slot's text at +0x32, len 0x14, size 2, centred in the cells,
+  colour 0x25. After 4000 ms on the host a button box (cx, cy + 0x50, 120, 30) with (18, 5, 4) "Close connection" at +0x5a,
+  colour 0x25 hovered, else 1. After 4000 ms (18, 5, 5) "EXIT GAME" at (320, 340), len 0x46, size 3, centred on x, colour
+  0x25 hovered, else 1.
+- Hit test (only after 4000 ms): the host's buttons (the last hit wins: item = the slot), the exit strip x 40..600, y 330..360
+  (item 9). `Mouse_Tipus = DrawOverSelected > 0`. A press closes it: a slot → `MultiKickClient(bae65c[slot], 1)`, 9 →
+  `ExitToMainScreen`, the main menu. While the stall lasts it opens again at once (armed 4000 ms later). No sound.
+- Mode 2 (a joiner asks to enter a running game, `FUN_005bfa60`): the question (18, 5, 6..8), the joiner's slot and race
+  (9, 10), accept / reject strips (0xb, 0xc; reject → `Multi_KickJoiningPlayer` 0x513630, reason 8), exit (0xd).
+
+Ours (`mp_wait`): open after 5000 ms without a local turn while no player's pause holds the session; the cells are
+`mp_lobby::Session::late` (the empires the session awaits, dropped in a battle or a migration's survivors, plus on the host
+those whose input for the next turn hasn't come, `lockstep::Host::late`; a joiner that knows of none waits for the host); the
+title (18, 5, 2) while the session awaits a reconnect; the second line is the empire's race (the exe's per-slot text 0xbae593 is
+unknown); "Close connection" is `HostSession::drop_player` (the drop path: the player may come back through the door; the exe's
+reason-1 kick only ends the link too); either button held acts, as the exe's level test; the title shows whenever a reconnect is awaited, the overlay open or not, the screens below take no mouse input, the keys stay live (`MOUSE_DrawOver`'s loop runs `Fake_FRISSITES` → `DoKeyboard` 0x4de890). Mode 2 has no counterpart: the
+door admits a returning human by name and refuses newcomers to a started game (deviation 296).
+Compared against ig2.exe 2026-10-25 (`run_screendiff.py … mpwait`): a real two-instance stall can't be driven, so
+`tools/trace/probes/mpwait.js` stages the exe's own state for one (two late players, the host, the reconnect title,
+`acttime` 5 s back) in a single-player game and the exe's code draws; the client draws the same with `--mp-wait`. Title,
+panel, cells, buttons and exit strip match (mean ≤ 2.3; the exe's OS-drawn pointer aside).
+
+## 10. Modifier keys and the middle button (row 379, fixed 2026-10-25: `ig2-client::window`)
+
+- `MainCallBackEventHandler` (exe 0x4e2db0): a KEYDOWN (0x300) of Shift/Ctrl/Alt sets `KeyShift` 0xbae295 / `KeyCtrl` 0xbae27f / `KeyAlt` 0xbae294 (asm 0x4e3099 / 0x4e30bf / 0x4e30e9) after `remapKeyCodes` 0x4e4670 (LSHIFT/RSHIFT e1/e5 to VK 0x10, LCTRL/RCTRL e0/e4 to 0x11, LALT/RALT e2/e6 to 0x12); no repeat filter; gated by `TutorialActive` 0xf6915d == 0 or `AktKep` 0xbae0fc == 0xd. A KEYUP (0x301) of either key of a pair clears it. Nothing reads `SDL_GetModState` or `keysym.mod`.
+- A button event (0x401/0x402) with a button other than 1/3 (middle, X1, X2), and event type 0xa (meaning unknown), jump to block 0x4e345a: with `IsActive` 0x912a38 set it zeroes the three modifier bytes and the held bytes 0xdb467d/e/f (any/left/right), then calls `SetWindowPos(NULL, HWND_TOPMOST, ...)` (hWnd NULL: no effect; HWND_BOTTOM when inactive, and then nothing is cleared). The tutorial gate is inside the button-1/3 branches only, so the middle clear also works in the tutorial.
+- `Mouse_Lekerdez` (0x5105d0) then sets `Mouse_Felenged` 0xdb465c and the release edges 0xdb465d/e for every button that was held; the later real release of that button is no edge.
+- Readers: Starmap_Main 0x5b2b70, StarmapKeyboardHandler 0x5aeab0, Starmap_MouseInit2 0x5b8950, ColonyKeyboardHandler 0x4628c0, Colony_MouseInit2 0x467990, ground war 0x47b350/0x4a79e0, SpaceWarKeyboardHandler 0x561ef0, FUN_0057c4c0; TutorialCheckEvent 0x60bdf0/0x60be40 zero Shift; FUN_00510930 records/plays them in replays.
+- Client: `modifier_key` sets/clears a modifier on its own key's down/up (repeats included, AltGr = Alt, synthetic focus presses skipped, not while `tutorial_owns_input()`); `ModifiersChanged` only clears, so a pressed Ctrl doesn't bring back a dropped Shift; `middle_clears` (pre-dispatch in `window_event`) tracks left/right held over every route and, on any other button with the window focused, drops the modifiers, re-dispatches a Released for each held button and swallows that button's real release. Not run in the live window (the capture path calls `mouse()`/`key()` directly).

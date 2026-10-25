@@ -5,7 +5,7 @@
 use super::{add_money, answered, anim, campaign_id, message, param, param_int, promoted, relation, Pick};
 use crate::begin::{attack_fleet, delete_fleet, fleet_distance, move_to_planet, show_fleet, stands};
 use crate::brnd::nearest_fleet;
-use crate::story::{adat, flag, last_fn, Abort, MessageText, Story, StoryEvent, StoryWorld};
+use crate::story::{adat, flag, last_fn, Abort, InfoLine, MessageText, Story, StoryEvent, StoryWorld};
 
 /// The script's π (`3.141592`, f64).
 #[allow(clippy::approx_constant)]
@@ -640,7 +640,10 @@ pub(super) fn scientist(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         message(w, 0x522, 0x14);
         let q = s.b_search(TO, 0, w);
         param(w, 1, MessageText::Planet(q));
-        s.add_game_info(FROM, 0, -1, w);
+        // The exe pushes `a2` first: `StoryError` is left by the search for `FROM`.
+        let to = s.b_search(TO, 0, w);
+        let from = s.b_search(FROM, 0, w);
+        s.add_info_line(FROM, InfoLine::TwoPlanets([from, to]), -1, w);
     }
     if s.arrived_planet(FROM, TO, w) {
         message(w, TO, 0);
@@ -726,7 +729,7 @@ pub(super) fn monster(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort
             message(w, id, 0);
             let p = s.b_search(ID, 0, w);
             param(w, 1, MessageText::Planet(p));
-            s.add_game_info(ID, 0, -1, w);
+            s.add_info_line(ID, InfoLine::Blank, -1, w);
         }
     }
     if s.daily() && stands(s, ID, w) {

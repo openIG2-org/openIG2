@@ -647,6 +647,9 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     // Our MP screens (ADR 0014), offline: hosting works on a listener nobody reaches, nothing touches the network.
     let mut mp: Option<crate::mp_lobby::MpScreen> = None;
     let mut net = crate::mp_lobby::OfflineNet;
+    // The row frame's globals (`--dkm`, else the exe's boot values), carried by the scenario list's frame (row 362).
+    let [m0, c0, n0] = o.dkm.unwrap_or([0.0, std::f32::consts::FRAC_PI_2, 0.0]);
+    let (mut dk, mut dk_owner) = (crate::kit::DesignFrame::with_phase(m0, c0, n0), 0u8);
     for t in 0..=script.end() {
         let mut press = None;
         let mut release = None;
@@ -681,6 +684,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             due = s.due();
         }
         s.frame();
+        let list = s.scenario.as_mut().map(|sc| &mut sc.frame);
+        crate::window::carry_row_frame(&mut dk, &mut dk_owner, if list.is_some() { 6 } else { 0 }, list, 1);
         s.hover(mouse);
         s.race_boxes = scene.race_boxes(&install, &s);
         if let Some(st) = s.take_started() {
@@ -768,6 +773,12 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                     let os = h.enter(&install, true);
                     options = Some((h, os));
                 }
+            }
+        }
+        if !script.grabs.contains(&t) {
+            // The exe draws every tick: the list's row frame is asked for on the frames this run doesn't draw too.
+            if let (Some(sc), Some(_)) = (&mut s.scenario, &assets) {
+                sc.ask_frame();
             }
         }
         if script.grabs.contains(&t) {

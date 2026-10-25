@@ -144,6 +144,8 @@ ELF 0x5b7a40 in `IG2_gameUpdate`), except while `Mouse_Megfogva` (exe 0xDB466A) 
 it, `IG2_gameUpdate` clears it once no button is down (after picking, so the release frame still sees the held
 hot-spot with `Mouse_Felenged`).
 
+14/15 are off while `MainScenarioDescriptor` (0xbbd140) is 0 (`Info_MouseInit2` 0x4e9530): `StoreScenarioDescription` 0x504120 (0x50421a, from the main menu's scenario start 0x4fef1b) sets it, `InitNewGame` 0x4e1130 (0x4e1181) clears it and every new game and `LoadSave` (0x543cf7) call that, so on only in a game started as a scenario from the menu (client `World::scenario` -> `UiSnap::scenario`). Spot 33's text is 21 when `CheckMelyikFolottVan` (0x4e5320) finds a shown row's globe within a strict +-30 px box of the pointer (client: `globes[k].pos` projected, vx = 600x/w+320, vy = 600y/w+240), else 0x1b; only when infoKINYITVA (0xb79f89) and no screen change is pending (0xbae24c/d). Original bug: a kind-1 (fleet) row's hit jumps (0x4e54f6) to the `xor al,al` exit and ends the search with 0 (deviations row 348, client `over_globe` the same).
+
 ## 6. The planet/fleet list
 `GFX_Info` (exe 0x4e5c30, ELF 0x564580) runs every frame: `FeltoltBolygoFlottaTomb` (exe 0x4e5a20, ELF 0x55efd0: the
 exe rebuilds the list every frame, the ELF only in `Info_Belep`), `PutFaders` (exe 0x4ed410, ELF 0x55b2c0), then

@@ -228,7 +228,8 @@ impl Game<'_> {
             let ctx = self.starmap_context(&g);
             let mut map = self.state.starmap();
             let mut ev = Vec::new();
-            for &f in fleets {
+            let n = map.fleets.len();
+            for &f in fleets.iter().filter(|&&f| f < n) {
                 map.order(f, 0, 0, 0.0, 0.0, &ctx, &mut ev);
             }
             self.state.store_starmap(&map);

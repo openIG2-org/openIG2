@@ -474,6 +474,11 @@ impl<'r> HostSession<'r> {
         &self.info
     }
 
+    /// The empires the relay waits for (their input for the next turn hasn't come), the host's own aside.
+    pub fn late(&self) -> Vec<u8> {
+        self.host.late().into_iter().filter(|&s| s != self.own.slot).filter_map(|s| self.host.empire_of(s)).collect()
+    }
+
     /// A host migration waits for survivors to come back.
     pub fn migrating(&self) -> bool {
         self.migration.is_some()

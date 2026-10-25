@@ -20,11 +20,16 @@ pub(super) struct Overlay {
     tip: Option<(crate::kit::Tooltip, Vec<u8>)>,
     /// The pointer's place (virtual pixels), type and phase (`MouseFazis`).
     pointer: Option<([i32; 2], i32, u64)>,
+    /// The multiplayer wait overlay, while it is open.
+    wait: Option<crate::mp_wait::Wait>,
 }
 
 impl Overlay {
-    /// The tooltip, then the pointer, over everything.
+    /// The wait overlay, the tooltip, then the pointer, over everything.
     pub fn draw(&self, f: &mut Frame, h: &crate::ui::Hud, size: [f32; 2]) {
+        if let (Some(w), Some(font)) = (&self.wait, &h.font) {
+            w.draw(f, font, h.white, &crate::font::Virtual::new(size), &h.palette, &|n| h.texts.get(18, 5, n), std::time::Instant::now());
+        }
         if let (Some((t, text)), Some(font)) = (&self.tip, &h.font) {
             t.draw(f, font, h.white, &crate::font::Virtual::new(size), &h.palette, text);
         }
@@ -96,6 +101,35 @@ impl App {
         }
     }
 
+    /// A screen hot-spot under `at` as `IG2_gameUpdate`'s hit test (exe 0x510390) finds one for a press: the screens'
+    /// tooltips' `AktIkon`; the colony, the space battle and the screens without a hit test here count as one (their
+    /// mains keep the pointer). Research's rows and models are no hot-spots (`ResearchGfx2D_2` and
+    /// `CheckIfTalalmanyokFolottVan` test the pointer themselves).
+    pub(super) fn screen_spot_at(&mut self, at: [f32; 2]) -> bool {
+        let spot = |t: Option<&crate::kit::Tooltip>| t.is_none_or(|t| t.under != 0);
+        if self.front.is_some() || self.colony.is_some() || self.spacewar.is_some() {
+            return true;
+        }
+        if self.options.is_some() {
+            return spot(self.options.as_ref().map(|o| &o.s.tip));
+        }
+        if self.help.is_some() {
+            return spot(self.help.as_ref().map(|h| &h.s.tip));
+        }
+        if self.spy.is_some() {
+            return spot(self.spy.as_ref().map(|s| &s.screen.tip));
+        }
+        match (self.overlay, &self.hud) {
+            (Some(crate::ui::Screen::Research), _) => spot(self.research.as_ref().map(|r| &r.tip)),
+            (Some(crate::ui::Screen::Design), _) => self.design.as_ref().is_none_or(|d| d.tip.under != 0),
+            (Some(crate::ui::Screen::Trade), _) => spot(self.trade.as_ref().map(|t| &t.tip)),
+            (Some(crate::ui::Screen::Info), Some(h)) => h.info.held.is_some() || h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui).is_some(),
+            (Some(crate::ui::Screen::Messages), Some(h)) => h.messages.spot_at(at).is_some(),
+            (None, _) => self.starmap_tip(at).is_some(),
+            _ => true,
+        }
+    }
+
     /// Once a frame: the top bar's tooltip (`Mouse_Init`'s texts `GetString(18, 1, n)` on every screen below 0xe,
     /// `UpdateFrame`'s rest timer) and the pointer `UpdateFrame` draws: none while a screen changes, outside the window,
     /// or where the screen draws its own (the colony, the space battle, the tutorial's parked recording); the hand (1) over the
@@ -119,7 +153,7 @@ impl App {
         let info = match (&self.hud, self.overlay) {
             (Some(h), Some(crate::ui::Screen::Info)) if game => {
                 let id = h.info.held.or_else(|| h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui));
-                id.map(|id| (id, h.info.tip_text(id, &h.texts, &h.empire_names)))
+                id.map(|id| (id, h.info.tip_text(id, &h.texts, &h.empire_names, &self.world.ui, at)))
             }
             // The messages screen's (`Messages_MouseInit`'s texts).
             (Some(h), Some(crate::ui::Screen::Messages)) if game => {
@@ -191,6 +225,16 @@ impl App {
                     ([at[0] as i32, at[1] as i32], kind, now as u64 / 10)
                 }
             });
+        }
+        // `GFX_DrawOver`'s last line: `Mouse_Tipus = DrawOverSelected > 0`; no tooltip under it.
+        if self.mp_wait.is_open() {
+            out.tip = None;
+            if let Some(p) = &mut out.pointer {
+                p.1 = (self.mp_wait.hover > 0) as i32;
+            }
+        }
+        if self.mp_wait.shown() {
+            out.wait = Some(self.mp_wait.clone());
         }
         out
     }

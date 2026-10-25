@@ -18,11 +18,85 @@ const CONSOLE_RECT: [f32; 4] = [200.0, 360.0, 440.0, 480.0];
 const CONSOLE_SCALE: f32 = 4.0;
 
 /// The control panel: `kezel.xvb` (`Init3dStarmap` ELF 0x6db470: `AddToScene(…, 0.17)`, relative to the camera at
-/// (0, 170, −600), not rotated), drawn once into a texture over [`CONSOLE_RECT`].
+/// (0, 170, −600), not rotated), drawn into a texture over [`CONSOLE_RECT`], again when a button's pose changes.
 pub struct Console {
     tex: TexId,
     /// The battle screen's console, lit again each frame with the circling side lights ([`Console::relight`]).
     sides: Option<Box<Sides>>,
+    /// The starmap's console, posed again when a button sinks ([`Console::pose`]).
+    still: Option<Box<Still>>,
+}
+
+/// The starmap console's frame kept for posing its buttons: the model as loaded, the button frames loaded so far,
+/// the frame each button (`GetSubMeshid(KezeloId, i)`, i = 0..6) is drawn at.
+struct Still {
+    frame: Frame,
+    target: crate::render::Target,
+    size: (u32, u32),
+    base: Model,
+    keys: Vec<(usize, Model)>,
+    depth: [usize; 6],
+}
+
+/// The console's button animation (`Starmap_Main` ELF 0x6f50a0 lines 163-257, `ShowStarmap` ELF 0x6eca50 lines
+/// 379-381 and 465-473 / exe 0x5a3250): a console hot-spot sets `MelyikGombot` (its sub-mesh), `KezeloGombFrame = 0` and
+/// `GombFazis = 1`; a button let go (`Mouse_Felenged`) turns `GombFazis` to 2; once a drawn frame (a UI tick here) the
+/// frame steps +5 (to 10) or −5 (to 0) and `SetFrame`s that sub-mesh only, so a button left mid-way keeps its pose.
+/// The held rotate, zoom and pitch spots (2, 3, 5, 6) set frame 0 again every frame, so they show frame 5; the views
+/// (1, 4) act on the release frame, which also lets go: they never sink.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ConsoleButtons {
+    /// `MelyikGombot`.
+    pub which: usize,
+    /// `GombFazis`: 0 idle, 1 sinking, 2 rising.
+    phase: u8,
+    /// `KezeloGombFrame`.
+    frame: f32,
+    /// `Mouse_Felenged` seen since the last step.
+    released: bool,
+    /// The frame each sub-mesh was last set to.
+    pub depth: [f32; 6],
+}
+
+impl ConsoleButtons {
+    /// The sub-mesh of console hot-spot `spot` (1 top view, 2 rotate right, 3 rotate left, 4 side view, 5 zoom,
+    /// 6 pitch); the minimap (7) has none.
+    pub fn sub_mesh(spot: u32) -> Option<usize> {
+        Some(match spot {
+            1 => 4,
+            2 => 5,
+            3 => 2,
+            4 => 1,
+            5 => 0,
+            6 => 3,
+            _ => return None,
+        })
+    }
+
+    /// `Starmap_Main` on console hot-spot `spot`: `KezeloGombFrame = 0; GombFazis = 1; MelyikGombot = …`.
+    pub fn press(&mut self, spot: u32) {
+        if let Some(m) = Self::sub_mesh(spot) {
+            (self.frame, self.phase, self.which) = (0.0, 1, m);
+        }
+    }
+
+    /// A button let go (`Mouse_Felenged`).
+    pub fn release(&mut self) {
+        self.released = true;
+    }
+
+    /// `ShowStarmap`'s step.
+    pub fn step(&mut self) {
+        if std::mem::take(&mut self.released) {
+            self.phase = 2;
+        }
+        match self.phase {
+            1 => self.frame = (self.frame + 5.0).min(10.0),
+            2 => self.frame = (self.frame - 5.0).max(0.0),
+            _ => {}
+        }
+        self.depth[self.which] = self.frame;
+    }
 }
 
 /// The panel's frame, its target size and the scene's parallel light.
@@ -82,9 +156,49 @@ impl Console {
 
     /// The panel under another parallel light colour `sun` (the battle screen's, re/screens/spacewar.md §5.1).
     pub fn load_lit(r: &mut Renderer, install: &Install, sun: [f32; 3]) -> Result<Self, String> {
-        let (f, size, _) = Self::frame(r, install, sun)?;
-        let tex = r.render_texture(&f, size);
-        Ok(Self { tex, sides: None })
+        let (frame, size, _) = Self::frame(r, install, sun)?;
+        let mut target = r.target(size);
+        r.draw_into(&frame, &mut target, size, 0.0);
+        let base = Self::model(install, None)?;
+        Ok(Self { tex: target.tex, sides: None, still: Some(Box::new(Still { frame, target, size, base, keys: Vec::new(), depth: [0; 6] })) })
+    }
+
+    /// `kezel.xvb` at key `frame` (`None`: as loaded).
+    fn model(install: &Install, frame: Option<usize>) -> Result<Model, String> {
+        Model::load_at(install, "vector/starmap/", "kezel.xvb", "textures/starmap/", frame)
+    }
+
+    /// The buttons at `depth` (`SetFrame` of `GetSubMeshid(KezeloId, i)`, whole frames as the steps of 5 leave them):
+    /// each sub-mesh's vertices from the model at its frame, drawn again when one changed.
+    pub fn pose(&mut self, r: &mut Renderer, install: &Install, depth: &[f32; 6]) {
+        let Some(st) = self.still.as_deref_mut() else { return };
+        let depth = depth.map(|d| d.max(0.0) as usize);
+        if depth == st.depth {
+            return;
+        }
+        st.depth = depth;
+        for &d in &depth {
+            if d != 0 && !st.keys.iter().any(|(k, _)| *k == d) {
+                match Self::model(install, Some(d)) {
+                    Ok(m) => st.keys.push((d, m)),
+                    Err(e) => eprintln!("ig2-client: kezel.xvb frame {d}: {e}"),
+                }
+            }
+        }
+        let place = Placement::add_to_scene(st.base.origin, 0.17).world((0.0, 0.0, 0.0), [0.0, 170.0, -600.0]);
+        let Some(sc) = st.frame.scene.as_mut() else { return };
+        let mut at = 0;
+        for (k, p) in st.base.parts.iter().enumerate() {
+            let d = p.index.first().and_then(|&i| depth.get(i as usize)).copied().unwrap_or(0);
+            let key = st.keys.iter().find(|(f, _)| d != 0 && *f == d).and_then(|(_, m)| m.parts.get(k));
+            let src = key.filter(|q| q.verts.len() == p.verts.len()).unwrap_or(p);
+            for (v, dst) in src.verts.iter().zip(&mut sc.dynamic[at..at + p.verts.len()]) {
+                dst.pos = place.point(v.pos);
+                dst.normal = scene::normalise(scene::apply(&place.matrix, v.normal));
+            }
+            at += p.verts.len();
+        }
+        r.draw_into(&st.frame, &mut st.target, st.size, 0.0);
     }
 
     /// The panel with `smOldalsoFenyekBe`'s two parallel lights on it (ELF 0x6d81e0: colours 0x7f5d00 and 0x004e7f,
@@ -98,7 +212,7 @@ impl Console {
         }
         let normals = frame.scene.as_ref().map_or(Vec::new(), |s| s.dynamic.iter().map(|v| v.normal).collect());
         let target = r.target(size);
-        let mut c = Self { tex: target.tex, sides: Some(Box::new(Sides { frame, normals, target, size })) };
+        let mut c = Self { tex: target.tex, sides: Some(Box::new(Sides { frame, normals, target, size })), still: None };
         c.relight(r, kering, m);
         Ok(c)
     }
@@ -123,7 +237,7 @@ impl Console {
     /// The panel's frame: the model at its place under the scene's lights, and the target size.
     fn frame(r: &mut Renderer, install: &Install, sun: [f32; 3]) -> Result<PanelFrame, String> {
         let light = scene::normalise([0.0, -0.35, 1.0]);
-        let model = Model::load(install, "vector/starmap/", "kezel.xvb", "textures/starmap/")?;
+        let model = Self::model(install, None)?;
         let place = Placement::add_to_scene(model.origin, 0.17).world((0.0, 0.0, 0.0), [0.0, 170.0, -600.0]);
         let mut dynamic = Vec::new();
         let mut draws = Vec::new();
@@ -556,6 +670,50 @@ pub fn minimap(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn console_buttons_sink_while_held_and_views_never() {
+        // A held zoom (5): `Starmap_Main` sets frame 0 every frame, `ShowStarmap` adds 5; let go, it comes back.
+        let mut b = ConsoleButtons::default();
+        for _ in 0..3 {
+            b.press(5);
+            b.step();
+            assert_eq!((b.which, b.depth[0]), (0, 5.0));
+        }
+        b.release();
+        b.step();
+        assert_eq!(b.depth[0], 0.0);
+        // The top view (1) acts on the release frame: pressed and let go in one step, it stays at 0.
+        b.press(1);
+        b.release();
+        b.step();
+        assert_eq!((b.which, b.depth[4]), (4, 0.0));
+        // The minimap has no button.
+        b.press(7);
+        assert_eq!(b.which, 4);
+        // Not set again, a sinking button goes on to 10 and holds there.
+        let mut b = ConsoleButtons::default();
+        b.press(6);
+        for _ in 0..3 {
+            b.step();
+        }
+        assert_eq!(b.depth[3], 10.0);
+    }
+
+    /// Each `GetSubMeshid(KezeloId, i)` sub-mesh moves between its frames 0 and 5, the pose a held button shows
+    /// (skips without the install).
+    #[test]
+    fn console_buttons_have_key_frames() {
+        let Ok(root) = std::env::var("IG2_INSTALL_DIR") else { return };
+        let install = Install::open(root, ig2_formats::text::Lang::En).unwrap();
+        let m0 = Console::model(&install, None).unwrap();
+        let m5 = Console::model(&install, Some(5)).unwrap();
+        for i in 0..6u16 {
+            let parts = m0.parts.iter().zip(&m5.parts).filter(|(p, _)| p.index.first() == Some(&i));
+            let moved = parts.flat_map(|(p, q)| p.verts.iter().zip(&q.verts)).any(|(a, b)| a.pos != b.pos);
+            assert!(moved, "sub-mesh {i} keeps its pose at frame 5");
+        }
+    }
 
     #[test]
     fn minimap_maps_the_galaxy_mirrored_in_x() {

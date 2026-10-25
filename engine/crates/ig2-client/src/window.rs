@@ -130,6 +130,9 @@ impl Front {
     }
 }
 
+/// How long a story's earthquake shakes the colony camera (`FRISSIT_Story`: `Colony_foldrenges_ido + 10000 < AktIdo`).
+const QUAKE: std::time::Duration = std::time::Duration::from_millis(10000);
+
 struct App {
     /// The main menu, until a ring starts the game.
     front: Option<Front>,
@@ -154,10 +157,20 @@ struct App {
     dip_next: Option<crate::ui::Screen>,
     /// The screen change asked for (`AktKepKell`), until the screen up has left (`do_keyboard`).
     kep_kell: Option<do_keyboard::KepKell>,
+    /// `AktPlanetKell` with a colony screen asked for by the story (`StoryUi`): the planet it opens on.
+    planet_kell: Option<usize>,
+    /// `Colony_foldrenges` (exe 0x9ABB70): the planet of the story's earthquake, and when its colony screen first drew
+    /// after it (`Colony_foldrenges_ido` 0x9ABB74); `quake_rand` = the jolt's libc `rand()` (cosmetic).
+    quake: Option<(usize, Option<Instant>)>,
+    quake_rand: crate::audio::Rand,
+    /// The multiplayer wait overlay (`crate::mp_wait`).
+    mp_wait: crate::mp_wait::Wait,
     /// The button whose press the top bar took (`top_bar`): its release is the bar's too.
     bar_held: Option<MouseButton>,
     /// The left button went down on the message line (spot 7) and is still held.
     bar_line_held: bool,
+    /// The left button went down over no hot-spot (`AktIkon` 0, so no screen grabs the pointer) and is still held.
+    bar_free_hold: bool,
     /// The top bar's tooltip (`window/pointer.rs`).
     bar_tip: crate::kit::Tooltip,
     gpu: Option<Gpu>,
@@ -234,6 +247,9 @@ struct App {
     clip_lists: Option<Vec<ig2_formats::dialogue::ClipGroup>>,
     /// The battle screen (`AktKep` 11) while it is up.
     spacewar: Option<crate::spacewar_live::Live>,
+    /// The battle screen while the options screen opened from it is up (`OptionsElottiKep` 0xb): the battle goes on
+    /// under it, the starmap shows behind Options (`GFX_Starmap(); SaveScreen(2)`).
+    spacewar_parked: Option<crate::spacewar_live::Live>,
     /// The Options screen while it is up (re/screens/options.md), over the main menu (load only) or the game.
     options: Option<OptionsUp>,
     help: Option<HelpUp>,
@@ -254,8 +270,16 @@ struct App {
     cursor_px: [i32; 2],
     /// The mouse buttons held (bit 0 left, bit 1 right): `Mouse_Gomb` stops the colony's edge scroll.
     mouse_held: u8,
+    /// `MainCallBackEventHandler`'s held bytes (0xdb467e/f: bit 0 left, bit 1 right) over every route, and the buttons
+    /// whose release a middle click already gave (their real release is no edge, row 379).
+    buttons_down: u8,
+    released_early: u8,
     /// The pointer is over the window (a `CursorMoved` came, no `CursorLeft` since): the edge scroll reads it.
     pointer_in: bool,
+    /// The edge scroll may read `cursor_px`. In play it starts at (0, 0) as `Mouse_Phys_x/y` does (written only by
+    /// SDL_MOUSEMOTION, `MainCallBackEventHandler` exe 0x4e34e1; nothing warps the pointer), so the starmap scrolls
+    /// up-left until the first move (row 357); a headless script run waits for its first move.
+    pointer_seen: bool,
     /// The window's pointer is hidden (the colony screen draws its own).
     cursor_hidden: bool,
     /// `Mouse_FelengedesMajdMegvar` on the colony screen: the releases wait until both buttons are up.
@@ -273,6 +297,10 @@ struct App {
     star_keys: crate::starmap::CamKeys,
     /// A console hot-spot (1..=7, `STAR_M.RAW`'s colours) held (`Mouse_Megfogva`), with the left button?
     console_held: Option<(u32, bool)>,
+    /// The console buttons' press animation (`MelyikGombot`, `GombFazis`, `KezeloGombFrame`).
+    star_buttons: crate::starmap_hud::ConsoleButtons,
+    /// O on the help screen: Options opens once Help's closing has run out.
+    help_then_options: bool,
     /// `STAR_M.RAW` (kep 0x1f): the console's and the minimap's hot-spot colours, 640 × 480 (loaded on first use).
     star_mask: Option<Vec<u8>>,
     /// `DesignKeret1`'s globals (`dkm`, `dkmcel`, `GfxNovelo`), stepped every UI frame whatever the screen, and the
@@ -406,6 +434,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     let mut renderer = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let mut hud = crate::ui::Hud::load(&mut renderer, &l.install, tables);
     let mut app = App::new(world, l.install, tables, rules, audio);
+    // The exe's script runs start with the real pointer wherever it is: no edge scroll before the script's first move.
+    app.pointer_seen = false;
     app.world.game.empire_names = hud.empire_names.clone();
     hud.set_one_language(&app.install, o.texts == Some(true));
     app.hud = Some(hud);
@@ -529,8 +559,13 @@ impl App {
             diplomacy: None,
             dip_next: None,
             kep_kell: None,
+            planet_kell: None,
+            quake: None,
+            quake_rand: crate::audio::Rand::seeded(),
+            mp_wait: Default::default(),
             bar_held: None,
             bar_line_held: false,
+            bar_free_hold: false,
             bar_tip: Default::default(),
             dip_input: Default::default(),
             gpu: None,
@@ -574,6 +609,7 @@ impl App {
             speech: Vec::new(),
             headless: None,
             spacewar: None,
+            spacewar_parked: None,
             options: None,
             help: None,
             help_memory: Default::default(),
@@ -594,7 +630,10 @@ impl App {
             clip_lists: None,
             cursor_px: [0; 2],
             mouse_held: 0,
+            buttons_down: 0,
+            released_early: 0,
             pointer_in: false,
+            pointer_seen: true,
             cursor_hidden: false,
             colony_wait_release: false,
             attack_banner: 0,
@@ -604,8 +643,11 @@ impl App {
             tutorial_kind: -2,
             star_keys: Default::default(),
             console_held: None,
+            star_buttons: Default::default(),
+            help_then_options: false,
             star_mask: None,
-            dk: Default::default(),
+            // The exe's boot values (`.data`): `dkm` 0, `dkmcel` π/2 (row 362).
+            dk: crate::kit::DesignFrame::with_phase(0.0, std::f32::consts::FRAC_PI_2, 0.0),
             dk_owner: 0,
         }
     }
@@ -833,7 +875,7 @@ impl App {
         }
     }
 
-    /// Open the colony screen of the selected planet (else the human's first planet), or close it.
+    /// Open the colony screen of `AktPlanet`, or close it.
     fn toggle_colony(&mut self) {
         if self.colony.take().is_some() {
             self.world.show_colony(None);
@@ -852,14 +894,12 @@ impl App {
         self.tutorial.as_ref().is_some_and(|t| t.t.gates.screens.get(n).copied().unwrap_or(false))
     }
 
-    /// The planet the colony screen opens on: the selected one, else the human's first.
-    fn colony_target(&self) -> Option<usize> {
-        let human = self.world.curr.human;
-        let selected = match self.view.as_ref().and_then(|v| v.selected) {
-            Some(crate::starmap::Pick::Planet(p)) => Some(p),
-            _ => None,
-        };
-        selected.or_else(|| self.world.curr.planets.iter().find(|p| p.owner == human).map(|p| p.index))
+    /// The planet the colony screen opens on: `AktPlanet` ([`Self::akt_planet`]; `Colony_Belep` exe 0x465b40 reads
+    /// 0xb9933c from 0x465bb9 on, so after a fleet pick the planet picked or shown before it; re/deviations.md row
+    /// 342).
+    fn colony_target(&mut self) -> Option<usize> {
+        let p = self.akt_planet();
+        self.world.curr.planets.iter().any(|q| q.index == p).then_some(p)
     }
 
     /// `AktPlanet` (exe 0xb9933c): the colony shown, else the planet last picked on the starmap (`Starmap_Main` exe
@@ -913,6 +953,20 @@ impl App {
                 self.world.show_colony(None);
             }
         }
+    }
+
+    /// `Colony_Belep` (exe 0x465b40) over the colony that is up (back from the options screen; it reads no `OldKep`):
+    /// the screen's state starts over as on any entry (the selection rule, the war groups from the units' bytes, the
+    /// planet's ambience again); the camera is the one `Colony_Kilep` wrote to the planet, the view's, so it stays.
+    fn reenter_colony(&mut self) {
+        let (Some(c), Some(snap)) = (&mut self.colony, self.world.colony_curr.as_ref()) else { return };
+        let own = snap.owner == self.world.curr.human && !snap.at_war;
+        let mut ui = crate::colony_ui::ColonyUi::enter(snap, own, &self.world.game.state);
+        if let Some(field) = self.world.game.state.ground_field(snap.planet) {
+            ui.war.seed_groups(field.units.iter().enumerate().map(|(slot, u)| (slot, u.tail.f13c)));
+        }
+        ui.war.banner = std::mem::take(&mut c.ui.war.banner);
+        c.ui = ui;
     }
 
     /// A key of the war (`ColonyKeyboardHandler` exe 0x4628c0) by its character, at war or not: S stops
@@ -1353,15 +1407,17 @@ impl App {
     }
 
     /// A press on the research screen (`Research_Main`, the lists, the models).
-    fn research_press(&mut self) {
+    /// A press on the research screen (`left`: `Mouse_Bal`); the right button also grips the ball.
+    fn research_press(&mut self, left: bool) {
         let at = self.virtual_cursor();
         let (Some(r), Some(m)) = (&mut self.research, &self.research_models) else { return };
-        r.held = true;
-        r.buttons |= 1;
-        if r.closing {
-            return;
+        if left {
+            r.held = true;
         }
-        for a in r.press(&self.world.game.state, self.tables, &m.mask, at, &m.centres) {
+        r.buttons |= if left { 1 } else { 2 };
+        // `Mouse_Bal`: the left button held, whichever went down.
+        let bal = left || self.mouse_held & 1 != 0;
+        for a in r.press(&self.world.game.state, self.tables, &m.mask, at, &m.centres, bal) {
             let crate::research::Act::Send(c) = a;
             self.world.send(c);
         }
@@ -1622,6 +1678,9 @@ impl App {
     /// The left button went up after [`Self::starmap_press`]: an open select menu sends, the radial menu fires its
     /// icon.
     fn starmap_release(&mut self) {
+        // Also under DISABLE STARMAP (hot-spots off, exe 0x5b898f): an open menu holds `Mouse_Megfogva`, so
+        // `IG2_gameUpdate` keeps the pressed hot-spot as `AktIkon` (exe 0x4e0440, no `Mouse_Darabol` while held) and
+        // `Starmap_Main`'s release arm still runs (re/deviations.md row 335).
         let sel = self.selection();
         if self.menus.menu.is_some() {
             let dos = self.menus.release_menu(&self.world.game.state, &sel);
@@ -1750,10 +1809,10 @@ impl App {
             return;
         }
         if right {
-            // In planet mode on the player's planet (and in the redirect mode) the right button picks the rally
-            // planet (`0x400`).
+            // In planet mode on the player's planet the right button picks the rally planet (`0x400`), redirect mode or
+            // not; in fleet mode the redirect mode gives way to the fleet's orders (`Starmap_Main` exe 0x5b53e2).
             let own = sel.mode == 1 && self.world.curr.planets.iter().any(|p| p.index == sel.planet && p.owner == self.world.curr.human);
-            if self.menus.redirect || own {
+            if own {
                 // The rally pick clicks before it picks (exe 0x5b5406).
                 self.sounds.push(crate::audio::CLICK);
                 let target = orders::select_nearest_planet(&self.world.curr, &v.camera, at, 1.0);
@@ -1819,6 +1878,7 @@ impl App {
         }
         if s != 1 && s != 4 {
             self.sounds.push(crate::audio::CLICK);
+            self.star_buttons.press(s);
         }
         self.console_held = Some((s, left));
         true
@@ -1828,6 +1888,7 @@ impl App {
     /// when released over their button (`StarmapSetTopView`, `StarmapSetSideView`, 8 frames).
     fn console_release(&mut self) {
         let Some((s, _)) = self.console_held.take() else { return };
+        self.star_buttons.release();
         let k = &mut self.star_keys;
         match s {
             2 | 3 => (k.left, k.right) = (false, false),
@@ -1840,6 +1901,8 @@ impl App {
             return;
         }
         self.sounds.push(crate::audio::CLICK);
+        // The views' hot-spots act on the release (their `Mouse_Szoveg_Set` flag): the button is set, then let go.
+        self.star_buttons.press(s);
         let Some(v) = &self.view else { return };
         let c = v.camera;
         if s == 1 {
@@ -1884,6 +1947,9 @@ impl App {
         }
         self.audio.frame(human_race(&self.world.game.state));
         fr.s.frame();
+        // The main menu (`AktKep` 15) steps the row frame's globals too; the scenario list's frame carries them (row 362).
+        let list = fr.s.scenario.as_mut().map(|sc| &mut sc.frame);
+        carry_row_frame(&mut self.dk, &mut self.dk_owner, if list.is_some() { 6 } else { 0 }, list, due);
         fr.s.hover(fr.at);
         if let Some(mp) = &mut fr.mp {
             mp.hover(fr.at);
@@ -2023,7 +2089,7 @@ impl App {
             Start::Campaign { race, level } => {
                 // `Nehezseg` by the ring: easy 1, normal (index 2) 2, hard (index 1) 4.
                 let difficulty = [1, 4, 2][(*level as usize).min(2)];
-                let cfg = ig2_sim::game::new_game::NewCampaign { campaign: *race as i32 + 1, difficulty, seed, ticks: seed, storyline: 0, storymap: 0, last_storyline: None };
+                let cfg = ig2_sim::game::new_game::NewCampaign { campaign: *race as i32 + 1, difficulty, seed, ticks: seed, storyline: 0, storymap: 0, last_storyline: self.settings.int(&format!("Fable_{}", *race as i32 + 1)) };
                 crate::new_game::campaign(&self.install, &cfg, rules)
             }
             Start::Scenario { file, .. } => crate::new_game::scenario(&self.install, file, seed, rules),
@@ -2056,6 +2122,9 @@ impl App {
         match game {
             Ok(g) => {
                 let mut w = World::new_game(g);
+                // `MainScr` 0x4fef1b: `StoreScenarioDescription` after `Betolt_Scenario`.
+                w.scenario = matches!(st, Start::Scenario { .. });
+                w.ui.scenario = w.scenario;
                 let campaign = matches!(st, Start::Campaign { .. });
                 if campaign {
                     w.campaign_intro();
@@ -2083,6 +2152,18 @@ impl App {
 
     /// `Options_Belep` (re/screens/options.md §3): the settings as the audio and the settings file hold them, the
     /// slots read; in a game the clock pauses (`SetIdoPause(1, 0)`) until it is left.
+    /// `AktKepKell = 0xd`: from the messages screen `Messages_Kilep`'s closing runs first; from the battle its zoom-out
+    /// (the tutorial's O too); else Options at once.
+    fn ask_options(&mut self) {
+        if self.spacewar.is_some() {
+            self.leave_battle(0xd);
+        } else if self.overlay == Some(crate::ui::Screen::Messages) {
+            self.request_screen(0xd);
+        } else {
+            self.open_options(false);
+        }
+    }
+
     fn open_options(&mut self, load_only: bool) {
         if self.options.is_some() {
             return;
@@ -2098,13 +2179,14 @@ impl App {
         // ground war runs (exe 0x466631, `GetWarfareStatus` inlined); `Options_Belep` keeps it only from 3 or 0xb.
         let planet = self.world.colony_curr.as_ref().map(|c| c.planet).filter(|_| self.colony.is_some() && self.overlay.is_none());
         let war = planet.is_some_and(|p| self.world.game.warfare_status(p) == 1);
-        screen.from_battle = !load_only && self.spacewar.is_some();
+        screen.from_battle = !load_only && (self.spacewar.is_some() || self.spacewar_parked.is_some());
         screen.battle = !load_only && (screen.from_battle || war);
         screen.debug = self.world.game.state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
         let glow = self.gpu.as_mut().and_then(|g| {
             self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(&self.install, &p).ok()).map(|img| g.renderer.add_texture(&img))
         });
-        let was_paused = self.world.paused();
+        // `SetIdoPause` (exe 0x541300) changes nothing in MP: neither the pause here nor `Options_Kilep`'s restore.
+        let was_paused = self.world.paused() || mp;
         if !load_only && !was_paused {
             self.send(StarmapOrder::Pause { paused: true });
         }
@@ -2191,7 +2273,11 @@ impl App {
         if self.help.is_some() || self.front.is_some() || ((self.spacewar.is_some() || war) && !debug) || options_locked || messages_busy || off {
             return;
         }
-        if self.options.is_some() {
+        // Over a parked battle (`DEBUGX`): `Options_Kilep` without re-entering it; `Help_Belep` takes
+        // `OptionsElottiKep` (0xb) as `HelpElottiScreen`, so Help's Back goes to the starmap and on to the battle.
+        if self.options.is_some() && self.spacewar_parked.is_some() {
+            self.leave_options();
+        } else if self.options.is_some() {
             self.options_act(crate::options::Act::Back);
         }
         if self.overlay == Some(crate::ui::Screen::Messages) {
@@ -2208,6 +2294,8 @@ impl App {
 
     /// Help goes at once (its screen changes under a key): the help state is kept, the game clock restarts.
     fn leave_help(&mut self) {
+        // Gone some other way than its closing: no Options after it.
+        self.help_then_options = false;
         if let Some(h) = self.help.take() {
             self.help_memory = h.s.memory();
             self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
@@ -2280,6 +2368,9 @@ impl App {
                 self.help_memory = h.s.memory();
             }
             self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
+            if std::mem::take(&mut self.help_then_options) {
+                self.open_options(false);
+            }
         }
     }
 
@@ -2619,14 +2710,38 @@ impl App {
                     self.trade = Some(crate::trade::Trade::back(&old, &self.world.game.state));
                     self.overlay = Some(crate::ui::Screen::Trade);
                 }
-                // The screen before is entered again (`_Belep` with `OldKep` 0xd, re/screens/options.md §3): the spy
-                // screen ignores `OldKep` and plays its opening again; the starmap's `Starmap_Belep` re-inits its
-                // faders (`fifo`, `starf`).
-                if self.spy.is_some() {
+                // The screen before is entered again (`_Belep` with `OldKep` 0xd, re/screens/options.md §3.1): the spy
+                // screen ignores `OldKep` and plays its opening again; research, diplomacy and info start over without
+                // their opening (selection, menus, counters); the colony's `Colony_Belep` reads no `OldKep` (its
+                // ambience again); the starmap's `Starmap_Belep` re-inits its faders (`fifo`, `starf`); design keeps
+                // its state.
+                use crate::ui::Screen;
+                if let Some(mut sw) = self.spacewar_parked.take() {
+                    sw.reenter(&mut self.world);
+                    self.spacewar = Some(sw);
+                } else if self.spy.is_some() {
                     self.spy = None;
                     self.toggle_spy();
-                } else if self.colony.is_none() && self.overlay.is_none() {
-                    self.on_starmap = false;
+                } else {
+                    match self.overlay {
+                        // `Research_Belep` again, unanimated: the state rebuilt, the field's `Res_Hangok[1]` once the
+                        // models load (exe 0x523540, 0x51ee14); its place as the screen left it.
+                        Some(Screen::Research) => {
+                            self.drop_research();
+                            self.enter_research(0xd);
+                        }
+                        Some(Screen::Diplomacy) => self.enter_diplomacy(false),
+                        Some(Screen::Info) => {
+                            if let Some(h) = &mut self.hud {
+                                let tri = h.info.tri;
+                                h.info = crate::ui::InfoScreen::enter(self.world.ui.human);
+                                h.info.tri = tri;
+                            }
+                        }
+                        None if self.colony.is_some() => self.reenter_colony(),
+                        None => self.on_starmap = false,
+                        _ => {}
+                    }
                 }
             }
             Act::MainMenu => {
@@ -2688,6 +2803,10 @@ impl App {
                 if let Some(v) = &self.view {
                     self.world.store_view(&v.camera);
                 }
+                // The research screen's place (one peer's UI) as the exe's globals hold it when saving.
+                if let Some(p) = self.research.as_ref().map(|r| r.place()).or(self.research_place) {
+                    p.write(&mut self.world.game.state);
+                }
                 self.world.save_file()
             }
             Some(Ok(f)) => f,
@@ -2722,6 +2841,7 @@ impl App {
         self.drop_research();
         self.stop_battle_loops();
         self.spacewar = None;
+        self.spacewar_parked = None;
         self.cam_tween = None;
         self.cam_saved = None;
         self.panels = Panels::default();
@@ -2760,7 +2880,7 @@ impl App {
         use ig2_sim::game::RealTimeEvent;
         for e in std::mem::take(&mut self.world.realtime) {
             match e {
-                RealTimeEvent::SpaceStarted { slot } if self.spacewar.is_none() => {
+                RealTimeEvent::SpaceStarted { slot } if self.spacewar.is_none() && self.spacewar_parked.is_none() => {
                     let Some(cam) = self.view.as_ref().map(|v| v.camera) else { continue };
                     // `SpaceWar_Belep`: always entered from the starmap.
                     self.colony = None;
@@ -2780,6 +2900,11 @@ impl App {
                     None => self.attack_banner = 900,
                 },
                 RealTimeEvent::SpaceOver { slot, .. } => {
+                    // Under the options screen (MP: the time runs on): the battle ends without its screen.
+                    if self.spacewar_parked.as_ref().is_some_and(|sw| sw.ui.slot == slot) {
+                        self.spacewar_parked = None;
+                        self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                    }
                     if let Some(sw) = self.spacewar.as_mut().filter(|sw| sw.ui.slot == slot) {
                         sw.over(&self.world, now);
                         self.send(StarmapOrder::Pause { paused: true });
@@ -2788,6 +2913,7 @@ impl App {
                 _ => {}
             }
         }
+        self.resume_parked_battle();
         let Some(sw) = &mut self.spacewar else { return };
         sw.pointer = self.cursor_px;
         if let Some(g) = &self.gpu {
@@ -2796,6 +2922,42 @@ impl App {
         }
         let out = sw.update(&mut self.world, now);
         self.spacewar_out(out);
+    }
+
+    /// `AktKepKell = to` on the battle screen, once its opening zoom is over: `SpaceWar_Kilep`'s phase 1 (exe 0x562b50),
+    /// the zoom-out to the starmap (five times faster towards Options), the tutorial's 0x20 (not towards Options, Help
+    /// or the messages screen), `nemlehetidotallitani = 1; SetIdoPause(1, 0)` (ignored in MP).
+    fn leave_battle(&mut self, to: i32) {
+        if !self.spacewar.as_ref().is_some_and(|sw| sw.clock_free()) {
+            return;
+        }
+        if !matches!(to, 0xd | 1 | 10) {
+            self.world.game.tutorial_check_event(0x20);
+        }
+        let now = self.now_ms();
+        if let Some(sw) = &mut self.spacewar {
+            if to == 0xd {
+                sw.leave_for_options(&self.world, now);
+            } else {
+                sw.leave_for_screen(&self.world, now, to);
+            }
+        }
+        if !self.multiplayer() {
+            self.send(StarmapOrder::Pause { paused: true });
+        }
+    }
+
+    /// `FUN_00594a40` (exe, from `Fake_FRISSITES` 0x4de788, only while `AktKep == 2`): a battle left running
+    /// (`spacewarbanvanbarkacs` 0xf176ee) is asked for again at once (`AktKepKell = 0xb`), whatever screen was asked
+    /// for before; `SpaceWar_Belep` resumes it with its opening zoom.
+    fn resume_parked_battle(&mut self) {
+        if self.spacewar_parked.is_none() || self.kep_kell.is_some() || self.screen_changing() || self.akt_kep_now() != 2 {
+            return;
+        }
+        if let Some(mut sw) = self.spacewar_parked.take() {
+            sw.reenter(&mut self.world);
+            self.spacewar = Some(sw);
+        }
     }
 
     /// The battle screen's weapon loops stop with it (`lovedeksoundend`, `unloadgfx`'s `lovedekfreesound`).
@@ -2812,8 +2974,12 @@ impl App {
         use crate::spacewar_ui::Out;
         for o in out {
             let Some(sw) = &self.spacewar else { return };
-            for c in sw.commands(&o) {
-                self.world.send(c);
+            // Towards Options a running battle stays: `SpaceWar_Kilep` (exe 0x562b50) returns before `SpaceWarVege` /
+            // `Multi_Send(0x44d)`.
+            if !(o == Out::Left && (sw.to_options || sw.to_screen.is_some()) && !sw.ended) {
+                for c in sw.commands(&o) {
+                    self.world.send(c);
+                }
             }
             match o {
                 Out::Click => self.sounds.push(crate::audio::CLICK),
@@ -2842,6 +3008,32 @@ impl App {
                         }
                     }
                 }
+                Out::Left if self.spacewar.as_ref().is_some_and(|sw| sw.to_screen.is_some() && !sw.ended) => {
+                    // `SpaceWar_Kilep`'s phase 2 towards another screen (exe 0x562b50): the tutorial's 0x20 again (not
+                    // towards Help or the messages screen), `starmaphovaleptovabb = target`, the battle parked (no
+                    // `SpaceWarVege`, `SetIdoPause(1, 0)`) and the starmap entered, which asks for the battle again
+                    // at once (`resume_parked_battle`): the target is dropped.
+                    if self.spacewar.as_ref().and_then(|sw| sw.to_screen).is_some_and(|to| !matches!(to, 1 | 10)) {
+                        self.world.game.tutorial_check_event(0x20);
+                    }
+                    self.world.game.sp_battles.on_screen = false;
+                    self.stop_battle_loops();
+                    self.spacewar_parked = self.spacewar.take();
+                    if let Some(v) = &mut self.view {
+                        crate::spacewar_live::restore_view(v);
+                    }
+                }
+                Out::Left if self.spacewar.as_ref().is_some_and(|sw| sw.to_options && !sw.ended) => {
+                    // `SpaceWar_Kilep`'s phase 2 towards Options (exe 0x562c0f): `GFX_Starmap(); SaveScreen(2);
+                    // OptionsHarcFolyik = 1`; no tutorial event 0x20 (not towards 0xd), the battle stays.
+                    self.world.game.sp_battles.on_screen = false;
+                    self.stop_battle_loops();
+                    self.spacewar_parked = self.spacewar.take();
+                    if let Some(v) = &mut self.view {
+                        crate::spacewar_live::restore_view(v);
+                    }
+                    self.open_options(false);
+                }
                 Out::Left => {
                     // `SpaceWar_Kilep`'s first statement (exe 0x562b68): the tutorial's 0x20 (not towards the options,
                     // Help or the trade screen).
@@ -2853,9 +3045,19 @@ impl App {
                     if self.spacewar.as_ref().is_some_and(|sw| sw.ended) {
                         self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
                     }
+                    // A battle over during the zoom-out towards Options (MP: the time runs on): phase 2 still takes
+                    // the 0xd branch (`OptionsHarcFolyik = 1`) before its end, so Options opens.
+                    let to_options = self.spacewar.as_ref().is_some_and(|sw| sw.to_options);
                     self.spacewar = None;
                     if let Some(v) = &mut self.view {
                         crate::spacewar_live::restore_view(v);
+                    }
+                    if to_options {
+                        self.open_options(false);
+                        if let Some(o) = &mut self.options {
+                            o.s.from_battle = true;
+                            o.s.battle = true;
+                        }
                     }
                 }
                 _ => {}
@@ -2912,10 +3114,10 @@ impl App {
                 }
                 return;
             }
+            // Every key repeats while held (`MainCallBackEventHandler` exe 0x4e2db0 pushes the OS repeats into the
+            // key ring: no repeat test); the zoom-out holds the repeats off (`nemlehetidotallitani`).
             if matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape)) || ch == Some('o') {
-                if !event.repeat && self.spacewar.as_ref().is_some_and(|sw| sw.clock_free()) {
-                    self.open_options(false);
-                }
+                self.leave_battle(0xd);
                 return;
             }
         }
@@ -3004,6 +3206,80 @@ impl App {
     fn queue_videos(&mut self, names: impl IntoIterator<Item = String>, force: bool, then: AfterVideo) {
         self.video_queue.extend(names.into_iter().map(|n| if force { format!("!{n}") } else { n }));
         self.after_video = then;
+    }
+
+    /// The multiplayer wait overlay's state this frame (`MOUSE_DrawOver`'s open and hover).
+    fn update_mp_wait(&mut self) {
+        let Some(crate::world::WaitView { turn, paused, reconnecting, host, late }) = self.world.wait_view() else {
+            self.mp_wait = Default::default();
+            return;
+        };
+        let races = |e: u8| {
+            let race = self.world.game.state.mem.u8(ig2_sim::save::va::PLAYER_FAJ + e as u32);
+            self.hud.as_ref().map_or_else(Vec::new, |h| h.texts.get(0x11, 1, race as u16 + 5))
+        };
+        let late = late.into_iter().map(|(e, name)| crate::mp_wait::Late { empire: e, name: name.into_bytes(), text: races(e) }).collect();
+        let now = Instant::now();
+        self.mp_wait.update(now, turn, paused, reconnecting, host, late);
+        let at = self.virtual_cursor();
+        self.mp_wait.hover(at, now);
+        // `MOUSE_DrawOver` tests `Mouse_Gomb` (0xdb4650: left or right held) every pass, a level: a button held as the
+        // items arm acts too (deviation 377).
+        if self.mp_wait.is_open() && self.mouse_held & 3 != 0 {
+            self.mp_wait_press();
+        }
+    }
+
+    /// A press on the wait overlay (`MOUSE_DrawOver`): the host's "Close connection", "EXIT GAME".
+    fn mp_wait_press(&mut self) {
+        let at = self.virtual_cursor();
+        match self.mp_wait.press(at, Instant::now()) {
+            Some(crate::mp_wait::Act::Close(e)) => self.world.drop_player(e),
+            Some(crate::mp_wait::Act::Exit) => self.exit_to_main_menu(),
+            None => {}
+        }
+    }
+
+    /// The story's UI effects (deviation 231, [`crate::world::StoryUi`]): the storyline into the registry (written to
+    /// `options.dat` at once; the exe writes it with the next `SaveGlobalRegistrySettings`), the colony screen asked
+    /// for, the earthquake, the riot's pause.
+    fn take_story_ui(&mut self) {
+        use crate::world::StoryUi;
+        for e in std::mem::take(&mut self.world.story_ui) {
+            let p = match e {
+                StoryUi::Storyline { campaign, value } => {
+                    let key = format!("Fable_{campaign}");
+                    self.settings.set(&key, &value.to_string());
+                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| std::fs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
+                    own.set(&key, &value.to_string());
+                    if let Some(path) = ig2_formats::options::Options::own_path() {
+                        if let Err(e) = std::fs::write(&path, own.to_bytes()) {
+                            eprintln!("ig2-client: {}: {e}", path.display());
+                        }
+                    }
+                    continue;
+                }
+                StoryUi::Earthquake(p) => {
+                    self.quake = Some((p, None));
+                    p
+                }
+                StoryUi::Hold(p) => {
+                    self.send(StarmapOrder::Pause { paused: true });
+                    p
+                }
+            };
+            match self.colony {
+                Some(_) if self.world.colony == Some(p) => {}
+                Some(_) => {
+                    self.colony = None;
+                    self.open_colony(p);
+                }
+                None => {
+                    self.planet_kell = Some(p);
+                    self.request_screen(3);
+                }
+            }
+        }
     }
 
     /// The sim's video requests (`st_ShowAnim`, `MEGHALAS`, `MEGNYERES`) become the queue.
@@ -3180,8 +3456,28 @@ impl App {
         }
     }
 
+    /// Multiplayer: an ended rename's name (and a fleet's custom-name bit) as a command (deviation 395); the screen
+    /// shows it until the lockstep has carried it.
+    fn send_renames(&mut self) {
+        if self.world.net.is_none() || self.menus.rename.is_some() {
+            return;
+        }
+        let mut out = Vec::new();
+        for n in self.world.game.local_names.iter_mut().filter(|n| !n.sent) {
+            n.sent = true;
+            let name = n.shown.iter().take_while(|&&c| c != 0).copied().collect();
+            out.push(Command::Rename { fleet: n.fleet, index: n.index as u32, name, custom: n.custom });
+        }
+        for c in out {
+            self.world.send(c);
+        }
+    }
+
     fn frame(&mut self) {
+        self.send_renames();
         self.take_video_requests();
+        self.take_story_ui();
+        self.update_mp_wait();
         if self.video.is_some() || !self.video_queue.is_empty() {
             self.video_frame();
             if self.video.is_some() {
@@ -3215,7 +3511,10 @@ impl App {
             if let (Some((renderer, ..)), Some(s)) = (gfx(&mut self.gpu, &mut self.headless), &self.world.colony_curr) {
                 if c.scene.stale(s) {
                     match crate::colony::ColonyScene::load(renderer, &self.install, self.tables, self.maps, s) {
-                        Ok(scene) => c.scene = scene,
+                        Ok(scene) => {
+                            let old = std::mem::replace(&mut c.scene, scene);
+                            c.scene.carry_from(old);
+                        }
                         Err(e) => eprintln!("ig2-client: colony: {e}"),
                     }
                 }
@@ -3368,10 +3667,11 @@ impl App {
         if let Some(v) = &mut self.view {
             for _ in 0..due_ui {
                 self.star_keys.tick(&mut v.camera);
-                // Gated off, the speeds keep their values (the exe skips the whole function). [deviation: the port
-                // reads the pointer only while it is over the window; the exe keeps the last physical position]
+                // Gated off, the speeds keep their values (the exe skips the whole function). The pointer is the last
+                // physical one, so the scroll goes on with it outside the window (as the colony's), (0, 0) before the
+                // first move (`pointer_seen`).
                 if scroll {
-                    let held = self.mouse_held != 0 || !self.pointer_in;
+                    let held = self.mouse_held != 0 || !self.pointer_seen;
                     self.star_keys.autoscroll(&mut v.camera, self.cursor_px, win, held);
                 }
             }
@@ -3390,16 +3690,44 @@ impl App {
         // `FRISSIT_Starmap2` runs on the starmap only.
         if let (Some(v), None, None) = (&mut self.view, &self.colony, self.overlay) {
             // `Starmap_Belep` inits `fifo` and `starf` on every entry.
+            // `Starmap_Belep` also lets every console button out (`SetFrame(GetSubMeshid(KezeloId, i), 0)`, i < 6, exe
+            // 0x5b19a0); `GombFazis`, `MelyikGombot` and `KezeloGombFrame` keep their values.
             if !self.on_starmap {
                 self.panels.faders = crate::starmap_panels::StarmapFaders::enter();
+                self.star_buttons.depth = [0.0; 6];
             }
             for _ in 0..due_ui {
                 v.ui_tick();
                 self.panels.ui_tick();
+                // `Starmap_Main` sets a held rotate, zoom or pitch button again every frame, then `ShowStarmap` steps.
+                // Zoom and pitch read the buttons each frame: left in / up, then right out / down (right wins with both).
+                if let Some((s @ (2 | 3 | 5 | 6), _)) = self.console_held {
+                    self.star_buttons.press(s);
+                    let k = &mut self.star_keys;
+                    let pair = match s {
+                        5 => Some((&mut k.zoom_in, &mut k.zoom_out)),
+                        6 => Some((&mut k.up, &mut k.down)),
+                        _ => None,
+                    };
+                    if let Some((inc, dec)) = pair {
+                        if self.mouse_held & 1 != 0 {
+                            (*inc, *dec) = (true, false);
+                        }
+                        if self.mouse_held & 2 != 0 {
+                            (*inc, *dec) = (false, true);
+                        }
+                    }
+                }
+                self.star_buttons.step();
             }
             self.on_starmap = true;
         } else {
             self.on_starmap = false;
+        }
+        if let (Some(h), Some(g)) = (&mut self.hud, &mut self.gpu)
+            && let Some(c) = &mut h.starmap.console
+        {
+            c.pose(&mut g.renderer, &self.install, &self.star_buttons.depth);
         }
         // The radial menu's frame (`FRISSIT_Starmap2`).
         for _ in 0..due_ui {
@@ -3470,6 +3798,19 @@ impl App {
             // `TransformRotation`, once a drawn frame in `ShowColony`.
             if shown {
                 c.ui.cam_keys.frame(&mut c.view.camera);
+                c.ui.cam_keys.tank(&mut c.view.camera, &s.units, &c.ui.war.selected);
+            }
+            // The earthquake (`ShowColony`): the clock starts at the first colony draw after it, `FRISSIT_Story` ends it
+            // 10000 `AktIdo` (ms) later; the jolt only on the quake's planet.
+            c.view.camera.shake = [0.0; 2];
+            if let Some((q, since)) = &mut self.quake {
+                if since.get_or_insert_with(Instant::now).elapsed() >= QUAKE {
+                    self.quake = None;
+                } else if Some(*q) == self.world.colony && shown {
+                    let x = (self.quake_rand.rand() % 31 - 15) as f32;
+                    let y = (self.quake_rand.rand() % 31 - 15) as f32;
+                    c.view.camera.shake = [x, y];
+                }
             }
             c.ui.building_sounds(s, shown);
             c.view.overlay = c.ui.overlay(s, self.world.curr.human as i32);
@@ -3527,7 +3868,9 @@ impl App {
         }
         if let (Some(r), Some(m)) = (&mut self.research, &self.research_models) {
             r.tip.moved(self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor)));
-            r.tooltip(&self.world.game.state, &m.mask, &self.research_tips, now as f64);
+            if let Some(h) = &self.hud {
+                r.tooltip(&self.world.game.state, &m.mask, &self.research_tips, &h.texts, &m.centres, now as f64);
+            }
         }
         // The sounds queued by the frame's input and by these UI ticks, then the ticks' music steps.
         self.audio_frame(due_ui);
@@ -3648,7 +3991,7 @@ impl App {
             (None, Some(c), Some(prev), Some(curr)) => {
                 let unit = crate::colony::landing_unit(&self.world.game.state, curr);
                 let light = c.view.panel_light(self.maps, curr.map);
-                colony_panel = c.panel.render(&mut g.renderer, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), light, size);
+                colony_panel = c.panel.render(&mut g.renderer, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), light, size, c.scene.sky.as_deref());
                 colony_info = crate::colony_ui::render_kis_info(&mut g.renderer, &self.install, self.tables, &c.ui, &mut c.scene, &mut c.panel, curr, self.world.curr.human as i32, light, size);
                 (c.view.build(&mut g.renderer, &self.install, self.tables, self.maps, &mut c.scene, prev, curr, alpha, t), crate::ui::Screen::Colony)
             }
@@ -3959,8 +4302,16 @@ impl ApplicationHandler for App {
             let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
             self.cursor = [position.x as f32, position.y as f32 - top];
         }
-        if let WindowEvent::KeyboardInput { event: ref k, .. } = event {
+        if let WindowEvent::KeyboardInput { event: ref k, is_synthetic, .. } = event {
             self.research_key_seen(k);
+            if !is_synthetic {
+                self.modifier_key(k);
+            }
+        }
+        if let WindowEvent::MouseInput { device_id, state, button } = event {
+            if self.middle_clears(el, device_id, state, button) {
+                return;
+            }
         }
         match event {
             // SDL_QUIT (`MainCallBackEventHandler`): `CloseBink` if a video plays, then the game quits.
@@ -3997,6 +4348,16 @@ impl ApplicationHandler for App {
                 if let Some(v) = &mut self.video {
                     v.press();
                 }
+            }
+            // The wait overlay's own frame loop (`MOUSE_DrawOver`): nothing under it takes the buttons (its items take a
+            // held button each frame, `update_mp_wait`); the keys stay live (its `Fake_FRISSITES` runs `DoKeyboard`).
+            WindowEvent::MouseInput { state, button, .. } if self.mp_wait.is_open() => {
+                let bit = match button {
+                    MouseButton::Left => 1,
+                    MouseButton::Right => 2,
+                    _ => 0,
+                };
+                self.mouse_held = if state == ElementState::Pressed { self.mouse_held | bit } else { self.mouse_held & !bit };
             }
             // The top bar's drop-downs take the buttons first on every screen with the bar (`MOUSE_SelectScreens`).
             WindowEvent::MouseInput { state, button, .. }
@@ -4045,7 +4406,16 @@ impl ApplicationHandler for App {
                             el.exit();
                         }
                     }
-                    k @ Key::Character("o" | "O" | "m" | "M") => {
+                    // O: `Help_Kilep` closes the screen first when it opened animated, then Options enters over the
+                    // screen before Help (`OptionsElottiKep = HelpElottiScreen`).
+                    Key::Character("o" | "O") if self.o_key_allowed() => {
+                        if let Some(h) = &mut self.help {
+                            h.s.escape();
+                            self.help_then_options = true;
+                        }
+                    }
+                    Key::Character("o" | "O") => {}
+                    k @ Key::Character("m" | "M") => {
                         let again = self.help_under_is(&k);
                         self.leave_help();
                         if !again && self.key(k) {
@@ -4130,7 +4500,13 @@ impl ApplicationHandler for App {
                     f.s.release_right();
                 }
             }
-            WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { button: MouseButton::Middle, .. } if self.front.is_some() => {}
+            // The wheel is no event of `MainCallBackEventHandler`'s (exe 0x4e2db0); the middle button drops the held ones.
+            WindowEvent::MouseWheel { .. } if self.front.is_some() => {}
+            WindowEvent::MouseInput { button: MouseButton::Middle, .. } if self.front.is_some() => {
+                if let Some(f) = &mut self.front {
+                    f.s.middle();
+                }
+            }
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.front.is_some() => {
                 let Some(f) = &mut self.front else { return };
                 let at = f.at;
@@ -4144,6 +4520,7 @@ impl ApplicationHandler for App {
             // The OS pointer is still tracked (`MainCallBackEventHandler` stores the raw position first).
             WindowEvent::CursorMoved { position, .. } if self.tutorial_owns_input() => {
                 self.cursor_px = [position.x as i32, position.y as i32];
+                self.pointer_seen = true;
                 self.pointer_in = true;
             }
             WindowEvent::MouseInput { .. } | WindowEvent::MouseWheel { .. } | WindowEvent::ModifiersChanged(_) if self.tutorial_owns_input() => {}
@@ -4161,7 +4538,7 @@ impl ApplicationHandler for App {
                                 t.t.gates.text_shown ^= true;
                             }
                         }
-                        Key::Character("o" | "O") => self.open_options(false),
+                        Key::Character("o" | "O") => self.ask_options(),
                         _ => {}
                     }
                 }
@@ -4172,7 +4549,7 @@ impl ApplicationHandler for App {
                 if event.state == ElementState::Pressed && matches!(event.logical_key.as_ref(), Key::Character("t" | "T" | "o" | "O")) && self.tutorial.as_ref().is_some_and(|t| t.running()) && self.options.is_none() =>
             {
                 if matches!(event.logical_key.as_ref(), Key::Character("o" | "O")) {
-                    self.open_options(false);
+                    self.ask_options();
                     return;
                 }
                 if let Some(t) = &mut self.tutorial {
@@ -4184,10 +4561,12 @@ impl ApplicationHandler for App {
                     el.exit();
                 }
             }
-            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
+            // A modifier is set by its own key's down (`modifier_key`), as the exe's are; the OS state only clears.
+            WindowEvent::ModifiersChanged(m) => self.modifiers &= m.state(),
             WindowEvent::CursorLeft { .. } => self.pointer_in = false,
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_px = [position.x as i32, position.y as i32];
+                self.pointer_seen = true;
                 self.pointer_in = true;
                 // The band's pixels: the mouse goes through the frame (`IG2_VIRTUAL_POSY`, re/screens/widescreen.md §4).
                 let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
@@ -4204,21 +4583,22 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } if self.spacewar.is_some() => {
                 let at = self.virtual_cursor();
-                let mut bar = None;
-                let mp = self.multiplayer();
+                let down = state == ElementState::Pressed;
+                let mut first = false;
                 if let Some(sw) = &mut self.spacewar {
-                    let down = state == ElementState::Pressed;
+                    // `IG2_gameUpdate` (exe 0x4e0440) acts on the press edge of "any button held" (`Mouse_Valtozas`
+                    // 0xDB4653 with 0xDB4650): a second button pressed while one is held changes nothing.
+                    first = !(sw.left || sw.right);
                     match button {
                         MouseButton::Left => sw.left = down,
                         MouseButton::Right => sw.right = down,
                         _ => {}
                     }
-                    bar = if down && button == MouseButton::Left { sw.bar_press(at, mp) } else { None };
                 }
-                match bar {
-                    Some(0) => self.toggle_pause(),
-                    Some(n) => self.set_speed(n),
-                    None => {}
+                // The top bar's plain spots as on every screen: pause and the speeds on either button's press, the
+                // message line (7) with its battle gate (`DEBUGX`) and the right button's history.
+                if !down || first {
+                    self.top_bar_mouse(button, down, at);
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.spacewar.is_some() => self.spacewar_key(&event),
@@ -4369,6 +4749,59 @@ impl App {
     }
 
     /// A mouse button went down or up.
+    /// `KeyShift`/`KeyCtrl`/`KeyAlt` (0xbae295/0xbae27f/0xbae294) are set on every KEYDOWN of their key, an OS
+    /// repeat too, and cleared on its KEYUP, either side's (`MainCallBackEventHandler` exe 0x4e2db0 reads no mod state
+    /// and filters no repeats; `remapKeyCodes` 0x4e4670 maps both keys of a pair to one VK; not while the tutorial
+    /// holds the input, unless `AktKep` 0xd): after a middle click dropped them, the next repeat of a held modifier
+    /// brings it back. AltGr (SDL's RALT) is Alt; the focus gain's synthetic presses aren't key-downs.
+    fn modifier_key(&mut self, k: &winit::event::KeyEvent) {
+        if self.tutorial_owns_input() {
+            return;
+        }
+        let m = match k.logical_key.as_ref() {
+            Key::Named(NamedKey::Shift) => ModifiersState::SHIFT,
+            Key::Named(NamedKey::Control) => ModifiersState::CONTROL,
+            Key::Named(NamedKey::Alt | NamedKey::AltGraph) => ModifiersState::ALT,
+            _ => return,
+        };
+        self.modifiers.set(m, k.state == ElementState::Pressed);
+    }
+
+    /// Row 379: `MainCallBackEventHandler` sends a press or release of any button but 1 and 3 to the block at exe
+    /// 0x4e345a, which with `IsActive` (0x912a38) set zeroes `KeyShift`/`KeyCtrl`/`KeyAlt` and the held bytes
+    /// 0xdb467d..f: the next `Mouse_Lekerdez` (exe 0x5105d0) sees every held button released (`Mouse_Felenged` and the
+    /// per-button edges), and the real release later is no edge. So: the modifiers drop, each held button gets its
+    /// release now, and its real release is swallowed. True: the event is swallowed.
+    fn middle_clears(&mut self, el: &ActiveEventLoop, device_id: winit::event::DeviceId, state: ElementState, button: MouseButton) -> bool {
+        let bit = match button {
+            MouseButton::Left => 1,
+            MouseButton::Right => 2,
+            _ => 0,
+        };
+        if bit != 0 {
+            if state == ElementState::Pressed {
+                self.buttons_down |= bit;
+                self.released_early &= !bit;
+                return false;
+            }
+            self.buttons_down &= !bit;
+            let early = self.released_early & bit != 0;
+            self.released_early &= !bit;
+            return early;
+        }
+        if !self.gpu.as_ref().is_some_and(|g| g.window.has_focus()) {
+            return false;
+        }
+        self.modifiers = ModifiersState::empty();
+        for (b, button) in [(1, MouseButton::Left), (2, MouseButton::Right)] {
+            if self.buttons_down & b != 0 {
+                self.window_event(el, WindowId::dummy(), WindowEvent::MouseInput { device_id, state: ElementState::Released, button });
+                self.released_early |= b;
+            }
+        }
+        false
+    }
+
     fn mouse(&mut self, button: MouseButton, pressed: bool) {
         let state = if pressed { ElementState::Pressed } else { ElementState::Released };
         let bit = match button {
@@ -4385,12 +4818,15 @@ impl App {
         if self.top_bar_mouse(button, pressed, at) {
             return;
         }
-        if button != MouseButton::Left && self.spy.is_some() {
-            // `Spy_Main` has no right-button input; nothing reaches the starmap under it.
+        if self.spy.is_some() && (bit == 0 || self.mouse_held & !bit != 0) {
+            // `Spy_Main` (exe 0x58d410) tests only `Mouse_Lenyom`/`Felenged`, either button's edges: the first button
+            // down presses, the last one up releases (`Mouse_Lekerdez` exe 0x510694..0x510717 takes both edges from
+            // `Mouse_Gomb`, any button: a second button's edge while one is held is none); nothing reaches the
+            // starmap under it.
             self.right_down = None;
             return;
         }
-        if button == MouseButton::Left && self.spy.is_some() {
+        if self.spy.is_some() {
             let Some(at) = self.spy_virtual(self.cursor) else { return };
             let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
             let Some(spy) = &mut self.spy else { return };
@@ -4472,8 +4908,9 @@ impl App {
                     }
                 }
             }
-            (MouseButton::Left, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Research) => self.research_press(),
-            // The buttons for the drags and the faders (`Mouse_Lekerdez`); the right one presses nothing else here.
+            // `Research_Main` (exe 0x523c10) acts on either button's press (re/screens/input.md §7).
+            (MouseButton::Left | MouseButton::Right, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Research) => self.research_press(button == MouseButton::Left),
+            // The buttons for the drags and the faders (`Mouse_Lekerdez`).
             (MouseButton::Left | MouseButton::Right, _) if self.overlay == Some(crate::ui::Screen::Research) => {
                 if let Some(r) = &mut self.research {
                     let bit = if button == MouseButton::Left { 1 } else { 2 };
@@ -4510,15 +4947,24 @@ impl App {
             (MouseButton::Left, ElementState::Released) if self.colony.is_some() => {
                 self.colony_input(|ui, ctx, at, now| ui.release(ctx, at, true, now));
             }
+            // A second button's press is no new press on the starmap (`Mouse_Lenyom` is the first button down only,
+            // `Mouse_Lekerdez` exe 0x5105d0): over a held console spot it is the spot's (row 358); after a press on the
+            // map, which latches hot-spot 0x35 (`Mouse_Megfogva`, `Starmap_Main` exe 0x5b54a2), no console spot, pick or
+            // order starts (row 363).
+            (MouseButton::Left | MouseButton::Right, ElementState::Pressed) if on_starmap && (self.console_held.is_some() || self.mouse_held & !bit & 3 != 0) => {}
             (MouseButton::Left, ElementState::Pressed) => {
                 self.menus.held = true;
                 if !(on_starmap && self.starmap_press()) {
                     self.left_down = Some(self.cursor);
                 }
             }
-            (MouseButton::Left | MouseButton::Right, ElementState::Released) if self.console_held.is_some_and(|(_, l)| l == (button == MouseButton::Left)) => {
-                self.menus.held = false;
-                self.console_release();
+            // A held console spot stays latched (`Mouse_Megfogva`) until every button is up (`Mouse_Felenged`,
+            // `Mouse_Lekerdez` exe 0x5105d0); a second button's press there is taken by it (row 358).
+            (MouseButton::Left | MouseButton::Right, ElementState::Released) if self.console_held.is_some() => {
+                if self.mouse_held & 3 == 0 {
+                    self.menus.held = false;
+                    self.console_release();
+                }
             }
             (MouseButton::Left, ElementState::Released) if self.menus.menu.is_some() || self.menus.rop.is_some() => {
                 self.menus.held = false;
@@ -4541,13 +4987,13 @@ impl App {
             (MouseButton::Right, ElementState::Pressed) if on_starmap && self.console_held.is_none() && self.console_press(false) => {}
             (MouseButton::Right, ElementState::Pressed) if on_starmap && self.panel_press(false) => self.panel_held = Some(false),
             (MouseButton::Right, ElementState::Pressed) if self.colony.is_some() => self.colony_input(|ui, ctx, at, now| ui.press(ctx, at, false, now)),
-            // `Starmap_Main` gives the map's right-button orders (0x15, the rally 0x400) on the press, not while the
-            // left button is held outside the redirect mode nor under the radial menu (ELF 0x6f50a0 lines 731-732); the
-            // right button never drags the camera (re/deviations.md #169). The info box's right action (colony /
-            // split) is the release's.
+            // `Starmap_Main` gives the map's right-button orders (0x15, the rally 0x400) on the press, not under the
+            // radial menu (ELF 0x6f50a0 lines 731-732; a press with the left button held is no press, above); the right
+            // button never drags the camera (re/deviations.md #169). The info box's right action (colony / split) is the
+            // release's.
             (MouseButton::Right, ElementState::Pressed) => {
                 self.right_down = Some(self.cursor);
-                let gated = (self.mouse_held & 1 != 0 && !self.menus.redirect) || self.menus.rop.is_some();
+                let gated = self.menus.rop.is_some();
                 if on_starmap && !gated && !self.on_info_box(self.cursor) {
                     self.starmap_click(self.cursor, true);
                 }
@@ -4577,9 +5023,12 @@ impl App {
         self.colony_camera_key_by(event.physical_key, event.logical_key.as_ref(), event.state == ElementState::Pressed)
     }
 
-    fn colony_camera_key_by(&mut self, physical: winit::keyboard::PhysicalKey, _logical: Key<&str>, down: bool) -> bool {
+    fn colony_camera_key_by(&mut self, physical: winit::keyboard::PhysicalKey, logical: Key<&str>, down: bool) -> bool {
         use winit::keyboard::{KeyCode, PhysicalKey};
-        if self.overlay.is_some() || self.spy.is_some() || self.colony.is_none() || self.menus.rename.is_some() || self.hud.as_ref().is_some_and(|h| h.chat.entry.is_some()) {
+        // `DoKeyboard` (exe 0x4db1a0 line 186) hands every key up to the screen's handler, a text entry up or not
+        // (deviation 373); a key down goes to the entry.
+        let entry = self.menus.rename.is_some() || self.hud.as_ref().is_some_and(|h| h.chat.entry.is_some());
+        if self.overlay.is_some() || self.spy.is_some() || self.colony.is_none() || (entry && down) {
             return false;
         }
         // `ColonyKeyboardHandler` (exe 0x4628c0 line 26): the top row's 4..9 (vk 0x34..=0x39, not the numpad) call
@@ -4601,14 +5050,16 @@ impl App {
         }
         let Some(c) = &mut self.colony else { return false };
         let k = &mut c.ui.cam_keys;
-        let flag = match physical {
-            PhysicalKey::Code(KeyCode::ArrowLeft) => &mut k.left,
-            PhysicalKey::Code(KeyCode::ArrowRight) => &mut k.right,
-            PhysicalKey::Code(KeyCode::ArrowUp) => &mut k.up,
-            PhysicalKey::Code(KeyCode::ArrowDown) => &mut k.down,
-            PhysicalKey::Code(KeyCode::NumpadAdd) => &mut k.zoom_in,
-            PhysicalKey::Code(KeyCode::NumpadSubtract) => &mut k.zoom_out,
-            _ => return false,
+        // VK 0x25..=0x28 by the logical key (a NumLock-off numpad sends them too, deviation 375), numpad + / − by
+        // the physical one.
+        let Some(i) = do_keyboard::colony_camera_key(physical, logical) else { return false };
+        let flag = match i {
+            0 => &mut k.left,
+            1 => &mut k.right,
+            2 => &mut k.up,
+            3 => &mut k.down,
+            4 => &mut k.zoom_in,
+            _ => &mut k.zoom_out,
         };
         *flag = down;
         true
@@ -4658,7 +5109,8 @@ impl App {
     fn starmap_key_by(&mut self, physical: winit::keyboard::PhysicalKey, logical: Key<&str>, down: bool) -> bool {
         use crate::starmap::CamKey as K;
         use winit::keyboard::{KeyCode, PhysicalKey};
-        if self.view.is_none() || self.colony.is_some() || self.under_screen() || self.menus.rename.is_some() {
+        // A key up reaches the handler with the rename's entry up too (`DoKeyboard` line 186, deviation 372).
+        if self.view.is_none() || self.colony.is_some() || self.under_screen() || (self.menus.rename.is_some() && down) {
             return false;
         }
         // VK 0x25..=0x28 by the logical.clone() key (a NumLock-off numpad sends them too), numpad + / − by the physical one.
@@ -4765,6 +5217,19 @@ impl App {
             }
             _ => return,
         };
+        // A fleet's rename sets its custom-name bit for good (`+0x52 |= 0x800`, `Starmap_Main` exe 0x5b62be / 0x5b6cf4;
+        // Esc or a press elsewhere keeps it): `Show_Flottak2d` draws its name on the map from then on. Only that draw
+        // and the Elem story read it, so the local edit (no message, as the name's) can't desync (row 234).
+        if r.fleet {
+            if self.world.net.is_some() {
+                // Multiplayer: shown here at once, the bit and the name go through the lockstep when the rename ends
+                // (deviation 395).
+                let name = r.backup.clone();
+                self.world.game.edit_local_name(true, r.index, &name, true);
+            } else if let Some(f) = self.world.game.state.fleets.get_mut(r.index) {
+                f[0x53] |= 0x08;
+            }
+        }
         self.menus.rename = Some(r);
     }
 
@@ -4787,6 +5252,13 @@ impl App {
     /// The rename's text written into the record (`IOString` is the record's name).
     fn write_rename(&mut self, text: &[u8]) {
         let Some(r) = &self.menus.rename else { return };
+        // Multiplayer: the shared state isn't written outside the lockstep; the screen shows the typed name and the
+        // rename's end sends it (`send_renames`, deviation 395).
+        if self.world.net.is_some() {
+            let (fleet, index) = (r.fleet, r.index);
+            self.world.game.edit_local_name(fleet, index, text, fleet);
+            return;
+        }
         let state = &mut self.world.game.state;
         let mut name = text.to_vec();
         name.push(0);
@@ -4845,6 +5317,9 @@ impl App {
     /// `Frissit2_Grafika` steps every UI frame and no screen resets; only the frame's places reset on a screen change.
     /// The shown screen's frame carries it; a newly shown one starts from it.
     fn row_frame_phase(&mut self, due_ui: u64) {
+        if self.front.is_some() {
+            return;
+        }
         use crate::ui::Screen;
         let (owner, frame) = if let Some(o) = &mut self.options {
             (1, Some(&mut o.s.design))
@@ -4859,25 +5334,7 @@ impl App {
         } else {
             (0, None)
         };
-        match frame {
-            Some(f) if owner == self.dk_owner => {
-                let [m, c, n] = f.phase();
-                self.dk = crate::kit::DesignFrame::with_phase(m, c, n);
-            }
-            Some(f) => {
-                for _ in 0..due_ui {
-                    self.dk.tick();
-                }
-                let [m, c, n] = self.dk.phase();
-                *f = crate::kit::DesignFrame::with_phase(m, c, n);
-            }
-            None => {
-                for _ in 0..due_ui {
-                    self.dk.tick();
-                }
-            }
-        }
-        self.dk_owner = owner;
+        carry_row_frame(&mut self.dk, &mut self.dk_owner, owner, frame, due_ui);
     }
 
     /// `c` on the starmap (character 99): a free planet, a colony ship in the pool, none sent this frame or on the
@@ -4969,12 +5426,7 @@ impl App {
             Key::Named(NamedKey::Escape) if self.colony.is_some() && self.overlay.is_none() && self.colony.as_ref().is_some_and(|c| c.ui.info.is_some()) => {}
             Key::Named(NamedKey::Escape) | Key::Character("o" | "O") => {
                 if self.o_key_allowed() {
-                    // From the messages screen `Messages_Kilep`'s closing runs first.
-                    if self.overlay == Some(crate::ui::Screen::Messages) {
-                        self.request_screen(0xd);
-                    } else {
-                        self.open_options(false);
-                    }
+                    self.ask_options();
                 }
             }
             // `DoKeyboard`'s M (exe 0x4db1a0 lines 92-114); refused, the character goes on to the screen (none uses it).
@@ -5035,4 +5487,29 @@ impl App {
         }
         false
     }
+}
+
+/// The row frame's phase hand-over (`dkm`, `dkmcel`, `GfxNovelo`: one set of globals, `Frissit2_Grafika` exe 0x4d2ed0
+/// steps them every 10 ms tick on every screen): the shown screen's frame `owner` steps them itself and the globals copy
+/// it; a newly shown one starts from the globals with its places reset; with none shown the globals step on their own.
+pub(crate) fn carry_row_frame(dk: &mut crate::kit::DesignFrame, dk_owner: &mut u8, owner: u8, frame: Option<&mut crate::kit::DesignFrame>, due: u64) {
+    match frame {
+        Some(f) if owner == *dk_owner => {
+            let [m, c, n] = f.phase();
+            *dk = crate::kit::DesignFrame::with_phase(m, c, n);
+        }
+        Some(f) => {
+            for _ in 0..due {
+                dk.tick();
+            }
+            let [m, c, n] = dk.phase();
+            *f = crate::kit::DesignFrame::with_phase(m, c, n);
+        }
+        None => {
+            for _ in 0..due {
+                dk.tick();
+            }
+        }
+    }
+    *dk_owner = owner;
 }

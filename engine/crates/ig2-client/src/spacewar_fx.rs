@@ -278,6 +278,16 @@ impl Ring {
     }
 }
 
+/// The shield rings' opacity byte, one for all of them: `Kocka` (exe 0x5281f0) hands `fenyekszamolasa` (0x52f190)
+/// `float2int(255 − 255·t)` with the ring's `t = f/30`, but that writes the colours of the ONE `karika` mesh the 20
+/// rings share, and only while the mesh is flagged (`DAT_00dff940` = mesh `+0x90`, set by `SetFrame` /
+/// `SetObjTransparency` when a value changes, exe 0x453630): the first ring drawn after a battle step lights it for
+/// every ring until the next change (hidden rings aren't drawn). None without a ring to draw.
+pub fn ring_light(rings: &[Ring], tick: i32) -> Option<i32> {
+    let first = rings.iter().find(|r| r.start != 0 && r.frame(tick) <= 30.0)?;
+    Some(crate::lighting::float2int(255.0 - 255.0 * (first.frame(tick) / 30.0)).clamp(0, 255))
+}
+
 /// A piece of debris (`robbanasdarabok`, spec §6.8.6): its model (`darab1..3`), size, place, spin, turn and counter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Debris {
@@ -912,6 +922,21 @@ pub fn shot_look(s: &ig2_sim::spacebattle::Shot, weapons: &[WeaponRules], forms:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shield capture (`run_spwc.py --planets --shield --records`, `shield3`, 2026-10-25): `fenyekszamolasa`'s
+    /// opacity byte per ring draw and the ring records. At grab t3000 (tick 510) the first ring (start 494) hands 66,
+    /// at t3200 (tick 543, the battle over) the first (526) hands 60; every ring is drawn with that one.
+    #[test]
+    fn shield_rings_share_the_first_rings_light() {
+        let ring = |start| Ring { start, ..Default::default() };
+        let t3000: Vec<_> = [494, 505, 506, 507, 508, 509, 509, 510, 510].into_iter().map(ring).collect();
+        assert_eq!(ring_light(&t3000, 510), Some(66));
+        let t3200: Vec<_> = [526, 537, 538, 539, 540, 541, 541, 542, 542, 543, 543, 513, 513, 513, 514, 514, 514, 515].into_iter().map(ring).collect();
+        assert_eq!(ring_light(&t3200, 543), Some(60));
+        // Each ring's own byte, as handed: 0 for the oldest, 255 for the newest.
+        assert_eq!(crate::lighting::float2int(255.0 - 255.0 * (ring(513).frame(543) / 30.0)), 0);
+        assert_eq!(ring_light(&[ring(0), ring(543)], 543), Some(255));
+    }
 
     #[test]
     fn an_explosion_fades_out_in_54_ticks() {

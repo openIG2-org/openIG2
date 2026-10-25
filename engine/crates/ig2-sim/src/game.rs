@@ -36,6 +36,7 @@ mod battles;
 mod colony_orders;
 mod death;
 mod design_orders;
+mod game_info;
 mod info_orders;
 mod message_orders;
 mod orders;
@@ -135,6 +136,8 @@ pub struct StoryRules {
     pub values: Vec<(i32, i32)>,
     pub fleets: Vec<crate::story::FleetData>,
     pub buildings: Vec<crate::story::BuildingData>,
+    /// `GameInfoList` (exe 0xE3E398, gameinfo.txt by `LoadGameInfo`): the info lines' ids and texts (bytes as read).
+    pub game_info: Vec<(i32, Vec<u8>)>,
 }
 
 /// `Story_Check`'s scripts in its order (`re/rules/campaign.md` §2): `st_Begin_include`, `st_Rnd_include`,
@@ -201,7 +204,16 @@ impl StoryRules {
             info_strings: info_strings.iter().map(|s| (s.id, s.flag)).collect(),
             diplomacy_specials: ig2_formats::diplomacy::parse_specials(&String::from_utf8_lossy(&specials)).iter().map(|s| s.id).collect(),
             design_templates,
+            game_info: Self::game_info_lines(install),
         }
+    }
+
+    /// `GameInfoList` from the install's gameinfo.txt in its language (`LoadGameInfo`).
+    pub fn game_info_lines(install: &ig2_formats::Install) -> Vec<(i32, Vec<u8>)> {
+        let lang = install.lang();
+        let raw = install.read("dataraw/text/gameinfo.txt").unwrap_or_default();
+        let lines = ig2_formats::misc_text::parse_gameinfo(&ig2_formats::text::decode(&raw, lang));
+        lines.into_iter().map(|(id, t)| (id, lang.encoding().encode(&t).0.into_owned())).collect()
     }
 }
 
@@ -318,7 +330,32 @@ pub struct Game<'r> {
     /// How the game ended (`GameStarted` 0xBAE297 cleared by `ExitToMainScreen`): `MEGHALAS` and `MEGNYERES` end
     /// it only while it is `None` (`game::death`). Not in the state: a loaded game runs again.
     pub over: Option<GameOver>,
+    /// Inside [`Game::with_inbox_of`]: the human whose own inbox is in the state (unsaved).
+    pub answering: Option<u8>,
+    /// The client's [`Game::show_inbox`]: the human whose inbox it swapped in (unsaved).
+    pub local_inbox: Option<u8>,
+    /// The names the local screen shows ahead of the lockstep ([`Game::show_local_names`]; unsaved).
+    pub local_names: Vec<LocalName>,
 }
+
+/// A name the local screen shows before the lockstep carries it (a rename in multiplayer, deviation 395): fleet or
+/// planet `index`'s name bytes as typed and, for a fleet, its custom-name bit.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalName {
+    pub fleet: bool,
+    pub index: usize,
+    /// The record's name bytes as shown ([`Game::name_bytes`]).
+    pub shown: Vec<u8>,
+    pub custom: bool,
+    /// The rename ended and its command went out: dropped once the shared state says the same.
+    pub sent: bool,
+    /// The shared state's bytes and bit while the shown ones are in.
+    under: Option<(Vec<u8>, bool)>,
+}
+
+/// A fleet record's name (`+0x00`, NUL included) and a planet record's.
+const FLEET_NAME: usize = 0x14;
+const PLANET_NAME: usize = 0x18;
 
 /// One planet's draws in the economy prologue: `(planet, weather, background)` ([`Game::weather_draws`]).
 pub type WeatherDraw = (usize, i32, Option<i32>);
@@ -391,6 +428,131 @@ impl<'r> Game<'r> {
             realtime: RealTime::default(),
             sp_battles: SpBattles::default(),
             over: None,
+            answering: None,
+            local_inbox: None,
+            local_names: Vec::new(),
+        }
+    }
+
+    /// Canonical multiplayer: run `f` with human `h`'s inbox in the state (`re/rules/multiplayer.md` §5.3), its
+    /// answers the story's [`crate::story::StoryWorld::answering`].
+    pub(crate) fn with_inbox_of<T>(&mut self, h: u8, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.state.swap_inbox(h);
+        let was = self.answering.replace(h);
+        let r = f(self);
+        self.answering = was;
+        self.state.swap_inbox(h);
+        r
+    }
+
+    /// The humans with an inbox of their own (canonical multiplayer: every human but `EN`).
+    fn own_inboxes(&self) -> Vec<u8> {
+        match self.view {
+            ViewMode::Canonical { .. } => self.state.humans.iter().filter(|(_, s)| !s.inbox.is_empty()).map(|(&h, _)| h).collect(),
+            ViewMode::Classic => Vec::new(),
+        }
+    }
+
+    /// Fleet or planet `index`'s name bytes ([`LocalName`]) and, for a fleet, its custom-name bit (`+0x52 & 0x800`).
+    pub fn name_bytes(&self, fleet: bool, index: usize) -> Option<(Vec<u8>, bool)> {
+        if fleet {
+            let f = self.state.fleets.get(index)?;
+            Some((f[..FLEET_NAME].to_vec(), f[0x53] & 0x08 != 0))
+        } else {
+            (1..=self.state.planet_count()).contains(&index).then(|| (self.state.mem.read(va::PLANETS + (index * PLANET_SIZE) as u32, PLANET_NAME), false))
+        }
+    }
+
+    fn put_name_bytes(&mut self, fleet: bool, index: usize, name: &[u8], custom: bool) {
+        if fleet {
+            if let Some(f) = self.state.fleets.get_mut(index) {
+                f[..FLEET_NAME].copy_from_slice(&name[..FLEET_NAME]);
+                f[0x53] = (f[0x53] & !0x08) | if custom { 0x08 } else { 0 };
+            }
+        } else {
+            self.state.mem.write(va::PLANETS + (index * PLANET_SIZE) as u32, &name[..PLANET_NAME]);
+        }
+    }
+
+    /// A rename from `issuer` (ours in multiplayer, deviation 395: the original renames on its own machine only,
+    /// `Starmap_Main` / `Colony_Main` with `IOMode`, no message): fleet `index`'s name (at most 0x13 characters) and
+    /// its custom-name bit (`+0x52 |= 0x800`, kept for good), or planet `index`'s name (at most 0x17). Refused: a
+    /// fleet not `issuer`'s, a name too long or with a NUL.
+    pub fn rename(&mut self, issuer: u8, fleet: bool, index: usize, name: &[u8], custom: bool) {
+        let max = if fleet { FLEET_NAME } else { PLANET_NAME };
+        if name.len() >= max || name.contains(&0) {
+            return;
+        }
+        let Some((mut bytes, bit)) = self.name_bytes(fleet, index) else { return };
+        if fleet && self.state.fleets[index][0x15] != issuer {
+            return;
+        }
+        bytes[..name.len()].copy_from_slice(name);
+        bytes[name.len()] = 0;
+        self.put_name_bytes(fleet, index, &bytes, bit || custom);
+    }
+
+    /// The client's [`LocalName`]s in (`true`, while it holds the game) or the shared state's bytes back (`false`,
+    /// before the game goes into the lockstep). Repeats are no-ops; a sent name the shared state has caught up with is
+    /// dropped.
+    pub fn show_local_names(&mut self, on: bool) {
+        let mut names = std::mem::take(&mut self.local_names);
+        if on {
+            names.retain_mut(|n| {
+                if n.under.is_some() {
+                    return true;
+                }
+                let Some(under) = self.name_bytes(n.fleet, n.index) else { return false };
+                if n.sent && under == (n.shown.clone(), n.custom) {
+                    return false;
+                }
+                self.put_name_bytes(n.fleet, n.index, &n.shown, n.custom);
+                n.under = Some(under);
+                true
+            });
+        } else {
+            for n in &mut names {
+                if let Some((b, bit)) = n.under.take() {
+                    self.put_name_bytes(n.fleet, n.index, &b, bit);
+                }
+            }
+        }
+        self.local_names = names;
+    }
+
+    /// The client's local edit of a name (a rename in multiplayer): `name` (no NUL) and the custom-name bit shown at
+    /// once, the shared state's left for [`Game::show_local_names`] to put back.
+    pub fn edit_local_name(&mut self, fleet: bool, index: usize, name: &[u8], custom: bool) {
+        self.show_local_names(false);
+        if let Some((mut bytes, bit)) = self.name_bytes(fleet, index) {
+            let n = name.len().min(if fleet { FLEET_NAME } else { PLANET_NAME } - 1);
+            bytes[..n].copy_from_slice(&name[..n]);
+            bytes[n] = 0;
+            let custom = bit || custom;
+            match self.local_names.iter_mut().find(|l| l.fleet == fleet && l.index == index) {
+                Some(l) => {
+                    l.shown = bytes;
+                    l.custom |= custom;
+                    l.sent = false;
+                }
+                None => self.local_names.push(LocalName { fleet, index, shown: bytes, custom, ..LocalName::default() }),
+            }
+        }
+        self.show_local_names(true);
+    }
+
+    /// The client's view of human `h`'s inbox while it holds the game (`Some(h)`: swapped in; `None`: back). The
+    /// state is the canonical one again before it goes into the lockstep. Repeats are no-ops.
+    pub fn show_inbox(&mut self, h: Option<u8>) {
+        if self.local_inbox == h {
+            return;
+        }
+        if let Some(was) = self.local_inbox.take() {
+            self.state.swap_inbox(was);
+        }
+        if let Some(h) = h.filter(|h| self.state.humans.get(h).is_some_and(|s| !s.inbox.is_empty())) {
+            self.state.swap_inbox(h);
+            self.local_inbox = Some(h);
         }
     }
 
@@ -417,10 +579,15 @@ impl<'r> Game<'r> {
         let ViewMode::Canonical { en } = self.view else { return };
         let humans = self.state.human_controlled();
         for h in (1..EMPIRES).filter(|&h| humans[h] && h != en as usize) {
-            if self.state.humans.contains_key(&(h as u8)) {
+            if let Some(side) = self.state.humans.get(&(h as u8)) {
+                if side.inbox.is_empty() {
+                    let f = self.state.fresh_inbox();
+                    self.state.humans.get_mut(&(h as u8)).expect("there").inbox = f;
+                }
                 continue;
             }
-            self.state.humans.insert(h as u8, HumanSide::default());
+            let inbox = self.state.fresh_inbox();
+            self.state.humans.insert(h as u8, HumanSide { inbox, ..HumanSide::default() });
             let knows: Vec<usize> = (1..9).filter(|&e| self.state.mem.u8(va::EMPIRE_KNOWS + (h * EMPIRES + e) as u32) != 0).collect();
             self.with_diplomacy(|d, w| {
                 for &e in &knows {
@@ -547,6 +714,12 @@ impl<'r> Game<'r> {
     /// pools, every garrison recounted; `ai-empire.md` §12.9). It changes the state: a colonising fleet's colony ship
     /// has left the pool, and the recount puts it back (`fleet-movement.md` §4.3). `FRISSITES_IGAZIT` is the UI's.
     pub fn saved(&mut self) {
+        // `LoadSaveVariables`'s last reads (exe 0x545a1c): `0xB77288 = st_vGet(4003)`, `0xB7728C = st_vGet(4002)`;
+        // `StoryError` is left as "4002 missing" (1 in a scenario).
+        let mut v = [0; 2];
+        self.with_story(|st, _| v = [st.v_get(4003), st.v_get(4002)]);
+        self.state.mem.set_i32(va::STORY_LINE_STORY, v[0]);
+        self.state.mem.set_i32(va::STORY_SCENARIO, v[1]);
         self.state.mem.set_i32(va::MISSIONS + 0x160, 0);
         self.state.battlefields_saved();
         self.with_ai(|_, w, _| w.recount());
@@ -2097,6 +2270,14 @@ impl Game<'_> {
     /// `FRISSIT_Messages` (`info-messages.md` §4): a message past its expiry leaves the inbox and tells the
     /// stories (`Story_MessageElevules`).
     fn inbox(&mut self) {
+        self.inbox_pass();
+        // Every other human's own inbox expires on its own (each machine's `FRISSIT_Messages`).
+        for h in self.own_inboxes() {
+            self.with_inbox_of(h, |g| g.inbox_pass());
+        }
+    }
+
+    fn inbox_pass(&mut self) {
         let mut b = self.state.inbox();
         let Some(block) = b.expire(self.state.mem.i32(va::IDO), self.globals().message_shown) else { return };
         self.state.store_inbox(&b);

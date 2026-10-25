@@ -402,7 +402,11 @@ fn replay_matches_the_exe_tick_by_tick() {
     }
     let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
     let (messages, lang) = message_texts(&recs);
-    let rules = GameRules { messages, ..game_rules(&inst) };
+    let mut rules = GameRules { messages, ..game_rules(&inst) };
+    // The info lines' texts (`GameInfo`) in the same language.
+    if let Some(Ok(l)) = Install::from_env(lang) {
+        rules.story.game_info = ig2_sim::game::StoryRules::game_info_lines(&l);
+    }
     let designs = design_texts(lang);
     let mut failed = Vec::new();
     for rec in recs {

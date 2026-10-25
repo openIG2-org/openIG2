@@ -34,6 +34,8 @@ pub struct UiSnap {
     pub inbox_params: Vec<Vec<Vec<u8>>>,
     /// The info screen's panels.
     pub info: crate::info_screen::InfoData,
+    /// [`crate::world::World::scenario`].
+    pub scenario: bool,
 }
 
 fn cstr(b: &[u8]) -> Vec<u8> {
@@ -67,6 +69,7 @@ impl UiSnap {
             bar: bar_state(state, en),
             inbox_params,
             info: crate::info_screen::InfoData::read(state),
+            scenario: false,
         }
     }
 }
@@ -414,6 +417,8 @@ pub struct Hud {
     /// The speed buttons: `IdoSpeed` 0..=2 and `IdoPause`, set by the client each frame.
     pub speed: usize,
     pub paused: bool,
+    /// A still's pointer phase (`MouseFazis` at the exe's grab, `--mouse-phase`; re/screens/input.md §8).
+    pub pointer_phase: u64,
     /// The message line's history drop-down, while the right button holds it (`ScreensScrollHistoryMode`).
     pub history_open: bool,
     /// The starmap's panel, faders, short info and minimap (re/screens/starmap.md §11).
@@ -480,6 +485,7 @@ impl Hud {
             starmap_brushes: rules.starmap_brushes.clone(),
             speed: 2,
             paused: false,
+            pointer_phase: 0,
             history_open: false,
         }
     }
@@ -593,7 +599,7 @@ impl Hud {
     }
 
     /// A snapshot's pointer at `--mouse` (the exe's capture draws its pointer there, `UpdateFrame`): over the top bar's
-    /// spots their tooltip (the pointer at rest) and the hand, else the arrow; phase 0.
+    /// spots their tooltip (the pointer at rest) and the hand, else the arrow; at the still's phase (`--mouse-phase`).
     pub fn snapshot_pointer(&self, f: &mut Frame, size: [f32; 2], mouse: Option<[f32; 2]>) {
         if let Some(m) = mouse {
             self.snapshot_tip_pointer(f, size, m, None, 0, 0);
@@ -603,6 +609,7 @@ impl Hud {
     /// [`Self::snapshot_pointer`] with the screen's own tooltip text and pointer type (`kind`), which the bar's spots
     /// override.
     pub fn snapshot_tip_pointer(&self, f: &mut Frame, size: [f32; 2], m: [f32; 2], screen_tip: Option<&[u8]>, kind: i32, phase: u64) {
+        let phase = if phase == 0 { self.pointer_phase } else { phase };
         let spot = crate::hud::bar_tip_spot(m);
         let text = match spot {
             Some(n) => Some(self.texts.get(18, 1, n as u16 - 1)),
@@ -624,7 +631,7 @@ impl Hud {
         if let Some(font) = &self.font {
             tip.draw(f, font, self.white, &Virtual::new(size), &self.palette, text);
         }
-        self.draw_pointer_phase(f, size, [tip.mouse[0] as i32, tip.mouse[1] as i32], (tip.under != 0) as i32, 0);
+        self.draw_pointer_phase(f, size, [tip.mouse[0] as i32, tip.mouse[1] as i32], (tip.under != 0) as i32, self.pointer_phase);
     }
 
     /// [`Self::draw_pointer`] at phase `MouseFazis` (one a 10 ms UI tick): the cell's row `(phase / 5) % 40`.
@@ -720,9 +727,8 @@ impl Hud {
         }
         r.draw_faders(f, &d, state, glow);
         r.draw_over(f, &d, state, rules, &crate::research::Texts { infos, arrow });
-        if let Some(t) = tips.get(r.tip.shown as usize) {
-            r.tip.draw(f, font, self.white, &d.v, &self.palette, t);
-        }
+        let t = r.tip_text(tips, &self.texts, r.tip.shown);
+        r.tip.draw(f, font, self.white, &d.v, &self.palette, &t);
     }
 
     /// The design screen's 2D pass over its scene (re/screens/design.md §5): the faders, the scroll bar, the

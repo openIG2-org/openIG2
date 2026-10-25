@@ -139,6 +139,21 @@ to story 371). The UI line is added; then, if `owner != 0`, no entry `(4, id, ow
 fewer than 299 entries, `(4, id, owner)` goes into the first entry of type 0 below the count, else is appended.
 `st_RemoveGameInfo(id)`: zero every entry `(4, id, *)` (the count stays), remove the UI line.
 
+The line itself (saved: `re/formats/save.md` §4.5). `AddGameInfo(id, a1, a2, a3, colour)` (exe 0x53ad10, ELF 0x621d00;
+the exe's ported name `Research_MouseInit2` is wrong): `idx` = the first `GameInfoList` (gameinfo.txt, exe 0xE3E398)
+entry with `id`, none → nothing; an entry of `GameInfo` (exe 0xE3E3A0, stride 0xC) with `+0 == idx` → nothing (the
+old one stays); else appended at `GameInfoMut` (no capacity check: `ClearGameInfo` allocates 100) with `+0 = idx`,
+`+8 = colour` (0 → 1; `KiirStr`'s palette index), `+4` = the line's text when `a1` is NULL, else
+`stringhelper::format(text, a1, a2, a3)` (the texts hold `%s` only), then `a2az` (`Lang == 4` only: never on GOG,
+`re/formats/locale.md` §2). `RemoveGameInfo(id)` (exe 0x540e50): the first entry whose line has `id` leaves, the
+rest move down, `GameInfoMut −= 1`. Nothing else writes the list but `ClearGameInfo` (new game) and the load; the
+starmap only draws it (`StarmapGfx2D_3`, exe 0x5ab365). The scripts' texts: a number is `CString(n)` = `"%d"`
+(ELF 0x4f3e00); a planet `Bolygok[p]` (`+0x00`); an empire `Birodalom_Nev[e]`; a tech `Talalmanyok[t]`; dates
+`"%d.%2d.%2d"` (year + 1, month, day); story 863's planets joined with `", "`; `st_Rnd` 131 two planets as `a1`, `a2`;
+`st_Multi`'s threat lines `PlayerNev[e]`, `RED`/`YELLOW`/`GREEN`, the planet in colours 6/3/7, its score line
+`"%s: %4d/%d %c   %s: %4d/%d %c"` (players 1 and 2: score, touchdowns, `F` when holding the flag) in colour 3; all
+others colour 1. Port: `ig2-sim::game::game_info`.
+
 ### 2.4 Variables, logic flags
 `st_vSet(id, v)`: the first entry with `id` (1..n), else a new entry if `n < 500` (`n += 1`); writes `id` and
 `v`; `StoryError := 0`, or 1 when the table is full. `st_vGet(id)`: the value, else 0; `StoryError` = not found.

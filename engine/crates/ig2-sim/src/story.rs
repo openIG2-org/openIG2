@@ -202,7 +202,7 @@ pub enum StoryEvent {
     Won,
     /// `MEGHALAS(e)` (`DIE()` passes `EN`).
     EmpireDies(i32),
-    /// `AddGameInfo(id, text)`: a starmap info line (the scenario countdown passes a number).
+    /// `AddGameInfo(id, text)`: a starmap info line with `CString(value)` (`"%d"`) as its text (the countdowns).
     GameInfo { id: i32, value: i32 },
     /// `RemoveGameInfo(id)`.
     RemoveGameInfo(i32),
@@ -293,8 +293,11 @@ pub enum StoryEvent {
     /// `AddSzoveg(text)` (0x591360): a starmap text for the human (UI).
     Notice(Notice),
     /// `Multi_Send(0x66, EN, 4, &id)` (0x513840): the lockstep message `MULTIGET_Story` turns into
-    /// `Story_Special(15, sender, id)`.
-    SendStorySpecial(i32),
+    /// `Story_Special(15, sender, id)`; `sender` = the machine's `EN` (the answering human, [`StoryWorld::answering`]).
+    SendStorySpecial { id: i32, sender: i32 },
+    /// Canonical multiplayer: `NewMessage(id, arg)` with `PlayerNev[empire]` as parameter 1 into human `empire`'s own
+    /// inbox (each machine's own `NewMessage` in the original; `re/rules/multiplayer.md` §5.3).
+    HumanMessage { empire: i32, id: i32, arg: i32 },
     /// Fleet `+0x52` bit 8 (always visible) set or cleared.
     SetFleetVisible { fleet: i32, on: bool },
     /// The planet's name (`+0x00`) written.
@@ -585,16 +588,18 @@ pub enum InfoLine {
     Date([i32; 3]),
     /// Four planets' names joined with `", "` (story 863).
     Planets([i32; 4]),
+    /// Two planets' names as the line's first and second text (`st_Rnd` 131).
+    TwoPlanets([i32; 2]),
 }
 
 /// The multiplayer modes' texts for the human (`AddSzoveg`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Notice {
     /// "AMAZING! YOU ARE THE WINNER!" (1001/1002) or "YOU ARE THE WINNER!" (1003) for the human, else
-    /// "`PlayerNev[e]` is the winner!".
-    Winner { empire: i32, amazing: bool },
-    /// "You cannot colonize `<planet>`!"
-    CannotColonise(i32),
+    /// "`PlayerNev[e]` is the winner!"; `AddSzoveg`'s colour 7 (1001) or 2 (exe 0x5ee7db, 0x5eeca1, 0x5ef5ed).
+    Winner { empire: i32, amazing: bool, colour: u8 },
+    /// "You cannot colonize `<planet>`!" for the colonising empire `by`.
+    CannotColonise { planet: i32, by: i32 },
     /// "You have the flag of `PlayerNev[from]`!" (the human took it) or "`PlayerNev[by]` has your flag!".
     FlagTaken { by: i32, from: i32 },
     /// "TOUCHDOWN!!!" (the human scored) or "`PlayerNev[by]` has captured your flag!".
@@ -646,6 +651,15 @@ pub trait StoryWorld {
     fn human(&self) -> i32;
     /// Canonical lockstep multiplayer (`game::ViewMode::Canonical`): the effects the original ran for the local
     /// human on each machine run for every human (`re/rules/multiplayer.md` §5.3).
+    /// Canonical multiplayer: the human empires besides [`StoryWorld::human`] (each machine of the original runs the
+    /// story for its own; `re/rules/multiplayer.md` §5.3). None in single player.
+    fn other_humans(&self) -> Vec<i32> {
+        Vec::new()
+    }
+    /// The human whose messages-screen answer (or inbox expiry) the story is handling: its machine's `EN`.
+    fn answering(&self) -> i32 {
+        self.human()
+    }
     fn canonical(&self) -> bool {
         false
     }

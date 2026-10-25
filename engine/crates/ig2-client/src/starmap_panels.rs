@@ -1028,18 +1028,20 @@ impl Panels {
 pub struct StarmapFaders {
     pub starf: FaderDesign,
     pub fifo: FaderDesign,
+    /// The research screen's `resf` (exe 0xDC4758, `FRISSIT_Research2` 0x51db4b) when the capture had it.
+    pub resf: Option<FaderDesign>,
 }
 
 impl StarmapFaders {
     /// `Starmap_Belep`: `InitFaderDesignStruktura(fifo)`, then `starf`.
     pub fn enter() -> Self {
         let fifo = FaderDesign::new(1);
-        Self { starf: fifo.next(), fifo }
+        Self { starf: fifo.next(), fifo, resf: None }
     }
 }
 
 impl StarmapFaders {
-    /// The exe's `fifo` and `starf` at a capture's grab (`--faders`: the `ui.json` beside the state save, hex strings
+    /// The exe's `fifo`, `starf` (and `resf`) at a capture's grab (`--faders`: the `ui.json` beside the state save, hex strings
     /// of 0x5cc bytes each, run_screen.py).
     pub fn from_ui_json(path: &std::path::Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1049,7 +1051,7 @@ impl StarmapFaders {
             let b: Vec<u8> = (0..h.len() / 2).filter_map(|i| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()).collect();
             FaderDesign::from_exe(&b).ok_or_else(|| format!("{}: faders.{k} too short", path.display()))
         };
-        Ok(Self { fifo: one("fifo")?, starf: one("starf")? })
+        Ok(Self { fifo: one("fifo")?, starf: one("starf")?, resf: one("resf").ok() })
     }
 }
 

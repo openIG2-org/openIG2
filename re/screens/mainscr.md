@@ -341,11 +341,11 @@ then off: 1..8, 0xc, 0xd, 0xe..0x14; 0x18..0x1b and 0x1d..0x26 on and 0x27 off o
 | 0x16, `Mouse_Lenyom` | cancel: ELF `CancelScenarioValasztas()`; exe inline: `Mode_Scenario_Valasztas_Becsukas = 1; ScenarioKepNyitottsagCel = 0; MaxMainKorok = 3` |
 | 0x17, `Mouse_Lenyom` | row r = clamp((`Mouse_y` - 0x41)/0xf, 0, 0x16) + `ScenarioStart`; if r < count and r != `SelectedScenario`: `SelectedScenario = r`; if the entry is a skirmish (kind > 0) `ScenarioHighScoreMode = 0`; `InitScirmishValtozok()` (exe 0x4f8f80); if `ScenarioKepNyitottsag != 0`: `ScenarioKepNyitottsagCel = 0` |
 | 0x18..0x26, `Mouse_Lenyom` | `PlaySoundGlobal(0)`, then +-1 (the first id of each pair 0x18/0x19, 0x1a/0x1b, 0x1d/0x1e, 0x1f/0x20, 0x21/0x22, 0x23/0x24, 0x25/0x26 decrements, the second increments): race 1..8, computers 1..7, difficulty 1..4, planets 0..4, technology 0..3, money 0..5, population 0..3 |
-| 0x1c, `Mouse_Lenyom` or `Mouse_Megfogva` | `ScenarioStart = (int)(((float)Mouse_y - 64.0)/364.0*(float)count - 11.5)`, then clamp: < 0 -> 0; `count < ScenarioStart + 23` -> `count - 23`; < 0 -> 0; `Mouse_Megfogva = 1; DesignKeretAzonnalMorph (0xad0ef5) = 1` |
+| 0x1c, `Mouse_Lenyom` or `Mouse_Megfogva` | `ScenarioStart = (int)(((float)Mouse_y - 64.0)/364.0*(float)count - 11.5)`, then clamp: < 0 -> 0; `count < ScenarioStart + 23` -> `count - 23`; < 0 -> 0; `Mouse_Megfogva = 1; DesignKeretAzonnalMorph (0xad0ef5) = 1`. The drag holds (rows 344-346): `IG2_gameUpdate` (exe 0x4e0440) skips the hot-spot test while `Mouse_Megfogva` is set (`AktIkon` stays 0x1c, a press of the other button only scrolls) and clears it once `Mouse_Gomb` (0xdb4650, left or right held: `MainCallBackEventHandler` 0x4e2db0 sets 0xdb467d from 0xdb467e/0xdb467f) is 0, so with both buttons down the first release keeps the drag. Any other button (the middle, SDL button 2) falls through both button tests to the block at 0x4e345a, which zeroes 0xdb467d..f and Shift/Ctrl/Alt (0xbae295/0xbae27f/0xbae294) when 0x912a38 is set: the drag ends; the wheel (0x403) is no case of the handler. Client: `ScenarioList::press(at, left)`/`release(left)`/`middle()`/`hot()` |
 | 0x27 | `ScenarioHighScoreMode = !ScenarioHighScoreMode` (once per press: a flag-1 spot fires on the press edge, the frame loop then waits for the release; either button, input.md §7) |
 
 ### 6.4 Keyboard (`MainscrKeyboardHandler`, exe 0x5000c0)
-Only when `DEBUGLEHET` is set (command line): key 13 (Enter) pressed and not `YouAreDisconnectedVolt`: `HanyGepiJatekos (0xf21488) = 7; Main_NemKellZoom = 1; AktIkon = 0x1f; MainScr_Main(); AktIkon` restored (debug quick start).
+Only when `DEBUGLEHET` is set (command line): key 13 (Enter) pressed and not `YouAreDisconnectedVolt`: `HanyGepiJatekos (0xf21488) = 7; Main_NemKellZoom = 1; AktIkon = 0x1f; MainScr_Main(); AktIkon` restored (debug quick start). Not ported: `DEBUGLEHET` comes only from `init/config`'s `debugmode`, which the GOG install lacks (a keep, ADR 0016 §4, row 347).
 Nothing else here; text entry goes through the generic `IOMode` code, Esc through `MainScr_CancelIPEnter` (exe 0x4fe6f0) and `MainScr_ESCPressedWhenMultiplayerselect` (0x4fe780), decompiled in pass 2:
 Esc: `MainScr_ESCPressedWhenMultiplayerselect` (exe 0x4fe780; ELF 0x59ecc0), only if byte 0xdb9439 == 0; the first matching case wins:
 1. `Mode_Scenario_Valasztas && !_Becsukas`: `_Becsukas = 1; ScenarioKepNyitottsagCel (0xbbb04c) = 0; MaxMainKorok = 3`.
@@ -393,7 +393,7 @@ Scenario list (`Mode_Scenario_Valasztas`):
 - description lines (10 strings of the entry, +0xc..+0x30; empty ones skipped) at (0x2a + 0x48 for rows 0..4 and every row of a skirmish entry, else
   0x2a; 0x15a + 0xd*k; len, 2, 4, 0x22), drawn when `!ScenarioHighScoreMode || skirmish` (exe 0x4fc8d0 lines 338-361).
 - high-score table (high-score mode, or a skirmish entry): line 0xf formatted with the scenario name at (0x2d, 0x15a, 0x32, 3, 4, 1); rows k = 0..9: `"%02d."` at (0x2d, or 0xe1 for k >= 5; 0x173 + 0xd*(k mod 5)); the name (entry strings) at (x + 0x16, y + 0x15a - 0x173..., 0x14, 2, 4, 2)
-  or line 0x11 (empty slot, style 1); the score = line 0x10 formatted with `score/0x32` at (x + 0x5c, ..., 0xc, 2, 4, 2). Selected row frame: `DesignKeret1(0x1b5, 0x43 + 0xf*(SelectedScenario - ScenarioStart), 0xa5, 0xf, 0x22)`.
+  or line 0x11 (empty slot, style 1); the score = line 0x10 formatted with `score/0x32` at (x + 0x5c, ..., 0xc, 2, 4, 2). Selected row frame: `DesignKeret1(0x1b5, 0x43 + 0xf*(SelectedScenario - ScenarioStart), 0xa5, 0xf, 0x22)` (start phase and the scroll drag's `DesignKeretAzonnalMorph`: `research.md` §5.4; the list takes part in the global row-frame phase, row 362).
 Dialogs by `IOMode` / `IOAzonosito`:
 - 0x97 IP entry: `GetString(15, 3, 1)` at (0xa6, 0xb2, IOMaxLen, 4, 4, 1); `IOString` at (IOX, IOY - 9, IOMaxLen, IOCharSize, 5, IOColor); list entries k = 0..2 at (IOX - 0x25 + 0x8c*k, 0xf0, 0xf, 3, 4): "000.000.000.000" in style 1 when empty, else style 2 / 3 (hover of id 9 + k) or 7 / 6 for a flagged entry.
 - 0x98 name: `GetString(15, 3, 2)` at (0x140, 0xbc, 0x28, 4, 7, 1); text at (IOX, IOY - 9).
@@ -541,7 +541,7 @@ Name tables: difficulty `0xbbb248 + 0x14·d` (d = the entry's `difficulty`, or t
 only reads them): `KiirStrSzinSzorzo` takes integers, `O` = `(int)O` for the panel's own lines and `P = (int)(K·O/100.0)` for the entry's.
 On `O`: the title (line 1 + ":", always), line 4 + ":" at (0x28, 0x28), the difficulty label (line 6 + ":") at (0xfa, 0x28) **for every entry,
 skirmish too**, the info / high-score toggle (0xd / 0xe); on `P`: the entry's name, difficulty value (count > 0), race, settings, description, scores.
-The selected row: `DesignKeret1(0x1b5, 0x43 + 0xf·(Sel − Start), 0xa5, 0xf, 0x22)` (exe 0x4cbac0), drawn last, fade `O`.
+The selected row: `DesignKeret1(0x1b5, 0x43 + 0xf·(Sel − Start), 0xa5, 0xf, 0x22)` (exe 0x4cbac0), drawn last, fade `O`; its phase is the global one (`research.md` §5.4, boots at dkm 0 / dkmcel π/2).
 The race portrait (drawn first, not in high-score mode): `Brush3(MainScrBrushok[race + 3], a, a, a + 42, a + 340, w, w)`, `a = (int)((1 − P/100)·32)`,
 `w = (int)(P/100·64)`: the 64 × 64 picture's centre `w × w` at 1:1, white, no fade of its own; the remaster's pictures are
 `textures/main/fejek3/<race>a.bmp` (exe string 0x8568e8, reference 0x4f961b; race 8 reads past the 7-picture table). The settings' `%d` / `%s`
@@ -658,6 +658,11 @@ mesh's and the four clouds' turns. The galaxy's brightness still swings about ±
 t 400..3400, twice that at t 4000 when the core fills the view) as the core turns towards or away from the camera; the client
 follows it within 1..5 units at 6 of 7 grabs (galaxy region best-offset 5.4..10.7, t 2200 30.0 from a meteor that hangs over the
 core in the exe and elsewhere in the client). The rest is the meteors' and ships' respawn poses (§3.2 RNG trap, deviations 150).
+
+### 13.4 Scenario description lines (row 291; `scripts/mainscr-desc.json`, rows 2/5/1 selected, grabs t 790-1500)
+Description lines match the exe at t 1000/1250/1500 (x 114 for k 0..4, 42 from k 5, y 0x15a + 0xd k, line count); static frames 2.2-3.6, the fade grabs t 900/1150/1400 9.0-12.8 (picture fade phase). Open: at t 790 the exe draws the selected-row frame on the Skirmish row, the client none visible (row 362, fixed 2026-10-25: the client's list took no part in the global row-frame phase and started fresh, so it stayed hidden; now it carries the phase (`carry_row_frame`, owner 6), keeps it across the post-load rebuild and asks the frame every headless tick; t 790 rings_top 3.33 -> 2.70, frame 3.58 -> 3.25, t 1000-1500 unchanged).
+
+Selected-row frame (`DesignKeret1`, row 153, fixed 2026-10-25 with `ROW_EDGE`): frame box (540,80)-(760,240) at t 790/1000/1250/1500 mean abs diff 5.17/4.15/4.86/4.72 -> 4.00/3.97/4.08/4.51.
 
 ## 14. Port status (`ig2-client::mainscr`, `mainscr_scene`, `mainscr_race`, `mainscr_scenario`)
 Part 1: the 3D scene (rings + labels with the hover texture, galaxy mesh, the four clouds exact, the pictures, the dust,

@@ -291,6 +291,12 @@ pub enum Command {
     /// Ours (no packet: the exe calls it straight from the fleet panel's sale menu, single player only): a story hero's
     /// design sent back (`Story_Special(0x19, fleet, design)`, re/screens/starmap.md §19.7).
     HeroSentBack { fleet: i32, design: i32 },
+    /// The story's own 0x66 (`SendStorySpecial`) with its sender: `Story_Special(15, sender, id)`. Sim-originated (the
+    /// answering human's, `re/rules/multiplayer.md` §5.3); a peer's copy is dropped ([`Command::host_only`]).
+    StoryFrom { sender: u8, id: i32 },
+    /// A fleet's or a planet's rename (ours, deviation 395: the original's is its own machine's only) with the
+    /// fleet's custom-name bit.
+    Rename { fleet: bool, index: u32, name: Vec<u8>, custom: bool },
 }
 
 impl From<MessageOrder> for Command {
@@ -331,7 +337,7 @@ pub struct Stamped {
 impl Command {
     /// Only the host sends it ([`crate::lockstep::Host::inject`]); a peer's copy is dropped.
     pub fn host_only(&self) -> bool {
-        matches!(self, Command::PlayerAway | Command::PlayerBack)
+        matches!(self, Command::PlayerAway | Command::PlayerBack | Command::StoryFrom { .. })
     }
 
     /// The sim-originated command a tick's event sends (the sim's own `Multi_Send`), if any; the driver applies it
@@ -340,7 +346,7 @@ impl Command {
     /// `Story_Special(15, sender, id)`) and 0x49 (`MULTIGET_Spy`: the spy screen's send with target 0 and 10 days).
     pub fn from_event(e: &GameEvent) -> Option<Command> {
         match e {
-            GameEvent::Story(StoryEvent::SendStorySpecial(id)) => Some(Command::StoryChoice { id: *id }),
+            GameEvent::Story(StoryEvent::SendStorySpecial { id, sender }) => Some(Command::StoryFrom { sender: (*sender).clamp(0, 255) as u8, id: *id }),
             GameEvent::Story(StoryEvent::SpyOrder { spy, mission }) => Some(Command::Spy {
                 order: SpyOrder::Send { spy: *spy as u8, mission: *mission as u16, target: 0, param1: 0, param2: 0, days: 10 },
             }),
@@ -364,6 +370,8 @@ impl Command {
                 game.diplomacy_answer(Answer { from: issuer as i32, to: *to, msg: (*terms).into(), counter: *counter, reply: *reply, yes: *yes });
             }
             Command::StoryChoice { id } => game.story_special([15, issuer as i32, *id, 0, 0, 0, 0, 0]),
+            Command::StoryFrom { sender, id } => game.story_special([15, *sender as i32, *id, 0, 0, 0, 0, 0]),
+            Command::Rename { fleet, index, name, custom } => game.rename(issuer, *fleet, *index as usize, name, *custom),
             Command::HeroSentBack { fleet, design } => game.story_special([0x19, *fleet, *design, 0, 0, 0, 0, 0]),
             Command::FleetEmptied { fleet } => game.fleet_emptied(*fleet as usize),
             Command::Spy { order } => game.spy_order(issuer as usize, (*order).into()),
@@ -445,7 +453,7 @@ mod tests {
     #[test]
     fn story_messages_become_commands() {
         use ig2_sim::story::StoryEvent;
-        assert_eq!(Command::from_event(&GameEvent::Story(StoryEvent::SendStorySpecial(10031))), Some(Command::StoryChoice { id: 10031 }));
+        assert_eq!(Command::from_event(&GameEvent::Story(StoryEvent::SendStorySpecial { id: 10031, sender: 3 })), Some(Command::StoryFrom { sender: 3, id: 10031 }));
         assert_eq!(
             Command::from_event(&GameEvent::Story(StoryEvent::SpyOrder { spy: 3, mission: 17 })),
             Some(Command::Spy { order: SpyOrder::Send { spy: 3, mission: 17, target: 0, param1: 0, param2: 0, days: 10 } })

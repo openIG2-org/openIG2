@@ -95,7 +95,10 @@ Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB
   `Infoing3DInit` 2400, `ShowColony` 5625, `Research3DInit` 10000. The chosen level's boxes and vertices are drawn
   under the head's record (`AddToScene` sizes only the head; `AddToXVB` hands its slot to every level).
 - **The head's box spans the chain**: `BoxUjraszamol` measures the vertices down the `+0x18` chain, so `romb60`'s box
-  (1024, 857.8, 406.6) takes x and y from `romb60`, z from `romb61`/`romb62`.
+  (1024, 857.8, 406.6) takes x and y from `romb60`, z from `romb61`/`romb62`. The colony's buildings: `M = R·diag(e)·s` with `e` the
+  per-axis reach of the chain's vertices when `BoxUjraszamol` ran on every level, else the header's half-extents (`kemv2`'s ten
+  frames keep `kemv0`'s header; `npv0` (3040, 3040, 3040) records (100.32, 100.32, 31.25)·…) [obs, `probes/lod_colony.js`;
+  test `building_lod_steps_like_kocka`].
 - [obs: `probes/lod.js` on the starmap fleet panel: `romb60` at `AddToScene` 0.04 (the cells) has size 3119.55,
   at 0.08 (the big preview) 12478.14, `z` −0.5859, `valtashatar` 1600: the cells draw `romb61`, the preview `romb62`;
   test `scene::tests::panel_hulls_step_down_their_lod_chain_like_kocka`.]

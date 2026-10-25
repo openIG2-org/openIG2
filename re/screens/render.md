@@ -60,6 +60,7 @@ From the node's property word `spsorttype+0x6c` (cached `renderstate_*` globals 
 - a transparency (`param_3 != 0xff`) forces blending on and clears bit 0x2000;
 - 0x200 (set when the texture has alpha, `d3dt+4`): alpha test `GREATER 0.5` (`BIT0`) unless `shiti740`;
 - 0x2000: fog on with `fogszin` and blending off (opaque, fogged); else fog off and blending on;
+- lighting (`fenyekszamolasa` exe 0x52f190): 0x1 = per-vertex lighting; 0x100 without 0x1 = flat light (ambient + each parallel light's colour·205>>8, no normal: the colony's trees, colony.md §3.1); neither = full bright;
 - 0x800: no texture.
 - the transparency leaves the depth bits alone: a transparent object still writes depth (the design hull, design.md §14.3);
 - after each batch, when the mesh's first material has a second texture, `selfillumkirak` (0x613da0) draws it again
@@ -69,7 +70,31 @@ From the node's property word `spsorttype+0x6c` (cached `renderstate_*` globals 
 `dataraw/<name with . → _>.pvr`; the pass comes from the name: `charset_bmp` → `FONT`, `xx_bmf` → `VIDEO`,
 `ethcldbp_bmp` → `CLOUD`, else `OPAQUE`. The PVR's `SGLB` metadata: `TXNV` (bit 0/1 repeat s/t, bit 2 trilinear,
 bit 3 trilinear + the maximum anisotropy, bit 4 nearest; mip filters only with more than one level) and `CNST`
-(named shader constants handed to the material: `load_constants`).
+(named shader constants handed to the material: `load_constants`). `load_pvr` uploads each file's own mip levels; the client
+uses them too (`Pvr::decode_levels`, `render::mip_chain`): filtering from the top blurs alpha-tested textures (the scaffold's rails).
+
+### 2.5 Environment mapping (`vagashatarkirak` exe 0x5395d0, ELF 0x606c90)
+Property 0x8000 makes `Kocka` (dispatch exe 0x52848f: 0x8000, then 0x1000000, then 0x40 = `wirekirak`) draw the mesh with
+`vagashatarkirak`: no shadow-receive, no self-illum pass. 0x4000 (tested only inside it) switches on the env texcoords and
+`changeaktmatarialself` (exe 0x52dda0), which binds the material's texture2 (null: the bound texture1 stays). 0x1000000 is the
+construction cut (`clippolygonvagashatar`), not env mapping.
+- Texcoords (`envszamol` ELF 0x6110e0, inlined in the exe; `normalizevektor` exe 0x4501f0), f32, in the mesh's own space:
+  `e = normalize(camera − P)` (left raw when the length is under 1e-5), `uv = (e.x − N.x, e.y − N.y)` with the vertex normal `N`;
+  no scale or offset, it replaces texcoord0, `nz` unused. Neither P nor N is rotated: the highlight follows the camera's place
+  relative to each vertex. `scene::env_uv`.
+- One pass, the lit vertex colour, fog as `kirak`, back faces culled. Blend by `renderstateallitas`: 0x2000 (inherited from the
+  building root) makes it opaque and fogged; a transparency byte (`_C_` 0.6, ponds 0.28, `VIZ` 0.63) clears 0x2000 and blends
+  `SRC_ALPHA`/`INV_SRC_ALPHA`.
+- The texture: `loadmaterial` (exe 0x534470, swap at 0x5346b9) replaces a texture2 named `reflec.bmp` or `fenyek_2.bmp` by the
+  texture1 name of `HAmp` (the colony background box, exe 0xde0298, set by `Init3dColony` before the building loop) = the planet's
+  sky texture; `ChangeTexture` (exe 0x451af0) also sets the dome's texture1 to it. Ponds (`tavak`, planet types 1/5):
+  `ChangeSelfTexture` (exe 0x451ab0) loads the sky texture's name with its first letter replaced by `v`.
+- Users: the colony only (`Init3dColony` exe 0x47d520: `_B_` 0xc000, `_C_` 0xc000 + 0.6, ponds, terrain water `VIZ` 0xc008;
+  `ShowColony` exe 0x49f130: the panel preview and the build cursor's copy; `EpuletFelepult` exe 0x4741a0). `HAmp` is a shared
+  global, so elsewhere the swap uses a stale texture (SpaceWar `valami.xvb` `_B_Cylin02`, row 370).
+- Verified (`probes/envmap.js`, `quick-1.sav` planet 17): 66 drawn triangles match the formula to 1.3e-7; test
+  `scene::tests::env_uv_matches_the_exe`. Client: `colony::{building_env, env_texture, env_map}`, `EnvPart` (drawn per frame from
+  the eye), the panel previews (`colony_ui` `PanelBuilding` takes the sky).
 
 ## 3. What the install's textures carry
 `ig2-formats` example `pvrmeta` (`cargo run --release -p ig2-formats --example pvrmeta -- <install>`) over all
@@ -86,13 +111,16 @@ The colony screen, with `OptionsKellArnyek`, `lehetarnyek` (0x118b388 = 1) and f
 `kelltereptargyarnyek` (0x1166818 = 1):
 - **Who.** `Init3dColony` sets property 0x400000 (casts) on every building (`Epulet3d`) and the terrain's `tt*`
   and `fak*` groups, 0x800000 (receives) on the terrain object, the roads (`AddUtDarab`) and the buildings' `+r`
-  parts (whose cast flag it clears). Properties inherit down the tree (`PropertiesOn` 0x456a50 sets `+0x54` and
+  parts (whose cast flag it clears). `findboxxvb2` (exe 0x453970, case-insensitive substring) searches only the
+  nodes of each LOD level's root `.xvb` (`getnextmeshpointer` exe 0x453b70 steps LOD levels, not children), so only
+  a part whose top-level node name contains `+r` receives; the Park's `+r+Rectangle01/2` tree quads sit in the child
+  archive `prkv2-fa.xvb`, keep casting and don't receive (row 391). Properties inherit down the tree (`PropertiesOn` 0x456a50 sets `+0x54` and
   clears the bit from the inherit mask `+0x58`; children take `parent & mask | own & ~mask`).
 - **The map.** `ShowColony` calls `rendershadowmap` (0x604f50) before the scene: `SGL_glSetTarget(1)`
   (`command_glSetTarget` 0x427c00: the shadow framebuffer, cleared to white, projection `scale(1/128)` then
   `translate(−1, −1)`), a camera `CameraRotate(0, (2, 2, 2))` (its rows `a`, `−b` of the look-at basis, colony.md §1),
   then `Kockashadow` (0x5fc430) draws every caster's triangles at `(rows·p)/32 + 128` (`shadowzoom` 1/32, `shadowkp`
-  128: a 256-unit map, 8,192 world units across) with colour 0x80808080, no texture, no blend, no depth.
+  128: a 256-unit map, 8,192 world units across) with colour 0x80808080, no texture, no blend, no depth; whole triangles, alpha ignored (alpha-tested quads shadow as full quads).
 - **The receivers.** `Kockarecshadow` (0x5fcae0) stores each receiver vertex's `(rows·p/32 + 128)/256` as its second
   texcoord (`VertType+0xc/+0x10`); `Kocka` draws receivers through `shadowkirak` between `SGL_glEnable(0xdeadbeef)` and
   `Disable`: `BIT2` multiplies the texel by the map's green (0.5 in shadow) before the vertex colour and the fog.

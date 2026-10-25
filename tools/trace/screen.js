@@ -654,10 +654,14 @@ Interceptor.attach(A.Fake_FRISSITES, {
           ptr: va(0xb84c08).readS32(), n: va(0xb84c0c).readS32(), texts: [va(0x90b8a0).readS32(), va(0xb85e94).readS32(), va(0xb85e98).readS32()] },
         star: { mode: va(0xb79fb2).readU8(), frame: va(0xb85260).readFloat(), pointer: va(0xb84c10).readS32(), filled: va(0xb84bf4).readS32(),
           log: Array.from({ length: 200 }, (_, i) => { const r = va(0xb82990 + 0x2c * i); const t = r.add(8).readByteArray(0x24); const b = new Uint8Array(t); const n = b.indexOf(0); return [r.readS32(), hexs(r.add(8), n < 0 ? 0x24 : n)]; }) } };
-      // The starmap's `faderstruktura`s `fifo` (exe 0xF152F0) and `starf` (0xF168E8), 0x5cc bytes each (hud.md §1.2.1):
-      // their shine and drift phase, which the client can't replay.
-      const faders = { fifo: hexs(va(0xf152f0), 0x5cc), starf: hexs(va(0xf168e8), 0x5cc) };
-      send({ k: 'grab', faders, clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), infoTurn: va(0xb85304).readFloat(), infoAlap: va(0xf158c0).readFloat(), infoAlapOn: va(0xe83701).readU8(), ropFrames: ropDone ? frames - ropFrame : null, fifo: [0, 1, 2, 3, 4, 5, 6, 7].map(k => va(0xf154d0 + 4 * k).readFloat()), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
+      // The starmap's `faderstruktura`s `fifo` (exe 0xF152F0) and `starf` (0xF168E8), 0x5cc bytes each (hud.md §1.2.1),
+      // and the research screen's `resf` (0xDC4758): their shine and drift phase, which the client can't replay.
+      const faders = { fifo: hexs(va(0xf152f0), 0x5cc), starf: hexs(va(0xf168e8), 0x5cc), resf: hexs(va(0xdc4758), 0x5cc) };
+      send({ k: 'grab', faders, clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(), mouseFazis: va(0xb77204).readU32(), infoTurn: va(0xb85304).readFloat(), infoAlap: va(0xf158c0).readFloat(), infoAlapOn: va(0xe83701).readU8(), ropFrames: ropDone ? frames - ropFrame : null, fifo: [0, 1, 2, 3, 4, 5, 6, 7].map(k => va(0xf154d0 + 4 * k).readFloat()), infoList, menus, spy, res, n: shot, kep: A.AktKep.readS32(), planet: p, ido2: A.Ido2.readS32(), date: date(), paused: va(0xbae264).readU8(), cam });
+      if (cfg.glGrab) {
+        glStill = shot;
+        if (!swapHooked) { hookSwap(); swapHooked = true; }
+      }
       shot++;
       at = frames;
       if (shot >= cfg.shots) phase = 4;
@@ -677,6 +681,9 @@ Interceptor.attach(A.Fake_FRISSITES, {
 // comes after exactly t UI ticks is read back with glReadPixels (the default framebuffer's back buffer, the GL state
 // put back after) → {k: 'frame', t, ticks, res} + RGBA bytes, bottom-up. The exe's own save of the first frame goes to
 // --state-out (before any event), with the UI clocks in {k: 'scriptStart'}.
+// --gl-grab: the still `shot` to read back at the next swap (stills without PrintWindow, which grabs white with the
+// display off).
+let glStill = null;
 let scriptT = null, scriptUi0 = 0, scriptMouse = [320, 240], scriptEvents = [], scriptGrabs = [], scriptEnd = 0;
 let vt = 0, vtOn = false, realTicks = null, swapHooked = false;
 const SDL_KEYS = { down: [81, 0x40000051], up: [82, 0x40000052], right: [79, 0x4000004f], left: [80, 0x40000050], enter: [40, 13],
@@ -795,25 +802,37 @@ function hookSwap() {
   let bindFb = null, bindBuf = null;
   const tmp = Memory.alloc(16), rect = Memory.alloc(16);
   const get = (e) => { getInt(e, tmp); return tmp.readS32(); };
+  // The default framebuffer's back buffer of the window behind `dc`, the GL state put back after: [w, h, RGBA bottom-up].
+  const readBack = (dc) => {
+    if (!bindFb) {
+      const p = getProc(Memory.allocAnsiString('glBindFramebuffer')), q = getProc(Memory.allocAnsiString('glBindBuffer'));
+      bindFb = p.isNull() ? () => {} : new NativeFunction(p, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+      bindBuf = q.isNull() ? () => {} : new NativeFunction(q, 'void', ['uint', 'uint'], { abi: 'stdcall' });
+    }
+    clientRect(winOfDc(dc), rect);
+    const w = rect.add(8).readS32(), h = rect.add(12).readS32();
+    // GL_READ_FRAMEBUFFER_BINDING, GL_PIXEL_PACK_BUFFER_BINDING, GL_READ_BUFFER, GL_PACK_ALIGNMENT.
+    const fb = get(0x8caa), pack = get(0x88ed), rb = get(0x0c02), align = get(0x0d05);
+    bindFb(0x8ca8, 0); bindBuf(0x88eb, 0); readBuffer(0x0405); pixelStore(0x0d05, 1);
+    const buf = Memory.alloc(w * h * 4);
+    readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
+    bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
+    return [w, h, buf];
+  };
   Interceptor.attach(gdi.getExportByName('SwapBuffers'), {
     onEnter(args) {
+      if (glStill !== null) {
+        const s = glStill;
+        glStill = null;
+        const [w, h, buf] = readBack(args[0]);
+        send({ k: 'frame', still: s, t: s, ticks: va(0xb772a4).readS32(), w, h, frames, res: resState() }, buf.readByteArray(w * h * 4));
+        return;
+      }
       if (scriptT === null || scriptGrabs.length === 0) return;
       const ticks = va(0xb772a4).readS32() - scriptUi0;
       if (ticks < scriptGrabs[0]) return;
       const want = scriptGrabs.shift();
-      if (!bindFb) {
-        const p = getProc(Memory.allocAnsiString('glBindFramebuffer')), q = getProc(Memory.allocAnsiString('glBindBuffer'));
-        bindFb = p.isNull() ? () => {} : new NativeFunction(p, 'void', ['uint', 'uint'], { abi: 'stdcall' });
-        bindBuf = q.isNull() ? () => {} : new NativeFunction(q, 'void', ['uint', 'uint'], { abi: 'stdcall' });
-      }
-      clientRect(winOfDc(args[0]), rect);
-      const w = rect.add(8).readS32(), h = rect.add(12).readS32();
-      // GL_READ_FRAMEBUFFER_BINDING, GL_PIXEL_PACK_BUFFER_BINDING, GL_READ_BUFFER, GL_PACK_ALIGNMENT.
-      const fb = get(0x8caa), pack = get(0x88ed), rb = get(0x0c02), align = get(0x0d05);
-      bindFb(0x8ca8, 0); bindBuf(0x88eb, 0); readBuffer(0x0405); pixelStore(0x0d05, 1);
-      const buf = Memory.alloc(w * h * 4);
-      readPixels(0, 0, w, h, 0x1908, 0x1401, buf);
-      bindFb(0x8ca8, fb); bindBuf(0x88eb, pack); readBuffer(rb); pixelStore(0x0d05, align);
+      const [w, h, buf] = readBack(args[0]);
       // The colony camera (`ColonyXStart/YStart/Zoom/Pitch/Rotate`, colony.md §11.9).
       const cam = [0xba90dc, 0xba9514, 0xba9e8c, 0xba9b64, 0xba983c].map((x) => va(x).readFloat());
       const fh = (at) => Array.from(new Uint8Array(va(at).readByteArray(0x5cc)), (x) => x.toString(16).padStart(2, '0')).join('');
@@ -833,7 +852,7 @@ function scriptFrame() {
     if (!swapHooked) { hookSwap(); swapHooked = true; }
     if (cfg.stateSlot) loadSave(cfg.stateSlot, Memory.allocAnsiString('screendiff'), 2);
     const fhex = (at) => Array.from(new Uint8Array(va(at).readByteArray(0x5cc)), (b) => b.toString(16).padStart(2, '0')).join('');
-    send({ k: 'scriptStart', faders: { fifo: fhex(0xf152f0), starf: fhex(0xf168e8) }, frames, ui: scriptUi0, res: resState(), clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(),
+    send({ k: 'scriptStart', faders: { fifo: fhex(0xf152f0), starf: fhex(0xf168e8), resf: fhex(0xdc4758) }, frames, ui: scriptUi0, res: resState(), clouds: va(0xe75918).readS32(), futofeny: va(0xf1736c).readFloat(), acttime: va(0xfd1520).readU32(),
       infoTurn: va(0xb85304).readFloat(), tradeEta: va(0xf43428).readS32(), dkm: [va(0xb34c0c).readFloat(), va(0x903548).readFloat(), va(0xb34bac).readFloat()], kep: A.AktKep.readS32(), date: date(), paused: va(0xbae264).readU8() });
   } else {
     // The UI ticks run so far (a frame now and then runs none or two: `scriptT` follows the ticks, not the frames).

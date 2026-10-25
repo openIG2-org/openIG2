@@ -3,6 +3,9 @@
 use super::Virtual;
 use crate::render::{kind, Blend, Frame, Instance, TexId};
 
+/// The device-pixel nudge that gives a device row centred on a virtual row edge to the row above (row 153).
+const ROW_EDGE: f32 = 0.01;
+
 /// `DesignKeret1` (ELF 0x53f780): the animated frame around a chosen row (the research lists, the info screen's
 /// race names). The frame morphs to a new place: `dkmcel = π/2` starts it, `Frissit2_Grafika` (ELF 0x5481c0, every
 /// UI frame) runs `dkm` up by 0.05 to π/2 (the old frame fades out and widens), jumps to the new place and runs back
@@ -17,12 +20,14 @@ pub struct DesignFrame {
     novelo: f32,
     /// How much of the widening goes to the left: a third (`DesignKeret1`) or a half (`DesignKeret2`).
     left: f32,
+    /// `DesignKeretAzonnalMorph` (exe 0xad0ef5): the next new place is taken at once, no morph.
+    now: bool,
 }
 
 impl Default for DesignFrame {
     /// As `Frissit2_Grafika` leaves it on a new screen (`DesignKeret1OldKep != AktKep`): no frame yet.
     fn default() -> Self {
-        Self { m: 0.0, target: 0.0, old: [0, 0, 1, 1], new: [0; 4], novelo: 0.0, left: 3.0 }
+        Self { m: 0.0, target: 0.0, old: [0, 0, 1, 1], new: [0; 4], novelo: 0.0, left: 3.0, now: false }
     }
 }
 
@@ -48,12 +53,24 @@ impl DesignFrame {
         Self::with_phase(self.m, self.target, self.novelo)
     }
 
-    /// `DesignKeret1(x, y, w, h)`'s bookkeeping: a new place starts the morph.
+    /// `DesignKeret1(x, y, w, h)`'s bookkeeping (exe 0x4cbac0): a new place starts the morph, or with
+    /// [`Self::at_once`] set is shown at once; the flag clears either way.
     pub fn ask(&mut self, r: [i32; 4]) {
         if r != self.new {
             self.new = r;
-            self.target = std::f32::consts::FRAC_PI_2;
+            if self.now {
+                self.old = r;
+            } else {
+                self.target = std::f32::consts::FRAC_PI_2;
+            }
         }
+        self.now = false;
+    }
+
+    /// `DesignKeretAzonnalMorph = 1` (the main menu's scroll-bar drag, `MainScr_Main` box 0x1c): the next call's new
+    /// place jumps in without the morph.
+    pub fn at_once(&mut self) {
+        self.now = true;
     }
 
     /// `Frissit2_Grafika`'s step (one UI frame).
@@ -104,7 +121,11 @@ impl DesignFrame {
                 };
                 let col: [f32; 3] = std::array::from_fn(|i| ca[i] + (cb[i] - ca[i]) * t);
                 if col.iter().any(|&v| v > 0.0) {
-                    f.push(white, Blend::GammaAdditive, Instance::new(kind::SPRITE, v.px(px as f32 + 0.5, py as f32 + 0.5), [v.k / 2.0, v.k / 2.0], [col[0], col[1], col[2], 1.0]));
+                    // Each virtual pixel fills its own device rectangle; a device row whose centre lies exactly on a
+                    // virtual row's top edge (every 5th at 800x600) goes to the row above in the exe [obs:
+                    // `mainscr-desc.json` t 1000, rows 122/127/132/137; row 153], hence the nudge down.
+                    let [cx, cy] = v.px(px as f32 + 0.5, py as f32 + 0.5);
+                    f.push(white, Blend::GammaAdditive, Instance::new(kind::SPRITE, [cx, cy + ROW_EDGE], [v.k / 2.0, v.k / 2.0], [col[0], col[1], col[2], 1.0]));
                 }
             }
         };
@@ -146,5 +167,32 @@ impl DesignFrame {
             let col = byte(fade * (s % 1.0) as f32);
             seg(a, b, col, col);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Row 362: from the exe's boot values (`dkm` 0, `dkmcel` π/2) the phase saw-tooths π/2 → 0 while no place was
+    /// asked, so a first ask almost always morphs in; only one landing on `dkm == π/2` stays hidden. `at_once` (the
+    /// scroll drag) takes the place without a morph.
+    #[test]
+    fn first_place_and_at_once() {
+        let mut d = DesignFrame::with_phase(0.0, std::f32::consts::FRAC_PI_2, 0.0);
+        for _ in 0..50 {
+            d.tick();
+        }
+        assert!(d.m < std::f32::consts::FRAC_PI_2 && d.target == 0.0 && d.old[0] == 0);
+        for _ in 0..80 {
+            d.ask([437, 67, 165, 15]);
+            d.tick();
+        }
+        assert_eq!((d.old, d.m, d.target), ([437, 67, 165, 15], 0.0, 0.0));
+        d.at_once();
+        d.ask([437, 97, 165, 15]);
+        assert_eq!((d.old, d.target), ([437, 97, 165, 15], 0.0));
+        d.ask([437, 112, 165, 15]);
+        assert_eq!((d.old[1], d.target), (97, std::f32::consts::FRAC_PI_2), "the flag clears after one call");
     }
 }

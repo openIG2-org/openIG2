@@ -654,6 +654,11 @@ impl WarUi {
         out
     }
 
+    /// `ColonyCounter`.
+    pub fn counter(&self) -> f32 {
+        self.counter
+    }
+
     /// One UI frame (`Frissit2_Colony`, `WF_Tank::Refresh2`): the selection keeps alive units only; the rings and
     /// target markers pulse.
     pub fn ui_frame(&mut self, c: &WarCtx) {
@@ -929,6 +934,38 @@ pub(crate) mod tests {
         assert_eq!(p.alpha, 128);
     }
 
+    /// Row 131: `c` ×3 follows the lowest selected slot from 130 behind, 60 above (heading 0: the angle −π/2, so
+    /// the eye is at −130 on x); a new heading turns the eye 0.025 rad a frame; no selection ends the tank view.
+    #[test]
+    fn tank_view_follows_the_first_selected() {
+        use crate::colony::{Camera, CameraKeys, SavedCamera};
+        let mut k = CameraKeys::default();
+        for _ in 0..3 {
+            k.preset();
+        }
+        assert!(k.tank_view);
+        let mut cam = Camera::from_saved(&SavedCamera { x: 0.0, y: 0.0, zoom: -666.0, pitch: -0.5, rotate: 0.0, centre: false }, [640.0, 480.0]);
+        let mut a = unit(4, 1, 0);
+        a.pos = [-10.0, 200.0, -300.0];
+        let mut b = unit(2, 1, 0);
+        b.pos = [0.0, 50.0, 60.0];
+        b.flags |= flag::NOT_PLACED;
+        let units = vec![a.clone(), b];
+        let sel: BTreeSet<usize> = [2, 4].into();
+        k.tank(&mut cam, &units, &sel);
+        let e = cam.tank.unwrap();
+        assert_eq!(e.target, [-40.0, 200.0, -300.0]);
+        assert_eq!(e.eye[0], -100.0);
+        assert!((e.eye[1] - 70.0).abs() < 1e-3 && (e.eye[2] + 300.0).abs() < 1e-3, "{:?}", e.eye);
+        let mut turned = units.clone();
+        turned[0].angle = 1.0;
+        k.tank(&mut cam, &turned, &sel);
+        let want = (-std::f64::consts::FRAC_PI_2 - 0.025) as f32;
+        assert!((cam.tank.unwrap().eye[1] - (want.sin() * 130.0 + 200.0)).abs() < 1e-3);
+        k.tank(&mut cam, &units, &BTreeSet::new());
+        assert!(cam.tank.is_none() && !k.tank_view && k.mode == 3);
+    }
+
     fn unit(slot: usize, owner: i32, weapons: u32) -> UnitView {
         UnitView {
             slot,
@@ -968,6 +1005,7 @@ pub(crate) mod tests {
             planet: 7,
             tick: 0,
             owner: 2,
+            owner_race: 0,
             surface: 1,
             map: 0,
             buildings: Vec::new(),

@@ -1,0 +1,17 @@
+{
+ "screen": "main",
+ "note": "Row 291 check (re/screens/mainscr.md §7.2): the scenario list's description lines. Single player (t 350), the scenario ring (t 600), row 2 (t 800), row 5 (t 1050), row 1 (t 1300); each held 220 ticks with no toggle so the picture opens again and the ten desc lines show (rows 0..4 beside the race picture, the rest under it).",
+ "events": [
+  {"t": 1, "mouse": [320, 240]},
+  {"t": 350, "press": [162, 267], "hold": 3},
+  {"t": 600, "press": [296, 82], "hold": 3},
+  {"t": 800, "press": [500, 102], "hold": 3},
+  {"t": 810, "mouse": [320, 240]},
+  {"t": 1050, "press": [500, 147], "hold": 3},
+  {"t": 1060, "mouse": [320, 240]},
+  {"t": 1300, "press": [500, 87], "hold": 3},
+  {"t": 1310, "mouse": [320, 240]}
+ ],
+ "grabs": [790, 900, 1000, 1040, 1150, 1250, 1400, 1500],
+ "tail": 10
+}

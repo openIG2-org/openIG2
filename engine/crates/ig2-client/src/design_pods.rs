@@ -55,6 +55,10 @@ pub struct Pods {
     released: bool,
     /// The press the pick sees: the exe's pick sound comes a tick after the press's click [obs: design-pods.json, t 301].
     pick_press: bool,
+    /// The release `Design3DUpdate` sees: like the press, a tick late (`Mouse_Lekerdez` sets `Mouse_Felenged` after the
+    /// frame's draw, exe 0x4e0440), so the fit's fly-in starts the tick after the button went up [obs: design-pods.json,
+    /// t 372: the exe's model still on the ring].
+    release_late: bool,
     /// `Mouse_Bal`: the left button is down.
     down: bool,
     /// `DesGombFrame`, `DesGombFrameCsokkent`, `DesGombNew`, `DesMelyikGombotOld`.
@@ -287,7 +291,7 @@ impl Design {
                 }
             }
         }
-        let released = std::mem::take(&mut self.pods.released);
+        let released = std::mem::replace(&mut self.pods.release_late, std::mem::take(&mut self.pods.released));
         // `Design_Main` zeroes `DesignPodKiuritomod` every frame before `Megkeres` reads it (exe 0x4b21cf): the clear
         // row never acts.
         self.pods.clear_row = false;

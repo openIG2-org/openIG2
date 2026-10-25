@@ -10,7 +10,7 @@
 mod common;
 
 use ig2_net::{loopback, state_hash, Command, Host, Loopback, Peer, Snapshot, SpyOrder, StarmapCmd, Terms, DEFAULT_DELAY, TURN_TICKS};
-use ig2_sim::game::{Game, GameRules, LocalView, ViewMode};
+use ig2_sim::game::{Game, GameRules, LocalView, MessageOrder, ViewMode};
 use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 use ig2_sim::trade::DELIVERY;
 
@@ -361,6 +361,148 @@ fn each_human_keeps_its_own_contacts_and_reports() {
     let (back, pending) = snap.restore(&rules).unwrap();
     assert_eq!(back.state.humans, p2.game.state.humans);
     assert_eq!(Snapshot::capture(&back, &pending, snap.turn, snap.tick).hash, snap.hash);
+}
+
+/// The entries' block ids of human `h`'s own inbox (`HumanSide::inbox`: three bytes, then `INBOX`, `INBOX_PLAYBACK`,
+/// `INBOX_RANDOM`, then 0xDABDA0.. with the count at +0x30), or of the state's when `h` is `EN`.
+fn inbox_ids(g: &Game, h: u8) -> Vec<i32> {
+    let b = match g.state.humans.get(&h) {
+        Some(s) => s.inbox.clone(),
+        None => g.state.inbox_regions(),
+    };
+    let base = 3 + 100 * 0x88 + 100 * 0x54 + 400;
+    let n = i32::from_le_bytes(b[base + 0x30..base + 0x34].try_into().unwrap());
+    (0..n.max(0) as usize).map(|k| i32::from_le_bytes(b[3 + k * 0x88..7 + k * 0x88].try_into().unwrap())).collect()
+}
+
+/// Deviation 388 (`re/rules/multiplayer.md` §5.3): in story 1003 every human gets the radar offer (message 0x2347)
+/// in its own inbox; the second human's answers run in its inbox and buy the radar for it (special 15 with it as the
+/// sender: its 20000 paid, its bit in `RADAR_BUYERS`), and both peers agree on every turn.
+#[test]
+fn every_human_gets_its_own_radar_offer() {
+    let Some((rules, mut state)) = common::setup(SAVE) else { return };
+    state.mem.set_u8(va::PLAYER_KI + 3, 1);
+    // `MessagesVege` (0xD909BA, unsaved): set once a dialogue has ended; a fresh save has none, and `Messages_Main`
+    // opens a row only with it.
+    state.mem.set_u8(0xD909BA, 1);
+    // The save's clock stands (speed 0): the fastest speed on both, before the start.
+    let canonical = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.canonical_view(6);
+        g.set_speed(3, false);
+        g
+    };
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
+    s.join(2, 3, |_| Peer::new(2, 3, canonical(state.clone()), DEFAULT_DELAY));
+    s.run_to(4, |p| {
+        if (p.slot, p.turn) == (1, 2) {
+            p.issue(Command::StoryStart { id: 1003 });
+        }
+    });
+    let offered = |g: &Game| inbox_ids(g, 6).contains(&0x2347) && inbox_ids(g, 3).contains(&0x2347);
+    let mut turns = 4;
+    while !offered(&s.peers[0].0.game) {
+        turns += 50;
+        s.run_to(turns, |_| {});
+        assert!(turns < 3_000, "no offer after {turns} turns: 6 {:?}, 3 {:?}", inbox_ids(&s.peers[0].0.game, 6), inbox_ids(&s.peers[0].0.game, 3));
+    }
+    eprintln!("both offers by turn {turns}");
+    let money = |g: &Game, e: usize| g.state.treasuries()[e].total;
+    let before = (money(&s.peers[0].0.game, 6), money(&s.peers[0].0.game, 3));
+    // 3 opens its messages screen and takes answer 0 (part 2: buy); 6 does nothing.
+    let order = |o: MessageOrder| {
+        let (kind, values) = o.to_message();
+        Command::Message { kind, values }
+    };
+    let t = turns;
+    let mut script = vec![order(MessageOrder::Enter), order(MessageOrder::Open { row: 0 }), order(MessageOrder::TypedOut)];
+    script.extend([order(MessageOrder::Answer { k: 0 }), order(MessageOrder::TypedOut)]);
+    s.run_to(t + 2 * script.len() as u64 + 20, |p| {
+        if p.slot == 2 && p.turn > t && (p.turn - t) % 2 == 0 {
+            if let Some(c) = script.get(((p.turn - t) / 2 - 1) as usize) {
+                p.issue(c.clone());
+            }
+        }
+    });
+    let g = &s.peers[0].0.game;
+    let after = (money(g, 6), money(g, 3));
+    let mut st = g.state.story();
+    let buyers = st.v_get(10039);
+    assert_eq!(buyers, 1 << 3, "only 3 bought");
+    assert!(before.1 - after.1 >= 20000.0 - 1e-6, "3 paid: {before:?} → {after:?}");
+    assert_eq!(before.0, after.0, "6 paid nothing");
+    assert_eq!(inbox_ids(g, 6), [0x2347], "6's own offer waits, unanswered");
+    // The client's view: 3's peer shows its own inbox while it holds the game, then the canonical state again.
+    let p2 = &mut s.peers[1].0;
+    let h0 = state_hash(&p2.game, &[]);
+    let own = p2.game.state.humans[&3].inbox.clone();
+    p2.game.show_inbox(Some(3));
+    assert_eq!(p2.game.state.inbox_regions(), own, "3's own inbox on its screen");
+    p2.game.show_inbox(Some(3));
+    p2.game.show_inbox(None);
+    assert_eq!(state_hash(&p2.game, &[]), h0, "the canonical state is back");
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    assert!(agree(&s.peers) as u64 >= turns);
+    assert_eq!(s.peers[0].0.game.state.humans, s.peers[1].0.game.state.humans);
+    // The own inbox is synced state: a snapshot carries it.
+    let snap = s.peers[1].0.snapshot();
+    let (back, pending) = snap.restore(&rules).unwrap();
+    assert_eq!(back.state.humans, s.peers[1].0.game.state.humans);
+    assert_eq!(Snapshot::capture(&back, &pending, snap.turn, snap.tick).hash, snap.hash);
+}
+
+/// Deviation 395: a rename in multiplayer goes through the command stream (`Command::Rename`): the second human renames its
+/// own fleet (the name and the custom-name bit land on both peers, the hashes agree); its rename of another's fleet is
+/// refused. The client's local edit before the command (`Game::edit_local_name`) is swapped out of the shared state
+/// whenever the game goes into the lockstep (`show_local_names(false)`): the hash doesn't see it.
+#[test]
+fn a_rename_goes_through_the_lockstep() {
+    let Some((rules, mut state)) = common::setup(SAVE) else { return };
+    // quick-1 has the pirates' fleets only: two of them become empire 3's (the second human's) and 6's.
+    let (mine, theirs, other) = (11, 12, 3u8);
+    state.fleets[mine][0x15] = other;
+    state.fleets[theirs][0x15] = 6;
+    state.mem.set_u8(va::PLAYER_KI + other as u32, 1);
+    let canonical = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.canonical_view(6);
+        g
+    };
+    // The local edit: shown while held, gone from the hash.
+    let mut g = canonical(state.clone());
+    let h0 = state_hash(&g, &[]);
+    g.edit_local_name(true, mine, b"Raiders", true);
+    assert_eq!(&g.state.fleets[mine][..8], b"Raiders\0");
+    g.show_local_names(false);
+    assert_eq!(state_hash(&g, &[]), h0, "the shared state is untouched");
+    g.show_local_names(true);
+    g.show_local_names(true);
+    assert_eq!(g.state.fleets[mine][0x53] & 0x08, 0x08);
+
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
+    s.join(2, other, |_| Peer::new(2, other, canonical(state.clone()), DEFAULT_DELAY));
+    let rename = |index: usize, name: &[u8]| Command::Rename { fleet: true, index: index as u32, name: name.to_vec(), custom: true };
+    s.run_to(20, |p| match (p.slot, p.turn) {
+        (2, 3) => p.issue(rename(mine, b"Raiders")),
+        (2, 4) => p.issue(rename(theirs, b"Stolen")),
+        _ => {}
+    });
+    assert!(agree(&s.peers) as u64 >= 20);
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    for (p, _) in &s.peers {
+        let f = &p.game.state.fleets;
+        assert_eq!(&f[mine][..8], b"Raiders\0");
+        assert_eq!(f[mine][0x53] & 0x08, 0x08, "the custom-name bit");
+        assert_eq!(f[theirs][..0x14], state.fleets[theirs][..0x14], "another empire's fleet keeps its name");
+    }
+    // Once the shared state has caught up, the local edit is dropped.
+    g = std::mem::replace(&mut s.peers[1].0.game, canonical(state.clone()));
+    g.local_names.iter_mut().for_each(|n| n.sent = true);
+    g.show_local_names(false);
+    g.show_local_names(true);
+    assert!(g.local_names.is_empty());
 }
 
 /// Two humans steer their fleets (`MULTIGET_Starmap` 0x15, `re/rules/fleet-movement.md` §6.4): the orders cross the

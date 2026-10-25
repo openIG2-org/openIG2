@@ -40,7 +40,12 @@ impl Options {
         o
     }
 
+    /// The original's file in its save folder; `IG2_OPTIONS_DIR` puts the folder elsewhere (captures pin it there,
+    /// `tools/trace/run_screendiff.py`), the remake's own file and the save slots with it.
     pub fn path() -> Option<PathBuf> {
+        if let Some(d) = std::env::var_os("IG2_OPTIONS_DIR") {
+            return Some(PathBuf::from(d).join("options.dat"));
+        }
         std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("GyroscopeGames/ig2/options.dat"))
     }
 

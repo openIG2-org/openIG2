@@ -82,6 +82,22 @@ confirms it (§8: screen x = −x).
 - Pan (`Starmap_Move0` 0x6fe570): `XStart −= (cα·mx − sα·my)·(600 − Zoom)/600·0.85`, `YStart −= (cα·my + sα·mx)·
   (600 − Zoom)/600·0.85`; a move that would leave [−300, 300]² is refused (`Starmap_Move` 0x6fe780 retries with
   1 unit less until it fits). So the pivot never leaves the ±300 square.
+- Operand widths (row 226, exe asm, 2026-10-25; all five camera values are f32): zoom is f32 throughout
+  (`(640 − z) / 10 / 5`, two `divss`, exe 0x5ae8c9); rotate adds the f64 0.02, rounds, below 0 adds the f64 2π, rounds,
+  then `fmod` by f32 2π as f64 (0x5ae9ec); pitch adds the f64 0.00628318 and rounds, the clamps compare in f64 and
+  store f32 −0.2 / 0xbfc7c821 (0x5aea5f); the pan (`Starmap_Move` exe 0x5bb230, `Move0` inlined) rounds sin/cos to f32,
+  turns and scales in f32 (`mulss`, `/ 600`), then `XStart − v·0.85` in f64; the minimap pivot divides in f32 and
+  does `(v − 0.5)·−600` in f64 (0x5b2ec9). Recorded with `probes/starmap_cam.js` on `scripts/starmap-cam.json`
+  (quick-1.sav): these formulas give all 90 rotate, 290 pitch, 60 zoom steps, 104 pans and both minimap pivots
+  bit-exact; the earlier f32-only pan missed 3 pans by an ulp. Port: `Camera::turn`/`tilt`/`move0`,
+  `orders::minimap_target`; test `camera_steps_match_the_exe_bits`. `Starmap_Autoscroll`'s normalisation divides in
+  f32 in the exe (f64 in the ELF); the integer results are the same (30, 21, 24).
+- `StarmapSetSideView` with no planet known or owned (row 228, exe 0x5b0c60): Zoom, Rotate and Pitch targets are
+  written, `TargetXStart/YStart` and `StarmapMaxKiZoom` are not (stale); `StarmapSetTopView` (0x5b0e00) sets only rotate
+  and pitch and starts no move. Unreachable: a planet the human has seen stays known (`+0xd8 + 2EN`), the home
+  planet from the start. The box's filter (both views, exe 0x5b0cc0 / 0x5b0e50, planets 1..count): `+0xd8 + 2EN > 0`
+  or `+0x20 == EN`, no `DEBUGX` term (row 314's leftover: the client's side/top view takes known or owned planets, the
+  same; only its `known` includes `DEBUGX`, so a debug game frames every planet: kept).
 - Zoom to a planet: `StarmapBeZoomol` 0x6fe450 (saves `Last*`, targets the point at the given zoom),
   `StarmapKiZoomol` 0x6f3610 back; `StarmapKozepreAllit` 0x6fe220 centres. In planet-info mode `GFX_Starmap` pins
   Zoom = 599 and follows the orbiting planet.
@@ -132,11 +148,20 @@ Verified against captures of the long info (`run_screen.py --hide clouds|planet`
   other; the remaster's PVR carries a metadata block `SGLB`/`CNST` with `uv_mul = (1, 0.5, 0, 0)` and
   `render/ig2_vertex.shader` multiplies the mesh UVs by it (`var_uv = sg3d_texcoord0 · uv_mul.xy`), so the sphere
   shows one copy (`ig2_formats::pvr::Pvr::constant`).
-- **Light.** `ShowStarmap` sets the lighting direction `(fxn, fyn, fzn)` = `(StmapLightX, StmapLightY, StmapLightZ)`
-  (ELF 0x1730060/64, never written, and 0x119a72c = −10): (0, 0, −1) in camera space, which lights the faces turned
-  towards the eye; per vertex `ambient 0x40 + 0x80·max(0, n·to_eye)` (`Init3dStarmap`'s ambient and parallel light
-  levels), gamma-space. The meshes' stored normals are mirrored in x and y (`(−x, −y, z)` of the positions); the
-  captures match outward normals [obs] (planet region 12.2 vs 21.8–29.6 for the stored ones).
+- **Light** (row 371, 2026-10-25). `Init3dStarmap` (ELF 0x6db470, exe 0x59c850) puts an ambient light 0x404040
+  and a parallel one 0x808080 along (10, 10, −10) (normalised, the world's `MoveObj` axes) on the scene root
+  `mainmeshid`; every planet and cloud inherits them (`Kocka`). `ShowStarmap`'s `StmapLightX/Y/Z` → `fxn/fyn/fzn` (exe
+  0x5a4464..0x5a448c) are read only by `setlightnormal`, which nothing calls. `fenyekszamolasa` (§ research.md 2.1,
+  `ig2-client::lighting`) lights in the object's space: `Kocka` turns `L` by the camera, `fenyekszamolasa` back by the
+  node's chain (camera · `RotateObj`), so `Lo = Rᵀ·L` with `R` the object's own `RotateObj` (the planet's `(0, 0,
+  PlanetRotate·spin·6)`, the clouds' `(−PlanetRotate·spin·2, 5, 0)`): the lit side is fixed in the galaxy and differs
+  between the planet and its clouds. Per vertex `0x40 + 0x80·shade[|n' − Lo|²·2047] >> 8` with `n'` the file normal
+  (mirrored in x and y as stored, z negated); both have property 8 (planet flags 0xf, `CloudId` 0xb), so the bytes
+  aren't scaled by the opacity. Verified with `--light-probe` (`light-planetinfo.jsonl`): every vertex exact with the
+  exe's own `Mᵀ·L` (`lighting::tests::starmap_long_info_probe_matches_the_exe`), within one byte from `Rᵀ·L` (98 %+
+  exact; `starmap_planet::tests::long_info_planet_and_clouds_light_as_the_exe`). The long info's planet region (bg-gl)
+  10.45 → 2.63. Not ported: `fenyekszamolasa` caches the colours in the shared XVO and recomputes only for the first
+  drawn object of a mesh per frame (`xvo+0xbc`), so same-surface planets would share one shading [inf, not run].
 - **Order.** The remaster draws the starmap's meshes without the depth test (`render/video.state`) in the old
   engine's sorted order, the particle pass (`DrawStarmapParticles`, a `SetRenderOther` callback) before the planets:
   the background's additive clouds don't show through a planet (they gave the client's planets a blue cast).
@@ -369,8 +394,13 @@ Port: `StarmapEvent::FleetEmptied` (`StarmapContext::sends`, `transfer`).
   cycles through a stack.
 - Left press: `SelectNearestUnit(…, 1.0, AktFleet or −AktPlanet, false, false)` selects (`StarmapMode` 1 planet / 2
   fleet, `AktPlanet`/`AktFleet`) and opens the radial menu (§14); the release carries out its icon.
-- Right press in planet mode on the player's planet (and any press in the redirect mode): the rally order 0x400
-  (§14.5).
+- Right press in planet mode on the player's planet (and a left one in the redirect mode): the rally order 0x400
+  (exe 0x5b53e2: `StarmapMode == 1`, the player's planet, `Bal == 0 || StarmapVillogasMode || StarmapAtiranyitasMode`,
+  `StarmapRopIkonMod == 0`; in fleet mode the fleet branch takes the press, redirect mode or not: row 318; §14.5).
+  `StarmapVillogasMode` (0xb9a964) is the pending fleet order's kind (1 move, 2 attack, 0xd point, 0xe on the fleet
+  itself), set and cleared inside the right-click arm (0x5b53d3), cleared by `MULTIGET` 0x15 (0x59db19), `Starmap_Belep`
+  and `Starmap_MouseInit2`; its left-held setter (0x5b4538) needs `ControlConfig[0]` (touch), off in GOG: the gate's
+  Villogas term is always 0 there (row 364, settled). The 100-tick order-line blink is `f176f0`/`e836bc`, not it.
 - Right click with the human's fleet selected (or story fleet 0x1f88): Ctrl = attack mode; the pick at r = 0.5
   (skipping the fleet itself, its target excluded); Alt = no pick. A hostile pick (owned by someone other than the
   human and the fleet's owner; fleets without 0x200, planets without `+0xbc` bit 0) turns a move into an attack (2).
@@ -422,12 +452,42 @@ Port: `StarmapEvent::FleetEmptied` (`StarmapContext::sends`, `transfer`).
   `xSpeed`/`ySpeed` step 5 towards it; non-zero → `Starmap_Move(xSpeed/5, ySpeed/5)` (§2.4).
 - Port: `starmap::CamKeys`, `window.rs` `starmap_key`, `console_press`/`console_release`, `step_selection`
   (starmap_panels.rs), `InfoPanel::key`.
+- Console press animation (row 224, 2026-10-25; `starmap_hud::ConsoleButtons`, `Console::pose`): hot-spot ->
+  sub-mesh 1 -> 4, 2 -> 5, 3 -> 2, 4 -> 1, 5 -> 0, 6 -> 3 (`Starmap_Main` lines 163-257). `ShowStarmap` (ELF 0x6eca50
+  lines 379-381, 465-473 / exe 0x5a3250) steps +-5 per drawn frame (a UI tick); `Mouse_Felenged` -> phase 2; only
+  `MelyikGombot`'s sub-mesh is set; held 2/3/5/6 re-set frame 0 each frame so they show frame 5; views 1/4 act on the
+  release frame and never sink; `Starmap_Belep` (exe 0x5b19a0) zeroes the six sub-mesh frames only. Tooltips 1-7:
+  `starmap_tip.rs` (`GetString(2,1,N)`, `Starmap_MouseInit` exe 0x5b99d0). Tests `console_buttons_sink_while_held_and_views_never`,
+  `console_buttons_have_key_frames`. Capture-checked (2026-10-25): `scripts/starmap-console.json` holds the
+  pitch button with the left button and the zoom button with the right one in the exe (the pointer moved off while
+  held; the script starts at t 150, the exe's first ~100 script ticks draw nothing and lose their events); the client's
+  still `--console-held 6` / `5` against the held grabs: the pitch box's mean difference 17.3 unposed → 6.5 posed (t
+  180), the zoom box's 12.8 → 9.8 (t 255), the wrong button posed doesn't help; released (t 285) both are up. The rest
+  is the console's shading (its blue rim in the exe), the same at rest.
+- Row 225: `StarmapProductPlanetChange` (ELF 0x6fe2b0) only queues the production view's head-model swap, drawn by the client
+  from the current planet each frame; `AktEpulet = 0` has no client effect. Row 302: `Starmap_MouseInit2` (ELF 0x7024b0 /
+  exe 0x5b8950) turns 0x35 off under the long info, tanks, fleet panel and transfer; the client's `starmap_view_pointer`
+  gates on the same states (matches). Row 227: the edge scroll reads the last physical pointer (`Mouse_Phys_x/y`), so it
+  goes on with the pointer outside the window. Row 357: `Mouse_Phys_x/y` (exe 0xdb9408/0c) start at 0 and only
+  SDL_MOUSEMOTION writes them (`MainCallBackEventHandler` exe 0x4e34e1; nothing warps the pointer), so before the first
+  move the exe scrolls up-left; the client's pointer starts at (0, 0) too (a headless script run waits for its first
+  move). Row 358 (`Mouse_Lekerdez` exe 0x5105d0): `Mouse_Gomb` is any button held, `Mouse_Felenged` the last one let go,
+  `Mouse_Lenyom` the first one down; a held spot stays latched (`Mouse_Megfogva`) until every button is up and a second
+  button's press goes to it (no new click); 5 and 6 read the buttons every frame, left (in, up) then right (out, down),
+  so the right wins with both held; 2 and 3 ignore which button. The client re-reads them each UI tick and ends the spot
+  when both buttons are up. Row 363: every held frame of the map view (hot-spot 0x35) sets `Mouse_Megfogva` (exe
+  0x5b54a2; also spots 2, 3, 5, 6, 7 and the panel cells, never 1 or 4), and the pick runs only on the first held frame
+  (0xdb9418, set while no button is down), so after a press on the map a second button starts no console spot, pick or
+  order until both are up; the client takes no second press on the starmap (`scripts/starmap-second-button.json`: the
+  exe and the client click only at the right press that starts the zoom button, none after the map drag; the exe's view
+  doesn't zoom then). Row 335: an open menu holds `Mouse_Megfogva`, so `IG2_gameUpdate`
+  (exe 0x4e0440 line 52) doesn't re-read `AktIkon` and the release arm runs under the lock, as in the client.
 
 ### 10.7 The rename (`IOMode`, `IOAzonosito` 0x15 planet / 0x16 fleet)
 - Start (`Starmap_Main` ELF 0x6f50a0, the info box branch, `ControlConfig[0]` clear): hot-spot 8 with both buttons held.
   Planet mode, any planet (after the branch's `PlaySoundGlobal(5)`): `IOString` = the planet's name (record +0),
   `IOMaxLen` 0xf, colour 0x22. Fleet mode, `EN`'s fleet (not `fSpec`): `PlaySoundGlobal(0)`, the fleet's name (+0),
-  `IOMaxLen` 0x13, colour 3, the fleet's `+0x52 |= 0x800` while editing. Both: `IOStringBackup` = the old name, `IOX`
+  `IOMaxLen` 0x13, colour 3, the fleet's `+0x52 |= 0x800` (exe 0x5b62be / 0x5b6cf4). Both: `IOStringBackup` = the old name, `IOX`
   0x32, `IOY` 0x1ab, `IOCharSize` 2, `IOKurzor` = its length, `IOGombnyomasraTorles` 1, `Mouse_FelengedesMajdMegvar`.
 - The name is edited in place (no message; every machine keeps its own). Keys: `DoKeyboard`'s editing branch
   (re/screens/input.md §1); Enter ends it (`TutorialCheckEvent(4)` fleet, `(3)` planet); Esc restores the backup.
@@ -436,8 +496,14 @@ Port: `StarmapEvent::FleetEmptied` (`StarmapContext::sends`, `transfer`).
 - Drawn by `StarmapGfx2D_3` (ELF 0x6d4a30): until the first key a colour-0x27 box (`FillToScreen(IOX − 1, IOY − 1,
   len·cw + 2, ch + 2)`), `KiirStr(IOString, IOX, IOY, IOMaxLen, 2, 4, IOColor)`, on `AktIdo200` odd the cursor bar
   `FillToScreen(IOX + IOKurzor·cw, IOY + ch, cw, 2, 1)` (on the last cell once full).
-- Port: `starmap_menus::Rename`, `window.rs` `start_rename`/`rename_key`/`write_rename`. Not ported: the `0x800` flag,
-  the tutorial events 3/4.
+- `0x800` is the fleet's custom-name bit (ELF `FlottaNevLatszik` 0x615470 = `strcmp(name, AlapFlottaNev) != 0`;
+  fleet-movement.md: bit 11), not an editing flag: nothing at the rename's end clears it (Esc, a press elsewhere, Enter),
+  so a fleet once renamed keeps its name drawn by `Show_Flottak2d` (exe 0x5a5080, test 0x5a5370: the name and its
+  shadow under the marker). Recomputed from the name by `FlottaNew` (exe 0x53d755) and `FlottaOsszevon` (0x53d94d),
+  cleared by `InitNewGame` and the AI's main-fleet change, set/cleared by the stories. Its only readers are that draw
+  and the Elem story (0x5d52b6, host only), so the local edit (no message, like the name) can't desync (row 234).
+- Port: `starmap_menus::Rename`, `window.rs` `start_rename` (the `0x800` bit) / `rename_key` (the tutorial's 4 / 3 on
+  Enter) / `write_rename`.
 
 ### 10.4 The selection fix-up
 After every message pass: with `StarmapMode` 2 and `AktFleet` gone (owner 0xFF) or no longer seen (`+0x19 + EN`

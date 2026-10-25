@@ -42,7 +42,7 @@ UI tick (`Frissit2_Options`). **T** = the tutorial layout: `(TutorialActive 0xf6
 | `SaveAktivSlot` | 0x916058 | Selected slot 1..24 (default 1). Saved as `Save slot`. |
 | `SaveLeiro` | 0xdb9768 | Slot titles, `[slot] × 0x34` (entry 0 unused; section 5.3). |
 | `OptionsCsakLoadLehet` | 0xbae24e | Load only (from the main menu's load ring). |
-| `OptionsHarcFolyik` | 0xbae24f | A battle is running (no save without `DEBUGX` 0xbae587). Set by `SpaceWar_Kilep` 0x562b50 towards Options (0x562c0f, also gated by `PTR_DAT_0091a830[0x1fb8]`, meaning unknown) and by every `Colony_Kilep` 0x466390 as `WF::GetStatus(Warfare[VisiblePlanet−1]) == −1` (0x466631, the planet's ground war runs; `GetWarfareStatus` inlined). Belep (0x51a074) clears it unless `OptionsElottiKep` is 3 or 0xb; Kilep (0x51a2aa) clears it. Readers: Options_MouseInit2 (id 2), the button pass 0x517580, `OptionsGfx2D_2`'s Save label (0x518da7), `DoKeyboard`'s F-key gate, the colony handlers. |
+| `OptionsHarcFolyik` | 0xbae24f | A battle is running (no save without `DEBUGX` 0xbae587). Set by `SpaceWar_Kilep` 0x562b50 towards Options (0x562c0f, also gated by `PTR_DAT_0091a830[0x1fb8]` = the battle's leaving flag, set by `Starmapvisszaallit` 0x570c10, so only after the zoom-out: spacewar.md §9.14) and by every `Colony_Kilep` 0x466390 as `WF::GetStatus(Warfare[VisiblePlanet−1]) == −1` (0x466631, the planet's ground war runs; `GetWarfareStatus` inlined). Belep (0x51a074) clears it unless `OptionsElottiKep` is 3 or 0xb; Kilep (0x51a2aa) clears it. Readers: Options_MouseInit2 (id 2), the button pass 0x517580, `OptionsGfx2D_2`'s Save label (0x518da7), `DoKeyboard`'s F-key gate, the colony handlers. |
 | `OptionsAreYouSureToQuitMode` | 0xdb975a | The quit question is up (Save → YES, Quit → NO). |
 | `OptionsElottiKep` | 0xbae2b4 | The screen to go back to. |
 | `OptionsFelfadeles` (f32) | 0xdb9c84 | Fade-in 0..100. |
@@ -124,8 +124,19 @@ Every game screen's `_Kilep` / `_Belep` special-cases `AktKep` / `OldKep` ∈ {1
 | SpaceWar 0xb (0x562b50) | no exit, `OptionsHarcFolyik` | back via the starmap (`starmaphovaleptovabb = 0xb`, the battle view restored) |
 
 Port: back from Options re-opens the spy screen (with its opening) and re-enters the starmap (its faders); Options
-from the messages screen returns under it; trade comes back through `Trade::back`. Not ported: the other screens'
-state resets on the return, the colony's rebuild (ambience sound), Messages' closing animation (deviations).
+from the messages screen returns under it; trade comes back through `Trade::back`. Row 240 (2026-10-25): Back
+re-enters the screen before as its `_Belep` with OldKep 0xd: research `enter_research(0xd)` (no opening, state reset, exe
+0x523540), diplomacy `enter_diplomacy(false)` (0x4bf530), info `InfoScreen::enter` keeping `tri` (0x4e7d30), colony
+`reenter_colony` (`ColonyUi::enter`: selection rule, war groups, the ambience again; camera kept; 0x465b40); design keeps
+its state; spy/trade/starmap as before. O on Help runs `Help_Kilep`'s closing (0x4d7440) first (`help_then_options`); every
+O path from Messages goes through `ask_options` -> `request_screen(0xd)` (`Messages_Kilep` 0x5083d0 closing first). Not
+ported: the design-return flags (`resMessagesUtaniLegelsoBejoves` exe 0xdc471c, set at 0x523810; `infoMessagesUtaniLegelsoBejoves`
+0xb8525c, set at 0x4e7ed2): `(MessagesElottiScreen == 5 && OldKep == 10) || (OldKep == 1 && HelpElottiScreen == 5) ||
+(OldKep == 0xd && OptionsElottiKep == 5)`. Neither has a reader (only `desMessagesUtaniLegelsoBejoves`, Design's own, is
+read); set, research skips resetting `reswireframe` (0xdc537c) and `res_xy` (0xdc5378, 2.0), so they go on from the last
+visit; info has no such branch. The client rebuilds the research state on every entry: only that wire-sphere frame and
+glass phase differ, reachable via Messages or Help opened over Design (row 359, kept). Rows 336/337: the DEBUGX reads (0x51a927, 0x518d9c, 0x51790b) and `!SelfPlaying` (0x51a8a0) can't change while the
+modal Options is up, and the client has no demo: reading once at open is equivalent.
 
 ### 3.2 Multiplayer (`MultiPlayerMode` 0xbae2c0)
 Read in Options only by `CheckOptionsDependencies` 0x516e10 (rows without the MP flag off), `Options_MouseInit2`
@@ -328,6 +339,10 @@ deviation 70). The load opens the colony screen of the last planet whose ground 
 `WF::GetStatus() == -1`, `GetWarfareStatus == 1`; quick saves give none, the positive case is decompile-only, deviation
 190). The slot-list press grabs (`Mouse_Megfogva`): while held the pick follows the pointer's y outside the list (test
 added, deviation 191; the `DEBUGX` save-in-battle half is still open).
+Row 320 (2026-10-25): `Options::path()` honours `IG2_OPTIONS_DIR`; `run_screendiff.py` pins it to
+`<out>/options-pinned` with a copy of the exe's options.dat and save*.sav (not the remake's own settings/.ig2s). Options
+sequence re-run: left_panel t170/t250 5.05/5.16 (was 8.4/8.6; acceptance <= 5.2); buttons t100-t400 5.9-11.1 (sparks, hover
+glow); slots t500/t560 21.4/18.5 (row 316's fader shine).
 
 Acceptance (2026-10-22, `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json`): over the game every region matches at every grab (frame ≤ 3.9, top bar ≤ 1.1, left

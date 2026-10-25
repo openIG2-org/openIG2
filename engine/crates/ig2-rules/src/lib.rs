@@ -130,6 +130,8 @@ pub mod layout {
     /// `utdarabsize`: the scale of the road pieces `ut1..ut9.xvb` (`AddUtDarab`).
     pub const ROAD_SCALE: (u32, usize, usize) = (0x8EC968, 4, 9);
     pub const SCAFFOLD_HEIGHTS: (u32, usize, usize) = (0x8F3878, 4, 60); // allvanypoziciok (ELF 0x115f740)
+    pub const SCAFFOLD_MASKS: (u32, usize, usize) = (0x8F3968, 100, 60); // magas (ELF 0x115f830), Building+0x60 (`InitEpuletek`)
+    pub const SCAFFOLD_SCALES: (u32, usize, usize) = (0x8F85C8, 4, 10); // allvanymeretszorzo
     pub const DECLARE_WAR_UNRELIABILITY: (u32, usize, usize) = (0x902FC0, 4, 16); // Megbizhatatlansag_DeclareWar [2][4][2]
     pub const SPY_MISSIONS: (u32, usize, usize) = (0x912F48, 0x20, 27); // KemKuldetesek
     pub const SPY_OUTCOME_STATE: (u32, usize, usize) = (0x9132A8, 4, 5); // KemKuldetesAtmenet
@@ -655,6 +657,11 @@ pub struct Rules {
     pub road_scale: Vec<f32>,
     /// `allvanypoziciok[k − 1]`: building kind `k`'s scaffolding height (the selection marker sits 20 below it).
     pub scaffold_heights: Vec<f32>,
+    /// `magas[k − 1]` (`Building[k]+0x60`, set by `InitEpuletek` exe 0x482bf0): kind `k`'s 10 × 10 grid of the highest
+    /// scaffolding level per footprint cell, `[row·10 + col]`.
+    pub scaffold_masks: Vec<Vec<u8>>,
+    /// `allvanymeretszorzo[level]`: scaffolding box `allvany<level + 1>.xvb`'s scale (× 0.038, `ModifyAllvany`).
+    pub scaffold_scales: Vec<f32>,
     pub charset: Charset,
     /// `FajnevX[e − 1]`: where the info screen writes race `e`'s name.
     pub race_name_x: Vec<i32>,
@@ -998,6 +1005,11 @@ impl Rules {
             },
             road_scale: floats(layout::ROAD_SCALE)?,
             scaffold_heights: floats(layout::SCAFFOLD_HEIGHTS)?,
+            scaffold_masks: {
+                let (b, s, n) = tab(layout::SCAFFOLD_MASKS)?;
+                (0..n).map(|i| b[i * s..(i + 1) * s].to_vec()).collect()
+            },
+            scaffold_scales: floats(layout::SCAFFOLD_SCALES)?,
             charset: {
                 let t = ints(layout::CHAR_TABLES)?;
                 let bytes = |t| -> Result<Vec<u8>> { Ok(tab(t)?.0.to_vec()) };

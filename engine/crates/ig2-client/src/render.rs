@@ -817,8 +817,18 @@ fn raw_view(tex: &wgpu::Texture) -> wgpu::TextureView {
 
 /// The image and its box-filtered mips down to 1×1 (in sRGB space; good enough for these assets).
 fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
+    // The PVR's own levels first (`load_pvr` uploads them as stored: the alpha-tested scaffolding's rails stay solid,
+    // re/deviations.md row 366), then box-filtered ones down to 1 × 1.
     let mut out = vec![img.rgba.clone()];
     let (mut w, mut h) = (img.width as usize, img.height as usize);
+    for m in &img.mips {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        if m.len() != nw * nh * 4 {
+            break;
+        }
+        out.push(m.clone());
+        (w, h) = (nw, nh);
+    }
     while w > 1 || h > 1 {
         let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
         let src = out.last().unwrap();
@@ -1027,7 +1037,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut panel_model = crate::colony_ui::PanelBuilding::default();
     let light = view.panel_light(&l.rules.ground_maps, curr.map);
-    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr), ui.spin(), light, size);
+    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr), ui.spin(), light, size, scene.sky.as_deref());
     let en = world.game.state.mem.i32(ig2_sim::save::va::EN);
     let info_model = crate::colony_ui::render_kis_info(r, &l.install, &l.tables, &ui, &mut scene, &mut panel_model, &curr, en, light, size);
     let mut frame = view.build(r, &l.install, &l.tables, &l.rules.ground_maps, &mut scene, &prev, &curr, o.alpha, t);
@@ -1092,6 +1102,9 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     // Animated like the exe (`KELLKINYITASDEFAULT` 1): the info box and the wire sphere stay where `MoveObj` puts
     // them also at rest.
     let mut s = crate::research::Research::open(state, &l.tables, true);
+    if let Some(f) = o.faders.as_ref().and_then(|f| f.resf.clone()) {
+        s.set_faders(f);
+    }
     match o.spy_frame {
         Some(f) => s.hold(f, o.spy_closing),
         None => s.hold_open(),
@@ -1104,7 +1117,7 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     let mut models = crate::research::ResearchModels::new(r, &l.install);
     for _ in 0..o.ui_frames.max(1) {
         s.step(state);
-        s.tooltip(state, &models.mask, &tips, s.frames as f64 * 10.0);
+        s.tooltip(state, &models.mask, &tips, &hud.texts, &models.centres, s.frames as f64 * 10.0);
     }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
@@ -1395,6 +1408,9 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
     use crate::research::{Act, Key};
     use crate::script::Input;
     let mut s = crate::research::Research::open(&world.game.state, &l.tables, true);
+    if let Some(f) = o.faders.as_ref().and_then(|f| f.resf.clone()) {
+        s.set_faders(f);
+    }
     s.tip.moved([320.0, 240.0]);
     let infos = crate::research::tech_infos(&l.install);
     let tips = crate::research::tips(&hud.texts);
@@ -1409,7 +1425,7 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
     'ticks: for tick in 0..=script.end() {
         if tick > 0 {
             s.step(&world.game.state);
-            s.tooltip(&world.game.state, &models.mask, &tips, s.frames as f64 * 10.0);
+            s.tooltip(&world.game.state, &models.mask, &tips, &hud.texts, &models.centres, s.frames as f64 * 10.0);
             rendered = None;
             heard.extend(s.sounds.drain(..).map(|id| (Some(tick - 1), id)));
         }
@@ -1434,23 +1450,23 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
                 }
                 // The top bar's spots (re/screens/input.md §6: 2..5 at x 0..73, 7 at 270..593, the drop-downs 8 and 6 at
                 // 598..640) are over the screen's own; the drop-downs aren't run here.
-                Input::Button { button: 1, down: true, at } if at[1] < 20.0 && (at[0] < 73.0 || (270.0..593.0).contains(&at[0]) || at[0] >= 598.0) => Vec::new(),
-                Input::Button { button: 3, down, .. } => {
-                    s.buttons = if *down { s.buttons | 2 } else { s.buttons & !2 };
+                Input::Button { button: 1 | 3, down: true, at } if at[1] < 20.0 && (at[0] < 73.0 || (270.0..593.0).contains(&at[0]) || at[0] >= 598.0) => Vec::new(),
+                Input::Button { button: 3, down: false, .. } => {
+                    s.buttons &= !2;
                     Vec::new()
                 }
-                Input::Button { button: 1, down: true, at } => {
-                    s.held = true;
-                    s.buttons |= 1;
-                    if s.closing {
-                        Vec::new()
-                    } else {
-                        // The models' projected centres of the last drawn frame (`CheckIfTalalmanyokFolottVan`).
-                        if rendered.is_none() {
-                            rendered = Some(models.render(r, &l.install, &l.tables, &s, &world.game.state, size));
-                        }
-                        s.press(&world.game.state, &l.tables, &models.mask, *at, &models.centres)
+                // Either button presses (`Research_Main`); the left one also holds, the right one grips the ball.
+                Input::Button { button: b @ (1 | 3), down: true, at } => {
+                    let left = *b == 1;
+                    if left {
+                        s.held = true;
                     }
+                    s.buttons |= if left { 1 } else { 2 };
+                    // The models' projected centres of the last drawn frame (`CheckIfTalalmanyokFolottVan`).
+                    if rendered.is_none() {
+                        rendered = Some(models.render(r, &l.install, &l.tables, &s, &world.game.state, size));
+                    }
+                    s.press(&world.game.state, &l.tables, &models.mask, *at, &models.centres, left)
                 }
                 Input::Button { button: 1, down: false, .. } => {
                     s.held = false;
@@ -1761,6 +1777,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     hud.info.settle(&world.ui.info, world.ui.human);
     hud.speed = crate::hud::speed_index(world.game.state.mem.i32(ig2_sim::save::va::IDO_SPEED));
     hud.paused = o.paused;
+    hud.pointer_phase = o.mouse_phase;
     // `--backdrop`: the starmap a running game's exit left under the overlay screens (crate::backdrop): without its
     // HUD (`SaveScreen(1)`), or with it for the messages screen (`SaveScreen(2)`).
     if let Some((pic, grey)) = crate::backdrop::snapshot_pic(o).filter(|_| o.backdrop) {
@@ -1842,7 +1859,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         // The info screen's hot-spot tooltip at `--mouse` (`Info_MouseInit`'s texts), as the window's `frame_overlay`.
         match (screen, o.mouse) {
             (crate::ui::Screen::Info, Some(m)) => {
-                let tip = hud.info.spot_at(&l.tables.race_name_x, m, &world.ui).map(|id| hud.info.tip_text(id, &hud.texts, &hud.empire_names));
+                let tip = hud.info.spot_at(&l.tables.race_name_x, m, &world.ui).map(|id| hud.info.tip_text(id, &hud.texts, &hud.empire_names, &world.ui, m));
                 hud.snapshot_tip_pointer(&mut frame, size, m, tip.as_deref(), 0, 0);
             }
             _ => hud.snapshot_pointer(&mut frame, size, o.mouse),
@@ -1912,6 +1929,12 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     // The staged long info is drawn at zoom 599 at least: its box is up.
     let mut models = crate::starmap_panels::PanelModels::new(&mut r);
     let globe = models.render_globe(&mut r, &l.install, &world.game.state, &sel, &view.camera.matrix(), [o.size.0 as f32, o.size.1 as f32], o.ui_frames as f32);
+    // `--console-held S`: a held rotate, zoom or pitch button sits at frame 5 (`ConsoleButtons`).
+    if let (Some(m), Some(c)) = (o.console_held.and_then(crate::starmap_hud::ConsoleButtons::sub_mesh), &mut hud.starmap.console) {
+        let mut depth = [0.0; 6];
+        depth[m] = 5.0;
+        c.pose(&mut r, &l.install, &depth);
+    }
     hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info, globe);
     // An info panel at rest: its selection frame morphed in (re/screens/starmap.md §19.4).
     if let Some(i) = &mut panels.info {
@@ -1945,6 +1968,12 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let line = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let tu = crate::tutorial_ui::TutorialUi::from_record(line.lines().next().unwrap_or_default())?;
         hud.draw_tutorial(&mut frame, &tu, [o.size.0 as f32, o.size.1 as f32], 2);
+    }
+    // `--mp-wait`: the multiplayer wait overlay (`GFX_DrawOver`), armed, as the probe stages the exe.
+    if let (Some(spec), Some(font)) = (&o.mp_wait, &hud.font) {
+        let w = crate::mp_wait::Wait::staged(spec);
+        let v = crate::font::Virtual::new([o.size.0 as f32, o.size.1 as f32]);
+        w.draw(&mut frame, font, hud.white, &v, &hud.palette, &|n| hud.texts.get(18, 5, n), std::time::Instant::now());
     }
     // `UpdateFrame`'s last pass at `--mouse` (re/screens/input.md §8), not over a staged menu: the hot-spot's tooltip
     // (the pointer at rest), then the pointer (over the map view hot-spot 0x35 its types 2/5/6/7, `orders::view_pointer`).

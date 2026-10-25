@@ -459,7 +459,7 @@ impl MainScr {
         // 0x27 (300, 446, 110 × 19) also outside the list: `MainScr_MouseInit2` (exe 0x4ff7b0) switches it on whenever
         // the skirmish settings are off, `Mode_Scenario_Valasztas` 0 included.
         let toggle = self.scenario.is_none() && in_box(at, TOGGLE_BOX);
-        self.hand = self.hovered.is_some() || toggle || self.scenario.as_ref().is_some_and(|sc| sc.spot_at(at) != 0) || self.race_box_at(at).is_some();
+        self.hand = self.hovered.is_some() || toggle || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
     }
 
     /// The race box (0xe..=0x10) under `at`: the 160 × 160 square round the sphere's projected centre, while they're on.
@@ -499,7 +499,7 @@ impl MainScr {
         }
         if let Some(sc) = &mut self.scenario {
             use crate::mainscr_scenario::Act as S;
-            return match sc.press(at)? {
+            return match sc.press(at, left)? {
                 S::Click => Some(Act::Click),
                 // §6.3 0x15: `Cel` 6, `AktKep = 2`; the panel closes while the exit animation runs.
                 S::Start => {
@@ -571,18 +571,25 @@ impl MainScr {
         }
     }
 
-    /// A right release: ends the scenario list's knob drag (0x1c, `Mouse_Megfogva` clears with either button).
+    /// A right release: the scenario list's knob drag (0x1c) ends once no button is held (`Mouse_Megfogva`, exe 0x4e0440).
     pub fn release_right(&mut self) {
         if let Some(sc) = &mut self.scenario {
-            sc.release();
+            sc.release(false);
         }
     }
 
-    /// A left release: only the scenario list's knob drag ends; a box ring acted on the press, and the exe's frame
+    /// A middle press or release: no hot-spot sees it, but it drops the held buttons (the knob drag ends).
+    pub fn middle(&mut self) {
+        if let Some(sc) = &mut self.scenario {
+            sc.middle();
+        }
+    }
+
+    /// A left release: only the scenario list's knob drag can end (with no button held); a box ring acted on the press, and the exe's frame
     /// loop swallows its release.
     pub fn release(&mut self, _at: [f32; 2]) -> Option<Act> {
         if let Some(sc) = &mut self.scenario {
-            sc.release();
+            sc.release(true);
         }
         None
     }
@@ -598,7 +605,10 @@ impl MainScr {
         }
         self.loading = None;
         if let Some(sc) = self.scenario.take() {
-            self.scenario = Some(crate::mainscr_scenario::ScenarioList::open(sc.entries));
+            // The row frame (`DesignKeret1`'s globals) isn't one of the resets.
+            let mut list = crate::mainscr_scenario::ScenarioList::open(sc.entries);
+            list.frame = sc.frame;
+            self.scenario = Some(list);
         }
         self.cel = 6.0;
         None

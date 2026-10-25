@@ -146,6 +146,8 @@ pub struct ColonySnap {
     pub planet: usize,
     pub tick: i32,
     pub owner: u8,
+    /// The owner's race (`PlayerFaj[owner]`): race 4 builds in two thirds of the work ([`cut_height`]).
+    pub owner_race: u8,
     pub surface: u8,
     pub map: usize,
     pub buildings: Vec<BuildingView>,
@@ -274,6 +276,7 @@ impl ColonySnap {
             planet,
             tick: state.mem.i32(ig2_sim::save::va::IDO2),
             owner: p.owner,
+            owner_race: state.races().get(p.owner as usize).copied().unwrap_or(0),
             surface: p.surface,
             map: p.colony_map as usize,
             buildings,
@@ -348,6 +351,11 @@ pub struct Camera {
     pub pitch: f32,
     pub rotate: f32,
     pub size: [f32; 2],
+    /// An earthquake's jolt added to the pivot after the clamp (`ShowColony` exe 0x49f130: `rand() % 31 − 15` for x,
+    /// then for y, while `Colony_foldrenges` is the shown planet); zero otherwise.
+    pub shake: [f32; 2],
+    /// `TankView`'s eye and target this frame ([`CameraKeys::tank`]): they replace the block above (row 131).
+    pub tank: Option<Eye>,
 }
 
 /// Where the camera stands and looks, `(h, x, y)`.
@@ -378,15 +386,18 @@ fn dot(p: V3, q: V3) -> f32 {
 
 impl Camera {
     pub fn from_saved(s: &SavedCamera, size: [f32; 2]) -> Self {
-        Self { x: s.x, y: s.y, zoom: s.zoom, pitch: s.pitch, rotate: s.rotate, size }
+        Self { x: s.x, y: s.y, zoom: s.zoom, pitch: s.pitch, rotate: s.rotate, size, shake: [0.0; 2], tank: None }
     }
 
     /// `ShowColony`'s camera block: pivot `(0, XStart, −YStart)`, eye at `Zoom − 800` from it along pitch and
     /// rotation, clamped to ±3900 (`MaximizeCamera`), kept 100 above the ground under it.
     pub fn eye(&self, map: &GroundMap) -> Eye {
+        if let Some(t) = self.tank {
+            return t;
+        }
         let x = self.x.clamp(-3800.0, 3800.0);
         let y = self.y.clamp(-3800.0, 3800.0);
-        let mut target = [0.0, x, -y];
+        let mut target = [0.0, x + self.shake[0], self.shake[1] - y];
         let r = self.zoom - 800.0;
         let (sp, cp) = ((self.pitch as f64).sin(), (self.pitch as f64).cos());
         let h = (r as f64 * cp) as f32;
@@ -589,8 +600,12 @@ pub struct CameraKeys {
     rotate_speed: f32,
     zoom_speed: f32,
     pitch_speed: f32,
-    /// `NextCameraMode` (0x998248); mode 3 is `TankView` [not ported: the normal camera].
+    /// `NextCameraMode` (0x998248); mode 3 sets `TankView` (0x9963a3), which the first frame with nothing to follow
+    /// clears (the mode stays 3).
     pub mode: i32,
+    pub tank_view: bool,
+    /// `TankViewLastAngle` (0x8ec9f0, −1000 at start = `None`, never reset).
+    tank_last: Option<f32>,
     /// `ColonyTargetZoom/Pitch` and `TransfRotFrame` while `TransfRot`.
     tween: Option<(f32, f32, i32)>,
     /// `Colony_Autoscroll`'s `xSpeed/ySpeed` (0xa3eb68/6c).
@@ -629,6 +644,7 @@ impl CameraKeys {
     /// `c`: the next preset; zoom and pitch glide there over 15 drawn frames.
     pub fn preset(&mut self) {
         self.mode = if self.mode + 1 > 3 { 0 } else { self.mode + 1 };
+        self.tank_view = self.mode == 3;
         if let Some(&(z, p)) = PRESETS.get(self.mode as usize) {
             self.tween = Some((z, p, 0));
         }
@@ -644,6 +660,38 @@ impl CameraKeys {
                 self.tween = None;
             }
         }
+    }
+
+    /// `ShowColony`'s tank camera (exe 0x49f130, asm 0x4a097e..0x4a0be4), once per drawn frame: while `TankView`, the
+    /// first selected unit by slot (not `NOT_PLACED`, not `NOT_COUNTED`) is followed from 130 behind and 60 above,
+    /// its heading turned at most 0.025 rad a frame; the normal block, its clamps and the quake's jolt are skipped,
+    /// keys and edge scroll still move the hidden camera. No selected unit: `TankView` off, the normal camera.
+    pub fn tank(&mut self, cam: &mut Camera, units: &[UnitView], selected: &std::collections::BTreeSet<usize>) {
+        cam.tank = None;
+        if !self.tank_view {
+            return;
+        }
+        let ok = |u: &&UnitView| selected.contains(&u.slot) && u.flags & flag::NOT_PLACED == 0;
+        let mut chosen: Vec<&UnitView> = units.iter().filter(ok).collect();
+        chosen.sort_by_key(|u| u.slot);
+        let Some(u) = chosen.into_iter().find(|u| u.flags & flag::NOT_COUNTED == 0) else {
+            self.tank_view = false;
+            return;
+        };
+        // `a = (f32)(−heading − π/2)` in f64; a step of `d/|d|·0.025` (f64) while `|d| ≥ 0.025`.
+        let want = (-(u.angle as f64) - std::f64::consts::FRAC_PI_2) as f32;
+        let a = match self.tank_last {
+            Some(last) => {
+                let d = want - last;
+                let ad = (d as f64).abs() as f32;
+                if ad as f64 >= 0.025 { (last as f64 + (d / ad) as f64 * 0.025) as f32 } else { want }
+            }
+            None => want,
+        };
+        self.tank_last = Some(a);
+        let [h, x, y] = u.pos;
+        let (sa, ca) = ((a as f64).sin() as f32, (a as f64).cos() as f32);
+        cam.tank = Some(Eye { eye: [h - 90.0, sa * 130.0 + x, ca * 130.0 + y], target: [h - 30.0, x, y] });
     }
 
     /// `Frissit2_Colony`'s camera part (exe 0x477dc0), one 100 Hz UI tick, f32.
@@ -739,8 +787,307 @@ fn maximize(eye: &mut V3, pivot: &mut V3, m: f32) {
 struct Drawn {
     mesh: MeshId,
     draws: Vec<(std::ops::Range<u32>, TexId, bool, Shadow)>,
+    /// Per draw, the building slot and level of detail it belongs to (empty: always drawn; [`ColonyScene::lods`]).
+    lods: Vec<Option<(usize, usize)>>,
     /// Drawn only when the human sees inside (`Some(true)`) or only when not (`Some(false)`).
     when: Option<bool>,
+}
+
+/// An environment-mapped part (property 0x4000 with 0x8000: `Kocka` hands it to `vagashatarkirak`, ELF 0x606c90 /
+/// exe 0x5395d0; re/screens/render.md §2.5): its baked, lit world vertices with their file normals and the inverse of
+/// its world matrix; [`scene::env_uv`] gives the texcoords from the eye every frame. One pass, the texture bound by
+/// [`env_texture`], no shadow-receive and no self-illumination pass.
+/// Parts of a building under construction come this way too, environment-mapped or not (`env`), cut every frame at
+/// [`cut_height`] (`cut`: the building's slot and bottom height).
+struct EnvPart {
+    verts: Vec<MeshVertex>,
+    normals: Vec<V3>,
+    inv: M3,
+    tex: TexId,
+    glass: bool,
+    shadow: Shadow,
+    when: Option<bool>,
+    env: bool,
+    cut: Option<(usize, f32)>,
+    /// A blinking building's slot ([`blinks`]): its transparency follows the counter.
+    blink: Option<usize>,
+    /// The building slot and level of detail it belongs to ([`ColonyScene::lods`]).
+    lod: Option<(usize, usize)>,
+}
+
+/// `ShowColony` (exe 0x49f130, asm 0x49f3a0..0x49f45b) for a building under construction (`+8` work left > 0), every
+/// frame: `frac = 1 − left/total` (f32, not below 0; `total = EpuletekLeiro[kind]+4 · 50`, `/1.5` truncated for race
+/// 4), and the cut `bottom − (f32)(apos·frac)·2.1 + apos` in f64, kept as f32 (`setvagashatar` exe 0x4542e0), `apos` =
+/// `allvanypoziciok[kind − 1]`, `bottom` the slot's `+0x14`. On the height axis (more negative = higher): at frac 0
+/// the cut lies `apos` below the bottom, at 1 `1.1·apos` above it. `None` for a finished building.
+pub fn cut_height(rules: &ig2_rules::Rules, race: u8, kind: u8, left: u16, bottom: f32) -> Option<f32> {
+    let frac = built_fraction(rules, race, kind, left)?;
+    let apos = rules.scaffold_heights.get((kind as usize).wrapping_sub(1)).copied().unwrap_or(0.0);
+    Some((bottom as f64 - (apos * frac) as f64 * 2.1 + apos as f64) as f32)
+}
+
+/// `SetLangPlaces` (exe 0x49bd50) for one placed building (`verts` its baked triangles): the chimneys, the child
+/// meshes `fust1`, `fust2`, … up to the first missing one, at their nodes' world positions (`GetObjWorldSpacePos`),
+/// and the three damage points: where a vertical line (from −1500 down to 15000) through (gx + 30, gz − 25),
+/// (gx − 30, gz + 30) and (gx − 30, gz − 30) first meets the building (`vonalmetszes`), `(gx, gz)` its slot's
+/// `Grid2Real` without the odd-size half cells.
+fn smoke_places(m: &Model, xf: &Transform, b: &BuildingView, verts: &[MeshVertex], out: &mut crate::colony_smoke::Emitters) {
+    for k in 1.. {
+        let name = format!("fust{k}");
+        let Some(n) = m.nodes.iter().find(|n| n.path.rsplit('/').next().is_some_and(|c| c.eq_ignore_ascii_case(&name))) else { break };
+        out.chimneys.push((b.slot, xf.point(n.at)));
+    }
+    let (gx, gz) = grid_to_real(b.x, b.y);
+    let hit = |y: f32, z: f32| -> Option<V3> {
+        let mut best: Option<f32> = None;
+        for t in verts.chunks_exact(3) {
+            let (a, b, c) = (t[0].pos, t[1].pos, t[2].pos);
+            let d = (b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2]);
+            if d.abs() < 1e-9 {
+                continue;
+            }
+            let u = ((y - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (z - a[2])) / d;
+            let v = ((b[1] - a[1]) * (z - a[2]) - (y - a[1]) * (b[2] - a[2])) / d;
+            if u < 0.0 || v < 0.0 || u + v > 1.0 {
+                continue;
+            }
+            let h = a[0] + u * (b[0] - a[0]) + v * (c[0] - a[0]);
+            if (-1500.0..=15000.0).contains(&h) && best.is_none_or(|x| h < x) {
+                best = Some(h);
+            }
+        }
+        best.map(|h| [h, y, z])
+    };
+    out.damage.push((b.slot, [hit(gx + 30.0, gz - 25.0), hit(gx - 30.0, gz + 30.0), hit(gx - 30.0, gz - 30.0)]));
+}
+
+/// [`cut_height`]'s `frac`: the share of the work done, `None` once finished.
+fn built_fraction(rules: &ig2_rules::Rules, race: u8, kind: u8, left: u16) -> Option<f32> {
+    if left == 0 {
+        return None;
+    }
+    let mut total = rules.buildings.get(kind as usize).map_or(0, |b| b.build_work) * 50;
+    if race == 4 {
+        total = (total as f64 / 1.5) as i32;
+    }
+    Some((1.0 - left as f32 / total as f32).max(0.0))
+}
+
+/// The scaffolding of a building under construction (`EpuletAllvanyok::AddAllvanyok` exe 0x4578c0, `ModifyAllvany`
+/// exe 0x48b390): `step = (int)(frac·10)`; one box a footprint cell (rows from `(int)(y − h/2 + oy)`, columns from
+/// `(int)(x − w/2 + ox)` while below the far edge, `ox`/`oy` the odd-size half cells) at level
+/// `min(step, magas[kind − 1][row·10 + col])`, placed at `(allvanypoziciok[kind − 1] + (int)bottom, Grid2Real(cx + 0.5,
+/// cy + 0.5))`. The exe adds them as the work goes on and never lowers a level, which is the same as recomputing.
+/// Returns `(level, position)`; the box is `allvany<level + 1>.xvb` ([`ColonyScene::scaffold_mesh`]).
+pub fn scaffolds(rules: &ig2_rules::Rules, race: u8, b: &BuildingView, bottom: f32) -> Vec<(usize, V3)> {
+    let Some(frac) = built_fraction(rules, race, b.kind, b.work_left) else { return Vec::new() };
+    let step = (frac * 10.0) as usize;
+    let k = b.kind as usize;
+    let (Some(&(w, h)), Some(mask), Some(&apos)) = (rules.building_footprints.get(k), rules.scaffold_masks.get(k.wrapping_sub(1)), rules.scaffold_heights.get(k.wrapping_sub(1))) else {
+        return Vec::new();
+    };
+    let ox = if w % 2 != 0 { 0.5 } else { 0.0 };
+    let oy = if h % 2 != 0 { -0.5 } else { 0.0 };
+    let (x, y) = (b.x as f64, b.y as f64);
+    let (x0, x1) = ((x - w as f64 / 2.0 + ox) as i32, x + w as f64 / 2.0 + ox);
+    let (y0, y1) = ((y - h as f64 / 2.0 + oy) as i32, y + h as f64 / 2.0 + oy);
+    let height = apos + (bottom as i32) as f32;
+    let mut out = Vec::new();
+    for (row, cy) in (y0..).take_while(|&c| (c as f64) < y1).enumerate() {
+        for (col, cx) in (x0..).take_while(|&c| (c as f64) < x1).enumerate() {
+            let level = step.min(mask.get(row * 10 + col).copied().unwrap_or(0) as usize);
+            let (gx, gz) = grid_to_real(cx as f32 + 0.5, cy as f32 + 0.5);
+            out.push((level, [height, gx, gz]));
+        }
+    }
+    out
+}
+
+/// `clippolygonvagashatar` (exe 0x52e410, `cliptlvertexvh` 0x52ea60): the part of a triangle list at or below the
+/// cut (`h ≥ cut` on the height axis) kept, the crossing triangles split at `t = (cut − h_a)/(h_b − h_a)` with the
+/// points, texcoords and colours lerped; no cap over the opening.
+fn clip_below(tris: &[MeshVertex], cut: f32, out: &mut Vec<MeshVertex>) {
+    let lerp = |a: &MeshVertex, b: &MeshVertex| {
+        let t = (cut - a.pos[0]) / (b.pos[0] - a.pos[0]);
+        let l = |x: f32, y: f32| x + (y - x) * t;
+        MeshVertex {
+            pos: std::array::from_fn(|k| l(a.pos[k], b.pos[k])),
+            normal: std::array::from_fn(|k| l(a.normal[k], b.normal[k])),
+            uv: std::array::from_fn(|k| l(a.uv[k], b.uv[k])),
+            color: std::array::from_fn(|k| l(a.color[k], b.color[k])),
+        }
+    };
+    for t in tris.chunks_exact(3) {
+        let inside: Vec<bool> = t.iter().map(|v| v.pos[0] >= cut).collect();
+        match inside.iter().filter(|&&x| x).count() {
+            3 => out.extend_from_slice(t),
+            0 => {}
+            n => {
+                // Walk the triangle's edges (Sutherland–Hodgman) and fan the polygon left.
+                let mut poly = Vec::with_capacity(4);
+                for i in 0..3 {
+                    let (a, b) = (&t[i], &t[(i + 1) % 3]);
+                    if inside[i] {
+                        poly.push(*a);
+                    }
+                    if inside[i] != inside[(i + 1) % 3] {
+                        poly.push(lerp(a, b));
+                    }
+                }
+                debug_assert_eq!(poly.len(), if n == 2 { 4 } else { 3 });
+                for k in 1..poly.len() - 1 {
+                    out.extend([poly[0], poly[k], poly[k + 1]]);
+                }
+            }
+        }
+    }
+}
+
+/// `Init3dColony` (`PropertiesOn(…, 0xc000)`, exe 0x47e11e/0x47e229) and `ShowColony` (the panel's and the build
+/// cursor's copies, exe 0x49fa3b..0x49fdeb): a building's `_B_` and `_C_` children are environment-mapped.
+pub(crate) fn building_env(p: &scene::Part) -> bool {
+    let l = p.path.to_ascii_lowercase();
+    l.contains("_b_") || l.contains("_c_")
+}
+
+/// Property 0x100 without 1 (the terrain's trees, the Park): `fenyekszamolasa` (exe 0x52f190) lights the vertices flat,
+/// without normals: the ambient lights' sum plus each parallel light's colour · `shade[1024]` (205) >> 8; on the colony
+/// (`SetEnvironment`: ambient 0x1e1e1e, parallel 0xc8c8c8) 0x1e + (0xc8·205 >> 8) = 190 a channel.
+const FLAT_LIGHT: f32 = (0x1e + ((0xc8 * 205) >> 8)) as f32 / 255.0;
+
+/// A building's scaffolding as drawn: its slot, grid position and boxes (level, base).
+type Scaffolding = (usize, (f32, f32), Vec<(usize, V3)>);
+/// A scaffolding box to draw: level, base, and the falling one's axis and angle.
+type ScaffoldBox = (usize, V3, Option<(V3, f32)>);
+
+/// A scaffolding box falling over (`EpuletAllvany` after `DoljLe`): level, base, axis, the angle and its speed, the
+/// frames still to wait, the angle drawn this frame.
+struct Falling {
+    level: usize,
+    at: V3,
+    axis: V3,
+    angle: f32,
+    vel: f32,
+    delay: i32,
+    drawn: f32,
+}
+
+impl Falling {
+    /// One UI tick of `EpuletAllvany::Refresh`; `false` once the box is gone.
+    fn tick(&mut self) -> bool {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return true;
+        }
+        self.drawn = self.angle;
+        self.angle -= self.vel;
+        self.vel += 0.005;
+        self.angle > -std::f32::consts::FRAC_PI_2
+    }
+}
+
+/// The texture an environment-mapped part shows: `changeaktmatarialself` (ELF 0x610ff0 / exe 0x52dda0) binds the batch
+/// material's `texture2`, which `loadmaterial` (exe 0x534470) swaps for the sky's (`HAmp`'s first material's texture)
+/// when it is `reflec.bmp` or `fenyek_2.bmp`; without one the texture bound before stays: for `_B_`/`_C_` the sky's
+/// too (`ChangeTexture`, exe 0x451af0), else the part's own.
+pub(crate) fn env_texture(install: &Install, p: &scene::Part, sky: Option<&str>, building: bool) -> Option<String> {
+    match p.texture2_name.as_str() {
+        "reflec.bmp" | "fenyek_2.bmp" => sky.map(str::to_owned),
+        "" if building => sky.map(str::to_owned),
+        "" => p.texture.clone(),
+        t => install.resolve_texture("textures/colony/", t).or_else(|| p.texture.clone()),
+    }
+}
+
+/// [`scene::env_uv`] over a part's baked vertices (`out`, in the order of `p.verts`), its root placed by `world`.
+pub(crate) fn env_map(p: &scene::Part, world: &M3, eye: V3, out: &mut [MeshVertex]) {
+    let Some(inv) = scene::inverse(&scene::mul(world, &p.matrix)) else { return };
+    for (o, v) in out.iter_mut().zip(&p.verts) {
+        o.uv = scene::env_uv(&inv, eye, o.pos, v.fnormal);
+    }
+}
+
+/// One of the buildings' particles (`ParticleOwner`) as drawn: centre, half size (world units), colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Particle {
+    pub at: V3,
+    pub size: f32,
+    pub rgb: [f32; 3],
+    pub flare: bool,
+}
+
+/// A stand-in for the `rand()` draws of the particles (the exe takes them from the shared libc stream).
+fn pick(seed: u32, n: u32) -> u32 {
+    let mut x = seed.wrapping_mul(0x9e37_79b9) ^ 0x5bd1_e995;
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2c1b_3c6d);
+    x ^= x >> 12;
+    x % n
+}
+
+/// `AddBuildingSpecEffect` (exe 0x457dd0, ELF 0x4c1380; with `OptionsKellSpecFX`) and their step in `WF::Refresh2`
+/// (exe 0x48ce10, ELF 0x489170), drawn by `DrawParticles` (exe 0x472800) through `ParticleOwner::Draw` (exe 0x526f80):
+/// screen-aligned quads at the building's centre `(H, gx, gz)` (`H` its bottom height `+0x14`), added (`ONE`/`ONE`),
+/// depth-tested without writing it, unfogged; the colour `c·(255 − fade) >> 8`. Only for finished, working buildings
+/// (`+0x19` bit 0 set, bit 5 clear) on a planet the human sees inside. The positions step every fifth UI tick
+/// (`(int)ColonyCounter % 5 == 0`, `ColonyCounter` = `counter`).
+/// - kind 53 (the solar plant): a `flare.bmp` (owner B, type 0xc) at `H − 30`, half size `20 + rand % 10` drawn anew
+///   each step, white; and 16 `rcloud.bmp` (owner A, type 0xd, colour (0x12, 0x63, 0x8b) fade 0x40, half size
+///   `5 + rand % 2`) circling it: `f = sin(i/31)·0.15 + 1`, angle `i + counter/(f·60)`, radius `f·15`;
+/// - kind 52: 32 `rcloud.bmp` (type 0xb, colour `(255 − rand % 100, 163 − rand % 130, rand % 50)`, half size
+///   `(rand % 10)/2·2 + 10`) at `H − 10` swinging `sin(i + counter/60)·45` across.
+///
+/// `i` counts owner A's particles in the order the buildings were added. The `rand()` draws are stand-ins.
+pub fn building_particles(buildings: &[BuildingView], at: &[(usize, V3)], counter: f32) -> Vec<Particle> {
+    let cc = ((counter as i32).div_euclid(5) * 5) as f32;
+    let step = (counter as i32).div_euclid(5) as u32;
+    let mut out = Vec::new();
+    let mut i = 0u32;
+    for b in buildings.iter().filter(|b| b.kind == 52 || b.kind == 53) {
+        let Some(&(_, t)) = at.iter().find(|(s, _)| *s == b.slot) else { continue };
+        let (h, gx, gz) = (t[0] + 1.0, t[1], t[2]);
+        let on = b.work_left == 0 && b.flags & 1 != 0 && b.flags & 0x20 == 0;
+        let seed = b.slot as u32 * 64;
+        if b.kind == 53 {
+            if on {
+                out.push(Particle { at: [h - 30.0, gx, gz], size: (20 + pick(seed ^ step.wrapping_mul(7919), 10)) as f32, rgb: [254.0 / 255.0; 3], flare: true });
+            }
+            for k in 0..16 {
+                let f = ((i as f64 / 31.0).sin() * 0.15 + 1.0) as f32;
+                let ang = (i as f64 + (cc / (f * 60.0)) as f64) as f32;
+                if on {
+                    let r = f * 15.0;
+                    let size = (5 + pick(seed + k, 2)) as f32;
+                    out.push(Particle { at: [h - 30.0, gx + ang.sin() * r, gz + ang.cos() * r], size, rgb: [13.0 / 255.0, 73.0 / 255.0, 103.0 / 255.0], flare: false });
+                }
+                i += 1;
+            }
+        } else {
+            for k in 0..32 {
+                if on {
+                    let s = seed + k * 8;
+                    let rgb = [(255 - pick(s, 100)) as f32, (163 - pick(s + 1, 130)) as f32, pick(s + 2, 50) as f32].map(|c| (c * 255.0 / 256.0).floor() / 255.0);
+                    let size = (pick(s + 3, 10) / 2 * 2 + 10) as f32;
+                    let x = (i as f32 + cc / 60.0).sin() * 45.0;
+                    out.push(Particle { at: [h - 10.0, gx + x, gz], size, rgb, flare: false });
+                }
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// A quad facing the screen (the camera's right and up rows) around `at`, half size `h`: two triangles, prelit.
+fn billboard(basis: &ViewBasis, at: V3, h: f32, rgb: [f32; 3]) -> [MeshVertex; 6] {
+    let (a, b) = (basis.rows[0], basis.rows[1]);
+    let q = |sx: f32, sy: f32, u: f32, v: f32| MeshVertex {
+        pos: std::array::from_fn(|k| at[k] + (a[k] * sx + b[k] * sy) * h),
+        normal: [0.0; 3],
+        uv: [u, v],
+        color: [rgb[0], rgb[1], rgb[2], 1.0],
+    };
+    [q(-1.0, 1.0, 0.0, 0.0), q(1.0, 1.0, 1.0, 0.0), q(1.0, -1.0, 1.0, 1.0), q(-1.0, 1.0, 0.0, 0.0), q(1.0, -1.0, 1.0, 1.0), q(-1.0, -1.0, 0.0, 1.0)]
 }
 
 /// A model's parts with their textures resolved, for per-frame placement (units).
@@ -752,6 +1099,28 @@ struct UnitMesh {
 /// One planet's colony scene: what `Init3dColony` loads, uploaded once.
 pub struct ColonyScene {
     statics: Vec<Drawn>,
+    /// The environment-mapped parts, drawn every frame with texcoords from the eye ([`EnvPart`]).
+    env: Vec<EnvPart>,
+    /// The buildings' smoke ([`crate::colony_smoke`]) and where it comes from.
+    smoke: crate::colony_smoke::Smoke,
+    emitters: crate::colony_smoke::Emitters,
+    /// Snow or rain ([`crate::colony_weather`]), moved once a drawn frame.
+    weather: Option<crate::colony_weather::Weather>,
+    /// The scaffolding drawn last frame by slot (the building's grid position and its boxes), and the boxes of
+    /// finished or demolished buildings still falling ([`ColonyScene::carry_from`]).
+    last_scaffolds: Vec<Scaffolding>,
+    falling: Vec<Falling>,
+    /// The `ColonyCounter` the falling boxes were last stepped to, and their `rand()` stand-in.
+    fall_counter: Option<f32>,
+    fall_rand: crate::colony_weather::CRand,
+    /// Per building: slot, `|M·(1, 1, 1)|²` of its placement (world units), its position and its number of levels.
+    lods: Vec<(usize, f32, V3, usize)>,
+    /// The buildings' finest level of detail by kind, which `getbottomvertex` measures ([`bottom_vertex`]).
+    finest: HashMap<u8, Option<Model>>,
+    /// `allvany1..10.xvb` (`EpuletAllvanyok::Init` exe 0x47f330), loaded on first use.
+    scaffold_models: Vec<Option<Option<UnitMesh>>>,
+    /// The sky's texture (`HAmp`'s first material's `texture`, resolved): what `reflec.bmp`/`fenyek_2.bmp` become.
+    pub sky: Option<String>,
     textures: HashMap<String, TexId>,
     white: TexId,
     units: HashMap<(usize, i32), Option<UnitMesh>>,
@@ -762,7 +1131,7 @@ pub struct ColonyScene {
     /// The radar's picture: the terrain seen from straight above (re/screens/hud.md §3.1).
     pub radar: Option<TexId>,
     /// What the baked buildings were made from: `(slot, kind, x, y, finished)` ([`ColonyScene::stale`]).
-    key: Vec<(usize, u8, i32, i32, bool)>,
+    key: Vec<(usize, u8, i32, i32, bool, bool)>,
     /// Building models for the build cursor (`tempepulet`), by kind.
     buildings: HashMap<u8, Option<UnitMesh>>,
     /// `hordozo.xvb` (`WF::LoadMesh` exe 0x483f70), loaded on the first dropship.
@@ -833,15 +1202,22 @@ impl ColonyScene {
                     (rg, t, matches!(look, Look::Glass(_)), role(&model.parts[pi].path.to_ascii_lowercase()))
                 })
                 .collect();
-            Drawn { mesh, draws, when: None }
+            Drawn { mesh, draws, when: None, lods: Vec::new() }
         };
 
         // The background dome (`Hatterek[WF+0xa04]`, `AddToScene(…, 11)`, scaled (1, 1, 1.1), moved to h = −3000).
         let bg = backgrounds.get(s.background.max(0) as usize).or(backgrounds.first());
         let fog = bg.map_or([0.0; 3], |b| std::array::from_fn(|k| b.fog.get(k).copied().unwrap_or(0) as f32 / 255.0));
+        // `HAmp` (exe 0xde0298), loaded before the buildings: its first material's texture is the environment map.
+        let mut sky_name = String::new();
+        let mut sky = None;
         if let Some(b) = bg {
             match Model::load(install, "vector/colony/", &b.model, "textures/colony/") {
                 Ok(m) => {
+                    if let Some(p) = m.parts.first() {
+                        sky_name = p.texture_name.clone();
+                        sky = p.texture.clone();
+                    }
                     let xf = Placement::add_to_scene(m.origin, 11.0).scaled([1.0, 1.0, 1.1]).world((0.0, HALF_PI, 0.0), [-3000.0, 0.0, 0.0]);
                     let (mut v, mut rg) = (Vec::new(), Vec::new());
                     bake(&m, &xf, [1.0; 3], 0.0, &mut v, &mut rg);
@@ -864,60 +1240,141 @@ impl ColonyScene {
         let xf = rec.scaled([4096.0 / raw_max_x; 3]).world((0.0, HALF_PI, 0.0), [gm.base, 0.0, 0.0]);
         let (mut v, mut rg) = (Vec::new(), Vec::new());
         bake(&terrain, &xf, [1.0; 3], 1.0, &mut v, &mut rg);
+        // The trees (`fak*`: `Init3dColony` clears property 1 and sets 0x100, 0x200, 0x20, 0x10000): lit flat.
+        let flat = FLAT_LIGHT;
+        for (range, pi, _) in &rg {
+            if terrain.parts[*pi].path.to_ascii_lowercase().contains("fak") {
+                for x in &mut v[range.start as usize..range.end as usize] {
+                    x.normal = [0.0; 3];
+                    x.color = [flat, flat, flat, x.color[3]];
+                }
+            }
+        }
         // The shadow map (re/screens/render.md §4): the terrain receives (`PropertiesOn(terep, 0x800000)`), its objects
         // `tt` and trees `fak` cast instead (`Init3dColony`, with `OptionsKellArnyek`, `lehetarnyek` and
         // `kelltereptargyarnyek` on).
+        // Environment-mapped (`Init3dColony`): the ponds `tavak` on planet types 1 and 5 (0xc000, transparency 0.28,
+        // `ChangeSelfTexture` exe 0x451ab0: the sky's texture name with its first letter `v`), the water `VIZ` (0xc008,
+        // transparency 0.63, its own `texture2`'s swap).
+        let mut env = Vec::new();
+        let pond = (s.surface == 1 || s.surface == 5).then(|| {
+            let mut n = sky_name.clone();
+            n.replace_range(..n.chars().next().map_or(0, char::len_utf8), "v");
+            install.resolve_texture("textures/colony/", &n)
+        });
+        let terrain_env: Vec<(usize, Option<String>)> = rg
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (_, pi, _))| {
+                let p = &terrain.parts[*pi];
+                let l = p.path.to_ascii_lowercase();
+                match &pond {
+                    Some(t) if l.contains("tavak") => Some((i, t.clone())),
+                    _ if l.contains("viz") => Some((i, env_texture(install, p, sky.as_deref(), false))),
+                    _ => None,
+                }
+            })
+            .collect();
+        for (i, tex) in &terrain_env {
+            let (range, pi, look) = &rg[*i];
+            let p = &terrain.parts[*pi];
+            let inv = scene::inverse(&scene::mul(&xf.matrix, &p.matrix)).unwrap_or(scene::IDENTITY);
+            let tex = texture(r, install, &mut textures, white, tex.as_deref());
+            env.push(EnvPart { verts: v[range.start as usize..range.end as usize].to_vec(), normals: p.verts.iter().map(|x| x.fnormal).collect(), inv, tex, glass: matches!(look, Look::Glass(_)), shadow: Shadow::None, when: None, env: true, cut: None, blink: None, lod: None });
+        }
         statics.push(upload(r, &mut textures, &terrain, v, rg, &|path| if path.contains("tt") || path.contains("fak") { Shadow::Cast } else { Shadow::Receive }));
         let radar = radar_picture(r, statics.last().unwrap());
+        // The radar's picture keeps the water; the scene draws it through `env`.
+        let td = &mut statics.last_mut().unwrap().draws;
+        for (i, _) in terrain_env.iter().rev() {
+            td.remove(*i);
+        }
 
         // The buildings (spec §3): `AddToSceneGenesis(model, scale/1024/1000)`, turned a quarter, on the ground.
-        let mut models: HashMap<u8, Option<Model>> = HashMap::new();
-        let (mut v, mut rg, mut owners) = (Vec::new(), Vec::new(), Vec::new());
+        let mut models: HashMap<u8, Option<Vec<Model>>> = HashMap::new();
+        let mut lods = Vec::new();
+        let mut finest: HashMap<u8, Option<Model>> = HashMap::new();
+        let (mut v, mut rg, mut owners, mut worlds, mut cuts) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut blink_slots = Vec::new();
+        let mut range_lods: Vec<(usize, usize)> = Vec::new();
         let mut building_at = Vec::new();
+        let mut emitters = crate::colony_smoke::Emitters::default();
         for b in &s.buildings {
             let Some(bm) = rules.building_models.get(b.kind as usize) else { continue };
-            let m = models.entry(b.kind).or_insert_with(|| {
-                Model::load(install, "vector/colony/", &bm.model, "textures/colony/")
-                    .map(|mut m| {
-                        m.set_look("_a_", Look::Glass(0.4));
-                        m.set_look("_c_", Look::Glass(0.4));
-                        m
-                    })
-                    .map_err(|e| eprintln!("ig2-client: building {}: {e}", b.kind))
-                    .ok()
-            });
-            let Some(m) = m.as_ref() else { continue };
+            let levels = models.entry(b.kind).or_insert_with(|| building_levels(install, &bm.model));
+            let Some(levels) = levels.as_ref() else { continue };
+            let m = &levels[0];
             let (w, h) = rules.building_footprints.get(b.kind as usize).copied().unwrap_or((0, 0));
             let (ox, oy) = (if w % 2 != 0 { 0.5 } else { 0.0 }, if h % 2 != 0 { -0.5 } else { 0.0 });
             let (wx, wy) = grid_to_real(b.x + ox, b.y + oy);
             let rec = Placement::genesis(m.origin, bm.scale / 1024.0 / 1000.0);
             let rel = rec.world((0.0, HALF_PI, 0.0), [0.0; 3]);
-            let bottom = bottom_vertex(m, &rel, gm, wx, wy);
+            let fm = finest.entry(b.kind).or_insert_with(|| load_lod_finest(install, "vector/colony/", &bm.model, "textures/colony/"));
+            let bottom = bottom_vertex(fm.as_ref().unwrap_or(m), &rel, gm, wx, wy);
             let xf = Transform { translation: [bottom - 1.0, wx, wy], ..rel };
             building_at.push((b.slot, xf.translation));
-            // Under construction: drawn see-through until finished (the original cuts the model at the built height
-            // and puts up scaffolding: `SetEpuletVagas`, `EpuletAllvanyok`).
-            let tint = if b.work_left > 0 { [0.6, 0.75, 1.0] } else { [1.0; 3] };
-            let before = rg.len();
-            bake(m, &xf, tint, 1.0, &mut v, &mut rg);
-            if b.work_left > 0 {
-                for x in &mut rg[before..] {
-                    x.2 = Look::Glass(0.45);
+            // Under construction: cut every frame at the built height ([`cut_height`], property 0x1000000).
+            let (before, vstart) = (rg.len(), v.len());
+            // Every level of detail baked; each frame draws the one `Kocka` picks ([`lod_pick`]).
+            let mut level_of = Vec::new();
+            let mut level0_end = 0;
+            for (k, lm) in levels.iter().enumerate() {
+                let n = rg.len();
+                bake(lm, &xf, [1.0; 3], 1.0, &mut v, &mut rg);
+                level_of.extend(std::iter::repeat_n(k, rg.len() - n));
+                if k == 0 {
+                    level0_end = v.len();
                 }
             }
+            // The head's record matrix is `R·diag(e)·s`, `e` the reach of the chain's vertices per axis when
+            // `BoxUjraszamol` ran (it rewrites the half-extents; the drawn size stays `origin·s`), else the header's [obs: probes/lod_colony.js:
+            // `npv0` (3040, 3040, 3040) records (100.32, 100.32, 31.25), its z reach 947]; `R` drops out of the length.
+            let k = bm.scale / 1024.0 / 1000.0 * 1024.0;
+            // (the recount runs only when every level allows it: `kemv2`'s ten frames keep `kemv0`'s header).
+            let e = if levels.iter().all(|m| m.recounted) { levels.iter().map(Model::reach).fold([0.0f32; 3], |a, r| std::array::from_fn(|i| a[i].max(r[i]))) } else { levels[0].origin };
+            let m1 = e.iter().map(|x| (x * k) * (x * k)).sum::<f32>();
+            lods.push((b.slot, m1, xf.translation, levels.len()));
+            // The Park (kind 10): `Init3dColony` sets 0x100 and 0x200 and clears 1 on the whole model, lit flat as the
+            // terrain's trees ([`FLAT_LIGHT`]).
+            if b.kind == 10 {
+                for x in &mut v[vstart..] {
+                    x.normal = [0.0; 3];
+                    x.color = [FLAT_LIGHT, FLAT_LIGHT, FLAT_LIGHT, x.color[3]];
+                }
+            }
+            // The slot's `+0x14` is `getbottomvertex`'s height, one below the model's placement.
+            cuts.extend(std::iter::repeat_n((b.work_left > 0).then_some((b.slot, xf.translation[0] + 1.0)), rg.len() - before));
+            smoke_places(m, &xf, b, &v[vstart..level0_end], &mut emitters);
             owners.extend(std::iter::repeat_n(b.kind, rg.len() - before));
+            blink_slots.extend(std::iter::repeat_n(blinks(b).then_some(b.slot), rg.len() - before));
+            worlds.extend(std::iter::repeat_n(xf.matrix, rg.len() - before));
+            range_lods.extend(level_of.into_iter().map(|k| (b.slot, k)));
         }
         if !v.is_empty() {
             let mesh = r.add_mesh(&v);
-            let mut draws = Vec::new();
-            for ((range, pi, look), kind) in rg.into_iter().zip(owners) {
-                let m = models[&kind].as_ref().unwrap();
-                let t = texture(r, install, &mut textures, white, m.parts[pi].texture.as_deref());
-                // A building casts (0x400000), its `+r` parts (the ground plates) receive instead.
-                let role = if m.parts[pi].path.to_ascii_lowercase().contains("+r") { Shadow::Receive } else { Shadow::Cast };
+            let (mut draws, mut draw_lods) = (Vec::new(), Vec::new());
+            for ((((((range, pi, look), kind), world), cut), blink), lod) in rg.into_iter().zip(owners).zip(worlds).zip(cuts).zip(blink_slots).zip(range_lods) {
+                let m = &models[&kind].as_ref().unwrap()[lod.1];
+                let p = &m.parts[pi];
+                // A building casts (0x400000), its `+r` parts (the ground plates) receive instead: `findboxxvb2` (exe
+                // 0x453970) searches the root's own nodes only, so a `+r` mesh inside a child archive (the Park's
+                // `fa` trees) keeps casting.
+                let top = p.path.split('/').find(|c| !c.is_empty()).unwrap_or("").to_ascii_lowercase();
+                let role = if top.contains("+r") { Shadow::Receive } else { Shadow::Cast };
+                let is_env = building_env(p);
+                if is_env || cut.is_some() || blink.is_some() {
+                    let path = if is_env { env_texture(install, p, sky.as_deref(), true) } else { p.texture.clone() };
+                    let t = texture(r, install, &mut textures, white, path.as_deref());
+                    let inv = scene::inverse(&scene::mul(&world, &p.matrix)).unwrap_or(scene::IDENTITY);
+                    let verts = v[range.start as usize..range.end as usize].to_vec();
+                    env.push(EnvPart { verts, normals: p.verts.iter().map(|x| x.fnormal).collect(), inv, tex: t, glass: matches!(look, Look::Glass(_)), shadow: role, when: Some(true), env: is_env, cut, blink, lod: Some(lod) });
+                    continue;
+                }
+                let t = texture(r, install, &mut textures, white, p.texture.as_deref());
                 draws.push((range, t, matches!(look, Look::Glass(_)), role));
+                draw_lods.push(Some(lod));
             }
-            statics.push(Drawn { mesh, draws, when: Some(true) });
+            statics.push(Drawn { mesh, draws, when: Some(true), lods: draw_lods });
         }
         // What the human sees of a planet without satellites: `DrawBuildingBases` (ELF 0x4d2150), a quad of
         // `hazalap.bmp` over each footprint (41 world units per cell), red at half opacity.
@@ -935,7 +1392,7 @@ impl ColonyScene {
         }
         if !v.is_empty() {
             let n = v.len() as u32;
-            statics.push(Drawn { mesh: r.add_mesh(&v), draws: vec![(0..n, base_tex, true, Shadow::None)], when: Some(false) });
+            statics.push(Drawn { mesh: r.add_mesh(&v), draws: vec![(0..n, base_tex, true, Shadow::None)], when: Some(false), lods: Vec::new() });
         }
         // The roads (spec §3.3): `ut<n>.xvb` strips along the buildings' frame cells.
         let mut grid = road_grid(gm, &s.buildings, &rules.building_footprints);
@@ -971,9 +1428,9 @@ impl ColonyScene {
                     (range, t, false, Shadow::Receive)
                 })
                 .collect();
-            statics.push(Drawn { mesh, draws, when: Some(true) });
+            statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, unit_centres: Vec::new() })
+        Ok(Self { statics, env, finest, lods, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, unit_centres: Vec::new() })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -989,7 +1446,7 @@ impl ColonyScene {
 
     /// A building kind's model with its textures (`LoadMaxLevelBox(Building[k − 1])`), for the build cursor.
     fn building_mesh(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: u8) -> Option<&UnitMesh> {
-        let (textures, white) = (&mut self.textures, self.white);
+        let (textures, white, sky) = (&mut self.textures, self.white, &self.sky);
         self.buildings
             .entry(kind)
             .or_insert_with(|| {
@@ -997,6 +1454,66 @@ impl ColonyScene {
                 let mut model = Model::load(install, "vector/colony/", &bm.model, "textures/colony/").map_err(|e| eprintln!("ig2-client: building {kind}: {e}")).ok()?;
                 model.set_look("_a_", Look::Glass(0.4));
                 model.set_look("_c_", Look::Glass(0.4));
+                let texs = model
+                    .parts
+                    .iter()
+                    .map(|p| {
+                        let path = if building_env(p) { env_texture(install, p, sky.as_deref(), true) } else { p.texture.clone() };
+                        texture(r, install, textures, white, path.as_deref())
+                    })
+                    .collect();
+                Some(UnitMesh { model, texs })
+            })
+            .as_ref()
+    }
+
+    /// The scene reloaded after the buildings changed (`stale`): what runs on keeps going (the smoke, the weather, the
+    /// falling boxes), and the scaffolding of a building that was finished or demolished since falls over
+    /// (`EpuletFelepult` exe 0x4741a0 / `Remove3dBuilding` 0x497760 → `DoljLe` 0x470e50).
+    pub fn carry_from(&mut self, old: ColonyScene) {
+        self.smoke = old.smoke;
+        self.weather = old.weather;
+        self.falling = old.falling;
+        self.fall_counter = old.fall_counter;
+        self.fall_rand = old.fall_rand;
+        for (slot, (x, y), boxes) in old.last_scaffolds {
+            if self.key.iter().any(|k| k.0 == slot && !k.4) {
+                continue;
+            }
+            // `EpuletAllvany::Refresh`'s first call: the axis `(0, dz, −dy)/len` from the building's centre
+            // (`Grid2Real(x, y)`, no half cells) to the box, a delay of `rand() % 30` frames.
+            let (cx, cz) = grid_to_real(x, y);
+            for (level, at) in boxes {
+                let (dy, dz) = (cx - at[1], cz - at[2]);
+                let len = ((dy * dy + dz * dz) as f64).sqrt() as f32;
+                let len = if len == 0.0 { 1.0 } else { len };
+                let delay = self.fall_rand.below(30) as i32;
+                self.falling.push(Falling { level, at, axis: [0.0, dz / len, -dy / len], angle: 0.0, vel: 0.0, delay, drawn: 0.0 });
+            }
+        }
+    }
+
+    /// `EpuletAllvany::Refresh` (exe 0x48f920) once a UI tick up to `counter`: the delay runs down, then each tick
+    /// draws the box at the angle and turns it `vel` further, `vel` growing 0.005 a tick; gone at −π/2 ([`Falling::tick`]).
+    fn step_falling(&mut self, counter: f32) {
+        let last = self.fall_counter.unwrap_or(counter);
+        let ticks = (counter - last).max(0.0) as i32;
+        self.fall_counter = Some(counter);
+        for _ in 0..ticks {
+            self.falling.retain_mut(Falling::tick);
+        }
+    }
+
+    /// Scaffolding box `allvany<level + 1>.xvb`: one `Box01` with `allvany.bmp`, alpha-tested (`atlatszodolgok`,
+    /// property 0x200).
+    fn scaffold_mesh(&mut self, r: &mut Renderer, install: &Install, level: usize) -> Option<&UnitMesh> {
+        let (textures, white) = (&mut self.textures, self.white);
+        self.scaffold_models.get_mut(level)?
+            .get_or_insert_with(|| {
+                let mut model = Model::load(install, "vector/colony/", &format!("allvany{}.xvb", level + 1), "textures/colony/").map_err(|e| eprintln!("ig2-client: scaffolding: {e}")).ok()?;
+                for p in &mut model.parts {
+                    p.look = Look::Cutout;
+                }
                 let texs = model.parts.iter().map(|p| texture(r, install, textures, white, p.texture.as_deref())).collect();
                 Some(UnitMesh { model, texs })
             })
@@ -1273,6 +1790,43 @@ fn road_heights(pieces: &mut [RoadPiece], gm: &GroundMap) {
 
 /// `getbottomvertex` (ELF 0x47c750): over the model's lowest vertices (within 0.5 % of its height range), the
 /// largest `ground − vertex height`: how far down the model goes so it stands on the terrain.
+/// A building model's level-of-detail chain (`LoadMaxLevelBox`: the head and its `lod_archive` successors), every
+/// level placed by the head's extents (re/formats/xv.md, LOD), with the glass of `_A_`/`_C_` children.
+fn building_levels(install: &Install, name: &str) -> Option<Vec<Model>> {
+    let chain = scene::lod_chain(install, "vector/colony/", name);
+    let mut levels = Vec::new();
+    for stem in &chain {
+        let Ok(mut m) = Model::load(install, "vector/colony/", &format!("{stem}.xvb"), "textures/colony/").map_err(|e| eprintln!("ig2-client: building {name}: {e}")) else { break };
+        m.set_look("_a_", Look::Glass(0.4));
+        m.set_look("_c_", Look::Glass(0.4));
+        levels.push(m);
+    }
+    let origin = levels.first()?.origin;
+    for m in &mut levels {
+        m.origin = origin;
+    }
+    Some(levels)
+}
+
+/// `Kocka`'s level-of-detail step (exe 0x5281f0, re/formats/xv.md) for a building: `size = |M·(1, 1, 1)|²·(fov/−z)²`
+/// (`m1` = the first factor in world units, `z` the depth of its position, fov 600), and the level climbs while
+/// `valtashatar·30^level < 4·size` with `ShowColony`'s `valtashatar` 5625 [obs: `probes/lod_colony.js`, grwar:17:
+/// kind 26 at depth 2361 has size 3075.7 = 47628·(600/2361)², level 1].
+fn lod_pick(basis: &ViewBasis, m1: f32, at: V3, levels: usize) -> usize {
+    let q = [at[0] - basis.eye[0], at[1] - basis.eye[1], at[2] - basis.eye[2]];
+    let z = dot(basis.rows[2], q).min(-0.001);
+    let size = m1 * (600.0 / -z) * (600.0 / -z);
+    let (mut level, mut thr) = (0, 5625.0f32);
+    while level + 1 < levels && level < 10 && thr < size * 4.0 {
+        level += 1;
+        thr *= 30.0;
+    }
+    level
+}
+
+/// `getbottomvertex` (exe 0x4a89a0, ELF 0x47c750) over `dumpvertexlist`'s vertices of the model placed by `rel` at the
+/// origin: `Kocka2` at depth zero walks the level-of-detail chain to its end, so `m` is the finest level
+/// ([`load_lod_finest`]) [obs: `probes/bottom.js`: kind 26 `kemv0` is measured on `kemv2`, bottom at 106.98].
 fn bottom_vertex(m: &Model, rel: &Transform, map: &GroundMap, x: f32, y: f32) -> f32 {
     let pts: Vec<V3> = m.positions().map(|v| rel.point(v)).collect();
     let (mut lo, mut hi) = (0.0f32, 0.0f32);
@@ -1322,6 +1876,8 @@ pub struct Overlay {
     pub routes: (Vec<(i32, i32)>, f32),
     /// `UpdateRain`'s lightning lights this frame (`villamid`).
     pub flash: bool,
+    /// `ColonyCounter` (exe 0x99823c): the colony screen's UI ticks ([`building_particles`]).
+    pub counter: f32,
 }
 
 /// A flat textured square on the ground (two triangles, `polygons3d`), alpha `alpha` (0..=255).
@@ -1419,13 +1975,138 @@ impl View {
         let Some(gm) = maps.get(curr.map) else { return f };
         let basis = self.camera.basis(gm);
         let mut draws: Vec<MeshDraw> = Vec::new();
+        let picked: Vec<(usize, usize)> = scene.lods.iter().map(|&(slot, m1, at, n)| (slot, lod_pick(&basis, m1, at, n))).collect();
+        let shown = |lod: Option<(usize, usize)>| lod.is_none_or(|(slot, k)| picked.iter().any(|&(s, l)| s == slot && l == k));
         for d in scene.statics.iter().filter(|d| d.when.is_none_or(|w| w == curr.visible)) {
-            for (range, tex, glass, shadow) in &d.draws {
+            for (i, (range, tex, glass, shadow)) in d.draws.iter().enumerate() {
+                if !shown(d.lods.get(i).copied().flatten()) {
+                    continue;
+                }
                 draws.push(MeshDraw { mesh: Some(d.mesh), range: range.clone(), tex: *tex, glass: *glass, cloud: false, shadow: *shadow, video: false, additive: false, depth_write: false });
             }
         }
         // Units (spec §4): the hull at `P + body·(0,0,pivot)` with matrix `body·S`, the weapon on top.
         let mut dynamic = Vec::new();
+        for e in scene.env.iter().filter(|e| e.when.is_none_or(|w| w == curr.visible) && shown(e.lod)) {
+            let base = dynamic.len() as u32;
+            let verts = e.verts.iter().zip(&e.normals).map(|(v, n)| if e.env { MeshVertex { uv: scene::env_uv(&e.inv, basis.eye, v.pos, *n), ..*v } } else { *v });
+            let cut = e.cut.and_then(|(slot, bottom)| {
+                let b = curr.buildings.iter().find(|b| b.slot == slot)?;
+                cut_height(rules, curr.owner_race, b.kind, b.work_left, bottom)
+            });
+            let mut shadow = e.shadow;
+            match cut {
+                Some(c) => {
+                    let all: Vec<MeshVertex> = verts.collect();
+                    if shadow == Shadow::Cast {
+                        dynamic.extend_from_slice(&all);
+                        draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: e.tex, glass: e.glass, cloud: false, shadow: Shadow::CastOnly, video: false, additive: false, depth_write: false });
+                        shadow = Shadow::None;
+                    }
+                    let start = dynamic.len() as u32;
+                    clip_below(&all, c, &mut dynamic);
+                    draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: e.tex, glass: e.glass, cloud: false, shadow, video: false, additive: false, depth_write: false });
+                    continue;
+                }
+                None => dynamic.extend(verts),
+            }
+            // A blinking building: `SetObjTransparency(t)` on the whole model (blended, the depth still written).
+            let blink = e.blink.map(|k| 1.0 - blink_transparency(self.overlay.counter, k));
+            if let Some(a) = blink {
+                for x in &mut dynamic[base as usize..] {
+                    x.color[3] = if e.glass { x.color[3].min(a) } else { a };
+                }
+            }
+            draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: e.tex, glass: e.glass || blink.is_some(), cloud: false, shadow, video: false, additive: false, depth_write: blink.is_some() });
+        }
+        scene.last_scaffolds.clear();
+        for b in curr.buildings.iter().filter(|b| b.work_left > 0) {
+            let Some(&(_, t)) = scene.building_at.iter().find(|(s, _)| *s == b.slot) else { continue };
+            let boxes = scaffolds(rules, curr.owner_race, b, t[0] + 1.0);
+            scene.last_scaffolds.push((b.slot, (b.x, b.y), boxes));
+        }
+        scene.step_falling(self.overlay.counter);
+        if curr.visible {
+            let mut boxes: Vec<ScaffoldBox> = scene.last_scaffolds.iter().flat_map(|(_, _, v)| v.iter().map(|&(l, at)| (l, at, None))).collect();
+            boxes.extend(scene.falling.iter().map(|f| (f.level, f.at, Some((f.axis, f.drawn)))));
+            for (level, at, fall) in boxes {
+                let scale = rules.scaffold_scales.get(level).copied().unwrap_or(0.0);
+                let Some(mesh) = scene.scaffold_mesh(r, install, level) else { continue };
+                let rec = Placement::add_to_scene(mesh.model.origin, (scale as f64 * 0.038) as f32);
+                let Some((axis, angle)) = fall else {
+                    push_model(&mesh.model, &mesh.texs, &rec.world((0.0, HALF_PI, 0.0), at), &mut dynamic, &mut draws);
+                    continue;
+                };
+                // `EpuletAllvany::Refresh`: `RotateObj(0, π/2, 0)` then `RotateObj2(axis, angle)`; transparent from −π/4.
+                let m = scene::mul(&scene::axis_matrix(axis, angle), &rec.rotated(0.0, HALF_PI, 0.0));
+                let xf = Transform { matrix: m.map(|x| x * 1024.0), translation: at };
+                let t = if angle <= -std::f32::consts::FRAC_PI_4 { (-angle - std::f32::consts::FRAC_PI_4) / std::f32::consts::FRAC_PI_4 } else { 0.0 };
+                let (mut v, mut rg) = (Vec::new(), Vec::new());
+                bake(&mesh.model, &xf, [1.0; 3], 1.0, &mut v, &mut rg);
+                let base = dynamic.len() as u32;
+                for x in &mut v {
+                    x.color[3] = 1.0 - t;
+                }
+                dynamic.extend(v);
+                for (range, pi, _) in rg {
+                    draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: t > 0.0, cloud: false, shadow: Shadow::None, video: false, additive: false, depth_write: false });
+                }
+            }
+        }
+        // Snow and rain (`UpdateSnow`/`UpdateRain` once a drawn frame) around the pivot, inside and outside.
+        if let Some(w) = scene.weather.as_mut() {
+            w.step(self.overlay.counter);
+        }
+        if let Some(w) = scene.weather.as_ref() {
+            let target = self.camera.eye(gm).target;
+            let pivot = [target[1], target[2]];
+            let base = dynamic.len() as u32;
+            if w.snow() {
+                // `hopehely.bmp`, colour 0x80ffffff: `rgb·(255 − 0x80)/256` = 126, added (the set's 100.0).
+                let g = 126.0 / 255.0;
+                for (at, size) in w.flakes(pivot) {
+                    dynamic.extend(billboard(&basis, at, size, [g; 3]));
+                }
+                let tex = scene.colony_texture(r, install, "hopehely.bmp");
+                draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
+            } else {
+                // `line3d2`'s colour 0xc09696 (`probes/rain.js`: words 0x80c09696, 0x10c09696), the drop's end at alpha 0x10 and the
+                // streak's lower end at 0x80 [obs: the exe's streaks are brightest at the bottom].
+                let px = 480.0 / self.camera.size[1].max(1.0) / 600.0;
+                let c = [150.0 / 255.0, 150.0 / 255.0, 192.0 / 255.0];
+                let (ca, cb) = ([c[0], c[1], c[2], 16.0 / 255.0], [c[0], c[1], c[2], 128.0 / 255.0]);
+                for (a, b) in w.streaks(pivot) {
+                    dynamic.extend(crate::colony_weather::line_quad(basis.eye, px, a, b, ca, cb));
+                }
+                draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: scene.white, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: false, depth_write: false });
+            }
+        }
+        // The smoke, stepped to this frame's `ColonyCounter`, drawn like the buildings' particles.
+        {
+            let at = &scene.building_at;
+            let bottom = |slot: usize| at.iter().find(|(s, _)| *s == slot).map(|(_, t)| t[0] + 1.0);
+            let hp = |kind: u8| rules.buildings.get(kind as usize).map_or(0, |b| b.max_hp);
+            scene.smoke.advance(self.overlay.counter, &curr.buildings, &hp, &bottom, &scene.emitters);
+        }
+        if !scene.smoke.puffs().is_empty() {
+            let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
+            let base = dynamic.len() as u32;
+            for q in scene.smoke.puffs() {
+                dynamic.extend(billboard(&basis, q.p, q.size, q.colour()));
+            }
+            draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: rcloud, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
+        }
+        let parts = building_particles(&curr.buildings, &scene.building_at, self.overlay.counter);
+        if curr.visible && !parts.is_empty() {
+            let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
+            let flare = scene.colony_texture(r, install, "flare.bmp");
+            for p in parts {
+                let base = dynamic.len() as u32;
+                dynamic.extend(billboard(&basis, p.at, p.size, p.rgb));
+                let tex = if p.flare { flare } else { rcloud };
+                draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
+            }
+        }
         let um = &rules.unit_models;
         scene.unit_centres.clear();
         // `WF_Tank::Draw3d`/`Update` hide the units too when the human doesn't see inside.
@@ -1548,17 +2229,32 @@ impl View {
         if let Some(g) = self.overlay.ghost {
             let (w, h) = rules.building_footprints.get(g.kind as usize).copied().unwrap_or((0, 0));
             let scale = rules.building_models.get(g.kind as usize).map_or(0.0, |b| b.scale);
+            // `getbottomvertex` measures the finest level of detail ([`bottom_vertex`]).
+            let finest_bottom = rules.building_models.get(g.kind as usize).and_then(|bm| {
+                let fm = scene.finest.entry(g.kind).or_insert_with(|| load_lod_finest(install, "vector/colony/", &bm.model, "textures/colony/")).as_ref()?;
+                let (ox, oy) = (if w % 2 != 0 { 0.5 } else { 0.0 }, if h % 2 != 0 { -0.5 } else { 0.0 });
+                let (wx, wy) = grid_to_real(g.at.0 as f32 + ox, g.at.1 as f32 + oy);
+                let rel = Placement::genesis(fm.origin, scale / 1024.0 / 1000.0).world((0.0, HALF_PI, 0.0), [0.0; 3]);
+                Some(bottom_vertex(fm, &rel, gm, wx, wy))
+            });
             if let Some(mesh) = scene.building_mesh(r, install, rules, g.kind) {
                 // The model's centre: the cell, odd sizes shifted half a cell (`Grid2Real` of the frame box's corners).
                 let (ox, oy) = (if w % 2 != 0 { 0.5 } else { 0.0 }, if h % 2 != 0 { -0.5 } else { 0.0 });
                 let (wx, wy) = grid_to_real(g.at.0 as f32 + ox, g.at.1 as f32 + oy);
                 let rec = Placement::genesis(mesh.model.origin, scale / 1024.0 / 1000.0);
                 let rel = rec.world((0.0, HALF_PI, 0.0), [0.0; 3]);
-                let bottom = bottom_vertex(&mesh.model, &rel, gm, wx, wy);
+                let bottom = finest_bottom.unwrap_or_else(|| bottom_vertex(&mesh.model, &rel, gm, wx, wy));
                 let xf = Transform { translation: [bottom - 1.0, wx, wy], ..rel };
                 let tint = if g.blocked { [1.0, 0.25, 0.25] } else { [1.0; 3] };
                 let (mut v, mut rg) = (Vec::new(), Vec::new());
                 bake(&mesh.model, &xf, tint, 1.0, &mut v, &mut rg);
+                let eye = self.camera.basis(gm).eye;
+                for (range, pi, _) in &rg {
+                    let p = &mesh.model.parts[*pi];
+                    if building_env(p) {
+                        env_map(p, &xf.matrix, eye, &mut v[range.start as usize..range.end as usize]);
+                    }
+                }
                 let base = dynamic.len() as u32;
                 // `SetObjTransparency(tempepulet, 0.5)`.
                 for x in &mut v {
@@ -1849,8 +2545,18 @@ pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usi
     }
 }
 
-fn scene_key(s: &ColonySnap) -> Vec<(usize, u8, i32, i32, bool)> {
-    s.buildings.iter().map(|b| (b.slot, b.kind, b.x as i32, b.y as i32, b.work_left == 0)).collect()
+fn scene_key(s: &ColonySnap) -> Vec<(usize, u8, i32, i32, bool, bool)> {
+    s.buildings.iter().map(|b| (b.slot, b.kind, b.x as i32, b.y as i32, b.work_left == 0, blinks(b))).collect()
+}
+
+/// `ShowColony` (exe asm 0x49f4c3..0x49f51a): a finished building with `+0x19` bit 4 (story 806's police strike,
+/// re/rules/campaign/elem.md) gets the transparency `(f32)(sin(ColonyCounter/15 + k)·0.25 + 0.26)`, `k` its 1-based slot.
+fn blinks(b: &BuildingView) -> bool {
+    b.work_left == 0 && b.flags & 0x10 != 0
+}
+
+fn blink_transparency(counter: f32, slot: usize) -> f32 {
+    ((counter as f64 / 15.0 + slot as f64).sin() * 0.25 + 0.26) as f32
 }
 
 fn axis_x(angle: f32) -> M3 {
@@ -1951,7 +2657,7 @@ mod tests {
     /// −0.6854; a right drag alone turns nothing.
     #[test]
     fn both_buttons_turn_the_camera_as_the_exe() {
-        let mut cam = Camera { x: 0.0, y: 0.0, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.0, size: [640.0, 480.0] };
+        let mut cam = Camera { x: 0.0, y: 0.0, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.0, size: [640.0, 480.0], shake: [0.0; 2], tank: None };
         let mut k = CameraKeys::default();
         k.mouse_press(&cam, [300.0, 200.0]);
         k.mouse_press(&cam, [300.0, 200.0]);
@@ -1970,7 +2676,7 @@ mod tests {
         let held = |t: i32, from: i32, n: i32| (from..from + n).contains(&t);
         let run = |sx: i32, sy: i32| {
             let [x, y, zoom, pitch, rotate] = CAMERA_TRACE[1].1;
-            let mut cam = Camera { x, y, zoom, pitch, rotate, size: [640.0, 480.0] };
+            let mut cam = Camera { x, y, zoom, pitch, rotate, size: [640.0, 480.0], shake: [0.0; 2], tank: None };
             let mut k = CameraKeys { scroll: [sx, sy], ..CameraKeys::default() };
             let (mut pos, mut rest) = (0.0f32, 0.0f32);
             for t in 21..=290 {
@@ -2011,6 +2717,74 @@ mod tests {
     /// quick-1.sav, planet 42, as ig2.exe shows it after entering (`tools/trace/run_screen.py`, re/screens/colony.md
     /// §8): pivot (0, 375.6696, 333.1013), eye (−1343.5028, 375.6696, 1676.6041). Skips without install and save.
     #[test]
+    fn building_lod_steps_like_kocka() {
+        // `probes/lod_colony.js` on grwar:17: slot 18 (`kemv`, |M·1|² 47628) at depth 2361.1 has size 3075.7 and draws
+        // level 1; slot 16 (`npv`, recounted extents: size 1118.05 at depth 2606.8) stays at level 0.
+        let basis = ViewBasis { eye: [0.0; 3], rows: [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]] };
+        assert_eq!(lod_pick(&basis, 47628.0, [-2361.0972, 0.0, 0.0], 3), 1);
+        assert_eq!(lod_pick(&basis, 1118.0518 * (2606.828f32 / 600.0).powi(2), [-2606.828, 0.0, 0.0], 3), 0);
+        // Close up: the chain's end; one level: always 0.
+        assert_eq!(lod_pick(&basis, 47628.0, [-200.0, 0.0, 0.0], 3), 2);
+        assert_eq!(lod_pick(&basis, 47628.0, [-200.0, 0.0, 0.0], 1), 0);
+    }
+
+    #[test]
+    fn blink_stays_between_001_and_051() {
+        let b = BuildingView { slot: 3, kind: 7, x: 0.0, y: 0.0, work_left: 0, damage: 0, flags: 0x11, yield_pct: 100, efficiency: 256 };
+        assert!(blinks(&b) && !blinks(&BuildingView { work_left: 5, ..b.clone() }) && !blinks(&BuildingView { flags: 1, ..b.clone() }));
+        // sin(0/15 + 3)·0.25 + 0.26, and the extremes over a period.
+        assert!((blink_transparency(0.0, 3) - (3.0f64.sin() * 0.25 + 0.26) as f32).abs() < 1e-7);
+        let ts: Vec<f32> = (0..95).map(|c| blink_transparency(c as f32, 1)).collect();
+        assert!(ts.iter().all(|t| (0.0099..=0.5101).contains(t)));
+    }
+
+    #[test]
+    fn falling_scaffold_lasts_26_ticks_after_its_delay() {
+        // `EpuletAllvany::Refresh`: the angle falls by 0, 0.005, 0.010, … a tick: past −π/2 on the 26th turning tick.
+        let mut f = vec![Falling { level: 0, at: [0.0; 3], axis: [0.0, 1.0, 0.0], angle: 0.0, vel: 0.0, delay: 3, drawn: 0.0 }];
+        let mut ticks = 0;
+        while !f.is_empty() {
+            ticks += 1;
+            f.retain_mut(Falling::tick);
+        }
+        assert_eq!(ticks, 3 + 26);
+    }
+
+    #[test]
+    fn quick1_planet17_construction_matches_the_exe() {
+        // `probes/scaffold.js` on grwar:17 of quick-1.sav (2026-10-25): slot 18 (kind 26, 21400 work left, `+0x14`
+        // = −15.129608) is cut at 44.16639 (`setvagashatar`), its 6 × 6 boxes at height 70 with these levels by row
+        // (`ModifyAllvany`'s cy 78..83, cx 99..104) and `Grid2Real` centres.
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (sim, defaults) = crate::rules::load(&install).unwrap();
+        let snap = ColonySnap::read(&SaveState::from_save(&save, &defaults), 17).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let b = snap.buildings.iter().find(|b| b.slot == 18).unwrap();
+        assert_eq!((b.kind, b.work_left), (26, 21400));
+        let bottom = -15.129608;
+        // `getbottomvertex` on the finest level (`kemv2`, probes/bottom.js: the four bottom corners at 106.98).
+        let bm = &tables.building_models[26];
+        let fm = load_lod_finest(&install, "vector/colony/", &bm.model, "textures/colony/").unwrap();
+        let (w, h) = tables.building_footprints[26];
+        let (wx, wy) = grid_to_real(b.x + if w % 2 != 0 { 0.5 } else { 0.0 }, b.y + if h % 2 != 0 { -0.5 } else { 0.0 });
+        let rel = Placement::genesis(fm.origin, bm.scale / 1024.0 / 1000.0).world((0.0, HALF_PI, 0.0), [0.0; 3]);
+        let got = bottom_vertex(&fm, &rel, &sim.ground_maps[snap.map], wx, wy);
+        assert!((got - bottom).abs() < 1e-4, "{got}");
+        let cut = cut_height(&tables, snap.owner_race, b.kind, b.work_left, bottom).unwrap();
+        assert!((cut - 44.16639).abs() < 1e-4, "{cut}");
+        let boxes = scaffolds(&tables, snap.owner_race, b, bottom);
+        let levels: String = boxes.iter().map(|(l, _)| char::from(b'0' + *l as u8)).collect();
+        assert_eq!(levels, "001100011110111111111111011110001100");
+        assert!(boxes.iter().all(|(_, at)| at[0] == 70.0));
+        let (first, last) = (boxes[0].1, boxes[35].1);
+        assert!((first[1] - -62.27).abs() < 1e-2 && (first[2] - -815.355).abs() < 1e-2, "{first:?}");
+        assert!((last[1] - -271.228).abs() < 1e-2 && (last[2] - -606.397).abs() < 1e-2, "{last:?}");
+    }
+
+    #[test]
     fn quick1_planet42_camera_matches_the_exe() {
         let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
         let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
@@ -2039,7 +2813,7 @@ mod tests {
 
     #[test]
     fn the_camera_looks_at_its_pivot() {
-        let cam = Camera { x: 100.0, y: -200.0, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.3, size: [640.0, 480.0] };
+        let cam = Camera { x: 100.0, y: -200.0, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.3, size: [640.0, 480.0], shake: [0.0; 2], tank: None };
         let terrain = ig2_sim::placement::Terrain { mask: [0; 650], kind: 0, start: (0, 0) };
         let map = GroundMap { terrain, heights: vec![0; 2500], base: 0.0, footprints: Vec::new() };
         let b = cam.basis(&map);
@@ -2055,7 +2829,7 @@ mod tests {
     /// planet 42, the camera at pitch −π/4, rotate 0): `vec` (−0.5774, 0, −0.8165) on every object of the pass.
     #[test]
     fn panel_light_turns_with_the_colony_camera() {
-        let camera = Camera { x: 375.67, y: -333.1, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.0, size: [640.0, 480.0] };
+        let camera = Camera { x: 375.67, y: -333.1, zoom: -1100.0, pitch: -std::f32::consts::FRAC_PI_4, rotate: 0.0, size: [640.0, 480.0], shake: [0.0; 2], tank: None };
         let terrain = ig2_sim::placement::Terrain { mask: [0; 650], kind: 0, start: (0, 0) };
         let map = GroundMap { terrain, heights: vec![0; 2500], base: 0.0, footprints: Vec::new() };
         let l = View { camera, scale: 1.0, overlay: Overlay::default() }.panel_light(&[map], 0);

@@ -375,23 +375,35 @@ impl Camera {
         }
     }
 
-    /// Yaw by `frames` keyboard frames (±0.02 each).
+    /// Yaw by `frames` keyboard frames (±0.02 each). `StarmapKeyboardDoModifies` (exe 0x5ae880) steps in f64 and
+    /// rounds to f32 after each step: + the f64 0.02, below 0 + the f64 2π, then `fmod` by f32 2π (row 226).
     pub fn turn(&mut self, frames: f32) {
-        self.rotate = (self.rotate + 0.02 * frames).rem_euclid(std::f32::consts::TAU);
+        let tau = std::f32::consts::TAU as f64;
+        for _ in 0..frames.abs().round().max(1.0) as u32 {
+            let mut r = (self.rotate as f64 + 0.02 * frames.signum() as f64) as f32;
+            if r < 0.0 {
+                r = (r as f64 + std::f64::consts::TAU) as f32;
+            }
+            self.rotate = (r as f64 % tau) as f32;
+        }
     }
 
-    /// Pitch by `frames` keyboard frames (±0.00628318 each, clamp [−1.560795, −0.2]).
+    /// Pitch by `frames` keyboard frames (the f64 ±0.00628318 each, rounded to f32; clamp [−1.560795, −0.2]: exe
+    /// 0x5ae880, row 226).
     pub fn tilt(&mut self, frames: f32) {
-        self.pitch = (self.pitch + 0.00628318 * frames).clamp(-1.560795, -0.2);
+        for _ in 0..frames.abs().round().max(1.0) as u32 {
+            self.pitch = ((self.pitch as f64 + 0.00628318 * frames.signum() as f64) as f32).clamp(-1.560795, -0.2);
+        }
     }
 
-    /// `Starmap_Move0` (ELF 0x6fe570): the pivot moves by the screen-turned `(mx, my)` scaled by the zoom; a move out
-    /// of the ±300 square is refused (false).
+    /// `Starmap_Move0` (ELF 0x6fe570, inlined in exe 0x5bb230): the pivot moves by the screen-turned `(mx, my)` scaled
+    /// by the zoom; a move out of the ±300 square is refused (false). The exe rounds sin and cos to f32 and turns and
+    /// scales in f32, then subtracts `· 0.85` in f64 (row 226).
     fn move0(&mut self, mx: f32, my: f32) -> bool {
-        let (s, c) = ((self.rotate as f64).sin(), (self.rotate as f64).cos());
-        let k = |v: f64| v as f32 * (600.0 - self.zoom) / 600.0 * 0.85;
-        let x = self.x - k(c * mx as f64 - s * my as f64);
-        let y = self.y - k(c * my as f64 + s * mx as f64);
+        let (s, c) = ((self.rotate as f64).sin() as f32, (self.rotate as f64).cos() as f32);
+        let k = |v: f32| (v * (600.0 - self.zoom) / 600.0) as f64 * 0.85;
+        let x = (self.x as f64 - k(c * mx - s * my)) as f32;
+        let y = (self.y as f64 - k(c * my + s * mx)) as f32;
         if x.abs() > PAN_LIMIT || y.abs() > PAN_LIMIT {
             return false;
         }
@@ -576,6 +588,12 @@ pub struct View {
     /// The battle screen's `starmaperosseg` (`starmapszarok`, spacewar.md §3.3, §7.4): the systems' glows × e, the
     /// planets and fleets hidden at 0 (`starmaphideflottak`, `starmaphalvanyit`).
     pub battle_fade: Option<f32>,
+}
+
+/// `Show_Flottak2d` (exe 0x5a5370..0x5a5398): a fleet's name shows with its custom-name bit (`+0x52` 0x800); in
+/// multiplayer only on the human's own fleets, unless `DEBUGX` (row 394).
+fn fleet_name_shown(fl: &FleetView, curr: &Snapshot) -> bool {
+    fl.flags & 0x800 != 0 && (!curr.own_names_only || fl.owner == curr.human)
 }
 
 /// The background's layout: the far stars, `Clouds1`, `Clouds2`, `KodPamacsok`.
@@ -947,7 +965,10 @@ impl View {
             let spin = p.look.spin as f32 / 100.0;
             let Frame { scene, late, .. } = &mut f;
             if let (true, Some(scene)) = (a.planet_meshes.ready(p.surface), scene.as_mut()) {
-                a.planet_meshes.add_planet(scene, late, p.surface, p.look.size, planet_rotate * spin * 6.0, [0.0, at[0], at[1]], &eye);
+                // Behind a battle `starmaphalvanyit(e)` (exe, spec spacewar.md §3.3) gives the planets the
+                // transparency `1 − e`: byte `float2int(255 − 255·(1 − e))` [obs: shield capture t3400, e 0.65: 166].
+                let opacity = self.battle_fade.map_or(1.0, |e| crate::lighting::float2int(255.0 - 255.0 * (1.0 - e)).clamp(0, 255) as f32 / 255.0);
+                a.planet_meshes.add_planet(scene, late, p.surface, p.look.size, planet_rotate * spin * 6.0, [0.0, at[0], at[1]], &eye, opacity);
                 if clouds == Some(p.index) {
                     a.planet_meshes.add_clouds(scene, late, p.look.size, -planet_rotate * spin * 2.0, [0.0, at[0], at[1]], &eye);
                 }
@@ -1069,6 +1090,12 @@ impl View {
         let col = |owner: u8| a.palette.get(owner as usize + 15).copied().unwrap_or([1.0; 3]);
         let zoom_fade = if cam.zoom >= 590.0 { (100.0 - (cam.zoom - 590.0) / 9.1 * 100.0) as i32 as f32 / 100.0 } else { 1.0 };
         let below = (cam.zoom / 5.0).sqrt() as i32 as f32;
+        // `starmaphideflottak` (exe 0xF1737C: `starmapszarok` sets it while the battle zoom's `starmaperosseg` is 0)
+        // hides the planets' and fleets' names (`Show_Stars2d3d` 0x5a5c8a, `Show_Flottak2d` 0x5a5363). `KilepesElott`
+        // without `KilepesElott2` (the exit's HUD-less picture) draws none either: [`View::build`] alone, no names.
+        if self.battle_fade.is_some_and(|e| e <= 0.0) {
+            return;
+        }
         for p in self.planets(curr).filter(|p| p.on_map() && (p.owner != 0 || p.blink)) {
             let Some((c, _)) = cam.project(p.pos) else { continue };
             let (x, y) = virt(c);
@@ -1076,7 +1103,7 @@ impl View {
             let name: Vec<u8> = p.name.chars().map(|c| c as u32 as u8).collect();
             font.text(f, &v, &name, x.trunc(), (y + below).trunc(), 0x14, 1, crate::font::Align::Centre, col(p.owner).map(|c| c * k), None);
         }
-        for fl in self.shown(&curr.fleets_at(prev, alpha)).filter(|fl| fl.flags & 0x800 != 0) {
+        for fl in self.shown(&curr.fleets_at(prev, alpha)).filter(|fl| fleet_name_shown(fl, curr)) {
             let Some((c, _)) = cam.project(fl.pos) else { continue };
             let (x, y) = virt(c);
             // The shadow in colour 0 first (black: nothing to add), then the name.
@@ -1315,6 +1342,42 @@ mod tests {
         assert_eq!(c.zoom, 2.0);
         c.tilt(1000.0);
         assert_eq!(c.pitch, -0.2);
+    }
+
+    #[test]
+    fn fleet_names_need_the_bit_and_in_multiplayer_the_human() {
+        let fl = |owner: u8, flags: u16| FleetView { slot: 0, pos: [0.0; 2], owner, visible: true, target: None, order: 0, flags, name: b"A".to_vec(), ships: 1, story_id: 0, kind: 0, target_index: 0 };
+        let mut s = Snapshot { human: 1, ..Default::default() };
+        assert!(fleet_name_shown(&fl(2, 0x800), &s) && !fleet_name_shown(&fl(1, 0), &s));
+        s.own_names_only = true;
+        assert!(fleet_name_shown(&fl(1, 0x800), &s) && !fleet_name_shown(&fl(2, 0x800), &s));
+    }
+
+    /// Steps recorded in ig2.exe (`probes/starmap_cam.js` on `scripts/starmap-cam.json`, quick-1.sav, 2026-10-25): the
+    /// raw f32 bits before and after `StarmapKeyboardDoModifies` and `Starmap_Move` (row 226). The f32-only pan missed
+    /// these three of 104 moves by an ulp.
+    #[test]
+    fn camera_steps_match_the_exe_bits() {
+        let f = f32::from_bits;
+        let mut c = cam(0.0, f(0xbf81a478));
+        c.rotate = f(0x40bd8abc);
+        c.turn(-1.0);
+        assert_eq!(c.rotate.to_bits(), 0x40bce6e5);
+        c.tilt(-1.0);
+        assert_eq!(c.pitch.to_bits(), 0xbf82725b);
+        c.pitch = f(0xbe4f2850);
+        c.tilt(1.0);
+        assert_eq!(c.pitch.to_bits(), 0xbe4ccccd);
+        let moves = [
+            ([0x4281ff52, 0x400b571a], [0x42842f12, 0x3f68450f]),
+            ([0x42842f12, 0x3f68450f], [0x42865ed2, 0xbeb9a494]),
+            ([0x42865ed2, 0xbeb9a494], [0x42888e92, 0xbfd0f4d1]),
+        ];
+        for (from, to) in moves {
+            let mut c = Camera { x: f(from[0]), y: f(from[1]), rotate: f(0x40ad8abd), pitch: f(0xbe4ccccd), zoom: f(0x43c96e80), ..cam(0.0, -0.95) };
+            c.slide(-6.0, 0.0);
+            assert_eq!([c.x.to_bits(), c.y.to_bits()], to);
+        }
     }
 
     #[test]

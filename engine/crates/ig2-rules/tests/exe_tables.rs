@@ -22,6 +22,11 @@ fn tables_have_catalogued_shapes() {
     // `allvanypoziciok` (ELF 0x115f740) and `Building[0]+0x68` (ELF +0x6c): the selection marker of the colony hub.
     assert_eq!(r.scaffold_heights.len(), 60);
     assert_eq!(&r.scaffold_heights[..4], &[170.0, 15.0, 205.0, 50.0]);
+    // `magas` (exe 0x8F3968): kind 2 (3 × 3) is all level 1; `allvanymeretszorzo` (exe 0x8F85C8).
+    assert_eq!(r.scaffold_masks.len(), 60);
+    assert!((0..3).all(|row| r.scaffold_masks[1][row * 10..row * 10 + 3] == [1, 1, 1]));
+    assert_eq!(r.scaffold_scales.len(), 10);
+    assert_eq!(&r.scaffold_scales[..2], &[0.55, 1.62]);
     assert_eq!(r.building_models[1].select, 0.59);
     assert_eq!(r.pod_types.len(), 55);
     assert_eq!(r.pod_slots.len(), 14);

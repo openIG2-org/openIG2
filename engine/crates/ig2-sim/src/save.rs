@@ -749,6 +749,17 @@ pub struct SaveState {
     /// but the canonical `EN` (whose copies are the exe's memory), by empire (`re/rules/multiplayer.md` §5). Empty in
     /// single player.
     pub humans: BTreeMap<u8, HumanSide>,
+    /// `GameInfo[0..GameInfoMut]` (exe 0xE3E3A0 / 0xE3E3A4): the starmap's info lines (`re/formats/save.md` §4.5).
+    pub game_info: Vec<GameInfo>,
+}
+
+/// One `GameInfo` entry (exe stride 0xC): `+0` the line's index in `GameInfoList` (gameinfo.txt), `+4` its text
+/// (CString), `+8` its colour (`KiirStr`'s palette index).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameInfo {
+    pub index: i32,
+    pub text: Vec<u8>,
+    pub colour: i32,
 }
 
 /// One human's own copies (`re/rules/multiplayer.md` §5), in the exe's raw layouts.
@@ -762,7 +773,26 @@ pub struct HumanSide {
     pub shown: i32,
     /// `KemBeszolasok[1..=n]`: n × `spy::REPORT` bytes (at most `spy::MAX_REPORTS`).
     pub reports: Vec<u8>,
+    /// The inbox and the messages screen's dialogue state ([`INBOX_REGIONS`] in turn); empty until made.
+    pub inbox: Vec<u8>,
 }
+
+/// The inbox (only story and tutorial messages reach it) and the messages screen's dialogue globals, `(address,
+/// length)`: the parts of the state each machine of the original keeps for its own human (`re/rules/multiplayer.md`
+/// §5.3; the dialogue globals of `game::message_orders`).
+pub const INBOX_REGIONS: [(u32, usize); 11] = [
+    (0xDA65E7, 1),
+    (0xDA65FF, 1),
+    (0xDA6607, 1),
+    (va::INBOX, 100 * MESSAGE),
+    (va::INBOX_PLAYBACK, 100 * PLAYBACK),
+    (va::INBOX_RANDOM, 400),
+    (0xDABDA0, 0xa0),
+    (0xD90DC0, 0x18),
+    (0x91494C, 4),
+    (0xD8E160, 4 * 0x5c),
+    (0xD909BA, 2),
+];
 
 fn rd_i32(b: &[u8], o: usize) -> i32 {
     i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
@@ -811,6 +841,7 @@ impl SaveState {
             multiplayer_blob: false,
             fresh_buildings: Vec::new(),
             humans: BTreeMap::new(),
+            game_info: Vec::new(),
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -835,7 +866,14 @@ impl SaveState {
             save.chunks.iter().map(|c| (c.name.clone(), save.body[c.range.clone()].to_vec())).collect();
         let mut story = StoryQueues { buckets: vec![Queue::default(); story::BUCKETS], ..Default::default() };
         let mut pending: Option<(usize, i32)> = None;
+        let mut game_info: Vec<GameInfo> = Vec::new();
         for (name, data) in &template {
+            match name.as_str() {
+                "GameInfo.text" => game_info.push(GameInfo { text: data.clone(), ..Default::default() }),
+                "GameInfo.0" => game_info.last_mut().expect("a GameInfo text first").index = rd_i32(data, 0),
+                "GameInfo.8" => game_info.last_mut().expect("a GameInfo text first").colour = rd_i32(data, 0),
+                _ => {}
+            }
             if let Some(q) = QUEUES.iter().position(|q| name.strip_suffix(".key") == Some(q)) {
                 pending = Some((q, rd_i32(data, 0)));
                 continue;
@@ -871,6 +909,7 @@ impl SaveState {
             multiplayer_blob: save.multiplayer,
             fresh_buildings: Vec::new(),
             humans: BTreeMap::new(),
+            game_info,
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -918,6 +957,18 @@ impl SaveState {
             }
             let bytes = match name.as_str() {
                 "Waypointek" if self.waypoints.len() <= 1 => continue,
+                // The info lines follow their count (`LoadSaveVariables`, exe 0x544c27..0x544d13).
+                n if n.starts_with("GameInfo.") => continue,
+                "GameInfoMut" => {
+                    add(name, &(self.game_info.len() as i32).to_le_bytes());
+                    for e in &self.game_info {
+                        add("GameInfo.text.len", &(e.text.len() as i32).to_le_bytes());
+                        add("GameInfo.text", &e.text);
+                        add("GameInfo.0", &e.index.to_le_bytes());
+                        add("GameInfo.8", &e.colour.to_le_bytes());
+                    }
+                    continue;
+                }
                 // `Waypointek` follows its count only when there are waypoints (re/formats/save.md §4.8).
                 "OsszHanyWaypoint" => {
                     add(name, &((self.waypoints.len() as i32 - 1).max(0)).to_le_bytes());
@@ -1121,6 +1172,7 @@ pub fn modelled(name: &str) -> bool {
         || matches!(name, "Flottak" | "Hajok" | "Waypointek")
         || name.starts_with("Tervek[")
         || name.starts_with("Epuletek[")
+        || name.starts_with("GameInfo.")
         || battlefield_of(name).is_some()
         || QUEUES.iter().any(|q| name.starts_with(q) && name[q.len()..].starts_with('.'))
 }
@@ -1586,6 +1638,50 @@ impl SaveState {
         } else if let Some(r) = self.humans.get_mut(&(h as u8)).and_then(|x| x.reports.first_mut()) {
             *r = kind;
         }
+    }
+
+    /// The state's [`INBOX_REGIONS`], one after the other.
+    pub fn inbox_regions(&self) -> Vec<u8> {
+        INBOX_REGIONS.iter().flat_map(|&(at, n)| self.mem.read(at, n)).collect()
+    }
+
+    fn put_inbox_regions(&mut self, b: &[u8]) {
+        let mut o = 0;
+        for &(at, n) in &INBOX_REGIONS {
+            self.mem.write(at, &b[o..o + n]);
+            o += n;
+        }
+    }
+
+    /// A human's first inbox: the state's dialogue state with nothing in the inbox.
+    pub fn fresh_inbox(&self) -> Vec<u8> {
+        let mut b = self.inbox_regions();
+        let mut o = 0;
+        for &(at, n) in &INBOX_REGIONS {
+            if [va::INBOX, va::INBOX_PLAYBACK, va::INBOX_RANDOM].contains(&at) {
+                b[o..o + n].fill(0);
+            }
+            if at == 0xDABDA0 {
+                let c = (va::INBOX_COUNT - at) as usize + o;
+                b[c..c + 4].fill(0);
+            }
+            o += n;
+        }
+        b
+    }
+
+    /// Human `h`'s inbox and the state's change places (both ways at once: twice is the start again). A human
+    /// without one gets [`SaveState::fresh_inbox`] first.
+    pub fn swap_inbox(&mut self, h: u8) {
+        let fresh = self.humans.get(&h).is_none_or(|x| x.inbox.is_empty()).then(|| self.fresh_inbox());
+        let side = self.humans.entry(h).or_default();
+        if let Some(f) = fresh {
+            side.inbox = f;
+        }
+        let theirs = std::mem::take(&mut side.inbox);
+        let ours = self.inbox_regions();
+        self.put_inbox_regions(&theirs);
+        self.humans.get_mut(&h).expect("made above").inbox = ours;
     }
 
     pub fn store_inbox(&mut self, b: &Inbox) {

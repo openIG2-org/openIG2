@@ -21,7 +21,9 @@ spacewar:<grab.json> (a battle-screen grab of `run_spwc.py --grab-ticks`: the ex
    writes `<out>/<name>-{exe,client,heat}.png` and `<out>/<name>.json`, and prints the table.
 --client-new-campaign C,D,SEED,TICKS: the client builds the world from its own campaign start (`World::new_game`)
 instead of the state save; <save> is the exe's tick-0 save of that start (run_newgame.py), which the exe loads.
-The message line is masked by default (it scrolls on the UI clock in both). Exit code 0 = every region matches.
+The message line is masked by default (it scrolls on the UI clock in both). The client reads a copy of the exe's
+settings file and save slots (`<out>/options-pinned`, IG2_OPTIONS_DIR), not the remake's own. Exit code 0 = every
+region matches.
 Images hold game imagery: keep --out under _local/.
 
 --script S (screens with `script` below; re/screens/sound.md §3) compares a frame sequence instead of one still: the
@@ -63,7 +65,7 @@ SCREENS = {
     # The colony screen in a real-time ground war (colony.md §11): the exe lands the human on the planet, places and
     # selects every unit (run_screen.py --grwar); the client seeds its selection from the saved flag 8. The exe draws its
     # pointer (`UpdateFrame`, colony.md §11.10) where the capture leaves it, the screen's centre: the client draws it there.
-    "grwar": dict(kep=3, exe=["--grwar"], client=["--colony", "{planet}", "--colony-live", "--colony-ui", "war", "--mouse", "320,240"], regions=[
+    "grwar": dict(kep=3, exe=["--grwar"], script=True, client=["--colony", "{planet}", "--colony-live", "--colony-ui", "war", "--mouse", "320,240"], regions=[
         TOPBAR, "texts=200,30,300,40", "radar=491,348,149,132", "bottom_info=5,403,162,72",
         "buttons=200,425,260,50", "view=223,20,268,320"]),
     # The info screen opens over 150 UI frames and fades its texts in over 100 more: the grab waits longer.
@@ -152,6 +154,12 @@ SCREENS = {
                       client=["--menu", "autobuild@422,299", "--mouse", "430,335"], masks=["425,328,115,22"], regions=[TOPBAR, "panel=319,33,302,326", "menu=416,297,130,121"]),
     "priority": dict(kep=2, exe=["--rop", "0xf", "--menu", "priority@422,321", "--mouse", "430,330"],
                      client=["--menu", "priority@422,321", "--mouse", "430,330"], masks=["425,323,115,22"], regions=[TOPBAR, "panel=319,33,302,326", "menu=416,319,130,43"]),
+    # The multiplayer wait overlay (input.md §9, row 296): ig2.exe can't be put into a real lockstep stall here, so
+    # probes/mpwait.js stages the exe's own state for one (two late players, the host, the reconnect title) and its
+    # code draws; the grab waits until its items are armed (4 s). The client draws the same state (--mp-wait).
+    "mpwait": dict(kep=2, wait=3000, exe=["--gl-grab", "--probe", "tools/trace/probes/mpwait.js"],
+                   client=["--mp-wait", "host,reconnecting;Alice|Slot two;Bob|Slot three"], regions=[
+        "title=40,28,600,22", "panel=40,50,560,270", "cells=50,60,260,110", "buttons=50,140,260,30", "exit=40,330,560,30"]),
     # The exe's staging leaves the list without a hovered planet (`smSelected` −1), so no --mouse here.
     "planets": dict(kep=2, exe=["--rop", "2", "--menu", "planets@300,90"],
                     client=["--panel", "production", "--menu", "planets@300,90"], regions=[TOPBAR, "menu=294,88,200,60"]),
@@ -184,7 +192,7 @@ def size_suffix(a):
 
 def size_exe(a):
     # Always set: the install's ig2.settings may hold another size (run_screen.py puts the file back after the run).
-    return ["--size", a.size]
+    return ["--size", a.size] + (["--gl-grab"] if a.gl_grab else [])
 
 
 def clock_args(save):
@@ -245,6 +253,25 @@ def sim_phase(trace):
             elif '"step"' in line[:20] and last is not None:
                 return last % 5
     return 0
+
+
+def pin_options(out, env):
+    """The client's settings and save slots pinned to what the exe reads (re/deviations.md row 320): a copy of the
+    original's `options.dat` and `save<n>.sav` from its save folder, without the remake's own settings file and
+    `.ig2s` slots that play rewrites; `IG2_OPTIONS_DIR` points the client there. An IG2_OPTIONS_DIR or IG2_SLOT_DIR
+    already set is kept."""
+    if "IG2_OPTIONS_DIR" in env or "IG2_SLOT_DIR" in env or not env.get("LOCALAPPDATA"):
+        return
+    src = os.path.join(env["LOCALAPPDATA"], "GyroscopeGames", "ig2")
+    pinned = os.path.join(out, "options-pinned")
+    shutil.rmtree(pinned, ignore_errors=True)
+    os.makedirs(pinned)
+    if os.path.isdir(src):
+        for f in os.listdir(src):
+            low = f.lower()
+            if low == "options.dat" or (low.startswith("save") and low.endswith(".sav")):
+                shutil.copy2(os.path.join(src, f), pinned)
+    env["IG2_OPTIONS_DIR"] = os.path.abspath(pinned)
 
 
 def sequence(a, kind, cfg, env, masks, planet):
@@ -329,7 +356,10 @@ def main():
     ap.add_argument("--exe-png", help="use this capture of ig2.exe instead of making one")
     ap.add_argument("--client-arg", action="append", default=[], help="pass this argument on to the client's still (e.g. "
                     "--client-arg=--top-menu --client-arg=research with an --exe-png grab of a script run)")
+    ap.add_argument("--exe-arg", action="append", default=[], help="pass this argument on to the exe's still capture "
+                    "(run_screen.py; e.g. --exe-arg=--hide --exe-arg=planet on planetinfo)")
     ap.add_argument("--exe-state", help="with --exe-png: the exe's save of that moment (default: <save>)")
+    ap.add_argument("--gl-grab", action="store_true", help="the exe's still read back in the game (run_screen.py --gl-grab): works with the display off")
     ap.add_argument("--wait", type=int, help="frames the exe shows the screen before the grab (default: the screen's, else 240)")
     ap.add_argument("--build", action="store_true", help="cargo build --release the client and the comparator first")
     ap.add_argument("--threshold", default="6")
@@ -437,6 +467,7 @@ def main():
     env = dict(os.environ, IG2_INSTALL_DIR=os.path.abspath(a.install))
     if a.lang:
         env["IG2_LANG"] = a.lang
+    pin_options(a.out, env)
 
     if a.build or not (os.path.exists(CLIENT) and os.path.exists(DIFF)):
         cargo = shutil.which("cargo") or os.path.expanduser("~/.cargo/bin/cargo")
@@ -458,7 +489,7 @@ def main():
         state = os.path.join(a.out, f"{name}-state.sav")
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
                  "--planet", str(planet), "--wait", str(a.wait or cfg.get("wait", 240)), "--shots", "1", "--state-out", state,
-                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])] + held_exe + size_exe(a)
+                 "--seconds", "400"] + [x.format(mode=mode) for x in cfg.get("exe", [])] + held_exe + size_exe(a) + a.exe_arg
                 + (["--via-starmap", str(a.via_starmap)] if a.via_starmap else []))
         if r.returncode or not os.path.exists(prefix + "-0.png"):
             sys.exit("the exe capture failed")
@@ -488,6 +519,9 @@ def main():
             args += ["--acttime", repr(clocks["acttime"] / 1000)]
         if clocks.get("info_alap") is not None:
             args += ["--info-alap", repr(clocks["info_alap"])]
+        # The pointer's animation phase `MouseFazis` at the grab (re/screens/input.md §8).
+        if clocks.get("mouse_phase") is not None:
+            args += ["--mouse-phase", str(clocks["mouse_phase"])]
         # The transfer and vehicle panels' cells turn per drawn frame since the icon press (starmap.md §13.3): the
         # exe's count when the grab was asked for plus the still's lag.
         if clocks.get("rop_frames") is not None and kind in ("transfer", "tanksinfo"):

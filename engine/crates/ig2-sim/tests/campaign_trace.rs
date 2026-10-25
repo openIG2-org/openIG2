@@ -1848,7 +1848,7 @@ impl StoryWorld for W<'_> {
                 self.planets[planet as usize].richness = value;
             }
             StoryEvent::SetTechState { tech, state, empire } => self.expect("techstate", &[v(tech), v(state), v(empire)], &what),
-            StoryEvent::SendStorySpecial(id) => self.expect("multisend", &[v(0x66), v(self.en), v(4), v(id)], &what),
+            StoryEvent::SendStorySpecial { id, .. } => self.expect("multisend", &[v(0x66), v(self.en), v(4), v(id)], &what),
             StoryEvent::DeleteShip(k) => {
                 self.expect("shipdelete", &[v(k)], &what);
                 // `HajoDelete` (exe 0x53e5d0) marks the slot free and drops the units its fleet can't carry.
@@ -1885,11 +1885,11 @@ impl StoryWorld for W<'_> {
             StoryEvent::Notice(n) => {
                 let en = self.en;
                 let ok: Box<dyn Fn(&str) -> bool> = match n {
-                    Notice::Winner { empire, amazing } if empire == en => {
+                    Notice::Winner { empire, amazing, .. } if empire == en => {
                         Box::new(move |t| t == if amazing { "AMAZING! YOU ARE THE WINNER!" } else { "YOU ARE THE WINNER!" })
                     }
                     Notice::Winner { .. } => Box::new(|t| t.ends_with(" is the winner!")),
-                    Notice::CannotColonise(_) => Box::new(|t| t.starts_with("You cannot colonize ")),
+                    Notice::CannotColonise { .. } => Box::new(|t| t.starts_with("You cannot colonize ")),
                     Notice::FlagTaken { by, .. } if by == en => Box::new(|t| t.starts_with("You have the flag of ")),
                     Notice::FlagTaken { .. } => Box::new(|t| t.ends_with(" has your flag!")),
                     Notice::Touchdown { by } if by == en => Box::new(|t| t == "TOUCHDOWN!!!"),

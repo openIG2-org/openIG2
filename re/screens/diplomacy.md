@@ -106,7 +106,10 @@ Per drawn frame, `Diplomacy3DUpdate` (ELF 0x51b2f0, exe 0x4be2d0), with `s = 1 �
   spinning `+0.02` on each axis also while not open; transparency −0.02 a frame while above 0.5 (exe 0x4be2d0 lines
   79-90): after an opening the cages **stay about half transparent** (26 steps from 1 end at 0.48000047), at rest (no
   opening) opaque. Without property 8 the engine draws them additively, the lit colour scaled by `≈ 1 − t`; the
-  client's wire alpha `2(1 − t)` carries its doubled wire light (the factor is calibrated, not derived).
+  client draws the wires additively in gamma space (`Blend::GammaAdditive`) with the lit colour × `(1 − t)/0.52`
+  (normalised to the opened rest t = 0.48000047 the port's doubled wire light was calibrated on; the 0.52 is calibrated,
+  not derived), so the unanimated rest (t 0) is about 1.9× as bright as after an opening, as in the exe [no capture of
+  that state yet] (row 124).
 - The portraits (`Fejek[k]+0x10`): `fejetransp` −0.03 a frame once open (+0.09 while closing); they swing with the
   cages only while closing (they stand at their places, invisible, during the opening).
 - The round frame: from `dipframe` 60 as in §3 (the turn, `dipFrameValtozo`'s ring spins: sub-mesh 0 `Rz(n/220)`

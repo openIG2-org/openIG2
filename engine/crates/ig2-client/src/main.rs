@@ -43,7 +43,9 @@ mod chat;
 mod console;
 mod colony;
 mod colony_ui;
+mod colony_smoke;
 mod colony_war;
+mod colony_weather;
 mod diplomacy;
 mod diplomacy_scene;
 mod font;
@@ -58,6 +60,7 @@ mod mainscr_race;
 mod mainscr_scenario;
 mod messages_screen;
 mod mp_lobby;
+mod mp_wait;
 mod new_game;
 mod options;
 mod orders;
@@ -183,6 +186,8 @@ pub struct Options {
     /// `--spin-frames N`: drawn frames since the transfer or vehicle panel opened (its cells' turn; run_screen.py's
     /// `rop_frames`, re/screens/starmap.md §13.3).
     pub spin_frames: Option<f32>,
+    /// `--console-held S`: the starmap console's hot-spot S (1..=6) held down, its button at frame 5 (row 224).
+    pub console_held: Option<u32>,
     /// `--info-turn K`: the info screen's `infokeringeto` (re/screens/info.md §1.1).
     pub info_turn: f32,
     /// `--info-list P,H,C`: the list's `BolygoFlottaPointer`, its problem step and `Counter` (re/screens/info.md §6.2).
@@ -211,10 +216,15 @@ pub struct Options {
     /// `t % 5 == P`, the exe run's phase of its 50 ms clock against the scripted 10 ms one (run_screendiff.py reads
     /// it from the exe's trace).
     pub sim_phase: u32,
+    /// `--mouse-phase N` (with `--snapshot`): the pointer's `MouseFazis` at the exe's grab (run_screendiff.py reads it
+    /// from the capture's ui.json), its animation row `(N / 5) % 40`.
+    pub mouse_phase: u64,
     /// Show the clock as paused (`--paused`; the capture tool pauses the exe).
     pub paused: bool,
     /// `--panel production` or `--panel transfer:F1,F2[,tank]`: the starmap's production view or transfer panel up.
     pub panel: Option<String>,
+    /// `--mp-wait SPEC`: the multiplayer wait overlay over the starmap, armed (`mp_wait::Wait::staged`).
+    pub mp_wait: Option<String>,
     /// `--planet-info`, `--rop-menu X,Y`, `--menu KIND@X,Y`, `--mouse X,Y` (re/screens/starmap.md §14–§17).
     pub planet_info: bool,
     pub rop_menu: Option<[f32; 2]>,
@@ -277,6 +287,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         acttime: None,
         info_alap: None,
         spin_frames: None,
+        console_held: None,
         info_turn: 0.0,
         info_list: None,
         info_globes: Vec::new(),
@@ -288,9 +299,11 @@ fn parse(args: &[String]) -> Result<Options, String> {
         script: None,
         battle: None,
         sim_phase: 0,
+        mouse_phase: 0,
         paused: false,
         panel: None,
         planet_info: false,
+        mp_wait: None,
         rop_menu: None,
         menu: None,
         top_menu: None,
@@ -414,13 +427,16 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--info-log" => o.info_log = Some(val()?),
             "--script" => o.script = Some(val()?),
             "--battle" => o.battle = Some(val()?),
+            "--mouse-phase" => o.mouse_phase = val()?.parse::<u64>().map_err(|e| format!("--mouse-phase: {e}"))?,
             "--sim-phase" => o.sim_phase = val()?.parse::<u32>().map_err(|e| format!("--sim-phase: {e}"))? % 5,
             "--acttime" => o.acttime = Some(val()?.parse().map_err(|e| format!("--acttime: {e}"))?),
+            "--console-held" => o.console_held = Some(val()?.parse().map_err(|e| format!("--console-held: {e}"))?),
             "--spin-frames" => o.spin_frames = Some(val()?.parse().map_err(|e| format!("--spin-frames: {e}"))?),
             "--info-alap" => o.info_alap = Some(val()?.parse().map_err(|e| format!("--info-alap: {e}"))?),
             "--colony" => o.colony = Some(val()?.parse().map_err(|e| format!("--colony: {e}"))?),
             "--panel" => o.panel = Some(val()?),
             "--planet-info" => o.planet_info = true,
+            "--mp-wait" => o.mp_wait = Some(val()?),
             "--menu" => o.menu = Some(val()?),
             "--top-menu" => o.top_menu = Some(val()?),
             "--top-mouse" => {

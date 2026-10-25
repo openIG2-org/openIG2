@@ -134,6 +134,12 @@ impl Game<'_> {
         self.state.fleets.get(f).map_or(DELETED, |r| r[0x15])
     }
 
+    /// `spFlottak[1..=SpWarHanyFlotta]`'s fleets (`+0` i16; a negative one reads as no fleet).
+    pub(super) fn sp_fleets(&self) -> Vec<usize> {
+        let m = &self.state.mem;
+        (1..=m.i32(at::SP_COUNT).max(0) as u32).map(|k| usize::try_from(m.i16(at::SP_FLEETS + 6 * k)).unwrap_or(usize::MAX)).collect()
+    }
+
     fn fleet_i32(&self, f: usize, o: usize) -> i32 {
         self.state.fleets.get(f).map_or(0, |r| i32::from_le_bytes(r[o..o + 4].try_into().unwrap()))
     }
@@ -249,6 +255,10 @@ impl Game<'_> {
             self.events.push(GameEvent::Battle(BattleEvent::SpaceForbidden { attacker: f1, defender: f2 }));
             return;
         }
+        // From here on the exe reads the fleets back from `spFlottak[1..=SpWarHanyFlotta]` (exe 0x5a77f2, 0x5a7b19,
+        // `SpaceWar_NewBattle`): the story's `st_AddFleetToSpWar` may have added up to two (the route then goes
+        // real-time); the simulation keeps `f1`/`f2`.
+        let fleets = self.sp_fleets();
         let m = &self.state.mem;
         let contender = |f: usize| Contender {
             owner: self.fleet_owner(f),

@@ -29,6 +29,9 @@ impl App {
     /// 0x555470 lines 90-121) at the virtual point `at`. True when the bar takes it (the screen under it sees nothing);
     /// a press it took also takes that button's release.
     pub(super) fn top_bar_mouse(&mut self, button: MouseButton, pressed: bool, at: [f32; 2]) -> bool {
+        if button == MouseButton::Left {
+            self.bar_free_hold = pressed && bar_spot(at).is_none() && !self.screen_spot_at(at);
+        }
         if !pressed {
             if self.bar_held != Some(button) {
                 return false;
@@ -70,9 +73,11 @@ impl App {
     /// exe 0x555470 lines 90-121 test `Mouse_Bal`, no press edge; `IG2_gameUpdate` 0x4e0440 hit-tests `AktIkon` again
     /// each held frame unless a spot holds the pointer, `Mouse_Megfogva` 0xdb466a), so a message that arrives while
     /// the line is held, or the pointer coming back onto it, asks too. A hold that began elsewhere stays with that
-    /// spot (the screens' mains grab the pointer, the bar's flag-1 spots wait for the release).
+    /// spot (the screens' mains grab the pointer, the bar's flag-1 spots wait for the release); a hold that began over
+    /// no hot-spot (`AktIkon` 0: no `_Main` runs, so nothing sets `Mouse_Megfogva`) asks once the pointer reaches the
+    /// line (re/deviations.md row 340).
     pub(super) fn top_bar_frame(&mut self) {
-        if !self.bar_line_held || self.mouse_held & 1 == 0 || self.front.is_some() {
+        if !(self.bar_line_held || self.bar_free_hold) || self.mouse_held & 1 == 0 || self.front.is_some() {
             return;
         }
         let Some(h) = &self.hud else { return };

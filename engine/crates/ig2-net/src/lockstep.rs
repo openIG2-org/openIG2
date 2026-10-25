@@ -127,6 +127,13 @@ impl Host {
         self.injected.push(Stamped { issuer: empire, command });
     }
 
+    /// The slots whose input for the next bundle hasn't come: the relay waits for them (the exe's late test,
+    /// `FUN_00510fd0`).
+    pub fn late(&self) -> Vec<u8> {
+        let have = self.inputs.get(&self.next);
+        self.slots.iter().filter(|(slot, s)| self.next >= s.from && !have.is_some_and(|i| i.contains_key(slot))).map(|(&slot, _)| slot).collect()
+    }
+
     /// The address `slot`'s link comes from ([`Transport::remote`]).
     pub fn remote(&self, slot: u8) -> Option<std::net::IpAddr> {
         self.slots.get(&slot)?.link.remote()
@@ -479,12 +486,14 @@ impl<'r> Peer<'r> {
                 let sender = self.game.sender();
                 c.apply(&mut self.game, sender);
             }
+            // The sim's own messages from this tick and from the bundle's orders (an answer's 0x66 on the messages
+            // screen: the original's UI loop sends it, delivered after the next tick).
+            let from = self.game.events.len();
             if k == 0 {
                 for s in &b.commands {
                     s.command.apply(&mut self.game, s.issuer);
                 }
             }
-            let from = self.game.events.len();
             self.game.advance_clock();
             self.game.run_tick();
             self.pending.extend(self.game.events[from..].iter().filter_map(Command::from_event));

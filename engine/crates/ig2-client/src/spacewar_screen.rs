@@ -402,12 +402,23 @@ impl Mesh {
 
     /// The model's triangles at `xf` in one colour, into the 3D pass's late draws.
     fn push(&self, f: &mut crate::render::Frame, xf: &crate::scene::Transform, color: [f32; 4], additive: bool) {
+        self.push_lerp(None, f, xf, color, additive);
+    }
+
+    /// [`Mesh::push`] with the vertex positions blended towards `next`'s frame by its weight (`kirak` 0x60e160's 8.8
+    /// lerp, `SetFrame` exe 0x452f30), the textures this mesh's.
+    fn push_lerp(&self, next: Option<(&Mesh, f32)>, f: &mut crate::render::Frame, xf: &crate::scene::Transform, color: [f32; 4], additive: bool) {
         let crate::render::Frame { scene, late, .. } = f;
         let Some(scene) = scene.as_mut() else { return };
-        for (verts, tex) in &self.parts {
+        for (i, (verts, tex)) in self.parts.iter().enumerate() {
             let start = scene.dynamic.len() as u32;
-            for v in verts {
-                scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color });
+            let to = next.and_then(|(m, w)| m.parts.get(i).filter(|p| p.0.len() == verts.len()).map(|p| (&p.0, w)));
+            for (j, v) in verts.iter().enumerate() {
+                let pos = match to {
+                    Some((q, w)) => std::array::from_fn(|k| v.pos[k] + (q[j].pos[k] - v.pos[k]) * w),
+                    None => v.pos,
+                };
+                scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(pos), normal: [0.0; 3], uv: v.uv, color });
             }
             let range = start..scene.dynamic.len() as u32;
             late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: color[3] < 1.0 || additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });
@@ -429,6 +440,8 @@ fn create_matrix2(d: [f32; 3]) -> crate::scene::M3 {
 pub struct FxGfx {
     debris: [Option<Mesh>; 3],
     rings: HashMap<usize, Option<Mesh>>,
+    /// The rings' shared light ([`crate::spacewar_fx::ring_light`]): the battle tick it was taken at, the opacity byte.
+    ring_light: Option<(i32, i32)>,
     fighter: Option<Mesh>,
     villam: Option<crate::render::TexId>,
     flare: Option<crate::render::TexId>,
@@ -439,7 +452,7 @@ impl FxGfx {
         let debris = std::array::from_fn(|i| Mesh::load(r, install, "vector/spacewar/", &format!("darab{}.xvb", i + 1), "textures/spacewar/"));
         let tex = |r: &mut crate::render::Renderer, n: &str| crate::assets::Image::load(install, &format!("dataraw/textures/spacewar/{n}_bmp.pvr")).map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
         let fighter = Mesh::load(r, install, "vector/spacewar/", "vad10.xvb", "textures/spacewar/");
-        Self { debris, rings: HashMap::new(), fighter, villam: tex(r, "villam"), flare: tex(r, "flare") }
+        Self { debris, rings: HashMap::new(), ring_light: None, fighter, villam: tex(r, "villam"), flare: tex(r, "flare") }
     }
 }
 
@@ -1186,21 +1199,38 @@ impl<'a> Scene<'a> {
         }
     }
 
-    /// The shield rings (`karikafrissit`, spec §6.8.5): `karika.xvb` at 0.05, `CreateMatrix2(dir, 0)`, at frame `f`,
-    /// unshaded, transparency `f/30`.
+    /// The shield rings (`karikafrissit`, spec §6.8.5): `karika.xvb` at 0.05, `CreateMatrix2(dir, 0)`, at the fractional
+    /// frame `f` (`SetFrame`'s 8.8 lerp, each ring its own: `kirak` exe 0x531460 lerps per draw), unshaded,
+    /// transparency `f/30`; `PropertiesOff(0xc)` (exe 0x576e40): added (`ONE`/`ONE`) with no depth write, the white
+    /// vertices scaled by the shared opacity byte `>> 8` ([`crate::spacewar_fx::ring_light`]), the texture
+    /// (`kekring`, no alpha) added as it is.
     fn rings(&self, f: &mut crate::render::Frame, r: &mut crate::render::Renderer, install: &ig2_formats::Install, b: &Battle, fx: &crate::spacewar_fx::Fx, g: &mut FxGfx) {
         if b.planet_owner < 0 {
             return;
         }
+        if g.ring_light.is_none_or(|(t, _)| t != b.tick) {
+            if let Some(o) = crate::spacewar_fx::ring_light(&fx.rings, b.tick) {
+                g.ring_light = Some((b.tick, o));
+            }
+        }
+        let o = g.ring_light.map_or(255, |x| x.1);
         for ring in fx.rings.iter().filter(|x| x.start != 0) {
             let fr = ring.frame(b.tick);
             if fr > 30.0 {
                 continue;
             }
-            let Some(mesh) = g.rings.entry(fr.max(0.0) as usize).or_insert_with(|| Mesh::load_at(r, install, "karika.xvb", fr.max(0.0) as usize)).as_ref() else { continue };
-            let place = crate::scene::Placement::add_to_scene(mesh.origin, 0.05 / SCENE_SCALE);
-            let xf = crate::scene::Transform { matrix: crate::scene::mul(&create_matrix2(ring.dir), &place.matrix), translation: self.world(ring.at) };
-            mesh.push(f, &xf, [1.0, 1.0, 1.0, 1.0 - fr / 30.0], false);
+            let (f0, f1, w) = crate::scene::frame_keys(fr, usize::MAX);
+            for k in [f0, f1] {
+                g.rings.entry(k).or_insert_with(|| Mesh::load_at(r, install, "karika.xvb", k));
+            }
+            let Some(mesh) = g.rings[&f0].as_ref() else { continue };
+            let next = g.rings[&f1].as_ref().filter(|_| w > 0.0).map(|m| (m, w));
+            // The exe's ring records hold `diag(0.05)` in record space (battle / 1024): the model's box is ±1024, so
+            // its vertex frames are already normalised (±0.007 at frame 0 growing to ±0.97 at 30) [obs 2026-10-25
+            // shield capture, `--records` t3000: `s` 0.05 on every axis, `at` = the hit point / 1024].
+            let s = 0.05 * 1024.0 / SCENE_SCALE;
+            let xf = crate::scene::Transform { matrix: crate::scene::mul(&create_matrix2(ring.dir), &crate::scene::scale([s; 3])), translation: self.world(ring.at) };
+            mesh.push_lerp(next, f, &xf, [1.0, 1.0, 1.0, o as f32 / 256.0], true);
         }
     }
 
@@ -1369,7 +1399,13 @@ impl<'a> Scene<'a> {
             let half = std::f32::consts::FRAC_PI_2;
             let crate::render::Frame { scene, late, .. } = f;
             if let Some(scene) = scene.as_mut() {
-                self.assets.planet_meshes.add_battle_planet(scene, late, surface, r * 1.16 / SCENE_SCALE, (half, half, 0.0), self.world(p), eye, planet_light());
+                self.assets.planet_meshes.add_battle_planet(scene, late, surface, r * 1.16 / SCENE_SCALE, (half, half, 0.0), self.world(p), eye);
+                // The cloud shells (`bolygo3.xvb` at R·1.02 and R·1.04 in f64, `RotateObj(0, π/2, 0)`), which `frissit2`
+                // (exe 0x573bff, 0x573c36) turns each battle step to `(tick/900, 0, 0)` and `(tick/−1200, π/2, 0)`.
+                let t = b.tick as f32;
+                for (k, rot) in [(1.02f64, (t / 900.0, 0.0, 0.0)), (1.04, (t / -1200.0, half, 0.0))] {
+                    self.assets.planet_meshes.add_battle_shell(scene, late, (b.planet_size as f64 * k) as f32 / SCENE_SCALE, rot, self.world(p), eye);
+                }
             }
         }
         self.ships(f, b, eye);
@@ -1649,12 +1685,14 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
                 Input::Move(at) => mouse = *at,
                 Input::Button { button, down, at } => {
                     mouse = *at;
+                    let first = !(live.left || live.right);
                     match button {
                         1 => live.left = *down,
                         3 => live.right = *down,
                         _ => {}
                     }
-                    if *down && *button == 1 && live.bar_press(*at, false) == Some(0) {
+                    // The top bar's pause (spot 2, x 0..15, y < 20) on either button's first press, once the zoom is over.
+                    if *down && first && matches!(button, 1 | 3) && live.clock_free() && at[0] < 15.0 && at[1] < 20.0 {
                         let paused = world.paused();
                         world.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::from(ig2_sim::game::StarmapOrder::Pause { paused: !paused }) });
                     }

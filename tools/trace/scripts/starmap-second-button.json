@@ -1,0 +1,19 @@
+{
+ "screen": "starmap",
+ "note": "Row 363 (re/screens/starmap.md §10.6): a left press on empty map latches hot-spot 0x35 (`Mouse_Megfogva`); dragged onto the zoom button (5) and the right button pressed there, no console spot starts (no click, no zoom); then the reverse: a right press on the zoom button and a left press there (the spot's, no new click). Starts at t 150 (the exe's first ~100 script ticks are lost).",
+ "events": [
+  {"t": 150, "mouse": [600, 120]},
+  {"t": 160, "down": 1, "at": [600, 120]},
+  {"t": 165, "mouse": [470, 250]},
+  {"t": 170, "mouse": [320, 376]},
+  {"t": 180, "down": 3, "at": [320, 376]},
+  {"t": 200, "up": 3, "at": [320, 376]},
+  {"t": 210, "up": 1, "at": [320, 376]},
+  {"t": 240, "down": 3, "at": [320, 376]},
+  {"t": 250, "down": 1, "at": [320, 376]},
+  {"t": 260, "up": 1, "at": [320, 376]},
+  {"t": 270, "up": 3, "at": [320, 376]}
+ ],
+ "grabs": [175, 205, 235, 265, 285],
+ "tail": 10
+}

@@ -74,6 +74,9 @@ impl Script {
                 }
                 events.push(Event { t: t + hold, input: Input::Move(to) });
                 events.push(Event { t: t + hold, input: Input::Button { button, down: false, at: to } });
+            } else if let (Some((button, down)), Some(at)) = (e.get("down").map(|b| (b, true)).or_else(|| e.get("up").map(|b| (b, false))), point(e, "at")) {
+                // A lone button down or up (screen.js's raw mouse events).
+                events.push(Event { t, input: Input::Button { button: button.as_u64().unwrap_or(1) as u8, down, at } });
             } else if let Some(at) = point(e, "mouse") {
                 events.push(Event { t, input: Input::Move(at) });
             } else if let Some(name) = e.get("text").and_then(Value::as_str) {
@@ -145,6 +148,9 @@ mod tests {
         let moves: Vec<_> = d.events.iter().filter_map(|e| if let Input::Move(at) = e.input { Some((e.t, at)) } else { None }).collect();
         assert_eq!(moves, vec![(2, [0.0, 0.0]), (3, [10.0, 5.0]), (4, [20.0, 10.0]), (5, [30.0, 15.0]), (6, [40.0, 20.0])]);
         assert_eq!(d.events.last().unwrap().input, Input::Button { button: 1, down: false, at: [40.0, 20.0] });
+        let r = Script::parse(r#"{"events": [{"t": 4, "up": 3, "at": [1, 2]}, {"t": 1, "down": 3, "at": [1, 2]}]}"#).unwrap();
+        assert_eq!(r.events[0].input, Input::Button { button: 3, down: true, at: [1.0, 2.0] });
+        assert_eq!(r.events[1].input, Input::Button { button: 3, down: false, at: [1.0, 2.0] });
         assert_eq!(grab_path(std::path::Path::new("x/r-client.png"), 30), std::path::PathBuf::from("x/r-client-t30.png"));
     }
 }

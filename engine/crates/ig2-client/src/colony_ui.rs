@@ -197,6 +197,12 @@ impl Ctx<'_> {
     fn en(&self) -> usize {
         self.state.mem.i32(va::EN).clamp(0, 18) as usize
     }
+    /// `Colony_Main` hot-spot 0x14's building gate (exe 0x4666d0): the planet is EN's, or side EN has units on the
+    /// field (`WF+0x8b1 + EN`): a lander picks the enemy's buildings too (row 267).
+    fn picks(&self) -> bool {
+        let en = self.en();
+        self.snap.owner as usize == en || self.snap.present.get(en).is_some_and(|&p| p != 0)
+    }
     fn planet_rec(&self, p: usize) -> Vec<u8> {
         self.state.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE)
     }
@@ -632,6 +638,10 @@ impl ColonyUi {
             out.commands = w.commands;
             out.click = w.click;
             if w.drop_building {
+                // `GetNearestBuilding` gave 0 (a unit took the press): the click when a building was selected.
+                if self.selected != 0 && c.picks() && !w.click {
+                    self.sounds.push(CLICK);
+                }
                 self.selected = 0;
             }
             if w.taken {
@@ -859,7 +869,7 @@ impl ColonyUi {
     /// building under the pointer is picked again every frame, with the click when it changes; once one is picked
     /// `Mouse_FelengedesMajdMegvar` stops the hold.
     fn sweep_building(&mut self, c: &Ctx, boxed: bool) {
-        if !self.sweep || self.build_mode || !c.snap.visible || c.snap.owner as usize != c.en() {
+        if !self.sweep || self.build_mode || !c.picks() {
             return;
         }
         let under = self.building_under(c);
@@ -879,7 +889,7 @@ impl ColonyUi {
     /// The 3D view pressed (hot-spot 0x14): select the building under the pointer, or build at the cursor.
     fn view_press(&mut self, c: &Ctx, p: [f32; 2], left: bool, out: &mut Outcome) {
         if !self.build_mode {
-            if left && c.snap.visible && c.snap.owner as usize == c.en() {
+            if left && c.picks() {
                 let under = self.building_under(c);
                 // `Colony_Main` hot-spot 0x14: the click when another building becomes the selection.
                 if under != self.selected {
@@ -1072,6 +1082,7 @@ impl ColonyUi {
             // (`CheckPlacing(−1)` false; spec §11.7).
             landing: s.owner as i32 != en && !s.to_land.is_empty(),
             flash: self.flash,
+            counter: self.war.counter(),
         }
     }
 
@@ -1272,8 +1283,9 @@ impl PanelBuilding {
     /// `unit`: the hull and colour of the unit to land, shown instead (`AktEpuletTipus < −9`: `LoadBox(TankAlap[hull])`
     /// at scale 2.0, the first sub-mesh's texture `tankok/<hull><colour>.bmp`; spec §11.7).
     #[allow(clippy::too_many_arguments)]
-    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>, spin: f32, light: V3, size: [f32; 2]) -> Option<TexId> {
-        let (model, texs) = self.model(r, install, rules, kind, unit)?;
+    /// `sky`: the colony's environment map ([`crate::colony::ColonyScene::sky`]).
+    pub fn render(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>, spin: f32, light: V3, size: [f32; 2], sky: Option<&str>) -> Option<TexId> {
+        let (model, texs) = self.model(r, install, rules, kind, unit, sky)?;
         // `local_e0 = Building+0x54` (1.5 at most below `OptionsBuildingRes` 2, the remaster runs the highest), ×3/2;
         // a unit 2.0.
         let s = if unit.is_some() { 2.0 } else { rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 3.0 / 2.0 };
@@ -1298,8 +1310,8 @@ impl PanelBuilding {
     /// `RotateObj(π/2, 0, 0)`, camera-fixed at (−130, 657, −1100) and turned −0.01 a UI frame about (0, 1, 0) for
     /// `turn` frames; into a texture of the window's size of which the caller draws the info box's corner.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_info(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, turn: f32, light: V3, size: [f32; 2]) -> Option<TexId> {
-        let (model, texs) = self.model(r, install, rules, kind, None)?;
+    pub fn render_info(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, turn: f32, light: V3, size: [f32; 2], sky: Option<&str>) -> Option<TexId> {
+        let (model, texs) = self.model(r, install, rules, kind, None, sky)?;
         let s = rules.building_models.get(kind).map_or(1.0, |b| b.preview_scale) * 0.015;
         let rot = scene::mul(&scene::axis_matrix([0.0, 1.0, 0.0], -0.01 * turn), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0));
         let m: M3 = scene::mul(&rot, &Placement::add_to_scene(model.origin, s).matrix).map(|x| x * 1024.0);
@@ -1314,7 +1326,7 @@ impl PanelBuilding {
     }
 
     /// Kind `kind`'s preview model (or the landing unit's hull) with its textures, loaded once.
-    fn model(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>) -> Option<(Model, Vec<TexId>)> {
+    fn model(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: usize, unit: Option<(usize, i32)>, sky: Option<&str>) -> Option<(Model, Vec<TexId>)> {
         // Units are kept under keys past the building kinds.
         let key = unit.map_or(kind, |(h, c)| 1000 + h * 16 + c as usize);
         if let (Some((hull, colour)), false) = (unit, self.models.contains_key(&key)) {
@@ -1338,7 +1350,9 @@ impl PanelBuilding {
             let loaded = loaded.map(|mut m| {
                 m.set_look("_a_", scene::Look::Glass(0.4));
                 m.set_look("_c_", scene::Look::Glass(0.4));
-                let texs = m.parts.iter().map(|p| p.texture.clone()).collect::<Vec<_>>().into_iter().map(|t| self.texture(r, install, t.as_deref())).collect();
+                // `ShowColony` environment-maps the copy's `_B_`/`_C_` children too (exe 0x49fa3b/0x49faab).
+                let paths = m.parts.iter().map(|p| if crate::colony::building_env(p) { crate::colony::env_texture(install, p, sky, true) } else { p.texture.clone() });
+                let texs = paths.collect::<Vec<_>>().into_iter().map(|t| self.texture(r, install, t.as_deref())).collect();
                 (m, texs)
             });
             self.models.insert(kind, loaded);
@@ -1368,7 +1382,7 @@ pub fn render_kis_info(r: &mut Renderer, install: &Install, rules: &ig2_rules::R
             let (u, _) = ui.war.info_model(&w)?;
             scene.render_info_model(r, install, &rules.unit_models, u, turn, light, size)
         }
-        KisInfo::Building(kind) => panel.render_info(r, install, rules, kind, turn, light, size),
+        KisInfo::Building(kind) => panel.render_info(r, install, rules, kind, turn, light, size, scene.sky.as_deref()),
         KisInfo::Globe(_) => scene.render_info_globe(r, install, s.surface, turn, light, size),
     }
 }
@@ -1388,6 +1402,10 @@ fn bake_panel(model: &Model, texs: &[TexId], m: &M3, at: V3, lights: &crate::lig
             let q = scene::apply(m, v.pos);
             let c = lights.rgb(crate::lighting::normal(m, v.lnormal));
             dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], a] });
+        }
+        // The pass's camera sits at the origin of its own space.
+        if crate::colony::building_env(p) {
+            crate::colony::env_map(p, m, [0.0; 3], &mut dynamic[start as usize..]);
         }
         draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(texs[0]), glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
     }

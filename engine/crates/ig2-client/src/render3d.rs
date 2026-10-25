@@ -250,6 +250,9 @@ pub enum Shadow {
     /// A blob shadow under a unit (`WF_Tank::DrawShadow`'s `polygons3d(v, 3, 2)`: blend ZERO / ONE_MINUS_SRC_COLOR,
     /// so what lies below is multiplied by `1 − texel·colour`; depth tested, not written; no fog). Gamma pass, glass.
     Blob,
+    /// Drawn into the shadow map only: `Kockashadow` (ELF 0x5fc430) draws a building under construction whole while
+    /// the scene cuts it (re/screens/colony.md §3.4).
+    CastOnly,
 }
 
 /// The light-space rows of `rendershadowmap`'s camera (`CameraRotate(0, light)`: `a`, `−b` of its basis).
@@ -632,7 +635,7 @@ impl Pipe3d {
             pass.set_bind_group(0, &self.uniform_bg, &[]);
             pass.set_bind_group(1, &textures[0], &[]);
             pass.set_bind_group(2, &self.shadow_pass_bg, &[]);
-            for m in draws.iter().filter(|m| m.shadow == Shadow::Cast && !m.range.is_empty()) {
+            for m in draws.iter().filter(|m| matches!(m.shadow, Shadow::Cast | Shadow::CastOnly) && !m.range.is_empty()) {
                 pass.set_vertex_buffer(0, match m.mesh {
                     Some(MeshId(i)) => self.meshes[i].slice(..),
                     None => dynbuf.slice(..),
@@ -658,8 +661,12 @@ impl Pipe3d {
         });
         pass.set_bind_group(0, &self.uniform_bg, &[]);
         pass.set_bind_group(2, &self.shadow_bg, &[]);
-        for glass in [false, true] {
-            for m in draws.iter().filter(|m| m.glass == glass && !m.cloud && !m.range.is_empty()) {
+        // `renderscene`: `Kocka` (the opaque objects, then the translucent ones) before `Lines` (re/screens/spacewar.md
+        // §3 step 11; the colony's alike): the engine's lines (additive, not glass) come last, so a translucent object
+        // behind one isn't cut by the depth it writes (the shield rings under the battle's grid).
+        for phase in 0..3 {
+            let glass = phase == 1;
+            for m in draws.iter().filter(|m| !m.cloud && m.shadow != Shadow::CastOnly && !m.range.is_empty() && m.glass == glass && (phase == 1 || (phase == 2) == (m.additive && !m.video))) {
                 let receives = scene.shadow.is_some() && m.shadow == Shadow::Receive;
                 pass.set_pipeline(match (scene.gamma, glass, receives) {
                     (true, false, _) if m.video => &self.video_g,

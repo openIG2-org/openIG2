@@ -82,6 +82,7 @@ ap.add_argument("--via-starmap", type=int, default=0, metavar="F",
                 help="open the starmap first and --kep F frames later (the overlays' SaveScreen pictures, re/screens/overlay-background.md)")
 ap.add_argument("--script", help="an input script on the screen --kep (JSON: events, grabs; re/screens/sound.md §3)")
 ap.add_argument("--exe-args", nargs="*", default=[], help="command-line arguments for ig2.exe (e.g. demomode: re/screens/mainscr.md §9.5)")
+ap.add_argument("--gl-grab", action="store_true", help="read the stills back in the game at the next SwapBuffers (glReadPixels, as --script's grabs) instead of PrintWindow, which grabs white while the display is off")
 ap.add_argument("--boot", action="store_true", help="the main menu as the exe starts: no scenario, no save (use with --kep 15 --run)")
 ap.add_argument("--probe", help="append this Frida script to the agent (a screen's own probe, e.g. probes/mainscr.js; its records go to stdout)")
 ap.add_argument("--tutorial", type=int, default=1, help="with --probe probes/tutorial.js: the chapter its TutorialStart runs; its 'tutwin' records go to <out>-tutwin.jsonl")
@@ -168,6 +169,7 @@ def grab(hwnd, path):
 
 
 grabs = []
+gl_stills = []
 done = []
 records = open(a.jsonl, "w", encoding="utf-8") if a.jsonl else None
 sounds = open(a.sounds, "w", encoding="utf-8") if a.sounds else None
@@ -204,6 +206,12 @@ def on(msg, data):
             with open(f"{a.out}-tutwin.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(p) + "\n")
             return
+        if p.get("k") == "frame" and p.get("still") is not None:
+            path = f"{a.out}-{p['still']}.png"
+            png_rgba_bottom_up(path, p["w"], p["h"], data)
+            gl_stills.append(path)
+            print(f"grabbed {path} {p['w']}x{p['h']} (in game)", flush=True)
+            return
         if p.get("k") == "frame":
             path = f"{a.out}-t{p['t']}.png"
             png_rgba_bottom_up(path, p["w"], p["h"], data)
@@ -232,7 +240,7 @@ def on(msg, data):
             if a.state_out:
                 with open(a.state_out + ".ui.json", "w", encoding="utf-8") as f:
                     json.dump({"clouds": p.get("clouds"), "futofeny": p.get("futofeny"), "acttime": p.get("acttime"), "info_turn": p.get("infoTurn"), "info_alap": p.get("infoAlap"),
-                               "info_list": p.get("infoList"), "faders": p.get("faders"), "rop_frames": p.get("ropFrames")}, f)
+                               "mouse_phase": p.get("mouseFazis"), "info_list": p.get("infoList"), "faders": p.get("faders"), "rop_frames": p.get("ropFrames")}, f)
     else:
         print(msg, flush=True)
         done.append(1)
@@ -262,7 +270,7 @@ if a.sounds:
     sys.path.insert(0, here)
     import sound_tables
     sound_tables = sound_tables.find(a.install)
-agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "viaStarmap": a.via_starmap, "shots": a.shots, "run": a.run, "boot": a.boot,
+agent.post({"type": "config", "payload": {"slot": a.slot, "kep": a.kep, "planet": a.planet, "wait": a.wait, "viaStarmap": a.via_starmap, "shots": a.shots, "run": a.run, "boot": a.boot, "glGrab": a.gl_grab,
                                            "cam": [float(v) for v in a.cam.split(",")] if a.cam else None,
                                            "stateSlot": a.slot + 1 if a.state_out else 0, "debug": a.debug,
                                            "fleets": a.fleets, "planetTanks": a.planet_tanks, "rop": a.rop, "ropFleet": a.rop_fleet,
@@ -292,7 +300,9 @@ try:
             r = wt.RECT()
             u32.GetClientRect(hwnd, ctypes.byref(r))
             u32.PostMessageW(hwnd, WM_MOUSEMOVE, 0, (r.bottom // 2) << 16 | (r.right // 2))
-        if len(grabs) > n:
+        if a.gl_grab:
+            n = len(gl_stills)
+        elif len(grabs) > n:
             hwnd = window_of(pid)
             if hwnd:
                 w, h = grab(hwnd, f"{a.out}-{n}.png")

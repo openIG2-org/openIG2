@@ -66,6 +66,7 @@ ap.add_argument("--sounds")
 ap.add_argument("--records", action="store_true", help="at each script grab the scene records of the debris, the ships root and the units ('records')")
 ap.add_argument("--shield", action="store_true", help="with --planets: every planet battle, the first armed building armour (shield rings)")
 ap.add_argument("--watch", help="T:OFF[:N]: a hardware write watchpoint on the slot's byte OFF from script tick T (the first N writers)")
+ap.add_argument("--globals", help="NAME=VA[:1],..., or NAME=slot+OFF: exe globals (4 B, 1 B with :1) or the battle's bytes, logged on change each script frame ('glob')")
 ap.add_argument("--watch-addr", help="VA[:N]: a hardware write watchpoint on an exe global from just before the scenario's load (the first N writers, the value read as a string)")
 a = ap.parse_args()
 input_script = json.load(open(a.script, encoding="utf-8")) if a.script else None
@@ -167,6 +168,7 @@ script.post({"type": "config", "payload": {"scenario": a.scenario, "steps": a.st
                                            "grabSettle": a.grab_settle, "stateSlot": STATE_SLOT if a.state_out else 0,
                                            "script": input_script, "soundTables": sound_tables, "formation": a.formation, "records": a.records, "shield": a.shield,
                                            "watch": dict(zip(("t", "off", "n"), (int(x, 0) for x in a.watch.split(":")))) if a.watch else None,
+                                           "globals": [dict(name=n, slot=v.startswith("slot+"), addr=int(v[5:] if v.startswith("slot+") else v.split(":")[0], 0), size=1 if v.endswith(":1") else 4) for n, v in (x.split("=") for x in a.globals.split(","))] if a.globals else None,
                                            "watchAddr": dict(zip(("addr", "n"), (int(x, 0) for x in a.watch_addr.split(":")))) if a.watch_addr else None}})
 device.resume(pid)
 print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")

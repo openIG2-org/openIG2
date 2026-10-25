@@ -139,14 +139,12 @@ impl TradeScene {
                 }
                 let id = p.texture.clone().and_then(|t| self.texture(r, install, &t).map(|x| x.id)).unwrap_or(self.white);
                 // The panels' and the backdrop's material is 0.65 transparent (`Racsszin`, `tozs_hk`; ig2.exe draws them
-                // at opacity 89/255). The panels lie over black and hide the backdrop behind them [obs: a flat
-                // racsszin × 0.35 there]: drawn opaque at that opacity, they keep the depth the glass pass doesn't write.
+                // at opacity 89/255): blended over the overlay's picture, the depth write kept (`renderstateallitas`)
+                // [obs: racsszin × 0.35 over black, plus 0.65 of the dimmed starmap behind; deviations #260].
                 let o = 1.0 - p.transparency.clamp(0.0, 1.0);
-                let panel = p.texture.as_deref().is_some_and(|t| t.ends_with("racsszin_bmp.pvr"));
-                if panel && o < 1.0 {
-                    bake(p, &t, &lights, id, 1.0, o, &mut dynamic, &mut draws);
-                } else {
-                    bake(p, &t, &lights, id, o, 1.0, &mut dynamic, &mut draws);
+                bake(p, &t, &lights, id, o, 1.0, &mut dynamic, &mut draws);
+                if let Some(d) = draws.last_mut().filter(|d| d.glass) {
+                    d.depth_write = true;
                 }
             }
         }
@@ -182,16 +180,19 @@ impl TradeScene {
                 let (to, rot) = s.wire_pose();
                 m.move_child(&[WIRE], Some(to.map(|c| c / 1024.0)), Some(&rot));
                 let t = Placement::add_to_scene(m.origin, 1.15).world((0.0, 0.0, 0.0), at);
-                // `wirekirak`: each end lit by the scene's lights times the texture, the faces turned away culled (as
-                // the research screen's sphere) [the exe's lines are ~3x brighter and wider: deviations].
+                // `wirekirak`: each end lit by the scene's lights times the texture; every face's edges, the far side's in
+                // the ambient colour, as aliased lines one output pixel wide, blended at the opacity [obs: fx10-trade
+                // t60, deviations #241]. Open, the camera is inside it: its far faces' dark lines lie over the
+                // overlay's picture [obs: the dark curved grid, deviations #261].
                 for p in m.below(&[WIRE]) {
                     self.wire(p, &t, &lights, 1.0 - v, &mut grid);
                 }
             }
         }
         for (a, b, c) in grid {
-            if let (Some(pa), Some(pb)) = (project(a), project(b)) {
-                f.push(self.white, Blend::GammaAdditive, Instance::line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), 1.0, c));
+            // Cut where it passes the camera plane (research.rs `wire`) [obs: the opening's near cells].
+            if let Some((Some(pa), Some(pb))) = crate::research::cut_near(a, b).map(|(a, b)| (project(a), project(b))) {
+                f.push(self.white, Blend::GammaAlpha, Instance::hard_line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), c));
             }
         }
         if dynamic.is_empty() {
@@ -215,25 +216,25 @@ impl TradeScene {
     }
 
     /// `wirekirak`: the part's flagged triangle edges as lines, each end in its vertex's lit colour times the
-    /// texture's there, times the opacity.
+    /// texture's there, the opacity their alpha (property 8: blended, not scaled).
     fn wire(&self, p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, opacity: f32, out: &mut Vec<(V3, V3, [f32; 4])>) {
         let img = p.texture.as_deref().and_then(|t| self.textures.get(t)).map(|t| &t.img);
         let colour = |v: &scene::Vert| -> [f32; 3] {
             let l = lights.rgb(lighting::normal(&t.matrix, v.lnormal));
             let tc = img.map_or([1.0; 3], |im| sample(im, v.uv));
-            [l[0] * tc[0] * opacity, l[1] * tc[1] * opacity, l[2] * tc[2] * opacity]
+            [l[0] * tc[0], l[1] * tc[1], l[2] * tc[2]]
         };
+        // An edge two faces share draws once (the second fails the engine's depth test, research.rs `wire`).
+        let mut drawn = std::collections::HashSet::new();
+        let key = |a: V3| a.map(f32::to_bits);
         for (ti, tri) in p.verts.chunks_exact(3).enumerate() {
             let flags = p.edges.get(ti).copied().unwrap_or(7);
             let pts: Vec<V3> = tri.iter().map(|v| t.point(v.pos)).collect();
-            // The engine culls the triangles facing away, wireframes too (as the research screen's sphere).
-            if crate::research::faces_away(&[pts[0], pts[1], pts[2]]) {
-                continue;
-            }
             let cols: Vec<[f32; 3]> = tri.iter().map(colour).collect();
             for (bit, (a, b)) in [(0, (2, 0)), (1, (0, 1)), (2, (1, 2))] {
-                if flags & (1 << bit) != 0 {
-                    let c = [(cols[a][0] + cols[b][0]) / 2.0, (cols[a][1] + cols[b][1]) / 2.0, (cols[a][2] + cols[b][2]) / 2.0, 1.0];
+                let (ka, kb) = (key(tri[a].pos), key(tri[b].pos));
+                if flags & (1 << bit) != 0 && drawn.insert(if ka <= kb { (ka, kb) } else { (kb, ka) }) {
+                    let c = [(cols[a][0] + cols[b][0]) / 2.0, (cols[a][1] + cols[b][1]) / 2.0, (cols[a][2] + cols[b][2]) / 2.0, opacity];
                     out.push((pts[a], pts[b], c));
                 }
             }

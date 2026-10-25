@@ -329,7 +329,14 @@ only. Its name is written when it has an owner (or story flag `StoryAdat+0x4c`, 
 For each fleet on the map (owner ≠ −1, seen by the human or always visible, `+0x52` bit 10 clear) in front: the
 sprite (starmap.md §4.2), then, when `+0x52` bit 11 is set (in MP only the human's own), its name `+0` twice:
 colour 0 at `(x + 1, y + 10)` (the shadow) and `owner + 15` at `(x + 1, y + 9)`, 0x14 bytes, size 1, flags 0xf. The
-debug build adds the fleet's numbers under it. On the starmap, fleets with `+0x52` bit 2 or 7 get the animated
+debug build adds the fleet's numbers under it. The name's guard (exe 0x5a534b..0x5a5398, row 394):
+`(!KilepesElott || KilepesElott2) && !starmaphideflottak && bit 11 && (!MultiPlayerMode || owner == EN || DEBUGX)`;
+the planets' names (`Show_Stars2d3d` 0x5a5c81) share the first two terms. `KilepesElott2` (0xF1737E) is set only by
+`Starmap_Kilep` (0x5b28b0) for the picture with the HUD under messages/help/options (names shown), cleared for the
+HUD-less one (0x5b28d8: no names) and after both; `starmaphideflottak` (0xF1737C) by `starmapszarok` (0x581c4e) while
+the battle zoom's `starmaperosseg` is 0, cleared by `Init3dStarmap`. Port: `View::names` (`battle_fade` 0 hides
+both), `fleet_name_shown` (`Snapshot::own_names_only`), the exit's HUD-less picture is `View::build` alone. On the
+starmap, fleets with `+0x52` bit 2 or 7 get the animated
 marker `StarmapBrushok` 6 at (x − 15, y − 13).
 
 ## 5. Not specified here

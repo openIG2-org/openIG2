@@ -255,7 +255,7 @@ impl SpyScene {
         let race_tex = (1..=RACE_TEXTURES).map(|k| texture(r, install, &format!("{k}_a.bmp"), &mut cache, white)).collect();
         let mut status_tex: Vec<TexId> = STATUS_TEXTURES.iter().map(|n| texture(r, install, n, &mut cache, white)).collect();
         status_tex.extend((0..HOURGLASS).map(|k| texture(r, install, &format!("{:06}.bmp", 10000 + k), &mut cache, white)));
-        let head_tex = r.add_texture(&crate::assets::Image { width: 1, height: 1, rgba: vec![0, 0, 0, 255] });
+        let head_tex = r.add_texture(&crate::assets::Image { width: 1, height: 1, rgba: vec![0, 0, 0, 255], mips: Vec::new() });
         Ok(Self { frame, wire, gomb, pedestals, ring, disc, icon, race_tex, status_tex, white, head_tex, frame_origin: origin })
     }
 
@@ -464,7 +464,7 @@ fn lerp_piece(a: &Piece, b: &Piece, t: f32) -> Piece {
         return a.clone();
     }
     let l = |x: V3, y: V3| -> V3 { std::array::from_fn(|k| x[k] + (y[k] - x[k]) * t) };
-    let verts = a.verts.iter().zip(&b.verts).map(|(x, y)| scene::Vert { pos: l(x.pos, y.pos), normal: scene::normalise(l(x.normal, y.normal)), uv: x.uv, lnormal: l(x.lnormal, y.lnormal) }).collect();
+    let verts = a.verts.iter().zip(&b.verts).map(|(x, y)| scene::Vert { pos: l(x.pos, y.pos), normal: scene::normalise(l(x.normal, y.normal)), uv: x.uv, lnormal: l(x.lnormal, y.lnormal), fnormal: x.fnormal }).collect();
     Piece { verts, tex: a.tex }
 }
 
@@ -632,7 +632,7 @@ impl HeadVideo {
                     }
                     rgba
                 };
-                Some(ani.frames().ok()?.into_iter().map(|f| crate::assets::Image { width: w, height: h, rgba: opaque(f.rgba) }).collect())
+                Some(ani.frames().ok()?.into_iter().map(|f| crate::assets::Image { width: w, height: h, rgba: opaque(f.rgba), mips: Vec::new() }).collect())
             })
             .unwrap_or_default();
         Self { frames, shown: None }

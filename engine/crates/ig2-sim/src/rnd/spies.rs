@@ -4,7 +4,7 @@
 use super::{answered, message, param, read};
 use crate::brnd::random_empire;
 use crate::rng::stream::SPY as SPY_STREAM;
-use crate::story::{flag, Abort, KemNews, MessageText, Story, StoryEvent, StoryWorld};
+use crate::story::{flag, Abort, InfoLine, KemNews, MessageText, Story, StoryEvent, StoryWorld};
 
 /// The story spy missions: `KemKuldetesek[14 + k]` belongs to story `StoryKuldetes[k]` (12 of them).
 const MISSIONS: i32 = 12;
@@ -50,7 +50,7 @@ pub(super) fn mission(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort
     if read(s, ID) {
         s.sz_start(ID, 60);
         s.spy_mission(ID, true, w);
-        s.add_game_info(ID, 0, -1, w);
+        s.add_info_line(ID, InfoLine::Blank, -1, w);
     }
     if spy_success(s, ID) {
         s.spy_answer = 0;

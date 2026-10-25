@@ -262,10 +262,12 @@ pub fn select_nearest_planet(s: &Snapshot, cam: &Camera, at: [f32; 2], r: f32) -
 }
 
 /// A click in the minimap (hot-spot 7, `Starmap_Main`): the view's pivot moves over the galaxy point there
-/// (`TargetXStart = −((x − 274)/92 − 0.5)·600`, `TargetYStart = −((y − 388)/65 − 0.5)·600`, within ±299.9).
+/// (`TargetXStart = −((x − 274)/92 − 0.5)·600`, `TargetYStart = −((y − 388)/65 − 0.5)·600`, within ±299.9; the
+/// division in f32, the rest in f64: exe 0x5b2ec9).
 pub fn minimap_target(at: [f32; 2]) -> [f32; 2] {
     let c = |v: f32| if v > 300.0 { 299.9 } else if v < -300.0 { -299.9 } else { v };
-    [c(-((at[0] - 274.0) / 92.0 - 0.5) * 600.0), c(-((at[1] - 388.0) / 65.0 - 0.5) * 600.0)]
+    let t = |v: f32, o: f32, d: f32| c(((((v - o) / d) as f64 - 0.5) * -600.0) as f32);
+    [t(at[0], 274.0, 92.0), t(at[1], 388.0, 65.0)]
 }
 
 /// The starmap's console and minimap hot-spots by their `STAR_M.RAW` colour (`Starmap_MouseInit` exe 0x6feb70:
@@ -294,6 +296,9 @@ mod tests {
         let c = minimap_target([320.0, 420.5]);
         assert!(c[0].abs() < 1e-3 && c[1].abs() < 1e-3);
         assert_eq!(minimap_target([400.0, 420.5])[0], -299.9);
+        // ig2.exe's `TargetXStart` / `YStart` after presses at (301, 413) and (333, 441) (probes/starmap_cam.js).
+        assert_eq!(minimap_target([301.0, 413.0]).map(f32::to_bits), [0x42f7d37b, 0x428a7627]);
+        assert_eq!(minimap_target([333.0, 441.0]).map(f32::to_bits), [0xc2a990b4, 0xc33d3b14]);
     }
 
     #[test]

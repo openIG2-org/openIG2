@@ -42,6 +42,9 @@ pub mod id {
     pub const THREE: i32 = 10031;
     pub const RADAR: i32 = 10033;
     pub const OFFER: i32 = 10034;
+    /// Ours (canonical multiplayer, `re/rules/multiplayer.md` §5.3): the offer counter of human `h` other than `EN`
+    /// is `OFFER_OTHER + h` (10061..=10068; no script uses these counters).
+    pub const OFFER_OTHER: i32 = 10060;
     /// Ours (canonical multiplayer, `re/rules/multiplayer.md` §5.3): a variable with a bit per empire that bought the
     /// radar. No script uses this id.
     pub const RADAR_BUYERS: i32 = 10039;
@@ -204,7 +207,7 @@ fn king_of_the_hill(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
         let n = n.wrapping_sub(1);
         s.v_set(id::HILL + 1, n);
         if n < 1 {
-            w.event(StoryEvent::Notice(Notice::Winner { empire: o, amazing: true }));
+            w.event(StoryEvent::Notice(Notice::Winner { empire: o, amazing: true, colour: 7 }));
             s.win(0, true, w);
         } else {
             let info = hill_info(id::HILL, o, en);
@@ -252,7 +255,7 @@ fn king_of_the_hill_per_owner(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(
         let n = n.wrapping_sub(1);
         s.v_set(id::HILL2_LEFT + o, n);
         if n < 1 {
-            w.event(StoryEvent::Notice(Notice::Winner { empire: o, amazing: true }));
+            w.event(StoryEvent::Notice(Notice::Winner { empire: o, amazing: true, colour: 2 }));
             s.win(0, true, w);
         } else {
             let info = hill_info(id::HILL2, o, en);
@@ -295,20 +298,32 @@ fn three_planets(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         s.add_info_line(id::THREE, InfoLine::Blank, -1, w);
         s.sz_start(id::THREE, 10);
         s.sz_start(id::OFFER, 50);
+        // Canonical multiplayer: every other human's machine starts its own offer.
+        for h in w.other_humans() {
+            s.sz_start(id::OFFER_OTHER + h, 50);
+        }
     }
     // The radar offer: message 0x2347, answered (part 2 buys, part 4 asks again later) or promoted.
     if s.counter(id::OFFER) {
         w.event(StoryEvent::NewMessage { id: id::OFFER_MESSAGE, arg: 300 });
         w.event(StoryEvent::MessageParam { slot: 1, text: MessageText::Player(en) });
     }
+    for h in w.other_humans() {
+        if s.counter(id::OFFER_OTHER + h) {
+            w.event(StoryEvent::HumanMessage { empire: h, id: id::OFFER_MESSAGE, arg: 300 });
+        }
+    }
+    // The answer is the answering human's, its counter the one it re-arms.
+    let who = w.answering();
+    let offer = if who == en { id::OFFER } else { id::OFFER_OTHER + who };
     if s.flags[flag::MESSAGE] && s.message == (id::OFFER_MESSAGE, 2) {
-        w.event(StoryEvent::SendStorySpecial(id::THREE));
+        w.event(StoryEvent::SendStorySpecial { id: id::THREE, sender: who });
     }
     if s.flags[flag::MESSAGE] && s.message == (id::OFFER_MESSAGE, 4) {
-        s.sz_start(id::OFFER, 50);
+        s.sz_start(offer, 50);
     }
     if s.flags[flag::PROMOTED] && s.message.0 == id::OFFER_MESSAGE {
-        s.sz_start(id::OFFER, 100);
+        s.sz_start(offer, 100);
     }
     // The purchase comes back from the lockstep queue as special 15 (sender, 10031).
     if s.special_is(15, 0, id::THREE, 0) {
@@ -380,7 +395,7 @@ fn three_planets(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             *o = w.planet_owner(p);
         }
         if owners[0] != 0 && owners[0] == owners[1] && owners[1] == owners[2] {
-            w.event(StoryEvent::Notice(Notice::Winner { empire: owners[0], amazing: false }));
+            w.event(StoryEvent::Notice(Notice::Winner { empire: owners[0], amazing: false, colour: 2 }));
             s.win(0, true, w);
         }
     }
@@ -436,8 +451,9 @@ fn capture_the_flag(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
     if s.special_is(10, 0, 0, 0) {
         let p = s.special[2];
         if p == s.b_search(id::BASE, 0, w) || p == s.b_search(id::BASE + 1, 0, w) {
-            if s.special[1] == en {
-                w.event(StoryEvent::Notice(Notice::CannotColonise(p)));
+            // Every machine tests its own `EN`; canonical MP raises it for each (the client shows it to `by`).
+            if s.special[1] == en || w.canonical() {
+                w.event(StoryEvent::Notice(Notice::CannotColonise { planet: p, by: s.special[1] }));
             }
             w.event(StoryEvent::SetPlanetOwner { planet: p, owner: 0, race: w.race(0) });
         }
@@ -462,7 +478,7 @@ fn capture_the_flag(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
             0
         };
         if x != 0 {
-            if en == x || en == which {
+            if en == x || en == which || w.canonical() {
                 w.event(StoryEvent::Notice(Notice::FlagTaken { by: x, from: which }));
             }
             s.v_set(id::BASE + 1 + x, 1);
@@ -489,7 +505,7 @@ fn capture_the_flag(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
                     0
                 };
                 if y != 0 {
-                    if en == y || en == 3 - y {
+                    if en == y || en == 3 - y || w.canonical() {
                         w.event(StoryEvent::Notice(Notice::Touchdown { by: y }));
                     }
                     s.v_set(id::BASE + 1 + y, 0);
@@ -536,7 +552,7 @@ fn capture_the_flag(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> 
         for e in 0..2 {
             if holds[e] != 0 && !carrier[e] {
                 s.v_set(id::HOLDS + e as i32, 0);
-                if en == 1 || en == 2 {
+                if en == 1 || en == 2 || w.canonical() {
                     w.event(StoryEvent::Notice(Notice::FlagLost { by: e as i32 + 1 }));
                 }
             }

@@ -7,7 +7,7 @@
 //! user's exe ([`CampaignTables`]). What the stories do to the rest of the game goes out as
 //! [`StoryEvent`]s and [`StoryWorld`] calls, like the scripts'.
 
-use crate::story::{last_fn, Abort, ScenarioStory, Story, StoryEvent, StoryWorld, STREAM};
+use crate::story::{last_fn, Abort, InfoLine, ScenarioStory, Story, StoryEvent, StoryWorld, STREAM};
 
 /// The campaign tables, the exe's words from VA [`CampaignTables::VA`] (`StoryEleje` 0x928340, `StoryElejeSeq`,
 /// `StoryLine`, `StoryScenario`, `RndStoryk` 0x928540, `RndStoryValasztas`, `StoryHosok`, `RndHosok` 0x9288B0,
@@ -536,7 +536,7 @@ fn bomb(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             s.sz_start(4022, 60);
             s.v_set(V, 1);
             s.b_add_id(p, V);
-            s.add_game_info(V, 60, -1, w);
+            s.add_info_line(V, InfoLine::Planet { planet: p, count: Some(60) }, -1, w);
         }
     }
     if s.daily() && s.v_get(V) != 0 {
@@ -551,7 +551,7 @@ fn bomb(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             w.event(StoryEvent::Anim(6));
             s.win(0, true, w);
         } else {
-            s.add_game_info(V, days, -1, w);
+            s.add_info_line(V, InfoLine::Planet { planet: p, count: Some(days) }, -1, w);
         }
     }
     Ok(())

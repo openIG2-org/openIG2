@@ -400,17 +400,22 @@ impl GameStory<'_, '_> {
                     strcpy(&mut r[..0x10], &name);
                 });
             }
-            // The space battle starting (`st_AddFleetToSpWar`): entry `n + 1` of `spFlottak`, `n < 4`, side 1.
+            // The space battle starting (`st_AddFleetToSpWar`, exe 0x5c9cd3): entry `n + 1` of `spFlottak`, `n < 4`,
+            // side 1 (a byte, exe 0x5c9cf2). `space_war` reads the list back.
             StoryEvent::JoinBattle(f) => {
                 let m = &mut self.game.state.mem;
                 let n = m.i32(super::battles::at::SP_COUNT);
                 if n < 4 {
                     let at = super::battles::at::SP_FLEETS + 6 * (n as u32 + 1);
                     m.write(at, &(f as i16).to_le_bytes());
-                    m.write(at + 2, &1i16.to_le_bytes());
+                    m.set_u8(at + 2, 1);
                     m.set_i32(super::battles::at::SP_COUNT, n + 1);
                 }
             }
+            // `st_AddGameInfo` / `RemoveGameInfo` (undo 4 too): the saved info lines.
+            StoryEvent::GameInfo { id, value } => self.with_game(|g| g.add_game_info_number(id, value)),
+            StoryEvent::InfoLine { id, line } => self.with_game(|g| g.add_game_info_line(id, line)),
+            StoryEvent::RemoveGameInfo(id) | StoryEvent::Undo { kind: 4, value: id } => self.with_game(|g| g.remove_game_info(id)),
             StoryEvent::ShowWormhole(w) if w > 0 => {
                 let at = va::WORMHOLES + 0x1c * w as u32;
                 self.game.state.mem.set_u8(at + 8, 1);
@@ -955,6 +960,27 @@ mod tests {
         // A hole is reused before the list grows; a removed entry keeps its empire and index.
         w.event(StoryEvent::DiplomacySpecial { id: 0x2179, empire: 4 });
         assert_eq!(list(&w), (1, [entry(0x2179, 4, 0), entry(0, 3, 0)].concat()));
+    }
+
+    #[test]
+    fn joined_fleets_are_read_back_by_the_battle() {
+        use crate::game::battles::at;
+        let rules = GameRules::default();
+        let mut g = game(&rules);
+        // `SpaceWarIndit`'s two entries over 0xAA filler (the story writes the side as a byte: `+3` keeps its filler).
+        g.state.mem.write(at::SP_FLEETS, &[0xAA; 6 * 5]);
+        for (k, f) in [(1u32, 3i16), (2, 5)] {
+            g.state.mem.write(at::SP_FLEETS + 6 * k, &f.to_le_bytes());
+        }
+        g.state.mem.set_i32(at::SP_COUNT, 2);
+        let mut w = GameStory::new(&mut g);
+        for f in [7, 8, 9] {
+            w.event(StoryEvent::JoinBattle(f));
+        }
+        drop(w);
+        // `n < 4`: the third join is dropped; entries 3 and 4 get side 1 in their `+2` byte only.
+        assert_eq!(g.sp_fleets(), [3, 5, 7, 8]);
+        assert_eq!(g.state.mem.read(at::SP_FLEETS + 6 * 3, 6), [7, 0, 1, 0xAA, 0xAA, 0xAA]);
     }
 
     #[test]

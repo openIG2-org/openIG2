@@ -75,6 +75,21 @@ pub struct Vert {
     /// (`spsorttype+0x24`: animated nodes' key rotations; a record's matrix never enters it, `LoadXVB` resets the
     /// child's `+100` to the identity; no `AddToScene` scale).
     pub lnormal: V3,
+    /// The file normal as `LoadObject` keeps it (normalised; a zero one is (1, 0, 0)), in its mesh's own space: the
+    /// environment mapping's `N` (`envszamol`, [`env_uv`]).
+    pub fnormal: V3,
+}
+
+/// The environment mapping (`vagashatarkirak` ELF 0x606c90 / exe 0x5395d0, property 0x4000; `envszamol` ELF 0x6110e0,
+/// inlined in the exe): the texcoords of a vertex at `pos` with the file normal `n`, seen from `eye` (world space).
+/// `inv` = the inverse of the mesh's world matrix (its node's `P·M` and the placement): `e` is the eye direction in the
+/// mesh's own space, `normalizevektor`'d (left as is when shorter than 1e-5), and `uv = (e.x − n.x, e.y − n.y)` with no
+/// scale or offset (about −2..2 on the repeating texture). `n.z` is unused.
+pub fn env_uv(inv: &M3, eye: V3, pos: V3, n: V3) -> [f32; 2] {
+    let e = apply(inv, [eye[0] - pos[0], eye[1] - pos[1], eye[2] - pos[2]]);
+    let l = ((e[0] * e[0] + e[1] * e[1] + e[2] * e[2]) as f64).sqrt() as f32;
+    let e = if l < 1e-5 { e } else { [e[0] / l, e[1] / l, e[2] / l] };
+    [e[0] - n[0], e[1] - n[1]]
 }
 
 /// How a part is blended (`SetObjTransparency`, property bits; re/screens/colony.md §2.4).
@@ -109,6 +124,13 @@ pub struct Part {
     /// material's second texture (or, without one, its first: `changeaktmatarialself` binds nothing new). The ship
     /// hulls' lit windows (`6desttsi.bmp`).
     pub self_illum: Option<String>,
+    /// The batch material's `texture` name as stored (lower case).
+    pub texture_name: String,
+    /// The batch material's `texture2` name as stored (`reflec.bmp`, `fenyek_2.bmp`, …; empty = none): what an
+    /// environment-mapped part binds (`changeaktmatarialself`).
+    pub texture2_name: String,
+    /// Its mesh's matrix in the root's space (the node's `P·M`): the environment mapping's object space.
+    pub matrix: M3,
 }
 
 impl Part {
@@ -142,6 +164,8 @@ pub struct Model {
     pub origin: V3,
     pub parts: Vec<Part>,
     pub nodes: Vec<NodePose>,
+    /// `BoxUjraszamol` ran ([`skips_box_recount`] false): the half-extents became the vertices' reach.
+    pub recounted: bool,
 }
 
 /// Where a child (`GetSubMeshid` chain `index`) was placed: its parent's matrix, its record translation, its matrix
@@ -155,6 +179,8 @@ pub struct NodePose {
     pub at: V3,
     /// The rotation chain to this child (lighting).
     pub light: M3,
+    /// The chain of child names to it, as [`Part::path`] (`GetObjWorldSpacePos` finds children by name).
+    pub path: String,
 }
 
 impl Model {
@@ -181,7 +207,7 @@ impl Model {
     }
 
     /// The vertices' reach from the pivot per axis, in the file's units (`max |p|·origin`).
-    fn reach(&self) -> V3 {
+    pub fn reach(&self) -> V3 {
         let mut e = [0.0f32; 3];
         for p in self.positions() {
             for k in 0..3 {
@@ -212,8 +238,9 @@ impl Model {
             frame,
         };
         w.node(&scene, &IDENTITY, &IDENTITY, [0.0; 3], "", &[]);
-        let mut model = Self { origin: scene.header.origin, parts: w.parts, nodes: w.nodes };
-        if !skips_box_recount(&scene) {
+        let recounted = !skips_box_recount(&scene);
+        let mut model = Self { origin: scene.header.origin, parts: w.parts, nodes: w.nodes, recounted };
+        if recounted {
             model.box_recount();
         }
         Ok(model)
@@ -356,6 +383,12 @@ impl Walk<'_, '_> {
         })
     }
 
+    /// The material's `texture` and `texture2` names as stored, lower case (empty when absent).
+    fn texture_names(&self, material: &str) -> (String, String) {
+        let m = self.archive.get(&format!("{}{material}.xvm", self.prefix));
+        m.and_then(|m| Material::parse(m.data).ok()).map_or_else(Default::default, |m| (m.texture.to_ascii_lowercase(), m.texture2.to_ascii_lowercase()))
+    }
+
     /// The material's transparency word (an f32; absent or not finite = 0).
     fn transparency(&self, material: &str) -> f32 {
         let m = self.archive.get(&format!("{}{material}.xvm", self.prefix));
@@ -387,13 +420,14 @@ impl Walk<'_, '_> {
             let path = format!("{path}/{}", c.name);
             let index: Vec<u16> = index.iter().copied().chain([i as u16]).collect();
             let record = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
-            self.nodes.push(NodePose { index: index.clone(), parent: *p, record, matrix: m, at: t2, light: ml });
+            self.nodes.push(NodePose { index: index.clone(), parent: *p, record, matrix: m, at: t2, light: ml, path: path.clone() });
             match content {
                 ChildContent::Node(sub) => self.node(sub, &m, &ml, t2, &path, &index),
                 ChildContent::Mesh(mesh) => {
                     let texs: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture(x)).collect();
                     let trs: Vec<f32> = mesh.materials.iter().map(|x| self.transparency(x)).collect();
                     let tex2: Vec<Option<String>> = mesh.materials.iter().map(|x| self.texture2(x)).collect();
+                    let names: Vec<(String, String)> = mesh.materials.iter().map(|x| self.texture_names(x)).collect();
                     let lit = tex2.first().is_some_and(Option::is_some);
                     let nm = normal_matrix(&m);
                     let vf = self.frame.filter(|_| mesh.is_vertex_animated()).map(|f| f.min(mesh.frames() as usize - 1));
@@ -408,21 +442,20 @@ impl Walk<'_, '_> {
                             let Some(v) = mesh.vertices.get(i as usize) else { continue };
                             let pos = vf.and_then(|f| mesh.frame_vertex(f, i as usize)).map_or(v.pos, |x| x.0);
                             let q = apply(&m, pos);
+                            // `LoadObject` normalises the file normal (a zero one becomes (1, 0, 0)).
+                            let fnormal = if v.normal == [0.0; 3] { [1.0, 0.0, 0.0] } else { normalise(v.normal) };
                             by_mat[k].push(Vert {
                                 pos: [q[0] + t2[0], q[1] + t2[1], q[2] + t2[2]],
                                 normal: normalise(apply(&nm, v.normal)),
                                 uv: v.uv,
-                                // `LoadObject` normalises the file normal (a zero one becomes (1, 0, 0)).
-                                lnormal: apply(&ml, {
-                                    let q = if v.normal == [0.0; 3] { [1.0, 0.0, 0.0] } else { normalise(v.normal) };
-                                    [q[0], q[1], -q[2]]
-                                }),
+                                lnormal: apply(&ml, [fnormal[0], fnormal[1], -fnormal[2]]),
+                                fnormal,
                             });
                         }
                     }
                     for (k, (verts, edges)) in by_mat.into_iter().zip(edges).enumerate() {
                         if !verts.is_empty() {
-                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges, transparency: trs.first().copied().unwrap_or(0.0), self_illum: if lit { tex2.get(k).cloned().flatten().or_else(|| texs.get(k).cloned().flatten()) } else { None } });
+                            self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges, transparency: trs.first().copied().unwrap_or(0.0), self_illum: if lit { tex2.get(k).cloned().flatten().or_else(|| texs.get(k).cloned().flatten()) } else { None }, texture_name: names.get(k).map(|n| n.0.clone()).unwrap_or_default(), texture2_name: names.get(k).map(|n| n.1.clone()).unwrap_or_default(), matrix: m });
                         }
                     }
                 }
@@ -621,6 +654,24 @@ impl Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn env_uv_matches_the_exe() {
+        // `probes/envmap.js` on grwar:17 of quick-1.sav (2026-10-25): a `vagashatarkirak` call's camera-space record
+        // (matrix, point; the eye at the origin), three corners' file points and normals and the texcoords the exe drew.
+        let m = [0.0, -48.418583, 0.0, 34.23711, 0.0, -7.110858, 34.237106, 0.0, 7.110856];
+        let at = [-63.22683, -637.3606, -2591.87];
+        let inv = inverse(&m).unwrap();
+        for (p, n, uv) in [
+            ([0.111014, 1.0, 1.0], [-2.8887797e-7, 0.75874317, 0.65138996], [0.32597104, -0.7747188]),
+            ([-0.10750656, 0.99999994, 1.0], [-4.349908e-8, 0.7587433, 0.65138984], [0.32732293, -0.774711]),
+            ([0.25529337, 0.6433839, -0.9999991], [-4.349908e-8, 0.7587433, 0.65138984], [0.32087967, -0.77207816]),
+        ] {
+            let q = apply(&m, p);
+            let got = env_uv(&inv, [0.0; 3], [q[0] + at[0], q[1] + at[1], q[2] + at[2]], n);
+            assert!((got[0] - uv[0]).abs() < 2e-6 && (got[1] - uv[1]).abs() < 2e-6, "{got:?} vs {uv:?}");
+        }
+    }
 
     #[test]
     fn rotate_quarter_turn_maps_model_axes() {
