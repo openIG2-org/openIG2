@@ -93,4 +93,3 @@ Per-empire radar tables derived from these at runtime (`RadarHatotav2` 0xBB61A8,
 ## Open
 - Hull +0x10..+0x23 (design/spy screens), weapon +0x40/+0x48/+0x59 and kinds other than 2 (tactical battle, not ported).
 - Tech words +28/+36/+60..; building +1/+4/+24/+28; the leading `-` on some built-in names (`-Fighter`) [unk marker].
-- `FajSpeckoKutatasMoneySzorzo` exact address. (`Talalmanyok2` is `[193][9]` u8, read by `TervAutoDesign`: `ai-empire.md` §10.3.)

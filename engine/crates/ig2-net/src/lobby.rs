@@ -508,6 +508,15 @@ impl LobbyHost {
         self.door.session
     }
 
+    /// Make the session private (unannounced, joined with the join code only) or open again; members already in stay.
+    pub fn set_private(&mut self, private: bool) {
+        if self.door.settings.private != private {
+            self.door.settings.private = private;
+            self.state.private = private;
+            self.dirty = true;
+        }
+    }
+
     /// The LAN announcement, or `None` for a private session.
     pub fn announcement(&self, port: u16, fingerprint: [u8; 32]) -> Option<crate::discovery::Announcement> {
         let s = &self.door.settings;

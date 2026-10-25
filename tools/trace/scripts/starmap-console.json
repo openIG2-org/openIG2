@@ -1,6 +1,6 @@
 {
  "screen": "starmap",
- "note": "The console buttons' press animation (re/screens/starmap.md §10.6, deviations row 224): the pitch button (hot-spot 6) held with the left button, then the zoom button (5) held with the right one; a held button shows `kezel.xvb`'s sub-mesh at frame 5, back to 0 on the release. The exe draws its first frames only ~100 ticks into the script (its grabs before that come late and its events there are lost), so everything starts at t 150. Times are UI ticks from the script's first frame. The pointer leaves the console 5 ticks after each press (the held spot stays latched, `Mouse_Megfogva`) so the exe's cursor doesn't cover the button. Compare a held grab with the client's still `--console-held 6` / `5` (`--exe-png`, `--client-arg`).",
+ "note": "The console buttons' press animation (re/screens/starmap.md §10.6): the pitch button (hot-spot 6) held with the left button, then the zoom button (5) held with the right one; a held button shows `kezel.xvb`'s sub-mesh at frame 5, back to 0 on the release. The exe draws its first frames only ~100 ticks into the script (its grabs before that come late and its events there are lost), so everything starts at t 150. Times are UI ticks from the script's first frame. The pointer leaves the console 5 ticks after each press (the held spot stays latched, `Mouse_Megfogva`) so the exe's cursor doesn't cover the button. Compare a held grab with the client's still `--console-held 6` / `5` (`--exe-png`, `--client-arg`).",
  "events": [
   {
    "t": 150,

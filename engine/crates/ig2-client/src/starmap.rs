@@ -376,7 +376,7 @@ impl Camera {
     }
 
     /// Yaw by `frames` keyboard frames (±0.02 each). `StarmapKeyboardDoModifies` (exe 0x5ae880) steps in f64 and
-    /// rounds to f32 after each step: + the f64 0.02, below 0 + the f64 2π, then `fmod` by f32 2π (row 226).
+    /// rounds to f32 after each step: + the f64 0.02, below 0 + the f64 2π, then `fmod` by f32 2π.
     pub fn turn(&mut self, frames: f32) {
         let tau = std::f32::consts::TAU as f64;
         for _ in 0..frames.abs().round().max(1.0) as u32 {
@@ -389,7 +389,7 @@ impl Camera {
     }
 
     /// Pitch by `frames` keyboard frames (the f64 ±0.00628318 each, rounded to f32; clamp [−1.560795, −0.2]: exe
-    /// 0x5ae880, row 226).
+    /// 0x5ae880).
     pub fn tilt(&mut self, frames: f32) {
         for _ in 0..frames.abs().round().max(1.0) as u32 {
             self.pitch = ((self.pitch as f64 + 0.00628318 * frames.signum() as f64) as f32).clamp(-1.560795, -0.2);
@@ -398,7 +398,7 @@ impl Camera {
 
     /// `Starmap_Move0` (ELF 0x6fe570, inlined in exe 0x5bb230): the pivot moves by the screen-turned `(mx, my)` scaled
     /// by the zoom; a move out of the ±300 square is refused (false). The exe rounds sin and cos to f32 and turns and
-    /// scales in f32, then subtracts `· 0.85` in f64 (row 226).
+    /// scales in f32, then subtracts `· 0.85` in f64.
     fn move0(&mut self, mx: f32, my: f32) -> bool {
         let (s, c) = ((self.rotate as f64).sin() as f32, (self.rotate as f64).cos() as f32);
         let k = |v: f32| (v * (600.0 - self.zoom) / 600.0) as f64 * 0.85;
@@ -591,7 +591,7 @@ pub struct View {
 }
 
 /// `Show_Flottak2d` (exe 0x5a5370..0x5a5398): a fleet's name shows with its custom-name bit (`+0x52` 0x800); in
-/// multiplayer only on the human's own fleets, unless `DEBUGX` (row 394).
+/// multiplayer only on the human's own fleets, unless `DEBUGX`.
 fn fleet_name_shown(fl: &FleetView, curr: &Snapshot) -> bool {
     fl.flags & 0x800 != 0 && (!curr.own_names_only || fl.owner == curr.human)
 }
@@ -1354,7 +1354,7 @@ mod tests {
     }
 
     /// Steps recorded in ig2.exe (`probes/starmap_cam.js` on `scripts/starmap-cam.json`, quick-1.sav, 2026-10-25): the
-    /// raw f32 bits before and after `StarmapKeyboardDoModifies` and `Starmap_Move` (row 226). The f32-only pan missed
+    /// raw f32 bits before and after `StarmapKeyboardDoModifies` and `Starmap_Move`. The f32-only pan missed
     /// these three of 104 moves by an ulp.
     #[test]
     fn camera_steps_match_the_exe_bits() {

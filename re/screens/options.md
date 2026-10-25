@@ -5,7 +5,7 @@ Addresses are exe unless marked ELF. `[elf]` = read in the ELF only; `[guess]` =
 disassembly; `[obs]` = observed at runtime (section 13). Coordinates are 640 × 480 virtual pixels. "Tick" = one 10 ms
 UI tick (`Frissit2_Options`). **T** = the tutorial layout: `(TutorialActive 0xf6915d || TutorialPaused 0xf66f2a) &&
 !SelfPlaying 0xbae267`; with T several hot-spot ids shift by `s = 1`. Strings are `GetString(13, section, n)` =
-`txt13` (the install's text file 13). Port: `ig2-client::options` (section 14).
+`txt13` (the install's text file 13). Client status: section 14.
 
 ## 0. Functions
 
@@ -42,7 +42,7 @@ UI tick (`Frissit2_Options`). **T** = the tutorial layout: `(TutorialActive 0xf6
 | `SaveAktivSlot` | 0x916058 | Selected slot 1..24 (default 1). Saved as `Save slot`. |
 | `SaveLeiro` | 0xdb9768 | Slot titles, `[slot] × 0x34` (entry 0 unused; section 5.3). |
 | `OptionsCsakLoadLehet` | 0xbae24e | Load only (from the main menu's load ring). |
-| `OptionsHarcFolyik` | 0xbae24f | A battle is running (no save without `DEBUGX` 0xbae587). Set by `SpaceWar_Kilep` 0x562b50 towards Options (0x562c0f, also gated by `PTR_DAT_0091a830[0x1fb8]` = the battle's leaving flag, set by `Starmapvisszaallit` 0x570c10, so only after the zoom-out: spacewar.md §9.14) and by every `Colony_Kilep` 0x466390 as `WF::GetStatus(Warfare[VisiblePlanet−1]) == −1` (0x466631, the planet's ground war runs; `GetWarfareStatus` inlined). Belep (0x51a074) clears it unless `OptionsElottiKep` is 3 or 0xb; Kilep (0x51a2aa) clears it. Readers: Options_MouseInit2 (id 2), the button pass 0x517580, `OptionsGfx2D_2`'s Save label (0x518da7), `DoKeyboard`'s F-key gate, the colony handlers. |
+| `OptionsHarcFolyik` | 0xbae24f | A battle is running (no save without `DEBUGX` 0xbae587). Set by `SpaceWar_Kilep` 0x562b50 towards Options (0x562c0f, also gated by `PTR_DAT_0091a830[0x1fb8]` = the battle's leaving flag, set by `Starmapvisszaallit` 0x570c10, so only after the zoom-out: spacewar.md §4.1.2) and by every `Colony_Kilep` 0x466390 as `WF::GetStatus(Warfare[VisiblePlanet−1]) == −1` (0x466631, the planet's ground war runs; `GetWarfareStatus` inlined). Belep (0x51a074) clears it unless `OptionsElottiKep` is 3 or 0xb; Kilep (0x51a2aa) clears it. Readers: Options_MouseInit2 (id 2), the button pass 0x517580, `OptionsGfx2D_2`'s Save label (0x518da7), `DoKeyboard`'s F-key gate, the colony handlers. |
 | `OptionsAreYouSureToQuitMode` | 0xdb975a | The quit question is up (Save → YES, Quit → NO). |
 | `OptionsElottiKep` | 0xbae2b4 | The screen to go back to. |
 | `OptionsFelfadeles` (f32) | 0xdb9c84 | Fade-in 0..100. |
@@ -123,20 +123,13 @@ Every game screen's `_Kilep` / `_Belep` special-cases `AktKep` / `OldKep` ∈ {1
 | Messages 10 (0x5083d0 / 0x507f90), Help 1 (0x4d7440 / 0x4d7060) | the closing animation plays (no `AktKep` test) | Options goes back to the screen before them (`MessagesElottiScreen`, `HelpElottiScreen`) |
 | SpaceWar 0xb (0x562b50) | no exit, `OptionsHarcFolyik` | back via the starmap (`starmaphovaleptovabb = 0xb`, the battle view restored) |
 
-Port: back from Options re-opens the spy screen (with its opening) and re-enters the starmap (its faders); Options
-from the messages screen returns under it; trade comes back through `Trade::back`. Row 240 (2026-10-25): Back
-re-enters the screen before as its `_Belep` with OldKep 0xd: research `enter_research(0xd)` (no opening, state reset, exe
-0x523540), diplomacy `enter_diplomacy(false)` (0x4bf530), info `InfoScreen::enter` keeping `tri` (0x4e7d30), colony
-`reenter_colony` (`ColonyUi::enter`: selection rule, war groups, the ambience again; camera kept; 0x465b40); design keeps
-its state; spy/trade/starmap as before. O on Help runs `Help_Kilep`'s closing (0x4d7440) first (`help_then_options`); every
-O path from Messages goes through `ask_options` -> `request_screen(0xd)` (`Messages_Kilep` 0x5083d0 closing first). Not
-ported: the design-return flags (`resMessagesUtaniLegelsoBejoves` exe 0xdc471c, set at 0x523810; `infoMessagesUtaniLegelsoBejoves`
-0xb8525c, set at 0x4e7ed2): `(MessagesElottiScreen == 5 && OldKep == 10) || (OldKep == 1 && HelpElottiScreen == 5) ||
+O on Help runs `Help_Kilep`'s closing (0x4d7440) first; from Messages, `Messages_Kilep` (0x5083d0) closes first.
+The design-return flags (`resMessagesUtaniLegelsoBejoves` exe 0xdc471c, set at 0x523810; `infoMessagesUtaniLegelsoBejoves`
+0xb8525c, set at 0x4e7ed2) are set on `(MessagesElottiScreen == 5 && OldKep == 10) || (OldKep == 1 && HelpElottiScreen == 5) ||
 (OldKep == 0xd && OptionsElottiKep == 5)`. Neither has a reader (only `desMessagesUtaniLegelsoBejoves`, Design's own, is
 read); set, research skips resetting `reswireframe` (0xdc537c) and `res_xy` (0xdc5378, 2.0), so they go on from the last
-visit; info has no such branch. The client rebuilds the research state on every entry: only that wire-sphere frame and
-glass phase differ, reachable via Messages or Help opened over Design (row 359, kept). Rows 336/337: the DEBUGX reads (0x51a927, 0x518d9c, 0x51790b) and `!SelfPlaying` (0x51a8a0) can't change while the
-modal Options is up, and the client has no demo: reading once at open is equivalent.
+visit; info has no such branch. The DEBUGX reads (0x51a927, 0x518d9c, 0x51790b) and `!SelfPlaying` (0x51a8a0) can't
+change while the modal Options is up.
 
 ### 3.2 Multiplayer (`MultiPlayerMode` 0xbae2c0)
 Read in Options only by `CheckOptionsDependencies` 0x516e10 (rows without the MP flag off), `Options_MouseInit2`
@@ -144,8 +137,7 @@ Read in Options only by `CheckOptionsDependencies` 0x516e10 (rows without the MP
 button only with `AreYouSure`, 0x51790b), `OptionsGfx2D_2` (no "Load" label 0x518cc6, no "Save" label 0x518da7) and
 `ExitToMainScreen` 0x5117f0 (YES on the quit question: `ig2server_sendinfo("nam:,stat:0")`, then
 `MultiCloseClient(1)` for a joiner or the host's teardown, `MultiPlayerMode = 0`). Belep, Main, Kilep and the slot
-code have none; Belep's `SetIdoPause(1, 0)` is ignored in MP (`SetIdoPause` 0x541272). Port (FX6 rest): the client
-passes MP into the screen; ours: the MP host keeps Save for ADR 0007's MP save (`mp_save`), a joiner has neither.
+code have none; Belep's `SetIdoPause(1, 0)` is ignored in MP (`SetIdoPause` 0x541272).
 
 ## 4. Hot-spots
 
@@ -171,6 +163,13 @@ makes `IG2_gameUpdate` (ELF 0x587400) wait for the button to come up afterwards 
 panel 17 covers the back area 18 under it); boxes take `x <= px <= x + w - 1` with the pointer clamped to 0..639 x 0..479.
 While a handler holds `Mouse_Megfogva` (a slider grab) `AktIkon` isn't recomputed: the drag goes on outside the box.
 
+**Tutorial layout (T)**: `Options_MouseInit2` 0x51a8a0 turns load, save and the slots off, quit becomes
+(441,62,178,37), continue id 9 (441,102,178,37), empty tooltips. Continue leaves on the hover alone, tested every tick
+(asm 0x51a7e3, hover id 0xbae240, no button or fade test). Texts (13,5,7)/(13,5,8) left-aligned at x 464, y 72/112
+(`Gfx2D_2` 0x518a30). Faders per the ELF `OptionsGfx2D_1` 0x5d49a0 (the exe's isn't located): quit 441/178 wide,
+continue under it on fader 2 with optf index 3, lasers for both, the slot-list fader skipped, later optf indices +1, the
+hover glow reads optf 3 at the quit rect (an ELF quirk, unverified in the exe).
+
 ## 5. Input, slots, saving
 
 ### 5.1 `Options_Main` (0x51a320)
@@ -181,7 +180,7 @@ While a handler holds `Mouse_Megfogva` (a slider grab) `AktIkon` isn't recompute
 | id 2 press, AreYouSure | Not load only: `AktKep = 0xf`, `Atlepes` (YES: quit to the main menu). |
 | id 2 press | The name entry: the slot's name (≤ 0x20) or `"Save Game %02d"`; `IOMaxLen 0x20`, `IOAzonosito 0x83`, `IOMode 1`, colour 2, font 2, the first key clears the text, at (0x17c, (slot−1)·12 + 0x82). |
 | id 1 press (Load) | `LoadSave(slot, "", 1)`, `ReadUzenetAnimLista`, `SetIdoSpeed(1, 0)`; `OptionsOldIdoPause = 0` (**a loaded game runs unpaused**), `OptionsCsakLoadLehet = 0`, `AktKep = STARTSCREEN` (starmap). If a planet's ground war is on (`GetWarfareStatus(p) == 1`, the last such planet): straight to its colony screen (`AktKepKell 3`). |
-| id 4, every frame while over it | `slot = (Mouse_y − 0x82) / 12 + 1` (C division), taken if filled or `< 23`; clamp 1..24. **Hover alone selects** (no button test). |
+| id 4, every frame while over it | `slot = (Mouse_y − 0x82) / 12 + 1` (C division), taken if filled or `< 23`; clamp 1..24. **Hover alone selects** (no button test). A press grabs (`Mouse_Megfogva`, `AktIkon` stays 4): while held the pick follows the pointer's y outside the list. |
 | ids 5..7 | the slider drag (section 2). |
 | id 18+s press with `OptionsFelfadeles == 100` | back: `AktKep = OptionsElottiKep` (0xb → 2). |
 | id 9 (T) | the same back. |
@@ -312,43 +311,24 @@ Only `PlaySoundGlobal(0)` on the Quit/BACK/NO press. Load, save, tabs, rows and 
 
 ## 13. Runtime observations
 
-`run_screen.py --kep 13` on `quick-1.sav` (2026-10-22, Hungarian install): page 0; the music and sound sliders at
-y 110/150 with "Zene hangereje – Magas" / "Hangerő – Magas"; Save and Quit buttons (no Load: slot 1 empty); the 24-row
-list with 22 dashed rows, row 23 empty and row 24 "Autosave 2328 1 1"; slot 1 framed; the back-area tooltip under the
-pointer; the lasers' corner glows.
+`run_screen.py --kep 13` on `quick-1.sav` (Hungarian install): page 0; the music and sound sliders at y 110/150 with
+"Zene hangereje – Magas" / "Hangerő – Magas"; Save and Quit buttons (no Load: slot 1 empty); the 24-row list with 22
+dashed rows, row 23 empty and row 24 "Autosave 2328 1 1"; slot 1 framed; the back-area tooltip under the pointer; the
+lasers' corner glows.
 
 Load only (`--boot --run`, `tools/trace/scripts/options-loadonly.json`): the load ring's release opens Options at once
 (no sound; the menu music plays on); the rings fly away (`Cel` 6) and the main menu's scene runs on behind; no top bar;
 Quit reads BACK with the tooltip (13,1,13). Sounds (`--sounds`, `tools/trace/scripts/options.json`): only
 `Global_Hangok[0]` (`ingame/Click1.wav`) on the quit press, one UI tick after it; none on NO, tabs, rows, slots.
 
-## 14. Port (`ig2-client::options`) and acceptance
+## 14. Client status
 
-`OptionsScreen` holds the screen's globals; `window.rs` opens it from the main menu's load ring (load only, over the
-scene) and with Esc or `O` from the game screens (the clock paused, `OptionsOldIdoPause` restored on the way back), and
-carries out its acts after the fade-out: back, the main menu (rings in again, menu music), load (an original
-`save<n>.sav` or our `save<n>.ig2s`: the starmap, speed 1, unpaused), save (`World::save_file`, ADR 0007's format, with
-the slot title after it). Settings go to `ig2-rework-options.dat` beside the original's `options.dat` (deviations).
-`ig2-client --snapshot OUT --screen options [--script S]` draws it over a save; `--screen main --script` opens it from
-the load ring. Tests: the hot-spot order, the hover slot pick, the relative slider drag (the asm's precision), the quit
-question, the rows' toggles and dependencies, the name entry, the slot title, and a save → slot list → load round
-trip (same state hash, camera and next 40 ticks).
-FX10 part 1 (2026-10-24): a save writes the live starmap camera back (`World::store_view` -> `SaveState::set_ui_chunk`, the
-template chunks `StarmapXStart`..`StarmapPlanetKering`; a loaded save passes them through; round-trip test extended,
-deviation 70). The load opens the colony screen of the last planet whose ground war runs (`Game::warfare_status`,
-`WF::GetStatus() == -1`, `GetWarfareStatus == 1`; quick saves give none, the positive case is decompile-only, deviation
-190). The slot-list press grabs (`Mouse_Megfogva`): while held the pick follows the pointer's y outside the list (test
-added, deviation 191; the `DEBUGX` save-in-battle half is still open).
-Row 320 (2026-10-25): `Options::path()` honours `IG2_OPTIONS_DIR`; `run_screendiff.py` pins it to
-`<out>/options-pinned` with a copy of the exe's options.dat and save*.sav (not the remake's own settings/.ig2s). Options
-sequence re-run: left_panel t170/t250 5.05/5.16 (was 8.4/8.6; acceptance <= 5.2); buttons t100-t400 5.9-11.1 (sparks, hover
-glow); slots t500/t560 21.4/18.5 (row 316's fader shine).
-
-Acceptance (2026-10-22, `run_screendiff.py options --script scripts/options.json` and `options-load --script
-scripts/options-loadonly.json`): over the game every region matches at every grab (frame ≤ 3.9, top bar ≤ 1.1, left
-panel ≤ 5.2, slots ≤ 5.6) except `buttons` at t 100/170/320 (6.8–11.2: the random sparks, and the hover glow
-`FadeKerettelKerekitDesign` that isn't ported); the fade-in tracks the exe's to a tick; the sound table matches. Load
-only: the same panels within 1–2 ticks over the random galaxy (frame 6–9 from t 300). Open: the hover glow (a shared
-kit item), the software cursor of the captures, multiplayer's states.
-
-Tutorial layout (FX6 part 5, `options.rs` `tutorial`, test `tutorial_layout`; not capture-compared): `Options_MouseInit2` 0x51a8a0 turns load/save/slots off, quit (441,62,178,37), continue id 9 (441,102,178,37), empty tooltips. Continue leaves on the hover alone, tested every tick (asm 0x51a7e3, hover id 0xbae240, no button or fade test). Texts (13,5,7)/(13,5,8) left-aligned at x 464, y 72/112 (`Gfx2D_2` 0x518a30). Faders follow the ELF `OptionsGfx2D_1` 0x5d49a0 (the exe's isn't located): quit 441/178 wide, continue under it on fader 2 with optf index 3, lasers for both, slot-list fader skipped, later optf indices +1, the hover glow reads optf 3 at the quit rect (ELF quirk, unverified in the exe).
+`ig2-client::options` (`options.rs`, opened by `window.rs` from the load ring and with Esc/`O`): sliders, rows and
+dependencies, slots, name entry, quit question, tutorial layout, MP states (the MP host keeps Save for ADR 0007's MP
+save, a joiner has neither), Back re-entering the screen before as its `_Belep` with OldKep 0xd. Load reads an original
+`save<n>.sav` or our `save<n>.ig2s`; save writes ADR 0007's format plus the live starmap camera chunk (row 70); settings
+go to `ig2-rework-options.dat` (row 69). Missing: the faders' hover glow `FadeKerettelKerekitDesign`, the
+research design-return flags (row 359, kept); load into a war colony and the held slot pick are decompile-only (rows
+190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
+scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open
+differences are the random sparks and the hover glow.

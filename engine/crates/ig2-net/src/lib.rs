@@ -15,6 +15,7 @@
 pub mod command;
 pub mod discovery;
 pub mod galaxy;
+pub mod joincode;
 pub mod lobby;
 pub mod lockstep;
 pub mod portmap;

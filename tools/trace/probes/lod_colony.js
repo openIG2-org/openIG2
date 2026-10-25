@@ -1,4 +1,4 @@
-// Level-of-detail probe, the colony variant (deviation 390; lod.js is the starmap's), appended to screen.js by run_screen.py --probe: every
+// Level-of-detail probe, the colony variant (lod.js is the starmap's), appended to screen.js by run_screen.py --probe: every
 // `Kocka(spsort)` (exe 0x5281f0) in the last 3 frames before the grab whose box heads a LOD chain (`+0x14` next node,
 // `+0x10` lod) logs the sort record's size `+0x7c` (before Kocka's ×4), its matrix `+0..+0x20`, its z `+0x50`, the
 // flags `+0x68`, the chain's length and `fov` (0xE033E0), once per head and size.

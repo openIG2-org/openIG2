@@ -1,7 +1,7 @@
 # `ecGs` / `neGs` / `pcGs` asset container (Gyroscope remaster)
 
 Status: **verified**. All 17,575 files in the GOG install decode with 0 failures using
-`tools/ecgs_decode.py` (run 2026-10-15).
+`tools/ecgs_decode.py`.
 
 Every proprietary file in the remaster (textures, models, scripts, audio, video, configs,
 shaders, fonts) is wrapped in this container. The original file extension is kept.

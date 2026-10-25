@@ -1,6 +1,6 @@
 {
  "screen": "design",
- "note": "The design screen's FX8 checks (re/deviations.md 181, 182): the second design (a list press), modify, the third pod row's minus cell (Tetra laser, 4) held 40 ticks (the count steps on the press and from the 8th held frame on every frame), then a press on a pod box held 100 ticks: the tech models open out of it (30 ticks after the pick) and Esc while they are out folds them and cancels the edit. Times are UI ticks from the first frame the screen is up.",
+ "note": "The design screen's FX8 checks: the second design (a list press), modify, the third pod row's minus cell (Tetra laser, 4) held 40 ticks (the count steps on the press and from the 8th held frame on every frame), then a press on a pod box held 100 ticks: the tech models open out of it (30 ticks after the pick) and Esc while they are out folds them and cancels the edit. Times are UI ticks from the first frame the screen is up.",
  "events": [
   {"t": 100, "press": [40, 121]},
   {"t": 150, "press": [320, 420]},

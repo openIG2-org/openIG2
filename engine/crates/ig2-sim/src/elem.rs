@@ -5,8 +5,8 @@
 //! 818, 820, 830, 831, 835, 837, 841, 842 and 864..=868; part 2a the spy episodes 802, 824, 850, 852 and 861
 //! ([`spies`]); part 2b the ground-war episodes 808 and 854 ([`ground`]); part 2c the diplomacy episodes 810, 857,
 //! 858 and 860 ([`diplomacy`]); part 2d 801, 804, 806, 807 and 809 ([`crises`]); part 2e 814, 815, 821, 832 and 834
-//! ([`threats`]); part 2f 836, 839, 840 and 843 ([`waves`]); the other blocks of the script (844, 856, 862, 863)
-//! are not yet (STATUS U24). What the episodes do to the rest of the game goes out as
+//! ([`threats`]); part 2f 836, 839, 840 and 843 ([`waves`]); and part 2g the last blocks 844, 856, 862 and 863
+//! ([`finale`]). What the episodes do to the rest of the game goes out as
 //! [`StoryEvent`]s and [`StoryWorld`] calls.
 
 mod crises;

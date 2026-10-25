@@ -5,13 +5,13 @@ Shared terms, the story engine and the notation are in `../campaign.md` §1..§8
 
 The episodes 801..=868 the storylines (§8.9) start: 49 story blocks, in the same order in both binaries; unlike
 the other scripts the exe calls `st_Story` (0x602f80) and `st_StoryStart` (0x602fe0) per block instead of
-inlining them. Each block catches an abort with `WIN(0, 1)` and goes on (§8.7). **Part 1 is ported** in
-`engine/crates/ig2-sim/src/elem.rs` ([`ElemStories`], run after `LineStories`) and verified at runtime
-(`traces/2026-10-16-elem.md`): 805, 811, 813, 816, 817, 818, 820, 830, 831, 835, 837, 841, 842, 864..=868; part 2a
-(the spy episodes 802, 824, 850, 852, 861, below), part 2b (the ground-war episodes 808, 854, below), part 2c (the
-diplomacy episodes 810, 857, 858, 860, below), part 2d (801, 804, 806, 807, 809, below), part 2e (814, 815, 821, 832,
-834, below), part 2f (836, 839, 840, 843, below) and part 2g (844, 856, 862, 863, below) too: **every block is ported**
-(the script has no 851, 853, 855, 859) (the real-time ground war,
+inlining them. Each block catches an abort with `WIN(0, 1)` and goes on (§8.7). Port status: **every block is
+ported** (the script has no 851, 853, 855, 859): part 1 in `engine/crates/ig2-sim/src/elem.rs` ([`ElemStories`], run
+after `LineStories`; verified at runtime, `traces/2026-10-16-elem.md`): 805, 811, 813, 816, 817, 818, 820, 830, 831,
+835, 837, 841, 842, 864..=868; part 2a (the spy episodes 802, 824, 850, 852, 861, below), part 2b (the ground-war
+episodes 808, 854, below), part 2c (the diplomacy episodes 810, 857, 858, 860, below), part 2d (801, 804, 806, 807,
+809, below), part 2e (814, 815, 821, 832, 834, below), part 2f (836, 839, 840, 843, below) and part 2g (844, 856, 862,
+863, below) in `elem/*.rs`, with what they rely on (the real-time ground war,
 diplomacy specials and relations, `StoryInit839_GenerateBolygok`, `st_bGet3Nearest`, `st_bGet4Brutal`, …; the
 ELF decompile is `_local/decomp/elem/0x77ac00.c`, the exe's `_local/decomp/elem-exe/`). Notation as in §8.9 and
 §8.11; `R(b)` = `st_Olvas(b)`: flag 9 with `StoryMessageBlokk == b`; `G(f, b)` = `st_GrWarPart(f, b)`: flag 4,

@@ -1,7 +1,6 @@
 # Colony economy (`FRISSIT_Planet`)
 
-Status: **verified at runtime** (§12): 103 traced economy steps, 1,043 planet checks and 1,516 logged
-RNG rolls reproduced exactly by `engine/crates/ig2-sim` (`colony.rs`, `tests/colony_trace.rs`). Evidence: ELF `ig2` (-O0)
+Port status: ported in `engine/crates/ig2-sim` (`colony.rs`, test `tests/colony_trace.rs`), exact (§12). Evidence: ELF `ig2` (-O0)
 `FRISSIT_Planet(bool, int)` @ 0x4e6ef0 (source `../sources_base/colony.cpp`), and the shipped exe
 `FRISSIT_Planet` @ **0x474930** (identified by the same `colony.cpp` line numbers at its `rndlog` call
 sites, e.g. `push 0x12ef` @ 0x4766c3). The exe implements the same algorithm; its floating-point
@@ -273,7 +272,7 @@ floor roll → spy-expulsion rolls. Nested refreshes (§9) consume nothing.
 ## 12. Verification
 `traces/2026-10-15-colony.md`: Frida before/after snapshots of every economy call on the GOG exe,
 replayed by `engine/crates/ig2-sim/tests/colony_trace.rs`, including a fuzzed run that randomises
-live planet state before each call. All modelled fields, `BolygoNeededMoral`, the unrest counters,
-the monthly `FullGDP`/`FullTax` and the stream-3 state match. Whole steps including rebellions are
-replayed by `tests/colony_side_trace.rs` (`traces/2026-10-15-colony-side.md`), which found the two
-corrections above (problem 1's inputs, the `+0x64` byte test).
+live planet state before each call: 103 economy steps, 1,043 planet checks and 1,516 logged RNG rolls.
+All modelled fields, `BolygoNeededMoral`, the unrest counters, the monthly `FullGDP`/`FullTax` and the
+stream-3 state match. Whole steps including rebellions are replayed by `tests/colony_side_trace.rs`
+(`traces/2026-10-15-colony-side.md`).

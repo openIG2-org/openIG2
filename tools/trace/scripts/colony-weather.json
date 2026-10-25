@@ -1,6 +1,6 @@
 {
  "screen": "colony",
- "note": "The colony's weather (re/screens/colony.md §2.6; deviation 367): a rainy planet (quick-1.sav planet 6) or a snowy one (planet 17) left alone with the pointer in the middle; grabs read back in the game. Times are UI ticks.",
+ "note": "The colony's weather (re/screens/colony.md §2.6): a rainy planet (quick-1.sav planet 6) or a snowy one (planet 17) left alone with the pointer in the middle; grabs read back in the game. Times are UI ticks.",
  "events": [
   {"t": 2, "mouse": [320, 240]}
  ],

@@ -100,7 +100,7 @@ fn outline(install: &ig2_formats::Install, text: &str, h: u32) -> Option<Image> 
 /// byte of the first `h` rows as the coverage. [obs: at 600 lines 457 px wide, capitals on rows 3..=14; the exe's
 /// capture 456 wide.]
 #[cfg(windows)]
-mod gdi {
+pub(crate) mod gdi {
     use crate::assets::Image;
     use std::ffi::c_void;
 
@@ -149,6 +149,15 @@ mod gdi {
     }
 
     pub fn render(text: &str, size: u32) -> Option<Image> {
+        render_as(text, size, 1)
+    }
+
+    /// The same line left-aligned (`DT_LEFT`): the setup window's text (`crate::setup`).
+    pub fn render_left(text: &str, size: u32) -> Option<Image> {
+        render_as(text, size, 0)
+    }
+
+    fn render_as(text: &str, size: u32, format: u32) -> Option<Image> {
         let (w, h) = ((size << 6) as i32, size as i32);
         if h == 0 {
             return None;
@@ -169,7 +178,7 @@ mod gdi {
             let font = CreateFontA(h, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 4, 0, c"Arial".as_ptr().cast());
             let old_font = SelectObject(dc, font);
             let mut r = Rect { l: 0, t: 0, r: w, b: h };
-            DrawTextW(dc, wide.as_ptr(), -1, &mut r, 1);
+            DrawTextW(dc, wide.as_ptr(), -1, &mut r, format);
             let mut info = BitmapInfo { size: 40, w: cx, h: -h, planes: 1, bits: 24, rest: [0; 6], colours: [0] };
             let n = GetDIBits(dc, bm, 0, h as u32, bits.as_mut_ptr(), &mut info, 0);
             SelectObject(dc, old_font);

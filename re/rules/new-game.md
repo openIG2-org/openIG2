@@ -1,18 +1,18 @@
 # New game: `InitNewGame` (exe 0x4e1130) and the campaign start
 
-Status: **modes 0, 1, 2 and 3 are ported and verified** (`engine/crates/ig2-sim/src/game/new_game.rs`:
+Port status: **modes 0, 1, 2 and 3 are ported** (`engine/crates/ig2-sim/src/game/new_game.rs`:
 `Game::new_campaign` / `Game::before_start` + `Game::start_campaign`, `Game::start_scenario` / `new_scenario`,
 `Game::start_mp_galaxy` / `NewMpGalaxy`, `Game::start_skirmish` / `NewSkirmish`): 35 starts recorded in ig2.exe (5 campaigns,
 15 scenarios, 5 MP galaxies, 10 skirmishes) give the same save at tick 0 chunk for chunk (`tests/new_game.rs`, tracer
 `tools/trace/run_newgame.py` + `newgame.js`, seeds `tools/trace/scenario_seeds.py`, trace report
 `traces/2026-10-23-new-game.md`). **Not ported:** the load path (mode 5) and mode 0 with config campaign=0 (falls to
 skirmish defaults). The galaxy generation of §3 is verified through modes 2 and 3; §7's mode-0 keywords through the scenarios.
-Section 13 has what the scenario and MP runs added.
+Section 13 has the scenario and MP specifics.
 
 Sources: decompiles `_local/decomp/newgame/{elf,exe}/`, `_local/decomp/campaign2/`. ELF = unstripped x64 `ig2`
 (symbol oracle), exe = `ig2.exe` (normative). VAs are exe image VAs.
 
-## What the runtime comparison corrected or added (normative over the sections below)
+## Runtime facts (normative over the sections below)
 - **The starting state is the exe image.** A save taken right after the start equals the image's initial bytes for
   every saved global the start doesn't write (a pre-start dump of `.data` matched the image for all of them but
   `RandSeed` and `HanyBolygo2`, which the start overwrites). The port starts from the image (`ig2_rules::PeImage::
@@ -27,7 +27,7 @@ Sources: decompiles `_local/decomp/newgame/{elf,exe}/`, `_local/decomp/campaign2
   `Faj_Nev[r]` = (17, 1, r + 5); `AlapFlottaNev` from (17, 5, 46) of the same file (the AI conquerors are named
   "Flotta 1" on an English install).
 - **The exe's `NEWGAME_Research`** does reset `ResearchTerulet` = 3, `ResearchOldForgato` = 3 and `ResearchTalalmany`
-  = 0x21 (seen in every save), contrary to §1 step 39's reading.
+  = 0x21 (seen in every save).
 - **`LoadScenario(map, 1)`** (the campaign map) loads neither `RandSeed` nor the relations: the streams after the
   start are `RandomInit`'s plus the start's own draws, and the relations' 5000s come from `INIT_MI`.
 - **`INIT_MI`** (exe 0x5ade70, ELF decompile `_local/decomp/ai_elf/INIT_MI.c`): per empire 1..=ProgramPlayers2
@@ -43,7 +43,7 @@ Sources: decompiles `_local/decomp/newgame/{elf,exe}/`, `_local/decomp/campaign2
 - **Heap records** (never zeroed: fleet and ship slot 0, a new fleet's fields `FlottaNew` doesn't write, design
   records past the templates, building blocks `OldReallocate` grows by 20, including those `LoadScenario` grows)
   hold the heap's bytes; the port takes them from `Game::uninit` (zero without it), the test feeds the exe's.
-- **The AI's design names** (`DesignPoenosanElnevez`, §14): ported; the test no longer copies the exe's names
+- **The AI's design names** (`DesignPoenosanElnevez`, §14): ported; the test does not copy the exe's names
   (a key off by one makes 7 chunk groups differ on every campaign and skirmish start).
 - `NEWGAME_Diplomacy` reseeds libc with `SDL_GetTicks()`: [`NewCampaign::ticks`]; the port leaves `Game::libc` at
   that seed after the 90 draws.
@@ -109,7 +109,7 @@ Notation: E[x] = exe VA array indexed by empire e (1..18), P[p] = planet record.
 | 36 | AktKem 0xBB2384 = 1; KemHanyBeszolas 0xBAF334 = 0; CsaladtagElrabolvaKi[e] (0xBB405C+4e, e=1..8) = 0 | |
 | 37 | NEWGAME_Messages (exe 0x508f30, ELF 0x5a8ff0) | 0xDABDD4 (AktUzenetPointer) = 0; 0xD90DC8 = -1; 0xDABDB8 = -1; 0xDABDB4 = -1; 0xD909BA (u8) = 1; 0xDABDD8 = -1; 0xDABDA0, 0xDABDA4, 0xDABDA8, 0xDABDAC, 0xDABDB0 = -1; 0xDA65E7 (u8) = 1; 0xDABDC0 = -1; 0xD909AE, 0xD909AF (u8), 0xD909A8 = 0; LoadMessagesFile() (reads the message-kinds archive resource 0xd5189e: HanyUzenetFajta 0xDABE38 and the 1000-entry UzenetFajtak table); ReadUzenetAnimLista() (exe 0x509280); mesKINYITVA 0xDA65E5 = 0 |
 | 38 | NEWGAME_Diplomacy (exe 0x4c80c0, ELF 0x529e20) | Diplomacy_ReadSpecials() (exe 0x4bfce0; SpecialLista 0xA42DE8, SpecialListaMut 0xA41DC4; parser in ig2-formats); MaxPlayerek 0xAB64DC = 0; InitBirodalom(i) i=0..19 (exe 0x4c6560, ELF 0x51c9d0): AktPlayerek (0xA41E98 + 0xC4 i) +0 = 0, +8 = 0, +0xc (u8) = 0, +0x10 = 0, +0x14 (u8) = 1, +0x16 (u16) = 0, +0x1c/+0x20/+0x24 = -1 (the exe loop covers i = 0..19 inline); DiplomacyStarted 0xAB69B5 = 1; then srand(SDL_GetTicks()) and, for e=1..18, FIVE libc rand() draws: BirodalmiMacskak[e] (0xA41CD8+4e) = rand()%10; BirodalmiPapagajok[e] (0xA41D28) = rand()%10; BirodalmiEvfordulok[e] (0xA41D78) = rand()%12+1; BirodalmiGyengesegek[e] (0xA41DC8) = rand()%10; HanyevesAzUralkodo[e] (0xA41E48) = rand()%10+30; VoltmarUdvozloUzenetEbbenAzEvben[e] (0xA41CC4+e, u8) = 0; DipOldNap 0xAB6FFC = -1; dipKINYITVA 0xAB6504 = 0. NOT deterministic (wall clock) and the five arrays are SAVED; Game.libc ends in the state after 90 draws from that seed |
-| 39 | NEWGAME_Research (ELF 0x5e8c40) vs exe | ELF: Terulet_Akt[0..13) (0x919200) = Terulet_Akt_Def; ResMelyikGombot/2/Old = -1; ResGombNew/2 = 0; ResearchTerulet = 3; ResearchOldForgato (0x919598) = 3; ResearchAktTeruletSorszam = Terulet_Melyik[3]; ResearchTalalmany = 0x21; ProjectAllapotok[i] = status of EN for tech i+1; InfoSorok text rows; Double_Lenyomva = 0; resKINYITVA = 0; then LoadTalalmanyInfok(). EXE: only LoadTalalmanyInfok() (exe 0x51f050, ELF 0x5e7df0: reads the tech info text resource id 0xd55539 into ResTalalmanyInfok rows of 0x21c bytes, 189 entries). The exe image already holds Terulet_Akt (0x919200) = [0,1,1,1,1,1,1,1,1,1,1,1,1] and ResearchOldForgato (0x919598) = 3 in .data, so a fresh process has what the ELF writes (the exe does NOT reset them for a second game in the same process) |
+| 39 | NEWGAME_Research (ELF 0x5e8c40) vs exe | ELF: Terulet_Akt[0..13) (0x919200) = Terulet_Akt_Def; ResMelyikGombot/2/Old = -1; ResGombNew/2 = 0; ResearchTerulet = 3; ResearchOldForgato (0x919598) = 3; ResearchAktTeruletSorszam = Terulet_Melyik[3]; ResearchTalalmany = 0x21; ProjectAllapotok[i] = status of EN for tech i+1; InfoSorok text rows; Double_Lenyomva = 0; resKINYITVA = 0; then LoadTalalmanyInfok(). EXE: ResearchTerulet = 3, ResearchOldForgato = 3, ResearchTalalmany = 0x21 (runtime, top section) and LoadTalalmanyInfok() (exe 0x51f050, ELF 0x5e7df0: reads the tech info text resource id 0xd55539 into ResTalalmanyInfok rows of 0x21c bytes, 189 entries). The exe image already holds Terulet_Akt (0x919200) = [0,1,1,1,1,1,1,1,1,1,1,1,1] and ResearchOldForgato (0x919598) = 3 in .data, so a fresh process has what the ELF writes (the exe does NOT reset Terulet_Akt for a second game in the same process) |
 | 40 | Research_TalalmanyUjraSzamol (exe 0x5245c0, ELF 0x5eb450) | ported in research.rs (status 1->2->3 from prerequisites +0x2d/+0x2e/+0x2f, DebugAllTechs 0xB77254) |
 | 41 | NEWGAME_Trade (exe 0x6074b0, ELF 0x7acc20) | TozsdeScrollLoad (exe 0x607fe0, ELF 0x7a7420): ScrollQueueLength 0xF439C8 = 0; ScrollSorok +0x50 (0xF43528) = 0; ScrollSorok text (0xF434D8) = GetString(8,4); OldEtaHonap 0x928DB0 = -1; TradeOldNap 0xF66E2C = -1; TradeHanySzallitas[e] (0xF66DE0+4e, e=1..18) = 0; traKINYITVA 0xF43433 = 0 |
 | 42 | UzenetekDb 0xE413D4 = 0; UzenetekDbHistory 0xE413D8 = 0; UzenetSzoveg[0] 0xE41230 = 0; HibaUzenetSzoveg[0] 0xE41308 = 0; UzenetekSzama 0xDABDD0 = 0; StoryTerroristaCselValoszinusege 0xF23A18 = 0x32 | overwritten by Story_Generate (step 43) |
@@ -224,10 +224,10 @@ Lines: leading whitespace/commas skipped, trailing control chars trimmed, ";" li
 sHanyValtozo 0xF23A14 = 0; HanyBolygo 0x912AC8 = 0; HanyBolygo2 0xBB6B58 = 0. If mode == 0: OsszHanyKem[1..8] (0xBB1F84) = 0; OsszHanyTerv[1..18] (0xB9C028+4e) = 0x28 (40, NOT 0x2e); Viszony[a][b] for a,b = 1..18 (0xDABF38 + 0x2d2 a + 0x26 b; the exe loop covers 18 rows, bound CMP EDX,0xdaf222 / JLE at 0x545d0a): +0x00 = 0, +0x02 = 5000, +0x04 = 5000, +0x06 = 5000, +0x08 = 0, +0x0a = 0, +0x1c = 5000, +0x1e = 5000, +0x20 = 0, +0x22 = 0x9c4 (2500) (all u16), +0x24 (u8) = 0, +0x25 (u8) = 3.
 
 ### Keywords that act in mode 0 only (the whole saved state; every other mode ignores the line)
-- EN -> EN; "Money v1..v18" -> Money[e] (f64) = (double)(float)GetInstantParamF; Ev/Honap/Nap/Ido -> calendar (0xBAE040/44/48/4C); ProgramMode/Difficulty/Sebesseg/Players/Players2/Machines/GalaxyShape -> 0xBAE544/548/54C/912ACC/912AD0/BAE550/BAE554; PlayerKi e (1..18 u8) 0xBAE560; PlayerFaj e (1..18 u8) 0xBAE574; "BirodalomIsmeri row v1..v18" -> byte (0xBAEBB8 + 19 row + k) = (v != 0); "RandSeed v1..v20" -> RandSeed[1..20] (0xBAF2D0 + 4k; RandSeed[0] stays RandomInit value); CsaladtagElrabolvaKi / Altal v1..v8 (0xBB405C / 0xBB4080); AktPlanet / AktFleet / StarmapMode (0xB9933C / B99664 / B9998C); StarmapXStart/YStart/Rotate/Pitch/Zoom/PlanetKering (f32); KutatasSurgos v1..18 (u8 = v != 0); ResearchAktFejlesztett v1..18 (i32, 0xB9A9B8); ResearchTerulet/Mezo/Talalmany; "LaborSzint row v1..v3" (0x912728 + 0x10 row + 4k); DesignTervSorszam, AktTervMutato; Nehezseg v (-> 0x92827C); Diplomaciatiltas / tradetiltas (the ELF writes DiplomaciaEngedelyezve = 0 for BOTH; spytiltas -> SpyEngedelyezve = 0: check which byte the exe clears for tradetiltas); ViszonyNemValtozhat -> StoryAdat+176 = 1; tervredesign -> sets the flag that makes the tail recompute every design (local_258 = 1).
+- EN -> EN; "Money v1..v18" -> Money[e] (f64) = (double)(float)GetInstantParamF; Ev/Honap/Nap/Ido -> calendar (0xBAE040/44/48/4C); ProgramMode/Difficulty/Sebesseg/Players/Players2/Machines/GalaxyShape -> 0xBAE544/548/54C/912ACC/912AD0/BAE550/BAE554; PlayerKi e (1..18 u8) 0xBAE560; PlayerFaj e (1..18 u8) 0xBAE574; "BirodalomIsmeri row v1..v18" -> byte (0xBAEBB8 + 19 row + k) = (v != 0); "RandSeed v1..v20" -> RandSeed[1..20] (0xBAF2D0 + 4k; RandSeed[0] stays RandomInit value); CsaladtagElrabolvaKi / Altal v1..v8 (0xBB405C / 0xBB4080); AktPlanet / AktFleet / StarmapMode (0xB9933C / B99664 / B9998C); StarmapXStart/YStart/Rotate/Pitch/Zoom/PlanetKering (f32); KutatasSurgos v1..18 (u8 = v != 0); ResearchAktFejlesztett v1..18 (i32, 0xB9A9B8); ResearchTerulet/Mezo/Talalmany; "LaborSzint row v1..v3" (0x912728 + 0x10 row + 4k); DesignTervSorszam, AktTervMutato; Nehezseg v (-> 0x92827C); Diplomaciatiltas / tradetiltas (both write DiplomaciaEngedelyezve = 0, §13; spytiltas -> SpyEngedelyezve = 0); ViszonyNemValtozhat -> StoryAdat+176 = 1; tervredesign -> sets the flag that makes the tail recompute every design (local_258 = 1).
 - SPY e: OsszHanyKem[e]++, k = OsszHanyKem[e]; memset(Kemek[e][k], 0, 0x4c); the s* lines then write Kemek[e][k] (0xBAFCC8 + 0x3DC e + 0x4C k): sNev name +0 (my_strncpy), sStatusz +0x10 u16, sFaj +0x12 u8, sKep +0x14 u16, sUjonnanJelentkezett +0x16 u16, sKinekKettosKem +0x18 u8, sKuldetes +0x1a u16, sCelFaj +0x1c u8, sCel +0x1e u16, sCel2 +0x20 u16, sIdo +0x24 i32, sIdoHatra +0x28 i32, sIdoElkapasEllenorzes +0x2c i32, sSzetoszthato +0x38 i32, sXP +0x3c i32, sRang +0x40 u8; sTudas k=1..4 -> bytes at record +0x30+k (skills; espionage.md), sIsmerik k=1..8 -> bytes at record +0x41+k (known-by flags, (v != 0)).
-- TALALMANY: tech counter t++ (starts at 0, so the first TALALMANY is tech 1); rProjectAllapot v1..v18 -> status[t][e] (record+0x45+e); rKutatasAktIdo v1..18 -> record+0x58+4k (ELF 0x14339b8+4k); rNeededNullazva v1..18 -> record+0xa4+k (ELF 0x1433a04+k, bool; the key-facts name this field the given flag); "rKemkedeshezIsmeri row v1..v8" -> seen matrix record+0xc0+9 row+k. rNeeded, rKutatasSzint, rKutatasMoney, rKutatasIdo are matched in every mode and ignored.
-- TERV e: OsszHanyTerv[e]++, i = OsszHanyTerv[e] (the first is 0x29); TervekReallocate(); the record is NOT zeroed (uninit heap; only the t* fields below are written): tNev name +0 (my_strncpy 0x13), tTipus +0x16 u16, tEredetiTulaj +0x40 u16, tLathato +0x18, tNemLehetModositani +0x19, tEltuntetniHaNincs +0x1a, tUpgradeMire +0x1c i32, tGyartasIdo +0x20, tAr +0x24, tMaxTank +0x28 u8, tEro +0x2c, tHP +0x30, tKolonizalo +0x34, tTerraformalo +0x35, tVadasz +0x36, tUrbazis +0x37, tUrbazisMozgathato +0x38, tSatellite +0x39 (bools), tSebesseg +0x3c f32, tAlap +0x44, tAlapTalalmany +0x48, tHanyPod +0x4c, tPodTalalmany k=1..12 +0x50+k u8, tPodDarab k=1..12 +0x5d+k u8, tRadar +0x6a u8, tFleetCloaking +0x6b bool, tKamuDarab +0x6c, tKamuKills +0x70 u8, tKamuBeadasiEv/Honap/Nap +0x74/0x78/0x7c.
+- TALALMANY: tech counter t++ (starts at 0, so the first TALALMANY is tech 1); rProjectAllapot v1..v18 -> status[t][e] (record+0x45+e); rKutatasAktIdo v1..18 -> record+0x58+4k (ELF 0x14339b8+4k); rNeededNullazva v1..18 -> record+0xa4+k (ELF 0x1433a04+k, bool; called the given flag elsewhere); "rKemkedeshezIsmeri row v1..v8" -> seen matrix record+0xc0+9 row+k. rNeeded, rKutatasSzint, rKutatasMoney, rKutatasIdo are matched in every mode and ignored.
+- TERV e: OsszHanyTerv[e]++, i = OsszHanyTerv[e] (the first is 0x29); TervekReallocate(); the record is NOT zeroed (uninit heap; only the t* fields below are written): tNev name +0 (my_strncpy 0x15, §13), tTipus +0x16 u16, tEredetiTulaj +0x40 u16, tLathato +0x18, tNemLehetModositani +0x19, tEltuntetniHaNincs +0x1a, tUpgradeMire +0x1c i32, tGyartasIdo +0x20, tAr +0x24, tMaxTank +0x28 u8, tEro +0x2c, tHP +0x30, tKolonizalo +0x34, tTerraformalo +0x35, tVadasz +0x36, tUrbazis +0x37, tUrbazisMozgathato +0x38, tSatellite +0x39 (bools), tSebesseg +0x3c f32, tAlap +0x44, tAlapTalalmany +0x48, tHanyPod +0x4c, tPodTalalmany k=1..12 +0x50+k u8, tPodDarab k=1..12 +0x5d+k u8, tRadar +0x6a u8, tFleetCloaking +0x6b bool, tKamuDarab +0x6c, tKamuKills +0x70 u8, tKamuBeadasiEv/Honap/Nap +0x74/0x78/0x7c.
 - Fleet x, y owner (mode 0): the previous fleet must be empty-or-special, else an error aborts the load; OsszHanyFlotta++ (grow by 100 via OldReallocate when full), OsszHanySajatFlotta[owner]++, the 0x80-byte record is zeroed, +0x15 = owner, +0x30 = x, +0x34 = y (f32), name (+0) = AlapFlottaNev. DUMMYFLEET: OsszHanyFlotta++ and record +0x15 = 0xff only (the rest uninit). The f* lines then write the newest record: fAzon / fAzonosito +0x16 (u16), fNev name +0, fHidden bit0 / fEltunes bit1 of +0x18, fLathato k=1..18 bytes at +0x19+k, fHovaVonulVissza +0x2c u16, fSebesseg +0x38 f32, fAbszolutSebesseg +0x3c f32, fMozgasTipus +0x40 u16, fCelTipus +0x42 u16, fCelX +0x44 f32, fCelY +0x48 f32, flag bits of the u16 at +0x52: fSpecVirus 2, fSpecKolonizalo 3, fSpecTerraformalo 4, fSpecAtiranyitott 5, fKellSzolniFelfedezeskor 6, fVillogas 7, fMindigLathato 8, fBarat 9, fWormhole 10, fNeveLatszik 11, fCloaking 12, fSpecWormholeDeploy 13, fMeteor 14; fRadar +0x7c f32; "fTank type [n]" -> TankNew(fleet, type, n); "fShip type [n]" -> n x HajoNew(fleet, type) (type 0x2b in an owner-9 fleet becomes 8).
 - "VISZONY a b" selects [a][b]; vMegbizhatatlan +0x0a, vLebukottKemek +0x00, vRegiHaboruk +0x02, vStoryViszony +0x04, vDiplomViszony +0x06, vDiplomTulSokszorZavartal +0x08, vEroviszony +0x1c, vSzovetsegiRendszer +0x1e, vTavolsag +0x20, vViszony +0x22 (all u16), vTradeAgreement +0x24 (bool), vSzovetsegiAllapot +0x25 (u8).
 
@@ -269,15 +269,15 @@ Betolt_Scenario then repeats step 55 of section 1 (techs 89/124/159 and tech 147
 | Generate_StarNames 0x59b860: divisions by 7/9/11/13 (compiled as magic multiplies) | signed int division of positive values: plain division |
 | InitScirmishBolygok 0x4e2a10: local_20[uVar4 % 3] (unsigned modulo), (iVar3 * local_20[..]) / 100 (signed) | |
 | 0x4e29a7 (StoryAdat+196) | rndlog(1,0xa0,0xf0)*0x32 stored into 0xF274BC |
-| LoadScenario tradetiltas handler | the ELF clears DiplomaciaEngedelyezve for both Diplomaciatiltas and tradetiltas: confirm the exe byte (should be TradeEngedelyezve 0xBAE3AE) |
+| LoadScenario tradetiltas handler | clears DiplomaciaEngedelyezve 0xBAE3AD, the same byte as Diplomaciatiltas (exe and ELF; §13) |
 
 ## 11. Surprises and unknowns
 - Non-deterministic inputs: (a) seed = SDL_GetTicks() for scenario/skirmish/tutorial (campaign: debug init\init rnd or ticks); (b) NEWGAME_Diplomacy re-seeds the libc rand with SDL_GetTicks() and fills 5 saved arrays (cats, parrots, anniversaries, weaknesses, ruler ages) and leaves libc in the state after 90 draws; (c) ReadDebugData reads init\init from the cwd (story, rnd, money, speed, ai, savescenario, measure, scenedit); (d) ConfigFile GetParam("campaign") / GetParam("Difficulty") (and InitStory reads storymap/config/registry); (e) OldIdo/OldIdo2 = (SDL_GetTicks()/50)*50 set by every caller after InitNewGame.
 - File reads inside InitNewGame: text/maffia.txt, infostr.txt (once per process), gameinfo.txt, the story data files, the message-kinds and tech-info resources, Diplomacy_ReadSpecials, LoadScenario files. Poll(1) = SoundEngine::Poll: only releases finished waves.
 - Deliberate-looking oddities kept by the exe: BirodalomEl[3] literal in the skirmish extras; the LoadScenario spy-remap bound; status defaults indexed by empire (not race) in the LoadScenario tail; Money f32 round-trip; tech 147 +0x2e patched to 7 on every empire iteration; StoryTerroristaCselValoszinusege 0x32 overwritten by 0x1e; the easy-mode human bonus tests PlayerKi==1.
 - Uninitialised: Flottak/Hajok/Epuletek[p]/Tervek[e] heap beyond what is written; Generate_StarData step 3 pick when no candidate scores > 0 (ELF local_18); AddPlanet may return 0 and then write Bolygok[0]; scenario TERV records and DUMMYFLEET records are not zeroed.
-- ELF/exe difference worth a deviation row: exe NEWGAME_Research only loads texts; ELF resets research UI. Also exe InitNewGame has no TradeHanyTradeCuccVan loop and no debug asserts.
-- ig2.exe hung (no return in 450 s) on a skirmish with 200 planets (en 8, 4 AIs, tech 2, pop 3, difficulty 1); 150 planets worked. Cause not investigated.
+- ELF/exe difference worth a deviation row: exe NEWGAME_Research resets only ResearchTerulet/OldForgato/Talalmany and loads texts; ELF resets the whole research UI. Also exe InitNewGame has no TradeHanyTradeCuccVan loop and no debug asserts.
+- ig2.exe hangs (no return in 450 s) on a skirmish with 200 planets (en 8, 4 AIs, tech 2, pop 3, difficulty 1); 150 planets work. Cause unknown.
 - Unknowns: (1) resolved, §13; (2) contents of Bolygok[0] and Kemek0 at new-game time (both BSS, assumed zero); (3) resolved, §13; (4) GroundWarSetBattleStatus (0x47caa0) effect on a fresh game: for owner==0 planets it writes P.+0x64 = 0, for owned ones FUN_0047be90 decides (never reached in InitGrWar because owners are 0 at that point); (5) FUN_00474930(false, 0) second argument meaning is "all planets"; (6) names/text: GetString tables (PlayerNev = Faj_Nev[race], AlapFlottaNev, constellation names _s(0x1d,k), pod names) are localised and part of saved or visible state: the port needs the user language's tables (Game::fleet_name, empire_names exist); (7) none left for spy offsets (sTudas +0x30+k, sIsmerik +0x41+k match espionage.md).
 
 ## 12. Tables and constants read from the exe image (VA, element size, count)
@@ -287,7 +287,7 @@ Betolt_Scenario then repeats step 55 of section 1 (techs 89/124/159 and tech 147
 
 Note on rows 53/54 of section 1: for mode 0 these run AFTER InitStory (row 44) loaded the campaign map, so HanyBolygo2 is the map size there; rows 29 and 31's loops run before and see 0 planets in modes 0/1/4/5 (row 31 only reads planets for AktPlanet after the map exists, so it works in mode 0).
 
-## 13. Scenario start (mode 1) and the MP generated galaxy (mode 2): ported, 2026-10-23
+## 13. Scenario start (mode 1) and the MP generated galaxy (mode 2): ported
 Port: `Game::start_scenario` (`NewScenario`; `Betolt_Scenario` exe 0x4f5ba0: the §6 prologue with PlayerFaj[17] = 2,
 EN = 1, PlayerKi[1] = 1, `InitNewGame(ticks, 1, 0, 0)` with the difficulty from config "Difficulty" (default 2),
 `LoadScenario(file, 0)` with every mode-0 keyword, `FelfedezBirodalom` for known empires 1..8, the WF cameras,
@@ -296,12 +296,12 @@ EN = 1, PlayerKi[1] = 1, `InitNewGame(ticks, 1, 0, 0)` with the difficulty from 
 empires, races and planet count, Nehezseg forced 1). The galaxy is §3 (`generate_stars`, `star_coords`, `star_data`
 with SetPlanetSurfaces/InitGrWar/Generate_Planet initial, the empire-3 extras), step 29 (planet colours and looks),
 step 31's AktPlanet. MP guards: no 3rd destroyer for empire 5, no easy-mode bonus ships, no tech-83 bonus. Step 40
-`Research_TalalmanyUjraSzamol` is explicit (before it was only reached via the map tail); `InitAdvancedTalalmanyok`'s
+`Research_TalalmanyUjraSzamol` is explicit (not only via the map tail); `InitAdvancedTalalmanyok`'s
 head start is gated to mode 0. `Story::init_story_cleared`; `ScenarioStory::{Start, SzStart}`.
 
-Corrections to §7 / §10 / §11 (normative):
+Details to §7 / §10 / §11 (normative):
 - `tradetiltas` clears `DiplomaciaEngedelyezve` 0xBAE3AD, the same byte as `Diplomaciatiltas`; the trade byte is never
-  touched (resolves unknown 3 and the §10 row).
+  touched (unknown 3).
 - `tNev` and `fNev` are `my_strncpy(.., 0x15)` (strncpy, cut to n−1 when the name has n bytes or more); `sNev` 0xf.
 - TERV records past 0x28 reuse the template bytes; past 0x2e they are heap bytes.
 - Fleet's "last fleet empty" check: `OsszHanyFlotta != 0` and prev `+0x15 != 0xFF` and i32 `+0x54 == 0` and
@@ -321,7 +321,7 @@ Seeds: scenario and MP starts use wall-clock seeds that Frida-made calls don't p
 `scenario_seeds.py` recovers them from the post dump (diplomacy ticks from the 90 saved draws; `RandomInit`'s seed =
 the latest tick ≤ that whose RandSeed[0] matches).
 
-## 13.1 Skirmish start (mode 3): ported, 2026-10-23
+## 13.1 Skirmish start (mode 3): ported
 Port: `Game::start_skirmish(&NewSkirmish, &StartData)` = `SetScirmishGameOptions` (exe 0x503e80; 2nd arg = number of computer
 opponents, `HanyGepiJatekos` 0xF21488, not humans) then `InitNewGame(ticks, 3, 0, Nehezseg)`: the §6 prologue (PlayerFaj[17] = 1),
 EN/PlayerKi, `NewgameRandomID` 0xB7740C, ScrirmishTechicalLevel/PlanetNumber/StartingMoney/Population, `Nehezseg` = d==3 ? 4 : d;
@@ -340,7 +340,7 @@ Runtime findings (normative):
 - The exe's `st_bSearch` has no assert: `InitScirmishBolygok` with no planet would write `Bolygok[0]`.
 - Unknown: the 200-planet hang (§11).
 
-## 14. `DesignPoenosanElnevez(e, hull, out, special)` (exe 0x4b19d0, ELF 0x5087c0): ported, 2026-10-23
+## 14. `DesignPoenosanElnevez(e, hull, out, special)` (exe 0x4b19d0, ELF 0x5087c0): ported
 Exe decompile (`_local/decomp/design/exe/004b19d0_DesignPoenosanElnevez.c`): `n = special + (e·100 + hull)·10`;
 the name is the first non-empty of `_s(0x3b, n)`, `_s(0x3b, n − 1)` (only with `special ≠ 0`), `_s(0x3b, hull·10)`
 and `Talalmanyok[Alapok[hull].tech].name` (exe 0x90bc04 + hull·0x24, 0xb9c0c8 + t·0x114), built in a 52-byte local
@@ -354,7 +354,7 @@ Port: `ai::design::generated_name`; the table is `Game::design_texts` (`StartDat
 read through `AiHooks::design_text` and `Market::design_name`. Verified: `tests/new_game.rs` (35 starts) and the save
 replay, both byte-exact without copying names; the mutation above is caught.
 
-## 15. The campaign stories in `Game`'s story tick (done 2026-10-24)
+## 15. The campaign stories in `Game`'s story tick
 `game::story_chain` runs the whole `Story_Check` chain (Begin, Rnd, BRnd, Fable, Scen, Line, Elem, Multi) at every
 story call site (game.rs, game/battles.rs, game/realtime.rs, game/message_orders.rs), not `ScenarioStories` only.
 - **Reads**: `game::story_world::GameStory` (a `StoryWorld` over `&mut Game`, replacing `StoryView`) answers every
@@ -366,7 +366,7 @@ story call site (game.rs, game/battles.rs, game/realtime.rs, game/message_orders
   `story_recruit_names`, `design_templates`, `production_template`).
 - **Creators** made in the game at once: `FlottaNew`, `TervNew` (+`TervUjraSzamol`), `TervCopy2`, `st_GetTerv`
   (`trade::story_design`), `Spy_New`. Fleet names are `FleetName` (story text/bytes/sprintf/design name); ~50 call
-  sites that passed "" now pass the exe's `_s(5, N)`.
+  sites pass the exe's `_s(5, N)`.
 - **Effects** (`game/story_effects.rs`): every world-reaching `StoryEvent` is carried out when the script raises it:
   fleets, ships, units (the AI's ports); designs (incl. 8's sale, 840's discount, 908's reset); planets
   (`SetBolygoTulaj`, `st_Colonise`/`Generate_Planet`, `st_BolygoDestroy`, `Story_VulkanKitores`, razing,
@@ -375,36 +375,33 @@ story call site (game.rs, game/battles.rs, game/realtime.rs, game/message_orders
   `Diplomacy_AddSpecial/RemoveSpecial`, spies (records, `KemJelentesAdd`, story agent 310, 138's recruits, story
   missions); undo types 1, 2, 3, 5, 6, 9, 10, 11.
 - **Statics**: the story statics the save leaves out (`save.rs va::STORY_MESSAGE..STORY_BRUTAL4`, `KemEsemeny`,
-  `Story_Minden_Flotta_Latszik`) are kept at their exe addresses between checks. Fixes on the way: the `st_vOzonviz`
-  chunk was emitted after its count when the loaded save had none; `MULTIGET_Spy`'s per-frame `HanyKemVan` recount
-  now runs at the start of `run_tick` (a new campaign's save holds a stale count).
+  `Story_Minden_Flotta_Latszik`) are kept at their exe addresses between checks. `MULTIGET_Spy`'s per-frame `HanyKemVan`
+  recount runs at the start of `run_tick` (a new campaign's save holds a stale count).
 - **Verification**: two campaign-start save replays recorded in ig2.exe from `_local/traces/newgame/newgame-c1-d1-s5150.sav`
   (campaign 1, difficulty 1): `replay-campaign-c1-x16` (60 ticks) and `replay-campaign-opening-c1-x16`
   (`run_replay.py --warmup 685 --ticks 40`: story 401's first opening episode starts at tick 10, pirate base planet 111
   with buildings and garrison, pirate fleet "Khan kalóz" attacking), both byte-exact tick by tick (chunks and the
-  compared unsaved globals, incl. the story statics and CTF). All earlier save replays stay byte-exact.
-- **Now modelled** (2026-10-25, rows 230/232, b9efb9b): the GameInfo list (§2.3), the `JoinBattle` read-back in `Game::space_war`
+  compared unsaved globals, incl. the story statics and CTF).
+- **Also modelled**: the GameInfo list (§2.3), the `JoinBattle` read-back in `Game::space_war`
   (exe 0x5a77f2, 0x5a7b19, `SpaceWar_NewBattle` 0x563700), and `LoadSaveVariables`' last reads (exe 0x545a1c: 0xB77288 = st_vGet(4003),
   0xB7728C = st_vGet(4002)); `replay-scen-swarm-x16` (story 371's countdown, 14 adds / 13 removes) is byte-exact.
-- **Carried out by the client** (2026-10-25, deviation 231; `ig2-client::world::StoryUi`, single player): `SaveStoryline` →
+- **Carried out by the client** (`ig2-client::world::StoryUi`, single player): `SaveStoryline` →
   `SaveRegistrySetting(StoryRegString(ct), line)` (exe 0x51b860, 0x5c5540: key `Fable_<ct>`, the decimal index; ours writes
   `options.dat` at once, the exe at the next `SaveGlobalRegistrySettings`), read back by the next campaign's `InitStory`
   (`NewCampaign::last_storyline`); `Earthquake(p)` (`st_Foldrenges`) → the colony screen of `p` and `ShowColony`'s jolt (exe 0x49f130:
   `rand() % 31 − 15` on the pivot's x then y after the clamp, while `Colony_foldrenges` is the shown planet; 10000 ms from the first
-  colony draw, `FRISSIT_Story`); `HoldGroundWar` → the colony screen and `SetIdoPause(1, 0)` (exe 0x541300; ignored in MP). The
-  0xF261F8 hold skips one `WF::Refresh` of the shown planet only when its colony screen is already up (`FRISSIT_Grwar` exe
-  0x4747c0, cleared every call): not ported (the strategic sim has no per-screen refresh). The 0x49/0x66 messages:
+  colony draw, `FRISSIT_Story`); `HoldGroundWar` → the colony screen and `SetIdoPause(1, 0)` (exe 0x541300; ignored in MP). The 0x49/0x66 messages:
   `multiplayer.md` §5.5. Undo 7 `st_RemoveTerv` is unreachable (no `st_Ozonviz(7, …)` among the ELF's 22 calls).
-- **Starmap texts** (2026-10-25): `StoryEvent::Notice` → `AddSzoveg(text, colour)` (exe 0x591360, the chat's ring) on the
+- **Starmap texts**: `StoryEvent::Notice` → `AddSzoveg(text, colour)` (exe 0x591360, the chat's ring) on the
   machine whose `EN` the exe tests (`ig2-client::world::notice_line`): Winner colour 7 in 1001 (push 0x5ee7db), 2 in 1002/1003;
   "You cannot colonize …!", the flag lines, "TOUCHDOWN!!!" colour 2 (0x5efcc1, 0x5eff5b, 0x5f00ea, 0x5f0241, 0x5f029e, 0x5f0808,
   0x5f08ff); `_s(5, 8560)` colour 1 (0x5de609, 0x5e318d). In canonical MP the sim raises them for every empire concerned and
   each client picks its own.
-- **The 0xF261F8 hold** has no effect here: `FRISSIT_Grwar` (exe 0x4747c0) skips only the shown planet's `WF::Refresh` (after
-  `WF::MI`) in that one call, and our strategic sim runs neither for the shown colony in single player (`Game::grwar`;
+- **The 0xF261F8 hold** has no effect here: `FRISSIT_Grwar` (exe 0x4747c0, cleared every call) skips only the shown planet's
+  `WF::Refresh` (after `WF::MI`) in that one call, only when its colony screen is already up, and our strategic sim runs neither for the shown colony in single player (`Game::grwar`;
   `grwar_mp` is the exe's MP branch, which never tests it). It comes with an SP real-time ground tick, if one is ported.
 
-## 16. Tutorial start (done 2026-10-24)
+## 16. Tutorial start
 - **Recording**: `tools/trace/run_newgame.py --tutorial N` (newgame.js calls the exe's `TutorialSetCampaignGameOptions(n)`,
   exe 0x504250, as `MainScr_Kilep` does at exe 0x4feec2; `TutorialStart("main", n)` (script, gate flags, music) is left
   out; seeds from `scenario_seeds.py` as for scenarios) -> `_local/traces/newgame/tutorial-{1..5}.*`.
@@ -413,7 +410,7 @@ story call site (game.rs, game/battles.rs, game/realtime.rs, game/message_orders
 - **Replays**: `run_replay.py` from tutorial-1.sav and tutorial-4.sav, 60 ticks at x16 (`replay-tutorial1-x16`,
   `replay-tutorial4-x16`): `replay_matches_the_exe_tick_by_tick` byte-exact. The tutorial interpreter does not run in
   them (the save is loaded); it is verified separately (`tutorial.md` §11).
-- **Sim**: `Game::start_tutorial` passes `InitNewGame`'s difficulty 0 as the exe does (`InitNewGame(SDL_GetTicks(), 1, 0, 0)`),
-  not `cfg.difficulty`; output unchanged (the scn file sets Nehezseg).
+- **Sim**: `Game::start_tutorial` passes `InitNewGame`'s difficulty 0 as the exe does (`InitNewGame(SDL_GetTicks(), 1, 0, 0)`;
+  the scn file sets Nehezseg).
 - **Data quirk** (shipped, not fixed): tutorial4.scn and tutorial5.scn share the same date (Ev 2342 9/1, Ido 42168045)
   and both carry TITLE "Tutorial 2"; they differ in one FLEET line.

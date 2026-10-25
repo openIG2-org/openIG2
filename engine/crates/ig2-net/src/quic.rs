@@ -214,6 +214,8 @@ pub enum Pin {
     Cert(Vec<u8>),
     /// Its SHA-256 (from a LAN announcement).
     Fingerprint([u8; 32]),
+    /// Its SHA-256's leading bytes (a join code's, `joincode::PIN_BYTES`).
+    Prefix(Vec<u8>),
     /// None: a direct join by address. The connection is encrypted but the host unauthenticated until a password
     /// check (ADR 0008 §3.1) binds the channel.
     Any,
@@ -223,7 +225,7 @@ pub enum Pin {
 /// usual, so the server must hold the certificate's key.
 #[derive(Debug)]
 struct Pinned {
-    fingerprint: Option<[u8; 32]>,
+    fingerprint: Option<Vec<u8>>,
     algs: rustls::crypto::WebPkiSupportedAlgorithms,
 }
 
@@ -237,7 +239,7 @@ impl rustls::client::danger::ServerCertVerifier for Pinned {
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         match self.fingerprint {
-            Some(f) if f != fingerprint(end_entity) => Err(rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)),
+            Some(ref f) if !fingerprint(end_entity).starts_with(f) => Err(rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)),
             _ => Ok(rustls::client::danger::ServerCertVerified::assertion()),
         }
     }
@@ -282,10 +284,14 @@ pub fn connect_pinned(addr: SocketAddr, pin: &Pin) -> Result<QuicLink, Error> {
                 .with_root_certificates(roots)
                 .with_no_client_auth()
         }
-        Pin::Fingerprint(_) | Pin::Any => {
+        Pin::Fingerprint(_) | Pin::Prefix(_) | Pin::Any => {
             let provider = rustls::crypto::ring::default_provider();
             let algs = provider.signature_verification_algorithms;
-            let fingerprint = if let Pin::Fingerprint(f) = pin { Some(*f) } else { None };
+            let fingerprint = match pin {
+                Pin::Fingerprint(f) => Some(f.to_vec()),
+                Pin::Prefix(f) => Some(f.clone()),
+                _ => None,
+            };
             rustls::ClientConfig::builder_with_provider(Arc::new(provider))
                 .with_protocol_versions(&[&rustls::version::TLS13])?
                 .dangerous()

@@ -1,4 +1,4 @@
-// Info screen probe (re/screens/info.md §5, FX3 row 186), appended to screen.js by run_screen.py --probe. While `AktKep`
+// Info screen probe (re/screens/info.md §5), appended to screen.js by run_screen.py --probe. While `AktKep`
 // is 9: every `Info_MouseInit2` (exe 0x4e9530, once a drawn frame) first gives `MainScenarioDescriptor` (0xBBD140) a
 // dummy record when it is 0 (a save outside a scenario has none, and the charts and star-log buttons 14/15 are off
 // without one), and logs ('f') and every `Info_Main` (exe 0x4e81c0, run by `IG2_gameUpdate` only on button frames)

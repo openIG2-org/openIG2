@@ -354,7 +354,7 @@ pub struct Camera {
     /// An earthquake's jolt added to the pivot after the clamp (`ShowColony` exe 0x49f130: `rand() % 31 − 15` for x,
     /// then for y, while `Colony_foldrenges` is the shown planet); zero otherwise.
     pub shake: [f32; 2],
-    /// `TankView`'s eye and target this frame ([`CameraKeys::tank`]): they replace the block above (row 131).
+    /// `TankView`'s eye and target this frame ([`CameraKeys::tank`]): they replace the block above.
     pub tank: Option<Eye>,
 }
 
@@ -2314,7 +2314,7 @@ impl View {
             Some(([at[0] + lift, at[1], at[2]], (w * 0x28) as f32 * k + grow, (h * 0x28) as f32 * k + grow))
         };
         // `polygons3d(v, 3, 3)`: additive `RGB·A/256` (black is clear) [obs: the exe's rings over snow], the building
-        // marker's too (`DrawBuildingSelection`; deviation 310).
+        // marker's too (`DrawBuildingSelection`).
         let mut square = |tex: TexId, at: V3, hx: f32, hy: f32, alpha: i32, additive: bool| {
             let c = [1.0, 1.0, 1.0, alpha.clamp(0, 255) as f32 / 255.0];
             let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [at[0], at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };

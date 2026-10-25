@@ -26,7 +26,7 @@ impl From<Terms> for Message {
 }
 
 /// What the diplomacy screen writes to its own contact-list slot (`ig2_sim::diplomacy::ScreenOp`,
-/// `re/screens/diplomacy.md` §8): the original writes these flags in the frame it sends the message or answer.
+/// `re/screens/diplomacy.md` §9): the original writes these flags in the frame it sends the message or answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiplomacyScreenOp {
     Sent,
@@ -447,7 +447,7 @@ mod tests {
         assert!(StarmapCmd::Queue { planet: 1, block: vec![0; 3] }.order().is_none());
     }
 
-    /// Deviation 231: the story's own `Multi_Send`s become commands the driver applies before the next tick, as
+    /// The story's own `Multi_Send`s become commands the driver applies before the next tick, as
     /// `MultiSendPackets` hands them to `MULTIGET_Story` (0x66 → `Story_Special(15, sender, id)`) and `MULTIGET_Spy`
     /// (0x49: the elem stories' `Multi_Send(0x49, EN, spy, mission, 0, 0, 0, 10)`, exe 0x5d4b70).
     #[test]

@@ -3,9 +3,7 @@
 The 1999 engine transforms, lights and fogs its vertices on the CPU and hands them to Gyroscope's GL layer (`sg3d`),
 which draws them with its own shaders, materials and state blocks. Those ship in the install (`render/`, decoded to
 `_local/extracted/render/`) and decide how every 3D screen looks: colour space, blending, depth, texture mapping, fog,
-shadows and two procedural materials. This spec lists them with the ELF evidence and what the client does with them
-(`ig2-client::render3d`, `Scene3d::gamma`). Status: specified, applied to the colony, research, spy, diplomacy and
-starmap screens; capture results in `diff-results.md` (`render-layer`).
+shadows and two procedural materials. This spec lists them with the ELF evidence; client status: §5.
 
 ## 1. Files (`render/`)
 
@@ -62,16 +60,16 @@ From the node's property word `spsorttype+0x6c` (cached `renderstate_*` globals 
 - 0x2000: fog on with `fogszin` and blending off (opaque, fogged); else fog off and blending on;
 - lighting (`fenyekszamolasa` exe 0x52f190): 0x1 = per-vertex lighting; 0x100 without 0x1 = flat light (ambient + each parallel light's colour·205>>8, no normal: the colony's trees, colony.md §3.1); neither = full bright;
 - 0x800: no texture.
-- the transparency leaves the depth bits alone: a transparent object still writes depth (the design hull, design.md §14.3);
+- the transparency leaves the depth bits alone: a transparent object still writes depth (the design hull, design.md §12c);
 - after each batch, when the mesh's first material has a second texture, `selfillumkirak` (0x613da0) draws it again
-  additively (`ONE`/`ONE`) with the batch material's second texture, unlit in the grey `255 − t·255` (design.md §14.3).
+  additively (`ONE`/`ONE`) with the batch material's second texture, unlit in the grey `255 − t·255` (design.md §12c).
 
 ### 2.4 Textures (`command_glLoadTexture` 0x426e30, `sg3d::texture_t::load_pvr` 0x86db50)
 `dataraw/<name with . → _>.pvr`; the pass comes from the name: `charset_bmp` → `FONT`, `xx_bmf` → `VIDEO`,
 `ethcldbp_bmp` → `CLOUD`, else `OPAQUE`. The PVR's `SGLB` metadata: `TXNV` (bit 0/1 repeat s/t, bit 2 trilinear,
 bit 3 trilinear + the maximum anisotropy, bit 4 nearest; mip filters only with more than one level) and `CNST`
-(named shader constants handed to the material: `load_constants`). `load_pvr` uploads each file's own mip levels; the client
-uses them too (`Pvr::decode_levels`, `render::mip_chain`): filtering from the top blurs alpha-tested textures (the scaffold's rails).
+(named shader constants handed to the material: `load_constants`). `load_pvr` uploads each file's own mip levels
+(filtering from the top level alone blurs alpha-tested textures, e.g. the scaffold's rails).
 
 ### 2.5 Environment mapping (`vagashatarkirak` exe 0x5395d0, ELF 0x606c90)
 Property 0x8000 makes `Kocka` (dispatch exe 0x52848f: 0x8000, then 0x1000000, then 0x40 = `wirekirak`) draw the mesh with
@@ -81,7 +79,7 @@ construction cut (`clippolygonvagashatar`), not env mapping.
 - Texcoords (`envszamol` ELF 0x6110e0, inlined in the exe; `normalizevektor` exe 0x4501f0), f32, in the mesh's own space:
   `e = normalize(camera − P)` (left raw when the length is under 1e-5), `uv = (e.x − N.x, e.y − N.y)` with the vertex normal `N`;
   no scale or offset, it replaces texcoord0, `nz` unused. Neither P nor N is rotated: the highlight follows the camera's place
-  relative to each vertex. `scene::env_uv`.
+  relative to each vertex.
 - One pass, the lit vertex colour, fog as `kirak`, back faces culled. Blend by `renderstateallitas`: 0x2000 (inherited from the
   building root) makes it opaque and fogged; a transparency byte (`_C_` 0.6, ponds 0.28, `VIZ` 0.63) clears 0x2000 and blends
   `SRC_ALPHA`/`INV_SRC_ALPHA`.
@@ -91,10 +89,14 @@ construction cut (`clippolygonvagashatar`), not env mapping.
   `ChangeSelfTexture` (exe 0x451ab0) loads the sky texture's name with its first letter replaced by `v`.
 - Users: the colony only (`Init3dColony` exe 0x47d520: `_B_` 0xc000, `_C_` 0xc000 + 0.6, ponds, terrain water `VIZ` 0xc008;
   `ShowColony` exe 0x49f130: the panel preview and the build cursor's copy; `EpuletFelepult` exe 0x4741a0). `HAmp` is a shared
-  global, so elsewhere the swap uses a stale texture (SpaceWar `valami.xvb` `_B_Cylin02`, row 370).
-- Verified (`probes/envmap.js`, `quick-1.sav` planet 17): 66 drawn triangles match the formula to 1.3e-7; test
-  `scene::tests::env_uv_matches_the_exe`. Client: `colony::{building_env, env_texture, env_map}`, `EnvPart` (drawn per frame from
-  the eye), the panel previews (`colony_ui` `PanelBuilding` takes the sky).
+  global, so elsewhere the swap uses a stale texture (SpaceWar `valami.xvb` `_B_Cylin02`).
+- Verified (`probes/envmap.js`, `quick-1.sav` planet 17): 66 drawn triangles match the formula to 1.3e-7.
+
+### 2.6 Light directions on the colony
+`fenyekszamolasa` takes `|n' − L|` with the file normal's model z negated; the colony's models are quarter-turned
+(`RotateObj(0, π/2, 0)`, model z → −h), so for the file normals the lights `light2` (2, 2, −2) (the terrain and
+buildings, `mainmeshid1`) and `light5x` (10, 10, −10) (the building panel's model, `mainmeshid2`, ambient 0x404040,
+colour 0xffffff) act from (−1, 1, −1) [obs: the best of the eight sign choices on the colony view and the panel].
 
 ## 3. What the install's textures carry
 `ig2-formats` example `pvrmeta` (`cargo run --release -p ig2-formats --example pvrmeta -- <install>`) over all
@@ -114,7 +116,7 @@ The colony screen, with `OptionsKellArnyek`, `lehetarnyek` (0x118b388 = 1) and f
   parts (whose cast flag it clears). `findboxxvb2` (exe 0x453970, case-insensitive substring) searches only the
   nodes of each LOD level's root `.xvb` (`getnextmeshpointer` exe 0x453b70 steps LOD levels, not children), so only
   a part whose top-level node name contains `+r` receives; the Park's `+r+Rectangle01/2` tree quads sit in the child
-  archive `prkv2-fa.xvb`, keep casting and don't receive (row 391). Properties inherit down the tree (`PropertiesOn` 0x456a50 sets `+0x54` and
+  archive `prkv2-fa.xvb`, keep casting and don't receive. Properties inherit down the tree (`PropertiesOn` 0x456a50 sets `+0x54` and
   clears the bit from the inherit mask `+0x58`; children take `parent & mask | own & ~mask`).
 - **The map.** `ShowColony` calls `rendershadowmap` (0x604f50) before the scene: `SGL_glSetTarget(1)`
   (`command_glSetTarget` 0x427c00: the shadow framebuffer, cleared to white, projection `scale(1/128)` then
@@ -126,27 +128,14 @@ The colony screen, with `OptionsKellArnyek`, `lehetarnyek` (0x118b388 = 1) and f
   `Disable`: `BIT2` multiplies the texel by the map's green (0.5 in shadow) before the vertex colour and the fog.
 - The units have their own `WF_Tank::DrawShadow` (0x481d80) [not ported].
 
-## 5. The client
-`render3d::Scene3d::gamma` draws a scene as the remaster does: on the frame's raw (non-sRGB) view with the textures'
-raw views and their mesh sampler (repeat, trilinear, anisotropy), `texture × vertex colour` (lights clamped to 1 like
-the colour bytes), the fog mix, `BIT0` at 0.5, the frame's clear colour stored as given. Scenes rendered into a
-target (research, diplomacy, the colony's building panel) are laid over the frame with `Blend::GammaPremul`
-(`c·a + frame·(1 − a)`), which replaces the earlier per-screen corrections for linear blending (`spy_scene::gamma`,
-the `/a²` glass tint). Shader-lit scenes (the colony) use the engine's parallel light (`fenyekszamolasa`'s
-`shade[float2int(|n − L|²·2047)]`, research.md §2.1) instead of Lambert. `Scene3d::shadow` is §4 (`Shadow::Cast` /
-`Receive` per draw, a 2048² map), `MeshDraw::video` the `VIDEO` material (`--acttime` pins `sg3d_time`; the capture
-tool passes the exe's).
-
-Light directions for the colony: `fenyekszamolasa` takes `|n' − L|` with the file normal's model z negated; the
-colony's models are quarter-turned (`RotateObj(0, π/2, 0)`, model z → −h), so for the client's file normals the
-lights `light2` (2, 2, −2) (the terrain and buildings, `mainmeshid1`) and `light5x` (10, 10, −10) (the building
-panel's model, `mainmeshid2`, ambient 0x404040, colour 0xffffff) act from (−1, 1, −1) [obs: the colony view 18.3 →
-11.7 against the other seven sign choices; the panel 13.0, best of nine].
-
-The info and messages frames (`screen_frames`) take the engine's lights per vertex (info.md §1.1, messages.md §4) in
-the gamma pass, laid over the frame with `Blend::GammaPremul` (messages panel 14.9 → 0.3, diff-results.md
-`infomsg-lights`).
-
-Open: the units' shadows; the research and spy side lights (research.md §5.6); the colony terrain's own brightness in
-places (the rock's lit faces); the info frame's faces turned away from the lights (the pillar's right half, lit grey
-in the exe, dark in the client).
+## 5. Client status
+`render.rs`, `render3d.rs`, `lighting.rs`: `render3d::Scene3d::gamma` draws a scene as the remaster does (the raw
+non-sRGB frame and texture views, the mesh sampler, `texture × vertex colour` with lights clamped to 1, the fog mix,
+`BIT0` at 0.5, the PVR mip levels); scenes rendered into a target (research, diplomacy, the colony's building panel)
+are laid over the frame with `Blend::GammaPremul` (`c·a + frame·(1 − a)`); shader-lit scenes use the engine's light
+(`fenyekszamolasa`'s `shade[float2int(|n − L|²·2047)]`, research.md §2.1); `Scene3d::shadow` is §4 (a 2048² map);
+`MeshDraw::video` the `VIDEO` material (`--acttime` pins `sg3d_time`; the capture tool passes the exe's); env mapping
+in `colony::{building_env, env_texture, env_map}` and the panel previews (test `scene::tests::env_uv_matches_the_exe`).
+Applied to the colony, research, spy, diplomacy, starmap screens and the info/messages frames. Open: the units'
+shadows (`WF_Tank::DrawShadow`), the research and spy side lights (research.md §5.6), the colony terrain's own
+brightness in places, the info frame's faces turned away from the lights (lit grey in the exe, dark in the client).

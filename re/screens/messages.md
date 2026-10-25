@@ -27,14 +27,13 @@ nothing. `len` caps the bytes; flags & 3: 1 centres in `len` cells, 2 right-alig
 `HatarX1..X2 × HatarY1..Y2` by whole glyphs. `KiirInt` writes a number the same way. Texts are raw bytes in the
 game's code page (`uzenet.txt`, planet names).
 
-**The glyph quad as drawn** (row 27, 2026-10-24): every vertex (exe 0x4a9e60, ELF 0x4f8570) also carries the cell
+**The glyph quad as drawn**: every vertex (exe 0x4a9e60, ELF 0x4f8570) also carries the cell
 inset by half a texel, `(u0 + 0.5/W, v0 + 0.5/H)` in `z, rhw` and `(u1 − 0.5/W, v1 − 0.5/H)` in the second uv
 (`W × H` = the sheet's pixels); the `FONT` pass (`ig2_vertex_font`/`ig2_fragment_font`) clamps the sampled uv into it.
 Quad and uv are exactly `width × height` virtual pixels (no rounding). At 800 × 600 a glyph is 8.75 px tall, and when
 its bottom edge lands on a pixel centre (`y + height ≡ 2 mod 4`, e.g. the SpaceWar info box's title at y 427, edge
 542.5) the exe's GL fills that row (the clamped last texel row: the descenders of `y`, `g`), where wgpu's top-left
-rule leaves it out [obs: `_local/screendiff/spacewar` grab3 t600 rows 542 and 587; every other row equal]. The client
-draws glyphs as `kind::GLYPH` (the clamp) moved 1/64 px down with their uv, so ties fall as in the exe.
+rule leaves it out [obs: a SpaceWar grab, rows 542 and 587; every other row equal].
 
 ## 2. The scrolling message line
 `FRISSIT_Scroll2` 0x66ebd0 runs in the 10 ms UI frame (not while entering/leaving a screen); `GFX_Scroll` 0x66f270
@@ -133,15 +132,14 @@ render done), `MessagesKellKepMentes` 0xd909ae (save the screen).
   exe 0x4e2db0, no `mesframe` test) live during the opening: leaving mid-opening closes from where it stood. Inside
   the closing loop the main loop's mouse pass doesn't run and `bae24d` refuses Esc and the screen keys. A button pressed
   inside the closing loop never reaches the next screen [obs: `scripts/messages-close-press.json` with
-  `--via-starmap 60`, 2026-10-25: a left down on the starmap's screens arrow during the closing, released after the
+  `--via-starmap 60`: a left down on the starmap's screens arrow during the closing, released after the
   starmap is up, opens no menu].
 - **Measured** (`run_screen.py --script scripts/messages-{open,esc}.json` over a replay save with inbox messages,
-  `mesframe`/`mesKINYITVA`/`mesBECSUKAS` per grab, 2026-10-24): 0 → 15 in 46 ticks (`mesKINYITVA` at the next render);
+  `mesframe`/`mesKINYITVA`/`mesBECSUKAS` per grab): 0 → 15 in 46 ticks (`mesKINYITVA` at the next render);
   an Esc or a press at UI tick t is taken after the render of t + 1 (`IG2_gameUpdate`/`Messages_Main` come after the
   frame's ticks and render), so the closing's first −0.6 is tick t + 2; an inbox row pressed at t starts 15 → 30 at
   tick t + 3 (`KELLKINYITAS2` a tick after the open; `Kiirashang` at t + 1); Esc at `mesframe` 10 closes from 10.333
-  and the screen is gone at the second pass at 0. `ig2-client --snapshot --screen messages --script` matches every
-  grab's `mesframe` (screendiff `messages --script`).
+  and the screen is gone at the second pass at 0.
 
 ## 5. The open message (`KiertekelUjuzenet` 0x5a8550 and the dialogue)
 Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzenetek/msg%04d.txt` and `txt%04d.txt`
@@ -196,17 +194,26 @@ once typed; `FolyamatbanU == −1` and
 Tooltips (`Messages_MouseInit` exe 0x508b10: `Mouse_Szoveg_Set(id, 0, rect, GetString(10, 1, n), wait, 1)`, the hand
 on every spot): n = id for 1..=6, 7 for 7..=10; shown by `UpdateFrame` after the 400 ms rest (input.md §8) on the lowest
 enabled spot under the pointer; the "lit frame" over a hovered row is that tooltip's fader box [obs: messages-open.json
-t 129, the inbox's "Üzenetek" box at the pointer]. Client: `MessagesScreen::{spot_at, tip_text}`.
+t 129, the inbox's "Üzenetek" box at the pointer].
 `Messages_MouseInit2` (exe 0x508940, every frame): 3 on per `DAT_00da65e5`; 4 and 6 only at `mesframe == 30`; 5 and 10
 off; 7..=9 only with no choices pending and the text typed (`AktValasztasok == 0 && KiirtaMar`). Esc
 (`MainCallBackEventHandler` exe 0x4e2db0) in that idle state sets `AktIkonKell = 0x25`, a press on hot-spot 7
 (`IG2_gameUpdate` 0x4e0440): the screen leaves for `MessagesElottiScreen` as a click there does; otherwise Esc does
 nothing. An answer asked for (hot-spot 4, a..d, `Melyikvalaszfolottvanazeger`) sets `VoltUjValasz` (0xDABDB4);
 `ValaszKivalasztva` (0x509d10) runs at the end of every `Messages_Main` and takes it once the choice isn't disabled,
-so a disabled answer stays asked for (only `Messages_Belep` clears it). Client: `MessagesScreen::{pending, answer}`.
+so a disabled answer stays asked for (only `Messages_Belep` clears it).
 
 ## 7. Not specified here
 The top bar (money, date, speed buttons, the line's frame) is in re/screens/hud.md §2. The talking heads and videos
 (`StartAnim` 0x5a1340, `uzenetanim_%d`), the voices and typing sounds, the story map (`CreateStoryMap`), the
 automatic messages, `AliasConv`'s aliases beyond `#k#`, the read message's replay (`UzenetPlaybackek`). The story hand-offs (`Story_MessageMegnezes`, `Story_MessageSelected`,
 `Story_LetiltasCheck`) and the entry's `+4`/`+5` flags are in rules/info-messages.md §7 and sent as `MessageOrder`s.
+
+## 8. Client status
+`ig2-client::messages_screen` (`MessagesScreen`), the font in `font.rs`, the line in the HUD: text, the scrolling
+line and history, the inbox, the frame's opening and closing (matching the exe's `mesframe` at every grab), the open
+message, typing, dialogue and answers, hot-spots and tooltips, Esc. Glyphs are drawn as `kind::GLYPH` (the uv clamp)
+moved 1/64 px down, so §1's pixel-centre ties fall as in the exe. Talking heads, speech and the typer's sounds:
+`video.md` §6, `audio.md` §7. Open rows: 4 (the side strips wider than 4:3 stay black), 309 (speech stays English, as
+the exe). Capture: `run_screendiff.py messages --script scripts/messages-{open,esc}.json` over a replay save with inbox
+messages.

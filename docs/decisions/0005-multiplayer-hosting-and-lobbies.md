@@ -7,7 +7,7 @@ Builds on ADR 0003 (deterministic sim: fixed 20 Hz tick, seeded RNG, `rand()` re
 The owner's requirements:
 - A player hosts a session **from inside the game**; others join easily. No dedicated servers as in the
   original (the GOG remaster's lobbies lived on a central server; a server package of the remaster is probably
-  that server, not yet inspected, STATUS U7).
+  that server, not yet inspected, U7, `re/README.md`).
 - **No manual port forwarding and no user-run tunnels** (Hamachi, VPNs): UPnP and automatic fallbacks.
 - **LAN play** with automatic discovery.
 - **Lobbies**: open sessions anyone can join until the game starts, password-protected sessions.
@@ -98,6 +98,8 @@ over those paths. Without the service there's no internet session browser, no jo
 punching and no relay, so a host behind CGNAT or a router without UPnP can't accept internet players
 yet (LAN still works). The protocol keeps room for those features (connection candidates in the
 handshake, a session id usable as a join code) so they can be added without breaking it.
+Update: direct join codes now exist (host addresses + certificate pin + session id, ADR 0014 amendment); the
+directory, short codes like `KX7-42Q`, hole punching and relay still need the service.
 Reachability check without the service: the host shows its external address and whether the port
 mapping succeeded; a joiner's failed attempt explains the likely cause.
 

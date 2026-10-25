@@ -1,4 +1,4 @@
-// Building height probe (deviation 383, re/screens/colony.md §3.1), appended to screen.js by run_screen.py --probe:
+// Building height probe (re/screens/colony.md §3.1), appended to screen.js by run_screen.py --probe:
 // every `getbottomvertex` (exe 0x4a89a0, cdecl: float a, float b, int planet; result in st0) with its arguments, the
 // dumped vertex list (`*0xDE0284`, count 0xDE0288, 0x18 bytes a vertex: x, y, z first) as its height range and the
 // vertices within 0.5 % of the bottom, and the result read from st0 on the way out.

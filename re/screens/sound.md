@@ -1,10 +1,9 @@
 # Sounds and input scripts
 
 How ig2.exe starts its sounds, how the sound-id tracer records them per action, and how an input script drives the
-exe and the client through the same frame sequence (roadmap §2 steps 3 and 5: "a sound-id log per action", "the
+exe and the client through the same frame sequence (the screen workflow, `CONTRIBUTING.md` → Workflow: "a sound-id log per action", "the
 sound ids match in order", the capture diff for every state). Tools: `tools/trace/sound_tables.py`, `sound.js`,
-`run_screen.py --script --sounds`, `run_screendiff.py --script`; the client's `--snapshot --script`
-(`ig2-client::script`). Results: `diff-results.md`.
+`run_screen.py --script --sounds`, `run_screendiff.py --script`; the client side: §5.
 
 ## 1. Sound tables and `PlaySound`
 - A `Hang` record is 0x11c bytes (exe and ELF alike): the file name at +0 (0x100 bytes, relative to `sounds/`),
@@ -23,7 +22,7 @@ sound ids match in order", the capture diff for every state). Tools: `tools/trac
 - Voices and message audio go elsewhere: `PlayWav(name, loop)` exe 0x563e60 (`SoundEngine::LoadWave(name, 0, &h)`,
   loop flag, volume from G through 0x55c430), `PlayMp2` exe 0x563df0 (the tutorial's `mfx/tutorial/*.mp2`),
   `Speech::Play` exe 0x563d50, `PlayMessagesHang(name, bool)` exe 0x55c9b0 (the one record `MessagesHang`, filled at
-  run time). Music (`PlayMusicMain/Menu/SpWar/GrWar` exe 0x61f360…) is not traced yet.
+  run time). Music (`PlayMusicMain/Menu/SpWar/GrWar`): audio.md §4.
 
 The tables (`<Screen>_Hangok` in the ELF's symbols; `sound_tables.py` finds the exe's copy by its names at the
 record stride). A sound id = table + index:
@@ -65,8 +64,7 @@ One JSON file drives both sides (`tools/trace/scripts/*.json`; `ig2-client/src/s
 (640 × 480); a press is the pointer moved there, the button down and up `hold` (3) ticks later; key names: down,
 up, right, left, enter, pageup, pagedown, escape, d, k, space, c, e, i, m, s, 1, 2, 3, tab, delete (the exe gets
 key events only: a handler that reads the typed character, as `ColonyKeyboardHandler`'s E does, doesn't see them).
-On the starmap and the colony screen the client runs the window's own code headless (audio.md §7) and writes only
-the sounds; the scripts there carry no grabs.
+The starmap and colony sound scripts carry no grabs.
 
 The exe side (`screen.js`, `run_screen.py --script`):
 - **The clock**: `Fake_FRISSITES` (exe 0x4de720) runs one UI tick per 10 ms of `SDL_GetTicks` (exe 0x689e80):
@@ -88,12 +86,7 @@ The exe side (`screen.js`, `run_screen.py --script`):
   frame is the one the game presented, at the tick it was drawn.
 - `--state-out` saves the script's first frame (`LoadSave(slot, name, 2)`, before any event) with its UI clocks.
 
-The client side (`ig2-client --snapshot OUT.png --save STATE --screen research --script S`): the screen opened
-animated on that save, then per tick: the tick, the grab (`OUT-t<T>.png`, drawn after t ticks), then the events at t
-(the same order as the exe's: a grab at t shows the state before t's events). Presses go to the screen's press handler,
-keys to its keyboard handler, commands through `World::send`/`pump` as the exe's `MULTIGET_*`.
-
-## 4. The research screen's sounds (observed, `research.json`, 2026-10-22)
+## 4. The research screen's sounds (observed, `research.json`)
 
 | Action | Sound | When |
 |---|---|---|
@@ -102,7 +95,16 @@ keys to its keyboard handler, commands through `World::send`/`pump` as the exe's
 | ↓ (the next field) | `Res_Hangok[1]` | 10 ticks after the key down |
 | PgDn (a category), D (urgent by key) | none | |
 
-The sequence diff of the same run (diff-results.md, 2026-10-22): the exe's `resframe` is 0.4·t from t = 1 (4.0 at 10,
-60 and open at 150); the client's trails it by one tick. `Res_Hangok[3]` is the closing's (`Research_Kilep`, research.md §5.1); `Res_Hangok[2]` wasn't heard. Esc on the
+In the same run the exe's `resframe` is 0.4·t from t = 1 (4.0 at 10, 60 and open at 150). `Res_Hangok[3]` is the closing's (`Research_Kilep`, research.md §5.1); `Res_Hangok[2]` wasn't heard. Esc on the
 research screen opens screen 13 at once (no closing animation, no sound), and a press on the top bar's research spot
 (620, 10) does nothing in the exe: `re/deviations.md`.
+
+## 5. Client status
+`ig2-client::script` reads the same scripts. `ig2-client --snapshot OUT.png --save STATE --screen <s> --script S`
+opens the screen animated on the save, then per tick: the tick, the grab (`OUT-t<T>.png`, drawn after t ticks), then
+the events at t (the exe's order: a grab at t shows the state before t's events); presses go to the screen's press
+handler, keys to its keyboard handler, commands through `World::send`/`pump` as the exe's `MULTIGET_*`. On the
+starmap and the colony screen it runs the window's own code headless and writes only the sounds
+(`<out>-sounds.jsonl`, audio.md §7). The sound tables come from the user's exe (`ig2-rules::sounds`). Known harness
+difference: the client applies orders at once, while the exe's script clock holds the 20 Hz sim (so the exe ignores
+D after an urgent press on research).

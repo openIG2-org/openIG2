@@ -1,4 +1,4 @@
-//! The battle screen on a live battle slot (re/screens/spacewar.md §9.4): what runs it each frame, shared by the
+//! The battle screen on a live battle slot (re/screens/spacewar.md §4.1, §9): what runs it each frame, shared by the
 //! window and the scripted snapshot (`--screen spacewar --battle FILE --script S`). The sim's battle advances with the
 //! world's ticks; the screen keeps its own state ([`SpaceWarUi`]) and sends its orders as lockstep commands.
 
@@ -36,7 +36,7 @@ pub struct Live {
     /// The zoom-out runs towards the options screen (`starmaphovaleptovabb = 0xd`, `SpaceWar_Kilep` phase 1).
     pub to_options: bool,
     /// The zoom-out runs towards another screen (an F-key or the top bar's spot 7, both only with `DEBUGX`): its
-    /// `AktKep`. At its end the battle is parked and the starmap asks for it again at once (re/screens/spacewar.md §9.15).
+    /// `AktKep`. At its end the battle is parked and the starmap asks for it again at once (re/screens/spacewar.md §4.1.2).
     pub to_screen: Option<i32>,
 }
 
@@ -201,7 +201,7 @@ impl Live {
         v.battle_fade = Some(shown.erosseg);
         let mut frame = v.build(assets, &world.prev, &world.curr, alpha, t);
         let surface = world.curr.planets.iter().find(|p| p.index as i32 == b.planet).map(|p| p.surface);
-        // `StarmapGfx2D_1`'s names while `starmaphideflottak` is clear (e > 0; spec §9.10), under the console.
+        // `StarmapGfx2D_1`'s names while `starmaphideflottak` is clear (e > 0; spec §5.2), under the console.
         if shown.erosseg > 0.0 {
             hud.draw_starmap_names(&mut frame, v, assets, &world.prev, &world.curr, alpha, t);
         }

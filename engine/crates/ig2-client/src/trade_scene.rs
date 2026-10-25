@@ -140,7 +140,7 @@ impl TradeScene {
                 let id = p.texture.clone().and_then(|t| self.texture(r, install, &t).map(|x| x.id)).unwrap_or(self.white);
                 // The panels' and the backdrop's material is 0.65 transparent (`Racsszin`, `tozs_hk`; ig2.exe draws them
                 // at opacity 89/255): blended over the overlay's picture, the depth write kept (`renderstateallitas`)
-                // [obs: racsszin × 0.35 over black, plus 0.65 of the dimmed starmap behind; deviations #260].
+                // [obs: racsszin × 0.35 over black, plus 0.65 of the dimmed starmap behind].
                 let o = 1.0 - p.transparency.clamp(0.0, 1.0);
                 bake(p, &t, &lights, id, o, 1.0, &mut dynamic, &mut draws);
                 if let Some(d) = draws.last_mut().filter(|d| d.glass) {
@@ -182,8 +182,8 @@ impl TradeScene {
                 let t = Placement::add_to_scene(m.origin, 1.15).world((0.0, 0.0, 0.0), at);
                 // `wirekirak`: each end lit by the scene's lights times the texture; every face's edges, the far side's in
                 // the ambient colour, as aliased lines one output pixel wide, blended at the opacity [obs: fx10-trade
-                // t60, deviations #241]. Open, the camera is inside it: its far faces' dark lines lie over the
-                // overlay's picture [obs: the dark curved grid, deviations #261].
+                // t60]. Open, the camera is inside it: its far faces' dark lines lie over the
+                // overlay's picture [obs: the dark curved grid].
                 for p in m.below(&[WIRE]) {
                     self.wire(p, &t, &lights, 1.0 - v, &mut grid);
                 }

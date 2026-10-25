@@ -1,6 +1,6 @@
-# IG2 reverse-engineering overview (Phase 0 recon)
+# IG2 reverse-engineering overview
 
-Date: 2026-10-15. Target: GOG "Imperium Galactica II: Alliances" (gameId 1254614904),
+Target: GOG "Imperium Galactica II: Alliances" (gameId 1254614904),
 installed at `Imperium_Galactica_II_ORIGINAL_GOG/` beside the repository (gitignored; 688 MB, 17,575 files).
 
 Each claim is marked **[obs]** (directly observed in a file or disassembly), **[inf]**
@@ -131,17 +131,17 @@ reference decoder `tools/ecgs_decode.py`, with **17,575/17,575 files decoding an
 | Ext | Count | Decoded MB | Content after the container | Status |
 |---|---|---|---|---|
 | `.ogg` | 7,420 | 243 | Ogg Vorbis (SFX, speech per language, music `mfx/`) | standard ✔ |
-| `.txt` | 6,320 | 4.9 | UI and story text, message scripts (`uzenetek/`), Hungarian dev text | text, grammar TBD |
+| `.txt` | 6,320 | 4.9 | UI and story text, message scripts (`uzenetek/`), Hungarian dev text | text: [formats/text.md](formats/text.md) |
 | `.pvr` | 2,081 | 145 | PVR v3: RGB565 (1,840), RGBA4444 (230), DXT1 (9), other (2) | standard ✔ |
-| `.xv` | 937 | 86 | Original IG2 3D models (`Material…`/`DEFAULT` sections) | **unknown format** |
+| `.xv` | 937 | 86 | Original IG2 3D models (`Material…`/`DEFAULT` sections) | [formats/xv.md](formats/xv.md) ✔ |
 | `.mp4` | 423 | 307 | H.264/AAC cutscenes and diplomacy and building animations (`anim/mpeg4`) | standard ✔ |
 | `.mou` | 87 | 2.2 | Tutorial mouse/input recordings (binary, `0xCD` padding = MSVC debug fill) | unknown |
-| `.map` | 76 | 0.7 | Colony terrain and placement grids | unknown |
+| `.map` | 76 | 0.7 | Colony terrain and placement grids | [formats/colony-map.md](formats/colony-map.md) ✔ |
 | `.dsc` | 64 | <0.1 | Scenario descriptions (`title`, `pic`, `difficulty`, `race`, `desc`) | text ✔ |
-| `.scn` | 29 | 8.3 | Scenario and campaign state (key/value text) | text, keys TBD |
+| `.scn` | 29 | 8.3 | Scenario and campaign state (key/value text) | text: [formats/scn.md](formats/scn.md) ✔ |
 | `.eng` | 18 | 0.5 | Diplomacy dialogue tables | text |
-| `.ani` | 14 | 5.4 | `SpidyAni` v2: 8-bit paletted animation (`Pal ` chunk), talking heads | **unknown format** |
-| `.bin` | 10 | <0.1 | Space-war start formations (`felallas` = formation), int records | unknown |
+| `.ani` | 14 | 5.4 | `SpidyAni` v2: 8-bit paletted animation (`Pal ` chunk), talking heads | [formats/ani.md](formats/ani.md) ✔ |
+| `.bin` | 10 | <0.1 | Space-war start formations (`felallas` = formation), int records | [formats/formation.md](formats/formation.md) ✔ |
 | `.tut` | 7 | 0.4 | Tutorial scripts | text |
 | `.res`, `.m`, `.b` | 8 | <0.1 | Colony resource and lookup tables (float and int arrays) | unknown |
 | `.raw` | 3 | 0.9 | HSI "mhwanh" 8-bit paletted images (640×480) | known legacy ✔ |
@@ -159,50 +159,3 @@ overrides of the same basenames, English being the base), `anim/` (video and hea
 [obs] The binary references `.xvb` (`a3v0.xvb`, …) and 1999-style `*.ani` building names
 (`HADIGYAR.ani`, `KISLAKOHAZ.ani`). In the remaster those animations live in
 `anim/mpeg4/*.mp4`. [inf] There's a name-remapping table, probably in `GetAnimFile`.
-
-## 5. Formats still unknown (Phase 1 queue, in priority order)
-
-1. `.xv`: 3D models for ships, buildings and planets. Loader candidates: `AddToXVB`,
-   `CreateXVB`, `FreeXVB*`, `GetXVBRoot`.
-2. `.map`, `.res`, `.m`, `.b`: colony maps and tables (`Decode2LargeMap`, `GenerateByteHeightMap`, `FixLandscape`).
-3. `.scn` key grammar and save blobs (`Betolt_Scenario`, `LoadSaveVariables`).
-4. `.txt` dialects: message scripts (`ReadUzenetAnimLista`, `InfoString_Read`), help, autobuild rules (`INIT_AutoBuild`).
-5. `.ani` SpidyAni v2 (`InitAnim`, `GetAnimFrame`, `AnimMakePaletteTable`).
-6. `.bin` formations, `.mou` tutorial recordings, `.eng` diplomacy (`Dip_LoadFile`).
-7. PVR → atlas metadata: how UI sprites are cut (`GetKepAddr`, `LoadKepToMemory`, brush tables).
-
-## 6. Effort estimate per subsystem
-
-Rough figures in focused agent-plus-review work-weeks. The unstripped -O0 ELF cuts static
-work by roughly 3–5× compared with an anonymous binary.
-
-| Subsystem | Size signal | RE | Rust impl | Risk |
-|---|---|---|---|---|
-| Container + standard formats (PVR, OGG, MP4, fonts) | solved | 0 | 0.5 | low |
-| Original formats (`.xv`, `.map`, `.ani`, `.bin`, `.mou`, text dialects) | ~8 loaders | 2 | 2 | medium |
-| Asset viewer (egui) | — | — | 1 | low |
-| Galaxy/strategic sim (time, fleets, planets, economy) | `FRISSIT_Planet/Starmap/Colony/Datum`, 45+36 fns | 3 | 3 | medium |
-| Research, design, production | ~60 fns | 1.5 | 1.5 | low |
-| Diplomacy, trade, espionage | ~85 fns | 2 | 2 | medium |
-| AI (`FRISSIT_MI_*`) | 14 large fns | 2.5 | 2 | high (big functions) |
-| Space combat (`SpwC`, 226 methods) | C++ | 3 | 3 | high |
-| Ground combat (`WF`, `WF_Tank`, `Grwar`) | C++/C | 3 | 3 | high |
-| Campaign/story/tutorial scripting | 54 fns + text scripts | 2 | 2 | medium |
-| Original MP protocol (study only) | ~54 fns | 1 | — | low |
-| New engine: wgpu renderer, UI, DPI, audio, video | — | — | 6 | medium |
-| Deterministic lockstep MP + QUIC + lobby | — | — | 5 | high |
-| Saves (new format + original importer) | `LoadSaveVariables` | 1 | 1.5 | medium |
-| **Total** | | **~21** | **~32** | |
-
-## 7. Tooling notes and blockers
-
-- REA's Windows Ghidra provider only accepts PE. The ELF is analysed with binutils
-  (`nm`/`objdump`) and a headless Ghidra project at `_local\ghidra` (gitignored, since it
-  contains binary bytes).
-- REA `binary_overview` on `ig2.exe` timed out twice: auto-analysis of the 5.8 MB PE runs past
-  the MCP request timeout and the session closes. Workaround: the pre-built headless project,
-  and/or a smaller analysis profile. **Next step:** port ELF symbol names onto `ig2.exe` (string,
-  xref and call-graph matching) so the REA database for the shipped exe carries the recovered
-  names for Frida tracing.
-- Decoded assets for local study go to `_local\extracted\` (gitignored). **Never commit them.**
-- The game install (`Imperium_Galactica_II_ORIGINAL_GOG/`) may sit in the project root; it is gitignored.

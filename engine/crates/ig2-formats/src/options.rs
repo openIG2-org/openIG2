@@ -80,6 +80,19 @@ impl Options {
     pub fn int(&self, key: &str) -> Option<i32> {
         self.get(key)?.trim().parse().ok()
     }
+
+    /// Set `pairs` in the remake's own file ([`Options::own_path`]), its folder made when the original never ran.
+    pub fn store_own(pairs: &[(&str, &str)]) -> std::io::Result<()> {
+        let Some(p) = Self::own_path() else { return Ok(()) };
+        let mut own = std::fs::read(&p).map(|b| Self::parse(&b)).unwrap_or_default();
+        for (k, v) in pairs {
+            own.set(k, v);
+        }
+        if let Some(d) = p.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(&p, own.to_bytes())
+    }
 }
 
 #[cfg(test)]

@@ -76,7 +76,7 @@ impl Font {
                 let g = self.glyph[b as usize] as f32;
                 let (u, vv) = ((g % per_row).floor() * sx, (g / per_row).floor() * sy + y0);
                 // The exe's GL fills a pixel whose centre lies exactly on the glyph's bottom edge, not on its top
-                // edge (wgpu does the opposite): the quad moves `TIE` pixels down, its uv with it (row 27).
+                // edge (wgpu does the opposite): the quad moves `TIE` pixels down, its uv with it.
                 let p = v.px(x + w / 2.0, y + h / 2.0);
                 let mut i = Instance::new(kind::GLYPH, [p[0], p[1] + TIE], [w * v.k / 2.0, h * v.k / 2.0], [rgb[0], rgb[1], rgb[2], 1.0]);
                 i.uv = [u / 256.0, (vv + TIE / v.k) / 256.0, w / 256.0, h / 256.0];

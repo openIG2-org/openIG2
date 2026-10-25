@@ -1,6 +1,6 @@
 # The tutorial interpreter
 
-Status: **verified at runtime** (2026-10-22, §11, `traces/2026-10-22-tutorial.md`): all five chapters of the shipped
+Port status: **ported and verified at runtime** (§11, `traces/2026-10-22-tutorial.md`): all five chapters of the shipped
 script, 219,000 UI ticks and 970 commands, exact against `ig2_sim::tutorial` (`tests/tutorial_trace.rs`).
 
 Sources: ELF `ig2` `tutorial.cpp` (`TutorialGetNextCommand` 0x7b4bc0, `TutorialFrissit` 0x7bd460, …) and the exe (0x60c570, 0x60c020, …).
@@ -165,7 +165,7 @@ wait = sets a wait flag. Every command first shifts `TutorialLastCommands` (debu
 | 0 | AT | 2 ints x,y | `TKTargetX=x; TKTargetY=y; TKXAdder = abs((float)x - TKActX)/40.0; TKYAdder = abs((float)y - TKActY)/40.0` (f32 diff, abs, **divide in f64**, narrow to f32; exe 0x60c7d2..0x60c856) | UI |
 | 1 | END | - | `TutorialStop(true); AddSzoveg("Tutorial END.", 7)` (message line); return | CTL |
 | 2 | RETURNTOMAINMENU | - | `TutorialStop(true); AktKepKell = 0xf` (main screen; exe 0xbae250); return | CTL |
-| 3 | SEEKCHAPTER | - | `sprintf("Chapter %d", TutorialDefaultChapter)`; from just after the `<` scan forward for the first `strncmp` (case-sensitive, any position, no tag boundary) hit, then skip to `>` (the pointer sits on the `>` of the CHAPTER N tag). Not found: pointer = end of buffer, interpreter stays Active but idle (UNCERTAIN) | CTL |
+| 3 | SEEKCHAPTER | - | `sprintf("Chapter %d", TutorialDefaultChapter)`; from just after the `<` scan forward for the first `strncmp` (case-sensitive, any position, no tag boundary) hit, then skip to `>` (the pointer sits on the `>` of the CHAPTER N tag). Not found: pointer = end of buffer, interpreter stays Active but idle (runtime, §10) | CTL |
 | 4 | QUIT | - | `TutorialStop(true); MouseIkonKep = 0 (exe 0xbae29c); exit(0)` | CTL |
 | 5 | KURVAANYAD | - | `Colony_BELEP_ABBA_A_KIBASZOTT_PLANETINFOBA()`: `ColonyPlanetInfoMod=1; AktEpulet=0; if (ColonyBuildMode) ColonyRemoveBuilding=1; ColonyBuildMode=0` (history string "BAZMEG"; used once in chapter 2) | UI |
 | 6 | TYPE | 1 quoted string | skip to the quote; push CR CR onto TKQueue; copy chars to the closing quote: CR -> SP and `i+=2` (eats the LF), LF -> SP in the queue; every char also appended to TutorialLastSzovegPuffer (raw LF kept); `TutorialLastSzovegHossz=len`; `Novelo = (Mp2Len==0) ? 15.0 : ((float)len/(float)Mp2Len)*50.0*160.0` (all f32; exe 0x60cdb2..0x60cdd4); `TKTCol=1; TKTVil=0; Szoveg_Counter=0`. Does not wait: script uses WAITFORTEXT | UI |
@@ -249,7 +249,7 @@ Not used by shipped `main.tut`: TIME, COUNT, LOADSAVEGAME, IRRITATEME, GOTO SCRE
 
 Event ids are hexadecimal below (as in the code).
 
-Port status (2026-10-24, FX6 parts 1-2): every firing site below is raised except the two with no caller (0x0e, 0x12); the sites and approximations are in `re/screens/tutorial.md` §4.
+Port status: every firing site below is raised except the two with no caller (0x0e, 0x12); the sites and approximations are in `re/screens/tutorial.md` §4.
 
 | id | name | fired by (ELF function: condition) |
 |---|---|---|
@@ -352,7 +352,7 @@ SDL layer (`MainCallBackEventHandler`): while Active and AktKep != 0xd the mouse
 
 * Launch: main-menu tutorial choice -> `MainScr_Kilep` (ELF 0x59bec0 / exe 0x4fecc0): `Mode_Tutorial_Start=0; ElinditTutorial(TutorialStartMelyik)`. ELF `ElinditTutorial` (0x59c3b0): `MainKorokTavolsagCel = 6.0 (0x40c00000); TutorialSetCampaignGameOptions(n); TutorialStart("main", n)`.
   **Exe: inlined** in `MainScr_Kilep` (`DAT_00bbb0bc = 0x40c00000; TutorialSetCampaignGameOptions(DAT_00bbb230)` call at exe 0x4feec2; `TutorialStart("main", n)` at 0x4feecd; flag `DAT_00bbb22c`). The symbol-table row "0x553c20 <-> ELF 0x59c3b0 ElinditTutorial" is **wrong** (exe 0x553c20 is an unrelated vector clean-up).
-  Ported as `Game::start_tutorial` (ig2-sim; MainScr part 2, `mainscr.md` §9.4: verified byte-exact at tick 0 for all five chapters, `new-game.md` §16; the script is not run on start).
+  Ported as `Game::start_tutorial` (ig2-sim; `mainscr.md` §9.4: verified byte-exact at tick 0 for all five chapters, `new-game.md` §16; the script is not run on start).
 * `TutorialSetCampaignGameOptions(n)` (ELF 0x59c5f0 / exe 0x504250): `ProgramMode=0; SingleStartGame(); SetIdoSpeed(1,false); ProgramMachines=1; ProgramPlayers=8; ProgramPlayers2=0x12 (18)`; for i=1..18: `PlayerKi[i]=2; PlayerFaj[i]=i; PlayerNev[i*11] = Faj_Nev[PlayerFaj[i]]`
   with overrides after the assignment for i==15,16,17,18 -> `PlayerFaj[15..18] = 1,3,1,1` (exe 0xbae583..0xbae586; the name copy uses the overridden race); `EN=1; PlayerKi[1]=1` (exe 0x912a3c, 0xbae561); `ReadDebugData(); InitNewGame(SDL_GetTicks(), 1, 0, 0)`
   (**RNG seed = tick count: not deterministic**; mode argument 1); `TutorialLoadScenario(n)`; `if (debug story id 0x144c4b0 (exe 0xb77260) != 0) StartStory(id, false)`; `OldIdo = OldIdo2 = (SDL_GetTicks()/50)*50; ProgramNowStarting = 1`.
@@ -402,7 +402,7 @@ SDL layer (`MainCallBackEventHandler`): while Active and AktKep != 0xd the mouse
 * `DemoMode_*` and the `TEXTURE` consumer (`DemoMode_Poll`) not read.
 * `ctut` / `demo.tut`: `demo.tut` is not shipped, so `StartDemoMode` would fail to open it (not checked what `DatFile::dopen` does then).
 
-Resolved at runtime (§11): `SEEKCHAPTER` for a chapter the script lacks leaves the pointer at the end and the
+At runtime (§11): `SEEKCHAPTER` for a chapter the script lacks leaves the pointer at the end and the
 interpreter Active and idle (traced with chapter 6: the script's sixth part is labelled "Spying screen", so no
 chapter number reaches it).
 
@@ -416,7 +416,7 @@ reached through `TutorialHost` (the screen, the 20 Hz `Counter`, transitions, th
 `.mou` sample count, the planet/vehicle counts) and everything a command does outside the interpreter goes out as an
 `Effect` (§3; *sim* ones are tagged). `Game::tutorial_effect` (`game/tutorial.rs`) carries out the in-place writes:
 money, tech state, `SHOW PLANET`, `EXPLORE EMPIRE` (and `FelfedezBirodalom` for the diplomacy form), autobuild,
-traders, the planets' +0x186 mark. Also (FX6 part 4): GIVE KILLER/KOLONIZALO FLEET, ADD DESTROYERS TO TRADE and DISABLE OVERRUN (`story_effects.rs` `new_vehicles`; the client restores the saved debug flags in `TutorialStop`). FX6 part 5: music ducking (`TutorialStart` sets `GlobalMusicVolumeCsokkento` = (int)(volume x 0.4), exe 0x612278; `TutorialStop(true)` 0; `ExitToMainScreen` leaves it; trace `tutorial-ch2-music`), DOUBLEGOMB (`ResearchDoubleGomb`), KURVAANYAD (`ColonyUi::planet_info`), the gate readers of §5, WAITFORATLEPES held through the old screen's closing loop (`screen_changing()`; entering research still lacks 10 ticks). FX6 rest (2026-10-25): `IRRITATEME` = `Diplomacy::talk_about(6, EN, INSULT, −1)` (`ElkuldUzenetMI` as a declaration: the two meet, `Viszony[EN][6].MESSAGES` += 1000, the insult waits in EN's contact list; no screen opens; test `tutorial_irritate`); `LOADSAVEGAME` kept unported (unused by main.tut; it reads `GetSavePath()save<n>.sav` after `InitNewGame(0, 5, 0, 0)`, a missing file silently leaves the new game; the client has no `.sav` slot load). The research entry's extra WAITFORATLEPES ticks are wall-clock catch-up, not rules: `Research_MouseInit` 0x524080 calls `LoadKepToMemory(0x58)`, whose `FRISSITES` replays the load time while `Belep` is set (`Fake_FRISSITES` 0x4de720: `while now − bae278 > 10`, capped at 500 ms; ≈ ceil(ms/10) − 1 ticks, 10 in ch3 for ~105 ms; the game `Counter` stands, `bae265`); kept (re/deviations.md 202). The overlay reads `Tutorial::window` (grid,
+traders, the planets' +0x186 mark. Also GIVE KILLER/KOLONIZALO FLEET, ADD DESTROYERS TO TRADE and DISABLE OVERRUN (`story_effects.rs` `new_vehicles`; the client restores the saved debug flags in `TutorialStop`); music ducking (`TutorialStart` sets `GlobalMusicVolumeCsokkento` = (int)(volume x 0.4), exe 0x612278; `TutorialStop(true)` 0; `ExitToMainScreen` leaves it; trace `tutorial-ch2-music`), DOUBLEGOMB (`ResearchDoubleGomb`), KURVAANYAD (`ColonyUi::planet_info`), the gate readers of §5, WAITFORATLEPES held through the old screen's closing loop (`screen_changing()`; the research entry's extra ticks are not reproduced, below); `IRRITATEME` = `Diplomacy::talk_about(6, EN, INSULT, −1)` (`ElkuldUzenetMI` as a declaration: the two meet, `Viszony[EN][6].MESSAGES` += 1000, the insult waits in EN's contact list; no screen opens; test `tutorial_irritate`); `LOADSAVEGAME` is not ported (unused by main.tut; it reads `GetSavePath()save<n>.sav` after `InitNewGame(0, 5, 0, 0)`, a missing file silently leaves the new game; the client has no `.sav` slot load). The research entry's extra WAITFORATLEPES ticks are wall-clock catch-up, not rules: `Research_MouseInit` 0x524080 calls `LoadKepToMemory(0x58)`, whose `FRISSITES` replays the load time while `Belep` is set (`Fake_FRISSITES` 0x4de720: `while now − bae278 > 10`, capped at 500 ms; ≈ ceil(ms/10) − 1 ticks, 10 in ch3 for ~105 ms; the game `Counter` stands, `bae265`); a deviation (re/deviations.md 202). The overlay reads `Tutorial::window` (grid,
 position, cursor column, `blink` brightness), `Tutorial::gates` and `Tutorial::mouse_sample`. The tutorial is single
 player; its *sim* effects belong in the lockstep queue at the tick they happen. Deviation: a quoted name across a line
 break where the exe hangs stops the tutorial (`Effect::Hang`, `re/deviations.md`).

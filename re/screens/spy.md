@@ -7,12 +7,6 @@ runtime captures of ig2.exe (`tools/trace/run_screen.py --kep 7 --spies MODE`) a
 under Frida (`run_spy.py --estimate N`). `[inf]` marks inference, `[obs]` what only the captures show. The sim side
 (the spies, missions, reports and the orders `MULTIGET_Spy` applies) is `re/rules/espionage.md`.
 
-Port: `engine/crates/ig2-client/src/spy_screen.rs` (state, input, `spy_screen/draw.rs` the 2D pass) and
-`spy_scene.rs` (the 3D pass); the orders are `ig2_net::Command::Spy`. **Status**: drawn, driven and compared (§9):
-the carousel and both panels match the captures, and so do the opening's frames 12, 30, 45 and the tooltip; the
-ring with the head video differs by the video's frame and the ring's spin (clock-dependent). Verified: the chance
-estimate bit for bit against 600 exe calls, the verdict roll against 600 exe presses.
-
 | Function | ELF | exe | Role |
 |---|---|---|---|
 | `Spy_Belep` | 0x6c5a70 | 0x58cd50 | enter: texts, state, `Spying3DInit`, the first report (§1) |
@@ -26,7 +20,7 @@ estimate bit for bit against 600 exe calls, the verdict roll against 600 exe pre
 | `FRISSIT_Spy2` | 0x6d1e20 | | the 100 Hz UI frame (§1.2) |
 | `Spy_Main` | 0x6c7360 | 0x58d410 | input (§6) |
 | `Spy_MouseInit` / `Spy_MouseInit2` | 0x6ca930 / 0x6c99c0 | 0x58f0f0 / 0x58ec70 | the hot-spots and their switches (§6.1) |
-| `SpyKeyboardHandler` | 0x6c5770 | | ←/→ (§6.5) |
+| `SpyKeyboardHandler` | 0x6c5770 | 0x58cb20 | ←/→ (§6.5) |
 | `KemEselySzamolas1` | 0x6ca200 | 0x587b80 | the planner's escape estimate, stream 0 (§6.3) |
 | `KemEselySzamolas2` | 0x6ca620 | 0x587de0 | the success chance (`espionage.md` §5.1, `ai-empire.md` §6.5) |
 | `Spy_MennyiPenzbeKerul` | 0x6cb9c0 | inlined | an applicant's wage (`espionage.md` §8, 0x4b) |
@@ -40,11 +34,11 @@ estimate bit for bit against 600 exe calls, the verdict roll against 600 exe pre
 = `GetString(7, 6, k + 5)` (planet, building, ship, tech, level); sounds `Spy_Hangok`; `AktBrushok = SpyBrushok`;
 `KemNevVillogtato` 0 rising; `SpyOldKem` −1; **`AktKem` = 1**; `spyAtfordulas` = 30 (no flip running);
 `SpyInitNewMission`; no list, dialog or kill question; `SpyEsemenyEllenoriz` (§4); `spyKELLKINYITAS =
-KELLKINYITASDEFAULT & 1` (the opening animation: `spyframe` 0 → 50; off → 50 at once; `KELLKINYITASDEFAULT` exe 0x912A39 is a registry setting, 1 on this host
-[obs: the tracer reads `spyKELLKINYITAS` exe 0xE75430 = 1]); `Spying3DInit`. The screen
-loads no picture (`Screens[7]` is empty, `ScreenBetolt` ELF 0x669670): the screen's own background is black, but
-`Copy3hatterkep(0x34, …)` in `Spying3DUpdate` draws `SaveScreen`'s picture (the starmap without HUD) dimmed over it (the earlier
-note that kep 0x34 is not loaded held only for bare `--kep` jumps, which have no picture): see [`overlay-background.md`](overlay-background.md).
+KELLKINYITASDEFAULT & 1` (the opening animation: `spyframe` 0 → 50; off → 50 at once; `KELLKINYITASDEFAULT` exe
+0x912A39 is a registry setting, 1 on the GOG install [obs: `spyKELLKINYITAS` exe 0xE75430 = 1]); `Spying3DInit`. The
+screen loads no picture (`Screens[7]` is empty, `ScreenBetolt` ELF 0x669670): its own background is black, but
+`Copy3hatterkep(0x34, …)` in `Spying3DUpdate` draws `SaveScreen`'s picture (the starmap without HUD) dimmed over it
+(nothing only after a bare `--kep` jump): see [`overlay-background.md`](overlay-background.md).
 
 `Spy_Kilep`: unless leaving for messages (10), help (1) or options (13), it plays the closing (`spyBECSUKAS` exe
 0xE75383, `spyframe` 50 → 0 by 0.6 a UI frame, sound `screens/spy/scrn08ki.wav`) in a loop of `UpdateFrame` +
@@ -65,18 +59,18 @@ With `f = spyframe/50` (exe f32 0xE75504):
   (`spyInitPos1` ELF 0x171aae0 / exe 0xE75594 is never written: 0) and `RotateObj(Gomb, sin((1 − f)·2)·3, sin((1 −
   f)·2.1)·2, 0)` (the first product in f32, the second in f64). `MoveObj` replaces the child's own translation
   (ELF 0x455f80: record `+0 = v/1024`), so at rest too the sphere sits at `Gomb`'s origin, not at the file's
-  (−0.12, 0.09, 0.16) model units [obs: the at-rest capture's carousel 3.30 → 3.22]. `SetFrame(Gomb, spyframe +
-  spywireframe)`; transparency `1.35 − 2·spyframe/50` up to frame 25, else 1e−6 (`spySetObjTransparencyH`
-  ELF 0x6b9c00: clamped to 1e−6..0.9999999). Transparent, its lines are `Racsszin × opacity` in the frame's gamma
-  space; opaque, ambient-lit (§2.2) [obs: closing frame 20 (opacity 0.45): (4, 45, 59) on a line, (6, 71, 92)
-  where two cross]. Only the triangles facing the camera draw their edges [obs: the sphere seen from outside while
-  it flies in shows one side's grid; at rest the camera is inside].
+  (−0.12, 0.09, 0.16) model units. `SetFrame(Gomb, spyframe + spywireframe)`; transparency `1.35 − 2·spyframe/50` up
+  to frame 25, else 1e−6 (`spySetObjTransparencyH` ELF 0x6b9c00: clamped to 1e−6..0.9999999). Transparent, its lines
+  are `Racsszin × opacity` in the frame's gamma space; opaque, ambient-lit (§2.2) [obs: closing frame 20 (opacity
+  0.45): (4, 45, 59) on a line, (6, 71, 92) where two cross]. Only the triangles facing the camera draw their edges
+  [obs: the sphere seen from outside while it flies in shows one side's grid; at rest the camera is inside].
 - From frame 25 and not closing: the ring's spin and flip (§2.2); the head video's disc shows once a flip passes
   its frame 15 (`UnhideObj(spyKorId)`; `Spying3DInit` shows it at once when not animated).
 - Closing: the disc fades (`spySetObjTransparencyH(spyKorId, 1 − f)`) and drops to `(0, (1 − f)·70 + 182, −1000 −
   (1 − f)·700)`.
 - `SpyPalast` (the carousel) drops in from `(0, −125 − (1 − f)·150, −1000·f)` turning `−sin((1 − f)·π)` (§2.2).
-- `Copy3hatterkep(0x34, …)` draws the saved starmap picture (§1.1 and [`overlay-background.md`](overlay-background.md); nothing only after a bare jump); `spyANIMBARKACS` (the 2D video path) is off.
+- `Copy3hatterkep(0x34, …)` draws the saved starmap picture (§1.1); `spyANIMBARKACS` (the 2D video path,
+  `PlayAnimFrame(0x100, 0x11c)`) is off.
 
 ### 1.2 `FRISSIT_Spy2` (100 Hz UI frame)
 - `KemNevVillogtato` runs 0 → 100 → 0 by 1 (the selected name's blink); `spyKiirSzinSzorzo` += 1 up to 100 once
@@ -105,11 +99,8 @@ as the scene's callbacks in this order: `SpyGfx2D_1` (after the carousel), fader
 Lights: ambient 0x141414; `CreateLightParalell(0x808080)` at (0, 0, −10); `spyOldalsoFenyekBe` 0x7f5d00 and 0x004e7f
 at (200, 0, −1000), moved every frame by `spyMozgatMainFenyek` to `(sin(20k)·300, cos(20k)·200, −1000)` and the
 same at +1.57075 (`k = spykeringeto`); the selected pedestal gets an ambient light `(sin(90k) + 1)·127` grey
-(`SpyRarakFeny`, the pedestal's own light after the inherited ones). Lit by the engine's model (research.md §2.1,
-verified on the research screen; `ig2-client::lighting`): the colour words as bytes `[r, g, b]` (0x7f5d00 teal,
-0x004e7f orange), transparent parts lit too; the engine's gamma-space products are mapped into the sRGB frame
-(`spy_scene::gamma`). It replaced an inferred model (0x80 = full light, the white light two-sided) and took the
-opening/closing captures' panels from ~7 to ~1.5 (diff-results.md `engine-lights`).
+(`SpyRarakFeny`, the pedestal's own light after the inherited ones). Lit by the engine's model (research.md §2.1):
+the colour words as bytes `[r, g, b]` (0x7f5d00 teal, 0x004e7f orange), transparent parts lit too.
 
 ### 2.2 The models (`VectorDir = vector/spy/`, `TextureDir = textures/spy/`)
 | Object | Model, `AddToScene` scale, `MoveObj` | Shown |
@@ -158,7 +149,7 @@ Open and not closing: for each pedestal, `p` = the centre of its base on screen;
 "---") at `(p.x − 40, p.y − 2)`, 14 cells, size 1, flags 0x4d / 0xd (centred in the 14 cells, clipped: centred on
 the pedestal), colour 2, `KiirStrSzinSzorzo = (1 − t)·100·spyKiirSzinSzorzo/100` (the selected one also
 `× KemNevVillogtato/100`); pedestals with `t ≥ 0.8` get none. `SpyGfx2D_1` also queues `FadeKeret(6, 248, 172,
-217)` and `(464, 248, …)` in (0, 45, 90) at 128 past frame 35, which no capture shows [obs]: the port leaves them out.
+217)` and `(464, 248, …)` in (0, 45, 90) at 128 past frame 35, which no capture shows [obs].
 
 ## 4. Texts and the reports
 `StringReadAll` (ELF 0x531e40) fills from the Hungarian `txt17` (every language, `hud.md`): `Faj_Nev[k]` (17, 1,
@@ -238,9 +229,10 @@ human sees (`+0xd8 + 2·EN > 0`), 2 techs 0x51..0x90 the human knows the empire 
 | 0x1e..0x20 | 475, 298 / 332 / 366, 150, 25 | dialog 2 (0x1e: money and a free slot, or SP forced 3) | `0x4b` hire / reject / later, close |
 | 0x21 | 475, 424, 60, 25 | a repeatable report (§6.2) | repeat the mission `0x49`, close |
 | 0x22..0x25 | 12, 320 + 16i, 86, 15 | a spy on show | tooltips only (the skills' descriptions) |
-Ids 1, 2 and 5..0xd are set up but always off. The common ids (2..5: pause, speeds) are the top bar's (`hud.md`).
-0x22..0x25 are on while the screen is open (`spyKINYITVA`) with a spy on show. Of several hot-spots under the
-pointer the lowest id wins (`Mouse_Darabol` ELF 0x5b7a40 walks the table down; the pointer clamped to 639 × 479).
+Ids 1, 2 and 5..0xd are set up but always off. `Spy_MouseInit`'s ids 3/4 are table indices 0x21/0x22; the common ids
+(2..8: pause, speeds, menus) are the top bar's (input.md §6). 0x22..0x25 are on while the screen is open
+(`spyKINYITVA`) with a spy on show. Of several hot-spots under the pointer the lowest id wins (`Mouse_Darabol` ELF
+0x5b7a40 walks the table down; the pointer clamped to 639 × 479). Sounds: audio.md §6.4.
 
 **Tooltips** (`Mouse_Szoveg_Set(id, 0, x, y, w, h, GetString(7, 1, k), …)`, `k` from the asm's immediates): 1..4 →
 1..4, 0xe..0x18 → 5..15, the four skill buttons 0x19..0x1c all 16, 0x1e..0x25 → 17..24 (`MouseSzoveg` ELF
@@ -251,7 +243,7 @@ pixel; `AktIdo` = SDL ticks, ms) onto another hot-spot than the one shown, or a 
 wait); once shown it follows the pointer (`Mouse_Kiiras_x/y` = the pointer, x pulled back so `x + len·6 + 0x18 ≤
 640`). The box is `GFX_DateMoneyScrollFade`'s (ELF 0x66d160, fader pass 3): `FadeKerettelKerekit(x + 15, y − 1,
 len·6 + 10, 13)` in (0, 10, 30) at 30 with a (0, 13, 31) edge at 15; the text `KiirStr(text, x + 21, y + 2, 99,
-0x1a, 0xc, 2)` (size `0x1a % 8` = 2, flags 0xc: left, clipped) over everything. Port: `SpyScreen::tooltip`.
+0x1a, 0xc, 2)` (size `0x1a % 8` = 2, flags 0xc: left, clipped) over everything.
 
 ### 6.2 Branches
 - **Lists** open on the press at the pointer (mission: `x = mx − 0x8c`, `y = my − 13n/2`; race `mx − 0x98`; targets
@@ -266,9 +258,9 @@ len·6 + 10, 13)` in (0, 10, 30) at 30 with a (0, 13, 31) edge at 15; the text `
   else fate 6 (killed escaping), kind 0xb; 1 → kind 0xd, 4 → kind 0xe. The report's kind becomes the follow-up
   (`KemBeszolasok[1].+0`, exe 0xBAF368; the dialog `SpyBeszolasMi` exe 0xE75384) and `0x4a` sends the fate (exe
   0x58d410 at 0x58e40b: spy.cpp lines 0x313/0x318; the block is entered for 0x14..0x18, the roll only below 0x18).
-  The follow-up stays until its OK. **Verified**: 600 presses of 0x14..0x17 through the exe's own input on fuzzed
+  The follow-up stays until its OK. Runtime check: 600 presses of 0x14..0x17 through the exe's own input on fuzzed
   prisoners (loyalty, double-agent field, stream 0's state) reproduced the fate, the follow-up kind and stream 0's
-  state (`tests/spy_verdict_trace.rs`, `run_screen.py --spies verdict --verdict N`; §9).
+  state (`tests/spy_verdict_trace.rs`).
 - **Repeat** (0x21): dialog 1, outcome > 3, the report's spy on show and at home, the target alive, a planet target
   still the target's, not a tech already stolen, the mission enabled, not 999 or 0x3e5. Cost check (else
   `GetString(7, 2, 2)` "Nincs elég pénzed, hogy elküldd a kémed" on the message line; the report closes either
@@ -287,7 +279,7 @@ over the remaining ones; the last offered winner is taken), each adding `counter
 defence; then `a = rndlog(stream, 0, infiltration·140)`, `d = rndlog(stream, 0, defence·10)`; `a /= 3` if the spy is
 known to `t`; race 3 and SP difficulty 1 for a human each `a = (int)((f64)a·1.5)`; the round is won when `d ≤ a` or
 no counter-spy was drawn. Result `won·100/rounds` (0 rounds divides by zero in the exe), 0 for missions without a
-countdown. **Verified**: 600 direct exe calls (fuzzed rosters, races, difficulty, known flags, streams 0..20)
+countdown. Runtime check: 600 direct exe calls (fuzzed rosters, races, difficulty, known flags, streams 0..20)
 reproduced bit for bit, result and stream state (`tests/spy_estimate_trace.rs`).
 
 ### 6.4 The carousel
@@ -295,7 +287,8 @@ reproduced bit for bit, result and stream state (`tests/spy_estimate_trace.rs`).
 `∓|x − 320|/320·0.1` toward the middle; within 316..324 it is settled. The edge scrolling and the decay are §1.2.
 
 ### 6.5 Keys (`SpyKeyboardHandler`)
-VK 0x27 (→): the previous working slot; VK 0x25 (←): the next one; only without a dialog.
+VK 0x27 (→): the previous working slot; VK 0x25 (←): the next one; only without a dialog. Nothing else: Esc is
+`ESC_Pressed` (the options screen).
 
 ## 7. Orders and multiplayer
 Every change to the spies goes through `Multi_Send(type, EN, …)` (also in SP) to `MULTIGET_Spy` (`espionage.md` §8):
@@ -307,31 +300,26 @@ synced stream, so the port sends them as orders too (ADR 0007 §5; `re/rules/mul
   client computes the shown figure on a copy of the state's streams; the sim makes the same draws when the order
   arrives, before the next tick, as the exe's UI does between two ticks.
 In the original's MP these UI draws moved each machine's own stream 0 (a desync source); in SP the port's order of
-draws is the original's. The verdict roll is verified against the exe (§6.2).
+draws is the original's.
 
-## 8. Port notes and what is missing
-The client opens the screen with S (`window.rs`) animated, and S closes it after the closing animation
-(`SpyScreen::leave`/`closed`); Esc opens the options as in the exe (`ESC_Pressed`: `SpyKeyboardHandler` exe 0x58cb20
-has only ←/→; back to the spy screen after); the top bar's spots stay live (`Spy_MouseInit`'s ids 3/4 are table
-indices 0x21/0x22, the bar's 2..8, input.md §6); `--snapshot --screen spy --ui-frames N` renders it after N UI frames (the carousel
-settles, the names fade in), animated as the exe (the sphere's `MoveObj` applies at rest too); `--spy-frame F
-[--spy-closing]` holds `spyframe` at F like the tracer holds the exe's; `--mouse X,Y` rests the pointer (a tooltip);
-`IG2_LANG` picks the game's language (the captures here are Hungarian). The frame's poses are cached at the integer
-frames 0..=50 and blended linearly in between (`Kocka` blends the keys, not the vertices: the same at the key
-frames, off by the curvature of the nested turns between them). The refusals' lines go to `World::local_lines`.
-Missing: the sounds, the 2D video path (`spyANIMBARKACS`: `PlayAnimFrame(0x100, 0x11c)`), the tutorial's limits
-(`TutorialSpyMelyikLehet`), `DEBUGX`, the demo mode, the top bar's own tooltips (ids 1..0x1e). `spyFrameValtozo`
-counts UI frames (the exe's drawn frames). The skill buttons 0x19..0x1c are off with a dialog up in the port;
-`Spy_MouseInit2` leaves them on [not checked against the exe].
-
-## 9. Captures and comparison
-`tools/trace/run_screen.py --kep 7 --spies roster|report|verdict|applicant` stages five spies of different races and
-states (at home with skill points, on a mission, travelling, captured, at home) and one report, waits 1200 frames
-and writes the exe's save of the moment; `run_screendiff.py … spy:<mode>` compares (regions: the top bar,
-the carousel, the two panels, the ring). `--spy-frame F [--spy-closing]` holds both at a frame of the opening or
-closing (the tracer writes `spyframe` before every `Spying3DUpdate`; a held closing never ran a flip, so the exe
-shows no disc), `--spy-mouse X,Y` rests the pointer for a tooltip. `run_screen.py --spies verdict --verdict N
---verdict-seed S --jsonl OUT` presses the verdict buttons through the exe's input (`AktIkonKell` exe 0xB77208 = id +
-0x1e) on fuzzed prisoners, hooks `Spy_Main` and `Multi_Send` (exe 0x513840) and writes `spyverdict-*.jsonl` (the
-prisoner is re-staged at `Spy_Main`'s entry: the last fate's `MULTIGET_Spy` may have rewritten it since).
-Results: `diff-results.md`.
+## 8. Client status
+`ig2-client::spy_screen` (state, input, tooltips `SpyScreen::tooltip`; `spy_screen/draw.rs` the 2D pass) and
+`spy_scene` (the 3D pass; the engine's lit bytes mapped into the sRGB frame by `spy_scene::gamma`); orders
+`ig2_net::Command::Spy`; sounds per audio.md §6.4. Drawn, driven and compared: the carousel and both panels match the
+captures, so do the opening's frames 12, 30, 45 and the tooltip; the ring with the head video differs by the video's
+frame and the ring's spin (clock-dependent). The chance estimate and the verdict roll match the exe (§6.2, §6.3).
+The screen opens animated from S and closes after its closing animation (`SpyScreen::leave`/`closed`); Esc opens the
+options and returns. The frame's poses are cached at the integer frames 0..=50 and blended linearly in between
+(exact at the key frames). `spyFrameValtozo` counts UI frames (the exe's drawn frames). The refusals' lines go to
+`World::local_lines`. The two `SpyGfx2D_1` frames no capture shows (§3) are left out.
+Missing: the 2D video path (`spyANIMBARKACS`, `PlayAnimFrame(0x100, 0x11c)`), the tutorial's limits
+(`TutorialSpyMelyikLehet`). Unchecked: the skill buttons 0x19..0x1c are off with a dialog up in the port,
+`Spy_MouseInit2` leaves them on. Open deviation rows: 4 (side strips, keep).
+Captures: `run_screen.py --kep 7 --spies roster|report|verdict|applicant` stages five spies (at home with skill
+points, on a mission, travelling, captured, at home) and one report, waits 1200 frames and writes the exe's save;
+`run_screendiff.py … spy:<mode>` compares (regions: the top bar, the carousel, the two panels, the ring);
+`--spy-frame F [--spy-closing]` holds `spyframe` in both (a held closing never ran a flip, so the exe shows no disc),
+`--spy-mouse X,Y` rests the pointer. The client: `--snapshot --screen spy --ui-frames N`, `--spy-frame`, `--mouse`,
+`IG2_LANG` (the captures are Hungarian). `run_screen.py --spies verdict --verdict N --verdict-seed S --jsonl OUT`
+presses the verdict buttons through `AktIkonKell` exe 0xB77208 = id + 0x1e, hooks `Spy_Main` and `Multi_Send` (exe
+0x513840) and re-stages the prisoner at `Spy_Main`'s entry. Results: `diff-results.md`.

@@ -1,6 +1,6 @@
 {
  "screen": "starmap",
- "note": "The starmap camera's held keys, edge scroll and minimap (re/screens/starmap.md §2.4, §10.6, deviations row 226), for probes/starmap_cam.js: left arrow (rotate below 0, the 2π wrap), up and down arrows (pitch to both clamps), numpad +/− (zoom), the pointer at the left and top edges (Starmap_Move), two minimap presses. Starts at t 150 (the exe's first frames come ~100 ticks in).",
+ "note": "The starmap camera's held keys, edge scroll and minimap (re/screens/starmap.md §2.4, §10.6), for probes/starmap_cam.js: left arrow (rotate below 0, the 2π wrap), up and down arrows (pitch to both clamps), numpad +/− (zoom), the pointer at the left and top edges (Starmap_Move), two minimap presses. Starts at t 150 (the exe's first frames come ~100 ticks in).",
  "events": [
   {"t": 150, "key": "left", "hold": 60},
   {"t": 220, "key": "up", "hold": 40},

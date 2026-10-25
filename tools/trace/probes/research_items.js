@@ -1,4 +1,4 @@
-// Research tech-model probe (FX17b, deviation 312), appended to screen.js by run_screen.py --probe (with --script): on
+// Research tech-model probe (FX17b), appended to screen.js by run_screen.py --probe (with --script): on
 // the script ticks listed in GRABS, every object the engine lights and draws (`fenyekszamolasa` exe 0x52f190, cdecl
 // (pos, vertexnormal[], n, spsorttype, XVOStruct, opacity), called from `Kocka` only for the objects it draws) with its
 // vertex count, flags (sp +0x68), opacity byte, rotation chain (sp +0x24), its lights (sp +0x6c/+0x70) and, for the

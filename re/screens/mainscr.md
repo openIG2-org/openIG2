@@ -4,8 +4,7 @@ From the ELF decompiles (`_local/decomp/mainscr/`, `mainscr2/`) and the exe deco
 the exe wins. Addresses are exe unless marked ELF. `[elf]` = read in the ELF only; `[guess]` = inferred; `[asm]` = checked
 in the exe disassembly; `[obs]` = observed at runtime (section 13). The main menu itself has **no 2D draw list**: every
 button is a 3D ring with a label texture; 2D (faders, texts) appears only in the sub-states (section 7). Time unit: "tick"
-= one 10 ms UI tick (100 Hz) unless said otherwise. Port: `ig2-client::mainscr` (title + main menu + the ring menus;
-the race, scenario, tutorial and multiplayer screens behind them are not ported yet, section 14).
+= one 10 ms UI tick (100 Hz) unless said otherwise. Client status: section 14.
 
 ## 0. Functions
 
@@ -18,7 +17,7 @@ the race, scenario, tutorial and multiplayer screens behind them are not ported 
 | `MainscrKeyboardHandler` | 0x5a0a60 | 0x5000c0 |
 | `GFX_MainScr` -> `Mainscreen_Update3D` (per drawn frame) | 0x59eb00 -> 0x58fc80 | 0x500270 |
 | `Main3DInit` | 0x58d7f0 | 0x4f96a0 |
-| `FRISSIT_MainScr2` (10 ms UI tick) | 0x59f360 | **0x4f65f0** (decompiled in pass 2: section 5) |
+| `FRISSIT_MainScr2` (10 ms UI tick) | 0x59f360 | **0x4f65f0** (decompiled: section 5) |
 | `FRISSIT_MainScr` (20 Hz) | 0x59eff0 | 0x4f7300 (bytes: `if AktKep==15 && YouAreDisconnected(0xdb94f4) { YouAreDisconnectedVolt(0xbbd144) = 1; YouAreDisconnected = 0 }`) |
 | `MainScrGfx2D_1` (faders) / `_2` (texts) / `_3` (disconnect box) | 0x593fc0 / 0x597670 / 0x59a660 | not given / 0x4fc8d0 / not given |
 | `CampaignGameStart` | 0x58a8a0 | 0x4f5e90 |
@@ -27,8 +26,8 @@ the race, scenario, tutorial and multiplayer screens behind them are not ported 
 | `TutorialSetCampaignGameOptions` | 0x59c5f0 | 0x504250 |
 | `ElinditTutorial(int)` (ELF); **the exe's `ElinditTutorial` 0x553c20 is `UnLoadScenarioList`** | 0x59c3b0 | 0x553c20 |
 | `MainInitSounds` / `MainDeInitSounds` / `MainPlaySound` | 0x593b60 / 0x593d40 / 0x593860 | 0x4fa9f0 / 0x4fa970 / inlined |
-| Decompiled in pass 2 (`_local/decomp/mainscr2/`) | `HozzaadKorok` 0x58d2d0, `ForgatFajvalasztasDolgai` 0x58af10, `LoadFajValasztasVektor` 0x58bc90, `VisszaAllitFajvalasztasKezdoPoziciok` 0x5893a0, `HandleLoadingMesh` 0x58d670, `MainScrInitNullBoxes` 0x593f00, `MainScr_CancelIPEnter` 0x59ec00, `MainScr_ESCPressedWhenMultiplayerselect` 0x59ecc0, `GenerateUrhajoPosok` 0x58c1d0, `MainSetSoundPan` 0x5939b0, `ChangeGalaxyColors` 0x58c700, `GenerateGalaxy` 0x58cde0, `GenerateKod` 0x58c960, `DeGenerateKod` 0x58cb50, `GenerateKod2` 0x58cc60, `MainInitSounds` 0x593b60 | exe 0x4f8780 (3.1), 0x4f7390 (9.2), 0x4f9410 (9.2), 0x4f89b0 (9.2), 0x4f8620 (4), 0x4fe2c0 (3.1), 0x4fe6f0 + 0x4fe780 (6.4), 0x4f8380 (5.5), 0x500040 (8), 0x4f6040 (3.2); exe `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240 not decompiled (3.2, ELF read; Kod* from the ELF disassembly) |
-| Decompiled in pass 3/4 (`_local/decomp/mainscr3/`, `mainscr4/`) | `ScenarioGombraRanyomtak`, `KiirFajInfoSzoveg`, `FrissitFajInfoSzoveg`, `InitKiirInfoSzoveg`, `InfoBelerakSzoveg`, `FUN_00504380`, `MozgatKor` and the rest of part 2 | exe 0x503bf0, 0x4f9040, 0x4f7c60, 0x4f8ea0, 0x4f8910, 0x504380, 0x4fab30, 0x4fe190, 0x503e80, 0x503d40, 0x4f8f80, 0x4f9250, 0x553400, 0x503540, 0x4f7330, 0x4f6270, 0x504870, 0x504120, 0x543750, 0x543150, 0x4fa9f0, 0x4fa970, 0x552fc0 |
+| Decompiled (`_local/decomp/mainscr2/`) | `HozzaadKorok` 0x58d2d0, `ForgatFajvalasztasDolgai` 0x58af10, `LoadFajValasztasVektor` 0x58bc90, `VisszaAllitFajvalasztasKezdoPoziciok` 0x5893a0, `HandleLoadingMesh` 0x58d670, `MainScrInitNullBoxes` 0x593f00, `MainScr_CancelIPEnter` 0x59ec00, `MainScr_ESCPressedWhenMultiplayerselect` 0x59ecc0, `GenerateUrhajoPosok` 0x58c1d0, `MainSetSoundPan` 0x5939b0, `ChangeGalaxyColors` 0x58c700, `GenerateGalaxy` 0x58cde0, `GenerateKod` 0x58c960, `DeGenerateKod` 0x58cb50, `GenerateKod2` 0x58cc60, `MainInitSounds` 0x593b60 | exe 0x4f8780 (3.1), 0x4f7390 (9.2), 0x4f9410 (9.2), 0x4f89b0 (9.2), 0x4f8620 (4), 0x4fe2c0 (3.1), 0x4fe6f0 + 0x4fe780 (6.4), 0x4f8380 (5.5), 0x500040 (8), 0x4f6040 (3.2); exe `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240 not decompiled (3.2, ELF read; Kod* from the ELF disassembly) |
+| Decompiled (`_local/decomp/mainscr3/`, `mainscr4/`) | `ScenarioGombraRanyomtak`, `KiirFajInfoSzoveg`, `FrissitFajInfoSzoveg`, `InitKiirInfoSzoveg`, `InfoBelerakSzoveg`, `FUN_00504380`, `MozgatKor` and the race / scenario / sound functions | exe 0x503bf0, 0x4f9040, 0x4f7c60, 0x4f8ea0, 0x4f8910, 0x504380, 0x4fab30, 0x4fe190, 0x503e80, 0x503d40, 0x4f8f80, 0x4f9250, 0x553400, 0x503540, 0x4f7330, 0x4f6270, 0x504870, 0x504120, 0x543750, 0x543150, 0x4fa9f0, 0x4fa970, 0x552fc0 |
 
 ## 1. State
 
@@ -75,8 +74,8 @@ Screen flags (bytes). `Belep` clears all but `Mode_Main`. Floats are f32.
 (`MouseSzoveg[...+0x74]`) dispatches once, on either button's press frame, and `IG2_gameUpdate` then sets `Mouse_FelengedesMajdMegvar` and runs frames
 until the release, which reaches `_Main` only as two passes with `AktIkon` 0; a flag-0 box dispatches on the press and every held frame, plus once on
 the release over the same spot; a frame with no button down and no release dispatches nothing (exe 0x4e0440 lines 26-37, 88-132; [obs]
-`probes/mainscr-input.js` + `scripts/mainscr-press.json` / `mainscr-press2.json`: a right press on the load ring calls `MainScr_Main` with
-`AktIkon` 0x25, `Mouse_Lenyom` 1, `Mouse_Bal` 0 on its press frame, Options opens; on the scenario ring 0x20 the same). So `MainScr_Main` sees `AktIkon` = `id + 0x1e` once. So its
+`probes/mainscr-input.js`: a right press on the load ring calls `MainScr_Main` with `AktIkon` 0x25, `Mouse_Lenyom` 1, `Mouse_Bal` 0 on its
+press frame and Options opens; the scenario ring 0x20 the same). So `MainScr_Main` sees `AktIkon` = `id + 0x1e` once: its
 `AktIkon` 0x1f..0x32 are box ids 1..0x14 and its `AktIkon2` 0x15..0x27 are box ids.
 
 ## 2. Enter and leave
@@ -109,12 +108,11 @@ the release over the same spot; a frame with no button down and no release dispa
      `GetSubMeshid(LoadingMesh1 0xd84368, sub 0xd84498, 0)`; `ChangeTexture(sub, LoadingTexturak[mcd])`.
    - `Mode_Kilepes = 1; MainScrKilepesValtozo = 100.0; AktKepBackup = AktKep; AktKep = 0xf`; loop while `MainScrKilepesValtozo > 0`: `Mouse_Tipus = -2; ForceUpdateFrame (0xbae2ac) = 1;
      Cel = 6.0; UpdateFrame(); FRISSITES(); ForceUpdateFrame = 0`. Then restore `AktKep`, `Mode_Kilepes = 0`. (200 ticks = 2 s of what 4 and 5 describe.)
-   **Exit animation** (pass 3: `MainScr_Kilep`, `FRISSIT_MainScr2`, `Update3D`, `HandleLoadingMesh` exe 0x4f8620, asm 0x4f86a2..0x4f8774 checked):
+   **Exit animation** (`MainScr_Kilep`, `FRISSIT_MainScr2`, `Update3D`, `HandleLoadingMesh` exe 0x4f8620, asm 0x4f86a2..0x4f8774 checked):
    K = `MainScrKilepesValtozo` −0.5 a UI tick (f64, 0x4f71a5), 200 ticks. The rings fly out (`Cel` 6 forced). Camera (`Update3D` step 1): q = 100 − K,
    `kamerapont.z −= q·30`, `forgaspont.x = q·5` (f32). K < 25: `GlobalTransparency = (float)(K/25.0)` (f64, 0x4f71df), the scene fades in the last 50 ticks.
-   K < 50: T = `(float)(K/50.0)` (f64); plate 1 (`LoadingMesh1` 0xd84368, `vector/main/loadi1.xv`, its sub-mesh retextured with `load<mcd+1>.bmp`,
-   remaster `textures/main/load<n>_bmt.pvr`): shown, `SetObjTransparency(T)`, `MoveObj(0, −T·100, −1400)`, `RotateObj(0, (float)(T·π/2), 0)`; plate 2
-   (0xd84278, `loadi2.xv`): `MoveObj(0, T·100, −1400)`, `RotateObj(0, (float)(−T·π/2), 0)`. In a race start `Mode_Fajvalasztas` and `StartGame` stay set
+   K < 50: the two loading plates (`HandleLoadingMesh`, §4): plate 1 = `vector/main/loadi1.xv`, its sub-mesh retextured with `load<mcd+1>.bmp`
+   (remaster `textures/main/load<n>_bmt.pvr`); plate 2 = `loadi2.xv`. In a race start `Mode_Fajvalasztas` and `StartGame` stay set
    (the head stays hidden at z 1400). The leave test of `Update3D` is skipped while `Mode_Kilepes`. No sounds.
 2. `Main_NemKellZoom = 0`. If the target is not 0xe / 0x10 / 0xd: `mainOldalsoFenyekKi()`, `MainDeInitSounds()`, `RemoveFajVLight()`. `MainScrRemoveNullBoxes()`.
 3. What is started:
@@ -140,7 +138,7 @@ Fresh entry only. `LoadBox(name, lit)`, `AddToScene(xvb, scene, scale, mesh)`; d
    `n2.bmp` n 3500 (0xdac) rgb (0.1, 0.1, 0.1) alpha 200 scale 1.4; `felho2.bmp` 3500 (1, 1, 1) 100 scale 2.0; `n2.bmp` 3500 (0.5, 0.7, 1.0) 200 scale 3.0; `n2.bmp` 3300 (0xce4) (0.5, 0.7, 1.0) 200 scale 0.8.
    The particles are static random points (the colour word is built with a factor 0.0, so black until recoloured); `ChangeGalaxyColors` recolours them every frame (4.5). Layout, draw order and distribution: 3.2.
 6. Three background billboards (one particle each): `texcsor.bmp` at (-400, -400, -100) size 1350 colour 0x64ffffff; `galaxy_1.bmp` at (-500, 1500, -3000) size 300 colour 0x8cffffff; `galaxy_1.bmp` at (-900, 1900, -3000) size 200 colour 0x8cffffff.
-   Each is a null box (`AddNullBox` + `SetParticle(box, rec, 1)`) whose one particle keeps the record's (x, y, z) as its **box-local** position; `Update3D` moves boxes 0 and 1 (4.4), so those two draw at the sum (2x, 2y, z' + z); box 2 stays at the origin [obs 2026-10-24: the sum takes the menu sequence from 6.6–8.0 to 2.9–4.2 at 4:3 and every 16:9 grab under 6, deviations 20, 214].
+   Each is a null box (`AddNullBox` + `SetParticle(box, rec, 1)`) whose one particle keeps the record's (x, y, z) as its **box-local** position; `Update3D` moves boxes 0 and 1 (4.4), so those two draw at the sum (2x, 2y, z' + z); box 2 stays at the origin [obs: drawing at the sum matches the exe captures].
    `hanyhattergalaxis` (0xbbd13c) = **2** (the index of the last; `Update3D` moves entries 0 and 1 only, so the third stays where it was made).
 7. Three dust systems ("kod"; exe 0xcc1470 / 0xd023c0 / 0xd43310): `GenerateKod` n 3500, no texture, (0.5, 0.5, 0.5); `GenerateKod2` n 1750 `torpedo.bmp` (0, 0, 0); `GenerateKod2` n 1750 `n2.bmp` (0.5, 0.5, 0.5);
    all with offset (-1000, -800, -1800) and scale 30.0 (3.2; their `srand(400)` fixes the RNG state for step 8).
@@ -173,7 +171,7 @@ Fresh entry only. `LoadBox(name, lit)`, `AddToScene(xvb, scene, scale, mesh)`; d
 - The label goes on **sub-mesh 0 of B** (`Update3D` step 10: `GetSubMeshid(B_i, sub, 0)`; `ChangeTexture(sub, tex)`); the ring A has no label. Whether the ten `szrke{i}` files differ in geometry: not checked (asset-finder: `vector/main/szrke0..9.xvb`, `korke1.xvb`).
 - Transparency 0.3 on both; `Update3D` never touches the rings' transparency again (only meteors, ships and the loading plates get `SetObjTransparency` there). The engine's transparency is "0 = opaque" [evidence: meteors use `1 - GlobalTransparency` and fade IN as `GT` goes 0 -> 1].
 - Property bits 8, 4, 2 (off) and 0x20 (on): no spec documents them (`re/screens/render.md` only has the inherit rule); `galaxy.xvb` uses the same pattern (off 8, 4; on 0x20). Meaning [unknown]; copy the pattern, don't interpret it.
-- The rings are **unlit** (`LoadBox(.., false)` + `SetObjShade(false)`): the scene lights don't change them. Scene lights, created once (guard byte ELF 0x1618b51) by `mainOldalsoFenyekBe` (ELF 0x58c5b0 = **exe 0x5047d0**, which the ported names call `mesOldalsoFenyekBe`; guard byte exe 0xbbb17e; `mainOldalsoFenyekKi` = ELF 0x58c520): two `CreateLightParalell` on `mainmeshid` (exe 0x93da40, the `mainxvb` scene's root: the design, diplomacy and trade screens light their models through it too), handles exe 0xcc1448 / 0xd84488: L1 colour word **0xc86464** direction (200, -1000, 500); L2 **0x829cff** direction (0, 1400, 500) (exe immediates; as `0xBBGGRR` words L1 is blue, L2 warm). Every lit model of the scene sees them first (`Kocka`), then its own: the ships their 0x323238, the race scene its 0xdcc8c8. The meteors (`LoadBox("meteor.xvb", 0)`, no light of their own) draw near black in the captures; lit by these two they come out grey [obs], so the client keeps them on a dim light (deviation 150). `mainMozgatMainFenyek` (ELF 0x58c690) is an **empty function** (`ret`): the side lights never move. They light only lit models (ships, race scene, probably the loading plates [their lit flag not checked]).
+- The rings are **unlit** (`LoadBox(.., false)` + `SetObjShade(false)`): the scene lights don't change them. Scene lights, created once (guard byte ELF 0x1618b51) by `mainOldalsoFenyekBe` (ELF 0x58c5b0 = **exe 0x5047d0**, which the ported names call `mesOldalsoFenyekBe`; guard byte exe 0xbbb17e; `mainOldalsoFenyekKi` = ELF 0x58c520): two `CreateLightParalell` on `mainmeshid` (exe 0x93da40, the `mainxvb` scene's root: the design, diplomacy and trade screens light their models through it too), handles exe 0xcc1448 / 0xd84488: L1 colour word **0xc86464** direction (200, -1000, 500); L2 **0x829cff** direction (0, 1400, 500) (exe immediates; as `0xBBGGRR` words L1 is blue, L2 warm). Every lit model of the scene sees them first (`Kocka`), then its own: the ships their 0x323238, the race scene its 0xdcc8c8. The meteors (`LoadBox("meteor.xvb", 0)`, no light of their own) draw near black in the captures; lit by these two they come out grey [obs]. `mainMozgatMainFenyek` (ELF 0x58c690) is an **empty function** (`ret`): the side lights never move. They light only lit models (ships, race scene, probably the loading plates [their lit flag not checked]).
 - `MainScrInitNullBoxes` (exe 0x4fe2c0; ELF 0x593f00): `GFX_AllandoInit1(); InitFader1(); AddNullBox(mainxvb, cb1 = exe 0xd84360); SetRenderOther(cb1, MainScrGfx2D_1 = exe 0x4fab30, 0); InitFader2(); AddNullBox(mainxvb, cb2 = exe 0xcc145c); SetRenderOther(cb2, MainScrGfx2D_2 = exe 0x4fc8d0, 0); AddNullBox(mainxvb, cb3 = exe 0xcc1438); SetRenderOther(cb3, MainScrGfx2D_3 = exe 0x4fe190, 0); GFX_AllandoInit2(); InitFader3()`. The three 2D passes are draw callbacks of null boxes added after the 3D objects; exe `_1` / `_3` = 0x4fab30 / 0x4fe190 (not decompiled).
 
 ### 3.2 Particle generators (clouds and dust of `Main3DInit` steps 4, 5, 7; recoloured in `Update3D` steps 2, 5)
@@ -222,20 +220,20 @@ Called from `GFX_MainScr` unless `SelfPlaying`. Order [exe; ELF agrees unless no
 10. Label textures, when `Cel != 5.0`: for each ring i < `MaxMainKorok`: `GetSubMeshid(B_i, sub, 0)`; `ChangeTexture(sub, selected[i])` if `AktKijelolt == i` (ELF: and `ControlConfig[0]` (touch mode) clear), else `unselected[i]`.
     Set: `Mode_Main` -> set 1; `Mode_SinglePlayerSelected` and neither race confirmed nor closing -> set 2; single with race confirmed or closing -> set 4; `Mode_MultiPlayerSelected` -> set 3; `Mode_Tutorial_Valasztas` -> set 5;
     `Mode_Main` loops 6 rings, the others `MaxMainKorok`.
-11. `mainMozgatMainFenyek()` [ELF only: an empty function; the exe has no call here and no light is touched after `Main3DInit`: the handles 0xcc1448 / 0xd84488 are written only by 0x5047d0 and freed by 0x504870 (FX17b, decompile of exe 0x500270 / 0x4f96a0)], `ForgatFajvalasztasDolgai()`, `HandleLoadingMesh()` if `AktKep == 0xf`; `AktKep == 2` is treated as 0xf around `Update3D(null, null, 0)` (this scene draws while the starmap is being entered);
+11. `mainMozgatMainFenyek()` [ELF only: an empty function; the exe has no call here and no light is touched after `Main3DInit`: the handles 0xcc1448 / 0xd84488 are written only by 0x5047d0 and freed by 0x504870 (decompiles of exe 0x500270 / 0x4f96a0)], `ForgatFajvalasztasDolgai()`, `HandleLoadingMesh()` if `AktKep == 0xf`; `AktKep == 2` is treated as 0xf around `Update3D(null, null, 0)` (this scene draws while the starmap is being entered);
     `KiirFajInfoSzoveg()` (exe 0x4f9040); exe: `if FajValasztasStartGame && FajVSzetnyilas == 100.0 && !Mode_Kilepes { AktKep = STARTSCREEN; Atlepes = 1 }` (ELF: `CheckCampaignGameStart()`).
 `HandleLoadingMesh` (exe 0x4f8620; ELF 0x58d670), only while `Mode_Kilepes && K < 50.0` (the last 100 ticks of the exit animation, K = `MainScrKilepesValtozo`): `T = K/50` (exe: **f64** division `divsd 50.0` at 0x4f8654, stored f32; ELF f32). Both plates (`LoadingMesh1` 0xd84368, `LoadingMesh2` 0xd84278): `UnhideObj`, `SetObjTransparency(T)` (T falls 1 -> 0 = fades in). Plate 1: `MoveObj(0, -(T*100), -1400)`, `RotateObj(0, T*(pi/2), 0)`; plate 2: `MoveObj(0, +T*100, -1400)`, `RotateObj(0, -T*(pi/2), 0)` (exe: `(float)((double)T*1.5707963267948966 + 0.0)`, `mulsd` 0x4f86ed; ELF f32 1.5707964). So the two plates slide together from y = -+100 to 0 and swing from +-90 degrees yaw to 0 at z = -1400 while the rings are flying away (`Cel = 6.0`); their textures are `LoadingTexturak[mcd]` (2.2).
 
 ## 5. Timers (`FRISSIT_MainScr2`, **exe 0x4f65f0 decompiled; these are the exe values**; ELF 0x59f360 agrees except where section 10 says so)
 Runs in the 10 ms UI loop of `Fake_FRISSITES` (exe 0x4de720: `while (10 < now - OldIdo2) { OldIdo2 += 10; ... }`, 100 Hz), after `TutorialFrissit`.
-Flags (exe): `AktKep` 0xbae0fc; `MainElindult` 0xbbac53; `IrcElindult` 0xbb6f29; `OptionsCsakLoadLehet` 0xbae24e; `Mode_Kilepes` 0xbbb22a; `MainScrKilepesValtozo` (K) 0xbbb360; `Atlepes` 0xbae24d, `Belep` 0xbae24c; `MINDENEGYSZERRE` 0xbbb3d0; `Mode_Main` 0xbbb3d1, `Mode_SinglePlayerSelected` 0xbbb3d2, `Mode_MultiPlayerSelected` 0xbbb3d3; `Mode_Scenario_Valasztas` 0xbbb3f7, `_Becsukas` 0xbbb229; `Mode_Fajvalasztas` 0xbbb17f, `_Becsukas` 0xbbb228; `MaxMainKorok` 0xbbb0c0; `Tav` (`MainKorokTavolsag`) 0xbbb050, `Cel` 0xbbb0bc; `GlobalTransparency` (GT) 0xbbb0cc, step `GlobalTransparencyNovelo` = f32 at 0x913de4 = 0.003; `MainScrMozgato` (M) 0xbbabe0; `MainUrhajoTimer` 0xbbb0c8; `MainAszteroidaTimer` 0xbbb0d0; `MainInactivityTimer` 0xbbb0c4; mouse x / y / pressed 0xdb4654 / 0xdb4658 / 0xdb465f.
+Flags: the addresses of §1 (K = `MainScrKilepesValtozo`, `Tav` = `MainKorokTavolsag`, GT = `GlobalTransparency`, M = `MainScrMozgato`); also `IrcElindult` 0xbb6f29, `MINDENEGYSZERRE` 0xbbb3d0.
 **Gate** (the body 5.1 runs when): `AktKep == 0xe`, or `0x10 && IrcElindult`, or `0xf && MainElindult`, or `0xd && OptionsCsakLoadLehet`. **5.2 runs on every tick with `AktKep == 0xf`** (after the body when the gate is open, directly when it is closed); other `AktKep` values do nothing else.
 Precision key (from the instruction operands, byte-scanned): **f64** = `cvtss2sd`, then `addsd|subsd|mulsd|divsd` with an f64 constant, `cvtsd2ss` store back (the decompile hides these casts!); **f32** = `addss|subss|mulss|divss`, `comiss` with f32 constants.
 
 ### 5.1 Per tick, inside the gate (exe order)
 1. `FaderDesignFrissito(0xbbcb70)` (exe 0x4d2c20).
 2. Scenario list (`Mode_Scenario_Valasztas`, value `ScenarioValasztasNyitottsag` 0xbbb2ac): not closing: `+= 1.0` (f32) while `< 100.0`, clamp to 100.0; closing (`_Becsukas`): while `> 0`: `-= 1.0`, at `<= 0`: 0, `_Becsukas = 0`, `Mode_SinglePlayerSelected = 1`, `Mode_Scenario_Valasztas = 0`, `Cel = 1.0`.
-3. Race choice (`Mode_Fajvalasztas`): `MozgatKorYadderCel` (0xbbb3e4) = 0, or -50.0 (f32) when `LastKijelolt != -1` (`FrissitFajInfoSzoveg()` = exe 0x4f7c60 runs then) and the race is not confirmed; `MozgatKorYadder` (0xbbb3e8) moves toward it by **0.3 in f64** (`movsd 0.3` at 0x4f6776), clamped to it. If `FajVKINYITVA` (0xbbb162): `MainKorMozgatoValtozo` (0xbbb174) `+= 0.001` (**f64**, 0x4f67d5); `FajVSzetnyilas` (0xbbb16c) toward `Cel` (0xbbb170): going down `-= 0.6` (**f64**, 0x4f67f9); on reaching it with `Mode_Fajvalasztas_Becsukas`: `Mode_Fajvalasztas = 0; _Becsukas = 0; FUN_00504380(); MaxMainKorok = 3; Cel = 1.0` (the exe calls 0x504380 here, not read; the ELF calls `VisszaAllitFajvalasztasKezdoPoziciok`); going up `+= 1.0` (f32) to `Cel`: `FajValasztasFajKivalsztvaBecsukas` (0xbbb3f5) -> 0 with `MaxMainKorok = 3`; if not `StartGame` (0xbbb17c): `FajValasztasSelectedRace` (0xbbb178) = -1. `FajVFrame` (0xbbb168) `+= 0.3` (**f64**, 0x4f684d) while `< 90.0` (f32 compare); at `>= 90`: 90.0, `FajVKINYITVA = 1; LastKijelolt = 0; InitKiirInfoSzoveg()` (0x4f8ea0)`; InfoBelerakSzoveg(0)` (0x4f8910).
+3. Race choice (`Mode_Fajvalasztas`): `MozgatKorYadder`, `MainKorMozgatoValtozo`, `FajVSzetnyilas`, `FajVFrame` as in the §9.2 State table (exe order: Yadder, then under `FajVKINYITVA` θ0 and S, then `FajVFrame`; f64 operand sites 0x4f6776 (0.3), 0x4f67d5 (0.001), 0x4f67f9 (0.6), 0x4f684d (0.3); `FajVFrame` compares with f32 90.0). The ELF calls `VisszaAllitFajvalasztasKezdoPoziciok` where the exe's close path calls 0x504380.
 4. Screen 0x10 / 0xe fades: `0xbbb3ec -= 0.005` (**f64**, 0x4f6926) while `> 0` and `AktKep == 0x10`, clamp 0; `0xbb6f2c += 0.02` (**f64**, 0x4f695e) to 1.0 if `AktKep == 0x10` and byte 0x913990 != 0; `0xbbb3f0 -= 0.005` (f64) while `> 0` and `AktKep == 0xe` and byte 0xf21485 != 0; `0xf21480 += 0.02` (f64) to 1.0 if `AktKep == 0xe` and byte 0xf21484 != 0. (Names: `IrcMainAtlatszosaga` / `IrcKilepesValtozo` / `MainMainAtlatszosaga` / `MainKilepesValtozo`; the exe has the flag conditions.)
 5. `MainUrhajoTimer += 1; MainAszteroidaTimer += 1` (ints); `M = (float)((double)M + 0.1)` (**f64** `addsd 0.1` at 0x4f6a3e, f32 store at 0x4f6a4c). Then the inlined `GetKameraPos` (matrix from `elforgatas` 0xde0158.., inverted; the result is unused in this function).
 6. If `(!Atlepes && !Belep) || Mode_Kilepes`: meteors, then ships (5.3). Each loop reads its timer once before the loop (the snapshot).
@@ -261,7 +259,7 @@ Ship i = 0..7 (pos 0xbbac60 + 0x10*i, start 0xbbace0, target 0xbbad60, speed 0xb
 1. `rand() % 6 == 0` -> `UnhideObj(ship i)`, else `HideObj` (a ship is shown with 1/6 chance per respawn).
 2. Camera position `P` = inverse(`CreateMatrix(elforgatas)`) (nine floats m0..m8) applied to `kamerapont` (c = 0xde0148 / 4c / 50) plus `forgaspont` (0xde0130 / 34 / 38): `P.x = m0*cx + m1*cy + m2*cz + fp.x`, `P.y = m3*cx + m4*cy + m5*cz + fp.y`, `P.z = m6*cx + m7*cy + m8*cz + fp.z` [reading order of the decompile; rows vs columns not verified].
 3. `UrhajoElforgatasok[i] = 0`; draws in order: start.x = `rand() % 3000 - 1000`; start.y = `rand() % 3000 - 1500`; start.z = `rand() % 2000 - 9000`; target = (P.x, P.y, P.z + 3000.0); alpha = 1.0; pos = start; `s = (float)(rand() % 50)/10.0 + 2.0` (2.0..6.9); speed = `(target - start)*s/8000.0` per axis; `UrhajoVoltHangjamar[i] = 0`.
-(The ELF takes the target x / y from `GetKameraPos()`'s two return registers; same value.) While leaving the ships move `speed·((1 − K/100)·5 + 1)` per tick (exe 0x4f65f0, `Mode_Kilepes`), as the meteors `·((1 − K/100)·10 + 1)`; a respawn also needs `MINDENEGYSZERRE` (0xbbb3d0) or the timer > 200.
+(The ELF takes the target x / y from `GetKameraPos()`'s two return registers; same value.)
 
 ## 6. Input
 
@@ -341,12 +339,12 @@ then off: 1..8, 0xc, 0xd, 0xe..0x14; 0x18..0x1b and 0x1d..0x26 on and 0x27 off o
 | 0x16, `Mouse_Lenyom` | cancel: ELF `CancelScenarioValasztas()`; exe inline: `Mode_Scenario_Valasztas_Becsukas = 1; ScenarioKepNyitottsagCel = 0; MaxMainKorok = 3` |
 | 0x17, `Mouse_Lenyom` | row r = clamp((`Mouse_y` - 0x41)/0xf, 0, 0x16) + `ScenarioStart`; if r < count and r != `SelectedScenario`: `SelectedScenario = r`; if the entry is a skirmish (kind > 0) `ScenarioHighScoreMode = 0`; `InitScirmishValtozok()` (exe 0x4f8f80); if `ScenarioKepNyitottsag != 0`: `ScenarioKepNyitottsagCel = 0` |
 | 0x18..0x26, `Mouse_Lenyom` | `PlaySoundGlobal(0)`, then +-1 (the first id of each pair 0x18/0x19, 0x1a/0x1b, 0x1d/0x1e, 0x1f/0x20, 0x21/0x22, 0x23/0x24, 0x25/0x26 decrements, the second increments): race 1..8, computers 1..7, difficulty 1..4, planets 0..4, technology 0..3, money 0..5, population 0..3 |
-| 0x1c, `Mouse_Lenyom` or `Mouse_Megfogva` | `ScenarioStart = (int)(((float)Mouse_y - 64.0)/364.0*(float)count - 11.5)`, then clamp: < 0 -> 0; `count < ScenarioStart + 23` -> `count - 23`; < 0 -> 0; `Mouse_Megfogva = 1; DesignKeretAzonnalMorph (0xad0ef5) = 1`. The drag holds (rows 344-346): `IG2_gameUpdate` (exe 0x4e0440) skips the hot-spot test while `Mouse_Megfogva` is set (`AktIkon` stays 0x1c, a press of the other button only scrolls) and clears it once `Mouse_Gomb` (0xdb4650, left or right held: `MainCallBackEventHandler` 0x4e2db0 sets 0xdb467d from 0xdb467e/0xdb467f) is 0, so with both buttons down the first release keeps the drag. Any other button (the middle, SDL button 2) falls through both button tests to the block at 0x4e345a, which zeroes 0xdb467d..f and Shift/Ctrl/Alt (0xbae295/0xbae27f/0xbae294) when 0x912a38 is set: the drag ends; the wheel (0x403) is no case of the handler. Client: `ScenarioList::press(at, left)`/`release(left)`/`middle()`/`hot()` |
+| 0x1c, `Mouse_Lenyom` or `Mouse_Megfogva` | `ScenarioStart = (int)(((float)Mouse_y - 64.0)/364.0*(float)count - 11.5)`, then clamp: < 0 -> 0; `count < ScenarioStart + 23` -> `count - 23`; < 0 -> 0; `Mouse_Megfogva = 1; DesignKeretAzonnalMorph (0xad0ef5) = 1`. The drag holds: `IG2_gameUpdate` (exe 0x4e0440) skips the hot-spot test while `Mouse_Megfogva` is set (`AktIkon` stays 0x1c, a press of the other button only scrolls) and clears it once `Mouse_Gomb` (0xdb4650, left or right held: `MainCallBackEventHandler` 0x4e2db0 sets 0xdb467d from 0xdb467e/0xdb467f) is 0, so with both buttons down the first release keeps the drag. Any other button (the middle, SDL button 2) falls through both button tests to the block at 0x4e345a, which zeroes 0xdb467d..f and Shift/Ctrl/Alt (0xbae295/0xbae27f/0xbae294) when 0x912a38 is set: the drag ends; the wheel (0x403) is no case of the handler |
 | 0x27 | `ScenarioHighScoreMode = !ScenarioHighScoreMode` (once per press: a flag-1 spot fires on the press edge, the frame loop then waits for the release; either button, input.md §7) |
 
 ### 6.4 Keyboard (`MainscrKeyboardHandler`, exe 0x5000c0)
-Only when `DEBUGLEHET` is set (command line): key 13 (Enter) pressed and not `YouAreDisconnectedVolt`: `HanyGepiJatekos (0xf21488) = 7; Main_NemKellZoom = 1; AktIkon = 0x1f; MainScr_Main(); AktIkon` restored (debug quick start). Not ported: `DEBUGLEHET` comes only from `init/config`'s `debugmode`, which the GOG install lacks (a keep, ADR 0016 §4, row 347).
-Nothing else here; text entry goes through the generic `IOMode` code, Esc through `MainScr_CancelIPEnter` (exe 0x4fe6f0) and `MainScr_ESCPressedWhenMultiplayerselect` (0x4fe780), decompiled in pass 2:
+Only when `DEBUGLEHET` is set (command line): key 13 (Enter) pressed and not `YouAreDisconnectedVolt`: `HanyGepiJatekos (0xf21488) = 7; Main_NemKellZoom = 1; AktIkon = 0x1f; MainScr_Main(); AktIkon` restored (debug quick start). `DEBUGLEHET` comes only from `init/config`'s `debugmode`, which the GOG install lacks.
+Nothing else here; text entry goes through the generic `IOMode` code, Esc through `MainScr_CancelIPEnter` (exe 0x4fe6f0) and `MainScr_ESCPressedWhenMultiplayerselect` (0x4fe780):
 Esc: `MainScr_ESCPressedWhenMultiplayerselect` (exe 0x4fe780; ELF 0x59ecc0), only if byte 0xdb9439 == 0; the first matching case wins:
 1. `Mode_Scenario_Valasztas && !_Becsukas`: `_Becsukas = 1; ScenarioKepNyitottsagCel (0xbbb04c) = 0; MaxMainKorok = 3`.
 2. `YouAreDisconnectedVolt` (0xbbd144): cleared.
@@ -393,7 +391,7 @@ Scenario list (`Mode_Scenario_Valasztas`):
 - description lines (10 strings of the entry, +0xc..+0x30; empty ones skipped) at (0x2a + 0x48 for rows 0..4 and every row of a skirmish entry, else
   0x2a; 0x15a + 0xd*k; len, 2, 4, 0x22), drawn when `!ScenarioHighScoreMode || skirmish` (exe 0x4fc8d0 lines 338-361).
 - high-score table (high-score mode, or a skirmish entry): line 0xf formatted with the scenario name at (0x2d, 0x15a, 0x32, 3, 4, 1); rows k = 0..9: `"%02d."` at (0x2d, or 0xe1 for k >= 5; 0x173 + 0xd*(k mod 5)); the name (entry strings) at (x + 0x16, y + 0x15a - 0x173..., 0x14, 2, 4, 2)
-  or line 0x11 (empty slot, style 1); the score = line 0x10 formatted with `score/0x32` at (x + 0x5c, ..., 0xc, 2, 4, 2). Selected row frame: `DesignKeret1(0x1b5, 0x43 + 0xf*(SelectedScenario - ScenarioStart), 0xa5, 0xf, 0x22)` (start phase and the scroll drag's `DesignKeretAzonnalMorph`: `research.md` §5.4; the list takes part in the global row-frame phase, row 362).
+  or line 0x11 (empty slot, style 1); the score = line 0x10 formatted with `score/0x32` at (x + 0x5c, ..., 0xc, 2, 4, 2). Selected row frame: `DesignKeret1(0x1b5, 0x43 + 0xf*(SelectedScenario - ScenarioStart), 0xa5, 0xf, 0x22)` (start phase and the scroll drag's `DesignKeretAzonnalMorph`: `research.md` §5.4; the list takes part in the global row-frame phase).
 Dialogs by `IOMode` / `IOAzonosito`:
 - 0x97 IP entry: `GetString(15, 3, 1)` at (0xa6, 0xb2, IOMaxLen, 4, 4, 1); `IOString` at (IOX, IOY - 9, IOMaxLen, IOCharSize, 5, IOColor); list entries k = 0..2 at (IOX - 0x25 + 0x8c*k, 0xf0, 0xf, 3, 4): "000.000.000.000" in style 1 when empty, else style 2 / 3 (hover of id 9 + k) or 7 / 6 for a flagged entry.
 - 0x98 name: `GetString(15, 3, 2)` at (0x140, 0xbc, 0x28, 4, 7, 1); text at (IOX, IOY - 9).
@@ -413,7 +411,7 @@ Only with `YouAreDisconnectedVolt`: OK hover rect 0x10d < x < 0x173, 0xdb < y < 
 - `MainSetSoundPan(isMeteor, idx, x, y, z)` (ELF 0x5939b0; exe 0x500040 `(char isMeteor, int idx, float x)`, only x is passed): if `SOUND`: for k = 0..2: `h = (isMeteor ? MeteorHangHandlek : UrhajoHangHandlek)[idx*3 + k]`; `SoundEngine::GetStatus(h)`; if status == 2 (playing): `SetPan(h, ...)` (exe `FUN_0055e590(&h, (int)x)`, ELF arguments dropped in the decompile). **`SetPan` is a no-op** (`re/screens/audio.md`: `SE_Wave::SetPan` is empty in the ELF; the exe function 0x55e590 is the 0x10 bytes before `SetVolume` 0x55e5a0, probably `ret 8`, not decompiled): the port needs no panning.
 - No `PlaySound` / `PlaySoundGlobal` in `HozzaadKorok`, `HandleLoadingMesh`, `MainScrInitNullBoxes`, `MainScr_Kilep`, the timers or the ESC handlers: the main menu's rings click silently in the code read. Skirmish arrows: `PlaySoundGlobal(0)` (6.3). Music: `PlayMusicMenu(false, true)` on a fresh entry only (music id 0xc). Video audio: `title.bik`, `credits.bik`.
 
-## 9. Other sub-states (for the next session)
+## 9. Other sub-states
 
 ### 9.1 Campaign start (`CampaignGameStart`, exe 0x4f5e90; ELF 0x58a8a0)
 Condition: `FajValasztasStartGame && FajVSzetnyilas == 100.0`. `ProgramMode (0xbae544) = 0; SingleStartGame(); SetIdoSpeed(1, 0); ProgramMachines (0xbae550) = 1; ProgramPlayers (0x912acc) = 8; ProgramPlayers2 (0x912ad0) = 0x12`;
@@ -423,7 +421,7 @@ players i = 1..18: `PlayerKi[i]` (0xbae560) = 2, `PlayerFaj[i]` (0xbae574) = i, 
 then `st_ShowAnim` by `EN` (0x912a3c, set inside `InitNewGame`): 1 -> `intro_human.bik`, 3 -> `intro_politikus.bik`, 5 -> `intro_brutal.bik` (how race index 0..2 becomes 1 / 3 / 5: read `InitNewGame`).
 `SetCampaignGameOptions` (ELF 0x59bcd0; the debug Enter path): the same setup with `EN = 1; PlayerKi[1] = 1`, `InitNewGame(seed, AktIkon == 0x2a ? 4 : 0, 0, 0)`, `StartStory(DAT_0144c4b0)` if set.
 
-#### 9.1.1 From the start to the first starmap frame (the client's half)
+#### 9.1.1 From the start to the first starmap frame
 - Order (`IG2_gameUpdate` exe 0x4e0440): `MainScr_Main` 0x4fefc0 sets `AktKep = STARTSCREEN` (exe 0x927a88 = 2, the
   starmap) and `Atlepes`; `IG2_gameUpdate` calls `MainScr_Kilep` (exit animation, then `CampaignGameStart`: `InitNewGame`,
   the intro, **blocking**, before any starmap frame; `Atlepes` still 1, so no sim tick runs), then `ScreenBetolt(2)`,
@@ -438,21 +436,10 @@ then `st_ShowAnim` by `EN` (0x912a3c, set inside `InitNewGame`): 1 -> `intro_hum
   `HangLejatszasKell` (exe 0xbae26c, `InitNewGame` step 6: the campaign type) > 0, the start voice
   `HangLejatszasID` (0x912a44) = `PlayWav("SOUNDS/START/faj%dstart.WAV", 0)`, the music ducked to `M·60/100`,
   `HangLejatszasKell = 0`; `UpdateFrame` ends the duck when the voice stops (re/screens/audio.md §3, §5).
-- Client (`ig2-client`): `World::new_game(game)` takes a `Game` from any start constructor (mode-agnostic): live
-  real-time battles, the camera from the state's `Starmap*` globals, the orbit clock 0, `HangLejatszasKell` taken
-  (and cleared, as the first `Starmap_Belep` does before any tick) for the start voice, no `FlottakUjraSzamol`
-  (that is `LoadSave`'s); `World::campaign_intro` queues `intro_name(EN)`. `new_game::StartTexts` builds the sim's
-  `StartData` from the install (the Hungarian `txt17` names `StringReadAll` writes, the constellations, the message
-  kinds, the exe image); `new_game::campaign` is `CampaignGameStart`'s `InitNewGame`. The window plays the intro,
-  then `AfterVideo::StarmapEntry`: the main music and the start voice. CLI: `--new-campaign C[,D[,SEED[,TICKS]]]`
-  (no config storyline, no registry entry yet: MainScr part 2 wires the race menu, `init\init` and the registry).
-- Verified: `world::tests::new_campaign_world_matches_the_exes_start` (the 5 `run_newgame.py` starts: camera,
-  selection, planets, fleets, radar, clock = the world loaded from the exe's tick-0 save, apart from the recount's
-  fleet bit 15); `run_screendiff.py … newgame-c1-d2-s4242.sav starmap:66 --client-new-campaign 1,2,4242,96277`
-  (re/screens/diff-results.md, 2026-10-23).
-- Open: `PlayMusicMain`'s `random(3)` stream (the client's own cosmetic pick).
+  `HangLejatszasKell` is cleared by the first `Starmap_Belep`, before any tick; a new game runs no `FlottakUjraSzamol`
+  (that is `LoadSave`'s). `PlayMusicMain` picks its track with `random(3)` (stream not matched).
 
-### 9.2 Race choice (`Mode_Fajvalasztas`; pass 3, exe decompiles `_local/decomp/mainscr3/`, asm checked at the spots listed)
+### 9.2 Race choice (`Mode_Fajvalasztas`; exe decompiles `_local/decomp/mainscr3/`, asm checked at the spots listed)
 Opened by box 0xd (single-player ring 0, `AktIkon` 0x2b, 6.3): `Cel = 6`, `Mode_Fajvalasztas = 1`, `VisszaAllitFajvalasztasKezdoPoziciok()`
 (exe 0x4f89b0), `VanFajVLight1 = 0`. The rings fly out; the race scene `FajVMainMesh` plays its opening, then three heads spread onto
 a circle, a click highlights a race (types its blurb), a second click on it confirms, the rings come back as the difficulty set,
@@ -530,9 +517,7 @@ race = entry race, computers 3, the rest 2; with byte 0xbad106 set 7, 3, 4, 3, 5
 `LoadScenarioList` (exe 0x553400, once): `LoadScenarioDescription("scenario\<name>")` (exe 0x552fc0) for the 14 names at exe 0x919774 (attack … tactical;
 a repeated registry name is dropped), then a skirmish entry inserted at 0 (kind 1, title `GetString(0x13, 5, 1)`, picture `..\scenario\pic\spwar\c30068.bmp`).
 A description's file is its name with `.scn`, its registry name the base name; `LoadHighscores` reads the registry, else `fabscr.txt`.
-Timers (`FRISSIT_MainScr2`): `Nyitottsag` ±1.0f a tick (+ while not `_Becsukas` up to 100; − to 0, then `_Becsukas = 0`,
-`Mode_SinglePlayerSelected = 1`, `Mode_Scenario_Valasztas = 0`, `Tav.Cel = 1.0`); `KepNyitottsag` toward its `Cel` by 2.0f: down to the `Cel` → 0, `Cel = 100`,
-`SelectedScenarioOld = SelectedScenario`, the new picture loaded; up (not while `Mode_Kilepes` or `_Becsukas`) to 100.
+Timers (`FRISSIT_MainScr2`): `Nyitottsag` §5.1 item 2, `KepNyitottsag` §5.2.
 Entry record (exe, 32-bit): `+0` name ptr, `+4` file ptr, `+0xc..+0x34` description lines (10 x 4), `+0x34` difficulty index, `+0x38` race, `+0x3c` registry name, `+0x40` scores (10 x 4), `+0x68` names (10 x 4), `+0x90` skirmish kind (> 0 = skirmish).
 ELF (64-bit): `+0` name, `+8` file, `+0x18` lines (8 each), `+0x68` difficulty, `+0x6c` race, `+0x70` registry name, `+0x78` scores, `+0xa0` names, `+0xf0` skirmish kind. Start = 2.2 (scenario file or `SetScirmishGameOptions`).
 Name tables: difficulty `0xbbb248 + 0x14·d` (d = the entry's `difficulty`, or the skirmish's 1..4), technology `0xbbb2b0 + 0x14·n`, population `0xbbb300 + 0x14·n`
@@ -545,25 +530,21 @@ The selected row: `DesignKeret1(0x1b5, 0x43 + 0xf·(Sel − Start), 0xa5, 0xf, 0
 The race portrait (drawn first, not in high-score mode): `Brush3(MainScrBrushok[race + 3], a, a, a + 42, a + 340, w, w)`, `a = (int)((1 − P/100)·32)`,
 `w = (int)(P/100·64)`: the 64 × 64 picture's centre `w × w` at 1:1, white, no fade of its own; the remaster's pictures are
 `textures/main/fejek3/<race>a.bmp` (exe string 0x8568e8, reference 0x4f961b; race 8 reads past the 7-picture table). The settings' `%d` / `%s`
-lines go through `sprintf` on the code page's bytes (deviation 152 was the client's UTF-8 round trip). Description lines: `x = 0x2a + (row < 5 ||
-skirmish ? 0x48 : 0)`, y `0x15a + 0xd·row`, drawn when `!HighScoreMode || skirmish` [decompile; the client draws all rows at 0x2a and none for a
-skirmish entry: deviation]. Timing [obs, `probes/mainscr-fades.js`]: the ring press (script t 600) sets `Mode_Scenario_Valasztas` and `O`
-counts from it, but `ScenarioGombraRanyomtak`'s resets (O, K = 0, `Cel` 6) land 5 UI ticks after the release reached the screen (between UI
-ticks 658/659 for a release at 653); the list's own presses act on the next tick. Cause [obs, `probes/mainscr-input.js`, `mainscr-press2.json`]:
-the ring acts on its press (UI 650); `ScenarioGombraRanyomtak` sets `Mode_Scenario_Valasztas = 1`, then `LoadScenarioValasztasFejek` runs ticks
-651..658 inside the call (the panel fades in by 8), and only then come `Nyitottsag = 0`, `Cel = 6`, the other resets; `MainScr_Main` returns at 659.
-The script clock moves one tick a drawn frame, so 8 is the load's frame count there; in real play it is wall-clock. The client acts on the press and
-lands the resets 8 ticks later (`SCENARIO_LOAD_TICKS`), ignoring Esc meanwhile.
+lines go through `sprintf` on the code page's bytes. Description lines: §7.2 [obs: a scenario entry's rows 0..4 at x 114, from row 5 at 42]. Timing [obs, `probes/mainscr-fades.js`, `probes/mainscr-input.js`]: the ring acts on its press (UI 650);
+`ScenarioGombraRanyomtak` sets `Mode_Scenario_Valasztas = 1` (`O` counts from it), then `LoadScenarioValasztasFejek` runs ticks 651..658 inside
+the call (the panel fades in by 8), and only then come `Nyitottsag = 0`, K = 0, `Cel = 6`, the other resets; `MainScr_Main` returns at 659. The
+list's own presses act on the next tick. The script clock moves one tick a drawn frame, so 8 is the load's frame count there; in real play it is
+wall-clock. [obs] Right after the open (entry 0, the skirmish, selected) the exe already draws the selected-row frame on it.
 
 ### 9.4 Tutorial
-6.1 (five parts + back), then 2.2 (`TutorialSetCampaignGameOptions` 0x504250, `TutorialStart("main", n)`). Port: `Game::start_tutorial`
-(re/rules/tutorial.md: the §6 prologue with PlayerFaj[17] = 1, `InitNewGame(ticks, 1, 0, 0)`, `LoadScenario("tutorial/scn/tutorial<n>.scn", 0)`).
+6.1 (five parts + back), then 2.2 (`TutorialSetCampaignGameOptions` 0x504250, `TutorialStart("main", n)`): re/rules/tutorial.md §6
+(the prologue with PlayerFaj[17] = 1, `InitNewGame(ticks, 1, 0, 0)`, `LoadScenario("tutorial/scn/tutorial<n>.scn", 0)`).
 
 ### 9.5 Demo (`SelfPlaying`, head of exe 0x4fe3c0; ELF `StartDemoMode` 0x59a870)
 After the title video, scenario list and `LoadFajInfoText`: `ProgramMode = 0; SingleStartGame(); SetIdoSpeed(1, 0);` the 18-player setup of 9.1 with `EN = 1`, `PlayerKi[1] = 1`; `ReadDebugData()`; `InitNewGame(seed, 4, 0, 0)`; `StartStory(0xb77260)` if set;
 `OldIdo = OldIdo2 = (ticks/0x32)*0x32`; `TutorialStart("demo", 0)`; return (no menu state). `DemoMode_Init` (exe 0x60b7f0) is the other screens demo hook.
 
-**Unreachable in the GOG exe** [asm, obs 2026-10-24]: `IG2_gameInit` (exe 0x4dfa00) sets `SelfPlaying = 1` only when `FUN_0048fce0("demomode")` returns true, and 0x48fce0 is `xor al, al; ret` (the mobile build's option lookup, stubbed); nothing else writes 0xbae267 but `TutorialStop`'s clear. A run with `demomode` on the command line (`run_screen.py --exe-args demomode --probe probes/demo.js`) keeps it 0 and boots to the normal menu. The script `demo.tut` isn't shipped either (with it missing `TutorialStart` would run an empty script: `DatTarolo::LoadFile` 0x4c9ab0 fails silently). What it would do: mode 4 with no stars or fleets, empire 1 human and idle, the menu undrawn (`GFX_MainScr` returns when `SelfPlaying`), `DemoMode_Init`/`DemoMode_Frissit` (exe 0x60b7f0/0x60b740) a screen-change effect (`vector/demo/bumm.xvb` on entry, `mmub.xvb`/`mmub2.xvb` on exit, sound 10) driven from `TutorialFrissit`. The client has no demo mode, as the exe; a draft of the dead code is in `_local/decomp/help/demo-draft.md`.
+**Unreachable in the GOG exe** [asm, obs]: `IG2_gameInit` (exe 0x4dfa00) sets `SelfPlaying = 1` only when `FUN_0048fce0("demomode")` returns true, and 0x48fce0 is `xor al, al; ret` (the mobile build's option lookup, stubbed); nothing else writes 0xbae267 but `TutorialStop`'s clear. A run with `demomode` on the command line (`run_screen.py --exe-args demomode --probe probes/demo.js`) keeps it 0 and boots to the normal menu. The script `demo.tut` isn't shipped either (with it missing `TutorialStart` would run an empty script: `DatTarolo::LoadFile` 0x4c9ab0 fails silently). What it would do: mode 4 with no stars or fleets, empire 1 human and idle, the menu undrawn (`GFX_MainScr` returns when `SelfPlaying`), `DemoMode_Init`/`DemoMode_Frissit` (exe 0x60b7f0/0x60b740) a screen-change effect (`vector/demo/bumm.xvb` on entry, `mmub.xvb`/`mmub2.xvb` on exit, sound 10) driven from `TutorialFrissit`. A draft of the dead code is in `_local/decomp/help/demo-draft.md`.
 
 ### 9.6 Multiplayer entry and exit
 6.5. IP entry (`IOAzonosito` 0x97, 3 list entries, box ids 9..11), IRC entry (0x9a), "disconnected" box: 7.2 / 7.3. Returning from `Start` (0xe) / `Irc` (0x10) re-enters in `Mode_MultiPlayerSelected` without rebuilding the scene (2.1 step 5). Quit: ring 1, immediate (`ig2_running = 0`), no dialog, no fade.
@@ -584,7 +565,7 @@ After the title video, scenario list and `LoadFajInfoText`: `ProgramMode = 0; Si
 11. `MainSetSoundPan`: exe passes `x` only; `SetPan` is a no-op in the ELF. `GenerateUrhajoPosok`: the exe inlines `GetKameraPos` (with the `forgaspont` terms) where the ELF reads two return registers. `HozzaadKorok`, `MainScrInitNullBoxes`, `VisszaAllit..`/`LoadFajValasztasVektor`: same calls and constants in both. The `random()` call at the end of the exe's `FRISSIT_MainScr2` loops and `GenerateUrhajoPosok` is the "index > 2 / > 7" artefact, not an RNG draw. In the exe `VisszaAllitFajvalasztasKezdoPoziciok` (0x4f89b0) also holds the ELF `InitFajvalasztas` assignments; the race-close path of `FRISSIT_MainScr2` calls `FUN_00504380` instead.
 
 ## 11. Check in the asm (exe address, what)
-1. **0x4f65f0 (`FRISSIT_MainScr2`) is decompiled now**; the f32/f64 reading in 5 comes from a byte scan of the operands (prefix f2 = sd, f3 = ss) and must still be confirmed in the listing at: 0x4f6a3e (`addsd [0x852208] = 0.1`, preceded by `cvtps2pd`, followed by `cvtpd2ps` + `movss [0xbbabe0]`), 0x4f6776 / 0x4f684d (0.3), 0x4f67d5 (0.001), 0x4f67f9 (0.6), 0x4f6926 (0.005), 0x4f695e (0.02), 0x4f6b47 (0.005), 0x4f6ad7 / 0x4f6f16 (0.99), 0x4f6e6c (0.001 compare), 0x4f6fc6 (0.02), 0x4f70f1 (0.05), 0x4f71a5 (0.5), 0x4f71df (`divsd 25.0`). `MainScrMozgato` accumulates for minutes: the f64-add-then-round-to-f32 each tick is what the port must repeat.
+1. 0x4f65f0 (`FRISSIT_MainScr2`): the f32/f64 reading in 5 comes from a byte scan of the operands (prefix f2 = sd, f3 = ss) and must still be confirmed in the listing at the f64 sites §5 names (plus 0x4f6ad7, 0.99); 0x4f6a3e is `addsd [0x852208] = 0.1`, preceded by `cvtps2pd`, followed by `cvtpd2ps` + `movss [0xbbabe0]`. `MainScrMozgato` accumulates for minutes: the f64-add-then-round-to-f32 each tick is what the port must repeat.
 2. 0x4f70b6..0x4f7184: the `Tav` step and clamp (the decompile of the compare chain is garbled): confirm that the new value is `Cel` when it reaches or passes it, and that the `Cel == 5.0` branch (`MaxMainKorok`, `Cel = 1.0`) runs only on reaching it going up. Also the compare `cmp [0xbbb0c4], 0xbb8` at 0x4f7044.
 3. 0x4f6bf0..0x4f6d60 (meteor loop) and 0x4f6c9e..0x4f6fd0 (ship loop): the snapshot-and-zero of the timers (`iVar3`) and the order of the three `rand()` calls; the `do { } while (< 3)` loop end 0x4f6d9f; the `(1 - K/100)*10 + 1` (f32) factor (`divss 100.0` 0x4f6bec, `movss 10.0` 0x4f6ba2 is the +-10 step).
 4. 0x4f6040 (`ChangeGalaxyColors`): the `ftol` helper call (0x819460) near 0x4f607x: confirm `A = (int)(GT*pa)` goes to bits 24..31 and the channel order (pb << 16, pg << 8, pr).
@@ -593,91 +574,65 @@ After the title video, scenario list and `LoadFajInfoText`: `ProgramMode = 0; Si
 7. 0x500040 (`MainSetSoundPan`): how `x` is passed to 0x55e590 (the decompile casts it to `int`) and the body of 0x55e590 (empty?).
 8. 0x4f8240, ~0x4f8170 and the exe `GenerateKod2` (call sites in `Main3DInit`), 0x4f7e60 (`GenerateGalaxy`): not decompiled; confirm the ELF reading of 3.2 (draw order, the per-frame `srand(400)`, the colour byte order). Bytes `push 0x190` seen at 0x4f8185 and 0x4f8254.
 9. 0x4f8780 (`HozzaadKorok`): nothing open except the meaning of the property bits (2, 4, 8, 0x20) in `sg3d` (`PropertiesOn` 0x456a50).
-10. Items 3..11 of the first pass still stand: 0x500270 meteor block (labels 0x500a7b, 0x500b33, 0x500bc3: the dropped `SetObjTransparency` argument and `METKOZ`), the ring loop (`RotateObj` third argument), the ship block (loop ending at `< 0xd84360`, labels 0x500f25, 0x500fd5, 0x50105c: transparency, matrix operand order), the texture loops from 0x503271 (table choice, touch-mode test, loop bound), the hit-test (`* 639.0 / 639.0`), 0x4fefc0 (the two `activateScreen` hashes; `Cel = 5.0` joins), 0x4f96a0 (`random()` at 0x4fa969 is a bounds artefact; `(int)-METMAX`; `hanyhattergalaxis` store at 0xbbd13c; `sdl_width` / `sdl_height` 0xb7721c / 0xb772a0), 0x4f5e90 (`Nehezseg` stores, `InitNewGame` args), 0x4fecc0 (`mcd` mapping, the `comiss` loop test).
+10. Also open: 0x500270 meteor block (labels 0x500a7b, 0x500b33, 0x500bc3: the dropped `SetObjTransparency` argument and `METKOZ`), the ring loop (`RotateObj` third argument), the ship block (loop ending at `< 0xd84360`, labels 0x500f25, 0x500fd5, 0x50105c: transparency, matrix operand order), the texture loops from 0x503271 (table choice, touch-mode test, loop bound), the hit-test (`* 639.0 / 639.0`), 0x4fefc0 (the two `activateScreen` hashes; `Cel = 5.0` joins), 0x4f96a0 (`random()` at 0x4fa969 is a bounds artefact; `(int)-METMAX`; `hanyhattergalaxis` store at 0xbbd13c; `sdl_width` / `sdl_height` 0xb7721c / 0xb772a0), 0x4f5e90 (`Nehezseg` stores, `InitNewGame` args), 0x4fecc0 (`mcd` mapping, the `comiss` loop test).
 
 ## 12. Unknowns (where I looked)
 - Whether the ten `szrke{i}.xvb` files differ in geometry or are the same quad; the sub-mesh count of `korke1.xvb` (asset-finder on `vector/main`).
 - The property bits 2, 4, 8, 0x20 (searched `re/screens/render.md`, `re/formats`): semantic unknown.
 - The vertex-colour byte order of particles (which byte is red): not found in the decompiles; check by capture.
-- Exe code not decompiled: `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240, `DeGenerateKod` (~0x4f8170), `GenerateKod2` (symbol address not read), `mainOldalsoFenyekBe` / `Ki`, `GetKameraPos`. (The race, scenario and sound functions are decompiled since part 2: header table above.) `GenerateKod`, `DeGenerateKod`, `GenerateKod2` have **no decompile anywhere under `_local/decomp`**; I read them from the ELF disassembly (`_local/decomp/placement/ig2.asm`, lines 333426..333700).
+- Exe code not decompiled: `GenerateGalaxy` 0x4f7e60, `GenerateKod` 0x4f8240, `DeGenerateKod` (~0x4f8170), `GenerateKod2` (symbol address not read), `mainOldalsoFenyekBe` / `Ki`, `GetKameraPos`. (The race, scenario and sound functions are decompiled: §0.) `GenerateKod`, `DeGenerateKod`, `GenerateKod2` have **no decompile anywhere under `_local/decomp`**; I read them from the ELF disassembly (`_local/decomp/placement/ig2.asm`, lines 333426..333700).
 - The RNG hypothesis of 3.2 (per-frame `srand(400)` making the respawns near-deterministic): not observed at run time.
 - Click sounds of the rings: none in the code read; the generic hot-spot code (`Mouse_Darabol`, `Mouse_Szoveg` tooltip drawing, `Mouse_Tipus`) was not read; tooltip texts are `GetString(15, 1, n)` (asset-finder job).
-- The race scene's rings (`kezdo_` subs 9..14) [FX17b part 3, probe `race_rings.js`]: the client's CPU lighting matches the exe's (the exe's per-vertex colours are exactly `fenyekszamolasa`'s from the same file normals and rotation chains; mean error 0; front light about 56 per channel). The drawn faces in the client took the other side's lighting, so the normals of rings B and C are z-mirrored in `mainscr_scene.rs` (empirical; the cause is open, deviation 148); the rings are neutral lit stone like the exe's.
+- The race scene's rings (`kezdo_` subs 9..14): the exe's vertex colours match `fenyekszamolasa` (§13), yet a renderer using the file normals as-is shows the other side's lighting; which face/normal convention causes it is open (§14).
 
-## 13. Runtime observations (`tools/trace/probes/mainscr.js`, `run_screen.py --boot`)
-`run_screen.py <install> <save> <out> --kep 15 --run --boot --script tools/trace/scripts/mainscr.json --probe
-tools/trace/probes/mainscr.js`: the menu as the exe boots (no scenario, no save; `--boot` in `screen.js`), one UI tick a
-drawn frame. The probe logs `Mainscreen_Update3D`'s state (first 12 calls, then every 50th) and the centres
-`TransformPoint` (exe 0x52cc90) returns.
+## 13. Runtime observations
+Boot run: `run_screen.py <install> <save> <out> --kep 15 --run --boot --script tools/trace/scripts/mainscr.json --probe
+tools/trace/probes/mainscr.js` (the menu as the exe boots, no scenario, no save; one UI tick a drawn frame). The probe logs
+`Mainscreen_Update3D`'s state (first 12 calls, then every 50th) and the centres `TransformPoint` (exe 0x52cc90) returns.
 - **Ring hit centres** = `ring_pos · 600/3000 + (320, 240)`: `GetObjPos × 1024` hands `TransformPoint` the `MoveObj`
   position itself, so the rings (and meteors, ships: `SetRelative(false)`) are camera-fixed; the camera (`kamerapont`,
   `elforgatas`) only moves the relative objects (galaxy mesh, clouds, pictures, dust): `e = M·p − kamerapont`,
-  `M = CreateMatrix(elforgatas, 0, 0)`. At M 25.1: ring 0 (384.94, 701.30, −3000) → (396.99, 380.26) … (test
-  `ring_centres_match_the_exe`).
+  `M = CreateMatrix(elforgatas, 0, 0)`. At M 25.1: ring 0 (384.94, 701.30, −3000) → (396.99, 380.26).
 - **Start**: `Update3D`'s first call comes 2 UI ticks after the script's t 0 with M 0, `Tav` 10, GT 0; from there
-  every tick M +0.1, `Tav` −0.05 (1.0 at call 181), GT +0.003. `kamerapont` (200, −100, 2100) at M 0.
+  every tick M +0.1, `Tav` −0.05 (1.0 at call 181), GT +0.003 (1.0 at t ~333). `kamerapont` (200, −100, 2100) at M 0.
 - **The libc stream is deterministic at boot** (two boots alike): the four galaxy clouds start 60 draws into the CRT's
-  default stream (seed 1, no `srand`), in `Main3DInit` order (test `clouds_match_the_exe`: the first three particles
-  of each cloud); the meteors and ships come from `srand(400)` + 7000 draws (after the last `GenerateKod2`), as §3.2
-  computed: meteors (−4339, −956, −10050), (−1254, −3312, −18238), (−2493, −474, −8061), ships 0..7 at (977, −843,
-  −8837) … (1623, −506, −7206), ship 0's speed (−0.6, 0.4, 11.8) (test `meteors_and_ships_match_the_exe`). The first
-  meteor respawn (meteor 2, timer 449 at UI 500): (−660, −1709, −51219).
-- **Input latency**: a script press at t 350 starts the fly-out as the client's press at t 352 does (`Mouse_Lenyom`
-  reaches `Update3D` two ticks after the SDL event).
+  default stream (seed 1, no `srand`), in `Main3DInit` order; the meteors and ships come from `srand(400)` + 7000 draws
+  (after the last `GenerateKod2`), as §3.2 computed: meteors (−4339, −956, −10050), (−1254, −3312, −18238), (−2493, −474,
+  −8061), ships 0..7 at (977, −843, −8837) … (1623, −506, −7206), ship 0's speed (−0.6, 0.4, 11.8). The first meteor
+  respawn (meteor 2, timer 449 at UI 500): (−660, −1709, −51219).
+- **Input latency**: `Mouse_Lenyom` reaches `Update3D` two ticks after the SDL event (a script press at t 350 starts the
+  fly-out at t 352).
 - **Sounds** (`--sounds`): no `PlaySound`/`PlaySoundGlobal`/`PlayWav`/`PlayMp2` for the hover, the ring presses or the
-  fly-out (the rings are silent). The meteors' and ships' `MainPlaySound` (§8) goes through `SoundEngine` directly, not
-  through the hooked functions: the action → sound table is "none" for every ring; the scene's sounds are the meteor
-  (`Asteroid1..3.wav`, volume 70) when a meteor first passes z −9000 and the ship (`Shipout1..3.wav`) while a ship is
-  within z ±3000 (§4 steps 6–7; for the audio module).
-- **Lighting** [obs]: the meteors draw near black (a dim light only); the ships show the side lights' blue and warm
-  highlights.
+  fly-out: the action → sound table is "none" for every ring. The meteors' and ships' `MainPlaySound` (§8) go through
+  `SoundEngine` directly: the meteor (`Asteroid1..3.wav`, volume 70) when a meteor first passes z −9000, the ship
+  (`Shipout1..3.wav`) while a ship is within z ±3000 (§4 steps 6–7). The skirmish arrows' `PlaySoundGlobal(0)` comes on the
+  press tick.
+- **Lighting**: the meteors draw near black (a dim light only); the ships show the side lights' blue and warm highlights.
+  The race scene's rings (`kezdo_` subs 9..14; probe `race_rings.js`): the exe's per-vertex colours are exactly
+  `fenyekszamolasa`'s from the file normals and rotation chains (front light about 56 per channel); neutral lit stone.
+  The difficulty labels and flares draw over the race ring and head.
+- **Over time** (`scripts/mainscr-long.json`, t 400..4000): no light or colour changes after the fade-in; only the camera
+  (§4 step 1) and the galaxy mesh's and clouds' turns move. The galaxy's brightness swings about ±25 % (mean red of the
+  galaxy region 40..56 at t 400..3400, twice that at t 4000 when the core fills the view) as the core turns.
+- **Name entry**: `MultiOpenInfoSocket` (exe 0x4fe950) refuses an empty name, so the name box stays open.
 
-### 13.1 Capture comparison (`run_screendiff.py … main --script tools/trace/scripts/mainscr.json`)
-Best-offset mean per region (pass ≤ 6), 2026-10-22, 800 × 600: frame 2.6 / 4.0 / 5.5 at t 5 / 60 / 120 (pass), 6.6–8.0
-from t 180 on, 10.0 at t 360 (the fly-out). The rings, labels and hover sit on the exe's (grey on the heat map); what is
-left is in `re/deviations.md`: the top-left picture's tint (greener), the galaxy mesh's arms (sharper, ~4 % bright),
-the dust points, the small bottom galaxy, the exe's own mouse pointer (the client draws none yet), the fly-out's shape.
-
-## 13.2 Capture comparison, part 2 (2026-10-23; `run_screendiff.py main --script mainscr-race.json | mainscr-scenario.json | mainscr-multi.json`)
-Best-offset frame mean, pass <= 6 (details `re/screens/diff-results.md`). Race: t 610 11.2 (ring label phase), 700 13.6, 800 9.5,
-905 9.6, 960 10.0, 1010-1250 8.2-9.3, 1350 9.0, 1420 19.7, 1480 10.8, 1550 11.0, 1610 16.0, 1650 38.4, 1700 72.8 (exit mid-zoom),
-1750 10.1, 1800 0.86. The heads' circle, centre, radius and start stack, the race box hits, and the blurb's position, rows,
-colour and cursor match the exe. Scenario list: static frames 4.3-5.2 (pass); transitions 7.8-11.4; the 3 arrow clicks
-`PlaySoundGlobal(0)` at the exe's ticks. Multi (name entry): t 400-510 6.1-6.7, 530-650 ~10.5-11, 700-800 7.1-9.5. Differences are
-deviations 148-155.
-FX11 (2026-10-24, the same exe captures): race t 610 8.3, 700 10.8, 800-960 7.0-8.0, 1010-1350 5.3-6.7, 1420 17.6, 1480-1610 8.1-9.5,
-1650 15.6, 1700 26.5 (from 38 / 73), 1750 5.1, 1800 0.6; scenario static 2.4-3.3, t 650 4.0 (from 20.9), 820 8.5, 880 9.0, 1050 5.6,
-1420-1600 3.8-7.7; multi t 400-510 3.2-4.2, 530-650 7.5-8.2 (the exe's name box stays open: its name was empty, the scripted keys never typed
-into it, and `MultiOpenInfoSocket` 0x4fe950 refuses an empty name; the client's typed "bob" closes it); main 4:3 t 5-700 2.6-5.3 except the
-fly-out t 360 7.8, 16:9 all under 6. FX17b (row 305): the difficulty labels (KÖNNYŰ/NEHÉZ/NORMÁL) and flares are drawn over the race ring and head in the exe (t 1420); the client's `szrke{i}` label rings (additive, no depth write) now come after the race scene's opaque models: t 1420 17.6 -> 14.3, 1480 8.5 -> 7.8. What is left: the meteors' material (near black, faintly lit in the exe), the race rings' tint (§3.1), and
-3D RNG/pose (the saucer that respawns in the exe's exit, meteor positions).
-
-### 13.3 The galaxy over time (FX17b, row 315; `scripts/mainscr-long.json`, grabs t 400..4000)
-The exe changes no light or colour after the fade-in (GT reaches 1.0 at t ~333): what moves is the camera (§4 step 1), the galaxy
-mesh's and the four clouds' turns. The galaxy's brightness still swings about ±25 % (mean RGB of the galaxy region 40..56 red at
-t 400..3400, twice that at t 4000 when the core fills the view) as the core turns towards or away from the camera; the client
-follows it within 1..5 units at 6 of 7 grabs (galaxy region best-offset 5.4..10.7, t 2200 30.0 from a meteor that hangs over the
-core in the exe and elsewhere in the client). The rest is the meteors' and ships' respawn poses (§3.2 RNG trap, deviations 150).
-
-### 13.4 Scenario description lines (row 291; `scripts/mainscr-desc.json`, rows 2/5/1 selected, grabs t 790-1500)
-Description lines match the exe at t 1000/1250/1500 (x 114 for k 0..4, 42 from k 5, y 0x15a + 0xd k, line count); static frames 2.2-3.6, the fade grabs t 900/1150/1400 9.0-12.8 (picture fade phase). Open: at t 790 the exe draws the selected-row frame on the Skirmish row, the client none visible (row 362, fixed 2026-10-25: the client's list took no part in the global row-frame phase and started fresh, so it stayed hidden; now it carries the phase (`carry_row_frame`, owner 6), keeps it across the post-load rebuild and asks the frame every headless tick; t 790 rings_top 3.33 -> 2.70, frame 3.58 -> 3.25, t 1000-1500 unchanged).
-
-Selected-row frame (`DesignKeret1`, row 153, fixed 2026-10-25 with `ROW_EDGE`): frame box (540,80)-(760,240) at t 790/1000/1250/1500 mean abs diff 5.17/4.15/4.86/4.72 -> 4.00/3.97/4.08/4.51.
-
-## 14. Port status (`ig2-client::mainscr`, `mainscr_scene`, `mainscr_race`, `mainscr_scenario`)
-Part 1: the 3D scene (rings + labels with the hover texture, galaxy mesh, the four clouds exact, the pictures, the dust,
-meteors, ships), the 10 ms tick (§5.1 items 5-8, §5.2 fade-in, §5.3, §5.5), the ring hit-tests and the menu changes,
-load game (from `--save`; Options' load slots) and quit; the title and credits videos (`video.md`).
-Part 2 (ported): the race choice (`mainscr_race.rs`: `FRISSIT_MainScr2` state, the `kezdo_.xv` opening 0..90, `MozgatKor`
-placement, race boxes from the projected ring centres, highlight/confirm, the blurb typer + `KiirFajInfoSzoveg`, Esc cases),
-the difficulty rings (label set 4, at rest at Tav 1.3), `Start::Campaign` -> `Game::new_campaign` -> `World::new_game` + intro,
-`Starmap_Belep` music and start voice; the scenario / skirmish list (`mainscr_scenario.rs`: `LoadScenarioList` order, the
-English "Skirmish" title fallback, fades, rows, scroll knob, 7 skirmish settings with `PlaySoundGlobal(0)` clicks,
-high-score / description toggle, fabscr.txt default scores); scenario start -> `Game::start_scenario`; the tutorial ring ->
-`Game::start_tutorial` (ig2-sim, verified byte-exact, `new-game.md` §16) -> starmap; the multiplayer name entry
-(`EnterNameMode`: A-Z a-z 0-9 _, max 9, Enter accepts; stored as `MultiplayerNev` in the remake's settings); the exit
-animation (`MainScrKilepesValtozo` 100 -> 0 over 200 ticks, camera z, meteor speed-up, GT fade, `loadi1`/`loadi2` plates
-with the `load<n>` picture). Tests: `mainscr_race::tests`, `mainscr_scenario::tests`, `world::tests::scenario_and_tutorial_starts_build_worlds`.
-The skirmish start goes to `Game::start_skirmish` (`SetScirmishGameOptions`: race, computers, the entry's kind, technology, the planet and money tables' values, difficulty, population). The local / inet rings open our MP screens (`mp_lobby.rs`, `start.md`, ADR 0014). Not yet: the
-tutorial script/overlay (U31), the high-score name entry after a scenario, the
-IP / IRC entry and the disconnected box, the meteor and ship sounds (`MainPlaySound`), the demo (§9.5), the ring tooltips.
+## 14. Client status
+Modules `ig2-client/src/`: `mainscr.rs` (state, tick §5, hit-tests, menu changes, load game, quit, exit animation with the
+`loadi1`/`loadi2` plates), `mainscr_scene.rs` (rings + labels, galaxy mesh, four clouds, pictures, dust, meteors, ships;
+title and credits videos via `video.md`), `mainscr_race.rs` (§9.2: opening, `MozgatKor`, race boxes, blurb typer,
+difficulty rings, Esc cases), `mainscr_scenario.rs` (§9.3: list, fades, scroll knob incl. the drag rules of §6.3
+`ScenarioList::press/release/middle/hot`, skirmish settings, high-score / description toggle, `fabscr.txt` scores; the open
+lands the resets 8 ticks after the press, `SCENARIO_LOAD_TICKS`, ignoring Esc meanwhile), `new_game.rs` (`StartTexts`,
+`campaign` = `CampaignGameStart`'s `InitNewGame`; `World::new_game` + `campaign_intro`, then the main music and start
+voice). Starts: `Game::new_campaign`, `start_scenario`, `start_skirmish`, `start_tutorial`; the local / inet rings open the
+remake's MP screens (`mp_lobby.rs`, ADR 0014); the MP name entry (A-Z a-z 0-9 _, max 9) is stored in the remake's settings.
+CLI `--new-campaign C[,D[,SEED[,TICKS]]]`. Tests: `mainscr_race::tests`, `mainscr_scenario::tests`,
+`world::tests::{new_campaign_world_matches_the_exes_start, scenario_and_tutorial_starts_build_worlds}`, the scene tests
+`ring_centres_match_the_exe`, `clouds_match_the_exe`, `meteors_and_ships_match_the_exe`.
+Captures: `run_screendiff.py … main --script tools/trace/scripts/mainscr.json` (also `mainscr-race`, `-scenario`, `-multi`,
+`-long`, `-desc`.json); results in `re/screens/diff-results.md`.
+Missing: tutorial script/overlay (U31), the high-score name entry, IP / IRC entry and the disconnected box, the meteor and
+ship sounds, the ring tooltips, the debug Enter (no `DEBUGLEHET`); no demo mode (as the exe).
+The race rings B and C draw with z-mirrored normals in `mainscr_scene.rs` (empirical; the exe's lighting matches, the
+cause is open). Open deviations: 20 (fly-out pace, RNG poses), 150 (respawning saucer, meteor material), 154 (picture
+slide), 157 (MP-ring leftovers).

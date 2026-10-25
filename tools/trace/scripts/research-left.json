@@ -1,6 +1,6 @@
 {
  "screen": "research",
- "note": "FX3 (re/deviations.md 280) on quick-1.sav: the left-press baseline of research-right.json. PgUp twice and down (civil buildings, tech 2, startable); right press on start/stop 1 (t 230), urgent 4 (t 300), the power category 7 (t 380), the running project 0x19 (t 450), a list row (ResearchGfx2D_2, t 520). Times are UI ticks from the first frame the screen is up.",
+ "note": "FX3 on quick-1.sav: the left-press baseline of research-right.json. PgUp twice and down (civil buildings, tech 2, startable); right press on start/stop 1 (t 230), urgent 4 (t 300), the power category 7 (t 380), the running project 0x19 (t 450), a list row (ResearchGfx2D_2, t 520). Times are UI ticks from the first frame the screen is up.",
  "events": [
   {"t": 170, "key": "pageup"},
   {"t": 180, "key": "pageup"},

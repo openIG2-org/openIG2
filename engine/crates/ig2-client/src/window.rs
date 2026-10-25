@@ -271,14 +271,14 @@ struct App {
     /// The mouse buttons held (bit 0 left, bit 1 right): `Mouse_Gomb` stops the colony's edge scroll.
     mouse_held: u8,
     /// `MainCallBackEventHandler`'s held bytes (0xdb467e/f: bit 0 left, bit 1 right) over every route, and the buttons
-    /// whose release a middle click already gave (their real release is no edge, row 379).
+    /// whose release a middle click already gave (their real release is no edge).
     buttons_down: u8,
     released_early: u8,
     /// The pointer is over the window (a `CursorMoved` came, no `CursorLeft` since): the edge scroll reads it.
     pointer_in: bool,
     /// The edge scroll may read `cursor_px`. In play it starts at (0, 0) as `Mouse_Phys_x/y` does (written only by
     /// SDL_MOUSEMOTION, `MainCallBackEventHandler` exe 0x4e34e1; nothing warps the pointer), so the starmap scrolls
-    /// up-left until the first move (row 357); a headless script run waits for its first move.
+    /// up-left until the first move; a headless script run waits for its first move.
     pointer_seen: bool,
     /// The window's pointer is hidden (the colony screen draws its own).
     cursor_hidden: bool,
@@ -646,7 +646,7 @@ impl App {
             star_buttons: Default::default(),
             help_then_options: false,
             star_mask: None,
-            // The exe's boot values (`.data`): `dkm` 0, `dkmcel` π/2 (row 362).
+            // The exe's boot values (`.data`): `dkm` 0, `dkmcel` π/2.
             dk: crate::kit::DesignFrame::with_phase(0.0, std::f32::consts::FRAC_PI_2, 0.0),
             dk_owner: 0,
         }
@@ -1680,7 +1680,7 @@ impl App {
     fn starmap_release(&mut self) {
         // Also under DISABLE STARMAP (hot-spots off, exe 0x5b898f): an open menu holds `Mouse_Megfogva`, so
         // `IG2_gameUpdate` keeps the pressed hot-spot as `AktIkon` (exe 0x4e0440, no `Mouse_Darabol` while held) and
-        // `Starmap_Main`'s release arm still runs (re/deviations.md row 335).
+        // `Starmap_Main`'s release arm still runs.
         let sel = self.selection();
         if self.menus.menu.is_some() {
             let dos = self.menus.release_menu(&self.world.game.state, &sel);
@@ -1947,7 +1947,7 @@ impl App {
         }
         self.audio.frame(human_race(&self.world.game.state));
         fr.s.frame();
-        // The main menu (`AktKep` 15) steps the row frame's globals too; the scenario list's frame carries them (row 362).
+        // The main menu (`AktKep` 15) steps the row frame's globals too; the scenario list's frame carries them.
         let list = fr.s.scenario.as_mut().map(|sc| &mut sc.frame);
         carry_row_frame(&mut self.dk, &mut self.dk_owner, if list.is_some() { 6 } else { 0 }, list, due);
         fr.s.hover(fr.at);
@@ -2041,6 +2041,12 @@ impl App {
         use crate::mp_lobby::Out;
         match o {
             Out::Click => self.audio.play(crate::audio::CLICK),
+            Out::Copy(s) => {
+                if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(s)) {
+                    eprintln!("ig2-client: clipboard: {e}");
+                }
+                self.audio.play(crate::audio::CLICK);
+            }
             Out::Close => {
                 if let Some(f) = &mut self.front {
                     f.mp = None;
@@ -3081,7 +3087,7 @@ impl App {
         use crate::spacewar_ui::Key as K;
         use winit::keyboard::{KeyCode, PhysicalKey};
         let down = event.state == ElementState::Pressed;
-        // MP: `DoKeyboard`'s chat entry (input.md §5; `AktKep` 0xb < 0xd) opens and takes the keys here too (row 243).
+        // MP: `DoKeyboard`'s chat entry (input.md §5; `AktKep` 0xb < 0xd) opens and takes the keys here too.
         if down && self.chat_key(&event.logical_key.as_ref()) {
             return;
         }
@@ -3156,6 +3162,22 @@ impl App {
         use crate::options::EntryKey;
         let Some(f) = &mut self.front else { return };
         if let Some(mp) = &mut f.mp {
+            // Ctrl+V pastes (a join code), Ctrl+C copies the host's join code.
+            if self.modifiers.control_key() {
+                match k.as_ref() {
+                    Key::Character(c) if c.eq_ignore_ascii_case("v") => match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+                        Ok(text) => mp.paste(&text),
+                        Err(e) => eprintln!("ig2-client: clipboard: {e}"),
+                    },
+                    Key::Character(c) if c.eq_ignore_ascii_case("c") => {
+                        if let Some(o) = mp.copy() {
+                            self.front_mp_out(o);
+                        }
+                    }
+                    _ => {}
+                }
+                return;
+            }
             let escape = matches!(k.as_ref(), Key::Named(NamedKey::Escape));
             let key = match k.as_ref() {
                 Key::Named(NamedKey::Enter) => Some(EntryKey::Enter),
@@ -3224,7 +3246,7 @@ impl App {
         let at = self.virtual_cursor();
         self.mp_wait.hover(at, now);
         // `MOUSE_DrawOver` tests `Mouse_Gomb` (0xdb4650: left or right held) every pass, a level: a button held as the
-        // items arm acts too (deviation 377).
+        // items arm acts too.
         if self.mp_wait.is_open() && self.mouse_held & 3 != 0 {
             self.mp_wait_press();
         }
@@ -3240,7 +3262,7 @@ impl App {
         }
     }
 
-    /// The story's UI effects (deviation 231, [`crate::world::StoryUi`]): the storyline into the registry (written to
+    /// The story's UI effects ([`crate::world::StoryUi`]): the storyline into the registry (written to
     /// `options.dat` at once; the exe writes it with the next `SaveGlobalRegistrySettings`), the colony screen asked
     /// for, the earthquake, the riot's pause.
     fn take_story_ui(&mut self) {
@@ -4293,7 +4315,7 @@ impl ApplicationHandler for App {
             v.release();
         }
         // The pointer is in the window on every screen (the main menu's, help's and options' arms below don't reach the
-        // game's own; `frame_overlay` draws none while it is out, deviation 304).
+        // game's own; `frame_overlay` draws none while it is out).
         if let WindowEvent::CursorMoved { .. } | WindowEvent::CursorEntered { .. } = event {
             self.pointer_in = true;
         }
@@ -4948,9 +4970,9 @@ impl App {
                 self.colony_input(|ui, ctx, at, now| ui.release(ctx, at, true, now));
             }
             // A second button's press is no new press on the starmap (`Mouse_Lenyom` is the first button down only,
-            // `Mouse_Lekerdez` exe 0x5105d0): over a held console spot it is the spot's (row 358); after a press on the
+            // `Mouse_Lekerdez` exe 0x5105d0): over a held console spot it is the spot's; after a press on the
             // map, which latches hot-spot 0x35 (`Mouse_Megfogva`, `Starmap_Main` exe 0x5b54a2), no console spot, pick or
-            // order starts (row 363).
+            // order starts.
             (MouseButton::Left | MouseButton::Right, ElementState::Pressed) if on_starmap && (self.console_held.is_some() || self.mouse_held & !bit & 3 != 0) => {}
             (MouseButton::Left, ElementState::Pressed) => {
                 self.menus.held = true;
@@ -4959,7 +4981,7 @@ impl App {
                 }
             }
             // A held console spot stays latched (`Mouse_Megfogva`) until every button is up (`Mouse_Felenged`,
-            // `Mouse_Lekerdez` exe 0x5105d0); a second button's press there is taken by it (row 358).
+            // `Mouse_Lekerdez` exe 0x5105d0); a second button's press there is taken by it.
             (MouseButton::Left | MouseButton::Right, ElementState::Released) if self.console_held.is_some() => {
                 if self.mouse_held & 3 == 0 {
                     self.menus.held = false;
@@ -5025,8 +5047,8 @@ impl App {
 
     fn colony_camera_key_by(&mut self, physical: winit::keyboard::PhysicalKey, logical: Key<&str>, down: bool) -> bool {
         use winit::keyboard::{KeyCode, PhysicalKey};
-        // `DoKeyboard` (exe 0x4db1a0 line 186) hands every key up to the screen's handler, a text entry up or not
-        // (deviation 373); a key down goes to the entry.
+        // `DoKeyboard` (exe 0x4db1a0 line 186) hands every key up to the screen's handler, a text entry up or not;
+        // a key down goes to the entry.
         let entry = self.menus.rename.is_some() || self.hud.as_ref().is_some_and(|h| h.chat.entry.is_some());
         if self.overlay.is_some() || self.spy.is_some() || self.colony.is_none() || (entry && down) {
             return false;
@@ -5050,7 +5072,7 @@ impl App {
         }
         let Some(c) = &mut self.colony else { return false };
         let k = &mut c.ui.cam_keys;
-        // VK 0x25..=0x28 by the logical key (a NumLock-off numpad sends them too, deviation 375), numpad + / − by
+        // VK 0x25..=0x28 by the logical key (a NumLock-off numpad sends them too), numpad + / − by
         // the physical one.
         let Some(i) = do_keyboard::colony_camera_key(physical, logical) else { return false };
         let flag = match i {
@@ -5109,7 +5131,7 @@ impl App {
     fn starmap_key_by(&mut self, physical: winit::keyboard::PhysicalKey, logical: Key<&str>, down: bool) -> bool {
         use crate::starmap::CamKey as K;
         use winit::keyboard::{KeyCode, PhysicalKey};
-        // A key up reaches the handler with the rename's entry up too (`DoKeyboard` line 186, deviation 372).
+        // A key up reaches the handler with the rename's entry up too (`DoKeyboard` line 186).
         if self.view.is_none() || self.colony.is_some() || self.under_screen() || (self.menus.rename.is_some() && down) {
             return false;
         }
@@ -5219,7 +5241,7 @@ impl App {
         };
         // A fleet's rename sets its custom-name bit for good (`+0x52 |= 0x800`, `Starmap_Main` exe 0x5b62be / 0x5b6cf4;
         // Esc or a press elsewhere keeps it): `Show_Flottak2d` draws its name on the map from then on. Only that draw
-        // and the Elem story read it, so the local edit (no message, as the name's) can't desync (row 234).
+        // and the Elem story read it, so the local edit (no message, as the name's) can't desync.
         if r.fleet {
             if self.world.net.is_some() {
                 // Multiplayer: shown here at once, the bit and the name go through the lockstep when the rename ends

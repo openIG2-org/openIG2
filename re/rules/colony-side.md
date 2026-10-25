@@ -1,6 +1,6 @@
 # Colony side systems (rebellion, conquest, autobuild, money, per-empire totals)
 
-Status: **verified at runtime** (§12): whole economy steps with rebellions and autobuild, and direct calls of the conquest, rebellion, colonisation and money functions, reproduced bit-exactly by `engine/crates/ig2-sim` (`colony_side.rs`, `tests/colony_side_trace.rs`). Companion to `colony-economy.md`,
+Port status: ported in `engine/crates/ig2-sim` (`colony_side.rs`, test `tests/colony_side_trace.rs`), bit-exact (§12). Companion to `colony-economy.md`,
 which covers the planet economy itself. Everything here runs inside or next to the exe's
 `FRISSIT_Planet` (**0x474930**) or is called from it. ELF names are the symbol oracle; the exe is normative.
 No rule values are given; tables are read from the user's exe (ADR 0004) or install text.
@@ -185,9 +185,9 @@ if score > best[owner].score: best[owner] = (MitEpit[best_c], score, p)
 When the energy branch picks category 1 and no power plant is researched, `MitEpit[1] = 0` and the test
 reads `inactive[0]`: the exe zeroes the per-type arrays only for types 1..=55 (0x4755a3 onwards), so this
 is an uninitialised stack slot (`[ebp−0x58c]`, only ever accessed indexed; type 0 is never counted).
-Both outcomes occur at runtime: positive → no purchase (most traced sessions); ≤ 0 → building 0 is
+Both outcomes occur at runtime: positive → no purchase (the common case); ≤ 0 → building 0 is
 "bought": its price is checked, then the colony-map search reads before the footprint table and fails,
-so the planet's counter becomes −1000 (9 steps of one fuzzed session). The port makes this explicit
+so the planet's counter becomes −1000. The port makes this explicit
 (`ZeroPick::Skip`, default, or `ZeroPick::Attempt`); the replay accepts a step when either reproduces it.
 `active/inactive/building/effect` are the economy's per-type counts (`colony-economy.md` §4 step 6).
 Abandoning planet `p` (§8) clears `best[owner]` if it points at `p`.
@@ -292,4 +292,5 @@ Stream 1: one roll per rebellion candidate; stream 8: one or two rolls per rebel
 - The exe snapshots `LaborSzintOsszes` with stride 16 from `+4`: same indices as the ELF.
 
 ## 12. Verification
-See `traces/2026-10-15-colony-side.md`.
+Whole economy steps with rebellions and autobuild, and direct calls of the conquest, rebellion,
+colonisation and money functions, replay bit-exactly. See `traces/2026-10-15-colony-side.md`.

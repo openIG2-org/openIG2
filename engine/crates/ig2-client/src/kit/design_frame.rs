@@ -3,7 +3,7 @@
 use super::Virtual;
 use crate::render::{kind, Blend, Frame, Instance, TexId};
 
-/// The device-pixel nudge that gives a device row centred on a virtual row edge to the row above (row 153).
+/// The device-pixel nudge that gives a device row centred on a virtual row edge to the row above.
 const ROW_EDGE: f32 = 0.01;
 
 /// `DesignKeret1` (ELF 0x53f780): the animated frame around a chosen row (the research lists, the info screen's
@@ -123,7 +123,7 @@ impl DesignFrame {
                 if col.iter().any(|&v| v > 0.0) {
                     // Each virtual pixel fills its own device rectangle; a device row whose centre lies exactly on a
                     // virtual row's top edge (every 5th at 800x600) goes to the row above in the exe [obs:
-                    // `mainscr-desc.json` t 1000, rows 122/127/132/137; row 153], hence the nudge down.
+                    // `mainscr-desc.json` t 1000, rows 122/127/132/137], hence the nudge down.
                     let [cx, cy] = v.px(px as f32 + 0.5, py as f32 + 0.5);
                     f.push(white, Blend::GammaAdditive, Instance::new(kind::SPRITE, [cx, cy + ROW_EDGE], [v.k / 2.0, v.k / 2.0], [col[0], col[1], col[2], 1.0]));
                 }

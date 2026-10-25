@@ -1,6 +1,6 @@
 # Multiplayer: per-peer state in the simulation
 
-Status: audit done 2026-10-16 (ADR 0007 §5); the real-time battles run by session rules (§7, ADR 0011). Implemented in `ig2-sim::game` (`ViewMode`, `LocalView`,
+Port status: the rule of ADR 0007 §5; the real-time battles run by session rules (§7, ADR 0011). Implemented in `ig2-sim::game` (`ViewMode`, `LocalView`,
 `Game::cosmetic`, `Game::messages_for`) and `ig2-net` (`Peer::show`, snapshot format version 2); tested by
 `ig2-net/tests/lockstep.rs::local_views_stay_out_of_the_synced_state`. Per-human contact lists, spy report queues
 and the `st_Multi_include` effects (§5): `SaveState::humans`, snapshot version 3, tested by
@@ -12,7 +12,7 @@ machine: `EN` (0x912A3C, the local human's empire), the screen on show (`AktKep`
 (`AktFleet` 0xB99664), and UI-paced timers (the 100 Hz colony tick, frame-paced scrolling and voice cooldowns).
 Some libc `rand()` draws happen only for what is on screen. In single player they're game state like any other
 (the byte-exact replays depend on them); in lockstep multiplayer, two peers whose players differ in any of them
-would desync. (The original MP layer was host-relayed with full-state resyncs, STATUS U7, which hid this.)
+would desync. (The original MP layer was host-relayed with full-state resyncs, U7 in `re/README.md`, which hid this.)
 
 ## 1. The rule (ADR 0007 §5)
 
@@ -76,7 +76,7 @@ in the original, so it never runs in MP. "MP" says what the canonical view does.
 | `Game::battlefield_weather` | `FRISSIT_Planet(true, 0)` prologue 0x4749b9..0x474ab0 | skips the planet on screen (`StarmapMode == 1`, `AktPlanet`): 0–2 libc draws fewer | G (libc stream) | nothing shown: every planet draws |
 | `Game::inbox` | `FRISSIT_Messages` 0x5062d0 | the message on screen (`UAktUzenetFajta` 0xDABDBC) doesn't expire | G (`Story_MessageElevules`) | none shown (0) |
 | `Game::starmap_pass` | `FlottaOsszevon` exe 0x53d860 | writes `AktFleet` = the merged fleet | UI state in the state | not written; UI follows `StarmapEvent::Merge` |
-| `StoryWorld::akt_planet` / `akt_fleet` | campaign stories (`campaign.md` §8: bomb, volcano on `AktPlanet`; new ships into `AktFleet`) | the selection | G | SP only. `Game`'s `StoryView` still returns 0 (the trait default); reading the state broke the save replay (story 405 start at tick 2): open |
+| `StoryWorld::akt_planet` / `akt_fleet` | campaign stories (`campaign.md` §8: bomb, volcano on `AktPlanet`; new ships into `AktFleet`) | the selection | G | SP only. `Game`'s `StoryView` returns 0 (the trait default; reading the state diverges the save replay at story 405's start): open |
 | `ground::War` with `on_screen` | `WF::Refresh` 0x490890, `FRISSIT_Grwar` 0x4747c0 | debris `AddRepesz` 0x45d400, ruins `Rom::Rom` 0x455570, bursts, dust, bomb textures, voices (libc draws; debris takes list-B slots that order later shots) | G | `Game::with_war` passes `on_screen: false`; a renderer makes its own debris from `Game::cosmetic` |
 | the real-time ground war itself | `FRISSIT_Grwar` 0x4747c0: `WF::MI` 0x486d40 and `WF::Refresh` run for the planet on the colony screen only (SP) | `AktKep == 3`, `AktPlanet` | G | the war's planet every tick, the original's MP branch (§6) |
 
@@ -120,7 +120,7 @@ owner.
   - `FelfedezBirodalom` (`discover_by(owner, e)`): from a message to `owner` (`FeldolgozAjanlat`), a war of
     `owner`'s (`DiplomaciaMegtamadas`), a radar meeting (`StarmapEvent::EmpireMet { by: owner }`: story special
     0x0B stays `EN`'s only), a caught spy of an unknown empire (`SpyEvent::Discovered { by: owner }`: special 0x0B
-    `EN`'s only), a planet changing hands in a deal (`BolygoElfoglal`'s `SideEvent::Met`, now reported for every
+    `EN`'s only), a planet changing hands in a deal (`BolygoElfoglal`'s `SideEvent::Met`, reported for every
     human; diplomacy keeps those whose `who` has a list).
   - `FeldolgozAjanlat` (exe 0x4c1480 area, §5): a message to `b` with a list waits in `b`'s slot of the sender
     (`a != b`; the dialogue-text draw comes from `Game::cosmetic` in canonical mode, as for `EN`).
@@ -130,8 +130,8 @@ owner.
   - `DiploEvent::Discovered { empire, by }` names the owner (each peer posts message 0x1A for its own empire).
 
 ### 5.2 Spy report queues (`KemBeszolasok` 0xBAF338, `info-messages.md` §3.3)
-- `KemJelentesAdd` is guarded by "the receiver is `EN`". Canonical MP: a report to `EN` is `SpyEvent::Report` as
-  before (queue in the exe's memory, `KemEsemeny`, `Story_KemEsemeny`); a report to another human `h` with a list is
+- `KemJelentesAdd` is guarded by "the receiver is `EN`". Canonical MP: a report to `EN` is `SpyEvent::Report`
+  (queue in the exe's memory, `KemEsemeny`, `Story_KemEsemeny`); a report to another human `h` with a list is
   `SpyEvent::ReportTo { to: h, report }`, which only appends to `h`'s queue (`SaveState::humans[h].reports`, the
   same 50-entry shift as step 2). `Story_KemEsemeny` is single-player only in the original (`campaign.md`), so the
   queue is all there is in MP.
@@ -147,7 +147,7 @@ owner.
 - 1005 (capture the flag): the original writes `EN` into the Flag Carrier design's race field (`flag_carrier(EN)`),
   so the two machines' designs differ. Canonical MP: the design for empire 1 carries 1, for empire 2 carries 2.
 
-- 1003's radar offer per human (deviation 388, ours since 2026-10-25). Each machine of the original runs its own offer
+- 1003's radar offer per human (ours). Each machine of the original runs its own offer
   (counter 10034, 50 days; `NewMessage(0x2347, 300)` with `PlayerNev[EN]`; answer 2 buys with `Multi_Send(0x66, EN, …)`,
   4 asks again in 50 days, the entry's expiry 100) from its own inbox. Canonical MP:
   - **A per-human inbox.** The inbox (only story and tutorial messages reach it) and the messages screen's dialogue
@@ -157,7 +157,7 @@ owner.
     dialogue state by `per_human_copies`; in the snapshot and the hash). `Game::with_inbox_of(h, …)` swaps it in and out
     (symmetric, so the state is the canonical one outside it).
   - **Orders.** A messages-screen order from human `h ≠ EN` runs inside `h`'s inbox (classic: other issuers' orders do
-    nothing, as before); a story hand-off from it (an answer) runs with `StoryWorld::answering()` = `h`. The expiry pass
+    nothing); a story hand-off from it (an answer) runs with `StoryWorld::answering()` = `h`. The expiry pass
     (`FRISSIT_Messages`) runs for each human's inbox in turn, its promotion answered by that human.
   - **1003.** At the start each other human `h` gets counter `10060 + h` (50 days; 10061..10068 unused by every story);
     when it fires `StoryEvent::HumanMessage { empire: h, id: 0x2347, arg: 300 }` puts the offer into `h`'s inbox with
@@ -167,9 +167,9 @@ owner.
     the answering human's counter (10034 for `EN`). The purchase and the radar pass were per buyer already
     (`RADAR_BUYERS`).
   - **Client.** `world::local_en` also swaps the local human's inbox in while the world holds the game, so a joiner's
-    messages screen shows its own inbox; its orders travel as commands as before.
+    messages screen shows its own inbox; its orders travel as commands.
   - The slow-down of `NewMessage` stays synced (the original slowed only the receiving machine).
-### 5.4 EN in the client (ours; FX15)
+### 5.4 EN in the client (ours)
 
 The shared state's EN is the host's empire. `ig2-client::world::local_en` writes the local empire into EN while the
 world holds the game and puts the canonical one back before the game goes into the peer, so hashes and snapshots are unchanged.
@@ -190,9 +190,8 @@ answer's 0x66 on the messages screen, counts too: the original's UI loop sends i
 - 0x49 (the elem stories, exe 0x5d4b70: `Multi_Send(0x49, EN, spy, st_GetKuldetesID(id), 0, 0, 0, 10)`) →
   `MULTIGET_Spy` (exe 0x5883c0) = the spy screen's send: `SpyOrder::Send { target 0, 0, 0, days 10 }`. Campaign only.
 
-In canonical MP the story's human is the canonical `EN` and only its machine's message answers reach the story
-(`Game::message_order`), so the 1003 radar offer goes to the host's player only, where the original offered it to
-every human on its own machine (open: per-human story hand-offs).
+In canonical MP the story's human is the canonical `EN` (`Game::message_order`); another human's message answers
+reach the story through that human's inbox (§5.3).
 
 ### 5.6 Renames (ours; deviation 395)
 
@@ -383,7 +382,7 @@ agree.
   survivors through the door). Else `Net::connect(addr, pin = cert)` to the first candidate with an address; on a
   link, `ClientSession::migrate(slot, link, name, password, fingerprint)`; a connect error, `MIGRATE_CONNECT`
   (5 s) without a link or the door's `Refused` → the next candidate. No candidate left → the game ends for this machine
-  as before ("The host has left the game.", main menu; `MultiCloseServer`). The message line says
+  ("The host has left the game.", main menu; `MultiCloseServer`). The message line says
   "The host has left the game. <name> hosts it now." on every survivor (ours, English).
 - **Resuming an MP save from the room.** The connection page has a fourth button, "Saved game" (ours): the list shows
   the save folder's slots (`options::read_slots`) that read as MP saves with these rules (`MpSave::read`), titled by the

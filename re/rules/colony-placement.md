@@ -1,7 +1,7 @@
 # Colony-map building placement (`LocateSuitableLocation`)
 
-Status: **verified at runtime** (§7); ELF -O0 and the shipped exe agree on every step below.
-Port: `engine/crates/ig2-sim/src/placement.rs`. No rule values here; inline code constants are listed.
+Port status: ported in `engine/crates/ig2-sim/src/placement.rs`, verified (§7). ELF -O0 and the shipped exe
+agree on every step below. No rule values here; inline code constants are listed.
 
 Evidence (ELF `ig2` / exe):
 | Function | ELF | exe | Role |
@@ -107,7 +107,7 @@ work left, output factor recomputed) with `AddBuildingTurrets` and `BuildingBuil
 The search sees the ground units on the map (§1) and the buildings not yet re-placed. Port: `Game::refit_buildings`.
 
 ## 7. Verification
-The vehicle pass (§1, §2.3) now gets the planet's battlefield (`SaveState::vehicle_cells` =
+The vehicle pass (§1, §2.3) gets the planet's battlefield (`SaveState::vehicle_cells` =
 `ground::Field::placed_cells`) in the economy step and colonisation arrivals; the refit (§6) is verified with it in
 `traces/2026-10-16-refit.md` (10 fuzzed refits, 2,060 buildings, 569 moved; mutations of the vehicle pass, the start
 hint, `BuildingBuilt` and the damage reset are each caught). The build cursor's search (§8) is verified in

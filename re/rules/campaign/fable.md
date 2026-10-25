@@ -56,7 +56,7 @@ Helpers:
   `st_fSearch(x)`; a slot ≥ 1 gets the bit, `StoryError` = not found.
 - `KiszedUtolsoUzenet(id, 0)` (0x506140), `KiszedUzenet` (0x506200), `ScrollUzenet` (0x556b50), `Spy_New`
   (0x58f830) and `KemJelentesAdd` (0x58d000) are events; `AutoAddship` (0x5c1d80, §8.6), `st_bShow` (0x603f20,
-  §8.10) were ported before.
+  §8.10) are the shared ones.
 
 The story spy's record (0x4c bytes, `Kemek`, `espionage.md`): name `_s(5, 3092)` (the rest of +0x00..+0x0e
 zero), `+0x10` i16 1, `+0x12` 1, `+0x14` i16 4, `+0x16` i16 100 (then 1), `+0x18` 0, `+0x1a` i16 4, `+0x1c` 3,

@@ -5,6 +5,7 @@
 //! localised name fields; the live tech table's balance fields equal `Talalmanyok0` after load
 //! (`re/rules/traces/2026-10-15-tables.md`).
 
+pub mod install;
 mod pe;
 pub mod sounds;
 pub mod speech;

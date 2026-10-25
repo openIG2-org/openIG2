@@ -1,15 +1,13 @@
 # The info screen: charts and race names
 
 How the original draws the info screen (`AktKep == 9`). Evidence: the ELF oracle decompiled with
-`tools/ghidra/DecompileFunctions.java` (addresses ELF unless marked exe), exe tables found by their bytes, and a
-reference capture of ig2.exe (`tools/trace/run_screen.py … --kep 9`). The data behind it — the ten statistics charts
-— is a sim system, specified and verified in `re/rules/info-messages.md` §1 (`ig2-sim::info`). `[inf]` marks
-inference.
+`tools/ghidra/DecompileFunctions.java` (addresses ELF unless marked exe), exe tables found by their bytes, and
+reference captures of ig2.exe (`tools/trace/run_screen.py … --kep 9`). The data behind it (the ten statistics charts)
+is a sim system, specified in `re/rules/info-messages.md` §1. `[inf]` marks inference, `[obs]` what the captures show.
 
-Scope: the chart and the race-name row (§2–§3), the 3D frame (§1.1), the empire panel, the spending limit, the money
+Scope: the 3D frame (§1.1), the chart and the race-name row (§2–§3), the empire panel, the spending limit, the money
 triangle's texts and the lines (§4), the hot-spots and input (§5), the planet/fleet list with its rows, faders, globes
-and scrolling (§6), the detail mode (§6.6), the slots' matrix swap (§6.7), the star log (§6.8) and the orders: the
-planet settings menus, the money triangle and the spending limit (§7).
+and scrolling (§6), the detail mode (§6.6), the slots' matrix swap (§6.7), the star log (§6.8) and the orders (§7).
 
 ## 1. Frame structure
 - `Info_Belep` 0x563fc0: `Info_Bir1/2` = 1, 2, chart mode on (`Info_ChartMode` = 1, `Info_SelectedChart` = 0,
@@ -35,10 +33,9 @@ planet settings menus, the money triangle and the spending limit (§7).
   every frame (`infoMozgatMainFenyek` 0x554e80, inlined at exe 0x4ef450 into `Infoing3DUpdate`) to
   `(sin a·300, cos a·200, −650)`, `a = infokeringeto·20` for light 3 and `a + 1.57075` for light 4. `infokeringeto`
   (ELF 0x14132b0, exe 0xB85304) gains 0.0006 a UI frame (`FRISSIT_Info2`) and is never reset (it also drives the
-  chart sweeps); the capture tool records it (`info_turn` in `<state>.ui.json`, the client's `--info-turn`). With the
-  main light the lit faces saturate at 255 (texture as is), so the side lights' phase barely shows [obs: no pixel
-  changed with their x or y mirrored]. The exe's ported names for the side lights are wrong: exe 0x4c89e0
-  ("`infoOldalsoFenyekBe`") is the diplomacy screen's (`Dip_MainLight3/4` 0xABA91C/0xABA930, moved in 0x4be2d0).
+  chart sweeps). With the main light the lit faces saturate at 255 (texture as is), so the side lights' phase barely
+  shows [obs: no pixel changed with their x or y mirrored]. The exe's ported names for the side lights are wrong: exe
+  0x4c89e0 ("`infoOldalsoFenyekBe`") is the diplomacy screen's (`Dip_MainLight3/4` 0xABA91C/0xABA930, moved in 0x4be2d0).
 - The heads' marks (`RarakFenyekFejekre` 0x554790, every frame after `Update3D`; `RarakFenytFejre` 0x554570 adds an
   ambient light to `InfoFejek[e]` = node 3/ring/1/0, slot `s` at `InfoFejek + 0x3c·e + 0xc + 0xc·s`, flag at
   `+8 + s`): slot 0 is removed from every head and put back on `InfoSelected` in grey `(int)(sin(t·20)·127/2 + 192)`,
@@ -47,10 +44,9 @@ planet settings menus, the money triangle and the spending limit (§7).
   (200, 50, 50) for a dead empire, else `(100 − x, 100 − x/2, 100 + x)`, `x = (int)(InfoFejF[0x168 + 4e]·100) − 89`
   clamped to 0..100 (the fader's `s` = 0.9 + its random shine: x = 1, the exe's f32 product). These slot lights are
   the head's only lights: neither the frame's ambient nor its parallel lights reach it, and it is drawn at opacity
-  250 (`1 − 0.99²` [inf]) [obs: `run_screen.py quick-1.sav --kep 9 --light-probe`, 2026-10-25: the selected head lit
-  by 0xa2a2a2 alone, the other by 0x656463 = (99, 100, 101)]. Alive heads that were selected at some point keep their
-  slot 1 too. With
-  `GLOBALKELLDESIGN` the shining heads also get two `FadeKerettelKerekitDesign` frames [not ported].
+  250 (`1 − 0.99²` [inf]) [obs, `--light-probe`: the selected head lit by 0xa2a2a2 alone, the other by 0x656463 =
+  (99, 100, 101)]. Alive heads that were selected at some point keep their slot 1 too. With `GLOBALKELLDESIGN` the
+  shining heads also get two `FadeKerettelKerekitDesign` frames.
 - `info.xvb` (`vector/info/`, `textures/info/`) `AddToScene(…, 1.22)`, `RotateObj(π/2, 0, 0)`, `MoveObj(0, 15, −650)`,
   property 0x200, posed by `SetFrame(InfoMainMesh, infoframe)`. Hidden: node 1's children 0xe..0x13 (init) and
   `GombMeshek[11]` = 1/7/0/5 (`InfoShowSelectedGomb` 0x554190).
@@ -61,8 +57,7 @@ planet settings menus, the money triangle and the spending limit (§7).
   index `Info_SelectedChart`, +1 above 4: 1/1..1/5 then 1/7/0/6, 1/7/0/1..4) moved by (−1, −3), transparency
   `(sin(InfoVillogtato) + 1)/4`, hidden in star-log mode. `Infoing3DInit` turns its properties 8, 4 and 2 off: no
   depth test or write and additive blending (render.md §2.3), so `fa.bmp`'s black inside adds nothing and only its
-  blue rim shows [obs: drawn alpha-blended the port covered the selected button with a black square; `buttons` 7.56
-  → 5.02].
+  blue rim shows.
 - The triangle's knob `hszog0.xvb` ×0.03 at `(InfoTriX·4.5 − 1438, InfoTriY·4.5 − 1050, −2650)`, transparency
   `1 − infoframe/45`; `Info_InitializeTriangleToMidPosition` 0x55e5d0 puts it at (319, `(int)(50 + 2√2700/5.6)`).
 - Under the frame `Copy3hatterkep(0x34, 0xff − infoframe/45·128)`: picture `0x33 + n` is `SaveScreen(n)` (0x5deb20,
@@ -87,7 +82,7 @@ For `e` = 1..=8 known by the human: `Faj_Nev[e]` (`GetString(0x11, 1, race + 5)`
 `(FajnevX[e − 1], 117)` (exe 0x90B6BC: 41, 97, 157, 214, 382, 439, 496, 552; `ig2-rules::race_name_x`), size 2,
 colour by the relation `Viszony[InfoSelected][e].+0x25`: 1 (war) → 6, 2 → 3, 4 → 0x29, 5 → 7, else 1; `InfoSelected`
 itself 2 with a frame (`DesignKeret1`), a dead empire 0xc. In MP the player names go 0x14 above (`PlayernevX`).
-Verified on the capture (quick-1.sav: Shinari red on column 3, the human's Godan white and framed on column 6).
+[obs, quick-1.sav: Shinari red on column 3, the human's Godan white and framed on column 6.]
 
 ## 4. The panels (`InfoGfx2D_2` 0x556500)
 All drawn only while open and not closing, the texts times `infoFelfadeles`.
@@ -108,10 +103,9 @@ All drawn only while open and not closing, the texts times `infoFelfadeles`.
   y `249 + 55k` and `301 + 55k`) in 0x322200, times the fade; under each race column a line from `FajnevX[e−1]` to +54
   at y 107, black → `DDColor[e + 15]` → black; the triangle's drag trail. `line2d` takes the colour words as
   0x00BBGGRR (as `DDColor` holds them): the row lines are (0, 34, 50) on the capture, one screen pixel high on row
-  `⌊y·k⌋`, the vertex colours interpolated in the gamma pass (the capture shows the bytes as given: the race lines peak
-  at the race colour itself).
+  `⌊y·k⌋`, the vertex colours interpolated in the gamma pass (the race lines peak at the race colour itself).
 - **Race names** (§3): the colour follows `Viszony[InfoSelected][e]`; the selected one is white in `DesignKeret1(x − 5,
-  114, 0x36, 0xc, 2)` (a morphing gradient box; the port draws its settled outline [inf]).
+  114, 0x36, 0xc, 2)` (a morphing gradient box, research.md §5.4).
 
 ## 5. Hot-spots and input (`Info_MouseInit` 0x5667b0, `Info_Main` 0x5647f0)
 `Mouse_Szoveg_Set(id, 0, x, y, w, h, tooltip)` in id order (tooltips `GetString(9, 1, k)`): 1..=8 the race columns
@@ -120,19 +114,18 @@ All drawn only while open and not closing, the texts times `infoFelfadeles`.
 21..=25 charts 5..9 `(588, 283 + 27k, 45, 20)`; 26..=28 tax / auto-build / priority `(135, 354 + 14k, 100, 13)`; 29 the
 triangle; 30/31 list up/down `(290, 247 / 450, 18, 19)`; 32 the limit `(280, 209, 100, 8)`; 33 `(0, 249, 55, …)`; 34 the
 scroll bar `(290, 266, 18, 203)`; 35/36 star log up/down `(621, 274 / 431, 18, 19)`; 37 back from the detail.
-Held frames (input.md §7): 34 (scroll bar) follows `Mouse_y` every held frame; 35/36 step `StarLogPointer` every held frame,
-release included. Button animation `LekezelGombok` (ELF 0x559850, from `Infoing3DUpdate`; exe `InfoGombNew` 0xB85310,
-`InfoGombFrameCsokkent` 0xB85311, `InfoMelyikGombot` 0xB85314, `InfoGombFrame` 0xB8531C): a press of 14/15/16..25 sinks
-`GombMeshek[0xb / 5 / c or c+1]` through frames 7, 10, 3, 0 [obs]; the list arrows 30/31 (0xc/0xd) and star-log arrows
-(0x11/0x12) restart it every held frame, so they stay in at 10 while held and come out 10, 3, 0 after the release [obs].
-`infoSetGombFrame` (ELF 0x557670) `MoveObj`s the mesh to z = table (ELF 0xd4dbe0, 19 f32) + 3*frame (0xd: - 3*frame); the
-table equals the open pose's node depths (test `button_table_is_the_open_pose`). There is no hover animation. Client:
-info_screen.rs `Buttons3d`, screen_frames.rs `button_z`, once a UI tick (ADR 0016 §1).
+Held frames (input.md §7): 34 (scroll bar) follows `Mouse_y` every held frame; 35/36 step `StarLogPointer` every held
+frame, release included. Button animation `LekezelGombok` (ELF 0x559850, from `Infoing3DUpdate`; exe `InfoGombNew`
+0xB85310, `InfoGombFrameCsokkent` 0xB85311, `InfoMelyikGombot` 0xB85314, `InfoGombFrame` 0xB8531C): a press of
+14/15/16..25 sinks `GombMeshek[0xb / 5 / c or c+1]` through frames 7, 10, 3, 0 [obs]; the list arrows 30/31 (0xc/0xd)
+and star-log arrows (0x11/0x12) restart it every held frame, so they stay in at 10 while held and come out 10, 3, 0
+after the release [obs]. `infoSetGombFrame` (ELF 0x557670) `MoveObj`s the mesh to z = table (ELF 0xd4dbe0, 19 f32) +
+3·frame (0xd: − 3·frame); the table equals the open pose's node depths. There is no hover animation.
 Heights (`Info_MouseInit` exe 0x4e9900, `Info_MouseInit2` 0x4e9530 every frame): 13 and 37 are a fixed 224 (13 always
 off, 37 only in detail mode); 33 is `56·min(HanyBolygoFlotta, 4)` (0xB82988), on only outside the detail mode while
 open. Tooltips (`GetString(9, 1, k)`, drawn by `UpdateFrame` as every screen's, input.md §8): 1..=8 the race's name;
-9..=12 k 1; 13 k 2; 14..=31 k = id − 11 (15 in chart mode 0x1a); 32 none; 33 k 21 (27 when `CheckMelyikFolottVan()`
-is 0 [u]); 34..=37 k = id − 12 [obs: 16 → "Teljes bevétel", exe and client alike, `info --info-mouse 370,290`].
+9..=12 k 1; 13 k 2; 14..=31 k = id − 11 (15 in chart mode 0x1a); 32 none; 33 k 21 or 0x1b (below); 34..=37 k = id − 12
+[obs: 16 → "Teljes bevétel"].
 `Mouse_Megfogva` is set by 26..=28 (a menu open or held), 29 (`Lenyom && Bal`), 32 (every frame it is `AktIkon2`) and
 34: while it holds, passing over a race column doesn't switch the empire.
 `Info_Main`: the mouse **over** 1..=8 selects that empire (`InfoSelected`, no click needed); a press on 14 / 15
@@ -144,7 +137,13 @@ ELF 0x5b7a40 in `IG2_gameUpdate`), except while `Mouse_Megfogva` (exe 0xDB466A) 
 it, `IG2_gameUpdate` clears it once no button is down (after picking, so the release frame still sees the held
 hot-spot with `Mouse_Felenged`).
 
-14/15 are off while `MainScenarioDescriptor` (0xbbd140) is 0 (`Info_MouseInit2` 0x4e9530): `StoreScenarioDescription` 0x504120 (0x50421a, from the main menu's scenario start 0x4fef1b) sets it, `InitNewGame` 0x4e1130 (0x4e1181) clears it and every new game and `LoadSave` (0x543cf7) call that, so on only in a game started as a scenario from the menu (client `World::scenario` -> `UiSnap::scenario`). Spot 33's text is 21 when `CheckMelyikFolottVan` (0x4e5320) finds a shown row's globe within a strict +-30 px box of the pointer (client: `globes[k].pos` projected, vx = 600x/w+320, vy = 600y/w+240), else 0x1b; only when infoKINYITVA (0xb79f89) and no screen change is pending (0xbae24c/d). Original bug: a kind-1 (fleet) row's hit jumps (0x4e54f6) to the `xor al,al` exit and ends the search with 0 (deviations row 348, client `over_globe` the same).
+14/15 are off while `MainScenarioDescriptor` (0xbbd140) is 0 (`Info_MouseInit2` 0x4e9530): `StoreScenarioDescription`
+0x504120 (0x50421a, from the main menu's scenario start 0x4fef1b) sets it, `InitNewGame` 0x4e1130 (0x4e1181) clears it
+and every new game and `LoadSave` (0x543cf7) call that, so they are on only in a game started as a scenario from the
+menu. Spot 33's text is 21 when `CheckMelyikFolottVan` (0x4e5320) finds a shown row's globe within a strict ±30 px box
+of the pointer (the globe's position projected, `vx = 600x/w + 320`, `vy = 600y/w + 240`), else 0x1b; only when
+`infoKINYITVA` (0xb79f89) and no screen change is pending (0xbae24c/d). Original bug: a kind-1 (fleet) row's hit jumps
+(0x4e54f6) to the `xor al,al` exit and ends the search with 0 (kept).
 
 ## 6. The planet/fleet list
 `GFX_Info` (exe 0x4e5c30, ELF 0x564580) runs every frame: `FeltoltBolygoFlottaTomb` (exe 0x4e5a20, ELF 0x55efd0: the
@@ -223,11 +222,11 @@ from `Info_Belep`, like the heads' `InfoFejF`):
   1)/100 + 0.01` (one libc draw per slot, UI-only), position `+0x7c`, home `+0x88`, target `+0xa0`, steps `+0xac`).
 - `InfoLoadBolygoTexturak` (exe 0x4e64c0): `BolygoTexturak[i]` = `textures/starmap/p<i+1>.bmp` (i = 0..7; the ninth
   is `p1.bmp` again).
-- The models as the renderer draws them [obs, the detail and fleet captures]: `flag10.xvb` is only the head of a
-  level-of-detail chain (`flag11` → `flag12`, the cruiser `cirkalv04` + `Object05` in `cirk1`/`cirk3`), drawn at its
-  last level and scaled by the head's half-extents (as the starmap's planets, starmap.md §3.3); the faces turned away
-  are culled (a translucent globe shows no back hemisphere); the lighting normals carry the child record's scale
-  (`flag12` 2.84, `bolygo_k` 0.85) and light by their direction only.
+- The models as the renderer draws them [obs]: `flag10.xvb` is only the head of a level-of-detail chain (`flag11` →
+  `flag12`, the cruiser `cirkalv04` + `Object05` in `cirk1`/`cirk3`), drawn at its last level and scaled by the head's
+  half-extents (as the starmap's planets, starmap.md §3.3); the faces turned away are culled (a translucent globe
+  shows no back hemisphere); the lighting normals carry the child record's scale (`flag12` 2.84, `bolygo_k` 0.85) and
+  light by their direction only.
 - `RotateBolygoFlottak` (every frame in `Infoing3DUpdate`): hides every slot; while open, not closing and without the
   debug tables, for each shown row `k` sets the slot's model matrix (`SetObjMatrix`, the rotation after the scale),
   unhides it (in detail mode only the selected one, or while it fades), gives a planet's child 0 the texture
@@ -273,9 +272,8 @@ selectors) only in detail mode on the human's own planet.
   is `f − 0.3` (at least 0.01) with `f = (x − home)/(target − home)` while its x target lies right of home (going
   out), else `1 − (start − x)/(start − home)` (`start` = `+0x94`, coming back); every other slot takes `f` of the
   selected slot without the −0.3 and is shown only while `f < 0.99`. So the selected globe settles at (−43, 28,
-  −150), 70 % transparent (`SetObjTransparency(0.7)`), the others hidden [obs: solving `exe = a·globe + (1 − a)·faders`
-  per pixel against the port's renders without and with the globe gives a = 0.28..0.30]. Outside the detail mode the
-  transparency is 0.
+  −150), 70 % transparent (`SetObjTransparency(0.7)`), the others hidden [obs: a = 0.28..0.30 solving `exe = a·globe +
+  (1 − a)·faders` per pixel]. Outside the detail mode the transparency is 0.
 - **The rows** (`KirakBolygoFlottakat(70, 249)`): only `InfoNagyKiirBolygo(61, 253, p)` / `InfoNagyKiirFlotta(61, 253,
   f)` for the entry; `MeghuzIzeVonalak` draws only the top and bottom lines (y 249 and 466); `PutFaders` §6.3.
 - **A planet** (`InfoNagyKiirBolygo` exe 0x4e6500, ELF 0x562390; size 2, align left, rows 13 apart from y 253; labels
@@ -329,7 +327,7 @@ without a swap.
   `InitializeStarLog` (ELF 0x55e540) clears it; `Info_AddStarLog(text, colour, a, b)` (ELF 0x55e850) shifts in an
   empty line and a dated line (`GetString(9, 3, …)`, colour 1), then the text with `#1`/`#2` replaced by `a`/`b`,
   word-wrapped at 33 characters, and sets the pointer to 0. It is not saved: after a load the log holds what the
-  running exe added (diplomacy's `DipCallStarLog` ELF 0x50e190 and others) [the producers aren't ported].
+  running exe added (diplomacy's `DipCallStarLog` ELF 0x50e190 and others).
 - Hot-spot 15 (pressed, chart mode): star-log mode, `SetUresTexturak` (ELF 0x555980: the left buttons
   `GombMeshek[0..5]`' child 0 gets `textures/info/info_ures.bmp`, the sixth `info_j6.bmp`; `BaloldaliGombok` ELF
   0x117ac60 = `info_b1..6`, `info_ures`, `info_j6`), hot-spot 14 moves to (350, 430) and 15 goes off, 16..=25 off,
@@ -345,14 +343,6 @@ without a swap.
 - 35 / 36 (held): `StarLogPointer` +1 (older) while more than 16 lines are filled and it is below `filled − 16` / −1
   while above 0; sound 0 on a press.
 - `PutFaders`: the chart's fader narrows by `d` (`(1 − (f − 60)/15)·200` from 60, `(f − 45)·200/15` between 45 and 60).
-
-### 6.9 Capturing these states
-`tools/trace/run_screen.py --kep 9 --info-press IDS` presses hot-spots through the game's input: `AktIkonKell` exe
-0xB77208 = id + 0x1e (`IG2_gameUpdate` turns it into `AktIkon2`), and since that sets no press edge, the agent sets
-`Mouse_Lenyom` (0xDB465F) at `Info_Main`'s entry (exe 0x4e81c0) in that frame. `--fleets N` gives the human fleets
-first (fleet rows), `--info-starlog N` stages star-log lines. The grab's `<state>.ui.json` carries the list, the
-slots (matrices, positions, steps), the detail mode and the star log; `run_screendiff.py … info:IDS [--fleets N]
-[--starlog N]` hands them to the client (`--info-detail`, `--info-texts`, `--info-star`, `--info-log`).
 
 ## 7. The orders (`Info_Main` exe 0x4e81c0, ELF 0x5647f0)
 ### 7.1 The planet settings menus (hot-spots 26..=28)
@@ -371,7 +361,7 @@ on a press (`Mouse_Lenyom`):
   `FadeKerettelKerekit(X − 6, Y − 2, 130, h, (0, 10, 0) 60, (0, 5, 0) 30)` with texture scale 0, `h` = 108 (tax),
   `(n + 1)·13 + 4` (auto-build, `n` the last mode), 43 (priority). `InfoGfx2D_3` writes the items `KiirStr(name, X,
   Y + 13(i − f) + 3, 20, 2, …, colour 6 for the item under the pointer, else 3)`: `AdoMertek_Nev`, `AutoBuild_Nev`,
-  `BolygoPrioritas_Nev` (the Hungarian `txt17` tables of §6.6). Verified on captures (§7.4).
+  `BolygoPrioritas_Nev` (the Hungarian `txt17` tables of §6.6).
 
 ### 7.2 The money triangle (hot-spot 29)
 A left press grabs it (`InfoHaromszogMegfogva` exe 0xB85259, `Mouse_Megfogva`); a right press acts once. While
@@ -387,9 +377,9 @@ for BC):
 3. Refused: nothing is sent, the grab ends. Else a right click resets the knob to (319, `(int)(2h/5.6 + base)`), and
    `Multi_Send(0x5b, EN, s1, s2, s3)` (f64) with `s1 = BC/h`, `s2 = −AC/h/1.25`, `s3 = AB/h/1.25` (each f32
    distance widened), each below 0.03 sent as 0; the knob model moves to `(x·4.5 − 1438, y·4.5 − 1050, −2650)`.
-The exe sends this every frame of a drag (the port only when the shares change). The release (`Mouse_Felenged`)
-ends the grab and sets `InfoHaromszogNovelo` to 0 (`FRISSIT_Info2` +1 a UI frame up to 100; the shares blink with
-`AktIdo300Szazalek` until then). `InfoTriX/Y` aren't reset by `Info_Belep`.
+The exe sends this every frame of a drag. The release (`Mouse_Felenged`) ends the grab and sets
+`InfoHaromszogNovelo` to 0 (`FRISSIT_Info2` +1 a UI frame up to 100; the shares blink with `AktIdo300Szazalek` until
+then). `InfoTriX/Y` aren't reset by `Info_Belep`.
 
 ### 7.3 The spending limit (hot-spot 32) and the messages
 On only for the human's own empire (`Info_MouseInit2`). Every frame the pointer is over it (no button needed, from
@@ -404,18 +394,27 @@ button keeps it while dragging off the bar).
   MoneyTeruletSzorzo[e][k]` and `MoneyHatar[e][k]` = 0 for k = 1..=5 (the pools re-dealt, the production and
   research reserves cleared).
 - 0x5c: `MoneyHatar[e][0]` (the reserve `MoneyMennyi` keeps back) = the value.
-Port: `ig2_sim::game::InfoOrder` / `Game::info_order`, `ig2_net::Command::Info`; verified byte-exact in the save
-replay on 520 staged messages (re/rules/traces/2026-10-17-info-orders.md).
-
-### 7.4 Capturing an open menu
-`run_screen.py --info-select K,X,Y,I` (and `run_screendiff.py info:9 --select K,X,Y,I`) holds menu K open at (X, Y) on
-item I by writing the globals after every `Info_Main` once the presses are done; the grab's `<state>.ui.json` carries
-them and the client draws them (`--info-select`).
+Runtime report: re/rules/traces/2026-10-17-info-orders.md.
 
 ## 8. Not specified here
 The opening and closing animation, the debug tables (`InfoKellenekOldDolgok`), the star log's producers
-(`Info_AddStarLog`'s callers). Open
-[obs]: in chart mode the exe's sixth left button (1/6, the star log's) shows a blank plate (`info_ures`'s look) where
-its material is `Info_b6.bmp` (the computer) and no code found here retextures it (`Info_Belep`, `Infoing3DInit`,
-`SetRegiTexturak` exe 0x4eeaf0 / `SetUresTexturak` 0x4eebc0 are only called from `Info_Main`); the port shows the
-computer. The chart's fade between `infoframe` 45 and 60 isn't drawn.
+(`Info_AddStarLog`'s callers). Open [obs]: in chart mode the exe's sixth left button (1/6, the star log's) shows a
+blank plate (`info_ures`'s look) where its material is `Info_b6.bmp` (the computer) and no code found here retextures
+it (`Info_Belep`, `Infoing3DInit`, `SetRegiTexturak` exe 0x4eeaf0 / `SetUresTexturak` 0x4eebc0 are only called from
+`Info_Main`).
+
+## 9. Client status
+`ig2-client::info_screen` (frame, chart, race names, panels, list, globes, detail mode, star log, menus, triangle,
+limit; the 3D buttons `Buttons3d` with `screen_frames::button_z`, stepped once a UI tick, ADR 0016 §1), the race
+frame through `kit::design_frame`, faders through `kit::fader`. Orders: `ig2_sim::game::InfoOrder` /
+`Game::info_order`, `ig2_net::Command::Info` (verified byte-exact in the save replay). The 14/15 scenario gate reads
+`World::scenario`; spot 33's text uses the globes' projected positions (`over_globe`, with the exe's fleet-row bug).
+Differences: the triangle's 0x5b is sent only when the shares change (the exe every drag frame); the star-log
+producers aren't ported (the log stays empty after a load); the sixth left button shows the computer (§8); the
+chart's 45..60 fade isn't drawn; `DesignKeret1` is drawn as the shared morphing frame; the heads'
+`FadeKerettelKerekitDesign` frames are missing. Open deviation rows: 84 (glow/shine rand stream, keep), 359 (keep).
+Captures: `run_screendiff.py <install> quick-1.sav info:IDS [--fleets N] [--starlog N] [--select K,X,Y,I]
+[--info-mouse X,Y]`; the tracer presses hot-spots through `AktIkonKell` exe 0xB77208 = id + 0x1e (setting
+`Mouse_Lenyom` 0xDB465F at `Info_Main`'s entry), records `infokeringeto` (`info_turn`), the list, slots, detail mode,
+star log and an open menu in `<state>.ui.json`; the client takes them as `--info-turn`, `--info-detail`,
+`--info-texts`, `--info-star`, `--info-log`, `--info-select`.

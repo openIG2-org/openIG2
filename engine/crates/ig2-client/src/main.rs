@@ -32,7 +32,8 @@
 //!           `--info-select K,X,Y,I` the planet-settings menu of hot-spot K open at (X, Y) on item I (§7.1).
 //! Info:     `ig2-client --info [--save <file.sav>] [--ticks N]` prints the starmap's planets and fleets.
 //!
-//! The install comes from `IG2_INSTALL_DIR`; the language from `--lang en|hu|de|fr|es|it`, else `IG2_LANG`, else the one
+//! The install comes from `IG2_INSTALL_DIR`, else the one found (`install_root`; the window says so when there is none,
+//! `setup`); the language from `--lang en|hu|de|fr|es|it`, else `IG2_LANG`, else the one
 //! the GOG ig2.exe would pick on this machine (`ig2_formats::locale`, re/formats/locale.md). The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
 //! repository's `_local/saves`). Saves, installs and rendered PNGs hold game data: keep them out of the repo.
 
@@ -74,6 +75,7 @@ mod design_pods;
 mod design_scene;
 mod rules;
 mod scene;
+mod setup;
 mod script;
 mod screen_frames;
 mod starmap;
@@ -161,7 +163,7 @@ pub struct Options {
     /// `GfxNovelo`, kept across screens by the exe).
     pub dkm: Option<[f32; 3]>,
     /// `--spy-frame F [--spy-closing]`: the spy screen with `spyframe` held at F while opening (or closing)
-    /// (re/screens/spy.md §1.1, §9).
+    /// (re/screens/spy.md §1.1, §8).
     pub spy_frame: Option<f32>,
     /// `--screen video:NAME --video-ms T [--video-at X,Y] [--video-loop]`: the window at time `T` of the `.bik`
     /// name's video, fullscreen or in the screen at `X,Y` of the 640×480 frame, looping like the message clips'
@@ -186,7 +188,7 @@ pub struct Options {
     /// `--spin-frames N`: drawn frames since the transfer or vehicle panel opened (its cells' turn; run_screen.py's
     /// `rop_frames`, re/screens/starmap.md §13.3).
     pub spin_frames: Option<f32>,
-    /// `--console-held S`: the starmap console's hot-spot S (1..=6) held down, its button at frame 5 (row 224).
+    /// `--console-held S`: the starmap console's hot-spot S (1..=6) held down, its button at frame 5.
     pub console_held: Option<u32>,
     /// `--info-turn K`: the info screen's `infokeringeto` (re/screens/info.md §1.1).
     pub info_turn: f32,
@@ -473,7 +475,7 @@ pub struct Loaded {
     pub rules: ig2_sim::game::GameRules,
     pub tech_defaults: Vec<u8>,
     pub volatile: Vec<(u32, Vec<u8>)>,
-    /// The save of `--save`; `None` with `--new-campaign`.
+    /// The save of `--save`; `None` with `--new-campaign` or on the main menu without the default save.
     pub save: Option<SaveGame>,
     /// The exe's tables the screens draw with (models, colours).
     pub tables: ig2_rules::Rules,
@@ -485,6 +487,8 @@ pub fn load(o: &Options) -> Result<Loaded, String> {
     let volatile = rules::scenario_globals(&install)?;
     let save = match o.new_campaign {
         Some(_) => None,
+        // A player's first start: no save yet, the menu over a stand-in game ([`start_world`]).
+        None if o.main_menu && !o.save.exists() => None,
         None => {
             let bytes = std::fs::read(&o.save).map_err(|e| format!("{}: {e}", o.save.display()))?;
             Some(SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", o.save.display()))?)
@@ -504,6 +508,8 @@ pub fn start_world<'r>(o: &Options, install: &Install, save: Option<&SaveGame>, 
             w
         }
         (None, Some(s)) => world::World::load(s, rules, tech_defaults, volatile),
+        // The main menu without the default save: campaign 1's start stands in until the player picks a game.
+        (None, None) if o.main_menu => world::World::new_game(new_game::campaign(install, &new_game::parse_campaign("1")?, rules)?),
         (None, None) => return Err("no game: --save or --new-campaign".into()),
     })
 }
@@ -513,10 +519,28 @@ pub fn save_f32(save: Option<&SaveGame>, n: &str) -> f32 {
     save.and_then(|s| s.chunk(n)).and_then(|b| b.get(..4)).map_or(0.0, |b| f32::from_le_bytes(b.try_into().unwrap()))
 }
 
-/// The install from `IG2_INSTALL_DIR` in the texts' language.
+/// The install's folder (`ig2_rules::install`: `IG2_INSTALL_DIR`, the folder remembered in the settings file, the GOG
+/// registry and default folders); one found otherwise than remembered is remembered for the next start.
+pub fn install_root() -> Result<PathBuf, Vec<(ig2_rules::install::Candidate, ig2_rules::install::Verdict)>> {
+    use ig2_rules::install::Source;
+    let settings = ig2_formats::options::Options::load();
+    let remembered = settings.get(setup::INSTALL_KEY).filter(|s| !s.is_empty()).map(PathBuf::from);
+    let found = ig2_rules::install::find(remembered.as_deref())?;
+    if matches!(found.source, Source::Registry | Source::DefaultFolder | Source::BesideRemake) {
+        if let Err(e) = ig2_formats::options::Options::store_own(&[(setup::INSTALL_KEY, &found.path.to_string_lossy())]) {
+            eprintln!("ig2-client: remembering the install: {e}");
+        }
+    }
+    Ok(found.path)
+}
+
+/// The install ([`install_root`]) in the texts' language.
 pub fn open_install(o: &Options) -> Result<Install, String> {
-    let root = std::env::var_os(ig2_formats::vfs::INSTALL_ENV).ok_or("set IG2_INSTALL_DIR to your IG2 install")?;
-    Install::open(PathBuf::from(&root), language(o, std::path::Path::new(&root))).map_err(|e| e.to_string())
+    let root = install_root().map_err(|tried| {
+        let places: Vec<String> = tried.iter().map(|(c, v)| format!("{} ({}): {}", c.path.display(), c.source.label(), v.describe())).collect();
+        format!("no Imperium Galactica II install found; set IG2_INSTALL_DIR to its folder (looked in: {})", places.join("; "))
+    })?;
+    Install::open(&root, language(o, &root)).map_err(|e| e.to_string())
 }
 
 /// The texts' language: `--lang`, else `IG2_LANG`, else what the GOG exe would run in (`ig2.settings`' `language=`,
@@ -559,14 +583,14 @@ fn info(o: &Options) -> Result<(), String> {
 }
 
 fn dump_pvr(path: &str, out: &std::path::Path) -> Result<(), String> {
-    let install = Install::from_env(Lang::En).ok_or("set IG2_INSTALL_DIR")?.map_err(|e| e.to_string())?;
+    let install = open_install(&parse(&[])?)?;
     let img = assets::Image::load(&install, path)?;
     println!("{path}: {}x{}", img.width, img.height);
     assets::write_png(out, img.width, img.height, &img.rgba)
 }
 
 fn colony_check(map: &str, surface: &str) -> Result<(), String> {
-    let install = Install::from_env(Lang::En).ok_or("set IG2_INSTALL_DIR")?.map_err(|e| e.to_string())?;
+    let install = open_install(&parse(&[])?)?;
     let (rules, _) = rules::load(&install)?;
     let map = map.parse().map_err(|_| "map: a number")?;
     colony::check(&install, &rules, map, surface.parse().map_err(|_| "surface: a number")?)
@@ -588,7 +612,10 @@ fn main() {
             [path, out] => dump_pvr(path, std::path::Path::new(out)),
             _ => Err("usage: --dump-pvr <game-path.pvr> <out.png>".into()),
         },
-        _ => parse(&args).and_then(window::run),
+        _ => parse(&args).and_then(|o| match install_root() {
+            Ok(_) => window::run(o),
+            Err(tried) => setup::run(tried),
+        }),
     };
     if let Err(e) = result {
         eprintln!("ig2-client: {e}");

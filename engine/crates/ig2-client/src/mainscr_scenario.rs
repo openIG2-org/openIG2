@@ -171,7 +171,7 @@ pub struct ScenarioList {
     drag: bool,
     /// The buttons held (bit 0 left, bit 1 right: `Mouse_Gomb` 0xdb4650 = either).
     held: u8,
-    /// Frames box 0x1c still acts after the drag ended: the release frame keeps `AktIkon` (row 360).
+    /// Frames box 0x1c still acts after the drag ended: the release frame keeps `AktIkon`.
     latch: u8,
     /// The pointer (virtual pixels) and the hot-spot id under it (`AktIkon2`).
     pub at: [f32; 2],
@@ -786,7 +786,7 @@ mod tests {
         assert_eq!(s.first, 0);
     }
 
-    /// The knob drag (rows 344-346): exclusive while held (a press elsewhere scrolls, `AktIkon` stays 0x1c), it ends
+    /// The knob drag: exclusive while held (a press elsewhere scrolls, `AktIkon` stays 0x1c), it ends
     /// only once neither button is held, and a middle press drops both.
     #[test]
     fn knob_drag_holds() {
@@ -803,7 +803,7 @@ mod tests {
         s.hover([300.0, 427.0]);
         assert_eq!((s.first, s.hot()), (17, 0x1c), "right still held");
         s.release(false);
-        // The release frame keeps 0x1c (row 360), the next frame tests the spots again.
+        // The release frame keeps 0x1c, the next frame tests the spots again.
         s.hover([300.0, 427.0]);
         assert_eq!((s.first, s.hot()), (17, 0x1c));
         s.hover([300.0, 427.0]);

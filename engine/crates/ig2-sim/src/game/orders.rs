@@ -265,7 +265,7 @@ impl Game<'_> {
     }
 
     /// `SetIdoLelassit` (exe 0x541270, [`crate::time::slow_down`]): an enemy fleet near, a research done, a message,
-    /// a space battle's end. It sets the speed button (`IdoSpeed`) too, which the top bar lights (row 307).
+    /// a space battle's end. It sets the speed button (`IdoSpeed`) too, which the top bar lights.
     pub(crate) fn slow_down(&mut self) {
         let m = &mut self.state.mem;
         let s = crate::time::slow_down(m.u8(va::MULTIPLAYER) != 0, m.i32(va::SPEED_LOCKED) != 0, m.i32(va::PROGRAM_SEBESSEG));

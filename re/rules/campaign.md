@@ -1,16 +1,12 @@
 # Campaign scripting: the story engine and the scenario stories
 
-Status: **engine core, the scenario stories, `InitStory`, the inline campaign stories and the storylines
-(`st_Line_include`) verified at runtime** (`traces/2026-10-16-story.md`, `traces/2026-10-16-campaign.md`,
-`traces/2026-10-16-line.md`), ported in `engine/crates/ig2-sim/src/story.rs`, `campaign.rs` and `storyline.rs`
-(`tests/story_trace.rs`, `tests/campaign_trace.rs`); the MP game modes (`st_Multi_include`, §8.10,
-`traces/2026-10-16-multi.md`) in `multi.rs`, the random stories 220..239 (`st_BRnd_include`, §8.11,
-`traces/2026-10-16-brnd.md`) in `brnd.rs`, the opening episodes (`st_Begin_include`, §8.12,
-`traces/2026-10-16-begin.md`) in `begin.rs`, 36 of the 62 stories of `st_Rnd_include` (§8.13,
-`traces/2026-10-16-rnd.md`, `traces/2026-10-16-rnd2a.md`) in `rnd.rs` and `rnd/`, the storyline episodes of `st_Elem_include` parts 1, 2a, 2b, 2c and 2d (§8.14,
-`traces/2026-10-16-elem.md`, `traces/2026-10-17-elem2a.md` .. `2026-10-17-elem2d.md`) in `elem.rs` and `elem/`, the random fables (`st_Fable_include`, §8.15,
-`traces/2026-10-16-fable.md`) in `fable.rs`. The campaign's other scripts are mapped (§8.8, §8.13, §8.14) but not
-ported yet.
+Port status: the engine core, the scenario stories, `InitStory`, the inline campaign stories and every script
+are ported in `engine/crates/ig2-sim/src/` and verified at runtime: `story.rs`, `campaign.rs`, `storyline.rs`
+(`traces/2026-10-16-story.md`, `traces/2026-10-16-campaign.md`, `traces/2026-10-16-line.md`; `tests/story_trace.rs`,
+`tests/campaign_trace.rs`), `multi.rs` (§8.10, `traces/2026-10-16-multi.md`), `brnd.rs` (§8.11,
+`traces/2026-10-16-brnd.md`), `begin.rs` (§8.12, `traces/2026-10-16-begin.md`), `rnd.rs` and `rnd/` (§8.13,
+`traces/2026-10-16-rnd.md`, `traces/2026-10-16-rnd2a.md` ..), `elem.rs` and `elem/` (§8.14,
+`traces/2026-10-16-elem.md`, `traces/2026-10-17-elem2a.md` ..), `fable.rs` (§8.15, `traces/2026-10-16-fable.md`).
 
 The campaign is not data: the 1999 authors wrote every story as C code (`story.cpp`, `st_begin.cpp`,
 `st_rnd.cpp`, `st_brnd.cpp`, `st_fable.cpp`, `st_scen.cpp`, `st_line.cpp`, `st_elem.cpp`, `st_multi.cpp`), each
@@ -40,8 +36,8 @@ event predicates, and drops the scripts' `SDL_ReportAssertion` loops (release bu
 | `st_Line_include` | **0x5eb6f0** | 0x7771e0 | the storylines 501..720 (§8.9) |
 | `st_BRnd_include` | **0x5c9f20** | 0x768d50 | the random stories 220..239, 2301, 2311 (§8.11) |
 | `st_Begin_include` | **0x5cec20** | 0x7407b0 | the opening episodes 1..24 (§8.12) |
-| `st_Rnd_include` | **0x5f0e20** | 0x74a2c0 | the random stories 101..199, 242, 302 (§8.13; 36 ported) |
-| `st_Elem_include` | **0x5d4b70** | 0x77ac00 | the storyline episodes 801..868 (§8.14; part 1 ported) |
+| `st_Rnd_include` | **0x5f0e20** | 0x74a2c0 | the random stories 101..199, 242, 302 (§8.13) |
+| `st_Elem_include` | **0x5d4b70** | 0x77ac00 | the storyline episodes 801..868 (§8.14) |
 | other scripts | 0x5cec20, 0x5f0e20, 0x5c9f20, 0x5e6ba0, 0x5d4b70, 0x5ee4d0 | §8 | `Begin`, `Rnd`, `BRnd`, `Fable`, `Elem`, `Multi` |
 | `st_vSet` / `st_vGet` | 0x605780 / 0x605650 | 0x72f530 / 0x72f9d0 | variables (§2.4); `st_vAdd` & co. are inlined in the exe |
 | `st_szStart` / `st_szGet` | 0x605570 / 0x6054c0 | 0x735a90 / 0x735a20 | counters (§2.5) |
@@ -264,8 +260,7 @@ Exe vs ELF: the start blocks of 360–365, 367–370, 372, 374, 375 only assert 
 
 ## 7. Port
 `story::Story` holds §2's state; `FRISSIT_Story` is [`Story::tick`], the hooks are methods, `Story_Check` is
-[`Story::check`], the scripts are [`Script`]s run in the exe's order (a pair of scripts is one: so far
-`Begin`, `Rnd`, `BRnd`, `Fable`, `Scen`, `Line`, `Multi` where kept), then
+[`Story::check`], the scripts are [`Script`]s run in the exe's order (§4 step 2), then
 `campaign::inline_stories` (§8). A [`StoryWorld`] gives the world reads, the RNG, the calls that return something
 (`FlottaNew`, `st_IsInRR`, `st_GetTerv`, `LoadScenario`, `Generate_StarNames`, the config and registry reads) and
 takes the [`StoryEvent`]s: `MEGNYERES`, `MEGHALAS`, the undo actions that reach the world, game infos, fleet
@@ -274,10 +269,7 @@ from the user's exe through the world (`campaign_tables`).
 
 ## 8. The campaign (`InitStory`, the inline stories of `Story_Check`)
 Ported in `engine/crates/ig2-sim/src/campaign.rs` (+ the fleet helpers of §8.6 in `story.rs`), verified at
-runtime (`traces/2026-10-16-campaign.md`, `tests/campaign_trace.rs`). Of the scripts `st_Line_include` (§8.9),
-`st_Multi_include` (§8.10), `st_BRnd_include` (§8.11), `st_Begin_include` (§8.12), part of `st_Rnd_include` (§8.13)
-part 1 of `st_Elem_include` (§8.14) and
-`st_Fable_include` (§8.15) are ported, the others (§8.8) are not yet.
+runtime (`traces/2026-10-16-campaign.md`, `tests/campaign_trace.rs`). The scripts are in §8.9..§8.15.
 
 A campaign starts in `InitNewGame(seed, 0, campaign, difficulty)` (exe 0x4e1130; the race menu's
 `CampaignGameStart` 0x4f5e90 runs it with `CampaignType` = race 1..=3, human 1/3/5, difficulty 1, 2 or 4):
@@ -397,14 +389,14 @@ them.
 `Story_Check`'s catch handler for each story block (e.g. 0x5c79ac) calls `WIN(0, 1)` and resumes with the next
 story. The port's story functions return `Result<(), Abort>`.
 
-### 8.8 Not ported yet: the scripts
-`st_Rnd_include` (0x5f0e20, 125 KB), `st_Elem_include` (0x5d4b70, 132 KB; part 1 ported, §8.14); `st_Line_include` (§8.9), `st_Multi_include` (§8.10) and
-`st_BRnd_include` (§8.11) , `st_Begin_include` (§8.12) and `st_Fable_include` (§8.15) are ported, `st_Rnd_include` in part (§8.13: 36 of its 62 stories). They hold the
+### 8.8 The scripts
+`st_Rnd_include` (0x5f0e20, 125 KB), `st_Elem_include` (0x5d4b70, 132 KB), `st_Line_include` (§8.9), `st_Multi_include`
+(§8.10), `st_BRnd_include` (§8.11), `st_Begin_include` (§8.12), `st_Fable_include` (§8.15). They hold the
 stories 400's tables start (opening episodes 1..24, heroes 176..227, random stories 101..316,
 118/142/199/242/837/842/865), the episodes the storylines start (801..864) and start 402..918. Their calls to
-other systems go through the same `StoryWorld`/`StoryEvent` set (extended as needed: diplomacy specials and
-relations, spy missions `st_KemEsely`, …). The tracer (`run_story.py --campaign`) patches them out; port them one
-by one and drop each from the patch list (`--keep`). Also open: MP (`MULTIGET_Story`).
+other systems go through the same `StoryWorld`/`StoryEvent` set (diplomacy specials and relations, spy missions
+`st_KemEsely`, …). The tracer (`run_story.py --campaign`) patches the scripts out unless `--keep` names them.
+`MULTIGET_Story` is ported in `game.rs`.
 
 ### 8.9 `st_Line_include` (exe 0x5eb6f0, ELF 0x7771e0): the storylines
 

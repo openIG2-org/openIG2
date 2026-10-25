@@ -1,4 +1,4 @@
-//! The in-game multiplayer wait overlay (re/screens/input.md §9, deviation 296): `MOUSE_DrawOver` (exe 0x4c95b0, ELF
+//! The in-game multiplayer wait overlay (re/screens/input.md §9): `MOUSE_DrawOver` (exe 0x4c95b0, ELF
 //! 0x5306a0) opens it once the lockstep has stood still for `STALL` (`MultiSendPackets` exe 0x5126b0 sets
 //! `WaitingForVector` 0xdb9748 after 5000 ms without the turn's data) and runs its own frame loop until the data comes:
 //! the screens below take no mouse input (`DoKeyboard` still runs in its `Fake_FRISSITES`). `FUN_004c8b80` draws the boxes (fader pass 3), `GFX_DrawOver` (exe 0x4c8f80, ELF
@@ -9,7 +9,7 @@
 //! awaits (dropped in a battle, or a migration's survivor); a joiner that knows none waits for the host (the exe's
 //! client without the host's late list, `FUN_00510fd0`). "Close connection" takes the drop path (the player may come
 //! back through the door). The joining question (`DrawOverMode` 2) has no counterpart: the door admits a returning
-//! human by name and refuses newcomers to a started game (deviation 296).
+//! human by name and refuses newcomers to a started game.
 
 use std::time::{Duration, Instant};
 
@@ -169,7 +169,7 @@ impl Wait {
     pub fn draw(&self, f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], texts: &dyn Fn(u16) -> Vec<u8>, now: Instant) {
         let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
         // The title comes first in `GFX_DrawOver`, before its `DrawOverMode` test: it shows whenever a reconnect is
-        // awaited, the overlay open or not (deviation 376).
+        // awaited, the overlay open or not.
         let title = |f: &mut Frame| {
             if self.reconnecting {
                 font.text(f, v, &texts(2), 40.0, 40.0, 0x28, 4, Align::Left, col(3), None);
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(w.press([300.0, 335.0], at(20000)), Some(Act::Exit));
         w.update(at(20010), 8, false, false, false, late(5));
         assert!(!w.is_open(), "a turn ran");
-        // The title alone while a reconnect is awaited (deviation 376).
+        // The title alone while a reconnect is awaited.
         assert!(!w.shown());
         w.update(at(20020), 8, false, true, false, Vec::new());
         assert!(w.shown() && !w.is_open());

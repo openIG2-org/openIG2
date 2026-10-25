@@ -1363,7 +1363,7 @@ impl<'r> Game<'r> {
         self.with_deals(|d, w, deals| d.receive_message(w, deals, letter));
     }
 
-    /// Human `issuer`'s diplomacy screen writes to its contact-list slot of `empire` (`re/screens/diplomacy.md` §8).
+    /// Human `issuer`'s diplomacy screen writes to its contact-list slot of `empire` (`re/screens/diplomacy.md` §9).
     pub fn diplomacy_screen(&mut self, issuer: usize, empire: usize, op: diplomacy::ScreenOp) {
         let (en, ido) = (self.state.mem.i32(va::EN).clamp(0, 18) as usize, self.state.mem.i32(va::IDO));
         let mut d = self.state.diplomacy();

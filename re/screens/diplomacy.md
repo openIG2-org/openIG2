@@ -53,7 +53,8 @@ Scene in `vector/diplomac/`, textures in `textures/diplomac/`, camera at the ori
 panels]); the viewport is the 4:3 one widened by `ModifyViewPort`.
 - `dipbck8.xvb` ×1.1 at (0, `dipmozgato`, −650): child 0 = `DipWireGomb`, a wireframe grid (property 0x40) that is
   the faint background grid; child 1 = the opening ring (sub-meshes 0..3 and 4..7 hidden from `dipframe` 60 on by
-  `DiplomaciaInitGyuruk`, 8 and 9 always hidden). `SetFrame(dipframe)` animates the opening (frames 0..80).
+  `DiplomaciaInitGyuruk`, 8 and 9 always hidden); child 2 = `Kezelo_radar`, six small spheres (not seen on the
+  captures). `SetFrame(dipframe)` animates the opening (frames 0..80).
 - Six `golya.xvb` ×0.04 at `GombPoziciok[k]`, random start orientation (3 libc `rand() % 314 / 20` each,
   cosmetic), wireframe (0x40 | 0x800, not 8): the head cages. Per frame `RotateObjr(+0.02, +0.02, +0.02)` while the
   slot holds a living empire (or the screen is still opening), else `(−0.005, 0, 0)`. Transparency starts at 1 when
@@ -100,16 +101,13 @@ Per drawn frame, `Diplomacy3DUpdate` (ELF 0x51b2f0, exe 0x4be2d0), with `s = 1 �
   at y `(int)(29·s)`. Child 1 (the opening ring): sub-meshes 0..3 shown only for 40 < `dipframe` < 80, 4..7 shown
   until `DiplomaciaInitGyuruk` (`dipframe ≥ 60`, not closing) hides 0..7 and shows the round frame `DipKozep`; 8
   and 9 always hidden. Child 0 (the grid `DipWireGomb`) at `(0, 200s, −1000s)` relative (`dipInitPos` 0xAB767C..84
-  is never written: zero [obs: the sequence matches at t 150]), turned `(3 sin 2s, 2 sin 2.1s, 0)`, frame `dipframe + dipwireframe` (at 80 the
+  is never written: zero [obs]), turned `(3 sin 2s, 2 sin 2.1s, 0)`, frame `dipframe + dipwireframe` (at 80 the
   `dipwireframe` cycles 0..10 by 0.25 a frame), transparency `1.35 − 2·dipframe/80` up to `dipframe` 40, then 0.
 - The cages (`Fejek[k]`) at `GombPoziciok[k] + (820 sin(3s + ⌊k/2⌋)·s, 500 cos(4s + ⌊k/2⌋)·s, 0)` (sin/cos in f64),
   spinning `+0.02` on each axis also while not open; transparency −0.02 a frame while above 0.5 (exe 0x4be2d0 lines
   79-90): after an opening the cages **stay about half transparent** (26 steps from 1 end at 0.48000047), at rest (no
-  opening) opaque. Without property 8 the engine draws them additively, the lit colour scaled by `≈ 1 − t`; the
-  client draws the wires additively in gamma space (`Blend::GammaAdditive`) with the lit colour × `(1 − t)/0.52`
-  (normalised to the opened rest t = 0.48000047 the port's doubled wire light was calibrated on; the 0.52 is calibrated,
-  not derived), so the unanimated rest (t 0) is about 1.9× as bright as after an opening, as in the exe [no capture of
-  that state yet] (row 124).
+  opening) opaque. Without property 8 the engine draws them additively, the lit colour scaled by `≈ 1 − t`, so the
+  unanimated rest (t 0) is about 1.9× as bright as after an opening [no capture of that state].
 - The portraits (`Fejek[k]+0x10`): `fejetransp` −0.03 a frame once open (+0.09 while closing); they swing with the
   cages only while closing (they stand at their places, invisible, during the opening).
 - The round frame: from `dipframe` 60 as in §3 (the turn, `dipFrameValtozo`'s ring spins: sub-mesh 0 `Rz(n/220)`
@@ -118,7 +116,8 @@ Per drawn frame, `Diplomacy3DUpdate` (ELF 0x51b2f0, exe 0x4be2d0), with `s = 1 �
   `FRISSIT_Diplomacy2` toggles `dipAtvaneFordulva` 0 ↔ π each time `Atfordulas` reaches 30).
 - `ycenter = 250 − 10·dipframe/80` (240 at rest), background grey `255 − (int)(128·dipframe/80)`; the three faders
   of §3 drawn only above `dipframe` 40, `f = 2·dipframe/80 − 1`.
-- Closing (`dipBECSUKAS`): `kor` transparency `s`, z `−650 + 500s`, turning `Rx +0.2` a frame.
+- Closing (`dipBECSUKAS`): `kor` transparency `s`, z `−650 + 500s`, turning `Rx +0.2` a frame. [obs] `kor`'s
+  closing turn isn't mirrored: `RotateObjr` rebuilds the matrix from the object's angles and drops the `RotateObj2` flip.
 
 The 2D passes are gated on `dipKINYITVA && !dipBECSUKAS` (exe `DiplomGfx2D_1` 0x4b89e0 returns early when not open):
 while the screen opens or closes there are no menus, names, texts, info panel or input — only the 3D frame and the
@@ -129,9 +128,10 @@ three faders' frames. The row fades (`FRISSIT_Diplomacy2`) start once open.
 `PlaySound("screens/diplomac/screen20.wav")` (= `Dip_Hangok[1]`), then it draws frames (`dipframe −0.6` a UI tick)
 until a frame has been drawn at 0 (`voltnulla`). The order (`IG2_gameUpdate` exe 0x4e0440): the key sets `AktKepKell`
 inside a tick; the frame after it is still open; then `Diplomacy_Kilep` draws its first frame at 80 at once (no tick
-between) and steps: the captures after t + 1 ticks show the open screen at 80, after t + 2 ticks 79.4 [obs:
-diplomacy-fx9.json, F2 at 400: 80 / 79.4 / 78.8 at 401 / 402 / 403, the sound at 400, the client the same]. Towards messages, help or options: no closing, no sound (the screen
-is drawn once more for `SaveScreen(2)`).
+between) and steps: the captures after t + 1 ticks show the open screen at 80, after t + 2 ticks 79.4 [obs: F2 at
+t 400: 80 / 79.4 / 78.8 at 401 / 402 / 403, the sound at 400]. F2 leaves through the closing (`DoKeyboard`; the exe
+has no D key). Towards messages, help or options: no closing, no sound (the screen is drawn once more for
+`SaveScreen(2)`).
 
 ## 4. `FRISSIT_Diplomacy2` (every 10 ms UI tick on screen 6)
 `dipkeringeto += 0.0006`; opening: `dipframe += 0.2857` up to 80 (≈ 2.8 s), closing −0.6; from 60, `Atfordulas`
@@ -241,44 +241,22 @@ wrapped at 70 columns into at most five lines of 100 bytes. Unseeded `random()` 
 with the opening only, `Dip_Hangok[1]` (`screen20.wav`) when the closing starts (none when leaving for messages,
 help or options), `screen21.wav` (`Dip_Hangok[2]`) when another head is picked while the frame is at rest.
 
-## 8. The port (`ig2-client::diplomacy`)
-Drawn from the sim's state each frame; the dialogue state of the screen (selection, menus, the composed text) is the
-client's own, like the original's globals. Deliberate differences, all for multiplayer (ADR 0003, ADR 0007):
-- The screen's writes to the contact list (`+0x0c`, `+0x10`, `+0x16`, `+0x17`, `+0x18`, `+0x2c`) and to
-  `VoltmarUdvozloUzenetEbbenAzEvben` (the birthday greeting) go through the lockstep queue as `Command::DiplomacyScreen`, applied just before the message or answer they belong to (the
-  original writes them in the frame it sends the packet, one frame earlier).
-- The unseeded text variants use the client's own UI generator, not the sim's libc stream.
-- `+0x19`/`+0x1c`/`+0x20` (the counter-proposal being composed) live in the client, not in the save.
-- The menus are press-and-hold cascades like the original's (`Mouse_Bal` held over a main entry opens its sub-menu,
-  a release on a leaf picks it); the client recomputes them every frame from the state (`FeltoltMenupontok`).
+## 8. Observations [obs]
+The panels' fills are textured by `fadertexture` (`textures/design/screen/dt.bmp`, mean grey 0.5); the background grid
+is lit by the ambient light only (a uniform `racsszin` × 0x14); the cages' wire colours reach white; the video is
+interlaced (every other row dark, `DrawAnimInterlace`); the cages hide their back lines; picture 52 (`_ESIG_U2.BMP`)
+isn't in the GOG install, so `Copy3hatterkep` draws nothing after a bare jump (a screen entered from the starmap has
+the `SaveScreen` picture: [`overlay-background.md`](overlay-background.md)). With `--dip-frame` holding the exe's
+`dipframe`, the opening's grabs read 17.14, 42.86, 65.71, 80.
 
-Observations from the captures that shaped the port [obs]: the panels' fills are textured by `fadertexture`
-(`textures/design/screen/dt.bmp`, mean grey 0.5); the background grid is lit by the ambient light only (a uniform
-`racsszin` × 0x14); the cages' wire colours reach white (the port doubles the light on wires); the video is
-interlaced (every other row dark, `DrawAnimInterlace`); the cages hide their back lines (the port culls back faces);
-picture 52 (`_ESIG_U2.BMP`) isn't in the GOG install, so `Copy3hatterkep` draws nothing after a bare jump (a screen entered from the starmap has the `SaveScreen` picture: [`overlay-background.md`](overlay-background.md)). Results:
-`re/screens/diff-results.md` (2026-10-17).
-
-Verified in tests (`ig2-client::diplomacy`, quick-1.sav): composing "negotiate → cease-fire", sending it, the AI's
-immediate answer and its acknowledgement; an AI's cease-fire offer shown with "we agree / forget it" and accepted
-(relation level 2 afterwards); `GetSzoveg`'s lookup, seeded variants, substitution and wrap; `a2az`; the menu
-layout (`Igazitmenu`, the bottom clamp, hit tests).
-
-The opening, the closing, the special menu and the sounds (2026-10-23, §3.1, §6.1, §7.1): `Screen::enter`/`leave`/
-`frame3d` (`Diplomacy_Belep`/`_Kilep`/`Diplomacy3DUpdate`'s per-frame steps, counted at 60 a second in the window, one
-a tick under an input script), `dipbck8` posed between its keys (`scene::frame_keys`, as the design and trade
-screens), F2 leaves through the closing (`DoKeyboard`: the exe has no D key; the client's own D does the same), the
-messages screen in and out without the animation and silent. The special menu reads `SpecialLista` from the state;
-the sim doesn't write it yet (`Diplomacy_AddSpecial`/`RemoveSpecial` from the story's events, and the AI's
-`Story_Diplomacy_Special` hook, are unrouted: a save's list shows, a running campaign adds none). Verified:
-`run_screendiff.py … diplomacy --anim-frame 20|50|70` (`--dip-frame` holds the exe's `dipframe`): every region
-matches at 20 and 50 but `info` at 50 (the cages' wires), 70 as at rest; the sequence `scripts/diplomacy.json`
-(opening, a menu press, F2): the exe's `dipframe` equals the client's at every grab of the opening (17.14, 42.86,
-65.71, 80), t 60–230 match (t 150 frame 2.6), the closing runs one tick behind in the exe (F2 takes effect through
-`AktKepKell` a frame later); the sounds are the exe's: `Dip_Hangok[0]` (`screen13.wav`) on entry, the click at the
-press, `Dip_Hangok[1]` at F2. [obs] `kor`'s closing turn isn't mirrored: `RotateObjr` rebuilds the matrix from the
-object's angles and drops the `RotateObj2` flip.
-
-Not ported yet: the MP-only menus 0x2e, the leader video's lip sync, `DEBUGX`, the demo mode, `dipbck8`'s child 2
-(`Kezelo_radar`, six small spheres; not seen on the captures); the reason codes of the AI's own messages
-(`MiertValaszolt…` for the receiving side) are read from the slot as the sim stored them.
+## 9. Client status
+`ig2-client::diplomacy` (`diplomacy.rs`, the 3D frame in `diplomacy_scene.rs`): drawn from the sim's state each frame,
+the dialogue state the client's own. Done: §2–§7 (opening/closing, menus as press-and-hold cascades rebuilt each
+frame, composing, sending, answering, counter-proposals, `GetSzoveg`, the special menu, sounds). The cages' wires are
+drawn additively in gamma space with the lit colour × `(1 − t)/0.52` (a calibrated factor, the light on wires doubled).
+For MP (ADR 0003, ADR 0007) the screen's contact-list writes and the birthday flag go through the lockstep
+as `Command::DiplomacyScreen`, one frame later than the original; unseeded text variants use the client's UI
+generator; the counter-proposal being composed (`+0x19`/`+0x1c`/`+0x20`) isn't saved. Missing: the MP-only menu 0x2e,
+the leader video's lip sync, `DEBUGX`, the demo mode, `dipbck8`'s child 2; the story's `Diplomacy_AddSpecial`/
+`RemoveSpecial` and the AI's `Story_Diplomacy_Special` hook are unrouted (a save's list shows, a campaign adds none).
+Capture: `run_screendiff.py … diplomacy --anim-frame 20|50|70` and the sequence `scripts/diplomacy.json`.

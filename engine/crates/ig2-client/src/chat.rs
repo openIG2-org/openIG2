@@ -1,4 +1,4 @@
-//! The multiplayer chat (re/screens/input.md §DoKeyboard, deviations 157 and 163): `DoKeyboard`'s text entry (Enter
+//! The multiplayer chat (re/screens/input.md §1, deviation 157): `DoKeyboard`'s text entry (Enter
 //! or the backquote in multiplayer, exe 0x4db1a0), `ExecuteString`'s chat line (exe 0x4dc140: `Multi_Send(0x3fc,
 //! EN, …)`), `MULTIGET_Starmap`'s receiver (exe 0x59d930) into `AddSzoveg`'s ring (exe 0x591360) and its draw in
 //! `StarmapGfx2D_3` (exe 0x5aaba0). The entry is drawn in the top bar's line (`GFX_IdospeedPenzDatum` exe 0x554990),

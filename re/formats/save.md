@@ -1,9 +1,7 @@
 # Save games (`save<n>.sav`) and the multiplayer state blob
 
-Status: **verified** against 7 saves written by the exe's own `LoadSave` under Frida, each compared section by
-section with a live-memory snapshot taken at the same moment (`tools/trace/run_save.py`), plus two game autosaves
-(29,741 chunks, 175 fleets, 339 ground-war groups). Reader: `ig2-formats::save` (`SaveGame::parse`,
-`SaveGame::parse_multiplayer`). Answers STATUS U5.
+Port status: reader `ig2-formats::save` (`SaveGame::parse`, `SaveGame::parse_multiplayer`), writer and state
+`ig2-sim::save` (§8); verified (§9).
 
 Sources (ELF = unstripped x64 `ig2`, symbol oracle; exe = shipped `ig2.exe`, normative):
 
@@ -245,7 +243,7 @@ blobs taken at the same moment as file saves). `LoadSavedGame(blob)` (0x545a90) 
 `Multiplayer_save` set; nothing resets the flag but `LoadSave` (which clears it at its start). This is how the
 original game hands a joining or rejoining client the host's state.
 
-## 7. Win32 versus x64 (STATUS U5)
+## 7. Win32 versus x64
 
 **The stream is the same on both builds.** Every chunk length is an explicit constant or a saved count, never
 `sizeof` of a pointer-bearing type; the size sequences of `LoadSaveVariables` and `WF_Tank::LoadSave` are
@@ -269,7 +267,7 @@ the format as architecture-independent.
 ## 8. Notes for the remake
 
 - A parsed save gives the full original state at a day boundary of the player's choosing: usable to seed replay
-  tests (load a save, run the port and the exe side by side) and as the import path for original saves. Done:
+  tests (load a save, run the port and the exe side by side) and as the import path for original saves. Port:
   `ig2-sim::save::SaveState` keeps the chunks as the exe's memory (`chunk_va` maps each chunk name to its global;
   `Talalmanyok0` from `ig2-rules` under the per-tech chunks, `LoadSave`'s `HanyBolygo2` and `KemKuldetesek+0x160`
   fix-ups) plus the pointer-held records, decodes every system's state from it and stores it back, and turns
@@ -295,5 +293,5 @@ the format as architecture-independent.
 repository's `_local/saves`) completely (every chunk length checked, zero tail) and compares the calendar, `EN`,
 money, seeds, relations, story data, spies, fleets, ships, vehicles, planets, techs, designs, building counts and
 buildings, and the AI production table with the snapshot byte for byte; `--mp` blobs are checked against their
-file save. Result: 9 saves (3 quick, 2 with warships, 2 with MP blobs, 2 game autosaves from other traced runs)
-parse and match.
+file save. Result: 9 saves (3 quick, 2 with warships, 2 with MP blobs, 2 game autosaves from other traced runs;
+29,741 chunks, 175 fleets, 339 ground-war groups) parse and match.

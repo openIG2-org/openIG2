@@ -100,6 +100,7 @@ Pick{empire} / Ready(b) / Chat(s)   ─▶   State{lobby} to everyone after each
 - LAN play needs no setup and no internet; direct IP joins work with or without a password; UPnP/NAT-PMP hosting
   works where the router allows it and is the player's explicit choice.
 - No relay, hole punching, join-code directory or internet browser yet (ADR 0005 defers the rendezvous service);
-  the session id is already a join code and the hello already carries it.
+  the session id is already a join code and the hello already carries it. Direct join codes (addresses + pin) now
+  exist (ADR 0014 amendment); the directory and short codes still need the service.
 - New dependencies: `socket2` (already in the tree via tokio), `getrandom` (in the tree), `spake2` (password check;
   HMAC-SHA256 is ours on `sha2`), `igd-next` (feature `upnp`).

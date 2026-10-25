@@ -218,7 +218,7 @@ impl DiplomacyScene {
         let selected = scr.selected;
         // The cages swing in from `(820 sin(3s + ⌊k/2⌋)·s, 500 cos(4s + ⌊k/2⌋)·s)` and stay half transparent after an
         // opening (0.48000047). Without property 8 the engine adds them, the lit colour × `1 − t`; the port's wire light
-        // is calibrated on the opened rest, so its colour runs × `(1 − t)/0.52` (row 124: about twice as bright at the
+        // is calibrated on the opened rest, so its colour runs × `(1 − t)/0.52` (about twice as bright at the
         // unanimated rest, t 0).
         let cage_k = (1.0 - scr.cage_t) / 0.52;
         let swing = |k: usize, h: &[f32; 3]| {
@@ -336,7 +336,7 @@ impl DiplomacyScene {
         };
         // The grid is the far background: under the solid models. Aliased lines one output pixel wide, blended in
         // gamma space at the opacity: open, the camera is inside it and its dark lines lie over the overlay's picture
-        // [obs: deviations #261].
+        // [obs: the exe shows the dark curved grid over a lit backdrop].
         for (a, b, c) in grid {
             if let Some((Some(pa), Some(pb))) = crate::research::cut_near(a, b).map(|(a, b)| (project(a, self.yc), project(b, self.yc))) {
                 f.push(self.white, Blend::GammaAlpha, Instance::hard_line(vv.px(pa[0], pa[1]), vv.px(pb[0], pb[1]), c));

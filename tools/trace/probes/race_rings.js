@@ -1,4 +1,4 @@
-// Race scene lighting probe (re/screens/mainscr.md §9.2, deviation 148), appended to screen.js by run_screen.py
+// Race scene lighting probe (re/screens/mainscr.md §9.2), appended to screen.js by run_screen.py
 // --probe with --script scripts/mainscr-race.json: every lit object of the frames at script ticks 1000..1001 (the
 // race scene spread, before the boxes) through `fenyekszamolasa` (exe 0x52f190, as --light-probe): its vertex count,
 // rotation chain (sort record +0x24), flags, lights (type, colour word, vector +0x28) and per vertex the normal and

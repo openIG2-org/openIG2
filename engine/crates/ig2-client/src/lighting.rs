@@ -167,7 +167,7 @@ mod tests {
     }
 
     /// The starmap's long info planet and its clouds (`run_screen.py --kep 2 --planet 71 --rop 0xf --light-probe`,
-    /// quick-1.sav, 2026-10-25; re/screens/starmap.md §3.3): the root's ambient and parallel light (row 371).
+    /// quick-1.sav, 2026-10-25; re/screens/starmap.md §3.3): the root's ambient and parallel light.
     #[test]
     fn starmap_long_info_probe_matches_the_exe() {
         let (n, lit) = replay_probe("light-planetinfo.jsonl");

@@ -1,11 +1,15 @@
 # Ground combat (`WF*`): routing, landing, the auto-resolved ground war
 
-Status: **§2–§6 verified at runtime** (§10, `traces/2026-10-16-ground.md`) and ported to
-`engine/crates/ig2-sim/src/ground.rs`: 324 staged landings + auto-resolved wars and 150 `GroundWarIndit`
-calls reproduced exactly (every unit group, the vehicle table, fleet sums, buildings, stream 2, the count of
-libc `rand()` draws). The **real-time** ground war is §11: placement on the map with the landing zone,
-terrain heights and orientation, defence-building turrets and the battle start are ported and verified; the
-battle tick (`WF::Refresh`, `WF::MI`, shots, projectiles, mines, transporters) is in §9.
+Port status: §2–§6 (routing, landing, the auto-resolved war) are ported in `engine/crates/ig2-sim/src/ground.rs`
+and `Game::ground_war` (`game/battles.rs`), verified at runtime (§10, `traces/2026-10-16-ground.md`). The
+**real-time** ground war (§11) is ported in `ground/`; §9 lists what is left. Not ported:
+- `Grwar8020hoz` (the campaign's story-planet ground war, `BolygoInfoIs(p, −0x21ac)`, §2 step 1): `Game` only
+  reports `BattleEvent::GroundScripted` (`engine/crates/ig2-sim/src/game/battles.rs:56`).
+- `LocateTankSuitablePosition` without a colony map (§3.1 step 5, `HalveGroupC`, `AddOwnTankToPlanet`):
+  `War::locate_tank` runs the port (`placement::locate_tank`, §11.1) when the war has the planet's map (`War::map`,
+  from `GameRules::ground_maps`, `game/battles.rs:664`); without one it falls back to the `War::place` hook
+  (`engine/crates/ig2-sim/src/ground.rs:580`, documented there as not ported), for which `Game` passes a fixed
+  cell (100, 100) (`game/battles.rs:663`).
 
 A ground war starts when a fleet carrying ground vehicles (design class 2, `space-combat.md` §1) wins a
 planet battle or arrives at an undefended enemy planet: `GroundWarIndit(fleet, planet)` (called from
@@ -230,7 +234,8 @@ flags `= flags & ~0xC80 | 0x40`; flags2 `&= ~2`. Positions only matter to mine e
 the real-time battle. `LocateTankSuitablePosition(p, …, sx, sy)` searches the colony map like the
 building placement (`colony-placement.md`: grid from the map, buildings and placed units marked, square
 spiral `LocatePos` 0x486610 with predicate 0x46db30 from the start cell, default start = the buildings'
-integer centroid or the surface's start) [not ported: a hook].
+integer centroid or the surface's start); ported as `placement::locate_tank` (§11.1; the `War::place`
+fallback: Port status above).
 
 ## 4. Group arrangement (`RearrangeTankGroups(o)`)
 Each owner keeps at most **20 groups** on a field. "Free" = `max(0, 20 − #alive units of o without flags
@@ -295,7 +300,7 @@ the colony screen only (`FRISSIT_Grwar` ELF 0x49a7f0; at −1 it calls `GroundWa
 A countdown started for any other planet stays, `GetStatus` answers −1 there for good, and a later
 `WF::Simulate` on that planet never ends. `GroundWarSetBattleStatus` (§6.4) can start it for every planet
 of the human whose `last == −1` and whose field isn't contested. In normal play `last` is a side or −10
-once a field has been evaluated (the tracer hit the hang after aborting a real-time war by hand: §10).
+once a field has been evaluated (the hang occurs after aborting a real-time war by hand: §10).
 
 ### 5.2 Targets
 - `GetEnemyNJ(e)`: the first alive unit not paralysed (0x10000), not a destroyed turret, a turret only if
@@ -484,11 +489,10 @@ turrets, §5.5). A planet that repaired something, and every planet at war, gets
 at once). Port: `Game::buildings_tick` (`game/battles.rs`); verified in the save replay after the staged ground wars
 (their damaged buildings repaired tick by tick; skipping it is caught one tick after the first war).
 
-Not ported in the strategic tick: `FRISSIT_Grwar` and `FRISSIT_Colony` after it (`FRISSIT_Grwar` ticks a pending
-self-destruct and `WF::Collapse` on every battlefield; `FRISSIT_Colony` frees passability maps after 600 ticks),
-nor the battlefields' write-back into the save (`WF::LoadSave`): `Game::ground_fields` keeps the fields a battle
-touched (the others come from the loaded save, `SaveState::ground_field`), and the replay reports the `WF` chunks
-without comparing them.
+The strategic tick runs `FRISSIT_Grwar`'s per-planet part after it (§11.6, `Game::grwar`); `FRISSIT_Colony`
+(frees passability maps after 600 ticks) is not run. The fields a battle touched are kept in the state
+(`SaveState::store_ground_field`; the others come from the loaded save, `SaveState::ground_field`) and written
+back as `WF[p − 1]` (`save/wf.rs`).
 
 ## 7. Randomness
 - **Stream 2** draws (exe call sites): `WF_Tank::Damage` 0x46bfa0 (`grwar.cpp` 0xacc, every round),
@@ -519,16 +523,21 @@ marking units moved (§11.10), the self-destruct burst's height (§11.7), the vo
 the passability heights read past the colony map's grid (§11.13), the auto-aim kept on a unit freed in
 the same shot (§11.10).
 
-## 9. Not ported (real-time ground war)
+## 9. Not ported
+- `Grwar8020hoz` (story planets, §2 step 1): `Game` only reports `BattleEvent::GroundScripted`
+  (`engine/crates/ig2-sim/src/game/battles.rs:56`).
+- The `War::place` hook (`ground.rs:580`) is not wired to `placement::locate_tank`: `Game` passes a fixed cell
+  (100, 100) (`game/battles.rs:663`), used whenever the war has no colony map (Port status above).
+- Real time (§11.11): `GenerateMap`'s editor mode, the rest of `Refresh2` (visuals), `UpgradeTanks`, the MP
+  battle protocol.
+
 Ported and verified (§11): `StartGrWar`, placement with the landing zone, heights and orientation, building
 turrets, `FRISSIT_Grwar`'s own part (self-destruct, `WF::Collapse`), `WF::Refresh` with its three projectile
 lists, idle fire and the end countdown, `WF_Tank::Refresh` (movement, path search, aiming, firing, mines),
-the shots and `SetRealDamage`, removal, the voices' libc draws, the passability maps (`GenerateMap`, §11.13).
-Air strikes (bombs and the fighter wave, §11.15) and a building's turrets sharing a
-direct hit (§5.5) are ported too, and the transporters (the dropships of `WF_Hordozo`, the landing orders and
-the pod-0x9f partners, §11.16), the laser (§11.10, its mesh intersection is render-only) and the story mad
-tank (§11.8). Left (§11.11): `GenerateMap`'s editor mode, the rest of `Refresh2` (visuals), `UpgradeTanks`,
-the MP battle protocol, `LoadSave`.
+the shots and `SetRealDamage`, removal, the voices' libc draws, the passability maps (`GenerateMap`, §11.13),
+air strikes (bombs and the fighter wave, §11.15), a building's turrets sharing a direct hit (§5.5), the
+transporters (the dropships of `WF_Hordozo`, the landing orders and the pod-0x9f partners, §11.16), the laser
+(§11.10, its mesh intersection is render-only) and the story mad tank (§11.8).
 
 ## 10. Verification
 `tools/trace/run_ground.py` + `ground.js` (`traces/2026-10-16-ground.md`): `--mode war` stages a landing
@@ -914,6 +923,9 @@ and 4 for the weapons 2 and 0x100), then remembers the cell.
 - The laser's mesh intersection is renderer work (it needs the shown 3D scene); the port uses the target
   point, which gives the same armour side (§11.10).
 - An AI-against-AI battle on screen has no end in `WF::Refresh` (§11.7 step 9).
+- `UpgradeTanks`.
+- `LocateTankSuitablePosition` is ported (`placement::locate_tank`, §11.1), but the `War::place` fallback without a
+  colony map is the fixed cell (100, 100) (Port status above).
 
 ### 11.12 Cosmetic libc draws
 libc `rand()` decides nothing here, but every draw is replayed in order because debris occupies list-B

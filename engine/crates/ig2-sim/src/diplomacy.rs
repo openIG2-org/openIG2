@@ -235,7 +235,7 @@ pub struct PlayerSlot {
 }
 
 /// What the human's diplomacy screen writes to its own contact-list slot of an empire (`DiplomGfx2D_1` ELF
-/// 0x511190, `re/screens/diplomacy.md` §7–§8), as a lockstep command applied before the message or answer it
+/// 0x511190, `re/screens/diplomacy.md` §7, §9), as a lockstep command applied before the message or answer it
 /// belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenOp {

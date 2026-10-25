@@ -1,8 +1,7 @@
 # Widescreen: how the GOG remaster lays out its screens
 
-Status: **verified** (2026-10-18): decompiled (ELF + exe), the layout globals read out of a running ig2.exe at six
-window sizes, and captures of the starmap, colony, info and research screens at 800 × 600, 1920 × 1080 and
-2520 × 1080 (21:9). Decision: ADR 0010. Implementation: `ig2-client::kit::layout` (§6).
+Evidence: the ELF and exe decompiles, the layout globals read out of a running ig2.exe at six window sizes, and
+captures at 800 × 600, 1920 × 1080 and 2520 × 1080 (21:9). Decision: ADR 0010. Client status: §8.
 
 ## 1. Where the size comes from
 `ig2.settings` in the install (plain text): `window=1` (windowed), `width=`, `height=` (the GOG default is
@@ -70,9 +69,8 @@ What the captures show (`_local/traces-widescreen/`, `k<kep>-<W>x<H>-0.png`): th
 capture matches the 800 × 600 capture at offset 0 (mean |diff| 0.7–4.3 grey levels, animation only). Starmap: the
 3D map, the stars and the sky clouds fill the full width; the top bar, the control panel and the info box stay in
 the frame. Colony: the terrain and buildings fill the full width. Research: the background box's grid reaches into
-the sides (dark). Info: the sides stay black (nothing in the scene or picture there). Messages
-(`_local/traces-widescreen/k10-1920x1080.png`, 2026-10-18): the frame models stop at the 4:3 frame's edge and the
-side strips show a tiled dark texture (re/deviations.md 4; not a picture: §3, §7.2).
+the sides (dark). Info: the sides stay black (nothing in the scene or picture there). Messages: the frame models stop
+at the 4:3 frame's edge and the side strips show a tiled dark texture (not a picture: §3, §7.2).
 
 ## 4. Input and other users of the frame
 - **Mouse:** `MainCallBackEventHandler` (ELF 0x579B70) maps the physical position through the virtual frame:
@@ -89,73 +87,41 @@ side strips show a tiled dark texture (re/deviations.md 4; not a picture: §3, �
 ## 5. The mobile toolbar (`toolbar=1`, off by default)
 `IG2_TOOLBAR` (exe 0xFE6532) takes `H·52/768` pixels off each side of the window before the rule above
 (`IG2_WINDOW_POSX` = that width) and draws the touch sidebars there (`ig2_toolbar_resize` ELF 0x5515B0,
-`retina_*` bitmaps from 1680 px wide). A mobile leftover; not planned for the client.
+`retina_*` bitmaps from 1680 px wide). A mobile leftover.
 
-## 6. The client
-`ig2-client::kit` (the shared screen kit, 2026-10-18) holds the rule; every screen draws through it:
-- `kit::Layout` = `ig2_resize` (§2, its f32 aspect test and integer rounding), `hatar()` = `ModifyViewPort` (§3),
-  `mouse()` = `MainCallBackEventHandler`'s unclamped integer mapping (§4), `band()` = the GL viewport from the top
-  (`glViewport` counts y from the bottom, so an odd remainder puts the extra pixel row above the band). Tested with
-  §2's six observed sizes.
-- `kit::Virtual` (re-exported as `font::Virtual`): `ig2_render_first`'s float mapping (`k = WIN_H/480`, the frame
-  centred) of the viewport; `virtual_of` is the exe's integer mouse mapping; `x_range()` = `HatarX1..X2` (text
-  flag 8). The cameras (`starmap`, `colony`) and every former `k = size[1]/480` site go through it.
-- Narrower than 4:3: the screens draw in the band (`W × W·480/640`) as if it were the window; the window
-  (`window::Gpu::present`) and the snapshots (`assets::write_snapshot`, `kit::layout::compose`) put it on the window
-  with black bars above and below; the pointer is taken relative to `IG2_VIRTUAL_POSY`.
-- `kit::Wide`: the offscreen 3D targets (`research.rs` models, `starmap_panels.rs`, `colony_ui.rs`,
-  `diplomacy_scene.rs`) span the viewport, their clip matrices' x row divided by the width over the frame's. The
-  info/messages frame models (`screen_frames.rs`) keep a 4:3 target (`Wide::frame`): ig2.exe cuts them at the
-  frame's edge (§3, Messages).
-- The "letterbox" option (`--letterbox`, off by default, ADR 0010 §2): black over the side strips at the end of the
-  frame (`kit::layout::letterbox_bars`), and the `Wide` targets stay 4:3.
-- Also in the kit: the faders (`kit::fader`: `FadeKerettelKerekit`, `KirakFader`, `fadertexture`), the hot-spot
-  tooltip (`kit::Tooltip`), the row frame `DesignKeret1` (`kit::DesignFrame`), the hot-spot test `kit::inside`.
-- Checked (2026-10-18): 800 × 600 snapshots of nine screens are pixel-identical to the client before the kit; at
-  1920 × 1080 they differ by at most 1 grey level (the reformulated projections) and a 1280 × 1024 snapshot is the
-  1280 × 960 one between black bars.
-- Lines: the engine's wireframes (`wirekirak` ELF 0x6083f0: the research ball and sphere, the design sphere and
-  boxes, the diplomacy cages, the trade model; the spy sphere already was) are one output pixel wide at every window
-  size (§7.3), not one virtual pixel.
-- Open: edge scrolling at the window's edges (§4) when the autoscroll is ported; the side strips' stale texture
-  (§7.2, re/deviations.md 4).
+## 6. Lines
+The engine's wireframes (`wirekirak` ELF 0x6083f0: the research ball and sphere, the design sphere and boxes, the
+diplomacy cages, the trade model, the spy sphere) are GL lines one output pixel wide at every window size, not one
+virtual pixel [obs: run-width histogram of the research ball, mode 1 px at 800 × 600, 1920 × 1080, 2520 × 1080 and
+3840 × 2130].
 
-## 7. The M4 checks (2026-10-23/24)
+## 7. Observations at wide sizes
 `run_screendiff.py … --size WxH [--letterbox]` (exe and client at the same window size; `ig2-screendiff` places the
-regions in the centred 4:3 frame by §2 and adds `left_strip`/`right_strip`). Captures of `quick-1.sav` in
-`_local/screendiff/wide/<size>/`; results in re/screens/diff-results.md (M4 widescreen).
+regions in the centred 4:3 frame by §2 and adds `left_strip`/`right_strip`), captures of `quick-1.sav`.
 
 ### 7.1 Sizes and screens
 1920 × 1080, 2520 × 1080 and 3840 × 2130 (4K class: on a 2560 × 1440 desktop Windows shrinks ig2.exe's 3840 × 2160
-window to 2130 lines; the client at 3840 × 2160 is the same rule), plus 1280 × 1024 (narrower than 4:3) and an
-800 × 600 baseline. Screens: starmap, colony, ground war, info, messages, research, design, trade, production,
-transfer, fleet and vehicle info, diplomacy, spy, the radial and select menus, the planet info; the main menu and
-Options (scripts) at 16:9.
-- 2D stays in the frame and 3D fills the strips with the same camera on every screen; the in-frame regions match the
-  800 × 600 baseline within ~1 grey level (differences there are the screens' own, not the window size's).
-- At 1280 × 1024 the band (y 32..991) and the bars match on every screen tried (starmap, colony, research, messages,
-  info).
-- The letterbox option (`--letterbox`): the client's strips are black and the frame is unchanged (starmap, colony,
-  research, messages at 16:9).
+window to 2130 lines), plus 1280 × 1024 (narrower than 4:3) and an 800 × 600 baseline. Screens: starmap, colony,
+ground war, info, messages, research, design, trade, production, transfer, fleet and vehicle info, diplomacy, spy, the
+radial and select menus, the planet info; the main menu and Options at 16:9. On every screen 2D stays in the frame and
+3D fills the strips with the same camera; at 1280 × 1024 the band is y 32..991 between black bars.
 
 ### 7.2 The side strips of messages, diplomacy and spy
 ig2.exe shows a dark tiled "circuit" texture there (luma ~26, pixel-identical on the three screens and at every
-wide size, its tiles at a fixed scale: 21:9 shows more of them), the client black. It is no file of the install
-(every 2D picture and texture tried, stretched and tiled). Cause: `Copy3hatterkep` (§3) draws a picture whose
-texture handle is −1 (messages `Kepek[0x35]`; diplomacy's and spy's `Kepek[0x34]` = `_ESIG_U2.BMP`, not shipped),
-so the quad takes the last-bound texture. An original bug: kept black (re/deviations.md 4).
+wide size, its tiles at a fixed scale: 21:9 shows more of them). It is no file of the install (every 2D picture and
+texture tried, stretched and tiled). Cause: `Copy3hatterkep` (§3) draws a picture whose texture handle is −1
+(messages `Kepek[0x35]`; diplomacy's and spy's `Kepek[0x34]` = `_ESIG_U2.BMP`, not shipped), so the quad takes the
+last-bound texture. An original bug (re/deviations.md 4).
 
-### 7.3 Wire widths
-The exe's wire lines are 1 px wide at 800 × 600, 1920 × 1080, 2520 × 1080 and 3840 × 2130 [obs: run-width histogram
-of the research ball, mode 1 px at every size]; the client drew `k` px (4–5 px at 4K). Now 1 px: at 4K the research
-ball 12.9 → 6.3, the diplomacy heads 9.3/8.2 → 2.4/2.0, the research/design strips 0.7 → 0.1.
-
-### 7.4 Left open
-- The main menu at 16:9 (fixed 2026-10-24, deviation 214): the `texcsor.bmp` billboard draws at its null box's position plus
-  its particle's own (mainscr.md §3 step 6), so it sits 400 units further left and reaches the window's edge; every 16:9 main
-  grab is now under 6.
-- SpaceWar: `run_spwc.py` takes no window size yet; the client at 16:9 fills the strips with the battle and keeps the
-  HUD in the frame (no exe capture to compare). Help, credits, demo and the tutorial overlay have no capture entry
-  or client snapshot path yet.
-- 2D lines drawn through the kit (`ui.rs` charts, `hud.rs`, `starmap_hud.rs`, `colony_war.rs`) still scale with
-  `k`; not checked (no lines in the captured states).
+## 8. Client status
+`ig2-client::kit` holds the rule and every screen draws through it: `kit::Layout` = `ig2_resize` (§2, its f32 aspect
+test and integer rounding; tested with §2's six sizes), `hatar()` = `ModifyViewPort`, `mouse()` = §4's unclamped
+mapping, `band()` = the GL viewport from the top (an odd remainder puts the extra row above the band); `kit::Virtual`
+= `ig2_render_first`'s mapping; narrower than 4:3 the screens draw in the band and `window::Gpu::present` /
+`assets::write_snapshot` add the bars; `kit::Wide` widens the offscreen 3D targets, while the info/messages frame
+models keep a 4:3 target (`Wide::frame`), as the exe cuts them. Wire lines are 1 px (§6). The letterbox option
+(`--letterbox`, ADR 0010 §2) blacks the strips and keeps the `Wide` targets 4:3. In-frame regions match the 800 × 600
+baseline within ~1 grey level at every size. Open: the side strips stay black (row 4); edge scrolling at the window's
+edges (§4) with the autoscroll; SpaceWar (`run_spwc.py` takes no size), Help, credits, demo and the tutorial overlay
+not compared at wide sizes; 2D lines through the kit (`ui.rs` charts, `hud.rs`, `starmap_hud.rs`, `colony_war.rs`)
+still scale with `k`, unchecked. The mobile toolbar (§5) is not planned.

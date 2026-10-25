@@ -1,4 +1,4 @@
-// Starmap camera probe (re/screens/starmap.md §2.4, §10.6, re/deviations.md 226), appended to screen.js by
+// Starmap camera probe (re/screens/starmap.md §2.4, §10.6), appended to screen.js by
 // run_screen.py --probe: the camera's raw f32 bits before and after every `StarmapKeyboardDoModifies` (exe 0x5ae880)
 // and `Starmap_Move` (exe 0x5bb230, cdecl (f32 dx, f32 dy)) call on the starmap (at most 3000), with the held flags
 // (`KeyboardZoomKi`/`Be` 0xe75ae4/5, `PitchFel`/`Le` 0xe75ae6/7, `RotateBal`/`Jobb` 0xe75af0/1) and, after

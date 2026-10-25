@@ -4,8 +4,8 @@ Research (`AktKep` 4), design (5), diplomacy (6), spy (7), trade (8), info (9), 
 help (1) don't draw the starmap or the colony underneath. Each lays a screenshot of the screen it came from over the
 viewport, dimmed to about half as it opens. The starmap or colony is not drawn again while the screen is up. The game
 keeps running underneath (except where noted in §3). From the exe's decompiles (`_local/decomp/screens`, `design`,
-`infomsg2`, `spw-setup2`, `topbar`, `fader/Research3DUpdate.c`, `spyscr_exe`) and captures of a running game (§5).
-Addresses are exe unless marked ELF. Port: `ig2-client::backdrop`; the "live background" option is ADR 0015.
+`infomsg2`, `spw-setup2`, `topbar`, `fader/Research3DUpdate.c`, `spyscr_exe`) and captures of a running game (§3).
+Addresses are exe unless marked ELF. Client status: §4; the "live background" option is ADR 0015.
 
 ## 1. The pictures: `SaveScreen(n)` (0x524700, ELF 0x5deb20)
 - `SaveScreen(n)` fills the picture slot `Kepek[0x33 + n]` (exe 0x903558 + i·0x124: loaded byte +0x101, GL texture
@@ -57,7 +57,7 @@ layer, under the screen's own meshes.
 Consequences of the slot rules (original behaviour, kept in classic mode):
 - From the colony, research and the other 0x34 screens draw the **last starmap exit's** picture (stale), or nothing
   (black) if the starmap was never left this session.
-- Options, messages and help opened over research and the like draw that screen as it was (§5: options and
+- Options, messages and help opened over research and the like draw that screen as it was (§3: options and
   messages over the info screen).
 - A slot whose loaded byte is set but whose texture is missing draws with the last bound texture: the "circuit"
   side strips of widescreen.md §7.2 (deviations.md 4).
@@ -72,36 +72,22 @@ clear, unless multiplayer (`MultiPlayerMode` 0xBAE2C0):
   back in their `_Kilep`); help keeps 0xBAE265 set while it opened animated.
 
 So the original freezes the **picture**, not the game: the date runs on behind research, info and the rest [obs:
-§5, 2327-10-24 → 10-26 over the info screen].
+`run_screen.py quick-1.sav --kep 2 --run --script scripts/overlay-bg.json`, 1920 × 1080: the info screen over the
+dimmed starmap without names, options and messages over the dimmed info screen (Esc and F10 from it), the date
+2327-10-24 → 10-26 behind the info screen; F4 is gated on that save, research came up through `AktKepKell`].
 
-## 4. The port (`ig2-client::backdrop`, `window.rs`)
-- `Frame::backdrop` (render.rs): a picture under everything, the 3D scene too, drawn in gamma space with its grey
-  (the 2D pass, `Blend::GammaAlpha`'s pipeline).
-- `Backdrop` keeps the two pictures (0x34, 0x35) as render targets, and the frame last put on the window (the back
-  buffer `SaveScreen` reads). `App::backdrop_switch` runs when the shown `AktKep` changes and takes them as the
-  table in §1 says: the starmap scene without HUD for 0x34; the last frame for 0x35 from the starmap and the
-  overlay screens; the colony's scene for 0x35 from the colony.
-- **Classic** (`--background classic`, settings `LiveBackground` 0): the pictures as taken.
-- **Live** (default, ADR 0015): a picture taken of the starmap or colony (or none yet) is replaced by the starmap or
-  colony underneath drawn anew every frame (its scene, no HUD), at the screen's grey. A picture of another overlay
-  screen (options over research) stays as taken. The sim's rules (§3) don't change: what runs in the original runs.
-- Cost (`IG2_PROFILE`, release, vsync off, 800 × 600, `quick-2.sav`, medians; `_local/perf-overlay/`): live mode's
-  `backdrop` phase is 0.6–0.7 ms a frame (worst ≈ 2 ms), about what the starmap screen's own scene and draw take;
-  worst frames classic → live: info 2.4 → 5.4 ms, research 3.4 → 4.2, design 2.8 → 3.5, trade 2.5 → 3.6. The 3D
-  pass now keeps a depth buffer per target size (4 at most): with one, the band-sized backdrop and the screens'
-  offscreen models recreated it twice a frame (info 344 fps before, 826 after).
-- `--snapshot --backdrop` draws the save's starmap as the picture (0x34 without HUD; 0x35 with it for messages and
-  options) at the held frame's grey; `run_screendiff.py --via-starmap F` passes it with `run_screen.py
-  --via-starmap F` (the exe opens the starmap first, the screen F frames later).
-- The running client already takes the last presented frame for messages/options/help from screens 4-9 (`backdrop_switch`); only `--snapshot --backdrop` stages a starmap exit, the exe run's own path (deviations 265, matching, 2026-10-25).
+A bare `run_screen.py --kep N` capture goes from the main menu (`AktKep` 15 after `LoadSave`) straight to the screen:
+no `Starmap_Kilep`, no picture, a black background. `--via-starmap F` opens the starmap first and the screen F frames
+later, the original's own path.
 
-## 5. Captures
-- `run_screen.py quick-1.sav --kep 2 --run --script scripts/overlay-bg.json` (`_local/traces/overlay-bg/run1-*`,
-  1920 × 1080): the info screen over the dimmed starmap without names; options and messages over the dimmed info
-  screen (Esc and F10 from it); the date ran on behind the info screen. F4 didn't open research on that save (the
-  key is gated; research came up through `AktKepKell` with `--via-starmap`).
-- The bare `--kep N` captures go from the main menu (`AktKep` 15 after `LoadSave`) straight to the screen: no
-  `Starmap_Kilep`, no picture, a black background. The accepted screens' references are those; the client's
-  snapshot draws black unless `--backdrop`.
-- `run_screendiff.py … <screen> --via-starmap 120` (800 × 600, `_local/screendiff/overlay-bg/`): diff-results.md
-  2026-10-24.
+## 4. Client status
+`ig2-client::backdrop` (`Backdrop`, `window.rs` `App::backdrop_switch`, `Frame::backdrop` in render.rs): the two
+pictures (0x34, 0x35) as render targets taken per §1's table when the shown `AktKep` changes, drawn under everything in
+gamma space with §2's grey. **Classic** (`--background classic`, settings `LiveBackground` 0): the pictures as taken.
+**Live** (default, ADR 0015): a picture of the starmap or colony is replaced by that scene drawn anew every frame (no
+HUD); a picture of another overlay screen stays; the sim's rules (§3) don't change. Cost (`IG2_PROFILE`, release,
+vsync off, 800 × 600, `quick-2.sav`, medians): live mode's `backdrop` phase 0.6–0.7 ms a frame (worst ≈ 2 ms); worst
+frames classic → live: info 2.4 → 5.4 ms, research 3.4 → 4.2, design 2.8 → 3.5, trade 2.5 → 3.6 (the 3D pass keeps
+a depth buffer per target size, 4 at most). Capture: `--snapshot --backdrop` draws the save's starmap as the picture,
+`run_screendiff.py … <screen> --via-starmap 120` passes it on. Without `--backdrop` the snapshot is black,
+as the bare captures.

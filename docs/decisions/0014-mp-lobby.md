@@ -43,3 +43,12 @@ ships the whole start state as a snapshot. The client had no screens for either.
   desynced).
 - Tests: the lobby and the galaxy start over loopback links in `ig2-net`, two and three clients through the room
   model in `ig2-client`; no internet service is touched.
+
+## Amendment 2026-10-25: join codes and private rooms
+- A join code is `ig2_net::joincode::JoinCode`: the session id, a certificate pin (the first 12 bytes = 96 bits of
+  the session certificate's SHA-256, accepted as `quic::Pin::Prefix`) and up to four IPv4 socket addresses, written
+  in Crockford base 32 in groups of five with one SHA-256 check byte (two addresses = 65 characters with dashes).
+- Direct addresses only: the host's LAN IPv4 and, when port mapping worked, the router's external address. No
+  directory, short codes or relay (ADR 0005); the joiner tries every address in parallel, the first link wins.
+- The room has a private toggle (`LobbyHost::set_private`): no LAN announcement, and the door asks for the session
+  id in the hello. The host shows and copies the code; the connection page's address field accepts it (spec §5, §6).

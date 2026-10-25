@@ -31,7 +31,7 @@ pub enum Error {
     NatPmp(u16),
     #[error("malformed answer")]
     BadReply,
-    #[error("UPnP: {0}")]
+    #[error("{0}")]
     Upnp(String),
     #[error("no IPv4 address on the LAN")]
     NoLocalAddress,

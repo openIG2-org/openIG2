@@ -75,7 +75,7 @@ impl App {
     /// the line is held, or the pointer coming back onto it, asks too. A hold that began elsewhere stays with that
     /// spot (the screens' mains grab the pointer, the bar's flag-1 spots wait for the release); a hold that began over
     /// no hot-spot (`AktIkon` 0: no `_Main` runs, so nothing sets `Mouse_Megfogva`) asks once the pointer reaches the
-    /// line (re/deviations.md row 340).
+    /// line.
     pub(super) fn top_bar_frame(&mut self) {
         if !(self.bar_line_held || self.bar_free_hold) || self.mouse_held & 1 == 0 || self.front.is_some() {
             return;

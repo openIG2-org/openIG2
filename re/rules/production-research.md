@@ -1,8 +1,7 @@
 # Production and research queues
 
-Status: **verified at runtime** (§9): 9,000 research ticks (3,350 completions) and 6,919 production ticks
-(1,575 units) reproduced byte for byte by `engine/crates/ig2-sim` (`research.rs`, `production.rs`,
-`tests/production_trace.rs`). Two per-tick systems that spend
+Port status: ported in `engine/crates/ig2-sim` (`research.rs`, `production.rs`, test
+`tests/production_trace.rs`), byte-exact (§9). Two per-tick systems that spend
 money from pools 1 (production) and 3 (research) (`colony-side.md` §6.4):
 
 | Function | exe | ELF | Role |
@@ -90,7 +89,7 @@ v = min(v, limit − (f32)progress);   v = max(v, 1.0)
 The slow-down (exe 0x541270) acts **at once**: SP, unless the speed is locked (`nemlehetidotallitani`
 0xBAD0D4): `IdoSpeed = IdoSpeedSzorzo = 1` (and the battle multiplier); MP: back to `ProgramSebesseg`
 (0xBAE54C) 1/2/3 → ×4/×8/×16 (4: unchanged). It also writes `IdoSpeed` 0xBAE258 (the lit speed button; SP: = `IdoSpeedSzorzo` = battle multiplier = 1; MP: `ProgramSebesseg` 1/2/3 → `IdoSpeed` 1/2/3, battle multiplier 1/2/2; any other value → only `IdoSpeed = ProgramSebesseg`); the argument is ignored (ELF 0x623740 = `SetIdoSpeed(1, false)`); callers `FRISSIT_Research` 0x51e1b2, `SpaceWarFrissit` 0x56e15d, radar pass 0x595570, `NewMessage` 0x508fe5 (its first statement). Empires after the human in this loop, and the rest of the
-tick (`FRISSIT_Starmap` movement and production), run at the new multiplier (found by the fuzzed trace).
+tick (`FRISSIT_Starmap` movement and production), run at the new multiplier.
 
 ### 2.1 `TalalmanyKifejlesztve(e, t)`
 If `status[t][e] != 5`: `progress = (int)((f32)tech.+0x38 × RaceResearchTime[race(e)])`; status 5; for a
@@ -98,7 +97,7 @@ human-controlled `e` with `+0x26 != 0` or `+0x28 != 0` → `TervezAutomatikus(e,
 the recompute (`colony-side.md` §4.1); `ResearchAktFejlesztett[e] == t` → 0. Tech **0x95** also develops
 **0xAA** (same steps).
 
-### 2.3 `TervezAutomatikus(e, t)` (exe 0x4b72b0, ELF 0x61bc80; verified in the save replay)
+### 2.3 `TervezAutomatikus(e, t)` (exe 0x4b72b0, ELF 0x61bc80)
 The first hull `h` in `Alapok[1..25]` whose tech (`+0xc`) is `t`; none → nothing. Else `d = TervNew(e, 0)`
 (ai-empire.md §10.2), `+0x44 = h`, the design's name = `strcpy` of tech `t`'s name (the localised one),
 `TervUjraSzamol(e, d, false, true)`, `TervAutoDesign(e, d, 0)` (§10.3), `TervUjraSzamol` again. On the design
@@ -106,7 +105,7 @@ screen it also re-sorts the list (UI). Port: `ai::World::automatic_design`, run 
 `ResearchEvent::AutoDesign` of the research tick and of message 0x31; the name is reported
 (`AiEvent::DesignNamed`; the SP name is `ai::design::generated_name`, new-game.md §14).
 
-### 2.4 The research screen's orders (`MULTIGET_Research` exe 0x51ee70, ELF 0x5ec6e0; verified byte-exact)
+### 2.4 The research screen's orders (`MULTIGET_Research` exe 0x51ee70, ELF 0x5ec6e0)
 Lockstep messages from `Research_Main` (re/screens/research.md §6), also in SP. Values after the issuer `e`:
 - 0x29 `(4, t)` stop: `ResearchAktFejlesztett[e] = 0`, status(t, e) = 3.
 - 0x2a `(4, t)` start: `ResearchAktFejlesztett[e] = t`, status(t, e) = 4.
@@ -215,7 +214,8 @@ planets in order, line 0 before line 1, one unit per line per tick at most. No R
 
 ## 9. Verification
 `traces/2026-10-15-production.md`: Frida before/after region diffs of every `FRISSIT_Research` call and
-every production block, plain and fuzzed, replayed byte for byte; 18/23 research and 21/27 production
+every production block, plain and fuzzed, replayed byte for byte (9,000 research ticks with 3,350
+completions, 6,919 production ticks with 1,575 units); 18/23 research and 21/27 production
 mutations caught, the rest data-equivalent or untraced (listed there).
 `traces/2026-10-17-research-orders.md`: 615 research-screen messages (§2.4) staged through the exe's own handler in
 three save replays, byte-exact on the whole state with `TervezAutomatikus` (§2.3); 6/7 mutations caught.

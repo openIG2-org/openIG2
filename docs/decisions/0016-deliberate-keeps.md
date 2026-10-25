@@ -41,8 +41,8 @@ the user's install is read, never changed):
 4. **The developers' cheats** (added 2026-10-25, FX15). `ExecuteString`'s debug commands (stage B, about 90 cheats,
    input.md §5.1) need `DEBUGLEHET`, set only from an `init/config` file the GOG install doesn't have, or `DEBUGX`,
    set only by stage B's own `debug`; they act on the typing machine alone (a desync in multiplayer). They are not
-   ported, and neither are the 0x3fd system lines only they send. Rows: #163 (its debug part), #244 (the battle's
-   `DEBUGX` keys), #347 (the main menu's `DEBUGLEHET` Enter quick start, `MainscrKeyboardHandler` 0x5000c0). The client's `DEBUGX` readers stay, so a save with the flag set behaves as in the exe.
+   ported, and neither are the 0x3fd system lines only they send. This covers `DoKeyboard`'s debug keys, the battle's
+   `DEBUGX` keys and the main menu's `DEBUGLEHET` Enter quick start (`MainscrKeyboardHandler` 0x5000c0). The client's `DEBUGX` readers stay, so a save with the flag set behaves as in the exe.
 5. **Load times and frame latency** (added 2026-10-25, FX1). The original's waits that come from its loading or its
    frame loop, not from a rule, aren't reproduced:
    - #248, keys during a load: the exe refuses keys while a screen's synchronous `_Belep` load runs (its `FRISSITES`
@@ -59,8 +59,8 @@ the user's install is read, never changed):
      screen's `_Main`; a press is acted on in the same tick as in the client, but its 2D effect is first drawn one
      rendered frame later (design-fx8.json: the held − steps at frames 208/209/210 in both, the exe's grab shows the
      frame before). The orders and sounds `_Main` makes keep their ticks. Where a screen's own draw or 3D pass reads
-     the input (so the order moves a tick, a sound or a state), that screen ports it: research (#349, the list row
-     and the mouse-chosen category one frame later), design (#92, #95, the slides from the next 3D update), the
+     the input (so the order moves a tick, a sound or a state), that screen ports it: research (the list row
+     and the mouse-chosen category one frame later), design (the slides from the next 3D update), the
      messages screen (FX12). A capture taken in the frame after an input may show the client one frame ahead.
 6. **Build modes the GOG release doesn't use** (added 2026-10-25, FX1): #259, the remaster's mobile toolbar
    (`IG2_TOOLBAR` exe 0xfe6532, `toolbar=1`, off by default: spots 2..5 at 28 × 18, spot 7 at x 310, the history

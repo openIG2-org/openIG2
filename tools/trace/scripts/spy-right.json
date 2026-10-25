@@ -1,6 +1,6 @@
 {
  "screen": "spy",
- "note": "FX3 (re/deviations.md 281) with --spies applicant on quick-1.sav: a right press on the applicant dialog's 'later' 0x20 (t 200; Spy_Main tests only Mouse_Lenyom/Felenged), then a right press on the mission list 0x10 (t 300). Times are UI ticks from the first frame the screen is up.",
+ "note": "FX3 with --spies applicant on quick-1.sav: a right press on the applicant dialog's 'later' 0x20 (t 200; Spy_Main tests only Mouse_Lenyom/Felenged), then a right press on the mission list 0x10 (t 300). Times are UI ticks from the first frame the screen is up.",
  "events": [
   {"t": 200, "press": [550, 378], "button": 3},
   {"t": 300, "press": [555, 277], "button": 3}

@@ -117,6 +117,16 @@ entry). Lists the LAN sessions (`ig2_net::discovery::Browser`), hosts a session 
 announcement, `Pin::Any` by address). A password field serves both: hosting with one makes a password session;
 joining sends it to the SPAKE2 check. "inet" opens the same screen: there is no internet matchmaking (ADR 0005
 defers the rendezvous service); a direct address join works across the internet where the host's port is reachable.
+The status line reads "No internet matchmaking: join by address or join code".
+
+**Join by code** (`ig2_net::joincode`, byte layout in its module doc): the address field also takes a join code
+(`JoinCode { session, pin, addrs }`: the session id, the first 12 bytes of the session certificate's SHA-256 as
+`Pin::Prefix`, up to 4 IPv4 socket addresses; Crockford base 32 in dash-separated groups of five plus one SHA-256
+check byte; case, dashes and blanks ignored, O reads 0, I/L read 1). The field takes up to 96 characters, shows 60
+and scrolls. Join decodes the code, connects to every address in parallel, the first link up wins, and the hello
+carries the session id (the private door's check). A long string without dots or colons that fails to decode shows
+the decode error instead of a host lookup. Ctrl+V pastes (first line only) into the focused field. Codes are direct
+addresses only (the host's LAN IPv4 and, when port mapping worked, the router's external one); no directory service.
 
 ## 6. Layout (ours, 640 × 480 virtual; the scenario panel's style: `mainscr.md` §9.3)
 
@@ -126,9 +136,19 @@ font (size 3 headings and buttons, 2 rows, 1 small values), palette colours 1 (n
 
 | Box | Rect (x, y, w, h) | Holds |
 |---|---|---|
-| Room: title | 16, 8, 608, 26 | the session name (size 3), the join code of a private session |
+| Room: title | 16, 8, 608, 26 | the session name (size 3) |
 | Room: slots | 16, 40, 380, 272 | 8 rows of 32 px from y 56: empire n, race (click: next, right click: previous), holder (human name, "computer", "-"; click: move there; host right click: empty → AI → closed), "Ready" |
 | Room: options | 404, 40, 220, 272 | planets, AI players, galaxy shape, battles, speed control: label (0x25) and value (0x22) rows of 48 px with the host's ◄ ► arrows |
-| Room: chat | 16, 320, 608, 120 | the last 6 lines, the entry line (Enter sends) |
+| Room: port mapping | 16, 316, 608, 40 | host only: row "Port mapping (UPnP / NAT-PMP): off" (hot spot 0x72, 20, 318, 400, 16, click toggles); then "asking the router...", "on, reachable at <ip:port>" or the failure text; right of it at x 476 "Private game: no/yes" (host-only hot spot 0x73, 430, 318, 190, 16, click toggles `LobbyHost::set_private`: no LAN announcement, the door asks for the session id; a joiner sees "Private game: yes" in colour 0x25); second row at y 338 "Join code: <code>  (click: copy)" (hot spot 0x74, 20, 336, 600, 16; click or Ctrl+C copies) or "Join code: none (no network address)" |
+| Room: chat | 16, 360, 608, 80 | the last 4 lines (y 364 + 14j), the entry line at y 424 (Enter sends) |
 | Room: buttons | y 450 | Cancel (14/1/11), Ready (14/5/6) or Start game (14/1/12) |
 | Connect | 120, 40, 400, 400 | title (15/1/29 "Local network" or 15/1/30 "Internet game"), the session list (10 rows), Server IP address (14/5/2) entry, password entry, Host / Join / Cancel |
+
+## 7. Client status
+`ig2-client::mp_lobby` (`MpScreen`, on `ig2_net::lobby`): §4–§6 done — the connection page (LAN sessions, host, join
+from the list or by address, password), the galaxy room (slots, races, holders, the host's options, chat, ready,
+start, the host's opt-in port mapping through `Listener::map_port` / `port_map` and `ig2_net::portmap::open_live`, kept
+renewed until the room or game ends; `launch` builds the game via `HostSession::start_galaxy` / `ClientSession::new_galaxy`), and a room for an MP
+save (`MpScreen::host_save`). `mp_wait.rs` is the in-game wait overlay (`MOUSE_DrawOver`, input.md §9). The
+original's own room drawing (`StartGfx2D_1..3`) is deliberately not copied (ADR 0009 §2, ADR 0014); the shared start
+`ticks` is row 223; private rooms and join codes (§5, §6) are done (clipboard through `arboard`, text only); the main menu's remaining MP-ring leftovers are row 157.

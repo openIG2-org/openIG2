@@ -1,6 +1,6 @@
 {
  "screen": "main",
- "note": "FX17b row 315: the main menu left alone for 40 s. The exe moves no light (mainMozgatMainFenyek is empty, re/screens/mainscr.md §4); what changes over time is the camera (MainScrMozgato M = t/10: cos(M/50), sin(M/82), sin(M/165), roll cos(M/150)), the galaxy mesh's and the four clouds' turns and the fade-in (to t ~333). The pointer rests off the rings.",
+ "note": "FX17b: the main menu left alone for 40 s. The exe moves no light (mainMozgatMainFenyek is empty, re/screens/mainscr.md §4); what changes over time is the camera (MainScrMozgato M = t/10: cos(M/50), sin(M/82), sin(M/165), roll cos(M/150)), the galaxy mesh's and the four clouds' turns and the fade-in (to t ~333). The pointer rests off the rings.",
  "events": [
   {"t": 1, "mouse": [40, 560]}
  ],

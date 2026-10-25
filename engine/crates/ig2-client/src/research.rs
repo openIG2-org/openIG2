@@ -170,7 +170,7 @@ impl Place {
     }
 
     /// Into the state's globals, as the exe's save finds them (`ResearchTerulet`, `ResearchMezo`, `ResearchTalalmany`,
-    /// `Terulet_Akt[13]`, `ResearchOldForgato`: `LoadSave(…, 2)` writes the live values; re/deviations.md row 341).
+    /// `Terulet_Akt[13]`, `ResearchOldForgato`: `LoadSave(…, 2)` writes the live values).
     pub fn write(&self, state: &mut SaveState) {
         let m = &mut state.mem;
         m.set_i32(at::AREA, self.area as i32);
@@ -221,7 +221,7 @@ pub struct Research {
     info_tech: i32,
     /// `ResearchTalalmany` as the frame's `ResearchGfx2D_2` reads it for the info lines (as `drawn_area`: a mouse
     /// press's tech a frame later) [obs: research-left.json t 400 and 510, the lines typed 1.4 characters a frame
-    /// from the frame after the press; row 365].
+    /// from the frame after the press].
     drawn_tech: i32,
     /// `reswireframe`, the ball's matrix (`FociMesh`), `AddZoom`, `TalalmanyDir`, `Kozelites`/`KozelitesDirection`,
     /// `ResearchTalalmanyForgas`, `reskeringeto`, `GombocTransparencyk` (the lab cones' fade).
@@ -268,7 +268,7 @@ pub struct Research {
     /// `ResearchTerulet` as the frame's `Research3DUpdate` reads it: the exe draws before `Research_Main`, so a
     /// category chosen by a mouse press (not a key) shows in the next frame's pass (taken at the end of
     /// [`Research::step`]) [obs: research-left.json, the running project 0x19 pressed at t 450, its `Res_Hangok[1]`
-    /// at t 460, row 349].
+    /// at t 460].
     drawn_area: usize,
     models_shown: bool,
     /// Tooltip 0x11 (`CheckIfTalalmanyokFolottVan`): the model's tech and the pointer it was set at.
@@ -519,7 +519,7 @@ impl Research {
     }
 
     /// The exe's own `resf` at a capture's start (`--faders`): its `rand()`-driven shine and drift, which the
-    /// screen's own generator can't replay (row 365).
+    /// screen's own generator can't replay.
     pub fn set_faders(&mut self, f: crate::kit::FaderDesign) {
         self.faders = f;
     }
@@ -863,7 +863,7 @@ impl Research {
         }
         // `ResearchGfx2D_2` (exe 0x5221a0, l.281-301): a left press (`Mouse_Lenyom && Bal`) on a known tech's row
         // clicks and chooses it; drawn before the frame's `_Main`, it sees a press a frame after the hot-spots do [obs:
-        // research-left.json, the row at t 520 clicks at t 521, row 349].
+        // research-left.json, the row at t 520 clicks at t 521].
         if self.edge.press && self.edge.buttons & 1 != 0 {
             let p = self.pointer();
             if let Some(k) = self.list_row(en, techs, [p[0] as f32, p[1] as f32]) {
@@ -1945,7 +1945,7 @@ impl ResearchModels {
         // colour (`FenyHozzarendel`: seen (0, 32, 32), researchable (0, 64, 64), researching (64, 64, 0)); hidden
         // until the zoom-in after the opening ends (`LoadTalalmanyVectorok` hides them, `UnHideMeglevoTalalmanyok`).
         // Flying out after a new category they still draw, fading with `AddZoom` [obs: research-left.json t 400, the
-        // civil models 20 ticks after the press on category 9; row 365].
+        // civil models 20 ticks after the press on category 9].
         self.centres.clear();
         let race = state.mem.u8(at::RACES + en as u32);
         let sr = &rules.research_screen;
@@ -2470,7 +2470,7 @@ mod tests {
     }
 
     /// The top bar's quick pick with the screen down moves the place it opens at (`ResearchAtvaltTalalmanyra` exe
-    /// 0x521f20; deviations #254); the place the screen leaves at comes back on the next visit (needs the install and
+    /// 0x521f20); the place the screen leaves at comes back on the next visit (needs the install and
     /// `quick-1.sav`).
     #[test]
     fn the_quick_pick_moves_the_place_the_screen_opens_at() {
@@ -2495,7 +2495,7 @@ mod tests {
         assert_eq!((r.area, r.tech, r.slot_area[0]), (7, 6 * 16 + 2, a));
         let back = r.place();
         assert_eq!((back.area, back.tech, back.front, back.fields[a as usize]), (7, 6 * 16 + 2, a, r.fields[a as usize]));
-        // A save writes the place into the globals and a load reads it back (row 341).
+        // A save writes the place into the globals and a load reads it back.
         let mut state = w.game.state.clone();
         back.write(&mut state);
         assert_eq!(Place::read(&state), back);

@@ -2,7 +2,7 @@
 
 Status: **verified** on all 75 files (`ig2_formats::colony_map`, golden test
 `every_colony_map_parses`). Every field's use (or non-use) is pinned in the ELF: the 16 functions that
-touch `Terepek` were decompiled (2026-10-16).
+touch `Terepek` were decompiled.
 
 ## Evidence (ELF `ig2`)
 
@@ -65,7 +65,7 @@ Both masks are set together for terrain objects. Only cells 0..49 of a row are u
 bounding box). Shipped world heights span −1522..927 (golden test). `terepleiro.txt`'s "special
 height" also goes to `+0x8c` (+ 110) but the map file overwrites it.
 
-## Visual check (2026-10-15)
+## Visual check
 Rendered side by side (heights | tile IDs | mask A | mask B) for maps 0, 1 and 30:
 - heights: a smooth terrain field (craters, ridges, roads visible) → heightmap ✔
 - tile IDs: uniform over flat ground, varied in rough areas → terrain texture tiles ✔

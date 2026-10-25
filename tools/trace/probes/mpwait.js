@@ -1,4 +1,4 @@
-// The MP wait overlay staged in a single-player game (re/screens/input.md §9, deviation 296), appended to screen.js by
+// The MP wait overlay staged in a single-player game (re/screens/input.md §9), appended to screen.js by
 // run_screen.py --probe (run_screendiff.py mpwait). ig2.exe can't be driven into a real lockstep stall here (two
 // instances and the multiplayer menus), so this puts the exe's own state for one into place and lets its own code draw:
 // `MultiSendPackets` (exe 0x5126b0, which would clear `WaitingForVector`) does nothing; 30 frames into the starmap, and

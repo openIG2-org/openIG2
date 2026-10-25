@@ -58,7 +58,7 @@ impl Layout {
 
     /// `MainCallBackEventHandler`: a window pixel → virtual pixels through the frame, unclamped.
     pub fn mouse(&self, p: [i32; 2]) -> [i32; 2] {
-        // A minimised or display-off window has a 0-wide frame (deviations #264): no division by zero.
+        // A minimised or display-off window has a 0-wide frame: no division by zero.
         let [x, y, w, h] = self.frame;
         [(p[0] - x) * 640 / w.max(1), (p[1] - y) * 480 / h.max(1)]
     }
@@ -231,7 +231,7 @@ mod tests {
         // Unclamped, truncated towards zero in the side strips.
         assert_eq!(l.mouse([0, 0]), [-106, 0]);
         assert_eq!(l.mouse([1919, 0]), [746, 0]);
-        // A minimised window: a 1 × 1 size gives a 0-high frame (deviations #264), no panic.
+        // A minimised window: a 1 × 1 size gives a 0-high frame, no panic.
         let l = Layout::new(0, 0);
         assert_eq!(l.frame[3], 0);
         let _ = (l.mouse([5, 5]), l.hatar());

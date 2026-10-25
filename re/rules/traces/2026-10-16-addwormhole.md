@@ -1,7 +1,7 @@
 # Opening a wormhole (`AddWormhole`) (2026-10-16)
 
 Spec: `re/rules/fleet-movement.md` "Opening a wormhole" (before §11). Port: `Game::add_wormhole` (`ig2-sim::game`),
-with the fleets made by the AI port's `FlottaNew` (`ai::World::new_fleet`, `production-research.md` §3.4) and the tint
+with the fleets made by the AI port's `FlottaNew` (`ai::World::new_fleet`, `production-research.md` §5.1) and the tint
 table `ig2-rules` `wormhole_colours` (`i32 [6][3]` at exe 0x913850, `game::GameRules::radar.wormhole_colours`).
 `Game` now carries out the stories' `StoryEvent::Wormhole` (902, 239) in the story pass's hand-offs, and 239's
 `StoryEvent::RevealWormhole` (`Game::reveal_wormhole`) when the call made one. Test:

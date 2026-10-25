@@ -284,7 +284,7 @@ pub fn step_selection(state: &SaveState, sel: &Selection, next: bool, shift: boo
     }
 }
 
-/// `SearchBolygohozKozeliFlotta(p, 20, true, false, false, true, 0)` (exe 0x540f50, `production.md` §4): the
+/// `SearchBolygohozKozeliFlotta(p, 20, true, false, false, true, 0)` (exe 0x540f50, `production-research.md` §4): the
 /// owner's fleet nearest to planet `p` (Manhattan < 20) that isn't colonising, terraforming or in battle, an idle one
 /// preferred; 0 if none.
 pub fn near_fleet(state: &SaveState, p: usize) -> i32 {
@@ -1530,7 +1530,7 @@ impl PanelModels {
         let races = state.races();
         // Every panel model is lit per vertex by the starmap scene's lights (`Init3dStarmap`: ambient 0x404040, the
         // parallel 0x808080 at (10, 10, −10)), the light turned into camera space by the camera's rotation; the
-        // console's two side lights don't reach them [obs: light probe on the fleet panel, deviations #47].
+        // console's two side lights don't reach them [obs: light probe on the fleet panel].
         let l = [10.0, 10.0, -10.0];
         let lights = lighting::Lights::default().ambient(0x404040).parallel(0x808080, std::array::from_fn(|i| cam[i][0] * l[0] + cam[i][1] * l[1] + cam[i][2] * l[2]));
         if show_prod {
@@ -1675,7 +1675,7 @@ pub(crate) fn tilt() -> M3 {
 /// Bake a camera-fixed model (`SetRelative(false)`) at `at` with matrix `m`; `alpha` < 1 draws it as glass.
 /// Bake a camera-fixed model with the engine's vertex colours (the shader's pre-lit path: no normal), then each
 /// part's self-illumination (`selfillumkirak`: an additive unlit pass in the grey `255 − t·255`, `t` the object's
-/// transparency, else the material's; re/screens/design.md §14.3).
+/// transparency, else the material's; re/screens/design.md §12c).
 #[allow(clippy::too_many_arguments)]
 fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], glows: &[Option<TexId>], alpha: f32, lights: &lighting::Lights, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     for (pi, p) in model.parts.iter().enumerate() {

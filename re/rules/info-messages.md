@@ -1,6 +1,6 @@
 # Info charts and messages: the statistics history, the scrolling message line and the message inbox
 
-Status: **verified at runtime** for what the recordings reach (`traces/2026-10-16-save-replay.md`): the info
+Port status: ported in `engine/crates/ig2-sim`; verified for what the recordings reach (`traces/2026-10-16-save-replay.md`): the info
 charts every tick of 1,900 (the sample after each load and 17 month changes), the scrolling-message lists with the
 year's tax message (twice) and the "enemy fleet spotted" message, the spy reports and messages of a staged spy
 recording (§3.3: the report queue with 26 reports, ids 100, 101, 103, 106, 136, 139–141), the battle outcomes of
@@ -274,7 +274,7 @@ is posted (§2.2).
 Port: the scripts emit `StoryEvent::ScrollText { text, important }`, `ScrollSabotage`, `ScrollNumber(s)` and
 `ScrollEmpirePlanet`; `messages::story_line` renders them (`Texts::with_story`, `printf`) and `Game::messages_for`
 posts them with id 1 in event order. Verified: 574 lines of the campaign recordings exact (all but 308's, which no
-recording reaches; `traces/2026-10-22-story-ticker.md`). `Game`'s story tick runs the whole campaign chain now
+recording reaches; `traces/2026-10-22-story-ticker.md`). `Game`'s story tick runs the whole campaign chain
 (`new-game.md` §15), so a campaign-start save replay reaches these lines.
 
 ## 4. The inbox expiry (`FRISSIT_Messages`)
@@ -330,7 +330,7 @@ sent), `+0xc` arrival `Ido`, `+0x10 + 0x14·k` parameter `k` (NUL-ended, no leng
 - `LetiltReszlet(part)` (0x5063d0): `Tiltolista[MaxTiltasok++]` := part (0xDABDE8, 20 slots, no bound check).
 
 Gaps: the parameters `MessageText::Star`, `Planets`, `Design`, `Hero`, `Position`, `Participant`, `Spy` aren't
-resolved by the sim yet (the slot keeps `"#=#"`).
+resolved by the port (the slot keeps `"#=#"`).
 
 ## 7. The messages screen's orders
 The screen's writes to saved state and its story hand-offs. The original makes them in the UI frame without a

@@ -1,4 +1,4 @@
-// Colony panel pass probe (re/screens/colony.md §11.10, deviation 130), appended to screen.js by run_screen.py
+// Colony panel pass probe (re/screens/colony.md §11.10), appended to screen.js by run_screen.py
 // --probe: on the colony screen's second `Update3D` (exe 0x52cd10 with `ColonyMasodikUpdate3d` 0x998247 set) logs
 // the projection's inputs at entry and exit: `xcenter`/`ycenter` 0x919650/4, `screenaddx/y` 0xE03744/8, the focal
 // `fov2` 0xE033E0, the depth offset 0x91971C (`-(fov2 / (z + off))` in the draw routine 0x52b3af), `zbm` 0x91965C.

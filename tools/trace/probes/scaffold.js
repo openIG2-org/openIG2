@@ -1,4 +1,4 @@
-// Construction probe (deviation 366, re/screens/colony.md §3.4), appended to screen.js by run_screen.py --probe: the
+// Construction probe (re/screens/colony.md §3.4), appended to screen.js by run_screen.py --probe: the
 // cut height `setvagashatar` (exe 0x4542e0: meshid, float) gets every frame from `ShowColony`, and every scaffolding
 // box `ModifyAllvany` (exe 0x48b390, thiscall: models, slot k, level, cx, cy) places, with the record after the
 // call (+8 the height, +0xc/+0x10 the cell's `Grid2Real`). The first 40 of each.

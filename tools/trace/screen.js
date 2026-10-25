@@ -223,7 +223,7 @@ function hookLightProbe() {
         this.on = A.AktKep.readS32() === 8 && va(0xf434b8).readFloat() === 50 && !tradeProbed.has(key);
         if (this.on) tradeProbed.add(key);
       } else if (cfg.kep === 2 || cfg.kep === 9) {
-        // On the starmap (the info panels' models, deviations #47) and the info screen (the race heads, #329): each object (XVOStruct) once in the last frames
+        // On the starmap (the info panels' models) and the info screen (the race heads): each object (XVOStruct) once in the last frames
         // before the grab (the sort slots are reused every frame); an XVO drawn under several rotations (the fleet
         // panel's big preview shares its model with a cell) once per rotation.
         const key = args[4].toString() + [0, 1, 2, 3, 4, 5].map((i) => args[3].add(0x24 + 4 * i).readFloat().toFixed(3)).join(',');

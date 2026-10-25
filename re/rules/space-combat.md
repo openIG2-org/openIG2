@@ -1,8 +1,8 @@
 # Space combat: hulls, weapons, designs, routing, auto-resolve and the in-battle mark
 
-Status: **§2–§6 verified at runtime** (§8, `traces/2026-10-15-spacewar.md`) and ported to
-`engine/crates/ig2-sim/src/spacewar.rs`; §7 (the real-time battle tick, `SpwC::SpaceWarFrissit`) is ported to
-`spacebattle.rs` and verified bit-exact (`traces/2026-10-16-spacebattle.md`); its setup and end are not. **The exe is normative**: precision below is the exe's (asm checked;
+Port status: **§2–§6 verified at runtime** (§8, `traces/2026-10-15-spacewar.md`) and ported to
+`engine/crates/ig2-sim/src/spacewar.rs`; §7 (the real-time battle: tick `SpwC::SpaceWarFrissit`, setup and end) is
+ported to `spacebattle.rs` and verified bit-exact (§7). **The exe is normative**: precision below is the exe's (asm checked;
 `mulss` = f32, `mulsd` = f64). No rule values here (the tables are read from the user's exe,
 `ig2-rules`); inline code constants are listed.
 
@@ -251,7 +251,7 @@ advance while their screen is shown (`FRISSIT_SpaceWar2` runs on `AktKep == 0xB`
 battle keeps its fleets marked (and immobile, §4.2) until it ends.
 
 ## 7. The real-time battle (`SpwC`)
-Status: **the battle tick, its setup and its end are ported** (`engine/crates/ig2-sim/src/spacebattle.rs`) and
+Port status: **the battle tick, its setup and its end are ported** (`engine/crates/ig2-sim/src/spacebattle.rs`) and
 verified bit-exact against the exe (§8; tick: `traces/2026-10-16-spacebattle.md`, setup and end:
 `traces/2026-10-16-spacebattle-setup.md`). Not ported: the battle screen (camera, selection, drawing); its orders are (§7.12), and so is the MP flow (§7.13).
 Gameplay randomness is stream **6** only; every libc `rand()` in a battle is cosmetic (§7.9).
@@ -641,7 +641,7 @@ and mount lists, the arrays and the side lists are freed and the slot goes inact
 buildings, fleets retreating) already happened during the ticks (§7.5, §7.7).
 
 ### 7.12 The human's orders (`MULTIGET_SpaceWar`)
-Status: **ported and verified byte-exact** (`spacebattle::Order`, `Battle::order`, `Battle::arm_all`;
+Port status: **ported and verified byte-exact** (`spacebattle::Order`, `Battle::order`, `Battle::arm_all`;
 `traces/2026-10-16-spacebattle-orders.md`). The battle screen never calls the order functions itself: it sends
 lockstep messages, in SP too, and `MULTIGET_SpaceWar` (exe 0x5615b0, ELF 0x67ef60) carries them out between frames
 (two `Multi_GetNextTipus` loops: 0x6e..0x77, then 0x44c..0x456). Each names its battle slot; the handler points

@@ -53,7 +53,7 @@ pub(super) fn exe_queues_key_down(event: &winit::event::KeyEvent) -> bool {
 }
 
 /// A numpad digit (with Num Lock on, a `Key::Character`): the exe queues no key down for it, but its SDL_TEXTINPUT
-/// character still types into a text entry (`remapKeyCodes` exe 0x4e4670; deviations #253).
+/// character still types into a text entry (`remapKeyCodes` exe 0x4e4670).
 pub(super) fn numpad_digit(event: &winit::event::KeyEvent) -> bool {
     numpad_digit_key(event.physical_key, event.logical_key.as_ref())
 }
@@ -353,7 +353,7 @@ pub(super) fn mp_time_gate(only_server: i32, host: bool) -> bool {
 }
 
 /// `ColonyKeyboardHandler`'s held camera keys (exe 0x4628c0: vk 0x25..=0x28 by the logical key, so a NumLock-off
-/// numpad's arrows too, deviation 375; numpad + / − by the physical one): left, right, up, down, +, − as 0..=5.
+/// numpad's arrows too; numpad + / − by the physical one): left, right, up, down, +, − as 0..=5.
 pub(super) fn colony_camera_key(physical: winit::keyboard::PhysicalKey, logical: Key<&str>) -> Option<usize> {
     use winit::keyboard::{KeyCode, PhysicalKey};
     Some(match (physical, logical) {

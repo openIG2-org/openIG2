@@ -56,7 +56,7 @@ impl Dump {
 /// The model name of ship type `kind` of `race` (`tipusnevek[race·12 + kind]` `+0`). The planet stations' types 8..=11
 /// hold "TSCtablazatabol" in the exe file: `terv2tipus` (exe 0x582010) copies the hull tech's research model
 /// (`TTeruletek[tech − 1]`, tech `kind + 0x45`) into the record whenever it maps a station design, which `AddFleet`'s
-/// sort does before any unit is added (spec §9.10).
+/// sort does before any unit is added (spec §1.3).
 pub fn type_model(tables: &ig2_rules::Rules, race: i32, kind: i32) -> Option<String> {
     if (8..=11).contains(&kind) {
         return tables.research_screen.models.get((kind + 0x45 - 1) as usize).cloned();
@@ -588,7 +588,7 @@ const CELLS: i32 = 128;
 const BOUND: f32 = 192.0;
 const PLANE_H: f32 = 18.0;
 
-/// A vertex colour word `A<<24 | 0xBBGGRR`: red in the low byte, `A` a transparency (255 = clear; spec §6.1.1, §9.1), also
+/// A vertex colour word `A<<24 | 0xBBGGRR`: red in the low byte, `A` a transparency (255 = clear; spec §6.1.1, §1.6), also
 /// for the engine's `Lines` (the grid, the drop lines) [obs: frame diff 7.10 against 7.47 with A as the opacity].
 fn word_color(w: u32) -> [f32; 4] {
     let c = |s: u32| ((w >> s) & 0xff) as f32 / 255.0;
@@ -863,7 +863,7 @@ impl<'a> Scene<'a> {
     /// (exe unit `+0x184` grow T1, `+0x188` fade F, `+0x18c` attacked T3), the hit-point bar, the corner brackets while
     /// selected, the attack ticks, and the ship count of a selected group; additive, in virtual pixels. `c = 1 −
     /// starmaperosseg` (0 at the battle's zoom). The units' quads are depth tested (`line3(.., depth = true, ..)`, the
-    /// vertices at `1 − zbm/−Z`, deviation 24): billboards of the mesh pass at the unit's eye depth; the guns' are not.
+    /// vertices at `1 − zbm/−Z`): billboards of the mesh pass at the unit's eye depth; the guns' are not.
     fn overlays(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, hud: &crate::ui::Hud, b: &Battle, erosseg: f32, szar: Option<crate::render::TexId>) {
         use crate::render::{kind, Blend, Instance};
         let v = crate::font::Virtual::new(cam.size);
@@ -1097,7 +1097,7 @@ impl<'a> Scene<'a> {
             let Some((c, px)) = cam.project_eye(e) else { continue };
             // Size 1 in the model mode; the exe's fighters at the default view are 1–2 px points of the set's word
             // 0x2c2c2c [obs: fx5 t1000, where a size-1 model would be 8 px wide]: the model at a quarter of it (a
-            // calibration, deviation 136).
+            // calibration).
             let size = 0.25;
             let grey = 0x2c as f32 / 255.0;
             let (Some(mesh), true) = (mesh, size / SCENE_SCALE * px > 2.0) else {
@@ -1114,7 +1114,7 @@ impl<'a> Scene<'a> {
     /// The effect particles (`Particle` ELF 0x5f4ff0, textured mode; spec §6.7.2): screen-aligned squares of half-size
     /// `size·fov/−z`, the colour word's RGB × (255 − T)/256 added; the 25-frame sets step through their 5 × 5 sheet. Depth
     /// tested without a depth write (`ZENABLE`, no `ZWRITEENABLE`, `BLEND(1, 1)`): billboards of the mesh pass on the
-    /// camera's axes, behind the hulls where the exe hides them (deviation 119).
+    /// camera's axes, behind the hulls where the exe hides them.
     fn particles(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, fx: &crate::spacewar_fx::Fx, textures: &[Option<crate::render::TexId>; 5]) {
         let m = cam.matrix();
         let near = -cam.look.map_or(0.4, |l| l.near);
@@ -1479,7 +1479,7 @@ impl Gfx {
     }
 }
 
-/// The battle's camera on the starmap's view and its star field, before the view is built (spec §9.1).
+/// The battle's camera on the starmap's view and its star field, before the view is built (spec §1.0, §9).
 pub fn prepare(view: &mut crate::starmap::View, gfx: &Gfx, white: crate::render::TexId, s: &Shown) {
     view.camera.look = Some(starmap_look(&s.view, s.eye, s.target));
     view.backdrop.clear();

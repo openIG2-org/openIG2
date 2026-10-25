@@ -673,7 +673,7 @@ impl Hud {
         m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, (time * 100.0) as i32, &p.faders.starf, p.exit_fader());
     }
 
-    /// What of `StarmapGfx2D_3` the battle screen keeps during its opening zoom (re/screens/spacewar.md §5.2, §9.10):
+    /// What of `StarmapGfx2D_3` the battle screen keeps during its opening zoom (re/screens/spacewar.md §5.2):
     /// the short info (`StarmapRovidInfoKiir`'s body, after the battle's small box) and `GFX_StarmapRadar` while
     /// `spacewarelfade` (`fade`) < 1. The minimap's view outline keeps the starmap's last corners (`lastfrom*` refresh
     /// only at fade 0). `StarmapGfx2D_1`'s names are the caller's, under the console.

@@ -1,6 +1,6 @@
 # ADR 0010: Widescreen follows the remaster's layout rule
 
-Date: 2026-10-18. Status: **accepted** (the owner's goal of 2026-10-17, roadmap §4). Amends ADR 0009 §3 ("Widescreen,
+Date: 2026-10-18. Status: **accepted** (the project's goal of 2026-10-17). Amends ADR 0009 §3 ("Widescreen,
 high DPI and 4K"); the rest of ADR 0009 stands.
 
 ## Context

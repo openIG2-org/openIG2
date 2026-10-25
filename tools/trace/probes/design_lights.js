@@ -1,4 +1,4 @@
-// Design lighting probe (deviation 114, re/screens/design.md §14.4), appended to screen.js by run_screen.py --probe
+// Design lighting probe (deviation 114, re/screens/design.md §12c), appended to screen.js by run_screen.py --probe
 // with a design script (scripts/design-pods.json marks a tech model from t 345): every `fenyekszamolasa` (exe
 // 0x52f190; args: …, normals[] (stride 0x14: normal +0, colour +0xc), n, sort record, XVO) on the design screen is
 // read after the call: the record's properties (`+0x68`), its lights (`+0x6c` list, `+0x70` count: type, colour,

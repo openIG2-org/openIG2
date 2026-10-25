@@ -1,8 +1,7 @@
 # The AI empire (`FRISSIT_MI`)
 
-Status: **specified from both binaries, exe-normative**; runtime verification in
-`traces/2026-10-15-ai-empire.md` (part 1, §1–§6) and `traces/2026-10-16-ai-empire-2.md` (part 2, §8–§13). Ported in
-`engine/crates/ig2-sim/src/ai/`.
+Port status: ported in `engine/crates/ig2-sim/src/ai/`; specified from both binaries, exe-normative; verified
+against `traces/2026-10-15-ai-empire.md` (§1–§6) and `traces/2026-10-16-ai-empire-2.md` (§8–§13).
 
 `FRISSIT_MI` is one of the daily systems driven by the sim tick (`Fake_FRISSITES` exe 0x4de720, on a day change,
 skipped while the debug switch exe 0xB77244 is set):
@@ -14,7 +13,7 @@ FRISSIT_Planet (Nap % 6 == 1) → FRISSIT_Viszony → FRISSIT_MI → FRISSIT_Spy
 It runs one pass over every AI empire and calls seven sub-passes. This part covers the driver, the empire
 bookkeeping (`FRISSIT_MI_SZAMOLAS`), the per-planet colony settings, the money sliders, the production choices
 (`FRISSIT_MI_GYARTAS`) and the spy missions (`FRISSIT_MI_KEMKEDES`). `FRISSIT_MI_FEJLESZTES` (the next research
-pick) is already ported (`production-research.md` §2.2, `research::ai_pick`). Part 2 (§8–§13) covers colonisation,
+pick) is ported (`production-research.md` §2.2, `research::ai_pick`). Part 2 (§8–§13) covers colonisation,
 fleets, the AI's designs and the set-up at a new game.
 
 | Function | exe | ELF | Role |
@@ -81,7 +80,7 @@ diplomacy pass's `a·9 + b` indexing (`diplomacy.md` §4) writes day numbers int
 | `MiGyartasMitMin` / `…Max` | 0x915F78 / 0x915F84 | u8 `[11]`: the `MiTervMutato` slot range of a category |
 | `FajMiBolygokHanyadReszeGyartas` | 0x915F90 | i32 `[15]`: % of the planets that get a production autobuild mode, by race |
 | `FajMiBolygokMilyenKatonaiAutiBuild` | 0x915FCC | i32 `[15]`: the military autobuild mode, by race |
-| `KemKuldetesek` | 0x912F48 | `espionage.md` §1.2; here also **+0x10 length in days, +0x14 cost, +0x18 minimum rank** (the espionage spec had +0x10/+0x14 swapped; `FRISSIT_Spy` uses neither) |
+| `KemKuldetesek` | 0x912F48 | `espionage.md` §1.2; here also **+0x10 length in days, +0x14 cost, +0x18 minimum rank** (`FRISSIT_Spy` uses neither) |
 | `TrainingKuldetesAr` | 0x927044 | i32 `[6]`: training mission cost by level |
 | `KemKuldetesPenzSzorzoFajonkent` | 0x91376C | f32 `[15]`: mission cost multiplier by race |
 
@@ -278,8 +277,8 @@ other ports' worlds (`colony_side::ColonyWorld`, `spacewar::CombatWorld`, `fleet
 
 # Part 2: colonisation, fleets, design
 
-Status: **specified from both binaries, exe-normative** (decompiles of both and the exe asm for every float
-expression); runtime verification in `traces/2026-10-16-ai-empire-2.md`.
+Specified from both binaries, exe-normative (decompiles of both and the exe asm for every float expression);
+verified against `traces/2026-10-16-ai-empire-2.md`.
 
 | Function | exe | ELF | Role |
 |---|---|---|---|
@@ -577,13 +576,13 @@ the result's `+0x64` (planet 0's when none). `FindNearestKolonizalo(x, y, e)`: e
 ### 12.5 `DeleteKolonizalo(f, p)`
 The first ship i of f whose design (f's owner's) has `+0x34` (colony ship); none → 0. `f.+0x54 < 2`: the name becomes
 "Colonization" (13 bytes, NUL included), `FlottaMozgat(f, 1, 1, p)`, bit 3 set, colony pool −1, return f. Else
-`g = FlottaNew("Colonization", owner, 0, f.x, f.y, 0)` (`production-research.md` §3.4), `HajoAtpakol(i, g)` (the
+`g = FlottaNew("Colonization", owner, 0, f.x, f.y, 0)` (`production-research.md` §5.1), `HajoAtpakol(i, g)` (the
 ship moves: sums −1 on f, +1 on g), `FlottaMozgat(g, 1, 1, p)`, bit 3, pool −1; f with `+0x54 < 1` → `FlottaDelete(f)`;
 return g. `FlottaMozgat` (`fleet-movement.md` §2) first returns colony ships / terraformers of a colonising /
 terraforming fleet to the pools.
 ### 12.6 `TankAtpakol(from, to, d, n)`
 `TankDelete(from, d, n)` (a planet holder `−p`: also its ground-war map, `RemoveTankFromPlanet` + `RearrangeTankGroups`,
-not modelled: an event), `TankNew(to, d, n)` (`production-research.md` §3.4, garrison sums for planets).
+not modelled: an event), `TankNew(to, d, n)` (`production-research.md` §5.1, garrison sums for planets).
 `TankDelete` on a planet subtracts from `+0x58`/`+0x5c` like the fleet sums (`TankFlottahozHozzaszamol` with −n).
 ### 12.7 `FlottaOsszevon(into, from)` (both in 1..=n, distinct)
 radar `+0x7c = max`; if into's name equals `AlapFlottaNev`, `strcpy` from's name (up to and including its NUL); story

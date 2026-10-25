@@ -13,7 +13,7 @@ use crate::scene::{normalise, Model, Placement, Vert};
 
 /// `Init3dStarmap` (ELF 0x6db470, exe 0x59c850): the parallel light's vector on the scene's root `mainmeshid`, in the
 /// world (`MoveObj`) axes. Every planet and cloud inherits it with the ambient light (`Kocka`); `ShowStarmap`'s
-/// `StmapLightX/Y/Z` → `fxn/fyn/fzn` are read only by `setlightnormal`, which nothing calls (row 371).
+/// `StmapLightX/Y/Z` → `fxn/fyn/fzn` are read only by `setlightnormal`, which nothing calls.
 const LIGHT: [f32; 3] = [10.0, 10.0, -10.0];
 
 /// A model at the last level of its detail chain, its parts in the root's space with their textures.
@@ -66,7 +66,7 @@ impl Planets {
     /// R·1.04)`, `RotateObj`, `MoveObj(P)`, `SetObjTransparency(0.7)`), lit like the planet. The remaster draws its
     /// `CLOUD` material with the procedural clouds (the transparency's alpha unused), and the engine keeps its depth
     /// write: the shells, drawn after the planet and before the shield rings, hide the rings under them [obs: the
-    /// shield capture's probe, re/screens/spacewar.md §9.18]. Here a depth-only pass among the translucent draws,
+    /// shield capture's probe, re/screens/spacewar.md §1.1]. Here a depth-only pass among the translucent draws,
     /// then the clouds.
     #[allow(clippy::too_many_arguments)]
     pub fn add_battle_shell(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye) {
@@ -77,10 +77,10 @@ impl Planets {
     }
 
     /// The battle planet (`initgfx`: `AddToScene(…, R·1.16)`, `RotateObj(rot)`, `MoveObj(at)`), `scale` and `at` in
-    /// the starmap's world. Lit as the starmap's planets (row 371): the scene root's parallel light against the
+    /// the starmap's world. Lit as the starmap's planets: the scene root's parallel light against the
     /// object-space normals, whatever the camera [obs: the shield and fx8 captures, 2026-10-25: view ~2.0 → ~1.4 and
     /// 3.7..4.8 → 2.6..3.6 against the old camera-turned light, which went dark as the end zoom-out turned the camera;
-    /// re/screens/spacewar.md §9.16].
+    /// re/screens/spacewar.md §1.0].
     #[allow(clippy::too_many_arguments)]
     pub fn add_battle_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye) {
         if let Some(Some(m)) = self.battle.get((surface.max(1) as usize - 1) % 8) {
@@ -278,7 +278,7 @@ fn plasma() -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// The battle planet's outer cloud shell (`bolygo3` at R·1.04, R = 1, about P; re/screens/spacewar.md §9.18) as the
+    /// The battle planet's outer cloud shell (`bolygo3` at R·1.04, R = 1, about P; re/screens/spacewar.md §1.1) as the
     /// client places it, in battle units: the shield capture's young rings (537..540, 1029.2..1036.9 units from P,
     /// hidden in the exe at t3200) lie under it, the frame-30 ones (515 at 1094.1, 513 from 1099.4, shown) above it;
     /// the exe's shell is ~1.5 % smaller (its vertex 1028.4 from the inner node at scale 1041.45, the partial shell's
@@ -309,7 +309,7 @@ mod tests {
     /// colour. `Mᵀ·L` is the root's (10, 10, −10) turned back by the object's own rotation alone (the planet's
     /// `(0, 0, θ)`, the clouds' `(a, 5, 0)`, solved here), and [`engine_grey`] gives every vertex byte within 1 (the
     /// exe turns the light by the camera and back, an ulp off ours; exact with the exe's own `Mᵀ·L`:
-    /// `lighting::tests::starmap_long_info_probe_matches_the_exe`) (row 371).
+    /// `lighting::tests::starmap_long_info_probe_matches_the_exe`).
     #[test]
     fn long_info_planet_and_clouds_light_as_the_exe() {
         let dir = std::env::var_os("IG2_TRACE_DIR")

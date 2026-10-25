@@ -1,4 +1,4 @@
-// Drawn-vertex probe (deviations #47), appended to screen.js by run_screen.py --probe: `kirak` (exe 0x531460, ELF
+// Drawn-vertex probe, appended to screen.js by run_screen.py --probe: `kirak` (exe 0x531460, ELF
 // 0x60e160) and `kirak2` (exe 0x530b20) as called from `Kocka` (spsort, nfaces, VertType[] stride 0x24, pont[], …,
 // FaceType[] stride 0x28 with u16 a, b, c at +0/+2/+4, XVO), on the frames around the grab (`frame` relative to it), for the sort
 // records around the fleet panel's first three cells and its big preview (camera-fixed at z −600): the record's matrix and

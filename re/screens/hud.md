@@ -43,13 +43,6 @@ vertices (`x, y, 0.5, 1`, colour, `u, v`) handed to `gl_draw_tlv` 0x4f68f0, whic
   trilinear (+anisotropy), bit 4 nearest). The screen pictures have one level and `TXNV` = 11: bilinear on level 0,
   repeat (at 800 × 600 the 2× pictures are minified 1.6×, so the glyphs alias thin rather than blur).
 
-The client (ADR 0006) renders into an sRGB frame with sRGB textures: its 2D blends ran in linear light, which turned
-a tint `c` into `c^(1/2.2)` (text (203, 203, 77)) and brightened every translucent or filtered edge; with its mip
-chains the glyphs also blurred into their neighbours' atlas cells. `Blend::GammaAlpha`/`GammaAdditive`
-(`ig2-client::render`) are the exe's pass: drawn through the frame's non-sRGB view with the textures' raw views and a
-level-0 bilinear repeating sampler; `hud::Pictures::brush` and `font::Font::text` use them. Before/after:
-re/screens/diff-results.md (the top bar 7.7 → 0.1 on every screen).
-
 ### 1.2 Faders
 Every translucent box (`KirakFader` ELF 0x547920, `FadeKerettelKerekit` 0x538330, `FadeScreen` 0x537890) is queued
 into `fade` (0x34 B records) and drawn by `PutDarkening` 0x5391d0 → `PutDarkeningFace` 0x538de0 →
@@ -68,12 +61,8 @@ into `fade` (0x34 B records) and drawn by `PutDarkening` 0x5391d0 → `PutDarken
   its fill shows the texture (mean 0.50); its frame and every direct `FadeKerettelKerekit`/`FadeScreen` call pass a
   scale of 0, so all their vertices sample (0, 0): with repeat, the mean of the four corner texels (0.65 in the GOG
   `dt.bmp`). The callers' colours are × `s` = `+0x168 + 4i` = 0.9 + an occasional "shine" (`FaderDesignFrissito`).
-  [obs: across the edges of the transfer panel and the long info in the exe captures, inside = A + B·outside with
-  B = 0.37–0.40 (= 1 − 155/255) and A = (0, 14, 24) (= (0, 48.6, 81)·0.61·0.48), which the port now reproduces to
-  half a level.]
-
-The port: `starmap_panels::fader` (scale 0) and `kit::fader::kirak_fader` (the texture at the fader's offsets, §1.2.1)
-on `Blend::GammaAlpha`.
+  [obs: across the edges of the transfer panel and the long info, inside = A + B·outside with B = 0.37–0.40
+  (= 1 − 155/255) and A = (0, 14, 24) (= (0, 48.6, 81)·0.61·0.48).]
 
 ### 1.2.1 Fader design: the shine, the drift and the hover glow (`GLOBALKELLDESIGN` = 1)
 Each screen keeps a `faderstruktura` (0x5cc B: `optf`, `resf`, `desf`, `starf`, `mainf`, `fifo`, …) for up to 30 faders
@@ -131,39 +120,36 @@ After the lines, `style != 0 && t > 0.8` (f64) saves the box as `fade_old*`. `li
 covers the glows and scan bands [obs: Options, a style-1 line stops at the slot list's edge; the slot list's scan band
 isn't visible in the exe captures].
 
-Runtime check (2026-10-23, `run_screen.py --kep 13 --script scripts/options.json --probe probes/fader.js`,
-`_local/traces-faderglow`): the clock grows 0.003 a UI tick (one `FaderDesignFrissito` a tick); the glows start on the
-ticks and boxes the spec gives (the save button on entering; the left panel and a tab on the same press, `+0x4d0` = the
-later one; the panel again once its glow ended with the pointer still in it; quit; the slot list), each 100 ticks
-(`g` 0.99, 0.98, … 6.6e−7, then 0); the drift steps are `k/30`; a shine climbs 0.08 a tick to 1.04 (`s` 1.94), holds
-there ±0.02, decays 0.02 a tick to 0.9; all bit-exact in `kit::fader_design`'s test. The styles and the shine times
-come from the one `rand()` stream, so they differ from run to run (and from the client's).
+Runtime check (`run_screen.py --kep 13 --script scripts/options.json --probe probes/fader.js`): the clock grows 0.003
+a UI tick (one `FaderDesignFrissito` a tick); the glows start on the ticks and boxes given above (the save button on
+entering; the left panel and a tab on the same press, `+0x4d0` = the later one; the panel again once its glow ended
+with the pointer still in it; quit; the slot list), each 100 ticks (`g` 0.99, 0.98, … 6.6e−7, then 0); the drift
+steps are `k/30`; a shine climbs 0.08 a tick to 1.04 (`s` 1.94), holds there ±0.02, decays 0.02 a tick to 0.9. The
+styles and the shine times come from the one `rand()` stream, so they differ from run to run.
 
 The screens call it right after their faders, unless leaving, with `t = 1 − g`, `C = (0, s·54, s·90)` (truncated):
 - **Options** (`OptionsGfx2D_1` 0x5d49a0, `optf`): glows for faders 0 (load), 1 (save/YES), 2 (quit; in the tutorial
   both quit-row boxes are fader 2, but the glow tests and draws index 3 at the first box), 3 (the slot list); the
   left panel (4) and the tabs (6, 7) start glows (and spend `rand()`) but never draw them. Their colours use `s`
   of `optf` index `local_34 + k`: the quit box 2 (the tutorial's second row 3), the slot list 3, the panel 4 (5 in
-  the tutorial), both tabs 5 (6). At full fade-in the slot list also
-  draws the scan band: style 0, `t = fmod(clock·1.8, 1)`.
+  the tutorial), both tabs 5 (6). At full fade-in the slot list also draws the scan band: style 0,
+  `t = fmod(clock·1.8, 1)`.
 - **Research** (`Research3DUpdate` 0x5e4e10, `resf`): scan bands on the two side boxes (`fmod(clock, 1)`,
   `fmod(clock/2, 1)`), `C = (0, 54, 90)`; glows for faders 0 and 1 (the side boxes), `C` = `(0, 54, 90)`.
 - **Design** (0x503ea0, `desf`): scan bands on the five boxes (`fmod(clock·k, 1)`, `k` = 1, 1/2 (f32), 1/1.5 (f64),
   1.8, 1.2), `C = (0, s·54, s·90)` of each; glows for faders 0..4.
 - Starmap, info, colony/main screen (`mainf`): `KirakFader` only (the shine and the drift; their glows aren't drawn).
   `Starmap_Belep` inits `fifo` then `starf`; `FRISSIT_Starmap2` (ELF 0x719070) ticks `fifo` only while the fleet
-  info, the transfer or the tanks info is up, `starf` always. `starf`'s colours use `s` of the fader's own index;
-  `StarmapGfx2D_1` counts from 0 (the planet info box (319, 33, 302, 326) when shown, then the radar box (5, 423,
-  162, 52)), `StarmapGfx2D_2` from 6 (the product mode's slide-in boxes 6..15, its static boxes and the two (32/532,
-  86, 76, 35) after, then the info-off box and the tanks box: each the next count). Exact: `StarmapGfx2D_1` ELF 0x6dcb30 (planet
-  info box 0 when shown, radar next), `StarmapGfx2D_2` 0x6de1b0 from 6: slide-in 10 boxes, product 10 boxes, exit
-  button (only when `StarmapInfoOffHoltart` > 0, which the tanks info leaves at 0), then the tanks-info box (445, 380, 176, 30). Port: `starmap_panels::StarmapFaders { starf, fifo }` in `Panels`
-  (`FaderDesign::next` draws from the one rand() stream, fifo then starf, re-inited on every starmap entry; glows'
-  rand() draw skipped). `fifo`: transfer (`ShowStarmap` 0x6eca50) 0..5 + scroll track/thumb 6, fleet info
-  (`ArrangeFleetInfo` 0x6e5c30) 0..5 + bar 6, tanks info (`StarmapTanksInfoFaderKirakas` 0x6ea720) 0..4 + bar 5
-  (`fifo`'s fill (0, 54s, 90s) at 100, edge (0, 60s, 110s) at
-  70). The capture tools dump the exe's `fifo` (0xF152F0) and `starf` (0xF168E8), 0x5cc B each, into `<state>.ui.json` ("faders"); the client loads them with `--faders` (FX13a, row 208). Info (`PutFaders` ELF 0x55b2c0): `infof` faders 0 (387, 271, 0xe2 − slide, 183) and 1 (280, 209, 100, 8),
-  constant colours (no `s`); `Info_Belep` inits `InfoFejF` then `infof`, `FRISSIT_Info2` ticks both.
+  info, the transfer or the tanks info is up, `starf` always. `starf`'s colours use `s` of the fader's own index:
+  `StarmapGfx2D_1` (ELF 0x6dcb30) counts from 0 (the planet info box (319, 33, 302, 326) when shown, then the radar
+  box (5, 423, 162, 52)), `StarmapGfx2D_2` (0x6de1b0) from 6: the product mode's 10 slide-in boxes, its 10 static
+  boxes (the two (32/532, 86, 76, 35) among them), the exit button (only when `StarmapInfoOffHoltart` > 0, which the
+  tanks info leaves at 0), then the tanks-info box (445, 380, 176, 30), each the next count. `fifo`: transfer
+  (`ShowStarmap` 0x6eca50) 0..5 + scroll track/thumb 6, fleet info (`ArrangeFleetInfo` 0x6e5c30) 0..5 + bar 6, tanks
+  info (`StarmapTanksInfoFaderKirakas` 0x6ea720) 0..4 + bar 5 (`fifo`'s fill (0, 54s, 90s) at 100, edge (0, 60s,
+  110s) at 70). Exe `fifo` 0xF152F0, `starf` 0xF168E8 (0x5cc B each). Info (`PutFaders` ELF 0x55b2c0): `infof`
+  faders 0 (387, 271, 0xe2 − slide, 183) and 1 (280, 209, 100, 8), constant colours (no `s`); `Info_Belep` inits
+  `InfoFejF` then `infof`, `FRISSIT_Info2` ticks both.
 
 ## 2. The top bar (every screen below 0xe)
 Two persistent 2D layers (`GFX_AllandoInit1/2` 0x66d080/0x66d0f0, added by every screen's 3D init) draw it after the
@@ -192,7 +178,7 @@ screen's own passes, unless options (0xd) runs as the self-playing demo or the l
   50, widths 15, 14, 21, 23, height 20; the others 1012..=1015 = src x 77, 92, 106, 127, same places. [obs: the
   capture's bar matches: money box from x 75, "$109090" centred at x 90, the year at 172.]
 
-### 2.1 The two drop-downs: screens and quick research (2026-10-24)
+### 2.1 The two drop-downs: screens and quick research
 Input `MOUSE_SelectScreens` (ELF 0x66ba60, exe 0x555470), texts `GFX_SelectScreens` (ELF 0x66ace0, exe 0x554d90; no
 difference), boxes `GFX_DateMoneyScrollFade` (ELF 0x66d160, exe 0x554500, fader pass 2). Exe globals: open flags
 0xe40c5c (screens), 0xe40c5d (research), 0xe40c5e (history); `SelectX/Y/Sz/Ma` 0x912ad4/0x912f38/0x912f3c/0x912f40,
@@ -224,11 +210,11 @@ difference), boxes `GFX_DateMoneyScrollFade` (ELF 0x66d160, exe 0x554500, fader 
   status-3 techs in that column. `Selected` = the tech whose `[0x140 + 0x66c, +0x60] × [SelectY + 16row + 0xe, +16)`
   holds the pointer (the text is at +0x11). The release: with `Selected > 0`, nothing researched, status 3 and the
   labs enough (or the cheat 0xb7727c): `ResearchAtvaltTalalmanyra(t)` (the research screen's category and field jump
-  to it), `Multi_Send(0x2a, t)` (start, `MULTIGET_Research`); on the research screen showing t, its start button
-  goes in (`ResMelyikGombot 0xcc`, `ResGombNew`, `ButtonPressed`). With `Selected < 1` and a project running: a
-  release inside the STOP rect sends `Multi_Send(0x29, current)` (stop). Then it closes; it also closes whenever no
-  button is held (`Mouse_Gomb`; the client too since FX1, `top_menus_frame`). The pick also moves the research place
-  with the screen down (`ResearchTerulet`/`Mezo`/`Talalmany`, `Terulet_Akt`, `ResearchOldForgato`; `research::Place`, deviations 254).
+  to it: `ResearchTerulet`/`Mezo`/`Talalmany`, `Terulet_Akt`, `ResearchOldForgato`, also with the screen down),
+  `Multi_Send(0x2a, t)` (start, `MULTIGET_Research`); on the research screen showing t, its start button goes in
+  (`ResMelyikGombot 0xcc`, `ResGombNew`, `ButtonPressed`). With `Selected < 1` and a project running: a release inside
+  the STOP rect sends `Multi_Send(0x29, current)` (stop). Then it closes; it also closes whenever no button is held
+  (`Mouse_Gomb`).
   Texts: headers `GetString(0x11, 3, 0x26 + c)` (SPACESHIPS, BUILDINGS, TANKS) at (SelectX + 0x66(c − 1), SelectY +
   4), 16 cells, size 2, centred in the cells, colour 6; items the tech's name (`Talalmanyok[t]` +0, 16 bytes) at
   (SelectX + 0x66col, SelectY + 16row + 0x11), 16 cells, size 2, left; colour 3, 6 when `Selected`, 0x21 while a
@@ -329,27 +315,33 @@ only. Its name is written when it has an owner (or story flag `StoryAdat+0x4c`, 
 For each fleet on the map (owner ≠ −1, seen by the human or always visible, `+0x52` bit 10 clear) in front: the
 sprite (starmap.md §4.2), then, when `+0x52` bit 11 is set (in MP only the human's own), its name `+0` twice:
 colour 0 at `(x + 1, y + 10)` (the shadow) and `owner + 15` at `(x + 1, y + 9)`, 0x14 bytes, size 1, flags 0xf. The
-debug build adds the fleet's numbers under it. The name's guard (exe 0x5a534b..0x5a5398, row 394):
+debug build adds the fleet's numbers under it. The name's guard (exe 0x5a534b..0x5a5398):
 `(!KilepesElott || KilepesElott2) && !starmaphideflottak && bit 11 && (!MultiPlayerMode || owner == EN || DEBUGX)`;
 the planets' names (`Show_Stars2d3d` 0x5a5c81) share the first two terms. `KilepesElott2` (0xF1737E) is set only by
 `Starmap_Kilep` (0x5b28b0) for the picture with the HUD under messages/help/options (names shown), cleared for the
 HUD-less one (0x5b28d8: no names) and after both; `starmaphideflottak` (0xF1737C) by `starmapszarok` (0x581c4e) while
-the battle zoom's `starmaperosseg` is 0, cleared by `Init3dStarmap`. Port: `View::names` (`battle_fade` 0 hides
-both), `fleet_name_shown` (`Snapshot::own_names_only`), the exit's HUD-less picture is `View::build` alone. On the
-starmap, fleets with `+0x52` bit 2 or 7 get the animated
-marker `StarmapBrushok` 6 at (x − 15, y − 13).
+the battle zoom's `starmaperosseg` is 0, cleared by `Init3dStarmap`. On the starmap, fleets with `+0x52` bit 2 or 7
+get the animated marker `StarmapBrushok` 6 at (x − 15, y − 13).
 
 ## 5. Not specified here
-The screen-select menu and tooltips, the long planet info (`StarmapHosszuInfoKiir`), the ground-war buttons'
-conditions in detail, faders' look
-(`KirakFader`, `FadeKerettelKerekit`), the starmap's own panels (`StarmapGfx2D_1..4`, `kezel.xvb`), input.
+The long planet info (`StarmapHosszuInfoKiir`), the ground-war buttons' conditions in detail, the starmap's own
+panels (`StarmapGfx2D_1..4`, `kezel.xvb`), input (input.md).
 
-## 6. Reference captures
-`tools/trace/run_screen.py <install> quick-1.sav <out> --kep 2 --slot 91` (the starmap; the clock stays paused, so
-the pause button is the selected one) and `--kep 3 --planet 42` (re/screens/colony.md §8), compared with
-`ig2-client --snapshot … --size 800x600` [obs, 2026-10-16]: the planet names TRA 2, TRA 5, TRA 8, MAGELLAN 8,
-MAGELLAN 10, ANDROMEDA 8 cover the same pixels (bounding boxes within 1 pixel), in the same owner colours; the
-money "$109090", the year/month/day digits and the bar's boxes sit on the same columns; on planet 42 the panel's
-"$ 10000", energy 0, workers 500 lines, the "+4895" / "+1700" surplus line, the demolish and on/off buttons, the
-radar frame, its building dots, unit dots and view outline line up. Captures hold game imagery: `_local/snapshots/`,
-never committed.
+## 6. Client status
+- 2D pass: `ig2-client::render` `Blend::GammaAlpha`/`GammaAdditive` reproduce §1.1 (drawn through the frame's
+  non-sRGB view with the textures' raw views and a level-0 bilinear repeating sampler); `hud::Pictures::brush` and
+  `font::Font::text` use them.
+- Faders: `starmap_panels::fader` (scale 0), `kit::fader::kirak_fader` (the texture at the fader's offsets),
+  `kit::fader_design` (§1.2.1, bit-exact against the runtime check; the glows and shines draw from the client's own
+  rand() stream: row 84, keep). Starmap: `starmap_panels::StarmapFaders { starf, fifo }` (`FaderDesign::next`, fifo
+  then starf, re-inited on every starmap entry; the glows' rand() draw skipped); the capture tools dump the exe's
+  `fifo`/`starf` into `<state>.ui.json` ("faders") and the client loads them with `--faders`.
+- Top bar: `ig2-client::hud` (bar, research button, speed buttons, money, date, message line, history) and
+  `topbar_menus` (§2.1, closing whenever no button is held; the pick also moves the research place: `research::Place`).
+  The remaster toolbar layout isn't modelled (row 259, keep).
+- Colony HUD and radar: `hud`, `colony`, `colony_ui`; names: `starmap` `View::names` (`battle_fade` 0 hides both),
+  `fleet_name_shown` (`Snapshot::own_names_only`); the exit's HUD-less picture is `View::build` alone.
+- Reference captures: `tools/trace/run_screen.py <install> quick-1.sav <out> --kep 2 --slot 91` (the starmap; the
+  clock stays paused, so the pause button is the selected one) and `--kep 3 --planet 42` (colony.md §8), against
+  `ig2-client --snapshot … --size 800x600`: planet names, money, date, the colony panel's texts, buttons and the
+  radar line up within a pixel. Captures hold game imagery: `_local/snapshots/`, never committed.

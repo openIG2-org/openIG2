@@ -7,7 +7,7 @@
 //! deliveries), `TradeGfx2D_3` (exe 0x6098a0: the destinations) and the bottom ticker (`TozsdeScrollFrissit*`).
 //! OK sends message 0x51 (`MULTIGET_Trade`, [`ig2_net::Command::Buy`]). The 3D frame is [`crate::trade_scene`].
 //!
-//! Not yet (the roadmap's "Trade screen part 2"): the chosen offer's hull model (`TradeLoadAlap`'s file table,
+//! Not yet (trade screen part 2): the chosen offer's hull model (`TradeLoadAlap`'s file table,
 //! `ForgatTradeAlap`'s turn and fade are kept as state only), its info card (`PlaceVehicleInfo`, block C's boxes) and
 //! the pod list (`Trade_KiirPodNagyLista`, `TradeGfx2D_3`'s box), the tutorial event 0x27.
 

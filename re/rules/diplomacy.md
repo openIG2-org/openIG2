@@ -1,7 +1,7 @@
 # Diplomacy: relations and AI diplomacy
 
-Status: **verified at runtime** (`traces/2026-10-15-diplomacy.md`, `traces/2026-10-15-diplomacy-human.md`):
-7,060 daily calls and 1,200 staged human-side calls (the human's messages, deals, answers and
+Port status: ported in `engine/crates/ig2-sim`, **verified at runtime** (`traces/2026-10-15-diplomacy.md`,
+`traces/2026-10-15-diplomacy-human.md`): 7,060 daily calls and 1,200 staged human-side calls (the human's messages, deals, answers and
 counter-proposals, AI messages to the human, the auto-cancel) with 1,470 messages, 310 accepted deals,
 64 planet transfers and 1,788 libc `rand()` draws reproduced byte for byte by `engine/crates/ig2-sim`
 (`diplomacy.rs`, `tests/diplomacy_trace.rs`). Two daily systems driven by the sim tick

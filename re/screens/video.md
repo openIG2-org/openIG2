@@ -3,7 +3,7 @@
 The 1999 code asks for Bink names (`title.bik`, `misc/race_01_loop.bik`, …); the GOG remaster plays them from
 `anim/mpeg4/*.mp4` through its own `videoentity` (an FFmpeg wrapper, `SDL_ffmpeg_*`). The ELF `ig2` holds the same
 remaster code, so there is no RAD Bink logic in either binary. Decompiles: `_local/decomp/video-exe/0x<addr>.c` and
-`_local/decomp/video-elf/` (2026-10-22). Decoder decision: ADR 0013. Client: `ig2-client::video`.
+`_local/decomp/video-elf/`. Decoder decision: ADR 0013. Client status: §6.
 
 ## 1. Files
 
@@ -75,8 +75,7 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
   ANTIALIASED, "Arial")`, `DrawTextW` DT_CENTER top-aligned in a (p<<6) x p box, the blue byte as coverage, the top 4 bits as
   alpha, white texture, both sides rounded up to 4; drawn 1:1 in window pixels (`FUN_007115e0`, quad 1152 × 20 at 800 × 600 [obs:
   `probes/credits_text.js`]) centred at `((W>>1), 0.96·H)` over a black copy at +2, +2 with `(a·0x333333334)>>34` =
-  4a/5 alpha. GDI Arial 18 gives capitals on rows 3..14 and 457 px, the exe's capture 456 [obs]; the client calls the same GDI
-  functions on Windows (`video/credits.rs` `gdi`; an outline stand-in elsewhere; deviation 215, fixed 2026-10-24).
+  4a/5 alpha. GDI Arial 18 gives capitals on rows 3..14 and 457 px, the exe's capture 456 [obs].
 
 ## 4. Input and sound
 
@@ -88,14 +87,14 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
 - **After the skip logic** `anyEvent` (exe 0x7329d0; `bink_playing` 0xdb9438, armed 0xfe6438): a gate (`this+0x270`, its
   byte +0x20, an unknown object) swallows only 0x300/0x301/0x303/0x401/0x700; the button and finger releases (0x402,
   0x701) always reach `FUN_004df9b0` -> `FUN_004e2cd0`, the game's handler (`MainCallBackEventHandler` 0x4e2db0 sets the
-  mouse state 0xdb467d..f on 0x402). So a release that skips a video is also seen by the game (deviation 76, not
+  mouse state 0xdb467d..f on 0x402). So a release that skips a video is also seen by the game (not
   captured). SDL_QUIT (`MainCallBackEventHandler`): `CloseBink` if a video plays, `TutorialStop(0)`,
-  `SaveGlobalRegistrySettings`, `MouseIkonKep = 0`, quit flag 0xb771e0 = 1 (deviation 78).
+  `SaveGlobalRegistrySettings`, `MouseIkonKep = 0`, quit flag 0xb771e0 = 1.
 - **Sound** (fullscreen only): `soundhook` exe 0x7100e0 through `Mix_HookMusic`, outside sgsnd: the game's other
   sounds keep playing, the options' volumes are not applied (raw S16 stereo at the mixer's 44.1 kHz). The first
   0xe5b = 3675 frames (83.3 ms) of each play are silence, and an empty queue (underrun) resets that count (another
   lead-in after a stall). In-screen clips decode no sound.
-- **When the sound starts** [obs: `probes/video_sound.js` with `run_video.py --real`, 2026-10-24]: the hook runs from
+- **When the sound starts** [obs: `probes/video_sound.js` with `run_video.py --real`]: the hook runs from
   `play()` on, but `workerfunc` (exe 0x7104d0) decodes the sound (`fill_audio`) only from the packets
   `SDL_ffmpeg_get_next` reads on its way to the next picture, and it decodes at most the ring's 2 pictures
   (`Loader_Video_Entity` 0x70e7d0 sets `+0x2a4 = 2`; `play()` hands it 2 semaphore permits and waits for the first
@@ -106,10 +105,9 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
   (picture frame 9 = 360 ms), first non-zero frame 22310 = 3675 + 16384 + the track's own 2251, at video time 495 ms;
   the hook then stays 16-17 ms ahead of the picture clock to 30 s. `misc/credits.mp4` stores 1: no wait, first
   non-zero frame 4042. Nothing else sounds during the title (no `SoundEngine::Play`).
-- **The title's music is the clip's own** (owner report 2026-10-24, "the intro's sound starts over the two logos"):
-  `title.mp4` is one 88 s clip, the Imperium Galactica II logo (with the THQ Nordic overlay, §3) to ~6 s, the Digital
-  Reality logo to ~12 s, then the intro; its single sound track (84.3 s) is continuous music from 0.5 s. The exe plays
-  that music under both logos too: the remake matches, not a client bug. No music ducking: a blocking play stops the music, and
+- **The title's music is the clip's own**: `title.mp4` is one 88 s clip, the Imperium Galactica II logo (with the THQ
+  Nordic overlay, §3) to ~6 s, the Digital Reality logo to ~12 s, then the intro; its single sound track (84.3 s) is
+  continuous music from 0.5 s, so the exe plays that music under both logos too. No music ducking: a blocking play stops the music, and
   once the game runs again `UpdateFrame` (exe 0x4e3e90) starts the next main track because the loaded one stopped
   (`audio.md` §4). [unknown: SDL_mixer applies no music volume to a hook; not read in the asm]
 
@@ -140,8 +138,7 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
 y `InterlaceMover + 204` .. `+392`; two triangles), vertex colour 0x19ffffff (alpha 25/255), size 2^-16, rhw 0.5,
 every frame with the clip. No writer of `InterlaceMover` found (0 assumed). The texture coordinates run `lmin`..`lmax`
 both ways from the exe's floats 0x9148cc/0x9148d0 (the ELF's initial values -0.0049 / 1.4649): the texture repeats
-~1.47 times (PVR `TXNV` 11 = repeat), not stretched (deviation 81; exe 0x504fb0; `ig2_rules::Videos::interlace_uv`,
-layout `VIDEO_INTERLACE_UV`; not captured, no talking-head capture).
+~1.47 times (PVR `TXNV` 11 = repeat), not stretched (exe 0x504fb0; not captured).
 
 ### 5.3 The talking-head clip (ELF decompiles, checked against the exe)
 - **Names**: `GetTxtFileCommands` (ELF 0x5a7c70) on a part whose header says `TE` (the other side) sets
@@ -170,38 +167,19 @@ layout `VIDEO_INTERLACE_UV`; not captured, no talking-head capture).
 - `mesframe` (exe 0xdabe44, f32): +1/3 a UI update to 15 (opening), to 30 once a message is opened
   (`KELLKINYITAS2`), −0.6 closing; the clip waits for exactly 30 (messages.md §4.1). Hiding sub-mesh 5/0 shows
   nothing: from 30 on the exe draws the screen saved at 30 (`SaveScreen(3)`, before the 2D pass that hides it) instead
-  of the model, and `Messages_Kilep` shows it again before the closing draws the model. Client: `head_clip_frame` and
-  the typing wait for `MessagesScreen::text_up` (row 79).
+  of the model, and `Messages_Kilep` shows it again before the closing draws the model.
 
 ### 5.4 Open
 - Which music follows `title.bik`; re-layout on a window resize during a video (none found).
 
-## 6. The client (`ig2-client::video`)
+## 6. Client status
 
-- `ig2_formats::mp4` + `video::decode` (OpenH264 from source, Symphonia AAC, ADR 0013): frames in display order,
-  turned into RGBA with §3's shader arithmetic on the decoder thread (`Player`, four frames ahead).
-- `Player::update(now)`: §3's pacing on the caller's clock (frame `n` at `n·1000/fps` ms, at most the newest due
-  frame shown, late ones dropped, loops counted on).
-- `Player::update_blocking` / `Playback::frame_blocking` (captures): decode blocks on the script clock instead of running four frames ahead; a clip opened by the typing pass shows from the next frame (`HeadClip::fresh`).
-- Sound: `Audio::play_video` puts the AAC stream in the mixer's video slot at full volume after the 3675-frame
-  lead-in and `Clip::sound_wait` (§4: the pictures stored before the first sound chunk less 4, in whole 1024-frame
-  hook calls; both scaled to the device rate; test `sound_starts_as_the_exe`: title 22310, credits 4042); a blocking play stops the music (`Mixer::stop_music`); the music restarts through
-  `Audio::frame` afterwards like the exe.
-- Placement: fullscreen over the whole window (§3, black around), in-screen through `Virtual::px`.
-- Skip: press-then-release of any key or mouse button, fullscreen only; the mouse release of a skipped video also reaches
-  the game (§4). The window closing during a video drops the video first, then quits. The interlace quad's uv is
-  `interlace_uv` (§5.2).
-- Callers wired: the title before the main menu (once per run, not when the options' cut-scene flag is 0), the
-  credits ring, the story videos (`StoryEvent::Anim`/`AnimFile` → `s_anims.txt` table 6), the endings
-  (`GameEvent::GameOver` → `ig2_rules::Videos` loss/win tables, then the main menu), the message head clips (§5.3,
-  `video::message::HeadClip`: `TE` parts, the start at the typer's front, the wait and end clips at the typer's
-  end; the interlace over it), the campaign intro (`World::campaign_intro` after `World::new_game`: the race
-  menu's `CampaignGameStart` calls the two in turn, `--new-campaign` does now; the window plays it before the first
-  starmap frame, not with the cut-scenes off). The console's `anim` waits for a cheat console (the client has none;
-  it would push `video::Request::File`). The speech-ended switch of `FRISSIT_Messages2` waits for the message speech
-  (Audio part 3).
-- Captures: `tools/trace/run_video.py` (`video.js`: the exe's title with `SDL_GetTicks` driven by the frame
-  limiter's sleeps, grabs at video times, injected key/click), `ig2-client --snapshot --screen video:NAME
-  --video-ms T [--video-at X,Y] [--video-loop]`; `run_video.py --open NAME [--at X,Y] [--once]` plays a clip in the
-  screen instead (`OpenBink(NAME, 0, X, Y, 1)`, `PlayBink(0, loop, 0)` from `Fake_FRISSITES` over the main menu, the
-  title skipped): the message clips' check; results in `diff-results.md`.
+`ig2-client::video`: `ig2_formats::mp4` + `video::decode` (OpenH264, Symphonia AAC, ADR 0013), §3's shader arithmetic
+and pacing (`Player`, four frames ahead; `update_blocking` on the script clock for captures), the sound in the mixer's
+video slot after the lead-in and `Clip::sound_wait` (§4; test `sound_starts_as_the_exe`: title 22310, credits 4042),
+placement, skip (the skipping release also reaches the game), the interlace uv, the credits text via
+the same GDI calls on Windows (an outline stand-in elsewhere). Callers wired: title, credits, story videos,
+endings, message head clips (`video::message::HeadClip`, waiting for `MessagesScreen::text_up`), the campaign
+intro. Missing: the console's `anim` (no cheat console). Captures: `tools/trace/run_video.py` (`video.js`: the title
+with `SDL_GetTicks` driven by the frame limiter, grabs at video times; `--open NAME [--at X,Y] [--once]` plays a clip
+in the screen) against `ig2-client --snapshot --screen video:NAME --video-ms T [--video-at X,Y] [--video-loop]`.

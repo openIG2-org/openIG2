@@ -5,7 +5,7 @@
 //! - `hu` uses 0xF5 (ő) and 0xFB (ű) → Windows-1250.
 //! - de/fr/es/it use Windows-1252 letters (FR 0x9C = œ), as does the English base.
 //!
-//! This still needs checking against the charset glyph images (re/STATUS.md U8).
+//! This still needs checking against the charset glyph images (re/README.md U8).
 
 use encoding_rs::{Encoding, WINDOWS_1250, WINDOWS_1252};
 

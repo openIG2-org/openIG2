@@ -1,4 +1,4 @@
-"""Capture comparison of one screen: ig2.exe vs ig2-client (ADR 0009 §4, re/screens/README.md §5).
+"""Capture comparison of one screen: ig2.exe vs ig2-client (ADR 0009 §4, re/screens/diff-results.md).
 
     run_screendiff.py <install> <save.sav> <screen> [--out _local/screendiff] [--exe-png PNG] [--wait 240]
                       [--size WxH] [--letterbox]
@@ -154,7 +154,7 @@ SCREENS = {
                       client=["--menu", "autobuild@422,299", "--mouse", "430,335"], masks=["425,328,115,22"], regions=[TOPBAR, "panel=319,33,302,326", "menu=416,297,130,121"]),
     "priority": dict(kep=2, exe=["--rop", "0xf", "--menu", "priority@422,321", "--mouse", "430,330"],
                      client=["--menu", "priority@422,321", "--mouse", "430,330"], masks=["425,323,115,22"], regions=[TOPBAR, "panel=319,33,302,326", "menu=416,319,130,43"]),
-    # The multiplayer wait overlay (input.md §9, row 296): ig2.exe can't be put into a real lockstep stall here, so
+    # The multiplayer wait overlay (input.md §9): ig2.exe can't be put into a real lockstep stall here, so
     # probes/mpwait.js stages the exe's own state for one (two late players, the host, the reconnect title) and its
     # code draws; the grab waits until its items are armed (4 s). The client draws the same state (--mp-wait).
     "mpwait": dict(kep=2, wait=3000, exe=["--gl-grab", "--probe", "tools/trace/probes/mpwait.js"],
@@ -256,7 +256,7 @@ def sim_phase(trace):
 
 
 def pin_options(out, env):
-    """The client's settings and save slots pinned to what the exe reads (re/deviations.md row 320): a copy of the
+    """The client's settings and save slots pinned to what the exe reads: a copy of the
     original's `options.dat` and `save<n>.sav` from its save folder, without the remake's own settings file and
     `.ig2s` slots that play rewrites; `IG2_OPTIONS_DIR` points the client there. An IG2_OPTIONS_DIR or IG2_SLOT_DIR
     already set is kept."""

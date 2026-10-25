@@ -190,7 +190,7 @@ impl World<'_> {
         }
     }
 
-    /// `TankNew(h, d, n)` (`production-research.md` §3.4): ground vehicles anywhere, others only in fleets.
+    /// `TankNew(h, d, n)` (`production-research.md` §5.1): ground vehicles anywhere, others only in fleets.
     pub(crate) fn new_vehicles(&mut self, h: i32, d: i16, n: i32) {
         let owner = self.holder_owner(h);
         let class = self.des(owner as usize, d as i32).map_or(0, |x| x.class);
@@ -308,7 +308,7 @@ impl World<'_> {
         self.events.push(AiEvent::Combat(CombatEvent::FleetDeleted { fleet: f, owner }));
     }
 
-    /// `FlottaNew(name, owner, id, x, y, speed)` (`production-research.md` §3.4): the last free slot, else a new
+    /// `FlottaNew(name, owner, id, x, y, speed)` (`production-research.md` §5.1): the last free slot, else a new
     /// one. Returns the slot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_fleet(&mut self, name: &[u8], owner: u8, id: i16, x: f32, y: f32, speed: f32, hooks: &mut dyn AiHooks) -> usize {

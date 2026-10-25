@@ -16,7 +16,7 @@ battle tick T the clock pauses, F frames later the window is read back to <out>-
 that moment go to <out>-t<T>.json ('init' shape, for ig2-client --screen spacewar --battle); the first grab also
 writes the exe's own save to S (the top bar's state). Use with --battles 1.
 --script S.json [--sounds OUT.jsonl] [--state-out S.sav]: an input script on the battle screen (screen.js's format and
-clock, re/screens/spacewar.md §9.5): at its first frame the battle goes to <out>-entry.json (the grab shape) and the
+clock, re/screens/spacewar.md §9): at its first frame the battle goes to <out>-entry.json (the grab shape) and the
 exe's save to S.sav, then the events go in on the 10 ms UI clock and each grab t is read back to <out>-t<T>.png, its
 state to <out>-frames.json; the exe's pause and speeds are left alone. --sounds writes every sound the exe starts and
 every input event (sound.js) to OUT.jsonl. Implies --battles 1.

@@ -1,4 +1,4 @@
-// Box placement probe (deviations #47), appended to screen.js by run_screen.py --probe: every `Kocka(spsort)` (exe
+// Box placement probe, appended to screen.js by run_screen.py --probe: every `Kocka(spsort)` (exe
 // 0x5281f0) of one frame shortly before the grab logs the sort record's matrix `+0..+0x20` (the box's rotation·scale
 // as its parent set it), its position `+0x48..+0x50` (scene units), its size `+0x7c`, flags `+0x68`, the chain head
 // `+0x58` and the head's box count `+0x24`: how the exe places each child of the panels' models.

@@ -1,4 +1,4 @@
-// Fader design probe for the colony screen (AktKep 3; re/screens/hud.md §1.2.1, colony.md §12.3, deviation 139), a
+// Fader design probe for the colony screen (AktKep 3; re/screens/hud.md §1.2.1, colony.md §12.3), a
 // copy of probes/fader.js logging every 20th UI tick. Fader design probe (re/screens/hud.md §1.2.1), appended to screen.js by run_screen.py --probe: remembers every
 // `faderstruktura` `InitFaderDesignStruktura` (exe 0x4d3590) sets up; after every `Fake_FRISSITES` (exe 0x4de720)
 // while `AktKep` (0xbae0fc) is `FADER_KEP` (13, Options) logs the last one's faders 0..7: the glow `+0x3e0`, its

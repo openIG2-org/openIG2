@@ -3,8 +3,8 @@
 //! auto-resolve (`SimulateSpBattle`) with its deletions and the loser's retreat, and the starmap's
 //! in-battle marking. Spec: `re/rules/space-combat.md`. **The exe is normative** (precision per its asm).
 //!
-//! The real-time tactical battle (`SpwC::*`) is specified (§7 of the spec) but not ported; its state
-//! enters here only as the list of [`ActiveBattle`] units that mark fleets as in battle.
+//! The real-time tactical battle (`SpwC::*`, §7 of the spec) lives in `spacebattle`; its state enters here
+//! only as the list of [`ActiveBattle`] units that mark fleets as in battle.
 
 use crate::rng::Streams;
 

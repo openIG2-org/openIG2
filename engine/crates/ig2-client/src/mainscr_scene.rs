@@ -305,7 +305,7 @@ impl MainScene {
                     // other way along z, so only the side lights tinted them. Mirrored in z they match the capture
                     // [obs: `probes/race_rings.js`: the exe's per-vertex colours are `fenyekszamolasa`'s exactly from
                     // the same file normals and chains as these; the averages agree, the drawn side doesn't; cause
-                    // open, deviation 148; mainscr-race t 1010-1250 frame 5.3-6.7, rings neutral].
+                    // open; mainscr-race t 1010-1250 frame 5.3-6.7, rings neutral].
                     if sub != a {
                         for p in model.parts.iter_mut().filter(|p| p.index.first() == Some(&sub)) {
                             for v in &mut p.verts {
@@ -431,7 +431,7 @@ impl MainScene {
         }
         // Steps 8 and 10: the rings (`korke1` 0.7 turned, `szrke{i}` 0.3 with the label on child 0), transparency 0.3,
         // additive, unlit; after the race scene's opaque models, as the engine draws its transparent objects last
-        // [obs: the difficulty labels and their flares over the race ring and the head; deviation 305].
+        // [obs: the difficulty labels and their flares over the race ring and the head].
         if let Some(l) = s.labels() {
             self.labels = Some(l);
         }
@@ -647,7 +647,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     // Our MP screens (ADR 0014), offline: hosting works on a listener nobody reaches, nothing touches the network.
     let mut mp: Option<crate::mp_lobby::MpScreen> = None;
     let mut net = crate::mp_lobby::OfflineNet;
-    // The row frame's globals (`--dkm`, else the exe's boot values), carried by the scenario list's frame (row 362).
+    // The row frame's globals (`--dkm`, else the exe's boot values), carried by the scenario list's frame.
     let [m0, c0, n0] = o.dkm.unwrap_or([0.0, std::f32::consts::FRAC_PI_2, 0.0]);
     let (mut dk, mut dk_owner) = (crate::kit::DesignFrame::with_phase(m0, c0, n0), 0u8);
     for t in 0..=script.end() {
@@ -722,6 +722,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                         break;
                     }
                     Out::Start(_) => println!("t {t}: mp start"),
+                    Out::Copy(s) => println!("t {t}: mp copy {s}"),
                 }
             }
             keys.clear();
@@ -793,7 +794,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 h.draw(os, &mut frame, size, t as f64 * 10.0);
             } else if s.leaving.is_none() {
                 // `UpdateFrame`'s pointer at the script's point, the hand over a ring or a box (`MainScr_Kilep`'s loop
-                // hides it: −2; phase 0: deviation 277).
+                // hides it: −2; phase 0).
                 hud.draw_pointer(&mut frame, size, [mouse[0] as i32, mouse[1] as i32], s.hand as i32);
             }
             let rgba = r.draw_to_image(&frame, o.size, 0.0);

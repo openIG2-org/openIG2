@@ -1,4 +1,4 @@
-// Scaffolding draw probe (deviation 366), appended to screen.js by run_screen.py --probe: on the colony screen, after the first
+// Scaffolding draw probe, appended to screen.js by run_screen.py --probe: on the colony screen, after the first
 // 30000 calls, every `Kocka(spsort)` (exe 0x5281f0) whose effective properties (`+0x68`) carry 0x200
 // (alpha test: the scaffolding layer `atlatszodolgok`, also the trees): the sort record's camera-space matrix `+0..+0x20`
 // and point `+0x48..+0x50`, its size `+0x7c` and properties. Compared with the boxes `ModifyAllvany` placed.

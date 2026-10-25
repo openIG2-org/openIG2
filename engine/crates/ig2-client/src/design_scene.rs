@@ -176,7 +176,7 @@ impl DesignScene {
                 }
                 let t = Placement::add_to_scene(m.origin, 1.1).world((0.0, 0.0, 0.0), [0.0, 0.0, z]);
                 // Blended at the opacity (property 8), not scaled: open, its dark lines lie over the overlay's picture
-                // [obs: deviations #261].
+                // [obs: the exe shows the dark curved grid over a lit backdrop].
                 for p in m.below(&[WIRE]) {
                     self.wire(p, &t, &ambient, 1.0, &mut grid);
                 }

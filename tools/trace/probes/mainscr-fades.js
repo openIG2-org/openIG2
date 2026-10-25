@@ -1,4 +1,4 @@
-// Main menu fades probe (re/screens/mainscr.md §9.3, §13.2), appended to screen.js by run_screen.py --probe: after
+// Main menu fades probe (re/screens/mainscr.md §9.3), appended to screen.js by run_screen.py --probe: after
 // every `FRISSIT_MainScr2` (exe 0x4f65f0, the 10 ms tick) that changed one of them, logs the UI counter (0xB772A4),
 // `ScenarioValasztasNyitottsag` (0xBBB2AC), `ScenarioKepNyitottsag` and its target (0xBBB048 / 0xBBB04C),
 // `SelectedScenario` (0xBBB350), `Mode_Scenario_Valasztas` (0xBBB3F7), `MainKorokTavolsag` and its target

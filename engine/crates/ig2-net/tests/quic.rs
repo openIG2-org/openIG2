@@ -7,6 +7,7 @@ mod common;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use ig2_net::joincode::JoinCode;
 use ig2_net::quic::{connect, connect_pinned, Pin, QuicHost, QuicLink};
 use ig2_net::{Bundle, Command, Host, Msg, Peer, Transport, DEFAULT_DELAY};
 use ig2_sim::game::Game;
@@ -66,6 +67,20 @@ fn fingerprint_pins_and_the_channel_binding_match() {
     let there2 = wait(|| host.accept());
     assert_eq!(open.binding(), there2.binding());
     assert_ne!(open.binding(), joiner.binding());
+}
+
+#[test]
+fn a_join_code_reaches_and_pins_the_host() {
+    let host = QuicHost::bind(localhost()).unwrap();
+    let other = QuicHost::bind(localhost()).unwrap();
+    let SocketAddr::V4(addr) = host.local_addr().unwrap() else { unreachable!() };
+    let code = JoinCode::decode(&JoinCode::new(77, &host.fingerprint(), &[addr]).encode()).unwrap();
+    assert_eq!((code.session, code.addrs.as_slice()), (77, &[addr][..]));
+    let wrong = JoinCode::new(77, &other.fingerprint(), &[addr]);
+    assert!(connect_pinned(addr.into(), &Pin::Prefix(wrong.pin.to_vec())).is_err(), "another certificate");
+    let joiner = connect_pinned(code.addrs[0].into(), &Pin::Prefix(code.pin.to_vec())).unwrap();
+    let there = wait(|| host.accept());
+    assert_eq!(joiner.binding(), there.binding());
 }
 
 #[test]

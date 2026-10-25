@@ -1,10 +1,10 @@
-# The trade screen (`AktKep` 8): the merchants' market (from the ELF and exe decompiles; port and captures in §13)
+# The trade screen (`AktKep` 8): the merchants' market (from the ELF and exe decompiles)
 
 Sources: ELF decompiles `_local/decomp/trade-screen-elf/` (`DecompileTree` depth 1 from the screen's functions), exe
 decompiles `_local/decomp/trade-screen-exe/`, plus exe `0x605b60 0x607500 0x607c60 0x607e90 0x6058e0 0x6068a0 0x608a60
 0x608be0 0x608c30 0x608c70 0x6098a0 0x60a130 0x60b450 0x554500` and ELF `0x7a74c0 0x7a7910 0x7a7c10 0x7a7d40 0x7a7ee0
 0x7a80e0 0x7a8aa0 0x7a8e40 0x7a7f60 0x66d160`. The sim side (offers, deliveries, `MULTIGET_Trade`) is
-[`../rules/trade.md`](../rules/trade.md). Constants checked in the exe image (2026-10-23): `FRISSIT_Trade2`'s steps
+[`../rules/trade.md`](../rules/trade.md). Constants checked in the exe image: `FRISSIT_Trade2`'s steps
 are f64 constants added to f32 globals (0.8, 3.6, 0.03, 0.0006, 4/11 = 0.36363636…, 0.6, 0.05 at 0x852278, 0x861dc8,
 0x8521e0, 0x852b20, 0x861dc0, 0x852250, 0x848598); the scroll drag's 63.0, 86.0, 4.0 are f32 (0x861dd0/d4, 0x852480);
 `TRADEXAMAX` 185.0, `Gombok*` 137/195/352/195, `SzallX` 270, `traSelectX/Y/Chr` 90/28/22, 1.00001 (f64 0x856af0),
@@ -134,7 +134,7 @@ Offer lookups: `TradeNextTerv(t, from)` (ELF 0x7a71c0) = first index `>= from` w
 8. `Trade3DInit()` (3.2). `Mouse_Szoveg_Off_Range(0x14,0x17); Mouse_Szoveg_Off_Range(0x1d,0x20)`.
 9. `SelectDestinationMode = 0; TradeSelectedPlanet = TradeSelectedPlanetTemp = -1`.
 10. `if (!traKINYITVA) PlaySound(Trade_Hangok[0])` (screen19.wav): only when the opening animation runs.
-Not reset: quantity, list scroll positions, `AktEtaDays2`.
+Not reset: quantity, list scroll positions, `AktEtaDays2` (and the row frame's morph phase, §5.2 row 9).
 
 ### 3.2 `Trade3DInit` (ELF 0x7aa0e0 / exe 0x608030)
 `VectorDir = "vector/trade/"; TextureDir = "textures/trade/"; FreeMainXVB(); CreateMainXVB(); hull-loaded flag = 0; InitHatterFader()` (exe 0x4d3650).
@@ -221,11 +221,30 @@ Button meshes hidden each frame (`EltuntetGombok`, exe 0x6058e0): for each of th
 | label (8,3,6) Weapons | x - off, y-0x89 | 13 | 1 |
 | no pod used: (8,3,7) None at (x+0x3c-off, y-0x88), 13, colour 0x25 | | | 0x25 |
 | else: the list of non-empty pods; line n = GetString(8,3,5) followed by the format " d - " with d = n (1-based count of used pods) and then `Talalmanyok[pod tech].name`; the line shown is `(int)(trakeringeto*10) mod count`, at (x+0x3c-off, y-0x88), maxChars = strlen | | | 0x25 |
-`GetMaxPodok(race, base)` exe 0x4b4290, `GetGyartasAr` exe 0x4acaf0. Confirmed by the exe decompile (2026-10-23): the value is `GetGyartasAr((short)+0x40 = an empire index, looked up via PlayerFaj)`; the weapons lines loop `GetMaxPodok`'s slots; the tech names are the localised txt17 ones. In the ELF the pod lines use strcat of the tech name; the exe copies the same bytes.
+`GetMaxPodok(race, base)` exe 0x4b4290, `GetGyartasAr` exe 0x4acaf0. Exe decompile: the value is `GetGyartasAr((short)+0x40 = an empire index, looked up via PlayerFaj)`; the weapons lines loop `GetMaxPodok`'s slots; the tech names are the localised txt17 ones. In the ELF the pod lines use strcat of the tech name; the exe copies the same bytes.
+
+### 4.7 Rendering rules seen in the exe [obs]
+- **Material transparency**: the `.xvm` material's last word is an f32 transparency (`re/formats/xv.md` → Material
+  transparency): `Racsszin` (the four panels) and `tozs_hk` (the backdrop) hold 0.65 (0x3f266666), the sphere's
+  `Gombracs` 0.25. The exe draws the panel object at opacity 89/255: the panels are a flat racsszin × 0.35 and keep
+  their depth write, so neither the backdrop nor the wire sphere shows through them.
+- **The wire sphere** is drawn by `wirekirak` (ELF 0x6083f0): every face's edges, no culling (the far side
+  ambient-lit), aliased one-pixel lines in the vertex's lit colour, alpha = opacity (property 8). At rest its far
+  faces read as the dark grid over the lit backdrop.
+- **Hull normals**: the exe's hull normals are the file normals exactly (`vad1.xv`: 305 of 305, normalised and
+  deduplicated by `optimizeobject` ELF 0x5ff9d0, first-occurrence order). `LoadXVB` (ELF, the child loop) copies the
+  child record's matrix to child `+100`, then resets `+100` with `CreateMatrix(0, 0, 0)` (identity) and sets
+  `+0x88 = record·+100`; `Kocka` builds the lighting chain `sp+0x24` from the `+100` matrices (and a keyed child's
+  rotation key) only. So a child record's matrix places and scales the points but never turns or scales the normals
+  (`vad1`'s only child carries diag(0.85, 1.90, 0.18)). With the screen's lights (§3.2), 200 of `vad1`'s 305 vertices
+  get the ambient 0x141414 alone (near-black faces turned from the light); the wings are amber-lit.
 
 ## 5. The 2D passes (draw list)
 
 Positions in the 640x480 virtual screen (centre / letterbox: widescreen.md). `FaderHanyadikMenet` is 1 unless said.
+`Trade3DInit` loads no `dt.bmp`: every `FadeKerettelKerekit` here is the bare colour at `(255 − t)/255` over what lies below
+(the scroll-bar thumb (34, 42, 40) = ½·(0x2c, 0x36, 0x34) + ½·track; the deliveries panel (17, 24, 27) = ½·fill + ½·backdrop) [obs].
+`AktIkon` is set only while a button is down or on the press (the list and scroll-bar handlers test no button); `Mouse_Megfogva` holds the grabbed hot-spot.
 
 ### 5.1 `GFX_Trade` (per frame; ELF 0x7ad240 / exe 0x606b50), boxes
 0. Inlined first: `if (TradeSelectedPlanet != -1 && (Bolygok[p].owner != EN || (SearchBuilding(p, 0x32, true) < 1 && !DEBUGX && !TradeCheat))) TradeSelectedPlanet = -1` (`SearchBuilding` exe 0x541150; building type 0x32 = trade port).
@@ -253,7 +272,7 @@ Block A (flags 4 unless stated):
 | 6 | (8,2,4) Price: | 0x1d2, 0x31 | 6 | 1 |
 | 7 | (8,2,5) Qty: | 0x1ff, 0x31 | 5 | 1 |
 | 8 | `TradeDisplayVehicle(0x15b, 0x3f, 1, tankPos, 8)` | | | |
-| 9 | if `Which != 50000`: `TradeDrawSelection(Type == 0 ? 0x69 : 0x15b, 0x3f, Type, Which, 8)`: if `pos[Type] <= Which < pos[Type]+8`: `DesignKeret1(x-4, 63 + (Which-pos)*11 - 1, 0xc4, 10, 1)` (animated frame, exe 0x4cbac0) | | | |
+| 9 | if `Which != 50000`: `TradeDrawSelection(Type == 0 ? 0x69 : 0x15b, 0x3f, Type, Which, 8)`: if `pos[Type] <= Which < pos[Type]+8`: `DesignKeret1(x-4, 63 + (Which-pos)*11 - 1, 0xc4, 10, 1)` (animated frame, exe 0x4cbac0; its morph state `dkm` 0xB34C0C, `dkmcel` 0x903548, `GfxNovelo` 0xB34BAC is global and never reset between screens: only the places reset on a screen change, `Frissit2_Grafika`; 0xAD0EF5 = `MainScr_Main`'s jump-without-morph flag) | | | |
 | 10 | `TradeTotalVehiclePrice = TradeActVehiclePrice * TradeVehicleMennyi` (computed here) | | | |
 `TradeDisplayVehicle(x, y, t, first, 8)` (exe 0x608a60): rows `k = 0..7`, a row is shown if `first + k < count[t]`: name `KiirStr(rec.name, x, y+11k, 16, 2, 4, 0x25)`; price `KiirInt(TradeAr(i,1), x+0x78, y+11k, 7, 2, 4, 0x25)`; units `KiirInt(rec.+0x6c, x+0xa5, y+11k, 3, 2, 4, 0x25)`; the rows are consecutive offers of class `t+1` (`TradeNextTerv`), starting at the `first`-th.
 If `Which != 50000` (block A continued):
@@ -285,8 +304,8 @@ Block C (info-card boxes): if the hull model is loaded (0xF66EC8) and `Which != 
 
 ### 5.4 `Trade_KiirPodNagyLista(x, y)` (exe 0x60a390, ELF 0x7ae710), only while `Trade_GetPodListaMode`
 `rec = TradeTervek[traOldTervmut]; n = GetMaxPodok(race, base)`. If `n == 0`: GetString(8,2,1) followed by an exclamation mark (exe 0x85DA0C) at (x, y-7), maxChars 0x1e, size 2, flags 4, colour 1. Else `top = y - n*14/2`; for `k = 1..n` a line at `(x, top + (k-1)*14)`, maxChars = strlen, 2, 4, colour 1:
-- pod empty (`rec.+0x50+k == 0`): text = k, " - ", slotname, " - ", GetString(8,2,2), exclamation mark (k in decimal; slotname from `GetPodName(rec, k)`, exe 0x4b4320);
-- else: text = k, " - ", slotname, " - ", techname, " (", amount, " / ", max, ")": techname = `Talalmanyok[t].name` with `t = rec.+0x50+k`, amount = `rec.+0x5d+k`, max = `min(GetMaxRarakhato(race, base, k), Talalmanyok[t].+0x24)` (`GetMaxRarakhato` exe 0x4b42f0; `Talalmanyok` exe 0xB9C0C8, stride 0x114, `+0x24` is a byte).
+- pod empty (`rec.+0x50+k == 0`): text = k, " - ", slotname, " - ", GetString(8,2,2), exclamation mark (format `"%d - %s - "` + GetString(8,2,2) + `"!"`; k in decimal; slotname from `GetPodName(rec, k)`, exe 0x4b4320 = the `PodTipusok` name);
+- else: text = k, " - ", slotname, " - ", techname, " (", amount, " / ", max, ")" (`"%d - %s - %s (%d / %d)"`): techname = `Talalmanyok[t].name` with `t = rec.+0x50+k`, amount = `rec.+0x5d+k`, max = `min(GetMaxRarakhato(race, base, k), Talalmanyok[t].+0x24)` (`GetMaxRarakhato` exe 0x4b42f0; `Talalmanyok` exe 0xB9C0C8, stride 0x114, `+0x24` is a byte).
 
 ## 6. Input
 
@@ -314,7 +333,7 @@ No keyboard handler for the trade screen (screens README row: none).
    - first frame (`SelectDestinationMode == 0`): `traSelectChr = 0x16`; `n` = ports (min 1); `traSelectX = Mouse_x + 12; traSelectY = Mouse_y - (n*13)/2` (signed division); clamps in this order: `Mouse_x + 6 < 0 -> X = 6` (never true); `Y - 2 < 0 -> Y = 2`; `X + 22*6 + 4 > 640 -> X = 0x27c - 22*6 (= 504)`; `Y + n*13 + 2 > 480 -> Y = 0x1de - n*13`.
    - every frame: `traSelected = -1`; walk the ports in order (index j): if `traSelectX <= Mouse_x <= traSelectX + 0x84` and `traSelectY + j*13 <= Mouse_y < traSelectY + (j+1)*13`: `traSelected = j; TradeSelectedPlanetTemp = planet`. (Temp keeps its last value when the pointer is on no row.) Then `SelectDestinationMode = 1; Mouse_Megfogva = 1`.
    - on `Felenged`: `SelectDestinationMode = 0; TradeSelectedPlanet = TradeSelectedPlanetTemp; AktEtaDays2 = AktEtaDays` (so a release outside the list re-picks the last hovered planet, or -1 if none was hovered since Belep).
-4. `AktIkon == 0x3a` (OK, fires once on release): `if Lenyom: PlaySoundGlobal(2)` (Lenyom is false on the release frame, so normally silent: not verified). Build `TradeSzallitasTemp` (exe 0xF43388): `+0 TradeSelectedPlanet, +4 AktEtaDays2, +8 i = KeresAktualisTervSorszamat(), +0xc qty, +0x10 TradeAr(i, qty), +0x14.. a copy of the 0x84-byte record TradeTervek[i]`; `Multi_Send(0x51, EN, 0x98, &TradeSzallitasTemp, 0)` (exe 0x513840); if `copy.+0x48` (hull tech) `== 5`: `TutorialCheckEvent(0x27)` (exe 0x60bdf0). No further checks in `Trade_Main` (the button is only enabled by `Trade_MouseInit2`); the handler (trade.md section 4) validates.
+4. `AktIkon == 0x3a` (OK; an `onRelease` box reaches `_Main` once, on the press, then nothing until the button is up, `Mouse_FelengedesMajdMegvar`): `if Lenyom: PlaySoundGlobal(2)` (Click3 and the message both come on the press [obs]). Build `TradeSzallitasTemp` (exe 0xF43388): `+0 TradeSelectedPlanet, +4 AktEtaDays2, +8 i = KeresAktualisTervSorszamat(), +0xc qty, +0x10 TradeAr(i, qty), +0x14.. a copy of the 0x84-byte record TradeTervek[i]`; `Multi_Send(0x51, EN, 0x98, &TradeSzallitasTemp, 0)` (exe 0x513840); if `copy.+0x48` (hull tech) `== 5`: `TutorialCheckEvent(0x27)` (exe 0x60bdf0). No further checks in `Trade_Main` (the button is only enabled by `Trade_MouseInit2`); the handler (trade.md section 4) validates.
 5. `AktIkon == 0x3f` (ship scrollbar, `Mouse_Megfogva = 1`): `pos = (int)(((float)Mouse_y - 63.0) / 86.0 * (float)shipCount - 4.0)` (f32; asm 0x60aba9..0x60abc8); `pos < 0 -> 0`; `shipCount < pos + 8 -> pos = shipCount - 8` (can be negative; clamped to >= 0 by the next `TradeCalculateVehicleNum` / FRISSIT). `AktIkon == 0x40`: the same with tank count and pos.
 6. `AktIkon == 0x41 && shipCount > 0` (ship list): `Lenyom` -> `PlaySoundGlobal(0)`; `Type = 0; sel = shipPos + (Mouse_y - 0x3f)/0xb` (signed division: for `Mouse_y` 53..62 the quotient is 0, not -1); `TradeIgazitShipPoz(&sel)`: if `sel < pos` or `sel >= pos+8`: `sel < pos -> pos -= 1, sel = pos`; `sel > pos+7 -> sel = pos+8, pos += 1`; `sel >= pos+8 -> sel = pos+7`; `pos > count-8 -> pos = count-8`; `sel < 0 -> 0`; `pos < 0 -> 0` (auto-scroll one row per frame while dragging outside; `Mouse_Megfogva` keeps the hot-spot); `Which = sel; TradeSelectShip(); Mouse_Megfogva = 1`.
    `TradeSelectShip` (exe 0x60a080): `Which >= count -> count - 1; count == 0 -> Which = 50000`; if `Which == 50000`: `MennyiOsszesen = 0`, else `i = KeresAktualisTervSorszamat(); MennyiOsszesen = rec.+0x6c; ActVehiclePrice = TradeAr(i, 1); TradeAktualisCucc = i`; then `qty = 0` (every frame the mouse is held on a row, the quantity is reset to 0).
@@ -346,7 +365,7 @@ Per rendered frame (not per tick): hull spin 0.03 (`ForgatTradeAlap`), `trawiref
 | Screen opens (only with the opening animation) | `PlaySound(Trade_Hangok[0])` = `sounds/screens/trade/screen19.wav` |
 | Screen closes (only with the closing animation) | `PlaySound(Trade_Hangok[1])` = `screens/trade/scrn19ki.wav` |
 | Press on minus, plus, destination, a list row | `PlaySoundGlobal(0)` = `ingame/Click1.wav` (`Global_Hangok` exe 0x919A60, stride 0x11c) |
-| OK (only if `Lenyom` on the same frame as the release, normally never) | `PlaySoundGlobal(2)` = `ingame/Click3.wav` |
+| OK, on the press [obs] | `PlaySoundGlobal(2)` = `ingame/Click3.wav` |
 | scroll bars, pod list, ticker | none |
 
 ## 10. Exe vs ELF differences seen (and quirks)
@@ -395,49 +414,24 @@ Per rendered frame (not per tick): hull spin 0.03 (`ForgatTradeAlap`), `trawiref
 - The `TradeBrushok` record (empty name; no brush id used) and the 9th argument (1) of `Mouse_Szoveg_Set`.
 - `TRADEnyitottsag` is written but never read in the screen.
 - The Hang record flag at `+0x114` is 0 in the exe image (set at run time? see sound.md).
-- Whether the OK press ever plays `Click3` (depends on `Mouse_Lenyom` timing for onRelease boxes; mainscr.md section 6.3).
 - Where `TradeVehicleMennyi` is capped when the offer shrinks under the selection through ANOTHER empire purchase (FRISSIT does not clamp it; `MULTIGET_Trade` resets it for the buyer only): not found, so qty may exceed the units left until the next row click.
 - `ScrollSorok[0]` content assumed = `GetString(8,4,1)` from rules/new-game.md row 41 (not re-read).
 - Which submesh of `tozs1bck.xvb` is which (wire sphere = submesh 0, parts 2 and 4, button pairs) was not checked against the xvb file.
 
-## 13. Port (`ig2-client::trade`, `ig2-client::trade_scene`) and captures, part 1
-
-Opened with F8 (`DoKeyboard`), closed with F2 (the closing, scrn19ki) or Esc (to the options screen at once). OK
-sends message 0x51 as `ig2_net::Command::Buy` (the 0x98-byte `TradeSzallitasTemp` of §6.2 step 4); the screen side of
-`MULTIGET_Trade` (§6.3) runs when the human's delivery count changes. Snapshots: `ig2-client --snapshot --screen
-trade [--script S] [--trade-cheat] [--trade-eta N]`; `run_screendiff.py … trade` / `trade-buy` (scripts
-`tools/trace/scripts/trade.json`, `trade-buy.json`).
-
-Findings on the way [obs: captures 2026-10-23, `quick-1.sav`, `_local/screendiff/run`]:
-- **Material transparency.** The `.xvm` material's last word (`re/formats/xv.md`, "flags") is an f32 transparency:
-  `Racsszin` (the four panels) and `tozs_hk` (the backdrop) hold 0.65 (0x3f266666), the sphere's `Gombracs` 0.25. The
-  light probe (`run_screen.py --kep 8 --light-probe`) shows the exe drawing the panel object at opacity 89/255, and the
-  panels are a flat racsszin × 0.35 (no backdrop through them: the exe's glass keeps its depth). The port reads it as
-  `scene::Part::transparency`; the engine's rule (object transparency first, else the mesh's first material) is `re/formats/xv.md` → Material transparency; the other screens override or hide their material-transparent parts.
-- **Untinted boxes.** `Trade3DInit` loads no `dt.bmp`: every `FadeKerettelKerekit` here is the bare colour at
-  `(255 − t)/255` over what lies below (the scroll-bar thumb (34, 42, 40) = ½·(0x2c, 0x36, 0x34) + ½·track; the
-  deliveries panel (17, 24, 27) = ½·fill + ½·backdrop); `kit::fader::fader_untinted`.
-- **Input.** `AktIkon` is set only while a button is down or on the press (the list and scroll-bar handlers test no
-  button), `Mouse_Megfogva` holds the grabbed hot-spot; OK's release flag doesn't delay it: Click3 and the message
-  come on the press, then nothing until the button is up (`Mouse_FelengedesMajdMegvar`).
-- **No trade port in any save:** `--trade-cheat` sets the exe's own `TradeCheat` (0xF43835) in both runs, so every own
-  planet is a destination. `AktEtaDays` (unsaved) goes from the exe's script start to the client via the state save's
-  `ui.json` (`trade_eta`).
-
-Results: `trade` (the opening and rest, 6 grabs): every region 0.0–4.4 (frame 0.8–1.0). `trade-buy` (pick, +2,
-destination, OK, the deliveries panel, F2 closing; 10 grabs): the purchase matches (money 107 209, one delivery of 2
-Vadász to Andromeda 8 in 31 days); every part-1 region 0.1–2.6; what differs is part 2 (the hull model, its card and
-boxes: ticker 5.7–6.1, deliveries 4.9–6.0 while the model shows). The 7 sounds match the exe's in order and tick
-(screen19, Click1 ×4, Click3 on OK's press, scrn19ki).
-
-### Part 2 (2026-10-23, `trade-pods`)
-- Hull model: `ig2-client::trade::hull_file` (`TradeLoadAlap` exe 0x609c60, §4.4); `trade_scene.rs` draws it as `AddToScene(k*0.08)`, `RotateObj(1.57075, 0.785375, 0)`, `matrixforgat(.., 0.03, 0)` per frame (`ForgatTradeAlap` exe 0x6068a0), at `(TRADExa-190+s, 145, -650)`, transparency s/s0, depth write, self-illum pass.
-- Info card: `PlaceVehicleInfo` (exe 0x607500) and block C's boxes. Pod list: `Trade_KiirPodNagyLista` (exe 0x60a390: "%d - %s - " + GetString(8,2,2) + "!" or "%d - %s - %s (%d / %d)"; slot name = `GetPodName` exe 0x4b4320 = PodTipusok name; `TradeGetHeightAdder` exe 0x608c30), opened by a press on hot-spot 0x25, closed on any release.
-- Tutorial event 0x27: `ig2_sim::Game::buy` calls `Game::tutorial_check_event(0x27)` (exe `TutorialCheckEvent` 0x60bdf0) for the human's message when the record's hull tech (+0x14+0x48) is 5; `tutorial_sighting` uses the same function.
-- Options return: Esc keeps the trade state; Options "back" re-enters with `Trade::back` (`Trade_Belep` with OldKep 0xd: no opening; quantity, list positions, `AktEtaDays2` and the row frame's phase carried).
-- Row frame's first morph: `DesignKeret1` (exe 0x4cbac0) uses `dkm` (0xB34C0C), `dkmcel` (0x903548), `GfxNovelo` (0xB34BAC), globals never reset between screens (only the places reset on a screen change, `Frissit2_Grafika`; 0xAD0EF5 = `MainScr_Main`'s "jump without morph" flag). The capture tool records them at script start (`ui.json` "dkm" -> `run_screendiff --dkm M,CEL,NOVELO` -> `DesignFrame::with_phase`). The client keeps the phase per screen instance (deviations #135).
-- Results: `diff-results.md` 2026-10-23 (card 0.65-0.85, lists 0.4-3.2, panels 1.1-1.2, model 4.4-4.9).
-- Open: the hull's faces turned from the light are mid-grey vs near-black in the exe (lighting; not the self-illum pass, not unrotated normals; deviations #134); the multi-line pod list and a second offer's turn-away/reload weren't captured (quick-1 has one ship offer, without pods). Material transparency scan (`.xvm` last words): racsszin 0.65 (+0.25 sphere grid) also in desbck, dipbck8, resbck, spybck2/2a/2b; info.xv 0.70; messbck 0.6; spacewar hajoinfo 0.2, infopanel 0.36; starmap cirk11/12 0.5; colony khv* 0.5, mgv* 0.45, several 0.01. Every screen's bake now applies it (`Part::alpha`); trade is the only screen where it shows (xv.md → Material transparency, 2026-10-24).
-- Part 3 (FX10 part 2, 2026-10-24): the glass re-checked with a fresh capture (`fx10-trade`: panels 0.09/1.23/1.50 at t10/60/100; no wire sphere through the glass in the exe, deviations #110 closed). The opening's wire sphere was missing; since 2026-10-25 drawn as wirekirak (ELF 0x6083f0) does: every face's edges, no culling (far side ambient-lit), aliased one-pixel GL lines (`Instance::hard_line`) in the vertex's lit colour, alpha = opacity (property 8); line pixels 5614 vs exe 5574, median (4,51,59) vs (4,52,59), a small pose-phase offset remains. Panels are glass at 0.35 keeping the depth write (#260); the rest sphere's far faces are the dark grid, drawn GammaAlpha (#261). The row frame's phase is one global (#135).
-- Part 4 (FX13d, 2026-10-24, deviations #134): `_local/traces/light-trade.jsonl` (`run_screen.py --kep 8 --script tools/trace/scripts/trade-pods.json --light-probe --jsonl`, quick-1.sav): six objects (panels, card, the first offer's hull turning in, R = [0.6856,-0.728,0; 0,0,-1; 0.728,0.6856,0]). The engine formula reproduces every exe vertex colour (test `lighting::tests::trade_probe_matches_the_exe`; 200 of the hull's 305 vertices get the ambient 0x141414 alone: near-black). The client's lighting normals (`Vert::lnormal`) share no value with the exe's per-vertex normals n' (z negated) under any signed axis permutation (only ~26 equal the file normals): the fault is the client's hull normals/rotation chain, not the lights or the formula. Next: compare the hull model's part chain (`scene::Model`, `trade::hull_file`) with the exe record vertex by vertex. The exe's wings are amber-lit, the client's white (`_local/screendiff/fx13d`, t345).
-- Part 5 (FX13, 2026-10-24, deviations #134): the cause. The exe's hull normals are `vad1.xv`'s file normals exactly (305 of 305, normalised and deduplicated by `optimizeobject` ELF 0x5ff9d0, first-occurrence order). `LoadXVB` (ELF, the child loop) copies the child record's matrix to child `+100`, then resets `+100` with `CreateMatrix(0, 0, 0)` (identity) and sets `+0x88 = record·+100`; `Kocka` builds the lighting chain `sp+0x24` from the `+100` matrices (and a keyed child's rotation key) only. So a child record's matrix places and scales the points but never turns or scales the normals. `vad1`'s only child carries diag(0.85, 1.90, 0.18): the client's `scene::Walk::node` put it in the lighting chain (`cl = c.matrix`), squashing the hull's normals to a fifth in z, so faces turned from the light stayed mid-grey. Fix: an un-keyed child's lighting matrix is the identity (`scene.rs`).
+## 13. Client status
+Modules: `ig2-client/src/trade.rs` (screen state, 2D passes, input, hull file choice `hull_file`, the order) and
+`trade_scene.rs` (tozs1bck frame, wire sphere, hull model, lights). F8 opens it (`DoKeyboard`), F2 closes it with
+the closing (scrn19ki), Esc goes to the options screen at once; Options "back" re-enters as `Trade_Belep` with
+`OldKep` 0xd (`Trade::back`). OK sends 0x51 as `ig2_net::Command::Buy` (the 0x98-byte `TradeSzallitasTemp`); the
+§6.3 side effects run when the human's delivery count changes; tutorial event 0x27 is raised in `ig2_sim::Game::buy`.
+Done: §3–§9 (lists, scroll bars, buttons, destination popup, deliveries panel, ticker, hull model and its card,
+pod list, sounds in order and tick), the glass panels, the wire sphere, the hull's lighting.
+Not captured: the multi-line pod list and a second offer's turn-away/reload (quick-1 has one ship offer without pods).
+Open `re/deviations.md` rows: 107 (tick-bound repeat rate, ADR 0016), 229, 250. The row frame's morph phase is one
+global as in the exe.
+Captures: `ig2-client --snapshot --screen trade [--script S] [--trade-cheat] [--trade-eta N]`; `run_screendiff.py
+<install> quick-1.sav trade` / `trade-buy` (scripts `tools/trace/scripts/trade.json`, `trade-buy.json`,
+`trade-pods.json`). No save has a trade port: `--trade-cheat` sets the exe's `TradeCheat` (0xF43835) in both runs;
+`AktEtaDays` (unsaved) and the `DesignKeret1` phase globals go from the exe's script start to the client through the
+state save's `ui.json` (`trade_eta`, `dkm` → `run_screendiff --dkm M,CEL,NOVELO`). Light probe: `run_screen.py --kep 8
+--script tools/trace/scripts/trade-pods.json --light-probe --jsonl`.

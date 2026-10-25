@@ -14,7 +14,7 @@ Date: 2026-10-16. Status: accepted (Phase 3 start). Builds on ADR 0003 (20 Hz si
   `FeldolgozValasz`: `Diplomacy::receive_message` / `receive_answer`), `MULTIGET_Starmap` ELF 0x719680 (0x1b, an
   emptied fleet: `Game::fleet_emptied`), `MULTIGET_Story` (0x66 → `Story_Special(15, sender, id)`). Others are mapped
   but not ported (`MULTIGET_Spy` ELF 0x6d08e0, `MULTIGET_SpaceWar`, the 0x3d/0x40/0x41 diplomacy handlers).
-- The original MP layer (`FableSocket`, `ReceiveFullGameData`) is host-relayed with full-state resyncs (STATUS U7);
+- The original MP layer (`FableSocket`, `ReceiveFullGameData`) is host-relayed with full-state resyncs (U7, `re/README.md`);
   its libc `rand()` was seeded from `SDL_GetTicks()` per machine, a likely desync source.
 
 ## Decision

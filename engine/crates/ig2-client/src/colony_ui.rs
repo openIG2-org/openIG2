@@ -198,7 +198,7 @@ impl Ctx<'_> {
         self.state.mem.i32(va::EN).clamp(0, 18) as usize
     }
     /// `Colony_Main` hot-spot 0x14's building gate (exe 0x4666d0): the planet is EN's, or side EN has units on the
-    /// field (`WF+0x8b1 + EN`): a lander picks the enemy's buildings too (row 267).
+    /// field (`WF+0x8b1 + EN`): a lander picks the enemy's buildings too.
     fn picks(&self) -> bool {
         let en = self.en();
         self.snap.owner as usize == en || self.snap.present.get(en).is_some_and(|&p| p != 0)
@@ -275,7 +275,7 @@ pub struct ColonyUi {
     pub pending: i32,
     picker: Option<Picker>,
     /// The left button held on the view after a press on no building: `GetNearestBuilding`'s building rule runs again
-    /// each frame of the hold (row 39).
+    /// each frame of the hold.
     sweep: bool,
     /// `TutorialEpuletekLetiltva[class]` (0x3c entries, by the tech's `+0x27` building class), set by the window while
     /// a tutorial runs: a locked entry is drawn in colour 0xc and can't be picked (`Colony_Main` ELF lines 170, 187;
@@ -865,7 +865,7 @@ impl ColonyUi {
         }
     }
 
-    /// `Colony_Main` hot-spot 0x14 during the left hold with nothing under the pointer near the press (row 39): the
+    /// `Colony_Main` hot-spot 0x14 during the left hold with nothing under the pointer near the press: the
     /// building under the pointer is picked again every frame, with the click when it changes; once one is picked
     /// `Mouse_FelengedesMajdMegvar` stops the hold.
     fn sweep_building(&mut self, c: &Ctx, boxed: bool) {

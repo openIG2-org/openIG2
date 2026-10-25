@@ -1,7 +1,7 @@
 # Campaign scripting §8.13 `st_Rnd_include` (exe 0x5f0e20, ELF 0x74a2c0): random stories, part 2
 
 Split out of `../campaign.md` (sections, numbering and references unchanged: `campaign.md §8.13` means this file).
-Shared terms, the story engine and the notation are in `../campaign.md` §1..§8.8.
+Port status: all 62 stories ported (`engine/crates/ig2-sim/src/rnd.rs` and `rnd/`). Shared terms, the story engine and the notation are in `../campaign.md` §1..§8.8.
 
 Run right after `st_Begin_include` (`Story_Check` order: `Begin`, `Rnd`, `BRnd`, …). The exe calls `st_Story`
 (0x602f80) and `st_StoryStart` (0x602fe0) here instead of inlining them, and drops the ELF's `st_oldLetilt`
@@ -22,7 +22,7 @@ and pirates with fleet orders and battles (101, 102, 108, 124, 131), relations (
 `st_SetTozsdeOlcso`), the terrorist switch (188), the heroes 176..192 (fleets for hire, `st_HajoKigyujt`, undo
 entries).
 
-**Ported (part 1):** 118, 142, 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173, 199, 242 (`engine/crates/ig2-sim/src/rnd.rs`,
+**Ported:** 118, 142, 144, 146, 149, 150, 163, 164, 169, 170, 171, 172, 173, 199, 242 (`engine/crates/ig2-sim/src/rnd.rs`,
 [`RndStories`]; verified, `traces/2026-10-16-rnd.md`).
 
 | Story | What it does |
@@ -50,7 +50,7 @@ division for the price, the two `CampaignType` id swaps). Untraced: 118's
 exclusion of story 302's pirate (302 never ran in the traces), 146's last empty year. (149's four picks: a
 planet whose five info slots are full doesn't get info 1491, so the next pick takes it again.)
 
-**Ported (part 2a):** 116, 117, 127, 128, 129, 132, 133, 134, 136, 137, 139, 145, 147, 148, 152, 153, 155, 156,
+**Ported:** 116, 117, 127, 128, 129, 132, 133, 134, 136, 137, 139, 145, 147, 148, 152, 153, 155, 156,
 161, 165, 166 (`engine/crates/ig2-sim/src/rnd/{relations,spies,finds,buildings}.rs`; verified,
 `traces/2026-10-16-rnd2a.md`). The exe keeps the ELF's logic for all of them; its differences are draw orders
 (below) and inlined helpers. Helpers (stream 5 unless said; `M`, `A`, `P`, `R`, `C`, `b`, `v`, `l` as above):
@@ -113,7 +113,7 @@ events `MakeNeutral`, `SpyMission`, `SpyState`, `SpyExperience`, `TechSeen`, `Co
 (`Story::spy_story`/`spy_answer`).
 
 
-**Ported (part 2b):** 101, 102, 108, 124, 131, 151 (`engine/crates/ig2-sim/src/rnd/battles.rs`; verified,
+**Ported:** 101, 102, 108, 124, 131, 151 (`engine/crates/ig2-sim/src/rnd/battles.rs`; verified,
 `traces/2026-10-16-rnd2b.md`). Helpers (exe):
 - `st_SpWarStart(id)`: flag 1 and `id == 0` or one of the two fleets in `spFlottak` (§5) has story id `id`.
 - The escorts' battle (101, 102, 131): fleet `f`'s position truncated, then every fleet slot 1..=`OsszHanyHajo`
@@ -154,7 +154,7 @@ Port: the new world reads are the fleets' ship counts (`fleet_ship_count`), `nea
 `TechPrereq`, `TechResearchTime` and `EpidemicOver`. `game::StoryView` doesn't carry out story owner changes yet,
 so its `conquest_ends_epidemic` is the default `false`.
 
-**Ported (part 2c):** 138, 174 (`engine/crates/ig2-sim/src/rnd/spies.rs`), the heroes 176..=192
+**Ported:** 138, 174 (`engine/crates/ig2-sim/src/rnd/spies.rs`), the heroes 176..=192
 (`engine/crates/ig2-sim/src/rnd/heroes.rs`; verified, `traces/2026-10-17-rnd2c.md`). The exe keeps the ELF's logic
 except where noted. Helpers (exe):
 - `st_oldLetilt(b, 0)` is exe 0x48fce0, `return 0`: every `LetiltReszlet` branch of the heroes is dead code.
@@ -209,5 +209,5 @@ and room (`fleet_units`), 138's names (`recruit_name`), the spies' `+0x31`, `+0x
 (`Story::spy_owner`/`spy_slot`) and `last_hajo_kigyujt_flotta` (`Story::last_collect_fleet`). `game::StoryView`
 doesn't answer the new reads yet (defaults).
 
-All 62 stories of `st_Rnd_include` are ported; the replay of a trace recorded before part 2c leaves its stories
-out (`RndStories::without`: the exe had them patched out).
+A replay of a trace recorded with 138, 174 and the heroes patched out of the exe leaves them out too
+(`RndStories::without`).

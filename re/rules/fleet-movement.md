@@ -1,8 +1,8 @@
 # Fleet movement and the starmap tick (`FRISSIT_Starmap`)
 
-Status: **verified at runtime** (§11): 4,000 traced ticks (400 radar refreshes), 25,853 fleet moves,
-593 arrivals, 1,808 RNG rolls, 19 trader payments, and all radar/visibility state (§6) reproduced
-bit-exactly by `engine/crates/ig2-sim` (`fleet.rs`, `radar.rs`, `tests/fleet_trace.rs`). Evidence: ELF `ig2` (-O0) `FRISSIT_Starmap()` @ 0x7132b0
+Port status: ported in `engine/crates/ig2-sim` (`fleet.rs`, `radar.rs`); verified (§11): 4,000 traced ticks (400
+radar refreshes), 25,853 fleet moves, 593 arrivals, 1,808 RNG rolls, 19 trader payments, and all radar/visibility
+state (§6) reproduced bit-exactly (`tests/fleet_trace.rs`). Evidence: ELF `ig2` (-O0) `FRISSIT_Starmap()` @ 0x7132b0
 (`../sources_base/starmap.cpp`) and the shipped exe `FRISSIT_Starmap` @ **0x594ae0** (found by the
 `starmap.cpp` line numbers it pushes to `rndlog`: `push 0x2532` @ 0x5970d5). Helpers (ELF / exe):
 `FlottaMozgat` 0x616af0 / 0x53d270, `FlottaAddWaypoint` 0x617830 / 0x53cf70, `FlottaTovabbMozgat`
@@ -178,7 +178,7 @@ never accepts.)
 ### 4.5 Clean-up
 A fleet with ship count < 1 that isn't a wormhole/protected (`+0x53 & 0x44 == 0`): the local player's is
 reported with `Multi_Send(0x1b, EN, f)` (also in SP; not while the starmap's transfer panel shows it) and deleted
-by the next frame's `MULTIGET_Starmap` if still empty (`re/screens/starmap.md` §10.2, verified 2026-10-17); an AI's
+by the next frame's `MULTIGET_Starmap` if still empty (`re/screens/starmap.md` §10.2); an AI's
 (`PlayerKi != 1`) is deleted at once.
 
 ### 4.6 Merges and deletions: the units
@@ -392,7 +392,7 @@ story 239's follow-up (`StoryEvent::RevealWormhole`, exe 0x5ceb86: when `w ≠ 0
 `traces/2026-10-15-fleet.md`: Frida before/after snapshots of every `FRISSIT_Starmap` tick on the GOG
 exe (plain quick.scn and a fuzzed run with random orders, waypoints, patrols, follow orders, speed
 overrides and trade buildings), replayed by `engine/crates/ig2-sim/tests/fleet_trace.rs`. The double
-constants of §4.2 were found by this check (f32 0.3 left 1-ulp position errors).
+constants of §4.2 are needed (f32 0.3 gives 1-ulp position errors).
 `traces/2026-10-15-radar.md`: the same traces recaptured with the radar state (tables, planet radar
 levels/visibility/notices, `BirodalomIsmeri`, pools, radar techs) and a `--fuzz-radar` run (alliances,
 owners, radar stations, stealth and radar designs, boosters, story fields); §6 is computed, not copied.
@@ -405,7 +405,7 @@ retargeted follower, colonisation and terraforming by the human and the AI, a de
 `ig2-sim` runs them inside `Starmap::tick` through `Arrivals::merge_units` / `Arrivals::delete_units`
 (`game::StarmapHooks` on the combat view: `CombatWorld::merge_units`, `delete_ship`). Wormhole trips are verified in
 the save replay (`traces/2026-10-16-wormholes.md`: `run_replay.py --wormholes` opens a wormhole with the exe's own
-`AddWormhole` 0x53aec0 and sends three fleets through it, moving and attacking, from both ends; it corrected the
+`AddWormhole` 0x53aec0 and sends three fleets through it, moving and attacking, from both ends; it pins the
 story special's last argument, §4.3).
 The f64 booster sum (§6.3 step 4) is pinned by the asm (`cvtss2sd`/`addsd`/`cvtsd2ss` @ 0x594fc2..0x594fca) and
 provably equal to an f32 sum on every reachable input (`traces/2026-10-16-mp-radar.md`, "Booster sum"). The MP branches

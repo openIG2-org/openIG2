@@ -1,6 +1,6 @@
 # ADR 0017: One language everywhere
 
-Date: 2026-10-24. Status: accepted (a maintainer's play report of 2026-10-24, row 308 of `re/deviations.md`; the maintainer
+Date: 2026-10-24. Status: accepted (a maintainer's play report of 2026-10-24; the maintainer
 accepted the option). A deliberate deviation from the classic client (ADR 0009), with the original's mix kept as an
 option. Implemented by `ig2-client::ui::names_txt17` and the settings read in `window.rs`.
 

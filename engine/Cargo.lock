@@ -1839,6 +1839,7 @@ name = "ig2-client"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "arboard",
  "bytemuck",
  "cpal",
  "ig2-formats",

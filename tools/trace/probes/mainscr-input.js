@@ -1,4 +1,4 @@
-// Main menu input probe (re/screens/mainscr.md §6, deviations rows 285-290), appended to screen.js by run_screen.py
+// Main menu input probe (re/screens/mainscr.md §6), appended to screen.js by run_screen.py
 // --probe: on every `MainScr_Main` (exe 0x4fefc0) call and after every `FRISSIT_MainScr2` (0x4f65f0) tick that changed
 // one of them, logs the UI counter (0xB772A4), `AktIkon` / `AktIkon2` (0xBAE23C / 0xBAE240), `Mouse_Lenyom`
 // (0xDB465F), `Mouse_Felenged` (0xDB465C), `Mouse_Bal` (0xDB4651), `Mouse_FelengedesMajdMegvar` (0xDB4669), the

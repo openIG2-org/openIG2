@@ -1,4 +1,4 @@
-// AddToScene probe (re/screens/starmap.md §19.3, deviations #47), appended to screen.js by run_screen.py --probe:
+// AddToScene probe (re/screens/starmap.md §19.3), appended to screen.js by run_screen.py --probe:
 // every `AddToScene(xvb, parent, s, id)` (exe 0x451720) with s in 0.02..0.2 logs the XVB's flag byte, its box
 // `+4..+0xc` (the half-extents after `BoxUjraszamol`) and the words up to `+0x60` (`+0x4c` the root's scale).
 (function () {

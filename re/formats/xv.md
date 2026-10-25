@@ -51,7 +51,7 @@ v0:    origin = (marker, u16, u16) as floats
 
 `LoadXVBx` re-measures the root after loading (`BoxUjraszamol` 0x602750): the half-extents become the vertices'
 reach from the pivot, and the root's scale `+0x4c` = `max/1024` when the file's root is exactly 1024 wide
-(re/screens/design.md §14.3).
+(re/screens/design.md §12c).
 
 ## `.xvb` node
 ```
@@ -80,7 +80,7 @@ children of nodes with ≥ 3 frames, frame 0's translation equals `t` for 995 (g
 Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB`, otherwise
 `<prefix><name>.xvo` via `LoadObject`. A missing member leaves a NULL child.
 
-### Level of detail (verified 2026-10-25, FX13 leftovers)
+### Level of detail
 - **Chain.** `LoadObject` (ELF) reads the 16-byte `lod_archive`; a non-empty name gives `+0x18` = the next level's
   object and `+0x10` = 1.0f (the file's `lod_param` word is not used; screens may set it later: the starmap planets' heads run
   at 5 [obs: `probes/lod.js`]), an empty one `+0x10` = `+0x18` = 0. Shipped
@@ -109,7 +109,7 @@ Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB
   `+0x10` = `diag(ec/E)` and `+0` = `(o_c − o)/E` (`boxujraszamol` ELF 0x5ed9f0: its own box extent `ec` and pivot `o_c`
   over the parent's `E`, `o`), the vertices `(v_root − o)/ext` per axis: `AddToScene`'s `diag(ext·s/1024)` restores the
   shape, and `ScaleObja` (which replaces `+0x10`) stretches every axis to the same size [obs: the SpaceWar debris,
-  re/screens/spacewar.md §9.13].
+  re/screens/spacewar.md §6.8.6].
 
 ## `.xvo` mesh
 ```
@@ -142,13 +142,13 @@ c–a, bit 1 a–b, bit 2 b–c (face `= a, b, c`). The textured and shadow rend
 
 ## `.xvm` material (52 bytes)
 ```
-char name[16]; char texture[16]; char texture2[16]; u32 flags;
+char name[16]; char texture[16]; char texture2[16]; f32 transparency;
 ```
 The texture names are 1999 `.bmp` names (`panel_4_3.bmp`). `loadmaterial` loads `texture` with
 `loadtexture2` and a non-empty `texture2` with `loadtexture(…, 1)`: a self-illumination map, drawn additively over
-the first by `selfillumkirak` (re/screens/design.md §14.3; ships' `*si*.bmp` window lights);
+the first by `selfillumkirak` (re/screens/design.md §12c; ships' `*si*.bmp` window lights);
 `fenyek_2.bmp` and `reflec.bmp` as `texture2` are swapped for a runtime texture.
-Five shipped materials are 48 bytes, with the flags missing.
+Five shipped materials are 48 bytes, with the transparency missing.
 
 Texture path (verified in code): `loadtexture` prepends the global `TextureDir`, which each screen's
 init code sets (`textures/colony/`, `textures/colony/terrainmap/<n>/` for terrain objects,
@@ -164,7 +164,7 @@ screen directory (15,958 / 15,983 references resolve).
   handles this (`xvread` returns 0 → flags = 7).
 - Name fields hold uninitialized memory after the NUL (exporter artefact). Never compare past the NUL.
 
-## Verified by rendering (2026-10-15, `ig2-viewer --snapshot`)
+## Verified by rendering (`ig2-viewer --snapshot`)
 - Child placement is `p' = M·v + t`, with `t` = child record bytes 0x00..0x0C as `f32[3]` (the 4th f32
   at 0x0C is junk). Cruisers, colony buildings and alien ships assemble correctly.
 - **All 15,464 child matrices in the install are pure diagonal scales**: the exporter baked
@@ -177,14 +177,13 @@ screen directory (15,958 / 15,983 references resolve).
 - `Pod*` children of ship designs have untextured materials: equipment slots filled at runtime.
 
 ## Open questions
-- None for the file layout. The material `flags` word and the render-flag words of the child records
-  (`+0x54`/`+0x58` masks, set at runtime) belong to the renderer port (Phase 3).
-- (Settled 2026-10-24.) The material's last word is an f32 transparency, used as below.
+- None for the file layout. The render-flag words of the child records (`+0x54`/`+0x58` masks, set at runtime)
+  belong to the renderer port (Phase 3). The material's last word is an f32 transparency (below).
 
 ## Material transparency (`.xvm` +0x30)
 - `loadmaterial` (ELF 0x5ff760 / exe 0x534470) reads it into the material's +0x30 (absent file: 0; the five 48-byte
   `.xvm`s leave it as uninitialised heap in both binaries). Nothing writes it after load; `changeaktmatarial(self)`
-  never read it.
+  doesn't read it.
 - `Kocka` (ELF 0x5f6a40 / exe 0x5281f0), per drawn mesh: `t = node.t != 0 ? node.t : material[0].t`: the object's
   transparency (`SetObjTransparency` ELF 0x456d10 / exe 0x4533a0, box +0x60 ELF / +0x58 exe, no clamp; screen
   wrappers such as `spySetObjTransparencyH` clamp to ≥ 1e-6) wins when non-zero; else the mesh's FIRST material's,
@@ -197,7 +196,7 @@ screen directory (15,958 / 15,983 references resolve).
   Engine-wide, no screen gate.
 - Port: `scene::Part::transparency` (first material), `Part::opacity(object_t)`, `Part::alpha` (the screens' bakes);
   test `scene::tests::material_transparency_is_the_fallback`.
-- Where it shows (inventory of every shipped model, 2026-10-24): trade panels/backdrop (0.65) and grid (0.25), and the
+- Where it shows (inventory of every shipped model): trade panels/backdrop (0.65) and grid (0.25), and the
   messages frame's `messbck` 5/0/0 (0.6 → 102/255; drawn until the clip hides it) [obs: `messages-open.json`
   t129/t132 5.2/6.0 → 0.8, t290 2.6 → 0.6]. Elsewhere the exe overrides or hides every material-transparent part:
   design `desbck` 1..5 and diplomacy `dipbck8` 1/8, 1/9 hidden; research `resbck` Box01 (`KELLVILLOGAS`), spy pedestals

@@ -62,7 +62,7 @@ past the end ("skip the rest"; `politikus.ani` does this).
 The 256-colour path asserts on 32-bit screens (`OneFrame`, anim.cpp:0x311) and no shipped file uses
 it. Pixels never written are transparent in our decoder (the game starts from an uninitialised buffer).
 
-## Resolved (2026-10-16)
+## Unread fields
 - Header `blocks` (`AnimHanyBlokk` 0x11ccaf0): the only access in the ELF is the store in the
   `InitAnim` lambda; nothing reads it.
 - `Data` bytes 8–9: `LoadFrame` (0x45e460) streams `10 + raw_len` / `12 + packed_len` bytes using only

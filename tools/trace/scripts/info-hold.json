@@ -1,6 +1,6 @@
 {
  "screen": "info",
- "note": "FX3 row 186 probe (run with --info-starlog 40 --probe probes/info_buttons.js, which stages a scenario descriptor so 14/15 are on): a right-button drag on the scroll bar 34 from its top out past its right edge (t 60..80), the star log (15, t 150), the pointer resting on the up arrow 35 (t 200..230), then a left press held there 30 frames (t 240), the down arrow 36 held 15 frames with the right button (t 320), the charts button 14 (t 400), chart button 17 (t 450).",
+ "note": "FX3 probe (run with --info-starlog 40 --probe probes/info_buttons.js, which stages a scenario descriptor so 14/15 are on): a right-button drag on the scroll bar 34 from its top out past its right edge (t 60..80), the star log (15, t 150), the pointer resting on the up arrow 35 (t 200..230), then a left press held there 30 frames (t 240), the down arrow 36 held 15 frames with the right button (t 320), the charts button 14 (t 400), chart button 17 (t 450).",
  "events": [
   {"t": 1, "mouse": [500, 200]},
   {"t": 60, "drag": [[299, 280], [420, 450]], "hold": 20, "button": 3},

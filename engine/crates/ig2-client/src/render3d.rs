@@ -287,7 +287,7 @@ pub struct MeshDraw {
     pub additive: bool,
     /// Glass that keeps writing depth: the engine's transparency only turns blending on (`renderstateallitas` ELF
     /// 0x5fa410) and leaves the object's depth write, so its meshes hide one another as when opaque (the design
-    /// screen's hull at `SetObjTransparency(0.01)`, re/screens/design.md §14.3).
+    /// screen's hull at `SetObjTransparency(0.01)`, re/screens/design.md §12c).
     pub depth_write: bool,
 }
 

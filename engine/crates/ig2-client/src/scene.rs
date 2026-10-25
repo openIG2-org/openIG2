@@ -250,7 +250,7 @@ impl Model {
     /// half-extents become the vertices' reach from its pivot per axis (`e`), and `+0x4c` = `max(e)/1024` when the
     /// file's largest half-extent is exactly 1024 (else it stays 1.0). `AddToScene` scales by `e/max(e)·s·+0x4c`, so the
     /// model as drawn is the file's scaled by `max(origin)/max(e)` for a root that isn't 1024 wide, unchanged otherwise
-    /// (re/screens/design.md §14.3).
+    /// (re/screens/design.md §12c).
     fn box_recount(&mut self) {
         let mx = self.origin[0].max(self.origin[1]).max(self.origin[2]);
         if mx == 1024.0 {
@@ -404,7 +404,7 @@ impl Walk<'_, '_> {
             let mut ct = c.translation().map(|v| if v.is_finite() { v } else { 0.0 });
             let mut cm = c.matrix;
             // The lighting chain: `LoadXVB` copies the record's matrix to the child's `+100`, then resets `+100` to
-            // the identity (only `+0x88` = record·`+100` keeps it), so an un-keyed child turns no normal (row 134).
+            // the identity (only `+0x88` = record·`+100` keeps it), so an un-keyed child turns no normal.
             let mut cl = IDENTITY;
             if let (Some(f), true) = (self.frame, frames > 2) {
                 if let (Some(k), Some(k0)) = (n.header.key(f.min(frames - 1), i), n.header.key(0, i)) {
@@ -695,7 +695,7 @@ mod tests {
 
     /// `BoxUjraszamol` (IG2_INSTALL_DIR; skipped without it): the light tank hull `ltankp` (root 6065.9 wide, its body
     /// reaching 1.65× that) is drawn with its furthest vertex at the `AddToScene` scale, 0.61× the file's size [obs:
-    /// the design screen's tank at t500..t820, re/screens/design.md §14.3]; the 1024-wide Destroyer keeps its size and
+    /// the design screen's tank at t500..t820, re/screens/design.md §12c]; the 1024-wide Destroyer keeps its size and
     /// its shell's windows come from `MatJ`'s second texture.
     #[test]
     fn roots_are_remeasured_like_box_ujraszamol() {
@@ -739,7 +739,7 @@ mod tests {
 
     /// The lighting normals of `talalmanyok/vad1` (one child scaled diag(0.85, 1.90, 0.18)) are the file normals with
     /// z negated, the record's matrix left out: every normal the exe lit on the trade screen's hull [obs:
-    /// `light-trade.jsonl` record 5, 305 of them, re/screens/trade.md §13 part 5] is one of the client's.
+    /// `light-trade.jsonl` record 5, 305 of them, re/screens/trade.md §4.7] is one of the client's.
     #[test]
     fn lighting_normals_skip_the_record_matrix() {
         let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
@@ -758,7 +758,7 @@ mod tests {
     }
 
     /// `Kocka`'s fallback (IG2_INSTALL_DIR; skipped without it): the trade screen's panels (`Racsszin`, material 0.65)
-    /// come out at the opacity byte 89 [obs: `run_screen.py --kep 8 --light-probe`, trade.md §13], the sphere grid at
+    /// come out at the opacity byte 89 [obs: `run_screen.py --kep 8 --light-probe`, trade.md §4.7], the sphere grid at
     /// 191 (0.25), and an object transparency replaces the material's.
     #[test]
     fn material_transparency_is_the_fallback() {

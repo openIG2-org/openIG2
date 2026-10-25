@@ -1,4 +1,4 @@
-// Flat-light probe (deviation 392, re/screens/colony.md §3.1), appended to screen.js by run_screen.py --probe: every
+// Flat-light probe (re/screens/colony.md §3.1), appended to screen.js by run_screen.py --probe: every
 // `kirak` (exe 0x531460) or `kirak2` (0x530b20) (args: sort record, nfaces, VertType[], pont[], normals[] stride 0x14 (colour +0xc,
 // specular +0x10), …) whose record properties (`+0x68`) have 0x100 and not 1 (the flat-lit trees, the Park): the
 // properties and the first vertices' colour and specular words, 30 records after the first 500 calls.

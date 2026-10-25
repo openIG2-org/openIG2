@@ -1,56 +1,51 @@
 # Tasks
 
-What is left to reach a playable 1:1 client, then polish. Tick `[x]` and move the line to **Done** when a task is
-pushed; the detail (specs, agents, acceptance) lives in [`docs/roadmap.md`](docs/roadmap.md) §6.
-Updated 2026-10-24.
+The single work queue. **Features before polish**: a task is done when a player can do it in the live window
+(not when a test or a headless capture passes). Deviation rows are fixed only when a player would notice them
+(`re/deviations.md` → "Open: player-visible"). Tick `[x]`, add one line to `CHANGELOG.md`, and delete the line here
+at the next cleanup.
 
-## M2: playable start to finish
-- [x] New game: skirmish start (mode 3; `Game::start_skirmish`, `new-game.md` §13.1)
-- [x] New game leftovers: the AI's design names (`ai::design::generated_name`, `new-game.md` §14)
-- [x] New game leftovers: the campaign stories in `Game`'s story tick (4 items in `docs/roadmap.md` §6, `new-game.md` §15)
-- [x] Client: build a `World` from a new `Game` (`World::new_game`, `--new-campaign`; `mainscr.md` §9.1.1)
-- [x] MainScr part 2: race and difficulty, scenario/skirmish setup, tutorial start, multiplayer name entry, exit animation (skirmish start through `Game::start_skirmish`; MP lobby M5)
-- [x] Colony war part 2: landing clicks, landing zone and shadows, unit picture, self-destruct window, cursors, camera keys
-- [x] Colony: the planet info mode
-- [x] SpaceWar: formation re-placement (sim, deviation 137; `Battle::pick_formation`, 29 exe picks bit-exact)
-- [x] SpaceWar: the rest of spec §9.7 (station models, info view, zoom names; view diff t100 17.91→2.10, t300 8.32→4.04, t850 18.13→4.89; not accepted: console/radar regions)
-- [x] Design screen: hull look (Destroyer body and windows, tank hulls)
-- [x] Trade part 2: hull model, info card, pod list, return from Options
-- [x] Info/messages: the answers' orders
-- [x] Diplomacy: opening animation, the special (story) menu, sounds
-- [x] Research: the button lines
-- [x] Video: campaign intros verified (hook after `new_game`, no code change), `anim` is the debug cheat console's (not the tutorial's), message clips captured against the exe
-- [x] Game end: victory/defeat flow and videos, high scores (`rules/game-end.md`; the scenario panel's table draw: MainScr part 2)
+## M7: playable 1.0
 
-## M3: every screen exact
-- [x] Tutorial overlay (the interpreter is done; window accepted, remaining event sites and gate flags: deviations 199-207)
-- [x] U25's rest: battle posts, UI line, untraced ids, inbox expiry (left: the AI's messages to the human in the save replay, diplomacy §11 reason codes)
-- [x] Sweep: re-run every screen's acceptance, close the open states in `re/screens/diff-results.md` (2026-10-24)
+### Finish the game
+- [ ] **Starmap story actions**: the radial icons 0x10/0x11/0x12: the gigabomb (story 402), the story
+  fleet's wormhole, the virus alert. 0x11 is offered but does nothing; 0x10/0x12 are never offered
+  (`ig2-client/src/starmap_menus.rs` `rop_places`/`fire`, `re/screens/starmap.md`); the campaign episodes that need
+  them must be completable.
+- [ ] **The story-planet ground war**: `Grwar8020hoz` (`ig2-sim/src/game/battles.rs`, `GroundScripted`),
+  and `War::locate_tank`'s fallback without a colony map (fixed cell 100,100), `re/rules/ground-combat.md`.
+- [ ] **Play-through harness**: drive a campaign, a scenario and a skirmish headless at high speed to
+  victory/defeat (scripted orders or the AI playing the human's side), save and load on the way; report every
+  panic, hang and story that never fires. Then the same for a 2-peer loopback MP game (desync check).
+- [ ] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
+  recorded input replacing the live mouse (deviations 141, 174, 198).
+- [ ] **Diplomacy and spy leftovers**: diplomacy's MP-only menus (0x2e) and lip sync; the spy screen's
+  2D video path and the tutorial's spy limits.
 
-## M4: input and feel
-- [x] Input audit per screen against the keyboard handlers (2026-10-23, `re/screens/input.md`, deviations 158-198)
-- [x] 16:9, 21:9 and 4K checks (2026-10-24, `re/screens/widescreen.md` §7: 20 still screens at 1920x1080, 2520x1080, 3840x2130, 1280x1024 clean; wireframe lines fixed to one pixel; open: deviation 214, SpaceWar exe at wide sizes, Help/credits/demo/tutorial, 2D kit lines)
+### Ship it
+- [x] **Install detection**: find the GOG install (registry, default paths, GOG Galaxy) when
+  `IG2_INSTALL_DIR` is unset; a clear message when none is found; check the `ig2.exe` hash.
+- [ ] **Display settings**: window/fullscreen/borderless, resolution, vsync and the letterbox option in
+  the Options screen (enhanced-styled), saved in our settings file.
+- [ ] **Release bundle**: a `--release` build script per platform (Windows first), version from a
+  `VERSION` file, a zip with the exe and a readme; no game data.
+- [ ] **Install check tool**: `ig2-check`, like openOMSI's `omsi-check`: loads every asset, table and
+  script of the user's install and reports what fails to parse.
 
-## M5: multiplayer playable
-- [x] Lobby and connection screens on top of `ig2_net::session` (ADR 0014)
+### Multiplayer over the internet
+- [x] **Port mapping in the client**: wire `ig2-net::portmap` (UPnP/NAT-PMP) into hosting, opt-in.
+- [x] **Join codes and private rooms**: in the MP room UI.
+- [ ] **Desync soak**: long loopback MP games with every order type; trace the untraced MP paths when a
+  desync shows (U15 economy, U18 production, U22 AI, U23 ground war; `re/README.md` → Open unknowns).
+- [ ] **Rendezvous / relay service**.
 
-## M6: fixes and polish (after the prototype)
-- [x] Triage `re/deviations.md` (fix / enhanced option / keep) (2026-10-24: 129 fix, 31 investigate, 6 enhanced, 18 keep, 38 closed; queue FX1-FX16 in `docs/roadmap.md` §6)
-- [x] FX1 global input; FX2 pointer and tooltips; FX3 right button as left
-- [x] FX4 starmap input; FX5 colony and ground war; FX8 design; FX10 options and trade
-- [x] FX9 research, diplomacy, info, messages, spy
-- [x] FX7 SpaceWar, FX12 video and Help, FX13 render phases, FX15 MP teardown and gates: the done parts (detail in `docs/roadmap.md` §6)
-- [ ] FX6 tutorial wiring: the rest
-- [x] FX11 MainScr looks and timing
-- [ ] FX14 sound leftovers; FX16 a tutorial-start trace
-- [ ] FX7 render-look rest
-- [ ] FX15 rest: console commands, MP pause/speed messages, joiner migration, resuming an MP save from a room
-- [ ] Leftover rows the FX boxes left open: 10, 111, 124 (calibration), 130, 139, 163's console, 186's scroll bar, 188's `SkipAll`, 224, 225, 227, 240, 241, 47's rest, 79, 114, 267, 276-278, 280-284
-- [ ] Owner: decide the enhanced proposals (#5, #96, #133, #146, #159, #169, #197), then ADRs; ADR lines for the deliberate keeps
-- [ ] Sharper text, upscaled textures, graphics upgrades
+### Player-visible deviations
+- [ ] The rows under "Open: player-visible" in `re/deviations.md`.
 
-## Done
-Simulation (all systems), campaign scripts, tutorial interpreter, campaign, scenario, MP-galaxy and skirmish new game; MainScr part 1, Options,
-screen kit (widescreen rule, faders), starmap panels, colony ground-war UI, SpaceWar parts 1–5 (spec §9.8), Design parts 1–3,
-Trade part 1, audio parts 1–3 and ground-war voices, video playback, Help, credits text, demo mode (unreachable in the GOG exe); MP engine, real-time battles over the
-network, session layer, rejoin admission, keep-alive, host migration; U16, U19, U25 scripts' messages.
+## Maintainer decisions
+- [ ] The enhanced proposals in `re/deviations.md` → "Enhanced proposals": accept or reject each; an ADR per
+  accepted option, then its implementation.
+
+## After 1.0
+- Sharper text, upscaled textures, graphics upgrades (each an enhanced option with an ADR).
+- The minor and keep rows of `re/deviations.md`.

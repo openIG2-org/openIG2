@@ -2,7 +2,7 @@
 
 Status: **verified** (`ig2_formats::story_data`, golden test `story_data_tables_parse`).
 
-**Not** the building/ship balance rules. Those are compiled into the binary (next Phase 2 target).
+**Not** the building/ship balance rules. Those are compiled into the binary (`tables.md`).
 All three files are read by `story.cpp` at start-up into the `Story*Data` arrays used by campaign
 scripting. They aren't localised.
 

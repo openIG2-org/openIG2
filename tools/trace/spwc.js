@@ -764,7 +764,7 @@ function hookSwap() {
 }
 // opengl32.dll is loaded late: the SwapBuffers hook goes in at the first grab.
 
-// ---------------------------------------------------------------- input scripts (--script; re/screens/spacewar.md §9.5)
+// ---------------------------------------------------------------- input scripts (--script; re/screens/spacewar.md §9)
 // screen.js's script frames on the battle screen: from the first frame `AktKep` is 0xB, `SDL_GetTicks` (exe
 // 0x689e80) returns a clock that moves 10 ms a drawn frame (one UI tick a frame, `Fake_FRISSITES`' 100 Hz loop),
 // `scriptT` counts the UI ticks (0xB772A4) from there, and the script's events go in through the game's own SDL2

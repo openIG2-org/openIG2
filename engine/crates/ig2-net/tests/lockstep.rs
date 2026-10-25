@@ -375,7 +375,7 @@ fn inbox_ids(g: &Game, h: u8) -> Vec<i32> {
     (0..n.max(0) as usize).map(|k| i32::from_le_bytes(b[3 + k * 0x88..7 + k * 0x88].try_into().unwrap())).collect()
 }
 
-/// Deviation 388 (`re/rules/multiplayer.md` §5.3): in story 1003 every human gets the radar offer (message 0x2347)
+/// `re/rules/multiplayer.md` §5.3: in story 1003 every human gets the radar offer (message 0x2347)
 /// in its own inbox; the second human's answers run in its inbox and buy the radar for it (special 15 with it as the
 /// sender: its 20000 paid, its bit in `RADAR_BUYERS`), and both peers agree on every turn.
 #[test]

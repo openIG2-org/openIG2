@@ -13,7 +13,7 @@ own save of the grabbed moment (slot <slot>+1, last shot) to STATE.sav, for `ig2
 (--kep 2) --rop presses one of its icons (the production view, the transfer panel; re/screens/starmap.md §12–§13),
 after --fleets gave the human fleets beside --planet and --rop-fleet selected one. On the spy screen (--kep 7) --spies
 stages a roster and a report, --spy-frame holds the opening (closing) at a frame, --verdict presses the verdict
-buttons N times on fuzzed prisoners and writes what `Spy_Main` did to --jsonl (re/screens/spy.md §6.2, §9). On the info
+buttons N times on fuzzed prisoners and writes what `Spy_Main` did to --jsonl (re/screens/spy.md §6.2, §8). On the info
 screen (--kep 9) --info-press presses hot-spots in turn (a row's detail mode, the list arrows, the star log; the
 state of the list, its globes, the detail mode and the star log go into STATE.sav.ui.json). The PNGs
 show game imagery: write them under _local/ and never commit them. --size WxH runs the game in a window of that size

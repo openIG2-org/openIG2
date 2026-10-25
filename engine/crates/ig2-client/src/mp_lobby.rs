@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use ig2_net::discovery::{Announcement, Found};
 use ig2_net::galaxy::{GalaxyOptions, MAX_AIS, PLANETS};
+use ig2_net::joincode::JoinCode;
 use ig2_net::lobby::{LobbyClient, LobbyHost, LobbyState, Refusal, Settings, SlotKind, Start, Status};
 use ig2_net::session::{ClientSession, HoldStatus, HostSession, MpSave, SessionEvent, SessionSettings};
 use ig2_net::{Peer, Transport};
@@ -26,10 +27,14 @@ use crate::render::{kind, Blend, Frame, Instance};
 
 /// The game port a host listens on first (the LAN announcement carries the real one).
 pub const GAME_PORT: u16 = ig2_net::discovery::DISCOVERY_PORT + 1;
-/// The longest address and password typed.
+/// The longest password typed.
 const MAX_FIELD: usize = 40;
+/// The longest address typed or pasted (a join code with four addresses and its dashes is 84).
+const MAX_ADDRESS: usize = 96;
+/// The address characters the field shows (it scrolls with the cursor).
+const ADDRESS_SHOWN: usize = 60;
 /// Chat lines shown.
-const CHAT_LINES: usize = 6;
+const CHAT_LINES: usize = 4;
 /// Sessions listed.
 const LIST_ROWS: usize = 10;
 
@@ -47,6 +52,27 @@ pub trait Listener {
     fn fingerprint(&self) -> [u8; 32] {
         [0; 32]
     }
+    /// Ask the router to forward the game port (`on`), or remove the forwarding (ADR 0008 §2: the host's opt-in).
+    fn map_port(&mut self, _on: bool) {}
+    fn port_map(&self) -> PortMap {
+        PortMap::Off
+    }
+    /// Where joiners can reach this listener (its LAN address, the router's mapped one): a join code's addresses.
+    fn addrs(&self) -> Vec<std::net::SocketAddrV4> {
+        Vec::new()
+    }
+}
+
+/// The host's port mapping, shown in its room.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum PortMap {
+    #[default]
+    Off,
+    /// Waiting on the router (`portmap::open_live` searches for a few seconds).
+    Asking,
+    /// The router's external address and port.
+    Mapped(std::net::SocketAddrV4),
+    Failed(String),
 }
 
 /// A connection attempt's outcome, from a background thread.
@@ -59,6 +85,10 @@ pub trait Net {
     fn sessions(&mut self) -> Vec<Found>;
     /// Connect to `addr` ("host" or "host:port"), pinned by `pin` (a LAN announcement's fingerprint).
     fn connect(&mut self, addr: &str, pin: Option<[u8; 32]>) -> Connecting;
+    /// Connect to the host of a join code: every address it carries, the first to answer with the pinned certificate.
+    fn connect_code(&mut self, code: &JoinCode) -> Connecting {
+        self.connect(&code.addrs.first().map_or_else(String::new, |a| a.to_string()), None)
+    }
     /// A running game's listener on a joiner's machine (a host migration's successor takes the survivors on it):
     /// no LAN announcement.
     fn listen_game(&mut self) -> Result<Box<dyn Listener>, String> {
@@ -76,6 +106,29 @@ pub struct QuicNet {
 struct QuicListener {
     host: ig2_net::quic::QuicHost,
     announcer: Option<ig2_net::discovery::Announcer>,
+    /// The router's answer to come (a mapping granted after this listener is gone is dropped, which removes it).
+    asking: Option<Receiver<Result<ig2_net::portmap::Mapping, String>>>,
+    /// The live mapping: renewed in the background, removed when dropped (leaving the room or the game).
+    mapping: Option<ig2_net::portmap::Mapping>,
+    map: PortMap,
+    /// This machine's address on the LAN (the route towards the internet; nothing is sent).
+    lan: Option<std::net::Ipv4Addr>,
+}
+
+impl QuicListener {
+    fn new(host: ig2_net::quic::QuicHost, announcer: Option<ig2_net::discovery::Announcer>) -> Self {
+        let lan = ig2_net::portmap::local_ipv4(std::net::Ipv4Addr::new(192, 0, 2, 1)).ok();
+        Self { host, announcer, asking: None, mapping: None, map: PortMap::Off, lan }
+    }
+}
+
+/// Every protocol's failure, in the order tried.
+fn map_errors(errors: &[(ig2_net::portmap::Protocol, ig2_net::portmap::Error)]) -> String {
+    let name = |p| match p {
+        ig2_net::portmap::Protocol::Upnp => "UPnP",
+        ig2_net::portmap::Protocol::NatPmp => "NAT-PMP",
+    };
+    errors.iter().map(|(p, e)| format!("{}: {e}", name(*p))).collect::<Vec<_>>().join("; ")
 }
 
 impl Listener for QuicListener {
@@ -85,7 +138,60 @@ impl Listener for QuicListener {
                 eprintln!("ig2-client: LAN announcement: {e}");
             }
         }
+        if let Some(rx) = &self.asking {
+            match rx.try_recv() {
+                Ok(Ok(m)) => {
+                    self.mapping = Some(m);
+                    self.asking = None;
+                }
+                Ok(Err(e)) => {
+                    eprintln!("ig2-client: port mapping: {e}");
+                    self.map = PortMap::Failed(e);
+                    self.asking = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.map = PortMap::Failed("no answer".into());
+                    self.asking = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(m) = &self.mapping {
+            // A renewal may move the external address.
+            self.map = PortMap::Mapped(m.granted().external);
+        }
         self.host.accept().map(|l| Box::new(l) as Box<dyn Transport>)
+    }
+
+    fn map_port(&mut self, on: bool) {
+        if !on {
+            self.asking = None;
+            self.mapping = None;
+            self.map = PortMap::Off;
+            return;
+        }
+        if self.asking.is_some() || self.mapping.is_some() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        let port = self.port();
+        std::thread::spawn(move || {
+            let _ = tx.send(ig2_net::portmap::open_live(port, None).map_err(|e| map_errors(&e)));
+        });
+        self.asking = Some(rx);
+        self.map = PortMap::Asking;
+    }
+
+    fn port_map(&self) -> PortMap {
+        self.map.clone()
+    }
+
+    fn addrs(&self) -> Vec<std::net::SocketAddrV4> {
+        let mut v: Vec<std::net::SocketAddrV4> = self.lan.map(|ip| std::net::SocketAddrV4::new(ip, self.port())).into_iter().collect();
+        if let PortMap::Mapped(a) = self.map {
+            v.push(a);
+        }
+        v
     }
 
     fn announce(&mut self, a: Option<Announcement>) {
@@ -108,13 +214,13 @@ impl Net for QuicNet {
         let any = |port| std::net::SocketAddr::from(([0, 0, 0, 0], port));
         let host = ig2_net::quic::QuicHost::bind(any(GAME_PORT)).or_else(|_| ig2_net::quic::QuicHost::bind(any(0))).map_err(|e| e.to_string())?;
         let announcer = ig2_net::discovery::Announcer::bind_lan().map_err(|e| eprintln!("ig2-client: LAN announcement: {e}")).ok();
-        Ok(Box::new(QuicListener { host, announcer }))
+        Ok(Box::new(QuicListener::new(host, announcer)))
     }
 
     fn listen_game(&mut self) -> Result<Box<dyn Listener>, String> {
         let any = |port| std::net::SocketAddr::from(([0, 0, 0, 0], port));
         let host = ig2_net::quic::QuicHost::bind(any(GAME_PORT)).or_else(|_| ig2_net::quic::QuicHost::bind(any(0))).map_err(|e| e.to_string())?;
-        Ok(Box::new(QuicListener { host, announcer: None }))
+        Ok(Box::new(QuicListener::new(host, None)))
     }
 
     fn sessions(&mut self) -> Vec<Found> {
@@ -146,6 +252,33 @@ impl Net for QuicNet {
                 })
                 .map(|l| Box::new(l) as Box<dyn Transport + Send>);
             let _ = tx.send(r);
+        });
+        rx
+    }
+
+    fn connect_code(&mut self, code: &JoinCode) -> Connecting {
+        let (tx, rx) = mpsc::channel();
+        let (each, answers) = mpsc::channel();
+        for &a in &code.addrs {
+            let (each, pin) = (each.clone(), ig2_net::quic::Pin::Prefix(code.pin.to_vec()));
+            std::thread::spawn(move || {
+                let _ = each.send(ig2_net::quic::connect_pinned(a.into(), &pin).map_err(|e| format!("{a}: {e}")));
+            });
+        }
+        drop(each);
+        std::thread::spawn(move || {
+            // The first link up wins; the others are dropped as they come.
+            let mut errors = Vec::new();
+            for r in answers {
+                match r {
+                    Ok(l) => {
+                        let _ = tx.send(Ok(Box::new(l) as Box<dyn Transport + Send>));
+                        return;
+                    }
+                    Err(e) => errors.push(e),
+                }
+            }
+            let _ = tx.send(Err(if errors.is_empty() { "the join code has no address".into() } else { errors.join("; ") }));
         });
         rx
     }
@@ -275,6 +408,8 @@ pub enum Out {
     Close,
     /// The room started: build the game ([`launch`]).
     Start(Begun),
+    /// Put this text on the clipboard (the host's join code) and click.
+    Copy(String),
 }
 
 /// Hot-spot ids (ours).
@@ -292,6 +427,9 @@ mod spot {
     pub const OPTION: u32 = 0x60;
     pub const LEAVE: u32 = 0x70;
     pub const READY: u32 = 0x71;
+    pub const PORT_MAP: u32 = 0x72;
+    pub const PRIVATE: u32 = 0x73;
+    pub const CODE: u32 = 0x74;
 }
 
 /// The options rows (spec §6).
@@ -332,7 +470,8 @@ pub struct MpScreen {
     pub line: Vec<u8>,
     /// The host was lost (`Start_ClientDeleted`'s joiner side: 14/5/3 "Disconnected" on the connection page).
     pub lost: bool,
-    connecting: Option<(Connecting, Option<String>)>,
+    /// A connection attempt: the password and the join code's session id to say hello with.
+    connecting: Option<(Connecting, Option<String>, Option<u64>)>,
     pub role: Option<Role>,
     pub chat: Vec<(String, String)>,
     pub entry: Field,
@@ -352,7 +491,7 @@ mod words {
     pub const HOST: &[u8] = b"Host game";
     pub const PASSWORD: &[u8] = b"Password (optional)";
     pub const NONE_FOUND: &[u8] = b"No games found on the local network";
-    pub const INET: &[u8] = b"No internet matchmaking: join by address";
+    pub const INET: &[u8] = b"No internet matchmaking: join by address or join code";
     pub const CONNECTING: &[u8] = b"Connecting...";
     pub const COMPUTER: &[u8] = b"computer";
     pub const OPEN: &[u8] = b"-";
@@ -368,6 +507,11 @@ mod words {
     pub const LAN: &[u8] = b"LAN games";
     pub const NO_SAVES: &[u8] = b"No multiplayer saves";
     pub const NEED_SAVED: &[u8] = b"Every saved empire needs its player";
+    pub const MAP_OFF: &[u8] = b"Port mapping (UPnP / NAT-PMP): off";
+    pub const MAP_ASKING: &[u8] = b"Port mapping: asking the router...";
+    pub const PRIVATE: [&[u8]; 2] = [b"Private game: no", b"Private game: yes"];
+    pub const NO_CODE: &[u8] = b"Join code: none (no network address)";
+    pub const COPIED: &[u8] = b"The join code is on the clipboard";
 }
 
 fn refusal_text(r: Refusal) -> &'static [u8] {
@@ -396,7 +540,7 @@ impl MpScreen {
             open: 0.0,
             list: Vec::new(),
             selected: None,
-            address: Field::new(MAX_FIELD),
+            address: Field::new(MAX_ADDRESS),
             password: Field::new(MAX_FIELD),
             focus: Focus::Address,
             line: if inet { words::INET.to_vec() } else { Vec::new() },
@@ -475,27 +619,66 @@ impl MpScreen {
         }
     }
 
+    /// The host's join code (its session, certificate and addresses), once the listener knows an address.
+    pub fn join_code(&self) -> Option<JoinCode> {
+        let Some(Role::Host { lobby, listener }) = &self.role else { return None };
+        let addrs = listener.addrs();
+        (!addrs.is_empty()).then(|| JoinCode::new(lobby.session(), &listener.fingerprint(), &addrs))
+    }
+
+    /// Clipboard text into the focused field (the connection page's) or the chat line (the room), up to its first
+    /// line break.
+    pub fn paste(&mut self, text: &str) {
+        let f = match (&self.role, self.focus) {
+            (Some(_), _) => &mut self.entry,
+            (None, Focus::Address) => &mut self.address,
+            (None, Focus::Password) => &mut self.password,
+        };
+        for c in text.trim().lines().next().unwrap_or("").bytes().filter(|c| (0x20..0x7f).contains(c)) {
+            f.key(EntryKey::Char(c));
+        }
+        if self.role.is_none() && self.focus == Focus::Address {
+            self.selected = None;
+        }
+    }
+
+    /// Ctrl+C or a click on the code: the host's join code to the clipboard.
+    pub fn copy(&mut self) -> Option<Out> {
+        let code = self.join_code()?.encode();
+        self.line = words::COPIED.to_vec();
+        Some(Out::Copy(code))
+    }
+
     /// The connection page's list: the LAN's sessions, or the MP saves.
     fn rows(&self) -> usize {
         self.saves.as_ref().map_or(self.list.len(), Vec::len)
     }
 
-    /// Join the selected LAN session, else the typed address.
+    /// Join the selected LAN session, else the typed or pasted join code or address.
     pub fn join(&mut self, net: &mut dyn Net) {
-        let (addr, pin) = match self.selected.and_then(|i| self.list.get(i)) {
-            Some(f) => (f.addr.to_string(), Some(f.announcement.fingerprint)),
-            None if !self.address.string().is_empty() => (self.address.string(), None),
-            None => return,
+        let typed = self.address.string();
+        let (rx, code) = match self.selected.and_then(|i| self.list.get(i)) {
+            Some(f) => (net.connect(&f.addr.to_string(), Some(f.announcement.fingerprint)), None),
+            None if typed.is_empty() => return,
+            None => match JoinCode::decode(&typed) {
+                Ok(code) => (net.connect_code(&code), Some(code.session)),
+                // Long and without dots or colons: a mistyped code rather than a host name.
+                Err(e) if !typed.contains(['.', ':']) && typed.len() > 20 => {
+                    self.line = e.to_string().into_bytes();
+                    return;
+                }
+                Err(_) => (net.connect(&typed, None), None),
+            },
         };
-        self.connecting = Some((net.connect(&addr, pin), self.password()));
+        self.connecting = Some((rx, self.password(), code));
         self.line = words::CONNECTING.to_vec();
     }
 
-    /// Join over `link` (a connection that just came up).
-    pub fn join_link(&mut self, link: Box<dyn Transport>, password: Option<String>) {
+    /// Join over `link` (a connection that just came up); `code` = the join code's session id.
+    pub fn join_link(&mut self, link: Box<dyn Transport>, password: Option<String>, code: Option<u64>) {
         self.chat.clear();
         self.joined_password = password.clone();
-        self.role = Some(Role::Joiner(Box::new(LobbyClient::join(link, &self.name, self.rules, password, None))));
+        self.role = Some(Role::Joiner(Box::new(LobbyClient::join(link, &self.name, self.rules, password, code))));
         self.line.clear();
         self.lost = false;
     }
@@ -520,12 +703,12 @@ impl MpScreen {
                 self.selected = None;
             }
         }
-        if let Some((rx, pw)) = &self.connecting {
+        if let Some((rx, pw, code)) = &self.connecting {
             match rx.try_recv() {
                 Ok(Ok(link)) => {
-                    let pw = pw.clone();
+                    let (pw, code) = (pw.clone(), *code);
                     self.connecting = None;
-                    self.join_link(link, pw);
+                    self.join_link(link, pw, code);
                 }
                 Ok(Err(e)) => {
                     self.connecting = None;
@@ -620,6 +803,7 @@ impl MpScreen {
                     v.push((spot::HOLDER + i, [170.0, y, 160.0, 26.0]));
                 }
                 if self.is_host() {
+                    v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 16.0])]);
                     for k in 0..OPTIONS as u32 {
                         let y = 74.0 + 48.0 * k as f32;
                         v.push((spot::OPTION + 2 * k, [556.0, y, 30.0, 18.0]));
@@ -688,6 +872,17 @@ impl MpScreen {
         let slot = |i: u32| st.slots.get(i as usize).copied();
         match id {
             spot::LEAVE => self.leave(),
+            spot::PRIVATE => {
+                let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
+                let private = !lobby.state().private;
+                lobby.set_private(private);
+            }
+            spot::CODE => return self.copy(),
+            spot::PORT_MAP => {
+                let Some(Role::Host { listener, .. }) = self.role.as_mut() else { return None };
+                let on = matches!(listener.port_map(), PortMap::Off | PortMap::Failed(_));
+                listener.map_port(on);
+            }
             spot::READY => {
                 let ready = st.members.iter().find(|m| m.id == me).is_some_and(|m| m.ready);
                 match self.role.as_mut()? {
@@ -821,10 +1016,10 @@ impl MpScreen {
         let hover = self.spot_at(self.at);
         let text = |f: &mut Frame, s: &[u8], x: f32, y: f32, size: usize, a: Align, c: usize| d.font.text(f, v, s, x, y, 0, size, a, d.col(c, fade), None);
         let hot = |id: u32| if hover == id { 2 } else { 1 };
-        let cursor = |f: &mut Frame, fl: &Field, x: f32, y: f32, size: usize| {
+        let cursor = |f: &mut Frame, fl: &Field, first: usize, x: f32, y: f32, size: usize| {
             if blink {
                 let (w, h) = (d.font.advance(size), d.font.height(size));
-                let cx = x + w * fl.cursor as f32;
+                let cx = x + w * (fl.cursor - first) as f32;
                 let c = d.col(1, fade);
                 f.push(d.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(cx + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
             }
@@ -856,13 +1051,16 @@ impl MpScreen {
                 text(f, format!("{}/{}", a.humans, a.slots).as_bytes(), 500.0, y, 2, Align::Right, c);
             }
             text(f, &d.texts.get(14, 5, 2), 130.0, 266.0, 2, Align::Left, 0x25);
-            text(f, &self.address.text, 136.0, 285.0, 2, Align::Left, if self.focus == Focus::Address { 2 } else { 0x22 });
+            // A long address (a join code) scrolls: its end shows, or from the cursor on when that is further left.
+            let first = self.address.text.len().saturating_sub(ADDRESS_SHOWN).min(self.address.cursor);
+            let shown = &self.address.text[first..(first + ADDRESS_SHOWN).min(self.address.text.len())];
+            text(f, shown, 136.0, 285.0, 2, Align::Left, if self.focus == Focus::Address { 2 } else { 0x22 });
             text(f, words::PASSWORD, 130.0, 314.0, 2, Align::Left, 0x25);
             let stars = vec![b'*'; self.password.text.len()];
             text(f, &stars, 136.0, 333.0, 2, Align::Left, if self.focus == Focus::Password { 2 } else { 0x22 });
             match self.focus {
-                Focus::Address => cursor(f, &self.address, 136.0, 285.0, 2),
-                Focus::Password => cursor(f, &self.password, 136.0, 333.0, 2),
+                Focus::Address => cursor(f, &self.address, first, 136.0, 285.0, 2),
+                Focus::Password => cursor(f, &self.password, 0, 136.0, 333.0, 2),
             }
             let line = if self.lost && self.line.is_empty() { d.texts.get(14, 5, 3) } else { self.line.clone() };
             text(f, &line, 320.0, 364.0, 2, Align::Centre, 2);
@@ -875,7 +1073,7 @@ impl MpScreen {
             return;
         };
         // The room.
-        for r in [[16.0, 8.0, 608.0, 26.0], [16.0, 40.0, 380.0, 272.0], [404.0, 40.0, 220.0, 272.0], [16.0, 320.0, 608.0, 120.0], [16.0, 444.0, 120.0, 30.0], [504.0, 444.0, 120.0, 30.0]] {
+        for r in [[16.0, 8.0, 608.0, 26.0], [16.0, 40.0, 380.0, 272.0], [404.0, 40.0, 220.0, 272.0], [16.0, 316.0, 608.0, 40.0], [16.0, 360.0, 608.0, 80.0], [16.0, 444.0, 120.0, 30.0], [504.0, 444.0, 120.0, 30.0]] {
             box_(f, r);
         }
         text(f, st.name.as_bytes(), 320.0, 13.0, 3, Align::Centre, 1);
@@ -924,12 +1122,26 @@ impl MpScreen {
                 }
             }
         }
+        if let Some(Role::Host { listener, .. }) = &self.role {
+            let map = match listener.port_map() {
+                PortMap::Off => words::MAP_OFF.to_vec(),
+                PortMap::Asking => words::MAP_ASKING.to_vec(),
+                PortMap::Mapped(a) => format!("Port mapping: on, reachable at {a}").into_bytes(),
+                PortMap::Failed(e) => format!("Port mapping failed: {e}").into_bytes(),
+            };
+            text(f, &map, 24.0, 320.0, 2, Align::Left, hot(spot::PORT_MAP));
+            text(f, words::PRIVATE[st.private as usize], 476.0, 320.0, 2, Align::Left, hot(spot::PRIVATE));
+            let code = self.join_code().map_or_else(|| words::NO_CODE.to_vec(), |c| format!("Join code: {}  (click: copy)", c.encode()).into_bytes());
+            text(f, &code, 24.0, 338.0, 2, Align::Left, hot(spot::CODE));
+        } else if st.private {
+            text(f, words::PRIVATE[1], 476.0, 320.0, 2, Align::Left, 0x25);
+        }
         let first = self.chat.len().saturating_sub(CHAT_LINES);
         for (j, (who, line)) in self.chat[first..].iter().enumerate() {
-            text(f, format!("{who}: {line}").as_bytes(), 24.0, 328.0 + 14.0 * j as f32, 2, Align::Left, 0x22);
+            text(f, format!("{who}: {line}").as_bytes(), 24.0, 364.0 + 14.0 * j as f32, 2, Align::Left, 0x22);
         }
-        text(f, &self.entry.text, 24.0, 418.0, 2, Align::Left, 2);
-        cursor(f, &self.entry, 24.0, 418.0, 2);
+        text(f, &self.entry.text, 24.0, 424.0, 2, Align::Left, 2);
+        cursor(f, &self.entry, 0, 24.0, 424.0, 2);
         text(f, &self.line, 320.0, 452.0, 2, Align::Centre, 2);
         text(f, &d.texts.get(14, 1, 11), 76.0, 452.0, 3, Align::Centre, hot(spot::LEAVE));
         let (label, c) = if self.is_host() {
@@ -1243,7 +1455,7 @@ mod tests {
         hub: Hub,
     }
 
-    struct LoopListener(Receiver<Box<dyn Transport>>, u16);
+    struct LoopListener(Receiver<Box<dyn Transport>>, u16, PortMap);
 
     impl Listener for LoopListener {
         fn accept(&mut self) -> Option<Box<dyn Transport>> {
@@ -1253,13 +1465,27 @@ mod tests {
         fn port(&self) -> u16 {
             self.1
         }
+
+        /// A router that grants every mapping at a documentation address.
+        fn map_port(&mut self, on: bool) {
+            self.2 = if on { PortMap::Mapped(std::net::SocketAddrV4::new([203, 0, 113, 7].into(), 4000 + self.1)) } else { PortMap::Off };
+        }
+
+        fn port_map(&self) -> PortMap {
+            self.2.clone()
+        }
+
+        /// "127.0.0.1:n" reaches listener n ([`LoopNet::connect`]).
+        fn addrs(&self) -> Vec<std::net::SocketAddrV4> {
+            vec![std::net::SocketAddrV4::new([127, 0, 0, 1].into(), self.1)]
+        }
     }
 
     impl Net for LoopNet {
         fn listen(&mut self) -> Result<Box<dyn Listener>, String> {
             let (tx, rx) = mpsc::channel();
             self.hub.borrow_mut().push(tx);
-            Ok(Box::new(LoopListener(rx, self.hub.borrow().len() as u16)))
+            Ok(Box::new(LoopListener(rx, self.hub.borrow().len() as u16, PortMap::Off)))
         }
 
         fn sessions(&mut self) -> Vec<Found> {
@@ -1752,6 +1978,101 @@ mod tests {
             assert!(t.elapsed() < Duration::from_secs(2), "the joiners didn't notice");
         }
     }
+    #[test]
+    fn the_host_maps_its_port_from_the_room() {
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(1, &mut net);
+        let map = |h: &MpScreen| match &h.role {
+            Some(Role::Host { listener, .. }) => listener.port_map(),
+            _ => unreachable!(),
+        };
+        assert_eq!(map(&host), PortMap::Off, "opt-in: nothing asks the router until the host does");
+        assert!(!guests[0].boxes().iter().any(|b| b.0 == spot::PORT_MAP), "a joiner has no port mapping");
+        assert!(matches!(click(&mut host, spot::PORT_MAP, false, &mut net), Some(Out::Click)));
+        assert_eq!(map(&host), PortMap::Mapped("203.0.113.7:4001".parse().unwrap()));
+        click(&mut host, spot::PORT_MAP, false, &mut net);
+        assert_eq!(map(&host), PortMap::Off, "a second press removes the mapping");
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.len() == 2);
+    }
+
+    #[test]
+    fn a_private_room_is_joined_with_its_code() {
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(1, &mut net);
+        let session = match &host.role {
+            Some(Role::Host { lobby, .. }) => lobby.session(),
+            _ => unreachable!(),
+        };
+        assert!(!host.state().unwrap().private);
+        click(&mut host, spot::PRIVATE, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().private);
+        let fresh = |name: &str, net: &mut LoopNet| {
+            let mut s = MpScreen::open(true, name, RULES);
+            for _ in 0..25 {
+                s.tick(net);
+            }
+            s
+        };
+        // By address alone: refused at the door.
+        let mut plain = fresh("Plain", &mut net);
+        type_text(&mut plain, "127.0.0.1:1", &mut net);
+        let mut all = [&mut host, &mut plain];
+        run(&mut all, &mut net, |s| s[1].line == refusal_text(Refusal::Code));
+        // The host's code (a click copies it) pasted and joined.
+        let Some(Out::Copy(text)) = click(&mut host, spot::CODE, false, &mut net) else { panic!("the code row copies") };
+        assert_eq!(host.line, words::COPIED);
+        let code = JoinCode::decode(&text).unwrap();
+        assert_eq!((code.session, code.addrs.as_slice()), (session, &["127.0.0.1:1".parse().unwrap()][..]));
+        let mut coded = fresh("Coded", &mut net);
+        coded.paste(&format!(" {text}\nsecond line"));
+        assert_eq!(coded.address.string(), text, "the first line, trimmed");
+        coded.key(Some(EntryKey::Enter), false, &mut net);
+        let mut all = [&mut host, &mut coded];
+        run(&mut all, &mut net, |s| s[1].state().is_some_and(|st| st.members.len() == 3));
+        // A mistyped code is caught before connecting.
+        let mut typo = fresh("Typo", &mut net);
+        let mut bad = text.into_bytes();
+        bad[3] = if bad[3] == b'A' { b'B' } else { b'A' };
+        typo.paste(std::str::from_utf8(&bad).unwrap());
+        typo.key(Some(EntryKey::Enter), false, &mut net);
+        assert!(typo.connecting.is_none() && typo.line.starts_with(b"the join code") || typo.line == b"not a join code", "{}", String::from_utf8_lossy(&typo.line));
+        // Open again: the room's members see it.
+        click(&mut host, spot::PRIVATE, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| !h.state().unwrap().private);
+    }
+
+    /// The real thing on this machine: a private room on a QUIC socket, joined over UDP with its code (the LAN address
+    /// the code carries; skipped without one).
+    #[test]
+    fn a_join_code_works_over_quic() {
+        let mut host_net = QuicNet::default();
+        let mut host = MpScreen::open(true, "Host", RULES);
+        host.open = 100.0;
+        host.host(&mut host_net);
+        click_on(&mut host, spot::PRIVATE, &mut host_net);
+        let Some(Out::Copy(text)) = host.copy() else {
+            eprintln!("no LAN address; skipping");
+            return;
+        };
+        let mut net = QuicNet::default();
+        let mut guest = MpScreen::open(true, "Guest", RULES);
+        guest.open = 100.0;
+        guest.paste(&text);
+        guest.key(Some(EntryKey::Enter), false, &mut net);
+        let t = std::time::Instant::now();
+        while !guest.state().is_some_and(|st| st.members.len() == 2 && st.private) {
+            host.tick(&mut host_net);
+            guest.tick(&mut net);
+            assert!(t.elapsed() < Duration::from_secs(20), "not joined: {}", String::from_utf8_lossy(&guest.line));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn click_on(s: &mut MpScreen, id: u32, net: &mut dyn Net) -> Option<Out> {
+        let p = at(s, id);
+        s.press(p, false, net)
+    }
+
     #[test]
     fn fields_take_keys() {
         let mut f = Field::new(5);

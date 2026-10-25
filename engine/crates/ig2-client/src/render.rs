@@ -817,8 +817,8 @@ fn raw_view(tex: &wgpu::Texture) -> wgpu::TextureView {
 
 /// The image and its box-filtered mips down to 1×1 (in sRGB space; good enough for these assets).
 fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
-    // The PVR's own levels first (`load_pvr` uploads them as stored: the alpha-tested scaffolding's rails stay solid,
-    // re/deviations.md row 366), then box-filtered ones down to 1 × 1.
+    // The PVR's own levels first (`load_pvr` uploads them as stored: the alpha-tested scaffolding's rails stay solid),
+    // then box-filtered ones down to 1 × 1.
     let mut out = vec![img.rgba.clone()];
     let (mut w, mut h) = (img.width as usize, img.height as usize);
     for m in &img.mips {
@@ -1222,7 +1222,7 @@ fn design_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::sc
             scene.draw(&mut frame, r, &l.install, &l.tables, &mut s, state, &techs, en, size);
             hud.draw_design(&mut frame, &mut s, state, &techs, &l.tables, &tips, size, t);
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
-            // `UpdateFrame`'s pointer, the hand over a pickable pod or a model (phase 0: deviation 277).
+            // `UpdateFrame`'s pointer, the hand over a pickable pod or a model (phase 0).
             hud.snapshot_tip_pointer(&mut frame, size, s.mouse, None, (s.tip.under != 0 || s.pods.hand) as i32, 0);
             let rgba = r.draw_to_image(&frame, o.size, t);
             let path = crate::script::grab_path(out, tick);
@@ -1434,7 +1434,7 @@ fn research_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             hud.draw_research(&mut frame, &mut s, &infos, &tips, &world.game.state, &l.tables, (tex, models.glow, models.arrow), lines, size, t);
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
-            // `UpdateFrame`'s pointer at the script's point, the hand over a row or a model (phase 0: deviation 277).
+            // `UpdateFrame`'s pointer at the script's point, the hand over a row or a model (phase 0).
             let m = s.tip.mouse;
             hud.snapshot_tip_pointer(&mut frame, size, m, None, (s.tip.under != 0 || s.hand(&world.game.state, m, &models.centres)) as i32, 0);
             let rgba = r.draw_to_image(&frame, o.size, t);
@@ -1922,7 +1922,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     for _ in 0..o.ui_frames.max(1) {
         panels.ui_tick();
     }
-    // `--faders`: the exe's own `fifo` / `starf` at the grab (their `rand()`-driven shine and drift, deviation 208).
+    // `--faders`: the exe's own `fifo` / `starf` at the grab (their `rand()`-driven shine and drift).
     if let Some(f) = &o.faders {
         panels.faders = f.clone();
     }

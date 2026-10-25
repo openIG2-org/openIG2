@@ -1,6 +1,6 @@
 {
  "screen": "research",
- "note": "FX9 (re/deviations.md 6, 9, 86, 179, 180) on quick-1.sav: PgUp twice (turrets -> radars -> civil buildings), down to tech 2 (startable); a held Enter: it starts, a lone repeat key down does nothing, after another key's up it fires again (stops); the ball dragged with the right button; a left press on the left fader panel. Times are UI ticks from the first frame the screen is up.",
+ "note": "FX9 on quick-1.sav: PgUp twice (turrets -> radars -> civil buildings), down to tech 2 (startable); a held Enter: it starts, a lone repeat key down does nothing, after another key's up it fires again (stops); the ball dragged with the right button; a left press on the left fader panel. Times are UI ticks from the first frame the screen is up.",
  "events": [
   {"t": 170, "key": "pageup"},
   {"t": 180, "key": "pageup"},

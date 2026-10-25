@@ -1,4 +1,4 @@
-// Environment-mapping probe (deviation 275, re/screens/render.md §2.5), appended to screen.js by run_screen.py
+// Environment-mapping probe (re/screens/render.md §2.5), appended to screen.js by run_screen.py
 // --probe: `vagashatarkirak` (exe 0x5395d0, ELF 0x606c90; args: sort record, nfaces, VertType[] stride 0x24, pont[],
 // normals[] stride 0x14 (nx, ny, nz, diffuse, specular), uv[], FaceType[] stride 0x28 (u16 vertex a, b, c at +0/+2/+4,
 // normal a, b, c at +6/+8/+0xa), XVO) on the main scene's pass (`ColonyMasodikUpdate3d` 0x998247 clear): the record's

@@ -111,7 +111,7 @@ pub struct UnitGfx {
 impl UnitGfx {
     /// A new unit's drawn matrix as `AddUjUrhajo` (ELF 0x68a730) seeds it, `CreateMatrix(spin.x, spin.y + π, spin.z)`:
     /// `seturhajopos` takes its third column as the first up vector (an identity seed collapses the pose of a ship
-    /// heading along y, deviation 212).
+    /// heading along y).
     fn new(u: &Unit) -> Self {
         Self { matrix: create_matrix(u.spin[0], u.spin[1] + std::f32::consts::PI, u.spin[2]), ..Default::default() }
     }
@@ -1775,7 +1775,7 @@ impl SpaceWarUi {
         self.held_tick = tick;
         match spot {
             // `SpwC::main` 0x57b9e0 has no button test, but `IG2_gameUpdate` (ELF 0x587400 / exe 0x4e0440) calls it for a
-            // flag-0 hot-spot only while a button is held and on the release (deviation 56): a hover never pans.
+            // flag-0 hot-spot only while a button is held and on the release: a hover never pans.
             Some(0x1f) if any || release => {
                 let (dx, dy) = (self.mouse[0] - 321.0, self.mouse[1] - 421.0);
                 let th = self.snap_yaw as f64;

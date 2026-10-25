@@ -1,8 +1,8 @@
 # Trade: the merchants, purchases and deliveries
 
-Status: **verified at runtime** (`traces/2026-10-16-trade.md`): 1,640 whole-game ticks from an original save,
-with staged deliveries and four purchases through the exe's own `MULTIGET_Trade`, byte-exact against
-`engine/crates/ig2-sim` (`trade.rs`, `game.rs`, `tests/save_replay.rs`).
+Port status: ported in `engine/crates/ig2-sim` (`trade.rs`, `game.rs`, test `tests/save_replay.rs`, §6).
+Verification (`traces/2026-10-16-trade.md`): 1,640 whole-game ticks from an original save, with staged
+deliveries and four purchases through the exe's own `MULTIGET_Trade`, byte-exact.
 
 One per-tick system, `FRISSIT_Trade`, run every strategic tick after the daily block and before
 `FRISSIT_Research` (`time-and-rng.md` §1), plus the purchase message the trade screen sends through the lockstep

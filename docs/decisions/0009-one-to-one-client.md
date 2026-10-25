@@ -74,7 +74,7 @@ result is written into the screen's spec, and the screen's row in `re/screens/RE
 ### 5. What this changes
 - The README and `CONTRIBUTING.md` state the rule. New screen work starts by reading the screen's row in the inventory,
   porting its draw and input functions, and ends with a capture comparison.
-- Missing whole areas are tracked as STATUS items: audio (music, voices, UI sounds), MP4 cutscene playback, the
+- Missing whole areas are tracked as tasks (`TASKS.md`): audio (music, voices, UI sounds), MP4 cutscene playback, the
   menus before the game, the tutorial interpreter.
 
 ## Consequences

@@ -1,6 +1,6 @@
 {
  "screen": "colony",
- "note": "FX5 row 39 (run with --cam 382.385,-314.574,-1100,-0.7854,0 on quick-1.sav planet 42): a left press on bare ground drops the selection; still held, the pointer onto the solar plant picks it (with the click), then onto the police station changes nothing (Mouse_FelengedesMajdMegvar); the release. Times are UI ticks.",
+ "note": "FX5 (run with --cam 382.385,-314.574,-1100,-0.7854,0 on quick-1.sav planet 42): a left press on bare ground drops the selection; still held, the pointer onto the solar plant picks it (with the click), then onto the police station changes nothing (Mouse_FelengedesMajdMegvar); the release. Times are UI ticks.",
  "events": [
   {"t": 2, "mouse": [200, 300]},
   {"t": 10, "down": 1, "at": [200, 300]},

@@ -1,4 +1,4 @@
-// Design screen probe (re/screens/design.md §5.1, re/deviations.md 92/95), appended to screen.js by run_screen.py
+// Design screen probe (re/screens/design.md §5.1), appended to screen.js by run_screen.py
 // --probe: every `Design3DUpdate` (exe 0x4ad8e0) and `Design_Main` (exe 0x4b2190) call (at most 2500)
 // with `AddZoomDes` (0xa3f10c), `AddZoomDirDes` (0xa3f6e4), `AktAlap`/`OldAlap` (0xa3f038/0xa3f03c),
 // `NemkellTexturaCsere` (0xa3f6ec), `AktTerv` (0xb9aa64), `AktTervMutato` (0xb9aaec), `DesignTervezesMod`

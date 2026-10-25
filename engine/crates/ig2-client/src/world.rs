@@ -336,7 +336,7 @@ pub struct WaitView {
     pub late: Vec<(u8, String)>,
 }
 
-/// A story effect the window carries out (deviation 231; `rules/campaign.md`): the screens, the pause and the
+/// A story effect the window carries out (`rules/campaign.md`): the screens, the pause and the
 /// registry are the UI's. Single player only: in canonical MP the story is the canonical `EN`'s, and the original's MP
 /// ignores `SetIdoPause(1, 0)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1053,7 +1053,7 @@ mod tests {
         assert_eq!((g.order, g.target), (1, Some([10.0, -20.0])));
     }
 
-    /// Shift + right click (re/screens/starmap.md §10.3, deviation 306): a moving fleet's mode-13 orders append
+    /// Shift + right click (re/screens/starmap.md §10.3): a moving fleet's mode-13 orders append
     /// waypoints, and the snapshot carries the chain `Show_Flottak3d` draws for the selected fleet (`ships-0.sav`:
     /// the human has fleets).
     #[test]
@@ -1076,7 +1076,7 @@ mod tests {
         assert_eq!(chain, Some(vec![[30.0, -20.0], [30.0, 40.0]]));
     }
 
-    /// Deviation 314: a campaign starts with dozens of planets at visibility −1 and 0; the starmap shows only those
+    /// A campaign starts with dozens of planets at visibility −1 and 0; the starmap shows only those
     /// at `+0xd8 + 2·EN` > 0 (`rotate_stars`, `Show_Stars2d3d`, `GFX_StarmapRadar`, `SelectNearestUnit`), the
     /// exe's campaign-start saves (`IG2_TRACE_DIR/newgame/`) as loaded.
     #[test]

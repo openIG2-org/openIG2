@@ -647,7 +647,7 @@ impl InfoScreen {
     /// `CheckMelyikFolottVan` (exe 0x4e5320): a shown row's globe (`GetObjPos`, projected by `TransformPoint`: the
     /// screen's camera, `vx = 600·x/w + 320`, `vy = 600·y/w + 240`) strictly inside a ±30 pixel box around `at`.
     /// Only a planet row (kind 0, its point scaled `·639/639`, `·479/479` in f32) answers yes; a fleet row's hit
-    /// (kind 1) ends the search with no (0x4e54f6 jumps to the `xor al,al` exit: an original bug, row 348).
+    /// (kind 1) ends the search with no (0x4e54f6 jumps to the `xor al,al` exit: an original bug).
     fn over_globe(&self, d: &InfoData, human: usize, at: [f32; 2]) -> bool {
         let inside = |x: f32, y: f32| x - 30.0 < at[0] && at[0] < x + 30.0 && y - 30.0 < at[1] && at[1] < y + 30.0;
         for (k, e) in self.rows(d, human).iter().enumerate() {

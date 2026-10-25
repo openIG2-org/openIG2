@@ -291,7 +291,7 @@ impl Game<'_> {
     }
 
     /// The messages screen's order from empire `issuer`. The inbox is the human's: other issuers' orders change
-    /// nothing (each player's inbox in multiplayer is open: re/rules/info-messages.md §7.6).
+    /// nothing (each player's inbox in multiplayer is open: re/rules/info-messages.md §7.4).
     pub fn message_order(&mut self, issuer: u8, o: MessageOrder) {
         if issuer as i32 != self.g(va::EN) {
             // Canonical multiplayer: another human's order runs in its own inbox (multiplayer.md §5.3).
