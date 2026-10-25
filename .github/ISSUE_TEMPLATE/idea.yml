@@ -1,0 +1,32 @@
+name: Idea or improvement
+description: Suggest an enhanced option or a quality-of-life improvement.
+title: "[Idea] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The classic game stays as the original was; improvements become opt-in *enhanced* options (see
+        `CONTRIBUTING.md`). Bugs and differences from the original have their own forms.
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What should be possible, and in which part of the game?
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What problem does it solve for players?
+    validations:
+      required: true
+  - type: textarea
+    id: original
+    attributes:
+      label: How the original handles it today
+  - type: textarea
+    id: files
+    attributes:
+      label: Mock-ups, screenshots, examples from other games

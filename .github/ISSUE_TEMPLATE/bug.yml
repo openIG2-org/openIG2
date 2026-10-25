@@ -1,0 +1,131 @@
+name: Bug report
+description: Something breaks, crashes, hangs or doesn't work.
+title: "[Bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing openIG2! One problem per report, please. Something that works but looks, sounds or
+        behaves differently from the original game? Use **Differs from the original** instead.
+        Never attach files from the game's install (graphics, sounds, videos, `ig2.exe`). Save games are fine.
+  - type: input
+    id: version
+    attributes:
+      label: openIG2 version
+      description: The window title shows it, or run `ig2-client --version`.
+      placeholder: "0.7.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where in the game
+      options:
+        - Starting the game / finding the install
+        - Main menu, new game, load / save
+        - Options and display settings
+        - Starmap
+        - Colony
+        - Ground war
+        - Space battle
+        - Research
+        - Ship design / production
+        - Trade
+        - Diplomacy
+        - Espionage
+        - Info / messages
+        - Tutorial
+        - Campaign story
+        - Multiplayer
+        - Sound / music / video
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What happened
+      options:
+        - Crash (the game closed or showed an error)
+        - Hang / freeze
+        - Wrong result (rules, numbers, story)
+        - Input doesn't work (a key, button or click)
+        - Graphics glitch
+        - Sound problem
+        - Multiplayer desync or disconnect
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps from a save or from the main menu. The more exact, the faster it gets fixed.
+      placeholder: |
+        1. Load the attached save (or: start campaign 1, normal difficulty)
+        2. Open the colony screen of planet ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include the exact text of any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What the original game does here, if you know.
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: How often
+      options:
+        - Every time
+        - Sometimes
+        - Once
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Save game, screenshots, video
+      description: |
+        Drag files here. A save from just before the problem helps most: zip it (GitHub doesn't accept `.sav`
+        directly). Our saves are `save<N>.ig2s` in `%LOCALAPPDATA%\GyroscopeGames\ig2`.
+  - type: textarea
+    id: check
+    attributes:
+      label: ig2-check output
+      description: For start-up, loading or missing-content problems, run `ig2-check.exe --quick` and paste its output.
+      render: text
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Windows version, GPU, screen resolution and refresh rate.
+      placeholder: "Windows 11, RTX 3060, 2560x1440 144 Hz"
+  - type: dropdown
+    id: game-mode
+    attributes:
+      label: Game mode
+      options:
+        - Single player campaign
+        - Scenario / skirmish
+        - Tutorial
+        - Multiplayer (LAN)
+        - Multiplayer (internet)
+        - Not in a game
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before sending
+      options:
+        - label: I searched the existing issues for this problem.
+          required: true
+        - label: I attached no files from the game's install.
+          required: true

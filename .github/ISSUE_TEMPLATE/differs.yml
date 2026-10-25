@@ -1,0 +1,104 @@
+name: Differs from the original
+description: Works, but looks, sounds, plays or responds differently from Imperium Galactica II.
+title: "[Differs] "
+labels: ["fidelity", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        openIG2 aims to match the original game 1:1. Tell us where it doesn't. Known differences are listed in
+        [`re/deviations.md`](https://github.com/openIG2-org/openIG2/blob/main/re/deviations.md); please check
+        it first. Deliberate improvements are opt-in "enhanced" options; their defaults should match the original.
+  - type: input
+    id: version
+    attributes:
+      label: openIG2 version
+      placeholder: "0.7.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where in the game
+      options:
+        - Main menu, new game, load / save
+        - Options
+        - Starmap
+        - Colony
+        - Ground war
+        - Space battle
+        - Research
+        - Ship design / production
+        - Trade
+        - Diplomacy
+        - Espionage
+        - Info / messages
+        - Tutorial
+        - Campaign story
+        - Multiplayer
+        - Sound / music / video
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: aspect
+    attributes:
+      label: What differs
+      options:
+        - Rules or numbers (money, research, combat, AI, story)
+        - Input (keys, mouse, buttons, drag)
+        - Layout or text on screen
+        - Graphics or animation
+        - Sound or music
+        - Timing or speed
+        - Something missing
+    validations:
+      required: true
+  - type: textarea
+    id: original
+    attributes:
+      label: What the original does
+      description: As exactly as you can. Screenshots or video of the original help a lot.
+    validations:
+      required: true
+  - type: textarea
+    id: openig2
+    attributes:
+      label: What openIG2 does
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to see it
+      description: Steps from a save or the main menu, the same in both games if you can.
+      placeholder: |
+        1. Load the attached save
+        2. Open the research screen
+        3. Hold the right mouse button on ...
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Save game, screenshots, video
+      description: Side-by-side captures of both games are ideal. Zip saves before attaching.
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How much does it matter while playing
+      options:
+        - It changes the game (outcome, balance, a mission can't be finished)
+        - Clearly noticeable
+        - Small detail
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before sending
+      options:
+        - label: It is not already in `re/deviations.md` or another issue.
+          required: true
+        - label: I attached no files from the game's install.
+          required: true
