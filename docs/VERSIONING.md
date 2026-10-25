@@ -24,7 +24,11 @@ openIG2 versions are **MAJOR.MINOR.N**:
 ## Releases
 The release workflow (`.github/workflows/release.yml`) builds the Windows zip and publishes it on GitHub:
 
-- **Beta** (pre-release): started by hand from the Actions tab, from any commit on `main`.
+- **Beta**: started by hand from the Actions tab (Release → Run workflow), from the current `main`. Named
+  "openIG2 MAJOR.MINOR.N (beta)".
 - **Stable**: a pushed tag `vMAJOR.MINOR.N` that matches the computed version.
+
+Both are normal GitHub releases marked **Latest**, so the repository page, the README's download link and the
+website always point at the newest build. Before 1.0 every release is a beta in practice.
 
 The release notes come from the version's `CHANGELOG.md` section.

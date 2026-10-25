@@ -1,7 +1,7 @@
 name: Release
 
-# Beta: run by hand (Actions -> Release -> Run workflow) -> a pre-release vMAJOR.MINOR.N.
-# Stable: push a tag vMAJOR.MINOR.N that matches tools/release/version.py -> a full release.
+# Beta: run by hand (Actions -> Release -> Run workflow) -> release vMAJOR.MINOR.N named "(beta)", marked Latest.
+# Stable: push a tag vMAJOR.MINOR.N that matches tools/release/version.py -> the same, without "(beta)".
 on:
   workflow_dispatch:
   push:
@@ -49,6 +49,7 @@ jobs:
           tag_name: v${{ steps.v.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: openIG2 ${{ steps.v.outputs.version }}${{ github.ref_type != 'tag' && ' (beta)' || '' }}
-          prerelease: ${{ github.ref_type != 'tag' }}
+          prerelease: false
+          make_latest: true
           body_path: notes.md
           files: dist/openig2-${{ steps.v.outputs.version }}-windows-x64.zip
