@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/ig2-formats", "crates/ig2-net", "crates/ig2-rules", "crates/ig2-sim", "crates/ig2-viewer", "crates/ig2-client", "crates/ig2-screendiff", "crates/ig2-check"]
+members = ["crates/ig2-formats", "crates/ig2-net", "crates/ig2-rules", "crates/ig2-sim", "crates/ig2-viewer", "crates/ig2-client", "crates/ig2-screendiff", "crates/ig2-check", "crates/ig2-rendezvous"]
 exclude = ["vendor"]
 
 [workspace.package]

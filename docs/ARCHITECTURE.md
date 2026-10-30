@@ -10,9 +10,10 @@ against recordings of the original.
 | Formats | `ig2-formats` | Readers for the original's files: `ecGs`/`neGs` containers and the VFS, PVR textures, `.xv` models, colony maps, `.scn` scenarios, text and keyed strings, dialogue, diplomacy, formations, story data, the tutorial script, MP4 video, high scores, options, original saves; the locale pick |
 | Rules | `ig2-rules` | The balance tables read from the user's `ig2.exe` (sha256-gated PE reader): techs, buildings, hulls, designs, weapons, race and difficulty tables, radar, sound and speech ids |
 | Simulation | `ig2-sim` | The whole game, deterministic: `time`/`rng` (20 Hz clock, 21 seeded streams), colonies, fleets and radar, production, research, trade, diplomacy, espionage, the AI (`ai/`), space battles (auto and real-time `spacebattle`), ground war (`ground/`), the story engine and campaign scripts (`story`, `elem/`, `campaign`, `fable`), the tutorial interpreter, saves (`save/`), and `game/` which applies player orders and runs the tick |
-| Network | `ig2-net` | Lockstep (`lockstep`, `command`, `wire`), QUIC transport, LAN discovery, UPnP/NAT-PMP port mapping, the lobby and the session layer (drops, rejoin, resync, host migration, MP saves) |
+| Network | `ig2-net` | Lockstep (`lockstep`, `command`, `wire`), QUIC transport, LAN discovery, UPnP/NAT-PMP port mapping, join codes, the rendezvous protocol and its relay socket (`rendezvous`, `quic::RelaySocket`), the lobby and the session layer (drops, rejoin, resync, host migration, MP saves) |
 | Client | `ig2-client` | The game: winit window and wgpu renderer (`render`, `render3d`, `lighting`, `font`), the screen kit (`kit/`), one module group per screen (`mainscr*`, `starmap*`, `colony*`, `spacewar*`, `research`, `design*`, `trade*`, `diplomacy*`, `spy*`, `info_screen`, `messages_screen`, `options`, `help`, `tutorial_ui`, `mp_lobby`), audio and video, input scripts for headless captures |
 | Tools | `ig2-viewer`, `ig2-screendiff`, `ig2-check` | An asset browser; the pixel comparison of client captures with captures of the original; the install check (every asset, table and script loads) |
+| Service | `ig2-rendezvous` | The optional rendezvous and relay service for internet games (ADR 0018, `docs/RENDEZVOUS.md`); no game logic |
 
 ## Data flow
 ```

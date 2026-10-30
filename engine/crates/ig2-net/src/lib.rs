@@ -11,6 +11,7 @@
 //!
 //! Transports: the in-process [`transport::Loopback`] (no sockets) and, with feature `quic`, `quic::QuicHost` /
 //! `quic::connect` (`quinn`, one UDP port, a pinned self-signed session certificate).
+//! `rendezvous`: the optional rendezvous and relay service (ADR 0018); `quic::RelaySocket` carries QUIC through it.
 
 pub mod command;
 pub mod discovery;
@@ -21,6 +22,7 @@ pub mod lockstep;
 pub mod portmap;
 #[cfg(feature = "quic")]
 pub mod quic;
+pub mod rendezvous;
 pub mod session;
 pub mod snapshot;
 pub mod transport;

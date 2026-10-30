@@ -1,0 +1,12 @@
+[package]
+name = "ig2-rendezvous"
+version = "0.1.0"
+description = "The rendezvous and relay service for internet multiplayer (ADR 0018): rooms by join code, hole-punch help, QUIC datagram relay. No game logic, no accounts, no stored data."
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ig2-net = { version = "0.1.0", path = "../ig2-net" }

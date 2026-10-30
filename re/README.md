@@ -35,7 +35,7 @@ State: **verified** = matched against the exe at runtime (Frida or capture); **p
 | New game (campaign, scenario, MP galaxy, skirmish, tutorial) | [`rules/new-game.md`](rules/new-game.md) | partial (load mode 5 unported) | `ig2-sim::game::new_game` |
 | Tutorial interpreter | [`rules/tutorial.md`](rules/tutorial.md) | verified | `ig2_sim::tutorial` |
 | Game end, high scores | [`rules/game-end.md`](rules/game-end.md) | verified | `ig2-sim::game`, `ig2_formats::highscore` |
-| MP per-peer state, real-time battles in lockstep | [`rules/multiplayer.md`](rules/multiplayer.md) | partial (U7) | `ig2-sim::game::realtime` |
+| MP per-peer state, real-time battles in lockstep | [`rules/multiplayer.md`](rules/multiplayer.md); internet relay: ADR 0018 | partial (U7) | `ig2-sim::game::realtime`, `ig2_net::rendezvous` |
 | Lockstep, QUIC, discovery, port mapping, lobby, sessions | ADR 0005, 0007, 0008, 0011, 0012, 0014 | partial (U7) | `ig2-net` |
 | Screen inventory, exe functions per screen | [`screens/README.md`](screens/README.md) | — | `ig2-client` |
 | Top bar, faders, brushes, map names | [`screens/hud.md`](screens/hud.md) | partial | `ig2-client::hud` |

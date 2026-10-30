@@ -52,3 +52,7 @@ ships the whole start state as a snapshot. The client had no screens for either.
   directory, short codes or relay (ADR 0005); the joiner tries every address in parallel, the first link wins.
 - The room has a private toggle (`LobbyHost::set_private`): no LAN announcement, and the door asks for the session
   id in the hello. The host shows and copies the code; the connection page's address field accepts it (spec §5, §6).
+
+## Amendment 2026-10-31: rendezvous and relay
+- ADR 0018 adds an optional rendezvous and relay service (`ig2_net::rendezvous`, run by players: `docs/RENDEZVOUS.md`). The connection page gets a "Relay server" field; a join code then also works behind routers that block direct links.
+- Decision 4 (no public server) still holds: no address ships in the client; a player sets their own relay.

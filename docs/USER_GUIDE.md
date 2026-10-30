@@ -26,7 +26,8 @@ cd engine
 cargo run --release -p ig2-client
 ```
 The game starts at the title and main menu, like the original: campaign, scenario, skirmish, tutorial, load, and
-the multiplayer rings (LAN or direct IP; our MP room replaces the original's IRC screen).
+the multiplayer rings (LAN, direct IP or join code, optionally through a relay server you or a friend run:
+`docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen).
 
 | Flag | |
 |---|---|

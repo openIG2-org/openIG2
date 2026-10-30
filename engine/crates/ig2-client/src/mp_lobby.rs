@@ -8,12 +8,14 @@
 //! The connection page also hosts a room for an MP save ([`MpScreen::host_save`]); a joiner's [`Session`] takes part in
 //! a host migration (rules/multiplayer.md §7.3).
 
+use std::net::SocketAddrV4;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use ig2_net::discovery::{Announcement, Found};
 use ig2_net::galaxy::{GalaxyOptions, MAX_AIS, PLANETS};
 use ig2_net::joincode::JoinCode;
+use ig2_net::quic::Rendezvous;
 use ig2_net::lobby::{LobbyClient, LobbyHost, LobbyState, Refusal, Settings, SlotKind, Start, Status};
 use ig2_net::session::{ClientSession, HoldStatus, HostSession, MpSave, SessionEvent, SessionSettings};
 use ig2_net::{Peer, Transport};
@@ -27,12 +29,16 @@ use crate::render::{kind, Blend, Frame, Instance};
 
 /// The game port a host listens on first (the LAN announcement carries the real one).
 pub const GAME_PORT: u16 = ig2_net::discovery::DISCOVERY_PORT + 1;
+/// The relay address's file in the save folder.
+const RELAY_FILE: &str = "relay.txt";
 /// The longest password typed.
 const MAX_FIELD: usize = 40;
 /// The longest address typed or pasted (a join code with four addresses and its dashes is 84).
 const MAX_ADDRESS: usize = 96;
 /// The address characters the field shows (it scrolls with the cursor).
 const ADDRESS_SHOWN: usize = 60;
+/// The relay address characters shown after the field's label.
+const RELAY_SHOWN: usize = 36;
 /// Chat lines shown.
 const CHAT_LINES: usize = 4;
 /// Sessions listed.
@@ -60,6 +66,11 @@ pub trait Listener {
     /// Where joiners can reach this listener (its LAN address, the router's mapped one): a join code's addresses.
     fn addrs(&self) -> Vec<std::net::SocketAddrV4> {
         Vec::new()
+    }
+    /// Open the room of session `session` at the rendezvous service, if one is set (ADR 0018).
+    fn register(&mut self, _session: u64) {}
+    fn rendezvous(&self) -> Rendezvous {
+        Rendezvous::Off
     }
 }
 
@@ -94,13 +105,16 @@ pub trait Net {
     fn listen_game(&mut self) -> Result<Box<dyn Listener>, String> {
         self.listen()
     }
+    /// The rendezvous service hosting and join codes use from now on (ADR 0018; `None`: direct only).
+    fn set_relay(&mut self, _relay: Option<SocketAddrV4>) {}
 }
 
-/// QUIC links and LAN discovery (ADR 0008).
+/// QUIC links and LAN discovery (ADR 0008), and the rendezvous service the player set (ADR 0018).
 #[derive(Default)]
 pub struct QuicNet {
     browser: Option<ig2_net::discovery::Browser>,
     queried: Option<std::time::Instant>,
+    relay: Option<SocketAddrV4>,
 }
 
 struct QuicListener {
@@ -191,7 +205,19 @@ impl Listener for QuicListener {
         if let PortMap::Mapped(a) = self.map {
             v.push(a);
         }
+        // The address the rendezvous service sees (the router's side of a NAT).
+        if let Rendezvous::Registered(a) = self.host.rendezvous() {
+            v.push(a);
+        }
         v
+    }
+
+    fn register(&mut self, session: u64) {
+        self.host.register(session);
+    }
+
+    fn rendezvous(&self) -> Rendezvous {
+        self.host.rendezvous()
     }
 
     fn announce(&mut self, a: Option<Announcement>) {
@@ -212,7 +238,11 @@ impl Listener for QuicListener {
 impl Net for QuicNet {
     fn listen(&mut self) -> Result<Box<dyn Listener>, String> {
         let any = |port| std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        let host = ig2_net::quic::QuicHost::bind(any(GAME_PORT)).or_else(|_| ig2_net::quic::QuicHost::bind(any(0))).map_err(|e| e.to_string())?;
+        let bind = |port| match self.relay {
+            Some(r) => ig2_net::quic::QuicHost::bind_relayed(any(port), r),
+            None => ig2_net::quic::QuicHost::bind(any(port)),
+        };
+        let host = bind(GAME_PORT).or_else(|_| bind(0)).map_err(|e| e.to_string())?;
         let announcer = ig2_net::discovery::Announcer::bind_lan().map_err(|e| eprintln!("ig2-client: LAN announcement: {e}")).ok();
         Ok(Box::new(QuicListener::new(host, announcer)))
     }
@@ -256,6 +286,10 @@ impl Net for QuicNet {
         rx
     }
 
+    fn set_relay(&mut self, relay: Option<SocketAddrV4>) {
+        self.relay = relay;
+    }
+
     fn connect_code(&mut self, code: &JoinCode) -> Connecting {
         let (tx, rx) = mpsc::channel();
         let (each, answers) = mpsc::channel();
@@ -263,6 +297,13 @@ impl Net for QuicNet {
             let (each, pin) = (each.clone(), ig2_net::quic::Pin::Prefix(code.pin.to_vec()));
             std::thread::spawn(move || {
                 let _ = each.send(ig2_net::quic::connect_pinned(a.into(), &pin).map_err(|e| format!("{a}: {e}")));
+            });
+        }
+        // And through the rendezvous service: its hole punch, else its relay (ADR 0018 §4).
+        if let Some(r) = self.relay {
+            let (each, session, pin) = (each.clone(), code.session, code.pin);
+            std::thread::spawn(move || {
+                let _ = each.send(ig2_net::quic::connect_via(r, session, pin, ig2_net::quic::Via::PunchThenRelay).map_err(|e| format!("relay: {e}")));
             });
         }
         drop(each);
@@ -364,6 +405,7 @@ impl Field {
 pub enum Focus {
     Address,
     Password,
+    Relay,
 }
 
 /// Our side of the room.
@@ -430,7 +472,11 @@ mod spot {
     pub const PORT_MAP: u32 = 0x72;
     pub const PRIVATE: u32 = 0x73;
     pub const CODE: u32 = 0x74;
+    pub const RELAY: u32 = 0x36;
 }
+
+/// The connection page's relay field.
+const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
 
 /// The options rows (spec §6).
 const OPTIONS: usize = 5;
@@ -465,6 +511,8 @@ pub struct MpScreen {
     pub selected: Option<usize>,
     pub address: Field,
     pub password: Field,
+    /// The rendezvous service's address (ADR 0018), empty for none; kept in the save folder's `relay.txt`.
+    pub relay: Field,
     pub focus: Focus,
     /// The status line (a refusal, a connect error).
     pub line: Vec<u8>,
@@ -512,6 +560,24 @@ mod words {
     pub const PRIVATE: [&[u8]; 2] = [b"Private game: no", b"Private game: yes"];
     pub const NO_CODE: &[u8] = b"Join code: none (no network address)";
     pub const COPIED: &[u8] = b"The join code is on the clipboard";
+    pub const RELAY: &[u8] = b"Relay server (optional): ";
+}
+
+/// A typed relay address ("host" or "host:port", the default port [`ig2_net::rendezvous::DEFAULT_PORT`]); empty is
+/// none. IPv4 only, like join codes.
+pub fn relay_addr(typed: &str) -> Result<Option<SocketAddrV4>, String> {
+    use std::net::ToSocketAddrs;
+    let s = typed.trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let with_port = if s.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) { s.to_string() } else { format!("{s}:{}", ig2_net::rendezvous::DEFAULT_PORT) };
+    let mut all = with_port.to_socket_addrs().map_err(|e| e.to_string())?;
+    all.find_map(|a| match a {
+        std::net::SocketAddr::V4(a) => Some(Some(a)),
+        _ => None,
+    })
+    .ok_or_else(|| "no IPv4 address".into())
 }
 
 fn refusal_text(r: Refusal) -> &'static [u8] {
@@ -542,6 +608,7 @@ impl MpScreen {
             selected: None,
             address: Field::new(MAX_ADDRESS),
             password: Field::new(MAX_FIELD),
+            relay: Field::new(MAX_ADDRESS),
             focus: Focus::Address,
             line: if inet { words::INET.to_vec() } else { Vec::new() },
             lost: false,
@@ -554,6 +621,37 @@ impl MpScreen {
             saves: None,
             save_dir: crate::options::slot_dir(),
             resume: None,
+        }
+        .with_saved_relay()
+    }
+
+    fn with_saved_relay(mut self) -> Self {
+        let saved = self.save_dir.as_ref().and_then(|d| std::fs::read_to_string(d.join(RELAY_FILE)).ok()).unwrap_or_default();
+        for c in saved.trim().bytes().filter(|c| (0x20..0x7f).contains(c)) {
+            self.relay.key(EntryKey::Char(c));
+        }
+        self
+    }
+
+    /// The relay field to `net` (and to `relay.txt` when it changed); false, with the reason on the status line,
+    /// when it names no address.
+    fn apply_relay(&mut self, net: &mut dyn Net) -> bool {
+        let typed = self.relay.string();
+        match relay_addr(&typed) {
+            Ok(a) => {
+                net.set_relay(a);
+                if let Some(d) = &self.save_dir {
+                    let file = d.join(RELAY_FILE);
+                    if std::fs::read_to_string(&file).unwrap_or_default().trim() != typed.trim() {
+                        let _ = std::fs::write(file, typed.trim());
+                    }
+                }
+                true
+            }
+            Err(e) => {
+                self.line = format!("Relay server: {e}").into_bytes();
+                false
+            }
         }
     }
 
@@ -583,10 +681,14 @@ impl MpScreen {
 
     /// Host a room (the connection page's Host).
     pub fn host(&mut self, net: &mut dyn Net) {
+        if !self.apply_relay(net) {
+            return;
+        }
         match net.listen() {
-            Ok(listener) => {
+            Ok(mut listener) => {
                 let settings = Settings { name: format!("{}'s galaxy", self.name), scenario: "galaxy".into(), private: false, password: self.password() };
                 let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name);
+                listener.register(lobby.session());
                 self.chat.clear();
                 self.role = Some(Role::Host { lobby: Box::new(lobby), listener });
                 self.resume = None;
@@ -600,14 +702,18 @@ impl MpScreen {
     /// empires, the host in the one of its name (else the first).
     pub fn host_save(&mut self, i: usize, net: &mut dyn Net) {
         let Some(save) = self.saves.as_ref().and_then(|s| s.get(i)).map(|s| s.save.clone()) else { return };
+        if !self.apply_relay(net) {
+            return;
+        }
         match net.listen() {
-            Ok(listener) => {
+            Ok(mut listener) => {
                 let s = &save.session;
                 let settings = Settings { name: s.name.clone(), scenario: s.scenario.clone(), private: false, password: self.password() };
                 let slots: Vec<(u8, u8)> = s.humans.iter().map(|h| (h.empire, 0)).collect();
                 let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name);
                 let mine = s.humans.iter().find(|h| h.name == lobby.state().members[0].name).or(s.humans.first()).map(|h| h.empire);
                 lobby.pick(0, mine);
+                listener.register(lobby.session());
                 self.chat.clear();
                 self.role = Some(Role::Host { lobby: Box::new(lobby), listener });
                 self.resume = Some((save, vec![0]));
@@ -633,6 +739,7 @@ impl MpScreen {
             (Some(_), _) => &mut self.entry,
             (None, Focus::Address) => &mut self.address,
             (None, Focus::Password) => &mut self.password,
+            (None, Focus::Relay) => &mut self.relay,
         };
         for c in text.trim().lines().next().unwrap_or("").bytes().filter(|c| (0x20..0x7f).contains(c)) {
             f.key(EntryKey::Char(c));
@@ -661,7 +768,12 @@ impl MpScreen {
             Some(f) => (net.connect(&f.addr.to_string(), Some(f.announcement.fingerprint)), None),
             None if typed.is_empty() => return,
             None => match JoinCode::decode(&typed) {
-                Ok(code) => (net.connect_code(&code), Some(code.session)),
+                Ok(code) => {
+                    if !self.apply_relay(net) {
+                        return;
+                    }
+                    (net.connect_code(&code), Some(code.session))
+                }
                 // Long and without dots or colons: a mistyped code rather than a host name.
                 Err(e) if !typed.contains(['.', ':']) && typed.len() > 20 => {
                     self.line = e.to_string().into_bytes();
@@ -791,7 +903,7 @@ impl MpScreen {
                 for i in 0..self.rows().min(LIST_ROWS) {
                     v.push((spot::LIST + i as u32, [130.0, 82.0 + 16.0 * i as f32, 380.0, 16.0]));
                 }
-                v.extend([(spot::ADDRESS, [130.0, 280.0, 380.0, 22.0]), (spot::PASSWORD, [130.0, 328.0, 380.0, 22.0])]);
+                v.extend([(spot::ADDRESS, [130.0, 280.0, 380.0, 22.0]), (spot::PASSWORD, [130.0, 328.0, 380.0, 22.0]), (spot::RELAY, RELAY_BOX)]);
                 for (k, id) in [spot::HOST, spot::JOIN, spot::SAVED, spot::CANCEL].into_iter().enumerate() {
                     v.push((id, [BUTTONS[k], 392.0, 90.0, 30.0]));
                 }
@@ -839,6 +951,7 @@ impl MpScreen {
                     self.selected = None;
                 }
                 spot::PASSWORD => self.focus = Focus::Password,
+                spot::RELAY => self.focus = Focus::Relay,
                 spot::HOST if self.saves.is_some() => {
                     if let Some(k) = self.selected {
                         self.host_save(k, net);
@@ -997,6 +1110,7 @@ impl MpScreen {
         let f = match self.focus {
             Focus::Address => &mut self.address,
             Focus::Password => &mut self.password,
+            Focus::Relay => &mut self.relay,
         };
         if f.key(k) {
             self.selected = None;
@@ -1026,7 +1140,7 @@ impl MpScreen {
         };
         let Some(st) = self.state() else {
             // The connection page.
-            for r in [[120.0, 40.0, 400.0, 400.0], [125.0, 45.0, 390.0, 24.0], [125.0, 76.0, 390.0, 172.0], [130.0, 280.0, 380.0, 22.0], [130.0, 328.0, 380.0, 22.0]] {
+            for r in [[120.0, 40.0, 400.0, 400.0], [125.0, 45.0, 390.0, 24.0], [125.0, 76.0, 390.0, 172.0], [130.0, 280.0, 380.0, 22.0], [130.0, 328.0, 380.0, 22.0], RELAY_BOX] {
                 box_(f, r);
             }
             for x in BUTTONS {
@@ -1058,12 +1172,17 @@ impl MpScreen {
             text(f, words::PASSWORD, 130.0, 314.0, 2, Align::Left, 0x25);
             let stars = vec![b'*'; self.password.text.len()];
             text(f, &stars, 136.0, 333.0, 2, Align::Left, if self.focus == Focus::Password { 2 } else { 0x22 });
+            text(f, words::RELAY, 136.0, 357.0, 2, Align::Left, 0x25);
+            let relay_x = 136.0 + d.font.advance(2) * words::RELAY.len() as f32;
+            let relay_first = self.relay.text.len().saturating_sub(RELAY_SHOWN).min(self.relay.cursor);
+            text(f, &self.relay.text[relay_first..(relay_first + RELAY_SHOWN).min(self.relay.text.len())], relay_x, 357.0, 2, Align::Left, if self.focus == Focus::Relay { 2 } else { 0x22 });
             match self.focus {
                 Focus::Address => cursor(f, &self.address, first, 136.0, 285.0, 2),
                 Focus::Password => cursor(f, &self.password, 0, 136.0, 333.0, 2),
+                Focus::Relay => cursor(f, &self.relay, relay_first, relay_x, 357.0, 2),
             }
             let line = if self.lost && self.line.is_empty() { d.texts.get(14, 5, 3) } else { self.line.clone() };
-            text(f, &line, 320.0, 364.0, 2, Align::Centre, 2);
+            text(f, &line, 320.0, 377.0, 2, Align::Centre, 2);
             let saved = if self.saves.is_some() { words::LAN } else { words::SAVED };
             let join_c = if self.saves.is_some() { 0x25 } else { hot(spot::JOIN) };
             let labels: [(&[u8], usize); 4] = [(words::HOST, hot(spot::HOST)), (&d.texts.get(16, 3, 3), join_c), (saved, hot(spot::SAVED)), (&d.texts.get(15, 3, 7), hot(spot::CANCEL))];
@@ -1133,6 +1252,17 @@ impl MpScreen {
             text(f, words::PRIVATE[st.private as usize], 476.0, 320.0, 2, Align::Left, hot(spot::PRIVATE));
             let code = self.join_code().map_or_else(|| words::NO_CODE.to_vec(), |c| format!("Join code: {}  (click: copy)", c.encode()).into_bytes());
             text(f, &code, 24.0, 338.0, 2, Align::Left, hot(spot::CODE));
+            let relay = match listener.rendezvous() {
+                Rendezvous::Off => None,
+                Rendezvous::Asking => Some("Relay server: opening the room...".to_string()),
+                Rendezvous::Registered(a) => Some(format!("Relay server: room open, seen at {a}")),
+                Rendezvous::Refused(ig2_net::rendezvous::Refusal::Full) => Some("Relay server: full, try later".into()),
+                Rendezvous::Refused(_) => Some("Relay server: refused the room".into()),
+                Rendezvous::NoAnswer => Some("Relay server: no answer".into()),
+            };
+            if let Some(r) = relay {
+                text(f, r.as_bytes(), 24.0, 351.0, 2, Align::Left, 0x22);
+            }
         } else if st.private {
             text(f, words::PRIVATE[1], 476.0, 320.0, 2, Align::Left, 0x25);
         }
@@ -2066,6 +2196,61 @@ mod tests {
             assert!(t.elapsed() < Duration::from_secs(20), "not joined: {}", String::from_utf8_lossy(&guest.line));
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// A room through a rendezvous service on 127.0.0.1 (ADR 0018): the host types the relay and its room opens there;
+    /// a joiner whose code names no reachable address finds the host through the service.
+    #[test]
+    fn a_room_is_joined_through_the_relay() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let relay = socket.local_addr().unwrap().to_string();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let s2 = stop.clone();
+        std::thread::spawn(move || ig2_net::rendezvous::serve(&socket, &mut ig2_net::rendezvous::Service::default(), |_| s2.load(std::sync::atomic::Ordering::Relaxed)));
+        let open = |name: &str| {
+            let mut s = MpScreen::open(true, name, RULES);
+            s.save_dir = None;
+            s.relay = Field::new(MAX_ADDRESS);
+            s.open = 100.0;
+            s
+        };
+        let (mut host_net, mut net) = (QuicNet::default(), QuicNet::default());
+        let mut host = open("Host");
+        click_on(&mut host, spot::RELAY, &mut host_net);
+        host.paste("no-such-host.invalid");
+        host.host(&mut host_net);
+        assert!(host.role.is_none() && host.line.starts_with(b"Relay server: "), "a bad relay address stops hosting");
+        host.relay = Field::new(MAX_ADDRESS);
+        host.paste(&relay);
+        host.host(&mut host_net);
+        let t = std::time::Instant::now();
+        let seen = loop {
+            host.tick(&mut host_net);
+            if let Some(Role::Host { listener, .. }) = &host.role {
+                if let Rendezvous::Registered(a) = listener.rendezvous() {
+                    break a;
+                }
+            }
+            assert!(t.elapsed() < Duration::from_secs(10), "no room at the relay");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let code = host.join_code().unwrap();
+        assert!(code.addrs.contains(&seen), "the code carries the address the relay sees");
+        // Only an unreachable documentation address: the service is the way in.
+        let only_relay = JoinCode { addrs: vec!["192.0.2.1:9".parse().unwrap()], ..code };
+        let mut guest = open("Guest");
+        click_on(&mut guest, spot::RELAY, &mut net);
+        guest.paste(&relay);
+        click_on(&mut guest, spot::ADDRESS, &mut net);
+        guest.paste(&only_relay.encode());
+        guest.key(Some(EntryKey::Enter), false, &mut net);
+        while !guest.state().is_some_and(|st| st.members.len() == 2) {
+            host.tick(&mut host_net);
+            guest.tick(&mut net);
+            assert!(t.elapsed() < Duration::from_secs(30), "not joined: {}", String::from_utf8_lossy(&guest.line));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn click_on(s: &mut MpScreen, id: u32, net: &mut dyn Net) -> Option<Out> {

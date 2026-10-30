@@ -1899,6 +1899,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ig2-rendezvous"
+version = "0.1.0"
+dependencies = [
+ "ig2-net",
+]
+
+[[package]]
 name = "ig2-rules"
 version = "0.1.0"
 dependencies = [

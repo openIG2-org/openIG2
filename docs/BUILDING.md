@@ -23,6 +23,7 @@ on the PATH; the script fails if a binary imports a non-system DLL. A full build
 The release workflow (`.github/workflows/release.yml`) runs it and publishes the zip.
 
 `ig2-check` (`engine/crates/ig2-check`) validates an install: `cargo run --release -p ig2-check -- [DIR] [--quick]`.
+`ig2-rendezvous` (`engine/crates/ig2-rendezvous`) is the optional internet relay service (`docs/RENDEZVOUS.md`).
 
 ## Tests
 ```bash
