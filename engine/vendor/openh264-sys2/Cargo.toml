@@ -54,18 +54,6 @@ source = [
 name = "openh264_sys2"
 path = "src/lib.rs"
 
-[[test]]
-name = "api_libloading"
-path = "tests/api_libloading.rs"
-
-[[test]]
-name = "api_source"
-path = "tests/api_source.rs"
-
-[[test]]
-name = "common"
-path = "tests/common.rs"
-
 [dependencies.libloading]
 version = "0.8.1"
 optional = true
