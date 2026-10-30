@@ -68,7 +68,10 @@ panels]); the viewport is the 4:3 one widened by `ModifyViewPort`.
   `Atfordulas·π/30` while `Atfordulas` runs 0..30 (0.2 per UI tick; a new selection restarts it at 0 with
   `screen21.wav`), comes forward `30·Atfordulas` (`30·(29 − Atfordulas)` from 16 on) and, past 14, starts the leader's
   video on `kor`'s texture (`InitAnim(AnimNeve, loop, 25 fps)`, `FrissitDiplomaciaAnim` → `PlayAnimVector` each
-  frame; `formats/ani.md`). At 30 it flips a half turn (`dipAtvaneFordulva = π`) and rests; the inner ring turns
+  frame; `formats/ani.md`). The video loops and nothing ties it to the dialogue: there is no speech on this screen
+  and no lip sync (`FrissitDiplomaciaAnim` ELF 0x510370 plays it whenever an empire is selected and `dipframe ≥ 60`).
+  `dipANIMBARKACS` (ELF 0x133fea4, `InitAnim`'s last argument inverted) is read but written nowhere in the ELF or
+  the exe: always off. At 30 it flips a half turn (`dipAtvaneFordulva = π`) and rests; the inner ring turns
   `dipFrameValtozo/220` and `−dipFrameValtozo/90` (one step per frame).
 - Lights: ambient 0x141414, parallel 0x808080 from (0, 0, −10), two coloured parallel side lights (0x7F5D00 and
   0x004E7F, `0xBBGGRR`: blue and orange) circling with `dipkeringeto` (+0.0006 per UI tick:
@@ -228,7 +231,13 @@ With an empire selected (`PlayerSelected = k`, slot `s = AktPlayerek[k]`, `e = s
 4. **An answer arrived** (`+0x18`): `GetSzoveg(2, ValaszSzoveg, …, variant +0x8c)` with menu 0x2f (OK →
    `+0x18 = 0`). A counter-answer (`+0x2c`) shows `GetSzoveg(3, …)` with 0x2a: agree or forget it → `ElkuldValasz(…,
    reply)`.
-5. MP only: 0x2e "cancel last message" while `+0x16` (`CancelLastMessage`, `+0x16 = +0x0c = 0`).
+5. MP only (`MultiPlayerMode`): menu 0x2e (`GetString(6, 7, 6)`, "cancel last message", `FeltoltMenupontokPre` ELF
+   0x522fbf) while `+0x16` is set and `+0x17`, `+0x18`, `+0x2c` are clear; a press on its entry (hovered row 0,
+   `G0`) calls `CancelLastMessage(GetPlayerNr(k))` (ELF 0x51d4a0, call at 0x5164f2) and clears `+0x16`, `+0x0c` and
+   `Exchangemodevolt` at once. `CancelLastMessage` sends packet 0x40 with the receiver's player number; on the
+   receiving human's machine `MULTIGET_Diplomacy` (ELF 0x521118) clears `+0x17` of the sender's slot (the waiting
+   message disappears; the sender's own packet and other receivers' are ignored). An AI receiver answers at once,
+   so `+0x16` is clear again before the menu could show.
 
 `GetSzoveg(file, out, a, b, c, d, p1, p2, p3, fallback, seed)`: the header `#aaa/bbb[/ccc[/ddd]]` (−1 parts left
 out) is counted in the file's buffer and variant `random(n)` picked — or `n·seed/10001` with a seed (the waiting
@@ -256,7 +265,8 @@ frame, composing, sending, answering, counter-proposals, `GetSzoveg`, the specia
 drawn additively in gamma space with the lit colour × `(1 − t)/0.52` (a calibrated factor, the light on wires doubled).
 For MP (ADR 0003, ADR 0007) the screen's contact-list writes and the birthday flag go through the lockstep
 as `Command::DiplomacyScreen`, one frame later than the original; unseeded text variants use the client's UI
-generator; the counter-proposal being composed (`+0x19`/`+0x1c`/`+0x20`) isn't saved. Missing: the MP-only menu 0x2e,
-the leader video's lip sync, `DEBUGX`, the demo mode, `dipbck8`'s child 2; the story's `Diplomacy_AddSpecial`/
+generator; the counter-proposal being composed (`+0x19`/`+0x1c`/`+0x20`) isn't saved. Menu 0x2e sends
+`DiplomacyScreenOp::Cancelled`, which clears the sender's `+0x16`/`+0x0c` and the receiving human's `+0x17` in the
+same lockstep tick (the original clears the sender's at once, the receiver's a frame later). Missing: `DEBUGX`, the demo mode, `dipbck8`'s child 2; the story's `Diplomacy_AddSpecial`/
 `RemoveSpecial` and the AI's `Story_Diplomacy_Special` hook are unrouted (a save's list shows, a campaign adds none).
 Capture: `run_screendiff.py … diplomacy --anim-frame 20|50|70` and the sequence `scripts/diplomacy.json`.

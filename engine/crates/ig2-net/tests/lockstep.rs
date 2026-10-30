@@ -293,6 +293,45 @@ fn contact(g: &Game, owner: u8, e: i32) -> Option<ig2_sim::diplomacy::PlayerSlot
     list.into_iter().find(|s| s.empire == e)
 }
 
+/// Human 6 sends a letter to human 3 and takes it back with the diplomacy screen's "cancel last message" (menu 0x2e,
+/// packet 0x40, `re/screens/diplomacy.md` §7 step 5): 6's slot is free to compose again and 3's waiting letter is
+/// gone, on both peers.
+#[test]
+fn a_human_cancels_its_last_message_to_another_human() {
+    let Some((rules, mut state)) = common::setup(SAVE) else { return };
+    state.mem.set_u8(va::PLAYER_KI + 3, 1);
+    let canonical = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.canonical_view(6);
+        g
+    };
+    let trade = Terms { cat: 0, sub: 8, value: 0, sub2: -1, value2: -1 };
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
+    s.join(2, 3, |_| Peer::new(2, 3, canonical(state.clone()), DEFAULT_DELAY));
+    let screen = |op| Command::DiplomacyScreen { empire: 3, op };
+    s.run_to(6, |p| {
+        if (p.slot, p.turn) == (1, 2) {
+            p.issue(screen(ig2_net::DiplomacyScreenOp::Sent));
+            p.issue(Command::DiplomacyMessage { to: 3, declaration: false, terms: trade });
+        }
+    });
+    for (p, _) in &s.peers {
+        assert_eq!(contact(&p.game, 6, 3).map(|c| c.asked), Some(1));
+        assert_eq!(contact(&p.game, 3, 6).map(|c| c.waiting), Some(1));
+    }
+    s.run_to(12, |p| {
+        if (p.slot, p.turn) == (1, 7) {
+            p.issue(screen(ig2_net::DiplomacyScreenOp::Cancelled));
+        }
+    });
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    for (p, _) in &s.peers {
+        let (at6, at3) = (contact(&p.game, 6, 3).unwrap(), contact(&p.game, 3, 6).unwrap());
+        assert_eq!((at6.asked, at6.screen, at3.waiting), (0, 0, 0));
+    }
+}
+
 #[test]
 fn each_human_keeps_its_own_contacts_and_reports() {
     let Some((rules, mut state)) = common::setup(SAVE) else { return };

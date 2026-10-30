@@ -39,6 +39,8 @@ pub mod menu {
     pub const COUNTER_REPLY: usize = 0x2a;
     pub const DEAL_REPLY: usize = 0x2b;
     pub const BLOCKED: usize = 0x2c;
+    /// Multiplayer: "cancel last message" (`GetString(6, 7, 6)`, ELF 0x522fbf).
+    pub const CANCEL_LAST: usize = 0x2e;
     pub const OK: usize = 0x2f;
     pub const SORRY: usize = 0x30;
     pub const TALK_EMPIRES: usize = 0x31;
@@ -389,7 +391,10 @@ pub struct View {
     pub en: usize,
     pub ido: i32,
     pub month: i32,
+    /// `TutorialPaused`: the tutorial shortens the wait between messages (`DiplomGfx2D_1`).
     pub tutorial: bool,
+    /// `MultiPlayerMode`: menu 0x2e is offered.
+    pub multiplayer: bool,
     pub slots: Vec<PlayerSlot>,
     /// The slots' raw bytes (dialogue fields the sim doesn't model: `+0x15`, `+0x5c`, `+0x60`, `+0x8c`, `+0x90`).
     pub raw: Vec<Vec<u8>>,
@@ -420,7 +425,8 @@ impl View {
             en: m.i32(va::EN).clamp(0, 18) as usize,
             ido: m.i32(va::IDO),
             month: t.month(),
-            tutorial: false,
+            tutorial: m.u8(va::TUTORIAL_PAUSED) != 0,
+            multiplayer: m.u8(va::MULTIPLAYER) != 0,
             raw: (0..n).map(|i| m.read(va::CONTACTS + (i * SLOT) as u32, SLOT)).collect(),
             slots: d.players,
             alive: state.alive(),
@@ -602,6 +608,7 @@ impl Screen {
             (menu::SEND, vec![(7, 1), (7, 2)]),
             (menu::COUNTER_REPLY, vec![(7, 3), (7, 4)]),
             (menu::DEAL_REPLY, vec![(7, 3), (7, 4), (7, 5)]),
+            (menu::CANCEL_LAST, vec![(7, 6)]),
             (menu::OK, vec![(7, 7)]),
             (menu::SORRY, vec![(7, 8)]),
             (menu::EXCHANGE, vec![(10, 5), (10, 6)]),
@@ -1180,6 +1187,13 @@ impl Screen {
                 let _ = self.run_plain(menu::SEND, inp);
             }
         }
+        // 5. Multiplayer: "cancel last message" while the human's message is unanswered (`DiplomGfx2D_1` ELF 0x5164f2:
+        // `+0x16` set, `+0x17`/`+0x18`/`+0x2c` clear; `CancelLastMessage` sends packet 0x40).
+        if v.multiplayer && s.asked != 0 && s.waiting == 0 && s.answered == 0 && s.countered == 0 && self.run_plain(menu::CANCEL_LAST, inp) == Some(0) {
+            out.push(Command::DiplomacyScreen { empire: e as u8, op: DiplomacyScreenOp::Cancelled });
+            self.exchange = None;
+            self.cascade = None;
+        }
         // 3. A message of this empire waits for the human's answer.
         if !busy && s.waiting != 0 && s.answered == 0 {
             busy = true;
@@ -1674,6 +1688,43 @@ mod tests {
         }
         world.pump();
         assert_eq!(View::read(&world.game.state).slots[0].answered, 0);
+    }
+
+    /// quick-1.sav as a multiplayer game with the human's message to the Shinari (slot 0) unanswered: menu 0x2e is
+    /// offered and "cancel last message" clears `+0x16`/`+0x0c` through the lockstep (§7 step 5).
+    #[test]
+    fn quick1_mp_cancel_last_message() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let mut world = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        let ui = UiTexts::load(&install);
+        let names = crate::ui::empire_names(&crate::ui::names_txt17(&install, false));
+        let t = Texts::load(&install, &ui);
+        let heads = tables.diplomacy_screen.heads.clone();
+        let mut s = Screen::new(&tables, &ui, &View::read(&world.game.state));
+        let step = |s: &mut Screen, w: &crate::world::World, inp: Input| s.frame(&View::read(&w.game.state), &w.game.state, &ui, &t, &names, &heads, &inp);
+        for (off, x) in [(0x0c, 1), (0x16, 1), (0x17, 0), (0x18, 0), (0x2c, 0)] {
+            world.game.state.mem.set_u8(va::CONTACTS + off, x);
+        }
+        step(&mut s, &world, Input::default());
+        assert!(!s.shown.contains(&menu::CANCEL_LAST), "single player: no 0x2e");
+        world.game.state.mem.set_u8(va::MULTIPLAYER, 1);
+        step(&mut s, &world, Input::default());
+        assert_eq!(s.shown, vec![menu::CANCEL_LAST]);
+        let p = s.menus[menu::CANCEL_LAST].text_at(&s.metrics, 0);
+        let out = step(&mut s, &world, Input { at: [p[0] + 3.0, p[1] + 3.0], pressed: true, held: true, ..Default::default() });
+        assert!(matches!(out[..], [Command::DiplomacyScreen { op: DiplomacyScreenOp::Cancelled, .. }]), "{out:?}");
+        for c in out {
+            world.send(c);
+        }
+        world.pump();
+        let slot = View::read(&world.game.state).slots[0];
+        assert_eq!((slot.asked, slot.screen), (0, 0));
     }
 
     /// quick-1.sav with two specials staged in `SpecialLista` for the Shinari (slot 0): the menu lists both, 8571 is

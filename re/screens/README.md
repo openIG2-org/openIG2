@@ -137,8 +137,8 @@ Smaller per-screen differences are rows in `re/deviations.md`; each spec's last 
 | Ground war (colony screen in war) | [`colony.md`](colony.md) §9.1, §11; sim `rules/ground-combat.md` §11 | `colony_war` | done |
 | Research (4) | [`research.md`](research.md) | `research` | done |
 | Design (5) | [`design.md`](design.md); orders `design-orders.md` | `design`, `design_edit`, `design_pods`, `design_scene` | done |
-| Diplomacy (6) | [`diplomacy.md`](diplomacy.md) | `diplomacy`, `diplomacy_scene` | partial: the MP-only menus 0x2e and the lip sync are missing |
-| Spy (7) | [`spy.md`](spy.md) | `spy_screen`, `spy_screen/`, `spy_scene` | partial: the 2D video path and the tutorial's spy limits are missing |
+| Diplomacy (6) | [`diplomacy.md`](diplomacy.md) | `diplomacy`, `diplomacy_scene` | done (no lip sync in the original, §2) |
+| Spy (7) | [`spy.md`](spy.md) | `spy_screen`, `spy_screen/`, `spy_scene` | done (the 2D video path is dead code, §1.1) |
 | Trade (8) | [`trade.md`](trade.md) | `trade`, `trade_scene` | done |
 | Info (9) | [`info.md`](info.md) | `info_screen` | done |
 | Messages (10) | [`messages.md`](messages.md) | `messages_screen` | done |

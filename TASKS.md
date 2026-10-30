@@ -25,7 +25,7 @@ at the next cleanup.
 - [ ] **Single-player real-time ground war**: `Game::ground_war` (`ig2-sim/src/game/battles.rs`) calls
   `ground_real_time` only when canonical and nothing ticks `WF::MI`/Refresh in single player (`grwar_mp` is
   canonical-only), so an invasion routed to real time lands the vehicles and sits; `re/rules/ground-combat.md` §2, §11.
-- [ ] **Diplomacy and spy leftovers**: diplomacy's MP-only menus (0x2e) and lip sync; the spy screen's
+- [x] **Diplomacy and spy leftovers**: diplomacy's MP-only menus (0x2e) and lip sync; the spy screen's
   2D video path and the tutorial's spy limits.
 
 ### Ship it

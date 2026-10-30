@@ -31,6 +31,8 @@ Getting the game from "every part works" to "a player can install it and play it
 - The project is published as openIG2 under the AGPL-3.0, with CI, release builds and a website.
 - The website is redesigned after the game's own look: the screens list, a screenshot switcher, install and
   build steps, and the road to 1.0.
+- Diplomacy in multiplayer can take back an unanswered message ("cancel last message"); the tutorial's shorter wait
+  between diplomacy messages now applies.
 - Not done yet: the campaigns' late episodes are not verified end to end in a real play-through.
 
 ## 0.6 — Fixes against the original

@@ -247,7 +247,8 @@ pub enum ScreenOp {
     AnswerSeen,
     /// The counter-answer was answered: `+0x2c = 0`.
     CounterSeen,
-    /// `CancelLastMessage` (multiplayer): `+0x16 = 0`, `+0x0c = 0`.
+    /// `CancelLastMessage` (multiplayer): `+0x16 = 0`, `+0x0c = 0`; packet 0x40 clears the receiving human's
+    /// waiting message (`+0x17 = 0`, `MULTIGET_Diplomacy` ELF 0x521118).
     Cancelled,
     /// The birthday greeting was sent: `VoltmarUdvozloUzenetEbbenAzEvben[empire] = 1`.
     Greeted,
@@ -1792,6 +1793,9 @@ impl Diplomacy {
                 ScreenOp::Greeted => {}
             }
         });
+        if op == ScreenOp::Cancelled && empire != owner {
+            self.with_list(en, empire, |d| d.slot(owner).waiting = 0);
+        }
     }
 
     /// The auto-cancel of `list_owner`'s list (`players`; spec §10.3).
@@ -2287,6 +2291,15 @@ mod tests {
         d.tick(&mut w);
         assert_eq!(d.players.iter().map(|s| (s.waiting, s.cancelled)).collect::<Vec<_>>(), vec![(1, 0), (0, 1), (0, 1)]);
         assert_eq!(d.last_day, 5);
+    }
+
+    #[test]
+    fn cancel_clears_the_other_humans_waiting_message() {
+        let mut d = neutral();
+        d.players.push(PlayerSlot { empire: 2, asked: 1, screen: 1, ..Default::default() });
+        d.others.push(ContactList { empire: 2, players: vec![PlayerSlot { empire: 1, waiting: 1, ..Default::default() }], ..Default::default() });
+        d.screen(1, 1, 2, ScreenOp::Cancelled, 0);
+        assert_eq!((d.players[0].asked, d.players[0].screen, d.others[0].players[0].waiting), (0, 0, 0));
     }
 
     #[test]

@@ -31,6 +31,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 397 | colony, hot-spot 0x14 | with the right button held the exe skips the click and select (`DAT_00db4652`), ours doesn't; the ring timer 0x9964c4 isn't ported | minor | colony.md §11.3 |
 | 398 | colony, TankView | the exe keeps TankView and TankViewLastAngle across re-entry (ours restarts); ours lacks the `+0x18c & 4` test in the unit choice | minor | colony.md §11.9 |
 | 405 | colony, ground-war lock | `Colony_MouseInit2` (exe 0x467990) switches every hot-spot off in a ground war, the war buttons and view included; ours only the non-war ones (the tutorial never locks during a war) | no | colony.md §11 |
+| 406 | diplomacy, menu 0x2e | the exe swallows a press on menu 0x2e while `LenyomasraVarni` is 1 (set by a previous dialogue-menu press, cleared only on a release frame while 0x2e shows; `DiplomGfx2D_1` exe 0x4b89e0, the gate before the `CancelLastMessage` call); ours acts on every press (`Screen::frame` step 5) | no | diplomacy.md §7 |
 
 ## Keep
 

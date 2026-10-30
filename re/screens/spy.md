@@ -70,7 +70,8 @@ With `f = spyframe/50` (exe f32 0xE75504):
   (1 − f)·700)`.
 - `SpyPalast` (the carousel) drops in from `(0, −125 − (1 − f)·150, −1000·f)` turning `−sin((1 − f)·π)` (§2.2).
 - `Copy3hatterkep(0x34, …)` draws the saved starmap picture (§1.1); `spyANIMBARKACS` (the 2D video path,
-  `PlayAnimFrame(0x100, 0x11c)`) is off.
+  `PlayAnimFrame(0x100, 0x11c)`) is off: `spyANIMBARKACS` (ELF 0x171a62c, exe 0xe75432) is read but written nowhere
+  in the ELF or the exe (a developer switch), so the path is dead code and not ported.
 
 ### 1.2 `FRISSIT_Spy2` (100 Hz UI frame)
 - `KemNevVillogtato` runs 0 → 100 → 0 by 1 (the selected name's blink); `spyKiirSzinSzorzo` += 1 up to 100 once
@@ -312,8 +313,10 @@ The screen opens animated from S and closes after its closing animation (`SpyScr
 options and returns. The frame's poses are cached at the integer frames 0..=50 and blended linearly in between
 (exact at the key frames). `spyFrameValtozo` counts UI frames (the exe's drawn frames). The refusals' lines go to
 `World::local_lines`. The two `SpyGfx2D_1` frames no capture shows (§3) are left out.
-Missing: the 2D video path (`spyANIMBARKACS`, `PlayAnimFrame(0x100, 0x11c)`), the tutorial's limits
-(`TutorialSpyMelyikLehet`). Unchecked: the skill buttons 0x19..0x1c are off with a dialog up in the port,
+The tutorial's limits (`TutorialSpyMelyikLehet` exe 0x928ea4, set by `SPY MISSION m`, −1 at `TutorialStop`): with a
+value above 0 every other mission is drawn in 0xc (0x25 hovered) like a too dear one (`SpyGfx2D_3` ELF 0x6c3a10)
+and picking one drops the pick silently before the money check (`Spy_Main` ELF 0x6c7360): `SpyData::tutorial_forbids`.
+The 2D video path is dead code (§1.1). Unchecked: the skill buttons 0x19..0x1c are off with a dialog up in the port,
 `Spy_MouseInit2` leaves them on. Open deviation rows: 4 (side strips, keep).
 Captures: `run_screen.py --kep 7 --spies roster|report|verdict|applicant` stages five spies (at home with skill
 points, on a mission, travelling, captured, at home) and one report, waits 1200 frames and writes the exe's save;
