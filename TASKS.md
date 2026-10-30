@@ -16,8 +16,17 @@ at the next cleanup.
   and `War::locate_tank`'s fallback without a colony map (fixed cell 100,100), `re/rules/ground-combat.md`.
 - [x] **Play-through harness**: `ig2-client --playthrough` drives whole games headless with the AI
   playing the human's side, saving and loading on the way (`docs/BUILDING.md` → Play-through harness).
-- [ ] **Story-aware play-through driver**: the AI-played human loses all three campaigns, so later
-  episodes, CampaignOver and the campaign end videos are never reached headless; drive the campaigns to their end.
+- [ ] **Story-aware play-through driver**: done: the harness plays the story's part of the player (episode
+  answers, researches, spy missions, fleets to story targets, colonising); campaign 1 (both storylines) and
+  campaign 2 storyline 2 are won on difficulty 1 up to the campaign win video. Left: campaign 3 (empire 1 wins the
+  war in every seed; storyline 720 loses to story 840 for want of colony ships, which needs a production-queue
+  input on the client).
+- [ ] **Story spy missions in the sim**: the spy pass never asks the story (`game.rs` hands it a `StoryCheck` hook that always answers no), so
+  story 863's end (CampaignOver) can't resolve (`re/rules/campaign/elem.md` 861/863).
+- [ ] **Diplomacy specials reach the stories**: the routes of stories 857/858/860 (`ig2-sim/src/diplomacy.rs`
+  :1365, `re/rules/campaign/elem.md`).
+- [ ] **Fleet panic in story 856**: the raider ordered at fleet `OsszHanyFlotta + 1` panics at `fleet.rs:570`
+  (play-through `--seed 1`).
 - [x] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check): `ig2-client --playthrough mp`.
 - [x] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
   recorded input replacing the live mouse (deviations 141, 174, 198).

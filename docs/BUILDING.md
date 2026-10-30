@@ -64,13 +64,22 @@ frame or an input script's frames without a window; it is used by the capture co
 `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]` plays whole games
 headless at
 the fastest speed on the player's path (`World::tick`, the commands a screen sends), with the sim's AI playing the
-human's empire (`Game::autopilot`). Runs: `campaign:C[:D]` (campaign 1..=3, difficulty 1/2/4), `scenario:<name|all>`,
-`skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` (below), or `all` (the three campaigns, every scenario of the menu, a
-skirmish). The harness reads the inbox (the first answer each dialogue allows), leaves finished real-time battles, takes the pause off and saves
+human's empire (`Game::autopilot`). Runs: `campaign:C[:D[:L]]` (campaign 1..=3, difficulty 1/2/4, storyline 1/2; 0 or
+none: the registry's or a random one), `scenario:<name|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` (below),
+or `all` (the three campaigns on difficulty 1, every scenario of the menu, a skirmish). The harness reads the inbox
+(the first answer each dialogue allows), leaves finished real-time battles, takes the pause off and saves
 and loads our `.ig2s` every M game months (default 6). Each run ends in victory, defeat, the tick budget (default
-400,000 ticks of 50 ms), a stall (nothing changed hands and no story moved for M months, default 36) or a stuck
+400,000 ticks of 50 ms), a stall (nothing changed hands and no story moved for M months, default 120) or a stuck
 clock, and reports panics, broken invariants (money, fleets or planets of dead empires, empty fleets, a save that
-changes the state), the stories left running and what the client was asked to show (videos, real-time battles).
+changes the state), the stories left running and what the client was asked to show (videos, real-time battles,
+the end's: `video Won` is the race's win clip and `misc/end_campaign_win.bik`). In a campaign the harness also
+plays the story's part a player plays (`playthrough/story.rs`): it answers the episodes' messages the way that keeps
+the storyline going (or leaves one to expire), researches the techs an episode asks for, sends a spy on the story's
+spy missions, and gives up to two fleets the story's targets (the story planets the rebels and the episodes'
+invaders hold, the raiders to hunt, a planet to guard or visit, empire 5's planet of story 858); everything else
+stays the AI's. Whether the AI-played human wins the war depends on the seed: on difficulty 1, `campaign:1:1:1` and
+`campaign:1:1:2` with `--seed 2` and `campaign:2:1:2` with the default seed end won (the end video); campaign 3
+isn't won yet, and story 863's end (CampaignOver) waits on the story spy missions (861).
 `--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets
 the units fight it out) and the diplomacy questions reach its inbox. The exit code is 1 when a run failed (a panic,
 a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit.

@@ -5,9 +5,10 @@
 //! answer it may take), leaves a finished real-time battle, takes the pause off, and saves and loads on the way
 //! (our `.ig2s` through [`World::load_bytes`]). It reports panics, hangs, stories left running, broken invariants
 //! and what the game asked of the client (videos, battles, the end).
+//! In a campaign it also plays the story's part of the player ([`story`]).
 //!
 //! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`, runs
-//! `campaign:C[:D]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` ([`mp`]), or `all`.
+//! `campaign:C[:D[:L]]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` ([`mp`]), or `all`.
 
 mod mp;
 
@@ -16,17 +17,19 @@ use std::fmt::Write as _;
 
 use ig2_formats::Install;
 use ig2_net::Command;
-use ig2_sim::game::{choice_count, choice_disabled, Game, GameOver, MessageOrder, RealTimeEvent};
+use ig2_sim::game::{choice_count, choice_disabled, choice_part, Game, GameOver, MessageOrder, RealTimeEvent};
 use ig2_sim::save::va;
 use ig2_sim::time::Speed;
 
 use crate::world::World;
 
+mod story;
+
 /// One game to play.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Run {
-    /// `CampaignType` 1..=3 and `Nehezseg` 1/2/4.
-    Campaign { campaign: i32, difficulty: i32 },
+    /// `CampaignType` 1..=3, `Nehezseg` 1/2/4 and the config's `storyline` (0: the registry's or a random one).
+    Campaign { campaign: i32, difficulty: i32, storyline: i32 },
     /// A `scenario/<name>.scn` of the scenario menu (the `dataraw/` relative path).
     Scenario(String),
     /// The skirmish menu's defaults with the human's race and the computer count.
@@ -38,7 +41,8 @@ pub enum Run {
 impl Run {
     pub fn name(&self) -> String {
         match self {
-            Run::Campaign { campaign, difficulty } => format!("campaign:{campaign}:{difficulty}"),
+            Run::Campaign { campaign, difficulty, storyline: 0 } => format!("campaign:{campaign}:{difficulty}"),
+            Run::Campaign { campaign, difficulty, storyline } => format!("campaign:{campaign}:{difficulty}:{storyline}"),
             Run::Scenario(f) => format!("scenario:{f}"),
             Run::Skirmish { race, ais } => format!("skirmish:{race}:{ais}"),
             Run::Mp { ais, planets } => format!("mp:{ais}:{planets}"),
@@ -66,7 +70,7 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 36, autopilot: true, compare_every: 200 }
+        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 120, autopilot: true, compare_every: 200 }
     }
 }
 
@@ -173,8 +177,8 @@ impl Harness {
     fn start(&self, run: &Run, seed: u32) -> Result<World<'_>, String> {
         let rules = &self.rules;
         let game = match run {
-            Run::Campaign { campaign, difficulty } => {
-                let cfg = ig2_sim::game::new_game::NewCampaign { campaign: *campaign, difficulty: *difficulty, seed, ticks: seed, storyline: 0, storymap: 0, last_storyline: None };
+            Run::Campaign { campaign, difficulty, storyline } => {
+                let cfg = ig2_sim::game::new_game::NewCampaign { campaign: *campaign, difficulty: *difficulty, seed, ticks: seed, storyline: *storyline, storymap: 0, last_storyline: None };
                 crate::new_game::campaign(&self.install, &cfg, rules)?
             }
             Run::Scenario(file) => crate::new_game::scenario(&self.install, file, seed, rules)?,
@@ -242,10 +246,19 @@ impl Harness {
         let mut battle: Option<usize> = None;
         let mut ever_alive = w.game.state.alive();
         let mut end = End::Budget;
+        // The story's player: only where the AI plays the human's side of a campaign.
+        let mut driver = (limits.autopilot && matches!(run, Run::Campaign { .. })).then(story::Driver::default);
         for tick in 0..limits.ticks {
             report.ticks = tick;
             if tick % 200 == 0 && battle.is_none() {
                 report.answers += read_inbox(&mut w);
+                if let Some(d) = &mut driver {
+                    let mut notes = Vec::new();
+                    d.step(&mut w, en, &mut notes);
+                    for n in notes {
+                        report.note(tick, n);
+                    }
+                }
             }
             if w.paused() && battle.is_none() {
                 report.note(tick, "the game paused itself (the harness took the pause off)");
@@ -296,6 +309,10 @@ impl Harness {
             while w.pop_message().is_some() {}
             w.local_lines.clear();
             if let Some(o) = w.game.over {
+                // The end's videos (the world takes the tick's events at the next tick).
+                for v in w.game.events.iter().filter_map(crate::video::Request::of) {
+                    report.client(format!("video {v:?}"));
+                }
                 end = End::Over(o);
                 break;
             }
@@ -391,7 +408,7 @@ fn read_inbox(w: &mut World) -> u32 {
     use ig2_sim::game::dialogue_in_progress;
     let unread = |w: &World, tried: &[usize]| {
         let b = w.game.state.inbox();
-        (0..b.count.max(0) as usize).find(|&i| b.messages.get(i * ig2_sim::messages::MESSAGE + 4) == Some(&0) && !tried.contains(&i))
+        (0..b.count.max(0) as usize).find(|&i| b.messages.get(i * ig2_sim::messages::MESSAGE + 4) == Some(&0) && !tried.contains(&i) && story::answer(message_id(w, i)) != Some(story::Answer::Leave))
     };
     let mut answers = 0;
     let mut tried = Vec::new();
@@ -403,7 +420,13 @@ fn read_inbox(w: &mut World) -> u32 {
             w.send(MessageOrder::TypedOut.into());
             w.pump();
             let n = choice_count(&w.game.state);
-            if let Some(k) = (0..n).find(|&k| !choice_disabled(&w.game.state, k)) {
+            let open: Vec<usize> = (0..n).filter(|&k| !choice_disabled(&w.game.state, k)).collect();
+            let block = dialogue_in_progress(&w.game.state).map_or(0, |i| message_id(w, i));
+            let preferred = match story::answer(block) {
+                Some(story::Answer::Part(part)) => open.iter().copied().find(|&k| choice_part(&w.game.state, k) == part),
+                _ => None,
+            };
+            if let Some(k) = preferred.or(open.first().copied()) {
                 w.send(MessageOrder::Answer { k: k as i32 }.into());
                 w.pump();
                 answers += 1;
@@ -428,6 +451,12 @@ fn read_inbox(w: &mut World) -> u32 {
         eprintln!("inbox: {} messages, {answers} answers, dialogue {:?}, first unread {left:?}", w.game.state.inbox().count, dialogue_in_progress(&w.game.state));
     }
     answers
+}
+
+/// The block id of inbox entry `i` (`Uzenetek[i] + 0`).
+fn message_id(w: &World, i: usize) -> i32 {
+    let b = w.game.state.inbox();
+    b.messages.get(i * ig2_sim::messages::MESSAGE..i * ig2_sim::messages::MESSAGE + 4).map_or(0, |x| i32::from_le_bytes(x.try_into().unwrap()))
 }
 
 fn date(g: &Game) -> (i32, i32, i32) {
@@ -461,7 +490,8 @@ fn check(g: &Game, tick: u64, ever_alive: &[bool; 19], report: &mut Report) {
         if !t.total.is_finite() {
             report.problem(tick, format!("empire {e}'s money is not finite"));
         } else if t.total < 0.0 {
-            report.problem(tick, format!("empire {e}'s money is negative"));
+            // `MoneyHozzaadOld`'s pool-0 spend runs into debt (a story's fine, a toll): the original's, not a fault.
+            report.note(tick, format!("empire {e}'s money is negative"));
         }
     }
     let map = g.state.starmap();
@@ -491,7 +521,7 @@ fn check(g: &Game, tick: u64, ever_alive: &[bool; 19], report: &mut Report) {
     }
 }
 
-/// `--playthrough`'s run list: `campaign:C[:D]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]` or `all`.
+/// `--playthrough`'s run list: `campaign:C[:D[:L]]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]` or `all`.
 pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec<Run>, String> {
     let mut runs = Vec::new();
     for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
@@ -499,11 +529,11 @@ pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec
         let num = |i: usize, default: i32| parts.get(i).map_or(Ok(default), |s| s.parse::<i32>().map_err(|_| format!("--playthrough {item}: a number")));
         match parts[0] {
             "all" => {
-                runs.extend((1..=3).map(|c| Run::Campaign { campaign: c, difficulty: 2 }));
+                runs.extend((1..=3).map(|c| Run::Campaign { campaign: c, difficulty: 1, storyline: 0 }));
                 runs.extend(scenarios().into_iter().map(Run::Scenario));
                 runs.push(Run::Skirmish { race: 1, ais: 3 });
             }
-            "campaign" => runs.push(Run::Campaign { campaign: num(1, 1)?, difficulty: num(2, 2)? }),
+            "campaign" => runs.push(Run::Campaign { campaign: num(1, 1)?, difficulty: num(2, 2)?, storyline: num(3, 0)? }),
             "scenario" => match parts.get(1).copied() {
                 None | Some("all") => runs.extend(scenarios().into_iter().map(Run::Scenario)),
                 Some(f) if f.contains('/') => runs.push(Run::Scenario(f.to_string())),
@@ -511,7 +541,7 @@ pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec
             },
             "skirmish" => runs.push(Run::Skirmish { race: num(1, 1)?, ais: num(2, 3)? }),
             "mp" => runs.push(Run::Mp { ais: num(1, 2)?.clamp(0, 6) as u8, planets: num(2, 40)?.clamp(0, 255) as u8 }),
-            _ => return Err(format!("--playthrough {item}: campaign:C[:D], scenario:<file|all>, skirmish[:RACE[:AIS]], mp[:AIS[:PLANETS]] or all")),
+            _ => return Err(format!("--playthrough {item}: campaign:C[:D[:L]], scenario:<file|all>, skirmish[:RACE[:AIS]], mp[:AIS[:PLANETS]] or all")),
         }
     }
     Ok(runs)
@@ -580,7 +610,8 @@ mod tests {
     #[test]
     fn runs_parse() {
         let s = || vec!["scenario/a.scn".to_string()];
-        assert_eq!(parse_runs("campaign:2,skirmish", s).unwrap(), [Run::Campaign { campaign: 2, difficulty: 2 }, Run::Skirmish { race: 1, ais: 3 }]);
+        assert_eq!(parse_runs("campaign:2,skirmish", s).unwrap(), [Run::Campaign { campaign: 2, difficulty: 2, storyline: 0 }, Run::Skirmish { race: 1, ais: 3 }]);
+        assert_eq!(parse_runs("campaign:3:1:2", s).unwrap(), [Run::Campaign { campaign: 3, difficulty: 1, storyline: 2 }]);
         assert_eq!(parse_runs("scenario:all,scenario:b", s).unwrap(), [Run::Scenario("scenario/a.scn".into()), Run::Scenario("scenario/b.scn".into())]);
         assert_eq!(parse_runs("mp,mp:1:20", s).unwrap(), [Run::Mp { ais: 2, planets: 40 }, Run::Mp { ais: 1, planets: 20 }]);
         assert!(parse_runs("bogus", s).is_err());

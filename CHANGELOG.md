@@ -40,7 +40,8 @@ Getting the game from "every part works" to "a player can install it and play it
   build steps, and the road to 1.0.
 - Diplomacy in multiplayer can take back an unanswered message ("cancel last message"); the tutorial's shorter wait
   between diplomacy messages now applies.
-- Not done yet: the campaigns' late episodes are not verified end to end in a real play-through.
+- Not done yet: the campaigns' late episodes are verified end to end only for campaign 1 and campaign 2's second
+  storyline (the play-through driver answers the stories, researches, sends spies and fleets); campaign 3 is open.
 
 ## 0.6 — Fixes against the original
 Every known difference from the original was sorted into fix, enhanced option or keep, and most fixes were made.

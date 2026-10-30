@@ -55,6 +55,11 @@ pub fn choice_disabled(state: &crate::save::SaveState, k: usize) -> bool {
     k < 4 && state.mem.u8(at::CHOICES + at::CHOICE * k as u32 + 8) != 0
 }
 
+/// The part choice `k` of the open block answers (`Valasztasok[k] + 0x50`, written by the last order).
+pub fn choice_part(state: &crate::save::SaveState, k: usize) -> i32 {
+    if k < 4 { state.mem.i32(at::CHOICES + at::CHOICE * k as u32) } else { 0 }
+}
+
 /// The open block's answers (`AktValasztasok`, written by the last order).
 pub fn choice_count(state: &crate::save::SaveState) -> usize {
     state.mem.i32(at::CHOICE_COUNT).clamp(0, 4) as usize
