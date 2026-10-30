@@ -18,7 +18,7 @@ at the next cleanup.
   playing the human's side, saving and loading on the way (`docs/BUILDING.md` → Play-through harness).
 - [ ] **Story-aware play-through driver**: the AI-played human loses all three campaigns, so later
   episodes, CampaignOver and the campaign end videos are never reached headless; drive the campaigns to their end.
-- [ ] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check).
+- [x] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check): `ig2-client --playthrough mp`.
 - [x] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
   recorded input replacing the live mouse (deviations 141, 174, 198).
 - [x] **Single-player real-time ground war**: `Game::ground_war`/`grwar_sp` (`ig2-sim/src/game/battles.rs`) run an

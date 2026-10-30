@@ -531,6 +531,18 @@ impl<'r> World<'r> {
         Some(r)
     }
 
+    /// Multiplayer: this machine's snapshot of the shared state, as its peer hashes it each turn (the play-through's
+    /// desync check); `None` in single player.
+    pub fn mp_snapshot(&mut self) -> Option<ig2_net::Snapshot> {
+        let (net, _) = self.net.as_mut()?;
+        local_en(&mut self.game, false);
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        let s = net.peer().snapshot();
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        local_en(&mut self.game, true);
+        Some(s)
+    }
+
     /// The state as the remake's save file (`.ig2s`) holds it.
     /// The live starmap camera into the state's `StarmapXStart` … `StarmapPlanetKering` (exe 0xB9A968..), as
     /// `LoadSave(…, 2)` saves them; the view a load reads back.

@@ -61,11 +61,12 @@ frame or an input script's frames without a window; it is used by the capture co
 `engine/crates/ig2-client/src/main.rs`.
 
 ## Play-through harness
-`ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]` plays whole games headless at
+`ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]` plays whole games
+headless at
 the fastest speed on the player's path (`World::tick`, the commands a screen sends), with the sim's AI playing the
 human's empire (`Game::autopilot`). Runs: `campaign:C[:D]` (campaign 1..=3, difficulty 1/2/4), `scenario:<name|all>`,
-`skirmish[:RACE[:AIS]]`, or `all` (the three campaigns, every scenario of the menu, a skirmish). The harness reads
-the inbox (the first answer each dialogue allows), leaves finished real-time battles, takes the pause off and saves
+`skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` (below), or `all` (the three campaigns, every scenario of the menu, a
+skirmish). The harness reads the inbox (the first answer each dialogue allows), leaves finished real-time battles, takes the pause off and saves
 and loads our `.ig2s` every M game months (default 6). Each run ends in victory, defeat, the tick budget (default
 400,000 ticks of 50 ms), a stall (nothing changed hands and no story moved for M months, default 36) or a stuck
 clock, and reports panics, broken invariants (money, fleets or planets of dead empires, empty fleets, a save that
@@ -73,6 +74,19 @@ changes the state), the stories left running and what the client was asked to sh
 `--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets
 the units fight it out) and the diplomacy questions reach its inbox. The exit code is 1 when a run failed (a panic,
 a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit.
+
+`mp[:AIS[:PLANETS]]` (default `mp:2:40`) plays a generated multiplayer galaxy on two machines in one process, host and
+joiner, each on the player's multiplayer path (the room, `World::new_mp`, the session pumped by `World::tick`) over an
+in-process loopback link. Both humans are played by the AI (`--human idle`: idle humans; their real-time space battles
+are left when over). Every `--compare-every N` ticks (default 200) both machines stop at the same turn and their
+snapshots of the shared state must be equal; the lockstep's per-turn hashes are checked throughout. Every
+`--save-every` months the host's MP save is read back, resumed in a new room and rejoined, and the game goes on from
+it. A desync fails the run with the first turn whose hashes differ and the parts and memory addresses that differ;
+`--compare-every 2` narrows it to the turn; `IG2_PLAYTHROUGH_DEBUG=1` prints each empire's planets, fleets and money now and then. The galaxy grows slowly, so a whole game (to its winner, about 50 years and
+60,000 ticks) needs a longer stall limit:
+```bash
+ig2-client --playthrough mp --stall 240
+```
 
 The same as a test, off by default (it takes minutes per run):
 ```bash

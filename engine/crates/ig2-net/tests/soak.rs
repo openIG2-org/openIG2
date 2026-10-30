@@ -511,32 +511,9 @@ fn soak(humans: usize, ais: u8, turns: u64, seed: u64, even_wars: bool) {
 
 /// Where `a`'s and `b`'s states differ: the parts, and the first differing memory bytes.
 fn diff(a: &Peer, b: &Peer, rules: &GameRules) {
-    let (ga, pa) = a.snapshot().restore(rules).unwrap();
-    let (gb, pb) = b.snapshot().restore(rules).unwrap();
-    let (ha, hb) = (ig2_net::part_hashes(&ga, &pa), ig2_net::part_hashes(&gb, &pb));
-    let parts: Vec<&str> = ha.iter().zip(&hb).filter(|(x, y)| x.1 != y.1).map(|(x, _)| x.0).collect();
-    eprintln!("turn {} empire {} vs {}: live hashes {:x} {:x}, parts differ {parts:?}", a.turn, a.empire, b.empire, a.hash(), b.hash());
-    let (ma, mb) = (ga.state.mem.runs(), gb.state.mem.runs());
-    let mut n = 0;
-    for (at, x) in ma {
-        let Some(y) = mb.get(at) else {
-            eprintln!("  run {at:#x} only on empire {}", a.empire);
-            continue;
-        };
-        for i in 0..x.len().max(y.len()) {
-            if x.get(i) != y.get(i) && n < 60 {
-                eprintln!("  {:#x}: {:?} vs {:?}", at + i as u32, x.get(i), y.get(i));
-                n += 1;
-            }
-        }
-    }
-    if parts.contains(&"realtime") {
-        eprintln!("  realtime: {:?}
-  vs        {:?}", ga.realtime.current, gb.realtime.current);
-    }
-    if parts.contains(&"pending") {
-        eprintln!("  pending: {pa:?}
-  vs       {pb:?}");
+    eprintln!("turn {} empire {} vs {}: live hashes {:x} {:x}", a.turn, a.empire, b.empire, a.hash(), b.hash());
+    for line in ig2_net::snapshot::diff(&a.snapshot(), &b.snapshot(), rules, 60).unwrap() {
+        eprintln!("  {line}");
     }
 }
 

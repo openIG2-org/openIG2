@@ -186,6 +186,39 @@ pub fn state_hash(game: &Game, pending: &[Command]) -> u64 {
     u64::from_le_bytes(out[..8].try_into().unwrap())
 }
 
+/// Where two snapshots differ (a desync's diagnosis): the parts whose hashes differ, the first `max` differing memory
+/// bytes (`address: a vs b`), and the real-time battle or pending commands when those parts differ. Empty: equal.
+pub fn diff(a: &Snapshot, b: &Snapshot, rules: &GameRules, max: usize) -> Result<Vec<String>, Error> {
+    let ((ga, pa), (gb, pb)) = (a.restore(rules)?, b.restore(rules)?);
+    let (ha, hb) = (part_hashes(&ga, &pa), part_hashes(&gb, &pb));
+    let parts: Vec<&str> = ha.iter().zip(&hb).filter(|(x, y)| x.1 != y.1).map(|(x, _)| x.0).collect();
+    if parts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = vec![format!("parts differ: {parts:?}")];
+    let (ma, mb) = (ga.state.mem.runs(), gb.state.mem.runs());
+    let mut n = 0;
+    for (at, x) in ma {
+        let Some(y) = mb.get(at) else {
+            out.push(format!("run {at:#x} only on the first"));
+            continue;
+        };
+        for i in 0..x.len().max(y.len()) {
+            if x.get(i) != y.get(i) && n < max {
+                out.push(format!("{:#x}: {:?} vs {:?}", at + i as u32, x.get(i), y.get(i)));
+                n += 1;
+            }
+        }
+    }
+    if parts.contains(&"realtime") {
+        out.push(format!("realtime: {:?} vs {:?}", ga.realtime.current, gb.realtime.current));
+    }
+    if parts.contains(&"pending") {
+        out.push(format!("pending: {pa:?} vs {pb:?}"));
+    }
+    Ok(out)
+}
+
 fn hash_bytes(b: &[u8]) -> u64 {
     let out = <sha2::Sha256 as sha2::Digest>::digest(b);
     u64::from_le_bytes(out[..8].try_into().unwrap())

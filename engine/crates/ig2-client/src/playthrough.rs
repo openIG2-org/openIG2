@@ -6,8 +6,10 @@
 //! (our `.ig2s` through [`World::load_bytes`]). It reports panics, hangs, stories left running, broken invariants
 //! and what the game asked of the client (videos, battles, the end).
 //!
-//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]`, runs
-//! `campaign:C[:D]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, or `all`.
+//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`, runs
+//! `campaign:C[:D]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` ([`mp`]), or `all`.
+
+mod mp;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -29,6 +31,8 @@ pub enum Run {
     Scenario(String),
     /// The skirmish menu's defaults with the human's race and the computer count.
     Skirmish { race: i32, ais: i32 },
+    /// A 2-machine loopback multiplayer galaxy with `ais` computers and `planets` planets ([`mp`]).
+    Mp { ais: u8, planets: u8 },
 }
 
 impl Run {
@@ -37,6 +41,7 @@ impl Run {
             Run::Campaign { campaign, difficulty } => format!("campaign:{campaign}:{difficulty}"),
             Run::Scenario(f) => format!("scenario:{f}"),
             Run::Skirmish { race, ais } => format!("skirmish:{race}:{ais}"),
+            Run::Mp { ais, planets } => format!("mp:{ais}:{planets}"),
         }
     }
 }
@@ -55,11 +60,13 @@ pub struct Limits {
     /// The AI plays the human's empire ([`Game::autopilot`]); off: the human stays human and idle (every battle
     /// it is in runs in real time, the diplomacy questions come to its inbox).
     pub autopilot: bool,
+    /// Multiplayer: compare both machines' states at the same turn every this many ticks ([`mp`]).
+    pub compare_every: u64,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 36, autopilot: true }
+        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 36, autopilot: true, compare_every: 200 }
     }
 }
 
@@ -188,6 +195,7 @@ impl Harness {
                 };
                 crate::new_game::skirmish(&self.install, &cfg, rules)?
             }
+            Run::Mp { .. } => return Err("a multiplayer run starts its own machines".into()),
         };
         let mut w = World::new_game(game);
         w.scenario = matches!(run, Run::Scenario(_));
@@ -214,6 +222,9 @@ impl Harness {
     }
 
     fn play_inner(&self, run: &Run, limits: Limits, report: &mut Report) -> End {
+        if let Run::Mp { ais, planets } = *run {
+            return mp::play(self, ais, planets, limits, report);
+        }
         let mut w = match self.start(run, limits.seed) {
             Ok(w) => w,
             Err(e) => return End::Error(e),
@@ -499,16 +510,17 @@ pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec
                 Some(f) => runs.push(Run::Scenario(format!("scenario/{f}.scn"))),
             },
             "skirmish" => runs.push(Run::Skirmish { race: num(1, 1)?, ais: num(2, 3)? }),
-            _ => return Err(format!("--playthrough {item}: campaign:C[:D], scenario:<file|all>, skirmish[:RACE[:AIS]] or all")),
+            "mp" => runs.push(Run::Mp { ais: num(1, 2)?.clamp(0, 6) as u8, planets: num(2, 40)?.clamp(0, 255) as u8 }),
+            _ => return Err(format!("--playthrough {item}: campaign:C[:D], scenario:<file|all>, skirmish[:RACE[:AIS]], mp[:AIS[:PLANETS]] or all")),
         }
     }
     Ok(runs)
 }
 
-/// `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]`: every run's report; an
+/// `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`: every run's report; an
 /// error when one failed.
 pub fn main(args: &[String]) -> Result<(), String> {
-    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]")?;
+    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]")?;
     let mut limits = Limits::default();
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
@@ -519,6 +531,7 @@ pub fn main(args: &[String]) -> Result<(), String> {
             "--seed" => limits.seed = n(v)? as u32,
             "--save-every" => limits.save_every = n(v)? as i32,
             "--stall" => limits.stall = n(v)? as i32,
+            "--compare-every" => limits.compare_every = n(v)?,
             "--human" => limits.autopilot = match v.as_str() { "ai" => true, "idle" => false, _ => return Err(format!("--human {v}: ai or idle")) },
             _ => return Err(format!("{a}: unknown")),
         }
@@ -569,6 +582,7 @@ mod tests {
         let s = || vec!["scenario/a.scn".to_string()];
         assert_eq!(parse_runs("campaign:2,skirmish", s).unwrap(), [Run::Campaign { campaign: 2, difficulty: 2 }, Run::Skirmish { race: 1, ais: 3 }]);
         assert_eq!(parse_runs("scenario:all,scenario:b", s).unwrap(), [Run::Scenario("scenario/a.scn".into()), Run::Scenario("scenario/b.scn".into())]);
+        assert_eq!(parse_runs("mp,mp:1:20", s).unwrap(), [Run::Mp { ais: 2, planets: 40 }, Run::Mp { ais: 1, planets: 20 }]);
         assert!(parse_runs("bogus", s).is_err());
     }
 }

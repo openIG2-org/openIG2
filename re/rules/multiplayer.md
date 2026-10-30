@@ -278,6 +278,7 @@ at turn T and prints the differing state parts and memory bytes, via `ig2_net::p
 (event-kind histogram). Result: 6 long seeds x 6000 turns plus the defaults, no desync after the two fixes below; the
 games contained real-time and auto-resolved battles, ground wars, conquests, empire deaths, trade, spies, designs.
 It compares our peers with each other, not with the exe, so it does not close the untraced MP paths (U15, U18, U22, U23).
+`ig2-client --playthrough mp` (`docs/BUILDING.md` → Play-through harness) repeats this on the client's MP path: a whole AI-played 2-machine game to its winner (~59,000 ticks, 98 save/resumes) with no desync.
 
 - Events go through `Game::take_events()`: `Peer::run_turn` used to drain `game.events` with `append`, leaving
   `Game::hand_offs` (the battlefield hand-offs' place in the event list, `battlefield_hand_offs`) unreset, so the next
