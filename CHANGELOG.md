@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- The credits video shows from its first frame instead of staying black for ten seconds.
 - The client finds your GOG install by itself (registry, GOG Galaxy, the default folders) and checks `ig2.exe`.
   When it finds none, a window lists the places it tried and accepts the game folder dropped onto it.
 - The main menu works without a save; a first start no longer plays the campaign's start voice and in-game music

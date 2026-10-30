@@ -14,7 +14,6 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 |---|---|---|---|---|
 | 404 | ground war, single player | `Game::ground_war` calls `ground_real_time` only when canonical and nothing ticks `WF::MI`/Refresh in single player (`grwar_mp` is canonical-only): an invasion routed to real time lands the vehicles and sits (tutorial chapter 4's ground battle can't be won) | yes | ground-combat.md §2, §11 |
 | 396 | colony, building pick | ours picks a building by its footprint cell, the exe by model hit (`GetNearestBuilding` 0x47b350), so clicks on a building's upper part differ | yes | colony.md §11.3 |
-| 403 | video, credits | `anim/mpeg4/misc/credits.mp4`'s first 251 frames (~10 s) don't decode with OpenH264 (IDR: bitstream error, then reference lost), so the client's credits video stays black until frame 251; the exe shows it from the start. Cause unknown (perhaps a coding feature OpenH264 lacks); found by `ig2-check` | yes | video.md §6 |
 
 ## Open: minor
 

@@ -265,6 +265,34 @@ mod tests {
         assert_eq!(got, n);
     }
 
+    /// `credits.mp4`'s first IDR codes one coefficient with a CAVLC `level_prefix` of 16 (H.264 9.2.2.1, High
+    /// profile), which stock OpenH264 rejects, losing the first 250 frames (engine/vendor/README.md). Every sample of
+    /// the first GOP decodes, and the first picture's luma sums to ffmpeg's (bit-exact).
+    #[test]
+    fn credits_first_gop() {
+        let Some(c) = clip("anim/mpeg4/misc/credits.mp4") else { return };
+        let v = c.video();
+        let Codec::Avc { sps, pps, nal_length_size, .. } = &v.codec else { panic!("not AVC") };
+        let cfg = DecoderConfig::new().flush_after_decode(Flush::NoFlush);
+        let mut dec = Decoder::with_api_config(openh264::OpenH264API::from_source(), cfg).unwrap();
+        let mut buf = mp4::avc_parameter_sets(sps, pps);
+        let mut first = None;
+        for (k, s) in v.samples[..251].iter().enumerate() {
+            mp4::avc_to_annexb(v.data(&c.data, s).unwrap(), *nal_length_size, &mut buf).unwrap();
+            match dec.decode(&buf) {
+                Ok(Some(y)) if first.is_none() => {
+                    let (w, h) = y.dimensions();
+                    let (ys, _, _) = y.strides();
+                    first = Some((0..h).map(|r| y.y()[r * ys..r * ys + w].iter().map(|&p| p as u64).sum::<u64>()).sum::<u64>());
+                }
+                Ok(_) => {}
+                Err(e) => panic!("sample {k}: {e}"),
+            }
+            buf.clear();
+        }
+        assert_eq!(first, Some(5_508_296));
+    }
+
     /// The sound decodes to the AAC track's length at the mixer's rate.
     #[test]
     fn sound_length() {
@@ -311,3 +339,4 @@ mod tests {
         assert_eq!(px(81.0, 90.0, 240.0), [255, 0, 0]);
     }
 }
+

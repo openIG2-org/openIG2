@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/ig2-formats", "crates/ig2-net", "crates/ig2-rules", "crates/ig2-sim", "crates/ig2-viewer", "crates/ig2-client", "crates/ig2-screendiff", "crates/ig2-check"]
+exclude = ["vendor"]
 
 [workspace.package]
 edition = "2024"
@@ -16,3 +17,7 @@ thiserror = "2"
 
 [profile.dev.package."*"]
 opt-level = 2
+
+# OpenH264 with H.264 9.2.2.1 CAVLC level_prefix >= 16 (High profile); see vendor/README.md.
+[patch.crates-io]
+openh264-sys2 = { path = "vendor/openh264-sys2" }

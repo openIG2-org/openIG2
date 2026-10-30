@@ -180,7 +180,8 @@ video slot after the lead-in and `Clip::sound_wait` (§4; test `sound_starts_as_
 placement, skip (the skipping release also reaches the game), the interlace uv, the credits text via
 the same GDI calls on Windows (an outline stand-in elsewhere). Callers wired: title, credits, story videos,
 endings, message head clips (`video::message::HeadClip`, waiting for `MessagesScreen::text_up`), the campaign
-intro. Missing: the console's `anim` (no cheat console). Open: OpenH264 can't decode `credits.mp4`'s first 251
-frames (deviation 403). Captures: `tools/trace/run_video.py` (`video.js`: the title
+intro. Missing: the console's `anim` (no cheat console). OpenH264 is vendored (`engine/vendor/README.md`) with
+the High-profile CAVLC level fix (`level_prefix` 16, which `credits.mp4`'s first IDR uses); test `credits_first_gop`.
+Captures: `tools/trace/run_video.py` (`video.js`: the title
 with `SDL_GetTicks` driven by the frame limiter, grabs at video times; `--open NAME [--at X,Y] [--once]` plays a clip
 in the screen) against `ig2-client --snapshot --screen video:NAME --video-ms T [--video-at X,Y] [--video-loop]`.
