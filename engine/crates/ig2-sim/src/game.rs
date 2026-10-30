@@ -867,7 +867,7 @@ impl<'r> Game<'r> {
         let m = &mut self.state.mem;
         m.set_i32(0xBAE054, m.i32(0xBAE054).wrapping_add(1));
         self.battlefield_hand_offs();
-        self.grwar();
+        self.grwar(first_event);
         self.space_tick();
         if self.view != ViewMode::Classic {
             self.dropships_mp();
@@ -1254,9 +1254,10 @@ impl<'r> Game<'r> {
     /// battle runs (0xBAD114) or the SP battle screen is up): `gvalue` (0x9B2900) += 1, then every planet's
     /// self-destruct countdown per battle step and, every 300th call, `WF::Collapse`
     /// ([`ground::War::grwar_planet`]). The colony screen's `WF::MI` / `WF::Refresh` for the shown planet are the
-    /// real-time battle's (not run here). `FRISSIT_Colony` (0x474680), which follows, changes nothing a save holds:
+    /// real-time battle's ([`Game::grwar_sp`] in single player, [`Game::grwar_mp`] in the canonical view; `from` = the
+    /// tick's first event). `FRISSIT_Colony` (0x474680), which follows, changes nothing a save holds:
     /// the passability maps' 600-tick expiry, smoke emitters (0xA3E9C8, with libc draws), debris and the UI effect list.
-    fn grwar(&mut self) {
+    fn grwar(&mut self, from: usize) {
         let m = &self.state.mem;
         if m.i32(va::MP_SPACE_BATTLE) != 0 || (m.i32(va::AKT_KEP) == 0xb && !self.globals().multiplayer) {
             return;
@@ -1272,6 +1273,8 @@ impl<'r> Game<'r> {
         }
         if self.view != ViewMode::Classic {
             self.grwar_mp();
+        } else if !self.globals().multiplayer {
+            self.grwar_sp(from);
         }
     }
 

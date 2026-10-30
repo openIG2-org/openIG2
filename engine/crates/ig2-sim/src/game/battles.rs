@@ -491,7 +491,7 @@ impl Game<'_> {
         self.set_adat_i32(ADAT_NO_INCIDENT, 0);
         if !simulate {
             self.events.push(GameEvent::Battle(BattleEvent::GroundRealTime { fleet: f, planet: p }));
-            if g.canonical {
+            if g.canonical || self.sp_battles.live {
                 self.ground_real_time(p);
             }
             self.ground_battle_status();
@@ -736,14 +736,12 @@ impl Game<'_> {
         self.state.store_rng(&rng);
         self.state.store_combat(&world);
         for (p, e) in raised {
-            // `GroundWarFinished(p, s, false)` from the real-time war (canonical MP only: the classic game runs it
-            // simulated): `BolygoElfoglal(p, s)`, `BattlesWon[s] += 1`, before the abandonment test.
+            // `GroundWarFinished(p, s, false)` from the real-time war: `BolygoElfoglal(p, s)`, `BattlesWon[s] += 1`,
+            // before the abandonment test.
             if let GroundEvent::Captured { owner } = e {
-                if g.canonical {
-                    self.capture(p, owner);
-                    let won = at::BATTLES_WON + 4 * owner as u32;
-                    self.state.mem.set_i32(won, self.state.mem.i32(won).wrapping_add(1));
-                }
+                self.capture(p, owner);
+                let won = at::BATTLES_WON + 4 * owner as u32;
+                self.state.mem.set_i32(won, self.state.mem.i32(won).wrapping_add(1));
             }
             if e == GroundEvent::Abandoned {
                 self.capture(p, 0);

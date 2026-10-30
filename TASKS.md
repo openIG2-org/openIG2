@@ -20,11 +20,9 @@ at the next cleanup.
   episodes, CampaignOver and the campaign end videos are never reached headless; drive the campaigns to their end.
 - [ ] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check).
 - [x] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
-  recorded input replacing the live mouse (deviations 141, 174, 198). Chapter 4's last step ("win in groundbattle")
-  waits on the single-player real-time ground war below.
-- [ ] **Single-player real-time ground war**: `Game::ground_war` (`ig2-sim/src/game/battles.rs`) calls
-  `ground_real_time` only when canonical and nothing ticks `WF::MI`/Refresh in single player (`grwar_mp` is
-  canonical-only), so an invasion routed to real time lands the vehicles and sits; `re/rules/ground-combat.md` §2, §11.
+  recorded input replacing the live mouse (deviations 141, 174, 198).
+- [x] **Single-player real-time ground war**: `Game::ground_war`/`grwar_sp` (`ig2-sim/src/game/battles.rs`) run an
+  invasion routed to real time on its colony screen; `re/rules/ground-combat.md` §2, §11.
 - [x] **Diplomacy and spy leftovers**: diplomacy's MP-only menus (0x2e) and lip sync; the spy screen's
   2D video path and the tutorial's spy limits.
 

@@ -576,8 +576,20 @@ fn info(o: &Options) -> Result<(), String> {
     let l = load(o)?;
     let mut w = start_world(o, &l.install, l.save.as_ref(), &l.rules, &l.tech_defaults, &l.volatile)?;
     w.set_speed(o.speed);
+    // `--colony P`: the ticks run with P's colony screen up (its ground war's `WF::MI`/`WF::Refresh`, the dropships).
+    w.game.sp_battles.colony = o.colony;
     for _ in 0..o.ticks {
+        if o.colony.is_some() {
+            for _ in 0..5 {
+                w.game.colony_ui_tick();
+            }
+            // `StartGrWar` pauses; the player unpauses on the screen.
+            w.game.set_pause(false, false);
+        }
         w.tick();
+        for e in w.realtime.drain(..) {
+            println!("tick {}: {e:?}", w.curr.tick);
+        }
     }
     let s = &w.curr;
     let (y, m, d) = s.date();

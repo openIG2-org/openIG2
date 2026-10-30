@@ -174,7 +174,8 @@ Weapons (`+0x1d0`) and their `WF_Weapons` entry (§1.3): 1 → W0, 0x2000 → W1
 
 Port: `Game::ground_war` (`game/battles.rs`) runs §2–§6.4 on the save state where the starmap calls it (and after a
 won planet battle), with the planet's battlefield decoded from the save (`SaveState::ground_field`); the real-time
-route is reported (`BattleEvent::GroundRealTime`). Verified in the save replay (`traces/2026-10-16-save-replay.md`,
+route is reported (`BattleEvent::GroundRealTime`) and, in canonical MP or a single-player client (`SpBattles::live`),
+runs (`Game::ground_real_time`, §11.4). Verified in the save replay (`traces/2026-10-16-save-replay.md`,
 `replay-quick1-battles-ground-x16`): five wars against fortress turrets and garrisons, four won (two lopsided),
 with the captures, the messages (§6.3) and the repairs after them (§6.5).
 
@@ -684,8 +685,13 @@ floor in f64).
 `InitMineSystem` (§6.1 step 1); the per-empire call-in timers `+0x7fc + 8e := 0x8c`, `+0x800 + 8e := 0xf0`
 (e = 0..17); `+0x190 := 0`; `s = GetStatus()`; if `s` is −1 or −10 (or `+0x190`): `TamadasSzovegCounter :=
 900`, the "not watching" flags `+0x88d..+0x89e := 0`, and when the human owns the planet or has units there
-(or an MP battle runs) the colony screen of `p` opens (old screen saved, speed 1, paused: a UI event).
-Otherwise `GroundWarFinished(p, s, false)` at once and `+0x190 := 1`. Either way the retreat flags
+(or an MP battle runs) `GrWarOldKep/Planet/IdoPause := AktKep/AktPlanet/IdoPause`, `AktKepKell := 3`,
+`AktPlanetKell := p`, and in SP `SetIdoSpeed(1)`, `SetIdoPause(1)` (ELF 0x4a4f80). Otherwise `GrWarOldKep := 0`,
+`GroundWarFinished(p, s, false)` at once and `+0x190 := 1`. `GroundWarFinished(p, s, false)` (ELF 0x4968c0) runs
+`Story_GroundBattleFinishedSave(WF+0x338, p, s ≠ owner)` before the capture and, on the colony screen of `p` with
+`GrWarOldKep ≠ 0` (0xB → 2 first), `SetIdoPause(GrWarOldIdoPause)`, `AktKepKell := GrWarOldKep`, `AktPlanetKell :=
+GrWarOldPlanet`, `GrWarOldKep := 0`. Port: `Game::ground_real_time` / `ground_finished` (`game/realtime.rs`; the old
+pause in `SpBattles::old_pause`), the screens in the client (`window.rs`, `RealTimeEvent::GroundStarted/GroundEnded`). Either way the retreat flags
 `+0x89f..+0x8b0 := 0`. `GroundWarFinished` also frees the landing zone and clears the retreat flags.
 
 ### 11.5 `LoadMesh` side effects
@@ -704,8 +710,12 @@ only on the colony screen (`AktKep == 3`): planet `+0x64` (ground war) → `WF::
 else 18 per-empire counters `WF+0x37c + 0x40·e` are zeroed), and `WF::Refresh` (0x490890) unless a story
 script holds the planet (`0xF261F8`). MP: both for the battle planet. Order inside one call: `gvalue += 1`, the per-planet part (§11.7), `WF::MI`,
 `WF::Refresh`. The strategic game runs it after every tick (`Game::grwar`: the per-planet part for every planet,
-verified with `gvalue` dumped in the save replay; the colony screen's `WF::MI`/`WF::Refresh` belong to the
-real-time battle).
+verified with `gvalue` dumped in the save replay). SP's colony-screen part (exe from 0x474843: `AktKep 0xBAE0FC == 3`,
+`AktPlanet 0xB9933C`, planet byte `0xB85F0C + 0x188·p`, `WF+0x37c + 0x40·e` = the AI blocks' strategy, §1.1;
+0xF261F8 cleared on every return) is `Game::grwar_sp`, with the client's colony screen as `SpBattles::colony` and
+the story's hold as `StoryEvent::HoldGroundWar` of the same tick; MP's is `Game::grwar_mp`. `WF::Refresh`'s end
+countdown (§11.7 step 9) then runs `GroundWarFinished`: the capture, `BattlesWon`, the story save and check, the
+tutorial's event 0x21. Test: `ig2-net/tests/lockstep.rs` `single_player_ground_war_runs_on_its_colony_screen`.
 
 ### 11.7 The battlefield tick (`WF::Refresh` 0x490890, and `FRISSIT_Grwar`'s own part)
 `S` = `IdoSpeedSzorzoBattle` (0xBAE260, battle steps per tick), `run` = (`IdoPause` 0xBAE264 == 0).
@@ -1110,6 +1120,10 @@ at exe 0x4de8e8; it adds 1.0 to the f32 `ColonyCounter` 0x99823c first) for **ev
 When `(int)ColonyCounter % 5 == 0` it calls `WF_Hordozo::Refresh2(WF, x, y, z, i)` (0x48e0a0) for every alive
 unit without flag 2 whose dropship isn't away, on or off screen. So the dropships move at 20 Hz but on the UI
 clock, between the battle ticks, and they draw on stream 2, a game stream [original quirk: a UI-paced draw].
+`Fake_FRISSITES` calls `Frissit2_Colony` in its 100 Hz loop whenever `AktKep ≤ 0xD` (exe 0x4de8a8), paused or
+not. Port: SP `Game::colony_ui_tick` from the client's UI ticks; canonical MP once per sim tick (`dropships_mp`).
+Until the dropships run, a landed unit keeps flag 0x8000000 and `MoveG` refuses every order (§6.9 of
+`ground-ai.md`): the units sit.
 
 **A pass** (`dropship(i)`; all f32 unless stated; `v(h) = max(2, (f32)sqrt((f64)−h))`, a NaN stays NaN):
 1. Arriving (not in MP): `v = v(h)`; `h = v + h`; both offsets `+= v / 3`. `h > 0` → touchdown: offsets and

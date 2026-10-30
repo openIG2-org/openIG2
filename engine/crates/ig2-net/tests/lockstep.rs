@@ -808,6 +808,79 @@ fn two_humans_fight_a_ground_war_in_lockstep() {
     }
 }
 
+/// Single player (`ground-combat.md` §11.6): an AI fleet lands on the human's planet, the war goes real time
+/// (`GroundWarIndit`: the owner is human-controlled, no lopsided war) and `StartGrWar` runs. `FRISSIT_Grwar` runs
+/// `WF::MI` and `WF::Refresh` only for the planet on the colony screen (`AktKep == 3`, `AktPlanet`): away from it the war
+/// stands still (the call-in timers stay where `StartGrWar` set them, 140/240); on it the battle runs to
+/// `GroundWarFinished` from `WF::Refresh`'s end countdown, the holder keeps or takes the planet. An undefended planet
+/// falls at once (`StartGrWar` finds the field held), screen or not.
+#[test]
+fn single_player_ground_war_runs_on_its_colony_screen() {
+    use ig2_sim::game::{GameEvent, RealTimeEvent};
+    let Some((rules, base)) = common::setup(SAVE) else { return };
+    for defended in [true, false] {
+        let (mut state, home) = landing(base.clone(), defended);
+        state.mem.set_u8(va::PLAYER_KI + 3, 0);
+        state.mem.set_u8(va::MULTIPLAYER, 0);
+        state.mem.set_i32(va::EN, 6);
+        let mut g = game(state, &rules);
+        g.sp_battles.live = true;
+        let won = |g: &Game| g.state.mem.i32(va::BATTLES_WON + 4 * 3);
+        let won_before = won(&g);
+        let (mut started, mut ended, mut ticks) = (None, None, 0);
+        while ticks < 6000 && ended.is_none() {
+            // The colony screen opens 300 ticks after the war started.
+            g.sp_battles.colony = started.filter(|&(_, at)| ticks >= at + 300).map(|_| home);
+            // `StartGrWar` paused the game (the player unpauses on the colony screen).
+            g.set_pause(false, false);
+            for _ in 0..5 {
+                g.colony_ui_tick();
+            }
+            g.advance_clock();
+            g.run_tick();
+            for e in g.take_events() {
+                match e {
+                    GameEvent::RealTime(RealTimeEvent::GroundStarted { planet, holder }) => {
+                        assert_eq!(planet, home);
+                        if holder.is_some() {
+                            ended = holder.map(|h| (h, ticks));
+                        }
+                        started = Some((holder, ticks));
+                    }
+                    GameEvent::RealTime(RealTimeEvent::GroundEnded { planet, holder }) => {
+                        assert_eq!(planet, home);
+                        ended = Some((holder, ticks));
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((None, at)) = started {
+                if ticks == at + 299 {
+                    let f = g.state.ground_field(home).unwrap();
+                    assert!(f.timers.iter().all(|t| *t == (0x8c, 0xf0)), "no WF::Refresh away from the screen: {:?}", f.timers);
+                    assert!(ended.is_none());
+                }
+            }
+            ticks += 1;
+        }
+        let (holder, at) = started.expect("the landing started a real-time ground war");
+        let (h, end) = ended.expect("the war ended");
+        let owner = g.state.mem.u8(va::PLANETS + (home * PLANET_SIZE) as u32 + 0x20) as i32;
+        eprintln!("defended {defended}: started at {at}, holder {holder:?}, ended at {end} held by {h}, owner {owner}");
+        assert!(h == 3 || h == 6);
+        assert_eq!(owner, h, "the holder keeps or takes the planet");
+        assert_eq!(won(&g), won_before + (h == 3) as i32);
+        assert_eq!(g.state.mem.u8(va::PLANETS + (home * PLANET_SIZE) as u32 + 0x64), 0, "the war is over");
+        assert_eq!(g.state.mem.i32(0xBAD13C), 0, "no MP flag in single player");
+        if defended {
+            assert_eq!(holder, None);
+            assert!(end > at + 300, "it ran on the colony screen only");
+        } else {
+            assert_eq!((holder, end, h), (Some(3), at, 3));
+        }
+    }
+}
+
 /// Empire 3 (a second human) lands six tanks on one of 6's planets under the MP rules; `defended == false` takes the
 /// planet's turrets and garrison away first.
 fn landing(mut state: SaveState, defended: bool) -> (SaveState, usize) {

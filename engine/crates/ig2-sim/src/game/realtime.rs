@@ -76,6 +76,14 @@ pub struct SpBattles {
     pub on_screen: bool,
     /// `spacewarelfade` (exe 0xE72E14): the end check waits while it is strictly between 0 and 1.
     pub fade: f32,
+    /// `AktKep == 3`: the colony screen of this planet (`AktPlanet`) is up, so `FRISSIT_Grwar` runs its battlefield
+    /// (`ground-combat.md` §11.6).
+    pub colony: Option<usize>,
+    /// `GrWarOldIdoPause` (with `GrWarOldKep ≠ 0`): `StartGrWar` took the human to a war's colony screen and paused;
+    /// `GroundWarFinished` on that screen restores the pause.
+    pub old_pause: Option<bool>,
+    /// `ColonyCounter` (exe 0x99823c, an f32 there): the 100 Hz UI ticks [`Game::colony_ui_tick`] counted.
+    pub colony_counter: u32,
 }
 
 /// What a real-time battle did (canonical multiplayer, or single player's own with [`SpBattles::live`]).
@@ -204,7 +212,7 @@ impl Game<'_> {
         m.set_i32(at::MP_BATTLE_TICKS, m.i32(at::MP_BATTLE_TICKS).wrapping_add(1));
         self.battlefield_hand_offs();
         if self.state.mem.i32(at::SPACE_RUNNING) == 0 {
-            self.grwar();
+            self.grwar(self.events.len());
         }
         self.space_tick();
         self.post_messages(first_event);
@@ -640,30 +648,53 @@ impl Game<'_> {
 
     // -------------------------------------------------------------------------------------------- ground
 
-    /// `GroundWarIndit`'s real-time branch in canonical MP (exe 0x59c2d0): `GrWar_MultiCsata_bolygo := p`, the
+    /// `GroundWarIndit`'s real-time branch (exe 0x59c2d0): `GrWar_MultiCsata_bolygo := p`, in canonical MP the
     /// in-progress flag, `StartGrWar(p)` (which may end the war at once).
     pub(super) fn ground_real_time(&mut self, p: usize) {
+        let canonical = self.view != ViewMode::Classic;
         let m = &mut self.state.mem;
         m.set_i32(at::GROUND_PLANET, p as i32);
-        m.set_i32(at::GROUND_RUNNING, 1);
+        if canonical {
+            m.set_i32(at::GROUND_RUNNING, 1);
+        }
+        let old_owner = self.planet_owner(p);
         let mut started = Start::Battle;
         self.with_war(p, |w| started = w.start());
         let holder = match started {
             Start::Battle => None,
             Start::Finished(s) => Some(s),
         };
+        // SP, the human takes part (a unit of `EN` on the field or `EN`'s planet): `GrWarOld*` kept, the colony screen
+        // of `p` asked for (the client's), `SetIdoSpeed(1)`, `SetIdoPause(1)`.
+        let en = self.globals().en as i32;
+        let own = |f: crate::ground::Field| (0..f.units.len()).any(|i| f.alive[i] && f.units[i].owner == en);
+        let involved = old_owner as i32 == en || self.state.ground_field(p).is_some_and(own);
+        if holder.is_none() && !canonical && !self.globals().multiplayer && involved {
+            self.sp_battles.old_pause = Some(self.state.mem.u8(at::PAUSE) != 0);
+            self.set_speed(1, false);
+            self.set_pause(true, false);
+        }
         self.events.push(GameEvent::RealTime(RealTimeEvent::GroundStarted { planet: p, holder }));
         if let Some(s) = holder {
-            self.ground_finished(p, s);
+            self.ground_finished(p, s, old_owner);
         }
     }
 
     /// The rest of `GroundWarFinished(p, s, false)` (the field's part ran in [`ground::War::finish`], the capture in
-    /// [`Game::with_wars`]): `Story_GroundBattleFinishedCheck`, the MP flag clears.
-    fn ground_finished(&mut self, p: usize, s: i32) {
+    /// [`Game::with_wars`]): `Story_GroundBattleFinishedSave(WF+0x338, p, s ≠ owner)` (ELF 0x4968c0 line 27, before the
+    /// capture: `old_owner` is the planet's owner then), `Story_GroundBattleFinishedCheck`, the MP flag clears.
+    fn ground_finished(&mut self, p: usize, s: i32, old_owner: u8) {
+        let f = self.state.ground_field(p).map_or(0, |w| w.attack_fleet);
+        let won = (if s == crate::ground::EMPTY { old_owner as i32 } else { s }) != old_owner as i32;
+        self.with_story(|st, w| st.ground_battle_finished_save(f, p as i32, old_owner as i32, won, &*w));
         let buildings = self.state.mem.i32(va::BUILDINGS_OCCUPIED + 4 * p as u32);
         let owner = self.planet_owner(p) as i32;
         self.with_story(|st, w| st.ground_battle_finished_check(buildings, owner, &story_chain(), w));
+        if self.sp_battles.colony == Some(p) {
+            if let Some(paused) = self.sp_battles.old_pause.take() {
+                self.set_pause(paused, false);
+            }
+        }
         self.state.mem.set_i32(at::GROUND_RUNNING, 0);
         self.events.push(GameEvent::RealTime(RealTimeEvent::GroundEnded { planet: p, holder: s }));
     }
@@ -680,6 +711,7 @@ impl Game<'_> {
         }
         let clock = Clock { speed: self.state.mem.i32(va::BATTLE_SPEED), paused: self.state.mem.u8(at::PAUSE) != 0 };
         let watching = self.watching();
+        let old_owner = self.planet_owner(p);
         let mut ended = None;
         self.with_war(p, |w| {
             w.mi(clock.speed);
@@ -687,7 +719,44 @@ impl Game<'_> {
             ended = w.events.iter().find_map(|e| if let GroundEvent::Ended { holder } = *e { Some(holder) } else { None });
         });
         if let Some(s) = ended {
-            self.ground_finished(p, s);
+            self.ground_finished(p, s, old_owner);
+        }
+    }
+
+    /// `FRISSIT_Grwar`'s single-player part (exe 0x4747c0 from 0x474843, ELF 0x49a7f0): on the colony screen
+    /// ([`SpBattles::colony`]) of a planet at war (`+0x64`) `WF::MI`, else the 18 AI strategies `WF+0x37c + 0x40·e`
+    /// cleared; then `WF::Refresh` unless a story script holds the planet (0xF261F8, cleared after every call).
+    /// `WF::Refresh`'s end countdown runs `GroundWarFinished(p, GetStatus(), false)` (spec §11.7 step 9).
+    /// `from`: this tick's first event (the story's hold, `StoryEvent::HoldGroundWar`, is among them).
+    pub(super) fn grwar_sp(&mut self, from: usize) {
+        let hold = self.events[from.min(self.events.len())..]
+            .iter()
+            .rev()
+            .find_map(|e| if let GameEvent::Story(crate::story::StoryEvent::HoldGroundWar { planet }) = *e { Some(planet as usize) } else { None })
+            .unwrap_or(0);
+        let Some(p) = self.sp_battles.colony.filter(|&p| p > 0 && p <= self.state.planet_count()) else { return };
+        if !self.sp_battles.live || self.state.ground_field(p).is_none() {
+            return;
+        }
+        let clock = Clock { speed: self.state.mem.i32(va::BATTLE_SPEED), paused: self.state.mem.u8(at::PAUSE) != 0 };
+        let mut watching = [0; 18];
+        watching[self.globals().en.wrapping_sub(1).min(17)] = p as i32;
+        let at_war = self.planet_rec(p)[0x64] & 1 != 0;
+        let old_owner = self.planet_owner(p);
+        let mut ended = None;
+        self.with_war(p, |w| {
+            if at_war {
+                w.mi(clock.speed);
+            } else {
+                w.ai_forget();
+            }
+            if hold != p {
+                w.refresh(clock, &watching);
+            }
+            ended = w.events.iter().find_map(|e| if let GroundEvent::Finished { winner } = *e { Some(winner) } else { None });
+        });
+        if let Some(s) = ended {
+            self.ground_finished(p, s, old_owner);
         }
     }
 
@@ -706,6 +775,19 @@ impl Game<'_> {
     /// view.
     fn watching(&self) -> [i32; 18] {
         [0; 18]
+    }
+
+    /// `Frissit2_Colony`'s battlefield part in single player (exe 0x477dc0, called by `Fake_FRISSITES` at 0x4de8e8 on
+    /// every 100 Hz UI tick while `AktKep ≤ 0xD`, paused or not; spec §11.16): `ColonyCounter += 1`, and on every fifth
+    /// count the dropships of every battlefield. Canonical MP steps them with the sim instead.
+    pub fn colony_ui_tick(&mut self) {
+        if self.view != ViewMode::Classic || self.globals().multiplayer || !self.sp_battles.live {
+            return;
+        }
+        self.sp_battles.colony_counter = self.sp_battles.colony_counter.wrapping_add(1);
+        if self.sp_battles.colony_counter % 5 == 0 {
+            self.dropships_mp();
+        }
     }
 
     /// The dropships of every battlefield (`WF::Refresh2`'s pass, exe 0x48ce10), once per tick in canonical MP:

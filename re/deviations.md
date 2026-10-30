@@ -12,7 +12,6 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
-| 404 | ground war, single player | `Game::ground_war` calls `ground_real_time` only when canonical and nothing ticks `WF::MI`/Refresh in single player (`grwar_mp` is canonical-only): an invasion routed to real time lands the vehicles and sits (tutorial chapter 4's ground battle can't be won) | yes | ground-combat.md §2, §11 |
 
 ## Open: minor
 

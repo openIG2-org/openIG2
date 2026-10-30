@@ -289,6 +289,9 @@ struct App {
     /// `TamadasSzovegCounter` (exe 0x9ABAE0) while no colony screen is up: `StartGrWar` sets 900, the colony screen
     /// takes it on entry (it counts down only there) and `Colony_Kilep` zeroes it.
     attack_banner: i32,
+    /// `GrWarOldKep`, `GrWarOldPlanet`: the screen and planet a single-player real-time ground war took the player from
+    /// (`StartGrWar` exe 0x4a4a70); `GroundWarFinished` goes back to them (the sim restores the pause).
+    grwar_old: Option<(i32, usize)>,
     /// A running tutorial (re/rules/tutorial.md), its replayed pointer (virtual pixels) and buttons.
     tutorial: Option<crate::tutorial_ui::TutorialUi>,
     tutorial_at: [i32; 2],
@@ -646,6 +649,7 @@ impl App {
             cursor_hidden: false,
             colony_wait_release: false,
             attack_banner: 0,
+            grwar_old: None,
             tutorial: None,
             tutorial_at: crate::tutorial_ui::PARKED,
             tutorial_buttons: (false, false),
@@ -3015,7 +3019,7 @@ impl App {
                 }
                 // `StartGrWar` (exe 0x4a4a70): 900 when the field is contested (`WF::GetStatus` −1 or −10), any planet;
                 // it also ends the tutorial's `WAITFORBATTLE` (re/rules/tutorial.md §1).
-                RealTimeEvent::GroundStarted { holder, .. } => {
+                RealTimeEvent::GroundStarted { planet, holder } => {
                     if let Some(t) = &mut self.tutorial {
                         t.t.battle_started();
                     }
@@ -3023,6 +3027,25 @@ impl App {
                         match &mut self.colony {
                             Some(c) => c.ui.war.banner = 900,
                             None => self.attack_banner = 900,
+                        }
+                        // SP, the human takes part (the sim paused it at speed 1): the war's colony screen; the old screen
+                        // and planet are kept.
+                        if !self.multiplayer() && self.world.game.sp_battles.old_pause.is_some() {
+                            self.grwar_old = Some((self.shown_kep(), self.akt_planet()));
+                            self.show_colony_screen(planet);
+                        }
+                    }
+                }
+                // `GroundWarFinished(p, s, false)`: on the war's colony screen, back to the old screen (the battle
+                // screen's 0xB becomes the starmap) and its pause.
+                RealTimeEvent::GroundEnded { planet, .. } if !self.multiplayer() => {
+                    let shown = self.shown_kep() == 3 && self.world.colony == Some(planet);
+                    if let Some((kep, p)) = self.grwar_old.take().filter(|_| shown) {
+                        let kep = if kep == 0xb { 2 } else { kep };
+                        if kep == 3 {
+                            self.show_colony_screen(p);
+                        } else {
+                            self.request_screen(kep);
                         }
                     }
                 }
@@ -3415,16 +3438,21 @@ impl App {
                     p
                 }
             };
-            match self.colony {
-                Some(_) if self.world.colony == Some(p) => {}
-                Some(_) => {
-                    self.colony = None;
-                    self.open_colony(p);
-                }
-                None => {
-                    self.planet_kell = Some(p);
-                    self.request_screen(3);
-                }
+            self.show_colony_screen(p);
+        }
+    }
+
+    /// `AktKepKell := 3`, `AktPlanetKell := p`: the colony screen of planet `p`.
+    fn show_colony_screen(&mut self, p: usize) {
+        match self.colony {
+            Some(_) if self.world.colony == Some(p) => {}
+            Some(_) => {
+                self.colony = None;
+                self.open_colony(p);
+            }
+            None => {
+                self.planet_kell = Some(p);
+                self.request_screen(3);
             }
         }
     }
@@ -3683,6 +3711,7 @@ impl App {
             }
         }
         self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
+        self.world.game.sp_battles.colony = if self.shown_kep() == 3 { self.world.colony } else { None };
         let due = self.clock.advance(now);
         // Multiplayer: the session is pumped while paused too (its keep-alive and the others' commands).
         // A tutorial just started holds the game until its first tick has run (`ticked`).
@@ -3740,6 +3769,12 @@ impl App {
         // The message line runs on the 100 Hz UI clock (`FRISSIT_Scroll2`), also while paused.
         let due_ui = (now as u64 / 10).saturating_sub(self.ui_frames).min(50);
         self.ui_frames = now as u64 / 10;
+        // `Frissit2_Colony` (exe 0x4de8e8, before the tutorial's part) on a game screen: the dropships.
+        if self.front.is_none() && self.shown_kep() <= 0xd {
+            for _ in 0..due_ui {
+                self.world.game.colony_ui_tick();
+            }
+        }
         // `Fake_FRISSITES`' tutorial part per UI tick (re/rules/tutorial.md §2).
         for _ in 0..due_ui {
             if self.tutorial.is_none() || self.front.is_some() {
