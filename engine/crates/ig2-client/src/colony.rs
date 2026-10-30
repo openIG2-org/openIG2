@@ -1115,6 +1115,9 @@ pub struct ColonyScene {
     fall_rand: crate::colony_weather::CRand,
     /// Per building: slot, `|M·(1, 1, 1)|²` of its placement (world units), its position and its number of levels.
     lods: Vec<(usize, f32, V3, usize)>,
+    /// Per building: slot and its world triangles by level of detail, the faces the click test sees
+    /// ([`View::building_at`]).
+    faces: Vec<(usize, Vec<Vec<[V3; 3]>>)>,
     /// The buildings' finest level of detail by kind, which `getbottomvertex` measures ([`bottom_vertex`]).
     finest: HashMap<u8, Option<Model>>,
     /// `allvany1..10.xvb` (`EpuletAllvanyok::Init` exe 0x47f330), loaded on first use.
@@ -1298,6 +1301,7 @@ impl ColonyScene {
         let mut blink_slots = Vec::new();
         let mut range_lods: Vec<(usize, usize)> = Vec::new();
         let mut building_at = Vec::new();
+        let mut faces = Vec::new();
         let mut emitters = crate::colony_smoke::Emitters::default();
         for b in &s.buildings {
             let Some(bm) = rules.building_models.get(b.kind as usize) else { continue };
@@ -1326,6 +1330,11 @@ impl ColonyScene {
                     level0_end = v.len();
                 }
             }
+            let mut tris = vec![Vec::new(); levels.len()];
+            for ((range, _, _), &k) in rg[before..].iter().zip(&level_of) {
+                tris[k].extend(v[range.start as usize..range.end as usize].chunks_exact(3).map(|t| [t[0].pos, t[1].pos, t[2].pos]));
+            }
+            faces.push((b.slot, tris));
             // The head's record matrix is `R·diag(e)·s`, `e` the reach of the chain's vertices per axis when
             // `BoxUjraszamol` ran (it rewrites the half-extents; the drawn size stays `origin·s`), else the header's [obs: probes/lod_colony.js:
             // `npv0` (3040, 3040, 3040) records (100.32, 100.32, 31.25), its z reach 947]; `R` drops out of the length.
@@ -1430,7 +1439,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, env, finest, lods, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, unit_centres: Vec::new() })
+        Ok(Self { statics, env, finest, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, unit_centres: Vec::new() })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -2350,29 +2359,85 @@ impl View {
     /// marched over the heights until it goes below the ground; world `(x, y)`.
     pub fn ground_at(&self, gm: &GroundMap, p: [f32; 2]) -> Option<(f32, f32)> {
         let v = self.camera.basis(gm);
+        ground_hit(gm, &v, self.pointer_ray(&v, p)).map(|(_, at)| at)
+    }
+
+    /// The eye's unit ray through window pixel `p`.
+    fn pointer_ray(&self, v: &ViewBasis, p: [f32; 2]) -> V3 {
         let [vx, vy] = crate::font::Virtual::new(self.camera.size).virtual_f(p);
         let c = [(vx - 320.0) / 600.0, (vy - 240.0) / 600.0, -1.0];
         let r = v.rows;
-        let d: V3 = std::array::from_fn(|j| r[0][j] * c[0] + r[1][j] * c[1] + r[2][j] * c[2]);
-        let n = scene::normalise(d);
-        let half = MAP_SIZE / 2.0;
-        let mut t = 0.0f32;
-        let mut last = v.eye;
-        while t < 20000.0 {
-            t += 8.0;
-            let q = [v.eye[0] + n[0] * t, v.eye[1] + n[1] * t, v.eye[2] + n[2] * t];
-            if q[1].abs() > half * 1.5 || q[2].abs() > half * 1.5 {
-                return None;
-            }
-            // Up is −h: under the ground once h passes the terrain's height there.
-            if q[0] >= height(gm, q[1], q[2]) {
-                let mid = ((q[1] + last[1]) / 2.0, (q[2] + last[2]) / 2.0);
-                return (mid.0.abs() <= half && mid.1.abs() <= half).then_some(mid);
-            }
-            last = q;
-        }
-        None
+        scene::normalise(std::array::from_fn(|j| r[0][j] * c[0] + r[1][j] * c[1] + r[2][j] * c[2]))
     }
+
+    /// The building whose model is hit first under window pixel `p`: `ShowColony` (exe 0x49f130) reads the object of
+    /// the nearest face under the click point (`pontteszt` ELF 0x5f96b0, run on every drawn triangle of the click pass)
+    /// and walks it up to the building whose model holds it (`selectedepulet` exe 0x8ec994, the slot − 1). The drawn
+    /// level of detail is tested; the terrain in front hides a building. Hidden buildings (a planet not seen into)
+    /// can't be hit.
+    /// shortcut: units in front don't hide a building and an unfinished building's cut-away top still counts;
+    /// test their faces too if a player notices.
+    pub fn building_at(&self, gm: &GroundMap, scene: &ColonyScene, visible: bool, p: [f32; 2]) -> Option<usize> {
+        if !visible {
+            return None;
+        }
+        let v = self.camera.basis(gm);
+        let n = self.pointer_ray(&v, p);
+        let ground = ground_hit(gm, &v, n).map_or(f32::INFINITY, |(t, _)| t);
+        let mut best: Option<(f32, usize)> = None;
+        for (slot, levels) in &scene.faces {
+            let Some(&(_, m1, at, count)) = scene.lods.iter().find(|l| l.0 == *slot) else { continue };
+            let Some(tris) = levels.get(lod_pick(&v, m1, at, count)) else { continue };
+            for t in tris {
+                if let Some(d) = ray_triangle(v.eye, n, t)
+                    && d < ground
+                    && best.is_none_or(|(b, _)| d < b)
+                {
+                    best = Some((d, *slot));
+                }
+            }
+        }
+        best.map(|(_, slot)| slot)
+    }
+}
+
+/// Where the eye's ray `n` meets the ground: its distance and world `(x, y)` (`Update3D`'s click test against the
+/// terrain), marched over the heights until it goes below the ground.
+fn ground_hit(gm: &GroundMap, v: &ViewBasis, n: V3) -> Option<(f32, (f32, f32))> {
+    let half = MAP_SIZE / 2.0;
+    let mut t = 0.0f32;
+    let mut last = v.eye;
+    while t < 20000.0 {
+        t += 8.0;
+        let q = [v.eye[0] + n[0] * t, v.eye[1] + n[1] * t, v.eye[2] + n[2] * t];
+        if q[1].abs() > half * 1.5 || q[2].abs() > half * 1.5 {
+            return None;
+        }
+        // Up is −h: under the ground once h passes the terrain's height there.
+        if q[0] >= height(gm, q[1], q[2]) {
+            let mid = ((q[1] + last[1]) / 2.0, (q[2] + last[2]) / 2.0);
+            return (mid.0.abs() <= half && mid.1.abs() <= half).then_some((t - 4.0, mid));
+        }
+        last = q;
+    }
+    None
+}
+
+/// The distance along the unit ray `n` from `o` to triangle `t`, either side (Möller–Trumbore).
+fn ray_triangle(o: V3, n: V3, t: &[V3; 3]) -> Option<f32> {
+    let sub = |a: V3, b: V3| -> V3 { [a[0] - b[0], a[1] - b[1], a[2] - b[2]] };
+    let (e1, e2) = (sub(t[1], t[0]), sub(t[2], t[0]));
+    let p = cross(n, e2);
+    let det = dot(e1, p);
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    let s = sub(o, t[0]);
+    let u = dot(s, p) / det;
+    let q = cross(s, e1);
+    let w = dot(n, q) / det;
+    let d = dot(e2, q) / det;
+    (u >= 0.0 && w >= 0.0 && u + w <= 1.0 && d > 0.0).then_some(d)
 }
 
 /// `Real2Grid` (ELF 0x4717e0): world `(x, y)` → the grid cell, `floor((S/2 − x)·99/S/100·99·2)` and
@@ -2782,6 +2847,52 @@ mod tests {
         let (first, last) = (boxes[0].1, boxes[35].1);
         assert!((first[1] - -62.27).abs() < 1e-2 && (first[2] - -815.355).abs() < 1e-2, "{first:?}");
         assert!((last[1] - -271.228).abs() < 1e-2 && (last[2] - -606.397).abs() < 1e-2, "{last:?}");
+    }
+
+    /// `probes/colony_pick.js` on colony:42 of quick-1.sav (2026-10-30): the exe's `selectedepulet` for an 8-pixel grid
+    /// of click points over the virtual frame, camera (375.67, −333.10, −1100, −π/4, 0); 660 of the 4800 points hit
+    /// one of 8 buildings (the slot is `selectedepulet + 1`). Ours agrees at 4793: the other 7 lie on a model's
+    /// outline, where the exe's screen-space triangle test and our ray differ by under a pixel.
+    #[test]
+    fn quick1_planet42_building_pick_matches_the_exe() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let traces = std::env::var("IG2_TRACE_DIR").unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../../_local/traces").into());
+        let Ok(text) = std::fs::read_to_string(format!("{traces}/colony-pick/picks.jsonl")) else {
+            eprintln!("skipped: no colony-pick/picks.jsonl");
+            return;
+        };
+        let Ok(mut r) = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let snap = ColonySnap::read(&SaveState::from_save(&save, &defaults), 42).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let scene = ColonyScene::load(&mut r, &install, &tables, &rules.ground_maps, &snap).unwrap();
+        let gm = &rules.ground_maps[snap.map];
+        let mut view = View { camera: Camera::from_saved(&snap.camera, [640.0, 480.0]), scale: 1.0, overlay: Overlay::default() };
+        let (mut n, mut hits, mut same) = (0, 0, 0);
+        let mut wrong = Vec::new();
+        for line in text.lines() {
+            let rec: serde_json::Value = serde_json::from_str(line).unwrap();
+            if rec["k"] == "pickcam" {
+                let c: Vec<f32> = rec["cam"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap() as f32).collect();
+                view.camera = Camera { x: c[0], y: c[1], zoom: c[2], pitch: c[3], rotate: c[4], ..view.camera };
+                continue;
+            }
+            let (x, y) = (rec["x"].as_f64().unwrap() as f32, rec["y"].as_f64().unwrap() as f32);
+            let exe = rec["sel"].as_i64().unwrap();
+            let ours = view.building_at(gm, &scene, snap.visible, [x, y]).map_or(-1, |s| s as i64 - 1);
+            n += 1;
+            hits += (exe >= 0) as usize;
+            if ours == exe {
+                same += 1;
+            } else {
+                wrong.push((x, y, exe, ours));
+            }
+        }
+        assert_eq!((n, hits), (4800, 660));
+        assert!(wrong.len() <= 7, "{same}/{n} agree; differing (x, y, exe, ours): {wrong:?}");
     }
 
     #[test]

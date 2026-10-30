@@ -4873,8 +4873,11 @@ impl App {
             let gm = self.colony.as_ref().zip(self.world.colony_curr.as_ref()).and_then(|(c, s)| self.maps.get(s.map).map(|gm| (c, gm)));
             let gm_cell = gm.and_then(|(c, gm)| crate::colony_ui::cell_under(&c.view, gm, p));
             let start = gm.and_then(|(c, gm)| crate::colony_ui::cursor_cell_under(&c.view, gm, p));
-            // The pointer's cell first: the hold's building rule reads it.
+            let visible = self.world.colony_curr.as_ref().is_some_and(|s| s.visible);
+            let under = gm.and_then(|(c, gm)| c.view.building_at(gm, &c.scene, visible, p));
+            // The pointer's cell and building first: the hold's building rule reads them.
             self.colony_input(|ui, ctx, at, _| {
+                ui.war.under = under;
                 ui.hover(ctx, gm_cell, start);
                 ui.drag(ctx, at);
                 Default::default()

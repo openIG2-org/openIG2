@@ -23,6 +23,8 @@ Getting the game from "every part works" to "a player can install it and play it
   a desync after garrisons entered a battlefield and a crash from a malformed diplomacy message are fixed.
 - `ig2-client --playthrough` runs whole games headless to the end, with saves and loads on the way. Loaded saves
   now keep their real-time battles and the AI's design names.
+- Colony screen: clicking a building's roof, tower or upper part selects it, as in the original; the war cursor and
+  the right-click attack use the same pick.
 - `ig2-check` loads every file of the install and lists what fails to parse, so a broken install is found before
   playing.
 - A Windows release zip (the client, the checker and a readme; no game data). `ig2-client --version` and the window

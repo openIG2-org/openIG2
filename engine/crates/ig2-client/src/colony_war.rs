@@ -138,6 +138,8 @@ pub struct WarUi {
     kept: BTreeSet<usize>,
     /// The pointer's grid cell (`AktBGridX/Y`), the last one when it is off the ground.
     cell: (i32, i32),
+    /// `selectedepulet`: the slot of the building whose model is under the pointer ([`crate::colony::View::building_at`]).
+    pub under: Option<usize>,
     /// `ColonyCounter`.
     counter: f32,
     /// Hot-spot 0x12 (`Colony_MouseInit2`): off without an own selected unit, on while one moves (flag 0x100 or
@@ -468,11 +470,8 @@ impl WarUi {
     fn right_press(&mut self, c: &WarCtx, p: [f32; 2], out: &mut WarOutcome) {
         let Mods { shift, ctrl, alt } = self.mods;
         let t = self.hit(c, p);
-        let building = c.snap.buildings.iter().find(|b| {
-            // [deviation, as §10: the building whose footprint holds the cell, not the model hit]
-            let (x, y) = (b.x as i32, b.y as i32);
-            (self.cell.0 - x).abs() <= 1 && (self.cell.1 - y).abs() <= 1
-        });
+        // `selectedepulet + 1` as it is: a defence post too.
+        let building = self.under.and_then(|s| c.snap.buildings.iter().find(|b| b.slot == s));
         let attack = |target: i32, out: &mut WarOutcome| {
             // `AttackWithSelected` (exe 0x45f520): `GetSelected(0)`'s voice first, whoever's it is, unless a turret.
             out.voice = self.selected.first().and_then(|&s| c.unit(s)).filter(|u| u.flags & flag::TURRET == 0).map(|u| (u.slot as i32 % 3 + 1, speech::ATTACK));

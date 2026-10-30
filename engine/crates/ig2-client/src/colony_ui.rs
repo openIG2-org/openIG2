@@ -503,7 +503,7 @@ impl ColonyUi {
             Some(_) => 1,
         });
         if war_button.is_none() && spot == Some(0x14)
-            && let Some(t) = self.war.cursor(&w, p, self.footprint_under(c).is_some(), self.build_mode)
+            && let Some(t) = self.war.cursor(&w, p, self.building_view(c).is_some(), self.build_mode)
         {
             k = t;
         }
@@ -931,25 +931,19 @@ impl ColonyUi {
         }
     }
 
-    /// `GetNearestBuilding`'s building (`selectedepulet + 1`): the one whose footprint holds the pointer's cell
-    /// [deviation: the original picks the model hit by the click]; defence posts (kinds 0x20..=0x23, finished)
-    /// select their turrets instead and give 0.
+    /// `GetNearestBuilding`'s building (`selectedepulet + 1`): the one whose model is under the pointer; defence
+    /// posts (kinds 0x20..=0x23, finished) select their turrets instead and give 0.
     fn building_under(&self, c: &Ctx) -> usize {
-        match self.footprint_under(c) {
+        match self.building_view(c) {
             Some(b) if (0x20..0x24).contains(&b.kind) && b.work_left == 0 => 0,
             Some(b) => b.slot,
             None => 0,
         }
     }
 
-    /// The building whose footprint holds the pointer's cell (`selectedepulet` [deviation: the model hit]).
-    fn footprint_under<'a>(&self, c: &'a Ctx) -> Option<&'a crate::colony::BuildingView> {
-        let (gx, gy) = self.cell?;
-        c.snap.buildings.iter().find(|b| {
-            let (w, h) = c.rules.building_footprints.get(b.kind as usize).copied().unwrap_or((0, 0));
-            let (x, y) = (b.x as i32, b.y as i32);
-            gx >= x - w / 2 && gx < x + w / 2 + w % 2 && gy >= y - h / 2 - h % 2 && gy < y + h / 2
-        })
+    /// The building whose model is under the pointer (`selectedepulet`).
+    fn building_view<'a>(&self, c: &'a Ctx) -> Option<&'a crate::colony::BuildingView> {
+        c.building(self.war.under?)
     }
 
     /// `colony_start_build` (ELF 0x4dcbb0): with the cursor on a free spot, 0x1f for the kind at the spot.

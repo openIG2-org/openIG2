@@ -6,14 +6,13 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (406).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (408).
 
 ## Open: player-visible
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
 | 404 | ground war, single player | `Game::ground_war` calls `ground_real_time` only when canonical and nothing ticks `WF::MI`/Refresh in single player (`grwar_mp` is canonical-only): an invasion routed to real time lands the vehicles and sits (tutorial chapter 4's ground battle can't be won) | yes | ground-combat.md §2, §11 |
-| 396 | colony, building pick | ours picks a building by its footprint cell, the exe by model hit (`GetNearestBuilding` 0x47b350), so clicks on a building's upper part differ | yes | colony.md §11.3 |
 
 ## Open: minor
 
@@ -32,6 +31,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 398 | colony, TankView | the exe keeps TankView and TankViewLastAngle across re-entry (ours restarts); ours lacks the `+0x18c & 4` test in the unit choice | minor | colony.md §11.9 |
 | 405 | colony, ground-war lock | `Colony_MouseInit2` (exe 0x467990) switches every hot-spot off in a ground war, the war buttons and view included; ours only the non-war ones (the tutorial never locks during a war) | no | colony.md §11 |
 | 406 | diplomacy, menu 0x2e | the exe swallows a press on menu 0x2e while `LenyomasraVarni` is 1 (set by a previous dialogue-menu press, cleared only on a release frame while 0x2e shows; `DiplomGfx2D_1` exe 0x4b89e0, the gate before the `CancelLastMessage` call); ours acts on every press (`Screen::frame` step 5) | no | diplomacy.md §7 |
+| 407 | colony, building pick | the model pick re-runs only when the pointer moves (the exe every frame), so after a camera scroll/zoom/turn or a building change with the pointer still it is stale until the pointer moves; building faces are posed at load (animated parts not followed); a unit in front doesn't hide a building; an unfinished building's cut-away top still picks | minor | colony.md §10 |
 
 ## Keep
 

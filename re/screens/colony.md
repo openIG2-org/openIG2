@@ -393,7 +393,7 @@ becomes `AktEpuletTipus` with the cursor up. Without a working hub (`SearchBuild
 picked.
 
 The 3D view: without the build cursor the left button selects the building under the pointer (`GetNearestBuilding`'s
-`selectedepulet + 1`, the model hit by the click; finished defence posts 0x20..=0x23 select their turrets and give 0)
+`selectedepulet + 1`, the model hit by the click, below; finished defence posts 0x20..=0x23 select their turrets and give 0)
 and makes its kind `AktEpuletTipus`. With the cursor up (`ShowColony`): the pointer's ground cell `AktBGridX/Y`
 (`Real2Grid` ELF 0x4717e0: `floor((S/2 − x)·99/S/100·99·2)`, `floor((y + S/2)·99/S/100·99·2)`) is searched for the
 kind's first free spot (`LocateActBuildingSuitableLocation` exe 0x486460 / ELF 0x4bc820, over the colony screen's grid; differs from
@@ -458,6 +458,22 @@ The panel's turning building (`ShowColony`, `buildshown`): when `AktEpuletTipus`
 per UI frame about `(0, cos −0.3, sin −0.3)`; the second `Update3D` draws it in the viewport 18..173 × 36..167 centred
 on (98, 88) (the centre the remaster's `ColonyGfx2D_2` leaves, §11.10; `ShowColony` sets (95, 101)). A unit being placed shows its hull instead
 (`AktEpuletTipus = −10 − design`).
+
+The model hit (`selectedepulet` exe 0x8ec994, −1 none; set every frame by `ShowColony` exe 0x49f130 / ELF 0x4ced80):
+the frame's click pass (`Update3D(point, clicktype, 1)` exe 0x52cd10, the virtual pointer point; the building
+panel's and info box's groups `mainmeshid2/3` hidden, so it draws `mainmeshid1` (background, terrain, buildings, units) and the
+transparent group) runs `pontteszt` (ELF 0x5f96b0) on every drawn triangle: when the point is inside the projected
+triangle (`benne`), the view ray's crossing with its plane (`metszespont`) is kept if it is nearer than the best so
+far, with its object (`clickobjectxvo`) and face; the pass hands back the point (`AktBGridX/Y`'s source) and the
+object (`clicktype+0x20`). `ShowColony` then walks from that object up its parents (`+0x28`, or `+0x50` when its
+first byte is set) until one is a node of a building's loaded model (`Epulet3d[k−1]`'s node list, slots 1..=
+`HanyEpuletLefoglalva` with a kind); that slot − 1 is `selectedepulet`. So the frontmost face under the pointer
+decides: a building's roof or tower picks it, terrain or a unit in front hides it, buildings hidden on a planet
+the human doesn't see into (§3.3) are never hit [obs: `probes/colony_pick.js` on colony:42, an 8-pixel grid of
+click points: 660 of 4800 hit one of 8 buildings, contiguous model outlines]. The port casts the eye's ray through
+the pointer against each building's world triangles at its drawn level of detail and keeps the nearest in front of
+the ground (`View::building_at`; 4793 of the 4800 points agree, the rest on outlines; a unit in front doesn't
+hide a building and an unfinished building's cut-away top still picks it [ours]).
 
 The hold: hot-spot 0x14 is not one-shot, so `Colony_Main` runs `GetNearestBuilding` every frame the left button is
 held on the view (until `Mouse_FelengedesMajdMegvar`). A press on no building drops the selection; while the pointer
@@ -858,11 +874,13 @@ unit slots, groups seeded from `+0x13c` on entry and written back after Ctrl+4..
 frame's centres, landing, self-destruct, pointer), `colony_weather.rs` (§2.6), `colony_smoke.rs` (§3.5). Reloading the
 scene when the buildings change carries smoke, weather and falling boxes over.
 Done: §2–§6, §9–§12 as specified; capture comparisons `colony:42`, `colony:6` (rain), `grwar:17` (snow, war UI),
-`grwar:17 --land`, `colony:42 --self-destruct 380`, `--colony-live`, `--colony-ui pick|demolish|build|war`; results in
+`grwar:17 --land`, `colony:42 --self-destruct 380`, `--colony-live`, `--colony-ui pick|demolish|build|war`; the building pick by model hit (`View::building_at`, §10, tested against the
+exe's click pass); results in
 `re/screens/diff-results.md`. Weather capture runs through `run_screen.py --script tools/trace/scripts/colony-weather.json`
 (still exe grabs come back white); the Park smoke capture uses `--cam=-793.6,-1002.6,-1100,-0.7853982,0` + `--colony-cam`.
 Ours / approximations: distance fog off (border fog only); random draws are stand-in hashes, not libc (row 369);
 shots drawn as glowing points (§5, cosmetic); the build cursor's red is a tint; the radar is its own terrain-from-above
 render; mouse-wheel zoom; the pointer drawn on the colony screen only. Not compared on a capture: the scaffold collapse,
-the blink. Open rows: 369, 384 (rain streak pixels), 396 (building pick by footprint cell, not model hit), 397 (hold
-with the right button), 398 (tank view across re-entry). The panel building's glass is less blue than the exe's.
+the blink. Open rows: 369, 384 (rain streak pixels), 397 (hold
+with the right button), 398 (tank view across re-entry), 407 (building pick: stale until the pointer moves, posed at
+load, units don't hide it). The panel building's glass is less blue than the exe's.

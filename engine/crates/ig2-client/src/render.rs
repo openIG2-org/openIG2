@@ -1031,6 +1031,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
         if let Some(gm) = l.rules.ground_maps.get(curr.map) {
             let px = [m[0] * o.size.0 as f32 / 640.0, m[1] * o.size.1 as f32 / 480.0];
             ui.cell = crate::colony_ui::cell_under(&view, gm, px);
+            ui.war.under = view.building_at(gm, &scene, curr.visible, px);
             ui.war.pointer(ui.cell);
         }
     }

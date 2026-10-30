@@ -41,8 +41,8 @@ Open = rows still open in `re/deviations.md` (keep rows marked).
 | Fleet / vehicle panels | `fleetinfo`, `tanksinfo`, `fleetbox` | frames 3.1–5.2, models 3.0–3.4, lists 3.0–4.6: match | none |
 | Overlay backgrounds | `--via-starmap 120` on info, messages, research, options, design, trade, diplomacy | 0.6–3.4 (options backdrop 3.2–4.5); research 5.8, diplomacy 8.6 = their own kinds | 263 keep |
 | Top bar + drop-downs | every screen; `topbar-menus.json` | bar 0.05–0.2 (SpaceWar 2.56); menus 2.2–4.7: match | none |
-| Colony | `colony:42`, `--colony-info [tax --info-mouse 500,322]`, `--self-destruct 380`, `colony-weather.json` | frame 8.7 differs (planet_panel 6.6, bottom_info 8.0, view ~8.9, radar 5.6); info mode frame 7.4; self-destruct 9.9 | 396–398; 369, 384 keep |
-| Ground war | `grwar:17 [--land]`, `colony-sweep-war.json` | frame 12.8, view 6.4, texts 5.2, radar 9.3, bottom_info 14.3, buttons ~52 (the exe's terrain shadow band): differs | 396 |
+| Colony | `colony:42`, `--colony-info [tax --info-mouse 500,322]`, `--self-destruct 380`, `colony-weather.json` | frame 8.7 differs (planet_panel 6.6, bottom_info 8.0, view ~8.9, radar 5.6); info mode frame 7.4; self-destruct 9.9 | 397, 398; 369, 384 keep |
+| Ground war | `grwar:17 [--land]`, `colony-sweep-war.json` | frame 12.8, view 6.4, texts 5.2, radar 9.3, bottom_info 14.3, buttons ~52 (the exe's terrain shadow band): differs | |
 | Research | `research`, `--anim-frame 12…60`, `--anim-mouse`, `--script research`, `research-lines`, `research-fx9` | sequences frame 1.8–2.6, ball 2.7–3.5, lines bit-exact; held ≤ ~5.5; still 5.57, wheels 6.1 and ball ~11 (turn phase) differ | none |
 | Design | `design`, `design --script`, `design-edit`, `design-pods` | match but the exe's fader flashes; hull 0.9–5.7 | 114 keep |
 | Diplomacy | `diplomacy`, `--anim-frame 20/50/70`, `--script diplomacy`, `diplomacy-fx9` | still frame ~8, menu 3.5, heads ~6/5, name ~17, ring ~20 (leader video, spin, cage wires); closing t 600 ~11: differs | none |
