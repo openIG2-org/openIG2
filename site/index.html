@@ -2,99 +2,225 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>openIG2</title>
 <meta name="description" content="openIG2: an open-source engine for Imperium Galactica II. The original game, built for multiplayer, modern displays and today's hardware.">
+<meta name="theme-color" content="#070915">
 <meta property="og:title" content="openIG2">
 <meta property="og:description" content="An open-source engine for Imperium Galactica II.">
 <meta property="og:image" content="https://openig2-org.github.io/openIG2/assets/screens/main-menu.jpg">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;1,400&family=Share+Tech+Mono&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <canvas id="stars" aria-hidden="true"></canvas>
 
-<header class="nav">
-  <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="32" height="32"><span>open<b>IG2</b></span></a>
-  <nav>
-    <a href="#features">Features</a>
-    <a href="#screens">Screenshots</a>
-    <a href="#play">How to play</a>
-    <a href="#docs">Docs</a>
-    <a class="gh" href="https://github.com/openIG2-org/openIG2">GitHub</a>
-  </nav>
+<div class="page">
+<header class="hud">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="30" height="30"><span>open<b>IG2</b></span></a>
+    <div class="readouts" aria-label="Project status">
+      <span class="readout" id="hud-version">v0.7 beta</span>
+      <span class="readout">20 Hz sim</span>
+      <span class="readout">AGPL-3.0</span>
+    </div>
+    <nav aria-label="Sections">
+      <a href="#engine">Engine</a>
+      <a href="#screens">Screens</a>
+      <a href="#install">Install</a>
+      <a href="#road">Road to 1.0</a>
+      <a class="gh" href="https://github.com/openIG2-org/openIG2">GitHub</a>
+    </nav>
+  </div>
 </header>
 
 <main id="top">
   <section class="hero">
-    <img class="hero-logo" src="assets/logo.svg" alt="openIG2 logo" width="168" height="168">
-    <h1>open<b>IG2</b></h1>
-    <p class="tagline">The 1999 space strategy classic <em>Imperium Galactica II</em>, on a new open-source engine:
-      the original game, built for multiplayer, modern displays and today's hardware.</p>
-    <div class="cta">
-      <a class="btn primary" id="download" href="https://github.com/openIG2-org/openIG2/releases/latest">
-        <span>Download for Windows</span><small id="dl-version">latest release</small></a>
-      <a class="btn" href="https://github.com/openIG2-org/openIG2">Source on GitHub</a>
-    </div>
-    <p class="note">Free and open source (AGPL-3.0). You need your own copy of the game from GOG.</p>
-  </section>
-
-  <section id="features" class="features">
-    <h2>What you get</h2>
-    <div class="grid">
-      <article><h3>The whole game</h3><p>Campaigns, scenarios, skirmish, the tutorial and multiplayer, with every
-        screen of the original: starmap, colonies, ground war, space battles, research, design, trade, diplomacy and
-        espionage.</p></article>
-      <article><h3>Rules, bit for bit</h3><p>The simulation matches recordings of the original game tick for tick.
-        Your original save games load and play on.</p></article>
-      <article><h3>Multiplayer first</h3><p>LAN discovery, direct IP, private rooms with join codes, optional port
-        mapping, rejoin after a drop, host migration and multiplayer saves.</p></article>
-      <article><h3>Modern displays</h3><p>Any resolution and refresh rate, smoothly interpolated. High DPI, 4K and
-        ultrawide; window, borderless or fullscreen.</p></article>
-      <article><h3>Classic by default</h3><p>It looks, sounds and handles like the original. Every deliberate
-        change is an opt-in enhanced option.</p></article>
-      <article><h3>No assets included</h3><p>The engine reads graphics, text, voices and rules from your own
-        install, so nothing of the original is copied.</p></article>
+    <div class="wrap">
+      <div class="hero-copy">
+        <div class="status-line"><span class="pip"></span><span class="label">Beta · every screen and system is in</span></div>
+        <h1>open<span class="ii">IG2</span>
+          <small>The 1999 classic <em>Imperium Galactica II</em>, on a new open-source engine.</small></h1>
+        <p class="lede">The original game, tick for tick, rebuilt for <strong>multiplayer</strong>,
+          <strong>modern displays</strong> and today's hardware. It reads the graphics, voices and rules from your
+          own copy of the game; nothing of the original is shipped.</p>
+        <div class="cta">
+          <a class="btn primary" id="download" href="https://github.com/openIG2-org/openIG2/releases/latest">
+            Download for Windows<small id="dl-version">latest release · Windows 10/11, 64-bit</small></a>
+          <a class="btn" href="https://github.com/openIG2-org/openIG2">Source on GitHub<small>Rust · AGPL-3.0</small></a>
+        </div>
+        <p class="fineprint">You need <em>Imperium Galactica II</em> from <a href="https://www.gog.com/">GOG</a>.
+          Linux and other platforms: build from source.</p>
+      </div>
+      <figure class="viewport">
+        <div class="frame"><img src="assets/screens/starmap.jpg" alt="The starmap in openIG2: the Magellan and Andromeda systems inside a red territory, with the top bar showing credits and the date 2327:11:6" width="1600" height="900"></div>
+        <figcaption><span class="label">Starmap</span><span class="mono">captured from openIG2 · 1600×900</span></figcaption>
+      </figure>
     </div>
   </section>
 
-  <section id="screens" class="screens">
-    <h2>Screenshots</h2>
-    <p class="sub">Captured from openIG2 running on the player's own copy of the game.</p>
-    <div class="gallery" id="gallery"></div>
+  <section id="engine">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="label">The engine</span>
+        <h2>Same game. Better engine.</h2>
+        <p>Classic by default: it looks, sounds and handles like the original. Every deliberate change is an opt-in
+          enhanced option with a written decision record.</p>
+      </div>
+      <div class="pillars">
+        <article class="pillar"><span class="label">Rules</span><h3>The original's rules, bit for bit</h3>
+          <p>The simulation matches recordings of the original game tick for tick. Your original save games load and
+            play on.</p></article>
+        <article class="pillar"><span class="label">Multiplayer</span><h3>Built for playing together</h3>
+          <p>LAN discovery, direct IP, private rooms with join codes, optional UPnP / NAT-PMP port mapping, rejoin
+            after a drop, host migration and multiplayer saves.</p></article>
+        <article class="pillar"><span class="label">Display</span><h3>Any screen you own</h3>
+          <p>Any resolution and refresh rate, high DPI, 4K and ultrawide. Window, borderless or fullscreen, with an
+            optional 4:3 letterbox.</p></article>
+        <article class="pillar"><span class="label">Assets</span><h3>Your copy, nothing copied</h3>
+          <p>No original code, assets or rule values in the repository. Formats and rules are documented from scratch
+            in an open knowledge base.</p></article>
+      </div>
+
+      <div class="ticks">
+        <div class="ticks-head">
+          <span class="label">Quarter of a second, side by side</span>
+          <p>The game still thinks at the original's 20 ticks a second, so the rules stay exact. Your monitor draws as
+            often as it can, and openIG2 interpolates every frame between two ticks.</p>
+        </div>
+        <div class="ticks-svg"><svg id="tick-svg" viewBox="0 0 640 96" role="img" aria-label="Five game ticks at 20 Hz across 250 milliseconds, with 36 drawn frames at 144 Hz in between"></svg></div>
+        <div class="key">
+          <span><i style="background:var(--readout)"></i>Game tick · 20 Hz · 50 ms</span>
+          <span><i style="background:var(--ion)"></i>Drawn frame · 144 Hz example · 6.9 ms</span>
+        </div>
+      </div>
+    </div>
   </section>
 
-  <section id="play" class="play">
-    <h2>How to play</h2>
-    <ol class="steps">
-      <li><b>Own the game.</b> Install <em>Imperium Galactica II</em> from <a href="https://www.gog.com/">GOG</a>.</li>
-      <li><b>Download openIG2.</b> Get the latest zip from the
-        <a href="https://github.com/openIG2-org/openIG2/releases/latest">releases page</a>.</li>
-      <li><b>Unzip and play.</b> Put it into the game's folder and run <code>ig2-client.exe</code>. It also finds
-        the game on its own if you unzip it elsewhere.</li>
-    </ol>
+  <section id="screens">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="label">The whole game</span>
+        <h2>Every screen of the original</h2>
+        <p>The campaigns, scenarios, skirmish, the tutorial and multiplayer, with all of the original's screens.</p>
+      </div>
+      <ul class="screens-list" aria-label="Screens in openIG2">
+        <li><span class="pip"></span>Starmap</li><li><span class="pip"></span>Colonies</li>
+        <li><span class="pip"></span>Ground war</li><li><span class="pip"></span>Space battles</li>
+        <li><span class="pip"></span>Research</li><li><span class="pip"></span>Design</li>
+        <li><span class="pip"></span>Production</li><li><span class="pip"></span>Trade</li>
+        <li><span class="pip"></span>Diplomacy</li><li><span class="pip"></span>Espionage</li>
+        <li><span class="pip"></span>Info</li><li><span class="pip"></span>Messages</li>
+        <li><span class="pip"></span>Options</li><li><span class="pip"></span>Help</li>
+      </ul>
+
+      <div class="gallery">
+        <figure class="viewport">
+          <div class="frame"><img id="shot" src="assets/screens/main-menu.jpg" alt="Main menu" width="1600" height="900"></div>
+          <div class="shot-caption"><span class="label" id="shot-name">Main menu</span><p id="shot-text"></p></div>
+        </figure>
+        <ul class="thumbs" id="thumbs" aria-label="Choose a screenshot"></ul>
+      </div>
+    </div>
   </section>
 
-  <section id="docs" class="docs">
-    <h2>Documentation</h2>
-    <div class="links">
-      <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/USER_GUIDE.md"><b>User guide</b><span>Installing, keys, settings</span></a>
-      <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/BUILDING.md"><b>Building</b><span>Toolchain, tests, release builds</span></a>
-      <a href="https://github.com/openIG2-org/openIG2/blob/main/CHANGELOG.md"><b>Changelog</b><span>What changed in each version</span></a>
-      <a href="https://github.com/openIG2-org/openIG2/blob/main/re/README.md"><b>Knowledge base</b><span>The original's formats and rules</span></a>
-      <a href="https://github.com/openIG2-org/openIG2/blob/main/CONTRIBUTING.md"><b>Contributing</b><span>How to help</span></a>
-      <a href="https://github.com/openIG2-org/openIG2/issues"><b>Issues</b><span>Report a bug</span></a>
+  <section id="install">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="label">Install</span>
+        <h2>Three steps to the galaxy</h2>
+        <p>The client finds the game by itself (GOG registry, GOG Galaxy, the usual folders). If it can't, its window
+          lists where it looked, and you can drop the game's folder onto it.</p>
+      </div>
+      <div class="install">
+        <ol class="steps">
+          <li><div><h3>Own the game</h3><p>Install <em>Imperium Galactica II</em> from
+            <a href="https://www.gog.com/">GOG</a>.</p></div></li>
+          <li><div><h3>Download openIG2</h3><p>Get <code>openig2-&lt;version&gt;-windows-x64.zip</code> from the
+            <a href="https://github.com/openIG2-org/openIG2/releases/latest">releases page</a>.</p></div></li>
+          <li><div><h3>Unzip and play</h3><p>Unzip it next to <code>ig2.exe</code> and run <code>ig2-client.exe</code>.
+            <code>ig2-check.exe</code> lists any game file that fails to load.</p></div></li>
+        </ol>
+        <div class="term">
+          <div class="term-bar"><span class="label">Build from source</span>
+            <button class="copy" id="copy-build" type="button">Copy</button></div>
+          <pre id="build-cmd"><span class="c"># stable Rust toolchain, game installed</span>
+<span class="p">$ </span>git clone https://github.com/openIG2-org/openIG2
+<span class="p">$ </span>cd openIG2/engine
+<span class="p">$ </span>cargo run --release -p ig2-client</pre>
+          <p class="term-note">Always build with <code>--release</code>. Set <code>IG2_INSTALL_DIR</code> only to pick
+            a specific install. Details in <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/BUILDING.md">BUILDING.md</a>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="road">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="label">Milestone 7 · Playable 1.0</span>
+        <h2>Road to 1.0</h2>
+        <p>Long games run without errors. Some late campaign stretches and rare screen states are still being checked
+          against the original. Expect bugs, and please <a href="https://github.com/openIG2-org/openIG2/issues">report them</a>.</p>
+      </div>
+      <div class="road">
+        <div class="road-col">
+          <header><span class="label">Done in 0.7</span><span class="count">6</span></header>
+          <ul>
+            <li><span class="pip"></span><div><b>Install detection.</b> <span>Finds your GOG install and checks <code>ig2.exe</code>.</span></div></li>
+            <li><span class="pip"></span><div><b>Display settings.</b> <span>Window, borderless, fullscreen, resolution, vsync, letterbox.</span></div></li>
+            <li><span class="pip"></span><div><b>Windows release zip.</b> <span>Client, checker and a readme; no game data.</span></div></li>
+            <li><span class="pip"></span><div><b>Install checker.</b> <span><code>ig2-check</code> loads every file of the install.</span></div></li>
+            <li><span class="pip"></span><div><b>Tutorial input locks.</b> <span>Chapters 1–3 and 5 play through.</span></div></li>
+            <li><span class="pip"></span><div><b>Starmap story actions.</b> <span>Wormhole, virus alert and the gigabomb.</span></div></li>
+          </ul>
+        </div>
+        <div class="road-col">
+          <header><span class="label">Still open</span><span class="count">4</span></header>
+          <ul>
+            <li><span class="pip warn"></span><div><b>Campaigns end to end.</b> <span>Drive all three campaigns to their last episode.</span></div></li>
+            <li><span class="pip warn"></span><div><b>Real-time ground war in single player.</b> <span>Also finishes tutorial chapter 4.</span></div></li>
+            <li><span class="pip warn"></span><div><b>Multiplayer play-through.</b> <span>Two-peer loopback games checked for desyncs.</span></div></li>
+            <li><span class="pip warn"></span><div><b>Diplomacy and spy leftovers.</b> <span>Multiplayer-only menus, lip sync, spy video.</span></div></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="wrap">
+      <div class="sec-head">
+        <span class="label">Documentation</span>
+        <h2>Read the manual</h2>
+      </div>
+      <div class="docs">
+        <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/USER_GUIDE.md"><b>User guide</b><span>Installing, keys, flags, settings</span></a>
+        <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/BUILDING.md"><b>Building</b><span>Toolchain, tests, release builds</span></a>
+        <a href="https://github.com/openIG2-org/openIG2/blob/main/docs/ARCHITECTURE.md"><b>Architecture</b><span>Crates, data flow, determinism</span></a>
+        <a href="https://github.com/openIG2-org/openIG2/blob/main/re/README.md"><b>Knowledge base</b><span>The original's formats, rules and screens</span></a>
+        <a href="https://github.com/openIG2-org/openIG2/blob/main/CHANGELOG.md"><b>Changelog</b><span>What changed in each version</span></a>
+        <a href="https://github.com/openIG2-org/openIG2/blob/main/CONTRIBUTING.md"><b>Contributing</b><span>No original assets, one change per PR</span></a>
+      </div>
     </div>
   </section>
 </main>
 
 <footer>
-  <p>openIG2 is an independent, non-commercial fan project, not affiliated with or endorsed by the rights holders
-    of <em>Imperium Galactica II</em> or by GOG. No game files are included in the repository or the releases.</p>
-  <p>Code licensed under the <a href="https://github.com/openIG2-org/openIG2/blob/main/LICENSE">GNU AGPL-3.0</a>.</p>
+  <div class="wrap">
+    <p>openIG2 is an independent, non-commercial fan project. It is not affiliated with or endorsed by the rights
+      holders of <em>Imperium Galactica II</em> or by GOG. No game files, binaries or extracted data are in the
+      repository or its releases; you need your own copy of the game to play.</p>
+    <div class="end">
+      <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="26" height="26"><span>open<b>IG2</b></span></a>
+      <p>Code under the <a href="https://github.com/openIG2-org/openIG2/blob/main/LICENSE">GNU AGPL-3.0</a>.</p>
+    </div>
+  </div>
 </footer>
-
-<div class="lightbox" id="lightbox" hidden><img alt=""><p></p></div>
+</div>
 <script src="site.js"></script>
 </body>
 </html>
