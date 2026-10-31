@@ -622,6 +622,8 @@ values); triangle corner `A = (ix, iy)` if `(f32)(ix + 1) − fx > fy − (f32)i
 coordinate differences in f32, products and the division in **f64**, asm-checked); no intersection → 100000.
 Result `(f32)(Terepek[m].+0x84 + z)`; the base `+0x84` is stored by the loader as `−(file value − 200)`
 (`InitHatterekEsTerepek` ELF 0x4be142; checked on 9 maps).
+The map is that of `AktPlanet` (exe 0x49c4f0), which `Colony_Belep`/`StartGrWar` set to the shown planet: the client's
+`World::show_colony(Some(p))` writes the local view's planet = `p` (test `building_through_the_screen_reaches_the_sim`).
 
 `SetTankPositionAndMatrix(u)` (from `SetPosG` unless the unit is a turret or mine, and from `LoadMesh`):
 1. Terrain basis (`0x4a8b60`) at `(x, y) = (+0x1d4, +0x1d8)` with body angle `a = +0x1c0`: height cells
@@ -1152,6 +1154,8 @@ unit without flag 2 whose dropship isn't away, on or off screen. So the dropship
 clock, between the battle ticks, and they draw on stream 2, a game stream [original quirk: a UI-paced draw].
 `Fake_FRISSITES` calls `Frissit2_Colony` in its 100 Hz loop whenever `AktKep ≤ 0xD` (exe 0x4de8a8), paused or
 not. Port: SP `Game::colony_ui_tick` from the client's UI ticks; canonical MP once per sim tick (`dropships_mp`).
+The client refreshes the drawn colony snapshot after those UI ticks while the game is paused (StartGrWar pauses SP),
+so the landing shows on screen.
 Until the dropships run, a landed unit keeps flag 0x8000000 and `MoveG` refuses every order (§6.9 of
 `ground-ai.md`): the units sit.
 

@@ -973,6 +973,11 @@ impl<'r> World<'r> {
     /// Open (or close) the colony screen of planet `p`.
     pub fn show_colony(&mut self, p: Option<usize>) {
         self.colony = p;
+        // `AktPlanet` is the shown colony (`Colony_Belep`, `StartGrWar`'s `AktPlanetKell`): a ground war's units take
+        // its heights (`SetTankPositionAndMatrix`, re/rules/ground-combat.md §11.2).
+        if let Some(p) = p {
+            self.game.set_view(ig2_sim::game::LocalView { planet: p as i32, ..self.game.local_view() });
+        }
         self.colony_curr = p.and_then(|p| crate::colony::ColonySnap::read(&self.game.state, p));
         self.colony_prev = self.colony_curr.clone();
     }

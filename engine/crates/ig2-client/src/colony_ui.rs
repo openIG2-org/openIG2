@@ -1647,7 +1647,10 @@ mod tests {
         let tables = ig2_rules::Rules::from_install(&install).unwrap();
         let texts = crate::ui::UiTexts::load(&install);
         let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        w.game.set_view(ig2_sim::game::LocalView { planet: 7, ..w.game.local_view() });
         w.show_colony(Some(42));
+        // A ground war's heights follow the shown colony (`AktPlanet`), not the planet picked before.
+        assert_eq!(w.game.local_view().planet, 42);
         let names = |t: usize| crate::hud::tech_name(&texts, t);
         let snap = w.colony_curr.clone().unwrap();
         let before = snap.buildings.len();

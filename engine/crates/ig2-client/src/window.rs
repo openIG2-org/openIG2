@@ -3934,6 +3934,11 @@ impl App {
             for _ in 0..due_ui {
                 self.world.game.colony_ui_tick();
             }
+            // Paused (`StartGrWar` pauses single player) no sim tick reads the colony again: the dropships coming down
+            // are shown as they move (re/rules/ground-combat.md §11.16).
+            if due_ui > 0 && self.world.paused() && self.world.colony.is_some() {
+                self.world.show_colony(self.world.colony);
+            }
         }
         // `Fake_FRISSITES`' tutorial part per UI tick (re/rules/tutorial.md §2).
         for _ in 0..due_ui {
