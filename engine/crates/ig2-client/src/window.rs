@@ -300,6 +300,8 @@ struct App {
     /// `GrWarOldKep`, `GrWarOldPlanet`: the screen and planet a single-player real-time ground war took the player from
     /// (`StartGrWar` exe 0x4a4a70); `GroundWarFinished` goes back to them (the sim restores the pause).
     grwar_old: Option<(i32, usize)>,
+    /// `VoltHarc` (exe 0x99646a): the shown planet's ground war as `Frissit2_Colony` saw it last (new game: false).
+    volt_harc: bool,
     /// A running tutorial (re/rules/tutorial.md), its replayed pointer (virtual pixels) and buttons.
     tutorial: Option<crate::tutorial_ui::TutorialUi>,
     tutorial_at: [i32; 2],
@@ -674,6 +676,7 @@ impl App {
             cursor_hidden: false,
             wait_release: false,
             attack_banner: 0,
+            volt_harc: false,
             grwar_old: None,
             tutorial: None,
             tutorial_at: crate::tutorial_ui::PARKED,
@@ -3064,6 +3067,7 @@ impl App {
         self.tutorial = None;
         self.research_place = None;
         self.akt_planet = None;
+        self.volt_harc = false;
         self.world = w;
         self.apply_battle_rows();
         // `_s(0x3b, n)` is the install's table, not the save's: a loaded game names the AI's designs too.
@@ -4042,6 +4046,13 @@ impl App {
             if !self.on_starmap {
                 self.panels.faders = crate::starmap_panels::StarmapFaders::enter();
                 self.star_buttons.depth = [0.0; 6];
+                // `Starmap_Belep` exe 0x5b1d74: `PlayMusicMain(0, 0)` unless a battle still runs (`spacewarbanvanbarkacs`);
+                // it does nothing while a main track plays, so a ground war's music ends here (a campaign's intro
+                // plays first, `AfterVideo::StarmapEntry`).
+                let battle = self.spacewar_parked.is_some() || self.spacewar.as_ref().is_some_and(|sw| !sw.ended);
+                if !battle && self.world.videos.is_empty() {
+                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                }
             }
             for _ in 0..due_ui {
                 v.ui_tick();
@@ -4139,7 +4150,7 @@ impl App {
                 // `Frissit2_Colony`'s ambients and music only with the screen shown (`AktKep == 3`).
                 if shown {
                     c.ui.ui_frame(s, self.world.curr.human as i32, &mut c.view.camera);
-                    if let Some(m) = c.ui.war_music(s.at_war) {
+                    if let Some(m) = crate::colony_ui::ColonyUi::war_music(&mut self.volt_harc, s.at_war) {
                         self.audio.play_music(m, false, human_race(&self.world.game.state));
                     }
                 }

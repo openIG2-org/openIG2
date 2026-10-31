@@ -73,7 +73,8 @@ call-site table (297 ELF sites): `_local/audio/callsites.md`.
 - `UpdateFrame` exe 0x4e3e90, every frame: a loaded track that is no longer playing (and not paused) →
   `ZeneEppenJatszott = 0; PlayMusicMain(0, immediate)`: when any track ends (the menu's too) the next main track starts.
 - Callers: `MainScr_Belep` → Menu(immediate); `Starmap_Belep` exe 0x5b19a0 → Main (crossfade; not while a space-war
-  return is pending); `SpaceWar_Belep` exe 0x562680 → SpWar; `Frissit2_Colony` exe 0x477dc0 → GrWar when a ground
+  return is pending; a no-op while a main track plays, `ZeneEppenJatszott` 3..11; call at 0x5b1d74, on every
+  entry: the client does the same, not while a video plays); `SpaceWar_Belep` exe 0x562680 → SpWar; `Frissit2_Colony` exe 0x477dc0 → GrWar when a ground
   battle starts on the shown planet, Main when it ends. `Pause/UnPauseMainMusic` have no callers.
 
 ## 5. Voices and message audio
@@ -177,7 +178,7 @@ Planet type = `Bolygok+0x22`; `C[i]` = `Colony_Hangok[i]`, `Gr[i]` = `Gr_Hangok[
 |---|---|
 | entry | after `Init3dColony`: type 3/6 → `C[12+r(2)]`; a rainy field (`WF+0x8d0 == 2`, `OptionsKellIdojaras`) → `C[37+r(3)]` (a test of its own); type 1/2/5/8/9 → `C[53+r(3)]`; 4 → `C[56+r(2)]`; 7 → `C[43]`. No music. `Colony_Kilep` (exe 0x466390) plays nothing but stops what still plays: `DeInitSounds` (exe 0x55c460: `SoundEngine::Stop` and `ReleaseWave` on the three voices of every record) of `Colony_Villamok` (9), `Colony_Hangok` (0x3a) and `Gr_Hangok` (0x2c). Ported (`Audio::deinit` when the colony screen closes; a switch of planets inside the screen keeps them [not traced]) |
 | ambient | every UI tick on every screen `ColonyCounter` (f64 0x99823c) += 1; on the colony screen (`AktKep == 3`, not `Belep`/`Atlepes`) every 5th: `r(1000) < 4` → type 1/5: `rand()&1 == 0 ? C[17+r(10)] : C[14+r(3)]`; 2/8/9: `C[49+r(4)]`; 3/6: `rand()&1 == 0 ? C[9+r(3)] : C[8]`; 7: `rand()&1 == 0 ? C[44+r(3)] : C[3+r(5)]`; 4: none (about one a 12.5 s). The night birds `C[27..36]` are never used |
-| music | on the colony screen, not self-playing: a ground war starting on the shown planet (`WF::GetStatus == −1`) → `PlayMusicGrWar(1, 0)`, ending → `PlayMusicMain(0, 0)` (`VoltHarc` 0x99646a) |
+| music | on the colony screen, not self-playing: a ground war starting on the shown planet (`WF::GetStatus == −1`) → `PlayMusicGrWar(1, 0)`, ending → `PlayMusicMain(0, 0)` (`VoltHarc` 0x99646a, a global: the client keeps it in `App`, reset at game start/load; the starmap entry ends a war's music too: test `the_starmap_ends_the_war_music`) |
 | G0 | radar 5 and build menu 6 (own, `NemSzabadEpiteni == 0`) on the press; the on/off switch 0x11; E (owner `== EN`, the planet's `+0x44` clear) after its maybe empty 0x132; 3 (deselect); the 3D view 0x14 when another building becomes the selection, and its right click that drops the build cursor; the ground war's buttons 8, 0xa..0x12; the info modes 0x16..0x1e; the menus 0x15/0x19/0x1b on a release over an item |
 | `C[r(2)]` | the build start (`colony_start_build` exe 0x4a88a0, before `Multi_Send(0x1f)`); the repair window's yes (exe 0x47d170, with or without the building) |
 | `Gr[13+r(4)]` | the demolish window's yes with the building there (exe 0x47ced0, after `Multi_Send(0x20)`); Shift+Delete (`rand()&3`) |

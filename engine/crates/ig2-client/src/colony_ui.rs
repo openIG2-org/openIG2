@@ -325,8 +325,6 @@ pub struct ColonyUi {
     pub fx_tick: i32,
     /// The libc `rand()` of the sound picks (a cosmetic stream, [`Rand`]).
     rand: Rand,
-    /// `VoltHarc` (exe 0x99646a): the shown planet's ground war as `Frissit2_Colony` saw it last.
-    volt_harc: bool,
     /// `UpdateRain`'s frames due, in hundredths (60 a second: see [`ColonyUi::thunder`]).
     rain_frames: u32,
     /// The thunder struck since the last drawn frame: `villamid` lights the next one ([`crate::colony::Overlay::flash`]).
@@ -373,7 +371,6 @@ impl Default for ColonyUi {
             fx_tick: 0,
             voices: Vec::new(),
             rand: Rand(1),
-            volt_harc: false,
             rain_frames: 0,
             flash: false,
             scene_buildings: Vec::new(),
@@ -456,14 +453,15 @@ impl ColonyUi {
     }
 
     /// `Frissit2_Colony`'s music switch (exe 0x477dc0, on the colony screen, not in a self-playing game): a ground war
-    /// starting on the shown planet → `PlayMusicGrWar(1, 0)`, ending → `PlayMusicMain(0, 0)`.
-    pub fn war_music(&mut self, war: bool) -> Option<crate::audio::Music> {
-        let m = match (self.volt_harc, war) {
+    /// starting on the shown planet → `PlayMusicGrWar(1, 0)`, ending → `PlayMusicMain(0, 0)`. `volt_harc` is `VoltHarc`
+    /// (exe 0x99646a), a global: it outlives the colony screen.
+    pub fn war_music(volt_harc: &mut bool, war: bool) -> Option<crate::audio::Music> {
+        let m = match (*volt_harc, war) {
             (false, true) => Some(crate::audio::Music::GrWar),
             (true, false) => Some(crate::audio::Music::Main),
             _ => None,
         };
-        self.volt_harc = war;
+        *volt_harc = war;
         m
     }
 

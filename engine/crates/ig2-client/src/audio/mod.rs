@@ -714,6 +714,20 @@ mod tests {
         assert_eq!(m.main_pick(1, false, || 0), None);
     }
 
+    /// `Starmap_Belep`'s `PlayMusicMain(0, 0)` after a ground war (gwar 13..15 playing) picks the race's next main
+    /// track; while a main track plays it does nothing (issue: the war music stayed on the starmap).
+    #[test]
+    fn the_starmap_ends_the_war_music() {
+        let mut volt_harc = false;
+        assert_eq!(crate::colony_ui::ColonyUi::war_music(&mut volt_harc, true), Some(Music::GrWar));
+        assert_eq!(crate::colony_ui::ColonyUi::war_music(&mut volt_harc, true), None);
+        let mut m = MusicState { regi: 9, eppen: 14, ..MusicState::default() };
+        assert_eq!(m.main_pick(6, false, || unreachable!()), Some(10));
+        m.eppen = 10;
+        assert_eq!(m.main_pick(6, false, || unreachable!()), None);
+        assert_eq!(crate::colony_ui::ColonyUi::war_music(&mut volt_harc, false), Some(Music::Main));
+    }
+
     /// Observed (music2 trace): menu at full, `PlayMusicMain(0, 0)` at UI tick 825; `ZeneHangero` 99 at 826 … 1 at
     /// 924, pol1 starts at 925 with 0, then 1 at 926 … 100 at 1025.
     #[test]
