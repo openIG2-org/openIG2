@@ -113,6 +113,8 @@ pub struct ShotView {
     pub pos: V3,
     pub list: u8,
     pub kind: i32,
+    /// Its slot in the list (debris: the spin's axis, `WF::Update`).
+    pub slot: usize,
 }
 
 /// The colony screen's camera as `Colony_Belep` reads it from the battlefield (`WF+0x1a8..+0x1b8`; ELF
@@ -251,10 +253,10 @@ impl ColonySnap {
             .shells
             .iter()
             .flatten()
-            .map(|s| ShotView { pos: s.pos, list: 0, kind: 0 })
-            .chain(l.missiles.iter().flatten().map(|m| ShotView { pos: m.pos, list: 1, kind: m.kind }))
-            .chain(l.bolts.iter().flatten().map(|b| ShotView { pos: b.pos, list: 2, kind: 0 }))
-            .chain(l.fighters.iter().filter(|_| l.fighters_on).map(|f| ShotView { pos: f.pos, list: 3, kind: 0 }))
+            .map(|s| ShotView { pos: s.pos, list: 0, kind: 0, slot: 0 })
+            .chain(l.missiles.iter().enumerate().filter_map(|(k, m)| m.as_ref().map(|m| ShotView { pos: m.pos, list: 1, kind: m.kind, slot: k })))
+            .chain(l.bolts.iter().flatten().map(|b| ShotView { pos: b.pos, list: 2, kind: 0, slot: 0 }))
+            .chain(l.fighters.iter().filter(|_| l.fighters_on).map(|f| ShotView { pos: f.pos, list: 3, kind: 0, slot: 0 }))
             .collect();
         let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
         // `WF+0x8b1 + s` as `GetStatus` (exe 0x47be90) sets it: alive units counted on the field, by side (the saved
@@ -1139,6 +1141,8 @@ pub struct ColonyScene {
     buildings: HashMap<u8, Option<UnitMesh>>,
     /// `hordozo.xvb` (`WF::LoadMesh` exe 0x483f70), loaded on the first dropship.
     dropship: Option<Option<UnitMesh>>,
+    /// The shots' and debris' models (`WF::LoadMesh` exe 0x483f70), loaded on first use.
+    fx: HashMap<&'static str, Option<UnitMesh>>,
     /// The drawn units' `GetObjCenter` (their posed hull's box centre, a defence turret's gun), by slot: the hit test's
     /// point (`WF_Tank::MouseOver` exe 0x48bc90).
     pub unit_centres: Vec<(usize, V3)>,
@@ -1439,7 +1443,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, env, finest, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, unit_centres: Vec::new() })
+        Ok(Self { statics, env, finest, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new() })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -1631,6 +1635,19 @@ impl ColonyScene {
     }
 
     /// The dropship's model with its own textures (no per-owner skin, no tint).
+    fn fx_mesh(&mut self, r: &mut Renderer, install: &Install, name: &'static str) -> Option<&UnitMesh> {
+        let (textures, white) = (&mut self.textures, self.white);
+        self.fx
+            .entry(name)
+            .or_insert_with(|| {
+                let (vdir, tdir) = model_dirs(3);
+                let model = Model::load(install, vdir, name, tdir).map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
+                let texs = model.parts.iter().map(|p| texture(r, install, textures, white, p.texture.as_deref())).collect();
+                Some(UnitMesh { model, texs })
+            })
+            .as_ref()
+    }
+
     fn dropship_mesh(&mut self, r: &mut Renderer, install: &Install) -> Option<&UnitMesh> {
         let (textures, white) = (&mut self.textures, self.white);
         self.dropship
@@ -1887,6 +1904,8 @@ pub struct Overlay {
     pub flash: bool,
     /// `ColonyCounter` (exe 0x99823c): the colony screen's UI ticks ([`building_particles`]).
     pub counter: f32,
+    /// The ground war's hit and blast flashes (particle type 4): position, size, age in sim ticks.
+    pub flashes: Vec<(V3, f32, f32)>,
 }
 
 /// A flat textured square on the ground (two triangles, `polygons3d`), alpha `alpha` (0..=255).
@@ -2105,6 +2124,38 @@ impl View {
             }
             draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: rcloud, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
         }
+        // The flashes: the exe hands type-4 particles to the engine (`WF::Update` exe 0x4a5300) with their age; here a
+        // white `rcloud.bmp` fading out over its 25 ticks (the engine's own sprite isn't read, re/deviations.md).
+        if curr.visible && !self.overlay.flashes.is_empty() {
+            let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
+            let base = dynamic.len() as u32;
+            for &(at, size, age) in &self.overlay.flashes {
+                let g = 1.0 - age / crate::colony_ui::FLASH_TICKS;
+                dynamic.extend(billboard(&basis, at, size * (0.6 + 0.4 * age / crate::colony_ui::FLASH_TICKS), [g; 3]));
+            }
+            draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: rcloud, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
+        }
+        // The cannon shells (list B kinds 4, 5: `lightshot`/`heavyshot`, scale 0.012, turned `gvalue / 10` about every axis)
+        // and the debris (kind 7: `repesz1..3`, scale 0.005 or 0.01, tumbling by its slot); `WF::LoadMesh` (exe 0x483f70)
+        // and `WF::Update` (exe 0x4a5300). The tick stands for `gvalue`, the slot for the model and scale `rand()` picks.
+        if curr.visible {
+            let g = (curr.tick / 10) as f32;
+            for s in curr.shots.iter().filter(|s| s.list == 1 && matches!(s.kind, 4 | 5 | 7)) {
+                let l = s.slot;
+                let (name, scale, rot) = match s.kind {
+                    4 => ("lightshot", 0.012, (g, g, g)),
+                    5 => ("heavyshot", 0.012, (g, g, g)),
+                    _ => {
+                        let spin = |k: f32| g * k * 2.0;
+                        (["repesz1", "repesz2", "repesz3"][l % 3], 0.005 + 0.005 * (l & 1) as f32, (spin((l % 3) as f32 - 1.0), spin((l % 3) as f32), spin((l % 2) as f32)))
+                    }
+                };
+                if let Some(mesh) = scene.fx_mesh(r, install, name) {
+                    let xf = Placement::add_to_scene(mesh.model.origin, scale).world(rot, s.pos);
+                    push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                }
+            }
+        }
         let parts = building_particles(&curr.buildings, &scene.building_at, self.overlay.counter);
         if curr.visible && !parts.is_empty() {
             let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
@@ -2212,9 +2263,9 @@ impl View {
             draws,
             dynamic,
         });
-        // Shots: glowing points (the original draws them as particles and small meshes, spec §5).
+        // The other shots: glowing points (the original draws them as particles and small meshes, spec §5).
         let k = self.camera.k();
-        for s in &curr.shots {
+        for s in curr.shots.iter().filter(|s| !(s.list == 1 && matches!(s.kind, 4 | 5 | 7))) {
             if let Some(p) = self.camera.project(&basis, s.pos) {
                 let (c, sz) = match s.list {
                     0 => ([1.0, 0.85, 0.4, 1.0], 3.0),

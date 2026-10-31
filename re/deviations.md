@@ -6,7 +6,7 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (420).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (422).
 
 ## Open: player-visible
 
@@ -39,6 +39,8 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 417 | top bar, message line | the exe skips the line and the "new message" text while an error text (`HibaUzenetSzoveg`) is up, and on the colony screen while `StoryAdat+0xb4` is set shows story text `_s(5, 0x215d)` instead; the client has neither | minor | hud.md §2 |
 | 418 | MP, start story | the start story begins `delay` turns after the start (a lockstep `Command::StoryStart`, the same turn on every machine); the exe sends `Multi_Send(0x65)` right after `InitNewGame` (`FRISSIT_Start` 0x5bc590) | minor | start.md §3 |
 | 419 | MP, start story config | the config line `mpstory` (`Start_Belep` 0x5bf4b0) is not read (no reader for the original config file; `storyline`/`storymap` are read as 0 the same way), so the start story begins at 0 | minor | start.md §3 |
+| 420 | colony, war flashes | hit/blast flashes are a white additive `rcloud.bmp` billboard fading over 25 ticks; the exe's engine sprite (inferred `robbanas.bmp`, 25 frames) isn't read | minor | colony.md §5 |
+| 421 | colony, war projectiles | rockets, bolts, paralyser, bombs and fighters are glow points (no `RotateObjToAxis` heading); no particle trails, smoke, dust, machine-gun tracer lines, laser beam, scorch marks or ruin fade; debris never fades | minor | colony.md §5 |
 
 ## Keep
 

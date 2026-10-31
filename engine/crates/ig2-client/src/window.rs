@@ -735,7 +735,18 @@ impl App {
                 self.speech.push(crate::audio::speech::Speak { who: crate::audio::speech::Who::Colony, line, kind });
             }
         }
+        // `Gr_Hangok` and the flashes of the shown war (the sim gates them by the screen; another planet's are dropped).
+        let tick = self.world.curr.tick;
+        for (p, e) in std::mem::take(&mut self.world.ground_fx) {
+            let Some(c) = self.colony.as_mut().filter(|_| shown == Some(p)) else { continue };
+            match e {
+                ig2_sim::ground::GroundEvent::Sound(i) => c.ui.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Gr, i as u16)),
+                ig2_sim::ground::GroundEvent::Flash { at, size } => c.ui.add_flash(at.map(|v| v as f32), size as f32, tick),
+                _ => {}
+            }
+        }
         if let Some(c) = &mut self.colony {
+            c.ui.fx_tick = tick;
             for id in c.ui.sounds.drain(..) {
                 self.audio.play(id);
             }

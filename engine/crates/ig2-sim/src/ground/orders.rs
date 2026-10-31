@@ -39,9 +39,6 @@ pub enum GroundOrderEvent {
     /// 0x12f on the shown planet: `ColonySpeaker.Play(1, 3)` for the local player's own retreat, `(1, 10)` for
     /// another's.
     Retreat { empire: i32 },
-    /// 0x12d: `Blast07.wav + rand() % 5` (on the shown planet outside `Simulate`), once for the unit and once per
-    /// unit or building it took with it.
-    Blast { variant: i32 },
 }
 
 impl War<'_> {
@@ -128,12 +125,10 @@ impl War<'_> {
         rt.wp_cursor = 0;
     }
 
-    /// The blast sound's draw: one libc `rand()`, played on the shown planet outside `Simulate`.
+    /// The blast sound: `Gr_Hangok[8 + rand() % 5]` (Blast07..11), played on the shown planet outside `Simulate`.
     fn blast_sound(&mut self) {
         let r = (self.libc)();
-        if self.ctx.on_screen && !self.field.simulating {
-            self.events.push(GroundEvent::Order(GroundOrderEvent::Blast { variant: r % 5 }));
-        }
+        self.gr_sound(8 + r % 5);
     }
 
     /// `WF_Tank::Detonate(big, wf, i)` (exe 0x46dc40, ELF 0x4a0130): `k = big + 1`; `100k` particles (seven libc
@@ -157,7 +152,8 @@ impl War<'_> {
             }
         }
         if self.ctx.on_screen {
-            (self.libc)();
+            let size = ((self.libc)() % 70 + 10).wrapping_mul(k);
+            self.flash(p, size);
             for _ in 0..24 {
                 let a = (self.libc)();
                 let b = (self.libc)();

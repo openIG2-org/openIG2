@@ -2,7 +2,11 @@
 
 Port status: §2–§6 (routing, landing, the auto-resolved war) are ported in `engine/crates/ig2-sim/src/ground.rs`
 and `Game::ground_war` (`game/battles.rs`), verified at runtime (§10, `traces/2026-10-16-ground.md`). The
-**real-time** ground war (§11) is ported in `ground/`; §9 lists what is left.
+**real-time** ground war (§11) is ported in `ground/`; §9 lists what is left. Its sounds and hit flashes are
+ported (§11.12); the single-player defender AI runs `WF::MI` as `FRISSIT_Grwar` does (exe 0x4748ab..0x4748fd, war
+byte test `!= 0`); its passivity is most likely strategy 6 (`ground-ai.md` §4.1/§5.4), not checked on a chapter-4
+state. Open: the original also pauses at `StartGrWar` and the tutorial's chapter 4 unpauses with `GAMESPEED 1`; no
+extra pause after landing was found in ours.
 - `Grwar8020hoz` (the campaign's story-planet ground war, `BolygoInfoIs(p, −0x21ac)`, §2 step 1) is ported as
   `Game::grwar_8020` (`game/battles.rs`), verified against ig2.exe (`tools/trace/probes/grwar8020.js`, test
   `story_planet_ground_war_matches_the_exe`); `BattleEvent::GroundScripted` still follows it.
@@ -984,6 +988,32 @@ the dust:
     screen shows the war's planet (no `Belep`/`Atlepes` frames there), drawing the sample from its cosmetic
     stream: in the exe it is the shared libc stream (deviation 38). Move, attack and the two selections are the
     client's input (`colony_war.rs`); the detonation's kind 4 plays nothing.
+- Sounds (`Gr_Hangok` exe 0x8f51f0, 0x11c-byte records, all through `PlaySound` 0x55cd20; the gate is the voices'
+  without the speaker: shown planet, `AktKep` 3, no `Belep`/`Atlepes`, not `Simulate`). Index = base + draw, in
+  draw order:
+
+  | Site (exe) | `Gr[...]` |
+  |---|---|
+  | `ShotWithSpecificWeapon` 0x49d050: k 5/6 cannons, k 3 paralyser | `29 + rand()%5` (Tankloves1-5) |
+  | same, k 0/1 rockets | `23 + rand()%3` |
+  | same, k 4 machine gun | `19 + (rand()&3)`; after its 16 tracer lines (144 draws) the hit flash `rand()%30+10`, then `2 + rand()%6` |
+  | same, k 8 bolt / k 7 laser | 18 / 43 (no draw) |
+  | projectile hits, `WF::Refresh` 0x490890 (list A within 60; list B kinds 0, 3, 4, 5, 6; bombs on units) | flash `rand()%30+10`, then `2 + rand()%6` (Blast01-06) |
+  | a group dying on screen, `WF_Tank::Damage` 0x46bfa0 | burst flash `rand()%70+20`, 16 debris, then `8 + rand()%5` (Blast07-11) |
+  | a mine exploding 0x497c90; `Detonate` 0x46dc40 (own, each dead neighbour, each building) | `8 + rand()%5`; Detonate's flash `(rand()%70+10)·k` |
+  | mine laid (`WF_Tank::Refresh` 0x494bd0 via 0x48c620) / triggered | 1 (Aknalerakas) / 0 (Aknacsipogas) |
+  | fighter wave `AddFighters` 0x45b8d0; fighter laser bomb | 17; 18 |
+  | big-ship strike `ShotSpecWeapon` 0x49cb70 | 18 ×20 |
+
+  Building falls and ruins are silent. [obs, Frida battle tracer with orders through `MULTIGET_Colony`, the war on
+  the colony screen: machine-gun shots played 19/20/22, each followed by an impact 2/4/5; shots on a planet not on
+  screen played nothing.] The port: `GroundEvent::Sound` / `Flash` (`War::gr_sound`, `War::flash`, `War::hit_fx`);
+  the client's `World::ground_fx` → `window.rs` plays `Table::Gr` on the shown war; test
+  `ground::tests::sounds_and_flashes_on_screen_only`. The flashes are type-4 particles (`WF::Update` 0x4a5300 hands
+  them to the engine); the client draws them as a white additive `rcloud.bmp` billboard fading over 25 sim ticks.
+  In single player `Game::with_wars` marks the colony screen's planet `on_screen` (classic view; the canonical MP view
+  keeps every field off screen so the machines agree), so the on-screen-only effects (debris in list B, the mesh-load
+  side effects §11.5) run.
 
 ### 11.13 Passability maps (`PlanetAtjarasMap::GenerateMap` 0x479300, ELF 0x4ae090)
 `FUN_0045f600(p)` (first thing in `grUtkeres`) calls `GenerateMap(p − 1, 0)` when the flag byte

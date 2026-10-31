@@ -692,6 +692,7 @@ impl War<'_> {
                 }
             }
             self.um(i).ammo -= 1;
+            self.gr_sound(1);
         }
         let u = self.um(i);
         u.rt.mine_cell = u.cell;
@@ -774,6 +775,7 @@ impl War<'_> {
             let dy = v.pos.1 - y;
             let dx = v.pos.0 - x;
             if v.flags & flag::MINE == 0 && v.owner != owner && dy * dy + dx * dx < 3500.0 {
+                self.gr_sound(0);
                 self.remove_group(i);
                 self.remove_target(i);
                 return;

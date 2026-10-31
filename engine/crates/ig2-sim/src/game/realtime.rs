@@ -749,7 +749,8 @@ impl Game<'_> {
         let clock = Clock { speed: self.state.mem.i32(va::BATTLE_SPEED), paused: self.state.mem.u8(at::PAUSE) != 0 };
         let mut watching = [0; 18];
         watching[self.globals().en.wrapping_sub(1).min(17)] = p as i32;
-        let at_war = self.planet_rec(p)[0x64] & 1 != 0;
+        // The whole byte (exe 0x4748c0 `cmp byte [p·0x188 + 0xB85F0C], 0`).
+        let at_war = self.planet_rec(p)[0x64] != 0;
         let old_owner = self.planet_owner(p);
         let mut ended = None;
         self.with_war(p, |w| {

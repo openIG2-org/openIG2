@@ -258,6 +258,14 @@ The battlefield's projectile lists (shells `+0xd4`, missiles/bombs/debris `+0xd8
 heavyshot lightshot repesz1..3` (`.xvb`) and particle textures (`star rcloud flare lens/* epuletkosz tankkosz`); the
 fighters of an air strike (`WF+0x1f4 + 0x40k`) are models too. Not specified further.
 
+Port status: the hit/blast flashes (type-4 particles, ground-combat.md §11.12) are drawn as a white additive
+`rcloud.bmp` billboard fading over 25 sim ticks (the engine's own sprite, inferred `robbanas.bmp`, isn't read); the
+models of list-B kinds 4/5 (`lightshot`/`heavyshot`, scale 0.012, turned `gvalue/10` on all axes) and kind 7 debris
+(`repesz1..3`, scale 0.005/0.01, tumbling `gvalue/10·{l%3−1, l%3, l%2}·2`, never fading: the exe removes it in
+`WF::Refresh2`) are drawn; `WF::LoadMesh` exe 0x483f70. Rockets, bolts, paralyser, bombs and fighters stay glow
+points (their `RotateObjToAxis` heading isn't ported); no particle trails, smoke, dust, machine-gun tracer lines,
+laser beam (`villamgenesis`), scorch marks (`Koszfolt`) or ruin fade.
+
 The dropships (`WF_Hordozo`, inlined at the unit's exe `+0x264..+0x278` / ELF `+0x27c..+0x290`): `WF::LoadMesh` (exe
 0x483f70) loads `hordozo.xvb` once a planet; `WF_Tank::LoadMesh` (exe 0x4847a0) adds one per unit without flag
 0x4000000 (`AddToScene(…, mainxvb4, 0.04)`, `RotateObj(0, π/2, 0)` once: it never turns); `WF_Tank::Update` (exe
@@ -879,7 +887,7 @@ exe's click pass); results in
 `re/screens/diff-results.md`. Weather capture runs through `run_screen.py --script tools/trace/scripts/colony-weather.json`
 (still exe grabs come back white); the Park smoke capture uses `--cam=-793.6,-1002.6,-1100,-0.7853982,0` + `--colony-cam`.
 Ours / approximations: distance fog off (border fog only); random draws are stand-in hashes, not libc (row 369);
-shots drawn as glowing points (§5, cosmetic); the build cursor's red is a tint; the radar is its own terrain-from-above
+projectiles partly drawn as glowing points (§5, rows 420-421); the build cursor's red is a tint; the radar is its own terrain-from-above
 render; mouse-wheel zoom; the pointer drawn on the colony screen only. Not compared on a capture: the scaffold collapse,
 the blink. Open rows: 369, 384 (rain streak pixels), 397 (hold
 with the right button), 398 (tank view across re-entry), 407 (building pick: stale until the pointer moves, posed at

@@ -247,6 +247,7 @@ impl War<'_> {
             let sy = (self.draw(0, 1999) as f32 + y) - 1000.0;
             let sx = (self.draw(0, 1999) as f32 + x) - 1000.0;
             self.add_bomb([start, sx, sy], [top, dx, dy], 10, ground, 1);
+            self.gr_sound(18);
         }
     }
 
@@ -258,6 +259,7 @@ impl War<'_> {
             return;
         }
         self.field.lists.fighters_on = true;
+        self.gr_sound(17);
         let top = h - 1500.0;
         for k in 0..5 {
             let a = (k as f32 / 5.0) as f64 * std::f64::consts::PI * 2.0;
@@ -294,6 +296,7 @@ impl War<'_> {
                         let g = f.ground as i32;
                         let d = [g, (f.vel[1] * t + f.pos[1]) as i32, (f.vel[2] * t + f.pos[2]) as i32];
                         self.add_bomb(f.pos, d, 4000, g, 2);
+                        self.gr_sound(18);
                         f.cooldown = 0;
                     }
                     Some((f.vel[0] + f.pos[0], f.vel[0]))
@@ -341,7 +344,8 @@ impl War<'_> {
     /// The burst of a dying group, a blown mine or a falling building on screen: one particle draw, then
     /// `n` pieces of debris (three draws each), velocities `/ 1.5` for units and mines.
     pub(super) fn burst(&mut self, p: [f32; 3], n: usize, slow: bool) {
-        (self.libc)();
+        let size = (self.libc)() % 70 + 20;
+        self.flash(p, size);
         let k = if slow { 1.5 } else { 1.0 };
         for _ in 0..n {
             let a = (self.libc)();
@@ -512,13 +516,15 @@ impl War<'_> {
             let base = if partner { 0 } else { self.calc_damage(i, 5) };
             let n = self.alive_members(i);
             self.add_rocket(p, 300, t, n.wrapping_mul(base), 4, index);
-            (self.libc)();
+            let r = (self.libc)();
+            self.gr_sound(29 + r % 5);
         }
         if w & 0x400 != 0 && k == 6 {
             let base = if partner { 0 } else { self.calc_damage(i, 6) };
             let n = self.alive_members(i);
             self.add_rocket(p, 300, t, n.wrapping_mul(base), 5, index);
-            (self.libc)();
+            let r = (self.libc)();
+            self.gr_sound(29 + r % 5);
         }
         for (bit, kk, below) in [(1u32, 0usize, 2), (0x2000, 1, 5)] {
             if w & bit != 0 && k == kk {
@@ -526,7 +532,8 @@ impl War<'_> {
                 let steady = self.draw(0, 9) < below;
                 let n = self.alive_members(i);
                 self.add_shell(p, 0x50, t, 2.0, n.wrapping_mul(base), index, steady);
-                (self.libc)();
+                let r = (self.libc)();
+                self.gr_sound(23 + r % 3);
             }
         }
         if w & 0x1000 != 0 && k == 9 {
@@ -543,6 +550,7 @@ impl War<'_> {
             let base = if partner { 0 } else { self.calc_damage(i, 8) };
             let n = self.alive_members(i);
             self.add_bolt_b([z - 15.0, x, y], 300, t, n.wrapping_mul(base), index, 0);
+            self.gr_sound(18);
         }
         if w & 4 != 0 && k == 3 {
             let tag = if partner { 0 } else { owner };
@@ -552,7 +560,8 @@ impl War<'_> {
             } else {
                 let n = self.alive_members(i);
                 self.add_paralyser(p, 300, t, n.wrapping_mul(100).wrapping_add(tag));
-                (self.libc)();
+                let r = (self.libc)();
+                self.gr_sound(29 + r % 5);
             }
         }
         if w & 0x100 != 0 && k == 4 {
@@ -561,11 +570,13 @@ impl War<'_> {
                 let base = self.calc_damage(i, 4);
                 base.wrapping_mul(self.alive_members(i))
             };
-            (self.libc)();
+            let r = (self.libc)();
+            self.gr_sound(19 + (r & 3));
             let tp = if t < 0 { self.building_point(-t) } else { let v = self.u(t); [v.rt.z - 15.0, v.pos.0, v.pos.1] };
-            for _ in 0..16 * 9 + 2 {
+            for _ in 0..16 * 9 {
                 (self.libc)();
             }
+            self.hit_fx(tp);
             let n = self.alive_members(i);
             dmg = n.wrapping_mul(dmg);
             dmg = self.real_damage(t, dmg, tp[1] - x, tp[2] - y);
@@ -582,6 +593,7 @@ impl War<'_> {
             for _ in 0..60 {
                 (self.libc)();
             }
+            self.gr_sound(43);
             let n = self.alive_members(i);
             let dmg = n.wrapping_mul(base);
             let dmg = self.real_damage(t, dmg, tp[1] - x, tp[2] - y);
@@ -837,8 +849,7 @@ impl War<'_> {
                 sh.vel = [sh.vel[0] / sp * 20.0, sh.vel[1] / sp * 20.0, sh.vel[2] / sp * 20.0];
             }
             if dist < 60.0 {
-                (self.libc)();
-                (self.libc)();
+                self.hit_fx(sh.pos);
                 let dmg = self.real_damage(sh.target, sh.dmg, sh.vel[1], sh.vel[2]);
                 if self.damage(sh.target, dmg, sh.by) {
                     self.kill(sh.target);
@@ -877,8 +888,7 @@ impl War<'_> {
                     }
                     m.pos = [m.vel[0] + m.pos[0], m.vel[1] + m.pos[1], m.vel[2] + m.pos[2]];
                     if m.target != NONE && Self::missile_close(&m) {
-                        (self.libc)();
-                        (self.libc)();
+                        self.hit_fx(m.pos);
                         let dmg = self.real_damage(m.target, m.dmg, m.vel[1], m.vel[2]);
                         if self.damage(m.target, dmg, m.by) {
                             self.kill(m.target);
@@ -894,8 +904,7 @@ impl War<'_> {
                     }
                     m.pos = [m.vel[0] + m.pos[0], m.vel[1] + m.pos[1], m.vel[2] + m.pos[2]];
                     if m.target != NONE && Self::missile_close(&m) {
-                        (self.libc)();
-                        (self.libc)();
+                        self.hit_fx(m.pos);
                         let t = m.target;
                         if m.dmg & 1 != 0 && t >= 0 && t != NONE && self.u(t).flags & flag::TURRET == 0 {
                             let n = self.alive_members(t);
@@ -950,8 +959,7 @@ impl War<'_> {
                             let dy = v.pos.1 - m.pos[2];
                             let dx = v.pos.0 - m.pos[1];
                             if dx * dx + dy * dy < radius {
-                                (self.libc)();
-                                (self.libc)();
+                                self.hit_fx(m.pos);
                                 let dmg = if m.kind == 1 { m.dmg.wrapping_mul(20) } else { (m.dmg as f64 * 1.5) as i32 };
                                 if self.damage(j, dmg, m.by) {
                                     self.kill(j);

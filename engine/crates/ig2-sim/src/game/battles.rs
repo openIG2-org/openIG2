@@ -646,6 +646,9 @@ impl Game<'_> {
         let mut rng = self.state.rng();
         let mut libc = self.libc;
         let mut raised = Vec::new();
+        // SP: the colony screen shows `shown`'s battlefield (`AktKep == 3`, `AktPlanet`); the canonical view keeps every
+        // field off screen, so that the machines' libc draws and list-B debris agree.
+        let shown = self.sp_battles.colony.filter(|_| self.view == ViewMode::Classic && !g.multiplayer);
         for &p in planets {
             let mut field = self.state.take_ground_field(p);
             let r = self.planet_rec(p);
@@ -673,7 +676,7 @@ impl Game<'_> {
                 story_bonus: adat_i32(&adat, 0x70).wrapping_add(adat_i32(&adat, 0x74)),
                 players: g.pp2 as i32,
                 prev_planet_owner: m.u8(va::PLANETS + ((p - 1) * PLANET_SIZE) as u32 + 0x20),
-                on_screen: false,
+                on_screen: shown == Some(p),
                 player_ki: m.read(va::PLAYER_KI, EMPIRES).try_into().unwrap(),
             };
             let mut draw = || libc.rand();

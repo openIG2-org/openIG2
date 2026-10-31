@@ -316,6 +316,9 @@ pub struct World<'r> {
     pub videos: Vec<crate::video::Request>,
     /// The ground wars' voice lines since the window last took them (planet, `PlaySpeechGrWar` site).
     pub ground_voices: Vec<(usize, Voice)>,
+    /// The ground wars' sounds and flashes since the window last took them (planet, [`GroundEvent::Sound`] or
+    /// [`GroundEvent::Flash`]).
+    pub ground_fx: Vec<(usize, GroundEvent)>,
     /// `HangLejatszasKell` (exe 0xbae26c, `InitNewGame` step 6: the campaign type) as the first `Starmap_Belep`
     /// takes it for the start voice ([`crate::audio::Audio::play_start_voice`]).
     pub start_voice: Option<i32>,
@@ -466,6 +469,14 @@ fn ground_voices(events: &[GameEvent]) -> impl Iterator<Item = (usize, Voice)> +
     })
 }
 
+/// The ground wars' sounds and flashes among `events`.
+fn ground_fx(events: &[GameEvent]) -> impl Iterator<Item = (usize, GroundEvent)> + '_ {
+    events.iter().filter_map(|e| match *e {
+        GameEvent::Battle(BattleEvent::GroundSide { planet, event: event @ (GroundEvent::Sound(_) | GroundEvent::Flash { .. }) }) => Some((planet, event)),
+        _ => None,
+    })
+}
+
 impl<'r> World<'r> {
     /// Load `save` into the sim. `exe_volatile` = globals the save doesn't carry, from the user's exe image.
     pub fn load(save: &SaveGame, rules: &'r GameRules, tech_defaults: &[u8], volatile: &[(u32, Vec<u8>)]) -> Self {
@@ -575,7 +586,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, scenario: false }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, scenario: false }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -628,6 +639,7 @@ impl<'r> World<'r> {
         self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.ground_war_routed |= events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
         self.ground_voices.extend(ground_voices(&events));
+        self.ground_fx.extend(ground_fx(&events));
         // The orders' outcomes; the screens keep the local empire's.
         self.order_events.extend(events.iter().filter_map(|e| if let GameEvent::Order(o) = e { Some(*o) } else { None }));
         self.colony_events.extend(events.iter().filter_map(|e| if let GameEvent::ColonyOrder(o) = e { Some(*o) } else { None }));
@@ -783,6 +795,7 @@ impl<'r> World<'r> {
             _ => None,
         }));
         self.ground_voices.extend(ground_voices(&self.game.events[from..]));
+        self.ground_fx.extend(ground_fx(&self.game.events[from..]));
         if let Some(p) = self.colony {
             self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
         }
@@ -870,6 +883,7 @@ impl<'r> World<'r> {
         self.realtime.extend(self.game.events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.ground_war_routed |= self.game.events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
         self.ground_voices.extend(ground_voices(&self.game.events));
+        self.ground_fx.extend(ground_fx(&self.game.events));
         let snap = crate::prof::scope("t_snap");
         let mut next = Snapshot::read(&self.game);
         drop(snap);

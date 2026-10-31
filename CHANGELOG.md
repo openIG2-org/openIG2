@@ -34,7 +34,8 @@ Getting the game from "every part works" to "a player can install it and play it
   menu, so the campaign episodes that need them can be completed.
 - Attacking the campaign's story planet now plays out as in the original.
 - In single player, a planet invaded in real time is fought out on its colony screen: the landed vehicles leave
-  their dropships, the battle runs and the planet keeps or changes its owner.
+  their dropships, the battle runs and the planet keeps or changes its owner. The war has its sounds (shots, hits,
+  explosions, mines, air strikes) and its hit flashes, shot models and debris.
 - The tutorial locks input like the original (blocked and greyed keys, screens and buttons), and its chapters 1-3
   and 5 play through; chapter 4 runs up to its ground battle. `ig2-client --tutorial N` starts chapter N.
 - Internet games: the host can make a room private and share a join code, and can switch on UPnP / NAT-PMP port

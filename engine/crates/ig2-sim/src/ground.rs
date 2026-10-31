@@ -524,6 +524,12 @@ pub enum GroundEvent {
     /// A `WF::PlaySpeechGrWar` site was reached (spec §11.12), whether or not anyone watches: the colony screen
     /// showing the planet plays it.
     Voice(Voice),
+    /// `PlaySound(&Gr_Hangok[idx], 0)` (exe 0x55cd20, gated: `PlaySoundGrWar` 0x48c620 or the gate inlined): on
+    /// the shown planet outside `Simulate` (spec §11.12). The index's libc draw is made either way.
+    Sound(u8),
+    /// A hit or blast flash (particle type 4, `AddParticle` exe 0x45d270) of `size` at `at` (height, x, y; map
+    /// units, truncated): on the shown planet only (render only).
+    Flash { at: [i32; 3], size: i32 },
 }
 
 /// A ground-war voice line as the sim reaches it (spec §11.12). Whose the unit is decides the line and kind, and
@@ -660,6 +666,28 @@ impl<'a> War<'a> {
         if self.voices.as_deref_mut().is_some_and(|v| v.play(line, kind, en)) {
             (self.libc)();
         }
+    }
+
+    /// `Gr_Hangok[idx]` for the client ([`GroundEvent::Sound`]): the shown planet outside `Simulate`.
+    pub(crate) fn gr_sound(&mut self, idx: i32) {
+        if self.ctx.on_screen && !self.field.simulating {
+            self.events.push(GroundEvent::Sound(idx as u8));
+        }
+    }
+
+    /// A flash for the client ([`GroundEvent::Flash`]): the shown planet only.
+    pub(crate) fn flash(&mut self, at: [f32; 3], size: i32) {
+        if self.ctx.on_screen {
+            self.events.push(GroundEvent::Flash { at: at.map(|v| v as i32), size });
+        }
+    }
+
+    /// A projectile's hit (`WF::Refresh` 0x490890): the flash `rand() % 30 + 10`, then `Gr_Hangok[2 + rand() % 6]`.
+    pub(crate) fn hit_fx(&mut self, at: [f32; 3]) {
+        let size = (self.libc)() % 30 + 10;
+        self.flash(at, size);
+        let r = (self.libc)();
+        self.gr_sound(2 + r % 6);
     }
 
     /// A `PlaySpeechGrWar` site for the client ([`GroundEvent::Voice`]): every site outside `Simulate`.
@@ -1547,7 +1575,8 @@ impl<'a> War<'a> {
                     // The wreck on screen: a flash, 16 pieces of debris, a sound (libc draws only).
                     let p = [u.rt.z, u.pos.0, u.pos.1];
                     self.burst(p, 16, true);
-                    (self.libc)();
+                    let r = (self.libc)();
+                    self.gr_sound(8 + r % 5);
                 }
                 return true;
             }
@@ -1616,7 +1645,8 @@ impl<'a> War<'a> {
         if self.ctx.on_screen {
             self.burst([z, x, y], 16, true);
         }
-        (self.libc)(); // the blast sound
+        let r = (self.libc)();
+        self.gr_sound(8 + r % 5);
         for j in 0..self.n() as i32 {
             if !self.alive(j) || j == i {
                 continue;
@@ -2719,6 +2749,35 @@ mod tests {
         // `Rom::Rom`: a flash and 24 pieces (3 draws each, 2 more per piece in `AddRepesz`).
         assert_eq!(x.draws, 1 + 24 * 5);
         assert_eq!(x.field.lists.missiles.iter().flatten().filter(|m| m.kind == 7).count(), 24);
+    }
+
+    #[test]
+    fn sounds_and_flashes_on_screen_only() {
+        // The test's libc is always 0: a hit's flash is `0 % 30 + 10`, its sound Blast01 (`Gr_Hangok[2]`); a death
+        // burst's flash `0 % 70 + 20` and Blast07 (`[8]`).
+        for on in [true, false] {
+            let mut x = fx();
+            x.ctx.on_screen = on;
+            let mut events = Vec::new();
+            with_war(&mut x, |w| {
+                w.hit_fx([-5.0, 10.0, 20.0]);
+                let b = w.add_tank(2, 200, 2, -5, false, 0, 0, 0);
+                w.unit_damage(b, 10_000_000, NONE);
+                events = w.events.clone();
+            });
+            let fx: Vec<_> = events.into_iter().filter(|e| matches!(e, GroundEvent::Sound(_) | GroundEvent::Flash { .. })).collect();
+            let want = if on {
+                vec![
+                    GroundEvent::Flash { at: [-5, 10, 20], size: 10 },
+                    GroundEvent::Sound(2),
+                    GroundEvent::Flash { at: [0, 198, -198], size: 20 },
+                    GroundEvent::Sound(8),
+                ]
+            } else {
+                vec![]
+            };
+            assert_eq!(fx, want, "on screen {on}");
+        }
     }
 
     #[test]
