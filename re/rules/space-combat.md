@@ -141,7 +141,9 @@ attack a defended planet → `(f, nearest defender fleet within 15 or 0, planet)
    **clears** `Story_SpWarTiltas`, `Story_SpWarSimulateTiltas`, `StoryAdat+0x88/+0x94/+0x98/+0x7c/+0x84`,
    the story battle pacts (`StoryUrharcViszony`), retreat permissions and `StoryUrharcZachkinBarkacs`,
    and then runs the campaign script (story event 1, or the hard-wired fleets 0x439/0x43a), which may
-   set them for this battle: their values before the call don't matter (runtime-confirmed). Unless
+   set them for this battle: their values before the call don't matter (runtime-confirmed). Its inlined
+   `st_lIsTrue(0x439)` sets `StoryError` (0xF23A1C) to 1 when logical 0x439 doesn't exist, so outside the campaign
+   every space battle leaves `StoryError = 1` (sticky until the next story lookup). Unless
    `StoryAdat+0x88` (SP) the attack is a diplomatic incident (`DiplomaciaMegtamadas(o₁, o₂, 0, 0)`; the
    exe's `BirodalomMegtamad` call goes to an empty function, 0x559ad0), then `StoryAdat+0x88 := 0`.
    `Story_SpWarTiltas` → no battle at all.

@@ -611,3 +611,19 @@ the four timers and `MiUtolsoSzarKolonizalas` 0, centre 0, scouting grid 0, desi
 `FRISSIT_Viszony`; empires without planets die; categories 1..=10 cleared (`+0x0c, +0x1c, +0x02, +0x10, +0x20, +0x04,
 +0x14`). `INIT_MI_KIESETT(e)` (alive and not human-controlled): the same per-empire reset with `NoUpgrade = 720`
 (no grid reset), then `FRISSIT_MI_DESIGN(e, true)` if AI.
+
+## 14. Long-run pace (observed)
+Generated galaxies run AI-only in ig2.exe (`tools/trace/run_soak.py`: the humans handed to the AI as §13's dropped
+player, top speed, every empire's planets, fleets and money once a game month) and in the sim
+(`ig2-client --playthrough skirmish|mp`, `IG2_PLAYTHROUGH_DEBUG=1`) show the same pace:
+- **Skirmish** (the menu's defaults, 3 computer opponents, 4 start planets each), exe 2327-03 → 2329-08: the AI
+  empires keep their 4 planets and 1 fleet, their money climbs from 50,000 to 170,000–230,000; only the AI-run human
+  takes a fifth planet. The sim's skirmish AIs keep 4 planets for years too.
+- **MP galaxy** (40 planets, humans 1 and 2, AIs 3 and 6; `InitNewGame(seed, 2, 0, 1)`), exe 2327-03 → 2334-11:
+  every empire keeps its single home planet and 1 fleet for 7.5 years. Start money: humans 125,000, AIs 49,198.
+  Race 3 is the one whose money climbs (35,000 → 108,000) while the others drain (race 6: 49,000 → 151). The sim's
+  MP galaxy shows the same (there the humans are 1 and 3, so the hoarder is the autopilot's race 3).
+Why: the home yard's ship line (§5) is refilled with warships (`count` 3 for a `+0x36` design) and gets the colony
+ship only when idle; MP halves AI production (`production-research.md` §3, `MP and AI: s ×= 0.5`); a race whose
+autobuild never adds ship capacity (`+0x70` stays 1,000) can't spend its production pool and hoards. Not a port
+bug: no change. Exact values differ with the seed; the pattern is what's checked.
