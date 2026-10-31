@@ -483,9 +483,11 @@ pub fn retreat_window(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, m: [f32;
     crate::kit::fader::fader(f, hud.white, v, [400.0, 380.0, w as f32 * 6.0, 44.0], [0.0, 20.0, 30.0], 60.0, [0.0, 15.0, 25.0], 30.0);
     let col = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
     let h = retreat_hover(hud, m);
-    font.text(f, v, &hud.texts.get(0xb, 1, 1), 400.0, 383.0, w, 2, Align::Centre, col(2), None);
-    font.text(f, v, &hud.texts.get(3, 4, 2), 400.0, 395.0, w, 3, Align::Centre, col(if h == 1 { 2 } else { 1 }), None);
-    font.text(f, v, &hud.texts.get(3, 4, 3), 400.0, 409.0, w, 3, Align::Centre, col(if h == 2 { 2 } else { 1 }), None);
+    // The prompt centred in its `w` cells from x 400 (flags 5), "Yes" and "No" centred on the box's middle (flags 7).
+    let mid = 400.0 + 3.0 * w as f32;
+    font.text(f, v, &hud.texts.get(0xb, 1, 1), 400.0, 383.0, w, 2, Align::Field, col(2), None);
+    font.text(f, v, &hud.texts.get(3, 4, 2), mid, 395.0, w, 3, Align::Centre, col(if h == 1 { 2 } else { 1 }), None);
+    font.text(f, v, &hud.texts.get(3, 4, 3), mid, 409.0, w, 3, Align::Centre, col(if h == 2 { 2 } else { 1 }), None);
 }
 
 #[cfg(test)]

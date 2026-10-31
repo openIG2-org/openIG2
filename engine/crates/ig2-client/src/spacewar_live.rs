@@ -225,9 +225,6 @@ impl Live {
         if let Some(big) = &shown.big {
             crate::spacewar_hud::big_box(&mut frame, hud, &virt, &shown, big);
         }
-        if self.ui.retreat_window {
-            crate::spacewar_hud::retreat_window(&mut frame, hud, &virt, mouse);
-        }
         crate::spacewar_hud::notices(&mut frame, hud, &virt, [b.human_retreated, b.ai_retreated, self.ui.formation(b)], self.ui.column[0], self.ui.fade);
         if self.ui.mp_waiting(b) {
             crate::spacewar_hud::waiting(&mut frame, hud, &virt, self.ui.fade);
@@ -255,6 +252,10 @@ impl Live {
             // `a2az` (Hungarian articles; the other languages' texts have no markers).
             let t = if hud.texts.lang == ig2_formats::text::Lang::Hu { crate::diplomacy::a2az(&t) } else { t };
             crate::spacewar_hud::banner(&mut frame, hud, &virt, &t, now.saturating_sub(t0), self.ui.fade);
+        }
+        // `WriteRetreatWindow` is the frame's last text (spec §3 step 14), over the console and the radar.
+        if self.ui.retreat_window {
+            crate::spacewar_hud::retreat_window(&mut frame, hud, &virt, mouse);
         }
         // The tooltip (`GFX_DateMoneyScrollFade`'s fader pass 3) and the cursor (`UpdateFrame`): `MousePointerType` 0 → 1,
         // 2 → 5, 3 → 7, 4 → 6; 1 keeps the hot-spots' type 1.

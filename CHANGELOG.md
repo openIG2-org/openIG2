@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Space battle: the retreat question fits inside its box and shows over the radar, as in the original.
 - Spy screen: an open drop-down list now covers the panel texts under it, as in the original.
 - Spy screen: it opens without a short freeze.
 - The game window, the taskbar and the program file have an icon of their own.
