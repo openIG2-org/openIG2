@@ -561,6 +561,7 @@ mod words {
     pub const NO_CODE: &[u8] = b"Join code: none (no network address)";
     pub const COPIED: &[u8] = b"The join code is on the clipboard";
     pub const RELAY: &[u8] = b"Relay server (optional): ";
+    pub const ADDRESS: &[u8] = b"Address or join code:";
 }
 
 /// A typed relay address ("host" or "host:port", the default port [`ig2_net::rendezvous::DEFAULT_PORT`]); empty is
@@ -1164,7 +1165,7 @@ impl MpScreen {
                 text(f, format!("{lock}{}", a.name).as_bytes(), 136.0, y, 2, Align::Left, c);
                 text(f, format!("{}/{}", a.humans, a.slots).as_bytes(), 500.0, y, 2, Align::Right, c);
             }
-            text(f, &d.texts.get(14, 5, 2), 130.0, 266.0, 2, Align::Left, 0x25);
+            text(f, words::ADDRESS, 130.0, 266.0, 2, Align::Left, 0x25);
             // A long address (a join code) scrolls: its end shows, or from the cursor on when that is further left.
             let first = self.address.text.len().saturating_sub(ADDRESS_SHOWN).min(self.address.cursor);
             let shown = &self.address.text[first..(first + ADDRESS_SHOWN).min(self.address.text.len())];

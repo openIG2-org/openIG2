@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- The multiplayer join page labels its field "Address or join code", so a pasted join code is where to put it.
 - Story offers sent from the diplomacy screen's special menu now reach their episodes.
 - While the tutorial runs, the Options game page shows "Ground battle simulate" and "Space battle simulate" off and greyed out; your own settings come back afterwards (ADR 0019).
 - The credits video shows from its first frame instead of staying black for ten seconds.
