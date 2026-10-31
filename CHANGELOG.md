@@ -5,22 +5,33 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+### 0.7.81 (beta)
+Since 0.7.56.
+
+**Game**
+
 - The starmap now shows the campaign's info lines (story hints such as countdowns) top left, with the chat lines below them.
 - The ground-war music now ends with the battle: the main track starts when the war is over or you return to the starmap.
 - In a ground war, tanks stand on the planet's ground instead of floating above it, and the landing ships fly in and set them down on screen, also while the game is paused.
-- W/A/S/D move the camera on the starmap; a new Remake option "WASD camera" can also turn them on in the colony view.
-- Multiplayer: the host can let defeated players stay and watch the game (room option "Defeated players"; off keeps the original's exit to the menu).
-- Multiplayer: with the same room option, anyone can join a running game with Join under a new name to watch it.
 - Space battle: the retreat question fits inside its box and shows over the radar, as in the original.
+- Spy screen: an open drop-down list now covers the panel texts under it, as in the original.
+- Spy screen: it opens without a short freeze.
+- The game window, the taskbar and the program file have an icon of their own.
+- Space battles: the mouse pointer and its tooltip stay on top of the top bar.
+
+**New Remake options** (Options, game page)
+
+- W/A/S/D move the camera on the starmap; a new Remake option "WASD camera" can also turn them on in the colony view.
 - Options: typing a save name over a used slot no longer shows the old name behind it (Remake row "Clean name entry"; off shows the original's look).
 - Starmap and space battle: the turning model in the bottom-left info box stays inside its box (Remake row "Models inside boxes"; off shows the original's look).
 - Space battle: the defend/attack slider no longer runs through its label (Remake row "Slider under label"; off shows the original's look).
 - Hungarian games: the article before a name reads "a" or "az" instead of a stray character on the message line, in messages, diplomacy and battle banners (Remake row "Hungarian articles"; off shows the original's look).
 - Production view, transfer panel and fleet panel: the Exit label is centred on its button (Remake row "Centred Exit label"; off shows the original's look).
-- Spy screen: an open drop-down list now covers the panel texts under it, as in the original.
-- Spy screen: it opens without a short freeze.
-- The game window, the taskbar and the program file have an icon of their own.
-- Space battles: the mouse pointer and its tooltip stay on top of the top bar.
+
+**Multiplayer**
+
+- The host can let defeated players stay and watch the game (room option "Defeated players"; off keeps the original's exit to the menu).
+- With the same room option, anyone can join a running game with Join under a new name to watch it.
 
 ### 0.7.56 (beta)
 Since 0.7.48.
