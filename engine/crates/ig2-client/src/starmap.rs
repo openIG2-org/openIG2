@@ -1075,18 +1075,6 @@ impl View {
                 None => f.push(a.white, Blend::Alpha, Instance::new(kind::MARKER, c, [half[1]; 2], a.empire(fl.owner, dim))),
             }
         }
-
-        // Hover (the client's own cue; the original has none).
-        if let Some(h) = self.hover.filter(|h| Some(*h) != self.selected) {
-            let at = match h {
-                Pick::Planet(i) => curr.planets.iter().find(|q| q.index == i).and_then(|p| self.star_box(p)).map(|(c, r)| (c, (r * 0.5).max(8.0 * self.scale))),
-                Pick::Fleet(i) => fleets.iter().find(|q| q.slot == i).and_then(|q| self.fleet_box(q)).map(|(c, h)| (c, h[0])),
-            };
-            if let Some((c, r)) = at {
-                let ring = r + 3.0 * self.scale;
-                f.push(a.white, Blend::Alpha, Instance { param: [(ring - 1.0 * self.scale) / ring, 0.0], ..Instance::new(kind::RING, c, [ring; 2], [1.0, 1.0, 1.0, 0.6]) });
-            }
-        }
         f
     }
 
