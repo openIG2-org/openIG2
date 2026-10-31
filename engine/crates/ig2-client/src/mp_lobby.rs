@@ -2071,6 +2071,40 @@ mod tests {
         eprintln!("a joiner's order ran on both machines after {ticks} ticks");
     }
 
+    /// Issue #32: the host's pause stops the date on both machines (the session keeps turning), and the joiner's
+    /// un-pause starts it again.
+    #[test]
+    fn a_pause_stops_the_date_on_every_machine() {
+        let Some((mut a, mut g)) = two_worlds() else { return };
+        let step = |a: &mut crate::world::World, g: &mut crate::world::World| {
+            a.pump();
+            g.pump();
+            a.tick();
+            g.tick();
+        };
+        let ido = |w: &crate::world::World| w.game.state.mem.i32(ig2_sim::save::va::IDO);
+        let turn = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().turn;
+        for _ in 0..10 {
+            step(&mut a, &mut g);
+        }
+        a.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::Pause { paused: true } });
+        for _ in 0..20 {
+            step(&mut a, &mut g);
+        }
+        assert!(a.paused() && g.paused());
+        let at = (ido(&a), ido(&g), turn(&a));
+        for _ in 0..40 {
+            step(&mut a, &mut g);
+        }
+        assert_eq!((ido(&a), ido(&g)), (at.0, at.1), "the date while paused");
+        assert!(turn(&a) > at.2 + 10, "the turns went on");
+        g.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::Pause { paused: false } });
+        for _ in 0..20 {
+            step(&mut a, &mut g);
+        }
+        assert!(!a.paused() && ido(&a) > at.0 && ido(&g) > at.1, "the date after the un-pause");
+    }
+
     /// Each machine's diplomacy screen shows its own contact list (`AktPlayerek`, multiplayer.md §5.1): the joiner's
     /// is its copy beside the canonical one, the host's the canonical one.
     #[test]

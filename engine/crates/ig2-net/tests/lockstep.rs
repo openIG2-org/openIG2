@@ -178,6 +178,44 @@ fn two_peers_stay_in_lockstep() {
     assert_ne!(solo.peers[0].0.hashes.last(), s.peers[0].0.hashes.last());
 }
 
+/// A player's pause (0x407, room speed 4) stops the clock and the tick on every machine while the turns go on, and
+/// the un-pause starts them again (`time-and-rng.md`, the tick gate); at another room speed the pause is ignored.
+#[test]
+fn a_pause_stops_the_shared_clock() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    for speed in [4, 2] {
+        let mut state = state.clone();
+        state.mem.set_u8(va::MULTIPLAYER, 1);
+        state.mem.set_i32(va::PROGRAM_SEBESSEG, speed);
+        let mut s = Session::new();
+        for (slot, empire) in [(1, 6), (2, 3)] {
+            s.join(slot, empire, |_| {
+                let mut g = game(state.clone(), &rules);
+                g.set_pause(false, true);
+                Peer::new(slot, empire, g, DEFAULT_DELAY)
+            });
+        }
+        let ido = |s: &Session, i: usize| s.peers[i].0.game.state.mem.i32(va::IDO);
+        let pause = |s: &mut Session, i: usize, on: bool| s.peers[i].0.issue(Command::Starmap { order: StarmapCmd::Pause { paused: on } });
+        s.run_to(10, |_| {});
+        pause(&mut s, 0, true);
+        s.run_to(20, |_| {});
+        let paused_at = ido(&s, 0);
+        s.run_to(30, |_| {});
+        let paused = speed == 4;
+        assert_eq!(s.peers.iter().all(|(p, _)| p.game.paused()), paused, "speed {speed}");
+        assert_eq!(ido(&s, 0) == paused_at, paused, "speed {speed}: the date while paused");
+        if paused {
+            assert_eq!(ido(&s, 1), paused_at);
+        }
+        pause(&mut s, 1, false);
+        s.run_to(40, |_| {});
+        assert!(ido(&s, 0) > paused_at && ido(&s, 1) > paused_at, "speed {speed}: the date after the un-pause");
+        agree(&s.peers);
+        assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    }
+}
+
 #[test]
 fn a_peer_rejoins_from_a_snapshot_and_the_log() {
     let Some((rules, state)) = common::setup(SAVE) else { return };

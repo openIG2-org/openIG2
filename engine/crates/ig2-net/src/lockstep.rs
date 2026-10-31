@@ -511,8 +511,12 @@ impl<'r> Peer<'r> {
                     s.command.apply(&mut self.game, s.issuer);
                 }
             }
-            self.game.advance_clock();
-            self.game.run_tick();
+            // The shared pause (`IdoPause`, set by a player's 0x407) stops the clock and the whole tick, as the
+            // original's tick gate does (`time-and-rng.md`); the turns keep coming so the un-pause can arrive.
+            if !self.game.paused() {
+                self.game.advance_clock();
+                self.game.run_tick();
+            }
             // `take_events`, not the vector itself: it finishes the battlefield hand-offs and resets their place in
             // the list (emptied behind its back, the next tick's first hand-offs were skipped, more or fewer on each
             // peer as their events differ).

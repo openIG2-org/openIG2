@@ -42,6 +42,7 @@ Since 0.7.2.
 **Multiplayer**
 
 - The game runs at the single-player pace (it ran twice as fast), and orders run within 100-200 ms on a LAN; over the internet the delay follows the slowest player's connection.
+- The pause button stops the date, the money and the fleets for every player.
 - Hosting asks your router to open the game port (UPnP / NAT-PMP) at once; the room's port-mapping line switches it off.
 - When a player drops, leaves or is kicked, the computer plays their empire; a player who rejoins gets it back.
 - An optional room setting, "Space battle formations" (off by default), lets every human side with six or more ships pick a formation before a real-time space battle; the battle waits for the other players.

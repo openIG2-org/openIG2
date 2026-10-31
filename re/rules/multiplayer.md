@@ -356,6 +356,11 @@ deterministic under test; nothing in it touches the sim except the injected comm
 - **Pause**: `HostSession::pause` / `ClientSession::pause` (`Msg::Session(SessionMsg::Pause)`); the session holds
   while any human's pause stands. Every change of who is paused, awaited (with the grace left) or away goes to every
   peer as `SessionMsg::Status(HoldStatus)`.
+- **The time pause (0x407)**: a player's pause button (room speed 4 only, `Game::set_pause`) sets `IdoPause` on
+  every machine through the bundles; each turn then still applies its commands (so the un-pause can arrive) but skips
+  the clock step and the tick, as the original's tick gate (`time-and-rng.md`, Simulation tick): the date, money and
+  fleets stand still while the turns go on (`Peer::run_turn`). Tested by `lockstep.rs::a_pause_stops_the_shared_clock`
+  and `mp_lobby.rs::a_pause_stops_the_date_on_every_machine`.
 - **Order results**: every machine runs the `MULTIGET_*` handlers, which update the issuer's own screen; ours: each
   turn's order and colony-order events go to the screens' queues (`World::order_events`, `colony_events`) on every
   machine and the screens filter by their empire (tested by `mp_lobby.rs::a_joiners_order_result_reaches_its_screens`).
