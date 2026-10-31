@@ -1476,6 +1476,11 @@ mod tests {
         let Some((install, save, rules, tables, defaults, volatile)) = quick1() else { return };
         let mut w = World::load(&save, &rules, &defaults, &volatile);
         let en = stage(&mut w);
+        // A second applicant in slot 4 (the cursor stays within the roster).
+        let mut sp = w.game.state.spies();
+        sp.roster[en][4] = Spy { applicant: 1, ..spy(b"Delta", state::HOME, 6, 2) };
+        sp.count[en] = 4;
+        w.game.state.store_spies(&sp);
         let b = Bench { rules: &rules, tables: &tables, t: SpyTexts::new(&crate::ui::UiTexts::load(&install), &crate::ui::names_txt17(&install, false)), en };
         w.game.state.push_spy_report(&spy::Report { kind: 2, a: 3, x: [0, en as i32, 0, 0, 0, 0, 0, 0, 0], ..Default::default() });
         w.game.state.push_spy_report(&spy::Report { kind: 2, a: 4, x: [0, en as i32, 0, 0, 0, 0, 0, 0, 0], ..Default::default() });
