@@ -1014,6 +1014,37 @@ mod tests {
         assert!(w.story_ui.contains(&StoryUi::Messages));
     }
 
+    /// The screen's list takes the sim's place (`AktUzenetPointer`, here moved by the screen before), so the row
+    /// clicked is the entry the sim opens (`KiertekelUjuzenet`: pointer + row; re/rules/info-messages.md §7.3).
+    #[test]
+    fn a_clicked_row_opens_the_entry_the_sim_opens() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let kinds = &rules.inbox.kinds;
+        let plain = kinds.iter().find(|k| !k.1 && !k.2 && kinds.iter().all(|j| j.0 != k.0 || (!j.1 && !j.2))).expect("a plain kind").0;
+        let mut w = World::new_game(crate::new_game::tutorial(&install, 1, 4242, &rules).unwrap());
+        for _ in 0..8 {
+            w.game.inbox_call(ig2_sim::story::StoryEvent::NewMessage { id: plain, arg: 0 });
+        }
+        let n = w.game.state.inbox().count as usize;
+        w.send(ig2_sim::game::MessageOrder::Scroll { pointer: 4, row: -1 }.into());
+        w.pump();
+        let mut s = crate::messages_screen::MessagesScreen::default();
+        (s.debounce, s.opened) = (5, true);
+        s.sync(ig2_sim::game::inbox_place(&w.game.state));
+        assert_eq!(s.first, 4);
+        assert_eq!(s.press([50.0, 230.0], n), crate::messages_screen::Press::Open(7));
+        assert!(ig2_sim::game::inbox_open_allowed(&w.game.state));
+        for o in std::mem::take(&mut s.orders) {
+            w.send(o.into());
+        }
+        w.pump();
+        assert_eq!(ig2_sim::game::dialogue_in_progress(&w.game.state), Some(7));
+    }
+
     /// The main menu without a save stands on campaign 1's start, but as no started campaign: no start voice and no
     /// clips queued, so the title is followed by the menu's music, not the human's start voice.
     #[test]

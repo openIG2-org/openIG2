@@ -585,8 +585,10 @@ impl Dialogue {
 /// The screen's UI state.
 #[derive(Debug, Clone, Default)]
 pub struct MessagesScreen {
-    /// `AktUzenetPointer`.
+    /// `AktUzenetPointer` (the sim's, [`MessagesScreen::sync`]).
     pub first: usize,
+    /// The sim's pointer when an arrow moved the list: it is taken back only once the sim has moved on from it.
+    waiting: Option<i32>,
     pub open: Option<Dialogue>,
     /// `LenyomasValtozo`: the arrows take a press only after 5 UI frames.
     pub debounce: u32,
@@ -666,11 +668,26 @@ impl MessagesScreen {
         self.opened = !animated;
         self.want_open = self.open.is_some();
         self.open_asked = false;
+        self.waiting = None;
         // `Messages_Belep`: `MsgOldTime = SDL_GetTicks()`.
         if let Some(d) = &mut self.open {
             d.held = 0.0;
         }
         (self.closing, self.started, self.zero_seen, self.gone, self.kilep, self.left) = (false, false, false, false, false, false);
+    }
+
+    /// The list's place from the sim (`ig2_sim::game::inbox_place`): `Messages_Belep` scrolls to the first unread
+    /// entry, an automatic message to its own, a shrinking inbox leaves it where the sim has it. An arrow's move waits
+    /// until the sim has taken it.
+    pub fn sync(&mut self, (pointer, row): (i32, i32)) {
+        if let Some(w) = self.waiting {
+            if w == pointer && self.first as i32 != pointer {
+                return;
+            }
+            self.waiting = None;
+        }
+        self.first = pointer.max(0) as usize;
+        self.row = row;
     }
 
     /// Hold the screen open (snapshots): the list, or the message at 30.
@@ -833,6 +850,7 @@ impl MessagesScreen {
             Some(2) if self.debounce == 5 && !busy => {
                 self.debounce = 0;
                 if self.first > 0 {
+                    self.waiting.get_or_insert(self.first as i32);
                     self.first -= 1;
                     if self.row != -1 {
                         self.row = if self.row < 3 { self.row + 1 } else { -1 };
@@ -843,6 +861,7 @@ impl MessagesScreen {
             Some(1) if self.debounce == 5 && !busy => {
                 self.debounce = 0;
                 if self.first + 4 < n {
+                    self.waiting.get_or_insert(self.first as i32);
                     self.first += 1;
                     if self.row != -1 {
                         self.row = if self.row < 1 { -1 } else { self.row - 1 };
@@ -1055,6 +1074,27 @@ mod tests {
         assert_eq!(s.orders, [MessageOrder::Open { row: 3 }, MessageOrder::Open { row: 0 }, MessageOrder::Scroll { pointer: 1, row: -1 }]);
         // Spot 10 (the whole screen) is off: a press outside the others does nothing.
         assert_eq!(s.press([300.0, 470.0], 6), Press::None);
+    }
+
+    /// The list stands where the sim has it (`AktUzenetPointer`): a stale place isn't clicked through, an arrow's
+    /// move holds until the sim has taken it; a row is taken by the inbox's count alone (`Messages_Main`).
+    #[test]
+    fn the_list_follows_the_sims_place() {
+        let mut s = MessagesScreen { debounce: 5, opened: true, ..Default::default() };
+        s.sync((5, -1));
+        assert_eq!(s.first, 5);
+        // The top row is entry pointer + 3.
+        assert_eq!(s.press([50.0, 230.0], 10), Press::Open(8));
+        s.press([165.0, 195.0], 10);
+        assert_eq!(s.first, 6);
+        // The sim hasn't taken the scroll yet: its old place doesn't pull the list back.
+        s.sync((5, 3));
+        assert_eq!(s.first, 6);
+        s.sync((6, -1));
+        assert_eq!((s.first, s.row), (6, -1));
+        // The inbox shrank under the pointer: the exe opens pointer + row (the window finds no entry there).
+        assert_eq!(s.press([50.0, 230.0], 8), Press::Open(9));
+        assert_eq!(s.press([50.0, 380.0], 2), Press::Open(6));
     }
 
     #[test]

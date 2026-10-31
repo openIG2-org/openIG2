@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- The messages screen opens at the right place in the list, and a click opens the message you clicked.
 - Urgent messages open the messages screen and play at once, as in the original.
 - Multiplayer: the game no longer stays stuck after a space battle (a player who rejoined or resumed mid-battle, or had Options open when it ended, now leaves it too), and a battle's end no longer pauses everyone.
 - Multiplayer: a full-screen video (your own defeat or victory) no longer stalls the others or gets you dropped.

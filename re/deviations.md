@@ -35,6 +35,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 408 | spy missions, story 861/863 | the sim's spy pass never asks the story, so story spy missions don't resolve and 863's CampaignOver is unreachable | yes | campaign/elem.md 861 |
 | 409 | diplomacy specials, stories 857/858/860 | the diplomacy specials never reach the stories' routes (`ig2-sim/src/diplomacy.rs` :1365) | yes | campaign/elem.md 857 |
 | 412 | starmap, wormholes | the arrows between known wormhole pairs of `Show_Stars2d3d` are not drawn | minor | starmap.md §3.5 |
+| 416 | messages, list arrows | the client blocks the list arrows while a dialogue runs and leaves them live while an automatic message waits; the exe (`Messages_Main` 0x508560, the `DAT_00dabdd8 == -1` tests) gates them only on no automatic message waiting | minor | messages.md §6 |
 
 ## Keep
 

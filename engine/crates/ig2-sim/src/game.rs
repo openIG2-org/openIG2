@@ -50,7 +50,7 @@ pub mod new_game;
 pub use colony_orders::{repair_price, ColonyOrder, ColonyOrderEvent};
 pub use design_orders::{DesignOrder, DesignRecord};
 pub use info_orders::InfoOrder;
-pub use message_orders::{choice_count, choice_disabled, choice_part, dialogue_in_progress, MessageOrder};
+pub use message_orders::{choice_count, choice_disabled, choice_part, dialogue_in_progress, inbox_open_allowed, inbox_place, MessageOrder};
 pub use orders::{OrderEvent, StarmapOrder};
 pub use realtime::{RealTime, RealTimeEvent, SpBattles};
 pub use research_orders::ResearchOrder;

@@ -70,6 +70,16 @@ pub fn dialogue_in_progress(state: &crate::save::SaveState) -> Option<usize> {
     (state.mem.i32(at::FOLYAMATBAN_U) != -1).then(|| state.mem.i32(at::CURRENT)).filter(|&i| i >= 0).map(|i| i as usize)
 }
 
+/// The list's place: `AktUzenetPointer` (the oldest entry shown, the bottom row) and `AktUzenet0to3` (−1 none).
+pub fn inbox_place(state: &crate::save::SaveState) -> (i32, i32) {
+    (state.mem.i32(at::POINTER), state.mem.i32(at::ROW))
+}
+
+/// `Messages_Main` takes a row (hot-spot 3): no dialogue in progress, the last one over, no automatic message waiting.
+pub fn inbox_open_allowed(state: &crate::save::SaveState) -> bool {
+    state.mem.i32(at::FOLYAMATBAN_U) == -1 && state.mem.u8(at::OVER) != 0 && state.mem.i32(at::AUTOMATIC) == -1
+}
+
 /// One write of the messages screen (the human's input or the screen's own step).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageOrder {
@@ -324,8 +334,7 @@ impl Game<'_> {
                 self.set(at::ROW, row);
             }
             MessageOrder::Open { row } => {
-                // `Messages_Main` takes a row only with no dialogue running and no automatic message waiting.
-                if self.g(at::FOLYAMATBAN_U) != -1 || self.state.mem.u8(at::OVER) == 0 || self.g(at::AUTOMATIC) != -1 {
+                if !inbox_open_allowed(&self.state) {
                     return;
                 }
                 let n = self.state.inbox().count;

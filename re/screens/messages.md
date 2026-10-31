@@ -186,7 +186,7 @@ Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzene
 only after `LenyomasValtozo` reached 5 UI frames); 3 the inbox `(UBAXSz, 218, 157, 176)`: the row by quarters (top =
 `AktUzenet0to3` 3), only rows holding a message, only when no dialogue is running and no message picked still types (`DAT_00dabda0 == −1`, reset by `MessagesGfx2D_2`
 once typed; `FolyamatbanU == −1` and
-`ParbeszedVege`); 4 the answers `(210, 430, 340, 46)` by quarters; 5 the map `(201, 204, 334, 188)`; 6 the text
+`ParbeszedVege`); the client mirrors the sim's pointer and row every UI frame (`MessagesScreen::sync`, `ig2_sim::game::inbox_place`), so the entry shown is the entry `KiertekelUjuzenet` opens; 4 the answers `(210, 430, 340, 46)` by quarters; 5 the map `(201, 204, 334, 188)`; 6 the text
 `(210, 18, 333, 156)`; 7 `(0, 0, 195, 180)`, 8 `(586, 0, 54, 392)`, 9 `(0, 410, 143, 70)`, 10 the whole screen: back to
 `MessagesElottiScreen`. A press inside x 186..512, y 1..167 types the rest at once (`Novelo` 0.001; right button:
 `SkipAll` too) and stops the voice. `FRISSIT_Messages2` (every 10th UI frame) starts the automatic messages

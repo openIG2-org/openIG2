@@ -1151,7 +1151,9 @@ impl App {
                 }
             }
             crate::ui::Screen::Messages => match h.messages.press(at, self.world.ui.inbox.len()) {
-                crate::messages_screen::Press::Open(i) => h.open_message(&self.install, &self.world.ui, i),
+                // The sim refuses the row while a dialogue or an automatic message holds the screen.
+                crate::messages_screen::Press::Open(i) if ig2_sim::game::inbox_open_allowed(&self.world.game.state) => h.open_message(&self.install, &self.world.ui, i),
+                crate::messages_screen::Press::Open(_) => {}
                 crate::messages_screen::Press::Leave => leave = true,
                 crate::messages_screen::Press::None => {}
             },
@@ -3882,6 +3884,7 @@ impl App {
                 }
             }
             if on_messages {
+                h.messages.sync(ig2_sim::game::inbox_place(&world.game.state));
                 // A dialogue the sim opened by itself (an automatic message, one taken up again) is shown.
                 if let Some(i) = ig2_sim::game::dialogue_in_progress(&world.game.state) {
                     if h.messages.open.as_ref().is_none_or(|d| d.index != i) {
