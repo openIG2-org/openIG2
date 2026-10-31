@@ -3666,6 +3666,7 @@ impl App {
         if self.video.is_some() || !self.video_queue.is_empty() {
             self.video_frame();
             if self.video.is_some() {
+                self.mp_run_on();
                 return;
             }
         }
