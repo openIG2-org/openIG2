@@ -164,7 +164,7 @@ Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzene
   current line's visible width is counted back to the last `` (`~` −1, else +1; a line starting with `|C` −3); the
   source to its `
 ` (the `` kept) gets `#k#` = the entry's parameter `k` (`+0x10 + 0x14·k`; "#=#" →
-  "(~verror~s)"; in `~f…~s` when the other side speaks); `a2az` converts it for Hungarian (`Lang` 4); then each word
+  "(~verror~s)"; in `~f…~s` when the other side speaks); `a2az` converts it for Hungarian (`Lang` 4; the client converts at display unless `HungarianArticles` is off, ADR 0028, row 437); then each word
   follows a space if `width + strxlen(word) + 1 < 0x36`, else a `` and the word starts the line.
 - Typing (`MessagesGfx2D_2`): `MsgElteltMp += (MsgActTime − MsgOldTime)/500` (`SDL_GetTicks`), one more byte per
   `ParbeszTyperPtrNovelo`, then `MsgOldTime = MsgActTime`. Only that pass (at `mesframe` 30) and the open

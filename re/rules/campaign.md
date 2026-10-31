@@ -141,7 +141,7 @@ entry with `id`, none → nothing; an entry of `GameInfo` (exe 0xE3E3A0, stride 
 old one stays); else appended at `GameInfoMut` (no capacity check: `ClearGameInfo` allocates 100) with `+0 = idx`,
 `+8 = colour` (0 → 1; `KiirStr`'s palette index), `+4` = the line's text when `a1` is NULL, else
 `stringhelper::format(text, a1, a2, a3)` (the texts hold `%s` only), then `a2az` (`Lang == 4` only: never on GOG,
-`re/formats/locale.md` §2). `RemoveGameInfo(id)` (exe 0x540e50): the first entry whose line has `id` leaves, the
+`re/formats/locale.md` §2; the sim keeps the markers, the client converts at display, ADR 0028). `RemoveGameInfo(id)` (exe 0x540e50): the first entry whose line has `id` leaves, the
 rest move down, `GameInfoMut −= 1`. Nothing else writes the list but `ClearGameInfo` (new game) and the load; the
 starmap only draws it (`StarmapGfx2D_3`, exe 0x5ab365). The scripts' texts: a number is `CString(n)` = `"%d"`
 (ELF 0x4f3e00); a planet `Bolygok[p]` (`+0x00`); an empire `Birodalom_Nev[e]`; a tech `Talalmanyok[t]`; dates

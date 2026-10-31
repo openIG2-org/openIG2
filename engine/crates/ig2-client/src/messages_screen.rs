@@ -105,6 +105,8 @@ pub struct Dialogue {
     params: Vec<Vec<u8>>,
     msg: Vec<u8>,
     txt: Vec<u8>,
+    /// A Hungarian game: `TordelveAttesz`'s `a2az` ([`crate::diplomacy::articles`]).
+    hungarian: bool,
     /// `ParbeszPlace` (NUL-padded) and `ParbeszLength`, `ParbeszTyperPtr`.
     pub place: Vec<u8>,
     pub length: i32,
@@ -168,6 +170,7 @@ impl Dialogue {
             params,
             msg: Self::file(install, &format!("msg{id:04}.txt")),
             txt: Self::file(install, &format!("txt{id:04}.txt")),
+            hungarian: install.lang() == ig2_formats::text::Lang::Hu,
             place: vec![0; 0x4000],
             length: -1,
             typed: 0,
@@ -367,6 +370,7 @@ impl Dialogue {
             i += 1;
         }
         let used = i as i32 + 1;
+        let line = crate::diplomacy::articles(&line, self.hungarian);
         // The words: a word that still fits (width + its width + 1 < 0x36) follows a space, else a new line.
         let mut rest = &line[..];
         loop {
@@ -955,6 +959,7 @@ mod tests {
             params: vec![b"Earth".to_vec()],
             msg: msg.to_vec(),
             txt: txt.to_vec(),
+            hungarian: false,
             place: vec![0; 0x400],
             length: 0,
             typed: 0,

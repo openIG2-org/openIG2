@@ -613,7 +613,8 @@ off. Frame 0 hides the model. A transfer panel open at the press closes first (`
 - The exit button (`StarmapInfoOffHoltart` H: f/12 while moving, 1 when up or with the transfer panel):
   `KirakFader((1 − sin(H·π/2))·200 + 445, 380, 176 + addo, 30)` with `addo` stepping by 1 per frame towards 11
   (production), −10 (transfer) or 0; its text `GetString(2, 4, 4)` at x + 30, 390 (len 13, size 3, field-centred,
-  colour 0x25).
+  colour 0x25). The field is centred on x + 82, not on the box, so the label sits 11 px left of centre in the production view
+  (Hungarian capture at 800x600: margins 69/97 px); `CentredExitLabel` (on) centres it, ADR 0029, row 438.
 
 ### 12.3 Texts (`StarmapGfx2D_3` when `ProductMode`)
 The planet's name at (320, 48) size 3 (len 12) or, from 13 characters, (320, 50) size 2 (len 20), centred, colour 1.

@@ -95,6 +95,17 @@ pub fn slider_under() -> bool {
     SLIDER_UNDER.load(Ordering::Relaxed)
 }
 
+/// The "centred Exit label" option (ADR 0029; off = classic): the starmap panels' Exit label is centred on its box.
+static CENTRED_EXIT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_centred_exit(on: bool) {
+    CENTRED_EXIT.store(on, Ordering::Relaxed);
+}
+
+pub fn centred_exit() -> bool {
+    CENTRED_EXIT.load(Ordering::Relaxed)
+}
+
 /// The info box's rectangle (`[5, 423, 162, 52]`) in pixels, when [`set_box_models`] is on.
 pub fn box_model_clip(v: &crate::font::Virtual) -> Option<[f32; 4]> {
     BOX_MODELS.load(Ordering::Relaxed).then(|| {

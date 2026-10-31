@@ -203,7 +203,7 @@ pub struct Texts {
     pub races: Vec<Vec<u8>>,
     /// The techs' localised names (`Talalmanyok[t]`, re/screens/hud.md §4.1).
     pub techs: Vec<Vec<u8>>,
-    /// Whether `a2az` converts articles (`Lang == 4`, Hungarian).
+    /// A Hungarian game: [`articles`] may convert the article markers.
     pub hungarian: bool,
     /// `SpecialLeiro` (`diplomac/special.eng`, `Diplomacy_ReadSpecials`): title, text A, text B, (option, result)s.
     pub specials: Vec<Special>,
@@ -384,6 +384,24 @@ pub fn a2az(s: &[u8]) -> Vec<u8> {
         s = out;
     }
     s
+}
+
+/// The "Hungarian articles" option (ADR 0028; off = classic, as captures and snapshots draw). The GOG build's `Lang`
+/// stays 1 (re/formats/locale.md §2), so the exe never runs `a2az` and shows the markers as they are.
+static ARTICLES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_articles(on: bool) {
+    ARTICLES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a game in Hungarian (`hungarian`) takes the 1999 code's `Lang == 4` paths: under the option.
+pub fn articles_on(hungarian: bool) -> bool {
+    hungarian && ARTICLES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A text as shown: [`a2az`] for a Hungarian game under the option, else the exe's bytes.
+pub fn articles(s: &[u8], hungarian: bool) -> Vec<u8> {
+    if articles_on(hungarian) { a2az(s) } else { s.to_vec() }
 }
 
 /// What the screen reads of the state each frame.
@@ -1441,17 +1459,17 @@ impl Screen {
                 if listy && self.menus[sub as usize].entries.is_empty() || en.off {
                     c = 1;
                 }
-                let text = if t.hungarian { a2az(&en.text) } else { en.text.clone() };
+                let text = articles(&en.text, t.hungarian);
                 font.text(f, vv, &text, x, y, 0, mn.font, Align::Left, col(c, self.row_bright(i % per)), None);
             }
         }
         // The texts: own at (172, 395 + 14i), the other side's at (MenukKezdX − 15, InfonevY + 14i).
         for (i, l) in self.own_text.iter().enumerate() {
-            let l = if t.hungarian { a2az(l) } else { l.clone() };
+            let l = articles(l, t.hungarian);
             font.text(f, vv, &l, 0xac as f32, (0x18b + 14 * i) as f32, 0x50, 2, Align::Left, col(2, self.own_fade / 127.0), None);
         }
         for (i, l) in self.other_text.iter().enumerate() {
-            let l = if t.hungarian { a2az(l) } else { l.clone() };
+            let l = articles(l, t.hungarian);
             font.text(f, vv, &l, mx - 15.0, iy + (14 * i) as f32, 0x50, 2, Align::Left, col(2, self.other_fade / 127.0), None);
         }
         // Names under the heads (and "(dead)").
@@ -1637,6 +1655,8 @@ mod tests {
         assert_eq!(a2az(b"a\x95 Ember"), b"az Ember".to_vec());
         assert_eq!(a2az(b"a\x95 Godan"), b"a Godan".to_vec());
         assert_eq!(a2az(b"A\xB0 orsz\xE1g!"), b"AZ orsz\xE1g!".to_vec());
+        // The message line's "new empire" text (quick-1.sav in Hungarian).
+        assert_eq!(a2az(b"Felfedezted a\x95 Antari Birodalom-t!"), b"Felfedezted az Antari Birodalom-t!".to_vec());
     }
 
     /// quick-1.sav: the human (6) at war with the Shinari (3). Negotiate → cease-fire, send it, the AI's answer

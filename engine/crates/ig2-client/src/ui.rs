@@ -826,8 +826,9 @@ impl Hud {
             let n = s.history.len() as f32;
             crate::kit::fader::fader(f, self.white, &v, [268.0, 22.0, 326.0, n * 10.0 + 5.0], [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
             let c = self.palette.get(0x21).copied().unwrap_or([1.0; 3]);
+            let hu = self.texts.lang == ig2_formats::text::Lang::Hu;
             for (i, t) in s.history.iter().enumerate() {
-                font.text(f, &v, t, 268.0, 26.0 + 10.0 * i as f32, 0x36, 2, Align::Field, c, None);
+                font.text(f, &v, &crate::diplomacy::articles(t, hu), 268.0, 26.0 + 10.0 * i as f32, 0x36, 2, Align::Field, c, None);
             }
         }
         // `GFX_SelectScreens` after `GFX_IdospeedPenzDatum`, its boxes from `GFX_DateMoneyScrollFade`.

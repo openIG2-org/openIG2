@@ -625,7 +625,7 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
   0x477dc0) on the colony screen sets the flag 0x998245 = counter ≠ 0 and then counts it down; `Colony_Belep` clears
   the flag, `Colony_Kilep` zeroes the counter. While the flag is set (whatever the shown planet's war): EN's planet:
   `GetString(3, 2, 5)` with the attacking fleet's owner (`Flottak[WF+0x338]+0x15`, 1..=15) and the planet's name; else
-  `GetString(3, 2, 6)` with the planet's name and its owner's (swapped with `Lang` 4, never on GOG); MP (0xbae2c0):
+  `GetString(3, 2, 6)` with the planet's name and its owner's (swapped with `Lang` 4, never on GOG; the client does it for a Hungarian game unless `HungarianArticles` is off, ADR 0028, row 437); MP (0xbae2c0):
   `"%s (%s) vs. %s (%s)"` = the attacker's empire and `PlayerNev` (exe 0xBAE588 + 11·e), then the owner's;
   `KiirStr(…, 200, 30, 70, 2, 4, 2)` at `min(100, ((900 − c)·−10 + 9000)/5)` = `min(100, 2c)` % brightness.
 - **Unit info** (`ColonyInfoMod` 1, in `StarmapRovidInfoKiir`'s place at (50, 424)): several units: `GetString(3, 2, 33)`

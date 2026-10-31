@@ -204,7 +204,7 @@ the selected empire's entries in list order: text = the special's title (`strncp
 2 000 000` (f64, strict). Main entry 5 links to it; with no entries it is drawn in colour 1 like the empty item
 lists (`KirakMenu`), and a disabled entry is drawn in colour 1 and can't be hovered or picked.
 Picking an entry (release, `ActFomenuSzam` 5) composes two lines without `GetSzoveg`: `KeszAjanlat` = the special's
-text A, line 2 = text B (no substitution, through `a2az`), with menu 0x28; "send now" sends cat 4, `sub` = the index,
+text A, line 2 = text B (no substitution, through `a2az`; converted for a Hungarian game unless `HungarianArticles` is off, ADR 0028, row 437), with menu 0x28; "send now" sends cat 4, `sub` = the index,
 everything else 0, the reason `MiertValaszoltAztAmitValaszolt(EN, e, 2, 3)`. The AI hands it to the story
 (`Story_Diplomacy_Special(SpecialLeiro[sub].id, b)`, `rules/diplomacy.md` §6.2) and answers no; the answer shows
 the special's option `value` and its result (`options[value]`, `results[value]`; value is 0 as sent) as two lines

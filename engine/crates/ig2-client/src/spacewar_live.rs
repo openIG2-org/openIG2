@@ -253,7 +253,7 @@ impl Live {
             t.extend(name(c));
             t.extend(b")");
             // `a2az` (Hungarian articles; the other languages' texts have no markers).
-            let t = if hud.texts.lang == ig2_formats::text::Lang::Hu { crate::diplomacy::a2az(&t) } else { t };
+            let t = crate::diplomacy::articles(&t, hud.texts.lang == ig2_formats::text::Lang::Hu);
             crate::spacewar_hud::banner(&mut frame, hud, &virt, &t, now.saturating_sub(t0), self.ui.fade);
         }
         // `WriteRetreatWindow` is the frame's last text (spec §3 step 14), over the console and the radar.

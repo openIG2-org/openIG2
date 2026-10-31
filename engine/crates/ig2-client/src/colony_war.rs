@@ -765,11 +765,15 @@ impl WarUi {
                 let side = |e: i32| [d.empire_names.get(e.clamp(0, 18) as usize).cloned().unwrap_or_default(), b" (".to_vec(), (d.player_name)(e), b")".to_vec()].concat();
                 Some([side(c.snap.attacker), b" vs. ".to_vec(), side(c.snap.owner as i32)].concat())
             } else if c.foreign() {
-                Some(sprintf_s(&d.line(6), &[&c.snap.planet_name, &owner]))
+                // ADR 0028: the Hungarian line names the owner first, as the exe's `Lang` 4 branch passes them.
+                let hu = crate::diplomacy::articles_on(d.texts.lang == ig2_formats::text::Lang::Hu);
+                let args: [&[u8]; 2] = if hu { [&owner, &c.snap.planet_name] } else { [&c.snap.planet_name, &owner] };
+                Some(sprintf_s(&d.line(6), &args))
             } else {
                 (1..0x10).contains(&c.snap.attacker).then(|| sprintf_s(&d.line(5), &[&d.empire_names[c.snap.attacker as usize], &c.snap.planet_name]))
             };
             if let Some(t) = text {
+                let t = crate::diplomacy::articles(&t, d.texts.lang == ig2_formats::text::Lang::Hu);
                 let rgb = col(2).map(|x| x * k);
                 d.font.text(f, v, &t, 200.0, 30.0, 70, 2, Align::Left, rgb, None);
             }

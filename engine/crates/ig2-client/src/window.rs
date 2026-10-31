@@ -426,6 +426,8 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     crate::kit::layout::set_letterbox(o.letterbox || app.display.letterbox);
     crate::kit::layout::set_box_models(app.display.box_models);
     crate::kit::layout::set_slider_under(app.display.slider_under);
+    crate::diplomacy::set_articles(app.display.articles);
+    crate::kit::layout::set_centred_exit(app.display.centred_exit);
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
         crate::spacewar_screen::go_live(&mut app.world, crate::spacewar_screen::Dump::load(&p)?.battle);
@@ -2986,6 +2988,8 @@ impl App {
         }
         crate::kit::layout::set_box_models(d.box_models);
         crate::kit::layout::set_slider_under(d.slider_under);
+        crate::diplomacy::set_articles(d.articles);
+        crate::kit::layout::set_centred_exit(d.centred_exit);
         if d.live_background != old.live_background {
             self.backdrop.live = d.live_background;
         }
@@ -3951,7 +3955,8 @@ impl App {
             }
             for _ in 0..due_ui {
                 if line_on {
-                    h.scroller.step(&mut || world.pop_message());
+                    let hu = h.texts.lang == ig2_formats::text::Lang::Hu;
+                    h.scroller.step(&mut || world.pop_message().map(|(t, i)| (crate::diplomacy::articles(&t, hu), i)));
                 }
                 // `Info_Main`'s per-frame spots see the hot-spot under the pointer (`AktIkon2`).
                 let spot = if on_info { h.info.spot_at(&self.tables.race_name_x, at, &world.ui) } else { None };

@@ -1227,7 +1227,11 @@ impl Panels {
         }
         let k = self.exit_in();
         if k > 0.0 {
-            let x = ((1.0 - ((k as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0 + 500.0 - 25.0) as f32;
+            let mut x = ((1.0 - ((k as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0 + 500.0 - 25.0) as f32;
+            if crate::kit::layout::centred_exit() {
+                // ADR 0029: the 13-cell field centred on the box (`addo + 0xb0` wide, 30 left of the exe's start).
+                x += ((self.addo + 0xb0) as f32 - 13.0 * d.font.advance(3)) / 2.0 - 30.0;
+            }
             d.text(f, &d.texts.get(2, 4, 4), x.trunc(), 390.0, 13, 3, 0xd, 0x25);
         }
     }

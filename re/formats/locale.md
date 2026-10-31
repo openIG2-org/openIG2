@@ -33,7 +33,7 @@ constellation names.
 `init/config` value `lang` (default `none`) in `{none, ENG, FRA, GER, HUN, ITA, SPA}` (exe 0x854a54..0x854a70);
 for `none` it tries `data\<XXX>\text.dat` for 1..=6 and keeps the first that opens, else 1. The GOG install has
 neither, so `Lang` = 1 (ENG) whatever the text language: the remaster's code paths that test `Lang == 4` (HUN) don't
-run on GOG.
+run on GOG. The client converts the article markers (0x95/0xB0 → "a"/"az") at display in a Hungarian game, as the `Lang` 4 branch would (`HungarianArticles`, on by default; ADR 0028, deviations row 437).
 
 ## 3. Observed
 Frida on this host (`tools/trace/probe_lang.py`: hooks on `CreateFileA/W` and `GetLocaleInfoA`, no `locale.txt`, a
