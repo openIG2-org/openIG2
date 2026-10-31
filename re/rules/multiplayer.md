@@ -252,6 +252,12 @@ that and fixes the per-machine parts:
 - **Away/back**: `Command::PlayerAway` / `PlayerBack`, sent only by the host (`Host::inject`, stamped with the
   dropped empire; a peer's copy is dropped by `Host::pump`). Away = the empire has left every running space
   battle's screen (`SpaceWarVege` waits only for the others); back = that mark is cleared while the battle runs.
+- **Leaving**: the strategic clock waits until every human's 0x44d (`Game::space_battle_waits_on`). Ours: a machine
+  without the battle's screen up while it waits on its empire (a rejoin, a resumed save, a missed start, a battle
+  decided under Options) opens the screen, or sends 0x44d at once when the battle is decided (the client's
+  `mp_battle_check`); the screen's end sends no pause in MP (`SetIdoPause` changes nothing there; sent as a command
+  it would pause every machine). A turn's events reach the screens even when a drop, kick or save ran it. Tested by
+  `lockstep.rs::a_rejoined_player_without_the_screen_lets_the_battle_end`.
 - **Desync, rejoin, MP save**: the battle is in the snapshot and the per-turn hash (version 4), so all three work
   mid-battle through the ordinary paths (ADR 0007 §3–§4).
 - **Parity**: the host's bundle log replayed into one `Game` reproduces every turn's hash the peers reported.

@@ -1121,6 +1121,56 @@ fn a_player_drops_mid_battle_and_rejoins() {
     eprintln!("battle slot {b}: held at {held_at}, away at {away_at}, rejoined at {}, {n} turns agreed, {turns} replayed", snap.turn);
 }
 
+/// A player who rejoins mid-battle has no battle screen up (no `SpaceStarted` reaches it), so only
+/// `Game::space_battle_waits_on` tells its machine that the strategic clock waits for its 0x44d. Each machine leaving
+/// on that once the battle is decided (the client's `mp_battle_check`) ends it on every peer and the clock runs again.
+#[test]
+fn a_rejoined_player_without_the_screen_lets_the_battle_end() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let state = common::space_clash(state);
+    let mut ordered = [false; 2];
+    let (mut s, b) = into_space_battle(&rules, &state, |p, slot| {
+        let Some(b) = slot else { return };
+        let k = p.slot as usize - 1;
+        if !ordered[k] && p.game.realtime.slots[b].active {
+            ordered[k] = true;
+            attack_all(p, b);
+        }
+    });
+    s.host.remove_peer(2);
+    s.peers.remove(1);
+    let file = s.peers[0].0.snapshot().to_file(0, true);
+    let (snap, _) = Snapshot::from_file(&file).unwrap();
+    let rules_ref = &rules;
+    s.join(2, 3, |first| Peer::from_snapshot(2, 3, &snap, rules_ref, DEFAULT_DELAY, first).unwrap());
+    s.host.send_log(2, snap.turn);
+    s.host.inject(3, Command::PlayerBack);
+    let clock = s.peers[0].0.game.state.mem.i32(va::IDO);
+    let mut sent = [false; 2];
+    for _ in 0..60 {
+        let target = s.peers[0].0.turn + 50;
+        s.run_to(target, |p| {
+            p.events.clear();
+            let k = p.slot as usize - 1;
+            if let Some(slot) = p.game.space_battle_waits_on(p.empire) {
+                if p.game.realtime.slots[slot].ended && !sent[k] {
+                    sent[k] = true;
+                    p.issue(Command::SpaceBattleLeft);
+                }
+            }
+        });
+        if s.peers.iter().all(|(p, _)| p.game.state.mem.i32(va::MP_SPACE_BATTLE) == 0) {
+            break;
+        }
+    }
+    assert!(sent.iter().all(|&l| l), "both machines saw the battle wait on them: {sent:?}");
+    assert!(s.peers.iter().all(|(p, _)| p.game.state.mem.i32(va::MP_SPACE_BATTLE) == 0 && !p.game.realtime.slots[b].active));
+    s.run_to(s.peers[0].0.turn + 20, |p| p.events.clear());
+    assert!(s.peers.iter().all(|(p, _)| p.game.state.mem.i32(va::IDO) > clock), "the strategic clock runs again");
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    assert!(agree(&s.peers) > 0);
+}
+
 /// A peer's battle state drifts (as a stray `rand()` in its battle tick would): the host reports it at that turn, and
 /// the rejoin path resyncs it mid-battle (ADR 0011 §6).
 #[test]

@@ -585,6 +585,14 @@ impl Game<'_> {
         }
     }
 
+    /// Canonical view: the running space battle's slot while `empire` hasn't left its screen (0x44d): the strategic
+    /// clock waits on it ([`Game::space_battles_settle`]).
+    pub fn space_battle_waits_on(&self, empire: u8) -> Option<usize> {
+        let m = &self.state.mem;
+        let waits = self.view != ViewMode::Classic && m.i32(at::SPACE_RUNNING) != 0 && (1..9).contains(&empire);
+        (waits && m.i32(at::SPACE_LEFT + 4 * empire as u32) == 0).then_some(self.realtime.current)
+    }
+
     /// Ours (ADR 0011 §5): `empire`'s player is back: on the running space battle's screen again.
     pub fn player_back(&mut self, empire: u8) {
         if self.view != ViewMode::Classic && self.state.mem.i32(at::SPACE_RUNNING) != 0 && (1..9).contains(&empire) {

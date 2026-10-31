@@ -619,6 +619,12 @@ impl<'r> World<'r> {
             self.local_lines.push(line.to_vec());
             self.net_over = true;
         }
+        // The events of turns run outside this pump (a drop, a kick, a save catch the peer up) count too.
+        self.videos.extend(events.iter().filter_map(crate::video::Request::of));
+        self.take_notices(&events);
+        self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
+        self.ground_war_routed |= events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
+        self.ground_voices.extend(ground_voices(&events));
         match r {
             Ok((0, _)) => return,
             Ok(_) => {}
@@ -628,11 +634,6 @@ impl<'r> World<'r> {
                 return;
             }
         }
-        self.videos.extend(events.iter().filter_map(crate::video::Request::of));
-        self.take_notices(&events);
-        self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
-        self.ground_war_routed |= events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
-        self.ground_voices.extend(ground_voices(&events));
         let mut next = Snapshot::read(&self.game);
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
         next.orbit = (self.curr.orbit as f64 + 2.0 * speed as f64 / 1500.0) as f32;

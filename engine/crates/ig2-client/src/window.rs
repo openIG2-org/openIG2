@@ -252,6 +252,8 @@ struct App {
     /// The battle screen while the options screen opened from it is up (`OptionsElottiKep` 0xb): the battle goes on
     /// under it, the starmap shows behind Options (`GFX_Starmap(); SaveScreen(2)`).
     spacewar_parked: Option<crate::spacewar_live::Live>,
+    /// Multiplayer: this machine's 0x44d for the running battle is on its way (`mp_battle_check`).
+    mp_left_sent: bool,
     /// The Options screen while it is up (re/screens/options.md), over the main menu (load only) or the game.
     options: Option<OptionsUp>,
     help: Option<HelpUp>,
@@ -622,6 +624,7 @@ impl App {
             headless: None,
             spacewar: None,
             spacewar_parked: None,
+            mp_left_sent: false,
             options: None,
             help: None,
             help_memory: Default::default(),
@@ -3007,18 +3010,7 @@ impl App {
         for e in std::mem::take(&mut self.world.realtime) {
             match e {
                 RealTimeEvent::SpaceStarted { slot } if self.spacewar.is_none() && self.spacewar_parked.is_none() => {
-                    let Some(cam) = self.view.as_ref().map(|v| v.camera) else { continue };
-                    // `SpaceWar_Belep`: always entered from the starmap.
-                    self.colony = None;
-                    self.world.colony = None;
-                    self.overlay = None;
-                    self.spy = None;
-                    if let Some(g) = &mut self.gpu {
-                        g.assets.planet_meshes.load_battle(&mut g.renderer, &self.install);
-                    }
-                    // `SpaceWar_Belep` exe 0x5628ac: `PlayMusicSpWar(1, 0)` (crossfade) when no battle ran yet.
-                    self.audio.play_music(crate::audio::Music::SpWar, false, human_race(&self.world.game.state));
-                    self.spacewar = crate::spacewar_live::Live::enter(&mut self.world, slot, &cam, &self.install, now);
+                    self.enter_space_battle(slot, now);
                 }
                 // `StartGrWar` (exe 0x4a4a70): 900 when the field is contested (`WF::GetStatus` −1 or −10), any planet;
                 // it also ends the tutorial's `WAITFORBATTLE` (re/rules/tutorial.md §1).
@@ -3060,12 +3052,16 @@ impl App {
                     }
                     if let Some(sw) = self.spacewar.as_mut().filter(|sw| sw.ui.slot == slot) {
                         sw.over(&self.world, now);
-                        self.send(StarmapOrder::Pause { paused: true });
+                        // MP: `SetIdoPause` changes nothing (`leave_battle`); sent, it would pause every machine.
+                        if !self.multiplayer() {
+                            self.send(StarmapOrder::Pause { paused: true });
+                        }
                     }
                 }
                 _ => {}
             }
         }
+        self.mp_battle_check(now);
         self.resume_parked_battle();
         let Some(sw) = &mut self.spacewar else { return };
         sw.pointer = self.cursor_px;
@@ -3075,6 +3071,42 @@ impl App {
         }
         let out = sw.update(&mut self.world, now);
         self.spacewar_out(out);
+    }
+
+    /// `SpaceWar_Belep`: the battle screen for `slot`, always entered from the starmap.
+    fn enter_space_battle(&mut self, slot: usize, now: u32) {
+        let Some(cam) = self.view.as_ref().map(|v| v.camera) else { return };
+        self.colony = None;
+        self.world.colony = None;
+        self.overlay = None;
+        self.spy = None;
+        if let Some(g) = &mut self.gpu {
+            g.assets.planet_meshes.load_battle(&mut g.renderer, &self.install);
+        }
+        // `SpaceWar_Belep` exe 0x5628ac: `PlayMusicSpWar(1, 0)` (crossfade) when no battle ran yet.
+        self.audio.play_music(crate::audio::Music::SpWar, false, human_race(&self.world.game.state));
+        self.spacewar = crate::spacewar_live::Live::enter(&mut self.world, slot, &cam, &self.install, now);
+    }
+
+    /// Multiplayer: every machine's strategic clock waits until each human has left the running battle's screen
+    /// (0x44d). A machine without that screen up (a rejoin, a resumed save, a missed start, a battle decided under
+    /// Options) opens it, or leaves at once when the battle is decided or the screen can't open.
+    fn mp_battle_check(&mut self, now: u32) {
+        let waits = self.world.game.space_battle_waits_on(self.world.game.local_view().empire);
+        if waits.is_none() {
+            self.mp_left_sent = false;
+        }
+        let Some(slot) = waits.filter(|_| self.multiplayer() && !self.mp_left_sent) else { return };
+        if self.spacewar.is_some() || self.spacewar_parked.is_some() || self.view.is_none() {
+            return;
+        }
+        if self.world.game.realtime.slots.get(slot).is_some_and(|b| b.active && !b.ended) {
+            self.enter_space_battle(slot, now);
+        }
+        if self.spacewar.is_none() {
+            self.world.send(Command::SpaceBattleLeft);
+            self.mp_left_sent = true;
+        }
     }
 
     /// `AktKepKell = to` on the battle screen, once its opening zoom is over: `SpaceWar_Kilep`'s phase 1 (exe 0x562b50),
@@ -3133,6 +3165,7 @@ impl App {
                 for c in sw.commands(&o) {
                     self.world.send(c);
                 }
+                self.mp_left_sent |= o == Out::Left;
             }
             match o {
                 Out::Click => self.sounds.push(crate::audio::CLICK),

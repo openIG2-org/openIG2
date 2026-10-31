@@ -6,7 +6,7 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (412).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (414).
 
 ## Open: player-visible
 
@@ -82,6 +82,8 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 384 | colony, rain | the exe's GL lines give ~2× the streak pixels of our thin quads (same lines, length, direction) | no | colony.md §2.6 |
 | 395 | MP rename | a fleet/planet rename travels as `Command::Rename` to every peer; the exe renames on its own machine only | minor | multiplayer.md §5.6 |
 | 401 | starmap, story icons 0x10-0x12 | the exe calls `Story_Special`/`FlottaMozgat`/`HajoDelete` straight from the screen; ours sends `Command::StoryIcon` through the lockstep (0x10/0x11 single player only, as the exe) | no | starmap.md §14.5 |
+| 412 | MP, full-screen videos | the machine keeps pumping its session and running ticks under a video; the exe's `st_ShowAnim` (0x602bb0) blocks, its network side unobserved | no | multiplayer.md §7.2 |
+| 413 | MP, space battle end | a machine without the battle screen up (rejoin, resumed save, battle decided under Options) opens it or sends 0x44d at once (`mp_battle_check`), and the screen's end sends no pause; the exe's behaviour after a rejoin is unobserved | no | multiplayer.md §7.1 |
 
 ## Enhanced proposals (owner decides)
 
