@@ -1202,7 +1202,7 @@ impl View {
     }
 
     /// The radar ranges (spec §6.3): the discs' union in `rrange.bmp`'s colour (planets) or `rrange2.bmp`'s
-    /// (fleets), added at 10 % in gamma space (`SetObjTransparency(1 − 0.1·starmaperosseg·fade)`, the fade from
+    /// (fleets, only outside the planets' discs), added at 10 % in gamma space (`SetObjTransparency(1 − 0.1·starmaperosseg·fade)`, the fade from
     /// zoom 580 to 590), then the `radar.bmp` dots (`FStars` set 2, half size 1.3, red `0xff` or blue `0xc04000`).
     fn radar(&self, f: &mut Frame, a: &Assets, m: &[[f32; 3]; 3], rings: &crate::starmap_radar::Rings) {
         let cam = &self.camera;
@@ -1211,13 +1211,8 @@ impl View {
             f.push(a.white, blend, Instance::new(kind::SPRITE, [cam.size[0] / 2.0, cam.size[1] / 2.0], [cam.size[0] / 2.0 + 1.0, cam.size[1] / 2.0 + 1.0], color));
         };
         // `rrange.xvb`: a fan of 15 triangles around a unit disc's centre.
-        for fleet in [false, true] {
-            let discs: Vec<_> = rings.discs.iter().filter(|d| d.2 == fleet && d.1 > 0.0).collect();
-            if discs.is_empty() || fade <= 0.0 {
-                continue;
-            }
-            full(f, Blend::MaskClear, [0.0; 4]);
-            for &&(centre, r, _) in &discs {
+        let fans = |f: &mut Frame, fleet: bool, blend: Blend| {
+            for &(centre, r, _) in rings.discs.iter().filter(|d| d.2 == fleet && d.1 > 0.0) {
                 let eye = |k: usize| {
                     let t = k as f32 * std::f32::consts::TAU / 15.0;
                     let (sn, co) = ((t as f64).sin() as f32, (t as f64).cos() as f32);
@@ -1231,9 +1226,20 @@ impl View {
                         continue;
                     }
                     if let (Some((c1, _)), Some((c2, _))) = (cam.project_eye(e1), cam.project_eye(e2)) {
-                        f.push(a.white, Blend::MaskMax, Instance::tri(c0, c1, c2, [1.0, 1.0, 1.0, 0.1 * fade]));
+                        f.push(a.white, blend, Instance::tri(c0, c1, c2, [1.0, 1.0, 1.0, 0.1 * fade]));
                     }
                 }
+            }
+        };
+        for fleet in [false, true] {
+            if !rings.discs.iter().any(|d| d.2 == fleet && d.1 > 0.0) || fade <= 0.0 {
+                continue;
+            }
+            full(f, Blend::MaskClear, [0.0; 4]);
+            fans(f, fleet, Blend::MaskMax);
+            // The coplanar discs are depth-tested and the planets' go first: a fleet's shows only outside them.
+            if fleet {
+                fans(f, false, Blend::MaskClear);
             }
             let [r, g, b] = a.radar_fill[fleet as usize];
             full(f, Blend::MaskAdd, [r, g, b, 1.0]);

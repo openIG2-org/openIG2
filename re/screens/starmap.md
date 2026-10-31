@@ -301,7 +301,8 @@ in `starmapszarok`), size 1.3. The surviving circles show their discs: planet p'
 15-segment unit fan, `rrange.bmp` pure red), moved and scaled to the circle by `rotate_stars`; fleets' `rrang2.xvb`
 (`rrange2.bmp`, blue-violet); transparency `1 − starmaperosseg·0.1·fade` (fade 1 up to zoom 580, 0 at 590).
 [obs, captures: a disc adds 10 % of its colour in gamma space (red +25.5, green and blue unchanged), and overlapping
-discs add once (coplanar and depth-tested).]
+discs add once (coplanar and depth-tested).] The planets' discs are drawn first, so where a fleet's disc overlaps a planet's only the red shows [obs,
+issue report; the client masks the fleets' discs out under the planets'].
 
 ### 6.4 Stars (`PulzaljKisCsillag` exe 0x5a05a0, `PulzaljNagyCsillag` exe 0x5a0810; every `ShowStarmap`)
 - The far stars twinkle. Tables at the first call: `rnd1[i] = ((sin(i·82 (f32))/3 + 1)·0.25·180 (f32))/3.1415`,
