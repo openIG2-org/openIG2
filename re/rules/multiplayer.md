@@ -215,7 +215,7 @@ A stored ship design's rename (deviation 96) travels the same way in multiplayer
 (the exe writes `Tervek[EN][AktTerv].name` in place, no `Multi_Send`). Single player keeps the in-place write.
 
 ### 5.7 Order owner checks (ours; deviation 414)
-Issue #24 (`Game::foreign_planet`/`foreign_fleet`): in multiplayer every peer refuses starmap and colony orders on another empire's fleet or planet (the exe's `MULTIGET_Starmap`/`MULTIGET_Colony` check no owner); satellite, colonise, watch, queue, production, transfer and ground orders keep their own checks. Test: `ig2-net/tests/lockstep.rs`.
+Issue #24 (`Game::foreign_planet`/`foreign_fleet`): in multiplayer every peer refuses starmap and colony orders on another empire's fleet or planet (the exe's `MULTIGET_Starmap`/`MULTIGET_Colony` check no owner); satellite, colonise, watch, queue, production, transfer and ground orders keep their own checks. Test: `ig2-net/tests/lockstep.rs`. With the room's spectators option on, every peer also ignores a bundle order whose issuer's empire is dead (`EMPIRE_ALIVE` 0) in canonical view, except the host-only commands (away, back, story): `Peer::run_turn` (§7.1.3).
 
 ## 6. Open
 
@@ -329,6 +329,20 @@ side whose `AddFleet` list has ≥ 6 entries (`Battle::side_lists`) gets a pick 
 - Screen: `SpaceWarUi::mp_formation` on entry (`Game::formation_side`); the start button sends `SpaceReady`, then
   "Waiting for the other players" until the first tick; picks after the start are refused on both sides.
 - A fleet joining during the phase isn't re-placed by later picks (its ships aren't in the side's list).
+
+### 7.1.3 Spectators (ours, ADR 0026, enhanced; deviation 435)
+
+The original's defeated player leaves: `BirodalomMeghal` 0x53b630 → `ExitToMainScreen` 0x5117f0 closes the session
+(`MultiCloseClient(1)` / `MultiCloseServer(-1, true)`; `game-end.md` §2). With the room's "Defeated players" option on
+(`GalaxyOptions::spectators`, kept as `Game::spectators`; snapshot version 8, older saves read it as off; lobby
+protocol 7), the machine whose own empire dies plays the defeat videos and returns to the starmap.
+- It stays a lockstep peer: empty turns and state hashes; a defeated host keeps hosting. Message line: "Your empire has
+  fallen. You can watch the game until you leave it."
+- It sees every planet, fleet and name (`LocalView::spectating`, machine-local, not synced).
+- Its screens' orders are dropped (`World::pump`); every peer ignores a bundle order from a dead empire (§5.7).
+  Chat still works. Leaving = the menu exit (`Session::leave`).
+- Not done: joining a running game as a spectator. Tests: `ig2-net/tests/galaxy.rs`
+  `a_defeated_spectator_stays_in_step_and_orders_nothing`; `ig2-client` `mp_lobby.rs` `a_defeated_joiner_watches_without_orders`.
 
 ### 7.2 The session layer (ours, ADR 0011 §4–§6; `ig2_net::session`)
 

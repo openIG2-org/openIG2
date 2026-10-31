@@ -57,7 +57,7 @@ Every end goes through `MEGHALAS` (the human dies) or `MEGNYERES(videos)` (the h
   The world is kept until a new game or a load replaces it. Multiplayer: `exit_to_main_menu` calls
   `mp_lobby::Session::leave` (`SessionMsg::Leave`: a peer is away at once, no grace; the host leaving closes every
   peer's session at once; lobby protocol v4); a joiner whose host is gone ends with "The host has left the game."
-  (unless a successor takes over: migration in the client, `multiplayer.md` §7.3). The game end is per machine in canonical MP: `empire_dies`/`victory_check` use
+  (unless a successor takes over: migration in the client, `multiplayer.md` §7.3). With the room's "Defeated players: stay and watch" option the MP defeat keeps the session and returns to the starmap (ADR 0026, `multiplayer.md` §7.1.3). The game end is per machine in canonical MP: `empire_dies`/`victory_check` use
   `local_view().empire` and skip the "screen < 0xE" test.
 - `AktKep` is written by `Game::set_screen(kep)` (classic view only; the client passes the shown screen every frame
   before the ticks), so `victory_check`'s "screen < 0xE" test, the fleet split transfer spare (`starmap.md` §10.2) and

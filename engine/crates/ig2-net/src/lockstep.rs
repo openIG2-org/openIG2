@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use ig2_sim::game::{Game, GameEvent, GameRules, Libc, LocalView, ViewMode};
+use ig2_sim::save::va;
 use serde::{Deserialize, Serialize};
 
 use crate::command::{Command, Stamped};
@@ -508,7 +509,12 @@ impl<'r> Peer<'r> {
             let from = self.game.events.len();
             if k == 0 {
                 for s in &b.commands {
-                    s.command.apply(&mut self.game, s.issuer);
+                    // Ours (ADR 0026, the room's option): a dead empire's player orders nothing (a spectator); the
+                    // host's away/back and story messages still run.
+                    let dead = self.game.spectators && self.game.view != ViewMode::Classic && self.game.state.mem.u8(va::EMPIRE_ALIVE + s.issuer as u32) == 0;
+                    if !dead || s.command.host_only() {
+                        s.command.apply(&mut self.game, s.issuer);
+                    }
                 }
             }
             // The shared pause (`IdoPause`, set by a player's 0x407) stops the clock and the whole tick, as the

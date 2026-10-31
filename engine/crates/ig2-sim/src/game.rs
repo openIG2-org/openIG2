@@ -252,6 +252,8 @@ pub struct LocalView {
     pub starmap_mode: i32,
     pub planet: i32,
     pub fleet: i32,
+    /// Ours (ADR 0026): this machine's empire is dead and it watches the game, the whole map shown (canonical only).
+    pub spectating: bool,
 }
 
 /// What a tick asked of systems that aren't ported, or reported to the UI.
@@ -327,6 +329,8 @@ pub struct Game<'r> {
     hand_offs: usize,
     /// The real-time battles of canonical multiplayer (`game::realtime`). Synced.
     pub realtime: RealTime,
+    /// Ours (ADR 0026, the room's option): a defeated human stays and watches instead of leaving. Synced.
+    pub spectators: bool,
     /// The single-player battle screen (ours, classic view; not in the state).
     pub sp_battles: SpBattles,
     /// How the game ended (`GameStarted` 0xBAE297 cleared by `ExitToMainScreen`): `MEGHALAS` and `MEGNYERES` end
@@ -432,6 +436,7 @@ impl<'r> Game<'r> {
             local: LocalView::default(),
             cosmetic: Libc::default(),
             realtime: RealTime::default(),
+            spectators: false,
             sp_battles: SpBattles::default(),
             over: None,
             answering: None,
@@ -672,6 +677,7 @@ impl<'r> Game<'r> {
                     starmap_mode: m.i32(va::STARMAP_MODE),
                     planet: m.i32(va::AKT_PLANET),
                     fleet: m.i32(va::AKT_FLEET),
+                    spectating: false,
                 }
             }
             ViewMode::Canonical { .. } => self.local,

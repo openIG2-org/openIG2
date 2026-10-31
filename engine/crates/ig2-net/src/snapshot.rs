@@ -17,7 +17,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -85,12 +85,14 @@ struct View<'a> {
     transfers: &'a BTreeMap<u8, (i32, i32)>,
     /// The MP formation phase (`RealTime::formation`, ADR 0023; since version 7).
     formation: &'a MpFormation,
+    /// `Game::spectators` (ADR 0026; since version 8).
+    spectators: bool,
 }
 
 /// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state), `T` the version 6 one, `F` the
-/// version 7 one.
+/// version 7 one, `S` the version 8 one.
 #[derive(Deserialize)]
-struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation> {
+struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool> {
     mem: Vec<(u32, ByteBuf)>,
     template: Vec<(String, ByteBuf)>,
     fleets: ByteBuf,
@@ -114,14 +116,15 @@ struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormati
     inboxes: I,
     transfers: T,
     formation: F,
+    spectators: S,
 }
 
-impl<I, T> Owned<I, T, ()> {
-    /// An older state: no formation phase; a version 4 or 5 one (`T = ()`) no transfer panels, a version 4 one
+impl<I, T, F> Owned<I, T, F, ()> {
+    /// An older state: no spectators (off); a version 4..=6 one (`F = ()`) no formation phase; a version 4 or 5 one (`T = ()`) no transfer panels, a version 4 one
     /// (`I = ()`) no inboxes either.
-    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>) -> Owned {
-        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, .. } = self;
-        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: MpFormation::default() }
+    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>, formation: impl FnOnce(F) -> MpFormation) -> Owned {
+        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, formation: f, .. } = self;
+        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: formation(f), spectators: false }
     }
 }
 
@@ -155,6 +158,7 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
         inboxes: s.humans.iter().filter(|(_, h)| !h.inbox.is_empty()).map(|(&e, h)| (e, Bytes(&h.inbox))).collect(),
         transfers: &s.transfer_panels,
         formation: &g.realtime.formation,
+        spectators: g.spectators,
     }
 }
 
@@ -188,6 +192,7 @@ pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)>
         ("inboxes", h(&v.inboxes)),
         ("transfers", h(&v.transfers)),
         ("formation", h(&v.formation)),
+        ("spectators", h(&v.spectators)),
     ]
 }
 
@@ -274,10 +279,11 @@ impl Snapshot {
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
         let o: Owned = match wire::from_slice(&self.state) {
             Ok(o) => o,
-            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, ()>>(&self.state)
-                .map(|o| o.upgrade(|i| i, |t| t))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new())))
-                .or_else(|_| wire::from_slice::<Owned<(), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new())))
+            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, ()>>(&self.state)
+                .map(|o| o.upgrade(|i| i, |t| t, |f| f))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |()| MpFormation::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default())))
+                .or_else(|_| wire::from_slice::<Owned<(), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default())))
                 .map_err(|_| e)?,
         };
         let mut s = SaveState::from_parts(Memory::from_runs(o.mem.into_iter().map(|(at, b)| (at, b.0)).collect()), o.template.into_iter().map(|(n, b)| (n, b.0)).collect());
@@ -317,6 +323,7 @@ impl Snapshot {
         }
         g.realtime = o.realtime;
         g.realtime.formation = o.formation;
+        g.spectators = o.spectators;
         Ok((g, o.pending))
     }
 
@@ -374,7 +381,8 @@ impl Header {
         let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
-        // Version 4 states lack the inboxes, 4 and 5 the transfer panels, 4..=6 the formation phase (read as none).
+        // Version 4 states lack the inboxes, 4 and 5 the transfer panels, 4..=6 the formation phase (read as none),
+        // 4..=7 the spectators option (off).
         if !(4..=VERSION).contains(&h.version) {
             return Err(Error::Version(h.version));
         }

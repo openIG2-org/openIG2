@@ -57,6 +57,7 @@ at the next cleanup.
 - [x] **Desync soak**: long loopback MP games with every order type; trace the untraced MP paths when a
   desync shows (U15 economy, U18 production, U22 AI, U23 ground war; `re/README.md` → Open unknowns).
 - [ ] **Rendezvous / relay service**. The service and the client side are done (ADR 0018, `docs/RENDEZVOUS.md`); left: whether and where to run a public instance (maintainers' decision).
+- [ ] **Multiplayer: join a running game as a spectator** (issue #37's second half; ADR 0026 → Not covered).
 
 ### Player-visible deviations
 - [ ] The rows under "Open: player-visible" in `re/deviations.md`.

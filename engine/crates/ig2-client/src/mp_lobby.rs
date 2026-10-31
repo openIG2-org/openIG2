@@ -480,7 +480,7 @@ mod spot {
 const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
 
 /// The options rows (spec §6).
-const OPTIONS: usize = 6;
+const OPTIONS: usize = 7;
 /// The connection page's buttons' left edges (Host, Join, Saved game, Cancel).
 const BUTTONS: [f32; 4] = [130.0, 227.0, 323.0, 420.0];
 
@@ -562,6 +562,8 @@ mod words {
     pub const SPEED_BY: [&[u8]; 2] = [b"everyone", b"host"];
     pub const FORMATION: &[u8] = b"Space battle formations:";
     pub const FORMATION_BY: [&[u8]; 2] = [b"off (classic)", b"every player picks"];
+    pub const SPECTATORS: &[u8] = b"Defeated players:";
+    pub const SPECTATORS_BY: [&[u8]; 2] = [b"leave (classic)", b"stay and watch"];
     pub const NEED_TWO: &[u8] = b"Two empires are needed to start";
     pub const WAITING: &[u8] = b"Waiting for every player to be ready";
     pub const SAVED: &[u8] = b"Saved game";
@@ -934,7 +936,7 @@ impl MpScreen {
                 if self.is_host() {
                     v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 16.0])]);
                     for k in 0..OPTIONS as u32 {
-                        let y = 74.0 + 40.0 * k as f32;
+                        let y = 74.0 + 34.0 * k as f32;
                         v.push((spot::OPTION + 2 * k, [556.0, y, 30.0, 18.0]));
                         v.push((spot::OPTION + 2 * k + 1, [588.0, y, 30.0, 18.0]));
                     }
@@ -1086,7 +1088,8 @@ impl MpScreen {
                     2 => GalaxyOptions { shape: step(o.shape, 1, 2), ..o },
                     3 => GalaxyOptions { battle_status: step(o.battle_status, 0, 3), ..o },
                     4 => GalaxyOptions { host_time: up, ..o },
-                    _ => GalaxyOptions { formation: up, ..o },
+                    5 => GalaxyOptions { formation: up, ..o },
+                    _ => GalaxyOptions { spectators: up, ..o },
                 };
                 lobby.set_options(n);
             }
@@ -1247,11 +1250,12 @@ impl MpScreen {
                 (words::BATTLES.to_vec(), words::BATTLE[o.battle_status.min(3) as usize].to_vec()),
                 (words::SPEED.to_vec(), words::SPEED_BY[o.host_time as usize].to_vec()),
                 (words::FORMATION.to_vec(), words::FORMATION_BY[o.formation as usize].to_vec()),
+                (words::SPECTATORS.to_vec(), words::SPECTATORS_BY[o.spectators as usize].to_vec()),
             ];
             let mut planets = d.texts.get(15, 2, 8);
             planets.push(b':');
             for (k, (label, value)) in rows.iter().enumerate() {
-                let y = 60.0 + 40.0 * k as f32;
+                let y = 60.0 + 34.0 * k as f32;
                 text(f, if k == 0 { &planets } else { label }, 414.0, y, 2, Align::Left, 0x25);
                 text(f, value, 414.0, y + 18.0, 2, Align::Left, 0x22);
                 if self.is_host() {
@@ -1831,6 +1835,53 @@ mod tests {
             let stand_in = &worlds[0].net.as_ref().unwrap().0.peer().game;
             assert!(stand_in.state.fleets.is_empty(), "the peer holds the stand-in between pumps");
         }
+    }
+
+    /// ADR 0026: with the room's "Defeated players" option on, a joiner whose empire dies stays in the session, sees
+    /// the whole map, and its screens' orders never reach the lockstep; both machines stay in step.
+    #[test]
+    fn a_defeated_joiner_watches_without_orders() {
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(1, &mut net);
+        click(&mut host, spot::OPTION + 2 * 6 + 1, false, &mut net);
+        click(&mut guests[0], spot::READY, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready) && h.state().unwrap().galaxy.is_some_and(|g| g.spectators));
+        let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242, Box::new(hub.clone()))).unwrap().map(|s| crate::world::World::new_mp(s, rules)).unwrap();
+        let mut worlds = vec![mk(b)];
+        worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
+        let turn = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().turn;
+        let joiner = worlds[1].net.as_ref().unwrap().0.peer().empire;
+        let t = std::time::Instant::now();
+        let mut dead = false;
+        while worlds.iter().any(|w| turn(w) < 40) {
+            for w in &mut worlds {
+                w.pump();
+                w.tick();
+            }
+            // The death on both machines at the same turn (as the shared daily check would).
+            if !dead && turn(&worlds[0]) >= 5 && turn(&worlds[0]) == turn(&worlds[1]) {
+                for w in &mut worlds {
+                    w.game.empire_dies(joiner, &[]);
+                }
+                dead = true;
+            }
+            if dead && turn(&worlds[1]) == 25 {
+                worlds[1].send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::Setting { planet: 1, what: 9, value: 3 } });
+            }
+            assert!(t.elapsed() < Duration::from_secs(60), "stalled");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(worlds[1].game.local.spectating && !worlds[0].game.local.spectating);
+        assert!(worlds[1].local_lines.iter().any(|l| l.starts_with(b"Your empire has fallen")));
+        assert!(worlds[1].curr.planets.iter().all(|p| p.known), "a spectator sees every planet");
+        let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!("the host's world") };
+        assert!(!session.host.log.iter().flat_map(|b| &b.commands).any(|c| c.issuer == joiner), "no order from the spectator");
+        assert!(session.host.desyncs.is_empty() && !session.status(Duration::from_secs(1)).away.contains(&joiner));
     }
 
     /// ADR 0021: a joiner whose game drifts is resynchronised by the host, and both players are told on the message

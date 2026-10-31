@@ -3595,7 +3595,9 @@ impl App {
         let race = human_race(&self.world.game.state) as usize;
         let campaign = self.world.game.state.mem.i32(ig2_sim::save::va::CAMPAIGN_TYPE) > 0;
         let names: Vec<String> = reqs.iter().flat_map(|r| r.names(anims, &self.tables.videos, race, campaign)).collect();
-        match (reqs.iter().any(crate::video::Request::ends_game), names.is_empty()) {
+        // A spectator's game goes on after its defeat (ADR 0026).
+        let ends = reqs.iter().any(crate::video::Request::ends_game) && !self.world.game.local_view().spectating;
+        match (ends, names.is_empty()) {
             (true, true) => self.exit_to_main_menu(),
             (true, false) => self.queue_videos(names, false, AfterVideo::MainMenu),
             (false, _) => self.queue_videos(names, false, AfterVideo::Resume),

@@ -31,11 +31,13 @@ pub struct GalaxyOptions {
     /// Ours (ADR 0023, enhanced; off = the original): real-time space battles start with a formation phase for every
     /// human side (`RealTime::formation`).
     pub formation: bool,
+    /// Ours (ADR 0026, enhanced; off = the original): a player whose empire dies stays and watches (`Game::spectators`).
+    pub spectators: bool,
 }
 
 impl Default for GalaxyOptions {
     fn default() -> Self {
-        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false }
+        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false, spectators: false }
     }
 }
 
@@ -49,6 +51,7 @@ impl GalaxyOptions {
             battle_status: self.battle_status.min(3),
             host_time: self.host_time,
             formation: self.formation,
+            spectators: self.spectators,
         }
     }
 }
@@ -111,6 +114,7 @@ impl GalaxyStart {
         game.start_mp_galaxy(&cfg, data);
         game.start_multiplayer(host, humans);
         game.realtime.formation.on = self.options.formation;
+        game.spectators = self.options.spectators;
         game.libc = Libc(session as u32);
         game
     }
@@ -165,7 +169,7 @@ mod tests {
 
     #[test]
     fn options_are_clamped() {
-        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true }.clamped();
-        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true });
+        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true, spectators: true }.clamped();
+        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true, spectators: true });
     }
 }

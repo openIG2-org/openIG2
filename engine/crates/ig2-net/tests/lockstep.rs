@@ -272,7 +272,7 @@ fn local_views_stay_out_of_the_synced_state() {
     // quick-1 is saved paused: run the clock at ×16 so economy days come.
     state.mem.set_i32(va::IDO_SPEED, 16);
     let shown = weather_planet(&state);
-    let look = |empire: u8| LocalView { empire, starmap_mode: 1, planet: shown, fleet: 1 };
+    let look = |empire: u8| LocalView { empire, starmap_mode: 1, planet: shown, fleet: 1, spectating: false };
 
     // The classic view: the same two looks are game state, and the shown planet changes gameplay (the libc stream
     // every later draw of the economy day uses), not just the bytes of the globals.
@@ -305,8 +305,8 @@ fn local_views_stay_out_of_the_synced_state() {
         act(p);
         // Peer 1 browses: a planet, then the starmap, a fleet.
         match (p.slot, p.turn % 7) {
-            (1, 0) => p.show(LocalView { empire: 6, starmap_mode: 1, planet: shown + 1, fleet: 2 }),
-            (1, 3) => p.show(LocalView { empire: 6, starmap_mode: 0, planet: 0, fleet: 3 }),
+            (1, 0) => p.show(LocalView { empire: 6, starmap_mode: 1, planet: shown + 1, fleet: 2, spectating: false }),
+            (1, 3) => p.show(LocalView { empire: 6, starmap_mode: 0, planet: 0, fleet: 3, spectating: false }),
             _ => {}
         }
     });

@@ -169,6 +169,8 @@ impl Snapshot {
         let map = state.starmap();
         let n = state.planet_count();
         let debug = m.u8(va::DEBUGX) != 0;
+        // A spectator (ADR 0026) sees the whole map, as `DebugX` shows it, on its own machine only.
+        let all = debug || game.local_view().spectating;
         let planets = (1..=n)
             .map(|p| {
                 let r = m.read(va::PLANETS + (p * ig2_sim::save::PLANET_SIZE) as u32, ig2_sim::save::PLANET_SIZE);
@@ -180,7 +182,7 @@ impl Snapshot {
                     owner: sp.owner,
                     surface: r[0x22],
                     name: name.iter().map(|&b| b as char).collect(),
-                    known: sp.visible[en] > 0 || debug,
+                    known: sp.visible[en] > 0 || all,
                     blink: r[0xba] != 0,
                     friendly: r[0xbc] & 1 != 0,
                     rally: r[0xac] as usize,
@@ -199,7 +201,7 @@ impl Snapshot {
                 slot,
                 pos: [f.x, f.y],
                 owner: f.owner,
-                visible: f.owner as usize == en || (f.visible[en] != 0 && f.state & 1 == 0),
+                visible: f.owner as usize == en || ((f.visible[en] != 0 || all) && f.state & 1 == 0),
                 target: target(&map, f),
                 order: f.order,
                 flags: f.flags,
@@ -230,7 +232,7 @@ impl Snapshot {
                 (slot, chain)
             })
             .collect();
-        let own_names_only = m.u8(va::MULTIPLAYER) != 0 && !debug;
+        let own_names_only = m.u8(va::MULTIPLAYER) != 0 && !all;
         Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, waypoints, own_names_only }
     }
 
@@ -668,6 +670,11 @@ impl<'r> World<'r> {
         // The events of turns run outside this pump (a drop, a kick, a save catch the peer up) count too.
         self.game.post_local_messages(&events);
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
+        // Ours (ADR 0026): with the room's option a defeated machine stays in the session and watches.
+        if self.game.spectators && events.iter().any(|e| matches!(e, GameEvent::GameOver(ig2_sim::game::GameOver::Lost))) {
+            self.game.local.spectating = true;
+            self.local_lines.push(b"Your empire has fallen. You can watch the game until you leave it.".to_vec());
+        }
         self.take_notices(&events);
         self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.ground_war_routed |= events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
@@ -815,7 +822,9 @@ impl<'r> World<'r> {
         // Multiplayer: the commands go out with the next input and run on every peer `delay` turns later; the
         // session's messages move every frame, not only on ticks (a hop waits a frame, not a tick).
         if let Some((net, _)) = &mut self.net {
-            for c in std::mem::take(&mut self.outbox) {
+            // A spectator's screens order nothing (ADR 0026).
+            let watching = self.game.local.spectating;
+            for c in std::mem::take(&mut self.outbox).into_iter().filter(|_| !watching) {
                 net.peer_mut().issue(c);
             }
             self.mp_pump(false);

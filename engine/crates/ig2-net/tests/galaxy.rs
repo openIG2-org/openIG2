@@ -297,3 +297,59 @@ fn a_lost_player_leaves_and_the_others_play_on() {
         assert_eq!(clients[0].successors(), vec![clients[0].peer.slot], "Bob takes over");
     });
 }
+
+/// ADR 0026: with the room's spectators option a joiner whose empire dies stays in the session; its orders (a
+/// pause here) are ignored on every machine, and the three run on in step; the option survives a snapshot.
+#[test]
+fn a_defeated_spectator_stays_in_step_and_orders_nothing() {
+    let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
+    let rules = common::game_rules(&inst);
+    common::with_start_data(&inst, |data| {
+        use ig2_net::{Command, Snapshot, StarmapCmd};
+        let mut h = LobbyHost::new_galaxy(settings(), 0xD1F, RULES, "Host");
+        assert!(h.set_options(GalaxyOptions { planets: 20, ais: 1, spectators: true, ..GalaxyOptions::default() }));
+        let mut a = join(&mut h, "Alice");
+        let mut b = join(&mut h, "Bob");
+        pump(&mut h, &mut [&mut a, &mut b], |h, c| h.state().members.len() == 3 && synced(h, c));
+        a.ready(true);
+        b.ready(true);
+        pump(&mut h, &mut [&mut a, &mut b], |h, _| h.state().members.iter().skip(1).all(|m| m.ready));
+        assert!(h.set_ready(0, true));
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242).ok().expect("the room starts");
+        let mut clients = vec![started(a, data, &rules).unwrap(), started(b, data, &rules).unwrap()];
+        let alice = clients[0].peer.empire;
+        assert!(hs.own.game.spectators && clients.iter().all(|c| c.peer.game.spectators));
+
+        let mut now = Duration::ZERO;
+        let step = |hs: &mut HostSession, clients: &mut [ClientSession], until: u64, now: &mut Duration| {
+            while hs.own.turn < until || clients.iter().any(|c| c.peer.turn < until) {
+                *now += Duration::from_millis(10);
+                hs.pump(*now, (hs.own.turn < until) as usize).unwrap();
+                for c in clients.iter_mut() {
+                    let n = (c.peer.turn < until) as usize;
+                    c.pump(*now, n).unwrap();
+                }
+                assert!(*now < Duration::from_secs(120), "stalled at {}", hs.own.turn);
+            }
+        };
+        step(&mut hs, &mut clients, 20, &mut now);
+        hs.own.game.empire_dies(alice, &[]);
+        for c in &mut clients {
+            c.peer.game.empire_dies(alice, &[]);
+        }
+        // Alice stays and (a modified client) pauses: nobody's clock stops.
+        clients[0].peer.issue(Command::Starmap { order: StarmapCmd::Pause { paused: true } });
+        step(&mut hs, &mut clients, 60, &mut now);
+        assert!(!hs.own.game.paused() && clients.iter().all(|c| !c.peer.game.paused()), "a dead empire's pause is ignored");
+        assert!(!hs.status(now).away.contains(&alice));
+        assert!(agree(&hs.own, &clients[0].peer) >= 60 && agree(&hs.own, &clients[1].peer) >= 60);
+        assert!(hs.host.desyncs.is_empty(), "{:?}", hs.host.desyncs);
+        // A living player's pause still works.
+        clients[1].peer.issue(Command::Starmap { order: StarmapCmd::Pause { paused: true } });
+        step(&mut hs, &mut clients, 70, &mut now);
+        assert!(hs.own.game.paused() && clients.iter().all(|c| c.peer.game.paused()));
+
+        let (back, _) = Snapshot::capture(&hs.own.game, &[], 60, 0).restore(&rules).unwrap();
+        assert!(back.spectators);
+    });
+}
