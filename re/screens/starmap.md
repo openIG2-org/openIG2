@@ -526,7 +526,7 @@ Drawn in the original's order: the 3D pass with the control panel, then the 2D p
     human's with a satellite: the satellite's tech name (`Talalmanyok[level + 0xe]`) at (50, 457); the owner's
     empire name `BirodalomNev[owner]` at (50, 439) colour 0x23; for an owned, seen planet `GetString(2, 3, 1) +
     ": %d (%+d)"` (population `+0x28`, change `+0x2c`) at (50, 448); for the human's planet the line at (50, 457)
-    steps every 30 `Counter` frames from the planet's selection through `MOR` (`GetString(2, 3, 2) + ": %s"` with
+    steps every 30 `Counter` (the 20 Hz tick, so 1.5 s; the client's `counter(time)` in `starmap_hud.rs`) from the planet's selection through `MOR` (`GetString(2, 3, 2) + ": %s"` with
     `Moral_Nev[(int)(f32)(+0x30 / 100)]`) and the problems `StarmapProblemaRendez` sorts (ELF 0x7082c0: the four
     worst of 1..=19 at ≥ 100000, `"%d%% %s"` with `+0x118 + 4p / 10000` and `Problemak_Nev[p]`), and the
     production line at (50, 466) colour 1: the head ship (or vehicle; alternating every 30 frames when both)

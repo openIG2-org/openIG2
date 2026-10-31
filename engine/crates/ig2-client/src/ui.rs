@@ -539,7 +539,7 @@ impl Hud {
         crate::hud::draw_colony(f, &self.pics, font, self.white, &v, &self.palette, &self.colony_brushes, scene.radar, &c);
         // `ColonyGfx2D_2`: `StarmapRovidInfoKiir(50, 424, 0)` with `StarmapMode` 1, the planet's short info.
         let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
-        let counter = (input.time * 100.0) as i32;
+        let counter = crate::starmap_hud::counter(input.time);
         let sel = crate::orders::Selection { mode: 1, planet: curr.planet, fleet: 0 };
         let ctx = crate::colony_ui::Ctx { state, snap: curr, rules, sim: input.sim, texts: &self.texts, tech_name: &|t| self.tech_name(t) };
         // The ground war's parts (colony.md §11): `Tervek[side]+0x84·design`'s name (+0), the weapon pod's tech name.
@@ -677,7 +677,7 @@ impl Hud {
         if let Some(r) = &m.rename {
             r.draw(f, &d, time * 1000.0);
         }
-        m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, (time * 100.0) as i32, &p.faders.starf, p.exit_fader());
+        m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, crate::starmap_hud::counter(time), &p.faders.starf, p.exit_fader());
     }
 
     /// What of `StarmapGfx2D_3` the battle screen keeps during its opening zoom (re/screens/spacewar.md §5.2):
@@ -691,7 +691,7 @@ impl Hud {
             return;
         }
         let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
-        let counter = (time * 100.0) as i32;
+        let counter = crate::starmap_hud::counter(time);
         let step = self.starmap.step(if sel.mode == 1 { sel.planet } else { 0 }, counter);
         let info = crate::starmap_hud::InfoBox::new(state, rules, &t, sel, step, counter);
         let fleets = curr.fleets_at(prev, alpha);
@@ -709,7 +709,7 @@ impl Hud {
     pub fn draw_starmap_hud(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, faders: &crate::kit::FaderDesign, info_box: bool, globe: Option<TexId>) {
         let Some(font) = &self.font else { return };
         let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
-        let counter = (time * 100.0) as i32;
+        let counter = crate::starmap_hud::counter(time);
         let step = self.starmap.step(if sel.mode == 1 { sel.planet } else { 0 }, counter);
         let info = crate::starmap_hud::InfoBox::new(state, rules, &t, sel, step, counter);
         let fleets = curr.fleets_at(prev, alpha);

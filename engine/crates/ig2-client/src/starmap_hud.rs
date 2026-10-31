@@ -538,6 +538,11 @@ pub(crate) fn problem_order(r: &[u8], debug: bool) -> Vec<usize> {
     order
 }
 
+/// `Counter` (exe 0xBAE05C) at UI time `time` (seconds): one step a 50 ms tick, the clock the info texts rotate on.
+pub fn counter(time: f32) -> i32 {
+    (time * 20.0) as i32
+}
+
 /// The production line: the head ship (line 0) or vehicle (line 1; every other 30 frames when both) and how much
 /// of it is built.
 pub(crate) fn production_line(state: &SaveState, r: &[u8], owner: u8, counter: i32) -> Option<Vec<u8>> {
@@ -670,6 +675,17 @@ pub fn minimap(f: &mut Frame, white: TexId, v: &Virtual, palette: &[[f32; 3]], m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn info_lines_step_every_one_and_a_half_seconds() {
+        // `StarmapRovidInfoKiir` (exe 0x5afc50) steps every 30 `Counter`, a 50 ms tick each (issue #34).
+        let hud = StarmapHud { console: None, rotation: std::cell::Cell::new((0, 0)) };
+        assert_eq!(hud.step(7, counter(10.0)), 0);
+        assert_eq!(hud.step(7, counter(11.45)), 0);
+        assert_eq!(hud.step(7, counter(11.5)), 1);
+        assert_eq!(hud.step(7, counter(13.0)), 2);
+        assert_eq!((counter(1.45) / 30, counter(1.5) / 30), (0, 1));
+    }
 
     #[test]
     fn console_buttons_sink_while_held_and_views_never() {
