@@ -339,7 +339,9 @@ Exe vs ELF: the exe inlines 844's `st_ArrivedS`, `st_ArrivedB`, `st_SpWarStart`,
 `st_ArrivedB` planet test; it tests `BirodalomEl[5]` and the design byte `+0x36` whole (the ELF bit 0) and drops the
 ELF's asserts (`b(8560, 1) ≠ 0`, the class in 1..=4); 862 and 863 call every helper. 856's raider takes the first draw
 for y and the second for x (the ELF the other way round). Quirks kept: 856's raider chases fleet slot `OsszHanyFlotta +
-1` (the loop's end, not the nearest fleet it found); 856's `M(8559)` ends nothing; answer 4 of 8562 starts the raider
+1` (the loop's end, not the nearest fleet it found): a slot past the last fleet, uninitialised heap in the exe (four
+reads on quick-1.sav, `probes/fleet_past_end.js`: owner 0, position (0, 0) or a denormal, the rest varies), read as a
+zeroed record, so the next order upkeep (`fleet-movement.md` §4.1) sends the raider to (0, 0); 856's `M(8559)` ends nothing; answer 4 of 8562 starts the raider
 too; 862's `SetParamStr(8624, …)` writes nothing and reads planet `b(8622)` (never registered); 862's first daily `WIN`
 sets `v(8621) := 1`, read by nothing; 863 registers its four targets with `st_bAddNewAzonosito`'s arguments swapped (so
 `C(8634)` finds `b(8632)`..`b(8635)` missing: planet slot 0); 863's `C(8633)` / `C(8634)` through a ground battle leave

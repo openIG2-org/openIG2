@@ -31,6 +31,7 @@ Getting the game from "every part works" to "a player can install it and play it
   the right-click attack use the same pick.
 - `ig2-client --playthrough mp` plays a whole two-machine multiplayer game to its winner on one computer, comparing both
   machines throughout and saving, resuming and rejoining on the way; no desync is found.
+- Campaign 1 no longer crashes when the planet-toll raider sets out.
 - `ig2-check` loads every file of the install and lists what fails to parse, so a broken install is found before
   playing.
 - A Windows release zip (the client, the checker and a readme; no game data). `ig2-client --version` and the window

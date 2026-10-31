@@ -72,6 +72,8 @@ A battle started by an arrival (§4.3) stops the loop: **later fleets don't move
 ### 4.1 Order upkeep (before moving)
 - Fleet target (kind 2) deleted → clear the order. The visibility test below still runs, on the freed
   slot's **stale record** (`FlottaDelete` only sets the owner byte), so usually nothing more happens.
+  A target past the last slot (story 856) reads uninitialised heap: the port reads a zeroed record (owner 0, at
+  (0, 0), seen by nobody), so a fleet of empire 1..=8 turns to a move to (0, 0).
 - Fleet target no longer visible to the owner (`target.visible[owner] == 0`, not always-visible (bit8 or the
   story "all fleets visible" flag) — or the target is hidden (+0x18 bit0)), SP owner < 9, not debug:
   convert to a move to the target's current position (`FlottaMozgat(f, 1, 0, tx, ty)`; "contact lost"

@@ -26,8 +26,8 @@ at the next cleanup.
 - [x] **Diplomacy specials reach the stories**: a special the AI receives reaches stories 857/858/860
   (`Game::diplomacy_message`); the play-through sends them. Still blocked: 857's purchase needs 2,000,000 credits
   (the AI-played human never has them) and 858 waits for empire 5's death.
-- [ ] **Fleet panic in story 856**: the raider ordered at fleet `OsszHanyFlotta + 1` panics at `fleet.rs:570`
-  (play-through `--seed 1`).
+- [x] **Fleet panic in story 856**: the raider ordered at fleet `OsszHanyFlotta + 1` read a slot past the last fleet;
+  it now reads as a zeroed record, as in the exe.
 - [x] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check): `ig2-client --playthrough mp`.
 - [x] **Tutorial input locks**: the F-key and screen blocks, greyed entries, gate-flag locks and the
   recorded input replacing the live mouse (deviations 141, 174, 198).

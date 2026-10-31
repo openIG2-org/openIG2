@@ -547,6 +547,12 @@ impl Starmap {
         ev.push(StarmapEvent::Merge { into, from });
     }
 
+    /// The fleet record an order's target index reads. Past the last slot (story 856 aims at `OsszHanyFlotta + 1`)
+    /// the exe reads uninitialised heap; read as a zeroed record: owner 0 (not deleted) at (0, 0), seen by nobody.
+    fn target(&self, t: usize) -> Fleet {
+        self.fleets.get(t).cloned().unwrap_or_default()
+    }
+
     /// `SearchFlottahozKozeliBolygo(f, limit, false, false)`: nearest planet by Manhattan distance.
     pub fn nearest_planet(&self, f: usize, limit: f32) -> usize {
         let fl = &self.fleets[f];
@@ -567,10 +573,10 @@ impl Starmap {
         let fl = self.fleets[f].clone();
         let t = fl.target_index();
         if fl.order > 0 && fl.kind == order::FLEET {
-            if !self.fleets[t].alive() {
+            if !self.target(t).alive() {
                 self.order(f, order::NONE, order::POINT, 0.0, 0.0, ctx, ev);
             }
-            let tg = self.fleets[t].clone();
+            let tg = self.target(t);
             let owner = fl.owner as usize;
             let unseen = (tg.visible.get(owner).copied().unwrap_or(0) == 0
                 && tg.flags & flag::ALWAYS_VISIBLE == 0
@@ -619,7 +625,7 @@ impl Starmap {
                 (c, c)
             }
             order::FLEET => {
-                let tg = &self.fleets[t];
+                let tg = self.target(t);
                 let cur = (tg.x, tg.y);
                 let mut aim = cur;
                 if tg.order != 0 && tg.speed > 0.0 {
@@ -627,7 +633,7 @@ impl Starmap {
                     let dest = match tg.kind {
                         order::POINT => (tg.tx, tg.ty),
                         order::PLANET => (self.planets[ti].x, self.planets[ti].y),
-                        _ => (self.fleets[ti].x, self.fleets[ti].y),
+                        _ => { let g = self.target(ti); (g.x, g.y) }
                     };
                     let dd = len(dest.0 - cur.0, dest.1 - cur.1);
                     let ts = step_of(tg.speed);
@@ -714,7 +720,7 @@ impl Starmap {
             }
             let fl = self.fleets[f].clone();
             if fl.alive() && (fl.order == order::MOVE || fl.order == order::ATTACK) && fl.kind == order::FLEET
-                && self.fleets[t].flags & flag::WORMHOLE != 0
+                && self.target(t).flags & flag::WORMHOLE != 0
             {
                 for (w, h) in self.wormholes.iter_mut().enumerate().skip(1) {
                     for (here, other, to) in [(h.fleet_a, h.fleet_b, (h.bx, h.by)), (h.fleet_b, h.fleet_a, (h.ax, h.ay))] {
@@ -737,7 +743,7 @@ impl Starmap {
             }
             let fl = self.fleets[f].clone();
             if fl.alive() && fl.order == order::ATTACK && fl.kind == order::FLEET {
-                let tf = self.fleets[t].flags;
+                let tf = self.target(t).flags;
                 if tf & flag::PROTECTED != 0 {
                     ev.push(StarmapEvent::ProtectedTarget { fleet: f });
                     ev.push(StarmapEvent::StorySpecial([0x12, t as i32, 2, f as i32, 0, 0, 0, 0]));
@@ -771,9 +777,9 @@ impl Starmap {
             let fl = self.fleets[f].clone();
             // Following an own fleet ends in a merge (story arrival save happens either way).
             if fl.alive() && fl.order == order::MOVE && fl.kind == order::FLEET
-                && self.fleets[t].flags & (flag::COLONISING | flag::TERRAFORMING) == 0
+                && self.target(t).flags & (flag::COLONISING | flag::TERRAFORMING) == 0
             {
-                if self.fleets[t].owner == fl.owner {
+                if self.target(t).owner == fl.owner {
                     self.merge(t, f, ctx, arrivals, ev);
                 }
                 let (kind, target, fleet_id, target_fleet_id) = self.arrival_record(f);
@@ -783,7 +789,7 @@ impl Starmap {
             if fl.alive() {
                 if !fl.is_trader() {
                     let following = fl.order == order::MOVE && fl.kind == order::FLEET
-                        && self.fleets[fl.target_index()].flags & flag::WORMHOLE == 0;
+                        && self.target(fl.target_index()).flags & flag::WORMHOLE == 0;
                     if !following {
                         self.continue_route(f, ctx, ev);
                     }
@@ -989,6 +995,18 @@ mod tests {
         assert!(!m.fleets[1].alive(), "the colonist is used up");
         assert!(m.fleets[2].alive() && m.fleets[2].order == order::NONE, "the second one's target became owned: order cleared");
         assert!(ev.contains(&StarmapEvent::ColonyShipFreed { empire: 1 }), "and its colony ship returns to the pool");
+    }
+
+    #[test]
+    fn an_attack_on_the_slot_past_the_last_fleet_turns_into_a_move_to_its_zeroed_spot() {
+        // Story 856's raider is sent after fleet `OsszHanyFlotta + 1`; the exe's slot there read owner 0 at (0, 0)
+        // (probes/fleet_past_end.js on quick-1.sav), so upkeep finds it unseen and moves there.
+        let mut m = map(2);
+        m.fleets[1] = Fleet { owner: 5, x: 50.0, y: 40.0, order: order::ATTACK, kind: order::FLEET, tx: 3.0, ..m.fleets[1].clone() };
+        let (mut c, mut rng) = (ctx(), Streams::default());
+        m.tick(&[], &mut c, &mut rng, &mut ());
+        let f = &m.fleets[1];
+        assert_eq!((f.order, f.kind, f.tx, f.ty), (order::MOVE, order::POINT, 0.0, 0.0));
     }
 
     fn ship(fleet: usize, speed: f32, design_type: i32) -> ShipDesign {
