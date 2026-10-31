@@ -333,6 +333,7 @@ Verified byte-exact in a staged save replay (`traces/2026-10-22-story-ticker.md`
 Sim-code readers of Active/Paused that I did read: `IdoNapValtozott` (ELF, elf3): the automatic monthly save (`Nap==1 && Honap%6==1`, SP, `OptionsKellAutoSave`) is skipped while Active or Paused.
 `FRISSIT_Spy` (elf3 ~lines 232 and 457): while Active/Paused it zeroes one local (`local_a0`) and forces another (`local_51`) to true, i.e. the spy pass behaves differently in the tutorial; exact meaning UNCERTAIN.
 `FRISSIT_Starmap` explore-rename (event 1) and `MULTIGET_Starmap` (event 0x15) as in section 4.
+Client lock: DISABLE OVERRUN sets the battle flags behind the Options rows' back and the exe does not grey them; ours greys "Ground/Space battle simulate" off while the tutorial runs (options.md §14, row 410, ADR 0019).
 
 ## 6. Mouse and keyboard playback
 

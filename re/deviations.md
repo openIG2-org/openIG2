@@ -6,12 +6,13 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (410).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (412).
 
 ## Open: player-visible
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 411 | Options, battle rows | the four battle rows' values are not applied to exe 0xB77230..0xB7723C (`SaveOptions` 0x51b640 / `SetOptions` not ported): switching them changes no battle | yes | options.md §14 |
 
 ## Open: minor
 
@@ -95,3 +96,4 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 263 | overlay screens, background | the default redraws the starmap/colony live under the overlay (`LiveBackground`); classic = the exe's frozen `SaveScreen` picture (ADR 0015) | minor | overlay-background.md |
 | 322 | title video | proposal: music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
 | 402 | options, game page | six "Remake" rows under the original's seven (display mode, resolution, vsync, 4:3 letterbox, live background, one-language names), saved in `ig2-rework-options.dat`; their names and the mode/resolution labels are English only (the game has no strings for them); captures and `--snapshot` stay classic | minor | options.md §14 |
+| 410 | Options, tutorial | while the tutorial runs the "Ground battle simulate" and "Space battle simulate" rows read off and are greyed (stored values kept); the exe leaves them live while `DISABLE OVERRUN` sets the flags behind them (ADR 0019); default on | minor | options.md §14, tutorial.md §5 |

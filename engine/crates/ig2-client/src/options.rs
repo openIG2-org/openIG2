@@ -45,6 +45,8 @@ pub struct Row {
     pub labels: Vec<Vec<u8>>,
     /// Ours: a remake row, drawn after the page's own under the "Remake" heading.
     pub ours: bool,
+    /// Ours: shown off and greyed, its stored value kept (the battle simulate rows under the tutorial, ADR 0019).
+    pub locked: bool,
 }
 
 /// The rows from the user's exe, named as `Options_LoadStrings` (exe 0x51a2c0) names them: row k gets
@@ -73,7 +75,7 @@ pub fn read_rows(exe: &ig2_rules::PeImage, texts: &UiTexts) -> Vec<Row> {
 /// `CheckOptionsDependencies` (exe 0x516e10): a row is on with no dependency, with a positive one while that row is
 /// on, with a negative one while it is off; rows not for multiplayer are off there. An unknown id reads row 0.
 pub fn check_dependencies(rows: &mut [Row], multiplayer: bool) {
-    let values: Vec<(i32, i32)> = rows.iter().map(|r| (r.id, r.value)).collect();
+    let values: Vec<(i32, i32)> = rows.iter().map(|r| (r.id, if r.locked { 0 } else { r.value })).collect();
     let value_of = |id: i32| values.iter().find(|(i, _)| *i == id).or(values.first()).map_or(0, |v| v.1);
     for r in rows.iter_mut() {
         r.enabled = match r.dep {
@@ -81,7 +83,7 @@ pub fn check_dependencies(rows: &mut [Row], multiplayer: bool) {
             d if d > 0 => value_of(d) != 0,
             d => value_of(-d) == 0,
         };
-        if !r.mp_ok && multiplayer {
+        if (!r.mp_ok && multiplayer) || r.locked {
             r.enabled = false;
         }
     }
@@ -344,6 +346,15 @@ impl OptionsScreen {
         };
         o.show_sliders(s.gamma_enabled);
         o
+    }
+
+    /// Ours (ADR 0019): under the tutorial "ground battle simulate" and "space battle simulate" show off and greyed, so
+    /// its battles are fought; the stored values stay for later games.
+    pub fn lock_battle_simulate(&mut self) {
+        for r in self.rows.iter_mut().filter(|r| r.key == "DebugData_grBattle" || r.key == "DebugData_Battle") {
+            r.locked = true;
+        }
+        check_dependencies(&mut self.rows, self.multiplayer);
     }
 
     /// `OptionsCsuszkakKiBe` (ELF 0x5d48c0): page 0 shows music and sound, page 1 gamma (enabled as the hardware
@@ -970,7 +981,7 @@ impl OptionsScreen {
             let over = py >= y as i32 && py < y as i32 + 0xf && (0x1f..=0x117).contains(&px) && self.grab.is_none();
             let (cn, cv) = if !r.enabled { (1, 1) } else if over { (2, 2) } else { (0x22, 0x25) };
             text(f, &r.name, 0x1e as f32, y, r.name.len(), 2, Align::Left, d.col(cn, b2));
-            let (val, c) = match (r.states, r.value) {
+            let (val, c) = match (r.states, if r.locked { 0 } else { r.value }) {
                 _ if !r.labels.is_empty() => (r.labels.get(r.value.max(0) as usize).cloned().unwrap_or_default(), cv),
                 (1, 1) => (d.texts.get(13, 3, 1), cv),
                 (1, _) => (d.texts.get(13, 3, 2), cv),
@@ -1315,6 +1326,19 @@ mod tests {
         assert_eq!(act, Some(Act::Back));
         // Outside the tutorial there is no spot 9.
         assert_eq!(screen().spot_at([450.0, 120.0]), id::SLOTS);
+    }
+
+    #[test]
+    fn tutorial_locks_battle_simulate() {
+        let mut o = screen();
+        o.rows[1].value = 1;
+        o.tutorial = true;
+        o.lock_battle_simulate();
+        assert!(!o.rows[1].enabled && o.rows[2].enabled, "simulate greyed, read as off by its dependant");
+        o.press([150.0, 75.0], &mut |_| {});
+        o.press([40.0, (0x5c + 15 + 2) as f32], &mut |_| {});
+        assert_eq!(o.rows[1].value, 1, "no toggle, the stored value kept");
+        assert!(!o.rows[0].locked && !screen().rows[1].locked);
     }
 
     #[test]

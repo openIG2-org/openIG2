@@ -56,4 +56,4 @@ The key decisions are ADRs in `docs/decisions/`: asset source (0001), toolchain 
 from the user's exe (0004), MP hosting (0005), renderer and client (0006), lockstep and saves (0007), LAN discovery
 and lobby (0008), the 1:1 client (0009), widescreen (0010), real-time battles in lockstep (0011), host migration
 (0012), video decoding (0013), the MP room (0014), the live overlay background (0015), deliberate keeps (0016), one
-language (0017).
+language (0017), the rendezvous service (0018), the tutorial's locked battle switches (0019).

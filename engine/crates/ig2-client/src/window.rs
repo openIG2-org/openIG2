@@ -2217,6 +2217,9 @@ impl App {
         let mp = self.multiplayer();
         let mut screen = crate::options::OptionsScreen::enter(&h.texts, self.opt_rows.clone(), &s, load_only, mp, slots);
         screen.tutorial = self.tutorial.as_ref().is_some_and(|t| t.t.active || t.t.paused);
+        if screen.tutorial {
+            screen.lock_battle_simulate();
+        }
         screen.mp_save = mp && self.world.mp_host();
         // `OptionsHarcFolyik`: `SpaceWar_Kilep` sets it towards Options (exe 0x562c0f), `Colony_Kilep` when the planet's
         // ground war runs (exe 0x466631, `GetWarfareStatus` inlined); `Options_Belep` keeps it only from 3 or 0xb.

@@ -333,3 +333,4 @@ the faders' hover glow `FadeKerettelKerekitDesign`, the research design-return f
 190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open
 differences are the random sparks and the hover glow.
+During the tutorial the two "simulate" rows read off and are greyed (`Row.locked`, `OptionsScreen::lock_battle_simulate`; row 410, ADR 0019); the stored values stay in the settings file. Known bug (row 411): the four battle rows' values are not applied to exe 0xB77230..0xB7723C (`SaveOptions` 0x51b640 / `SetOptions` not ported), so switching them does not change battles.
