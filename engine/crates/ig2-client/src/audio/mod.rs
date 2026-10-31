@@ -503,6 +503,14 @@ impl Audio {
         }
     }
 
+    /// `DeInitSounds(<table>, n)` (exe 0x55c460, a screen's `_Kilep`): every voice of the table's records stops.
+    pub fn deinit(&mut self, table: Table) {
+        let channels: Vec<usize> = self.records.iter().filter(|(id, _)| id.table == table).flat_map(|(_, v)| v.channels.into_iter().flatten()).collect();
+        for ch in channels {
+            self.stop(ch);
+        }
+    }
+
     /// `PlayOrContinueSoundGlobal` (ELF 0x671500): unloaded → `PlaySoundGlobal`; stopped → played again on its
     /// first voice; playing → nothing.
     pub fn play_or_continue(&mut self, id: SoundId) {
@@ -767,6 +775,25 @@ mod tests {
         let inst = inst.expect("valid install");
         let c = decode::chunk(inst.read("dataraw/messagesounds/1/0011_01.ogg").unwrap(), 48000).unwrap();
         assert_eq!(c.len(), 816275);
+    }
+
+    /// `Colony_Kilep` (exe 0x466390) ends the colony's sounds (`DeInitSounds`): the wind `Colony_Hangok[54]` stops
+    /// (IG2_INSTALL_DIR; skipped without it).
+    #[test]
+    fn deinit_stops_the_tables_voices() {
+        let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let inst = inst.expect("valid install");
+        let t = SoundTables::from_exe(&inst.read_raw("ig2.exe").unwrap()).unwrap();
+        let mut a = Audio::new(inst, t, false);
+        a.mixer = Some(Arc::new(Mutex::new(Mixer::new(48000, 32))));
+        let wind = SoundId::new(Table::Colony, 54);
+        a.play(wind);
+        a.play(SoundId::global(7));
+        let ch = a.first_voice(wind).unwrap();
+        let typer = a.first_voice(SoundId::global(7)).unwrap();
+        assert!(a.playing(ch));
+        a.deinit(Table::Colony);
+        assert!(!a.playing(ch) && a.playing(typer));
     }
 
     /// Every table sound and music track of the user's install decodes (IG2_INSTALL_DIR; skipped without it).

@@ -31,6 +31,7 @@ Since 0.7.2.
 - Colony screen: clicking a building's roof, tower or upper part selects it, as in the original; the war cursor and
   the right-click attack use the same pick.
 - Campaign 1 no longer crashes when the planet-toll raider sets out.
+- Leaving a colony for the starmap now cuts off its wind, thunder and war sounds at once, as in the original.
 - A fleet split off on the starmap, the ground-war tick and the victory check now follow the screen you are on, as in
   the original.
 - The late episodes and endings of all three campaigns are now verified in headless play-throughs (the driver answers

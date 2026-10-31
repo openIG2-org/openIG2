@@ -230,6 +230,7 @@ struct App {
     audio: crate::audio::Audio,
     sound_overlay: Option<crate::ui::Screen>,
     sound_spy: Option<bool>,
+    sound_colony: bool,
     /// The sounds the window's input code started this frame (re/screens/audio.md §6), played by `audio_frame`.
     sounds: Vec<crate::audio::SoundId>,
     /// The speakers' lines the window's input code started this frame (re/screens/audio.md §5).
@@ -623,6 +624,7 @@ impl App {
             audio,
             sound_overlay: None,
             sound_spy: None,
+            sound_colony: false,
             sounds: Vec::new(),
             speech: Vec::new(),
             headless: None,
@@ -713,6 +715,14 @@ impl App {
         use crate::audio::SoundId;
         use crate::ui::Screen;
         use ig2_rules::sounds::Table;
+        // `Colony_Kilep` (exe 0x466390): `DeInitSounds` of `Colony_Villamok`, `Colony_Hangok` and `Gr_Hangok` stops
+        // whatever of them still plays (the wind, the thunder, the war).
+        if self.sound_colony && self.colony.is_none() {
+            for t in [Table::Villam, Table::Colony, Table::Gr] {
+                self.audio.deinit(t);
+            }
+        }
+        self.sound_colony = self.colony.is_some();
         for id in self.sounds.drain(..) {
             self.audio.play(id);
         }
