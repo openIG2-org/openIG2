@@ -79,8 +79,8 @@ const X: i32 = 0x1d6;
 
 impl SpyScreen {
     /// The 2D pass in the original's order: `SpyGfx2D_1` (the panels' frames, the names on the pedestals), the
-    /// faders `GFX_Spy` queued (buttons; the pick list's box), `SpyGfx2D_2` (the texts), `SpyGfx2D_3` (the pick
-    /// list's rows).
+    /// faders `GFX_Spy` queued (buttons), `SpyGfx2D_2` (the texts), fader pass 2 (the pick list's box), `SpyGfx2D_3`
+    /// (the pick list's rows).
     pub fn draw(&self, f: &mut Frame, d: &SpyData, g: &Draw2d, spots: &[Spot; 12]) {
         // `SpyGfx2D_1` queues `FadeKeret(6, 248, 172, 217)` and `(464, 248, …)` in (0, 45, 90) at 128 past frame 35,
         // but no capture shows them [obs: the panels' edges are the fill's (2, 20, 26)]: not drawn.
@@ -88,11 +88,10 @@ impl SpyScreen {
         if self.opened && !self.closing {
             self.names(f, d, g, spots);
             self.faders(f, d, g);
+            self.texts(f, d, g);
+            // The pick list's box is fader pass 2, after the texts: its fill dims the labels under it.
             if let Some(p) = self.popup {
                 self.popup_box(f, d, g, &p);
-            }
-            self.texts(f, d, g);
-            if let Some(p) = self.popup {
                 self.popup_rows(f, d, g, &p);
             }
         }
