@@ -315,6 +315,10 @@ deterministic under test; nothing in it touches the sim except the injected comm
 - **Pause**: `HostSession::pause` / `ClientSession::pause` (`Msg::Session(SessionMsg::Pause)`); the session holds
   while any human's pause stands. Every change of who is paused, awaited (with the grace left) or away goes to every
   peer as `SessionMsg::Status(HoldStatus)`.
+- **Under Options and Help**: the time runs on, as in the original (its Options pause, `SetIdoPause` 0x541300,
+  changes nothing in MP): the machine keeps pumping its session and running the ticks due (`World::run_on`); the turns'
+  events wait for the game screens. Ours: tested by `mp_lobby.rs::a_joiner_under_options_keeps_the_session_running`
+  (a joiner under the screen past the keep-alive: turns go on, nobody is dropped).
 - **MP save** (`HostSession::save`): the host's snapshot at the next turn as `Snapshot::to_file(rules, true)`, then
   `IG2RSESS`, a `u32` length and the `SavedSession` (name, scenario, delay, grace, the humans' empires and names;
   `wire` encoding). `MpSave::read` checks the MP flag and the rules fingerprint; `HostSession::resume(lobby, &save,

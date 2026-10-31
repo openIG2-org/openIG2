@@ -657,6 +657,19 @@ impl<'r> World<'r> {
         }
     }
 
+    /// Multiplayer under a full-screen video, Options or Help: the session runs on, as the original's time does in MP
+    /// (`SetIdoPause` 0x541300 has no effect there): the message pass and the ticks due. Their events wait in the
+    /// queues for the game screens' next frame.
+    pub fn run_on(&mut self, clock: &mut ig2_sim::time::TickClock, now_ms: u32) {
+        if self.net.is_none() {
+            return;
+        }
+        self.pump();
+        for _ in 0..clock.advance(now_ms) {
+            self.tick();
+        }
+    }
+
     /// The host's "Close connection" in the wait overlay (`crate::mp_wait`): the drop decides on the state at the next
     /// turn (it catches the peer up), so the game goes in for it.
     pub fn drop_player(&mut self, empire: u8) {

@@ -3651,6 +3651,13 @@ impl App {
         }
     }
 
+    /// Multiplayer: the session runs on under the screens that hold a single-player game
+    /// ([`crate::world::World::run_on`]).
+    fn mp_run_on(&mut self) {
+        let now = self.now_ms();
+        self.world.run_on(&mut self.clock, now);
+    }
+
     fn frame(&mut self) {
         self.send_renames();
         self.take_video_requests();
@@ -3669,10 +3676,12 @@ impl App {
         self.top_menus_frame();
         if self.options.is_some() {
             self.options_game_frame();
+            self.mp_run_on();
             return;
         }
         if self.help.is_some() {
             self.help_game_frame();
+            self.mp_run_on();
             return;
         }
         self.screen_change_step();

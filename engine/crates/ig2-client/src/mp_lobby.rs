@@ -1899,6 +1899,44 @@ mod tests {
         assert_eq!(worlds[0].net_seen.away, [1, 3]);
     }
 
+    /// A joiner under Options, Help or a video (`World::run_on`, the window's frame then runs no game screen) for
+    /// longer than the keep-alive: both machines' turns go on and nobody is dropped.
+    #[test]
+    fn a_joiner_under_options_keeps_the_session_running() {
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(1, &mut net);
+        click(&mut guests[0], spot::READY, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
+        let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242, Box::new(hub.clone()))).unwrap().map(|s| crate::world::World::new_mp(s, rules)).unwrap();
+        let mut a = mk(b);
+        let mut g = mk(started(&mut guests, &mut net).pop().unwrap());
+        let t = std::time::Instant::now();
+        let ms = || t.elapsed().as_millis() as u32;
+        let mut clocks = [0, 1].map(|_| ig2_sim::time::TickClock::new(ig2_sim::time::SIM_TICK_MS, ms()));
+        let turn = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().turn;
+        let under = ig2_net::session::DEFAULT_KEEP_ALIVE + Duration::from_secs(2);
+        while t.elapsed() < under {
+            // The host plays on the starmap at the sim's pace (the frame's pump and ticks due).
+            a.pump();
+            for _ in 0..clocks[0].advance(ms()) {
+                a.tick();
+            }
+            g.run_on(&mut clocks[1], ms());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(turn(&a) > 100 && turn(&g) > 100, "the turns ran: {} {}", turn(&a), turn(&g));
+        for w in [&a, &g] {
+            let (net, epoch) = w.net.as_ref().unwrap();
+            let s = net.status(epoch.elapsed());
+            assert!(s.away.is_empty() && s.waiting.is_empty() && s.migrating.is_empty(), "{s:?}");
+        }
+    }
+
     /// Host migration in the client (ADR 0012, rules/multiplayer.md §7.3) and an MP save resumed from the room: three
     /// machines; every joiner learns where the others listen; the host leaves, Guest0 (the lowest slot left) takes
     /// over on its own listener and Guest1 connects there and resumes from its own state; they agree on every turn.

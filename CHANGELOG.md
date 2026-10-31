@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Multiplayer: opening Options or Help no longer stalls the game for everyone or gets you dropped; the game runs on underneath, as in the original.
 - The multiplayer join page labels its field "Address or join code", so a pasted join code is where to put it.
 - The starmap shows a faint arrow from each of your planets to its rally planet, under the fleet routes.
 - Story offers sent from the diplomacy screen's special menu now reach their episodes.
