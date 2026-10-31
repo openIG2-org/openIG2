@@ -318,6 +318,9 @@ options and returns. The frame's poses are cached at the integer frames 0..=50 a
 (exact at the key frames). `spyFrameValtozo` counts UI frames (the exe's drawn frames). The refusals' lines go to
 `World::local_lines`. The two `SpyGfx2D_1` frames no capture shows (§3) are left out.
 An open pick list's box is drawn after the panel texts (§1.3, fader pass 2), so its fill dims the labels under it.
+The window loads the scene once at start and keeps it (`Rc<SpyScene>`) across openings; the exe loads it on every
+entry (`Spying3DInit` exe 0x58fd10 from `Spy_Belep` 0x58cd50), a load-time difference only. The 61 poses of `spybck2`
+come from one parse (`Model::load_poses`) and each texture is decoded once per path.
 The tutorial's limits (`TutorialSpyMelyikLehet` exe 0x928ea4, set by `SPY MISSION m`, −1 at `TutorialStop`): with a
 value above 0 every other mission is drawn in 0xc (0x25 hovered) like a too dear one (`SpyGfx2D_3` ELF 0x6c3a10)
 and picking one drops the pick silently before the money check (`Spy_Main` ELF 0x6c7360): `SpyData::tutorial_forbids`.

@@ -1175,7 +1175,7 @@ fn spy_context(d: &SpyData) -> spy::SpyContext {
 /// The open spy screen: its state, 3D scene, texts and the head video.
 pub struct SpyView {
     pub screen: SpyScreen,
-    scene: crate::spy_scene::SpyScene,
+    scene: std::rc::Rc<crate::spy_scene::SpyScene>,
     texts: SpyTexts,
     head: Option<crate::spy_scene::HeadVideo>,
     head_race: Option<u8>,
@@ -1186,10 +1186,15 @@ pub struct SpyView {
 }
 
 impl SpyView {
-    pub fn open(r: &mut crate::render::Renderer, install: &ig2_formats::Install, hud: &crate::ui::Hud, d: &SpyData, opening: bool) -> Result<Self, String> {
+    /// `scene` keeps the loaded 3D scene for the next opening: loading it takes a few frames' time.
+    pub fn open(r: &mut crate::render::Renderer, install: &ig2_formats::Install, hud: &crate::ui::Hud, d: &SpyData, opening: bool, scene: &mut Option<std::rc::Rc<crate::spy_scene::SpyScene>>) -> Result<Self, String> {
+        let scene = match scene {
+            Some(s) => s.clone(),
+            None => scene.insert(std::rc::Rc::new(crate::spy_scene::SpyScene::load(r, install)?)).clone(),
+        };
         Ok(Self {
             screen: SpyScreen::enter(d, opening),
-            scene: crate::spy_scene::SpyScene::load(r, install)?,
+            scene,
             texts: SpyTexts::new(&hud.texts, &hud.txt17),
             head: None,
             head_race: None,
@@ -1270,7 +1275,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     let d = SpyData::read(&world.game.state, en, &l.rules, &l.tables);
     // Animated like the exe (`KELLKINYITASDEFAULT` 1): at rest the sphere's `MoveObj` still applies (§2.2). The
     // save's moment is the open screen, or `--spy-frame F` held while opening (closing).
-    let mut v = SpyView::open(r, &l.install, hud, &d, true)?;
+    let mut v = SpyView::open(r, &l.install, hud, &d, true, &mut None)?;
     match o.spy_frame {
         Some(f) => {
             v.screen.pin = Some(f);

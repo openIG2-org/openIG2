@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - Spy screen: an open drop-down list now covers the panel texts under it, as in the original.
+- Spy screen: it opens without a short freeze.
 
 ### 0.7.56 (beta)
 Since 0.7.48.

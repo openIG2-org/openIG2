@@ -226,10 +226,23 @@ impl Model {
         let path = format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase();
         let bytes = install.read(&path).map_err(|e| format!("{path}: {e}"))?;
         let archive = Archive::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
+        Self::posed(&archive, &path, stem, install, texture_dir, frame)
+    }
+
+    /// [`Model::load_at`] for each of `frames`, the file read and parsed once.
+    pub fn load_poses(install: &Install, vector_dir: &str, name: &str, texture_dir: &str, frames: impl IntoIterator<Item = usize>) -> Result<Vec<Self>, String> {
+        let stem = name.trim_end_matches(".xvb").trim_end_matches(".XVB");
+        let path = format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase();
+        let bytes = install.read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let archive = Archive::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
+        frames.into_iter().map(|f| Self::posed(&archive, &path, stem, install, texture_dir, Some(f))).collect()
+    }
+
+    fn posed(archive: &Archive, path: &str, stem: &str, install: &Install, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {
         let scene = archive.scene(Some(stem)).map_err(|e| format!("{path}: {e}"))?.ok_or(format!("{path}: no root node"))?;
         let root = archive.root(Some(stem)).map(|m| m.name.clone()).unwrap_or_default();
         let mut w = Walk {
-            archive: &archive,
+            archive,
             install,
             texture_dir,
             prefix: format!("{}-", root.split('.').next().unwrap_or_default()),
@@ -654,6 +667,23 @@ impl Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poses_from_one_parse_match_each_load() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let poses = Model::load_poses(&install, "vector/spy/", "spybck2.xvb", "textures/spy/", [0, 25, 60]).unwrap();
+        for (m, f) in poses.iter().zip([0, 25, 60]) {
+            let one = Model::load_at(&install, "vector/spy/", "spybck2.xvb", "textures/spy/", Some(f)).unwrap();
+            assert_eq!(m.parts.len(), one.parts.len());
+            for (a, b) in m.parts.iter().zip(&one.parts) {
+                assert_eq!((&a.path, &a.texture), (&b.path, &b.texture));
+                assert!(a.verts.iter().zip(&b.verts).all(|(x, y)| x.pos == y.pos));
+            }
+        }
+    }
 
     #[test]
     fn env_uv_matches_the_exe() {

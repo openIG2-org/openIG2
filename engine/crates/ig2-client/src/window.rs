@@ -146,6 +146,8 @@ struct App {
     overlay: Option<crate::ui::Screen>,
     /// The spy screen, if it is up.
     spy: Option<crate::spy_screen::SpyView>,
+    /// The spy screen's 3D scene, loaded at its first opening and kept for the next ones.
+    spy_scene: Option<std::rc::Rc<crate::spy_scene::SpyScene>>,
     /// The message line's 10 ms UI frames done so far.
     ui_frames: u64,
     /// Multiplayer: the transfer panel as last sent (`Command::TransferPanel`).
@@ -572,6 +574,7 @@ impl App {
             hud: None,
             overlay: None,
             spy: None,
+            spy_scene: None,
             ui_frames: 0,
             sent_transfer: None,
             messages_auto: 0,
@@ -908,6 +911,8 @@ impl App {
         self.world.game.empire_names = hud.empire_names.clone();
         hud.set_one_language(&self.install, self.one_language);
         self.hud = Some(hud);
+        // Loaded with the rest at start: at its first opening it would hold that frame for tens of milliseconds.
+        self.spy_scene = crate::spy_scene::SpyScene::load(&mut renderer, &self.install).ok().map(std::rc::Rc::new);
         self.gpu = Some(Gpu { window, surface, config, renderer, assets, band_target: None });
         Ok(())
     }
@@ -1108,7 +1113,7 @@ impl App {
         }
         let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) else { return };
         let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
-        match crate::spy_screen::SpyView::open(&mut g.renderer, &self.install, h, &d, true) {
+        match crate::spy_screen::SpyView::open(&mut g.renderer, &self.install, h, &d, true, &mut self.spy_scene) {
             Ok(v) => self.spy = Some(v),
             Err(e) => eprintln!("ig2-client: spy screen: {e}"),
         }

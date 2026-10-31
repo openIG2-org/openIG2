@@ -138,9 +138,9 @@ fn pieces(r: &mut Renderer, install: &Install, parts: &[&Part], cache: &mut std:
     parts
         .iter()
         .map(|p| {
-            let tex = p.texture.as_ref().map_or(white, |t| match crate::assets::Image::load(install, t) {
-                Ok(img) => *cache.entry(t.clone()).or_insert_with(|| r.add_texture(&img)),
-                Err(_) => white,
+            let tex = p.texture.as_ref().map_or(white, |t| {
+                // Decoded once per path: the 51 poses share the frame's textures.
+                *cache.entry(t.clone()).or_insert_with(|| crate::assets::Image::load(install, t).map_or(white, |img| r.add_texture(&img)))
             });
             Piece { verts: p.verts.clone(), tex }
         })
@@ -204,8 +204,7 @@ impl SpyScene {
         let mut frame = Vec::new();
         let mut wire = Vec::new();
         let mut origin = [1024.0; 3];
-        for f in 0..=60 {
-            let m = Model::load_at(install, VECTORS, "spybck2.xvb", TEXTURES, Some(f))?;
+        for (f, m) in Model::load_poses(install, VECTORS, "spybck2.xvb", TEXTURES, 0..=60)?.into_iter().enumerate() {
             origin = m.origin;
             if f <= 50 {
                 let mut parts = Vec::new();
