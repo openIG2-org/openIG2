@@ -3,7 +3,8 @@
     python -I tools/check_tree.py [--base REV]
 
 Lists tracked files (or, with --base, the files added or changed since REV) that have a game-asset or binary
-extension or are larger than 1 MB, and exits 1 if there are any. The site's own screenshots are allowed.
+extension or are larger than 1 MB, and exits 1 if there are any. The site's own screenshots and its intro video
+(recorded in openIG2) are allowed.
 """
 import re
 import subprocess
@@ -15,6 +16,7 @@ LIMIT = 1_000_000
 ASSET = re.compile(r"\.(pvr|ogg|mp4|mp2|wav|xv|xvb|xvm|xvo|ani|scn|mou|map|res|dsc|eng|tut|raw|sav|ig2s|psd|blend|"
                    r"sgmodel|bmp|tga|dds|exe|dll|so|dylib|gpr|zip|7z|rar|bin)$", re.I)
 ALLOWED = re.compile(r"^site/assets/")
+BIG_OK = {"site/assets/intro.mp4"}
 
 
 def files(base: str | None) -> list[str]:
@@ -34,7 +36,7 @@ def main() -> int:
             continue
         if ASSET.search(f) and not ALLOWED.match(f):
             bad.append(f"{f}: asset or binary file type")
-        elif p.stat().st_size > LIMIT:
+        elif p.stat().st_size > LIMIT and f not in BIG_OK:
             bad.append(f"{f}: {p.stat().st_size / 1e6:.1f} MB (limit 1 MB)")
     for b in bad:
         print(b)

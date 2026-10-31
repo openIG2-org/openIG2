@@ -6,6 +6,7 @@ __pycache__/
 *.pvr
 *.ogg
 *.mp4
+!/site/assets/intro.mp4
 *.xv
 *.ani
 *.scn
