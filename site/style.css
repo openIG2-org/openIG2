@@ -125,7 +125,7 @@ h1, h2, h3 { font-family: var(--f-display); font-weight: 600; line-height: 1.1; 
   background: linear-gradient(145deg, #5a4a2b, #2a2215 40%, #6b5732 70%, #2a2215);
   box-shadow: 0 30px 80px -30px #000, 0 0 0 1px #000;
 }
-.frame img { display: block; width: 100%; height: auto; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px;
+.frame img, .frame video { display: block; width: 100%; height: auto; max-width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px;
   border: 1px solid #000; background: var(--hull); }
 .frame::after {
   content: ""; position: absolute; inset: 10px; border-radius: 4px; pointer-events: none;
