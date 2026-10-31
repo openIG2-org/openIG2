@@ -353,7 +353,7 @@ deterministic under test; nothing in it touches the sim except the injected comm
 - **MP save** (`HostSession::save`): the host's snapshot at the next turn as `Snapshot::to_file(rules, true)`, then
   `IG2RSESS`, a `u32` length and the `SavedSession` (name, scenario, delay, grace, the humans' empires and names;
   `wire` encoding). `MpSave::read` checks the MP flag and the rules fingerprint; `HostSession::resume(lobby, &save,
-  rules)` needs the lobby's members to hold exactly the saved empires and starts the `Host` at the saved turn
+  rules)` needs every member on a saved human's empire, hands each saved human nobody holds to the computer (`Game::autopilot`, ADR 0022; test `a_save_resumes_without_a_saved_player_whose_empire_the_computer_plays`) and starts the `Host` at the saved turn
   (`Host::at`; `LobbyHost::start` takes the turn from the snapshot's header).
 - **Rejoin admission** (`HostSession::admit(link, now)`, after the start): the same door as the lobby's (ADR 0008
   §3.2, `lobby::Door`, kept from `LobbyHost::start` in `Started::door` with the lobby's `Settings`, session id and
@@ -451,6 +451,7 @@ agree.
   (`LobbyHost::new`, ADR 0008's rules: no galaxy options, every member must hold an empire and be ready) for the saved
   humans' empires, named after the saved session, with the typed password. The host sits in the saved empire of its
   name (else the first); a joiner whose name is a saved human's is seated in that empire as it joins (it may move to
-  another open one). Start (the host's ready) needs the members to hold exactly the saved empires
-  (`HostSession::resume`), else the line says "Every saved empire needs its player". Joiners start from the host's
+  another open one). Start (the host's ready) needs every member on a saved human's empire, else the
+  line says "Pick one of the saved empires"; saved humans nobody holds are played by the computer from the start and
+  can't take the empire back later (`HostSession::resume`, ADR 0022). Joiners start from the host's
   snapshot (`Start::snapshot`, as a rejoin), so they need no save file.

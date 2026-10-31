@@ -565,7 +565,7 @@ mod words {
     pub const SAVED: &[u8] = b"Saved game";
     pub const LAN: &[u8] = b"LAN games";
     pub const NO_SAVES: &[u8] = b"No multiplayer saves";
-    pub const NEED_SAVED: &[u8] = b"Every saved empire needs its player";
+    pub const NEED_SAVED: &[u8] = b"Pick one of the saved empires";
     pub const MAP_OFF: &[u8] = b"Port mapping (UPnP / NAT-PMP): off";
     pub const MAP_ASKING: &[u8] = b"Port mapping: asking the router...";
     pub const PRIVATE: [&[u8]; 2] = [b"Private game: no", b"Private game: yes"];
@@ -1017,12 +1017,9 @@ impl MpScreen {
                     // The host's press is its ready and the start (exe 0x5c0120's button 0x44).
                     Role::Host { lobby, .. } => {
                         lobby.set_ready(0, true);
+                        // A saved empire nobody holds goes to the computer (ADR 0022); others than the saved can't play.
                         let saved = self.resume.as_ref().map(|(s, _)| {
-                            let mut want: Vec<u8> = s.session.humans.iter().map(|h| h.empire).collect();
-                            let mut held: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
-                            want.sort_unstable();
-                            held.sort_unstable();
-                            want == held
+                            st.members.iter().filter_map(|m| st.empire_of(m.id)).all(|e| s.session.humans.iter().any(|h| h.empire == e))
                         });
                         if saved == Some(false) {
                             self.line = words::NEED_SAVED.to_vec();

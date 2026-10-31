@@ -358,18 +358,26 @@ impl<'r> HostSession<'r> {
         Ok(Self::assemble(started, own, fingerprint, settings))
     }
 
-    /// Resume an MP save: the lobby's members must hold exactly the saved humans' empires. The state goes on from the
-    /// saved turn with the saved settings. Refused (the lobby back) otherwise.
+    /// Resume an MP save: each of the lobby's members must hold a saved human's empire. A saved human nobody holds is
+    /// handed to the computer as a dropped player (ADR 0022, `Game::autopilot`). The state goes on from the saved turn
+    /// with the saved settings. Refused (the lobby back) otherwise.
     pub fn resume(lobby: LobbyHost, save: &MpSave, rules: &'r GameRules) -> Result<Self, Box<LobbyHost>> {
         let st = lobby.state();
-        let mut theirs: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
-        let mut saved: Vec<u8> = save.session.humans.iter().map(|h| h.empire).collect();
-        theirs.sort_unstable();
-        saved.sort_unstable();
-        if !lobby.can_start() || theirs != saved {
+        let theirs: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let missing: Vec<u8> = save.session.humans.iter().map(|h| h.empire).filter(|e| !theirs.contains(e)).collect();
+        if !lobby.can_start() || theirs.iter().any(|e| !save.session.humans.iter().any(|h| h.empire == *e)) {
             return Err(Box::new(lobby));
         }
-        let file = save.snapshot.to_file(rules_id(lobby.rules()), true);
+        let id = rules_id(lobby.rules());
+        let file = if missing.is_empty() {
+            save.snapshot.to_file(id, true)
+        } else {
+            let Ok((mut game, pending)) = save.snapshot.restore(rules) else { return Err(Box::new(lobby)) };
+            for &e in &missing {
+                game.autopilot(e as usize);
+            }
+            Snapshot::capture(&game, &pending, save.snapshot.turn, save.snapshot.tick).to_file(id, true)
+        };
         let settings = SessionSettings { delay: save.session.delay, grace: Duration::from_millis(save.session.grace_ms), ..SessionSettings::default() };
         Self::launch(lobby, file, rules, settings)
     }

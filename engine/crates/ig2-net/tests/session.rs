@@ -241,6 +241,33 @@ fn a_session_runs_from_the_lobby_into_a_battle_and_resumes_from_an_mp_save() {
 }
 
 #[test]
+fn a_save_resumes_without_a_saved_player_whose_empire_the_computer_plays() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let (mut net, _cuts) = start3(&rules, &state);
+    net.run_to(20, |p| p.events.clear());
+    let saved = MpSave::read(&net.hs.save().unwrap(), RULES).unwrap();
+    assert_eq!(saved.session.humans.iter().map(|h| h.empire).collect::<Vec<_>>(), [6, 3, 2]);
+    let ki = |p: &Peer, e: u32| p.game.state.mem.u8(ig2_sim::save::va::PLAYER_KI + e);
+
+    // "Third" (2) doesn't come back: the room of 6 and 3 resumes, 2 goes to the computer on every machine.
+    let at = saved.header.turn;
+    let (h, c) = lobby(&[(6, 0), (3, 0), (2, 0)], 3);
+    let hs = HostSession::resume(h, &saved, &rules).ok().expect("the save resumes without 2");
+    let mut again = Net { hs, clients: vec![joined(c, &rules)], now: Duration::ZERO, events: Vec::new() };
+    assert_eq!(again.hs.host.next_turn(), at);
+    for p in [&again.hs.own, &again.clients[0].peer] {
+        assert_eq!((ki(p, 6), ki(p, 3), ki(p, 2)), (1, 1, 2), "empire {}", p.empire);
+    }
+    again.run_to(at + 120, |p| p.events.clear());
+    assert!(agree(&again.hs.own, &again.clients[0].peer) >= 119);
+    assert!(again.hs.host.desyncs.is_empty(), "{:?}", again.hs.host.desyncs);
+
+    // Still refused: a member on an empire that wasn't a saved human's.
+    let (wrong, _c) = lobby(&[(6, 0), (1, 0)], 1);
+    assert!(HostSession::resume(wrong, &saved, &rules).is_err());
+}
+
+#[test]
 fn a_dropped_player_is_awaited_then_away_and_rejoins() {
     let Some((rules, state)) = common::setup(SAVE) else { return };
     let state = common::space_clash(state);

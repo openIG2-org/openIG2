@@ -6,7 +6,7 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (422).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (425).
 
 ## Open: player-visible
 
@@ -109,3 +109,4 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 410 | Options, tutorial | while the tutorial runs the "Ground battle simulate" and "Space battle simulate" rows read off and are greyed (stored values kept); the exe leaves them live while `DISABLE OVERRUN` sets the flags behind them (ADR 0019); default on | minor | options.md §14, tutorial.md §5 |
 | 422 | MP, hosting | the room asks the router for a UPnP / NAT-PMP port mapping when it opens; one press in the room switches it off (ADR 0020); the exe has no port mapping | minor | start.md, ADR 0008 §2 |
 | 423 | MP, desyncs | a desync's resync puts a line on the host's and the resynced joiner's message line and a log line (ADR 0021); the exe's `Desync` flag (0xB771E8) is never shown | minor | multiplayer.md §7.2 |
+| 424 | MP, resuming a save | a saved game resumes with only some of its players in the room; the computer plays each saved human nobody holds (and keeps the empire); the exe has no multiplayer save | minor | multiplayer.md §7.2, ADR 0022 |
