@@ -11,6 +11,7 @@ cd engine
 cargo build --release -p ig2-client
 ```
 Always use `--release` to play: the debug build runs at a few fps.
+The Windows build embeds the program icon with `windres` (MinGW) when it is on PATH (or set `WINDRES`); without it the build warns and the exe has no file icon.
 
 ## Release bundle
 `python -I tools/release/build_windows.py [--out DIR] [--keep-target]` builds `ig2-client` and `ig2-check` in

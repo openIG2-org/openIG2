@@ -373,6 +373,14 @@ fn gfx<'a>(gpu: &'a mut Option<Gpu>, headless: &'a mut Option<Headless>) -> Opti
     }
 }
 
+/// Our own icon (`crate::icon`) on the title bar and, on Windows, the taskbar and Alt+Tab.
+pub fn with_icon(attrs: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
+    let icon = |n: u32| winit::window::Icon::from_rgba(crate::icon::rgba(n), n, n).ok();
+    #[cfg(windows)]
+    let attrs = winit::platform::windows::WindowAttributesExtWindows::with_taskbar_icon(attrs, icon(64));
+    attrs.with_window_icon(icon(32))
+}
+
 pub fn run(o: crate::Options) -> Result<(), String> {
     let l = crate::load(&o)?;
     // The rules live for the whole process; `World` borrows them.
@@ -866,7 +874,7 @@ impl App {
             Some((w, h)) if d.mode == crate::display::Mode::Window => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
             _ => attrs.with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0)),
         };
-        let attrs = attrs.with_fullscreen(d.fullscreen(el.primary_monitor()));
+        let attrs = with_icon(attrs.with_fullscreen(d.fullscreen(el.primary_monitor())));
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         // The Options screen's display rows, offering the monitor's sizes.
         let now = window.inner_size();

@@ -100,7 +100,7 @@ const LINE: u32 = 20;
 impl Setup {
     fn init(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
         let attrs = Window::default_attributes().with_title(format!("Imperium Galactica II — openIG2 {}", crate::version())).with_inner_size(winit::dpi::LogicalSize::new(1000.0, 520.0));
-        let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
+        let window = Arc::new(el.create_window(crate::window::with_icon(attrs)).map_err(|e| e.to_string())?);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { compatible_surface: Some(&surface), ..Default::default() })).map_err(|e| e.to_string())?;

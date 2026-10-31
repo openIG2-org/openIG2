@@ -55,6 +55,7 @@ mod display;
 mod font;
 mod help;
 mod hud;
+mod icon;
 mod info_screen;
 mod kit;
 mod lighting;

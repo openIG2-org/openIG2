@@ -96,6 +96,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 424 | MP, dropped, left or kicked player | the host injects `PlayerAway` at once (outside a battle) or after the grace (real-time battle); every peer sets `PlayerKi` 1→2 and starts the AI (`init_dropped`) as the exe's 0x404 does; a rejoin (not a kick) hands the empire back with `PlayerBack` (the exe has no way back). Not mirrored: the "computer" rename, `ProgramMachines`, the red line (our "X has left the game." status line stays) | yes | starmap.md 0x404 row, multiplayer.md §7.1 |
 | 429 | starmap, production counts and transfer cells | the hold repeat (`KezdoIdo`, hot-spots 0x1a..0x29 and 0x43..0x52) counts 60 frames a second, not once per rendered frame (ADR 0016) | no | starmap.md §12.4, §13.4 |
 | 430 | starmap, waypoint light | `waypointvillogo` steps every second of 60 frames a second, not every second rendered frame (ADR 0016) | no | starmap.md §4.3 |
+| 432 | window icon | the game and the setup window, the taskbar and the program file show the remake's own drawn icon, not the original's (the project ships no original assets) | minor | - |
 
 ## Enhanced proposals (owner decides)
 
