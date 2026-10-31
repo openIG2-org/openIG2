@@ -94,6 +94,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 426 | MP, order delay | an order runs on every machine `delay + 1` to `delay + 2` turns after it is given (100-200 ms on a LAN; `delay` from the slowest round trip, chosen when the game starts: ADR 0007 §2); the exe applies a received order at once (its `Multi_Send` packets, no lockstep) | minor | ADR 0007 §2 |
 | 424 | MP, dropped, left or kicked player | the host injects `PlayerAway` at once (outside a battle) or after the grace (real-time battle); every peer sets `PlayerKi` 1→2 and starts the AI (`init_dropped`) as the exe's 0x404 does; a rejoin (not a kick) hands the empire back with `PlayerBack` (the exe has no way back). Not mirrored: the "computer" rename, `ProgramMachines`, the red line (our "X has left the game." status line stays) | yes | starmap.md 0x404 row, multiplayer.md §7.1 |
 | 429 | starmap, production counts and transfer cells | the hold repeat (`KezdoIdo`, hot-spots 0x1a..0x29 and 0x43..0x52) counts 60 frames a second, not once per rendered frame (ADR 0016) | no | starmap.md §12.4, §13.4 |
+| 430 | starmap, waypoint light | `waypointvillogo` steps every second of 60 frames a second, not every second rendered frame (ADR 0016) | no | starmap.md §4.3 |
 
 ## Enhanced proposals (owner decides)
 

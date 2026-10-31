@@ -640,6 +640,12 @@ pub fn star_pulse(index: usize, star_size: f32, futofeny: f32) -> f32 {
     (((futofeny as f64 * 0.25) / 13.0 + (index as f64 - 1.0)).sin() / 2.5 + star_size as f64) as f32
 }
 
+/// `waypointvillogo` after `frames` rendered frames (`Show_Flottak3d`, spec §4.3): +1 every second frame. The
+/// client counts 60 frames a second, whatever the display's rate (ADR 0016 §1).
+fn waypoint_light(frames: f32) -> i32 {
+    (frames / 2.0) as i32
+}
+
 /// `OptionsFogResolution` from the user's options (2 when the file has none).
 fn fog_particles() -> usize {
     let res = ig2_formats::options::Options::load().int("OptionsFogResolution").unwrap_or(2);
@@ -1016,12 +1022,13 @@ impl View {
             arrow(&mut f, p, q, if fl.order == 2 { [1.0, 0.0, 0.0, 0.5] } else { grey });
         }
         // The selected fleet's waypoint chain from its order's target, one arrow a segment: the segment `i` (0 first)
-        // with `(waypointvillogo − i) % 15 == 0` is `0x80be968c`; `waypointvillogo` counts every second frame.
+        // with `(waypointvillogo − i) % 15 == 0` is `0x80be968c`.
         if let Some(Pick::Fleet(slot)) = self.selected {
             let chain = curr.waypoints.iter().find(|(s, _)| *s == slot).map(|(_, c)| c.as_slice()).unwrap_or_default();
             let start = fleets.iter().find(|fl| fl.slot == slot).and_then(|fl| fl.target.or(Some(fl.pos)));
             if let (Some(mut from), false) = (start, chain.is_empty()) {
-                let blink = (ui / 2.0) as i32;
+                // A pinned `futofeny` comes from a capture, which draws one frame a UI tick.
+                let blink = waypoint_light(self.futofeny.unwrap_or(time * 60.0));
                 let lit = [0x8c as f32 / 255.0, 0x96 as f32 / 255.0, 0xbe as f32 / 255.0, 0.5];
                 for (i, &to) in chain.iter().enumerate() {
                     if let (Some(p), Some(q)) = (cam.to_screen(from), cam.to_screen(to)) {
@@ -1257,6 +1264,16 @@ mod tests {
 
     fn cam(rotate: f32, pitch: f32) -> Camera {
         Camera { x: 10.0, y: -20.0, rotate, pitch, zoom: 300.0, size: [1920.0, 1080.0], look: None }
+    }
+
+    #[test]
+    fn the_waypoint_light_steps_30_times_a_second() {
+        // `Show_Flottak3d`: one step every second frame; one second = 60 frames.
+        assert_eq!(waypoint_light(1.0), 0);
+        assert_eq!(waypoint_light(2.0), 1);
+        assert_eq!(waypoint_light(60.0), 30);
+        // The lit segment `(step − i) % 15 == 0` returns to segment 0 every 15 steps: half a second.
+        assert_eq!(waypoint_light(30.0) % 15, 0);
     }
 
     #[test]

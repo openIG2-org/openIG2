@@ -224,7 +224,9 @@ ends, draws the `nyilszar` texture as a strip 2·1.5 virtual pixels wide and a 1
 (`AktFleet`, `StarmapMode == 2`, `KellSelect`; also story fleet 0x1f88's and the DEBUGX views') also gets its waypoint
 chain from `+0x50` (`Waypointek` +0/+4, next +8): one arrow a segment, the first from the order's target, each
 `0x805f4b46` except segment `i` (0 first) with `(waypointvillogo − i) % 15 == 0`, `0x80be968c`; `waypointvillogo`
-counts every second call (`waypointvillogok`), so the lit segment walks along the chain.
+counts every second call (`waypointvillogok`), one call per rendered frame (from `StarmapGfx2D_1`), so the lit
+segment walks along the chain. Client: 60 frames a second (ADR 0016), so 30 steps a second and the lit segment
+returns every 0.5 s.
 
 ### 4.4 Rally arrows (`Show_Atiranyitas3d` ELF 0x6e34a0 / exe 0x5a4fb0)
 Unless `starmaphideflottak` (exe 0xF1737C) is set: for every planet owned by the human (`+0x20 == EN`) with a rally
