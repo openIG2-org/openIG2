@@ -237,9 +237,9 @@ pub struct StarmapContext {
     /// tracked story fleet, revealed wormhole ends, "enemy approaching"): canonical MP every human; none set =
     /// `human_empire` alone (classic).
     pub viewers: [bool; 19],
-    /// The two fleets the starmap's transfer panel shows (`AktKep == 2` and `StarmapTransferMode`:
-    /// `StarmapTransferFlotta1/2`); their emptiness isn't reported.
-    pub transfer: Option<(i32, i32)>,
+    /// Per empire, the two fleets its starmap's transfer panel shows (`AktKep == 2` and `StarmapTransferMode`:
+    /// `StarmapTransferFlotta1/2`; canonical multiplayer: `SaveState::transfer_panels`); their emptiness isn't reported.
+    pub transfer: [Option<(i32, i32)>; 19],
 }
 
 impl StarmapContext {
@@ -834,7 +834,7 @@ impl Starmap {
             && fl.ship_count < 1
             && fl.flags & (flag::WORMHOLE | flag::PROTECTED) == 0
             && ctx.sends.get(fl.owner as usize).copied().unwrap_or(false)
-            && !ctx.transfer.is_some_and(|(a, b)| f as i32 == a || f as i32 == b)
+            && !ctx.transfer.get(fl.owner as usize).copied().flatten().is_some_and(|(a, b)| f as i32 == a || f as i32 == b)
         {
             ev.push(StarmapEvent::FleetEmptied { fleet: f });
         }

@@ -4,7 +4,9 @@ Port status: the rule of ADR 0007 §5; the real-time battles run by session rule
 `Game::cosmetic`, `Game::messages_for`) and `ig2-net` (`Peer::show`, snapshot format version 2); tested by
 `ig2-net/tests/lockstep.rs::local_views_stay_out_of_the_synced_state`. Per-human contact lists, spy report queues
 and the `st_Multi_include` effects (§5): `SaveState::humans`, snapshot version 3, tested by
-`ig2-net/tests/lockstep.rs::each_human_keeps_its_own_contacts_and_reports`.
+`ig2-net/tests/lockstep.rs::each_human_keeps_its_own_contacts_and_reports`. Each human's open fleet-transfer panel
+is synced state (`SaveState::transfer_panels`, snapshot version 6; changes travel as the `TransferPanel` command), so a
+split's new fleet survives on every peer: `lockstep.rs::a_split_fleet_lives_while_its_owners_transfer_panel_is_open`.
 
 The original runs the whole strategic sim on every machine, but some code paths read globals that differ per
 machine: `EN` (0x912A3C, the local human's empire), the screen on show (`AktKep` 0xBAE0FC, `StarmapMode`

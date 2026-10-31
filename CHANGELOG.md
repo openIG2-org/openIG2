@@ -8,6 +8,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Multiplayer: the game no longer stays stuck after a space battle (a player who rejoined or resumed mid-battle, or had Options open when it ended, now leaves it too), and a battle's end no longer pauses everyone.
 - Multiplayer: a full-screen video (your own defeat or victory) no longer stalls the others or gets you dropped.
 - Multiplayer: opening Options or Help no longer stalls the game for everyone or gets you dropped; the game runs on underneath, as in the original.
+- Splitting a fleet works again in single player and multiplayer: the new fleet stays, and ships can be moved into it in the transfer panel.
 - The multiplayer join page labels its field "Address or join code", so a pasted join code is where to put it.
 - The starmap shows a faint arrow from each of your planets to its rally planet, under the fleet routes.
 - Story offers sent from the diplomacy screen's special menu now reach their episodes.

@@ -189,7 +189,7 @@ fn context(s: &Value, rel: &str, after: &Value) -> StarmapContext {
         sends: [false; 19],
         // Classic: the snapshot's `EN` alone (in `--mp-move` ticks, the staged second human).
         viewers: [false; 19],
-        transfer: None,
+        transfer: [None; 19],
     }
 }
 

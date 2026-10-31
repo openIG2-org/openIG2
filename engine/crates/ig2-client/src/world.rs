@@ -625,6 +625,9 @@ impl<'r> World<'r> {
         self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.ground_war_routed |= events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
         self.ground_voices.extend(ground_voices(&events));
+        // The orders' outcomes; the screens keep the local empire's.
+        self.order_events.extend(events.iter().filter_map(|e| if let GameEvent::Order(o) = e { Some(*o) } else { None }));
+        self.colony_events.extend(events.iter().filter_map(|e| if let GameEvent::ColonyOrder(o) = e { Some(*o) } else { None }));
         match r {
             Ok((0, _)) => return,
             Ok(_) => {}

@@ -328,6 +328,9 @@ pub enum Command {
     /// A fleet's or a planet's rename (ours, deviation 395: the original's is its own machine's only) with the
     /// fleet's custom-name bit.
     Rename { fleet: bool, index: u32, name: Vec<u8>, custom: bool },
+    /// Ours (the original's panel is its own machine's): the issuer's starmap transfer panel shows `fleets` or
+    /// closed, which spares its emptied fleets the 0x1b ([`Game::transfer_panel`], re/screens/starmap.md §10.2).
+    TransferPanel { fleets: Option<(i32, i32)> },
 }
 
 impl From<MessageOrder> for Command {
@@ -443,6 +446,7 @@ impl Command {
                     game.message_order(issuer, o);
                 }
             }
+            Command::TransferPanel { fleets } => game.transfer_panel(issuer, *fleets),
         }
     }
 }

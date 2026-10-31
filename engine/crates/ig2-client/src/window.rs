@@ -148,6 +148,8 @@ struct App {
     spy: Option<crate::spy_screen::SpyView>,
     /// The message line's 10 ms UI frames done so far.
     ui_frames: u64,
+    /// Multiplayer: the transfer panel as last sent (`Command::TransferPanel`).
+    sent_transfer: Option<(i32, i32)>,
     /// `FRISSIT_Messages2`'s frame counter (the automatic messages every 11th UI frame).
     messages_auto: u32,
     /// The diplomacy screen while it is up, and this frame's pointer edges on it.
@@ -568,6 +570,7 @@ impl App {
             overlay: None,
             spy: None,
             ui_frames: 0,
+            sent_transfer: None,
             messages_auto: 0,
             diplomacy: None,
             dip_next: None,
@@ -3667,6 +3670,18 @@ impl App {
         }
     }
 
+    /// The transfer panel's fleets to the sim (classic: the state's globals); multiplayer sends each change as a
+    /// command, the panel counting only on the starmap (`AktKep == 2`, re/screens/starmap.md §10.2).
+    fn sync_transfer(&mut self) {
+        let fleets = self.panels.transfer.map(|t| (t.f1, t.f2));
+        self.world.game.set_transfer(fleets);
+        let fleets = fleets.filter(|_| self.shown_kep() == 2);
+        if self.world.net.is_some() && fleets != self.sent_transfer {
+            self.sent_transfer = fleets;
+            self.world.send(Command::TransferPanel { fleets });
+        }
+    }
+
     /// Multiplayer: an ended rename's name (and a fleet's custom-name bit) as a command (deviation 395); the screen
     /// shows it until the lockstep has carried it.
     fn send_renames(&mut self) {
@@ -3756,7 +3771,7 @@ impl App {
                 }
             }
         }
-        self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
+        self.sync_transfer();
         self.world.game.set_screen(self.shown_kep());
         self.world.game.sp_battles.colony = if self.shown_kep() == 3 { self.world.colony } else { None };
         let due = self.clock.advance(now);
@@ -3797,7 +3812,7 @@ impl App {
             i.advance(&self.world.game.state, &sel, now as f32 / 1000.0, zoom, ui);
         }
         // The panel's fleets are spared `FRISSIT_Starmap`'s 0x1b while it is up.
-        self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
+        self.sync_transfer();
         // `Mozgasd`: the camera halves its way to the target for 8 frames.
         if let (Some((t, n)), Some(v)) = (self.cam_tween, &mut self.view) {
             let c = &mut v.camera;

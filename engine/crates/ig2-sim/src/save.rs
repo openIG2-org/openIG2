@@ -749,6 +749,9 @@ pub struct SaveState {
     /// but the canonical `EN` (whose copies are the exe's memory), by empire (`re/rules/multiplayer.md` §5). Empty in
     /// single player.
     pub humans: BTreeMap<u8, HumanSide>,
+    /// Canonical multiplayer: the two fleets each human's starmap transfer panel shows, by empire (every human,
+    /// `EN` too: the panel each machine keeps, re/screens/starmap.md §10.2). Closed panels have no entry.
+    pub transfer_panels: BTreeMap<u8, (i32, i32)>,
     /// `GameInfo[0..GameInfoMut]` (exe 0xE3E3A0 / 0xE3E3A4): the starmap's info lines (`re/formats/save.md` §4.5).
     pub game_info: Vec<GameInfo>,
 }
@@ -841,6 +844,7 @@ impl SaveState {
             multiplayer_blob: false,
             fresh_buildings: Vec::new(),
             humans: BTreeMap::new(),
+            transfer_panels: BTreeMap::new(),
             game_info: Vec::new(),
             template,
             wf_ranges,
@@ -909,6 +913,7 @@ impl SaveState {
             multiplayer_blob: save.multiplayer,
             fresh_buildings: Vec::new(),
             humans: BTreeMap::new(),
+            transfer_panels: BTreeMap::new(),
             game_info,
             template,
             wf_ranges,

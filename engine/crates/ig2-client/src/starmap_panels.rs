@@ -1762,6 +1762,9 @@ mod tests {
         let (rules, defaults) = crate::rules::load(&install).unwrap();
         let volatile = crate::rules::scenario_globals(&install).unwrap();
         let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        // The starmap on view (the window's `set_screen` each frame) over a save that holds another `AktKep`.
+        w.game.state.mem.set_i32(va::AKT_KEP, 0);
+        w.game.set_screen(2);
         let send = |w: &mut crate::world::World, acts: Vec<Action>| {
             for a in acts {
                 if let Action::Send(o) = a {
@@ -1808,6 +1811,12 @@ mod tests {
         let mut panels = Panels::default();
         panels.open_transfer(f, new, false);
         w.game.set_transfer(Some((f, new)));
+        // The empty new fleet outlives the next ticks while the panel shows it (issue #2: it went at once).
+        for _ in 0..2 {
+            w.tick();
+            w.pump();
+        }
+        assert!(fleet(&w.game.state, new).is_some_and(|r| r[0x15] == e), "the split's new fleet was deleted");
         let t = panels.transfer.unwrap();
         assert_eq!(rows(&w.game.state, &t), vec![Row { design: d, group: 1, left: 1, right: 0 }]);
         let sel = Selection { mode: 2, planet: p, fleet: new as usize };

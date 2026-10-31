@@ -646,6 +646,74 @@ fn orders_on_anothers_fleet_or_planet_are_refused() {
     }
 }
 
+/// The new fleet of a split (`MULTIGET_Starmap` 0x14) is empty until ships move in: its owner's machine opens the
+/// transfer panel in the same handler, which spares the panel's fleets the 0x1b (re/screens/starmap.md §10.2). In the
+/// canonical view that panel is synced per human: the second human's split fleet survives, takes ships, and a
+/// second one left empty goes once that human closes the panel; the host's own panel spares only its own fleets.
+#[test]
+fn a_split_fleet_lives_while_its_owners_transfer_panel_is_open() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let mut state = common::space_clash(state);
+    let f3 = state.fleets.len() - 1;
+    let mut map = state.starmap();
+    (map.fleets[f3].x, map.fleets[f3].y, map.fleets[f3].order) = (250.0, -250.0, 0);
+    state.store_starmap(&map);
+    let d3 = state.ships.iter().find(|s| i16::from_le_bytes([s[0], s[1]]) as usize == f3).map(|s| i16::from_le_bytes([s[2], s[3]])).unwrap() as i32;
+    let (e2, f3) = (3u8, f3 as i32);
+    let canonical = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.canonical_view(6);
+        g
+    };
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
+    s.join(2, e2, |_| Peer::new(2, e2, canonical(state.clone()), DEFAULT_DELAY));
+    let split = |p: &Peer, nth: usize| {
+        p.events.iter()
+            .filter_map(|e| match e {
+                ig2_sim::game::GameEvent::Order(ig2_sim::game::OrderEvent::Split { empire: 3, new, .. }) => Some(*new as i32),
+                _ => None,
+            })
+            .nth(nth)
+    };
+    let fleet = |p: &Peer, f: i32| p.game.state.starmap().fleets[f as usize].clone();
+    s.run_to(8, |p| {
+        if (p.slot, p.turn) == (2, 2) {
+            p.issue(Command::Starmap { order: StarmapCmd::Split { fleet: f3 } });
+        }
+    });
+    let new = split(&s.peers[0].0, 0).expect("the split");
+    for (p, _) in &s.peers {
+        assert_eq!(split(p, 0), Some(new));
+        let n = fleet(p, new);
+        assert!(n.alive() && n.owner == e2 && n.ship_count == 0, "the empty new fleet lives on");
+        assert_eq!(p.game.state.transfer_panels.get(&e2), Some(&(f3, new)), "its owner's panel opened with the split");
+    }
+    // A snapshot keeps the open panel.
+    let (g, _) = Snapshot::capture(&s.peers[0].0.game, &[], 0, 0).restore(&rules).unwrap();
+    assert_eq!(g.state.transfer_panels.get(&e2), Some(&(f3, new)));
+    assert_eq!(state_hash(&g, &[]), state_hash(&s.peers[0].0.game, &[]));
+
+    s.run_to(24, |p| match (p.slot, p.turn) {
+        (2, 9) => p.issue(Command::Starmap { order: StarmapCmd::Transfer { from: f3, to: new, design: d3, ship: 0, count: 2 } }),
+        // The host's panel: its own fleets only.
+        (1, 10) => p.issue(Command::TransferPanel { fleets: Some((f3, new)) }),
+        (2, 11) => p.issue(Command::Starmap { order: StarmapCmd::Split { fleet: f3 } }),
+        (2, 16) => p.issue(Command::TransferPanel { fleets: None }),
+        _ => {}
+    });
+    assert!(agree(&s.peers) as u64 >= 24);
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    for (p, _) in &s.peers {
+        let n = fleet(p, new);
+        assert!(n.alive() && n.ship_count == 2, "the moved ships");
+        let second = split(p, 1).expect("the second split");
+        assert!(!fleet(p, second).alive() || fleet(p, second).owner != e2, "the second, left empty, went once the panel closed");
+        assert_eq!(p.game.state.transfer_panels.get(&e2), None);
+        assert_eq!(p.game.state.transfer_panels.get(&6), Some(&(f3, new)));
+    }
+}
+
 /// Two humans' fleets meet: the real-time battle runs on the sim clock in canonical MP (`re/rules/multiplayer.md`
 /// §7, `space-combat.md` §7.12–§7.13): both peers set it up in the same slot, the strategic clock waits, the orders
 /// travel as lockstep commands, and once both players leave the finished battle's screen `SpaceWarVege` ends it and

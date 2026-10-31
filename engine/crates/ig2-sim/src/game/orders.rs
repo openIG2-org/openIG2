@@ -404,8 +404,26 @@ impl Game<'_> {
             if self.view == ViewMode::Classic && issuer as usize == self.globals().en {
                 self.state.mem.set_i32(va::AKT_FLEET, new as i32);
             }
+            // Canonical multiplayer: the issuer's machine opens its panel in the same handler, before its next
+            // `FRISSIT_Starmap` could report the new fleet empty (re/screens/starmap.md §10.2).
+            if let ViewMode::Canonical { .. } = self.view {
+                self.state.transfer_panels.insert(issuer, (f as i32, new as i32));
+            }
             self.events.push(GameEvent::Order(OrderEvent::Split { empire: issuer, fleet: f, new }));
         }
+    }
+
+    /// Canonical multiplayer: the issuer's transfer panel shows `fleets` or closed (`None`). Only the issuer's own
+    /// fleets are spared by it: the 0x1b check looks the panel up by the fleet's owner. Classic mode keeps the
+    /// panel in the state's globals ([`Game::set_transfer`]).
+    pub fn transfer_panel(&mut self, issuer: u8, fleets: Option<(i32, i32)>) {
+        if !matches!(self.view, ViewMode::Canonical { .. }) || !self.state.human_controlled().get(issuer as usize).copied().unwrap_or(false) {
+            return;
+        }
+        match fleets {
+            Some(f) => self.state.transfer_panels.insert(issuer, f),
+            None => self.state.transfer_panels.remove(&issuer),
+        };
     }
 
     /// 0x1c (exe 0x59e2b4): both holders must be the issuer's.

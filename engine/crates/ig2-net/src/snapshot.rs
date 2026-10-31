@@ -17,7 +17,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -81,11 +81,13 @@ struct View<'a> {
     pending: &'a [Command],
     /// The other humans' own inboxes (`HumanSide::inbox`, multiplayer.md §5.3; since version 5).
     inboxes: Vec<(u8, Bytes<'a>)>,
+    /// The humans' open transfer panels (`SaveState::transfer_panels`; since version 6).
+    transfers: &'a BTreeMap<u8, (i32, i32)>,
 }
 
-/// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state).
+/// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state), `T` the version 6 one.
 #[derive(Deserialize)]
-struct Owned<I = Vec<(u8, ByteBuf)>> {
+struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>> {
     mem: Vec<(u32, ByteBuf)>,
     template: Vec<(String, ByteBuf)>,
     fleets: ByteBuf,
@@ -107,12 +109,14 @@ struct Owned<I = Vec<(u8, ByteBuf)>> {
     realtime: RealTime,
     pending: Vec<Command>,
     inboxes: I,
+    transfers: T,
 }
 
-impl Owned<()> {
-    fn upgrade(self) -> Owned {
-        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, .. } = self;
-        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: Vec::new() }
+impl<I> Owned<I, ()> {
+    /// An older state: no transfer panels; a version 4 one (`I = ()`) no inboxes either.
+    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>) -> Owned {
+        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, .. } = self;
+        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: BTreeMap::new() }
     }
 }
 
@@ -144,6 +148,7 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
         realtime: &g.realtime,
         pending,
         inboxes: s.humans.iter().filter(|(_, h)| !h.inbox.is_empty()).map(|(&e, h)| (e, Bytes(&h.inbox))).collect(),
+        transfers: &s.transfer_panels,
     }
 }
 
@@ -175,6 +180,7 @@ pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)>
         ("realtime", h(&v.realtime)),
         ("pending", h(&v.pending)),
         ("inboxes", h(&v.inboxes)),
+        ("transfers", h(&v.transfers)),
     ]
 }
 
@@ -261,7 +267,10 @@ impl Snapshot {
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
         let o: Owned = match wire::from_slice(&self.state) {
             Ok(o) => o,
-            Err(e) => wire::from_slice::<Owned<()>>(&self.state).map(Owned::upgrade).map_err(|_| e)?,
+            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, ()>>(&self.state)
+                .map(|o| o.upgrade(|i| i))
+                .or_else(|_| wire::from_slice::<Owned<(), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new())))
+                .map_err(|_| e)?,
         };
         let mut s = SaveState::from_parts(Memory::from_runs(o.mem.into_iter().map(|(at, b)| (at, b.0)).collect()), o.template.into_iter().map(|(n, b)| (n, b.0)).collect());
         s.fleets = records(&o.fleets)?;
@@ -289,6 +298,7 @@ impl Snapshot {
         for (e, inbox) in o.inboxes {
             s.humans.entry(e).or_default().inbox = inbox.0;
         }
+        s.transfer_panels = o.transfers;
         let mut g = Game::new(s, rules);
         g.libc = Libc(o.libc);
         g.fleet_name = o.fleet_name.map(|b| b.0);
@@ -355,8 +365,8 @@ impl Header {
         let u16_at = |o: usize| u16::from_le_bytes(b[o..o + 2].try_into().unwrap());
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
-        // Version 4 states lack the inboxes (read as none).
-        if h.version != VERSION && h.version != 4 {
+        // Version 4 states lack the inboxes, 4 and 5 the transfer panels (read as none).
+        if !(4..=VERSION).contains(&h.version) {
             return Err(Error::Version(h.version));
         }
         Ok(h)

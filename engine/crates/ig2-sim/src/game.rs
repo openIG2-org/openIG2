@@ -1069,8 +1069,13 @@ impl<'r> Game<'r> {
             in_battle: Vec::new(),
             sends: g.sends,
             viewers: g.sends,
-            transfer: (m.i32(va::AKT_KEP) == 2 && m.u8(va::STARMAP_TRANSFER_MODE) != 0)
-                .then(|| (m.i32(va::STARMAP_TRANSFER_FLEETS.0), m.i32(va::STARMAP_TRANSFER_FLEETS.1))),
+            transfer: match self.view {
+                ViewMode::Classic => std::array::from_fn(|e| {
+                    (e == g.en && m.i32(va::AKT_KEP) == 2 && m.u8(va::STARMAP_TRANSFER_MODE) != 0)
+                        .then(|| (m.i32(va::STARMAP_TRANSFER_FLEETS.0), m.i32(va::STARMAP_TRANSFER_FLEETS.1)))
+                }),
+                ViewMode::Canonical { .. } => std::array::from_fn(|e| self.state.transfer_panels.get(&(e as u8)).copied()),
+            },
         }
     }
 

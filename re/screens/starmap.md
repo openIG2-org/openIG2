@@ -373,6 +373,11 @@ At the end of every fleet's step `FRISSIT_Starmap` (exe 0x5970d5) sends `Multi_S
 player's fleet without ships (`+0x54 < 1`, neither flag 0x400 nor 0x4000) unless the transfer panel shows it
 (`AktKep == 2`, `StarmapTransferMode` 0xB9A304, `StarmapTransferFlotta1/2` 0xB9A62C/0xB9A954); an AI's is deleted at
 once. The next frame's handler deletes it if it is still empty (a split's new fleet left empty goes this way).
+Port: classic reads the panel from those globals (the client writes `AktKep` each frame, `Game::set_screen`). In
+canonical multiplayer every peer raises every human's 0x1b, so each human's panel is synced state
+(`SaveState::transfer_panels`, snapshot version 6): the split's handler opens the issuer's (as the issuer's machine
+does in the same `MULTIGET_Starmap` call), and the client sends each later change (`Command::TransferPanel`; closed
+off the starmap). A panel spares only its owner's fleets.
 
 ### 10.3 Mouse (`Starmap_Main` ELF 0x6f50a0)
 - Picks: `SelectNearestUnit(sx, sy, r, exclude, &kind, skip_selected, enemies)` (ELF 0x6e46b0): fleets the human sees
