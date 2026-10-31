@@ -5,11 +5,21 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
-### Since 0.7.48
+### 0.7.56 (beta)
+Since 0.7.48.
+
+**Game**
+
 - A short click on a production plus or minus button adds one ship again; holding it still repeats, as in the original.
 - Where a fleet's radar area overlaps a planet's on the starmap, only the planet's red shows, as in the original.
-- Multiplayer: the spy screen's report dialogs (hire, reject, verdicts, OK) no longer get stuck as empty boxes after a button press.
 - The starmap info panel's production and morale lines, and the planet info's rotating lines, switch every 1.5 seconds, as in the original.
+- Leaving a colony for the starmap now cuts off its wind, thunder and war sounds at once, as in the original.
+
+**Multiplayer**
+
+- The pause button stops the date, the money and the fleets for every player.
+- Fleets no longer move across the starmap in jerks: they glide, and stand still while the game is paused.
+- The spy screen's report dialogs (hire, reject, verdicts, OK) no longer get stuck as empty boxes after a button press.
 
 ### 0.7.48 (beta)
 Since 0.7.2.
@@ -34,7 +44,6 @@ Since 0.7.2.
 - Colony screen: clicking a building's roof, tower or upper part selects it, as in the original; the war cursor and
   the right-click attack use the same pick.
 - Campaign 1 no longer crashes when the planet-toll raider sets out.
-- Leaving a colony for the starmap now cuts off its wind, thunder and war sounds at once, as in the original.
 - A fleet split off on the starmap, the ground-war tick and the victory check now follow the screen you are on, as in
   the original.
 - The late episodes and endings of all three campaigns are now verified in headless play-throughs (the driver answers
@@ -44,8 +53,6 @@ Since 0.7.2.
 **Multiplayer**
 
 - The game runs at the single-player pace (it ran twice as fast), and orders run within 100-200 ms on a LAN; over the internet the delay follows the slowest player's connection.
-- The pause button stops the date, the money and the fleets for every player.
-- Fleets no longer move across the starmap in jerks: they glide, and stand still while the game is paused.
 - Hosting asks your router to open the game port (UPnP / NAT-PMP) at once; the room's port-mapping line switches it off.
 - When a player drops, leaves or is kicked, the computer plays their empire; a player who rejoins gets it back.
 - An optional room setting, "Space battle formations" (off by default), lets every human side with six or more ships pick a formation before a real-time space battle; the battle waits for the other players.
