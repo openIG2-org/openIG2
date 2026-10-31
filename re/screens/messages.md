@@ -68,11 +68,12 @@ messages they take the bottom rows, newest first. Row `r` is at `y = UBAY − (3
 - the sender `UzenetFajtak[KerUz(id)]+7` (`uzenetek/uzenetek.txt`, `ig2-formats::dialogue::MessageKind::sender`;
   `KerUz` 0x5a5b90 = the kind with that id; an id not in the table gives `HanyUzenetFajta`, the 1000-entry table's
   first unused, zeroed entry, so the sender and both subject lines are empty [obs: 230.sav's ids 30578/30579, no
-  caption in the exe]), via `AliasConv`, 0x13 bytes, size `UBAFont2`, colour `UBASzin4`, or `UBASzin1` when `+4` is
+  caption in the exe]), via `AliasConv` (exe 0x5048e0, `messages_screen::alias_conv`; `MessagesGfx2D_2` 0x507020
+  calls it for the sender and both subjects), 0x13 bytes, size `UBAFont2`, colour `UBASzin4`, or `UBASzin1` when `+4` is
   set;
 - the date at `y + 13`: year `Ido / 18000` (`Ido2Ev` 0x6206a0, 4 digits), month `Ido / 1500 % 12 + 1`, day
   `Ido / 50 % 30 + 1` with dots, size `UBAFont1`, colour `UBASzin2`;
-- the two subject lines `+0x1b`, `+0x2f` at `y + 23`, `y + 32`, 0x14 bytes;
+- the two subject lines `+0x1b`, `+0x2f` at `y + 23`, `y + 32`, via `AliasConv` too, 0x14 bytes;
 - a frame around the open message (`UAktUzenet`).
 The open message's text (`ParbeszPlace`, typed out with `|C`/`~` colour codes) and its answers (`Valasztasok`,
 `AnswFont`) follow below; the panel slides in (`mesframe` to 30). The capture of quick-1.sav (empty inbox) shows the

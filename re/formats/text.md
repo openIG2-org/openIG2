@@ -37,6 +37,7 @@ p+3  II/NN  automatic
 p+6  II/NN  replaces ("leváltás")
 p+9  20 chars sender      p+30  20 chars subject 1      p+51..EOL  subject 2
 ```
+The columns are bytes of the one-byte code page file, so after the UTF-8 conversion they count characters.
 761 entries in every language.
 
 ### `uzenetek/msgNNNN.txt` (dialogue control): `KeresBlokk` @0x5a69c0, `KiertekelBlokk` @0x5a6ac0

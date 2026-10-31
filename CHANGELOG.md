@@ -18,6 +18,7 @@ Since 0.7.48.
 - Where a fleet's radar area overlaps a planet's on the starmap, only the planet's red shows, as in the original.
 - The starmap info panel's production and morale lines, and the planet info's rotating lines, switch every 1.5 seconds, as in the original.
 - Leaving a colony for the starmap now cuts off its wind, thunder and war sounds at once, as in the original.
+- Messages: Hungarian senders and subjects in the message list are shown whole, with names filled in.
 
 **Multiplayer**
 

@@ -5,12 +5,15 @@
 //! `KeresBlokk`/`KiertekelBlokk` (msg blocks and choices), `KeresReszlet`/`KiirReszlet`/
 //! `GetTxtFileCommands` (txt parts), `ReadUzenetAnimLista`/`GetUzenetAnimLista` (`uzenetanim_%d`).
 //!
-//! All positions are byte columns, as in the original (the 1999 code indexes the raw buffer).
+//! All positions are byte columns of the one-byte code page file, as in the original (the 1999 code
+//! indexes the raw buffer); the text arrives here as UTF-8, so they are counted in characters.
 
 use crate::text::lines;
 
+/// Characters `from..from + len` (clamped), i.e. bytes of the original one-byte code page line.
 fn col(line: &str, from: usize, len: usize) -> &str {
-    line.get(from..(from + len).min(line.len())).unwrap_or("")
+    let at = |n: usize| line.char_indices().nth(n).map_or(line.len(), |(i, _)| i);
+    &line[at(from)..at(from + len)]
 }
 
 /// C `atoi`: optional sign, digits, stop at the first non-digit; 0 if none.
@@ -73,7 +76,7 @@ pub fn parse_message_index(text: &str) -> Vec<MessageKind> {
             automatic: ii(3),
             replaces: ii(6),
             sender: col(line, p + 9, 20).trim_end().to_owned(),
-            subject: [col(line, p + 30, 20).trim_end().to_owned(), line.get(p + 51..).unwrap_or("").trim_end().to_owned()],
+            subject: [col(line, p + 30, 20).trim_end().to_owned(), col(line, p + 51, usize::MAX - p - 51).trim_end().to_owned()],
         });
     }
     out
@@ -249,6 +252,14 @@ pub fn parse_clip_lists(text: &str) -> Vec<ClipGroup> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn index_columns_count_accented_letters_once() {
+        let k = parse_message_index("0051 NN NN NN Személyi tanácsadó   Ismeretlen űrhajók   közelednek
+");
+        assert_eq!(k[0].sender, "Személyi tanácsadó");
+        assert_eq!(k[0].subject, ["Ismeretlen űrhajók".to_owned(), "közelednek".to_owned()]);
+    }
 
     #[test]
     fn index_columns() {

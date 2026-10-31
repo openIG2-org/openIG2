@@ -311,7 +311,10 @@ pub fn draw_inbox(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, texts: &U
         let kind = texts.kinds.iter().find(|k| k.id as i32 == block);
         // An unknown id: `KerUz` (ELF 0x5a5b90) runs out at `HanyUzenetFajta`, the 1000-entry table's first unused,
         // zeroed entry, so the sender and subjects are empty.
-        let sender = kind.map(|k| texts.encode(&k.sender)).unwrap_or_default();
+        // `AliasConv` (exe 0x5048e0) fills the entry's `#k#` names into the sender and both subject lines.
+        let params = s.inbox_params.get(i).map_or(&[][..], |p| &p[..]);
+        let alias = |t: &str| crate::messages_screen::alias_conv(&texts.encode(t), params);
+        let sender = kind.map(|k| alias(&k.sender)).unwrap_or_default();
         font.text(f, v, &sender, x, y, 0x13, 3, Align::Left, col(if kept & 1 != 0 || read.contains(&i) { 1 } else { 34 }), None);
         let (year, month, day) = (date / 18000, date / 1500 % 12 + 1, date / 50 % 30 + 1);
         font.int(f, v, year as i64, x, y + 13.0, 4, 2, Align::Left, col(2));
@@ -320,8 +323,8 @@ pub fn draw_inbox(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, texts: &U
         font.text(f, v, b".", x + w2 * (month / 10 + 6) as f32, y + 13.0, 1, 2, Align::Left, col(2), None);
         font.int(f, v, day as i64, x + w2 * (month / 10 + 7) as f32, y + 13.0, 2, 2, Align::Left, col(2));
         if let Some(k) = kind {
-            font.text(f, v, &texts.encode(&k.subject[0]), x, y + 23.0, 0x14, 2, Align::Left, col(2), None);
-            font.text(f, v, &texts.encode(&k.subject[1]), x, y + 32.0, 0x14, 2, Align::Left, col(2), None);
+            font.text(f, v, &alias(&k.subject[0]), x, y + 23.0, 0x14, 2, Align::Left, col(2), None);
+            font.text(f, v, &alias(&k.subject[1]), x, y + 32.0, 0x14, 2, Align::Left, col(2), None);
         }
     }
 }

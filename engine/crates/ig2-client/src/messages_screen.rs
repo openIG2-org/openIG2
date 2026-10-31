@@ -1201,3 +1201,32 @@ mod tests {
         assert_eq!(m.open.as_ref().unwrap().orders, [MessageOrder::Answer { k: 1 }]);
     }
 }
+
+/// `AliasConv` (exe 0x5048e0): `#k#` replaced by the entry's parameter `k` (`+0x10 + 0x14·k`), `(~verror~s)` when
+/// that parameter is `#=#`. The inbox list runs the sender and both subject lines through it.
+pub fn alias_conv(text: &[u8], params: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        if text[i] == b'#' && i + 2 < text.len() && text[i + 2] == b'#' {
+            let p = text[i + 1].checked_sub(b'0').and_then(|k| params.get(k as usize)).map_or(&[][..], |p| &p[..]);
+            out.extend_from_slice(if p == b"#=#" { b"(~verror~s)" } else { p });
+            i += 3;
+        } else {
+            out.push(text[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod alias_tests {
+    #[test]
+    fn alias_conv_fills_parameters() {
+        let params = vec![b"Zorg".to_vec(), b"#=#".to_vec()];
+        assert_eq!(super::alias_conv(b"Admiral #0# ", &params), b"Admiral Zorg ");
+        assert_eq!(super::alias_conv(b"#1#", &params), b"(~verror~s)");
+        assert_eq!(super::alias_conv(b"#4# x #", &params), b" x #");
+    }
+}
