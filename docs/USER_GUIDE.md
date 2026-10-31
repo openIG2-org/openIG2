@@ -81,6 +81,7 @@ at once and are saved in `ig2-rework-options.dat`.
 | Names in game language (`OneLanguage`) | ADR 0017 |
 | Clean name entry (`CleanNameEntry`) | On by default: typing a save name hides the slot's old name behind it (ADR 0024); off draws the original's look |
 | Models inside boxes (`BoxModelsInside`) | On by default: the turning planet or ship model in the starmap's and space battle's bottom-left info box is cut to the box (ADR 0025); off lets it reach past the edge as in the original |
+| Slider under label (`SliderUnderLabel`) | On by default: the space battle's defend/attack slider sits under its label instead of running through it (ADR 0027); off draws the original's look |
 
 The window opens at 1600x900 until a size is saved.
 

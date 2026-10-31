@@ -2034,7 +2034,9 @@ impl SpaceWarUi {
                 return Some(0x21 + i as u32);
             }
         }
-        if self.stats.total == 0 && inside([50.0, 461.0, 113.0, 9.0]) {
+        // Under ADR 0027 the bar sits at y 470..472, below the exe's 461..469: the spot reaches down to it.
+        let h = if crate::kit::layout::slider_under() { 14.0 } else { 9.0 };
+        if self.stats.total == 0 && inside([50.0, 461.0, 113.0, h]) {
             return Some(0x37);
         }
         if inside([0.0, 424.0, 166.0, 56.0]) {
@@ -2091,6 +2093,20 @@ mod tests {
         ui.jobb_click(&b, &mut out);
         assert!(out.contains(&Out::Order(Order::Attack { unit: 1, target: 0 })), "{out:?}");
         assert!(!SpaceWarUi::enter_as(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0, 6).units[1].selected);
+    }
+
+    /// The Defend/Attack slider's spot (hot-spot 0x19, `[50, 461, 113, 9]`) reaches down to the bar under its label
+    /// with ADR 0027's layout; classic, the bar's new rows are the info box's.
+    #[test]
+    fn the_slider_spot_follows_the_bar() {
+        let b = Battle::slot();
+        let ui = SpaceWarUi::enter(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+        let mask = vec![0u8; 640 * 480];
+        assert_eq!((ui.spot(&mask, [100.0, 465.0]), ui.spot(&mask, [100.0, 471.0])), (Some(0x37), Some(0x42)));
+        crate::kit::layout::set_slider_under(true);
+        let under = (ui.spot(&mask, [100.0, 465.0]), ui.spot(&mask, [100.0, 471.0]), ui.spot(&mask, [100.0, 476.0]));
+        crate::kit::layout::set_slider_under(false);
+        assert_eq!(under, (Some(0x37), Some(0x37), Some(0x42)));
     }
 
     /// `Mouse_Megfogva` (exe 0x57b9e0's latch sites, cleared at 0x4e05bc): a drag that starts on the yaw button stays

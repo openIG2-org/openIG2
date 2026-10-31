@@ -219,12 +219,14 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
             let p = v.px(x0 + w / 2.0, y0 + h / 2.0);
             f.push(hud.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, p, [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], alpha]));
         };
-        fill(f, x, y + 42.0, 113.0, 3.0, [r, g, 0.0]);
+        // The label last, over the bar (exe 0x577c00) [obs spacewar_info t500, spacewar_slider: the exe's label is over
+        // the bar]; ADR 0027 lifts the label 3 px and puts the bar under it.
+        let (label_y, bar_y) = if crate::kit::layout::slider_under() { (38.0, 46.0) } else { (41.0, 42.0) };
+        fill(f, x, y + bar_y, 113.0, 3.0, [r, g, 0.0]);
         let mx = x + (st_v * 0x71 / 100) as f32;
-        fill(f, mx - 1.0, y + 40.0, 3.0, 7.0, col(2));
-        fill(f, mx, y + 41.0, 1.0, 5.0, col(0));
-        // The label last, over the bar (exe 0x577c00) [obs spacewar_info t500: the exe's label is over the bar].
-        font.text(f, v, &s(0x14), x, y + 41.0, 0x13, 1, Align::Left, col(0x21).map(|z| z * fade), None);
+        fill(f, mx - 1.0, y + bar_y - 2.0, 3.0, 7.0, col(2));
+        fill(f, mx, y + bar_y - 1.0, 1.0, 5.0, col(0));
+        font.text(f, v, &s(0x14), x, y + label_y, 0x13, 1, Align::Left, col(0x21).map(|z| z * fade), None);
     }
 }
 

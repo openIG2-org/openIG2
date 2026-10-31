@@ -101,7 +101,7 @@ with `--exe-png S/<dir>/<name>-exe.png --exe-state S/<dir>/<name>-state.sav` (se
   tools/trace/scripts/options-loadonly.json` (`--boot`).
 - **Help**: `rsd quick-1.sav help --script tools/trace/scripts/help.json`.
 - **SpaceWar**: `rsd spacewar --script spacewar_fx8.json --exe-seq _local/traces-fx8b/fx8` (16 grabs t 800–2300);
-  `spacewar --script spacewar_fx7.json --exe-seq S/spacewar-fx7/…-exe`; `spacewar --script spacewar_info.json`
+  `spacewar --script spacewar_fx7.json --exe-seq S/spacewar-fx7/…-exe`; `spacewar --script spacewar_info.json`, `spacewar --script spacewar_slider.json` (stance 0/100/50, info box 3.5–3.9)
   (1920 × 1080, `S/spacewar-info2`); stills `rsd S.sav spacewar:<grab>.json` (grabs from `run_spwc.py --grab-ticks`).
 - **Video**: `run_video.py` against client `--snapshot --screen video:title --video-ms T` (T 2, 70, 1002, 3001, 6002,
   20002; 800 × 600 and 1280 × 720); clips `run_video.py --open NAME` against `--screen video:NAME --video-at 201,204

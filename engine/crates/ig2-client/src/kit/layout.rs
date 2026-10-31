@@ -83,6 +83,18 @@ pub fn set_box_models(on: bool) {
     BOX_MODELS.store(on, Ordering::Relaxed);
 }
 
+/// The "slider under its label" option (ADR 0027; off = classic, as captures and snapshots draw): the space battle's
+/// defend/attack slider moves under its label instead of through it.
+static SLIDER_UNDER: AtomicBool = AtomicBool::new(false);
+
+pub fn set_slider_under(on: bool) {
+    SLIDER_UNDER.store(on, Ordering::Relaxed);
+}
+
+pub fn slider_under() -> bool {
+    SLIDER_UNDER.load(Ordering::Relaxed)
+}
+
 /// The info box's rectangle (`[5, 423, 162, 52]`) in pixels, when [`set_box_models`] is on.
 pub fn box_model_clip(v: &crate::font::Virtual) -> Option<[f32; 4]> {
     BOX_MODELS.load(Ordering::Relaxed).then(|| {
