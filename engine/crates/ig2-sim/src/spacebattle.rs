@@ -715,7 +715,7 @@ pub struct Battle {
     pub human_list: Vec<Entry>,
     /// +0x2005: the ground war after the battle has been started.
     pub ground_war_started: bool,
-    /// +0x2d84/+0x2d86: an AI tick was due while paused (UI flags kept for fidelity).
+    /// +0x2d84/+0x2d86: no unpaused tick yet / the formation phase's end (the first unpaused tick sets it, exe 0x56e018).
     pub f2d84: bool,
     pub f2d86: bool,
     /// +0x2d98: `infoszamol`'s one-shot block is due (`InitSpaceWar` sets it; [`Battle::outgunned`] clears it).

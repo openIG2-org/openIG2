@@ -28,6 +28,8 @@ Getting the game from "every part works" to "a player can install it and play it
   a desync after garrisons entered a battlefield and a crash from a malformed diplomacy message are fixed.
 - `ig2-client --playthrough` runs whole games headless to the end, with saves and loads on the way. Loaded saves
   now keep their real-time battles and the AI's design names.
+- Single-player space battles: ships now obey attack and move orders however you start the battle (top-bar pause,
+  Space or P, the speed keys), and re-entering the battle screen no longer brings the formation choice back.
 - Colony screen: clicking a building's roof, tower or upper part selects it, as in the original; the war cursor and
   the right-click attack use the same pick.
 - `ig2-client --playthrough mp` plays a whole two-machine multiplayer game to its winner on one computer, comparing both

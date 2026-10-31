@@ -681,7 +681,7 @@ Frame, only when `+0x24b8` (gfx up), in §3's order (steps 1–13). Its 2D parts
 ### 5.1 The weapon column (fegyverpanelfrissit ELF 0x6a7150 / exe 0x5727d0; SpaceWarFrissit2 for the counters)
 Ten slots i = 0..9 (meshes: `ikon<i>.xvb` button at scale 0.02, `ora.xvb` reload clock at 0.014, `no.xvb` "off" overlay at 0.014; vector/spacewar/ and textures/spacewar/; created in initgfx at x = 300, y = 42*i - 200 (+15 for i = 9), z = -600).
 Per tick (SpaceWarFrissit2, every UI tick: 50 ticks = 0.5 s; only when no intro/fade and `+0x2545` clear): target on = `!(+0x342e) && ( +0x342d || ( count[i] != 0 && +0x2588 != 0 && +0x2578 != 0 ) )`; slot 9 (Retreat): `!(+0x342e) && ( +0x342d || ( side[+0xd2c].+0x70 != 0 && StoryAdat+152 == 0 ) )` (the viewer's flag B, ELF side `+0x70`, set by `infoszamol`; not `may_retreat` `+0x68`);
-forced off while leaving (`+0x2544`). Counter `c = slot+0x28`: +1 if on else -1, clamped 0..50 (50 ticks = 1.67 s). When c hits 0 while `+0x342e`: formation phase ends (`+0x342e = +0x342d = 0`), the icon materials are restored and the tooltips reset to `fegyvernevek[i]` (`Mouse_Csak_Szoveg_Set`, hot-spot id 3 + i).
+forced off while leaving (`+0x2544`). Counter `c = slot+0x28`: +1 if on else -1, clamped 0..50 (50 ticks = 1.67 s). `+0x342e` is set by the tenth button or by the battle's first unpaused tick (`SpaceWarFrissit` exe 0x56e018..0x56e021: `+0x2d84` set → `+0x2d86 = 1`, `+0x2d84 = 0`; not gated by `+0x2d85`), so any unpause (top-bar pause, Space/P, the speed keys and buttons, none of them blocked in the phase) starts the slide-out. When c hits 0 while `+0x342e`: formation phase ends (`+0x342e = +0x342d = 0`, exe 0x56de12), the icon materials are restored and the tooltips reset to `fegyvernevek[i]` (`Mouse_Csak_Szoveg_Set`, hot-spot id 3 + i).
 Per frame: `f = (1 - gorbe(1 - c/50)) * 50`; `x = f*150/50 + 150` (150 closed -> 300 open), `y = 42*i - 200` (+15 for slot 9), `z = -200 - f*400/50` (-200 closed -> -600 open); all three meshes `MoveObj(x + 320 - xcenter*639/639, y, z)` (xcenter = 320).
 Icon frame `SetFrame(+8 mesh, (maxreload[i]/10) * 1.65)` (the reload clock), mesh +8 shown with transparency 0. Not in formation mode: state[i] (0x3150): 3 -> overlay (+0x10) alpha 0.75 shown (some mounts of the group disabled); 6 -> alpha 0.5 shown (all disabled); 7 -> overlay hidden (all enabled); -1 (no weapon of the group) -> unchanged. `panelkiirsetszin(state)` stores it at +0x24a8.
 c == 0: meshes hidden, hot-spot off (`Mouse_Szoveg_Off(3 + i)`); else button shown and hot-spot on, repositioned by `Mouse_Csak_Pos_Set(3 + i, (int)(x - 20 + 320), (int)(y - 20 + 250), -1, -1)` (size stays 40x40). Open column: x = 300 -> hot-spots at x = 600, y = 30 + 42*i (+15 for i = 9), i.e. a right-edge column.
@@ -1116,7 +1116,7 @@ Mount offsets are the ELF record (0x70); the exe record layout may differ [u]. s
 Weapon column buttons (SpwC::main; hot-spots 3..0xc, k = AktIkon - 0x21, never on a release frame):
 - Right button (`!Mouse_Bal`), no formation phase, k < 9, fire cursor not already set by the saved-cursor test (`+0x24c4 != 4`): if k == `+0x24c8` (already armed) -> disarm (`MousePointerType = 0`, `+0x24c8 = +0x24cc = -1`, `+0x24c4 = 0`); else arm: `+0x24c8 = k`, `+0x24cc = -1`, `+0x24c4 = 0`, `MousePointerType = 4` (fire cursor). No message, no sound.
 - Left button, no formation phase: k == 9 -> `SPWRetreatWindow = 1`. k < 9 and `state[k] >= 0` (the group exists): if `state[k] == 7` (all mounts on): `keep = ~mask`, `set = 0`; else `keep = 0xffffffff`, `set = mask`; per own selected live unit (if `keep != 0xffffffff || set != 0`): `Multi_Send(0x44f, EN, 4,&i, 4,&keep, 4,&set, 4,&slot, 0)` = `Weapons { unit: i, keep, set }` (toggle the group). No sound.
-- Formation phase (`+0x342d`): left button: k == 9 -> `+0x342e = 1; SetIdoSpeed(1, false); SetIdoPause(false, false)` (start the battle; the column slides out, then `+0x342d/+0x342e` clear); k < 9 -> `+0x3430 = k` (a tick later SpaceWarFrissit2 does `sprintf("felallas%d", k + 1); loadfelallas` once per change: a formation file of that name).
+- Formation phase (`+0x342d`): left button: k == 9 -> `+0x342e = 1; SetIdoSpeed(1, false); SetIdoPause(false, false)` (start the battle; the column slides out, then `+0x342d/+0x342e` clear); k < 9 -> `+0x3430 = k`, not guarded by `+0x342e` or the pause, so a pick still loads while the column slides out (exe 0x57c213..0x57c230) (a tick later SpaceWarFrissit2 does `sprintf("felallas%d", k + 1); loadfelallas` once per change: a formation file of that name).
 Group masks (ELF table at 0x1199960 + 0x20 + 0x24*g; the exe image has zeros there, see section 7): 0 Lasers 0x1f, 1 Guns 0x1e0, 2 Paralyser 0x200, 3 Ship manipulator 0x400, 4 Anti-matter ray 0x800, 5 Destructor Ray 0x1000, 6 Torpedo 0xe000, 7 Bomb 0x30000, 8 Virus bomb 0x40000, 9 Retreat 0x80000 (weapon kind bit numbers 0..19).
 infoszamol statistics per group (every 5 ticks, from the selected own ships): `count[g]` = sum of mount barrels (`mount +8`) of kinds in the mask; `enabled[g]` = the same for kinds enabled in the unit weapon mask (`unit +0x1c8` ELF); `maxreload[g]` = max over mounts of `clamp(0xa9 - timer * 0xaa / timerSet, 0, 0xaa)`; `state[g]`: -1 if count 0, 6 if enabled 0, 7 if enabled == count, else 3.
 Fighter stance: when `gfxvadaszdefendattack != side[+0xd2c].+0x44` (checked on every infoszamol run, only with `+0x24b8`): `Multi_Send(0x77, EN, 4,&value, 4,&side, 4,&slot, 0)` = `FighterStance { side, value }` (side = `+0xd2c`, my empire).
@@ -1374,7 +1374,7 @@ normalise(a × v)`, `b = normalise(a × c)`, the columns `−a, −b, −c`; `Mu
 
 #### 8.7.5 Settled
 - The camera's steady state at an arena corner: `SpaceWar_Autoscroll` (§2.6).
-- Who unpauses after the opening zoom: with a formation choice the column's tenth button (`+0x342e`, `SetIdoPause(false)`);
+- Who unpauses after the opening zoom: with a formation choice the column's tenth button (`+0x342e`, `SetIdoPause(false)`) or the top bar / keys (the first unpaused tick sets `+0x342e` itself, §5.1);
   without one nothing on the screen, only the top bar's pause button (§7.4); in MP the battle is never paused.
 - `HandleRetreatWindow`: a press-drag-release popup (§7.4).
 
@@ -1396,6 +1396,8 @@ normalise(a × v)`, `b = normalise(a × c)`, the columns `−a, −b, −c`; `Mu
 - Sim side: `ig2-sim::spacebattle` (`game::realtime`, `SpBattles`); orders as `Command::SpaceOrder`, leaving a finished
   battle `Command::SpaceBattleLeft`; `infoszamol`'s sim writes travel as the battle orders `Strengths` and `Outgunned`;
   the formation pick as `Battle::pick_formation`. Tested by `ig2-net/tests/sp_battle.rs`.
+- Formation phase: ends on the battle's first unpaused tick (§5.1), not only by the start button; a screen entered
+  later has none.
 
 **State**: accepted against the fx8 capture sequence (numbers in `re/screens/diff-results.md`); everything in §1–§7 is
 ported. Orders were not compared byte-exact (no MULTIGET harness for SpaceWar); `infoszamol`'s strengths equal the

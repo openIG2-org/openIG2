@@ -54,6 +54,20 @@ fn a_single_player_battle_runs_on_the_battle_screen() {
     let o = |order| Command::SpaceOrder { battle: b as u8, order };
     o(BattleOrder::Attack { unit: mine[0] as u16, target: theirs[0] as u16 }).apply(&mut g, me as u8);
     assert_eq!(g.realtime.slots[b].units[mine[0]].target, Some(theirs[0]), "the human's attack order");
+    // Unpaused, the attacker closes on its target (`attack_order`, then the battle's movement).
+    let gap = |g: &Game| {
+        let s = &g.realtime.slots[b];
+        let (p, q) = (s.units[mine[0]].pos, s.units[theirs[0]].pos);
+        ((p.x - q.x).powi(2) + (p.y - q.y).powi(2) + (p.z - q.z).powi(2)).sqrt()
+    };
+    let gap0 = gap(&g);
+    g.set_pause(false, false);
+    for _ in 0..100 {
+        g.advance_clock();
+        g.run_tick();
+    }
+    assert!(g.realtime.slots[b].f2d86, "the first unpaused tick ends the formation phase (+0x2d86)");
+    assert!(gap(&g) < gap0 - 5.0, "the attacker moves to its target: {gap0} -> {}", gap(&g));
     // Another empire's unit, or an order from the AI's empire: refused.
     assert!(!g.space_order(me as u8, b, Order::Attack { unit: theirs[0], target: mine[0] }));
     assert!(!g.space_order(3, b, Order::Attack { unit: theirs[0], target: mine[0] }));

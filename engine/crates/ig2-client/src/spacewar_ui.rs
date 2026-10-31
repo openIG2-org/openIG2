@@ -375,9 +375,10 @@ pub struct SpaceWarUi {
     // The weapon column (§5.1) and `infoszamol`'s groups: counters 0..50, then per group the barrels, the enabled
     // barrels, the slowest reload (0..0xaa) and the state (−1 none, 3 some off, 6 all off, 7 all on).
     pub column: [i32; 10],
-    /// The formation phase's end (`+0x2d86`, ELF `+0x342e`): set by the start button, the phase (`+0x2d85`) is over
-    /// once a column slot has slid out. The exe clears both bytes in the screen's tick; the sim's
-    /// `Battle::formation_choice` keeps the start value, so the screen keeps the end here.
+    /// The formation phase's end (`+0x2d86`, ELF `+0x342e`): set by the start button or the battle's first unpaused
+    /// tick (`Battle::f2d86`), the phase (`+0x2d85`) is over once a column slot has slid out. The exe clears both
+    /// bytes in the screen's tick; the sim's `Battle::formation_choice` keeps the start value, so the screen keeps
+    /// the end here (and takes a set `f2d86` on entry as a phase already over).
     pub formation_leaving: bool,
     pub formation_done: bool,
     /// `+0x3430` / `+0x3434` (exe `+0x2d88` / `+0x2d8c`): the formation chosen in the phase and the one loaded
@@ -526,7 +527,7 @@ impl SpaceWarUi {
             armed_marker: -1,
             column: [0; 10],
             formation_leaving: false,
-            formation_done: false,
+            formation_done: b.f2d86,
             formation_pick: if b.formation_choice { 0 } else { -1 },
             formation_loaded: if b.formation_choice { 0 } else { -1 },
             voices: Vec::new(),
@@ -1014,6 +1015,10 @@ impl SpaceWarUi {
     /// retreat button while the side may retreat; all of them in the formation phase.
     fn column_tick(&mut self, b: &Battle) {
         let may_retreat = self.can_retreat && !self.story_no_retreat;
+        // Any unpause starts the slide-out: `SpaceWarFrissit` sets `+0x2d86` on the first unpaused tick (exe 0x56e018).
+        if b.f2d86 && self.formation(b) {
+            self.formation_leaving = true;
+        }
         for i in 0..10 {
             let formation = self.formation(b);
             let on = if self.leaving || self.formation_leaving {
@@ -2063,6 +2068,32 @@ mod tests {
         assert_eq!(step(&mut ui, 0x1f, false), Some(0x1f));
         assert_eq!(step(&mut ui, 0x1f, true), Some(0x1f));
         assert_eq!(step(&mut ui, 0x4c, true), Some(0x1f));
+    }
+
+    /// The formation phase ends however the battle is unpaused: `SpaceWarFrissit`'s first unpaused tick sets
+    /// `+0x2d86` (exe 0x56e018, `Battle::f2d86`), the column slides out, then `+0x2d85` clears (exe 0x56de12); a
+    /// screen entered after that has no phase. Orders (`JobbClick`, exe 0x5691b0) wait for its end.
+    #[test]
+    fn any_unpause_ends_the_formation_phase() {
+        let mut b = Battle::slot();
+        b.formation_choice = true;
+        let cam = crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]);
+        let mut ui = SpaceWarUi::enter(0, &b, &cam, 0);
+        for _ in 0..60 {
+            ui.column_tick(&b);
+        }
+        assert!(ui.formation(&b), "paused: the phase stays");
+        b.f2d86 = true;
+        ui.column_tick(&b);
+        assert!(ui.formation_leaving && ui.formation(&b), "the column slides out first");
+        for _ in 0..60 {
+            ui.column_tick(&b);
+        }
+        assert!(!ui.formation(&b), "the phase is over");
+        let mut out = Vec::new();
+        ui.weapon_button(&b, 3, true, &mut out);
+        assert_eq!(ui.formation_pick, 0, "no formation pick after the start");
+        assert!(!SpaceWarUi::enter(0, &b, &cam, 0).formation(&b), "nor after entering the screen again");
     }
 
     /// `SpaceWar_Kilep`'s zoom-out (exe 0x562b50): towards Options at five times the speed (`visszaallitasidoszorzo =
