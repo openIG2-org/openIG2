@@ -15,6 +15,7 @@ Since 0.7.48.
 
 - Starmap: no white circle around the fleet or planet under the mouse, as in the original.
 - Starmap: the light running along a fleet's waypoint arrows moves at the original's pace again.
+- Space battle: the retreat button works: answering Yes sends your ships out of the battle, and computer fleets that are losing retreat too, as in the original.
 - A short click on a production plus or minus button adds one ship again; holding it still repeats, as in the original.
 - Where a fleet's radar area overlaps a planet's on the starmap, only the planet's red shows, as in the original.
 - The starmap info panel's production and morale lines, and the planet info's rotating lines, switch every 1.5 seconds, as in the original.

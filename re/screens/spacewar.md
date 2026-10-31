@@ -680,7 +680,7 @@ Frame, only when `+0x24b8` (gfx up), in §3's order (steps 1–13). Its 2D parts
 
 ### 5.1 The weapon column (fegyverpanelfrissit ELF 0x6a7150 / exe 0x5727d0; SpaceWarFrissit2 for the counters)
 Ten slots i = 0..9 (meshes: `ikon<i>.xvb` button at scale 0.02, `ora.xvb` reload clock at 0.014, `no.xvb` "off" overlay at 0.014; vector/spacewar/ and textures/spacewar/; created in initgfx at x = 300, y = 42*i - 200 (+15 for i = 9), z = -600).
-Per tick (SpaceWarFrissit2, every UI tick: 50 ticks = 0.5 s; only when no intro/fade and `+0x2545` clear): target on = `!(+0x342e) && ( +0x342d || ( count[i] != 0 && +0x2588 != 0 && +0x2578 != 0 ) )`; slot 9 (Retreat): `!(+0x342e) && ( +0x342d || ( side[+0xd2c].+0x70 != 0 && StoryAdat+152 == 0 ) )` (the viewer's flag B, ELF side `+0x70`, set by `infoszamol`; not `may_retreat` `+0x68`);
+Per tick (SpaceWarFrissit2, every UI tick: 50 ticks = 0.5 s; only when no intro/fade and `+0x2545` clear): target on = `!(+0x342e) && ( +0x342d || ( count[i] != 0 && +0x2588 != 0 && +0x2578 != 0 ) )`; slot 9 (Retreat): `!(+0x342e) && ( +0x342d || ( side[+0xd2c].+0x70 != 0 && StoryAdat+152 == 0 ) )` (the viewer's flag B, exe side `+0x68` (exe 0x56dd54), ELF `+0x70`, set by `infoszamol` (exe 0x574da7), the same byte `retreat` 0x57ee20 checks, re/rules/space-combat.md §7);
 forced off while leaving (`+0x2544`). Counter `c = slot+0x28`: +1 if on else -1, clamped 0..50 (50 ticks = 1.67 s). `+0x342e` is set by the tenth button or by the battle's first unpaused tick (`SpaceWarFrissit` exe 0x56e018..0x56e021: `+0x2d84` set → `+0x2d86 = 1`, `+0x2d84 = 0`; not gated by `+0x2d85`), so any unpause (top-bar pause, Space/P, the speed keys and buttons, none of them blocked in the phase) starts the slide-out. When c hits 0 while `+0x342e`: formation phase ends (`+0x342e = +0x342d = 0`, exe 0x56de12), the icon materials are restored and the tooltips reset to `fegyvernevek[i]` (`Mouse_Csak_Szoveg_Set`, hot-spot id 3 + i).
 Per frame: `f = (1 - gorbe(1 - c/50)) * 50`; `x = f*150/50 + 150` (150 closed -> 300 open), `y = 42*i - 200` (+15 for slot 9), `z = -200 - f*400/50` (-200 closed -> -600 open); all three meshes `MoveObj(x + 320 - xcenter*639/639, y, z)` (xcenter = 320).
 Icon frame `SetFrame(+8 mesh, (maxreload[i]/10) * 1.65)` (the reload clock), mesh +8 shown with transparency 0. Not in formation mode: state[i] (0x3150): 3 -> overlay (+0x10) alpha 0.75 shown (some mounts of the group disabled); 6 -> alpha 0.5 shown (all disabled); 7 -> overlay hidden (all enabled); -1 (no weapon of the group) -> unchanged. `panelkiirsetszin(state)` stores it at +0x24a8.
@@ -1394,7 +1394,7 @@ normalise(a × v)`, `b = normalise(a × c)`, the columns `−a, −b, −c`; `Mu
 - `spacewar_live.rs`: `Live`: entry from the starmap camera, opening and closing zoom, leaving for Options or another
   screen with the battle parked, re-entry.
 - Sim side: `ig2-sim::spacebattle` (`game::realtime`, `SpBattles`); orders as `Command::SpaceOrder`, leaving a finished
-  battle `Command::SpaceBattleLeft`; `infoszamol`'s sim writes travel as the battle orders `Strengths` and `Outgunned`;
+  battle `Command::SpaceBattleLeft`; `infoszamol`'s sim writes travel as the battle orders `Strengths`, `Outgunned` and `RetreatFlags`;
   the formation pick as `Battle::pick_formation`. Tested by `ig2-net/tests/sp_battle.rs`.
 - Formation phase: ends on the battle's first unpaused tick (§5.1), not only by the start button; a screen entered
   later has none. In multiplayer it is an enhanced room option (off by default): `re/rules/multiplayer.md` §7.1.2

@@ -1268,7 +1268,7 @@ impl SpaceWarUi {
     /// `infoszamol` (ELF 0x6a4080, exe 0x574040; spec §5.2, §7.1.3): the selection's statistics and the weapon groups
     /// (both only while something is selected; the groups keep their last values otherwise), the fighter stance's
     /// message while the slider differs from the side's. `plans` gives a design's firepower (`Tervek[e][d] +0x2c`) and a
-    /// ship's design (`Hajok[s] +2`). Its writes to the sim leave as [`Order::Strengths`] and [`Order::Outgunned`].
+    /// ship's design (`Hajok[s] +2`). Its writes to the sim leave as [`Order::Strengths`], [`Order::RetreatFlags`] and [`Order::Outgunned`].
     pub fn infoszamol(&mut self, b: &Battle, plans: &Plans, out: &mut Vec<Out>) {
         let me = self.me;
         let mut st = crate::spacewar_hud::Stats { rank_sum: -1, ..Default::default() };
@@ -1422,11 +1422,13 @@ impl SpaceWarUi {
             self.info_type = t;
             self.spin = -0.05;
         }
-        // The sides' flag B (ELF side `+0x70`, exe 0x574040): a live unit of the side's original owner that is
-        // neither paralysed (`+0x1c0`), taken over (`+0x1c4`) nor retreating (`+0x1d4`) and can move (type `+0x14`),
-        // or a live fighter group not retreating. Slot 9 (Retreat) shows on the viewer's (§5.1).
-        self.can_retreat = b.units.iter().any(|u| u.alive && u.original_owner == me && u.disabled == 0 && u.taken == 0 && !u.retreating && u.ship_type.top_speed != 0.0)
-            || b.fighters.iter().any(|g| g.alive && g.owner == me && !g.retreating);
+        // The sides' flag B (exe side `+0x68`, ELF `+0x70`): slot 9 (Retreat) shows on the viewer's (§5.1); the battle
+        // gets them as an order when they differ.
+        let flags = b.retreat_flags();
+        self.can_retreat = flags.get(me.max(0) as usize).copied().unwrap_or(false);
+        if b.sides.iter().zip(flags).any(|(s, f)| s.may_retreat != f) {
+            out.push(Out::Order(Order::RetreatFlags));
+        }
         let side = me.max(0) as usize;
         if b.sides.get(side).is_some_and(|s| s.fighter_aggression != self.stance) {
             out.push(Out::Order(Order::FighterStance { side, value: self.stance }));

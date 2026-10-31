@@ -450,7 +450,10 @@ Then: the retreat check (MP, or the human / no story ban, and no scripted lock):
 `(f64)strength < (f64)lost·0.6` and `2·strength < Σ hostile strengths` → retreat (`strength` = side `+0x54`, written
 only by the battle screen's `infoszamol`, every 6th UI tick: each side's current firepower, re/screens/spacewar.md
 §8.7.1; a battle nobody watches keeps the last values); all its units' weapon masks
-:= all. Retreat (if allowed, +0x68; story ban for the human): mobile units of that original owner start
+:= all. Retreat (if allowed, side +0x68, flag B: only the battle screen's `infoszamol` writes it, exe 0x574da7..0x574e5f, every
+run: cleared for all 19 sides, then set for each original owner (`+0x1c8`) of a live unit not paralysed, retreating or
+taken over whose type's top speed is not 0, and each owner of a live fighter group not retreating; the port sends it as
+`Order::RetreatFlags`; story ban for the human): mobile units of that original owner start
 retreating (`rndlog(6, 0, 2) < 1` explodes later), fighters head 600 away (`rndlog(6, 0, 2) < 1` doomed), its
 fleets back off on the starmap (exe 0x597cb0, = `FlottaArrebPakol`). Attack: squad centres; gathering squads
 spread away from the common centre (`2d`, normalised to 3 within 3, to 10 beyond 10) and move there, then

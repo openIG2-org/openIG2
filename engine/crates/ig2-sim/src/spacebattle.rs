@@ -635,7 +635,7 @@ pub struct Side {
     pub lost: i32,
     /// +0x64: fighters the last `AddFleet` brought for it.
     pub fighter_count: i32,
-    /// +0x68: may retreat.
+    /// +0x68: may retreat (flag B): only the battle screen's `infoszamol` writes it ([`Order::RetreatFlags`]).
     pub may_retreat: bool,
 }
 
@@ -3496,6 +3496,9 @@ pub enum Order {
     /// No message: `infoszamol`'s one-shot block (exe 0x574ee1, `+0x2d98`, once per battle): the outgunned flags and
     /// the experience of the last unit slot's ships ([`Battle::outgunned`]); the caller applies the experience.
     Outgunned,
+    /// No message: `infoszamol` (exe 0x574da7..0x574e5f, every run) clears every side's `+0x68` and sets it again from
+    /// [`Battle::retreat_flags`]; `retreat` (0x57ee20) does nothing for a side without it. Sent when they differ.
+    RetreatFlags,
 }
 
 impl Battle {
@@ -3517,9 +3520,28 @@ impl Battle {
             Order::AttackGun { unit: u, gun: g } | Order::GunTarget { gun: g, unit: u } => unit(u) && gun(g),
             Order::DirectFire { unit: u, target, mount } => unit(u) && unit(target) && mount < self.units[u].mounts.len(),
             Order::FighterStance { side, .. } => side < self.sides.len(),
-            Order::Retreat | Order::ArmAll | Order::Strengths { .. } => true,
+            Order::Retreat | Order::ArmAll | Order::Strengths { .. } | Order::RetreatFlags => true,
             Order::Outgunned => self.f2d98,
         }
+    }
+
+    /// `infoszamol`'s flag B (exe 0x574da7..0x574e5f): a side may retreat while it has a live unit of its original owner
+    /// (`+0x1c8`) that is neither paralysed (`+0x1c0`), retreating (`+0x1d4`) nor taken over (`+0x1c4`) and can move
+    /// (type `+0x14`), or a live fighter group (`+0x70` owner) that is not retreating (`+0x88`).
+    pub fn retreat_flags(&self) -> [bool; EMPIRES] {
+        let mut f = [false; EMPIRES];
+        let mut set = |e: i32| if let Some(x) = usize::try_from(e).ok().and_then(|e| f.get_mut(e)) { *x = true };
+        for u in &self.units {
+            if u.alive && u.disabled == 0 && !u.retreating && u.taken == 0 && u.ship_type.top_speed != 0.0 {
+                set(u.original_owner);
+            }
+        }
+        for g in &self.fighters {
+            if g.alive && !g.retreating {
+                set(g.owner);
+            }
+        }
+        f
     }
 
     /// `infoszamol`'s one-shot block (exe 0x574ee1..0x574f2b; ELF 0x6a4080): every side with firepower gets flag A
@@ -3567,6 +3589,12 @@ impl Battle {
                 }
             }
             Order::ArmAll | Order::Outgunned => {}
+            Order::RetreatFlags => {
+                let flags = self.retreat_flags();
+                for (s, f) in self.sides.iter_mut().zip(flags) {
+                    s.may_retreat = f;
+                }
+            }
             Order::Explode { unit } => {
                 for _ in 0..self.units[unit].ship_count.max(0) {
                     self.explode(t, unit, 0, true, true);
@@ -5091,5 +5119,32 @@ mod tests {
         b.units[2].owner = 3;
         b.f2d98 = true;
         assert!(b.outgunned().is_empty());
+    }
+
+    /// `retreat` (0x57ee20) obeys flag B, which only `infoszamol` (exe 0x574da7) sets: a fresh battle ignores the order;
+    /// after [`Order::RetreatFlags`] side 6's mobile unit turns tail, its stationary one (top speed 0) does not, and
+    /// side 3 with nothing but a stationary unit never gets the flag.
+    #[test]
+    fn retreat_needs_the_screens_flag() {
+        let mut still = ship(6, V4::new(2.0, 0.0, 0.0));
+        still.ship_type.top_speed = 0.0;
+        let mut guard = ship(3, V4::new(4.0, 0.0, 0.0));
+        guard.ship_type.top_speed = 0.0;
+        let mut b = battle(vec![ship(6, V4::new(0.0, 0.0, 0.0)), still, guard]);
+        let r = rules();
+        let words = vec![vec![0; 46]; 40];
+        let mut rng = Streams::default();
+        let mut w = Log::default();
+        let mut ev = Vec::new();
+        let mut t = Tick { rules: &r, weapon_words: &words, rng: &mut rng, world: &mut w, events: &mut ev };
+        b.order(&mut t, 6, Order::Retreat);
+        assert!(!b.units[0].retreating);
+        assert!(b.order_valid(&Order::RetreatFlags));
+        b.order(&mut t, 6, Order::RetreatFlags);
+        assert_eq!((b.sides[6].may_retreat, b.sides[3].may_retreat), (true, false));
+        b.order(&mut t, 6, Order::Retreat);
+        assert_eq!((b.units[0].retreating, b.units[1].retreating), (true, false));
+        b.order(&mut t, 6, Order::RetreatFlags);
+        assert!(!b.sides[6].may_retreat);
     }
 }

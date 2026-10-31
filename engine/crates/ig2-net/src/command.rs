@@ -127,6 +127,7 @@ pub enum BattleOrder {
     Weapons { unit: u16, keep: u32, set: u32 },
     Strengths { values: [i32; ig2_sim::spacebattle::EMPIRES] },
     Outgunned,
+    RetreatFlags,
 }
 
 impl From<BattleOrder> for Order {
@@ -145,6 +146,7 @@ impl From<BattleOrder> for Order {
             BattleOrder::Weapons { unit, keep, set } => Order::Weapons { unit: u(unit), keep, set },
             BattleOrder::Strengths { values } => Order::Strengths { values },
             BattleOrder::Outgunned => Order::Outgunned,
+            BattleOrder::RetreatFlags => Order::RetreatFlags,
         }
     }
 }
@@ -165,6 +167,7 @@ impl From<Order> for BattleOrder {
             Order::Weapons { unit, keep, set } => BattleOrder::Weapons { unit: u(unit), keep, set },
             Order::Strengths { values } => BattleOrder::Strengths { values },
             Order::Outgunned => BattleOrder::Outgunned,
+            Order::RetreatFlags => BattleOrder::RetreatFlags,
         }
     }
 }

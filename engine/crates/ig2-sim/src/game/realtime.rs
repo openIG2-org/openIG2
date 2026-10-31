@@ -631,7 +631,7 @@ impl Game<'_> {
             | Order::DirectFire { unit, .. } | Order::Weapons { unit, .. } => own_unit(unit),
             Order::GunTarget { .. } => b.planet_owner == issuer as i32,
             Order::FighterStance { side, .. } => side == issuer as usize,
-            Order::Retreat | Order::ArmAll | Order::Strengths { .. } | Order::Outgunned => true,
+            Order::Retreat | Order::ArmAll | Order::Strengths { .. } | Order::Outgunned | Order::RetreatFlags => true,
         };
         if !mine {
             return false;
