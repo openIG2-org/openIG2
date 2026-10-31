@@ -33,6 +33,9 @@ pub struct Live {
     pub loops: std::collections::HashMap<(usize, usize, u8), usize>,
     /// The hot-spots' tooltip.
     tip: crate::kit::tooltip::Tooltip,
+    /// The frame's tooltip and pointer, which go over the top bar and the tutorial's window (`UpdateFrame` draws
+    /// them last): the caller appends them after those.
+    pub over_bar: Option<crate::render::Frame>,
     /// The zoom-out runs towards the options screen (`starmaphovaleptovabb = 0xd`, `SpaceWar_Kilep` phase 1).
     pub to_options: bool,
     /// The zoom-out runs towards another screen (an F-key or the top bar's spot 7, both only with `DEBUGX`): its
@@ -54,7 +57,7 @@ impl Live {
         world.game.sp_battles.on_screen = true;
         world.game.realtime.fx.clear();
         let fx = crate::spacewar_fx::Tables::read(install).map_err(|e| eprintln!("ig2-client: the battle effects' tables: {e}")).ok().map(crate::spacewar_fx::Fx::new);
-        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx, loops: Default::default(), tip: Default::default(), to_options: false, to_screen: None })
+        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx, loops: Default::default(), tip: Default::default(), over_bar: None, to_options: false, to_screen: None })
     }
 
     /// The end check closed the battle (`AktKepKell = 2`): `SpaceWar_Kilep`'s zoom-out.
@@ -264,8 +267,9 @@ impl Live {
         let under = raw.map_or(0, |a| a.saturating_sub(0x1e));
         let len = tips.get(under as usize).map_or(0, |t| t.len());
         self.tip.update(now as f64, if len == 0 { 0 } else { under }, len, self.left || self.right);
+        let mut top = crate::render::Frame::new([0.0; 4]);
         if let (Some(t), Some(font)) = (tips.get(self.tip.shown as usize), hud.font.as_ref()) {
-            self.tip.draw(&mut frame, font, hud.white, &virt, &hud.palette, t);
+            self.tip.draw(&mut top, font, hud.white, &virt, &hud.palette, t);
         }
         let kind = match shown.pointer {
             0 | 1 => 1,
@@ -274,7 +278,8 @@ impl Live {
             4 => 6,
             _ => 1,
         };
-        crate::spacewar_hud::cursor(&mut frame, &virt, gfx.cursor, kind, self.ticks100, mouse);
+        crate::spacewar_hud::cursor(&mut top, &virt, gfx.cursor, kind, self.ticks100, mouse);
+        self.over_bar = Some(top);
         let (units, guns) = crate::spacewar_screen::pick(gfx, assets, &shown, &v.camera);
         let plane = crate::spacewar_screen::plane_point(&shown, mouse, crate::spacewar_ui::PLANE_H * shown.view.scale);
         let cam = v.camera;

@@ -1755,6 +1755,9 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
             hud.speed = (world.game.speed_level() - 1).clamp(0, 2) as usize;
             hud.paused = world.paused();
             hud.draw(&mut f, size, &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
+            if let Some(top) = live.over_bar.take() {
+                f.append(top);
+            }
             let rgba = r.draw_to_image(&f, o.size, t);
             let path = crate::script::grab_path(out, tick);
             crate::assets::write_snapshot(&path, o, &rgba)?;

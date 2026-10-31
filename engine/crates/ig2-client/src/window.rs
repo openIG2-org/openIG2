@@ -4255,6 +4255,9 @@ impl App {
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, 11);
             }
+            if let Some(top) = self.spacewar.as_mut().and_then(|s| s.over_bar.take()) {
+                frame.append(top);
+            }
             ov.draw(&mut frame, h, size);
             if let Ok(out) = g.surface.get_current_texture() {
                 self.backdrop.last = Some((g.present(frame, &out.texture, t), t));

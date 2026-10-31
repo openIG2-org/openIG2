@@ -10,6 +10,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Spy screen: an open drop-down list now covers the panel texts under it, as in the original.
 - Spy screen: it opens without a short freeze.
 - The game window, the taskbar and the program file have an icon of their own.
+- Space battles: the mouse pointer and its tooltip stay on top of the top bar.
 
 ### 0.7.56 (beta)
 Since 0.7.48.

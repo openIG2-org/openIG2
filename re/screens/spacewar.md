@@ -1399,6 +1399,8 @@ normalise(a × v)`, `b = normalise(a × c)`, the columns `−a, −b, −c`; `Mu
 - Formation phase: ends on the battle's first unpaused tick (§5.1), not only by the start button; a screen entered
   later has none. In multiplayer it is an enhanced room option (off by default): `re/rules/multiplayer.md` §7.1.2
   (ported: each human side picks and starts; the screen shows "Waiting for the other players" after start).
+- Draw order: the tooltip and the pointer are not in the battle frame; `Live::over_bar` holds them and the window (and the
+  headless grabs) append them after the top bar and the tutorial window, as `MousePointer()` follows the bar (§3 step 11).
 
 **State**: accepted against the fx8 capture sequence (numbers in `re/screens/diff-results.md`); everything in §1–§7 is
 ported. Orders were not compared byte-exact (no MULTIGET harness for SpaceWar); `infoszamol`'s strengths equal the
