@@ -338,6 +338,10 @@ pub struct Game<'r> {
     pub local_inbox: Option<u8>,
     /// The names the local screen shows ahead of the lockstep ([`Game::show_local_names`]; unsaved).
     pub local_names: Vec<LocalName>,
+    /// Canonical multiplayer: this machine's message line ([`Game::show_local_ticker`]; unsaved) while the shared
+    /// one is in the state, and the shared one while this is.
+    pub local_ticker: messages::Ticker,
+    pub shared_ticker: Option<messages::Ticker>,
 }
 
 /// A name the local screen shows before the lockstep carries it (a rename in multiplayer, deviation 395): fleet or
@@ -432,6 +436,8 @@ impl<'r> Game<'r> {
             over: None,
             answering: None,
             local_inbox: None,
+            local_ticker: messages::Ticker::default(),
+            shared_ticker: None,
             local_names: Vec::new(),
         }
     }
@@ -533,6 +539,33 @@ impl<'r> Game<'r> {
             }
         }
         self.local_names = names;
+    }
+
+    /// This machine's message line in (`true`, while the client holds the game) or the shared state's back (`false`,
+    /// before the game goes into the lockstep; `re/rules/multiplayer.md` §2: each peer posts its own empire's lines).
+    /// Repeats are no-ops.
+    pub fn show_local_ticker(&mut self, on: bool) {
+        if on == self.shared_ticker.is_some() {
+            return;
+        }
+        let now = self.state.ticker();
+        match self.shared_ticker.take() {
+            Some(shared) => {
+                self.state.store_ticker(&shared);
+                self.local_ticker = now;
+            }
+            None => {
+                self.state.store_ticker(&self.local_ticker);
+                self.shared_ticker = Some(now);
+            }
+        }
+    }
+
+    /// Canonical multiplayer: the lines `events` post for this machine's empire into its own line (shown by
+    /// [`Game::show_local_ticker`]).
+    pub fn post_local_messages(&mut self, events: &[GameEvent]) {
+        let posts = self.messages_for(events, self.local.empire as usize);
+        self.post(posts);
     }
 
     /// The client's local edit of a name (a rename in multiplayer): `name` (no NUL) and the custom-name bit shown at
@@ -2382,6 +2415,10 @@ impl Game<'_> {
             return;
         }
         let posts = self.messages_for(&self.events[from..], self.globals().en);
+        self.post(posts);
+    }
+
+    fn post(&mut self, posts: Vec<(i32, Vec<u8>, bool, bool)>) {
         if posts.is_empty() {
             return;
         }
@@ -2438,7 +2475,9 @@ impl Game<'_> {
                     SideEvent::Abandoned { planet, owner } if is_en(owner) => posts.push((5, vec![self.planet_name(planet)], true, false)),
                     SideEvent::TechCaptured { empire, tech } if is_en(empire) => posts.push((7, vec![self.tech_name(tech)], false, false)),
                     SideEvent::Revolt { planet, owner } if is_en(owner) => posts.push((8, vec![self.planet_name(planet)], true, true)),
-                    SideEvent::Colony { planet, event: ColonyEvent::UnrestWarning } => posts.push((9, vec![self.planet_name(planet)], true, false)),
+                    SideEvent::Colony { planet, event: ColonyEvent::UnrestWarning } if is_en(self.planet_owner(planet)) => {
+                        posts.push((9, vec![self.planet_name(planet)], true, false))
+                    }
                     SideEvent::Colony { planet, event: ColonyEvent::SpyExpelled { empire } } if is_en(empire) => {
                         posts.push((13, vec![self.planet_name(planet)], false, false))
                     }

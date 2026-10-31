@@ -44,8 +44,8 @@ in the original, so it never runs in MP. "MP" says what the canonical view does.
 
 | Port site | Exe function | Reads | Class | MP (canonical) |
 |---|---|---|---|---|
-| `Game::post_messages` / `messages_for` | `ScrollUzenetId` 0x556dc0 at the sites of `info-messages.md` §3.2 | `EN` filters the lines; writes the lists 0xE40CB0/0xE40F70 | P | not posted to the state; each peer: `messages_for(events, own empire)` |
-| `colony::economy_head` | `FRISSIT_Planet` 0x474930 | unrest warning only for `EN`'s planets | P | canonical `EN`'s (events are reported for it only) |
+| `Game::post_messages` / `messages_for` | `ScrollUzenetId` 0x556dc0 at the sites of `info-messages.md` §3.2 | `EN` filters the lines; writes the lists 0xE40CB0/0xE40F70 | P | not posted to the state; each peer: `messages_for(events, own empire)` (owner-checked, incl. unrest id 9). Ported: `Game::post_local_messages` after each turn (client `World::mp_tick`) into the peer's own `Game::local_ticker`, swapped into the state by `show_local_ticker(true)` while the client holds the game and out before the lockstep, so hashes stay alike |
+| `colony::economy_head` | `FRISSIT_Planet` 0x474930 | unrest warning only for `EN`'s planets | P | canonical `EN`'s (events are reported for it only); joiners get no unrest warning of their own yet |
 | `colony::production_base` | `GetBolygoGazdagsag` 0x4aca20 | an unowned planet's richness uses `EN`'s race | G | host's race (the original would differ per machine) |
 | `colony_side::transfer` | `BolygoElfoglal` 0x53b720 | `SideEvent::Met` for `EN` → `FelfedezBirodalom` (contact slot) | G (contact list) | canonical `EN`'s list; see §5 |
 | `colony_side::transfer`, epidemic | `BolygoElfoglal` 0x53b720 | `new != EN` | SP | — |

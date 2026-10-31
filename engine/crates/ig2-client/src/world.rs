@@ -425,6 +425,8 @@ fn local_en(game: &mut Game, local: bool) {
     game.show_inbox((local && e != en).then_some(e));
     // And the names it renamed that the lockstep hasn't carried yet (deviation 395).
     game.show_local_names(local);
+    // And its own message line (each peer posts its own empire's lines, re/rules/multiplayer.md §2).
+    game.show_local_ticker(local);
 }
 
 /// The message line's words for a change of the session's hold status (ours, in English: the original's MP had no
@@ -634,6 +636,7 @@ impl<'r> World<'r> {
             self.net_over = true;
         }
         // The events of turns run outside this pump (a drop, a kick, a save catch the peer up) count too.
+        self.game.post_local_messages(&events);
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
         self.take_notices(&events);
         self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
@@ -1057,6 +1060,31 @@ mod tests {
         }
         w.pump();
         assert_eq!(ig2_sim::game::dialogue_in_progress(&w.game.state), Some(7));
+    }
+
+    /// Canonical multiplayer: each machine posts its own empire's lines (`messages_for(events, own empire)`,
+    /// re/rules/multiplayer.md §2) into a line of its own; the shared state's line is back whenever the game goes
+    /// into the lockstep, so the peers' states stay alike.
+    #[test]
+    fn each_peer_posts_its_own_message_line() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let mut g = crate::new_game::tutorial(&install, 1, 4242, &rules).unwrap();
+        g.canonical_view(1);
+        g.local.empire = 2;
+        let shared = g.state.ticker();
+        local_en(&mut g, true);
+        let done = |empire| GameEvent::Research(ig2_sim::research::ResearchEvent::Completed { empire, tech: 1 });
+        g.post_local_messages(&[done(2), done(1)]);
+        assert_eq!(g.state.ticker().count, shared.count + 1, "the joiner's research only");
+        local_en(&mut g, false);
+        assert_eq!(g.state.ticker(), shared, "the shared line goes into the lockstep");
+        local_en(&mut g, true);
+        local_en(&mut g, true);
+        assert_eq!(g.state.ticker().count, shared.count + 1, "the local line comes back once");
     }
 
     /// The main menu without a save stands on campaign 1's start, but as no started campaign: no start voice and no
