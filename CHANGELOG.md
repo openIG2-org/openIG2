@@ -1,38 +1,72 @@
 # Changelog
 
-- Options: the ground and space battle "simulate" and "overrun" switches now change how battles are fought.
 What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
-- Multiplayer: the game runs at the single-player pace (it ran twice as fast), and orders run within 100-200 ms on a LAN; over the internet the delay follows the slowest player's connection.
-- Multiplayer: hosting asks your router to open the game port (UPnP / NAT-PMP) at once; the room's port-mapping line switches it off.
-- Multiplayer: when a player drops, leaves or is kicked, the computer plays their empire; a player who rejoins gets it back.
-- Multiplayer: an optional room setting, "Space battle formations" (off by default), lets every human side with six or more ships pick a formation before a real-time space battle; the battle waits for the other players.
-- Multiplayer: a joining player's diplomacy screen lists the empires they have met, not the host's.
-- Multiplayer: a colony can build more than one building per visit (the build button comes back once the building is placed).
-- Multiplayer: in a space battle the joining player can select and order their own ships (the screen used to treat the host's ships as theirs).
+### 0.7.48 (beta)
+Since 0.7.2.
+
+**Game**
+
+- Options: the ground and space battle "simulate" and "overrun" switches now change how battles are fought.
 - The messages screen opens at the right place in the list, and a click opens the message you clicked.
 - Urgent messages open the messages screen and play at once, as in the original.
 - A waiting message makes the top bar's "new message" text pulse, and the message line pauses until you read it, as in the original.
-- Multiplayer: the host can start a game mode (king of the hill, three planets, capture the flag) by typing `story 1001`, `story 1003` etc. in the room chat before starting, as in the original; the room confirms "Starting story set to N" on the host.
-- Multiplayer: the game no longer stays stuck after a space battle (a player who rejoined or resumed mid-battle, or had Options open when it ended, now leaves it too), and a battle's end no longer pauses everyone.
-- Multiplayer: a saved game can be resumed without every player; the computer plays the empires of the players who are missing.
-- Multiplayer: a full-screen video (your own defeat or victory) no longer stalls the others or gets you dropped.
-- Multiplayer: opening Options or Help no longer stalls the game for everyone or gets you dropped; the game runs on underneath, as in the original.
-- Multiplayer: the message line shows your own empire's news again (research done, wars, offers, revolts), with its history and voices.
 - Splitting a fleet works again in single player and multiplayer: the new fleet stays, and ships can be moved into it in the transfer panel.
-- Multiplayer: a real-time ground war opens its colony screen on every machine and the game goes back to the old screen when it ends.
-- Multiplayer: renaming a ship design no longer puts the players' games out of step.
-- The multiplayer join page labels its field "Address or join code", so a pasted join code is where to put it.
 - The starmap shows a faint arrow from each of your planets to its rally planet, under the fleet routes.
 - Story spy missions now succeed or get caught, so campaign 2's ending can be reached.
 - Story offers sent from the diplomacy screen's special menu now reach their episodes.
 - While the tutorial runs, the Options game page shows "Ground battle simulate" and "Space battle simulate" off and greyed out; your own settings come back afterwards (ADR 0019).
-- In multiplayer you can no longer move, rally, sell or change the settings of another player's fleets and planets, or give building orders on their colonies.
 - The credits video shows from its first frame instead of staying black for ten seconds.
+- In single player, a planet invaded in real time is fought out on its colony screen: the landed vehicles leave
+  their dropships, the battle runs and the planet keeps or changes its owner. The war has its sounds (shots, hits,
+  explosions, mines, air strikes) and its hit flashes, shot models and debris.
+- Single-player space battles: ships now obey attack and move orders however you start the battle (top-bar pause,
+  Space or P, the speed keys), and re-entering the battle screen no longer brings the formation choice back.
+- Colony screen: clicking a building's roof, tower or upper part selects it, as in the original; the war cursor and
+  the right-click attack use the same pick.
+- Campaign 1 no longer crashes when the planet-toll raider sets out.
+- A fleet split off on the starmap, the ground-war tick and the victory check now follow the screen you are on, as in
+  the original.
+- The late episodes and endings of all three campaigns are now verified in headless play-throughs (the driver answers
+  the stories, researches, sends spies and fleets, builds colony ships), including campaign 2's own ending; campaign
+  3's second storyline isn't won yet.
+
+**Multiplayer**
+
+- The game runs at the single-player pace (it ran twice as fast), and orders run within 100-200 ms on a LAN; over the internet the delay follows the slowest player's connection.
+- Hosting asks your router to open the game port (UPnP / NAT-PMP) at once; the room's port-mapping line switches it off.
+- When a player drops, leaves or is kicked, the computer plays their empire; a player who rejoins gets it back.
+- An optional room setting, "Space battle formations" (off by default), lets every human side with six or more ships pick a formation before a real-time space battle; the battle waits for the other players.
+- A joining player's diplomacy screen lists the empires they have met, not the host's.
+- A colony can build more than one building per visit (the build button comes back once the building is placed).
+- In a space battle the joining player can select and order their own ships (the screen used to treat the host's ships as theirs).
+- The host can start a game mode (king of the hill, three planets, capture the flag) by typing `story 1001`, `story 1003` etc. in the room chat before starting, as in the original; the room confirms "Starting story set to N" on the host.
+- The game no longer stays stuck after a space battle (a player who rejoined or resumed mid-battle, or had Options open when it ended, now leaves it too), and a battle's end no longer pauses everyone.
+- A saved game can be resumed without every player; the computer plays the empires of the players who are missing.
+- A full-screen video (your own defeat or victory) no longer stalls the others or gets you dropped.
+- Opening Options or Help no longer stalls the game for everyone or gets you dropped; the game runs on underneath, as in the original.
+- The message line shows your own empire's news again (research done, wars, offers, revolts), with its history and voices.
+- A real-time ground war opens its colony screen on every machine and the game goes back to the old screen when it ends.
+- Renaming a ship design no longer puts the players' games out of step.
+- The multiplayer join page labels its field "Address or join code", so a pasted join code is where to put it.
+- In multiplayer you can no longer move, rally, sell or change the settings of another player's fleets and planets, or give building orders on their colonies.
 - Internet games through a relay server you run yourself: type its address on the multiplayer page, and joining by code then works behind any router (`docs/RENDEZVOUS.md`).
+- When a game gets out of step and is put back in sync, the players see a line on the message bar.
+- Diplomacy in multiplayer can take back an unanswered message ("cancel last message"); the tutorial's shorter wait
+  between diplomacy messages now applies.
+
+**Tools and project**
+
+- `ig2-client --playthrough mp` plays a whole two-machine multiplayer game to its winner on one computer, comparing both
+  machines throughout and saving, resuming and rejoining on the way; no desync is found.
+- The website is redesigned after the game's own look: the screens list, a screenshot switcher, install and
+  build steps, and the road to 1.0.
+
+### 0.7.2 (beta)
+
 - The client finds your GOG install by itself (registry, GOG Galaxy, the default folders) and checks `ig2.exe`.
   When it finds none, a window lists the places it tried and accepts the game folder dropped onto it.
 - The main menu works without a save; a first start no longer plays the campaign's start voice and in-game music
@@ -42,9 +76,6 @@ Getting the game from "every part works" to "a player can install it and play it
 - Starmap story icons: the story fleet's wormhole, the virus alert and the gigabomb can be used from the radial
   menu, so the campaign episodes that need them can be completed.
 - Attacking the campaign's story planet now plays out as in the original.
-- In single player, a planet invaded in real time is fought out on its colony screen: the landed vehicles leave
-  their dropships, the battle runs and the planet keeps or changes its owner. The war has its sounds (shots, hits,
-  explosions, mines, air strikes) and its hit flashes, shot models and debris.
 - The tutorial locks input like the original (blocked and greyed keys, screens and buttons), and its chapters 1-3
   and 5 play through; chapter 4 runs up to its ground battle. `ig2-client --tutorial N` starts chapter N.
 - Internet games: the host can make a room private and share a join code, and can switch on UPnP / NAT-PMP port
@@ -53,29 +84,12 @@ Getting the game from "every part works" to "a player can install it and play it
   a desync after garrisons entered a battlefield and a crash from a malformed diplomacy message are fixed.
 - `ig2-client --playthrough` runs whole games headless to the end, with saves and loads on the way. Loaded saves
   now keep their real-time battles and the AI's design names.
-- Single-player space battles: ships now obey attack and move orders however you start the battle (top-bar pause,
-  Space or P, the speed keys), and re-entering the battle screen no longer brings the formation choice back.
-- Colony screen: clicking a building's roof, tower or upper part selects it, as in the original; the war cursor and
-  the right-click attack use the same pick.
-- `ig2-client --playthrough mp` plays a whole two-machine multiplayer game to its winner on one computer, comparing both
-  machines throughout and saving, resuming and rejoining on the way; no desync is found.
-- Multiplayer: when a game gets out of step and is put back in sync, the players see a line on the message bar.
-- Campaign 1 no longer crashes when the planet-toll raider sets out.
 - `ig2-check` loads every file of the install and lists what fails to parse, so a broken install is found before
   playing.
 - A Windows release zip (the client, the checker and a readme; no game data). `ig2-client --version` and the window
   title show the version.
 - Unzipped into the game's folder, the client always uses that install, even when another one is installed.
 - The project is published as openIG2 under the AGPL-3.0, with CI, release builds and a website.
-- The website is redesigned after the game's own look: the screens list, a screenshot switcher, install and
-  build steps, and the road to 1.0.
-- Diplomacy in multiplayer can take back an unanswered message ("cancel last message"); the tutorial's shorter wait
-  between diplomacy messages now applies.
-- A fleet split off on the starmap, the ground-war tick and the victory check now follow the screen you are on, as in
-  the original.
-- The late episodes and endings of all three campaigns are now verified in headless play-throughs (the driver answers
-  the stories, researches, sends spies and fleets, builds colony ships), including campaign 2's own ending; campaign
-  3's second storyline isn't won yet.
 
 ## 0.6 — Fixes against the original
 Every known difference from the original was sorted into fix, enhanced option or keep, and most fixes were made.
