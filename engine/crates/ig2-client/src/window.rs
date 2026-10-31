@@ -992,6 +992,7 @@ impl App {
                 }
                 ui.war.banner = std::mem::take(&mut self.attack_banner);
                 self.colony = Some(Colony { scene, view, ui, panel: Default::default() });
+                self.send_watching(p);
             }
             Err(e) => {
                 eprintln!("ig2-client: colony {p}: {e}");
@@ -1012,6 +1013,16 @@ impl App {
         }
         ui.war.banner = std::mem::take(&mut c.ui.war.banner);
         c.ui = ui;
+        let p = snap.planet;
+        self.send_watching(p);
+    }
+
+    /// `Colony_Belep`'s `Multi_Send(0x26)`: MP tells the others which planet this machine's colony screen shows
+    /// (`KiMelyikBolygonVan`, re/screens/colony.md §9.1); nothing clears it on leaving.
+    fn send_watching(&mut self, p: usize) {
+        if self.multiplayer() {
+            self.world.send(ig2_sim::game::ColonyOrder::Watch { planet: p as i32 }.into());
+        }
     }
 
     /// A key of the war (`ColonyKeyboardHandler` exe 0x4628c0) by its character, at war or not: S stops
@@ -3045,9 +3056,9 @@ impl App {
                             Some(c) => c.ui.war.banner = 900,
                             None => self.attack_banner = 900,
                         }
-                        // SP, the human takes part (the sim paused it at speed 1): the war's colony screen; the old screen
-                        // and planet are kept.
-                        if !self.multiplayer() && self.world.game.sp_battles.old_pause.is_some() {
+                        // SP, the human takes part (the sim paused it at speed 1), or MP (every machine, ELF 0x4a4f80):
+                        // the war's colony screen; the old screen and planet are kept.
+                        if self.multiplayer() || self.world.game.sp_battles.old_pause.is_some() {
                             self.grwar_old = Some((self.shown_kep(), self.akt_planet()));
                             self.show_colony_screen(planet);
                         }
@@ -3055,7 +3066,7 @@ impl App {
                 }
                 // `GroundWarFinished(p, s, false)`: on the war's colony screen, back to the old screen (the battle
                 // screen's 0xB becomes the starmap) and its pause.
-                RealTimeEvent::GroundEnded { planet, .. } if !self.multiplayer() => {
+                RealTimeEvent::GroundEnded { planet, .. } => {
                     let shown = self.shown_kep() == 3 && self.world.colony == Some(planet);
                     if let Some((kep, p)) = self.grwar_old.take().filter(|_| shown) {
                         let kep = if kep == 0xb { 2 } else { kep };

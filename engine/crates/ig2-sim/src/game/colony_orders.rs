@@ -122,7 +122,7 @@ pub enum ColonyOrderEvent {
 }
 
 /// Exe globals the orders read or write.
-mod at {
+pub(super) mod at {
     /// `KiMelyikBolygonVan` − 4 (`(&0x9ABAE4)[e]`: empire 0 writes `Colony_elozo_foldrenges` [original quirk]).
     pub const WATCHING: u32 = 0x9ABAE4;
 }

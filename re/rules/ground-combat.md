@@ -1224,3 +1224,5 @@ tick for every battlefield (the 100 Hz UI's every fifth pass is 20 Hz). The capt
 carried out by `Game::with_wars` after the field's part (the same order: before the abandonment test). Tested by
 `ig2-net/tests/lockstep.rs::two_humans_fight_a_ground_war_in_lockstep` (with orders), `a_player_drops_mid_battle_and_rejoins`; the MP end branch is not traced against the
 exe (MP needs a second machine).
+
+The client (`window.rs`, `RealTimeEvent::GroundStarted/GroundEnded`): in MP every machine goes to the war's colony screen (`StartGrWar`'s "or an MP battle runs", ELF 0x4a4f80; spectators too) and back to its old screen at the end; no pause is kept (`SetIdoPause` changes nothing in MP). `Colony_Belep`'s `Multi_Send(0x26)` is `ColonyOrder::Watch` (re/screens/colony.md §9.1): `KiMelyikBolygonVan` feeds `WF::Refresh`'s "not watching" flags `+0x88d..` (saved, read by nothing else); nothing clears it on leaving. One real-time war at a time: the flag and planet are single globals, as in the exe; a second landing routed to real time in the same strategic tick replaces the planet (not traced).

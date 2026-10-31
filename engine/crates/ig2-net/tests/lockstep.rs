@@ -877,7 +877,7 @@ fn two_humans_fight_a_ground_war_in_lockstep() {
         let mut s = Session::new();
         s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
         s.join(2, 3, |_| Peer::new(2, 3, canonical(state.clone()), DEFAULT_DELAY));
-        let (mut started, mut ended, mut clock, mut turns_running, mut refused) = (None, None, None, 0, false);
+        let (mut started, mut ended, mut clock, mut turns_running, mut refused, mut watched) = (None, None, None, 0, false, false);
         let order = |unit: usize, target: i32| Command::from(ColonyOrder::Ground { planet: home as i32, order: GroundOrder::Target { unit: unit as i32, target } });
         let limit = if ordered { 4000 } else { 150 };
         while s.peers[0].0.turn < limit && ended.is_none() {
@@ -895,6 +895,11 @@ fn two_humans_fight_a_ground_war_in_lockstep() {
                 }
                 if p.game.state.mem.i32(0xBAD13C) == 0 {
                     return;
+                }
+                // Empire 6's machine opens the war's colony screen (`Colony_Belep`'s 0x26); empire 3's looks elsewhere.
+                if !watched && p.slot == 1 {
+                    p.issue(Command::from(ColonyOrder::Watch { planet: home as i32 }));
+                    watched = true;
                 }
                 if p.slot == 1 {
                     turns_running += 1;
@@ -944,6 +949,8 @@ fn two_humans_fight_a_ground_war_in_lockstep() {
                 // `WF::Refresh` ran every tick: the call-in timers of every empire reached their caps.
                 let f = g.state.ground_field(home).unwrap();
                 assert!(f.timers.iter().all(|t| *t == (200, 300)), "{:?}", f.timers);
+                // `WF::Refresh`'s "not watching" flags from `KiMelyikBolygonVan`.
+                assert_eq!((f.not_watching[5], f.not_watching[2]), (0, 1));
                 assert_eq!(g.state.mem.i32(va::IDO), clock.unwrap());
             }
             (true, true) => {

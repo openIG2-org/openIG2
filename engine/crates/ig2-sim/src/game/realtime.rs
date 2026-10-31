@@ -780,10 +780,10 @@ impl Game<'_> {
         (s == crate::ground::CONTESTED) as i32
     }
 
-    /// `KiMelyikBolygonVan[k]` (exe 0x9ABAE8): the planet on empire k + 1's colony screen; none in the canonical
-    /// view.
+    /// `KiMelyikBolygonVan[k]` (exe 0x9ABAE8): the planet on empire k + 1's colony screen, from the machines' 0x26
+    /// orders (`ColonyOrder::Watch`).
     fn watching(&self) -> [i32; 18] {
-        [0; 18]
+        std::array::from_fn(|k| self.state.mem.i32(super::colony_orders::at::WATCHING + 4 * (k as u32 + 1)))
     }
 
     /// `Frissit2_Colony`'s battlefield part in single player (exe 0x477dc0, called by `Fake_FRISSITES` at 0x4de8e8 on
