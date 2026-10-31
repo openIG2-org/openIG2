@@ -404,6 +404,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         }
     }
     (app.opt_rows, app.tech_defaults, app.volatile) = (opt_rows, l.tech_defaults, l.volatile);
+    app.apply_battle_rows();
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
     app.backdrop.live = o.background.unwrap_or(app.settings.int("LiveBackground") != Some(0));
     app.one_language = o.texts.unwrap_or(app.settings.int("OneLanguage") != Some(0));
@@ -2917,7 +2918,26 @@ impl App {
                 r.value = n.value;
             }
         }
+        self.apply_battle_rows();
         self.apply_display();
+    }
+
+    /// `SaveOptions` (exe 0x51b640): the battle rows into the battle flags the sim reads (exe 0xB77230..0xB7723C), as
+    /// a row is set and as a game starts or loads (the flags aren't in a save). Not in multiplayer: there they are
+    /// lockstep state (ADR 0011). Under the tutorial's `DISABLE OVERRUN` they go into the values `TutorialStop` puts
+    /// back, so its override holds while it runs.
+    fn apply_battle_rows(&mut self) {
+        let Some(v) = crate::options::battle_flags(&self.opt_rows) else { return };
+        if self.multiplayer() {
+            return;
+        }
+        if let Some(saved) = self.tutorial.as_mut().and_then(|t| t.overrun.as_mut()) {
+            *saved = v;
+            return;
+        }
+        for (i, x) in v.into_iter().enumerate() {
+            self.world.game.state.mem.set_i32(0xB77230 + 4 * i as u32, x);
+        }
     }
 
     /// The display rows' settings (crate::display) applied where they changed: the window's mode and size, vsync,
@@ -3013,6 +3033,7 @@ impl App {
         self.research_place = None;
         self.akt_planet = None;
         self.world = w;
+        self.apply_battle_rows();
         // `_s(0x3b, n)` is the install's table, not the save's: a loaded game names the AI's designs too.
         if self.world.game.design_texts.is_empty() {
             self.world.game.design_texts = crate::new_game::design_texts(&self.install);

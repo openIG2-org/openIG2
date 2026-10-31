@@ -72,6 +72,14 @@ pub fn read_rows(exe: &ig2_rules::PeImage, texts: &UiTexts) -> Vec<Row> {
         .collect()
 }
 
+/// `SaveOptions` (exe 0x51b640) for the battle rows: the battle flags at exe 0xB77230, 0xB77234, 0xB77238, 0xB7723C
+/// from `DebugData_Battle`, `DebugData_grBattle`, not `DebugData_SpNoOverrun`, not `DebugData_GrNoOverrun` (ids 104,
+/// 102, 105, 103; re/screens/options.md §7). None without the rows (no exe read).
+pub fn battle_flags(rows: &[Row]) -> Option<[i32; 4]> {
+    let on = |id| rows.iter().find(|r| r.id == id).map(|r| r.value != 0);
+    Some([on(104)? as i32, on(102)? as i32, !on(105)? as i32, !on(103)? as i32])
+}
+
 /// `CheckOptionsDependencies` (exe 0x516e10): a row is on with no dependency, with a positive one while that row is
 /// on, with a negative one while it is off; rows not for multiplayer are off there. An unknown id reads row 0.
 pub fn check_dependencies(rows: &mut [Row], multiplayer: bool) {
@@ -1339,6 +1347,27 @@ mod tests {
         o.press([40.0, (0x5c + 15 + 2) as f32], &mut |_| {});
         assert_eq!(o.rows[1].value, 1, "no toggle, the stored value kept");
         assert!(!o.rows[0].locked && !screen().rows[1].locked);
+    }
+
+    /// ig2.exe's own `SaveOptions` over all 16 combinations of the battle rows (Frida, `probes/battle_rows.js`):
+    /// rows (grBattle, GrNoOverrun, Battle, SpNoOverrun) → flags 0xB77230..0xB7723C.
+    #[test]
+    fn battle_rows_set_the_flags_as_the_exe() {
+        let seen = [
+            ([0, 0, 0, 0], [0, 0, 1, 1]), ([1, 0, 0, 0], [0, 1, 1, 1]), ([0, 1, 0, 0], [0, 0, 1, 0]), ([1, 1, 0, 0], [0, 1, 1, 0]),
+            ([0, 0, 1, 0], [1, 0, 1, 1]), ([1, 0, 1, 0], [1, 1, 1, 1]), ([0, 1, 1, 0], [1, 0, 1, 0]), ([1, 1, 1, 0], [1, 1, 1, 0]),
+            ([0, 0, 0, 1], [0, 0, 0, 1]), ([1, 0, 0, 1], [0, 1, 0, 1]), ([0, 1, 0, 1], [0, 0, 0, 0]), ([1, 1, 0, 1], [0, 1, 0, 0]),
+            ([0, 0, 1, 1], [1, 0, 0, 1]), ([1, 0, 1, 1], [1, 1, 0, 1]), ([0, 1, 1, 1], [1, 0, 0, 0]), ([1, 1, 1, 1], [1, 1, 0, 0]),
+        ];
+        let mut rows = screen().rows;
+        assert_eq!(battle_flags(&rows), None, "rows 104 and 105 missing");
+        rows.extend([104, 105].map(|id| Row { id, ..Row::default() }));
+        for (v, flags) in seen {
+            for (id, x) in [102, 103, 104, 105].into_iter().zip(v) {
+                rows.iter_mut().find(|r| r.id == id).unwrap().value = x;
+            }
+            assert_eq!(battle_flags(&rows), Some(flags), "rows {v:?}");
+        }
     }
 
     #[test]

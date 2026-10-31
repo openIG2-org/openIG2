@@ -1,5 +1,6 @@
 # Changelog
 
+- Options: the ground and space battle "simulate" and "overrun" switches now change how battles are fought.
 What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 
 ## 0.7 — Playable 1.0 (in progress)

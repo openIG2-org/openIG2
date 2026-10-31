@@ -12,7 +12,6 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
-| 411 | Options, battle rows | the four battle rows' values are not applied to exe 0xB77230..0xB7723C (`SaveOptions` 0x51b640 / `SetOptions` not ported): switching them changes no battle | yes | options.md §14 |
 
 ## Open: minor
 

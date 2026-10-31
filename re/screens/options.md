@@ -243,6 +243,14 @@ enabled; dep > 0 enabled iff that id's value ≠ 0; dep < 0 iff it is 0; not MP-
 `SaveOptions` (the 17 rows, each also applied to its global) and `save_options_new` (0x51c4d0): the whole map to
 `<GetSavePath>options.dat` (`wb`; `ig2_formats::options` reads it). Called from Kilep and from a row press.
 
+`SaveOptions` (exe 0x51b640, decompiled) sets the battle flags from the battle rows (v = value ≠ 0): id 102
+`grBattle` → 0xB77234 = v, 103 `GrNoOverrun` → 0xB7723C = !v, 104 `Battle` → 0xB77230 = v, 105 `SpNoOverrun` →
+0xB77238 = !v (all 16 combinations seen through the exe's own call, `tools/trace/probes/battle_rows.js`; the defaults
+0, 1, 0, 1 give 0, 0, 0, 0). `SetOptions` (ELF 0x5d2cf0) is the reverse (flags → rows), run by
+`InitGlobalRegistrySettings` after `ReadOptions` and by the colony screen's key 0x23. The flags are process globals,
+not in a save. The port applies the rows as a row is set, at start-up and as a game starts or loads; not in
+multiplayer (lockstep state, ADR 0011); under the tutorial's `DISABLE OVERRUN` into the values `TutorialStop` puts back.
+
 ## 8. Draw list
 
 ### `Gfx2D_1` [elf 0x5d49a0] (faders and lasers)
@@ -333,4 +341,4 @@ the faders' hover glow `FadeKerettelKerekitDesign`, the research design-return f
 190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open
 differences are the random sparks and the hover glow.
-During the tutorial the two "simulate" rows read off and are greyed (`Row.locked`, `OptionsScreen::lock_battle_simulate`; row 410, ADR 0019); the stored values stay in the settings file. Known bug (row 411): the four battle rows' values are not applied to exe 0xB77230..0xB7723C (`SaveOptions` 0x51b640 / `SetOptions` not ported), so switching them does not change battles.
+During the tutorial the two "simulate" rows read off and are greyed (`Row.locked`, `OptionsScreen::lock_battle_simulate`; row 410, ADR 0019); the stored values stay in the settings file. The four battle rows are applied to the battle flags as `SaveOptions` does (§7): when a row is set, at start-up and when a game starts or loads; not in multiplayer.

@@ -1047,6 +1047,9 @@ mod tests {
         inp.story_simulate_ban = false;
         inp.fleets[1].story_id = 10_005; // traders are never lopsided
         assert_eq!(route(&inp), Route::Tactical);
+        inp.debug_always_simulate = true; // the Options row "space battle simulate" (0xB77230)
+        assert_eq!(route(&inp), Route::Simulate { lopsided: false });
+        inp.debug_always_simulate = false;
         inp.multiplayer = true; // MP: only two human sides fight in real time
         assert_eq!(route(&inp), Route::Simulate { lopsided: false });
     }
