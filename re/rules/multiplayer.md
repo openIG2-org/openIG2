@@ -250,6 +250,10 @@ that and fixes the per-machine parts:
 - **Start**: `Game::start_multiplayer(en, humans)`: `MultiPlayerMode` = 1, `PlayerKi` = 1 for exactly the session's
   humans (a former human not in the list: 0), canonical view of `en`. The original's MP routing then sends only
   human-vs-human battles to real time; every human is on the screen, the participants order, the others watch.
+- **Whose side** (ours): the battle's `human` is the canonical `EN` on every machine; each machine's screen takes its
+  own empire as its side (`SpaceWarUi::enter_as` with `local_view().empire`), so a joiner selects and orders its own
+  ships (`spacewar_ui.rs::a_joiners_screen_orders_its_own_ships`). The sim's retreat bookkeeping and the retreat
+  notice still read `human`.
 - **Cadence**: one battle step per sim tick (two per turn), orders `delay` turns after they're issued like every
   command; the strategic clock waits, the turn clock doesn't.
 - **Hold**: `Host::hold(bool)` stops and resumes the bundles (every peer stalls at the same turn). The session

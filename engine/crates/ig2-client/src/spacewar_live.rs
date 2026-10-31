@@ -44,7 +44,7 @@ impl Live {
     /// `SpaceWar_Belep` on battle slot `slot`, from the starmap camera `cam`.
     pub fn enter(world: &mut World, slot: usize, cam: &crate::starmap::Camera, install: &ig2_formats::Install, now: u32) -> Option<Self> {
         let b = world.game.realtime.slots.get(slot)?;
-        let ui = SpaceWarUi::enter(slot, b, cam, now);
+        let ui = SpaceWarUi::enter_as(slot, b, cam, now, world.game.local_view().empire as i32);
         let mask = install.read("dataraw/screen/star_m.raw").ok().and_then(|b| b.get(800..800 + 640 * 480).map(|x| x.to_vec())).unwrap_or_default();
         let seen_tick = b.tick;
         world.game.sp_battles.on_screen = true;

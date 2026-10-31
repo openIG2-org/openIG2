@@ -268,6 +268,8 @@ pub enum Out {
 /// The battle screen's state for battle slot `slot`.
 pub struct SpaceWarUi {
     pub slot: usize,
+    /// "My side": this machine's empire (`EN`; in multiplayer each machine's own, not the battle's `human`).
+    pub me: i32,
     pub units: Vec<UnitGfx>,
     /// The planet guns' selection (`+0x89` and the box snapshot `+0x8b`).
     pub guns: Vec<(bool, bool)>,
@@ -437,10 +439,16 @@ pub struct SpaceWarUi {
 pub const GROUP_MASKS: [u32; 10] = [0x1f, 0x1e0, 0x200, 0x400, 0x800, 0x1000, 0xe000, 0x30000, 0x40000, 0x80000];
 
 impl SpaceWarUi {
-    /// `SpaceWar_Belep` → `initgfx` (spec §1.1): the battle starts from the starmap camera (`cam`: pivot `(0, XStart,
-    /// −YStart)`, yaw `StarmapRotate`, tilt `StarmapPitch`, zoom `600 − Zoom`) shifted by the battle's origin, at scene
-    /// scale 0.0004; every own unit selected (`flottafelallit`); the default yaw (step 23).
+    /// [`SpaceWarUi::enter_as`] on the battle's `human` side (single player).
+    #[cfg(test)]
     pub fn enter(slot: usize, b: &Battle, cam: &crate::starmap::Camera, now_ms: u32) -> Self {
+        Self::enter_as(slot, b, cam, now_ms, b.human)
+    }
+
+    /// `SpaceWar_Belep` → `initgfx` (spec §1.1) on empire `me`'s machine: the battle starts from the starmap camera
+    /// (`cam`: pivot `(0, XStart, −YStart)`, yaw `StarmapRotate`, tilt `StarmapPitch`, zoom `600 − Zoom`) shifted by
+    /// the battle's origin, at scene scale 0.0004; every own unit selected (`flottafelallit`); the default yaw (step 23).
+    pub fn enter_as(slot: usize, b: &Battle, cam: &crate::starmap::Camera, now_ms: u32, me: i32) -> Self {
         // `initgfx` (exe 0x575050): the starmap camera's pan minus the slot's raw `starmapeltolas` (+0x1f74: h, x,
         // y as stored); `sceneeltol` moves the starmap's objects by the same raw offset, so a battle point q is the
         // starmap point `+0x1f74 + q` (the dump's origin; the galaxy lines up during the opening zoom).
@@ -449,6 +457,7 @@ impl SpaceWarUi {
         let starmap = Pose { yaw: cam.rotate, tilt: cam.pitch, zoom: 600.0 - cam.zoom, xcenter: 320.0, pan: pivot };
         let mut s = Self {
             slot,
+            me,
             units: b.units.iter().map(UnitGfx::new).collect(),
             guns: vec![(false, false); b.guns.len()],
             pivot,
@@ -554,7 +563,7 @@ impl SpaceWarUi {
             infoszamol_timer: 0,
             stats: Default::default(),
             retreat_window: false,
-            stance: b.sides.get(b.human.max(0) as usize).map_or(0, |s| s.fighter_aggression),
+            stance: b.sides.get(me.max(0) as usize).map_or(0, |s| s.fighter_aggression),
             button: 0,
             button_phase: 0,
             button_frame: 0.0,
@@ -562,7 +571,7 @@ impl SpaceWarUi {
             info_type: -1,
             masks: GROUP_MASKS,
         };
-        s.defaults.yaw = Self::default_yaw(b);
+        s.defaults.yaw = Self::default_yaw(b, me);
         s.select_fleet(b);
         for (u, g) in b.units.iter().zip(&mut s.units) {
             pose(u, g);
@@ -572,11 +581,11 @@ impl SpaceWarUi {
 
     /// `initgfx` step 23: a planet battle looks from π; else from the own units' centre `c`: `v = normalise(0, c.x,
     /// −c.y)`, `π − asin(v.x)` when `v.y ≥ 0`, else `asin(v.x)` (f64 `asin`); no own unit: 0.
-    fn default_yaw(b: &Battle) -> f32 {
+    fn default_yaw(b: &Battle, me: i32) -> f32 {
         if b.planet >= 0 && b.planet_owner >= 0 {
             return std::f32::consts::PI;
         }
-        let own: Vec<&Unit> = b.units.iter().filter(|u| u.alive && u.owner == b.human).collect();
+        let own: Vec<&Unit> = b.units.iter().filter(|u| u.alive && u.owner == me).collect();
         if own.is_empty() {
             return 0.0;
         }
@@ -1182,8 +1191,8 @@ impl SpaceWarUi {
 
     // ------------------------------------------------------------------------------------------ selection
 
-    fn selectable(b: &Battle, i: usize) -> bool {
-        b.units.get(i).is_some_and(|u| u.alive && u.owner == b.human && u.owner != 0 && !u.retreating)
+    fn selectable(b: &Battle, me: i32, i: usize) -> bool {
+        b.units.get(i).is_some_and(|u| u.alive && u.owner == me && u.owner != 0 && !u.retreating)
     }
 
     /// `SpeakingDirector::Play(&SpaceWarSpeaker, line, kind)` behind the screen's throttle (`beszedlasttick + 30 <
@@ -1207,7 +1216,7 @@ impl SpaceWarUi {
             }
             BattleEvent::Retreat { empire } if self.speech_last + 30 < self.acttick2 => {
                 self.speech_last = self.acttick2;
-                self.voices.push((1, if empire == b.human { 3 } else { 10 }));
+                self.voices.push((1, if empire == self.me { 3 } else { 10 }));
             }
             _ => {}
         }
@@ -1227,11 +1236,11 @@ impl SpaceWarUi {
     fn select_fleet(&mut self, b: &Battle) {
         self.deselect();
         for i in 0..self.units.len() {
-            if Self::selectable(b, i) {
+            if Self::selectable(b, self.me, i) {
                 self.units[i].selected = true;
             }
         }
-        if b.planet_owner == b.human {
+        if b.planet_owner == self.me {
             for g in &mut self.guns {
                 g.0 = true;
             }
@@ -1245,7 +1254,7 @@ impl SpaceWarUi {
     /// message while the slider differs from the side's. `plans` gives a design's firepower (`Tervek[e][d] +0x2c`) and a
     /// ship's design (`Hajok[s] +2`). Its writes to the sim leave as [`Order::Strengths`] and [`Order::Outgunned`].
     pub fn infoszamol(&mut self, b: &Battle, plans: &Plans, out: &mut Vec<Out>) {
-        let me = b.human;
+        let me = self.me;
         let mut st = crate::spacewar_hud::Stats { rank_sum: -1, ..Default::default() };
         // The overview (exe 0x574040, the `+0x1f2c` block): own, enemy (the relation byte 1) and other ships,
         // fighters and firepower; the guns count by their building's tech.
@@ -1502,7 +1511,7 @@ impl SpaceWarUi {
                 } else if !self.suppress && ((lp && r) || (rp && l)) {
                     self.rotating = true;
                 } else if !self.suppress && !l && r && self.own_selected(b) && self.hovered == -1 {
-                    let movable = (0..self.units.len()).any(|i| self.units[i].selected && b.units[i].alive && b.units[i].owner == b.human && b.units[i].ship_type.top_speed > 0.01);
+                    let movable = (0..self.units.len()).any(|i| self.units[i].selected && b.units[i].alive && b.units[i].owner == self.me && b.units[i].ship_type.top_speed > 0.01);
                     if movable && (self.right_at[1] - m[1]).abs() > 5.0 {
                         self.height = true;
                         self.height_press = self.right_at;
@@ -1568,19 +1577,19 @@ impl SpaceWarUi {
             let inside = |p: [f32; 2]| p[0] > x0 && p[0] < x1 && p[1] > y0 && p[1] < y1;
             for (i, g) in self.units.iter_mut().enumerate() {
                 g.selected = shift && g.snapshot;
-                if !g.selected && Self::selectable(b, i) && units.get(i).copied().flatten().is_some_and(|p| inside(p.at)) {
+                if !g.selected && Self::selectable(b, self.me, i) && units.get(i).copied().flatten().is_some_and(|p| inside(p.at)) {
                     g.selected = true;
                 }
             }
             // A box that takes its first own unit speaks, during the drag [obs: ui5, the exe at t703 of a drag from
             // t690; the unit: inf, the first of them].
             if !self.box_spoke {
-                if let Some(i) = (0..self.units.len()).find(|&i| self.units[i].selected && b.units.get(i).is_some_and(|u| u.alive && u.owner == b.human)) {
+                if let Some(i) = (0..self.units.len()).find(|&i| self.units[i].selected && b.units.get(i).is_some_and(|u| u.alive && u.owner == self.me)) {
                     self.box_spoke = true;
                     self.voice(b, i, 1);
                 }
             }
-            let mine = b.planet_owner == b.human;
+            let mine = b.planet_owner == self.me;
             for (k, g) in self.guns.iter_mut().enumerate() {
                 g.0 = shift && g.1;
                 if mine && !g.0 && b.guns.get(k).is_some_and(|x| x.building != 0) && guns.get(k).copied().flatten().is_some_and(|p| inside(p.at)) {
@@ -1607,7 +1616,7 @@ impl SpaceWarUi {
     }
 
     fn own_selected(&self, b: &Battle) -> bool {
-        (0..self.units.len()).any(|i| self.units[i].selected && b.units[i].owner == b.human)
+        (0..self.units.len()).any(|i| self.units[i].selected && b.units[i].owner == self.me)
     }
 
     /// `SpaceWarMouseMove` (ELF 0x6b2c90, exe 0x56fa60; spec §7.1.2 as corrected): the nearest unit (own or not
@@ -1619,7 +1628,7 @@ impl SpaceWarUi {
         let dist = |p: [f32; 2]| (((p[0] - m[0]) * (p[0] - m[0]) + (p[1] - m[1]) * (p[1] - m[1])) as f64).sqrt() as f32;
         let (mut best, mut idx, mut kind) = (400.0f32, -1i32, 0);
         for (i, u) in b.units.iter().enumerate() {
-            if !u.alive || (u.owner != b.human && u.cloaked) {
+            if !u.alive || (u.owner != self.me && u.cloaked) {
                 continue;
             }
             let Some(Some(p)) = units.get(i) else { continue };
@@ -1640,13 +1649,13 @@ impl SpaceWarUi {
         }
         (self.hovered, self.hover_kind) = if kind != 0 { (idx, kind) } else { (-1, 0) };
         if self.pointer < 4 {
-            let me = b.human.max(0) as usize;
+            let me = self.me.max(0) as usize;
             let enemy_selected = (0..self.units.len()).any(|i| self.units[i].selected && b.units[i].alive && b.hostile[me][b.units[i].owner.max(0) as usize] == 1);
             let total = self.units.iter().any(|g| g.selected) || self.guns.iter().any(|g| g.0);
             self.pointer = match self.hover_kind {
                 0 => 0,
-                1 if b.units[self.hovered as usize].owner == b.human => 2,
-                2 if b.planet_owner == b.human => 2,
+                1 if b.units[self.hovered as usize].owner == self.me => 2,
+                2 if b.planet_owner == self.me => 2,
                 _ if !total || enemy_selected => 2,
                 _ => 3,
             };
@@ -1674,7 +1683,7 @@ impl SpaceWarUi {
                     self.deselect();
                     self.units[i].selected = true;
                     // `BalClick` (ELF 0x6b13c0): an own live unit selected alone speaks.
-                    if b.units[i].alive && b.units[i].owner == b.human {
+                    if b.units[i].alive && b.units[i].owner == self.me {
                         self.voice(b, i, 1);
                     }
                 } else {
@@ -1703,7 +1712,7 @@ impl SpaceWarUi {
             return;
         }
         out.push(Out::Click);
-        let mine: Vec<usize> = (0..self.units.len()).filter(|&i| self.units[i].selected && b.units[i].alive && b.units[i].owner == b.human).collect();
+        let mine: Vec<usize> = (0..self.units.len()).filter(|&i| self.units[i].selected && b.units[i].alive && b.units[i].owner == self.me).collect();
         let h = self.hovered;
         match (self.pointer, self.hover_kind) {
             (3, 1) => {
@@ -1711,7 +1720,7 @@ impl SpaceWarUi {
                     out.push(Out::Order(Order::Attack { unit: i, target: h as usize }));
                     self.voice(b, i, 2);
                 }
-                if b.planet_owner == b.human {
+                if b.planet_owner == self.me {
                     for (k, g) in self.guns.iter().enumerate() {
                         if g.0 && b.guns.get(k).is_some_and(|x| x.building != 0) {
                             out.push(Out::Order(Order::GunTarget { gun: k, unit: h as usize }));
@@ -1868,7 +1877,7 @@ impl SpaceWarUi {
         let mask = self.masks[k];
         let (keep, set) = if self.group_state[k] == 7 { (!mask, 0) } else { (u32::MAX, mask) };
         for i in 0..self.units.len() {
-            if self.units[i].selected && b.units[i].alive && b.units[i].owner == b.human {
+            if self.units[i].selected && b.units[i].alive && b.units[i].owner == self.me {
                 out.push(Out::Order(Order::Weapons { unit: i, keep, set }));
             }
         }
@@ -1913,7 +1922,7 @@ impl SpaceWarUi {
                 }
                 self.deselect();
                 for i in 0..self.units.len() {
-                    if Self::selectable(b, i) && self.units[i].group == n {
+                    if Self::selectable(b, self.me, i) && self.units[i].group == n {
                         self.units[i].selected = true;
                     }
                 }
@@ -2045,6 +2054,24 @@ pub enum Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Multiplayer: a joiner's machine (empire 3) in a battle whose `human` is the host's empire (6): its screen's own
+    /// side is 3, so `flottafelallit` selects 3's ship and a right click on 6's orders that ship to attack it.
+    #[test]
+    fn a_joiners_screen_orders_its_own_ships() {
+        use ig2_sim::spacebattle::{ShipType, Unit};
+        let mut b = Battle::slot();
+        b.human = 6;
+        let ship = |owner| Unit { alive: true, owner, original_owner: owner, ship_type: ShipType { top_speed: 0.4, ..Default::default() }, ..Default::default() };
+        b.units = vec![ship(6), ship(3)];
+        let mut ui = SpaceWarUi::enter_as(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0, 3);
+        assert_eq!(ui.units.iter().map(|u| u.selected).collect::<Vec<_>>(), [false, true]);
+        (ui.restoring, ui.pointer, ui.hover_kind, ui.hovered) = (false, 3, 1, 0);
+        let mut out = Vec::new();
+        ui.jobb_click(&b, &mut out);
+        assert!(out.contains(&Out::Order(Order::Attack { unit: 1, target: 0 })), "{out:?}");
+        assert!(!SpaceWarUi::enter_as(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0, 6).units[1].selected);
+    }
 
     /// `Mouse_Megfogva` (exe 0x57b9e0's latch sites, cleared at 0x4e05bc): a drag that starts on the yaw button stays
     /// on it, one that starts on the camera button 0x46 (no latch) reaches the battlefield under the pointer, and the

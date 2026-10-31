@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Multiplayer: in a space battle the joining player can select and order their own ships (the screen used to treat the host's ships as theirs).
 - The messages screen opens at the right place in the list, and a click opens the message you clicked.
 - Urgent messages open the messages screen and play at once, as in the original.
 - A waiting message makes the top bar's "new message" text pulse, and the message line pauses until you read it, as in the original.
