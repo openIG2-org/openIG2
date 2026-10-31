@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Multiplayer: the game runs at the single-player pace (it ran twice as fast), and orders run within 100-200 ms on a LAN; over the internet the delay follows the slowest player's connection.
 - Multiplayer: hosting asks your router to open the game port (UPnP / NAT-PMP) at once; the room's port-mapping line switches it off.
 - Multiplayer: when a player drops, leaves or is kicked, the computer plays their empire; a player who rejoins gets it back.
 - Multiplayer: an optional room setting, "Space battle formations" (off by default), lets every human side with six or more ships pick a formation before a real-time space battle; the battle waits for the other players.

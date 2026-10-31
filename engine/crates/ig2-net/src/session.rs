@@ -51,7 +51,7 @@ pub const SESSION_MAGIC: &[u8; 8] = b"IG2RSESS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionSettings {
-    /// The input delay in turns.
+    /// The input delay in turns (at a room's start, the least: the members' round trips may raise it).
     pub delay: u64,
     pub grace: Duration,
     /// Silence after which a peer is dropped; `SessionMsg::Alive` goes out every quarter of it. Zero: off (the
@@ -380,7 +380,8 @@ impl<'r> HostSession<'r> {
             }
             Snapshot::capture(&game, &pending, save.snapshot.turn, save.snapshot.tick).to_file(id, true)
         };
-        let settings = SessionSettings { delay: save.session.delay, grace: Duration::from_millis(save.session.grace_ms), ..SessionSettings::default() };
+        // The delay comes from today's links, not the save's.
+        let settings = SessionSettings { delay: DEFAULT_DELAY, grace: Duration::from_millis(save.session.grace_ms), ..SessionSettings::default() };
         Self::launch(lobby, file, rules, settings)
     }
 
@@ -554,6 +555,8 @@ impl<'r> HostSession<'r> {
         self.resume_survivors()?;
         self.end_migration(now)?;
         self.own.poll(&mut self.link, max_turns)?;
+        // Our own input just sent may complete a turn: its bundle goes out in this pump, not the next.
+        self.host.pump()?;
         self.resync_diverged()?;
         for h in &mut self.humans {
             if let Presence::Waiting { since } = h.presence {

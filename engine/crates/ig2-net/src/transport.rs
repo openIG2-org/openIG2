@@ -26,6 +26,10 @@ pub trait Transport {
     fn remote(&self) -> Option<std::net::IpAddr> {
         None
     }
+    /// The link's measured round trip, if it has one (a room picks the input delay from it, [`crate::lockstep::input_delay`]).
+    fn rtt(&self) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// An in-process link. Messages cross it encoded, as they would cross a network, and the ends may live on

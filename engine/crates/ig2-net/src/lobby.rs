@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
 use crate::galaxy::{self, GalaxyOptions, GalaxyStart};
-use crate::lockstep::{Host, Msg, Peer};
+use crate::lockstep::{input_delay, Host, Msg, Peer};
 use crate::session::SessionSettings;
 use crate::snapshot::{self, Snapshot};
 use crate::transport::{loopback, Loopback, Transport};
@@ -752,7 +752,8 @@ impl LobbyHost {
     }
 
     fn launch(mut self, snapshot: Vec<u8>, galaxy: Option<GalaxyStart>, settings: &SessionSettings) -> Result<Started, Box<Self>> {
-        let delay = settings.delay;
+        // Adaptive (ADR 0007 §2): the slowest member's round trip sets the delay, the settings' is the least.
+        let delay = self.links.values().filter_map(|l| l.rtt()).map(input_delay).fold(settings.delay, u64::max);
         if !self.can_start() {
             return Err(Box::new(self));
         }

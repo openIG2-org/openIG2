@@ -327,6 +327,8 @@ pub struct World<'r> {
     pub net: Option<(crate::mp_lobby::Session<'r>, std::time::Instant)>,
     /// The session's hold status the message line last told (ours: who paused, dropped, left or came back).
     pub net_seen: ig2_net::session::HoldStatus,
+    /// Multiplayer: the ticks since the last turn ran (a turn every [`ig2_net::TURN_TICKS`] ticks, [`World::turn_phase`]).
+    net_since: u32,
     /// The chat lines received (`name: text`) for the ring (`MULTIGET_Starmap`'s 0x3fc: `AddSzoveg(.., 3)`).
     pub chat_lines: Vec<(Vec<u8>, usize)>,
     /// The session ended under this machine (the host is gone, or the link failed): the window goes to the main menu.
@@ -590,7 +592,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -605,13 +607,26 @@ impl<'r> World<'r> {
         w
     }
 
-    /// A multiplayer world's turn step, in place of [`World::tick`]: the game goes back into the peer, the session
-    /// pumps (one turn at most: two ticks), the game comes out again; the turn's events feed the screens.
+    /// A multiplayer world's tick, in place of [`World::tick`]: a turn (two ticks) runs every [`ig2_net::TURN_TICKS`]
+    /// ticks, 100 ms (ADR 0007 §2); the ticks between only move messages, unless this peer is behind the session
+    /// ([`ig2_net::Peer::behind`]), which catches up a turn on them.
     fn mp_tick(&mut self) {
-        let Some((net, epoch)) = &mut self.net else { return };
+        let Some((net, _)) = &self.net else { return };
+        let due = self.net_since + 1 >= ig2_net::TURN_TICKS || net.peer().behind();
+        if self.mp_pump(due) {
+            self.net_since = 0;
+        } else {
+            self.net_since += 1;
+        }
+    }
+
+    /// The session's pump, with a turn (`turn`) or only its messages: the game goes back into the peer, the session
+    /// pumps, the game comes out again; the events feed the screens. Whether a turn ran.
+    fn mp_pump(&mut self, turn: bool) -> bool {
+        let Some((net, epoch)) = &mut self.net else { return false };
         local_en(&mut self.game, false);
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
-        let r = net.pump(epoch.elapsed(), 1);
+        let r = net.pump(epoch.elapsed(), usize::from(turn));
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
         local_en(&mut self.game, true);
         let events = std::mem::take(&mut net.peer_mut().events);
@@ -662,12 +677,12 @@ impl<'r> World<'r> {
         self.order_events.extend(events.iter().filter_map(|e| if let GameEvent::Order(o) = e { Some(*o) } else { None }));
         self.colony_events.extend(events.iter().filter_map(|e| if let GameEvent::ColonyOrder(o) = e { Some(*o) } else { None }));
         match r {
-            Ok((0, _)) => return,
+            Ok((0, _)) => return false,
             Ok(_) => {}
             Err(e) => {
                 eprintln!("ig2-client: multiplayer: {e}");
                 self.net_over = true;
-                return;
+                return false;
             }
         }
         let mut next = Snapshot::read(&self.game);
@@ -679,6 +694,7 @@ impl<'r> World<'r> {
         if let Some(p) = self.colony {
             self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
         }
+        true
     }
 
     /// The story's starmap texts for this machine's empire (`StoryEvent::Notice`, [`notice_line`]) into the message ring.
@@ -692,6 +708,15 @@ impl<'r> World<'r> {
                 }
             }
         }
+    }
+
+    /// The render interpolation's way from the previous snapshot to the current one, from the clock's way into the
+    /// next tick `tick_phase`: a multiplayer snapshot is a turn apart (two ticks), a single-player one a tick.
+    pub fn turn_phase(&self, tick_phase: f32) -> f32 {
+        if self.net.is_none() {
+            return tick_phase;
+        }
+        ((self.net_since as f32 + tick_phase) / ig2_net::TURN_TICKS as f32).min(1.0)
     }
 
     /// Multiplayer under a full-screen video, Options or Help: the session runs on, as the original's time does in MP
@@ -787,14 +812,16 @@ impl<'r> World<'r> {
     /// The frame's message pass (`MULTIGET_*`): the queued commands are applied for the human, in order, also
     /// while the clock is paused; the screens see the result at once.
     pub fn pump(&mut self) {
-        if self.outbox.is_empty() {
-            return;
-        }
-        // Multiplayer: the commands go out with the next input and run on every peer `delay` turns later.
+        // Multiplayer: the commands go out with the next input and run on every peer `delay` turns later; the
+        // session's messages move every frame, not only on ticks (a hop waits a frame, not a tick).
         if let Some((net, _)) = &mut self.net {
             for c in std::mem::take(&mut self.outbox) {
                 net.peer_mut().issue(c);
             }
+            self.mp_pump(false);
+            return;
+        }
+        if self.outbox.is_empty() {
             return;
         }
         let human = self.curr.human;

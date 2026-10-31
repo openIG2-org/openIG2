@@ -314,3 +314,46 @@ fn start_runs_lockstep_on_a_real_save() {
     started.host.pump().unwrap();
     assert!(started.host.desyncs.is_empty());
 }
+
+/// A loopback link that reports a round trip, as a QUIC link over the internet does.
+struct Slow(Loopback, Duration);
+
+impl Transport for Slow {
+    fn send(&mut self, msg: &Msg) {
+        self.0.send(msg);
+    }
+    fn recv(&mut self) -> Result<Option<Msg>, ig2_net::wire::Error> {
+        self.0.recv()
+    }
+    fn rtt(&self) -> Option<Duration> {
+        Some(self.1)
+    }
+}
+
+/// The input delay follows the slowest member's round trip (ADR 0007 §2): a turn's round trip (delay 0) on a LAN,
+/// more over the internet.
+#[test]
+fn the_slowest_link_sets_the_input_delay() {
+    assert_eq!([1, 50, 51, 150, 151, 180, 5000].map(|ms| ig2_net::input_delay(Duration::from_millis(ms))), [0, 0, 1, 1, 2, 2, 9]);
+    for (rtt, delay) in [(None, 0), (Some(2), 0), (Some(180), 2)] {
+        let mut h = host(false, None);
+        let mut a = join(&mut h, "Alice", None, None);
+        let (l, r) = loopback();
+        match rtt {
+            Some(ms) => h.admit(Box::new(Slow(r, Duration::from_millis(ms)))),
+            None => h.admit(Box::new(r)),
+        }
+        let mut b = LobbyClient::join(Box::new(l), "Bob", RULES, None, None);
+        pump(&mut h, &mut [&mut a, &mut b], |h, _| h.state().members.len() == 3);
+        h.pick(0, Some(6));
+        a.pick(Some(1));
+        b.pick(Some(2));
+        pump(&mut h, &mut [&mut a, &mut b], |h, _| h.state().empire_of(2) == Some(2) && h.state().empire_of(1) == Some(1));
+        a.ready(true);
+        b.ready(true);
+        pump(&mut h, &mut [&mut a, &mut b], |h, _| h.state().members[1..].iter().all(|m| m.ready));
+        h.set_ready(0, true);
+        let started = h.start(vec![9], ig2_net::DEFAULT_DELAY).ok().unwrap();
+        assert_eq!(started.own.delay, delay, "round trip {rtt:?}");
+    }
+}

@@ -2035,6 +2035,42 @@ mod tests {
         }
     }
 
+    /// Issue #6: a turn runs every two ticks (100 ms, ADR 0007 §2), and on a LAN (input delay 0: a turn's round trip) a joiner's order
+    /// runs on both machines within two turns (200 ms) of being given. A tick here is three frames' pumps.
+    #[test]
+    fn turns_are_100_ms_and_a_joiners_order_lands_soon() {
+        let Some((mut a, mut g)) = two_worlds() else { return };
+        let turn = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().turn;
+        fn step(a: &mut crate::world::World, g: &mut crate::world::World) {
+            for _ in 0..3 {
+                a.pump();
+                g.pump();
+            }
+            a.tick();
+            g.tick();
+        }
+        for _ in 0..10 {
+            step(&mut a, &mut g);
+        }
+        let from = (turn(&a), turn(&g));
+        for _ in 0..40 {
+            step(&mut a, &mut g);
+        }
+        assert_eq!((turn(&a) - from.0, turn(&g) - from.1), (20, 20), "40 ticks (2 s) run 20 turns");
+        let joiner = g.net.as_ref().unwrap().0.peer().empire;
+        let home = g.game.state.colony().planets.iter().position(|p| p.owner == joiner).expect("the joiner's planet");
+        g.send(ig2_sim::game::ColonyOrder::Build { planet: home as i32, kind: 0, x: 0, y: 0 }.into());
+        let landed = |w: &crate::world::World| !w.colony_events.is_empty();
+        let mut ticks = 0;
+        while !(landed(&a) && landed(&g)) {
+            step(&mut a, &mut g);
+            ticks += 1;
+            assert!(ticks < 40, "the order never ran");
+        }
+        assert!(ticks <= 4, "the order took {ticks} ticks");
+        eprintln!("a joiner's order ran on both machines after {ticks} ticks");
+    }
+
     /// Each machine's diplomacy screen shows its own contact list (`AktPlayerek`, multiplayer.md §5.1): the joiner's
     /// is its copy beside the canonical one, the host's the canonical one.
     #[test]

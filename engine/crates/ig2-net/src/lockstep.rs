@@ -15,8 +15,19 @@ use crate::wire;
 
 /// Sim ticks per turn (100 ms at 20 Hz).
 pub const TURN_TICKS: u32 = 2;
-/// The default input delay in turns (200 ms).
-pub const DEFAULT_DELAY: u64 = 2;
+/// The least input delay in turns: 0, a LAN's (an input goes out as its turn becomes the next to run, so the round
+/// trip has `delay + 1` turns, 100 ms); a room raises it from its links' round trips ([`input_delay`]).
+pub const DEFAULT_DELAY: u64 = 0;
+/// The most input delay a room picks (a 1 s round trip).
+pub const MAX_DELAY: u64 = 9;
+
+/// The input delay for a link of round trip `rtt` (ADR 0007 §2): the input for turn `t + delay`, sent when `t` becomes
+/// the next turn to run, must reach the host and its bundle come back within `delay + 1` turns, with 50 ms to spare
+/// for the 50 ms tick boundaries and jitter.
+pub fn input_delay(rtt: std::time::Duration) -> u64 {
+    let turn_ms = u64::from(TURN_TICKS * ig2_sim::time::SIM_TICK_MS);
+    ((rtt.as_millis() as u64 + 50).div_ceil(turn_ms) - 1).clamp(DEFAULT_DELAY, MAX_DELAY)
+}
 /// The bundles a peer keeps after running them, for a host migration (ADR 0012 §3).
 pub const KEPT_BUNDLES: usize = 128;
 
@@ -405,6 +416,12 @@ impl<'r> Peer<'r> {
 
     /// The bundles this peer holds up to its frontier: the last [`KEPT_BUNDLES`] run, then the buffered ones
     /// (contiguous, in turn order).
+    /// This peer is behind the session: it holds more bundles than its inputs run ahead (`delay` + 1, the turn due
+    /// and the ones its sent inputs completed).
+    pub fn behind(&self) -> bool {
+        self.bundles.len() as u64 > self.delay + 1
+    }
+
     pub fn held_bundles(&self) -> Vec<Bundle> {
         let buffered = (self.turn..self.frontier()).map(|t| self.bundles[&t].clone());
         self.kept.iter().cloned().chain(buffered).collect()

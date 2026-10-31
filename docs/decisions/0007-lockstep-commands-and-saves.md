@@ -47,8 +47,18 @@ handler, so the classic ruleset stays the original's order of effects:
 ### 2. Lockstep scheduling
 - A **turn** is `TURN_TICKS` sim ticks (2 = 100 ms at 20 Hz). Every peer sends one `Input { turn, commands }` per
   turn, empty or not (the heartbeat). Commands issued while the local peer is at turn `t` are scheduled for turn
-  `t + delay` (**input delay**, default 2 turns = 200 ms; the host may raise it for slow links, announcing the new
-  value for a turn in the future so every peer switches at the same turn).
+  `t + delay` (**input delay**); the input for a turn goes out when the turn `delay` before it becomes the next to
+  run, so a command waits for the next input (up to a turn) and its round trip has `delay + 1` turns. Amended
+  2026-10-31 (issue #6): adaptive. The room picks it at the start (also a resumed save's) from its members' measured
+  round trips (QUIC's estimate, end to end through a relay too): `ceil((rtt + 50 ms) / 100 ms) - 1` for the slowest
+  member, at least 0 (a LAN: one turn's round trip, an order runs 100-200 ms after it is given), at most 9
+  (`ig2_net::input_delay`). The value counts turns beyond the one every input already has: `delay` 0 is a one-turn (100 ms)
+  delay, 1 two turns. A bundle later than its turn stalls that peer until it comes; the peer then catches up
+  (below), so a late packet costs a pause, not a desync. It stays fixed for the session; changing it mid-session (announced for a future turn so
+  every peer switches together) is not built.
+- Every peer runs one turn per `TURN_TICKS` ticks of its own clock (a turn every 100 ms; the ticks between move
+  messages only; the transport is pumped every frame), so the session runs at 20 ticks/s like single player. A peer
+  holding more bundles than `delay + 1` is behind and runs a turn on those ticks too.
 - The **host** collects the inputs for turn `t` from every active peer and broadcasts one ordered `Bundle { turn,
   commands }` (by peer slot, then send order, each stamped with its issuer). A peer runs turn `t` only when it holds
   bundle `t`; otherwise it stalls (the sim never runs ahead or rolls back). A peer that fell behind catches up with
@@ -120,4 +130,4 @@ input delay.
   profiles.
 - Per-human state (contact lists, spy reports, `st_Multi_include` effects) is kept per human in canonical MP
   (`multiplayer.md` §5, snapshot version 3). Open: `MULTIGET_SpaceWar`; the real-time battles' per-frame UI input (`MULTISEND_SpWarSynch`) as commands (LAN discovery, UPnP and the
-  lobby: ADR 0008); adaptive input delay from measured round trips.
+  lobby: ADR 0008); changing the input delay mid-session.

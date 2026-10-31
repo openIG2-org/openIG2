@@ -4050,7 +4050,7 @@ impl App {
         if let Some(v) = &mut self.view {
             let c = &v.camera;
             let (curr, prev) = (&self.world.curr, &self.world.prev);
-            let clock = prev.orbit + (curr.orbit - prev.orbit) * self.clock.phase(now).clamp(0.0, 1.0);
+            let clock = prev.orbit + (curr.orbit - prev.orbit) * self.world.turn_phase(self.clock.phase(now).clamp(0.0, 1.0));
             let orbit = |p: usize| curr.planets.iter().find(|q| q.index == p).map_or([0.0; 2], |q| crate::starmap::orbit_position(q, clock));
             let planet = self.menus.info.map(|i| i.planet);
             let (cam, star, out) = self.menus.advance_info([c.x, c.y, c.zoom, c.rotate], orbit, now as f32 / 1000.0);
@@ -4198,7 +4198,7 @@ impl App {
             }
         }
         let paused = self.world.paused();
-        let alpha = if paused { 1.0 } else { self.clock.phase(now) };
+        let alpha = if paused { 1.0 } else { self.world.turn_phase(self.clock.phase(now)) };
         drop(ui);
         let names = self.building_names();
         // The pictures a screen change takes, and this frame's picture under an overlay screen.
@@ -4433,7 +4433,7 @@ impl App {
             return None;
         }
         let now = self.now_ms();
-        let alpha = if self.world.paused() { 1.0 } else { self.clock.phase(now) };
+        let alpha = if self.world.paused() { 1.0 } else { self.world.turn_phase(self.clock.phase(now)) };
         let t = now as f32 / 1000.0;
         let g = self.gpu.as_mut()?;
         match (&mut self.colony, &self.world.colony_prev, &self.world.colony_curr) {

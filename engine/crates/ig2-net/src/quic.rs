@@ -115,6 +115,11 @@ impl Transport for QuicLink {
         Some(self.remote().ip())
     }
 
+    /// QUIC's smoothed round-trip estimate (through a relay too: the connection is end to end).
+    fn rtt(&self) -> Option<std::time::Duration> {
+        Some(self.conn.rtt())
+    }
+
     fn send(&mut self, msg: &Msg) {
         let _ = self.out.send(wire::to_vec(msg).expect("messages encode"));
     }

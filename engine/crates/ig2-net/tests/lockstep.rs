@@ -171,7 +171,6 @@ fn two_peers_stay_in_lockstep() {
     // The bundles carried every command, stamped with its sender's empire.
     let sent: Vec<(u64, u8)> = s.host.log.iter().flat_map(|b| b.commands.iter().map(move |c| (b.turn, c.issuer))).collect();
     assert_eq!(sent.len(), 9, "{sent:?}");
-    assert!(sent.iter().all(|&(t, _)| t >= DEFAULT_DELAY));
     // Commands changed the game: a session without them ends elsewhere.
     let mut solo = Session::new();
     solo.join(1, 6, |_| Peer::new(1, 6, game(state.clone(), &rules), DEFAULT_DELAY));
