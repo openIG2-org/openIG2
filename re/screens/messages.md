@@ -37,10 +37,11 @@ rule leaves it out [obs: a SpaceWar grab, rows 542 and 587; every other row equa
 
 ## 2. The scrolling message line
 `FRISSIT_Scroll2` 0x66ebd0 runs in the 10 ms UI frame (not while entering/leaving a screen); `GFX_Scroll` 0x66f270
-draws it. Both run when the screen is the messages screen (10), the space battle in SP (0xb) or options (0xd), or
-when no message window is up (`VanUzenet()` false), or in a few battle states (a planet at war on the colony
-screen, options during a battle); not on the colony screen while `StoryAdat+0xb4` is set (the tests at the head of
-both functions). An error text (`HibaUzenetSzoveg`) replaces the line for 300 frames.
+draws it (exe 0x556210 and 0x5566a0; the "waiting" text is hud.md §2). Both run when nothing is unread
+(`VanUzenet()` 0x509e00 false), or on the messages (10), options (0xd) or space-battle (0xb) screen, or on a colony
+at war (in a battle/war they run unless `DEBUGX`; on 0xb in MP too); otherwise the line stands still and is not
+drawn. Not on the colony screen while `StoryAdat+0xb4` is set (the tests at the head of both functions). Port:
+`App::message_line_gates`. An error text (`HibaUzenetSzoveg`) replaces the line for 300 frames.
 
 Motion, in characters (`UzenetStart` `s`, `UzenetSebesseg` `v`, `UzenetHatar` `h`):
 - When the current text has left (`s ≥ len`) or there is none: take `ScrollUzenetek[1]` (text, `+0x3c` important →

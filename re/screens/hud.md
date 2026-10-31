@@ -161,9 +161,14 @@ screen's own passes, unless options (0xd) runs as the self-playing demo or the l
   (status 3 or 4 in `Talalmanyok[t].+0x45 + EN`), else 2 (and 2 in the battle states above).
 - `GFX_AllandoCallBack2` 0x66caf0: the history drop-down (`GFX_ScrollHistory`, when open), the message line
   (`GFX_Scroll`, messages.md §2), **`GFX_IdospeedPenzDatum` 0x66a590** (exe 0x554990, checked), the screen-select
-  menu (`GFX_SelectScreens`, when open), then texts: "message waiting" `GetString(0x12, 2)` at (268, 7), 0x36 bytes,
-  size 2, flags 5, colour 6, pulsing with `KiirStrSzinSzorzo = sin(AktIdo/100)·50 + 50` when a message window is up
-  (`VanUzenet`); an empire with no planets left gets the countdown texts at (10, 30) and (10, 50), size 4, colour 3.
+  menu (`GFX_SelectScreens`, when open), then texts: "message waiting" `GetString(0x12, 2, 1)` (exe 0x554040; the
+  ELF dropped the third index) at (268, 7), 0x36 bytes, size 2, flags 5, colour 6, pulsing with
+  `KiirStrSzinSzorzo = (int)(sin(AktIdo/100)·50 + 50)` per cent (`AktIdo` in ms). Drawn when a message is unread
+  (`VanUzenet`), not on the space battle, not on a colony at war, on the messages screen only when idle
+  (`dabe3c == 0 && da6607`), not on options when load-only (`bae24e`) or in a battle (`bae24f`); the exe also shows
+  it with `DEBUGX` in those battle states. Skipped while an error text is up and on the colony screen while
+  `StoryAdat+0xb4` is set (the exe draws story text `_s(5, 0x215d)` there; not ported). Port:
+  `App::message_line_gates`, `waiting_pulse`. An empire with no planets left gets the countdown texts at (10, 30) and (10, 50), size 4, colour 3.
   (`GFX_DateMoneyScrollFade` 0x66d160 only draws faders: the tooltip box, the select menus' boxes, the history box
   (268, 22, 0x146 × `10·n + 5`).)
 - `GFX_IdospeedPenzDatum`: the speed buttons `BrushToScreen(1007 + i)` for the selected `i` and `1011 + i` for the

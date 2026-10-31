@@ -25,6 +25,20 @@ impl App {
         (0..b.count.max(0) as usize).any(|i| b.messages.get(i * ig2_sim::messages::MESSAGE + 4) == Some(&0))
     }
 
+    /// The message line's gate (`FRISSIT_Scroll2` exe 0x556210, `GFX_Scroll` 0x5566a0: it runs with nothing unread, on
+    /// the messages, options and battle screens and a colony at war) and the "message waiting" text's
+    /// (`GFX_AllandoCallBack2` 0x554040: unread, not in a battle or a war, the messages screen only idle, the options
+    /// screen not load-only or in a battle). `DEBUGX` and the story's colony text (`StoryAdat+0xb4`) aren't ported.
+    pub(super) fn message_line_gates(&self) -> (bool, bool) {
+        let unread = self.unread_message();
+        let s = self.akt_kep_now();
+        let war = s == 3 && self.colony_war_up();
+        let line = !unread || matches!(s, 10 | 0xb | 0xd) || war;
+        let options_held = s == 0xd && self.options.as_ref().is_some_and(|o| o.s.load_only || o.s.battle);
+        let waiting = unread && s != 0xb && !war && (s != 10 || self.messages_idle()) && !options_held;
+        (line, waiting)
+    }
+
     /// A button on the top bar's plain spots (`IG2_gameUpdate` exe 0x4e0440 lines 147-181, `MOUSE_SelectScreens`
     /// 0x555470 lines 90-121) at the virtual point `at`. True when the bar takes it (the screen under it sees nothing);
     /// a press it took also takes that button's release.

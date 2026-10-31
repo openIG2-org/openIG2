@@ -36,6 +36,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 409 | diplomacy specials, stories 857/858/860 | the diplomacy specials never reach the stories' routes (`ig2-sim/src/diplomacy.rs` :1365) | yes | campaign/elem.md 857 |
 | 412 | starmap, wormholes | the arrows between known wormhole pairs of `Show_Stars2d3d` are not drawn | minor | starmap.md §3.5 |
 | 416 | messages, list arrows | the client blocks the list arrows while a dialogue runs and leaves them live while an automatic message waits; the exe (`Messages_Main` 0x508560, the `DAT_00dabdd8 == -1` tests) gates them only on no automatic message waiting | minor | messages.md §6 |
+| 417 | top bar, message line | the exe skips the line and the "new message" text while an error text (`HibaUzenetSzoveg`) is up, and on the colony screen while `StoryAdat+0xb4` is set shows story text `_s(5, 0x215d)` instead; the client has neither | minor | hud.md §2 |
 
 ## Keep
 

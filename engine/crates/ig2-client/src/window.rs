@@ -3861,15 +3861,19 @@ impl App {
         let at = self.virtual_cursor();
         let on_info = self.overlay == Some(crate::ui::Screen::Info) && self.pointer_in;
         let info_down = self.info_down;
+        let (line_on, waiting) = self.message_line_gates();
         if let Some(h) = &mut self.hud {
             let world = &mut self.world;
+            (h.line_held, h.message_waiting) = (!line_on, waiting);
             let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
             let now_ms = now as f64;
             for (line, colour) in world.chat_lines.drain(..) {
                 h.chat.ring.add(line, colour, now_ms);
             }
             for _ in 0..due_ui {
-                h.scroller.step(&mut || world.pop_message());
+                if line_on {
+                    h.scroller.step(&mut || world.pop_message());
+                }
                 // `Info_Main`'s per-frame spots see the hot-spot under the pointer (`AktIkon2`).
                 let spot = if on_info { h.info.spot_at(&self.tables.race_name_x, at, &world.ui) } else { None };
                 h.info.ui_frame(&world.ui.info, world.ui.human, spot, at[1], info_down);

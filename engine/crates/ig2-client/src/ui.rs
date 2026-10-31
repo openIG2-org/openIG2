@@ -421,6 +421,11 @@ pub struct Hud {
     pub pointer_phase: u64,
     /// The message line's history drop-down, while the right button holds it (`ScreensScrollHistoryMode`).
     pub history_open: bool,
+    /// The message line stands still and isn't drawn: a message is waiting (`FRISSIT_Scroll2`/`GFX_Scroll`'s gate,
+    /// set by the client each frame).
+    pub line_held: bool,
+    /// The top bar's pulsing "message waiting" text (`GFX_AllandoCallBack2`'s gate, set by the client each frame).
+    pub message_waiting: bool,
     /// The starmap's panel, faders, short info and minimap (re/screens/starmap.md §11).
     pub starmap: crate::starmap_hud::StarmapHud,
     /// `BirodalomNev[e]`: the empire names (the Hungarian `txt17` §1 even in other languages [obs]).
@@ -487,6 +492,8 @@ impl Hud {
             paused: false,
             pointer_phase: 0,
             history_open: false,
+            line_held: false,
+            message_waiting: false,
         }
     }
 
@@ -793,14 +800,21 @@ impl Hud {
             }
             _ => {}
         }
-        // The top bar (re/screens/hud.md §2), then its line (`GFX_Scroll` ELF 0x66f270; message windows aren't drawn
-        // yet, so it always shows).
+        // The top bar (re/screens/hud.md §2), then its line (`GFX_Scroll` exe 0x5566a0) unless a message waits.
         let bar = crate::hud::BarState { speed: self.speed, paused: self.paused, ..s.bar };
         crate::hud::draw_bar(f, &self.pics, font, &v, &self.palette, &bar);
         // The chat entry takes the line's place while it is open (`GFX_Scroll` is skipped).
         match &self.chat.entry {
             Some(e) => e.draw(f, font, self.white, &v, &self.palette, time),
-            None => self.scroller.draw(f, font, &v, &self.palette, time),
+            None if !self.line_held => self.scroller.draw(f, font, &v, &self.palette, time),
+            None => {}
+        }
+        // `GFX_AllandoCallBack2` (exe 0x554040): "message waiting" `GetString(0x12, 2, 1)` at (268, 7) in 0x36 cells,
+        // size 2, colour 6 times `KiirStrSzinSzorzo = (int)(sin(AktIdo / 100)·50 + 50)` per cent (`AktIdo` in ms).
+        if self.message_waiting {
+            let k = waiting_pulse(time);
+            let c = self.palette.get(6).copied().unwrap_or([1.0; 3]).map(|x| x * k);
+            font.text(f, &v, &self.texts.get(0x12, 2, 1), 268.0, 7.0, 0x36, 2, Align::Field, c, None);
         }
         // The history drop-down (`GFX_DateMoneyScrollFade` ELF 0x66d160, `GFX_ScrollHistory` exe 0x556ac0): the frame
         // `FadeKerettelKerekit(0x10c, 0x16, 0x146, n·10 + 5)` in (0, 10, 0) at 60 with a (0, 5, 0) edge at 30, entry i
@@ -823,9 +837,31 @@ impl Hud {
     }
 }
 
+/// `KiirStrSzinSzorzo = (int)(sin(AktIdo / 100)·50 + 50)` (exe 0x554040) as a factor, `time` in seconds.
+fn waiting_pulse(time: f32) -> f32 {
+    ((time as f64 * 10.0).sin() * 50.0 + 50.0) as i32 as f32 / 100.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The "message waiting" text pulses between 0 and 100 per cent every 2π/10 s (`AktIdo` ms / 100 radians).
+    #[test]
+    fn the_waiting_text_pulses() {
+        assert_eq!(waiting_pulse(0.0), 0.5);
+        // `AktIdo` 50, 157, 471, 1000 ms: truncated per cent.
+        assert_eq!(waiting_pulse(0.05), 0.73);
+        assert_eq!(waiting_pulse(0.157), 0.99);
+        assert_eq!(waiting_pulse(0.471), 0.0);
+        assert_eq!(waiting_pulse(1.0), 0.22);
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let t = UiTexts::load(&install).get(0x12, 2, 1);
+        assert!(!t.is_empty());
+    }
 
     /// ADR 0017: classic, the name tables are the Hungarian `txt17` in code page 1250 whatever the game's language;
     /// with one language, the game's own `txt17` (the same text the screens' `GetString(17, …)` gives).
