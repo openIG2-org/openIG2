@@ -23,6 +23,10 @@ comparison needs the same texts on both sides). Port: `ig2_formats::locale` (`ex
 `TextServer::language` picks the asset tree `localization/<lang>/` (the `AssetHelper` rule, `vfs.rs`; files missing
 there fall back to the base = English files) and the bitmap font's glyph order: exe 0x4a9efa calls exe 0x739b80
 (the language string) and copies `GLYPHS_HU` 0x8527F0 when its first byte is `h`, else `GLYPHS` 0x852748.
+`localization/hu/dataraw/text/` has no copy of `fleet.txt`, `designs.txt`, `s_design.txt`, `s_stname.txt`,
+`building.txt`, `autobld*.txt`, `scenario.txt`, `fabscr.txt` or `main.tut`, so a Hungarian game shows their texts in
+English: the campaigns' story fleet and ship names (campaign 1's "Conqueror"), the computer's design names and the
+constellation names.
 
 ## 2. The 1999 code's `Lang`
 `IG2_gameInit` (ELF 0x586960, exe 0x4dfbaf..0x4dfcfa) sets `Lang` (exe 0x912724, ELF 0x117b050) to the index of the
