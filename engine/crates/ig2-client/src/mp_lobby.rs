@@ -2071,6 +2071,48 @@ mod tests {
         eprintln!("a joiner's order ran on both machines after {ticks} ticks");
     }
 
+    /// Issue #33: a fleet on its way glides on both machines, frame by frame as the window draws it (the frame's message
+    /// pass, the ticks due, the interpolation's way between the turns' snapshots; none while paused), also through a
+    /// pause: it stands still while paused and never hops a turn's way in one frame.
+    #[test]
+    fn a_moving_fleet_glides_through_a_pause() {
+        let Some((mut a, mut g)) = two_worlds() else { return };
+        let joiner = g.net.as_ref().unwrap().0.peer().empire;
+        let f = g.curr.fleets.iter().find(|f| f.owner == joiner).expect("the joiner's fleet").clone();
+        g.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::Move { fleet: f.slot as i32, order: 1, kind: 0, x: (f.pos[0] + 400.0).to_bits(), y: f.pos[1].to_bits() } });
+        let pause = |w: &mut crate::world::World, on: bool| w.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::Pause { paused: on } });
+        // Half a tick apart, at 60 frames a second.
+        let mut clocks = [0, 25].map(|at| ig2_sim::time::TickClock::new(ig2_sim::time::SIM_TICK_MS, at));
+        let mut steps = [Vec::new(), Vec::new()];
+        let mut last = [f32::NAN; 2];
+        for now in (100..3100).step_by(16) {
+            match now {
+                1092 => pause(&mut a, true),
+                2092 => pause(&mut g, false),
+                _ => {}
+            }
+            let [ca, cg] = &mut clocks;
+            for (i, (w, c)) in [(&mut a, ca), (&mut g, cg)].into_iter().enumerate() {
+                w.pump();
+                for _ in 0..c.advance(now) {
+                    w.tick();
+                }
+                let alpha = if w.paused() { 1.0 } else { w.turn_phase(c.phase(now)) };
+                let x = w.curr.fleets_at(&w.prev, alpha).iter().find(|v| v.slot == f.slot).expect("the fleet").pos[0];
+                if now > 300 {
+                    steps[i].push(x - last[i]);
+                }
+                last[i] = x;
+            }
+        }
+        for (i, s) in steps.iter().enumerate() {
+            let moving: Vec<f32> = s.iter().copied().filter(|d| *d != 0.0).collect();
+            let step = moving.iter().sum::<f32>() / moving.len() as f32;
+            assert!(step > 0.0 && moving.iter().all(|d| *d > 0.0 && *d < 2.0 * step), "machine {i}: the fleet hops {s:?}");
+            assert!(s.len() - moving.len() > 40, "machine {i}: the pause stops the fleet");
+        }
+    }
+
     /// Issue #32: the host's pause stops the date on both machines (the session keeps turning), and the joiner's
     /// un-pause starts it again.
     #[test]

@@ -360,7 +360,9 @@ deterministic under test; nothing in it touches the sim except the injected comm
   every machine through the bundles; each turn then still applies its commands (so the un-pause can arrive) but skips
   the clock step and the tick, as the original's tick gate (`time-and-rng.md`, Simulation tick): the date, money and
   fleets stand still while the turns go on (`Peer::run_turn`). Tested by `lockstep.rs::a_pause_stops_the_shared_clock`
-  and `mp_lobby.rs::a_pause_stops_the_date_on_every_machine`.
+  and `mp_lobby.rs::a_pause_stops_the_date_on_every_machine`. The starmap draws the last snapshot while paused (no
+  interpolation), so turns that kept running under a pause made the fleets hop a turn's way every 100 ms; between
+  the turns the drawing interpolates (`World::turn_phase`). Tested by `mp_lobby.rs::a_moving_fleet_glides_through_a_pause`.
 - **Order results**: every machine runs the `MULTIGET_*` handlers, which update the issuer's own screen; ours: each
   turn's order and colony-order events go to the screens' queues (`World::order_events`, `colony_events`) on every
   machine and the screens filter by their empire (tested by `mp_lobby.rs::a_joiners_order_result_reaches_its_screens`).
