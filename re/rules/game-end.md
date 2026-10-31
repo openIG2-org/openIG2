@@ -59,6 +59,9 @@ Every end goes through `MEGHALAS` (the human dies) or `MEGNYERES(videos)` (the h
   peer's session at once; lobby protocol v4); a joiner whose host is gone ends with "The host has left the game."
   (unless a successor takes over: migration in the client, `multiplayer.md` §7.3). The game end is per machine in canonical MP: `empire_dies`/`victory_check` use
   `local_view().empire` and skip the "screen < 0xE" test.
+- `AktKep` is written by `Game::set_screen(kep)` (classic view only; the client passes the shown screen every frame
+  before the ticks), so `victory_check`'s "screen < 0xE" test, the fleet split transfer spare (`starmap.md` §10.2) and
+  the ground-war skip (`ground-combat.md` §11.7) read it. Canonical MP never writes it (per machine, `multiplayer.md` §1).
 
 ## 4. The high-score table
 Ten slots per scenario (kind 0 entries of the scenario list only; skirmish and campaign have none), in the

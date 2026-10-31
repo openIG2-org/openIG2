@@ -660,6 +660,15 @@ impl<'r> Game<'r> {
         }
     }
 
+    /// The screen on view (`AktKep`, written by `IG2_gameUpdate` 0x4e0440 from `AktKepKell` on each screen change):
+    /// the transfer panel's fleet split, `FRISSIT_Grwar` and `MegnyeresEllenoriz` read it. Classic view only; in
+    /// multiplayer it differs per machine and no reader needs it (multiplayer.md §1).
+    pub fn set_screen(&mut self, kep: i32) {
+        if let ViewMode::Classic = self.view {
+            self.state.mem.set_i32(va::AKT_KEP, kep);
+        }
+    }
+
     /// The planet on screen as the sim sees it (`StarmapMode == 1` → `AktPlanet`); none in canonical mode.
     fn shown_planet(&self) -> Option<i32> {
         let m = &self.state.mem;

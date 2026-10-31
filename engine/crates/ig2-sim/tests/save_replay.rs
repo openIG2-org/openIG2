@@ -877,6 +877,15 @@ fn empire_death_deletes_fleets_and_checks_victory() {
     assert_eq!((owned(&g, 3), alive(&g, 3)), (0, 0));
     assert_eq!(over(&g), [GameOver::Won]);
 
+    // `MegnyeresEllenoriz` wins only while `AktKep < 0xE` (#14: the client writes the screen on view).
+    let mut g = Game::new(SaveState::from_save(&save, &tech_defaults), &rules);
+    g.state.fleets[f][0x15] = 3;
+    g.set_screen(0xe);
+    g.empire_dies(3, &[]);
+    assert!(over(&g).is_empty(), "AktKep 0xE: no victory");
+    g.set_screen(2);
+    assert_eq!(g.state.mem.i32(va::AKT_KEP), 2);
+
     let mut g = Game::new(SaveState::from_save(&save, &tech_defaults), &rules);
     g.empire_dies(3, &[1]);
     assert!(over(&g).is_empty(), "empire 1 dies later in the same pass: still an enemy here");

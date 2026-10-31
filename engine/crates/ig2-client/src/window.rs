@@ -3714,6 +3714,7 @@ impl App {
             }
         }
         self.world.game.set_transfer(self.panels.transfer.map(|t| (t.f1, t.f2)));
+        self.world.game.set_screen(self.shown_kep());
         self.world.game.sp_battles.colony = if self.shown_kep() == 3 { self.world.colony } else { None };
         let due = self.clock.advance(now);
         // Multiplayer: the session is pumped while paused too (its keep-alive and the others' commands).

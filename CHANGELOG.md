@@ -47,6 +47,8 @@ Getting the game from "every part works" to "a player can install it and play it
   build steps, and the road to 1.0.
 - Diplomacy in multiplayer can take back an unanswered message ("cancel last message"); the tutorial's shorter wait
   between diplomacy messages now applies.
+- A fleet split off on the starmap, the ground-war tick and the victory check now follow the screen you are on, as in
+  the original.
 - Not done yet: the campaigns' late episodes are verified end to end only for campaign 1 and campaign 2's second
   storyline (the play-through driver answers the stories, researches, sends spies and fleets); campaign 3 is open.
 
