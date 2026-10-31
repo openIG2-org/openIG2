@@ -480,7 +480,7 @@ mod spot {
 const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
 
 /// The options rows (spec §6).
-const OPTIONS: usize = 5;
+const OPTIONS: usize = 6;
 /// The connection page's buttons' left edges (Host, Join, Saved game, Cancel).
 const BUTTONS: [f32; 4] = [130.0, 227.0, 323.0, 420.0];
 
@@ -560,6 +560,8 @@ mod words {
     pub const BATTLE: [&[u8]; 4] = [b"real time", b"space real time", b"ground real time", b"automatic"];
     pub const SPEED: &[u8] = b"Speed control:";
     pub const SPEED_BY: [&[u8]; 2] = [b"everyone", b"host"];
+    pub const FORMATION: &[u8] = b"Space battle formations:";
+    pub const FORMATION_BY: [&[u8]; 2] = [b"off (classic)", b"every player picks"];
     pub const NEED_TWO: &[u8] = b"Two empires are needed to start";
     pub const WAITING: &[u8] = b"Waiting for every player to be ready";
     pub const SAVED: &[u8] = b"Saved game";
@@ -932,7 +934,7 @@ impl MpScreen {
                 if self.is_host() {
                     v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 16.0])]);
                     for k in 0..OPTIONS as u32 {
-                        let y = 74.0 + 48.0 * k as f32;
+                        let y = 74.0 + 40.0 * k as f32;
                         v.push((spot::OPTION + 2 * k, [556.0, y, 30.0, 18.0]));
                         v.push((spot::OPTION + 2 * k + 1, [588.0, y, 30.0, 18.0]));
                     }
@@ -1083,7 +1085,8 @@ impl MpScreen {
                     1 => GalaxyOptions { ais: step(o.ais, 0, MAX_AIS), ..o },
                     2 => GalaxyOptions { shape: step(o.shape, 1, 2), ..o },
                     3 => GalaxyOptions { battle_status: step(o.battle_status, 0, 3), ..o },
-                    _ => GalaxyOptions { host_time: up, ..o },
+                    4 => GalaxyOptions { host_time: up, ..o },
+                    _ => GalaxyOptions { formation: up, ..o },
                 };
                 lobby.set_options(n);
             }
@@ -1243,11 +1246,12 @@ impl MpScreen {
                 (words::SHAPE.to_vec(), format!("{}", o.shape).into_bytes()),
                 (words::BATTLES.to_vec(), words::BATTLE[o.battle_status.min(3) as usize].to_vec()),
                 (words::SPEED.to_vec(), words::SPEED_BY[o.host_time as usize].to_vec()),
+                (words::FORMATION.to_vec(), words::FORMATION_BY[o.formation as usize].to_vec()),
             ];
             let mut planets = d.texts.get(15, 2, 8);
             planets.push(b':');
             for (k, (label, value)) in rows.iter().enumerate() {
-                let y = 60.0 + 48.0 * k as f32;
+                let y = 60.0 + 40.0 * k as f32;
                 text(f, if k == 0 { &planets } else { label }, 414.0, y, 2, Align::Left, 0x25);
                 text(f, value, 414.0, y + 18.0, 2, Align::Left, 0x22);
                 if self.is_host() {

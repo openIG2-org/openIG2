@@ -245,6 +245,102 @@ fn a_session_runs_from_the_lobby_into_a_battle_and_resumes_from_an_mp_save() {
     eprintln!("battle slot {b}, saved at turn {at}, {n} turns identical after the resume");
 }
 
+/// A session on `state` with the room's formation option on (ADR 0023), run until every peer has the space battle
+/// in its formation phase; returns its slot.
+fn into_formation<'r>(rules: &'r GameRules, state: &SaveState) -> (Net<'r>, usize) {
+    let (h, c) = lobby(&[(6, 0), (3, 0)], 3);
+    let mut g = game(state.clone(), rules);
+    g.realtime.formation.on = true;
+    let hs = HostSession::start(h, g, rules, SessionSettings::default()).ok().expect("the session starts");
+    let mut net = Net { hs, clients: vec![joined(c, rules)], now: Duration::ZERO, events: Vec::new() };
+    let mut slot = None;
+    for _ in 0..40 {
+        let target = net.turn() + 25;
+        net.run_to(target, |p| {
+            slot = slot.or(space_started(p));
+            p.events.clear();
+        });
+        if let Some(b) = slot.filter(|&b| net.clients[0].peer.game.formation_side(b, 3).is_some()) {
+            return (net, b);
+        }
+    }
+    panic!("no formation phase");
+}
+
+/// Unit `owner`'s first live unit's position in battle `b`.
+fn first_unit(p: &Peer, b: usize, owner: i32) -> [f32; 3] {
+    let u = p.game.realtime.slots[b].units.iter().find(|u| u.alive && u.owner == owner).expect("a unit");
+    [u.pos.x, u.pos.y, u.pos.z]
+}
+
+#[test]
+fn an_mp_formation_phase_waits_for_every_human_side() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let state = common::space_clash(state);
+    let (mut net, b) = into_formation(&rules, &state);
+    let host = &net.hs.own;
+    assert_eq!(host.game.formation_side(b, 6), Some((false, 0)));
+    assert_eq!(host.game.formation_side(b, 3), Some((false, 0)));
+    assert_eq!(host.game.realtime.slots[b].tick, 0, "the battle waits");
+    let (six, three) = (first_unit(host, b, 6), first_unit(host, b, 3));
+
+    // 6 picks a formation: only 6's side is placed anew, on every peer.
+    net.hs.own.issue(Command::SpaceFormation { battle: b as u8, pick: 4 });
+    let at = net.turn();
+    net.run_to(at + 10, |p| p.events.clear());
+    for p in std::iter::once(&net.hs.own).chain(net.clients.iter().map(|c| &c.peer)) {
+        assert_eq!(p.game.formation_side(b, 6), Some((false, 4)));
+        assert_ne!(first_unit(p, b, 6), six, "6's side placed anew");
+        assert_eq!(first_unit(p, b, 3), three, "3's side as it was");
+        assert_eq!(p.game.realtime.slots[b].tick, 0);
+    }
+
+    // 3 starts: the battle still waits for 6; then 6 starts and it runs.
+    net.clients[0].peer.issue(Command::SpaceReady { battle: b as u8 });
+    let at = net.turn();
+    net.run_to(at + 10, |p| p.events.clear());
+    assert_eq!(net.hs.own.game.formation_side(b, 3), Some((true, 0)));
+    net.clients[0].peer.issue(Command::SpaceFormation { battle: b as u8, pick: 2 });
+    let at = net.turn();
+    net.run_to(at + 10, |p| p.events.clear());
+    assert_eq!(net.hs.own.game.formation_side(b, 3), Some((true, 0)), "no pick after the start");
+    assert_eq!(first_unit(&net.hs.own, b, 3), three);
+    assert_eq!(net.hs.own.game.realtime.slots[b].tick, 0);
+
+    // The phase travels with a save.
+    let file = net.hs.save().unwrap();
+    let saved = MpSave::read(&file, RULES).unwrap().snapshot.restore(&rules).unwrap().0;
+    assert_eq!(saved.realtime.formation, net.hs.own.game.realtime.formation);
+
+    net.hs.own.issue(Command::SpaceReady { battle: b as u8 });
+    let at = net.turn();
+    net.run_to(at + 10, |p| p.events.clear());
+    for p in std::iter::once(&net.hs.own).chain(net.clients.iter().map(|c| &c.peer)) {
+        assert!(p.game.realtime.formation.phases.is_empty(), "the phase is over");
+        assert!(p.game.realtime.slots[b].tick > 0 && p.game.realtime.slots[b].f2d86, "the battle runs");
+    }
+    assert!(agree(&net.hs.own, &net.clients[0].peer) > 0);
+    assert!(net.hs.host.desyncs.is_empty(), "{:?}", net.hs.host.desyncs);
+}
+
+#[test]
+fn an_mp_formation_phase_ends_after_its_hold() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let state = common::space_clash(state);
+    let (mut net, b) = into_formation(&rules, &state);
+    net.clients[0].peer.issue(Command::SpaceReady { battle: b as u8 });
+    let at = net.turn();
+    // 6 never starts: the battle runs once the hold is over.
+    let waited = net.hs.own.game.realtime.formation.phases[0].hold;
+    let hold = ((ig2_sim::game::FORMATION_HOLD - waited) / ig2_net::TURN_TICKS) as u64;
+    net.run_to(at + hold - 10, |p| p.events.clear());
+    assert_eq!(net.hs.own.game.realtime.slots[b].tick, 0, "still waiting");
+    net.run_to(at + hold + 10, |p| p.events.clear());
+    assert!(net.hs.own.game.realtime.formation.phases.is_empty());
+    assert!(net.hs.own.game.realtime.slots[b].tick > 0);
+    assert!(net.hs.host.desyncs.is_empty(), "{:?}", net.hs.host.desyncs);
+}
+
 #[test]
 fn a_save_resumes_without_a_saved_player_whose_empire_the_computer_plays() {
     let Some((rules, state)) = common::setup(SAVE) else { return };

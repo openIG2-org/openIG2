@@ -21,7 +21,8 @@ use super::story_chain;
 use super::*;
 use crate::ground::{Clock, GroundEvent, GroundOrder, Start};
 use crate::spacebattle::{
-    self, Battle, BattleRules, BattleWorld, Order, SetupBuilding, SetupFleet, SetupInput, SetupPlanet, SetupShip, ShipType, Tick, WeaponRules,
+    self, Battle, BattleRules, BattleWorld, Entry, Order, SetupBuilding, SetupFleet, SetupInput, SetupPlanet, SetupShip, ShipType, Tick,
+    WeaponRules,
 };
 use crate::spacewar::CombatWorld;
 use crate::story::Participant;
@@ -64,6 +65,48 @@ pub struct RealTime {
     /// client takes them. Not synced state.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub fx: Vec<(usize, crate::spacebattle::BattleEvent)>,
+    /// Ours (ADR 0023): the MP formation phase. Synced state, in the snapshot's own field (not this struct's).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub formation: MpFormation,
+}
+
+/// How long a battle waits in its formation phase for a side that hasn't started: game ticks (60 s at the ADR 0007
+/// pace).
+pub const FORMATION_HOLD: u32 = 1200;
+
+/// Ours (ADR 0023, the enhanced rule): an MP real-time battle's human sides each pick a formation and start, as the
+/// SP battle's formation phase (`space-combat.md` §7.10 step 10, which the original keeps for SP); the battle runs
+/// once every one has started, left or dropped, or after [`FORMATION_HOLD`] ticks.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct MpFormation {
+    /// The room's option (the host's).
+    pub on: bool,
+    /// The battles still in their phase.
+    pub phases: Vec<FormationPhase>,
+}
+
+/// One battle's formation phase.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FormationPhase {
+    pub slot: usize,
+    /// The human sides with a pick (≥ 6 ships, as SP's `+0x2d85`).
+    pub sides: Vec<FormationSide>,
+    /// Ticks waited.
+    pub hold: u32,
+}
+
+/// A human side in a formation phase.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FormationSide {
+    pub side: u8,
+    /// The side's ships as the set-up listed them (what a pick places anew).
+    pub list: Vec<Entry>,
+    /// The loaded pick (0..=8, `felallas<pick + 1>`).
+    pub pick: i32,
+    pub ready: bool,
 }
 
 /// The single-player battle screen (ours, classic view; per machine, not in the state).
@@ -315,6 +358,7 @@ impl Game<'_> {
         for e in 1..9u32 {
             m.set_i32(at::SPACE_LEFT + 4 * e, 0);
         }
+        self.formation_phase(slot, &g.human);
         self.events.push(GameEvent::RealTime(RealTimeEvent::SpaceStarted { slot }));
     }
 
@@ -324,11 +368,81 @@ impl Game<'_> {
     }
 
     /// The formation phase's pick on the battle screen (`SpaceWarFrissit2` → `loadfelallas`, spec §7.4): formation
-    /// `pick` 0..=8 (`felallas<pick + 1>`) places the human's ships in battle `slot` anew. SP only (the phase is).
+    /// `pick` 0..=8 (`felallas<pick + 1>`) places the human's ships in battle `slot` anew. SP only (the phase is; MP's
+    /// own phase is [`Game::space_formation`]).
     pub fn pick_formation(&mut self, slot: usize, pick: i32) {
         if !(0..9).contains(&pick) || self.realtime.slots.get(slot).is_none() {
             return;
         }
+        self.place_formation(slot, pick, None);
+    }
+
+    /// Ours (ADR 0023): `issuer`'s pick in battle `slot`'s MP formation phase places its side anew; refused once
+    /// the side has started or the phase is over.
+    pub fn space_formation(&mut self, issuer: u8, slot: usize, pick: i32) {
+        let phases = &mut self.realtime.formation.phases;
+        let side = phases.iter_mut().filter(|p| p.slot == slot).flat_map(|p| p.sides.iter_mut()).find(|s| s.side == issuer && !s.ready);
+        let Some(s) = side.filter(|_| (0..9).contains(&pick)) else { return };
+        s.pick = pick;
+        let mut list = std::mem::take(&mut s.list);
+        self.place_formation(slot, pick, Some((issuer as usize, &mut list)));
+        let phases = &mut self.realtime.formation.phases;
+        if let Some(s) = phases.iter_mut().filter(|p| p.slot == slot).flat_map(|p| p.sides.iter_mut()).find(|s| s.side == issuer) {
+            s.list = list;
+        }
+    }
+
+    /// Ours (ADR 0023): `issuer` pressed start in battle `slot`'s MP formation phase.
+    pub fn space_ready(&mut self, issuer: u8, slot: usize) {
+        for p in self.realtime.formation.phases.iter_mut().filter(|p| p.slot == slot) {
+            for s in p.sides.iter_mut().filter(|s| s.side == issuer) {
+                s.ready = true;
+            }
+        }
+    }
+
+    /// Ours (ADR 0023): empire `e`'s side in battle `slot`'s MP formation phase: (started, loaded pick).
+    pub fn formation_side(&self, slot: usize, e: i32) -> Option<(bool, i32)> {
+        let p = self.realtime.formation.phases.iter().find(|p| p.slot == slot)?;
+        p.sides.iter().find(|s| s.side as i32 == e).map(|s| (s.ready, s.pick))
+    }
+
+    /// Ours (ADR 0023): a new MP battle's formation phase, with the room's option on: each human side with ≥ 6 ships
+    /// in its list gets a pick. Takes the set-up's lists either way.
+    fn formation_phase(&mut self, slot: usize, human: &[bool]) {
+        let rt = &mut self.realtime;
+        let lists = std::mem::take(&mut rt.slots[slot].side_lists);
+        if !rt.formation.on || rt.formation.phases.iter().any(|p| p.slot == slot) {
+            return;
+        }
+        let sides: Vec<FormationSide> = lists
+            .into_iter()
+            .enumerate()
+            .filter(|(e, l)| (1..9).contains(e) && human.get(*e).copied().unwrap_or(false) && 6 <= l.len())
+            .map(|(e, list)| FormationSide { side: e as u8, list, pick: 0, ready: false })
+            .collect();
+        if !sides.is_empty() {
+            rt.formation.phases.push(FormationPhase { slot, sides, hold: 0 });
+        }
+    }
+
+    /// Ours (ADR 0023): battle `slot` waits in its formation phase (counted per tick); the phase ends once every side
+    /// has started or after [`FORMATION_HOLD`] ticks.
+    fn formation_holds(&mut self, slot: usize) -> bool {
+        let active = self.realtime.slots[slot].active;
+        let phases = &mut self.realtime.formation.phases;
+        let Some(i) = phases.iter().position(|p| p.slot == slot) else { return false };
+        let p = &mut phases[i];
+        p.hold += 1;
+        if !active || p.sides.iter().all(|s| s.ready) || FORMATION_HOLD < p.hold {
+            phases.remove(i);
+            return false;
+        }
+        true
+    }
+
+    /// [`Game::pick_formation`]'s placing: the human's side (SP), or `side` with its own list.
+    fn place_formation(&mut self, slot: usize, pick: i32, side: Option<(usize, &mut Vec<Entry>)>) {
         let ships = self.setup_ships();
         let combat = self.state.combat();
         let inp = SetupInput {
@@ -356,7 +470,10 @@ impl Game<'_> {
         }
         let mut rng = self.state.rng();
         let RealTime { slots, types, .. } = &mut self.realtime;
-        slots[slot].pick_formation(pick as usize + 1, &inp, &rules, types, &mut rng);
+        match side {
+            None => slots[slot].pick_formation(pick as usize + 1, &inp, &rules, types, &mut rng),
+            Some((e, list)) => slots[slot].place_formation(e, list, pick as usize + 1, &inp, &rules, types, &mut rng),
+        }
         self.state.store_rng(&rng);
     }
 
@@ -459,6 +576,9 @@ impl Game<'_> {
         }
         let speed = self.state.mem.i32(va::BATTLE_SPEED);
         for slot in 0..self.realtime.slots.len() {
+            if self.formation_holds(slot) {
+                continue;
+            }
             for _ in 0..speed {
                 if !self.realtime.slots[slot].active {
                     break;
@@ -589,6 +709,12 @@ impl Game<'_> {
         if (1..9).contains(&e) && self.state.mem.u8(va::PLAYER_KI + e as u32) == 1 {
             self.state.mem.set_u8(va::PLAYER_KI + e as u32, 2);
             self.with_ai(|st, w, hooks| st.init_dropped(w, e, hooks));
+        }
+        // A formation phase doesn't wait for it either (ADR 0023).
+        for p in &mut self.realtime.formation.phases {
+            for s in p.sides.iter_mut().filter(|s| s.side == empire) {
+                s.ready = true;
+            }
         }
     }
 

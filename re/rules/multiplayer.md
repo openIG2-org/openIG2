@@ -313,6 +313,23 @@ It compares our peers with each other, not with the exe, so it does not close th
   Out-of-range terms crashed `Diplomacy::deal_value` and `make_peace`; the original only receives what its own screen
   built, so the drop is the same on every machine (unit test `command::tests::terms_out_of_range_are_refused`).
 
+### 7.1.2 Formation phase (ours, ADR 0023, enhanced; deviation 425)
+
+The original keeps the formation phase for SP only (`AddFleet`: `+0x2d85` = ≥ 6 entries and not MP,
+`space-combat.md` §7.10 step 10). With the room's option on (`GalaxyOptions::formation`, kept in the state as
+`RealTime::formation.on`), `space_real_time` opens a phase for the new battle (`Game::formation_phase`): each human
+side whose `AddFleet` list has ≥ 6 entries (`Battle::side_lists`) gets a pick (0..=8, `felallas<pick + 1>`).
+- `space_tick` skips the slot while the phase lasts; it counts `hold` per tick and ends the phase once every side
+  has started or after `FORMATION_HOLD` (1200) ticks. The first real tick then sets `f2d86` as in SP, and every
+  screen's column slides out.
+- `Command::SpaceFormation { battle, pick }`: the issuer's side, while it hasn't started, is placed anew
+  (`Battle::place_formation`: `felallit` of that side with its own list, stream 6 as SP's pick).
+- `Command::SpaceReady { battle }`: the issuer's side has started; `Game::player_away` counts as started.
+- Synced: the phase is the snapshot's own field (version 7), not `RealTime`'s encoding.
+- Screen: `SpaceWarUi::mp_formation` on entry (`Game::formation_side`); the start button sends `SpaceReady`, then
+  "Waiting for the other players" until the first tick; picks after the start are refused on both sides.
+- A fleet joining during the phase isn't re-placed by later picks (its ships aren't in the side's list).
+
 ### 7.2 The session layer (ours, ADR 0011 §4–§6; `ig2_net::session`)
 
 No UI; the lobby screens sit on top. Time is the caller's (`now`, any monotonic origin), so the policy is

@@ -44,7 +44,11 @@ impl Live {
     /// `SpaceWar_Belep` on battle slot `slot`, from the starmap camera `cam`.
     pub fn enter(world: &mut World, slot: usize, cam: &crate::starmap::Camera, install: &ig2_formats::Install, now: u32) -> Option<Self> {
         let b = world.game.realtime.slots.get(slot)?;
-        let ui = SpaceWarUi::enter_as(slot, b, cam, now, world.game.local_view().empire as i32);
+        let me = world.game.local_view().empire as i32;
+        let mut ui = SpaceWarUi::enter_as(slot, b, cam, now, me);
+        if let Some((ready, pick)) = world.game.formation_side(slot, me) {
+            ui.mp_formation(ready, pick);
+        }
         let mask = install.read("dataraw/screen/star_m.raw").ok().and_then(|b| b.get(800..800 + 640 * 480).map(|x| x.to_vec())).unwrap_or_default();
         let seen_tick = b.tick;
         world.game.sp_battles.on_screen = true;
@@ -148,10 +152,18 @@ impl Live {
         }
         if due > 0 {
             if let Some(pick) = self.ui.formation_due() {
-                world.game.pick_formation(self.ui.slot, pick);
-                if let Some(b) = world.game.realtime.slots.get(self.ui.slot) {
-                    self.ui.placed(b);
+                if self.ui.mp_phase {
+                    world.send(Command::SpaceFormation { battle: self.ui.slot as u8, pick });
+                } else {
+                    world.game.pick_formation(self.ui.slot, pick);
+                    if let Some(b) = world.game.realtime.slots.get(self.ui.slot) {
+                        self.ui.placed(b);
+                    }
                 }
+            }
+            // An MP pick lands some turns later (ADR 0023), and the other sides' picks too.
+            if let Some(b) = world.game.realtime.slots.get(self.ui.slot).filter(|b| self.ui.mp_phase && self.ui.formation(b)) {
+                self.ui.placed(b);
             }
         }
         world.game.sp_battles.fade = self.ui.fade;
@@ -217,6 +229,9 @@ impl Live {
             crate::spacewar_hud::retreat_window(&mut frame, hud, &virt, mouse);
         }
         crate::spacewar_hud::notices(&mut frame, hud, &virt, [b.human_retreated, b.ai_retreated, self.ui.formation(b)], self.ui.column[0], self.ui.fade);
+        if self.ui.mp_waiting(b) {
+            crate::spacewar_hud::waiting(&mut frame, hud, &virt, self.ui.fade);
+        }
         // The MP versus banner (exe 0x57f800): with more than one empire present (`+0xe30`), the first two of the
         // list (`+0xe09`, `+0xe0a`) with their players' names (`PlayerNev` 0xBAE588, 11 bytes each).
         if world.game.state.mem.u8(ig2_sim::save::va::MULTIPLAYER) != 0
@@ -279,6 +294,7 @@ impl Live {
         use ig2_sim::game::StarmapOrder;
         match o {
             Out::Order(order) => vec![Command::SpaceOrder { battle: self.ui.slot as u8, order: (*order).into() }],
+            Out::Start if self.ui.mp_phase => vec![Command::SpaceReady { battle: self.ui.slot as u8 }],
             Out::Start => vec![
                 Command::Starmap { order: StarmapCmd::from(StarmapOrder::Speed { level: 1 }) },
                 Command::Starmap { order: StarmapCmd::from(StarmapOrder::Pause { paused: false }) },

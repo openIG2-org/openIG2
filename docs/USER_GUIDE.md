@@ -30,7 +30,8 @@ the multiplayer rings (LAN, direct IP or join code, optionally through a relay s
 `docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code
 (Ctrl+V) into the "Address or join code" field with no LAN game selected and press Join.
 Hosting asks your router to forward the game port (UPnP / NAT-PMP); the room shows whether it worked, and a
-click on that line switches it off.
+click on that line switches it off. A generated galaxy's room also has an off-by-default "Space battle formations"
+row: with it on, each human side with six or more ships picks a formation before a real-time space battle starts.
 
 | Flag | |
 |---|---|

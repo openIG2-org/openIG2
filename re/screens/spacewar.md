@@ -1397,7 +1397,8 @@ normalise(a × v)`, `b = normalise(a × c)`, the columns `−a, −b, −c`; `Mu
   battle `Command::SpaceBattleLeft`; `infoszamol`'s sim writes travel as the battle orders `Strengths` and `Outgunned`;
   the formation pick as `Battle::pick_formation`. Tested by `ig2-net/tests/sp_battle.rs`.
 - Formation phase: ends on the battle's first unpaused tick (§5.1), not only by the start button; a screen entered
-  later has none.
+  later has none. In multiplayer it is an enhanced room option (off by default): `re/rules/multiplayer.md` §7.1.2
+  (ported: each human side picks and starts; the screen shows "Waiting for the other players" after start).
 
 **State**: accepted against the fx8 capture sequence (numbers in `re/screens/diff-results.md`); everything in §1–§7 is
 ported. Orders were not compared byte-exact (no MULTIGET harness for SpaceWar); `infoszamol`'s strengths equal the

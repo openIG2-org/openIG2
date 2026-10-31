@@ -7,6 +7,7 @@ Getting the game from "every part works" to "a player can install it and play it
 
 - Multiplayer: hosting asks your router to open the game port (UPnP / NAT-PMP) at once; the room's port-mapping line switches it off.
 - Multiplayer: when a player drops, leaves or is kicked, the computer plays their empire; a player who rejoins gets it back.
+- Multiplayer: an optional room setting, "Space battle formations" (off by default), lets every human side with six or more ships pick a formation before a real-time space battle; the battle waits for the other players.
 - Multiplayer: a joining player's diplomacy screen lists the empires they have met, not the host's.
 - Multiplayer: a colony can build more than one building per visit (the build button comes back once the building is placed).
 - Multiplayer: in a space battle the joining player can select and order their own ships (the screen used to treat the host's ships as theirs).

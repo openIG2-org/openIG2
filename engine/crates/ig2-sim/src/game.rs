@@ -52,7 +52,7 @@ pub use design_orders::{DesignOrder, DesignRecord};
 pub use info_orders::InfoOrder;
 pub use message_orders::{choice_count, choice_disabled, choice_part, dialogue_in_progress, inbox_open_allowed, inbox_place, MessageOrder};
 pub use orders::{OrderEvent, StarmapOrder};
-pub use realtime::{RealTime, RealTimeEvent, SpBattles};
+pub use realtime::{FormationPhase, FormationSide, MpFormation, RealTime, RealTimeEvent, SpBattles, FORMATION_HOLD};
 pub use research_orders::ResearchOrder;
 
 pub use battles::BattleEvent;

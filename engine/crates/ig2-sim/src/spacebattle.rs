@@ -713,6 +713,10 @@ pub struct Battle {
     /// The human's side's list of ships (side `+0x5c`/`+0x60`, 0x1c-byte entries) as the last `AddFleet` left
     /// it: what a formation pick places anew ([`Battle::pick_formation`]).
     pub human_list: Vec<Entry>,
+    /// Every side's list as the last `AddFleet` left it (index = empire), for the MP formation phase (ours, ADR 0023):
+    /// the game takes it right after the set-up. Not synced state.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub side_lists: Vec<Vec<Entry>>,
     /// +0x2005: the ground war after the battle has been started.
     pub ground_war_started: bool,
     /// +0x2d84/+0x2d86: no unpaused tick yet / the formation phase's end (the first unpaused tick sets it, exe 0x56e018).
@@ -4266,14 +4270,20 @@ impl Battle {
     /// ones in the new formation, turned to face the others (stream 6: each new unit's look and mount timers).
     /// `inp` needs only `ships` and `designs` (the strategic records); `types` is the global ship-type table.
     pub fn pick_formation(&mut self, file: usize, inp: &SetupInput, rules: &SetupRules, types: &mut [ShipType], rng: &mut Streams) {
+        let mut list = std::mem::take(&mut self.human_list);
+        self.place_formation(self.human as usize, &mut list, file, inp, rules, types, rng);
+        self.human_list = list;
+    }
+
+    /// [`Battle::pick_formation`] for side `side` with its own `list` (ours, ADR 0023: an MP battle's formation phase).
+    #[allow(clippy::too_many_arguments)]
+    pub fn place_formation(&mut self, side: usize, list: &mut [Entry], file: usize, inp: &SetupInput, rules: &SetupRules, types: &mut [ShipType], rng: &mut Streams) {
         let Some(formation) = rules.formations.get(file) else { return };
-        if self.human_list.is_empty() {
+        if list.is_empty() {
             return;
         }
-        let mut list = std::mem::take(&mut self.human_list);
         let mut s = Setup { rules, inp, types, rng, formation: formation.clone() };
-        self.felallit(&mut s, self.human as usize, &mut list);
-        self.human_list = list;
+        self.felallit(&mut s, side, list);
     }
 
     /// `AddUjVadasz(race, class, owner, fleet, design, count, groups)` (exe 0x566420).
@@ -4497,6 +4507,7 @@ impl Battle {
         self.formation_choice = lists.get(self.human as usize).is_some_and(|l| 6 <= l.len()) && !inp.multiplayer;
         // `AddFleet` frees the lists when it starts, so the human's is the one this call built.
         self.human_list = lists.get(self.human as usize).cloned().unwrap_or_default();
+        self.side_lists = lists;
         self.f2d86 = false;
         self.recount_present();
     }

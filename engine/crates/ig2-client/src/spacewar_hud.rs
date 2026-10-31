@@ -433,6 +433,14 @@ pub fn notices(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, [own, ai, forma
     }
 }
 
+/// Ours (ADR 0023): an MP formation phase's side that has started waits for the others; below the notices, in their
+/// style.
+pub fn waiting(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, fade: f32) {
+    let Some(font) = &hud.font else { return };
+    let c = hud.palette.get(2).copied().unwrap_or([1.0; 3]).map(|x| x * fade);
+    font.text(f, v, b"Waiting for the other players", 200.0, 60.0, 0x46, 2, Align::Right, c, None);
+}
+
 /// The MP versus banner (`screenfrissites`, spec §7.4): `"%s (%s) vs. %s (%s)"` at (200, 30), 0x46 cells, size 2,
 /// centred, colour 2, for 9 s from the opening zoom's start (`spwckezdotimer`), fading over its last 0.5 s.
 pub fn banner(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, text: &[u8], ms: u32, fade: f32) {

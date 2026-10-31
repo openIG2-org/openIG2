@@ -387,6 +387,10 @@ pub struct SpaceWarUi {
     /// (0: `felallas1`, the start's; −1 without the phase). [`SpaceWarUi::formation_due`] places the side anew.
     pub formation_pick: i32,
     pub formation_loaded: i32,
+    /// Ours (ADR 0023): this side is in the battle's MP formation phase (`Game::formation_side`); the start button
+    /// sends `Command::SpaceReady` (`mp_ready`) and the column stays until the battle's first tick.
+    pub mp_phase: bool,
+    pub mp_ready: bool,
     /// The voices (`SpeakingDirector::Play(&SpaceWarSpeaker, line, kind)`, §7.4) due, and the throttle
     /// `beszedlasttick` / `acttick2` (+1 a UI tick with the gfx up; 30 ticks between lines).
     pub voices: Vec<(i32, i32)>,
@@ -539,6 +543,8 @@ impl SpaceWarUi {
             formation_done: b.f2d86,
             formation_pick: if b.formation_choice { 0 } else { -1 },
             formation_loaded: if b.formation_choice { 0 } else { -1 },
+            mp_phase: false,
+            mp_ready: false,
             voices: Vec::new(),
             speech_last: 0,
             acttick2: 0,
@@ -1048,7 +1054,17 @@ impl SpaceWarUi {
 
     /// The formation phase (`+0x2d85`): the human picks a formation before the battle starts (§7.1.3).
     pub fn formation(&self, b: &Battle) -> bool {
-        b.formation_choice && !self.formation_done
+        (b.formation_choice || self.mp_phase) && !self.formation_done
+    }
+
+    /// Ours (ADR 0023): the side's place in an MP formation phase on entry: started or not, the loaded pick.
+    pub fn mp_formation(&mut self, ready: bool, pick: i32) {
+        (self.mp_phase, self.mp_ready, self.formation_pick, self.formation_loaded) = (true, ready, pick, pick);
+    }
+
+    /// Ours (ADR 0023): started, the battle waits for the other sides.
+    pub fn mp_waiting(&self, b: &Battle) -> bool {
+        self.mp_ready && self.formation(b) && !self.formation_leaving
     }
 
     /// `SpaceWarFrissit2`'s formation step (exe 0x56d870, after the column; not on the first frame or while
@@ -1849,10 +1865,12 @@ impl SpaceWarUi {
     fn weapon_button(&mut self, b: &Battle, k: usize, left: bool, out: &mut Vec<Out>) {
         if self.formation(b) {
             // `+0x342e = 1; SetIdoSpeed(1); SetIdoPause(false)`: the column slides out, then the phase ends.
-            if left && k == 9 && !self.formation_leaving {
-                self.formation_leaving = true;
+            if left && k == 9 && !self.formation_leaving && !self.mp_ready {
+                // MP (ADR 0023): the column stays until every side has started (the battle's first tick).
+                self.mp_ready = self.mp_phase;
+                self.formation_leaving = !self.mp_phase;
                 out.push(Out::Start);
-            } else if left && k < 9 {
+            } else if left && k < 9 && !self.mp_ready && !(self.mp_phase && self.formation_leaving) {
                 self.formation_pick = k as i32;
             }
             return;
@@ -2121,6 +2139,35 @@ mod tests {
         ui.weapon_button(&b, 3, true, &mut out);
         assert_eq!(ui.formation_pick, 0, "no formation pick after the start");
         assert!(!SpaceWarUi::enter(0, &b, &cam, 0).formation(&b), "nor after entering the screen again");
+    }
+
+    /// Ours (ADR 0023): in an MP formation phase the start button only says ready; picks stop, the column stays until
+    /// the battle's first tick and then slides out as in SP.
+    #[test]
+    fn an_mp_formation_start_waits_for_the_battle() {
+        let mut b = Battle::slot();
+        let cam = crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]);
+        let mut ui = SpaceWarUi::enter(0, &b, &cam, 0);
+        assert!(!ui.formation(&b), "no phase without the option");
+        ui.mp_formation(false, 2);
+        assert!(ui.formation(&b) && ui.formation_pick == 2);
+        for _ in 0..60 {
+            ui.column_tick(&b);
+        }
+        let mut out = Vec::new();
+        ui.weapon_button(&b, 9, true, &mut out);
+        assert_eq!(out, [Out::Start]);
+        assert!(ui.mp_waiting(&b) && !ui.formation_leaving, "the column stays");
+        ui.weapon_button(&b, 9, true, &mut out);
+        ui.weapon_button(&b, 5, true, &mut out);
+        assert_eq!((out.len(), ui.formation_pick), (1, 2), "one start, no pick after it");
+        b.f2d86 = true;
+        ui.column_tick(&b);
+        assert!(ui.formation_leaving && !ui.mp_waiting(&b));
+        for _ in 0..60 {
+            ui.column_tick(&b);
+        }
+        assert!(!ui.formation(&b), "the phase is over");
     }
 
     /// `SpaceWar_Kilep`'s zoom-out (exe 0x562b50): towards Options at five times the speed (`visszaallitasidoszorzo =

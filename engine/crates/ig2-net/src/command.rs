@@ -334,6 +334,10 @@ pub enum Command {
     /// A stored design's rename in the issuer's own table (ours, deviation 96: the original writes it in place on its
     /// own machine only); sent on every key of the name input.
     RenameDesign { index: u32, name: Vec<u8> },
+    /// Ours (ADR 0023): the issuer's formation pick (0..=8) in the MP formation phase of battle slot `battle`.
+    SpaceFormation { battle: u8, pick: i32 },
+    /// Ours (ADR 0023): the issuer pressed start in the MP formation phase of battle slot `battle`.
+    SpaceReady { battle: u8 },
 }
 
 impl From<MessageOrder> for Command {
@@ -421,6 +425,8 @@ impl Command {
                 game.space_order(issuer, *battle as usize, (*order).into());
             }
             Command::SpaceBattleLeft => game.space_battle_left(issuer),
+            Command::SpaceFormation { battle, pick } => game.space_formation(issuer, *battle as usize, *pick),
+            Command::SpaceReady { battle } => game.space_ready(issuer, *battle as usize),
             Command::Starmap { order } => {
                 if let Some(o) = order.order() {
                     game.starmap_order(issuer, o);
