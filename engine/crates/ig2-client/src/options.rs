@@ -1023,18 +1023,23 @@ impl OptionsScreen {
             (false, false) => lab(f, 6, 0x244, id::QUIT),
             (true, _) => lab(f, 4, 0x244, id::QUIT),
         }
-        // The slot list (`KiirStrSzinSzorzo = Blokk1`): names at x 380, the selected one framed.
+        // The slot list (`KiirStrSzinSzorzo = Blokk1`): names at x 380, the selected one framed. The exe draws the
+        // slot's old name under the name entry too; with the clean entry (ADR 0024) the entry's slot shows none.
+        let clean = self.entry.is_some() && self.rows.iter().any(|r| r.ours && r.key == crate::display::CLEAN_ENTRY && r.value != 0);
         for i in 1..=SLOTS {
             let y = 0x83 + (i as i32 - 1) * 0xc;
             let c = if i == self.slot { 2 } else { 1 };
             if i == self.slot {
                 self.design.ask([0x178, y - 4, 0xbb, 0xc]);
             }
+            let name = !(clean && i == self.slot);
             match &self.slots[i] {
-                None if i < 0x17 => text(f, b"------------------------------", 0x17c as f32, (y - 1) as f32, 0x1e, 2, Align::Left, d.col(c, b1)),
+                None if i < 0x17 && name => text(f, b"------------------------------", 0x17c as f32, (y - 1) as f32, 0x1e, 2, Align::Left, d.col(c, b1)),
                 None => {}
                 Some(s) => {
-                    text(f, &s.name, 0x17c as f32, (y - 1) as f32, 0x1e, 2, Align::Left, d.col(c, b1));
+                    if name {
+                        text(f, &s.name, 0x17c as f32, (y - 1) as f32, 0x1e, 2, Align::Left, d.col(c, b1));
+                    }
                     for (k, (x, len)) in [(0x238, 4), (0x253, 2), (0x262, 2)].into_iter().enumerate() {
                         d.font.int(f, v, s.date[k] as i64, x as f32, y as f32, len, 1, Align::Right, d.col(c, b1));
                     }

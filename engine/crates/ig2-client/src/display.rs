@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017); kept in our settings file and shown as extra rows on the Options screen's game page
+//! language (ADR 0017) and the clean name entry (ADR 0024); kept in our settings file and shown as extra rows on the Options screen's game page
 //! (`crate::options`, in the original's font and colours under a "Remake" heading). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -16,6 +16,8 @@ pub const VSYNC: &str = "VSync";
 pub const LETTERBOX: &str = "Letterbox";
 pub const LIVE_BACKGROUND: &str = "LiveBackground";
 pub const ONE_LANGUAGE: &str = "OneLanguage";
+/// ADR 0024: the save slot being named doesn't show its old name under the entry.
+pub const CLEAN_ENTRY: &str = "CleanNameEntry";
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -131,6 +133,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(3, "Letterbox 4:3", LETTERBOX, d.letterbox as i32, Vec::new(), 1),
         row(4, "Live background", LIVE_BACKGROUND, d.live_background as i32, Vec::new(), 1),
         row(5, "Names in game language", ONE_LANGUAGE, d.one_language as i32, Vec::new(), 1),
+        row(6, "Clean name entry", CLEAN_ENTRY, (f.int(CLEAN_ENTRY) != Some(0)) as i32, Vec::new(), 1),
     ]
 }
 
@@ -165,7 +168,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

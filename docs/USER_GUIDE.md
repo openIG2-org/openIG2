@@ -77,6 +77,7 @@ at once and are saved in `ig2-rework-options.dat`.
 | Letterbox 4:3 (`Letterbox`) | Off by default; `--letterbox` overrides at start |
 | Live background (`LiveBackground`) | Overlay screens redraw the map live (ADR 0015) |
 | Names in game language (`OneLanguage`) | ADR 0017 |
+| Clean name entry (`CleanNameEntry`) | On by default: typing a save name hides the slot's old name behind it (ADR 0024); off draws the original's look |
 
 The window opens at 1600x900 until a size is saved.
 

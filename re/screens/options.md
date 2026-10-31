@@ -277,8 +277,10 @@ Then per visible slider `FadeKerettelKerekit(x, y−3, 220, 10, …)` (brighter 
    at y 0x70, x 0x234 − 100s. Labels and tabs use align 7 (centred on x: the boxes' middles). Tabs at y 0x46: (13,5,9)
    at 0x3a, (13,5,11) at 0x99, colour 2 if hovered or its page is up (the second tab tests page **1**, though its press
    sets 2: an exe slip, so the game tab never stays lit [obs]). 5. The slot list (5.2). 6. The
-   text entry box: `FillToScreen(IOX−1, IOY−1, len·charW+2, charH+2, 0x27)`, the text, a cursor block blinking on
-   `AktIdo200`. 7. Slider tracks (`line2d`): per visible slider, columns `j = 0..value+9` at `x + 2j` from
+   text entry box: `FillToScreen(IOX−1, IOY−1, len·charW+2, charH+2, c)` with c 0x27 until the first key, then 0 (ELF 0x5d71c0), the
+   text, a cursor block blinking on `AktIdo200`. The slot list (5.2) is drawn first, so the edited slot's old name
+   shows under a box only as wide as the typed text ("asd" over "Vaig Elment" reads "asdaig Elment"; the save gets
+   "asd"). The client leaves that name out while the entry is up unless classic (ADR 0024). 7. Slider tracks (`line2d`): per visible slider, columns `j = 0..value+9` at `x + 2j` from
    `y − 2 + d` to `y + 6 − d` (`d` 1 at `j = value+8`, 3 at `value+9`), colour by `f = j/220·2·Blokk2/100` (`Blokk2`
    reloaded each column) as `0xAABBGGRR`: top (r, g, b) = `(10f, 10f, 200f)`, bottom `(210f, 210f, 200f)` [obs: blue];
    the thumb: five grey (`Blokk2·140/100`) strokes at `x14 = x + 2·value + 0x12`: `(x14−3, y+4)–(x14−1, y+4)`,
@@ -335,8 +337,9 @@ Quit reads BACK with the tooltip (13,1,13). Sounds (`--sounds`, `tools/trace/scr
 dependencies, slots, name entry, quit question, tutorial layout, MP states (the MP host keeps Save for ADR 0007's MP
 save, a joiner has neither), Back re-entering the screen before as its `_Belep` with OldKep 0xd. Load reads an original
 `save<n>.sav` or our `save<n>.ig2s`; save writes ADR 0007's format plus the live starmap camera chunk (row 70); settings
-go to `ig2-rework-options.dat` (row 69). The game page adds six "Remake" rows below the original's seven (enhanced,
-row 402; `display.rs`): display mode, resolution, vsync, letterbox, live background, one-language names. Missing:
+go to `ig2-rework-options.dat` (row 69). The game page adds seven "Remake" rows below the original's seven (enhanced,
+rows 402, 433; `display.rs`): display mode, resolution, vsync, letterbox, live background, one-language names, clean
+name entry (`CleanNameEntry`, on: the edited slot's old name isn't drawn under the entry; ADR 0024). Missing:
 the faders' hover glow `FadeKerettelKerekitDesign`, the research design-return flags (row 359, kept); load into a war colony and the held slot pick are decompile-only (rows
 190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open
