@@ -128,11 +128,12 @@ impl Ring {
         self.lines.iter().map(|l| l.0.as_slice()).filter(|l| !l.is_empty())
     }
 
-    /// Slot i at (0x14, i·10 + 0x32 − shift), 100 cells of size 2, clipped to y ≥ 0x32; slot 0 at (9 − shift)·10 %.
-    pub fn draw(&self, f: &mut Frame, font: &Font, v: &Virtual, palette: &[[f32; 3]]) {
+    /// Slot i at (0x14, i·10 + 0x32 + `top` − shift), 100 cells of size 2, clipped to y ≥ 0x32 + `top` (`top` = the
+    /// info lines' 10 each above it); slot 0 at (9 − shift)·10 %.
+    pub fn draw(&self, f: &mut Frame, font: &Font, v: &Virtual, palette: &[[f32; 3]], top: i32) {
         for (i, (text, c)) in self.lines.iter().enumerate() {
-            let y = (i as i32 * 10 + 0x32 - self.shift) as f32;
-            if text.is_empty() || y < 0x32 as f32 {
+            let y = (i as i32 * 10 + 0x32 + top - self.shift) as f32;
+            if text.is_empty() || y < (0x32 + top) as f32 {
                 continue;
             }
             let mut rgb = palette.get(*c).copied().unwrap_or([1.0; 3]);

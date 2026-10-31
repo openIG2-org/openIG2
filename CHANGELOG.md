@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- The starmap now shows the campaign's info lines (story hints such as countdowns) top left, with the chat lines below them.
 - The ground-war music now ends with the battle: the main track starts when the war is over or you return to the starmap.
 - In a ground war, tanks stand on the planet's ground instead of floating above it, and the landing ships fly in and set them down on screen, also while the game is paused.
 - Multiplayer: the host can let defeated players stay and watch the game (room option "Defeated players"; off keeps the original's exit to the menu).

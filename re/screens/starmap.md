@@ -522,6 +522,13 @@ Drawn in the original's order: the 3D pass with the control panel, then the 2D p
   tanks (k 1) at (171, 430) and production (k 2, frame 9) at (419, 430) when `Starmap_MouseInit2` (ELF 0x7024b0) set
   `StarmapTanksGomb` / `StarmapProductGomb` (the latter: planet mode on the human's planet), the redirect mark (k 3)
   at (471, 430) blinking, then `GFX_StarmapRadar` (§8). `StarmapBrushok` 9 is kep 33, −49 × −49, 14 per row.
+- The info lines (`StarmapGfx2D_3` exe 0x5ab365..0x5ab39d, after ELF 0x6d57b1; the list: re/rules/campaign.md §2.3): every
+  entry i of `GameInfo[0..GameInfoMut]` (exe stride 0xc) as `KiirStr(+4 text, 0x14, 0x28 + 10i, 0x50, 2, 4, +8
+  colour)`, unfaded, before the chat ring (re/screens/input.md §5), which therefore starts `GameInfoMut`·10 lower:
+  slot k at `(k + GameInfoMut)·10 + 0x32 − shift`, clipped to `HatarY1 = (GameInfoMut + 5)·10`. Flag 4 has no
+  documented effect on `KiirStr` (re/screens/messages.md §1). In a Hungarian game the client passes each text through
+  `a2az` under the articles option (gameinfo.txt holds the 0x95 marker; ADR 0028). Port: `ui.rs` (`UiSnap::game_info`,
+  `Ui::draw`), `chat.rs` (`Ring::draw`'s `top`).
 - `StarmapRovidInfoKiir` (exe 0x5afc50; `KiirStrAlap(text, x, y, 0x13, size, 0xc, colour)`):
   - planet mode: the name at (50, 427) size 2 colour 0x22; when the planet is the human's, or it has a satellite
     there (`+0xc4 + EN`), or the human is race 7 and `+0xcb` is 0, or `DEBUGX`: `"\x03:"` (size 2) and

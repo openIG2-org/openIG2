@@ -36,6 +36,8 @@ pub struct UiSnap {
     pub info: crate::info_screen::InfoData,
     /// [`crate::world::World::scenario`].
     pub scenario: bool,
+    /// The starmap's info lines (`GameInfo` `+4` text, `+8` colour; re/screens/starmap.md §11).
+    pub game_info: Vec<(Vec<u8>, usize)>,
 }
 
 fn cstr(b: &[u8]) -> Vec<u8> {
@@ -70,6 +72,7 @@ impl UiSnap {
             inbox_params,
             info: crate::info_screen::InfoData::read(state),
             scenario: false,
+            game_info: state.game_info.iter().map(|g| (cstr(&g.text), g.colour.max(0) as usize)).collect(),
         }
     }
 }
@@ -833,10 +836,16 @@ impl Hud {
         }
         // `GFX_SelectScreens` after `GFX_IdospeedPenzDatum`, its boxes from `GFX_DateMoneyScrollFade`.
         self.top.draw(f, font, self.white, &v, &self.palette, &self.top_data);
-        // `StarmapGfx2D_3`: the chat ring, on the starmap only.
+        // `StarmapGfx2D_3` (exe 0x5ab365): the info lines `KiirStr(text, 0x14, 0x28 + 10i, 0x50, 2, 4, colour)`, then the
+        // chat ring under them, on the starmap only.
         self.chat.ring.tick(time as f64 * 1000.0);
         if screen == Screen::Starmap {
-            self.chat.ring.draw(f, font, &v, &self.palette);
+            let hu = self.texts.lang == ig2_formats::text::Lang::Hu;
+            for (i, (text, c)) in s.game_info.iter().enumerate() {
+                let rgb = self.palette.get(*c).copied().unwrap_or([1.0; 3]);
+                font.text(f, &v, &crate::diplomacy::articles(text, hu), 20.0, 40.0 + 10.0 * i as f32, 0x50, 2, Align::Left, rgb, None);
+            }
+            self.chat.ring.draw(f, font, &v, &self.palette, s.game_info.len() as i32 * 10);
         }
     }
 }

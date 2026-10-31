@@ -143,7 +143,7 @@ old one stays); else appended at `GameInfoMut` (no capacity check: `ClearGameInf
 `stringhelper::format(text, a1, a2, a3)` (the texts hold `%s` only), then `a2az` (`Lang == 4` only: never on GOG,
 `re/formats/locale.md` §2; the sim keeps the markers, the client converts at display, ADR 0028). `RemoveGameInfo(id)` (exe 0x540e50): the first entry whose line has `id` leaves, the
 rest move down, `GameInfoMut −= 1`. Nothing else writes the list but `ClearGameInfo` (new game) and the load; the
-starmap only draws it (`StarmapGfx2D_3`, exe 0x5ab365). The scripts' texts: a number is `CString(n)` = `"%d"`
+starmap only draws it (`StarmapGfx2D_3`, exe 0x5ab365; `re/screens/starmap.md` §11). The scripts' texts: a number is `CString(n)` = `"%d"`
 (ELF 0x4f3e00); a planet `Bolygok[p]` (`+0x00`); an empire `Birodalom_Nev[e]`; a tech `Talalmanyok[t]`; dates
 `"%d.%2d.%2d"` (year + 1, month, day); story 863's planets joined with `", "`; `st_Rnd` 131 two planets as `a1`, `a2`;
 `st_Multi`'s threat lines `PlayerNev[e]`, `RED`/`YELLOW`/`GREEN`, the planet in colours 6/3/7, its score line
