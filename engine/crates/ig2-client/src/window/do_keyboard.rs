@@ -377,6 +377,29 @@ pub(super) fn colony_camera_key(physical: winit::keyboard::PhysicalKey, logical:
     })
 }
 
+/// ADR 0030: W/A/S/D by their place on the keyboard (Z/Q/S/D on AZERTY): left, right, up, down as 0..=3.
+pub(super) fn wasd_key(physical: winit::keyboard::PhysicalKey) -> Option<usize> {
+    use winit::keyboard::{KeyCode, PhysicalKey};
+    match physical {
+        PhysicalKey::Code(KeyCode::KeyA) => Some(0),
+        PhysicalKey::Code(KeyCode::KeyD) => Some(1),
+        PhysicalKey::Code(KeyCode::KeyW) => Some(2),
+        PhysicalKey::Code(KeyCode::KeyS) => Some(3),
+        _ => None,
+    }
+}
+
+/// ADR 0030: whether a W/A/S/D key down pans: on the starmap (option 1 or 2) or the colony screen (option 2), with no
+/// text entry up.
+pub(super) fn wasd_pans(option: crate::display::Wasd, starmap: bool, colony: bool, entry: bool) -> bool {
+    use crate::display::Wasd;
+    !entry && match option {
+        Wasd::Off => false,
+        Wasd::Starmap => starmap,
+        Wasd::Everywhere => starmap || colony,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,6 +409,22 @@ mod tests {
         assert!(mp_time_gate(0, false) && mp_time_gate(0, true));
         assert!(!mp_time_gate(1, false));
         assert!(mp_time_gate(1, true));
+    }
+
+    #[test]
+    fn wasd_by_place_and_not_into_entries() {
+        use crate::display::Wasd;
+        use winit::keyboard::{KeyCode, PhysicalKey};
+        let k = |c| wasd_key(PhysicalKey::Code(c));
+        assert_eq!([k(KeyCode::KeyA), k(KeyCode::KeyD), k(KeyCode::KeyW), k(KeyCode::KeyS)], [Some(0), Some(1), Some(2), Some(3)]);
+        assert_eq!(k(KeyCode::KeyQ), None);
+        // Default: the starmap only, so the colony's `a` and `s` keep their meaning.
+        assert!(wasd_pans(Wasd::Starmap, true, false, false));
+        assert!(!wasd_pans(Wasd::Starmap, false, true, false));
+        assert!(wasd_pans(Wasd::Everywhere, false, true, false));
+        assert!(!wasd_pans(Wasd::Off, true, false, false));
+        // A rename, chat or save name being typed gets the letters.
+        assert!(!wasd_pans(Wasd::Everywhere, true, false, true) && !wasd_pans(Wasd::Everywhere, false, true, true));
     }
 
     #[test]

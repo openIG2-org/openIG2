@@ -460,6 +460,8 @@ off the starmap). A panel spares only its owner's fleets.
 - The edge scroll reads the last physical pointer (`Mouse_Phys_x/y`, exe 0xdb9408/0c), so it goes on with the pointer
   outside the window. Both start at 0 and only SDL_MOUSEMOTION writes them (`MainCallBackEventHandler` exe 0x4e34e1;
   nothing warps the pointer), so before the first move the exe scrolls up-left.
+- Client addition (not in the exe): held W/A/S/D feed the edge-scroll path; Remake option "WASD camera", ADR 0030,
+  deviation 439.
 - Buttons (`Mouse_Lekerdez` exe 0x5105d0): `Mouse_Gomb` is any button held, `Mouse_Felenged` the last one let go,
   `Mouse_Lenyom` the first one down; a held spot stays latched (`Mouse_Megfogva`) until every button is up and a second
   button's press goes to it (no new click); 5 and 6 read the buttons every frame, left (in, up) then right (out, down),

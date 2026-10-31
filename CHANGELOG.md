@@ -8,6 +8,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - The starmap now shows the campaign's info lines (story hints such as countdowns) top left, with the chat lines below them.
 - The ground-war music now ends with the battle: the main track starts when the war is over or you return to the starmap.
 - In a ground war, tanks stand on the planet's ground instead of floating above it, and the landing ships fly in and set them down on screen, also while the game is paused.
+- W/A/S/D move the camera on the starmap; a new Remake option "WASD camera" can also turn them on in the colony view.
 - Multiplayer: the host can let defeated players stay and watch the game (room option "Defeated players"; off keeps the original's exit to the menu).
 - Multiplayer: with the same room option, anyone can join a running game with Join under a new name to watch it.
 - Space battle: the retreat question fits inside its box and shows over the radar, as in the original.

@@ -458,6 +458,19 @@ pub struct CamKeys {
     pub down: bool,
     /// `Starmap_Autoscroll::xSpeed` / `ySpeed`.
     scroll: [i32; 2],
+    /// W/A/S/D held (ADR 0030): left, right, up, down.
+    pub pan: [bool; 4],
+}
+
+/// ADR 0030: the held W/A/S/D (`pan`: left, right, up, down) aim an axis of the edge scroll as the pointer at that
+/// edge does (±30, so the same ramp and speed); both or neither of an axis leave the edge's target.
+pub fn pan_target(pan: [bool; 4], edge: [i32; 2]) -> [i32; 2] {
+    let axis = |neg: bool, pos: bool, e: i32| match (neg, pos) {
+        (true, false) => -30,
+        (false, true) => 30,
+        _ => e,
+    };
+    [axis(pan[0], pan[1], edge[0]), axis(pan[2], pan[3], edge[1])]
 }
 
 /// A key `StarmapKeyboardHandler` takes for the camera.
@@ -530,6 +543,7 @@ impl CamKeys {
                 ty = 30;
             }
         }
+        [tx, ty] = pan_target(self.pan, [tx, ty]);
         let n = |tx: i32, ty: i32| ((tx as f32 * tx as f32 + (ty * ty) as f32) as f64).sqrt();
         if tx * tx + ty * ty != 0 {
             tx = ((tx * 30) as f64 / n(tx, ty)) as i32;
@@ -1358,6 +1372,24 @@ mod tests {
         c.x = 299.9;
         c.slide(-6.0, 0.0);
         assert!(c.x <= PAN_LIMIT);
+    }
+
+    #[test]
+    fn wasd_aims_the_edge_scroll() {
+        // ADR 0030: A/D/W/S as the pointer at the left/right/top/bottom edge; opposite keys cancel to the edge's aim.
+        assert_eq!(pan_target([true, false, false, true], [0, 0]), [-30, 30]);
+        assert_eq!(pan_target([true, true, false, false], [30, -30]), [30, -30]);
+        // The same ramp as the edge, also with a button held, and a diagonal normalised like the pointer's corner.
+        let (mut k, mut c) = (CamKeys { pan: [false, true, false, false], ..Default::default() }, cam(0.0, -0.95));
+        k.autoscroll(&mut c, [900, 500], [1920, 1080], true);
+        assert_eq!(k.scroll, [5, 0]);
+        k.pan = [false, true, true, false];
+        let mut e = CamKeys::default();
+        for _ in 0..8 {
+            k.autoscroll(&mut c, [900, 500], [1920, 1080], false);
+            e.autoscroll(&mut c, [1919, 0], [1920, 1080], false);
+        }
+        assert_eq!(k.scroll, e.scroll);
     }
 
     #[test]

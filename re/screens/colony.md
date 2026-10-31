@@ -737,6 +737,9 @@ axis, f32 with the angle's `cos`/`sin` rounded to f32: `k = (600 − Zoom) + 200
 The window position is the last physical one: the scroll goes on with the pointer outside the window. The mouse
 wheel does nothing in the colony.
 
+Client addition (not in the exe): with the Remake option "WASD camera" on Both, held W/A/S/D feed the edge scroll and
+replace `a` / `s` (ADR 0030, deviation 439).
+
 [obs: `tools/trace/scripts/colony-camera.json` on quick-1.sav planet 42 (`run_screen.py --script`, the grabs carry the
 exe's camera): ←, numpad +, ↑, → with numpad − held; the keys reach the camera one UI tick after their event; zoom, pitch
 and rotate match the formulas to the bit over 270 ticks; the injected pointer leaves the window pointer at (0, 0), so the

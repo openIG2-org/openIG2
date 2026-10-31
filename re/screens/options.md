@@ -337,9 +337,9 @@ Quit reads BACK with the tooltip (13,1,13). Sounds (`--sounds`, `tools/trace/scr
 dependencies, slots, name entry, quit question, tutorial layout, MP states (the MP host keeps Save for ADR 0007's MP
 save, a joiner has neither), Back re-entering the screen before as its `_Belep` with OldKep 0xd. Load reads an original
 `save<n>.sav` or our `save<n>.ig2s`; save writes ADR 0007's format plus the live starmap camera chunk (row 70); settings
-go to `ig2-rework-options.dat` (row 69). The game page adds eleven "Remake" rows below the original's seven (enhanced,
-rows 402, 433-438; `display.rs`): display mode, resolution, vsync, letterbox, live background, one-language names, clean
-name entry (`CleanNameEntry`, on: the edited slot's old name isn't drawn under the entry; ADR 0024), models inside boxes (`BoxModelsInside`, on: the starmap's and the battle's info-box model is cut to its box; ADR 0025), slider under label (`SliderUnderLabel`, on: the battle's defend/attack slider sits under its label; ADR 0027), Hungarian articles (`HungarianArticles`, on; ADR 0028), centred Exit label (`CentredExitLabel`, on; ADR 0029). Missing:
+go to `ig2-rework-options.dat` (row 69). The game page adds twelve "Remake" rows below the original's seven (enhanced,
+rows 402, 433-439; `display.rs`): display mode, resolution, vsync, letterbox, live background, one-language names, clean
+name entry (`CleanNameEntry`, on: the edited slot's old name isn't drawn under the entry; ADR 0024), models inside boxes (`BoxModelsInside`, on: the starmap's and the battle's info-box model is cut to its box; ADR 0025), slider under label (`SliderUnderLabel`, on: the battle's defend/attack slider sits under its label; ADR 0027), Hungarian articles (`HungarianArticles`, on; ADR 0028), centred Exit label (`CentredExitLabel`, on; ADR 0029), WASD camera (`WasdCamera`: off, starmap (default), both (also the colony screen); ADR 0030). Missing:
 the faders' hover glow `FadeKerettelKerekitDesign`, the research design-return flags (row 359, kept); load into a war colony and the held slot pick are decompile-only (rows
 190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open

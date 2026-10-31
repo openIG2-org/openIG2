@@ -612,6 +612,8 @@ pub struct CameraKeys {
     tween: Option<(f32, f32, i32)>,
     /// `Colony_Autoscroll`'s `xSpeed/ySpeed` (0xa3eb68/6c).
     scroll: [i32; 2],
+    /// W/A/S/D held (ADR 0030): left, right, up, down.
+    pub pan: [bool; 4],
     /// `balclickx/y` (virtual pixels), `Colony_LastRotate`, `Colony_LastZoom` (the pitch) of the first press;
     /// `None` = `ujclick` (the next press takes them).
     turn_from: Option<([f32; 2], f32, f32)>,
@@ -731,6 +733,7 @@ impl CameraKeys {
                 ty = 30;
             }
         }
+        [tx, ty] = crate::starmap::pan_target(self.pan, [tx, ty]);
         // Normalised in f32; the second axis sees the first's new value [original quirk].
         let n = |tx: i32, ty: i32| ((tx as f32 * tx as f32 + (ty * ty) as f32) as f64).sqrt() as f32;
         if tx * tx + ty * ty != 0 {

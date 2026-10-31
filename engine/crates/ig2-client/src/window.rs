@@ -4679,6 +4679,13 @@ impl ApplicationHandler for App {
         }
         if let WindowEvent::KeyboardInput { event: ref k, is_synthetic, .. } = event {
             self.research_key_seen(k);
+            // ADR 0030: a W/A/S/D up ends its pan whichever screen has the keyboard (help, a video, a battle…).
+            if let (ElementState::Released, Some(i)) = (k.state, do_keyboard::wasd_key(k.physical_key)) {
+                self.star_keys.pan[i] = false;
+                if let Some(c) = &mut self.colony {
+                    c.ui.cam_keys.pan[i] = false;
+                }
+            }
             if !is_synthetic {
                 self.modifier_key(k);
             }
@@ -4934,7 +4941,7 @@ impl ApplicationHandler for App {
                 }
                 if self.spacewar.is_some() {
                     self.spacewar_key(event);
-                } else if !self.colony_camera_key(event) && !self.starmap_key(event) && self.key(event.logical_key.as_ref()) {
+                } else if !self.wasd_key(event) && !self.colony_camera_key(event) && !self.starmap_key(event) && self.key(event.logical_key.as_ref()) {
                     el.exit();
                 }
             }
@@ -4979,7 +4986,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.spacewar.is_some() => self.spacewar_key(&event),
-            WindowEvent::KeyboardInput { event, .. } if self.colony_camera_key(&event) || self.trade_key(&event) || self.starmap_key(&event) => {}
+            WindowEvent::KeyboardInput { event, .. } if self.wasd_key(&event) || self.colony_camera_key(&event) || self.trade_key(&event) || self.starmap_key(&event) => {}
             WindowEvent::MouseInput { state, button, .. } => self.mouse(button, state == ElementState::Pressed),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 let quit = self.key(event.logical_key.as_ref());
@@ -5400,6 +5407,27 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// ADR 0030: W/A/S/D held pan the starmap's camera (and with the option's third state the colony's) through the
+    /// edge scroll; a key down taken here never reaches the screen (the colony's `a` and `s`). The key up is handled
+    /// before the screens (`window_event`). True when taken.
+    fn wasd_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        let Some(i) = do_keyboard::wasd_key(event.physical_key) else { return false };
+        if event.state != ElementState::Pressed {
+            return false;
+        }
+        let shown = self.spacewar.is_none() && !self.under_screen() && self.options.is_none();
+        let starmap = shown && self.view.is_some() && self.colony.is_none();
+        let colony = shown && self.colony.is_some();
+        if !do_keyboard::wasd_pans(self.display.wasd, starmap, colony, self.entry_up()) {
+            return false;
+        }
+        match &mut self.colony {
+            Some(c) => c.ui.cam_keys.pan[i] = true,
+            None => self.star_keys.pan[i] = true,
+        }
+        true
     }
 
     /// `ColonyKeyboardHandler`'s held camera keys (spec §11.9), down and up: the arrows turn and tilt, numpad + / −

@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) and the centred Exit label (ADR 0029); kept in our settings file and shown as extra rows on the Options screen's game page
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) and the W/A/S/D camera (ADR 0030); kept in our settings file and shown as extra rows on the Options screen's game page
 //! (`crate::options`, in the original's font and colours under a "Remake" heading). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -26,6 +26,8 @@ pub const SLIDER_UNDER: &str = "SliderUnderLabel";
 pub const ARTICLES: &str = "HungarianArticles";
 /// ADR 0029: the starmap panels' Exit label is centred on its box.
 pub const CENTRED_EXIT: &str = "CentredExitLabel";
+/// ADR 0030: W/A/S/D pan the camera; 0 off, 1 on the starmap (the default), 2 both, also on the colony screen.
+pub const WASD: &str = "WasdCamera";
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -51,6 +53,16 @@ pub struct Display {
     pub slider_under: bool,
     pub articles: bool,
     pub centred_exit: bool,
+    pub wasd: Wasd,
+}
+
+/// Where W/A/S/D pan the camera (ADR 0030).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wasd {
+    Off,
+    Starmap,
+    /// Also on the colony screen, where they replace the original's `a` (select all) and `s` (stop).
+    Everywhere,
 }
 
 /// `"1920x1080"`.
@@ -77,6 +89,11 @@ impl Display {
             slider_under: f.int(SLIDER_UNDER) != Some(0),
             articles: f.int(ARTICLES) != Some(0),
             centred_exit: f.int(CENTRED_EXIT) != Some(0),
+            wasd: match f.int(WASD) {
+                Some(0) => Wasd::Off,
+                Some(2) => Wasd::Everywhere,
+                _ => Wasd::Starmap,
+            },
         }
     }
 
@@ -154,6 +171,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(8, "Slider under label", SLIDER_UNDER, d.slider_under as i32, Vec::new(), 1),
         row(9, "Hungarian articles", ARTICLES, d.articles as i32, Vec::new(), 1),
         row(10, "Centred Exit label", CENTRED_EXIT, d.centred_exit as i32, Vec::new(), 1),
+        row(11, "WASD camera", WASD, d.wasd as i32, ["Off", "Starmap", "Both"].map(|s| s.as_bytes().to_vec()).to_vec(), 2),
     ]
 }
 
@@ -172,12 +190,12 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let mut f = File::default();
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap });
         f.set(MODE, "2");
         f.set(RESOLUTION, "1280x720");
         f.set(VSYNC, "0");
         f.set(LETTERBOX, "1");
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap });
         assert_eq!(parse_size("12x7"), None);
     }
 
@@ -188,7 +206,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);
