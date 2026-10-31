@@ -360,6 +360,9 @@ flags & 3 = alignment). Geometry: literals (`DrawOverX/Y/Xm/Ym` = 0x28, 0x32, 0x
   `Research::hand`, `Pods::hand`, `orders::view_pointer`). Tooltips show during a screen's `Belep` (row 279, keep).
   Snapshots draw both at `--mouse`; `--mouse-phase N` (from the grab's `ui.json` `mouse_phase`) sets the pointer's
   animation row; script sequences start at their own phase.
+  Every live frame draws `Overlay::draw` after the top bar and the tutorial window (the space battle its pointer and
+  tooltip through `Live::over_bar`), as `UpdateFrame` does: checked live over the bar on the colony, research, design,
+  diplomacy, spy, trade, info, messages, options and help screens (the ground war is the colony's frame).
 - MP wait overlay: `ig2-client::mp_wait`: opens after 5000 ms without a local turn while no player's pause holds the
   session; cells from `mp_lobby::Session::late` (plus `lockstep::Host::late` on the host); the second line is the
   empire's race; "Close connection" is `HostSession::drop_player` (the player may come back). Mode 2 has no
