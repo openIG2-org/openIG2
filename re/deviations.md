@@ -85,6 +85,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 412 | MP, full-screen videos | the machine keeps pumping its session and running ticks under a video; the exe's `st_ShowAnim` (0x602bb0) blocks, its network side unobserved | no | multiplayer.md §7.2 |
 | 413 | MP, space battle end | a machine without the battle screen up (rejoin, resumed save, battle decided under Options) opens it or sends 0x44d at once (`mp_battle_check`), and the screen's end sends no pause; the exe's behaviour after a rejoin is unobserved | no | multiplayer.md §7.1 |
 | 414 | MP order owner checks | in multiplayer every peer refuses starmap orders on another empire's fleet or planet (move 0x15, sell station, settings 1-4 and 8-10, rally, finish heads) and colony building orders (build, demolish, switch, priority, self-destruct, repair); the exe checks no owner (issue #24); single player as the exe | no | multiplayer.md §5.7, starmap.md §10.1, colony.md §9 |
+| 415 | automatic messages | an automatic message doesn't pull the player out of a battle (screen 11), a screen ≥ 0xe, a colony at war or a pending screen change; the exe sets `AktKepKell` := 10 over all of them (its behaviour there isn't traced) | minor | info-messages.md §6 |
 
 ## Enhanced proposals (owner decides)
 

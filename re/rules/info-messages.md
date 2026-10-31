@@ -316,7 +316,7 @@ sent), `+0xc` arrival `Ido`, `+0x10 + 0x14·k` parameter `k` (NUL-ended, no leng
   `UzenetekSzama < 100`: `UVoltUjUzenet` 0xDA65FF := 1, `LastNewMessage` 0xDABDC8 := n (the new index),
   `UUjUzenetLejarasa` 0xDABDCC := `days == 0 ? 0 : days·50 + Ido`; `UzenetekRandomKitol[n]` := 0; parameters 1..=5 :=
   `"#=#"` (0 kept); `+0` id, `+8` expiry, `+4` = `+5` = 0, `+0xc` `Ido`; count + 1. An automatic kind (below) with
-  `AktKep ≠ 10` sets `AktKepKell` 0xBAE250 := 10 (the client opens the messages screen; UI). The kinds:
+  `AktKep ≠ 10` sets `AktKepKell` 0xBAE250 := 10 (ported: `Game::new_message` pushes `GameEvent::MessagesScreen` for an automatic kind with room in the inbox; the client's `StoryUi::Messages` opens screen 10, see deviation 415). The kinds:
   `UzenetFajtak` 0xD90DF0 (0x110 each: `+0` id, `+4` conversation, `+5` automatic; count `HanyUzenetFajta` 0xDABE38;
   the inlined lookups take the first match, none reads the slot past the table).
 - `SetMessageFajOverride(r)` (0x5094c0): `UzenetekRandomKitol[LastNewMessage]` := r for 1..=8, 13, 14, else 1.

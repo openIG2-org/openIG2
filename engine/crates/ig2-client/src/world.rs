@@ -361,6 +361,8 @@ pub enum StoryUi {
     Earthquake(usize),
     /// Story 854's riot: `AktKepKell := 3`, `AktPlanetKell := p`, `SetIdoPause(1, 0)` (exe 0x541300).
     Hold(usize),
+    /// `NewMessage` of an automatic kind (exe 0x508fe0): `AktKepKell := 10`, the messages screen plays it.
+    Messages,
 }
 
 impl StoryUi {
@@ -370,6 +372,7 @@ impl StoryUi {
             GameEvent::Story(StoryEvent::SaveStoryline { campaign, value }) => Some(Self::Storyline { campaign: *campaign, value: *value }),
             GameEvent::Story(StoryEvent::Earthquake(p)) if *p > 0 => Some(Self::Earthquake(*p as usize)),
             GameEvent::Story(StoryEvent::HoldGroundWar { planet }) if *planet > 0 => Some(Self::Hold(*planet as usize)),
+            GameEvent::MessagesScreen => Some(Self::Messages),
             _ => None,
         }
     }
@@ -987,6 +990,28 @@ mod tests {
             assert!(w.curr.planets.iter().any(|p| p.owner == en), "{name}: the human's planets");
             assert!(!w.paused(), "{name}: running");
         }
+    }
+
+    /// A message of an automatic kind asks for the messages screen (`NewMessage` exe 0x508fe0: `AktKepKell := 10`,
+    /// re/rules/info-messages.md §6); a plain one only waits in the inbox.
+    #[test]
+    fn an_automatic_message_asks_for_the_messages_screen() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let kinds = &rules.inbox.kinds;
+        let auto = kinds.iter().find(|k| k.2).expect("an automatic kind").0;
+        let plain = kinds.iter().find(|k| !k.2 && kinds.iter().all(|j| j.0 != k.0 || !j.2)).expect("a plain kind").0;
+        let mut w = World::new_game(crate::new_game::tutorial(&install, 1, 4242, &rules).unwrap());
+        w.game.take_events();
+        w.game.inbox_call(ig2_sim::story::StoryEvent::NewMessage { id: plain, arg: 0 });
+        w.tick();
+        assert!(!w.story_ui.contains(&StoryUi::Messages));
+        w.game.inbox_call(ig2_sim::story::StoryEvent::NewMessage { id: auto, arg: 0 });
+        w.tick();
+        assert!(w.story_ui.contains(&StoryUi::Messages));
     }
 
     /// The main menu without a save stands on campaign 1's start, but as no started campaign: no start voice and no

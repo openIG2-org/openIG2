@@ -3451,7 +3451,7 @@ impl App {
 
     /// The story's UI effects ([`crate::world::StoryUi`]): the storyline into the registry (written to
     /// `options.dat` at once; the exe writes it with the next `SaveGlobalRegistrySettings`), the colony screen asked
-    /// for, the earthquake, the riot's pause.
+    /// for, the earthquake, the riot's pause, an automatic message's messages screen.
     fn take_story_ui(&mut self) {
         use crate::world::StoryUi;
         for e in std::mem::take(&mut self.world.story_ui) {
@@ -3475,6 +3475,15 @@ impl App {
                 StoryUi::Hold(p) => {
                     self.send(StarmapOrder::Pause { paused: true });
                     p
+                }
+                StoryUi::Messages => {
+                    // The exe sets `AktKepKell` over any pending change and from any screen; the port keeps a change
+                    // under way and the battle screens (their leave paths aren't a plain request).
+                    let s = self.akt_kep_now();
+                    if s != 10 && s < 0xe && s != 11 && !(s == 3 && self.colony_war_up()) && self.kep_kell.is_none() {
+                        self.request_screen(10);
+                    }
+                    continue;
                 }
             };
             self.show_colony_screen(p);

@@ -208,7 +208,7 @@ impl Game<'_> {
     /// `NewMessage(id, days)` (exe 0x508fe0): first the slow-down `SetIdoLelassit` (even when the inbox is full; a
     /// story check's own already ran as the script made the call, `GameStory::event`), then a new entry at the
     /// end, parameters 1..=5 `"#=#"`, read and seen cleared, the arrival date. The kind's automatic flag switches
-    /// to the messages screen (`AktKepKell` 10: the client's, from the event).
+    /// to the messages screen (`AktKepKell` 10: the client's, from [`GameEvent::MessagesScreen`]).
     pub(super) fn new_message(&mut self, id: i32, days: i32) {
         self.slow_down();
         let mut b = self.state.inbox();
@@ -233,6 +233,9 @@ impl Game<'_> {
         b.messages[o + 0xc..o + 0x10].copy_from_slice(&ido.to_le_bytes());
         b.count += 1;
         self.state.store_inbox(&b);
+        if self.kind_of(id).1 {
+            self.events.push(GameEvent::MessagesScreen);
+        }
     }
 
     /// `SetParamStr(k, s)` / `SetParamInt` (exe 0x509570 / 0x509500): the last new message's parameter `k`

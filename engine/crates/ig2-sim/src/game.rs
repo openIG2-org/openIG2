@@ -281,6 +281,8 @@ pub enum GameEvent {
     Order(OrderEvent),
     /// A colony order's outcome for the issuer's screen (`game::colony_orders`).
     ColonyOrder(ColonyOrderEvent),
+    /// `NewMessage` stored a message of an automatic kind: `AktKepKell := 10` unless the messages screen is up (UI).
+    MessagesScreen,
 }
 
 impl GameEvent {
