@@ -52,7 +52,7 @@ at the next cleanup.
   script of the user's install and reports what fails to parse.
 
 ### Multiplayer over the internet
-- [x] **Port mapping in the client**: wire `ig2-net::portmap` (UPnP/NAT-PMP) into hosting, opt-in.
+- [x] **Port mapping in the client**: wire `ig2-net::portmap` (UPnP/NAT-PMP) into hosting (on by default since ADR 0020).
 - [x] **Join codes and private rooms**: in the MP room UI.
 - [x] **Desync soak**: long loopback MP games with every order type; trace the untraced MP paths when a
   desync shows (U15 economy, U18 production, U22 AI, U23 ground war; `re/README.md` → Open unknowns).

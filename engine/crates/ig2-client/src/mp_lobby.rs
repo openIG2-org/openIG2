@@ -58,7 +58,7 @@ pub trait Listener {
     fn fingerprint(&self) -> [u8; 32] {
         [0; 32]
     }
-    /// Ask the router to forward the game port (`on`), or remove the forwarding (ADR 0008 §2: the host's opt-in).
+    /// Ask the router to forward the game port (`on`), or remove the forwarding (ADR 0008 §2; on when a room opens, ADR 0020).
     fn map_port(&mut self, _on: bool) {}
     fn port_map(&self) -> PortMap {
         PortMap::Off
@@ -702,6 +702,7 @@ impl MpScreen {
                 let settings = Settings { name: format!("{}'s galaxy", self.name), scenario: "galaxy".into(), private: false, password: self.password() };
                 let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name);
                 listener.register(lobby.session());
+                listener.map_port(true);
                 self.chat.clear();
                 self.role = Some(Role::Host { lobby: Box::new(lobby), listener });
                 self.resume = None;
@@ -727,6 +728,7 @@ impl MpScreen {
                 let mine = s.humans.iter().find(|h| h.name == lobby.state().members[0].name).or(s.humans.first()).map(|h| h.empire);
                 lobby.pick(0, mine);
                 listener.register(lobby.session());
+                listener.map_port(true);
                 self.chat.clear();
                 self.role = Some(Role::Host { lobby: Box::new(lobby), listener });
                 self.resume = Some((save, vec![0]));
@@ -2125,6 +2127,7 @@ mod tests {
         click(&mut host, spot::LIST, false, &mut net);
         click(&mut host, spot::LIST, false, &mut net);
         assert!(host.is_host());
+        assert!(matches!(&host.role, Some(Role::Host { listener, .. }) if matches!(listener.port_map(), PortMap::Mapped(_))), "a save's room maps its port too");
         let st = host.state().unwrap();
         assert!(st.galaxy.is_none());
         assert_eq!(st.slots.iter().map(|s| s.empire).collect::<Vec<_>>(), [1, 2, 3]);
@@ -2248,12 +2251,12 @@ mod tests {
             Some(Role::Host { listener, .. }) => listener.port_map(),
             _ => unreachable!(),
         };
-        assert_eq!(map(&host), PortMap::Off, "opt-in: nothing asks the router until the host does");
+        assert_eq!(map(&host), PortMap::Mapped("203.0.113.7:4001".parse().unwrap()), "on by default (ADR 0020)");
         assert!(!guests[0].boxes().iter().any(|b| b.0 == spot::PORT_MAP), "a joiner has no port mapping");
         assert!(matches!(click(&mut host, spot::PORT_MAP, false, &mut net), Some(Out::Click)));
-        assert_eq!(map(&host), PortMap::Mapped("203.0.113.7:4001".parse().unwrap()));
+        assert_eq!(map(&host), PortMap::Off, "a press removes the mapping");
         click(&mut host, spot::PORT_MAP, false, &mut net);
-        assert_eq!(map(&host), PortMap::Off, "a second press removes the mapping");
+        assert_eq!(map(&host), PortMap::Mapped("203.0.113.7:4001".parse().unwrap()), "a second press maps again");
         sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.len() == 2);
     }
 

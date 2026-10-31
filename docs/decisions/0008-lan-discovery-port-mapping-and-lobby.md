@@ -32,8 +32,8 @@ covers a home LAN and needs no extra crate; it can be added beside it without a 
 
 ## 2. Port mapping (`ig2_net::portmap`)
 
-The host may ask its router to forward the session's UDP port (ADR 0005 §3 step 3). **Opt-in**: nothing maps a
-port unless the host's player enabled it for this session; the mapping is renewed while the session lives and
+The host may ask its router to forward the session's UDP port (ADR 0005 §3 step 3). **On by default** (ADR 0020; opt-in before it): the room asks
+when it opens and the host can switch it off; the mapping is renewed while the session lives and
 removed when it ends (`Drop` of the `Mapping` handle, and an explicit `close`).
 
 - Protocols, tried in order: **UPnP IGD** (`igd-next`, behind feature `upnp`: SSDP search, `AddPortMapping` for UDP,
