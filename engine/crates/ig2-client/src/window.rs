@@ -289,8 +289,9 @@ struct App {
     pointer_seen: bool,
     /// The window's pointer is hidden (the colony screen draws its own).
     cursor_hidden: bool,
-    /// `Mouse_FelengedesMajdMegvar` on the colony screen: the releases wait until both buttons are up.
-    colony_wait_release: bool,
+    /// `Mouse_FelengedesMajdMegvar` (a rename's start on the starmap or the colony screen): the releases wait until
+    /// both buttons are up and do nothing.
+    wait_release: bool,
     /// `TamadasSzovegCounter` (exe 0x9ABAE0) while no colony screen is up: `StartGrWar` sets 900, the colony screen
     /// takes it on entry (it counts down only there) and `Colony_Kilep` zeroes it.
     attack_banner: i32,
@@ -656,7 +657,7 @@ impl App {
             pointer_in: false,
             pointer_seen: true,
             cursor_hidden: false,
-            colony_wait_release: false,
+            wait_release: false,
             attack_banner: 0,
             grwar_old: None,
             tutorial: None,
@@ -5146,6 +5147,17 @@ impl App {
             _ => 0,
         };
         self.mouse_held = if pressed { self.mouse_held | bit } else { self.mouse_held & !bit };
+        // `Mouse_FelengedesMajdMegvar`: `IG2_gameUpdate` (exe 0x4e0440) runs no screen until every button is up, so
+        // nothing (the top bar included) takes the presses and releases meanwhile.
+        if self.wait_release {
+            if self.mouse_held == 0 {
+                self.wait_release = false;
+                if let Some(c) = &mut self.colony {
+                    c.ui.cam_keys.mouse_release();
+                }
+            }
+            return;
+        }
         if self.top_menus_button(button, pressed) {
             return;
         }
@@ -5186,18 +5198,10 @@ impl App {
         }
         // `Colony_Main` hot-spot 4 (exe 0x4667fb): both buttons held over the short info with `ColonyInfoMod` 0 start
         // the planet's name entry (`IOAzonosito` 0x1f; any planet, no sound) and wait for the release.
-        if self.colony.is_some() && !self.under_screen() {
-            if self.colony_wait_release {
-                if self.mouse_held == 0 {
-                    self.colony_wait_release = false;
-                }
-                return;
-            }
-            if pressed && self.mouse_held == 3 && self.colony_rename_spot() {
-                self.colony_wait_release = true;
-                self.start_colony_rename();
-                return;
-            }
+        if self.colony.is_some() && !self.under_screen() && pressed && self.mouse_held == 3 && self.colony_rename_spot() {
+            self.wait_release = true;
+            self.start_colony_rename();
+            return;
         }
         let moved = |d: Option<[f32; 2]>, p: [f32; 2]| d.is_none_or(|d| (d[0] - p[0]).abs() + (d[1] - p[1]).abs() > 4.0);
         if on_starmap && pressed && self.spacewar.is_none() {
@@ -5212,8 +5216,10 @@ impl App {
                 }
             }
             if on_box && self.mouse_held == 3 {
+                // `Mouse_FelengedesMajdMegvar`: the releases don't reach the info box (the long info, the colony).
                 self.left_down = None;
                 self.right_down = None;
+                self.wait_release = true;
                 self.start_rename();
                 return;
             }
@@ -5636,7 +5642,7 @@ impl App {
             Key::Named(NamedKey::Space) => R::Char(b' '),
             Key::Character(c) => {
                 let b = self.hud.as_ref().map_or_else(|| c.as_bytes().to_vec(), |h| h.texts.encode(c));
-                match b.first().copied().filter(|&b| b >= 0x20) {
+                match b.first().copied().filter(|&b| b >= 0x20 && b != 0x81) {
                     Some(b) => R::Char(b),
                     None => return,
                 }

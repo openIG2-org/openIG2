@@ -39,6 +39,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 419 | MP, start story config | the config line `mpstory` (`Start_Belep` 0x5bf4b0) is not read (no reader for the original config file; `storyline`/`storymap` are read as 0 the same way), so the start story begins at 0 | minor | start.md §3 |
 | 420 | colony, war flashes | hit/blast flashes are a white additive `rcloud.bmp` billboard fading over 25 ticks; the exe's engine sprite (inferred `robbanas.bmp`, 25 frames) isn't read | minor | colony.md §5 |
 | 421 | colony, war projectiles | rockets, bolts, paralyser, bombs and fighters are glow points (no `RotateObjToAxis` heading); no particle trails, smoke, dust, machine-gun tracer lines, laser beam, scorch marks or ruin fade; debris never fades | minor | colony.md §5 |
+| 431 | starmap, rename | Esc in a rename ends it even while a screen change is pending; the exe's `DoKeyboard` (0x4db1a0, case 0x1b) tests `bae24c`/`bae24d`/`bae250` first | minor | starmap.md §10.7 |
 
 ## Keep
 

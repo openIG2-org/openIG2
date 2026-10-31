@@ -19,6 +19,7 @@ Since 0.7.48.
 - The starmap info panel's production and morale lines, and the planet info's rotating lines, switch every 1.5 seconds, as in the original.
 - Leaving a colony for the starmap now cuts off its wind, thunder and war sounds at once, as in the original.
 - Messages: Hungarian senders and subjects in the message list are shown whole, with names filled in.
+- Starmap: renaming a planet or fleet no longer opens the colony, the info panel or a fleet split when you let go of the buttons.
 
 **Multiplayer**
 

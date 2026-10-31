@@ -477,7 +477,9 @@ off the starmap). A panel spares only its owner's fleets.
   Planet mode, any planet (after the branch's `PlaySoundGlobal(5)`): `IOString` = the planet's name (record +0),
   `IOMaxLen` 0xf, colour 0x22. Fleet mode, `EN`'s fleet (not `fSpec`): `PlaySoundGlobal(0)`, the fleet's name (+0),
   `IOMaxLen` 0x13, colour 3, the fleet's `+0x52 |= 0x800` (exe 0x5b62be / 0x5b6cf4). Both: `IOStringBackup` = the old name, `IOX`
-  0x32, `IOY` 0x1ab, `IOCharSize` 2, `IOKurzor` = its length, `IOGombnyomasraTorles` 1, `Mouse_FelengedesMajdMegvar`.
+  0x32, `IOY` 0x1ab, `IOCharSize` 2, `IOKurzor` = its length, `IOGombnyomasraTorles` 1, `Mouse_FelengedesMajdMegvar` (`IG2_gameUpdate` exe 0x4e0440
+  waits until both buttons are up: the start's releases reach nothing, not the info box's long info (left) or its
+  colony / split (right); ported, `wait_release` in `window.rs`; also covers the colony rename).
 - The name is edited in place (no message; every machine keeps its own). Keys: `DoKeyboard`'s editing branch
   (re/screens/input.md §1); Enter ends it (`TutorialCheckEvent(4)` fleet, `(3)` planet); Esc restores the backup.
   Any press ends it (`Starmap_Main` line 157), the backup restored unless the press is on hot-spot 8. `FlottaDelete` /
