@@ -368,6 +368,18 @@ pub struct StoryCheck {
     pub param2: i16,
 }
 
+/// The pass's working copies, handed to the story question: `Story_Check` runs inside `FRISSIT_Spy`, so the stories
+/// read and change them mid-pass.
+pub struct Held<'b> {
+    pub spies: &'b mut Spies,
+    pub colony: &'b mut ColonyWorld,
+    pub combat: &'b mut CombatWorld,
+    pub research: &'b mut Research,
+    pub relations: &'b mut [[Relation; EMPIRES]],
+    pub kidnap: &'b mut [i32; 18],
+    pub rng: &'b mut Streams,
+}
+
 /// `KemJelentesAdd(kind, a, b, c, d, x6..x14)` (exe 0x58d000, `info-messages.md` §3.3): a report to the human's
 /// spy screen (its `KemBeszolasok` entry, `Story_KemEsemeny`, maybe a scrolling message).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -478,7 +490,7 @@ pub struct World<'a> {
     pub rng: &'a mut Streams,
     pub rules: &'a SpyRules,
     /// Story missions: the story script's verdict.
-    pub story: &'a mut dyn FnMut(StoryCheck) -> bool,
+    pub story: &'a mut dyn FnMut(StoryCheck, Held) -> bool,
     pub events: Vec<SpyEvent>,
 }
 
@@ -747,6 +759,19 @@ impl Spies {
         }
     }
 
+    fn ask_story(&mut self, w: &mut World, check: StoryCheck) -> bool {
+        let held = Held {
+            spies: self,
+            colony: &mut *w.colony,
+            combat: &mut *w.combat,
+            research: &mut *w.research,
+            relations: &mut *w.relations,
+            kidnap: &mut *w.kidnap,
+            rng: &mut *w.rng,
+        };
+        (w.story)(check, held)
+    }
+
     /// The catch check (spec §4).
     fn catch_check(&mut self, w: &mut World, e: usize, k: usize, flag: &mut u8) {
         let s = *self.spy(e, k);
@@ -754,7 +779,7 @@ impl Spies {
         let rule = w.rules.mission(m);
         if rule.story {
             let check = StoryCheck { caught: true, empire: e as u8, spy: k as u8, mission: s.mission, target: s.target, param1: s.param1, param2: s.param2 };
-            if (w.story)(check) {
+            if self.ask_story(w, check) {
                 let st = w.rules.state_after(outcome::LOST);
                 self.spy_mut(e, k).state = st;
                 w.events.push(SpyEvent::StoryCaught { empire: e as u8, spy: k as u8 });
@@ -918,7 +943,7 @@ impl Spies {
         let mut p1_after = p1;
         let ok = if rule.story {
             let check = StoryCheck { caught: false, empire: e as u8, spy: k as u8, mission: s.mission, target: s.target, param1: s.param1, param2: s.param2 };
-            (w.story)(check)
+            self.ask_story(w, check)
         } else {
             let mut ok = w.r(1, 100) <= chance(&rule, s.skills[skill::INFILTRATION], m, w.ctx, e);
             if !w.ctx.multiplayer && w.ctx.debug && e == w.ctx.human_empire {
@@ -1603,7 +1628,7 @@ mod tests {
         }
 
         fn run<R>(&mut self, f: impl FnOnce(&mut World) -> R) -> (R, Vec<SpyEvent>) {
-            let mut story = |_: StoryCheck| false;
+            let mut story = |_: StoryCheck, _: Held| false;
             let mut w = World {
                 ctx: &self.ctx,
                 colony: &mut self.colony,

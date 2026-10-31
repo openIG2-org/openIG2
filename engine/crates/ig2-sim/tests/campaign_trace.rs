@@ -3182,6 +3182,17 @@ fn campaign_matches_exe() {
                             st.fleet_arrived_save(f, order, target, &w);
                             st.fleet_arrived_check(sc, &mut w);
                         }
+                        // A story mission's question staged as `StoryEredmenyKem*` stages it (flag 15, kind 1 or 2,
+                        // `KemkedesValasz` −1): asked through `Story::spy_question`, its answer against the exe's.
+                        "flag" if int(&a[0]) == 15 && matches!(st.spy_kind, 1 | 2) && st.spy_answer == -1 => {
+                            let k = (0..12).find(|&k| tables.story_mission(k) == st.spy_story).expect("a story mission");
+                            let got = st.spy_question(st.spy_kind == 1, st.spy_owner, st.spy_slot, k + 14, sc, &mut w);
+                            let kval = int(&post["s"]["kval"]);
+                            assert_eq!(got, kval > 0, "{} seq {}: story mission {} question", path.display(), r["seq"], st.spy_story);
+                            // The tracer's `post` is from before the exe's clamp of a negative answer.
+                            st.spy_answer = kval;
+                            *stats.kinds.entry("spy question".into()).or_default() += 1;
+                        }
                         // The flag and its payload are in `pre` (written right before the call).
                         "flag" => st.check(true, sc, &mut w),
                         "win" => st.win(int(&a[0]), int(&a[1]) != 0, &mut w),

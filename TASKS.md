@@ -21,8 +21,9 @@ at the next cleanup.
   campaign 2 storyline 2 are won on difficulty 1 up to the campaign win video. Left: campaign 3 (empire 1 wins the
   war in every seed; storyline 720 loses to story 840 for want of colony ships, which needs a production-queue
   input on the client).
-- [ ] **Story spy missions in the sim**: the spy pass never asks the story (`game.rs` hands it a `StoryCheck` hook that always answers no), so
-  story 863's end (CampaignOver) can't resolve (`re/rules/campaign/elem.md` 861/863).
+- [x] **Story spy missions in the sim**: the spy pass asks the story (`Story::spy_question`), so story 863's end (CampaignOver) resolves
+  (`re/rules/campaign/elem.md` 861/863). Campaign 2 storyline 2 seed 2 reaches the end videos; seed 1 runs out of ticks
+  because the AI-played human never conquers empire 5's last planets.
 - [x] **Diplomacy specials reach the stories**: a special the AI receives reaches stories 857/858/860
   (`Game::diplomacy_message`); the play-through sends them. Still blocked: 857's purchase needs 2,000,000 credits
   (the AI-played human never has them) and 858 waits for empire 5's death.

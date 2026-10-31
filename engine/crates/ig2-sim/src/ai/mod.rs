@@ -1025,7 +1025,7 @@ mod tests {
     use crate::research::{Research, ResearchContext, ResearchRules};
     use crate::rng::Streams;
     use crate::spacewar::{CombatFleet, CombatWorld, Design, Ship, Vehicle};
-    use crate::spy::{Spy, SpyContext, SpyRules, StoryCheck};
+    use crate::spy::{Held, Spy, SpyContext, SpyRules, StoryCheck};
 
     struct Fixture {
         ctx: AiContext,
@@ -1110,7 +1110,7 @@ mod tests {
     }
 
     fn run(fx: &mut Fixture, f: impl FnOnce(&mut World)) -> Vec<AiEvent> {
-        let mut story = |_: StoryCheck| false;
+        let mut story = |_: StoryCheck, _: Held| false;
         let mut w = World {
             ctx: &fx.ctx,
             rules: &fx.rules,

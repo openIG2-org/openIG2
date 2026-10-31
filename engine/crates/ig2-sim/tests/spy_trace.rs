@@ -19,7 +19,7 @@ use ig2_sim::diplomacy::Relation;
 use ig2_sim::research::{Research, ResearchContext, ResearchRules};
 use ig2_sim::rng::Streams;
 use ig2_sim::spacewar::{CombatFleet, CombatWorld, Design, FleetTotals, Ship, Vehicle};
-use ig2_sim::spy::{MissionRule, Order, Spies, Spy, SpyContext, SpyEvent, SpyRules, StoryCheck, World, RECORD, ROSTERS, SLOTS};
+use ig2_sim::spy::{Held, MissionRule, Order, Spies, Spy, SpyContext, SpyEvent, SpyRules, StoryCheck, World, RECORD, ROSTERS, SLOTS};
 use serde_json::Value;
 
 fn traces(prefix: &str) -> Vec<PathBuf> {
@@ -324,7 +324,7 @@ fn spy_matches_every_traced_call() {
                 rng.set_state(i, i32_at(&before["seeds"], 4 * i) as u32);
             }
             let mut story_asked = 0;
-            let mut story = |_: StoryCheck| {
+            let mut story = |_: StoryCheck, _: Held| {
                 story_asked += 1;
                 false
             };

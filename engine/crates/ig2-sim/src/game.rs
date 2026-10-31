@@ -73,7 +73,7 @@ use crate::research::{self, ResearchContext, ResearchEvent, ResearchRules};
 use crate::rng::Streams;
 use crate::save::{fleet_totals_put, put_fleet, put_wormhole, va, HumanSide, SaveState, PLANET_SIZE};
 use crate::spacewar::{CombatFleet, CombatWorld, Ship, Vehicle, NO_DESIGN};
-use crate::spy::{self, SpyContext, SpyEvent, SpyRules, StoryCheck};
+use crate::spy::{self, Held, SpyContext, SpyEvent, SpyRules, StoryCheck};
 use crate::story::{ScenarioStories, StoryEvent};
 use crate::time::GameTime;
 use crate::trade::{self, Delivery, Market, MarketContext, TradeEvent};
@@ -1538,7 +1538,8 @@ impl<'r> Game<'r> {
         let power = m.f32s(va::EMPIRE_POWER);
         let planet_count = m.i32s(va::EMPIRE_PLANETS);
         let mut known = self.state.known_since();
-        let mut story = |_: StoryCheck| false;
+        // The AI's own spy orders; story missions resolve in the daily spy pass ([`Game::with_spies`]).
+        let mut story = |_: StoryCheck, _: Held| false;
         let mut hooks = WarHooks { wars: Vec::new(), uninit: self.uninit.as_mut(), texts: &self.design_texts };
         let waypoints = self.state.waypoints.len();
         let (events, spy_events) = {
@@ -1624,6 +1625,28 @@ impl<'r> Game<'r> {
         }
     }
 
+    /// A story mission's question in the spy pass (`StoryEredmenyKem*`): the pass's copies go into the state for the
+    /// stories and come back with what they changed.
+    fn spy_story(&mut self, q: StoryCheck, h: Held) -> bool {
+        self.state.store_colony(h.colony);
+        self.state.store_combat(h.combat);
+        self.state.store_research(h.research);
+        self.state.store_relations(h.relations);
+        self.state.store_kidnap(h.kidnap);
+        self.state.store_rng(h.rng);
+        self.state.store_spies(h.spies);
+        let mut answer = false;
+        self.with_story(|st, w| answer = st.spy_question(q.caught, q.empire as i32, q.spy as i32, q.mission as i32, &story_chain(), w));
+        *h.colony = self.state.colony();
+        *h.combat = self.state.combat();
+        *h.research = self.state.research();
+        h.relations.copy_from_slice(&self.state.relations());
+        *h.kidnap = self.state.kidnap();
+        *h.rng = self.state.rng();
+        *h.spies = self.state.spies();
+        answer
+    }
+
     fn spies(&mut self) {
         self.with_spies(|spies, w| spies.daily(w));
     }
@@ -1668,21 +1691,22 @@ impl<'r> Game<'r> {
         let mut kidnap = self.state.kidnap();
         let mut rng = self.state.rng();
         let mut spies = self.state.spies();
-        let mut story = |_: StoryCheck| false;
+        let rules = self.rules;
+        let mut story = |q: StoryCheck, h: Held| self.spy_story(q, h);
         let events = {
             let mut w = spy::World {
                 ctx: &sctx,
                 colony: &mut colony,
-                side_rules: &self.rules.side,
+                side_rules: &rules.side,
                 econ: &econ,
                 combat: &mut combat,
                 research: &mut research,
-                research_rules: &self.rules.research,
+                research_rules: &rules.research,
                 research_ctx: &rctx,
                 relations: &mut relations,
                 kidnap: &mut kidnap,
                 rng: &mut rng,
-                rules: &self.rules.spy,
+                rules: &rules.spy,
                 story: &mut story,
                 events: Vec::new(),
             };

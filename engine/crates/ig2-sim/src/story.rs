@@ -2306,6 +2306,22 @@ impl Story {
         self.spy_kind = 3;
         self.check(true, scripts, world);
     }
+
+    /// `StoryEredmenyKemElkapasa` / `StoryEredmenyKemSikeres` (exe 0x5c48c0 / 0x5c4940, ELF 0x73ecd0 / 0x73ee10):
+    /// is `owner`'s spy `slot` on story mission `mission` (`KemKuldetesek` 14..=25) caught / does it succeed? The
+    /// stories answer in `KemkedesValasz` (−1 = no story answered: no). The mission's target and parameters
+    /// (`KemkedesCelFaj`, `KemkedesCel`, `KemkedesCel2`) are read by no story and not kept.
+    pub fn spy_question(&mut self, caught: bool, owner: i32, slot: i32, mission: i32, scripts: &dyn Script, world: &mut dyn StoryWorld) -> bool {
+        self.spy_story = world.campaign_tables().story_mission(mission - 14);
+        self.flags[flag::SPY] = true;
+        self.spy_kind = if caught { 1 } else { 2 };
+        self.spy_answer = -1;
+        self.spy_owner = owner;
+        self.spy_slot = slot;
+        self.check(true, scripts, world);
+        self.spy_answer = self.spy_answer.max(0);
+        self.spy_answer != 0
+    }
 }
 
 // ---------------------------------------------------------------- the scenario stories (§6)

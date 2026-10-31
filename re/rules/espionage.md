@@ -3,6 +3,7 @@
 Port status: ported in `engine/crates/ig2-sim` (`spy.rs`); verified against `traces/2026-10-15-espionage.md`:
 1,393 daily calls (plain, fuzzed, with warships) with 1,382 mission results, 346 catch checks and 78 recruits
 reproduced byte for byte (`tests/spy_trace.rs`).
+Story missions (§2.3) are ported too (`Story::spy_question`, `Game::spy_story`); `tests/campaign_trace.rs` replays 1,414 traced story questions.
 One daily system driven by the sim tick (`Fake_FRISSITES` exe 0x4de720, on a day change):
 
 ```
@@ -104,8 +105,23 @@ HanyKemVan (§7)
 ### 2.3 Story missions
 A mission with `+0x1d` asks the story script: the catch check calls `StoryEredmenyKemElkapasa(e, k, m, t,
 p1, p2)` (true → outcome 1 below, nothing else), the result calls `StoryEredmenyKemSikeres(…)` (the
-success flag; then experience, state and +500 grievance as in §5.13). Both set up `Story_Check(1)` and read its
-answer; the port asks a hook. Untraced (quick.scn has no story missions).
+success flag; then experience, state and +500 grievance as in §5.13). Both (exe 0x5c48c0 / 0x5c4940, ELF 0x73ecd0 /
+0x73ee10, `story.cpp` 0x1473 / 0x148a) do the same with `KemkedesTipus` 1 / 2:
+
+```
+KemkedesAzonosito = StoryKuldetes[m - 14]     // exe 0x9289ac; the ELF asserts m - 14 < 12
+StoryEsemeny[15] = 1; KemkedesTipus = 1 or 2; KemkedesValasz = -1
+KemkedesCelFaj, KemkedesCel, KemkedesCel2 = t, p1, p2   // exe 0xF2658C..94, read by no story
+KemkedesTulaj = e; KemkedesAktKem = k
+Story_Check(1)                                 // the episodes' st_KemElkap(id) / st_KemSiker(id) set KemkedesValasz
+return max(KemkedesValasz, 0) != 0
+```
+
+`Story_Check` runs inside `FRISSIT_Spy`: the stories see the pass's state as it is and their changes (money, wars,
+stream 5, missions switched) count for the rest of the pass. Port: `Story::spy_question`, called by
+`Game::spy_story`, which hands the stories the pass's working copies and takes them back. The stories' side is replayed
+in `campaign-elem2a-*` and `campaign-rnd2a-*` (the tracer stages these exact writes); the pass's calls are untraced
+(quick.scn has no story missions).
 
 ## 3. Per spy, before the mission
 ### 3.1 Ranks

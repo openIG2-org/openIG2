@@ -20,6 +20,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Multiplayer: renaming a ship design no longer puts the players' games out of step.
 - The multiplayer join page labels its field "Address or join code", so a pasted join code is where to put it.
 - The starmap shows a faint arrow from each of your planets to its rally planet, under the fleet routes.
+- Story spy missions now succeed or get caught, so campaign 2's ending can be reached.
 - Story offers sent from the diplomacy screen's special menu now reach their episodes.
 - While the tutorial runs, the Options game page shows "Ground battle simulate" and "Space battle simulate" off and greyed out; your own settings come back afterwards (ADR 0019).
 - In multiplayer you can no longer move, rally, sell or change the settings of another player's fleets and planets, or give building orders on their colonies.

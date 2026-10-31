@@ -32,7 +32,7 @@ use ig2_sim::fleet::{Fleet, Starmap, StarmapContext, Waypoint};
 use ig2_sim::research::{Research, ResearchContext, ResearchRules};
 use ig2_sim::rng::Streams;
 use ig2_sim::spacewar::{CombatFleet, CombatWorld, Design, DesignRules, FleetTotals, Hull, Ship, Vehicle};
-use ig2_sim::spy::{self, MissionRule, Spies, Spy, SpyContext, SpyRules, StoryCheck, RECORD, ROSTERS, SLOTS};
+use ig2_sim::spy::{self, Held, MissionRule, Spies, Spy, SpyContext, SpyRules, StoryCheck, RECORD, ROSTERS, SLOTS};
 use serde_json::Value;
 
 /// `_local/traces` of the checkout, or `IG2_TRACE_DIR` (a git worktree without the gitignored traces).
@@ -818,7 +818,7 @@ fn ai_matches_every_traced_call() {
                     d.ctx.story_no_war = st[0] != 0;
                     d.ctx.story_guard = [st[1] != 0, st[2] != 0];
                 }
-                let mut story = |_: StoryCheck| false;
+                let mut story = |_: StoryCheck, _: Held| false;
                 let mut hooks = TraceHooks { after: &state, wars: frame.as_ref().map_or_else(Vec::new, |f| f.wars.clone()), declared: Vec::new() };
                 let events = {
                     let mut w = World {
