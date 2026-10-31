@@ -68,3 +68,10 @@ at the next cleanup.
 ## After 1.0
 - Sharper text, upscaled textures, graphics upgrades (each an enhanced option with an ADR).
 - The minor and keep rows of `re/deviations.md`.
+- **Play in the browser** (open a URL, the main menu loads). The game data is never hosted: on the first visit
+  the player picks their own install folder, the browser keeps the needed files (OPFS). Work: a wasm32 build
+  (wgpu WebGPU/WebGL2, winit, an async main loop), a virtual file layer for the install and the saves, WebAudio
+  via cpal, videos through WebCodecs instead of openh264, the web clipboard instead of arboard; multiplayer over
+  WebRTC or WebTransport through the rendezvous/relay service (ADR 0018). Rough size: main menu 1-2 weeks,
+  single player 2-3 more, multiplayer 2-4 more. First step: `cargo check --target wasm32-unknown-unknown -p
+  ig2-formats -p ig2-sim`.
