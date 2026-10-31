@@ -209,6 +209,11 @@ Esc). While the rename runs and until the lockstep has carried it the client sho
 `Game::local_names` (`edit_local_name`), put in while it holds the game and taken out before the game goes into the
 lockstep (`show_local_names`, with `world::local_en`), so every peer's hash sees only the shared names.
 
+A stored ship design's rename (deviation 96) travels the same way in multiplayer: the client sends
+`Command::RenameDesign { index, name }` on every key of the name input and every peer applies
+`Game::rename_design(issuer, index, name)`: only the issuer's own table, index 1..len, at most 0x15 characters, no NUL
+(the exe writes `Tervek[EN][AktTerv].name` in place, no `Multi_Send`). Single player keeps the in-place write.
+
 ### 5.7 Order owner checks (ours; deviation 414)
 Issue #24 (`Game::foreign_planet`/`foreign_fleet`): in multiplayer every peer refuses starmap and colony orders on another empire's fleet or planet (the exe's `MULTIGET_Starmap`/`MULTIGET_Colony` check no owner); satellite, colonise, watch, queue, production, transfer and ground orders keep their own checks. Test: `ig2-net/tests/lockstep.rs`.
 

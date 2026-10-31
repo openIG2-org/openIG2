@@ -85,6 +85,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 378 | MP wait overlay | no joining question (mode 2): the door admits returning humans by name and refuses newcomers | minor | input.md §9 |
 | 384 | colony, rain | the exe's GL lines give ~2× the streak pixels of our thin quads (same lines, length, direction) | no | colony.md §2.6 |
 | 395 | MP rename | a fleet/planet rename travels as `Command::Rename` to every peer; the exe renames on its own machine only | minor | multiplayer.md §5.6 |
+| 96 | design, rename in MP | a stored design's rename travels as `Command::RenameDesign` to every peer in multiplayer; the exe writes it in place on its own machine only; single player as the exe | minor | design.md §13, multiplayer.md §5.6 |
 | 401 | starmap, story icons 0x10-0x12 | the exe calls `Story_Special`/`FlottaMozgat`/`HajoDelete` straight from the screen; ours sends `Command::StoryIcon` through the lockstep (0x10/0x11 single player only, as the exe) | no | starmap.md §14.5 |
 | 412 | MP, full-screen videos | the machine keeps pumping its session and running ticks under a video; the exe's `st_ShowAnim` (0x602bb0) blocks, its network side unobserved | no | multiplayer.md §7.2 |
 | 413 | MP, space battle end | a machine without the battle screen up (rejoin, resumed save, battle decided under Options) opens it or sends 0x44d at once (`mp_battle_check`), and the screen's end sends no pause; the exe's behaviour after a rejoin is unobserved | no | multiplayer.md §7.1 |
@@ -96,7 +97,6 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
 | 5 | campaign story 834 | proposal: empire 1's siege fleets start at planet 8340, not at planet −1's (0, 0) (enhanced ruleset only; classic stays bit-exact) | minor | campaign/elem.md §8.14 |
-| 96 | design, rename in MP | proposal: the design rename travels as an order (the exe writes it in place: an MP desync); worth making the MP default | minor | design.md §13 |
 | 133 | colony camera | ours zooms with the mouse wheel; the original has no wheel zoom (classic: none) | minor | colony.md §11.9 |
 | 146 | game end, high scores | proposal: a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
 | 159 | all screens, V key | a V hotkey for vsync (the original has none); also a "Vertical sync" row in Options (row 402) | minor | input.md |

@@ -406,7 +406,8 @@ Sim side: `TervUjraSzamol` 0x61b5f0 [0x5423b0], `TervCopy` 0x61a840 [0x541cd0], 
 - ELF `SetFirstMenu` 0x507470 and `ModifyPlan` 0x508b70 bodies (the exe inlines / was read); the table at exe 0xb9aaf0 (`TervUjraSzamol` flag 3).
 - `DDColor` byte order in `TscVonal` (D3DCOLOR is BGR in memory: byte 0 may be B, then the table 1..8 reads B,G,R).
 - `KiirStr` flags 4 vs 6 and the 5th argument (size 2/3): research.md says size 2, flags 4 = left; 6 = right/centre (guess).
-- Deviation candidates: stored-design rename without a command (MP desync), 3585 vs 3510 in the scroll bar, the unaffordable-modify `bc = 0` quirk, `Tervek[-1]` queue reads, `DesignElnevez` buffer overrun.
+- Stored-design rename (row 0x56, `IOString` in place, no `Multi_Send`; `MULTIGET_Design` handles only 0x33-0x35): in MP it desyncs the shared table. Ported as `Command::RenameDesign` (deviation 96, multiplayer.md §5.6); single player writes in place as the exe.
+- Deviation candidates: 3585 vs 3510 in the scroll bar, the unaffordable-modify `bc = 0` quirk, `Tervek[-1]` queue reads, `DesignElnevez` buffer overrun.
 
 ## 14. Client status
 Modules: `ig2-client/src/design.rs` (screen, list, panels, input, orders), `design_edit.rs` (editing modes 1–3,
@@ -418,7 +419,7 @@ stream), the exe frame order (§8: `design_main` after the 3D update and draw, o
 seeing press and release a frame late), every sound in order and tick.
 Missing: the 3D pass's one-frame-late pointer (the hover marker may start a tick early); the first marked frame's
 part-tint (the client tints the whole model).
-Open `re/deviations.md` rows: 66 (hull turn phase), 84, 96 (rename without an order: enhanced), 114 (first marked
+Open `re/deviations.md` rows: 66 (hull turn phase), 84, 114 (first marked
 frame tint), 229 (one frame of 2D latency, found here), 359.
 Captures: `run_screendiff.py <install> quick-1.sav design` (still after 600 UI ticks), with `--script
 tools/trace/scripts/design-{sounds,edit,pods,fx8}.json`; probes `tools/trace/probes/design_zoom.js`,

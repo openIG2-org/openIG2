@@ -544,6 +544,42 @@ fn a_rename_goes_through_the_lockstep() {
     assert!(g.local_names.is_empty());
 }
 
+/// Deviation 96: a stored design's rename in multiplayer goes through the command stream (`Command::RenameDesign`, one per
+/// key): the second human's rename of its own design lands on both peers; an index outside its table and a name too
+/// long change nothing, and the hashes agree.
+#[test]
+fn a_design_rename_goes_through_the_lockstep() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let other = 3u8;
+    let mut state = state;
+    state.mem.set_u8(va::PLAYER_KI + other as u32, 1);
+    let n = state.designs[other as usize].len();
+    assert!(n > 1, "empire 3 has a stored design");
+    let canonical = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.canonical_view(6);
+        g
+    };
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
+    s.join(2, other, |_| Peer::new(2, other, canonical(state.clone()), DEFAULT_DELAY));
+    let rename = |index: usize, name: &[u8]| Command::RenameDesign { index: index as u32, name: name.to_vec() };
+    s.run_to(20, |p| match (p.slot, p.turn) {
+        (2, 3) => p.issue(rename(1, b"Lancer")),
+        (2, 4) => p.issue(rename(n, b"Nowhere")),
+        (2, 5) => p.issue(rename(1, &[b'x'; 0x16])),
+        _ => {}
+    });
+    assert!(agree(&s.peers) >= 20);
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    for (p, _) in &s.peers {
+        let t = &p.game.state.designs;
+        assert_eq!(&t[other as usize][1][..7], b"Lancer ");
+        assert_eq!(t[6], state.designs[6], "the other human's designs are untouched");
+        assert_eq!(t[other as usize].len(), n);
+    }
+}
+
 /// Two humans steer their fleets (`MULTIGET_Starmap` 0x15, `re/rules/fleet-movement.md` §6.4): the orders cross the
 /// wire stamped with their issuer and both peers carry them out; a revealed wormhole is shown to both humans, as each
 /// one's own machine would (the canonical view gives every human its local sightings), and the hashes agree.

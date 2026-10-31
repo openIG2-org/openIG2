@@ -331,6 +331,9 @@ pub enum Command {
     /// Ours (the original's panel is its own machine's): the issuer's starmap transfer panel shows `fleets` or
     /// closed, which spares its emptied fleets the 0x1b ([`Game::transfer_panel`], re/screens/starmap.md §10.2).
     TransferPanel { fleets: Option<(i32, i32)> },
+    /// A stored design's rename in the issuer's own table (ours, deviation 96: the original writes it in place on its
+    /// own machine only); sent on every key of the name input.
+    RenameDesign { index: u32, name: Vec<u8> },
 }
 
 impl From<MessageOrder> for Command {
@@ -408,6 +411,7 @@ impl Command {
             Command::StoryChoice { id } => game.story_special([15, issuer as i32, *id, 0, 0, 0, 0, 0]),
             Command::StoryFrom { sender, id } => game.story_special([15, *sender as i32, *id, 0, 0, 0, 0, 0]),
             Command::Rename { fleet, index, name, custom } => game.rename(issuer, *fleet, *index as usize, name, *custom),
+            Command::RenameDesign { index, name } => game.rename_design(issuer, *index as usize, name),
             Command::HeroSentBack { fleet, design } => game.story_special([0x19, *fleet, *design, 0, 0, 0, 0, 0]),
             Command::StoryIcon { icon, target } => game.story_icon(*icon, *target),
             Command::FleetEmptied { fleet } => game.fleet_emptied(*fleet as usize),

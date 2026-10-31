@@ -494,6 +494,19 @@ impl<'r> Game<'r> {
         self.put_name_bytes(fleet, index, &bytes, bit || custom);
     }
 
+    /// A stored design's rename from `issuer` (ours in multiplayer, deviation 96: the original's design screen edits
+    /// `Tervek[EN][AktTerv]`'s name in place with no message, re/screens/design.md §2 0x56): design `index` of the
+    /// issuer's own table gets `name` (at most 0x15 characters, `+0x00`). Refused: an index outside the table, a name
+    /// too long or with a NUL.
+    pub fn rename_design(&mut self, issuer: u8, index: usize, name: &[u8]) {
+        if name.len() > 0x15 || name.contains(&0) || index == 0 {
+            return;
+        }
+        let Some(r) = self.state.designs.get_mut(issuer as usize).and_then(|t| t.get_mut(index)) else { return };
+        r[..name.len()].copy_from_slice(name);
+        r[name.len()] = 0;
+    }
+
     /// The client's [`LocalName`]s in (`true`, while it holds the game) or the shared state's bytes back (`false`,
     /// before the game goes into the lockstep). Repeats are no-ops; a sent name the shared state has caught up with is
     /// dropped.

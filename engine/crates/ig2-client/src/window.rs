@@ -1323,6 +1323,12 @@ impl App {
         };
         let Some(d) = &mut self.design else { return };
         if let Some((k, name)) = d.entry_key(key) {
+            // Multiplayer: the shared state changes only through the lockstep (deviation 96).
+            if self.world.net.is_some() {
+                let n = name.iter().take_while(|&&c| c != 0).take(0x15).copied().collect();
+                self.world.send(Command::RenameDesign { index: k as u32, name: n });
+                return;
+            }
             let state = &mut self.world.game.state;
             let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
             if let Some(r) = state.designs.get_mut(en).and_then(|t| t.get_mut(k)) {
