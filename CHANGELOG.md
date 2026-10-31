@@ -11,6 +11,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - The messages screen opens at the right place in the list, and a click opens the message you clicked.
 - Urgent messages open the messages screen and play at once, as in the original.
 - A waiting message makes the top bar's "new message" text pulse, and the message line pauses until you read it, as in the original.
+- Multiplayer: the host can start a game mode (king of the hill, three planets, capture the flag) by typing `story 1001`, `story 1003` etc. in the room chat before starting, as in the original; the room confirms "Starting story set to N" on the host.
 - Multiplayer: the game no longer stays stuck after a space battle (a player who rejoined or resumed mid-battle, or had Options open when it ended, now leaves it too), and a battle's end no longer pauses everyone.
 - Multiplayer: a full-screen video (your own defeat or victory) no longer stalls the others or gets you dropped.
 - Multiplayer: opening Options or Help no longer stalls the game for everyone or gets you dropped; the game runs on underneath, as in the original.

@@ -416,7 +416,8 @@ pub enum Role {
 
 /// The room's start, for [`launch`]: the host's room (`save`: the MP save it resumes), or a joiner's start.
 pub enum Begun {
-    Host { lobby: Box<LobbyHost>, listener: Box<dyn Listener>, save: Option<Box<MpSave>> },
+    /// `story`: `MultiplayerStartStory` (exe 0xF2148C), the story the start begins (0: none).
+    Host { lobby: Box<LobbyHost>, listener: Box<dyn Listener>, save: Option<Box<MpSave>>, story: i32 },
     Joiner { start: Box<Start>, link: Box<dyn Transport>, me: Me },
 }
 
@@ -532,6 +533,16 @@ pub struct MpScreen {
     pub save_dir: Option<std::path::PathBuf>,
     /// The host's room resumes this save; the members already seated in their saved empires.
     resume: Option<(Box<MpSave>, Vec<u8>)>,
+    /// `MultiplayerStartStory` (exe 0xF2148C): set by the room's `story N` / `s N` line; only the host's start sends
+    /// it. The config line `mpstory` (`Start_Belep` exe 0x5bf4b0) has no reader here, so it starts at 0.
+    pub story: i32,
+}
+
+/// `DoKeyboard`'s room line (exe 0x4db1a0, ~0x4db7bc): `story N` or `s N` (case-insensitive) with `atoi(N) != 0`.
+fn story_line(text: &str) -> Option<i32> {
+    let lower = text.to_ascii_lowercase();
+    let rest = lower.strip_prefix("story ").or_else(|| lower.strip_prefix("s "))?;
+    Some(ig2_formats::dialogue::atoi(rest)).filter(|&n| n != 0)
 }
 
 /// Our English words where the original has none (ADR 0014 §4).
@@ -622,6 +633,7 @@ impl MpScreen {
             saves: None,
             save_dir: crate::options::slot_dir(),
             resume: None,
+            story: 0,
         }
         .with_saved_relay()
     }
@@ -1018,7 +1030,7 @@ impl MpScreen {
                             let Some(Role::Host { lobby, mut listener }) = self.role.take() else { unreachable!() };
                             listener.announce(None);
                             let save = self.resume.take().map(|r| r.0);
-                            return Some(Out::Start(Begun::Host { lobby, listener, save }));
+                            return Some(Out::Start(Begun::Host { lobby, listener, save, story: self.story }));
                         }
                         let two = st.members.len() + st.ais().len() >= 2;
                         self.line = if two { words::WAITING } else { words::NEED_TWO }.to_vec();
@@ -1095,7 +1107,11 @@ impl MpScreen {
         if let Some(role) = &mut self.role {
             if self.entry.key(k) {
                 let text = self.entry.take();
-                if !text.trim().is_empty() {
+                if let Some(n) = story_line(&text) {
+                    // Shown on this machine only, not sent (`Start_NewChatText(.., 2)`).
+                    self.story = n;
+                    self.chat.push((String::new(), format!("Starting story set to {n}")));
+                } else if !text.trim().is_empty() {
                     match role {
                         Role::Host { lobby, .. } => {
                             lobby.say(0, &text);
@@ -1269,7 +1285,9 @@ impl MpScreen {
         }
         let first = self.chat.len().saturating_sub(CHAT_LINES);
         for (j, (who, line)) in self.chat[first..].iter().enumerate() {
-            text(f, format!("{who}: {line}").as_bytes(), 24.0, 364.0 + 14.0 * j as f32, 2, Align::Left, 0x22);
+            // A line of this machine's own (no speaker) shows bare.
+            let shown = if who.is_empty() { line.clone() } else { format!("{who}: {line}") };
+            text(f, shown.as_bytes(), 24.0, 364.0 + 14.0 * j as f32, 2, Align::Left, 0x22);
         }
         text(f, &self.entry.text, 24.0, 424.0, 2, Align::Left, 2);
         cursor(f, &self.entry, 0, 24.0, 424.0, 2);
@@ -1551,12 +1569,16 @@ impl<'r> Session<'r> {
 /// successor (§7.3).
 pub fn launch<'r>(b: Begun, data: &StartData, rules: &'r GameRules, ticks: u32, net: Box<dyn Net>) -> Result<Session<'r>, String> {
     match b {
-        Begun::Host { lobby, listener, save: Some(save) } => {
+        Begun::Host { lobby, listener, save: Some(save), .. } => {
             let s = HostSession::resume(*lobby, &save, rules).map_err(|_| String::from_utf8_lossy(words::NEED_SAVED).into_owned())?;
             Ok(Session::Host { session: Box::new(s), listener })
         }
-        Begun::Host { lobby, listener, save: None } => {
-            let s = HostSession::start_galaxy(*lobby, data, rules, SessionSettings::default(), ticks).map_err(|_| "the room can't start yet".to_string())?;
+        Begun::Host { lobby, listener, save: None, story } => {
+            let mut s = HostSession::start_galaxy(*lobby, data, rules, SessionSettings::default(), ticks).map_err(|_| "the room can't start yet".to_string())?;
+            // `FRISSIT_Start` (exe 0x5bc590): after `InitNewGame`, `Multi_Send(0x65, EN, story)` → `StartStory(id, 0)`.
+            if story != 0 {
+                s.own.issue(ig2_net::Command::StoryStart { id: story });
+            }
             Ok(Session::Host { session: Box::new(s), listener })
         }
         Begun::Joiner { start, link, me } => {
@@ -1740,6 +1762,16 @@ mod tests {
                 click(g, spot::READY, false, &mut net);
             }
             sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
+            // `DoKeyboard`'s room line (exe 0x4db1a0): the host's `story N` picks the start story, shown here only; a
+            // joiner's sets its own (never sent: only the host's `FRISSIT_Start` sends 0x65); `story x` is chat.
+            if joiners == 1 {
+                type_text(&mut host, "Story 1003", &mut net);
+                type_text(&mut guests[0], "s 1001", &mut net);
+                type_text(&mut host, "story x", &mut net);
+                assert_eq!((host.story, guests[0].story), (1003, 1001));
+                assert_eq!(host.chat[host.chat.len() - 2], (String::new(), "Starting story set to 1003".to_string()));
+                assert!(host.chat.last().is_some_and(|c| c.1 == "story x"), "not a story number: a chat line");
+            }
             let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
             let hub = net.clone();
             let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242, Box::new(hub.clone()))).unwrap().map(|s| crate::world::World::new_mp(s, rules)).unwrap();
@@ -1779,6 +1811,12 @@ mod tests {
             let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!("the host's world") };
             let joiner = *empires.last().unwrap();
             assert!(session.host.log.iter().flat_map(|b| &b.commands).any(|c| c.issuer == joiner && matches!(c.command, ig2_net::Command::Starmap { .. })), "the joiner's order ran in a bundle");
+            if joiners == 1 {
+                for w in &worlds {
+                    let st = w.game.state.story();
+                    assert!(st.is_running(1003) && !st.is_running(1001), "the host's start story runs on every machine");
+                }
+            }
             let stand_in = &worlds[0].net.as_ref().unwrap().0.peer().game;
             assert!(stand_in.state.fleets.is_empty(), "the peer holds the stand-in between pumps");
         }

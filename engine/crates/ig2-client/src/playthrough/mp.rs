@@ -80,7 +80,7 @@ fn room(seed: u64, options: Option<GalaxyOptions>, saved: Option<&MpSave>) -> Re
 /// and (`autopilot`) the AI on both humans' empires (`Game::autopilot`; a resumed save already holds it).
 fn start<'r>(hx: &'r Harness, texts: &crate::new_game::StartTexts, (lobby, mut c): (LobbyHost, LobbyClient), save: Option<MpSave>, seed: u32, autopilot: bool) -> Result<[World<'r>; 2], String> {
     let rules = &hx.rules;
-    let host = Begun::Host { lobby: Box::new(lobby), listener: OfflineNet.listen()?, save: save.map(Box::new) };
+    let host = Begun::Host { lobby: Box::new(lobby), listener: OfflineNet.listen()?, save: save.map(Box::new), story: 0 };
     let host = texts.with(&hx.install, |data| launch(host, data, rules, seed, Box::new(OfflineNet)))??;
     let t = Instant::now();
     while c.status != Status::Started {

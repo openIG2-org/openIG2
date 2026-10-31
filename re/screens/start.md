@@ -91,6 +91,14 @@ the client ids and IP strings. Other types: 1 chat, 3 the seed, 4 "start now", 5
   same `InitNewGame(seed, 2, 0, 1)` on the last message 2's room, `SetIdoSpeed(1, 1)`, `SetIdoPause(0, 1)`. So every
   machine generates the galaxy itself; only the room and the seed travel. `NEWGAME_Diplomacy` reseeds libc from each
   machine's own `SDL_GetTicks()`.
+- **Start story** (`MultiplayerStartStory` exe 0xF2148C; the MP game modes, `rules/campaign/multi.md`): `Start_Belep`
+  (0x5bf4b0) sets it from the config line `mpstory` (default "0") and, when non-zero, shows 14/5/1 + the id as a
+  chat line. In the room (`AktKep` 0xE) `DoKeyboard` (0x4db1a0, the write at 0x4db7d2) takes a typed line that starts
+  `story ` or `s ` (`_strnicmp`, case-insensitive) with `atoi(rest) != 0` as the new value and shows "Starting story
+  set to " + the id (`Start_NewChatText(.., 2)`, this machine only; not sent); any other line is chat. Any id is
+  taken, and on any machine, but only the host's `FRISSIT_Start` sends it: right after `InitNewGame`,
+  `Multi_Send(0x65, EN, 4, &story)` when non-zero (read at 0x5bc66a); every peer's `MULTIGET_Story` runs
+  `StartStory(id, 0)`. There is no menu option for it.
 
 ## 4. Our room's rules (ADR 0014; `ig2_net::lobby` with `LobbyState::galaxy`)
 
@@ -156,4 +164,4 @@ start, the host's opt-in port mapping through `Listener::map_port` / `port_map` 
 renewed until the room or game ends; `launch` builds the game via `HostSession::start_galaxy` / `ClientSession::new_galaxy`), and a room for an MP
 save (`MpScreen::host_save`). `mp_wait.rs` is the in-game wait overlay (`MOUSE_DrawOver`, input.md §9). The
 original's own room drawing (`StartGfx2D_1..3`) is deliberately not copied (ADR 0009 §2, ADR 0014); the shared start
-`ticks` is row 223; private rooms, join codes and the optional relay server (§5, §6) are done (clipboard through `arboard`, text only); the main menu's remaining MP-ring leftovers are row 157.
+`ticks` is row 223; private rooms, join codes and the optional relay server (§5, §6) are done (clipboard through `arboard`, text only); the main menu's remaining MP-ring leftovers are row 157; the host's `story N` chat line picks the start story (§3, rows 418, 419).
