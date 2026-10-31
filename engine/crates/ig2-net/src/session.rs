@@ -932,8 +932,10 @@ pub struct ClientSession<'r> {
     pub refused: Option<Refusal>,
     /// The host's last hold status.
     pub status: HoldStatus,
-    /// Restarts from the host's state (resyncs) since this session began.
+    /// Restarts from the host's state (resyncs, a migration's) since this session began.
     pub restarts: usize,
+    /// Of those, the host's resyncs of this diverged peer (ADR 0021: the players see them).
+    pub resyncs: usize,
     /// The host's silence after which it counts as gone ([`SessionSettings::keep_alive`]; zero: off).
     pub keep_alive: Duration,
     /// When the host was last heard from, and when `SessionMsg::Alive` last went out.
@@ -990,6 +992,7 @@ impl<'r> ClientSession<'r> {
             refused: None,
             status: HoldStatus::default(),
             restarts: 0,
+            resyncs: 0,
             keep_alive: Duration::from_millis(start.session.keep_alive_ms),
             heard: None,
             alive_sent: None,
@@ -1037,6 +1040,8 @@ impl<'r> ClientSession<'r> {
                 self.status = s;
             }
             let Some(start) = start else { return Ok(run) };
+            // A `Start` on the running link is a resync (a rejoin comes on a new link, a migration's in migrate_pump).
+            self.resyncs += 1;
             self.restart(&start)?;
         }
     }

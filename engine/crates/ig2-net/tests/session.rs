@@ -340,6 +340,7 @@ fn a_desynced_peer_is_resynced_by_the_host() {
     let [SessionEvent::Resynced { empire: 3, turn, at }] = resynced[..] else { panic!("{:?}", net.events) };
     assert_eq!(turn, drift);
     assert_eq!(net.clients[0].restarts, 1);
+    assert_eq!(net.clients[0].resyncs, 1);
     assert!(net.clients[0].peer.hashes.iter().all(|&(t, _)| t >= at), "a fresh peer from the host's state");
     let reports = net.hs.host.desyncs.len();
     net.run_to(at + 60, |p| p.events.clear());

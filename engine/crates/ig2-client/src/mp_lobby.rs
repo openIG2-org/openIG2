@@ -1418,6 +1418,14 @@ impl<'r> Session<'r> {
         }
     }
 
+    /// A joiner's resyncs from the host's state so far (the host's own come as `SessionEvent::Resynced`).
+    pub fn resyncs(&self) -> usize {
+        match self {
+            Session::Client(c, _) => c.resyncs,
+            _ => 0,
+        }
+    }
+
     /// What holds the session now (the host's own view, a joiner's last word from the host).
     pub fn status(&self, now: Duration) -> HoldStatus {
         match self {
@@ -1822,6 +1830,50 @@ mod tests {
             let stand_in = &worlds[0].net.as_ref().unwrap().0.peer().game;
             assert!(stand_in.state.fleets.is_empty(), "the peer holds the stand-in between pumps");
         }
+    }
+
+    /// ADR 0021: a joiner whose game drifts is resynchronised by the host, and both players are told on the message
+    /// line.
+    #[test]
+    fn a_desync_and_its_resync_are_told_to_the_players() {
+        use crate::world::World;
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(1, &mut net);
+        click(&mut guests[0], spot::READY, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
+        let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 77, Box::new(hub.clone()))).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
+        let mut worlds = vec![mk(b)];
+        worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
+        let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
+        let t = std::time::Instant::now();
+        let step = |worlds: &mut Vec<World<'static>>, done: &dyn Fn(&[World]) -> bool| {
+            while !done(worlds) {
+                for w in worlds.iter_mut() {
+                    w.pump();
+                    w.tick();
+                }
+                assert!(t.elapsed() < Duration::from_secs(90), "stalled");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= 10));
+        assert!(worlds.iter().all(|w| w.local_lines.is_empty()));
+        // The joiner's state drifts (as a stray `rand()` would).
+        let money = ig2_sim::save::va::MONEY;
+        let m = worlds[1].game.state.mem.i32(money);
+        worlds[1].game.state.mem.set_i32(money, m + 12345);
+        let host_line: &[u8] = b"Guest0's game was out of step and has been resynchronised.";
+        let guest_line: &[u8] = b"This game was out of step with the host and has been resynchronised.";
+        step(&mut worlds, &|w| w[0].local_lines.iter().any(|l| l == host_line) && w[1].local_lines.iter().any(|l| l == guest_line));
+        let at = turn(&worlds[0]);
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 20));
+        assert_eq!(worlds[1].local_lines.iter().filter(|l| *l == guest_line).count(), 1, "told once");
+        assert_eq!(worlds[1].net.as_ref().unwrap().0.resyncs(), 1);
     }
 
     /// The game loop on three machines (FX15): each world's screens see its own `EN`; a chat line reaches every

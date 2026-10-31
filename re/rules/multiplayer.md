@@ -334,7 +334,8 @@ deterministic under test; nothing in it touches the sim except the injected comm
 - **Desync** (ADR 0007 §3): on a new report the host's peer catches up; every peer whose hash for a reported turn
   differs from the host's own is restarted on its own link through the rejoin path (the host's state wins).
   `Host` ignores a slot's hashes for turns before it (re)joined, so the old peer's in-flight reports don't count;
-  `ClientSession` swaps its peer when a `Start` arrives (`restarts`).
+  `ClientSession` swaps its peer when a `Start` arrives (`restarts`). The players are told (ADR 0021): the host's
+  `SessionEvent::Resynced` and the joiner's `ClientSession::resyncs` (a `Start` on the running link) each put a line on the message bar and in the log.
 - **Pause**: `HostSession::pause` / `ClientSession::pause` (`Msg::Session(SessionMsg::Pause)`); the session holds
   while any human's pause stands. Every change of who is paused, awaited (with the grace left) or away goes to every
   peer as `SessionMsg::Status(HoldStatus)`.

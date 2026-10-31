@@ -333,6 +333,8 @@ pub struct World<'r> {
     pub net_over: bool,
     /// The slot of the session's host at the last pump (a host migration changes it, rules/multiplayer.md §7.3).
     pub net_host: Option<u8>,
+    /// The joiner's resyncs already told on the message line (ADR 0021).
+    pub net_resyncs: usize,
     /// `MainScenarioDescriptor` (exe 0xbbd140) is set: the game was started as a scenario from the main menu
     /// (`StoreScenarioDescription` 0x504120); `InitNewGame` (every other start and every `LoadSave`) clears it.
     pub scenario: bool,
@@ -588,7 +590,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, scenario: false }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -615,10 +617,23 @@ impl<'r> World<'r> {
         let events = std::mem::take(&mut net.peer_mut().events);
         if let Ok((_, said)) = &r {
             for e in said {
-                if let ig2_net::session::SessionEvent::Said { empire, text } = e {
-                    self.chat_lines.push((format!("{}: {text}", net.name_of(*empire)).into_bytes(), crate::chat::CHAT_COLOUR));
+                match e {
+                    ig2_net::session::SessionEvent::Said { empire, text } => {
+                        self.chat_lines.push((format!("{}: {text}", net.name_of(*empire)).into_bytes(), crate::chat::CHAT_COLOUR));
+                    }
+                    // Ours, in English (ADR 0021): a desync and its resync are told, and logged for bug reports.
+                    &ig2_net::session::SessionEvent::Resynced { empire, turn, at } => {
+                        eprintln!("multiplayer: empire {empire} diverged at turn {turn}, resynchronised from turn {at}");
+                        self.local_lines.push(format!("{}'s game was out of step and has been resynchronised.", net.name_of(empire)).into_bytes());
+                    }
+                    _ => {}
                 }
             }
+        }
+        if net.resyncs() > self.net_resyncs {
+            eprintln!("multiplayer: out of step with the host, resynchronised at turn {}", net.peer().turn);
+            self.local_lines.push(b"This game was out of step with the host and has been resynchronised.".to_vec());
+            self.net_resyncs = net.resyncs();
         }
         let status = net.status(epoch.elapsed());
         self.local_lines.extend(status_lines(&self.net_seen, &status, |e| net.name_of(e)));
