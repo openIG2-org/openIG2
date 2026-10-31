@@ -281,8 +281,9 @@ pub struct SpyScreen {
     pub dialog: u8,
     /// `SpyEppKuldetesElkuldeseAlattVan`: a mission was just sent (no new plan until the spy leaves home).
     sending: bool,
-    /// Orders in flight: the report on show changes only when they are applied (the next frame's pump).
-    awaiting: bool,
+    /// Orders in flight with the first report and the queue's length when they went out: the report on show
+    /// changes only when they are applied (the next frame's pump; in multiplayer `delay` turns later).
+    awaiting: Option<(Option<Report>, usize)>,
     /// `KemNevVillogtato`/`Dir`, `spyKiirSzinSzorzo`, `spykeringeto`, `SpyPalastRotation`, `ElfordulasiSebesseg`.
     blink: i32,
     blink_up: bool,
@@ -334,7 +335,7 @@ impl SpyScreen {
             popup: None,
             dialog: 0,
             sending: false,
-            awaiting: false,
+            awaiting: None,
             blink: 0,
             blink_up: true,
             text_fade: 0.0,
@@ -387,7 +388,7 @@ impl SpyScreen {
     /// `SpyEsemenyEllenoriz` (ELF 0x6c5d30): with no plan in progress and no dialog, show the first report: its
     /// spy becomes `AktKem` (the old one is kept for afterwards).
     fn check_reports(&mut self, d: &SpyData) {
-        if self.awaiting || self.dialog != 0 || (self.plan.on && self.plan.mission > 0) || matches!(self.popup, Some(Popup { list: List::Mission, .. })) {
+        if self.awaiting.is_some() || self.dialog != 0 || (self.plan.on && self.plan.mission > 0) || matches!(self.popup, Some(Popup { list: List::Mission, .. })) {
             return;
         }
         if let Some(r) = d.report() {
@@ -412,8 +413,12 @@ impl SpyScreen {
     /// The frame's start: orders sent last frame have been applied (`World::pump`), so the report on show is
     /// read again.
     pub fn applied(&mut self, d: &SpyData) {
-        if self.awaiting {
-            self.awaiting = false;
+        if let Some((head, len)) = self.awaiting {
+            // Not yet applied: the first report is still the one answered and no report has left the queue.
+            if head.is_some() && d.report() == head && d.reports.len() >= len {
+                return;
+            }
+            self.awaiting = None;
             self.dialog = 0;
             self.check_reports(d);
             if self.dialog == 0 {
@@ -805,6 +810,10 @@ impl SpyScreen {
     /// `Spy_Main`'s branches for a pressed hot-spot.
     fn icon(&mut self, d: &SpyData, t: &SpyTexts, id: u32, out: &mut Vec<Command>) {
         let spy = self.akt as u8;
+        // Ours: the dialog's buttons wait for the orders already sent on its report (multiplayer's delay).
+        if self.awaiting.is_some() && matches!(id, 0x14..=0x18 | 0x1e..=0x21) {
+            return;
+        }
         // `Spy_Main` (exe 0x58d410): the buttons and lists click on the press, the skills with `Global[2]`; the kill
         // list not while the tutorial pauses.
         match id {
@@ -842,19 +851,19 @@ impl SpyScreen {
                 // The verdict: the roll on stream 0 and the follow-up report travel with the order (§7).
                 if let Some(r) = d.report() {
                     out.push(Command::Spy { order: SpyOrder::Judge { choice: id as i32 - 0x13, owner: r.x[1] as u8, spy: r.x[2] as u8 } });
-                    self.awaiting = true;
+                    self.awaiting = Some((d.report(), d.reports.len()));
                 }
             }
             0x18 => {
                 out.push(Command::Spy { order: SpyOrder::Acknowledge });
-                self.awaiting = true;
+                self.awaiting = Some((d.report(), d.reports.len()));
             }
             0x19..=0x1c => out.push(Command::Spy { order: SpyOrder::Skill { spy, skill: (id - 0x18) as u8 } }),
             0x1e..=0x20 => {
                 if let Some(r) = d.report() {
                     out.push(Command::Spy { order: SpyOrder::Applicant { choice: id as i32 - 0x1d, spy: r.a as u8 } });
                     out.push(Command::Spy { order: SpyOrder::Acknowledge });
-                    self.awaiting = true;
+                    self.awaiting = Some((d.report(), d.reports.len()));
                 }
             }
             0x21 => {
@@ -871,7 +880,7 @@ impl SpyScreen {
                         self.sending = true;
                     }
                     out.push(Command::Spy { order: SpyOrder::Acknowledge });
-                    self.awaiting = true;
+                    self.awaiting = Some((d.report(), d.reports.len()));
                 }
             }
             _ => {}
@@ -1453,6 +1462,42 @@ mod tests {
         b.click(&mut w, &mut s, [480.0, 305.0], [480.0, 305.0]);
         assert_eq!(w.game.state.spies().roster[en][3].applicant, 0);
         assert!(w.game.state.spy_reports(en, en).is_empty());
+    }
+
+    /// Multiplayer runs the orders `delay` turns later: until the hire lands, the applicant dialog stays as it is
+    /// and its buttons send nothing more; then the next report shows with its texts, and after it none.
+    #[test]
+    fn a_hire_in_flight_keeps_the_dialog_until_it_lands() {
+        let Some((install, save, rules, tables, defaults, volatile)) = quick1() else { return };
+        let mut w = World::load(&save, &rules, &defaults, &volatile);
+        let en = stage(&mut w);
+        let b = Bench { rules: &rules, tables: &tables, t: SpyTexts::new(&crate::ui::UiTexts::load(&install), &crate::ui::names_txt17(&install, false)), en };
+        w.game.state.push_spy_report(&spy::Report { kind: 2, a: 3, x: [0, en as i32, 0, 0, 0, 0, 0, 0, 0], ..Default::default() });
+        w.game.state.push_spy_report(&spy::Report { kind: 2, a: 4, x: [0, en as i32, 0, 0, 0, 0, 0, 0, 0], ..Default::default() });
+        let mut s = SpyScreen::enter(&b.data(&w), false);
+        assert_eq!((s.dialog, s.akt), (2, 3));
+        let mut held = Vec::new();
+        for _ in 0..2 {
+            let d = b.data(&w);
+            held.extend(s.press(&d, &b.t, &[Spot::default(); 12], [480.0, 305.0]));
+            held.extend(s.release(&d, &b.t));
+            s.applied(&d);
+            s.ui_frame(&d);
+            assert_eq!((s.dialog, s.akt), (2, 3), "the dialog waits for its orders");
+        }
+        assert_eq!(held.len(), 2, "one hire and one acknowledgement: {held:?}");
+        for c in held {
+            w.send(c);
+        }
+        w.pump();
+        let d = b.data(&w);
+        s.applied(&d);
+        s.ui_frame(&d);
+        assert_eq!((s.dialog, s.akt), (2, 4), "the second applicant");
+        assert_eq!(d.report().map(|r| r.a), Some(4));
+        b.click(&mut w, &mut s, [480.0, 305.0], [480.0, 305.0]);
+        assert!(w.game.state.spy_reports(en, en).is_empty());
+        assert_eq!(s.dialog, 0);
     }
 
     /// `KemEselySzamolas1` with no counter-spies: every round gets through; a mission without a target: 100 and no

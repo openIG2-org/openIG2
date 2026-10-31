@@ -8,6 +8,7 @@ Getting the game from "every part works" to "a player can install it and play it
 ### Since 0.7.48
 - A short click on a production plus or minus button adds one ship again; holding it still repeats, as in the original.
 - Where a fleet's radar area overlaps a planet's on the starmap, only the planet's red shows, as in the original.
+- Multiplayer: the spy screen's report dialogs (hire, reject, verdicts, OK) no longer get stuck as empty boxes after a button press.
 
 ### 0.7.48 (beta)
 Since 0.7.2.

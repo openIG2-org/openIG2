@@ -302,6 +302,10 @@ synced stream, so the port sends them as orders too (ADR 0007 §5; `re/rules/mul
   arrives, before the next tick, as the exe's UI does between two ticks.
 In the original's MP these UI draws moved each machine's own stream 0 (a desync source); in SP the port's order of
 draws is the original's.
+In MP the orders run `delay` turns later (`multiplayer.md`), so after a dialog's button (0x14..0x18, 0x1e..0x21) the
+screen keeps that dialog and ignores its buttons until the first report changes or a report leaves the queue; only
+then does `SpyEsemenyEllenoriz` pick the next report. The exe changes the queue at once (ours, not a deviation: SP
+is unchanged; `spy_screen::tests::a_hire_in_flight_keeps_the_dialog_until_it_lands`).
 
 ## 8. Client status
 `ig2-client::spy_screen` (state, input, tooltips `SpyScreen::tooltip`; `spy_screen/draw.rs` the 2D pass) and
