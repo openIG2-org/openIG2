@@ -1942,6 +1942,31 @@ mod tests {
         }
     }
 
+    /// Each machine's diplomacy screen shows its own contact list (`AktPlayerek`, multiplayer.md §5.1): the joiner's
+    /// is its copy beside the canonical one, the host's the canonical one.
+    #[test]
+    fn each_machine_shows_its_own_contacts() {
+        let Some((mut a, mut g)) = two_worlds() else { return };
+        for _ in 0..20 {
+            for w in [&mut a, &mut g] {
+                w.pump();
+                w.tick();
+            }
+        }
+        let joiner = g.net.as_ref().unwrap().0.peer().empire;
+        let mut d = g.game.state.diplomacy();
+        let own = d.others.iter_mut().find(|c| c.empire == joiner).expect("the joiner's own list");
+        own.players.push(ig2_sim::diplomacy::PlayerSlot { empire: 7, ..Default::default() });
+        let list: Vec<i32> = own.players.iter().map(|s| s.empire).collect();
+        g.game.state.store_diplomacy(&d);
+        let v = crate::diplomacy::View::read(&g.game.state);
+        assert_eq!(v.en, joiner as usize);
+        assert_eq!(v.slots.iter().map(|s| s.empire).collect::<Vec<_>>(), list);
+        assert_eq!(v.raw.len(), list.len());
+        let host = crate::diplomacy::View::read(&a.game.state);
+        assert_eq!(host.slots, a.game.state.diplomacy().players);
+    }
+
     /// A joiner's colony order runs on every machine and its result reaches the joiner's own screens
     /// (`World::colony_events`, as `MULTIGET_Colony` updates the issuer's screen), not the host's.
     #[test]

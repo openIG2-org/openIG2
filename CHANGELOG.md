@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Multiplayer: a joining player's diplomacy screen lists the empires they have met, not the host's.
 - Multiplayer: a colony can build more than one building per visit (the build button comes back once the building is placed).
 - Multiplayer: in a space battle the joining player can select and order their own ships (the screen used to treat the host's ships as theirs).
 - The messages screen opens at the right place in the list, and a click opens the message you clicked.

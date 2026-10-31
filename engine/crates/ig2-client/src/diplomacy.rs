@@ -418,17 +418,24 @@ pub struct View {
 impl View {
     pub fn read(state: &SaveState) -> Self {
         let m = &state.mem;
-        let d = state.diplomacy();
-        let n = d.players.len();
+        let mut d = state.diplomacy();
+        let en = m.i32(va::EN).clamp(0, 18) as usize;
+        // Canonical multiplayer: a joiner's machine shows its own `AktPlayerek` (multiplayer.md §5.1), kept beside
+        // the canonical human's list.
+        let own = d.others.iter_mut().find(|c| c.empire as usize == en).map(|c| std::mem::take(&mut c.players));
+        let raw = match (&own, state.humans.get(&(en as u8))) {
+            (Some(_), Some(h)) => h.contacts.chunks_exact(SLOT).map(<[u8]>::to_vec).collect(),
+            _ => (0..d.players.len()).map(|i| m.read(va::CONTACTS + (i * SLOT) as u32, SLOT)).collect(),
+        };
         let t = ig2_sim::time::GameTime(m.i32(va::IDO));
         Self {
-            en: m.i32(va::EN).clamp(0, 18) as usize,
+            en,
             ido: m.i32(va::IDO),
             month: t.month(),
             tutorial: m.u8(va::TUTORIAL_PAUSED) != 0,
             multiplayer: m.u8(va::MULTIPLAYER) != 0,
-            raw: (0..n).map(|i| m.read(va::CONTACTS + (i * SLOT) as u32, SLOT)).collect(),
-            slots: d.players,
+            raw,
+            slots: own.unwrap_or(d.players),
             alive: state.alive(),
             races: state.races(),
             relations: state.relations(),

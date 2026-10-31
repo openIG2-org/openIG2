@@ -130,6 +130,9 @@ owner.
   - `FRISSIT_Diplomacy`'s auto-cancel (§10): every list, `EN`'s first, then the others by empire;
     `DiploEvent::AutoCancelled { from, to }` names the list's owner.
   - `DiploEvent::Discovered { empire, by }` names the owner (each peer posts message 0x1A for its own empire).
+- The diplomacy screen shows the machine's own list: `diplomacy::View::read` takes `Diplomacy::others`' entry for
+  the local `EN` (the slots and their raw bytes, `humans[EN].contacts`) when there is one, else the canonical list
+  (tested by `mp_lobby.rs::each_machine_shows_its_own_contacts`).
 
 ### 5.2 Spy report queues (`KemBeszolasok` 0xBAF338, `info-messages.md` §3.3)
 - `KemJelentesAdd` is guarded by "the receiver is `EN`". Canonical MP: a report to `EN` is `SpyEvent::Report`
