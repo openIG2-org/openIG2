@@ -61,7 +61,7 @@ frame or an input script's frames without a window; it is used by the capture co
 `engine/crates/ig2-client/src/main.rs`.
 
 ## Play-through harness
-`ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]` plays whole games
+`ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]` plays whole games
 headless at
 the fastest speed on the player's path (`World::tick`, the commands a screen sends), with the sim's AI playing the
 human's empire (`Game::autopilot`). Runs: `campaign:C[:D[:L]]` (campaign 1..=3, difficulty 1/2/4, storyline 1/2; 0 or
@@ -76,10 +76,15 @@ the end's: `video Won` is the race's win clip and `misc/end_campaign_win.bik`). 
 plays the story's part a player plays (`playthrough/story.rs`): it answers the episodes' messages the way that keeps
 the storyline going (or leaves one to expire), researches the techs an episode asks for, sends a spy on the story's
 spy missions, sends the story specials (8571 with 2,000,000 credits, 8581, 8601) once each, and gives up to two
-fleets the story's targets (the story planets the rebels and the episodes' invaders hold, the raiders to hunt, a planet to guard or visit, empire 5's planet of story 858); everything else
-stays the AI's. Whether the AI-played human wins the war depends on the seed: on difficulty 1, `campaign:1:1:1` and
-`campaign:1:1:2` with `--seed 2` and `campaign:2:1:2` with the default seed end won (the end video); campaign 3
-isn't won yet, and story 863's end (CampaignOver) waits on the story spy missions (861).
+fleets the story's targets (the story planets the rebels and the episodes' invaders hold, the planets empire 17
+took in 840, the raiders to hunt, a planet to guard or visit, empire 5's planet of 858, the least defended planet of
+an empire the story guards from the AI, `StoryAdat+0xb8/+0xbc`); during 840 it queues colony ships at the head of a
+ship line and sends them to free planets; at war with nobody, it declares war on a known empire with under half its
+planets. Everything else stays the AI's. Whether the AI-played human wins the war depends on the seed (each sim
+change reshuffles them), so a campaign is played over a seed list, e.g. `campaign:2:1:1 --seed 2,3,8,4242`: on
+difficulty 1 every campaign has seeds that end won (`video Won`: the race's win clip and
+`misc/end_campaign_win.bik`), and campaign 2 storyline 1 also ends in story 863's own end (`Over(Ended)`,
+`politikus_win.bik`).
 `--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets
 the units fight it out) and the diplomacy questions reach its inbox. The exit code is 1 when a run failed (a panic,
 a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit.

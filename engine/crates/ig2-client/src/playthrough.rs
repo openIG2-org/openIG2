@@ -7,7 +7,7 @@
 //! and what the game asked of the client (videos, battles, the end).
 //! In a campaign it also plays the story's part of the player ([`story`]).
 //!
-//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`, runs
+//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`, runs
 //! `campaign:C[:D[:L]]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` ([`mp`]), or `all`.
 
 mod mp;
@@ -336,6 +336,9 @@ impl Harness {
                 let mine = w.game.state.colony().planets.iter().filter(|p| p.owner as usize == en).count();
                 let fleets = w.game.state.starmap().fleets.iter().filter(|f| f.owner as usize == en).count();
                 eprintln!("{:?} EN money {:.0} pools {:?} planets {mine} fleets {fleets} ki {} ai {}", date(&w.game), t.total, t.pools, w.game.state.mem.u8(va::PLAYER_KI + en as u32), w.game.state.mem.u8(va::AI_EMPIRE + en as u32));
+                let c = w.game.state.colony();
+                let per: Vec<usize> = (1..9).map(|e| c.planets.iter().filter(|p| p.owner as usize == e).count()).collect();
+                eprintln!("   planets of empires 1..=8: {per:?}");
             }
             let story = w.game.state.story();
             let date = date(&w.game);
@@ -547,18 +550,19 @@ pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec
     Ok(runs)
 }
 
-/// `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`: every run's report; an
+/// `ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`: every run's report; an
 /// error when one failed.
 pub fn main(args: &[String]) -> Result<(), String> {
-    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]")?;
+    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]")?;
     let mut limits = Limits::default();
+    let mut seeds = vec![limits.seed];
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         let v = it.next().ok_or_else(|| format!("{a}: a value"))?;
         let n = |v: &str| v.parse::<u64>().map_err(|_| format!("{a} {v}: a number"));
         match a.as_str() {
             "--ticks" => limits.ticks = n(v)?,
-            "--seed" => limits.seed = n(v)? as u32,
+            "--seed" => seeds = v.split(',').map(|s| n(s).map(|x| x as u32)).collect::<Result<_, _>>()?,
             "--save-every" => limits.save_every = n(v)? as i32,
             "--stall" => limits.stall = n(v)? as i32,
             "--compare-every" => limits.compare_every = n(v)?,
@@ -571,14 +575,19 @@ pub fn main(args: &[String]) -> Result<(), String> {
     let runs = parse_runs(spec, || h.scenarios())?;
     let mut failed = 0;
     for run in &runs {
-        let t = std::time::Instant::now();
-        let r = h.play(run, limits);
-        print!("{}", r.text());
-        println!("   ({:.1} s)", t.elapsed().as_secs_f64());
-        failed += r.failed() as usize;
+        for &seed in &seeds {
+            let t = std::time::Instant::now();
+            let mut r = h.play(run, Limits { seed, ..limits });
+            if seeds.len() > 1 {
+                r.name += &format!(" seed {seed}");
+            }
+            print!("{}", r.text());
+            println!("   ({:.1} s)", t.elapsed().as_secs_f64());
+            failed += r.failed() as usize;
+        }
     }
     if failed > 0 {
-        return Err(format!("{failed} of {} runs failed", runs.len()));
+        return Err(format!("{failed} of {} runs failed", runs.len() * seeds.len()));
     }
     Ok(())
 }

@@ -16,11 +16,15 @@ at the next cleanup.
   and `War::locate_tank`'s fallback without a colony map (fixed cell 100,100), `re/rules/ground-combat.md`.
 - [x] **Play-through harness**: `ig2-client --playthrough` drives whole games headless with the AI
   playing the human's side, saving and loading on the way (`docs/BUILDING.md` → Play-through harness).
-- [ ] **Story-aware play-through driver**: done: the harness plays the story's part of the player (episode
-  answers, researches, spy missions, fleets to story targets, colonising); campaign 1 (both storylines) and
-  campaign 2 storyline 2 are won on difficulty 1 up to the campaign win video. Left: campaign 3 (empire 1 wins the
-  war in every seed; storyline 720 loses to story 840 for want of colony ships, which needs a production-queue
-  input on the client).
+- [x] **Story-aware play-through driver**: in a campaign the harness plays the story's part of the player (episode
+  answers, techs, spy missions, story specials, fleets to story targets, colony ships for story 840 through the
+  production order, attacks on the empires the story guards from the AI, war on a much smaller empire when at war
+  with nobody); `--seed` takes a list. On difficulty 1 every campaign reaches its end on some seeds: campaign 1 won
+  on both storylines (storyline 1 seed 2, storyline 2 seed 4242), campaign 2 storyline 1 ends in story 863's own end
+  (CampaignOver, seed 4242) and is won on seed 2, storyline 2 won on seed 4242, campaign 3 storyline 1 won (seed 8).
+- [ ] **Campaign 3 storyline 2 to its end**: no seed tried (2..11, 4242) wins storyline 720 on difficulty 1; on some
+  the human still misses story 840's five colonies and can't retake the two planets empire 17 takes within 900 days;
+  on the others empire 1 wins the war.
 - [x] **Story spy missions in the sim**: the spy pass asks the story (`Story::spy_question`), so story 863's end (CampaignOver) resolves
   (`re/rules/campaign/elem.md` 861/863). Campaign 2 storyline 2 seed 2 reaches the end videos; seed 1 runs out of ticks
   because the AI-played human never conquers empire 5's last planets.
