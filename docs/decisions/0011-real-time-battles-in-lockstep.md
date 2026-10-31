@@ -37,7 +37,7 @@ all, is new here:
    at the same turn; nothing in the sim changes), `hold(false)` resumes. The session layer holds when a human drops
    while `Game::realtime_running()`, for a grace period it chooses (wall-clock, host-side only, default 60 s), and
    releases on the rejoin or at the end of the grace. A player's pause during a battle is the same hold.
-5. **Away and back.** After the grace the host injects `Command::PlayerAway` for the dropped empire
+5. **Away and back.** Away also means the computer plays the empire; a rejoin hands it back; a kick keeps it with the computer. After the grace the host injects `Command::PlayerAway` for the dropped empire
    (`Host::inject`, stamped with that empire, in the next bundle); it counts as having left every running space
    battle's screen (so `SpaceWarVege` can run once the others leave) and its units fight on with no new orders.
    `Command::PlayerBack` on the rejoin clears the left mark while the battle runs, so the returning player is on

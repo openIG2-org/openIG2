@@ -577,11 +577,18 @@ impl Game<'_> {
         self.view != ViewMode::Classic && (m.i32(at::SPACE_RUNNING) != 0 || m.i32(at::GROUND_RUNNING) != 0)
     }
 
-    /// Ours (ADR 0011 §5): `empire`'s player is away (dropped past the grace period). It counts as having left the
-    /// running space battle's screen; its units fight on without orders.
+    /// Ours (ADR 0011 §5): `empire`'s player is away (dropped past the grace period, left or kicked). It counts as
+    /// having left the running space battle's screen, and the computer takes the empire over as the original's
+    /// `MULTIGET_Starmap` 0x404 does on every machine (`PlayerKi` 2, `INIT_MI_KIESETT` exe 0x5ad2a0; `multiplayer.md`
+    /// §7.1); a human empire only, so a repeat changes nothing.
     pub fn player_away(&mut self, empire: u8) {
         if self.state.mem.i32(at::SPACE_RUNNING) != 0 {
             self.space_battle_left(empire);
+        }
+        let e = empire as usize;
+        if (1..9).contains(&e) && self.state.mem.u8(va::PLAYER_KI + e as u32) == 1 {
+            self.state.mem.set_u8(va::PLAYER_KI + e as u32, 2);
+            self.with_ai(|st, w, hooks| st.init_dropped(w, e, hooks));
         }
     }
 
@@ -593,8 +600,13 @@ impl Game<'_> {
         (waits && m.i32(at::SPACE_LEFT + 4 * empire as u32) == 0).then_some(self.realtime.current)
     }
 
-    /// Ours (ADR 0011 §5): `empire`'s player is back: on the running space battle's screen again.
+    /// Ours (ADR 0011 §5): `empire`'s player is back: its empire is a human's again (`PlayerKi` 1; the original has no
+    /// way back) and on the running space battle's screen again.
     pub fn player_back(&mut self, empire: u8) {
+        let k = va::PLAYER_KI + empire as u32;
+        if (1..9).contains(&empire) && self.state.mem.u8(k) == 2 {
+            self.state.mem.set_u8(k, 1);
+        }
         if self.view != ViewMode::Classic && self.state.mem.i32(at::SPACE_RUNNING) != 0 && (1..9).contains(&empire) {
             self.state.mem.set_i32(at::SPACE_LEFT + 4 * empire as u32, 0);
         }

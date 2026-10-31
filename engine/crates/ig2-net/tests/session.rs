@@ -20,7 +20,7 @@ use ig2_net::lobby::{LobbyClient, LobbyHost, LobbyMsg, Refusal, Settings, Status
 use ig2_net::session::{self, ClientSession, HostSession, MpSave, SessionEvent, SessionSettings, DEFAULT_GRACE, DEFAULT_KEEP_ALIVE};
 use ig2_net::{loopback, BattleOrder, Command, Loopback, Msg, Peer, Transport};
 use ig2_sim::game::{Game, GameEvent, GameRules, RealTimeEvent};
-use ig2_sim::save::SaveState;
+use ig2_sim::save::{va, SaveState};
 
 const SAVE: &str = "quick-1.sav";
 const RULES: [u8; 32] = [0x5a; 32];
@@ -187,6 +187,11 @@ fn into_battle(net: &mut Net) -> usize {
 }
 
 /// Every turn both peers ran has the same hash; returns how many.
+/// `PlayerKi[e]`: 1 a human plays it, 2 the computer took it over (#22, the original's 0x404).
+fn ki(p: &Peer, e: u32) -> u8 {
+    p.game.state.mem.u8(va::PLAYER_KI + e)
+}
+
 fn agree(a: &Peer, b: &Peer) -> usize {
     let mut n = 0;
     for (t, h) in &b.hashes {
@@ -306,6 +311,7 @@ fn a_dropped_player_is_awaited_then_away_and_rejoins() {
     net.run_to(held_at + 10, |p| p.events.clear());
     assert_eq!(left_screen(&net.hs.own.game, 3), 1, "away counts as having left the screen");
     assert!(net.hs.own.game.realtime.slots[b].active, "the battle still runs");
+    assert_eq!(ki(&net.hs.own, 3), 2, "the computer plays 3's empire");
 
     // 3 comes back on a new link: the host's state now, then PlayerBack.
     let (mut ours, theirs) = loopback();
@@ -322,6 +328,7 @@ fn a_dropped_player_is_awaited_then_away_and_rejoins() {
         assert_eq!(left_screen(&net.hs.own.game, 3), 0, "back on the battle's screen");
     }
     assert!(net.clients[0].status.away.is_empty() && !net.clients[0].status.held());
+    assert_eq!((ki(&net.hs.own, 3), ki(&net.clients[0].peer, 3)), (1, 1), "3's empire is the human's again");
     assert!(net.hs.host.desyncs.is_empty(), "{:?}", net.hs.host.desyncs);
     let n = agree(&net.hs.own, &net.clients[0].peer);
     assert!(n >= 59, "{n}");
@@ -340,6 +347,7 @@ fn a_drop_outside_a_battle_is_away_at_once() {
     assert_eq!(net.hs.status(net.now).away, [3]);
     let at = net.turn();
     net.run_to(at + 20, |p| p.events.clear());
+    assert_eq!(ki(&net.hs.own, 3), 2, "the computer plays 3's empire at once");
     let (mut ours, theirs) = loopback();
     net.hs.rejoin(3, Box::new(theirs), net.now).unwrap();
     let start = ClientSession::wait_start(&mut ours).unwrap().unwrap();
@@ -347,8 +355,18 @@ fn a_drop_outside_a_battle_is_away_at_once() {
     let back = net.turn();
     net.run_to(back + 30, |p| p.events.clear());
     assert!(net.hs.humans().all(|(_, _, here)| here));
+    assert_eq!((ki(&net.hs.own, 3), ki(&net.clients[0].peer, 3)), (1, 1), "handed back on the rejoin");
     assert!(agree(&net.hs.own, &net.clients[0].peer) >= 29);
     assert!(net.hs.host.desyncs.is_empty());
+
+    // Leaving hands it to the computer too, on every peer.
+    net.clients[0].leave();
+    net.idle(3);
+    assert!(net.took(&SessionEvent::Left { empire: 3 }), "{:?}", net.events);
+    net.clients.clear();
+    let at = net.turn();
+    net.run_to(at + 5, |p| p.events.clear());
+    assert_eq!(ki(&net.hs.own, 3), 2, "a player who left: the computer's");
 }
 
 #[test]
@@ -492,6 +510,7 @@ fn a_kicked_player_is_away_at_once_and_turned_away_at_the_door() {
     net.run_to(at + 30, |p| p.events.clear());
     assert!(net.hs.host.log.iter().flat_map(|b| &b.commands).any(|c| c.issuer == 3 && matches!(c.command, Command::PlayerAway)));
     assert!(net.hs.own.game.realtime.slots[b].tick > 0);
+    assert_eq!(ki(&net.hs.own, 3), 2, "a kicked player's empire is the computer's for good");
     // Its name stays out.
     let mut c = knock(&mut net, "Guest", RULES, None, None);
     assert_eq!(come_back(&mut net, &mut c), Status::Refused(Refusal::Kicked));

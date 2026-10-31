@@ -363,6 +363,8 @@ next frame's message pass (also in single player, also while paused). The handle
 | 0x40f | planet | The head units of both queues are finished (`+0xa0 + 4L = −1`) | a debug key |
 | 1, 2, 0x3fc, 0x3fd, 0x401, 0x402, 0x404, 0x405, 2000 | | session: money/join, chat, desync checks, a player dropped (→ AI), log files, a player left | `ig2-net` |
 
+0x404 (exe 0x59d930, run on every machine): `PlayerKi[e] = 2`, `ProgramMachines--`, a red line `PlayerNev[e] + " " + GetString(2,4)` (`AddSzoveg(.., 6)`), the empire renamed "computer", `INIT_MI_KIESETT(e)` (exe 0x5ad2a0, ai-empire.md §13); `BirodalomMIzik` is untouched. Ported: `Game::player_away` (`ig2-sim` game/realtime.rs) sets `PlayerKi` 1→2 and `AiState::init_dropped` for a human empire; the host injects it from `ig2-net` session.rs (`away_now`, `mark_dropped`). Not ported: the rename, `ProgramMachines`, the red line (deviation 424). A rejoin hands the empire back (`PlayerBack`, `PlayerKi` 2→1; the original has no way back).
+
 `IG2_gameUpdate` (exe 0x4e0440) handles the top bar's hot-spots: 2 = pause toggle, 3..5 = speeds 1..3. In SP it
 calls `SetIdoPause(!IdoPause, false)` (not on screens 10 and ≥ 0xd, nor when the speed is locked) and, for a speed
 button when paused or at another speed, `SetIdoSpeed(n, false)` + `SetIdoPause(false, false)`; in MP it sends

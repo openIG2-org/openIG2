@@ -268,7 +268,7 @@ that and fixes the per-machine parts:
   layer holds while a dropped human may come back during a battle (`Game::realtime_running`) and for a pause.
 - **Away/back**: `Command::PlayerAway` / `PlayerBack`, sent only by the host (`Host::inject`, stamped with the
   dropped empire; a peer's copy is dropped by `Host::pump`). Away = the empire has left every running space
-  battle's screen (`SpaceWarVege` waits only for the others); back = that mark is cleared while the battle runs.
+  battle's screen (`SpaceWarVege` waits only for the others) and, for a human empire, `PlayerKi` 1→2 with `AiState::init_dropped`: the computer plays it (the original's 0x404 / `INIT_MI_KIESETT`, ai-empire.md §13; a repeat changes nothing). Back = that mark is cleared while the battle runs and `PlayerKi` is 2→1 (the AI's leftover queues stay; a kicked player is refused at the door, so the computer keeps the empire). Not mirrored: the "computer" rename, `ProgramMachines`, the original's red line (deviation 424).
 - **Leaving**: the strategic clock waits until every human's 0x44d (`Game::space_battle_waits_on`). Ours: a machine
   without the battle's screen up while it waits on its empire (a rejoin, a resumed save, a missed start, a battle
   decided under Options) opens the screen, or sends 0x44d at once when the battle is decided (the client's
@@ -325,8 +325,8 @@ deterministic under test; nothing in it touches the sim except the injected comm
 - **Drop** (a link reports `closed()`, or `HostSession::drop_player`): the host's peer first runs every bundle sent,
   then: a real-time battle runs (`Game::realtime_running`) → *waiting*: `Host::hold(true)` until the rejoin or the
   grace (`SessionSettings::grace`, default 60 s) → *away*: `Host::inject(empire, PlayerAway)`, the hold ends. No
-  battle → *away* at once. Whenever a battle starts while an empire is away, `PlayerAway` goes out for it again
-  (`Game::player_away` only marks the running battle). A dropped player's pause ends with it.
+  battle → *away* at once (also on a leave or kick). Tests: ig2-net/tests/session.rs checks `PlayerKi` on host and client. Whenever a battle starts while an empire is away, `PlayerAway` goes out for it again
+  (`Game::player_away` then only repeats the mark; the takeover is applied once). A dropped player's pause ends with it.
 - **Rejoin** (`HostSession::rejoin(empire, link, now)`, the link admitted by the glue): the host's state at
   `Host::next_turn` as a fresh `Start` (`Msg::Lobby(LobbyMsg::Start)`) on the link, `Host::add_peer`, `send_log`
   from the snapshot's turn, the hold status, and `PlayerBack` if the empire was away. The rejoiner reads it with

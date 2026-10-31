@@ -134,8 +134,8 @@ player.", 6)` (str 0x85428c); `i == EN` → `AddSzoveg("Cannot kick yourself.", 
 are local and red (colour 6; `dsz`'s test lines: 6 red, 2 white, 3 chat, 7 system). `MultiKickClient` sends socket
 packet 99 with the reason (2 = console; 1 = the DrawOver player menu, 7 = lobby full) and drops the socket; the kicked
 machine's `ReceiveData` (exe 0x515910, state 10) sets `DAT_00db94f4 = 1`, `DAT_00db94f8 = reason` (its disconnect),
-and the host's drop path makes the empire a computer one (0x404, `PlayerKi = 2`), so a second kick of it is "No such
-player.". The kicked player has no way back.
+and the host's drop path makes the empire a computer one (0x404, `PlayerKi = 2`; ours: `PlayerAway`, starmap.md §0x404 row), so a second kick of it is "No such
+player.". The kicked player has no way back (the door refuses them).
 
 Stage B, only with `DEBUGLEHET` (0xbae659) or `DEBUGX` (0xbae587), runs after stage A (a chat line too): a
 `_strnicmp` prefix chain of about 90 cheats (`debug` toggles `DEBUGX` and sends the 0x3fd line "enabled/disabled

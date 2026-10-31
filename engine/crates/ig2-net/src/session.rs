@@ -4,7 +4,8 @@
 //! - [`HostSession`] starts the game (`Game::start_multiplayer`, the start snapshot, `LobbyHost::start`), runs the
 //!   host's own [`Peer`] and applies the policy: a human who drops while a real-time battle runs is waited for
 //!   (`Host::hold`) for the grace period, then marked away (`Command::PlayerAway`) and the session runs on; outside a
-//!   battle a drop is away at once. A rejoin gets a fresh [`Start`] from the host's state (snapshot + `send_log`) and
+//!   battle a drop is away at once. Away, the computer plays the empire (the original's 0x404 takeover); a kicked
+//!   player's empire stays the computer's. A rejoin gets a fresh [`Start`] from the host's state (snapshot + `send_log`) and
 //!   `Command::PlayerBack`; a rejoiner comes back through the lobby's admission ([`HostSession::admit`]: hello,
 //!   join code, password), matched to its empire by name. A human silent for the keep-alive is dropped like a closed
 //!   link (both ends send `SessionMsg::Alive`, so a held session isn't silence). A desynced peer is restarted the same way on its own link (the host's state wins). A pause
@@ -17,7 +18,8 @@
 //!
 //! ```text
 //! drop ─▶ battle running? ─yes─▶ Waiting (hold) ─grace─▶ Away (inject PlayerAway, resume)
-//!                         └─no──▶ Away (PlayerAway whenever a battle starts)
+//!                         └─no──▶ Away (inject PlayerAway; again whenever a battle starts)
+//! leave / kick ─▶ Away (inject PlayerAway)        PlayerAway: the computer takes the empire; PlayerBack: the human
 //! admit(link) ─▶ Hello / password ─▶ the human of that name, if away ─▶ Welcome ─▶ rejoin
 //! rejoin(empire, link) ─▶ Start{snapshot at Host::next_turn} + send_log + PlayerBack (if away) ─▶ Here
 //! desync ─▶ the peers whose hash differs from the host's: restart on their link
@@ -813,9 +815,7 @@ impl<'r> HostSession<'r> {
             self.queued.push(SessionEvent::Paused { empire, on: false });
         }
         self.catch_up()?;
-        if self.own.game.realtime_running() {
-            self.host.inject(empire, Command::PlayerAway);
-        }
+        self.host.inject(empire, Command::PlayerAway);
         self.humans[i].presence = Presence::Away;
         self.humans[i].reach = None;
         Ok(empire)
@@ -836,6 +836,9 @@ impl<'r> HostSession<'r> {
         // Decide on the state the hold would stop at: every bundle sent so far run.
         self.catch_up()?;
         let waiting = self.own.game.realtime_running();
+        if !waiting {
+            self.host.inject(empire, Command::PlayerAway);
+        }
         self.humans[i].presence = if waiting { Presence::Waiting { since: now } } else { Presence::Away };
         self.humans[i].reach = None;
         self.queued.push(SessionEvent::Dropped { empire, waiting });

@@ -75,7 +75,7 @@ State: **verified** = matched against the exe at runtime (Frida or capture); **p
 - **U18** Production/research: MP paths, MP slow-down, station rally untraced (soak: no peer desync).
 - **U20** Diplomacy: reason codes (`MiertValaszolt…`) and `vv_*` flags, `NEWGAME_Diplomacy`, MP, `ProgramPlayers` 18. Blocks AI-to-human message texts (also U25 ids 6/10).
 - **U21** Espionage: `EpuletDelete`'s colony-screen/ground-war targets; spy screen sounds.
-- **U22** AI empire: MP pace observed in ig2.exe (`ai-empire.md` §14: same as the sim; per-call MP branches still untraced); `ProgramPlayers` 18 overflows (`Kemek`, `MiTervMutato`); `INIT_MI_KIESETT` (dropped player) only unit-tested.
+- **U22** AI empire: MP pace observed in ig2.exe (`ai-empire.md` §14: same as the sim; per-call MP branches still untraced); `ProgramPlayers` 18 overflows (`Kemek`, `MiTervMutato`); `INIT_MI_KIESETT` (dropped player) is used in MP by `PlayerAway` (session tests only, not traced in ig2.exe).
 - **U23** Ground war: `GenerateMap` editor mode, `Refresh2` visuals, `UpgradeTanks`, MP (soak: no peer desync), stealth, mines untraced; planet deals don't reach the battlefield.
 - **U25** Messages: ids 6, 10 (need U20), 13; a recorded real-time ground war's end; `Grwar8020hoz`; save replays don't run campaign story lines yet.
 - **U26–U32** Screen gaps (starmap, colony, info/messages, audio, video, unfinished screens, diplomacy): listed in each screen spec's open items and in `deviations.md`; load (mode 5) is unported in `ig2-sim`.
