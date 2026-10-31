@@ -6,7 +6,7 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (425).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (430).
 
 ## Open: player-visible
 
@@ -93,6 +93,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 415 | automatic messages | an automatic message doesn't pull the player out of a battle (screen 11), a screen ≥ 0xe, a colony at war or a pending screen change; the exe sets `AktKepKell` := 10 over all of them (its behaviour there isn't traced) | minor | info-messages.md §6 |
 | 426 | MP, order delay | an order runs on every machine `delay + 1` to `delay + 2` turns after it is given (100-200 ms on a LAN; `delay` from the slowest round trip, chosen when the game starts: ADR 0007 §2); the exe applies a received order at once (its `Multi_Send` packets, no lockstep) | minor | ADR 0007 §2 |
 | 424 | MP, dropped, left or kicked player | the host injects `PlayerAway` at once (outside a battle) or after the grace (real-time battle); every peer sets `PlayerKi` 1→2 and starts the AI (`init_dropped`) as the exe's 0x404 does; a rejoin (not a kick) hands the empire back with `PlayerBack` (the exe has no way back). Not mirrored: the "computer" rename, `ProgramMachines`, the red line (our "X has left the game." status line stays) | yes | starmap.md 0x404 row, multiplayer.md §7.1 |
+| 429 | starmap, production counts and transfer cells | the hold repeat (`KezdoIdo`, hot-spots 0x1a..0x29 and 0x43..0x52) counts 60 frames a second, not once per rendered frame (ADR 0016) | no | starmap.md §12.4, §13.4 |
 
 ## Enhanced proposals (owner decides)
 

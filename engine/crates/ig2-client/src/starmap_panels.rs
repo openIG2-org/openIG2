@@ -148,11 +148,13 @@ pub struct Transfer {
     pub first: i32,
 }
 
-/// A held button: the hot-spot and `Starmap_Main::KezdoIdo` (its 10 ms frames so far), plus the mouse button.
+/// A held button: the hot-spot and `Starmap_Main::KezdoIdo` (its frames so far), the 100 Hz ticks' hundredths
+/// towards the next 60 Hz frame, plus the mouse button.
 #[derive(Debug, Clone, Copy)]
 struct Hold {
     spot: u32,
     frames: i32,
+    acc: i32,
     left: bool,
 }
 
@@ -781,13 +783,13 @@ impl Panels {
                 if id <= 0x29 {
                     out.push(CLICK);
                 }
-                self.hold = Some(Hold { spot: id, frames: 0, left });
+                self.hold = Some(Hold { spot: id, frames: 0, acc: 0, left });
                 out.extend(self.hold_frame(state, sel, at));
             }
             0x2a..=0x31 => self.open_list(state, sel, id, at),
             // The scroll bar follows the pointer every frame while held (`Mouse_Megfogva`).
             0x57 => {
-                self.hold = Some(Hold { spot: id, frames: 0, left });
+                self.hold = Some(Hold { spot: id, frames: 0, acc: 0, left });
                 self.scroll(state, at);
             }
             _ => {}
@@ -802,8 +804,9 @@ impl Panels {
         Action::Send(StarmapOrder::Production { op, planet: sel.planet as i32, line: l as i32, slot: ui, value })
     }
 
-    /// One 10 ms UI frame while a button is held (`Starmap_Main::KezdoIdo`): the first frame and every frame after
-    /// the seventh send, `(KezdoIdo − 7)/8 + 1` at a time (at most 5 for the counts; a right button moves everything).
+    /// One 100 Hz UI tick while a button is held. `Starmap_Main::KezdoIdo` counts the exe's rendered frames; the
+    /// client counts 60 a second (ADR 0016): the first frame and every frame after the seventh send,
+    /// `(KezdoIdo − 7)/8 + 1` at a time (at most 5 for the counts; a right button moves everything).
     pub fn hold_frame(&mut self, state: &SaveState, sel: &Selection, at: [f32; 2]) -> Vec<Action> {
         if let Some(i) = &mut self.info {
             i.hold_frame(state, sel, at);
@@ -812,6 +815,15 @@ impl Panels {
         if h.spot == 0x57 {
             self.scroll(state, at);
             return Vec::new();
+        }
+        let mut h = h;
+        if h.frames > 0 {
+            h.acc += 60;
+            if h.acc < 100 {
+                self.hold = Some(h);
+                return Vec::new();
+            }
+            h.acc -= 100;
         }
         let k = h.frames;
         self.hold = Some(Hold { frames: k + 1, ..h });
@@ -1789,6 +1801,12 @@ mod tests {
         // The pair's right half (hot-spot 0x22) raises the count once on the press.
         let acts = panels.press(&w.game.state, &sel, [170.0, 150.0], true).unwrap();
         send(&mut w, acts);
+        // Held, it repeats on the 7th 60 Hz frame after the press: 120 ms, so a short click adds one (issue #36).
+        let sends = |a: &[Action]| a.iter().filter(|x| matches!(x, Action::Send(_))).count();
+        for _ in 0..11 {
+            assert_eq!(sends(&panels.hold_frame(&w.game.state, &sel, [170.0, 150.0])), 0);
+        }
+        assert_eq!(sends(&panels.hold_frame(&w.game.state, &sel, [170.0, 150.0])), 1);
         panels.release(&w.game.state, &sel);
         assert_eq!(queue(&w.game.state, p)[0].slots[0].as_ref().map(|s| s.2), Some(2));
         // Finish it: a fleet of the player's appears beside the planet.

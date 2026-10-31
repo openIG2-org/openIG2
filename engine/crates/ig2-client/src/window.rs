@@ -4189,7 +4189,7 @@ impl App {
         // The sounds queued by the frame's input and by these UI ticks, then the ticks' music steps.
         self.audio_frame(due_ui);
         self.row_frame_phase(due_ui);
-        // A button held on a panel repeats on the 100 Hz UI frames (`Starmap_Main::KezdoIdo`).
+        // A button held on a panel steps on the 100 Hz UI ticks (`Starmap_Main::KezdoIdo` counts 60 a second).
         if self.panel_held.is_some() {
             let at = self.virtual_cursor();
             for _ in 0..due_ui {

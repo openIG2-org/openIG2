@@ -23,6 +23,7 @@ the user's install is read, never changed):
    - #107, trade screen: `Trade_Main`, the right-button quantity repeat, the scroll and the row drags once per 100 Hz
      UI tick (`trade.md` §6.2).
    - #123, diplomacy: `Diplomacy3DUpdate`'s per-frame steps 60 times a second (diplomacy.md §3.1).
+   - #429, starmap: the production count and transfer-cell hold repeat steps 60 times a second (starmap.md §12.4).
    New cases of the same kind follow this rule and add a row; they don't need a new ADR.
 2. **MP-safe local actions.** An action that changes the shared game goes through a lockstep order on every machine,
    even where the exe changes it locally or reads the receiving machine's own UI state. Rows:

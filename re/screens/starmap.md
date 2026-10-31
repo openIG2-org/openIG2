@@ -630,7 +630,7 @@ without the buttons of empty slots; the lowest id under the pointer wins [inf]):
 | 0xc / 0xd | (254, 37, 22, 37) / (363, 37, 22, 37) | previous / next planet of `EN` (`StarmapKozepreAllit`, `StarmapProductPlanetChange`) |
 | 0xe..0x15 | (153 or 468, 164 / 238 / 293 / 349, 21, 24 or 21) | `0x1d(3, planet, L, k, ui, 0)`: toggle repeat |
 | 0x16..0x19 | (469, 134 / 208 / 263 / 318, 19, 13 or 14) | `0x1d(5, planet, 1, k, ui, 0)`: toggle "into a fleet" |
-| 0x1a..0x29 | (135 or 450, y, 28, 51) and (163 or 478, y, 28, 51), y = 132, 205, 259, 314 | held: `0x1d(1 or 2, planet, L, k, ui, n)` on the first frame and every 10 ms frame after the 7th, `n = (KezdoIdo − 7)/8 + 1` ≤ 5; minus while `Mouse_x` < 164 (L 0) / 479 (L 1); not for stations (`+0x37`) |
+| 0x1a..0x29 | (135 or 450, y, 28, 51) and (163 or 478, y, 28, 51), y = 132, 205, 259, 314 | held: `0x1d(1 or 2, planet, L, k, ui, n)` on the first frame and every rendered frame after the 7th (the client counts 60 frames a second: row 429), `n = (KezdoIdo − 7)/8 + 1` ≤ 5; minus while `Mouse_x` < 164 (L 0) / 479 (L 1); not for stations (`+0x37`) |
 | 0x2a..0x31 | (11 or 511, 125 / 206 / 261 / 316, 120, 60 or 50) | press: the design list at the pointer; release: `0x1d(4, planet, L, k, ui, d)` (§12.5) |
 | 0x32 | (276, 32, 87, 47) | the list of `EN`'s planets (`StarmapSelectPlanet`, §17) |
 | 0x33 / 0x34 | (0, 80, 195, 292) / (445, 80, 195, 292) | the panels (they catch clicks) |
@@ -701,7 +701,7 @@ mode), group 3 vehicles (`+0x16 == 2`), designs ascending, only designs either s
 Hot-spots 0x43..0x52 (the cells; `Starmap_MouseInit2` turns on `2·min(n, 8)` of them): left panel column 0
 (28, y, 124, 70), column 1 (152, y, 139, 70), right panel column 0 (338, y, 139, 70), column 1 (487, y, 121, 70),
 y = 60, 130, 200, 270; item = `(id − 0x43)/2 + Kezdet`; an even id moves left → right (fleet 1 → 2), an odd one
-right → left. Held: the first frame and every 10 ms frame after the 7th send `0x1c(from, to, design, 0, n)` with
+right → left. Held: the first frame and every rendered frame after the 7th (60 a second in the client: row 429) send `0x1c(from, to, design, 0, n)` with
 `n = (KezdoIdo − 7)/8 + 1` (no cap); the right button sends 1,000,000 (all). 0x57 (307, 30, 26, 329):
 `Kezdet = ((Mouse_y − 30 − h/2)·(n − 8) + (329 − h)/2)/(329 − h)` with h = 2632/n, clamped to 0..n − 8, rounded up
 to even. 0x58 (24, 24, 592, 339) covers the map; the minimap is off. Hot-spot 9 closes.
@@ -1100,7 +1100,7 @@ panel) open them in ig2.exe through `AktRopIkon`.
 ## Client status
 Modules (`engine/crates/ig2-client/src/`): `starmap.rs` (camera, keys, background, routes, fleet sprites),
 `starmap_planet.rs` (planets, clouds), `starmap_radar.rs` (§6.3), `starmap_hud.rs` (console, side lights, button
-animation), `starmap_panels.rs` (§12, §13), `starmap_menus.rs` (radial menu, long info, select menus §16, planet list
+animation), `starmap_panels.rs` (§12, §13; the hold counter `KezdoIdo` steps 60 times a second), `starmap_menus.rs` (radial menu, long info, select menus §16, planet list
 §17, rename), `starmap_info.rs` (fleet panel §19, vehicle panel §20, sale menus), `starmap_tip.rs` (tooltips),
 `topbar_menus.rs`. Orders: `ig2_sim` `StarmapOrder` / `Game::starmap_order`, `ig2_net::Command::Starmap`; §10.5's
 replay is byte-exact. Camera steps, background particles and radar dots are bit-exact (tests
