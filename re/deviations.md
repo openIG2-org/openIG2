@@ -34,6 +34,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 407 | colony, building pick | the model pick re-runs only when the pointer moves (the exe every frame), so after a camera scroll/zoom/turn or a building change with the pointer still it is stale until the pointer moves; building faces are posed at load (animated parts not followed); a unit in front doesn't hide a building; an unfinished building's cut-away top still picks | minor | colony.md §10 |
 | 408 | spy missions, story 861/863 | the sim's spy pass never asks the story, so story spy missions don't resolve and 863's CampaignOver is unreachable | yes | campaign/elem.md 861 |
 | 409 | diplomacy specials, stories 857/858/860 | the diplomacy specials never reach the stories' routes (`ig2-sim/src/diplomacy.rs` :1365) | yes | campaign/elem.md 857 |
+| 412 | starmap, wormholes | the arrows between known wormhole pairs of `Show_Stars2d3d` are not drawn | minor | starmap.md §3.5 |
 
 ## Keep
 

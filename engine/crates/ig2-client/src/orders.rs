@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn view_pointer_follows_starmap_mouse_init2() {
         use crate::world::{FleetView, PlanetLook, PlanetView};
-        let planet = |index: usize, x: f32, owner: u8| PlanetView { index, pos: [x, 0.0], owner, surface: 1, name: String::new(), known: true, blink: false, friendly: false, look: PlanetLook::default() };
+        let planet = |index: usize, x: f32, owner: u8| PlanetView { index, pos: [x, 0.0], owner, surface: 1, name: String::new(), known: true, blink: false, friendly: false, rally: 0, look: PlanetLook::default() };
         let fleet = |slot: usize, x: f32, owner: u8| FleetView { slot, pos: [x, 50.0], owner, visible: true, target: None, order: 0, flags: 0, name: Vec::new(), ships: 1, story_id: 0, kind: 0, target_index: 0 };
         // The human (1): planet 1 at x −100 (own), planet 2 at 0 (empire 2), planet 3 at 100 (free); fleet 1 (own) far off,
         // fleet 2 (empire 2).

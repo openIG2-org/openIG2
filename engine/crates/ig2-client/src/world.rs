@@ -35,6 +35,8 @@ pub struct PlanetView {
     pub blink: bool,
     /// `+0xbc` bit 0: never a target (`SelectNearestUnit`'s enemies-only pick skips it).
     pub friendly: bool,
+    /// `+0xac`: the rally planet of its new ship fleets (0 = none; re/screens/starmap.md §4.4).
+    pub rally: usize,
     /// How the starmap draws it (`+0x17c..+0x185`, re/screens/starmap.md §3).
     pub look: PlanetLook,
 }
@@ -153,6 +155,13 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// `Show_Atiranyitas3d` (ELF 0x6e34a0, exe 0x5a4fb0): from each of the human's planets with a rally planet to
+    /// that planet, selected or not, seen or not (re/screens/starmap.md §4.4).
+    pub fn rally_arrows(&self) -> impl Iterator<Item = ([f32; 2], [f32; 2])> + '_ {
+        let at = |i: usize| self.planets.iter().find(|p| p.index == i).map(|p| p.pos);
+        self.planets.iter().filter(|p| p.owner == self.human && p.rally != 0).filter_map(move |p| Some((p.pos, at(p.rally)?)))
+    }
+
     pub fn read(game: &Game) -> Self {
         let state = &game.state;
         let m = &state.mem;
@@ -174,6 +183,7 @@ impl Snapshot {
                     known: sp.visible[en] > 0 || debug,
                     blink: r[0xba] != 0,
                     friendly: r[0xbc] & 1 != 0,
+                    rally: r[0xac] as usize,
                     look: PlanetLook::read(&r),
                 }
             })

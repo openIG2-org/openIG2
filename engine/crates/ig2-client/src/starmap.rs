@@ -991,13 +991,24 @@ impl View {
             }
         }
 
+        // `DrawArrow` (spec §4.3): a strip 2·width wide, a head 10 long and ±2.5·width (the marker spans ±0.75).
+        let arrow_w = |f: &mut Frame, p: [f32; 2], q: [f32; 2], width: f32, color: [f32; 4]| {
+            f.push(a.white, Blend::Alpha, Instance::line(p, q, 2.0 * width * k, color));
+            let rot = (q[1] - p[1]).atan2(q[0] - p[0]);
+            f.push(a.white, Blend::Alpha, Instance { rot, ..Instance::new(kind::MARKER, q, [5.0 * k, 2.5 * width / 0.75 * k], color) });
+        };
+        let arrow = |f: &mut Frame, p: [f32; 2], q: [f32; 2], color: [f32; 4]| arrow_w(f, p, q, 1.5, color);
+        // Rally arrows (`Show_Atiranyitas3d`, spec §4.4), under the routes: 0.7 wide, `0x40873264`.
+        if !hidden {
+            let purple = [0x64 as f32 / 255.0, 0x32 as f32 / 255.0, 0x87 as f32 / 255.0, 0x40 as f32 / 255.0];
+            for (p, q) in curr.rally_arrows() {
+                if let (Some(p), Some(q)) = (cam.to_screen(p), cam.to_screen(q)) {
+                    arrow_w(&mut f, p, q, 0.7, purple);
+                }
+            }
+        }
         // Routes of the human's fleets and story fleet 0x1f88 (`Show_Flottak3d`, spec §4.3).
         let fleets = if hidden { Vec::new() } else { curr.fleets_at(prev, alpha) };
-        let arrow = |f: &mut Frame, p: [f32; 2], q: [f32; 2], color: [f32; 4]| {
-            f.push(a.white, Blend::Alpha, Instance::line(p, q, 3.0 * k, color));
-            let rot = (q[1] - p[1]).atan2(q[0] - p[0]);
-            f.push(a.white, Blend::Alpha, Instance { rot, ..Instance::new(kind::MARKER, q, [5.0 * k; 2], color) });
-        };
         let grey = [0x46 as f32 / 255.0, 0x4b as f32 / 255.0, 0x5f as f32 / 255.0, 0.5];
         for fl in self.shown(&fleets).filter(|f| f.order > 0 && f.flags & 0x20 == 0 && (self.reveal || f.owner == curr.human || f.story_id == 0x1f88)) {
             let (Some(t), Some(p)) = (fl.target, cam.to_screen(fl.pos)) else { continue };
@@ -1247,11 +1258,27 @@ mod tests {
     use crate::world::PlanetLook;
 
     fn planet(index: usize, x: f32, y: f32) -> PlanetView {
-        PlanetView { index, pos: [x, y], owner: 0, surface: 1, name: String::new(), known: true, blink: false, friendly: false, look: PlanetLook { star_size: 8, ..Default::default() } }
+        PlanetView { index, pos: [x, y], owner: 0, surface: 1, name: String::new(), known: true, blink: false, friendly: false, rally: 0, look: PlanetLook { star_size: 8, ..Default::default() } }
     }
 
     fn cam(rotate: f32, pitch: f32) -> Camera {
         Camera { x: 10.0, y: -20.0, rotate, pitch, zoom: 300.0, size: [1920.0, 1080.0], look: None }
+    }
+
+    #[test]
+    fn rally_arrows_run_from_the_humans_planets_to_their_rally_planets() {
+        // `Show_Atiranyitas3d`: owner == EN and `+0xac` != 0; neither selection nor visibility matters.
+        let mut own = planet(1, 1.0, 2.0);
+        own.owner = 3;
+        own.rally = 3;
+        let mut foreign = planet(2, 5.0, 5.0);
+        foreign.rally = 3;
+        let mut target = planet(3, 7.0, 8.0);
+        target.known = false;
+        let mut none = planet(4, 9.0, 9.0);
+        none.owner = 3;
+        let s = Snapshot { human: 3, planets: vec![own, foreign, target, none], ..Default::default() };
+        assert_eq!(s.rally_arrows().collect::<Vec<_>>(), vec![([1.0, 2.0], [7.0, 8.0])]);
     }
 
     #[test]

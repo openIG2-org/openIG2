@@ -226,6 +226,14 @@ chain from `+0x50` (`Waypointek` +0/+4, next +8): one arrow a segment, the first
 `0x805f4b46` except segment `i` (0 first) with `(waypointvillogo − i) % 15 == 0`, `0x80be968c`; `waypointvillogo`
 counts every second call (`waypointvillogok`), so the lit segment walks along the chain.
 
+### 4.4 Rally arrows (`Show_Atiranyitas3d` ELF 0x6e34a0 / exe 0x5a4fb0)
+Unless `starmaphideflottak` (exe 0xF1737C) is set: for every planet owned by the human (`+0x20 == EN`) with a rally
+planet (`+0xac ≠ 0`, the `0x400` order), `DrawArrow((0, +0x18, +0x1c), (0, rally +0x18, rally +0x1c), 0x40873264,
+0.7, 1)`: a faint purple (`0xAABBGGRR` → RGB 0x64 0x32 0x87, alpha 0x40), a 1.4-pixel strip and a head ±1.75 wide.
+Neither the selection nor the target's visibility matters. `StarmapGfx2D_1` calls it after `Show_Stars2d3d` and
+before `Show_Flottak2d`/`Show_Flottak3d`, so the routes cover it. Exe: `push 1`, `0x3f333333` (0x5a501e),
+`push 0x40873264` (0x5a5023). Port: `Snapshot::rally_arrows`, drawn in `starmap.rs` before the routes.
+
 ## 5. Selection (`GFX_Starmap`, `rotate_stars`, `ShowStarmap`)
 40 `select.bmp` particles (`Selection`, additive) on a circle of radius `10/√(600/D)` world units around the selected
 planet's star (`AktPlanet` in `StarmapMode` 1) — `10·√(600/D)` virtual pixels. Every third frame a light runs one
@@ -1092,7 +1100,8 @@ replay is byte-exact. Camera steps, background particles and radar dots are bit-
 `camera_steps_match_the_exe_bits`, `the_background_matches_the_exes_records`, `quick1_rings_match_the_exes_particles`).
 The radial menu's story icons 0x10, 0x11, 0x12 (story wormhole, virus alert, gigabomb) are ported: offered in
 `rop_places`, fired through `Command::StoryIcon` into `Game::story_icon` (tests `story_icons_match_the_exe` in
-`ig2-sim` tests/save_replay.rs, `menus_reach_the_sim` in `starmap_menus.rs`). Missing: planets and clouds always at the last LOD level, no per-mesh light cache (§3.3);
+`ig2-sim` tests/save_replay.rs, `menus_reach_the_sim` in `starmap_menus.rs`). The rally arrows (§4.4) are drawn from `Snapshot::rally_arrows` (test `rally_arrows_run_from_the_humans_planets_to_their_rally_planets`).
+Missing: the wormhole arrows of §3.5; planets and clouds always at the last LOD level, no per-mesh light cache (§3.3);
 the production view's sinking buttons and wireframe twins (§12.2); the long info's stations (§15.2); an emptied fleet
 always goes by 0x1b, also in SP (§13.1). Open deviations: 47, 317.
 Captures: `run_screen.py … --kep 2 --planet P` with the flags of §11.1, §13.5, §18, §20.5 against `ig2-client
