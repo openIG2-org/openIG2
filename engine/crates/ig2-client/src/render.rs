@@ -165,6 +165,21 @@ impl Instance {
     pub fn new(kind: u32, center: [f32; 2], half: [f32; 2], color: [f32; 4]) -> Self {
         Self { center, half, rot: 0.0, kind, param: [0.0; 2], uv: [0.0, 0.0, 1.0, 1.0], color }
     }
+    /// The part of an unrotated sprite inside the pixel rectangle `clip` (x0, y0, x1, y1), its texture cut to match.
+    pub fn clipped(mut self, clip: [f32; 4]) -> Self {
+        let lo = [self.center[0] - self.half[0], self.center[1] - self.half[1]];
+        let size = [2.0 * self.half[0], 2.0 * self.half[1]];
+        for k in 0..2 {
+            let a = clip[k].max(lo[k]);
+            let b = clip[k + 2].min(lo[k] + size[k]).max(a);
+            let s = self.uv[k + 2] / size[k].max(f32::MIN_POSITIVE);
+            self.uv[k] += (a - lo[k]) * s;
+            self.uv[k + 2] = (b - a) * s;
+            self.center[k] = (a + b) / 2.0;
+            self.half[k] = (b - a) / 2.0;
+        }
+        self
+    }
     /// A solid triangle with the corners `a`, `b`, `c` (kind [`kind::TRI`]).
     pub fn tri(a: [f32; 2], b: [f32; 2], c: [f32; 2], color: [f32; 4]) -> Self {
         Self { param: c, ..Self::new(kind::TRI, a, b, color) }
@@ -2013,4 +2028,19 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         println!("  fleet {:3} owner {:2} at ({:8.3}, {:8.3}) -> px ({x:7.1}, {y:7.1})", f.slot, f.owner, f.pos[0], f.pos[1]);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clipped_sprite_keeps_its_texels_in_place() {
+        // A 100 × 50 sprite at (50, 25) cut to x 10..60, y −5..20: the texture's left 10 % and top 0 % on.
+        let i = Instance::new(kind::SPRITE, [50.0, 25.0], [50.0, 25.0], [1.0; 4]).clipped([10.0, -5.0, 60.0, 20.0]);
+        assert_eq!((i.center, i.half), ([35.0, 10.0], [25.0, 10.0]));
+        assert!(i.uv.iter().zip([0.1, 0.0, 0.5, 0.4]).all(|(a, b)| (a - b).abs() < 1e-6), "{:?}", i.uv);
+        // Wholly outside: nothing left.
+        assert_eq!(Instance::new(kind::SPRITE, [50.0, 25.0], [50.0, 25.0], [1.0; 4]).clipped([200.0, 0.0, 300.0, 50.0]).half[0], 0.0);
+    }
 }

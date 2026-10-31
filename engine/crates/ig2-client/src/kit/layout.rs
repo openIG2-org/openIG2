@@ -75,6 +75,22 @@ pub fn letterbox() -> bool {
     LETTERBOX.load(Ordering::Relaxed)
 }
 
+/// The "models inside boxes" option (ADR 0025; off = classic, as captures and snapshots draw): the info box's
+/// turning model is cut to the box.
+static BOX_MODELS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_box_models(on: bool) {
+    BOX_MODELS.store(on, Ordering::Relaxed);
+}
+
+/// The info box's rectangle (`[5, 423, 162, 52]`) in pixels, when [`set_box_models`] is on.
+pub fn box_model_clip(v: &crate::font::Virtual) -> Option<[f32; 4]> {
+    BOX_MODELS.load(Ordering::Relaxed).then(|| {
+        let ([x0, y0], [x1, y1]) = (v.px(5.0, 423.0), v.px(167.0, 475.0));
+        [x0, y0, x1, y1]
+    })
+}
+
 /// Under [`letterbox`], black over the side strips beside the frame: the 3D scenes and pictures stop at its edges
 /// while the 2D layer, which stays inside it, is untouched.
 pub fn letterbox_bars(f: &mut crate::render::Frame, l: &Layout, white: crate::render::TexId) {

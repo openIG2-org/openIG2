@@ -424,6 +424,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     app.display = crate::display::Display::from_settings(&app.settings);
     app.vsync = std::env::var("IG2_VSYNC").map_or(app.display.vsync, |v| v != "0");
     crate::kit::layout::set_letterbox(o.letterbox || app.display.letterbox);
+    crate::kit::layout::set_box_models(app.display.box_models);
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
         crate::spacewar_screen::go_live(&mut app.world, crate::spacewar_screen::Dump::load(&p)?.battle);
@@ -2982,6 +2983,7 @@ impl App {
             crate::kit::layout::set_letterbox(d.letterbox);
             self.reconfigure();
         }
+        crate::kit::layout::set_box_models(d.box_models);
         if d.live_background != old.live_background {
             self.backdrop.live = d.live_background;
         }

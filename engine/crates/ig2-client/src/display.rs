@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017) and the clean name entry (ADR 0024); kept in our settings file and shown as extra rows on the Options screen's game page
+//! language (ADR 0017), the clean name entry (ADR 0024) and the info boxes' models (ADR 0025); kept in our settings file and shown as extra rows on the Options screen's game page
 //! (`crate::options`, in the original's font and colours under a "Remake" heading). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -18,6 +18,8 @@ pub const LIVE_BACKGROUND: &str = "LiveBackground";
 pub const ONE_LANGUAGE: &str = "OneLanguage";
 /// ADR 0024: the save slot being named doesn't show its old name under the entry.
 pub const CLEAN_ENTRY: &str = "CleanNameEntry";
+/// ADR 0025: the info box's turning model is cut to the box.
+pub const BOX_MODELS: &str = "BoxModelsInside";
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -39,6 +41,7 @@ pub struct Display {
     pub letterbox: bool,
     pub live_background: bool,
     pub one_language: bool,
+    pub box_models: bool,
 }
 
 /// `"1920x1080"`.
@@ -61,6 +64,7 @@ impl Display {
             letterbox: f.int(LETTERBOX) == Some(1),
             live_background: f.int(LIVE_BACKGROUND) != Some(0),
             one_language: f.int(ONE_LANGUAGE) != Some(0),
+            box_models: f.int(BOX_MODELS) != Some(0),
         }
     }
 
@@ -134,6 +138,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(4, "Live background", LIVE_BACKGROUND, d.live_background as i32, Vec::new(), 1),
         row(5, "Names in game language", ONE_LANGUAGE, d.one_language as i32, Vec::new(), 1),
         row(6, "Clean name entry", CLEAN_ENTRY, (f.int(CLEAN_ENTRY) != Some(0)) as i32, Vec::new(), 1),
+        row(7, "Models inside boxes", BOX_MODELS, d.box_models as i32, Vec::new(), 1),
     ]
 }
 
@@ -152,12 +157,12 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let mut f = File::default();
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true });
         f.set(MODE, "2");
         f.set(RESOLUTION, "1280x720");
         f.set(VSYNC, "0");
         f.set(LETTERBOX, "1");
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true });
         assert_eq!(parse_size("12x7"), None);
     }
 
@@ -168,7 +173,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

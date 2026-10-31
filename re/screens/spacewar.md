@@ -1380,6 +1380,8 @@ normalise(a × v)`, `b = normalise(a × c)`, the columns `−a, −b, −c`; `Mu
 
 ## 9. Client status
 
+The info model (§5.2) is cut to the small info box `[5, 423, 167, 475]` by default, as on the starmap (`BoxModelsInside`, `spacewar_screen.rs` `put_fixed`; ADR 0025, row 434): the exe lets a long hull at x −545 reach past the box's left edge (battle grabs `grab3-t600`, `grab4-t800`).
+
 **Modules** (`engine/crates/ig2-client/src/`):
 - `spacewar_screen.rs`: the scene. The battle is drawn inside the starmap's view (`starmap::View`, its background, sky,
   clouds and planets) through `starmap::Camera::look` (the look-at camera of §2 in starmap units, `xcenter` included),

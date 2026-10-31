@@ -1103,6 +1103,7 @@ frames after the press).
 panel) open them in ig2.exe through `AktRopIkon`.
 
 ## Client status
+The bottom-left info box's turning model (planet globe, fleet model, §11) is cut to the box `[5, 423, 167, 475]` by default (`BoxModelsInside`, `starmap_hud.rs`; ADR 0025, row 434); snapshots and captures stay classic.
 Modules (`engine/crates/ig2-client/src/`): `starmap.rs` (camera, keys, background, routes, fleet sprites),
 `starmap_planet.rs` (planets, clouds), `starmap_radar.rs` (§6.3), `starmap_hud.rs` (console, side lights, button
 animation), `starmap_panels.rs` (§12, §13; the hold counter `KezdoIdo` steps 60 times a second), `starmap_menus.rs` (radial menu, long info, select menus §16, planet list

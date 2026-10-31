@@ -686,10 +686,11 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
 }
 
 /// A texture of [`fixed_texture`] over its rectangle.
-fn put_fixed(f: &mut crate::render::Frame, v: &crate::font::Virtual, tex: Option<crate::render::TexId>, rect: [f32; 4]) {
+fn put_fixed(f: &mut crate::render::Frame, v: &crate::font::Virtual, tex: Option<crate::render::TexId>, rect: [f32; 4], clip: Option<[f32; 4]>) {
     let Some(tex) = tex else { return };
     let [x0, y0, x1, y1] = rect;
-    f.push(tex, crate::render::Blend::Alpha, crate::render::Instance::new(crate::render::kind::SPRITE, v.px((x0 + x1) / 2.0, (y0 + y1) / 2.0), [(x1 - x0) * v.k / 2.0, (y1 - y0) * v.k / 2.0], [1.0; 4]));
+    let i = crate::render::Instance::new(crate::render::kind::SPRITE, v.px((x0 + x1) / 2.0, (y0 + y1) / 2.0), [(x1 - x0) * v.k / 2.0, (y1 - y0) * v.k / 2.0], [1.0; 4]);
+    f.push(tex, crate::render::Blend::Alpha, clip.map_or(i, |c| i.clipped(c)));
 }
 
 /// The weapon column's and the info model's rectangles (virtual).
@@ -1515,7 +1516,7 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
     // [obs fx7 t1000..t1245 with the big box open: weapons 5.0-8.6 -> 2.8-6.0; the info model then left its box].
     let mut column = Vec::new();
     scene.weapons(&mut column, &gfx.panel);
-    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT, s.kering, true, s.view.xcenter), COLUMN_RECT);
+    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT, s.kering, true, s.view.xcenter), COLUMN_RECT, None);
     let mut info = Vec::new();
     scene.info_model(&mut info, s.battle, s.spin, 1.0 - s.fade);
     let info_tex = fixed_texture(r, &mut gfx.info_target, &info, INFO_MODEL_RECT, s.kering, false, 320.0);
@@ -1523,7 +1524,7 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
         c.relight(r, s.kering, &cam.matrix());
     }
     crate::spacewar_hud::draw(f, hud, gfx.console.as_ref(), &virt, s);
-    put_fixed(f, &virt, info_tex, INFO_MODEL_RECT);
+    put_fixed(f, &virt, info_tex, INFO_MODEL_RECT, crate::kit::layout::box_model_clip(&virt));
 }
 
 /// A battle point on the virtual screen and the projection's pixels per battle unit there.

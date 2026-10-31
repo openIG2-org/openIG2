@@ -608,7 +608,8 @@ impl StarmapHud {
         // The info box's globe (`StarmapFrissitBolygoUrhajok`): over the box's fader, as the exe draws it (its
         // `PropertiesOn(0x2000000)` [obs: the capture's globe is undimmed by the fill]).
         if let Some(tex) = globe {
-            f.push(tex, Blend::Alpha, Instance::new(kind::SPRITE, v.px(320.0, 240.0), crate::kit::Wide::new(v).half(v), [1.0; 4]));
+            let i = Instance::new(kind::SPRITE, v.px(320.0, 240.0), crate::kit::Wide::new(v).half(v), [1.0; 4]);
+            f.push(tex, Blend::Alpha, crate::kit::layout::box_model_clip(v).map_or(i, |c| i.clipped(c)));
         }
         f.push(white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(271.0 + 49.0, 385.0 + 35.5), [49.0 * v.k, 35.5 * v.k], fade_color([0.0; 3], 1.0 - 0x40 as f32 / 255.0)));
         short_info(f, font, v, palette, pics, brushes, info, 1.0, 0.0);
