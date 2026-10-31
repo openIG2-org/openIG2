@@ -330,6 +330,10 @@ deterministic under test; nothing in it touches the sim except the injected comm
 - **Pause**: `HostSession::pause` / `ClientSession::pause` (`Msg::Session(SessionMsg::Pause)`); the session holds
   while any human's pause stands. Every change of who is paused, awaited (with the grace left) or away goes to every
   peer as `SessionMsg::Status(HoldStatus)`.
+- **Order results**: every machine runs the `MULTIGET_*` handlers, which update the issuer's own screen; ours: each
+  turn's order and colony-order events go to the screens' queues (`World::order_events`, `colony_events`) on every
+  machine and the screens filter by their empire (tested by `mp_lobby.rs::a_joiners_order_result_reaches_its_screens`).
+  `StarmapEvent::Merge` (row above, `AktFleet` after a merge) has no client handler yet.
 - **Under Options, Help and full-screen videos**: the time runs on, as in the original (its Options pause,
   `SetIdoPause` 0x541300, changes nothing in MP): the machine keeps pumping its session and running the ticks due
   (`World::run_on`); the turns' events wait for the game screens. Ours for the videos (the original's `st_ShowAnim`

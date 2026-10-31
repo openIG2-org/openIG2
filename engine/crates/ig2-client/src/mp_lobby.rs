@@ -1901,9 +1901,9 @@ mod tests {
 
     /// A joiner under Options, Help or a video (`World::run_on`, the window's frame then runs no game screen) for
     /// longer than the keep-alive: both machines' turns go on and nobody is dropped.
-    #[test]
-    fn a_joiner_under_options_keeps_the_session_running() {
-        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+    /// A started two-machine game: the host's world and the joiner's.
+    fn two_worlds() -> Option<(crate::world::World<'static>, crate::world::World<'static>)> {
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return None };
         let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
         let texts = crate::new_game::StartTexts::read(&inst).unwrap();
         let mut net = LoopNet::default();
@@ -1913,8 +1913,13 @@ mod tests {
         let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
         let hub = net.clone();
         let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242, Box::new(hub.clone()))).unwrap().map(|s| crate::world::World::new_mp(s, rules)).unwrap();
-        let mut a = mk(b);
-        let mut g = mk(started(&mut guests, &mut net).pop().unwrap());
+        let a = mk(b);
+        Some((a, mk(started(&mut guests, &mut net).pop().unwrap())))
+    }
+
+    #[test]
+    fn a_joiner_under_options_keeps_the_session_running() {
+        let Some((mut a, mut g)) = two_worlds() else { return };
         let t = std::time::Instant::now();
         let ms = || t.elapsed().as_millis() as u32;
         let mut clocks = [0, 1].map(|_| ig2_sim::time::TickClock::new(ig2_sim::time::SIM_TICK_MS, ms()));
@@ -1935,6 +1940,31 @@ mod tests {
             let s = net.status(epoch.elapsed());
             assert!(s.away.is_empty() && s.waiting.is_empty() && s.migrating.is_empty(), "{s:?}");
         }
+    }
+
+    /// A joiner's colony order runs on every machine and its result reaches the joiner's own screens
+    /// (`World::colony_events`, as `MULTIGET_Colony` updates the issuer's screen), not the host's.
+    #[test]
+    fn a_joiners_order_result_reaches_its_screens() {
+        let Some((mut a, mut g)) = two_worlds() else { return };
+        let joiner = g.net.as_ref().unwrap().0.peer().empire;
+        let turn = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().turn;
+        // On its own planet: another's is refused unseen (`Game::foreign_planet`).
+        let home = g.game.state.colony().planets.iter().position(|p| p.owner == joiner).expect("the joiner's planet");
+        g.send(ig2_sim::game::ColonyOrder::Build { planet: home as i32, kind: 0, x: 0, y: 0 }.into());
+        let t = std::time::Instant::now();
+        while turn(&a) < 20 || turn(&g) < 20 {
+            for w in [&mut a, &mut g] {
+                w.pump();
+                w.tick();
+            }
+            assert!(t.elapsed() < Duration::from_secs(60), "stalled");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        use ig2_sim::game::ColonyOrderEvent::{BuildRefused, Built};
+        let mine = |w: &crate::world::World| w.colony_events.iter().filter(|e| matches!(e, Built { empire, .. } | BuildRefused { empire, .. } if *empire == joiner)).count();
+        assert_eq!(mine(&g), 1, "{:?}", g.colony_events);
+        assert_eq!(mine(&a), 1, "every machine sees it; the screens filter by empire");
     }
 
     /// Host migration in the client (ADR 0012, rules/multiplayer.md §7.3) and an MP save resumed from the room: three
