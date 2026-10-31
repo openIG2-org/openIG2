@@ -12,6 +12,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - The starmap shows a faint arrow from each of your planets to its rally planet, under the fleet routes.
 - Story offers sent from the diplomacy screen's special menu now reach their episodes.
 - While the tutorial runs, the Options game page shows "Ground battle simulate" and "Space battle simulate" off and greyed out; your own settings come back afterwards (ADR 0019).
+- In multiplayer you can no longer move, rally, sell or change the settings of another player's fleets and planets, or give building orders on their colonies.
 - The credits video shows from its first frame instead of staying black for ten seconds.
 - Internet games through a relay server you run yourself: type its address on the multiplayer page, and joining by code then works behind any router (`docs/RENDEZVOUS.md`).
 - The client finds your GOG install by itself (registry, GOG Galaxy, the default folders) and checks `ig2.exe`.

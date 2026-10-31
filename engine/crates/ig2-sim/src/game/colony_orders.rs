@@ -140,18 +140,21 @@ impl Game<'_> {
         let e = issuer as usize % EMPIRES;
         let planets = self.state.planet_count();
         let planet = |p: i32| usize::try_from(p).ok().filter(|&p| (1..=planets).contains(&p));
+        // Everything but a satellite (meant for others' planets), the watched planet and a ground order (checked by
+        // `ground_order_allowed`) needs the issuer's own planet in multiplayer.
+        let own = |g: &Self, p: i32| planet(p).filter(|&p| !g.foreign_planet(issuer, p));
         let slots = |g: &Self, p: usize| g.state.mem.i32(va::BUILDING_SLOTS + 4 * p as u32).max(0) as usize;
         let slot = |g: &Self, p: usize, k: i32| usize::try_from(k).ok().filter(|&k| k >= 1 && k <= slots(g, p));
         match o {
             ColonyOrder::Build { planet: p, kind, x, y } => {
-                let (Some(p), Ok(kind)) = (planet(p), u8::try_from(kind)) else { return };
+                let (Some(p), Ok(kind)) = (own(self, p), u8::try_from(kind)) else { return };
                 if kind as usize >= self.rules.side.colony.buildings.len() {
                     return;
                 }
                 self.build(issuer, p, kind, (x, y));
             }
             ColonyOrder::Demolish { planet: p, slot: k } => {
-                let Some(p) = planet(p) else { return };
+                let Some(p) = own(self, p) else { return };
                 let Some(k) = slot(self, p, k) else { return };
                 let mut c = self.state.colony();
                 let kind = c.planets[p].buildings[k - 1].kind;
@@ -165,7 +168,7 @@ impl Game<'_> {
                 self.events.push(GameEvent::ColonyOrder(ColonyOrderEvent::Demolished { empire: issuer, planet: p, slot: k }));
             }
             ColonyOrder::Switch { planet: p, slot: k } | ColonyOrder::Priority { planet: p, slot: k } => {
-                let Some(p) = planet(p) else { return };
+                let Some(p) = own(self, p) else { return };
                 let Some(k) = slot(self, p, k) else { return };
                 let bit = if matches!(o, ColonyOrder::Switch { .. }) { 2 } else { 0x20 };
                 let mut c = self.state.colony();
@@ -174,7 +177,7 @@ impl Game<'_> {
             }
             ColonyOrder::Watch { planet: p } => self.state.mem.set_i32(at::WATCHING + 4 * issuer as u32, p),
             ColonyOrder::SelfDestruct { planet: p } | ColonyOrder::SelfDestructOff { planet: p } => {
-                let Some(p) = planet(p) else { return };
+                let Some(p) = own(self, p) else { return };
                 let v = if matches!(o, ColonyOrder::SelfDestruct { .. }) { 399 } else { -1 };
                 self.with_war(p, |w| w.field.self_destruct = v);
             }
@@ -186,7 +189,7 @@ impl Game<'_> {
                 self.with_war(p, |w| w.order(issuer as i32, order));
             }
             ColonyOrder::Repair { planet: p, slot: k } => {
-                let Some(p) = planet(p) else { return };
+                let Some(p) = own(self, p) else { return };
                 let Some(k) = slot(self, p, k) else { return };
                 let mut c = self.state.colony();
                 let b = c.planets[p].buildings[k - 1];

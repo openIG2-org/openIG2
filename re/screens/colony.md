@@ -298,7 +298,7 @@ Captures hold game imagery: `_local/snapshots/ref/`, never committed.
 ## 9. The colony screen's orders (`MULTIGET_Colony`)
 `MULTIGET_Colony` (ELF 0x4ec2e0, exe 0x48a270; found by its `Multi_GetNextTipus(0x1f, 0x27)` / `(300, 399)` calls) runs
 every frame like the starmap's handler (`re/screens/starmap.md` §10): each message is `Multi_Get(type, &issuer, …)`
-with int values, applied on every peer. Port: `ig2_sim::game::ColonyOrder` (`from_message`/`to_message`),
+with int values, applied on every peer. The exe checks no owner; multiplayer refuses Build, Demolish, Switch, Priority, SelfDestruct(Off) and Repair on another empire's planet (multiplayer.md §5.7). Port: `ig2_sim::game::ColonyOrder` (`from_message`/`to_message`),
 `Game::colony_order`, `ig2_net::Command::Colony { kind, values }`; outcomes for the issuer's screen are
 `GameEvent::ColonyOrder(ColonyOrderEvent)`. Values: planet p, building slot k (1-based), kind t.
 

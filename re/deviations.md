@@ -84,6 +84,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 401 | starmap, story icons 0x10-0x12 | the exe calls `Story_Special`/`FlottaMozgat`/`HajoDelete` straight from the screen; ours sends `Command::StoryIcon` through the lockstep (0x10/0x11 single player only, as the exe) | no | starmap.md §14.5 |
 | 412 | MP, full-screen videos | the machine keeps pumping its session and running ticks under a video; the exe's `st_ShowAnim` (0x602bb0) blocks, its network side unobserved | no | multiplayer.md §7.2 |
 | 413 | MP, space battle end | a machine without the battle screen up (rejoin, resumed save, battle decided under Options) opens it or sends 0x44d at once (`mp_battle_check`), and the screen's end sends no pause; the exe's behaviour after a rejoin is unobserved | no | multiplayer.md §7.1 |
+| 414 | MP order owner checks | in multiplayer every peer refuses starmap orders on another empire's fleet or planet (move 0x15, sell station, settings 1-4 and 8-10, rally, finish heads) and colony building orders (build, demolish, switch, priority, self-destruct, repair); the exe checks no owner (issue #24); single player as the exe | no | multiplayer.md §5.7, starmap.md §10.1, colony.md §9 |
 
 ## Enhanced proposals (owner decides)
 

@@ -559,6 +559,7 @@ fn two_humans_give_movement_orders_in_lockstep() {
     let e2 = 3u8;
     let (x6, y6) = (map.fleets[f6].x, map.fleets[f6].y);
     let (x3, y3) = (map.fleets[f3].x, map.fleets[f3].y);
+    let wp6 = map.fleets[f6].first_waypoint;
     let (f6, f3) = (f6 as i32, f3 as i32);
     let canonical = |state: SaveState| {
         let mut g = game(state, &rules);
@@ -576,7 +577,7 @@ fn two_humans_give_movement_orders_in_lockstep() {
     s.run_to(turns, |p| match (p.slot, p.turn) {
         (1, 2) => p.issue(Command::Starmap { order: StarmapCmd::Move { fleet: f6, order: 1, kind: 0, x: to(x6), y: to(y6) } }),
         (2, 3) => p.issue(Command::Starmap { order: StarmapCmd::Move { fleet: f3, order: 1, kind: 0, x: to(x3), y: to(y3) } }),
-        // Appending a waypoint to the other human's fleet is carried out too (0x15 has no owner check).
+        // Appending a waypoint to the other human's fleet is refused (the exe's 0x15 has no owner check; #24).
         (2, 4) => p.issue(Command::Starmap { order: StarmapCmd::Move { fleet: f6, order: 13, kind: 0, x: 0f32.to_bits(), y: 0f32.to_bits() } }),
         _ => {}
     });
@@ -586,11 +587,62 @@ fn two_humans_give_movement_orders_in_lockstep() {
         let m = p.game.state.starmap();
         let (a, b) = (&m.fleets[f6 as usize], &m.fleets[f3 as usize]);
         assert_eq!((a.order, a.tx, a.ty), (1, x6 * 0.5, y6 * 0.5), "6's move");
-        assert!(a.first_waypoint > 0, "the appended waypoint");
+        assert_eq!(a.first_waypoint, wp6, "no waypoint from the other human");
         assert_eq!((b.order, b.tx, b.ty), (1, x3 * 0.5, y3 * 0.5), "the second human's move");
         let w = m.wormholes.last().expect("the wormhole");
         let ends = [&m.fleets[w.fleet_a as usize], &m.fleets[w.fleet_b as usize]];
         assert!(ends.iter().all(|f| f.visible[6] == 1 && f.visible[e2 as usize] == 1), "both humans see the revealed ends");
+    }
+}
+
+/// Starmap and colony orders on another empire's fleet or planet are refused on every peer in multiplayer
+/// (`multiplayer.md` §5.7; the exe's `MULTIGET_Starmap` and `MULTIGET_Colony` check no owner): the second human's move
+/// of 6's fleet, demolition, repair, switch and rally on 6's planet change nothing; its own planet's rally goes through.
+#[test]
+fn orders_on_anothers_fleet_or_planet_are_refused() {
+    use ig2_sim::game::ColonyOrder;
+    let Some((rules, mut state)) = common::setup(SAVE) else { return };
+    let other = 3u8;
+    let (theirs, mine) = (11, 12);
+    state.fleets[theirs][0x15] = 6;
+    state.mem.set_u8(va::PLAYER_KI + other as u32, 1);
+    let mut c = state.colony();
+    let p6 = (1..c.planets.len()).find(|&p| c.planets[p].owner == 6 && c.planets[p].buildings[0].kind != 0).expect("a built planet of 6's");
+    let p3 = (1..c.planets.len()).find(|&p| c.planets[p].owner != 6).expect("another planet");
+    c.planets[p3].owner = other;
+    state.store_colony(&c);
+    state.fleets[mine][0x15] = other;
+    let canonical = |state: SaveState| {
+        let mut g = game(state, &rules);
+        g.canonical_view(6);
+        g
+    };
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, canonical(state.clone()), DEFAULT_DELAY));
+    s.join(2, other, |_| Peer::new(2, other, canonical(state.clone()), DEFAULT_DELAY));
+    let before = s.peers[0].0.game.state.colony();
+    let (p6i, p3i) = (p6 as i32, p3 as i32);
+    s.run_to(20, |p| match (p.slot, p.turn) {
+        (2, 2) => p.issue(Command::Starmap { order: StarmapCmd::Move { fleet: theirs as i32, order: 1, kind: 0, x: 0f32.to_bits(), y: 0f32.to_bits() } }),
+        (2, 3) => {
+            p.issue(ColonyOrder::Demolish { planet: p6i, slot: 1 }.into());
+            p.issue(ColonyOrder::Switch { planet: p6i, slot: 1 }.into());
+            p.issue(ColonyOrder::Repair { planet: p6i, slot: 1 }.into());
+        }
+        (2, 4) => {
+            p.issue(Command::Starmap { order: StarmapCmd::Rally { planet: p6i, target: p3i } });
+            p.issue(Command::Starmap { order: StarmapCmd::Rally { planet: p3i, target: p6i } });
+        }
+        _ => {}
+    });
+    assert!(agree(&s.peers) >= 20);
+    assert!(s.host.desyncs.is_empty(), "{:?}", s.host.desyncs);
+    for (p, _) in &s.peers {
+        let c = p.game.state.colony();
+        assert_eq!(p.game.state.starmap().fleets[theirs].order, state.starmap().fleets[theirs].order, "6's fleet not moved");
+        assert_eq!(c.planets[p6].buildings, before.planets[p6].buildings, "6's buildings untouched");
+        assert_eq!(c.planets[p6].production, before.planets[p6].production, "6's rally untouched");
+        assert_ne!(c.planets[p3].production, before.planets[p3].production, "3's own rally");
     }
 }
 

@@ -120,6 +120,9 @@ impl Game<'_> {
             StarmapOrder::Split { fleet } => self.split(issuer, fleet),
             StarmapOrder::Move { fleet, order, kind, x, y } => {
                 let Some(f) = self.fleet_slot(fleet) else { return };
+                if self.foreign_fleet(issuer, f) {
+                    return;
+                }
                 let g = self.globals();
                 let en = g.en;
                 let mut sent = None;
@@ -157,7 +160,7 @@ impl Game<'_> {
                 });
             }
             StarmapOrder::SellStation { planet: p, index } => {
-                let Some(p) = planet(p) else { return };
+                let Some(p) = planet(p).filter(|&p| !self.foreign_planet(issuer, p)) else { return };
                 self.with_ai(|_, w, _| w.sell_station(e, p, index));
             }
             StarmapOrder::Satellite { planet: p, kind } => {
@@ -173,7 +176,8 @@ impl Game<'_> {
                 self.state.store_colony(&c);
             }
             StarmapOrder::Setting { planet: p, what, value } => {
-                let Some(p) = planet(p) else { return };
+                // 5–7 copy the planet's settings to the issuer's own planets only.
+                let Some(p) = planet(p).filter(|&p| matches!(what, 5..=7) || !self.foreign_planet(issuer, p)) else { return };
                 let mut c = self.state.colony();
                 let n = planets.min(c.planets.len() - 1);
                 setting(&mut c.planets[..=n], p, e, what, value as u8);
@@ -207,13 +211,13 @@ impl Game<'_> {
                 self.state.store_colony(&c);
             }
             StarmapOrder::Rally { planet: p, target } => {
-                let Some(p) = planet(p) else { return };
+                let Some(p) = planet(p).filter(|&p| !self.foreign_planet(issuer, p)) else { return };
                 let mut c = self.state.colony();
                 c.planets[p].production[RALLY] = target as u8;
                 self.state.store_colony(&c);
             }
             StarmapOrder::FinishHeads { planet: p } => {
-                let Some(p) = planet(p) else { return };
+                let Some(p) = planet(p).filter(|&p| !self.foreign_planet(issuer, p)) else { return };
                 let mut c = self.state.colony();
                 let q = &mut c.planets[p].production;
                 for line in 0..2 {
@@ -364,6 +368,16 @@ impl Game<'_> {
         self.battlefield_hand_offs();
         self.hand_offs = 0;
         std::mem::take(&mut self.events)
+    }
+
+    /// Multiplayer refuses orders on another empire's planet or fleet; the original's `MULTIGET_Starmap` and
+    /// `MULTIGET_Colony` check no owner there (`multiplayer.md` §5.7).
+    pub(super) fn foreign_planet(&self, issuer: u8, p: usize) -> bool {
+        self.view != ViewMode::Classic && self.state.colony().planets[p].owner as usize != issuer as usize % EMPIRES
+    }
+
+    fn foreign_fleet(&self, issuer: u8, f: usize) -> bool {
+        self.view != ViewMode::Classic && self.state.fleets[f][0x15] as usize != issuer as usize % EMPIRES
     }
 
     fn fleet_slot(&self, f: i32) -> Option<usize> {
