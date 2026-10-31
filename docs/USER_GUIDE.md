@@ -33,7 +33,8 @@ Hosting asks your router to forward the game port (UPnP / NAT-PMP); the room sho
 click on that line switches it off. A generated galaxy's room also has an off-by-default "Space battle formations"
 row: with it on, each human side with six or more ships picks a formation before a real-time space battle starts.
 Its "Defeated players" row (off: leave, as in the original; on: stay and watch) lets a player whose empire falls
-return to the starmap, see the whole map and chat, without giving orders, until they leave.
+return to the starmap, see the whole map and chat, without giving orders, until they leave. With it on, others can
+also join the running game with Join under a new name to watch it.
 
 | Flag | |
 |---|---|

@@ -353,3 +353,75 @@ fn a_defeated_spectator_stays_in_step_and_orders_nothing() {
         assert!(back.spectators);
     });
 }
+
+/// ADR 0026: with the spectators option a newcomer is admitted to the running game as a spectator (empire 0, from
+/// the host's state): nobody waits for it, it orders nothing and it stays in step; without the option it is refused.
+#[test]
+fn a_newcomer_watches_a_running_game() {
+    let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
+    let rules = common::game_rules(&inst);
+    common::with_start_data(&inst, |data| {
+        use ig2_net::lobby::Refusal;
+        use ig2_net::{Command, StarmapCmd};
+        for spectators in [false, true] {
+            let mut h = LobbyHost::new_galaxy(settings(), 0xD20, RULES, "Host");
+            assert!(h.set_options(GalaxyOptions { planets: 20, ais: 1, spectators, ..GalaxyOptions::default() }));
+            let mut a = join(&mut h, "Alice");
+            pump(&mut h, &mut [&mut a], |h, c| h.state().members.len() == 2 && synced(h, c));
+            a.ready(true);
+            pump(&mut h, &mut [&mut a], |h, _| h.state().members.iter().skip(1).all(|m| m.ready));
+            assert!(h.set_ready(0, true));
+            let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242).ok().expect("the room starts");
+            let mut clients = vec![started(a, data, &rules).unwrap()];
+            let mut now = Duration::ZERO;
+            let step = |hs: &mut HostSession, clients: &mut [ClientSession], until: u64, now: &mut Duration| {
+                while hs.own.turn < until || clients.iter().any(|c| c.peer.turn < until) {
+                    *now += Duration::from_millis(10);
+                    hs.pump(*now, (hs.own.turn < until) as usize).unwrap();
+                    for c in clients.iter_mut() {
+                        let n = (c.peer.turn < until) as usize;
+                        c.pump(*now, n).unwrap();
+                    }
+                    assert!(*now < Duration::from_secs(120), "stalled at {}", hs.own.turn);
+                }
+            };
+            step(&mut hs, &mut clients, 20, &mut now);
+
+            // Carol knocks on the running game's door.
+            let (ours, theirs) = loopback();
+            hs.admit(Box::new(theirs), now);
+            let mut carol = LobbyClient::rejoin(Box::new(ours), "Carol", RULES, None, None);
+            while matches!(carol.pump().unwrap(), Status::Joining) {
+                now += Duration::from_millis(10);
+                hs.pump(now, 0).unwrap();
+                clients[0].pump(now, 0).unwrap();
+                assert!(now < Duration::from_secs(150), "the admission stalled");
+            }
+            if !spectators {
+                assert_eq!(carol.status, Status::Refused(Refusal::Started), "closed to newcomers");
+                continue;
+            }
+            assert_eq!(carol.status, Status::Admitted);
+            let mut link = carol.into_link().unwrap();
+            let start = loop {
+                if let Some(s) = ClientSession::wait_start(link.as_mut()).unwrap() {
+                    break s;
+                }
+                now += Duration::from_millis(10);
+                hs.pump(now, 0).unwrap();
+            };
+            assert_eq!(start.empire, 0, "a spectator plays no empire");
+            let mut watcher = ClientSession::new(&start, link, &rules).unwrap();
+            watcher.peer.issue(Command::Starmap { order: StarmapCmd::Pause { paused: true } });
+
+            // The players run on without waiting for the spectator, which then catches up.
+            step(&mut hs, &mut clients, 40, &mut now);
+            clients.push(watcher);
+            step(&mut hs, &mut clients, 60, &mut now);
+            assert!(!hs.own.game.paused() && clients.iter().all(|c| !c.peer.game.paused()), "the spectator's pause never went out");
+            assert!(agree(&hs.own, &clients[1].peer) >= 30, "the spectator is in step");
+            assert!(hs.host.desyncs.is_empty(), "{:?}", hs.host.desyncs);
+            assert_eq!(hs.humans().count(), 2, "no new human");
+        }
+    });
+}

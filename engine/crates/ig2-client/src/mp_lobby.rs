@@ -1524,7 +1524,8 @@ impl<'r> Session<'r> {
             }
             Session::Handover => None,
         }
-        .unwrap_or_else(|| format!("Empire {empire}"))
+        // Empire 0: a spectator's chat (ADR 0026).
+        .unwrap_or_else(|| if empire == 0 { "Spectator".into() } else { format!("Empire {empire}") })
     }
 
     /// The name of the player in `slot`.
@@ -1882,6 +1883,73 @@ mod tests {
         let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!("the host's world") };
         assert!(!session.host.log.iter().flat_map(|b| &b.commands).any(|c| c.issuer == joiner), "no order from the spectator");
         assert!(session.host.desyncs.is_empty() && !session.status(Duration::from_secs(1)).away.contains(&joiner));
+    }
+
+    /// ADR 0026: in a game with the "Defeated players" option a newcomer's Join to the running game makes it a
+    /// spectator (empire 0, the host's state now): the players are told, it sees the whole map, orders nothing and
+    /// stays in step.
+    #[test]
+    fn a_newcomer_joins_the_running_game_to_watch() {
+        use crate::world::World;
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(1, &mut net);
+        click(&mut host, spot::OPTION + 2 * 6 + 1, false, &mut net);
+        click(&mut guests[0], spot::READY, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready) && h.state().unwrap().galaxy.is_some_and(|g| g.spectators));
+        let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242, Box::new(hub.clone()))).unwrap().map(|s| World::new_mp(s, rules)).unwrap();
+        let mut worlds = vec![mk(b)];
+        worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
+        let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
+        let t = std::time::Instant::now();
+        let step = |worlds: &mut Vec<World>, until: &dyn Fn(&[World]) -> bool| {
+            while !until(worlds) {
+                for w in worlds.iter_mut() {
+                    w.pump();
+                    w.tick();
+                }
+                assert!(t.elapsed() < Duration::from_secs(60), "stalled");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        };
+        step(&mut worlds, &|w| turn(&w[0]) >= 10);
+
+        let mut watcher = MpScreen::open(false, "Watcher", RULES);
+        type_text(&mut watcher, "local", &mut net);
+        let b = loop {
+            for w in worlds.iter_mut() {
+                w.pump();
+                w.tick();
+            }
+            if let Some(Out::Start(b)) = watcher.tick(&mut net) {
+                break b;
+            }
+            assert!(t.elapsed() < Duration::from_secs(20), "no admission");
+        };
+        assert!(matches!(&b, Begun::Joiner { start, .. } if start.empire == 0 && !start.snapshot.is_empty()));
+        worlds.push(mk(b));
+        assert!(worlds[2].game.local.spectating);
+        let at = turn(&worlds[0]);
+        step(&mut worlds, &|w| turn(&w[2]) >= at + 5);
+        worlds[2].send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::Setting { planet: 1, what: 9, value: 3 } });
+        worlds[2].say(b"hello", &[]);
+        step(&mut worlds, &|w| w.iter().all(|w| turn(w) >= at + 30));
+
+        assert!(worlds[0].local_lines.iter().any(|l| l == b"Watcher is watching the game."));
+        assert!(worlds[1].chat_lines.iter().any(|l| l.0 == b"Spectator: hello"), "a spectator chats");
+        assert!(worlds[2].curr.planets.iter().all(|p| p.known), "a spectator sees every planet");
+        assert!(worlds[2].game.local.spectating && worlds[2].game.over.is_some(), "still watching, its game never ends");
+        let Some((Session::Host { session, .. }, _)) = &worlds[0].net else { panic!("the host's world") };
+        assert!(!session.host.log.iter().flat_map(|b| &b.commands).any(|c| c.issuer == 0), "no order from the spectator");
+        assert!(session.host.desyncs.is_empty());
+        let hashes = |w: &World| w.net.as_ref().unwrap().0.peer().hashes.clone();
+        let (h0, h2) = (hashes(&worlds[0]), hashes(&worlds[2]));
+        let common: Vec<_> = h2.iter().filter(|x| h0.contains(x)).collect();
+        assert!(common.len() >= 25 && h2.iter().all(|(t, x)| h0.iter().find(|(t0, _)| t0 == t).is_none_or(|(_, x0)| x0 == x)), "the spectator is in step");
     }
 
     /// ADR 0021: a joiner whose game drifts is resynchronised by the host, and both players are told on the message

@@ -341,8 +341,18 @@ protocol 7), the machine whose own empire dies plays the defeat videos and retur
 - It sees every planet, fleet and name (`LocalView::spectating`, machine-local, not synced).
 - Its screens' orders are dropped (`World::pump`); every peer ignores a bundle order from a dead empire (§5.7).
   Chat still works. Leaving = the menu exit (`Session::leave`).
-- Not done: joining a running game as a spectator. Tests: `ig2-net/tests/galaxy.rs`
-  `a_defeated_spectator_stays_in_step_and_orders_nothing`; `ig2-client` `mp_lobby.rs` `a_defeated_joiner_watches_without_orders`.
+- Late spectators (option on): a connection whose name is none of the game's humans is admitted at the running game's
+  door (after the version/rules/join code/password checks) as a spectator, at most 8 (`Refused{Full}` beyond), on
+  lockstep slots 0xF0..=0xF7 (`SPECTATOR_SLOTS`, `HostSession::watch`, `Host::add_watcher`). It gets `Welcome`, a
+  `Start` for empire 0 from the host's state now with `first_input = u64::MAX`, and the bundles since. The host
+  relays everything to it but never waits for it; its inputs are dropped and its hashes not compared; only chat
+  ("Spectator: ...") and leave are taken from it. Players' message line: "<name> is watching the game." Its machine
+  shows the whole map, its game never ends (`Game::over` set) and it takes no part in a host migration
+  (`ClientSession::successors` empty). No wire format change. In the room: the usual Join (address or join code)
+  under a new name.
+- Tests: `ig2-net/tests/galaxy.rs` `a_defeated_spectator_stays_in_step_and_orders_nothing`,
+  `a_newcomer_watches_a_running_game`; `ig2-client` `mp_lobby.rs` `a_defeated_joiner_watches_without_orders`,
+  `a_newcomer_joins_the_running_game_to_watch`.
 
 ### 7.2 The session layer (ours, ADR 0011 §4–§6; `ig2_net::session`)
 
@@ -400,7 +410,7 @@ deterministic under test; nothing in it touches the sim except the injected comm
   `WRONG_PASSWORD_DELAY`), and `Refused{TimedOut}` once `ADMISSION_TIMEOUT` passes or the link closes. Who comes
   back is the hello's name (truncated like the lobby's) matched against the session's humans (the names the
   members had in the lobby that started it, a resumed save's too): no human of that name → `Refused{Started}` (it is
-  closed to newcomers); every human of that name still connected → `Refused{Connected}`. Both are checked at the
+  closed to newcomers; with the spectators option it is admitted as a spectator instead, §7.1.3); every human of that name still connected → `Refused{Connected}`. Both are checked at the
   hello and again once the password checks out. Admitted: `Welcome{member: the human's slot}`, then the ordinary
   rejoin above (`Start`, `send_log`, status, `PlayerBack`). The door runs on the session's clock (`now`), so the
   delay and the timeout are deterministic under test; `LobbyHost` feeds it `Instant` time since its creation. The

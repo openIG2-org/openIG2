@@ -46,6 +46,9 @@ use crate::wire;
 pub const DEFAULT_GRACE: Duration = Duration::from_secs(60);
 /// How long a connected peer may be silent before it counts as dropped (either end; [`SessionSettings::keep_alive`]).
 pub const DEFAULT_KEEP_ALIVE: Duration = Duration::from_secs(10);
+/// Ours (ADR 0026): the lockstep slots of a running game's spectators, at most eight. The room's member ids count
+/// up from 1, so a game would need 240 joins before one met them.
+pub const SPECTATOR_SLOTS: std::ops::RangeInclusive<u8> = 0xF0..=0xF7;
 /// The marker of the session block after an MP save's state.
 pub const SESSION_MAGIC: &[u8; 8] = b"IG2RSESS";
 
@@ -169,6 +172,8 @@ pub enum SessionEvent {
     Kicked { empire: u8 },
     /// A connection was turned away at the admission.
     Refused(Refusal),
+    /// Ours (ADR 0026): `name` joined the running game as a spectator.
+    Watching { name: String },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -533,11 +538,13 @@ impl<'r> HostSession<'r> {
     pub fn pump(&mut self, now: Duration, max_turns: usize) -> Result<Vec<SessionEvent>, Error> {
         self.host.pump()?;
         for (slot, m) in self.host.take_inbox() {
+            // A spectator (empire 0, ADR 0026) may only chat and leave.
+            let player = self.host.empire_of(slot).is_some_and(|e| e != 0);
             match (m, self.host.empire_of(slot)) {
-                (SessionMsg::Pause(on), Some(empire)) => self.set_pause(empire, on),
+                (SessionMsg::Pause(on), Some(empire)) if player => self.set_pause(empire, on),
                 (SessionMsg::Leave, Some(_)) => self.left(slot)?,
                 (SessionMsg::Say(text), Some(empire)) => self.said(empire, &text),
-                (SessionMsg::Reach { port, cert }, Some(_)) => self.reached(slot, port, cert),
+                (SessionMsg::Reach { port, cert }, Some(_)) if player => self.reached(slot, port, cert),
                 _ => {}
             }
         }
@@ -702,11 +709,23 @@ impl<'r> HostSession<'r> {
     fn admit_rejoiners(&mut self, now: Duration) -> Result<(), Error> {
         let humans = &self.humans;
         let mut refused = Vec::new();
-        let admitted = self.door.pump(now, |name| returning(humans, name).err(), &mut refused)?;
+        // ADR 0026: with the room's spectators option a name that isn't the session's comes in to watch.
+        let watch = self.own.game.spectators && self.free_watcher().is_some();
+        let admitted = self.door.pump(
+            now,
+            |name| match returning(humans, name) {
+                Err(Refusal::Started) if watch => None,
+                r => r.err(),
+            },
+            &mut refused,
+        )?;
         self.queued.extend(refused.into_iter().map(SessionEvent::Refused));
         for (mut link, name) in admitted {
             // The door checked it last.
-            let i = returning(&self.humans, &name).expect("an away human of that name");
+            let Ok(i) = returning(&self.humans, &name) else {
+                self.watch(link, name)?;
+                continue;
+            };
             link.send(&Msg::Lobby(LobbyMsg::Welcome { member: self.humans[i].slot }));
             if matches!(self.humans[i].presence, Presence::Migrating { .. }) {
                 // A survivor of the migration: its `Resume` follows.
@@ -860,24 +879,57 @@ impl<'r> HostSession<'r> {
     }
 
     /// (Re)start `slot` on `link` from the host's state now; returns the snapshot's turn.
-    fn restart(&mut self, slot: u8, mut link: Box<dyn Transport>) -> Result<u64, Error> {
+    fn restart(&mut self, slot: u8, link: Box<dyn Transport>) -> Result<u64, Error> {
         self.catch_up()?;
         let h = self.humans.iter_mut().find(|h| h.slot == slot).expect("a session slot");
         h.heard = None;
         let empire = h.empire;
-        let snap = self.own.snapshot();
-        let delay = self.settings.delay;
-        let first_input = self.host.next_turn().max(delay);
-        let humans = self.humans.iter().map(|h| (h.slot, h.empire)).collect();
-        let session = self.info.clone();
-        let start = Start { slot, empire, delay, first_input, humans, session, snapshot: snap.to_file(rules_id(self.fingerprint), true), galaxy: None };
-        link.send(&Msg::Lobby(LobbyMsg::Start(Box::new(start))));
+        let first_input = self.host.next_turn().max(self.settings.delay);
+        let (turn, link) = self.send_start(slot, empire, first_input, link)?;
         let from = self.host.add_peer(slot, empire, link);
         debug_assert_eq!(from, first_input);
-        self.host.send_log(slot, snap.turn);
+        self.after_start(slot, turn);
+        Ok(turn)
+    }
+
+    /// The `Start` from the host's state now (every bundle sent run) on `link`; returns the snapshot's turn and the link.
+    fn send_start(&mut self, slot: u8, empire: u8, first_input: u64, mut link: Box<dyn Transport>) -> Result<(u64, Box<dyn Transport>), Error> {
+        self.catch_up()?;
+        let snap = self.own.snapshot();
+        let humans = self.humans.iter().map(|h| (h.slot, h.empire)).collect();
+        let session = self.info.clone();
+        let snapshot = snap.to_file(rules_id(self.fingerprint), true);
+        let start = Start { slot, empire, delay: self.settings.delay, first_input, humans, session, snapshot, galaxy: None };
+        link.send(&Msg::Lobby(LobbyMsg::Start(Box::new(start))));
+        Ok((snap.turn, link))
+    }
+
+    /// A (re)started slot gets the bundles since the snapshot's `turn` and the hold status.
+    fn after_start(&mut self, slot: u8, turn: u64) {
+        self.host.send_log(slot, turn);
         self.host.send_to(slot, &Msg::Session(SessionMsg::Status(self.sent.clone())));
         self.reachable = None;
-        Ok(snap.turn)
+    }
+
+    /// A free spectator slot ([`SPECTATOR_SLOTS`]).
+    fn free_watcher(&self) -> Option<u8> {
+        SPECTATOR_SLOTS.into_iter().find(|&s| self.host.empire_of(s).is_none())
+    }
+
+    /// ADR 0026: an admitted newcomer of a spectators game watches it: `Welcome`, a `Start` as empire 0 that owes no
+    /// input (`first_input` = `u64::MAX`), the bundles since. No slot left: `Refused{Full}`.
+    fn watch(&mut self, mut link: Box<dyn Transport>, name: String) -> Result<(), Error> {
+        let Some(slot) = self.free_watcher() else {
+            link.send(&Msg::Lobby(LobbyMsg::Refused(Refusal::Full)));
+            self.queued.push(SessionEvent::Refused(Refusal::Full));
+            return Ok(());
+        };
+        link.send(&Msg::Lobby(LobbyMsg::Welcome { member: slot }));
+        let (turn, link) = self.send_start(slot, 0, u64::MAX, link)?;
+        self.host.add_watcher(slot, link);
+        self.after_start(slot, turn);
+        self.queued.push(SessionEvent::Watching { name });
+        Ok(())
     }
 
     /// ADR 0007 §3: on a new desync report, restart every peer whose hash for a reported turn differs from the host's
@@ -1103,7 +1155,8 @@ impl<'r> ClientSession<'r> {
     /// if that's this peer's slot, the glue calls [`HostSession::migrate`], else [`ClientSession::migrate`] with a link
     /// to it.
     pub fn successors(&self) -> Vec<u8> {
-        if self.kicked {
+        // A spectator (ADR 0026) takes part in no migration: the game ends for it with the host.
+        if self.kicked || self.peer.empire == 0 {
             return Vec::new();
         }
         let s = &self.status;

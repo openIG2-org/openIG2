@@ -8,6 +8,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - The ground-war music now ends with the battle: the main track starts when the war is over or you return to the starmap.
 - In a ground war, tanks stand on the planet's ground instead of floating above it, and the landing ships fly in and set them down on screen, also while the game is paused.
 - Multiplayer: the host can let defeated players stay and watch the game (room option "Defeated players"; off keeps the original's exit to the menu).
+- Multiplayer: with the same room option, anyone can join a running game with Join under a new name to watch it.
 - Space battle: the retreat question fits inside its box and shows over the radar, as in the original.
 - Options: typing a save name over a used slot no longer shows the old name behind it (Remake row "Clean name entry"; off shows the original's look).
 - Starmap and space battle: the turning model in the bottom-left info box stays inside its box (Remake row "Models inside boxes"; off shows the original's look).

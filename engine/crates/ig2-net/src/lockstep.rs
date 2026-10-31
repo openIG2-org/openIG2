@@ -170,6 +170,12 @@ impl Host {
         from
     }
 
+    /// Ours (ADR 0026): a spectator on `slot` gets every bundle and message from now on, but owes no input (nobody
+    /// waits for it, anything it sends is dropped) and its hashes aren't compared (it is never resynced).
+    pub fn add_watcher(&mut self, slot: u8, link: Box<dyn Transport>) {
+        self.slots.insert(slot, Slot { empire: 0, link, from: u64::MAX, since: u64::MAX, heard: 0 });
+    }
+
     /// A peer left: later turns no longer wait for it. Returns its link (a resync reuses it).
     pub fn remove_peer(&mut self, slot: u8) -> Option<Box<dyn Transport>> {
         for inputs in self.inputs.values_mut() {

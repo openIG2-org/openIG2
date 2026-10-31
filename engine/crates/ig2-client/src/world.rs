@@ -603,6 +603,11 @@ impl<'r> World<'r> {
         let stand_in = Game::new(SaveState::from_parts(Default::default(), Vec::new()), rules);
         let mut game = std::mem::replace(&mut net.peer_mut().game, stand_in);
         local_en(&mut game, true);
+        // A late spectator (ADR 0026: the host's door gave it empire 0).
+        if net.peer().empire == 0 {
+            game.local.spectating = true;
+            game.over = Some(ig2_sim::game::GameOver::Ended);
+        }
         let chunks = game.state.chunks();
         let mut w = Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned()));
         w.net = Some((net, std::time::Instant::now()));
@@ -626,11 +631,18 @@ impl<'r> World<'r> {
     /// pumps, the game comes out again; the events feed the screens. Whether a turn ran.
     fn mp_pump(&mut self, turn: bool) -> bool {
         let Some((net, epoch)) = &mut self.net else { return false };
+        let watching = self.game.local.spectating;
         local_en(&mut self.game, false);
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
         let r = net.pump(epoch.elapsed(), usize::from(turn));
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
         local_en(&mut self.game, true);
+        // A spectator stays one through a restart from the host's state (ADR 0026); a late one (empire 0) from the
+        // start, and its machine's game never ends (`MEGHALAS`/`MEGNYERES` don't fire once `over` is set).
+        if watching || net.peer().empire == 0 {
+            self.game.local.spectating = true;
+            self.game.over.get_or_insert(ig2_sim::game::GameOver::Ended);
+        }
         let events = std::mem::take(&mut net.peer_mut().events);
         if let Ok((_, said)) = &r {
             for e in said {
@@ -639,6 +651,9 @@ impl<'r> World<'r> {
                         self.chat_lines.push((format!("{}: {text}", net.name_of(*empire)).into_bytes(), crate::chat::CHAT_COLOUR));
                     }
                     // Ours, in English (ADR 0021): a desync and its resync are told, and logged for bug reports.
+                    ig2_net::session::SessionEvent::Watching { name } => {
+                        self.local_lines.push(format!("{name} is watching the game.").into_bytes());
+                    }
                     &ig2_net::session::SessionEvent::Resynced { empire, turn, at } => {
                         eprintln!("multiplayer: empire {empire} diverged at turn {turn}, resynchronised from turn {at}");
                         self.local_lines.push(format!("{}'s game was out of step and has been resynchronised.", net.name_of(empire)).into_bytes());
