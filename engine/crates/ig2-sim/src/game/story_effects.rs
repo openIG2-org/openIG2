@@ -963,6 +963,19 @@ mod tests {
     }
 
     #[test]
+    fn a_sent_special_reaches_the_story() {
+        // `EldontIgenNemUzenet` 0x4c01e0, cat 4: `Story_Diplomacy_Special(SpecialLeiro[sub].id, b)` (0x5c8c60) stores
+        // `(id, b)` at 0xF2656C, the answer 0xF42660 := 0, and runs `Story_Check(1)`.
+        let rules = GameRules { story: StoryRules { diplomacy_specials: vec![0x2179, 0x217b], ..Default::default() }, ..Default::default() };
+        let mut g = game(&rules);
+        g.state.store_story(&crate::story::Story::default());
+        let en = g.state.mem.i32(crate::save::va::EN);
+        let msg = crate::diplomacy::Message { cat: crate::diplomacy::cat::SPECIAL, sub: 1, ..Default::default() };
+        g.diplomacy_message(crate::diplomacy::Letter { from: en, to: 2, declaration: false, msg });
+        assert_eq!(g.state.story().diplomacy, (0x217b, 2, 0));
+    }
+
+    #[test]
     fn joined_fleets_are_read_back_by_the_battle() {
         use crate::game::battles::at;
         let rules = GameRules::default();

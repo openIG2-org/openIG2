@@ -267,6 +267,6 @@ For MP (ADR 0003, ADR 0007) the screen's contact-list writes and the birthday fl
 as `Command::DiplomacyScreen`, one frame later than the original; unseeded text variants use the client's UI
 generator; the counter-proposal being composed (`+0x19`/`+0x1c`/`+0x20`) isn't saved. Menu 0x2e sends
 `DiplomacyScreenOp::Cancelled`, which clears the sender's `+0x16`/`+0x0c` and the receiving human's `+0x17` in the
-same lockstep tick (the original clears the sender's at once, the receiver's a frame later). Missing: `DEBUGX`, the demo mode, `dipbck8`'s child 2; the story's `Diplomacy_AddSpecial`/
-`RemoveSpecial` and the AI's `Story_Diplomacy_Special` hook are unrouted (a save's list shows, a campaign adds none).
+same lockstep tick (the original clears the sender's at once, the receiver's a frame later). Missing: `DEBUGX`, the demo mode, `dipbck8`'s child 2. The story's `Diplomacy_AddSpecial`/
+`RemoveSpecial` write the list and the AI's `Story_Diplomacy_Special` hook reaches the story (`rules/diplomacy.md` §6.2).
 Capture: `run_screendiff.py … diplomacy --anim-frame 20|50|70` and the sequence `scripts/diplomacy.json`.

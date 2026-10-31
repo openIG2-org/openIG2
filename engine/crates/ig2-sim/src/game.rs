@@ -1363,7 +1363,18 @@ impl<'r> Game<'r> {
     /// A human's message out of the lockstep queue (`MULTIGET_Diplomacy` exe 0x4c7880, packet 0x3e →
     /// `FeldolgozAjanlat`, `re/rules/diplomacy.md` §10.2); its deals reach money, planets and research.
     pub fn diplomacy_message(&mut self, letter: diplomacy::Letter) {
+        let n = self.events.len();
         self.with_deals(|d, w, deals| d.receive_message(w, deals, letter));
+        // `Story_Diplomacy_Special` (exe 0x5c8c60, called with `SpecialLeiro[sub].id` from the cat-4 branch of
+        // `EldontIgenNemUzenet` 0x4c01e0) runs `Story_Check(1)` inside the AI's decision; here once the deal is stored.
+        let specials: Vec<(i32, u8)> = self.events[n..].iter().filter_map(|e| match *e {
+            GameEvent::Diplomacy(DiploEvent::DiplomacySpecial { special, to }) => Some((special, to)),
+            _ => None,
+        }).collect();
+        for (k, to) in specials {
+            let Some(&id) = self.rules.story.diplomacy_specials.get(k.max(0) as usize) else { continue };
+            self.with_story(|st, w| st.diplomacy_special(id, to as i32, &story_chain(), w));
+        }
     }
 
     /// Human `issuer`'s diplomacy screen writes to its contact-list slot of `empire` (`re/screens/diplomacy.md` §9).

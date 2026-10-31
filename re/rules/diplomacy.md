@@ -240,7 +240,9 @@ Tutorial → yes. `bonus = race[a] == 7 ? 1000 : 0`. For AI-to-AI messages (cat 
 - cat 6: yes.
 Deals (cat 1/2/3/4, only the human sends them; exe order):
 - cat 4 (special `sub`): `Lehetseges = 1`, `Story_Diplomacy_Special(SpecialLeiro[sub], b)` (exe 0x5c8c60, story
-  hook: an event), then **no**.
+  hook: an event), then **no**. Ported: `Game::diplomacy_message` calls `Story::diplomacy_special` (which/e at
+  0xF2656C/0xF26570, answer 0xF42660 := 0, flag 0xF2F8B9 := 1, `Story_Check(1)`) right after the deal is stored; the exe
+  runs the check inside the AI's decision (same command, kept).
 - cat 2 (demand) with sub 3 (a tech) that b hasn't developed (status ≠ 5) → no. cat 1 with sub2 3 (b's tech)
   that b hasn't developed → no.
 - `bonus` as above; `give = Ertek(a, sub, value, demand = cat 2, offer_for = cat 1, level[b][a])` (§6.3) for
@@ -430,8 +432,8 @@ Cancel: `+0x58 = 1`, `+0x17 = 0`, `Multi_Send(0x41, EN, f)` (a no-op handler in 
 
 ## 11. Not ported (open)
 The human's screen (which messages it lets the human compose, its texts and answers) is `re/screens/diplomacy.md`.
-`MiertValaszolt…` reason codes and `vv_*` text flags, `Story_Special` and
-`Story_Diplomacy_Special`, `NEWGAME_Diplomacy` (initial ruler ages and the cosmetic tables), the MP transport
+`MiertValaszolt…` reason codes and `vv_*` text flags, `Story_Special`,
+`NEWGAME_Diplomacy` (initial ruler ages and the cosmetic tables), the MP transport
 (§10.2; the 0x3d/0x40/0x41 handlers), the
 alias of `DiplomaciaMikorHivtaUtoljara` with the AI table, the race diplomacy thresholds (`FajBekeMogalomSzint`
 & co. have no reader in the ELF).

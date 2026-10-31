@@ -4,7 +4,7 @@
 //! ([`World::send`]: fleet orders, research, spy missions, the messages screen's answers) and reads the state, so the
 //! same driver plays a peer of a multiplayer game.
 
-use ig2_net::{Command, ResearchCmd, SpyOrder, StarmapCmd};
+use ig2_net::{Command, ResearchCmd, SpyOrder, StarmapCmd, Terms};
 use ig2_sim::game::Game;
 use ig2_sim::save::va;
 use ig2_sim::story::Story;
@@ -83,6 +83,10 @@ pub fn answer(id: i32) -> Option<Answer> {
 /// empire 1).
 const MISSIONS: &[(i32, i32, u8)] = &[(861, 8611, 1)];
 
+/// The story diplomacy specials a player sends (menu 0x32, re/screens/diplomacy.md §6.1): (story, special) (elem.md
+/// 857: buy the alliance, 858: the pacts, 860: the tribute).
+const SPECIALS: &[(i32, i32)] = &[(857, 8571), (858, 8581), (860, 8601)];
+
 /// The fleets the story may take from the AI at once.
 const FLEETS: usize = 2;
 
@@ -90,6 +94,8 @@ const FLEETS: usize = 2;
 #[derive(Debug, Default)]
 pub struct Driver {
     pub orders: u32,
+    /// The specials sent: (id, empire).
+    sent: Vec<(i32, i32)>,
 }
 
 /// One fleet goal: what the story wants a fleet to do.
@@ -114,6 +120,7 @@ impl Driver {
             }
         }
         self.spies(w, en, &story, notes);
+        self.specials(w, en, &story, notes);
         // 840: five colonies in time, or the human loses its planets (or dies).
         if story.is_running(840) {
             self.colonise(w, en, notes);
@@ -168,6 +175,24 @@ impl Driver {
             w.send(Command::Starmap { order: StarmapCmd::Colonise { planet: p as i32, kind: 1 } });
             self.orders += 1;
             notes.push(format!("colonise {p}"));
+        }
+    }
+
+    /// Each story special offered (`SpecialLista`, exe 0xA42DE8) is sent once while its story runs (cat 4, `sub` =
+    /// the `SpecialLeiro` index); 8571 only with the 2,000,000 it costs (the menu disables it below that).
+    fn specials(&mut self, w: &mut World, en: usize, story: &Story, notes: &mut Vec<String>) {
+        let m = &w.game.state.mem;
+        let n = m.i32(0xA41DC4).clamp(0, 200) as u32;
+        let money = m.f64(va::MONEY + 8 * en as u32);
+        let list: Vec<[i32; 3]> = (0..n).map(|i| std::array::from_fn(|f| m.i32(0xA42DE8 + 12 * i + 4 * f as u32))).collect();
+        for [id, e, k] in list {
+            let running = SPECIALS.iter().any(|&(s, x)| x == id && story.is_running(s));
+            if !running || self.sent.contains(&(id, e)) || (id == 8571 && money < 2_000_000.0) {
+                continue;
+            }
+            self.sent.push((id, e));
+            w.send(Command::DiplomacyMessage { to: e, declaration: false, terms: Terms { cat: 4, sub: k, ..Default::default() } });
+            notes.push(format!("special {id} to {e}"));
         }
     }
 

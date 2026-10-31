@@ -179,6 +179,9 @@ the x87 stack and is stored as f64 for the compare with the f64 constant 2e6. Qu
 `v(8589)` (857's start leaves whether it found an empire; 858 aborts without), 858 asks for the battle fleet's owner
 live while 824 reads `GrWarFlottaTulaj`; `WIN`'s undo type 3 takes back every special still offered
 (`Diplomacy_RemoveSpecial`, logged as `diplremove`).
+Port status: the specials a player sends reach the stories (`Game::diplomacy_message` → `Story::diplomacy_special`,
+`rules/diplomacy.md` §6.2); the play-through sends 8571, 8581, 8601 (`D(8601)` ends 860; 857's needs the
+2,000,000 credits and 858 ends with empire 5's death).
 
 **Part 2d: the evacuation, the pirates' bases, the police strike, the ultimatum and the blockade** (801, 804, 806, 807,
 809; `engine/crates/ig2-sim/src/elem/crises.rs`, verified at runtime: `traces/2026-10-17-elem2d.md`; exe blocks at the

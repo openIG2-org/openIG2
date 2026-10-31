@@ -23,8 +23,9 @@ at the next cleanup.
   input on the client).
 - [ ] **Story spy missions in the sim**: the spy pass never asks the story (`game.rs` hands it a `StoryCheck` hook that always answers no), so
   story 863's end (CampaignOver) can't resolve (`re/rules/campaign/elem.md` 861/863).
-- [ ] **Diplomacy specials reach the stories**: the routes of stories 857/858/860 (`ig2-sim/src/diplomacy.rs`
-  :1365, `re/rules/campaign/elem.md`).
+- [x] **Diplomacy specials reach the stories**: a special the AI receives reaches stories 857/858/860
+  (`Game::diplomacy_message`); the play-through sends them. Still blocked: 857's purchase needs 2,000,000 credits
+  (the AI-played human never has them) and 858 waits for empire 5's death.
 - [ ] **Fleet panic in story 856**: the raider ordered at fleet `OsszHanyFlotta + 1` panics at `fleet.rs:570`
   (play-through `--seed 1`).
 - [x] **MP loopback play-through**: the same harness for a 2-peer loopback MP game (desync check): `ig2-client --playthrough mp`.

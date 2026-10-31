@@ -73,7 +73,7 @@ State: **verified** = matched against the exe at runtime (Frida or capture); **p
 - **U15** Colony side: MP economy steps untraced (the desync soak found no peer-to-peer desync here, `rules/multiplayer.md` §7.1.1); story yields `st_v(0x5FB/0x60F)` in `EpuletNew`; the `+0xba` counter of `BolygoInfoRemove`.
 - **U17** Real-time space battle: MP, chain lightning, the victory flight, several battles at once (shared pools), > 2 participants untraced.
 - **U18** Production/research: MP paths, MP slow-down, station rally untraced (soak: no peer desync).
-- **U20** Diplomacy: reason codes (`MiertValaszolt…`) and `vv_*` flags, `Story_Diplomacy_Special` routing (`SpecialLista` never written), `NEWGAME_Diplomacy`, MP, `ProgramPlayers` 18. Blocks AI-to-human message texts (also U25 ids 6/10).
+- **U20** Diplomacy: reason codes (`MiertValaszolt…`) and `vv_*` flags, `NEWGAME_Diplomacy`, MP, `ProgramPlayers` 18. Blocks AI-to-human message texts (also U25 ids 6/10).
 - **U21** Espionage: story missions (`StoryEredmenyKem*`), `EpuletDelete`'s colony-screen/ground-war targets; spy screen sounds.
 - **U22** AI empire: MP pace observed in ig2.exe (`ai-empire.md` §14: same as the sim; per-call MP branches still untraced); `ProgramPlayers` 18 overflows (`Kemek`, `MiTervMutato`); `INIT_MI_KIESETT` (dropped player) only unit-tested.
 - **U23** Ground war: `GenerateMap` editor mode, `Refresh2` visuals, `UpgradeTanks`, MP (soak: no peer desync), stealth, mines untraced; planet deals don't reach the battlefield.

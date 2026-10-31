@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Story offers sent from the diplomacy screen's special menu now reach their episodes.
 - The credits video shows from its first frame instead of staying black for ten seconds.
 - Internet games through a relay server you run yourself: type its address on the multiplayer page, and joining by code then works behind any router (`docs/RENDEZVOUS.md`).
 - The client finds your GOG install by itself (registry, GOG Galaxy, the default folders) and checks `ig2.exe`.

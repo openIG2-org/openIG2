@@ -75,8 +75,8 @@ changes the state), the stories left running and what the client was asked to sh
 the end's: `video Won` is the race's win clip and `misc/end_campaign_win.bik`). In a campaign the harness also
 plays the story's part a player plays (`playthrough/story.rs`): it answers the episodes' messages the way that keeps
 the storyline going (or leaves one to expire), researches the techs an episode asks for, sends a spy on the story's
-spy missions, and gives up to two fleets the story's targets (the story planets the rebels and the episodes'
-invaders hold, the raiders to hunt, a planet to guard or visit, empire 5's planet of story 858); everything else
+spy missions, sends the story specials (8571 with 2,000,000 credits, 8581, 8601) once each, and gives up to two
+fleets the story's targets (the story planets the rebels and the episodes' invaders hold, the raiders to hunt, a planet to guard or visit, empire 5's planet of story 858); everything else
 stays the AI's. Whether the AI-played human wins the war depends on the seed: on difficulty 1, `campaign:1:1:1` and
 `campaign:1:1:2` with `--seed 2` and `campaign:2:1:2` with the default seed end won (the end video); campaign 3
 isn't won yet, and story 863's end (CampaignOver) waits on the story spy missions (861).
