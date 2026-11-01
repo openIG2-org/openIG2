@@ -31,6 +31,7 @@ counter): a proposed row takes the next free number there (484).
 | 2026-11-01 | Multiplayer orders must feel as responsive as in single player. |
 | 2026-11-01 | No console window beside the game. |
 | 2026-11-01 | CI runs on pull requests, by hand and before every release, not on every push; a release follows every finished bigger package, with its changelog. |
+| 2026-11-01 | Every original screen and in-game UI element gets a modern version on the egui layer: close to the original's layout and flow, yet its own modern look; the classic look keeps the original. Planned, not started. |
 
 ## Ideas
 
@@ -38,6 +39,7 @@ Grouped by area; sizes are rough guesses for one developer.
 
 | Area | Idea | Why | Rough size |
 |---|---|---|---|
+| UI | **Decided, planned.** Modern versions of every original screen and in-game UI element on the egui layer (ADR 0062), reusing the modern HUD's and in-game menu's style and widgets; each close to the original's layout, functions and keys, with its own modern look; classic keeps the original. In order of use: the starmap's long-press planet and fleet menus (radial icons, select menus, long info), the colony screen and its building/ground-war panels, production, research, information (list, detail mode, star log), diplomacy (menus, dialogue), trade, ship design, spy screen, messages, the space battle's and ground war's panels, the end and statistics screens | the original's screens look their age next to the modern HUD; one consistent UI | months, one screen per package |
 | UI | **Decided: egui.** The modern UI framework: an ADR, egui drawn inside our frame (after the 3D, before the cursor), input routed to it first when it wants it, the UI theme as an egui style, fonts that read the install's own glyphs or a bundled free font, scaling with UI scale; the main-menu Options screen moved onto it as the first designed page. Part 1 shipped: the framework and the main-menu Options page (ADR 0062); part 2 shipped: the multiplayer pages (ADR 0066); part 3 shipped: the starmap HUD (ADR 0065) | a modern, consistent, maintainable UI for every remake screen | 2-3 weeks |
 | Starmap | **Shipped** (ADR 0065, row 485): the top bar, the selection's info card, the camera buttons and the minimap. Still the original's, possible later work: the radial and select menus, the production, transfer, fleet and vehicle panels and the long info | the most-used screen looks its age | done; the rest weeks |
 | Speed | Optimisation: profile the frame and the sim tick (`docs/perf.md`), faster loading, fewer draw calls | smooth play at high refresh rates and on weak machines | part 1 done (`docs/perf.md` → Measurements: start 2.2 → 0.7 s, the ground war's rebuild hitch 24 → 4 ms, a late tick −16 %); part 2 done (`docs/perf.md` → part 2: start with texture upscaling 5.6–7.1 → 2.5–3.9 s, the starmap's ground-war marks 0.15 → 0.09 ms a tick; frames 1–2.5 ms with every option on); next: the battle status's walk over every planet, state views kept decoded across a tick's systems, the hires textures' levels off the frame thread, the colony rebuild's meshes, the device made while the rules load |
