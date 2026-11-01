@@ -6,13 +6,13 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original; listed in `docs/ENHANCEMENTS.md`). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (457).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (469).
 
 ## Open: player-visible
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
-| 453 | colony, ruins | after a building's ruin the exe keeps the building's ground plate (the pad stays, the scorch mark lies on it); the client's plate goes with the building model | yes | colony.md §5 |
+| 465 | colony, ruins | after a building's ruin the exe keeps the building's ground plate (the pad stays, the scorch mark lies on it); the client's plate goes with the building model | yes | colony.md §5 |
 
 ## Open: minor
 
@@ -38,7 +38,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 417 | top bar, message line | the exe skips the line and the "new message" text while an error text (`HibaUzenetSzoveg`) is up, and on the colony screen while `StoryAdat+0xb4` is set shows story text `_s(5, 0x215d)` instead; the client has neither | minor | hud.md §2 |
 | 418 | MP, start story | the start story begins `delay` turns after the start (a lockstep `Command::StoryStart`, the same turn on every machine); the exe sends `Multi_Send(0x65)` right after `InitNewGame` (`FRISSIT_Start` 0x5bc590) | minor | start.md §3 |
 | 419 | MP, start story config | the config line `mpstory` (`Start_Belep` 0x5bf4b0) is not read (no reader for the original config file; `storyline`/`storymap` are read as 0 the same way), so the start story begins at 0 | minor | start.md §3 |
-| 454 | colony, collapsing building | a collapsing building sinks through its collapse frames in the exe (`Rom::Update`'s `SetFrame`, high building detail); the client only fades it out | minor | colony.md §5 |
+| 466 | colony, collapsing building | a collapsing building sinks through its collapse frames in the exe (`Rom::Update`'s `SetFrame`, high building detail); the client only fades it out | minor | colony.md §5 |
 | 431 | starmap, rename | Esc in a rename ends it even while a screen change is pending; the exe's `DoKeyboard` (0x4db1a0, case 0x1b) tests `bae24c`/`bae24d`/`bae250` first | minor | starmap.md §10.7 |
 
 ## Keep
@@ -96,8 +96,8 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 424 | MP, dropped, left or kicked player | the host injects `PlayerAway` at once (outside a battle) or after the grace (real-time battle); every peer sets `PlayerKi` 1→2 and starts the AI (`init_dropped`) as the exe's 0x404 does; a rejoin (not a kick) hands the empire back with `PlayerBack` (the exe has no way back). Not mirrored: the "computer" rename, `ProgramMachines`, the red line (our "X has left the game." status line stays) | yes | starmap.md 0x404 row, multiplayer.md §7.1 |
 | 429 | starmap, production counts and transfer cells | the hold repeat (`KezdoIdo`, hot-spots 0x1a..0x29 and 0x43..0x52) counts 60 frames a second, not once per rendered frame (ADR 0016) | no | starmap.md §12.4, §13.4 |
 | 430 | starmap, waypoint light | `waypointvillogo` steps every second of 60 frames a second, not every second rendered frame (ADR 0016) | no | starmap.md §4.3 |
-| 455 | colony, scorch marks | `Koszfolt::Refresh` draws stream 0 (`rndlog(0, 0, 99)`) once a sim tick per scorch mark while the colony screen shows them; the sim doesn't make these draws (they depend on the viewer's screen, which lockstep can't share), so later stream-0 draws (dropship heights) can differ from the exe's in a single-player game while marks are up; the client fades its marks from its own stream | no | colony.md §5 |
-| 456 | colony, war effects | the ruins' two lights (`Feny`) and `Detonate`'s type-1 particles aren't drawn; scorch marks of another planet's `Detonate`/`SelfDestruct` aren't drawn on the shown planet (the exe does); tracer and beam jitter come from the client's own random stream (the exe shares libc's) and the debris' model pick from the slot | no | colony.md §5 |
+| 467 | colony, scorch marks | `Koszfolt::Refresh` draws stream 0 (`rndlog(0, 0, 99)`) once a sim tick per scorch mark while the colony screen shows them; the sim doesn't make these draws (they depend on the viewer's screen, which lockstep can't share), so later stream-0 draws (dropship heights) can differ from the exe's in a single-player game while marks are up; the client fades its marks from its own stream | no | colony.md §5 |
+| 468 | colony, war effects | the ruins' two lights (`Feny`) and `Detonate`'s type-1 particles aren't drawn; scorch marks of another planet's `Detonate`/`SelfDestruct` aren't drawn on the shown planet (the exe does); tracer and beam jitter come from the client's own random stream (the exe shares libc's) and the debris' model pick from the slot | no | colony.md §5 |
 | 432 | window icon | the game and the setup window, the taskbar and the program file show the remake's own drawn icon, not the original's (the project ships no original assets) | minor | - |
 
 ## Enhanced

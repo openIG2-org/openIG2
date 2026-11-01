@@ -12,7 +12,7 @@ How an idea moves:
 4. **Shipped**: the option exists; the row names its setting and ADR.
 
 Ideas have no number; a row gets one when it is proposed. Numbers are shared with `re/deviations.md` (one
-counter): a proposed row takes the next free number there (453).
+counter): a proposed row takes the next free number there (469).
 
 ## Decisions
 
