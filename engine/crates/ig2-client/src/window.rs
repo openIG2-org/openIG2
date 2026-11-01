@@ -185,6 +185,8 @@ struct App {
     vsync: bool,
     /// The display settings as last applied (crate::display).
     display: crate::display::Display,
+    /// ADR 0035: the fleets on Ctrl/Alt+1..9, kept beside the save.
+    fleet_groups: crate::fleet_groups::Groups,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -618,6 +620,7 @@ impl App {
             start,
             vsync: std::env::var("IG2_VSYNC").map_or(true, |v| v != "0"),
             display: crate::display::Display::from_settings(&ig2_formats::options::Options::default()),
+            fleet_groups: Default::default(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
             left_down: None,
@@ -3057,7 +3060,8 @@ impl App {
             Some(r) => r?,
         };
         let file = crate::options::slot_file(state, name, [y, m, d]);
-        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(path, file)).map_err(|e| {
+        let groups = self.fleet_groups;
+        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(path, file)).and_then(|_| groups.store(path)).map_err(|e| {
             eprintln!("ig2-client: {}: {e}", path.display());
             format!("Cannot save: {e}")
         })
@@ -3105,6 +3109,7 @@ impl App {
         match World::load_slot(path, self.rules, &self.tech_defaults, &self.volatile) {
             Ok(w) => {
                 self.start_world(w);
+                self.fleet_groups = crate::fleet_groups::Groups::load(path);
                 // `Options_Main`'s load: the last planet whose ground war runs (`GetWarfareStatus == 1`) opens on its
                 // colony screen (`AktKepKell 3`, back to the starmap).
                 let n = self.world.game.state.planet_count();
@@ -3174,6 +3179,7 @@ impl App {
         self.tutorial = None;
         self.research_place = None;
         self.akt_planet = None;
+        self.fleet_groups = Default::default();
         self.volt_harc = false;
         self.world = w;
         self.autosave = (self.world.curr.date(), 0);
@@ -5098,7 +5104,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.spacewar.is_some() => self.spacewar_key(&event),
-            WindowEvent::KeyboardInput { event, .. } if self.wasd_key(&event) || self.colony_camera_key(&event) || self.trade_key(&event) || self.starmap_key(&event) => {}
+            WindowEvent::KeyboardInput { event, .. } if self.fleet_group_key(&event) || self.wasd_key(&event) || self.colony_camera_key(&event) || self.trade_key(&event) || self.starmap_key(&event) => {}
             WindowEvent::MouseInput { state, button, .. } => self.mouse(button, state == ElementState::Pressed),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
                 let quit = self.key(event.logical_key.as_ref());
@@ -5538,6 +5544,53 @@ impl App {
         match &mut self.colony {
             Some(c) => c.ui.cam_keys.pan[i] = true,
             None => self.star_keys.pan[i] = true,
+        }
+        true
+    }
+
+    /// ADR 0035: on the starmap Ctrl+1..9 binds the selected own fleet to the group, Alt+1..9 selects the group's fleet
+    /// and, when it is already selected, centres the camera on it. Taken (never reaching `DoKeyboard`'s speed keys) only
+    /// with the option on and the starmap free, as PgUp/PgDn's step (re/screens/starmap.md §10.6). True when taken.
+    fn fleet_group_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        use crate::fleet_groups::GroupKey;
+        use crate::starmap_menus::InfoPhase;
+        let m = self.modifiers;
+        let Some(k) = crate::fleet_groups::group_key(event.physical_key, m.control_key(), m.alt_key()) else { return false };
+        if !self.display.fleet_groups || self.view.is_none() || self.colony.is_some() || self.spacewar.is_some() || self.under_screen()
+            || self.options.is_some() || self.entry_up() || self.starmap_locked()
+        {
+            return false;
+        }
+        if event.state != ElementState::Pressed {
+            return true;
+        }
+        let blocked = self.menus.menu.is_some() || self.menus.info.is_some_and(|i| i.phase != InfoPhase::Up) || self.panels.fleet_info()
+            || self.panels.transfer.is_some();
+        if blocked {
+            return true;
+        }
+        let human = self.world.curr.human;
+        let sel = self.selection();
+        match k {
+            GroupKey::Store(g) => {
+                if sel.mode == 2 && self.world.game.state.fleets.get(sel.fleet).is_some_and(|f| f[0x15] == human) {
+                    self.fleet_groups.0[g] = sel.fleet;
+                    self.sounds.push(crate::audio::CLICK);
+                }
+            }
+            GroupKey::Recall(g) => {
+                let f = self.fleet_groups.0[g];
+                // shortcut: a freed slot reused by a new fleet of the human's recalls that fleet; a fleet id + birth
+                // tick would tell them apart if players notice.
+                let Some(r) = self.world.game.state.fleets.get(f).filter(|r| f > 0 && r[0x15] == human) else { return true };
+                let at = [f32::from_le_bytes(r[0x30..0x34].try_into().unwrap()), f32::from_le_bytes(r[0x34..0x38].try_into().unwrap())];
+                if sel.mode == 2 && sel.fleet == f {
+                    self.apply(vec![Action::Centre { x: at[0], y: at[1] }]);
+                } else {
+                    self.sounds.push(crate::audio::CLICK);
+                    self.select(Selection { mode: 2, fleet: f, ..sel });
+                }
+            }
         }
         true
     }

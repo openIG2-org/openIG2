@@ -433,6 +433,10 @@ off the starmap). A panel spares only its owner's fleets.
     `!StarmapKolonizaloElkuldve`, `OsszHanyKolonizalo[EN] > 0`, `!IndultEKolonizalo`, no info −0x2094 →
     `Multi_Send(0x16, planet, kind 1)`, `StarmapKolonizaloElkuldve = 1`. `DEBUGX` only: Home (copies the queues to the
     empty own planets, 0x1a), End (`HanyEpuletLefoglalva = 0`), `l` (+10000 population).
+  - No digit: the top row's 1..3 are `DoKeyboard`'s speed keys (input.md §1), which test no Ctrl/Shift/Alt; 4..9 and
+    the digit characters reach this handler and do nothing.
+- Client addition (not in the exe): Ctrl+1..9 store the selected own fleet in a group, Alt+1..9 select it (again:
+  `StarmapKozepreAllit` on it); Remake option "Fleet groups", ADR 0035, row 447 (`ig2-client::fleet_groups`).
 - `StarmapKeyboardDoModifies` (ELF 0x705630), every 10 ms UI frame on every screen (`Fake_FRISSITES`): a running
   `…2` step zooms one key step (in when `ZoomBe2`) and counts both down; a held zoom flag one step; rotate ±0.02
   (`Bal` −), pitch ±0.00628318 (`Le` +) with the §2.4 clamps.

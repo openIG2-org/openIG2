@@ -22,6 +22,7 @@ Since 0.7.56.
 **New Remake options** (Options, game page)
 
 - F12 quick-saves and Shift+F12 quick-loads; the game autosaves twice a game year into slot 24 as the original does, and a new Remake option "Autosave every" saves every 10, 30 or 90 game days instead, keeping the last two autosaves in the load list.
+- Starmap: Ctrl+1…9 put the selected fleet in a group, Alt+1…9 select it again and a second press centres the view on it (Remake row "Fleet groups"; off keeps the original's keys). The groups are saved with the game.
 - W/A/S/D move the camera on the starmap; a new Remake option "WASD camera" can also turn them on in the colony view.
 - Options: typing a save name over a used slot no longer shows the old name behind it (Remake row "Clean name entry"; off shows the original's look).
 - Starmap and space battle: the turning model in the bottom-left info box stays inside its box (Remake row "Models inside boxes"; off shows the original's look).

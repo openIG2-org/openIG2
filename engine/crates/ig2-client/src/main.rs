@@ -52,6 +52,7 @@ mod colony_weather;
 mod diplomacy;
 mod diplomacy_scene;
 mod display;
+mod fleet_groups;
 mod font;
 mod help;
 mod hud;
