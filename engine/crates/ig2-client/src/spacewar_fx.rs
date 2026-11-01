@@ -143,7 +143,7 @@ fn random_across(r: &mut MsvcRand, d: [f32; 3], k: f32) -> [f32; 3] {
 
 /// A lightning bolt (`villam`, spec §6.8.4): the base points on the line A–B, the current points jittering about
 /// them with their words, and the ribbon's look.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bolt {
     /// +0x1c width, +0x18 brightness, +0x3c amplitude (`J·W`).
     pub width: f32,
@@ -168,7 +168,7 @@ pub struct Bolt {
 impl Bolt {
     /// `villam::create(n, W, I, J, seg, flare, 3, −0.05, 15, −1, 1, A, B)` (ELF 0x7c5c20).
     #[allow(clippy::too_many_arguments)]
-    fn new(r: &mut MsvcRand, n: usize, w: f32, i: f32, j: f32, seg: usize, flare: bool, a: [f32; 3], b: [f32; 3]) -> Self {
+    pub(crate) fn new(r: &mut MsvcRand, n: usize, w: f32, i: f32, j: f32, seg: usize, flare: bool, a: [f32; 3], b: [f32; 3]) -> Self {
         let amp = j * w;
         let dir = std::array::from_fn(|k| b[k] - a[k]);
         let mut base = vec![a; n];
@@ -200,7 +200,7 @@ impl Bolt {
     }
 
     /// `villam::Refresh` (ELF 0x7c60c0), once a battle tick.
-    fn refresh(&mut self, r: &mut MsvcRand) {
+    pub(crate) fn refresh(&mut self, r: &mut MsvcRand) {
         let n = self.base.len();
         let lit = self.frag <= r.random(100) as f32;
         let word = |r: &mut MsvcRand, bright: f32| {

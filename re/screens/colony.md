@@ -252,19 +252,92 @@ and placed (bit 2 clear). Exe unit offsets are ELF − 8 from `+0x164` on, −0x
 - Own units being placed: transparency (`+0x190` bit 15); selection rings, targets, shadows and the route lines
   (`line3d`, colour 0x80be8882) are `WF_Tank::DrawSelection/DrawTarget/DrawShadow/Draw3d`.
 
-## 5. Shots and effects (`WF::LoadMesh` 0x46c300)
-The battlefield's projectile lists (shells `+0xd4`, missiles/bombs/debris `+0xd8`, bolts `+0xdc`; `ig2-sim`
-`Lists`) are drawn with `rocket laser racs2 paralyze biglaser1..5 akna vad manipulator manipulated hordozo megashot
-heavyshot lightshot repesz1..3` (`.xvb`) and particle textures (`star rcloud flare lens/* epuletkosz tankkosz`); the
-fighters of an air strike (`WF+0x1f4 + 0x40k`) are models too. Not specified further.
+## 5. Shots and effects (`WF::LoadMesh` exe 0x483f70, `WF::Update` exe 0x4a5300)
+The battlefield's projectile lists (shells `+0xd4`, missiles/bombs/debris `+0xd8`, bolts `+0xdc`; `ig2-sim` `Lists`) are
+scene nodes: `WF::LoadMesh` (ELF 0x46c300) adds the ones alive when the planet's scene loads, each `AddX` adds its own
+on the shown war's colony screen. `WF::Update` (ELF 0x472180), once a drawn frame, moves each node to its position and
+turns it. `RotateObj` (exe 0x452960) sets a node's rotation; `RotateObjToAxis(m, d, roll)` (exe 0x4529f0) multiplies
+it by `CreateMatrix2(normalise(d), roll)` (ELF 0x4534e0). `gvalue` (exe 0x9B2900) counts sim ticks.
 
-Port status: the hit/blast flashes (type-4 particles, ground-combat.md §11.12) are drawn as a white additive
-`rcloud.bmp` billboard fading over 25 sim ticks (the engine's own sprite, inferred `robbanas.bmp`, isn't read); the
-models of list-B kinds 4/5 (`lightshot`/`heavyshot`, scale 0.012, turned `gvalue/10` on all axes) and kind 7 debris
-(`repesz1..3`, scale 0.005/0.01, tumbling `gvalue/10·{l%3−1, l%3, l%2}·2`, never fading: the exe removes it in
-`WF::Refresh2`) are drawn; `WF::LoadMesh` exe 0x483f70. Rockets, bolts, paralyser, bombs and fighters stay glow
-points (their `RotateObjToAxis` heading isn't ported); no particle trails, smoke, dust, machine-gun tracer lines,
-laser beam (`villamgenesis`), scorch marks (`Koszfolt`) or ruin fade.
+### 5.1 Models
+| Object | List, kind | Model (`vector/colony/`) | `AddToScene` size | Parent | Pose a frame |
+|---|---|---|---|---|---|
+| rocket (`AddRocket` ELF 0x47ad20) | A | `rocket.xvb` | 0.01 | `mainxvb4` (lit) | `RotateObj(0,0,0)`, `RotateObjToAxis(vel, 0)` |
+| laser bolt | B 0 | `laser.xvb` | 0.06 | `atlatszodolgok` | the same |
+| big ship's bomb (`AddBigLaser` ELF 0x49f570) | B 1 | `biglaser4`/`5` (`random(2) + 3`) | 0.5 | `atlatszodolgok`, unlit | the same |
+| fighter's bomb (`AddFighterLaser` exe 0x45b600) | B 2 | `biglaser4`/`5` | 0.05 | the same | the same |
+| manipulator bolt | B 3 | `manipulator.xvb` | 0.015 | `atlatszodolgok` | the same |
+| light / heavy / mega shell (`AddSimpleGun` ELF 0x47a690) | B 4 / 5 / 6 | `lightshot` / `heavyshot` / `megashot` | 0.012 | `atlatszodolgok`, unlit | `RotateObj(g, g, g)`, `g = gvalue/10` |
+| debris (`AddRepesz` exe 0x45d400) | B 7 | `repesz1..3` (`random(3)`) | `0.005 + 0.005·random(2)` | `mainxvb4` | `RotateObj(0,0,0)`, `RotateObjToAxis(vel, 0)`; `SetObjTransparency(+0x3c)` |
+| paralyser bolt | C | `paralyze.xvb` | 0.015 | `mainxvb4` | heading as the rocket |
+| fighter (`WF+0x1f4 + 0x40k`) | — | `vad.xvb` | 0.06 | `mainxvb4` | hidden while the wave is down; `RotateObj(0,0,0)`, `RotateObjToAxis(step, phase/15)` |
+
+Kind 7 first gets a tumble `RotateObj(g·(l%3−1)·2, g·(l%3)·2, g·(l%2)·2)` but then takes the heading branch, whose
+absolute `RotateObj(0, 0, 0)` replaces it (ELF and exe alike): debris faces along its velocity.
+
+### 5.2 Trails (particle owner 0, `ParticleOwner::AddParticle` exe 0x45d270)
+`WF::Refresh` (exe 0x490890) adds one particle per object per round at the object's position before it moves, with
+velocity `(random(3) − 1)` per axis (the exe evaluates the arguments last first: the first draw is the y velocity),
+colour `(r, g, b)`, fade `T`, size `s` and type:
+
+| Source (rounds a tick) | Colour | T | Size | Type |
+|---|---|---|---|---|
+| fighter (2·S) | 0x32, 0x3c, 0xff | 0x96 | 10 | 0 |
+| rocket, list A (S) | 0xff, 0x82, 0 | 0x40 | 10 | 0 |
+| laser bolt B 0 (4·S) | 100, 100, 0xff | 200 | 10 | 2 |
+| bomb B 1 / B 2 (4·S) | 100, 100, 0xff | 200 / 0xdc | 10 | 2 |
+| manipulator B 3 (4·S) | 100, 0xff, 100 | 200 | 7 | 2 |
+| shells B 4 / 5 / 6 (4·S) | 0x38,0xb2,0xbb / 0x40,0x56,0xc0 / 0x55,0x95,199 | 200 | 6 | 7 |
+| paralyser, list C (S) | 100, 0xff, 100 | 100 | 10 | 2 |
+
+`S` = `IdoSpeedSzorzoBattle`. After the lists, on the colony screen (`AktKep == 3`), `S` rounds step owner 0 (ELF
+0x48d750 lines ~1357–1810): `T += dT`; at `T ≥` the limit the particle goes (swapped with the last); else `pos += vel`,
+`vel ×=` drag, `size +=` growth, and for the grey types each of r, g, b becomes `(int)(c + (avg − c)/k)`,
+`avg = (r + g + b)/3`:
+
+| Type | dT | Limit | Drag (h; x, y) | Growth | Grey k |
+|---|---|---|---|---|---|
+| 0 | 5 | 0xfb | 0.95; 0.95 | 1.0 | 10 |
+| 2 | 10 | 0xf6 | 0.95; 0.95 | 0.2 | — |
+| 7 | 0x14 | 0xf6 | 0.95; 0.95 | 0.2 | — |
+
+`ParticleOwner::Draw` (exe 0x526f80) draws each as a camera-facing `rcloud.bmp` square of half size `size` (world),
+colour `c·(255 − T) >> 8`, added (ONE/ONE), depth test on, no depth write, no fog. A type-4 particle in owner 0 instead
+counts `+0x38` up a round and goes at 25.
+
+### 5.3 Hit and blast flashes (type 4)
+Every flash (`GroundEvent::Flash`, ground-combat.md §11.12) is a type-4 particle of owner 1 (`WF+0x2c0`; velocity 0,
+colour 255, `T` 0). `ParticleOwner::Draw` skips type 4: `WF::Update` copies them to a particle set whose texture is
+`loadanimtexture("robbanas.bmp", 0x19)` (exe 0x534460: a 5×5 sheet of 25 frames), blend 100.0 (ONE/ONE), drawn by
+the engine's `Particle()` (ELF 0x5f4ff0): half size `size` (world), colour `255·255/256`, frame `f` the cell
+`(f % 5, f / 5)`, no depth write, no fog. `WF::Refresh2` (exe 0x48ce10) steps owner 1 when `(int)ColonyCounter % 5 == 0`
+(20 Hz of the 100 Hz UI clock): the frame counts up, the flash goes at 25. The size and colour never change. A
+projectile's hit flash (`WF::Refresh`, lists A, B, C; the paralyser's with no sound) is placed by
+`WF::GetIntersectionPoint` (ELF 0x4636b0): at the shot's next point `pos + vel`, unless on the shown war the segment
+from `pos + 20·(pos − (pos + vel))` to it meets the target's mesh (`vonalmetszes`), then at that hit.
+
+### 5.4 Machine-gun tracers (`Lines::AddMachineGunLine` ELF 0x47c340, `LineParticle` ELF 0x4f18e0)
+`ShotWithSpecificWeapon`'s weapon 4 (exe 0x49d050) adds 16 lines: the target end `(h_t, x_t + r6 − 3, y_t + r6 − 3)`, the
+muzzle `(h − 15 + r10 − 10, x + r10 − 5, y + r10 − 5)`, life `r13 + 1` (`rN` = `random(N)`); of that segment a random
+part `m ∓ L·random(100)/100·d` about its middle `m` (`L` the half length, `d` its direction) is kept. `Lines::Refresh`
+(ELF 0x4f2980, from `FRISSIT_Colony` exe 0x474680, once a sim tick) counts the life down; `LineParticle::Draw` (exe
+0x471360, from `WF::Draw3d`) draws the line only on the tick its life reaches 0: two `line3d2` 1-px segments `P0 → P0 +
+(P1 − P0)/3 → P1` (`P0` on the target's side) with vertex words 0xffffffff, 0x961e64fa, 0x000a3296 (white, orange,
+dark red at alpha 0). The machine gun's own flash is at the target point (no mesh test).
+
+### 5.5 Laser beam (`villamgenesis`, `villam::create` exe 0x616190)
+Weapon 7 adds a lightning bolt from the muzzle `(h − 10, x, y)` to the target point (on screen moved onto the target's
+mesh, ground-combat.md §11.10): `villam::create(12, W 10, I 1.0, J 0.6, seg 4, flare, 3.0, −0.05, frag 15, life 20, 1, A,
+B)`, the space battle's lightning (spacewar.md §6.8.4) with a life. Its list (exe 0xA34FD4) is refreshed by
+`FRISSIT_Colony` once a sim tick and drawn by `ColonyGfx2D_0` after `WF::Draw3d`: a `villam.bmp` ribbon of half width
+`W` and the `flare.bmp` square at its end, added.
+
+Port status: §5.1–§5.5 are drawn (`colony_fx.rs`, `colony.rs`). The trails take the sim's own three draws
+(`GroundEvent::Trail`, `GroundEvent::TrailStep` after the lists); the tracers' and the beam's draws are the client's
+cosmetic stream (in the exe the shared libc stream, deviation 38's kind); the bombs' and the debris' model pick is
+the slot (the exe's `random` on screen). Not drawn yet: the bomb blasts' dust (`WF::Refresh` lines ~996–1129), the
+units' smoke and fire (`WF_Tank::Refresh2`, `WF_Tank::Refresh`), the dropship's exhaust, scorch marks (`Koszfolt`), ruin
+fade (`RomTarolo`), and debris flight and fade (`WF::Refresh2`: the port's debris stays where it was made).
 
 The dropships (`WF_Hordozo`, inlined at the unit's exe `+0x264..+0x278` / ELF `+0x27c..+0x290`): `WF::LoadMesh` (exe
 0x483f70) loads `hordozo.xvb` once a planet; `WF_Tank::LoadMesh` (exe 0x4847a0) adds one per unit without flag
@@ -890,7 +963,7 @@ exe's click pass); results in
 `re/screens/diff-results.md`. Weather capture runs through `run_screen.py --script tools/trace/scripts/colony-weather.json`
 (still exe grabs come back white); the Park smoke capture uses `--cam=-793.6,-1002.6,-1100,-0.7853982,0` + `--colony-cam`.
 Ours / approximations: distance fog off (border fog only); random draws are stand-in hashes, not libc (row 369);
-projectiles partly drawn as glowing points (§5, rows 420-421); the build cursor's red is a tint; the radar is its own terrain-from-above
+war effects: flashes, projectile models, trails, tracers and beam ported, smoke, dust, scorch marks, ruin fade and debris flight missing (§5, row 421); the build cursor's red is a tint; the radar is its own terrain-from-above
 render; mouse-wheel zoom; the pointer drawn on the colony screen only. Not compared on a capture: the scaffold collapse,
 the blink. Open rows: 369, 384 (rain streak pixels), 397 (hold
 with the right button), 398 (tank view across re-entry), 407 (building pick: stale until the pointer moves, posed at

@@ -734,7 +734,7 @@ struct Particle {
 }
 
 /// MSVC's `rand()` from `srand(seed)` (the exe's libc).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MsvcRand(pub(crate) u32);
 
 impl MsvcRand {

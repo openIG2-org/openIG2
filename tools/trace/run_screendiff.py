@@ -301,7 +301,7 @@ def sequence(a, kind, cfg, env, masks, planet):
                 sys.exit("the exe's script run failed")
     elif not a.exe_seq:
         r = run([sys.executable, os.path.join(HERE, "run_screen.py"), a.install, a.save, prefix, "--kep", str(cfg["kep"]),
-                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []) + size_exe(a)
+                 "--planet", str(planet), "--script", a.script, "--sounds", sounds, "--seconds", "560"] + ([] if boot else ["--state-out", state]) + cfg.get("exe", []) + a.exe_arg + size_exe(a)
                 + (["--via-starmap", str(a.via_starmap)] if a.via_starmap else []))
         if r.returncode:
             sys.exit("the exe's script run failed")
@@ -314,7 +314,7 @@ def sequence(a, kind, cfg, env, masks, planet):
     if kind == "spacewar":
         args += ["--sim-phase", str(sim_phase(prefix + ".jsonl"))]
     args += ["--backdrop"] if a.via_starmap else []
-    r = run([CLIENT, "--snapshot", client, "--save", state, "--size", a.size, "--ticks", "0", "--speed", "1", "--paused"] + args + clock_args(state), env=env)
+    r = run([CLIENT, "--snapshot", client, "--save", state, "--size", a.size, "--ticks", "0", "--speed", "1", "--paused"] + args + a.client_arg + clock_args(state), env=env)
     if r.returncode:
         sys.exit("the client's script run failed")
     out = []
@@ -358,9 +358,9 @@ def main():
     ap.add_argument("screen")
     ap.add_argument("--out", default=os.path.join(ROOT, "_local", "screendiff"))
     ap.add_argument("--exe-png", help="use this capture of ig2.exe instead of making one")
-    ap.add_argument("--client-arg", action="append", default=[], help="pass this argument on to the client's still (e.g. "
+    ap.add_argument("--client-arg", action="append", default=[], help="pass this argument on to the client's still or script run (e.g. "
                     "--client-arg=--top-menu --client-arg=research with an --exe-png grab of a script run)")
-    ap.add_argument("--exe-arg", action="append", default=[], help="pass this argument on to the exe's still capture "
+    ap.add_argument("--exe-arg", action="append", default=[], help="pass this argument on to the exe's still capture or script run "
                     "(run_screen.py; e.g. --exe-arg=--hide --exe-arg=planet on planetinfo)")
     ap.add_argument("--exe-state", help="with --exe-png: the exe's save of that moment (default: <save>)")
     ap.add_argument("--gl-grab", action="store_true", help="the exe's still read back in the game (run_screen.py --gl-grab): works with the display off")

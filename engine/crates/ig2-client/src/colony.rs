@@ -9,7 +9,7 @@ use ig2_sim::ground::{flag, Field, GroundMap};
 use ig2_sim::save::SaveState;
 
 use crate::assets::Image;
-use crate::render::{kind, Blend, Frame, Instance, Renderer, TexId};
+use crate::render::{Frame, Renderer, TexId};
 use crate::render3d::{MeshDraw, MeshId, MeshVertex, Scene3d, SceneUniforms, Shadow, ShadowMap};
 use crate::scene::{self, Look, Model, Placement, Transform, V3, M3};
 
@@ -107,10 +107,14 @@ pub struct UnitView {
     pub dropship: Option<V3>,
 }
 
-/// A shot in flight: `(h, x, y)`, the list it is in (0 shells, 1 missiles/debris, 2 bolts) and its kind.
+/// A shot in flight: `(h, x, y)`, the list it is in (0 shells, 1 missiles/debris, 2 bolts, 3 fighters) and its kind.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShotView {
     pub pos: V3,
+    /// The axis `RotateObjToAxis` turns it to (its velocity; a fighter's last step) and the roll (a fighter's
+    /// `phase / 15`), spec §5.1.
+    pub axis: V3,
+    pub roll: f32,
     pub list: u8,
     pub kind: i32,
     /// Its slot in the list (debris: the spin's axis, `WF::Update`).
@@ -253,10 +257,10 @@ impl ColonySnap {
             .shells
             .iter()
             .flatten()
-            .map(|s| ShotView { pos: s.pos, list: 0, kind: 0, slot: 0 })
-            .chain(l.missiles.iter().enumerate().filter_map(|(k, m)| m.as_ref().map(|m| ShotView { pos: m.pos, list: 1, kind: m.kind, slot: k })))
-            .chain(l.bolts.iter().flatten().map(|b| ShotView { pos: b.pos, list: 2, kind: 0, slot: 0 }))
-            .chain(l.fighters.iter().filter(|_| l.fighters_on).map(|f| ShotView { pos: f.pos, list: 3, kind: 0, slot: 0 }))
+            .map(|s| ShotView { pos: s.pos, axis: s.vel, roll: 0.0, list: 0, kind: 0, slot: 0 })
+            .chain(l.missiles.iter().enumerate().filter_map(|(k, m)| m.as_ref().map(|m| ShotView { pos: m.pos, axis: m.vel, roll: 0.0, list: 1, kind: m.kind, slot: k })))
+            .chain(l.bolts.iter().flatten().map(|b| ShotView { pos: b.pos, axis: b.vel, roll: 0.0, list: 2, kind: 0, slot: 0 }))
+            .chain(l.fighters.iter().filter(|_| l.fighters_on).map(|f| ShotView { pos: f.pos, axis: f.step, roll: (f.phase as f64 / 15.0) as f32, list: 3, kind: 0, slot: 0 }))
             .collect();
         let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
         // `WF+0x8b1 + s` as `GetStatus` (exe 0x47be90) sets it: alive units counted on the field, by side (the saved
@@ -421,11 +425,6 @@ impl Camera {
         let a = scene::normalise(cross(d, [1.0, 0.0, 0.0]));
         let b = scene::normalise(cross(d, a));
         ViewBasis { eye, rows: [a, [-b[0], -b[1], -b[2]], [-d[0], -d[1], -d[2]]] }
-    }
-
-    /// Virtual pixels → window pixels: 480 lines high, centred.
-    pub fn k(&self) -> f32 {
-        crate::font::Virtual::new(self.size).k
     }
 
     /// World → window pixels, `None` behind the near plane.
@@ -1085,6 +1084,11 @@ pub fn building_particles(buildings: &[BuildingView], at: &[(usize, V3)], counte
 
 /// A quad facing the screen (the camera's right and up rows) around `at`, half size `h`: two triangles, prelit.
 fn billboard(basis: &ViewBasis, at: V3, h: f32, rgb: [f32; 3]) -> [MeshVertex; 6] {
+    billboard_cell(basis, at, h, rgb, [0.0, 0.0, 1.0, 1.0])
+}
+
+/// [`billboard`] showing the texture's `[u0, v0, u1, v1]` (a cell of an animated sheet).
+fn billboard_cell(basis: &ViewBasis, at: V3, h: f32, rgb: [f32; 3], c: [f32; 4]) -> [MeshVertex; 6] {
     let (a, b) = (basis.rows[0], basis.rows[1]);
     let q = |sx: f32, sy: f32, u: f32, v: f32| MeshVertex {
         pos: std::array::from_fn(|k| at[k] + (a[k] * sx + b[k] * sy) * h),
@@ -1092,7 +1096,18 @@ fn billboard(basis: &ViewBasis, at: V3, h: f32, rgb: [f32; 3]) -> [MeshVertex; 6
         uv: [u, v],
         color: [rgb[0], rgb[1], rgb[2], 1.0],
     };
-    [q(-1.0, 1.0, 0.0, 0.0), q(1.0, 1.0, 1.0, 0.0), q(1.0, -1.0, 1.0, 1.0), q(-1.0, 1.0, 0.0, 0.0), q(1.0, -1.0, 1.0, 1.0), q(-1.0, -1.0, 0.0, 1.0)]
+    let ([u0, v0], [u1, v1]) = ([c[0], c[1]], [c[2], c[3]]);
+    [q(-1.0, 1.0, u0, v0), q(1.0, 1.0, u1, v0), q(1.0, -1.0, u1, v1), q(-1.0, 1.0, u0, v0), q(1.0, -1.0, u1, v1), q(-1.0, -1.0, u0, v1)]
+}
+
+/// A segment `a -> b` as a camera-facing band of half width `hw` (world), the texture's v running `v0 -> v1`
+/// (`kiralyvonalhuzo`, ELF 0x5f2650).
+#[allow(clippy::too_many_arguments)]
+fn ribbon(eye: V3, a: V3, b: V3, hw: f32, v0: f32, v1: f32, ca: [f32; 4], cb: [f32; 4]) -> [MeshVertex; 6] {
+    let mid: V3 = std::array::from_fn(|k| (a[k] + b[k]) / 2.0);
+    let side = scene::normalise(cross(std::array::from_fn(|k| b[k] - a[k]), std::array::from_fn(|k| eye[k] - mid[k])));
+    let q = |p: V3, s: f32, v: f32, c: [f32; 4]| MeshVertex { pos: std::array::from_fn(|k| p[k] + side[k] * hw * s), normal: [0.0; 3], uv: [(s + 1.0) / 2.0, v], color: c };
+    [q(a, -1.0, v0, ca), q(b, -1.0, v1, cb), q(b, 1.0, v1, cb), q(a, -1.0, v0, ca), q(b, 1.0, v1, cb), q(a, 1.0, v0, ca)]
 }
 
 /// A model's parts with their textures resolved, for per-frame placement (units).
@@ -1566,6 +1581,12 @@ impl ColonyScene {
         texture(r, install, &mut self.textures, self.white, path.as_deref())
     }
 
+    /// The laser beam's `villam.bmp` (`loadvillamtexture` ELF 0x7c5810 switches to `textures/spacewar/`).
+    fn villam_texture(&mut self, r: &mut Renderer, install: &Install) -> TexId {
+        let path = install.resolve_texture("textures/spacewar/", "villam.bmp");
+        texture(r, install, &mut self.textures, self.white, path.as_deref())
+    }
+
     fn marker_texture(&mut self, r: &mut Renderer, install: &Install) -> TexId {
         let path = install.resolve_texture("textures/colony/", "epkij.bmp");
         texture(r, install, &mut self.textures, self.white, path.as_deref())
@@ -1930,8 +1951,8 @@ pub struct Overlay {
     pub flash: bool,
     /// `ColonyCounter` (exe 0x99823c): the colony screen's UI ticks ([`building_particles`]).
     pub counter: f32,
-    /// The ground war's hit and blast flashes (particle type 4): position, size, age in sim ticks.
-    pub flashes: Vec<(V3, f32, f32)>,
+    /// The shown war's trails, flashes, tracers and beams ([`crate::colony_fx`]).
+    pub fx: crate::colony_fx::WarFx,
 }
 
 /// A flat textured square on the ground (two triangles, `polygons3d`), alpha `alpha` (0..=255).
@@ -2150,36 +2171,96 @@ impl View {
             }
             draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: rcloud, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
         }
-        // The flashes: the exe hands type-4 particles to the engine (`WF::Update` exe 0x4a5300) with their age; here a
-        // white `rcloud.bmp` fading out over its 25 ticks (the engine's own sprite isn't read, re/deviations.md).
-        if curr.visible && !self.overlay.flashes.is_empty() {
+        // The trails (owner 0, `ParticleOwner::Draw`) and the flashes (type 4: `robbanas.bmp`'s 5 × 5 sheet, `Particle()`),
+        // spec §5.2, §5.3.
+        if curr.visible && !self.overlay.fx.puffs.is_empty() {
             let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
             let base = dynamic.len() as u32;
-            for &(at, size, age) in &self.overlay.flashes {
-                let g = 1.0 - age / crate::colony_ui::FLASH_TICKS;
-                dynamic.extend(billboard(&basis, at, size * (0.6 + 0.4 * age / crate::colony_ui::FLASH_TICKS), [g; 3]));
+            for q in &self.overlay.fx.puffs {
+                dynamic.extend(billboard(&basis, q.pos, q.size, q.colour()));
             }
             draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: rcloud, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
         }
-        // The cannon shells (list B kinds 4, 5: `lightshot`/`heavyshot`, scale 0.012, turned `gvalue / 10` about every axis)
-        // and the debris (kind 7: `repesz1..3`, scale 0.005 or 0.01, tumbling by its slot); `WF::LoadMesh` (exe 0x483f70)
-        // and `WF::Update` (exe 0x4a5300). The tick stands for `gvalue`, the slot for the model and scale `rand()` picks.
         if curr.visible {
-            let g = (curr.tick / 10) as f32;
-            for s in curr.shots.iter().filter(|s| s.list == 1 && matches!(s.kind, 4 | 5 | 7)) {
+            let base = dynamic.len() as u32;
+            for (f, k) in self.overlay.fx.shown_flashes(self.overlay.counter) {
+                let (u, v) = ((k % 5) as f32 / 5.0, (k / 5) as f32 / 5.0);
+                dynamic.extend(billboard_cell(&basis, f.at, f.size, [254.0 / 255.0; 3], [u, v, u + 0.2, v + 0.2]));
+            }
+            if dynamic.len() as u32 > base {
+                let tex = scene.colony_texture(r, install, "robbanas.bmp");
+                draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
+            }
+        }
+        // The projectiles' models (spec §5.1, `WF::LoadMesh` exe 0x483f70, `WF::Update` exe 0x4a5300): the shells of list B
+        // kinds 4–6 tumble by `gvalue / 10`, the rest turn to their axis (`RotateObj(0, 0, 0)`, `RotateObjToAxis`). The
+        // slot stands for the bombs' and debris' model `random` picks.
+        if curr.visible {
+            let g = (curr.tick as f64 / 10.0) as f32;
+            for s in &curr.shots {
                 let l = s.slot;
-                let (name, scale, rot) = match s.kind {
-                    4 => ("lightshot", 0.012, (g, g, g)),
-                    5 => ("heavyshot", 0.012, (g, g, g)),
-                    _ => {
-                        let spin = |k: f32| g * k * 2.0;
-                        (["repesz1", "repesz2", "repesz3"][l % 3], 0.005 + 0.005 * (l & 1) as f32, (spin((l % 3) as f32 - 1.0), spin((l % 3) as f32), spin((l % 2) as f32)))
-                    }
+                let (name, scale) = match (s.list, s.kind) {
+                    (0, _) => ("rocket", 0.01),
+                    (1, 0) => ("laser", 0.06),
+                    (1, 1 | 2) => (["biglaser4", "biglaser5"][l % 2], if s.kind == 1 { 0.5 } else { 0.05 }),
+                    (1, 3) => ("manipulator", 0.015),
+                    (1, 4) => ("lightshot", 0.012),
+                    (1, 5) => ("heavyshot", 0.012),
+                    (1, 6) => ("megashot", 0.012),
+                    (1, _) => (["repesz1", "repesz2", "repesz3"][l % 3], 0.005 + 0.005 * (l & 1) as f32),
+                    (2, _) => ("paralyze", 0.015),
+                    _ => ("vad", 0.06),
                 };
-                if let Some(mesh) = scene.fx_mesh(r, install, name) {
-                    let xf = Placement::add_to_scene(mesh.model.origin, scale).world(rot, s.pos);
-                    push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                let Some(mesh) = scene.fx_mesh(r, install, name) else { continue };
+                let rec = Placement::add_to_scene(mesh.model.origin, scale);
+                let xf = if s.list == 1 && matches!(s.kind, 4..=6) {
+                    rec.world((g, g, g), s.pos)
+                } else {
+                    Transform { matrix: scene::mul(&scene::create_matrix2(s.axis, s.roll), &rec.matrix).map(|x| x * 1024.0), translation: s.pos }
+                };
+                push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+            }
+        }
+        // The machine gun's tracers (`LineParticle::Draw`, two 1-px `line3d2` segments) and the laser's beams
+        // (`villam::Update`: a `villam.bmp` ribbon of half width W and a `flare.bmp` square), spec §5.4, §5.5.
+        if curr.visible {
+            let px = 480.0 / self.camera.size[1].max(1.0) / 600.0;
+            let word = |w: u32| [(w & 0xff) as f32 / 255.0, ((w >> 8) & 0xff) as f32 / 255.0, ((w >> 16) & 0xff) as f32 / 255.0, (w >> 24) as f32 / 255.0];
+            let (c0, c1, c2) = (word(0xffff_ffff), word(0x961e_64fa), word(0x000a_3296));
+            let base = dynamic.len() as u32;
+            for t in self.overlay.fx.tracers.iter().filter(|t| t.shown()) {
+                let m: V3 = std::array::from_fn(|k| t.a[k] + (t.b[k] - t.a[k]) / 3.0);
+                dynamic.extend(crate::colony_weather::line_quad(basis.eye, px, t.a, m, c0, c1));
+                dynamic.extend(crate::colony_weather::line_quad(basis.eye, px, m, t.b, c1, c2));
+            }
+            if dynamic.len() as u32 > base {
+                draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: scene.white, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: false, depth_write: false });
+            }
+            if !self.overlay.fx.beams.is_empty() {
+                let base = dynamic.len() as u32;
+                let mut flares = Vec::new();
+                for (b, _) in &self.overlay.fx.beams {
+                    let pts = b.samples();
+                    let n = pts.len().saturating_sub(1).max(1) as f32;
+                    for (i, w) in pts.windows(2).enumerate() {
+                        let (v0, v1) = (i as f32 / n * b.texscale + b.tex, (i + 1) as f32 / n * b.texscale + b.tex);
+                        let (ca, cb) = (crate::starmap::particle_color(w[0].1), crate::starmap::particle_color(w[1].1));
+                        dynamic.extend(ribbon(basis.eye, w[0].0, w[1].0, b.width, v0, v1, ca, cb));
+                    }
+                    if let (true, Some(&(q, _))) = (b.flare, b.cur.last()) {
+                        flares.push((q, b.flare_size));
+                    }
                 }
+                // `loadvillamtexture` (ELF 0x7c5810) reads from `textures/spacewar/`.
+                let tex = scene.villam_texture(r, install);
+                draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
+                let base = dynamic.len() as u32;
+                let c = crate::starmap::particle_color(0x80ff_ffff);
+                for (q, size) in flares {
+                    dynamic.extend(billboard(&basis, q, size, [c[0], c[1], c[2]]));
+                }
+                let tex = scene.colony_texture(r, install, "flare.bmp");
+                draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
             }
         }
         let parts = building_particles(&curr.buildings, &scene.building_at, self.overlay.counter);
@@ -2289,20 +2370,6 @@ impl View {
             draws,
             dynamic,
         });
-        // The other shots: glowing points (the original draws them as particles and small meshes, spec §5).
-        let k = self.camera.k();
-        for s in curr.shots.iter().filter(|s| !(s.list == 1 && matches!(s.kind, 4 | 5 | 7))) {
-            if let Some(p) = self.camera.project(&basis, s.pos) {
-                let (c, sz) = match s.list {
-                    0 => ([1.0, 0.85, 0.4, 1.0], 3.0),
-                    1 if s.kind == 7 => ([0.6, 0.5, 0.4, 0.6], 1.5),
-                    1 => ([1.0, 0.5, 0.2, 1.0], 4.0),
-                    2 => ([0.4, 0.8, 1.0, 1.0], 3.5),
-                    _ => ([1.0, 1.0, 1.0, 1.0], 3.0),
-                };
-                f.push(scene.white, Blend::Additive, Instance::new(kind::GLOW, p, [sz * k * 2.0; 2], c));
-            }
-        }
         let _ = time;
         f
     }

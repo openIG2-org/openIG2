@@ -494,7 +494,7 @@ pub struct GroundContext {
 }
 
 /// Side effects for other systems.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GroundEvent {
     /// `EpuletDelete(p, slot)`: the building of `kind` fell (colony map, 3D model: the colony side).
     BuildingDestroyed { slot: usize, kind: u8 },
@@ -530,6 +530,27 @@ pub enum GroundEvent {
     /// A hit or blast flash (particle type 4, `AddParticle` exe 0x45d270) of `size` at `at` (height, x, y; map
     /// units, truncated): on the shown planet only (render only).
     Flash { at: [i32; 3], size: i32 },
+    /// A trail particle (owner 0, `WF::Refresh` 0x490890; colony.md §5.2) at `at` (height, x, y) with the velocity
+    /// `random(3) − 1` per axis (the sim's own draws): on the shown planet only (render only).
+    Trail { at: [f32; 3], vel: [i8; 3], of: TrailSource },
+    /// `WF::Refresh` steps owner 0 `rounds` times after the lists (colony.md §5.2): on the shown planet only.
+    TrailStep { rounds: i32 },
+    /// The machine gun's 16 tracers from the shooter `from` to the hit point `to` (colony.md §5.4; render only).
+    MachineGun { from: [f32; 3], to: [f32; 3] },
+    /// The laser's beam from `from` to `to` (`villamgenesis`, colony.md §5.5; render only).
+    Laser { from: [f32; 3], to: [f32; 3] },
+}
+
+/// What leaves a trail (colony.md §5.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrailSource {
+    Fighter,
+    /// List A.
+    Rocket,
+    /// List B by kind.
+    Missile(i32),
+    /// List C.
+    Paralyser,
 }
 
 /// A ground-war voice line as the sim reaches it (spec §11.12). Whose the unit is decides the line and kind, and
@@ -679,6 +700,23 @@ impl<'a> War<'a> {
     pub(crate) fn flash(&mut self, at: [f32; 3], size: i32) {
         if self.ctx.on_screen {
             self.events.push(GroundEvent::Flash { at: at.map(|v| v as i32), size });
+        }
+    }
+
+    /// A trail particle's three `random(3)` (colony.md §5.2; the exe evaluates `AddParticle`'s arguments last first).
+    pub(crate) fn trail(&mut self, at: [f32; 3], of: TrailSource) {
+        let vy = ((self.libc)() % 3 - 1) as i8;
+        let vx = ((self.libc)() % 3 - 1) as i8;
+        let vh = ((self.libc)() % 3 - 1) as i8;
+        if self.ctx.on_screen {
+            self.events.push(GroundEvent::Trail { at, vel: [vh, vx, vy], of });
+        }
+    }
+
+    /// A render-only event on the shown planet.
+    pub(crate) fn shown(&mut self, e: GroundEvent) {
+        if self.ctx.on_screen {
+            self.events.push(e);
         }
     }
 

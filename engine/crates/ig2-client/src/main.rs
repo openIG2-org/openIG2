@@ -48,6 +48,7 @@ mod chat;
 mod console;
 mod colony;
 mod colony_ui;
+mod colony_fx;
 mod colony_smoke;
 mod colony_war;
 mod colony_weather;

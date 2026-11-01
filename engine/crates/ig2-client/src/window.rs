@@ -379,6 +379,8 @@ struct Headless {
     renderer: Renderer,
     band: (u32, u32),
     ms: u32,
+    /// The sim runs on the script's clock (a ground war's run); else it is held.
+    sim: bool,
 }
 
 /// The renderer, the band and the scale factor, from the window or the headless run.
@@ -517,7 +519,10 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     if sel.mode == 1 || sel.mode == 2 {
         app.select(sel);
     }
-    app.headless = Some(Headless { renderer, band: o.size, ms: 0 });
+    // A ground war (`--colony-ui war`): the sim runs on the script's clock as in the exe's script run, and each grab
+    // draws the colony screen (`<out>-t<T>.png`).
+    let war = o.colony.is_some() && o.colony_ui.as_deref().is_some_and(|m| m.starts_with("war"));
+    app.headless = Some(Headless { renderer, band: o.size, ms: 0, sim: war });
     // `--dkm`: the row frame's global phase at the script's start (the capture's `ui.json` "dkm").
     if let Some([m, c, n]) = o.dkm {
         app.dk = crate::kit::DesignFrame::with_phase(m, c, n);
@@ -539,6 +544,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     let v = crate::kit::layout::Virtual::new([o.size.0 as f32, o.size.1 as f32]);
     // A virtual point's pixel: its centre, so the exe's truncating mouse map gives the point back.
     let px = |at: [f32; 2]| v.px(at[0] + 0.5, at[1] + 0.5);
+    // `screen.js` holds the exe's physical pointer at the script's point (its `--mouse` until the first move).
+    app.cursor_px = px(o.mouse.unwrap_or([320.0, 240.0])).map(|v| v as i32);
     for tick in 0..=script.end() {
         if tick > 0 {
             if let Some(h) = &mut app.headless {
@@ -546,7 +553,14 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
             }
             app.frame();
         }
+        if war && script.grabs.contains(&tick) {
+            app.colony_grab(&crate::script::grab_path(out, tick))?;
+        }
         for e in script.at(tick) {
+            // The capture writes the script's point to the physical pointer too (`screen.js`), which the edge scroll reads.
+            if let Input::Move(at) | Input::Button { at, .. } = &e.input {
+                app.cursor_px = px(*at).map(|v| v as i32);
+            }
             match &e.input {
                 Input::Move(at) => app.cursor_moved(px(*at)),
                 Input::Button { button, down, at } => {
@@ -584,7 +598,7 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     // The last events' sounds.
     app.audio_frame(0);
     let heard: Vec<(Option<u32>, crate::audio::SoundId)> = app.audio.log.iter().map(|p| (Some(p.ui as u32), p.id)).collect();
-    if !script.grabs.is_empty() {
+    if !script.grabs.is_empty() && !war {
         println!("ig2-client: --script on the starmap/colony draws no grabs");
     }
     let path = crate::script::write_sounds(out, &heard)?;
@@ -760,6 +774,29 @@ impl App {
         }
     }
 
+    /// A headless war script's grab: the colony screen as the frame draws it.
+    fn colony_grab(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let (Some(h), Some(hud), Some(c), Some(prev), Some(curr)) = (&mut self.headless, &mut self.hud, &mut self.colony, &self.world.colony_prev, &self.world.colony_curr) else {
+            return Ok(());
+        };
+        hud.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
+        hud.paused = self.world.paused();
+        let r = &mut h.renderer;
+        let size = [h.band.0 as f32, h.band.1 as f32];
+        let t = h.ms as f32 / 1000.0;
+        let light = c.view.panel_light(self.maps, curr.map);
+        let unit = crate::colony::landing_unit(&self.world.game.state, curr);
+        let panel = c.panel.render(r, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), light, size, c.scene.sky.as_deref());
+        let info_model = crate::colony_ui::render_kis_info(r, &self.install, self.tables, &c.ui, &mut c.scene, &mut c.panel, curr, self.world.curr.human as i32, light, size);
+        let mut frame = c.view.build(r, &self.install, self.tables, self.maps, &mut c.scene, prev, curr, 1.0, t);
+        let cursor = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
+        let input = crate::ui::ColonyInput { ui: &c.ui, sim: self.world.game.rules, panel, cursor, pointer: false, info_model, now_ms: h.ms, time: t, names: true, rename: None };
+        hud.draw_colony(&mut frame, &self.world.game.state, self.tables, self.maps, &c.view, &c.scene, curr, &input);
+        hud.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Colony, t);
+        let rgba = r.draw_to_image(&frame, h.band, t);
+        crate::assets::write_png(path, h.band.0, h.band.1, &rgba)
+    }
+
     fn now_ms(&self) -> u32 {
         match &self.headless {
             Some(h) => h.ms,
@@ -842,17 +879,17 @@ impl App {
             }
         }
         // `Gr_Hangok` and the flashes of the shown war (the sim gates them by the screen; another planet's are dropped).
-        let tick = self.world.curr.tick;
         for (p, e) in std::mem::take(&mut self.world.ground_fx) {
             let Some(c) = self.colony.as_mut().filter(|_| shown == Some(p)) else { continue };
             match e {
                 ig2_sim::ground::GroundEvent::Sound(i) => c.ui.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Gr, i as u16)),
-                ig2_sim::ground::GroundEvent::Flash { at, size } => c.ui.add_flash(at.map(|v| v as f32), size as f32, tick),
-                _ => {}
+                e => {
+                    let counter = c.ui.war.counter();
+                    c.ui.fx.event(&e, counter);
+                }
             }
         }
         if let Some(c) = &mut self.colony {
-            c.ui.fx_tick = tick;
             for id in c.ui.sounds.drain(..) {
                 self.audio.play(id);
             }
@@ -4209,7 +4246,7 @@ impl App {
         // Multiplayer: the session is pumped while paused too (its keep-alive and the others' commands).
         // A tutorial just started holds the game until its first tick has run (`ticked`).
         let held = self.tutorial.as_ref().is_some_and(|t| !t.ticked);
-        if (!self.world.paused() || self.world.net.is_some()) && self.headless.is_none() && !held {
+        if (!self.world.paused() || self.world.net.is_some()) && self.headless.as_ref().is_none_or(|h| h.sim) && !held {
             for _ in 0..due {
                 self.world.tick();
                 if let Some(t) = &mut self.tutorial {

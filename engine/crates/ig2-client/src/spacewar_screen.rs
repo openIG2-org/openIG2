@@ -426,13 +426,8 @@ impl Mesh {
     }
 }
 
-/// `CreateMatrix2(d, 0)` (ELF 0x4534e0; spec §6.7.2): `t = normalise(d × (0, 1, 0))`, `u = normalise(d × t)`, the
-/// elements `[−d.x, −u.x, −t.x, −d.y, −u.y, −t.y, −d.z, −u.z, −t.z]`.
 fn create_matrix2(d: [f32; 3]) -> crate::scene::M3 {
-    let d = crate::scene::normalise(d);
-    let t = crate::scene::normalise(cross(d, [0.0, 1.0, 0.0]));
-    let u = crate::scene::normalise(cross(d, t));
-    [-d[0], -u[0], -t[0], -d[1], -u[1], -t[1], -d[2], -u[2], -t[2]]
+    crate::scene::create_matrix2(d, 0.0)
 }
 
 /// The battle's effect models and textures: the debris (`darab1..3.xvb`), the shield ring `karika.xvb` per frame,

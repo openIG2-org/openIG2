@@ -320,8 +320,8 @@ pub struct World<'r> {
     pub videos: Vec<crate::video::Request>,
     /// The ground wars' voice lines since the window last took them (planet, `PlaySpeechGrWar` site).
     pub ground_voices: Vec<(usize, Voice)>,
-    /// The ground wars' sounds and flashes since the window last took them (planet, [`GroundEvent::Sound`] or
-    /// [`GroundEvent::Flash`]).
+    /// The ground wars' sounds and render-only effects since the window last took them (planet, [`GroundEvent::Sound`],
+    /// [`GroundEvent::Flash`] and the rest of [`ground_fx`]'s).
     pub ground_fx: Vec<(usize, GroundEvent)>,
     /// `HangLejatszasKell` (exe 0xbae26c, `InitNewGame` step 6: the campaign type) as the first `Starmap_Belep`
     /// takes it for the start voice ([`crate::audio::Audio::play_start_voice`]).
@@ -493,10 +493,10 @@ fn ground_voices(events: &[GameEvent]) -> impl Iterator<Item = (usize, Voice)> +
     })
 }
 
-/// The ground wars' sounds and flashes among `events`.
+/// The ground wars' sounds and effects among `events`.
 fn ground_fx(events: &[GameEvent]) -> impl Iterator<Item = (usize, GroundEvent)> + '_ {
     events.iter().filter_map(|e| match *e {
-        GameEvent::Battle(BattleEvent::GroundSide { planet, event: event @ (GroundEvent::Sound(_) | GroundEvent::Flash { .. }) }) => Some((planet, event)),
+        GameEvent::Battle(BattleEvent::GroundSide { planet, event: event @ (GroundEvent::Sound(_) | GroundEvent::Flash { .. } | GroundEvent::Trail { .. } | GroundEvent::TrailStep { .. } | GroundEvent::MachineGun { .. } | GroundEvent::Laser { .. }) }) => Some((planet, event)),
         _ => None,
     })
 }

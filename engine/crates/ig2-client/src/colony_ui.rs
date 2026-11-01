@@ -262,9 +262,6 @@ pub enum KisInfo {
 }
 
 /// The colony screen's input state.
-/// A type-4 particle's life (`WF::Refresh`: its age `+0x38` counts sim ticks, removed at 25).
-pub const FLASH_TICKS: f32 = 25.0;
-
 pub struct ColonyUi {
     /// `AktEpulet`: the selected building slot (0 = none).
     pub selected: usize,
@@ -319,10 +316,8 @@ pub struct ColonyUi {
     pub sounds: Vec<SoundId>,
     /// The units' voice lines (`ColonySpeaker.Play(line, kind)`: selection, move, attack), played by the window with the sounds.
     pub voices: Vec<(i32, i32)>,
-    /// The ground war's flashes (`GroundEvent::Flash`): position, size and the sim tick they came on; `fx_tick` is the
-    /// shown tick ([`crate::colony::Overlay::flashes`]).
-    pub flashes: Vec<([f32; 3], f32, i32)>,
-    pub fx_tick: i32,
+    /// The shown war's trails, flashes, tracers and beams ([`crate::colony_fx`]).
+    pub fx: crate::colony_fx::WarFx,
     /// The libc `rand()` of the sound picks (a cosmetic stream, [`Rand`]).
     rand: Rand,
     /// `UpdateRain`'s frames due, in hundredths (60 a second: see [`ColonyUi::thunder`]).
@@ -367,8 +362,7 @@ impl Default for ColonyUi {
             war: Default::default(),
             cam_keys: Default::default(),
             sounds: Vec::new(),
-            flashes: Vec::new(),
-            fx_tick: 0,
+            fx: Default::default(),
             voices: Vec::new(),
             rand: Rand(1),
             rain_frames: 0,
@@ -1091,14 +1085,8 @@ impl ColonyUi {
             landing: s.owner as i32 != en && !s.to_land.is_empty(),
             flash: self.flash,
             counter: self.war.counter(),
-            flashes: self.flashes.iter().map(|&(at, size, t)| (at, size, (self.fx_tick - t) as f32)).filter(|f| (0.0..FLASH_TICKS).contains(&f.2)).collect(),
+            fx: self.fx.clone(),
         }
-    }
-
-    /// A ground-war flash on tick `tick`; the ones done by then go.
-    pub fn add_flash(&mut self, at: [f32; 3], size: f32, tick: i32) {
-        self.flashes.retain(|f| ((tick - f.2) as f32) < FLASH_TICKS);
-        self.flashes.push((at, size, tick));
     }
 
     fn window_cells(&self, c: &Ctx, w: Confirm) -> usize {

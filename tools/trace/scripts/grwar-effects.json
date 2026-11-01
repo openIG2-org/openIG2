@@ -1,0 +1,48 @@
+{
+ "screen": "grwar",
+ "note": "The ground war's projectiles and effects (re/screens/colony.md §5; run as grwar:17 on quick-1.sav): select all (a) and an attack on the main building (right press on it), the game unpaused at speed 1 (key 1), the attack again once the units have landed, then the war left to run; grabs while they fire. Run with `--exe-arg=--run` (the clock running) and the camera `--client-arg=--colony-cam --client-arg=X,Y,ZOOM,PITCH,ROTATE` from the exe's frames.json `cam`. Times are UI ticks.",
+ "events": [
+  {
+   "t": 100,
+   "key": "a"
+  },
+  {
+   "t": 160,
+   "press": [
+    385,
+    300
+   ],
+   "button": 3
+  },
+  {
+   "t": 200,
+   "key": "1"
+  },
+  {
+   "t": 1500,
+   "key": "a"
+  },
+  {
+   "t": 1560,
+   "press": [
+    385,
+    300
+   ],
+   "button": 3
+  }
+ ],
+ "grabs": [
+  3000,
+  3800,
+  3820,
+  3840,
+  3860,
+  3880,
+  3900,
+  3920,
+  3940,
+  3960,
+  3980
+ ],
+ "tail": 10
+}

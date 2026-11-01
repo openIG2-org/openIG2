@@ -1012,7 +1012,7 @@ the dust:
   screen played nothing.] The port: `GroundEvent::Sound` / `Flash` (`War::gr_sound`, `War::flash`, `War::hit_fx`);
   the client's `World::ground_fx` → `window.rs` plays `Table::Gr` on the shown war; test
   `ground::tests::sounds_and_flashes_on_screen_only`. The flashes are type-4 particles (`WF::Update` 0x4a5300 hands
-  them to the engine); the client draws them as a white additive `rcloud.bmp` billboard fading over 25 sim ticks.
+  them to the engine); the client draws them as the original's sprite sheet (colony.md §5.3). Render-only events `Trail`/`TrailStep`/`MachineGun`/`Laser` hand the trails, tracers and beam to the client (§5.2, §5.4, §5.5).
   In single player `Game::with_wars` marks the colony screen's planet `on_screen` (classic view; the canonical MP view
   keeps every field off screen so the machines agree), so the on-screen-only effects (debris in list B, the mesh-load
   side effects §11.5) run.

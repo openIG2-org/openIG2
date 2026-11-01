@@ -8,7 +8,7 @@
 //! later shots, and so the stream-2 draws), so every draw is replayed in order through [`War::libc`].
 
 use super::tick::{sqrtf, Clock};
-use super::{flag, realtime::grid_to_real, War, CONTESTED, NONE};
+use super::{flag, realtime::grid_to_real, TrailSource, War, CONTESTED, NONE};
 
 /// A homing shell of list A (`WF+0xd4`, count `+0xe0`; 0x38-byte objects from 0x45d5d0).
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +97,11 @@ pub(super) fn slot<T>(v: &mut Vec<Option<T>>) -> usize {
             v.len() - 1
         }
     }
+}
+
+/// A hit flash's place (`WF::GetIntersectionPoint` ELF 0x4636b0 without a mesh hit): the shot's next point, `pos + vel`.
+fn ahead(p: &[f32; 3], v: &[f32; 3]) -> [f32; 3] {
+    [p[0] + v[0], p[1] + v[1], p[2] + v[2]]
 }
 
 /// `|b − a|` of two `(h, x, y)` points: f32 differences and squares, the root through f64.
@@ -284,9 +289,7 @@ impl War<'_> {
         for k in 0..5 {
             let mut f = self.field.lists.fighters[k];
             f.cooldown += 1;
-            for _ in 0..3 {
-                (self.libc)();
-            }
+            self.trail(f.pos, TrailSource::Fighter);
             // (new height, height step); the descent `vel[0]` itself never changes.
             let up = match f.phase {
                 ..95 => {
@@ -576,6 +579,7 @@ impl War<'_> {
             for _ in 0..16 * 9 {
                 (self.libc)();
             }
+            self.shown(super::GroundEvent::MachineGun { from: p, to: tp });
             self.hit_fx(tp);
             let n = self.alive_members(i);
             dmg = n.wrapping_mul(dmg);
@@ -593,6 +597,7 @@ impl War<'_> {
             for _ in 0..60 {
                 (self.libc)();
             }
+            self.shown(super::GroundEvent::Laser { from: [z - 10.0, x, y], to: tp });
             self.gr_sound(43);
             let n = self.alive_members(i);
             let dmg = n.wrapping_mul(base);
@@ -712,6 +717,7 @@ impl War<'_> {
         for _ in 0..s {
             self.bolts_step();
         }
+        self.shown(super::GroundEvent::TrailStep { rounds: s });
         if s0 == CONTESTED {
             self.idle_fire(clock);
         }
@@ -811,9 +817,7 @@ impl War<'_> {
                 k += 1;
                 continue;
             }
-            for _ in 0..3 {
-                (self.libc)();
-            }
+            self.trail(sh.pos, TrailSource::Rocket);
             sh.pos = [sh.vel[0] + sh.pos[0], sh.vel[1] + sh.pos[1], sh.vel[2] + sh.pos[2]];
             if sh.target == NONE {
                 self.field.lists.shells[k] = Some(sh);
@@ -849,7 +853,7 @@ impl War<'_> {
                 sh.vel = [sh.vel[0] / sp * 20.0, sh.vel[1] / sp * 20.0, sh.vel[2] / sp * 20.0];
             }
             if dist < 60.0 {
-                self.hit_fx(sh.pos);
+                self.hit_fx(ahead(&sh.pos, &sh.vel));
                 let dmg = self.real_damage(sh.target, sh.dmg, sh.vel[1], sh.vel[2]);
                 if self.damage(sh.target, dmg, sh.by) {
                     self.kill(sh.target);
@@ -883,12 +887,10 @@ impl War<'_> {
             }
             match m.kind {
                 0 | 4 | 5 | 6 => {
-                    for _ in 0..3 {
-                        (self.libc)();
-                    }
+                    self.trail(m.pos, TrailSource::Missile(m.kind));
                     m.pos = [m.vel[0] + m.pos[0], m.vel[1] + m.pos[1], m.vel[2] + m.pos[2]];
                     if m.target != NONE && Self::missile_close(&m) {
-                        self.hit_fx(m.pos);
+                        self.hit_fx(ahead(&m.pos, &m.vel));
                         let dmg = self.real_damage(m.target, m.dmg, m.vel[1], m.vel[2]);
                         if self.damage(m.target, dmg, m.by) {
                             self.kill(m.target);
@@ -899,12 +901,10 @@ impl War<'_> {
                     }
                 }
                 3 => {
-                    for _ in 0..3 {
-                        (self.libc)();
-                    }
+                    self.trail(m.pos, TrailSource::Missile(3));
                     m.pos = [m.vel[0] + m.pos[0], m.vel[1] + m.pos[1], m.vel[2] + m.pos[2]];
                     if m.target != NONE && Self::missile_close(&m) {
-                        self.hit_fx(m.pos);
+                        self.hit_fx(ahead(&m.pos, &m.vel));
                         let t = m.target;
                         if m.dmg & 1 != 0 && t >= 0 && t != NONE && self.u(t).flags & flag::TURRET == 0 {
                             let n = self.alive_members(t);
@@ -937,9 +937,7 @@ impl War<'_> {
                     }
                 }
                 1 | 2 => {
-                    for _ in 0..3 {
-                        (self.libc)();
-                    }
+                    self.trail(m.pos, TrailSource::Missile(m.kind));
                     m.pos = [m.vel[0] + m.pos[0], m.vel[1] + m.pos[1], m.vel[2] + m.pos[2]];
                     let dist = dist3(&m.pos, &m.dest);
                     let (near, radius) = if m.kind == 1 { (100.0, 3600.0) } else { (40.0, 2500.0) };
@@ -996,12 +994,12 @@ impl War<'_> {
                 k += 1;
                 continue;
             }
-            for _ in 0..3 {
-                (self.libc)();
-            }
+            self.trail(b.pos, TrailSource::Paralyser);
             b.pos = [b.vel[0] + b.pos[0], b.vel[1] + b.pos[1], b.vel[2] + b.pos[2]];
             if b.target != NONE && dist3(&b.pos, &b.dest) < 40.0 {
-                (self.libc)();
+                // The hit's flash (no sound), at the shot's next point (`GetIntersectionPoint`, colony.md §5.3).
+                let size = (self.libc)() % 30 + 10;
+                self.flash(ahead(&b.pos, &b.vel), size);
                 let t = b.target;
                 if b.power != 0 && t >= 0 && self.u(t).flags & flag::TURRET == 0 {
                     let n = self.alive_members(t);

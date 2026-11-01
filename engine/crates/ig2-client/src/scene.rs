@@ -28,6 +28,16 @@ pub fn scale(s: V3) -> M3 {
     [s[0], 0.0, 0.0, 0.0, s[1], 0.0, 0.0, 0.0, s[2]]
 }
 
+/// `RotateObjToAxis`'s `CreateMatrix2(normalise(d), θ)` (ELF 0x4534e0): `t = normalise(d × (sin θ, cos θ, 0))`,
+/// `u = normalise(d × t)`, the elements `[−d.x, −u.x, −t.x, −d.y, −u.y, −t.y, −d.z, −u.z, −t.z]`.
+pub fn create_matrix2(d: V3, a: f32) -> M3 {
+    let cross = |a: V3, b: V3| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let d = normalise(d);
+    let t = normalise(cross(d, [(a as f64).sin() as f32, (a as f64).cos() as f32, 0.0]));
+    let u = normalise(cross(d, t));
+    [-d[0], -u[0], -t[0], -d[1], -u[1], -t[1], -d[2], -u[2], -t[2]]
+}
+
 /// `CreateMatrix(a, b, c)` (ELF 0x451ee0), f32 sines and cosines.
 pub fn create_matrix(a: f32, b: f32, c: f32) -> M3 {
     let (sa, ca) = ((a as f64).sin() as f32, (a as f64).cos() as f32);
