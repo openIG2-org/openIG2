@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Sharper textures on big screens: a new Remake row "Texture upscaling" (2x or 4x) smooths the game's pictures and model textures as they load, and texture packs in the mods folder can replace any picture or model with a higher-resolution one; every picture keeps its place (off keeps the original's look).
 - The title video stays quiet over the two logos and its music starts with the intro (Remake row "Title music with intro"; off plays the music from the first logo as the original).
 - Win a scenario and you can put your name in its high-score table: the list opens on it and asks for your name; the table shows how many days the win took (Remake row "High-score entry"; off keeps the original, which never asks).
 - Starmap: the mouse wheel zooms and a right drag moves the map; a right click still gives the fleet its order (Remake row "Starmap mouse camera"; off keeps the original's controls).

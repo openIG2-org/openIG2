@@ -52,7 +52,7 @@ impl Planets {
     pub fn load(r: &mut Renderer, install: &Install) -> Self {
         let meshes = std::array::from_fn(|k| Mesh::load(r, install, &format!("b{k}0.xvb")));
         let cloud = Mesh::load(r, install, "felhoo_0.xvb");
-        let noise = r.add_texture_linear(&Image { width: PLASMA, height: PLASMA, rgba: plasma().iter().flat_map(|&v| [v, v, v, 255]).collect(), mips: Vec::new() });
+        let noise = r.add_texture_linear(&Image { width: PLASMA, height: PLASMA, rgba: plasma().iter().flat_map(|&v| [v, v, v, 255]).collect(), mips: Vec::new(), hires: None });
         Self { meshes, cloud, noise, battle: Vec::new(), shell: None }
     }
 

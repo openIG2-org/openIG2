@@ -73,6 +73,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--size WxH`, `--letterbox` | Window size; letterbox wide windows instead of the remaster's layout |
 | `--sharp-ui` | Sharp UI on for this run, over the settings file |
 | `--sharp-text` | Sharp text on for this run, over the settings file |
+| `--upscale 2\|4` | Texture upscaling at 2× or 4× for this run, over the settings file |
 
 ## Controls
 The controls are the original's. The most used:
@@ -143,6 +144,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Colour-blind colours (`ColourBlindColours`) | Off by default: empires 1–8 get colours that stay apart with red-green or blue-yellow colour blindness, in names, the minimap, the info screen, the top bar and the fleet icons (ADR 0036) |
 | Sharp UI (`SharpUi`) | Off by default: the panels, text and pointer are drawn with crisp texel edges instead of the original's smooth scaling, for big windows (1440p, 4K) where the 640×480 layout is scaled several times (ADR 0043); the UI's size follows the window either way |
 | Sharp text (`SharpText`) | Off by default: on big windows (1440p, 4K) the game's own font is drawn with sharp, smooth edges instead of the original's blur, every letter in the same place and size (ADR 0046); combines with Sharp UI; at 800x600 nothing changes |
+| Texture upscaling (`TextureUpscale`) | Off / 2x / 4x, off by default: the textures are enlarged as they load, interface art with an edge-keeping filter (xBRZ) and the rest smoothly, so pictures and models look less blocky on big windows; every picture keeps its place and size (ADR 0054). The first visit to a screen takes longer (the starmap about 4 s at 4x); a change shows on the screens opened afterwards. A texture pack (Mods) wins over it |
 | Starmap mouse camera (`StarmapMouseCamera`) | On by default: the wheel zooms the starmap and a right drag moves it; an unmoved right click gives its order on the release (ADR 0049); off = the original: no wheel, the right press orders at once |
 | High-score entry (`HighScoreEntry`) | On by default: after a won scenario the main menu opens its list in high-score view and asks for your name (Enter keeps it; the score is the days the win took, fewer is better); the tables are kept in the remake's settings file (ADR 0050); off = the original, which never asks |
 | Computer empires (`EnhancedAi`) | Classic by default: the computer empires of a new single-player game play as in the original. Enhanced (ADR 0045): they expand faster, build the labs their research needs, buy every planet's building when they can pay, set taxes by morale and research a colony ship when there are planets to take. A game keeps the choice it started with (saved with it); a multiplayer room has its own row |
@@ -208,7 +210,25 @@ game with a message naming the mod and the field, and `ig2-check` shows the same
 `dataraw\`, so a mod replaces them whole like any other file.
 
 In multiplayer every player needs the same mod files and `rules.toml`s: the room refuses a player with other mods
-("Other mods enabled"), and a multiplayer save made with mods resumes only with them.
+("Other mods enabled"), and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
+are the exception: they only change what you see, so players with and without them play together.
+
+### Texture and model packs
+A pack is a mod whose `hires` folder holds better versions of the game's pictures and models (ADR 0054). Unlike a
+plain replacement, a pack's file can be any size: the game still places and sizes everything by the install's
+original, so a picture four times as large draws in the same spot, only sharper.
+
+- **Pictures**: put a PNG (or a `.pvr`) at `hires\` + the install's path, with `.png` for `.pvr`:
+  `mods\hd-colony\hires\dataraw	extures\colonyoo_bmp.png` is drawn for the install's
+  `dataraw	extures\colonyoo_bmp.pvr`. Any size and aspect works; keep transparency in the PNG's alpha channel.
+  Model textures, interface pictures and the pointer all work this way; the font does not.
+- **Models**: put a model file at `hires\` + the install's path: `mods\hd-colony\hires\datarawector\colony\<name>.xv`
+  is drawn for the install's `datarawector\colony\<name>.xv` (buildings and every other model). It is scaled so
+  its largest side matches the original's, so it fits the original's place whatever units it was built in. Its
+  textures are found by name like the original's: put new ones in the mod's `dataraw	extures\colony\`, or sharper
+  versions of the install's in `hires\`.
+- Enable the pack like any mod (`enabled.txt` or `--mod`). A pack's picture wins over Texture upscaling.
+- Packs, like all mods, are yours to make or download; the project ships no graphics.
 
 ## Asset viewer
 `cargo run --release -p ig2-viewer` browses the install's models, textures, colony maps, animations and messages.

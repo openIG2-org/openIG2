@@ -144,7 +144,7 @@ pub fn rgba(y: &DecodedYUV) -> Image {
             out[o..o + 3].copy_from_slice(&shade(yp[row * ys + col] as f32 / 255.0, bil(up, us), bil(vp, vs)));
         }
     }
-    Image { width: w as u32, height: h as u32, rgba: out, mips: Vec::new() }
+    Image { width: w as u32, height: h as u32, rgba: out, mips: Vec::new(), hires: None }
 }
 
 /// One pixel of `video_fragment.shader` from the sampled planes (0..=1 each).

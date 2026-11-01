@@ -584,8 +584,10 @@ impl Renderer {
     fn upload(&mut self, img: &Image, format: wgpu::TextureFormat) -> TexId {
         crate::prof::count("tex", 1);
         crate::prof::count("tex_kb", img.rgba.len() as u64 / 1024);
-        let mips = mip_chain(img);
-        let size = wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 };
+        // A picture past the device's limit is uploaded as the texture's own (ADR 0054 §2).
+        let max = self.device.limits().max_texture_dimension_2d;
+        let ((width, height), mips) = mip_chain(img, img.hires.as_deref().filter(|h| h.width.max(h.height) <= max));
+        let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let tex = self.device.create_texture_with_data(
             &self.queue,
             &wgpu::TextureDescriptor {
@@ -903,12 +905,28 @@ fn raw_view(tex: &wgpu::Texture) -> wgpu::TextureView {
     tex.create_view(&wgpu::TextureViewDescriptor { format: Some(tex.format().remove_srgb_suffix()), ..Default::default() })
 }
 
-/// The image and its box-filtered mips down to 1×1 (in sRGB space; good enough for these assets).
-fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
+/// The image (or `hires`, drawn in its place) and its box-filtered mips down to 1×1 (in sRGB space; good enough for
+/// these assets), with the top level's size.
+fn mip_chain(img: &Image, hires: Option<&crate::upscale::Hires>) -> ((u32, u32), Vec<Vec<u8>>) {
+    let (mut out, mut w, mut h) = match hires {
+        Some(hi) => (vec![hi.rgba.clone()], hi.width as usize, hi.height as usize),
+        None => (vec![img.rgba.clone()], img.width as usize, img.height as usize),
+    };
+    let size = (w as u32, h as u32);
+    // An upscaled level halves down to the image's own size, where the image itself takes over (ADR 0054 §2).
+    if hires.is_some_and(|hi| hi.upscaled) {
+        while w > img.width as usize {
+            (w, h) = halve(&mut out, w, h);
+        }
+        *out.last_mut().unwrap() = img.rgba.clone();
+    } else if hires.is_some() {
+        while w > 1 || h > 1 {
+            (w, h) = halve(&mut out, w, h);
+        }
+        return (size, out);
+    }
     // The PVR's own levels first (`load_pvr` uploads them as stored: the alpha-tested scaffolding's rails stay solid),
     // then box-filtered ones down to 1 × 1.
-    let mut out = vec![img.rgba.clone()];
-    let (mut w, mut h) = (img.width as usize, img.height as usize);
     for m in &img.mips {
         let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
         if m.len() != nw * nh * 4 {
@@ -918,25 +936,30 @@ fn mip_chain(img: &Image) -> Vec<Vec<u8>> {
         (w, h) = (nw, nh);
     }
     while w > 1 || h > 1 {
-        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-        let src = out.last().unwrap();
-        let mut dst = vec![0u8; nw * nh * 4];
-        for y in 0..nh {
-            for x in 0..nw {
-                for c in 0..4 {
-                    let mut sum = 0u32;
-                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                        let (sx, sy) = ((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
-                        sum += src[(sy * w + sx) * 4 + c] as u32;
-                    }
-                    dst[(y * nw + x) * 4 + c] = (sum / 4) as u8;
+        (w, h) = halve(&mut out, w, h);
+    }
+    (size, out)
+}
+
+/// `out`'s last level (`w` × `h`) box-filtered to half its size, pushed; the new size.
+fn halve(out: &mut Vec<Vec<u8>>, w: usize, h: usize) -> (usize, usize) {
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let src = out.last().unwrap();
+    let mut dst = vec![0u8; nw * nh * 4];
+    for y in 0..nh {
+        for x in 0..nw {
+            for c in 0..4 {
+                let mut sum = 0u32;
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (sx, sy) = ((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
+                    sum += src[(sy * w + sx) * 4 + c] as u32;
                 }
+                dst[(y * nw + x) * 4 + c] = (sum / 4) as u8;
             }
         }
-        out.push(dst);
-        (w, h) = (nw, nh);
     }
-    out
+    out.push(dst);
+    (nw, nh)
 }
 
 /// `--snapshot --screen diplomacy`: the diplomacy screen at rest (re/screens/diplomacy.md), or with `--anim-frame F`
@@ -2106,6 +2129,24 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0054 §2: an upscaled picture is the top level and halves down to the image's own pixels, then the PVR's
+    /// levels; a pack's picture of any size is box-filtered all the way; without either the image's chain is unchanged.
+    #[test]
+    fn hires_levels_reach_the_images_own() {
+        let img = Image { width: 8, height: 4, rgba: vec![7; 8 * 4 * 4], mips: vec![vec![9; 4 * 2 * 4]], hires: None };
+        let (size, plain) = mip_chain(&img, None);
+        assert_eq!((size, plain.len(), plain[1][0]), ((8, 4), 4, 9));
+        let up = crate::upscale::Hires { width: 32, height: 16, rgba: vec![1; 32 * 16 * 4], upscaled: true };
+        let (size, levels) = mip_chain(&img, Some(&up));
+        assert_eq!(size, (32, 16));
+        assert_eq!(levels.iter().map(|l| l.len() / 4).collect::<Vec<_>>(), [512, 128, 32, 8, 2, 1]);
+        assert_eq!((levels[2][0], levels[3][0]), (7, 9));
+        let pack = crate::upscale::Hires { width: 30, height: 12, rgba: vec![200; 30 * 12 * 4], upscaled: false };
+        let (size, levels) = mip_chain(&img, Some(&pack));
+        assert_eq!((size, levels.len()), ((30, 12), 5));
+        assert!(levels.iter().all(|l| l[0] == 200));
+    }
 
     /// ADR 0046: the coverage's 0.5 edge stays put (the glyph's stroke widths and positions), 1:1 or minified the
     /// value is the bilinear one, and at 4.5 pixels a texel the ramp is one pixel wide.

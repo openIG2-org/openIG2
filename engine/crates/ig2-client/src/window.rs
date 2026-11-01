@@ -474,6 +474,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     crate::starmap::set_colour_blind(app.display.colour_blind);
     crate::render::set_sharp_ui(o.sharp_ui || app.display.sharp_ui);
     crate::render::set_sharp_text(o.sharp_text || app.display.sharp_text);
+    crate::upscale::set_factor(o.upscale.max(app.display.upscale));
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
         crate::spacewar_screen::go_live(&mut app.world, crate::spacewar_screen::Dump::load(&p)?.battle);
@@ -3195,6 +3196,7 @@ impl App {
         crate::kit::layout::set_centred_exit(d.centred_exit);
         crate::render::set_sharp_ui(d.sharp_ui);
         crate::render::set_sharp_text(d.sharp_text);
+        crate::upscale::set_factor(d.upscale);
         if d.colour_blind != old.colour_blind {
             crate::starmap::set_colour_blind(d.colour_blind);
             self.reload_palettes();

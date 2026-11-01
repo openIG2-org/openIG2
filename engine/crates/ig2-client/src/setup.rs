@@ -192,7 +192,7 @@ fn text_line(l: &str, px: u32) -> Option<crate::assets::Image> {
             }
         });
     }
-    Some(crate::assets::Image { width: w, height: h, rgba, mips: Vec::new() })
+    Some(crate::assets::Image { width: w, height: h, rgba, mips: Vec::new(), hires: None })
 }
 
 impl ApplicationHandler for Setup {

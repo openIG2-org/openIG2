@@ -23,7 +23,7 @@ main-menu Options screen with tabs follows separately.
    the groups in that order, each under a heading line (colour 1, x 30), its rows in their declared order; an empty
    group has no heading.
 4. **Sub-pages**: lines step 15 from y 92 like the game page's rows; 21 lines a sub-page (a heading never ends one,
-   it moves to the next), line 21 the "Restart to change the language" notice while it applies, line 22 a "Page"
+   it moves to the next; a group carried over repeats its heading on the next sub-page), line 21 the "Restart to change the language" notice while it applies, line 22 a "Page"
    row with the value "n/m" when there is more than one sub-page; a press on it shows the next sub-page (after the
    last, the first), as a press on a row steps its value. Rows react as on the other pages (`y..y+15`,
    `31 ≤ x ≤ 279`, colours 0x22/0x25, 2 hovered, 1 disabled).

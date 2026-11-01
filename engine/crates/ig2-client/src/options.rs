@@ -61,7 +61,8 @@ enum Line {
     Row(usize),
 }
 
-/// The Remake page's lines split into sub-pages of [`SUB_LINES`]; a heading never ends one.
+/// The Remake page's lines split into sub-pages of [`SUB_LINES`]; a heading never ends one, and a group carried over
+/// to the next sub-page repeats its heading there.
 fn remake_pages(rows: &[Row]) -> Vec<Vec<Line>> {
     let mut lines = Vec::new();
     for g in Group::ALL {
@@ -72,11 +73,15 @@ fn remake_pages(rows: &[Row]) -> Vec<Vec<Line>> {
         }
     }
     let mut pages = vec![Vec::new()];
+    let mut group = None;
     for (i, l) in lines.iter().enumerate() {
+        if let Line::Heading(g) = l {
+            group = Some(*g);
+        }
         let page = pages.last_mut().unwrap();
         let heading_last = page.len() == SUB_LINES - 1 && matches!(l, Line::Heading(_)) && i + 1 < lines.len();
         if page.len() == SUB_LINES || heading_last {
-            pages.push(Vec::new());
+            pages.push(group.filter(|_| matches!(l, Line::Row(_))).map(Line::Heading).into_iter().collect());
         }
         pages.last_mut().unwrap().push(*l);
     }
@@ -1626,7 +1631,7 @@ mod tests {
         assert!(o.row_y(SUB_LINES as i32 + 1) + 0xf <= 62 + 384);
         o.press([40.0, y(22)], &mut |_| {});
         assert_eq!(o.sub, 1);
-        assert_eq!(o.remake_lines()[0], Line::Heading(Group::Game));
+        assert_eq!(o.remake_lines()[..2], [Line::Heading(Group::Interface), Line::Row(26)]);
         o.press([40.0, y(22)], &mut |_| {});
         assert_eq!(o.sub, 0);
         // Leaving the page shows its first sub-page again.

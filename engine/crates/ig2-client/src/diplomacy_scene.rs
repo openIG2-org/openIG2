@@ -141,7 +141,7 @@ impl DiplomacyScene {
             }
             // `PlayAnimVector` (ELF 0x45ea70) uploads the frames as they are; the scan lines are the `VIDEO` material's
             // (re/screens/render.md §3).
-            frames.into_iter().map(|f| r.add_texture(&Image { width: w, height: h, rgba: f.rgba, mips: Vec::new() }))
+            frames.into_iter().map(|f| r.add_texture(&Image { width: w, height: h, rgba: f.rgba, mips: Vec::new(), hires: None }))
                 .collect()
         })
     }

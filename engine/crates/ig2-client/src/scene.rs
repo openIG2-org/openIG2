@@ -168,6 +168,14 @@ impl Part {
     }
 }
 
+/// An enabled pack's model drawn instead of the install's `path` (`hires/<path>`, ADR 0054 §6).
+fn pack_model(install: &Install, path: &str) -> Option<Vec<u8>> {
+    if install.mods().is_empty() {
+        return None;
+    }
+    install.read(&format!("{}{path}", crate::upscale::PACK_DIR)).ok()
+}
+
 /// A loaded model: its root node's half-extents (`XVBStruct+4..+0xc`), its parts and the pose of every child.
 #[derive(Debug, Clone, Default)]
 pub struct Model {
@@ -236,7 +244,29 @@ impl Model {
         let path = format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase();
         let bytes = install.read(&path).map_err(|e| format!("{path}: {e}"))?;
         let archive = Archive::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-        Self::posed(&archive, &path, stem, install, texture_dir, frame)
+        match pack_model(install, &path) {
+            Some(bytes) => Self::from_pack(&bytes, &archive, &path, stem, install, texture_dir, frame),
+            None => Self::posed(&archive, &path, stem, install, texture_dir, frame),
+        }
+    }
+
+    /// A pack's model (`bytes`, ADR 0054 §6) posed in place of `archive`'s: its half-extents scaled uniformly so the
+    /// largest is the original's.
+    #[allow(clippy::too_many_arguments)]
+    fn from_pack(bytes: &[u8], archive: &Archive, path: &str, stem: &str, install: &Install, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {
+        let pack = Archive::parse(bytes).map_err(|e| format!("{}{path}: {e}", crate::upscale::PACK_DIR))?;
+        let mut model = Self::posed(&pack, path, stem, install, texture_dir, frame)?;
+        let original = archive.scene(Some(stem)).map_err(|e| format!("{path}: {e}"))?.ok_or(format!("{path}: no root node"))?.header.origin;
+        model.fit(original);
+        Ok(model)
+    }
+
+    /// The half-extents scaled uniformly so that their largest is `to`'s (a pack's model in the original's place).
+    pub fn fit(&mut self, to: V3) {
+        let k = to[0].max(to[1]).max(to[2]) / self.origin[0].max(self.origin[1]).max(self.origin[2]);
+        if k.is_finite() && k > 0.0 {
+            self.origin = self.origin.map(|o| o * k);
+        }
     }
 
     /// [`Model::load_at`] for each of `frames`, the file read and parsed once.
@@ -245,7 +275,14 @@ impl Model {
         let path = format!("dataraw/{vector_dir}{stem}.xv").to_ascii_lowercase();
         let bytes = install.read(&path).map_err(|e| format!("{path}: {e}"))?;
         let archive = Archive::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
-        frames.into_iter().map(|f| Self::posed(&archive, &path, stem, install, texture_dir, Some(f))).collect()
+        let pack = pack_model(install, &path);
+        frames
+            .into_iter()
+            .map(|f| match &pack {
+                Some(bytes) => Self::from_pack(bytes, &archive, &path, stem, install, texture_dir, Some(f)),
+                None => Self::posed(&archive, &path, stem, install, texture_dir, Some(f)),
+            })
+            .collect()
     }
 
     fn posed(archive: &Archive, path: &str, stem: &str, install: &Install, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {

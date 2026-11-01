@@ -11,15 +11,26 @@ pub struct Image {
     pub rgba: Vec<u8>,
     /// The smaller levels the PVR holds, largest first (empty: the renderer filters its own).
     pub mips: Vec<Vec<u8>>,
+    /// The pixels the renderer uploads instead (an upscaled copy or a pack's picture, ADR 0054); the size and pixels
+    /// above stay the file's.
+    pub hires: Option<std::sync::Arc<crate::upscale::Hires>>,
 }
 
 impl Image {
+    /// The texture at `path`, with what the texture upscaling or an enabled pack draws instead (ADR 0054).
     pub fn load(install: &Install, path: &str) -> Result<Self, String> {
+        let mut img = Self::load_original(install, path)?;
+        img.hires = crate::upscale::hires(install, path, &img);
+        Ok(img)
+    }
+
+    /// [`Image::load`] drawn as it is (the font atlas).
+    pub fn load_original(install: &Install, path: &str) -> Result<Self, String> {
         let bytes = install.read(path).map_err(|e| format!("{path}: {e}"))?;
         let pvr = Pvr::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
         let mut levels = pvr.decode_levels().map_err(|e| format!("{path}: {e}"))?.into_iter().map(|l| l.pixels);
         let rgba = levels.next().ok_or(format!("{path}: no pixels"))?;
-        Ok(Self { width: pvr.width, height: pvr.height, rgba, mips: levels.collect() })
+        Ok(Self { width: pvr.width, height: pvr.height, rgba, mips: levels.collect(), hires: None })
     }
 
     /// The texture's `uv_mul` (its PVR's `CNST` metadata, `ig2_vertex.shader` scales the mesh UVs by it), else (1, 1).
@@ -30,7 +41,7 @@ impl Image {
 
     /// A 1×1 white image (untextured shapes).
     pub fn white() -> Self {
-        Self { width: 1, height: 1, rgba: vec![255; 4], mips: Vec::new() }
+        Self { width: 1, height: 1, rgba: vec![255; 4], mips: Vec::new(), hires: None }
     }
 }
 

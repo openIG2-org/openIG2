@@ -32,7 +32,7 @@ pub struct Font {
 
 impl Font {
     pub fn load(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules) -> Option<Self> {
-        let img = Image::load(install, "dataraw/screen/charset_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
+        let img = Image::load_original(install, "dataraw/screen/charset_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
         let tex = r.add_texture(&img);
         let order = if install.lang() == Lang::Hu { &rules.charset.order_hu } else { &rules.charset.order };
         let mut glyph = [0x4c_u8; 256];

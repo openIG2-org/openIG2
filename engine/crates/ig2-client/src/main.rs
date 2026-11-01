@@ -7,7 +7,7 @@
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--upscale 2|4] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -109,6 +109,7 @@ mod trade;
 mod tr;
 mod topbar_menus;
 mod tutorial_ui;
+mod upscale;
 mod trade_scene;
 mod ui;
 mod video;
@@ -143,6 +144,8 @@ pub struct Options {
     pub sharp_ui: bool,
     /// `--sharp-text`: the glyphs' edges one screen pixel wide (ADR 0046; else the settings file's `SharpText`).
     pub sharp_text: bool,
+    /// `--upscale 2|4`: the textures upscaled (ADR 0054; else the settings file's `TextureUpscale`); 1 = off.
+    pub upscale: u8,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -298,6 +301,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         letterbox: false,
         sharp_ui: false,
         sharp_text: false,
+        upscale: 1,
         multiplayer: false,
         background: None,
         texts: None,
@@ -396,6 +400,13 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--letterbox" => o.letterbox = true,
             "--sharp-ui" => o.sharp_ui = true,
             "--sharp-text" => o.sharp_text = true,
+            "--upscale" => {
+                o.upscale = match val()?.trim() {
+                    "2" => 2,
+                    "4" => 4,
+                    _ => return Err("--upscale 2|4".into()),
+                }
+            }
             "--multiplayer" => o.multiplayer = true,
             "--backdrop" => o.backdrop = true,
             "--background" => {
@@ -519,6 +530,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     kit::layout::set_letterbox(o.letterbox);
     render::set_sharp_ui(o.sharp_ui);
     render::set_sharp_text(o.sharp_text);
+    upscale::set_factor(o.upscale);
     Ok(o)
 }
 
@@ -626,10 +638,11 @@ fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
     mods
 }
 
-/// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`): the override files,
-/// and each `rules.toml` as `rules.toml#<k>` in the order they apply (ADR 0044 §9); `None` without mods.
+/// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`): the override files
+/// but a pack's pictures and models (only drawn, ADR 0054 §7), and each `rules.toml` as `rules.toml#<k>` in the order
+/// they apply (ADR 0044 §9); `None` without mods.
 pub fn mods_fingerprint(install: &Install) -> Option<[u8; 32]> {
-    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().map(|f| (f.path.to_owned(), std::fs::read(f.file).unwrap_or_default())).collect();
+    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR)).map(|f| (f.path.to_owned(), std::fs::read(f.file).unwrap_or_default())).collect();
     files.extend(install.rule_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("rules.toml#{k}"), b)));
     ig2_net::session::mods_fingerprint(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())))
 }
