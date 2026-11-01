@@ -1,4 +1,4 @@
-# ADR 0062: smooth glows
+# ADR 0064: smooth glows
 
 Date: 2026-11-01. Status: accepted. Implemented by `ig2-client::render` (`kind::SOFT`, the B-spline and the point
 dots), `ig2-client::starmap` (the glows, particles and sky sphere), `ig2-client::mainscr_scene` (the menu's galaxy),

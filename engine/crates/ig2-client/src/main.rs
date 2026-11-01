@@ -175,7 +175,7 @@ pub struct Options {
     pub modern_lighting: bool,
     /// `--battle-effects`: the battles' enhanced effects (ADR 0057; else the settings file's `BattleEffects`).
     pub battle_effects: bool,
-    /// `--smooth-glows`: the glows and particles without a texel grid (ADR 0062; else the settings file's `SmoothGlows`).
+    /// `--smooth-glows`: the glows and particles without a texel grid (ADR 0064; else the settings file's `SmoothGlows`).
     pub smooth_glows: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,

@@ -141,7 +141,7 @@ fn sky_sphere(r: &mut Renderer, install: &Install) -> Vec<(Vec<crate::render3d::
         .iter()
         .filter_map(|p| {
             let mut t = Image::load(install, p.texture.as_deref()?).ok()?;
-            // "Smooth glows" (ADR 0062): the nebulae, each texel about ten pixels wide at 1080p, from a 4× Catmull-Rom
+            // "Smooth glows" (ADR 0064): the nebulae, each texel about ten pixels wide at 1080p, from a 4× Catmull-Rom
             // copy (a texture pack's or the upscaling row's picture first).
             if let (true, None, Some(f)) = (crate::render::smooth_glows(), &t.hires, crate::upscale::fit(t.width, t.height, 4)) {
                 let rgba = crate::upscale::cubic(&t.rgba, t.width as usize, t.height as usize, f as usize);

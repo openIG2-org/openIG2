@@ -85,7 +85,7 @@ pub const SOFT_SHADOWS: &str = "SoftShadows";
 pub const BLOOM: &str = "Bloom";
 /// ADR 0057: the battles' effects with the enhanced particle layers on top (0 = classic, the default; 1 = enhanced).
 pub const BATTLE_EFFECTS: &str = "BattleEffects";
-/// ADR 0062: the starmap's and backgrounds' glows and particles drawn without a texel grid or square points (off by
+/// ADR 0064: the starmap's and backgrounds' glows and particles drawn without a texel grid or square points (off by
 /// default).
 pub const SMOOTH_GLOWS: &str = "SmoothGlows";
 

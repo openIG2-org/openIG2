@@ -123,7 +123,7 @@ fn cubic(t: vec2<f32>, lo: vec2<f32>, hi: vec2<f32>) -> vec4<f32> {
 }
 
 // `tex` at `t` through a cubic B-spline over the 4 × 4 texels around it, as four bilinear taps: smooth everywhere,
-// so a magnified texture shows no texel grid (ADR 0062). The Rust twin is `bspline` (its test pins the weights).
+// so a magnified texture shows no texel grid (ADR 0064). The Rust twin is `bspline` (its test pins the weights).
 fn bspline(t: vec2<f32>) -> vec4<f32> {
     let dims = vec2<f32>(textureDimensions(tex));
     let p = t * dims - 0.5;
@@ -226,7 +226,7 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
             let c = dec(cubic(t, v.uv.xy + h, v.uv.xy + v.uv.zw - h), d);
             return vec4(sharpen(c.rgb, s), 1.0) * v.color;
         }
-        // A scene's glow or particle (ADR 0062): bilinear like a sprite but never sharpened by "Sharp UI"; with "Smooth
+        // A scene's glow or particle (ADR 0064): bilinear like a sprite but never sharpened by "Sharp UI"; with "Smooth
         // glows" a magnified texture is read through the B-spline and a one-texel (white) point is a round dot of the
         // square's light.
         case 8u: {
@@ -260,7 +260,7 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
 static SHARP_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// The "Sharp text" option (ADR 0046, off by default): the glyphs' edges one screen pixel wide at any size.
 static SHARP_TEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// The "Smooth glows" option (ADR 0062, off by default): [`kind::SOFT`] quads without a texel grid or square points.
+/// The "Smooth glows" option (ADR 0064, off by default): [`kind::SOFT`] quads without a texel grid or square points.
 static SMOOTH_GLOWS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_sharp_ui(on: bool) {
@@ -316,7 +316,7 @@ pub mod kind {
     pub const GLOW: u32 = 5;
     pub const TRI: u32 = 6;
     pub const GLYPH: u32 = 7;
-    /// A scene's glow or particle sprite (ADR 0062): [`SPRITE`] without "Sharp UI", smooth with "Smooth glows".
+    /// A scene's glow or particle sprite (ADR 0064): [`SPRITE`] without "Sharp UI", smooth with "Smooth glows".
     pub const SOFT: u32 = 8;
 }
 
@@ -441,7 +441,7 @@ pub struct Frame {
     /// A picture over the whole target under everything else, the scene too (`Copy3hatterkep`: the game behind an
     /// overlay screen, re/screens/overlay-background.md): its texture and its gamma-space grey.
     pub backdrop: Option<(TexId, f32)>,
-    /// Drawn over what the target holds, not cleared first (the pointer over an egui page, ADR 0062).
+    /// Drawn over what the target holds, not cleared first (the pointer over an egui page, ADR 0064).
     pub keep: bool,
     late_at: usize,
     pub(crate) instances: Vec<Instance>,
@@ -482,7 +482,7 @@ impl Frame {
 struct Uniforms {
     screen: [f32; 2],
     time: f32,
-    /// Bit 0: "Sharp UI" (ADR 0043); bit 1: "Sharp text" (ADR 0046); bit 2: "Smooth glows" (ADR 0062).
+    /// Bit 0: "Sharp UI" (ADR 0043); bit 1: "Sharp text" (ADR 0046); bit 2: "Smooth glows" (ADR 0064).
     sharp: u32,
 }
 
@@ -982,7 +982,7 @@ impl Renderer {
         self.draw_to_image_over(frame, size, time, |_, _, _| {})
     }
 
-    /// [`Renderer::draw_to_image`] with `over` drawing into the texture after the frame (an egui page, ADR 0062).
+    /// [`Renderer::draw_to_image`] with `over` drawing into the texture after the frame (an egui page, ADR 0064).
     pub fn draw_to_image_over(&mut self, frame: &Frame, size: (u32, u32), time: f32, over: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::Texture)) -> Vec<u8> {
         let (w, h) = size;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -2284,7 +2284,7 @@ mod tests {
         assert!(levels.iter().all(|l| l[0] == 200));
     }
 
-    /// ADR 0062: the two bilinear taps give the cubic B-spline's four weights (1/6, 4/6, 1/6 at a texel centre),
+    /// ADR 0064: the two bilinear taps give the cubic B-spline's four weights (1/6, 4/6, 1/6 at a texel centre),
     /// a flat texture stays flat, and the curve has no kink where bilinear has one (at a texel centre).
     #[test]
     fn bspline_taps_are_the_four_weights() {
