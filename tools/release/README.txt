@@ -31,6 +31,8 @@ Settings, saves
   (Linux: ~/.local/share/GyroscopeGames/ig2/, macOS: ~/Library/Application Support/GyroscopeGames/ig2/),
   beside the original's options.dat (which openIG2 never rewrites).
 - Save slots are in the same folder (save<n>.ig2s; the original's save<n>.sav load too).
+- ig2-client.log in the same folder (Windows): the game's messages and errors from its last start;
+  attach it to a bug report.
 - ig2-check (if included) checks every file of your install and lists what fails.
 
 Uninstall: delete this folder and, if you like, ig2-rework-options.dat and save*.ig2s.

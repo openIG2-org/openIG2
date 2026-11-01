@@ -26,7 +26,10 @@ remembered, and the game restarts. Esc quits.
 ## Running
 Download `openig2-<version>-windows-x64.zip` from the
 [releases](https://github.com/openIG2-org/openIG2/releases/latest), unzip it into the game's folder (or anywhere)
-and run `ig2-client.exe`. Or run from source (`docs/BUILDING.md`):
+and run `ig2-client.exe`. It opens no console window: its messages and errors (a crash's too) go to
+`ig2-client.log` beside the settings (`%LOCALAPPDATA%\GyroscopeGames\ig2`, or `IG2_OPTIONS_DIR`), emptied at
+each start; started from a terminal it prints there instead (`--version`, the mod list). Attach the log to a bug
+report. Or run from source (`docs/BUILDING.md`):
 ```bash
 cd engine
 cargo run --release -p ig2-client

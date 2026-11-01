@@ -45,6 +45,8 @@
 
 // The browser build runs only the window (`web::start`): the command line's other paths are compiled but unused there.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+// Release builds on Windows have no console window (`stdio`); debug builds and the tests keep theirs.
+#![cfg_attr(all(windows, not(debug_assertions), not(test)), windows_subsystem = "windows")]
 
 // The browser has no stderr: the client's error lines go to the page's console (ADR 0047).
 #[cfg(target_arch = "wasm32")]
@@ -102,6 +104,8 @@ mod scene;
 mod setup;
 mod script;
 mod screen_frames;
+#[cfg(windows)]
+mod stdio;
 mod starmap;
 mod starmap_hud;
 mod starmap_info;
@@ -793,6 +797,8 @@ fn main() {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    #[cfg(windows)]
+    stdio::route();
     prof::start();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
