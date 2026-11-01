@@ -21,10 +21,6 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 150 | main menu, exit animation | the exe's respawning saucer (RNG) is missing and the meteors' material is fully black (faintly lit in the exe) | minor | mainscr.md §14 |
 | 154 | main menu, scenario list | the picture slide transitions at t 820/880 still differ (3D RNG/pose) | minor | mainscr.md §14 |
 | 157 | main menu, MP rings | the main menu's remaining MP-ring leftovers (meteor/ship sounds; the local/inet rings are our lobby, ADR 0014) are not done | minor | mainscr.md §14 |
-| 380 | SpaceWar, end zoom-out | the battle planet is ~29 levels less red than the exe's (red only; not the light, fog, cloud shells, texture or `uv_mul`) | minor | spacewar.md §9 |
-| 407 | colony, building pick | building faces are posed at load (animated parts not followed); a unit in front doesn't hide a building; an unfinished building's cut-away top still picks | minor | colony.md §10 |
-| 481 | text entries, Esc | Esc in the chat entry, the design screen's name entry and the options screen's save-name entry acts even while a screen change is pending; the exe's `DoKeyboard` (0x4db1a0, case 0x1b) ignores it then (`Belep` 0xbae24c, `Atlepes` 0xbae24d, `AktKepKell` 0xbae250); the renames are gated | minor | input.md §1 |
-| 482 | starmap, wormholes | the wormholes' end particles (particle set 7, `Wormhole3DSettings` exe 0x5bbd50) are not drawn: the exe shows a bright dot at each end of a known pair | minor | starmap.md §6, §9 |
 
 ## Keep
 
@@ -84,6 +80,8 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 467 | colony, scorch marks | `Koszfolt::Refresh` draws stream 0 (`rndlog(0, 0, 99)`) once a sim tick per scorch mark while the colony screen shows them; the sim doesn't make these draws (they depend on the viewer's screen, which lockstep can't share), so later stream-0 draws (dropship heights) can differ from the exe's in a single-player game while marks are up; the client fades its marks from its own stream | no | colony.md §5 |
 | 468 | colony, war effects | the ruins' two lights (`Feny`) and `Detonate`'s type-1 particles aren't drawn; scorch marks of another planet's `Detonate`/`SelfDestruct` aren't drawn on the shown planet (the exe does); tracer and beam jitter come from the client's own random stream (the exe shares libc's) and the debris' model pick from the slot | no | colony.md §5 |
 | 432 | window icon | the game and the setup window, the taskbar and the program file show the remake's own drawn icon, not the original's (the project ships no original assets) | minor | - |
+| 380 | SpaceWar, end zoom-out | the battle planet is ~29 levels less red than the exe's (red only; not the light, fog, cloud shells, texture or `uv_mul`) during the end zoom-out, which lasts 1.6 s (0.8 s towards options); the close-up matches; a colour tolerance that doesn't change gameplay | no | spacewar.md §9 |
+| 407 | colony, building pick | the pointer's unit is decided before the building (press, hold, right button), so the leftovers (faces posed at load, a unit's model in front outside its pick circle, an unfinished building's cut-away top) only change picks on model outlines (4793 of 4800 grid points agree with the exe) | no | colony.md §10 |
 
 ## Enhanced
 

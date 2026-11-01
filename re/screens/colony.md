@@ -637,7 +637,7 @@ the human doesn't see into (§3.3) are never hit [obs: `probes/colony_pick.js` o
 click points: 660 of 4800 hit one of 8 buildings, contiguous model outlines]. The port casts the eye's ray through
 the pointer against each building's world triangles at its drawn level of detail and keeps the nearest in front of
 the ground (`View::building_at`; 4793 of the 4800 points agree, the rest on outlines; a unit in front doesn't
-hide a building and an unfinished building's cut-away top still picks it [ours]). Like the exe it runs every drawn frame
+hide a building and an unfinished building's cut-away top still picks it [ours]; row 407, kept: the pointer's unit is decided first). Like the exe it runs every drawn frame
 (and on every pointer move), with the cell under the pointer, so a camera move or a building change under a still pointer
 is followed.
 

@@ -35,7 +35,7 @@ Not editing (`DAT_00bae2c3 == 0`):
 | down | any other | `FUN_004db040(vk, 0, 1)` |
 | up | any | `FUN_004db040(vk, 0, 0)` |
 
-Esc is not a `DoKeyboard` key outside an entry: it reaches the screens through `FUN_004db040` and
+In every text entry (chat, design name, save name, renames) the client ignores Esc while a screen change is pending, as `DoKeyboard` case 0x1b does (`Belep` 0xbae24c, `Atlepes` 0xbae24d, `AktKepKell` 0xbae250). Esc is not a `DoKeyboard` key outside an entry: it reaches the screens through `FUN_004db040` and
 `MainCallBackEventHandler` (exe 0x4e2db0, on the key down, not in an entry or a change): the messages screen when idle
 `AktIkonKell = 0x25` (hot-spot 7), Help 0x24 (6), the starmap with the production view, the transfer, the fleet's or
 vehicles' panel or the long info up (`StarmapProductMode` 0xb9933a, `StarmapTransferMode` 0xb9a304, `StarmapFleetMode`

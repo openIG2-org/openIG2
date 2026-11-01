@@ -197,7 +197,7 @@ below 1), colour `0x40000000 | +0x1a << 16 | +0x19 << 8 | +0x18` (red in the low
 wide, then the `nyilhegy` head to the tip, ±2.5·width at its base; `polygons(…, 1)` adds the colour premultiplied by
 its alpha, unsmoothed [obs: a staged pair (`tools/trace/probes/wormholes.js`) adds (30, 92, 121) to a pixel of the two
 overlapping arrows at 800 × 600]. Port: `Snapshot::wormholes`, drawn after the rally arrows (white for the two
-textures; the strip's summed colour within 10 % of the capture). The wormholes' end particles (set 7, §6) are §9's.
+textures; the strip's summed colour within 10 % of the capture). The wormholes' end particles are not drawn by the exe (§6, set 7).
 
 ## 4. Fleets
 
@@ -257,7 +257,7 @@ Particle records: `FStars` exe 0xF16F38, 11 sets × 0x38 = {+0 records (0x4c byt
 with `run_screen.py --particles`; §6.1 and §6.3 give all 3,010 background particles and quick-1.sav's 52 radar dots
 bit for bit). Sets: 0 `FarStar` (no texture: points), 2
 `RadarRange` (`radar.bmp`), 3 `Selection`, 6 `FlottaMozgPart`, 7 the wormholes, 8 `Clouds1` (`felho3.bmp`), 9
-`Clouds2` and 10 `KodPamacsok` (`felho2.bmp`). `Particle` (ELF 0x5f4ff0) draws a textured particle as a
+`Clouds2` and 10 `KodPamacsok` (`felho2.bmp`). Set 7 (two records per wormhole, from the `Wormhole` record +0/+4 and +0xc/+0x10, colour +0x18..+0x1a) is filled by `Wormhole3DSettings` (ELF 0x6db280, exe 0x5bbd50) with size 0 and nothing else writes those records (reference scan of exe 0xeed000..0xeee000 and ELF 0x1797410..0x1798410; the set loops only scale or move), so `Particle` skips them: the exe never draws the end particles, and the bright spot at a pair's ends is the two overlapping arrows (§4). `Particle` (ELF 0x5f4ff0) draws a textured particle as a
 screen-aligned quad of half size `size·fov/−e.z` with colour × `(255 − TT)/256` and blend (1, 1) (alpha blending when
 the set's `+0x20` is 99), skipping colour 0 and size ≤ 0; untextured sets as GL points. The whole pass is gamma-space
 GL (re/screens/hud.md §1.1).
@@ -346,7 +346,7 @@ footprint as four lines between `get_radarpos` of the virtual corners (−320, �
 (320, 240).
 
 ## 9. Not specified here
-Wormhole particles, `starmapszarok`'s brightness change. The hot-spots' tooltips are in re/screens/input.md §8.
+`starmapszarok`'s brightness change. The hot-spots' tooltips are in re/screens/input.md §8.
 
 ## 10. Input → orders (lockstep messages)
 The screen never changes the game state itself: every order goes out as `Multi_Send(type, EN, …)` and is carried

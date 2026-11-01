@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Esc in the chat line, a design's name and a save's name no longer acts while the screen is changing.
 - The planet in the starmap's planet details no longer trembles while the game is paused: the camera now stays on the planet instead of swinging between its last two positions.
 - Hungarian: the remake's own texts read more naturally ("Keret nélküli" and "Teljes képernyő" window modes, "Bővített" instead of "Fejlett", "házigazda" for the multiplayer host, "képernyő" for screens, and more).
 - The multiplayer pages are redesigned: the connection page shows LAN, internet and saved games as tabs with clear rows and badges, says what to do when a list is empty, and has its own cards for joining by address or join code and for the relay server; the room shows each player with their race, colour and ready state, the galaxy settings with arrows, the host's connection switches and a Copy join code button, and the chat. Tab, the arrow keys and Enter work on the connection page.

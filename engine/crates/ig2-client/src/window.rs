@@ -1917,6 +1917,7 @@ impl App {
     /// the screen (the exe's case 0xd falls into the screen's handler); the backquote doesn't.
     fn chat_key(&mut self, key: &Key<&str>) -> bool {
         use crate::chat::EntryKey as E;
+        let changing = self.screen_changing();
         let Some(h) = &mut self.hud else { return false };
         let Some(e) = &mut h.chat.entry else {
             let opens = matches!(key, Key::Named(NamedKey::Enter) | Key::Character("`"));
@@ -1936,6 +1937,8 @@ impl App {
             Key::Named(NamedKey::ArrowLeft) => Some(E::Left),
             Key::Named(NamedKey::ArrowRight) => Some(E::Right),
             Key::Named(NamedKey::Enter) => Some(E::Enter),
+            // `DoKeyboard` case 0x1b (exe 0x4db1a0): nothing while a screen change is pending.
+            Key::Named(NamedKey::Escape) if changing => None,
             Key::Named(NamedKey::Escape) => Some(E::Escape),
             Key::Named(NamedKey::F1 | NamedKey::F2 | NamedKey::F3 | NamedKey::F4 | NamedKey::F5 | NamedKey::F6 | NamedKey::F7 | NamedKey::F8 | NamedKey::F9 | NamedKey::F10 | NamedKey::F11) => {
                 h.chat.entry = None;
@@ -2836,6 +2839,7 @@ impl App {
     /// (`ESC_Pressed`).
     fn options_key(&mut self, k: &Key) {
         use crate::options::EntryKey;
+        let changing = self.screen_changing();
         let Some(o) = &mut self.options else { return };
         if o.s.modern.is_some() {
             use crate::options::modern::Nav;
@@ -2866,6 +2870,8 @@ impl App {
         }
         let act = if o.s.entry.is_some() {
             let key = match k.as_ref() {
+                // `DoKeyboard` case 0x1b (exe 0x4db1a0): nothing while a screen change is pending.
+                Key::Named(NamedKey::Escape) if changing => None,
                 Key::Named(NamedKey::Escape) => {
                     o.s.escape();
                     None
@@ -7032,6 +7038,9 @@ impl App {
         match key {
             // The starmap's rename takes the keys (`IOMode`).
             _ if self.menus.rename.is_some() && !self.under_screen() => self.rename_key(&key),
+            // `DoKeyboard` case 0x1b (exe 0x4db1a0): the name input ignores Esc while a screen change is pending.
+            Key::Named(NamedKey::Escape)
+                if self.overlay == Some(crate::ui::Screen::Design) && self.design.as_ref().is_some_and(|d| d.entry.is_some()) && self.screen_changing() => {}
             // `DesignKeyboardEscPressed`: the name input ends, an edit is cancelled; else the options screen.
             Key::Named(NamedKey::Escape) if self.overlay == Some(crate::ui::Screen::Design) => {
                 if self.design_do(|d, c, _| d.escape(c)) != Some(true) && self.o_key_allowed() {

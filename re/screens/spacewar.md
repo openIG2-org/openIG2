@@ -1420,7 +1420,7 @@ stages one real-time battle on quick.scn and writes `<out>-entry.json`, the grab
 `--grab-ticks T,..` and `ig2-client --snapshot OUT --save S.sav --screen spacewar --battle <grab>.json`.
 
 **Open**:
-- End zoom-out (row 380): the battle planet's disc is rosier in the exe (shield7 t3400, the label masked: (121, 88, 83)
+- End zoom-out (row 380, kept: colour only, 1.6 s): the battle planet's disc is rosier in the exe (shield7 t3400, the label masked: (121, 88, 83)
   against (92, 84, 79), red only); not the light (the planet's and shells' records are grey), not fog (flags 15, no
   0x2000), not the shells (`bolygo3.xvb`'s `ETHCLDBP.bmp` is the grey `CLOUD` material), not `p5`'s levels or
   `uv_mul`; the close-up at t3000 matches. Next: probe the sampled texels (vertex uv `+0x18`).
