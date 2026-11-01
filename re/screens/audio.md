@@ -227,4 +227,5 @@ building sounds, the scroll voices, the speech-ended switch, `Mes[2]`, the thund
 lasts its decoded length (row 99); cosmetic draws use the client's own stream (row 38). Method: `--snapshot --script S`
 (on the starmap, or `--colony P`) runs the window's input and frame code headless and writes `<out>-sounds.jsonl` in the
 tracer's shape, compared by `run_screendiff.py --script`; scripts `tools/trace/scripts/{starmap,colony}-sounds.json`
-(the colony's E key can't be injected into the exe).
+(the colony's E key can't be injected into the exe). Ours: `Subtitles` (off) holds a spoken scroll line's text at the
+bottom while its voice plays (ADR 0036; no other voice has a text in the install).

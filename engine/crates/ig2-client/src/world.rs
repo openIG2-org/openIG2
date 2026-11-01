@@ -305,8 +305,9 @@ pub struct World<'r> {
     pub colony_events: Vec<ColonyOrderEvent>,
     /// `ScrollHibaUzenet`: the screens' own error lines for the message ticker, shown before the sim's.
     pub local_lines: Vec<Vec<u8>>,
-    /// The ids of the sim's messages the line took (`ScrollUzenetek+0x38`), for their voices (`FRISSIT_Scroll2`).
-    pub popped: Vec<i32>,
+    /// The ids of the sim's messages the line took (`ScrollUzenetek+0x38`) and their texts, for their voices
+    /// (`FRISSIT_Scroll2`) and the subtitles (ADR 0036).
+    pub popped: Vec<(i32, Vec<u8>)>,
     /// What the real-time battles did since the screen last looked (start, end).
     pub realtime: Vec<ig2_sim::game::RealTimeEvent>,
     /// A ground war went to the real-time screen since the window last looked (`GroundWarIndit`'s `StartGrWar`
@@ -1072,8 +1073,8 @@ impl<'r> World<'r> {
         if let Some(r) = &mut self.recorder {
             r.input(ig2_net::replay::Input::PopMessage);
         }
-        self.popped.push(id);
         let text: Vec<u8> = t.on_screen.iter().copied().take_while(|&b| b != 0).collect();
+        self.popped.push((id, text.clone()));
         let important = t.on_screen_important != 0;
         self.game.state.store_ticker(&t);
         self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };

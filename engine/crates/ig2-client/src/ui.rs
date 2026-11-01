@@ -432,6 +432,8 @@ pub struct Hud {
     pub line_held: bool,
     /// The top bar's pulsing "message waiting" text (`GFX_AllandoCallBack2`'s gate, set by the client each frame).
     pub message_waiting: bool,
+    /// ADR 0036 ("subtitles", off = classic): the text of the spoken message line while its voice plays.
+    pub subtitle: Option<Vec<u8>>,
     /// The starmap's panel, faders, short info and minimap (re/screens/starmap.md §11).
     pub starmap: crate::starmap_hud::StarmapHud,
     /// `BirodalomNev[e]`: the empire names (the Hungarian `txt17` §1 even in other languages [obs]).
@@ -500,6 +502,7 @@ impl Hud {
             history_open: false,
             line_held: false,
             message_waiting: false,
+            subtitle: None,
         }
     }
 
@@ -847,6 +850,18 @@ impl Hud {
             }
             self.chat.ring.draw(f, font, &v, &self.palette, s.game_info.len() as i32 * 10);
         }
+        // ADR 0036: the subtitle, centred above the screens' bottom panels on a dark box, size 2, colour 0x21.
+        if let Some(t) = &self.subtitle {
+            let lines = wrap(t, SUBTITLE_CHARS);
+            let w = font.advance(2);
+            let widest = lines.iter().map(|l| l.len()).max().unwrap_or(0) as f32 * w;
+            let top = 368.0 - 10.0 * lines.len() as f32;
+            crate::kit::fader::fade_screen(f, self.white, &v, [320.0 - widest / 2.0 - 4.0, top - 3.0, widest + 8.0, 10.0 * lines.len() as f32 + 5.0], [0.0; 3], 90.0);
+            let c = self.palette.get(0x21).copied().unwrap_or([1.0; 3]);
+            for (i, l) in lines.iter().enumerate() {
+                font.text(f, &v, l, 320.0, top + 10.0 * i as f32, 0, 2, Align::Centre, c, None);
+            }
+        }
     }
 }
 
@@ -859,6 +874,24 @@ impl Hud {
     }
 }
 
+/// A subtitle line's characters (size 2: 6 pixels each, inside the 640-wide frame).
+const SUBTITLE_CHARS: usize = 100;
+
+/// `text` broken at spaces into lines of at most `max` bytes (a longer word gets a line of its own, cut).
+fn wrap(text: &[u8], max: usize) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    let mut rest = text.trim_ascii();
+    while rest.len() > max {
+        let cut = rest[..=max].iter().rposition(|&b| b == b' ').filter(|&i| i > 0).unwrap_or(max);
+        out.push(rest[..cut].trim_ascii_end());
+        rest = rest[cut..].trim_ascii_start();
+    }
+    if !rest.is_empty() {
+        out.push(rest);
+    }
+    out
+}
+
 /// `KiirStrSzinSzorzo = (int)(sin(AktIdo / 100)·50 + 50)` (exe 0x554040) as a factor, `time` in seconds.
 fn waiting_pulse(time: f32) -> f32 {
     ((time as f64 * 10.0).sin() * 50.0 + 50.0) as i32 as f32 / 100.0
@@ -867,6 +900,14 @@ fn waiting_pulse(time: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subtitles_wrap_at_spaces() {
+        assert_eq!(wrap(b" one two three ", 7), [&b"one two"[..], b"three"]);
+        assert_eq!(wrap(b"abcdefghij kl", 4), [&b"abcd"[..], b"efgh", b"ij", b"kl"]);
+        assert_eq!(wrap(b"", 4), Vec::<&[u8]>::new());
+        assert_eq!(wrap(b"exactly", 7), [b"exactly"]);
+    }
 
     /// The "message waiting" text pulses between 0 and 100 per cent every 2π/10 s (`AktIdo` ms / 100 radians).
     #[test]

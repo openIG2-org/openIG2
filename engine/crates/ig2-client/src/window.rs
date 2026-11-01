@@ -238,6 +238,8 @@ struct App {
     sound_overlay: Option<crate::ui::Screen>,
     sound_spy: Option<bool>,
     sound_colony: bool,
+    /// ADR 0036: the spoken message line's channel and text while its voice plays (the subtitles option).
+    subtitle: Option<(usize, Vec<u8>)>,
     /// The sounds the window's input code started this frame (re/screens/audio.md §6), played by `audio_frame`.
     sounds: Vec<crate::audio::SoundId>,
     /// The speakers' lines the window's input code started this frame (re/screens/audio.md §5).
@@ -450,6 +452,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     crate::kit::layout::set_slider_under(app.display.slider_under);
     crate::diplomacy::set_articles(app.display.articles);
     crate::kit::layout::set_centred_exit(app.display.centred_exit);
+    crate::starmap::set_colour_blind(app.display.colour_blind);
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
         crate::spacewar_screen::go_live(&mut app.world, crate::spacewar_screen::Dump::load(&p)?.battle);
@@ -679,6 +682,7 @@ impl App {
             sound_overlay: None,
             sound_spy: None,
             sound_colony: false,
+            subtitle: None,
             sounds: Vec::new(),
             speech: Vec::new(),
             headless: None,
@@ -791,11 +795,20 @@ impl App {
         // `FRISSIT_Scroll2` (exe 0x556210): a message taken onto the line speaks, unless it is one of the four
         // silent ids; the brutal voice for empire 5 (`EN`), else the human one.
         let en = self.world.game.state.mem.i32(ig2_sim::save::va::EN);
-        for id in std::mem::take(&mut self.world.popped) {
+        for (id, text) in std::mem::take(&mut self.world.popped) {
             if !matches!(id, 1 | 0x14 | 0x15 | 0x1a) {
                 let voice = if en == 5 { "brutal" } else { "human" };
-                self.audio.play_wav(&format!("sounds/scroll/{voice}/{id:04}.wav"));
+                let ch = self.audio.play_wav(&format!("sounds/scroll/{voice}/{id:04}.wav"));
+                if let Some(ch) = ch.filter(|_| self.display.subtitles) {
+                    self.subtitle = Some((ch, text));
+                }
             }
+        }
+        if self.subtitle.as_ref().is_some_and(|(ch, _)| !self.display.subtitles || !self.audio.playing(*ch)) {
+            self.subtitle = None;
+        }
+        if let Some(h) = &mut self.hud {
+            h.subtitle = self.subtitle.as_ref().map(|(_, t)| t.clone());
         }
         // `WF::PlaySpeechGrWar` (exe 0x48c670) and the retreat 0x12f: only while the colony screen shows the war's
         // planet; the line and kind for this player's empire (ground-combat.md §11.12).
@@ -3041,6 +3054,10 @@ impl App {
         crate::kit::layout::set_slider_under(d.slider_under);
         crate::diplomacy::set_articles(d.articles);
         crate::kit::layout::set_centred_exit(d.centred_exit);
+        if d.colour_blind != old.colour_blind {
+            crate::starmap::set_colour_blind(d.colour_blind);
+            self.reload_palettes();
+        }
         if d.live_background != old.live_background {
             self.backdrop.live = d.live_background;
         }
@@ -3052,6 +3069,17 @@ impl App {
             if let Some(h) = &mut self.hud {
                 h.set_one_language(&self.install, d.one_language);
             }
+        }
+    }
+
+    /// ADR 0036: the palettes read again after the colour-blind option changed.
+    fn reload_palettes(&mut self) {
+        let Ok(p) = crate::starmap::read_palette(&self.install) else { return };
+        if let Some(h) = &mut self.hud {
+            h.palette = p.clone();
+        }
+        if let Some(g) = &mut self.gpu {
+            g.assets.set_palette(p);
         }
     }
 

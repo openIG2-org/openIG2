@@ -19,6 +19,23 @@ const SURFACES: usize = 10;
 const DD_COLOR: u32 = 0x8F_8710;
 const DD_COLORS: usize = 43;
 
+/// The "colour-blind empire colours" option (ADR 0036; off = classic): empires 1..=8 (`DDColor[16..=23]`) take
+/// [`COLOUR_BLIND`] instead of the exe's colours, and the fleets' sprites are the white column tinted with them.
+static COLOUR_BLIND_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_colour_blind(on: bool) {
+    COLOUR_BLIND_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn colour_blind() -> bool {
+    COLOUR_BLIND_ON.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Empires 1..=8 under the option: white kept for 1, then the Okabe–Ito set (orange, vermilion, reddish purple, sky
+/// blue, bluish green, yellow, a light violet-blue for the dark screens), told apart by hue and lightness under
+/// protanopia, deuteranopia and tritanopia (test `colour_blind_pairs_stay_apart`).
+const COLOUR_BLIND: [[u8; 3]; 8] = [[255, 255, 255], [230, 159, 0], [213, 94, 0], [204, 121, 167], [86, 180, 233], [0, 158, 115], [240, 228, 66], [120, 100, 255]];
+
 /// A sprite sheet of equal cells (a brush set, spec §4.2).
 #[derive(Debug, Clone, Copy)]
 struct Sheet {
@@ -95,6 +112,11 @@ impl Assets {
         Self { white, select, planets, stars, clouds, radar_dot, radar_fill, sky, planet_meshes, fleets, small_fleets, palette }
     }
 
+    /// ADR 0036: the colour-blind option changed.
+    pub fn set_palette(&mut self, p: Vec<[f32; 3]>) {
+        self.palette = p;
+    }
+
     /// Empire `e`'s colour, `DDColor[e + 15]` (spec §7).
     fn empire(&self, owner: u8, a: f32) -> [f32; 4] {
         let [r, g, b] = self.palette.get(owner as usize + 15).copied().unwrap_or([0.6; 3]);
@@ -140,7 +162,13 @@ pub(crate) fn read_palette(install: &Install) -> Result<Vec<[f32; 3]>, String> {
     let exe = std::fs::read(install.root().join("ig2.exe")).map_err(|e| e.to_string())?;
     let img = ig2_rules::PeImage::parse(&exe).map_err(|e| e.to_string())?;
     let b = img.read(DD_COLOR, 4 * DD_COLORS).map_err(|e| e.to_string())?;
-    Ok(b.chunks_exact(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect())
+    let mut p: Vec<[f32; 3]> = b.chunks_exact(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect();
+    if colour_blind() {
+        for (e, c) in COLOUR_BLIND.iter().enumerate() {
+            p[16 + e] = c.map(|x| x as f32 / 255.0);
+        }
+    }
+    Ok(p)
 }
 
 /// A `0xTTBBGGRR` particle colour: RGB × (255 − TT)/256 (`Particle` ELF 0x5f4ff0).
@@ -1089,9 +1117,13 @@ impl View {
             let dim = if fl.visible { 1.0 } else { 0.5 };
             match sheet {
                 Some(s) => {
-                    let frame = if fl.flags & 0x4000 != 0 && !small { 17 } else { fl.owner.max(1) as u32 } + row * cols;
+                    let special = fl.flags & 0x4000 != 0 && !small;
+                    // ADR 0036: the white column (empire 1) tinted with the option's colour.
+                    let tint = colour_blind() && !special && (1..=8).contains(&fl.owner);
+                    let frame = if special { 17 } else if tint { 1 } else { fl.owner.max(1) as u32 } + row * cols;
                     let (col, row) = ((frame - 1) % cols, ((frame - 1) / cols) % 48);
-                    f.push(s.tex, Blend::GammaAlpha, Instance { uv: s.uv(col, row), ..Instance::new(kind::SPRITE, c, half, [dim, dim, dim, 1.0]) });
+                    let rgba = if tint { a.empire(fl.owner, 1.0).map(|x| x * dim) } else { [dim, dim, dim, 1.0] };
+                    f.push(s.tex, Blend::GammaAlpha, Instance { uv: s.uv(col, row), ..Instance::new(kind::SPRITE, c, half, [rgba[0], rgba[1], rgba[2], 1.0]) });
                 }
                 None => f.push(a.white, Blend::Alpha, Instance::new(kind::MARKER, c, [half[1]; 2], a.empire(fl.owner, dim))),
             }
@@ -1270,6 +1302,29 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0036: under the three full dichromacies (Machado, Oliveira and Fernandes 2009, severity 1, on linear RGB)
+    /// every pair of the option's eight colours stays more than 0.15 apart in sRGB (the exe's own: 0.056 for empires 2
+    /// and 6 under protanopia, 0.061 for 4 and 5 under deuteranopia).
+    #[test]
+    fn colour_blind_pairs_stay_apart() {
+        const M: [[[f32; 3]; 3]; 3] = [
+            [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216], [-0.003882, -0.048116, 1.051998]],
+            [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.011820, 0.042940, 0.968881]],
+            [[1.255528, -0.076749, -0.178779], [-0.078411, 0.930809, 0.147602], [0.004733, 0.691367, 0.303900]],
+        ];
+        let lin = |c: u8| (c as f32 / 255.0).powf(2.2);
+        let srgb = |x: f32| x.clamp(0.0, 1.0).powf(1.0 / 2.2);
+        for m in &M {
+            let seen: Vec<[f32; 3]> = COLOUR_BLIND.iter().map(|c| std::array::from_fn(|i| srgb((0..3).map(|j| m[i][j] * lin(c[j])).sum()))).collect();
+            for (a, x) in seen.iter().enumerate() {
+                for (b, y) in seen.iter().enumerate().skip(a + 1) {
+                    let d = (0..3).map(|i| (x[i] - y[i]).powi(2)).sum::<f32>().sqrt();
+                    assert!(d > 0.15, "empires {} and {} at {d}", a + 1, b + 1);
+                }
+            }
+        }
+    }
     use crate::world::PlanetLook;
 
     fn planet(index: usize, x: f32, y: f32) -> PlanetView {

@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038) and the event log (ADR 0040); kept in our settings file and shown as extra rows on the Options screen's game page
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036); kept in our settings file and shown as extra rows on the Options screen's game page
 //! (`crate::options`, in the original's font and colours under a "Remake" heading). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -50,6 +50,10 @@ pub fn language(f: &File) -> Option<Lang> {
 }
 /// ADR 0038: each game writes its replay into `replays/` beside the slots (on by default).
 pub const REPLAYS: &str = "RecordReplays";
+/// ADR 0036: the spoken message line's text at the bottom while its voice plays (off by default).
+pub const SUBTITLES: &str = "Subtitles";
+/// ADR 0036: colour-blind-friendly colours for empires 1..=8 (off by default).
+pub const COLOUR_BLIND: &str = "ColourBlindColours";
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -79,6 +83,8 @@ pub struct Display {
     pub fleet_groups: bool,
     pub statistics: bool,
     pub event_log: bool,
+    pub subtitles: bool,
+    pub colour_blind: bool,
 }
 
 /// Where W/A/S/D pan the camera (ADR 0030).
@@ -122,6 +128,8 @@ impl Display {
             fleet_groups: f.int(FLEET_GROUPS) != Some(0),
             statistics: f.int(STATISTICS) != Some(0),
             event_log: f.int(EVENT_LOG) != Some(0),
+            subtitles: f.int(SUBTITLES) == Some(1),
+            colour_blind: f.int(COLOUR_BLIND) == Some(1),
         }
     }
 
@@ -208,6 +216,8 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(16, "Game statistics", STATISTICS, d.statistics as i32, Vec::new(), 1),
         row(17, "Record replays", REPLAYS, (f.int(REPLAYS) != Some(0)) as i32, Vec::new(), 1),
         row(18, "Event log", EVENT_LOG, d.event_log as i32, Vec::new(), 1),
+        row(19, "Subtitles", SUBTITLES, d.subtitles as i32, Vec::new(), 1),
+        row(20, "Colour-blind colours", COLOUR_BLIND, d.colour_blind as i32, Vec::new(), 1),
     ]
 }
 
@@ -226,12 +236,12 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let mut f = File::default();
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false });
         f.set(MODE, "2");
         f.set(RESOLUTION, "1280x720");
         f.set(VSYNC, "0");
         f.set(LETTERBOX, "1");
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false });
         assert_eq!(parse_size("12x7"), None);
     }
 
@@ -242,7 +252,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

@@ -327,7 +327,8 @@ worse).
 `DDColor` (exe 0x8F8710, ELF 0x1166cd0): 43 × `0x00BBGGRR` (red in the low byte: GL vertex colours). Empire `e`'s
 colour is `DDColor[e + 15]` (names, minimap, fleets' name text); unowned planets on the minimap use `DDColor[12]`.
 The 17 `star_pl` columns are drawn in the same colours (column e − 1). Particle colours `0xTTBBGGRR` multiply RGB by
-`(255 − TT)/256` (`Particle`). Arrow/vertex colours are `0xAABBGGRR`.
+`(255 − TT)/256` (`Particle`). Arrow/vertex colours are `0xAABBGGRR`. Ours: `ColourBlindColours` (off) replaces
+`DDColor[16..=23]` and draws the fleets from the white column tinted (ADR 0036).
 
 ## 8. Minimap (`GFX_StarmapRadar` 0x70e490)
 In the panel at virtual (274..366, 388..453): planets the human sees as 2×2 dots at
