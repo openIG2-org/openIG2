@@ -65,6 +65,9 @@ at the next cleanup.
 ## Maintainer decisions
 - [ ] The "Proposed" rows of `docs/ENHANCEMENTS.md`: accept or reject each; an ADR and a task line here per
   accepted option, then its implementation.
+- [ ] **Auto research** (ADR 0037, `docs/ENHANCEMENTS.md` row 451):
+  - [x] Part 1, sim: per-empire switches (ships, buildings, tanks), the lockstep order, the pick inside the research tick, saved in our saves.
+  - [ ] Part 2, UI: the three switches on the research screen and rows in Options.
 
 ## After 1.0
 - The minor and keep rows of `re/deviations.md`.

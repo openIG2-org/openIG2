@@ -124,6 +124,31 @@ accept if (`b ≠ 0` and (`b < B` or `B < 1`)) or (`b == 0` and `B < 0`). So the
 wins, ties to the first; a priority-0 tech only if nothing else. The winner gets status **4** and becomes
 `ResearchAktFejlesztett[e]`.
 
+### 2.5 Auto research (ours, enhanced; ADR 0037)
+Not in the original: a human picks every project on the research screen (§2.4 0x2a), and an idle slot stays idle
+(`FRISSIT_Research` skips `t < 1`; `FRISSIT_MI_FEJLESZTES` returns for `PlayerKi[e] == 1`). The enhancement:
+- **Switches**, per empire (`Game::auto_research[e]`, bits `research::auto`): 1 ships, 2 buildings, 4 tanks. All 0
+  (the default) = the original, bit for bit. Saved in our save format (`.ig2s`, snapshot version 10) and part of the
+  state hash; an original `.sav` doesn't carry them (a load starts with all off).
+- **Order** `ResearchOrder::Auto { switches }` (`ig2_net::ResearchCmd::Auto`; no message number in the original):
+  replaces the issuer's switches (`switches & 7`), in lockstep like §2.4, so every peer agrees.
+- **Category → switch** by the research screen's category `c = (t − 1) / 16 + 1` (re/screens/research.md §1):
+  c 1..=5 (ships, weapons, radars, shields, bombs and space bases) → ships; 6..=9 (civil, research, military
+  buildings, power plants) → buildings; 10..=11 (tanks, turrets and mines) → tanks; 12 (special: the story's
+  techs) → none.
+- **When**: in `FRISSIT_Research`, for `e` in 1..=18 before the `t < 1` test: a human-controlled `e` (`PlayerKi[e]
+  == 1`) with `ResearchAktFejlesztett[e] == 0` and a switch on picks; a pick then researches in the same tick. So a
+  project finished this tick is replaced on the next one, and a project the player stops (0x29) is replaced on the
+  next tick by the best pick (possibly the same tech): switching off is how to leave the slot idle.
+- **Pick**: over techs 1..=192 with status 3, a switched-on category, and the labs (§2.2's test; the research cheat
+  for `EN` skips it): the AI's priority for the empire's race (`+0xb7+r`, `r` as §2.2) lowest non-zero first,
+  priority 0 last; ties by the lower research cost `+0x34`, then the lower tech number. The winner gets status 4
+  and becomes `ResearchAktFejlesztett[e]`, as a 0x2a start; `ResearchEvent::Started`. Nothing open: the slot
+  stays idle. Unlike §2.2 a priority tie goes to the cheaper tech (the AI's goes to the first).
+- Port: `research::auto_pick`, `research::auto::switch`, `Game::research_order`; tests `research::tests`,
+  `ig2-net` `lockstep::auto_research_picks_in_the_tick_and_rides_the_save`. UI (the research screen's three
+  switches and the Options rows) not yet.
+
 ## 3. Production (end of `FRISSIT_Starmap`, every tick)
 `MoneyHatar[e][1] = 0` for `e` in 1..=18. Then planets `p` in 1..=`HanyBolygo`, `o = owner(p)`, lines
 `L` = 0, 1, while `d = design[L][0] > 0` and `+0x64 == 0`, `D = Tervek[o][d]`, `rate = +0x70+4L`:

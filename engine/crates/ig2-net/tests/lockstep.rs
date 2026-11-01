@@ -9,7 +9,7 @@
 
 mod common;
 
-use ig2_net::{loopback, state_hash, Command, Host, Loopback, Peer, Snapshot, SpyOrder, StarmapCmd, Terms, DEFAULT_DELAY, TURN_TICKS};
+use ig2_net::{loopback, state_hash, Command, Host, Loopback, Peer, ResearchCmd, Snapshot, SpyOrder, StarmapCmd, Terms, DEFAULT_DELAY, TURN_TICKS};
 use ig2_sim::game::{Game, GameRules, LocalView, MessageOrder, ViewMode};
 use ig2_sim::save::{va, SaveState, PLANET_SIZE};
 use ig2_sim::trade::DELIVERY;
@@ -1453,4 +1453,30 @@ fn recorded_ground_orders_cross_the_wire() {
         }
     }
     eprintln!("{n} recorded ground-war messages crossed the wire");
+}
+
+/// ADR 0037: the auto-research order sets the issuer's switches; the idle human then starts a project inside the tick
+/// (switches off: the slot stays idle), and the switches ride our save.
+#[test]
+fn auto_research_picks_in_the_tick_and_rides_the_save() {
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let mut runs = Vec::new();
+    for switches in [0, ig2_sim::research::auto::ALL] {
+        let mut g = game(state.clone(), &rules);
+        let en = g.state.mem.i32(va::EN) as u8;
+        let current = g.state.research().current[en as usize];
+        Command::Research { order: ResearchCmd::Stop { tech: current } }.apply(&mut g, en);
+        if switches != 0 {
+            Command::Research { order: ResearchCmd::Auto { switches } }.apply(&mut g, en);
+        }
+        for _ in 0..3 {
+            tick(&mut g);
+        }
+        let (back, _) = Snapshot::capture(&g, &[], 0, 0).restore(&rules).unwrap();
+        assert_eq!(back.auto_research, g.auto_research);
+        assert_eq!(back.auto_research[en as usize], switches);
+        runs.push(g.state.research().current[en as usize]);
+    }
+    assert_eq!(runs[0], 0, "switches off: the stopped slot stays idle");
+    assert!(runs[1] > 0, "switches on: a project started");
 }

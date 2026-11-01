@@ -45,7 +45,7 @@ Grouped by area; sizes are rough guesses for one developer.
 | Game end | A statistics screen after a win or a loss: game length, planets and population over time, ships built and lost, battles won, research, credits earned, per empire, with simple graphs (sampled by the sim each turn; ties in with the high-score proposal 146) | today the game only says who won | 1-2 weeks |
 | Game end | A match history in the main menu: every finished game (date, mode, empires, result, length) with its statistics screen to look back at, kept in our own file beside the saves | players can't look back at past games | 1 week |
 | Game end | The same statistics and match history for multiplayer games: every machine stores the shared statistics (they come from the lockstep sim, so all peers agree), per player | multiplayer games end without a summary | 1 week, after the two rows above |
-| Comfort | Auto research: a button or option that picks the next research by itself, with three separate switches (spaceships, buildings, tanks/ground units); it picks the most useful available tech (what unlocks the next important item or fills a gap, reusing the computer empires' research choice in `ig2-sim/src/ai/` where it fits); a lockstep order in multiplayer; off = the original | less micromanagement in long games | 1 week |
+| Comfort | Auto research: a button or option that picks the next research by itself, with three separate switches (spaceships, buildings, tanks/ground units); it picks the most useful available tech (what unlocks the next important item or fills a gap, reusing the computer empires' research choice in `ig2-sim/src/ai/` where it fits); a lockstep order in multiplayer; off = the original (sim done, UI next: ADR 0037, row 451) | less micromanagement in long games | 1 week |
 | Comfort | Replays: the lockstep order stream saved beside the save, played back at any speed | review a battle or a whole multiplayer game | 1-2 weeks |
 | Comfort | A searchable event log with filters (battles, research, diplomacy) | messages scroll away | days |
 | Accessibility | Colour-blind-friendly empire colours, and subtitles for the videos and spoken messages | players who can't tell the colours apart or can't hear the voices | days |
@@ -58,6 +58,7 @@ Grouped by area; sizes are rough guesses for one developer.
 | 146 | game end, high scores | proposal: a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
 | 169 | starmap, wheel | proposal: wheel zoom (and right-drag pan) on the starmap; classic has neither | minor | starmap.md |
 | 322 | title video | proposal: music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
+| 451 | research, auto research | accepted (ADR 0037); three switches per empire (ships, buildings, tanks) start the next research by the computer empires' race priority when the slot is idle, inside the sim tick (lockstep order, saved in our saves); sim done, the research screen and Options switches next; all off = the original | yes (once the UI lands) | production-research.md §2.5 |
 
 ## Shipped
 

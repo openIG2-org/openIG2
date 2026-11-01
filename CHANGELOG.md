@@ -18,6 +18,7 @@ Since 0.7.56.
 - Spy screen: it opens without a short freeze.
 - The game window, the taskbar and the program file have an icon of their own.
 - Space battles: the mouse pointer and its tooltip stay on top of the top bar.
+- Auto research groundwork: the game can now pick your next research by itself per category (ships, buildings, tanks); the switches arrive on the research screen and in Options next.
 
 **New Remake options** (Options, game page)
 

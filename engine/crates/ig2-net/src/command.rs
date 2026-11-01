@@ -247,6 +247,8 @@ pub enum ResearchCmd {
     Start { tech: i32 },
     Urgent,
     DevelopAll,
+    /// Ours (ADR 0037): the issuer's auto-research switches (`ig2_sim::research::auto` bits).
+    Auto { switches: u8 },
 }
 
 impl From<ResearchCmd> for ResearchOrder {
@@ -256,6 +258,7 @@ impl From<ResearchCmd> for ResearchOrder {
             ResearchCmd::Start { tech } => ResearchOrder::Start { tech },
             ResearchCmd::Urgent => ResearchOrder::Urgent,
             ResearchCmd::DevelopAll => ResearchOrder::DevelopAll,
+            ResearchCmd::Auto { switches } => ResearchOrder::Auto { switches },
         }
     }
 }
@@ -267,6 +270,7 @@ impl From<ResearchOrder> for ResearchCmd {
             ResearchOrder::Start { tech } => ResearchCmd::Start { tech },
             ResearchOrder::Urgent => ResearchCmd::Urgent,
             ResearchOrder::DevelopAll => ResearchCmd::DevelopAll,
+            ResearchOrder::Auto { switches } => ResearchCmd::Auto { switches },
         }
     }
 }

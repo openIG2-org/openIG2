@@ -19,6 +19,9 @@ pub enum ResearchOrder {
     /// issuer doesn't own is developed (`TalalmanyKifejlesztve`, then `Story_Special(0x0d, e, 5)` in SP), then
     /// `Research_TalalmanyUjraSzamol`.
     DevelopAll,
+    /// Ours (ADR 0037, no message in the original): the issuer's auto-research switches (`research::auto` bits),
+    /// replacing the old ones.
+    Auto { switches: u8 },
 }
 
 impl ResearchOrder {
@@ -62,6 +65,7 @@ impl Game<'_> {
                 self.state.store_research(&res);
             }
             ResearchOrder::DevelopAll => self.develop_all(e),
+            ResearchOrder::Auto { switches } => self.auto_research[e] = switches & research::auto::ALL,
         }
     }
 
@@ -108,5 +112,18 @@ mod tests {
         assert_eq!(ResearchOrder::from_message(0x31, &[]), Some(ResearchOrder::DevelopAll));
         assert_eq!(ResearchOrder::from_message(0x2a, &[]), None);
         assert_eq!(ResearchOrder::from_message(0x2c, &[1]), None);
+    }
+
+    #[test]
+    fn auto_order_sets_only_the_issuers_switches() {
+        let rules = GameRules::default();
+        let mut g = Game::new(SaveState::from_parts(Default::default(), Vec::new()), &rules);
+        g.research_order(3, ResearchOrder::Auto { switches: 0xff });
+        g.research_order(2, ResearchOrder::Auto { switches: research::auto::TANKS });
+        g.research_order(EMPIRES as u8, ResearchOrder::Auto { switches: 1 });
+        let mut want = [0; EMPIRES];
+        want[3] = research::auto::ALL;
+        want[2] = research::auto::TANKS;
+        assert_eq!(g.auto_research, want);
     }
 }

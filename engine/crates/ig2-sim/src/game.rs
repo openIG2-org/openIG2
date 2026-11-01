@@ -331,6 +331,8 @@ pub struct Game<'r> {
     pub realtime: RealTime,
     /// Ours (ADR 0026, the room's option): a defeated human stays and watches instead of leaving. Synced.
     pub spectators: bool,
+    /// Ours (ADR 0037): each empire's auto-research switches (`research::auto` bits; all 0 = the original). Synced.
+    pub auto_research: [u8; EMPIRES],
     /// The single-player battle screen (ours, classic view; not in the state).
     pub sp_battles: SpBattles,
     /// How the game ended (`GameStarted` 0xBAE297 cleared by `ExitToMainScreen`): `MEGHALAS` and `MEGNYERES` end
@@ -439,6 +441,7 @@ impl<'r> Game<'r> {
             cosmetic: Libc::default(),
             realtime: RealTime::default(),
             spectators: false,
+            auto_research: [0; EMPIRES],
             sp_battles: SpBattles::default(),
             over: None,
             answering: None,
@@ -1089,6 +1092,7 @@ impl<'r> Game<'r> {
             players: g.pp2 as i32,
             speed_locked: g.speed_locked,
             program_speed: g.program_speed,
+            auto: self.auto_research,
             slowed: false,
         }
     }
