@@ -15,7 +15,7 @@ use std::time::Duration;
 use ig2_net::discovery::{Announcement, Found};
 use ig2_net::galaxy::{GalaxyOptions, MAX_AIS, PLANETS};
 use ig2_net::joincode::JoinCode;
-use ig2_net::rendezvous::Rendezvous;
+use ig2_net::rendezvous::{Listing, Rendezvous};
 use ig2_net::lobby::{LobbyClient, LobbyHost, LobbyState, Refusal, Settings, SlotKind, Start, Status};
 use ig2_net::session::{ClientSession, HoldStatus, HostSession, MpSave, SessionEvent, SessionSettings};
 use ig2_net::{Peer, Transport};
@@ -72,6 +72,8 @@ pub trait Listener {
     fn rendezvous(&self) -> Rendezvous {
         Rendezvous::Off
     }
+    /// Put the room on the service's public list (`None`: take it off; ADR 0060).
+    fn publish(&mut self, _l: Option<Listing>) {}
 }
 
 /// The host's port mapping, shown in its room.
@@ -88,6 +90,8 @@ pub enum PortMap {
 
 /// A connection attempt's outcome, from a background thread.
 pub type Connecting = Receiver<Result<Box<dyn Transport + Send>, String>>;
+/// The rendezvous service's public list (each room's host and listing), from a background thread (ADR 0060).
+pub type Browsing = Receiver<Result<Vec<(SocketAddrV4, Listing)>, String>>;
 
 /// Where links come from.
 pub trait Net {
@@ -107,6 +111,12 @@ pub trait Net {
     }
     /// The rendezvous service hosting and join codes use from now on (ADR 0018; `None`: direct only).
     fn set_relay(&mut self, _relay: Option<SocketAddrV4>) {}
+    /// Ask the rendezvous service set last for its public list (ADR 0060).
+    fn browse(&mut self) -> Browsing {
+        let (tx, rx) = mpsc::channel();
+        let _ = tx.send(Err("no internet list here".into()));
+        rx
+    }
 }
 
 /// The client's links: QUIC natively; none in the browser yet (ADR 0047 part 4).
@@ -231,6 +241,10 @@ impl Listener for QuicListener {
         self.host.rendezvous()
     }
 
+    fn publish(&mut self, l: Option<Listing>) {
+        self.host.publish(l.map(|l| l.encode()));
+    }
+
     fn announce(&mut self, a: Option<Announcement>) {
         if let Some(an) = &mut self.announcer {
             an.set(a);
@@ -300,6 +314,16 @@ impl Net for QuicNet {
 
     fn set_relay(&mut self, relay: Option<SocketAddrV4>) {
         self.relay = relay;
+    }
+
+    fn browse(&mut self) -> Browsing {
+        let (tx, rx) = mpsc::channel();
+        if let Some(r) = self.relay {
+            std::thread::spawn(move || {
+                let _ = tx.send(ig2_net::rendezvous::list(r, Duration::from_millis(700)).map_err(|e| format!("Relay server: {e}")));
+            });
+        }
+        rx
     }
 
     fn connect_code(&mut self, code: &JoinCode) -> Connecting {
@@ -488,6 +512,10 @@ mod spot {
     pub const PRIVATE: u32 = 0x73;
     pub const CODE: u32 = 0x74;
     pub const RELAY: u32 = 0x36;
+    /// ADR 0060: the connection page's internet list switch and its refresh, the host's public-list switch.
+    pub const BROWSE: u32 = 0x37;
+    pub const REFRESH: u32 = 0x38;
+    pub const PUBLIC: u32 = 0x75;
     /// Ours (ADR 0033): a computer slot's level.
     pub const LEVEL: u32 = 0x78;
 }
@@ -499,6 +527,11 @@ const CARD_TEXT: f32 = 58.0;
 
 /// The connection page's relay field.
 const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
+/// The connection page's internet list switch and refresh, under the list (ADR 0060).
+const BROWSE_BOX: [f32; 4] = [130.0, 249.0, 250.0, 14.0];
+const REFRESH_BOX: [f32; 4] = [430.0, 249.0, 80.0, 14.0];
+/// The host's public-list switch, beside the relay line.
+const PUBLIC_BOX: [f32; 4] = [430.0, 349.0, 190.0, 14.0];
 
 /// The options rows (spec §6).
 const OPTIONS: usize = 8;
@@ -537,6 +570,12 @@ pub struct MpScreen {
     pub password: Field,
     /// The rendezvous service's address (ADR 0018), empty for none; kept in the save folder's `relay.txt`.
     pub relay: Field,
+    /// The connection page lists the service's public rooms (ADR 0060) instead of the LAN's sessions.
+    pub internet: Option<Vec<(SocketAddrV4, Listing)>>,
+    /// The public list being fetched.
+    browsing: Option<Browsing>,
+    /// The host puts its room on the service's public list (off by default; a private room never is).
+    pub public: bool,
     pub focus: Focus,
     /// The status line (a refusal, a connect error).
     pub line: Vec<u8>,
@@ -609,6 +648,12 @@ mod words {
     pub const COPIED: &[u8] = b"The join code is on the clipboard";
     pub const RELAY: &[u8] = b"Relay server (optional): ";
     pub const ADDRESS: &[u8] = b"Address or join code:";
+    pub const PUBLIC: [&[u8]; 2] = [b"Public list: no", b"Public list: yes"];
+    pub const BROWSE: &[u8] = b"Browse internet games";
+    pub const REFRESH: &[u8] = b"Refresh";
+    pub const ASKING: &[u8] = b"Asking the relay server...";
+    pub const NO_PUBLIC: &[u8] = b"No public games on the relay server";
+    pub const NEED_RELAY: &[u8] = b"Type a relay server to browse internet games";
 }
 
 /// A typed relay address ("host" or "host:port", the default port [`ig2_net::rendezvous::DEFAULT_PORT`]); empty is
@@ -665,6 +710,9 @@ impl MpScreen {
             address: Field::new(MAX_ADDRESS),
             password: Field::new(MAX_FIELD),
             relay: Field::new(MAX_ADDRESS),
+            internet: None,
+            browsing: None,
+            public: false,
             focus: Focus::Address,
             line: if inet { words::INET.to_vec() } else { Vec::new() },
             lost: false,
@@ -817,15 +865,41 @@ impl MpScreen {
         Some(Out::Copy(code))
     }
 
-    /// The connection page's list: the LAN's sessions, or the MP saves.
+    /// The connection page's list: the LAN's sessions, the service's public rooms or the MP saves.
     fn rows(&self) -> usize {
-        self.saves.as_ref().map_or(self.list.len(), Vec::len)
+        match (&self.saves, &self.internet) {
+            (Some(s), _) => s.len(),
+            (None, Some(i)) => i.len(),
+            (None, None) => self.list.len(),
+        }
     }
 
-    /// Join the selected LAN session, else the typed or pasted join code or address.
+    /// Ask the relay server for its public list (ADR 0060); the rows stay until the answer.
+    pub fn refresh(&mut self, net: &mut dyn Net) {
+        if !self.apply_relay(net) {
+            return;
+        }
+        if relay_addr(&self.relay.string()).ok().flatten().is_none() {
+            self.line = words::NEED_RELAY.to_vec();
+            self.focus = Focus::Relay;
+            return;
+        }
+        self.browsing = Some(net.browse());
+        self.line = words::ASKING.to_vec();
+    }
+
+    /// Join the selected LAN session or public room, else the typed or pasted join code or address. A public room is
+    /// joined by its join code (put in the address field): its address, and the relay's hole punch and relay.
     pub fn join(&mut self, net: &mut dyn Net) {
+        if let Some(code) = self.selected.and_then(|i| self.internet.as_ref()?.get(i)).map(|(host, l)| l.join_code(*host).encode()) {
+            self.address = Field::new(MAX_ADDRESS);
+            for c in code.bytes() {
+                self.address.key(EntryKey::Char(c));
+            }
+            self.selected = None;
+        }
         let typed = self.address.string();
-        let (rx, code) = match self.selected.and_then(|i| self.list.get(i)) {
+        let (rx, code) = match self.selected.and_then(|i| self.list.get(i)).filter(|_| self.internet.is_none()) {
             Some(f) => (net.connect(&f.addr.to_string(), Some(f.announcement.fingerprint)), None),
             None if typed.is_empty() => return,
             None => match JoinCode::decode(&typed) {
@@ -860,7 +934,10 @@ impl MpScreen {
     fn leave(&mut self) {
         match self.role.take() {
             Some(Role::Joiner(c)) => (*c).leave(),
-            Some(Role::Host { mut listener, .. }) => listener.announce(None),
+            Some(Role::Host { mut listener, .. }) => {
+                listener.announce(None);
+                listener.publish(None);
+            }
             None => {}
         }
     }
@@ -869,10 +946,27 @@ impl MpScreen {
     /// back as [`Out::Start`].
     pub fn tick(&mut self, net: &mut dyn Net) -> Option<Out> {
         self.open = (self.open + 4.0).min(100.0);
+        if let Some(rx) = &self.browsing {
+            match rx.try_recv() {
+                Ok(Ok(mut rooms)) => {
+                    rooms.sort_by(|a, b| a.1.announcement.name.cmp(&b.1.announcement.name));
+                    self.line = if rooms.is_empty() { words::NO_PUBLIC.to_vec() } else { Vec::new() };
+                    self.internet = Some(rooms);
+                    self.browsing = None;
+                    self.selected = None;
+                }
+                Ok(Err(e)) => {
+                    self.line = e.into_bytes();
+                    self.browsing = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => self.browsing = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if self.role.is_none() {
             self.list = net.sessions();
             self.list.sort_by(|a, b| a.announcement.name.cmp(&b.announcement.name));
-            if self.selected.is_some_and(|i| i >= self.list.len()) {
+            if self.selected.is_some_and(|i| i >= self.rows()) {
                 self.selected = None;
             }
         }
@@ -911,6 +1005,7 @@ impl MpScreen {
                     seat_saved(lobby, save, seated);
                 }
                 let a = lobby.announcement(listener.port(), listener.fingerprint());
+                listener.publish(a.clone().filter(|_| self.public).map(|announcement| Listing { announcement, mods: self.mods }));
                 listener.announce(a);
                 None
             }
@@ -965,6 +1060,12 @@ impl MpScreen {
                     v.push((spot::LIST + i as u32, [130.0, 82.0 + 16.0 * i as f32, 380.0, 16.0]));
                 }
                 v.extend([(spot::ADDRESS, [130.0, 280.0, 380.0, 22.0]), (spot::PASSWORD, [130.0, 328.0, 380.0, 22.0]), (spot::RELAY, RELAY_BOX)]);
+                if self.saves.is_none() {
+                    v.push((spot::BROWSE, BROWSE_BOX));
+                    if self.internet.is_some() {
+                        v.push((spot::REFRESH, REFRESH_BOX));
+                    }
+                }
                 for (k, id) in [spot::HOST, spot::JOIN, spot::SAVED, spot::CANCEL].into_iter().enumerate() {
                     v.push((id, [BUTTONS[k], 392.0, 90.0, 30.0]));
                 }
@@ -980,7 +1081,10 @@ impl MpScreen {
                     v.push((spot::HOLDER + i, [170.0, y, if level { LEVEL_X - 4.0 - 170.0 } else { 160.0 }, 26.0]));
                 }
                 if self.is_host() {
-                    v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 16.0])]);
+                    v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 13.0])]);
+                    if matches!(&self.role, Some(Role::Host { listener, .. }) if listener.rendezvous() != Rendezvous::Off) {
+                        v.push((spot::PUBLIC, PUBLIC_BOX));
+                    }
                     for k in 0..OPTIONS as u32 {
                         let y = 74.0 + 30.0 * k as f32;
                         v.push((spot::OPTION + 2 * k, [556.0, y, 30.0, 18.0]));
@@ -1029,6 +1133,17 @@ impl MpScreen {
                     self.saves = if self.saves.is_some() { None } else { Some(saved_games(self.save_dir.as_deref(), self.rules)) };
                     self.selected = None;
                 }
+                spot::BROWSE => {
+                    self.selected = None;
+                    if self.internet.take().is_none() {
+                        self.internet = Some(Vec::new());
+                        self.refresh(net);
+                    } else {
+                        self.browsing = None;
+                        self.line.clear();
+                    }
+                }
+                spot::REFRESH => self.refresh(net),
                 spot::CANCEL => return Some(Out::Close),
                 i if (spot::LIST..spot::LIST + LIST_ROWS as u32).contains(&i) => {
                     let k = (i - spot::LIST) as usize;
@@ -1057,6 +1172,7 @@ impl MpScreen {
                 lobby.set_private(private);
             }
             spot::CODE => return self.copy(),
+            spot::PUBLIC => self.public = !self.public,
             spot::PORT_MAP => {
                 let Some(Role::Host { listener, .. }) = self.role.as_mut() else { return None };
                 let on = matches!(listener.port_map(), PortMap::Off | PortMap::Failed(_));
@@ -1082,6 +1198,7 @@ impl MpScreen {
                         if lobby.can_start() {
                             let Some(Role::Host { lobby, mut listener }) = self.role.take() else { unreachable!() };
                             listener.announce(None);
+                            listener.publish(None);
                             let save = self.resume.take().map(|r| r.0);
                             return Some(Out::Start(Begun::Host { lobby, listener, save, story: self.story }));
                         }
@@ -1248,14 +1365,39 @@ impl MpScreen {
             let title = d.texts.get(15, 1, if self.inet { 30 } else { 29 });
             text(f, &title, 320.0, 50.0, 3, Align::Centre, 1);
             if self.rows() == 0 {
-                text(f, if self.saves.is_some() { words::NO_SAVES } else { words::NONE_FOUND }, 320.0, 150.0, 2, Align::Centre, 0x25);
+                let empty = match (&self.saves, &self.internet) {
+                    (Some(_), _) => words::NO_SAVES,
+                    (None, Some(_)) if self.browsing.is_some() => words::ASKING,
+                    (None, Some(_)) => words::NO_PUBLIC,
+                    (None, None) => words::NONE_FOUND,
+                };
+                text(f, empty, 320.0, 150.0, 2, Align::Centre, 0x25);
+            }
+            if self.saves.is_none() {
+                let browse = if self.internet.is_some() { words::LAN } else { words::BROWSE };
+                text(f, browse, BROWSE_BOX[0] + 6.0, BROWSE_BOX[1], 2, Align::Left, hot(spot::BROWSE));
+                if self.internet.is_some() {
+                    text(f, words::REFRESH, REFRESH_BOX[0] + 6.0, REFRESH_BOX[1], 2, Align::Left, hot(spot::REFRESH));
+                }
+            }
+            // The public rooms (ADR 0060): one this game can't join (another version, install or mods; started) dimmed.
+            for (i, (_, l)) in self.internet.iter().flatten().take(LIST_ROWS).enumerate().filter(|_| self.saves.is_none()) {
+                let a = &l.announcement;
+                let y = 84.0 + 16.0 * i as f32;
+                let other = a.version != ig2_net::lobby::LOBBY_VERSION || a.rules != self.rules || l.mods != self.mods || a.started;
+                let c = if self.selected == Some(i) { 2 } else if other { 0x25 } else { 0x22 };
+                let lock = if a.password { "* " } else { "" };
+                text(f, format!("{lock}{}", a.name).as_bytes(), 136.0, y, 2, Align::Left, c);
+                let mode: String = a.scenario.chars().take(14).collect();
+                text(f, mode.as_bytes(), 400.0, y, 2, Align::Left, c);
+                text(f, format!("{}/{}", a.humans, a.slots).as_bytes(), 500.0, y, 2, Align::Right, c);
             }
             for (i, s) in self.saves.iter().flatten().take(LIST_ROWS).enumerate() {
                 let c = if self.selected == Some(i) { 2 } else { 0x22 };
                 text(f, &s.title, 136.0, 84.0 + 16.0 * i as f32, 2, Align::Left, c);
                 text(f, format!("{}", s.save.session.humans.len()).as_bytes(), 500.0, 84.0 + 16.0 * i as f32, 2, Align::Right, c);
             }
-            for (i, s) in self.list.iter().take(LIST_ROWS).enumerate().filter(|_| self.saves.is_none()) {
+            for (i, s) in self.list.iter().take(LIST_ROWS).enumerate().filter(|_| self.saves.is_none() && self.internet.is_none()) {
                 let a = &s.announcement;
                 let y = 84.0 + 16.0 * i as f32;
                 let c = if self.selected == Some(i) { 2 } else if a.rules != self.rules || a.started { 0x25 } else { 0x22 };
@@ -1387,6 +1529,8 @@ impl MpScreen {
             };
             if let Some(r) = relay {
                 text(f, r.as_bytes(), 24.0, 351.0, 2, Align::Left, 0x22);
+                // A private room is never listed: its switch dims.
+                text(f, words::PUBLIC[self.public as usize], 476.0, 351.0, 2, Align::Left, if st.private { 0x25 } else { hot(spot::PUBLIC) });
             }
         } else if st.private {
             text(f, words::PRIVATE[1], 476.0, 320.0, 2, Align::Left, 0x25);
@@ -2819,6 +2963,75 @@ mod tests {
             assert!(t.elapsed() < Duration::from_secs(30), "not joined: {}", String::from_utf8_lossy(&guest.line));
             std::thread::sleep(Duration::from_millis(5));
         }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// ADR 0060 through the screens and a service on 127.0.0.1: the host's room goes on the public list only once it
+    /// switches Public on, a joiner's "Browse internet games" lists it and two clicks on its row join it.
+    #[test]
+    fn a_public_room_is_browsed_and_joined_with_a_click() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let relay = socket.local_addr().unwrap().to_string();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let s2 = stop.clone();
+        std::thread::spawn(move || ig2_net::rendezvous::serve(&socket, &mut ig2_net::rendezvous::Service::default(), |_| s2.load(std::sync::atomic::Ordering::Relaxed)));
+        let open = |name: &str| {
+            let mut s = MpScreen::open(true, name, RULES);
+            s.save_dir = None;
+            s.relay = Field::new(MAX_ADDRESS);
+            s.open = 100.0;
+            s
+        };
+        let (mut host_net, mut net) = (QuicNet::default(), QuicNet::default());
+        let mut host = open("Host");
+        let mut guest = open("Guest");
+        // Without a relay the list asks for one.
+        click_on(&mut guest, spot::BROWSE, &mut net);
+        assert_eq!((guest.line.as_slice(), guest.focus), (words::NEED_RELAY, Focus::Relay));
+        guest.paste(&relay);
+        let t = web_time::Instant::now();
+        let wait = |host: &mut MpScreen, host_net: &mut QuicNet, guest: &mut MpScreen, net: &mut QuicNet, what: &str, done: &dyn Fn(&MpScreen, &MpScreen) -> bool| {
+            while !done(host, guest) {
+                host.tick(host_net);
+                guest.tick(net);
+                assert!(t.elapsed() < Duration::from_secs(30), "{what}: {}", String::from_utf8_lossy(&guest.line));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        click_on(&mut host, spot::RELAY, &mut host_net);
+        host.paste(&relay);
+        host.host(&mut host_net);
+        wait(&mut host, &mut host_net, &mut guest, &mut net, "registered", &|h, _| matches!(&h.role, Some(Role::Host { listener, .. }) if matches!(listener.rendezvous(), Rendezvous::Registered(_))));
+        // Private by default: the list is empty.
+        click_on(&mut guest, spot::REFRESH, &mut net);
+        assert_eq!(guest.line, words::ASKING);
+        wait(&mut host, &mut host_net, &mut guest, &mut net, "asked", &|_, g| g.browsing.is_none());
+        assert_eq!((guest.rows(), guest.line.as_slice()), (0, words::NO_PUBLIC));
+        assert!(host.boxes().iter().any(|b| b.0 == spot::PUBLIC), "a host with a relay has the switch");
+        click_on(&mut host, spot::PUBLIC, &mut host_net);
+        assert!(host.public);
+        for _ in 0..5 {
+            host.tick(&mut host_net);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        click_on(&mut guest, spot::REFRESH, &mut net);
+        wait(&mut host, &mut host_net, &mut guest, &mut net, "listed", &|_, g| g.browsing.is_none());
+        let rooms = guest.internet.clone().unwrap();
+        assert_eq!(rooms.len(), 1);
+        assert_eq!((rooms[0].1.announcement.name.as_str(), rooms[0].1.announcement.humans, rooms[0].1.mods), ("Host's galaxy", 1, [0; 32]));
+        // Two clicks on the row: the join code's way in, the code left in the address field.
+        click_on(&mut guest, spot::LIST, &mut net);
+        click_on(&mut guest, spot::LIST, &mut net);
+        assert!(JoinCode::decode(&guest.address.string()).is_ok_and(|c| c.addrs == [rooms[0].0]));
+        wait(&mut host, &mut host_net, &mut guest, &mut net, "joined", &|_, g| g.state().is_some_and(|st| st.members.len() == 2));
+        // Leaving takes the room off the list at once.
+        host.key(None, true, &mut host_net);
+        let mut other = open("Other");
+        click_on(&mut other, spot::RELAY, &mut net);
+        other.paste(&relay);
+        click_on(&mut other, spot::BROWSE, &mut net);
+        wait(&mut host, &mut host_net, &mut other, &mut net, "unlisted", &|_, o| o.browsing.is_none());
+        assert_eq!(other.rows(), 0);
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 

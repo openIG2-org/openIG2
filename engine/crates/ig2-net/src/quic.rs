@@ -239,8 +239,22 @@ impl QuicHost {
                 every.tick().await;
                 let Some(s) = socket.upgrade() else { break };
                 s.control(&Packet::Register { session, pin });
+                if let Some(l) = s.listing.lock().unwrap().as_deref() {
+                    s.control(&Packet::Publish { listing: l });
+                }
             }
         });
+    }
+
+    /// Put the room on the service's public list with `listing` (an encoded `rendezvous::Listing`, ADR 0060), kept
+    /// there with every refresh, or take it off (`None`); nothing without a service.
+    pub fn publish(&self, listing: Option<Vec<u8>>) {
+        let Some(r) = &self.relay else { return };
+        let mut held = r.socket.listing.lock().unwrap();
+        if *held != listing {
+            r.socket.control(&listing.as_deref().map_or(Packet::Unlist, |l| Packet::Publish { listing: l }));
+            *held = listing;
+        }
     }
 
     /// The room at the rendezvous service.
@@ -433,6 +447,8 @@ pub struct RelaySocket {
     relay: SocketAddr,
     relayed: std::sync::Mutex<HashSet<SocketAddr>>,
     notes: mpsc::Sender<Packet<'static>>,
+    /// A host's public listing, published with every refresh (ADR 0060).
+    listing: std::sync::Mutex<Option<Vec<u8>>>,
 }
 
 impl RelaySocket {
@@ -441,7 +457,7 @@ impl RelaySocket {
         let std = std::net::UdpSocket::bind(addr)?;
         std.set_nonblocking(true)?;
         let (notes, rx) = mpsc::channel();
-        Ok((Arc::new(Self { io: tokio::net::UdpSocket::from_std(std)?, relay: relay.into(), relayed: Default::default(), notes }), rx))
+        Ok((Arc::new(Self { io: tokio::net::UdpSocket::from_std(std)?, relay: relay.into(), relayed: Default::default(), notes, listing: Default::default() }), rx))
     }
 
     /// A packet to the service (lost if the socket is busy: every control packet is repeated or answered).

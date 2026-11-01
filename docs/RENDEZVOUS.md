@@ -40,13 +40,29 @@ On the multiplayer connection page, type the service's address in **Relay server
 Joining by typed address or from the LAN list doesn't use the service. Host migration after a host leaves stays
 direct-only.
 
+## The public game list
+The same service keeps a list of open games (ADR 0060); nothing extra to run or configure. A host lists its room by
+switching **Public list: yes** in the room (shown when a relay server is set; off by default, a private room is
+never listed). Joiners press **Browse internet games** under the connection page's list: the service's public rooms
+show with their name, scenario and players (dimmed: another game version, install or mods, or already started);
+**Refresh** asks again, **LAN games** goes back. A second click on a row (or Join) joins it with its join code,
+which stays in the address field if the connection fails. A room leaves the list when its host switches it off,
+leaves or starts, and 15 s after its host stops refreshing it.
+
+The project's own public instance is decided but not running yet; until it is, use a service you or a friend run.
+
+To try it on one machine: start `ig2-rendezvous --listen 127.0.0.1:29172`, open two clients (separate
+`IG2_OPTIONS_DIR` and `IG2_SLOT_DIR` folders), type `127.0.0.1` as the relay server in both, host and switch the list
+on in one, browse in the other.
+
 ## What the service can and can't see
 It sees the public IPv4 addresses and ports of hosts and joiners while their rooms are open, and the size and
-timing of the packets it relays. It can't read or change the game: the QUIC connection is encrypted end to end
+timing of the packets it relays. A listed room's name, scenario, players and host address are visible to anyone who
+asks the service for its list. It can't read or change the game: the QUIC connection is encrypted end to end
 and the joiner checks the host's certificate against the join code. Without the join code (session id and
 certificate pin) nobody can look a room up.
 
 ## Testing locally
 `cargo test --release -p ig2-net --features quic --test relay` runs a service on 127.0.0.1 and plays a short
 lockstep game through it, relay-only. `ig2-client`'s `a_room_is_joined_through_the_relay` does the same through
-the MP screens.
+the MP screens; `a_public_room_is_browsed_and_joined_with_a_click` the public list.

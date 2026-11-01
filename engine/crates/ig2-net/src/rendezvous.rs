@@ -5,13 +5,18 @@
 //! host ── Register{session, pin} ──▶ service ── Registered{public addr} ──▶ host
 //! joiner ─ Lookup{session, pin} ──▶ service ── Found{host} ──▶ joiner, Incoming{joiner} ──▶ host (punches)
 //! relayed: peer ─ To{dest, QUIC datagram} ─▶ service ─ From{src, datagram} ─▶ dest
+//! public list (ADR 0060): host ─ Publish{Listing} ─▶ service; browser ─ List{start} (1200 B) ─▶ service ─ Rooms ─▶
 //! ```
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
+use crate::discovery::{Announcement, MAX_NAME};
 use crate::joincode::PIN_BYTES;
+use crate::wire;
 
 /// Every packet's first bytes.
 pub const MAGIC: &[u8; 4] = b"IG2R";
@@ -22,6 +27,40 @@ pub const DEFAULT_PORT: u16 = crate::discovery::DISCOVERY_PORT + 2;
 const HEAD: usize = 6;
 /// The header in front of a relayed datagram (head and an address).
 pub const DATA_HEAD: usize = HEAD + 6;
+/// A List request's exact size (padding: a Rooms answer is never larger, so the list doesn't amplify).
+pub const LIST_LEN: usize = 1200;
+/// The longest Listing accepted (its names are at most [`MAX_NAME`] characters).
+pub const MAX_LISTING: usize = 512;
+/// The pages [`list`] asks for at most (a page holds 2 rooms of the largest listing, 6 or so of usual ones; within
+/// the service's control burst of 40).
+pub const MAX_PAGES: u16 = 32;
+
+/// A public room's entry in the service's list (ADR 0060): the room's LAN announcement (name, players, slots,
+/// scenario, lobby version, rules fingerprint, password, certificate fingerprint) and the enabled mods' fingerprint
+/// (zero: none). The host's public address comes from the service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Listing {
+    pub announcement: Announcement,
+    pub mods: [u8; 32],
+}
+
+impl Listing {
+    pub fn encode(&self) -> Vec<u8> {
+        wire::to_vec(self).expect("a listing encodes")
+    }
+
+    /// A well-formed listing within the size and name limits.
+    pub fn decode(b: &[u8]) -> Option<Self> {
+        let l: Self = (b.len() <= MAX_LISTING).then(|| wire::from_slice(b).ok()).flatten()?;
+        let a = &l.announcement;
+        (a.name.chars().count() <= MAX_NAME && a.scenario.chars().count() <= MAX_NAME).then_some(l)
+    }
+
+    /// The join code of this room at `host` (its session, the certificate's pin).
+    pub fn join_code(&self, host: SocketAddrV4) -> crate::joincode::JoinCode {
+        crate::joincode::JoinCode::new(self.announcement.session, &self.announcement.fingerprint, &[host])
+    }
+}
 
 /// A host's room at the rendezvous service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +96,14 @@ pub enum Packet<'a> {
     Punch,
     To { peer: SocketAddrV4, data: &'a [u8] },
     From { peer: SocketAddrV4, data: &'a [u8] },
+    /// The host's room goes on the public list (an encoded [`Listing`]; repeated with every Register).
+    Publish { listing: &'a [u8] },
+    /// The host's room leaves the public list now.
+    Unlist,
+    /// The public list from entry `start` on (padded to [`LIST_LEN`]).
+    List { start: u16 },
+    /// Entries `start..` of `total`: each the host's address, a u16 LE length and an encoded [`Listing`].
+    Rooms { total: u16, start: u16, entries: &'a [u8] },
 }
 
 fn put_addr(b: &mut Vec<u8>, a: SocketAddrV4) {
@@ -81,6 +128,10 @@ impl<'a> Packet<'a> {
             Self::Punch => 8,
             Self::To { .. } => 9,
             Self::From { .. } => 10,
+            Self::Publish { .. } => 11,
+            Self::Unlist => 12,
+            Self::List { .. } => 13,
+            Self::Rooms { .. } => 14,
         }
     }
 
@@ -95,7 +146,17 @@ impl<'a> Packet<'a> {
             }
             Self::Registered { seen: a } | Self::Found { host: a } | Self::Incoming { joiner: a } => put_addr(&mut b, a),
             Self::Refused(r) => b.push(r as u8),
-            Self::Unregister | Self::Punch => {}
+            Self::Unregister | Self::Punch | Self::Unlist => {}
+            Self::Publish { listing } => b.extend_from_slice(listing),
+            Self::List { start } => {
+                b.extend_from_slice(&start.to_le_bytes());
+                b.resize(LIST_LEN, 0);
+            }
+            Self::Rooms { total, start, entries } => {
+                b.extend_from_slice(&total.to_le_bytes());
+                b.extend_from_slice(&start.to_le_bytes());
+                b.extend_from_slice(entries);
+            }
             Self::To { peer, data } | Self::From { peer, data } => {
                 put_addr(&mut b, peer);
                 b.extend_from_slice(data);
@@ -130,6 +191,12 @@ impl<'a> Packet<'a> {
                 let (peer, data) = (addr(body), &body[6..]);
                 if b[5] == 9 { Self::To { peer, data } } else { Self::From { peer, data } }
             }
+            11 if !body.is_empty() && body.len() <= MAX_LISTING => Self::Publish { listing: body },
+            12 if body.is_empty() => Self::Unlist,
+            13 if b.len() == LIST_LEN && body[2..].iter().all(|&x| x == 0) => Self::List { start: u16::from_le_bytes([body[0], body[1]]) },
+            14 if body.len() >= 4 && b.len() <= LIST_LEN => {
+                Self::Rooms { total: u16::from_le_bytes([body[0], body[1]]), start: u16::from_le_bytes([body[2], body[3]]), entries: &body[4..] }
+            }
             _ => return None,
         })
     }
@@ -151,6 +218,8 @@ pub struct Limits {
     /// Relayed bytes per second per room, and the burst.
     pub room_rate: f64,
     pub room_burst: f64,
+    /// A public room without a Publish for this long leaves the list (the host repeats it every 5 s).
+    pub list_ttl: Duration,
 }
 
 impl Default for Limits {
@@ -165,6 +234,7 @@ impl Default for Limits {
             control_burst: 40.0,
             room_rate: 256.0 * 1024.0,
             room_burst: 1024.0 * 1024.0,
+            list_ttl: Duration::from_secs(15),
         }
     }
 }
@@ -200,6 +270,8 @@ struct Room {
     /// Relayed peers (they looked the room up) and when each last sent.
     peers: HashMap<SocketAddrV4, Duration>,
     bytes: Bucket,
+    /// On the public list: the encoded [`Listing`] and when it was last published.
+    listed: Option<(Vec<u8>, Duration)>,
 }
 
 /// What the service did, for its status line.
@@ -288,7 +360,7 @@ impl Service {
                     Some(_) => Packet::Refused(Refusal::Taken),
                     None if full => Packet::Refused(Refusal::Full),
                     None => {
-                        self.rooms.insert(session, Room { host: from, pin, seen: now, peers: HashMap::new(), bytes: Bucket::full(l.room_burst, now) });
+                        self.rooms.insert(session, Room { host: from, pin, seen: now, peers: HashMap::new(), bytes: Bucket::full(l.room_burst, now), listed: None });
                         self.hosts.insert(from, session);
                         Packet::Registered { seen: from }
                     }
@@ -320,9 +392,52 @@ impl Service {
                 out.push((from, Packet::Found { host: r.host }.encode()));
                 out.push((r.host, Packet::Incoming { joiner: from }.encode()));
             }
+            Packet::Publish { listing } => {
+                let session = self.hosts.get(&from).copied();
+                match (session.and_then(|s| self.rooms.get_mut(&s)), Listing::decode(listing)) {
+                    // Only the room's own host lists it, with its own session and certificate.
+                    (Some(r), Some(li)) if session == Some(li.announcement.session) && li.announcement.fingerprint.starts_with(&r.pin) => {
+                        r.seen = now;
+                        r.listed = Some((li.encode(), now));
+                    }
+                    _ => self.counts.dropped += 1,
+                }
+            }
+            Packet::Unlist => {
+                if let Some(r) = self.hosts.get(&from).and_then(|s| self.rooms.get_mut(s)) {
+                    r.listed = None;
+                }
+            }
+            Packet::List { start } => out.push((from, self.page(start, now))),
             // Answers and punches are not for the service.
             _ => self.counts.dropped += 1,
         }
+    }
+
+    /// The public rooms' hosts and encoded listings, by session id (a stable order for paging).
+    pub fn listed(&self, now: Duration) -> Vec<(SocketAddrV4, &[u8])> {
+        let mut v: Vec<(u64, SocketAddrV4, &[u8])> = self
+            .rooms
+            .iter()
+            .filter_map(|(&s, r)| r.listed.as_ref().filter(|(_, at)| now.saturating_sub(*at) <= self.limits.list_ttl).map(|(b, _)| (s, r.host, b.as_slice())))
+            .collect();
+        v.sort_unstable_by_key(|e| e.0);
+        v.into_iter().map(|(_, h, b)| (h, b)).collect()
+    }
+
+    /// The Rooms answer from entry `start` on: as many entries as fit in [`LIST_LEN`].
+    fn page(&self, start: u16, now: Duration) -> Vec<u8> {
+        let all = self.listed(now);
+        let mut entries = Vec::new();
+        for (host, b) in all.iter().skip(start as usize) {
+            if HEAD + 4 + entries.len() + 8 + b.len() > LIST_LEN {
+                break;
+            }
+            put_addr(&mut entries, *host);
+            entries.extend_from_slice(&(b.len() as u16).to_le_bytes());
+            entries.extend_from_slice(b);
+        }
+        Packet::Rooms { total: all.len().min(u16::MAX as usize) as u16, start, entries: &entries }.encode()
     }
 
     /// Drop expired rooms and peers and idle rate buckets (call about once a second).
@@ -345,6 +460,52 @@ impl Service {
         // A full bucket is the same as none.
         self.control.retain(|_, b| now.saturating_sub(b.at).as_secs_f64() * l.control_rate < l.control_burst);
     }
+}
+
+/// A Rooms answer's entries: the hosts' addresses and their listings (`None`: malformed).
+pub fn entries(mut b: &[u8]) -> Option<Vec<(SocketAddrV4, Listing)>> {
+    let mut v = Vec::new();
+    while !b.is_empty() {
+        let n = u16::from_le_bytes(b.get(6..8)?.try_into().ok()?) as usize;
+        v.push((addr(b), Listing::decode(b.get(8..8 + n)?)?));
+        b = &b[8 + n..];
+    }
+    Some(v)
+}
+
+/// The public rooms at the service at `service` (blocking: up to [`MAX_PAGES`] pages, each asked up to three times
+/// and waited for `wait`). An error when the first page never comes.
+pub fn list(service: SocketAddrV4, wait: Duration) -> std::io::Result<Vec<(SocketAddrV4, Listing)>> {
+    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
+    socket.set_read_timeout(Some(wait))?;
+    let mut rooms = Vec::new();
+    let mut buf = [0u8; LIST_LEN];
+    'pages: for page in 0..MAX_PAGES {
+        let start = rooms.len() as u16;
+        for _ in 0..3 {
+            socket.send_to(&Packet::List { start }.encode(), service)?;
+            let deadline = web_time::Instant::now() + wait;
+            while web_time::Instant::now() < deadline {
+                let Ok((n, from)) = socket.recv_from(&mut buf) else { break };
+                let Some(Packet::Rooms { total, start: s, entries: e }) = (from == service.into()).then(|| Packet::decode(&buf[..n])).flatten() else { continue };
+                if s != start {
+                    continue;
+                }
+                let got = entries(e).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "a malformed list"))?;
+                let done = got.is_empty() || start as usize + got.len() >= total as usize;
+                rooms.extend(got);
+                if done {
+                    break 'pages;
+                }
+                continue 'pages;
+            }
+        }
+        if page == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "no answer"));
+        }
+        break;
+    }
+    Ok(rooms)
 }
 
 /// Serve on `socket` until `stop` says so (asked a few times a second, with the service for its counts). Bad
@@ -406,6 +567,10 @@ mod tests {
             Packet::Punch,
             Packet::To { peer: a("10.0.0.1:1"), data: &data },
             Packet::From { peer: a("10.0.0.1:1"), data: &[] },
+            Packet::Publish { listing: &data },
+            Packet::Unlist,
+            Packet::List { start: 300 },
+            Packet::Rooms { total: 9, start: 2, entries: &data },
         ] {
             assert_eq!(Packet::decode(&p.encode()), Some(p));
         }
@@ -460,6 +625,120 @@ mod tests {
         assert_eq!(s.rooms(), 0, "no refresh for 31 s");
         // Expired: the session is free for anyone.
         assert_eq!(decoded(&send(&mut s, "198.51.100.9:1", Packet::Register { session: 5, pin: PIN }, 82))[0].1, Packet::Registered { seen: a("198.51.100.9:1") });
+    }
+
+    fn listing(session: u64, name: &str) -> Listing {
+        let mut fingerprint = [7; 32];
+        fingerprint[..PIN_BYTES].copy_from_slice(&PIN);
+        Listing {
+            announcement: Announcement { session, name: name.into(), port: 29171, fingerprint, password: false, version: 11, rules: [3; 32], scenario: "galaxy".into(), humans: 1, slots: 8, started: false },
+            mods: [0; 32],
+        }
+    }
+
+    fn rooms(s: &mut Service, from: &str, start: u16, now: u64) -> (u16, Vec<(SocketAddrV4, Listing)>) {
+        let out = send(s, from, Packet::List { start }, now);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.len() <= LIST_LEN, "never larger than the request");
+        match Packet::decode(&out[0].1) {
+            Some(Packet::Rooms { total, start: s, entries: e }) if s == start => (total, entries(e).unwrap()),
+            p => panic!("{p:?}"),
+        }
+    }
+
+    #[test]
+    fn public_rooms_are_listed_by_their_hosts_until_they_stop() {
+        let mut s = Service::default();
+        let l = listing(5, "Alice's galaxy");
+        let host = "198.51.100.1:4000";
+        // Not without a room, nor for another session or certificate.
+        send(&mut s, host, Packet::Publish { listing: &l.encode() }, 0);
+        send(&mut s, host, Packet::Register { session: 5, pin: PIN }, 0);
+        send(&mut s, host, Packet::Publish { listing: &listing(6, "x").encode() }, 0);
+        let other = Listing { announcement: Announcement { fingerprint: [1; 32], ..l.announcement.clone() }, ..l.clone() };
+        send(&mut s, host, Packet::Publish { listing: &other.encode() }, 0);
+        // Nor by somebody else for this room.
+        send(&mut s, "192.0.2.5:7000", Packet::Publish { listing: &l.encode() }, 0);
+        assert_eq!(rooms(&mut s, "192.0.2.5:7000", 0, 0), (0, vec![]));
+        // A room without a listing is private: unlisted.
+        send(&mut s, host, Packet::Publish { listing: &l.encode() }, 1);
+        assert_eq!(rooms(&mut s, "192.0.2.5:7000", 0, 1), (1, vec![(a(host), l.clone())]));
+        let code = l.join_code(a(host));
+        assert_eq!((code.session, code.pin, code.addrs.as_slice()), (5, PIN, &[a(host)][..]), "a click's join code");
+        // Unlist takes it off now; a listing not repeated for 15 s goes too (the room stays).
+        send(&mut s, host, Packet::Unlist, 2);
+        assert_eq!(rooms(&mut s, "192.0.2.5:7000", 0, 2).0, 0);
+        send(&mut s, host, Packet::Publish { listing: &l.encode() }, 3);
+        send(&mut s, host, Packet::Register { session: 5, pin: PIN }, 18);
+        assert_eq!(rooms(&mut s, "192.0.2.5:7000", 0, 18).0, 1);
+        assert_eq!(rooms(&mut s, "192.0.2.5:7000", 0, 19).0, 0, "stale");
+        // A closed room is off the list.
+        send(&mut s, host, Packet::Publish { listing: &l.encode() }, 20);
+        send(&mut s, host, Packet::Unregister, 20);
+        assert_eq!(rooms(&mut s, "192.0.2.5:7000", 0, 20).0, 0);
+        // An unpadded List is not answered.
+        let mut short = Packet::List { start: 0 }.encode();
+        short.truncate(100);
+        let mut out = Vec::new();
+        s.handle(a("192.0.2.5:7000"), &short, Duration::from_secs(20), &mut out);
+        assert!(out.is_empty(), "no answer to an unpadded list");
+    }
+
+    #[test]
+    fn the_list_comes_in_pages() {
+        let limits = Limits { rooms_per_ip: 64, control_burst: 1000.0, ..Limits::default() };
+        let mut s = Service::new(limits);
+        let long = "Ǆ".repeat(MAX_NAME);
+        let n = 40u64;
+        for k in 0..n {
+            let host = format!("198.51.100.1:{}", 1000 + k);
+            send(&mut s, &host, Packet::Register { session: k, pin: PIN }, 0);
+            let mut l = listing(k, &long);
+            l.announcement.scenario = long.clone();
+            assert!(l.encode().len() <= MAX_LISTING, "{}", l.encode().len());
+            send(&mut s, &host, Packet::Publish { listing: &l.encode() }, 0);
+        }
+        let mut got = Vec::new();
+        while got.len() < n as usize {
+            let (total, page) = rooms(&mut s, "192.0.2.5:7000", got.len() as u16, 0);
+            assert_eq!(total as u64, n);
+            assert!(!page.is_empty());
+            got.extend(page);
+        }
+        let sessions: Vec<u64> = got.iter().map(|(_, l)| l.announcement.session).collect();
+        assert_eq!(sessions, (0..n).collect::<Vec<_>>(), "by session, each once");
+        assert_eq!(rooms(&mut s, "192.0.2.5:7000", n as u16, 0), (n as u16, vec![]));
+        // An over-long name is refused.
+        let mut l = listing(1, &"x".repeat(MAX_NAME + 1));
+        l.announcement.session = 1;
+        assert_eq!(Listing::decode(&l.encode()), None);
+    }
+
+    /// The blocking browser against a served socket on 127.0.0.1.
+    #[test]
+    fn the_browser_pages_through_a_running_service() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let std::net::SocketAddr::V4(at) = socket.local_addr().unwrap() else { unreachable!() };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut s = Service::new(Limits { rooms_per_ip: 64, ..Limits::default() });
+            for k in 0..20u64 {
+                let host = a(&format!("198.51.100.1:{}", 1000 + k));
+                let mut out = Vec::new();
+                s.handle(host, &Packet::Register { session: k, pin: PIN }.encode(), Duration::ZERO, &mut out);
+                s.handle(host, &Packet::Publish { listing: &listing(k, &format!("Room {k}")).encode() }.encode(), Duration::ZERO, &mut out);
+            }
+            serve(&socket, &mut s, |_| rx.try_recv().is_ok())
+        });
+        let got = list(at, Duration::from_millis(500)).unwrap();
+        assert_eq!(got.len(), 20);
+        assert_eq!(got[19].1.announcement.name, "Room 19");
+        tx.send(()).unwrap();
+        // Nobody there: an error, not an empty list.
+        let dead = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let std::net::SocketAddr::V4(nobody) = dead.local_addr().unwrap() else { unreachable!() };
+        drop(dead);
+        assert!(list(nobody, Duration::from_millis(100)).is_err());
     }
 
     #[test]
