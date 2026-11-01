@@ -106,14 +106,15 @@ pub enum Item {
     Name,
 }
 
-/// The tab's settings in order (ADR 0053 §2): Display the remake's rows, gamma, the exe's graphics rows; Sound the
+/// The tab's settings in order (ADR 0053 §2): Display the remake's rows, gamma, the exe's graphics rows, the modern
+/// lighting's (ADR 0055); Sound the
 /// two volumes; Game the exe's game rows, then ours; Multiplayer the name, then ours; the rest the group's rows.
 pub fn items(rows: &[Row], tab: Tab) -> Vec<Item> {
     let ours = |g| rows.iter().enumerate().filter(move |(_, r)| r.ours && r.group == g).map(|(k, _)| Item::Row(k));
     let exe = |page| rows.iter().enumerate().filter(move |(_, r)| !r.ours && r.page == page).map(|(k, _)| Item::Row(k));
     let mut v: Vec<Item> = match tab {
         Tab::Sound => return vec![Item::Slider(0), Item::Slider(1)],
-        Tab::Display => ours(Group::Display).chain([Item::Slider(2)]).chain(exe(1)).collect(),
+        Tab::Display => ours(Group::Display).chain([Item::Slider(2)]).chain(exe(1)).chain(ours(Group::Graphics)).collect(),
         Tab::Game => exe(2).collect(),
         Tab::Multiplayer => vec![Item::Name],
         _ => Vec::new(),
@@ -186,6 +187,10 @@ pub fn describe(key: &str) -> &'static str {
         "EnhancedAi" => "How the computer empires of the next game manage their economy and research.",
         "TitleMusicWithIntro" => "The title video's music starts with the intro, not under the logos.",
         "TextureUpscale" => "Smooths the game's pictures and model textures 2x or 4x as they load.",
+        "AntiAliasing" => "Smooth edges on the 3D scenes' buildings, ships and planets.",
+        "PixelLighting" => "The space battle's ships lit per pixel, so their hulls shade smoothly.",
+        "SoftShadows" => "Soft edges on the colony's building shadows.",
+        "Bloom" => "A soft glow around fire, blasts and the colony's weather.",
         _ => "",
     }
 }

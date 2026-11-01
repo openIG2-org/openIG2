@@ -146,6 +146,9 @@ pub struct Options {
     pub sharp_text: bool,
     /// `--upscale 2|4`: the textures upscaled (ADR 0054; else the settings file's `TextureUpscale`); 1 = off.
     pub upscale: u8,
+    /// `--modern-lighting`: anti-aliasing, per-pixel lighting, soft shadows and bloom (ADR 0055; else the settings
+    /// file's rows).
+    pub modern_lighting: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -302,6 +305,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         sharp_ui: false,
         sharp_text: false,
         upscale: 1,
+        modern_lighting: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -407,6 +411,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     _ => return Err("--upscale 2|4".into()),
                 }
             }
+            "--modern-lighting" => o.modern_lighting = true,
             "--multiplayer" => o.multiplayer = true,
             "--backdrop" => o.backdrop = true,
             "--background" => {
@@ -531,6 +536,9 @@ fn parse(args: &[String]) -> Result<Options, String> {
     render::set_sharp_ui(o.sharp_ui);
     render::set_sharp_text(o.sharp_text);
     upscale::set_factor(o.upscale);
+    if o.modern_lighting {
+        render3d::set_lighting(render3d::Lighting { msaa: true, per_pixel: true, soft_shadows: true, bloom: true });
+    }
     Ok(o)
 }
 

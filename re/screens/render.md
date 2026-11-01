@@ -139,3 +139,6 @@ in `colony::{building_env, env_texture, env_map}` and the panel previews (test `
 Applied to the colony, research, spy, diplomacy, starmap screens and the info/messages frames. Open: the units'
 shadows (`WF_Tank::DrawShadow`), the research and spy side lights (research.md §5.6), the colony terrain's own
 brightness in places, the info frame's faces turned away from the lights (lit grey in the exe, dark in the client).
+The modern lighting (ADR 0055, `render3d::Lighting`, four Remake rows, all off by default) is not the remaster's:
+4× multisampling of the mesh pass, the battle ships' light per fragment, a percentage-closer read of §4's map and a
+glow of the additive mesh parts; off, the mesh pass is the one above (captures byte-identical).

@@ -830,7 +830,6 @@ impl<'a> Scene<'a> {
     fn ships(&self, f: &mut crate::render::Frame, b: &Battle, eye: &crate::starmap_planet::Eye) {
         let crate::render::Frame { scene, late, .. } = f;
         let Some(scene) = scene.as_mut() else { return };
-        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
         let light = crate::scene::normalise(planet_light());
         let _ = eye;
         for (i, u) in b.units.iter().enumerate() {
@@ -846,8 +845,7 @@ impl<'a> Scene<'a> {
                 let start = scene.dynamic.len() as u32;
                 for v in verts {
                     let n = crate::scene::normalise(crate::scene::apply(&m, v.normal));
-                    let lit = (0x40 as f32 / 255.0 + 0x80 as f32 / 255.0 * dot(n, light).max(0.0)).min(1.0);
-                    scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [lit, lit, lit, alpha] });
+                    scene.dynamic.push(ship_vertex(xf.point(v.pos), n, light, v.uv, alpha));
                 }
                 let range = start..scene.dynamic.len() as u32;
                 late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: alpha < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
@@ -1232,7 +1230,6 @@ impl<'a> Scene<'a> {
 
     /// The debris (`Darabok`, spec §6.8.6): each shown piece's model at its size, turned by its spin, lit like the ships.
     fn debris(&self, f: &mut crate::render::Frame, fx: &crate::spacewar_fx::Fx, g: &FxGfx) {
-        let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
         let light = crate::scene::normalise(planet_light());
         for d in fx.debris.iter().filter(|d| d.counter != 0) {
             let Some(mesh) = g.debris[d.model.min(2)].as_ref() else { continue };
@@ -1253,8 +1250,7 @@ impl<'a> Scene<'a> {
                 let start = scene.dynamic.len() as u32;
                 for v in verts {
                     let n = crate::scene::normalise(crate::scene::apply(&d.turn, v.normal));
-                    let lit = (0x40 as f32 / 255.0 + 0x80 as f32 / 255.0 * dot(n, light).max(0.0)).min(1.0);
-                    scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [lit, lit, lit, alpha] });
+                    scene.dynamic.push(ship_vertex(xf.point(v.pos), n, light, v.uv, alpha));
                 }
                 let range = start..scene.dynamic.len() as u32;
                 late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
@@ -1421,6 +1417,17 @@ fn mesh_reach(mesh: &Mesh) -> [f32; 3] {
         }
     }
     r
+}
+
+/// A ship's or piece's vertex lit per vertex by ambient 0x40 and the planet's parallel light 0x80, or (ADR 0055,
+/// "Per-pixel lighting") keeping its normal, four long, for the same two lights per fragment: the starmap scene's
+/// ambient 0x40 and parallel 0x80 from (−1, −1, 1) (its sky's, `starmap::sky`) are the battle's.
+fn ship_vertex(pos: [f32; 3], n: [f32; 3], light: [f32; 3], uv: [f32; 2], alpha: f32) -> crate::render3d::MeshVertex {
+    if crate::render3d::lighting().per_pixel {
+        return crate::render3d::MeshVertex { pos, normal: n.map(|x| x * 4.0), uv, color: [1.0, 1.0, 1.0, alpha] };
+    }
+    let lit = (0x40 as f32 / 255.0 + 0x80 as f32 / 255.0 * (n[0] * light[0] + n[1] * light[1] + n[2] * light[2]).max(0.0)).min(1.0);
+    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv, color: [lit, lit, lit, alpha] }
 }
 
 fn planet_light() -> [f32; 3] {

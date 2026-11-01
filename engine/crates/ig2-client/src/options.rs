@@ -47,14 +47,16 @@ pub enum Group {
     Multiplayer,
     /// ADR 0053: the language rows (the main menu screen's Language tab).
     Language,
+    /// The modern lighting (ADR 0055).
+    Graphics,
 }
 
 impl Group {
-    pub const ALL: [Group; 6] = [Group::Display, Group::Interface, Group::Game, Group::Accessibility, Group::Multiplayer, Group::Language];
+    pub const ALL: [Group; 7] = [Group::Display, Group::Interface, Group::Game, Group::Accessibility, Group::Graphics, Group::Multiplayer, Group::Language];
 
     /// The heading's English text (the remake text table's key, ADR 0042).
     pub fn title(self) -> &'static str {
-        ["Screen", "Interface", "Game", "Accessibility", "Multiplayer", "Language"][self as usize]
+        ["Screen", "Interface", "Game", "Accessibility", "Multiplayer", "Language", "Graphics"][self as usize]
     }
 }
 

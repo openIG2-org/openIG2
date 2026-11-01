@@ -104,3 +104,20 @@ system per tick (`starmap_pass`, `with_ai`, `with_diplomacy`): a view that stays
 writes only what changed, would cut most of the tick; the autosave (12.7 ms on the frame thread at each save: write
 it on a worker); the colony rebuild's last 4 ms (keep the meshes too, rebuild only the buildings' mesh); the GPU and
 asset start-up (≈ 0.5 s: create the window and device while the rules load).
+
+## Measurements: the modern lighting (ADR 0055, 2026-11-01)
+
+Same machine, release, vsync off, a window of the size; `--modern-lighting` (all four rows on) against all off.
+Starmap over `quick-2.sav`, the colony (F3) over a colony state save, the space battle over a `run_spwc.py --script`
+entry dump (`IG2_PROFILE_BATTLE`); medians of the 1-second lines over 16 s.
+
+| Mean frame | 1920 × 1080 off / on | 3840 × 2160 off / on |
+|---|---|---|
+| Starmap | 1.5 / 2.4 ms | 2.1 / 2.4 ms |
+| Colony | 1.3 / 1.4 ms | 2.3 / 2.3 ms |
+| Space battle | 3.4 / 3.1 ms | 3.8 / 2.9 ms |
+
+The cost is the 4× pass and its resolve (the starmap's late planets add a second resolve and a full-screen lay-over);
+the bloom's half-size blur and the 16-tap shadow read stay under the noise. The space battle's numbers vary more than
+the difference. The targets are made once per frame size (`render3d::Pipe3d::targets`, six sizes): a frame that draws
+more sizes would make them every frame (12 ms in the battle while the cache held three).
