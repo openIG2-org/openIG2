@@ -445,7 +445,7 @@ fn a_newcomer_watches_a_running_game() {
 
 /// ADR 0033: the host sets each computer's level in the room; every machine builds the same start with those levels
 /// (the AIs' `Nehezseg`, the humans' the game's 1), the state carries them through a snapshot, and two machines run
-/// in step.
+/// in step; with the room's enhanced computer empires (ADR 0045) too.
 #[test]
 fn per_computer_levels_travel_and_stay_in_step() {
     let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
@@ -463,6 +463,7 @@ fn per_computer_levels_travel_and_stay_in_step() {
         for (&e, level) in ais.iter().zip([3, 2, 1]) {
             o.difficulty[e as usize - 1] = level;
         }
+        o.enhanced_ai = true;
         assert!(h.set_options(o));
         pump(&mut h, &mut [&mut a], synced);
         assert_eq!(a.state.as_ref().unwrap().galaxy, Some(o), "the joiner sees the levels");
@@ -478,12 +479,17 @@ fn per_computer_levels_travel_and_stay_in_step() {
             assert_eq!(ais.iter().map(|&e| d[e as usize]).collect::<Vec<_>>(), [4, 2, 1], "the AIs' levels");
             assert!(humans.iter().all(|&e| d[e as usize] == 1), "the humans keep the game's");
             assert_eq!(g.state.mem.i32(va::NEHEZSEG), 1, "the game's level stays the original's");
+            assert!(g.enhanced_ai, "the room's enhanced computer empires (ADR 0045)");
             // The start's `BirodalomIsmeriMiotaKi`: a hard computer knows the humans at once, an easy one after 0x708.
             let since = |e: u8, k: u8| g.state.mem.i32(va::EMPIRE_KNOWN_SINCE + 0x4c * e as u32 + 4 * k as u32);
             assert_eq!((since(ais[0], humans[0]), since(ais[2], humans[0])), (0, 0x708));
         }
         let snap = Snapshot::capture(&hs.own.game, &[], 0, 0);
         assert_eq!(snap.restore(&rules).unwrap().0.state.ai_difficulty, hs.own.game.state.ai_difficulty, "the snapshot keeps them");
+        assert!(snap.restore(&rules).unwrap().0.enhanced_ai, "and the ruleset");
+        let mut classic = snap.restore(&rules).unwrap().0;
+        classic.enhanced_ai = false;
+        assert_ne!(ig2_net::state_hash(&classic, &[]), ig2_net::state_hash(&hs.own.game, &[]), "the ruleset is in the hash");
 
         let mut now = Duration::ZERO;
         while hs.own.turn < 200 || c.peer.turn < 200 {

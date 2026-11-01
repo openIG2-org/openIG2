@@ -234,6 +234,7 @@ fn context(s: &Value) -> EconomyContext {
             lab_start: std::array::from_fn(|i| i32_at(&story, 0x9c + 4 * i)),
         },
         story_values: Vec::new(),
+        enhanced_ai: [false; 19],
     }
 }
 

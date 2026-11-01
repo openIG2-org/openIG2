@@ -151,7 +151,7 @@ impl Game<'_> {
                 if kind as usize >= self.rules.side.colony.buildings.len() {
                     return;
                 }
-                self.build(issuer, p, kind, (x, y));
+                self.build(issuer, p, kind, Some((x, y)));
             }
             ColonyOrder::Demolish { planet: p, slot: k } => {
                 let Some(p) = own(self, p) else { return };
@@ -218,7 +218,8 @@ impl Game<'_> {
     }
 
     /// 0x1f (exe 0x48a306).
-    fn build(&mut self, issuer: u8, p: usize, kind: u8, at: (i32, i32)) {
+    /// `at`: the grid cell the search starts from (none: `EpuletNewSearchLocation`'s −1, −1).
+    pub(super) fn build(&mut self, issuer: u8, p: usize, kind: u8, at: Option<(i32, i32)>) {
         let e = issuer as usize % EMPIRES;
         let g = self.globals();
         let mut c = self.state.colony();
@@ -234,7 +235,7 @@ impl Game<'_> {
         }
         let cells = self.state.vehicle_cells(p);
         let mut slot = 0;
-        if let Some((x, y)) = self.rules.placement.locate(&c.planets[p], kind, &cells, Some(at)) {
+        if let Some((x, y)) = self.rules.placement.locate(&c.planets[p], kind, &cells, at) {
             let econ = self.economy_context(&g);
             slot = c.new_building(p, kind, false, (x as f32, y as f32), 0, &self.rules.side, &econ);
         }

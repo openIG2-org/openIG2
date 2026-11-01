@@ -36,11 +36,14 @@ pub struct GalaxyOptions {
     /// Ours (ADR 0033, enhanced): the computer's level in each slot (empires 1..=8), the skirmish menu's 1 easy,
     /// 2 normal, 3 hard ([`nehezseg`]); all 1 = the original (`InitNewGame(seed, 2, 0, 1)`). Read for AI slots only.
     pub difficulty: [u8; 8],
+    /// Ours (ADR 0045, enhanced; off = the original): the computer empires play the enhanced ruleset
+    /// (`Game::enhanced_ai`).
+    pub enhanced_ai: bool,
 }
 
 impl Default for GalaxyOptions {
     fn default() -> Self {
-        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false, spectators: false, difficulty: [1; 8] }
+        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false, spectators: false, difficulty: [1; 8], enhanced_ai: false }
     }
 }
 
@@ -56,6 +59,7 @@ impl GalaxyOptions {
             formation: self.formation,
             spectators: self.spectators,
             difficulty: self.difficulty.map(|d| d.clamp(1, 3)),
+            enhanced_ai: self.enhanced_ai,
         }
     }
 }
@@ -125,6 +129,7 @@ impl GalaxyStart {
         game.start_multiplayer(host, humans);
         game.realtime.formation.on = self.options.formation;
         game.spectators = self.options.spectators;
+        game.enhanced_ai = self.options.enhanced_ai;
         game.libc = Libc(session as u32);
         game
     }
@@ -179,8 +184,8 @@ mod tests {
 
     #[test]
     fn options_are_clamped() {
-        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true, spectators: true, difficulty: [0, 1, 2, 3, 4, 9, 1, 1] }.clamped();
-        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true, spectators: true, difficulty: [1, 1, 2, 3, 3, 3, 1, 1] });
+        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true, spectators: true, difficulty: [0, 1, 2, 3, 4, 9, 1, 1], enhanced_ai: true }.clamped();
+        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true, spectators: true, difficulty: [1, 1, 2, 3, 3, 3, 1, 1], enhanced_ai: true });
         assert_eq!([1, 2, 3].map(nehezseg), [1, 2, 4]);
     }
 }

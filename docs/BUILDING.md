@@ -79,7 +79,7 @@ frame or an input script's frames without a window; it is used by the capture co
 `engine/crates/ig2-client/src/main.rs`.
 
 ## Play-through harness
-`ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]` plays whole games
+`ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]` plays whole games
 headless at
 the fastest speed on the player's path (`World::tick`, the commands a screen sends), with the sim's AI playing the
 human's empire (`Game::autopilot`). Runs: `campaign:C[:D[:L]]` (campaign 1..=3, difficulty 1/2/4, storyline 1/2; 0 or
@@ -103,6 +103,10 @@ change reshuffles them), so a campaign is played over a seed list, e.g. `campaig
 difficulty 1 every campaign has seeds that end won (`video Won`: the race's win clip and
 `misc/end_campaign_win.bik`), and campaign 2 storyline 1 also ends in story 863's own end (`Over(Ended)`,
 `politikus_win.bik`).
+`--growth M` prints a `growth` line per living empire every M game months (planets, population, techs, credits,
+ships, the running research, the lab buildings and the open techs with the labs they need): the curves the
+computer empires' rulesets are compared by (`re/rules/ai-empire.md` §15). `--ai enhanced` plays the computer empires
+with the enhanced ruleset (ADR 0045; in `mp` runs the room's option), `classic` (the default) with the original's.
 `--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets
 the units fight it out) and the diplomacy questions reach its inbox. The exit code is 1 when a run failed (a panic,
 a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit.

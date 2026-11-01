@@ -16,6 +16,7 @@
 
 pub mod colonise;
 pub mod design;
+pub mod enhanced;
 pub mod fleets;
 pub mod refit;
 pub mod units;
@@ -208,6 +209,8 @@ pub struct AiContext {
     pub ai_off: bool,
     /// `DesignBarmiRarakhato` (exe 0xA3F0B0): techs 0xa1..=0xa9 fit every slot.
     pub design_debug: bool,
+    /// Ours (ADR 0045): the computer empires play the enhanced ruleset ([`enhanced`]; `Game::enhanced_ai`).
+    pub enhanced: bool,
 }
 
 /// Effects for the UI or other systems.
@@ -230,6 +233,9 @@ pub enum AiEvent {
     HumanFleetEmptied { fleet: usize },
     Combat(CombatEvent),
     Research(ResearchEvent),
+    /// Ours (ADR 0045): an enhanced empire places building `kind` on `planet` as the colony screen's order does
+    /// (`ColonyOrder::Build`, paid from its credits, the first free spot); `Game` carries it out after the pass.
+    Build { empire: u8, planet: usize, kind: u8 },
 }
 
 /// Effects the AI hands to other systems synchronously.
@@ -362,13 +368,20 @@ impl AiState {
                 continue;
             }
             self.planet_settings(w, e);
+            if w.ctx.enhanced {
+                self.enhanced_planet_settings(w, e);
+            }
             self.production(w, e);
             if e as i32 <= w.spy.ctx.program_players && w.ctx.spies_enabled {
                 spy_missions(w, e);
             }
             self.colonise(w, e, hooks);
             self.fleets(w, e, hooks);
-            research_pick(w, e);
+            if w.ctx.enhanced {
+                self.enhanced_research(w, e);
+            } else {
+                research_pick(w, e);
+            }
             self.set_sliders(e, w.danger[e]);
         }
         self.income_shares(&mut w.spy.colony.money);
@@ -645,6 +658,9 @@ impl AiState {
         cats[4].want = 0;
         cats[2].want = 0;
         cats[category::COLONY_SHIP].want = (self.empty_planets[e] != 0) as i32;
+        if w.ctx.enhanced {
+            self.categories[e][category::COLONY_SHIP].want = enhanced::colony_ships_wanted(w, e, self.empty_planets[e] != 0);
+        }
 
         let main = self.main_planet[e];
         let danger = w.danger[e];
@@ -657,18 +673,32 @@ impl AiState {
             if alt_cat.total(SPECIAL) < alt_cat.total(BEST) && alt_cat.design[SPECIAL] > 0 {
                 alt = alt_cat.design[SPECIAL];
             }
-            let (idle, yard) = {
+            let (mut idle, yard) = {
                 let pl = &w.spy.colony.planets[p];
                 (planet_word(pl, 0x78) == 0, pl.ship_capacity > 0)
             };
+            // Enhanced (ADR 0045): at peace a wanted colony ship replaces a warship batch (the original refills a
+            // yard only when its line runs empty, which a single yard's warships never let happen).
+            if w.ctx.enhanced && danger < 3 && !idle {
+                let col = &cats[category::COLONY_SHIP];
+                let head = planet_word(&w.spy.colony.planets[p], 0x78);
+                idle = col.design[BEST] > 0 && col.total(BEST) < col.want && head != col.design[BEST] && (head == cats[category::SHIP].design[BEST] || head == alt);
+            }
             if idle && yard {
-                if (danger < 3 || w.r(1, 3) == 1) && p as i32 == main {
+                // Enhanced (ADR 0045): every shipyard, not only the main planet's, builds what is wanted.
+                if (danger < 3 || w.r(1, 3) == 1) && (p as i32 == main || w.ctx.enhanced) {
                     for (c, cat) in cats.iter().enumerate().skip(1) {
                         if w.rules.build_mode.get(c) == Some(&1) && cat.design[BEST] > 0 && cat.total(BEST) < cat.want {
                             ship = cat.design[BEST];
                             alt = 0;
                         }
                     }
+                }
+                // Enhanced (ADR 0045): at peace no more warships than the empire's planets call for, so the credits
+                // go to colonies, buildings and research.
+                let warships = cats[category::SHIP].total(BEST) + cats[category::SHIP_ALT].total(BEST) + cats[category::SHIP_ALT].total(SPECIAL);
+                if w.ctx.enhanced && danger == 1 && ship == cats[category::SHIP].design[BEST] && warships >= enhanced::peace_warships(mine.len()) {
+                    ship = 0;
                 }
                 let count = if w.design(e, ship as i32).is_some_and(|r| r[0x36] != 0) { 3 } else { 1 };
                 let time = w.design_i32(e, ship as i32, 0x20);
@@ -1549,5 +1579,95 @@ mod tests {
         (ai.no_load[2], ai.load_phase[2]) = (2, 1);
         run(&mut fx, |w| ai.fleets(w, 2, &mut ()));
         assert_eq!((ai.no_load[2], ai.load_phase[2]), (1, 0));
+    }
+
+    /// A tech researchable by empire 2 (race 2) with AI priority `prio`, research cost `cost` and ship labs `lab`.
+    fn open_tech(fx: &mut Fixture, t: usize, prio: u8, cost: i32, lab: u8) {
+        let o = t * crate::colony_side::TECH_STRIDE;
+        let b = &mut fx.colony.tech.bytes;
+        b[o + 0xb7 + 2] = prio;
+        b[o + 0x34..o + 0x38].copy_from_slice(&cost.to_le_bytes());
+        b[o + 0x31] = lab;
+        fx.colony.tech.set_status(t, 2, crate::colony_side::status::RESEARCHABLE);
+    }
+
+    /// ADR 0045: taxes by morale band (the lower of now and the target), 0 while restless; while research waits
+    /// for labs the production planets but the main one switch to labs.
+    #[test]
+    fn enhanced_taxes_follow_morale_and_labs_come_first() {
+        let mut fx = fixture();
+        for (p, (morale, mode)) in [(400, 2), (600, 6), (900, 9), (800, 2), (800, 2)].into_iter().enumerate() {
+            fx.colony.planets[p + 1] = planet(2, p as f32, 10_000, 0);
+            fx.colony.planets[p + 1].morale = morale;
+            fx.colony.planets[p + 1].autobuild_mode = mode;
+        }
+        fx.colony.planets[5].unrest = 3;
+        fx.colony.needed_morale = vec![1000; 6];
+        fx.colony.needed_morale[3] = 700;
+        let mut ai = AiState::default();
+        ai.main_planet[2] = 1;
+        let ev = run(&mut fx, |w| ai.enhanced_planet_settings(w, 2));
+        let p = &fx.colony.planets;
+        assert_eq!([1, 2, 3, 4, 5].map(|i| p[i].tax_level), [2, 3, 3, 4, 0]);
+        assert_eq!([1, 2, 3, 4].map(|i| p[i].autobuild_mode), [2, 3, 9, 3], "the main planet and military modes stay");
+        assert!(ev.is_empty(), "no open tech: no lab to aim for");
+    }
+
+    /// ADR 0045: the lab for the open tech closest to the lab buildings, on the most populous planet that is free
+    /// to build; nothing while the credits would drop below the reserve.
+    #[test]
+    fn enhanced_lab_goes_to_the_most_populous_free_planet() {
+        let mut fx = fixture();
+        fx.colony.planets[1] = planet(2, 1.0, 30_000, 0);
+        fx.colony.planets[1].buildings = vec![crate::colony::Building { kind: 3, work_left: 10, ..Default::default() }];
+        fx.colony.planets[2] = planet(2, 2.0, 20_000, 0);
+        fx.colony.planets[3] = planet(2, 3.0, 10_000, 0);
+        open_tech(&mut fx, 20, 1, 500, 4);
+        open_tech(&mut fx, 21, 1, 400, 9);
+        fx.colony.empires.lab_buildings[2][1] = 2;
+        fx.side.autobuild.min = vec![0, 0, 0, 0, 0, 30, 0, 0];
+        fx.side.autobuild.max = vec![0, 0, 0, 0, 0, 32, 0, 0];
+        fx.side.colony.buildings = vec![crate::colony::BuildingKind::default(); 33];
+        for (k, t) in [(30, 60), (31, 61), (32, 62)] {
+            fx.side.colony.buildings[k].tech = t;
+        }
+        for t in [60, 61] {
+            fx.colony.tech.set_status(t, 2, crate::colony_side::status::OWNED);
+        }
+        let o = 61 * crate::colony_side::TECH_STRIDE + 0x14;
+        fx.colony.tech.bytes[o..o + 4].copy_from_slice(&5_000i32.to_le_bytes());
+        fx.colony.money[2] = Treasury { total: 24_000.0, pools: [0.0, 8_000.0, 8_000.0, 8_000.0, 0.0, 0.0], share: [0.0, 0.4, 0.3, 0.3, 0.0, 0.0], ..Default::default() };
+        let mut ai = AiState::default();
+        assert!(run(&mut fx, |w| ai.enhanced_planet_settings(w, 2)).is_empty(), "5,000 + 20,000 reserve > 24,000");
+        fx.colony.money[2].pools[2] = 9_000.0;
+        fx.colony.money[2].total = 25_000.0;
+        let ev = run(&mut fx, |w| ai.enhanced_planet_settings(w, 2));
+        assert_eq!(ev, [AiEvent::Build { empire: 2, planet: 2, kind: 31 }], "tech 20 (2 short), its ship lab 31 (32 not researched), planet 1 busy");
+    }
+
+    /// ADR 0045: the research pick prefers a colony-ship hull while planets wait and there is no colony-ship
+    /// design, else the race's priority with ties to the cheaper; plenty of credits make it urgent.
+    #[test]
+    fn enhanced_research_pick_and_urgency() {
+        let mut fx = fixture();
+        fx.rules.design.hulls = vec![Default::default(); 15];
+        fx.rules.design.hulls[13].tech = 40;
+        open_tech(&mut fx, 10, 2, 900, 0);
+        open_tech(&mut fx, 11, 2, 300, 0);
+        open_tech(&mut fx, 12, 5, 100, 0);
+        open_tech(&mut fx, 40, 9, 700, 0);
+        let mut ai = AiState::default();
+        ai.empty_planets[2] = 1;
+        fx.colony.money[2].total = 200_000.0;
+        run(&mut fx, |w| ai.enhanced_research(w, 2));
+        assert_eq!((fx.research.current[2], fx.research.urgent[2]), (40, 1), "the colony-ship hull first");
+        fx.research.current[2] = 0;
+        ai.categories[2][category::COLONY_SHIP].design[BEST] = 7;
+        fx.colony.money[2].total = 100_000.0;
+        run(&mut fx, |w| ai.enhanced_research(w, 2));
+        assert_eq!((fx.research.current[2], fx.research.urgent[2]), (11, 1), "priority 2, the cheaper; urgent until below 50,000");
+        fx.colony.money[2].total = 40_000.0;
+        run(&mut fx, |w| ai.enhanced_research(w, 2));
+        assert_eq!((fx.research.current[2], fx.research.urgent[2]), (11, 0));
     }
 }

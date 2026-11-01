@@ -58,6 +58,8 @@ row: with it on, each human side with six or more ships picks a formation before
 Its "Defeated players" row (off: leave, as in the original; on: stay and watch) lets a player whose empire falls
 return to the starmap, see the whole map and chat, without giving orders, until they leave. With it on, others can
 also join the running game with Join under a new name to watch it.
+Its "Computer empires" row (classic, as in the original; or enhanced, ADR 0045) sets how the computer empires run
+their economy and research for the whole game.
 Each computer slot shows its level after "Computer": easy (the default, as in the original), normal or hard. The
 host clicks it to raise the level and right-clicks to lower it; the computer empire then plays at that difficulty.
 
@@ -143,6 +145,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Sharp text (`SharpText`) | Off by default: on big windows (1440p, 4K) the game's own font is drawn with sharp, smooth edges instead of the original's blur, every letter in the same place and size (ADR 0046); combines with Sharp UI; at 800x600 nothing changes |
 | Starmap mouse camera (`StarmapMouseCamera`) | On by default: the wheel zooms the starmap and a right drag moves it; an unmoved right click gives its order on the release (ADR 0049); off = the original: no wheel, the right press orders at once |
 | High-score entry (`HighScoreEntry`) | On by default: after a won scenario the main menu opens its list in high-score view and asks for your name (Enter keeps it; the score is the days the win took, fewer is better); the tables are kept in the remake's settings file (ADR 0050); off = the original, which never asks |
+| Computer empires (`EnhancedAi`) | Classic by default: the computer empires of a new single-player game play as in the original. Enhanced (ADR 0045): they expand faster, build the labs their research needs, buy every planet's building when they can pay, set taxes by morale and research a colony ship when there are planets to take. A game keeps the choice it started with (saved with it); a multiplayer room has its own row |
 
 The window opens at 1600x900 until a size is saved.
 

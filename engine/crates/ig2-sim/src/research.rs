@@ -95,7 +95,7 @@ pub enum ResearchEvent {
     Started { empire: u8, tech: usize },
 }
 
-fn labs_ok(techs: &TechTable, t: usize, labs: &[i32; 4]) -> bool {
+pub(crate) fn labs_ok(techs: &TechTable, t: usize, labs: &[i32; 4]) -> bool {
     let need = techs.labs_needed(t);
     (0..3).all(|i| need[i] as i32 <= labs[i + 1])
 }

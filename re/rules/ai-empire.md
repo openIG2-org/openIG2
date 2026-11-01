@@ -1,7 +1,8 @@
 # The AI empire (`FRISSIT_MI`)
 
 Port status: ported in `engine/crates/ig2-sim/src/ai/`; specified from both binaries, exe-normative; verified
-against `traces/2026-10-15-ai-empire.md` (§1–§6) and `traces/2026-10-16-ai-empire-2.md` (§8–§13).
+against `traces/2026-10-15-ai-empire.md` (§1–§6) and `traces/2026-10-16-ai-empire-2.md` (§8–§13); §15: our
+enhanced ruleset, part 1 (economy and research; ADR 0045), in `ai/enhanced.rs`.
 
 `FRISSIT_MI` is one of the daily systems driven by the sim tick (`Fake_FRISSITES` exe 0x4de720, on a day change,
 skipped while the debug switch exe 0xB77244 is set):
@@ -627,3 +628,95 @@ Why: the home yard's ship line (§5) is refilled with warships (`count` 3 for a 
 ship only when idle; MP halves AI production (`production-research.md` §3, `MP and AI: s ×= 0.5`); a race whose
 autobuild never adds ship capacity (`+0x70` stays 1,000) can't spend its production pool and hoards. Not a port
 bug: no change. Exact values differ with the seed; the pattern is what's checked.
+
+## 15. The classic AI's weaknesses and the enhanced ruleset (ours, ADR 0045)
+Not the original: an enhanced ruleset beside it, switched per game (`Game::enhanced_ai`; classic = §1–§14 bit for
+bit). Part 1 covers economy and research; fleets, war (§11) and diplomacy (`diplomacy.md`) are parts 2 and 3.
+
+### 15.1 What a player exploits (measured)
+AI-only games in the play-through harness (`ig2-client --playthrough skirmish|mp --growth 12`, the human handed to
+the AI as well; `docs/BUILDING.md`), the game statistics' per-empire values (ADR 0034):
+1. **Research stands idle.** A skirmish starts without labs; the open techs need 5–16 ship labs (`+0x31..+0x33`,
+   `production-research.md` §2.2), and the autobuild adds labs one building per planet at a time and buys **one
+   building per empire per economy step** (`colony-side.md` §6.2). After 3 years the empires hold 4/3/3 lab
+   buildings, the research slot is empty most of the time and the tech count grows by 1–2 in 5 years.
+2. **Credits pile up.** With nothing to buy, 150,000–400,000 credits sit unspent (skirmish, years 2–5).
+3. **Expansion stalls.** The colony ship is wanted once (`want` = `VanUresBolygo`, §5.1) and only the main planet's
+   idle ship line builds it (§5.2); a single shipyard refills its warship batch (`count` 3) and never runs idle, so
+   an MP-galaxy empire keeps its home planet for years and a skirmish empire its 4 start planets for about three.
+4. **Fixed taxes**: level 3, or 0 while restless (§3.3), whatever the morale.
+5. **Research order** by priority with ties to the first tech, blind to a missing colony-ship hull.
+6. **Multiplayer starves the AI**: the original halves a computer's income and production there (`colony-side.md`
+   §6.4, `production-research.md` §3). Part 1 leaves that alone.
+A human who expands early and builds labs outgrows every computer empire within a few years.
+
+### 15.2 The enhanced rules
+Only for empires the computer plays (`BirodalomMIzik`, not human-controlled) when the game's ruleset is enhanced.
+They read synced state only and draw no random numbers (the classic draws keep their places), so they are
+lockstep-safe.
+- **Autobuild purchase** (`colony-side.md` §6.2): every planet's pick (§6.1's score > 0, the hub pick included) is a
+  candidate; in the epilogue they are bought best score first (ties in planet order) while `MoneyMennyi(e, 2)` covers
+  the price; the first one it does not cover sets `MoneyHatar[e][2] = price + 100` and ends the empire's buying for
+  the step; a planet that changed owner during the step is skipped. The classic one-pick purchase skips the empire.
+- **Labs first** (after §3.3, daily): research is blocked when `ResearchAktFejlesztett[e] < 1` and no tech with
+  status 3 meets the lab levels (`LaborSzint`). Then (a) one lab is placed: the open tech with the smallest total
+  shortfall against the lab *buildings* (`LaborSzintOsszes`: a built lab without power or workers needs those, not
+  another lab; ties: cheaper research cost, lower number), the lab type with the largest shortfall (first on ties),
+  the empire's best researched building of autobuild category 5 + type (`AutoBuildMitEpitMin/Max`), on the most
+  populous own planet with nothing under construction, if `MoneyMennyi(e, 2) ≥ price + 20,000`; placed as the colony
+  screen's order (`ColonyOrder::Build`: paid from the credits, the first free spot from no start cell); (b) every own
+  planet but the main one in autobuild mode 2 or 6 switches to mode 3 (technological).
+- **Taxes** (after §3.3): `m = min(morale, BolygoNeededMoral)`; restless (`BolygoMennyiIdejeLazad > 0`) → 0;
+  `m < 500` → 2; `m ≥ 750` → 4; else 3.
+- **Research pick** (instead of §3.4's `FRISSIT_MI_FEJLESZTES`), when the slot is empty: while `VanUresBolygo[e]`
+  and the colony-ship category has no design (`MiGyarthatoCuccok[e][3].+0x02 ≤ 0`), the cheapest open hull tech of
+  the colony-ship slots (`Alapok[s].tech`, `s` in `MiGyartasMitMin..Max[3]`); else the open tech (status 3, labs
+  met) of the race's lowest non-zero priority, priority 0 last, ties to the lower research cost, then the lower
+  number (the auto research order, `production-research.md` §2.5, every category). Then `KutatasSurgos[e]` = 1
+  above 150,000 credits, 0 below 50,000 or with no project (unchanged in between).
+- **Colony ships** (§5): `want` = the free planets `e` sees (owner 0, visibility > 0, §9's candidate tests), clamped
+  to 1..=3, while `VanUresBolygo[e]`; every shipyard, not only the main planet's, takes §5.2's wanted-category
+  loop (the `rndlog(10, 1, 3)` draw where the danger is ≥ 3 is unchanged); at danger < 3 a yard whose line holds
+  the warship (`cat[8].+2`) or its alternative counts as idle while the colony ships in service and queued are below
+  `want` (the batch is replaced).
+- **Peace-time warships**: at danger 1 an idle yard that would start the warship (`cat[8].+2`, nothing wanted) stays
+  idle while warships in service and queued (category 8, both variants of 10) number at least 4 + 2 × the empire's
+  planets.
+
+Port: `ai::enhanced` (`enhanced_planet_settings`, `lab_to_build`, `enhanced_research`, `colony_ships_wanted`,
+`peace_warships`), the gated branches of `AiState::production`, `AiEvent::Build` (carried out by `Game::ai`),
+`ColonyWorld::autobuild_buy_enhanced`; tests `ai::tests::enhanced_*`,
+`colony_side::tests::enhanced_autobuild_buys_per_planet_best_first`, `ig2-net`
+`galaxy::per_computer_levels_travel_and_stay_in_step` (the room's option, the snapshot, the hash, two machines in
+step).
+
+### 15.3 Measured effect
+`--growth 1`, the computer-played empires except the host's human, mean per empire at each month since the start.
+
+Skirmish (`skirmish:1:3`, 3 computer opponents, seeds 1–8, 12,000 ticks):
+
+| Month | Ruleset | Planets | Population | Techs | Credits |
+|---|---|---|---|---|---|
+| 24 | classic | 4.00 | 90,628 | 94.0 | 147,717 |
+| 24 | enhanced | 4.42 | 92,584 | 95.4 | 75,132 |
+| 48 | classic | 4.38 | 100,990 | 95.0 | 229,931 |
+| 48 | enhanced | 6.79 | 110,629 | 97.9 | 35,408 |
+| 96 | classic | 5.54 | 121,606 | 95.8 | 124,941 |
+| 96 | enhanced | 12.12 | 166,756 | 103.3 | 219,019 |
+
+MP galaxy (`mp:2:40`, two AI-played humans and two computers, seeds 1–4, 12,000 ticks; the second human counted
+with the computers):
+
+| Month | Ruleset | Planets | Population | Techs | Credits |
+|---|---|---|---|---|---|
+| 24 | classic | 1.00 | 14,030 | 31.0 | 51,532 |
+| 24 | enhanced | 1.17 | 14,543 | 32.4 | 16,800 |
+| 48 | classic | 1.00 | 17,137 | 31.0 | 46,626 |
+| 48 | enhanced | 1.67 | 19,599 | 32.8 | 7,147 |
+| 96 | classic | 1.33 | 24,214 | 31.0 | 57,938 |
+| 96 | enhanced | 2.36 | 30,462 | 34.6 | 1,556 |
+
+The MP run's state compares and per-turn hashes stayed equal with the enhanced ruleset on. Tried and dropped: taxes
+stepping a level a day between 1 and 5 (5 % less population than the fixed 3); the morale bands above match the
+fixed 3's growth. Left for later parts: the credits that pile up again after year 6 (nothing left to buy but
+warships) and the MP halving.

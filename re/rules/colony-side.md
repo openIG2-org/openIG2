@@ -205,6 +205,7 @@ else: money = MoneyMennyi(e, 2); price = GetGyartasAr(e, tech(best.kind))
 ```
 The trade-port increment has no bound check: for owners ≥ 9 (the rebels, 10, seen at runtime) it writes
 `HanyKemKozpontBolygonkent[0][owner − 9]`, which follows `HanyTradePortVan[9]` in memory. Kept.
+Ours (ADR 0045): an empire playing the enhanced ruleset buys every planet's pick instead (`ai-empire.md` §15.2).
 `GetGyartasAr(e, t)`: race 4 or 7 and `t == 13`: `(int)((f64)price[13] × 0.75)`; race 5 and `t ∉ 81..=144`,
 `t ∉ {13, 14}`: `(int)((f64)price[t] × 0.7000001)`; else `price[t]` (tech `+0x14`).
 

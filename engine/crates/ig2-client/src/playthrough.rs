@@ -7,7 +7,7 @@
 //! and what the game asked of the client (videos, battles, the end).
 //! In a campaign it also plays the story's part of the player ([`story`]).
 //!
-//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]`, runs
+//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]`, runs
 //! `campaign:C[:D[:L]]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` ([`mp`]), or `all`.
 
 mod mp;
@@ -69,11 +69,16 @@ pub struct Limits {
     /// Every machine records its replay (ADR 0038), played back headless before each save and at the end: it
     /// must reach the machine's state.
     pub replay: bool,
+    /// Print every living empire's planets, population, techs and credits every this many game months (0: never):
+    /// the growth curves the computer empires' rulesets are compared by (`re/rules/ai-empire.md` §15).
+    pub growth: i32,
+    /// The computer empires play the enhanced ruleset (`Game::enhanced_ai`, ADR 0045).
+    pub enhanced_ai: bool,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 120, autopilot: true, compare_every: 200, replay: false }
+        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 120, autopilot: true, compare_every: 200, replay: false, growth: 0, enhanced_ai: false }
     }
 }
 
@@ -226,6 +231,7 @@ impl Harness {
         };
         let en = w.game.state.mem.i32(va::EN).clamp(1, 18) as usize;
         report.human = en;
+        w.game.enhanced_ai = limits.enhanced_ai;
         if limits.autopilot {
             w.game.autopilot(en);
         }
@@ -235,6 +241,8 @@ impl Harness {
         let mut progress = (signature(&w.game), months(&w.game));
         let mut clock = (w.game.state.mem.i32(va::IDO), 0u64);
         let mut next_save = months(&w.game) + limits.save_every;
+        let start_month = months(&w.game);
+        let mut next_growth = start_month;
         let mut battle: Option<usize> = None;
         let mut ever_alive = w.game.state.alive();
         let mut end = End::Budget;
@@ -335,6 +343,10 @@ impl Harness {
                 ever_alive[e] |= *a;
             }
             check(&w.game, tick, &ever_alive, report);
+            if limits.growth > 0 && months(&w.game) >= next_growth {
+                next_growth += limits.growth;
+                growth(&w.game, &report.name, limits.seed, months(&w.game) - start_month);
+            }
             if tick % 2000 == 0 && std::env::var_os("IG2_PLAYTHROUGH_DEBUG").is_some() {
                 let t = &w.game.state.treasuries()[en];
                 let mine = w.game.state.colony().planets.iter().filter(|p| p.owner as usize == en).count();
@@ -519,6 +531,17 @@ fn months(g: &Game) -> i32 {
     y * 12 + m
 }
 
+/// One `growth` line per living empire 1..=8 (`--growth`): `month` = game months since the start.
+pub(super) fn growth(g: &Game, run: &str, seed: u32, month: i32) {
+    let s = ig2_sim::stats::sample(&g.state);
+    let alive = g.state.alive();
+    for (i, r) in s.rows.iter().enumerate().filter(|(i, _)| alive[i + 1]) {
+        let e = i + 1;
+        let labs: Vec<i32> = (1..=3).map(|k| g.state.mem.i32(va::LAB_BUILDINGS + 16 * e as u32 + 4 * k)).collect();
+        println!("growth {run} seed {seed} month {month} empire {e} planets {} population {} techs {} credits {} ships {} research {} labs {labs:?} open {:?}", r.planets, r.population, r.techs, r.credits, r.ships, g.state.mem.i32(va::RESEARCHING + 4 * e as u32), { let c = g.state.colony(); (1..193).filter(|&t| c.tech.status(t, e) == 3).map(|t| (t, c.tech.labs_needed(t))).collect::<Vec<_>>() });
+    }
+}
+
 /// What counts as progress: the planets' owners, the living empires and the stories' history.
 fn signature(g: &Game) -> (Vec<u8>, [bool; 19], usize, usize) {
     let colony = g.state.colony();
@@ -597,10 +620,10 @@ pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec
     Ok(runs)
 }
 
-/// `ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]`: every run's report; an
+/// `ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]`: every run's report; an
 /// error when one failed.
 pub fn main(args: &[String]) -> Result<(), String> {
-    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]")?;
+    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]")?;
     let mut limits = Limits::default();
     let mut seeds = vec![limits.seed];
     let mut it = args[1..].iter();
@@ -614,6 +637,8 @@ pub fn main(args: &[String]) -> Result<(), String> {
             "--stall" => limits.stall = n(v)? as i32,
             "--compare-every" => limits.compare_every = n(v)?,
             "--replay" => limits.replay = n(v)? != 0,
+            "--growth" => limits.growth = n(v)? as i32,
+            "--ai" => limits.enhanced_ai = match v.as_str() { "classic" => false, "enhanced" => true, _ => return Err(format!("--ai {v}: classic or enhanced")) },
             "--human" => limits.autopilot = match v.as_str() { "ai" => true, "idle" => false, _ => return Err(format!("--human {v}: ai or idle")) },
             _ => return Err(format!("{a}: unknown")),
         }

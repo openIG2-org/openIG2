@@ -891,7 +891,7 @@ impl ColonyWorld {
 
     /// Autobuild scoring for one planet (spec §6.1); `targets` are this step's problem targets ×10000.
     #[allow(clippy::too_many_arguments)]
-    fn autobuild_score(&mut self, p: usize, fx: &Effects, targets: &[i32; colony::problem::COUNT], before: &Before, best: &mut [Pick; EMPIRES], rules: &SideRules, ctx: &EconomyContext) {
+    fn autobuild_score(&mut self, p: usize, fx: &Effects, targets: &[i32; colony::problem::COUNT], before: &Before, best: &mut [Pick; EMPIRES], picks: &mut Vec<(usize, Pick)>, rules: &SideRules, ctx: &EconomyContext) {
         let pl = &self.planets[p];
         let (mode, aggr) = (pl.autobuild_mode as usize, pl.autobuild_aggr as i32);
         if (ctx.year == 2327 && ctx.month == 3) || mode == 0 || aggr == 0 {
@@ -901,6 +901,9 @@ impl ColonyWorld {
         if fx.active[kind::COLONY_HUB] < 1 {
             if fx.inactive[kind::COLONY_HUB] == 0 {
                 best[owner] = Pick { kind: 1, score: 2_000_000_000, planet: p };
+                if ctx.enhanced_ai[owner] {
+                    picks.push((owner, best[owner]));
+                }
             }
             return;
         }
@@ -1010,11 +1013,17 @@ impl ColonyWorld {
         if best[owner].score < score {
             best[owner] = Pick { kind: pick[best_c], score, planet: p };
         }
+        if ctx.enhanced_ai[owner] && score > 0 {
+            picks.push((owner, Pick { kind: pick[best_c], score, planet: p }));
+        }
     }
 
     /// The autobuild purchases of the epilogue (spec §6.2).
     fn autobuild_buy(&mut self, best: &[Pick; EMPIRES], place: Placement, rules: &SideRules, ctx: &EconomyContext, events: &mut Vec<SideEvent>) {
         for (e, b) in best.iter().enumerate().skip(1) {
+            if ctx.enhanced_ai[e] {
+                continue;
+            }
             if b.score < 1 {
                 self.money[e].reserve[2] = 0.0;
                 continue;
@@ -1040,6 +1049,42 @@ impl ColonyWorld {
                 self.money[e].reserve[2] = 0.0;
             } else {
                 self.money[e].reserve[2] = (cost + 100) as f64;
+            }
+        }
+    }
+
+    /// Ours (ADR 0045, spec §6.2): an enhanced computer empire buys every planet's pick it can pay for, the best
+    /// score first (ties in planet order); the first pick it can't pay for sets the pool-2 reserve, as the original's
+    /// one pick does. A planet that changed hands during the step is skipped.
+    fn autobuild_buy_enhanced(&mut self, mut picks: Vec<(usize, Pick)>, place: Placement, rules: &SideRules, ctx: &EconomyContext, events: &mut Vec<SideEvent>) {
+        for e in (1..EMPIRES).filter(|&e| ctx.enhanced_ai[e]) {
+            self.money[e].reserve[2] = 0.0;
+        }
+        picks.sort_by_key(|&(_, b)| std::cmp::Reverse(b.score));
+        let mut waiting = [false; EMPIRES];
+        for (e, b) in picks {
+            if self.planets[b.planet].owner as usize != e || waiting[e] {
+                continue;
+            }
+            let t = rules.colony.buildings[b.kind as usize].tech as usize;
+            let cost = price(&self.tech, ctx.empire_race[e], t);
+            if cost as f64 > self.money[e].available(2) {
+                self.money[e].reserve[2] = (cost + 100) as f64;
+                waiting[e] = true;
+                continue;
+            }
+            let kind = b.kind as u8;
+            let slot = if kind == 0 { 0 } else { self.place_building(b.planet, kind, false, 0, place, rules, ctx) };
+            if slot == 0 {
+                self.planets[b.planet].autobuild_counter = -1000;
+                events.push(SideEvent::AutobuildNoRoom { empire: e as u8, planet: b.planet, kind });
+            } else {
+                self.add_money(e, 2, -(cost as f64), rules, ctx);
+                self.planets[b.planet].autobuild_counter = 0;
+                if b.kind as usize == kind::TRADE_PORT {
+                    self.empires.bump_trade_ports(e);
+                }
+                events.push(SideEvent::AutobuildPlaced { empire: e as u8, planet: b.planet, kind, slot });
             }
         }
     }
@@ -1073,6 +1118,7 @@ impl ColonyWorld {
         let before = self.reset_totals(ctx);
         colony::decay_global_morale(ctx);
         let mut best = [Pick::default(); EMPIRES];
+        let mut picks = Vec::new();
         let mut reports = vec![PlanetReport::default(); self.planets.len()];
         for (p, slot) in reports.iter_mut().enumerate().skip(1) {
             if self.planets[p].owner == 0 {
@@ -1093,7 +1139,7 @@ impl ColonyWorld {
                 self.empires.full_tax[owner] += report.tax_paid;
                 self.add_money(owner, 0, report.tax_paid as f64, rules, ctx);
             }
-            self.autobuild_score(p, &fx, &report.targets, &before, &mut best, rules, ctx);
+            self.autobuild_score(p, &fx, &report.targets, &before, &mut best, &mut picks, rules, ctx);
             self.add_totals(p, &fx, rules, ctx);
             for ev in &report.events {
                 match ev {
@@ -1111,6 +1157,7 @@ impl ColonyWorld {
             *slot = report;
         }
         self.autobuild_buy(&best, place, rules, ctx, &mut events);
+        self.autobuild_buy_enhanced(picks, place, rules, ctx, &mut events);
         if monthly {
             let t = &mut self.empires;
             for e in 1..EMPIRES {
@@ -1149,6 +1196,36 @@ impl ColonyWorld {
 mod tests {
     use super::*;
     use crate::placement::Terrain;
+
+    /// ADR 0045: an enhanced empire buys each planet's pick, best score first, until one is too dear (that one sets
+    /// the reserve); a pick on a planet that changed hands is skipped, and the classic one-pick purchase leaves it alone.
+    #[test]
+    fn enhanced_autobuild_buys_per_planet_best_first() {
+        let mut w = ColonyWorld { planets: vec![Planet::default(); 4], occupied: vec![0; 4], ..Default::default() };
+        for (p, owner) in [(1, 2), (2, 2), (3, 3)] {
+            w.planets[p].owner = owner;
+        }
+        let mut rules = SideRules::default();
+        rules.colony.buildings = vec![colony::BuildingKind::default(); 6];
+        rules.colony.buildings[5].tech = 9;
+        let o = 9 * TECH_STRIDE + 0x14;
+        w.tech.bytes[o..o + 4].copy_from_slice(&1_000i32.to_le_bytes());
+        w.money[2] = Treasury { total: 1_500.0, pools: [0.0, 0.0, 1_500.0, 0.0, 0.0, 0.0], share: [0.0, 0.4, 0.3, 0.3, 0.0, 0.0], ..Default::default() };
+        let mut ctx = EconomyContext::default();
+        ctx.enhanced_ai[2] = true;
+        let pick = |planet, score| Pick { kind: 5, score, planet };
+        let picks = vec![(2, pick(1, 50)), (2, pick(2, 90)), (2, pick(3, 99))];
+        let mut place = |_: &Planet, _: usize, _: u8| Some((10.0, 10.0));
+        let mut events = Vec::new();
+        w.autobuild_buy_enhanced(picks, &mut place, &rules, &ctx, &mut events);
+        assert_eq!(events, [SideEvent::AutobuildPlaced { empire: 2, planet: 2, kind: 5, slot: 1 }]);
+        assert_eq!((w.money[2].total, w.money[2].reserve[2]), (500.0, 1_100.0), "planet 1's pick waits for the money");
+        assert!(w.planets[3].buildings.is_empty(), "planet 3 is empire 3's");
+        let mut best = [Pick::default(); EMPIRES];
+        best[2] = pick(1, 50);
+        w.autobuild_buy(&best, &mut place, &rules, &ctx, &mut events);
+        assert_eq!((events.len(), w.money[2].reserve[2]), (1, 1_100.0), "the classic purchase skips an enhanced empire");
+    }
 
     #[test]
     fn colony_maps_rotate_per_surface_kind_and_skip_map_60() {

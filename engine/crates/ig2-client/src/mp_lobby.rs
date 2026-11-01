@@ -487,7 +487,7 @@ const CARD_TEXT: f32 = 58.0;
 const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
 
 /// The options rows (spec §6).
-const OPTIONS: usize = 7;
+const OPTIONS: usize = 8;
 /// The connection page's buttons' left edges (Host, Join, Saved game, Cancel).
 const BUTTONS: [f32; 4] = [130.0, 227.0, 323.0, 420.0];
 
@@ -577,6 +577,8 @@ mod words {
     pub const FORMATION_BY: [&[u8]; 2] = [b"off (classic)", b"every player picks"];
     pub const SPECTATORS: &[u8] = b"Defeated players:";
     pub const SPECTATORS_BY: [&[u8]; 2] = [b"leave (classic)", b"stay and watch"];
+    pub const AI: &[u8] = b"Computer empires:";
+    pub const AI_BY: [&[u8]; 2] = [b"classic", b"enhanced"];
     pub const NEED_TWO: &[u8] = b"Two empires are needed to start";
     pub const WAITING: &[u8] = b"Not everyone is ready: press again to start anyway";
     pub const START_ANYWAY: &[u8] = b"Start anyway";
@@ -966,7 +968,7 @@ impl MpScreen {
                 if self.is_host() {
                     v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 16.0])]);
                     for k in 0..OPTIONS as u32 {
-                        let y = 74.0 + 34.0 * k as f32;
+                        let y = 74.0 + 30.0 * k as f32;
                         v.push((spot::OPTION + 2 * k, [556.0, y, 30.0, 18.0]));
                         v.push((spot::OPTION + 2 * k + 1, [588.0, y, 30.0, 18.0]));
                     }
@@ -1132,7 +1134,8 @@ impl MpScreen {
                     3 => GalaxyOptions { battle_status: step(o.battle_status, 0, 3), ..o },
                     4 => GalaxyOptions { host_time: up, ..o },
                     5 => GalaxyOptions { formation: up, ..o },
-                    _ => GalaxyOptions { spectators: up, ..o },
+                    6 => GalaxyOptions { spectators: up, ..o },
+                    _ => GalaxyOptions { enhanced_ai: up, ..o },
                 };
                 lobby.set_options(n);
             }
@@ -1325,11 +1328,12 @@ impl MpScreen {
                 (words::SPEED.to_vec(), words::SPEED_BY[o.host_time as usize].to_vec()),
                 (words::FORMATION.to_vec(), words::FORMATION_BY[o.formation as usize].to_vec()),
                 (words::SPECTATORS.to_vec(), words::SPECTATORS_BY[o.spectators as usize].to_vec()),
+                (words::AI.to_vec(), words::AI_BY[o.enhanced_ai as usize].to_vec()),
             ];
             let mut planets = d.texts.get(15, 2, 8);
             planets.push(b':');
             for (k, (label, value)) in rows.iter().enumerate() {
-                let y = 60.0 + 34.0 * k as f32;
+                let y = 60.0 + 30.0 * k as f32;
                 text(f, if k == 0 { &planets } else { label }, 414.0, y, 2, Align::Left, 0x25);
                 text(f, value, 414.0, y + 18.0, 2, Align::Left, 0x22);
                 if self.is_host() {

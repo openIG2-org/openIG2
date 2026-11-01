@@ -165,7 +165,7 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
         Err(e) => return End::Error(e),
     };
     // Mixed computer levels (ADR 0033), so the desync check covers each level's AI.
-    let options = GalaxyOptions { planets, ais, battle_status: 0, difficulty: [1, 2, 3, 1, 2, 3, 1, 2], ..GalaxyOptions::default() };
+    let options = GalaxyOptions { planets, ais, battle_status: 0, difficulty: [1, 2, 3, 1, 2, 3, 1, 2], enhanced_ai: limits.enhanced_ai, ..GalaxyOptions::default() };
     let mut worlds = match room(limits.seed as u64 | 1, Some(options), None).and_then(|r| start(hx, &texts, r, None, limits.seed, limits.autopilot)) {
         Ok(w) => w,
         Err(e) => return End::Error(e),
@@ -181,6 +181,8 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
     let mut ever_alive = worlds[0].game.state.alive();
     let mut progress = (signature(&worlds[0].game), months(&worlds[0].game));
     let mut next_save = months(&worlds[0].game) + limits.save_every;
+    let start_month = months(&worlds[0].game);
+    let mut next_growth = start_month;
     // A real-time space battle each machine is on (left when it is over).
     let mut battle = [false; 2];
     let mut round = 0u64;
@@ -259,6 +261,10 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
             ever_alive[e] |= *alive;
         }
         check(&worlds[0].game, tick, &ever_alive, report);
+        if limits.growth > 0 && months(&worlds[0].game) >= next_growth {
+            next_growth += limits.growth;
+            super::growth(&worlds[0].game, &report.name, limits.seed, months(&worlds[0].game) - start_month);
+        }
         if compares % 50 == 0 && std::env::var_os("IG2_PLAYTHROUGH_DEBUG").is_some() {
             let g = &worlds[0].game;
             let (colony, map, money) = (g.state.colony(), g.state.starmap(), g.state.treasuries());

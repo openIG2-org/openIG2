@@ -300,6 +300,9 @@ pub struct EconomyContext {
     pub story: StoryHooks,
     /// Story-script variables (`st_vGet`) read by new buildings' yields; unset = 0.
     pub story_values: Vec<(i32, u8)>,
+    /// Ours (ADR 0045): the computer empires that play the enhanced ruleset (`Game::enhanced_ai`): their autobuild
+    /// buys every planet's pick it can pay for (`colony-side.md` §6.2). All false = the original.
+    pub enhanced_ai: [bool; 19],
 }
 
 impl EconomyContext {

@@ -333,6 +333,8 @@ pub struct Game<'r> {
     pub spectators: bool,
     /// Ours (ADR 0037): each empire's auto-research switches (`research::auto` bits; all 0 = the original). Synced.
     pub auto_research: [u8; EMPIRES],
+    /// Ours (ADR 0045): the computer empires play the enhanced ruleset (`ai::enhanced`); false = the original. Synced.
+    pub enhanced_ai: bool,
     /// Ours (ADR 0034): the game's statistics, a day at each day change (`crate::stats`). Synced.
     pub stats: crate::stats::Stats,
     /// The single-player battle screen (ours, classic view; not in the state).
@@ -444,6 +446,7 @@ impl<'r> Game<'r> {
             realtime: RealTime::default(),
             spectators: false,
             auto_research: [0; EMPIRES],
+            enhanced_ai: false,
             stats: Default::default(),
             sp_battles: SpBattles::default(),
             over: None,
@@ -1086,6 +1089,10 @@ impl<'r> Game<'r> {
                 lab_start: std::array::from_fn(|i| adat_i32(&a, 0x9c + 4 * i)),
             },
             story_values: [0x5fb, 0x60f].iter().map(|&c| (c, self.story_var(c) as u8)).collect(),
+            enhanced_ai: {
+                let ai: [bool; EMPIRES] = self.state.mem.flags(va::AI_EMPIRE);
+                std::array::from_fn(|e| self.enhanced_ai && ai[e] && !g.human[e])
+            },
         }
     }
 
@@ -1522,7 +1529,19 @@ impl<'r> Game<'r> {
     }
 
     fn ai(&mut self) {
+        let from = self.events.len();
         self.with_ai(|st, w, hooks| st.daily(w, hooks));
+        // The enhanced empires' buildings (ADR 0045), placed as the colony screen's order places them.
+        let builds: Vec<(u8, usize, u8)> = self.events[from..]
+            .iter()
+            .filter_map(|ev| match *ev {
+                GameEvent::Ai(ai::AiEvent::Build { empire, planet, kind }) => Some((empire, planet, kind)),
+                _ => None,
+            })
+            .collect();
+        for (e, p, kind) in builds {
+            self.build(e, p, kind, None);
+        }
     }
 
     /// Ours (the play-through harness, `docs/BUILDING.md`): empire `e` is handed to the computer as the original
@@ -1556,6 +1575,7 @@ impl<'r> Game<'r> {
             tick: g.tick,
             ai_off: m.i32(va::AI_OFF) != 0,
             design_debug: m.i32(va::DESIGN_DEBUG) != 0,
+            enhanced: self.enhanced_ai,
         };
         let sctx = self.spy_context(&g);
         let econ = self.economy_context(&g);

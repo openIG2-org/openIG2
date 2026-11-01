@@ -62,6 +62,9 @@ pub const SHARP_TEXT: &str = "SharpText";
 pub const STARMAP_MOUSE: &str = "StarmapMouseCamera";
 /// ADR 0050: a won scenario's time goes into its high-score table (on by default).
 pub const HIGH_SCORES: &str = "HighScoreEntry";
+/// ADR 0045: the computer empires of the next single-player game play the enhanced ruleset (0 classic, the default;
+/// 1 enhanced). The game keeps its own choice (`Game::enhanced_ai`, saved with it).
+pub const ENHANCED_AI: &str = "EnhancedAi";
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -239,6 +242,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(22, Group::Display, "Sharp text", SHARP_TEXT, d.sharp_text as i32, Vec::new(), 1),
         row(23, Group::Interface, "Starmap mouse camera", STARMAP_MOUSE, d.starmap_mouse as i32, Vec::new(), 1),
         row(24, Group::Game, "High-score entry", HIGH_SCORES, d.high_scores as i32, Vec::new(), 1),
+        row(25, Group::Game, "Computer empires", ENHANCED_AI, (f.int(ENHANCED_AI) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
     ]
 }
 
@@ -273,7 +277,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

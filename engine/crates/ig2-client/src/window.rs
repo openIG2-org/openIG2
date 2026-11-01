@@ -2405,6 +2405,8 @@ impl App {
         match game {
             Ok(g) => {
                 let mut w = World::new_game(g);
+                // Ours (ADR 0045): the computer empires' ruleset of the new game, from the Options row.
+                w.game.enhanced_ai = self.settings.int(crate::display::ENHANCED_AI) == Some(1);
                 // `MainScr` 0x4fef1b: `StoreScenarioDescription` after `Betolt_Scenario`.
                 w.scenario = matches!(st, Start::Scenario { .. });
                 w.ui.scenario = w.scenario;

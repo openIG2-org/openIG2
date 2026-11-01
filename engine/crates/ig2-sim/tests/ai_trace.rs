@@ -455,6 +455,7 @@ fn decode(s: &Regions, g: &Value) -> Decoded {
         tick: gi("ido") as i32,
         ai_off: gi("aioff") != 0,
         design_debug: gi("ddebug") != 0,
+        enhanced: false,
     };
     let econ = EconomyContext {
         multiplayer: sctx.multiplayer,

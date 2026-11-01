@@ -1,0 +1,160 @@
+//! Ours (ADR 0045): the enhanced computer empires' economy and research (`re/rules/ai-empire.md` §15.2). Each
+//! function runs after (or instead of) the original's step for the same empire, only when `AiContext::enhanced` is
+//! on; it draws no random numbers, so the classic draws stay where they were.
+
+use super::colonise::capturable;
+use super::{category, AiEvent, AiState, World, BEST};
+use crate::colony_side::{price, status, TECHS};
+use crate::research::{self, ResearchEvent};
+
+/// The autobuild modes (`autobldN.txt`): production, technological (labs), ship and vehicle production.
+const MODE_PRODUCTION: u8 = 2;
+const MODE_LABS: u8 = 3;
+const MODE_SHIPS: u8 = 6;
+/// Tax levels by morale band (the original sets 3, or 0 on unrest).
+const TAX_LOW: u8 = 2;
+const TAX_NORMAL: u8 = 3;
+const TAX_HIGH: u8 = 4;
+/// Morale (‰) below which the tax is [`TAX_LOW`], and from which it is [`TAX_HIGH`].
+const MORALE_LOW: i32 = 500;
+const MORALE_HIGH: i32 = 750;
+/// Credits above which research runs urgent (double speed, double cost), and below which it stops being urgent.
+const URGENT_ON: f64 = 150_000.0;
+const URGENT_OFF: f64 = 50_000.0;
+/// Colony ships wanted at once, at most.
+const COLONY_SHIPS: i32 = 3;
+/// Credits an enhanced empire keeps after paying for a lab.
+const LAB_RESERVE: f64 = 20_000.0;
+/// The autobuild category of the ship lab (`AutoBuildMitEpitMin/Max[5]`); 6 and 7 are the vehicle and building labs.
+const LAB_CATEGORY: usize = 5;
+/// Planet event: the AI must not colonise this planet.
+const NO_AI_COLONY: i16 = -0x2094;
+
+/// No tech is being researched and none is open with `e`'s labs: research waits for labs.
+fn research_blocked(w: &World, e: usize) -> bool {
+    let colony = &w.spy.colony;
+    let labs = &colony.empires.labs[e];
+    w.spy.research.current[e] < 1 && !(1..TECHS).any(|t| colony.tech.status(t, e) == status::RESEARCHABLE && research::labs_ok(&colony.tech, t, labs))
+}
+
+/// Free planets `e` sees and may colonise (`FRISSIT_MI_KOLONIZALAS`'s candidates, §9).
+pub(super) fn free_planets(w: &World, e: usize) -> i32 {
+    let mp = w.spy.ctx.multiplayer;
+    w.spy.colony.planets.iter().skip(1).filter(|p| p.owner == 0 && p.visibility[e] > 0 && (mp || (capturable(p) && !p.events.contains(&NO_AI_COLONY)))).count() as i32
+}
+
+/// The colony ships an enhanced empire wants (`MiGyarthatoCuccok[e][3]` +0x14): one per free planet it sees, at
+/// most [`COLONY_SHIPS`]; the original wants one while `VanUresBolygo`.
+pub(super) fn colony_ships_wanted(w: &World, e: usize, empty: bool) -> i32 {
+    if empty { free_planets(w, e).clamp(1, COLONY_SHIPS) } else { 0 }
+}
+
+/// The lab an enhanced empire builds while research waits for labs, and where: for the open tech closest to its
+/// lab buildings (`LaborSzintOsszes`, working or not: a lab without power or workers needs those, not another lab;
+/// the smallest total shortfall, then the cheaper, then the lower number), the lab type it lacks most (the first on
+/// ties), its best researched building of that type, on the most populous planet with nothing under construction.
+/// None while the credits after paying would fall below [`LAB_RESERVE`].
+fn lab_to_build(w: &World, e: usize) -> Option<(usize, u8)> {
+    let colony = &w.spy.colony;
+    let labs = &colony.empires.lab_buildings[e];
+    let short = |t: usize| colony.tech.labs_needed(t).map(|n| n as i32).iter().zip(&labs[1..]).map(|(n, l)| (n - l).max(0)).collect::<Vec<_>>();
+    let t = (1..TECHS).filter(|&t| colony.tech.status(t, e) == status::RESEARCHABLE).min_by_key(|&t| (short(t).iter().sum::<i32>(), colony.tech.research_cost(t), t))?;
+    let s = short(t);
+    let i = (0..3).max_by_key(|&i| (s[i], std::cmp::Reverse(i)))?;
+    if s[i] < 1 {
+        return None;
+    }
+    let rules = &w.spy.side_rules;
+    let c = LAB_CATEGORY + i;
+    let range = |v: &Vec<i32>| v.get(c).copied().unwrap_or(0).max(0) as usize;
+    let (lo, hi) = (range(&rules.autobuild.min), range(&rules.autobuild.max));
+    let kind = (lo..=hi).rev().find(|&k| rules.colony.buildings.get(k).is_some_and(|b| colony.tech.status(b.tech as usize, e) == status::OWNED))?;
+    let cost = price(&colony.tech, w.race(e), rules.colony.buildings[kind].tech as usize);
+    if colony.money[e].available(2) < cost as f64 + LAB_RESERVE {
+        return None;
+    }
+    let p = (1..colony.planets.len())
+        .filter(|&p| colony.planets[p].owner as usize == e && !colony.planets[p].buildings.iter().any(|b| b.kind != 0 && b.work_left > 0))
+        .max_by_key(|&p| (colony.planets[p].population, std::cmp::Reverse(p)))?;
+    Some((p, kind as u8))
+}
+
+/// The warships an enhanced empire at peace keeps building up to: four, and two per planet.
+pub(super) fn peace_warships(planets: usize) -> i32 {
+    4 + 2 * planets as i32
+}
+
+impl AiState {
+    /// After the original's planet settings (§3.3): while research waits for labs, a lab is placed ([`lab_to_build`])
+    /// and every production planet but the main one builds labs; each planet's tax follows its morale (the lower of
+    /// now and where it is heading): [`TAX_LOW`], [`TAX_NORMAL`] or [`TAX_HIGH`], 0 while it is restless.
+    pub(super) fn enhanced_planet_settings(&mut self, w: &mut World, e: usize) {
+        let labs = research_blocked(w, e);
+        if labs {
+            if let Some((planet, kind)) = lab_to_build(w, e) {
+                w.events.push(AiEvent::Build { empire: e as u8, planet, kind });
+            }
+        }
+        let main = self.main_planet[e];
+        let colony = &mut *w.spy.colony;
+        for p in 1..colony.planets.len() {
+            if colony.planets[p].owner as usize != e {
+                continue;
+            }
+            let needed = colony.needed_morale.get(p).copied().unwrap_or(1000);
+            let pl = &mut colony.planets[p];
+            if labs && p as i32 != main && matches!(pl.autobuild_mode, MODE_PRODUCTION | MODE_SHIPS) {
+                pl.autobuild_mode = MODE_LABS;
+            }
+            let morale = pl.morale.min(needed);
+            pl.tax_level = if pl.unrest > 0 {
+                0
+            } else if morale < MORALE_LOW {
+                TAX_LOW
+            } else if morale >= MORALE_HIGH {
+                TAX_HIGH
+            } else {
+                TAX_NORMAL
+            };
+        }
+    }
+
+    /// Instead of `FRISSIT_MI_FEJLESZTES` (`production-research.md` §2.2): while there are planets to colonise
+    /// and no colony-ship design, the cheapest open hull of the colony-ship slots (`MiGyartasMitMin/Max[3]`);
+    /// else the open tech of the race's lowest non-zero priority, a tie to the cheaper one (the auto research pick
+    /// of ADR 0037, every category). With plenty of credits the project runs urgent.
+    pub(super) fn enhanced_research(&self, w: &mut World, e: usize) {
+        let colony_ship = self.empty_planets[e] != 0 && self.categories[e][category::COLONY_SHIP].design[BEST] <= 0;
+        let slot = |v: &Vec<u8>| v.get(category::COLONY_SHIP).copied().unwrap_or(0) as usize;
+        let hulls: Vec<usize> = if colony_ship {
+            (slot(&w.rules.build_min)..=slot(&w.rules.build_max)).filter_map(|s| w.rules.design.hulls.get(s)).map(|h| h.tech.max(0) as usize).collect()
+        } else {
+            Vec::new()
+        };
+        let colony = &mut *w.spy.colony;
+        let research = &mut *w.spy.research;
+        if research.current[e] == 0 {
+            let race = w.spy.ctx.race.get(e).copied().unwrap_or(0);
+            let r = if race < 9 { race as usize } else { 1 };
+            let labs = &colony.empires.labs[e];
+            let open = |t: usize| t > 0 && colony.tech.status(t, e) == status::RESEARCHABLE && research::labs_ok(&colony.tech, t, labs);
+            let pick = hulls.iter().copied().filter(|&t| open(t)).min_by_key(|&t| (colony.tech.research_cost(t), t)).or_else(|| {
+                (1..TECHS).filter(|&t| open(t)).min_by_key(|&t| {
+                    let b = colony.tech.ai_priority(t, r);
+                    (b == 0, b, colony.tech.research_cost(t), t)
+                })
+            });
+            if let Some(t) = pick {
+                colony.tech.set_status(t, e, status::RESEARCHING);
+                research.current[e] = t as i32;
+                w.events.push(AiEvent::Research(ResearchEvent::Started { empire: e as u8, tech: t }));
+            }
+        }
+        let credits = colony.money[e].total;
+        if research.current[e] < 1 || credits < URGENT_OFF {
+            research.urgent[e] = 0;
+        } else if credits > URGENT_ON {
+            research.urgent[e] = 1;
+        }
+    }
+}
