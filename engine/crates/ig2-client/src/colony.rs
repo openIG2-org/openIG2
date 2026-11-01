@@ -1125,6 +1125,8 @@ pub struct ColonyScene {
     faces: Vec<(usize, Vec<Vec<[V3; 3]>>)>,
     /// The buildings' finest level of detail by kind, which `getbottomvertex` measures ([`bottom_vertex`]).
     finest: HashMap<u8, Option<Model>>,
+    /// Each building kind's levels of detail ([`building_levels`]), kept for a reload.
+    levels: HashMap<u8, Option<Vec<Model>>>,
     /// `allvany1..10.xvb` (`EpuletAllvanyok::Init` exe 0x47f330), loaded on first use.
     scaffold_models: Vec<Option<Option<UnitMesh>>>,
     /// The sky's texture (`HAmp`'s first material's `texture`, resolved): what `reflec.bmp`/`fenyek_2.bmp` become.
@@ -1192,11 +1194,34 @@ fn bake(model: &Model, xf: &Transform, tint: [f32; 3], fog: f32, out: &mut Vec<M
     }
 }
 
+/// What [`ColonyScene::reload`] keeps of the old scene.
+struct Kept {
+    textures: HashMap<String, TexId>,
+    white: TexId,
+    levels: HashMap<u8, Option<Vec<Model>>>,
+    finest: HashMap<u8, Option<Model>>,
+}
+
 impl ColonyScene {
     pub fn load(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, maps: &[GroundMap], s: &ColonySnap) -> Result<Self, String> {
-        r.clear_meshes();
         let white = r.add_texture(&Image::white());
-        let mut textures = HashMap::new();
+        Self::load_with(r, install, rules, maps, s, Kept { textures: HashMap::new(), white, levels: HashMap::new(), finest: HashMap::new() })
+    }
+
+    /// The scene again after its buildings changed ([`ColonyScene::stale`]), keeping the textures this scene has
+    /// already uploaded and the building models it has read (a reload in a ground war read them all again:
+    /// docs/perf.md); the clocks and effects carry over ([`ColonyScene::carry_from`]).
+    pub fn reload(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, maps: &[GroundMap], s: &ColonySnap) -> Result<(), String> {
+        let kept = Kept { textures: std::mem::take(&mut self.textures), white: self.white, levels: std::mem::take(&mut self.levels), finest: std::mem::take(&mut self.finest) };
+        let scene = Self::load_with(r, install, rules, maps, s, kept)?;
+        let old = std::mem::replace(self, scene);
+        self.carry_from(old);
+        Ok(())
+    }
+
+    fn load_with(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, maps: &[GroundMap], s: &ColonySnap, kept: Kept) -> Result<Self, String> {
+        r.clear_meshes();
+        let Kept { mut textures, white, levels: mut models, mut finest } = kept;
         let gm = maps.get(s.map).ok_or(format!("no colony map {}", s.map))?;
         let raw = install.read("dataraw/colony/terepleiro.txt").map_err(|e| e.to_string())?;
         let txt = text::decode(&raw, install.lang());
@@ -1301,9 +1326,7 @@ impl ColonyScene {
         }
 
         // The buildings (spec §3): `AddToSceneGenesis(model, scale/1024/1000)`, turned a quarter, on the ground.
-        let mut models: HashMap<u8, Option<Vec<Model>>> = HashMap::new();
         let mut lods = Vec::new();
-        let mut finest: HashMap<u8, Option<Model>> = HashMap::new();
         let (mut v, mut rg, mut owners, mut worlds, mut cuts) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut blink_slots = Vec::new();
         let mut range_lods: Vec<(usize, usize)> = Vec::new();
@@ -1446,7 +1469,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, env, finest, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new() })
+        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new() })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).

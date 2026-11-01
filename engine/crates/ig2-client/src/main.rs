@@ -530,18 +530,24 @@ pub struct Loaded {
 
 pub fn load(o: &Options) -> Result<Loaded, String> {
     let install = open_install(o)?;
+    prof::mark("install");
     let (rules, tech_defaults) = rules::load(&install)?;
+    prof::mark("rules");
     let volatile = rules::scenario_globals(&install)?;
+    prof::mark("scenario globals");
     let save = match o.new_campaign {
         Some(_) => None,
         // A player's first start: no save yet, the menu over a stand-in game ([`start_world`]).
         None if o.main_menu && !o.save.exists() => None,
         None => {
             let bytes = std::fs::read(&o.save).map_err(|e| format!("{}: {e}", o.save.display()))?;
-            Some(SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", o.save.display()))?)
+            let save = SaveGame::parse(&bytes).map_err(|e| format!("{}: {e}", o.save.display()))?;
+            prof::mark("save");
+            Some(save)
         }
     };
     let tables = ig2_rules::Rules::from_install(&install)?;
+    prof::mark("tables");
     Ok(Loaded { install, rules, tech_defaults, volatile, save, tables })
 }
 
@@ -690,6 +696,7 @@ fn colony_check(map: &str, surface: &str) -> Result<(), String> {
 }
 
 fn main() {
+    prof::start();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("--snapshot") => match args.get(1) {

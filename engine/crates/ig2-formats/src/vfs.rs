@@ -17,6 +17,7 @@ use crate::{Error, Result};
 /// The environment variable tests and tools use to find the install.
 pub const INSTALL_ENV: &str = "IG2_INSTALL_DIR";
 
+#[derive(Clone)]
 pub struct Install {
     root: PathBuf,
     lang: Lang,
@@ -227,7 +228,8 @@ fn scan(root: &Path) -> Result<HashMap<String, PathBuf>> {
         let entries = std::fs::read_dir(&dir).map_err(|source| Error::Io { path: dir.display().to_string(), source })?;
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir() {
+            // The entry's own type costs no extra file-system call (`is_dir` stats each file); a link is followed.
+            if entry.file_type().is_ok_and(|t| if t.is_symlink() { p.is_dir() } else { t.is_dir() }) {
                 stack.push(p);
             } else if let Ok(rel) = p.strip_prefix(root) {
                 index.insert(normalize(&rel.to_string_lossy()), p);

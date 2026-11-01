@@ -240,6 +240,8 @@ impl Harness {
         let mut end = End::Budget;
         // The story's player: only where the AI plays the human's side of a campaign.
         let mut driver = (limits.autopilot && matches!(run, Run::Campaign { .. })).then(story::Driver::default);
+        // `IG2_PROFILE`: each 10,000 ticks' mean and worst `World::tick` (docs/perf.md).
+        let mut prof = (0.0f64, 0.0f64);
         for tick in 0..limits.ticks {
             report.ticks = tick;
             if tick % 200 == 0 && battle.is_none() {
@@ -264,7 +266,17 @@ impl Harness {
                 }
                 w.set_speed(Speed::Fastest);
             }
+            let at = crate::prof::on().then(std::time::Instant::now);
             w.tick();
+            if let Some(at) = at {
+                let ms = at.elapsed().as_secs_f64() * 1000.0;
+                prof = (prof.0 + ms, prof.1.max(ms));
+                crate::prof::frame("tick");
+                if tick % 10_000 == 9_999 {
+                    eprintln!("[prof] ticks {:>7} {:?} tick mean {:.3} ms worst {:.1} ms", tick + 1, date(&w.game), prof.0 / 10_000.0, prof.1);
+                    prof = (0.0, 0.0);
+                }
+            }
             // The tick's battles (the world takes the events at the next tick).
             for e in &w.game.events {
                 if let ig2_sim::game::GameEvent::Battle(b) = e {

@@ -917,8 +917,12 @@ impl<'r> Game<'r> {
             return;
         }
         // `MULTIGET_Spy` runs every frame and ends in the `HanyKemVan` recount (`espionage.md` §8): a save written
-        // before any frame (a new campaign's) holds a stale count.
-        self.with_spies(|sp, w| sp.recount(w));
+        // before any frame (a new campaign's) holds a stale count. Only the rosters are read and written: the whole
+        // spy world (`with_spies`) cost a sixth of a late game's tick (docs/perf.md).
+        let ctx = self.spy_context(&self.globals());
+        let mut spies = self.state.spies();
+        spies.recount(&ctx);
+        self.state.store_spies(&spies);
         let m = &mut self.state.mem;
         let (nap, old) = (m.i32(va::NAP), m.i32(va::OLD_NAP));
         let first_event = self.events.len();

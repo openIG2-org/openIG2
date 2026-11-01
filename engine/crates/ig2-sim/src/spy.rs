@@ -598,14 +598,14 @@ impl Spies {
             }
         }
         self.recruit(w);
-        self.recount(w);
+        self.recount(w.ctx);
     }
 
     /// `HanyKemVan[e]` (§7).
-    pub(crate) fn recount(&mut self, w: &World) {
+    pub(crate) fn recount(&mut self, ctx: &SpyContext) {
         for e in 1..ROSTERS {
             self.working[e] = 0;
-            if w.ctx.race(e) != 5 && w.ctx.alive(e) {
+            if ctx.race(e) != 5 && ctx.alive(e) {
                 self.working[e] = (1..=self.len(e)).filter(|&k| self.spy(e, k).state > 0 && self.spy(e, k).applicant == 0).count() as i32;
             }
         }
@@ -689,7 +689,7 @@ impl Spies {
             }
             _ => {}
         }
-        self.recount(w);
+        self.recount(w.ctx);
     }
 
     fn spy_day(&mut self, w: &mut World, e: usize, k: usize, flag: &mut u8) {

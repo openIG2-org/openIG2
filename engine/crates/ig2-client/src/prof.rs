@@ -15,6 +15,20 @@ pub fn on() -> bool {
     *ON.get_or_init(|| std::env::var("IG2_PROFILE").is_ok_and(|v| v != "0" && !v.is_empty()))
 }
 
+/// The process start, for the first frame's line (the load time).
+pub fn start() {
+    STARTED.get_or_init(Instant::now);
+}
+
+static STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// A start-up step done: its time since the start, logged (the load time's parts).
+pub fn mark(what: &str) {
+    if on() {
+        eprintln!("[prof] {what} {:.0} ms after the start", STARTED.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0));
+    }
+}
+
 #[derive(Default)]
 struct State {
     /// Per phase: total ms over the second and the worst frame's ms.
@@ -71,6 +85,9 @@ pub fn frame(screen: &str) {
     STATE.with_borrow_mut(|s| {
         if let Some(at) = s.frame_at {
             s.frame_max = s.frame_max.max((now - at).as_secs_f64() * 1000.0);
+        }
+        if s.since.is_none() {
+            eprintln!("[prof] first frame ({screen}) {:.0} ms after the start", STARTED.get().map_or(0.0, |t| (now - *t).as_secs_f64() * 1000.0));
         }
         s.frame_at = Some(now);
         s.frames += 1;

@@ -29,7 +29,7 @@ Grouped by area; sizes are rough guesses for one developer.
 | Graphics | Better effects: particle explosions, smoke, beams, shields in the space and ground battles (after the classic effects are complete, `re/deviations.md` 420/421) | the battles look flat | 2-4 weeks |
 | Graphics | Higher-detail building models and textures on the colony screen, loaded from a pack beside the install | the buildings are low-poly | weeks, plus art |
 | Graphics | A modern lighting option: per-pixel lighting, soft shadows, bloom, anti-aliasing | the original lighting is per-vertex | 2-3 weeks |
-| Speed | Optimisation: profile the frame and the sim tick (`docs/perf.md`), faster loading, fewer draw calls | smooth play at high refresh rates and on weak machines | ongoing |
+| Speed | Optimisation: profile the frame and the sim tick (`docs/perf.md`), faster loading, fewer draw calls | smooth play at high refresh rates and on weak machines | part 1 done (`docs/perf.md` → Measurements: start 2.2 → 0.7 s, the ground war's rebuild hitch 24 → 4 ms, a late tick −16 %); next: state views kept decoded across a tick's systems, the autosave off the frame thread, the colony rebuild's meshes, the device made while the rules load |
 | AI | Smarter computer empires: better economy, research order, fleet use and diplomacy, as an "enhanced AI" ruleset beside the classic one | the original AI is easy to beat | weeks to months |
 | Multiplayer | Our own public rendezvous/relay instance (the service is done, ADR 0018, `docs/RENDEZVOUS.md`) | players behind strict NATs can join each other | days, plus a server |
 | Multiplayer | A public lobby browser on the rendezvous service: list open games, join with one click | today a join code has to be shared | 1-2 weeks |

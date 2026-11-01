@@ -411,12 +411,15 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     if world.game.design_texts.is_empty() {
         world.game.design_texts = crate::new_game::design_texts(&l.install);
     }
+    crate::prof::mark("world");
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
-    let audio_install = l.install.with_lang(l.install.lang()).map_err(|e| e.to_string())?;
+    // The same files: a second `Install::open` walked the whole install again (docs/perf.md).
+    let audio_install = l.install.clone();
     let mut audio = crate::audio::Audio::new(audio_install, sounds, true);
     audio.set_speech(&ig2_rules::speech::Speech::from_exe(&exe).unwrap_or_default());
+    crate::prof::mark("audio");
     if !audio.has_device() {
         eprintln!("ig2-client: no sound device; running silent");
     }
@@ -434,6 +437,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     // The option rows as the exe holds them, their values from the settings file (the registry `SaveOptions` fills).
     let mut opt_rows = ig2_rules::PeImage::parse(&exe).map(|img| crate::options::read_rows(&img, &crate::ui::UiTexts::load(&l.install))).unwrap_or_default();
     let mut app = App::new(world, l.install, tables, rules, audio);
+    crate::prof::mark("app");
     for r in &mut opt_rows {
         if let Some(v) = app.settings.int(&r.key) {
             r.value = v;
@@ -478,6 +482,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         app.after_video = AfterVideo::StarmapEntry(c);
     }
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    crate::prof::mark("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app).map_err(|e| e.to_string())
 }
@@ -495,7 +500,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
-    let audio_install = l.install.with_lang(l.install.lang()).map_err(|e| e.to_string())?;
+    // The same files: a second `Install::open` walked the whole install again (docs/perf.md).
+    let audio_install = l.install.clone();
     let mut audio = crate::audio::Audio::new(audio_install, sounds, false);
     audio.set_speech(&ig2_rules::speech::Speech::from_exe(&exe).unwrap_or_default());
     let mut renderer = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
@@ -981,7 +987,9 @@ impl App {
         };
         surface.configure(&device, &config);
         let mut renderer = Renderer::new(device, queue, format);
+        crate::prof::mark("gpu");
         let assets = Assets::load(&mut renderer, &self.install);
+        crate::prof::mark("assets");
         self.panel_models = Some(PanelModels::new(&mut renderer));
         self.frame_models = Some(crate::screen_frames::FrameModels::new(&mut renderer));
         let scale = window.scale_factor() as f32;
@@ -992,6 +1000,7 @@ impl App {
             self.select(sel);
         }
         let mut hud = crate::ui::Hud::load(&mut renderer, &self.install, self.tables);
+        crate::prof::mark("hud");
         // The messages quote the empires by `BirodalomNev`: the exe's table, the same on every peer (ADR 0017).
         self.world.game.empire_names = hud.empire_names.clone();
         // A game started from the command line records from here, as one from the menu does once its names are set
@@ -1003,6 +1012,7 @@ impl App {
         self.hud = Some(hud);
         // Loaded with the rest at start: at its first opening it would hold that frame for tens of milliseconds.
         self.spy_scene = crate::spy_scene::SpyScene::load(&mut renderer, &self.install).ok().map(std::rc::Rc::new);
+        crate::prof::mark("spy scene");
         self.gpu = Some(Gpu { window, surface, config, renderer, assets, band_target: None });
         Ok(())
     }
@@ -4170,12 +4180,9 @@ impl App {
             // A building came or went: `Init3dColony`'s building loop again.
             if let (Some((renderer, ..)), Some(s)) = (gfx(&mut self.gpu, &mut self.headless), &self.world.colony_curr) {
                 if c.scene.stale(s) {
-                    match crate::colony::ColonyScene::load(renderer, &self.install, self.tables, self.maps, s) {
-                        Ok(scene) => {
-                            let old = std::mem::replace(&mut c.scene, scene);
-                            c.scene.carry_from(old);
-                        }
-                        Err(e) => eprintln!("ig2-client: colony: {e}"),
+                    let _reload = crate::prof::scope("reload");
+                    if let Err(e) = c.scene.reload(renderer, &self.install, self.tables, self.maps, s) {
+                        eprintln!("ig2-client: colony: {e}");
                     }
                 }
             }
@@ -4208,6 +4215,7 @@ impl App {
                 if let Some(t) = &mut self.tutorial {
                     t.counter += 1;
                 }
+                let _autosave = crate::prof::scope("autosave");
                 self.autosave_tick();
             }
         }
