@@ -11,7 +11,7 @@ have one.
   `IG2_INSTALL_DIR` and skip when it is unset.
 - **Fidelity is the default.** The classic ruleset and client match the GOG release. A deliberate difference is an
   opt-in *enhanced* option with a decision record in `docs/decisions/`; known differences are listed in
-  `re/deviations.md`.
+  `re/deviations.md`, enhancement ideas and options in `docs/ENHANCEMENTS.md`.
 - **Evidence first.** For anything ported from the original, write or update the spec (the original's function and
   address) before the code, and test the ported formula with values observed in the original at runtime.
 - **Features before polish.** What a player can't do yet comes before tuning what already works. The open work is
