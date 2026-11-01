@@ -32,3 +32,7 @@ Both are normal GitHub releases marked **Latest**, so the repository page, the R
 website always point at the newest build. Before 1.0 every release is a beta in practice.
 
 The release notes come from the version's `CHANGELOG.md` section.
+
+A release first runs the whole CI (builds, tests, clippy, the asset guard on Windows, Linux, macOS and the browser
+target) and publishes nothing if it fails. CI also runs on every pull request and by hand (Actions → CI), but not on
+every push to `main`. A new beta follows every finished bigger piece of work, so its changelog lines reach players.

@@ -11,8 +11,14 @@ permissions:
   contents: write
 
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   windows:
     name: Windows zip
+    # No release from a commit that fails the build, the tests, clippy or the asset guard.
+    needs: ci
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

@@ -25,6 +25,11 @@ counter): a proposed row takes the next free number there (469).
 | 2026-11-01 | Steamworks: no. |
 | 2026-11-01 | More races: as mods only. |
 | 2026-11-01 | Better textures and building models: a runtime upscaling filter plus player-made packs; no graphics shipped. |
+| 2026-11-01 | A modern UI on a Rust UI framework: **egui** (egui-wgpu and egui-winit on our wgpu 25 / winit 0.30 renderer, also in the browser build), with designed pages. The remake's own screens move to it first (main-menu Options, the multiplayer pages), then the starmap's HUD (same functions, new look); the UI theme (ADR 0056) becomes its style. Classic keeps the original's screens. |
+| 2026-11-01 | The remastered look need not match the original: no visible pixels in glows, backgrounds or the starmap; the classic look stays the faithful one. |
+| 2026-11-01 | Multiplayer orders must feel as responsive as in single player. |
+| 2026-11-01 | No console window beside the game. |
+| 2026-11-01 | CI runs on pull requests, by hand and before every release, not on every push; a release follows every finished bigger package, with its changelog. |
 
 ## Ideas
 
@@ -32,6 +37,13 @@ Grouped by area; sizes are rough guesses for one developer.
 
 | Area | Idea | Why | Rough size |
 |---|---|---|---|
+| UI | **Decided: egui.** The modern UI framework: an ADR, egui drawn inside our frame (after the 3D, before the cursor), input routed to it first when it wants it, the UI theme as an egui style, fonts that read the install's own glyphs or a bundled free font, scaling with UI scale; the main-menu Options screen moved onto it as the first designed page | a modern, consistent, maintainable UI for every remake screen | 2-3 weeks |
+| Multiplayer | **Decided.** The multiplayer pages on the new UI (after the framework): connection page, LAN and internet game lists, room, chat, wait overlay; designed, not a restyle of today's boxes | today's pages look rough | 1-2 weeks |
+| Starmap | **Decided.** A modern starmap HUD on the new UI (after the framework): top bar, info boxes, the right-click menus and the panels redrawn with the same functions and keys; Remastered look only, classic keeps the original | the most-used screen looks its age | weeks |
+| Main menu | **Decided.** With "Menu navigation" Enhanced, the left panel replaces the rotating rings: the rings and their labels stop and hide, the background stays | two menus on top of each other today | days |
+| Graphics | **Decided.** The remastered starmap and backgrounds without pixels: the glow orbs (suns, stars, planet halos, nebula lights) drawn as smooth procedural or high-resolution sprites instead of magnified low-resolution textures; the sky, nebulae and particles smooth at any resolution | glows look blocky at 1080p and above | 1-2 weeks |
+| Multiplayer | **Decided.** Responsive orders: an order shows at once (selection, path line, sound, the fleet's marker) as in single player while lockstep applies it a few ticks later, and the input delay adapts to the measured round trip (the lowest that holds) | right-click moves feel laggy in multiplayer | 1 week |
+| Platform | **Decided.** No console window: release builds start without one on Windows; the log goes to a file in the save folder (and to the terminal when started from one) | a stray black window beside the game | hours |
 | Speed | Optimisation: profile the frame and the sim tick (`docs/perf.md`), faster loading, fewer draw calls | smooth play at high refresh rates and on weak machines | part 1 done (`docs/perf.md` → Measurements: start 2.2 → 0.7 s, the ground war's rebuild hitch 24 → 4 ms, a late tick −16 %); part 2 done (`docs/perf.md` → part 2: start with texture upscaling 5.6–7.1 → 2.5–3.9 s, the starmap's ground-war marks 0.15 → 0.09 ms a tick; frames 1–2.5 ms with every option on); next: the battle status's walk over every planet, state views kept decoded across a tick's systems, the hires textures' levels off the frame thread, the colony rebuild's meshes, the device made while the rules load |
 | Multiplayer | **Decided: yes, on our own VPS (the maintainers provide it).** Our own public rendezvous/relay instance (the service is done, ADR 0018, `docs/RENDEZVOUS.md`) | players behind strict NATs can join each other | days, plus a server |
 | Story mods | Part 1 is done (ADR 0061: the `stories.toml` format, the core triggers and actions, save/load, the lockstep hash, `ig2-check`); next: more triggers and actions (battles, techs, money, relations, spy reports, timers, repeating stories, diplomacy, buildings) and a worked example mod in `docs/USER_GUIDE.md` | new campaigns and race stories from players | weeks |
