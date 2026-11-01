@@ -311,6 +311,8 @@ pub enum Act {
     Load(usize),
     /// `Options_EnterPressed`: `LoadSave(slot, name, 2)`, then back.
     Save(usize, Vec<u8>),
+    /// Ours (ADR 0067): the modern menu's Exit game: the game quits (as the window's close).
+    Exit,
 }
 
 /// The save-name entry (`IOMode` with `IOAzonosito` 0x83).
@@ -602,7 +604,9 @@ impl OptionsScreen {
     /// Leave for `act` through the fade-out (`Options_Kilep`: `KilepesValtozo = (int)OptionsFelfadeles`).
     fn leave(&mut self, act: Act) {
         if self.leaving.is_none() {
-            self.leaving = Some((self.fade as i32, 0, act));
+            // The modern page has no fade-out (ADR 0067 §6): it goes at once.
+            let v = if self.modern.is_some() { 0 } else { self.fade as i32 };
+            self.leaving = Some((v, 0, act));
             self.dirty = true;
         }
     }
@@ -731,12 +735,7 @@ impl OptionsScreen {
                 return None;
             }
             id::SAVE => {
-                // The slot's name (at most 32 bytes) or "Save Game %02d"; the first key clears it.
-                let text = match self.slots.get(self.slot).and_then(Option::as_ref) {
-                    Some(s) => s.name.iter().take(0x20).copied().collect(),
-                    None => format!("Save Game {:02}", self.slot).into_bytes(),
-                };
-                self.entry = Some(Entry { cursor: text.len(), text, clear: true });
+                self.start_entry();
                 return None;
             }
             _ if self.sure => return None,
@@ -758,6 +757,15 @@ impl OptionsScreen {
             _ => {}
         }
         None
+    }
+
+    /// The save name's entry: the slot's name (at most 32 bytes) or "Save Game %02d"; the first key clears it.
+    fn start_entry(&mut self) {
+        let text = match self.slots.get(self.slot).and_then(Option::as_ref) {
+            Some(s) => s.name.iter().take(0x20).copied().collect(),
+            None => format!("Save Game {:02}", self.slot).into_bytes(),
+        };
+        self.entry = Some(Entry { cursor: text.len(), text, clear: true });
     }
 
     fn set_page(&mut self, p: i32) {
@@ -824,7 +832,7 @@ impl OptionsScreen {
     /// the name entry `Options_EscPressed`: the entry ends).
     pub fn escape(&mut self) {
         if self.modern.is_some() {
-            self.modern_key(modern::Nav::Back, &mut |_| {});
+            let _ = self.modern_key(modern::Nav::Back, &mut |_| {});
             return;
         }
         if self.entry.take().is_some() {
@@ -835,14 +843,16 @@ impl OptionsScreen {
         }
     }
 
-    /// Ours (ADR 0053): a key on the main menu's modern screen.
-    pub fn modern_key(&mut self, k: modern::Nav, sound: &mut dyn FnMut(crate::audio::SoundId)) {
-        if let Some(mut m) = self.modern.take() {
-            if self.leaving.is_none() {
-                m.key(self, k, sound);
-            }
-            self.modern = Some(m);
+    /// Ours (ADR 0053): a key on the modern screen; a save asked for (ADR 0067) comes back at once, as the name
+    /// entry's Enter.
+    pub fn modern_key(&mut self, k: modern::Nav, sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
+        let mut m = self.modern.take()?;
+        if self.leaving.is_none() {
+            m.key(self, k, sound);
         }
+        let act = m.out.take();
+        self.modern = Some(m);
+        act
     }
 
     /// ADR 0058: the modern screen waits for an action's new key.
@@ -858,13 +868,14 @@ impl OptionsScreen {
     }
 
     /// Ours (ADR 0062): a frame of the main menu's modern screen, the egui page (its draw and pointer input).
-    pub fn modern_page(&mut self, ctx: &egui::Context, texts: &crate::ui::UiTexts, theme: &crate::theme::Theme, sound: &mut dyn FnMut(crate::audio::SoundId)) {
-        if let Some(mut m) = self.modern.take() {
-            if self.leaving.is_none() {
-                m.show(self, ctx, texts, theme, sound);
-            }
-            self.modern = Some(m);
+    pub fn modern_page(&mut self, ctx: &egui::Context, texts: &crate::ui::UiTexts, theme: &crate::theme::Theme, sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
+        let mut m = self.modern.take()?;
+        if self.leaving.is_none() {
+            m.show(self, ctx, texts, theme, sound);
         }
+        let act = m.out.take();
+        self.modern = Some(m);
+        act
     }
 
     /// A text is being typed (the save name, the modern screen's player name): letters are no hotkeys.
@@ -1381,7 +1392,8 @@ impl Headless {
 /// `ig2-client --snapshot OUT --screen options [--ui-frames N] [--mouse X,Y] [--script S]`: the Options screen
 /// opened on the save's game (black behind it, or with `--backdrop` the starmap's picture, the top bar over it) after
 /// N UI ticks of 10 ms, one drawn frame each; with a script one grab per `t` (re/screens/sound.md §3: the events at t,
-/// the tick, the frame).
+/// the tick, the frame). `--modern-menu`: the modern in-game menu (ADR 0067) instead, driven by the script's pointer
+/// and keys.
 pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     use crate::script::Input;
     let l = crate::load(o)?;
@@ -1390,6 +1402,15 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     let mut h = Headless::load(&mut r, &l.install, &l.tables);
     let mut s = h.enter(&l.install, false);
     let size = [o.size.0 as f32, o.size.1 as f32];
+    let mut gui = o.modern_menu.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
+    if gui.is_some() {
+        let file = ig2_formats::options::Options::load();
+        s.rows.extend(crate::display::rows(&file, &[], o.size));
+        check_dependencies(&mut s.rows, false);
+        s.modern = Some(modern::Modern::in_game(&s, b"Player".to_vec(), Default::default()));
+    }
+    let k = crate::gui::Gui::scale(o.size.1);
+    let mut mouse = o.mouse.unwrap_or([320.0, 240.0]);
     // `SaveScreen(2)` of the starmap with its HUD, as `Starmap_Kilep` leaves it (crate::backdrop).
     let pic = o.backdrop.then(|| crate::render::starmap_picture(o, &l, &world, &mut r, &mut h.hud, crate::backdrop::Pic::Before));
     let script = o.script.as_deref().map(crate::script::Script::load).transpose()?;
@@ -1401,7 +1422,24 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     s.hover(o.mouse.unwrap_or([320.0, 240.0]));
     let mut played = Vec::new();
     for t in 0..=end {
+        let mut buttons = Vec::new();
         for e in script.iter().flat_map(|sc| sc.at(t)) {
+            if gui.is_some() && s.modern.is_some() {
+                match &e.input {
+                    Input::Move(at) => mouse = *at,
+                    Input::Button { button: 1, down, at } => {
+                        mouse = *at;
+                        buttons.push(*down);
+                    }
+                    Input::Key { name, down: true } => {
+                        if let Some(a) = modern::nav(name, s.typing()).and_then(|n| s.modern_key(n, &mut |id| played.push((t, id)))) {
+                            println!("t {t}: {a:?}");
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             match &e.input {
                 Input::Move(at) => s.hover(*at),
                 Input::Button { button: 1, down: true, at } => {
@@ -1424,6 +1462,34 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
         frame.backdrop = pic.map(|tex| (tex, crate::backdrop::options(s.fade_level())));
         h.draw(&mut s, &mut frame, size, t as f64 * 10.0);
+        if let Some(g) = gui.as_mut().filter(|_| s.modern.is_some()) {
+            // The page: the script's pointer and buttons, one egui frame a t (each press and release its own).
+            let Some(font) = &h.hud.font else { return Err("no font".into()) };
+            let theme = crate::theme::look(&Draw { font, white: h.hud.white, glow: h.glow, v: Virtual::new(size), palette: &h.hud.palette, texts: &h.hud.texts, now_ms: 0.0 });
+            let style = crate::gui::style(&theme);
+            g.pointer(Some(Virtual::new(size).px(mouse[0], mouse[1])), k);
+            let mut page = |g: &mut crate::gui::Gui, s: &mut OptionsScreen| {
+                g.run(o.size, &style, |ctx| {
+                    if let Some(a) = s.modern_page(ctx, &h.hud.texts, &theme, &mut |id| played.push((t, id))) {
+                        println!("t {t}: {a:?}");
+                    }
+                })
+            };
+            if buttons.is_empty() {
+                page(g, &mut s);
+            }
+            for down in buttons {
+                g.button(0, down);
+                page(g, &mut s);
+            }
+            if grabs.contains(&t) {
+                let rgba = r.draw_to_image_over(&frame, o.size, 0.0, |d, q, tex| g.paint(d, q, tex));
+                let path = if script.is_some() { crate::script::grab_path(out, t) } else { out.to_path_buf() };
+                crate::assets::write_snapshot(&path, o, &rgba)?;
+                println!("{}: t {t} | tab {:?} slot {} entry {:?}", path.display(), s.modern.as_ref().map(|m| m.tab), s.slot, s.entry.as_ref().map(|e| String::from_utf8_lossy(&e.text).into_owned()));
+            }
+            continue;
+        }
         if grabs.contains(&t) {
             h.hud.paused = true;
             h.hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Options, 0.0);

@@ -618,6 +618,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     app.display.starmap_mouse = false;
     // The original's HUD: the scripts click its hot-spots (ADR 0065's panels need the window).
     app.display.modern_starmap = false;
+    // The original's Options screen: the scripts click its hot-spots (ADR 0067's page needs a pointer of its own).
+    app.display.modern_menu = false;
     app.world.game.empire_names = hud.empire_names.clone();
     hud.set_one_language(&app.install, o.texts == Some(true));
     app.hud = Some(hud);
@@ -711,6 +713,13 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     let path = crate::script::write_sounds(out, &heard)?;
     println!("{}: {} sounds", path.display(), heard.len());
     Ok(())
+}
+
+/// The egui pages' theme (ADR 0062): the UI theme's look of the HUD's font and palette.
+fn page_theme(h: &crate::ui::Hud, size: [f32; 2]) -> crate::theme::Theme {
+    h.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
+        crate::theme::look(&crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 })
+    })
 }
 
 /// The Options screen over `frame` (after the 3D behind it).
@@ -2494,15 +2503,14 @@ impl App {
         // and under the pointer.
         let mut top = None;
         let mut mp_outs = Vec::new();
-        let theme = |h: &crate::ui::Hud| {
-            h.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
-                crate::theme::look(&crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 })
-            })
-        };
+        let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
             let theme = theme(h);
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id)));
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| {
+                // Load only: no save to hand back.
+                let _ = o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id));
+            });
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -2794,6 +2802,11 @@ impl App {
         screen.from_battle = !load_only && (self.spacewar.is_some() || self.spacewar_parked.is_some());
         screen.battle = !load_only && (screen.from_battle || war);
         screen.debug = self.world.game.state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
+        // Ours (ADR 0067): the in-game menu (and the main menu's Load game) as the modern page.
+        if self.display.modern_menu {
+            let name = self.settings.get("MultiplayerNev").filter(|n| !n.is_empty()).map_or_else(|| b"Player".to_vec(), |n| n.as_bytes().to_vec());
+            screen.modern = Some(crate::options::modern::Modern::in_game(&screen, name, self.bindings.clone()));
+        }
         let glow = self.gpu.as_mut().and_then(|g| {
             self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(&self.install, &p).ok()).map(|img| g.renderer.add_texture(&img))
         });
@@ -2843,6 +2856,17 @@ impl App {
         let Some(o) = &mut self.options else { return };
         if o.s.modern.is_some() {
             use crate::options::modern::Nav;
+            // ADR 0067: the save name's Home, End and Delete, as on the original's entry.
+            let edit = match k.as_ref() {
+                Key::Named(NamedKey::Home) => Some(EntryKey::Home),
+                Key::Named(NamedKey::End) => Some(EntryKey::End),
+                Key::Named(NamedKey::Delete) => Some(EntryKey::Delete),
+                _ => None,
+            };
+            if let Some(e) = edit.filter(|_| o.s.entry.is_some()) {
+                o.s.entry_key(e);
+                return;
+            }
             let typing = o.s.typing();
             let shift = self.modifiers.shift_key();
             let nav = match k.as_ref() {
@@ -2863,8 +2887,13 @@ impl App {
                 _ => None,
             };
             let audio = &mut self.audio;
-            if let (Some(n), Some(o)) = (nav, &mut self.options) {
-                o.s.modern_key(n, &mut |id| audio.play(id));
+            let act = match (nav, &mut self.options) {
+                (Some(n), Some(o)) => o.s.modern_key(n, &mut |id| audio.play(id)),
+                _ => None,
+            };
+            // ADR 0067: the save name's Enter.
+            if let Some(crate::options::Act::Save(slot, name)) = act {
+                self.options_save(slot, name);
             }
             return;
         }
@@ -3047,19 +3076,33 @@ impl App {
         let t = now as f32 / 1000.0;
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         frame.backdrop = backdrop;
+        let (mut top, mut act) = (None, None);
         if let (Some(o), Some(h)) = (&mut self.options, &mut self.hud) {
             draw_options(o, h, &mut frame, size, self.start.elapsed().as_secs_f64() * 1000.0);
-            h.paused = true;
-            h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Options, t);
-            ov.draw(&mut frame, h, size);
+            if o.s.modern.is_some() {
+                // ADR 0067: the egui page over the black, the pointer over it (the top bar is under the page).
+                let theme = page_theme(h, size);
+                let audio = &mut self.audio;
+                g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| act = o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id)));
+                let mut f = crate::render::Frame::new([0.0; 4]);
+                ov.draw(&mut f, h, size);
+                top = Some(f);
+            } else {
+                h.paused = true;
+                h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Options, t);
+                ov.draw(&mut frame, h, size);
+            }
         }
         let Ok(out) = g.surface.get_current_texture() else {
             self.reconfigure();
             return;
         };
-        g.present(frame, &out.texture, t);
+        g.present_over(frame, top, &out.texture, t);
         g.window.pre_present_notify();
         out.present();
+        if let Some(crate::options::Act::Save(slot, name)) = act {
+            self.options_save(slot, name);
+        }
     }
 
     /// `ExitToMainScreen` (exe 0x5117f0), then `AktKepKell = 0xF`: `MainScr_Belep` (the rings fly in again, the menu
@@ -3472,6 +3515,13 @@ impl App {
                 }
             }
             Act::Save(..) => {}
+            // Ours (ADR 0067): Exit game, as the window's close (in multiplayer the session is left first).
+            Act::Exit => {
+                self.exit_to_main_menu();
+                if let Some(f) = &mut self.front {
+                    f.quit = true;
+                }
+            }
         }
     }
 

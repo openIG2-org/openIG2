@@ -89,6 +89,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--sharp-ui` | Sharp UI on for this run, over the settings file |
 | `--smooth-glows` | Smooth glows on for this run, over the settings file |
 | `--modern-hud` | Draw the modern starmap HUD in snapshots (without it they draw the original's; input scripts always click the original's) |
+| `--modern-menu` | Draw the modern in-game menu in snapshots of the Options screen (without it they draw the original's; input scripts always use the original's) |
 | `--sharp-text` | Sharp text on for this run, over the settings file |
 | `--upscale 2\|4` | Texture upscaling at 2× or 4× for this run, over the settings file |
 | `--modern-lighting` | Anti-aliasing, per-pixel lighting, soft shadows and bloom on for this run, over the settings file |
@@ -118,7 +119,7 @@ The controls are the original's; the main menu's Options screen → Controls cha
 The full key and hot-spot tables per screen are in `re/screens/input.md`.
 
 ## Saves and settings
-Our own saves go to the Options screen's slots (`IG2_SLOT_DIR`); original `.sav` files load with `--save`. Our
+Our own saves go to the Options screen's slots (`IG2_SLOT_DIR`; with the modern in-game menu on, its "Save & load" tab shows them: click a slot, double click or Load loads it, Save asks for a name); original `.sav` files load with `--save`. Our
 settings are kept in our own file (`IG2_OPTIONS_DIR`), never in the original's.
 
 F12 quick-saves into `quicksave.ig2s` beside the slots and Shift+F12 loads it back (ADR 0032); both work where the
@@ -135,7 +136,7 @@ list comes back. A replay only plays on the version that recorded it: one that d
 row "Record replays" (`RecordReplays`, on by default) turns recording off.
 
 ### Display settings
-In a game: Options → the REMAKE tab, grouped (Screen, Interface, Game, Accessibility, Language), with a "Page" row to
+In a game with "Modern in-game menu" off: Options → the REMAKE tab, grouped (Screen, Interface, Game, Accessibility, Language), with a "Page" row to
 turn to the next page. A press cycles the row; changes apply at once and are saved in `ig2-rework-options.dat`.
 
 In the main menu, the Settings label at the bottom right (or the `O` key) opens the modern Options screen with every
@@ -181,6 +182,7 @@ Shift and Alt can't be changed; typing names and chat always uses the real keys.
 | Sharp UI (`SharpUi`) | Off by default: the panels, text and pointer are drawn with crisp texel edges instead of the original's smooth scaling, for big windows (1440p, 4K) where the 640×480 layout is scaled several times (ADR 0043); the UI's size follows the window either way |
 | Sharp text (`SharpText`) | Off by default: on big windows (1440p, 4K) the game's own font is drawn with sharp, smooth edges instead of the original's blur, every letter in the same place and size (ADR 0046); combines with Sharp UI; at 800x600 nothing changes |
 | Modern starmap HUD (`ModernStarmapHud`) | On by default, under "Interface": on the starmap the top bar (with the screens as a row of icons), the selection's compact info panel (icon buttons for details, colony or split, tanks and production), and the minimap with a strip of camera buttons under it are redrawn as small console plates in your empire colour that follow the UI scale; the radial and select menus, the production, transfer, fleet and vehicle panels and the long info stay the original's. Off = the original's HUD (ADR 0065) |
+| Modern in-game menu (`ModernGameMenu`) | On by default, under "Interface": Esc or `O` in a game, and the main menu's Load game, open the main menu's Options page with a first tab "Save & load" (the 24 slots, a preview, Load, Save, Quit to main menu, Exit game); settings wait for Apply. Off = the original's Options screen (ADR 0067) |
 | Smooth glows (`SmoothGlows`) | On by default (off = the original's look), under "Graphics": the starmap's star glows, clouds and stars, the main menu's galaxy and the space battle's shot flares are drawn without a visible pixel grid, one-pixel stars as round dots, and the sky's nebulae get a smooth enlarged copy (from the next start); Sharp UI does not apply to these (ADR 0064) |
 | Texture upscaling (`TextureUpscale`) | Off / 2x / 4x, off by default: the textures are enlarged as they load, interface art with an edge-keeping filter (xBRZ) and the rest smoothly, so pictures and models look less blocky on big windows; every picture keeps its place and size (ADR 0054). The first visit to a screen takes longer (the starmap about 4 s at 4x); a change shows on the screens opened afterwards. A texture pack (Mods) wins over it |
 | Anti-aliasing (`AntiAliasing`) | Off by default, under "Graphics": the 3D scenes (starmap planets, colony, space and ground battles, the models in the panels) are drawn with 4× multisampling, so their edges don't stair-step; the 2D panels and text are not touched (ADR 0055) |

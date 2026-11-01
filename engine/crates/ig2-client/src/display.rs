@@ -90,6 +90,8 @@ pub const BATTLE_EFFECTS: &str = "BattleEffects";
 pub const SMOOTH_GLOWS: &str = "SmoothGlows";
 /// ADR 0065: the starmap's HUD drawn as the modern egui panels (on by default; 0 = the original's).
 pub const MODERN_STARMAP: &str = "ModernStarmapHud";
+/// ADR 0067: Esc's in-game menu (the Options screen) as the modern egui page (on by default; 0 = the original's).
+pub const MODERN_MENU: &str = "ModernGameMenu";
 
 /// ADR 0058: the speech's volume; 0 = the sound volume's (the original's, the default), n = (n − 1) × 10 per cent.
 pub const VOICE_VOLUME: &str = "VoiceVolume";
@@ -142,6 +144,7 @@ pub struct Display {
     pub battle_effects: bool,
     pub smooth_glows: bool,
     pub modern_starmap: bool,
+    pub modern_menu: bool,
 }
 
 /// Where W/A/S/D pan the camera (ADR 0030).
@@ -206,6 +209,7 @@ impl Display {
             battle_effects: f.int(BATTLE_EFFECTS) == Some(1),
             smooth_glows: f.int(SMOOTH_GLOWS) != Some(0),
             modern_starmap: f.int(MODERN_STARMAP) != Some(0),
+            modern_menu: f.int(MODERN_MENU) != Some(0),
         }
     }
 
@@ -319,6 +323,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(37, Group::Interface, "Menu navigation", crate::menu_flow::KEY, (f.int(crate::menu_flow::KEY) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
         row(38, Group::Graphics, "Smooth glows", SMOOTH_GLOWS, d.smooth_glows as i32, Vec::new(), 1),
         row(39, Group::Interface, "Modern starmap HUD", MODERN_STARMAP, d.modern_starmap as i32, Vec::new(), 1),
+        row(40, Group::Interface, "Modern in-game menu", MODERN_MENU, d.modern_menu as i32, Vec::new(), 1),
     ]
 }
 
@@ -337,12 +342,12 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let mut f = File::default();
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true });
         f.set(MODE, "2");
         f.set(RESOLUTION, "1280x720");
         f.set(VSYNC, "0");
         f.set(LETTERBOX, "1");
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true });
         assert_eq!(parse_size("12x7"), None);
     }
 
@@ -353,7 +358,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]);
         // The theme row: Classic first, Modern by its stored name.
         let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
         assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));

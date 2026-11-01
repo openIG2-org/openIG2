@@ -785,22 +785,10 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         }
         // Ours (ADR 0053): the modern Options screen takes the keys.
         if let Some(os) = options.as_mut().map(|o| &mut o.1).filter(|os| os.modern.is_some()) {
-            use crate::options::modern::Nav;
             for k in keys.drain(..) {
-                let nav = match k.to_ascii_lowercase().as_str() {
-                    "escape" | "esc" => Nav::Back,
-                    "up" => Nav::Up,
-                    "down" => Nav::Down,
-                    "left" => Nav::Left,
-                    "right" => Nav::Right,
-                    "tab" | "pagedown" => Nav::NextTab,
-                    "pageup" => Nav::PrevTab,
-                    "enter" | "return" | "space" => Nav::Activate,
-                    "backspace" => Nav::Erase,
-                    c if c.len() == 1 => Nav::Char(k.as_bytes()[0]),
-                    _ => continue,
-                };
-                os.modern_key(nav, &mut |id| println!("t {t}: sound {id:?}"));
+                if let Some(nav) = crate::options::modern::nav(&k, os.typing()) {
+                    let _ = os.modern_key(nav, &mut |id| println!("t {t}: sound {id:?}"));
+                }
             }
         }
         for k in &keys {
@@ -835,7 +823,9 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             let theme = hud.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
                 crate::theme::look(&crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: 0.0 })
             });
-            gui.run(o.size, &crate::gui::style(&theme), |ctx| os.modern_page(ctx, &hud.texts, &theme, &mut |id| println!("t {t}: sound {id:?}")));
+            gui.run(o.size, &crate::gui::style(&theme), |ctx| {
+                let _ = os.modern_page(ctx, &hud.texts, &theme, &mut |id| println!("t {t}: sound {id:?}"));
+            });
         }
         if let Some((_, os)) = &mut options {
             os.hover(mouse);

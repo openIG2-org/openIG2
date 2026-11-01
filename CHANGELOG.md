@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern in-game menu (Options, Interface; on by default): Esc or O in a game, and the main menu's Load game, open the same designed page as the main menu's Settings, with a first tab "Save & load": the 24 slots with name and game date and a preview of the selected one, Load (double click too), Save with a name field, Quit to main menu and Exit game (both ask first), under the original's rules for what may be saved or loaded; switch it off for the original's screen (ADR 0067).
 - Esc in the chat line, a design's name and a save's name no longer acts while the screen is changing.
 - The planet in the starmap's planet details no longer trembles while the game is paused: the camera now stays on the planet instead of swinging between its last two positions.
 - Hungarian: the remake's own texts read more naturally ("Keret nélküli" and "Teljes képernyő" window modes, "Bővített" instead of "Fejlett", "házigazda" for the multiplayer host, "képernyő" for screens, and more).
