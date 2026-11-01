@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Win a scenario and you can put your name in its high-score table: the list opens on it and asks for your name; the table shows how many days the win took (Remake row "High-score entry"; off keeps the original, which never asks).
 - Starmap: the mouse wheel zooms and a right drag moves the map; a right click still gives the fleet its order (Remake row "Starmap mouse camera"; off keeps the original's controls).
 - Options: the remake's own settings have their own REMAKE page, grouped and paged, so every one can be reached; the game page looks like the original again.
 - Mods can change the rules without replacing files: a `rules.toml` in the mod folder sets single values (a tech's price or research time, a building's energy, a weapon's damage, a race's production speed…) by name; `ig2-check` points at any mistyped name, and multiplayer rooms check that everyone has the same changes.

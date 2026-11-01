@@ -103,7 +103,14 @@ But nothing sets `scenario_nevbevitelkell` or writes `scenario_score` (0xBAD110)
 records `scenario_kezdesi_ido` (0xBAD108) = `Ido` and `scenario_registry_name` when a scenario starts (both saved).
 So a won scenario never reaches the entry, no formula for the score exists, and the tables only ever show the
 `fabscr.txt` seed (or what an `options.dat` holds). The port keeps the table code (§4–§5) and does not open the
-entry (`deviations.md`: a working entry, score = `Ido − scenario_kezdesi_ido` [guess], is an enhanced option).
+entry. The exe's code references (a byte scan for the addresses): 0xBAD10C only at the clear 0x4e1290 and the
+test 0x4fe620; 0xBAD110 only read (0x4fdbcd `imul` for the dialog's days, 0x4feb21 `push` into `AddHighscore`);
+0xBAD108 at the clear 0x4e1196, the start write 0x4fef64 and the save field 0x5442fb. So no score formula exists;
+the unit (days · 50) and the start time are the exe's. The port writes `scenario_kezdesi_ido` and
+`scenario_registry_name` at a scenario's start (`MainScr_Kilep`).
+- Ours (ADR 0050, `HighScoreEntry`, on by default): a won single-player scenario opens the entry as step 7 would,
+  score `Ido − scenario_kezdesi_ido` (that the designers meant this is a guess); Enter runs `AddHighscore`;
+  `LoadHighscores` reads `options.dat` with our settings file over it, `SaveHighscores` writes our settings file.
 
 ## 7. The table on the scenario panel (`MainScrGfx2D_2` 0x4fc8d0; `KiirStr(text, x, y, len, size, colour, style)`)
 Shown while `ScenarioHighScoreMode` (0xBBB22E, hot-spot 0x27 toggles it; label `GetString(15,2,13/14)`) and the entry

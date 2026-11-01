@@ -54,9 +54,10 @@ impl Entry {
 /// the same registry name is dropped; an entry goes before the first of a higher `difficulty`, or of the same one with a
 /// greater title, byte by byte), then the skirmish entry (`GetString(0x13, 5, 1)`: a language without the line takes
 /// the English one [obs: "Skirmish" in the Hungarian exe], `pic\spwar\c30068.bmp`, kind 1) put first. The high
-/// scores come from `fabscr.txt` (`LoadHighscores`' defaults; the registry tables aren't kept yet).
-pub fn load_entries(install: &Install, exe: &ig2_rules::PeImage, texts: &UiTexts) -> Vec<Entry> {
-    let defaults = install.read("dataraw/text/fabscr.txt").map(|b| misc_text::parse_fabscr(&ig2_formats::text::decode(&b, install.lang()))).unwrap_or_default();
+/// scores are `LoadHighscores`': the registry's table (`reg`: `options.dat` and our settings file over it, where
+/// ADR 0050's entry stores them), else `fabscr.txt`'s.
+pub fn load_entries(install: &Install, exe: &ig2_rules::PeImage, texts: &UiTexts, reg: &ig2_formats::options::Options) -> Vec<Entry> {
+    let defaults = default_scores(install);
     let mut skirmish = texts.get(0x13, 5, 1);
     if skirmish.is_empty() {
         if let Ok(en) = install.with_lang(ig2_formats::text::Lang::En) {
@@ -74,7 +75,7 @@ pub fn load_entries(install: &Install, exe: &ig2_rules::PeImage, texts: &UiTexts
         let Ok(b) = install.read(&format!("dataraw/scenario/{name}")) else { continue };
         let d = misc_text::parse_dsc(&ig2_formats::text::decode(&b, install.lang()));
         let enc = |s: &str| texts.encode(s);
-        let scores = high_scores(&defaults, &base, texts);
+        let scores = high_scores(reg, &defaults, &base, texts);
         let name = enc(&d.title);
         let at = out.iter().position(|e| e.difficulty > d.difficulty || (e.difficulty == d.difficulty && e.name > name)).unwrap_or(out.len());
         out.insert(at, Entry {
@@ -93,9 +94,15 @@ pub fn load_entries(install: &Install, exe: &ig2_rules::PeImage, texts: &UiTexts
     out
 }
 
-/// `LoadHighscores`' default table of `scenario`: the `fabscr.txt` lines naming it, in file order, at most 10.
-fn high_scores(defaults: &[DefaultScore], scenario: &str, texts: &UiTexts) -> Vec<(Vec<u8>, i32)> {
-    defaults.iter().filter(|d| d.scenario.eq_ignore_ascii_case(scenario)).take(HIGHSCORE_SLOTS).map(|d| (texts.encode(&d.name), d.score)).collect()
+/// `text/fabscr.txt`: `LoadHighscores`' seed.
+pub fn default_scores(install: &Install) -> Vec<DefaultScore> {
+    install.read("dataraw/text/fabscr.txt").map(|b| misc_text::parse_fabscr(&ig2_formats::text::decode(&b, install.lang()))).unwrap_or_default()
+}
+
+/// `LoadHighscores(scenario)`: the ten slots (an empty one scores 0).
+pub fn high_scores(reg: &ig2_formats::options::Options, defaults: &[DefaultScore], scenario: &str, texts: &UiTexts) -> Vec<(Vec<u8>, i32)> {
+    let t = ig2_formats::highscore::Table::load(reg, scenario, defaults);
+    t.names.iter().zip(t.scores).map(|(n, s)| (texts.encode(n), s)).collect()
 }
 
 /// Ours (ADR 0039): the settings file's key of the last skirmish's settings ([`Skirmish::from_setting`]).
@@ -259,6 +266,16 @@ impl ScenarioList {
         if let Some(e) = self.entries.get(self.selected).filter(|e| e.skirmish()) {
             self.sk = Skirmish::new(e.race);
         }
+    }
+
+    /// `ScenarioGombraRanyomtak(name)` with a name (spec §9.3): the entry of that registry name selected, the list from
+    /// it (at most `count − 23`, at least 0), the high-score view on.
+    pub fn select_registry(&mut self, registry: &str) {
+        if let Some(i) = self.entries.iter().position(|e| e.registry.eq_ignore_ascii_case(registry)) {
+            (self.selected, self.shown) = (i, i);
+            self.first = i.min(self.entries.len().saturating_sub(ROWS));
+        }
+        self.high_score = true;
     }
 
     /// The entry the picture and the lower panel show.
@@ -515,7 +532,7 @@ impl Assets {
     pub fn load(install: &Install, texts: &UiTexts) -> Self {
         let exe = install.read_raw("ig2.exe").unwrap_or_default();
         let (entries, tables) = match ig2_rules::PeImage::parse(&exe) {
-            Ok(pe) => (load_entries(install, &pe, texts), Tables::read(&pe)),
+            Ok(pe) => (load_entries(install, &pe, texts, &ig2_formats::options::Options::load()), Tables::read(&pe)),
             Err(_) => (Vec::new(), Tables { planets: [0; 5], money: [0; 6] }),
         };
         Self { entries, tables, pics: Pictures::default() }
@@ -705,7 +722,7 @@ impl ScenarioList {
             for k in 0..HIGHSCORE_SLOTS {
                 let (x, y) = (if k >= 5 { 0xe1 } else { 0x2d }, 0x173 + 0xd * (k % 5) as i32);
                 text(f, format!("{:02}.", k + 1).as_bytes(), x, y, 3, 2, Align::Left, 2, pfade);
-                match e.scores.get(k) {
+                match e.scores.get(k).filter(|(_, s)| *s >= 1) {
                     Some((name, score)) => {
                         text(f, name, x + 0x16, y, 0x14, 2, Align::Left, 2, pfade);
                         let days = [format!("{} ", score / 0x32).into_bytes(), d.texts.get(15, 2, 0x10)].concat();
@@ -732,8 +749,25 @@ pub fn draw_name(f: &mut Frame, d: &Draw, n: &crate::mainscr::NameEntry, blink: 
     let v = &d.v;
     fader::kirak_fader(f, d.white, v, [111.0, 163.0, 420.0, 98.0], [0.0, 54.0, 90.0], 100.0, [0.0, 90.0, 130.0], 30.0, [0.0, 0.0]);
     d.font.text(f, v, &d.texts.get(15, 3, 2), 0x140 as f32, 0xbc as f32, 0x28, 4, Align::Centre, d.col(1, 100.0), None);
-    let (x0, y) = (0x11c as f32, (0xe6 - 9) as f32);
-    let max = crate::mainscr::NAME_MAX;
+    entry_text(f, d, n, [0x11c as f32, (0xe6 - 9) as f32], blink);
+}
+
+/// Ours (ADR 0050): the high-score name entry (`MainScrGfx2D_1`: the fader (60, 134, 330 × 130); `MainScrGfx2D_2`
+/// `IOAzonosito` 0x99: `sprintf(GetString(15, 3, 3), score / 50)` centred at (0xe1, 0xa1) size 3 colour 7,
+/// `GetString(15, 3, 2)` centred at (0xe1, 0xbf) size 4 colour 7, the name in 20 cells from (0x91, 0xdf) size 3
+/// colour 2, the cursor as the other entries').
+pub fn draw_high_score(f: &mut Frame, d: &Draw, h: &crate::mainscr::HighScore, blink: bool) {
+    let v = &d.v;
+    fader::kirak_fader(f, d.white, v, [60.0, 134.0, 330.0, 130.0], [0.0, 54.0, 90.0], 100.0, [0.0, 90.0, 130.0], 30.0, [0.0, 0.0]);
+    let won = crate::ui::sprintf(&d.texts.get(15, 3, 3), &[(h.score / 50) as i64]);
+    d.font.text(f, v, &won, 0xe1 as f32, 0xa1 as f32, 0x28, 3, Align::Centre, d.col(7, 100.0), None);
+    d.font.text(f, v, &d.texts.get(15, 3, 2), 0xe1 as f32, 0xbf as f32, 0x28, 4, Align::Centre, d.col(7, 100.0), None);
+    entry_text(f, d, &h.entry, [0x91 as f32, 0xdf as f32], blink);
+}
+
+/// An entry's text in its `IOMaxLen` cells from `at` (`Align::Field`) and the blinking cursor (`FillToScreen`).
+fn entry_text(f: &mut Frame, d: &Draw, n: &crate::mainscr::NameEntry, [x0, y]: [f32; 2], blink: bool) {
+    let (v, max) = (&d.v, n.max);
     d.font.text(f, v, &n.text, x0, y, max, 3, Align::Field, d.col(2, 100.0), None);
     if blink {
         let cw = d.font.advance(3) as i32;

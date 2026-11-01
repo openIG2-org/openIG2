@@ -135,6 +135,10 @@ impl Front {
     }
 }
 
+/// `scenario_kezdesi_ido` (exe 0xBAD108) and `scenario_registry_name` (0xBAD0E8, 0x1e bytes).
+const SCENARIO_START: u32 = 0xBAD108;
+const SCENARIO_REGISTRY: u32 = 0xBAD0E8;
+
 /// How long a story's earthquake shakes the colony camera (`FRISSIT_Story`: `Colony_foldrenges_ido + 10000 < AktIdo`).
 const QUAKE: std::time::Duration = std::time::Duration::from_millis(10000);
 
@@ -2292,6 +2296,28 @@ impl App {
                 f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods));
             }
             Act::Tutorial(_) => {}
+            // Ours (ADR 0050): `AddHighscore` (`LoadHighscores`, the entry slotted in, `SaveHighscores`) into our
+            // settings file (`options.dat` stays untouched), and the list's tables reloaded.
+            Act::HighScore => {
+                let Some(h) = self.front.as_mut().and_then(|f| f.s.scored.take()) else { return };
+                let defaults = crate::mainscr_scenario::default_scores(&self.install);
+                let mut reg = ig2_formats::options::Options::load();
+                let mut t = ig2_formats::highscore::Table::load(&reg, &h.registry, &defaults);
+                t.add(&ig2_formats::text::decode(&h.entry.text, self.install.lang()), h.score);
+                t.save(&mut reg, &h.registry);
+                let pairs: Vec<(String, String)> = reg.pairs.iter().filter(|(k, _)| k.starts_with(&format!("{}_", h.registry))).cloned().collect();
+                let pairs: Vec<(&str, &str)> = pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                if let Err(e) = ig2_formats::options::Options::store_own(&pairs) {
+                    eprintln!("ig2-client: high scores: {e}");
+                }
+                let Some(f) = &mut self.front else { return };
+                let texts = crate::ui::UiTexts::load(&self.install);
+                let scores = crate::mainscr_scenario::high_scores(&reg, &defaults, &h.registry, &texts);
+                let lists = f.scenarios.iter_mut().map(|a| &mut a.entries).chain(f.s.scenario.iter_mut().map(|sc| &mut sc.entries));
+                for e in lists.flatten().filter(|e| e.registry.eq_ignore_ascii_case(&h.registry)) {
+                    e.scores = scores.clone();
+                }
+            }
         }
     }
 
@@ -2379,6 +2405,16 @@ impl App {
                 // `MainScr` 0x4fef1b: `StoreScenarioDescription` after `Betolt_Scenario`.
                 w.scenario = matches!(st, Start::Scenario { .. });
                 w.ui.scenario = w.scenario;
+                // `MainScr_Kilep` 0x4fef45..63: a scenario's start time and registry name (saved; only ADR 0050's
+                // high-score entry reads them).
+                if let Start::Scenario { registry, .. } = &st {
+                    let m = &mut w.game.state.mem;
+                    m.set_i32(SCENARIO_START, m.i32(ig2_sim::save::va::IDO));
+                    let name = registry.as_bytes();
+                    for i in 0..0x1e {
+                        m.set_u8(SCENARIO_REGISTRY + i as u32, if i < 0x1d { name.get(i).copied().unwrap_or(0) } else { 0 });
+                    }
+                }
                 let campaign = matches!(st, Start::Campaign { .. });
                 if campaign {
                     w.campaign_intro();
@@ -2980,6 +3016,19 @@ impl App {
         }
     }
 
+    /// Ours (ADR 0050, re/rules/game-end.md §6): a single-player scenario this machine won with the high-score entry
+    /// on: its registry name and score, `Ido − scenario_kezdesi_ido` (the exe has no formula: `scenario_score` is never
+    /// written; its dialog shows `score / 50` days, so the score is the days to win in `Ido` units).
+    fn won_scenario(&self) -> Option<(String, i32)> {
+        if !self.display.high_scores || self.world.net.is_some() || self.world.game.over != Some(ig2_sim::game::GameOver::Won) {
+            return None;
+        }
+        let m = &self.world.game.state.mem;
+        let name: Vec<u8> = (0..0x1e).map(|i| m.u8(SCENARIO_REGISTRY + i)).take_while(|&b| b != 0).collect();
+        let score = m.i32(ig2_sim::save::va::IDO) - m.i32(SCENARIO_START);
+        (!name.is_empty() && score > 0).then(|| (String::from_utf8_lossy(&name).into_owned(), score))
+    }
+
     fn exit_to_main_menu(&mut self) {
         // `ExitToMainScreen`: `TutorialStop` (the overrun flags back); in multiplayer the session's teardown
         // (`MultiCloseClient`/`Server`).
@@ -2997,6 +3046,11 @@ impl App {
         }
         let scene = self.front.take().and_then(|f| f.scene);
         let mut front = Front::new(scene, self.now_ms(), &self.settings);
+        // Ours (ADR 0050): back from a won scenario, its list under the high-score entry (`MainScr_Belep` step 7).
+        if let Some((registry, score)) = self.won_scenario() {
+            let a = front.scenarios.get_or_insert_with(|| crate::mainscr_scenario::Assets::load(&self.install, &crate::ui::UiTexts::load(&self.install)));
+            front.s.open_high_score(a.entries.clone(), &registry, score);
+        }
         // Ours (ADR 0034): a finished game's statistics, after its end videos.
         front.stats = self.stats_end.take().map(crate::stats_screen::StatsScreen::end);
         self.front = Some(front);
@@ -3821,7 +3875,7 @@ impl App {
             f.s.escape();
             return;
         }
-        if f.s.name.is_none() {
+        if f.s.name.is_none() && f.s.high_score.is_none() {
             if let (Key::Character("o" | "O"), Some(a)) = (k.as_ref(), f.s.settings_key()) {
                 self.front_act(a);
             }
@@ -3836,10 +3890,19 @@ impl App {
             Key::Named(NamedKey::ArrowLeft) => Some(EntryKey::Left),
             Key::Named(NamedKey::ArrowRight) => Some(EntryKey::Right),
             Key::Named(NamedKey::Space) => Some(EntryKey::Char(b' ')),
+            // The high-score name takes the code page's letters (`HighScoreNev` goes through `KiirStr`).
+            Key::Character(c) if f.s.high_score.is_some() => {
+                let b = self.hud.as_ref().map_or_else(|| c.as_bytes().to_vec(), |h| h.texts.encode(c));
+                b.first().copied().map(EntryKey::Char)
+            }
             Key::Character(c) => c.bytes().next().filter(|b| b.is_ascii()).map(EntryKey::Char),
             _ => None,
         };
-        if let Some(a) = key.and_then(|key| f.s.name_key(key)) {
+        let act = match f.s.high_score.is_some() {
+            true => key.and_then(|key| f.s.high_score_key(key)),
+            false => key.and_then(|key| f.s.name_key(key)),
+        };
+        if let Some(a) = act {
             self.front_act(a);
         }
     }

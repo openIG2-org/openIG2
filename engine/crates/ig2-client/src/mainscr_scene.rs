@@ -534,6 +534,9 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
     if let Some(n) = &s.name {
         crate::mainscr_scenario::draw_name(frame, &d, n, blink);
     }
+    if let Some(h) = &s.high_score {
+        crate::mainscr_scenario::draw_high_score(frame, &d, h, blink);
+    }
     if let Some(reason) = s.disconnected {
         crate::mainscr_scenario::draw_disconnected(frame, &d, reason, s.at);
     }

@@ -65,6 +65,9 @@ pub enum Act {
     Settings,
     /// Ours (ADR 0039): the Quick game label: the skirmish panel alone, with the last skirmish's settings.
     QuickGame,
+    /// Ours (ADR 0050): the high-score name entered (`AddHighscore(scenario_registry_name, HighScoreNev, score)`):
+    /// [`MainScr::scored`].
+    HighScore,
 }
 
 /// What `MainScr_Kilep` starts (spec §2.2 step 3).
@@ -107,26 +110,47 @@ pub struct NameEntry {
     pub text: Vec<u8>,
     /// `IOKurzor`.
     pub cursor: usize,
+    /// `IOMaxLen`; `name`: the field takes only `A–Z a–z 0–9 _` (`IOAzonosito` 0x98), else any byte ≥ 0x20.
+    pub max: usize,
+    pub name: bool,
 }
 
 /// `IOMaxLen` of the name entry.
 pub const NAME_MAX: usize = 9;
+/// `IOMaxLen` of the high-score name entry (0x14).
+pub const HIGH_SCORE_MAX: usize = 0x14;
+
+/// Ours (ADR 0050, re/rules/game-end.md §6): the high-score name entry the exe never opens (`EnterHighScoreNameMode`,
+/// `scenario_nevbevitelkell`): the won scenario's registry name, its score (`Ido` units) and the name typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighScore {
+    pub registry: String,
+    pub score: i32,
+    pub entry: NameEntry,
+}
 
 impl NameEntry {
     pub fn new(name: &[u8]) -> Self {
-        Self { text: name.to_vec(), cursor: name.len() }
+        Self { text: name.to_vec(), cursor: name.len(), max: NAME_MAX, name: true }
     }
 
-    /// A key (`DoKeyboard` ELF, `IOMode`): for 0x98 only `A–Z a–z 0–9 _` go in (a space becomes `_`), at the cursor,
-    /// while it is below `IOMaxLen` (at a full text the last byte drops); Backspace removes the byte before the
-    /// cursor. Enter (`MainScr_IPEntered`): the spaces trimmed, and a non-empty name ends the entry (`true`).
+    /// The high-score name entry (`IOAzonosito` 0x99, `IOMaxLen` 0x14, seeded with "Player").
+    pub fn high_score() -> Self {
+        Self { max: HIGH_SCORE_MAX, name: false, ..Self::new(b"Player") }
+    }
+
+    /// A key (`DoKeyboard` ELF, `IOMode`): for 0x98 only `A–Z a–z 0–9 _` go in (a space becomes `_`), for the
+    /// others any byte ≥ 0x20 (re/screens/input.md), at the cursor, while it is below `IOMaxLen` (at a full text the
+    /// last byte drops); Backspace removes the byte before the cursor. Enter (`MainScr_IPEntered`): the spaces
+    /// trimmed, and a non-empty name ends the entry (`true`).
     pub fn key(&mut self, k: crate::options::EntryKey) -> bool {
         use crate::options::EntryKey;
         match k {
             EntryKey::Char(c) => {
-                let c = if c == b' ' { b'_' } else { c };
-                if (c.is_ascii_alphanumeric() || c == b'_') && self.cursor < NAME_MAX {
-                    self.text.truncate(NAME_MAX - 1);
+                let c = if c == b' ' && self.name { b'_' } else { c };
+                let ok = if self.name { c.is_ascii_alphanumeric() || c == b'_' } else { c >= 0x20 };
+                if ok && self.cursor < self.max {
+                    self.text.truncate(self.max - 1);
                     self.text.insert(self.cursor.min(self.text.len()), c);
                     self.cursor += 1;
                 }
@@ -251,6 +275,9 @@ pub struct MainScr {
     pub scenario: Option<crate::mainscr_scenario::ScenarioList>,
     /// The multiplayer name entry (`EnterNameMode`) and `MultiplayerNev` (exe 0x914800, "Player").
     pub name: Option<NameEntry>,
+    /// Ours (ADR 0050): the high-score name entry over the scenario list, and the entry accepted.
+    pub high_score: Option<HighScore>,
+    pub scored: Option<HighScore>,
     /// Our MP screens are up (`mp_lobby`, ADR 0014): the rings are flown out (`Cel` 6) as for the scenario list.
     pub mp: bool,
     /// The scenario list's load after the ring's press: the UI ticks left until `ScenarioGombraRanyomtak`'s resets.
@@ -337,6 +364,8 @@ impl MainScr {
             cam: camera(0.0, 200.0, 0.0, 1000.0, 1500.0),
             scenario: None,
             name: None,
+            high_score: None,
+            scored: None,
             mp: false,
             loading: None,
             disconnected: None,
@@ -538,6 +567,10 @@ impl MainScr {
             return None;
         }
         // `FUN_004fe190` (exe): `Mouse_Gomb && Mouse_Lenyom` on OK (x 270..370, y 220..250) clears the box.
+        // `EnterHighScoreNameMode`: the panel's hot-spots 0x15..0x27 are off (spec §7).
+        if self.high_score.is_some() {
+            return None;
+        }
         if self.disconnected.is_some() {
             let (x, y) = (at[0].floor() as i32, at[1].floor() as i32);
             if ((x - 0x10e) as u32) < 0x65 && ((y - 0xdc) as u32) < 0x1f {
@@ -725,8 +758,9 @@ impl MainScr {
     /// Esc (`MainScr_ESCPressedWhenMultiplayerselect` exe 0x4fe780, the ring menus' case): with the rings at rest,
     /// back to the main set through a fly-out, also from the main set itself; never quits.
     pub fn escape(&mut self) {
-        // The list's load runs inside `MainScr_Main`: no key is read until it returns.
-        if self.loading.is_some() {
+        // The list's load runs inside `MainScr_Main`: no key is read until it returns. `MainScr_CancelIPEnter` skips the
+        // high-score entry (0x99), and the list under it has its hot-spots off.
+        if self.loading.is_some() || self.high_score.is_some() {
             return;
         }
         if let Some(sc) = &mut self.scenario {
@@ -761,6 +795,27 @@ impl MainScr {
     /// The scenario list opened with `entries` (`ScenarioGombraRanyomtak`).
     pub fn open_scenarios(&mut self, entries: Vec<crate::mainscr_scenario::Entry>) {
         self.scenario = Some(crate::mainscr_scenario::ScenarioList::open(entries));
+    }
+
+    /// `MainScr_Belep` step 7 (spec §2.1), ours (ADR 0050): back from a won scenario, the list opens on its entry in
+    /// high-score view (`ScenarioGombraRanyomtak(scenario_registry_name)`) under the name entry.
+    pub fn open_high_score(&mut self, entries: Vec<crate::mainscr_scenario::Entry>, registry: &str, score: i32) {
+        let mut sc = crate::mainscr_scenario::ScenarioList::open(entries);
+        sc.select_registry(registry);
+        self.scenario = Some(sc);
+        self.cel = 6.0;
+        self.high_score = Some(HighScore { registry: registry.to_string(), score, entry: NameEntry::high_score() });
+    }
+
+    /// A key while the high-score entry is up (Esc does nothing: `MainScr_CancelIPEnter` skips 0x99);
+    /// `Act::HighScore` when Enter accepts a name.
+    pub fn high_score_key(&mut self, k: crate::options::EntryKey) -> Option<Act> {
+        let h = self.high_score.as_mut()?;
+        if !h.entry.key(k) {
+            return None;
+        }
+        self.scored = self.high_score.take();
+        Some(Act::HighScore)
     }
 
     /// A key while the name entry is up; `Act::NameEntered` when Enter accepts it.
@@ -979,6 +1034,34 @@ impl MainScr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0050: back from a won scenario the list opens on it in high-score view under the 0x99 entry ("Player",
+    /// any byte ≥ 0x20, 20 at most); Esc and presses do nothing; Enter with a name hands it over once.
+    #[test]
+    fn high_score_entry() {
+        use crate::mainscr_scenario::Entry;
+        use crate::options::EntryKey as K;
+        let e = |r: &str| Entry { registry: r.into(), file: format!("scenario/{r}.scn"), ..Default::default() };
+        let mut entries = vec![Entry { kind: 1, ..Default::default() }];
+        entries.extend((0..30).map(|k| e(&format!("s{k:02}"))));
+        let mut s = MainScr::enter();
+        s.open_high_score(entries, "S27", 1234);
+        let sc = s.scenario.as_ref().unwrap();
+        assert_eq!((sc.selected, sc.shown, sc.first, sc.high_score), (28, 28, 31 - 23, true));
+        assert_eq!(s.high_score.as_ref().map(|h| (h.entry.text.as_slice(), h.score)), Some((&b"Player"[..], 1234)));
+        s.escape();
+        assert_eq!(s.press([470.0, 450.0]), None);
+        assert!(s.high_score.is_some() && s.start.is_none());
+        for _ in 0..6 {
+            assert_eq!(s.high_score_key(K::Back), None);
+        }
+        for c in b"Kov\xe1cs J. & co., the 2nd!" {
+            s.high_score_key(K::Char(*c));
+        }
+        assert_eq!(s.high_score.as_ref().unwrap().entry.text, b"Kov\xe1cs J. & co., the");
+        assert_eq!(s.high_score_key(K::Enter), Some(Act::HighScore));
+        assert!(s.high_score.is_none() && s.scored.as_ref().is_some_and(|h| h.registry == "S27"));
+    }
 
     /// ADR 0039: the Quick game label opens the skirmish panel alone with the given settings; Start starts that
     /// skirmish, Esc goes back to the main set.
