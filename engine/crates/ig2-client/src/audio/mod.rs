@@ -242,6 +242,8 @@ pub struct Audio {
     pub music_on: bool,
     pub sound_volume: i32,
     pub music_volume: i32,
+    /// Ours (ADR 0058): the speech's volume 0..=100; `None` = the sound volume's, as in the original.
+    pub voice_volume: Option<i32>,
     pub music: MusicState,
     /// The 100 Hz UI ticks run so far (the log's clock).
     pub ui: u64,
@@ -305,6 +307,7 @@ impl Audio {
             music_on: true,
             sound_volume: opts.int("Sound Volume").unwrap_or(100).clamp(0, 100),
             music_volume: opts.int("Music Volume").unwrap_or(100).clamp(0, 100),
+            voice_volume: crate::display::voice_volume(&opts),
             music: MusicState::default(),
             start_voice: None,
             ui: 0,
@@ -356,7 +359,7 @@ impl Audio {
         let Some(mixer) = self.mixer.clone() else { return };
         let Ok(mut m) = mixer.lock() else { return };
         let ch = m.alloc_free();
-        m.set_volume(ch, mixer_volume(effect_volume(self.sound_volume, 100)));
+        m.set_volume(ch, mixer_volume(effect_volume(self.voice_level(), 100)));
         m.play(ch, &chunk, 0);
         self.message.channel = Some(ch);
     }
@@ -412,6 +415,16 @@ impl Audio {
         self.music.duck = duck;
     }
 
+    /// The global volume speech plays at (ADR 0058): the voice volume, else the sound volume.
+    fn voice_level(&self) -> i32 {
+        self.voice_volume.unwrap_or(self.sound_volume)
+    }
+
+    /// The global volume `id` plays at: the alien voices (`Mes_Hangok[3..19]`) are speech.
+    fn level_of(&self, id: SoundId) -> i32 {
+        if id.table == Table::Mes && (3..19).contains(&id.idx) { self.voice_level() } else { self.sound_volume }
+    }
+
     pub fn has_device(&self) -> bool {
         self.output.is_some()
     }
@@ -431,7 +444,7 @@ impl Audio {
             return;
         }
         let Some(h) = self.tables.get(id.table, id.idx as usize) else { return };
-        let volume = mixer_volume(effect_volume(self.sound_volume, self.volumes.get(&id).copied().unwrap_or(h.volume)));
+        let volume = mixer_volume(effect_volume(self.level_of(id), self.volumes.get(&id).copied().unwrap_or(h.volume)));
         self.log.push(Played { id, ui: self.ui });
         if !self.records.contains_key(&id) {
             let chunk = self.load(id);
@@ -530,7 +543,7 @@ impl Audio {
     /// `MuteSoundGlobal` / `UnMuteSoundGlobal`: the first voice at 0, or back at the record's volume.
     pub fn mute(&mut self, id: SoundId, mute: bool) {
         let Some(ch) = self.first_voice(id) else { return };
-        let v = if mute { 0 } else { self.tables.get(id.table, id.idx as usize).map_or(0, |h| mixer_volume(effect_volume(self.sound_volume, h.volume))) };
+        let v = if mute { 0 } else { self.tables.get(id.table, id.idx as usize).map_or(0, |h| mixer_volume(effect_volume(self.level_of(id), h.volume))) };
         if let Some(m) = &self.mixer
             && let Ok(mut m) = m.lock()
         {
@@ -573,7 +586,7 @@ impl Audio {
         let chunk = decode::chunk(self.install.read(&real).ok()?, rate).ok()?;
         let mut m = mixer.lock().ok()?;
         let ch = m.alloc_free();
-        m.set_volume(ch, mixer_volume(convert_volume(self.sound_volume as f64)));
+        m.set_volume(ch, mixer_volume(convert_volume(self.voice_level() as f64)));
         m.play(ch, &chunk, 0);
         Some(ch)
     }

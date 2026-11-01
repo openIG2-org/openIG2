@@ -825,7 +825,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                         os.settings_only = true;
                         os.slots = vec![None; crate::options::SLOTS + 1];
                         os.lang_at_start = Some(file.int(crate::display::LANGUAGE).unwrap_or(0));
-                        os.modern = Some(crate::options::modern::Modern::new(&os, s.player.clone()));
+                        os.modern = Some(crate::options::modern::Modern::new(&os, s.player.clone(), Default::default()));
                     }
                     options = Some((h, os));
                 }

@@ -368,5 +368,6 @@ flags & 3 = alignment). Geometry: literals (`DrawOverX/Y/Xm/Ym` = 0x28, 0x32, 0x
   empire's race; "Close connection" is `HostSession::drop_player` (the player may come back). Mode 2 has no
   counterpart (row 378, keep). Compared with `run_screendiff.py … mpwait` (`tools/trace/probes/mpwait.js` stages the
   exe's state in a single-player game; the client draws with `--mp-wait`).
+- Key rebinding (ADR 0058, row 471): `ig2-client::bindings` holds the action table; `window.rs` `rebind` rewrites a key event to its action's default key before the screens match it, so §1-§10 keep the original's keys.
 - Modifiers: `ig2-client::window` `modifier_key` (own key's down/up, AltGr = Alt, not while `tutorial_owns_input()`),
   `middle_clears` (drops modifiers and releases held buttons on any other button). Not yet checked in the live window.

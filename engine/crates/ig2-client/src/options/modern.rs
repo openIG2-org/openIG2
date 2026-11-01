@@ -11,10 +11,9 @@ use crate::render::{kind, Blend, Frame, Instance};
 const ROW_H: f32 = 17.0;
 const PANEL: [f32; 4] = [20.0, 12.0, 600.0, 456.0];
 const TABS_Y: f32 = 44.0;
-const TAB: [f32; 3] = [26.0, 84.0, 82.0];
+const TAB: [f32; 3] = [26.0, 74.0, 72.0];
 const LIST_Y: f32 = 72.0;
-/// The settings a tab may hold (the list ends above the description line).
-#[cfg(test)]
+/// The settings a tab shows at once (the list ends above the description line); the Controls tab scrolls.
 const MAX_ITEMS: usize = 19;
 const LABEL_X: f32 = 40.0;
 const CTRL: [f32; 2] = [392.0, 600.0];
@@ -34,20 +33,23 @@ pub enum Tab {
     Accessibility,
     Multiplayer,
     Language,
+    /// ADR 0058: the key bindings.
+    Controls,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 7] = [Tab::Display, Tab::Sound, Tab::Interface, Tab::Game, Tab::Accessibility, Tab::Multiplayer, Tab::Language];
+    pub const ALL: [Tab; 8] = [Tab::Display, Tab::Sound, Tab::Interface, Tab::Game, Tab::Controls, Tab::Accessibility, Tab::Multiplayer, Tab::Language];
 
     /// The label (the remake text table's key).
     pub fn title(self) -> &'static str {
-        ["DISPLAY", "SOUND", "INTERFACE", "GAME", "ACCESSIBILITY", "MULTIPLAYER", "LANGUAGE"][self as usize]
+        ["DISPLAY", "SOUND", "INTERFACE", "GAME", "ACCESSIBILITY", "MULTIPLAYER", "LANGUAGE", "CONTROLS"][self as usize]
     }
 
     fn group(self) -> Option<Group> {
         match self {
             Tab::Display => Some(Group::Display),
-            Tab::Sound => None,
+            Tab::Sound => Some(Group::Sound),
+            Tab::Controls => None,
             Tab::Interface => Some(Group::Interface),
             Tab::Game => Some(Group::Game),
             Tab::Accessibility => Some(Group::Accessibility),
@@ -63,16 +65,21 @@ pub enum Item {
     Row(usize),
     Slider(usize),
     Name,
+    /// ADR 0058: an action's key (`crate::bindings::ACTIONS`), and the reset of every key.
+    Bind(usize),
+    Reset,
 }
 
 /// The tab's settings in order (ADR 0053 §2): Display the remake's rows, gamma, the exe's graphics rows, the modern
 /// lighting's (ADR 0055); Sound the
-/// two volumes; Game the exe's game rows, then ours; Multiplayer the name, then ours; the rest the group's rows.
+/// two volumes, then ours; Game the exe's game rows, then ours; Multiplayer the name, then ours; Controls the keys
+/// and their reset (ADR 0058); the rest the group's rows.
 pub fn items(rows: &[Row], tab: Tab) -> Vec<Item> {
     let ours = |g| rows.iter().enumerate().filter(move |(_, r)| r.ours && r.group == g).map(|(k, _)| Item::Row(k));
     let exe = |page| rows.iter().enumerate().filter(move |(_, r)| !r.ours && r.page == page).map(|(k, _)| Item::Row(k));
     let mut v: Vec<Item> = match tab {
-        Tab::Sound => return vec![Item::Slider(0), Item::Slider(1)],
+        Tab::Sound => vec![Item::Slider(0), Item::Slider(1)],
+        Tab::Controls => return (0..crate::bindings::ACTIONS.len()).map(Item::Bind).chain([Item::Reset]).collect(),
         Tab::Display => ours(Group::Display).chain([Item::Slider(2)]).chain(exe(1)).chain(ours(Group::Graphics)).collect(),
         Tab::Game => exe(2).collect(),
         Tab::Multiplayer => vec![Item::Name],
@@ -115,7 +122,11 @@ pub fn describe(key: &str) -> &'static str {
         "OptionsHiresVectors" => "Sharper line drawings on the research screen.",
         "OptionsFogResolution" => "How many nebula clouds the starmap draws.",
         "Music Volume" => "The music's loudness.",
-        "Sound Volume" => "The loudness of the sound effects and speech.",
+        "Sound Volume" => "The loudness of the sound effects, and of speech at Same as sound.",
+        "VoiceVolume" => "The loudness of the advisors' and messages' speech.",
+        "ExtraSpeeds" => "The fastest speed's key or button pressed again goes faster: x2, then x4.",
+        "Bind" => "Enter or a click, then the new key; Esc keeps the old one.",
+        "ResetKeys" => "Every key back to the original game's.",
         "Gamma Correction" => "The picture's brightness, where the display allows it.",
         NAME_KEY => "Your name in multiplayer games, at most 9 letters.",
         "DisplayMode" => "A window, a borderless window over the screen, or fullscreen.",
@@ -197,8 +208,12 @@ pub struct Modern {
     pub editing: bool,
     /// `MultiplayerNev` in the font's bytes.
     pub name: Vec<u8>,
-    /// The applied values Back puts back: the rows', the sliders', the name.
-    kept: (Vec<i32>, [i32; 3], Vec<u8>),
+    /// ADR 0058: the keys, the action waiting for its new key, the Controls tab's first line shown.
+    pub binds: crate::bindings::Bindings,
+    pub capture: Option<usize>,
+    scroll: usize,
+    /// The applied values Back puts back: the rows', the sliders', the name, the keys.
+    kept: (Vec<i32>, [i32; 3], Vec<u8>, crate::bindings::Bindings),
 }
 
 fn inside(r: [f32; 4], at: [f32; 2]) -> bool {
@@ -217,14 +232,14 @@ fn line_y(i: usize) -> f32 {
 const TRACK: [f32; 2] = [CTRL[0] + 4.0, 160.0];
 
 impl Modern {
-    pub fn new(o: &OptionsScreen, name: Vec<u8>) -> Self {
-        let mut m = Self { tab: Tab::Display, focus: 0, hover: None, drag: None, editing: false, name, kept: Default::default() };
+    pub fn new(o: &OptionsScreen, name: Vec<u8>, binds: crate::bindings::Bindings) -> Self {
+        let mut m = Self { tab: Tab::Display, focus: 0, hover: None, drag: None, editing: false, name, binds, capture: None, scroll: 0, kept: Default::default() };
         m.keep(o);
         m
     }
 
-    fn values(&self, o: &OptionsScreen) -> (Vec<i32>, [i32; 3], Vec<u8>) {
-        (o.rows.iter().map(|r| r.value).collect(), [0, 1, 2].map(|i| o.sliders[i].value), self.name.clone())
+    fn values(&self, o: &OptionsScreen) -> (Vec<i32>, [i32; 3], Vec<u8>, crate::bindings::Bindings) {
+        (o.rows.iter().map(|r| r.value).collect(), [0, 1, 2].map(|i| o.sliders[i].value), self.name.clone(), self.binds.clone())
     }
 
     fn keep(&mut self, o: &OptionsScreen) {
@@ -250,8 +265,8 @@ impl Modern {
         if inside(APPLY, at) {
             return Some(Spot::Apply);
         }
-        let n = self.items(o).len();
-        let i = (0..n).find(|&i| inside([32.0, line_y(i), 576.0, ROW_H], at))?;
+        let n = self.items(o).len().saturating_sub(self.scroll).min(MAX_ITEMS);
+        let i = (0..n).find(|&i| inside([32.0, line_y(i), 576.0, ROW_H], at))? + self.scroll;
         let part = if at[0] >= CTRL[1] - 18.0 { 1 } else if (CTRL[0]..CTRL[0] + 18.0).contains(&at[0]) { -1 } else { 0 };
         Some(Spot::Item(i, part))
     }
@@ -260,7 +275,7 @@ impl Modern {
         match it {
             Item::Row(k) => o.rows[k].enabled,
             Item::Slider(i) => o.sliders[i].enabled,
-            Item::Name => true,
+            Item::Name | Item::Bind(_) | Item::Reset => true,
         }
     }
 
@@ -289,6 +304,7 @@ impl Modern {
     pub fn press(&mut self, o: &mut OptionsScreen, at: [f32; 2], sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
         self.hover = self.spot(o, at);
         self.editing = false;
+        self.capture = None;
         let spot = self.hover?;
         match spot {
             Spot::Tab(t) => self.set_tab(t),
@@ -309,6 +325,8 @@ impl Modern {
                         Self::slider_to(o, s, at[0]);
                         self.drag = Some(s);
                     }
+                    Item::Bind(b) => self.capture = Some(b),
+                    Item::Reset => self.binds = Default::default(),
                     _ => {}
                 }
             }
@@ -324,6 +342,8 @@ impl Modern {
     fn set_tab(&mut self, t: Tab) {
         self.tab = t;
         self.focus = 0;
+        self.scroll = 0;
+        self.capture = None;
         self.editing = false;
         self.drag = None;
         self.hover = None;
@@ -348,14 +368,37 @@ impl Modern {
             s.value = v;
         }
         self.name = self.kept.2.clone();
+        self.binds = self.kept.3.clone();
+        self.capture = None;
         check_dependencies(&mut o.rows, o.multiplayer);
         if o.leaving.is_none() {
             o.leave(if o.load_only { Act::MainMenu } else { Act::Back });
         }
     }
 
+    /// ADR 0058: the key pressed while an action waits for one becomes its key (a key no binding takes is ignored).
+    pub fn bind(&mut self, k: winit::keyboard::KeyCode, sound: &mut dyn FnMut(crate::audio::SoundId)) {
+        let Some(b) = self.capture else { return };
+        if crate::bindings::key_name(k).is_some() {
+            self.binds.0[b] = k;
+            self.capture = None;
+            sound(crate::audio::CLICK);
+        }
+    }
+
+    /// The mouse wheel: the Controls tab's list scrolls `steps` lines up (positive) or down.
+    pub fn wheel(&mut self, o: &OptionsScreen, steps: i32) {
+        let max = self.items(o).len().saturating_sub(MAX_ITEMS);
+        self.scroll = (self.scroll as i32 - steps).clamp(0, max as i32) as usize;
+    }
+
     pub fn key(&mut self, o: &mut OptionsScreen, k: Nav, sound: &mut dyn FnMut(crate::audio::SoundId)) {
         self.hover = None;
+        if self.capture.is_some() {
+            // Esc (or another key of the screen's own) gives up waiting for the key.
+            self.capture = None;
+            return;
+        }
         let items = self.items(o);
         let lines = items.len() + 2;
         if self.editing {
@@ -373,8 +416,12 @@ impl Modern {
         match k {
             Nav::NextTab => self.set_tab(Tab::ALL[(tab + 1) % Tab::ALL.len()]),
             Nav::PrevTab => self.set_tab(Tab::ALL[(tab + Tab::ALL.len() - 1) % Tab::ALL.len()]),
-            Nav::Up => self.focus = (self.focus + lines - 1) % lines,
-            Nav::Down => self.focus = (self.focus + 1) % lines,
+            Nav::Up | Nav::Down => {
+                self.focus = (self.focus + if k == Nav::Up { lines - 1 } else { 1 }) % lines;
+                // The focused line in view.
+                let f = self.focus.min(items.len().saturating_sub(1));
+                self.scroll = self.scroll.min(f).max((f + 1).saturating_sub(MAX_ITEMS));
+            }
             Nav::Back => self.back(o),
             Nav::Left | Nav::Right | Nav::Activate => {
                 let d = if k == Nav::Left { -1 } else { 1 };
@@ -387,6 +434,8 @@ impl Modern {
                         Item::Row(r) => Self::step(o, r, d),
                         Item::Slider(s) if k != Nav::Activate => o.sliders[s].value = (o.sliders[s].value + 5 * d).clamp(0, 100),
                         Item::Name if k == Nav::Activate => self.editing = true,
+                        Item::Bind(b) if k == Nav::Activate => self.capture = Some(b),
+                        Item::Reset if k == Nav::Activate => self.binds = Default::default(),
                         _ => return,
                     },
                     _ => return,
@@ -432,6 +481,14 @@ impl Modern {
             }
             Item::Slider(i) => o.sliders[i].title.clone(),
             Item::Name => d.texts.ours("Player name"),
+            Item::Bind(b) => {
+                let a = &crate::bindings::ACTIONS[b];
+                match a.ctx {
+                    crate::bindings::Ctx::Global => d.texts.ours(a.name),
+                    c => [d.texts.ours(c.title()), b": ".to_vec(), d.texts.ours(a.name)].concat(),
+                }
+            }
+            Item::Reset => d.texts.ours("Reset all keys"),
         }
     }
 
@@ -440,6 +497,8 @@ impl Modern {
             Item::Row(k) => &o.rows[k].key,
             Item::Slider(i) => ["Music Volume", "Sound Volume", "Gamma Correction"][i],
             Item::Name => NAME_KEY,
+            Item::Bind(_) => "Bind",
+            Item::Reset => "ResetKeys",
         }
     }
 
@@ -457,8 +516,15 @@ impl Modern {
         }
         quad(f, d, [32.0, LIST_Y - 5.0, 576.0, 1.0], t.panel_edge.map(|c| c / 255.0), 1.0);
         let items = self.items(o);
-        for (i, &it) in items.iter().enumerate() {
+        for (i, &it) in items.iter().enumerate().skip(self.scroll).take(MAX_ITEMS) {
             self.draw_item(o, f, d, i, it);
+        }
+        // More lines above or below the Controls tab's view.
+        if self.scroll > 0 {
+            text(f, d, b"^", CTRL[1] + 6.0, line_y(0) + 4.0, t.small, Align::Left, t.dim);
+        }
+        if items.len() > self.scroll + MAX_ITEMS {
+            text(f, d, b"v", CTRL[1] + 6.0, line_y(MAX_ITEMS - 1) + 4.0, t.small, Align::Left, t.dim);
         }
         // The Language tab: the restart notice (as on the in-game Remake page).
         let lang = items.iter().find_map(|&it| match it {
@@ -469,13 +535,26 @@ impl Modern {
             text(f, d, &d.texts.ours("Restart to change the language"), LABEL_X, line_y(items.len()) + 8.0, t.small, Align::Left, t.hot);
         }
         quad(f, d, [32.0, DESC_Y - 6.0, 576.0, 1.0], t.panel_edge.map(|c| c / 255.0), 1.0);
-        let desc = match self.hover.or(Some(Spot::Item(self.focus, 0))) {
+        let at = self.hover.or(Some(Spot::Item(self.focus, 0)));
+        let desc = match at {
+            _ if self.capture.is_some() => Some("Press the new key; Esc keeps the old one."),
             Some(Spot::Item(i, _)) => items.get(i).map(|&it| describe(Self::key_of(o, it))),
             Some(Spot::Back) => Some("Leave; changes not applied are taken back."),
             Some(Spot::Apply) => Some("Save the changes and use them."),
             _ => None,
         };
-        if let Some(s) = desc.filter(|s| !s.is_empty()) {
+        // A key two actions share where both apply: the other action named instead.
+        let clash = match at {
+            Some(Spot::Item(i, _)) if self.capture.is_none() => match items.get(i) {
+                Some(&Item::Bind(b)) => self.binds.clash(b),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(c) = clash {
+            let s = [d.texts.ours("Also the key of:"), b" ".to_vec(), Self::label(o, d, Item::Bind(c))].concat();
+            text(f, d, &s, 320.0, DESC_Y, t.small, Align::Centre, t.hot);
+        } else if let Some(s) = desc.filter(|s| !s.is_empty()) {
             text(f, d, &d.texts.ours(s), 320.0, DESC_Y, t.small, Align::Centre, t.dim);
         }
         let pending = self.pending(o);
@@ -489,7 +568,7 @@ impl Modern {
 
     fn draw_item(&self, o: &OptionsScreen, f: &mut Frame, d: &Draw, i: usize, it: Item) {
         let t = &crate::theme::look(d);
-        let y = line_y(i);
+        let y = line_y(i - self.scroll);
         let ty = y + (ROW_H - d.font.height(t.small)) / 2.0;
         let live = Self::enabled(o, it);
         let hot = matches!(self.hover, Some(Spot::Item(h, _)) if h == i);
@@ -544,6 +623,23 @@ impl Modern {
                     quad(f, d, [x, r[1] + 2.0, 1.0, r[3] - 4.0], t.text, 1.0);
                 }
             }
+            Item::Bind(b) => {
+                let r = [CTRL[1] - 110.0, y + 1.0, 108.0, ROW_H - 2.0];
+                quad(f, d, r, t.off_track, 1.0);
+                let (s, c) = match self.capture {
+                    // The description line says what to do.
+                    Some(c) if c == b => (b"...".to_vec(), t.hot),
+                    _ => {
+                        let name = crate::bindings::key_name(self.binds.0[b]).unwrap_or("?").as_bytes().to_vec();
+                        (name, if self.binds.clash(b).is_some() { t.hot } else { vc })
+                    }
+                };
+                text(f, d, &s, r[0] + r[2] / 2.0, ty, t.small, Align::Centre, c);
+            }
+            Item::Reset => {
+                let s = if self.binds.is_default() { d.texts.ours("Original keys") } else { d.texts.ours("Reset") };
+                text(f, d, &s, CTRL[1] - 4.0, ty, t.small, Align::Right, vc);
+            }
         }
     }
 }
@@ -562,7 +658,7 @@ mod tests {
         rows.extend(crate::display::rows(&Default::default(), &[(800, 600), (640, 480)], (800, 600)));
         let s = super::super::Settings { music: 80, sound: 60, gamma: 50, gamma_enabled: false, page: 0, slot: 1, gfx_detail: 0 };
         let mut o = OptionsScreen::enter(&texts, rows, &s, true, false, Vec::new());
-        o.modern = Some(Modern::new(&o, b"Kim".to_vec()));
+        o.modern = Some(Modern::new(&o, b"Kim".to_vec(), Default::default()));
         o
     }
 
@@ -570,16 +666,17 @@ mod tests {
     #[test]
     fn every_setting_on_one_tab() {
         let o = screen();
-        let all: Vec<Item> = Tab::ALL.iter().flat_map(|&t| items(&o.rows, t)).collect();
+        let all: Vec<Item> = Tab::ALL.iter().filter(|&&t| t != Tab::Controls).flat_map(|&t| items(&o.rows, t)).collect();
         assert_eq!(all.len(), o.rows.len() + 3 + 1);
         for (k, _) in o.rows.iter().enumerate() {
             assert_eq!(all.iter().filter(|&&i| i == Item::Row(k)).count(), 1, "{}", o.rows[k].key);
         }
         for t in Tab::ALL {
             assert!(!items(&o.rows, t).is_empty(), "{t:?}");
-            assert!(items(&o.rows, t).len() <= MAX_ITEMS && line_y(MAX_ITEMS) <= DESC_Y - 8.0, "{t:?}");
+            assert!(t == Tab::Controls || items(&o.rows, t).len() <= MAX_ITEMS && line_y(MAX_ITEMS) <= DESC_Y - 8.0, "{t:?}");
         }
-        assert_eq!(items(&o.rows, Tab::Sound), [Item::Slider(0), Item::Slider(1)]);
+        assert_eq!(items(&o.rows, Tab::Sound)[..2], [Item::Slider(0), Item::Slider(1)]);
+        assert_eq!(items(&o.rows, Tab::Controls).len(), crate::bindings::ACTIONS.len() + 1);
         assert_eq!(items(&o.rows, Tab::Game)[..2], [Item::Row(0), Item::Row(1)]);
     }
 
@@ -597,8 +694,11 @@ mod tests {
         for t in Tab::ALL {
             assert!(crate::tr::has(t.title()), "{t:?}");
         }
-        for s in ["Leave; changes not applied are taken back.", "Save the changes and use them."] {
-            assert!(crate::tr::has(s));
+        for s in ["Leave; changes not applied are taken back.", "Save the changes and use them.", describe("Bind"), describe("ResetKeys")] {
+            assert!(crate::tr::has(s), "{s}");
+        }
+        for a in crate::bindings::ACTIONS {
+            assert!(crate::tr::has(a.name) && crate::tr::has(a.ctx.title()), "{}", a.name);
         }
     }
 

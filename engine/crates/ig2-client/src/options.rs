@@ -49,14 +49,16 @@ pub enum Group {
     Language,
     /// The modern lighting (ADR 0055).
     Graphics,
+    /// ADR 0058: the voice volume.
+    Sound,
 }
 
 impl Group {
-    pub const ALL: [Group; 7] = [Group::Display, Group::Interface, Group::Game, Group::Accessibility, Group::Graphics, Group::Multiplayer, Group::Language];
+    pub const ALL: [Group; 8] = [Group::Display, Group::Sound, Group::Interface, Group::Game, Group::Accessibility, Group::Graphics, Group::Multiplayer, Group::Language];
 
     /// The heading's English text (the remake text table's key, ADR 0042).
     pub fn title(self) -> &'static str {
-        ["Screen", "Interface", "Game", "Accessibility", "Multiplayer", "Language", "Graphics"][self as usize]
+        ["Screen", "Interface", "Game", "Accessibility", "Multiplayer", "Language", "Graphics", "Sound"][self as usize]
     }
 }
 
@@ -855,6 +857,26 @@ impl OptionsScreen {
         }
     }
 
+    /// ADR 0058: the modern screen waits for an action's new key.
+    pub fn capturing(&self) -> bool {
+        self.modern.as_ref().is_some_and(|m| m.capture.is_some())
+    }
+
+    /// ADR 0058: the key pressed for the action waiting for one.
+    pub fn modern_bind(&mut self, k: winit::keyboard::KeyCode, sound: &mut dyn FnMut(crate::audio::SoundId)) {
+        if let Some(m) = &mut self.modern {
+            m.bind(k, sound);
+        }
+    }
+
+    /// The modern screen's list scrolled by the mouse wheel.
+    pub fn modern_wheel(&mut self, steps: i32) {
+        if let Some(mut m) = self.modern.take() {
+            m.wheel(self, steps);
+            self.modern = Some(m);
+        }
+    }
+
     /// A text is being typed (the save name, the modern screen's player name): letters are no hotkeys.
     pub fn typing(&self) -> bool {
         self.entry.is_some() || self.modern.as_ref().is_some_and(|m| m.editing)
@@ -932,6 +954,7 @@ impl OptionsScreen {
         }
         if let Some(m) = &self.modern {
             o.set("MultiplayerNev", &String::from_utf8_lossy(&m.name));
+            m.binds.store(o);
         }
         for r in &self.rows {
             match r.labels.get(r.value.max(0) as usize) {
@@ -1678,13 +1701,14 @@ mod tests {
         assert_eq!(f.get(crate::display::UI_THEME), Some("Modern"));
         // Every row on one of the sub-pages, each within the panel; the "Page" row on line 22 turns them over.
         let pages = remake_pages(&o.rows);
-        assert_eq!(pages.len(), 2);
+        assert_eq!(pages.len(), 3);
         assert!(pages.iter().all(|p| p.len() <= SUB_LINES && !matches!(p.last(), Some(Line::Heading(_)))));
         assert_eq!(pages.iter().flatten().filter(|l| matches!(l, Line::Row(_))).count(), o.rows.iter().filter(|r| r.ours).count());
         assert!(o.row_y(SUB_LINES as i32 + 1) + 0xf <= 62 + 384);
         o.press([40.0, y(22)], &mut |_| {});
         assert_eq!(o.sub, 1);
         assert_eq!(o.remake_lines()[0], pages[1][0]);
+        o.press([40.0, y(22)], &mut |_| {});
         o.press([40.0, y(22)], &mut |_| {});
         assert_eq!(o.sub, 0);
         // Leaving the page shows its first sub-page again.

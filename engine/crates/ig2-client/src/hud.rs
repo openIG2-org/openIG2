@@ -112,6 +112,8 @@ pub struct BarState {
     /// `IdoSpeed` 0..=2 and `IdoPause`.
     pub speed: usize,
     pub paused: bool,
+    /// ADR 0058: the extra speed's factor over the fastest (2 or 4; else none).
+    pub turbo: u32,
 }
 
 /// `IdoSpeed` (0..=2) for an `IdoSpeedSzorzo` of 1, 4 or 16 (single player).
@@ -133,6 +135,9 @@ pub fn draw_bar(f: &mut Frame, pics: &Pictures, font: &Font, v: &Virtual, palett
     let selected = if s.paused { 1 } else { s.speed + 2 };
     for i in 1..=4 {
         pics.brush(f, v, &SPEED[if i == selected { i - 1 } else { i + 3 }], 1, None, white);
+    }
+    if s.turbo > 1 && !s.paused {
+        font.text(f, v, format!("x{}", s.turbo).as_bytes(), 54.0, 12.0, 2, 1, Align::Left, [1.0, 0.85, 0.3], None);
     }
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
     let money = format!("${}", (s.money + 0.5).floor() as i64);

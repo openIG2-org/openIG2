@@ -232,6 +232,10 @@ struct App {
     vsync: bool,
     /// The display settings as last applied (crate::display).
     display: crate::display::Display,
+    /// ADR 0058: the keys the player bound, as last applied.
+    bindings: crate::bindings::Bindings,
+    /// ADR 0058: the extra speeds' sim ticks per tick (1, 2 or 4) at the fastest speed in single player.
+    turbo: u32,
     /// ADR 0035: the fleets on Ctrl/Alt+1..9, kept beside the save.
     fleet_groups: crate::fleet_groups::Groups,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
@@ -501,6 +505,8 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     app.lang_forced = crate::forced_language(&o).is_some();
     // The display rows' settings (crate::display), `IG2_VSYNC` and `--letterbox` over them.
     app.display = crate::display::Display::from_settings(&app.settings);
+    app.bindings = crate::bindings::Bindings::from_settings(&app.settings);
+    app.audio.voice_volume = crate::display::voice_volume(&app.settings);
     app.vsync = std::env::var("IG2_VSYNC").map_or(app.display.vsync, |v| v != "0");
     crate::kit::layout::set_letterbox(o.letterbox || app.display.letterbox);
     crate::kit::layout::set_box_models(app.display.box_models);
@@ -745,6 +751,8 @@ impl App {
             start,
             vsync: std::env::var("IG2_VSYNC").map_or(true, |v| v != "0"),
             display: crate::display::Display::from_settings(&ig2_formats::options::Options::default()),
+            bindings: Default::default(),
+            turbo: 1,
             fleet_groups: Default::default(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
@@ -841,6 +849,7 @@ impl App {
             return Ok(());
         };
         hud.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
+        hud.turbo = self.turbo;
         hud.paused = self.world.paused();
         let r = &mut h.renderer;
         let size = [h.band.0 as f32, h.band.1 as f32];
@@ -1485,12 +1494,26 @@ impl App {
                 self.send(StarmapOrder::Speed { level });
                 self.send(StarmapOrder::Pause { paused: false });
             }
+        } else if self.turbo_step(level) {
+            self.sounds.push(crate::audio::SoundId::global(10));
         } else if !self.speed_locked() && (self.world.paused() || self.world.game.speed_level() != level) {
             // `IG2_gameUpdate` (exe 0x4e08c6): the speed buttons' sound, single player only.
             self.sounds.push(crate::audio::SoundId::global(10));
             self.send(StarmapOrder::Speed { level });
             self.send(StarmapOrder::Pause { paused: false });
         }
+    }
+
+    /// ADR 0058: the fastest speed asked for again while it runs (single player, the Extra game speeds row on) steps
+    /// the extra speeds: twice, then four times the sim ticks. Any other speed asked for ends them. True = stepped.
+    fn turbo_step(&mut self, level: i32) -> bool {
+        let on = self.settings.int(crate::display::EXTRA_SPEEDS) == Some(1);
+        if on && level == 3 && !self.world.paused() && self.world.game.speed_level() == 3 && self.spacewar.is_none() {
+            self.turbo = (self.turbo * 2).min(4);
+            return true;
+        }
+        self.turbo = 1;
+        false
     }
 
     /// MP pause and speed (input.md §5.2: `DoKeyboard`, `IG2_gameUpdate` exe 0x4e0831/0x4e08e9): the room lets every
@@ -2326,7 +2349,7 @@ impl App {
                 if let Some(o) = &mut self.options {
                     o.s.settings_only = true;
                     o.s.slots = vec![None; crate::options::SLOTS + 1];
-                    o.s.modern = Some(crate::options::modern::Modern::new(&o.s, name));
+                    o.s.modern = Some(crate::options::modern::Modern::new(&o.s, name, self.bindings.clone()));
                 }
             }
             // `Mainscreen_Update3D` exe 0x50147d: `OpenBink("misc/credits.bik", 1, 0, 0, force)`, blocking.
@@ -2586,6 +2609,10 @@ impl App {
         }
         let s = o.s.settings();
         (self.audio.music_volume, self.audio.sound_volume) = (s.music, s.sound);
+        // ADR 0058: the voice volume heard as it is set, too.
+        if let Some(r) = o.s.rows.iter().find(|r| r.ours && r.key == crate::display::VOICE_VOLUME) {
+            self.audio.voice_volume = (r.value > 0).then(|| (r.value - 1) * 10);
+        }
         if std::mem::take(&mut o.s.dirty) {
             let snap = o.s.clone();
             self.store_settings_from(&snap);
@@ -3301,6 +3328,8 @@ impl App {
         crate::upscale::set_factor(d.upscale);
         crate::render3d::set_lighting(d.lighting);
         crate::battle_fx::set_enhanced(d.battle_effects);
+        self.bindings = crate::bindings::Bindings::from_settings(&self.settings);
+        self.audio.voice_volume = crate::display::voice_volume(&self.settings);
         if d.colour_blind != old.colour_blind {
             crate::starmap::set_colour_blind(d.colour_blind);
             self.reload_palettes();
@@ -4431,7 +4460,12 @@ impl App {
         // A tutorial just started holds the game until its first tick has run (`ticked`).
         let held = self.tutorial.as_ref().is_some_and(|t| !t.ticked);
         if (!self.world.paused() || self.world.net.is_some()) && self.headless.as_ref().is_none_or(|h| h.sim) && !held {
-            for _ in 0..due {
+            // ADR 0058: the extra speeds run more ticks; a slow-down (`SetIdoLelassit`) or the row off ends them.
+            let fastest = self.world.game.speed_level() == 3 && self.settings.int(crate::display::EXTRA_SPEEDS) == Some(1);
+            if !fastest || self.world.net.is_some() || self.world.viewer.is_some() || self.spacewar.is_some() {
+                self.turbo = 1;
+            }
+            for _ in 0..due * self.turbo {
                 self.world.tick();
                 if let Some(t) = &mut self.tutorial {
                     t.counter += 1;
@@ -4838,6 +4872,7 @@ impl App {
             let Some(mut frame) = self.spacewar_frame(now, alpha, size, t) else { return };
             let (Some(g), Some(h)) = (&mut self.gpu, &mut self.hud) else { return };
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
+            h.turbo = self.turbo;
             h.paused = paused;
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Starmap, t);
             // The tutorial's window over the battle too (`GFX_DateMoneyScrollFade` pass 3, every `AktKep` but 0xd).
@@ -4866,6 +4901,7 @@ impl App {
                 return;
             }
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
+            h.turbo = self.turbo;
             h.paused = paused;
             let mut frame = spy.build(h, &d, size, self.install.lang() == ig2_formats::text::Lang::Hu);
             frame.backdrop = backdrop;
@@ -4945,6 +4981,7 @@ impl App {
         let hud = crate::prof::scope("hud");
         if let Some(h) = &mut self.hud {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
+            h.turbo = self.turbo;
             h.paused = paused;
             match (screen, &self.colony, &self.world.colony_curr) {
                 (crate::ui::Screen::Colony, Some(c), Some(curr)) => {
@@ -5244,6 +5281,13 @@ impl ApplicationHandler for App {
         if let (Some(v), WindowEvent::MouseInput { state: ElementState::Released, .. }) = (&mut self.video, &event) {
             v.release();
         }
+        // ADR 0058: a bound key arrives as its action's default key (the screens match the original's keys).
+        let mut event = event;
+        if let WindowEvent::KeyboardInput { event: k, .. } = &mut event {
+            if !self.rebind(k) {
+                return;
+            }
+        }
         // The pointer is in the window on every screen (the main menu's, help's and options' arms below don't reach the
         // game's own; `frame_overlay` draws none while it is out).
         if let WindowEvent::CursorMoved { .. } | WindowEvent::CursorEntered { .. } = event {
@@ -5413,12 +5457,30 @@ impl ApplicationHandler for App {
                     }
                 }
             }
+            WindowEvent::MouseWheel { delta, .. } if self.options.as_ref().is_some_and(|o| o.s.modern.is_some()) => {
+                let steps = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y.round() as i32,
+                    MouseScrollDelta::PixelDelta(p) => (p.y / 20.0).round() as i32,
+                };
+                if let Some(o) = &mut self.options {
+                    o.s.modern_wheel(steps);
+                }
+            }
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.options.is_some() => {}
             // `DoKeyboard` on the options screen: the F-keys (also in the name entry) and M ask for their screen.
             WindowEvent::KeyboardInput { event, .. } if self.options.is_some() => {
                 // Ours (ADR 0053): a held Esc, Enter, Space or O acts once on the modern screen.
                 let once = event.repeat && self.options.as_ref().is_some_and(|o| o.s.modern.is_some())
                     && matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::Space) | Key::Character("o" | "O"));
+                // ADR 0058: a key pressed for an action waiting for one is its new key (Esc gives up).
+                let esc = matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape));
+                if let (ElementState::Pressed, false, Some(o), winit::keyboard::PhysicalKey::Code(code)) = (event.state, esc, &mut self.options, event.physical_key) {
+                    if o.s.capturing() {
+                        let audio = &mut self.audio;
+                        o.s.modern_bind(code, &mut |id| audio.play(id));
+                        return;
+                    }
+                }
                 if event.state == ElementState::Pressed && !once {
                     let k = event.logical_key.as_ref();
                     let entry = self.options.as_ref().is_some_and(|o| o.s.typing());
@@ -6459,6 +6521,30 @@ impl App {
 
     /// ADR 0040: on the messages screen `L` opens the event log; while it is up every key but the F-keys is its
     /// (the search, Esc, the arrows and PgUp/PgDn scroll). True when taken.
+    /// ADR 0058: `k` as the key of the action the player bound it to, at the screen up; false = the default key of an
+    /// action bound elsewhere, which does nothing. Not in the menus, a video, a text entry or the open event log.
+    fn rebind(&self, k: &mut winit::event::KeyEvent) -> bool {
+        use crate::bindings::Remap;
+        let winit::keyboard::PhysicalKey::Code(code) = k.physical_key else { return true };
+        let log_open = self.hud.as_ref().is_some_and(|h| h.messages.log.open);
+        let modern = self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+        if self.bindings.is_default() || self.front.is_some() || self.video.is_some() || modern || self.entry_up() || log_open {
+            return true;
+        }
+        match self.bindings.remap(crate::bindings::Ctx::of_screen(self.akt_kep_now()), code) {
+            Remap::Keep => true,
+            Remap::Drop => false,
+            Remap::To(to) => {
+                let upper = matches!(k.logical_key.as_ref(), Key::Character(c) if c.chars().any(char::is_uppercase));
+                let (logical, text) = crate::bindings::logical(to, upper);
+                k.physical_key = winit::keyboard::PhysicalKey::Code(to);
+                k.logical_key = logical;
+                k.text = if k.state == ElementState::Pressed { text } else { None };
+                true
+            }
+        }
+    }
+
     fn event_log_key(&mut self, key: &Key<&str>) -> bool {
         use crate::chat::EntryKey as E;
         let on = self.display.event_log && self.overlay == Some(crate::ui::Screen::Messages);
@@ -6662,7 +6748,7 @@ impl App {
                 // `DoKeyboard` (ELF 0x5800d0): the keys sound whatever the speed was, single player only.
                 self.sounds.push(crate::audio::SoundId::global(10));
                 let level = c.parse().unwrap_or(1);
-                if self.world.paused() || self.world.game.speed_level() != level {
+                if !self.turbo_step(level) && (self.world.paused() || self.world.game.speed_level() != level) {
                     self.send(StarmapOrder::Speed { level });
                     self.send(StarmapOrder::Pause { paused: false });
                 }

@@ -48,6 +48,7 @@ mod assets;
 mod audio;
 mod backdrop;
 mod battle_fx;
+mod bindings;
 mod chat;
 mod console;
 mod colony;

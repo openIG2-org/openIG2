@@ -347,4 +347,5 @@ the faders' hover glow `FadeKerettelKerekitDesign`, the research design-return f
 190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open
 differences are the random sparks and the hover glow.
+The main menu's Options screen has a Controls tab (45 actions from `bindings::ACTIONS`, press-to-bind, clash warning, "Reset all keys"; `Bind<id>` in the settings file; ADR 0058, row 471), and two Remake rows: "Voice volume" (`display::voice_volume`, `audio::Audio::voice_volume`: the speech's global volume) and "Extra game speeds" (single player).
 During the tutorial the two "simulate" rows read off and are greyed (`Row.locked`, `OptionsScreen::lock_battle_simulate`; row 410, ADR 0019); the stored values stay in the settings file. The four battle rows are applied to the battle flags as `SaveOptions` does (§7): when a row is set, at start-up and when a game starts or loads; not in multiplayer.

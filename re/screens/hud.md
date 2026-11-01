@@ -344,7 +344,7 @@ panels (`StarmapGfx2D_1..4`, `kezel.xvb`), input (input.md).
   `fifo`/`starf` into `<state>.ui.json` ("faders") and the client loads them with `--faders`.
 - Top bar: `ig2-client::hud` (bar, research button, speed buttons, money, date, message line, history) and
   `topbar_menus` (§2.1, closing whenever no button is held; the pick also moves the research place: `research::Place`).
-  The remaster toolbar layout isn't modelled (row 259, keep).
+  The remaster toolbar layout isn't modelled (row 259, keep). With "Extra game speeds" the bar marks "x2"/"x4" by the fastest button (ADR 0058, row 471).
 - Colony HUD and radar: `hud`, `colony`, `colony_ui`; names: `starmap` `View::names` (`battle_fade` 0 hides both),
   `fleet_name_shown` (`Snapshot::own_names_only`); the exit's HUD-less picture is `View::build` alone.
 - Reference captures: `tools/trace/run_screen.py <install> quick-1.sav <out> --kep 2 --slot 91` (the starmap; the

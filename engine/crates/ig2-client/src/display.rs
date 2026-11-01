@@ -86,6 +86,16 @@ pub const BLOOM: &str = "Bloom";
 /// ADR 0057: the battles' effects with the enhanced particle layers on top (0 = classic, the default; 1 = enhanced).
 pub const BATTLE_EFFECTS: &str = "BattleEffects";
 
+/// ADR 0058: the speech's volume; 0 = the sound volume's (the original's, the default), n = (n − 1) × 10 per cent.
+pub const VOICE_VOLUME: &str = "VoiceVolume";
+/// ADR 0058: the keys for the faster speeds ×32 and ×64 in single player (off by default).
+pub const EXTRA_SPEEDS: &str = "ExtraSpeeds";
+
+/// The speech's volume the settings file chooses (ADR 0058), `None` = the sound volume's.
+pub fn voice_volume(f: &File) -> Option<i32> {
+    f.int(VOICE_VOLUME).filter(|n| (1..=11).contains(n)).map(|n| (n - 1) * 10)
+}
+
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
 
@@ -257,6 +267,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
     let theme = f.get(UI_THEME).and_then(|t| themes.iter().position(|x| x == t)).unwrap_or(0) as i32;
     let n_themes = themes.len() as i32;
     let themes: Vec<Vec<u8>> = themes.into_iter().map(String::into_bytes).collect();
+    let voices: Vec<Vec<u8>> = std::iter::once(b"Same as sound".to_vec()).chain((0..=10).map(|n| format!("{}%", n * 10).into_bytes())).collect();
     let langs = ["Default", "English", "Magyar", "Deutsch", "Francais", "Espanol", "Italiano"].map(|s| s.as_bytes().to_vec()).to_vec();
     vec![
         row(0, Group::Display, "Display", MODE, d.mode as i32, modes, 2),
@@ -294,6 +305,8 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(32, Group::Game, "Campaign story", STORY_FIXES, (f.int(STORY_FIXES) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
         row(33, Group::Interface, "UI theme", UI_THEME, theme, themes, n_themes - 1),
         row(34, Group::Graphics, "Battle effects", BATTLE_EFFECTS, d.battle_effects as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
+        row(35, Group::Sound, "Voice volume", VOICE_VOLUME, voice_volume(f).map_or(0, |v| v / 10 + 1), voices, 11),
+        row(36, Group::Game, "Extra game speeds", EXTRA_SPEEDS, (f.int(EXTRA_SPEEDS) == Some(1)) as i32, Vec::new(), 1),
     ]
 }
 
@@ -328,7 +341,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         // The theme row: Classic first, Modern by its stored name.
         let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
         assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));
@@ -355,5 +368,20 @@ mod tests {
         assert_eq!((row.value, row.labels[row.value as usize].as_slice()), (3, &b"Deutsch"[..]));
         f.set(LANGUAGE, "7");
         assert_eq!(language(&f), None);
+    }
+
+    #[test]
+    fn voice_volume_row() {
+        let mut f = File::default();
+        assert_eq!(voice_volume(&f), None);
+        f.set(VOICE_VOLUME, "1");
+        assert_eq!(voice_volume(&f), Some(0));
+        f.set(VOICE_VOLUME, "9");
+        assert_eq!(voice_volume(&f), Some(80));
+        let r = rows(&f, &[(800, 600)], (800, 600));
+        let row = r.iter().find(|r| r.key == VOICE_VOLUME).unwrap();
+        assert_eq!((row.value, row.labels[row.value as usize].as_slice(), row.labels.len() as i32), (9, &b"80%"[..], row.states + 1));
+        f.set(VOICE_VOLUME, "12");
+        assert_eq!(voice_volume(&f), None);
     }
 }

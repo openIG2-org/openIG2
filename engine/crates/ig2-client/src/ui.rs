@@ -428,6 +428,8 @@ pub struct Hud {
     /// The speed buttons: `IdoSpeed` 0..=2 and `IdoPause`, set by the client each frame.
     pub speed: usize,
     pub paused: bool,
+    /// ADR 0058: the extra speed's factor (1 = none).
+    pub turbo: u32,
     /// A still's pointer phase (`MouseFazis` at the exe's grab, `--mouse-phase`; re/screens/input.md §8).
     pub pointer_phase: u64,
     /// The message line's history drop-down, while the right button holds it (`ScreensScrollHistoryMode`).
@@ -502,6 +504,7 @@ impl Hud {
             colony_brushes: rules.colony_brushes.clone(),
             starmap_brushes: rules.starmap_brushes.clone(),
             speed: 2,
+            turbo: 1,
             paused: false,
             pointer_phase: 0,
             history_open: false,
@@ -815,7 +818,7 @@ impl Hud {
             _ => {}
         }
         // The top bar (re/screens/hud.md §2), then its line (`GFX_Scroll` exe 0x5566a0) unless a message waits.
-        let bar = crate::hud::BarState { speed: self.speed, paused: self.paused, ..s.bar };
+        let bar = crate::hud::BarState { speed: self.speed, paused: self.paused, turbo: self.turbo, ..s.bar };
         crate::hud::draw_bar(f, &self.pics, font, &v, &self.palette, &bar);
         // The chat entry takes the line's place while it is open (`GFX_Scroll` is skipped).
         match &self.chat.entry {

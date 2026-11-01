@@ -81,11 +81,11 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--battle-effects` | Enhanced battle effects for this run, over the settings file |
 
 ## Controls
-The controls are the original's. The most used:
+The controls are the original's; the main menu's Options screen → Controls changes the keys (see below). The most used:
 
 | Key / mouse | |
 |---|---|
-| Space, 1/2/3 | Pause, game speed |
+| Space, 1/2/3 | Pause, game speed (with the Remake row "Extra game speeds": 3 again goes x2, then x4 faster) |
 | F1 | Help |
 | Mouse wheel | Zoom (on the starmap: Remake row "Starmap mouse camera") |
 | Starmap: left press | Select; hold for the radial icons, release over one to use it |
@@ -124,12 +124,20 @@ In a game: Options → the REMAKE tab, grouped (Screen, Interface, Game, Accessi
 turn to the next page. A press cycles the row; changes apply at once and are saved in `ig2-rework-options.dat`.
 
 In the main menu, the Settings label at the bottom right (or the `O` key) opens the modern Options screen with every
-setting, the original's and ours, in tabs: Display, Sound, Interface, Game, Accessibility, Multiplayer (your name in
-multiplayer games) and Language. The line above the buttons says what the setting under the pointer does. Click a
+setting, the original's and ours, in tabs: Display, Sound, Interface, Game, Controls, Accessibility, Multiplayer
+(your name in multiplayer games) and Language. The line above the buttons says what the setting under the pointer does. Click a
 switch, the arrows of a choice or a slider's track; Apply saves and applies the changes, Back leaves and takes back
 what wasn't applied. Keyboard: Tab / Shift+Tab (or Page Down / Up) change the tab, Up / Down move between the settings
 and the buttons, Left / Right change a value (sliders by 5), Enter or Space toggles or presses, Esc is Back. Both
 screens show the same values.
+
+Controls (ADR 0058) lists every key you can change: the screen keys (F1–F10), M, O, pause, the speeds, quick save,
+chat, and each screen's own keys (the starmap's, the colony's, research, design, messages, the space battle), with
+the original's keys as the defaults. Click a line (or Enter on it) and press the new key; Esc keeps the old one. A key
+already used by another action where both apply is shown in the warning colour, and the line above the buttons names
+the other action; it is allowed, but only the first action in the list gets it. "Reset all keys" brings back the
+original's. The list scrolls with the wheel or the arrow keys. Esc, Enter, the arrows, the digit groups and Ctrl,
+Shift and Alt can't be changed; typing names and chat always uses the real keys. The keys are saved as `Bind<name>`.
 
 | Row (key) | |
 |---|---|
@@ -167,6 +175,8 @@ screens show the same values.
 | Computer empires (`EnhancedAi`) | Classic by default: the computer empires of a new single-player game play as in the original. Enhanced (ADR 0045): they expand faster, build the labs their research needs, buy every planet's building when they can pay, set taxes by morale and research a colony ship when there are planets to take. A game keeps the choice it started with (saved with it); a multiplayer room has its own row |
 | Title music with intro (`TitleMusicWithIntro`) | On by default: the title video is silent over the game's and the studio's logos and its music starts with the intro (ADR 0051); off = the original: the music from the first logo |
 | Campaign story (`StoryFixes`) | Classic by default: a new campaign's story plays as in the original. Enhanced (ADR 0052): the original's story slips are fixed; so far the siege episode's five enemy fleets start at the planet they besiege instead of the galaxy's corner. The game keeps the choice it started with (saved with it) |
+| Voice volume (`VoiceVolume`) | Under "Sound": Same as sound (default, the original: speech follows the sound slider) or 0–100 %: the advisors', messages', start and aliens' speech at their own volume, the sound slider then sets the effects only (ADR 0058) |
+| Extra game speeds (`ExtraSpeeds`) | Off by default: in single player the fastest speed's key (3) or top-bar button pressed again while it runs makes the game go twice, then four times faster ("x2"/"x4" by the button); any other speed or a slow-down (an enemy near, a message) ends it, a space battle runs at its usual speed (ADR 0058). Multiplayer keeps the room's speeds |
 | UI theme (`UiTheme`) | Classic by default: the remake's own screens (main-menu Options, history, replays, lobby, event log) in their usual look; Modern or a mod's theme restyles them at once (ADR 0056, Mods → UI themes). The game's own screens never change |
 
 The window opens at 1600x900 until a size is saved.
