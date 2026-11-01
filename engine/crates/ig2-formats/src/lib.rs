@@ -5,6 +5,7 @@
 
 pub mod ani;
 pub mod colony_map;
+pub mod config;
 pub mod container;
 pub mod dialogue;
 pub mod diplomacy;

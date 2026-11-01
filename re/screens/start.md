@@ -101,6 +101,13 @@ the client ids and IP strings. Other types: 1 chat, 3 the seed, 4 "start now", 5
   taken, and on any machine, but only the host's `FRISSIT_Start` sends it: right after `InitNewGame`,
   `Multi_Send(0x65, EN, 4, &story)` when non-zero (read at 0x5bc66a); every peer's `MULTIGET_Story` runs
   `StartStory(id, 0)`. There is no menu option for it.
+  Config file: `<install>/init/config` (`ConfigFileClass::Read` ELF 0x6202b0): `key=value` lines, the first `=` splits,
+  trailing bytes < 0x20 (signed char) are cut, at most 30 entries; `GetParam` (ELF 0x620580, exe 0x53e4c0) is
+  case-insensitive, first match. The GOG install ships none, so every key defaults to 0 unless a player creates it.
+  Port: `ig2-formats/src/config.rs`; the client reads `mpstory` on entering the MP screens and `storyline`/`storymap`
+  for a campaign started from the menu. `GalaxyStart` carries the story (lobby protocol 12) and `GalaxyStart::build`
+  calls `Game::story_start` right after the galaxy is built, on every machine (the start hash covers it), as
+  `FRISSIT_Start` does.
 
 ## 4. Our room's rules (ADR 0014; `ig2_net::lobby` with `LobbyState::galaxy`)
 
@@ -166,4 +173,4 @@ start, the host's port mapping (on when the room opens, ADR 0020) through `Liste
 renewed until the room or game ends; `launch` builds the game via `HostSession::start_galaxy` / `ClientSession::new_galaxy`), and a room for an MP
 save (`MpScreen::host_save`). `mp_wait.rs` is the in-game wait overlay (`MOUSE_DrawOver`, input.md §9). The
 original's own room drawing (`StartGfx2D_1..3`) is deliberately not copied (ADR 0009 §2, ADR 0014); the shared start
-`ticks` is row 223; private rooms, join codes and the optional relay server (§5, §6) are done (clipboard through `arboard`, text only); the main menu's remaining MP-ring leftovers are row 157; the host's `story N` chat line picks the start story (§3, rows 418, 419); the slot cards and the forced start (Start anyway) are done (ADR 0041).
+`ticks` is row 223; private rooms, join codes and the optional relay server (§5, §6) are done (clipboard through `arboard`, text only); the main menu's remaining MP-ring leftovers are row 157; the host's `story N` chat line picks the start story and the `mpstory` config line sets its default (§3); the slot cards and the forced start (Start anyway) are done (ADR 0041).

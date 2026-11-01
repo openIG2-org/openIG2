@@ -2407,7 +2407,8 @@ impl App {
                 let rules = ig2_net::session::modded_fingerprint(rules, mods);
                 let Some(f) = &mut self.front else { return };
                 let name = String::from_utf8_lossy(&f.s.player).into_owned();
-                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods));
+                let story = ig2_formats::config::Config::read(self.install.root()).int("mpstory");
+                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods).with_story(story));
             }
             Act::Tutorial(_) => {}
             // Ours (ADR 0059): the newest save that reads, as the Load screen's Load.
@@ -2502,7 +2503,10 @@ impl App {
             Start::Campaign { race, level } => {
                 // `Nehezseg` by the ring: easy 1, normal (index 2) 2, hard (index 1) 4.
                 let difficulty = [1, 4, 2][(*level as usize).min(2)];
-                let cfg = ig2_sim::game::new_game::NewCampaign { campaign: *race as i32 + 1, difficulty, seed, ticks: seed, storyline: 0, storymap: 0, last_storyline: self.settings.int(&format!("Fable_{}", *race as i32 + 1)) };
+                // `InitStory` (exe 0x5c2940): the config's `storyline` and `storymap` (0 = not set).
+                let config = ig2_formats::config::Config::read(self.install.root());
+                let (storyline, storymap) = (config.int("storyline"), config.int("storymap"));
+                let cfg = ig2_sim::game::new_game::NewCampaign { campaign: *race as i32 + 1, difficulty, seed, ticks: seed, storyline, storymap, last_storyline: self.settings.int(&format!("Fable_{}", *race as i32 + 1)) };
                 crate::new_game::campaign(&self.install, &cfg, rules)
             }
             Start::Scenario { file, .. } => crate::new_game::scenario(&self.install, file, seed, rules),

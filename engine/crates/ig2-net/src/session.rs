@@ -372,7 +372,7 @@ impl<'r> HostSession<'r> {
     /// options, races and AIs, the host's empire as `EN` and `ticks` (the host's clock) for the seed and the diplomacy
     /// reseed; every member builds the same state and checks its hash. Refused (the lobby back) unless
     /// `LobbyHost::can_start` in a galaxy room.
-    pub fn start_galaxy(lobby: LobbyHost, data: &StartData, rules: &'r GameRules, settings: SessionSettings, ticks: u32) -> Result<Self, Box<LobbyHost>> {
+    pub fn start_galaxy(lobby: LobbyHost, data: &StartData, rules: &'r GameRules, settings: SessionSettings, ticks: u32, story: i32) -> Result<Self, Box<LobbyHost>> {
         let st = lobby.state();
         let Some(options) = st.galaxy.filter(|_| lobby.can_start()) else { return Err(Box::new(lobby)) };
         let humans: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
@@ -382,7 +382,7 @@ impl<'r> HostSession<'r> {
                 races[s.empire as usize - 1] = s.race;
             }
         }
-        let mut galaxy = GalaxyStart::new(ticks, options, races, st.ais());
+        let mut galaxy = GalaxyStart { story, ..GalaxyStart::new(ticks, options, races, st.ais()) };
         let game = galaxy.build_hashed(data, rules, humans[0], &humans, lobby.session());
         let fingerprint = lobby.rules();
         let started = lobby.start_galaxy(galaxy, &settings)?;

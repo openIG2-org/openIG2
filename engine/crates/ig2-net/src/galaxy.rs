@@ -82,6 +82,10 @@ pub struct GalaxyStart {
     pub races: [u8; 8],
     /// The AI empires (`BirodalomEl`).
     pub ais: Vec<u8>,
+    /// `MultiplayerStartStory` (exe 0xF2148C, the host's; 0 = none): `FRISSIT_Start` (exe 0x5bc590) sends
+    /// `Multi_Send(0x65)` right after `InitNewGame` and every peer's `MULTIGET_Story` runs `StartStory(id, 0)`; here
+    /// [`GalaxyStart::build`] starts it at the same point on every machine.
+    pub story: i32,
     /// [`state_hash`] of the built start state (the joiners check theirs against it).
     pub hash: u64,
 }
@@ -94,7 +98,7 @@ pub fn seed_from_ticks(ticks: u32) -> u32 {
 impl GalaxyStart {
     /// The host's start (the hash still 0: [`GalaxyStart::build`] fills it in).
     pub fn new(ticks: u32, options: GalaxyOptions, races: [u8; 8], ais: Vec<u8>) -> Self {
-        Self { seed: seed_from_ticks(ticks), ticks, options, races, ais, hash: 0 }
+        Self { seed: seed_from_ticks(ticks), ticks, options, races, ais, story: 0, hash: 0 }
     }
 
     /// The start state (spec §4): `Game::before_start`, `Game::start_mp_galaxy` with `host` (the host's empire) as
@@ -131,6 +135,9 @@ impl GalaxyStart {
         game.spectators = self.options.spectators;
         game.enhanced_ai = self.options.enhanced_ai;
         game.libc = Libc(session as u32);
+        if self.story != 0 {
+            game.story_start(self.story);
+        }
         game
     }
 

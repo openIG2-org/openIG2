@@ -574,6 +574,9 @@ pub struct Screen {
     /// `PlayerSelected`.
     pub selected: i32,
     cascade: Option<Cascade>,
+    /// `LenyomasraVarni`: a dialogue-menu press set it (`DeinitMenuk` ELF 0x51d3d0); menu 0x2e takes a press only
+    /// once a release went by while it showed, or after a press on a root menu (§7 step 5). A global in the exe.
+    pub wait_press: bool,
     /// `Keszazajanlat` + `KeszAjanlat`: the proposal waiting for "send it now".
     pub proposal: Option<Proposal>,
     /// `Exchangemode`: the first half of an "offer … for …" (`Almenuksel0`).
@@ -655,6 +658,7 @@ impl Screen {
             metrics,
             selected: -1,
             cascade: None,
+            wait_press: false,
             proposal: None,
             exchange: None,
             counter: None,
@@ -864,6 +868,7 @@ impl Screen {
             // `DiplomGfx2D_1` (exe 0x4b89e0): a press on a menu clicks.
             self.sounds.push(crate::audio::CLICK);
             if inp.pressed {
+                self.wait_press = false;
                 self.cascade = Some(Cascade { root, row: root_row, sub_row: None });
             }
         }
@@ -926,6 +931,7 @@ impl Screen {
         if inp.pressed {
             if r.is_some() {
                 self.sounds.push(crate::audio::CLICK);
+                self.wait_press = true;
             }
             r
         } else {
@@ -1213,8 +1219,16 @@ impl Screen {
             }
         }
         // 5. Multiplayer: "cancel last message" while the human's message is unanswered (`DiplomGfx2D_1` ELF 0x5164f2:
-        // `+0x16` set, `+0x17`/`+0x18`/`+0x2c` clear; `CancelLastMessage` sends packet 0x40).
-        if v.multiplayer && s.asked != 0 && s.waiting == 0 && s.answered == 0 && s.countered == 0 && self.run_plain(menu::CANCEL_LAST, inp) == Some(0) {
+        // `+0x16` set, `+0x17`/`+0x18`/`+0x2c` clear; `CancelLastMessage` sends packet 0x40). While `LenyomasraVarni`
+        // is set only a release frame opens it, and a press then acts no earlier than the next frame.
+        let cancel = v.multiplayer && s.asked != 0 && s.waiting == 0 && s.answered == 0 && s.countered == 0 && {
+            let open = !self.wait_press || inp.released;
+            if open {
+                self.wait_press = false;
+            }
+            self.run_plain(menu::CANCEL_LAST, &Input { pressed: inp.pressed && open, ..*inp }) == Some(0)
+        };
+        if cancel {
             out.push(Command::DiplomacyScreen { empire: e as u8, op: DiplomacyScreenOp::Cancelled });
             self.exchange = None;
             self.cascade = None;
@@ -1591,7 +1605,9 @@ impl Open {
 
     /// `Diplomacy_Belep` (§3.1): the screen's state afresh, with the opening unless `animated` is false.
     pub fn enter(&mut self, rules: &ig2_rules::Rules, ui: &UiTexts, state: &SaveState, animated: bool) {
+        let wait_press = self.screen.wait_press;
         self.screen = Screen::new(rules, ui, &View::read(state));
+        self.screen.wait_press = wait_press;
         self.screen.enter(animated);
         self.last3d = None;
     }
@@ -1744,8 +1760,16 @@ mod tests {
         step(&mut s, &world, Input::default());
         assert_eq!(s.shown, vec![menu::CANCEL_LAST]);
         let p = s.menus[menu::CANCEL_LAST].text_at(&s.metrics, 0);
-        let out = step(&mut s, &world, Input { at: [p[0] + 3.0, p[1] + 3.0], pressed: true, held: true, ..Default::default() });
+        let press = Input { at: [p[0] + 3.0, p[1] + 3.0], pressed: true, held: true, ..Default::default() };
+        // `LenyomasraVarni` left set by an earlier dialogue press: this press is swallowed, a release opens the menu.
+        s.wait_press = true;
+        assert!(step(&mut s, &world, press).is_empty());
+        assert!(s.wait_press);
+        step(&mut s, &world, Input { at: press.at, released: true, ..Default::default() });
+        assert!(!s.wait_press);
+        let out = step(&mut s, &world, press);
         assert!(matches!(out[..], [Command::DiplomacyScreen { op: DiplomacyScreenOp::Cancelled, .. }]), "{out:?}");
+        assert!(s.wait_press, "the cancel is a dialogue press (`DeinitMenuk`)");
         for c in out {
             world.send(c);
         }

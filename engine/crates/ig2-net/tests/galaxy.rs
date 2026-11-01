@@ -184,8 +184,11 @@ fn every_machine_builds_the_galaxy_and_runs_in_step() {
         let empires: Vec<u8> = (0..3).map(|m| h.state().empire_of(m).unwrap()).collect();
         let ais = h.state().ais();
 
-        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 123_456).ok().expect("the room starts");
+        // With a start story (`mpstory` / `story N`): every machine starts it in the build, right after
+        // `InitNewGame` (`FRISSIT_Start` exe 0x5bc590, `Multi_Send(0x65)`), so the joiners' start hashes match.
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 123_456, 1003).ok().expect("the room starts");
         let mut clients = vec![started(a, data, &rules).unwrap(), started(b, data, &rules).unwrap()];
+        assert!(hs.own.game.state.story().starting.contains(1003), "the start story waits for its first check at turn 0");
         assert_eq!(clients.iter().map(|c| c.peer.empire).collect::<Vec<_>>(), empires[1..]);
         let m = &hs.own.game.state.mem;
         use ig2_sim::save::va;
@@ -212,7 +215,9 @@ fn every_machine_builds_the_galaxy_and_runs_in_step() {
         }
         for c in &clients {
             assert!(agree(&hs.own, &c.peer) >= 40, "every turn from 0");
+            assert!(c.peer.game.state.story().is_running(1003));
         }
+        assert!(hs.own.game.state.story().is_running(1003));
         assert!(hs.host.desyncs.is_empty(), "{:?}", hs.host.desyncs);
     });
 }
@@ -228,7 +233,7 @@ fn a_different_start_is_refused() {
         a.ready(true);
         pump(&mut h, &mut [&mut a], |h, _| h.state().members[1].ready);
         assert!(h.set_ready(0, true));
-        let _hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 99).ok().unwrap();
+        let _hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 99, 0).ok().unwrap();
         let start = Instant::now();
         while a.status != Status::Started {
             a.pump().unwrap();
@@ -261,7 +266,7 @@ fn a_lost_player_leaves_and_the_others_play_on() {
         b.ready(true);
         pump(&mut h, &mut [&mut a, &mut b], |h, _| h.state().members.iter().skip(1).all(|m| m.ready));
         assert!(h.set_ready(0, true));
-        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242).ok().expect("the room starts");
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242, 0).ok().expect("the room starts");
         let mut clients = vec![started(a, data, &rules).unwrap(), started(b, data, &rules).unwrap()];
         let alice = clients[0].peer.empire;
 
@@ -332,7 +337,7 @@ fn a_defeated_spectator_stays_in_step_and_orders_nothing() {
         b.ready(true);
         pump(&mut h, &mut [&mut a, &mut b], |h, _| h.state().members.iter().skip(1).all(|m| m.ready));
         assert!(h.set_ready(0, true));
-        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242).ok().expect("the room starts");
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242, 0).ok().expect("the room starts");
         let mut clients = vec![started(a, data, &rules).unwrap(), started(b, data, &rules).unwrap()];
         let alice = clients[0].peer.empire;
         assert!(hs.own.game.spectators && clients.iter().all(|c| c.peer.game.spectators));
@@ -388,7 +393,7 @@ fn a_newcomer_watches_a_running_game() {
             a.ready(true);
             pump(&mut h, &mut [&mut a], |h, _| h.state().members.iter().skip(1).all(|m| m.ready));
             assert!(h.set_ready(0, true));
-            let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242).ok().expect("the room starts");
+            let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 4242, 0).ok().expect("the room starts");
             let mut clients = vec![started(a, data, &rules).unwrap()];
             let mut now = Duration::ZERO;
             let step = |hs: &mut HostSession, clients: &mut [ClientSession], until: u64, now: &mut Duration| {
@@ -472,7 +477,7 @@ fn per_computer_levels_travel_and_stay_in_step() {
         assert!(h.set_ready(0, true));
         let humans: Vec<u8> = (0..2).map(|m| h.state().empire_of(m).unwrap()).collect();
 
-        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 777).ok().expect("the room starts");
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 777, 0).ok().expect("the room starts");
         let mut c = started(a, data, &rules).unwrap();
         for g in [&hs.own.game, &c.peer.game] {
             let d = g.state.difficulties();

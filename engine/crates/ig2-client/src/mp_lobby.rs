@@ -596,7 +596,7 @@ pub struct MpScreen {
     /// The host's room resumes this save; the members already seated in their saved empires.
     resume: Option<(Box<MpSave>, Vec<u8>)>,
     /// `MultiplayerStartStory` (exe 0xF2148C): set by the room's `story N` / `s N` line; only the host's start sends
-    /// it. The config line `mpstory` (`Start_Belep` exe 0x5bf4b0) has no reader here, so it starts at 0.
+    /// it. Starts at the config line `mpstory` ([`MpScreen::with_story`]).
     pub story: i32,
     /// The race heads on the room's cards (ADR 0041), race 1 first; loaded by [`MpScreen::load_pictures`].
     pub races: Vec<Option<TexId>>,
@@ -694,6 +694,16 @@ impl MpScreen {
     /// The enabled mods' fingerprint (`session::mods_fingerprint`): rooms and hellos carry it (ADR 0044 §4).
     pub fn with_mods(mut self, mods: Option<[u8; 32]>) -> Self {
         self.mods = mods.unwrap_or_default();
+        self
+    }
+
+    /// `Start_Belep` (exe 0x5bf4b0): `MultiplayerStartStory = atoi(GetParam("mpstory", "0"))`, shown as a chat line
+    /// when non-zero.
+    pub fn with_story(mut self, story: i32) -> Self {
+        self.story = story;
+        if story != 0 {
+            self.chat.push((String::new(), format!("Starting story set to {story}")));
+        }
         self
     }
 
@@ -1835,11 +1845,8 @@ pub fn launch<'r>(b: Begun, data: &StartData, rules: &'r GameRules, ticks: u32, 
             Ok(Session::Host { session: Box::new(s), listener })
         }
         Begun::Host { lobby, listener, save: None, story } => {
-            let mut s = HostSession::start_galaxy(*lobby, data, rules, SessionSettings::default(), ticks).map_err(|_| "the room can't start yet".to_string())?;
             // `FRISSIT_Start` (exe 0x5bc590): after `InitNewGame`, `Multi_Send(0x65, EN, story)` → `StartStory(id, 0)`.
-            if story != 0 {
-                s.own.issue(ig2_net::Command::StoryStart { id: story });
-            }
+            let s = HostSession::start_galaxy(*lobby, data, rules, SessionSettings::default(), ticks, story).map_err(|_| "the room can't start yet".to_string())?;
             Ok(Session::Host { session: Box::new(s), listener })
         }
         Begun::Joiner { start, link, me } => {

@@ -237,7 +237,10 @@ With an empire selected (`PlayerSelected = k`, slot `s = AktPlayerek[k]`, `e = s
    `Exchangemodevolt` at once. `CancelLastMessage` sends packet 0x40 with the receiver's player number; on the
    receiving human's machine `MULTIGET_Diplomacy` (ELF 0x521118) clears `+0x17` of the sender's slot (the waiting
    message disappears; the sender's own packet and other receivers' are ignored). An AI receiver answers at once,
-   so `+0x16` is clear again before the menu could show.
+   so `+0x16` is clear again before the menu could show. Gate (`DiplomGfx2D_1` exe 0x4b89e0, the 0x2e block): the
+   global `LenyomasraVarni` is set by every acting press on a one-level dialogue menu (`DeinitMenuk` ELF 0x51d3d0)
+   and cleared by a root-menu press; menu 0x2e takes a press only if the flag is clear or the frame is a release
+   frame (then it clears the flag). The flag survives leaving and re-entering the screen.
 
 `GetSzoveg(file, out, a, b, c, d, p1, p2, p3, fallback, seed)`: the header `#aaa/bbb[/ccc[/ddd]]` (−1 parts left
 out) is counted in the file's buffer and variant `random(n)` picked — or `n·seed/10001` with a seed (the waiting
@@ -267,6 +270,8 @@ For MP (ADR 0003, ADR 0007) the screen's contact-list writes and the birthday fl
 as `Command::DiplomacyScreen`, one frame later than the original; unseeded text variants use the client's UI
 generator; the counter-proposal being composed (`+0x19`/`+0x1c`/`+0x20`) isn't saved. Menu 0x2e sends
 `DiplomacyScreenOp::Cancelled`, which clears the sender's `+0x16`/`+0x0c` and the receiving human's `+0x17` in the
-same lockstep tick (the original clears the sender's at once, the receiver's a frame later). Missing: `DEBUGX`, the demo mode, `dipbck8`'s child 2. The story's `Diplomacy_AddSpecial`/
+same lockstep tick (the original clears the sender's at once, the receiver's a frame later). `Screen::wait_press` is the §7 step 5
+gate (test `quick1_mp_cancel_last_message`); known small difference: the exe opens a root menu when the button is
+already held as the pointer enters it (flag clear), ours needs a fresh press. Missing: `DEBUGX`, the demo mode, `dipbck8`'s child 2. The story's `Diplomacy_AddSpecial`/
 `RemoveSpecial` write the list and the AI's `Story_Diplomacy_Special` hook reaches the story (`rules/diplomacy.md` §6.2).
 Capture: `run_screendiff.py … diplomacy --anim-frame 20|50|70` and the sequence `scripts/diplomacy.json`.

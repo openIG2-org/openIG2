@@ -417,7 +417,7 @@ fn soak(humans: usize, ais: u8, turns: u64, seed: u64, even_wars: bool) {
             }
         }
         assert!(h.set_ready(0, true));
-        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), seed as u32).ok().expect("the room starts");
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), seed as u32, 0).ok().expect("the room starts");
         let mut clients: Vec<ClientSession> = joiners.into_iter().map(|c| started(c, data, &rules)).collect();
         if even_wars {
             let (a, d) = (hs.own.empire, clients[0].peer.empire);

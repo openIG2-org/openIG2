@@ -298,7 +298,8 @@ Clears the 256 buckets, `StoryAdat`, `HistoryVodor`, `VegzesVodor`, `StartVodor`
 read queue) and the storyline story (0xB77288). `mode != 0` (skirmish): nothing else. Campaign (`mode == 0`):
 1. Storyline index `line` = `atoi(config "storyline")`; if 0: `ReadRegistrySetting(StoryRegString(ct))` (key
    `Fable_<ct>`); a successful non-zero read `v` gives `3 − v` (the other storyline of two), else
-   `rndlog(5, 1, StoryLine[ct][0])`. `StoryLineStory` (0xB77288) = `StoryLine[ct][line]`.
+   `rndlog(5, 1, StoryLine[ct][0])`. `StoryLineStory` (0xB77288) = `StoryLine[ct][line]`. Port: the config keys come
+   from `<install>/init/config` (`ig2-formats/src/config.rs`, `re/screens/start.md` §3); absent, they are 0.
 2. Map: `atoi(config "storymap")`, else `rndlog(5, 1, StoryScenario[ct][0])`; `LoadScenario("scenario/<n>.scn",
    1)` with `n = StoryScenario[ct][map]` (its `RandSeed` reseeds streams 1–20; its `vSet` lines and planet
    `pAzon` ids reach the story tables).
