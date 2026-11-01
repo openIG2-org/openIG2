@@ -37,7 +37,7 @@ docker compose -f compose.yaml up -d
 ```
 or, from a clone of the repository, build it from source: `docker compose -f deploy/rendezvous/compose.yaml up -d
 --build`. Either way the service runs from a small image (no shell, a non-root user); the compose file publishes
-UDP 29172 (`IG2_RENDEZVOUS_PORT=N` publishes another port), restarts it after a crash or reboot, and keeps the last
+29172 over UDP and TCP (`IG2_RENDEZVOUS_PORT=N` publishes another port), restarts it after a crash or reboot, and keeps the last
 30 MB of its log (`docker compose -f compose.yaml logs -f`). The flags above go in the compose file's
 `command`. To update, `pull` and `up -d` again (or `git pull` and the `--build` command).
 

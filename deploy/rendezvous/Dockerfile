@@ -11,6 +11,6 @@ RUN cargo build --release --locked -p ig2-rendezvous
 FROM gcr.io/distroless/cc-debian13:nonroot
 LABEL org.opencontainers.image.source=https://github.com/openIG2-org/openIG2       org.opencontainers.image.description="openIG2 rendezvous and relay service"       org.opencontainers.image.licenses=AGPL-3.0-only
 COPY --from=build /src/target/release/ig2-rendezvous /usr/local/bin/ig2-rendezvous
-EXPOSE 29172/udp
+EXPOSE 29172/udp 29172/tcp
 ENTRYPOINT ["/usr/local/bin/ig2-rendezvous"]
 CMD ["--listen", "0.0.0.0:29172"]

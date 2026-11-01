@@ -2,7 +2,7 @@
 #   docker compose -f deploy/rendezvous/compose.yaml up -d --build
 # Or with the published image, this file alone:
 #   docker compose -f compose.yaml pull && docker compose -f compose.yaml up -d
-# It needs the UDP port open in the server's firewall; nothing is stored, so there are no volumes.
+# It needs the port open in the server's firewall for UDP and TCP; nothing is stored, so there are no volumes.
 services:
   rendezvous:
     build:
@@ -16,6 +16,8 @@ services:
       # Published ports keep the players' source addresses, which the hole punch needs. If a host firewall or
       # proxy rewrites them, use `network_mode: host` instead (and drop `ports`).
       - "${IG2_RENDEZVOUS_PORT:-29172}:29172/udp"
+      # The same number over TCP: browser players' WebRTC signalling (plain HTTP).
+      - "${IG2_RENDEZVOUS_PORT:-29172}:29172/tcp"
     # The limits are the service's flags (docs/RENDEZVOUS.md); add any of them here.
     command: ["--listen", "0.0.0.0:29172"]
     read_only: true
