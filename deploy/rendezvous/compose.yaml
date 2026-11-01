@@ -1,0 +1,26 @@
+# Runs the rendezvous and relay service (docs/RENDEZVOUS.md). On the server, from the repository root:
+#   docker compose -f deploy/rendezvous/compose.yaml up -d --build
+# It needs the UDP port open in the server's firewall; nothing is stored, so there are no volumes.
+services:
+  rendezvous:
+    build:
+      context: ../..
+      dockerfile: deploy/rendezvous/Dockerfile
+    image: openig2-rendezvous
+    restart: unless-stopped
+    # The binary installs no signal handlers; as PID 1 it would ignore `docker stop`'s SIGTERM.
+    init: true
+    ports:
+      # Published ports keep the players' source addresses, which the hole punch needs. If a host firewall or
+      # proxy rewrites them, use `network_mode: host` instead (and drop `ports`).
+      - "${IG2_RENDEZVOUS_PORT:-29172}:29172/udp"
+    # The limits are the service's flags (docs/RENDEZVOUS.md); add any of them here.
+    command: ["--listen", "0.0.0.0:29172"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

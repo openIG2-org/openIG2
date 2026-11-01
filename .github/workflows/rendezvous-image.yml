@@ -1,0 +1,26 @@
+name: Rendezvous image
+
+on:
+  push:
+    branches: [main]
+    paths: [deploy/rendezvous/**, .dockerignore, engine/Cargo.lock, engine/crates/ig2-rendezvous/**, engine/crates/ig2-net/**, .github/workflows/rendezvous-image.yml]
+  pull_request:
+    paths: [deploy/rendezvous/**, .dockerignore, engine/Cargo.lock, engine/crates/ig2-rendezvous/**, engine/crates/ig2-net/**, .github/workflows/rendezvous-image.yml]
+  workflow_dispatch:
+
+jobs:
+  image:
+    name: Build and start the rendezvous image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start
+        run: docker compose -f deploy/rendezvous/compose.yaml up -d --build --wait
+      - name: Still running after 5 s
+        run: |
+          sleep 5
+          docker compose -f deploy/rendezvous/compose.yaml ps --status running --quiet | grep -q .
+          docker compose -f deploy/rendezvous/compose.yaml logs
+      - name: Stop
+        if: always()
+        run: docker compose -f deploy/rendezvous/compose.yaml down

@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Relay server in Docker: `docker compose -f deploy/rendezvous/compose.yaml up -d --build` runs the rendezvous and relay service on a Linux server (`docs/RENDEZVOUS.md`).
 - Ground war on the colony screen: a destroyed building now sinks through its collapse animation instead of only fading, and the road ring and pad around it stay until the war ends, as in the original. The colony camera keeps its tank view (C pressed three times) when you leave and return, holding the right button no longer selects a building with a left click, and the building under a still pointer is picked again when the camera moves.
 - Mods can now add their own stories: a `stories.toml` in a mod folder lists stories that fire once on a day, a planet owner, a fleet arriving or a reply, and show messages, give planets, spawn fleets, change money, or win or lose the game (ADR 0061).
 - Multiplayer start story: the story chosen for a multiplayer game now begins the moment the game starts, on every machine; an `init/config` file in the game folder (as the original reads) can set the start story (`mpstory`), the storyline and the story map; and "cancel last message" in multiplayer diplomacy ignores a click until the previous one is released, as in the original.

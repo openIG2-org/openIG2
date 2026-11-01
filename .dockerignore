@@ -1,0 +1,7 @@
+# Only the engine's sources go into an image build (deploy/rendezvous); never the install, _local or build output.
+*
+!engine/Cargo.toml
+!engine/Cargo.lock
+!engine/crates
+!engine/vendor
+**/target

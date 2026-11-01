@@ -26,6 +26,16 @@ minute (`--status-secs N`, 0 = never) and never logs addresses.
 | `--room-kib-per-sec N` | 256 | relayed bandwidth per room (burst: 4 s worth) |
 | `--control-per-sec N` | 20 | room and lookup packets per second per address (burst: 2 s worth) |
 
+### With Docker
+On a Linux server with Docker, from a clone of the repository:
+```bash
+docker compose -f deploy/rendezvous/compose.yaml up -d --build
+```
+This builds the service into a small image (no shell, runs as a non-root user), publishes UDP 29172
+(`IG2_RENDEZVOUS_PORT=N` publishes another port), restarts it after a crash or reboot, and keeps the last 30 MB of
+its log (`docker compose -f deploy/rendezvous/compose.yaml logs -f`). The flags above go in the compose file's
+`command`. After `git pull`, the same command rebuilds and restarts it.
+
 A room closes 30 s after its host stops refreshing it (the host refreshes every 5 s), a relayed joiner 60 s after
 its last packet. A lockstep game needs a few KB/s; a rejoin snapshot a few hundred KB once.
 
