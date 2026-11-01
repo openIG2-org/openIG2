@@ -121,7 +121,9 @@ difficulty 1 every campaign has seeds that end won (`video Won`: the race's win 
 `misc/end_campaign_win.bik`), and campaign 2 storyline 1 also ends in story 863's own end (`Over(Ended)`,
 `politikus_win.bik`).
 `--growth M` prints a `growth` line per living empire every M game months (planets, population, techs, credits,
-ships, the running research, the lab buildings and the open techs with the labs they need): the curves the
+ships, ships built and lost, battles won, the ship and vehicle capacity and garrisons, the main fleet's slot, ships,
+attack, vehicles, room and ground strength, the wars, the running research, the lab buildings and the open techs with
+the labs they need): the curves the
 computer empires' rulesets are compared by (`re/rules/ai-empire.md` §15). `--ai enhanced` plays the computer empires
 with the enhanced ruleset (ADR 0045; in `mp` runs the room's option), `classic` (the default) with the original's.
 `--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets

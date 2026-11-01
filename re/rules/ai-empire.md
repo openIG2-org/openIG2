@@ -631,7 +631,8 @@ bug: no change. Exact values differ with the seed; the pattern is what's checked
 
 ## 15. The classic AI's weaknesses and the enhanced ruleset (ours, ADR 0045)
 Not the original: an enhanced ruleset beside it, switched per game (`Game::enhanced_ai`; classic = §1–§14 bit for
-bit). Part 1 covers economy and research; fleets, war (§11) and diplomacy (`diplomacy.md`) are parts 2 and 3.
+bit). Part 1 covers economy and research (§15.2), part 2 fleets and war (§15.4); diplomacy (`diplomacy.md`) is
+part 3.
 
 ### 15.1 What a player exploits (measured)
 AI-only games in the play-through harness (`ig2-client --playthrough skirmish|mp --growth 12`, the human handed to
@@ -649,6 +650,25 @@ the AI as well; `docs/BUILDING.md`), the game statistics' per-empire values (ADR
 6. **Multiplayer starves the AI**: the original halves a computer's income and production there (`colony-side.md`
    §6.4, `production-research.md` §3). Part 1 leaves that alone.
 A human who expands early and builds labs outgrows every computer empire within a few years.
+
+Fleets and war (`--growth`'s `ships`, `built`/`lost`, `battles`, `capacity` and `main` fields; the classic rules, and
+part 1 on top of them):
+7. **Tiny fleets.** A skirmish empire keeps 3–6 ships for ten years. A planet's line builds at its own ship capacity
+   (`production-research.md` §3: 1,000 = one basic yard, a warship ~150,000–400,000 work, a colony ship
+   ~500,000–700,000), and the autobuild adds spaceship factories (autobuild category 2, buildings 19–20) rarely and
+   anywhere. With part 1 every idle yard also starts a colony ship on the same day (§5.2 compares `want` with the
+   day's start counts), so 3–5 yards build colony ships at once while 1–3 were wanted.
+8. **The "warship" is often a fighter.** Category 8 (slots 1–4) are the fighter hulls, counted per fighter in
+   `MiGyarthatoCuccok` (§5.1): 25 fighters read as 25 warships, so part 1's peace-time cap stopped the yards at
+   3 real ships.
+9. **Wars start by chance.** `MI_KitAkarTamadni` names a target only when the main fleet's ground strength reaches
+   a planet's defence; then a 1-in-720 day draw declares the war (§11.3), however much stronger the empire is.
+10. **The main fleet attacks alone** while its followers are on the way (§11.5), ignores an enemy fleet attacking its
+    own colony unless it falls in the speed-class range (§11.4), and invades with any ground strength from the
+    planet's defence up (`def <= M.+0x68`, ×10 score below 1.5 × def).
+11. **A fleeing fleet stops** every `9 · Nehezseg` ticks below difficulty 4 (§12.2: `FlottaMozgatHaNincsAzonosito(f,
+    0, 0, 0, 0)`), so a beaten fleet is caught.
+12. **Garrisons stop at 10** vehicles a planet (§5.2), war or peace, so the main fleet has little to load.
 
 ### 15.2 The enhanced rules
 Only for empires the computer plays (`BirodalomMIzik`, not human-controlled) when the game's ruleset is enhanced.
@@ -720,3 +740,70 @@ The MP run's state compares and per-turn hashes stayed equal with the enhanced r
 stepping a level a day between 1 and 5 (5 % less population than the fixed 3); the morale bands above match the
 fixed 3's growth. Left for later parts: the credits that pile up again after year 6 (nothing left to buy but
 warships) and the MP halving.
+
+### 15.4 The enhanced rules, part 2: fleets and war
+Same scope and guarantees as §15.2 (computer-played empires of an enhanced game, synced state only, no random draws
+of their own). The original's draws are made as before; an enhanced decision can change whether a later one is
+reached (an attack now draws §11.5's `rndlog(10, 1, …)`), the same on every peer.
+- **Factories** (after §3.3, daily, when research does not wait for labs, §15.2): at war (`MiVeszelyAllapot ≥ 2`)
+  while the vehicle capacity (`+0x74` summed over the empire's planets) is below half the ship capacity (`+0x70`
+  summed), a tank factory (autobuild category 3); else, while the ship capacity is below 3,000 × planets, a
+  spaceship factory (category 2): the best researched building of the category, on the planet with the most of that
+  capacity and nothing under construction (lower number on ties), if `MoneyMennyi(e, 2) ≥ price + reserve`
+  (20,000 at peace, 30,000 at war). Placed like §15.2's lab. A planet's line runs at its own capacity, so the
+  factories pile onto the biggest yard.
+- **Production mix** (§5.2): the wanted-category test and §15.2's colony-ship replacement count the units the
+  day's earlier yards already took (`total + taken < want`), so one wanted colony ship starts on one yard. The
+  peace-time cap (§15.2) counts real warships: ships in the empire's fleets whose design is neither a colony ship nor
+  a terraformer (`+0x34`, `+0x35`), plus the queued entries of categories 8 and 10.
+- **Garrisons** (§5.2): at war the vehicle line refills while a planet holds fewer than 25 (`+0x58`), not 10.
+- **War** (§11.3): with `t = MI_KitAkarTamadni(e) > 0` and `BirodalomMiotaIsmeri[e][t] < 0` as before, the war is
+  also declared when the main fleet's attack (`+0x60`) is at least 1.5 × the attack of `t`'s main fleet and the
+  level with `t` is no ceasefire, pact or alliance (the original's draws are made first).
+- **Invasion margin** (§11.4, planets): a planet is a target only with `M.+0x68 ≥ 1.5 · def` (unless `e` has no
+  planets); the weaker ones are skipped, so the fleet loads vehicles (§11.5's scout branch) instead.
+- **Defence** (§11.4, after the load phase): an enemy fleet at war, seen, not a story fleet, attacking (order 2,
+  kind 1) a planet of `e`, with `+0x60` below `M.+0x60`: the nearest such fleet to M (lower number on ties) becomes
+  the target (`kind 2`), over §11.4's choice.
+- **Gathering** (§11.5): when the target is a planet and own fleets moving to M (order 1, kind 2, `+0x44 == M`, not
+  colonising or terraforming) within 150 of it carry at least a quarter of `M.+0x60`, M waits where it stands
+  (`FlottaMozgatHaNincsAzonosito(M, 1, 0, M.x, M.y)`) so they arrive and merge (`fleet-movement.md` §4.3) instead of
+  attacking.
+- **Retreat** (§12.2): the periodic stop below difficulty 4 is skipped: a fleet in danger keeps fleeing.
+Not changed: the designs (`FRISSIT_MI_DESIGN` already refits every slot with the best researched parts on each new
+tech, §10), the flight rules themselves (§12) and the scouting.
+
+Port: `ai::enhanced` (`factory_to_build`, `place`, `warships`, `war_ready`, `defence_target`, `gather`,
+`INVADE_MARGIN`, `GARRISON_WAR`), the gated branches of `AiState::production`, `AiState::fleets` and `AiState::flee`;
+tests `ai::tests::enhanced_war_needs_a_margin_and_no_pact`, `enhanced_defence_and_gathering`,
+`enhanced_factories_go_to_the_biggest_yard`.
+
+### 15.5 Measured effect, part 2
+Skirmish (`skirmish:1:3`, seeds 1–8, 12,000 ticks ≈ 10 years, `--growth 12`), the computer empires' mean (the human
+excluded); classic, part 1 alone (`c186c38`) and parts 1 + 2. "At war" = the share of computer empires at war; "main
+attack / ground" = the main fleet's `+0x60` / `+0x68`.
+
+With the human played by the computer as well (`--human ai`):
+
+| Month | Ruleset | Planets | Ships | Battles won | Main attack | Main ground | At war |
+|---|---|---|---|---|---|---|---|
+| 60 | classic | 4.67 | 3.0 | 0.33 | 1,284 | 24 | 0.17 |
+| 60 | part 1 | 8.33 | 3.2 | 0.88 | 504 | 32 | 0.29 |
+| 60 | parts 1 + 2 | 10.50 | 4.0 | 1.25 | 1,160 | 16 | 0.25 |
+| 120 | classic | 6.43 | 4.5 | 3.48 | 7,511 | 118 | 0.43 |
+| 120 | part 1 | 14.10 | 3.5 | 11.90 | 1,359 | 26 | 0.62 |
+| 120 | parts 1 + 2 | 15.21 | 4.0 | 6.58 | 5,351 | 36 | 0.62 |
+
+Against an idle human (`--human idle`: it never builds or orders anything), the month of the human's defeat:
+classic 4 of 8 seeds (months 45, 56, 69, 78; mean 62), part 1 4 of 8 (48, 59, 68, 93; mean 67), parts 1 + 2 4 of 8
+(45, 57, 61, 67; mean 57.5). In the other four seeds no one reaches the human's planets: the main fleets carry 5–9
+ground units (their room, `+0x78`, comes from the few capital hulls; fighters carry none), short of a fortified home
+planet's defence, so `MI_KitAkarTamadni` never names the human.
+
+So part 2 gives the expanded empires their fleet back (the main fleet's attack about 4 × part 1's, near the classic
+empires' that spend everything on warships, while holding over twice their planets) and ends an idle human about ten
+months sooner. Fewer battles are won than with part 1 alone: the neighbours are stronger too and the margins
+(war, invasion) avoid the losing fights. Left for later: troop room (a transport-heavy design and production mix, so
+a main fleet can carry a real invasion force) and the money: an empire's autobuild buys spend the credits that
+production then lacks. The MP run (`mp:2:40`, seeds 1–4, 12,000 ticks) kept its 60 state compares a seed equal and
+every turn hashed alike.

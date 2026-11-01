@@ -4,6 +4,7 @@
 //! normative**: the precision of every float expression follows its asm (noted where it differs from the obvious).
 
 use super::colonise::capturable;
+use super::enhanced;
 use super::{cvtt, AiHooks, AiState, World, EMPIRES, GRID};
 use crate::diplomacy::{field, level};
 use crate::fleet::{flag, order};
@@ -386,7 +387,8 @@ impl AiState {
             }
         }
         let diff = w.spy.ctx.difficulty(o);
-        if diff < 4 && (9 * diff) != 0 && w.ctx.tick.wrapping_rem(9 * diff) == 0 {
+        // Enhanced (ADR 0045): a fleet in danger keeps fleeing (the original stops it every 9·Nehezseg ticks).
+        if !w.ctx.enhanced && diff < 4 && (9 * diff) != 0 && w.ctx.tick.wrapping_rem(9 * diff) == 0 {
             w.order_unscripted(f, order::NONE, order::POINT, 0.0, 0.0);
             return 0;
         }
@@ -530,7 +532,9 @@ impl AiState {
             let t = w.war_target(e, &self.main_fleet);
             if t > 0 && w.known_since[e][t] < 0 {
                 let diff = w.spy.ctx.difficulty(e);
-                if w.r(1, 720) == 1 || w.planet_count[e] == 0 || (diff == 4 && w.human(t) && w.r(1, 720) == 1) {
+                // Enhanced (ADR 0045): a clearly stronger empire doesn't wait for the 1-in-720 day (the draws stay).
+                let roll = w.r(1, 720) == 1 || w.planet_count[e] == 0 || (diff == 4 && w.human(t) && w.r(1, 720) == 1);
+                if roll || (w.ctx.enhanced && enhanced::war_ready(w, e, t, &self.main_fleet)) {
                     hooks.declare_war(w, e, t);
                 }
             }
@@ -615,6 +619,10 @@ impl AiState {
                 if !((w.danger_at(m as usize, px, py, 10.0).0 == 0 || no_planets) && (def <= mt.ground_strength || no_planets)) {
                     continue;
                 }
+                // Enhanced (ADR 0045): no invasion without a margin of ground troops.
+                if w.ctx.enhanced && !no_planets && (mt.ground_strength as f64) < def as f64 * enhanced::INVADE_MARGIN {
+                    continue;
+                }
                 let pl = &w.spy.colony.planets[p];
                 let (dx, dy) = (px - cx, py - cy);
                 let a = root(dx * dx + dy * dy) + 100.0;
@@ -649,6 +657,12 @@ impl AiState {
             if self.load_phase[e] > 0 && (t.capacity <= t.ground || v.spare < 1 || !cand) {
                 self.load_phase[e] = 0;
             }
+            // Enhanced (ADR 0045): a colony under attack comes first.
+            if w.ctx.enhanced {
+                if let Some(f) = enhanced::defence_target(w, e, m as usize) {
+                    (kind, target) = (2, f);
+                }
+            }
         }
 
         // §11.5 orders.
@@ -680,7 +694,12 @@ impl AiState {
         }
         let m = self.main_fleet[e];
         if m > 0 && !matches!(fled, 1..=3) {
-            if kind > 0 {
+            if kind == 1 && w.ctx.enhanced && enhanced::gather(w, e, m as usize) {
+                // Enhanced (ADR 0045): wait where it is for the followers to merge before an invasion.
+                let r = &w.starmap.fleets[m as usize];
+                let (x, y) = (r.x, r.y);
+                w.order_unscripted(m as usize, order::MOVE, order::POINT, x, y);
+            } else if kind > 0 {
                 w.order_unscripted(m as usize, order::ATTACK, kind as i16, target as f32, 0.0);
             } else if w.rec(m).is_some_and(|r| r.order == order::NONE) {
                 let t = w.totals(m);

@@ -536,10 +536,17 @@ fn months(g: &Game) -> i32 {
 pub(super) fn growth(g: &Game, run: &str, seed: u32, month: i32) {
     let s = ig2_sim::stats::sample(&g.state);
     let alive = g.state.alive();
+    let (colony, combat, relations, ai) = (g.state.colony(), g.state.combat(), g.state.relations(), g.state.ai());
     for (i, r) in s.rows.iter().enumerate().filter(|(i, _)| alive[i + 1]) {
         let e = i + 1;
         let labs: Vec<i32> = (1..=3).map(|k| g.state.mem.i32(va::LAB_BUILDINGS + 16 * e as u32 + 4 * k)).collect();
-        println!("growth {run} seed {seed} month {month} empire {e} planets {} population {} techs {} credits {} ships {} research {} labs {labs:?} open {:?}", r.planets, r.population, r.techs, r.credits, r.ships, g.state.mem.i32(va::RESEARCHING + 4 * e as u32), { let c = g.state.colony(); (1..193).filter(|&t| c.tech.status(t, e) == 3).map(|t| (t, c.tech.labs_needed(t))).collect::<Vec<_>>() });
+        let open: Vec<_> = (1..193).filter(|&t| colony.tech.status(t, e) == 3).map(|t| (t, colony.tech.labs_needed(t))).collect();
+        // Ship and vehicle capacity, garrisons; the main fleet's (slot, ships, attack, vehicles, room, ground strength).
+        let capacity = colony.planets.iter().filter(|p| p.owner as usize == e).fold([0, 0, 0], |a, p| [a[0] + p.ship_capacity, a[1] + p.vehicle_capacity, a[2] + p.field_58]);
+        let m = ai.main_fleet[e];
+        let main = combat.fleets.get(m.max(0) as usize).map_or([0; 6], |f| { let t = f.totals; [m, t.ships, t.attack, t.ground, t.capacity, t.ground_strength] });
+        let wars = (1..19).filter(|&u| u != e && relations[e][u].level == 1).count();
+        println!("growth {run} seed {seed} month {month} empire {e} planets {} population {} techs {} credits {} ships {} built {} lost {} battles {} capacity {capacity:?} main {main:?} wars {wars} research {} labs {labs:?} open {open:?}", r.planets, r.population, r.techs, r.credits, r.ships, g.stats.built[i], g.stats.lost[i], r.battles, g.state.mem.i32(va::RESEARCHING + 4 * e as u32));
     }
 }
 

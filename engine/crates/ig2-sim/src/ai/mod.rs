@@ -665,6 +665,9 @@ impl AiState {
         let main = self.main_planet[e];
         let danger = w.danger[e];
         let cats = self.categories[e];
+        // Enhanced (ADR 0045): what today's yards already took, so they don't all start the same wanted unit.
+        let mut taken = [0i32; CATEGORIES];
+        let warships = if w.ctx.enhanced { enhanced::warships(w, e, &cats) } else { 0 };
         for &p in &mine {
             queue_put(&mut w.spy.colony.planets[p], 0xac, &[if p as i32 == main { 0 } else { main as u8 }]);
             let mut ship = cats[category::SHIP].design[BEST];
@@ -682,21 +685,25 @@ impl AiState {
             if w.ctx.enhanced && danger < 3 && !idle {
                 let col = &cats[category::COLONY_SHIP];
                 let head = planet_word(&w.spy.colony.planets[p], 0x78);
-                idle = col.design[BEST] > 0 && col.total(BEST) < col.want && head != col.design[BEST] && (head == cats[category::SHIP].design[BEST] || head == alt);
+                idle = col.design[BEST] > 0 && col.total(BEST) + taken[category::COLONY_SHIP] < col.want && head != col.design[BEST] && (head == cats[category::SHIP].design[BEST] || head == alt);
             }
             if idle && yard {
                 // Enhanced (ADR 0045): every shipyard, not only the main planet's, builds what is wanted.
                 if (danger < 3 || w.r(1, 3) == 1) && (p as i32 == main || w.ctx.enhanced) {
                     for (c, cat) in cats.iter().enumerate().skip(1) {
-                        if w.rules.build_mode.get(c) == Some(&1) && cat.design[BEST] > 0 && cat.total(BEST) < cat.want {
+                        if w.rules.build_mode.get(c) == Some(&1) && cat.design[BEST] > 0 && cat.total(BEST) + taken[c] < cat.want {
                             ship = cat.design[BEST];
                             alt = 0;
+                        }
+                    }
+                    if w.ctx.enhanced {
+                        if let Some(c) = (1..CATEGORIES).find(|&c| ship != 0 && ship != cats[category::SHIP].design[BEST] && cats[c].design[BEST] == ship) {
+                            taken[c] += 1;
                         }
                     }
                 }
                 // Enhanced (ADR 0045): at peace no more warships than the empire's planets call for, so the credits
                 // go to colonies, buildings and research.
-                let warships = cats[category::SHIP].total(BEST) + cats[category::SHIP_ALT].total(BEST) + cats[category::SHIP_ALT].total(SPECIAL);
                 if w.ctx.enhanced && danger == 1 && ship == cats[category::SHIP].design[BEST] && warships >= enhanced::peace_warships(mine.len()) {
                     ship = 0;
                 }
@@ -717,8 +724,10 @@ impl AiState {
                 veh = veh_cat.design[SPECIAL];
             }
             let time = w.design_i32(e, veh as i32, 0x20);
+            // Enhanced (ADR 0045): bigger garrisons at war, for the invasions.
+            let garrison = if w.ctx.enhanced && danger >= 2 { enhanced::GARRISON_WAR } else { 10 };
             let pl = &mut w.spy.colony.planets[p];
-            if planet_word(pl, 0x80) == 0 && pl.field_58 < 10 && pl.vehicle_capacity > 0 {
+            if planet_word(pl, 0x80) == 0 && pl.field_58 < garrison && pl.vehicle_capacity > 0 {
                 queue_put(pl, 0x80, &veh.to_le_bytes());
                 for (o, v) in [(0x8c, 1), (0x94, 0), (0xb1, 0), (0xa9, 0)] {
                     queue_put(pl, o, &[v]);
@@ -1050,7 +1059,7 @@ mod tests {
     use super::*;
     use crate::colony::{EconomyContext, Planet};
     use crate::colony_side::{ColonyWorld, SideRules};
-    use crate::fleet::Fleet;
+    use crate::fleet::{order, Fleet};
     use crate::diplomacy::Relation;
     use crate::research::{Research, ResearchContext, ResearchRules};
     use crate::rng::Streams;
@@ -1669,5 +1678,84 @@ mod tests {
         fx.colony.money[2].total = 40_000.0;
         run(&mut fx, |w| ai.enhanced_research(w, 2));
         assert_eq!((fx.research.current[2], fx.research.urgent[2]), (11, 0));
+    }
+
+    fn fleet(owner: u8, strength: i32, x: f32, y: f32) -> Fleet {
+        let mut f = Fleet::from_record(&[0u8; 0x80]);
+        (f.owner, f.strength, f.x, f.y) = (owner, strength, x, y);
+        f.visible = [1; 19];
+        f
+    }
+
+    /// ADR 0045 part 2: a war is declared at once when the main fleet is half as strong again as the target's,
+    /// never under a ceasefire, pact or alliance.
+    #[test]
+    fn enhanced_war_needs_a_margin_and_no_pact() {
+        let mut fx = fixture();
+        fx.starmap.fleets.push(fleet(2, 150, 0.0, 0.0));
+        fx.starmap.fleets.push(fleet(3, 100, 50.0, 0.0));
+        let main = { let mut m = [0; EMPIRES]; (m[2], m[3]) = (1, 2); m };
+        run(&mut fx, |w| assert!(enhanced::war_ready(w, 2, 3, &main), "150 = 1.5 × 100"));
+        fx.starmap.fleets[2].strength = 101;
+        run(&mut fx, |w| assert!(!enhanced::war_ready(w, 2, 3, &main), "150 < 1.5 × 101"));
+        fx.starmap.fleets[2].strength = 0;
+        fx.rel[2][3].level = crate::diplomacy::level::NAP;
+        run(&mut fx, |w| assert!(!enhanced::war_ready(w, 2, 3, &main), "a pact holds"));
+    }
+
+    /// ADR 0045 part 2: the main fleet turns on the nearest enemy it outguns that attacks one of its planets, and
+    /// waits for followers close by carrying a quarter of its strength.
+    #[test]
+    fn enhanced_defence_and_gathering() {
+        let mut fx = fixture();
+        fx.colony.planets[1] = planet(2, 10.0, 1000, 0);
+        fx.colony.planets[2] = planet(3, 20.0, 1000, 0);
+        fx.rel[2][3].level = crate::diplomacy::level::WAR;
+        fx.starmap.fleets.push(fleet(2, 100, 0.0, 0.0));
+        for (x, s, p) in [(90.0, 50, 1.0), (30.0, 120, 1.0), (40.0, 50, 2.0), (60.0, 60, 1.0)] {
+            let mut f = fleet(3, s, x, 0.0);
+            (f.order, f.kind, f.tx) = (order::ATTACK, order::PLANET, p);
+            fx.starmap.fleets.push(f);
+        }
+        run(&mut fx, |w| assert_eq!(enhanced::defence_target(w, 2, 1), Some(5), "3 is too strong, 4 attacks a planet of its own side, 5 is nearer than 2"));
+        fx.rel[2][3].level = 0;
+        run(&mut fx, |w| assert_eq!(enhanced::defence_target(w, 2, 1), None, "not at war"));
+
+        let mut f = fleet(2, 25, 100.0, 100.0);
+        (f.order, f.kind, f.tx) = (order::MOVE, order::FLEET, 1.0);
+        fx.starmap.fleets.push(f);
+        run(&mut fx, |w| assert!(enhanced::gather(w, 2, 1), "25 within 150 is a quarter of 100"));
+        fx.starmap.fleets[6].strength = 24;
+        run(&mut fx, |w| assert!(!enhanced::gather(w, 2, 1)));
+        fx.starmap.fleets[6].strength = 25;
+        fx.starmap.fleets[6].x = 120.0;
+        run(&mut fx, |w| assert!(!enhanced::gather(w, 2, 1), "too far"));
+    }
+
+    /// ADR 0045 part 2: with research not waiting for labs, a spaceship factory goes to the biggest yard while
+    /// the ship capacity is short; at war a tank factory first while the vehicle capacity is below half of it.
+    #[test]
+    fn enhanced_factories_go_to_the_biggest_yard() {
+        let mut fx = fixture();
+        fx.colony.planets[1] = planet(2, 1.0, 30_000, 1000);
+        fx.colony.planets[2] = planet(2, 2.0, 20_000, 4000);
+        fx.research.current[2] = 5;
+        fx.side.autobuild.min = vec![0, 0, 19, 21];
+        fx.side.autobuild.max = vec![0, 0, 20, 22];
+        fx.side.colony.buildings = vec![crate::colony::BuildingKind::default(); 23];
+        for k in 19..=22 {
+            fx.side.colony.buildings[k].tech = 40 + k as u8;
+            fx.colony.tech.set_status(40 + k, 2, crate::colony_side::status::OWNED);
+        }
+        fx.colony.money[2] = Treasury { total: 30_000.0, pools: [0.0, 10_000.0, 10_000.0, 10_000.0, 0.0, 0.0], share: [0.0, 0.4, 0.3, 0.3, 0.0, 0.0], ..Default::default() };
+        let mut ai = AiState::default();
+        let ev = run(&mut fx, |w| ai.enhanced_planet_settings(w, 2));
+        assert_eq!(ev, [AiEvent::Build { empire: 2, planet: 2, kind: 20 }], "5,000 < 3,000 × 2 planets: the best factory on the bigger yard");
+        fx.danger[2] = 2;
+        let ev = run(&mut fx, |w| ai.enhanced_planet_settings(w, 2));
+        assert_eq!(ev, [AiEvent::Build { empire: 2, planet: 1, kind: 22 }], "at war, no vehicle capacity: a tank factory (the tie to the first planet)");
+        fx.colony.planets[2].ship_capacity = 6000;
+        fx.danger[2] = 1;
+        assert!(run(&mut fx, |w| ai.enhanced_planet_settings(w, 2)).is_empty(), "7,000 capacity is enough for 2 planets");
     }
 }
