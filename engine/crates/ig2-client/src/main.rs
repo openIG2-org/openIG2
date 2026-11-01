@@ -35,8 +35,8 @@
 //! Info:     `ig2-client --info [--save <file.sav>] [--ticks N]` prints the starmap's planets and fleets.
 //!
 //! The install comes from `IG2_INSTALL_DIR`, else the one found (`install_root`; the window says so when there is none,
-//! `setup`); the language from `--lang en|hu|de|fr|es|it`, else `IG2_LANG`, else the one
-//! the GOG ig2.exe would pick on this machine (`ig2_formats::locale`, re/formats/locale.md). The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
+//! `setup`); the language from `--lang en|hu|de|fr|es|it`, else `IG2_LANG`, else the Options screen's Language row
+//! (ADR 0031), else the one the GOG ig2.exe would pick on this machine (`ig2_formats::locale`, re/formats/locale.md). The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
 //! repository's `_local/saves`). Saves, installs and rendered PNGs hold game data: keep them out of the repo.
 
 mod assets;
@@ -567,10 +567,17 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
     Install::open(&root, language(o, &root)).map_err(|e| e.to_string())
 }
 
-/// The texts' language: `--lang`, else `IG2_LANG`, else what the GOG exe would run in (`ig2.settings`' `language=`,
-/// a `locale.txt`, the system locale).
+/// The texts' language: [`forced_language`], else the settings file's Language row (ADR 0031), else what the GOG exe
+/// would run in (`ig2.settings`' `language=`, a `locale.txt`, the system locale).
 fn language(o: &Options, root: &std::path::Path) -> Lang {
-    o.lang.or_else(|| std::env::var("IG2_LANG").ok().and_then(|c| Lang::from_code(&c))).unwrap_or_else(|| ig2_formats::locale::exe_language(root).0)
+    forced_language(o)
+        .or_else(|| display::language(&ig2_formats::options::Options::load()))
+        .unwrap_or_else(|| ig2_formats::locale::exe_language(root).0)
+}
+
+/// `--lang`, else `IG2_LANG`: over the Language row, which is greyed then.
+pub fn forced_language(o: &Options) -> Option<Lang> {
+    o.lang.or_else(|| std::env::var("IG2_LANG").ok().and_then(|c| Lang::from_code(&c)))
 }
 
 fn info(o: &Options) -> Result<(), String> {

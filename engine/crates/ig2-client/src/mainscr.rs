@@ -61,6 +61,8 @@ pub enum Act {
     Click,
     /// The name entry ended (`MainScr_IPEntered`: `SaveGlobalRegistrySettings`).
     NameEntered,
+    /// Ours (ADR 0031): the Settings label or `O`: the Options screen without its slots, load and save.
+    Settings,
 }
 
 /// What `MainScr_Kilep` starts (spec §2.2 step 3).
@@ -206,6 +208,8 @@ pub const SCENARIO_LOAD_TICKS: u8 = 8;
 /// Box 0x27 (`Mouse_Szoveg_Set(0x27, 0, 300, 446, 110, 19, .., 1, 1)`, exe 0x4ff980): the scenario info / high-score
 /// toggle, live on the plain ring menus too.
 pub const TOGGLE_BOX: [i32; 4] = [300, 446, 110, 19];
+/// Ours (ADR 0031): the Settings label's box, bottom right.
+pub const SETTINGS_BOX: [i32; 4] = [536, 448, 96, 22];
 
 /// The exe's hot-spot test (exe 0x510390): `x0 <= x <= x0 + w - 1` on the pointer's integer pixel.
 pub fn in_box(at: [f32; 2], r: [i32; 4]) -> bool {
@@ -263,6 +267,9 @@ pub struct MainScr {
     pub race: Option<crate::mainscr_race::RaceChoice>,
     pub blurbs: [Vec<u8>; 3],
     pub race_boxes: [Option<[f32; 2]>; 3],
+    /// Ours (ADR 0031, `MenuSettings`): the Settings label and `O` are on; `covered`: the Options screen is up.
+    pub settings: bool,
+    pub covered: bool,
 }
 
 /// `kamerapont` and `elforgatas` from `MainScrMozgato` with the y and z amplitudes and offsets of `Update3D` (100, −100,
@@ -336,6 +343,8 @@ impl MainScr {
             race: None,
             blurbs: Default::default(),
             race_boxes: [None; 3],
+            settings: false,
+            covered: false,
         };
         for i in 0..8 {
             s.respawn_ship(i, &mut r);
@@ -459,7 +468,22 @@ impl MainScr {
         // 0x27 (300, 446, 110 × 19) also outside the list: `MainScr_MouseInit2` (exe 0x4ff7b0) switches it on whenever
         // the skirmish settings are off, `Mode_Scenario_Valasztas` 0 included.
         let toggle = self.scenario.is_none() && in_box(at, TOGGLE_BOX);
-        self.hand = self.hovered.is_some() || toggle || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
+        self.hand = self.hovered.is_some() || toggle || self.settings_at(at) || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
+    }
+
+    /// Ours (ADR 0031): the Settings label shows while the main ring set is up and idle.
+    pub fn settings_shown(&self) -> bool {
+        self.settings && !self.covered && self.menu == Menu::Main && self.cel == 1.0 && self.scenario.is_none() && self.name.is_none() && !self.mp && self.race.is_none()
+            && self.disconnected.is_none() && self.leaving.is_none() && self.start.is_none() && self.loading.is_none()
+    }
+
+    pub fn settings_at(&self, at: [f32; 2]) -> bool {
+        self.settings_shown() && in_box(at, SETTINGS_BOX)
+    }
+
+    /// Ours (ADR 0031): `O` on the main menu.
+    pub fn settings_key(&self) -> Option<Act> {
+        self.settings_shown().then_some(Act::Settings)
     }
 
     /// The race box (0xe..=0x10) under `at`: the 160 × 160 square round the sphere's projected centre, while they're on.
@@ -533,6 +557,9 @@ impl MainScr {
                 }
             }
             return None;
+        }
+        if left && self.settings_at(at) {
+            return Some(Act::Settings);
         }
         // A box ring acts on the press frame, then the frame loop waits for the release (`Mouse_FelengedesMajdMegvar`).
         let boxed = self.box_ring_at(at);
@@ -926,6 +953,18 @@ mod tests {
 
     /// The ring hit centres the exe's `TransformPoint` gave at `MainScrMozgato` 25.1 (`tools/trace/probes/mainscr.js`,
     /// quick-1.sav, spec §13).
+    /// ADR 0031: the Settings label only on the idle main ring set, and only with the option on.
+    #[test]
+    fn settings_label() {
+        let mut s = MainScr::enter();
+        let at = [(SETTINGS_BOX[0] + 10) as f32, (SETTINGS_BOX[1] + 10) as f32];
+        assert_eq!((s.settings_key(), s.press(at)), (None, None));
+        s.settings = true;
+        assert_eq!((s.settings_key(), s.press(at)), (Some(Act::Settings), Some(Act::Settings)));
+        s.fly_to(Menu::Single);
+        assert_eq!(s.settings_key(), None);
+    }
+
     #[test]
     fn ring_centres_match_the_exe() {
         let mut s = MainScr::enter();

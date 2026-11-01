@@ -46,3 +46,4 @@ reads `localization/hu/…`; `Lang` reads 1.
 `LC_MESSAGES` / `LANG`, as for the ELF build [inf]); a language without a localization (`pl`, …) gives English.
 The client's texts keep their files' code page (Windows-1250 for Hungarian: ő/ű are 0xF5/0xFB, which the Hungarian
 glyph order maps), never Latin-1.
+The client's order at start: `--lang`, `IG2_LANG`, the Options "Language" row (`Language`, 0 = Default; ADR 0031, deviation 441), then `exe_language`.

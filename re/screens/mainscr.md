@@ -636,3 +636,4 @@ ship sounds, the ring tooltips, the debug Enter (no `DEBUGLEHET`); no demo mode 
 The race rings B and C draw with z-mirrored normals in `mainscr_scene.rs` (empirical; the exe's lighting matches, the
 cause is open). Open deviations: 20 (fly-out pace, RNG poses), 150 (respawning saucer, meteor material), 154 (picture
 slide), 157 (MP-ring leftovers).
+Client addition: a Settings label (`SETTINGS_BOX`, `Act::Settings`) bottom right of the main ring set when idle, and the `O` key, open the settings-only Options screen (Remake row `MenuSettings`, ADR 0031, deviation 440); `run_screendiff.py` pins it off.

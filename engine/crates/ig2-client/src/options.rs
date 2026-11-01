@@ -268,6 +268,10 @@ pub struct OptionsScreen {
     pub slots: Vec<Option<Slot>>,
     pub rows: Vec<Row>,
     pub load_only: bool,
+    /// Ours (ADR 0031): opened from the main menu's Settings label, load only without the slot list, Load and Save.
+    pub settings_only: bool,
+    /// Ours (ADR 0031): the Language row's value the client started with; another one shows the restart line.
+    pub lang_at_start: Option<i32>,
     /// `OptionsHarcFolyik` (exe 0xbae24f): a battle runs (no saving without `DEBUGX`). Set by `SpaceWar_Kilep`
     /// towards Options (exe 0x562c0f) and `Colony_Kilep` with a ground war on the planet (exe 0x466631).
     pub battle: bool,
@@ -349,6 +353,8 @@ impl OptionsScreen {
             slots,
             rows,
             load_only,
+            settings_only: false,
+            lang_at_start: None,
             battle: false,
             debug: false,
             multiplayer,
@@ -430,7 +436,7 @@ impl OptionsScreen {
     fn spot_on(&self, id: u32) -> bool {
         match id {
             // Under the tutorial: no load, save or slots (`Off(2)`, id 1 forced off); "continue" on.
-            id::LOAD | id::SAVE | id::SLOTS if self.tutorial => false,
+            id::LOAD | id::SAVE | id::SLOTS if self.tutorial || self.settings_only => false,
             id::CONTINUE => self.tutorial,
             id::LOAD => self.filled(self.slot) && !self.sure && !self.multiplayer,
             id::SAVE => (!self.load_only && !self.battle_lock() && !self.mp_lock() && self.slot < 23) || self.sure,
@@ -661,6 +667,11 @@ impl OptionsScreen {
     /// The page's rows with their line (ours one line lower, under the heading) and index.
     fn page_rows(&self) -> impl Iterator<Item = (usize, usize, &Row)> {
         self.rows.iter().enumerate().filter(|(_, r)| r.page == self.page).enumerate().map(|(n, (k, r))| (n + r.ours as usize, k, r))
+    }
+
+    /// Ours (ADR 0031): the Language row is on this page and differs from the one the client started with.
+    fn restart_needed(&self) -> bool {
+        self.rows.iter().any(|r| r.ours && r.page == self.page && r.key == crate::display::LANGUAGE && self.lang_at_start.is_some_and(|v| v != r.value))
     }
 
     fn row_y(&self, n: i32) -> i32 {
@@ -924,14 +935,14 @@ impl OptionsScreen {
             vv = 100.0;
         } else {
             vv = fd * 2.0;
-            if leaving.is_none() && !t {
+            if leaving.is_none() && !t && !self.settings_only {
                 self.lasers.shoot([0x169, 0x74, 0x109, 0x14a], [0x27f, 0x1df], vv / 100.0, LASER);
             }
         }
         if let Some(l) = leaving {
             vv = l;
         }
-        if !t {
+        if !t && !self.settings_only {
             kirak(f, &mut fq, &mut self.faders, 3, 3, [361.0, 116.0, 265.0, 330.0], vv, false);
             // At full fade-in the scan band runs down the slot list (style 0 at `fmod(clock·1.8, 1)`), then its glow.
             let s = self.faders.s(3);
@@ -1004,7 +1015,7 @@ impl OptionsScreen {
             }
         }
         // The page's rows (`KirakMenuPontok`).
-        let mut heading = true;
+        let (mut heading, mut last) = (true, 0);
         for (n, _, r) in self.page_rows() {
             let y = self.row_y(n as i32) as f32;
             if r.ours && std::mem::take(&mut heading) {
@@ -1022,6 +1033,10 @@ impl OptionsScreen {
                 _ => (Vec::new(), cv),
             };
             text(f, &val, 0xe6 as f32, y, 10, 2, Align::Left, d.col(c, b2));
+            last = n;
+        }
+        if self.restart_needed() {
+            text(f, b"Restart to change the language", 0x1e as f32, self.row_y(last as i32 + 1) as f32, 0x20, 2, Align::Left, d.col(1, b2));
         }
         // The buttons' labels (font 3, centred in 9 cells), colour 2 under the pointer.
         let lab = |f: &mut Frame, s: u16, x: i32, spot: u32| {
@@ -1051,7 +1066,7 @@ impl OptionsScreen {
         // The slot list (`KiirStrSzinSzorzo = Blokk1`): names at x 380, the selected one framed. The exe draws the
         // slot's old name under the name entry too; with the clean entry (ADR 0024) the entry's slot shows none.
         let clean = self.entry.is_some() && self.rows.iter().any(|r| r.ours && r.key == crate::display::CLEAN_ENTRY && r.value != 0);
-        for i in 1..=SLOTS {
+        for i in (1..=SLOTS).filter(|_| !self.settings_only) {
             let y = 0x83 + (i as i32 - 1) * 0xc;
             let c = if i == self.slot { 2 } else { 1 };
             if i == self.slot {
@@ -1508,6 +1523,22 @@ mod tests {
             act = act.or(o.done());
         }
         assert_eq!(act, Some(Act::MainMenu));
+    }
+
+    /// ADR 0031: from the main menu's Settings label, no slot list, Load or Save; the restart line once the Language
+    /// row differs from the start's.
+    #[test]
+    fn settings_only() {
+        let mut o = screen();
+        o.load_only = true;
+        o.settings_only = true;
+        assert!(!o.spot_on(id::LOAD) && !o.spot_on(id::SAVE) && !o.spot_on(id::SLOTS) && o.spot_on(id::QUIT));
+        o.rows.push(Row { key: crate::display::LANGUAGE.into(), page: o.page, ours: true, enabled: true, states: 6, value: 2, ..Row::default() });
+        assert!(!o.restart_needed());
+        o.lang_at_start = Some(2);
+        assert!(!o.restart_needed());
+        o.lang_at_start = Some(0);
+        assert!(o.restart_needed());
     }
 
     #[test]

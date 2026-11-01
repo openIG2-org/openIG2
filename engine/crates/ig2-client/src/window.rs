@@ -123,6 +123,7 @@ impl Front {
     /// `MainScr_Belep`, `MultiplayerNev` from the settings file (`SaveGlobalRegistrySettings`' value; "Player" without one).
     fn new(scene: Option<crate::mainscr_scene::MainScene>, ui_ms: u32, settings: &ig2_formats::options::Options) -> Self {
         let mut s = crate::mainscr::MainScr::enter();
+        s.settings = settings.int(crate::display::MENU_SETTINGS) != Some(0);
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
@@ -274,6 +275,9 @@ struct App {
     autosave: ((i32, i32, i32), i32),
     /// ADR 0017: the name tables in the game's language (`OneLanguage`, `--texts`).
     one_language: bool,
+    /// Ours (ADR 0031): the Language row's value at start, and `--lang`/`IG2_LANG` set (the row greyed).
+    lang_at_start: i32,
+    lang_forced: bool,
     rules: &'static ig2_sim::game::GameRules,
     tech_defaults: Vec<u8>,
     volatile: Vec<(u32, Vec<u8>)>,
@@ -424,6 +428,8 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
     app.backdrop.live = o.background.unwrap_or(app.settings.int("LiveBackground") != Some(0));
     app.one_language = o.texts.unwrap_or(app.settings.int("OneLanguage") != Some(0));
+    app.lang_at_start = app.settings.int(crate::display::LANGUAGE).unwrap_or(0);
+    app.lang_forced = crate::forced_language(&o).is_some();
     // The display rows' settings (crate::display), `IG2_VSYNC` and `--letterbox` over them.
     app.display = crate::display::Display::from_settings(&app.settings);
     app.vsync = std::env::var("IG2_VSYNC").map_or(app.display.vsync, |v| v != "0");
@@ -659,6 +665,8 @@ impl App {
             settings: ig2_formats::options::Options::load(),
             autosave: ((0, 0, 0), 0),
             one_language: false,
+            lang_at_start: 0,
+            lang_forced: false,
             rules,
             tech_defaults: Vec::new(),
             volatile: Vec::new(),
@@ -2071,6 +2079,7 @@ impl App {
         let scene = fr.scene.get_or_insert_with(|| crate::mainscr_scene::MainScene::load(&mut g.renderer, &self.install));
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         fr.s.race_boxes = scene.draw(&mut frame, &mut g.renderer, &self.install, &fr.s, &crate::font::Virtual::new(size));
+        fr.s.covered = self.options.is_some();
         if let Some(h) = &self.hud {
             let now = self.start.elapsed().as_secs_f64() * 1000.0;
             draw_front_2d(fr, h, &mut g.renderer, &self.install, &mut frame, size, now);
@@ -2102,6 +2111,14 @@ impl App {
             }
             // `OptionsCsakLoadLehet = 1; AktKep = 0xd`: Options in load-only mode over the main menu's scene.
             Act::LoadGame => self.open_options(true),
+            // Ours (ADR 0031): the same screen without the slot list, Load and Save.
+            Act::Settings => {
+                self.open_options(true);
+                if let Some(o) = &mut self.options {
+                    o.s.settings_only = true;
+                    o.s.slots = vec![None; crate::options::SLOTS + 1];
+                }
+            }
             // `Mainscreen_Update3D` exe 0x50147d: `OpenBink("misc/credits.bik", 1, 0, 0, force)`, blocking.
             Act::Credits => self.queue_videos(["misc/credits.bik".to_string()], true, AfterVideo::Resume),
             Act::Click => self.audio.play(crate::audio::CLICK),
@@ -2287,6 +2304,13 @@ impl App {
         let slots = crate::options::read_slots(crate::options::slot_dir().as_deref());
         let mp = self.multiplayer();
         let mut screen = crate::options::OptionsScreen::enter(&h.texts, self.opt_rows.clone(), &s, load_only, mp, slots);
+        screen.lang_at_start = Some(self.lang_at_start);
+        if self.lang_forced {
+            if let Some(r) = screen.rows.iter_mut().find(|r| r.ours && r.key == crate::display::LANGUAGE) {
+                r.locked = true;
+            }
+            crate::options::check_dependencies(&mut screen.rows, mp);
+        }
         screen.tutorial = self.tutorial.as_ref().is_some_and(|t| t.t.active || t.t.paused);
         if screen.tutorial {
             screen.lock_battle_simulate();
@@ -2986,6 +3010,9 @@ impl App {
         if d.live_background != old.live_background {
             self.backdrop.live = d.live_background;
         }
+        if let Some(f) = &mut self.front {
+            f.s.settings = self.settings.int(crate::display::MENU_SETTINGS) != Some(0);
+        }
         if d.one_language != old.one_language {
             self.one_language = d.one_language;
             if let Some(h) = &mut self.hud {
@@ -3559,6 +3586,9 @@ impl App {
             return;
         }
         if f.s.name.is_none() {
+            if let (Key::Character("o" | "O"), Some(a)) = (k.as_ref(), f.s.settings_key()) {
+                self.front_act(a);
+            }
             return;
         }
         let key = match k.as_ref() {

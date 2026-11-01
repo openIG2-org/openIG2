@@ -28,6 +28,8 @@ Since 0.7.56.
 - Space battle: the defend/attack slider no longer runs through its label (Remake row "Slider under label"; off shows the original's look).
 - Hungarian games: the article before a name reads "a" or "az" instead of a stray character on the message line, in messages, diplomacy and battle banners (Remake row "Hungarian articles"; off shows the original's look).
 - Production view, transfer panel and fleet panel: the Exit label is centred on its button (Remake row "Centred Exit label"; off shows the original's look).
+- Main menu: a Settings label (bottom right) and the O key open the Options screen without the slot list, Load and Save (Remake row "Settings in menu"; off keeps the original's menu).
+- Options: a Language row picks the game's text language; it applies after a restart (Remake row "Language"; `--lang` and `IG2_LANG` still win).
 
 **Multiplayer**
 

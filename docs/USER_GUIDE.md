@@ -41,7 +41,7 @@ also join the running game with Join under a new name to watch it.
 | `--save <file.sav>` | Start straight into an original or our own save |
 | `--new-campaign` | Start a new campaign at once |
 | `--speed 1\|2\|3` | Starting game speed |
-| `--lang en\|hu\|de\|fr\|es\|it` | UI language |
+| `--lang en\|hu\|de\|fr\|es\|it` | UI language; wins over `IG2_LANG`, which wins over the Options Language row, then the original's own choice |
 | `--size WxH`, `--letterbox` | Window size; letterbox wide windows instead of the remaster's layout |
 
 ## Controls
@@ -77,7 +77,7 @@ load list shows the last two.
 
 ### Display settings
 Options → the game tab, under the original's rows and a "Remake" heading. A press cycles the row; changes apply
-at once and are saved in `ig2-rework-options.dat`.
+at once and are saved in `ig2-rework-options.dat`. The Options screen also opens from the main menu (the Settings label at the bottom right, or the `O` key), without its slot list, Load and Save.
 
 | Row (key) | |
 |---|---|
@@ -94,6 +94,8 @@ at once and are saved in `ig2-rework-options.dat`.
 | Centred Exit label (`CentredExitLabel`) | On by default: the Exit label of the production view, transfer panel and fleet panel is centred on its button (ADR 0029); off draws it left of centre as in the original |
 | WASD camera (`WasdCamera`) | Held W/A/S/D move the camera at the edge-scroll speed (ADR 0030): Starmap (default), Both (also the colony screen, where they replace the `a` select-all and `s` stop keys) or Off; never while you type a name or chat |
 | Autosave every (`AutosaveEvery`) | Original (default: slot 24 twice a game year), or every 10, 30 or 90 game days with the previous autosave kept in slot 23 (ADR 0032); in multiplayer only these cadences autosave, on the host |
+| Settings in menu (`MenuSettings`) | On by default: the main menu shows a Settings label and opens Options on `O` (ADR 0031); off keeps the original's menu |
+| Language (`Language`) | Default (the client's own choice), English, Magyar, Deutsch, Francais, Espanol or Italiano (ADR 0031); applies at the next start, the screen says "Restart to change the language"; greyed while `--lang` or `IG2_LANG` is set |
 
 The window opens at 1600x900 until a size is saved.
 

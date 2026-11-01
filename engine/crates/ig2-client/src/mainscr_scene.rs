@@ -537,6 +537,12 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
     if let Some(reason) = s.disconnected {
         crate::mainscr_scenario::draw_disconnected(frame, &d, reason, s.at);
     }
+    // Ours (ADR 0031): the Settings label in the Options screen's button font, colour 2 under the pointer.
+    if s.settings_shown() {
+        let [x, y, w, _] = crate::mainscr::SETTINGS_BOX;
+        let c = d.col(if s.settings_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
+        font.text(frame, &d.v, b"Settings", (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
+    }
 }
 
 /// What a ring's request needs from the install before the menu goes on (shared by the window and the script run):
@@ -633,6 +639,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let mut scene = MainScene::load(&mut r, &install);
     let mut s = MainScr::enter();
+    s.settings = ig2_formats::options::Options::load().int(crate::display::MENU_SETTINGS) != Some(0);
     let size = [o.size.0 as f32, o.size.1 as f32];
     let vv = Virtual::new(size);
     let mut mouse = [320.0, 240.0];
@@ -655,6 +662,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         let mut release = None;
         let mut right = None;
         let mut keys = Vec::new();
+        let mut settings = None;
         for e in script.at(t.saturating_sub(lag)).filter(|_| t >= lag) {
             match &e.input {
                 Input::Key { name, down: true } => keys.push(name.clone()),
@@ -737,6 +745,10 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                     s.escape();
                     None
                 }
+                "o" if s.name.is_none() => {
+                    settings = s.settings_key();
+                    None
+                }
                 "enter" | "return" => Some(EntryKey::Enter),
                 "backspace" => Some(EntryKey::Back),
                 "space" => Some(EntryKey::Char(b' ')),
@@ -760,7 +772,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 println!("t {t}: options {a:?}");
             }
         } else {
-            let acts = [due, press.and_then(|p| s.press(p)), right.and_then(|p| s.press_right(p)), release.and_then(|p| s.release(p))];
+            let acts = [due, press.and_then(|p| s.press(p)), right.and_then(|p| s.press_right(p)), release.and_then(|p| s.release(p)), settings.take()];
             for a in acts.into_iter().flatten() {
                 println!("t {t}: {a:?}");
                 prepare(&mut s, a, &mut assets, &install, &hud.texts);
@@ -768,10 +780,19 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                     let name = String::from_utf8_lossy(&s.player).into_owned();
                     mp = Some(crate::mp_lobby::MpScreen::open(a == crate::mainscr::Act::MultiMatchmaking, &name, [0; 32]));
                 }
-                if a == crate::mainscr::Act::LoadGame {
+                if matches!(a, crate::mainscr::Act::LoadGame | crate::mainscr::Act::Settings) {
                     let tables = ig2_rules::Rules::from_install(&install)?;
                     let h = crate::options::Headless::load(&mut r, &install, &tables);
-                    let os = h.enter(&install, true);
+                    let mut os = h.enter(&install, true);
+                    // Ours (ADR 0031): the window's settings-only screen, the remake rows with it.
+                    if a == crate::mainscr::Act::Settings {
+                        let file = ig2_formats::options::Options::load();
+                        os.rows.extend(crate::display::rows(&file, &[], (o.size.0, o.size.1)));
+                        crate::options::check_dependencies(&mut os.rows, false);
+                        os.settings_only = true;
+                        os.slots = vec![None; crate::options::SLOTS + 1];
+                        os.lang_at_start = Some(file.int(crate::display::LANGUAGE).unwrap_or(0));
+                    }
                     options = Some((h, os));
                 }
             }
@@ -783,6 +804,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             }
         }
         if script.grabs.contains(&t) {
+            s.covered = options.is_some();
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             scene.draw(&mut frame, &mut r, &install, &s, &vv);
             draw_2d(&mut s, &mut assets, &hud, &mut r, &install, &mut frame, size, t as f64 * 10.0);

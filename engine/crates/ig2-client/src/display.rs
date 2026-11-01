@@ -1,10 +1,11 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030) and the autosave's cadence (ADR 0032); kept in our settings file and shown as extra rows on the Options screen's game page
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031); kept in our settings file and shown as extra rows on the Options screen's game page
 //! (`crate::options`, in the original's font and colours under a "Remake" heading). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
 use ig2_formats::options::Options as File;
+use ig2_formats::text::Lang;
 use winit::monitor::MonitorHandle;
 use winit::window::Fullscreen;
 
@@ -30,6 +31,17 @@ pub const CENTRED_EXIT: &str = "CentredExitLabel";
 pub const WASD: &str = "WasdCamera";
 /// ADR 0032: the autosave's cadence, an index into `crate::options::AUTOSAVE_DAYS` (0 = the original's).
 pub const AUTOSAVE: &str = "AutosaveEvery";
+/// ADR 0031: the main menu's "Settings" label and its `O` key (on by default).
+pub const MENU_SETTINGS: &str = "MenuSettings";
+/// ADR 0031: the texts' language at the next start; 0 the client's own choice, else [`LANGS`]`[n - 1]`.
+pub const LANGUAGE: &str = "Language";
+/// The language row's choices after "Default", in its order.
+pub const LANGS: [Lang; 6] = [Lang::En, Lang::Hu, Lang::De, Lang::Fr, Lang::Es, Lang::It];
+
+/// The language the settings file chooses (ADR 0031), if any.
+pub fn language(f: &File) -> Option<Lang> {
+    f.int(LANGUAGE).and_then(|n| LANGS.get((n as usize).checked_sub(1)?).copied())
+}
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -161,6 +173,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
     let modes = ["Window", "Borderless", "Fullscreen"].map(|s| s.as_bytes().to_vec()).to_vec();
     let labels: Vec<Vec<u8>> = sizes.iter().map(|(w, h)| format!("{w}x{h}").into_bytes()).collect();
     let n = labels.len() as i32;
+    let langs = ["Default", "English", "Magyar", "Deutsch", "Francais", "Espanol", "Italiano"].map(|s| s.as_bytes().to_vec()).to_vec();
     vec![
         row(0, "Display", MODE, d.mode as i32, modes, 2),
         row(1, "Resolution", RESOLUTION, res as i32, labels, n - 1),
@@ -175,6 +188,8 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(10, "Centred Exit label", CENTRED_EXIT, d.centred_exit as i32, Vec::new(), 1),
         row(11, "WASD camera", WASD, d.wasd as i32, ["Off", "Starmap", "Both"].map(|s| s.as_bytes().to_vec()).to_vec(), 2),
         row(12, "Autosave every", AUTOSAVE, f.int(AUTOSAVE).unwrap_or(0).clamp(0, 3), ["Original", "10 days", "30 days", "90 days"].map(|s| s.as_bytes().to_vec()).to_vec(), 3),
+        row(13, "Settings in menu", MENU_SETTINGS, (f.int(MENU_SETTINGS) != Some(0)) as i32, Vec::new(), 1),
+        row(14, "Language", LANGUAGE, language(f).map_or(0, |l| 1 + LANGS.iter().position(|&x| x == l).unwrap() as i32), langs, 6),
     ]
 }
 
@@ -209,7 +224,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);
@@ -218,5 +233,18 @@ mod tests {
         r[0].value = 1;
         dependencies(&mut r);
         assert!(!r[1].enabled);
+    }
+
+    #[test]
+    fn language_row() {
+        let mut f = File::default();
+        assert_eq!(language(&f), None);
+        f.set(LANGUAGE, "3");
+        assert_eq!(language(&f), Some(Lang::De));
+        let r = rows(&f, &[(800, 600)], (800, 600));
+        let row = r.iter().find(|r| r.key == LANGUAGE).unwrap();
+        assert_eq!((row.value, row.labels[row.value as usize].as_slice()), (3, &b"Deutsch"[..]));
+        f.set(LANGUAGE, "7");
+        assert_eq!(language(&f), None);
     }
 }

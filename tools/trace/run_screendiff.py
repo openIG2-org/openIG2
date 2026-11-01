@@ -257,8 +257,8 @@ def sim_phase(trace):
 
 def pin_options(out, env):
     """The client's settings and save slots pinned to what the exe reads: a copy of the
-    original's `options.dat` and `save<n>.sav` from its save folder, without the remake's own settings file and
-    `.ig2s` slots that play rewrites; `IG2_OPTIONS_DIR` points the client there. An IG2_OPTIONS_DIR or IG2_SLOT_DIR
+    original's `options.dat` and `save<n>.sav` from its save folder, the remake's own settings file only turning the
+    main menu's Settings label off, without the `.ig2s` slots that play rewrites; `IG2_OPTIONS_DIR` points the client there. An IG2_OPTIONS_DIR or IG2_SLOT_DIR
     already set is kept."""
     if "IG2_OPTIONS_DIR" in env or "IG2_SLOT_DIR" in env or not env.get("LOCALAPPDATA"):
         return
@@ -271,6 +271,10 @@ def pin_options(out, env):
             low = f.lower()
             if low == "options.dat" or (low.startswith("save") and low.endswith(".sav")):
                 shutil.copy2(os.path.join(src, f), pinned)
+    # The remake's own settings with the main menu's Settings label off (ADR 0031: not the exe's).
+    own = b"".join(len(x).to_bytes(4, "little") + x for x in [b"MenuSettings", b"0", b"", b""])
+    with open(os.path.join(pinned, "ig2-rework-options.dat"), "wb") as f:
+        f.write(own)
     env["IG2_OPTIONS_DIR"] = os.path.abspath(pinned)
 
 
