@@ -164,6 +164,9 @@ impl War<'_> {
                 self.add_debris(p, [vh, vx, vy]);
             }
         }
+        if flags & flag::TURRET == 0 {
+            self.shown(super::GroundEvent::Scorch { at: p });
+        }
         self.blast_sound();
         self.remove_group(i);
         self.remove_target(i);

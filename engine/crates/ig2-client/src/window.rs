@@ -901,6 +901,9 @@ impl App {
             }
         }
         if let Some(c) = &mut self.colony {
+            c.scene.take_fx(&mut c.ui.fx);
+        }
+        if let Some(c) = &mut self.colony {
             for id in c.ui.sounds.drain(..) {
                 self.audio.play(id);
             }

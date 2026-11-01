@@ -597,7 +597,7 @@ impl War<'_> {
             for _ in 0..60 {
                 (self.libc)();
             }
-            self.shown(super::GroundEvent::Laser { from: [z - 10.0, x, y], to: tp });
+            self.shown(super::GroundEvent::Laser { from: [z - 10.0, x, y], to: tp, target: t });
             self.gr_sound(43);
             let n = self.alive_members(i);
             let dmg = n.wrapping_mul(base);
@@ -781,6 +781,12 @@ impl War<'_> {
         }
         for i in 0..self.n() as i32 {
             if self.alive(i) && self.unit_damage(i, 10_000_000, NONE) {
+                // `SelfDestruct`'s own scorch mark (exe 0x499500, colony.md §5.10).
+                let u = self.u(i);
+                if u.flags & flag::TURRET == 0 {
+                    let at = [u.rt.z, u.pos.0, u.pos.1];
+                    self.shown(super::GroundEvent::Scorch { at });
+                }
                 self.remove_group(i);
                 self.remove_target(i);
             }
@@ -853,7 +859,7 @@ impl War<'_> {
                 sh.vel = [sh.vel[0] / sp * 20.0, sh.vel[1] / sp * 20.0, sh.vel[2] / sp * 20.0];
             }
             if dist < 60.0 {
-                self.hit_fx(ahead(&sh.pos, &sh.vel));
+                self.hit_fx_on(sh.pos, sh.vel, sh.target);
                 let dmg = self.real_damage(sh.target, sh.dmg, sh.vel[1], sh.vel[2]);
                 if self.damage(sh.target, dmg, sh.by) {
                     self.kill(sh.target);
@@ -890,7 +896,7 @@ impl War<'_> {
                     self.trail(m.pos, TrailSource::Missile(m.kind));
                     m.pos = [m.vel[0] + m.pos[0], m.vel[1] + m.pos[1], m.vel[2] + m.pos[2]];
                     if m.target != NONE && Self::missile_close(&m) {
-                        self.hit_fx(ahead(&m.pos, &m.vel));
+                        self.hit_fx_on(m.pos, m.vel, m.target);
                         let dmg = self.real_damage(m.target, m.dmg, m.vel[1], m.vel[2]);
                         if self.damage(m.target, dmg, m.by) {
                             self.kill(m.target);
@@ -904,7 +910,7 @@ impl War<'_> {
                     self.trail(m.pos, TrailSource::Missile(3));
                     m.pos = [m.vel[0] + m.pos[0], m.vel[1] + m.pos[1], m.vel[2] + m.pos[2]];
                     if m.target != NONE && Self::missile_close(&m) {
-                        self.hit_fx(ahead(&m.pos, &m.vel));
+                        self.hit_fx_on(m.pos, m.vel, m.target);
                         let t = m.target;
                         if m.dmg & 1 != 0 && t >= 0 && t != NONE && self.u(t).flags & flag::TURRET == 0 {
                             let n = self.alive_members(t);
@@ -942,9 +948,16 @@ impl War<'_> {
                     let dist = dist3(&m.pos, &m.dest);
                     let (near, radius) = if m.kind == 1 { (100.0, 3600.0) } else { (40.0, 2500.0) };
                     if (m.pos[0] - m.target as f32).abs() < near {
-                        let bursts = if m.kind == 1 { 3 } else { 1 };
-                        for _ in 0..bursts * 5 {
-                            (self.libc)();
+                        // The dust (owner 0, colony.md §5.11; the exe draws vy, vx, vh, y, x).
+                        let (bursts, size) = if m.kind == 1 { (3, 10.0) } else { (1, 3.0) };
+                        let ground = (m.target - 10) as f32;
+                        for _ in 0..bursts {
+                            let vy = ((self.libc)() % 20 - 10) as f32 / 5.0;
+                            let vx = ((self.libc)() % 20 - 10) as f32 / 5.0;
+                            let vh = (-((self.libc)() % 10)) as f32 / 5.0;
+                            let y = m.pos[2] + ((self.libc)() % 10) as f32 - 5.0;
+                            let x = m.pos[1] + ((self.libc)() % 10) as f32 - 5.0;
+                            self.shown(super::GroundEvent::Particle { owner1: false, at: [ground, x, y], vel: [vh, vx, vy], rgb: [0x96, 100, 0x32], t: 100, size, ty: 0 });
                         }
                         for j in 0..self.n() as i32 {
                             if !self.alive(j) {
@@ -957,7 +970,7 @@ impl War<'_> {
                             let dy = v.pos.1 - m.pos[2];
                             let dx = v.pos.0 - m.pos[1];
                             if dx * dx + dy * dy < radius {
-                                self.hit_fx(m.pos);
+                                self.hit_fx([ground, m.pos[1], m.pos[2]]);
                                 let dmg = if m.kind == 1 { m.dmg.wrapping_mul(20) } else { (m.dmg as f64 * 1.5) as i32 };
                                 if self.damage(j, dmg, m.by) {
                                     self.kill(j);
@@ -999,7 +1012,8 @@ impl War<'_> {
             if b.target != NONE && dist3(&b.pos, &b.dest) < 40.0 {
                 // The hit's flash (no sound), at the shot's next point (`GetIntersectionPoint`, colony.md §5.3).
                 let size = (self.libc)() % 30 + 10;
-                self.flash(ahead(&b.pos, &b.vel), size);
+                let to = ahead(&b.pos, &b.vel);
+                self.shown(super::GroundEvent::HitFlash { from: b.pos, to, size, target: b.target });
                 let t = b.target;
                 if b.power != 0 && t >= 0 && self.u(t).flags & flag::TURRET == 0 {
                     let n = self.alive_members(t);

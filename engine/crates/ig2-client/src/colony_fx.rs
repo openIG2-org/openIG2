@@ -1,6 +1,7 @@
-//! The ground war's effects on the colony screen (spec `re/screens/colony.md` §5.2–§5.5): the projectiles' trails,
-//! the hit and blast flashes, the machine gun's tracers and the laser's beams, fed by the sim's render-only
-//! [`GroundEvent`]s of the shown war.
+//! The ground war's effects on the colony screen (spec `re/screens/colony.md` §5.2–§5.6, §5.11): the projectiles'
+//! trails, the bomb blasts' dust, the hit and blast flashes, the machine gun's tracers and the laser's beams, fed by
+//! the sim's render-only [`GroundEvent`]s of the shown war. Owner 1's particles and the scorch marks wait in
+//! [`WarFx::owner1`] and [`WarFx::scorches`] for the scene's [`crate::colony_smoke::Smoke`].
 
 use crate::spacewar_fx::Bolt;
 use crate::starmap::MsvcRand;
@@ -69,12 +70,19 @@ fn trail_look(of: TrailSource) -> ([i32; 3], i32, f32, u8) {
     }
 }
 
-/// A type-4 particle of owner 1 (spec §5.3): where, its size and the `ColonyCounter` it came on.
+/// A type-4 particle of owner 1 (spec §5.3): where, its size and the `ColonyCounter` it came on; a projectile's hit
+/// waits for [`WarFx::resolve`] to move it onto the target's mesh (the ray's far point and the target, §5.6).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Flash {
     pub at: V3,
     pub size: f32,
     born: i64,
+    ray: Option<(V3, i32)>,
+}
+
+/// `GetIntersectionPoint`'s far point: `target + 20·(muzzle − target)`.
+fn far(from: V3, to: V3) -> V3 {
+    std::array::from_fn(|k| to[k] + 20.0 * (from[k] - to[k]))
 }
 
 /// A machine-gun tracer (`LineParticle` type 2, spec §5.4): its ends (`a` on the target's side) and the sim ticks
@@ -101,13 +109,18 @@ pub struct WarFx {
     pub tracers: Vec<Tracer>,
     /// The laser beams and their sim ticks left.
     pub beams: Vec<(Bolt, i32)>,
+    /// The beams still to be put onto their target's mesh: muzzle, target point, target, sim ticks left.
+    aimed: Vec<(V3, V3, i32, i32)>,
+    /// Owner 1's particles and the vehicles' scorch marks the sim reported since the scene last took them.
+    pub owner1: Vec<crate::colony_smoke::Puff>,
+    pub scorches: Vec<V3>,
     /// The tracers' and beams' draws (the exe's shared libc stream).
     rand: MsvcRand,
 }
 
 impl Default for WarFx {
     fn default() -> Self {
-        Self { puffs: Vec::new(), flashes: Vec::new(), tracers: Vec::new(), beams: Vec::new(), rand: MsvcRand(1) }
+        Self { puffs: Vec::new(), flashes: Vec::new(), tracers: Vec::new(), beams: Vec::new(), aimed: Vec::new(), owner1: Vec::new(), scorches: Vec::new(), rand: MsvcRand(1) }
     }
 }
 
@@ -118,8 +131,16 @@ impl WarFx {
             GroundEvent::Flash { at, size } => {
                 let now = counter as i64;
                 self.flashes.retain(|f| Self::frame(f, now) < FLASH_FRAMES);
-                self.flashes.push(Flash { at: at.map(|v| v as f32), size: size as f32, born: now });
+                self.flashes.push(Flash { at: at.map(|v| v as f32), size: size as f32, born: now, ray: None });
             }
+            GroundEvent::HitFlash { from, to, size, target } => {
+                let now = counter as i64;
+                self.flashes.retain(|f| Self::frame(f, now) < FLASH_FRAMES);
+                self.flashes.push(Flash { at: to, size: size as f32, born: now, ray: Some((far(from, to), target)) });
+            }
+            GroundEvent::Particle { owner1: true, at, vel, rgb, t, size, ty } => self.owner1.push(crate::colony_smoke::Puff::new(ty, at, vel, rgb, t, size)),
+            GroundEvent::Particle { owner1: false, at, vel, rgb, t, size, ty } => self.puffs.push(Puff { vel, pos: at, rgb, t, size, ty }),
+            GroundEvent::Scorch { at } => self.scorches.push(at),
             GroundEvent::Trail { at, vel, of } => {
                 let (rgb, t, size, ty) = trail_look(of);
                 self.puffs.push(Puff { vel: vel.map(f32::from), pos: at, rgb, t, size, ty });
@@ -131,8 +152,7 @@ impl WarFx {
                 self.sim_tick();
             }
             GroundEvent::MachineGun { from, to } => self.machine_gun(from, to),
-            // `villamgenesis(12, 10, 1, 0.6, 4, flare, 3, −0.05, 15, 20, 1, A, B)`.
-            GroundEvent::Laser { from, to } => self.beams.push((Bolt::new(&mut self.rand, 12, 10.0, 1.0, 0.6, 4, true, from, to), 20)),
+            GroundEvent::Laser { from, to, target } => self.aimed.push((from, to, target, 20)),
             _ => {}
         }
     }
@@ -148,6 +168,25 @@ impl WarFx {
             *life -= 1;
         }
         self.beams.retain(|b| b.1 > 0);
+        for a in &mut self.aimed {
+            a.3 -= 1;
+        }
+        self.aimed.retain(|a| a.3 > 0);
+    }
+
+    /// `GetIntersectionPoint` (spec §5.6) for the flashes and beams that came since: `hit(target, far point, point)` is
+    /// the nearest crossing of the target's mesh from the far point, if any.
+    pub fn resolve(&mut self, hit: &mut dyn FnMut(i32, V3, V3) -> Option<V3>) {
+        for f in &mut self.flashes {
+            if let Some((a, t)) = f.ray.take() {
+                f.at = hit(t, a, f.at).unwrap_or(f.at);
+            }
+        }
+        for (from, to, target, life) in std::mem::take(&mut self.aimed) {
+            let end = hit(target, far(from, to), to).unwrap_or(to);
+            // `villamgenesis(12, 10, 1, 0.6, 4, flare, 3, −0.05, 15, 20, 1, A, B)`.
+            self.beams.push((Bolt::new(&mut self.rand, 12, 10.0, 1.0, 0.6, 4, true, from, end), life));
+        }
     }
 
     /// `Lines::AddMachineGunLine` (ELF 0x47c340) ×16: a random part of a jittered muzzle–target segment.
@@ -218,7 +257,8 @@ mod tests {
     fn tracers_show_for_one_tick_and_beams_live_20() {
         let mut fx = WarFx::default();
         fx.event(&GroundEvent::MachineGun { from: [0.0; 3], to: [0.0, 100.0, 0.0] }, 0.0);
-        fx.event(&GroundEvent::Laser { from: [0.0; 3], to: [0.0, 100.0, 0.0] }, 0.0);
+        fx.event(&GroundEvent::Laser { from: [0.0; 3], to: [0.0, 100.0, 0.0], target: 0 }, 0.0);
+        fx.resolve(&mut |_, _, _| None);
         assert_eq!(fx.tracers.len(), 16);
         let mut shown = 0;
         for _ in 0..20 {
@@ -226,5 +266,18 @@ mod tests {
             shown += fx.tracers.iter().filter(|t| t.shown()).count();
         }
         assert_eq!((shown, fx.tracers.len(), fx.beams.len()), (16, 0, 0));
+    }
+
+    #[test]
+    fn a_hit_flash_lands_on_the_mesh_from_the_far_point() {
+        let mut fx = WarFx::default();
+        fx.event(&GroundEvent::HitFlash { from: [0.0, 0.0, 0.0], to: [0.0, 10.0, 0.0], size: 20, target: 3 }, 0.0);
+        let mut seen = None;
+        fx.resolve(&mut |t, a, b| {
+            seen = Some((t, a, b));
+            Some([0.0, 7.0, 0.0])
+        });
+        assert_eq!(seen, Some((3, [0.0, -190.0, 0.0], [0.0, 10.0, 0.0])));
+        assert_eq!(fx.flashes[0].at, [0.0, 7.0, 0.0]);
     }
 }

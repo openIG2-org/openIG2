@@ -125,9 +125,11 @@ impl War<'_> {
         d[1] += v / 3.0;
         // The exhaust particle (lines 0x3300, 0x32fe, 0x32fd, 0x32fc, 0x32fb, 0x32fa: the exe evaluates the
         // arguments last to first).
-        for (lo, hi) in [(0, 9), (6, 8), (0, 2), (0, 2), (0, 4), (0, 4)] {
-            self.rng.range(0, lo, hi);
-        }
+        let [size, vy, vx, vh, y, x] = [(0, 9), (6, 8), (0, 2), (0, 2), (0, 4), (0, 4)].map(|(lo, hi)| self.rng.range(0, lo, hi) as f32);
+        let (u, d) = (self.u(i), self.u(i).rt.drop);
+        let at = [d[2] + u.rt.z, d[0] + u.pos.0 + x - 2.0, d[1] + u.pos.1 + y - 2.0];
+        let e = super::GroundEvent::Particle { owner1: true, at, vel: [vh - 1.0, vx - 1.0, vy], rgb: [0xff, 0x80, 0], t: 0x80, size: size + 10.0, ty: 0 };
+        self.shown(e);
         if -1400.0 > self.u(i).rt.drop[2] {
             let u = self.um(i);
             u.transport |= drop::AWAY;

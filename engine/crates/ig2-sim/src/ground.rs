@@ -537,8 +537,17 @@ pub enum GroundEvent {
     TrailStep { rounds: i32 },
     /// The machine gun's 16 tracers from the shooter `from` to the hit point `to` (colony.md §5.4; render only).
     MachineGun { from: [f32; 3], to: [f32; 3] },
-    /// The laser's beam from `from` to `to` (`villamgenesis`, colony.md §5.5; render only).
-    Laser { from: [f32; 3], to: [f32; 3] },
+    /// The laser's beam from `from` to `to` at unit `target` (`−slot` a building; `villamgenesis`, colony.md §5.5;
+    /// the end moved onto the target's mesh, §5.6; render only).
+    Laser { from: [f32; 3], to: [f32; 3], target: i32 },
+    /// A projectile's hit flash of `size` (colony.md §5.3): at `to` (`pos + vel`) unless the ray from `from` (`pos`)
+    /// meets `target`'s mesh first (§5.6; render only).
+    HitFlash { from: [f32; 3], to: [f32; 3], size: i32, target: i32 },
+    /// A particle the sim draws itself (`AddParticle` exe 0x45d270; colony.md §5.7, §5.11): owner 1 (stepped on the
+    /// fifth UI ticks) or owner 0 (`WF::Refresh`'s rounds), at `at` (height, x, y); render only.
+    Particle { owner1: bool, at: [f32; 3], vel: [f32; 3], rgb: [i32; 3], t: i32, size: f32, ty: u8 },
+    /// A vehicle's scorch mark (`Koszfolt`, `tankkosz.bmp` 80 × 80, colony.md §5.10) at `at`; render only.
+    Scorch { at: [f32; 3] },
 }
 
 /// What leaves a trail (colony.md §5.2).
@@ -718,6 +727,16 @@ impl<'a> War<'a> {
         if self.ctx.on_screen {
             self.events.push(e);
         }
+    }
+
+    /// A projectile's hit at `target` (`WF::Refresh` 0x490890): [`Self::hit_fx`] with the flash placed by
+    /// `GetIntersectionPoint` (colony.md §5.6).
+    pub(crate) fn hit_fx_on(&mut self, pos: [f32; 3], vel: [f32; 3], target: i32) {
+        let size = (self.libc)() % 30 + 10;
+        let to = [pos[0] + vel[0], pos[1] + vel[1], pos[2] + vel[2]];
+        self.shown(GroundEvent::HitFlash { from: pos, to, size, target });
+        let r = (self.libc)();
+        self.gr_sound(2 + r % 6);
     }
 
     /// A projectile's hit (`WF::Refresh` 0x490890): the flash `rand() % 30 + 10`, then `Gr_Hangok[2 + rand() % 6]`.
@@ -1610,9 +1629,13 @@ impl<'a> War<'a> {
                         self.um(c).partner = -1;
                     }
                 } else if self.ctx.on_screen {
-                    // The wreck on screen: a flash, 16 pieces of debris, a sound (libc draws only).
+                    // The wreck on screen: a flash, 16 pieces of debris, a sound (libc draws only), the scorch mark.
                     let p = [u.rt.z, u.pos.0, u.pos.1];
+                    let turret = u.flags & flag::TURRET != 0;
                     self.burst(p, 16, true);
+                    if !turret {
+                        self.events.push(GroundEvent::Scorch { at: p });
+                    }
                     let r = (self.libc)();
                     self.gr_sound(8 + r % 5);
                 }
@@ -1682,6 +1705,9 @@ impl<'a> War<'a> {
         }
         if self.ctx.on_screen {
             self.burst([z, x, y], 16, true);
+            if self.u(i).flags & flag::TURRET == 0 {
+                self.events.push(GroundEvent::Scorch { at: [z, x, y] });
+            }
         }
         let r = (self.libc)();
         self.gr_sound(8 + r % 5);

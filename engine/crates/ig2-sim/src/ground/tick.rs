@@ -144,9 +144,14 @@ impl War<'_> {
         }
     }
 
-    /// One dust particle: a libc draw (`rand() % 5`), no state.
-    fn dust(&mut self) {
-        (self.libc)();
+    /// A moving vehicle's dust (`WF_Tank::Refresh` exe 0x494bd0, colony.md §5.7): `rand() % 5`; 0 and not a turret:
+    /// an owner-1 type-6 puff at the unit.
+    fn dust(&mut self, i: i32) {
+        if (self.libc)() % 5 == 0 && self.u(i).flags & flag::TURRET == 0 {
+            let u = self.u(i);
+            let at = [u.rt.z, u.pos.0, u.pos.1];
+            self.shown(super::GroundEvent::Particle { owner1: true, at, vel: [-0.2, 0.0, 0.0], rgb: [100, 100, 0x4b], t: 0xa0, size: 4.0, ty: 6 });
+        }
     }
 
     /// Snap the position to the step point, re-orient, take the cell (the end of a drive).
@@ -309,7 +314,7 @@ impl War<'_> {
                 u.pos = (u.rt.dir.0 * v + u.pos.0, u.rt.dir.1 * v + u.pos.1);
                 u.rt.step = u.pos;
                 self.set_matrix(i);
-                self.dust();
+                self.dust(i);
                 let u = self.um(i);
                 u.flags |= 0x40;
                 u.rt.moved = 1;
@@ -352,7 +357,7 @@ impl War<'_> {
                 u.pos.0 += run * (v * u.rt.dir.0) * s;
                 u.pos.1 += run * (v * u.rt.dir.1) * s;
                 self.set_matrix(i);
-                self.dust();
+                self.dust(i);
                 let u = self.um(i);
                 u.flags |= 0x40;
                 u.rt.moved = 1;
@@ -430,7 +435,7 @@ impl War<'_> {
             u.pos = (u.rt.dir.0 * v + u.pos.0, u.rt.dir.1 * v + u.pos.1);
             u.rt.step = u.pos;
             self.set_matrix(i);
-            self.dust();
+            self.dust(i);
             let u = self.um(i);
             u.flags |= 0x40;
             u.rt.moved = 1;
@@ -505,7 +510,7 @@ impl War<'_> {
             let size = self.rules.map_size;
             let u = self.um(i);
             u.cell = real_to_grid(u.pos.0, u.pos.1, size);
-            self.dust();
+            self.dust(i);
             let u = self.um(i);
             u.flags |= 0x40;
             u.rt.moved = 1;

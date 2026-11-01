@@ -994,6 +994,7 @@ pub(crate) mod tests {
             ride: None,
             building: 0,
             dropship: None,
+            smoking: false,
         }
     }
 

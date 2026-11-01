@@ -332,12 +332,81 @@ B)`, the space battle's lightning (spacewar.md §6.8.4) with a life. Its list (e
 `FRISSIT_Colony` once a sim tick and drawn by `ColonyGfx2D_0` after `WF::Draw3d`: a `villam.bmp` ribbon of half width
 `W` and the `flare.bmp` square at its end, added.
 
-Port status: §5.1–§5.5 are drawn (`colony_fx.rs`, `colony.rs`). The trails take the sim's own three draws
-(`GroundEvent::Trail`, `GroundEvent::TrailStep` after the lists); the tracers' and the beam's draws are the client's
-cosmetic stream (in the exe the shared libc stream, deviation 38's kind); the bombs' and the debris' model pick is
-the slot (the exe's `random` on screen). Not drawn yet: the bomb blasts' dust (`WF::Refresh` lines ~996–1129), the
-units' smoke and fire (`WF_Tank::Refresh2`, `WF_Tank::Refresh`), the dropship's exhaust, scorch marks (`Koszfolt`), ruin
-fade (`RomTarolo`), and debris flight and fade (`WF::Refresh2`: the port's debris stays where it was made).
+### 5.6 The mesh hit point (`WF::GetIntersectionPoint` ELF 0x4636b0, `vonalmetszes` exe 0x53a2b0, `Kocka3` exe 0x527d30)
+`GetIntersectionPoint(idx, muzzle, target, &out)`: `out = target`; on the shown war (`AktKep` 3, no `Atlepes`/`Belep`)
+the ray from `A = target + 20·(muzzle − target)` to `target` is tested against one mesh only (property 0x100000 set
+for the test): a building `idx < 0` (its `Epulet3d` model), else the unit's body (`+0x168`), a turret unit's gun
+(`+0x170`); a hit replaces `out` with the one nearest `A`. A projectile's hit flash (§5.3) passes `pos`, `pos + vel`;
+the laser (§5.5) its muzzle and the target point.
+
+### 5.7 Owner 1's other particles (`WF::Refresh2` exe 0x48ce10, 20 Hz)
+Owner 1 (`rcloud.bmp`, drawn as §5.2) is stepped on the fifth UI ticks (§3.5); a particle that goes is replaced by the
+last one. Besides types 3, 10 (§3.5) and 4 (§5.3):
+
+| Type | dT | Limit | Step | Growth | Grey k |
+|---|---|---|---|---|---|
+| 0 | 5 | 0xfb | `v ×= 0.95` | 1.0 | 10 |
+| 6 | 1 | 0x100 | none | 0.5 | — |
+| 8 | 3 | 0xf6 | `vh −= 0.15`, `vx, vy ×= 0.965` | 0.3 | — |
+
+Sources (draws in the exe's order: it evaluates call arguments last first; `rN` = `random(N)`, libc):
+- A damaged unit's smoke (`WF_Tank::Refresh2` exe 0x48f300, each step): first member's hit points `< max/2`, not a mine
+  (0x20000), not riding (`+0x278` bit 3), on the shown war: two puffs, each `r10, r50, r130, r100, r20, r20, r10, r20,
+  r20` = size `(r/2 + 5)`, blue `r`, green `0xa3 − r`, red `0xff − r`, `vy = r/10 − 1`, `vx = r/10 − 1`, `vh = −(r/10 +
+  0.5)·5`, `y + r − 10`, `x + r − 10`; at `h − 5`, `T` 0, type 3.
+- A moving vehicle's dust (`WF_Tank::Refresh` exe 0x494bd0, six movement branches, once a movement step): `r5`
+  (always drawn); 0 and not a turret: `(h, x, y)`, velocity `(−0.2, 0, 0)`, colour (100, 100, 0x4b), `T` 0xa0, size 4,
+  type 6.
+- The dropship's exhaust while it climbs (`WF_Hordozo::Refresh2` exe 0x48e0a0; stream 0, ranges inclusive, lines
+  0x3300, 0x32fe, 0x32fd, 0x32fc, 0x32fb, 0x32fa): size `r + 10` (0..9), `vy = r` (6..8), `vx = r − 1`, `vh = r − 1`
+  (0..2), `y + off_y + r − 2`, `x + off_x + r − 2` (0..4), at `h + off_h`; colour (0xff, 0x80, 0), `T` 0x80, type 0.
+- A piece of debris (§5.8) on every twelfth slot; the ruins' dust (§5.9).
+
+### 5.8 Debris (`AddRepesz` exe 0x45d400, `WF::Refresh2`)
+Each list-B kind-7 record on the second UI ticks (`(int)ColonyCounter % 2 == 0`, 50 Hz), on the shown war: `+0x2c −=
+1` (never set by `AddRepesz`: debris ends by fading); slot `% 12 == 0`: an owner-1 trail particle (three `r3 − 1`
+velocities, (0xff, 0x82, 0), `T` 0xa0, size 5, type 0); `pos += vel`, `vh += 0.05`; while `vh > 0` its transparency
+`+0x3c += 0.01`, past 1.0 it goes. `WF::Update` sets `SetObjTransparency(+0x3c)` every frame.
+
+### 5.9 Ruins (`Rom::Rom` exe 0x455570, `Rom::Refresh` exe 0x4904f0, `Rom::Update` exe 0x4a5240)
+`Remove3dBuilding` (exe 0x497760) pushes a `Rom` to `RomTarolo` (exe 0xA3500C) for any building whose 3D model exists:
+the building (its own model, `A`) collapses while the rubble box `torm_e.xvb` (`B`; `AddToSceneGenesis(…,
+atlatszodolgok, RomMeret[0] = 7.8125e-5)`, `RotateObj(0, π/2, 0)`, `ScaleObj2(h, w, w/1.5)` with the footprint `w × h`,
+at `(ground − 5w, x, y)` the building's centre) fades in, then out. `Rom::Rom` adds a scorch mark (§5.10,
+`epuletkosz.bmp`, `40w × 40h`) and on the shown planet a flash (size `r100 + 100`) and 24 pieces of debris (the sim's
+burst). `Rom::Refresh` on the fifth UI ticks (`Frissit2_Colony` exe 0x477dc0; colony screen only):
+1. Fade-in (from the start): rubble transparency `−= 0.03` down to 0.01.
+2. Collapse (from the start): building fade `+= 0.015` (from 0.01), `frame += 0.1875` (to 10); past 1.0 the building is
+   removed and the collapse ends. Each call two owner-1 dust puffs at the ruin: velocity `(0, r100/10 − 5, r100/10 −
+   5)` (y drawn first), colour (200, 200, 0xaf), `T` 0x80, size 20, type 8. When it ends: fade-out starts.
+3. Fade-out: rubble transparency `+= 0.03`; at 1.0 the rubble goes and the ruin is deleted.
+`Rom::Update` each frame: the rubble at its transparency, the collapsing building at `fade²` (property 0x4000000);
+with `OptionsBuildingRes == 2` some kinds also `SetFrame(frame)`. About 3.35 s of collapse, 1.65 s of fade-out.
+
+### 5.10 Scorch marks (`Koszfolt`, ELF ctor 0x4f0270, `Refresh` exe 0x4903c0, `Update` exe 0x4a5010)
+Elements of the beams' list (exe 0xA34FD4, emptied by `Colony_Belep`/`Colony_Kilep`, newest first). Made by a ruin
+(above), a vehicle killed on the shown war (`WF_Tank::Damage` exe 0x46bfa0), a mine's removal on it
+(`RemoveTankGroup` exe 0x497c90), `Detonate` and `SelfDestruct` (no view test there; turrets never): `tankkosz.bmp`,
+80 × 80, at the unit. `Refresh` once a sim tick: `rndlog(0, 0, 99) < 10` → `n += 1`; gone at 255. `Update` each
+frame: two ground triangles at `h − 2`, `x ± a/2`, `y ± b/2` (uv 0..1), colour `255 − n`, `polygons3d` mode 2 =
+ZERO / ONE_MINUS_SRC_COLOR: the texture darkens the ground and fades as `n` grows; depth test, no depth write, no fog;
+after each triangle one `rand()` (unused).
+
+### 5.11 Bomb blasts (`WF::Refresh` exe 0x490890, list B kinds 1 and 2)
+When a bomb comes within 100 (kind 1) / 40 (kind 2) of the ground height `+0x34`: 3 / 1 owner-0 dust particles, each
+`r20, r20, r10, r10, r10` = `vy = (r − 10)/5`, `vx = (r − 10)/5`, `vh = −r/5`, `y + r − 5`, `x + r − 5`, at `ground −
+10`; colour (0x96, 100, 0x32), `T` 100, size 10 / 3, type 0; then per placed non-turret unit within 60 / 50 a flash
+(`r30 + 10`) at `(ground − 10, x, y)` with its sound and damage.
+
+Port status: §5.1–§5.11 are drawn (`colony_fx.rs`, `colony_smoke.rs`, `colony.rs`). The sim reports what it draws
+itself (render-only `GroundEvent`s: the trails, the bomb dust, the vehicles' dust, the exhaust, the flashes with the
+target for §5.6, the scorch marks); the rest (the tracers', beams', smoke's, debris trails' and ruins' draws, the scorch
+marks' fade) comes from the client's cosmetic streams (in the exe libc's or stream 0, deviation 38's kind); the bombs'
+and the debris' model pick is the slot. The scorch marks fade on the 20 Hz clock (a sim tick in the exe: the same at
+normal speed). Debris flies and fades in the client; its sim record stays. Not drawn: the ruins' two lights (`Feny`),
+`SetFrame` of a collapsing building (the exe's building sinks through its collapse frames, the client's only fades),
+`Detonate`'s `100k` type-1 particles, and scorch marks of another planet's `Detonate`/`SelfDestruct` (the exe draws
+them on the shown planet at their place).
 
 The dropships (`WF_Hordozo`, inlined at the unit's exe `+0x264..+0x278` / ELF `+0x27c..+0x290`): `WF::LoadMesh` (exe
 0x483f70) loads `hordozo.xvb` once a planet; `WF_Tank::LoadMesh` (exe 0x4847a0) adds one per unit without flag

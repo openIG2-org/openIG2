@@ -105,6 +105,8 @@ pub struct UnitView {
     /// The dropship (`WF_Hordozo`, `+0x264..+0x26c`) while it is shown (state `+0x278` bit 0 clear, not a turret or
     /// a 0x20000 unit): its offset `(h, x, y)` from the unit.
     pub dropship: Option<V3>,
+    /// `WF_Tank::Refresh2`'s smoke (spec §5.7): the first member below half its hit points, not a mine, not riding.
+    pub smoking: bool,
 }
 
 /// A shot in flight: `(h, x, y)`, the list it is in (0 shells, 1 missiles/debris, 2 bolts, 3 fighters) and its kind.
@@ -249,6 +251,7 @@ impl ColonySnap {
                     ride: (u.transport & 8 != 0).then_some([u.rt.drop[2], u.rt.drop[0], u.rt.drop[1]]),
                     building: u.building,
                     dropship: (u.flags & 0x4020000 == 0 && u.transport & 1 == 0).then_some([u.rt.drop[2], u.rt.drop[0], u.rt.drop[1]]),
+                    smoking: u.hp.first().is_some_and(|&h| h < u.max_hp / 2) && u.flags & flag::MINE == 0 && u.transport & 8 == 0,
                 }
             })
             .collect();
@@ -1110,6 +1113,16 @@ fn ribbon(eye: V3, a: V3, b: V3, hw: f32, v0: f32, v1: f32, ca: [f32; 4], cb: [f
     [q(a, -1.0, v0, ca), q(b, -1.0, v1, cb), q(b, 1.0, v1, cb), q(a, -1.0, v0, ca), q(b, 1.0, v1, cb), q(a, 1.0, v0, ca)]
 }
 
+/// A building as baked: slot, kind, placement, footprint `(w, h)` and `(ground, x, y)`.
+type Placed = (usize, u8, Transform, (i32, i32), V3);
+
+/// Which cached model a drawn unit was: its hull's (`(hull, owner)`) or a defence turret's gun.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Pose {
+    Body(usize, i32),
+    Gun(usize),
+}
+
 /// A model's parts with their textures resolved, for per-frame placement (units).
 struct UnitMesh {
     model: Model,
@@ -1166,6 +1179,10 @@ pub struct ColonyScene {
     /// The drawn units' `GetObjCenter` (their posed hull's box centre, a defence turret's gun), by slot: the hit test's
     /// point (`WF_Tank::MouseOver` exe 0x48bc90).
     pub unit_centres: Vec<(usize, V3)>,
+    /// The mesh `GetIntersectionPoint` tests for each drawn unit (spec §5.6): its body, a defence turret's gun.
+    unit_poses: Vec<(usize, Pose, Transform)>,
+    /// Each building's slot, kind, placement, footprint and `(ground, x, y)`: what a ruin starts from (§5.9).
+    placed: Vec<Placed>,
     /// The unit info's turning model's render target ([`ColonyScene::render_info_model`]).
     info_target: Option<crate::render::Target>,
     /// The info box's planet globes `b<k>0.xvb` ([`ColonyScene::render_info_globe`]).
@@ -1348,6 +1365,7 @@ impl ColonyScene {
         let mut building_at = Vec::new();
         let mut faces = Vec::new();
         let mut emitters = crate::colony_smoke::Emitters::default();
+        let mut placed = Vec::new();
         for b in &s.buildings {
             let Some(bm) = rules.building_models.get(b.kind as usize) else { continue };
             let levels = models.entry(b.kind).or_insert_with(|| building_levels(install, &bm.model));
@@ -1362,6 +1380,10 @@ impl ColonyScene {
             let bottom = bottom_vertex(fm.as_ref().unwrap_or(m), &rel, gm, wx, wy);
             let xf = Transform { translation: [bottom - 1.0, wx, wy], ..rel };
             building_at.push((b.slot, xf.translation));
+            // `Rom::Rom`'s ground: `GetHeight` of the centre's height cell (none past 200).
+            let (gx, gy) = ((b.x + ox) / 4.0, (b.y + oy) / 4.0);
+            let ground = if gx > 200.0 || gy > 200.0 { 0.0 } else { gm.height(gx.clamp(0.0, 48.99), gy.clamp(0.0, 48.99)) };
+            placed.push((b.slot, b.kind, xf, (w, h), [ground, wx, wy]));
             // Under construction: cut every frame at the built height ([`cut_height`], property 0x1000000).
             let (before, vstart) = (rg.len(), v.len());
             // Every level of detail baked; each frame draws the one `Kocka` picks ([`lod_pick`]).
@@ -1484,7 +1506,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new() })
+        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new(), unit_poses: Vec::new(), placed })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -1530,6 +1552,12 @@ impl ColonyScene {
         self.falling = old.falling;
         self.fall_counter = old.fall_counter;
         self.fall_rand = old.fall_rand;
+        // `Remove3dBuilding`: a ruin wherever a building's model went (§5.9).
+        for &(slot, kind, xf, foot, at) in &old.placed {
+            if !self.placed.iter().any(|p| p.0 == slot && p.1 == kind) {
+                self.smoke.ruin(crate::colony_smoke::Ruin::new(slot, kind, xf, foot, at));
+            }
+        }
         for (slot, (x, y), boxes) in old.last_scaffolds {
             if self.key.iter().any(|k| k.0 == slot && !k.4) {
                 continue;
@@ -1545,6 +1573,37 @@ impl ColonyScene {
                 self.falling.push(Falling { level, at, axis: [0.0, dz / len, -dy / len], angle: 0.0, vel: 0.0, delay, drawn: 0.0 });
             }
         }
+    }
+
+    /// The shown war's particles and scorch marks for the smoke, and its hits put onto their target's mesh (spec
+    /// §5.6: the building's faces, the unit's body or gun as last drawn).
+    pub fn take_fx(&mut self, fx: &mut crate::colony_fx::WarFx) {
+        for q in fx.owner1.drain(..) {
+            self.smoke.push(q);
+        }
+        for at in fx.scorches.drain(..) {
+            self.smoke.scorch(at, (80.0, 80.0), false);
+        }
+        let tris = |t: i32| -> Vec<[V3; 3]> {
+            if t < 0 {
+                let slot = t.unsigned_abs() as usize;
+                return self.faces.iter().find(|f| f.0 == slot).and_then(|f| f.1.first().cloned()).unwrap_or_default();
+            }
+            let Some(&(_, pose, xf)) = self.unit_poses.iter().find(|p| p.0 == t as usize) else { return Vec::new() };
+            let mesh = match pose {
+                Pose::Body(h, o) => self.units.get(&(h, o)),
+                Pose::Gun(k) => self.turrets.get(&(k, 0)),
+            };
+            let Some(Some(mesh)) = mesh else { return Vec::new() };
+            let (mut v, mut rg) = (Vec::new(), Vec::new());
+            bake(&mesh.model, &xf, [1.0; 3], 1.0, &mut v, &mut rg);
+            v.chunks_exact(3).map(|t| [t[0].pos, t[1].pos, t[2].pos]).collect()
+        };
+        fx.resolve(&mut |t, a, b| {
+            let n: V3 = std::array::from_fn(|k| b[k] - a[k]);
+            let d = tris(t).iter().filter_map(|tri| ray_triangle(a, n, tri)).filter(|&d| d <= 1.0).min_by(f32::total_cmp)?;
+            Some(std::array::from_fn(|k| a[k] + n[k] * d))
+        });
     }
 
     /// `EpuletAllvany::Refresh` (exe 0x48f920) once a UI tick up to `counter`: the delay runs down, then each tick
@@ -2162,6 +2221,42 @@ impl View {
             let bottom = |slot: usize| at.iter().find(|(s, _)| *s == slot).map(|(_, t)| t[0] + 1.0);
             let hp = |kind: u8| rules.buildings.get(kind as usize).map_or(0, |b| b.max_hp);
             scene.smoke.advance(self.overlay.counter, &curr.buildings, &hp, &bottom, &scene.emitters);
+            let smoking: Vec<V3> = curr.units.iter().filter(|u| u.smoking && curr.visible).map(|u| u.pos).collect();
+            scene.smoke.war(self.overlay.counter, &smoking);
+            let pieces: Vec<(usize, V3, V3)> = curr.shots.iter().filter(|s| s.list == 1 && s.kind == 7).map(|s| (s.slot, s.pos, s.axis)).collect();
+            scene.smoke.fly(self.overlay.counter, &pieces);
+        }
+        // The scorch marks (`Koszfolt::Update`, spec §5.10): two ground triangles darkening what lies below.
+        if !scene.smoke.scorches.is_empty() {
+            for building in [false, true] {
+                let base = dynamic.len() as u32;
+                for m in scene.smoke.scorches.iter().filter(|m| m.building == building) {
+                    let (h, x, y) = (m.at[0] - 2.0, m.at[1], m.at[2]);
+                    let (ha, hb) = (m.size.0 / 2.0, m.size.1 / 2.0);
+                    let c = (255 - m.n) as f32 / 255.0;
+                    let q = |px: f32, py: f32, u: f32, v: f32| MeshVertex { pos: [h, px, py], normal: [0.0; 3], uv: [u, v], color: [c, c, c, 1.0] };
+                    dynamic.extend([q(x - ha, y + hb, 0.0, 1.0), q(x + ha, y + hb, 1.0, 1.0), q(x + ha, y - hb, 1.0, 0.0)]);
+                    dynamic.extend([q(x - ha, y + hb, 0.0, 1.0), q(x - ha, y - hb, 0.0, 0.0), q(x + ha, y - hb, 1.0, 0.0)]);
+                }
+                if dynamic.len() as u32 > base {
+                    let tex = scene.colony_texture(r, install, if building { "epuletkosz.bmp" } else { "tankkosz.bmp" });
+                    draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow: Shadow::Blob, video: false, additive: false, depth_write: false });
+                }
+            }
+        }
+        // The ruins (`Rom::Update`, spec §5.9): the collapsing building at `fade²`, the rubble `torm_e.xvb` at its own
+        // transparency (`RomMeret[0]` = 7.8125e-5, `ScaleObj2(h, w, w/1.5)`, turned a quarter, `5w` above the ground).
+        for ru in scene.smoke.ruins.clone() {
+            if ru.collapsing {
+                if let Some(mesh) = scene.building_mesh(r, install, rules, ru.kind) {
+                    push_model_faded(&mesh.model, &mesh.texs, &ru.building, 1.0 - ru.fade * ru.fade, &mut dynamic, &mut draws);
+                }
+            }
+            if let Some(mesh) = scene.fx_mesh(r, install, "torm_e") {
+                let (w, h) = (ru.foot.0 as f32, ru.foot.1 as f32);
+                let xf = Placement::genesis(mesh.model.origin, 7.8125e-5).scaled([h, w, w / 1.5]).world((0.0, HALF_PI, 0.0), [ru.at[0] - w * 5.0, ru.at[1], ru.at[2]]);
+                push_model_faded(&mesh.model, &mesh.texs, &xf, 1.0 - ru.rubble, &mut dynamic, &mut draws);
+            }
         }
         if !scene.smoke.puffs().is_empty() {
             let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
@@ -2199,6 +2294,13 @@ impl View {
             let g = (curr.tick as f64 / 10.0) as f32;
             for s in &curr.shots {
                 let l = s.slot;
+                // Debris flies and fades in the client (spec §5.8).
+                let (s, opacity) = if s.list == 1 && s.kind == 7 {
+                    let Some(f) = scene.smoke.flight(l, s.pos) else { continue };
+                    (&ShotView { pos: f.pos, axis: f.vel, ..*s }, 1.0 - f.fade)
+                } else {
+                    (s, 1.0)
+                };
                 let (name, scale) = match (s.list, s.kind) {
                     (0, _) => ("rocket", 0.01),
                     (1, 0) => ("laser", 0.06),
@@ -2218,7 +2320,11 @@ impl View {
                 } else {
                     Transform { matrix: scene::mul(&scene::create_matrix2(s.axis, s.roll), &rec.matrix).map(|x| x * 1024.0), translation: s.pos }
                 };
-                push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                if opacity < 1.0 {
+                    push_model_faded(&mesh.model, &mesh.texs, &xf, opacity, &mut dynamic, &mut draws);
+                } else {
+                    push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                }
             }
         }
         // The machine gun's tracers (`LineParticle::Draw`, two 1-px `line3d2` segments) and the laser's beams
@@ -2276,6 +2382,7 @@ impl View {
         }
         let um = &rules.unit_models;
         scene.unit_centres.clear();
+        let mut poses = Vec::new();
         // `WF_Tank::Draw3d`/`Update` hide the units too when the human doesn't see inside.
         for mut u in curr.units_at(prev, alpha).into_iter().filter(|_| curr.visible) {
             if u.flags & flag::TURRET == 0 {
@@ -2307,6 +2414,7 @@ impl View {
                     let rec = Placement::genesis(mesh.model.origin, s);
                     let xf = Transform { matrix: scene::mul(&u.body, &rec.matrix).map(|x| x * 1024.0), translation: base };
                     push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                    poses.push((u.slot, Pose::Body(hull, u.owner.clamp(0, 10)), xf));
                     if let Some(c) = box_centre(&mesh.model, &xf) {
                         scene.unit_centres.push((u.slot, c));
                     }
@@ -2331,11 +2439,15 @@ impl View {
                 let rec = Placement::genesis(mesh.model.origin, s);
                 let xf = Transform { matrix: scene::mul(&m, &rec.matrix).map(|x| x * 1024.0), translation: at };
                 push_model(&mesh.model, &mesh.texs, &xf, &mut dynamic, &mut draws);
+                if turret_unit {
+                    poses.push((u.slot, Pose::Gun(k), xf));
+                }
                 if let Some(c) = box_centre(&mesh.model, &xf).filter(|_| turret_unit) {
                     scene.unit_centres.push((u.slot, c));
                 }
             }
         }
+        scene.unit_poses = poses;
         self.overlay_models(r, install, rules, gm, scene, curr, &mut dynamic, &mut draws);
         // `light2` from (2, 2, −2) (`SetEnvironment`); `fenyekszamolasa` takes `|n' − L|` with the file normal's model z
         // negated, which for the quarter-turned models (`RotateObj(0, π/2, 0)`, model z = −h) flips h: the shader's
@@ -2793,6 +2905,20 @@ fn push_model(model: &Model, texs: &[TexId], xf: &Transform, out: &mut Vec<MeshV
     out.extend(v);
     for (range, pi, look) in rg {
         draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: texs[pi], glass: matches!(look, Look::Glass(_)), cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+    }
+}
+
+/// [`push_model`] at `SetObjTransparency(1 − opacity)`: every part blended at `opacity` (its glass at its own times it).
+fn push_model_faded(model: &Model, texs: &[TexId], xf: &Transform, opacity: f32, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
+    let (mut v, mut rg) = (Vec::new(), Vec::new());
+    bake(model, xf, [1.0; 3], 1.0, &mut v, &mut rg);
+    let base = out.len() as u32;
+    out.extend(v.into_iter().map(|mut x| {
+        x.color[3] *= opacity.clamp(0.0, 1.0);
+        x
+    }));
+    for (range, pi, _) in rg {
+        draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: texs[pi], glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
     }
 }
 

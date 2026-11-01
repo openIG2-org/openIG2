@@ -496,7 +496,7 @@ fn ground_voices(events: &[GameEvent]) -> impl Iterator<Item = (usize, Voice)> +
 /// The ground wars' sounds and effects among `events`.
 fn ground_fx(events: &[GameEvent]) -> impl Iterator<Item = (usize, GroundEvent)> + '_ {
     events.iter().filter_map(|e| match *e {
-        GameEvent::Battle(BattleEvent::GroundSide { planet, event: event @ (GroundEvent::Sound(_) | GroundEvent::Flash { .. } | GroundEvent::Trail { .. } | GroundEvent::TrailStep { .. } | GroundEvent::MachineGun { .. } | GroundEvent::Laser { .. }) }) => Some((planet, event)),
+        GameEvent::Battle(BattleEvent::GroundSide { planet, event: event @ (GroundEvent::Sound(_) | GroundEvent::Flash { .. } | GroundEvent::Trail { .. } | GroundEvent::TrailStep { .. } | GroundEvent::MachineGun { .. } | GroundEvent::Laser { .. } | GroundEvent::HitFlash { .. } | GroundEvent::Particle { .. } | GroundEvent::Scorch { .. }) }) => Some((planet, event)),
         _ => None,
     })
 }
