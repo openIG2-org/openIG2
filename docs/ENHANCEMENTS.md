@@ -22,6 +22,7 @@ Grouped by area; sizes are rough guesses for one developer.
 |---|---|---|---|
 | Menus | A reworked menu system: clearer navigation, fewer clicks to start a game, a back button everywhere | the original menus are slow to move through | 1-2 weeks |
 | Menus | Settings reachable from the main menu without starting or loading a game (display, sound, language, remake options) | today the Options screen opens only in a game | days |
+| Menus | Two Options screens: a dedicated main-menu Options screen with its own modern layout (every setting, grouped in tabs), and a reworked in-game Options screen (the original's look by default, tidied rows) | the in-game screen is cramped, and the remake rows sit under the original's | 1-2 weeks |
 | Menus | A language selector in the menu (today only `--lang`), applied without a restart where possible | players can't switch language in the game | days |
 | Menus | A quick game: one screen with sensible defaults (galaxy, opponents, difficulty) and a Start button | a skirmish takes many screens to set up | days |
 | Menus | More options: key rebinding, UI scale, separate music/voice/effect volumes, game speed steps, autosave interval | today's options are the original's few plus the remake rows | 1-2 weeks |
