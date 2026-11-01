@@ -33,6 +33,7 @@ Since 0.7.56.
 - Hungarian games: the article before a name reads "a" or "az" instead of a stray character on the message line, in messages, diplomacy and battle banners (Remake row "Hungarian articles"; off shows the original's look).
 - Production view, transfer panel and fleet panel: the Exit label is centred on its button (Remake row "Centred Exit label"; off shows the original's look).
 - Main menu: a Settings label (bottom right) and the O key open the Options screen without the slot list, Load and Save (Remake row "Settings in menu"; off keeps the original's menu).
+- Main menu: a Quick game label above Settings opens the skirmish settings alone, with the last skirmish's choices; Start begins a generated galaxy in two clicks (shown with "Settings in menu").
 - Options: a Language row picks the game's text language; it applies after a restart (Remake row "Language"; `--lang` and `IG2_LANG` still win).
 
 **Multiplayer**

@@ -542,17 +542,27 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
         let [x, y, w, _] = crate::mainscr::SETTINGS_BOX;
         let c = d.col(if s.settings_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
         font.text(frame, &d.v, b"Settings", (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
+        // Ours (ADR 0039): the Quick game label above it.
+        let [x, y, w, _] = crate::mainscr::QUICK_BOX;
+        let c = d.col(if s.quick_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
+        font.text(frame, &d.v, b"Quick game", (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
     }
 }
 
 /// What a ring's request needs from the install before the menu goes on (shared by the window and the script run):
-/// the scenario list's entries, the race blurbs.
+/// the scenario list's entries (the quick game's too), the race blurbs.
 pub fn prepare(s: &mut MainScr, a: crate::mainscr::Act, assets: &mut Option<crate::mainscr_scenario::Assets>, install: &Install, texts: &crate::ui::UiTexts) {
     use crate::mainscr::Act;
     match a {
         Act::OpenScenarios => {
             let a = assets.get_or_insert_with(|| crate::mainscr_scenario::Assets::load(install, texts));
             s.open_scenarios(a.entries.clone());
+        }
+        // Ours (ADR 0039): the skirmish entry alone, with the last skirmish's settings.
+        Act::QuickGame => {
+            let a = assets.get_or_insert_with(|| crate::mainscr_scenario::Assets::load(install, texts));
+            let sk = crate::mainscr_scenario::Skirmish::from_setting(ig2_formats::options::Options::load().get(crate::mainscr_scenario::QUICK_GAME));
+            s.open_quick(a.entries.clone(), sk);
         }
         Act::Campaign => s.blurbs = crate::mainscr_race::load_blurbs(install, texts),
         _ => {}

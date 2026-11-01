@@ -63,6 +63,8 @@ pub enum Act {
     NameEntered,
     /// Ours (ADR 0031): the Settings label or `O`: the Options screen without its slots, load and save.
     Settings,
+    /// Ours (ADR 0039): the Quick game label: the skirmish panel alone, with the last skirmish's settings.
+    QuickGame,
 }
 
 /// What `MainScr_Kilep` starts (spec §2.2 step 3).
@@ -210,6 +212,8 @@ pub const SCENARIO_LOAD_TICKS: u8 = 8;
 pub const TOGGLE_BOX: [i32; 4] = [300, 446, 110, 19];
 /// Ours (ADR 0031): the Settings label's box, bottom right.
 pub const SETTINGS_BOX: [i32; 4] = [536, 448, 96, 22];
+/// Ours (ADR 0039): the Quick game label's box, above the Settings label.
+pub const QUICK_BOX: [i32; 4] = [516, 424, 116, 22];
 
 /// The exe's hot-spot test (exe 0x510390): `x0 <= x <= x0 + w - 1` on the pointer's integer pixel.
 pub fn in_box(at: [f32; 2], r: [i32; 4]) -> bool {
@@ -468,7 +472,7 @@ impl MainScr {
         // 0x27 (300, 446, 110 × 19) also outside the list: `MainScr_MouseInit2` (exe 0x4ff7b0) switches it on whenever
         // the skirmish settings are off, `Mode_Scenario_Valasztas` 0 included.
         let toggle = self.scenario.is_none() && in_box(at, TOGGLE_BOX);
-        self.hand = self.hovered.is_some() || toggle || self.settings_at(at) || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
+        self.hand = self.hovered.is_some() || toggle || self.settings_at(at) || self.quick_at(at) || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
     }
 
     /// Ours (ADR 0031): the Settings label shows while the main ring set is up and idle.
@@ -484,6 +488,21 @@ impl MainScr {
 
     pub fn settings_at(&self, at: [f32; 2]) -> bool {
         self.settings_shown() && in_box(at, SETTINGS_BOX)
+    }
+
+    /// Ours (ADR 0039): the Quick game label, shown with the Settings label.
+    pub fn quick_at(&self, at: [f32; 2]) -> bool {
+        self.settings_shown() && in_box(at, QUICK_BOX)
+    }
+
+    /// Ours (ADR 0039): the quick game's panel: the scenario panel with only the skirmish entry of `entries`, its
+    /// settings `sk`.
+    pub fn open_quick(&mut self, entries: Vec<crate::mainscr_scenario::Entry>, sk: crate::mainscr_scenario::Skirmish) {
+        let mut sc = crate::mainscr_scenario::ScenarioList::open(entries.into_iter().filter(|e| e.skirmish()).take(1).collect());
+        sc.sk = sk;
+        sc.quick = true;
+        self.scenario = Some(sc);
+        self.cel = 6.0;
     }
 
     /// Ours (ADR 0031): `O` on the main menu.
@@ -565,6 +584,9 @@ impl MainScr {
         }
         if left && self.settings_at(at) {
             return Some(Act::Settings);
+        }
+        if left && self.quick_at(at) {
+            return Some(Act::QuickGame);
         }
         // A box ring acts on the press frame, then the frame loop waits for the release (`Mouse_FelengedesMajdMegvar`).
         let boxed = self.box_ring_at(at);
@@ -799,9 +821,11 @@ impl MainScr {
             sc.tick(leaving);
             // Shut: back to the single-player set (`Mode_SinglePlayerSelected = 1; Cel = 1.0`).
             if sc.closed() {
+                let quick = sc.quick;
                 self.scenario = None;
                 if !leaving {
-                    self.menu = Menu::Single;
+                    // Ours (ADR 0039): the quick game's panel goes back to the main set.
+                    self.menu = if quick { Menu::Main } else { Menu::Single };
                     self.cel = 1.0;
                 }
             }
@@ -955,6 +979,80 @@ impl MainScr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0039: the Quick game label opens the skirmish panel alone with the given settings; Start starts that
+    /// skirmish, Esc goes back to the main set.
+    #[test]
+    fn quick_game_label() {
+        use crate::mainscr_scenario::{Entry, Skirmish};
+        let entries = || vec![Entry { kind: 1, race: 1, ..Default::default() }, Entry { file: "scenario/a.scn".into(), ..Default::default() }];
+        let mut s = MainScr::enter();
+        let at = [(QUICK_BOX[0] + 10) as f32, (QUICK_BOX[1] + 10) as f32];
+        assert_eq!(s.press(at), None);
+        s.settings = true;
+        assert_eq!(s.press(at), Some(Act::QuickGame));
+        let sk = Skirmish { race: 5, computers: 6, ..Skirmish::new(1) };
+        s.open_quick(entries(), sk);
+        assert_eq!(s.scenario.as_ref().map(|sc| sc.entries.len()), Some(1));
+        for _ in 0..100 {
+            s.tick();
+        }
+        assert_eq!(s.press([470.0, 450.0]), None);
+        assert_eq!(s.start, Some(Start::Skirmish { settings: sk, kind: 1 }));
+
+        let mut s = MainScr::enter();
+        s.open_quick(entries(), sk);
+        s.escape();
+        for _ in 0..200 {
+            s.tick();
+        }
+        assert!(s.scenario.is_none());
+        assert_eq!((s.menu, s.cel), (Menu::Main, 1.0));
+    }
+
+    /// ADR 0039: the remembered settings round-trip; a missing or out-of-range value keeps the default.
+    #[test]
+    fn quick_game_setting() {
+        use crate::mainscr_scenario::Skirmish;
+        let sk = Skirmish { race: 8, computers: 7, difficulty: 4, planets: 0, technology: 3, money: 5, population: 1 };
+        assert_eq!(Skirmish::from_setting(Some(&sk.to_setting())), sk);
+        assert_eq!(Skirmish::from_setting(None), Skirmish::new(1));
+        assert_eq!(Skirmish::from_setting(Some("9,x,3")), Skirmish { difficulty: 3, ..Skirmish::new(1) });
+    }
+
+    /// ADR 0039 (IG2_INSTALL_DIR; skipped without it): the quick game's Start and the full list's Start with the same
+    /// choices and seed make the same galaxy.
+    #[test]
+    fn quick_game_matches_the_full_setup() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let texts = crate::ui::UiTexts::load(&install);
+        let assets = crate::mainscr_scenario::Assets::load(&install, &texts);
+        let sk = crate::mainscr_scenario::Skirmish { race: 3, computers: 4, difficulty: 3, planets: 1, technology: 1, money: 4, population: 3 };
+        // The full path: the single-player list, its first entry (the skirmish), the arrows set to `sk`.
+        let mut full = MainScr::enter();
+        full.open_scenarios(assets.entries.clone());
+        full.scenario.as_mut().unwrap().sk = sk;
+        let mut quick = MainScr::enter();
+        quick.open_quick(assets.entries.clone(), sk);
+        for _ in 0..100 {
+            full.tick();
+            quick.tick();
+        }
+        let start = [470.0, 450.0];
+        full.press(start);
+        quick.press(start);
+        assert_eq!(full.start, quick.start);
+        let Some(Start::Skirmish { settings, kind }) = quick.start else { panic!("no skirmish start") };
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let galaxy = |cfg| crate::new_game::skirmish(&install, &cfg, &rules).unwrap().state.chunks();
+        // `SetScirmishGameOptions` with the full list's values, written out.
+        let t = &assets.tables;
+        let by_hand = ig2_sim::game::new_game::NewSkirmish { en: 3, ais: 4, random_id: 1, tech: 1, planets: t.planets[1], money: t.money[4], difficulty: 3, population: 3, seed: 4242, ticks: 4242 };
+        assert_eq!(galaxy(settings.config(kind, t, 4242)), galaxy(by_hand));
+    }
 
     /// The ring hit centres the exe's `TransformPoint` gave at `MainScrMozgato` 25.1 (`tools/trace/probes/mainscr.js`,
     /// quick-1.sav, spec §13).

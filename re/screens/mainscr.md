@@ -637,3 +637,4 @@ The race rings B and C draw with z-mirrored normals in `mainscr_scene.rs` (empir
 cause is open). Open deviations: 20 (fly-out pace, RNG poses), 150 (respawning saucer, meteor material), 154 (picture
 slide), 157 (MP-ring leftovers).
 Client addition: a Settings label (`SETTINGS_BOX`, `Act::Settings`) bottom right of the main ring set when idle, and the `O` key, open the settings-only Options screen (Remake row `MenuSettings`, ADR 0031, deviation 440); `run_screendiff.py` pins it off.
+Client addition: a Quick game label (`QUICK_BOX`, `Act::QuickGame`, `MainScr::open_quick`) above it opens the §9.3 panel with the skirmish entry alone and the last skirmish's settings (`Skirmish::from_setting`, key `QuickGame`, stored by every skirmish start); closing it returns to the main set (ADR 0039, deviation 453). Test `mainscr::tests::quick_game_matches_the_full_setup`.

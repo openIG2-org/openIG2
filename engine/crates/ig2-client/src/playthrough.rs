@@ -184,20 +184,8 @@ impl Harness {
             Run::Scenario(file) => crate::new_game::scenario(&self.install, file, seed, rules)?,
             Run::Skirmish { race, ais } => {
                 let exe = ig2_rules::PeImage::parse(&self.install.read_raw("ig2.exe").map_err(|e| e.to_string())?).map(|pe| crate::mainscr_scenario::Tables::read(&pe)).map_err(|e| e.to_string())?;
-                let k = crate::mainscr_scenario::Skirmish::new(*race);
-                let cfg = ig2_sim::game::new_game::NewSkirmish {
-                    en: k.race,
-                    ais: *ais,
-                    random_id: 1,
-                    tech: k.technology,
-                    planets: exe.planets[k.planets.clamp(0, 4) as usize],
-                    money: exe.money[k.money.clamp(0, 5) as usize],
-                    difficulty: k.difficulty,
-                    population: k.population,
-                    seed,
-                    ticks: seed,
-                };
-                crate::new_game::skirmish(&self.install, &cfg, rules)?
+                let k = crate::mainscr_scenario::Skirmish { computers: *ais, ..crate::mainscr_scenario::Skirmish::new(*race) };
+                crate::new_game::skirmish(&self.install, &k.config(1, &exe, seed), rules)?
             }
             Run::Mp { .. } => return Err("a multiplayer run starts its own machines".into()),
         };

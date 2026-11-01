@@ -2149,7 +2149,7 @@ impl App {
             // `Mainscreen_Update3D` exe 0x50147d: `OpenBink("misc/credits.bik", 1, 0, 0, force)`, blocking.
             Act::Credits => self.queue_videos(["misc/credits.bik".to_string()], true, AfterVideo::Resume),
             Act::Click => self.audio.play(crate::audio::CLICK),
-            Act::OpenScenarios | Act::Campaign => {
+            Act::OpenScenarios | Act::Campaign | Act::QuickGame => {
                 let Some(f) = &mut self.front else { return };
                 let owned;
                 let texts = match self.hud.as_ref() {
@@ -2253,26 +2253,14 @@ impl App {
             Start::Scenario { file, .. } => crate::new_game::scenario(&self.install, file, seed, rules),
             Start::Tutorial(n) => crate::new_game::tutorial(&self.install, *n, seed, rules),
             Start::Multiplayer => unreachable!("handled above"),
-            // `SetScirmishGameOptions(race, computers, kind, technology, ScenarioKezdoBolygoSzamok[planets],
-            // ScenarioKezdoPenzek[money], difficulty, population)` (spec §2.2 step 3).
             Start::Skirmish { settings: k, kind } => {
-                let tables = self.front.as_ref().and_then(|f| f.scenarios.as_ref()).map(|a| (a.tables.planets, a.tables.money));
-                match tables {
-                    Some((planets, money)) => {
-                        let cfg = ig2_sim::game::new_game::NewSkirmish {
-                            en: k.race,
-                            ais: k.computers,
-                            random_id: *kind,
-                            tech: k.technology,
-                            planets: planets[k.planets.clamp(0, 4) as usize],
-                            money: money[k.money.clamp(0, 5) as usize],
-                            difficulty: k.difficulty,
-                            population: k.population,
-                            seed,
-                            ticks: seed,
-                        };
-                        crate::new_game::skirmish(&self.install, &cfg, rules)
-                    }
+                // Ours (ADR 0039): the quick game's next settings.
+                self.settings.set(crate::mainscr_scenario::QUICK_GAME, &k.to_setting());
+                if let Err(e) = ig2_formats::options::Options::store_own(&[(crate::mainscr_scenario::QUICK_GAME, &k.to_setting())]) {
+                    eprintln!("ig2-client: settings: {e}");
+                }
+                match self.front.as_ref().and_then(|f| f.scenarios.as_ref()) {
+                    Some(a) => crate::new_game::skirmish(&self.install, &k.config(*kind, &a.tables, seed), rules),
                     None => Err("no scenario list".into()),
                 }
             }

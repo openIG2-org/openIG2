@@ -98,6 +98,9 @@ fn high_scores(defaults: &[DefaultScore], scenario: &str, texts: &UiTexts) -> Ve
     defaults.iter().filter(|d| d.scenario.eq_ignore_ascii_case(scenario)).take(HIGHSCORE_SLOTS).map(|d| (texts.encode(&d.name), d.score)).collect()
 }
 
+/// Ours (ADR 0039): the settings file's key of the last skirmish's settings ([`Skirmish::from_setting`]).
+pub const QUICK_GAME: &str = "QuickGame";
+
 /// The skirmish settings (`SelectedScirmish*`, exe 0xbbb358.., spec §1) and their ranges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Skirmish {
@@ -144,6 +147,41 @@ impl Skirmish {
         let mut c = *self;
         *c.get(k)
     }
+
+    /// Ours (ADR 0039): the settings file's `QuickGame` (the seven values comma-separated, in box order); a missing
+    /// or out-of-range value keeps `InitScirmishValtozok`'s default.
+    pub fn from_setting(v: Option<&str>) -> Self {
+        let mut sk = Self::new(1);
+        for (k, n) in v.unwrap_or("").split(',').map(|n| n.trim().parse::<i32>().ok()).enumerate().take(SETTINGS.len()) {
+            let (_, _, lo, hi) = SETTINGS[k];
+            if let Some(n) = n.filter(|n| (lo..=hi).contains(n)) {
+                *sk.get(k) = n;
+            }
+        }
+        sk
+    }
+
+    /// The `QuickGame` value of these settings.
+    pub fn to_setting(self) -> String {
+        (0..SETTINGS.len()).map(|k| self.value(k).to_string()).collect::<Vec<_>>().join(",")
+    }
+
+    /// `SetScirmishGameOptions(race, computers, kind, technology, ScenarioKezdoBolygoSzamok[planets],
+    /// ScenarioKezdoPenzek[money], difficulty, population)` (spec §2.2 step 3): the sim's start.
+    pub fn config(&self, kind: i32, tables: &Tables, seed: u32) -> ig2_sim::game::new_game::NewSkirmish {
+        ig2_sim::game::new_game::NewSkirmish {
+            en: self.race,
+            ais: self.computers,
+            random_id: kind,
+            tech: self.technology,
+            planets: tables.planets[self.planets.clamp(0, 4) as usize],
+            money: tables.money[self.money.clamp(0, 5) as usize],
+            difficulty: self.difficulty,
+            population: self.population,
+            seed,
+            ticks: seed,
+        }
+    }
 }
 
 /// The list's state (`Mode_Scenario_Valasztas` and its variables).
@@ -177,6 +215,8 @@ pub struct ScenarioList {
     pub at: [f32; 2],
     /// `DesignKeret1` round the selected row.
     pub frame: DesignFrame,
+    /// Ours (ADR 0039): the quick game's panel (the skirmish entry only); closing it returns to the main ring set.
+    pub quick: bool,
 }
 
 /// What a press asks of the main menu.
@@ -209,6 +249,7 @@ impl ScenarioList {
             latch: 0,
             at: [0.0; 2],
             frame: DesignFrame::default(),
+            quick: false,
         };
         s.init_skirmish();
         s

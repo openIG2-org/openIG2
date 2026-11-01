@@ -29,6 +29,9 @@ The game starts at the title and main menu, like the original: campaign, scenari
 the multiplayer rings (LAN, direct IP or join code, optionally through a relay server you or a friend run:
 `docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code
 (Ctrl+V) into the "Address or join code" field with no LAN game selected and press Join.
+For a quick game, click "Quick game" at the bottom right of the main menu: the skirmish settings open on their own
+(race, computer players, difficulty, planets, technology, money, population), set to your last skirmish's choices;
+Start begins a generated galaxy. The full single-player path is still there.
 Hosting asks your router to forward the game port (UPnP / NAT-PMP); the room shows whether it worked, and a
 click on that line switches it off. A generated galaxy's room also has an off-by-default "Space battle formations"
 row: with it on, each human side with six or more ships picks a formation before a real-time space battle starts.
@@ -97,7 +100,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Game statistics (`GameStatistics`) | On by default (ADR 0034): after a game's end videos a statistics screen shows the game's length and result, a table per empire (planets, population, credits, ships, ships built and lost, techs, battles won, score) and graphs over time (pick the value with its tabs or Left/Right; Esc, Enter or Continue goes on to the menu). Every finished game is added to `match-history.json` (in `IG2_SAVE_DIR`, else beside the save slots); the main menu's "History" item lists them, newest first, and opens each one's screen. Multiplayer games are recorded on every machine. Off: the original's end, nothing recorded |
 | WASD camera (`WasdCamera`) | Held W/A/S/D move the camera at the edge-scroll speed (ADR 0030): Starmap (default), Both (also the colony screen, where they replace the `a` select-all and `s` stop keys) or Off; never while you type a name or chat |
 | Autosave every (`AutosaveEvery`) | Original (default: slot 24 twice a game year), or every 10, 30 or 90 game days with the previous autosave kept in slot 23 (ADR 0032); in multiplayer only these cadences autosave, on the host |
-| Settings in menu (`MenuSettings`) | On by default: the main menu shows a Settings label and opens Options on `O` (ADR 0031); off keeps the original's menu |
+| Settings in menu (`MenuSettings`) | On by default: the main menu shows a Settings label and opens Options on `O` (ADR 0031), and a Quick game label (ADR 0039); off keeps the original's menu |
 | Language (`Language`) | Default (the client's own choice), English, Magyar, Deutsch, Francais, Espanol or Italiano (ADR 0031); applies at the next start, the screen says "Restart to change the language"; greyed while `--lang` or `IG2_LANG` is set |
 | Fleet groups (`FleetGroups`) | On by default: on the starmap Ctrl+1…9 put the selected fleet in a group, Alt+1…9 select the group's fleet, pressed again the view centres on it (ADR 0035); the plain 1…3 stay the speed keys; the groups are saved beside the save slot (`save<n>.groups`); off leaves Ctrl/Alt+1…3 as speed keys as in the original |
 
