@@ -124,15 +124,16 @@ impl Driver {
         self.war(w, en, notes);
         // 840: five colonies in time, or the human loses its planets (or dies).
         if story.is_running(840) {
-            self.build_colony_ship(w, en, notes);
+            self.build_colony_ship(w, en, &story, notes);
             self.colonise(w, en, notes);
         }
         let goals = goals(&w.game, en, &story);
-        let mut free = own_fleets(&w.game, en);
-        // The rest of the fleets stay the AI's (its defence and its own wars).
-        for g in goals.into_iter().take(FLEETS) {
-            let Some(f) = free.first().copied() else { break };
-            free.remove(0);
+        let free = own_fleets(&w.game, en);
+        // The rest of the fleets stay the AI's (its defence and its own wars), unless the AI won't fight the only
+        // enemies there are: then every fleet follows the goals, the ones beyond them the last goal.
+        let n = if guarded_wars_only(&w.game, en) { free.len() } else { FLEETS.min(goals.len()) };
+        for (k, &f) in free.iter().take(n).enumerate() {
+            let Some(&g) = goals.get(k.min(goals.len().saturating_sub(1))) else { break };
             if self.order(w, f, g) {
                 notes.push(format!("{g:?}"));
             }
@@ -198,13 +199,16 @@ impl Driver {
         }
     }
 
-    /// With no colony ship in a fleet and none queued, the cheapest colony ship design the human can build goes into
-    /// the ship line of its planet with the most ship capacity: the production screen's "add" (`Production` op 4, exe
-    /// order 0x1d: the design goes to the first empty slot, re-timed when it is the head; production-research.md
-    /// §1, space-combat.md §2.3 for the design's colony flag `+0x34`).
-    fn build_colony_ship(&mut self, w: &mut World, en: usize, notes: &mut Vec<String>) {
+    /// While fewer colony ships fly and are queued than 840 still needs colonies (`5 − v(8400)`), the cheapest colony
+    /// ship design the human can build goes into the ship line of its planet with the most ship capacity that isn't
+    /// building one: the production screen's "add" (`Production` op 4, exe order 0x1d: the design goes to the first
+    /// empty slot, re-timed when it is the head; production-research.md §1, space-combat.md §2.3 for the design's
+    /// colony flag `+0x34`). One at a time misses the goal: building one takes most of a year on a broke economy.
+    fn build_colony_ship(&mut self, w: &mut World, en: usize, story: &Story, notes: &mut Vec<String>) {
         let map = w.game.state.starmap();
-        if map.fleets.iter().skip(1).any(|f| f.owner as usize == en && f.colony_ships > 0) {
+        let flying: i32 = map.fleets.iter().skip(1).filter(|f| f.owner as usize == en).map(|f| f.colony_ships as i32).sum();
+        let need = 5 - story.vars.get(8400).unwrap_or(0) - flying;
+        if need <= 0 {
             return;
         }
         let combat = w.game.state.combat();
@@ -215,41 +219,47 @@ impl Driver {
         let Some(design) = (1..designs.len()).filter(|&d| colony(&designs[d])).min_by_key(|&d| price(&designs[d])) else { return };
         let c = w.game.state.colony();
         let slot = |q: &[u8; 64], k: usize| i16::from_le_bytes([q[2 * k], q[2 * k + 1]]);
+        let mine = |p: usize| c.planets[p].owner as usize == en;
         // Queued: what the AI put ahead of it is deleted (op 4 without a design on the head), so it is built next.
-        if let Some(p) = (1..c.planets.len()).find(|&p| c.planets[p].owner as usize == en && (0..4).any(|k| slot(&c.planets[p].production, k) == design as i16)) {
+        let queued: Vec<usize> = (1..c.planets.len()).filter(|&p| mine(p) && (0..4).any(|k| slot(&c.planets[p].production, k) == design as i16)).collect();
+        for &p in &queued {
             let q = &c.planets[p].production;
             if slot(q, 0) != design as i16 {
                 w.send(Command::Starmap { order: StarmapCmd::Production { op: 4, planet: p as i32, line: 0, slot: q[0x20] as i32, value: 0 } });
                 self.orders += 1;
             }
-            return;
         }
         // The ship line (0): designs at +0x78 + 2k, the UI bytes at +0x98 + k that the order finds the slot by.
-        let best = (1..c.planets.len())
-            .filter(|&p| c.planets[p].owner as usize == en && c.planets[p].ship_capacity > 0 && slot(&c.planets[p].production, 3) == 0)
-            .max_by_key(|&p| c.planets[p].ship_capacity);
-        let Some(p) = best else { return };
-        let ui = c.planets[p].production[0x20 + 3];
-        w.send(Command::Starmap { order: StarmapCmd::Production { op: 4, planet: p as i32, line: 0, slot: ui as i32, value: design as i32 } });
-        self.orders += 1;
-        notes.push(format!("colony ship queued at {p}"));
+        let mut free: Vec<usize> = (1..c.planets.len()).filter(|&p| mine(p) && c.planets[p].ship_capacity > 0 && slot(&c.planets[p].production, 3) == 0 && !queued.contains(&p)).collect();
+        free.sort_by_key(|&p| std::cmp::Reverse(c.planets[p].ship_capacity));
+        for p in free.into_iter().take((need - queued.len() as i32).max(0) as usize) {
+            let ui = c.planets[p].production[0x20 + 3];
+            w.send(Command::Starmap { order: StarmapCmd::Production { op: 4, planet: p as i32, line: 0, slot: ui as i32, value: design as i32 } });
+            self.orders += 1;
+            notes.push(format!("colony ship queued at {p}"));
+        }
     }
 
     /// At war with nobody, the player declares war on the empire it knows with the fewest planets
     /// (`BirodalomHanyBolygo`), when that is under half its own: the AI playing
     /// the human waits for a war target its rules allow (ai-empire.md §6.2, the story's guards §11.1) and stops
-    /// growing once the free planets are gone. The diplomacy screen's declaration (re/rules/diplomacy.md §6.3).
+    /// growing once the free planets are gone. At war with two rivals or fewer left, it still declares on a non-ally with
+    /// under a quarter of its planets: the campaign is won with one non-ally left that the human outweighs twice (story 405,
+    /// re/rules/game-end.md), not while a small bystander lives. The diplomacy screen's declaration
+    /// (re/rules/diplomacy.md §6.3).
     fn war(&mut self, w: &mut World, en: usize, notes: &mut Vec<String>) {
         let m = &w.game.state.mem;
         let alive = w.game.state.alive();
         let knows = w.game.state.colony().knows;
         let level = |e: usize| m.u8(va::RELATIONS + ((en * 19 + e) * 0x26) as u32 + 0x25);
         let rivals: Vec<usize> = (1..9).filter(|&e| e != en && alive[e] && knows[en][e] != 0).collect();
-        if rivals.iter().any(|&e| level(e) == 1) {
+        let planets: [i32; 19] = m.i32s(va::EMPIRE_PLANETS);
+        let at_war = rivals.iter().any(|&e| level(e) == 1);
+        if at_war && (1..9).filter(|&e| e != en && alive[e]).count() > 2 {
             return;
         }
-        let planets: [i32; 19] = m.i32s(va::EMPIRE_PLANETS);
-        let Some(e) = rivals.into_iter().filter(|&e| planets[e] * 2 < planets[en]).min_by_key(|&e| planets[e]) else { return };
+        let small = |e: usize| if at_war { level(e) != 1 && level(e) != 5 && planets[e] * 4 < planets[en] } else { planets[e] * 2 < planets[en] };
+        let Some(e) = rivals.into_iter().filter(|&e| small(e)).min_by_key(|&e| planets[e]) else { return };
         let terms = ig2_net::Terms { cat: 0, sub: 2, value: -1, sub2: -1, value2: -1 };
         w.send(Command::DiplomacyMessage { to: e as i32, declaration: true, terms });
         notes.push(format!("war on {e}"));
@@ -276,6 +286,14 @@ impl Driver {
             }
         }
     }
+}
+
+/// `IG2_PLAYTHROUGH_DEBUG`: the story planets (id, planet, owner, the human's view) and 840's colonies so far.
+pub fn debug(g: &Game, en: usize) -> String {
+    let story = g.state.story();
+    let colony = g.state.colony();
+    let planets: Vec<String> = story.planets.iter().filter(|e| e.0 > 0 && e.1 > 0).filter_map(|&(id, p)| colony.planets.get(p as usize).map(|q| format!("{id}:{p}/{}/{}", q.owner, q.visibility[en]))).collect();
+    format!("story planets {} 840 v8400 {:?}", planets.join(" "), story.is_running(840).then(|| story.vars.get(8400)))
 }
 
 /// The story's fleet goals, the most urgent first (elem.md, begin.md).
@@ -337,6 +355,33 @@ fn goals(g: &Game, en: usize, story: &Story) -> Vec<Goal> {
         out.extend((1..colony.planets.len()).filter(|&p| e > 0 && owner(p) == e && seen(p)).take(2).map(Goal::Take));
     }
     out
+}
+
+/// The human is at war, and only with empires the story guards from the AI: the AI playing the human attacks nobody
+/// then.
+fn guarded_wars_only(g: &Game, en: usize) -> bool {
+    let m = &g.state.mem;
+    let alive = g.state.alive();
+    let war = |e: usize| m.u8(va::RELATIONS + ((en * 19 + e) * 0x26) as u32 + 0x25) == 1;
+    let wars: Vec<usize> = (1..9).filter(|&e| e != en && alive[e] && war(e)).collect();
+    !wars.is_empty() && wars.iter().all(|&e| guarded(g, e))
+}
+
+/// No AI attacks empire `e`'s planets right now: the story guards it (`StoryAdat+0xb8`: 1, `+0xbc`: 5) and it isn't
+/// among the strongest (ai-empire.md §11.1).
+fn guarded(g: &Game, e: usize) -> bool {
+    let m = &g.state.mem;
+    let alive = g.state.alive();
+    let power: [f32; 19] = m.f32s(va::EMPIRE_POWER);
+    // `s1`, `s2`: the first alive empire with the strictly greatest power, then likewise among the others.
+    let strongest = |skip: usize| (1..9).filter(|&c| alive[c] && c != skip).fold(0, |s, c| if s == 0 || power[s] < power[c] { c } else { s });
+    let (s1, flags) = (strongest(usize::MAX), [m.i32(va::STORY_ADAT + 0xb8) != 0, m.i32(va::STORY_ADAT + 0xbc) != 0]);
+    let s2 = strongest(s1);
+    match (e, flags) {
+        (1, [true, true]) | (5, [true, true]) => s1 != e && s2 != e,
+        (1, [true, _]) | (5, [_, true]) => s1 != e,
+        _ => false,
+    }
 }
 
 /// The human's fleets that aren't story fleets, the strongest (by ground units, then strength) first.

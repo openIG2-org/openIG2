@@ -355,6 +355,7 @@ impl Harness {
                 let c = w.game.state.colony();
                 let per: Vec<usize> = (1..9).map(|e| c.planets.iter().filter(|p| p.owner as usize == e).count()).collect();
                 eprintln!("   planets of empires 1..=8: {per:?}");
+                eprintln!("   {}", story::debug(&w.game, en));
             }
             let story = w.game.state.story();
             let date = date(&w.game);

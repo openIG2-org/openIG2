@@ -21,10 +21,12 @@ at the next cleanup.
   production order, attacks on the empires the story guards from the AI, war on a much smaller empire when at war
   with nobody); `--seed` takes a list. On difficulty 1 every campaign reaches its end on some seeds: campaign 1 won
   on both storylines (storyline 1 seed 2, storyline 2 seed 4242), campaign 2 storyline 1 ends in story 863's own end
-  (CampaignOver, seed 4242) and is won on seed 2, storyline 2 won on seed 4242, campaign 3 storyline 1 won (seed 8).
-- [ ] **Campaign 3 storyline 2 to its end**: no seed tried (2..11, 4242) wins storyline 720 on difficulty 1; on some
-  the human still misses story 840's five colonies and can't retake the two planets empire 17 takes within 900 days;
-  on the others empire 1 wins the war.
+  (CampaignOver, seed 4242) and is won on seed 2, storyline 2 won on seed 4242, campaign 3 storyline 1 won (seed 8), storyline 2 ends (story 837) and is won on seeds 2 and 5.
+- [x] **Campaign 3 storyline 2 to its end**: campaign 3 keeps empire 1 shielded from the AI while it isn't the
+  strongest (`StoryAdat+0xb8`), so the driver sends every human fleet after the story goals while the human's only
+  wars are with such empires, declares war on a small empire near the end (story 405), and keeps as many colony ships
+  in production as story 840 still needs. Seeds 2 and 5 end storyline 720 and win; other seeds lose to empire 1,
+  stall, or miss 840's colonies.
 - [x] **Story spy missions in the sim**: the spy pass asks the story (`Story::spy_question`), so story 863's end (CampaignOver) resolves
   (`re/rules/campaign/elem.md` 861/863). Campaign 2 storyline 2 seed 2 reaches the end videos; seed 1 runs out of ticks
   because the AI-played human never conquers empire 5's last planets.

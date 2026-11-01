@@ -96,9 +96,11 @@ the storyline going (or leaves one to expire), researches the techs an episode a
 spy missions, sends the story specials (8571 with 2,000,000 credits, 8581, 8601) once each, and gives up to two
 fleets the story's targets (the story planets the rebels and the episodes' invaders hold, the planets empire 17
 took in 840, the raiders to hunt, a planet to guard or visit, empire 5's planet of 858, the least defended planet of
-an empire the story guards from the AI, `StoryAdat+0xb8/+0xbc`); during 840 it queues colony ships at the head of a
-ship line and sends them to free planets; at war with nobody, it declares war on a known empire with under half its
-planets. Everything else stays the AI's. Whether the AI-played human wins the war depends on the seed (each sim
+an empire the story guards from the AI, `StoryAdat+0xb8/+0xbc`; every human fleet follows them, not two, while the human's only wars are with empires the
+story guards from the AI right now); during 840 it keeps as many colony ships in production, on different planets,
+as colonies 840 still needs and sends them to free planets; at war with nobody, it declares war on a known empire
+with under half its planets, and at war with two rivals or fewer left, on a non-ally with under a quarter (story 405's
+win). Everything else stays the AI's. Whether the AI-played human wins the war depends on the seed (each sim
 change reshuffles them), so a campaign is played over a seed list, e.g. `campaign:2:1:1 --seed 2,3,8,4242`: on
 difficulty 1 every campaign has seeds that end won (`video Won`: the race's win clip and
 `misc/end_campaign_win.bik`), and campaign 2 storyline 1 also ends in story 863's own end (`Over(Ended)`,
@@ -109,7 +111,7 @@ computer empires' rulesets are compared by (`re/rules/ai-empire.md` §15). `--ai
 with the enhanced ruleset (ADR 0045; in `mp` runs the room's option), `classic` (the default) with the original's.
 `--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets
 the units fight it out) and the diplomacy questions reach its inbox. The exit code is 1 when a run failed (a panic,
-a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit.
+a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit, the story planets (id:planet/owner/view) and 840's v(8400).
 
 `mp[:AIS[:PLANETS]]` (default `mp:2:40`) plays a generated multiplayer galaxy on two machines in one process, host and
 joiner, each on the player's multiplayer path (the room, `World::new_mp`, the session pumped by `World::tick`) over an
