@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - Starmap: the mouse wheel zooms and a right drag moves the map; a right click still gives the fleet its order (Remake row "Starmap mouse camera"; off keeps the original's controls).
+- Options: the remake's own settings have their own REMAKE page, grouped and paged, so every one can be reached; the game page looks like the original again.
 - Mods can change the rules without replacing files: a `rules.toml` in the mod folder sets single values (a tech's price or research time, a building's energy, a weapon's damage, a race's production speed…) by name; `ig2-check` points at any mistyped name, and multiplayer rooms check that everyone has the same changes.
 - macOS: openIG2 builds for Apple Silicon Macs (an unsigned archive in releases), finds a copied Windows install in the Applications folders, CrossOver, Whisky or Heroic (or through `IG2_INSTALL_DIR`), and keeps its settings and saves in `~/Library/Application Support/GyroscopeGames/ig2`.
 - Linux: openIG2 builds for 64-bit Linux, finds an install made through Heroic, Lutris or Wine, and keeps its settings and saves in `~/.local/share/GyroscopeGames/ig2`; releases can carry a Linux archive beside the Windows zip.
@@ -33,7 +34,7 @@ Since 0.7.56.
 - Space battles: the mouse pointer and its tooltip stay on top of the top bar.
 - Auto research groundwork: the game can now pick your next research by itself per category (ships, buildings, tanks); the switches arrive on the research screen and in Options next.
 
-**New Remake options** (Options, game page)
+**New Remake options** (Options, REMAKE page)
 
 - F12 quick-saves and Shift+F12 quick-loads; the game autosaves twice a game year into slot 24 as the original does, and a new Remake option "Autosave every" saves every 10, 30 or 90 game days instead, keeping the last two autosaves in the load list.
 - Starmap: Ctrl+1…9 put the selected fleet in a group, Alt+1…9 select it again and a second press centres the view on it (Remake row "Fleet groups"; off keeps the original's keys). The groups are saved with the game.
@@ -42,7 +43,7 @@ Since 0.7.56.
 - W/A/S/D move the camera on the starmap; a new Remake option "WASD camera" can also turn them on in the colony view.
 - Options: typing a save name over a used slot no longer shows the old name behind it (Remake row "Clean name entry"; off shows the original's look).
 - Starmap and space battle: the turning model in the bottom-left info box stays inside its box (Remake row "Models inside boxes"; off shows the original's look).
-- Every game now records a replay beside your saves (`replays` folder, the newest 50 kept) that plays back exactly; the viewer comes later. Switch it off under Options, game page, "Record replays".
+- Every game now records a replay beside your saves (`replays` folder, the newest 50 kept) that plays back exactly; the viewer comes later. Switch it off under Options, REMAKE page, "Record replays".
 - Replays can be watched: the main menu's "Replays" item lists them and plays one back with the whole map shown, pause, speeds up to 8x and a progress line.
 - Space battle: the defend/attack slider no longer runs through its label (Remake row "Slider under label"; off shows the original's look).
 - Hungarian games: the article before a name reads "a" or "az" instead of a stray character on the message line, in messages, diplomacy and battle banners (Remake row "Hungarian articles"; off shows the original's look).

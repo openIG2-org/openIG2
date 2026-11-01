@@ -9,8 +9,15 @@ use ig2_formats::text::Lang;
 /// `UiTexts::ours`) where it is drawn; the test below fails on a row without both languages.
 const TABLE: &[(&str, &str)] = &[
     // Options: the remake's rows (display.rs) and their values (at most 10 letters, the value field).
-    ("Remake", "Felújítás"),
     ("Restart to change the language", "A nyelv újraindítás után vált"),
+    // The Remake page (ADR 0048): the tab's tooltip, the groups' headings, the sub-page row.
+    ("REMAKE", "FELÚJÍTÁS"),
+    ("The remake's own settings", "A felújítás saját beállításai"),
+    ("Screen", "Képernyő"),
+    ("Interface", "Kezelőfelület"),
+    ("Game", "Játék"),
+    ("Accessibility", "Akadálymentesség"),
+    ("Page", "Oldal"),
     ("Display", "Megjelenítés"),
     ("Resolution", "Felbontás"),
     ("Vertical sync", "Függőleges szinkron"),
@@ -294,6 +301,7 @@ mod tests {
             missing.extend(std::iter::once(name).chain(labels).filter(|s| !has(s)));
         }
         missing.extend(crate::event_log::FILTERS.iter().map(|f| f.0.to_string()).filter(|s| !has(s)));
+        missing.extend(crate::options::Group::ALL.iter().map(|g| g.title().to_string()).filter(|s| !has(s)));
         assert!(missing.is_empty(), "not in the table: {missing:#?}");
     }
 

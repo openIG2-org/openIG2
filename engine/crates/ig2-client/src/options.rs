@@ -29,6 +29,60 @@ const ROWS: usize = 17;
 /// `DrawLaser(…, 0x3c, 0x50, 0xfa, …)`.
 const LASER: [i32; 3] = [0x3c, 0x50, 0xfa];
 
+/// Ours (ADR 0048): the page of the remake's rows, behind the third tab (`OptionsMelyikMod` 3, only in our file).
+pub const REMAKE_PAGE: i32 = 3;
+/// The Remake page's lines a sub-page: rows and headings, then the restart notice's line and the "Page" row's.
+const SUB_LINES: usize = 21;
+
+/// Ours (ADR 0048): a remake row's group on the Remake page, drawn in this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Group {
+    #[default]
+    Display,
+    Interface,
+    Game,
+    Accessibility,
+    Multiplayer,
+}
+
+impl Group {
+    pub const ALL: [Group; 5] = [Group::Display, Group::Interface, Group::Game, Group::Accessibility, Group::Multiplayer];
+
+    /// The heading's English text (the remake text table's key, ADR 0042).
+    pub fn title(self) -> &'static str {
+        ["Screen", "Interface", "Game", "Accessibility", "Multiplayer"][self as usize]
+    }
+}
+
+/// A line of the Remake page: a group's heading or the row at that index.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Line {
+    Heading(Group),
+    Row(usize),
+}
+
+/// The Remake page's lines split into sub-pages of [`SUB_LINES`]; a heading never ends one.
+fn remake_pages(rows: &[Row]) -> Vec<Vec<Line>> {
+    let mut lines = Vec::new();
+    for g in Group::ALL {
+        let mut rs = rows.iter().enumerate().filter(|(_, r)| r.page == REMAKE_PAGE && r.group == g).map(|(k, _)| Line::Row(k)).peekable();
+        if rs.peek().is_some() {
+            lines.push(Line::Heading(g));
+            lines.extend(rs);
+        }
+    }
+    let mut pages = vec![Vec::new()];
+    for (i, l) in lines.iter().enumerate() {
+        let page = pages.last_mut().unwrap();
+        let heading_last = page.len() == SUB_LINES - 1 && matches!(l, Line::Heading(_)) && i + 1 < lines.len();
+        if page.len() == SUB_LINES || heading_last {
+            pages.push(Vec::new());
+        }
+        pages.last_mut().unwrap().push(*l);
+    }
+    pages
+}
+
 /// An option row (`KirakMenuPontok` exe 0x5171f0's table), or one of the remake's own (`crate::display`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Row {
@@ -43,8 +97,9 @@ pub struct Row {
     pub mp_ok: bool,
     /// Ours: the value's texts (else the game's on/off and low/medium/high).
     pub labels: Vec<Vec<u8>>,
-    /// Ours: a remake row, drawn after the page's own under the "Remake" heading.
+    /// Ours: a remake row, on the Remake page ([`REMAKE_PAGE`]) under its group's heading (ADR 0048).
     pub ours: bool,
+    pub group: Group,
     /// Ours: shown off and greyed, its stored value kept (the battle simulate rows under the tutorial, ADR 0019).
     pub locked: bool,
 }
@@ -272,6 +327,8 @@ mod id {
     pub const SLIDER: u32 = 5;
     pub const SOUND: u32 = 10;
     pub const GAME: u32 = 11;
+    /// Ours (ADR 0048): the Remake tab.
+    pub const REMAKE: u32 = 12;
     pub const PANEL: u32 = 17;
     pub const BACK: u32 = 18;
 }
@@ -291,6 +348,8 @@ pub struct Settings {
 #[derive(Debug, Clone)]
 pub struct OptionsScreen {
     pub page: i32,
+    /// Ours (ADR 0048): the Remake page's sub-page shown.
+    pub sub: usize,
     pub sliders: [Slider; 3],
     pub slot: usize,
     pub slots: Vec<Option<Slot>>,
@@ -370,8 +429,11 @@ impl OptionsScreen {
             enabled: true,
         };
         check_dependencies(&mut rows, multiplayer);
+        // The Remake page kept in our file, opened without the remake's rows (a snapshot): the sound page.
+        let page = if s.page == REMAKE_PAGE && !rows.iter().any(|r| r.ours) { 0 } else { s.page };
         let mut o = Self {
-            page: s.page,
+            page,
+            sub: 0,
             sliders: [
                 slider(0x6e, s.music, [1, 2, 3, 4, 5, 6], 7),
                 slider(0x96, s.sound, [1, 2, 3, 4, 5, 6], 8),
@@ -466,6 +528,7 @@ impl OptionsScreen {
             // Under the tutorial: no load, save or slots (`Off(2)`, id 1 forced off); "continue" on.
             id::LOAD | id::SAVE | id::SLOTS if self.tutorial || self.settings_only => false,
             id::CONTINUE => self.tutorial,
+            id::REMAKE => self.has_remake(),
             id::LOAD => self.filled(self.slot) && !self.sure && !self.multiplayer,
             id::SAVE => (!self.load_only && !self.battle_lock() && !self.mp_lock() && self.slot < 23) || self.sure,
             id::SLOTS => self.entry.is_none(),
@@ -489,6 +552,7 @@ impl OptionsScreen {
             }
             id::SOUND => [0xd, 0x42, 0x5a, 0x14],
             id::GAME => [0x6c, 0x42, 0x5a, 0x14],
+            id::REMAKE => [203, 0x42, 0x5a, 0x14],
             id::PANEL => [9, 0x3e, 0x120, 0x180],
             id::BACK => [0, 0, 0x159, 0x1df],
             _ => return None,
@@ -514,6 +578,7 @@ impl OptionsScreen {
             5..=7 => self.sliders[(id - 5) as usize].title.clone(),
             id::SOUND => texts.get(13, 1, 5),
             id::GAME => texts.get(13, 1, 7),
+            id::REMAKE => texts.ours("The remake's own settings"),
             id::BACK => texts.get(13, 1, 12),
             _ => Vec::new(),
         }
@@ -621,6 +686,8 @@ impl OptionsScreen {
                 self.gfx_detail = 3;
                 self.dirty = true;
                 check_dependencies(&mut self.rows, self.multiplayer);
+            } else if let Some((_, sub, m)) = self.sub_row().filter(|&(n, ..)| self.over_line(at, n)) {
+                self.sub = sub % m;
             }
         }
         let spot = self.spot_at(at);
@@ -669,6 +736,7 @@ impl OptionsScreen {
             id::BACK if self.fade == 100.0 => self.leave(if self.load_only { Act::MainMenu } else { Act::Back }),
             id::SOUND => self.set_page(0),
             id::GAME => self.set_page(2),
+            id::REMAKE => self.set_page(REMAKE_PAGE),
             _ => {}
         }
         None
@@ -676,25 +744,46 @@ impl OptionsScreen {
 
     fn set_page(&mut self, p: i32) {
         self.page = p;
+        self.sub = 0;
         let g = self.sliders[2].enabled;
         self.show_sliders(g);
     }
 
     /// The row of the page under `at` that a press toggles (enabled only).
     fn row_at(&self, at: [f32; 2]) -> Option<usize> {
-        for (n, k, r) in self.page_rows() {
-            let y = self.row_y(n as i32);
-            let (x, py) = (at[0] as i32, at[1] as i32);
-            if r.enabled && py >= y && py < y + 0xf && (0x1f..=0x117).contains(&x) {
-                return Some(k);
-            }
-        }
-        None
+        self.page_rows().into_iter().find(|&(n, _, r)| r.enabled && self.over_line(at, n as i32)).map(|(_, k, _)| k)
     }
 
-    /// The page's rows with their line (ours one line lower, under the heading) and index.
-    fn page_rows(&self) -> impl Iterator<Item = (usize, usize, &Row)> {
-        self.rows.iter().enumerate().filter(|(_, r)| r.page == self.page).enumerate().map(|(n, (k, r))| (n + r.ours as usize, k, r))
+    /// Ours (ADR 0048): the Remake tab shows with the remake's rows (the window's screens; not the exe-capture snapshot).
+    fn has_remake(&self) -> bool {
+        self.rows.iter().any(|r| r.ours)
+    }
+
+    /// The page's rows with their line and index (the Remake page's: of the sub-page shown, ADR 0048).
+    fn page_rows(&self) -> Vec<(usize, usize, &Row)> {
+        if self.page == REMAKE_PAGE {
+            let lines = self.remake_lines();
+            return lines.iter().enumerate().filter_map(|(n, l)| if let Line::Row(k) = *l { Some((n, k, &self.rows[k])) } else { None }).collect();
+        }
+        self.rows.iter().enumerate().filter(|(_, r)| r.page == self.page).enumerate().map(|(n, (k, r))| (n, k, r)).collect()
+    }
+
+    /// The Remake page's sub-page shown and how many there are.
+    fn remake_lines(&self) -> Vec<Line> {
+        let mut pages = remake_pages(&self.rows);
+        pages.swap_remove(self.sub.min(pages.len() - 1))
+    }
+
+    /// The Remake page's "Page n/m" row: its line and `(n, m)`, when there are sub-pages.
+    fn sub_row(&self) -> Option<(i32, usize, usize)> {
+        let m = remake_pages(&self.rows).len();
+        (self.page == REMAKE_PAGE && m > 1).then(|| (SUB_LINES as i32 + 1, self.sub.min(m - 1) + 1, m))
+    }
+
+    /// The pointer over the row at line `n` (`y..y+15`, `31 ≤ x ≤ 279`).
+    fn over_line(&self, at: [f32; 2], n: i32) -> bool {
+        let (y, x, py) = (self.row_y(n), at[0] as i32, at[1] as i32);
+        py >= y && py < y + 0xf && (0x1f..=0x117).contains(&x)
     }
 
     /// Ours (ADR 0031): the Language row is on this page and differs from the one the client started with.
@@ -1017,6 +1106,9 @@ impl OptionsScreen {
         // The left panel and the tabs start glows that are never drawn.
         kirak(f, &mut fq, &mut self.faders, 6, 5 + si, [13.0, 66.0, 90.0, 20.0], vv, false);
         kirak(f, &mut fq, &mut self.faders, 7, 5 + si, [108.0, 66.0, 90.0, 20.0], vv, false);
+        if self.has_remake() {
+            kirak(f, &mut fq, &mut self.faders, 8, 5 + si, [203.0, 66.0, 90.0, 20.0], vv, false);
+        }
         (self.pressed, self.released) = (false, false);
         self.fade_v = vv;
         f.append(fq);
@@ -1042,16 +1134,18 @@ impl OptionsScreen {
                 text(f, &d.texts.get(13, 4, 11), after, y, 0x14, 2, Align::Left, d.col(0x25, b2));
             }
         }
-        // The page's rows (`KirakMenuPontok`).
-        let (mut heading, mut last) = (true, 0);
+        // The page's rows (`KirakMenuPontok`); on the Remake page also the groups' headings (ADR 0048).
+        if self.page == REMAKE_PAGE {
+            for (n, l) in self.remake_lines().into_iter().enumerate() {
+                if let Line::Heading(g) = l {
+                    let h = d.texts.ours(g.title());
+                    text(f, &h, 0x1e as f32, self.row_y(n as i32) as f32, h.len(), 2, Align::Left, d.col(1, b2));
+                }
+            }
+        }
         for (n, _, r) in self.page_rows() {
             let y = self.row_y(n as i32) as f32;
-            if r.ours && std::mem::take(&mut heading) {
-                let remake = d.texts.ours("Remake");
-                text(f, &remake, 0x1e as f32, y - 0xf as f32, remake.len(), 2, Align::Left, d.col(1, b2));
-            }
-            let (px, py) = (self.at[0] as i32, self.at[1] as i32);
-            let over = py >= y as i32 && py < y as i32 + 0xf && (0x1f..=0x117).contains(&px) && self.grab.is_none();
+            let over = self.over_line(self.at, n as i32) && self.grab.is_none();
             let (cn, cv) = if !r.enabled { (1, 1) } else if over { (2, 2) } else { (0x22, 0x25) };
             // ADR 0042: the remake's rows keep their English and show the game's language.
             let name = if r.ours { crate::tr::bytes(d.texts.lang, &r.name) } else { r.name.clone() };
@@ -1064,11 +1158,17 @@ impl OptionsScreen {
                 _ => (Vec::new(), cv),
             };
             text(f, &val, 0xe6 as f32, y, 10, 2, Align::Left, d.col(c, b2));
-            last = n;
         }
         if self.restart_needed() {
             let l = d.texts.ours("Restart to change the language");
-            text(f, &l, 0x1e as f32, self.row_y(last as i32 + 1) as f32, l.len(), 2, Align::Left, d.col(1, b2));
+            text(f, &l, 0x1e as f32, self.row_y(SUB_LINES as i32) as f32, l.len(), 2, Align::Left, d.col(1, b2));
+        }
+        if let Some((n, sub, m)) = self.sub_row() {
+            let (y, c) = (self.row_y(n) as f32, if self.over_line(self.at, n) && self.grab.is_none() { [2, 2] } else { [0x22, 0x25] });
+            let name = d.texts.ours("Page");
+            text(f, &name, 0x1e as f32, y, name.len(), 2, Align::Left, d.col(c[0], b2));
+            let val = format!("{sub}/{m}").into_bytes();
+            text(f, &val, 0xe6 as f32, y, 10, 2, Align::Left, d.col(c[1], b2));
         }
         // The buttons' labels (font 3, centred in 9 cells), colour 2 under the pointer.
         let lab = |f: &mut Frame, s: u16, x: i32, spot: u32| {
@@ -1123,6 +1223,11 @@ impl OptionsScreen {
         let tab = |f: &mut Frame, s: u16, x: i32, on: bool| text(f, &d.texts.get(13, 5, s), x as f32, 0x46 as f32, 0xf, 3, Align::Centre, d.col(if on { 2 } else { 1 }, b2));
         tab(f, 9, 0x3a, hover == id::SOUND || self.page == 0);
         tab(f, 11, 0x99, hover == id::GAME || self.page == 1);
+        // Ours (ADR 0048): the Remake tab beside them.
+        if self.has_remake() {
+            let remake = d.texts.ours("REMAKE");
+            text(f, &remake, 248.0, 0x46 as f32, 0xf, 3, Align::Centre, d.col(if hover == id::REMAKE || self.page == REMAKE_PAGE { 2 } else { 1 }, b2));
+        }
         // The name entry: its box (colour 0x27 until the first key, else 0), the text, the blinking cursor.
         if let Some(e) = &self.entry {
             let (x, y) = (0x17c as f32, (self.slot as i32 * 0xc + 0x76) as f32);
@@ -1494,20 +1599,41 @@ mod tests {
         let mut f = ig2_formats::options::Options::default();
         f.set(crate::display::MODE, "0");
         o.rows.extend(crate::display::rows(&f, &[(1920, 1080), (1280, 720)], (1920, 1080)));
+        // The game page keeps only the exe's rows (ADR 0048).
         o.press([150.0, 75.0], &mut |_| {});
-        // Three own rows, the heading on line 3, ours from line 4: the resolution on line 5.
+        assert_eq!(o.page_rows().len(), 3);
+        // The Remake tab: the "Screen" heading on line 0, the display mode on 1, the resolution on 2.
+        o.press([248.0, 75.0], &mut |_| {});
+        assert_eq!((o.page, o.sub), (REMAKE_PAGE, 0));
+        assert!(o.sliders.iter().all(|s| !s.visible));
         let y = |n: i32| (0x5c + n * 15 + 2) as f32;
-        o.press([40.0, y(5)], &mut |_| {});
+        o.press([40.0, y(2)], &mut |_| {});
         let mut f = ig2_formats::options::Options::default();
         o.store(&mut f);
         assert_eq!(f.get(crate::display::RESOLUTION), Some("1280x720"));
-        o.press([40.0, y(5)], &mut |_| {});
-        o.press([40.0, y(4)], &mut |_| {});
+        o.press([40.0, y(2)], &mut |_| {});
+        o.press([40.0, y(1)], &mut |_| {});
         assert_eq!(o.rows[3].value, 1, "borderless");
         assert!(!o.rows[4].enabled);
-        o.press([40.0, y(5)], &mut |_| {});
+        o.press([40.0, y(2)], &mut |_| {});
         o.store(&mut f);
         assert_eq!((f.get(crate::display::RESOLUTION), f.int(crate::display::MODE)), (Some("1920x1080"), Some(1)));
+        // Every row on one of the sub-pages, each within the panel; the "Page" row on line 22 turns them over.
+        let pages = remake_pages(&o.rows);
+        assert_eq!(pages.len(), 2);
+        assert!(pages.iter().all(|p| p.len() <= SUB_LINES && !matches!(p.last(), Some(Line::Heading(_)))));
+        assert_eq!(pages.iter().flatten().filter(|l| matches!(l, Line::Row(_))).count(), o.rows.iter().filter(|r| r.ours).count());
+        assert!(o.row_y(SUB_LINES as i32 + 1) + 0xf <= 62 + 384);
+        o.press([40.0, y(22)], &mut |_| {});
+        assert_eq!(o.sub, 1);
+        assert_eq!(o.remake_lines()[0], Line::Heading(Group::Game));
+        o.press([40.0, y(22)], &mut |_| {});
+        assert_eq!(o.sub, 0);
+        // Leaving the page shows its first sub-page again.
+        o.press([40.0, y(22)], &mut |_| {});
+        o.press([60.0, 75.0], &mut |_| {});
+        o.press([248.0, 75.0], &mut |_| {});
+        assert_eq!(o.sub, 0);
     }
 
     #[test]
@@ -1565,7 +1691,8 @@ mod tests {
         o.load_only = true;
         o.settings_only = true;
         assert!(!o.spot_on(id::LOAD) && !o.spot_on(id::SAVE) && !o.spot_on(id::SLOTS) && o.spot_on(id::QUIT));
-        o.rows.push(Row { key: crate::display::LANGUAGE.into(), page: o.page, ours: true, enabled: true, states: 6, value: 2, ..Row::default() });
+        o.page = REMAKE_PAGE;
+        o.rows.push(Row { key: crate::display::LANGUAGE.into(), page: REMAKE_PAGE, ours: true, enabled: true, states: 6, value: 2, ..Row::default() });
         assert!(!o.restart_needed());
         o.lang_at_start = Some(2);
         assert!(!o.restart_needed());

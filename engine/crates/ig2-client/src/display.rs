@@ -1,7 +1,7 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the starmap's mouse camera (ADR 0049); kept in our settings file and shown as extra rows on the Options screen's game page
-//! (`crate::options`, in the original's font and colours under a "Remake" heading). The original has a fixed
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the starmap's mouse camera (ADR 0049); kept in our settings file and shown as rows on the Options screen's Remake page (ADR 0048)
+//! (`crate::options`, in the original's font and colours on the Remake page under group headings). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
 use ig2_formats::options::Options as File;
@@ -9,7 +9,7 @@ use ig2_formats::text::Lang;
 use winit::monitor::MonitorHandle;
 use winit::window::Fullscreen;
 
-use crate::options::Row;
+use crate::options::{Group, Row};
 
 pub const MODE: &str = "DisplayMode";
 pub const RESOLUTION: &str = "Resolution";
@@ -179,7 +179,7 @@ pub fn sizes(monitor: Option<&MonitorHandle>) -> Vec<(u32, u32)> {
     v
 }
 
-/// The remake's rows for the game page: `sizes` the resolutions to offer, `current` the window's size (the
+/// The remake's rows for the Remake page: `sizes` the resolutions to offer, `current` the window's size (the
 /// resolution row's value when the file names none or a size not offered); on/off texts come from the game's
 /// strings (an empty label list).
 pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
@@ -190,18 +190,19 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
     }
     let want = d.size.unwrap_or(current);
     let res = sizes.iter().position(|&s| s == want).or_else(|| sizes.iter().position(|&s| s.0 <= want.0 && s.1 <= want.1)).unwrap_or(0);
-    let row = |n: i32, name: &str, key: &str, value: i32, labels: Vec<Vec<u8>>, states: i32| Row {
+    let row = |n: i32, group: Group, name: &str, key: &str, value: i32, labels: Vec<Vec<u8>>, states: i32| Row {
         name: name.as_bytes().to_vec(),
         key: key.into(),
         enabled: true,
         value,
         states,
-        page: 2,
+        page: crate::options::REMAKE_PAGE,
         id: ID_MODE + n,
         dep: 0,
         mp_ok: true,
         labels,
         ours: true,
+        group,
         locked: false,
     };
     let modes = ["Window", "Borderless", "Fullscreen"].map(|s| s.as_bytes().to_vec()).to_vec();
@@ -209,30 +210,30 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
     let n = labels.len() as i32;
     let langs = ["Default", "English", "Magyar", "Deutsch", "Francais", "Espanol", "Italiano"].map(|s| s.as_bytes().to_vec()).to_vec();
     vec![
-        row(0, "Display", MODE, d.mode as i32, modes, 2),
-        row(1, "Resolution", RESOLUTION, res as i32, labels, n - 1),
-        row(2, "Vertical sync", VSYNC, d.vsync as i32, Vec::new(), 1),
-        row(3, "Letterbox 4:3", LETTERBOX, d.letterbox as i32, Vec::new(), 1),
-        row(4, "Live background", LIVE_BACKGROUND, d.live_background as i32, Vec::new(), 1),
-        row(5, "Names in game language", ONE_LANGUAGE, d.one_language as i32, Vec::new(), 1),
-        row(6, "Clean name entry", CLEAN_ENTRY, (f.int(CLEAN_ENTRY) != Some(0)) as i32, Vec::new(), 1),
-        row(7, "Models inside boxes", BOX_MODELS, d.box_models as i32, Vec::new(), 1),
-        row(8, "Slider under label", SLIDER_UNDER, d.slider_under as i32, Vec::new(), 1),
-        row(9, "Hungarian articles", ARTICLES, d.articles as i32, Vec::new(), 1),
-        row(10, "Centred Exit label", CENTRED_EXIT, d.centred_exit as i32, Vec::new(), 1),
-        row(11, "WASD camera", WASD, d.wasd as i32, ["Off", "Starmap", "Both"].map(|s| s.as_bytes().to_vec()).to_vec(), 2),
-        row(12, "Autosave every", AUTOSAVE, f.int(AUTOSAVE).unwrap_or(0).clamp(0, 3), ["Original", "10 days", "30 days", "90 days"].map(|s| s.as_bytes().to_vec()).to_vec(), 3),
-        row(13, "Settings in menu", MENU_SETTINGS, (f.int(MENU_SETTINGS) != Some(0)) as i32, Vec::new(), 1),
-        row(14, "Language", LANGUAGE, language(f).map_or(0, |l| 1 + LANGS.iter().position(|&x| x == l).unwrap() as i32), langs, 6),
-        row(15, "Fleet groups", FLEET_GROUPS, d.fleet_groups as i32, Vec::new(), 1),
-        row(16, "Game statistics", STATISTICS, d.statistics as i32, Vec::new(), 1),
-        row(17, "Record replays", REPLAYS, (f.int(REPLAYS) != Some(0)) as i32, Vec::new(), 1),
-        row(18, "Event log", EVENT_LOG, d.event_log as i32, Vec::new(), 1),
-        row(19, "Subtitles", SUBTITLES, d.subtitles as i32, Vec::new(), 1),
-        row(20, "Colour-blind colours", COLOUR_BLIND, d.colour_blind as i32, Vec::new(), 1),
-        row(21, "Sharp UI", SHARP_UI, d.sharp_ui as i32, Vec::new(), 1),
-        row(22, "Sharp text", SHARP_TEXT, d.sharp_text as i32, Vec::new(), 1),
-        row(23, "Starmap mouse camera", STARMAP_MOUSE, d.starmap_mouse as i32, Vec::new(), 1),
+        row(0, Group::Display, "Display", MODE, d.mode as i32, modes, 2),
+        row(1, Group::Display, "Resolution", RESOLUTION, res as i32, labels, n - 1),
+        row(2, Group::Display, "Vertical sync", VSYNC, d.vsync as i32, Vec::new(), 1),
+        row(3, Group::Display, "Letterbox 4:3", LETTERBOX, d.letterbox as i32, Vec::new(), 1),
+        row(4, Group::Display, "Live background", LIVE_BACKGROUND, d.live_background as i32, Vec::new(), 1),
+        row(5, Group::Interface, "Names in game language", ONE_LANGUAGE, d.one_language as i32, Vec::new(), 1),
+        row(6, Group::Interface, "Clean name entry", CLEAN_ENTRY, (f.int(CLEAN_ENTRY) != Some(0)) as i32, Vec::new(), 1),
+        row(7, Group::Interface, "Models inside boxes", BOX_MODELS, d.box_models as i32, Vec::new(), 1),
+        row(8, Group::Interface, "Slider under label", SLIDER_UNDER, d.slider_under as i32, Vec::new(), 1),
+        row(9, Group::Interface, "Hungarian articles", ARTICLES, d.articles as i32, Vec::new(), 1),
+        row(10, Group::Interface, "Centred Exit label", CENTRED_EXIT, d.centred_exit as i32, Vec::new(), 1),
+        row(11, Group::Interface, "WASD camera", WASD, d.wasd as i32, ["Off", "Starmap", "Both"].map(|s| s.as_bytes().to_vec()).to_vec(), 2),
+        row(12, Group::Game, "Autosave every", AUTOSAVE, f.int(AUTOSAVE).unwrap_or(0).clamp(0, 3), ["Original", "10 days", "30 days", "90 days"].map(|s| s.as_bytes().to_vec()).to_vec(), 3),
+        row(13, Group::Interface, "Settings in menu", MENU_SETTINGS, (f.int(MENU_SETTINGS) != Some(0)) as i32, Vec::new(), 1),
+        row(14, Group::Interface, "Language", LANGUAGE, language(f).map_or(0, |l| 1 + LANGS.iter().position(|&x| x == l).unwrap() as i32), langs, 6),
+        row(15, Group::Interface, "Fleet groups", FLEET_GROUPS, d.fleet_groups as i32, Vec::new(), 1),
+        row(16, Group::Game, "Game statistics", STATISTICS, d.statistics as i32, Vec::new(), 1),
+        row(17, Group::Game, "Record replays", REPLAYS, (f.int(REPLAYS) != Some(0)) as i32, Vec::new(), 1),
+        row(18, Group::Interface, "Event log", EVENT_LOG, d.event_log as i32, Vec::new(), 1),
+        row(19, Group::Accessibility, "Subtitles", SUBTITLES, d.subtitles as i32, Vec::new(), 1),
+        row(20, Group::Accessibility, "Colour-blind colours", COLOUR_BLIND, d.colour_blind as i32, Vec::new(), 1),
+        row(21, Group::Display, "Sharp UI", SHARP_UI, d.sharp_ui as i32, Vec::new(), 1),
+        row(22, Group::Display, "Sharp text", SHARP_TEXT, d.sharp_text as i32, Vec::new(), 1),
+        row(23, Group::Interface, "Starmap mouse camera", STARMAP_MOUSE, d.starmap_mouse as i32, Vec::new(), 1),
     ]
 }
 

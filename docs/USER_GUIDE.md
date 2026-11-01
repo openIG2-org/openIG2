@@ -113,7 +113,7 @@ list comes back. A replay only plays on the version that recorded it: one that d
 row "Record replays" (`RecordReplays`, on by default) turns recording off.
 
 ### Display settings
-Options → the game tab, under the original's rows and a "Remake" heading. A press cycles the row; changes apply
+Options → the REMAKE tab, grouped (Screen, Interface, Game, Accessibility), with a "Page" row to turn to the next page. A press cycles the row; changes apply
 at once and are saved in `ig2-rework-options.dat`. The Options screen also opens from the main menu (the Settings label at the bottom right, or the `O` key), without its slot list, Load and Save.
 
 | Row (key) | |
