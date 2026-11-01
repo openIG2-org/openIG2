@@ -609,6 +609,9 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
     for m in install.mods() {
         eprintln!("ig2-client: mod {} ({} files)", m.name, install.overrides().iter().filter(|f| f.mod_name == m.name).count());
     }
+    for (m, _) in install.rule_patches().unwrap_or_default() {
+        eprintln!("ig2-client: mod {m}: rules.toml");
+    }
     tr::set_game(install.lang());
     Ok(install)
 }
@@ -623,10 +626,12 @@ fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
     mods
 }
 
-/// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`); `None` without mods.
+/// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`): the override files,
+/// and each `rules.toml` as `rules.toml#<k>` in the order they apply (ADR 0044 §9); `None` without mods.
 pub fn mods_fingerprint(install: &Install) -> Option<[u8; 32]> {
-    let files: Vec<(&str, Vec<u8>)> = install.overrides().iter().map(|f| (f.path, std::fs::read(f.file).unwrap_or_default())).collect();
-    ig2_net::session::mods_fingerprint(files.iter().map(|(p, b)| (*p, b.as_slice())))
+    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().map(|f| (f.path.to_owned(), std::fs::read(f.file).unwrap_or_default())).collect();
+    files.extend(install.rule_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("rules.toml#{k}"), b)));
+    ig2_net::session::mods_fingerprint(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())))
 }
 
 /// The texts' language: [`forced_language`], else the settings file's Language row (ADR 0031), else what the GOG exe

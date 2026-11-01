@@ -354,6 +354,21 @@ fn main() {
             g.notes.extend(files.iter().map(|o| format!("  {} {}", if o.replaces { "replaces" } else { "adds    " }, o.path)));
             g.ok += 1;
         }
+        // Each patch on its own, against the exe's tables (ADR 0044 §8).
+        let exe = ig2_rules::Rules::from_exe(&inst.read_raw("ig2.exe").unwrap_or_default());
+        for (name, bytes) in inst.rule_patches().unwrap_or_default() {
+            let applied = || -> Result<usize, String> {
+                let mut r = exe.as_ref().map_err(|e| e.to_string())?.clone();
+                r.apply_patch(&String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?)
+            };
+            match applied() {
+                Ok(n) => {
+                    g.notes.push(format!("mod {name}: rules.toml sets {n} fields"));
+                    g.ok += 1;
+                }
+                Err(e) => g.failed.push((format!("mod {name}: rules.toml"), e)),
+            }
+        }
         report(&g, Instant::now());
         groups.push(g);
     }

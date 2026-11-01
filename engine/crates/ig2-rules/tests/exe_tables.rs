@@ -223,3 +223,39 @@ fn video_tables_resolve() {
     }
     assert_eq!(n, 16 + 20);
 }
+
+/// A mod's rule patch (ADR 0044 §7) writes tech fields back into `tech_defaults`; with nothing patched the raw records
+/// stay the exe's bytes, so an unmodded game is unchanged.
+#[test]
+fn an_empty_patch_keeps_the_exe_tables() {
+    let Some(mut r) = rules() else { return };
+    let raw = r.tech_defaults.clone();
+    assert_eq!(r.apply_patch("").unwrap(), 0);
+    assert_eq!(r.tech_defaults, raw);
+    // A made-up value lands in the parsed and the raw record alike.
+    r.apply_patch("[techs.5]\nresearch_cost = 12345\n").unwrap();
+    assert_eq!(r.techs[5].research_cost, 12345);
+    assert_eq!(i32::from_le_bytes(r.tech_defaults[5 * 276 + 52..5 * 276 + 56].try_into().unwrap()), 12345);
+}
+
+/// Two mods' `rules.toml` over the install (ADR 0044 §7–§8): the first enabled mod has the last word; an unknown field
+/// fails the load naming the mod.
+#[test]
+fn mod_patches_apply_in_load_order() {
+    let Some(Ok(plain)) = Install::from_env(Lang::En) else { return };
+    let dir = std::env::temp_dir().join(format!("ig2-rule-patches-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (name, body) in [("a", "[techs.3]\nprice = 111\n"), ("b", "[techs.3]\nprice = 222\nhp = 333\n"), ("bad", "[techs.3]\nprise = 1\n")] {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+        std::fs::write(dir.join(name).join("rules.toml"), body).unwrap();
+    }
+    let open = |names: &[&str]| {
+        let (mods, _) = ig2_formats::vfs::Mod::find(&dir, &names.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+        Install::open_with_mods(plain.root(), Lang::En, mods).unwrap()
+    };
+    let r = Rules::from_install(&open(&["a", "b"])).unwrap();
+    assert_eq!((r.techs[3].price, r.techs[3].hp), (111, 333));
+    let err = Rules::from_install(&open(&["bad"])).unwrap_err();
+    assert!(err.starts_with("mod bad: rules.toml: techs.3.prise: unknown field"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

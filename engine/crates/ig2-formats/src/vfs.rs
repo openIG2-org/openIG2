@@ -72,7 +72,12 @@ pub struct Install {
     mods: Vec<Mod>,
     /// Paths a mod provides → (index in `mods`, whether the install has the path too).
     modded: HashMap<String, (usize, bool)>,
+    /// Each mod's `rules.toml` (ADR 0044 §6), lowest priority first: (index in `mods`, file).
+    patches: Vec<(usize, PathBuf)>,
 }
+
+/// A mod's rule patch file at its folder's top (ADR 0044 §6); not a game path.
+pub const RULES_PATCH: &str = "rules.toml";
 
 /// An enabled mod: a folder mirroring the install's layout (ADR 0044).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,16 +147,18 @@ impl Install {
                 root.display()
             )));
         }
-        let mut modded = HashMap::new();
+        let (mut modded, mut patches) = (HashMap::new(), Vec::new());
         for (i, m) in mods.iter().enumerate().rev() {
-            // The rule tables are read from the exe (ADR 0004); a mod never replaces it (part 2: rule tables).
-            for (k, p) in scan(&*files, &m.dir)?.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
+            let mut found = scan(&*files, &m.dir)?;
+            patches.extend(found.remove(RULES_PATCH).map(|p| (i, p)));
+            // The rule tables are read from the exe (ADR 0004); a mod never replaces it, `rules.toml` patches them.
+            for (k, p) in found.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
                 let replaces = modded.get(&k).map_or_else(|| index.contains_key(&k), |&(_, r)| r);
                 modded.insert(k.clone(), (i, replaces));
                 index.insert(k, p);
             }
         }
-        Ok(Self { files, root, lang, index, mods, modded })
+        Ok(Self { files, root, lang, index, mods, modded, patches })
     }
 
     /// The same install and mods in another texts' language.
@@ -162,6 +169,17 @@ impl Install {
     /// The enabled mods, highest priority first.
     pub fn mods(&self) -> &[Mod] {
         &self.mods
+    }
+
+    /// The enabled mods' `rules.toml` files in the order they apply (lowest priority first, ADR 0044 §7): (mod, bytes).
+    pub fn rule_patches(&self) -> Result<Vec<(&str, Vec<u8>)>> {
+        self.patches
+            .iter()
+            .map(|(i, p)| {
+                let bytes = self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })?;
+                Ok((self.mods[*i].name.as_str(), bytes))
+            })
+            .collect()
     }
 
     /// Every file a mod provides, in path order.
@@ -301,6 +319,8 @@ mod tests {
             ("install/ig2.exe", "exe"),
             ("mods/first/DataRaw/Textures/Colony/A_BMP.pvr", "first a"),
             ("mods/first/ig2.exe", "modded exe"),
+            ("mods/first/Rules.toml", "first patch"),
+            ("mods/second/rules.toml", "second patch"),
             ("mods/second/dataraw/textures/colony/a_bmp.pvr", "second a"),
             ("mods/second/dataraw/textures/colony/b_bmp.pvr", "second b"),
             ("mods/second/dataraw/textures/colony/new_bmp.pvr", "second new"),
@@ -340,6 +360,10 @@ mod tests {
                 ("dataraw/textures/colony/new_bmp.pvr", "second", false),
             ]
         );
+        // Patches aren't game files; they apply lowest priority first.
+        assert!(i.resolve("rules.toml").is_none());
+        let p: Vec<(&str, String)> = i.rule_patches().unwrap().into_iter().map(|(m, b)| (m, String::from_utf8(b).unwrap())).collect();
+        assert_eq!(p, [("second", "second patch".into()), ("first", "first patch".into())]);
         // The other order: the second mod's copy wins.
         let (mods, _) = Mod::find(&t.join("mods"), &["second".into(), "first".into()]);
         let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();

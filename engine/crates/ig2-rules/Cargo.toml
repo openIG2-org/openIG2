@@ -13,3 +13,4 @@ ron = "0.12.2"
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
 thiserror.workspace = true
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }

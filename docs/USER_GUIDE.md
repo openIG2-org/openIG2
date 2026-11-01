@@ -148,7 +148,8 @@ The window opens at 1600x900 until a size is saved.
 table and script of your install the way the game does and lists what fails; it finds the install like the client
 when no folder is given. `--quick` skips the sound and video decoding. Exit code 0 = all ok, 1 = failures, 2 = no
 install. A full run takes about a minute. `--mod NAME` (repeatable) checks those mods instead of `mods/enabled.txt`'s;
-the "mods" line lists every file each enabled mod replaces or adds, and its files are loaded with the install's.
+the "mods" line lists every file each enabled mod replaces or adds and checks each mod's `rules.toml`, and its files
+are loaded with the install's.
 
 ## Mods
 A mod replaces the install's files with your own: a sharper texture, another text, another sound (ADR 0044). The
@@ -167,9 +168,40 @@ remake still ships no game files; a mod is files you make or download.
    `--mod sharp-menu` (repeatable) for one run, which replaces the list.
 5. Check it: `ig2-check --quick` lists the files your mod replaces or adds, and loads them.
 
-`ig2.exe` can't be replaced: the rule tables are read from it (changing rules and scripts is a later step). In
-multiplayer every player needs the same mod files: the room refuses a player with other mods ("Other mods
-enabled"), and a multiplayer save made with mods resumes only with them.
+`ig2.exe` can't be replaced: the rule tables are read from it. To change rules, put a `rules.toml` at the top of
+the mod folder (`mods\cheap-labsules.toml`); it sets single fields of the tables by name. A record is
+`[<table>.<id>]` with `field = value` lines; a list is `[<list>]` with `<index> = value` lines. The ids and the
+current values are in the file `cargo run --release -p ig2-rules --bin ig2-rules-dump <install> rules.ron` writes
+(keep it to yourself: it holds the game's values). An example (made-up numbers):
+
+```toml
+# Tech 12 is cheaper and quicker to research.
+[techs.12]
+research_cost = 500
+research_time = 20
+lab_levels = [1, 0, 0]
+
+# Building 4 needs less energy.
+[buildings.4]
+energy = 3
+
+# Race 2 produces half again as fast.
+[race_production_mult]
+2 = 1.5
+
+# Ground weapon 3 fires faster in the real-time ground war.
+[ground_rt_weapons.3]
+reload = 10
+```
+
+The tables and their fields are listed in ADR 0044 §6 (`techs`, `buildings`, `hulls`, `space_weapons`,
+`ship_types`, `spy_missions`, `problem_curves`, the ground weapons and the race, difficulty, radar and spy lists).
+When several mods change the same field, the one higher in `enabled.txt` wins. A wrong table, id or field stops the
+game with a message naming the mod and the field, and `ig2-check` shows the same message. Story scripts are files in
+`dataraw\`, so a mod replaces them whole like any other file.
+
+In multiplayer every player needs the same mod files and `rules.toml`s: the room refuses a player with other mods
+("Other mods enabled"), and a multiplayer save made with mods resumes only with them.
 
 ## Asset viewer
 `cargo run --release -p ig2-viewer` browses the install's models, textures, colony maps, animations and messages.

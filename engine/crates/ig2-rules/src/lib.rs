@@ -6,6 +6,7 @@
 //! (`re/rules/traces/2026-10-15-tables.md`).
 
 pub mod install;
+mod patch;
 mod pe;
 pub mod sounds;
 pub mod speech;
@@ -247,7 +248,7 @@ fn spy_names(img: &PeImage) -> Result<Vec<Vec<u8>>> {
 }
 
 /// One technology (`Talalmanyok0` record, 276 bytes; per-empire runtime state at 69.. is omitted).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Tech {
     pub index: usize,
     /// Built-in English name (the game overwrites bytes 0..15 with the localised name at start-up).
@@ -278,7 +279,7 @@ pub struct Tech {
 }
 
 /// Building descriptor (`EpuletekLeiro`, 36 bytes). Fields pinned in `re/rules/colony-economy.md` §2.3.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Building {
     pub index: usize,
     /// +0: tech whose price/time is the building's cost (`EpuletJavitasAr`, `FRISSIT_Planet`).
@@ -455,7 +456,7 @@ impl Brush {
 }
 
 /// A spy mission (`KemKuldetesek`, 0x20 bytes; `re/rules/espionage.md` §1.2).
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
 pub struct SpyMission {
     /// +0: enabled (the story toggles story missions; `FRISSIT_Spy` clears mission 11 daily).
     pub enabled: u8,
@@ -484,7 +485,7 @@ pub struct SpyMission {
 
 /// One colony problem curve (`ProblemakLeiro`, 6 × i32; entry 0 is the morale curve).
 /// See `re/rules/colony-economy.md` §5.
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
 pub struct ProblemCurve {
     /// Value at the threshold.
     pub a: i32,
@@ -501,7 +502,7 @@ pub struct ProblemCurve {
 }
 
 /// Equipment pod type (`PodTipusok`, 84 bytes).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct PodType {
     pub index: usize,
     /// +0: pod type ID referenced by the slot table.
@@ -520,7 +521,7 @@ pub struct PodSlot {
 }
 
 /// Hull record (`Alapok`, 36 bytes; `re/rules/space-combat.md` §2.1).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Hull {
     pub index: usize,
     /// +0 (i16): 0 none, 1 space (ships and fighters), 2 ground vehicle.
@@ -536,7 +537,7 @@ pub struct Hull {
 }
 
 /// Space weapon record (`fegyverek`, 92 bytes; `re/rules/space-combat.md` §2.2).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SpaceWeapon {
     pub index: usize,
     /// +0: kind (2 = not counted in a ship's weapon range span; others [unk]).
@@ -564,7 +565,7 @@ pub struct SpaceWeapon {
 
 /// A projectile form (`fegyveralakok`, 0x78 bytes; `re/rules/space-combat.md` §7.1): its model, sprite size and
 /// pool size (the battle's projectile slots of this form).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ShotForm {
     pub index: usize,
     /// +0: the model file; empty = never loaded (the form can't be fired).
@@ -576,14 +577,14 @@ pub struct ShotForm {
 }
 
 /// Default design (`Tervek0`, 0x84 bytes; layout in `re/rules/space-combat.md` §2.3).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct DesignTemplate {
     pub index: usize,
     pub name: String,
     pub raw: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Rules {
     pub techs: Vec<Tech>,
     /// `Talalmanyok0` as raw 276-byte records (193): the defaults `InitNewGame` copies to the live table
@@ -769,7 +770,7 @@ pub struct DiplomacyScreen {
 }
 
 /// A battle ship type (`tipusnevek`, exe 0x91F488, 0x30 bytes; record `race·12 + type`, spec §7.10).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ShipTypeRecord {
     pub index: usize,
     /// +0: model name.
@@ -1228,10 +1229,15 @@ impl Rules {
         })
     }
 
-    /// Read from an install directory.
+    /// Read from an install directory, with the enabled mods' rule patches applied (ADR 0044 §7).
     pub fn from_install(install: &ig2_formats::Install) -> std::result::Result<Self, String> {
         let exe = install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
-        Self::from_exe(&exe).map_err(|e| e.to_string())
+        let mut rules = Self::from_exe(&exe).map_err(|e| e.to_string())?;
+        for (name, bytes) in install.rule_patches().map_err(|e| e.to_string())? {
+            let text = String::from_utf8(bytes).map_err(|_| format!("mod {name}: rules.toml: not UTF-8 text"))?;
+            rules.apply_patch(&text).map_err(|e| format!("mod {name}: rules.toml: {e}"))?;
+        }
+        Ok(rules)
     }
 
     /// Serialise to RON (for local inspection and modding; never commit the output).

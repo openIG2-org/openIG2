@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Mods can change the rules without replacing files: a `rules.toml` in the mod folder sets single values (a tech's price or research time, a building's energy, a weapon's damage, a race's production speed…) by name; `ig2-check` points at any mistyped name, and multiplayer rooms check that everyone has the same changes.
 - macOS: openIG2 builds for Apple Silicon Macs (an unsigned archive in releases), finds a copied Windows install in the Applications folders, CrossOver, Whisky or Heroic (or through `IG2_INSTALL_DIR`), and keeps its settings and saves in `~/Library/Application Support/GyroscopeGames/ig2`.
 - Linux: openIG2 builds for 64-bit Linux, finds an install made through Heroic, Lutris or Wine, and keeps its settings and saves in `~/.local/share/GyroscopeGames/ig2`; releases can carry a Linux archive beside the Windows zip.
 - Mods: put your own textures, texts or sounds in a folder under `mods` beside the settings and list it in `mods/enabled.txt` (or start with `--mod NAME`) to use them instead of the install's; multiplayer rooms make sure everyone has the same mods, and `ig2-check` lists what each mod replaces.
