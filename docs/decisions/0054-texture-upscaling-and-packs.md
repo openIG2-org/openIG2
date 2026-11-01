@@ -52,8 +52,9 @@ info globes), and some read pixels (hit masks, the charset).
    0044 §4): players with and without a pack can play together.
 
 ## Rejected
-- **A disk cache**: the filters take about 0.35 s per million texels at 4× (the starmap's set, the largest, about
-  4 s the first time it opens, then nothing: the memory cache); a cache folder would hold data derived from the
+- **A disk cache**: the filters take about 0.35 s per million texels at 4× on one core (the starmap's set, the
+  largest, about 4 s the first time it opens, then nothing: the memory cache; since 2026-11-01 they run on every core,
+  about 1.5 s, `docs/perf.md` part 2); a cache folder would hold data derived from the
   install outside of it, to be kept in sync with the install and the mods.
 - **One filter for everything**: xBRZ on the rendered pictures and model textures (no flat areas) posterises them;
   a smooth filter on interface art blurs its edges like the GPU's bilinear magnification already does.

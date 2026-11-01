@@ -126,3 +126,45 @@ The cost is the 4× pass and its resolve (the starmap's late planets add a secon
 the bloom's half-size blur and the 16-tap shadow read stay under the noise. The space battle's numbers vary more than
 the difference. The targets are made once per frame size (`render3d::Pipe3d::targets`, six sizes): a frame that draws
 more sizes would make them every frame (12 ms in the battle while the cache held three).
+
+## Measurements (part 2, 2026-11-01)
+
+Same machine and method as part 1, after the modern lighting, battle effects, texture upscaling, sharp text and UI,
+themes and the enhanced computer empires landed. "Off" is the settings file's defaults, "on" is
+`--modern-lighting --battle-effects --sharp-text --sharp-ui --upscale 4 --theme Modern`; a saved settings file with a
+row on counts too (`LOCALAPPDATA` pointed at an empty folder for the "off" runs). The battle is the `fx8` capture's
+entry dump.
+
+| Mean frame (worst-frame median) | 1920 × 1080 off / on | 3840 × 2160 off / on |
+|---|---|---|
+| Main menu | 2.2 / 2.5 ms (4.5 / 4.5) | 2.4 / 1.8 ms (5.3 / 4.3) |
+| Starmap | 1.6 / 1.8 ms (4.9 / 5.0) | 1.5 / 1.4 ms (5.3 / 4.4) |
+| Ground war | 1.6 / 1.8 ms (5.0 / 7.4) | 1.8 / 1.9 ms (6.0 / 6.9) |
+| Space battle | 1.7 / 1.2 ms (5.2 / 3.2) | 1.5 / 1.6 ms (4.2 / 4.0) |
+
+No screen's frame is a hot spot with or without the options (the main menu's 20,460 quads a frame included). What a
+player felt was the start with the texture upscaling on, and the sim tick:
+
+| | before | after |
+|---|---|---|
+| Load to the first frame, options on | 5.6–7.1 s (`assets` 3.7–4.8 s) | 2.5–3.9 s (`assets` 1.4–1.7 s) |
+| Load to the first frame, options off | 0.9–1.4 s | unchanged |
+| `starmap_ground_marks` per tick (enhanced AI run) | 0.15 ms | 0.09 ms |
+| Sim tick, `--playthrough skirmish:1:7 --seed 7`, best of 3, at 10,000 / 40,000 ticks | 0.93 / 1.08 ms | 0.87 / 1.03 ms |
+
+- **The upscaling filters** (`upscale::xbrz`, `upscale::cubic`) ran on one core on the frame thread for every texture
+  a screen loads. They now fill bands of rows on every core (`par_rows`): the cubic filter with the same arithmetic per
+  texel, xBRZ with 8 rows of context round each band; test `banded_filters_match_the_whole_picture` keeps them equal
+  to the whole picture's. The rest of `assets` is the upload and the box-filtered levels of the 16× larger pictures.
+- **The starmap's ground-war marks** (`Game::starmap_ground_marks`, each tick) decoded and stored the whole combat
+  view twice to clear and restore one flag bit per fleet; they now touch the fleets' flag words only. The rest of its
+  cost is `with_wars` over every planet.
+
+Where an enhanced-AI tick goes (means per tick over the run, before the second fix): `starmap` 0.52 ms (the
+ground-war marks 0.15, the starmap, colony and combat views loaded 0.13 and stored 0.05, production 0.08, the fleet
+movement itself 0.006), `daily` 0.31 ms (the AI 0.14: the enhanced empires add 0.02 ms over the classic ones),
+`diplomacy_tick` 0.11, `grwar` 0.11, the rest under 0.04. The autosave's 12.7 ms runs twice a game year at the default
+cadence: left on the frame thread.
+
+Next candidates: `with_wars` over every planet for the battle status (skip planets without a battlefield); the
+state views kept decoded across a tick's systems; the hires textures' levels made on the GPU or on a worker.

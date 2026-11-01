@@ -615,19 +615,18 @@ impl Game<'_> {
     /// mark, so it must come after).
     pub(super) fn starmap_ground_marks(&mut self) -> Vec<usize> {
         self.battlefield_hand_offs();
-        let mut combat = self.state.combat();
-        let flags: Vec<u16> = combat.fleets.iter().map(|f| f.flags).collect();
-        for f in combat.fleets.iter_mut() {
-            f.flags &= !1;
+        // Only the fleets' flag words (+0x52) change here: the whole combat view decoded and stored twice cost a
+        // seventh of a late tick (docs/perf.md).
+        let flag = |r: &[u8; crate::save::FLEET_SIZE]| u16::from_le_bytes([r[0x52], r[0x53]]);
+        let flags: Vec<u16> = self.state.fleets.iter().map(flag).collect();
+        for r in self.state.fleets.iter_mut() {
+            r[0x52] &= !1;
         }
-        self.state.store_combat(&combat);
         self.ground_battle_status();
-        let mut combat = self.state.combat();
-        let marked = (0..combat.fleets.len()).filter(|&f| combat.fleets[f].flags & 1 != 0).collect();
-        for (f, x) in combat.fleets.iter_mut().zip(flags) {
-            f.flags = x;
+        let marked = (0..self.state.fleets.len()).filter(|&f| flag(&self.state.fleets[f]) & 1 != 0).collect();
+        for (r, x) in self.state.fleets.iter_mut().zip(flags) {
+            r[0x52..0x54].copy_from_slice(&x.to_le_bytes());
         }
-        self.state.store_combat(&combat);
         marked
     }
 

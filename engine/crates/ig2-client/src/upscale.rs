@@ -129,18 +129,47 @@ pub fn upscale(img: &Image, f: u8) -> Hires {
 }
 
 /// xBRZ with the border texels repeated (the crate reads past the edge as transparent, which would fade every
-/// picture's border).
+/// picture's border), in bands of rows on the machine's cores.
 fn xbrz(rgba: &[u8], w: usize, h: usize, f: usize) -> Vec<u8> {
     const PAD: usize = 2;
+    // The kernel reads two rows above and below, a band's first rows read past its edge: each band is scaled with
+    // this many rows of context on both sides, which keeps the result the whole picture's
+    // (`banded_xbrz_matches_the_whole_picture`).
+    const CONTEXT: usize = 8;
     let (pw, ph) = (w + 2 * PAD, h + 2 * PAD);
     let at = |x: usize, y: usize| {
         let i = (y.clamp(PAD, h + PAD - 1) - PAD) * w + x.clamp(PAD, w + PAD - 1) - PAD;
         &rgba[i * 4..i * 4 + 4]
     };
     let padded: Vec<u8> = (0..ph).flat_map(|y| (0..pw).flat_map(move |x| at(x, y).to_vec())).collect();
-    let big = xbrz::scale_rgba(&padded, pw, ph, f);
-    let (row, skip) = (w * f * 4, PAD * f * 4);
-    (0..h * f).flat_map(|y| &big[(y + PAD * f) * pw * f * 4 + skip..][..row]).copied().collect()
+    let row = w * f * 4;
+    let mut out = vec![0; row * h * f];
+    par_rows(&mut out, row * f, |y0, band| {
+        let rows = band.len() / (row * f);
+        let (a, b) = ((y0 + PAD).saturating_sub(CONTEXT), (y0 + rows + PAD + CONTEXT).min(ph));
+        let big = xbrz::scale_rgba(&padded[a * pw * 4..b * pw * 4], pw, b - a, f);
+        for (y, line) in band.chunks_exact_mut(row).enumerate() {
+            line.copy_from_slice(&big[(y + (y0 + PAD - a) * f) * pw * f * 4 + PAD * f * 4..][..row]);
+        }
+    });
+    out
+}
+
+/// Fills `out` (rows of `row_len` items) by `fill(first row, rows)` in bands on the machine's cores.
+fn par_rows<T: Send>(out: &mut [T], row_len: usize, fill: impl Fn(usize, &mut [T]) + Sync) {
+    let rows = out.len() / row_len.max(1);
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let bands = cores.min(rows / 16).max(1);
+    if bands == 1 {
+        return fill(0, out);
+    }
+    let per = rows.div_ceil(bands);
+    std::thread::scope(|s| {
+        for (k, band) in out.chunks_mut(per * row_len).enumerate() {
+            let fill = &fill;
+            s.spawn(move || fill(k * per, band));
+        }
+    });
 }
 
 /// The Catmull-Rom weights of the 4 taps around a sample `t` (0..1) past the second.
@@ -148,28 +177,27 @@ fn weights(t: f32) -> [f32; 4] {
     [t * (-0.5 + t * (1.0 - 0.5 * t)), 1.0 + t * t * (-2.5 + 1.5 * t), t * (0.5 + t * (2.0 - 1.5 * t)), t * t * (-0.5 + 0.5 * t)]
 }
 
-/// One axis of the cubic scale: `n` lines of `len` premultiplied texels (texel `i` of line `l` at `at(i, l)`), each
-/// scaled by `f` into `out` (at `out_at`).
-fn cubic_axis(src: &[[f32; 4]], len: usize, n: usize, f: usize, at: impl Fn(usize, usize) -> usize, out_at: impl Fn(usize, usize) -> usize, out: &mut [[f32; 4]]) {
-    for i in 0..len * f {
-        let x = (i as f32 + 0.5) / f as f32 - 0.5;
-        let x0 = x.floor();
-        let w = weights(x - x0);
-        let taps: [usize; 4] = std::array::from_fn(|k| (x0 as isize + k as isize - 1).clamp(0, len as isize - 1) as usize);
-        for line in 0..n {
-            let mut c = [0.0f32; 4];
-            for k in 0..4 {
-                let s = src[at(taps[k], line)];
-                for ch in 0..4 {
-                    c[ch] += s[ch] * w[k];
-                }
-            }
-            out[out_at(i, line)] = c;
-        }
-    }
+/// The 4 source texels (of `len`) and their weights for texel `i` of the line scaled by `f`.
+fn taps(i: usize, len: usize, f: usize) -> ([usize; 4], [f32; 4]) {
+    let x = (i as f32 + 0.5) / f as f32 - 0.5;
+    let x0 = x.floor();
+    (std::array::from_fn(|k| (x0 as isize + k as isize - 1).clamp(0, len as isize - 1) as usize), weights(x - x0))
 }
 
-/// `rgba` (`w` × `h`, straight alpha) scaled by `f` with Catmull-Rom on premultiplied colour.
+/// The sum of 4 taps of premultiplied texels, `tap(k)` the k-th.
+fn blend(tap: impl Fn(usize) -> [f32; 4], w: [f32; 4]) -> [f32; 4] {
+    let mut c = [0.0f32; 4];
+    for (k, w) in w.into_iter().enumerate() {
+        let s = tap(k);
+        for (c, s) in c.iter_mut().zip(s) {
+            *c += s * w;
+        }
+    }
+    c
+}
+
+/// `rgba` (`w` × `h`, straight alpha) scaled by `f` with Catmull-Rom on premultiplied colour, rows first, in bands
+/// of rows on the machine's cores.
 pub fn cubic(rgba: &[u8], w: usize, h: usize, f: usize) -> Vec<u8> {
     let pre: Vec<[f32; 4]> = rgba
         .chunks_exact(4)
@@ -180,16 +208,28 @@ pub fn cubic(rgba: &[u8], w: usize, h: usize, f: usize) -> Vec<u8> {
         .collect();
     let (ow, oh) = (w * f, h * f);
     let mut wide = vec![[0.0; 4]; ow * h];
-    cubic_axis(&pre, w, h, f, |x, y| y * w + x, |x, y| y * ow + x, &mut wide);
-    let mut out = vec![[0.0; 4]; ow * oh];
-    cubic_axis(&wide, h, ow, f, |y, x| y * ow + x, |y, x| y * ow + x, &mut out);
-    out.iter()
-        .flat_map(|c| {
-            let a = c[3].clamp(0.0, 255.0);
-            let k = if a > 0.0 { 255.0 / a } else { 0.0 };
-            [(c[0] * k).clamp(0.0, 255.0).round() as u8, (c[1] * k).clamp(0.0, 255.0).round() as u8, (c[2] * k).clamp(0.0, 255.0).round() as u8, a.round() as u8]
-        })
-        .collect()
+    par_rows(&mut wide, ow, |y0, band| {
+        for (y, line) in band.chunks_exact_mut(ow).enumerate() {
+            let src = &pre[(y0 + y) * w..][..w];
+            for (i, c) in line.iter_mut().enumerate() {
+                let (t, wt) = taps(i, w, f);
+                *c = blend(|k| src[t[k]], wt);
+            }
+        }
+    });
+    let mut out = vec![0; ow * oh * 4];
+    par_rows(&mut out, ow * 4, |i0, band| {
+        for (i, line) in band.chunks_exact_mut(ow * 4).enumerate() {
+            let (t, wt) = taps(i0 + i, h, f);
+            for (x, p) in line.chunks_exact_mut(4).enumerate() {
+                let c = blend(|k| wide[t[k] * ow + x], wt);
+                let a = c[3].clamp(0.0, 255.0);
+                let k = if a > 0.0 { 255.0 / a } else { 0.0 };
+                p.copy_from_slice(&[(c[0] * k).clamp(0.0, 255.0).round() as u8, (c[1] * k).clamp(0.0, 255.0).round() as u8, (c[2] * k).clamp(0.0, 255.0).round() as u8, a.round() as u8]);
+            }
+        }
+    });
+    out
 }
 
 #[cfg(test)]
@@ -282,6 +322,38 @@ mod tests {
         // Display only: a pack stays out of the room's fingerprint.
         assert_eq!(crate::mods_fingerprint(&modded), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The bands give the whole picture's pixels: xBRZ scaled in one piece, Catmull-Rom texel by texel.
+    #[test]
+    fn banded_filters_match_the_whole_picture() {
+        // Blocks of flat colour with a few transparent holes (xBRZ's kind) and a noisy picture (Catmull-Rom's).
+        let flat = image(53, 211, |x, y| if (x * 7 + y * 3) % 23 == 0 { [0; 4] } else { [(x / 5 * 40) as u8, (y / 9 * 20) as u8, 90, 255] });
+        let (w, h) = (53usize, 211usize);
+        for f in [2, 4] {
+            const PAD: usize = 2;
+            let (pw, ph) = (w + 2 * PAD, h + 2 * PAD);
+            let at = |x: usize, y: usize| (y.clamp(PAD, h + PAD - 1) - PAD) * w + x.clamp(PAD, w + PAD - 1) - PAD;
+            let (src, at) = (&flat.rgba, &at);
+            let padded: Vec<u8> = (0..ph).flat_map(|y| (0..pw).flat_map(move |x| src[at(x, y) * 4..][..4].to_vec())).collect();
+            let big = xbrz::scale_rgba(&padded, pw, ph, f);
+            let whole: Vec<u8> = (0..h * f).flat_map(|y| &big[(y + PAD * f) * pw * f * 4 + PAD * f * 4..][..w * f * 4]).copied().collect();
+            assert!(xbrz(&flat.rgba, w, h, f) == whole, "xbrz {f}x");
+        }
+        let noisy = image(37, 150, |x, y| [(x * 97 + y * 13) as u8, (x * y) as u8, (y * 31) as u8, ((x + y) * 50) as u8]);
+        let (w, h, f) = (37usize, 150usize, 4usize);
+        let pre: Vec<[f32; 4]> = noisy.rgba.chunks_exact(4).map(|p| { let a = p[3] as f32 / 255.0; [p[0] as f32 * a, p[1] as f32 * a, p[2] as f32 * a, p[3] as f32] }).collect();
+        let out = cubic(&noisy.rgba, w, h, f);
+        for (oy, ox) in [(0, 0), (3, 140), (299, 77), (599, 147), (411, 2)] {
+            let (ty, wy) = taps(oy, h, f);
+            let (tx, wx) = taps(ox, w, f);
+            let row = |r: usize| blend(|k| pre[r * w + tx[k]], wx);
+            let c = blend(|k| row(ty[k]), wy);
+            let a = c[3].clamp(0.0, 255.0);
+            let k = if a > 0.0 { 255.0 / a } else { 0.0 };
+            let want = [(c[0] * k).clamp(0.0, 255.0).round() as u8, (c[1] * k).clamp(0.0, 255.0).round() as u8, (c[2] * k).clamp(0.0, 255.0).round() as u8, a.round() as u8];
+            assert_eq!(out[(oy * w * f + ox) * 4..][..4], want, "({ox}, {oy})");
+        }
     }
 
     /// A transparent texel's colour never bleeds into an opaque neighbour (premultiplied filtering).
