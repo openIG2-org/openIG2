@@ -57,6 +57,23 @@ jobs:
         working-directory: engine
         run: cargo clippy --release --all-targets -- -D warnings
 
+  wasm:
+    name: Browser target check
+    # The crates a browser build needs first (ADR 0047).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: Clippy for wasm32
+        working-directory: engine
+        run: cargo clippy --target wasm32-unknown-unknown -p ig2-formats -p ig2-rules -p ig2-sim -- -D warnings
+
   linux:
     name: Linux build, tests, clippy
     # The oldest supported glibc (2.35): what the release archive is built on.

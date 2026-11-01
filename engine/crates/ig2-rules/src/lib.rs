@@ -1230,7 +1230,7 @@ impl Rules {
 
     /// Read from an install directory.
     pub fn from_install(install: &ig2_formats::Install) -> std::result::Result<Self, String> {
-        let exe = std::fs::read(install.root().join("ig2.exe")).map_err(|e| e.to_string())?;
+        let exe = install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
         Self::from_exe(&exe).map_err(|e| e.to_string())
     }
 

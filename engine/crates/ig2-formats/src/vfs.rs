@@ -7,8 +7,9 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{self, BufReader, Read, Seek};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::container::{self, DecryptingReader};
 use crate::text::Lang;
@@ -17,8 +18,52 @@ use crate::{Error, Result};
 /// The environment variable tests and tools use to find the install.
 pub const INSTALL_ENV: &str = "IG2_INSTALL_DIR";
 
+/// Where an install's bytes come from: the disk ([`Disk`]), or a store the host fills, such as a browser's copy of
+/// the install folder (ADR 0047). Paths are the ones [`Files::scan`] returned.
+pub trait Files: Send + Sync {
+    /// Every file under `root` (links followed).
+    fn scan(&self, root: &Path) -> io::Result<Vec<PathBuf>>;
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
+    /// A seekable reader, for streamed media.
+    fn open(&self, path: &Path) -> io::Result<Box<dyn ReadSeek>>;
+}
+
+pub trait ReadSeek: Read + Seek + Send {}
+impl<T: Read + Seek + Send> ReadSeek for T {}
+
+/// The local file system.
+pub struct Disk;
+
+impl Files for Disk {
+    fn scan(&self, root: &Path) -> io::Result<Vec<PathBuf>> {
+        let mut files = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir)?.flatten() {
+                let p = entry.path();
+                // The entry's own type costs no extra file-system call (`is_dir` stats each file); a link is followed.
+                if entry.file_type().is_ok_and(|t| if t.is_symlink() { p.is_dir() } else { t.is_dir() }) {
+                    stack.push(p);
+                } else {
+                    files.push(p);
+                }
+            }
+        }
+        Ok(files)
+    }
+
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        std::fs::read(path)
+    }
+
+    fn open(&self, path: &Path) -> io::Result<Box<dyn ReadSeek>> {
+        Ok(Box::new(BufReader::new(File::open(path)?)))
+    }
+}
+
 #[derive(Clone)]
 pub struct Install {
+    files: Arc<dyn Files>,
     root: PathBuf,
     lang: Lang,
     /// Lowercase relative path with `/` separators → absolute path (a mod's file over the install's).
@@ -84,8 +129,13 @@ impl Install {
 
     /// The install with `mods` (highest priority first) over it (ADR 0044): the first mod that has a path wins.
     pub fn open_with_mods(root: impl Into<PathBuf>, lang: Lang, mods: Vec<Mod>) -> Result<Self> {
+        Self::open_from(Arc::new(Disk), root, lang, mods)
+    }
+
+    /// [`Install::open_with_mods`] with the bytes from `files`.
+    pub fn open_from(files: Arc<dyn Files>, root: impl Into<PathBuf>, lang: Lang, mods: Vec<Mod>) -> Result<Self> {
         let root = root.into();
-        let mut index = scan(&root)?;
+        let mut index = scan(&*files, &root)?;
         if !index.contains_key("dataraw/text/scenario.txt") {
             return Err(Error::NotFound(format!(
                 "{} doesn't look like an IG2 install (no dataraw/text/scenario.txt)",
@@ -95,18 +145,18 @@ impl Install {
         let mut modded = HashMap::new();
         for (i, m) in mods.iter().enumerate().rev() {
             // The rule tables are read from the exe (ADR 0004); a mod never replaces it (part 2: rule tables).
-            for (k, p) in scan(&m.dir)?.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
+            for (k, p) in scan(&*files, &m.dir)?.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
                 let replaces = modded.get(&k).map_or_else(|| index.contains_key(&k), |&(_, r)| r);
                 modded.insert(k.clone(), (i, replaces));
                 index.insert(k, p);
             }
         }
-        Ok(Self { root, lang, index, mods, modded })
+        Ok(Self { files, root, lang, index, mods, modded })
     }
 
     /// The same install and mods in another texts' language.
     pub fn with_lang(&self, lang: Lang) -> Result<Self> {
-        Self::open_with_mods(&self.root, lang, self.mods.clone())
+        Self::open_from(self.files.clone(), &self.root, lang, self.mods.clone())
     }
 
     /// The enabled mods, highest priority first.
@@ -151,7 +201,7 @@ impl Install {
     /// Raw on-disk bytes (still wrapped in the container).
     pub fn read_raw(&self, path: &str) -> Result<Vec<u8>> {
         let p = self.resolve(path).ok_or_else(|| Error::NotFound(path.to_owned()))?;
-        std::fs::read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })
+        self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })
     }
 
     /// Fully decoded file contents.
@@ -161,11 +211,10 @@ impl Install {
     }
 
     /// Seekable decrypted stream, for `neGs` media (Ogg, MP4).
-    pub fn open_stream(&self, path: &str) -> Result<DecryptingReader<BufReader<File>>> {
+    pub fn open_stream(&self, path: &str) -> Result<DecryptingReader<Box<dyn ReadSeek>>> {
         let p = self.resolve(path).ok_or_else(|| Error::NotFound(path.to_owned()))?;
         let io = |source| Error::Io { path: p.display().to_string(), source };
-        let f = File::open(p).map_err(io)?;
-        DecryptingReader::new(path, BufReader::new(f)).map_err(io)
+        DecryptingReader::new(path, self.files.open(p).map_err(io)?).map_err(io)
     }
 
     /// Resolve a 1999 `.bmp` texture name used by a `.xv` material to its remaster `.pvr`.
@@ -221,22 +270,9 @@ impl Install {
 }
 
 /// Every file under `root`: lowercase `/`-separated relative path → absolute path.
-fn scan(root: &Path) -> Result<HashMap<String, PathBuf>> {
-    let mut index = HashMap::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir).map_err(|source| Error::Io { path: dir.display().to_string(), source })?;
-        for entry in entries.flatten() {
-            let p = entry.path();
-            // The entry's own type costs no extra file-system call (`is_dir` stats each file); a link is followed.
-            if entry.file_type().is_ok_and(|t| if t.is_symlink() { p.is_dir() } else { t.is_dir() }) {
-                stack.push(p);
-            } else if let Ok(rel) = p.strip_prefix(root) {
-                index.insert(normalize(&rel.to_string_lossy()), p);
-            }
-        }
-    }
-    Ok(index)
+fn scan(files: &dyn Files, root: &Path) -> Result<HashMap<String, PathBuf>> {
+    let found = files.scan(root).map_err(|source| Error::Io { path: root.display().to_string(), source })?;
+    Ok(found.into_iter().filter_map(|p| Some((normalize(&p.strip_prefix(root).ok()?.to_string_lossy()), p))).collect())
 }
 
 /// `foo.bmp`, then `foo.bmt`, then `foo.bmf` (`D3DTexture::Load`), with `.` → `_`, lowercased.
@@ -309,6 +345,36 @@ mod tests {
         let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();
         assert_eq!(text(&i, "dataraw/textures/colony/a_bmp.pvr"), "second a");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// Files a host hands over in memory (how a browser feeds its copy of the install).
+    struct Memory(HashMap<PathBuf, Vec<u8>>);
+
+    impl Files for Memory {
+        fn scan(&self, root: &Path) -> io::Result<Vec<PathBuf>> {
+            Ok(self.0.keys().filter(|p| p.starts_with(root)).cloned().collect())
+        }
+
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            self.0.get(path).cloned().ok_or_else(|| io::ErrorKind::NotFound.into())
+        }
+
+        fn open(&self, path: &Path) -> io::Result<Box<dyn ReadSeek>> {
+            Ok(Box::new(io::Cursor::new(self.read(path)?)))
+        }
+    }
+
+    #[test]
+    fn an_install_from_memory() {
+        let files = [("game/DataRaw/Text/Scenario.txt", "base"), ("game/localization/hu/dataraw/text/scenario.txt", "hu")];
+        let files = Memory(files.into_iter().map(|(p, b)| (PathBuf::from(p), b.as_bytes().to_vec())).collect());
+        let i = Install::open_from(Arc::new(files), "game", Lang::En, Vec::new()).unwrap();
+        assert_eq!(i.all_files(), ["dataraw/text/scenario.txt", "localization/hu/dataraw/text/scenario.txt"]);
+        assert_eq!(text(&i, "DATARAW/TEXT/SCENARIO.TXT"), "base");
+        assert_eq!(text(&i.with_lang(Lang::Hu).unwrap(), "dataraw/text/scenario.txt"), "hu");
+        let mut s = String::new();
+        i.open_stream("dataraw/text/scenario.txt").unwrap().read_to_string(&mut s).unwrap();
+        assert_eq!(s, "base");
     }
 
     #[test]
