@@ -58,21 +58,31 @@ jobs:
         run: cargo clippy --release --all-targets -- -D warnings
 
   linux:
-    name: Linux build and tests
-    runs-on: ubuntu-latest
-    # Linux is not a release platform yet; its failures don't block.
-    continue-on-error: true
+    name: Linux build, tests, clippy
+    # The oldest supported glibc (2.35): what the release archive is built on.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: engine
+      - name: Version
+        run: echo "OPENIG2_VERSION=$(python3 -I tools/release/version.py)" >> "$GITHUB_ENV"
       - name: Build
         working-directory: engine
         run: cargo build --release --workspace
       - name: Test
         working-directory: engine
         run: cargo test --release --workspace
+      - name: Clippy
+        working-directory: engine
+        run: cargo clippy --release --all-targets -- -D warnings
+      - name: Release bundle
+        run: python3 -I tools/release/build_linux.py --out dist

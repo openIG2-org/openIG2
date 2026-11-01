@@ -2,6 +2,9 @@
 
 ## Toolchain
 - Rust stable. On Windows the project uses `stable-x86_64-pc-windows-gnu` (no MSVC C++ tools needed).
+- On Linux: a C/C++ compiler and the ALSA, udev, xkbcommon and Wayland headers (Debian/Ubuntu:
+  `sudo apt-get install build-essential pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev`).
+  CI builds, tests and lints on Ubuntu 22.04. macOS is not supported yet.
 - A GPU with Vulkan, DirectX 12 or Metal (wgpu).
 - For reverse engineering only: Ghidra (headless), Python 3 with Frida 17 (`_local/venv`), the GOG `ig2.exe`.
 
@@ -22,6 +25,12 @@ The Windows build embeds the program icon with `windres` (MinGW) when it is on P
 statically (`CXXSTDLIB=static=stdc++`, `crt-static`), which needs a MinGW-w64 `g++` with static libs (e.g. WinLibs)
 on the PATH; the script fails if a binary imports a non-system DLL. A full build takes about 5 minutes.
 The release workflow (`.github/workflows/release.yml`) runs it and publishes the zip.
+
+On Linux, `python3 -I tools/release/build_linux.py [--out DIR]` builds both binaries in the workspace's own
+target and stages `_local/release/openig2-<version>-linux-x64/` plus the `.tar.gz`, listing the shared libraries
+each binary needs (glibc, libstdc++, libasound; X11/Wayland and Vulkan are loaded at run time). CI runs it on
+every push; the release workflow adds its archive to the release after the Windows zip. Build it on the oldest
+glibc you want to support (CI: Ubuntu 22.04, glibc 2.35).
 
 `ig2-check` (`engine/crates/ig2-check`) validates an install: `cargo run --release -p ig2-check -- [DIR] [--quick]`.
 `ig2-rendezvous` (`engine/crates/ig2-rendezvous`) is the optional internet relay service (`docs/RENDEZVOUS.md`).

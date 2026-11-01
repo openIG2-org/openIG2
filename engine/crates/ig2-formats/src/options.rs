@@ -41,12 +41,17 @@ impl Options {
     }
 
     /// The original's file in its save folder; `IG2_OPTIONS_DIR` puts the folder elsewhere (captures pin it there,
-    /// `tools/trace/run_screendiff.py`), the remake's own file and the save slots with it.
+    /// `tools/trace/run_screendiff.py`), the remake's own file and the save slots with it. Without `LOCALAPPDATA`
+    /// (Linux, macOS): the same folder under `$XDG_DATA_HOME`, else `~/.local/share`.
     pub fn path() -> Option<PathBuf> {
         if let Some(d) = std::env::var_os("IG2_OPTIONS_DIR") {
             return Some(PathBuf::from(d).join("options.dat"));
         }
-        std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("GyroscopeGames/ig2/options.dat"))
+        let data = std::env::var_os("LOCALAPPDATA")
+            .or_else(|| std::env::var_os("XDG_DATA_HOME"))
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+        data.map(|d| d.join("GyroscopeGames/ig2/options.dat"))
     }
 
     /// Where the remake keeps the settings its Options screen changes: beside the original's file, in the same

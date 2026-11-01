@@ -5,8 +5,10 @@
 //! other on the machine), the GOG installers' registry keys (`HKLM\SOFTWARE\[WOW6432Node\]GOG.com\Games\<id>`,
 //! written by the offline installer and by GOG Galaxy alike: the entry whose `gameName` names the game or whose
 //! `exeFile` is `ig2.exe`, its `path`), and the default folders (`<drive>:\GOG Games\*`,
-//! `<drive>:\Program Files (x86)\GOG Galaxy\Games\*`, any subfolder named "Imperium Galactica…"). A place
-//! counts when it holds `dataraw/text/scenario.txt` and an `ig2.exe` of the catalogued build ([`crate::GOG_2017_SHA256`]).
+//! `<drive>:\Program Files (x86)\GOG Galaxy\Games\*`, any subfolder named "Imperium Galactica…"). Elsewhere (Linux)
+//! the launchers' records stand in for the registry (Heroic's `gog_store/installed.json`, native and Flatpak), and the
+//! default folders are `~/GOG Games`, `~/Games`, `~/Games/Heroic` and the Wine prefixes' GOG folders (`~/.wine`,
+//! Lutris' `~/Games/<game>/`). A place counts when it holds `dataraw/text/scenario.txt` and an `ig2.exe` of the catalogued build ([`crate::GOG_2017_SHA256`]).
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +32,7 @@ impl Source {
         match self {
             Source::Env => "IG2_INSTALL_DIR",
             Source::Remembered => "remembered",
-            Source::Registry => "GOG registry",
+            Source::Registry => if cfg!(windows) { "GOG registry" } else { "Heroic launcher" },
             Source::DefaultFolder => "default folder",
             Source::BesideRemake => "beside the remake",
             Source::Chosen => "chosen",
@@ -152,11 +154,13 @@ pub fn find(remembered: Option<&Path>) -> Result<Candidate, Vec<(Candidate, Verd
 
 /// Whether a folder name looks like the game's (`Imperium Galactica II`, `Imperium Galactica 2 Alliances`, …).
 fn named_like_game(name: &str) -> bool {
-    let n = name.to_ascii_lowercase();
+    // Lutris names its folders by slug (`imperium-galactica-ii`).
+    let n = name.to_ascii_lowercase().replace(['-', '_'], " ");
     n.contains("imperium galactica") && !n.ends_with("galactica") && !n.contains("galactica 1") || n == "ig2"
 }
 
-/// `<drive>:\GOG Games\*` and GOG Galaxy's default library on every drive (Windows), the subfolders named like the game.
+/// `<drive>:\GOG Games\*` and GOG Galaxy's default library on every drive (Windows), or the home folder's game and
+/// Wine prefix folders (elsewhere): the subfolders named like the game.
 fn default_folders() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if cfg!(windows) {
@@ -167,8 +171,20 @@ fn default_folders() -> Vec<PathBuf> {
             }
         }
     } else if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        roots.push(home.join("GOG Games"));
-        roots.push(home.join("Games"));
+        let games = home.join("Games");
+        roots.extend([home.join("GOG Games"), games.clone(), games.join("Heroic")]);
+        // Wine prefixes: the default one, and Lutris' one per game (`~/Games/<slug>/drive_c`).
+        let mut prefixes = vec![home.join(".wine")];
+        if let Ok(rd) = std::fs::read_dir(&games) {
+            let mut p: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("drive_c").is_dir()).collect();
+            p.sort();
+            prefixes.extend(p);
+        }
+        for p in prefixes {
+            for sub in ["GOG Games", "Games", "Program Files (x86)/GOG Galaxy/Games", "Program Files/GOG Galaxy/Games"] {
+                roots.push(p.join("drive_c").join(sub));
+            }
+        }
     }
     let mut out = Vec::new();
     for r in roots {
@@ -252,8 +268,44 @@ mod registry {
 
 #[cfg(not(windows))]
 mod registry {
-    pub fn gog_paths() -> Vec<std::path::PathBuf> {
-        Vec::new()
+    //! Heroic's GOG installs (`gog_store/installed.json` in its config folder, native or Flatpak): every
+    //! `install_path` whose folder is named like the game.
+    use std::path::PathBuf;
+
+    pub fn gog_paths() -> Vec<PathBuf> {
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return Vec::new() };
+        let config = std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| home.join(".config"), PathBuf::from);
+        let files = [config.join("heroic"), home.join(".var/app/com.heroicgameslauncher.hgl/config/heroic")];
+        let mut out = Vec::new();
+        for f in files.map(|d| d.join("gog_store/installed.json")) {
+            if let Ok(s) = std::fs::read_to_string(f) {
+                out.extend(install_paths(&s).into_iter().filter(|p| p.file_name().is_some_and(|n| super::named_like_game(&n.to_string_lossy()))));
+            }
+        }
+        out
+    }
+
+    /// The `"install_path": "…"` string values of a JSON text (`\/`, `\\` and `\"` unescaped).
+    pub(super) fn install_paths(json: &str) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut rest = json;
+        while let Some(i) = rest.find("\"install_path\"") {
+            rest = &rest[i + 14..];
+            let Some(q) = rest.trim_start().strip_prefix(':').map(str::trim_start).and_then(|r| r.strip_prefix('"')) else { continue };
+            let (mut v, mut esc) = (String::new(), false);
+            for c in q.chars() {
+                match (esc, c) {
+                    (false, '\\') => esc = true,
+                    (false, '"') => break,
+                    _ => {
+                        v.push(c);
+                        esc = false;
+                    }
+                }
+            }
+            out.push(PathBuf::from(v));
+        }
+        out
     }
 }
 
@@ -267,6 +319,14 @@ mod tests {
         assert!(named_like_game("Imperium Galactica 2 Alliances"));
         assert!(!named_like_game("Imperium Galactica"));
         assert!(!named_like_game("The Witcher 3 Wild Hunt GOTY"));
+        assert!(named_like_game("imperium-galactica-ii"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn heroic_install_paths() {
+        let json = r#"{"installed":[{"platform":"windows","install_path":"/home/p/Games/Heroic/Imperium Galactica II","appName":"1254614904"},{"install_path" : "/a\/b \"c\""}]}"#;
+        assert_eq!(registry::install_paths(json), [PathBuf::from("/home/p/Games/Heroic/Imperium Galactica II"), PathBuf::from("/a/b \"c\"")]);
     }
 
     #[test]

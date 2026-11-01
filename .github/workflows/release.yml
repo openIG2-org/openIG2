@@ -53,3 +53,29 @@ jobs:
           make_latest: true
           body_path: notes.md
           files: dist/openig2-${{ steps.v.outputs.version }}-windows-x64.zip
+
+  linux:
+    name: Linux archive
+    # After the Windows job: that one creates the release, this one adds its archive.
+    needs: windows
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
+      - name: Version
+        id: v
+        run: |
+          v=$(python3 -I tools/release/version.py)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "OPENIG2_VERSION=$v" >> "$GITHUB_ENV"
+      - name: Build the archive
+        run: python3 -I tools/release/build_linux.py --out dist
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          files: dist/openig2-${{ steps.v.outputs.version }}-linux-x64.tar.gz

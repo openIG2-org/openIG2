@@ -6,16 +6,20 @@ setup: unzip the release into the game's folder and run `ig2-client.exe`. Nothin
 client looks, in this order, in:
 1. `IG2_INSTALL_DIR` (optional: an override that wins over everything);
 2. the folder remembered in our settings file (`ig2-rework-options.dat`, key `InstallDir`, next to the original's
-   `options.dat` under `%LOCALAPPDATA%\GyroscopeGames\ig2`, or `IG2_OPTIONS_DIR`);
+   `options.dat` under `%LOCALAPPDATA%\GyroscopeGames\ig2`, on Linux `~/.local/share/GyroscopeGames/ig2`
+   (`$XDG_DATA_HOME` if set), or `IG2_OPTIONS_DIR`);
 3. the client's own folder and its parent (the release unzipped into the game's folder);
-4. the GOG registry entries (GOG Galaxy writes the same ones);
+4. the GOG registry entries (GOG Galaxy writes the same ones); on Linux, Heroic's GOG library
+   (`~/.config/heroic/gog_store/installed.json`, the Flatpak's too);
 5. the default folders `<drive>:\GOG Games\*`, `<drive>:\Games\*` and `<drive>:\Program Files [(x86)]\GOG
-   Galaxy\Games\*` (subfolders named "Imperium Galactica…").
+   Galaxy\Games\*` (subfolders named "Imperium Galactica…"); on Linux `~/GOG Games/*`, `~/Games/*`,
+   `~/Games/Heroic/*` and the same GOG folders inside the Wine prefixes `~/.wine/drive_c` and Lutris'
+   `~/Games/<game>/drive_c`.
 
 A folder counts when it has `dataraw/text/scenario.txt` and the GOG 2017 build of `ig2.exe` (checked by hash). A
 folder found by the search is remembered, so later starts skip it. If nothing is found, a window says so, lists
 each place tried and why it failed, and takes the game's folder (or its `ig2.exe`) dropped onto it: it is checked,
-remembered, and the game restarts. Esc quits. On other systems than Windows the message goes to stderr.
+remembered, and the game restarts. Esc quits.
 
 ## Running
 Download `openig2-<version>-windows-x64.zip` from the
@@ -25,6 +29,12 @@ and run `ig2-client.exe`. Or run from source (`docs/BUILDING.md`):
 cd engine
 cargo run --release -p ig2-client
 ```
+On Linux (x86-64, glibc 2.35 or newer, Vulkan drivers, ALSA or PipeWire/PulseAudio, X11 or Wayland; the Steam
+Deck's desktop mode works the same) build from source, or take `openig2-<version>-linux-x64.tar.gz` from the
+releases once one carries it, unpack it anywhere and run `./ig2-client`. The game itself has to be installed
+once: the GOG offline installer through Wine, Heroic or Lutris all leave the files where the search above finds
+them (or drop the folder with `ig2.exe` onto the not-found window). The credits line uses an outline font instead
+of Windows' Arial. Linux builds are new: please report anything that differs from the Windows build.
 The game starts at the title and main menu, like the original: campaign, scenario, skirmish, tutorial, load, and
 the multiplayer rings (LAN, direct IP or join code, optionally through a relay server you or a friend run:
 `docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code

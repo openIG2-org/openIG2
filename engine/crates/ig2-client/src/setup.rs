@@ -157,9 +157,42 @@ fn text_line(l: &str, px: u32) -> Option<crate::assets::Image> {
     crate::video::credits::gdi::render_left(l, px)
 }
 
+/// Without GDI: the line left-aligned in a system font (the install, with its own font, is what's missing).
 #[cfg(not(windows))]
-fn text_line(_: &str, _: u32) -> Option<crate::assets::Image> {
-    None
+fn text_line(l: &str, px: u32) -> Option<crate::assets::Image> {
+    use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
+    const FONTS: [&str; 5] = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ];
+    let bytes = FONTS.iter().find_map(|p| std::fs::read(p).ok())?;
+    let font = FontRef::try_from_slice(&bytes).ok()?;
+    let (w, h) = ((px << 6).next_multiple_of(4), px);
+    if h == 0 {
+        return None;
+    }
+    let sf = font.as_scaled(PxScale::from(h as f32));
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    let mut x = 0.0f32;
+    for c in l.chars() {
+        let id = sf.glyph_id(c);
+        let g = id.with_scale_and_position(sf.scale(), ab_glyph::point(x, sf.ascent()));
+        x += sf.h_advance(id);
+        let Some(o) = font.outline_glyph(g) else { continue };
+        let b = o.px_bounds();
+        o.draw(|gx, gy, cov| {
+            let (px, py) = (b.min.x as i32 + gx as i32, b.min.y as i32 + gy as i32);
+            if px >= 0 && py >= 0 && px < w as i32 && py < h as i32 {
+                let i = ((py as u32 * w + px as u32) * 4) as usize;
+                rgba[i..i + 3].copy_from_slice(&[255, 255, 255]);
+                rgba[i + 3] = rgba[i + 3].max((cov.clamp(0.0, 1.0) * 255.0) as u8);
+            }
+        });
+    }
+    Some(crate::assets::Image { width: w, height: h, rgba, mips: Vec::new() })
 }
 
 impl ApplicationHandler for Setup {

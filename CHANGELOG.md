@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Linux: openIG2 builds for 64-bit Linux, finds an install made through Heroic, Lutris or Wine, and keeps its settings and saves in `~/.local/share/GyroscopeGames/ig2`; releases can carry a Linux archive beside the Windows zip.
 - Mods: put your own textures, texts or sounds in a folder under `mods` beside the settings and list it in `mods/enabled.txt` (or start with `--mod NAME`) to use them instead of the install's; multiplayer rooms make sure everyone has the same mods, and `ig2-check` lists what each mod replaces.
 - New Remake row "Sharp UI": on 1440p and 4K screens the panels, text and pointer stay crisp instead of blurring when scaled up (off keeps the original's smooth look).
 - A Hungarian game now shows the remake's own menus and notices in Hungarian too (the extra Options rows, the main menu's Settings, Quick game and History, the statistics screen, the event log, the auto research switches, the multiplayer lobby and its messages, quick save notices).
