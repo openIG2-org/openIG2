@@ -3,17 +3,25 @@ name: Rendezvous image
 on:
   push:
     branches: [main]
-    paths: [deploy/rendezvous/**, .dockerignore, engine/Cargo.lock, engine/crates/ig2-rendezvous/**, engine/crates/ig2-net/**, .github/workflows/rendezvous-image.yml]
+    paths: [deploy/rendezvous/**, .dockerignore, engine/Cargo.lock, engine/crates/ig2-rendezvous/**, engine/crates/ig2-net/**, engine/crates/ig2-sim/**, .github/workflows/rendezvous-image.yml]
   pull_request:
-    paths: [deploy/rendezvous/**, .dockerignore, engine/Cargo.lock, engine/crates/ig2-rendezvous/**, engine/crates/ig2-net/**, .github/workflows/rendezvous-image.yml]
+    paths: [deploy/rendezvous/**, .dockerignore, engine/Cargo.lock, engine/crates/ig2-rendezvous/**, engine/crates/ig2-net/**, engine/crates/ig2-sim/**, .github/workflows/rendezvous-image.yml]
   workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/openig2-org/openig2-rendezvous
 
 jobs:
   image:
-    name: Build and start the rendezvous image
+    name: Build, start and publish the rendezvous image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Build and start
         run: docker compose -f deploy/rendezvous/compose.yaml up -d --build --wait
       - name: Still running after 5 s
@@ -24,3 +32,12 @@ jobs:
       - name: Stop
         if: always()
         run: docker compose -f deploy/rendezvous/compose.yaml down
+      # Only main publishes: `latest` and the build's version (docs/VERSIONING.md).
+      - name: Publish
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          version=$(python3 -I tools/release/version.py)
+          docker tag "$IMAGE:latest" "$IMAGE:$version"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$version"

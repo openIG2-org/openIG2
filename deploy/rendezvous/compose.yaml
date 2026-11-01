@@ -1,4 +1,6 @@
-# Runs the rendezvous and relay service (docs/RENDEZVOUS.md). On the server, from the repository root:
+# Runs the rendezvous and relay service (docs/RENDEZVOUS.md). On the server, with this file alone:
+#   docker compose -f compose.yaml pull && docker compose -f compose.yaml up -d
+# or, from a clone of the repository, building the image from source:
 #   docker compose -f deploy/rendezvous/compose.yaml up -d --build
 # It needs the UDP port open in the server's firewall; nothing is stored, so there are no volumes.
 services:
@@ -6,7 +8,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/rendezvous/Dockerfile
-    image: openig2-rendezvous
+    image: ghcr.io/openig2-org/openig2-rendezvous:latest
     restart: unless-stopped
     # The binary installs no signal handlers; as PID 1 it would ignore `docker stop`'s SIGTERM.
     init: true
