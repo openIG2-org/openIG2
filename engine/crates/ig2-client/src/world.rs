@@ -917,6 +917,12 @@ impl<'r> World<'r> {
         ((self.net_since as f32 + tick_phase) / ig2_net::TURN_TICKS as f32).min(1.0)
     }
 
+    /// The interpolation every drawn frame uses: paused, the current snapshot (the clock keeps cycling its phase
+    /// while no tick runs, so the camera's pin and the planets it follows would part each tick period).
+    pub fn draw_phase(&self, tick_phase: f32) -> f32 {
+        if self.paused() { 1.0 } else { self.turn_phase(tick_phase) }
+    }
+
     /// Multiplayer under a full-screen video, Options or Help: the session runs on, as the original's time does in MP
     /// (`SetIdoPause` 0x541300 has no effect there): the message pass and the ticks due. Their events wait in the
     /// queues for the game screens' next frame.
@@ -1617,6 +1623,28 @@ mod tests {
         w.pump();
         let g = w.curr.fleets.iter().find(|g| g.slot == f).unwrap();
         assert_eq!((g.order, g.target), (1, Some([10.0, -20.0])));
+    }
+
+    /// Paused, the clock's phase still cycles each tick period: every drawn frame (the long info's camera pin and the
+    /// planet it pins) stays on the current snapshot, so the pinned planet doesn't tremble.
+    #[test]
+    fn a_paused_frame_stays_on_the_current_snapshot() {
+        use ig2_net::StarmapCmd;
+        let Some((save, rules, defaults, volatile)) = quick1() else { return };
+        let mut w = World::load(&save, &rules, &defaults, &volatile);
+        w.set_speed(Speed::Fastest);
+        w.send(Command::Starmap { order: StarmapCmd::Pause { paused: false } });
+        w.pump();
+        for _ in 0..3 {
+            w.tick();
+        }
+        assert_ne!(w.prev.orbit, w.curr.orbit, "the orbits moved in the last tick");
+        assert_eq!(w.draw_phase(0.25), 0.25);
+        w.send(Command::Starmap { order: StarmapCmd::Pause { paused: true } });
+        w.pump();
+        let clock = |a: f32| w.prev.orbit + (w.curr.orbit - w.prev.orbit) * a;
+        let frames: Vec<f32> = (0..40).map(|k| clock(w.draw_phase((k % 10) as f32 / 9.0))).collect();
+        assert!(frames.iter().all(|&c| c == w.curr.orbit), "{frames:?}");
     }
 
     /// Shift + right click (re/screens/starmap.md §10.3): a moving fleet's mode-13 orders append

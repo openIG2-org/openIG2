@@ -2458,7 +2458,7 @@ mod tests {
                 for _ in 0..c.advance(now) {
                     w.tick();
                 }
-                let alpha = if w.paused() { 1.0 } else { w.turn_phase(c.phase(now)) };
+                let alpha = w.draw_phase(c.phase(now));
                 let x = w.curr.fleets_at(&w.prev, alpha).iter().find(|v| v.slot == f.slot).expect("the fleet").pos[0];
                 if now > 300 {
                     steps[i].push(x - last[i]);
