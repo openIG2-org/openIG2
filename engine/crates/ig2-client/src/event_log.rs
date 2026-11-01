@@ -3,6 +3,7 @@
 //! about; the messages screen shows them in a panel with a filter row and a search field, and a line leads to its
 //! planet or fleet on the starmap. Client-side only: nothing goes into the sim or the lockstep.
 
+use ig2_formats::text::Lang;
 use ig2_sim::colony::ColonyEvent;
 use ig2_sim::colony_side::SideEvent;
 use ig2_sim::diplomacy::DiploEvent;
@@ -129,7 +130,7 @@ pub fn matches(e: &Entry, filter: Option<Category>, search: &[u8]) -> bool {
 
 /// The "EVENT LOG" label on the messages screen (virtual pixels: x, y, w, h).
 pub const LABEL: [f32; 4] = [6.0, 196.0, 54.0, 8.0];
-const LABEL_TEXT: &[u8] = b"EVENT LOG";
+const LABEL_TEXT: &str = "EVENT LOG";
 /// The panel `[x, y, w, h]`, the filter row's and the search's y, the first line's y, the line step and count.
 const PANEL: [f32; 4] = [200.0, 20.0, 436.0, 452.0];
 const TABS_Y: f32 = 26.0;
@@ -155,13 +156,14 @@ pub struct Panel {
     pub label_hover: bool,
 }
 
-/// The filter labels' x.
-fn tab_x() -> [f32; 6] {
+/// The filter labels in `lang` (ADR 0042) and their x.
+fn tabs(lang: Lang) -> [(Vec<u8>, f32); 6] {
     let mut x = PANEL[0] + 8.0;
     FILTERS.map(|(l, _)| {
+        let l = crate::tr::get(lang, l);
         let at = x;
         x += (l.len() as f32 + 2.0) * CELL;
-        at
+        (l, at)
     })
 }
 
@@ -203,9 +205,9 @@ impl Panel {
     }
 
     /// A left press while the panel is up: a filter, or a line's target.
-    pub fn press(&mut self, at: [f32; 2], log: &Log) -> Option<Target> {
-        for (i, x) in tab_x().into_iter().enumerate() {
-            if inside(at, [x, TABS_Y - 2.0, FILTERS[i].0.len() as f32 * CELL, 11.0]) {
+    pub fn press(&mut self, at: [f32; 2], log: &Log, lang: Lang) -> Option<Target> {
+        for (i, (l, x)) in tabs(lang).into_iter().enumerate() {
+            if inside(at, [x, TABS_Y - 2.0, l.len() as f32 * CELL, 11.0]) {
                 (self.filter, self.scroll) = (i, 0);
                 return None;
             }
@@ -232,17 +234,19 @@ impl Panel {
 pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], p: &Panel, log: &Log, hu: bool, time: f32) {
     let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
     let lit = |on: bool| col(if on { 6 } else { 2 });
-    font.text(f, v, LABEL_TEXT, LABEL[0], LABEL[1], 0, 2, Align::Left, lit(p.label_hover || p.open), None);
+    let lang = if hu { Lang::Hu } else { Lang::En };
+    font.text(f, v, &crate::tr::get(lang, LABEL_TEXT), LABEL[0], LABEL[1], 0, 2, Align::Left, lit(p.label_hover || p.open), None);
     if !p.open {
         return;
     }
     crate::kit::fader::fader(f, white, v, PANEL, [0.0, 0.0, 0.0], 20.0, [0.0, 60.0, 0.0], 30.0);
-    for (i, x) in tab_x().into_iter().enumerate() {
-        font.text(f, v, FILTERS[i].0.as_bytes(), x, TABS_Y, 0, 2, Align::Left, lit(i == p.filter), None);
+    for (i, (l, x)) in tabs(lang).into_iter().enumerate() {
+        font.text(f, v, &l, x, TABS_Y, 0, 2, Align::Left, lit(i == p.filter), None);
     }
     let x0 = PANEL[0] + 8.0;
-    font.text(f, v, b"Search:", x0, SEARCH_Y, 0, 2, Align::Left, col(2), None);
-    let sx = x0 + 8.0 * CELL;
+    let search = crate::tr::get(lang, "Search:");
+    font.text(f, v, &search, x0, SEARCH_Y, 0, 2, Align::Left, col(2), None);
+    let sx = x0 + (search.len() + 1) as f32 * CELL;
     font.text(f, v, &p.search.text, sx, SEARCH_Y, 0, 2, Align::Left, col(crate::chat::CHAT_COLOUR), None);
     if (time * 1000.0 / 200.0) as i64 % 2 == 0 {
         let c = col(1);
@@ -251,7 +255,7 @@ pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f
     }
     let shown = p.shown(log);
     if shown.is_empty() {
-        font.text(f, v, b"No messages.", x0, LINES_Y, 0, 2, Align::Left, col(2), None);
+        font.text(f, v, &crate::tr::get(lang, "No messages."), x0, LINES_Y, 0, 2, Align::Left, col(2), None);
     }
     for (row, (k, e)) in shown.iter().enumerate().skip(p.scroll).take(ROWS).enumerate() {
         let y = LINES_Y + row as f32 * LINE;

@@ -1263,7 +1263,7 @@ impl App {
                 if crate::event_log::Panel::over_label(at) {
                     h.messages.log.toggle();
                     self.sounds.push(crate::audio::CLICK);
-                } else if let Some(t) = h.messages.log.press(at, &self.world.log) {
+                } else if let Some(t) = h.messages.log.press(at, &self.world.log, h.texts.lang) {
                     self.log_jump(t);
                 }
             }
@@ -3122,7 +3122,7 @@ impl App {
         let groups = self.fleet_groups;
         path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(path, file)).and_then(|_| groups.store(path)).map_err(|e| {
             eprintln!("ig2-client: {}: {e}", path.display());
-            format!("Cannot save: {e}")
+            String::from_utf8_lossy(&crate::tr::fill(crate::tr::game(), "Cannot save: {}", &[e.to_string().as_bytes()])).into_owned()
         })
     }
 
@@ -3144,8 +3144,8 @@ impl App {
             return;
         }
         let (y, m, d) = self.world.curr.date();
-        let line = match self.write_save(&dir.join(crate::options::QUICKSAVE), format!("Quicksave {y} {m} {d}").as_bytes()) {
-            Ok(()) => b"Quick saved.".to_vec(),
+        let line = match self.write_save(&dir.join(crate::options::QUICKSAVE), &crate::tr::fill(crate::tr::game(), "Quicksave {}", &[format!("{y} {m} {d}").as_bytes()])) {
+            Ok(()) => crate::tr::get(crate::tr::game(), "Quick saved."),
             Err(e) => e.into_bytes(),
         };
         self.world.local_lines.push(line);
@@ -3159,7 +3159,7 @@ impl App {
             return;
         }
         if self.load_file(&path) {
-            self.world.local_lines.push(b"Quick loaded.".to_vec());
+            self.world.local_lines.push(crate::tr::get(crate::tr::game(), "Quick loaded."));
         }
     }
 
@@ -3211,7 +3211,7 @@ impl App {
                 eprintln!("ig2-client: autosave: {e}");
             }
         }
-        if let Err(e) = self.write_save(&dir.join("save24.ig2s"), format!("Autosave {y} {m} {d}").as_bytes()) {
+        if let Err(e) = self.write_save(&dir.join("save24.ig2s"), &crate::tr::fill(crate::tr::game(), "Autosave {}", &[format!("{y} {m} {d}").as_bytes()])) {
             self.world.local_lines.push(e.into_bytes());
         }
     }

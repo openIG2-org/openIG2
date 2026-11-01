@@ -102,6 +102,7 @@ mod starmap_radar;
 mod starmap_tip;
 mod stats_screen;
 mod trade;
+mod tr;
 mod topbar_menus;
 mod tutorial_ui;
 mod trade_scene;
@@ -576,7 +577,9 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
         let places: Vec<String> = tried.iter().map(|(c, v)| format!("{} ({}): {}", c.path.display(), c.source.label(), v.describe())).collect();
         format!("no Imperium Galactica II install found; set IG2_INSTALL_DIR to its folder (looked in: {})", places.join("; "))
     })?;
-    Install::open(&root, language(o, &root)).map_err(|e| e.to_string())
+    let install = Install::open(&root, language(o, &root)).map_err(|e| e.to_string())?;
+    tr::set_game(install.lang());
+    Ok(install)
 }
 
 /// The texts' language: [`forced_language`], else the settings file's Language row (ADR 0031), else what the GOG exe

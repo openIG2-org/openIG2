@@ -1190,7 +1190,8 @@ impl MpScreen {
         let box_ = |f: &mut Frame, r: [f32; 4]| fader::kirak_fader(f, d.white, v, r, [0.0, 54.0, 90.0], t1, [0.0, 90.0, 130.0], t2, [0.0, 0.0]);
         let fade = self.open;
         let hover = self.spot_at(self.at);
-        let text = |f: &mut Frame, s: &[u8], x: f32, y: f32, size: usize, a: Align, c: usize| d.font.text(f, v, s, x, y, 0, size, a, d.col(c, fade), None);
+        // ADR 0042: our English words and lines show in the game's language.
+        let text = |f: &mut Frame, s: &[u8], x: f32, y: f32, size: usize, a: Align, c: usize| d.font.text(f, v, &crate::tr::bytes(d.texts.lang, s), x, y, 0, size, a, d.col(c, fade), None);
         let hot = |id: u32| if hover == id { 2 } else { 1 };
         let cursor = |f: &mut Frame, fl: &Field, first: usize, x: f32, y: f32, size: usize| {
             if blink {
@@ -1235,7 +1236,7 @@ impl MpScreen {
             let stars = vec![b'*'; self.password.text.len()];
             text(f, &stars, 136.0, 333.0, 2, Align::Left, if self.focus == Focus::Password { 2 } else { 0x22 });
             text(f, words::RELAY, 136.0, 357.0, 2, Align::Left, 0x25);
-            let relay_x = 136.0 + d.font.advance(2) * words::RELAY.len() as f32;
+            let relay_x = 136.0 + d.font.advance(2) * crate::tr::bytes(d.texts.lang, words::RELAY).len() as f32;
             let relay_first = self.relay.text.len().saturating_sub(RELAY_SHOWN).min(self.relay.cursor);
             text(f, &self.relay.text[relay_first..(relay_first + RELAY_SHOWN).min(self.relay.text.len())], relay_x, 357.0, 2, Align::Left, if self.focus == Focus::Relay { 2 } else { 0x22 });
             match self.focus {
@@ -1337,7 +1338,7 @@ impl MpScreen {
             };
             text(f, &map, 24.0, 320.0, 2, Align::Left, hot(spot::PORT_MAP));
             text(f, words::PRIVATE[st.private as usize], 476.0, 320.0, 2, Align::Left, hot(spot::PRIVATE));
-            let code = self.join_code().map_or_else(|| words::NO_CODE.to_vec(), |c| format!("Join code: {}  (click: copy)", c.encode()).into_bytes());
+            let code = self.join_code().map_or_else(|| words::NO_CODE.to_vec(), |c| crate::tr::fill(d.texts.lang, "Join code: {}  (click: copy)", &[c.encode().as_bytes()]));
             text(f, &code, 24.0, 338.0, 2, Align::Left, hot(spot::CODE));
             let relay = match listener.rendezvous() {
                 Rendezvous::Off => None,

@@ -1047,14 +1047,17 @@ impl OptionsScreen {
         for (n, _, r) in self.page_rows() {
             let y = self.row_y(n as i32) as f32;
             if r.ours && std::mem::take(&mut heading) {
-                text(f, b"Remake", 0x1e as f32, y - 0xf as f32, 6, 2, Align::Left, d.col(1, b2));
+                let remake = d.texts.ours("Remake");
+                text(f, &remake, 0x1e as f32, y - 0xf as f32, remake.len(), 2, Align::Left, d.col(1, b2));
             }
             let (px, py) = (self.at[0] as i32, self.at[1] as i32);
             let over = py >= y as i32 && py < y as i32 + 0xf && (0x1f..=0x117).contains(&px) && self.grab.is_none();
             let (cn, cv) = if !r.enabled { (1, 1) } else if over { (2, 2) } else { (0x22, 0x25) };
-            text(f, &r.name, 0x1e as f32, y, r.name.len(), 2, Align::Left, d.col(cn, b2));
+            // ADR 0042: the remake's rows keep their English and show the game's language.
+            let name = if r.ours { crate::tr::bytes(d.texts.lang, &r.name) } else { r.name.clone() };
+            text(f, &name, 0x1e as f32, y, name.len(), 2, Align::Left, d.col(cn, b2));
             let (val, c) = match (r.states, if r.locked { 0 } else { r.value }) {
-                _ if !r.labels.is_empty() => (r.labels.get(r.value.max(0) as usize).cloned().unwrap_or_default(), cv),
+                _ if !r.labels.is_empty() => (r.labels.get(r.value.max(0) as usize).map(|l| if r.ours { crate::tr::bytes(d.texts.lang, l) } else { l.clone() }).unwrap_or_default(), cv),
                 (1, 1) => (d.texts.get(13, 3, 1), cv),
                 (1, _) => (d.texts.get(13, 3, 2), cv),
                 (2, 0..=2) => (d.texts.get(13, 3, 3 + r.value as u16), 2),
@@ -1064,7 +1067,8 @@ impl OptionsScreen {
             last = n;
         }
         if self.restart_needed() {
-            text(f, b"Restart to change the language", 0x1e as f32, self.row_y(last as i32 + 1) as f32, 0x20, 2, Align::Left, d.col(1, b2));
+            let l = d.texts.ours("Restart to change the language");
+            text(f, &l, 0x1e as f32, self.row_y(last as i32 + 1) as f32, l.len(), 2, Align::Left, d.col(1, b2));
         }
         // The buttons' labels (font 3, centred in 9 cells), colour 2 under the pointer.
         let lab = |f: &mut Frame, s: u16, x: i32, spot: u32| {

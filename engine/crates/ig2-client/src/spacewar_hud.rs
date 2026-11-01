@@ -440,7 +440,7 @@ pub fn notices(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, [own, ai, forma
 pub fn waiting(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, fade: f32) {
     let Some(font) = &hud.font else { return };
     let c = hud.palette.get(2).copied().unwrap_or([1.0; 3]).map(|x| x * fade);
-    font.text(f, v, b"Waiting for the other players", 200.0, 60.0, 0x46, 2, Align::Right, c, None);
+    font.text(f, v, &hud.texts.ours("Waiting for the other players"), 200.0, 60.0, 0x46, 2, Align::Right, c, None);
 }
 
 /// The MP versus banner (`screenfrissites`, spec §7.4): `"%s (%s) vs. %s (%s)"` at (200, 30), 0x46 cells, size 2,

@@ -1213,7 +1213,7 @@ impl Research {
     pub fn tip_text(&self, tips: &[Vec<u8>], texts: &crate::ui::UiTexts, id: u32) -> Vec<u8> {
         let t = match (id, self.model_tip) {
             (MODEL_TIP, Some((t, _))) => crate::hud::tech_name(texts, t),
-            (id, _) if (AUTO_TIP..AUTO_TIP + 3).contains(&id) => AUTO[(id - AUTO_TIP) as usize].2.as_bytes().to_vec(),
+            (id, _) if (AUTO_TIP..AUTO_TIP + 3).contains(&id) => crate::tr::get(texts.lang, AUTO[(id - AUTO_TIP) as usize].2),
             _ => tips.get(id as usize).cloned().unwrap_or_default(),
         };
         t.split(|&b| b == 0).next().unwrap_or_default().to_vec()
@@ -1559,10 +1559,14 @@ impl Research {
             let hover = self.auto_row(self.tip.mouse);
             for (k, (bit, label, _)) in AUTO.iter().enumerate() {
                 let on = self.auto_shown() & bit != 0;
-                let text = format!("{label}: {}", if on { "ON" } else { "OFF" });
+                // ADR 0042: in the game's language.
+                let lang = crate::tr::game();
+                let mut text = crate::tr::get(lang, label);
+                text.extend(b": ");
+                text.extend(crate::tr::get(lang, if on { "ON" } else { "OFF" }));
                 let c = if hover == Some(k) { 6 } else if on { 3 } else { 0x27 };
                 let y = AUTO_BOX[1] + 4.0 + k as f32 * 12.0;
-                d.font.text(f, v, text.as_bytes(), AUTO_BOX[0] + 6.0, y, text.len(), 2, Align::Left, d.palette.get(c).copied().unwrap_or([1.0; 3]), None);
+                d.font.text(f, v, &text, AUTO_BOX[0] + 6.0, y, text.len(), 2, Align::Left, d.palette.get(c).copied().unwrap_or([1.0; 3]), None);
             }
         }
         // `ResearchGfx2D_2` writes only while the screen is open (and not closing).
@@ -2281,6 +2285,12 @@ fn bake_glass(p: &scene::Part, m: &M3, at: V3, tex: TexId, a: f32, out: &mut Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0042: the auto-research switches' labels and tooltips have their Hungarian.
+    #[test]
+    fn auto_labels_are_translated() {
+        assert!(AUTO.iter().flat_map(|a| [a.1, a.2]).chain(["ON", "OFF"]).all(crate::tr::has));
+    }
 
     /// `SetTTransp` (exe 0x5248a0) against the opacity bytes the engine drew with (`fenyekszamolasa`'s argument,
     /// `probes/research_items.js` on `scripts/research.json`, t 250/400): 252 for the models in front, 128 for the

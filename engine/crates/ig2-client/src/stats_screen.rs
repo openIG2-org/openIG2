@@ -169,6 +169,11 @@ const METRICS: [Metric; 6] = [
     ("Score", |r| r.score as f64),
 ];
 
+/// The match table's columns: head and right edge.
+const COLS: [(&str, f32); 9] = [("Planets", 214.0), ("Pop.", 262.0), ("Credits", 330.0), ("Ships", 378.0), ("Built", 420.0), ("Lost", 462.0), ("Techs", 504.0), ("Wins", 546.0), ("Score", 600.0)];
+/// The match list's heads and their x.
+const LIST_HEADS: [(f32, &str); 5] = [(40.0, "Date"), (120.0, "Mode"), (220.0, "Result"), (290.0, "Days"), (336.0, "Empires")];
+
 /// The empires' line colours (ours), by empire − 1.
 const COLOURS: [[f32; 3]; ROWS] = [
     [0.95, 0.30, 0.25],
@@ -203,7 +208,7 @@ pub const HISTORY_ITEM: [f32; 4] = [8.0, 448.0, 96.0, 22.0];
 /// menu's texts (`fade` = `MainScr::gt`).
 pub fn draw_history_item(f: &mut Frame, d: &Draw, hot: bool, fade: f32) {
     let [x, y, w, _] = HISTORY_ITEM;
-    d.font.text(f, &d.v, b"History", x + w / 2.0, y + 4.0, 0, 3, Align::Centre, d.col(if hot { 2 } else { 1 }, 100.0 * fade), None);
+    d.font.text(f, &d.v, &d.texts.ours("History"), x + w / 2.0, y + 4.0, 0, 3, Align::Centre, d.col(if hot { 2 } else { 1 }, 100.0 * fade), None);
 }
 
 /// What a press or key asks for.
@@ -327,7 +332,7 @@ impl StatsScreen {
     fn button(&self, f: &mut Frame, d: &Draw, r: [f32; 4], label: &str, hot: bool, live: bool) {
         crate::kit::fader::fader(f, d.white, &d.v, r, [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
         let c = if !live { d.col(1, 40.0) } else if hot { d.col(0x25, 100.0) } else { d.col(1, 100.0) };
-        d.font.text(f, &d.v, label.as_bytes(), r[0] + r[2] / 2.0, r[1] + 8.0, 0, 2, Align::Centre, c, None);
+        d.font.text(f, &d.v, &d.texts.ours(label), r[0] + r[2] / 2.0, r[1] + 8.0, 0, 2, Align::Centre, c, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -341,14 +346,15 @@ impl StatsScreen {
 
     fn draw_match(&self, f: &mut Frame, d: &Draw, m: &Match) {
         let (white, dim, hot) = (d.col(1, 100.0), d.col(1, 60.0), d.col(0x25, 100.0));
-        Self::text(f, d, m.title().as_bytes(), 320.0, 26.0, 4, Align::Centre, hot);
+        Self::text(f, d, &d.texts.ours(m.title()), 320.0, 26.0, 4, Align::Centre, hot);
         let [y, mo, dd] = m.date;
-        let sub = format!("{}  -  {} game days (to {y}-{mo:02}-{dd:02})  -  ended {}", mode_name(m.mode), m.days, day_of(m.when));
-        Self::text(f, d, sub.as_bytes(), 320.0, 46.0, 2, Align::Centre, dim);
-        let cols: [(&str, f32); 9] = [("Planets", 214.0), ("Pop.", 262.0), ("Credits", 330.0), ("Ships", 378.0), ("Built", 420.0), ("Lost", 462.0), ("Techs", 504.0), ("Wins", 546.0), ("Score", 600.0)];
-        Self::text(f, d, b"Empire", 40.0, TABLE_Y - 14.0, 2, Align::Left, dim);
+        let to = format!("{y}-{mo:02}-{dd:02}");
+        let sub = crate::tr::fill(d.texts.lang, "{}  -  {} game days (to {})  -  ended {}", &[&d.texts.ours(mode_name(m.mode)), m.days.to_string().as_bytes(), to.as_bytes(), day_of(m.when).as_bytes()]);
+        Self::text(f, d, &sub, 320.0, 46.0, 2, Align::Centre, dim);
+        let cols = COLS;
+        Self::text(f, d, &d.texts.ours("Empire"), 40.0, TABLE_Y - 14.0, 2, Align::Left, dim);
         for (name, x) in cols {
-            Self::text(f, d, name.as_bytes(), x, TABLE_Y - 14.0, 2, Align::Right, dim);
+            Self::text(f, d, &d.texts.ours(name), x, TABLE_Y - 14.0, 2, Align::Right, dim);
         }
         let Some(last) = m.last() else { return };
         for (k, e) in m.empires.iter().enumerate() {
@@ -358,7 +364,7 @@ impl StatsScreen {
             f.push(d.white, Blend::Alpha, Instance::line(d.v.px(30.0, y + 3.5), d.v.px(36.0, y + 3.5), 5.0 * d.v.k, rgba(COLOURS[i])));
             let mut name = e.name.clone();
             if e.empire == m.empire {
-                name.extend_from_slice(b" (you)");
+                name.extend(d.texts.ours(" (you)"));
             }
             Self::text(f, d, &name, 40.0, y, 2, Align::Left, if e.empire == m.empire { hot } else { white });
             let vals = [r.planets as i64, r.population as i64, r.credits, r.ships as i64, e.built as i64, e.lost as i64, r.techs as i64, r.battles as i64, r.score as i64];
@@ -372,7 +378,7 @@ impl StatsScreen {
                 crate::kit::fader::fader(f, d.white, &d.v, r, [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
             }
             let c = if k == self.metric || self.hover == Some(Spot::Metric(k)) { hot } else { dim };
-            Self::text(f, d, name.as_bytes(), r[0] + r[2] / 2.0, r[1] + 5.0, 2, Align::Centre, c);
+            Self::text(f, d, &d.texts.ours(name), r[0] + r[2] / 2.0, r[1] + 5.0, 2, Align::Centre, c);
         }
         self.graph(f, d, m);
     }
@@ -388,8 +394,8 @@ impl StatsScreen {
         line(f, [gx, gy], [gx, gy + gh], axis, 1.0);
         Self::text(f, d, fmt_value(max).as_bytes(), gx - 4.0, gy, 2, Align::Right, dim);
         Self::text(f, d, b"0", gx - 4.0, gy + gh - 6.0, 2, Align::Right, dim);
-        Self::text(f, d, b"day 0", gx, gy + gh + 4.0, 2, Align::Left, dim);
-        Self::text(f, d, format!("day {}", m.days).as_bytes(), gx + gw, gy + gh + 4.0, 2, Align::Right, dim);
+        Self::text(f, d, &crate::tr::fill(d.texts.lang, "day {}", &[b"0"]), gx, gy + gh + 4.0, 2, Align::Left, dim);
+        Self::text(f, d, &crate::tr::fill(d.texts.lang, "day {}", &[m.days.to_string().as_bytes()]), gx + gw, gy + gh + 4.0, 2, Align::Right, dim);
         let n = m.samples.len();
         let first = m.samples.first().map_or(0, |s| s.ido);
         let span = m.samples.last().map_or(0, |s| s.ido) - first;
@@ -410,22 +416,22 @@ impl StatsScreen {
 
     fn draw_list(&self, f: &mut Frame, d: &Draw) {
         let (white, dim, hot) = (d.col(1, 100.0), d.col(1, 60.0), d.col(0x25, 100.0));
-        Self::text(f, d, b"Match history", 320.0, 26.0, 4, Align::Centre, hot);
+        Self::text(f, d, &d.texts.ours("Match history"), 320.0, 26.0, 4, Align::Centre, hot);
         if let Some(e) = &self.error {
             Self::text(f, d, e.as_bytes(), 320.0, 46.0, 2, Align::Centre, dim);
         } else if self.list.is_empty() {
-            Self::text(f, d, b"No finished games yet.", 320.0, 46.0, 2, Align::Centre, dim);
+            Self::text(f, d, &d.texts.ours("No finished games yet."), 320.0, 46.0, 2, Align::Centre, dim);
         }
-        for (x, h) in [(40.0, "Date"), (120.0, "Mode"), (220.0, "Result"), (290.0, "Days"), (336.0, "Empires")] {
-            Self::text(f, d, h.as_bytes(), x, LIST_Y, 2, Align::Left, dim);
+        for (x, h) in LIST_HEADS {
+            Self::text(f, d, &d.texts.ours(h), x, LIST_Y, 2, Align::Left, dim);
         }
         for (i, m) in self.list.iter().skip(self.top).take(PAGE).enumerate() {
             let y = LIST_Y + 16.0 + i as f32 * LIST_H;
             let c = if self.hover == Some(Spot::Row(i)) { hot } else { white };
             let empires: Vec<u8> = m.empires.iter().map(|e| e.name.as_slice()).collect::<Vec<_>>().join(&b", "[..]);
             Self::text(f, d, day_of(m.when).as_bytes(), 40.0, y, 2, Align::Left, c);
-            Self::text(f, d, mode_name(m.mode).as_bytes(), 120.0, y, 2, Align::Left, c);
-            Self::text(f, d, m.title().as_bytes(), 220.0, y, 2, Align::Left, c);
+            Self::text(f, d, &d.texts.ours(mode_name(m.mode)), 120.0, y, 2, Align::Left, c);
+            Self::text(f, d, &d.texts.ours(m.title()), 220.0, y, 2, Align::Left, c);
             Self::text(f, d, m.days.to_string().as_bytes(), 290.0, y, 2, Align::Left, c);
             d.font.text(f, &d.v, &empires, 336.0, y, 44, 2, Align::Left, c, None);
         }
@@ -454,6 +460,16 @@ fn fmt_value(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0042: every label of the screen has its Hungarian.
+    #[test]
+    fn labels_are_translated() {
+        let outcomes = [Outcome::Won, Outcome::Lost, Outcome::Ended].map(|o| Match { outcome: o, ..game_match(1) }.title());
+        let modes = [Mode::Campaign, Mode::Single, Mode::Multiplayer].map(mode_name);
+        let all = METRICS.iter().map(|m| m.0).chain(COLS.iter().map(|c| c.0)).chain(LIST_HEADS.iter().map(|h| h.1)).chain(outcomes).chain(modes);
+        let missing: Vec<&str> = all.chain(["Back", "Main menu", "Continue", "Newer", "Older"]).filter(|s| !crate::tr::has(s)).collect();
+        assert!(missing.is_empty(), "{missing:?}");
+    }
 
     fn game_match(days: u32) -> Match {
         let row = Row { planets: 3, ships: 2, ..Row::default() };

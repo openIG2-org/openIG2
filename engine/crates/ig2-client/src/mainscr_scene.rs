@@ -541,11 +541,11 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
     if s.settings_shown() {
         let [x, y, w, _] = crate::mainscr::SETTINGS_BOX;
         let c = d.col(if s.settings_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
-        font.text(frame, &d.v, b"Settings", (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
+        font.text(frame, &d.v, &d.texts.ours("Settings"), (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
         // Ours (ADR 0039): the Quick game label above it.
         let [x, y, w, _] = crate::mainscr::QUICK_BOX;
         let c = d.col(if s.quick_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
-        font.text(frame, &d.v, b"Quick game", (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
+        font.text(frame, &d.v, &d.texts.ours("Quick game"), (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
     }
 }
 

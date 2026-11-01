@@ -181,6 +181,11 @@ impl UiTexts {
     pub fn encode(&self, s: &str) -> Vec<u8> {
         self.lang.encoding().encode(s).0.into_owned()
     }
+
+    /// A remake label (ADR 0042) in these texts' language, as the font's bytes.
+    pub fn ours(&self, en: &str) -> Vec<u8> {
+        crate::tr::get(self.lang, en)
+    }
 }
 
 /// The `txt17.txt` the name tables come from (`BirodalomNev`, `Moral_Nev`, `Problemak_Nev`, the planet menus' names,

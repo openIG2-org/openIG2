@@ -443,7 +443,7 @@ fn local_en(game: &mut Game, local: bool) {
     game.show_local_ticker(local);
 }
 
-/// The message line's words for a change of the session's hold status (ours, in English: the original's MP had no
+/// The message line's words for a change of the session's hold status (ours, ADR 0042: the original's MP had no
 /// such lines). `name` = the player of an empire.
 fn status_lines(was: &ig2_net::session::HoldStatus, now: &ig2_net::session::HoldStatus, name: impl Fn(u8) -> String) -> Vec<Vec<u8>> {
     let waiting = |s: &ig2_net::session::HoldStatus, e: u8| s.waiting.iter().any(|w| w.0 == e);
@@ -451,30 +451,35 @@ fn status_lines(was: &ig2_net::session::HoldStatus, now: &ig2_net::session::Hold
     let mut lines = Vec::new();
     for &e in &now.paused {
         if !was.paused.contains(&e) {
-            lines.push(format!("{} paused the game.", name(e)));
+            lines.push(say("{} paused the game.", &[name(e).as_bytes()]));
         }
     }
     for &e in &was.paused {
         if !now.paused.contains(&e) && !gone(now, e) {
-            lines.push(format!("{} resumed the game.", name(e)));
+            lines.push(say("{} resumed the game.", &[name(e).as_bytes()]));
         }
     }
     for &(e, ms) in &now.waiting {
         if !waiting(was, e) {
-            lines.push(format!("{} lost the connection: waiting {} s for a rejoin.", name(e), ms.div_ceil(1000)));
+            lines.push(say("{} lost the connection: waiting {} s for a rejoin.", &[name(e).as_bytes(), ms.div_ceil(1000).to_string().as_bytes()]));
         }
     }
     for &e in &now.away {
         if !was.away.contains(&e) {
-            lines.push(format!("{} has left the game.", name(e)));
+            lines.push(say("{} has left the game.", &[name(e).as_bytes()]));
         }
     }
     for e in was.away.iter().copied().chain(was.waiting.iter().map(|w| w.0)) {
         if !gone(now, e) && !now.migrating.contains(&e) {
-            lines.push(format!("{} is back.", name(e)));
+            lines.push(say("{} is back.", &[name(e).as_bytes()]));
         }
     }
-    lines.into_iter().map(String::into_bytes).collect()
+    lines
+}
+
+/// A line of ours in the game's language (ADR 0042), `args` filling its `{}`.
+fn say(en: &str, args: &[&[u8]]) -> Vec<u8> {
+    crate::tr::fill(crate::tr::game(), en, args)
 }
 
 /// The ground wars' voice sites among `events` (`GroundSide`, ground-combat.md §11.12).
@@ -658,13 +663,13 @@ impl<'r> World<'r> {
                     ig2_net::session::SessionEvent::Said { empire, text } => {
                         self.chat_lines.push((format!("{}: {text}", net.name_of(*empire)).into_bytes(), crate::chat::CHAT_COLOUR));
                     }
-                    // Ours, in English (ADR 0021): a desync and its resync are told, and logged for bug reports.
+                    // Ours (ADR 0021, 0042): a desync and its resync are told, and logged for bug reports.
                     ig2_net::session::SessionEvent::Watching { name } => {
-                        self.local_lines.push(format!("{name} is watching the game.").into_bytes());
+                        self.local_lines.push(say("{} is watching the game.", &[name.as_bytes()]));
                     }
                     &ig2_net::session::SessionEvent::Resynced { empire, turn, at } => {
                         eprintln!("multiplayer: empire {empire} diverged at turn {turn}, resynchronised from turn {at}");
-                        self.local_lines.push(format!("{}'s game was out of step and has been resynchronised.", net.name_of(empire)).into_bytes());
+                        self.local_lines.push(say("{}'s game was out of step and has been resynchronised.", &[net.name_of(empire).as_bytes()]));
                     }
                     _ => {}
                 }
@@ -672,7 +677,7 @@ impl<'r> World<'r> {
         }
         if net.resyncs() > self.net_resyncs {
             eprintln!("multiplayer: out of step with the host, resynchronised at turn {}", net.peer().turn);
-            self.local_lines.push(b"This game was out of step with the host and has been resynchronised.".to_vec());
+            self.local_lines.push(say("This game was out of step with the host and has been resynchronised.", &[]));
             self.net_resyncs = net.resyncs();
         }
         let status = net.status(epoch.elapsed());
@@ -680,14 +685,13 @@ impl<'r> World<'r> {
         self.net_seen = status;
         let host = net.host_slot();
         if self.net_host.is_some_and(|h| h != host) {
-            // Ours, in English: a survivor took the session over (ADR 0012).
-            self.local_lines.push(format!("The host has left the game. {} hosts it now.", net.name_in(host)).into_bytes());
+            // Ours: a survivor took the session over (ADR 0012).
+            self.local_lines.push(say("The host has left the game. {} hosts it now.", &[net.name_in(host).as_bytes()]));
         }
         self.net_host = Some(host);
         if net.host_gone() && !self.net_over {
-            // Ours, in English (the original's kicked machine only ends its game: `ReceiveData`'s packet 99).
-            let line: &[u8] = if net.kicked() { b"The host has kicked you from the game." } else { b"The host has left the game." };
-            self.local_lines.push(line.to_vec());
+            // Ours (the original's kicked machine only ends its game: `ReceiveData`'s packet 99).
+            self.local_lines.push(say(if net.kicked() { "The host has kicked you from the game." } else { "The host has left the game." }, &[]));
             self.net_over = true;
         }
         // The events of turns run outside this pump (a drop, a kick, a save catch the peer up) count too.
@@ -697,7 +701,7 @@ impl<'r> World<'r> {
         // Ours (ADR 0026): with the room's option a defeated machine stays in the session and watches.
         if self.game.spectators && events.iter().any(|e| matches!(e, GameEvent::GameOver(ig2_sim::game::GameOver::Lost))) {
             self.game.local.spectating = true;
-            self.local_lines.push(b"Your empire has fallen. You can watch the game until you leave it.".to_vec());
+            self.local_lines.push(say("Your empire has fallen. You can watch the game until you leave it.", &[]));
         }
         self.take_notices(&events);
         self.realtime.extend(events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));

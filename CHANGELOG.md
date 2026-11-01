@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- A Hungarian game now shows the remake's own menus and notices in Hungarian too (the extra Options rows, the main menu's Settings, Quick game and History, the statistics screen, the event log, the auto research switches, the multiplayer lobby and its messages, quick save notices).
 - After a win or a loss a statistics screen shows how the game went (planets, population, credits, ships built and lost, research, battles won, per empire, with graphs), and the main menu's new "History" lists every finished game, multiplayer ones too (Remake row "Game statistics"; off keeps the original's end).
 - Auto research: three switches on the research screen (ships, buildings, tanks) let an idle research slot pick its next project by itself, in single player and multiplayer; all off plays as the original.
 
