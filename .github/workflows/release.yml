@@ -74,11 +74,11 @@ jobs:
           echo "OPENIG2_VERSION=$v" >> "$GITHUB_ENV"
       - name: Build the archive
         run: python3 -I tools/release/build_unix.py --out dist
+      # Upload only: updating the existing release is refused (the v* tag rules), so no release action here.
       - name: Publish
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.v.outputs.version }}
-          files: dist/openig2-${{ steps.v.outputs.version }}-linux-x64.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ steps.v.outputs.version }}" "dist/openig2-${{ steps.v.outputs.version }}-linux-x64.tar.gz" --clobber
 
   macos:
     name: macOS archive
@@ -98,8 +98,8 @@ jobs:
           echo "OPENIG2_VERSION=$v" >> "$GITHUB_ENV"
       - name: Build the archive
         run: python3 -I tools/release/build_unix.py --out dist
+      # Upload only: updating the existing release is refused (the v* tag rules), so no release action here.
       - name: Publish
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.v.outputs.version }}
-          files: dist/openig2-${{ steps.v.outputs.version }}-macos-arm64.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ steps.v.outputs.version }}" "dist/openig2-${{ steps.v.outputs.version }}-macos-arm64.tar.gz" --clobber
