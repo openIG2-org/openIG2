@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Mods can now add their own stories: a `stories.toml` in a mod folder lists stories that fire once on a day, a planet owner, a fleet arriving or a reply, and show messages, give planets, spawn fleets, change money, or win or lose the game (ADR 0061).
 - Multiplayer start story: the story chosen for a multiplayer game now begins the moment the game starts, on every machine; an `init/config` file in the game folder (as the original reads) can set the start story (`mpstory`), the storyline and the story map; and "cancel last message" in multiplayer diplomacy ignores a click until the previous one is released, as in the original.
 - Message line and starmap details as in the original: a known wormhole pair shows its two arrows on the starmap; an
   error such as "not enough money" now stands in the top bar's message line for three seconds, blinking, instead of

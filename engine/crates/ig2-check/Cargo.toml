@@ -11,5 +11,6 @@ rust-version.workspace = true
 [dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
 ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
+ig2-sim = { version = "0.1.0", path = "../ig2-sim" }
 lewton = "0.10"
 openh264 = "0.9.9"

@@ -10,6 +10,7 @@ use ig2_sim::game::{Game, GameRules, Libc, MpFormation, RealTime, ViewMode};
 use ig2_sim::colony_side::EMPIRES;
 use ig2_sim::ground::Field;
 use ig2_sim::stats::Stats;
+use ig2_sim::story_mods::ModStoryState;
 use ig2_sim::save::{HumanSide, Memory, SaveState, StoryQueues, BUILDING_SIZE, DESIGN_SIZE, FLEET_SIZE};
 use ig2_sim::story::Queue;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 13;
+pub const VERSION: u16 = 14;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -99,13 +100,15 @@ struct View<'a> {
     enhanced_ai: bool,
     /// `Game::story_fixes` (ADR 0052; since version 13).
     story_fixes: bool,
+    /// `SaveState::mod_stories` (ADR 0061; since version 14).
+    mod_stories: &'a ModStoryState,
 }
 
 /// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state), `T` the version 6 one, `F` the
 /// version 7 one, `S` the version 8 one, `D` the version 9 one, `A` the version 10 one, `G` the version 11 one, `H` the
-/// version 12 one, `K` the version 13 one.
+/// version 12 one, `K` the version 13 one, `M` the version 14 one.
 #[derive(Deserialize)]
-struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool, D = [i32; EMPIRES], A = [u8; EMPIRES], G = Stats, H = bool, K = bool> {
+struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool, D = [i32; EMPIRES], A = [u8; EMPIRES], G = Stats, H = bool, K = bool, M = ModStoryState> {
     mem: Vec<(u32, ByteBuf)>,
     template: Vec<(String, ByteBuf)>,
     fleets: ByteBuf,
@@ -135,17 +138,18 @@ struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormati
     stats: G,
     enhanced_ai: H,
     story_fixes: K,
+    mod_stories: M,
 }
 
-impl<I, T, F, S, D, A, G, H, K> Owned<I, T, F, S, D, A, G, H, K> {
-    /// An older state: a version 4..=12 one (`K = ()`) the original's story; a version 4..=11 one (`H = ()`) the classic computer empires; a version 4..=10 one (`G = ()`)
+impl<I, T, F, S, D, A, G, H, K, M> Owned<I, T, F, S, D, A, G, H, K, M> {
+    /// An older state: a version 4..=13 one (`M = ()`) no story mods' state; a version 4..=12 one (`K = ()`) the original's story; a version 4..=11 one (`H = ()`) the classic computer empires; a version 4..=10 one (`G = ()`)
     /// no statistics; a version 4..=9 one (`A = ()`) no auto research (off); a version 4..=8 one (`D = ()`) no own computer levels (the game's); a
     /// version 4..=7 one (`S = ()`) no spectators (off); a version 4..=6 one (`F = ()`) no formation phase; a version 4
     /// or 5 one (`T = ()`) no transfer panels, a version 4 one (`I = ()`) no inboxes either.
     #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>, formation: impl FnOnce(F) -> MpFormation, spectators: impl FnOnce(S) -> bool, difficulty: impl FnOnce(D) -> [i32; EMPIRES], research: impl FnOnce(A) -> [u8; EMPIRES], stats: impl FnOnce(G) -> Stats, ai: impl FnOnce(H) -> bool, fixes: impl FnOnce(K) -> bool) -> Owned {
-        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, formation: f, spectators: s, ai_difficulty: d, auto_research: a, stats: g, enhanced_ai: h, story_fixes: k } = self;
-        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: formation(f), spectators: spectators(s), ai_difficulty: difficulty(d), auto_research: research(a), stats: stats(g), enhanced_ai: ai(h), story_fixes: fixes(k) }
+    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>, formation: impl FnOnce(F) -> MpFormation, spectators: impl FnOnce(S) -> bool, difficulty: impl FnOnce(D) -> [i32; EMPIRES], research: impl FnOnce(A) -> [u8; EMPIRES], stats: impl FnOnce(G) -> Stats, ai: impl FnOnce(H) -> bool, fixes: impl FnOnce(K) -> bool, mods: impl FnOnce(M) -> ModStoryState) -> Owned {
+        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, formation: f, spectators: s, ai_difficulty: d, auto_research: a, stats: g, enhanced_ai: h, story_fixes: k, mod_stories: m } = self;
+        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: formation(f), spectators: spectators(s), ai_difficulty: difficulty(d), auto_research: research(a), stats: stats(g), enhanced_ai: ai(h), story_fixes: fixes(k), mod_stories: mods(m) }
     }
 }
 
@@ -185,6 +189,7 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
         stats: &g.stats,
         enhanced_ai: g.enhanced_ai,
         story_fixes: g.story_fixes,
+        mod_stories: &s.mod_stories,
     }
 }
 
@@ -224,6 +229,7 @@ pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)>
         ("stats", h(&v.stats)),
         ("enhanced_ai", h(&v.enhanced_ai)),
         ("story_fixes", h(&v.story_fixes)),
+        ("mod_stories", h(&v.mod_stories)),
     ]
 }
 
@@ -310,16 +316,17 @@ impl Snapshot {
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
         let o: Owned = match wire::from_slice(&self.state) {
             Ok(o) => o,
-            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, ()>>(&self.state)
-                .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |()| false))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |()| false, |()| false)))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |()| Stats::default(), |()| false, |()| false)))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false)))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false)))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false)))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false)))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false)))
-                .or_else(|_| wire::from_slice::<Owned<(), (), (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false)))
+            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, bool, ()>>(&self.state)
+                .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |k| k, |()| ModStoryState::default()))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |()| false, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, (), (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
+                .or_else(|_| wire::from_slice::<Owned<(), (), (), (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
                 .map_err(|_| e)?,
         };
         let mut s = SaveState::from_parts(Memory::from_runs(o.mem.into_iter().map(|(at, b)| (at, b.0)).collect()), o.template.into_iter().map(|(n, b)| (n, b.0)).collect());
@@ -365,6 +372,7 @@ impl Snapshot {
         g.stats = o.stats;
         g.enhanced_ai = o.enhanced_ai;
         g.story_fixes = o.story_fixes;
+        g.state.mod_stories = o.mod_stories;
         Ok((g, o.pending))
     }
 
@@ -423,7 +431,7 @@ impl Header {
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
         // Version 4 states lack the inboxes, 4 and 5 the transfer panels, 4..=6 the formation phase (read as none),
-        // 4..=7 the spectators option (off), 4..=8 the computers' own levels (the game's), 4..=9 auto research (off), 4..=10 the statistics (none), 4..=11 the computer empires' ruleset (classic).
+        // 4..=7 the spectators option (off), 4..=8 the computers' own levels (the game's), 4..=9 auto research (off), 4..=10 the statistics (none), 4..=11 the computer empires' ruleset (classic), 4..=12 the story fixes (off), 4..=13 the story mods' state (none).
         if !(4..=VERSION).contains(&h.version) {
             return Err(Error::Version(h.version));
         }

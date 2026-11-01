@@ -242,6 +242,9 @@ The tables and their fields are listed in ADR 0044 §6 (`techs`, `buildings`, `h
 When several mods change the same field, the one higher in `enabled.txt` wins. A wrong table, id or field stops the
 game with a message naming the mod and the field, and `ig2-check` shows the same message.
 
+A mod can also add stories: a `stories.toml` at the top of the mod folder lists `[[story]]` tables, each with `when`
+triggers and `do` actions, that fire once after the built-in stories. The format is in ADR 0061; `ig2-check` validates the file.
+
 To change or add single lines of text without replacing a whole file, put a `texts.en.toml` at the top of the mod
 folder, and `texts.de.toml`, `texts.fr.toml`, `texts.es.toml`, `texts.it.toml` or `texts.hu.toml` for other
 languages; a line your mod has no translation for shows its English one. Each `["<file>"]` heading names a game text

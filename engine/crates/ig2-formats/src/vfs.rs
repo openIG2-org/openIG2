@@ -77,12 +77,16 @@ pub struct Install {
     patches: Vec<(usize, PathBuf)>,
     /// Each mod's `texts.<lang>.toml` (ADR 0044 §10), lowest priority first, English first within a mod.
     texts: Vec<(usize, Lang, PathBuf)>,
+    /// Each mod's `stories.toml` (ADR 0061 §1), lowest priority first: (index in `mods`, file).
+    stories: Vec<(usize, PathBuf)>,
     /// The text files the texts' language's patches change: game path → the patched decoded bytes.
     patched: HashMap<String, Vec<u8>>,
 }
 
 /// A mod's rule patch file at its folder's top (ADR 0044 §6); not a game path.
 pub const RULES_PATCH: &str = "rules.toml";
+/// A mod's story description file at its folder's top (ADR 0061 §1); not a game path.
+pub const STORY_FILE: &str = "stories.toml";
 
 /// An enabled mod: a folder mirroring the install's layout (ADR 0044).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,10 +156,11 @@ impl Install {
                 root.display()
             )));
         }
-        let (mut modded, mut patches, mut texts) = (HashMap::new(), Vec::new(), Vec::new());
+        let (mut modded, mut patches, mut texts, mut stories) = (HashMap::new(), Vec::new(), Vec::new(), Vec::new());
         for (i, m) in mods.iter().enumerate().rev() {
             let mut found = scan(&*files, &m.dir)?;
             patches.extend(found.remove(RULES_PATCH).map(|p| (i, p)));
+            stories.extend(found.remove(STORY_FILE).map(|p| (i, p)));
             texts.extend(Lang::ALL.into_iter().filter_map(|l| found.remove(&textpatch::file_name(l)).map(|p| (i, l, p))));
             // The rule tables are read from the exe (ADR 0004); a mod never replaces it, `rules.toml` patches them.
             for (k, p) in found.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
@@ -164,7 +169,7 @@ impl Install {
                 index.insert(k, p);
             }
         }
-        let mut install = Self { files, root, lang, index, mods, modded, patches, texts, patched: HashMap::new() };
+        let mut install = Self { files, root, lang, index, mods, modded, patches, texts, stories, patched: HashMap::new() };
         install.patched = install.patch_texts()?;
         Ok(install)
     }
@@ -203,7 +208,16 @@ impl Install {
 
     /// The enabled mods' `rules.toml` files in the order they apply (lowest priority first, ADR 0044 §7): (mod, bytes).
     pub fn rule_patches(&self) -> Result<Vec<(&str, Vec<u8>)>> {
-        self.patches
+        self.mod_files(&self.patches)
+    }
+
+    /// The enabled mods' `stories.toml` files in the order they run (lowest priority first, ADR 0061 §5): (mod, bytes).
+    pub fn story_files(&self) -> Result<Vec<(&str, Vec<u8>)>> {
+        self.mod_files(&self.stories)
+    }
+
+    fn mod_files(&self, files: &[(usize, PathBuf)]) -> Result<Vec<(&str, Vec<u8>)>> {
+        files
             .iter()
             .map(|(i, p)| {
                 let bytes = self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })?;
@@ -366,6 +380,7 @@ mod tests {
             ("mods/first/ig2.exe", "modded exe"),
             ("mods/first/Rules.toml", "first patch"),
             ("mods/second/rules.toml", "second patch"),
+            ("mods/second/Stories.toml", "second stories"),
             ("mods/second/dataraw/textures/colony/a_bmp.pvr", "second a"),
             ("mods/second/dataraw/textures/colony/b_bmp.pvr", "second b"),
             ("mods/second/dataraw/textures/colony/new_bmp.pvr", "second new"),
@@ -409,6 +424,8 @@ mod tests {
         assert!(i.resolve("rules.toml").is_none());
         let p: Vec<(&str, String)> = i.rule_patches().unwrap().into_iter().map(|(m, b)| (m, String::from_utf8(b).unwrap())).collect();
         assert_eq!(p, [("second", "second patch".into()), ("first", "first patch".into())]);
+        assert!(i.resolve("stories.toml").is_none());
+        assert_eq!(i.story_files().unwrap(), [("second", b"second stories".to_vec())]);
         // The other order: the second mod's copy wins.
         let (mods, _) = Mod::find(&t.join("mods"), &["second".into(), "first".into()]);
         let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();

@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
+toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 
 [features]

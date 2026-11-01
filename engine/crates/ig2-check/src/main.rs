@@ -389,6 +389,32 @@ fn main() {
                 Err(e) => g.failed.push((from, e)),
             }
         }
+        // Each story file on its own (ADR 0061 §7), and the messages its stories send: in `uzenetek.txt`'s index, with
+        // their text file.
+        let index = inst.read("dataraw/uzenetek/uzenetek.txt").map(|b| ig2_formats::dialogue::parse_message_index(&String::from_utf8_lossy(&b))).unwrap_or_default();
+        for (name, bytes) in inst.story_files().unwrap_or_default() {
+            let from = format!("mod {name}: {}", ig2_formats::vfs::STORY_FILE);
+            let checked = String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string()).and_then(|t| ig2_sim::story_mods::parse(&t, name)).and_then(|stories| {
+                let missing: Vec<String> = stories
+                    .iter()
+                    .flat_map(|s| s.actions.iter())
+                    .filter_map(|a| match a {
+                        &ig2_sim::story_mods::Action::Message(id) => Some(id),
+                        _ => None,
+                    })
+                    .filter(|&id| !index.iter().any(|k| k.id as i32 == id) || inst.resolve(&format!("dataraw/uzenetek/txt{id:04}.txt")).is_none())
+                    .map(|id| id.to_string())
+                    .collect();
+                if missing.is_empty() { Ok(stories.len()) } else { Err(format!("messages not in uzenetek.txt or without their txtNNNN.txt: {}", missing.join(", "))) }
+            });
+            match checked {
+                Ok(n) => {
+                    g.notes.push(format!("{from} holds {n} stories"));
+                    g.ok += 1;
+                }
+                Err(e) => g.failed.push((from, e)),
+            }
+        }
         report(&g, Instant::now());
         groups.push(g);
     }

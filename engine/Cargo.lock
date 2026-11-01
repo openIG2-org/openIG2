@@ -1877,6 +1877,7 @@ version = "0.1.0"
 dependencies = [
  "ig2-formats",
  "ig2-rules",
+ "ig2-sim",
  "lewton",
  "openh264",
 ]
@@ -1981,6 +1982,7 @@ dependencies = [
  "ig2-rules",
  "serde",
  "serde_json",
+ "toml_edit",
 ]
 
 [[package]]

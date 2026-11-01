@@ -138,22 +138,24 @@ pub struct StoryRules {
     pub buildings: Vec<crate::story::BuildingData>,
     /// `GameInfoList` (exe 0xE3E398, gameinfo.txt by `LoadGameInfo`): the info lines' ids and texts (bytes as read).
     pub game_info: Vec<(i32, Vec<u8>)>,
+    /// Ours (ADR 0061): the enabled mods' stories in the order they run (`story_mods::load`); empty without mods.
+    pub mods: std::sync::Arc<[crate::story_mods::ModStory]>,
 }
 
 /// `Story_Check`'s scripts in its order (`re/rules/campaign.md` §2): `st_Begin_include`, `st_Rnd_include`,
 /// `st_BRnd_include`, `st_Fable_include`, `st_Scen_include`, `st_Line_include`, `st_Elem_include`,
-/// `st_Multi_include`. A script acts on its own running stories only, so a scenario or multiplayer game runs the
+/// `st_Multi_include`, then the mods' stories (ours, ADR 0061). A script acts on its own running stories only, so a scenario or multiplayer game runs the
 /// same chain.
 pub type StoryChain = (
     crate::begin::BeginStories,
-    (crate::rnd::RndStories, (crate::brnd::BRndStories, (crate::fable::FableStories, (ScenarioStories, (crate::storyline::LineStories, (crate::elem::ElemStories, crate::multi::MultiStories)))))),
+    (crate::rnd::RndStories, (crate::brnd::BRndStories, (crate::fable::FableStories, (ScenarioStories, (crate::storyline::LineStories, (crate::elem::ElemStories, (crate::multi::MultiStories, crate::story_mods::ModScripts))))))),
 );
 
 pub fn story_chain() -> StoryChain {
     use crate::*;
     (
         begin::BeginStories,
-        (rnd::RndStories::default(), (brnd::BRndStories, (fable::FableStories, (ScenarioStories, (storyline::LineStories, (elem::ElemStories::default(), multi::MultiStories)))))),
+        (rnd::RndStories::default(), (brnd::BRndStories, (fable::FableStories, (ScenarioStories, (storyline::LineStories, (elem::ElemStories::default(), (multi::MultiStories, story_mods::ModScripts))))))),
     )
 }
 
@@ -205,6 +207,8 @@ impl StoryRules {
             diplomacy_specials: ig2_formats::diplomacy::parse_specials(&String::from_utf8_lossy(&specials)).iter().map(|s| s.id).collect(),
             design_templates,
             game_info: Self::game_info_lines(install),
+            // The mods' stories can fail to load; the caller sets them (`story_mods::load`).
+            mods: Vec::new().into(),
         }
     }
 
@@ -1876,6 +1880,7 @@ impl<'r> Game<'r> {
         st.values.clone_from(&rules.values);
         st.fleet_data.clone_from(&rules.fleets);
         st.building_data.clone_from(&rules.buildings);
+        st.mod_defs = rules.mods.clone();
         let events = {
             let mut w = GameStory::new(self);
             f(&mut st, &mut w);

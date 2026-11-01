@@ -757,6 +757,8 @@ pub struct SaveState {
     /// Ours (ADR 0033, the MP room's per-computer level): each computer empire's `Nehezseg`, 0 = the game's
     /// (`NEHEZSEG`). Not in the exe's save; our snapshot carries it.
     pub ai_difficulty: [i32; EMPIRES],
+    /// Ours (ADR 0061): the story mods' state. Not in the exe's save; our snapshot carries it.
+    pub mod_stories: crate::story_mods::ModStoryState,
 }
 
 /// One `GameInfo` entry (exe stride 0xC): `+0` the line's index in `GameInfoList` (gameinfo.txt), `+4` its text
@@ -850,6 +852,7 @@ impl SaveState {
             transfer_panels: BTreeMap::new(),
             game_info: Vec::new(),
             ai_difficulty: [0; EMPIRES],
+            mod_stories: Default::default(),
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -920,6 +923,7 @@ impl SaveState {
             transfer_panels: BTreeMap::new(),
             game_info,
             ai_difficulty: [0; EMPIRES],
+            mod_stories: Default::default(),
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -2395,10 +2399,12 @@ impl SaveState {
         st.last_collect_fleet = m.i32(va::STORY_LAST_COLLECT_FLEET);
         st.nearest3 = m.i32s(va::STORY_NEAREST3);
         st.brutal4 = m.i32s(va::STORY_BRUTAL4);
+        st.mod_state = self.mod_stories.clone();
         st
     }
 
     pub fn store_story(&mut self, st: &Story) {
+        self.mod_stories.clone_from(&st.mod_state);
         let q = &mut self.story;
         q.buckets = st.buckets.clone();
         q.history = st.history.clone();

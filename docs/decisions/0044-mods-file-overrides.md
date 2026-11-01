@@ -141,11 +141,11 @@ mod made for the English files breaks the Hungarian ones. So a mod may set singl
     actions as `StoryEvent`s, the engine's variables, counters and flags), story ids of its own outside the
     campaign's (1..=868, 2301, 2311), an interpreter in `ig2-sim` that runs it in `Story_Check`'s order after the
     built-in stories, deterministic and in the save, its files hashed into the fingerprint, and `ig2-check` validation
-    of every trigger and action. That is a feature of its own (the "Story mods" idea in `docs/ENHANCEMENTS.md`).
+    of every trigger and action. That is a feature of its own (the "Story mods" idea in `docs/ENHANCEMENTS.md`). ADR 0061 now provides the story description format.
 
 ## Consequences
 - A mod replaces whole files, changes rule-table fields by name (`rules.toml`) and text lines by key
-  (`texts.<lang>.toml`); the campaign's exe words and the story logic are not patchable.
+  (`texts.<lang>.toml`); the campaign's exe words and the campaign's own story logic are not patchable (mods add stories: ADR 0061).
 - Without mods nothing changes: no patch is read and every file is the install's bytes.
 - The engine still ships nothing: a mod is the player's own files; tests build tiny synthetic installs and mods.
 - Single player needs no agreement; replays and saves record nothing about mods yet.

@@ -30,6 +30,7 @@ pub mod spacewar;
 pub mod spy;
 pub mod stats;
 pub mod story;
+pub mod story_mods;
 pub mod storyline;
 pub mod time;
 pub mod trade;

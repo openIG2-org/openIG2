@@ -1331,6 +1331,10 @@ pub struct Story {
     pub nearest3: [i32; 3],
     /// `st_bGet4Brutal`'s planets (exe 0xF432D0): the four it last chose (a static, never cleared).
     pub brutal4: [i32; 4],
+    /// Ours (ADR 0061): the enabled mods' stories (`StoryRules::mods`, not saved) and their state (saved in our
+    /// snapshot, [`crate::save::SaveState::mod_stories`]).
+    pub mod_defs: std::sync::Arc<[crate::story_mods::ModStory]>,
+    pub mod_state: crate::story_mods::ModStoryState,
 }
 
 /// A story building record (`StoryBuildingData`, 16 bytes).
@@ -1417,6 +1421,8 @@ impl Default for Story {
             last_collect_fleet: 0,
             nearest3: [0; 3],
             brutal4: [0; 4],
+            mod_defs: Vec::new().into(),
+            mod_state: Default::default(),
         }
     }
 }
