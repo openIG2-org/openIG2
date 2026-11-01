@@ -4468,6 +4468,7 @@ impl App {
         }
         if let (Some(r), Some(m)) = (&mut self.research, &self.research_models) {
             r.tip.moved(self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor)));
+            r.set_auto(self.world.game.auto_research[crate::research::en(&self.world.game.state)]);
             if let Some(h) = &self.hud {
                 r.tooltip(&self.world.game.state, &m.mask, &self.research_tips, &h.texts, &m.centres, now as f64);
             }

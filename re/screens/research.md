@@ -350,6 +350,16 @@ ELF and exe agree in every constant and precision (exe: the helpers inlined or u
 ### 5.7 Open questions
 Who reads `resLenyomta` (0xDC5388, written by the ball's grab) [u].
 
+### 5.8 Auto research switches (ours, enhanced; ADR 0037)
+Not in the original. Three text toggles in the empty strip between the left list panel and the left lab dial
+(640x480 frame, x 4..137, y 192..232; nothing of the exe's is drawn or hit there): "Auto ships", "Auto buildings",
+"Auto tanks", each followed by ON or OFF, on a black fader box with a green edge (the event log's look). Colours:
+palette 6 under the pointer, 3 (the researching row's) when on, 0x27 (a seen tech's) when off. Shown and pressable
+only while the screen is open and not closing. A left press flips one bit and sends `ResearchCmd::Auto` with all
+three (re/rules/production-research.md §2.5), in single player and multiplayer alike; until the order comes back
+the toggles show what was sent. Each has a tooltip (hot-spots 0x40..=0x42, English text) through the screen's
+`kit::Tooltip`.
+
 ## 6. Orders
 `MULTIGET_Research`: re/rules/production-research.md §2.4 (runtime report traces/2026-10-17-research-orders.md).
 
@@ -364,7 +374,8 @@ row frame `kit::design_frame` (`ROW_EDGE` nudge for the device-row rule, `Design
 (`probes/research_lines.js`, `button_lines_match_the_exe`); the ball and models turn with the right-button drag as
 the exe's. Missing: the panels' `FadeKerettelKerekitDesign` frames (`GLOBALKELLDESIGN`), the screen-select menu
 entry; the info box glass's depth against the left wheel while closing differs; the model hit uses the orbit point,
-not `GetObjCenter`. Open deviation rows: 84 (glow/shine rand stream, keep), 359 (keep).
+not `GetObjCenter`. Ours: the auto-research toggles (§5.8, `AUTO`, `Research::auto_press`, `set_auto`, test
+`auto_toggles_send_the_switches`). Open deviation rows: 84 (glow/shine rand stream, keep), 359 (keep).
 Captures: `run_screendiff.py <install> quick-1.sav research [--script research.json]` (the client in the exe's
 language); `--anim-frame F [--anim-closing]` holds `resframe` in both (the tracer writes it before every exe
 `Research3DUpdate`, `run_screen.py --res-frame`; closing also sets `resBECSUKAS`, clears `resKINYITVA`); held, the

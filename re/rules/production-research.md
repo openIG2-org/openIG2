@@ -146,8 +146,8 @@ Not in the original: a human picks every project on the research screen (§2.4 0
   and becomes `ResearchAktFejlesztett[e]`, as a 0x2a start; `ResearchEvent::Started`. Nothing open: the slot
   stays idle. Unlike §2.2 a priority tie goes to the cheaper tech (the AI's goes to the first).
 - Port: `research::auto_pick`, `research::auto::switch`, `Game::research_order`; tests `research::tests`,
-  `ig2-net` `lockstep::auto_research_picks_in_the_tick_and_rides_the_save`. UI (the research screen's three
-  switches and the Options rows) not yet.
+  `ig2-net` `lockstep::auto_research_picks_in_the_tick_and_rides_the_save`. UI: the research screen's three
+  switches (re/screens/research.md §5.8).
 
 ## 3. Production (end of `FRISSIT_Starmap`, every tick)
 `MoneyHatar[e][1] = 0` for `e` in 1..=18. Then planets `p` in 1..=`HanyBolygo`, `o = owner(p)`, lines

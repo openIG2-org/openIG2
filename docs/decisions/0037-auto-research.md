@@ -2,7 +2,8 @@
 
 Date: 2026-11-01. Status: accepted. An enhanced option (off = the original). Spec: `re/rules/production-research.md`
 §2.5. Implemented by `ig2-sim::research::auto_pick`, `Game::auto_research` and `ResearchOrder::Auto`
-(`ig2-net::ResearchCmd::Auto`).
+(`ig2-net::ResearchCmd::Auto`); the switches by `ig2-client::research` (`AUTO`, `Research::auto_press`;
+re/screens/research.md §5.8).
 
 ## Context
 In the original a human picks every research project on the research screen, and an idle slot stays idle until
@@ -21,10 +22,14 @@ months.
    cheaper tech, then the lower number.
 4. A project the player starts by hand runs untouched; a stopped one is replaced on the next tick while a switch is
    on.
-5. **Saved** in our save format (snapshot version 10, part of the state hash); an original save loads with all off.
+5. **Switches on the research screen**: three text toggles ("Auto ships", "Auto buildings", "Auto tanks", ON/OFF)
+   in the empty strip under the left list panel, with English tooltips (the game has no strings for them); a press
+   sends the order with all three. No Options rows: the switches belong to the empire in the running game (saved
+   with it), not to the program's settings.
+6. **Saved** in our save format (snapshot version 10, part of the state hash); an original save loads with all off.
 
 ## Consequences
 - All switches off (the default) leaves the research tick as the original's: classic replays and saves stay
   byte-exact.
 - Older saves of ours (versions 4–9) load with the switches off.
-- The research screen's switches and the Options rows come with the client part (enhancement row 451).
+- Shipped as enhancement row 451 (`docs/ENHANCEMENTS.md`).

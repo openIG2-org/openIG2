@@ -66,6 +66,7 @@ The controls are the original's. The most used:
 | C, I, M, D | Colony, info, messages, diplomacy screens |
 | Colony: both buttons dragged | Turn and tilt the camera |
 | Colony: hold on the planet panel | The build menu |
+| Research: Auto ships / buildings / tanks | Ours: while on, an idle research slot starts the next tech of that kind by itself (off by default) |
 | Esc | Back |
 | V | Vsync on/off |
 | F12 / Shift+F12 | Quick save / quick load (single player; in multiplayer F12 saves on the host) |

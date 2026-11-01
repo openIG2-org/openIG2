@@ -46,6 +46,15 @@ const ZOOM_MAX: f32 = f32::from_bits(0x3f49_0e56);
 const ZOOM_MIN: f32 = 0.0;
 /// The model tooltip's hot-spot (`CheckIfTalalmanyokFolottVan`).
 const MODEL_TIP: u32 = 0x11;
+/// Ours (ADR 0037, re/screens/research.md §5.8): the auto-research toggles' box, their first tooltip hot-spot and
+/// each one's switch, label and tooltip.
+const AUTO_BOX: [f32; 4] = [4.0, 192.0, 133.0, 40.0];
+const AUTO_TIP: u32 = 0x40;
+const AUTO: [(u8, &str, &str); 3] = [
+    (ig2_sim::research::auto::SHIPS, "Auto ships", "Idle research picks ships, weapons, radars, shields, bombs"),
+    (ig2_sim::research::auto::BUILDINGS, "Auto buildings", "Idle research picks buildings and power plants"),
+    (ig2_sim::research::auto::TANKS, "Auto tanks", "Idle research picks tanks, turrets and mines"),
+];
 /// `InfoSorok[i]+0xb8` (`NEWGAME_Research`): where each info line's typing starts over.
 const INFO_START: [f32; 4] = [0.0, -20.0, -40.0, -60.0];
 /// The ball's centre (`MoveObj(FociMesh, 0, −35, −950)`).
@@ -293,6 +302,9 @@ pub struct Research {
     /// The tooltip (`UpdateFrame`) and the left button held.
     pub tip: crate::kit::Tooltip,
     pub held: bool,
+    /// Ours (ADR 0037): the human's auto-research switches as the game holds them, and the ones sent and not back yet.
+    auto: u8,
+    auto_sent: Option<u8>,
     /// `resf`: the faders' shine, drift and hover glow (`FaderDesignFrissito` in `FRISSIT_Research2`).
     faders: crate::kit::FaderDesign,
     /// The buttons down now (bit 0 left, bit 1 right: the window's events), at the last two `Mouse_Lekerdez` polls
@@ -391,6 +403,8 @@ impl Research {
             sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
             held: false,
+            auto: 0,
+            auto_sent: None,
             faders: crate::kit::FaderDesign::new(1),
             buttons: 0,
             poll: [0; 2],
@@ -623,6 +637,9 @@ impl Research {
             }
             return out;
         }
+        if let Some(a) = self.auto_press(at).filter(|_| left) {
+            return vec![a];
+        }
         let en = en(state);
         match self.spot(state, mask, at) {
             Some(1) => out = self.start_stop(state, true),
@@ -646,6 +663,33 @@ impl Research {
         }
         let _ = rules;
         out
+    }
+
+    /// The human's auto-research switches as the game now holds them (once a frame); a sent order that came back
+    /// stops overriding them.
+    pub fn set_auto(&mut self, switches: u8) {
+        self.auto = switches;
+        if self.auto_sent == Some(switches) {
+            self.auto_sent = None;
+        }
+    }
+
+    fn auto_shown(&self) -> u8 {
+        self.auto_sent.unwrap_or(self.auto)
+    }
+
+    /// The auto-research toggle under `at` (§5.8), while the screen is open.
+    fn auto_row(&self, at: [f32; 2]) -> Option<usize> {
+        let [x, y, w, h] = AUTO_BOX;
+        let inside = self.opened && !self.closing && (x..x + w).contains(&at[0]) && (y + 2.0..y + h - 2.0).contains(&at[1]);
+        inside.then(|| (((at[1] - y - 2.0) / 12.0) as usize).min(2))
+    }
+
+    /// A left press on an auto-research toggle: its switch flipped, all three sent.
+    fn auto_press(&mut self, at: [f32; 2]) -> Option<Act> {
+        let switches = self.auto_shown() ^ AUTO[self.auto_row(at)?].0;
+        self.auto_sent = Some(switches);
+        Some(Act::Send(Command::Research { order: ResearchCmd::Auto { switches } }))
     }
 
     /// `CheckIfTalalmanyokFolottVan`'s pick (exe 0x51d2d0): the first model under `at` plays `PlaySoundGlobal(2)` and
@@ -1144,6 +1188,9 @@ impl Research {
         if self.model_tip.is_some_and(|(_, c)| inside(c, self.tip.mouse)) && (under == 0 || under > MODEL_TIP) {
             under = MODEL_TIP;
         }
+        if let Some(k) = self.auto_row(self.tip.mouse) {
+            under = AUTO_TIP + k as u32;
+        }
         let len = self.tip_text(tips, texts, under).len();
         self.tip.update(now, under, len, self.held);
     }
@@ -1166,6 +1213,7 @@ impl Research {
     pub fn tip_text(&self, tips: &[Vec<u8>], texts: &crate::ui::UiTexts, id: u32) -> Vec<u8> {
         let t = match (id, self.model_tip) {
             (MODEL_TIP, Some((t, _))) => crate::hud::tech_name(texts, t),
+            (id, _) if (AUTO_TIP..AUTO_TIP + 3).contains(&id) => AUTO[(id - AUTO_TIP) as usize].2.as_bytes().to_vec(),
             _ => tips.get(id as usize).cloned().unwrap_or_default(),
         };
         t.split(|&b| b == 0).next().unwrap_or_default().to_vec()
@@ -1503,6 +1551,18 @@ impl Research {
         if let Some(tex) = t.arrow.filter(|_| self.last_button[0] != -1 && self.opened && !self.closing) {
             for a in self.lines.arrows([self.last_button[0] as f32, self.last_button[1] as f32]) {
                 draw_arrow(f, v, tex, &a);
+            }
+        }
+        // Ours (§5.8): the auto-research toggles.
+        if self.opened && !self.closing {
+            crate::kit::fader::fader(f, d.white, v, AUTO_BOX, [0.0, 0.0, 0.0], 20.0, [0.0, 60.0, 0.0], 30.0);
+            let hover = self.auto_row(self.tip.mouse);
+            for (k, (bit, label, _)) in AUTO.iter().enumerate() {
+                let on = self.auto_shown() & bit != 0;
+                let text = format!("{label}: {}", if on { "ON" } else { "OFF" });
+                let c = if hover == Some(k) { 6 } else if on { 3 } else { 0x27 };
+                let y = AUTO_BOX[1] + 4.0 + k as f32 * 12.0;
+                d.font.text(f, v, text.as_bytes(), AUTO_BOX[0] + 6.0, y, text.len(), 2, Align::Left, d.palette.get(c).copied().unwrap_or([1.0; 3]), None);
             }
         }
         // `ResearchGfx2D_2` writes only while the screen is open (and not closing).
@@ -2293,6 +2353,8 @@ mod tests {
             sounds: Vec::new(),
             tip: crate::kit::Tooltip::default(),
             held: false,
+            auto: 0,
+            auto_sent: None,
             faders: crate::kit::FaderDesign::new(1),
             buttons: 0,
             poll: [0; 2],
@@ -2341,6 +2403,27 @@ mod tests {
         assert_eq!(s.model_tip, None);
         s.zoom = 0.5;
         assert_eq!(s.models_under([100.0, 100.0], &models).next(), None);
+    }
+
+    /// Ours (ADR 0037): a left press on a toggle flips its switch and sends all three; a second press before the
+    /// order comes back flips from what was sent; the toggles answer only while open.
+    #[test]
+    fn auto_toggles_send_the_switches() {
+        use ig2_sim::research::auto::{BUILDINGS, TANKS};
+        let mut s = screen();
+        s.opened = true;
+        let send = |switches| Some(Act::Send(Command::Research { order: ResearchCmd::Auto { switches } }));
+        let tanks = [20.0, AUTO_BOX[1] + 30.0];
+        assert_eq!(s.auto_row(tanks), Some(2));
+        assert_eq!(s.auto_press(tanks), send(TANKS));
+        assert_eq!(s.auto_press([20.0, AUTO_BOX[1] + 18.0]), send(TANKS | BUILDINGS));
+        assert_eq!(s.auto_press([20.0, AUTO_BOX[1] + 60.0]), None);
+        s.set_auto(TANKS);
+        assert_eq!(s.auto_shown(), TANKS | BUILDINGS);
+        s.set_auto(TANKS | BUILDINGS);
+        assert_eq!(s.auto_sent, None);
+        s.closing = true;
+        assert_eq!(s.auto_row(tanks), None);
     }
 
     /// `Forgotabla` (exe 0x51e360) clicks for the middle wheel's categories; the off-wheel buttons' `TT_*` (exe

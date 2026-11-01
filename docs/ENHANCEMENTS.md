@@ -40,7 +40,7 @@ Grouped by area; sizes are rough guesses for one developer.
 | Content | More races, as a mod or an enhanced ruleset (rules, diplomacy lines, pictures) | more variety | months, plus art |
 | Platform | Play in the browser: open a URL, the main menu loads; the player picks their own install folder, the browser keeps the files (OPFS), the game data is never hosted. Work: a wasm32 build (wgpu WebGPU/WebGL2, winit, an async main loop), a virtual file layer for the install and the saves, WebAudio via cpal, videos through WebCodecs instead of openh264, the web clipboard instead of arboard; multiplayer over WebRTC or WebTransport through the rendezvous/relay service (ADR 0018). First step: `cargo check --target wasm32-unknown-unknown -p ig2-formats -p ig2-sim` | no install step, plays anywhere | main menu 1-2 weeks, single player 2-3 more, multiplayer 2-4 more |
 | Platform | Linux and macOS builds (and the Steam Deck) | more players | 1-2 weeks |
-| Comfort | Auto research: a button or option that picks the next research by itself, with three separate switches (spaceships, buildings, tanks/ground units); it picks the most useful available tech (what unlocks the next important item or fills a gap, reusing the computer empires' research choice in `ig2-sim/src/ai/` where it fits); a lockstep order in multiplayer; off = the original (sim done, UI next: ADR 0037, row 451) | less micromanagement in long games | 1 week |
+| Comfort | Auto research: a button or option that picks the next research by itself, with three separate switches (spaceships, buildings, tanks/ground units); it picks the most useful available tech (what unlocks the next important item or fills a gap, reusing the computer empires' research choice in `ig2-sim/src/ai/` where it fits); a lockstep order in multiplayer; off = the original (shipped: ADR 0037, row 451) | less micromanagement in long games | 1 week |
 | Comfort | Replays: the lockstep order stream saved beside the save, played back at any speed | review a battle or a whole multiplayer game | 1-2 weeks; core done (ADR 0038, row 452), viewer next: play/pause/speed in the client and a list in the main menu |
 
 ## Proposed (maintainers decide)
@@ -51,12 +51,12 @@ Grouped by area; sizes are rough guesses for one developer.
 | 146 | game end, high scores | proposal: a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
 | 169 | starmap, wheel | proposal: wheel zoom (and right-drag pan) on the starmap; classic has neither | minor | starmap.md |
 | 322 | title video | proposal: music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
-| 451 | research, auto research | accepted (ADR 0037); three switches per empire (ships, buildings, tanks) start the next research by the computer empires' race priority when the slot is idle, inside the sim tick (lockstep order, saved in our saves); sim done, the research screen and Options switches next; all off = the original | yes (once the UI lands) | production-research.md §2.5 |
 
 ## Shipped
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 451 | research, auto research | three per-empire switches (ships, buildings, tanks) on the research screen, left of the ball under the list panel, with tooltips; an idle research slot starts the next tech by the computer empires' race priority, inside the sim tick (a lockstep order in multiplayer, saved in our saves); the original has no such switches; all off (the default) = the original (ADR 0037) | yes | production-research.md §2.5, research.md §5.8 |
 | 133 | colony camera | ours zooms with the mouse wheel; the original has no wheel zoom (classic: none) | minor | colony.md §11.9 |
 | 159 | all screens, V key | a V hotkey for vsync (the original has none); also a "Vertical sync" row in Options (row 402) | minor | input.md |
 | 197 | videos, skip | ours skips a video in any window mode; the exe only in fullscreen (`anyEvent` 0x7329d0) | minor | video.md §4 |
