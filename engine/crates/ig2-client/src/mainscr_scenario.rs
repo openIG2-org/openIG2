@@ -59,7 +59,7 @@ pub fn load_entries(install: &Install, exe: &ig2_rules::PeImage, texts: &UiTexts
     let defaults = install.read("dataraw/text/fabscr.txt").map(|b| misc_text::parse_fabscr(&ig2_formats::text::decode(&b, install.lang()))).unwrap_or_default();
     let mut skirmish = texts.get(0x13, 5, 1);
     if skirmish.is_empty() {
-        if let Ok(en) = Install::open(install.root(), ig2_formats::text::Lang::En) {
+        if let Ok(en) = install.with_lang(ig2_formats::text::Lang::En) {
             skirmish = UiTexts::load(&en).get(0x13, 5, 1);
         }
     }

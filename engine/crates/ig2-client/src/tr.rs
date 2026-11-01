@@ -153,6 +153,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Starting story set to {}", "Kezdő történet: {}"),
     ("Another game version", "Más játékverzió"),
     ("Another game install (rules differ)", "Más telepítés (eltérő szabályok)"),
+    ("Other mods enabled (mods differ)", "Más modok bekapcsolva (eltérő modok)"),
     ("Wrong join code", "Hibás csatlakozási kód"),
     ("The game is full", "A játék megtelt"),
     ("The game has started", "A játék már elindult"),

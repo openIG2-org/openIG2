@@ -20,8 +20,56 @@ pub const INSTALL_ENV: &str = "IG2_INSTALL_DIR";
 pub struct Install {
     root: PathBuf,
     lang: Lang,
-    /// Lowercase relative path with `/` separators → absolute path.
+    /// Lowercase relative path with `/` separators → absolute path (a mod's file over the install's).
     index: HashMap<String, PathBuf>,
+    /// The enabled mods, highest priority first (ADR 0044).
+    mods: Vec<Mod>,
+    /// Paths a mod provides → (index in `mods`, whether the install has the path too).
+    modded: HashMap<String, (usize, bool)>,
+}
+
+/// An enabled mod: a folder mirroring the install's layout (ADR 0044).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mod {
+    pub name: String,
+    pub dir: PathBuf,
+}
+
+impl Mod {
+    /// The mods folder beside the settings files (`mods/` next to [`Options::path`](crate::options::Options::path)).
+    pub fn folder() -> Option<PathBuf> {
+        crate::options::Options::path().and_then(|p| p.parent().map(|d| d.join("mods")))
+    }
+
+    /// `mods/enabled.txt`'s names in order: one a line, `#` comments and blank lines skipped.
+    pub fn parse_enabled(text: &str) -> Vec<String> {
+        text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()).map(str::to_owned).collect()
+    }
+
+    /// The mods to load (ADR 0044 §2): `given` (`--mod`), else `mods/enabled.txt`'s names, found in [`Mod::folder`];
+    /// the names without a folder are the second list.
+    pub fn enabled(given: Option<Vec<String>>) -> (Vec<Mod>, Vec<String>) {
+        let Some(folder) = Self::folder() else { return (Vec::new(), given.unwrap_or_default()) };
+        let names = given.unwrap_or_else(|| std::fs::read_to_string(folder.join("enabled.txt")).map(|t| Self::parse_enabled(&t)).unwrap_or_default());
+        Self::find(&folder, &names)
+    }
+
+    /// The named mods in `folder`, in the given order; the names without a folder are the second list.
+    pub fn find(folder: &Path, names: &[String]) -> (Vec<Mod>, Vec<String>) {
+        let (found, missing): (Vec<&String>, Vec<&String>) = names.iter().partition(|n| folder.join(n).is_dir());
+        (found.into_iter().map(|n| Mod { name: n.clone(), dir: folder.join(n) }).collect(), missing.into_iter().cloned().collect())
+    }
+}
+
+/// One file an enabled mod provides ([`Install::overrides`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Override<'a> {
+    /// The game path (lowercase, `/`-separated).
+    pub path: &'a str,
+    pub mod_name: &'a str,
+    pub file: &'a Path,
+    /// The install has this path too (otherwise the mod adds it).
+    pub replaces: bool,
 }
 
 fn normalize(path: &str) -> String {
@@ -30,28 +78,50 @@ fn normalize(path: &str) -> String {
 
 impl Install {
     pub fn open(root: impl Into<PathBuf>, lang: Lang) -> Result<Self> {
+        Self::open_with_mods(root, lang, Vec::new())
+    }
+
+    /// The install with `mods` (highest priority first) over it (ADR 0044): the first mod that has a path wins.
+    pub fn open_with_mods(root: impl Into<PathBuf>, lang: Lang, mods: Vec<Mod>) -> Result<Self> {
         let root = root.into();
-        let mut index = HashMap::new();
-        let mut stack = vec![root.clone()];
-        while let Some(dir) = stack.pop() {
-            let entries = std::fs::read_dir(&dir)
-                .map_err(|source| Error::Io { path: dir.display().to_string(), source })?;
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    stack.push(p);
-                } else if let Ok(rel) = p.strip_prefix(&root) {
-                    index.insert(normalize(&rel.to_string_lossy()), p);
-                }
-            }
-        }
+        let mut index = scan(&root)?;
         if !index.contains_key("dataraw/text/scenario.txt") {
             return Err(Error::NotFound(format!(
                 "{} doesn't look like an IG2 install (no dataraw/text/scenario.txt)",
                 root.display()
             )));
         }
-        Ok(Self { root, lang, index })
+        let mut modded = HashMap::new();
+        for (i, m) in mods.iter().enumerate().rev() {
+            // The rule tables are read from the exe (ADR 0004); a mod never replaces it (part 2: rule tables).
+            for (k, p) in scan(&m.dir)?.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
+                let replaces = modded.get(&k).map_or_else(|| index.contains_key(&k), |&(_, r)| r);
+                modded.insert(k.clone(), (i, replaces));
+                index.insert(k, p);
+            }
+        }
+        Ok(Self { root, lang, index, mods, modded })
+    }
+
+    /// The same install and mods in another texts' language.
+    pub fn with_lang(&self, lang: Lang) -> Result<Self> {
+        Self::open_with_mods(&self.root, lang, self.mods.clone())
+    }
+
+    /// The enabled mods, highest priority first.
+    pub fn mods(&self) -> &[Mod] {
+        &self.mods
+    }
+
+    /// Every file a mod provides, in path order.
+    pub fn overrides(&self) -> Vec<Override<'_>> {
+        let mut v: Vec<Override> = self
+            .modded
+            .iter()
+            .map(|(k, &(i, replaces))| Override { path: k, mod_name: &self.mods[i].name, file: &self.index[k], replaces })
+            .collect();
+        v.sort_unstable_by_key(|o| o.path);
+        v
     }
 
     /// Open the install named by `IG2_INSTALL_DIR`, if set.
@@ -68,13 +138,13 @@ impl Install {
     }
 
     /// Resolve a game path to a file on disk, preferring the localized copy.
+    /// A mod's copy of either path comes before the install's (ADR 0044 §3).
     pub fn resolve(&self, path: &str) -> Option<&Path> {
         let p = normalize(path);
-        self.lang
-            .dir()
-            .and_then(|d| self.index.get(&format!("localization/{d}/{p}")))
-            .or_else(|| self.index.get(&p))
-            .map(PathBuf::as_path)
+        let keys = [self.lang.dir().map(|d| format!("localization/{d}/{p}")), Some(p)];
+        let keys = keys.iter().flatten();
+        let key = keys.clone().find(|k| self.modded.contains_key(*k)).or_else(|| keys.clone().find(|k| self.index.contains_key(*k)))?;
+        self.index.get(key).map(PathBuf::as_path)
     }
 
     /// Raw on-disk bytes (still wrapped in the container).
@@ -149,6 +219,24 @@ impl Install {
     }
 }
 
+/// Every file under `root`: lowercase `/`-separated relative path → absolute path.
+fn scan(root: &Path) -> Result<HashMap<String, PathBuf>> {
+    let mut index = HashMap::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir).map_err(|source| Error::Io { path: dir.display().to_string(), source })?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if let Ok(rel) = p.strip_prefix(root) {
+                index.insert(normalize(&rel.to_string_lossy()), p);
+            }
+        }
+    }
+    Ok(index)
+}
+
 /// `foo.bmp`, then `foo.bmt`, then `foo.bmf` (`D3DTexture::Load`), with `.` → `_`, lowercased.
 fn texture_candidates(name: &str) -> Vec<String> {
     let name = name.to_ascii_lowercase();
@@ -157,4 +245,80 @@ fn texture_candidates(name: &str) -> Vec<String> {
         out.extend(['t', 'f'].map(|c| format!("{}{c}", &name[..i]).replace('.', "_")));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tiny synthetic install and two mods under the temp folder (no game data).
+    fn tree(tag: &str) -> PathBuf {
+        let t = std::env::temp_dir().join(format!("ig2-vfs-mods-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        for (rel, body) in [
+            ("install/dataraw/text/scenario.txt", "base"),
+            ("install/dataraw/textures/colony/a_bmp.pvr", "base a"),
+            ("install/dataraw/textures/colony/b_bmp.pvr", "base b"),
+            ("install/localization/hu/dataraw/textures/colony/a_bmp.pvr", "base hu a"),
+            ("install/ig2.exe", "exe"),
+            ("mods/first/DataRaw/Textures/Colony/A_BMP.pvr", "first a"),
+            ("mods/first/ig2.exe", "modded exe"),
+            ("mods/second/dataraw/textures/colony/a_bmp.pvr", "second a"),
+            ("mods/second/dataraw/textures/colony/b_bmp.pvr", "second b"),
+            ("mods/second/dataraw/textures/colony/new_bmp.pvr", "second new"),
+        ] {
+            let p = t.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        t
+    }
+
+    fn text(i: &Install, path: &str) -> String {
+        String::from_utf8(i.read(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn mods_win_in_list_order() {
+        let t = tree("order");
+        let names = Mod::parse_enabled("# load order\nfirst\n\n  second  # comment\nmissing\n");
+        assert_eq!(names, ["first", "second", "missing"]);
+        let (mods, missing) = Mod::find(&t.join("mods"), &names);
+        assert_eq!(missing, ["missing"]);
+        let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();
+        assert_eq!(text(&i, "dataraw/textures/colony/a_bmp.pvr"), "first a");
+        assert_eq!(text(&i, r"DATARAW\textures\colony\b_bmp.pvr"), "second b");
+        assert_eq!(text(&i, "dataraw/textures/colony/new_bmp.pvr"), "second new");
+        assert_eq!(text(&i, "dataraw/text/scenario.txt"), "base");
+        assert_eq!(i.resolve_texture("textures/colony/", "new.bmp").as_deref(), Some("dataraw/textures/colony/new_bmp.pvr"));
+        // The exe stays the install's (rule tables are part 2).
+        assert_eq!(text(&i, "ig2.exe"), "exe");
+        let o: Vec<(&str, &str, bool)> = i.overrides().iter().map(|o| (o.path, o.mod_name, o.replaces)).collect();
+        assert_eq!(
+            o,
+            [
+                ("dataraw/textures/colony/a_bmp.pvr", "first", true),
+                ("dataraw/textures/colony/b_bmp.pvr", "second", true),
+                ("dataraw/textures/colony/new_bmp.pvr", "second", false),
+            ]
+        );
+        // The other order: the second mod's copy wins.
+        let (mods, _) = Mod::find(&t.join("mods"), &["second".into(), "first".into()]);
+        let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();
+        assert_eq!(text(&i, "dataraw/textures/colony/a_bmp.pvr"), "second a");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn a_mod_beats_the_installs_localized_copy() {
+        let t = tree("lang");
+        let plain = Install::open(t.join("install"), Lang::Hu).unwrap();
+        assert_eq!(text(&plain, "dataraw/textures/colony/a_bmp.pvr"), "base hu a");
+        assert!(plain.overrides().is_empty());
+        let (mods, _) = Mod::find(&t.join("mods"), &["second".into()]);
+        let i = Install::open_with_mods(t.join("install"), Lang::Hu, mods).unwrap();
+        assert_eq!(text(&i, "dataraw/textures/colony/a_bmp.pvr"), "second a");
+        assert_eq!(text(&i.with_lang(Lang::En).unwrap(), "dataraw/textures/colony/a_bmp.pvr"), "second a");
+        let _ = std::fs::remove_dir_all(&t);
+    }
 }

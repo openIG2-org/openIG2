@@ -414,7 +414,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
-    let audio_install = ig2_formats::Install::open(l.install.root(), l.install.lang()).map_err(|e| e.to_string())?;
+    let audio_install = l.install.with_lang(l.install.lang()).map_err(|e| e.to_string())?;
     let mut audio = crate::audio::Audio::new(audio_install, sounds, true);
     audio.set_speech(&ig2_rules::speech::Speech::from_exe(&exe).unwrap_or_default());
     if !audio.has_device() {
@@ -495,7 +495,7 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
-    let audio_install = ig2_formats::Install::open(l.install.root(), l.install.lang()).map_err(|e| e.to_string())?;
+    let audio_install = l.install.with_lang(l.install.lang()).map_err(|e| e.to_string())?;
     let mut audio = crate::audio::Audio::new(audio_install, sounds, false);
     audio.set_speech(&ig2_rules::speech::Speech::from_exe(&exe).unwrap_or_default());
     let mut renderer = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
@@ -2231,9 +2231,11 @@ impl App {
             // (ADR 0014 §4; "inet" is the same screen without matchmaking).
             Act::MultiServer | Act::MultiMatchmaking => {
                 let rules = self.install.read_raw("ig2.exe").map(|exe| ig2_net::session::rules_fingerprint(&exe)).unwrap_or_default();
+                let mods = crate::mods_fingerprint(&self.install);
+                let rules = ig2_net::session::modded_fingerprint(rules, mods);
                 let Some(f) = &mut self.front else { return };
                 let name = String::from_utf8_lossy(&f.s.player).into_owned();
-                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules));
+                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods));
             }
             Act::Tutorial(_) => {}
         }

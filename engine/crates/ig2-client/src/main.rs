@@ -37,7 +37,8 @@
 //!
 //! The install comes from `IG2_INSTALL_DIR`, else the one found (`install_root`; the window says so when there is none,
 //! `setup`); the language from `--lang en|hu|de|fr|es|it`, else `IG2_LANG`, else the Options screen's Language row
-//! (ADR 0031), else the one the GOG ig2.exe would pick on this machine (`ig2_formats::locale`, re/formats/locale.md). The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
+//! (ADR 0031), else the one the GOG ig2.exe would pick on this machine (`ig2_formats::locale`, re/formats/locale.md). Mods
+//! (ADR 0044): `--mod NAME` (repeatable), else `mods/enabled.txt` beside the settings, override the install's files. The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
 //! repository's `_local/saves`). Saves, installs and rendered PNGs hold game data: keep them out of the repo.
 
 mod assets;
@@ -260,6 +261,8 @@ pub struct Options {
     pub mouse: Option<[f32; 2]>,
     /// `--lang CODE`: the texts' language (default: the exe's own choice).
     pub lang: Option<Lang>,
+    /// `--mod` (repeatable): the mods for this run, over `mods/enabled.txt` (ADR 0044).
+    pub mods: Option<Vec<String>>,
 }
 
 /// The release's version, in the window's title and `--version`: `OPENIG2_VERSION` at build time (the release
@@ -348,6 +351,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         top_mouse: None,
         mouse: None,
         lang: None,
+        mods: None,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -497,6 +501,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     o.rop_menu = p;
                 }
             }
+            "--mod" => o.mods.get_or_insert_with(Vec::new).push(val()?),
             "--lang" => {
                 let v = val()?;
                 o.lang = Some(Lang::from_code(&v).ok_or(format!("--lang {v}: en, hu, de, fr, es or it"))?);
@@ -588,9 +593,28 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
         let places: Vec<String> = tried.iter().map(|(c, v)| format!("{} ({}): {}", c.path.display(), c.source.label(), v.describe())).collect();
         format!("no Imperium Galactica II install found; set IG2_INSTALL_DIR to its folder (looked in: {})", places.join("; "))
     })?;
-    let install = Install::open(&root, language(o, &root)).map_err(|e| e.to_string())?;
+    let install = Install::open_with_mods(&root, language(o, &root), enabled_mods(o)).map_err(|e| e.to_string())?;
+    for m in install.mods() {
+        eprintln!("ig2-client: mod {} ({} files)", m.name, install.overrides().iter().filter(|f| f.mod_name == m.name).count());
+    }
     tr::set_game(install.lang());
     Ok(install)
+}
+
+/// The mods to load (ADR 0044 §2): `--mod` names, else `mods/enabled.txt`'s, found in the mods folder; a missing one
+/// is reported and skipped.
+fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
+    let (mods, missing) = ig2_formats::vfs::Mod::enabled(o.mods.clone());
+    for n in missing {
+        eprintln!("ig2-client: mod {n}: no such folder in the mods folder");
+    }
+    mods
+}
+
+/// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`); `None` without mods.
+pub fn mods_fingerprint(install: &Install) -> Option<[u8; 32]> {
+    let files: Vec<(&str, Vec<u8>)> = install.overrides().iter().map(|f| (f.path, std::fs::read(f.file).unwrap_or_default())).collect();
+    ig2_net::session::mods_fingerprint(files.iter().map(|(p, b)| (*p, b.as_slice())))
 }
 
 /// The texts' language: [`forced_language`], else the settings file's Language row (ADR 0031), else what the GOG exe

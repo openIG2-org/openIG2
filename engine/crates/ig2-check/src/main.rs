@@ -1,8 +1,10 @@
 //! `ig2-check`: loads every file of the user's Imperium Galactica II install through the engine's loaders and
 //! reports what fails (like openOMSI's `omsi-check`). Ships and writes no game data.
 //!
-//! `ig2-check [INSTALL_DIR] [--quick]`: the install from the argument, else found as the client finds it
-//! (`ig2_rules::install`). `--quick` skips decoding the music, sounds and videos (their containers are still read).
+//! `ig2-check [INSTALL_DIR] [--quick] [--mod NAME]...`: the install from the argument, else found as the client finds
+//! it (`ig2_rules::install`). `--quick` skips decoding the music, sounds and videos (their containers are still read).
+//! The enabled mods (`--mod`, else `mods/enabled.txt`, ADR 0044) are loaded over the install, so their files are
+//! checked too, and listed with the install file each one replaces or the file it adds.
 //! Exit code 0 when everything loads, 1 when something fails, 2 when there is no install.
 
 use std::io::Read;
@@ -163,7 +165,7 @@ fn texts(inst: &Install, g: &mut Group) {
         if lang != Lang::En && !inst.root().join("localization").join(dir).is_dir() {
             continue;
         }
-        let Ok(li) = Install::open(inst.root(), lang) else { continue };
+        let Ok(li) = inst.with_lang(lang) else { continue };
         g.check(&format!("string tables ({dir})"), || {
             let mut ui = UiStrings::default();
             for n in (1..=19).filter(|&n| n != 12) {
@@ -286,11 +288,14 @@ fn version() -> String {
 fn main() {
     let mut root = None;
     let mut quick = false;
-    for a in std::env::args().skip(1) {
+    let mut given: Option<Vec<String>> = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
         match a.as_str() {
             "--quick" => quick = true,
+            "--mod" => given.get_or_insert_with(Vec::new).extend(args.next()),
             "--help" | "-h" => {
-                println!("ig2-check [INSTALL_DIR] [--quick]: loads every file of your Imperium Galactica II install");
+                println!("ig2-check [INSTALL_DIR] [--quick] [--mod NAME]...: loads every file of your Imperium Galactica II install and mods");
                 return;
             }
             _ => root = Some(PathBuf::from(a)),
@@ -320,7 +325,8 @@ fn main() {
         std::process::exit(2);
     }
     let lang = ig2_formats::locale::exe_language(&root).0;
-    let inst = match Install::open(&root, lang) {
+    let (mods, missing) = ig2_formats::vfs::Mod::enabled(given);
+    let inst = match Install::open_with_mods(&root, lang, mods) {
         Ok(i) => i,
         Err(e) => {
             eprintln!("ig2-check: {e}");
@@ -337,6 +343,20 @@ fn main() {
     });
     report(&install, Instant::now());
     groups.push(install);
+    if !inst.mods().is_empty() || !missing.is_empty() {
+        let mut g = Group::new("mods");
+        for n in missing {
+            g.check(&format!("mod {n}"), || Err("no such folder in the mods folder".into()));
+        }
+        for m in inst.mods() {
+            let files: Vec<_> = inst.overrides().into_iter().filter(|o| o.mod_name == m.name).collect();
+            g.notes.push(format!("mod {} ({}): {} files", m.name, m.dir.display(), files.len()));
+            g.notes.extend(files.iter().map(|o| format!("  {} {}", if o.replaces { "replaces" } else { "adds    " }, o.path)));
+            g.ok += 1;
+        }
+        report(&g, Instant::now());
+        groups.push(g);
+    }
     let steps: [(&'static str, &Step); 9] = [
         ("exe tables", &exe_tables),
         ("containers", &containers),

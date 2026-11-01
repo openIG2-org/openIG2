@@ -116,11 +116,11 @@ fn admission_refusals() {
     // Wrong version and wrong rules (raw hellos).
     let (mut raw, b) = loopback();
     h.admit(Box::new(b));
-    raw.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION + 1, rules: RULES, name: "x".into(), code: None }));
+    raw.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION + 1, rules: RULES, mods: [0; 32], name: "x".into(), code: None }));
     let mut c = join(&mut h, "Eve", None, None);
     let (mut raw2, b2) = loopback();
     h.admit(Box::new(b2));
-    raw2.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION, rules: [0; 32], name: "y".into(), code: None }));
+    raw2.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION, rules: [0; 32], mods: [0; 32], name: "y".into(), code: None }));
     let ev = pump(&mut h, &mut [&mut c], |h, _| h.state().members.len() == 2);
     assert!(ev.contains(&LobbyEvent::Refused(Refusal::Version)) && ev.contains(&LobbyEvent::Refused(Refusal::Rules)));
     assert_eq!(recv(&mut raw), Msg::Lobby(LobbyMsg::Refused(Refusal::Version)));
@@ -356,4 +356,39 @@ fn the_slowest_link_sets_the_input_delay() {
         let started = h.start(vec![9], ig2_net::DEFAULT_DELAY).ok().unwrap();
         assert_eq!(started.own.delay, delay, "round trip {rtt:?}");
     }
+}
+
+/// ADR 0044 §4: the mods fingerprint ignores folder names and file order, changes with any byte, and a room with
+/// mods refuses a joiner without them (or with others) as `Refusal::Mods`, while the same mods are let in.
+#[test]
+fn mods_mismatch_refused() {
+    use ig2_net::session::{mods_fingerprint, modded_fingerprint};
+    let a: &[(&str, &[u8])] = &[("dataraw/textures/colony/a_bmp.pvr", b"red"), ("dataraw/text/x.txt", b"hi")];
+    let b: &[(&str, &[u8])] = &[("dataraw/text/x.txt", b"hi"), ("dataraw/textures/colony/a_bmp.pvr", b"red")];
+    let mods = mods_fingerprint(a.iter().copied()).unwrap();
+    assert_eq!(Some(mods), mods_fingerprint(b.iter().copied()));
+    let other = mods_fingerprint([("dataraw/text/x.txt", &b"ho"[..])]).unwrap();
+    assert_ne!(mods, other);
+    // A path and its bytes can't trade places.
+    assert_ne!(mods_fingerprint([("ab", &b"c"[..])]), mods_fingerprint([("a", &b"bc"[..])]));
+    assert_eq!(mods_fingerprint(std::iter::empty()), None);
+    assert_eq!(modded_fingerprint(RULES, None), RULES);
+    let room = modded_fingerprint(RULES, Some(mods));
+    assert_ne!(room, RULES);
+
+    let mut h = LobbyHost::new(settings(false, None), 0xC0DE, room, &SLOTS, "Host").with_mods(mods);
+    let mut joiner = |rules, m| {
+        let (a, b) = loopback();
+        h.admit(Box::new(b));
+        LobbyClient::join_with_mods(Box::new(a), "Guest", rules, m, None, None)
+    };
+    let mut plain = joiner(RULES, [0; 32]);
+    let mut wrong = joiner(modded_fingerprint(RULES, Some(other)), other);
+    let mut same = joiner(room, mods);
+    let mut other_exe = joiner(modded_fingerprint([1; 32], Some(mods)), mods);
+    pump(&mut h, &mut [&mut plain, &mut wrong, &mut same, &mut other_exe], |_, c| c.iter().all(|c| c.status != Status::Joining));
+    assert_eq!(plain.status, Status::Refused(Refusal::Mods));
+    assert_eq!(wrong.status, Status::Refused(Refusal::Mods));
+    assert_eq!(same.status, Status::InLobby);
+    assert_eq!(other_exe.status, Status::Refused(Refusal::Rules));
 }

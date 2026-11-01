@@ -207,6 +207,31 @@ pub fn rules_fingerprint(exe: &[u8]) -> [u8; 32] {
     Sha256::digest(exe).into()
 }
 
+/// The mods fingerprint (ADR 0044 §4): SHA-256 over every active mod file in path order (the path, a 0 byte, the
+/// length as u64 little-endian, the bytes); `None` without one.
+pub fn mods_fingerprint<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Option<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    let mut files: Vec<_> = files.into_iter().collect();
+    if files.is_empty() {
+        return None;
+    }
+    files.sort_unstable_by_key(|f| f.0);
+    let mut h = Sha256::new();
+    for (path, bytes) in files {
+        h.update(path.as_bytes());
+        h.update([0]);
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(bytes);
+    }
+    Some(h.finalize().into())
+}
+
+/// The room's fingerprint: [`rules_fingerprint`] alone without mods, else SHA-256 of it and the mods fingerprint.
+pub fn modded_fingerprint(rules: [u8; 32], mods: Option<[u8; 32]>) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    mods.map_or(rules, |m| Sha256::new().chain_update(rules).chain_update(m).finalize().into())
+}
+
 /// The rules fingerprint as a save header stores it (its first 8 bytes).
 pub fn rules_id(fingerprint: [u8; 32]) -> u64 {
     u64::from_le_bytes(fingerprint[..8].try_into().unwrap())

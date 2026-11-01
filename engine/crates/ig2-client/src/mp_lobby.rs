@@ -513,6 +513,8 @@ pub struct MpScreen {
     pub inet: bool,
     pub name: String,
     rules: [u8; 32],
+    /// The enabled mods' fingerprint (zero without mods), to name a mods mismatch (ADR 0044 §4).
+    mods: [u8; 32],
     /// The fade 0..100 (+4 a 10 ms tick).
     pub open: f32,
     pub list: Vec<Found>,
@@ -614,6 +616,7 @@ fn refusal_text(r: Refusal) -> &'static [u8] {
     match r {
         Refusal::Version => b"Another game version",
         Refusal::Rules => b"Another game install (rules differ)",
+        Refusal::Mods => b"Other mods enabled (mods differ)",
         Refusal::Code => b"Wrong join code",
         Refusal::Full => b"The game is full",
         Refusal::Started => b"The game has started",
@@ -627,12 +630,19 @@ fn refusal_text(r: Refusal) -> &'static [u8] {
 }
 
 impl MpScreen {
+    /// The enabled mods' fingerprint (`session::mods_fingerprint`): rooms and hellos carry it (ADR 0044 §4).
+    pub fn with_mods(mut self, mods: Option<[u8; 32]>) -> Self {
+        self.mods = mods.unwrap_or_default();
+        self
+    }
+
     /// The connection page (`name` = `MultiplayerNev`, `rules` = the rules fingerprint joiners must match).
     pub fn open(inet: bool, name: &str, rules: [u8; 32]) -> Self {
         Self {
             inet,
             name: name.to_string(),
             rules,
+            mods: [0; 32],
             open: 0.0,
             list: Vec::new(),
             selected: None,
@@ -720,7 +730,7 @@ impl MpScreen {
         match net.listen() {
             Ok(mut listener) => {
                 let settings = Settings { name: format!("{}'s galaxy", self.name), scenario: "galaxy".into(), private: false, password: self.password() };
-                let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name);
+                let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name).with_mods(self.mods);
                 listener.register(lobby.session());
                 listener.map_port(true);
                 self.chat.clear();
@@ -744,7 +754,7 @@ impl MpScreen {
                 let s = &save.session;
                 let settings = Settings { name: s.name.clone(), scenario: s.scenario.clone(), private: false, password: self.password() };
                 let slots: Vec<(u8, u8)> = s.humans.iter().map(|h| (h.empire, 0)).collect();
-                let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name);
+                let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name).with_mods(self.mods);
                 let mine = s.humans.iter().find(|h| h.name == lobby.state().members[0].name).or(s.humans.first()).map(|h| h.empire);
                 lobby.pick(0, mine);
                 listener.register(lobby.session());
@@ -825,7 +835,7 @@ impl MpScreen {
     pub fn join_link(&mut self, link: Box<dyn Transport>, password: Option<String>, code: Option<u64>) {
         self.chat.clear();
         self.joined_password = password.clone();
-        self.role = Some(Role::Joiner(Box::new(LobbyClient::join(link, &self.name, self.rules, password, code))));
+        self.role = Some(Role::Joiner(Box::new(LobbyClient::join_with_mods(link, &self.name, self.rules, self.mods, password, code))));
         self.line.clear();
         self.lost = false;
     }

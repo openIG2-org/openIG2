@@ -126,7 +126,29 @@ The window opens at 1600x900 until a size is saved.
 `ig2-check [INSTALL_DIR] [--quick]` (in the release zip, or `cargo run --release -p ig2-check`) loads every asset,
 table and script of your install the way the game does and lists what fails; it finds the install like the client
 when no folder is given. `--quick` skips the sound and video decoding. Exit code 0 = all ok, 1 = failures, 2 = no
-install. A full run takes about a minute.
+install. A full run takes about a minute. `--mod NAME` (repeatable) checks those mods instead of `mods/enabled.txt`'s;
+the "mods" line lists every file each enabled mod replaces or adds, and its files are loaded with the install's.
+
+## Mods
+A mod replaces the install's files with your own: a sharper texture, another text, another sound (ADR 0044). The
+remake still ships no game files; a mod is files you make or download.
+
+1. Find the mods folder: `mods` beside the settings files (`%LOCALAPPDATA%\GyroscopeGames\ig2\mods`, or
+   `IG2_OPTIONS_DIR\mods`). Make it if it is missing.
+2. Make a folder for your mod in it, for example `mods\sharp-menu`.
+3. Put each file at the same path it has in the install:
+   `mods\sharp-menu\dataraw\textures\main\eng\unselected\0_credits_bmp.pvr` replaces the install's
+   `dataraw\textures\main\eng\unselected\0_credits_bmp.pvr`. Names are not case-sensitive. A mod's file also beats
+   the install's translated copy under `localization\<language>\`. Files may be plain (textures as PowerVR v3
+   `.pvr`, texts in the game's text format) or in the install's own packed form.
+4. Enable it: write its folder name in `mods\enabled.txt`, one mod a line, the most important first (when two mods
+   have the same file, the one higher in the list wins; `#` starts a comment). Or start the client with
+   `--mod sharp-menu` (repeatable) for one run, which replaces the list.
+5. Check it: `ig2-check --quick` lists the files your mod replaces or adds, and loads them.
+
+`ig2.exe` can't be replaced: the rule tables are read from it (changing rules and scripts is a later step). In
+multiplayer every player needs the same mod files: the room refuses a player with other mods ("Other mods
+enabled"), and a multiplayer save made with mods resumes only with them.
 
 ## Asset viewer
 `cargo run --release -p ig2-viewer` browses the install's models, textures, colony maps, animations and messages.

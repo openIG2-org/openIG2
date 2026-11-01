@@ -24,7 +24,7 @@ use crate::transport::{loopback, Loopback, Transport};
 use crate::wire;
 
 /// The lobby protocol version (checked in the hello).
-pub const LOBBY_VERSION: u32 = 9;
+pub const LOBBY_VERSION: u32 = 10;
 /// The host answers a wrong password after this long (one guess per connection).
 pub const WRONG_PASSWORD_DELAY: Duration = Duration::from_secs(1);
 /// A joiner that hasn't finished the admission by then is dropped.
@@ -56,6 +56,8 @@ pub enum Refusal {
     HostNotAuthentic,
     /// After the start: the rejoiner's empire is still played (its player is connected).
     Connected,
+    /// The rules fingerprint differs and so do the enabled mods (ADR 0044 §4).
+    Mods,
 }
 
 /// Who holds an empire slot.
@@ -159,7 +161,7 @@ impl Start {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LobbyMsg {
     // joiner → host
-    Hello { version: u32, rules: [u8; 32], name: String, code: Option<u64> },
+    Hello { version: u32, rules: [u8; 32], mods: [u8; 32], name: String, code: Option<u64> },
     Pick { empire: Option<u8> },
     Ready(bool),
     Chat(String),
@@ -260,12 +262,14 @@ pub struct Door {
     settings: Settings,
     session: u64,
     rules: [u8; 32],
+    /// The mods fingerprint (zero without mods), only to tell a mods mismatch from another install.
+    mods: [u8; 32],
     pending: Vec<Pending>,
 }
 
 impl Door {
     pub(crate) fn new(settings: Settings, session: u64, rules: [u8; 32]) -> Self {
-        Self { settings, session, rules, pending: Vec::new() }
+        Self { settings, session, rules, mods: [0; 32], pending: Vec::new() }
     }
 
     pub fn settings(&self) -> &Settings {
@@ -342,12 +346,12 @@ impl Door {
             return None;
         };
         match (std::mem::replace(&mut p.stage, Stage::Hello), m) {
-            (Stage::Hello, LobbyMsg::Hello { version, rules, name, code }) => {
+            (Stage::Hello, LobbyMsg::Hello { version, rules, mods, name, code }) => {
                 let name = truncate(&name, MAX_NAME);
                 p.stage = if version != LOBBY_VERSION {
                     refuse(Refusal::Version)
                 } else if rules != self.rules {
-                    refuse(Refusal::Rules)
+                    refuse(if mods != self.mods { Refusal::Mods } else { Refusal::Rules })
                 } else if self.settings.private && code != Some(self.session) {
                     refuse(Refusal::Code)
                 } else if let Some(why) = check(&name) {
@@ -424,6 +428,12 @@ impl LobbyHost {
             galaxy: None,
         };
         Self { door: Door::new(settings, session, rules), epoch: Instant::now(), state, links: BTreeMap::new(), next_id: 1, dirty: false, rng: session | 1 }
+    }
+
+    /// The room's mods fingerprint (`session::mods_fingerprint`), to name a mods mismatch as such.
+    pub fn with_mods(mut self, mods: [u8; 32]) -> Self {
+        self.door.mods = mods;
+        self
     }
 
     /// A generated galaxy's room (`Start_Init` exe 0x5bfbf0): empires 1..=8 with races 1..=8, the host in slot 1,
@@ -826,8 +836,13 @@ pub struct LobbyClient {
 impl LobbyClient {
     /// Say hello over `link` (`quic::connect_pinned`, or a loopback end). `code` = the join code of a private
     /// session.
-    pub fn join(mut link: Box<dyn Transport>, name: &str, rules: [u8; 32], password: Option<String>, code: Option<u64>) -> Self {
-        link.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION, rules, name: truncate(name, MAX_NAME), code }));
+    pub fn join(link: Box<dyn Transport>, name: &str, rules: [u8; 32], password: Option<String>, code: Option<u64>) -> Self {
+        Self::join_with_mods(link, name, rules, [0; 32], password, code)
+    }
+
+    /// [`LobbyClient::join`] with the joiner's mods fingerprint (`session::mods_fingerprint`, ADR 0044 §4).
+    pub fn join_with_mods(mut link: Box<dyn Transport>, name: &str, rules: [u8; 32], mods: [u8; 32], password: Option<String>, code: Option<u64>) -> Self {
+        link.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION, rules, mods, name: truncate(name, MAX_NAME), code }));
         Self { link, password, key: None, status: Status::Joining, member: None, state: None, chat: Vec::new(), start: None, rejoin: false }
     }
 
