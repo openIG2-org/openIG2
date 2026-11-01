@@ -146,6 +146,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Starmap mouse camera (`StarmapMouseCamera`) | On by default: the wheel zooms the starmap and a right drag moves it; an unmoved right click gives its order on the release (ADR 0049); off = the original: no wheel, the right press orders at once |
 | High-score entry (`HighScoreEntry`) | On by default: after a won scenario the main menu opens its list in high-score view and asks for your name (Enter keeps it; the score is the days the win took, fewer is better); the tables are kept in the remake's settings file (ADR 0050); off = the original, which never asks |
 | Computer empires (`EnhancedAi`) | Classic by default: the computer empires of a new single-player game play as in the original. Enhanced (ADR 0045): they expand faster, build the labs their research needs, buy every planet's building when they can pay, set taxes by morale and research a colony ship when there are planets to take. A game keeps the choice it started with (saved with it); a multiplayer room has its own row |
+| Title music with intro (`TitleMusicWithIntro`) | On by default: the title video is silent over the game's and the studio's logos and its music starts with the intro (ADR 0051); off = the original: the music from the first logo |
 
 The window opens at 1600x900 until a size is saved.
 

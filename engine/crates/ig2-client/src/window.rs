@@ -4065,7 +4065,9 @@ impl App {
                 None => (name, false),
             };
             if let Some(v) = crate::video::playback::Playback::open(&self.install, &name, crate::video::playback::Place::Full, false, force) {
-                self.audio.play_video(&v.player, true);
+                // Ours (ADR 0051): the title's music only with the intro.
+                let gate = (self.display.title_music && name.eq_ignore_ascii_case("title.bik")).then_some(crate::video::TITLE_INTRO_MS);
+                self.audio.play_video(&v.player, true, gate);
                 self.video = Some(v);
             }
         }

@@ -595,15 +595,21 @@ impl Audio {
     /// A fullscreen video's sound (`Mix_HookMusic(soundhook)`, re/screens/video.md §4): beside the effects, at no
     /// volume setting of the options. `blocking` also stops the music (`PlayBink(1, …)`), which `frame` then
     /// follows with the next main track once the game runs again.
-    pub fn play_video(&mut self, video: &crate::video::Player, blocking: bool) {
+    /// `gate`: ours (ADR 0051), the sound silent until the first video time (ms), full from the second.
+    pub fn play_video(&mut self, video: &crate::video::Player, blocking: bool, gate: Option<[u32; 2]>) {
         let Some(mixer) = self.mixer.clone() else { return };
         let Ok(mut m) = mixer.lock() else { return };
         if blocking {
             m.stop_music();
         }
-        match video.sound(m.rate) {
-            Some(s) => m.play_video(Box::new(s), mixer::MAX_VOLUME),
-            None => m.stop_video(),
+        let frames = |ms: u32| ms as u64 * m.rate as u64 / 1000;
+        match (video.sound(m.rate), gate) {
+            (Some(s), Some([a, b])) => {
+                let g = mixer::Gate { inner: s, pos: 0, from: frames(a), to: frames(b) };
+                m.play_video(Box::new(g), mixer::MAX_VOLUME)
+            }
+            (Some(s), None) => m.play_video(Box::new(s), mixer::MAX_VOLUME),
+            (None, _) => m.stop_video(),
         }
     }
 

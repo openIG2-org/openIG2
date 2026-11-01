@@ -15,6 +15,11 @@ use crate::assets::Image;
 use decode::{Clip, Frames};
 
 /// `OpenBink`'s name → the remaster's file: `anim/mpeg4/` + the name with `\` → `/`, lower case, `.bik` → `.mp4`.
+/// `title.mp4` (re/screens/video.md §4): the Digital Reality logo has faded to black at 14.56 s of video time, the
+/// intro's first picture comes at 15.88 s [obs: mean luminance of the decoded frames, 0.9 from 14 560 ms, 3.0 at
+/// 15 880 ms]. Ours (ADR 0051): the clip's music is held back until the first and full from the second.
+pub const TITLE_INTRO_MS: [u32; 2] = [14_560, 15_880];
+
 pub fn mp4_path(bik: &str) -> String {
     let n = bik.replace('\\', "/").to_ascii_lowercase();
     let n = n.trim_start_matches("anim/").trim_start_matches("mpeg4/");

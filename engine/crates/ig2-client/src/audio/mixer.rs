@@ -29,6 +29,28 @@ pub trait Stream: Send {
     fn read(&mut self, out: &mut [[f32; 2]]) -> usize;
 }
 
+/// Ours (ADR 0051): `inner` silent up to frame `from`, rising linearly to full at frame `to` (the title's music with
+/// the intro only, not under the logos).
+pub struct Gate<S> {
+    pub inner: S,
+    pub pos: u64,
+    pub from: u64,
+    pub to: u64,
+}
+
+impl<S: Stream> Stream for Gate<S> {
+    fn read(&mut self, out: &mut [[f32; 2]]) -> usize {
+        let n = self.inner.read(out);
+        for f in &mut out[..n] {
+            let g = if self.pos >= self.to { 1.0 } else { self.pos.saturating_sub(self.from) as f32 / (self.to - self.from).max(1) as f32 };
+            f[0] *= g;
+            f[1] *= g;
+            self.pos += 1;
+        }
+        n
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Channel {
     chunk: Chunk,
@@ -201,6 +223,23 @@ mod tests {
             self.0 -= n;
             n
         }
+    }
+
+    #[test]
+    fn a_gate_holds_the_sound_back_then_fades_it_in() {
+        struct One;
+        impl Stream for One {
+            fn read(&mut self, out: &mut [[f32; 2]]) -> usize {
+                out.fill([1.0, -1.0]);
+                out.len()
+            }
+        }
+        let mut g = Gate { inner: One, pos: 0, from: 4, to: 8 };
+        let mut out = [[0.0; 2]; 10];
+        assert_eq!(g.read(&mut out), 10);
+        let left: Vec<f32> = out.iter().map(|f| f[0]).collect();
+        assert_eq!(left, [0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0]);
+        assert_eq!(out[6][1], -0.5);
     }
 
     #[test]

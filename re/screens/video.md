@@ -110,6 +110,9 @@ Some clips' sound track ends before the picture (`arriving.mp4`: 11.5 s of sound
   continuous music from 0.5 s, so the exe plays that music under both logos too. No music ducking: a blocking play stops the music, and
   once the game runs again `UpdateFrame` (exe 0x4e3e90) starts the next main track because the loaded one stopped
   (`audio.md` §4). [unknown: SDL_mixer applies no music volume to a hook; not read in the asm]
+- Ours (ADR 0051, `TitleMusicWithIntro`, on by default; off = the above): the title's sound is gated, silent to
+  14.56 s of video time (the Digital Reality logo faded to black: mean luminance 0.9 from 14 560 ms) and rising
+  linearly to full at 15.88 s (the intro's first picture, 3.0 at 15 880 ms); `video::TITLE_INTRO_MS`, `audio::mixer::Gate`.
 
 ## 5. Callers
 

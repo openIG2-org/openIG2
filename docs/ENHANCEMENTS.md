@@ -57,12 +57,12 @@ Accepted on 2026-11-01; each gets an ADR when it is built, then moves to "Shippe
 |---|---|---|---|---|
 | 457 | all screens, 2D pictures and text | "Sharp UI" (`SharpUi`, Remake row; `--sharp-ui`) samples the 2D pictures, the font and the pointer sharp bilinear: each texel a flat square, only its border pixel blended, so the UI scaled to a 1440p or 4K window stays crisp; the exe samples them bilinearly (`GL_LINEAR`, soft when magnified, 2.25× at 4K); off (the default) = the exe (ADR 0043) | yes | hud.md §1.1 |
 | 5 | campaign story 834 | empire 1's siege fleets start at planet 8340, not at planet −1's (0, 0) (enhanced ruleset only; classic stays bit-exact) | minor | campaign/elem.md §8.14 |
-| 322 | title video | music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
 
 ## Shipped
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 322 | title video | the title's music is silent under the two logos and fades in from 14.56 s (the logo faded to black) to full at 15.88 s (the intro's first picture); the exe plays the clip's one track from 0.5 s, under both logos; `TitleMusicWithIntro` on (default), off = the exe (ADR 0051) | minor | video.md §4 |
 | 146 | game end, high scores | a won single-player scenario opens its list in high-score view under the name entry (the exe's dead `EnterHighScoreNameMode`); the score is `Ido − scenario_kezdesi_ido` (unit and start time from the exe; that the designers meant this difference is a guess); the tables are kept in our settings file over `options.dat`; `HighScoreEntry` on (default), off = the exe (ADR 0050) | minor | game-end.md §6 |
 | 461 | Options, Remake page | the remake's rows are on their own page behind a third tab REMAKE beside the original's two, grouped under headings, with a Page row turning sub-pages; the exe has two tabs and no such rows (ADR 0048) | minor | options.md §14 |
 | 169 | starmap, mouse camera | the wheel zooms like numpad + / − and a right drag pans the map (the order of an unmoved right click goes out on its release); the exe has neither and gives the right press's order at once; `StarmapMouseCamera` on (default), off = the exe (ADR 0049) | minor | starmap.md §10.3 |

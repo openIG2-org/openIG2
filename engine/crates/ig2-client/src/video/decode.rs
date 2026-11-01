@@ -330,6 +330,22 @@ mod tests {
         }
     }
 
+    /// ADR 0051: through the title gate the clip's music is silent under the logos (it sounds there without it) and
+    /// back at full from the intro's first picture.
+    #[test]
+    fn title_music_waits_for_the_intro() {
+        let Some(c) = clip("anim/mpeg4/title.mp4") else { return };
+        let [a, b] = crate::video::TITLE_INTRO_MS.map(|ms| ms as usize * 441 / 10);
+        let peak = |f: &[[f32; 2]]| f.iter().flatten().fold(0.0f32, |m, x| m.max(x.abs()));
+        let mut plain = vec![[0.0f32; 2]; b + 44100];
+        Sound::new(c.clone(), 44100).unwrap().read(&mut plain);
+        let mut gated = plain.clone();
+        let mut g = crate::audio::mixer::Gate { inner: Sound::new(c, 44100).unwrap(), pos: 0, from: a as u64, to: b as u64 };
+        assert_eq!(g.read(&mut gated), gated.len());
+        assert!(peak(&plain[..a]) > 0.1 && peak(&gated[..a]) == 0.0);
+        assert_eq!(gated[b..], plain[b..]);
+    }
+
     /// The remaster's shader arithmetic: 8-bit 128 is 0.502 in GL, so grey carries a faint magenta (R and B +1/255, white G 254).
     #[test]
     fn yuv_to_rgb() {

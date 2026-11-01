@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the starmap's mouse camera (ADR 0049), the high-score entry (ADR 0050); kept in our settings file and shown as rows on the Options screen's Remake page (ADR 0048)
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the starmap's mouse camera (ADR 0049), the high-score entry (ADR 0050), the title's music (ADR 0051); kept in our settings file and shown as rows on the Options screen's Remake page (ADR 0048)
 //! (`crate::options`, in the original's font and colours on the Remake page under group headings). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -65,6 +65,8 @@ pub const HIGH_SCORES: &str = "HighScoreEntry";
 /// ADR 0045: the computer empires of the next single-player game play the enhanced ruleset (0 classic, the default;
 /// 1 enhanced). The game keeps its own choice (`Game::enhanced_ai`, saved with it).
 pub const ENHANCED_AI: &str = "EnhancedAi";
+/// ADR 0051: the title video's music starts with the intro, not under the logos (on by default).
+pub const TITLE_MUSIC: &str = "TitleMusicWithIntro";
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -100,6 +102,7 @@ pub struct Display {
     pub sharp_text: bool,
     pub starmap_mouse: bool,
     pub high_scores: bool,
+    pub title_music: bool,
 }
 
 /// Where W/A/S/D pan the camera (ADR 0030).
@@ -149,6 +152,7 @@ impl Display {
             sharp_text: f.int(SHARP_TEXT) == Some(1),
             starmap_mouse: f.int(STARMAP_MOUSE) != Some(0),
             high_scores: f.int(HIGH_SCORES) != Some(0),
+            title_music: f.int(TITLE_MUSIC) != Some(0),
         }
     }
 
@@ -243,6 +247,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(23, Group::Interface, "Starmap mouse camera", STARMAP_MOUSE, d.starmap_mouse as i32, Vec::new(), 1),
         row(24, Group::Game, "High-score entry", HIGH_SCORES, d.high_scores as i32, Vec::new(), 1),
         row(25, Group::Game, "Computer empires", ENHANCED_AI, (f.int(ENHANCED_AI) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
+        row(26, Group::Game, "Title music with intro", TITLE_MUSIC, d.title_music as i32, Vec::new(), 1),
     ]
 }
 
@@ -261,12 +266,12 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let mut f = File::default();
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true });
         f.set(MODE, "2");
         f.set(RESOLUTION, "1280x720");
         f.set(VSYNC, "0");
         f.set(LETTERBOX, "1");
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true });
         assert_eq!(parse_size("12x7"), None);
     }
 
@@ -277,7 +282,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

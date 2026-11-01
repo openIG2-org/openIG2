@@ -44,6 +44,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Starmap mouse camera", "Egérkamera a térképen"),
     ("High-score entry", "Rekordlista-bejegyzés"),
     ("Computer empires", "Gépi birodalmak"),
+    ("Title music with intro", "Főcímzene az intróval"),
     ("Window", "Ablak"),
     ("Borderless", "Keretlen"),
     ("Fullscreen", "Teljes kép"),
