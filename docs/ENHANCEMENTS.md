@@ -11,15 +11,44 @@ How an idea moves:
    implementation. Rejected: the row is deleted (git history keeps it).
 4. **Shipped**: the option exists; the row names its setting and ADR.
 
-Row numbers are shared with `re/deviations.md` (one counter): a new row takes the next free number there (440).
+Ideas have no number; a row gets one when it is proposed. Numbers are shared with `re/deviations.md` (one
+counter): a proposed row takes the next free number there (440).
 
 ## Ideas
 
-| # | Idea | Why | Rough size |
+Grouped by area; sizes are rough guesses for one developer.
+
+| Area | Idea | Why | Rough size |
 |---|---|---|---|
-| — | Sharper text (vector or high-resolution font rendering at any window size) | the 800x600 bitmap font blurs when scaled up | weeks |
-| — | Upscaled textures and other graphics upgrades, each its own option | the original textures are low-resolution on modern screens | weeks |
-| — | Play in the browser: open a URL, the main menu loads; the player picks their own install folder, the browser keeps the files (OPFS), the game data is never hosted. Work: a wasm32 build (wgpu WebGPU/WebGL2, winit, an async main loop), a virtual file layer for the install and the saves, WebAudio via cpal, videos through WebCodecs instead of openh264, the web clipboard instead of arboard; multiplayer over WebRTC or WebTransport through the rendezvous/relay service (ADR 0018). First step: `cargo check --target wasm32-unknown-unknown -p ig2-formats -p ig2-sim` | no install step, plays anywhere | main menu 1-2 weeks, single player 2-3 more, multiplayer 2-4 more |
+| Menus | A reworked menu system: clearer navigation, fewer clicks to start a game, a back button everywhere | the original menus are slow to move through | 1-2 weeks |
+| Menus | Settings reachable from the main menu without starting or loading a game (display, sound, language, remake options) | today the Options screen opens only in a game | days |
+| Menus | A language selector in the menu (today only `--lang`), applied without a restart where possible | players can't switch language in the game | days |
+| Menus | A quick game: one screen with sensible defaults (galaxy, opponents, difficulty) and a Start button | a skirmish takes many screens to set up | days |
+| Menus | More options: key rebinding, UI scale, separate music/voice/effect volumes, game speed steps, autosave interval | today's options are the original's few plus the remake rows | 1-2 weeks |
+| UI | A modernised, themeable UI skin (colours, frames, fonts), the classic look kept as the default theme | the 2D panels look dated at high resolutions | weeks |
+| UI | High-DPI / UI scaling for 4K screens | the 800x600 layout is small or blurry on big screens | 1 week |
+| Text | Fill in the missing Hungarian and English texts (the remake rows, mode labels and lines the install lacks; `re/README.md` U13), from a translation file we write ourselves | some texts show in the wrong language or not at all | days |
+| Graphics | Sharper text (vector or high-resolution font rendering at any window size) | the 800x600 bitmap font blurs when scaled up | weeks |
+| Graphics | Upscaled textures and other graphics upgrades, each its own option | the original textures are low-resolution on modern screens | weeks |
+| Graphics | Better effects: particle explosions, smoke, beams, shields in the space and ground battles (after the classic effects are complete, `re/deviations.md` 420/421) | the battles look flat | 2-4 weeks |
+| Graphics | Higher-detail building models and textures on the colony screen, loaded from a pack beside the install | the buildings are low-poly | weeks, plus art |
+| Graphics | A modern lighting option: per-pixel lighting, soft shadows, bloom, anti-aliasing | the original lighting is per-vertex | 2-3 weeks |
+| Speed | Optimisation: profile the frame and the sim tick (`docs/perf.md`), faster loading, fewer draw calls | smooth play at high refresh rates and on weak machines | ongoing |
+| AI | Smarter computer empires: better economy, research order, fleet use and diplomacy, as an "enhanced AI" ruleset beside the classic one | the original AI is easy to beat | weeks to months |
+| AI | Per-bot difficulty and personality in a multiplayer room | today every computer player in the room plays alike | 1 week |
+| Multiplayer | A nicer lobby: player cards, empire colours and pictures, ready states, chat | the room is functional, not pretty | 1-2 weeks |
+| Multiplayer | Our own public rendezvous/relay instance (the service is done, ADR 0018, `docs/RENDEZVOUS.md`) | players behind strict NATs can join each other | days, plus a server |
+| Multiplayer | A public lobby browser on the rendezvous service: list open games, join with one click | today a join code has to be shared | 1-2 weeks |
+| Multiplayer | Steamworks (lobbies, invites, relay, achievements) | an easy way to find players | needs the rights holder's agreement and a legal check first |
+| Modding | Mod support: a mods folder whose files override the install's, then rule tables and scripts that mods can change | new content and balance changes from players | weeks |
+| Content | More races, as a mod or an enhanced ruleset (rules, diplomacy lines, pictures) | more variety | months, plus art |
+| Platform | Play in the browser: open a URL, the main menu loads; the player picks their own install folder, the browser keeps the files (OPFS), the game data is never hosted. Work: a wasm32 build (wgpu WebGPU/WebGL2, winit, an async main loop), a virtual file layer for the install and the saves, WebAudio via cpal, videos through WebCodecs instead of openh264, the web clipboard instead of arboard; multiplayer over WebRTC or WebTransport through the rendezvous/relay service (ADR 0018). First step: `cargo check --target wasm32-unknown-unknown -p ig2-formats -p ig2-sim` | no install step, plays anywhere | main menu 1-2 weeks, single player 2-3 more, multiplayer 2-4 more |
+| Platform | Linux and macOS builds (and the Steam Deck) | more players | 1-2 weeks |
+| Comfort | Quick save and quick load keys, and autosaves kept in turns | lost progress after a crash or a bad battle | days |
+| Comfort | Replays: the lockstep order stream saved beside the save, played back at any speed | review a battle or a whole multiplayer game | 1-2 weeks |
+| Comfort | Fleet groups on Ctrl+1…9, and a colony build queue that repeats | less clicking in long games | days |
+| Comfort | A searchable event log with filters (battles, research, diplomacy) | messages scroll away | days |
+| Accessibility | Colour-blind-friendly empire colours, and subtitles for the videos and spoken messages | players who can't tell the colours apart or can't hear the voices | days |
 
 ## Proposed (maintainers decide)
 
