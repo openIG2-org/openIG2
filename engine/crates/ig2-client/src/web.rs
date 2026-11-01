@@ -47,10 +47,36 @@ pub fn add_file(path: &str, data: Box<[u8]>) {
     ADDED.lock().unwrap().push((Path::new(ROOT).join(path), data.into()));
 }
 
-/// Starts the client on the main menu with the files added; `lang` a language code ("en", "de", …) or the default.
+/// The page's folder of the player's own files (settings, saves, replays) in [`ig2_formats::userfs`]'s paths.
+pub const USER: &str = "/user";
+
+/// One of the player's own files the page had stored, its path relative to [`USER`].
 #[wasm_bindgen]
-pub fn start(lang: Option<String>) -> Result<(), JsValue> {
+pub fn add_user_file(path: &str, data: Box<[u8]>) {
+    ig2_formats::userfs::insert(Path::new(USER).join(path), data.into());
+}
+
+/// Hands a changed or removed file of the player's back to the page, which stores it.
+fn user_changed(path: &Path, bytes: Option<&[u8]>) {
+    if let Ok(rel) = path.strip_prefix(USER) {
+        user_file(&rel.to_string_lossy(), bytes.map(Box::from));
+    }
+}
+
+static WEBGL_ONLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the page asked for WebGL2 even where WebGPU works (`?webgl`).
+pub fn webgl_only() -> bool {
+    WEBGL_ONLY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Starts the client on the main menu with the files added; `lang` a language code ("en", "de", …) or the default;
+/// `webgl` draws through WebGL2 even where WebGPU works.
+#[wasm_bindgen]
+pub fn start(lang: Option<String>, webgl: bool) -> Result<(), JsValue> {
+    WEBGL_ONLY.store(webgl, std::sync::atomic::Ordering::Relaxed);
     console_error_panic_hook::set_once();
+    ig2_formats::userfs::set_sink(user_changed);
     let files = std::mem::take(&mut *ADDED.lock().unwrap());
     STORE.set(Arc::new(Store(files.into_iter().collect()))).map_err(|_| JsValue::from_str("already started"))?;
     let args: Vec<String> = lang.into_iter().flat_map(|l| ["--lang".to_string(), l]).collect();
@@ -62,6 +88,14 @@ extern "C" {
     /// The page's report of a start that failed (web/main.js).
     #[wasm_bindgen(js_name = ig2_failed)]
     pub fn failed(message: &str);
+
+    /// The page's end of a game that quit (the menu's Exit): back to its start (web/main.js).
+    #[wasm_bindgen(js_name = ig2_exited)]
+    pub fn exited();
+
+    /// The page's store of one of the player's files (web/main.js): its bytes, or `None` when it was removed.
+    #[wasm_bindgen(js_name = ig2_user_file)]
+    fn user_file(path: &str, data: Option<Box<[u8]>>);
 }
 
 /// No clipboard in the browser build yet: `navigator.clipboard` comes with ADR 0047 part 3.

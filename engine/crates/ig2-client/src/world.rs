@@ -517,7 +517,7 @@ impl<'r> World<'r> {
     /// A slot of the Options screen (re/screens/options.md §5): an original `save<n>.sav` as [`World::load`] loads
     /// it, or the remake's own `save<n>.ig2s` (ADR 0007 §4: the snapshot restored as it was saved).
     pub fn load_slot(path: &std::path::Path, rules: &'r GameRules, tech_defaults: &[u8], volatile: &[(u32, Vec<u8>)]) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let bytes = ig2_formats::userfs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
         Self::load_bytes(&bytes, rules, tech_defaults, volatile).map_err(|e| format!("{}: {e}", path.display()))
     }
 
@@ -985,7 +985,7 @@ impl<'r> World<'r> {
     /// from the peer's turn. Any replay being written is finished first.
     pub fn record_replay(&mut self, path: std::path::PathBuf) -> std::io::Result<()> {
         self.end_replay();
-        self.record_into(Box::new(std::io::BufWriter::new(std::fs::File::create(&path)?)))?;
+        self.record_into(Box::new(std::io::BufWriter::new(ig2_formats::userfs::create(&path)?)))?;
         self.replay = Some(path);
         Ok(())
     }
@@ -1037,7 +1037,7 @@ impl<'r> World<'r> {
     /// Stop writing the replay and delete its file (the tutorial records none).
     pub fn drop_replay(&mut self) {
         if let Some(p) = self.end_replay() {
-            let _ = std::fs::remove_file(p);
+            let _ = ig2_formats::userfs::remove_file(p);
         }
     }
 

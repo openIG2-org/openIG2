@@ -218,10 +218,10 @@ pub fn replay_name(multiplayer: bool) -> String {
 
 /// Delete all but the `keep` newest replays in `dir`.
 pub fn prune_replays(dir: &Path, keep: usize) -> std::io::Result<()> {
-    let mut names: Vec<PathBuf> = std::fs::read_dir(dir)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "ig2r")).collect();
+    let mut names: Vec<PathBuf> = ig2_formats::userfs::list(dir)?.into_iter().filter(|p| p.extension().is_some_and(|x| x == "ig2r")).collect();
     names.sort();
     for p in &names[..names.len().saturating_sub(keep)] {
-        std::fs::remove_file(p)?;
+        ig2_formats::userfs::remove_file(p)?;
     }
     Ok(())
 }
@@ -263,8 +263,8 @@ pub fn autosave_due(every: i32, days: i32, month: i32, day: i32) -> bool {
 /// 24. Only our own files move.
 pub fn rotate_autosaves(dir: &Path) -> std::io::Result<()> {
     let newest = dir.join("save24.ig2s");
-    if newest.exists() {
-        std::fs::rename(newest, dir.join("save23.ig2s"))?;
+    if ig2_formats::userfs::exists(&newest) {
+        ig2_formats::userfs::rename(newest, dir.join("save23.ig2s"))?;
     }
     Ok(())
 }
@@ -286,18 +286,12 @@ pub fn read_slots(dir: Option<&Path>) -> Vec<Option<Slot>> {
     let Some(dir) = dir else { return out };
     for (n, slot) in out.iter_mut().enumerate().skip(1) {
         let ours = dir.join(format!("save{n}.ig2s"));
-        if let Some((name, date)) = std::fs::read(&ours).ok().and_then(|b| our_title(&b)) {
+        if let Some((name, date)) = ig2_formats::userfs::read(&ours).ok().and_then(|b| our_title(&b)) {
             *slot = Some(Slot { name, date, file: ours, ours: true });
             continue;
         }
         let orig = dir.join(format!("save{n}.sav"));
-        let head = std::fs::File::open(&orig).ok().and_then(|mut f| {
-            use std::io::Read;
-            let mut b = vec![0u8; 80];
-            let k = f.read(&mut b).ok()?;
-            b.truncate(k);
-            ig2_formats::save::Header::read(&b).ok()
-        });
+        let head = ig2_formats::userfs::read_head(&orig, 80).ok().and_then(|b| ig2_formats::save::Header::read(&b).ok());
         if let Some(h) = head {
             let name = h.name[..30].iter().take_while(|&&c| c != 0).copied().collect();
             *slot = Some(Slot { name, date: [h.year, h.month, h.day], file: orig, ours: false });

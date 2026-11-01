@@ -50,13 +50,18 @@ version of the `wasm-bindgen` crate in `engine/Cargo.lock`:
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.129 --locked
 python -I tools/build_web.py
-python -m http.server 8047 --bind 127.0.0.1 --directory web
+python -I tools/serve_web.py
 ```
 `tools/build_web.py` builds the release wasm and writes the module and its loader to `web/pkg/` (gitignored). Open
-`http://127.0.0.1:8047/` in a browser with WebGPU (current Chrome or Edge; Firefox and Safari where WebGPU is on), pick the install folder: the page copies it into the
+`http://127.0.0.1:8047/` in a current browser (WebGPU, else WebGL2), pick the install folder: the page copies it into the
 browser's private storage (OPFS; on the next visit Play starts from that copy), loads every file but the videos into
-the client and starts the main menu. Not there yet: WebGL2, videos, saves, settings, multiplayer, the clipboard (ADR 0047's later parts). Serve it on localhost only; the page holds no
-game data, but publishing it is a release decision.
+the client and starts the main menu. Settings, save slots, the quick save, autosaves and replays are kept in the same
+storage (`user/`). Not there yet: videos, multiplayer, the clipboard (ADR 0047's later parts). Serve it on localhost
+only; the page holds no game data, but publishing it is a release decision.
+
+For testing without the folder dialog, `python -I tools/serve_web.py --install <your install>` also serves the
+install on 127.0.0.1 and `http://127.0.0.1:8047/?dev-install` copies it from there; `&webgl` draws through WebGL2
+even where WebGPU works. The game's error lines go to the browser console.
 
 ## Tests
 ```bash

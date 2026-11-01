@@ -1,9 +1,11 @@
 // The browser build's loader (ADR 0047): the player's own install, picked here, copied into the Origin Private File
 // System and handed to the client file by file. No game file leaves the machine.
-import init, { add_file, start } from "./pkg/ig2_client.js";
+import init, { add_file, add_user_file, start } from "./pkg/ig2_client.js";
 
 const $ = (id) => document.getElementById(id);
 const STORE = "install";
+// The player's own files (settings, saves, replays): the client's `/user` folder (ADR 0047 part 3).
+const USER = "user";
 // Written last: a copy without it was interrupted.
 const DONE = ".openig2-complete";
 // The videos wait for the browser's decoder (ADR 0047 part 3).
@@ -20,6 +22,26 @@ window.ig2_failed = (message) => {
   $("setup").hidden = false;
   status(`The client stopped: ${message}`, true);
 };
+
+// The client's changes to the player's files, stored in order: `data` the bytes, `undefined` a removed file.
+let writes = Promise.resolve();
+window.ig2_user_file = (path, data) => {
+  writes = writes.then(async () => {
+    const parts = path.split("/");
+    let dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(USER, { create: true });
+    for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
+    if (data === undefined) {
+      await dir.removeEntry(parts.at(-1)).catch(() => {});
+      return;
+    }
+    const w = await (await dir.getFileHandle(parts.at(-1), { create: true })).createWritable();
+    await w.write(data);
+    await w.close();
+  }).catch((e) => console.error(`storing ${path}:`, e));
+};
+
+// The game quit (the menu's Exit): the page starts over once the last writes are stored.
+window.ig2_exited = () => writes.then(() => location.reload());
 
 async function storeDir(create = false) {
   const root = await navigator.storage.getDirectory();
@@ -76,8 +98,15 @@ async function copy(files) {
     let dir = store;
     for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
     const w = await (await dir.getFileHandle(parts.at(-1), { create: true })).createWritable();
-    await w.write(file);
-    await w.close();
+    if (typeof file === "string") {
+      // A URL of the test server (?dev-install): streamed in; pipeTo closes the file.
+      const r = await fetch(file);
+      if (!r.ok) throw new Error(`${file}: ${r.status}`);
+      await r.body.pipeTo(w);
+    } else {
+      await w.write(file);
+      await w.close();
+    }
     if (++done % 50 === 0) status(`Copying the install into this browser: ${done} / ${files.length} files`);
   }
   await (await (await store.getFileHandle(DONE, { create: true })).createWritable()).close();
@@ -92,14 +121,30 @@ async function play() {
       add_file(path, new Uint8Array(await (await h.getFile()).arrayBuffer()));
       if (++n % 200 === 0) status(`Loading the game files: ${n}`);
     }
+    const user = await (await navigator.storage.getDirectory()).getDirectoryHandle(USER, { create: true });
+    for await (const [path, h] of walk(user)) add_user_file(path, new Uint8Array(await (await h.getFile()).arrayBuffer()));
     status("Starting…");
     $("setup").hidden = true;
-    start($("lang").value || new URLSearchParams(location.search).get("lang") || undefined);
+    const params = new URLSearchParams(location.search);
+    start($("lang").value || params.get("lang") || undefined, params.has("webgl"));
   } catch (e) {
     $("setup").hidden = false;
     status(`The client stopped: ${e}`, true);
     console.error(e);
   }
+}
+
+// Testing only: `tools/serve_web.py --install` serves the install on this machine; `?dev-install` copies it from there
+// instead of asking for the folder. Pages not on localhost ignore it.
+async function devInstall() {
+  const local = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+  if (!local || !new URLSearchParams(location.search).has("dev-install")) return false;
+  if (!(await stored())) {
+    const names = await (await fetch("/dev-install/index.json")).json();
+    await copy(names.map((n) => [n, "/dev-install/" + n.split("/").map(encodeURIComponent).join("/")]));
+  }
+  await play();
+  return true;
 }
 
 async function main() {
@@ -121,7 +166,9 @@ async function main() {
     }
   };
   $("play").onclick = play;
+  if (await devInstall()) return;
   $("forget").onclick = async () => {
+    // The install's copy only: the saves and settings stay.
     const root = await navigator.storage.getDirectory();
     await root.removeEntry(STORE, { recursive: true }).catch(() => {});
     $("play").hidden = $("forget").hidden = true;

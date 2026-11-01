@@ -139,7 +139,7 @@ pub fn history_dir() -> Option<PathBuf> {
 /// The history in `dir`, oldest first (none without the file; an unreadable file is reported and reads as none).
 pub fn load(dir: &Path) -> Result<Vec<Match>, String> {
     let p = dir.join(HISTORY_FILE);
-    match std::fs::read(&p) {
+    match ig2_formats::userfs::read(&p) {
         Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("{}: {e}", p.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(e) => Err(format!("{}: {e}", p.display())),
@@ -153,7 +153,7 @@ pub fn append(dir: &Path, m: &Match) -> Result<(), String> {
     let json = serde_json::to_vec(&all).map_err(|e| e.to_string())?;
     let p = dir.join(HISTORY_FILE);
     let tmp = dir.join(format!("{HISTORY_FILE}.tmp"));
-    std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&tmp, json)).and_then(|_| std::fs::rename(&tmp, &p)).map_err(|e| format!("{}: {e}", p.display()))
+    ig2_formats::userfs::create_dir_all(dir).and_then(|_| ig2_formats::userfs::write(&tmp, json)).and_then(|_| ig2_formats::userfs::rename(&tmp, &p)).map_err(|e| format!("{}: {e}", p.display()))
 }
 
 /// A graph's name and value.

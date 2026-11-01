@@ -22,6 +22,7 @@ pub mod strings;
 pub mod text;
 pub mod textpatch;
 pub mod tutorial;
+pub mod userfs;
 pub mod vfs;
 pub mod xv;
 

@@ -59,20 +59,38 @@ fn vs(@builtin(vertex_index) vi: u32, i: I) -> VO {
 
 const PI: f32 = 3.14159265;
 
+// The sRGB transfer, both ways, for a frame without sRGB views (WebGL2, ADR 0047 §4): `fs_srgb` decodes the texels
+// the sRGB views would and encodes its result as the frame's sRGB view would.
+fn dec(c: vec4<f32>, d: bool) -> vec4<f32> {
+    if !d {
+        return c;
+    }
+    let lo = c.rgb / 12.92;
+    let hi = pow((c.rgb + 0.055) / 1.055, vec3(2.4));
+    return vec4(select(hi, lo, c.rgb <= vec3(0.04045)), c.a);
+}
+
+fn enc(c: vec4<f32>) -> vec4<f32> {
+    let x = max(c.rgb, vec3(0.0));
+    let lo = x * 12.92;
+    let hi = 1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055;
+    return vec4(select(hi, lo, x <= vec3(0.0031308)), c.a);
+}
+
 // A 2D sprite's or glyph's texel at `t`: bilinear (the exe's), or with "Sharp UI" (ADR 0043) sharp bilinear: each
 // texel a flat square blended with its neighbour only over the border pixel; at a scale of 1 or below, bilinear.
-fn sample2d(t: vec2<f32>) -> vec4<f32> {
+fn sample2d(t: vec2<f32>, d: bool) -> vec4<f32> {
     let dx = dpdx(t);
     let dy = dpdy(t);
     if (u.sharp & 1u) == 0u {
-        return textureSample(tex, smp, t);
+        return dec(textureSample(tex, smp, t), d);
     }
     let dims = vec2<f32>(textureDimensions(tex));
     let texel = t * dims - 0.5;
     let px = max(1.0 / max(fwidth(texel), vec2(1e-6)), vec2(1.0));
     let f = fract(texel);
     let s = (floor(texel) + clamp((f - 0.5) * px + 0.5, vec2(0.0), vec2(1.0)) + 0.5) / dims;
-    return textureSampleGrad(tex, smp, s, dx, dy);
+    return dec(textureSampleGrad(tex, smp, s, dx, dy), d);
 }
 
 // A coverage `c` (0..1, edge at 0.5) whose texel spans `s` screen pixels, its ramp narrowed to one pixel; the identity
@@ -112,12 +130,22 @@ fn cover(d: f32) -> f32 {
 
 @fragment
 fn fs(v: VO) -> @location(0) vec4<f32> {
+    return shade(v, false);
+}
+
+@fragment
+fn fs_srgb(v: VO) -> @location(0) vec4<f32> {
+    return enc(shade(v, true));
+}
+
+// A quad's colour; `d`: its texels decoded from sRGB here.
+fn shade(v: VO, d: bool) -> vec4<f32> {
     let q = v.q;
     switch v.kind {
         // Textured sprite.
         case 0u: {
             let t = v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw;
-            return sample2d(t) * v.color;
+            return sample2d(t, d) * v.color;
         }
         // Lit sphere sampling an equirectangular map: param.x = longitude turn (0..1), uv = the map's rect.
         case 1u: {
@@ -130,7 +158,7 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
             let t = v.uv.xy + vec2(fract(lon), 0.5 - lat) * v.uv.zw;
             let dims = vec2<f32>(textureDimensions(tex));
             let lod = log2(max(dims.x * v.uv.z / (PI * 2.0 * v.half.x), 1.0));
-            let albedo = textureSampleLevel(tex, smp, t, lod).rgb;
+            let albedo = dec(textureSampleLevel(tex, smp, t, lod), d).rgb;
             let l = normalize(vec3(-0.55, 0.45, 0.7));
             let diffuse = 0.12 + 0.88 * max(dot(n, l), 0.0);
             let rim = pow(1.0 - z, 3.0) * v.param.y;
@@ -174,9 +202,9 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
             // and read as a distance field, its 0.5 edge kept and the ramp narrowed to one screen pixel (`sharpen`).
             let s = 1.0 / max(fwidth(t0.x * f32(textureDimensions(tex).x)), 1e-6);
             if (u.sharp & 2u) == 0u || s <= 1.0 {
-                return sample2d(t) * v.color;
+                return sample2d(t, d) * v.color;
             }
-            let c = cubic(t, v.uv.xy + h, v.uv.xy + v.uv.zw - h);
+            let c = dec(cubic(t, v.uv.xy + h, v.uv.xy + v.uv.zw - h), d);
             return vec4(sharpen(c.rgb, s), 1.0) * v.color;
         }
         // Soft round glow (procedural stars).
@@ -455,7 +483,9 @@ impl Renderer {
             push_constant_ranges: &[],
         });
         let attrs = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Uint32, 4 => Float32x2, 5 => Float32x4, 6 => Float32x4];
-        let pipeline = |blend: wgpu::BlendState, format: wgpu::TextureFormat| {
+        // A frame without sRGB views (WebGL2): the sRGB blends' shader does the transfer itself (`fs_srgb`).
+        let srgb = if format.is_srgb() { "fs" } else { "fs_srgb" };
+        let pipeline_fs = |blend: wgpu::BlendState, format: wgpu::TextureFormat, fs: &str| {
             d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("ig2-client quads"),
                 layout: Some(&layout),
@@ -474,7 +504,7 @@ impl Renderer {
                 multisample: Default::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fs"),
+                    entry_point: Some(fs),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
                 }),
@@ -482,9 +512,10 @@ impl Renderer {
                 cache: None,
             })
         };
-        let alpha = pipeline(wgpu::BlendState::ALPHA_BLENDING, format);
+        let pipeline = |blend, format| pipeline_fs(blend, format, "fs");
+        let alpha = pipeline_fs(wgpu::BlendState::ALPHA_BLENDING, format, srgb);
         let add = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
-        let additive = pipeline(wgpu::BlendState { color: add, alpha: add }, format);
+        let additive = pipeline_fs(wgpu::BlendState { color: add, alpha: add }, format, srgb);
         let gamma_alpha = pipeline(wgpu::BlendState::ALPHA_BLENDING, format.remove_srgb_suffix());
         let gamma_additive = pipeline(wgpu::BlendState { color: add, alpha: add }, format.remove_srgb_suffix());
         let gamma_premul = pipeline(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING, format.remove_srgb_suffix());
@@ -598,9 +629,9 @@ impl Renderer {
                 mip_level_count: mips.len() as u32,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format,
+                format: self.texture_format(format),
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+                view_formats: &Self::view_formats(self.texture_format(format)),
             },
             wgpu::util::TextureDataOrder::MipMajor,
             &mips.concat(),
@@ -641,9 +672,9 @@ impl Renderer {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: self.texture_format(wgpu::TextureFormat::Rgba8UnormSrgb),
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
+            view_formats: &Self::view_formats(self.texture_format(wgpu::TextureFormat::Rgba8UnormSrgb)),
         });
         let [a, b, c, e] = self.groups(&tex);
         self.textures.push(a);
@@ -771,6 +802,7 @@ impl Renderer {
                 end = end.min(frame.late_at);
             }
             let [r, g, b, a] = frame.clear;
+            let [r, g, b] = if gamma { [r, g, b] } else { [r, g, b].map(|c| encode_srgb(c, self.format)) };
             let load = if !first || frame.scene.is_some() || backdrop.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -854,6 +886,11 @@ impl Renderer {
         (tex, groups)
     }
 
+    /// A texture's format: on a frame without sRGB (WebGL2) stored raw, `fs_srgb` decoding it.
+    fn texture_format(&self, format: wgpu::TextureFormat) -> wgpu::TextureFormat {
+        if self.format.is_srgb() { format } else { format.remove_srgb_suffix() }
+    }
+
     /// The view formats a frame of `format` needs: its non-sRGB twin for the gamma blends.
     pub fn view_formats(format: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
         if format.remove_srgb_suffix() == format { vec![] } else { vec![format.remove_srgb_suffix()] }
@@ -899,6 +936,16 @@ impl Renderer {
             out.extend_from_slice(&data[y * row as usize..][..4 * w as usize]);
         }
         out
+    }
+}
+
+/// A linear colour channel as a frame of `format` stores it: as given on an sRGB frame (its view encodes it), else
+/// sRGB-encoded (a frame without sRGB views, WebGL2).
+pub(crate) fn encode_srgb(c: f64, format: wgpu::TextureFormat) -> f64 {
+    match format.is_srgb() {
+        true => c,
+        false if c <= 0.0031308 => c * 12.92,
+        false => 1.055 * c.powf(1.0 / 2.4) - 0.055,
     }
 }
 

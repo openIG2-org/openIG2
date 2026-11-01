@@ -105,8 +105,8 @@ fn shadow_pcf(uv: vec2<f32>) -> f32 {
     return s / 16.0;
 }
 
-fn shade(i: VO) -> vec4<f32> {
-    return shade_cap(i, 1.3, false, 1.0);
+fn shade(i: VO, srgb: bool) -> vec4<f32> {
+    return shade_cap(i, 1.3, false, 1.0, srgb);
 }
 
 // `fenyekszamolasa`'s parallel light (re/screens/research.md §2.1): `shade[float2int(|n − L|²·2047)]` of the table
@@ -116,8 +116,12 @@ fn engine_shade(c: f32) -> f32 {
     return select(0.0, floor(sqrt(1.0 - i / 2896.0) * 255.0) / 256.0, i < 2896.0);
 }
 
-fn shade_cap(i: VO, cap: f32, engine: bool, shadow: f32) -> vec4<f32> {
-    let t = textureSample(tex, smp, i.uv);
+// `srgb`: the texel decoded from sRGB here (a frame without sRGB views: `fs_opaque_e`, `fs_glass_e`).
+fn shade_cap(i: VO, cap: f32, engine: bool, shadow: f32, srgb: bool) -> vec4<f32> {
+    var t = textureSample(tex, smp, i.uv);
+    if srgb {
+        t = vec4(select(pow((t.rgb + 0.055) / 1.055, vec3(2.4)), t.rgb / 12.92, t.rgb <= vec3(0.04045)), t.a);
+    }
     // A zero normal: lit on the CPU (`color.rgb` holds the light).
     let prelit = dot(i.n, i.n) < 1e-8;
     let n = normalize(select(i.n, vec3(1.0, 0.0, 0.0), prelit));
@@ -136,22 +140,41 @@ fn shade_cap(i: VO, cap: f32, engine: bool, shadow: f32) -> vec4<f32> {
 
 @fragment
 fn fs_opaque(i: VO) -> @location(0) vec4<f32> {
-    let c = shade(i);
+    let c = shade(i, false);
     if (c.a < 0.5) { discard; }
     return vec4(c.rgb, 1.0);
 }
 
 @fragment
 fn fs_glass(i: VO) -> @location(0) vec4<f32> {
-    let c = shade(i);
+    let c = shade(i, false);
     return vec4(c.rgb, c.a * i.color.a);
+}
+
+// The same on a frame without sRGB views (WebGL2, ADR 0047 §4): the transfer done here.
+fn enc(c: vec3<f32>) -> vec3<f32> {
+    let x = max(c, vec3(0.0));
+    return select(1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3(0.0031308));
+}
+
+@fragment
+fn fs_opaque_e(i: VO) -> @location(0) vec4<f32> {
+    let c = shade(i, true);
+    if (c.a < 0.5) { discard; }
+    return vec4(enc(c.rgb), 1.0);
+}
+
+@fragment
+fn fs_glass_e(i: VO) -> @location(0) vec4<f32> {
+    let c = shade(i, true);
+    return vec4(enc(c.rgb), c.a * i.color.a);
 }
 
 // The remaster's `ig2_fragment.shader` on the raw (gamma-space) views: `texture × vertex colour` (the engine's light,
 // clamped to 1 like its colour bytes), mixed towards the fog colour; `BIT0` (an alpha texture) discards below 0.5.
 @fragment
 fn fs_opaque_g(i: VO) -> @location(0) vec4<f32> {
-    let c = shade_cap(i, 1.0, true, 1.0);
+    let c = shade_cap(i, 1.0, true, 1.0, false);
     if (c.a < 0.5) { discard; }
     return vec4(c.rgb, 1.0);
 }
@@ -164,21 +187,21 @@ fn fs_blob_g(i: VO) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_glass_g(i: VO) -> @location(0) vec4<f32> {
-    let c = shade_cap(i, 1.0, true, 1.0);
+    let c = shade_cap(i, 1.0, true, 1.0, false);
     return vec4(c.rgb, c.a * i.color.a);
 }
 
 // The same for shadow receivers (`BIT2`: the texel's colour times the map before the vertex colour and the fog).
 @fragment
 fn fs_opaque_gr(i: VO) -> @location(0) vec4<f32> {
-    let c = shade_cap(i, 1.0, true, shadow_at(i.suv));
+    let c = shade_cap(i, 1.0, true, shadow_at(i.suv), false);
     if (c.a < 0.5) { discard; }
     return vec4(c.rgb, 1.0);
 }
 
 @fragment
 fn fs_glass_gr(i: VO) -> @location(0) vec4<f32> {
-    let c = shade_cap(i, 1.0, true, shadow_at(i.suv));
+    let c = shade_cap(i, 1.0, true, shadow_at(i.suv), false);
     return vec4(c.rgb, c.a * i.color.a);
 }
 
@@ -485,14 +508,15 @@ impl Pipes {
             color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::OneMinusSrc, operation: wgpu::BlendOperation::Add },
             alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add },
         };
+        let (opaque, glass) = if format.is_srgb() { ("fs_opaque", "fs_glass") } else { ("fs_opaque_e", "fs_glass_e") };
         Self {
-            opaque: pipeline("fs_opaque", None, true, format),
-            glass: pipeline("fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), false, format),
+            opaque: pipeline(opaque, None, true, format),
+            glass: pipeline(glass, Some(wgpu::BlendState::ALPHA_BLENDING), false, format),
             opaque_g: pipeline("fs_opaque_g", None, true, raw),
             glass_g: pipeline("fs_glass_g", Some(over), false, raw),
             opaque_gr: pipeline("fs_opaque_gr", None, true, raw),
             glass_gr: pipeline("fs_glass_gr", Some(over), false, raw),
-            glass_w: pipeline("fs_glass", Some(wgpu::BlendState::ALPHA_BLENDING), true, format),
+            glass_w: pipeline(glass, Some(wgpu::BlendState::ALPHA_BLENDING), true, format),
             glass_gw: pipeline("fs_glass_g", Some(over), true, raw),
             video_g: pipeline("fs_video_g", None, true, raw),
             add_g: pipeline("fs_glass_g", Some(ADD), false, raw),
@@ -888,7 +912,8 @@ impl Pipe3d {
             q.write_buffer(dynbuf, 0, bytes);
         }
         // With `gamma` the clear colour is stored as given (`glClearColor` on the remaster's non-sRGB frame).
-        let load = clear.map_or(wgpu::LoadOp::Load, |[r, g, b, a]| wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }));
+        let to_frame = |c| if scene.gamma { c } else { crate::render::encode_srgb(c, self.format) };
+        let load = clear.map_or(wgpu::LoadOp::Load, |[r, g, b, a]| wgpu::LoadOp::Clear(wgpu::Color { r: to_frame(r), g: to_frame(g), b: to_frame(b), a }));
         if first {
             let [a, b] = scene.shadow.map_or([[0.0; 3]; 2], |m| m.rows);
             let t = scene.uniforms.eye[3];

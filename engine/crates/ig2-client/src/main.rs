@@ -44,6 +44,12 @@
 // The browser build runs only the window (`web::start`): the command line's other paths are compiled but unused there.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 
+// The browser has no stderr: the client's error lines go to the page's console (ADR 0047).
+#[cfg(target_arch = "wasm32")]
+macro_rules! eprintln {
+    ($($t:tt)*) => { web_sys::console::error_1(&format!($($t)*).into()) };
+}
+
 mod assets;
 mod audio;
 mod backdrop;

@@ -67,8 +67,17 @@ struct GpuParts {
 
 impl GpuParts {
     async fn request(window: Arc<Window>) -> Result<Self, String> {
-        let desc = wgpu::InstanceDescriptor::default();
-        let instance = wgpu::Instance::new(&desc);
+        #[cfg(not(target_arch = "wasm32"))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        // The browser: WebGPU where it works, else WebGL2 (ADR 0047 §4); the page's `?webgl` asks for WebGL2.
+        #[cfg(target_arch = "wasm32")]
+        let instance = {
+            let mut desc = wgpu::InstanceDescriptor::default();
+            if crate::web::webgl_only() {
+                desc.backends.remove(wgpu::Backends::BROWSER_WEBGPU);
+            }
+            wgpu::util::new_instance_with_webgpu_detection(&desc).await
+        };
         let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -77,10 +86,10 @@ impl GpuParts {
                 force_fallback_adapter: false,
             })
             .await
-            // The browser build needs WebGPU: the gamma-space passes view each texture both as sRGB and as linear,
-            // which WebGL2 can't (ADR 0047 §4).
-            .map_err(|e| if cfg!(target_arch = "wasm32") { format!("this browser offers no WebGPU ({e})") } else { e.to_string() })?;
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor::default()).await.map_err(|e| e.to_string())?;
+            .map_err(|e| if cfg!(target_arch = "wasm32") { format!("this browser offers neither WebGPU nor WebGL2 ({e})") } else { e.to_string() })?;
+        // WebGL2's limits are below wgpu's defaults: the browser asks for what the adapter has.
+        let required_limits = if cfg!(target_arch = "wasm32") { adapter.limits() } else { Default::default() };
+        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor { required_limits, ..Default::default() }).await.map_err(|e| e.to_string())?;
         Ok(Self { window, surface, adapter, device, queue })
     }
 }
@@ -1106,7 +1115,10 @@ impl App {
         self.opt_rows.retain(|r| !r.ours);
         self.opt_rows.extend(crate::display::rows(&self.settings, &crate::display::sizes(window.current_monitor().as_ref()), (now.width, now.height)));
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats.iter().copied().find(wgpu::TextureFormat::is_srgb).unwrap_or(caps.formats[0]);
+        // An sRGB frame with raw views for the gamma passes; without such views (WebGL2) a raw frame, the shaders
+        // doing the sRGB transfer (ADR 0047 §4).
+        let views = adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let format = caps.formats.iter().copied().find(|f| f.is_srgb() == views).unwrap_or(caps.formats[0]);
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -2378,10 +2390,10 @@ impl App {
                 if let Some(f) = &self.front {
                     let name = String::from_utf8_lossy(&f.s.player).into_owned();
                     self.settings.set("MultiplayerNev", &name);
-                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| std::fs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
+                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| ig2_formats::userfs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
                     own.set("MultiplayerNev", &name);
                     if let Some(p) = ig2_formats::options::Options::own_path() {
-                        if let Err(e) = std::fs::write(&p, own.to_bytes()) {
+                        if let Err(e) = ig2_formats::userfs::write(&p, own.to_bytes()) {
                             eprintln!("ig2-client: {}: {e}", p.display());
                         }
                     }
@@ -3275,10 +3287,10 @@ impl App {
     /// `SaveGlobalRegistrySettings`: the screen's settings into the remake's own settings file (beside the original's
     /// `options.dat`, which stays untouched), and the rows' values for the next time.
     fn store_settings_from(&mut self, s: &crate::options::OptionsScreen) {
-        let mut own = ig2_formats::options::Options::own_path().and_then(|p| std::fs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
+        let mut own = ig2_formats::options::Options::own_path().and_then(|p| ig2_formats::userfs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
         s.store(&mut own);
         if let Some(p) = ig2_formats::options::Options::own_path() {
-            if let Err(e) = std::fs::write(&p, own.to_bytes()) {
+            if let Err(e) = ig2_formats::userfs::write(&p, own.to_bytes()) {
                 eprintln!("ig2-client: {}: {e}", p.display());
             }
         }
@@ -3411,7 +3423,7 @@ impl App {
         };
         let file = crate::options::slot_file(state, name, [y, m, d]);
         let groups = self.fleet_groups;
-        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(path, file)).and_then(|_| groups.store(path)).map_err(|e| {
+        path.parent().map_or(Ok(()), ig2_formats::userfs::create_dir_all).and_then(|_| ig2_formats::userfs::write(path, file)).and_then(|_| groups.store(path)).map_err(|e| {
             eprintln!("ig2-client: {}: {e}", path.display());
             String::from_utf8_lossy(&crate::tr::fill(crate::tr::game(), "Cannot save: {}", &[e.to_string().as_bytes()])).into_owned()
         })
@@ -3592,7 +3604,7 @@ impl App {
 
     /// Ours (ADR 0038 §6): a replay from the list opens read-only; one that doesn't read stays in the list with why.
     fn watch_replay(&mut self, path: &std::path::Path) {
-        let w = std::fs::read(path)
+        let w = ig2_formats::userfs::read(path)
             .map_err(|e| e.to_string())
             .and_then(|b| ig2_net::replay::Replay::read(&b).map_err(|e| e.to_string()))
             .and_then(|r| {
@@ -3641,7 +3653,7 @@ impl App {
         let on = self.settings.int(crate::display::REPLAYS) != Some(0);
         let Some(dir) = crate::options::slot_dir().map(|d| d.join("replays")).filter(|_| on) else { return };
         let mp = self.world.net.is_some();
-        let r = std::fs::create_dir_all(&dir).and_then(|()| {
+        let r = ig2_formats::userfs::create_dir_all(&dir).and_then(|()| {
             crate::options::prune_replays(&dir, crate::options::KEPT_REPLAYS - 1)?;
             self.world.record_replay(dir.join(crate::options::replay_name(mp)))
         });
@@ -4134,10 +4146,10 @@ impl App {
                 StoryUi::Storyline { campaign, value } => {
                     let key = format!("Fable_{campaign}");
                     self.settings.set(&key, &value.to_string());
-                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| std::fs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
+                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| ig2_formats::userfs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
                     own.set(&key, &value.to_string());
                     if let Some(path) = ig2_formats::options::Options::own_path() {
-                        if let Err(e) = std::fs::write(&path, own.to_bytes()) {
+                        if let Err(e) = ig2_formats::userfs::write(&path, own.to_bytes()) {
                             eprintln!("ig2-client: {}: {e}", path.display());
                         }
                     }
@@ -5296,6 +5308,12 @@ impl ApplicationHandler for App {
                 el.exit();
             }
         }
+    }
+
+    /// The browser keeps the page after the game quits: it goes back to its start (web/main.js).
+    #[cfg(target_arch = "wasm32")]
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        crate::web::exited();
     }
 
     fn about_to_wait(&mut self, _el: &ActiveEventLoop) {

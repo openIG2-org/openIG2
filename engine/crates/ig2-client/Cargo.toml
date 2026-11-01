@@ -37,6 +37,8 @@ pollster = "1.0.1"
 # The browser build (ADR 0047).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
+# WebGL2 where the browser has no WebGPU (ADR 0047 §4).
+wgpu = { version = "25.0.2", features = ["webgl"] }
 cpal = { version = "0.16", features = ["wasm-bindgen"] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"

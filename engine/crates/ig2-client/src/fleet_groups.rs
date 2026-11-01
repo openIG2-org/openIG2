@@ -58,14 +58,14 @@ impl Groups {
 
     /// The groups saved beside `save`, none without the file.
     pub fn load(save: &Path) -> Self {
-        std::fs::read_to_string(path(save)).map(|t| Self::parse(&t)).unwrap_or_default()
+        ig2_formats::userfs::read_to_string(path(save)).map(|t| Self::parse(&t)).unwrap_or_default()
     }
 
     /// Written beside `save`; no groups removes the file.
     pub fn store(&self, save: &Path) -> std::io::Result<()> {
         match self.to_text() {
-            t if t.is_empty() => std::fs::remove_file(path(save)).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }),
-            t => std::fs::write(path(save), t),
+            t if t.is_empty() => ig2_formats::userfs::remove_file(path(save)).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) }),
+            t => ig2_formats::userfs::write(path(save), t),
         }
     }
 }

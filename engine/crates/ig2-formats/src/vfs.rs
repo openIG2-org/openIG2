@@ -106,7 +106,7 @@ impl Mod {
     /// the names without a folder are the second list.
     pub fn enabled(given: Option<Vec<String>>) -> (Vec<Mod>, Vec<String>) {
         let Some(folder) = Self::folder() else { return (Vec::new(), given.unwrap_or_default()) };
-        let names = given.unwrap_or_else(|| std::fs::read_to_string(folder.join("enabled.txt")).map(|t| Self::parse_enabled(&t)).unwrap_or_default());
+        let names = given.unwrap_or_else(|| crate::userfs::read_to_string(folder.join("enabled.txt")).map(|t| Self::parse_enabled(&t)).unwrap_or_default());
         Self::find(&folder, &names)
     }
 

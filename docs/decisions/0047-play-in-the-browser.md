@@ -1,7 +1,8 @@
 # ADR 0047: play in the browser
 
 Date: 2026-11-01. Status: accepted; part 1 implemented (`ig2-formats::vfs::Files`, the CI job "Browser target check");
-part 2 implemented (the client in a page up to the main menu with its music, `web/`, `tools/build_web.py`).
+part 2 implemented (the client in a page up to the main menu with its music, `web/`, `tools/build_web.py`); part 3
+implemented but for video (single player on WebGPU or WebGL2, the player's files in OPFS, `tools/serve_web.py`).
 
 ## Context
 Opening a URL and playing needs no install step and runs on any machine with a current browser. The engine ships no
@@ -30,7 +31,7 @@ that target), blocking sockets, `openh264`'s C code, `arboard`, QUIC over UDP.
    `spawn_app`). Frame timing uses `web-time`, a re-export of `std::time` natively. WebGL2 is **not** a fallback yet: the
    renderer's gamma-space passes view every sRGB texture and the surface also as linear (wgpu's `VIEW_FORMATS` and
    `SURFACE_VIEW_FORMATS`), which WebGL2 cannot; a WebGL2 path needs linear copies of the 2D textures or the sRGB
-   decode moved into the shaders. Without WebGPU the page says so. The 2D shader turns off WGSL's derivative
+   decode moved into the shaders; part 3 takes the second way (below). The 2D shader turns off WGSL's derivative
    uniformity check (`diagnostic(off, derivative_uniformity)`), which browsers enforce and naga does not.
 5. **Audio.** cpal's WebAudio backend; the mixer runs on the audio callback as on native. Decoding stays in Rust
    (lewton, symphonia). Browsers start audio only after a click: the first click on the main menu resumes it.
@@ -63,10 +64,28 @@ that target), blocking sockets, `openh264`'s C code, `arboard`, QUIC over UDP.
 - `cpal`'s WebAudio host plays the mixer as on native; the page's click on Play is the gesture browsers ask for.
 - CI's "Browser target check" lints `ig2-net` and `ig2-client` for wasm32 too.
 
+## Part 3 as built
+- **The player's files** go through `ig2_formats::userfs`: `std::fs` natively; in the browser a store in memory under
+  `/user` (`Options::path` is `/user/options.dat` there, so the slots, the quick save, autosaves, replays, statistics
+  and fleet groups sit beside it). The page reads its OPFS folder `user/` into it before the start
+  (`web::add_user_file`) and stores every change the client hands back (`ig2_user_file`, written in order); a replay
+  is stored when its writer is dropped.
+- **WebGL2**: where the adapter has no `DownlevelFlags::VIEW_FORMATS` the window takes a non-sRGB surface format. A frame
+  without sRGB is the renderer's switch: textures are stored raw, and the sRGB pipelines (2D `Alpha`/`Additive`, the
+  lit mesh pass) use entry points that decode their texels and encode their result (`fs_srgb`, `fs_opaque_e`,
+  `fs_glass_e`); the gamma-space passes are unchanged. Blending in those pipelines then happens on encoded values, a
+  small difference at translucent edges against WebGPU and native. The browser asks for the adapter's limits
+  (WebGL2's are below wgpu's defaults); WebGPU is used where `navigator.gpu` gives an adapter
+  (`new_instance_with_webgpu_detection`), the page's `?webgl` forces WebGL2.
+- **Testing**: `tools/serve_web.py --install DIR` serves the install on 127.0.0.1 only and the page's `?dev-install`
+  (honoured on localhost only) copies it from there without the folder dialog. The client's `eprintln!` lines go to the
+  console. The menu's Exit returns the page to its start.
+
 ## What is left
-- **Single player (part 3):** saves, settings, replays and the mods list in OPFS; WebCodecs video (the intro, cut-scenes,
-  message clips); the web clipboard; reading files on demand from a worker instead of holding them in memory.
-- **WebGL2:** see §4.
+- **Video:** WebCodecs (`VideoDecoder`) fed from `ig2_formats::mp4` for the intro, cut-scenes and message clips; until
+  then `Frames` fails and they are skipped, as in part 2.
+- **Clipboard, mods, memory:** the web clipboard for join codes; mods in OPFS; reading the install on demand from a
+  worker instead of holding it in memory (about 400 MB).
 - **Audio:** works; speech and effects are untested beyond the menu.
 - **Multiplayer (part 4)** and **hosting (part 5)** as below.
 
