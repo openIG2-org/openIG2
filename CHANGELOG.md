@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Responsive multiplayer orders: an order you give shows at once on your own screen, as in single player, instead of a few ticks later, and each player's input delay now follows their own connection's round trip, so a LAN game plays with none (ADR 0063).
 - Smooth glows (Options, Graphics; off by default): the starmap's star glows, clouds and stars, the main menu's galaxy and the battle's shot flares are drawn without visible pixels at 1080p and above. Sharp UI no longer turns these glows into blocks.
 - No more black console window beside the game on Windows: the game's messages and errors now go to `ig2-client.log` in the settings folder (or to the terminal it was started from).
 - Relay server in Docker: `deploy/rendezvous/compose.yaml` runs the rendezvous and relay service on a Linux server, from the published image `ghcr.io/openig2-org/openig2-rendezvous` or built from source (`docs/RENDEZVOUS.md`).

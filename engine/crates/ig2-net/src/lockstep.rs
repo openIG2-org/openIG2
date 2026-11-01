@@ -29,6 +29,9 @@ pub fn input_delay(rtt: std::time::Duration) -> u64 {
     let turn_ms = u64::from(TURN_TICKS * ig2_sim::time::SIM_TICK_MS);
     ((rtt.as_millis() as u64 + 50).div_ceil(turn_ms) - 1).clamp(DEFAULT_DELAY, MAX_DELAY)
 }
+/// Ours (ADR 0063): the turns a lower input delay must have sufficed before a peer's delay falls by one.
+pub const LOWER_AFTER: u64 = 20;
+
 /// The bundles a peer keeps after running them, for a host migration (ADR 0012 §3).
 pub const KEPT_BUNDLES: usize = 128;
 
@@ -329,6 +332,17 @@ impl Host {
 
 // ------------------------------------------------------------------------------------------------ peer
 
+/// A link's round trip as [`Peer::adapt`] tracks it (TCP's smoothing, RFC 6298), in ms.
+#[derive(Debug, Clone, Copy)]
+struct Rtt {
+    srtt: f64,
+    var: f64,
+    /// The turn of the last sample.
+    at: Option<u64>,
+    /// The turn since which a lower delay would have sufficed.
+    low_since: Option<u64>,
+}
+
 /// A player's machine: the whole sim, run turn by turn as the bundles arrive.
 pub struct Peer<'r> {
     pub slot: u8,
@@ -349,6 +363,10 @@ pub struct Peer<'r> {
     unacked: BTreeMap<u64, Vec<Command>>,
     /// Resend `unacked` with the next inputs.
     resend: bool,
+    /// The local commands sent for turns not run yet (ADR 0063: the client's prediction shows them).
+    issued: BTreeMap<u64, Vec<Command>>,
+    /// The link's round-trip estimate the delay follows, once [`Peer::adapt`] has had a sample.
+    rtt: Option<Rtt>,
     /// `(turn, hash)` after each turn run.
     pub hashes: Vec<(u64, u64)>,
     /// The ticks' events since the caller last took them (the UI's).
@@ -380,6 +398,8 @@ impl<'r> Peer<'r> {
             next_input: delay,
             unacked: BTreeMap::new(),
             resend: false,
+            issued: BTreeMap::new(),
+            rtt: None,
             hashes: Vec::new(),
             events: Vec::new(),
             desyncs: Vec::new(),
@@ -461,6 +481,39 @@ impl<'r> Peer<'r> {
         self.outbox.push(c);
     }
 
+    /// The local commands issued that no turn has run yet, in the order they will run (ADR 0063).
+    pub fn in_flight(&self) -> impl Iterator<Item = &Command> {
+        self.issued.values().flatten().chain(&self.outbox)
+    }
+
+    /// The input delay this peer sends with now, in turns.
+    pub fn delay(&self) -> u64 {
+        self.delay
+    }
+
+    /// Ours (ADR 0063): a round-trip sample of this peer's link to the host (the first of each turn counts). The delay
+    /// rises at once to what the smoothed round trip and twice its jitter need ([`input_delay`]), and falls a turn at
+    /// a time once a lower one has sufficed for [`LOWER_AFTER`] turns. The delay only says which turn an input is
+    /// for: the host's bundles stay the one order every peer runs, so no peer needs to know another's.
+    pub fn adapt(&mut self, rtt: std::time::Duration) {
+        let ms = rtt.as_secs_f64() * 1000.0;
+        let r = self.rtt.get_or_insert(Rtt { srtt: ms, var: 0.0, at: None, low_since: None });
+        if r.at == Some(self.turn) {
+            return;
+        }
+        r.at = Some(self.turn);
+        r.var = 0.75 * r.var + 0.25 * (r.srtt - ms).abs();
+        r.srtt = 0.875 * r.srtt + 0.125 * ms;
+        let want = input_delay(std::time::Duration::from_secs_f64((r.srtt + 2.0 * r.var) / 1000.0));
+        if want >= self.delay {
+            self.delay = want;
+            r.low_since = None;
+        } else if self.turn - *r.low_since.get_or_insert(self.turn) >= LOWER_AFTER {
+            self.delay -= 1;
+            r.low_since = Some(self.turn);
+        }
+    }
+
     /// Receive, send the inputs that are due and run up to `max_turns` turns whose bundles are here. Returns
     /// the turns run.
     pub fn poll(&mut self, link: &mut dyn Transport, max_turns: usize) -> Result<usize, wire::Error> {
@@ -490,6 +543,7 @@ impl<'r> Peer<'r> {
                 self.kept.pop_front();
             }
             self.kept.push_back(b);
+            self.issued.retain(|&t, _| t >= self.turn);
             run += 1;
         }
         Ok(run)
@@ -505,6 +559,9 @@ impl<'r> Peer<'r> {
         while self.next_input <= due {
             let commands = if self.next_input == due { std::mem::take(&mut self.outbox) } else { Vec::new() };
             link.send(&Msg::Input { turn: self.next_input, commands: commands.clone() });
+            if !commands.is_empty() {
+                self.issued.insert(self.next_input, commands.clone());
+            }
             self.unacked.insert(self.next_input, commands);
             self.next_input += 1;
         }

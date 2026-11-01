@@ -586,6 +586,8 @@ impl<'r> HostSession<'r> {
         self.admit_rejoiners(now)?;
         self.resume_survivors()?;
         self.end_migration(now)?;
+        // The host's own peer is in this process: no round trip, the least delay (ADR 0063).
+        self.own.adapt(Duration::ZERO);
         self.own.poll(&mut self.link, max_turns)?;
         // Our own input just sent may complete a turn: its bundle goes out in this pump, not the next.
         self.host.pump()?;
@@ -1115,6 +1117,9 @@ impl<'r> ClientSession<'r> {
         if alive_due(self.keep_alive, self.alive_sent, now) {
             self.link.send(&Msg::Session(SessionMsg::Alive));
             self.alive_sent = Some(now);
+        }
+        if let Some(rtt) = self.link.rtt() {
+            self.peer.adapt(rtt);
         }
         let mut run = 0;
         loop {

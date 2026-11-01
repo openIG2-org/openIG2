@@ -33,7 +33,7 @@ pub mod webrtc;
 pub mod wire;
 
 pub use command::{BattleOrder, Command, DiplomacyScreenOp, ResearchCmd, SpyOrder, Stamped, StarmapCmd, Terms};
-pub use lockstep::{input_delay, Bundle, Desync, Host, Msg, Peer, DEFAULT_DELAY, KEPT_BUNDLES, MAX_DELAY, TURN_TICKS};
+pub use lockstep::{input_delay, Bundle, Desync, Host, Msg, Peer, DEFAULT_DELAY, KEPT_BUNDLES, LOWER_AFTER, MAX_DELAY, TURN_TICKS};
 pub use session::{ClientSession, HoldStatus, HostSession, MpSave, SessionEvent, SessionMsg, SessionSettings};
 pub use snapshot::{part_hashes, state_hash, Header, Snapshot};
 pub use transport::{loopback, Loopback, Transport};

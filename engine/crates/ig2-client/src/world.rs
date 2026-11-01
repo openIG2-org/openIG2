@@ -345,6 +345,9 @@ pub struct World<'r> {
     pub net_host: Option<u8>,
     /// The joiner's resyncs already told on the message line (ADR 0021).
     pub net_resyncs: usize,
+    /// Ours (ADR 0063): while this machine's own orders are on their way through the lockstep, `game` is a prediction
+    /// (the shared game with them applied, as single player applies them at once) and this is the shared game.
+    net_real: Option<Game<'r>>,
     /// `MainScenarioDescriptor` (exe 0xbbd140) is set: the game was started as a scenario from the main menu
     /// (`StoreScenarioDescription` 0x504120); `InitNewGame` (every other start and every `LoadSave`) clears it.
     pub scenario: bool,
@@ -448,6 +451,21 @@ fn local_en(game: &mut Game, local: bool) {
     game.show_local_names(local);
     // And its own message line (each peer posts its own empire's lines, re/rules/multiplayer.md §2).
     game.show_local_ticker(local);
+}
+
+/// End a prediction (ADR 0063): the per-machine parts the screens write (the local view, the renames shown ahead of
+/// the lockstep, the own message line; a spectator's end) go from the shown `game` into the shared one in `real`,
+/// which is shown again.
+fn settled<'r>(game: &mut Game<'r>, real: &mut Option<Game<'r>>) {
+    let Some(mut to) = real.take() else { return };
+    local_en(game, false);
+    local_en(&mut to, false);
+    to.local = game.local;
+    to.local_names = std::mem::take(&mut game.local_names);
+    to.local_ticker = game.local_ticker.clone();
+    to.over = to.over.or(game.over);
+    local_en(&mut to, true);
+    *game = to;
 }
 
 /// The message line's words for a change of the session's hold status (ours, ADR 0042: the original's MP had no
@@ -574,6 +592,7 @@ impl<'r> World<'r> {
     pub fn mp_save(&mut self) -> Option<Result<Vec<u8>, String>> {
         let (net, _) = self.net.as_mut()?;
         let crate::mp_lobby::Session::Host { session, .. } = net else { return Some(Err("Only the host can save a multiplayer game.".into())) };
+        settled(&mut self.game, &mut self.net_real);
         local_en(&mut self.game, false);
         std::mem::swap(&mut self.game, &mut session.own.game);
         // The turns it catches up on leave their events in the peer for the next `mp_tick`.
@@ -587,6 +606,7 @@ impl<'r> World<'r> {
     /// desync check); `None` in single player.
     pub fn mp_snapshot(&mut self) -> Option<ig2_net::Snapshot> {
         let (net, _) = self.net.as_mut()?;
+        settled(&mut self.game, &mut self.net_real);
         local_en(&mut self.game, false);
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
         let s = net.peer().snapshot();
@@ -614,7 +634,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false, replay: None, recorder: None, log: Default::default(), log_on: true, viewer: None }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, net_real: None, scenario: false, replay: None, recorder: None, log: Default::default(), log_on: true, viewer: None }
     }
 
     /// A replay to watch (ADR 0038 §6): its start, run by its playback, seen as a spectator sees a game (ADR 0026).
@@ -721,23 +741,30 @@ impl<'r> World<'r> {
     fn mp_tick(&mut self) {
         let Some((net, _)) = &self.net else { return };
         let due = self.net_since + 1 >= ig2_net::TURN_TICKS || net.peer().behind();
-        if self.mp_pump(due) {
+        if self.mp_pump(due, false) {
             self.net_since = 0;
         } else {
             self.net_since += 1;
         }
     }
 
-    /// The session's pump, with a turn (`turn`) or only its messages: the game goes back into the peer, the session
-    /// pumps, the game comes out again; the events feed the screens. Whether a turn ran.
-    fn mp_pump(&mut self, turn: bool) -> bool {
+    /// The session's pump, with a turn (`turn`) or only its messages: the shared game goes back into the peer, the
+    /// session pumps, the game comes out again; the events feed the screens. `issued`: this frame's orders went to the
+    /// peer. Whether a turn ran.
+    fn mp_pump(&mut self, turn: bool, issued: bool) -> bool {
         let Some((net, epoch)) = &mut self.net else { return false };
         let watching = self.game.local.spectating;
-        local_en(&mut self.game, false);
-        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        let was = (net.peer().turn, net.resyncs());
+        // A prediction stays shown (ADR 0063): the peer runs the shared game under it.
+        let shared = self.net_real.as_mut().unwrap_or(&mut self.game);
+        local_en(shared, false);
+        std::mem::swap(shared, &mut net.peer_mut().game);
         let r = net.pump(epoch.elapsed(), usize::from(turn));
-        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
-        local_en(&mut self.game, true);
+        std::mem::swap(shared, &mut net.peer_mut().game);
+        local_en(shared, true);
+        let moved = issued || was != (net.peer().turn, net.resyncs());
+        let shown = self.predict(moved);
+        let Some((net, epoch)) = &mut self.net else { return false };
         // A spectator stays one through a restart from the host's state (ADR 0026); a late one (empire 0) from the
         // start, and its machine's game never ends (`MEGHALAS`/`MEGNYERES` don't fire once `over` is set).
         if watching || net.peer().empire == 0 {
@@ -800,7 +827,12 @@ impl<'r> World<'r> {
         self.order_events.extend(events.iter().filter_map(|e| if let GameEvent::Order(o) = e { Some(*o) } else { None }));
         self.colony_events.extend(events.iter().filter_map(|e| if let GameEvent::ColonyOrder(o) = e { Some(*o) } else { None }));
         match r {
-            Ok((0, _)) => return false,
+            Ok((0, _)) => {
+                if shown {
+                    self.reread();
+                }
+                return false;
+            }
             Ok(_) => {}
             Err(e) => {
                 eprintln!("ig2-client: multiplayer: {e}");
@@ -818,6 +850,49 @@ impl<'r> World<'r> {
             self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
         }
         true
+    }
+
+    /// Show this machine's orders that no turn has run yet (ADR 0063): the shared game forked with them applied, as the
+    /// lockstep will apply them and as single player applies them at once, for the screens only (the fork never goes
+    /// into the peer). `force`: rebuild it (a turn ran, the peer restarted, an order was issued). Whether the shown
+    /// game changed.
+    fn predict(&mut self, force: bool) -> bool {
+        let Some((net, _)) = &self.net else { return false };
+        if !force && self.net_real.is_some() || !matches!(self.game.view, ig2_sim::game::ViewMode::Canonical { .. }) {
+            return false;
+        }
+        let orders: Vec<Command> = net.peer().in_flight().cloned().collect();
+        let issuer = net.peer().empire;
+        if orders.is_empty() && self.net_real.is_none() {
+            return false;
+        }
+        settled(&mut self.game, &mut self.net_real);
+        if !orders.is_empty() {
+            local_en(&mut self.game, false);
+            let mut fork = self.game.fork();
+            local_en(&mut self.game, true);
+            for c in orders {
+                c.apply(&mut fork, issuer);
+            }
+            fork.events.clear();
+            local_en(&mut fork, true);
+            self.net_real = Some(std::mem::replace(&mut self.game, fork));
+        }
+        true
+    }
+
+    /// The screens show a prediction of this machine's orders (ADR 0063).
+    pub fn predicting(&self) -> bool {
+        self.net_real.is_some()
+    }
+
+    /// The screens' snapshots of the game as it is now, within the same tick (the fleets keep gliding from `prev`).
+    fn reread(&mut self) {
+        if let Some(p) = self.colony {
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+        }
+        self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game) };
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
     }
 
     /// The story's starmap texts for this machine's empire (`StoryEvent::Notice`, [`notice_line`]) into the message ring.
@@ -859,6 +934,7 @@ impl<'r> World<'r> {
     /// turn (it catches the peer up), so the game goes in for it.
     pub fn drop_player(&mut self, empire: u8) {
         let Some((net, epoch)) = &mut self.net else { return };
+        settled(&mut self.game, &mut self.net_real);
         local_en(&mut self.game, false);
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
         let r = net.drop_player(empire, epoch.elapsed());
@@ -886,6 +962,7 @@ impl<'r> World<'r> {
             match crate::console::kick_target(arg, &net.players(races), net.peer().empire) {
                 Ok(e) => {
                     // The kick decides on the state at the next turn (it catches the peer up): the game goes in.
+                    settled(&mut self.game, &mut self.net_real);
                     local_en(&mut self.game, false);
                     std::mem::swap(&mut self.game, &mut net.peer_mut().game);
                     let r = net.kick(e, epoch.elapsed());
@@ -944,11 +1021,13 @@ impl<'r> World<'r> {
         // session's messages move every frame, not only on ticks (a hop waits a frame, not a tick).
         if let Some((net, _)) = &mut self.net {
             // A spectator's screens order nothing (ADR 0026).
+            // Ours (ADR 0063): the screens see them at once all the same, as a prediction until their turn runs.
             let watching = self.game.local.spectating;
+            let issued = !watching && !self.outbox.is_empty();
             for c in std::mem::take(&mut self.outbox).into_iter().filter(|_| !watching) {
                 net.peer_mut().issue(c);
             }
-            self.mp_pump(false);
+            self.mp_pump(false, issued);
             return;
         }
         if self.outbox.is_empty() {
@@ -977,12 +1056,8 @@ impl<'r> World<'r> {
         }));
         self.ground_voices.extend(ground_voices(&self.game.events[from..]));
         self.ground_fx.extend(ground_fx(&self.game.events[from..]));
-        if let Some(p) = self.colony {
-            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
-        }
         // Same tick: the fleets keep gliding from `prev`.
-        self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game) };
-        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+        self.reread();
     }
 
     /// Start writing this game's replay into `path` (ADR 0038): single player from now (between ticks), multiplayer
@@ -1008,6 +1083,7 @@ impl<'r> World<'r> {
     /// Multiplayer: `f` on the peer holding the game as the lockstep sees it (the synced `EN`, as [`World::mp_pump`]).
     fn in_peer<T>(&mut self, f: impl FnOnce(&mut ig2_net::Peer<'r>) -> T) -> T {
         let (net, _) = self.net.as_mut().expect("multiplayer");
+        settled(&mut self.game, &mut self.net_real);
         local_en(&mut self.game, false);
         std::mem::swap(&mut self.game, &mut net.peer_mut().game);
         let t = f(net.peer_mut());
@@ -1050,7 +1126,8 @@ impl<'r> World<'r> {
         if let Some(v) = &self.viewer {
             return v.paused || v.end.is_some();
         }
-        self.game.paused()
+        // The clock stops when the shared game does, not when a predicted pause shows (ADR 0063).
+        self.net_real.as_ref().unwrap_or(&self.game).paused()
     }
 
     /// The tail of `MULTIGET_Starmap` (ELF 0x719680), every frame: a selected fleet (`StarmapMode` 2) that is gone or

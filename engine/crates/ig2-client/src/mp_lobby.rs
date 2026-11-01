@@ -2614,6 +2614,50 @@ mod tests {
         eprintln!("a joiner's order ran on both machines after {ticks} ticks");
     }
 
+    /// ADR 0063: a joiner's fleet order shows on its own screens in the same frame, as in single player (a prediction:
+    /// the shared game and the host's are untouched), and the prediction gives way to the real order once its turn
+    /// runs, the same on both machines, which stay in step.
+    #[test]
+    fn a_joiners_order_shows_at_once_and_the_prediction_clears() {
+        let Some((mut a, mut g)) = two_worlds() else { return };
+        fn step(a: &mut crate::world::World, g: &mut crate::world::World) {
+            for _ in 0..3 {
+                a.pump();
+                g.pump();
+            }
+            a.tick();
+            g.tick();
+        }
+        for _ in 0..10 {
+            step(&mut a, &mut g);
+        }
+        let joiner = g.net.as_ref().unwrap().0.peer().empire;
+        let f = g.curr.fleets.iter().find(|f| f.owner == joiner).expect("the joiner's fleet").clone();
+        let to = [f.pos[0] + 400.0, f.pos[1]];
+        let target = |w: &crate::world::World| w.curr.fleets.iter().find(|x| x.slot == f.slot).and_then(|x| x.target);
+        assert_ne!(target(&g), Some(to));
+        g.send(ig2_net::Command::Starmap { order: ig2_net::StarmapCmd::Move { fleet: f.slot as i32, order: 1, kind: 0, x: to[0].to_bits(), y: to[1].to_bits() } });
+        g.pump();
+        assert!(g.predicting());
+        assert_eq!(target(&g), Some(to), "the order shows in the frame it was given");
+        assert_ne!(target(&a), Some(to), "the host hasn't run it yet");
+        let mut ticks = 0;
+        while g.predicting() || target(&a) != Some(to) {
+            step(&mut a, &mut g);
+            assert_eq!(target(&g), Some(to), "the prediction holds until the real order replaces it");
+            ticks += 1;
+            assert!(ticks < 40, "the order never ran");
+        }
+        for _ in 0..10 {
+            step(&mut a, &mut g);
+        }
+        let hashes = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().hashes.clone();
+        let (ha, hg) = (hashes(&a), hashes(&g));
+        assert!(hg.iter().filter(|x| ha.contains(x)).count() >= 10, "the machines stay in step");
+        assert!(hg.iter().all(|(t, x)| ha.iter().find(|(t0, _)| t0 == t).is_none_or(|(_, x0)| x0 == x)));
+        eprintln!("the real order replaced the prediction after {ticks} ticks");
+    }
+
     /// Issue #33: a fleet on its way glides on both machines, frame by frame as the window draws it (the frame's message
     /// pass, the ticks due, the interpolation's way between the turns' snapshots; none while paused), also through a
     /// pause: it stands still while paused and never hops a turn's way in one frame.

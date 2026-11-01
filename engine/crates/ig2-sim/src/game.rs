@@ -466,6 +466,39 @@ impl<'r> Game<'r> {
         }
     }
 
+    /// Ours (ADR 0063): a copy of the game for a display-only prediction, never run in the lockstep: everything but
+    /// `uninit` (appended records start zeroed, as a snapshot's restore does) and the events.
+    pub fn fork(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            rules: self.rules,
+            libc: self.libc,
+            fleet_name: self.fleet_name.clone(),
+            uninit: None,
+            events: Vec::new(),
+            empire_names: self.empire_names.clone(),
+            family_names: self.family_names.clone(),
+            design_texts: self.design_texts.clone(),
+            hand_offs: 0,
+            view: self.view,
+            local: self.local,
+            cosmetic: self.cosmetic,
+            realtime: self.realtime.clone(),
+            spectators: self.spectators,
+            auto_research: self.auto_research,
+            enhanced_ai: self.enhanced_ai,
+            story_fixes: self.story_fixes,
+            stats: self.stats.clone(),
+            sp_battles: self.sp_battles,
+            over: self.over,
+            answering: self.answering,
+            local_inbox: self.local_inbox,
+            local_ticker: self.local_ticker.clone(),
+            shared_ticker: self.shared_ticker.clone(),
+            local_names: self.local_names.clone(),
+        }
+    }
+
     /// Canonical multiplayer: run `f` with human `h`'s inbox in the state (`re/rules/multiplayer.md` §5.3), its
     /// answers the story's [`crate::story::StoryWorld::answering`].
     pub(crate) fn with_inbox_of<T>(&mut self, h: u8, f: impl FnOnce(&mut Self) -> T) -> T {
