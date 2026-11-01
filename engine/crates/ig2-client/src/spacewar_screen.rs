@@ -1239,7 +1239,7 @@ impl<'a> Scene<'a> {
                 && let Some((c, px)) = project(q)
             {
                 let half = bolt.flare_size / SCENE_SCALE * px;
-                f.push(g.flare.unwrap_or(self.assets.white), Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [half; 2], crate::starmap::particle_color(0x80ff_ffff)));
+                f.push(g.flare.unwrap_or(self.assets.white), Blend::GammaAdditive, Instance::new(kind::SOFT, c, [half; 2], crate::starmap::particle_color(0x80ff_ffff)));
             }
         }
     }

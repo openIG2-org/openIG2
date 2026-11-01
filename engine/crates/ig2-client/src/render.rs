@@ -122,6 +122,25 @@ fn cubic(t: vec2<f32>, lo: vec2<f32>, hi: vec2<f32>) -> vec4<f32> {
     return c;
 }
 
+// `tex` at `t` through a cubic B-spline over the 4 × 4 texels around it, as four bilinear taps: smooth everywhere,
+// so a magnified texture shows no texel grid (ADR 0062). The Rust twin is `bspline` (its test pins the weights).
+fn bspline(t: vec2<f32>) -> vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(tex));
+    let p = t * dims - 0.5;
+    let i = floor(p);
+    let f = p - i;
+    let w0 = (1.0 - f) * (1.0 - f) * (1.0 - f) / 6.0;
+    let w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0;
+    let w3 = f * f * f / 6.0;
+    let w2 = 1.0 - w0 - w1 - w3;
+    let g0 = w0 + w1;
+    let g1 = w2 + w3;
+    let h0 = (i - 0.5 + w1 / g0) / dims;
+    let h1 = (i + 1.5 + w3 / g1) / dims;
+    return g0.y * (g0.x * textureSampleLevel(tex, smp, vec2(h0.x, h0.y), 0.0) + g1.x * textureSampleLevel(tex, smp, vec2(h1.x, h0.y), 0.0))
+        + g1.y * (g0.x * textureSampleLevel(tex, smp, vec2(h0.x, h1.y), 0.0) + g1.x * textureSampleLevel(tex, smp, vec2(h1.x, h1.y), 0.0));
+}
+
 // Coverage of the edge of a shape whose signed distance (in quad units, < 0 inside) is `d`.
 fn cover(d: f32) -> f32 {
     let w = max(fwidth(d), 1e-4);
@@ -207,6 +226,26 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
             let c = dec(cubic(t, v.uv.xy + h, v.uv.xy + v.uv.zw - h), d);
             return vec4(sharpen(c.rgb, s), 1.0) * v.color;
         }
+        // A scene's glow or particle (ADR 0062): bilinear like a sprite but never sharpened by "Sharp UI"; with "Smooth
+        // glows" a magnified texture is read through the B-spline and a one-texel (white) point is a round dot of the
+        // square's light.
+        case 8u: {
+            let t = v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw;
+            let dims = vec2<f32>(textureDimensions(tex));
+            let s = 1.0 / max(fwidth(t.x * dims.x), 1e-6);
+            let c = textureSample(tex, smp, t);
+            if (u.sharp & 4u) == 0u {
+                return dec(c, d) * v.color;
+            }
+            if all(dims == vec2(1.0)) {
+                let a = cover(length(q) - 1.0);
+                return vec4(dec(c, d).rgb * v.color.rgb * (4.0 / PI), v.color.a * a);
+            }
+            if s <= 1.0 {
+                return dec(c, d) * v.color;
+            }
+            return dec(bspline(t), d) * v.color;
+        }
         // Soft round glow (procedural stars).
         default: {
             let r = length(q);
@@ -221,6 +260,8 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
 static SHARP_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// The "Sharp text" option (ADR 0046, off by default): the glyphs' edges one screen pixel wide at any size.
 static SHARP_TEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The "Smooth glows" option (ADR 0062, off by default): [`kind::SOFT`] quads without a texel grid or square points.
+static SMOOTH_GLOWS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_sharp_ui(on: bool) {
     SHARP_UI.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -230,10 +271,39 @@ pub fn set_sharp_text(on: bool) {
     SHARP_TEXT.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+pub fn set_smooth_glows(on: bool) {
+    SMOOTH_GLOWS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn smooth_glows() -> bool {
+    SMOOTH_GLOWS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The shader's `sharpen` for one channel: coverage `c` of a texel `s` screen pixels wide.
 #[cfg(test)]
 fn sharpen(c: f32, s: f32) -> f32 {
     ((c - 0.5) * s.max(1.0) + 0.5).clamp(0.0, 1.0)
+}
+
+/// The shader's `bspline` along one axis of a row of texels `row` at `x` (texel units, centres at `i + 0.5`): the
+/// two bilinear taps (`lerp` of the clamped neighbours) and their weights.
+#[cfg(test)]
+fn bspline(row: &[f32], x: f32) -> f32 {
+    let p = x - 0.5;
+    let i = p.floor();
+    let f = p - i;
+    let w0 = (1.0 - f).powi(3) / 6.0;
+    let w1 = (4.0 - 6.0 * f * f + 3.0 * f * f * f) / 6.0;
+    let w3 = f * f * f / 6.0;
+    let w2 = 1.0 - w0 - w1 - w3;
+    let (g0, g1) = (w0 + w1, w2 + w3);
+    let tap = |x: f32| {
+        let p = x - 0.5;
+        let k = p.floor();
+        let at = |j: f32| row[(j as isize).clamp(0, row.len() as isize - 1) as usize];
+        at(k) + (at(k + 1.0) - at(k)) * (p - k)
+    };
+    g0 * tap(i - 0.5 + w1 / g0) + g1 * tap(i + 1.5 + w3 / g1)
 }
 
 /// Instance kinds (`I.kind`).
@@ -246,6 +316,8 @@ pub mod kind {
     pub const GLOW: u32 = 5;
     pub const TRI: u32 = 6;
     pub const GLYPH: u32 = 7;
+    /// A scene's glow or particle sprite (ADR 0062): [`SPRITE`] without "Sharp UI", smooth with "Smooth glows".
+    pub const SOFT: u32 = 8;
 }
 
 /// One quad, in physical pixels (origin top left).
@@ -401,7 +473,7 @@ impl Frame {
 struct Uniforms {
     screen: [f32; 2],
     time: f32,
-    /// Bit 0: "Sharp UI" (ADR 0043); bit 1: "Sharp text" (ADR 0046).
+    /// Bit 0: "Sharp UI" (ADR 0043); bit 1: "Sharp text" (ADR 0046); bit 2: "Smooth glows" (ADR 0062).
     sharp: u32,
 }
 
@@ -727,7 +799,7 @@ impl Renderer {
         crate::prof::count("passes", 1);
         crate::prof::count("quads", frame.instances.len() as u64);
         crate::prof::count("batches", frame.batches.len() as u64);
-        let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, sharp: SHARP_UI.load(std::sync::atomic::Ordering::Relaxed) as u32 | (SHARP_TEXT.load(std::sync::atomic::Ordering::Relaxed) as u32) << 1 };
+        let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, sharp: SHARP_UI.load(std::sync::atomic::Ordering::Relaxed) as u32 | (SHARP_TEXT.load(std::sync::atomic::Ordering::Relaxed) as u32) << 1 | (SMOOTH_GLOWS.load(std::sync::atomic::Ordering::Relaxed) as u32) << 2 };
         self.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         // The backdrop's quad goes after the frame's own in the buffer.
         let backdrop = frame.backdrop.map(|(tex, c)| {
@@ -2195,6 +2267,34 @@ mod tests {
         let (size, levels) = mip_chain(&img, Some(&pack));
         assert_eq!((size, levels.len()), ((30, 12), 5));
         assert!(levels.iter().all(|l| l[0] == 200));
+    }
+
+    /// ADR 0062: the two bilinear taps give the cubic B-spline's four weights (1/6, 4/6, 1/6 at a texel centre),
+    /// a flat texture stays flat, and the curve has no kink where bilinear has one (at a texel centre).
+    #[test]
+    fn bspline_taps_are_the_four_weights() {
+        let row = [0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0];
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(bspline(&row, 3.5), 4.0) && near(bspline(&row, 2.5), 1.0) && near(bspline(&row, 4.5), 1.0));
+        assert!(near(bspline(&row, 1.5), 0.0));
+        for x in [2.1, 2.9, 3.3, 3.7, 4.2] {
+            assert!(near(bspline(&row, x), 6.0 * cubic_b(x - 3.5)), "{x}");
+        }
+        assert!(near(bspline(&[0.3; 5], 2.2), 0.3));
+        let slope = |x: f32| (bspline(&row, x + 1e-3) - bspline(&row, x - 1e-3)) / 2e-3;
+        assert!(slope(3.5).abs() < 1e-2);
+    }
+
+    /// The cubic B-spline kernel at distance `t` from a texel centre.
+    fn cubic_b(t: f32) -> f32 {
+        let a = t.abs();
+        if a < 1.0 {
+            (4.0 - 6.0 * a * a + 3.0 * a * a * a) / 6.0
+        } else if a < 2.0 {
+            (2.0 - a).powi(3) / 6.0
+        } else {
+            0.0
+        }
     }
 
     /// ADR 0046: the coverage's 0.5 edge stays put (the glyph's stroke widths and positions), 1:1 or minified the

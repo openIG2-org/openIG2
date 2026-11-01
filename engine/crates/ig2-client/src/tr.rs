@@ -51,6 +51,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Modern", "Modern"),
     ("The look of the remake's own screens; Classic keeps the game's colours.", "A remake saját képernyőinek kinézete; a Klasszikus a játék színeit tartja meg."),
     ("Battle effects", "Csataeffektusok"),
+    ("Smooth glows", "Lágy fények"),
     ("Menu navigation", "Menünavigáció"),
     ("A grouped main menu with Continue; Back, Esc or right click on every menu screen.", "Csoportos főmenü Tovább gombbal; Vissza, Esc vagy jobb klikk minden menüben."),
     ("Starmap mouse camera", "Egérkamera a térképen"),
@@ -138,6 +139,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Enhanced fixes the original campaign story's slips in the next new game.", "Fejlett: a következő új játékban javítja az eredeti kampánytörténet hibáit."),
     ("Smooths the game's pictures and model textures 2x or 4x as they load.", "Betöltéskor 2x vagy 4x simítja a játék képeit és modelltextúráit."),
     ("Sparks, shock waves, smoke and glowing shots on top of the battles' own effects.", "Szikrák, lökéshullámok, füst és izzó lövések a csaták saját effektusai fölött."),
+    ("Soft, round glows and stars on the starmap and the backgrounds at any resolution.", "Lágy, kerek fények és csillagok a csillagtérképen és a hátterekben, bármely felbontáson."),
     // The research screen's auto research switches (label and state within 22 letters) and tooltips.
     ("Auto ships", "Auto hajók"),
     ("Auto buildings", "Auto épületek"),

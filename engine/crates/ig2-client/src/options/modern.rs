@@ -163,6 +163,7 @@ pub fn describe(key: &str) -> &'static str {
         "PixelLighting" => "The space battle's ships lit per pixel, so their hulls shade smoothly.",
         "SoftShadows" => "Soft edges on the colony's building shadows.",
         "Bloom" => "A soft glow around fire, blasts and the colony's weather.",
+        "SmoothGlows" => "Soft, round glows and stars on the starmap and the backgrounds at any resolution.",
         "BattleEffects" => "Sparks, shock waves, smoke and glowing shots on top of the battles' own effects.",
         "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",
         _ => "",

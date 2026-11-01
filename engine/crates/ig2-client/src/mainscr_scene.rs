@@ -242,7 +242,7 @@ impl MainScene {
         let sprite = |f: &mut Frame, tex: Option<TexId>, white: TexId, e: V3, size: f32, color: u32| {
             let Some((c, k)) = project(e) else { return };
             let half = (size * k).max(0.5) * vv.k;
-            f.push(tex.unwrap_or(white), Blend::GammaAdditive, Instance::new(kind::SPRITE, vv.px(c[0], c[1]), [half; 2], crate::starmap::particle_color(color)));
+            f.push(tex.unwrap_or(white), Blend::GammaAdditive, Instance::new(kind::SOFT, vv.px(c[0], c[1]), [half; 2], crate::starmap::particle_color(color)));
         };
         // Step 4: the pictures at `kamerapont.z/1.2 − 3000`, `A = GT·140·GT`, grey `GT·255` (only the first two move).
         let grey = (gt * 255.0) as u32 & 0xff;

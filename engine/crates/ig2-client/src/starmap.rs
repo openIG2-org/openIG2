@@ -140,7 +140,13 @@ fn sky_sphere(r: &mut Renderer, install: &Install) -> Vec<(Vec<crate::render3d::
         .parts
         .iter()
         .filter_map(|p| {
-            let t = Image::load(install, p.texture.as_deref()?).ok()?;
+            let mut t = Image::load(install, p.texture.as_deref()?).ok()?;
+            // "Smooth glows" (ADR 0062): the nebulae, each texel about ten pixels wide at 1080p, from a 4× Catmull-Rom
+            // copy (a texture pack's or the upscaling row's picture first).
+            if let (true, None, Some(f)) = (crate::render::smooth_glows(), &t.hires, crate::upscale::fit(t.width, t.height, 4)) {
+                let rgba = crate::upscale::cubic(&t.rgba, t.width as usize, t.height as usize, f as usize);
+                t.hires = Some(std::sync::Arc::new(crate::upscale::Hires { width: t.width * f as u32, height: t.height * f as u32, rgba, upscaled: true }));
+            }
             let tex = r.add_texture(&t);
             let verts = p
                 .verts
@@ -989,7 +995,7 @@ impl View {
                 }
             }
             let tex = a.stars[(p.surface.max(1) as usize - 1) % 8].unwrap_or(a.white);
-            let kind = if tex == a.white { kind::GLOW } else { kind::SPRITE };
+            let kind = if tex == a.white { kind::GLOW } else { kind::SOFT };
             let e = self.battle_fade.unwrap_or(1.0);
             if e <= 0.0 {
                 continue;
@@ -1139,7 +1145,7 @@ impl View {
                         continue;
                     }
                     if let Some((s, px)) = cam.project_eye(e) {
-                        f.push(t, Blend::GammaAdditive, Instance::new(kind::SPRITE, s, [size * px; 2], particle_color(color)));
+                        f.push(t, Blend::GammaAdditive, Instance::new(kind::SOFT, s, [size * px; 2], particle_color(color)));
                     }
                 }
             }
@@ -1231,7 +1237,7 @@ impl View {
                     if c[0] < 0.0 || c[1] < 0.0 || c[0] > cam.size[0] || c[1] > cam.size[1] {
                         continue;
                     }
-                    f.push(a.white, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [0.5 * cam.k(); 2], color));
+                    f.push(a.white, Blend::GammaAdditive, Instance::new(kind::SOFT, c, [0.5 * cam.k(); 2], color));
                 }
                 s => {
                     let half = p.size * px;
@@ -1239,7 +1245,7 @@ impl View {
                         continue;
                     }
                     if let Some(t) = a.clouds[s as usize - 1] {
-                        f.push(t, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [half; 2], color));
+                        f.push(t, Blend::GammaAdditive, Instance::new(kind::SOFT, c, [half; 2], color));
                     }
                 }
             }
@@ -1332,7 +1338,7 @@ impl View {
             }
             let Some((c, px)) = cam.project_eye(e) else { continue };
             let color = if d.fleet { particle_color(0xc04000) } else { particle_color(0xff) };
-            f.push(t, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [1.3 * px; 2], color));
+            f.push(t, Blend::GammaAdditive, Instance::new(kind::SOFT, c, [1.3 * px; 2], color));
         }
     }
 }
