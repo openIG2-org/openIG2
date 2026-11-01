@@ -1,7 +1,7 @@
-# Runs the rendezvous and relay service (docs/RENDEZVOUS.md). On the server, with this file alone:
-#   docker compose -f compose.yaml pull && docker compose -f compose.yaml up -d
-# or, from a clone of the repository, building the image from source:
+# Runs the rendezvous and relay service (docs/RENDEZVOUS.md). From a clone of the repository, building the image:
 #   docker compose -f deploy/rendezvous/compose.yaml up -d --build
+# With access to the project's private image (docker login ghcr.io), this file alone is enough:
+#   docker compose -f compose.yaml pull && docker compose -f compose.yaml up -d
 # It needs the UDP port open in the server's firewall; nothing is stored, so there are no volumes.
 services:
   rendezvous:
