@@ -49,11 +49,11 @@ re/screens/hud.md §2, re/screens/input.md §6) and must stay exactly as they ar
 5. **Unchanged**: the radial icon menu, the select menus, the production view, the transfer panel, the fleet's and
    vehicles' info panels and the planet's long info (whose box keeps the original's info box under it while open).
    They keep their original look; a later part may redraw them.
-6. **Scale and ratio**: the plates are laid out in egui points for one point per pixel at 1080 lines (the UI scale at
-   100 %): there the top plates are 30 pixels high and the corner plates take about 13 % of the width each. They follow
-   the shared UI scale of the egui layer, so a player who wants them bigger sets the UI scale; the first version was
-   laid out for the pages' 540 points high, so it doubled at 1080p. The plates are anchored to the band's corners and
-   edges (4:3, 16:9, 21:9) and stay sharp at any resolution; the UI theme (ADR 0056) is their style.
+6. **Scale and ratio**: the plates are laid out in egui points and follow the shared UI scale of the egui layer: the
+   top plates are 30 points high and the corner plates about 250 points wide, a small share of the screen at the
+   default scale on 1080p and above; a player who wants them bigger or smaller sets the UI scale. The first version's
+   plates were sized for the pages' larger layout and took about twice the room. The plates are anchored to the band's
+   corners and edges (4:3, 16:9, 21:9) and stay sharp at any resolution; the UI theme (ADR 0056) is their style.
 
 ## Consequences
 - The original's HUD code stays and draws whenever the option is off (and under the long info).

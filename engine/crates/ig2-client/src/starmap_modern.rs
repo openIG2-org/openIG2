@@ -7,8 +7,7 @@
 //! menus and the panels stay the original's.
 //!
 //! The look is a ship's console: small dark plates with cut corners, a hairline edge and corner marks in the player's
-//! colour, drawn icons with their keys in the tooltips. It is laid out for one point per pixel at 1080 lines (the UI
-//! scale at 100 %) and follows the shared UI scale.
+//! colour, drawn icons with their keys in the tooltips. It is laid out in points and follows the shared UI scale.
 
 use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Margin, Pos2, Rect, Sense, Shadow, Shape, Stroke};
 
