@@ -7,7 +7,7 @@
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--upscale 2|4] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -108,6 +108,7 @@ mod starmap_radar;
 mod starmap_tip;
 mod replay_viewer;
 mod stats_screen;
+mod theme;
 mod trade;
 mod tr;
 mod topbar_menus;
@@ -149,6 +150,8 @@ pub struct Options {
     pub sharp_ui: bool,
     /// `--sharp-text`: the glyphs' edges one screen pixel wide (ADR 0046; else the settings file's `SharpText`).
     pub sharp_text: bool,
+    /// `--theme NAME`: the UI theme (ADR 0056; else the settings file's `UiTheme`).
+    pub theme: Option<String>,
     /// `--upscale 2|4`: the textures upscaled (ADR 0054; else the settings file's `TextureUpscale`); 1 = off.
     pub upscale: u8,
     /// `--modern-lighting`: anti-aliasing, per-pixel lighting, soft shadows and bloom (ADR 0055; else the settings
@@ -309,6 +312,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         letterbox: false,
         sharp_ui: false,
         sharp_text: false,
+        theme: None,
         upscale: 1,
         modern_lighting: false,
         multiplayer: false,
@@ -409,6 +413,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--letterbox" => o.letterbox = true,
             "--sharp-ui" => o.sharp_ui = true,
             "--sharp-text" => o.sharp_text = true,
+            "--theme" => o.theme = Some(val()?),
             "--upscale" => {
                 o.upscale = match val()?.trim() {
                     "2" => 2,
@@ -540,6 +545,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     kit::layout::set_letterbox(o.letterbox);
     render::set_sharp_ui(o.sharp_ui);
     render::set_sharp_text(o.sharp_text);
+    theme::set(o.theme.as_deref().unwrap_or(""));
     upscale::set_factor(o.upscale);
     if o.modern_lighting {
         render3d::set_lighting(render3d::Lighting { msaa: true, per_pixel: true, soft_shadows: true, bloom: true });

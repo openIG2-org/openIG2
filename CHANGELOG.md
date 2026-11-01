@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- UI themes: a new Interface setting "UI theme" restyles the remake's own screens (the main-menu Options, match history and statistics, replays, the multiplayer lobby, the event log) in the Modern look or a theme from the mods folder; Classic keeps today's look and the game's own screens never change.
 - Sharper textures on big screens: a new Remake row "Texture upscaling" (2x or 4x) smooths the game's pictures and model textures as they load, and texture packs in the mods folder can replace any picture or model with a higher-resolution one; every picture keeps its place (off keeps the original's look).
 - Campaign: with the new Remake row "Campaign story" set to Enhanced, the five fleets besieging a planet in one of the story episodes start at that planet instead of the far corner of the map (Classic, the default, plays as the original).
 - The title video stays quiet over the two logos and its music starts with the intro (Remake row "Title music with intro"; off plays the music from the first logo as the original).

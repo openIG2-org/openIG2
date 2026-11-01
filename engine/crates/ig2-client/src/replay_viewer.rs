@@ -151,14 +151,15 @@ impl Bar {
     }
 
     pub fn draw(&self, f: &mut Frame, d: &Draw) {
-        let (white, dim, hot) = (d.col(1, 100.0), d.col(1, 60.0), d.col(0x25, 100.0));
-        crate::kit::fader::fader(f, d.white, &d.v, BAR, [0.0, 14.0, 22.0], 0.0, [0.0, 40.0, 60.0], 20.0);
+        let t = crate::theme::look(d);
+        let (white, dim, hot) = (t.text, t.dim, t.hot);
+        t.panel(f, d.white, &d.v, BAR);
         let button = |f: &mut Frame, r: [f32; 4], label: &str, lit: bool, hover: bool| {
             if lit {
-                crate::kit::fader::fader(f, d.white, &d.v, r, [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
+                t.button(f, d.white, &d.v, r);
             }
             let c = if hover || lit { hot } else { white };
-            d.font.text(f, &d.v, label.as_bytes(), r[0] + r[2] / 2.0, r[1] + 5.0, 0, 2, Align::Centre, c, None);
+            d.font.text(f, &d.v, label.as_bytes(), r[0] + r[2] / 2.0, r[1] + 5.0, 0, t.small, Align::Centre, c, None);
         };
         button(f, PAUSE, if self.paused { "Play" } else { "Pause" }, false, self.hover == Some(Spot::Pause));
         for (k, s) in SPEEDS.iter().enumerate() {
@@ -166,13 +167,13 @@ impl Bar {
         }
         button(f, EXIT, "Exit", false, self.hover == Some(Spot::Exit));
         let [x0, x1] = LINE_X;
-        let t = if self.total > 0 { (self.pos as f32 / self.total as f32).min(1.0) } else { 1.0 };
+        let at = if self.total > 0 { (self.pos as f32 / self.total as f32).min(1.0) } else { 1.0 };
         let line = |f: &mut Frame, a: f32, b: f32, c: [f32; 3], w: f32| f.push(d.white, Blend::Alpha, Instance::line(d.v.px(a, LINE_Y), d.v.px(b, LINE_Y), w * d.v.k.max(1.0), [c[0], c[1], c[2], 1.0]));
         line(f, x0, x1, dim, 2.0);
-        line(f, x0, x0 + t * (x1 - x0), hot, 3.0);
+        line(f, x0, x0 + at * (x1 - x0), hot, 3.0);
         let k = u64::from(self.ticks_per_step);
         let time = format!("{} / {}", clock(self.pos * k), clock(self.total * k));
-        d.font.text(f, &d.v, time.as_bytes(), 398.0, LINE_Y - 4.0, 0, 2, Align::Left, white, None);
+        d.font.text(f, &d.v, time.as_bytes(), 398.0, LINE_Y - 4.0, 0, t.small, Align::Left, white, None);
     }
 }
 
@@ -306,27 +307,28 @@ impl ReplayList {
     }
 
     pub fn draw(&self, f: &mut Frame, d: &Draw) {
-        let (white, dim, hot) = (d.col(1, 100.0), d.col(1, 60.0), d.col(0x25, 100.0));
-        crate::kit::fader::fader(f, d.white, &d.v, PANEL, [0.0, 14.0, 22.0], 0.0, [0.0, 40.0, 60.0], 20.0);
-        d.font.text(f, &d.v, b"Replays", 320.0, 26.0, 0, 4, Align::Centre, hot, None);
+        let t = crate::theme::look(d);
+        let (white, dim, hot) = (t.text, t.dim, t.hot);
+        t.panel(f, d.white, &d.v, PANEL);
+        d.font.text(f, &d.v, b"Replays", 320.0, 26.0, 0, t.big, Align::Centre, hot, None);
         if let Some(e) = &self.error {
-            d.font.text(f, &d.v, e.as_bytes(), 320.0, 46.0, 0, 2, Align::Centre, dim, None);
+            d.font.text(f, &d.v, e.as_bytes(), 320.0, 46.0, 0, t.small, Align::Centre, dim, None);
         } else if self.list.is_empty() {
-            d.font.text(f, &d.v, b"No recorded games yet.", 320.0, 46.0, 0, 2, Align::Centre, dim, None);
+            d.font.text(f, &d.v, b"No recorded games yet.", 320.0, 46.0, 0, t.small, Align::Centre, dim, None);
         }
         for (x, h) in [(40.0, "Started (UTC)"), (220.0, "Mode"), (340.0, "Size")] {
-            d.font.text(f, &d.v, h.as_bytes(), x, LIST_Y, 0, 2, Align::Left, dim, None);
+            d.font.text(f, &d.v, h.as_bytes(), x, LIST_Y, 0, t.small, Align::Left, dim, None);
         }
         for (i, e) in self.list.iter().skip(self.top).take(PAGE).enumerate() {
             let y = LIST_Y + 16.0 + i as f32 * LIST_H;
             let c = if self.hover == Some(ListSpot::Row(i)) { hot } else { white };
-            d.font.text(f, &d.v, e.when.as_bytes(), 40.0, y, 0, 2, Align::Left, c, None);
-            d.font.text(f, &d.v, if e.multiplayer { b"Multiplayer" as &[u8] } else { b"Single player" }, 220.0, y, 0, 2, Align::Left, c, None);
-            d.font.text(f, &d.v, format!("{} KB", e.kb).as_bytes(), 340.0, y, 0, 2, Align::Left, c, None);
+            d.font.text(f, &d.v, e.when.as_bytes(), 40.0, y, 0, t.small, Align::Left, c, None);
+            d.font.text(f, &d.v, if e.multiplayer { b"Multiplayer" as &[u8] } else { b"Single player" }, 220.0, y, 0, t.small, Align::Left, c, None);
+            d.font.text(f, &d.v, format!("{} KB", e.kb).as_bytes(), 340.0, y, 0, t.small, Align::Left, c, None);
         }
         let button = |f: &mut Frame, r: [f32; 4], label: &str, hover: bool| {
-            crate::kit::fader::fader(f, d.white, &d.v, r, [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
-            d.font.text(f, &d.v, label.as_bytes(), r[0] + r[2] / 2.0, r[1] + 8.0, 0, 2, Align::Centre, if hover { hot } else { white }, None);
+            t.button(f, d.white, &d.v, r);
+            d.font.text(f, &d.v, label.as_bytes(), r[0] + r[2] / 2.0, r[1] + 8.0, 0, t.small, Align::Centre, if hover { hot } else { white }, None);
         };
         button(f, BACK, "Main menu", self.hover == Some(ListSpot::Back));
         if self.top > 0 {

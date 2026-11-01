@@ -232,14 +232,24 @@ impl Panel {
 /// The label, and the panel when open (`hu`: Hungarian articles as the line's history shows them).
 #[allow(clippy::too_many_arguments)]
 pub fn draw(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]], p: &Panel, log: &Log, hu: bool, time: f32) {
-    let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
+    // ADR 0056: a theme's text colours and panel; the empire and chat colours stay the game's.
+    let theme = crate::theme::current();
+    let col = |i: usize| match (theme, i) {
+        (Some(t), 1 | 0x21) => t.text,
+        (Some(t), 2) => t.dim,
+        (Some(t), 6) => t.hot,
+        _ => palette.get(i).copied().unwrap_or([1.0; 3]),
+    };
     let lit = |on: bool| col(if on { 6 } else { 2 });
     let lang = if hu { Lang::Hu } else { Lang::En };
     font.text(f, v, &crate::tr::get(lang, LABEL_TEXT), LABEL[0], LABEL[1], 0, 2, Align::Left, lit(p.label_hover || p.open), None);
     if !p.open {
         return;
     }
-    crate::kit::fader::fader(f, white, v, PANEL, [0.0, 0.0, 0.0], 20.0, [0.0, 60.0, 0.0], 30.0);
+    match theme {
+        Some(t) => t.panel(f, white, v, PANEL),
+        None => crate::kit::fader::fader(f, white, v, PANEL, [0.0, 0.0, 0.0], 20.0, [0.0, 60.0, 0.0], 30.0),
+    }
     for (i, (l, x)) in tabs(lang).into_iter().enumerate() {
         font.text(f, v, &l, x, TABS_Y, 0, 2, Align::Left, lit(i == p.filter), None);
     }

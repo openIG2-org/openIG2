@@ -1214,17 +1214,26 @@ impl MpScreen {
         let v = &d.v;
         let t = 1.0 - self.open / 100.0;
         let (t1, t2) = (t * 155.0 + 100.0, t * 225.0 + 30.0);
-        let box_ = |f: &mut Frame, r: [f32; 4]| fader::kirak_fader(f, d.white, v, r, [0.0, 54.0, 90.0], t1, [0.0, 90.0, 130.0], t2, [0.0, 0.0]);
+        // ADR 0056: a theme's colours over the lobby's own transparencies (its opening).
+        let theme = crate::theme::current();
+        let (fill, edge) = theme.map_or(([0.0, 54.0, 90.0], [0.0, 90.0, 130.0]), |t| (t.panel, t.panel_edge));
+        let box_ = |f: &mut Frame, r: [f32; 4]| fader::kirak_fader(f, d.white, v, r, fill, t1, edge, t2, [0.0, 0.0]);
         let fade = self.open;
+        let col = |c: usize| match (theme, c) {
+            (Some(t), 1 | 0x22) => t.text.map(|x| x * fade / 100.0),
+            (Some(t), 2) => t.hot.map(|x| x * fade / 100.0),
+            (Some(t), 0x25) => t.dim.map(|x| x * fade / 100.0),
+            _ => d.col(c, fade),
+        };
         let hover = self.spot_at(self.at);
         // ADR 0042: our English words and lines show in the game's language.
-        let text = |f: &mut Frame, s: &[u8], x: f32, y: f32, size: usize, a: Align, c: usize| d.font.text(f, v, &crate::tr::bytes(d.texts.lang, s), x, y, 0, size, a, d.col(c, fade), None);
+        let text = |f: &mut Frame, s: &[u8], x: f32, y: f32, size: usize, a: Align, c: usize| d.font.text(f, v, &crate::tr::bytes(d.texts.lang, s), x, y, 0, size, a, col(c), None);
         let hot = |id: u32| if hover == id { 2 } else { 1 };
         let cursor = |f: &mut Frame, fl: &Field, first: usize, x: f32, y: f32, size: usize| {
             if blink {
                 let (w, h) = (d.font.advance(size), d.font.height(size));
                 let cx = x + w * (fl.cursor - first) as f32;
-                let c = d.col(1, fade);
+                let c = col(1);
                 f.push(d.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(cx + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
             }
         };

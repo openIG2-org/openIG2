@@ -1,0 +1,21 @@
+# The built-in Modern theme (ADR 0056): the main-menu Options screen's look. A mod's `theme.toml` has the same
+# keys, every one optional (a missing key keeps this file's value). Colours are [r, g, b] in 0..255, transparencies
+# [fill, edge] in 0..255 (0 = opaque).
+panel = [4, 12, 24]
+panel_edge = [40, 90, 130]
+panel_transparency = [0, 0]
+tab = [10, 30, 50]
+tab_selected = [20, 70, 110]
+button = [10, 40, 70]
+button_edge = [10, 30, 50]
+button_transparency = [0, 0]
+text = [219, 230, 245]
+text_dim = [128, 148, 173]
+text_off = [77, 84, 97]
+accent = [102, 199, 255]
+hover = [255, 219, 115]
+track_on = [41, 128, 191]
+track_off = [46, 51, 64]
+knob = [230, 240, 255]
+font_title = 4
+font_text = 2

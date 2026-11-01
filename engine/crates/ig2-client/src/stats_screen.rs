@@ -320,7 +320,7 @@ impl StatsScreen {
 
     pub fn draw(&self, f: &mut Frame, d: &Draw) {
         // Opaque: the menu's bright ring labels would show through.
-        crate::kit::fader::fader(f, d.white, &d.v, PANEL, [0.0, 14.0, 22.0], 0.0, [0.0, 40.0, 60.0], 20.0);
+        crate::theme::look(d).panel(f, d.white, &d.v, PANEL);
         match self.shown() {
             Some(m) => self.draw_match(f, d, m),
             None => self.draw_list(f, d),
@@ -330,9 +330,10 @@ impl StatsScreen {
     }
 
     fn button(&self, f: &mut Frame, d: &Draw, r: [f32; 4], label: &str, hot: bool, live: bool) {
-        crate::kit::fader::fader(f, d.white, &d.v, r, [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
-        let c = if !live { d.col(1, 40.0) } else if hot { d.col(0x25, 100.0) } else { d.col(1, 100.0) };
-        d.font.text(f, &d.v, &d.texts.ours(label), r[0] + r[2] / 2.0, r[1] + 8.0, 0, 2, Align::Centre, c, None);
+        let t = crate::theme::look(d);
+        t.button(f, d.white, &d.v, r);
+        let c = if !live { t.off } else if hot { t.hot } else { t.text };
+        d.font.text(f, &d.v, &d.texts.ours(label), r[0] + r[2] / 2.0, r[1] + 8.0, 0, t.small, Align::Centre, c, None);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -345,16 +346,17 @@ impl StatsScreen {
     }
 
     fn draw_match(&self, f: &mut Frame, d: &Draw, m: &Match) {
-        let (white, dim, hot) = (d.col(1, 100.0), d.col(1, 60.0), d.col(0x25, 100.0));
-        Self::text(f, d, &d.texts.ours(m.title()), 320.0, 26.0, 4, Align::Centre, hot);
+        let t = crate::theme::look(d);
+        let (white, dim, hot) = (t.text, t.dim, t.hot);
+        Self::text(f, d, &d.texts.ours(m.title()), 320.0, 26.0, t.big, Align::Centre, hot);
         let [y, mo, dd] = m.date;
         let to = format!("{y}-{mo:02}-{dd:02}");
         let sub = crate::tr::fill(d.texts.lang, "{}  -  {} game days (to {})  -  ended {}", &[&d.texts.ours(mode_name(m.mode)), m.days.to_string().as_bytes(), to.as_bytes(), day_of(m.when).as_bytes()]);
-        Self::text(f, d, &sub, 320.0, 46.0, 2, Align::Centre, dim);
+        Self::text(f, d, &sub, 320.0, 46.0, t.small, Align::Centre, dim);
         let cols = COLS;
-        Self::text(f, d, &d.texts.ours("Empire"), 40.0, TABLE_Y - 14.0, 2, Align::Left, dim);
+        Self::text(f, d, &d.texts.ours("Empire"), 40.0, TABLE_Y - 14.0, t.small, Align::Left, dim);
         for (name, x) in cols {
-            Self::text(f, d, &d.texts.ours(name), x, TABLE_Y - 14.0, 2, Align::Right, dim);
+            Self::text(f, d, &d.texts.ours(name), x, TABLE_Y - 14.0, t.small, Align::Right, dim);
         }
         let Some(last) = m.last() else { return };
         for (k, e) in m.empires.iter().enumerate() {
@@ -366,19 +368,19 @@ impl StatsScreen {
             if e.empire == m.empire {
                 name.extend(d.texts.ours(" (you)"));
             }
-            Self::text(f, d, &name, 40.0, y, 2, Align::Left, if e.empire == m.empire { hot } else { white });
+            Self::text(f, d, &name, 40.0, y, t.small, Align::Left, if e.empire == m.empire { hot } else { white });
             let vals = [r.planets as i64, r.population as i64, r.credits, r.ships as i64, e.built as i64, e.lost as i64, r.techs as i64, r.battles as i64, r.score as i64];
             for ((_, x), v) in cols.iter().zip(vals) {
-                Self::text(f, d, v.to_string().as_bytes(), *x, y, 2, Align::Right, white);
+                Self::text(f, d, v.to_string().as_bytes(), *x, y, t.small, Align::Right, white);
             }
         }
         for (k, (name, _)) in METRICS.iter().enumerate() {
             let r = [40.0 + k as f32 * TAB_W, TABS_Y, TAB_W - 4.0, 18.0];
             if k == self.metric {
-                crate::kit::fader::fader(f, d.white, &d.v, r, [0.0, 10.0, 0.0], 60.0, [0.0, 5.0, 0.0], 30.0);
+                t.button(f, d.white, &d.v, r);
             }
             let c = if k == self.metric || self.hover == Some(Spot::Metric(k)) { hot } else { dim };
-            Self::text(f, d, &d.texts.ours(name), r[0] + r[2] / 2.0, r[1] + 5.0, 2, Align::Centre, c);
+            Self::text(f, d, &d.texts.ours(name), r[0] + r[2] / 2.0, r[1] + 5.0, t.small, Align::Centre, c);
         }
         self.graph(f, d, m);
     }
@@ -387,15 +389,16 @@ impl StatsScreen {
         let [gx, gy, gw, gh] = GRAPH;
         let value = METRICS[self.metric].1;
         let max = m.samples.iter().flat_map(|s| m.empires.iter().map(move |e| value(&s.rows[e.empire as usize - 1]))).fold(0.0f64, f64::max);
-        let dim = d.col(1, 50.0);
+        let t = crate::theme::look(d);
+        let dim = if crate::theme::current().is_some() { t.dim } else { d.col(1, 50.0) };
         let line = |f: &mut Frame, a: [f32; 2], b: [f32; 2], c: [f32; 4], w: f32| f.push(d.white, Blend::Alpha, Instance::line(d.v.px(a[0], a[1]), d.v.px(b[0], b[1]), w * d.v.k.max(1.0), c));
         let axis = [dim[0], dim[1], dim[2], 1.0];
         line(f, [gx, gy + gh], [gx + gw, gy + gh], axis, 1.0);
         line(f, [gx, gy], [gx, gy + gh], axis, 1.0);
-        Self::text(f, d, fmt_value(max).as_bytes(), gx - 4.0, gy, 2, Align::Right, dim);
-        Self::text(f, d, b"0", gx - 4.0, gy + gh - 6.0, 2, Align::Right, dim);
-        Self::text(f, d, &crate::tr::fill(d.texts.lang, "day {}", &[b"0"]), gx, gy + gh + 4.0, 2, Align::Left, dim);
-        Self::text(f, d, &crate::tr::fill(d.texts.lang, "day {}", &[m.days.to_string().as_bytes()]), gx + gw, gy + gh + 4.0, 2, Align::Right, dim);
+        Self::text(f, d, fmt_value(max).as_bytes(), gx - 4.0, gy, t.small, Align::Right, dim);
+        Self::text(f, d, b"0", gx - 4.0, gy + gh - 6.0, t.small, Align::Right, dim);
+        Self::text(f, d, &crate::tr::fill(d.texts.lang, "day {}", &[b"0"]), gx, gy + gh + 4.0, t.small, Align::Left, dim);
+        Self::text(f, d, &crate::tr::fill(d.texts.lang, "day {}", &[m.days.to_string().as_bytes()]), gx + gw, gy + gh + 4.0, t.small, Align::Right, dim);
         let n = m.samples.len();
         let first = m.samples.first().map_or(0, |s| s.ido);
         let span = m.samples.last().map_or(0, |s| s.ido) - first;
@@ -415,25 +418,26 @@ impl StatsScreen {
     }
 
     fn draw_list(&self, f: &mut Frame, d: &Draw) {
-        let (white, dim, hot) = (d.col(1, 100.0), d.col(1, 60.0), d.col(0x25, 100.0));
-        Self::text(f, d, &d.texts.ours("Match history"), 320.0, 26.0, 4, Align::Centre, hot);
+        let t = crate::theme::look(d);
+        let (white, dim, hot) = (t.text, t.dim, t.hot);
+        Self::text(f, d, &d.texts.ours("Match history"), 320.0, 26.0, t.big, Align::Centre, hot);
         if let Some(e) = &self.error {
-            Self::text(f, d, e.as_bytes(), 320.0, 46.0, 2, Align::Centre, dim);
+            Self::text(f, d, e.as_bytes(), 320.0, 46.0, t.small, Align::Centre, dim);
         } else if self.list.is_empty() {
-            Self::text(f, d, &d.texts.ours("No finished games yet."), 320.0, 46.0, 2, Align::Centre, dim);
+            Self::text(f, d, &d.texts.ours("No finished games yet."), 320.0, 46.0, t.small, Align::Centre, dim);
         }
         for (x, h) in LIST_HEADS {
-            Self::text(f, d, &d.texts.ours(h), x, LIST_Y, 2, Align::Left, dim);
+            Self::text(f, d, &d.texts.ours(h), x, LIST_Y, t.small, Align::Left, dim);
         }
         for (i, m) in self.list.iter().skip(self.top).take(PAGE).enumerate() {
             let y = LIST_Y + 16.0 + i as f32 * LIST_H;
             let c = if self.hover == Some(Spot::Row(i)) { hot } else { white };
             let empires: Vec<u8> = m.empires.iter().map(|e| e.name.as_slice()).collect::<Vec<_>>().join(&b", "[..]);
-            Self::text(f, d, day_of(m.when).as_bytes(), 40.0, y, 2, Align::Left, c);
-            Self::text(f, d, &d.texts.ours(mode_name(m.mode)), 120.0, y, 2, Align::Left, c);
-            Self::text(f, d, &d.texts.ours(m.title()), 220.0, y, 2, Align::Left, c);
-            Self::text(f, d, m.days.to_string().as_bytes(), 290.0, y, 2, Align::Left, c);
-            d.font.text(f, &d.v, &empires, 336.0, y, 44, 2, Align::Left, c, None);
+            Self::text(f, d, day_of(m.when).as_bytes(), 40.0, y, t.small, Align::Left, c);
+            Self::text(f, d, &d.texts.ours(mode_name(m.mode)), 120.0, y, t.small, Align::Left, c);
+            Self::text(f, d, &d.texts.ours(m.title()), 220.0, y, t.small, Align::Left, c);
+            Self::text(f, d, m.days.to_string().as_bytes(), 290.0, y, t.small, Align::Left, c);
+            d.font.text(f, &d.v, &empires, 336.0, y, 44, t.small, Align::Left, c, None);
         }
         if self.top > 0 {
             self.button(f, d, NEWER, "Newer", self.hover == Some(Spot::Newer), true);

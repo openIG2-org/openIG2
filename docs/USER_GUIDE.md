@@ -75,6 +75,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--sharp-text` | Sharp text on for this run, over the settings file |
 | `--upscale 2\|4` | Texture upscaling at 2× or 4× for this run, over the settings file |
 | `--modern-lighting` | Anti-aliasing, per-pixel lighting, soft shadows and bloom on for this run, over the settings file |
+| `--theme NAME` | UI theme for this run (Classic, Modern or a mod folder's), over the settings file |
 
 ## Controls
 The controls are the original's. The most used:
@@ -163,6 +164,7 @@ screens show the same values.
 | Computer empires (`EnhancedAi`) | Classic by default: the computer empires of a new single-player game play as in the original. Enhanced (ADR 0045): they expand faster, build the labs their research needs, buy every planet's building when they can pay, set taxes by morale and research a colony ship when there are planets to take. A game keeps the choice it started with (saved with it); a multiplayer room has its own row |
 | Title music with intro (`TitleMusicWithIntro`) | On by default: the title video is silent over the game's and the studio's logos and its music starts with the intro (ADR 0051); off = the original: the music from the first logo |
 | Campaign story (`StoryFixes`) | Classic by default: a new campaign's story plays as in the original. Enhanced (ADR 0052): the original's story slips are fixed; so far the siege episode's five enemy fleets start at the planet they besiege instead of the galaxy's corner. The game keeps the choice it started with (saved with it) |
+| UI theme (`UiTheme`) | Classic by default: the remake's own screens (main-menu Options, history, replays, lobby, event log) in their usual look; Modern or a mod's theme restyles them at once (ADR 0056, Mods → UI themes). The game's own screens never change |
 
 The window opens at 1600x900 until a size is saved.
 
@@ -226,6 +228,34 @@ game with a message naming the mod and the field, and `ig2-check` shows the same
 In multiplayer every player needs the same mod files and `rules.toml`s: the room refuses a player with other mods
 ("Other mods enabled"), and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
 are the exception: they only change what you see, so players with and without them play together.
+
+### UI themes
+A theme restyles the remake's own screens (the main-menu Options, match history and statistics, replays, the
+multiplayer lobby, the event log); the game's own screens keep the original's look (ADR 0056). Pick one with the
+Interface setting "UI theme": Classic (default), Modern, or any mod folder that has a `theme.toml`, listed by the
+folder's name (the theme doesn't need `enabled.txt` and doesn't affect multiplayer).
+
+To make one, create `mods\<name>	heme.toml`. Every key is optional and starts from Modern's value; colours are
+`[red, green, blue]` from 0 to 255:
+
+```toml
+# mods/amber/theme.toml
+panel = [24, 14, 0]          # panel fill
+panel_edge = [140, 90, 20]   # panel edge
+panel_transparency = [0, 0]  # [fill, edge], 0 = opaque, 255 = invisible
+tab = [30, 20, 5]            # tabs; tab_selected for the open one
+tab_selected = [90, 60, 10]
+button = [50, 30, 5]         # buttons: button, button_edge, button_transparency
+text = [255, 220, 160]       # text; text_dim, text_off (disabled), accent (values), hover
+hover = [255, 255, 255]
+track_on = [200, 130, 30]    # switches and sliders: track_on, track_off, knob
+font_title = 4               # the game font's size for titles (0-4)
+font_text = 2                # and for everything else (0-2)
+```
+
+A key it doesn't know, a wrong value or a number out of range is an error that names the key: such a theme isn't
+listed, and a stored one falls back to Classic with the error in the log (`ig2-client: theme <name>: …`). The full
+list of keys and Modern's values is `engine/crates/ig2-client/src/themes/modern.toml`.
 
 ### Texture and model packs
 A pack is a mod whose `hires` folder holds better versions of the game's pictures and models (ADR 0054). Unlike a

@@ -513,6 +513,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     crate::starmap::set_colour_blind(app.display.colour_blind);
     crate::render::set_sharp_ui(o.sharp_ui || app.display.sharp_ui);
     crate::render::set_sharp_text(o.sharp_text || app.display.sharp_text);
+    crate::theme::set(o.theme.as_deref().or(app.settings.get(crate::display::UI_THEME)).unwrap_or(""));
     crate::upscale::set_factor(o.upscale.max(app.display.upscale));
     if !o.modern_lighting {
         crate::render3d::set_lighting(app.display.lighting);
@@ -3298,6 +3299,7 @@ impl App {
         crate::kit::layout::set_centred_exit(d.centred_exit);
         crate::render::set_sharp_ui(d.sharp_ui);
         crate::render::set_sharp_text(d.sharp_text);
+        crate::theme::set(self.settings.get(crate::display::UI_THEME).unwrap_or(""));
         crate::upscale::set_factor(d.upscale);
         crate::render3d::set_lighting(d.lighting);
         if d.colour_blind != old.colour_blind {

@@ -1,55 +1,14 @@
 //! Ours (ADR 0053): the main menu's Options screen. Every setting of the in-game screen (`OptionsScreen`'s rows,
 //! sliders) and the multiplayer name in seven tabs with switches, choices, sliders and a description line; Apply
 //! writes them through `OptionsScreen::store`, Back takes back what was not applied. Drawn with the kit's faders,
-//! filled quads and the game's font in the 640×480 virtual pixels; its colours and metrics are one [`Theme`].
+//! filled quads and the game's font in the 640×480 virtual pixels; its colours and font sizes are the UI theme's (ADR 0056).
 
 use super::{check_dependencies, Act, Draw, Group, OptionsScreen, Row};
 use crate::font::Align;
 use crate::render::{kind, Blend, Frame, Instance};
 
-/// The look: the first theme of the themeable UI (ADR 0053 §8). Box colours 0..255 with a transparency (the faders'),
-/// text colours 0..1 (the font adds them).
-#[derive(Debug, Clone, Copy)]
-pub struct Theme {
-    pub panel: [f32; 3],
-    pub panel_edge: [f32; 3],
-    pub tab: [f32; 3],
-    pub tab_on: [f32; 3],
-    pub button: [f32; 3],
-    pub text: [f32; 3],
-    pub dim: [f32; 3],
-    pub off: [f32; 3],
-    pub accent: [f32; 3],
-    pub hot: [f32; 3],
-    /// The switch's track when on and off, its knob (0..1, drawn opaque).
-    pub on_track: [f32; 3],
-    pub off_track: [f32; 3],
-    pub knob: [f32; 3],
-    pub row_h: f32,
-    /// The font's sizes: titles, everything else.
-    pub big: usize,
-    pub small: usize,
-}
-
-pub const THEME: Theme = Theme {
-    panel: [4.0, 12.0, 24.0],
-    panel_edge: [40.0, 90.0, 130.0],
-    tab: [10.0, 30.0, 50.0],
-    tab_on: [20.0, 70.0, 110.0],
-    button: [10.0, 40.0, 70.0],
-    text: [0.86, 0.9, 0.96],
-    dim: [0.5, 0.58, 0.68],
-    off: [0.3, 0.33, 0.38],
-    accent: [0.4, 0.78, 1.0],
-    hot: [1.0, 0.86, 0.45],
-    on_track: [0.16, 0.5, 0.75],
-    off_track: [0.18, 0.2, 0.25],
-    knob: [0.9, 0.94, 1.0],
-    row_h: 17.0,
-    big: 4,
-    small: 2,
-};
-
+/// A setting's line.
+const ROW_H: f32 = 17.0;
 const PANEL: [f32; 4] = [20.0, 12.0, 600.0, 456.0];
 const TABS_Y: f32 = 44.0;
 const TAB: [f32; 3] = [26.0, 84.0, 82.0];
@@ -187,6 +146,7 @@ pub fn describe(key: &str) -> &'static str {
         "EnhancedAi" => "How the computer empires of the next game manage their economy and research.",
         "TitleMusicWithIntro" => "The title video's music starts with the intro, not under the logos.",
         "StoryFixes" => "Enhanced fixes the original campaign story's slips in the next new game.",
+        "UiTheme" => "The look of the remake's own screens; Classic keeps the game's colours.",
         "TextureUpscale" => "Smooths the game's pictures and model textures 2x or 4x as they load.",
         "AntiAliasing" => "Smooth edges on the 3D scenes' buildings, ships and planets.",
         "PixelLighting" => "The space battle's ships lit per pixel, so their hulls shade smoothly.",
@@ -249,7 +209,7 @@ fn tab_box(k: usize) -> [f32; 4] {
 }
 
 fn line_y(i: usize) -> f32 {
-    LIST_Y + i as f32 * THEME.row_h
+    LIST_Y + i as f32 * ROW_H
 }
 
 /// The slider's track: x, width.
@@ -290,7 +250,7 @@ impl Modern {
             return Some(Spot::Apply);
         }
         let n = self.items(o).len();
-        let i = (0..n).find(|&i| inside([32.0, line_y(i), 576.0, THEME.row_h], at))?;
+        let i = (0..n).find(|&i| inside([32.0, line_y(i), 576.0, ROW_H], at))?;
         let part = if at[0] >= CTRL[1] - 18.0 { 1 } else if (CTRL[0]..CTRL[0] + 18.0).contains(&at[0]) { -1 } else { 0 };
         Some(Spot::Item(i, part))
     }
@@ -452,9 +412,10 @@ fn text(f: &mut Frame, d: &Draw, s: &[u8], x: f32, y: f32, size: usize, align: A
     }
 }
 
-fn boxed(f: &mut Frame, d: &Draw, r: [f32; 4], fill: [f32; 3], edge: [f32; 3]) {
-    crate::kit::fader::fader(f, d.white, &d.v, r, fill, 0.0, edge, 0.0);
+fn boxed(f: &mut Frame, d: &Draw, r: [f32; 4], fill: [f32; 3], edge: [f32; 3], clear: [f32; 2]) {
+    crate::kit::fader::fader(f, d.white, &d.v, r, fill, clear[0], edge, clear[1]);
 }
+
 
 impl Modern {
     /// A setting's label.
@@ -482,15 +443,15 @@ impl Modern {
     }
 
     pub fn draw(&self, o: &OptionsScreen, f: &mut Frame, d: &Draw) {
-        let t = &THEME;
+        let t = &crate::theme::look(d);
         // Opaque: the menu's ring labels would show through.
-        boxed(f, d, PANEL, t.panel, t.panel_edge);
+        boxed(f, d, PANEL, t.panel, t.panel_edge, t.panel_clear);
         text(f, d, &d.texts.ours("OPTIONS"), 320.0, 22.0, t.big, Align::Centre, t.text);
         for (k, &tab) in Tab::ALL.iter().enumerate() {
             let on = tab == self.tab;
             let hot = self.hover == Some(Spot::Tab(tab));
             let r = tab_box(k);
-            boxed(f, d, r, if on { t.tab_on } else { t.tab }, if on { t.panel_edge } else { t.tab });
+            boxed(f, d, r, if on { t.tab_on } else { t.tab }, if on { t.panel_edge } else { t.tab }, t.button_clear);
             text(f, d, &d.texts.ours(tab.title()), r[0] + r[2] / 2.0, r[1] + 6.0, t.small, Align::Centre, if hot { t.hot } else if on { t.text } else { t.dim });
         }
         quad(f, d, [32.0, LIST_Y - 5.0, 576.0, 1.0], t.panel_edge.map(|c| c / 255.0), 1.0);
@@ -520,19 +481,19 @@ impl Modern {
         for (r, label, spot, k, live) in [(BACK, "Back", Spot::Back, 0, true), (APPLY, "Apply", Spot::Apply, 1, pending)] {
             let focused = self.focus == items.len() + k;
             let hot = self.hover == Some(spot);
-            boxed(f, d, r, if live { t.button } else { t.tab }, if focused || hot { t.panel_edge } else { t.tab });
+            boxed(f, d, r, if live { t.button } else { t.tab }, if focused || hot { t.panel_edge } else { t.tab }, t.button_clear);
             text(f, d, &d.texts.ours(label), r[0] + r[2] / 2.0, r[1] + 7.0, t.small, Align::Centre, if hot { t.hot } else if live { t.text } else { t.dim });
         }
     }
 
     fn draw_item(&self, o: &OptionsScreen, f: &mut Frame, d: &Draw, i: usize, it: Item) {
-        let t = &THEME;
+        let t = &crate::theme::look(d);
         let y = line_y(i);
-        let ty = y + (t.row_h - d.font.height(t.small)) / 2.0;
+        let ty = y + (ROW_H - d.font.height(t.small)) / 2.0;
         let live = Self::enabled(o, it);
         let hot = matches!(self.hover, Some(Spot::Item(h, _)) if h == i);
         if self.focus == i || hot {
-            quad(f, d, [32.0, y, 576.0, t.row_h], t.on_track, if self.focus == i { 0.28 } else { 0.14 });
+            quad(f, d, [32.0, y, 576.0, ROW_H], t.on_track, if self.focus == i { 0.28 } else { 0.14 });
         }
         let c = if !live { t.off } else if hot { t.hot } else { t.text };
         text(f, d, &Self::label(o, d, it), LABEL_X, ty, t.small, Align::Left, c);
@@ -544,7 +505,7 @@ impl Modern {
                 if r.states == 1 && r.labels.is_empty() {
                     // The switch: its track, the knob at the right when on.
                     let on = v != 0;
-                    let tr = [CTRL[1] - 30.0, y + 3.0, 28.0, t.row_h - 6.0];
+                    let tr = [CTRL[1] - 30.0, y + 3.0, 28.0, ROW_H - 6.0];
                     quad(f, d, tr, if !live { t.off_track } else if on { t.on_track } else { t.off_track }, 1.0);
                     let kx = if on { tr[0] + tr[2] - tr[3] } else { tr[0] };
                     quad(f, d, [kx + 1.0, tr[1] + 1.0, tr[3] - 2.0, tr[3] - 2.0], if live { t.knob } else { t.off }, 1.0);
@@ -563,15 +524,15 @@ impl Modern {
             }
             Item::Slider(s) => {
                 let v = o.sliders[s].value;
-                let mid = y + t.row_h / 2.0;
+                let mid = y + ROW_H / 2.0;
                 quad(f, d, [TRACK[0], mid - 1.5, TRACK[1], 3.0], t.off_track, 1.0);
                 let x = TRACK[0] + TRACK[1] * v as f32 / 100.0;
                 quad(f, d, [TRACK[0], mid - 1.5, x - TRACK[0], 3.0], if live { t.on_track } else { t.off_track }, 1.0);
-                quad(f, d, [x - 3.0, y + 3.0, 6.0, t.row_h - 6.0], if live { t.knob } else { t.off }, 1.0);
+                quad(f, d, [x - 3.0, y + 3.0, 6.0, ROW_H - 6.0], if live { t.knob } else { t.off }, 1.0);
                 text(f, d, format!("{v}%").as_bytes(), CTRL[1] - 4.0, ty, t.small, Align::Right, vc);
             }
             Item::Name => {
-                let r = [CTRL[0], y + 1.0, CTRL[1] - CTRL[0], t.row_h - 2.0];
+                let r = [CTRL[0], y + 1.0, CTRL[1] - CTRL[0], ROW_H - 2.0];
                 quad(f, d, r, t.off_track, 1.0);
                 if self.editing {
                     quad(f, d, [r[0], r[1] + r[3] - 1.0, r[2], 1.0], t.accent, 1.0);
