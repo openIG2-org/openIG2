@@ -28,14 +28,15 @@ minute (`--status-secs N`, 0 = never) and never logs addresses.
 | `--control-per-sec N` | 20 | room and lookup packets per second per address (burst: 2 s worth) |
 
 ### With Docker
-On a Linux server with Docker, from a clone of the repository, build and start it:
+Every change to the service on `main` publishes a public image, `ghcr.io/openig2-org/openig2-rendezvous` (tags
+`latest` and the version, e.g. `0.7.150`). On a Linux server with Docker, copy `deploy/rendezvous/compose.yaml`
+there and run:
 ```bash
-docker compose -f deploy/rendezvous/compose.yaml up -d --build
+docker compose -f compose.yaml pull
+docker compose -f compose.yaml up -d
 ```
-Every change to the service on `main` also publishes an image, `ghcr.io/openig2-org/openig2-rendezvous` (tags
-`latest` and the version, e.g. `0.7.150`), for the project's own server; it is private, so pulling it needs a
-`docker login ghcr.io` with a token that may read the organisation's packages, and then only `compose.yaml` on the
-server: `docker compose -f compose.yaml pull && docker compose -f compose.yaml up -d`. Either way the service runs from a small image (no shell, a non-root user); the compose file publishes
+or, from a clone of the repository, build it from source: `docker compose -f deploy/rendezvous/compose.yaml up -d
+--build`. Either way the service runs from a small image (no shell, a non-root user); the compose file publishes
 UDP 29172 (`IG2_RENDEZVOUS_PORT=N` publishes another port), restarts it after a crash or reboot, and keeps the last
 30 MB of its log (`docker compose -f compose.yaml logs -f`). The flags above go in the compose file's
 `command`. To update, `pull` and `up -d` again (or `git pull` and the `--build` command).
