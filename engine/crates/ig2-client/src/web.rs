@@ -13,8 +13,8 @@ use wasm_bindgen::prelude::*;
 pub const ROOT: &str = "/install";
 
 /// The install's files the page read, in memory.
-/// shortcut: the page reads every file but the videos before the start (about 400 MB); a worker's synchronous OPFS
-/// access handles read them on demand once the videos come in (ADR 0047 §2).
+/// shortcut: the page reads every file before the start, the videos too (about 700 MB); a worker's synchronous OPFS
+/// access handles would read them on demand (ADR 0047 §2) once the memory matters.
 pub struct Store(HashMap<PathBuf, Arc<[u8]>>);
 
 impl Files for Store {
@@ -71,15 +71,17 @@ pub fn webgl_only() -> bool {
 }
 
 /// Starts the client on the main menu with the files added; `lang` a language code ("en", "de", …) or the default;
-/// `webgl` draws through WebGL2 even where WebGPU works.
+/// `webgl` draws through WebGL2 even where WebGPU works; `args` the native client's options, space-separated (the
+/// page passes them on localhost only, for testing: `--multiplayer` opens on the connection page).
 #[wasm_bindgen]
-pub fn start(lang: Option<String>, webgl: bool) -> Result<(), JsValue> {
+pub fn start(lang: Option<String>, webgl: bool, args: Option<String>) -> Result<(), JsValue> {
     WEBGL_ONLY.store(webgl, std::sync::atomic::Ordering::Relaxed);
     console_error_panic_hook::set_once();
     ig2_formats::userfs::set_sink(user_changed);
     let files = std::mem::take(&mut *ADDED.lock().unwrap());
     STORE.set(Arc::new(Store(files.into_iter().collect()))).map_err(|_| JsValue::from_str("already started"))?;
-    let args: Vec<String> = lang.into_iter().flat_map(|l| ["--lang".to_string(), l]).collect();
+    let mut args: Vec<String> = args.iter().flat_map(|a| a.split_whitespace()).map(String::from).collect();
+    args.extend(lang.into_iter().flat_map(|l| ["--lang".to_string(), l]));
     crate::parse(&args).and_then(crate::window::run).map_err(|e| JsValue::from_str(&e))
 }
 

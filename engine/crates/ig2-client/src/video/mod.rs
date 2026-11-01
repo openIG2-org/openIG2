@@ -7,12 +7,16 @@ pub mod credits;
 pub mod decode;
 pub mod message;
 pub mod playback;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 use std::sync::mpsc::{sync_channel, Receiver};
 use std::sync::Arc;
 
 use crate::assets::Image;
-use decode::{Clip, Frames};
+use decode::Clip;
+#[cfg(not(target_arch = "wasm32"))]
+use decode::Frames;
 
 /// `OpenBink`'s name → the remaster's file: `anim/mpeg4/` + the name with `\` → `/`, lower case, `.bik` → `.mp4`.
 /// `title.mp4` (re/screens/video.md §4): the Digital Reality logo has faded to black at 14.56 s of video time, the
@@ -127,6 +131,10 @@ impl Player {
         let fps = clip.fps();
         let (tx, rx) = sync_channel(AHEAD);
         let c = clip.clone();
+        // No threads in the browser: the page's decoder (ADR 0047 part 4).
+        #[cfg(target_arch = "wasm32")]
+        web::spawn(c, looping, tx);
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::Builder::new()
             .name("video".into())
             .spawn(move || {

@@ -180,7 +180,10 @@ impl QuicHost {
                 None => (quinn::Endpoint::server(config, addr)?, None),
                 Some(r) => {
                     let (socket, notes) = RelaySocket::bind(addr, r)?;
-                    let ep = quinn::Endpoint::new_with_abstract_socket(quinn::EndpointConfig::default(), Some(config), socket.clone(), Arc::new(quinn::TokioRuntime))?;
+                    // Datagrams from the service may be browsers' offers, longer than QUIC's (ADR 0047 part 4).
+                    let mut ec = quinn::EndpointConfig::default();
+                    ec.max_udp_payload_size((crate::rendezvous::DATA_HEAD + crate::rendezvous::MAX_SDP) as u16).map_err(|e| Error::Config(e.to_string()))?;
+                    let ep = quinn::Endpoint::new_with_abstract_socket(ec, Some(config), socket.clone(), Arc::new(quinn::TokioRuntime))?;
                     (ep, Some(Registration { socket, notes, state: std::sync::Mutex::new((Rendezvous::Off, None)) }))
                 }
             }
@@ -254,6 +257,19 @@ impl QuicHost {
         if *held != listing {
             r.socket.control(&listing.as_deref().map_or(Packet::Unlist, |l| Packet::Publish { listing: l }));
             *held = listing;
+        }
+    }
+
+    /// The browsers' WebRTC offers (their SDP) the service passed on since last asked, by offer id (ADR 0047 part 4).
+    pub fn offers(&self) -> Vec<(u32, String)> {
+        let Some(r) = &self.relay else { return Vec::new() };
+        std::mem::take(&mut *r.socket.offers.lock().unwrap()).into_iter().map(|(id, b)| (id, String::from_utf8_lossy(&b).into_owned())).collect()
+    }
+
+    /// Answer offer `id` with `sdp` (through the service, to the browser that asked).
+    pub fn answer(&self, id: u32, sdp: &str) {
+        if let Some(r) = &self.relay {
+            r.socket.control(&Packet::Answer { id, sdp: sdp.as_bytes() });
         }
     }
 
@@ -449,6 +465,8 @@ pub struct RelaySocket {
     notes: mpsc::Sender<Packet<'static>>,
     /// A host's public listing, published with every refresh (ADR 0060).
     listing: std::sync::Mutex<Option<Vec<u8>>>,
+    /// Browsers' offers come in (ADR 0047 part 4).
+    offers: std::sync::Mutex<Vec<(u32, Vec<u8>)>>,
 }
 
 impl RelaySocket {
@@ -457,7 +475,7 @@ impl RelaySocket {
         let std = std::net::UdpSocket::bind(addr)?;
         std.set_nonblocking(true)?;
         let (notes, rx) = mpsc::channel();
-        Ok((Arc::new(Self { io: tokio::net::UdpSocket::from_std(std)?, relay: relay.into(), relayed: Default::default(), notes, listing: Default::default() }), rx))
+        Ok((Arc::new(Self { io: tokio::net::UdpSocket::from_std(std)?, relay: relay.into(), relayed: Default::default(), notes, listing: Default::default(), offers: Default::default() }), rx))
     }
 
     /// A packet to the service (lost if the socket is busy: every control packet is repeated or answered).
@@ -517,6 +535,10 @@ impl quinn::AsyncUdpSocket for RelaySocket {
             let (addr, start) = if from == self.relay {
                 match Packet::decode(b) {
                     Some(Packet::From { peer, data }) => (SocketAddr::V4(peer), n - data.len()),
+                    Some(Packet::Offer { id, sdp }) => {
+                        self.offers.lock().unwrap().push((id, sdp.to_vec()));
+                        continue;
+                    }
                     Some(p) => {
                         if let Packet::Incoming { joiner } = p {
                             // Open this host's NAT towards the joiner; its direct try may then get in.

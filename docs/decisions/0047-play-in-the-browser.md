@@ -2,7 +2,9 @@
 
 Date: 2026-11-01. Status: accepted; part 1 implemented (`ig2-formats::vfs::Files`, the CI job "Browser target check");
 part 2 implemented (the client in a page up to the main menu with its music, `web/`, `tools/build_web.py`); part 3
-implemented but for video (single player on WebGPU or WebGL2, the player's files in OPFS, `tools/serve_web.py`).
+implemented but for video (single player on WebGPU or WebGL2, the player's files in OPFS, `tools/serve_web.py`);
+part 4 implemented (a browser joins a native host over WebRTC through the rendezvous service, videos through
+WebCodecs). Hosting a public page (part 5) waits for the maintainers' decision.
 
 ## Context
 Opening a URL and playing needs no install step and runs on any machine with a current browser. The engine ships no
@@ -81,13 +83,54 @@ that target), blocking sockets, `openh264`'s C code, `arboard`, QUIC over UDP.
   (honoured on localhost only) copies it from there without the folder dialog. The client's `eprintln!` lines go to the
   console. The menu's Exit returns the page to its start.
 
+## Part 4 as built
+- **The transport** is `ig2_net::webrtc`: one reliable, ordered data channel per link (not unreliable-ordered as §9
+  planned: the lockstep messages need every frame, and QUIC's links are reliable streams too), messages in 16 KiB
+  pieces each led by a "more follow" byte, behind the same `Transport` trait as QUIC. Natively (feature `webrtc`)
+  `str0m` with its pure-Rust crypto drives the channel on a UDP socket of its own (host candidates for 127.0.0.1 and
+  the LAN address); in the browser it is the page's `RTCPeerConnection`. The password binding (ADR 0008 §3.1) is a
+  SHA-256 over both ends' DTLS fingerprints as the offer and the answer carry them, so a signalling server that
+  swapped them fails the password check.
+- **Signalling** goes through the rendezvous service (ADR 0018), which grows two packets (15 Offer, 16 Answer: an offer
+  id and an SDP of at most 4000 bytes) and an HTTP side on the same port number over TCP: the page POSTs its offer
+  (no trickling: it waits for its candidates) to `/offer/{session}/{pin}` with the join code's session and pin; the
+  service looks the room up as for Lookup and passes the offer to the room's host on its registered QUIC socket; the
+  host answers there, and the service returns the answer as the HTTP reply (404 no such room, 429 a limit, 504 no
+  answer in 8 s). Offers count against the control-packet limit, and a room holds as many waiting offers as it takes
+  peers. CORS is open (`*`): the join code is the key, as for Lookup.
+- **The client**: a native host with a relay server set answers browser offers beside its QUIC joiners (the lobby's
+  `Listener::accept` admits a browser once its channel opens), so a browser and a native player meet in the same
+  room and no room needs a transport flag. The browser's `WebNet` joins by join code through the relay server typed
+  on the connection page (kept in `relay.txt` in the page's storage); it cannot host or search the LAN.
+- **Video**: `video::web` feeds the `ig2_formats::mp4` samples as Annex B access units (the parameter sets before each
+  key frame) to WebCodecs' `VideoDecoder` through a few functions of the page (`ig2_video_*`), and draws each frame
+  through a canvas into RGBA for the player's channel. The YUV to RGB conversion is the browser's, not the remaster
+  shader's arithmetic the native decoder copies. The page now hands the videos to the store too (about 300 MB more).
+- **Tests**: `ig2-net/tests/webrtc.rs` runs the service on 127.0.0.1, a native offerer (`webrtc::connect`, the
+  browser's HTTP path) against a relayed `QuicHost`, and two such peers in lockstep with identical hashes.
+- **Testing in the pane**: `ig2-client --mp-host` hosts a room without a window (the connection page's own code, the
+  relay server of `relay.txt`, its join code printed; it starts once the joiners are ready and prints the turns and
+  any desync), and the page's `?args=` (localhost only) passes the native client's options, `--multiplayer` opening
+  on the connection page. Verified: the title video plays; a browser joined `--mp-host` through a local service and
+  the two played about 960 lockstep turns with the game clock running.
+- **One divergence at the start**: the browser's first turn hashed differently from the Windows host's (native pairs
+  agree from turn 0); the session resynchronised it from turn 2 (ADR 0021) and every later turn agreed. Likely
+  cause: the sim's `sin`, `cos`, `acos`, `ln`, `exp`, `powf` come from each platform's maths library, and the galaxy's
+  start uses them; a portable implementation for the sim (the `libm` crate) would make every platform agree, so the
+  Consequences' "byte-identical" holds on one platform only until then.
+
 ## What is left
-- **Video:** WebCodecs (`VideoDecoder`) fed from `ig2_formats::mp4` for the intro, cut-scenes and message clips; until
-  then `Frames` fails and they are skipped, as in part 2.
-- **Clipboard, mods, memory:** the web clipboard for join codes; mods in OPFS; reading the install on demand from a
-  worker instead of holding it in memory (about 400 MB).
+- **A public page and an HTTPS service:** a page served over HTTPS can only reach an HTTPS signalling endpoint, and
+  publishing the page is the maintainers' call (part 5). Until then the page runs from `tools/serve_web.py` on this
+  machine against a service the player runs.
+- **Internet NAT traversal for browsers:** the host's WebRTC candidates are its loopback and LAN addresses (no STUN);
+  a browser outside the host's LAN needs the host's public address as a candidate (the service sees it on Register)
+  or a relay over WebSocket. Browsers can't host yet, so two browsers can't play each other.
+- **Clipboard, mods, memory:** the web clipboard for join codes (typed for now); mods in OPFS; reading the install on
+  demand from a worker instead of holding it in memory (now about 700 MB with the videos).
+- **Cross-platform determinism:** the sim's transcendental functions from one portable implementation (above).
 - **Audio:** works; speech and effects are untested beyond the menu.
-- **Multiplayer (part 4)** and **hosting (part 5)** as below.
+- **Hosting (part 5)** as below.
 
 ## Order of the parts
 1. **Shared crates build for wasm32** (done): `Files` behind `Install`, the CI check.

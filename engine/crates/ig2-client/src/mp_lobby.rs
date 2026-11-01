@@ -119,11 +119,12 @@ pub trait Net {
     }
 }
 
-/// The client's links: QUIC natively; none in the browser yet (ADR 0047 part 4).
+/// The client's links: QUIC natively (and WebRTC for browser joiners); WebRTC through the relay server in the browser
+/// (ADR 0047 part 4).
 #[cfg(not(target_arch = "wasm32"))]
 pub type ClientNet = QuicNet;
 #[cfg(target_arch = "wasm32")]
-pub type ClientNet = OfflineNet;
+pub type ClientNet = WebNet;
 
 /// QUIC links and LAN discovery (ADR 0008), and the rendezvous service the player set (ADR 0018).
 #[cfg(not(target_arch = "wasm32"))]
@@ -145,13 +146,15 @@ struct QuicListener {
     map: PortMap,
     /// This machine's address on the LAN (the route towards the internet; nothing is sent).
     lan: Option<std::net::Ipv4Addr>,
+    /// Browsers' WebRTC links that are not open yet (ADR 0047 part 4).
+    browsers: Vec<ig2_net::webrtc::Link>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl QuicListener {
     fn new(host: ig2_net::quic::QuicHost, announcer: Option<ig2_net::discovery::Announcer>) -> Self {
         let lan = ig2_net::portmap::local_ipv4(std::net::Ipv4Addr::new(192, 0, 2, 1)).ok();
-        Self { host, announcer, asking: None, mapping: None, map: PortMap::Off, lan }
+        Self { host, announcer, asking: None, mapping: None, map: PortMap::Off, lan, browsers: Vec::new() }
     }
 }
 
@@ -194,6 +197,20 @@ impl Listener for QuicListener {
         if let Some(m) = &self.mapping {
             // A renewal may move the external address.
             self.map = PortMap::Mapped(m.granted().external);
+        }
+        // Browsers' offers through the relay server: answered at once, admitted once their channel opens.
+        for (id, offer) in self.host.offers() {
+            match ig2_net::webrtc::answer(&offer) {
+                Ok((answer, link)) => {
+                    self.host.answer(id, &answer);
+                    self.browsers.push(link);
+                }
+                Err(e) => eprintln!("ig2-client: a browser's offer: {e}"),
+            }
+        }
+        self.browsers.retain(|l| !l.closed());
+        if let Some(i) = self.browsers.iter().position(|l| l.is_open()) {
+            return Some(Box::new(self.browsers.swap_remove(i)));
         }
         self.host.accept().map(|l| Box::new(l) as Box<dyn Transport>)
     }
@@ -361,8 +378,50 @@ impl Net for QuicNet {
     }
 }
 
-/// No network (the headless script runs, the browser build): hosting gets a listener nobody reaches, the LAN is empty,
-/// joins fail.
+/// The browser's links (ADR 0047 part 4): a join code through the relay server's WebRTC signalling. A page can't
+/// listen, so hosting gets a listener nobody reaches, and there is no LAN to search.
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+pub struct WebNet {
+    relay: Option<SocketAddrV4>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Net for WebNet {
+    fn listen(&mut self) -> Result<Box<dyn Listener>, String> {
+        Ok(Box::new(Unreached))
+    }
+
+    fn sessions(&mut self) -> Vec<Found> {
+        Vec::new()
+    }
+
+    fn connect(&mut self, _addr: &str, _pin: Option<[u8; 32]>) -> Connecting {
+        let (tx, rx) = mpsc::channel();
+        let _ = tx.send(Err("in the browser, join with a join code and a relay server".into()));
+        rx
+    }
+
+    fn connect_code(&mut self, code: &JoinCode) -> Connecting {
+        let (tx, rx) = mpsc::channel();
+        let Some(relay) = self.relay else {
+            let _ = tx.send(Err("in the browser, joining needs a relay server".into()));
+            return rx;
+        };
+        let (session, pin) = (code.session, code.pin);
+        wasm_bindgen_futures::spawn_local(async move {
+            let r = ig2_net::webrtc::connect(&format!("http://{relay}"), session, &pin).await;
+            let _ = tx.send(r.map(|l| Box::new(l) as Box<dyn Transport + Send>).map_err(|e| e.to_string()));
+        });
+        rx
+    }
+
+    fn set_relay(&mut self, relay: Option<SocketAddrV4>) {
+        self.relay = relay;
+    }
+}
+
+/// No network (the headless script runs): hosting gets a listener nobody reaches, the LAN is empty, joins fail.
 #[derive(Default)]
 pub struct OfflineNet;
 
@@ -743,7 +802,7 @@ impl MpScreen {
     }
 
     fn with_saved_relay(mut self) -> Self {
-        let saved = self.save_dir.as_ref().and_then(|d| std::fs::read_to_string(d.join(RELAY_FILE)).ok()).unwrap_or_default();
+        let saved = self.save_dir.as_ref().and_then(|d| ig2_formats::userfs::read_to_string(d.join(RELAY_FILE)).ok()).unwrap_or_default();
         for c in saved.trim().bytes().filter(|c| (0x20..0x7f).contains(c)) {
             self.relay.key(EntryKey::Char(c));
         }
@@ -759,8 +818,8 @@ impl MpScreen {
                 net.set_relay(a);
                 if let Some(d) = &self.save_dir {
                     let file = d.join(RELAY_FILE);
-                    if std::fs::read_to_string(&file).unwrap_or_default().trim() != typed.trim() {
-                        let _ = std::fs::write(file, typed.trim());
+                    if ig2_formats::userfs::read_to_string(&file).unwrap_or_default().trim() != typed.trim() {
+                        let _ = ig2_formats::userfs::write(file, typed.trim());
                     }
                 }
                 true
@@ -1858,6 +1917,70 @@ pub fn launch<'r>(b: Begun, data: &StartData, rules: &'r GameRules, ticks: u32, 
             Ok(Session::Client(c, Box::new(s)))
         }
     }
+}
+
+/// `ig2-client --mp-host`: a host without a window to try other clients against (a browser's join, ADR 0047 part 4).
+/// It opens the connection page's room through the relay server of `relay.txt` (the save folder), prints the join
+/// code once the room is open, starts as soon as every joiner is ready, then runs the game on the wall clock (its own
+/// empire idle) and prints the lockstep turn every ten seconds, and any desync, until the joiners leave.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn headless_host() -> Result<(), String> {
+    // The window's install and language: the start's names are in it, and every machine builds the same galaxy.
+    let install = crate::open_install(&crate::parse(&[])?)?;
+    let (rules, _) = crate::rules::load(&install)?;
+    let exe = install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
+    let mods = crate::mods_fingerprint(&install);
+    let fingerprint = ig2_net::session::modded_fingerprint(ig2_net::session::rules_fingerprint(&exe), mods);
+    let mut net = QuicNet::default();
+    let mut s = MpScreen::open(true, "Host", fingerprint).with_mods(mods);
+    s.open = 100.0;
+    s.host(&mut net);
+    let mut printed = false;
+    let begun = loop {
+        s.tick(&mut net);
+        let Some(Role::Host { listener, .. }) = &s.role else { return Err(String::from_utf8_lossy(&s.line).into_owned()) };
+        if !printed && matches!(listener.rendezvous(), Rendezvous::Registered(_)) {
+            printed = true;
+            println!("join code: {}", s.join_code().map(|c| c.encode()).unwrap_or_default());
+        }
+        let ready = s.state().is_some_and(|st| st.members.len() >= 2 && st.members.iter().filter(|m| m.id != 0).all(|m| m.ready));
+        if ready {
+            let at = s.boxes().into_iter().find(|b| b.0 == spot::READY).map(|(_, r)| [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]).ok_or("no start button")?;
+            if let Some(Out::Start(b)) = s.press(at, false, &mut net) {
+                break b;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let texts = crate::new_game::StartTexts::read(&install)?;
+    let session = texts.with(&install, |data| launch(begun, data, &rules, crate::new_game::wall_ticks(), Box::new(QuicNet::default())))??;
+    println!("started");
+    let mut w = crate::world::World::new_mp(session, &rules);
+    // As the window's start (`start_world`): the install's design names and the empire names.
+    w.game.design_texts = crate::new_game::design_texts(&install);
+    w.game.empire_names = crate::ui::empire_names(&crate::ui::names_txt17(&install, false));
+    let (start, mut shown) = (web_time::Instant::now(), 0);
+    let mut desyncs = 0;
+    while !w.net_over {
+        w.tick();
+        let Some((net, _)) = &w.net else { break };
+        let found = match net {
+            Session::Host { session, .. } => session.host.desyncs.len(),
+            _ => 0,
+        } + net.peer().desyncs.len();
+        if found > desyncs {
+            desyncs = found;
+            println!("desync at turn {}", net.peer().turn);
+        }
+        let secs = start.elapsed().as_secs();
+        if secs >= shown + 10 {
+            shown = secs;
+            println!("turn {}, {} hashes compared, {desyncs} desyncs", net.peer().turn, net.peer().hashes.len());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    println!("the session ended");
+    Ok(())
 }
 
 #[cfg(test)]

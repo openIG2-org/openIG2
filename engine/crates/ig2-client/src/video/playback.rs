@@ -19,10 +19,6 @@ pub enum Place {
 /// `KellenekCutScenek` (`DAT_0091605c`, the options' `Cutscenes`, default 1): `OpenBink` without `force` plays
 /// nothing when it is 0.
 pub fn cutscenes_enabled() -> bool {
-    // The browser build has no video decoder yet (ADR 0047 part 3).
-    if cfg!(target_arch = "wasm32") {
-        return false;
-    }
     ig2_formats::options::Options::load().int("Cutscenes").unwrap_or(1) != 0
 }
 

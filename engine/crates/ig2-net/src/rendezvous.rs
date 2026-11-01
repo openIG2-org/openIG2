@@ -6,6 +6,8 @@
 //! joiner ─ Lookup{session, pin} ──▶ service ── Found{host} ──▶ joiner, Incoming{joiner} ──▶ host (punches)
 //! relayed: peer ─ To{dest, QUIC datagram} ─▶ service ─ From{src, datagram} ─▶ dest
 //! public list (ADR 0060): host ─ Publish{Listing} ─▶ service; browser ─ List{start} (1200 B) ─▶ service ─ Rooms ─▶
+//! WebRTC (ADR 0047 part 4): page ─ HTTP POST /offer/{session}/{pin}, SDP ─▶ service ─ Offer{id, SDP} ─▶ host
+//!                          host ─ Answer{id, SDP} ─▶ service ─ HTTP 200, SDP ─▶ page
 //! ```
 
 use std::collections::HashMap;
@@ -104,7 +106,15 @@ pub enum Packet<'a> {
     List { start: u16 },
     /// Entries `start..` of `total`: each the host's address, a u16 LE length and an encoded [`Listing`].
     Rooms { total: u16, start: u16, entries: &'a [u8] },
+    /// A browser's WebRTC offer (SDP) for the room's host, which answers with the same `id`.
+    Offer { id: u32, sdp: &'a [u8] },
+    Answer { id: u32, sdp: &'a [u8] },
 }
+
+/// The longest offer or answer carried (a data channel's SDP with a few candidates is about 1 KB).
+pub const MAX_SDP: usize = 4000;
+/// How long the service holds an offer for its answer.
+pub const OFFER_TTL: Duration = Duration::from_secs(8);
 
 fn put_addr(b: &mut Vec<u8>, a: SocketAddrV4) {
     b.extend_from_slice(&a.ip().octets());
@@ -132,6 +142,8 @@ impl<'a> Packet<'a> {
             Self::Unlist => 12,
             Self::List { .. } => 13,
             Self::Rooms { .. } => 14,
+            Self::Offer { .. } => 15,
+            Self::Answer { .. } => 16,
         }
     }
 
@@ -160,6 +172,10 @@ impl<'a> Packet<'a> {
             Self::To { peer, data } | Self::From { peer, data } => {
                 put_addr(&mut b, peer);
                 b.extend_from_slice(data);
+            }
+            Self::Offer { id, sdp } | Self::Answer { id, sdp } => {
+                b.extend_from_slice(&id.to_le_bytes());
+                b.extend_from_slice(sdp);
             }
         }
         b
@@ -196,6 +212,10 @@ impl<'a> Packet<'a> {
             13 if b.len() == LIST_LEN && body[2..].iter().all(|&x| x == 0) => Self::List { start: u16::from_le_bytes([body[0], body[1]]) },
             14 if body.len() >= 4 && b.len() <= LIST_LEN => {
                 Self::Rooms { total: u16::from_le_bytes([body[0], body[1]]), start: u16::from_le_bytes([body[2], body[3]]), entries: &body[4..] }
+            }
+            15 | 16 if body.len() > 4 && body.len() <= 4 + MAX_SDP => {
+                let (id, sdp) = (u32::from_le_bytes(body[..4].try_into().unwrap()), &body[4..]);
+                if b[5] == 15 { Self::Offer { id, sdp } } else { Self::Answer { id, sdp } }
             }
             _ => return None,
         })
@@ -290,6 +310,9 @@ pub struct Service {
     hosts: HashMap<SocketAddrV4, u64>,
     peers: HashMap<SocketAddrV4, u64>,
     control: HashMap<Ipv4Addr, Bucket>,
+    /// Browser offers waiting for their host's answer: the host, when sent, the answer once it came.
+    offers: HashMap<u32, (SocketAddrV4, Duration, Option<Vec<u8>>)>,
+    next_offer: u32,
     pub counts: Counts,
 }
 
@@ -409,8 +432,42 @@ impl Service {
                 }
             }
             Packet::List { start } => out.push((from, self.page(start, now))),
+            Packet::Answer { id, sdp } => match self.offers.get_mut(&id) {
+                // Only the host the offer went to answers it.
+                Some((host, _, answer @ None)) if *host == from => *answer = Some(sdp.to_vec()),
+                _ => self.counts.dropped += 1,
+            },
             // Answers and punches are not for the service.
             _ => self.counts.dropped += 1,
+        }
+    }
+
+    /// A browser at `from` offers WebRTC (`sdp`) to the room of the join code's `session` and `pin` (ADR 0047 part 4):
+    /// the Offer for its host goes to `out`; [`Service::answer`] has the reply once it came. Offers count as control
+    /// packets, and a room holds as many waiting offers as it takes peers.
+    pub fn offer(&mut self, from: Ipv4Addr, session: u64, pin: [u8; PIN_BYTES], sdp: &[u8], now: Duration, out: &mut Vec<(SocketAddrV4, Vec<u8>)>) -> Result<u32, Refusal> {
+        let l = self.limits;
+        if !self.control.entry(from).or_insert_with(|| Bucket::full(l.control_burst, now)).take(1.0, l.control_rate, l.control_burst, now) || sdp.len() > MAX_SDP {
+            self.counts.dropped += 1;
+            return Err(Refusal::Full);
+        }
+        let host = self.rooms.get(&session).filter(|r| r.pin == pin).ok_or(Refusal::Unknown)?.host;
+        if self.offers.values().filter(|o| o.0 == host).count() >= l.peers_per_room {
+            return Err(Refusal::Full);
+        }
+        self.next_offer = self.next_offer.wrapping_add(1);
+        let id = self.next_offer;
+        self.offers.insert(id, (host, now, None));
+        out.push((host, Packet::Offer { id, sdp }.encode()));
+        Ok(id)
+    }
+
+    /// Offer `id`'s answer: `Some(Some)` once the host answered (the offer is done then), `Some(None)` while
+    /// waiting, `None` when it expired unanswered.
+    pub fn answer(&mut self, id: u32) -> Option<Option<Vec<u8>>> {
+        match self.offers.get(&id)? {
+            (_, _, None) => Some(None),
+            _ => Some(self.offers.remove(&id).and_then(|o| o.2)),
         }
     }
 
@@ -457,6 +514,7 @@ impl Service {
                 keep
             });
         }
+        self.offers.retain(|_, o| now.saturating_sub(o.1) <= OFFER_TTL);
         // A full bucket is the same as none.
         self.control.retain(|_, b| now.saturating_sub(b.at).as_secs_f64() * l.control_rate < l.control_burst);
     }
@@ -510,11 +568,35 @@ pub fn list(service: SocketAddrV4, wait: Duration) -> std::io::Result<Vec<(Socke
 
 /// Serve on `socket` until `stop` says so (asked a few times a second, with the service for its counts). Bad
 /// packets and socket errors (an ICMP-reported unreachable peer) are dropped, never fatal.
-pub fn serve(socket: &std::net::UdpSocket, service: &mut Service, mut stop: impl FnMut(&Service) -> bool) -> std::io::Result<()> {
-    socket.set_read_timeout(Some(Duration::from_millis(200)))?;
+pub fn serve(socket: &std::net::UdpSocket, service: &mut Service, stop: impl FnMut(&Service) -> bool) -> std::io::Result<()> {
+    serve_with_http(socket, None, service, stop)
+}
+
+/// A browser's offer from the HTTP side, for the datagram loop: the answer or an HTTP status goes to `reply`.
+struct HttpOffer {
+    from: Ipv4Addr,
+    session: u64,
+    pin: [u8; PIN_BYTES],
+    sdp: Vec<u8>,
+    reply: Reply,
+}
+
+/// Where an offer's answer (or an HTTP status) goes.
+type Reply = std::sync::mpsc::Sender<Result<Vec<u8>, u16>>;
+
+/// [`serve`], and with `http` the browsers' WebRTC signalling on that TCP listener (ADR 0047 part 4): `POST
+/// /offer/{session hex}/{pin hex}` with the offer's SDP, answered with the host's SDP (404 no such room, 429 a limit,
+/// 504 the host did not answer). Pages on any origin may ask (CORS `*`): the join code is the key, as for Lookup.
+pub fn serve_with_http(socket: &std::net::UdpSocket, http: Option<std::net::TcpListener>, service: &mut Service, mut stop: impl FnMut(&Service) -> bool) -> std::io::Result<()> {
+    socket.set_read_timeout(Some(Duration::from_millis(if http.is_some() { 20 } else { 200 })))?;
+    let (tx, offers) = std::sync::mpsc::channel();
+    if let Some(l) = http {
+        std::thread::spawn(move || http_accept(l, tx));
+    }
+    let mut waiting: Vec<(u32, Reply)> = Vec::new();
     let start = web_time::Instant::now();
-    // A relayed datagram is at most QUIC's 1200 bytes plus the header; anything longer is not ours.
-    let mut buf = [0u8; 2048];
+    // A relayed datagram is at most QUIC's 1200 bytes plus the header, an answer at most MAX_SDP; anything longer is not ours.
+    let mut buf = [0u8; HEAD + 4 + MAX_SDP + 1];
     let mut out = Vec::new();
     let mut swept = Duration::ZERO;
     while !stop(service) {
@@ -522,6 +604,25 @@ pub fn serve(socket: &std::net::UdpSocket, service: &mut Service, mut stop: impl
         if let Ok((n, std::net::SocketAddr::V4(from))) = socket.recv_from(&mut buf) {
             service.handle(from, &buf[..n], now, &mut out);
         }
+        while let Ok(o) = offers.try_recv() {
+            match service.offer(o.from, o.session, o.pin, &o.sdp, now, &mut out) {
+                Ok(id) => waiting.push((id, o.reply)),
+                Err(r) => {
+                    let _ = o.reply.send(Err(if r == Refusal::Unknown { 404 } else { 429 }));
+                }
+            }
+        }
+        waiting.retain(|(id, reply)| match service.answer(*id) {
+            Some(None) => true,
+            Some(Some(a)) => {
+                let _ = reply.send(Ok(a));
+                false
+            }
+            None => {
+                let _ = reply.send(Err(504));
+                false
+            }
+        });
         for (to, b) in out.drain(..) {
             let _ = socket.send_to(&b, to);
         }
@@ -531,6 +632,107 @@ pub fn serve(socket: &std::net::UdpSocket, service: &mut Service, mut stop: impl
         }
     }
     Ok(())
+}
+
+/// Connections served at once (more are closed unanswered).
+const HTTP_CONNS: usize = 32;
+
+fn http_accept(l: std::net::TcpListener, tx: std::sync::mpsc::Sender<HttpOffer>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let open = std::sync::Arc::new(AtomicUsize::new(0));
+    for s in l.incoming().flatten() {
+        if open.fetch_add(1, Ordering::SeqCst) >= HTTP_CONNS {
+            open.fetch_sub(1, Ordering::SeqCst);
+            continue;
+        }
+        let (tx, open) = (tx.clone(), open.clone());
+        std::thread::spawn(move || {
+            let _ = http_one(s, &tx);
+            open.fetch_sub(1, Ordering::SeqCst);
+        });
+    }
+}
+
+fn http_reply(s: &mut std::net::TcpStream, code: u16, body: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let reason = match code {
+        200 => "OK",
+        204 => "No Content",
+        400 => "Bad Request",
+        404 => "Not Found",
+        413 => "Payload Too Large",
+        429 => "Too Many Requests",
+        _ => "Gateway Timeout",
+    };
+    let head = format!(
+        "HTTP/1.1 {code} {reason}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    s.write_all(head.as_bytes())?;
+    s.write_all(body)
+}
+
+/// The session and pin of `/offer/{16 hex digits}/{24 hex digits}`.
+fn offer_path(path: &str) -> Option<(u64, [u8; PIN_BYTES])> {
+    let (session, pin) = path.strip_prefix("/offer/")?.split_once('/')?;
+    if session.len() != 16 || pin.len() != 2 * PIN_BYTES {
+        return None;
+    }
+    let mut p = [0; PIN_BYTES];
+    for (i, b) in p.iter_mut().enumerate() {
+        *b = u8::from_str_radix(pin.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some((u64::from_str_radix(session, 16).ok()?, p))
+}
+
+fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpOffer>) -> std::io::Result<()> {
+    use std::io::Read;
+    s.set_read_timeout(Some(Duration::from_secs(5)))?;
+    s.set_write_timeout(Some(Duration::from_secs(5)))?;
+    let std::net::IpAddr::V4(from) = s.peer_addr()?.ip() else { return Ok(()) };
+    let mut b = Vec::new();
+    let mut chunk = [0u8; 2048];
+    let head = loop {
+        let n = s.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(());
+        }
+        b.extend_from_slice(&chunk[..n]);
+        if let Some(p) = b.windows(4).position(|w| w == b"\r\n\r\n") {
+            break p + 4;
+        }
+        if b.len() > 4096 {
+            return http_reply(&mut s, 413, b"");
+        }
+    };
+    let text = String::from_utf8_lossy(&b[..head]).into_owned();
+    let mut lines = text.split("\r\n");
+    let mut first = lines.next().unwrap_or("").split(' ');
+    let (method, path) = (first.next().unwrap_or(""), first.next().unwrap_or(""));
+    if method == "OPTIONS" {
+        return http_reply(&mut s, 204, b"");
+    }
+    let len = lines.filter_map(|l| l.split_once(':')).find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.trim().parse::<usize>().ok());
+    let (Some(len), "POST", Some((session, pin))) = (len, method, offer_path(path)) else { return http_reply(&mut s, 400, b"") };
+    if len > MAX_SDP {
+        return http_reply(&mut s, 413, b"");
+    }
+    while b.len() < head + len {
+        let n = s.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(());
+        }
+        b.extend_from_slice(&chunk[..n]);
+    }
+    let (reply, answer) = std::sync::mpsc::channel();
+    if tx.send(HttpOffer { from, session, pin, sdp: b[head..head + len].to_vec(), reply }).is_err() {
+        return Ok(());
+    }
+    match answer.recv_timeout(OFFER_TTL + Duration::from_secs(2)) {
+        Ok(Ok(sdp)) => http_reply(&mut s, 200, &sdp),
+        Ok(Err(code)) => http_reply(&mut s, code, b""),
+        Err(_) => http_reply(&mut s, 504, b""),
+    }
 }
 
 #[cfg(test)]
@@ -571,6 +773,8 @@ mod tests {
             Packet::Unlist,
             Packet::List { start: 300 },
             Packet::Rooms { total: 9, start: 2, entries: &data },
+            Packet::Offer { id: 7, sdp: &data },
+            Packet::Answer { id: u32::MAX, sdp: &data },
         ] {
             assert_eq!(Packet::decode(&p.encode()), Some(p));
         }
@@ -739,6 +943,34 @@ mod tests {
         let std::net::SocketAddr::V4(nobody) = dead.local_addr().unwrap() else { unreachable!() };
         drop(dead);
         assert!(list(nobody, Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn offers_reach_the_rooms_host_and_only_it_answers() {
+        let mut s = Service::default();
+        send(&mut s, "198.51.100.1:1", Packet::Register { session: 1, pin: PIN }, 0);
+        let (page, mut out) = (Ipv4Addr::new(192, 0, 2, 9), Vec::new());
+        assert_eq!(s.offer(page, 1, [8; PIN_BYTES], b"v=0", Duration::ZERO, &mut out), Err(Refusal::Unknown));
+        assert_eq!(s.offer(page, 2, PIN, b"v=0", Duration::ZERO, &mut out), Err(Refusal::Unknown));
+        let id = s.offer(page, 1, PIN, b"v=0", Duration::ZERO, &mut out).unwrap();
+        assert_eq!(decoded(&out), [(a("198.51.100.1:1"), Packet::Offer { id, sdp: b"v=0" })]);
+        assert_eq!(s.answer(id), Some(None));
+        send(&mut s, "198.51.100.2:1", Packet::Answer { id, sdp: b"v=x" }, 0);
+        assert_eq!(s.answer(id), Some(None), "not the room's host");
+        send(&mut s, "198.51.100.1:1", Packet::Answer { id, sdp: b"v=1" }, 0);
+        assert_eq!(s.answer(id), Some(Some(b"v=1".to_vec())));
+        assert_eq!(s.answer(id), None, "taken once");
+        // Unanswered offers expire; a room holds as many waiting as it takes peers.
+        let id = s.offer(page, 1, PIN, b"v=0", Duration::ZERO, &mut out).unwrap();
+        s.sweep(OFFER_TTL + Duration::from_secs(1));
+        assert_eq!(s.answer(id), None);
+        let now = OFFER_TTL * 2;
+        for _ in 0..Limits::default().peers_per_room {
+            s.offer(page, 1, PIN, b"v=0", now, &mut out).unwrap();
+        }
+        assert_eq!(s.offer(page, 1, PIN, b"v=0", now, &mut out), Err(Refusal::Full));
+        assert_eq!(offer_path(&crate::webrtc::offer_path(0x5eed, &PIN)), Some((0x5eed, PIN)));
+        assert_eq!(offer_path("/offer/5eed/09"), None);
     }
 
     #[test]

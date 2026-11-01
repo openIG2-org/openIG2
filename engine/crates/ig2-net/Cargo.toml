@@ -25,12 +25,19 @@ spake2 = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 socket2 = "0.6"
+# The WebRTC transport's native side (ADR 0047 part 4), pure-Rust crypto.
+str0m = { version = "0.24.1", default-features = false, features = ["rust-crypto"], optional = true }
 
 # The browser build (ADR 0047): the page's crypto.getRandomValues.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 # spake2's rand_core 0.6 still asks the older one.
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+# The page's RTCPeerConnection and fetch (webrtc::connect).
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "MessageEvent", "RtcPeerConnection", "RtcDataChannel", "RtcDataChannelState", "RtcDataChannelType", "RtcIceGatheringState", "RtcSdpType", "RtcSessionDescription", "RtcSessionDescriptionInit", "Request", "RequestInit", "Response"] }
 
 [dev-dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
@@ -39,5 +46,7 @@ ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
 [features]
 # The QUIC transport (ADR 0005 §2, ADR 0007 §6).
 quic = ["dep:quinn", "dep:rustls", "dep:rcgen", "dep:tokio"]
+# The WebRTC transport for browser joiners (ADR 0047 part 4).
+webrtc = ["dep:str0m"]
 # UPnP IGD port mapping (ADR 0008 §2).
 upnp = ["dep:igd-next"]

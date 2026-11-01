@@ -14,7 +14,8 @@ cargo build --release -p ig2-rendezvous
 ./target/release/ig2-rendezvous --listen 0.0.0.0:29172
 ```
 It needs one **UDP** port reachable from the internet (29172 by default; forward it on the router or open it in
-the firewall). Nothing else: no database, no files, no accounts. It prints its room and relay counts every
+the firewall), and the same port number over **TCP** for players in the browser (their WebRTC signalling, plain
+HTTP; without it the service runs UDP only and says so). Nothing else: no database, no files, no accounts. It prints its room and relay counts every
 minute (`--status-secs N`, 0 = never) and never logs addresses.
 
 | Flag | Default | |
@@ -49,6 +50,13 @@ On the multiplayer connection page, type the service's address in **Relay server
 
 Joining by typed address or from the LAN list doesn't use the service. Host migration after a host leaves stays
 direct-only.
+
+## Players in the browser
+The browser build (ADR 0047 part 4) joins through the service only: it types the relay server and the host's join
+code, posts its WebRTC offer to `http://<relay>/offer/<session>/<pin>`, and the service passes it to the room's host
+(any native client with that relay set), whose answer comes back the same way. The game then runs over a WebRTC data
+channel between the two machines, not through the service. The page can't host. A page served over HTTPS can only
+reach an HTTPS service, which this one isn't yet: run the page from `http://127.0.0.1` (or the LAN) for now.
 
 ## The public game list
 The same service keeps a list of open games (ADR 0060); nothing extra to run or configure. A host lists its room by

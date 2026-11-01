@@ -31,6 +31,8 @@
 //!           E,S,L,P` the detail mode on entry E (slot S, leaving, design pointer) with `--info-texts H,OC,OP`;
 //!           `--info-star F` the star log at `infoframe` F and `--info-log FILE` its records (§6.8);
 //!           `--info-select K,X,Y,I` the planet-settings menu of hot-spot K open at (X, Y) on item I (§7.1).
+//! MP host:  `ig2-client --mp-host` hosts a room without a window through the relay server of `relay.txt` (for
+//!           trying other clients, `mp_lobby::headless_host`).
 //! Play-through: `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]` plays whole
 //!           games headless (`playthrough.rs`, docs/BUILDING.md).
 //! Info:     `ig2-client --info [--save <file.sav>] [--ticks N]` prints the starmap's planets and fleets.
@@ -799,6 +801,7 @@ fn main() {
             None => Err("usage: --snapshot <out.png> [options]".into()),
         },
         Some("--playthrough") => playthrough::main(&args[1..]),
+        Some("--mp-host") => mp_lobby::headless_host(),
         Some("--info") => parse(&args[1..]).and_then(|o| info(&o)),
         Some("--version") => {
             println!("ig2-client {}", version());

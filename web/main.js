@@ -8,8 +8,6 @@ const STORE = "install";
 const USER = "user";
 // Written last: a copy without it was interrupted.
 const DONE = ".openig2-complete";
-// The videos wait for the browser's decoder (ADR 0047 part 3).
-const SKIP = /\.mp4$/i;
 
 function status(text, error = false) {
   $("status").textContent = text;
@@ -38,6 +36,33 @@ window.ig2_user_file = (path, data) => {
     await w.write(data);
     await w.close();
   }).catch((e) => console.error(`storing ${path}:`, e));
+};
+
+// The videos (ADR 0047 part 4): WebCodecs decodes the H.264 access units the client feeds; each frame goes back as
+// RGBA through a canvas (`null`: the decoder failed).
+window.ig2_video_open = (codec, width, height, onFrame) => {
+  const ctx = new OffscreenCanvas(width, height).getContext("2d", { willReadFrequently: true });
+  const dec = new VideoDecoder({
+    output: (f) => {
+      ctx.drawImage(f, 0, 0, width, height);
+      f.close();
+      onFrame(new Uint8Array(ctx.getImageData(0, 0, width, height).data.buffer));
+    },
+    error: (e) => {
+      console.error("video:", e);
+      onFrame(null);
+    },
+  });
+  dec.configure({ codec, codedWidth: width, codedHeight: height, optimizeForLatency: true });
+  return dec;
+};
+window.ig2_video_chunk = (dec, key, timestamp, data) => {
+  if (dec.state === "configured") dec.decode(new EncodedVideoChunk({ type: key ? "key" : "delta", timestamp, data }));
+};
+window.ig2_video_queue = (dec) => dec.decodeQueueSize;
+window.ig2_video_flush = (dec) => (dec.state === "configured" ? dec.flush() : Promise.resolve());
+window.ig2_video_close = (dec) => {
+  if (dec.state !== "closed") dec.close();
 };
 
 // The game quit (the menu's Exit): the page starts over once the last writes are stored.
@@ -117,7 +142,7 @@ async function play() {
   try {
     let n = 0;
     for await (const [path, h] of walk(await storeDir())) {
-      if (path === DONE || SKIP.test(path)) continue;
+      if (path === DONE) continue;
       add_file(path, new Uint8Array(await (await h.getFile()).arrayBuffer()));
       if (++n % 200 === 0) status(`Loading the game files: ${n}`);
     }
@@ -126,7 +151,9 @@ async function play() {
     status("Starting…");
     $("setup").hidden = true;
     const params = new URLSearchParams(location.search);
-    start($("lang").value || params.get("lang") || undefined, params.has("webgl"));
+    // Testing only: `?args=--multiplayer` and the like, the native client's options, on localhost.
+    const args = isLocal() ? params.get("args") ?? undefined : undefined;
+    start($("lang").value || params.get("lang") || undefined, params.has("webgl"), args);
   } catch (e) {
     $("setup").hidden = false;
     status(`The client stopped: ${e}`, true);
@@ -136,9 +163,10 @@ async function play() {
 
 // Testing only: `tools/serve_web.py --install` serves the install on this machine; `?dev-install` copies it from there
 // instead of asking for the folder. Pages not on localhost ignore it.
+const isLocal = () => ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+
 async function devInstall() {
-  const local = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
-  if (!local || !new URLSearchParams(location.search).has("dev-install")) return false;
+  if (!isLocal() || !new URLSearchParams(location.search).has("dev-install")) return false;
   if (!(await stored())) {
     const names = await (await fetch("/dev-install/index.json")).json();
     await copy(names.map((n) => [n, "/dev-install/" + n.split("/").map(encodeURIComponent).join("/")]));

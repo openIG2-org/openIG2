@@ -36,6 +36,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def end_headers(self):
+        # Every build is fresh: a cached module from an older build would run instead.
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def translate_path(self, path):
         rel = urllib.parse.unquote(urllib.parse.urlsplit(path).path)
         if self.install and rel.startswith(PREFIX):

@@ -28,6 +28,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - The title video stays quiet over the two logos and its music starts with the intro (Remake row "Title music with intro"; off plays the music from the first logo as the original).
 - A new Options screen in the main menu (Settings or `O`): every setting in tabs (display, sound, interface, game, accessibility, multiplayer, language) with switches, sliders and choices, a line explaining each one, and Apply/Back; it works with the keyboard alone, in English and Hungarian, and the in-game Options screen sees the same values.
 - New Remake rows under "Graphics": anti-aliasing (smooth edges on buildings, ships and planets), per-pixel lighting for the space battle's ships, soft colony shadows and a gentle glow on fire, blasts and weather; each one separately, all off keeps the original's look.
+- Browser build, multiplayer and videos: the page joins a game hosted by a desktop player through a relay server you run (type the relay server and the host's join code; the game itself runs directly between the two machines), and the intro, cut-scenes and message clips play in the browser. The page can't host yet, and no public page is hosted.
 - Browser build, single player: games start, save and load in the page (settings, slots, quick save, autosaves and
   replays stay in the browser's private storage), and browsers without WebGPU draw through WebGL2. Videos and
   multiplayer are not there yet.

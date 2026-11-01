@@ -1,10 +1,11 @@
 //! `ig2-rendezvous`: the rendezvous and relay service for internet multiplayer (ADR 0018, `docs/RENDEZVOUS.md`).
-//! Rooms by join code, hole-punch help and a QUIC datagram relay on one UDP port; no game logic, no accounts,
-//! nothing written to disk. Prints its counts now and then, never addresses.
+//! Rooms by join code, hole-punch help and a QUIC datagram relay on one UDP port, browsers' WebRTC signalling over
+//! HTTP on the same TCP port (ADR 0047 part 4); no game logic, no accounts, nothing written to disk. Prints its
+//! counts now and then, never addresses.
 
 use std::time::{Duration, Instant};
 
-use ig2_net::rendezvous::{serve, Limits, Service, DEFAULT_PORT};
+use ig2_net::rendezvous::{serve_with_http, Limits, Service, DEFAULT_PORT};
 
 const USAGE: &str = "usage: ig2-rendezvous [--listen ADDR:PORT] [--max-rooms N] [--rooms-per-ip N] [--peers-per-room N] [--room-kib-per-sec N] [--control-per-sec N] [--status-secs N]";
 
@@ -45,9 +46,10 @@ fn run() -> Result<(), String> {
         }
     }
     let socket = std::net::UdpSocket::bind(&listen).map_err(|e| format!("{listen}: {e}"))?;
-    println!("ig2-rendezvous: listening on {} (UDP), {l:?}", socket.local_addr().map_err(|e| e.to_string())?);
+    let http = std::net::TcpListener::bind(&listen).map_err(|e| eprintln!("ig2-rendezvous: no browser signalling, {listen} (TCP): {e}")).ok();
+    println!("ig2-rendezvous: listening on {} (UDP{}), {l:?}", socket.local_addr().map_err(|e| e.to_string())?, if http.is_some() { " and TCP" } else { "" });
     let mut last = Instant::now();
-    serve(&socket, &mut Service::new(l), |s| {
+    serve_with_http(&socket, http, &mut Service::new(l), |s| {
         if status > 0 && last.elapsed() >= Duration::from_secs(status) {
             last = Instant::now();
             let c = s.counts;

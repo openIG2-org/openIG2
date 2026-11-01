@@ -1,5 +1,6 @@
-//! The videos' decoders (re/screens/video.md §1): H.264 through OpenH264 (built from source by `openh264-sys2`, no
-//! system library) and AAC-LC through Symphonia, both fed by `ig2_formats::mp4`'s demuxer. Frames come out in
+//! The videos' decoders (re/screens/video.md §1): H.264 through OpenH264 natively (built from source by
+//! `openh264-sys2`, no system library; the browser's is `video::web`) and AAC-LC through Symphonia, both fed by
+//! `ig2_formats::mp4`'s demuxer. Frames come out in
 //! display order and are turned into RGBA with the remaster's own `video_fragment.shader` arithmetic (BT.601,
 //! limited range, chroma sampled bilinearly as GL samples the half-size planes).
 
@@ -13,6 +14,7 @@ use openh264::decoder::{DecodedYUV, Decoder, DecoderConfig, Flush};
 use openh264::formats::YUVSource;
 use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::assets::Image;
 use crate::audio::mixer::Stream;
 
@@ -62,21 +64,6 @@ impl Clip {
         }
     }
 
-}
-
-/// No H.264 decoder in the browser build yet: WebCodecs comes with ADR 0047 part 3.
-#[cfg(target_arch = "wasm32")]
-pub struct Frames;
-
-#[cfg(target_arch = "wasm32")]
-impl Frames {
-    pub fn new(_: Arc<Clip>) -> Result<Self, String> {
-        Err("no video decoder in the browser build yet".into())
-    }
-
-    pub fn next_frame(&mut self) -> Option<Image> {
-        None
-    }
 }
 
 /// The video track decoded frame by frame.
