@@ -5271,6 +5271,7 @@ impl App {
                     if modern_bar {
                         let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
                         let mut m = h.modern_view(&self.world.game.state, self.tables, &self.world.ui, v, &self.world.prev, &self.world.curr, &sel, alpha, t, &self.panels, &self.menus, gates);
+                        m.bind_keys(&self.bindings);
                         if !modern_hud {
                             (m.info, m.mini) = (None, None);
                         }

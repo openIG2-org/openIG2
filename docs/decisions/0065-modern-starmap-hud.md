@@ -16,20 +16,27 @@ re/screens/hud.md §2, re/screens/input.md §6) and must stay exactly as they ar
 1. **An option**, "Modern starmap HUD" (`ModernStarmapHud`, Remake page, Interface), **on by default**; off = the
    original's HUD. Snapshots and capture comparisons draw the original's unless `--modern-hud` is given, and the input
    scripts always click the original's hot-spots, so every capture and replay test stays byte-identical.
-2. **What it redraws** on the starmap (nothing over it: no colony, overlay screen, battle, spy, help or options):
-   - the top bar as three glass strips: pause and the three speeds (vector icons, the current one lit, the extra
-     speeds' factor beside them), the date, the money (thousands apart); the message line (left click: the messages
-     screen; right button held: the history drop-down; the chat entry and the error text show in it); the quick
-     research (the running project and its per cent; click: the menu of startable techs by column with their cost,
-     the running one's progress, money left and STOP) and the screen menu (the original's screens with their keys,
-     the disabled ones greyed);
-   - the selection's card (bottom left): an owner-coloured mark, the name, the owner and the original's info lines in
-     their colours, richness and habitability, the left and the right action as buttons ("Details": the long info or
-     the fleet's panel; the colony screen or "Split"), the tanks and production buttons as icons, the redirect mode's
-     mark; a click on the card is the info box's left or right click, both buttons there start the rename;
-   - the console and the minimap (bottom right): rotate, zoom and tilt buttons held as the console's (zoom out and
-     tilt down are the console's right-button directions), the top and side views, the minimap with the view's
-     outline (press or drag: the camera flies there).
+2. **What it redraws** on the starmap (nothing over it: no colony, overlay screen, battle, spy, help or options), as
+   a ship's console (revised 2026-11-01 after the first version was judged too big and too plain): small dark plates
+   with the top-left and bottom-right corners cut, a hairline edge and corner marks in the player's empire colour (lifted
+   toward the text colour), drawn icons in one stroke, the theme's text colours, the Jura type in three sizes (money
+   largest and white, red below zero; names 15, text 12.5, labels 11 points):
+   - top left: pause and the three speeds (the current one lit with an accent bar, the extra speeds' factor beside
+     them), the date, the money (thousands apart); beside it the message line: the original's scrolling message, the
+     chat entry, the error or the waiting text (pulsing), else the latest history line dim, else only its mail icon
+     (left click: the messages screen; right button held: the history drop-down);
+   - top right: the research under way (its name, per cent and a progress line; idle: "No research"; click: the quick
+     research menu of startable techs by column with their cost, the running one's progress, money left and STOP) and
+     the original's screens as a row of icons (the current one lit, the disabled ones dim and not clickable);
+   - the selection panel (bottom left): an owner-coloured mark, the name, the owner, the original's info lines in their
+     colours, richness and habitability, then icon buttons: details (the long info or the fleet's panel), the colony
+     screen or split, tanks, production, and the redirect mode's mark; a click on the panel is the info box's left or
+     right click, both buttons there start the rename;
+   - the navigation plate (bottom right): the minimap with a faint grid and the view's outline (press or drag: the
+     camera flies there), under it one strip of the camera's buttons: rotate, zoom and tilt held as the console's (zoom
+     out and tilt down are the console's right-button directions), the top and side views.
+   Every button has a hover state and a tooltip: the original's text or the screen's name, with its bound key
+   (ADR 0058) in a key cap where it has one.
 3. **Same functions**: every act goes through the original's hot-spot code (`toggle_pause`, `set_speed`, the message
    line, `top_menu_screen`, the research order, `console_act`/`console_let_go`/`console_view`, `orders::minimap_target`,
    the info box's left and right click, `Panels::press_id(10 | 11)`), so the orders, sounds, multiplayer time rules
@@ -42,9 +49,11 @@ re/screens/hud.md §2, re/screens/input.md §6) and must stay exactly as they ar
 5. **Unchanged**: the radial icon menu, the select menus, the production view, the transfer panel, the fleet's and
    vehicles' info panels and the planet's long info (whose box keeps the original's info box under it while open).
    They keep their original look; a later part may redraw them.
-6. **Scale and ratio**: the panels are laid out in ADR 0062's points (540 high), anchored to the band's corners and
-   edges, so they keep their size relative to the height at 4:3, 16:9 and 21:9 and stay sharp at any resolution; the
-   UI theme (ADR 0056) is their style.
+6. **Scale and ratio**: the plates are laid out in egui points for one point per pixel at 1080 lines (the UI scale at
+   100 %): there the top plates are 30 pixels high and the corner plates take about 13 % of the width each. They follow
+   the shared UI scale of the egui layer, so a player who wants them bigger sets the UI scale; the first version was
+   laid out for the pages' 540 points high, so it doubled at 1080p. The plates are anchored to the band's corners and
+   edges (4:3, 16:9, 21:9) and stay sharp at any resolution; the UI theme (ADR 0056) is their style.
 
 ## Consequences
 - The original's HUD code stays and draws whenever the option is off (and under the long info).

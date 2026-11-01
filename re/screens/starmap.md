@@ -1130,7 +1130,7 @@ frames after the press).
 panel) open them in ig2.exe through `AktRopIkon`.
 
 ## Client status
-With `ModernStarmapHud` on (default; ADR 0065, `starmap_modern.rs`) an egui layer redraws §11's HUD (info card, camera buttons, minimap) and the top bar through the same hot-spot code; off (and in snapshots without `--modern-hud`) the classic HUD is unchanged.
+With `ModernStarmapHud` on (default; ADR 0065, `starmap_modern.rs`) an egui layer redraws §11's HUD as a compact console (selection panel with icon buttons, minimap with the camera-button strip under it) and the top bar with its screen icons through the same hot-spot code; off (and in snapshots without `--modern-hud`) the classic HUD is unchanged.
 The bottom-left info box's turning model (planet globe, fleet model, §11) is cut to the box `[5, 423, 167, 475]` by default (`BoxModelsInside`, `starmap_hud.rs`; ADR 0025, row 434); snapshots and captures stay classic.
 Modules (`engine/crates/ig2-client/src/`): `starmap.rs` (camera, keys, background, routes, fleet sprites),
 `starmap_planet.rs` (planets, clouds), `starmap_radar.rs` (§6.3), `starmap_hud.rs` (console, side lights, button

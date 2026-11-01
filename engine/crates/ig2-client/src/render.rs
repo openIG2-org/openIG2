@@ -2248,7 +2248,8 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     let rgba = if o.modern_hud {
         let size = [o.size.0 as f32, o.size.1 as f32];
         let menus = crate::starmap_menus::Menus::default();
-        let mv = hud.modern_view(&world.game.state, &l.tables, &world.ui, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels, &menus, None);
+        let mut mv = hud.modern_view(&world.game.state, &l.tables, &world.ui, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels, &menus, None);
+        mv.bind_keys(&crate::bindings::Bindings::default());
         let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
         let style = crate::starmap_modern::style(&hud, size);
         let k = crate::gui::Gui::scale(o.size.1);

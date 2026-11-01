@@ -850,8 +850,10 @@ impl Hud {
             info,
             mini,
             tips: [String::new(), tip(1), tip(2), tip(3), tip(4), tip(5), tip(6), tip(7), tip(0xa), tip(0xb)],
-            labels: m::Labels { pause: ours("Pause"), speed: ours("Speed"), screens: ours("Screens"), research: ours("Quick research"), idle: ours("No research"), redirect: ours("Redirect") },
+            labels: m::Labels { pause: ours("Pause"), speed: ours("Speed"), research: ours("Quick research"), idle: ours("No research"), redirect: ours("Redirect") },
             blink: (time * 2.0) as i64 % 2 == 0,
+            race: col(curr.human as usize + 15),
+            ..Default::default()
         }
     }
 

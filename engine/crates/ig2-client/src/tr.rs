@@ -55,7 +55,6 @@ const TABLE: &[(&str, &str)] = &[
     ("Modern starmap HUD", "Modern csillagtérkép-felület"),
     // The modern starmap HUD (ADR 0065).
     ("Speed", "Sebesség"),
-    ("Screens", "Képernyők"),
     ("Quick research", "Gyors kutatás"),
     ("No research", "Nincs kutatás"),
     ("Redirect", "Átirányítás"),
