@@ -56,14 +56,14 @@ at the next cleanup.
 - [x] **Join codes and private rooms**: in the MP room UI.
 - [x] **Desync soak**: long loopback MP games with every order type; trace the untraced MP paths when a
   desync shows (U15 economy, U18 production, U22 AI, U23 ground war; `re/README.md` → Open unknowns).
-- [ ] **Rendezvous / relay service**. The service and the client side are done (ADR 0018, `docs/RENDEZVOUS.md`); left: whether and where to run a public instance (maintainers' decision).
+- [ ] **Rendezvous / relay service**. The service and the client side are done (ADR 0018, `docs/RENDEZVOUS.md`); decided 2026-11-01: a public instance on our own VPS; left: the server (maintainers provide it), then deploying the service there.
 - [x] **Multiplayer: join a running game as a spectator** (issue #37; ADR 0026).
 
 ### Player-visible deviations
 - [ ] The rows under "Open: player-visible" in `re/deviations.md`.
 
 ## Maintainer decisions
-- [ ] The "Proposed" rows of `docs/ENHANCEMENTS.md`: accept or reject each; an ADR and a task line here per
+- [x] The "Proposed" rows of `docs/ENHANCEMENTS.md`: accept or reject each (2026-11-01: all four accepted); an ADR and a task line here per
   accepted option, then its implementation.
 - [x] **Auto research** (ADR 0037, `docs/ENHANCEMENTS.md` row 451):
   - [x] Part 1, sim: per-empire switches (ships, buildings, tanks), the lockstep order, the pick inside the research tick, saved in our saves.

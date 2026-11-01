@@ -14,6 +14,18 @@ How an idea moves:
 Ideas have no number; a row gets one when it is proposed. Numbers are shared with `re/deviations.md` (one
 counter): a proposed row takes the next free number there (453).
 
+## Decisions
+
+| Date | Decision |
+|---|---|
+| 2026-11-01 | Proposals 5, 146, 169 and 322 accepted (see "Accepted"). |
+| 2026-11-01 | Options: a new, modern main-menu Options screen with every setting in tabs; the in-game screen keeps the original's look, with the remake rows tidied onto their own page so every row is reachable. |
+| 2026-11-01 | A themeable UI: yes, after the main-menu Options screen. |
+| 2026-11-01 | A public rendezvous/relay instance: yes, on our own VPS; the public lobby browser follows it. |
+| 2026-11-01 | Steamworks: no. |
+| 2026-11-01 | More races: as mods only. |
+| 2026-11-01 | Better textures and building models: a runtime upscaling filter plus player-made packs; no graphics shipped. |
+
 ## Ideas
 
 Grouped by area; sizes are rough guesses for one developer.
@@ -21,32 +33,33 @@ Grouped by area; sizes are rough guesses for one developer.
 | Area | Idea | Why | Rough size |
 |---|---|---|---|
 | Menus | A reworked menu system: clearer navigation, fewer clicks to start a game, a back button everywhere | the original menus are slow to move through | 1-2 weeks |
-| Menus | Two Options screens: a dedicated main-menu Options screen with its own modern layout (every setting, grouped in tabs), and a reworked in-game Options screen (the original's look by default, tidied rows) | the in-game screen is cramped, and the remake rows sit under the original's | 1-2 weeks |
+| Menus | **Decided: main menu modern, in-game tidied.** Two Options screens: a dedicated main-menu Options screen with its own modern layout (every setting, grouped in tabs), and a reworked in-game Options screen (the original's look by default, tidied rows) | the in-game screen is cramped, and the remake rows sit under the original's | 1-2 weeks |
 | Menus | More options: key rebinding, UI scale, separate music/voice/effect volumes, game speed steps, autosave interval | today's options are the original's few plus the remake rows | 1-2 weeks |
-| UI | A modernised, themeable UI skin (colours, frames, fonts), the classic look kept as the default theme | the 2D panels look dated at high resolutions | weeks |
-| Graphics | Upscaled textures and other graphics upgrades, each its own option | the original textures are low-resolution on modern screens | weeks |
+| UI | **Decided: yes, after the main-menu Options screen; its style is the first theme.** A modernised, themeable UI skin (colours, frames, fonts), the classic look kept as the default theme | the 2D panels look dated at high resolutions | weeks |
+| Graphics | **Decided: a runtime upscaling filter (an option) plus packs players make, loaded from `mods/`; the project ships no graphics.** Upscaled textures and other graphics upgrades, each its own option | the original textures are low-resolution on modern screens | weeks |
 | Graphics | Better effects: particle explosions, smoke, beams, shields in the space and ground battles (after the classic effects are complete, `re/deviations.md` 421; flashes, projectiles, trails, tracers and beams are classic now, smoke, dust, scorch marks and ruins still to come) | the battles look flat | 2-4 weeks |
-| Graphics | Higher-detail building models and textures on the colony screen, loaded from a pack beside the install | the buildings are low-poly | weeks, plus art |
+| Graphics | **Decided: a runtime upscaling filter (an option) plus packs players make, loaded from `mods/`; the project ships no graphics.** Higher-detail building models and textures on the colony screen, loaded from a pack beside the install | the buildings are low-poly | weeks, plus art |
 | Graphics | A modern lighting option: per-pixel lighting, soft shadows, bloom, anti-aliasing | the original lighting is per-vertex | 2-3 weeks |
 | Speed | Optimisation: profile the frame and the sim tick (`docs/perf.md`), faster loading, fewer draw calls | smooth play at high refresh rates and on weak machines | part 1 done (`docs/perf.md` → Measurements: start 2.2 → 0.7 s, the ground war's rebuild hitch 24 → 4 ms, a late tick −16 %); next: state views kept decoded across a tick's systems, the autosave off the frame thread, the colony rebuild's meshes, the device made while the rules load |
 | AI | Smarter computer empires: better economy, research order, fleet use and diplomacy, as an "enhanced AI" ruleset beside the classic one | the original AI is easy to beat | weeks to months |
-| Multiplayer | Our own public rendezvous/relay instance (the service is done, ADR 0018, `docs/RENDEZVOUS.md`) | players behind strict NATs can join each other | days, plus a server |
+| Multiplayer | **Decided: yes, on our own VPS (the maintainers provide it).** Our own public rendezvous/relay instance (the service is done, ADR 0018, `docs/RENDEZVOUS.md`) | players behind strict NATs can join each other | days, plus a server |
 | Multiplayer | A public lobby browser on the rendezvous service: list open games, join with one click | today a join code has to be shared | 1-2 weeks |
-| Multiplayer | Steamworks (lobbies, invites, relay, achievements) | an easy way to find players | needs the rights holder's agreement and a legal check first |
 | Modding | Mod support: a mods folder whose files override the install's, then rule tables and scripts that mods can change; shipped: file overrides and rule patches (ADR 0044, row 458); story scripts are replaced as whole files | new content and balance changes from players | weeks |
-| Content | More races, as a mod or an enhanced ruleset (rules, diplomacy lines, pictures) | more variety | months, plus art |
+| Content | **Decided: as mods only, through the rule-table patches (ADR 0044); the project makes none.** More races (rules, diplomacy lines, pictures) | more variety | months, plus art |
 | Platform | Play in the browser: open a URL, the main menu loads; the player picks their own install folder, the browser keeps the files (OPFS), the game data is never hosted. Work: a wasm32 build (wgpu WebGPU/WebGL2, winit, an async main loop), a virtual file layer for the install and the saves, WebAudio via cpal, videos through WebCodecs instead of openh264, the web clipboard instead of arboard; multiplayer over WebRTC or WebTransport through the rendezvous/relay service (ADR 0018). Part 1 done: `ig2-formats`, `ig2-rules` and `ig2-sim` build for wasm32 (install files behind `vfs::Files`, a CI check; ADR 0047 has the full plan); next: part 2, the main menu in a page (the client for wasm32, the folder picker and OPFS store, WebAudio) | no install step, plays anywhere | main menu 1-2 weeks, single player 2-3 more, multiplayer 2-4 more |
 | Comfort | Auto research: a button or option that picks the next research by itself, with three separate switches (spaceships, buildings, tanks/ground units); it picks the most useful available tech (what unlocks the next important item or fills a gap, reusing the computer empires' research choice in `ig2-sim/src/ai/` where it fits); a lockstep order in multiplayer; off = the original (shipped: ADR 0037, row 451) | less micromanagement in long games | 1 week |
 
-## Proposed (maintainers decide)
+## Accepted (to implement)
+
+Accepted on 2026-11-01; each gets an ADR when it is built, then moves to "Shipped".
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
 | 457 | all screens, 2D pictures and text | "Sharp UI" (`SharpUi`, Remake row; `--sharp-ui`) samples the 2D pictures, the font and the pointer sharp bilinear: each texel a flat square, only its border pixel blended, so the UI scaled to a 1440p or 4K window stays crisp; the exe samples them bilinearly (`GL_LINEAR`, soft when magnified, 2.25× at 4K); off (the default) = the exe (ADR 0043) | yes | hud.md §1.1 |
-| 5 | campaign story 834 | proposal: empire 1's siege fleets start at planet 8340, not at planet −1's (0, 0) (enhanced ruleset only; classic stays bit-exact) | minor | campaign/elem.md §8.14 |
-| 146 | game end, high scores | proposal: a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
-| 169 | starmap, wheel | proposal: wheel zoom (and right-drag pan) on the starmap; classic has neither | minor | starmap.md |
-| 322 | title video | proposal: music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
+| 5 | campaign story 834 | empire 1's siege fleets start at planet 8340, not at planet −1's (0, 0) (enhanced ruleset only; classic stays bit-exact) | minor | campaign/elem.md §8.14 |
+| 146 | game end, high scores | a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
+| 169 | starmap, wheel | wheel zoom (and right-drag pan) on the starmap; classic has neither | minor | starmap.md |
+| 322 | title video | music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
 
 ## Shipped
 
