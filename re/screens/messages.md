@@ -43,7 +43,16 @@ draws it (exe 0x556210 and 0x5566a0; the "waiting" text is hud.md §2). Both run
 (`VanUzenet()` 0x509e00 false), or on the messages (10), options (0xd) or space-battle (0xb) screen, or on a colony
 at war (in a battle/war they run unless `DEBUGX`; on 0xb in MP too); otherwise the line stands still and is not
 drawn. Not on the colony screen while `StoryAdat+0xb4` is set (the tests at the head of both functions). Port:
-`App::message_line_gates`. An error text (`HibaUzenetSzoveg`) replaces the line for 300 frames.
+`App::message_line_gates`.
+
+The error text (`HibaUzenetSzoveg` 0xe41308, counter 0xe413d0): `ScrollHibaUzenet` (exe 0x556b20) plays
+`PlaySoundGlobal(6)`, copies the text in and sets the counter 0 (a second one replaces the first). While it is set,
+`FRISSIT_Scroll2` (after its `IOMode`/`IOAzonosito` 1, `Belep` and `Atlepes` tests) only counts it up, one a UI frame,
+and clears it past 300 (0x55628b..0x5562b0): the line doesn't move. `GFX_Scroll` (after the same `IOMode` test) draws
+it in the line's place from count 1 (0x55672e..0x5567f6): `KiirStrAlap(text, 0x119, 7, 0x34, 2, 5, c)`, centred in
+the cells, `c` = 6 while `(count / 20) % 2` is 1, else 0, clipped like the line; the line's own screen tests come only
+after it, so it shows on every screen below 0xe. Ported: `Hud::error`, `App::scroll_error` (the colony screen's and
+the spy screen's errors).
 
 Motion, in characters (`UzenetStart` `s`, `UzenetSebesseg` `v`, `UzenetHatar` `h`):
 - When the current text has left (`s ≥ len`) or there is none: take `ScrollUzenetek[1]` (text, `+0x3c` important →
@@ -187,7 +196,8 @@ Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzene
 
 ## 6. Hot-spots and input (`Messages_MouseInit` 0x5aa340, `Messages_Main` 0x5a9c50)
 1 `(160, 189, 13, 19)` and 2 `(160, 400, 13, 19)`: the list one newer / older (`AktUzenetPointer` ±1, kept in range;
-only after `LenyomasValtozo` reached 5 UI frames); 3 the inbox `(UBAXSz, 218, 157, 176)`: the row by quarters (top =
+only after `LenyomasValtozo` reached 5 UI frames, and only with no automatic message waiting (`AutomataUzenet`
+0xdabdd8 == −1, `Messages_Main` exe 0x508560), a running dialogue or not; ported, `ig2_sim::game::inbox_arrows_allowed`); 3 the inbox `(UBAXSz, 218, 157, 176)`: the row by quarters (top =
 `AktUzenet0to3` 3), only rows holding a message, only when no dialogue is running and no message picked still types (`DAT_00dabda0 == −1`, reset by `MessagesGfx2D_2`
 once typed; `FolyamatbanU == −1` and
 `ParbeszedVege`); the client mirrors the sim's pointer and row every UI frame (`MessagesScreen::sync`, `ig2_sim::game::inbox_place`), so the entry shown is the entry `KiertekelUjuzenet` opens; 4 the answers `(210, 430, 340, 46)` by quarters; 5 the map `(201, 204, 334, 188)`; 6 the text

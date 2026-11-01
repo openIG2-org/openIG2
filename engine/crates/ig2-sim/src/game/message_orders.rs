@@ -80,6 +80,12 @@ pub fn inbox_open_allowed(state: &crate::save::SaveState) -> bool {
     state.mem.i32(at::FOLYAMATBAN_U) == -1 && state.mem.u8(at::OVER) != 0 && state.mem.i32(at::AUTOMATIC) == -1
 }
 
+/// `Messages_Main` (exe 0x508560) takes the list arrows (hot-spots 1, 2): no automatic message waiting, a dialogue
+/// running or not.
+pub fn inbox_arrows_allowed(state: &crate::save::SaveState) -> bool {
+    state.mem.i32(at::AUTOMATIC) == -1
+}
+
 /// One write of the messages screen (the human's input or the screen's own step).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageOrder {

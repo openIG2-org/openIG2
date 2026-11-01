@@ -152,6 +152,9 @@ pub struct Snapshot {
     pub waypoints: Vec<(usize, Vec<[f32; 2]>)>,
     /// `MultiPlayerMode` (exe 0xBAE2C0) without `DEBUGX`: `Show_Flottak2d` draws only the human's own fleets' names.
     pub own_names_only: bool,
+    /// `Show_Stars2d3d` (exe 0x5a5d5a): the wormholes 1..=`OsszHanyWormhole` with both ends revealed (`+8`, `+0x14`),
+    /// all with `DEBUGX`: the ends and the tint (`+0x18..+0x1a`).
+    pub wormholes: Vec<([f32; 2], [f32; 2], [u8; 3])>,
 }
 
 impl Snapshot {
@@ -234,7 +237,8 @@ impl Snapshot {
             })
             .collect();
         let own_names_only = m.u8(va::MULTIPLAYER) != 0 && !all;
-        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, waypoints, own_names_only }
+        let wormholes = map.wormholes.iter().skip(1).filter(|w| w.revealed_a && w.revealed_b || debug).map(|w| ([w.ax, w.ay], [w.bx, w.by], w.tint)).collect();
+        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, waypoints, own_names_only, wormholes }
     }
 
     /// The fleets between `prev` (alpha 0) and `self` (alpha 1). A fleet pairs with the same slot in `prev`; one
@@ -1370,7 +1374,7 @@ mod tests {
         (s.debounce, s.opened) = (5, true);
         s.sync(ig2_sim::game::inbox_place(&w.game.state));
         assert_eq!(s.first, 4);
-        assert_eq!(s.press([50.0, 230.0], n), crate::messages_screen::Press::Open(7));
+        assert_eq!(s.press([50.0, 230.0], n, true), crate::messages_screen::Press::Open(7));
         assert!(ig2_sim::game::inbox_open_allowed(&w.game.state));
         for o in std::mem::take(&mut s.orders) {
             w.send(o.into());

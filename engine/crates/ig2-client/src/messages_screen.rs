@@ -838,8 +838,9 @@ impl MessagesScreen {
         texts.get(10, 1, id.min(7) as u16)
     }
 
-    /// A left press (`Messages_Main`) on inbox of `n` messages.
-    pub fn press(&mut self, at: [f32; 2], n: usize) -> Press {
+    /// A left press (`Messages_Main`) on inbox of `n` messages; `arrows`: no automatic message waits
+    /// ([`ig2_sim::game::inbox_arrows_allowed`]).
+    pub fn press(&mut self, at: [f32; 2], n: usize, arrows: bool) -> Press {
         // Inside `Messages_Kilep`'s loop the main loop's mouse pass doesn't run.
         if self.closing {
             return Press::None;
@@ -853,7 +854,7 @@ impl MessagesScreen {
             }
         }
         match id {
-            Some(2) if self.debounce == 5 && !busy => {
+            Some(2) if self.debounce == 5 && arrows => {
                 self.debounce = 0;
                 if self.first > 0 {
                     self.waiting.get_or_insert(self.first as i32);
@@ -864,7 +865,7 @@ impl MessagesScreen {
                     self.orders.push(MessageOrder::Scroll { pointer: self.first as i32, row: self.row });
                 }
             }
-            Some(1) if self.debounce == 5 && !busy => {
+            Some(1) if self.debounce == 5 && arrows => {
                 self.debounce = 0;
                 if self.first + 4 < n {
                     self.waiting.get_or_insert(self.first as i32);
@@ -1071,16 +1072,16 @@ mod tests {
     fn inbox_rows_and_arrows_follow_messages_main() {
         let mut s = MessagesScreen { debounce: 5, opened: true, ..Default::default() };
         // Row 0 (y 218..262) is entry first + 3.
-        assert_eq!(s.press([50.0, 230.0], 6), Press::Open(3));
-        assert_eq!(s.press([50.0, 380.0], 6), Press::Open(0));
-        assert_eq!(s.press([50.0, 230.0], 2), Press::None);
-        s.press([165.0, 195.0], 6);
+        assert_eq!(s.press([50.0, 230.0], 6, true), Press::Open(3));
+        assert_eq!(s.press([50.0, 380.0], 6, true), Press::Open(0));
+        assert_eq!(s.press([50.0, 230.0], 2, true), Press::None);
+        s.press([165.0, 195.0], 6, true);
         assert_eq!(s.first, 1);
-        assert_eq!(s.press([600.0, 100.0], 6), Press::Leave);
+        assert_eq!(s.press([600.0, 100.0], 6, true), Press::Leave);
         // Rows 3 then 0 opened; the arrow moves the list and the selected row with it.
         assert_eq!(s.orders, [MessageOrder::Open { row: 3 }, MessageOrder::Open { row: 0 }, MessageOrder::Scroll { pointer: 1, row: -1 }]);
         // Spot 10 (the whole screen) is off: a press outside the others does nothing.
-        assert_eq!(s.press([300.0, 470.0], 6), Press::None);
+        assert_eq!(s.press([300.0, 470.0], 6, true), Press::None);
     }
 
     /// The list stands where the sim has it (`AktUzenetPointer`): a stale place isn't clicked through, an arrow's
@@ -1091,8 +1092,8 @@ mod tests {
         s.sync((5, -1));
         assert_eq!(s.first, 5);
         // The top row is entry pointer + 3.
-        assert_eq!(s.press([50.0, 230.0], 10), Press::Open(8));
-        s.press([165.0, 195.0], 10);
+        assert_eq!(s.press([50.0, 230.0], 10, true), Press::Open(8));
+        s.press([165.0, 195.0], 10, true);
         assert_eq!(s.first, 6);
         // The sim hasn't taken the scroll yet: its old place doesn't pull the list back.
         s.sync((5, 3));
@@ -1100,24 +1101,28 @@ mod tests {
         s.sync((6, -1));
         assert_eq!((s.first, s.row), (6, -1));
         // The inbox shrank under the pointer: the exe opens pointer + row (the window finds no entry there).
-        assert_eq!(s.press([50.0, 230.0], 8), Press::Open(9));
-        assert_eq!(s.press([50.0, 380.0], 2), Press::Open(6));
+        assert_eq!(s.press([50.0, 230.0], 8, true), Press::Open(9));
+        assert_eq!(s.press([50.0, 380.0], 2, true), Press::Open(6));
     }
 
     #[test]
-    fn a_running_dialogue_holds_the_leave_spots_arrows_and_takes_keys() {
+    fn a_running_dialogue_holds_the_leave_spots_and_takes_keys() {
         let msg = b"00\r\n- 01 -1 Yes.\r\n- 02 -1 No.\r\n";
         let txt = b"01 0001 12 EN\r\n+ Yes\r\n02 0001 12 EN\r\n+ No\r\n";
         let mut d = dialogue(msg, txt);
         let b = d.find_block(0);
         d.eval_block(b);
         let mut s = MessagesScreen { debounce: 5, open: Some(d), first: 1, ..Default::default() };
-        // Typing: no leave (`Messages_MouseInit2`), no arrows (`Messages_Main`), no answer key yet; a press in the
-        // text's box (x 186..512, y 1..167), here over spot 7's corner, hurries the typer.
-        assert_eq!(s.press([190.0, 100.0], 6), Press::None);
+        // Typing: no leave (`Messages_MouseInit2`), no answer key yet; a press in the text's box (x 186..512,
+        // y 1..167), here over spot 7's corner, hurries the typer.
+        assert_eq!(s.press([190.0, 100.0], 6, true), Press::None);
         assert_eq!(s.open.as_ref().unwrap().step, 0.001);
-        s.press([165.0, 195.0], 6);
+        // The arrows (`Messages_Main` exe 0x508560) wait only for an automatic message, not for the dialogue.
+        s.press([165.0, 195.0], 6, false);
         assert_eq!(s.first, 1);
+        s.press([165.0, 195.0], 6, true);
+        assert_eq!(s.first, 2);
+        assert_eq!(std::mem::take(&mut s.orders), vec![MessageOrder::Scroll { pointer: 2, row: -1 }]);
         s.key("b");
         assert!(s.orders.is_empty() && s.open.as_ref().unwrap().orders.is_empty());
         // Typed out, two answers: `b` takes the second; the spots stay off until the answers are gone.
@@ -1125,7 +1130,7 @@ mod tests {
         s.key("b");
         assert_eq!(s.open.as_ref().unwrap().orders.last(), Some(&MessageOrder::Answer { k: 1 }));
         s.open.as_mut().unwrap().advance(10_000.0);
-        assert_eq!(s.press([600.0, 100.0], 6), Press::Leave);
+        assert_eq!(s.press([600.0, 100.0], 6, true), Press::Leave);
     }
 
     #[test]
@@ -1146,7 +1151,7 @@ mod tests {
         };
         // `(float)((double)f + 1/3)`: 46 ticks to 15 (clamped), the list up at the next render.
         assert_eq!(ticks(&mut s, 15.0), 46);
-        assert!(!s.list_up() && s.press([50.0, 230.0], 6) == Press::None);
+        assert!(!s.list_up() && s.press([50.0, 230.0], 6, true) == Press::None);
         s.render_step();
         assert!(s.list_up());
         // A row opened: no other while the first is still to type (`DAT_00dabda0`).
@@ -1155,9 +1160,9 @@ mod tests {
         let txt = b"01 0001 12 EN
 + Hi
 ";
-        assert_eq!(s.press([50.0, 380.0], 6), Press::Open(0));
+        assert_eq!(s.press([50.0, 380.0], 6, true), Press::Open(0));
         s.open = Some(dialogue(msg, txt));
-        assert_eq!(s.press([50.0, 230.0], 6), Press::None);
+        assert_eq!(s.press([50.0, 230.0], 6, true), Press::None);
         s.open = None;
         // Without a message open the frame stays at 15; with one, 45 more ticks to 30 (30.0000248 clamps).
         s.tick();

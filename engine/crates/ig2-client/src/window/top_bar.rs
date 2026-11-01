@@ -26,17 +26,21 @@ impl App {
     }
 
     /// The message line's gate (`FRISSIT_Scroll2` exe 0x556210, `GFX_Scroll` 0x5566a0: it runs with nothing unread, on
-    /// the messages, options and battle screens and a colony at war) and the "message waiting" text's
-    /// (`GFX_AllandoCallBack2` 0x554040: unread, not in a battle or a war, the messages screen only idle, the options
-    /// screen not load-only or in a battle). `DEBUGX` and the story's colony text (`StoryAdat+0xb4`) aren't ported.
-    pub(super) fn message_line_gates(&self) -> (bool, bool) {
+    /// the messages, options and battle screens and a colony at war; never on the colony screen while
+    /// `StoryAdat+0xb4` is set, exe 0x5568c1), then the "message waiting" text's and the story text's
+    /// (`GFX_AllandoCallBack2` 0x554040, asm 0x5540f8..0x55422e): neither while an error text is up; on the colony
+    /// screen with `StoryAdat+0xb4` the story text; else the waiting text when unread, never on the messages or options
+    /// screen, on the space battle only in MP with `DEBUGX`, on a colony at war only with `DEBUGX`.
+    pub(super) fn message_line_gates(&self) -> (bool, bool, bool) {
         let unread = self.unread_message();
         let s = self.akt_kep_now();
         let war = s == 3 && self.colony_war_up();
-        let line = !unread || matches!(s, 10 | 0xb | 0xd) || war;
-        let options_held = s == 0xd && self.options.as_ref().is_some_and(|o| o.s.load_only || o.s.battle);
-        let waiting = unread && s != 0xb && !war && (s != 10 || self.messages_idle()) && !options_held;
-        (line, waiting)
+        let story_flag = s == 3 && self.world.game.state.mem.i32(va::STORY_ADAT + 0xb4) != 0;
+        let line = (!unread || matches!(s, 10 | 0xb | 0xd) || war) && !story_flag;
+        let error = self.hud.as_ref().is_some_and(|h| h.error.is_some());
+        let debugx = self.debugx();
+        let waiting = !error && !story_flag && unread && !matches!(s, 10 | 0xd) && (s != 0xb || self.multiplayer() && debugx) && (!war || debugx);
+        (line, waiting, !error && story_flag)
     }
 
     /// A button on the top bar's plain spots (`IG2_gameUpdate` exe 0x4e0440 lines 147-181, `MOUSE_SelectScreens`

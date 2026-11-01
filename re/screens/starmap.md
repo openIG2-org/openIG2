@@ -188,8 +188,16 @@ in play (`pFaj` 1, 2, 4, 5, 7, 8; human 6, AI 3) are parked at (−300, −300),
 For each drawn planet whose star projects in front (`e.z < 0`) and that is owned (or story `StoryAdat+0x4c`, tutorial,
 or `+0xba` set): the name centred at `(sx, sy + ⌊√(Zoom/5)⌋)` (`KiirStr`, colour `DDColor[owner + 15]`, blinking with
 `AktIdo300Szazalek` when `+0xba`; faded out over Zoom 590..599.1). A planet with `+0xb8 ≠ 0` gets brush 4
-(`kijelol` frames 1–4, `(AktIdo/200) % 4`) at `(sx − 13, sy − 13)`. Wormholes known to the human: two arrows between
-their ends (`DrawArrow`, colour from the record, alpha 0x40).
+(`kijelol` frames 1–4, `(AktIdo/200) % 4`) at `(sx − 13, sy − 13)`. Then, unless `starmaphideflottak`, the wormholes
+(exe 0x5a5d5a..0x5a5e42, ELF 0x6e22e0): for w = 1..=`OsszHanyWormhole` (0xbb61a0) with both ends revealed (record
+`Wormhole` 0xbb60f8 + 0x1c·w, bytes +8 and +0x14 ≠ 0), every one with `DEBUGX`: `DrawArrow(b, a)` then `DrawArrow(a, b)`
+(a = (+0, +4), b = (+0xc, +0x10), z 0), width 0.7, mode 1 (map coordinates; the rgb × `starmaperosseg` while it is
+below 1), colour `0x40000000 | +0x1a << 16 | +0x19 << 8 | +0x18` (red in the low byte as the GL draw reads it).
+`DrawArrow` (exe 0x593210) draws in window pixels: the `nyilszar` strip from the start to 10 short of the tip, 2·width
+wide, then the `nyilhegy` head to the tip, ±2.5·width at its base; `polygons(…, 1)` adds the colour premultiplied by
+its alpha, unsmoothed [obs: a staged pair (`tools/trace/probes/wormholes.js`) adds (30, 92, 121) to a pixel of the two
+overlapping arrows at 800 × 600]. Port: `Snapshot::wormholes`, drawn after the rally arrows (white for the two
+textures; the strip's summed colour within 10 % of the capture). The wormholes' end particles (set 7, §6) are §9's.
 
 ## 4. Fleets
 
@@ -490,7 +498,9 @@ off the starmap). A panel spares only its owner's fleets.
   waits until both buttons are up: the start's releases reach nothing, not the info box's long info (left) or its
   colony / split (right); ported, `wait_release` in `window.rs`; also covers the colony rename).
 - The name is edited in place (no message; every machine keeps its own). Keys: `DoKeyboard`'s editing branch
-  (re/screens/input.md §1); Enter ends it (`TutorialCheckEvent(4)` fleet, `(3)` planet); Esc restores the backup.
+  (re/screens/input.md §1); Enter ends it (`TutorialCheckEvent(4)` fleet, `(3)` planet); Esc restores the backup, but only with no
+  screen change pending (`DoKeyboard` exe 0x4db1a0 case 0x1b: `Belep` 0xbae24c, `Atlepes` 0xbae24d and `AktKepKell`
+  0xbae250 all 0; else the key does nothing and the rename stays; ported, `App::rename_key`).
   Any press ends it (`Starmap_Main` line 157), the backup restored unless the press is on hot-spot 8. `FlottaDelete` /
   `FlottaOsszevon` end a fleet's rename when the fleet goes.
 - Drawn by `StarmapGfx2D_3` (ELF 0x6d4a30): until the first key a colour-0x27 box (`FillToScreen(IOX − 1, IOY − 1,
@@ -1131,7 +1141,7 @@ replay is byte-exact. Camera steps, background particles and radar dots are bit-
 The radial menu's story icons 0x10, 0x11, 0x12 (story wormhole, virus alert, gigabomb) are ported: offered in
 `rop_places`, fired through `Command::StoryIcon` into `Game::story_icon` (tests `story_icons_match_the_exe` in
 `ig2-sim` tests/save_replay.rs, `menus_reach_the_sim` in `starmap_menus.rs`). The rally arrows (§4.4) are drawn from `Snapshot::rally_arrows` (test `rally_arrows_run_from_the_humans_planets_to_their_rally_planets`).
-Missing: the wormhole arrows of §3.5; planets and clouds always at the last LOD level, no per-mesh light cache (§3.3);
+Missing: planets and clouds always at the last LOD level, no per-mesh light cache (§3.3);
 the production view's sinking buttons and wireframe twins (§12.2); the long info's stations (§15.2); an emptied fleet
 always goes by 0x1b, also in SP (§13.1). Open deviations: 47, 317.
 Captures: `run_screen.py … --kep 2 --planet P` with the flags of §11.1, §13.5, §18, §20.5 against `ig2-client

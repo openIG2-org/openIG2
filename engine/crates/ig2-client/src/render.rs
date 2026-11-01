@@ -1789,7 +1789,7 @@ fn messages_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
                     }
                     Input::Button { button: 1 | 3, down: true, at } => {
                         mouse = *at;
-                        match hud.messages.press(*at, world.ui.inbox.len()) {
+                        match hud.messages.press(*at, world.ui.inbox.len(), ig2_sim::game::inbox_arrows_allowed(&world.game.state)) {
                             Press::Open(i) => hud.open_message(&l.install, &world.ui, i),
                             Press::Leave => {
                                 hud.messages.leave();

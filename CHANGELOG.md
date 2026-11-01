@@ -6,6 +6,11 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - Multiplayer start story: the story chosen for a multiplayer game now begins the moment the game starts, on every machine; an `init/config` file in the game folder (as the original reads) can set the start story (`mpstory`), the storyline and the story map; and "cancel last message" in multiplayer diplomacy ignores a click until the previous one is released, as in the original.
+- Message line and starmap details as in the original: a known wormhole pair shows its two arrows on the starmap; an
+  error such as "not enough money" now stands in the top bar's message line for three seconds, blinking, instead of
+  scrolling by; "new message" no longer pulses on the messages and options screens; the list arrows of the messages
+  screen work while a conversation runs and wait while an automatic message is coming; Esc no longer cancels a rename
+  while the screen is changing.
 - Menu navigation: a new Interface setting "Menu navigation: Enhanced" groups the main menu into one panel (Continue, Quick game, New game, Load, Multiplayer, History, Replays, Settings, Quit), Continue resumes your latest save in one click, and Esc, the right mouse button or a Back label take you one step back on every menu screen; Classic keeps the original's menus.
 - Smarter computer empires, part 3: with "Computer empires: Enhanced" the computer empires make peace when a war is going badly, team up against a runaway leader or an easy target, sign pacts and trade agreements when it pays, hold grudges over spies and broken treaties and keep their word; Classic plays as the original.
 - Internet game list: with a relay server set, a host can put the room on the server's public list ("Public list: yes" in the room), and other players find it under "Browse internet games" on the connection page and join with a double click; the project's own public server is not running yet, so this works with a relay server you or a friend run.

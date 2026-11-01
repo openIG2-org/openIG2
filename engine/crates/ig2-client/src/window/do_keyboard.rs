@@ -104,7 +104,7 @@ impl App {
         self.overlay != Some(Screen::Messages) || self.hud.as_mut().is_none_or(|h| h.messages.leave())
     }
 
-    fn debugx(&self) -> bool {
+    pub(super) fn debugx(&self) -> bool {
         self.world.game.state.mem.u8(va::DEBUGX) != 0
     }
 

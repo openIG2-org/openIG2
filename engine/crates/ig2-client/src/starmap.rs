@@ -1055,6 +1055,36 @@ impl View {
                 }
             }
         }
+        // The known wormholes (`Show_Stars2d3d` exe 0x5a5d5a, spec §3.5): `DrawArrow(b, a)` and `DrawArrow(a, b)`,
+        // 0.7 wide, the tint at alpha 0x40, mode 1 (the colour × `starmaperosseg` behind a battle). `DrawArrow`'s
+        // `polygons(…, 1)` adds the colour premultiplied by its alpha in gamma space: the strip to 10 short of the
+        // tip, 2·width wide, the head from there to the tip, ±2.5·width [obs: the two overlapping arrows add
+        // (30, 92, 121) to a pixel in a staged capture, 2 · 0x40/255 · (0x40, 0xc0, 0xff)].
+        if !hidden {
+            let e = self.battle_fade.unwrap_or(1.0).min(1.0);
+            let exe_arrow = |f: &mut Frame, p: [f32; 2], q: [f32; 2], w: f32, c: [f32; 4]| {
+                let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len <= 0.0 {
+                    return;
+                }
+                let (ux, uy) = (dx / len, dy / len);
+                // In window pixels, not virtual ones [obs: the strip's summed colour across it at 800 × 600].
+                let base = [q[0] - ux * 10.0, q[1] - uy * 10.0];
+                let (nx, ny) = (-uy * 2.5 * w, ux * 2.5 * w);
+                // Unsmoothed, as GL fills the polygons: every pixel whose centre the strip covers.
+                f.push(a.white, Blend::GammaAdditive, Instance { param: [1.0, 0.0], ..Instance::line(p, base, 2.0 * w, c) });
+                f.push(a.white, Blend::GammaAdditive, Instance::tri(q, [base[0] + nx, base[1] + ny], [base[0] - nx, base[1] - ny], c));
+            };
+            for &(p, q, t) in &curr.wormholes {
+                let c = t.map(|x| x as f32 / 255.0 * e * (0x40 as f32 / 255.0));
+                let c = [c[0], c[1], c[2], 1.0];
+                if let (Some(p), Some(q)) = (cam.to_screen(p), cam.to_screen(q)) {
+                    exe_arrow(&mut f, q, p, 0.7, c);
+                    exe_arrow(&mut f, p, q, 0.7, c);
+                }
+            }
+        }
         // Routes of the human's fleets and story fleet 0x1f88 (`Show_Flottak3d`, spec §4.3).
         let fleets = if hidden { Vec::new() } else { curr.fleets_at(prev, alpha) };
         let grey = [0x46 as f32 / 255.0, 0x4b as f32 / 255.0, 0x5f as f32 / 255.0, 0.5];

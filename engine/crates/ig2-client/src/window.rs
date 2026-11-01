@@ -1337,7 +1337,7 @@ impl App {
             self.world.send(cmd);
         }
         if let Some(e) = out.error {
-            self.world.local_lines.push(e);
+            self.scroll_error(e);
         }
         if out.starmap {
             self.toggle_colony();
@@ -1443,7 +1443,7 @@ impl App {
                     self.log_jump(t);
                 }
             }
-            crate::ui::Screen::Messages => match h.messages.press(at, self.world.ui.inbox.len()) {
+            crate::ui::Screen::Messages => match h.messages.press(at, self.world.ui.inbox.len(), ig2_sim::game::inbox_arrows_allowed(&self.world.game.state)) {
                 // The sim refuses the row while a dialogue or an automatic message holds the screen.
                 crate::messages_screen::Press::Open(i) if ig2_sim::game::inbox_open_allowed(&self.world.game.state) => h.open_message(&self.install, &self.world.ui, i),
                 crate::messages_screen::Press::Open(_) => {}
@@ -1940,6 +1940,14 @@ impl App {
     /// The camera as `[XStart, YStart, Zoom]`.
     fn camera3(&self) -> [f32; 3] {
         self.view.as_ref().map_or([0.0; 3], |v| [v.camera.x, v.camera.y, v.camera.zoom])
+    }
+
+    /// `ScrollHibaUzenet` (exe 0x556b20): `PlaySoundGlobal(6)`, the error text `HibaUzenetSzoveg` = `text`, its counter 0.
+    fn scroll_error(&mut self, text: Vec<u8>) {
+        self.audio.play(crate::audio::SoundId::global(6));
+        if let Some(h) = &mut self.hud {
+            h.error = Some((text, 0));
+        }
     }
 
     /// The sale menus' texts (`DesignTorlesValasztasNev`).
@@ -4602,17 +4610,30 @@ impl App {
         let at = self.virtual_cursor();
         let on_info = self.overlay == Some(crate::ui::Screen::Info) && self.pointer_in;
         let info_down = self.info_down;
-        let (line_on, waiting) = self.message_line_gates();
+        let (line_on, waiting, story) = self.message_line_gates();
+        // `GFX_AllandoCallBack2`'s story text `_s(5, 0x215d)` on the colony screen.
+        let story = story.then(|| self.world.game.rules.messages.story_text(0x215d).to_vec());
+        // `FRISSIT_Scroll2`'s head (exe 0x556210): an error text doesn't count in a chat entry (`IOAzonosito` 1) or a
+        // screen change.
+        let scroll_runs = !self.screen_changing();
         if let Some(h) = &mut self.hud {
             let world = &mut self.world;
-            (h.line_held, h.message_waiting) = (!line_on, waiting);
+            (h.line_held, h.message_waiting, h.story_line) = (!line_on, waiting, story);
             let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
             let now_ms = now as f64;
             for (line, colour) in world.chat_lines.drain(..) {
                 h.chat.ring.add(line, colour, now_ms);
             }
             for _ in 0..due_ui {
-                if line_on {
+                if let Some(e) = &mut h.error {
+                    // An error text counts up to 300 UI frames instead of the line moving, then goes.
+                    if scroll_runs && h.chat.entry.is_none() {
+                        e.1 += 1;
+                        if e.1 > 300 {
+                            h.error = None;
+                        }
+                    }
+                } else if line_on {
                     let hu = h.texts.lang == ig2_formats::text::Lang::Hu;
                     h.scroller.step(&mut || world.pop_message().map(|(t, i)| (crate::diplomacy::articles(&t, hu), i)));
                 }
@@ -6023,7 +6044,9 @@ impl App {
             for c in orders {
                 self.world.send(c);
             }
-            self.world.local_lines.extend(errors);
+            if let Some(e) = errors.into_iter().last() {
+                self.scroll_error(e);
+            }
             return;
         }
         let on_starmap = self.colony.is_none() && self.overlay.is_none();
@@ -6534,6 +6557,9 @@ impl App {
                 }
                 return;
             }
+            // `DoKeyboard` case 0x1b (exe 0x4db1a0): nothing while a screen change is pending (`Belep`, `Atlepes`,
+            // `AktKepKell`).
+            Key::Named(NamedKey::Escape) if self.screen_changing() => return,
             Key::Named(NamedKey::Escape) => {
                 if let Some(b) = self.menus.rename.as_ref().map(|r| r.backup.clone()) {
                     self.write_rename(&b);

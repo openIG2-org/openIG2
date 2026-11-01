@@ -31,11 +31,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 398 | colony, TankView | the exe keeps TankView and TankViewLastAngle across re-entry (ours restarts); ours lacks the `+0x18c & 4` test in the unit choice | minor | colony.md §11.9 |
 | 405 | colony, ground-war lock | `Colony_MouseInit2` (exe 0x467990) switches every hot-spot off in a ground war, the war buttons and view included; ours only the non-war ones (the tutorial never locks during a war) | no | colony.md §11 |
 | 407 | colony, building pick | the model pick re-runs only when the pointer moves (the exe every frame), so after a camera scroll/zoom/turn or a building change with the pointer still it is stale until the pointer moves; building faces are posed at load (animated parts not followed); a unit in front doesn't hide a building; an unfinished building's cut-away top still picks | minor | colony.md §10 |
-| 427 | starmap, wormholes | the arrows between known wormhole pairs of `Show_Stars2d3d` are not drawn | minor | starmap.md §3.5 |
-| 416 | messages, list arrows | the client blocks the list arrows while a dialogue runs and leaves them live while an automatic message waits; the exe (`Messages_Main` 0x508560, the `DAT_00dabdd8 == -1` tests) gates them only on no automatic message waiting | minor | messages.md §6 |
-| 417 | top bar, message line | the exe skips the line and the "new message" text while an error text (`HibaUzenetSzoveg`) is up, and on the colony screen while `StoryAdat+0xb4` is set shows story text `_s(5, 0x215d)` instead; the client has neither | minor | hud.md §2 |
 | 466 | colony, collapsing building | a collapsing building sinks through its collapse frames in the exe (`Rom::Update`'s `SetFrame`, high building detail); the client only fades it out | minor | colony.md §5 |
-| 431 | starmap, rename | Esc in a rename ends it even while a screen change is pending; the exe's `DoKeyboard` (0x4db1a0, case 0x1b) tests `bae24c`/`bae24d`/`bae250` first | minor | starmap.md §10.7 |
+| 481 | text entries, Esc | Esc in the chat entry, the design screen's name entry and the options screen's save-name entry acts even while a screen change is pending; the exe's `DoKeyboard` (0x4db1a0, case 0x1b) ignores it then (`Belep` 0xbae24c, `Atlepes` 0xbae24d, `AktKepKell` 0xbae250); the renames are gated | minor | input.md §1 |
+| 482 | starmap, wormholes | the wormholes' end particles (particle set 7, `Wormhole3DSettings` exe 0x5bbd50) are not drawn: the exe shows a bright dot at each end of a known pair | minor | starmap.md §6, §9 |
 
 ## Keep
 

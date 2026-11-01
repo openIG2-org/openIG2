@@ -439,6 +439,10 @@ pub struct Hud {
     pub line_held: bool,
     /// The top bar's pulsing "message waiting" text (`GFX_AllandoCallBack2`'s gate, set by the client each frame).
     pub message_waiting: bool,
+    /// The story text pulsing in its place on the colony screen (`StoryAdat+0xb4`, set by the client each frame).
+    pub story_line: Option<Vec<u8>>,
+    /// The error text `HibaUzenetSzoveg` and its counter (`ScrollHibaUzenet`): over the line for 300 UI frames.
+    pub error: Option<(Vec<u8>, i32)>,
     /// ADR 0036 ("subtitles", off = classic): the text of the spoken message line while its voice plays.
     pub subtitle: Option<Vec<u8>>,
     /// The starmap's panel, faders, short info and minimap (re/screens/starmap.md §11).
@@ -510,6 +514,8 @@ impl Hud {
             history_open: false,
             line_held: false,
             message_waiting: false,
+            story_line: None,
+            error: None,
             subtitle: None,
         }
     }
@@ -821,17 +827,29 @@ impl Hud {
         let bar = crate::hud::BarState { speed: self.speed, paused: self.paused, turbo: self.turbo, ..s.bar };
         crate::hud::draw_bar(f, &self.pics, font, &v, &self.palette, &bar);
         // The chat entry takes the line's place while it is open (`GFX_Scroll` is skipped).
-        match &self.chat.entry {
-            Some(e) => e.draw(f, font, self.white, &v, &self.palette, time),
-            None if !self.line_held => self.scroller.draw(f, font, &v, &self.palette, time),
-            None => {}
+        match (&self.chat.entry, &self.error) {
+            (Some(e), _) => e.draw(f, font, self.white, &v, &self.palette, time),
+            // `GFX_Scroll` exe 0x55672e: the error text from its second frame at (0x119, 7) in 0x34 cells, size 2,
+            // centred, colour 6 and 0 by turns every 20 frames, clipped as the line.
+            (None, Some((text, n))) if *n > 0 => {
+                let c = self.palette.get(if n / 20 % 2 == 1 { 6 } else { 0 }).copied().unwrap_or([1.0; 3]);
+                font.text(f, &v, text, 281.0, 7.0, 0x34, 2, Align::Field, c, Some((270.0, 593.0)));
+            }
+            (None, Some(_)) => {}
+            (None, None) if !self.line_held => self.scroller.draw(f, font, &v, &self.palette, time),
+            (None, None) => {}
         }
-        // `GFX_AllandoCallBack2` (exe 0x554040): "message waiting" `GetString(0x12, 2, 1)` at (268, 7) in 0x36 cells,
-        // size 2, colour 6 times `KiirStrSzinSzorzo = (int)(sin(AktIdo / 100)·50 + 50)` per cent (`AktIdo` in ms).
-        if self.message_waiting {
+        // `GFX_AllandoCallBack2` (exe 0x554040): "message waiting" `GetString(0x12, 2, 1)`, or on the colony screen the
+        // story text `_s(5, 0x215d)`, at (268, 7) in 0x36 cells, size 2, colour 6 times
+        // `KiirStrSzinSzorzo = (int)(sin(AktIdo / 100)·50 + 50)` per cent (`AktIdo` in ms).
+        let pulsing = match &self.story_line {
+            Some(t) => Some(t.clone()),
+            None => self.message_waiting.then(|| self.texts.get(0x12, 2, 1)),
+        };
+        if let Some(t) = pulsing {
             let k = waiting_pulse(time);
             let c = self.palette.get(6).copied().unwrap_or([1.0; 3]).map(|x| x * k);
-            font.text(f, &v, &self.texts.get(0x12, 2, 1), 268.0, 7.0, 0x36, 2, Align::Field, c, None);
+            font.text(f, &v, &t, 268.0, 7.0, 0x36, 2, Align::Field, c, None);
         }
         // The history drop-down (`GFX_DateMoneyScrollFade` ELF 0x66d160, `GFX_ScrollHistory` exe 0x556ac0): the frame
         // `FadeKerettelKerekit(0x10c, 0x16, 0x146, n·10 + 5)` in (0, 10, 0) at 60 with a (0, 5, 0) edge at 30, entry i

@@ -164,12 +164,13 @@ screen's own passes, unless options (0xd) runs as the self-playing demo or the l
   (`GFX_Scroll`, messages.md §2), **`GFX_IdospeedPenzDatum` 0x66a590** (exe 0x554990, checked), the screen-select
   menu (`GFX_SelectScreens`, when open), then texts: "message waiting" `GetString(0x12, 2, 1)` (exe 0x554040; the
   ELF dropped the third index) at (268, 7), 0x36 bytes, size 2, flags 5, colour 6, pulsing with
-  `KiirStrSzinSzorzo = (int)(sin(AktIdo/100)·50 + 50)` per cent (`AktIdo` in ms). Drawn when a message is unread
-  (`VanUzenet`), not on the space battle, not on a colony at war, on the messages screen only when idle
-  (`dabe3c == 0 && da6607`), not on options when load-only (`bae24e`) or in a battle (`bae24f`); the exe also shows
-  it with `DEBUGX` in those battle states. Skipped while an error text is up and on the colony screen while
-  `StoryAdat+0xb4` is set (the exe draws story text `_s(5, 0x215d)` there; not ported). Port:
-  `App::message_line_gates`, `waiting_pulse`. An empire with no planets left gets the countdown texts at (10, 30) and (10, 50), size 4, colour 3.
+  `KiirStrSzinSzorzo = (int)(sin(AktIdo/100)·50 + 50)` per cent (`AktIdo` in ms). Nothing of it while an error text is up
+  (`strcmp(HibaUzenetSzoveg, "")`, messages.md §2). On the colony screen with `StoryAdat+0xb4` (0xf274ac) set the
+  story text `_s(5, 0x215d)` pulses there instead (same place, cells, size, flags, colour and pulse, asm
+  0x55411b..0x55418a). Else drawn when a message is unread (`VanUzenet`) on the screens 1..=9, 0xc, the colony
+  (at war only with `DEBUGX`) and, in MP with `DEBUGX`, the space battle; never on the messages (10) or options
+  (0xd) screen (asm 0x554197..0x5541b1; the ELF's idle and load-only/battle tests behind it are dead for those two).
+  Port: `App::message_line_gates`, `waiting_pulse`, `Hud::story_line`. An empire with no planets left gets the countdown texts at (10, 30) and (10, 50), size 4, colour 3.
   (`GFX_DateMoneyScrollFade` 0x66d160 only draws faders: the tooltip box, the select menus' boxes, the history box
   (268, 22, 0x146 × `10·n + 5`).)
 - `GFX_IdospeedPenzDatum`: the speed buttons `BrushToScreen(1007 + i)` for the selected `i` and `1011 + i` for the
