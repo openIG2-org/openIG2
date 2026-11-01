@@ -24,7 +24,7 @@ The remastered look need not match the original where the original shows pixels 
    dust and pictures, and the space battle's shot flares. Off the option it samples exactly as `kind::SPRITE`
    does without "Sharp UI" (the same `textureSample`), so the captures are unchanged; "Sharp UI" no longer touches
    these sprites (it keeps the pictures, panels and text sharp, as its row says).
-2. **"Smooth glows"** (`SmoothGlows`, a Remake row under "Graphics", off by default; `--smooth-glows`):
+2. **"Smooth glows"** (`SmoothGlows`, a Remake row under "Graphics", on by default since 2026-11-01 (first off), 0 = the exe's bilinear sampling; `--smooth-glows`):
    - a magnified `SOFT` texture is read through a cubic B-spline (four bilinear taps): smooth everywhere, no texel
      grid at any size; at 1:1 or minified the bilinear (mipmapped) sample as before;
    - a one-texel (white) point is a round dot inside its square, anti-aliased, its colour × 4/π so it adds the
