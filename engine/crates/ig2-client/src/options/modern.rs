@@ -164,6 +164,7 @@ pub fn describe(key: &str) -> &'static str {
         "SoftShadows" => "Soft edges on the colony's building shadows.",
         "Bloom" => "A soft glow around fire, blasts and the colony's weather.",
         "BattleEffects" => "Sparks, shock waves, smoke and glowing shots on top of the battles' own effects.",
+        "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",
         _ => "",
     }
 }

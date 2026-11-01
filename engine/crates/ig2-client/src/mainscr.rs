@@ -68,6 +68,10 @@ pub enum Act {
     /// Ours (ADR 0050): the high-score name entered (`AddHighscore(scenario_registry_name, HighScoreNev, score)`):
     /// [`MainScr::scored`].
     HighScore,
+    /// Ours (ADR 0059): the panel's Continue (the newest save), History and Replays.
+    Continue,
+    History,
+    Replays,
 }
 
 /// What `MainScr_Kilep` starts (spec §2.2 step 3).
@@ -301,6 +305,11 @@ pub struct MainScr {
     /// Ours (ADR 0031, `MenuSettings`): the Settings label and `O` are on; `covered`: the Options screen is up.
     pub settings: bool,
     pub covered: bool,
+    /// Ours (ADR 0059, `MenuNavigation` 1): the grouped panel and the back paths; `history`: its History entry
+    /// (`GameStatistics`); `can_continue`: a save for Continue.
+    pub flow: bool,
+    pub history: bool,
+    pub can_continue: bool,
 }
 
 /// `kamerapont` and `elforgatas` from `MainScrMozgato` with the y and z amplitudes and offsets of `Update3D` (100, −100,
@@ -378,6 +387,9 @@ impl MainScr {
             race_boxes: [None; 3],
             settings: false,
             covered: false,
+            flow: false,
+            history: true,
+            can_continue: false,
         };
         for i in 0..8 {
             s.respawn_ship(i, &mut r);
@@ -501,12 +513,48 @@ impl MainScr {
         // 0x27 (300, 446, 110 × 19) also outside the list: `MainScr_MouseInit2` (exe 0x4ff7b0) switches it on whenever
         // the skirmish settings are off, `Mode_Scenario_Valasztas` 0 included.
         let toggle = self.scenario.is_none() && in_box(at, TOGGLE_BOX);
-        self.hand = self.hovered.is_some() || toggle || self.settings_at(at) || self.quick_at(at) || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
+        self.hand = self.hovered.is_some() || toggle || self.settings_at(at) || self.quick_at(at) || self.flow_item_at(at).is_some_and(|i| i != crate::menu_flow::Item::Continue || self.can_continue) || self.back_at(at) || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
     }
 
     /// Ours (ADR 0031): the Settings label shows while the main ring set is up and idle.
     pub fn settings_shown(&self) -> bool {
-        self.settings && self.at_rest()
+        self.settings && !self.flow && self.at_rest()
+    }
+
+    /// Ours (ADR 0059): the grouped panel shows in the labels' place.
+    pub fn flow_shown(&self) -> bool {
+        self.flow && self.at_rest()
+    }
+
+    pub fn flow_item_at(&self, at: [f32; 2]) -> Option<crate::menu_flow::Item> {
+        self.flow_shown().then(|| crate::menu_flow::item_at(at, self.history)).flatten()
+    }
+
+    /// Ours (ADR 0059): the Back label, on the screens without a back of their own: the ring sub-sets, the race
+    /// choice and the name entry (the scenario panel has Cancel, our MP screens their own).
+    pub fn back_shown(&self) -> bool {
+        self.flow && !self.covered && (self.menu != Menu::Main || self.race.is_some() || self.name.is_some()) && self.scenario.is_none() && !self.mp
+            && self.disconnected.is_none() && self.high_score.is_none() && self.leaving.is_none() && self.start.is_none() && self.loading.is_none()
+    }
+
+    pub fn back_at(&self, at: [f32; 2]) -> bool {
+        self.back_shown() && crate::kit::inside_f(crate::menu_flow::BACK, at)
+    }
+
+    /// A panel entry's action: New game, Load, Multiplayer and Quit as their rings.
+    fn act_item(&mut self, i: crate::menu_flow::Item) -> Option<Act> {
+        use crate::menu_flow::Item;
+        match i {
+            Item::Continue => self.can_continue.then_some(Act::Continue),
+            Item::QuickGame => Some(Act::QuickGame),
+            Item::NewGame => self.act_direct(4),
+            Item::Load => self.act_box(2),
+            Item::Multiplayer => self.act_direct(3),
+            Item::History => Some(Act::History),
+            Item::Replays => Some(Act::Replays),
+            Item::Settings => Some(Act::Settings),
+            Item::Quit => self.act_box(1),
+        }
     }
 
     /// The main ring set at rest with nothing over it (ours: where the Settings and History labels show).
@@ -536,7 +584,7 @@ impl MainScr {
 
     /// Ours (ADR 0031): `O` on the main menu.
     pub fn settings_key(&self) -> Option<Act> {
-        self.settings_shown().then_some(Act::Settings)
+        (self.settings_shown() || self.flow_shown()).then_some(Act::Settings)
     }
 
     /// The race box (0xe..=0x10) under `at`: the 160 × 160 square round the sphere's projected centre, while they're on.
@@ -558,6 +606,14 @@ impl MainScr {
     /// load ring opens Options; `mainscr-press2.json`, on the scenario ring the list; `mainscr-right.json`, nothing on
     /// the direct single-player ring].
     pub fn press_right(&mut self, at: [f32; 2]) -> Option<Act> {
+        // Ours (ADR 0059): on empty space the right button is Esc.
+        if self.flow && self.start.is_none() && self.leaving.is_none() {
+            self.hover(at);
+            if !self.hand {
+                self.escape();
+                return None;
+            }
+        }
         self.press_button(at, false)
     }
 
@@ -569,6 +625,10 @@ impl MainScr {
         // `FUN_004fe190` (exe): `Mouse_Gomb && Mouse_Lenyom` on OK (x 270..370, y 220..250) clears the box.
         // `EnterHighScoreNameMode`: the panel's hot-spots 0x15..0x27 are off (spec §7).
         if self.high_score.is_some() {
+            return None;
+        }
+        if left && self.back_at(at) {
+            self.escape();
             return None;
         }
         if self.disconnected.is_some() {
@@ -620,6 +680,9 @@ impl MainScr {
         }
         if left && self.quick_at(at) {
             return Some(Act::QuickGame);
+        }
+        if let Some(i) = self.flow_item_at(at).filter(|_| left) {
+            return self.act_item(i);
         }
         // A box ring acts on the press frame, then the frame loop waits for the release (`Mouse_FelengedesMajdMegvar`).
         let boxed = self.box_ring_at(at);
@@ -760,7 +823,8 @@ impl MainScr {
     pub fn escape(&mut self) {
         // The list's load runs inside `MainScr_Main`: no key is read until it returns. `MainScr_CancelIPEnter` skips the
         // high-score entry (0x99), and the list under it has its hot-spots off.
-        if self.loading.is_some() || self.high_score.is_some() {
+        // Ours (ADR 0059): on the main set at rest there is no step back (the exe flies out and in again).
+        if self.loading.is_some() || self.high_score.is_some() || (self.flow && self.at_rest()) {
             return;
         }
         if let Some(sc) = &mut self.scenario {
@@ -1149,6 +1213,78 @@ mod tests {
         assert_eq!((s.settings_key(), s.press(at)), (Some(Act::Settings), Some(Act::Settings)));
         s.fly_to(Menu::Single);
         assert_eq!(s.settings_key(), None);
+    }
+
+    /// Ours (ADR 0059): the grouped panel takes the labels' place; its entries act as their rings.
+    #[test]
+    fn flow_panel_replaces_the_labels() {
+        use crate::menu_flow::{item_at, Item, PANEL};
+        let centre = |i: Item| {
+            let y = (0..2 * PANEL[3] as i32).map(|y| PANEL[1] + y as f32 * 0.5).find(|&y| item_at([60.0, y], true) == Some(i)).unwrap();
+            [60.0, y + 4.0]
+        };
+        let mut s = MainScr::enter();
+        s.settings = true;
+        s.flow = true;
+        let label = [(SETTINGS_BOX[0] + 10) as f32, (SETTINGS_BOX[1] + 10) as f32];
+        assert_eq!((s.settings_shown(), s.press(label), s.settings_key()), (false, None, Some(Act::Settings)));
+        assert_eq!(s.press(centre(Item::Continue)), None);
+        s.can_continue = true;
+        assert_eq!(s.press(centre(Item::Continue)), Some(Act::Continue));
+        for (i, a) in [(Item::QuickGame, Act::QuickGame), (Item::History, Act::History), (Item::Replays, Act::Replays), (Item::Settings, Act::Settings), (Item::Quit, Act::Quit)] {
+            assert_eq!(s.press(centre(i)), Some(a));
+        }
+        assert_eq!((s.press(centre(Item::NewGame)), s.menu), (None, Menu::Single));
+        let mut s = MainScr::enter();
+        s.flow = true;
+        assert_eq!((s.press(centre(Item::Load)), s.cel), (Some(Act::LoadGame), 6.0));
+        let mut s = MainScr::enter();
+        s.flow = true;
+        assert_eq!((s.press(centre(Item::Multiplayer)), s.menu, s.name.is_some()), (None, Menu::Multi, true));
+        // The panel is gone once the main set isn't at rest.
+        assert_eq!(s.flow_item_at(centre(Item::Quit)), None);
+    }
+
+    /// Ours (ADR 0059): the Back label, Esc and the right button on empty space go one step back.
+    #[test]
+    fn flow_back_paths() {
+        let back = [crate::menu_flow::BACK[0] + 10.0, crate::menu_flow::BACK[1] + 10.0];
+        let rest = |s: &mut MainScr| {
+            while s.cel != 1.0 || s.tav != 1.0 {
+                s.tick();
+            }
+        };
+        let mut s = MainScr::enter();
+        s.flow = true;
+        s.tav = 1.0;
+        // At rest on the main set: no Back label, and Esc stays (the exe flies out and in again).
+        assert!(!s.back_shown());
+        s.escape();
+        assert_eq!(s.cel, 1.0);
+        // Single set: the Back label, then the right button on empty space.
+        s.press(s.ring_centre(4));
+        rest(&mut s);
+        assert!(s.back_shown() && s.press(back).is_none());
+        assert_eq!(s.menu, Menu::Main);
+        rest(&mut s);
+        s.press(s.ring_centre(4));
+        rest(&mut s);
+        assert_eq!(s.press_right([300.0, 470.0]), None);
+        assert_eq!(s.menu, Menu::Main);
+        // The name entry: Back ends it.
+        rest(&mut s);
+        s.press(s.ring_centre(3));
+        assert!(s.name.is_some() && s.back_shown());
+        s.press(back);
+        assert_eq!((s.name.is_none(), s.menu), (true, Menu::Main));
+        // Classic: no Back label; the right button on empty space does nothing.
+        rest(&mut s);
+        s.flow = false;
+        s.press(s.ring_centre(4));
+        rest(&mut s);
+        assert!(!s.back_shown());
+        s.press_right([300.0, 470.0]);
+        assert_eq!(s.menu, Menu::Single);
     }
 
     #[test]

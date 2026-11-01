@@ -70,6 +70,7 @@ mod info_screen;
 mod kit;
 mod lighting;
 mod mainscr;
+mod menu_flow;
 mod mainscr_scene;
 mod mainscr_race;
 mod mainscr_scenario;

@@ -550,6 +550,13 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
         let c = d.col(if s.quick_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
         font.text(frame, &d.v, &d.texts.ours("Quick game"), (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
     }
+    // Ours (ADR 0059): the grouped panel in the labels' place, the Back label.
+    if s.flow_shown() {
+        crate::menu_flow::draw_panel(frame, &d, s.history, s.can_continue, s.at, s.gt);
+    }
+    if s.back_shown() {
+        crate::menu_flow::draw_back(frame, &d, s.at, s.gt);
+    }
 }
 
 /// What a ring's request needs from the install before the menu goes on (shared by the window and the script run):
@@ -652,7 +659,10 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let mut scene = MainScene::load(&mut r, &install);
     let mut s = MainScr::enter();
-    s.settings = ig2_formats::options::Options::load().int(crate::display::MENU_SETTINGS) != Some(0);
+    let file = ig2_formats::options::Options::load();
+    s.settings = file.int(crate::display::MENU_SETTINGS) != Some(0);
+    s.flow = file.int(crate::menu_flow::KEY) == Some(1);
+    s.history = file.int(crate::display::STATISTICS) != Some(0);
     let size = [o.size.0 as f32, o.size.1 as f32];
     let vv = Virtual::new(size);
     let mut mouse = [320.0, 240.0];

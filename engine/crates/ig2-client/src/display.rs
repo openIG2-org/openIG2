@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the texture upscaling (ADR 0054), the starmap's mouse camera (ADR 0049), the high-score entry (ADR 0050), the title's music (ADR 0051), the campaign story's ruleset (ADR 0052), the modern lighting (ADR 0055); kept in our settings file and shown as rows on the Options screen's Remake page (ADR 0048)
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the texture upscaling (ADR 0054), the starmap's mouse camera (ADR 0049), the high-score entry (ADR 0050), the title's music (ADR 0051), the campaign story's ruleset (ADR 0052), the modern lighting (ADR 0055), the menu navigation (ADR 0059); kept in our settings file and shown as rows on the Options screen's Remake page (ADR 0048)
 //! (`crate::options`, in the original's font and colours on the Remake page under group headings). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -307,6 +307,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(34, Group::Graphics, "Battle effects", BATTLE_EFFECTS, d.battle_effects as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
         row(35, Group::Sound, "Voice volume", VOICE_VOLUME, voice_volume(f).map_or(0, |v| v / 10 + 1), voices, 11),
         row(36, Group::Game, "Extra game speeds", EXTRA_SPEEDS, (f.int(EXTRA_SPEEDS) == Some(1)) as i32, Vec::new(), 1),
+        row(37, Group::Interface, "Menu navigation", crate::menu_flow::KEY, (f.int(crate::menu_flow::KEY) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
     ]
 }
 
@@ -341,7 +342,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         // The theme row: Classic first, Modern by its stored name.
         let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
         assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));

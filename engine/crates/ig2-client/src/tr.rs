@@ -51,6 +51,8 @@ const TABLE: &[(&str, &str)] = &[
     ("Modern", "Modern"),
     ("The look of the remake's own screens; Classic keeps the game's colours.", "A remake saját képernyőinek kinézete; a Klasszikus a játék színeit tartja meg."),
     ("Battle effects", "Csataeffektusok"),
+    ("Menu navigation", "Menünavigáció"),
+    ("A grouped main menu with Continue; Back, Esc or right click on every menu screen.", "Csoportos főmenü Tovább gombbal; Vissza, Esc vagy jobb klikk minden menüben."),
     ("Starmap mouse camera", "Egérkamera a térképen"),
     ("High-score entry", "Rekordlista-bejegyzés"),
     ("Computer empires", "Gépi birodalmak"),
@@ -149,6 +151,13 @@ const TABLE: &[(&str, &str)] = &[
     ("Settings", "Beállítások"),
     ("Quick game", "Gyors játék"),
     ("History", "Előzmények"),
+    // The enhanced menu navigation (ADR 0059).
+    ("Play", "Játék"),
+    ("New game", "Új játék"),
+    ("Load game", "Betöltés"),
+    ("Extras", "Extrák"),
+    ("Replays", "Visszajátszások"),
+    ("Quit", "Kilépés"),
     // Game statistics and the match history (column heads at most 7 letters).
     ("Victory", "Győzelem"),
     ("Defeat", "Vereség"),

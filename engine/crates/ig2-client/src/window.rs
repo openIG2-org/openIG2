@@ -157,6 +157,9 @@ struct Front {
     stats: Option<crate::stats_screen::StatsScreen>,
     /// Ours (ADR 0038 §6): the replays list over the menu.
     replays: Option<crate::replay_viewer::ReplayList>,
+    /// The press that opened the statistics or replays screen: its release isn't theirs (ADR 0059: the panel's
+    /// entries lie over their rows).
+    opening: bool,
 }
 
 impl Front {
@@ -164,10 +167,13 @@ impl Front {
     fn new(scene: Option<crate::mainscr_scene::MainScene>, ui_ms: u32, settings: &ig2_formats::options::Options) -> Self {
         let mut s = crate::mainscr::MainScr::enter();
         s.settings = settings.int(crate::display::MENU_SETTINGS) != Some(0);
+        s.flow = settings.int(crate::menu_flow::KEY) == Some(1);
+        s.history = settings.int(crate::display::STATISTICS) != Some(0);
+        s.can_continue = crate::options::slot_dir().is_some_and(|d| !crate::menu_flow::saves_newest_first(&d).is_empty());
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, opening: false }
     }
 }
 
@@ -705,7 +711,7 @@ fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Rend
 /// The main menu's "History" and "Replays" items are up (ours, ADR 0034, 0038): the main ring set at rest, as the
 /// Settings label.
 fn front_history_shown(fr: &Front) -> bool {
-    fr.stats.is_none() && fr.replays.is_none() && fr.mp.is_none() && fr.s.at_rest()
+    fr.stats.is_none() && fr.replays.is_none() && fr.mp.is_none() && !fr.s.flow && fr.s.at_rest()
 }
 
 /// `PlayerFaj[EN]`, the music's race.
@@ -2392,6 +2398,13 @@ impl App {
                 f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods));
             }
             Act::Tutorial(_) => {}
+            // Ours (ADR 0059): the newest save that reads, as the Load screen's Load.
+            Act::Continue => {
+                let saves = crate::options::slot_dir().map(|d| crate::menu_flow::saves_newest_first(&d)).unwrap_or_default();
+                let _ = saves.iter().any(|p| self.load_file(p));
+            }
+            Act::History => self.open_history(),
+            Act::Replays => self.open_replays(),
             // Ours (ADR 0050): `AddHighscore` (`LoadHighscores`, the entry slotted in, `SaveHighscores`) into our
             // settings file (`options.dat` stays untouched), and the list's tables reloaded.
             Act::HighScore => {
@@ -3339,6 +3352,8 @@ impl App {
         }
         if let Some(f) = &mut self.front {
             f.s.settings = self.settings.int(crate::display::MENU_SETTINGS) != Some(0);
+            f.s.flow = self.settings.int(crate::menu_flow::KEY) == Some(1);
+            f.s.history = d.statistics;
         }
         if d.one_language != old.one_language {
             self.one_language = d.one_language;
@@ -3425,6 +3440,29 @@ impl App {
             Err(e) => e.into_bytes(),
         };
         self.world.local_lines.push(line);
+    }
+
+    /// The main menu's "History" (ours, ADR 0034): the match history over the menu.
+    fn open_history(&mut self) {
+        let (list, error) = match crate::stats_screen::history_dir().map(|d| crate::stats_screen::load(&d)) {
+            Some(Ok(l)) => (l, None),
+            Some(Err(e)) => (Vec::new(), Some(e)),
+            None => (Vec::new(), None),
+        };
+        if let Some(f) = &mut self.front {
+            f.stats = Some(crate::stats_screen::StatsScreen::history(list, error));
+            f.opening = true;
+        }
+        self.audio.play(crate::audio::CLICK);
+    }
+
+    /// The main menu's "Replays" (ours, ADR 0038 section 6): the replays list over the menu.
+    fn open_replays(&mut self) {
+        if let Some(f) = &mut self.front {
+            f.replays = Some(crate::replay_viewer::ReplayList::open(None));
+            f.opening = true;
+        }
+        self.audio.play(crate::audio::CLICK);
     }
 
     /// ADR 0032: Shift+F12 loads the quick save (single player only), as the Options screen's load does.
@@ -5445,6 +5483,17 @@ impl ApplicationHandler for App {
                     o.s.hover(at);
                 }
             }
+            // Ours (ADR 0059): over the main menu the right button is Esc (Load, Settings).
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Right, .. } if self.options.is_some() && self.front.as_ref().is_some_and(|f| f.s.flow) => {
+                let audio = &mut self.audio;
+                if let Some(o) = &mut self.options {
+                    if o.s.modern.is_some() {
+                        o.s.modern_key(crate::options::modern::Nav::Back, &mut |id| audio.play(id));
+                    } else if o.s.entry.is_none() {
+                        o.s.escape();
+                    }
+                }
+            }
             WindowEvent::MouseInput { state, button, .. } if self.options.as_ref().is_some_and(|o| o.s.modern.is_none()) && { let at = self.options.as_ref().map_or([0.0; 2], |o| o.s.at); self.top_bar_mouse(button, state == ElementState::Pressed, at) } => {}
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.options.is_some() => {
                 let audio = &mut self.audio;
@@ -5509,10 +5558,20 @@ impl ApplicationHandler for App {
             }
             // Ours (ADR 0034): the statistics screen takes either button, acting on the release so the menu under it
             // gets neither half of the click.
-            WindowEvent::MouseInput { state, button: MouseButton::Left | MouseButton::Right, .. } if self.front.as_ref().is_some_and(|f| f.stats.is_some()) => {
+            WindowEvent::MouseInput { state, button: button @ (MouseButton::Left | MouseButton::Right), .. } if self.front.as_ref().is_some_and(|f| f.stats.is_some()) => {
                 let Some(f) = &mut self.front else { return };
                 if state == ElementState::Released {
+                    if std::mem::take(&mut f.opening) {
+                        return;
+                    }
                     let at = f.at;
+                    // Ours (ADR 0059): the right button on empty space is Esc.
+                    if button == MouseButton::Right && f.s.flow && f.stats.as_ref().is_some_and(|st| !st.on_spot(at)) {
+                        if f.stats.as_mut().and_then(|st| st.back()).is_some() {
+                            f.stats = None;
+                        }
+                        return;
+                    }
                     if f.stats.as_mut().and_then(|st| st.press(at)).is_some() {
                         f.stats = None;
                         self.audio.play(crate::audio::CLICK);
@@ -5520,10 +5579,17 @@ impl ApplicationHandler for App {
                 }
             }
             // Ours (ADR 0038 §6): the replays list, as the statistics screen (either button, on the release).
-            WindowEvent::MouseInput { state, button: MouseButton::Left | MouseButton::Right, .. } if self.front.as_ref().is_some_and(|f| f.replays.is_some()) => {
+            WindowEvent::MouseInput { state, button: button @ (MouseButton::Left | MouseButton::Right), .. } if self.front.as_ref().is_some_and(|f| f.replays.is_some()) => {
                 let Some(f) = &mut self.front else { return };
                 if state == ElementState::Released {
+                    if std::mem::take(&mut f.opening) {
+                        return;
+                    }
                     let at = f.at;
+                    if button == MouseButton::Right && f.s.flow && f.replays.as_ref().is_some_and(|rl| !rl.on_spot(at)) {
+                        f.replays = None;
+                        return;
+                    }
                     match f.replays.as_mut().and_then(|rl| rl.press(at)) {
                         Some(crate::replay_viewer::ListAct::Close) => f.replays = None,
                         Some(crate::replay_viewer::ListAct::Open(path)) => self.watch_replay(&path),
@@ -5536,10 +5602,7 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }
                 if self.front.as_ref().is_some_and(|f| front_history_shown(f) && crate::kit::inside_f(crate::replay_viewer::REPLAYS_ITEM, f.at)) =>
             {
-                if let Some(f) = &mut self.front {
-                    f.replays = Some(crate::replay_viewer::ReplayList::open(None));
-                }
-                self.audio.play(crate::audio::CLICK);
+                self.open_replays();
             }
             // The replay viewer's bar takes the presses on it (ours, ADR 0038 §6).
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.replay_bar_up() && crate::replay_viewer::Bar::covers(self.virtual_cursor()) => {
@@ -5554,22 +5617,17 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }
                 if self.display.statistics && self.front.as_ref().is_some_and(|f| front_history_shown(f) && crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, f.at)) =>
             {
-                let (list, error) = match crate::stats_screen::history_dir().map(|d| crate::stats_screen::load(&d)) {
-                    Some(Ok(l)) => (l, None),
-                    Some(Err(e)) => (Vec::new(), Some(e)),
-                    None => (Vec::new(), None),
-                };
-                if let Some(f) = &mut self.front {
-                    f.stats = Some(crate::stats_screen::StatsScreen::history(list, error));
-                }
-                self.audio.play(crate::audio::CLICK);
+                self.open_history();
             }
             // Our MP screens: either button's press.
             WindowEvent::MouseInput { state: ElementState::Pressed, button: button @ (MouseButton::Left | MouseButton::Right), .. } if self.front.as_ref().is_some_and(|f| f.mp.is_some()) => {
                 let Some(f) = &mut self.front else { return };
                 let at = f.at;
                 let Some(mp) = &mut f.mp else { return };
-                if let Some(o) = mp.press(at, button == MouseButton::Right, &mut f.net) {
+                // Ours (ADR 0059): the right button on empty space is Esc.
+                let back = f.s.flow && button == MouseButton::Right && mp.spot_at(at) == 0;
+                let out = if back { mp.key(None, true, &mut f.net) } else { mp.press(at, button == MouseButton::Right, &mut f.net) };
+                if let Some(o) = out {
                     self.front_mp_out(o);
                 }
             }

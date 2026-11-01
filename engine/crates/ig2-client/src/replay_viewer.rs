@@ -295,6 +295,11 @@ impl ReplayList {
         self.hover = self.spot(at);
     }
 
+    /// A spot is under `at` (ADR 0059: elsewhere the right button is Esc).
+    pub fn on_spot(&self, at: [f32; 2]) -> bool {
+        self.spot(at).is_some()
+    }
+
     pub fn press(&mut self, at: [f32; 2]) -> Option<ListAct> {
         match self.spot(at)? {
             ListSpot::Row(i) => return Some(ListAct::Open(self.list[self.top + i].path.clone())),

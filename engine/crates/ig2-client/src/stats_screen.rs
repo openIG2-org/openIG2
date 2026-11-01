@@ -287,6 +287,11 @@ impl StatsScreen {
         self.hover = self.spot(at);
     }
 
+    /// A spot is under `at` (ADR 0059: elsewhere the right button is Esc).
+    pub fn on_spot(&self, at: [f32; 2]) -> bool {
+        self.spot(at).is_some()
+    }
+
     /// A press at `at` (virtual pixels).
     pub fn press(&mut self, at: [f32; 2]) -> Option<Act> {
         match self.spot(at)? {

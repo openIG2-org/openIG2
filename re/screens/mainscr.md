@@ -638,3 +638,51 @@ cause is open). Open deviations: 20 (fly-out pace, RNG poses), 150 (respawning s
 slide), 157 (MP-ring leftovers).
 Client addition: a Settings label (`SETTINGS_BOX`, `Act::Settings`) bottom right of the main ring set when idle, and the `O` key, open the settings-only Options screen (Remake row `MenuSettings`, ADR 0031, deviation 440); `run_screendiff.py` pins it off.
 Client addition: a Quick game label (`QUICK_BOX`, `Act::QuickGame`, `MainScr::open_quick`) above it opens the §9.3 panel with the skirmish entry alone and the last skirmish's settings (`Skirmish::from_setting`, key `QuickGame`, stored by every skirmish start); closing it returns to the main set (ADR 0039, deviation 453). Test `mainscr::tests::quick_game_matches_the_full_setup`.
+
+## 15. The menu flow, and the enhanced navigation (ours, ADR 0059)
+
+### 15.1 Today's flow (classic; `MenuNavigation` 0)
+Every path from the main ring set (§6.1) and back. "Back" = what returns one step; "—" = none.
+
+| Screen (state) | Reached by | Visible back | Esc | Right button |
+|---|---|---|---|---|
+| main ring set (`Mode_Main`) | start, every return | — (Exit ring quits) | flies out and in again (§6.4 case 4) | box rings act (§1) |
+| single player (`Mode_SinglePlayerSelected`) | Single ring | Back ring (direct, left only) | main set (case 4) | box rings act |
+| race choice, difficulty (`Mode_Fajvalasztas`) | Campaign ring | — | heads, then the single set (case 5) | race boxes, difficulty rings act |
+| scenario / skirmish panel (`Mode_Scenario_Valasztas`) | Scenario ring | Cancel (0x16) | closes (case 1) | the panel's boxes act |
+| tutorial set (`Mode_Tutorial_Valasztas`) | Tutorial ring | Back ring | main set (case 4) | — |
+| MP name entry (`EnterNameMode`) | Multiplayer ring | the multi set's Back ring | main set (case 4 + `MainScr_CancelIPEnter`) | — |
+| multiplayer set (`Mode_MultiPlayerSelected`) | the name accepted | Back ring | main set | box rings act |
+| our MP screens (ADR 0014; `start.md` §6) | local / inet rings | Cancel / Leave | the room, then the screens (`MpScreen::key`) | the screens' spots act |
+| Load (Options load-only, `AktKep` 0xd, `options.md`) | Load ring (box) | Back spot | back (`ESC_Pressed`) | — |
+| Settings (ours, ADR 0031 / 0053) | Settings label, `O` | Back | back (`Nav::Back`), also `O` | — |
+| Quick game (ours, ADR 0039) | Quick game label | Cancel | closes | the panel's boxes act |
+| History / statistics (ours, ADR 0034) | History label | Main menu / Back | back (a match → the list → the menu), also Enter | the spots act |
+| Replays list (ours, ADR 0038) | Replays label | Main menu | closes, also Enter | the spots act |
+| disconnected box (`YouAreDisconnectedVolt`) | an MP drop | OK | clears (case 2) | OK acts |
+| high-score name (ours, ADR 0050) | a won scenario | — (Enter only, as the exe: `MainScr_CancelIPEnter` skips 0x99) | — | — |
+
+Clicks to a game from the main set: campaign 4 (Single, Campaign, race twice, a difficulty), a scenario 3 (Single,
+Scenario, Start) plus a row, a skirmish 3 plus its settings, Quick game 2, a saved game 3 (Load, a slot, Load).
+
+### 15.2 Enhanced (`MenuNavigation` 1)
+- **Main menu panel** while the main set is at rest (`MainScr::at_rest`): in place of the separate Settings /
+  Quick game / History / Replays labels, one grouped panel at the left (`menu_flow::PANEL`, clear of the rings,
+  whose boxes start at x 120): *Play*: Continue, Quick game, New game (= the Single ring), Load (= the Load ring),
+  Multiplayer (= the Multiplayer ring with its name entry); *Extras*: History (only with `GameStatistics`),
+  Replays; then Settings, Quit. The rings stay and work as before (Credits and Tutorial are only rings).
+  Drawn in the chosen UI theme's panel, buttons and colours (ADR 0056) when a theme is chosen, else in the Settings
+  label's look (the button font, colour 1, colour 2 under the pointer, faded in with the scene).
+- **Continue** loads the newest readable one of the slot folder's saves (`save1..24.ig2s`, `save1..24.sav`, `quicksave.ig2s`,
+  the autosaves in slots 23/24 included) by modification time, as the Load screen's Load does (`load_file`); with
+  none it is drawn disabled and does nothing.
+- **Back everywhere**: Esc and the right button on empty space go one step back on every screen of §15.1: the
+  ring sets, the race choice, the name entry, the scenario and quick-game panels, our MP screens, Load and
+  Settings, History, Replays. A visible "Back" label (bottom left, `menu_flow::BACK`) shows where the screen has no
+  back of its own: the race choice and difficulty rings, the single, tutorial and multiplayer sets and the name
+  entry. Esc on the main set at rest does nothing (the classic fly-out and back is dropped). The right button keeps
+  acting on a spot that takes it (box rings, panel boxes, list rows). The high-score entry keeps the exe's rule.
+- Off (the default): §15.1 exactly; captures run with the option off.
+
+Port status: `menu_flow.rs` (panel, Back label, `saves_newest_first`), `MainScr::flow`, the window's dispatch; tests
+`menu_flow::tests`, `mainscr::tests::{flow_panel_replaces_the_labels, flow_back_paths}`.
