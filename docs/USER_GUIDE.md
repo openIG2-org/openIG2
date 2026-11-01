@@ -61,12 +61,19 @@ The controls are the original's. The most used:
 | Colony: hold on the planet panel | The build menu |
 | Esc | Back |
 | V | Vsync on/off |
+| F12 / Shift+F12 | Quick save / quick load (single player; in multiplayer F12 saves on the host) |
 
 The full key and hot-spot tables per screen are in `re/screens/input.md`.
 
 ## Saves and settings
 Our own saves go to the Options screen's slots (`IG2_SLOT_DIR`); original `.sav` files load with `--save`. Our
 settings are kept in our own file (`IG2_OPTIONS_DIR`), never in the original's.
+
+F12 quick-saves into `quicksave.ig2s` beside the slots and Shift+F12 loads it back (ADR 0032); both work where the
+Options screen could save (not in the tutorial or a battle). The game autosaves into slot 24 ("Autosave …") on the
+first day of months 1 and 7, as the original does, while the original's "Auto Save" row is on. The Remake row
+"Autosave every" saves every 10, 30 or 90 game days instead and keeps the autosave before it in slot 23, so the
+load list shows the last two.
 
 ### Display settings
 Options → the game tab, under the original's rows and a "Remake" heading. A press cycles the row; changes apply
@@ -86,6 +93,7 @@ at once and are saved in `ig2-rework-options.dat`.
 | Hungarian articles (`HungarianArticles`) | On by default: in a Hungarian game the article markers become "a" or "az" in messages, diplomacy and the battle banners (ADR 0028); off shows the original's raw marker character |
 | Centred Exit label (`CentredExitLabel`) | On by default: the Exit label of the production view, transfer panel and fleet panel is centred on its button (ADR 0029); off draws it left of centre as in the original |
 | WASD camera (`WasdCamera`) | Held W/A/S/D move the camera at the edge-scroll speed (ADR 0030): Starmap (default), Both (also the colony screen, where they replace the `a` select-all and `s` stop keys) or Off; never while you type a name or chat |
+| Autosave every (`AutosaveEvery`) | Original (default: slot 24 twice a game year), or every 10, 30 or 90 game days with the previous autosave kept in slot 23 (ADR 0032); in multiplayer only these cadences autosave, on the host |
 
 The window opens at 1600x900 until a size is saved.
 

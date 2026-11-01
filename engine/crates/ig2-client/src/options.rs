@@ -148,6 +148,31 @@ pub fn slot_file(snapshot_file: Vec<u8>, name: &[u8], date: [i32; 3]) -> Vec<u8>
     out
 }
 
+/// ADR 0032: the quick save's file beside the slots (F12, Shift+F12 loads it).
+pub const QUICKSAVE: &str = "quicksave.ig2s";
+/// ADR 0032: the "Autosave every" row's cadences in game days; 0 = the original's (day 1 of months 1 and 7).
+pub const AUTOSAVE_DAYS: [i32; 4] = [0, 10, 30, 90];
+
+/// Whether a new day `(month, day)` autosaves: the original's six-monthly point (`IdoNapValtozott` exe 0x620720), or
+/// `every` days after the last autosave (`days` new days since it, or since the game started or loaded).
+pub fn autosave_due(every: i32, days: i32, month: i32, day: i32) -> bool {
+    if every == 0 {
+        day == 1 && month % 6 == 1
+    } else {
+        days >= every
+    }
+}
+
+/// ADR 0032, N-day cadence: the autosave in slot 24 moves to slot 23 (the older one there goes) so a new one can take
+/// 24. Only our own files move.
+pub fn rotate_autosaves(dir: &Path) -> std::io::Result<()> {
+    let newest = dir.join("save24.ig2s");
+    if newest.exists() {
+        std::fs::rename(newest, dir.join("save23.ig2s"))?;
+    }
+    Ok(())
+}
+
 /// The title of our slot file, if it carries one.
 fn our_title(b: &[u8]) -> Option<(Vec<u8>, [i32; 3])> {
     let t = b.get(b.len().checked_sub(SLOT_TRAILER)?..)?;
@@ -1237,6 +1262,28 @@ mod tests {
         assert_eq!(o.slot, 24);
         // Slot 24 can't be saved to.
         assert!(!o.spot_on(id::SAVE));
+    }
+
+    #[test]
+    fn autosaves_rotate_through_slots_24_and_23() {
+        // ADR 0032: the original's point is day 1 of months 1 and 7; an N-day cadence counts days.
+        assert!(autosave_due(0, 0, 1, 1) && autosave_due(0, 0, 7, 1));
+        assert!(!autosave_due(0, 500, 2, 1) && !autosave_due(0, 0, 1, 2));
+        assert!(!autosave_due(10, 9, 1, 1) && autosave_due(10, 10, 3, 14));
+        let dir = std::env::temp_dir().join(format!("ig2-autosave-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let save = |name: &str, day: i32| std::fs::write(dir.join("save24.ig2s"), slot_file(vec![0; 4], name.as_bytes(), [2328, 1, day])).unwrap();
+        rotate_autosaves(&dir).unwrap();
+        save("Autosave 2328 1 1", 1);
+        rotate_autosaves(&dir).unwrap();
+        save("Autosave 2328 1 11", 11);
+        rotate_autosaves(&dir).unwrap();
+        save("Autosave 2328 1 21", 21);
+        let slots = read_slots(Some(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(slots[24].as_ref().map(|s| s.date), Some([2328, 1, 21]));
+        assert_eq!(slots[23].as_ref().map(|s| s.name.clone()), Some(b"Autosave 2328 1 11".to_vec()));
+        assert!(slots[1..23].iter().all(Option::is_none), "the oldest is gone");
     }
 
     #[test]

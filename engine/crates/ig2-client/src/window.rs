@@ -270,6 +270,8 @@ struct App {
     /// save's companions.
     opt_rows: Vec<crate::options::Row>,
     settings: ig2_formats::options::Options,
+    /// ADR 0032: the last day the autosave saw and the new days since the last autosave (or the start or a load).
+    autosave: ((i32, i32, i32), i32),
     /// ADR 0017: the name tables in the game's language (`OneLanguage`, `--texts`).
     one_language: bool,
     rules: &'static ig2_sim::game::GameRules,
@@ -655,6 +657,7 @@ impl App {
             backdrop: crate::backdrop::Backdrop::new(true),
             opt_rows: Vec::new(),
             settings: ig2_formats::options::Options::load(),
+            autosave: ((0, 0, 0), 0),
             one_language: false,
             rules,
             tech_defaults: Vec::new(),
@@ -2912,21 +2915,8 @@ impl App {
                 self.exit_to_main_menu();
             }
             Act::Load(n) => {
-                let path = o.s.slots.get(n).and_then(Option::as_ref).map(|s| s.file.clone());
-                match path.map(|p| World::load_slot(&p, self.rules, &self.tech_defaults, &self.volatile)) {
-                    Some(Ok(w)) => {
-                        self.start_world(w);
-                        // `Options_Main`'s load: the last planet whose ground war runs (`GetWarfareStatus == 1`) opens
-                        // on its colony screen (`AktKepKell 3`, back to the starmap).
-                        let n = self.world.game.state.planet_count();
-                        if let Some(p) = (1..=n).filter(|&p| self.world.game.warfare_status(p) == 1).last() {
-                            let sel = self.selection();
-                            self.select(Selection { mode: 1, planet: p, ..sel });
-                            self.open_colony(p);
-                        }
-                    }
-                    Some(Err(e)) => eprintln!("ig2-client: load: {e}"),
-                    None => {}
+                if let Some(path) = o.s.slots.get(n).and_then(Option::as_ref).map(|s| s.file.clone()) {
+                    self.load_file(&path);
                 }
             }
             Act::Save(..) => {}
@@ -3008,6 +2998,21 @@ impl App {
     /// again and back to the screen before; a failed save stays (the exe's "Failed to save game!" line).
     fn options_save(&mut self, slot: usize, name: Vec<u8>) {
         let Some(dir) = crate::options::slot_dir() else { return };
+        let ok = self.write_save(&dir.join(format!("save{slot}.ig2s")), &name);
+        let slots = crate::options::read_slots(Some(&dir));
+        let Some(o) = &mut self.options else { return };
+        match ok {
+            Ok(()) => o.s.saved(slots),
+            Err(e) => {
+                self.world.local_lines.push(e.into_bytes());
+                o.s.refresh(slots);
+            }
+        }
+    }
+
+    /// `LoadSave(…, 2)`: the game as a slot file (the state, then the title `name` and today's date) at `path`; a
+    /// multiplayer game saves the session's state, on the host only.
+    fn write_save(&mut self, path: &std::path::Path, name: &[u8]) -> Result<(), String> {
         let (y, m, d) = self.world.curr.date();
         let state = match self.world.mp_save() {
             // `LoadSave(…, 2)` writes the live starmap camera (`StarmapXStart` … `StarmapPlanetKering`, exe 0xB9A968..);
@@ -3022,26 +3027,101 @@ impl App {
                 }
                 self.world.save_file()
             }
-            Some(Ok(f)) => f,
-            Some(Err(e)) => {
-                self.world.local_lines.push(e.into_bytes());
-                if let Some(o) = &mut self.options {
-                    o.s.refresh(crate::options::read_slots(Some(&dir)));
-                }
-                return;
-            }
+            Some(r) => r?,
         };
-        let file = crate::options::slot_file(state, &name, [y, m, d]);
-        let path = dir.join(format!("save{slot}.ig2s"));
-        let ok = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, file));
-        let slots = crate::options::read_slots(Some(&dir));
-        let Some(o) = &mut self.options else { return };
-        match ok {
-            Ok(()) => o.s.saved(slots),
-            Err(e) => {
-                eprintln!("ig2-client: {}: {e}", path.display());
-                o.s.refresh(slots);
+        let file = crate::options::slot_file(state, name, [y, m, d]);
+        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(path, file)).map_err(|e| {
+            eprintln!("ig2-client: {}: {e}", path.display());
+            format!("Cannot save: {e}")
+        })
+    }
+
+    /// The Options screen's save gates (`Options_Main`'s save button) without the screen: a game runs, not under the
+    /// tutorial, not in a battle (the space battle or a ground war) unless `DEBUGX`.
+    fn can_save(&mut self) -> bool {
+        let debug = self.world.game.state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
+        let planet = self.world.colony_curr.as_ref().map(|c| c.planet).filter(|_| self.colony.is_some() && self.overlay.is_none());
+        let war = planet.is_some_and(|p| self.world.game.warfare_status(p) == 1);
+        let battle = self.spacewar.is_some() || self.spacewar_parked.is_some() || war;
+        let tutorial = self.tutorial.as_ref().is_some_and(|t| t.t.active || t.t.paused);
+        self.front.is_none() && self.options.is_none() && self.help.is_none() && !tutorial && (!battle || debug)
+    }
+
+    /// ADR 0032: F12 saves into the quick save beside the slots.
+    fn quick_save(&mut self) {
+        let Some(dir) = crate::options::slot_dir() else { return };
+        if !self.can_save() {
+            return;
+        }
+        let (y, m, d) = self.world.curr.date();
+        let line = match self.write_save(&dir.join(crate::options::QUICKSAVE), format!("Quicksave {y} {m} {d}").as_bytes()) {
+            Ok(()) => b"Quick saved.".to_vec(),
+            Err(e) => e.into_bytes(),
+        };
+        self.world.local_lines.push(line);
+    }
+
+    /// ADR 0032: Shift+F12 loads the quick save (single player only), as the Options screen's load does.
+    fn quick_load(&mut self) {
+        let Some(path) = crate::options::slot_dir().map(|d| d.join(crate::options::QUICKSAVE)) else { return };
+        let tutorial = self.tutorial.as_ref().is_some_and(|t| t.t.active || t.t.paused);
+        if self.multiplayer() || self.front.is_some() || self.options.is_some() || self.help.is_some() || tutorial || !path.exists() {
+            return;
+        }
+        if self.load_file(&path) {
+            self.world.local_lines.push(b"Quick loaded.".to_vec());
+        }
+    }
+
+    /// `LoadSave(slot, "", 1)`, then the starmap; true when it loaded.
+    fn load_file(&mut self, path: &std::path::Path) -> bool {
+        match World::load_slot(path, self.rules, &self.tech_defaults, &self.volatile) {
+            Ok(w) => {
+                self.start_world(w);
+                // `Options_Main`'s load: the last planet whose ground war runs (`GetWarfareStatus == 1`) opens on its
+                // colony screen (`AktKepKell 3`, back to the starmap).
+                let n = self.world.game.state.planet_count();
+                if let Some(p) = (1..=n).filter(|&p| self.world.game.warfare_status(p) == 1).last() {
+                    let sel = self.selection();
+                    self.select(Selection { mode: 1, planet: p, ..sel });
+                    self.open_colony(p);
+                }
+                true
             }
+            Err(e) => {
+                eprintln!("ig2-client: load: {e}");
+                false
+            }
+        }
+    }
+
+    /// `IdoNapValtozott` (exe 0x620720) after a tick: on a new day the autosave (ADR 0032), into slot 24 at the
+    /// original's point, or every N days with the last one moved to slot 23. Single player not under the tutorial,
+    /// with the "Auto Save" row on; in multiplayer only with an N-day cadence and on the host.
+    fn autosave_tick(&mut self) {
+        let today = self.world.curr.date();
+        if today == self.autosave.0 {
+            return;
+        }
+        self.autosave = (today, self.autosave.1 + 1);
+        let row = |key: &str| self.opt_rows.iter().find(|r| r.key == key).map(|r| r.value);
+        let every = crate::options::AUTOSAVE_DAYS[row(crate::display::AUTOSAVE).unwrap_or(0).clamp(0, 3) as usize];
+        let on = row("OptionsKellAutoSave") != Some(0);
+        let tutorial = self.tutorial.as_ref().is_some_and(|t| t.t.active || t.t.paused);
+        let mp = self.world.net.is_some();
+        let (y, m, d) = today;
+        if !on || tutorial || (mp && (every == 0 || !self.world.mp_host())) || !crate::options::autosave_due(every, self.autosave.1, m, d) {
+            return;
+        }
+        let Some(dir) = crate::options::slot_dir() else { return };
+        self.autosave.1 = 0;
+        if every > 0 {
+            if let Err(e) = crate::options::rotate_autosaves(&dir) {
+                eprintln!("ig2-client: autosave: {e}");
+            }
+        }
+        if let Err(e) = self.write_save(&dir.join("save24.ig2s"), format!("Autosave {y} {m} {d}").as_bytes()) {
+            self.world.local_lines.push(e.into_bytes());
         }
     }
 
@@ -3069,6 +3149,7 @@ impl App {
         self.akt_planet = None;
         self.volt_harc = false;
         self.world = w;
+        self.autosave = (self.world.curr.date(), 0);
         self.apply_battle_rows();
         // `_s(0x3b, n)` is the install's table, not the save's: a loaded game names the AI's designs too.
         if self.world.game.design_texts.is_empty() {
@@ -3882,6 +3963,7 @@ impl App {
                 if let Some(t) = &mut self.tutorial {
                     t.counter += 1;
                 }
+                self.autosave_tick();
             }
         }
         drop(sim);
@@ -5770,6 +5852,15 @@ impl App {
         // `DoKeyboard`'s F-keys (exe 0x4db1a0): before the text entries, which don't take them.
         if let Some(n) = do_keyboard::f_key_screen(&key) {
             self.f_key(n);
+            return false;
+        }
+        // ADR 0032: F12 (no screen of the original's takes it) quick-saves, Shift+F12 quick-loads.
+        if key == Key::Named(NamedKey::F12) {
+            if self.modifiers.shift_key() {
+                self.quick_load();
+            } else {
+                self.quick_save();
+            }
             return false;
         }
         match key {

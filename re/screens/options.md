@@ -196,6 +196,9 @@ hover glow reads optf 3 at the quit rect (an ELF quirk, unverified in the exe).
 - Date of a filled slot: year `KiirInt` at x 0x238 (568), month at 0x253 (595), day at 0x262 (610), y + 1, font 1.
 - The selected row: `DesignKeret1(0x178, (i−1)·12 + 0x7f, 0xbb, 0xc, 0x22)`.
 - Slot 24 is the autosave (`IdoNapValtozott` exe 0x53e970: `LoadSave(24, "Autosave <year> <month> <day>", 2)`).
+  Port: `ig2-client::window::autosave_tick` (day 1 of months 1 and 7, SP, not under the tutorial, `OptionsKellAutoSave`
+  on); ours (ADR 0032, row 442): the "Autosave every" row's N-day cadence keeps the previous one in slot 23, and the
+  F12 quick save goes to `quicksave.ig2s`, outside the list.
 
 ### 5.3 `OptionsRefreshSlots` (0x5196c0), `LoadTitle` (0x553590)
 
@@ -337,9 +340,9 @@ Quit reads BACK with the tooltip (13,1,13). Sounds (`--sounds`, `tools/trace/scr
 dependencies, slots, name entry, quit question, tutorial layout, MP states (the MP host keeps Save for ADR 0007's MP
 save, a joiner has neither), Back re-entering the screen before as its `_Belep` with OldKep 0xd. Load reads an original
 `save<n>.sav` or our `save<n>.ig2s`; save writes ADR 0007's format plus the live starmap camera chunk (row 70); settings
-go to `ig2-rework-options.dat` (row 69). The game page adds twelve "Remake" rows below the original's seven (enhanced,
-rows 402, 433-439; `display.rs`): display mode, resolution, vsync, letterbox, live background, one-language names, clean
-name entry (`CleanNameEntry`, on: the edited slot's old name isn't drawn under the entry; ADR 0024), models inside boxes (`BoxModelsInside`, on: the starmap's and the battle's info-box model is cut to its box; ADR 0025), slider under label (`SliderUnderLabel`, on: the battle's defend/attack slider sits under its label; ADR 0027), Hungarian articles (`HungarianArticles`, on; ADR 0028), centred Exit label (`CentredExitLabel`, on; ADR 0029), WASD camera (`WasdCamera`: off, starmap (default), both (also the colony screen); ADR 0030). Missing:
+go to `ig2-rework-options.dat` (row 69). The game page adds thirteen "Remake" rows below the original's seven (enhanced,
+rows 402, 433-439, 442; `display.rs`): display mode, resolution, vsync, letterbox, live background, one-language names, clean
+name entry (`CleanNameEntry`, on: the edited slot's old name isn't drawn under the entry; ADR 0024), models inside boxes (`BoxModelsInside`, on: the starmap's and the battle's info-box model is cut to its box; ADR 0025), slider under label (`SliderUnderLabel`, on: the battle's defend/attack slider sits under its label; ADR 0027), Hungarian articles (`HungarianArticles`, on; ADR 0028), centred Exit label (`CentredExitLabel`, on; ADR 0029), WASD camera (`WasdCamera`: off, starmap (default), both (also the colony screen); ADR 0030), autosave every (`AutosaveEvery`: original (default), 10, 30, 90 days; ADR 0032). Missing:
 the faders' hover glow `FadeKerettelKerekitDesign`, the research design-return flags (row 359, kept); load into a war colony and the held slot pick are decompile-only (rows
 190/191). Capture: `run_screendiff.py options --script scripts/options.json` and `options-load --script
 scripts/options-loadonly.json` (`IG2_OPTIONS_DIR` pinned to a copy of the exe's options.dat and save*.sav); open
