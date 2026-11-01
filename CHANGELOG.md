@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Hungarian: the remake's own texts read more naturally ("Keret nélküli" and "Teljes képernyő" window modes, "Bővített" instead of "Fejlett", "házigazda" for the multiplayer host, "képernyő" for screens, and more).
 - The multiplayer pages are redesigned: the connection page shows LAN, internet and saved games as tabs with clear rows and badges, says what to do when a list is empty, and has its own cards for joining by address or join code and for the relay server; the room shows each player with their race, colour and ready state, the galaxy settings with arrows, the host's connection switches and a Copy join code button, and the chat. Tab, the arrow keys and Enter work on the connection page.
 - Internet games work out of the box: the project's own relay server (`ig2relay.justdawee.hu:30000`) is now the default, so hosting, joining by code behind any router and "Browse internet games" need no address typed in; clear the relay field to turn it off, or type your own server.
 - Modern starmap HUD (Options, Interface; on by default): the starmap's top bar, the selected planet or fleet's info card, the camera buttons and the minimap are redrawn crisp at any window size and work as before; switch it off for the original's HUD (ADR 0065).

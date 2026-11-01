@@ -138,7 +138,7 @@ pub fn describe(key: &str) -> &'static str {
         "ColourBlindColours" => "Empire colours that stay apart with colour blindness.",
         "SharpUi" => "Pictures and panels stay sharp on big screens.",
         "SharpText" => "Letters with crisp, smooth edges on big screens.",
-        "StarmapMouseCamera" => "The wheel zooms and the right button drags the starmap.",
+        "StarmapMouseCamera" => "The wheel zooms the starmap in and out.",
         "HighScoreEntry" => "A won scenario's time goes into its high-score table.",
         "EnhancedAi" => "How the computer empires of the next game manage their economy and research.",
         "TitleMusicWithIntro" => "The title video's music starts with the intro, not under the logos.",
