@@ -85,4 +85,33 @@ jobs:
         working-directory: engine
         run: cargo clippy --release --all-targets -- -D warnings
       - name: Release bundle
-        run: python3 -I tools/release/build_linux.py --out dist
+        run: python3 -I tools/release/build_unix.py --out dist
+
+  macos:
+    name: macOS build, tests, clippy
+    # Apple Silicon (arm64): what the release archive is built on.
+    runs-on: macos-14
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: Version
+        run: echo "OPENIG2_VERSION=$(python3 -I tools/release/version.py)" >> "$GITHUB_ENV"
+      - name: Build
+        working-directory: engine
+        run: cargo build --release --workspace
+      - name: Test
+        working-directory: engine
+        run: cargo test --release --workspace
+      - name: Clippy
+        working-directory: engine
+        run: cargo clippy --release --all-targets -- -D warnings
+      - name: Release bundle
+        run: python3 -I tools/release/build_unix.py --out dist

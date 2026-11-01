@@ -7,14 +7,16 @@ client looks, in this order, in:
 1. `IG2_INSTALL_DIR` (optional: an override that wins over everything);
 2. the folder remembered in our settings file (`ig2-rework-options.dat`, key `InstallDir`, next to the original's
    `options.dat` under `%LOCALAPPDATA%\GyroscopeGames\ig2`, on Linux `~/.local/share/GyroscopeGames/ig2`
-   (`$XDG_DATA_HOME` if set), or `IG2_OPTIONS_DIR`);
+   (`$XDG_DATA_HOME` if set), on macOS `~/Library/Application Support/GyroscopeGames/ig2`, or `IG2_OPTIONS_DIR`);
 3. the client's own folder and its parent (the release unzipped into the game's folder);
-4. the GOG registry entries (GOG Galaxy writes the same ones); on Linux, Heroic's GOG library
-   (`~/.config/heroic/gog_store/installed.json`, the Flatpak's too);
+4. the GOG registry entries (GOG Galaxy writes the same ones); on Linux and macOS, Heroic's GOG
+   library (`~/.config/heroic/gog_store/installed.json`, the Flatpak's, `~/Library/Application Support/heroic`);
 5. the default folders `<drive>:\GOG Games\*`, `<drive>:\Games\*` and `<drive>:\Program Files [(x86)]\GOG
    Galaxy\Games\*` (subfolders named "Imperium Galactica…"); on Linux `~/GOG Games/*`, `~/Games/*`,
    `~/Games/Heroic/*` and the same GOG folders inside the Wine prefixes `~/.wine/drive_c` and Lutris'
-   `~/Games/<game>/drive_c`.
+   `~/Games/<game>/drive_c`; on macOS also `~/Applications/*`, `/Applications/*` and the CrossOver and Whisky
+   bottles (`~/Library/Application Support/CrossOver/Bottles/*/drive_c`,
+   `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*/drive_c`).
 
 A folder counts when it has `dataraw/text/scenario.txt` and the GOG 2017 build of `ig2.exe` (checked by hash). A
 folder found by the search is remembered, so later starts skip it. If nothing is found, a window says so, lists
@@ -35,6 +37,13 @@ releases once one carries it, unpack it anywhere and run `./ig2-client`. The gam
 once: the GOG offline installer through Wine, Heroic or Lutris all leave the files where the search above finds
 them (or drop the folder with `ig2.exe` onto the not-found window). The credits line uses an outline font instead
 of Windows' Arial. Linux builds are new: please report anything that differs from the Windows build.
+
+On macOS (11 or newer, Apple Silicon; Metal) build from source, or take `openig2-<version>-macos-arm64.tar.gz`
+from the releases once one carries it. Its binaries are not signed: clear the download quarantine once with
+`xattr -dr com.apple.quarantine .` in the unpacked folder (or right-click `ig2-client` in Finder → Open), then run
+`./ig2-client`. The game is Windows-only, so copy the folder of a Windows install to the Mac (anywhere: point
+`IG2_INSTALL_DIR` at it or drop it onto the not-found window), or install it through CrossOver, Whisky or Heroic.
+macOS builds are new and tested by CI only: please report what goes wrong.
 The game starts at the title and main menu, like the original: campaign, scenario, skirmish, tutorial, load, and
 the multiplayer rings (LAN, direct IP or join code, optionally through a relay server you or a friend run:
 `docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code

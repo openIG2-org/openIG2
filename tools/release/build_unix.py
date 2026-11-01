@@ -1,15 +1,17 @@
-"""The Linux release bundle (docs/BUILDING.md -> Release bundle): the binaries built from this checkout, a readme,
+"""The Linux and macOS release bundles (docs/BUILDING.md -> Release bundle): the binaries built from this checkout, a readme,
 nothing else (no game data; the engine reads the player's own install).
 
-    python3 -I tools/release/build_linux.py [--out DIR]
+    python3 -I tools/release/build_unix.py [--out DIR]
 
 Version from `tools/release/version.py` (MAJOR.MINOR.N), passed to the build as `OPENIG2_VERSION`. Builds into the
 workspace's own target (nothing is linked differently from a normal release build), lists the shared libraries each
-binary needs, stages `_local/release/openig2-<version>-linux-x64/` and packs it beside as a .tar.gz. CI runs it on
+binary needs, stages `_local/release/openig2-<version>-<os>-<arch>/` (linux-x64, macos-arm64, macos-x64) and packs it
+beside as a .tar.gz. The macOS binaries are not signed or notarized. CI runs it on
 every push (.github/workflows/ci.yml), the release workflow publishes its archive.
 """
 import argparse
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -26,7 +28,13 @@ def run(cmd, env=None):
     subprocess.run(cmd, check=True, env=env)
 
 
+MACOS = sys.platform == "darwin"
+
+
 def needed(exe: Path) -> list[str]:
+    if MACOS:
+        out = subprocess.run(["otool", "-L", str(exe)], check=True, capture_output=True, text=True).stdout
+        return [l.split()[0] for l in out.splitlines()[1:] if l.strip()]
     out = subprocess.run(["objdump", "-p", str(exe)], check=True, capture_output=True, text=True).stdout
     return re.findall(r"NEEDED\s+(\S+)", out)
 
@@ -46,7 +54,8 @@ def main() -> int:
     run(cmd, env)
     target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "engine" / "target")
 
-    name = f"openig2-{version}-linux-x64"
+    arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x64"
+    name = f"openig2-{version}-{'macos' if MACOS else 'linux'}-{arch}"
     stage = a.out / name
     if stage.exists():
         shutil.rmtree(stage)

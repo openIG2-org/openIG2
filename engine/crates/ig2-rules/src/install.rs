@@ -5,10 +5,11 @@
 //! other on the machine), the GOG installers' registry keys (`HKLM\SOFTWARE\[WOW6432Node\]GOG.com\Games\<id>`,
 //! written by the offline installer and by GOG Galaxy alike: the entry whose `gameName` names the game or whose
 //! `exeFile` is `ig2.exe`, its `path`), and the default folders (`<drive>:\GOG Games\*`,
-//! `<drive>:\Program Files (x86)\GOG Galaxy\Games\*`, any subfolder named "Imperium Galactica…"). Elsewhere (Linux)
-//! the launchers' records stand in for the registry (Heroic's `gog_store/installed.json`, native and Flatpak), and the
-//! default folders are `~/GOG Games`, `~/Games`, `~/Games/Heroic` and the Wine prefixes' GOG folders (`~/.wine`,
-//! Lutris' `~/Games/<game>/`). A place counts when it holds `dataraw/text/scenario.txt` and an `ig2.exe` of the catalogued build ([`crate::GOG_2017_SHA256`]).
+//! `<drive>:\Program Files (x86)\GOG Galaxy\Games\*`, any subfolder named "Imperium Galactica…"). Elsewhere (Linux,
+//! macOS) the launchers' records stand in for the registry (Heroic's `gog_store/installed.json`, native, Flatpak and
+//! macOS), and the default folders are `~/GOG Games`, `~/Games`, `~/Games/Heroic`, on macOS `~/Applications` and
+//! `/Applications`, and the Wine prefixes' GOG folders (`~/.wine`, Lutris' `~/Games/<game>/`, CrossOver's and
+//! Whisky's bottles). A place counts when it holds `dataraw/text/scenario.txt` and an `ig2.exe` of the catalogued build ([`crate::GOG_2017_SHA256`]).
 
 use std::path::{Path, PathBuf};
 
@@ -173,9 +174,20 @@ fn default_folders() -> Vec<PathBuf> {
     } else if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         let games = home.join("Games");
         roots.extend([home.join("GOG Games"), games.clone(), games.join("Heroic")]);
-        // Wine prefixes: the default one, and Lutris' one per game (`~/Games/<slug>/drive_c`).
+        if cfg!(target_os = "macos") {
+            // The Windows install copied into an Applications folder.
+            roots.extend([home.join("Applications"), PathBuf::from("/Applications")]);
+        }
+        // Wine prefixes: the default one, and one per game or bottle under Lutris' `~/Games/<slug>/drive_c`,
+        // CrossOver's and Whisky's bottle folders (macOS).
         let mut prefixes = vec![home.join(".wine")];
-        if let Ok(rd) = std::fs::read_dir(&games) {
+        let bottles = [
+            games.clone(),
+            home.join("Library/Application Support/CrossOver/Bottles"),
+            home.join("Library/Containers/com.isaacmarovitz.Whisky/Bottles"),
+        ];
+        for b in bottles {
+            let Ok(rd) = std::fs::read_dir(&b) else { continue };
             let mut p: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.join("drive_c").is_dir()).collect();
             p.sort();
             prefixes.extend(p);
@@ -268,14 +280,18 @@ mod registry {
 
 #[cfg(not(windows))]
 mod registry {
-    //! Heroic's GOG installs (`gog_store/installed.json` in its config folder, native or Flatpak): every
+    //! Heroic's GOG installs (`gog_store/installed.json` in its config folder, native, Flatpak or macOS): every
     //! `install_path` whose folder is named like the game.
     use std::path::PathBuf;
 
     pub fn gog_paths() -> Vec<PathBuf> {
         let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return Vec::new() };
         let config = std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| home.join(".config"), PathBuf::from);
-        let files = [config.join("heroic"), home.join(".var/app/com.heroicgameslauncher.hgl/config/heroic")];
+        let files = [
+            config.join("heroic"),
+            home.join(".var/app/com.heroicgameslauncher.hgl/config/heroic"),
+            home.join("Library/Application Support/heroic"),
+        ];
         let mut out = Vec::new();
         for f in files.map(|d| d.join("gog_store/installed.json")) {
             if let Ok(s) = std::fs::read_to_string(f) {

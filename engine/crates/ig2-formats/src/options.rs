@@ -42,15 +42,16 @@ impl Options {
 
     /// The original's file in its save folder; `IG2_OPTIONS_DIR` puts the folder elsewhere (captures pin it there,
     /// `tools/trace/run_screendiff.py`), the remake's own file and the save slots with it. Without `LOCALAPPDATA`
-    /// (Linux, macOS): the same folder under `$XDG_DATA_HOME`, else `~/.local/share`.
+    /// (Linux, macOS): the same folder under `$XDG_DATA_HOME`, else `~/.local/share` (macOS: `~/Library/Application Support`).
     pub fn path() -> Option<PathBuf> {
         if let Some(d) = std::env::var_os("IG2_OPTIONS_DIR") {
             return Some(PathBuf::from(d).join("options.dat"));
         }
+        let home_data = if cfg!(target_os = "macos") { "Library/Application Support" } else { ".local/share" };
         let data = std::env::var_os("LOCALAPPDATA")
             .or_else(|| std::env::var_os("XDG_DATA_HOME"))
             .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(home_data)));
         data.map(|d| d.join("GyroscopeGames/ig2/options.dat"))
     }
 
