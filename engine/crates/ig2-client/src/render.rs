@@ -2183,7 +2183,12 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         depth[m] = 5.0;
         c.pose(&mut r, &l.install, &depth);
     }
-    hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info, globe);
+    // Ours (ADR 0065): `--modern-hud` draws the bar, the info box, the console and the minimap as egui panels (the long
+    // info keeps the original's box).
+    hud.modern_bar = o.modern_hud;
+    if !o.modern_hud || o.planet_info {
+        hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info, globe);
+    }
     // An info panel at rest: its selection frame morphed in (re/screens/starmap.md §19.4).
     if let Some(i) = &mut panels.info {
         i.advance(&world.game.state, &sel, t, view.camera.zoom, 0);
@@ -2240,7 +2245,27 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let kind = if view_spot { crate::orders::view_pointer(&world.curr, &view.camera, m, &vc).unwrap_or(0) } else { 0 };
         hud.snapshot_tip_pointer(&mut frame, [o.size.0 as f32, o.size.1 as f32], m, tip.map(|t| t.text).as_deref(), kind, 0);
     }
-    let rgba = r.draw_to_image(&frame, o.size, t);
+    let rgba = if o.modern_hud {
+        let size = [o.size.0 as f32, o.size.1 as f32];
+        let menus = crate::starmap_menus::Menus::default();
+        let mv = hud.modern_view(&world.game.state, &l.tables, &world.ui, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels, &menus, None);
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
+        let style = crate::starmap_modern::style(&hud, size);
+        let k = crate::gui::Gui::scale(o.size.1);
+        let mut st = crate::starmap_modern::State::default();
+        // The first frames size and place the anchored panels; `--mouse` hovers them.
+        for _ in 0..3 {
+            if let Some(m) = o.mouse {
+                gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
+            }
+            gui.run(o.size, &style, |ctx| {
+                crate::starmap_modern::show(ctx, &mv, &mut st);
+            });
+        }
+        r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex))
+    } else {
+        r.draw_to_image(&frame, o.size, t)
+    };
     crate::assets::write_snapshot(out, o, &rgba)?;
     let (y, m, d) = world.curr.date();
     let shown = world.curr.fleets.iter().filter(|f| view.reveal || f.visible).count();

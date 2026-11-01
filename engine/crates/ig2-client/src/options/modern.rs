@@ -151,6 +151,7 @@ pub fn describe(key: &str) -> &'static str {
         "Bloom" => "A soft glow around fire, blasts and the colony's weather.",
         "SmoothGlows" => "Soft, round glows and stars on the starmap and the backgrounds at any resolution.",
         "BattleEffects" => "Sparks, shock waves, smoke and glowing shots on top of the battles' own effects.",
+        "ModernStarmapHud" => "The starmap's bar, info box, minimap and camera buttons as clear modern panels; off = the original's.",
         "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",
         _ => "",
     }

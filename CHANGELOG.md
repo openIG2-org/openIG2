@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - Internet games work out of the box: the project's own relay server (`ig2relay.justdawee.hu:30000`) is now the default, so hosting, joining by code behind any router and "Browse internet games" need no address typed in; clear the relay field to turn it off, or type your own server.
+- Modern starmap HUD (Options, Interface; on by default): the starmap's top bar, the selected planet or fleet's info card, the camera buttons and the minimap are redrawn crisp at any window size and work as before; switch it off for the original's HUD (ADR 0065).
 - Responsive multiplayer orders: an order you give shows at once on your own screen, as in single player, instead of a few ticks later, and each player's input delay now follows their own connection's round trip, so a LAN game plays with none (ADR 0063).
 - Smooth glows (Options, Graphics; off by default): the starmap's star glows, clouds and stars, the main menu's galaxy and the battle's shot flares are drawn without visible pixels at 1080p and above. Sharp UI no longer turns these glows into blocks.
 - No more black console window beside the game on Windows: the game's messages and errors now go to `ig2-client.log` in the settings folder (or to the terminal it was started from).

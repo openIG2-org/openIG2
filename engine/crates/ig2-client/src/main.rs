@@ -7,7 +7,7 @@
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--battle-effects] [--smooth-glows] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--battle-effects] [--smooth-glows] [--modern-hud] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -111,6 +111,7 @@ mod starmap;
 mod starmap_hud;
 mod starmap_info;
 mod starmap_menus;
+mod starmap_modern;
 mod spacewar_fx;
 mod spacewar_hud;
 mod spacewar_live;
@@ -177,6 +178,8 @@ pub struct Options {
     pub battle_effects: bool,
     /// `--smooth-glows`: the glows and particles without a texel grid (ADR 0064; else the settings file's `SmoothGlows`).
     pub smooth_glows: bool,
+    /// `--modern-hud`: the starmap's modern egui HUD (ADR 0065; snapshots draw the original's without it).
+    pub modern_hud: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -337,6 +340,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         modern_lighting: false,
         battle_effects: false,
         smooth_glows: false,
+        modern_hud: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -436,6 +440,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--sharp-ui" => o.sharp_ui = true,
             "--battle-effects" => o.battle_effects = true,
             "--smooth-glows" => o.smooth_glows = true,
+            "--modern-hud" => o.modern_hud = true,
             "--sharp-text" => o.sharp_text = true,
             "--theme" => o.theme = Some(val()?),
             "--upscale" => {

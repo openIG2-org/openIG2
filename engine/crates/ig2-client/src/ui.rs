@@ -434,6 +434,8 @@ pub struct Hud {
     pub pointer_phase: u64,
     /// The message line's history drop-down, while the right button holds it (`ScreensScrollHistoryMode`).
     pub history_open: bool,
+    /// Ours (ADR 0065): the modern starmap HUD draws the top bar, its line, history and drop-downs this frame.
+    pub modern_bar: bool,
     /// The message line stands still and isn't drawn: a message is waiting (`FRISSIT_Scroll2`/`GFX_Scroll`'s gate,
     /// set by the client each frame).
     pub line_held: bool,
@@ -512,6 +514,7 @@ impl Hud {
             paused: false,
             pointer_phase: 0,
             history_open: false,
+            modern_bar: false,
             line_held: false,
             message_waiting: false,
             story_line: None,
@@ -747,6 +750,111 @@ impl Hud {
         self.starmap.draw(f, font, self.white, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, &mini, time, faders, info_box as usize, globe);
     }
 
+    /// Ours (ADR 0065): what the modern starmap HUD shows this frame, from the state the classic HUD reads.
+    #[allow(clippy::too_many_arguments)]
+    pub fn modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, s: &UiSnap, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, panels: &crate::starmap_panels::Panels, menus: &crate::starmap_menus::Menus, gates: Option<&[bool; 20]>) -> crate::starmap_modern::View {
+        use crate::starmap_modern as m;
+        let lang = self.texts.lang;
+        let hu = lang == ig2_formats::text::Lang::Hu;
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
+        let col = |i: usize| crate::gui::ink(self.palette.get(i).copied().unwrap_or([1.0; 3]));
+        let bar = &s.bar;
+        let (y, mo, d) = bar.date;
+        // The line: the chat entry, the error text, the waiting or story text, else the scrolling message.
+        let pulsing = self.story_line.clone().or_else(|| self.message_waiting.then(|| self.texts.get(0x12, 2, 1)));
+        let (line, waiting) = match (&self.chat.entry, &self.error, &pulsing) {
+            (Some(e), ..) => (format!("{}_", dec(&e.text)), false),
+            (None, Some((t, _)), _) => (dec(t), true),
+            (None, None, Some(t)) => (dec(t), true),
+            _ => (dec(&self.scroller.text), false),
+        };
+        let md = crate::topbar_menus::Data::read(state, rules, &self.texts, 2, gates, false);
+        let screens = crate::topbar_menus::TopMenus::screen_rows()
+            .map(|(_, i)| m::ScreenItem {
+                n: i,
+                name: md.names.get(i as usize).map(|n| dec(n)).unwrap_or_default(),
+                key: dec(crate::topbar_menus::KEY_NAMES[i as usize]).trim_end_matches('-').trim().to_string(),
+                on: !md.disabled[i as usize],
+                current: i == 2,
+            })
+            .collect();
+        let research = m::Research {
+            headers: md.headers.iter().map(|h| dec(h)).collect(),
+            items: md.items.iter().map(|i| (i.tech, dec(&i.name), i.col, md.startable(i.tech), i.short, i.cost)).collect(),
+            current: (md.current > 0).then(|| (md.current, dec(&md.current_name), md.pct, md.left)),
+            researchable: bar.researchable,
+            footer: md.footer.clone().map(|f| dec(&f)),
+        };
+        // The selection's short info: `StarmapRovidInfoKiir`'s lines by their place.
+        let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
+        let counter = crate::starmap_hud::counter(time);
+        let step = self.starmap.step(if sel.mode == 1 { sel.planet } else { 0 }, counter);
+        let ib = crate::starmap_hud::InfoBox::new(state, rules, &t, sel, step, counter);
+        let info = (!ib.lines.is_empty()).then(|| {
+            let mut main: Vec<_> = ib.lines.iter().filter(|l| l.1 >= 50.0).collect();
+            main.sort_by(|a, b| a.2.total_cmp(&b.2));
+            let owner = match sel.mode {
+                1 => curr.planets.iter().find(|p| p.index == sel.planet).map(|p| p.owner),
+                _ => curr.fleets.iter().find(|f| f.slot == sel.fleet).map(|f| f.owner),
+            };
+            let stats = ib.lines.iter().filter(|l| l.1 == 18.0).map(|l| (dec(&self.texts.ours(if l.2 < 440.0 { "Richness" } else { "Habitability" })), dec(&l.0))).collect();
+            let (tanks, product) = crate::starmap_panels::Panels::buttons(state, sel);
+            let debug = state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
+            let own_calm = sel.mode == 2 && state.fleets.get(sel.fleet).is_some_and(|f| f[0x15] == curr.human && f[0x52] & 1 == 0);
+            let c = crate::starmap_tip::Ctx { texts: &self.texts, state, sel: *sel, menus, panels, console: None, locked: false, human: curr.human };
+            m::Info {
+                title: main.first().map(|l| dec(&l.0)).unwrap_or_default(),
+                colour: col(match owner {
+                    Some(0) | None => 12,
+                    Some(o) => o as usize + 15,
+                }),
+                lines: main.iter().skip(1).map(|l| (dec(&crate::diplomacy::articles(&l.0, hu)), col(l.4))).collect(),
+                stats,
+                planet: sel.mode == 1,
+                tanks,
+                product: product || (debug && sel.mode == 1),
+                redirect: menus.redirect,
+                tip: crate::starmap_tip::tip(&c, [1.0, 470.0]).filter(|t| t.id == 8).map(|t| dec(&t.text)).unwrap_or_default(),
+                left: dec(&self.texts.ours("Details")),
+                right: match sel.mode {
+                    1 => md.names.get(3).map(|n| dec(n)),
+                    _ => own_calm.then(|| dec(&self.texts.ours("Split"))),
+                },
+            }
+        });
+        // The rename (both buttons on the info box) types into the title.
+        let mut info = info;
+        if let (Some(i), Some(r)) = (&mut info, &menus.rename) {
+            i.title = format!("{}_", dec(&r.text));
+        }
+        let mini = (!panels.minimap_off()).then(|| {
+            let fleets = curr.fleets_at(prev, alpha);
+            let mm = crate::starmap_hud::Minimap::new(curr, &fleets, sel, &view.camera);
+            let conv = |v: &Vec<([f32; 2], usize, bool)>| v.iter().map(|&(p, c, on)| (m::mini_unit(p), col(c), on)).collect();
+            m::Mini { planets: conv(&mm.planets), fleets: conv(&mm.fleets), view: mm.view.map(|p| p.map(m::mini_unit)) }
+        });
+        let tip = |n: u16| dec(&self.texts.get(2, 1, n));
+        let ours = |e: &str| dec(&self.texts.ours(e));
+        m::View {
+            date: format!("{y}-{mo:02}-{d:02}"),
+            money: crate::starmap_modern::money(bar.money),
+            speed: self.speed,
+            paused: self.paused,
+            turbo: self.turbo,
+            line,
+            waiting,
+            history: s.history.iter().map(|h| dec(&crate::diplomacy::articles(h, hu))).collect(),
+            history_open: self.history_open,
+            screens,
+            research,
+            info,
+            mini,
+            tips: [String::new(), tip(1), tip(2), tip(3), tip(4), tip(5), tip(6), tip(7), tip(0xa), tip(0xb)],
+            labels: m::Labels { pause: ours("Pause"), speed: ours("Speed"), screens: ours("Screens"), research: ours("Quick research"), idle: ours("No research"), redirect: ours("Redirect") },
+            blink: (time * 2.0) as i64 % 2 == 0,
+        }
+    }
+
     /// The research screen's 2D passes around its models (re/screens/research.md §3).
     #[allow(clippy::too_many_arguments)]
     pub fn draw_research(&self, f: &mut Frame, r: &mut crate::research::Research, infos: &[[Vec<u8>; 3]], tips: &[Vec<u8>], state: &SaveState, rules: &ig2_rules::Rules, models: (Option<TexId>, Option<TexId>, Option<TexId>), lines: Vec<crate::render::Instance>, size: [f32; 2], time: f32) {
@@ -831,7 +939,29 @@ impl Hud {
         }
         // The top bar (re/screens/hud.md §2), then its line (`GFX_Scroll` exe 0x5566a0) unless a message waits.
         let bar = crate::hud::BarState { speed: self.speed, paused: self.paused, turbo: self.turbo, ..s.bar };
-        crate::hud::draw_bar(f, &self.pics, font, &v, &self.palette, &bar);
+        if !self.modern_bar {
+            self.draw_bar_line(f, font, &v, s, &bar, time);
+        }
+        // `StarmapGfx2D_3` (exe 0x5ab365): the info lines `KiirStr(text, 0x14, 0x28 + 10i, 0x50, 2, 4, colour)`, then the
+        // chat ring under them, on the starmap only.
+        self.chat.ring.tick(time as f64 * 1000.0);
+        if screen == Screen::Starmap {
+            let hu = self.texts.lang == ig2_formats::text::Lang::Hu;
+            // Ours (ADR 0065): under the modern bar, which is taller.
+            let dy = if self.modern_bar { 12.0 } else { 0.0 };
+            for (i, (text, c)) in s.game_info.iter().enumerate() {
+                let rgb = self.palette.get(*c).copied().unwrap_or([1.0; 3]);
+                font.text(f, &v, &crate::diplomacy::articles(text, hu), 20.0, 40.0 + dy + 10.0 * i as f32, 0x50, 2, Align::Left, rgb, None);
+            }
+            self.chat.ring.draw(f, font, &v, &self.palette, s.game_info.len() as i32 * 10 + dy as i32);
+        }
+        self.draw_subtitle(f, font, &v);
+    }
+
+    /// The top bar (re/screens/hud.md §2), its line, the history and the drop-downs.
+    fn draw_bar_line(&self, f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, bar: &crate::hud::BarState, time: f32) {
+        let v = *v;
+        crate::hud::draw_bar(f, &self.pics, font, &v, &self.palette, bar);
         // The chat entry takes the line's place while it is open (`GFX_Scroll` is skipped).
         match (&self.chat.entry, &self.error) {
             (Some(e), _) => e.draw(f, font, self.white, &v, &self.palette, time),
@@ -871,17 +1001,11 @@ impl Hud {
         }
         // `GFX_SelectScreens` after `GFX_IdospeedPenzDatum`, its boxes from `GFX_DateMoneyScrollFade`.
         self.top.draw(f, font, self.white, &v, &self.palette, &self.top_data);
-        // `StarmapGfx2D_3` (exe 0x5ab365): the info lines `KiirStr(text, 0x14, 0x28 + 10i, 0x50, 2, 4, colour)`, then the
-        // chat ring under them, on the starmap only.
-        self.chat.ring.tick(time as f64 * 1000.0);
-        if screen == Screen::Starmap {
-            let hu = self.texts.lang == ig2_formats::text::Lang::Hu;
-            for (i, (text, c)) in s.game_info.iter().enumerate() {
-                let rgb = self.palette.get(*c).copied().unwrap_or([1.0; 3]);
-                font.text(f, &v, &crate::diplomacy::articles(text, hu), 20.0, 40.0 + 10.0 * i as f32, 0x50, 2, Align::Left, rgb, None);
-            }
-            self.chat.ring.draw(f, font, &v, &self.palette, s.game_info.len() as i32 * 10);
-        }
+    }
+
+    /// ADR 0036: the subtitle.
+    fn draw_subtitle(&self, f: &mut Frame, font: &Font, v: &Virtual) {
+        let v = *v;
         // ADR 0036: the subtitle, centred above the screens' bottom panels on a dark box, size 2, colour 0x21.
         if let Some(t) = &self.subtitle {
             let lines = wrap(t, SUBTITLE_CHARS);

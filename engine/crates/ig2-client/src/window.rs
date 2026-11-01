@@ -269,6 +269,12 @@ struct App {
     turbo: u32,
     /// ADR 0035: the fleets on Ctrl/Alt+1..9, kept beside the save.
     fleet_groups: crate::fleet_groups::Groups,
+    /// Ours (ADR 0065): the modern starmap HUD's menus, the console button it holds, the buttons pressed on it and
+    /// the acts of its last frame.
+    modern: crate::starmap_modern::State,
+    modern_hold: Option<(u32, bool)>,
+    gui_held: u8,
+    modern_acts: Vec<crate::starmap_modern::Act>,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -610,6 +616,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     app.pointer_seen = false;
     // The exe's controls: the scripts' right presses give their orders on the press (ADR 0049 off).
     app.display.starmap_mouse = false;
+    // The original's HUD: the scripts click its hot-spots (ADR 0065's panels need the window).
+    app.display.modern_starmap = false;
     app.world.game.empire_names = hud.empire_names.clone();
     hud.set_one_language(&app.install, o.texts == Some(true));
     app.hud = Some(hud);
@@ -788,6 +796,10 @@ impl App {
             bindings: Default::default(),
             turbo: 1,
             fleet_groups: Default::default(),
+            modern: Default::default(),
+            modern_hold: None,
+            gui_held: 0,
+            modern_acts: Vec::new(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
             left_down: None,
@@ -1751,20 +1763,109 @@ impl App {
             // The arrow's right press asks for the starmap with no tutorial gate; the menu's pick has one.
             Pick::Screen(n) if pressed => self.request_screen(n),
             Pick::Screen(n) => self.top_menu_screen(n),
-            Pick::Start(t) => {
-                // `ResearchAtvaltTalalmanyra(t)`; on the research screen its start button goes in, with the screen down
-                // the place it opens at next moves (exe 0x521f20).
-                if let Some(r) = &mut self.research {
-                    r.quick_start(t);
-                } else {
-                    let state = &self.world.game.state;
-                    self.research_place.get_or_insert_with(|| crate::research::Place::read(state)).jump_to(t, self.tables);
-                }
-                self.world.send(Command::Research { order: ig2_net::ResearchCmd::Start { tech: t } });
-            }
+            Pick::Start(t) => self.quick_research(t),
             Pick::Stop(t) => self.world.send(Command::Research { order: ig2_net::ResearchCmd::Stop { tech: t } }),
         }
         true
+    }
+
+    /// The quick-research menu's start: `ResearchAtvaltTalalmanyra(t)`; on the research screen its start button goes
+    /// in, with the screen down the place it opens at next moves (exe 0x521f20).
+    fn quick_research(&mut self, t: i32) {
+        if let Some(r) = &mut self.research {
+            r.quick_start(t);
+        } else {
+            let state = &self.world.game.state;
+            self.research_place.get_or_insert_with(|| crate::research::Place::read(state)).jump_to(t, self.tables);
+        }
+        self.world.send(Command::Research { order: ig2_net::ResearchCmd::Start { tech: t } });
+    }
+
+    /// Ours (ADR 0065): the modern starmap HUD is up (its option on, the starmap shown with nothing over it).
+    fn modern_up(&self) -> bool {
+        self.display.modern_starmap && self.front.is_none() && self.colony.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.view.is_some()
+    }
+
+    /// The pointer is over one of the modern HUD's panels (its last frame's).
+    fn over_gui(&self) -> bool {
+        self.modern_up() && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
+    }
+
+    /// The pointer is over the modern HUD's info card.
+    fn over_info_card(&self) -> bool {
+        self.gpu.as_ref().is_some_and(|g| {
+            let at = g.gui.ctx.input(|i| i.pointer.latest_pos());
+            let card = g.gui.ctx.memory(|m| m.area_rect(egui::Id::new("smh-info")));
+            at.zip(card).is_some_and(|(p, r)| r.contains(p))
+        })
+    }
+
+    /// The modern HUD's acts of its last frame, through the original's hot-spots' code.
+    fn modern_apply(&mut self) {
+        use crate::starmap_modern::Act;
+        if !self.modern_up() {
+            self.modern_acts.clear();
+            if let Some((s, _)) = self.modern_hold.take() {
+                self.console_let_go(s);
+            }
+            return;
+        }
+        for a in std::mem::take(&mut self.modern_acts) {
+            let time = self.time_keys_allowed() || self.multiplayer();
+            let locked = self.starmap_locked();
+            match a {
+                Act::Pause if time => self.toggle_pause(),
+                Act::Speed(n) if time => self.set_speed(n),
+                Act::Messages => self.messages_from_bar(),
+                Act::History(on) => {
+                    if let Some(h) = &mut self.hud {
+                        h.history_open = on;
+                    }
+                }
+                Act::Screen(n) => self.top_menu_screen(n),
+                Act::Start(t) => self.quick_research(t),
+                Act::Stop(t) => self.world.send(Command::Research { order: ig2_net::ResearchCmd::Stop { tech: t } }),
+                Act::Hold(h) if h != self.modern_hold => {
+                    if let Some((s, _)) = self.modern_hold.take() {
+                        self.console_let_go(s);
+                    }
+                    if let Some((s, left)) = h {
+                        self.console_act(s, left, [0.0; 2]);
+                    }
+                    self.modern_hold = h;
+                }
+                Act::View(s) => {
+                    self.star_buttons.press(s);
+                    self.console_view(s);
+                }
+                Act::Minimap(at, first) => {
+                    if first {
+                        self.console_act(7, true, at);
+                        self.star_buttons.release();
+                    } else {
+                        let t = orders::minimap_target(at);
+                        let zoom = self.camera3()[2];
+                        self.tween_to([t[0], t[1], zoom], 4);
+                    }
+                }
+                Act::Info(right) if !locked && !self.menus.info_on() && self.menus.rename.is_none() && !self.wait_release => {
+                    if right {
+                        self.info_box_click();
+                    } else {
+                        self.info_box_left();
+                    }
+                }
+                Act::Panel(id) if !locked => {
+                    let sel = self.selection();
+                    if let Some(acts) = self.panels.press_id(&self.world.game.state, &sel, id, [0.0; 2], true) {
+                        self.apply(acts);
+                        let acts = self.panels.release(&self.world.game.state, &sel);
+                        self.apply(acts);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The screen menu's pick and the arrow's right press (`AktKepKell = n`, [`Self::request_screen`]). While the
@@ -2027,8 +2128,9 @@ impl App {
             self.panel_held = Some(true);
             return true;
         }
-        // The rest of the top bar, the info box and the minimap act on the release.
-        if at[1] < 20.0 || (at[0] < 166.0 && at[1] >= 424.0) || (self.panels.transfer.is_some() && at[1] >= 20.0) {
+        // The rest of the top bar, the info box and the minimap act on the release (not under the modern HUD, ADR 0065).
+        let classic = !self.modern_up();
+        if (classic && (at[1] < 20.0 || (at[0] < 166.0 && at[1] >= 424.0))) || (self.panels.transfer.is_some() && at[1] >= 20.0) {
             return false;
         }
         // With an info panel up the map takes no picks (hot-spot 0x35 is off).
@@ -2104,6 +2206,10 @@ impl App {
         }
         let at = self.virtual_cursor();
         let sel = self.selection();
+        // Under the modern HUD the info box's spots (8, the tanks' 10, production's 11) are its card's (ADR 0065).
+        if self.modern_up() && self.panels.spot(&self.world.game.state, &sel, at).is_some_and(|id| matches!(id, 8 | 10 | 11)) {
+            return false;
+        }
         match self.panels.press(&self.world.game.state, &sel, at, left) {
             Some(actions) => {
                 self.apply(actions);
@@ -2153,10 +2259,28 @@ impl App {
         }
     }
 
+    /// The info box clicked with the left button: the fleet's info panel, or in planet mode the long info.
+    fn info_box_left(&mut self) {
+        let sel = self.selection();
+        if sel.mode == 2 {
+            let acts = self.fleet_info();
+            self.apply(acts);
+        } else if sel.mode == 1 && sel.planet > 0 {
+            self.sounds.push(crate::audio::SoundId::global(5));
+            self.panels.info = None;
+            self.panels.close_production();
+            let acts = self.panels.close_transfer(&self.world.game.state, &sel, false);
+            self.apply(acts);
+            self.cam_tween = None;
+            let cam = self.camera3();
+            self.menus.enter_info(sel.planet, cam);
+        }
+    }
+
     /// A click on the starmap screen at physical `p` (left: buttons, minimap, selection; right: an order).
-    /// The starmap's info box (hot-spot 8 at (0, 424, 166, 56)) under physical `p`.
+    /// The starmap's info box (hot-spot 8 at (0, 424, 166, 56)) under physical `p` (none under the modern HUD).
     fn on_info_box(&self, p: [f32; 2]) -> bool {
-        self.view.as_ref().is_some_and(|v| {
+        !self.modern_up() && self.view.as_ref().is_some_and(|v| {
             let at = v.camera.virtual_of(p);
             at[0] >= 0.0 && at[0] < 166.0 && at[1] >= 424.0
         })
@@ -2174,21 +2298,11 @@ impl App {
             return;
         }
         // The info box (hot-spot 8 at (0, 424, 166, 56)): right = colony / split, left in planet mode = the long info.
-        if at[0] >= 0.0 && at[0] < 166.0 && at[1] >= 424.0 {
+        if at[0] >= 0.0 && at[0] < 166.0 && at[1] >= 424.0 && !self.modern_up() {
             if right {
                 self.info_box_click();
-            } else if sel.mode == 2 {
-                let acts = self.fleet_info();
-                self.apply(acts);
-            } else if sel.mode == 1 && sel.planet > 0 {
-                self.sounds.push(crate::audio::SoundId::global(5));
-                self.panels.info = None;
-                self.panels.close_production();
-                let acts = self.panels.close_transfer(&self.world.game.state, &sel, false);
-                self.apply(acts);
-                self.cam_tween = None;
-                let cam = self.camera3();
-                self.menus.enter_info(sel.planet, cam);
+            } else {
+                self.info_box_left();
             }
             return;
         }
@@ -2236,7 +2350,7 @@ impl App {
     /// info, the production view, the transfer or the fleet's panel): `Mouse_Darabol` reads `STAR_M.RAW`'s colour
     /// there, their rectangles ignored (re/screens/starmap.md §10.3).
     fn console_spot(&mut self, at: [f32; 2]) -> Option<u32> {
-        if self.panels.minimap_off() || self.menus.info_on() {
+        if self.panels.minimap_off() || self.menus.info_on() || self.modern_up() {
             return None;
         }
         let install = &self.install;
@@ -2251,6 +2365,13 @@ impl App {
     fn console_press(&mut self, left: bool) -> bool {
         let at = self.virtual_cursor();
         let Some(s) = self.console_spot(at) else { return false };
+        self.console_act(s, left, at);
+        self.console_held = Some((s, left));
+        true
+    }
+
+    /// Console spot `s` pressed (`left`: with the left button; the minimap's at virtual `at`).
+    fn console_act(&mut self, s: u32, left: bool, at: [f32; 2]) {
         let k = &mut self.star_keys;
         match s {
             2 => (k.right, k.left) = (true, false),
@@ -2268,14 +2389,22 @@ impl App {
             self.sounds.push(crate::audio::CLICK);
             self.star_buttons.press(s);
         }
-        self.console_held = Some((s, left));
-        true
     }
 
     /// The button went up over a held console spot: its flags clear; the top view (1) and the side view (4) start
     /// when released over their button (`StarmapSetTopView`, `StarmapSetSideView`, 8 frames).
     fn console_release(&mut self) {
         let Some((s, _)) = self.console_held.take() else { return };
+        self.console_let_go(s);
+        let at = self.virtual_cursor();
+        if !matches!(s, 1 | 4) || self.console_spot(at) != Some(s) {
+            return;
+        }
+        self.console_view(s);
+    }
+
+    /// A held console spot let go: its camera flags clear.
+    fn console_let_go(&mut self, s: u32) {
         self.star_buttons.release();
         let k = &mut self.star_keys;
         match s {
@@ -2284,10 +2413,10 @@ impl App {
             6 => (k.up, k.down) = (false, false),
             _ => {}
         }
-        let at = self.virtual_cursor();
-        if !matches!(s, 1 | 4) || self.console_spot(at) != Some(s) {
-            return;
-        }
+    }
+
+    /// The top view (1) or the side view (4) released over its button.
+    fn console_view(&mut self, s: u32) {
         self.sounds.push(crate::audio::CLICK);
         // The views' hot-spots act on the release (their `Mouse_Szoveg_Set` flag): the button is set, then let go.
         self.star_buttons.press(s);
@@ -4969,6 +5098,10 @@ impl App {
         let backdrop = if self.overlay.is_some() || (self.spy.is_some() && self.spacewar.is_none()) { self.backdrop() } else { None };
         drop(backdrop_time);
         let kep = self.tutorial_kep();
+        // Ours (ADR 0065): the modern HUD's bar, and its card, console and minimap (the long info keeps the original's).
+        let modern_bar = self.modern_up();
+        let modern_hud = modern_bar && !self.menus.info_on();
+        let mut mv = None;
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
         let size = { let (w, h) = g.band(); [w as f32, h as f32] };
@@ -4989,6 +5122,7 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
+            h.modern_bar = false;
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Starmap, t);
             // The tutorial's window over the battle too (`GFX_DateMoneyScrollFade` pass 3, every `AktKep` but 0xd).
             if let Some(tu) = &self.tutorial {
@@ -5098,6 +5232,7 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
+            h.modern_bar = modern_bar && screen == crate::ui::Screen::Starmap;
             match (screen, &self.colony, &self.world.colony_curr) {
                 (crate::ui::Screen::Colony, Some(c), Some(curr)) => {
                     let cursor = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
@@ -5108,7 +5243,17 @@ impl App {
                     h.draw_starmap_names(&mut frame, v, &g.assets, &self.world.prev, &self.world.curr, alpha, t);
                     let lv = self.world.game.local_view();
                     let sel = Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
-                    h.draw_starmap_hud(&mut frame, &self.world.game.state, self.tables, v, &self.world.prev, &self.world.curr, &sel, alpha, t, &self.panels.faders.starf, self.menus.info_box(v.camera.zoom), globe);
+                    if !modern_hud {
+                        h.draw_starmap_hud(&mut frame, &self.world.game.state, self.tables, v, &self.world.prev, &self.world.curr, &sel, alpha, t, &self.panels.faders.starf, self.menus.info_box(v.camera.zoom), globe);
+                    }
+                    if modern_bar {
+                        let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                        let mut m = h.modern_view(&self.world.game.state, self.tables, &self.world.ui, v, &self.world.prev, &self.world.curr, &sel, alpha, t, &self.panels, &self.menus, gates);
+                        if !modern_hud {
+                            (m.info, m.mini) = (None, None);
+                        }
+                        mv = Some(m);
+                    }
                     h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, self.tables, &sel, panel_tex, size, t);
                     h.draw_starmap_menus(&mut frame, &self.menus, &self.panels, &self.world.game.state, self.tables, size, v.camera.zoom, t);
                 }
@@ -5146,9 +5291,21 @@ impl App {
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, kep);
             }
-            ov.draw(&mut frame, h, size);
+            if mv.is_none() {
+                ov.draw(&mut frame, h, size);
+            }
         }
         drop(hud);
+        // The modern HUD over the frame, the pointer over it (its acts run after the frame, `modern_apply`).
+        let mut top = None;
+        if let (Some(mv), Some(h)) = (&mv, &self.hud) {
+            let style = crate::starmap_modern::style(h, size);
+            let (st, acts, band) = (&mut self.modern, &mut self.modern_acts, g.band());
+            g.gui.run(band, &style, |ctx| acts.extend(crate::starmap_modern::show(ctx, mv, st)));
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        }
         let acquire = crate::prof::scope("acquire");
         let out = match g.surface.get_current_texture() {
             Ok(out) => out,
@@ -5163,7 +5320,7 @@ impl App {
         };
         drop(acquire);
         let draw = crate::prof::scope("draw");
-        self.backdrop.last = Some((g.present(frame, &out.texture, t), t));
+        self.backdrop.last = Some((g.present_over(frame, top, &out.texture, t), t));
         drop(draw);
         let present = crate::prof::scope("present");
         g.window.pre_present_notify();
@@ -5179,6 +5336,7 @@ impl App {
             self.title_at = Instant::now();
             self.frames = 0;
         }
+        self.modern_apply();
     }
 }
 
@@ -5420,9 +5578,37 @@ impl ApplicationHandler for App {
             self.cursor = [position.x as f32, position.y as f32 - top];
         }
         // Ours (ADR 0062): an egui page up (the modern Options screen) takes the pointer; the keys stay the screen's.
-        if self.options.as_ref().is_some_and(|o| o.s.modern.is_some())
-            && let Some(g) = &mut self.gpu
-        {
+        // The modern starmap HUD (ADR 0065) sees the pointer too; `mouse` gives it the buttons over its panels.
+        let page = self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+        if !page && (self.modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+            let k = crate::gui::Gui::scale(g.band().1);
+            let top = g.layout().frame[1] as f32;
+            let over = g.gui.ctx.is_pointer_over_area();
+            match &event {
+                WindowEvent::CursorMoved { position, .. } => g.gui.pointer(Some([position.x as f32, position.y as f32 - top]), k),
+                WindowEvent::CursorLeft { .. } => g.gui.pointer(None, k),
+                WindowEvent::MouseInput { state, button, .. } => {
+                    let b = match button {
+                        MouseButton::Left => 0,
+                        MouseButton::Right => 1,
+                        _ => 2,
+                    };
+                    // A release always reaches it, a press only over its panels.
+                    if over || *state == ElementState::Released {
+                        g.gui.button(b, *state == ElementState::Pressed);
+                    }
+                }
+                WindowEvent::MouseWheel { delta, .. } if over => {
+                    g.gui.wheel(match delta {
+                        MouseScrollDelta::LineDelta(_, y) => *y,
+                        MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                    });
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if page && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             match &event {
@@ -6096,12 +6282,28 @@ impl App {
             }
             return;
         }
-        if self.top_menus_button(button, pressed) {
+        // Ours (ADR 0065): a press over the modern HUD's panels is its own, and so is that button's release; both
+        // buttons there over the info card start the rename, as on the original's info box.
+        if bit != 0 && (self.gui_held & bit != 0 || (pressed && self.over_gui())) {
+            if pressed {
+                self.gui_held |= bit;
+                if self.mouse_held == 3 && self.over_info_card() && !self.starmap_locked() {
+                    self.wait_release = true;
+                    self.gui_held = 0;
+                    self.start_rename();
+                }
+            } else {
+                self.gui_held &= !bit;
+            }
+            return;
+        }
+        let modern = self.modern_up();
+        if !modern && self.top_menus_button(button, pressed) {
             return;
         }
         // The top bar's spots win over every screen's (`top_bar`).
         let at = self.virtual_cursor();
-        if self.top_bar_mouse(button, pressed, at) {
+        if !modern && self.top_bar_mouse(button, pressed, at) {
             return;
         }
         if self.spy.is_some() && (bit == 0 || self.mouse_held & !bit != 0) {
@@ -6146,7 +6348,7 @@ impl App {
         let moved = |d: Option<[f32; 2]>, p: [f32; 2]| d.is_none_or(|d| (d[0] - p[0]).abs() + (d[1] - p[1]).abs() > 4.0);
         if on_starmap && pressed && self.spacewar.is_none() {
             let at = self.virtual_cursor();
-            let on_box = at[0] >= 0.0 && at[0] < 166.0 && at[1] >= 424.0 && !self.menus.info_on();
+            let on_box = at[0] >= 0.0 && at[0] < 166.0 && at[1] >= 424.0 && !self.menus.info_on() && !modern;
             // `Starmap_Main`: a press ends the rename, the old name back unless it is on the info box.
             if let Some(r) = self.menus.rename.take() {
                 if !on_box {

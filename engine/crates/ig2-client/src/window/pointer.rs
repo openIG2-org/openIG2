@@ -154,7 +154,12 @@ impl App {
         let game = self.front.is_none();
         let colony = self.colony_shown().then(|| self.colony_overlay()).flatten();
         let starmap_shown = game && self.colony.is_none() && self.overlay.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.spacewar.is_none();
-        let starmap = if starmap_shown && crate::hud::bar_tip_spot(at).is_none() { self.starmap_tip(at) } else { None };
+        // Ours (ADR 0065): under the modern HUD no bar spot, its panels' own tooltips over them, the map's elsewhere
+        // but the info box's (8, 10, 11, its card's).
+        let modern = self.modern_up();
+        let over_gui = self.over_gui();
+        let bar_spot = |at: [f32; 2]| if modern { None } else { crate::hud::bar_tip_spot(at) };
+        let starmap = if starmap_shown && bar_spot(at).is_none() && !over_gui { self.starmap_tip(at).filter(|t| !modern || !matches!(t.id, 8 | 10 | 11)) } else { None };
         // The info and messages screens' hot-spots (`Info_MouseInit`'s texts); a held one keeps its own (`Mouse_Megfogva`).
         let info = match (&self.hud, self.overlay) {
             (Some(h), Some(crate::ui::Screen::Info)) if game => {
@@ -172,7 +177,8 @@ impl App {
         // (`Starmap_MouseInit` exe 0x5b99d0); the screens' own writers come on top.
         let spot = |t: Option<&crate::kit::Tooltip>| t.is_some_and(|t| t.under != 0);
         let screen_kind = match self.overlay {
-            _ if !game || crate::hud::bar_tip_spot(at).is_some() => 0,
+            _ if !game || bar_spot(at).is_some() => 0,
+            None if over_gui => self.gpu.as_ref().is_some_and(|g| g.gui.hand) as i32,
             _ if self.options.is_some() => spot(self.options.as_ref().map(|o| &o.s.tip)) as i32,
             _ if self.help.is_some() => spot(self.help.as_ref().map(|h| &h.s.tip)) as i32,
             _ if self.spy.is_some() => spot(self.spy.as_ref().map(|s| &s.screen.tip)) as i32,
@@ -189,7 +195,7 @@ impl App {
         let mut out = Overlay::default();
         if game && self.akt_kep_now() < 0xe {
             // `AktIkonKiir`: the bar's slots (2..=8) win over the screen's (id + 0x1e).
-            let bar = crate::hud::bar_tip_spot(at);
+            let bar = bar_spot(at);
             let (slot, text) = match (bar, &self.hud, &colony, &starmap) {
                 (Some(n), Some(h), ..) => (n, h.texts.get(18, 1, n as u16 - 1)),
                 (None, _, Some(ColonyOver { tip: Some((id, t)), .. }), _) => (id + 0x1e, t.clone()),
@@ -225,7 +231,7 @@ impl App {
                         // Ours (ADR 0062): the hand over an egui page's buttons.
                         let page = self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
                         (if page { self.gpu.as_ref().is_some_and(|g| g.gui.hand) } else { self.front.as_ref().is_some_and(|f| f.s.hand) }) as i32
-                    } else if crate::hud::bar_tip_spot(at).is_some() {
+                    } else if bar_spot(at).is_some() {
                         1
                     } else {
                         screen_kind

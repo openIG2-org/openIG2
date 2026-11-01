@@ -109,7 +109,7 @@ impl App {
 
     /// The message line's left button: the messages screen while a message is unread, not from it; the space battle,
     /// a colony at war and the options screen when load-only or in a battle only with `DEBUGX`.
-    fn messages_from_bar(&mut self) {
+    pub(super) fn messages_from_bar(&mut self) {
         let s = self.akt_kep_now();
         let debug = self.world.game.state.mem.u8(va::DEBUGX) != 0;
         let pass = match s {

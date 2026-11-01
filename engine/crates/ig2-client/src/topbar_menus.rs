@@ -14,7 +14,7 @@ pub const RESEARCH_SPOT: [i32; 4] = [0x256, 0, 21, 20];
 /// `HanyTaskbarElem` (exe 0x9197b0, static).
 pub const TASKBAR: i32 = 13;
 /// `Taskbar_Key_Names` (exe 0x9197b4, static literals; 11 and 12 are hidden).
-const KEY_NAMES: [&[u8]; 14] = [b"", b"F1-", b"F2-", b"F3-", b"F4-", b"F5-", b"F6-", b"F7-", b"F8-", b"F9-", b"F10", b"   ", b"   ", b"o -"];
+pub(crate) const KEY_NAMES: [&[u8]; 14] = [b"", b"F1-", b"F2-", b"F3-", b"F4-", b"F5-", b"F6-", b"F7-", b"F8-", b"F9-", b"F10", b"   ", b"   ", b"o -"];
 /// `FastResearchHanyadikSor` (exe 0x9198bc, static): a category's (`(t − 1)/16`) column.
 const COLUMN: [usize; 12] = [0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2];
 /// `SelectSz`: the research menu's columns.
@@ -165,7 +165,7 @@ impl Data {
     }
 
     /// `Selected` can start: idle, status 3 and its labs enough (`ok` of `GFX_DateMoneyScrollFade`).
-    fn startable(&self, t: i32) -> bool {
+    pub(crate) fn startable(&self, t: i32) -> bool {
         self.current < 1 && self.item(t).is_some_and(|i| !i.short)
     }
 }
@@ -215,7 +215,7 @@ pub struct TopMenus {
 
 impl TopMenus {
     /// The screen menu's rows: screens 1..=13 without the battles (11, 12).
-    fn screen_rows() -> impl Iterator<Item = (i32, i32)> {
+    pub(crate) fn screen_rows() -> impl Iterator<Item = (i32, i32)> {
         (1..=TASKBAR).filter(|&i| i != 11 && i != 12).enumerate().map(|(r, i)| (r as i32, i))
     }
 
