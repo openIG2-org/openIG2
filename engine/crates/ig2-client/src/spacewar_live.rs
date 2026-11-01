@@ -176,7 +176,7 @@ impl Live {
     /// The frame's input (`SpwC::main`, the retreat window, then `SpaceWarMouse` after the picture) and its picture
     /// on the starmap's view `v` (the top bar is the caller's).
     #[allow(clippy::too_many_arguments)]
-    pub fn frame(&mut self, world: &World, r: &mut crate::render::Renderer, install: &ig2_formats::Install, assets: &crate::starmap::Assets, v: &mut crate::starmap::View, hud: &crate::ui::Hud, tables: &ig2_rules::Rules, mouse: [f32; 2], shift: bool, now: u32, alpha: f32, t: f32, size: [f32; 2]) -> (Option<crate::render::Frame>, Vec<Out>) {
+    pub fn frame(&mut self, world: &World, r: &mut crate::render::Renderer, install: &ig2_formats::Install, assets: &crate::starmap::Assets, v: &mut crate::starmap::View, hud: &crate::ui::Hud, tables: &ig2_rules::Rules, mouse: [f32; 2], shift: bool, now: u32, alpha: f32, t: f32, size: [f32; 2], globe: Option<crate::render::TexId>) -> (Option<crate::render::Frame>, Vec<Out>) {
         let mut out = Vec::new();
         let Some(b) = world.game.realtime.slots.get(self.ui.slot) else { return (None, out) };
         self.ui.mouse = mouse;
@@ -223,7 +223,7 @@ impl Live {
         crate::spacewar_screen::draw(&mut frame, r, install, gfx, assets, &v.camera, hud, &shown, surface, size);
         let lv = world.game.local_view();
         let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
-        hud.draw_battle_starmap(&mut frame, &world.game.state, tables, v, &world.prev, &world.curr, &sel, alpha, t, shown.fade);
+        hud.draw_battle_starmap(&mut frame, &world.game.state, tables, v, &world.prev, &world.curr, &sel, alpha, t, shown.fade, globe);
         let virt = crate::font::Virtual::new(size);
         if let Some(big) = &shown.big {
             crate::spacewar_hud::big_box(&mut frame, hud, &virt, &shown, big);

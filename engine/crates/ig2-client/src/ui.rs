@@ -708,7 +708,7 @@ impl Hud {
     /// `spacewarelfade` (`fade`) < 1. The minimap's view outline keeps the starmap's last corners (`lastfrom*` refresh
     /// only at fade 0). `StarmapGfx2D_1`'s names are the caller's, under the console.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_battle_starmap(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, fade: f32) {
+    pub fn draw_battle_starmap(&self, f: &mut Frame, state: &SaveState, rules: &ig2_rules::Rules, view: &crate::starmap::View, prev: &crate::world::Snapshot, curr: &crate::world::Snapshot, sel: &crate::orders::Selection, alpha: f32, time: f32, fade: f32, globe: Option<TexId>) {
         let Some(font) = &self.font else { return };
         if fade >= 1.0 {
             return;
@@ -721,6 +721,12 @@ impl Hud {
         let starmap = crate::starmap::Camera { look: None, ..view.camera };
         let mini = crate::starmap_hud::Minimap::new(curr, &fleets, sel, &starmap);
         let v = Virtual::new(view.camera.size);
+        // `StarmapFrissitBolygoUrhajok` keeps the globe (or the fleet's picture) up at the transparency
+        // `spacewarelfade` (re/screens/starmap.md §11) [obs ui5f t100, fade 0.12: the globe; t300, 0.87: gone].
+        if let Some(tex) = globe {
+            let i = Instance::new(kind::SPRITE, v.px(320.0, 240.0), crate::kit::Wide::new(&v).half(&v), [1.0, 1.0, 1.0, 1.0 - fade]);
+            f.push(tex, Blend::Alpha, crate::kit::layout::box_model_clip(&v).map_or(i, |c| i.clipped(c)));
+        }
         crate::starmap_hud::short_info(f, font, &v, &self.palette, &self.pics, &self.starmap_brushes, &info, (((1.0 - fade) * 100.0) as i32) as f32 / 100.0, fade * 400.0);
         crate::starmap_hud::minimap(f, self.white, &v, &self.palette, &mini, time, fade);
     }

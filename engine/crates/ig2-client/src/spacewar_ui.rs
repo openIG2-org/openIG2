@@ -1669,12 +1669,13 @@ impl SpaceWarUi {
         if self.pointer < 4 {
             let me = self.me.max(0) as usize;
             let enemy_selected = (0..self.units.len()).any(|i| self.units[i].selected && b.units[i].alive && b.hostile[me][b.units[i].owner.max(0) as usize] == 1);
-            let total = self.units.iter().any(|g| g.selected) || self.guns.iter().any(|g| g.0);
+            // `+0x16f8`, `kijelolesujraszamol`'s count: dead ships and gone guns (`+0x84` 0) drop out though still
+            // flagged [obs shield7, battle step 493: the selected gun's `+0x84` goes 0, the count falls to 0, the cursor is 2].
             self.pointer = match self.hover_kind {
                 0 => 0,
                 1 if b.units[self.hovered as usize].owner == self.me => 2,
                 2 if b.planet_owner == self.me => 2,
-                _ if !total || enemy_selected => 2,
+                _ if self.stats.total == 0 || enemy_selected => 2,
                 _ => 3,
             };
         }
@@ -2093,6 +2094,28 @@ mod tests {
         ui.jobb_click(&b, &mut out);
         assert!(out.contains(&Out::Order(Order::Attack { unit: 1, target: 0 })), "{out:?}");
         assert!(!SpaceWarUi::enter_as(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0, 6).units[1].selected);
+    }
+
+    /// Hovering an enemy with an own ship still flagged: the attack cursor (3) while the recount `+0x16f8` holds it, the
+    /// brackets (2) once it drops out [obs shield7: the count falls to 0 at battle step 493, `MousePointerType` 2].
+    #[test]
+    fn the_cursor_follows_the_selection_count() {
+        use ig2_sim::spacebattle::{ShipType, Unit};
+        let mut b = Battle::slot();
+        b.human = 6;
+        let ship = |owner| Unit { alive: true, owner, original_owner: owner, ship_type: ShipType { top_speed: 0.4, ..Default::default() }, ..Default::default() };
+        b.units = vec![ship(6), ship(3)];
+        let mut ui = SpaceWarUi::enter(0, &b, &crate::starmap::Camera::side_view(&Default::default(), [640.0, 480.0]), 0);
+        assert!(ui.units[0].selected);
+        ui.mouse = [100.0, 100.0];
+        let units = [None, Some(Projected { at: [100.0, 100.0], radius: 20.0 })];
+        let mut kinds = Vec::new();
+        for total in [1, 0] {
+            ui.stats.total = total;
+            ui.mouse_move(&b, &units, &[]);
+            kinds.push(ui.pointer);
+        }
+        assert_eq!(kinds, [3, 2]);
     }
 
     /// The Defend/Attack slider's spot (hot-spot 0x19, `[50, 461, 113, 9]`) reaches down to the bar under its label

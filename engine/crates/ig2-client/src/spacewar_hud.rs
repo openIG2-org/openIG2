@@ -119,7 +119,7 @@ fn rank(hud: &crate::ui::Hud, avg: i32) -> Vec<u8> {
 
 /// The panel, the radar and the small info box.
 #[allow(clippy::too_many_arguments)]
-pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap_hud::Console>, v: &Virtual, d: &Shown) {
+pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap_hud::Console>, point: Option<crate::render::TexId>, v: &Virtual, d: &Shown) {
     let fade = d.fade;
     let Some(font) = &hud.font else { return };
     let col = |i: usize| hud.palette.get(i).copied().unwrap_or([1.0; 3]);
@@ -137,7 +137,7 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
         c.draw(f, v);
     }
     crate::starmap_hud::fader(f, hud.white, v, [5.0, 423.0, 162.0, 52.0]);
-    radar(f, hud, v, d);
+    radar(f, hud, point, v, d);
 
     // `kisinfokiir(50, 424, 0)`, case A (spec §5.2): ships selected.
     let (x, y) = (50.0, 424.0);
@@ -232,7 +232,7 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
 
 /// `RadarFrissit` (spec §5.3): the dark window, the view's outline on the grid plane, a pixel per unit (green for the
 /// viewer's, red for the rest), turned by the snapped view yaw `+0xc7c`; fully open (`spwradarcounter` 100).
-fn radar(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, d: &Shown) {
+fn radar(f: &mut Frame, hud: &crate::ui::Hud, point: Option<crate::render::TexId>, v: &Virtual, d: &Shown) {
     let (eye, target) = (d.eye, d.target);
     let th = d.snap_yaw;
     // `spwradarcounter`'s opening: the outline flies in from 7× and the dots from 10× (about the screen's origin).
@@ -288,10 +288,13 @@ fn radar(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, d: &Shown) {
             continue;
         }
         let rgb = if u.owner == b.human { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
-        let p = [q[0].trunc(), q[1].trunc()];
-        // A 2 × 2 device-pixel point at 800 × 600 [obs fx8b].
-        let c = v.px(p[0], p[1]).map(|z| z.floor() + 1.0);
-        f.push(white, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [v.k.max(1.0) * 0.8; 2], [rgb[0], rgb[1], rgb[2], 1.0]));
+        // `pixel` (exe 0x535570) sends `GL_POINTS` at `((int)X, (int)Y)`: `ig2_vertex.shader`'s `BIT1` point sprite,
+        // `sg3d_window.y·0.008` pixels across, `star.pvr`'s red sampled bilinear at `gl_PointCoord`, added
+        // [obs fx8b t1000, 800 × 600: a dot at (323, 414) adds 246, 111, 26 across x 403..405 and 54 above, the
+        // sprite's prediction 246, 112, 27 and 54].
+        let Some(t) = point else { continue };
+        let c = v.px(q[0].trunc(), q[1].trunc());
+        f.push(t, Blend::GammaAdditive, Instance::new(kind::SPRITE, c, [1.92 * v.k; 2], [rgb[0], rgb[1], rgb[2], 1.0]));
     }
 }
 

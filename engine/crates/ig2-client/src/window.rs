@@ -3923,11 +3923,11 @@ impl App {
     }
 
     /// The battle screen's frame: its input and its picture.
-    fn spacewar_frame(&mut self, now: u32, alpha: f32, size: [f32; 2], t: f32) -> Option<crate::render::Frame> {
+    fn spacewar_frame(&mut self, now: u32, alpha: f32, size: [f32; 2], t: f32, globe: Option<crate::render::TexId>) -> Option<crate::render::Frame> {
         let sw = self.spacewar.as_mut()?;
         let (g, v, h) = (self.gpu.as_mut()?, self.view.as_mut()?, self.hud.as_ref()?);
         let mouse = v.camera.virtual_of(self.cursor);
-        let (frame, out) = sw.frame(&self.world, &mut g.renderer, &self.install, &g.assets, v, h, self.tables, mouse, self.modifiers.shift_key(), now, alpha, t, size);
+        let (frame, out) = sw.frame(&self.world, &mut g.renderer, &self.install, &g.assets, v, h, self.tables, mouse, self.modifiers.shift_key(), now, alpha, t, size, globe);
         self.spacewar_out(out);
         frame
     }
@@ -4944,7 +4944,7 @@ impl App {
             _ => None,
         };
         if self.spacewar.is_some() {
-            let Some(mut frame) = self.spacewar_frame(now, alpha, size, t) else { return };
+            let Some(mut frame) = self.spacewar_frame(now, alpha, size, t, globe) else { return };
             let (Some(g), Some(h)) = (&mut self.gpu, &mut self.hud) else { return };
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;

@@ -1510,6 +1510,8 @@ pub struct Gfx {
     /// `szar.bmp` (`+0x1890`): the overlays' texture.
     szar: Option<crate::render::TexId>,
     fx: FxGfx,
+    /// `star.pvr` (`SG3D_TEXTURE_OPACITY`): the `GL_POINTS` sprites' texture (the radar's dots).
+    point: Option<crate::render::TexId>,
     /// `MOUSE.BMP` (`dataraw/screen/mouse_bmp.pvr`) and its size.
     pub cursor: Option<(crate::render::TexId, [f32; 2])>,
     /// The weapon column's and the small info box's textures ([`fixed_texture`]), drawn into again each frame.
@@ -1529,7 +1531,7 @@ impl Gfx {
         });
         let forms = s.fx.map_or_else(Vec::new, |(fx, _)| fx.tables.forms.iter().map(|f| if f.name.is_empty() { None } else { Mesh::load(r, install, "vector/spacewar/", &f.name, "textures/spacewar/") }).collect());
         let szar = crate::assets::Image::load(install, "dataraw/textures/spacewar/szar_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
-        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])), column_target: None, info_target: None }
+        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), point: crate::assets::Image::load(install, "star.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t)), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])), column_target: None, info_target: None }
     }
 }
 
@@ -1577,7 +1579,7 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
     if let Some(c) = gfx.console.as_mut() {
         c.relight(r, s.kering, &cam.matrix());
     }
-    crate::spacewar_hud::draw(f, hud, gfx.console.as_ref(), &virt, s);
+    crate::spacewar_hud::draw(f, hud, gfx.console.as_ref(), gfx.point, &virt, s);
     put_fixed(f, &virt, info_tex, INFO_MODEL_RECT, crate::kit::layout::box_model_clip(&virt));
 }
 
@@ -1725,11 +1727,19 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
     assets.planet_meshes.load_battle(r, &l.install);
     let mut view = crate::starmap::View::new(&world.curr, &world.view, o.size, o.scale);
     view.set_clouds(o.clouds);
+    // The window's starmap view keeps its selection ring through the battle: the save's `StarmapMode` pick.
+    let lv = world.game.local_view();
+    view.selected = match lv.starmap_mode {
+        1 => Some(crate::starmap::Pick::Planet(lv.planet.max(0) as usize)),
+        2 => Some(crate::starmap::Pick::Fleet(lv.fleet.max(0) as usize)),
+        _ => None,
+    };
     // The starmap camera the exe entered with (the save's can lag behind it).
     let c = &mut view.camera;
     [c.x, c.y, c.rotate, c.pitch, c.zoom] = cam;
     let mut live = crate::spacewar_live::Live::enter(world, 0, &view.camera, &l.install, 0).ok_or("no battle slot")?;
     live.ui.kering = kering;
+    let mut panel_models = crate::starmap_panels::PanelModels::new(r);
     let (mut mouse, mut next, mut shift) = ([320.0f32, 240.0], 0, false);
     for tick in 0..=script.end() {
         let now = tick * 10;
@@ -1791,7 +1801,10 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
         live.window = [o.size.0 as i32, o.size.1 as i32];
         outs.extend(live.update(world, now));
         let t = now as f32 / 1000.0;
-        let (frame, more) = live.frame(world, r, &l.install, &assets, &mut view, hud, &l.tables, mouse, shift, now, 1.0, t, size);
+        let lv = world.game.local_view();
+        let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
+        let globe = panel_models.render_globe(r, &l.install, &world.game.state, &sel, &view.camera.matrix(), size, tick as f32);
+        let (frame, more) = live.frame(world, r, &l.install, &assets, &mut view, hud, &l.tables, mouse, shift, now, 1.0, t, size, globe);
         outs.extend(more);
         for (line, kind) in live.ui.voices.drain(..) {
             println!("t {tick}: Voice {{ line: {line}, kind: {kind} }}");

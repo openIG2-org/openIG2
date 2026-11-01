@@ -19,14 +19,10 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
 | 20 | main menu | the fly-out (t 360) runs a little ahead at 4:3; meteor/ship RNG and pose differ | minor | mainscr.md §14 |
-| 58 | SpaceWar, input | the mouse wheel and the ControlConfig interpolators (only with `ControlConfig[1]`, off by default) are not routed | minor | spacewar.md §9 |
-| 102 | SpaceWar, info box | no starmap planet-info cross-fade at the opening zoom's start | minor | spacewar.md §9 |
-| 104 | SpaceWar, radar | radar dots are 2×2 px at full alpha, ~1 px right/lower; the exe's are ~2×1 px at ~203 alpha with a soft vertical blend | minor | spacewar.md §9 |
 | 150 | main menu, exit animation | the exe's respawning saucer (RNG) is missing and the meteors' material is fully black (faintly lit in the exe) | minor | mainscr.md §14 |
 | 154 | main menu, scenario list | the picture slide transitions at t 820/880 still differ (3D RNG/pose) | minor | mainscr.md §14 |
 | 157 | main menu, MP rings | the main menu's remaining MP-ring leftovers (meteor/ship sounds; the local/inet rings are our lobby, ADR 0014) are not done | minor | mainscr.md §14 |
-| 213 | SpaceWar, opening zoom | the glow around the fleet marker isn't drawn during the zoom | minor | spacewar.md §9 |
-| 380 | SpaceWar, end zoom-out | the battle planet is ~25 levels less red than the exe's; the cursor kind is 3 where the exe shows 2 | minor | spacewar.md §9 |
+| 380 | SpaceWar, end zoom-out | the battle planet is ~29 levels less red than the exe's (red only; not the light, fog, cloud shells, texture or `uv_mul`) | minor | spacewar.md §9 |
 | 397 | colony, hot-spot 0x14 | with the right button held the exe skips the click and select (`DAT_00db4652`), ours doesn't; the ring timer 0x9964c4 isn't ported | minor | colony.md §11.3 |
 | 398 | colony, TankView | the exe keeps TankView and TankViewLastAngle across re-entry (ours restarts); ours lacks the `+0x18c & 4` test in the unit choice | minor | colony.md §11.9 |
 | 405 | colony, ground-war lock | `Colony_MouseInit2` (exe 0x467990) switches every hot-spot off in a ground war, the war buttons and view included; ours only the non-war ones (the tutorial never locks during a war) | no | colony.md §11 |

@@ -1121,10 +1121,18 @@ impl View {
                 let d = cam.distance();
                 let radius = 10.0 / (FOV / d).sqrt();
                 let size_div = (0.3 * FOV / d).sqrt();
-                let head = (ui / 3.0) as i32;
+                // On the battle screen `starmapszarok` (re/screens/spacewar.md §3.3) runs it instead: a step a frame,
+                // down to 0.5, the colour × `starmaperosseg`.
+                let (head, floor, color) = match self.battle_fade {
+                    Some(e) => {
+                        let c = [color & 0xff, (color >> 8) & 0xff, (color >> 16) & 0xff].map(|x| (x as f32 * e) as u32);
+                        (ui as i32, 0.5, c[0] | c[1] << 8 | c[2] << 16)
+                    }
+                    None => ((ui / 3.0) as i32, 0.4, color),
+                };
                 for i in 0..40 {
                     let lag = (head - i).rem_euclid(20);
-                    let size = (2.0 - 0.2 * lag as f32).max(0.4) / size_div;
+                    let size = (2.0 - 0.2 * lag as f32).max(floor) / size_div;
                     let ang = i as f32 * 0.15707964;
                     let e = cam.eye(&m, 0.0, [c[0] + ang.cos() * radius, c[1] + ang.sin() * radius]);
                     if e[2] >= ZCLIP {

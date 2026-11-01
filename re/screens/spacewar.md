@@ -535,7 +535,7 @@ The followed group (camera mode) is not drawn.
 `futofeny2 += 1`; `RadarRangeKi()`; `e = log((double)(zoom / starmapszorzo)) / 3 + 0.4` (f64 log, f32 store), clamped to [0, 1] -> `starmaperosseg` (0 at full battle zoom -> starmap objects hidden:
 `starmaphideflottak = 1`, `HideObj(starmapnulla)`, `HideObj(starmapRnulla)`; else shown). Then the 40-particle ring in FStars set 3 (pointer at FStars+216): radius from `TransformTav(1.0, 600 - StarmapZoom)` and
 `TransformTav(0.3, ...)`; position (0, cos(i*0.15707964)*10/sqrt(-t1)*starmapszorzo, sin(...)*...); two moving highlights at index `(int)(futofeny2 mod 40)` and +-20 (size starmapszorzo*2), the rest shrinks by 0.2*starmapszorzo down to
-0.5*starmapszorzo; colour word `(255 - a)<<24 | b<<16 | g<<8 | r` with (r, g, b) = `StarmapMode == 1 ? (e*32, e*128, e*255) : (e*255, e*255, e*0)`, a from the starmap info/fleet mode fade (255, or the zoom ratio formula, or 64 + frame*23).
+0.5*starmapszorzo; colour word `(255 - a)<<24 | b<<16 | g<<8 | r` with (r, g, b) = `StarmapMode == 1 ? (e*32, e*128, e*255) : (e*255, e*255, e*0)`, a from the starmap info/fleet mode fade (255, or the zoom ratio formula, or 64 + frame*23). [obs ui5f t100, fade 0.12: the blue ring around the selected planet's fleet, its lower arc under the console; the short info's globe (`StarmapFrissitBolygoUrhajok`, re/screens/starmap.md §11) at transparency `spacewarelfade`, gone by t300 (fade 0.87).]
 Then `rotate_stars()`, `rotate_fleets()`, `PulzaljKisCsillag()`, `PulzaljNagyCsillag()`, `StarmapFrissitBolygoUrhajok()`, `smMozgatMainFenyek()` (the two starmap side lights circle), `starmaphalvanyit(e)`.
 
 ### 3.4 Shield rings (`karikakirak` 0x69c650 spawn, `karikafrissit` 0x6a2bb0 animate; planet battles only)
@@ -738,6 +738,7 @@ Radar rectangle on screen: **x 274..368 (94 px), y 388..455 (67 px)**, centre (3
 5. **Dots**: `k2 = (1-k)*9 + 1`; every live unit with `owner == EN` (human empire global) or **not cloaked** (+0x1e3): `a = -cs*x + sn*y`, `b = cs*y - (-sn)*x` (x = +0x4c, y = +0x50),
    `X = a*94*k2/384 + 321`, `Y = b*67*k2/384 + 421`; kept when `274 < X < 368` and `388 < Y < 455`. Colour: owner == +0xd2c (own) **0x8000FF00** (green), else **0x800000FF** (red).
    `pixel(buf, n, depth=false, additive=true)`: 1 px points at `((int)X, (int)Y)` (truncation), alpha forced 0xff. The buffer is the stack array that also held the backdrop (40 B per vertex, about 119 vertices).
+   `pixel` (exe 0x535570) draws them as `GL_POINTS` (primitive 0, texture `DAT_00de82a8` bound, fog and depth test off, blend (ONE, ONE)): the remaster's `ig2_vertex.shader` variation `BIT1` makes each a point sprite `sg3d_window.y·0.008` window pixels across (4.8 at 600), coloured `star.pvr`'s red at `gl_PointCoord` (`SG3D_TEXTURE_OPACITY`: the install root's 8 × 8 L8 picture, one level, sampled bilinear) × the vertex colour (re/screens/render.md §1). [obs fx8b t1000, 800 × 600: a dot at virtual (323, 414) adds 246, 111, 26 across x 403..405 on row 517 and 54 above, the sprite centred on (403.75, 517.5) gives 246, 112, 27 and 54.]
 6. **Outro fade**: when `SpwC+0x24bc` is nonzero and `> 0x2134 (8500)` (set to 1 by `vegevizsgal`, ELF 0x6a0d50, at the end of the battle together with `+0x24c0 = SDL_GetTicks()`; the writer that advances it was not found):
    `a = ((0x5dc - (v - 0x2134)) * 0xff) / 0x5dc` (int), at least 1; two triangles over (0,0)-(640,480), colour `a<<24 | 0x010101`, z 0.5, `polygonsfader(.., 2, 0)` (normal blend, transparency 255-a, texture `fadertexture`):
    a fade to black that is almost opaque 1500 units after 8500. Drawn after the dots.
@@ -1095,7 +1096,7 @@ Box: while the left button is held: the rectangle is drawn with four `Line(.., 7
 Box end: a right press during the box (`+0x223c`) cancels it (selection restored from the snapshot, counters recounted, `Box = 0; Sup = 1; Rot = 1`); when the left button goes up (`+0x223f` seen in the Box branch) `Box = 0` and, if the fire cursor was armed (`MousePointerType == 4`), it is restored (`MousePointerType = +0x24c4`, armed group and marker -1).
 After the machine: if neither button is held `Sup = 0`; if `Rot && !(+0x229e)`: yaw `+0xd70 -= (+0x225c - x) / 100.0` and pitch `+0xd74 -= (+0x2264 - y) / 200.0` (f32 arithmetic; prev = last frame mouse), pitch clamped to [-1.5607964, -0.2]; then `SpaceWarMouseMove`; `prev = now`; the four event flags are cleared.
 SpaceWarMouseMove (not Rot/Hgt/Box; corrected in 8.7.5): `+0x2234 = 0`; `best = 400` pixels; for each live unit whose owner == me or `+0x1e3` clear: centre projected (`GetObjCenter`, `TransformPoint`, z < 0, the 639/479 round trip), radius `max(10, TransformTav(ship type scale (+0x230 -> +0x10) * 1000, z))`; `d = tav2` (a pixel distance, `sqrt` in f64); accepted if `best > d && radius > d` (strict): `best = d`, `+0x2230 = idx`, `+0x2234 = 1`; then planet guns (`+0x84 != 0`, radius 10, `RotateAndTransformPoint`) share `best`, so a gun wins only when nearer (`+0x2234 = 2`). Nothing -> `+0x2230 = -1`, `+0x2234 = 0`. `TransformTav` takes z in scene units (battle units × the scene scale), so while the scale is 0.0004 (the opening and closing zooms) the radius is 2500× the drawn size and the nearest unit within 400 px is hovered [obs: the hover cursor with no unit under the pointer].
-Cursor (`MousePointerType`, only when < 4, i.e. no fire cursor armed): nothing hovered -> 0; hovered own unit (or a gun when the planet is mine) -> 2; hovered other unit or gun: 2 if nothing is selected (`+0x16f8 == 0`) or if any selected live unit is the human's enemy (`ellenseg(u)` = `rel[EN·0x13 + u.owner] == 1`: the selected unit's owner, not the hovered one's), else 3 (attack cursor). `Mouse_Tipus` per frame: 0 -> 1, 2 -> 5, 3 -> 7, 4 -> 6 (exe 0xDB9414).
+Cursor (`MousePointerType`, only when < 4, i.e. no fire cursor armed): nothing hovered -> 0; hovered own unit (or a gun when the planet is mine) -> 2; hovered other unit or gun: 2 if nothing is selected (`+0x16f8 == 0`: `kijelolesujraszamol`'s count, ELF 0x6b0020, of selected ships still alive and selected guns whose `+0x84` is nonzero, so a flagged dead ship or gone gun drops out [obs shield7: at battle step 493 the selected gun's `+0x84` goes 0, the count falls 2 → 0 and `MousePointerType` is 2 from then]) or if any selected live unit is the human's enemy (`ellenseg(u)` = `rel[EN·0x13 + u.owner] == 1`: the selected unit's owner, not the hovered one's), else 3 (attack cursor). `Mouse_Tipus` per frame: 0 -> 1, 2 -> 5, 3 -> 7, 4 -> 6 (exe 0xDB9414).
 
 #### 7.1.3 Clicks and the messages (BalClick ELF 0x6b13c0 / exe 0x566810; JobbClick ELF 0x6b0210 / exe 0x569190; weapon buttons in main)
 BalClick (left release; needs `AktIkon == 0x4c`, `+0x24bc == 0` (battle not over), `!(+0x229e)`): `PlaySoundGlobal(0)`; if the fire cursor is armed: cancel it (`MousePointerType = 0`, `+0x24c4 = 0`, `+0x24c8 = +0x24cc = -1`).
@@ -1419,14 +1420,12 @@ stages one real-time battle on quick.scn and writes `<out>-entry.json`, the grab
 `--grab-ticks T,..` and `ig2-client --snapshot OUT --save S.sav --screen spacewar --battle <grab>.json`.
 
 **Open**:
-- End zoom-out (row 380): the battle planet's disc is rosier in the exe (mean (116, 85, 79) against (88, 81, 77)); not
-  the light, the fog byte or the mips; next: probe the sampled texels (vertex uv `+0x18`). With the pointer parked
-  during the end zoom the exe's `MousePointerType` (0xDE01B4) is 2, the client's 3 (it hovers an enemy with own units
-  selected); next: probe the exe's `+0x16f8` and `+0x2230` there.
+- End zoom-out (row 380): the battle planet's disc is rosier in the exe (shield7 t3400, the label masked: (121, 88, 83)
+  against (92, 84, 79), red only); not the light (the planet's and shells' records are grey), not fog (flags 15, no
+  0x2000), not the shells (`bolygo3.xvb`'s `ETHCLDBP.bmp` is the grey `CLOUD` material), not `p5`'s levels or
+  `uv_mul`; the close-up at t3000 matches. Next: probe the sampled texels (vertex uv `+0x18`).
 - The client's outer cloud shell spans ~1.5 % more than the exe's (the partial shell's box re-measure is not modelled).
-- The opening zoom's short info: the planet picture, the fleet marker's glow (row 213) and the planet-info cross-fade
-  (row 102); the radar dots (row 104).
-- The small info box's fader shine (row 273); the mouse wheel and `ControlConfig` interpolators (row 58); the V key's
+- The small info box's fader shine (row 273); the V key's
   "Not Relevant Anymore" text is not drawn (row 272); the starmap's Belep catch-up ticks on the way back from Options
   are skipped (row 356, keep).
 - Not compared against a capture: the MP banner, the chase camera, a selected gun's building model; the big box's
