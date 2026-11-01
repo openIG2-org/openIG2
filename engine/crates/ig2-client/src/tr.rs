@@ -33,6 +33,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Subtitles", "Feliratok"),
     ("Colour-blind colours", "Színtévesztő színek"),
     ("Sharp UI", "Éles felület"),
+    ("Sharp text", "Éles szöveg"),
     ("Window", "Ablak"),
     ("Borderless", "Keretlen"),
     ("Fullscreen", "Teljes kép"),

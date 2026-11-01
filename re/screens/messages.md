@@ -34,6 +34,8 @@ Quad and uv are exactly `width × height` virtual pixels (no rounding). At 800 �
 its bottom edge lands on a pixel centre (`y + height ≡ 2 mod 4`, e.g. the SpaceWar info box's title at y 427, edge
 542.5) the exe's GL fills that row (the clamped last texel row: the descenders of `y`, `g`), where wgpu's top-left
 rule leaves it out [obs: a SpaceWar grab, rows 542 and 587; every other row equal].
+Ours: the "Sharp text" option (ADR 0046) draws a magnified glyph (a texel wider than a screen pixel) as a distance
+field: Catmull-Rom coverage inside the cell, ramp one pixel wide around 0.5; quads and uv as above.
 
 ## 2. The scrolling message line
 `FRISSIT_Scroll2` 0x66ebd0 runs in the 10 ms UI frame (not while entering/leaving a screen); `GFX_Scroll` 0x66f270

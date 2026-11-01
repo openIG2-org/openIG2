@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 use crate::assets::Image;
 
 const SHADER: &str = r#"
-struct U { screen: vec2<f32>, time: f32, sharp: f32 };
+struct U { screen: vec2<f32>, time: f32, sharp: u32 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var smp: sampler;
@@ -62,7 +62,7 @@ const PI: f32 = 3.14159265;
 fn sample2d(t: vec2<f32>) -> vec4<f32> {
     let dx = dpdx(t);
     let dy = dpdy(t);
-    if u.sharp < 0.5 {
+    if (u.sharp & 1u) == 0u {
         return textureSample(tex, smp, t);
     }
     let dims = vec2<f32>(textureDimensions(tex));
@@ -71,6 +71,35 @@ fn sample2d(t: vec2<f32>) -> vec4<f32> {
     let f = fract(texel);
     let s = (floor(texel) + clamp((f - 0.5) * px + 0.5, vec2(0.0), vec2(1.0)) + 0.5) / dims;
     return textureSampleGrad(tex, smp, s, dx, dy);
+}
+
+// A coverage `c` (0..1, edge at 0.5) whose texel spans `s` screen pixels, its ramp narrowed to one pixel; the identity
+// at `s` <= 1. The Rust twin is `sharpen` (its test pins the edge and the identity).
+fn sharpen(c: vec3<f32>, s: f32) -> vec3<f32> {
+    return clamp((c - 0.5) * max(s, 1.0) + 0.5, vec3(0.0), vec3(1.0));
+}
+
+// `tex` at `t` interpolated Catmull-Rom from the 4 × 4 texels around it, each tap clamped to [lo, hi] (a glyph's
+// cell, so no neighbour bleeds in).
+fn cubic(t: vec2<f32>, lo: vec2<f32>, hi: vec2<f32>) -> vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(tex));
+    let p = t * dims - 0.5;
+    let i = floor(p);
+    let f = p - i;
+    let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+    let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+    let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+    let w3 = f * f * (-0.5 + 0.5 * f);
+    var wx = array<f32, 4>(w0.x, w1.x, w2.x, w3.x);
+    var wy = array<f32, 4>(w0.y, w1.y, w2.y, w3.y);
+    var c = vec4(0.0);
+    for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+            let st = clamp((i + vec2(f32(x) - 0.5, f32(y) - 0.5)) / dims, lo, hi);
+            c += textureSampleLevel(tex, smp, st, 0.0) * (wx[x] * wy[y]);
+        }
+    }
+    return c;
 }
 
 // Coverage of the edge of a shape whose signed distance (in quad units, < 0 inside) is `d`.
@@ -137,8 +166,16 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
         // A `KiirStr` glyph: a sprite whose uv is clamped to its cell inset by half a texel (`ig2_fragment_font`).
         case 7u: {
             let h = 0.5 / vec2<f32>(textureDimensions(tex));
-            let t = clamp(v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw, v.uv.xy + h, v.uv.xy + v.uv.zw - h);
-            return sample2d(t) * v.color;
+            let t0 = v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw;
+            let t = clamp(t0, v.uv.xy + h, v.uv.xy + v.uv.zw - h);
+            // "Sharp text" (ADR 0046), magnified only: the glyph's coverage interpolated Catmull-Rom inside its cell
+            // and read as a distance field, its 0.5 edge kept and the ramp narrowed to one screen pixel (`sharpen`).
+            let s = 1.0 / max(fwidth(t0.x * f32(textureDimensions(tex).x)), 1e-6);
+            if (u.sharp & 2u) == 0u || s <= 1.0 {
+                return sample2d(t) * v.color;
+            }
+            let c = cubic(t, v.uv.xy + h, v.uv.xy + v.uv.zw - h);
+            return vec4(sharpen(c.rgb, s), 1.0) * v.color;
         }
         // Soft round glow (procedural stars).
         default: {
@@ -152,9 +189,21 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
 
 /// The "Sharp UI" option (ADR 0043, off by default): the 2D sprites and glyphs sampled sharp bilinear.
 static SHARP_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The "Sharp text" option (ADR 0046, off by default): the glyphs' edges one screen pixel wide at any size.
+static SHARP_TEXT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_sharp_ui(on: bool) {
     SHARP_UI.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_sharp_text(on: bool) {
+    SHARP_TEXT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The shader's `sharpen` for one channel: coverage `c` of a texel `s` screen pixels wide.
+#[cfg(test)]
+fn sharpen(c: f32, s: f32) -> f32 {
+    ((c - 0.5) * s.max(1.0) + 0.5).clamp(0.0, 1.0)
 }
 
 /// Instance kinds (`I.kind`).
@@ -284,7 +333,7 @@ pub struct Frame {
     /// overlay screen, re/screens/overlay-background.md): its texture and its gamma-space grey.
     pub backdrop: Option<(TexId, f32)>,
     late_at: usize,
-    instances: Vec<Instance>,
+    pub(crate) instances: Vec<Instance>,
     batches: Vec<Batch>,
 }
 
@@ -322,8 +371,8 @@ impl Frame {
 struct Uniforms {
     screen: [f32; 2],
     time: f32,
-    /// 1: "Sharp UI" (ADR 0043).
-    sharp: f32,
+    /// Bit 0: "Sharp UI" (ADR 0043); bit 1: "Sharp text" (ADR 0046).
+    sharp: u32,
 }
 
 pub struct Renderer {
@@ -643,7 +692,7 @@ impl Renderer {
         crate::prof::count("passes", 1);
         crate::prof::count("quads", frame.instances.len() as u64);
         crate::prof::count("batches", frame.batches.len() as u64);
-        let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, sharp: SHARP_UI.load(std::sync::atomic::Ordering::Relaxed) as u32 as f32 };
+        let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, sharp: SHARP_UI.load(std::sync::atomic::Ordering::Relaxed) as u32 | (SHARP_TEXT.load(std::sync::atomic::Ordering::Relaxed) as u32) << 1 };
         self.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         // The backdrop's quad goes after the frame's own in the buffer.
         let backdrop = frame.backdrop.map(|(tex, c)| {
@@ -2057,6 +2106,21 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0046: the coverage's 0.5 edge stays put (the glyph's stroke widths and positions), 1:1 or minified the
+    /// value is the bilinear one, and at 4.5 pixels a texel the ramp is one pixel wide.
+    #[test]
+    fn sharpen_keeps_the_edge() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        for s in [0.5, 1.0, 1.5, 2.25, 4.5] {
+            assert_eq!(sharpen(0.5, s), 0.5);
+        }
+        for c in [0.0, 0.1, 0.3, 0.7, 1.0] {
+            assert!(near(sharpen(c, 1.0), c) && near(sharpen(c, 0.625), c));
+        }
+        assert!(near(sharpen(0.3, 2.25), 0.05) && near(sharpen(0.7, 2.25), 0.95));
+        assert!(near(sharpen(0.4, 4.5), 0.05) && sharpen(0.65, 4.5) == 1.0);
+    }
 
     #[test]
     fn a_clipped_sprite_keeps_its_texels_in_place() {

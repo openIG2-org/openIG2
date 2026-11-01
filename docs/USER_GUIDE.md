@@ -70,6 +70,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--multiplayer` | Open the main menu on the multiplayer connection page |
 | `--size WxH`, `--letterbox` | Window size; letterbox wide windows instead of the remaster's layout |
 | `--sharp-ui` | Sharp UI on for this run, over the settings file |
+| `--sharp-text` | Sharp text on for this run, over the settings file |
 
 ## Controls
 The controls are the original's. The most used:
@@ -138,6 +139,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Subtitles (`Subtitles`) | Off by default: a spoken message line's text stays at the bottom of the screen while its voice plays (ADR 0036). The install has no texts for the videos, the campaign start voice or the units' voices, so these get none; the message screen types its spoken text anyway |
 | Colour-blind colours (`ColourBlindColours`) | Off by default: empires 1–8 get colours that stay apart with red-green or blue-yellow colour blindness, in names, the minimap, the info screen, the top bar and the fleet icons (ADR 0036) |
 | Sharp UI (`SharpUi`) | Off by default: the panels, text and pointer are drawn with crisp texel edges instead of the original's smooth scaling, for big windows (1440p, 4K) where the 640×480 layout is scaled several times (ADR 0043); the UI's size follows the window either way |
+| Sharp text (`SharpText`) | Off by default: on big windows (1440p, 4K) the game's own font is drawn with sharp, smooth edges instead of the original's blur, every letter in the same place and size (ADR 0046); combines with Sharp UI; at 800x600 nothing changes |
 
 The window opens at 1600x900 until a size is saved.
 

@@ -92,3 +92,36 @@ impl Font {
         self.text(f, v, n.to_string().as_bytes(), x, y, len, size, align, rgb, None);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// "Sharp text" (ADR 0046) is the glyph shader's only: the text's quads, sizes and atlas cells stay the ones
+    /// `KiirStr` lays out, at every window size.
+    #[test]
+    fn sharp_text_keeps_the_metrics() {
+        let cs = Charset { width: vec![0, 6, 6, 8, 12], height: vec![0, 5, 7, 10, 12], step_x: vec![0, 6, 6, 8, 12], step_y: vec![0, 6, 8, 10, 12], start_y: vec![0, 0, 24, 62, 126], per_row: vec![0, 42, 42, 32, 21], ..Charset::default() };
+        let mut glyph = [0x4c_u8; 256];
+        for (i, b) in (b'A'..=b'Z').enumerate() {
+            glyph[b as usize] = i as u8;
+        }
+        let font = Font { tex: TexId(0), cs, glyph };
+        let quads = |size: [f32; 2]| {
+            let mut f = Frame::new([0.0; 4]);
+            font.text(&mut f, &Virtual::new(size), b"SHARP TEXT", 100.0, 50.0, 12, 2, Align::Field, [1.0; 3], None);
+            f.instances.iter().map(|i| (i.center, i.half, i.uv)).collect::<Vec<_>>()
+        };
+        let classic = [[800.0, 600.0], [2560.0, 1440.0], [3840.0, 2160.0]].map(quads);
+        crate::render::set_sharp_text(true);
+        let sharp = [[800.0, 600.0], [2560.0, 1440.0], [3840.0, 2160.0]].map(quads);
+        crate::render::set_sharp_text(false);
+        assert_eq!(classic, sharp);
+        // 9 glyphs (the space draws nothing), centred in 12 cells of 6: from x 106; at 3840 × 2160 the 4:3 frame is
+        // 2880 wide, 4.5 pixels a unit.
+        assert_eq!(classic[2].len(), 9);
+        let v = Virtual::new([3840.0, 2160.0]);
+        assert_eq!(classic[2][0].0[0], v.px(106.0 + 3.0, 0.0)[0]);
+        assert_eq!(classic[2][0].1, [6.0 * v.k / 2.0, 7.0 * v.k / 2.0]);
+    }
+}

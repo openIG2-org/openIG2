@@ -24,7 +24,6 @@ Grouped by area; sizes are rough guesses for one developer.
 | Menus | Two Options screens: a dedicated main-menu Options screen with its own modern layout (every setting, grouped in tabs), and a reworked in-game Options screen (the original's look by default, tidied rows) | the in-game screen is cramped, and the remake rows sit under the original's | 1-2 weeks |
 | Menus | More options: key rebinding, UI scale, separate music/voice/effect volumes, game speed steps, autosave interval | today's options are the original's few plus the remake rows | 1-2 weeks |
 | UI | A modernised, themeable UI skin (colours, frames, fonts), the classic look kept as the default theme | the 2D panels look dated at high resolutions | weeks |
-| Graphics | Sharper text (vector or high-resolution font rendering at any window size) | the 800x600 bitmap font blurs when scaled up | weeks |
 | Graphics | Upscaled textures and other graphics upgrades, each its own option | the original textures are low-resolution on modern screens | weeks |
 | Graphics | Better effects: particle explosions, smoke, beams, shields in the space and ground battles (after the classic effects are complete, `re/deviations.md` 421; flashes, projectiles, trails, tracers and beams are classic now, smoke, dust, scorch marks and ruins still to come) | the battles look flat | 2-4 weeks |
 | Graphics | Higher-detail building models and textures on the colony screen, loaded from a pack beside the install | the buildings are low-poly | weeks, plus art |
@@ -53,6 +52,7 @@ Grouped by area; sizes are rough guesses for one developer.
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 460 | all screens, text | "Sharp text" (`SharpText`, Remake row; `--sharp-text`) draws a magnified glyph's coverage as a distance field: Catmull-Rom inside its cell, the 0.5 edge kept and the ramp one screen pixel wide, so text stays crisp with smooth curves at 1440p and 4K; same quads, advances and atlas cells; minified or 1:1 (800x600) the exe's bilinear path unchanged; off (the default) = the exe (ADR 0046) | yes | messages.md §1 |
 | 451 | research, auto research | three per-empire switches (ships, buildings, tanks) on the research screen, left of the ball under the list panel, with tooltips; an idle research slot starts the next tech by the computer empires' race priority, inside the sim tick (a lockstep order in multiplayer, saved in our saves); the original has no such switches; all off (the default) = the original (ADR 0037) | yes | production-research.md §2.5, research.md §5.8 |
 | 133 | colony camera | ours zooms with the mouse wheel; the original has no wheel zoom (classic: none) | minor | colony.md §11.9 |
 | 159 | all screens, V key | a V hotkey for vsync (the original has none); also a "Vertical sync" row in Options (row 402) | minor | input.md |
