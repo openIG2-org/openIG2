@@ -219,6 +219,8 @@ fn a_pause_stops_the_shared_clock() {
         let mut state = state.clone();
         state.mem.set_u8(va::MULTIPLAYER, 1);
         state.mem.set_i32(va::PROGRAM_SEBESSEG, speed);
+        // MP normal speed (×4; the save holds 0): at room speed 4 only a player's speed order sets it.
+        state.mem.set_i32(va::IDO_SPEED, 4);
         let mut s = Session::new();
         for (slot, empire) in [(1, 6), (2, 3)] {
             s.join(slot, empire, |_| {
