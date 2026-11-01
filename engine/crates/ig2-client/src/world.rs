@@ -345,6 +345,10 @@ pub struct World<'r> {
     /// The replay this machine writes (ADR 0038) and its file; in multiplayer the peer's recorder writes it.
     pub replay: Option<std::path::PathBuf>,
     recorder: Option<ig2_net::replay::Recorder>,
+    /// Ours (ADR 0040): the scrolling lines of this game for the messages screen's event log.
+    pub log: crate::event_log::Log,
+    /// The option's switch (`EventLog`): off records nothing.
+    pub log_on: bool,
 }
 
 /// The session as the wait overlay sees it (`crate::mp_wait`, [`World::wait_view`]).
@@ -597,7 +601,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false, replay: None, recorder: None }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false, replay: None, recorder: None, log: Default::default(), log_on: true }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -687,6 +691,7 @@ impl<'r> World<'r> {
         }
         // The events of turns run outside this pump (a drop, a kick, a save catch the peer up) count too.
         self.game.post_local_messages(&events);
+        self.record_log(&events);
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
         // Ours (ADR 0026): with the room's option a defeated machine stays in the session and watches.
         if self.game.spectators && events.iter().any(|e| matches!(e, GameEvent::GameOver(ig2_sim::game::GameOver::Lost))) {
@@ -996,6 +1001,14 @@ impl<'r> World<'r> {
         }
     }
 
+    /// The event log's lines of `events` for the local empire (ADR 0040).
+    fn record_log(&mut self, events: &[GameEvent]) {
+        if self.log_on && !events.is_empty() {
+            let ido = self.game.state.mem.i32(va::IDO);
+            self.log.record(&self.game, events, self.curr.human as usize, ido);
+        }
+    }
+
     /// One 50 ms sim tick, as the original's frame runs it: the lockstep messages the last tick sent first
     /// (`Command::from_event`: 0x1b, the story's 0x49 and 0x66, for `Game::sender`), then `FRISSIT_Datum` and the
     /// rest of the tick.
@@ -1007,9 +1020,9 @@ impl<'r> World<'r> {
         if let Some(r) = &mut self.recorder {
             r.watch(&self.game);
         }
-        // The client keeps no event history yet (the UI that shows them comes later). The same delivery as
-        // `ig2_net::replay::deliver`, which plays a replay back.
+        // The same delivery as `ig2_net::replay::deliver`, which plays a replay back.
         let events = self.game.take_events();
+        self.record_log(&events);
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
         self.story_ui.extend(events.iter().filter_map(StoryUi::of));
         self.take_notices(&events);

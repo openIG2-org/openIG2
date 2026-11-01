@@ -1245,6 +1245,15 @@ impl App {
                     self.world.send(c);
                 }
             }
+            // ADR 0040: the event log's label and, while it is up, its panel take the presses.
+            crate::ui::Screen::Messages if self.display.event_log && h.messages.list_up() && (h.messages.log.open || crate::event_log::Panel::over_label(at)) => {
+                if crate::event_log::Panel::over_label(at) {
+                    h.messages.log.toggle();
+                    self.sounds.push(crate::audio::CLICK);
+                } else if let Some(t) = h.messages.log.press(at, &self.world.log) {
+                    self.log_jump(t);
+                }
+            }
             crate::ui::Screen::Messages => match h.messages.press(at, self.world.ui.inbox.len()) {
                 // The sim refuses the row while a dialogue or an automatic message holds the screen.
                 crate::messages_screen::Press::Open(i) if ig2_sim::game::inbox_open_allowed(&self.world.game.state) => h.open_message(&self.install, &self.world.ui, i),
@@ -4032,6 +4041,7 @@ impl App {
         let now = self.now_ms();
         let sim = crate::prof::scope("sim");
         // The frame's message pass, then the ticks due (none while `IdoPause`).
+        self.world.log_on = self.display.event_log;
         self.world.pump();
         self.menus.sent_done();
         if let Some(c) = &mut self.colony {
@@ -4621,6 +4631,9 @@ impl App {
                 _ => {}
             }
             h.draw(&mut frame, size, &self.world.ui, self.tables, screen, t);
+            if screen == crate::ui::Screen::Messages && self.display.event_log {
+                h.draw_event_log(&mut frame, &self.world.log, size, t);
+            }
             // `GFX_DateMoneyScrollFade`'s fader pass 3 and `Update3D`'s `TutorialSzovegFrissit`: the window over the
             // screen (the pointer the recording moves is the overlay's).
             if let Some(tu) = &self.tutorial {
@@ -5304,7 +5317,10 @@ impl App {
                             self.world.send(c);
                         }
                     }
-                    Some(crate::ui::Screen::Messages) => h.messages.hover(at),
+                    Some(crate::ui::Screen::Messages) => {
+                        h.messages.hover(at);
+                        h.messages.log.hover_at(at, &self.world.log);
+                    }
                     _ => {}
                 }
             }
@@ -5348,6 +5364,10 @@ impl App {
 
     /// The wheel turned by `steps` notches.
     fn wheel(&mut self, steps: f32) {
+        if let Some(h) = self.hud.as_mut().filter(|h| self.overlay == Some(crate::ui::Screen::Messages) && h.messages.log.open) {
+            h.messages.log.scroll_by((-steps * 3.0).round() as i32, &self.world.log);
+            return;
+        }
         // None of the 2D screens (`Design_Main`, `Trade_Main`, `Research_Main`, …, `Spy_Main`) has a wheel.
         if self.under_screen() {
             return;
@@ -6033,6 +6053,63 @@ impl App {
         self.menus.col_sent = true;
     }
 
+    /// ADR 0040: on the messages screen `L` opens the event log; while it is up every key but the F-keys is its
+    /// (the search, Esc, the arrows and PgUp/PgDn scroll). True when taken.
+    fn event_log_key(&mut self, key: &Key<&str>) -> bool {
+        use crate::chat::EntryKey as E;
+        let on = self.display.event_log && self.overlay == Some(crate::ui::Screen::Messages);
+        let Some(h) = self.hud.as_mut().filter(|h| on && h.messages.list_up()) else { return false };
+        let log = &mut h.messages.log;
+        if !log.open {
+            if matches!(key, Key::Character("l" | "L")) {
+                log.toggle();
+                return true;
+            }
+            return false;
+        }
+        let k = match key {
+            Key::Character(s) => s.bytes().next().map(E::Char),
+            Key::Named(NamedKey::Space) => Some(E::Char(b' ')),
+            Key::Named(NamedKey::Backspace) => Some(E::Backspace),
+            Key::Named(NamedKey::Delete) => Some(E::Delete),
+            Key::Named(NamedKey::Home) => Some(E::Home),
+            Key::Named(NamedKey::End) => Some(E::End),
+            Key::Named(NamedKey::ArrowLeft) => Some(E::Left),
+            Key::Named(NamedKey::ArrowRight) => Some(E::Right),
+            Key::Named(NamedKey::Escape) => Some(E::Escape),
+            Key::Named(n @ (NamedKey::ArrowUp | NamedKey::ArrowDown | NamedKey::PageUp | NamedKey::PageDown)) => {
+                let lines = match n {
+                    NamedKey::ArrowUp => -1,
+                    NamedKey::ArrowDown => 1,
+                    NamedKey::PageUp => -30,
+                    _ => 30,
+                };
+                log.scroll_by(lines, &self.world.log);
+                None
+            }
+            _ => None,
+        };
+        if let Some(k) = k {
+            log.key(k);
+        }
+        true
+    }
+
+    /// ADR 0040: a log line's planet or fleet selected and centred on the starmap (the messages screen closes first).
+    fn log_jump(&mut self, t: crate::event_log::Target) {
+        use crate::event_log::Target;
+        let sel = self.selection();
+        let curr = &self.world.curr;
+        let hit = match t {
+            Target::Planet(p) => curr.planets.iter().find(|v| v.index == p && v.on_map()).map(|v| (Selection { mode: 1, planet: p, ..sel }, v.pos)),
+            Target::Fleet(f) => curr.fleets.iter().find(|v| v.slot == f && v.visible).map(|v| (Selection { mode: 2, fleet: f, ..sel }, v.pos)),
+        };
+        let Some((s, at)) = hit else { return };
+        self.sounds.push(crate::audio::CLICK);
+        self.request_screen(2);
+        self.apply(vec![Action::Select(s), Action::Centre { x: at[0], y: at[1] }]);
+    }
+
     /// A key went down; true = quit.
     fn key(&mut self, key: Key<&str>) -> bool {
         if self.chat_key(&key) {
@@ -6050,6 +6127,9 @@ impl App {
             } else {
                 self.quick_save();
             }
+            return false;
+        }
+        if self.event_log_key(&key) {
             return false;
         }
         match key {

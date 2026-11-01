@@ -850,6 +850,15 @@ impl Hud {
     }
 }
 
+impl Hud {
+    /// ADR 0040: the messages screen's event log label and panel, while its list is up.
+    pub fn draw_event_log(&self, f: &mut Frame, log: &crate::event_log::Log, size: [f32; 2], time: f32) {
+        let Some(font) = self.font.as_ref().filter(|_| self.messages.list_up()) else { return };
+        let hu = self.texts.lang == ig2_formats::text::Lang::Hu;
+        crate::event_log::draw(f, font, self.white, &Virtual::new(size), &self.palette, &self.messages.log, log, hu, time);
+    }
+}
+
 /// `KiirStrSzinSzorzo = (int)(sin(AktIdo / 100)·50 + 50)` (exe 0x554040) as a factor, `time` in seconds.
 fn waiting_pulse(time: f32) -> f32 {
     ((time as f64 * 10.0).sin() * 50.0 + 50.0) as i32 as f32 / 100.0

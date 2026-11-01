@@ -630,6 +630,8 @@ pub struct MessagesScreen {
     pub kilep: bool,
     /// `Messages_Kilep` has begun.
     pub left: bool,
+    /// Ours (ADR 0040): the event log's panel.
+    pub log: crate::event_log::Panel,
 }
 
 /// `Messages_MouseInit`'s hot-spots (virtual pixels): 1 up (older first … the list moves), 2 down, 3 the inbox,

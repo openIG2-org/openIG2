@@ -219,3 +219,15 @@ moved 1/64 px down, so §1's pixel-centre ties fall as in the exe. Talking heads
 `video.md` §6, `audio.md` §7. Open rows: 4 (the side strips wider than 4:3 stay black), 309 (speech stays English, as
 the exe). Capture: `run_screendiff.py messages --script scripts/messages-{open,esc}.json` over a replay save with inbox
 messages.
+
+## 9. The event log (ours, enhanced; ADR 0040, row 454)
+Not in the original. With `EventLog` on (the default) the client records every scrolling line `Game::messages_for`
+gives the local empire per tick (`World::tick`, `World::mp_tick`), with the date (`Ido`), a category and a target
+(`ig2-client::event_log::classify`: battles, research, diplomacy, colonies, story, other; a planet or a fleet), the
+newest 1000, unsaved. The messages screen gets an "EVENT LOG" label at (6, 196) (size 2, colour 2, 6 under the
+pointer) and the `L` key: a panel `[200, 20, 436, 452]` (black, a colour 0x26 edge) over the frame's right half with
+the filter row at y 26 (selected colour 6, else 2), "Search:" and the typed text at y 40, then up to 36 lines of 11 px
+from y 56 (`yyyy.mm.dd` then the text, Hungarian articles as the line's history; colour 6 under the pointer when the
+line has a target, else 0x21). A press on a line with a target asks for the starmap (`AktKepKell = 2`, the messages
+screen closes as usual) with the planet or fleet selected and the camera centred (`Action::Centre`). While the panel
+is up the screen's own presses and keys (rows, arrows, a..d, Esc) go to the panel; the F-keys still switch screens.
