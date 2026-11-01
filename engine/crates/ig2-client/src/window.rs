@@ -725,17 +725,12 @@ fn draw_options(o: &mut OptionsUp, h: &crate::ui::Hud, frame: &mut crate::render
 #[allow(clippy::too_many_arguments)]
 fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: &mut crate::render::Frame, size: [f32; 2], now_ms: f64, history: bool) {
     crate::mainscr_scene::draw_2d(&mut fr.s, &mut fr.scenarios, h, r, install, frame, size, now_ms);
-    if let Some(mp) = &mut fr.mp {
-        mp.load_pictures(r, install);
-    }
     let Some(font) = &h.font else { return };
     let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
     if let Some(st) = &fr.stats {
         st.draw(frame, &d);
     } else if let Some(rl) = &fr.replays {
         rl.draw(frame, &d);
-    } else if let Some(mp) = &fr.mp {
-        mp.draw(frame, &d, crate::kit::fader_design::blink(now_ms));
     } else if front_history_shown(fr) {
         if history {
             crate::stats_screen::draw_history_item(frame, &d, crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, fr.at), fr.s.gt);
@@ -2468,9 +2463,6 @@ impl App {
         let list = fr.s.scenario.as_mut().map(|sc| &mut sc.frame);
         carry_row_frame(&mut self.dk, &mut self.dk_owner, if list.is_some() { 6 } else { 0 }, list, due);
         fr.s.hover(fr.at);
-        if let Some(mp) = &mut fr.mp {
-            mp.hover(fr.at);
-        }
         if let Some(st) = &mut fr.stats {
             st.hover(fr.at);
         }
@@ -2495,14 +2487,28 @@ impl App {
         if let (Some(o), Some(h)) = (&mut self.options, &self.hud) {
             draw_options(o, h, &mut frame, size, self.start.elapsed().as_secs_f64() * 1000.0);
         }
-        // Ours (ADR 0062): the modern Options screen is an egui page, over the 2D and under the pointer.
+        // Ours (ADR 0062): the modern Options screen and the multiplayer pages (ADR 0064) are egui pages, over the 2D
+        // and under the pointer.
         let mut top = None;
+        let mut mp_outs = Vec::new();
+        let theme = |h: &crate::ui::Hud| {
+            h.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
+                crate::theme::look(&crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 })
+            })
+        };
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
-            let theme = h.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
-                crate::theme::look(&crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 })
-            });
+            let theme = theme(h);
             g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id)));
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        } else if let (Some(mp), Some(h)) = (fr.mp.as_mut(), &self.hud) {
+            let theme = theme(h);
+            mp.load_heads(&g.gui.ctx, &self.install);
+            let mut acts = Vec::new();
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| acts = mp.page(ctx, &h.texts, &h.palette, &theme, fr.s.flow));
+            mp_outs = mp.apply(acts, &mut fr.net);
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -2516,6 +2522,9 @@ impl App {
         g.present_over(frame, top, &out.texture, now as f32 / 1000.0);
         g.window.pre_present_notify();
         out.present();
+        for o in mp_outs {
+            self.front_mp_out(o);
+        }
     }
 
     /// A ring's request (`crate::mainscr::Act`): load game starts the game from the save (the Options screen's load
@@ -4217,7 +4226,20 @@ impl App {
                 }
                 return;
             }
+            // Ours (ADR 0064): Tab moves between the connection page's fields, the arrows through its list.
+            match k.as_ref() {
+                Key::Named(NamedKey::Tab) => return mp.next_field(),
+                Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown) => return mp.step_list(matches!(k.as_ref(), Key::Named(NamedKey::ArrowDown))),
+                _ => {}
+            }
             let escape = matches!(k.as_ref(), Key::Named(NamedKey::Escape));
+            // An open drop-down takes Esc (it closes) and the keys meant for it.
+            if let Some(g) = self.gpu.as_ref().filter(|g| egui::Popup::is_any_open(&g.gui.ctx)) {
+                if escape {
+                    egui::Popup::close_all(&g.gui.ctx);
+                }
+                return;
+            }
             let key = match k.as_ref() {
                 Key::Named(NamedKey::Enter) => Some(EntryKey::Enter),
                 Key::Named(NamedKey::Backspace) => Some(EntryKey::Back),
@@ -5579,7 +5601,9 @@ impl ApplicationHandler for App {
         }
         // Ours (ADR 0062): an egui page up (the modern Options screen) takes the pointer; the keys stay the screen's.
         // The modern starmap HUD (ADR 0065) sees the pointer too; `mouse` gives it the buttons over its panels.
-        let page = self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+        // The multiplayer pages (ADR 0066) take it the same way.
+        let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
+        let page = mp_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         if !page && (self.modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
@@ -5621,8 +5645,9 @@ impl ApplicationHandler for App {
                         _ => 2,
                     };
                     g.gui.button(b, *state == ElementState::Pressed);
-                    // The right button stays the menu's Back (ADR 0059).
-                    if *button == MouseButton::Left {
+                    // The right button stays the menu's Back (ADR 0059); the multiplayer page acts on it itself. A left
+                    // release still reaches the menu there (as before the page, which took presses only).
+                    if (*button == MouseButton::Left && !(mp_page && *state == ElementState::Released)) || (mp_page && *button != MouseButton::Left) {
                         return;
                     }
                 }
@@ -5726,9 +5751,10 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.help.is_some() => {}
             // `remapKeyCodes` (exe 0x4e4670): the key downs the exe never queues reach nothing (the key ups go on); a
             // numpad digit's character still types into an entry up (its SDL_TEXTINPUT). Ours: the main menu's modern
-            // Options screen (ADR 0053) takes them all (Tab, the numpad's arrows).
+            // Options screen (ADR 0053) and the multiplayer pages (ADR 0066) take them all (Tab, Delete, Home, End).
             WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && !do_keyboard::exe_queues_key_down(event)
-                && !(do_keyboard::numpad_digit(event) && self.entry_up()) && !self.options.as_ref().is_some_and(|o| o.s.modern.is_some()) => {}
+                && !(do_keyboard::numpad_digit(event) && self.entry_up()) && !self.options.as_ref().is_some_and(|o| o.s.modern.is_some())
+                && !(self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some())) => {}
             // Esc is the exit hot-spot (`MainCallBackEventHandler` on `AktKep` 1); F1 does nothing there. Help has no
             // keyboard handler of its own, but `DoKeyboard` stays live (exe 0x4db1a0): F2..F10, O and M leave it for
             // their screen (`AktKep` changes, `Help_Kilep`), Space, P and 1/2/3 pause and set the speed.
@@ -5909,18 +5935,6 @@ impl ApplicationHandler for App {
                 if self.display.statistics && self.front.as_ref().is_some_and(|f| front_history_shown(f) && crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, f.at)) =>
             {
                 self.open_history();
-            }
-            // Our MP screens: either button's press.
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: button @ (MouseButton::Left | MouseButton::Right), .. } if self.front.as_ref().is_some_and(|f| f.mp.is_some()) => {
-                let Some(f) = &mut self.front else { return };
-                let at = f.at;
-                let Some(mp) = &mut f.mp else { return };
-                // Ours (ADR 0059): the right button on empty space is Esc.
-                let back = f.s.flow && button == MouseButton::Right && mp.spot_at(at) == 0;
-                let out = if back { mp.key(None, true, &mut f.net) } else { mp.press(at, button == MouseButton::Right, &mut f.net) };
-                if let Some(o) = out {
-                    self.front_mp_out(o);
-                }
             }
             // The main menu's boxes, race spheres and difficulty rings take either button (`Mouse_Lenyom`, FX3).
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if self.front.is_some() => {

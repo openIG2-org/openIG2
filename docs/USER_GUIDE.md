@@ -50,10 +50,15 @@ macOS builds are new and tested by CI only: please report what goes wrong.
 The game starts at the title and main menu, like the original: campaign, scenario, skirmish, tutorial, load, and
 the multiplayer rings (LAN, direct IP or join code, through the project's relay server `ig2relay.justdawee.hu:30000` by default, or
 one you or a friend run: `docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code
-(Ctrl+V) into the "Address or join code" field with no LAN game selected and press Join. With a relay server set (the default),
-"Browse internet games" lists the rooms on its public list (a host switches "Public list: yes" in its room) and a
-double click joins one.
-In the room every empire is a card: its colour, the race's picture, the holder and a mark ("Host", "Ready" or "Not ready"). If you press Start as host while someone is not ready, the room says so and the button becomes "Start anyway"; pressing it again readies everyone and starts.
+(Ctrl+V) into the "Address or join code" field of the "Join directly" card and press Join. The connection page lists
+games in three tabs: LAN games, Internet games (the rooms on the relay server's public list, set by default; a host
+switches "Public list" on in its room) and Saved games (a multiplayer save to resume as host); a double click (or Up,
+Down and Enter) joins a row, Tab moves between the fields.
+In the room every empire is a row: its colour, the race's picture, the race, the holder and a mark ("Host", "Ready",
+"Not ready", "You"); the host sets a slot to Open, Computer (Easy, Normal or Hard) or Closed in its drop-down, and the
+galaxy settings with the arrows; "Take seat" moves you to a free slot; the host copies the join code with "Copy join
+code". If you press Start as host while someone is not ready, the room says so and the button becomes "Start anyway";
+pressing it again readies everyone and starts.
 For a quick game, click "Quick game" at the bottom right of the main menu: the skirmish settings open on their own
 (race, computer players, difficulty, planets, technology, money, population), set to your last skirmish's choices;
 Start begins a generated galaxy. The full single-player path is still there.

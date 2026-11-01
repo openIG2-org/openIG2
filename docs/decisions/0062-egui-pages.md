@@ -1,6 +1,7 @@
 # ADR 0062: egui for the remake's own pages
 
-Date: 2026-11-01. Status: accepted (part 1: the layer and the main-menu Options page). Amends ADR 0006 §7 (egui was
+Date: 2026-11-01. Status: accepted (part 1: the layer and the main-menu Options page; part 2, the multiplayer pages:
+ADR 0066). Amends ADR 0006 §7 (egui was
 for developer overlays only). Implemented by `ig2-client::gui` (the layer, the style, the shared widgets),
 `options::modern` (the page) and the window's frame and input (`window.rs`: `Gpu::present_over`, the pointer
 routing); the snapshot's `--script` drives the page too (`mainscr_scene::sequence`).

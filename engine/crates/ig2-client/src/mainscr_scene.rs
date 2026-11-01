@@ -728,16 +728,34 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
         }
         if let Some(m) = &mut mp {
             use crate::mp_lobby::Out;
-            m.hover(mouse);
             let mut outs: Vec<Out> = m.tick(&mut net).into_iter().collect();
-            for (p, rt) in [(press, false), (right, true)] {
-                if let Some(p) = p {
-                    outs.extend(m.press(p, rt, &mut net));
-                }
+            // Ours (ADR 0064): the page, driven by the script's pointer.
+            gui.pointer(Some(vv.px(mouse[0], mouse[1])), k);
+            if press.is_some() {
+                gui.button(0, true);
             }
+            if release.is_some() {
+                gui.button(0, false);
+            }
+            if right.is_some() {
+                gui.button(1, true);
+                gui.button(1, false);
+            }
+            let theme = hud.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
+                crate::theme::look(&crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: 0.0 })
+            });
+            m.load_heads(&gui.ctx, &install);
+            let mut acts = Vec::new();
+            gui.run(o.size, &crate::gui::style(&theme), |ctx| acts = m.page(ctx, &hud.texts, &hud.palette, &theme, s.flow));
+            outs.extend(m.apply(acts, &mut net));
             for k in &keys {
                 use crate::options::EntryKey;
                 let lower = k.to_ascii_lowercase();
+                match lower.as_str() {
+                    "tab" => m.next_field(),
+                    "up" | "down" => m.step_list(lower == "down"),
+                    _ => {}
+                }
                 let key = match lower.as_str() {
                     "enter" | "return" => Some(EntryKey::Enter),
                     "backspace" => Some(EntryKey::Back),
@@ -869,11 +887,6 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             scene.draw(&mut frame, &mut r, &install, &s, &vv);
             draw_2d(&mut s, &mut assets, &hud, &mut r, &install, &mut frame, size, t as f64 * 10.0);
-            if let (Some(m), Some(font)) = (&mut mp, &hud.font) {
-                m.load_pictures(&mut r, &install);
-                let d = crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: t as f64 * 10.0 };
-                m.draw(&mut frame, &d, crate::kit::fader_design::blink(t as f64 * 10.0));
-            }
             if let Some((h, os)) = &mut options {
                 h.draw(os, &mut frame, size, t as f64 * 10.0);
             } else if s.leaving.is_none() {

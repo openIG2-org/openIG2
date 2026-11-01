@@ -22,10 +22,9 @@ use ig2_net::{Peer, Transport};
 use ig2_sim::game::new_game::StartData;
 use ig2_sim::game::GameRules;
 
-use crate::font::Align;
-use crate::kit::fader;
-use crate::options::{Draw, EntryKey};
-use crate::render::{kind, Blend, Frame, Instance, TexId};
+use crate::options::EntryKey;
+
+mod page;
 
 /// The game port a host listens on first (the LAN announcement carries the real one).
 pub const GAME_PORT: u16 = ig2_net::discovery::DISCOVERY_PORT + 1;
@@ -38,14 +37,8 @@ pub const DEFAULT_RELAY: &str = "ig2relay.justdawee.hu:30000";
 const MAX_FIELD: usize = 40;
 /// The longest address typed or pasted (a join code with four addresses and its dashes is 84).
 const MAX_ADDRESS: usize = 96;
-/// The address characters the field shows (it scrolls with the cursor).
-const ADDRESS_SHOWN: usize = 60;
-/// The relay address characters shown after the field's label.
-const RELAY_SHOWN: usize = 36;
-/// Chat lines shown.
-const CHAT_LINES: usize = 4;
-/// Sessions listed.
-const LIST_ROWS: usize = 10;
+/// The connection page's rows at most (the list scrolls; their ids stay below `spot::ADDRESS`).
+const LIST_ROWS: usize = 32;
 
 // ------------------------------------------------------------------------------------------------ links
 
@@ -555,7 +548,7 @@ pub enum Out {
     Copy(String),
 }
 
-/// Hot-spot ids (ours).
+/// The page's item ids (ours; [`Act::Spot`]).
 mod spot {
     pub const LIST: u32 = 0x10;
     pub const ADDRESS: u32 = 0x30;
@@ -582,23 +575,8 @@ mod spot {
     pub const LEVEL: u32 = 0x78;
 }
 
-/// Where a computer slot's level is drawn and clicked (ADR 0033); the holder's box ends there.
-const LEVEL_X: f32 = 280.0;
-/// A slot card's race name (after the colour stripe and the race's head, ADR 0041).
-const CARD_TEXT: f32 = 58.0;
-
-/// The connection page's relay field.
-const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
-/// The connection page's internet list switch and refresh, under the list (ADR 0060).
-const BROWSE_BOX: [f32; 4] = [130.0, 249.0, 250.0, 14.0];
-const REFRESH_BOX: [f32; 4] = [430.0, 249.0, 80.0, 14.0];
-/// The host's public-list switch, beside the relay line.
-const PUBLIC_BOX: [f32; 4] = [430.0, 349.0, 190.0, 14.0];
-
 /// The options rows (spec §6).
 const OPTIONS: usize = 8;
-/// The connection page's buttons' left edges (Host, Join, Saved game, Cancel).
-const BUTTONS: [f32; 4] = [130.0, 227.0, 323.0, 420.0];
 
 /// Seat the room's members whose names are the save's humans in their saved empires, once each (a member may move
 /// on afterwards); `seated` = the members done.
@@ -649,7 +627,6 @@ pub struct MpScreen {
     pub role: Option<Role>,
     pub chat: Vec<(String, String)>,
     pub entry: Field,
-    pub at: [f32; 2],
     /// The password typed for the room this machine joined (kept for a host migration's door).
     joined_password: Option<String>,
     /// The connection page lists the save folder's MP saves instead of the LAN's sessions.
@@ -661,10 +638,12 @@ pub struct MpScreen {
     /// `MultiplayerStartStory` (exe 0xF2148C): set by the room's `story N` / `s N` line; only the host's start sends
     /// it. Starts at the config line `mpstory` ([`MpScreen::with_story`]).
     pub story: i32,
-    /// The race heads on the room's cards (ADR 0041), race 1 first; loaded by [`MpScreen::load_pictures`].
-    pub races: Vec<Option<TexId>>,
+    /// The race heads on the room's player rows (ADR 0041), race 1 first; loaded by [`MpScreen::load_heads`].
+    heads: Vec<Option<egui::TextureHandle>>,
     /// The host's Start found someone not ready: the next press starts anyway (ADR 0041).
     force: bool,
+    /// Up or Down moved the list's selection: the page scrolls it into view.
+    reveal: std::cell::Cell<bool>,
 }
 
 /// `DoKeyboard`'s room line (exe 0x4db1a0, ~0x4db7bc): `story N` or `s N` (case-insensitive) with `atoi(N) != 0`.
@@ -682,7 +661,6 @@ mod words {
     pub const INET: &[u8] = b"No internet matchmaking: join by address or join code";
     pub const CONNECTING: &[u8] = b"Connecting...";
     pub const COMPUTER: &[u8] = b"computer";
-    pub const OPEN: &[u8] = b"-";
     pub const CLOSED: &[u8] = b"closed";
     pub const SHAPE: &[u8] = b"Galaxy shape:";
     pub const BATTLES: &[u8] = b"Battles:";
@@ -704,19 +682,49 @@ mod words {
     pub const LAN: &[u8] = b"LAN games";
     pub const NO_SAVES: &[u8] = b"No multiplayer saves";
     pub const NEED_SAVED: &[u8] = b"Pick one of the saved empires";
-    pub const MAP_OFF: &[u8] = b"Port mapping (UPnP / NAT-PMP): off";
     pub const MAP_ASKING: &[u8] = b"Port mapping: asking the router...";
-    pub const PRIVATE: [&[u8]; 2] = [b"Private game: no", b"Private game: yes"];
     pub const NO_CODE: &[u8] = b"Join code: none (no network address)";
     pub const COPIED: &[u8] = b"The join code is on the clipboard";
-    pub const RELAY: &[u8] = b"Relay server (optional): ";
     pub const ADDRESS: &[u8] = b"Address or join code:";
-    pub const PUBLIC: [&[u8]; 2] = [b"Public list: no", b"Public list: yes"];
-    pub const BROWSE: &[u8] = b"Browse internet games";
     pub const REFRESH: &[u8] = b"Refresh";
     pub const ASKING: &[u8] = b"Asking the relay server...";
     pub const NO_PUBLIC: &[u8] = b"No public games on the relay server";
     pub const NEED_RELAY: &[u8] = b"Type a relay server to browse internet games";
+    // The designed pages (ADR 0064).
+    pub const PLAYING_AS: &[u8] = b"Playing as";
+    pub const INTERNET: &[u8] = b"Internet games";
+    pub const SAVED_GAMES: &[u8] = b"Saved games";
+    pub const JOIN_DIRECTLY: &[u8] = b"Join directly";
+    pub const RELAY_TITLE: &[u8] = b"Relay server";
+    pub const RELAY_HINT: &[u8] = b"Optional. For internet games: it lists public games, helps players behind a router reach each other and relays when nothing else works.";
+    pub const NONE_FOUND_HINT: &[u8] = b"Games hosted on this network show here as they open.";
+    pub const NO_PUBLIC_HINT: &[u8] = b"Host one yourself, or press Refresh to ask again.";
+    pub const NO_SAVES_HINT: &[u8] = b"A multiplayer game the host saved can be resumed here.";
+    pub const HOST_SAVED: &[u8] = b"Host saved game";
+    pub const STARTED: &[u8] = b"Started";
+    pub const INCOMPATIBLE: &[u8] = b"Incompatible";
+    pub const LOCKED: &[u8] = b"Password";
+    pub const JOINED: &[u8] = b"Joined";
+    pub const PRIVATE_BADGE: &[u8] = b"Private";
+    pub const READY_COUNT: &[u8] = b"Ready";
+    pub const PLAYERS: &[u8] = b"Players";
+    pub const CONNECTION: &[u8] = b"Connection";
+    pub const MAP_LABEL: &[u8] = b"Port mapping (UPnP / NAT-PMP)";
+    pub const PRIVATE_LABEL: &[u8] = b"Private game";
+    pub const PRIVATE_HINT: &[u8] = b"Joined with the join code only";
+    pub const PUBLIC_LABEL: &[u8] = b"Public list";
+    pub const COPY: &[u8] = b"Copy join code";
+    pub const COPY_HINT: &[u8] = b"Send it to the players: they paste it into Join directly (Ctrl+V).";
+    pub const OPEN_SEAT: &[u8] = b"Open";
+    pub const YOU: &[u8] = b"You";
+    pub const TAKE_SEAT: &[u8] = b"Take seat";
+    pub const CHAT: &[u8] = b"Chat";
+    pub const CHAT_HINT: &[u8] = b"Type a message; Enter sends it";
+
+    /// A word in the game's language, as text.
+    pub fn text(lang: ig2_formats::text::Lang, w: &[u8]) -> String {
+        crate::tr::text(lang, std::str::from_utf8(w).unwrap_or_default()).to_string()
+    }
 }
 
 /// The relay field's start: the saved `relay.txt`, even an empty one (the player turned the service off), else the
@@ -799,14 +807,14 @@ impl MpScreen {
             role: None,
             chat: Vec::new(),
             entry: Field::new(ig2_net::lobby::MAX_CHAT),
-            at: [0.0; 2],
             joined_password: None,
             saves: None,
             save_dir: crate::options::slot_dir(),
             resume: None,
             story: 0,
-            races: Vec::new(),
+            heads: Vec::new(),
             force: false,
+            reveal: Default::default(),
         }
         .with_saved_relay()
     }
@@ -1129,71 +1137,8 @@ impl MpScreen {
 
     // -------------------------------------------------------------------------------------------- input
 
-    /// The boxes switched on now (id, rect).
-    fn boxes(&self) -> Vec<(u32, [f32; 4])> {
-        let mut v = Vec::new();
-        if self.open < 100.0 {
-            return v;
-        }
-        match self.state() {
-            None => {
-                for i in 0..self.rows().min(LIST_ROWS) {
-                    v.push((spot::LIST + i as u32, [130.0, 82.0 + 16.0 * i as f32, 380.0, 16.0]));
-                }
-                v.extend([(spot::ADDRESS, [130.0, 280.0, 380.0, 22.0]), (spot::PASSWORD, [130.0, 328.0, 380.0, 22.0]), (spot::RELAY, RELAY_BOX)]);
-                if self.saves.is_none() {
-                    v.push((spot::BROWSE, BROWSE_BOX));
-                    if self.internet.is_some() {
-                        v.push((spot::REFRESH, REFRESH_BOX));
-                    }
-                }
-                for (k, id) in [spot::HOST, spot::JOIN, spot::SAVED, spot::CANCEL].into_iter().enumerate() {
-                    v.push((id, [BUTTONS[k], 392.0, 90.0, 30.0]));
-                }
-            }
-            Some(st) => {
-                for i in 0..8 {
-                    let y = 52.0 + 32.0 * i as f32;
-                    v.push((spot::RACE + i, [CARD_TEXT - 4.0, y, 170.0 - (CARD_TEXT - 4.0), 26.0]));
-                    let level = self.is_host() && st.galaxy.is_some() && st.slots.get(i as usize).is_some_and(|s| s.kind == SlotKind::Ai);
-                    if level {
-                        v.push((spot::LEVEL + i, [LEVEL_X - 4.0, y, 110.0, 26.0]));
-                    }
-                    v.push((spot::HOLDER + i, [170.0, y, if level { LEVEL_X - 4.0 - 170.0 } else { 160.0 }, 26.0]));
-                }
-                if self.is_host() {
-                    v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 13.0])]);
-                    if matches!(&self.role, Some(Role::Host { listener, .. }) if listener.rendezvous() != Rendezvous::Off) {
-                        v.push((spot::PUBLIC, PUBLIC_BOX));
-                    }
-                    for k in 0..OPTIONS as u32 {
-                        let y = 74.0 + 30.0 * k as f32;
-                        v.push((spot::OPTION + 2 * k, [556.0, y, 30.0, 18.0]));
-                        v.push((spot::OPTION + 2 * k + 1, [588.0, y, 30.0, 18.0]));
-                    }
-                }
-                v.extend([(spot::LEAVE, [16.0, 444.0, 120.0, 30.0]), (spot::READY, [504.0, 444.0, 120.0, 30.0])]);
-            }
-        }
-        v
-    }
-
-    pub fn spot_at(&self, at: [f32; 2]) -> u32 {
-        let (x, y) = (at[0].floor(), at[1].floor());
-        self.boxes().into_iter().find(|&(_, r)| r[0] <= x && x < r[0] + r[2] && r[1] <= y && y < r[1] + r[3]).map_or(0, |(id, _)| id)
-    }
-
-    pub fn hover(&mut self, at: [f32; 2]) {
-        self.at = at;
-    }
-
-    /// A press at `at` (`right`: the right button).
-    pub fn press(&mut self, at: [f32; 2], right: bool, net: &mut dyn Net) -> Option<Out> {
-        self.at = at;
-        let id = self.spot_at(at);
-        if id == 0 {
-            return None;
-        }
+    /// The page's press on item `id` (`right`: the right button's; the page's acts, [`page::Act::Spot`]).
+    pub fn act(&mut self, id: u32, right: bool, net: &mut dyn Net) -> Option<Out> {
         if self.role.is_none() {
             match id {
                 spot::ADDRESS => {
@@ -1242,7 +1187,6 @@ impl MpScreen {
         }
         let st = self.state()?.clone();
         let me = self.member()?;
-        let mine = st.empire_of(me);
         let slot = |i: u32| st.slots.get(i as usize).copied();
         let force = std::mem::take(&mut self.force);
         match id {
@@ -1292,29 +1236,20 @@ impl MpScreen {
             }
             i if (spot::RACE..spot::RACE + 8).contains(&i) => {
                 let s = slot(i - spot::RACE)?;
-                if !self.is_host() && mine != Some(s.empire) {
-                    return None;
-                }
-                let race = if right { (s.race + 6) % 8 + 1 } else { s.race % 8 + 1 };
-                match self.role.as_mut()? {
-                    Role::Host { lobby, .. } => {
-                        lobby.set_race(0, s.empire, race);
-                    }
-                    Role::Joiner(c) => c.race(s.empire, race),
-                }
+                return self.set_race((i - spot::RACE) as usize, if right { (s.race + 6) % 8 + 1 } else { s.race % 8 + 1 });
             }
             i if (spot::HOLDER..spot::HOLDER + 8).contains(&i) => {
                 let s = slot(i - spot::HOLDER)?;
                 match (self.role.as_mut()?, right) {
                     // The host's right click: empty → AI → closed → empty.
-                    (Role::Host { lobby, .. }, true) => {
+                    (Role::Host { .. }, true) => {
                         let next = match s.kind {
                             SlotKind::Open => SlotKind::Ai,
                             SlotKind::Ai => SlotKind::Closed,
                             SlotKind::Closed => SlotKind::Open,
                             SlotKind::Human(_) => return None,
                         };
-                        lobby.set_slot(s.empire, next);
+                        return self.set_slot((i - spot::HOLDER) as usize, next);
                     }
                     (Role::Host { lobby, .. }, false) => {
                         lobby.pick(0, Some(s.empire));
@@ -1326,10 +1261,8 @@ impl MpScreen {
             // The host's click: the next level (right: the previous), easy → normal → hard → easy.
             i if (spot::LEVEL..spot::LEVEL + 8).contains(&i) => {
                 let k = (slot(i - spot::LEVEL)?.empire as usize).clamp(1, 8) - 1;
-                let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
-                let mut o = lobby.state().galaxy?;
-                o.difficulty[k] = if right { (o.difficulty[k] + 1) % 3 + 1 } else { o.difficulty[k] % 3 + 1 };
-                lobby.set_options(o);
+                let level = st.galaxy?.difficulty[k];
+                return self.set_level((i - spot::LEVEL) as usize, if right { (level + 1) % 3 + 1 } else { level % 3 + 1 });
             }
             i if (spot::OPTION..spot::OPTION + 2 * OPTIONS as u32).contains(&i) => {
                 let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
@@ -1354,6 +1287,69 @@ impl MpScreen {
             _ => return None,
         }
         Some(Out::Click)
+    }
+
+    /// Slot `i`'s race (the host's any slot, a joiner's its own).
+    fn set_race(&mut self, i: usize, race: u8) -> Option<Out> {
+        let st = self.state()?;
+        let s = *st.slots.get(i)?;
+        if !self.is_host() && st.empire_of(self.member()?) != Some(s.empire) {
+            return None;
+        }
+        match self.role.as_mut()? {
+            Role::Host { lobby, .. } => {
+                lobby.set_race(0, s.empire, race);
+            }
+            Role::Joiner(c) => c.race(s.empire, race),
+        }
+        Some(Out::Click)
+    }
+
+    /// The host opens, closes or gives slot `i` to the computer (not a human's).
+    fn set_slot(&mut self, i: usize, kind: SlotKind) -> Option<Out> {
+        let s = *self.state()?.slots.get(i)?;
+        let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
+        if matches!(s.kind, SlotKind::Human(_)) || matches!(kind, SlotKind::Human(_)) {
+            return None;
+        }
+        lobby.set_slot(s.empire, kind);
+        Some(Out::Click)
+    }
+
+    /// The host sets the computer's level in slot `i` (1..3, ADR 0033).
+    fn set_level(&mut self, i: usize, level: u8) -> Option<Out> {
+        let k = (self.state()?.slots.get(i)?.empire as usize).clamp(1, 8) - 1;
+        let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
+        let mut o = lobby.state().galaxy?;
+        o.difficulty[k] = level.clamp(1, 3);
+        lobby.set_options(o);
+        Some(Out::Click)
+    }
+
+    /// Tab: the connection page's next field.
+    pub fn next_field(&mut self) {
+        if self.role.is_none() {
+            self.focus = match self.focus {
+                Focus::Address => Focus::Password,
+                Focus::Password => Focus::Relay,
+                Focus::Relay => Focus::Address,
+            };
+        }
+    }
+
+    /// Up or down: the connection page's list selection moves (Enter joins it, or hosts a save).
+    pub fn step_list(&mut self, down: bool) {
+        let n = self.rows().min(LIST_ROWS);
+        if self.role.is_some() || n == 0 {
+            return;
+        }
+        self.reveal.set(true);
+        self.selected = Some(match self.selected {
+            None if down => 0,
+            None => n - 1,
+            Some(k) if down => (k + 1).min(n - 1),
+            Some(k) => k.saturating_sub(1),
+        });
     }
 
     /// A key: the focused field's (the connection page) or the chat line's (the room); Esc leaves the room, then the
@@ -1392,248 +1388,22 @@ impl MpScreen {
             Focus::Password => &mut self.password,
             Focus::Relay => &mut self.relay,
         };
-        if f.key(k) {
-            self.selected = None;
-            self.join(net);
+        let typed = matches!(k, EntryKey::Char(_));
+        if !f.key(k) {
+            if typed && self.focus == Focus::Address {
+                self.selected = None;
+            }
+            return None;
+        }
+        match (self.selected, self.saves.is_some()) {
+            (Some(i), true) => self.host_save(i, net),
+            (Some(_), false) => self.join(net),
+            (None, true) => {}
+            (None, false) => self.join(net),
         }
         None
     }
 
-    // -------------------------------------------------------------------------------------------- drawing
-
-    /// The race heads for the cards, read once from the install.
-    pub fn load_pictures(&mut self, r: &mut crate::render::Renderer, install: &ig2_formats::Install) {
-        if self.races.is_empty() {
-            self.races = crate::mainscr_scenario::race_heads(r, install);
-        }
-    }
-
-    pub fn draw(&self, f: &mut Frame, d: &Draw, blink: bool) {
-        let v = &d.v;
-        let t = 1.0 - self.open / 100.0;
-        let (t1, t2) = (t * 155.0 + 100.0, t * 225.0 + 30.0);
-        // ADR 0056: a theme's colours over the lobby's own transparencies (its opening).
-        let theme = crate::theme::current();
-        let (fill, edge) = theme.map_or(([0.0, 54.0, 90.0], [0.0, 90.0, 130.0]), |t| (t.panel, t.panel_edge));
-        let box_ = |f: &mut Frame, r: [f32; 4]| fader::kirak_fader(f, d.white, v, r, fill, t1, edge, t2, [0.0, 0.0]);
-        let fade = self.open;
-        let col = |c: usize| match (theme, c) {
-            (Some(t), 1 | 0x22) => t.text.map(|x| x * fade / 100.0),
-            (Some(t), 2) => t.hot.map(|x| x * fade / 100.0),
-            (Some(t), 0x25) => t.dim.map(|x| x * fade / 100.0),
-            _ => d.col(c, fade),
-        };
-        let hover = self.spot_at(self.at);
-        // ADR 0042: our English words and lines show in the game's language.
-        let text = |f: &mut Frame, s: &[u8], x: f32, y: f32, size: usize, a: Align, c: usize| d.font.text(f, v, &crate::tr::bytes(d.texts.lang, s), x, y, 0, size, a, col(c), None);
-        let hot = |id: u32| if hover == id { 2 } else { 1 };
-        let cursor = |f: &mut Frame, fl: &Field, first: usize, x: f32, y: f32, size: usize| {
-            if blink {
-                let (w, h) = (d.font.advance(size), d.font.height(size));
-                let cx = x + w * (fl.cursor - first) as f32;
-                let c = col(1);
-                f.push(d.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(cx + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
-            }
-        };
-        let Some(st) = self.state() else {
-            // The connection page.
-            for r in [[120.0, 40.0, 400.0, 400.0], [125.0, 45.0, 390.0, 24.0], [125.0, 76.0, 390.0, 172.0], [130.0, 280.0, 380.0, 22.0], [130.0, 328.0, 380.0, 22.0], RELAY_BOX] {
-                box_(f, r);
-            }
-            for x in BUTTONS {
-                box_(f, [x, 392.0, 90.0, 30.0]);
-            }
-            let title = d.texts.get(15, 1, if self.inet { 30 } else { 29 });
-            text(f, &title, 320.0, 50.0, 3, Align::Centre, 1);
-            if self.rows() == 0 {
-                let empty = match (&self.saves, &self.internet) {
-                    (Some(_), _) => words::NO_SAVES,
-                    (None, Some(_)) if self.browsing.is_some() => words::ASKING,
-                    (None, Some(_)) => words::NO_PUBLIC,
-                    (None, None) => words::NONE_FOUND,
-                };
-                text(f, empty, 320.0, 150.0, 2, Align::Centre, 0x25);
-            }
-            if self.saves.is_none() {
-                let browse = if self.internet.is_some() { words::LAN } else { words::BROWSE };
-                text(f, browse, BROWSE_BOX[0] + 6.0, BROWSE_BOX[1], 2, Align::Left, hot(spot::BROWSE));
-                if self.internet.is_some() {
-                    text(f, words::REFRESH, REFRESH_BOX[0] + 6.0, REFRESH_BOX[1], 2, Align::Left, hot(spot::REFRESH));
-                }
-            }
-            // The public rooms (ADR 0060): one this game can't join (another version, install or mods; started) dimmed.
-            for (i, (_, l)) in self.internet.iter().flatten().take(LIST_ROWS).enumerate().filter(|_| self.saves.is_none()) {
-                let a = &l.announcement;
-                let y = 84.0 + 16.0 * i as f32;
-                let other = a.version != ig2_net::lobby::LOBBY_VERSION || a.rules != self.rules || l.mods != self.mods || a.started;
-                let c = if self.selected == Some(i) { 2 } else if other { 0x25 } else { 0x22 };
-                let lock = if a.password { "* " } else { "" };
-                text(f, format!("{lock}{}", a.name).as_bytes(), 136.0, y, 2, Align::Left, c);
-                let mode: String = a.scenario.chars().take(14).collect();
-                text(f, mode.as_bytes(), 400.0, y, 2, Align::Left, c);
-                text(f, format!("{}/{}", a.humans, a.slots).as_bytes(), 500.0, y, 2, Align::Right, c);
-            }
-            for (i, s) in self.saves.iter().flatten().take(LIST_ROWS).enumerate() {
-                let c = if self.selected == Some(i) { 2 } else { 0x22 };
-                text(f, &s.title, 136.0, 84.0 + 16.0 * i as f32, 2, Align::Left, c);
-                text(f, format!("{}", s.save.session.humans.len()).as_bytes(), 500.0, 84.0 + 16.0 * i as f32, 2, Align::Right, c);
-            }
-            for (i, s) in self.list.iter().take(LIST_ROWS).enumerate().filter(|_| self.saves.is_none() && self.internet.is_none()) {
-                let a = &s.announcement;
-                let y = 84.0 + 16.0 * i as f32;
-                let c = if self.selected == Some(i) { 2 } else if a.rules != self.rules || a.started { 0x25 } else { 0x22 };
-                let lock = if a.password { "* " } else { "" };
-                text(f, format!("{lock}{}", a.name).as_bytes(), 136.0, y, 2, Align::Left, c);
-                text(f, format!("{}/{}", a.humans, a.slots).as_bytes(), 500.0, y, 2, Align::Right, c);
-            }
-            text(f, words::ADDRESS, 130.0, 266.0, 2, Align::Left, 0x25);
-            // A long address (a join code) scrolls: its end shows, or from the cursor on when that is further left.
-            let first = self.address.text.len().saturating_sub(ADDRESS_SHOWN).min(self.address.cursor);
-            let shown = &self.address.text[first..(first + ADDRESS_SHOWN).min(self.address.text.len())];
-            text(f, shown, 136.0, 285.0, 2, Align::Left, if self.focus == Focus::Address { 2 } else { 0x22 });
-            text(f, words::PASSWORD, 130.0, 314.0, 2, Align::Left, 0x25);
-            let stars = vec![b'*'; self.password.text.len()];
-            text(f, &stars, 136.0, 333.0, 2, Align::Left, if self.focus == Focus::Password { 2 } else { 0x22 });
-            text(f, words::RELAY, 136.0, 357.0, 2, Align::Left, 0x25);
-            let relay_x = 136.0 + d.font.advance(2) * crate::tr::bytes(d.texts.lang, words::RELAY).len() as f32;
-            let relay_first = self.relay.text.len().saturating_sub(RELAY_SHOWN).min(self.relay.cursor);
-            text(f, &self.relay.text[relay_first..(relay_first + RELAY_SHOWN).min(self.relay.text.len())], relay_x, 357.0, 2, Align::Left, if self.focus == Focus::Relay { 2 } else { 0x22 });
-            match self.focus {
-                Focus::Address => cursor(f, &self.address, first, 136.0, 285.0, 2),
-                Focus::Password => cursor(f, &self.password, 0, 136.0, 333.0, 2),
-                Focus::Relay => cursor(f, &self.relay, relay_first, relay_x, 357.0, 2),
-            }
-            let line = if self.lost && self.line.is_empty() { d.texts.get(14, 5, 3) } else { self.line.clone() };
-            text(f, &line, 320.0, 377.0, 2, Align::Centre, 2);
-            let saved = if self.saves.is_some() { words::LAN } else { words::SAVED };
-            let join_c = if self.saves.is_some() { 0x25 } else { hot(spot::JOIN) };
-            let labels: [(&[u8], usize); 4] = [(words::HOST, hot(spot::HOST)), (&d.texts.get(16, 3, 3), join_c), (saved, hot(spot::SAVED)), (&d.texts.get(15, 3, 7), hot(spot::CANCEL))];
-            for (k, (label, c)) in labels.into_iter().enumerate() {
-                text(f, label, BUTTONS[k] + 45.0, 402.0, 2, Align::Centre, c);
-            }
-            return;
-        };
-        // The room.
-        for r in [[16.0, 8.0, 608.0, 26.0], [16.0, 40.0, 380.0, 272.0], [404.0, 40.0, 220.0, 272.0], [16.0, 316.0, 608.0, 40.0], [16.0, 360.0, 608.0, 80.0], [16.0, 444.0, 120.0, 30.0], [504.0, 444.0, 120.0, 30.0]] {
-            box_(f, r);
-        }
-        text(f, st.name.as_bytes(), 320.0, 13.0, 3, Align::Centre, 1);
-        let me = self.member();
-        let sprite = |f: &mut Frame, tex: TexId, r: [f32; 4], c: [f32; 3]| {
-            f.push(tex, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0), [r[2] * v.k / 2.0, r[3] * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
-        };
-        for (i, s) in st.slots.iter().enumerate().take(8) {
-            let y = 58.0 + 32.0 * i as f32;
-            let own = me.is_some_and(|m| s.kind == SlotKind::Human(m));
-            // ADR 0041: the slot's card, a stripe in the empire's colour (`ColonyKisInfo`'s owner colour 0xf + empire)
-            // and the race's head.
-            box_(f, [20.0, y - 7.0, 372.0, 28.0]);
-            if s.kind != SlotKind::Closed {
-                sprite(f, d.white, [24.0, y - 5.0, 4.0, 24.0], d.col(0xf + s.empire as usize, fade));
-                if let Some(Some(head)) = self.races.get((s.race as usize).wrapping_sub(1)) {
-                    sprite(f, *head, [31.0, y - 5.0, 24.0, 24.0], [fade / 100.0; 3]);
-                }
-            }
-            if st.galaxy.is_some() {
-                let race_c = if hover == spot::RACE + i as u32 && (own || self.is_host()) { 2 } else { 0x22 };
-                text(f, &d.texts.get(0x11, 1, (s.race.clamp(0, 19) + 5) as u16), CARD_TEXT, y, 2, Align::Left, race_c);
-            } else if let Some(h) = self.resume.as_ref().and_then(|(sv, _)| sv.session.humans.iter().find(|h| h.empire == s.empire)) {
-                // A resumed save: whose empire it was.
-                text(f, h.name.as_bytes(), CARD_TEXT, y, 2, Align::Left, 0x25);
-            }
-            let (who, ready): (Vec<u8>, Option<bool>) = match s.kind {
-                SlotKind::Human(m) => st.members.iter().find(|x| x.id == m).map_or((Vec::new(), None), |x| (x.name.as_bytes().to_vec(), Some(x.ready))),
-                SlotKind::Ai => (words::COMPUTER.to_vec(), None),
-                SlotKind::Open => (words::OPEN.to_vec(), None),
-                SlotKind::Closed => (words::CLOSED.to_vec(), None),
-            };
-            let holder_c = if own || (hover == spot::HOLDER + i as u32 && matches!(s.kind, SlotKind::Open | SlotKind::Ai)) { 2 } else { 0x22 };
-            text(f, &who, 176.0, y, 2, Align::Left, holder_c);
-            if let (SlotKind::Ai, Some(o)) = (s.kind, st.galaxy) {
-                // ADR 0033: the computer's level (the skirmish menu's strings 15/4/1..3).
-                let c = if !self.is_host() { 0x25 } else if hover == spot::LEVEL + i as u32 { 2 } else { 0x22 };
-                text(f, &d.texts.get(15, 4, o.difficulty[(s.empire as usize).clamp(1, 8) - 1].clamp(1, 3) as u16), LEVEL_X, y, 2, Align::Left, c);
-            }
-            // The mark ends at the card's right edge (the font's `Align::Right` needs a field width).
-            let mark: Option<(Vec<u8>, usize)> = match (s.kind, ready) {
-                (SlotKind::Human(0), _) => Some((words::HOST_MARK.to_vec(), 0x25)),
-                (_, Some(true)) => Some((d.texts.get(14, 5, 6), 2)),
-                (_, Some(false)) => Some((words::NOT_READY.to_vec(), 0x25)),
-                _ => None,
-            };
-            if let Some((m, c)) = mark {
-                text(f, &m, 386.0 - d.font.advance(2) * m.len() as f32, y, 2, Align::Left, c);
-            }
-        }
-        if let Some(o) = st.galaxy {
-            let rows: [(Vec<u8>, Vec<u8>); OPTIONS] = [
-                (b"".to_vec(), d.texts.get(14, 2, PLANETS.iter().position(|&p| p == o.planets).unwrap_or(1) as u16 + 1)),
-                (d.texts.get(14, 1, 1), format!("{}", o.ais).into_bytes()),
-                (words::SHAPE.to_vec(), format!("{}", o.shape).into_bytes()),
-                (words::BATTLES.to_vec(), words::BATTLE[o.battle_status.min(3) as usize].to_vec()),
-                (words::SPEED.to_vec(), words::SPEED_BY[o.host_time as usize].to_vec()),
-                (words::FORMATION.to_vec(), words::FORMATION_BY[o.formation as usize].to_vec()),
-                (words::SPECTATORS.to_vec(), words::SPECTATORS_BY[o.spectators as usize].to_vec()),
-                (words::AI.to_vec(), words::AI_BY[o.enhanced_ai as usize].to_vec()),
-            ];
-            let mut planets = d.texts.get(15, 2, 8);
-            planets.push(b':');
-            for (k, (label, value)) in rows.iter().enumerate() {
-                let y = 60.0 + 30.0 * k as f32;
-                text(f, if k == 0 { &planets } else { label }, 414.0, y, 2, Align::Left, 0x25);
-                text(f, value, 414.0, y + 18.0, 2, Align::Left, 0x22);
-                if self.is_host() {
-                    let id = spot::OPTION + 2 * k as u32;
-                    text(f, b"<-", 571.0, y + 18.0, 2, Align::Centre, hot(id));
-                    text(f, b"->", 603.0, y + 18.0, 2, Align::Centre, hot(id + 1));
-                }
-            }
-        }
-        if let Some(Role::Host { listener, .. }) = &self.role {
-            let map = match listener.port_map() {
-                PortMap::Off => words::MAP_OFF.to_vec(),
-                PortMap::Asking => words::MAP_ASKING.to_vec(),
-                PortMap::Mapped(a) => format!("Port mapping: on, reachable at {a}").into_bytes(),
-                PortMap::Failed(e) => format!("Port mapping failed: {e}").into_bytes(),
-            };
-            text(f, &map, 24.0, 320.0, 2, Align::Left, hot(spot::PORT_MAP));
-            text(f, words::PRIVATE[st.private as usize], 476.0, 320.0, 2, Align::Left, hot(spot::PRIVATE));
-            let code = self.join_code().map_or_else(|| words::NO_CODE.to_vec(), |c| crate::tr::fill(d.texts.lang, "Join code: {}  (click: copy)", &[c.encode().as_bytes()]));
-            text(f, &code, 24.0, 338.0, 2, Align::Left, hot(spot::CODE));
-            let relay = match listener.rendezvous() {
-                Rendezvous::Off => None,
-                Rendezvous::Asking => Some("Relay server: opening the room...".to_string()),
-                Rendezvous::Registered(a) => Some(format!("Relay server: room open, seen at {a}")),
-                Rendezvous::Refused(ig2_net::rendezvous::Refusal::Full) => Some("Relay server: full, try later".into()),
-                Rendezvous::Refused(_) => Some("Relay server: refused the room".into()),
-                Rendezvous::NoAnswer => Some("Relay server: no answer".into()),
-            };
-            if let Some(r) = relay {
-                text(f, r.as_bytes(), 24.0, 351.0, 2, Align::Left, 0x22);
-                // A private room is never listed: its switch dims.
-                text(f, words::PUBLIC[self.public as usize], 476.0, 351.0, 2, Align::Left, if st.private { 0x25 } else { hot(spot::PUBLIC) });
-            }
-        } else if st.private {
-            text(f, words::PRIVATE[1], 476.0, 320.0, 2, Align::Left, 0x25);
-        }
-        let first = self.chat.len().saturating_sub(CHAT_LINES);
-        for (j, (who, line)) in self.chat[first..].iter().enumerate() {
-            // A line of this machine's own (no speaker) shows bare.
-            let shown = if who.is_empty() { line.clone() } else { format!("{who}: {line}") };
-            text(f, shown.as_bytes(), 24.0, 364.0 + 14.0 * j as f32, 2, Align::Left, 0x22);
-        }
-        text(f, &self.entry.text, 24.0, 424.0, 2, Align::Left, 2);
-        cursor(f, &self.entry, 0, 24.0, 424.0, 2);
-        text(f, &self.line, 320.0, 452.0, 2, Align::Centre, 2);
-        text(f, &d.texts.get(14, 1, 11), 76.0, 452.0, 3, Align::Centre, hot(spot::LEAVE));
-        let (label, c) = if self.is_host() {
-            (if self.force { words::START_ANYWAY.to_vec() } else { d.texts.get(14, 1, 12) }, hot(spot::READY))
-        } else {
-            let ready = st.members.iter().find(|m| Some(m.id) == me).is_some_and(|m| m.ready);
-            (d.texts.get(14, 5, 6), if ready { 2 } else { hot(spot::READY) })
-        };
-        text(f, &label, 564.0, 452.0, 3, Align::Centre, c);
-    }
 }
 
 // ------------------------------------------------------------------------------------------------ the session
@@ -1957,8 +1727,7 @@ pub fn headless_host() -> Result<(), String> {
         }
         let ready = s.state().is_some_and(|st| st.members.len() >= 2 && st.members.iter().filter(|m| m.id != 0).all(|m| m.ready));
         if ready {
-            let at = s.boxes().into_iter().find(|b| b.0 == spot::READY).map(|(_, r)| [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]).ok_or("no start button")?;
-            if let Some(Out::Start(b)) = s.press(at, false, &mut net) {
+            if let Some(Out::Start(b)) = s.act(spot::READY, false, &mut net) {
                 break b;
             }
         }
@@ -2062,15 +1831,8 @@ mod tests {
         }
     }
 
-    /// The centre of hot-spot `id` on `s`.
-    fn at(s: &MpScreen, id: u32) -> [f32; 2] {
-        let r = s.boxes().into_iter().find(|b| b.0 == id).unwrap_or_else(|| panic!("spot {id:#x} is off")).1;
-        [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]
-    }
-
     fn click(s: &mut MpScreen, id: u32, right: bool, net: &mut LoopNet) -> Option<Out> {
-        let p = at(s, id);
-        s.press(p, right, net)
+        s.act(id, right, net)
     }
 
     /// Tick every screen until `done` (2 s at most); returns the starts that came out.
@@ -2235,7 +1997,7 @@ mod tests {
         sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().galaxy.is_some_and(|g| g.ais == 1));
         let i = host.state().unwrap().slots.iter().position(|s| s.kind == SlotKind::Ai).expect("an AI slot") as u32;
         let e = host.state().unwrap().slots[i as usize].empire;
-        assert!(!guests[0].boxes().iter().any(|b| b.0 == spot::LEVEL + i), "a joiner has no level button");
+        assert!(click(&mut guests[0], spot::LEVEL + i, false, &mut net).is_none(), "a joiner sets no level");
         for right in [false, false, true] {
             assert!(click(&mut host, spot::LEVEL + i, right, &mut net).is_some());
         }
@@ -3007,6 +2769,47 @@ mod tests {
             assert!(t.elapsed() < Duration::from_secs(2), "the joiners didn't notice");
         }
     }
+    /// Ours (ADR 0064): both pages lay out for the host and a joiner; the room's drop-downs (holder, computer level,
+    /// race) act through [`MpScreen::apply`]; a right click is Back when the menu's navigation is on.
+    #[test]
+    fn the_pages_lay_out_and_their_drop_downs_act() {
+        let texts = crate::ui::UiTexts { strings: Default::default(), kinds: Vec::new(), lang: ig2_formats::text::Lang::En };
+        let theme = crate::theme::Theme::modern();
+        let style = crate::gui::style(&theme);
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut net = LoopNet::default();
+        let page = |s: &mut MpScreen, flow: bool, gui: &mut crate::gui::Gui| {
+            let mut acts = Vec::new();
+            gui.run((1024, 768), &style, |ctx| acts = s.page(ctx, &texts, &[], &theme, flow));
+            acts
+        };
+        let mut lone = MpScreen::open(true, "Lone", RULES);
+        assert!(page(&mut lone, false, &mut gui).is_empty(), "nothing before the fade ends");
+        let (mut host, mut guests) = room(1, &mut net);
+        for s in std::iter::once(&mut host).chain(guests.iter_mut()) {
+            assert!(page(s, false, &mut gui).is_empty());
+        }
+        host.apply(vec![page::Act::Slot(7, SlotKind::Ai), page::Act::Level(7, 3), page::Act::Race(0, 4)], &mut net);
+        // A joiner can't change another's race nor any holder.
+        let outs = guests[0].apply(vec![page::Act::Race(0, 5), page::Act::Slot(6, SlotKind::Closed)], &mut net);
+        assert!(outs.is_empty());
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().slots[7].kind == SlotKind::Ai);
+        let st = guests[0].state().unwrap();
+        assert_eq!((st.slots[0].race, st.slots[6].kind, st.galaxy.unwrap().difficulty[7]), (4, SlotKind::Open, 3));
+        // The right button: Back with the menu's navigation, nothing without.
+        let right = |gui: &mut crate::gui::Gui| {
+            gui.pointer(Some([5.0, 5.0]), crate::gui::Gui::scale(768));
+            gui.button(1, true);
+            gui.button(1, false);
+        };
+        right(&mut gui);
+        assert!(page(&mut host, false, &mut gui).is_empty());
+        right(&mut gui);
+        assert_eq!(page(&mut host, true, &mut gui), [page::Act::Back]);
+        host.apply(vec![page::Act::Back], &mut net);
+        assert!(host.role.is_none(), "Back leaves the room");
+    }
+
     #[test]
     fn the_host_maps_its_port_from_the_room() {
         let mut net = LoopNet::default();
@@ -3016,7 +2819,7 @@ mod tests {
             _ => unreachable!(),
         };
         assert_eq!(map(&host), PortMap::Mapped("203.0.113.7:4001".parse().unwrap()), "on by default (ADR 0020)");
-        assert!(!guests[0].boxes().iter().any(|b| b.0 == spot::PORT_MAP), "a joiner has no port mapping");
+        assert!(click(&mut guests[0], spot::PORT_MAP, false, &mut net).is_none(), "a joiner has no port mapping");
         assert!(matches!(click(&mut host, spot::PORT_MAP, false, &mut net), Some(Out::Click)));
         assert_eq!(map(&host), PortMap::Off, "a press removes the mapping");
         click(&mut host, spot::PORT_MAP, false, &mut net);
@@ -3161,7 +2964,7 @@ mod tests {
     }
 
     /// ADR 0060 through the screens and a service on 127.0.0.1: the host's room goes on the public list only once it
-    /// switches Public on, a joiner's "Browse internet games" lists it and two clicks on its row join it.
+    /// switches Public on, a joiner's "Internet games" tab lists it and two clicks on its row join it.
     #[test]
     fn a_public_room_is_browsed_and_joined_with_a_click() {
         let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -3201,7 +3004,7 @@ mod tests {
         assert_eq!(guest.line, words::ASKING);
         wait(&mut host, &mut host_net, &mut guest, &mut net, "asked", &|_, g| g.browsing.is_none());
         assert_eq!((guest.rows(), guest.line.as_slice()), (0, words::NO_PUBLIC));
-        assert!(host.boxes().iter().any(|b| b.0 == spot::PUBLIC), "a host with a relay has the switch");
+        assert!(matches!(&host.role, Some(Role::Host { listener, .. }) if listener.rendezvous() != Rendezvous::Off), "a host with a relay has the switch");
         click_on(&mut host, spot::PUBLIC, &mut host_net);
         assert!(host.public);
         for _ in 0..5 {
@@ -3230,8 +3033,7 @@ mod tests {
     }
 
     fn click_on(s: &mut MpScreen, id: u32, net: &mut dyn Net) -> Option<Out> {
-        let p = at(s, id);
-        s.press(p, false, net)
+        s.act(id, false, net)
     }
 
     #[test]
