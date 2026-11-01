@@ -73,6 +73,8 @@ pub struct UnitView {
     pub owner: i32,
     pub hull: i32,
     pub flags: u32,
+    /// `+0x18c` flags2 (bit 2: not counted).
+    pub flags2: u32,
     pub has_gun: bool,
     /// `+0x15c`: the design (the pod tech for a defence turret).
     pub design: i32,
@@ -172,6 +174,10 @@ pub struct ColonySnap {
     pub retreat: [u8; 18],
     pub present: [u8; 19],
     pub war_flag: bool,
+    /// The planet's whole `+0x64` byte and the one of the planet before it (`Bolygok[p − 1]`): the road rebuild's
+    /// gates (spec §3.2).
+    pub war_byte: u8,
+    pub prev_war_byte: u8,
     /// `MultiPlayerMode` (exe 0xBAE2C0), and the MP ground war (`GrWar_MultiCsata_folyamatban` 0xBAD13C) runs on this
     /// planet (`GrWar_MultiCsata_bolygo` 0xBAD140): the gates of `Colony_MouseInit2` and `ColonyGfx2D_1` (spec §11.1).
     pub multiplayer: bool,
@@ -232,6 +238,7 @@ impl ColonySnap {
                     owner: u.owner,
                     hull: u.hull,
                     flags: u.flags,
+                    flags2: u.flags2,
                     has_gun: u.has_gun,
                     design: u.design,
                     side: u.side,
@@ -299,6 +306,8 @@ impl ColonySnap {
             retreat: field.retreat,
             present,
             war_flag: state.mem.u8(ig2_sim::save::va::PLANETS + (planet * ig2_sim::save::PLANET_SIZE) as u32 + 0x64) & 1 != 0,
+            war_byte: state.mem.u8(ig2_sim::save::va::PLANETS + (planet * ig2_sim::save::PLANET_SIZE) as u32 + 0x64),
+            prev_war_byte: state.mem.u8(ig2_sim::save::va::PLANETS + (planet.saturating_sub(1) * ig2_sim::save::PLANET_SIZE) as u32 + 0x64),
             multiplayer: state.mem.u8(ig2_sim::save::va::MULTIPLAYER) & 1 != 0,
             mp_war_here: state.mem.i32(0xBAD13C) != 0 && state.mem.i32(0xBAD140) == planet as i32,
             attacker: usize::try_from(field.attack_fleet).ok().filter(|&f| f > 0).and_then(|f| state.fleets.get(f)).map_or(0, |r| r[0x15] as i32),
@@ -647,6 +656,12 @@ impl CameraKeys {
         }
     }
 
+    /// `Colony_Belep` (exe 0x465b40): the held keys go; the speeds, `NextCameraMode`, `TankView`, its last angle and
+    /// the preset's glide are globals that stay.
+    pub fn reentered(&self) -> Self {
+        Self { rotate_speed: self.rotate_speed, zoom_speed: self.zoom_speed, pitch_speed: self.pitch_speed, mode: self.mode, tank_view: self.tank_view, tank_last: self.tank_last, tween: self.tween, ..Self::default() }
+    }
+
     /// `c`: the next preset; zoom and pitch glide there over 15 drawn frames.
     pub fn preset(&mut self) {
         self.mode = if self.mode + 1 > 3 { 0 } else { self.mode + 1 };
@@ -669,7 +684,7 @@ impl CameraKeys {
     }
 
     /// `ShowColony`'s tank camera (exe 0x49f130, asm 0x4a097e..0x4a0be4), once per drawn frame: while `TankView`, the
-    /// first selected unit by slot (not `NOT_PLACED`, not `NOT_COUNTED`) is followed from 130 behind and 60 above,
+    /// first selected unit by slot (not `NOT_PLACED`, not `NOT_COUNTED`, not flags2 & 4) is followed from 130 behind and 60 above,
     /// its heading turned at most 0.025 rad a frame; the normal block, its clamps and the quake's jolt are skipped,
     /// keys and edge scroll still move the hidden camera. No selected unit: `TankView` off, the normal camera.
     pub fn tank(&mut self, cam: &mut Camera, units: &[UnitView], selected: &std::collections::BTreeSet<usize>) {
@@ -680,7 +695,7 @@ impl CameraKeys {
         let ok = |u: &&UnitView| selected.contains(&u.slot) && u.flags & flag::NOT_PLACED == 0;
         let mut chosen: Vec<&UnitView> = units.iter().filter(ok).collect();
         chosen.sort_by_key(|u| u.slot);
-        let Some(u) = chosen.into_iter().find(|u| u.flags & flag::NOT_COUNTED == 0) else {
+        let Some(u) = chosen.into_iter().find(|u| u.flags & flag::NOT_COUNTED == 0 && u.flags2 & 4 == 0) else {
             self.tank_view = false;
             return;
         };
@@ -1115,6 +1130,8 @@ fn ribbon(eye: V3, a: V3, b: V3, hw: f32, v0: f32, v1: f32, ca: [f32; 4], cb: [f
 
 /// A building as baked: slot, kind, placement, footprint `(w, h)` and `(ground, x, y)`.
 type Placed = (usize, u8, Transform, (i32, i32), V3);
+/// A building's finest level at each collapse key, and its textures.
+type Collapse = (Vec<Model>, Vec<TexId>);
 
 /// Which cached model a drawn unit was: its hull's (`(hull, owner)`) or a defence turret's gun.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1176,6 +1193,8 @@ pub struct ColonyScene {
     key: Vec<(usize, u8, i32, i32, bool, bool)>,
     /// Building models for the build cursor (`tempepulet`), by kind.
     buildings: HashMap<u8, Option<UnitMesh>>,
+    /// The buildings' collapse keyframes by kind: the finest level of detail at each of its keys ([`Self::collapse_pose`]).
+    collapses: HashMap<u8, Option<Collapse>>,
     /// `hordozo.xvb` (`WF::LoadMesh` exe 0x483f70), loaded on the first dropship.
     dropship: Option<Option<UnitMesh>>,
     /// The shots' and debris' models (`WF::LoadMesh` exe 0x483f70), loaded on first use.
@@ -1187,6 +1206,9 @@ pub struct ColonyScene {
     unit_poses: Vec<(usize, Pose, Transform)>,
     /// Each building's slot, kind, placement, footprint and `(ground, x, y)`: what a ruin starts from (§5.9).
     placed: Vec<Placed>,
+    /// The buildings the roads were laid out for, and `0x996438` (a rebuild pending): [`ColonyScene::reload`].
+    roads_from: Vec<BuildingView>,
+    roads_pending: bool,
     /// The unit info's turning model's render target ([`ColonyScene::render_info_model`]).
     info_target: Option<crate::render::Target>,
     /// The info box's planet globes `b<k>0.xvb` ([`ColonyScene::render_info_globe`]).
@@ -1236,19 +1258,28 @@ struct Kept {
     white: TexId,
     levels: HashMap<u8, Option<Vec<Model>>>,
     finest: HashMap<u8, Option<Model>>,
+    /// The buildings to lay the roads out for (`None`: the snapshot's) and whether a rebuild is still pending.
+    roads: Option<(Vec<BuildingView>, bool)>,
 }
 
 impl ColonyScene {
     pub fn load(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, maps: &[GroundMap], s: &ColonySnap) -> Result<Self, String> {
         let white = r.add_texture(&Image::white());
-        Self::load_with(r, install, rules, maps, s, Kept { textures: HashMap::new(), white, levels: HashMap::new(), finest: HashMap::new() })
+        Self::load_with(r, install, rules, maps, s, Kept { textures: HashMap::new(), white, levels: HashMap::new(), finest: HashMap::new(), roads: None })
     }
 
     /// The scene again after its buildings changed ([`ColonyScene::stale`]), keeping the textures this scene has
     /// already uploaded and the building models it has read (a reload in a ground war read them all again:
     /// docs/perf.md); the clocks and effects carry over ([`ColonyScene::carry_from`]).
+    ///
+    /// The roads (`0x996438`): `Build3dBuilding` (exe 0x45f640) always asks for a rebuild, `Remove3dBuilding` (exe
+    /// 0x497760) only when the planet before this one has its `+0x64` byte clear [original quirk: `Bolygok[AktPlanet −
+    /// 1]`], and `ShowColony` (exe 0x49f130) rebuilds only while this planet's byte is clear: in a ground war the old
+    /// roads stay, a ruined building's frame ring with them.
     pub fn reload(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, maps: &[GroundMap], s: &ColonySnap) -> Result<(), String> {
-        let kept = Kept { textures: std::mem::take(&mut self.textures), white: self.white, levels: std::mem::take(&mut self.levels), finest: std::mem::take(&mut self.finest) };
+        let roads = road_rebuild(&self.placed, &s.buildings, self.roads_pending, s.war_byte, s.prev_war_byte);
+        let roads = Some(if roads.0 { (s.buildings.clone(), false) } else { (self.roads_from.clone(), roads.1) });
+        let kept = Kept { textures: std::mem::take(&mut self.textures), white: self.white, levels: std::mem::take(&mut self.levels), finest: std::mem::take(&mut self.finest), roads };
         let scene = Self::load_with(r, install, rules, maps, s, kept)?;
         let old = std::mem::replace(self, scene);
         self.carry_from(old);
@@ -1257,7 +1288,8 @@ impl ColonyScene {
 
     fn load_with(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, maps: &[GroundMap], s: &ColonySnap, kept: Kept) -> Result<Self, String> {
         r.clear_meshes();
-        let Kept { mut textures, white, levels: mut models, mut finest } = kept;
+        let Kept { mut textures, white, levels: mut models, mut finest, roads } = kept;
+        let (roads_from, roads_pending) = roads.unwrap_or_else(|| (s.buildings.clone(), false));
         let gm = maps.get(s.map).ok_or(format!("no colony map {}", s.map))?;
         let raw = install.read("dataraw/colony/terepleiro.txt").map_err(|e| e.to_string())?;
         let txt = text::decode(&raw, install.lang());
@@ -1475,7 +1507,7 @@ impl ColonyScene {
             statics.push(Drawn { mesh: r.add_mesh(&v), draws: vec![(0..n, base_tex, true, Shadow::None)], when: Some(false), lods: Vec::new() });
         }
         // The roads (spec §3.3): `ut<n>.xvb` strips along the buildings' frame cells.
-        let mut grid = road_grid(gm, &s.buildings, &rules.building_footprints);
+        let mut grid = road_grid(gm, &roads_from, &rules.building_footprints);
         let mut pieces = Vec::new();
         road_pieces(&mut grid, &mut pieces);
         road_heights(&mut pieces, gm);
@@ -1510,7 +1542,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), new_ruins: Vec::new(), extra_tex: None, emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new(), unit_poses: Vec::new(), placed })
+        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), new_ruins: Vec::new(), extra_tex: None, emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), collapses: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new(), unit_poses: Vec::new(), placed, roads_from, roads_pending })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -1532,19 +1564,38 @@ impl ColonyScene {
             .or_insert_with(|| {
                 let bm = rules.building_models.get(kind as usize)?;
                 let mut model = Model::load(install, "vector/colony/", &bm.model, "textures/colony/").map_err(|e| eprintln!("ig2-client: building {kind}: {e}")).ok()?;
-                model.set_look("_a_", Look::Glass(0.4));
-                model.set_look("_c_", Look::Glass(0.4));
-                let texs = model
-                    .parts
-                    .iter()
-                    .map(|p| {
-                        let path = if building_env(p) { env_texture(install, p, sky.as_deref(), true) } else { p.texture.clone() };
-                        texture(r, install, textures, white, path.as_deref())
-                    })
-                    .collect();
+                let texs = building_looks(r, install, textures, white, sky.as_deref(), &mut model);
                 Some(UnitMesh { model, texs })
             })
             .as_ref()
+    }
+
+    /// `Rom::Update` (exe 0x4a5240) with `OptionsBuildingRes` 2 (the default, and the remaster's): `SetFrame(frame)`
+    /// on a collapsing building from frame 0 on, except kinds 2, 10, 11, 12, 28..=31, 41, 50, 53, 55; the keys live
+    /// in the finest level of detail (most `*v2` carry 10), blended in 1/256 steps and held at the last (`Kocka`).
+    fn collapse_pose(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, kind: u8, frame: f32) -> Option<(Model, &[TexId])> {
+        if frame < 0.0 || matches!(kind, 2 | 10 | 11 | 12 | 28..=31 | 41 | 50 | 53 | 55) {
+            return None;
+        }
+        let (textures, white, sky) = (&mut self.textures, self.white, &self.sky);
+        let (poses, texs) = self
+            .collapses
+            .entry(kind)
+            .or_insert_with(|| {
+                let bm = rules.building_models.get(kind as usize)?;
+                let (stem, frames) = finest_stem(install, "vector/colony/", &bm.model);
+                let root = Model::load(install, "vector/colony/", &bm.model, "textures/colony/").ok()?;
+                let mut poses = Model::load_poses(install, "vector/colony/", &format!("{stem}.xvb"), "textures/colony/", 0..frames.max(1) as usize).map_err(|e| eprintln!("ig2-client: building {kind}: {e}")).ok()?;
+                let mut texs = Vec::new();
+                for m in &mut poses {
+                    m.origin = root.origin;
+                    texs = building_looks(r, install, textures, white, sky.as_deref(), m);
+                }
+                Some((poses, texs))
+            })
+            .as_ref()?;
+        let (f0, f1, t) = scene::frame_keys(frame, poses.len());
+        Some((poses[f0].lerp(&poses[f1], t), texs))
     }
 
     /// The scene reloaded after the buildings changed (`stale`): what runs on keeps going (the smoke, the weather, the
@@ -1804,20 +1855,41 @@ pub fn kis_info_lights(light: V3) -> crate::lighting::Lights {
 
 /// `LoadBox(name)` as the info box draws it (property 0x4000000): the last level of the detail chain
 /// (`lod_archive`), with the chain head's extents, which `AddToScene` scales by.
+/// The building models' looks: `_A_` and `_C_` glass, the env-mapped parts on the sky; one texture a part.
+fn building_looks(r: &mut Renderer, install: &Install, textures: &mut HashMap<String, TexId>, white: TexId, sky: Option<&str>, model: &mut Model) -> Vec<TexId> {
+    model.set_look("_a_", Look::Glass(0.4));
+    model.set_look("_c_", Look::Glass(0.4));
+    model
+        .parts
+        .iter()
+        .map(|p| {
+            let path = if building_env(p) { env_texture(install, p, sky, true) } else { p.texture.clone() };
+            texture(r, install, textures, white, path.as_deref())
+        })
+        .collect()
+}
+
+/// The last archive of `name`'s level-of-detail chain and its root's key count.
+fn finest_stem(install: &Install, vdir: &str, name: &str) -> (String, u32) {
+    let mut stem = name.trim_end_matches(".xvb").to_string();
+    let mut frames = 0;
+    for _ in 0..8 {
+        let Some(h) = install.read(&format!("dataraw/{vdir}{stem}.xv")).ok().and_then(|b| {
+            let ar = ig2_formats::xv::Archive::parse(&b).ok()?;
+            ig2_formats::xv::NodeHeader::parse(ar.root(Some(&stem))?.data).ok()
+        }) else { break };
+        frames = h.frames();
+        if h.lod_archive.is_empty() {
+            break;
+        }
+        stem = h.lod_archive.trim_end_matches(".xvb").to_string();
+    }
+    (stem, frames)
+}
+
 fn load_lod_finest(install: &Install, vdir: &str, name: &str, tdir: &str) -> Option<Model> {
     let root = Model::load(install, vdir, name, tdir).map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
-    let mut stem = name.trim_end_matches(".xvb").to_string();
-    for _ in 0..8 {
-        let next = install.read(&format!("dataraw/{vdir}{stem}.xv")).ok().and_then(|b| {
-            let ar = ig2_formats::xv::Archive::parse(&b).ok()?;
-            let h = ig2_formats::xv::NodeHeader::parse(ar.root(Some(&stem))?.data).ok()?;
-            (!h.lod_archive.is_empty()).then(|| h.lod_archive.trim_end_matches(".xvb").to_string())
-        });
-        match next {
-            Some(n) => stem = n,
-            None => break,
-        }
-    }
+    let (stem, _) = finest_stem(install, vdir, name);
     let mut last = Model::load(install, vdir, &format!("{stem}.xvb"), tdir).ok()?;
     last.origin = root.origin;
     Some(last)
@@ -1835,6 +1907,14 @@ pub fn model_dirs(dir: i32) -> (&'static str, &'static str) {
 
 /// The colony screen's `MapAlloc` (`Init3dColony`): the map's build mask as 4 × 4 blocks (`Decode2LargeMap`),
 /// then every building's interior (1) and frame ring (+0x20 per building) by `Allocate` in slot order.
+/// [`ColonyScene::reload`]'s road rule: `(rebuild now, still pending)` from the buildings placed before and now.
+fn road_rebuild(before: &[Placed], now: &[BuildingView], pending: bool, war_byte: u8, prev_war_byte: u8) -> (bool, bool) {
+    let added = now.iter().any(|b| !before.iter().any(|p| (p.0, p.1) == (b.slot, b.kind)));
+    let removed = before.iter().any(|p| !now.iter().any(|b| (p.0, p.1) == (b.slot, b.kind)));
+    let pending = pending || added || (removed && prev_war_byte == 0);
+    (pending && war_byte == 0, pending && war_byte != 0)
+}
+
 fn road_grid(gm: &GroundMap, buildings: &[BuildingView], footprints: &[(i32, i32)]) -> Vec<u8> {
     let mut g = ig2_sim::placement::Grid::from_terrain(&gm.terrain.mask);
     for b in buildings {
@@ -2260,8 +2340,11 @@ impl View {
         // transparency (`RomMeret[0]` = 7.8125e-5, `ScaleObj2(h, w, w/1.5)`, turned a quarter, `5w` above the ground).
         for ru in scene.smoke.ruins.clone() {
             if ru.collapsing {
-                if let Some(mesh) = scene.building_mesh(r, install, rules, ru.kind) {
-                    push_model_faded(&mesh.model, &mesh.texs, &ru.building, 1.0 - ru.fade * ru.fade, &mut dynamic, &mut draws);
+                let opacity = 1.0 - ru.fade * ru.fade;
+                if let Some((model, texs)) = scene.collapse_pose(r, install, rules, ru.kind, ru.frame) {
+                    push_model_faded(&model, texs, &ru.building, opacity, &mut dynamic, &mut draws);
+                } else if let Some(mesh) = scene.building_mesh(r, install, rules, ru.kind) {
+                    push_model_faded(&mesh.model, &mesh.texs, &ru.building, opacity, &mut dynamic, &mut draws);
                 }
             }
             if let Some(mesh) = scene.fx_mesh(r, install, "torm_e") {
@@ -3125,6 +3208,34 @@ mod tests {
         assert_eq!(ticks, 3 + 26);
     }
 
+    /// Row 466: the main building's collapse keys live in its finest level (`kkpv2`, 10 keys): the last key's model
+    /// has sunk.
+    #[test]
+    fn the_main_building_collapses_through_its_keys() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let (stem, frames) = finest_stem(&install, "vector/colony/", "kkpv0.xvb");
+        assert_eq!((stem.as_str(), frames), ("kkpv2", 10));
+        let poses = Model::load_poses(&install, "vector/colony/", "kkpv2.xvb", "textures/colony/", [0, 9]).unwrap();
+        // `Object01` drops 0.84 of the half-extent along the model's z (the height once stood up) from key 0 to 9.
+        let z = |m: &Model| m.positions().map(|v| v[2]).sum::<f32>() / m.positions().count() as f32;
+        assert!(z(&poses[0]) - z(&poses[1]) > 0.5, "{} {}", z(&poses[0]), z(&poses[1]));
+    }
+
+    /// Row 465: a building lost in a ground war leaves the roads as they were (its frame ring stays) until the war's
+    /// byte clears; a new building always asks for the rebuild; a loss asks only with the planet before's byte clear.
+    #[test]
+    fn roads_wait_for_the_war_to_end() {
+        let xf = Transform { matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], translation: [0.0; 3] };
+        let before: Vec<Placed> = vec![(3, 7, xf, (2, 2), [0.0; 3]), (4, 9, xf, (2, 2), [0.0; 3])];
+        let b = |slot, kind| BuildingView { slot, kind, x: 0.0, y: 0.0, work_left: 0, damage: 0, flags: 1, yield_pct: 100, efficiency: 256 };
+        let lost = vec![b(4, 9)];
+        assert_eq!(road_rebuild(&before, &lost, false, 1, 0), (false, true));
+        assert_eq!(road_rebuild(&before, &lost, false, 0, 0), (true, false));
+        assert_eq!(road_rebuild(&before, &lost, false, 0, 1), (false, false));
+        assert_eq!(road_rebuild(&before, &[b(3, 7), b(4, 9), b(5, 1)], false, 0, 1), (true, false));
+        assert_eq!(road_rebuild(&before, &[b(3, 7), b(4, 9)], true, 0, 1), (true, false));
+    }
+
     #[test]
     fn quick1_planet17_construction_matches_the_exe() {
         // `probes/scaffold.js` on grwar:17 of quick-1.sav (2026-10-25): slot 18 (kind 26, 21400 work left, `+0x14`
@@ -3258,3 +3369,4 @@ mod tests {
         assert!((0..3).all(|i| (l[i] - exe[i]).abs() < 1e-4), "{l:?}");
     }
 }
+

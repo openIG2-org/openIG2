@@ -184,6 +184,14 @@ frame cells without bit 8 → `AddUtDarab(col, from, to, 1)`. A run of 10+ cells
 `Grid2Real((from + to)/2, row + 0.5)` (columns: `(col + 0.5, (from + to)/2)`), at height
 `GetHeight((from + to)/8, row/4) − 2.5` (columns swapped).
 
+Rebuilds (`0x996438`, a rebuild pending): `Colony_Belep` and `Build3dBuilding` (exe 0x45f640) set it; `Remove3dBuilding`
+(exe 0x497760) sets it only when `Bolygok[AktPlanet − 1]+0x64` is 0 (asm 0x497867..0x497895 `CMP byte [AktPlanet·0x188 +
+0xb85d84], 0`; ELF 0x4ca7c0 tests `Bolygok[(AktPlanet − 1)·0x188 + 100] & 1`: the planet before the shown one
+[original quirk]); `ShowColony` (exe 0x49f130) runs `RecreateRoadSystem` and clears it only while the shown planet's
+`+0x64` byte is 0, `Colony_Kilep` clears it. So in a ground war the roads stay as they were: a ruined building keeps its
+frame ring (and the pad inside it) until the war ends [obs: `_local/grwar-ruin.json` on grwar:17 of quick-1.sav, the
+main building's ring and pad 11 s after its fall].
+
 ### 3.3 Planets the human doesn't see into
 `ShowColony`/`GFX_Colony`: `WF+0xa1b = owner == EN || BolygoTipus::pMuholdakMennyi(EN) || WF+0x9dd+EN` (the last an
 unsaved runtime flag) or the planet of an MP ground battle. `pMuholdakMennyi(e)` 0x4f0ea0 = planet `+0xc4 + e`
@@ -380,8 +388,14 @@ burst). `Rom::Refresh` on the fifth UI ticks (`Frissit2_Colony` exe 0x477dc0; co
    removed and the collapse ends. Each call two owner-1 dust puffs at the ruin: velocity `(0, r100/10 − 5, r100/10 −
    5)` (y drawn first), colour (200, 200, 0xaf), `T` 0x80, size 20, type 8. When it ends: fade-out starts.
 3. Fade-out: rubble transparency `+= 0.03`; at 1.0 the rubble goes and the ruin is deleted.
-`Rom::Update` each frame: the rubble at its transparency, the collapsing building at `fade²` (property 0x4000000);
-with `OptionsBuildingRes == 2` some kinds also `SetFrame(frame)`. About 3.35 s of collapse, 1.65 s of fade-out.
+`Rom::Update` each frame: the rubble at its transparency, the collapsing building at `fade²` (f32, property
+0x4000000); with `OptionsBuildingRes` (0xdb975c) 2, the default (`InitGlobalRegistrySettings` exe 0x517010), and the kind
+not 2, 10, 11, 12, 28..=31, 41, 50, 53, 55, `SetFrame(A, frame)` (exe 0x452f30) once `frame ≥ 0.0f`. `frame` (`Rom+0x2c`)
+starts at −2.0 and steps `(f32)((f64)frame + 0.1875)` with the fade, held at 10.0: posed from the 11th step (0.0625), the
+last key (9) on the 59th, 10.0 from the 64th. `SetFrame` stores `trunc(frame·256)`; `Kocka2` hands it to the children,
+`Kocka` blends key `f >> 8` toward the next by `(f & 0xff)/256` and holds the last: the keys live in the finest level of
+detail (most `*v2` carry 10: the main building's `kkpv2` sinks its `Object01` 0.84 of the half-extent from key 2 on;
+`gy2v2`, `lxv2`, `lxav2` have 2, `konnyuv2` 101). About 3.35 s of collapse, 1.65 s of fade-out.
 
 ### 5.10 Scorch marks (`Koszfolt`, ELF ctor 0x4f0270, `Refresh` exe 0x4903c0, `Update` exe 0x4a5010)
 Elements of the beams' list (exe 0xA34FD4, emptied by `Colony_Belep`/`Colony_Kilep`, newest first). Made by a ruin
@@ -623,7 +637,9 @@ the human doesn't see into (§3.3) are never hit [obs: `probes/colony_pick.js` o
 click points: 660 of 4800 hit one of 8 buildings, contiguous model outlines]. The port casts the eye's ray through
 the pointer against each building's world triangles at its drawn level of detail and keeps the nearest in front of
 the ground (`View::building_at`; 4793 of the 4800 points agree, the rest on outlines; a unit in front doesn't
-hide a building and an unfinished building's cut-away top still picks it [ours]).
+hide a building and an unfinished building's cut-away top still picks it [ours]). Like the exe it runs every drawn frame
+(and on every pointer move), with the cell under the pointer, so a camera move or a building change under a still pointer
+is followed.
 
 The hold: hot-spot 0x14 is not one-shot, so `Colony_Main` runs `GetNearestBuilding` every frame the left button is
 held on the view (until `Mouse_FelengedesMajdMegvar`). A press on no building drops the selection; while the pointer
@@ -686,6 +702,11 @@ bar runs past the cell above a charge of 200 [original quirk]); 6 and 7 are pale
 Hot-spot 4 released with the right button (the starmap) and PageUp/PageDown are blocked while
 `GetWarfareStatus(planet) = 1` (the war runs on the shown planet).
 
+`Colony_MouseInit2` (exe 0x467990; called after `Colony_Belep`/`Colony_MouseInit` in `IG2_gameUpdate` exe 0x4e0c9c and
+every colony frame from `UpdateFrame` exe 0x4e41fe) has no war test of its own: only the tutorial's colony lock
+(`TutorialColonyMindenLetiltvaKiveveAPageupot` 0xf66ff9) switches every hot-spot off (`Mouse_Szoveg_Off_Range(1,
+MouseSzovegSzam)`, the war buttons and the view 0x14 included) and returns.
+
 ### 11.2 Keys (`ColonyKeyboardHandler`)
 | Key | Effect |
 |---|---|
@@ -719,6 +740,10 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
   start point stays selected; every unit whose projected centre is inside the rectangle (inclusive) is selected, every
   other deselected; then, unless exactly one is selected, the selected units of other sides are deselected; with Shift
   the kept selection (`+0x146`) is added back.
+- **Right button held** (`Mouse_Jobb` 0xdb4652; `Colony_Main` exe 0x4666d0, the hot-spot 0x14 block): no box starts,
+  `GetNearestBuilding` still runs (units, landing clicks), and the building selection's step (`AktEpulet := nearest`,
+  `AktEpuletTipus`, its `PlaySoundGlobal(0)`) is skipped; with a build cursor the press drops it (the click, `ColonyBuildMode`
+  0). `BSelSize` 0x9964c4 (= 500.0 when the nearest building changes) is written only there and read nowhere.
 - **Left release**: the box ends; with the first selected unit EN's (not a mine) the select voice
   (`ColonySpeaker.Play(slot % 3 + 1, 1)`).
 - **Right press** (the press frame only) with units selected; `t` = the unit under the pointer, `b` = the building
@@ -857,8 +882,9 @@ first selected unit by slot (flags 8, not 2, not 0x40000000, not `+0x18c & 4`) g
 with `TankViewLastAngle` 0x8ec9f0 (−1000 at start, never reset) `d = a_new − last`, and if `|d| ≥ 0.025` (f64 compare) the
 angle steps `a = last + sign(d)·0.025` else `a = a_new`; target `(h − 30, x, y)`, eye `(h − 90, sin(a)·130 + x, cos(a)·130 + y)`.
 The normal block (clamps, ground rule, quake jolt) is skipped; projection, picking and HUD are unchanged; keys and edge
-scroll move the hidden camera; with no qualifying unit `TankView` = 0 that frame (mode stays 3). From the decompile, not
-runtime-captured.
+scroll move the hidden camera; with no qualifying unit `TankView` = 0 that frame (mode stays 3). `NextCameraMode`,
+`TankView`, `TankViewLastAngle`, the speeds and the preset's glide are globals: leaving and entering the screen keeps them
+(`Colony_Belep` clears only the held keys). From the decompile, not runtime-captured.
 
 `Frissit2_Colony` (exe 0x477dc0, every 100 Hz UI tick, all f32; speeds 0x997c64 rotate, 0x996e94 zoom, 0x997c68 pitch,
 kept across screens):
@@ -1034,6 +1060,6 @@ exe's click pass); results in
 Ours / approximations: distance fog off (border fog only); random draws are stand-in hashes, not libc (row 369);
 war effects: flashes, projectile models, trails, tracers and beam ported, smoke, dust, scorch marks, ruin fade and debris flight missing (§5, row 421); the build cursor's red is a tint; the radar is its own terrain-from-above
 render; mouse-wheel zoom; the pointer drawn on the colony screen only. Not compared on a capture: the scaffold collapse,
-the blink. Open rows: 369, 384 (rain streak pixels), 397 (hold
-with the right button), 398 (tank view across re-entry), 407 (building pick: stale until the pointer moves, posed at
-load, units don't hide it). The panel building's glass is less blue than the exe's.
+the blink. Ruins (§5.9): the collapse keyframes and the roads kept through a war (§3.2) compared on `_local/grwar-ruin.json`
+(the client's building falls about 2.3 s before the exe's there). Open rows: 369, 384 (rain streak pixels), 407 (building
+pick: posed at load, units don't hide it). The panel building's glass is less blue than the exe's.

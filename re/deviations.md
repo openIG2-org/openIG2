@@ -12,7 +12,6 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
-| 465 | colony, ruins | after a building's ruin the exe keeps the building's ground plate (the pad stays, the scorch mark lies on it); the client's plate goes with the building model | yes | colony.md §5 |
 
 ## Open: minor
 
@@ -23,11 +22,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 154 | main menu, scenario list | the picture slide transitions at t 820/880 still differ (3D RNG/pose) | minor | mainscr.md §14 |
 | 157 | main menu, MP rings | the main menu's remaining MP-ring leftovers (meteor/ship sounds; the local/inet rings are our lobby, ADR 0014) are not done | minor | mainscr.md §14 |
 | 380 | SpaceWar, end zoom-out | the battle planet is ~29 levels less red than the exe's (red only; not the light, fog, cloud shells, texture or `uv_mul`) | minor | spacewar.md §9 |
-| 397 | colony, hot-spot 0x14 | with the right button held the exe skips the click and select (`DAT_00db4652`), ours doesn't; the ring timer 0x9964c4 isn't ported | minor | colony.md §11.3 |
-| 398 | colony, TankView | the exe keeps TankView and TankViewLastAngle across re-entry (ours restarts); ours lacks the `+0x18c & 4` test in the unit choice | minor | colony.md §11.9 |
-| 405 | colony, ground-war lock | `Colony_MouseInit2` (exe 0x467990) switches every hot-spot off in a ground war, the war buttons and view included; ours only the non-war ones (the tutorial never locks during a war) | no | colony.md §11 |
-| 407 | colony, building pick | the model pick re-runs only when the pointer moves (the exe every frame), so after a camera scroll/zoom/turn or a building change with the pointer still it is stale until the pointer moves; building faces are posed at load (animated parts not followed); a unit in front doesn't hide a building; an unfinished building's cut-away top still picks | minor | colony.md §10 |
-| 466 | colony, collapsing building | a collapsing building sinks through its collapse frames in the exe (`Rom::Update`'s `SetFrame`, high building detail); the client only fades it out | minor | colony.md §5 |
+| 407 | colony, building pick | building faces are posed at load (animated parts not followed); a unit in front doesn't hide a building; an unfinished building's cut-away top still picks | minor | colony.md §10 |
 | 481 | text entries, Esc | Esc in the chat entry, the design screen's name entry and the options screen's save-name entry acts even while a screen change is pending; the exe's `DoKeyboard` (0x4db1a0, case 0x1b) ignores it then (`Belep` 0xbae24c, `Atlepes` 0xbae24d, `AktKepKell` 0xbae250); the renames are gated | minor | input.md §1 |
 | 482 | starmap, wormholes | the wormholes' end particles (particle set 7, `Wormhole3DSettings` exe 0x5bbd50) are not drawn: the exe shows a bright dot at each end of a known pair | minor | starmap.md §6, §9 |
 

@@ -132,6 +132,12 @@ pub struct WarUi {
     last_owner: i32,
     /// `SpecWeaponMode`: 1 fighters armed, 2 big ships.
     pub armed: u8,
+    /// `Mouse_Jobb` (exe 0xdb4652): the right button is held. `Colony_Main` hot-spot 0x14 then starts no box and
+    /// neither selects a building nor clicks (`GetNearestBuilding` still runs); a build cursor is dropped instead.
+    pub right_held: bool,
+    /// The tutorial's colony lock (`Colony_MouseInit2` exe 0x467990: `Mouse_Szoveg_Off_Range(1, MouseSzovegSzam)`
+    /// before any other test): the war's buttons go with every other hot-spot.
+    pub locked: bool,
     /// `KeretesKijeloles`, `keretstartx/y`: the box's corner while the left button is held.
     pub box_start: Option<[f32; 2]>,
     /// `+0x146`: each unit's selection when the press came (Shift keeps it).
@@ -310,7 +316,7 @@ impl WarUi {
 
     /// `Colony_MouseInit2`: the war button `id` is enabled.
     pub fn enabled(&self, c: &WarCtx, id: u32) -> bool {
-        if (0xb..=0x10).contains(&id) && c.bystander() {
+        if self.locked || ((0xb..=0x10).contains(&id) && c.bystander()) {
             return false;
         }
         match id {
@@ -357,7 +363,7 @@ impl WarUi {
             return out;
         }
         {
-            if left {
+            if left && !self.right_held {
                 self.box_start = Some(p);
             }
             // `GetNearestBuilding`'s unit half.
@@ -969,12 +975,39 @@ pub(crate) mod tests {
         assert!(cam.tank.is_none() && !k.tank_view && k.mode == 3);
     }
 
+    /// Row 398: a unit with flags2 & 4 is passed over; leaving and entering the screen keeps the mode, `TankView`
+    /// and the last angle (the eye goes on turning 0.025 a frame from where it was).
+    #[test]
+    fn tank_view_outlives_the_screen() {
+        use crate::colony::{Camera, CameraKeys, SavedCamera};
+        let mut k = CameraKeys::default();
+        for _ in 0..3 {
+            k.preset();
+        }
+        let mut cam = Camera::from_saved(&SavedCamera { x: 0.0, y: 0.0, zoom: -666.0, pitch: -0.5, rotate: 0.0, centre: false }, [640.0, 480.0]);
+        let mut a = unit(2, 1, 0);
+        a.flags2 = 4;
+        let b = unit(5, 1, 0);
+        let sel: BTreeSet<usize> = [2, 5].into();
+        k.tank(&mut cam, &[a, b.clone()], &sel);
+        assert_eq!(cam.tank.unwrap().target[1], b.pos[1]);
+        k.left = true;
+        let mut k = k.reentered();
+        assert!(k.tank_view && k.mode == 3 && !k.left);
+        let mut turned = b.clone();
+        turned.angle = 1.0;
+        k.tank(&mut cam, &[turned], &[5].into());
+        let want = (-std::f64::consts::FRAC_PI_2 - 0.025) as f32;
+        assert!((cam.tank.unwrap().eye[1] - (want.sin() * 130.0 + b.pos[1])).abs() < 1e-3);
+    }
+
     fn unit(slot: usize, owner: i32, weapons: u32) -> UnitView {
         UnitView {
             slot,
             owner,
             hull: 0,
             flags: flag::MESH,
+            flags2: 0,
             has_gun: true,
             design: 1,
             side: owner,
@@ -1023,6 +1056,8 @@ pub(crate) mod tests {
             retreat: [0; 18],
             present,
             war_flag: true,
+            war_byte: 1,
+            prev_war_byte: 0,
             multiplayer: false,
             mp_war_here: false,
             to_land: Vec::new(),
@@ -1054,6 +1089,19 @@ pub(crate) mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Row 397: with the right button held a left press still picks the unit under it (`GetNearestBuilding`) but
+    /// starts no box, so a drag decides nothing.
+    #[test]
+    fn right_held_starts_no_box() {
+        let s = field();
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        w.right_held = true;
+        w.press(&c, [141.0, 202.0], true, true);
+        assert_eq!((w.selected.clone(), w.box_start), (BTreeSet::from([1]), None));
+        assert_eq!(w.drag(&c, [260.0, 250.0]), None);
     }
 
     #[test]
@@ -1265,6 +1313,18 @@ pub(crate) mod tests {
     /// `Colony_MouseInit2`'s MP tail and `ColonyGfx2D_1`'s `local_22` (spec §11.1): a bystander of the MP war on its
     /// planet (not the owner, no units on the field) gets no war buttons; a participant keeps them; single player has
     /// no gate.
+    /// Row 405: the tutorial's colony lock switches every war button off too.
+    #[test]
+    fn the_tutorial_lock_takes_the_war_buttons() {
+        let mut w = ui();
+        w.selected = BTreeSet::from([0, 1, 2]);
+        let s = field();
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        assert!((0xb..=0x12).any(|id| w.enabled(&c, id)));
+        w.locked = true;
+        assert!(!(0xb..=0x12).any(|id| w.enabled(&c, id)) && w.button(&c, [360.0, 458.0]).is_none());
+    }
+
     #[test]
     fn mp_bystanders_get_no_war_buttons() {
         let mut w = ui();

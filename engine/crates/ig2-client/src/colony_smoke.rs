@@ -66,6 +66,8 @@ pub struct Ruin {
     pub at: V3,
     pub rubble: f32,
     pub fade: f32,
+    /// `Rom+0x2c`: the collapse keyframe (from −2.0; `Rom::Update` poses the building only from 0).
+    pub frame: f32,
     fading_in: bool,
     pub collapsing: bool,
     fading_out: bool,
@@ -74,7 +76,7 @@ pub struct Ruin {
 impl Ruin {
     /// `Rom::Rom` (exe 0x455570): the rubble unseen (1.0), the building whole (0.01), collapsing and fading in.
     pub fn new(slot: usize, kind: u8, building: Transform, foot: (i32, i32), at: V3) -> Self {
-        Self { slot, kind, building, foot, at, rubble: 1.0, fade: 0.01, fading_in: true, collapsing: true, fading_out: false }
+        Self { slot, kind, building, foot, at, rubble: 1.0, fade: 0.01, frame: -2.0, fading_in: true, collapsing: true, fading_out: false }
     }
 }
 
@@ -233,8 +235,8 @@ impl Smoke {
         self.puffs.push(Puff { kind: 3, p: [at[0] - 5.0, x, y], v: [vh, vx, vy], rgb: [red, g, b], a: 0, size });
     }
 
-    /// `Rom::Refresh` (exe 0x4904f0): fade the rubble in, collapse the building with two dust puffs a call, then fade
-    /// the rubble out.
+    /// `Rom::Refresh` (exe 0x4904f0): fade the rubble in, collapse the building (its fade and keyframe) with two dust
+    /// puffs a call, then fade the rubble out.
     fn ruin_step(&mut self, k: usize) {
         let r = &mut self.ruins[k];
         if r.fading_in {
@@ -246,6 +248,7 @@ impl Smoke {
         }
         if r.collapsing {
             r.fade = (r.fade as f64 + 0.015) as f32;
+            r.frame = ((r.frame as f64 + 0.1875) as f32).min(10.0);
             if r.fade > 1.0 {
                 r.fade = 1.0;
                 r.collapsing = false;
@@ -419,12 +422,16 @@ mod tests {
         assert_eq!((s.scorches.len(), s.scorches[0].size), (1, (80.0, 80.0)));
         s.war(0.0, &[]);
         let mut steps = 0;
+        let mut frames = Vec::new();
         while s.ruins.first().is_some_and(|r| r.collapsing) {
             s.war(5.0 * (steps + 1) as f32, &[]);
             steps += 1;
+            frames.push(s.ruins[0].frame);
         }
         // 0.01 + 0.015·k passes 1.0 on the 67th call; two dust puffs each call.
         assert_eq!(steps, 67);
+        // The keyframe −2 + 0.1875·k: posed from the 11th call (0.0625), clamped to 10 from the 64th.
+        assert_eq!((frames[9], frames[10], frames[62], frames[63]), (-0.125, 0.0625, 9.8125, 10.0));
         assert_eq!(s.ruins[0].rubble, 0.01);
         while !s.ruins.is_empty() {
             steps += 1;

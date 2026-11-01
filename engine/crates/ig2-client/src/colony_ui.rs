@@ -282,7 +282,8 @@ pub struct ColonyUi {
     /// `ColonyGfx2D_4` line 76).
     pub locked: Vec<bool>,
     /// `TutorialDisableEpuletLerombolas` (demolish, hot-spot 2, off) and `TutorialColonyMindenLetiltvaKiveveAPageupot`
-    /// (every hot-spot off: `Mouse_Szoveg_Off_Range(1, n)`), from the window while a tutorial runs.
+    /// (every hot-spot off: `Mouse_Szoveg_Off_Range(1, n)`, the war's buttons and the view included), from the window
+    /// while a tutorial runs.
     pub no_demolish: bool,
     pub all_off: bool,
     /// `KepernyokLetiltva[2]`: the tutorial has turned the starmap off (hot-spot 4's right release stays).
@@ -877,7 +878,7 @@ impl ColonyUi {
     /// building under the pointer is picked again every frame, with the click when it changes; once one is picked
     /// `Mouse_FelengedesMajdMegvar` stops the hold.
     fn sweep_building(&mut self, c: &Ctx, boxed: bool) {
-        if !self.sweep || self.build_mode || !c.picks() {
+        if !self.sweep || self.build_mode || !c.picks() || self.war.right_held {
             return;
         }
         let under = self.building_under(c);
@@ -897,7 +898,7 @@ impl ColonyUi {
     /// The 3D view pressed (hot-spot 0x14): select the building under the pointer, or build at the cursor.
     fn view_press(&mut self, c: &Ctx, p: [f32; 2], left: bool, out: &mut Outcome) {
         if !self.build_mode {
-            if left && c.picks() {
+            if left && c.picks() && !self.war.right_held {
                 let under = self.building_under(c);
                 // `Colony_Main` hot-spot 0x14: the click when another building becomes the selection.
                 if under != self.selected {
@@ -915,7 +916,7 @@ impl ColonyUi {
             }
             return;
         }
-        if !left {
+        if !left || self.war.right_held {
             self.sounds.push(CLICK);
             self.drop_build();
             return;

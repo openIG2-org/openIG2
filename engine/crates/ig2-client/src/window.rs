@@ -377,6 +377,8 @@ struct App {
     /// `TamadasSzovegCounter` (exe 0x9ABAE0) while no colony screen is up: `StartGrWar` sets 900, the colony screen
     /// takes it on entry (it counts down only there) and `Colony_Kilep` zeroes it.
     attack_banner: i32,
+    /// The colony camera's globals as last left (`CameraKeys::reentered`): they outlive the screen.
+    cam_keep: crate::colony::CameraKeys,
     /// `GrWarOldKep`, `GrWarOldPlanet`: the screen and planet a single-player real-time ground war took the player from
     /// (`StartGrWar` exe 0x4a4a70); `GroundWarFinished` goes back to them (the sim restores the pause).
     grwar_old: Option<(i32, usize)>,
@@ -841,6 +843,7 @@ impl App {
             cursor_hidden: false,
             wait_release: false,
             attack_banner: 0,
+            cam_keep: Default::default(),
             volt_harc: false,
             grwar_old: None,
             tutorial: None,
@@ -1249,6 +1252,7 @@ impl App {
                 let view = crate::colony::View::new(&snap, band, scale, &scene);
                 let own = snap.owner == self.world.curr.human && !snap.at_war;
                 let mut ui = crate::colony_ui::ColonyUi::enter(&snap, own, &self.world.game.state);
+                ui.cam_keys = self.cam_keep.reentered();
                 if let Some(field) = self.world.game.state.ground_field(p) {
                     ui.war.seed_groups(field.units.iter().enumerate().map(|(slot, u)| (slot, u.tail.f13c)));
                 }
@@ -1270,6 +1274,7 @@ impl App {
         let (Some(c), Some(snap)) = (&mut self.colony, self.world.colony_curr.as_ref()) else { return };
         let own = snap.owner == self.world.curr.human && !snap.at_war;
         let mut ui = crate::colony_ui::ColonyUi::enter(snap, own, &self.world.game.state);
+        ui.cam_keys = c.ui.cam_keys.reentered();
         if let Some(field) = self.world.game.state.ground_field(snap.planet) {
             ui.war.seed_groups(field.units.iter().enumerate().map(|(slot, u)| (slot, u.tail.f13c)));
         }
@@ -2965,6 +2970,7 @@ impl App {
         if let Some(c) = &mut self.colony {
             c.ui.locked = g.buildings.to_vec();
             (c.ui.no_demolish, c.ui.all_off, c.ui.starmap_off) = (g.demolish, g.colony, g.screens[2]);
+            c.ui.war.locked = g.colony;
         }
         self.tutorial_effects(effects);
     }
@@ -4835,6 +4841,7 @@ impl App {
                 c.ui.cam_keys.frame(&mut c.view.camera);
                 c.ui.cam_keys.tank(&mut c.view.camera, &s.units, &c.ui.war.selected);
             }
+            self.cam_keep.clone_from(&c.ui.cam_keys);
             // The earthquake (`ShowColony`): the clock starts at the first colony draw after it, `FRISSIT_Story` ends it
             // 10000 `AktIdo` (ms) later; the jolt only on the quake's planet.
             c.view.camera.shake = [0.0; 2];
@@ -4851,6 +4858,9 @@ impl App {
             c.view.overlay = c.ui.overlay(s, self.world.curr.human as i32);
             // The lightning lights one drawn frame.
             c.ui.flash = false;
+        }
+        if self.colony.is_some() && self.overlay.is_none() && self.spy.is_none() {
+            self.colony_pointer(false);
         }
         // `Messages_Kilep`'s loop and `Messages3DUpdate`'s flags, before the frame is drawn: the closing run out, the
         // screen asked for takes over.
@@ -5900,18 +5910,7 @@ impl App {
         }
         if self.colony.is_some() {
             self.cursor = p;
-            let gm = self.colony.as_ref().zip(self.world.colony_curr.as_ref()).and_then(|(c, s)| self.maps.get(s.map).map(|gm| (c, gm)));
-            let gm_cell = gm.and_then(|(c, gm)| crate::colony_ui::cell_under(&c.view, gm, p));
-            let start = gm.and_then(|(c, gm)| crate::colony_ui::cursor_cell_under(&c.view, gm, p));
-            let visible = self.world.colony_curr.as_ref().is_some_and(|s| s.visible);
-            let under = gm.and_then(|(c, gm)| c.view.building_at(gm, &c.scene, visible, p));
-            // The pointer's cell and building first: the hold's building rule reads them.
-            self.colony_input(|ui, ctx, at, _| {
-                ui.war.under = under;
-                ui.hover(ctx, gm_cell, start);
-                ui.drag(ctx, at);
-                Default::default()
-            });
+            self.colony_pointer(true);
         }
         if let Some(c) = self.colony.as_mut().filter(|_| self.overlay.is_none() && self.spy.is_none()) {
             // `ShowColony`: both buttons held turn and tilt the camera (colony.md §2.1).
@@ -5922,6 +5921,29 @@ impl App {
         }
         self.cursor = p;
         self.top_menus_frame();
+    }
+
+    /// `ShowColony`: the cell and the building under the pointer (`AktBGridX/Y`, the model pick), on every pointer move
+    /// and again every drawn frame (the camera or the buildings may have moved under a still pointer); the hold's
+    /// `Colony_Main` pass (`drag`) on a move and every frame a button is held. `Mouse_Jobb` is read live.
+    fn colony_pointer(&mut self, moved: bool) {
+        let p = self.cursor;
+        let (held, right) = (moved || self.mouse_held != 0, self.mouse_held & 2 != 0);
+        let gm = self.colony.as_ref().zip(self.world.colony_curr.as_ref()).and_then(|(c, s)| self.maps.get(s.map).map(|gm| (c, gm)));
+        let gm_cell = gm.and_then(|(c, gm)| crate::colony_ui::cell_under(&c.view, gm, p));
+        let start = gm.and_then(|(c, gm)| crate::colony_ui::cursor_cell_under(&c.view, gm, p));
+        let visible = self.world.colony_curr.as_ref().is_some_and(|s| s.visible);
+        let under = gm.and_then(|(c, gm)| c.view.building_at(gm, &c.scene, visible, p));
+        // The pointer's cell and building first: the hold's building rule reads them.
+        self.colony_input(|ui, ctx, at, _| {
+            ui.war.under = under;
+            ui.war.right_held = right;
+            ui.hover(ctx, gm_cell, start);
+            if held {
+                ui.drag(ctx, at);
+            }
+            Default::default()
+        });
     }
 
     /// A 2D screen (`overlay`) or the spy screen is up over the starmap or the colony.
@@ -6008,6 +6030,9 @@ impl App {
             _ => 0,
         };
         self.mouse_held = if pressed { self.mouse_held | bit } else { self.mouse_held & !bit };
+        if let Some(c) = &mut self.colony {
+            c.ui.war.right_held = self.mouse_held & 2 != 0;
+        }
         // `Mouse_FelengedesMajdMegvar`: `IG2_gameUpdate` (exe 0x4e0440) runs no screen until every button is up, so
         // nothing (the top bar included) takes the presses and releases meanwhile.
         if self.wait_release {
