@@ -197,11 +197,11 @@ fn every_peers_replay_plays_back() {
     let mut checks = Vec::new();
     for ((p, _), b) in s.peers.iter_mut().zip(&bufs) {
         p.replay.take().unwrap().flush(p.hash());
-        let r = Replay::read(&b.take()).unwrap();
+        let r = std::sync::Arc::new(Replay::read(&b.take()).unwrap());
         assert!(r.meta.multiplayer && r.meta.empire == p.empire && r.meta.rules == 0x1234 && r.torn == 0);
         assert_eq!(r.steps(), p.turn);
         assert_eq!(r.chunks.iter().flat_map(|c| c.steps.iter().flatten()).count(), 9, "the commands sent");
-        let mut play = Playback::new(&r, &rules).unwrap();
+        let mut play = Playback::new(r.clone(), &rules).unwrap();
         assert_eq!(play.run_to_end(), Ok(p.hash()));
         assert_eq!(play.peer.tick, p.tick);
         checks.push(r.chunks.iter().map(|c| c.hash).collect::<Vec<_>>());

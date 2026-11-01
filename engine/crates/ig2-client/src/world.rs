@@ -169,8 +169,9 @@ impl Snapshot {
         let map = state.starmap();
         let n = state.planet_count();
         let debug = m.u8(va::DEBUGX) != 0;
-        // A spectator (ADR 0026) sees the whole map, as `DebugX` shows it, on its own machine only.
-        let all = debug || game.local_view().spectating;
+        // A spectator (ADR 0026) sees the whole map, as `DebugX` shows it, on its own machine only; so does a replay's
+        // viewer, single player's too (whose classic view has no spectator: `Game::local` is the machine's own).
+        let all = debug || game.local.spectating;
         let planets = (1..=n)
             .map(|p| {
                 let r = m.read(va::PLANETS + (p * ig2_sim::save::PLANET_SIZE) as u32, ig2_sim::save::PLANET_SIZE);
@@ -350,6 +351,8 @@ pub struct World<'r> {
     pub log: crate::event_log::Log,
     /// The option's switch (`EventLog`): off records nothing.
     pub log_on: bool,
+    /// Ours (ADR 0038 §6): a replay watched, read-only: the playback runs the game, the screens' orders are dropped.
+    pub viewer: Option<crate::replay_viewer::Viewer<'r>>,
 }
 
 /// The session as the wait overlay sees it (`crate::mp_wait`, [`World::wait_view`]).
@@ -607,7 +610,88 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false, replay: None, recorder: None, log: Default::default(), log_on: true }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false, replay: None, recorder: None, log: Default::default(), log_on: true, viewer: None }
+    }
+
+    /// A replay to watch (ADR 0038 §6): its start, run by its playback, seen as a spectator sees a game (ADR 0026).
+    pub fn watch(replay: ig2_net::replay::Replay, rules: &'r GameRules) -> Result<Self, String> {
+        let replay = std::sync::Arc::new(replay);
+        let mut playback = ig2_net::replay::Playback::new(replay.clone(), rules).map_err(|e| e.to_string())?;
+        let stand_in = Game::new(SaveState::from_parts(Default::default(), Vec::new()), rules);
+        let mut game = std::mem::replace(&mut playback.peer.game, stand_in);
+        if replay.meta.multiplayer {
+            local_en(&mut game, true);
+        }
+        // Not synced, not in the hash: the whole map, as a spectator's.
+        game.local.spectating = true;
+        let viewer = crate::replay_viewer::Viewer::new(playback, &replay, &game);
+        let chunks = game.state.chunks();
+        let mut w = Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned()));
+        w.viewer = Some(viewer);
+        Ok(w)
+    }
+
+    /// The viewer's tick, in place of [`World::tick`]: the steps due at its speed, the game in the playback for them.
+    fn viewer_tick(&mut self) {
+        use crate::replay_viewer::End;
+        use ig2_net::replay::Locals;
+        let Some(v) = &mut self.viewer else { return };
+        let n = v.steps_due();
+        if n == 0 {
+            return;
+        }
+        // The window's own screen state aside, the recorded one back (single player; multiplayer's view is local).
+        let window = Locals::read(&self.game);
+        if v.multiplayer {
+            local_en(&mut self.game, false);
+        } else {
+            for i in window.changes(&v.locals) {
+                i.apply(&mut self.game);
+            }
+        }
+        std::mem::swap(&mut self.game, &mut v.playback.peer.game);
+        let mut ran = 0;
+        for _ in 0..n {
+            match v.playback.step() {
+                Ok(true) => ran += 1,
+                Ok(false) => break,
+                Err(d) => {
+                    v.end = Some(End::Diverged(d));
+                    break;
+                }
+            }
+        }
+        if v.playback.done() {
+            v.end.get_or_insert(End::Finished);
+        }
+        std::mem::swap(&mut self.game, &mut v.playback.peer.game);
+        if v.multiplayer {
+            local_en(&mut self.game, true);
+        } else {
+            v.locals = Locals::read(&self.game);
+            for i in v.locals.changes(&window) {
+                i.apply(&mut self.game);
+            }
+        }
+        let ticks = ran * v.ticks_per_step;
+        let events = std::mem::take(&mut v.playback.peer.events);
+        if v.multiplayer {
+            self.game.post_local_messages(&events);
+        }
+        // No videos, story effects or battle screens: the viewer watches from the starmap.
+        self.record_log(&events);
+        self.take_notices(&events);
+        self.ground_voices.extend(ground_voices(&events));
+        self.ground_fx.extend(ground_fx(&events));
+        let mut next = Snapshot::read(&self.game);
+        let speed = self.game.state.mem.i32(va::IDO_SPEED);
+        next.orbit = (self.curr.orbit as f64 + ticks as f64 * speed as f64 / 1500.0) as f32;
+        self.prev = std::mem::replace(&mut self.curr, next);
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+        self.colony_prev = self.colony_curr.take();
+        if let Some(p) = self.colony {
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+        }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -847,6 +931,11 @@ impl<'r> World<'r> {
     /// The frame's message pass (`MULTIGET_*`): the queued commands are applied for the human, in order, also
     /// while the clock is paused; the screens see the result at once.
     pub fn pump(&mut self) {
+        // A replay takes no orders (ADR 0038 §6).
+        if self.viewer.is_some() {
+            self.outbox.clear();
+            return;
+        }
         // Multiplayer: the commands go out with the next input and run on every peer `delay` turns later; the
         // session's messages move every frame, not only on ticks (a hop waits a frame, not a tick).
         if let Some((net, _)) = &mut self.net {
@@ -954,6 +1043,9 @@ impl<'r> World<'r> {
 
     /// `IdoPause`.
     pub fn paused(&self) -> bool {
+        if let Some(v) = &self.viewer {
+            return v.paused || v.end.is_some();
+        }
         self.game.paused()
     }
 
@@ -991,8 +1083,8 @@ impl<'r> World<'r> {
 
     /// The speed the session starts with (`SetIdoSpeed(level, false)`: 1/2/3 = ×1/×4/×16 in single player).
     pub fn set_speed(&mut self, speed: Speed) {
-        // Multiplayer: the speed is the session's (a local write would desync).
-        if self.net.is_some() {
+        // Multiplayer: the speed is the session's (a local write would desync); a replay's is recorded.
+        if self.net.is_some() || self.viewer.is_some() {
             return;
         }
         let level = match speed {
@@ -1018,6 +1110,10 @@ impl<'r> World<'r> {
     /// (`Command::from_event`: 0x1b, the story's 0x49 and 0x66, for `Game::sender`), then `FRISSIT_Datum` and the
     /// rest of the tick.
     pub fn tick(&mut self) {
+        if self.viewer.is_some() {
+            self.viewer_tick();
+            return;
+        }
         if self.net.is_some() {
             self.mp_tick();
             return;
@@ -1073,6 +1169,15 @@ impl<'r> World<'r> {
             return Some((self.local_lines.remove(0), true));
         }
         let mut t = self.game.state.ticker();
+        // A single-player replay pops the line as it was recorded: the window shows each new text.
+        if let Some(v) = self.viewer.as_mut().filter(|v| !v.multiplayer) {
+            let text: Vec<u8> = t.on_screen.iter().copied().take_while(|&b| b != 0).collect();
+            if text.is_empty() || text == v.line {
+                return None;
+            }
+            v.line = text.clone();
+            return Some((text, t.on_screen_important != 0));
+        }
         let id = t.pop()?;
         if let Some(r) = &mut self.recorder {
             r.input(ig2_net::replay::Input::PopMessage);
@@ -1104,6 +1209,47 @@ mod tests {
 
     fn fleet(slot: usize, x: f32, y: f32) -> FleetView {
         FleetView { slot, pos: [x, y], owner: 3, visible: true, target: None, order: 0, flags: 0, name: Vec::new(), ships: 1, story_id: 0, kind: 0, target_index: 0 }
+    }
+
+    /// ADR 0038 §6: a watched replay takes no orders, and the window's own screen writes stay out of the recorded
+    /// game, so it plays to its recorded end (a leak would diverge at the chunk's hash). quick-1.sav, recorded as the
+    /// window records single player.
+    #[test]
+    fn a_watched_replay_drops_the_orders_and_plays_to_its_end() {
+        use crate::replay_viewer::End;
+        use ig2_net::replay::{sp_hash, Buffer, Replay};
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let mut rec = World::load(&save, &rules, &defaults, &volatile);
+        let buf = Buffer::default();
+        rec.record_into(Box::new(buf.clone())).unwrap();
+        for _ in 0..250 {
+            rec.tick();
+        }
+        rec.end_replay();
+        let mut w = World::watch(Replay::read(&buf.take()).unwrap(), &rules).unwrap();
+        assert!(w.game.local.spectating);
+        let before = sp_hash(&w.game);
+        w.send(Command::Starmap { order: ig2_net::StarmapCmd::Pause { paused: true } });
+        w.pump();
+        assert!(w.outbox.is_empty());
+        assert_eq!(sp_hash(&w.game), before, "the order didn't reach the game");
+        // The window's own view write, as a click on a planet makes.
+        w.game.set_view(ig2_sim::game::LocalView { planet: 7, starmap_mode: 1, ..w.game.local_view() });
+        w.viewer.as_mut().unwrap().speed = 3;
+        let mut ticks = 0;
+        while w.viewer.as_ref().unwrap().end.is_none() {
+            w.tick();
+            ticks += 1;
+        }
+        assert_eq!(w.viewer.as_ref().unwrap().end, Some(End::Finished));
+        assert_eq!(ticks, 32, "8 steps a tick");
+        assert_eq!(w.game.local_view().planet, 7, "the window keeps its view");
+        assert!(w.paused());
     }
 
     #[test]
@@ -1500,4 +1646,3 @@ mod tests {
         assert_eq!(line(Notice::FlagLost { by: 1 }), Some((b"You have lost the flag!".to_vec(), 2)));
     }
 }
-

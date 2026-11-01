@@ -22,6 +22,8 @@ pub(super) struct Overlay {
     pointer: Option<([i32; 2], i32, u64)>,
     /// The multiplayer wait overlay, while it is open.
     wait: Option<crate::mp_wait::Wait>,
+    /// The replay viewer's bar (ADR 0038 §6).
+    replay: Option<crate::replay_viewer::Bar>,
 }
 
 impl Overlay {
@@ -29,6 +31,10 @@ impl Overlay {
     pub fn draw(&self, f: &mut Frame, h: &crate::ui::Hud, size: [f32; 2]) {
         if let (Some(w), Some(font)) = (&self.wait, &h.font) {
             w.draw(f, font, h.white, &crate::font::Virtual::new(size), &h.palette, &|n| h.texts.get(18, 5, n), std::time::Instant::now());
+        }
+        if let (Some(b), Some(font)) = (&self.replay, &h.font) {
+            let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 };
+            b.draw(f, &d);
         }
         if let (Some((t, text)), Some(font)) = (&self.tip, &h.font) {
             t.draw(f, font, h.white, &crate::font::Virtual::new(size), &h.palette, text);
@@ -235,6 +241,10 @@ impl App {
         }
         if self.mp_wait.shown() {
             out.wait = Some(self.mp_wait.clone());
+        }
+        if self.replay_bar_up() {
+            let hover = crate::replay_viewer::Bar::spot(at);
+            out.replay = self.world.viewer.as_ref().map(|v| v.bar(hover));
         }
         out
     }

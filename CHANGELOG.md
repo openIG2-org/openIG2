@@ -34,6 +34,7 @@ Since 0.7.56.
 - Options: typing a save name over a used slot no longer shows the old name behind it (Remake row "Clean name entry"; off shows the original's look).
 - Starmap and space battle: the turning model in the bottom-left info box stays inside its box (Remake row "Models inside boxes"; off shows the original's look).
 - Every game now records a replay beside your saves (`replays` folder, the newest 50 kept) that plays back exactly; the viewer comes later. Switch it off under Options, game page, "Record replays".
+- Replays can be watched: the main menu's "Replays" item lists them and plays one back with the whole map shown, pause, speeds up to 8x and a progress line.
 - Space battle: the defend/attack slider no longer runs through its label (Remake row "Slider under label"; off shows the original's look).
 - Hungarian games: the article before a name reads "a" or "az" instead of a stray character on the message line, in messages, diplomacy and battle banners (Remake row "Hungarian articles"; off shows the original's look).
 - Production view, transfer panel and fleet panel: the Exit label is centred on its button (Remake row "Centred Exit label"; off shows the original's look).

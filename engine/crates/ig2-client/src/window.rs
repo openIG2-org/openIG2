@@ -119,6 +119,8 @@ struct Front {
     session: Option<crate::mp_lobby::Session<'static>>,
     /// Ours (ADR 0034): the statistics screen over the menu (a game's end, or the history).
     stats: Option<crate::stats_screen::StatsScreen>,
+    /// Ours (ADR 0038 §6): the replays list over the menu.
+    replays: Option<crate::replay_viewer::ReplayList>,
 }
 
 impl Front {
@@ -129,7 +131,7 @@ impl Front {
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None }
     }
 }
 
@@ -405,6 +407,10 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     let rules: &'static ig2_sim::game::GameRules = Box::leak(Box::new(l.rules));
     let tables: &'static ig2_rules::Rules = Box::leak(Box::new(l.tables));
     let mut world = crate::start_world(&o, &l.install, l.save.as_ref(), rules, &l.tech_defaults, &l.volatile)?;
+    // As `App::start_world` gives a game loaded from the menu (`_s(0x3b, n)`: the AI's design names).
+    if world.game.design_texts.is_empty() {
+        world.game.design_texts = crate::new_game::design_texts(&l.install);
+    }
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
@@ -418,7 +424,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     // starmap (`Starmap_Belep`'s `PlayMusicMain(0, 0)`); nothing plays yet: at once.
     // On the main menu the title plays first (`StartDemoMode` exe 0x4fe3c0: once per run, unless the cut-scenes are
     // off) and the menu's music follows it.
-    let title = o.main_menu && crate::video::playback::cutscenes_enabled();
+    let title = o.main_menu && o.watch.is_none() && crate::video::playback::cutscenes_enabled();
     let music = if o.main_menu { crate::audio::Music::Menu } else { crate::audio::Music::Main };
     // A new campaign enters the starmap after its intro (re/screens/mainscr.md §9.1).
     let start = world.start_voice.take();
@@ -462,6 +468,9 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         app.front_start(crate::mainscr::Start::Tutorial(n));
     } else if title {
         app.queue_videos(["title.bik".to_string()], false, AfterVideo::MenuMusic);
+    }
+    if let Some(p) = o.watch.as_deref().filter(|_| o.main_menu) {
+        app.watch_replay(p);
     }
     if let Some(c) = start {
         app.take_video_requests();
@@ -595,16 +604,22 @@ fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Rend
     let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
     if let Some(st) = &fr.stats {
         st.draw(frame, &d);
+    } else if let Some(rl) = &fr.replays {
+        rl.draw(frame, &d);
     } else if let Some(mp) = &fr.mp {
         mp.draw(frame, &d, crate::kit::fader_design::blink(now_ms));
-    } else if history && front_history_shown(fr) {
-        crate::stats_screen::draw_history_item(frame, &d, crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, fr.at), fr.s.gt);
+    } else if front_history_shown(fr) {
+        if history {
+            crate::stats_screen::draw_history_item(frame, &d, crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, fr.at), fr.s.gt);
+        }
+        crate::replay_viewer::draw_item(frame, &d, crate::kit::inside_f(crate::replay_viewer::REPLAYS_ITEM, fr.at), fr.s.gt);
     }
 }
 
-/// The main menu's "History" item is up (ours, ADR 0034): the main ring set at rest, as the Settings label.
+/// The main menu's "History" and "Replays" items are up (ours, ADR 0034, 0038): the main ring set at rest, as the
+/// Settings label.
 fn front_history_shown(fr: &Front) -> bool {
-    fr.stats.is_none() && fr.mp.is_none() && fr.s.at_rest()
+    fr.stats.is_none() && fr.replays.is_none() && fr.mp.is_none() && fr.s.at_rest()
 }
 
 /// `PlayerFaj[EN]`, the music's race.
@@ -978,6 +993,11 @@ impl App {
         let mut hud = crate::ui::Hud::load(&mut renderer, &self.install, self.tables);
         // The messages quote the empires by `BirodalomNev`: the exe's table, the same on every peer (ADR 0017).
         self.world.game.empire_names = hud.empire_names.clone();
+        // A game started from the command line records from here, as one from the menu does once its names are set
+        // (ADR 0038 §4; they are in the state).
+        if self.front.is_none() && self.world.viewer.is_none() && self.world.replay.is_none() {
+            self.start_replay();
+        }
         hud.set_one_language(&self.install, self.one_language);
         self.hud = Some(hud);
         // Loaded with the rest at start: at its first opening it would hold that frame for tens of milliseconds.
@@ -2125,6 +2145,9 @@ impl App {
         if let Some(st) = &mut fr.stats {
             st.hover(fr.at);
         }
+        if let Some(rl) = &mut fr.replays {
+            rl.hover(fr.at);
+        }
         if let Some(st) = fr.s.take_started() {
             self.front_start(st);
             return;
@@ -3190,6 +3213,9 @@ impl App {
     /// original's point, or every N days with the last one moved to slot 23. Single player not under the tutorial,
     /// with the "Auto Save" row on; in multiplayer only with an N-day cadence and on the host.
     fn autosave_tick(&mut self) {
+        if self.world.viewer.is_some() {
+            return;
+        }
         let today = self.world.curr.date();
         if today == self.autosave.0 {
             return;
@@ -3243,7 +3269,10 @@ impl App {
         self.world.end_replay();
         self.world = w;
         self.autosave = (self.world.curr.date(), 0);
-        self.apply_battle_rows();
+        // A replay's battle flags are its start's.
+        if self.world.viewer.is_none() {
+            self.apply_battle_rows();
+        }
         // `_s(0x3b, n)` is the install's table, not the save's: a loaded game names the AI's designs too.
         if self.world.game.design_texts.is_empty() {
             self.world.game.design_texts = crate::new_game::design_texts(&self.install);
@@ -3265,7 +3294,55 @@ impl App {
             self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
         }
         self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
-        self.start_replay();
+        if self.world.viewer.is_none() {
+            self.start_replay();
+        }
+    }
+
+    /// Ours (ADR 0038 §6): a replay from the list opens read-only; one that doesn't read stays in the list with why.
+    fn watch_replay(&mut self, path: &std::path::Path) {
+        let w = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|b| ig2_net::replay::Replay::read(&b).map_err(|e| e.to_string()))
+            .and_then(|r| {
+                if r.meta.build != crate::version() {
+                    eprintln!("ig2-client: replay recorded by {}, played by {}", r.meta.build, crate::version());
+                }
+                World::watch(r, self.rules)
+            });
+        match w {
+            Ok(w) => self.start_world(w),
+            Err(e) => {
+                if let Some(f) = &mut self.front {
+                    f.replays = Some(crate::replay_viewer::ReplayList::open(Some(format!("{}: {e}", path.display()))));
+                }
+            }
+        }
+    }
+
+    /// The replay viewer's bar is up: a replay on the game screens, nothing over them.
+    fn replay_bar_up(&self) -> bool {
+        self.world.viewer.is_some() && self.front.is_none() && self.options.is_none() && self.help.is_none() && self.video.is_none()
+    }
+
+    /// The bar's or a key's act; Exit, or the replay's end, goes back to the replays list.
+    fn replay_act(&mut self, a: crate::replay_viewer::Act) {
+        use crate::replay_viewer::{Act, End};
+        let Some(v) = &mut self.world.viewer else { return };
+        v.act(a);
+        let end = v.end;
+        if a != Act::Exit && end.is_none() {
+            return;
+        }
+        self.exit_to_main_menu();
+        // A replay that drifted from its recording says where (ADR 0038 §3).
+        let error = match end {
+            Some(End::Diverged(d)) => Some(format!("The replay stopped: {d}.")),
+            _ => None,
+        };
+        if let Some(f) = &mut self.front {
+            f.replays = Some(crate::replay_viewer::ReplayList::open(error));
+        }
     }
 
     /// ADR 0038: the game's replay into `replays/` beside the slots, unless the "Record replays" row is off.
@@ -3637,6 +3714,12 @@ impl App {
             }
             return;
         }
+        if f.replays.is_some() {
+            if matches!(k.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter)) {
+                f.replays = None;
+            }
+            return;
+        }
         if let Some(mp) = &mut f.mp {
             // Ctrl+V pastes (a join code), Ctrl+C copies the host's join code.
             if self.modifiers.control_key() {
@@ -3998,7 +4081,12 @@ impl App {
     /// command, the panel counting only on the starmap (`AktKep == 2`, re/screens/starmap.md §10.2).
     fn sync_transfer(&mut self) {
         let fleets = self.panels.transfer.map(|t| (t.f1, t.f2));
-        self.world.game.set_transfer(fleets);
+        // Only a change: a write of the same value still adds the byte to the state a replay's hash checks (ADR 0038).
+        let m = &self.world.game.state.mem;
+        let now = (m.u8(ig2_sim::save::va::STARMAP_TRANSFER_MODE) != 0).then(|| (m.i32(ig2_sim::save::va::STARMAP_TRANSFER_FLEETS.0), m.i32(ig2_sim::save::va::STARMAP_TRANSFER_FLEETS.1)));
+        if now != fleets {
+            self.world.game.set_transfer(fleets);
+        }
         let fleets = fleets.filter(|_| self.shown_kep() == 2);
         if self.world.net.is_some() && fleets != self.sent_transfer {
             self.sent_transfer = fleets;
@@ -4122,6 +4210,11 @@ impl App {
         drop(sim);
         let ui = crate::prof::scope("ui");
         // Multiplayer: the session ended under this machine (`ExitToMainScreen` from `MULTIGET`'s disconnect).
+        // A replay at its end (ADR 0038 §6).
+        if self.world.viewer.as_ref().is_some_and(|v| v.end.is_some()) {
+            self.replay_act(crate::replay_viewer::Act::Exit);
+            return;
+        }
         if self.world.net_over {
             self.world.net_over = false;
             self.exit_to_main_menu();
@@ -5097,7 +5190,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } if self.front.is_some() => {
                 // A held Esc's repeats would close the statistics screen and go on to the menu's own Esc.
-                if event.state == ElementState::Pressed && !(event.repeat && self.front.as_ref().is_some_and(|f| f.stats.is_some())) {
+                if event.state == ElementState::Pressed && !(event.repeat && self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some())) {
                     self.front_key(&event.logical_key);
                 }
             }
@@ -5110,6 +5203,37 @@ impl ApplicationHandler for App {
                     if f.stats.as_mut().and_then(|st| st.press(at)).is_some() {
                         f.stats = None;
                         self.audio.play(crate::audio::CLICK);
+                    }
+                }
+            }
+            // Ours (ADR 0038 §6): the replays list, as the statistics screen (either button, on the release).
+            WindowEvent::MouseInput { state, button: MouseButton::Left | MouseButton::Right, .. } if self.front.as_ref().is_some_and(|f| f.replays.is_some()) => {
+                let Some(f) = &mut self.front else { return };
+                if state == ElementState::Released {
+                    let at = f.at;
+                    match f.replays.as_mut().and_then(|rl| rl.press(at)) {
+                        Some(crate::replay_viewer::ListAct::Close) => f.replays = None,
+                        Some(crate::replay_viewer::ListAct::Open(path)) => self.watch_replay(&path),
+                        None => return,
+                    }
+                    self.audio.play(crate::audio::CLICK);
+                }
+            }
+            // The main menu's "Replays" item (ours, ADR 0038 §6).
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }
+                if self.front.as_ref().is_some_and(|f| front_history_shown(f) && crate::kit::inside_f(crate::replay_viewer::REPLAYS_ITEM, f.at)) =>
+            {
+                if let Some(f) = &mut self.front {
+                    f.replays = Some(crate::replay_viewer::ReplayList::open(None));
+                }
+                self.audio.play(crate::audio::CLICK);
+            }
+            // The replay viewer's bar takes the presses on it (ours, ADR 0038 §6).
+            WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.replay_bar_up() && crate::replay_viewer::Bar::covers(self.virtual_cursor()) => {
+                if state == ElementState::Pressed {
+                    if let Some(a) = crate::replay_viewer::Bar::press(self.virtual_cursor()) {
+                        self.audio.play(crate::audio::CLICK);
+                        self.replay_act(a);
                     }
                 }
             }
@@ -6160,6 +6284,13 @@ impl App {
         }
         if self.event_log_key(&key) {
             return false;
+        }
+        // The replay viewer's keys (ours, ADR 0038 §6).
+        if let (true, Key::Character(c)) = (self.replay_bar_up(), &key) {
+            if let Some(a) = crate::replay_viewer::key_act(c) {
+                self.replay_act(a);
+                return false;
+            }
         }
         match key {
             // The starmap's rename takes the keys (`IOMode`).

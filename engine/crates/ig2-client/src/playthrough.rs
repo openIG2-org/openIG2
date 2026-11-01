@@ -382,13 +382,13 @@ impl Harness {
         let state = w.replay_hash();
         w.end_replay();
         let replay = match Replay::read(&buf.take()) {
-            Ok(r) => r,
+            Ok(r) => std::sync::Arc::new(r),
             Err(e) => {
                 report.problem(tick, format!("the replay doesn't read back: {e}"));
                 return Vec::new();
             }
         };
-        let mut p = match Playback::new(&replay, &self.rules) {
+        let mut p = match Playback::new(replay.clone(), &self.rules) {
             Ok(p) => p,
             Err(e) => {
                 report.problem(tick, format!("the replay doesn't start: {e}"));

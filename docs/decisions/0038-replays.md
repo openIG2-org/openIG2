@@ -2,9 +2,8 @@
 
 Date: 2026-11-01. Status: accepted. An enhancement over the classic client (ADR 0009): the original records no
 replays. Implemented by `ig2-net::replay` (the file, the recorder, the headless playback), `ig2-net::lockstep::Peer`
-(multiplayer recording) and `ig2-client::world` (single-player recording). Row 452 in `docs/ENHANCEMENTS.md`.
-This ADR covers the file and the headless playback; the viewer (play, pause, speed in the client) and the list in
-the main menu come next.
+(multiplayer recording), `ig2-client::world` (single-player recording, `World::watch`) and `ig2-client::replay_viewer`
+(the list and the viewer). Row 452 in `docs/ENHANCEMENTS.md`.
 
 ## Context
 The lockstep sim is deterministic (ADR 0007): the same start and the same commands give the same state hash on
@@ -45,7 +44,28 @@ the classic view's globals (`Game::set_view`, `set_screen`, `set_transfer`), the
    default**: a replay can't be made after the fact, and it costs a save file plus a few KB a minute. Off = the
    original (nothing written).
 
+6. **The viewer.** The main menu's "Replays" item (above "History", with the main ring set at rest) lists
+   `replays/*.ig2r`, newest first (start time and mode from the name, the size). A replay opens as a game read-only
+   (`World::watch`): the playback's game is the world's, swapped into the playback for its steps as the multiplayer
+   world swaps it into the peer. It is seen as a spectator sees a game (ADR 0026: `LocalView::spectating`, the whole
+   map) and takes nothing from the window:
+   - the screens' orders (the pause and speed buttons too) are dropped (`World::pump`); the speed set at a start and
+     the battle-option flags are not written; no autosave, no replay of the replay, no match history;
+   - single player's window state that the recording keeps as inputs (view, screen, transfer panel, battle screen,
+     pause: `Locals`) is put aside around every step, the recorded one restored for it, so a click on the map or an
+     opened screen never reaches the recorded game; the message line shows the text each recorded pop brings up;
+   - no videos, story effects or battle screens open: the viewer stays on the game screens.
+   A bar under the top bar has Pause/Play (Space), the speed steps 1x, 2x, 4x, 8x (keys 1-4: a step per window tick
+   at 1x in single player, a turn per two in multiplayer, as the game ran), a progress line with the time watched and
+   recorded, and Exit. At the end, on Exit, or when the playback diverges (§3, its step and hashes shown), the window
+   goes back to the main menu with the list open. No seeking backwards (that would be a new playback from the start).
+   `ig2-client --watch FILE` opens a replay in the viewer at start. A game started from the command line (`--save`,
+   `--new-campaign`) records too, from the moment its window has set the empire names, and gets the install's design
+   texts as a menu load does: both are in the state or feed it, so a recording without them would not play back.
+
 ## Consequences
+- The window writes the transfer panel's globals only when they change: writing the same value into state the sim
+  never touched still changes the hashed state, which a playback reports as a divergence.
 - The sim is untouched: recording only reads the state and the inputs the client already applies.
 - Inputs the window writes outside this list (the colony screen's unit groups, the tutorial's effects) aren't
   recorded; a replay that crosses one diverges and says so at that chunk.

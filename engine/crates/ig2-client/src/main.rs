@@ -1,8 +1,9 @@
 //! IG2 game client (ADR 0006): loads an original save into the simulation, runs it at the original's 20 Hz and
 //! renders the starmap at the display's refresh rate.
 //!
-//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3] [--tutorial N] [--multiplayer]`: the main menu (re/screens/mainscr.md; its load ring opens
-//!           the Options screen's slots, re/screens/options.md), or the game of `--save` at once.
+//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3] [--tutorial N] [--multiplayer] [--watch <file.ig2r>]`: the main menu
+//!           (re/screens/mainscr.md; its load ring opens the Options screen's slots, re/screens/options.md), the game of
+//!           `--save` at once, or a replay watched (ADR 0038 §6).
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
@@ -100,6 +101,7 @@ mod starmap_panels;
 mod starmap_planet;
 mod starmap_radar;
 mod starmap_tip;
+mod replay_viewer;
 mod stats_screen;
 mod trade;
 mod tr;
@@ -173,6 +175,8 @@ pub struct Options {
     /// `--stage-win DAYS`: once the game has run DAYS days every other empire dies, so the next tick's victory check
     /// ends it as won (the game-end trace's staging, re/rules/game-end.md §10; tests the end and its statistics).
     pub stage_win: Option<u32>,
+    /// `--watch FILE`: the window opens this replay in the viewer (ADR 0038 §6).
+    pub watch: Option<PathBuf>,
     /// `--trade-eta N`: the unsaved `AktEtaDays` (the trade screen's delivery time) as the exe had it.
     pub trade_eta: Option<i32>,
     /// `--dkm M,CEL,NOVELO`: the row frame's global phase at the script's start (`DesignKeret1`'s `dkm`, `dkmcel`,
@@ -303,6 +307,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         ui_frames: 150,
         trade_cheat: false,
         stage_win: None,
+        watch: None,
         trade_eta: None,
         dkm: None,
         spy_frame: None,
@@ -413,6 +418,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--open-message" => o.open_message = Some(val()?.parse().map_err(|e| format!("--open-message: {e}"))?),
             "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),
             "--trade-cheat" => o.trade_cheat = true,
+            "--watch" => o.watch = Some(PathBuf::from(val()?)),
             "--stage-win" => o.stage_win = Some(val()?.parse().map_err(|e| format!("--stage-win: {e}"))?),
             "--dkm" => {
                 let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse().map_err(|e| format!("--dkm: {e}"))).collect::<Result<_, _>>()?;

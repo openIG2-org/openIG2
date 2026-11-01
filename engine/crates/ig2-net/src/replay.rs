@@ -390,8 +390,8 @@ pub struct Diverged {
 }
 
 /// A replay run headless, step by step: the recorded game's sim, fed the recorded inputs.
-pub struct Playback<'a, 'r> {
-    replay: &'a Replay,
+pub struct Playback<'r> {
+    replay: std::sync::Arc<Replay>,
     /// The game (in multiplayer the peer's; its turn and tick count with it).
     pub peer: Peer<'r>,
     /// The next step and where it sits in the chunks.
@@ -401,10 +401,10 @@ pub struct Playback<'a, 'r> {
     pending: Vec<Command>,
 }
 
-impl<'a, 'r> Playback<'a, 'r> {
+impl<'r> Playback<'r> {
     /// The replay's start restored. The caller adds what a snapshot doesn't keep and the recording client had
     /// (`Game::design_texts` from the install).
-    pub fn new(replay: &'a Replay, rules: &'r GameRules) -> Result<Self, Error> {
+    pub fn new(replay: std::sync::Arc<Replay>, rules: &'r GameRules) -> Result<Self, Error> {
         let m = &replay.meta;
         let (peer, pending) = if m.multiplayer {
             (Peer::from_snapshot(m.slot, m.empire, &replay.start, rules, 0, 0)?, Vec::new())
@@ -436,7 +436,7 @@ impl<'a, 'r> Playback<'a, 'r> {
 
     /// Run the next step; `Ok(false)` at the end. At a chunk's end the state hash is checked.
     pub fn step(&mut self) -> Result<bool, Diverged> {
-        let replay = self.replay;
+        let replay = std::sync::Arc::clone(&self.replay);
         let Some(c) = replay.chunks.get(self.chunk) else { return Ok(false) };
         let k = (self.step - c.first) as usize;
         if c.steps.is_empty() {

@@ -84,8 +84,11 @@ first day of months 1 and 7, as the original does, while the original's "Auto Sa
 load list shows the last two.
 
 Every game also writes a replay (`replays/<date>_<time>_sp.ig2r` or `_mp`) beside the slots, and the newest 50 are
-kept (ADR 0038). A viewer is not in the client yet. The Remake row "Record replays" (`RecordReplays`, on by
-default) turns recording off.
+kept (ADR 0038). The main menu's "Replays" item (bottom left, above "History") lists them, newest first; a click
+plays one back read-only: the whole map is shown, the screens can be looked at but take no orders. The bar under the
+top bar has Pause/Play (Space), the speeds 1x, 2x, 4x and 8x (keys 1-4), the progress line and Exit; at the end the
+list comes back. A replay only plays on the version that recorded it: one that drifts stops and says where. The Remake
+row "Record replays" (`RecordReplays`, on by default) turns recording off.
 
 ### Display settings
 Options → the game tab, under the original's rows and a "Remake" heading. A press cycles the row; changes apply
