@@ -605,6 +605,14 @@ impl LobbyHost {
         }
     }
 
+    /// The host's forced start (ADR 0041): every member holding an empire becomes ready.
+    pub fn ready_all(&mut self) {
+        for m in &mut self.state.members {
+            m.ready |= self.state.slots.iter().any(|s| s.kind == SlotKind::Human(m.id));
+        }
+        self.dirty = true;
+    }
+
     /// The host opens, closes or gives `empire`'s slot to the AI (a human in it loses it).
     pub fn set_slot(&mut self, empire: u8, kind: SlotKind) -> bool {
         if matches!(kind, SlotKind::Human(_)) {

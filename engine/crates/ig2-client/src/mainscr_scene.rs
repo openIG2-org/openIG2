@@ -818,7 +818,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             scene.draw(&mut frame, &mut r, &install, &s, &vv);
             draw_2d(&mut s, &mut assets, &hud, &mut r, &install, &mut frame, size, t as f64 * 10.0);
-            if let (Some(m), Some(font)) = (&mp, &hud.font) {
+            if let (Some(m), Some(font)) = (&mut mp, &hud.font) {
+                m.load_pictures(&mut r, &install);
                 let d = crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: t as f64 * 10.0 };
                 m.draw(&mut frame, &d, crate::kit::fader_design::blink(t as f64 * 10.0));
             }

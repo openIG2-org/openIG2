@@ -499,6 +499,11 @@ pub struct Pictures {
     pub races: Vec<Option<TexId>>,
 }
 
+/// The eight races' heads (`textures/main/fejek3/<race>a.bmp`, 64 × 64; [`Assets::race_pictures`]), race 1 first.
+pub fn race_heads(r: &mut crate::render::Renderer, install: &Install) -> Vec<Option<TexId>> {
+    (1..=8).map(|k| install.resolve_texture("textures/main/fejek3/", &format!("{k}a.bmp")).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img))).collect()
+}
+
 /// What the list draws from, read once: the entries, the settings' tables, the pictures.
 pub struct Assets {
     pub entries: Vec<Entry>,
@@ -523,7 +528,7 @@ impl Assets {
         if !self.pics.races.is_empty() {
             return;
         }
-        self.pics.races = (1..=8).map(|k| install.resolve_texture("textures/main/fejek3/", &format!("{k}a.bmp")).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img))).collect();
+        self.pics.races = race_heads(r, install);
     }
 
     /// `SetKepName(0x3e, entry + 8)`, `LoadKepToMemory(0x3e)`: the shown entry's picture, loaded when it changes.

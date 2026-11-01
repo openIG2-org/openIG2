@@ -29,6 +29,7 @@ The game starts at the title and main menu, like the original: campaign, scenari
 the multiplayer rings (LAN, direct IP or join code, optionally through a relay server you or a friend run:
 `docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code
 (Ctrl+V) into the "Address or join code" field with no LAN game selected and press Join.
+In the room every empire is a card: its colour, the race's picture, the holder and a mark ("Host", "Ready" or "Not ready"). If you press Start as host while someone is not ready, the room says so and the button becomes "Start anyway"; pressing it again readies everyone and starts.
 For a quick game, click "Quick game" at the bottom right of the main menu: the skirmish settings open on their own
 (race, computer players, difficulty, planets, technology, money, population), set to your last skirmish's choices;
 Start begins a generated galaxy. The full single-player path is still there.
@@ -47,6 +48,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--new-campaign` | Start a new campaign at once |
 | `--speed 1\|2\|3` | Starting game speed |
 | `--lang en\|hu\|de\|fr\|es\|it` | UI language; wins over `IG2_LANG`, which wins over the Options Language row, then the original's own choice |
+| `--multiplayer` | Open the main menu on the multiplayer connection page |
 | `--size WxH`, `--letterbox` | Window size; letterbox wide windows instead of the remaster's layout |
 
 ## Controls

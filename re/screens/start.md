@@ -152,11 +152,11 @@ font (size 3 headings and buttons, 2 rows, 1 small values), palette colours 1 (n
 | Box | Rect (x, y, w, h) | Holds |
 |---|---|---|
 | Room: title | 16, 8, 608, 26 | the session name (size 3) |
-| Room: slots | 16, 40, 380, 272 | 8 rows of 32 px from y 56: empire n, race (click: next, right click: previous), holder (human name, "computer", "-"; click: move there; host right click: empty → AI → closed), "Ready" |
+| Room: slots | 16, 40, 380, 272 | 8 cards of 32 px from y 56 (a `kirak_fader` box each, ADR 0041): a stripe in the empire's colour (palette 0xf + empire), the race's head (`fejek3/<race>a.bmp`, 24×24), race (click: next, right click: previous), holder (human name, "computer", "-"; click: move there; host right click: empty → AI → closed), mark ending at x 386: "Host", "Ready" (14/5/6) or "Not ready" (dim) |
 | Room: options | 404, 40, 220, 272 | planets, AI players, galaxy shape, battles, speed control: label (0x25) and value (0x22) rows of 48 px with the host's ◄ ► arrows |
 | Room: port mapping | 16, 316, 608, 40 | host only: row "Port mapping (UPnP / NAT-PMP)" (hot spot 0x72, 20, 318, 400, 16, click toggles; on when the room opens, ADR 0020): "asking the router...", "on, reachable at <ip:port>" or the failure text; right of it at x 476 "Private game: no/yes" (host-only hot spot 0x73, 430, 318, 190, 16, click toggles `LobbyHost::set_private`: no LAN announcement, the door asks for the session id; a joiner sees "Private game: yes" in colour 0x25); second row at y 338 "Join code: <code>  (click: copy)" (hot spot 0x74, 20, 336, 600, 16; click or Ctrl+C copies) or "Join code: none (no network address)"; with a relay set, a line at y 351 "Relay server: room open, seen at <addr>" (or opening / full / refused / no answer) |
 | Room: chat | 16, 360, 608, 80 | the last 4 lines (y 364 + 14j), the entry line at y 424 (Enter sends) |
-| Room: buttons | y 450 | Cancel (14/1/11), Ready (14/5/6) or Start game (14/1/12) |
+| Room: buttons | y 450 | Cancel (14/1/11), Ready (14/5/6) or Start game (14/1/12); a Start with a human not ready shows "Not everyone is ready: press again to start anyway" and the button reads "Start anyway" (next press: `LobbyHost::ready_all`, then start; any other press disarms) |
 | Connect | 120, 40, 400, 400 | title (15/1/29 "Local network" or 15/1/30 "Internet game"), the session list (10 rows), Server IP address (14/5/2) entry, password entry, Host / Join / Cancel |
 
 ## 7. Client status
@@ -166,4 +166,4 @@ start, the host's port mapping (on when the room opens, ADR 0020) through `Liste
 renewed until the room or game ends; `launch` builds the game via `HostSession::start_galaxy` / `ClientSession::new_galaxy`), and a room for an MP
 save (`MpScreen::host_save`). `mp_wait.rs` is the in-game wait overlay (`MOUSE_DrawOver`, input.md §9). The
 original's own room drawing (`StartGfx2D_1..3`) is deliberately not copied (ADR 0009 §2, ADR 0014); the shared start
-`ticks` is row 223; private rooms, join codes and the optional relay server (§5, §6) are done (clipboard through `arboard`, text only); the main menu's remaining MP-ring leftovers are row 157; the host's `story N` chat line picks the start story (§3, rows 418, 419).
+`ticks` is row 223; private rooms, join codes and the optional relay server (§5, §6) are done (clipboard through `arboard`, text only); the main menu's remaining MP-ring leftovers are row 157; the host's `story N` chat line picks the start story (§3, rows 418, 419); the slot cards and the forced start (Start anyway) are done (ADR 0041).

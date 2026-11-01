@@ -1,7 +1,7 @@
 //! IG2 game client (ADR 0006): loads an original save into the simulation, runs it at the original's 20 Hz and
 //! renders the starmap at the display's refresh rate.
 //!
-//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3] [--tutorial N]`: the main menu (re/screens/mainscr.md; its load ring opens
+//! Window:   `ig2-client [--save <file.sav>] [--speed 1|2|3] [--tutorial N] [--multiplayer]`: the main menu (re/screens/mainscr.md; its load ring opens
 //!           the Options screen's slots, re/screens/options.md), or the game of `--save` at once.
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
@@ -133,6 +133,8 @@ pub struct Options {
     /// The window (`size` is its band, [`kit::Layout::band`]); `--letterbox`: the 3D stops at the 4:3 frame.
     pub window: (u32, u32),
     pub letterbox: bool,
+    /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
+    pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
     /// `LiveBackground`, live by default).
     pub background: Option<bool>,
@@ -280,6 +282,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         size: (1920, 1080),
         window: (1920, 1080),
         letterbox: false,
+        multiplayer: false,
         background: None,
         texts: None,
         backdrop: false,
@@ -373,6 +376,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             }
             "--reveal" => o.reveal = true,
             "--letterbox" => o.letterbox = true,
+            "--multiplayer" => o.multiplayer = true,
             "--backdrop" => o.backdrop = true,
             "--background" => {
                 o.background = Some(match val()?.as_str() {

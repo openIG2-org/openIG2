@@ -42,6 +42,7 @@ Since 0.7.56.
 - The host can let defeated players stay and watch the game (room option "Defeated players"; off keeps the original's exit to the menu).
 - With the same room option, anyone can join a running game with Join under a new name to watch it.
 - The host can set each computer player's difficulty in the room (easy, normal or hard; easy, the default, is how the original plays).
+- Multiplayer: the room shows a card per empire (empire colour, race picture, holder, ready mark), and the host can start without waiting for everyone ("Start anyway").
 
 ### 0.7.56 (beta)
 Since 0.7.48.

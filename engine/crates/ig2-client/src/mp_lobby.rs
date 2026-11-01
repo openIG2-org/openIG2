@@ -25,7 +25,7 @@ use ig2_sim::game::GameRules;
 use crate::font::Align;
 use crate::kit::fader;
 use crate::options::{Draw, EntryKey};
-use crate::render::{kind, Blend, Frame, Instance};
+use crate::render::{kind, Blend, Frame, Instance, TexId};
 
 /// The game port a host listens on first (the LAN announcement carries the real one).
 pub const GAME_PORT: u16 = ig2_net::discovery::DISCOVERY_PORT + 1;
@@ -480,6 +480,8 @@ mod spot {
 
 /// Where a computer slot's level is drawn and clicked (ADR 0033); the holder's box ends there.
 const LEVEL_X: f32 = 280.0;
+/// A slot card's race name (after the colour stripe and the race's head, ADR 0041).
+const CARD_TEXT: f32 = 58.0;
 
 /// The connection page's relay field.
 const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
@@ -541,6 +543,10 @@ pub struct MpScreen {
     /// `MultiplayerStartStory` (exe 0xF2148C): set by the room's `story N` / `s N` line; only the host's start sends
     /// it. The config line `mpstory` (`Start_Belep` exe 0x5bf4b0) has no reader here, so it starts at 0.
     pub story: i32,
+    /// The race heads on the room's cards (ADR 0041), race 1 first; loaded by [`MpScreen::load_pictures`].
+    pub races: Vec<Option<TexId>>,
+    /// The host's Start found someone not ready: the next press starts anyway (ADR 0041).
+    force: bool,
 }
 
 /// `DoKeyboard`'s room line (exe 0x4db1a0, ~0x4db7bc): `story N` or `s N` (case-insensitive) with `atoi(N) != 0`.
@@ -570,7 +576,10 @@ mod words {
     pub const SPECTATORS: &[u8] = b"Defeated players:";
     pub const SPECTATORS_BY: [&[u8]; 2] = [b"leave (classic)", b"stay and watch"];
     pub const NEED_TWO: &[u8] = b"Two empires are needed to start";
-    pub const WAITING: &[u8] = b"Waiting for every player to be ready";
+    pub const WAITING: &[u8] = b"Not everyone is ready: press again to start anyway";
+    pub const START_ANYWAY: &[u8] = b"Start anyway";
+    pub const NOT_READY: &[u8] = b"Not ready";
+    pub const HOST_MARK: &[u8] = b"Host";
     pub const SAVED: &[u8] = b"Saved game";
     pub const LAN: &[u8] = b"LAN games";
     pub const NO_SAVES: &[u8] = b"No multiplayer saves";
@@ -643,6 +652,8 @@ impl MpScreen {
             save_dir: crate::options::slot_dir(),
             resume: None,
             story: 0,
+            races: Vec::new(),
+            force: false,
         }
         .with_saved_relay()
     }
@@ -935,7 +946,7 @@ impl MpScreen {
             Some(st) => {
                 for i in 0..8 {
                     let y = 52.0 + 32.0 * i as f32;
-                    v.push((spot::RACE + i, [44.0, y, 120.0, 26.0]));
+                    v.push((spot::RACE + i, [CARD_TEXT - 4.0, y, 170.0 - (CARD_TEXT - 4.0), 26.0]));
                     let level = self.is_host() && st.galaxy.is_some() && st.slots.get(i as usize).is_some_and(|s| s.kind == SlotKind::Ai);
                     if level {
                         v.push((spot::LEVEL + i, [LEVEL_X - 4.0, y, 110.0, 26.0]));
@@ -1011,6 +1022,7 @@ impl MpScreen {
         let me = self.member()?;
         let mine = st.empire_of(me);
         let slot = |i: u32| st.slots.get(i as usize).copied();
+        let force = std::mem::take(&mut self.force);
         match id {
             spot::LEAVE => self.leave(),
             spot::PRIVATE => {
@@ -1030,6 +1042,9 @@ impl MpScreen {
                     // The host's press is its ready and the start (exe 0x5c0120's button 0x44).
                     Role::Host { lobby, .. } => {
                         lobby.set_ready(0, true);
+                        if force {
+                            lobby.ready_all();
+                        }
                         // A saved empire nobody holds goes to the computer (ADR 0022); others than the saved can't play.
                         let saved = self.resume.as_ref().map(|(s, _)| {
                             st.members.iter().filter_map(|m| st.empire_of(m.id)).all(|e| s.session.humans.iter().any(|h| h.empire == e))
@@ -1045,6 +1060,7 @@ impl MpScreen {
                             return Some(Out::Start(Begun::Host { lobby, listener, save, story: self.story }));
                         }
                         let two = st.members.len() + st.ais().len() >= 2;
+                        self.force = two;
                         self.line = if two { words::WAITING } else { words::NEED_TWO }.to_vec();
                     }
                     Role::Joiner(c) => c.ready(!ready),
@@ -1160,6 +1176,13 @@ impl MpScreen {
 
     // -------------------------------------------------------------------------------------------- drawing
 
+    /// The race heads for the cards, read once from the install.
+    pub fn load_pictures(&mut self, r: &mut crate::render::Renderer, install: &ig2_formats::Install) {
+        if self.races.is_empty() {
+            self.races = crate::mainscr_scenario::race_heads(r, install);
+        }
+    }
+
     pub fn draw(&self, f: &mut Frame, d: &Draw, blink: bool) {
         let v = &d.v;
         let t = 1.0 - self.open / 100.0;
@@ -1236,22 +1259,33 @@ impl MpScreen {
         }
         text(f, st.name.as_bytes(), 320.0, 13.0, 3, Align::Centre, 1);
         let me = self.member();
+        let sprite = |f: &mut Frame, tex: TexId, r: [f32; 4], c: [f32; 3]| {
+            f.push(tex, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0), [r[2] * v.k / 2.0, r[3] * v.k / 2.0], [c[0], c[1], c[2], 1.0]));
+        };
         for (i, s) in st.slots.iter().enumerate().take(8) {
             let y = 58.0 + 32.0 * i as f32;
             let own = me.is_some_and(|m| s.kind == SlotKind::Human(m));
-            text(f, format!("{}", s.empire).as_bytes(), 26.0, y, 2, Align::Left, if own { 2 } else { 0x25 });
+            // ADR 0041: the slot's card, a stripe in the empire's colour (`ColonyKisInfo`'s owner colour 0xf + empire)
+            // and the race's head.
+            box_(f, [20.0, y - 7.0, 372.0, 28.0]);
+            if s.kind != SlotKind::Closed {
+                sprite(f, d.white, [24.0, y - 5.0, 4.0, 24.0], d.col(0xf + s.empire as usize, fade));
+                if let Some(Some(head)) = self.races.get((s.race as usize).wrapping_sub(1)) {
+                    sprite(f, *head, [31.0, y - 5.0, 24.0, 24.0], [fade / 100.0; 3]);
+                }
+            }
             if st.galaxy.is_some() {
                 let race_c = if hover == spot::RACE + i as u32 && (own || self.is_host()) { 2 } else { 0x22 };
-                text(f, &d.texts.get(0x11, 1, (s.race.clamp(0, 19) + 5) as u16), 48.0, y, 2, Align::Left, race_c);
+                text(f, &d.texts.get(0x11, 1, (s.race.clamp(0, 19) + 5) as u16), CARD_TEXT, y, 2, Align::Left, race_c);
             } else if let Some(h) = self.resume.as_ref().and_then(|(sv, _)| sv.session.humans.iter().find(|h| h.empire == s.empire)) {
                 // A resumed save: whose empire it was.
-                text(f, h.name.as_bytes(), 48.0, y, 2, Align::Left, 0x25);
+                text(f, h.name.as_bytes(), CARD_TEXT, y, 2, Align::Left, 0x25);
             }
-            let (who, ready): (Vec<u8>, bool) = match s.kind {
-                SlotKind::Human(m) => st.members.iter().find(|x| x.id == m).map_or((Vec::new(), false), |x| (x.name.as_bytes().to_vec(), x.ready)),
-                SlotKind::Ai => (words::COMPUTER.to_vec(), false),
-                SlotKind::Open => (words::OPEN.to_vec(), false),
-                SlotKind::Closed => (words::CLOSED.to_vec(), false),
+            let (who, ready): (Vec<u8>, Option<bool>) = match s.kind {
+                SlotKind::Human(m) => st.members.iter().find(|x| x.id == m).map_or((Vec::new(), None), |x| (x.name.as_bytes().to_vec(), Some(x.ready))),
+                SlotKind::Ai => (words::COMPUTER.to_vec(), None),
+                SlotKind::Open => (words::OPEN.to_vec(), None),
+                SlotKind::Closed => (words::CLOSED.to_vec(), None),
             };
             let holder_c = if own || (hover == spot::HOLDER + i as u32 && matches!(s.kind, SlotKind::Open | SlotKind::Ai)) { 2 } else { 0x22 };
             text(f, &who, 176.0, y, 2, Align::Left, holder_c);
@@ -1260,8 +1294,15 @@ impl MpScreen {
                 let c = if !self.is_host() { 0x25 } else if hover == spot::LEVEL + i as u32 { 2 } else { 0x22 };
                 text(f, &d.texts.get(15, 4, o.difficulty[(s.empire as usize).clamp(1, 8) - 1].clamp(1, 3) as u16), LEVEL_X, y, 2, Align::Left, c);
             }
-            if ready {
-                text(f, &d.texts.get(14, 5, 6), 386.0, y, 2, Align::Right, 2);
+            // The mark ends at the card's right edge (the font's `Align::Right` needs a field width).
+            let mark: Option<(Vec<u8>, usize)> = match (s.kind, ready) {
+                (SlotKind::Human(0), _) => Some((words::HOST_MARK.to_vec(), 0x25)),
+                (_, Some(true)) => Some((d.texts.get(14, 5, 6), 2)),
+                (_, Some(false)) => Some((words::NOT_READY.to_vec(), 0x25)),
+                _ => None,
+            };
+            if let Some((m, c)) = mark {
+                text(f, &m, 386.0 - d.font.advance(2) * m.len() as f32, y, 2, Align::Left, c);
             }
         }
         if let Some(o) = st.galaxy {
@@ -1323,7 +1364,7 @@ impl MpScreen {
         text(f, &self.line, 320.0, 452.0, 2, Align::Centre, 2);
         text(f, &d.texts.get(14, 1, 11), 76.0, 452.0, 3, Align::Centre, hot(spot::LEAVE));
         let (label, c) = if self.is_host() {
-            (d.texts.get(14, 1, 12), hot(spot::READY))
+            (if self.force { words::START_ANYWAY.to_vec() } else { d.texts.get(14, 1, 12) }, hot(spot::READY))
         } else {
             let ready = st.members.iter().find(|m| Some(m.id) == me).is_some_and(|m| m.ready);
             (d.texts.get(14, 5, 6), if ready { 2 } else { hot(spot::READY) })
@@ -1888,6 +1929,25 @@ mod tests {
         for w in &worlds {
             assert_eq!(w.game.state.difficulties()[e as usize], 2, "empire {e}'s level on every machine");
         }
+    }
+
+    /// ADR 0041: the host's Start with a joiner not ready waits and arms "Start anyway"; another press disarms it, and
+    /// the armed press readies everyone and starts (the launch itself: the tests above).
+    #[test]
+    fn the_host_starts_anyway() {
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(2, &mut net);
+        click(&mut guests[0], spot::READY, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members[1].ready);
+        assert!(matches!(click(&mut host, spot::READY, false, &mut net), Some(Out::Click)), "Guest1 isn't ready");
+        assert_eq!(host.line, words::WAITING);
+        assert!(host.force);
+        click(&mut host, spot::PRIVATE, false, &mut net);
+        assert!(!host.force, "another press disarms it");
+        click(&mut host, spot::PRIVATE, false, &mut net);
+        click(&mut host, spot::READY, false, &mut net);
+        let Some(Out::Start(Begun::Host { lobby, .. })) = click(&mut host, spot::READY, false, &mut net) else { panic!("no forced start") };
+        assert!(lobby.can_start() && lobby.state().members.iter().all(|m| m.ready), "every member forced ready");
     }
 
     /// ADR 0026: with the room's "Defeated players" option on, a joiner whose empire dies stays in the session, sees

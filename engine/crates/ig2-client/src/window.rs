@@ -435,6 +435,9 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     app.apply_battle_rows();
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
     app.stage_win = o.stage_win;
+    if o.multiplayer && app.front.is_some() {
+        app.front_act(crate::mainscr::Act::MultiServer);
+    }
     app.backdrop.live = o.background.unwrap_or(app.settings.int("LiveBackground") != Some(0));
     app.one_language = o.texts.unwrap_or(app.settings.int("OneLanguage") != Some(0));
     app.lang_at_start = app.settings.int(crate::display::LANGUAGE).unwrap_or(0);
@@ -582,6 +585,9 @@ fn draw_options(o: &mut OptionsUp, h: &crate::ui::Hud, frame: &mut crate::render
 #[allow(clippy::too_many_arguments)]
 fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: &mut crate::render::Frame, size: [f32; 2], now_ms: f64, history: bool) {
     crate::mainscr_scene::draw_2d(&mut fr.s, &mut fr.scenarios, h, r, install, frame, size, now_ms);
+    if let Some(mp) = &mut fr.mp {
+        mp.load_pictures(r, install);
+    }
     let Some(font) = &h.font else { return };
     let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
     if let Some(st) = &fr.stats {

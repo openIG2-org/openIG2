@@ -113,6 +113,23 @@ fn the_room_seats_moves_and_picks_ais_like_the_original() {
     assert_eq!(kind(&h, to), SlotKind::Open);
 }
 
+/// ADR 0041: the host's forced start readies every seated member, and every joiner sees it.
+#[test]
+fn the_host_forces_the_start() {
+    let mut h = LobbyHost::new_galaxy(settings(), 9, RULES, "Host");
+    let mut a = join(&mut h, "Alice");
+    let mut b = join(&mut h, "Bob");
+    pump(&mut h, &mut [&mut a, &mut b], |h, c| h.state().members.len() == 3 && synced(h, c));
+    a.ready(true);
+    pump(&mut h, &mut [&mut a, &mut b], |h, c| h.state().members[1].ready && synced(h, c));
+    assert!(h.set_ready(0, true));
+    assert!(!h.can_start(), "Bob isn't ready");
+    h.ready_all();
+    assert!(h.can_start());
+    pump(&mut h, &mut [&mut a, &mut b], synced);
+    assert!(b.state.as_ref().unwrap().members.iter().all(|m| m.ready), "the joiners see the forced flags");
+}
+
 #[test]
 fn a_lone_host_needs_an_ai_to_start() {
     let mut h = LobbyHost::new_galaxy(settings(), 7, RULES, "Host");
