@@ -534,7 +534,8 @@ impl AiState {
                 let diff = w.spy.ctx.difficulty(e);
                 // Enhanced (ADR 0045): a clearly stronger empire doesn't wait for the 1-in-720 day (the draws stay).
                 let roll = w.r(1, 720) == 1 || w.planet_count[e] == 0 || (diff == 4 && w.human(t) && w.r(1, 720) == 1);
-                if roll || (w.ctx.enhanced && enhanced::war_ready(w, e, t, &self.main_fleet)) {
+                // Enhanced: a cease-fire or a pact is kept (part 3).
+                if (roll && !(w.ctx.enhanced && enhanced::pact(w, e, t))) || (w.ctx.enhanced && enhanced::war_ready(w, e, t, &self.main_fleet)) {
                     hooks.declare_war(w, e, t);
                 }
             }

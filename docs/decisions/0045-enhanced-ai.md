@@ -1,9 +1,9 @@
-# ADR 0045: Enhanced computer empires (part 1: economy and research; part 2: fleets and war)
+# ADR 0045: Enhanced computer empires (part 1: economy and research; part 2: fleets and war; part 3: diplomacy)
 
 Date: 2026-11-01. Status: accepted. An enhanced ruleset beside the classic one (classic = the original, bit for
-bit). Spec: `re/rules/ai-empire.md` §15 (the classic AI's weaknesses, the enhanced rules §15.2 and §15.4, the
-measured effect §15.3 and §15.5).
-Implemented by `ig2-sim::ai::enhanced`, `AiContext::enhanced`, `EconomyContext::enhanced_ai` (the autobuild's
+bit). Spec: `re/rules/ai-empire.md` §15 (the classic AI's weaknesses, the enhanced rules §15.2, §15.4 and §15.6, the
+measured effect §15.3, §15.5 and §15.7).
+Implemented by `ig2-sim::ai::enhanced`, `ig2-sim::diplomacy::enhanced` (`DiplomacyContext::enhanced`), `AiContext::enhanced`, `EconomyContext::enhanced_ai` (the autobuild's
 per-planet purchase in `colony_side`), `Game::enhanced_ai` (snapshot version 12), `GalaxyOptions::enhanced_ai`
 (lobby protocol 11), the Options row "Computer empires" (`EnhancedAi`) and the multiplayer room's row.
 
@@ -17,8 +17,8 @@ builds labs outgrows them within a few years.
 ## Decision
 1. **A per-game ruleset**: "Computer empires: classic / enhanced". Classic (the default) runs the original's AI
    untouched. Enhanced changes only the economy and research decisions of every computer-played empire (a dropped
-   multiplayer player handed to the computer included); part 2 adds fleets and war (decision 5); spies and diplomacy
-   stay the original's (part 3).
+   multiplayer player handed to the computer included); part 2 adds fleets and war (decision 5), part 3 diplomacy (decision 6); spies
+   stay the original's.
 2. **Where it is set**: single player takes it from the Options screen's Remake row "Computer empires" when a new
    game starts; a multiplayer room has a host row of the same name. The game keeps its own choice: it is part of
    the synced state (`Game::enhanced_ai`, snapshot version 12, in the state hash), so a save, a rejoin and a host
@@ -38,6 +38,13 @@ builds labs outgrows them within a few years.
    target's, a planet is invaded only with 1.5 × its defence aboard, an enemy attacking an own colony that the main
    fleet outguns comes first, the main fleet waits for followers close by before an invasion, and a fleeing fleet
    no longer stops every few ticks. The original's random draws are made as before; no save or protocol change.
+6. **Part 3, diplomacy** (spec §15.6): the computer empires send and judge the original's own negotiation messages
+   (cease-fire, peace, pacts, war together, trade, the spies complaint) by interest instead of by its 1-in-100 day
+   and opinion thresholds: a lost war ends in a cease-fire and peace, two empires gang up on a runaway leader (1.5 ×
+   the second's power) or on the target one of them can beat, pacts come from a common enemy or a strong neighbour,
+   spies and broken treaties block new ones and end old ones, and a pact or cease-fire is never broken by a declared
+   war (the original's 1-in-720 day included). They send no threats or insults and draw nothing on the diplomacy
+   stream; the human's deals and the effects of every answer stay the original's. No save or protocol change.
 
 ## Consequences
 - Classic games, replays and saves are unchanged (every enhanced branch is behind the flag).
@@ -49,4 +56,7 @@ builds labs outgrows them within a few years.
 - Part 2 (§15.5, 8 skirmish seeds, 10 years): the main fleets reach about 4 × part 1's attack while the empires hold
   over twice the classic planets, and an idle human falls about ten months sooner; the main fleets still carry few
   ground troops (troop room and money are the next limits).
-- Shipped as enhancement row 459 (`docs/ENHANCEMENTS.md`); diplomacy follows as part 3.
+- Part 3 (§15.7, the same runs): the computer empires end about three wars in four (the original ends none), sign
+  about three pacts and two trade agreements a game, and an idle human falls in 7 of 8 seeds (mean month 46) instead
+  of 4 of 8 (57.5).
+- Shipped as enhancement row 459 (`docs/ENHANCEMENTS.md`), all three parts.

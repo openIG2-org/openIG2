@@ -14,6 +14,8 @@ use crate::fleet::{order, Starmap, StarmapContext, StarmapEvent, DELETED};
 use crate::research::{self, Research, ResearchContext, ResearchEvent, ResearchRules};
 use crate::rng::Streams;
 
+mod enhanced;
+
 /// The diplomacy stream (`rndlog(9, …)`).
 pub const STREAM: usize = 9;
 /// Values per relation record.
@@ -513,6 +515,8 @@ pub struct DiplomacyContext {
     pub kidnap: [i32; 18],
     /// The "all techs" switch (exe 0xB77254), for the tech-status recompute after a tech deal.
     pub all_techs: bool,
+    /// Ours (ADR 0045 part 3): the empire is computer-played in an enhanced game (`diplomacy::enhanced`).
+    pub enhanced: [bool; EMPIRES],
 }
 
 impl DiplomacyContext {
@@ -1016,8 +1020,16 @@ impl Diplomacy {
                 self.last_contact[a * 9 + b] += 1;
             }
         }
+        let leader = if w.ctx.enhanced.iter().any(|&x| x) { self.runaway_leader(w) } else { 0 };
         for a in 1..=pp {
             if w.ctx.human[a] {
+                continue;
+            }
+            if w.ctx.enhanced[a] {
+                let target = self.target(w, a);
+                for b in 1..=pp {
+                    self.consider_enhanced(w, a, b, leader, target);
+                }
                 continue;
             }
             for b in 1..=pp {
@@ -1390,6 +1402,7 @@ impl Diplomacy {
         let wars = self.wars(w.ctx, b);
         let level_of = |s: &Self, x: i32, y: i32| s.level(x.max(0) as usize, y.max(0) as usize);
         match msg.cat {
+            cat::NEGOTIATE if w.ctx.enhanced[b] => self.enhanced_accepts(w, a, b, msg),
             cat::NEGOTIATE => match msg.sub {
                 negotiate::CEASEFIRE => self.wants_ceasefire(w.ctx, b, a, bonus),
                 negotiate::PEACE => self.wants_peace(w.ctx, b, a, bonus),
@@ -2318,5 +2331,80 @@ mod tests {
         let s = d.players[0];
         assert_eq!((s.waiting, s.letter.msg, s.letter.from), (1, msg, 3));
         assert_eq!(w.events.iter().filter(|e| matches!(e, DiploEvent::RandDraw { .. })).count(), 1);
+    }
+
+    /// ADR 0045 part 3 (`ai-empire.md` §15.6): the enhanced fixture, empires 2..=4 computer-played, powers given.
+    fn enhanced(fx: &mut Fixture, power: [f32; 5]) -> Diplomacy {
+        let mut d = neutral();
+        for r in d.relations.iter_mut().flatten() {
+            r.v[field::SPY_GRIEVANCE] = 0;
+            r.v[field::UNRELIABLE] = 0;
+        }
+        fx.ctx.enhanced[2..=4].fill(true);
+        d.power[..5].copy_from_slice(&power);
+        d
+    }
+
+    #[test]
+    fn enhanced_peace_when_the_war_is_lost() {
+        let fx = &mut Fixture::new();
+        let mut d = enhanced(fx, [1.0, 100.0, 100.0, 200.0, 100.0]);
+        d.set_level(2, 3, level::WAR);
+        let w = fx.world();
+        let ceasefire = Message::ai(cat::NEGOTIATE, negotiate::CEASEFIRE, 0);
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 0, 0), Some(ceasefire), "2 is out-powered");
+        assert_eq!(d.enhanced_pick(&w, 3, 2, 0, 0), None, "3 is winning");
+        let mut w = fx.world();
+        assert!(!d.decide(&mut w, &(), 2, 3, ceasefire), "the winner refuses");
+        d.power[3] = 90.0;
+        assert!(d.decide(&mut w, &(), 2, 3, ceasefire));
+        d.set_level(2, 3, level::CEASEFIRE);
+        assert_eq!(d.enhanced_pick(&w, 3, 2, 0, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::PEACE, 0)));
+    }
+
+    #[test]
+    fn enhanced_gang_up_on_a_runaway_leader() {
+        let fx = &mut Fixture::new();
+        let mut d = enhanced(fx, [1.0, 100.0, 400.0, 400.0, 1000.0]);
+        let mut w = fx.world();
+        assert_eq!(d.runaway_leader(&w), 4);
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 4, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 4)));
+        assert!(d.decide(&mut w, &(), 2, 3, Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 4)));
+        // Too weak together: a pact against the leader instead, and none with the leader.
+        d.power[2] = 300.0;
+        d.power[3] = 300.0;
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 4, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::NAP, 0)));
+        assert!(!d.decide(&mut w, &(), 4, 2, Message::ai(cat::NEGOTIATE, negotiate::NAP, 0)));
+        assert!(!d.decide(&mut w, &(), 2, 3, Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 4)));
+        // A shared prey: the human (power 100) against 2 and 3 together.
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 4, 1), Some(Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 1)));
+        assert!(d.decide(&mut w, &(), 2, 3, Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 1)));
+        // No leader: equal powers keep to themselves (opinion 5000, far apart).
+        d.power[4] = 300.0;
+        assert_eq!(d.runaway_leader(&w), 0);
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 0, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::TRADE, 0)));
+    }
+
+    #[test]
+    fn enhanced_pacts_end_over_spies_and_broken_word() {
+        let fx = &mut Fixture::new();
+        let mut d = enhanced(fx, [1.0, 100.0, 100.0, 100.0, 100.0]);
+        d.set_level(2, 3, level::NAP);
+        d.relations[2][3].v[field::TRUST] = 6000;
+        let w = fx.world();
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 0, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::TRADE, 0)), "no shared enemy: no alliance");
+        d.relations[2][3].v[field::SPY_GRIEVANCE] = 1500;
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 0, 0), Some(Message::ai(cat::TALK, talk::SPIES, 0)), "a complaint, no trade");
+        d.relations[2][3].v[field::SPY_GRIEVANCE] = 3000;
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 0, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::BREAK_NAP, 0)));
+        d.relations[2][3].v[field::SPY_GRIEVANCE] = 0;
+        d.relations[2][3].v[field::UNRELIABLE] = 3500;
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 0, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::BREAK_NAP, 0)), "3 broke its word elsewhere");
+        // The human's alliance offer between NAP partners with a common enemy: accepted (the original never does).
+        d.relations[2][3].v[field::UNRELIABLE] = 0;
+        d.set_level(2, 4, level::WAR);
+        d.set_level(3, 4, level::WAR);
+        let mut w = fx.world();
+        assert!(d.decide(&mut w, &(), 3, 2, Message::ai(cat::NEGOTIATE, negotiate::ALLIANCE, 0)));
     }
 }

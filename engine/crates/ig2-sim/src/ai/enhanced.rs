@@ -129,7 +129,12 @@ fn factory_to_build(w: &World, e: usize) -> Option<(usize, u8)> {
 pub(super) fn war_ready(w: &World, e: usize, t: usize, main_fleet: &[i32]) -> bool {
     let strength = |f: i32| w.rec(f.max(0)).map_or(0, |r| r.strength) as f64;
     let mine = strength(main_fleet[e]);
-    !matches!(w.spy.relations[e][t].level, level::CEASEFIRE | level::NAP | level::ALLIANCE) && mine > 0.0 && mine >= strength(main_fleet[t]) * WAR_MARGIN
+    !pact(w, e, t) && mine > 0.0 && mine >= strength(main_fleet[t]) * WAR_MARGIN
+}
+
+/// `e` and `t` hold a cease-fire, a non-aggression pact or an alliance: an enhanced empire keeps it (§15.6).
+pub(super) fn pact(w: &World, e: usize, t: usize) -> bool {
+    matches!(w.spy.relations[e][t].level, level::CEASEFIRE | level::NAP | level::ALLIANCE)
 }
 
 /// The enemy fleet attacking one of `e`'s planets that the main fleet `m` outguns, the nearest to it (§15.4).

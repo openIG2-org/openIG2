@@ -184,6 +184,7 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
     let mut next_save = months(&worlds[0].game) + limits.save_every;
     let start_month = months(&worlds[0].game);
     let mut next_growth = start_month;
+    let mut treaties = super::Treaties::default();
     // A real-time space battle each machine is on (left when it is over).
     let mut battle = [false; 2];
     let mut round = 0u64;
@@ -258,13 +259,16 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
             report.problem(tick, format!("the machines differ at {e} (first differing turn hash: {at:?})"));
             break End::Error("desync".into());
         }
+        if limits.growth > 0 {
+            treaties.step(&worlds[0].game);
+        }
         for (e, alive) in worlds[0].game.state.alive().iter().enumerate() {
             ever_alive[e] |= *alive;
         }
         check(&worlds[0].game, tick, &ever_alive, report);
         if limits.growth > 0 && months(&worlds[0].game) >= next_growth {
             next_growth += limits.growth;
-            super::growth(&worlds[0].game, &report.name, limits.seed, months(&worlds[0].game) - start_month);
+            super::growth(&worlds[0].game, &report.name, limits.seed, months(&worlds[0].game) - start_month, &treaties);
         }
         if compares % 50 == 0 && std::env::var_os("IG2_PLAYTHROUGH_DEBUG").is_some() {
             let g = &worlds[0].game;

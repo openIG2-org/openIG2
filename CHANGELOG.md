@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Smarter computer empires, part 3: with "Computer empires: Enhanced" the computer empires make peace when a war is going badly, team up against a runaway leader or an easy target, sign pacts and trade agreements when it pays, hold grudges over spies and broken treaties and keep their word; Classic plays as the original.
 - Internet game list: with a relay server set, a host can put the room on the server's public list ("Public list: yes" in the room), and other players find it under "Browse internet games" on the connection page and join with a double click; the project's own public server is not running yet, so this works with a relay server you or a friend run.
 - More options: the main menu's Options screen has a Controls tab to rebind the game's keys (with a warning when two actions share a key and a reset button), a "Voice volume" row sets the speech apart from the sound effects, and "Extra game speeds" lets the fastest speed go on to x2 and x4 in single player (all default to the original's behaviour).
 - Richer battles: a new Remake row "Battle effects" (Enhanced) adds sparks, shock waves, embers, smoke columns, shield flashes and glowing shots to the space battles and ground wars, on top of the original's effects (Classic keeps the original's look).

@@ -631,8 +631,7 @@ bug: no change. Exact values differ with the seed; the pattern is what's checked
 
 ## 15. The classic AI's weaknesses and the enhanced ruleset (ours, ADR 0045)
 Not the original: an enhanced ruleset beside it, switched per game (`Game::enhanced_ai`; classic = §1–§14 bit for
-bit). Part 1 covers economy and research (§15.2), part 2 fleets and war (§15.4); diplomacy (`diplomacy.md`) is
-part 3.
+bit). Part 1 covers economy and research (§15.2), part 2 fleets and war (§15.4), part 3 diplomacy (§15.6).
 
 ### 15.1 What a player exploits (measured)
 AI-only games in the play-through harness (`ig2-client --playthrough skirmish|mp --growth 12`, the human handed to
@@ -807,3 +806,76 @@ months sooner. Fewer battles are won than with part 1 alone: the neighbours are 
 a main fleet can carry a real invasion force) and the money: an empire's autobuild buys spend the credits that
 production then lacks. The MP run (`mp:2:40`, seeds 1–4, 12,000 ticks) kept its 60 state compares a seed equal and
 every turn hashed alike.
+
+### 15.6 The enhanced rules, part 3: diplomacy
+Same scope and guarantees as §15.2: computer-played empires of an enhanced game (`DiplomacyContext::enhanced`), synced
+state only, no random draws of their own. They only send and judge the messages the original's AI already uses
+(`diplomacy.md` §4–§7: cease-fire, peace, NAP, alliance, break NAP/alliance, war together, trade agreement, the spies
+complaint), so every effect, the human's screen and the replies stay the original's. Deals (offer, demand, offer-for,
+specials) are judged as before (`diplomacy.md` §6.4). With `StoryAdat+0xb0` set (the story holds back proposals)
+only the spies complaint is sent.
+Terms (x judges y; `power` = `BirodalomEro`, `danger` = `MiVeszelyAllapot`, `r = Viszony[x][y]`, §3 of
+`diplomacy.md`):
+- **runaway leader L**: with three or more empires alive (1..=`ProgramPlayers`), the strongest (first strict
+  maximum of `power`) when its power is at least 1.5 × the second's; else none. Once per day before the messages.
+- **weak(x, y)**: `danger[x] ≥ 3` (out-gunned in space) or `power[y] > 1.25 · power[x]`; **winning(x, y)**:
+  `danger[x] < 3` and `power[x] ≥ power[y]`.
+- **grudge(x, y)**: `r.v0` (spy grievance) > 1000 or `r.v5` (unreliability: wars declared, pacts broken, §8.1)
+  > 1000. **gang(x, y)**: L exists and is neither. **shared enemy**: gang, or a third living empire at war with both.
+- **near**: `0 < r.v16 < 5000` (the original's own distance threshold). `target(x)` = `MI_KitAkarTamadni(x)`
+  (§6.2 there), computed once per day per sender.
+**Sending** (`MI_DIPLOMACY`'s pair loop, the original's checks on contact, race-5 empires and a human still answering;
+instead of its 1-in-100 draw and table): a message to y at most every 90 days (30 at war: `DiplomaciaMikorHivta`
+reset only when one is sent), the first that applies:
+1. level ≥ 4 and (`r.v0 > 2500` or `r.v5 > 3000`) → break the alliance / the NAP (y spied a lot or broke its word);
+2. level 1 and (weak, or gang and not winning) → cease-fire; level 2 → peace;
+3. gang, levels x–y ≥ 3, y–L neutral, x–L neutral or at war, no other war of x and `power[x] + power[y] ≥ 0.75 ·
+   power[L]` → war together against L; else `t = target(x) > 0` (x is then at war with nobody), t ≠ y, x–y ≥ 3, y–t
+   neutral → war together against t (the original's step j without its draws and opinion test);
+4. level 4, no grudge, trust `r.v1 > 5500`, y ≠ target(x), y ≠ L, shared enemy → alliance;
+5. level 3, no grudge, y ≠ target(x), y ≠ L, and (L exists and isn't x, near and `power[y] ≥ 0.8 · power[x]`,
+   opinion `r.v17 > 6000`, or a shared enemy) → NAP;
+6. level ≥ 3, no trade agreement, no grudge, y ≠ target(x), y ≠ L unless x is L → trade agreement;
+7. `r.v0 > 1000` and level > 1 → complain about the spies (`diplomacy.md` §5: it lowers the grievance by 500).
+**Accepting** (b = the enhanced receiver judging a, `EldontIgenNemUzenet` cat 0; the war declaration and the breaks
+are accepted as before): cease-fire and peace at level ≤ 2 when rule 2 holds for b or b isn't winning; NAP, alliance
+and trade by rules 5, 4, 6 for b (the original judges alliance offers by the NAP rule and so never accepts one,
+`diplomacy.md` §6); war together when b is neutral with the third and at war with nobody and the two hold 0.75 × its
+power when it is L, 2 × its power otherwise, or by the original's rule (no war and `target(b)` is the third).
+A NAP, an alliance, a cease-fire and a peace call the original's `BirodalomBeketKot` (`diplomacy.md` §8.2), which
+sets both empires' `BirodalomMiotaIsmeri` row to at least 600: the 600 days without a declared war (§11.3 needs
+`< 0`) that follow every treaty are the original's; a war together is not held back by it.
+**Keeping its word** (§11.3): an enhanced empire declares no war on an empire it holds a cease-fire, NAP or alliance
+with, the original's 1-in-720 day included (its draws are made as before); it breaks a pact only by rule 1, and never
+by the original's random "bad" step, threats or insults (it sends none).
+
+Port: `diplomacy::enhanced` (`runaway_leader`, `enhanced_pick`, `enhanced_accepts`, `consider_enhanced`), the gated
+branches of `Diplomacy::ai_messages` and `Diplomacy::decide`, `ai::enhanced::pact` in `AiState::fleets`; tests
+`diplomacy::tests::enhanced_peace_when_the_war_is_lost`, `enhanced_gang_up_on_a_runaway_leader`,
+`enhanced_pacts_end_over_spies_and_broken_word`. The harness's `--growth` line has `diplomacy [wars started, wars
+ended, pacts formed, pacts broken, trade agreements]` per empire since the start (changes of `Viszony` levels,
+counted every tick).
+
+### 15.7 Measured effect, part 3
+Same runs as §15.5 (`skirmish:1:3`, seeds 1–8, 12,000 ticks, `--growth 12`, `--human ai`). Planets, main attack and
+"at war" are the computer empires' mean; the diplomacy columns are per game since the start (pairs, the human's
+included): wars started / ended (cease-fire or peace), pacts formed (NAP or alliance) / broken, trade agreements.
+
+| Month | Ruleset | Planets | Main attack | At war | Wars started | Wars ended | Pacts formed | Pacts broken | Trade |
+|---|---|---|---|---|---|---|---|---|---|
+| 60 | classic | 4.67 | 1,284 | 0.17 | 0.25 | 0 | 0 | 0 | 0 |
+| 60 | parts 1 + 2 | 10.50 | 1,160 | 0.25 | 0.75 | 0 | 0 | 0 | 0 |
+| 60 | parts 1–3 | 9.10 | 897 | 0.52 | 5.38 | 3.50 | 1.88 | 0.12 | 1.62 |
+| 120 | classic | 6.43 | 7,511 | 0.43 | 1.25 | 0 | 0 | 0 | 0 |
+| 120 | parts 1 + 2 | 15.21 | 5,351 | 0.62 | 1.88 | 0 | 0 | 0 | 0 |
+| 120 | parts 1–3 | 14.50 | 3,210 | 0.62 | 8.88 | 6.62 | 3.00 | 0.25 | 2.12 |
+
+The original's computer empires end no war and sign nothing in ten years (its 1-in-100 day and the −1000 bias of
+`MI_DIPLOMACY` rarely pass); the enhanced ones end three wars in four, sign about three pacts and two trade
+agreements a game and break a pact once in four games. Against an idle human (`--human idle`) the human falls in 7
+of 8 seeds (months 19, 20, 32, 40, 49, 56, 108; mean 46), against 4 of 8 (mean 57.5) with parts 1 + 2: two
+neighbours now go to war together against the target one of them can beat. A first version without that rule
+(gang-ups only against a runaway leader) let the idle human survive every seed: its NAPs' `BirodalomBeketKot` held
+both signers back from any war for 600 days (§15.6). The main fleets are smaller than with parts 1 + 2 (more wars,
+fought and ended). The MP run (`mp:2:40`, seeds 1–4) kept its 60 state compares a seed equal and every turn hashed
+alike.

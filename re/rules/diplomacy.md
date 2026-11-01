@@ -431,6 +431,8 @@ Then, once `DiplomacyStarted`: `MostHanyPlayerVan = MaxPlayerek`, and every slot
 Cancel: `+0x58 = 1`, `+0x17 = 0`, `Multi_Send(0x41, EN, f)` (a no-op handler in SP). No random draws.
 
 ## 11. Not ported (open)
+The enhanced ruleset's computer empires (ours, ADR 0045 part 3) pick and judge these messages by their own rules:
+`ai-empire.md` §15.6.
 The human's screen (which messages it lets the human compose, its texts and answers) is `re/screens/diplomacy.md`.
 `MiertValaszolt…` reason codes and `vv_*` text flags, `Story_Special`,
 `NEWGAME_Diplomacy` (initial ruler ages and the cosmetic tables), the MP transport

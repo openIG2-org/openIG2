@@ -1226,6 +1226,10 @@ impl<'r> Game<'r> {
             day: g.day,
             kidnap: self.state.kidnap(),
             all_techs: g.all_techs,
+            enhanced: {
+                let ai: [bool; EMPIRES] = m.flags(va::AI_EMPIRE);
+                std::array::from_fn(|e| self.enhanced_ai && ai[e] && !g.human[e])
+            },
         }
     }
 

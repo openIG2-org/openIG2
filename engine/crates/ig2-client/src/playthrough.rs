@@ -245,6 +245,7 @@ impl Harness {
         let mut next_growth = start_month;
         let mut battle: Option<usize> = None;
         let mut ever_alive = w.game.state.alive();
+        let mut treaties = Treaties::default();
         let mut end = End::Budget;
         // The story's player: only where the AI plays the human's side of a campaign.
         let mut driver = (limits.autopilot && matches!(run, Run::Campaign { .. })).then(story::Driver::default);
@@ -336,6 +337,9 @@ impl Harness {
                 end = End::ClockStuck(tick - clock.1);
                 break;
             }
+            if limits.growth > 0 {
+                treaties.step(&w.game);
+            }
             if tick % 100 != 0 {
                 continue;
             }
@@ -345,7 +349,7 @@ impl Harness {
             check(&w.game, tick, &ever_alive, report);
             if limits.growth > 0 && months(&w.game) >= next_growth {
                 next_growth += limits.growth;
-                growth(&w.game, &report.name, limits.seed, months(&w.game) - start_month);
+                growth(&w.game, &report.name, limits.seed, months(&w.game) - start_month, &treaties);
             }
             if tick % 2000 == 0 && std::env::var_os("IG2_PLAYTHROUGH_DEBUG").is_some() {
                 let t = &w.game.state.treasuries()[en];
@@ -532,8 +536,34 @@ fn months(g: &Game) -> i32 {
     y * 12 + m
 }
 
+/// `--growth`'s diplomacy counts per empire since the start: wars started, wars ended (cease-fire or peace), pacts
+/// formed (a non-aggression pact or an alliance), pacts broken, trade agreements made.
+#[derive(Default)]
+pub(super) struct Treaties {
+    levels: Vec<[(u8, u8); 19]>,
+    count: [[i32; 5]; 19],
+}
+
+impl Treaties {
+    /// Count the changes since the last call (call it every tick).
+    pub(super) fn step(&mut self, g: &Game) {
+        let now: Vec<[(u8, u8); 19]> = g.state.relations().iter().map(|r| std::array::from_fn(|c| (r[c].level, r[c].trade))).collect();
+        if self.levels.len() == now.len() {
+            for (a, b) in (1..19).flat_map(|a| (a + 1..19).map(move |b| (a, b))) {
+                let ((l0, t0), (l1, t1)) = (self.levels[a][b], now[a][b]);
+                let hits = [l1 == 1 && l0 > 1, l0 == 1 && matches!(l1, 2 | 3), l1 >= 4 && l1 > l0, l0 >= 4 && l1 < 4 && l1 != 0, t0 == 0 && t1 != 0];
+                for (k, _) in hits.iter().enumerate().filter(|x| *x.1) {
+                    self.count[a][k] += 1;
+                    self.count[b][k] += 1;
+                }
+            }
+        }
+        self.levels = now;
+    }
+}
+
 /// One `growth` line per living empire 1..=8 (`--growth`): `month` = game months since the start.
-pub(super) fn growth(g: &Game, run: &str, seed: u32, month: i32) {
+pub(super) fn growth(g: &Game, run: &str, seed: u32, month: i32, treaties: &Treaties) {
     let s = ig2_sim::stats::sample(&g.state);
     let alive = g.state.alive();
     let (colony, combat, relations, ai) = (g.state.colony(), g.state.combat(), g.state.relations(), g.state.ai());
@@ -546,7 +576,7 @@ pub(super) fn growth(g: &Game, run: &str, seed: u32, month: i32) {
         let m = ai.main_fleet[e];
         let main = combat.fleets.get(m.max(0) as usize).map_or([0; 6], |f| { let t = f.totals; [m, t.ships, t.attack, t.ground, t.capacity, t.ground_strength] });
         let wars = (1..19).filter(|&u| u != e && relations[e][u].level == 1).count();
-        println!("growth {run} seed {seed} month {month} empire {e} planets {} population {} techs {} credits {} ships {} built {} lost {} battles {} capacity {capacity:?} main {main:?} wars {wars} research {} labs {labs:?} open {open:?}", r.planets, r.population, r.techs, r.credits, r.ships, g.stats.built[i], g.stats.lost[i], r.battles, g.state.mem.i32(va::RESEARCHING + 4 * e as u32));
+        println!("growth {run} seed {seed} month {month} empire {e} planets {} population {} techs {} credits {} ships {} built {} lost {} battles {} capacity {capacity:?} main {main:?} wars {wars} diplomacy {:?} research {} labs {labs:?} open {open:?}", r.planets, r.population, r.techs, r.credits, r.ships, g.stats.built[i], g.stats.lost[i], r.battles, treaties.count[e], g.state.mem.i32(va::RESEARCHING + 4 * e as u32));
     }
 }
 
