@@ -116,6 +116,9 @@ impl StoryWorld for GameStory<'_, '_> {
     fn answering(&self) -> i32 {
         self.game.answering.map_or(self.g.en as i32, i32::from)
     }
+    fn story_fixes(&self) -> bool {
+        self.game.story_fixes
+    }
     fn canonical(&self) -> bool {
         self.g.canonical
     }

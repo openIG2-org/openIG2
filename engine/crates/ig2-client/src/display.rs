@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the texture upscaling (ADR 0054), the starmap's mouse camera (ADR 0049), the high-score entry (ADR 0050), the title's music (ADR 0051), the modern lighting (ADR 0055); kept in our settings file and shown as rows on the Options screen's Remake page (ADR 0048)
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) the replays (ADR 0038), the event log (ADR 0040), the subtitles and the colour-blind empire colours (ADR 0036), the sharp UI (ADR 0043), the sharp text (ADR 0046), the texture upscaling (ADR 0054), the starmap's mouse camera (ADR 0049), the high-score entry (ADR 0050), the title's music (ADR 0051), the campaign story's ruleset (ADR 0052), the modern lighting (ADR 0055); kept in our settings file and shown as rows on the Options screen's Remake page (ADR 0048)
 //! (`crate::options`, in the original's font and colours on the Remake page under group headings). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -65,6 +65,9 @@ pub const HIGH_SCORES: &str = "HighScoreEntry";
 /// ADR 0045: the computer empires of the next single-player game play the enhanced ruleset (0 classic, the default;
 /// 1 enhanced). The game keeps its own choice (`Game::enhanced_ai`, saved with it).
 pub const ENHANCED_AI: &str = "EnhancedAi";
+/// ADR 0052: the campaign story of the next new game plays the enhanced ruleset's fixes (0 classic, the default;
+/// 1 enhanced). The game keeps its own choice (`Game::story_fixes`, saved with it).
+pub const STORY_FIXES: &str = "StoryFixes";
 /// ADR 0051: the title video's music starts with the intro, not under the logos (on by default).
 pub const TITLE_MUSIC: &str = "TitleMusicWithIntro";
 /// ADR 0054: the textures upscaled 2× or 4× at load (0 = off, the default; 1 = 2×, 2 = 4×).
@@ -278,6 +281,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(29, Group::Graphics, "Per-pixel lighting", PIXEL_LIGHTING, d.lighting.per_pixel as i32, Vec::new(), 1),
         row(30, Group::Graphics, "Soft shadows", SOFT_SHADOWS, d.lighting.soft_shadows as i32, Vec::new(), 1),
         row(31, Group::Graphics, "Bloom", BLOOM, d.lighting.bloom as i32, Vec::new(), 1),
+        row(32, Group::Game, "Campaign story", STORY_FIXES, (f.int(STORY_FIXES) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
     ]
 }
 
@@ -312,7 +316,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

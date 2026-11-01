@@ -50,6 +50,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Starmap mouse camera", "Egérkamera a térképen"),
     ("High-score entry", "Rekordlista-bejegyzés"),
     ("Computer empires", "Gépi birodalmak"),
+    ("Campaign story", "Kampánytörténet"),
     ("Title music with intro", "Főcímzene az intróval"),
     ("Window", "Ablak"),
     ("Borderless", "Keretlen"),
@@ -129,6 +130,7 @@ const TABLE: &[(&str, &str)] = &[
     ("A won scenario's time goes into its high-score table.", "A megnyert küldetés ideje bekerül a rekordlistába."),
     ("How the computer empires of the next game manage their economy and research.", "Hogyan intézik a gépi birodalmak gazdaságukat és kutatásukat a következő játékban."),
     ("The title video's music starts with the intro, not under the logos.", "A címvideó zenéje a bevezetővel indul, nem a logók alatt."),
+    ("Enhanced fixes the original campaign story's slips in the next new game.", "Fejlett: a következő új játékban javítja az eredeti kampánytörténet hibáit."),
     ("Smooths the game's pictures and model textures 2x or 4x as they load.", "Betöltéskor 2x vagy 4x simítja a játék képeit és modelltextúráit."),
     // The research screen's auto research switches (label and state within 22 letters) and tooltips.
     ("Auto ships", "Auto hajók"),

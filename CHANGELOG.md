@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - Sharper textures on big screens: a new Remake row "Texture upscaling" (2x or 4x) smooths the game's pictures and model textures as they load, and texture packs in the mods folder can replace any picture or model with a higher-resolution one; every picture keeps its place (off keeps the original's look).
+- Campaign: with the new Remake row "Campaign story" set to Enhanced, the five fleets besieging a planet in one of the story episodes start at that planet instead of the far corner of the map (Classic, the default, plays as the original).
 - The title video stays quiet over the two logos and its music starts with the intro (Remake row "Title music with intro"; off plays the music from the first logo as the original).
 - A new Options screen in the main menu (Settings or `O`): every setting in tabs (display, sound, interface, game, accessibility, multiplayer, language) with switches, sliders and choices, a line explaining each one, and Apply/Back; it works with the keyboard alone, in English and Hungarian, and the in-game Options screen sees the same values.
 - New Remake rows under "Graphics": anti-aliasing (smooth edges on buildings, ships and planets), per-pixel lighting for the space battle's ships, soft colony shadows and a gentle glow on fire, blasts and weather; each one separately, all off keeps the original's look.

@@ -556,7 +556,10 @@ pub(super) fn story_834(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         if s.b_search(-1, 0, w) == 0 {
             s.win(0, true, w);
         } else {
-            s.f_new_ex(crate::story::FleetName::Text(id), 1, id, 0.09, 2, -1, w);
+            // `st_fNewEx(…, 2, −1)`: the exe's fleets appear at planet −1's record, (0, 0) in every recorded game; the
+            // enhanced ruleset (ADR 0052) starts them at planet 8340, the one they besiege.
+            let from = if w.story_fixes() { s.b_search(8340, 0, w) } else { -1 };
+            s.f_new_ex(crate::story::FleetName::Text(id), 1, id, 0.09, 2, from, w);
             move_to_planet(s, id, 8340, w);
             if id == 8344 {
                 s.v_set(8349, 1);
@@ -595,4 +598,99 @@ pub(super) fn story_834(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         s.win(0, true, w);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rng::Streams;
+
+    /// Planet 1 is empire 1's, planet 2 is the besieged 8340 at (120, −40); fleet records are kept as they come.
+    #[derive(Default)]
+    struct W {
+        rng: Streams,
+        fixes: bool,
+        fleets: Vec<(f32, f32)>,
+    }
+
+    impl StoryWorld for W {
+        fn ido(&self) -> i32 {
+            0
+        }
+        fn speed_mult(&self) -> i32 {
+            1
+        }
+        fn human(&self) -> i32 {
+            2
+        }
+        fn difficulty(&self) -> i32 {
+            1
+        }
+        fn multiplayer(&self) -> bool {
+            false
+        }
+        fn rng(&mut self) -> &mut Streams {
+            &mut self.rng
+        }
+        fn planet_count(&self) -> i32 {
+            2
+        }
+        fn planet_owner(&self, p: i32) -> i32 {
+            [0, 1, 2][p as usize]
+        }
+        fn planet_value(&self, _p: i32) -> i32 {
+            0
+        }
+        fn planet_visibility(&self, _p: i32) -> i32 {
+            1
+        }
+        fn planet_xy(&self, p: i32) -> (f32, f32) {
+            if p == 2 { (120.0, -40.0) } else { (0.0, 0.0) }
+        }
+        fn fleet_count(&self) -> i32 {
+            self.fleets.len() as i32
+        }
+        fn fleet_owner(&self, _f: i32) -> i32 {
+            1
+        }
+        fn fleet_id(&self, _f: i32) -> i32 {
+            0
+        }
+        fn new_fleet(&mut self, _name: &crate::story::FleetName, _owner: i32, _id: i32, x: f32, y: f32, _speed: f32) -> i32 {
+            self.fleets.push((x, y));
+            self.fleets.len() as i32
+        }
+        fn empire_alive(&self, _e: i32) -> bool {
+            true
+        }
+        fn planets_of(&self, _e: i32) -> i32 {
+            1
+        }
+        fn money(&self, _e: i32) -> f64 {
+            0.0
+        }
+        fn tech_status(&self, _t: i32, _e: i32) -> i32 {
+            0
+        }
+        fn relation_level(&self, _a: i32, _b: i32) -> i32 {
+            0
+        }
+        fn story_fixes(&self) -> bool {
+            self.fixes
+        }
+        fn event(&mut self, _ev: StoryEvent) {}
+    }
+
+    /// ADR 0052: counter 8340's siege fleet appears at planet −1's record ((0, 0) here, as in every recorded game) in
+    /// the original, at planet 8340 with the enhanced ruleset's story fixes.
+    #[test]
+    fn the_siege_fleets_start_at_8340_only_with_the_fixes() {
+        for (fixes, want) in [(false, (0.0, 0.0)), (true, (120.0, -40.0))] {
+            let mut w = W { fixes, ..W::default() };
+            let mut s = Story { planets: vec![(8340, 2)], counter_done: 8340, ..Story::default() };
+            s.flags[flag::COUNTER] = true;
+            story_834(&mut s, &mut w).unwrap();
+            assert_eq!(w.fleets.first(), Some(&want), "fixes {fixes}");
+        }
+    }
 }

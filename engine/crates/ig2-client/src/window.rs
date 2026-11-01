@@ -2478,6 +2478,8 @@ impl App {
                 let mut w = World::new_game(g);
                 // Ours (ADR 0045): the computer empires' ruleset of the new game, from the Options row.
                 w.game.enhanced_ai = self.settings.int(crate::display::ENHANCED_AI) == Some(1);
+                // Ours (ADR 0052): the campaign story's ruleset, likewise.
+                w.game.story_fixes = self.settings.int(crate::display::STORY_FIXES) == Some(1);
                 // `MainScr` 0x4fef1b: `StoreScenarioDescription` after `Betolt_Scenario`.
                 w.scenario = matches!(st, Start::Scenario { .. });
                 w.ui.scenario = w.scenario;

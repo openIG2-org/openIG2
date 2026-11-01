@@ -335,6 +335,9 @@ pub struct Game<'r> {
     pub auto_research: [u8; EMPIRES],
     /// Ours (ADR 0045): the computer empires play the enhanced ruleset (`ai::enhanced`); false = the original. Synced.
     pub enhanced_ai: bool,
+    /// Ours (ADR 0052): the campaign's story runs with the enhanced ruleset's fixes (story 834's siege fleets start at
+    /// planet 8340); false = the original, bit for bit. Chosen at a new campaign's start, saved with it. Synced.
+    pub story_fixes: bool,
     /// Ours (ADR 0034): the game's statistics, a day at each day change (`crate::stats`). Synced.
     pub stats: crate::stats::Stats,
     /// The single-player battle screen (ours, classic view; not in the state).
@@ -447,6 +450,7 @@ impl<'r> Game<'r> {
             spectators: false,
             auto_research: [0; EMPIRES],
             enhanced_ai: false,
+            story_fixes: false,
             stats: Default::default(),
             sp_battles: SpBattles::default(),
             over: None,

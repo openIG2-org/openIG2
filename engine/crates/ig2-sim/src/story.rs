@@ -656,6 +656,10 @@ pub trait StoryWorld {
     fn other_humans(&self) -> Vec<i32> {
         Vec::new()
     }
+    /// Ours (ADR 0052): the enhanced ruleset's story fixes (`Game::story_fixes`); false = the original.
+    fn story_fixes(&self) -> bool {
+        false
+    }
     /// The human whose messages-screen answer (or inbox expiry) the story is handling: its machine's `EN`.
     fn answering(&self) -> i32 {
         self.human()

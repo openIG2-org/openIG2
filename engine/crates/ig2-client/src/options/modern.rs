@@ -186,6 +186,7 @@ pub fn describe(key: &str) -> &'static str {
         "HighScoreEntry" => "A won scenario's time goes into its high-score table.",
         "EnhancedAi" => "How the computer empires of the next game manage their economy and research.",
         "TitleMusicWithIntro" => "The title video's music starts with the intro, not under the logos.",
+        "StoryFixes" => "Enhanced fixes the original campaign story's slips in the next new game.",
         "TextureUpscale" => "Smooths the game's pictures and model textures 2x or 4x as they load.",
         "AntiAliasing" => "Smooth edges on the 3D scenes' buildings, ships and planets.",
         "PixelLighting" => "The space battle's ships lit per pixel, so their hulls shade smoothly.",
