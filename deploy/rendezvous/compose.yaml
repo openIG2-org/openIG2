@@ -15,11 +15,12 @@ services:
     ports:
       # Published ports keep the players' source addresses, which the hole punch needs. If a host firewall or
       # proxy rewrites them, use `network_mode: host` instead (and drop `ports`).
-      - "${IG2_RENDEZVOUS_PORT:-29172}:29172/udp"
+      - "${IG2_RENDEZVOUS_PORT:-29172}:${IG2_RENDEZVOUS_PORT:-29172}/udp"
       # The same number over TCP: browser players' WebRTC signalling (plain HTTP).
-      - "${IG2_RENDEZVOUS_PORT:-29172}:29172/tcp"
+      - "${IG2_RENDEZVOUS_PORT:-29172}:${IG2_RENDEZVOUS_PORT:-29172}/tcp"
     # The limits are the service's flags (docs/RENDEZVOUS.md); add any of them here.
-    command: ["--listen", "0.0.0.0:29172"]
+    # IG2_RENDEZVOUS_PORT (e.g. in a .env file beside this one) sets the port inside and outside the container.
+    command: ["--listen", "0.0.0.0:${IG2_RENDEZVOUS_PORT:-29172}"]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
