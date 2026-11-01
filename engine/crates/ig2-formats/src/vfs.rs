@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use crate::container::{self, DecryptingReader};
 use crate::text::Lang;
+use crate::textpatch;
 use crate::{Error, Result};
 
 /// The environment variable tests and tools use to find the install.
@@ -74,6 +75,10 @@ pub struct Install {
     modded: HashMap<String, (usize, bool)>,
     /// Each mod's `rules.toml` (ADR 0044 §6), lowest priority first: (index in `mods`, file).
     patches: Vec<(usize, PathBuf)>,
+    /// Each mod's `texts.<lang>.toml` (ADR 0044 §10), lowest priority first, English first within a mod.
+    texts: Vec<(usize, Lang, PathBuf)>,
+    /// The text files the texts' language's patches change: game path → the patched decoded bytes.
+    patched: HashMap<String, Vec<u8>>,
 }
 
 /// A mod's rule patch file at its folder's top (ADR 0044 §6); not a game path.
@@ -147,10 +152,11 @@ impl Install {
                 root.display()
             )));
         }
-        let (mut modded, mut patches) = (HashMap::new(), Vec::new());
+        let (mut modded, mut patches, mut texts) = (HashMap::new(), Vec::new(), Vec::new());
         for (i, m) in mods.iter().enumerate().rev() {
             let mut found = scan(&*files, &m.dir)?;
             patches.extend(found.remove(RULES_PATCH).map(|p| (i, p)));
+            texts.extend(Lang::ALL.into_iter().filter_map(|l| found.remove(&textpatch::file_name(l)).map(|p| (i, l, p))));
             // The rule tables are read from the exe (ADR 0004); a mod never replaces it, `rules.toml` patches them.
             for (k, p) in found.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
                 let replaces = modded.get(&k).map_or_else(|| index.contains_key(&k), |&(_, r)| r);
@@ -158,7 +164,31 @@ impl Install {
                 index.insert(k, p);
             }
         }
-        Ok(Self { files, root, lang, index, mods, modded, patches })
+        let mut install = Self { files, root, lang, index, mods, modded, patches, texts, patched: HashMap::new() };
+        install.patched = install.patch_texts()?;
+        Ok(install)
+    }
+
+    /// Apply the texts' language's patches, falling back to English (ADR 0044 §11), to the files they name.
+    fn patch_texts(&self) -> Result<HashMap<String, Vec<u8>>> {
+        let err = |msg| Error::Format { format: "mod text patch", msg };
+        let mut patch = textpatch::TextPatch::default();
+        for (i, l, p) in self.texts.iter().filter(|t| t.1 == Lang::En || t.1 == self.lang) {
+            let bytes = self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })?;
+            let from = format!("{} of mod {}", textpatch::file_name(*l), self.mods[*i].name);
+            let toml = String::from_utf8(bytes).map_err(|_| err(format!("{from}: not UTF-8 text")))?;
+            patch.add(&toml, &from, self.lang).map_err(err)?;
+        }
+        patch
+            .paths()
+            .map(|path| {
+                let raw = self.read(path).map_err(|_| err(format!("{path}: no such file in the install or the mods")))?;
+                let bom = raw.starts_with(b"\xEF\xBB\xBF");
+                let text = patch.apply(path, &crate::text::decode(&raw, self.lang)).map_err(err)?;
+                let bytes = if bom { [&b"\xEF\xBB\xBF"[..], text.as_bytes()].concat() } else { crate::text::encode(&text, self.lang) };
+                Ok((path.to_owned(), bytes))
+            })
+            .collect()
     }
 
     /// The same install and mods in another texts' language.
@@ -178,6 +208,18 @@ impl Install {
             .map(|(i, p)| {
                 let bytes = self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })?;
                 Ok((self.mods[*i].name.as_str(), bytes))
+            })
+            .collect()
+    }
+
+    /// Every enabled mod's text patch files in the order they apply (lowest priority first, ADR 0044 §11), all
+    /// languages: (mod, file name, bytes).
+    pub fn text_patches(&self) -> Result<Vec<(&str, String, Vec<u8>)>> {
+        self.texts
+            .iter()
+            .map(|(i, l, p)| {
+                let bytes = self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })?;
+                Ok((self.mods[*i].name.as_str(), textpatch::file_name(*l), bytes))
             })
             .collect()
     }
@@ -222,8 +264,11 @@ impl Install {
         self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })
     }
 
-    /// Fully decoded file contents.
+    /// Fully decoded file contents, with the mods' text patches (ADR 0044 §10) applied.
     pub fn read(&self, path: &str) -> Result<Vec<u8>> {
+        if let Some(b) = self.patched.get(&normalize(path)) {
+            return Ok(b.clone());
+        }
         let raw = self.read_raw(path)?;
         Ok(container::decode(path, &raw)?.into_owned())
     }
@@ -399,6 +444,35 @@ mod tests {
         let mut s = String::new();
         i.open_stream("dataraw/text/scenario.txt").unwrap().read_to_string(&mut s).unwrap();
         assert_eq!(s, "base");
+    }
+
+    #[test]
+    fn text_patches_by_language_with_english_fallback() {
+        let files = [
+            ("game/dataraw/text/scenario.txt", "base"),
+            ("game/dataraw/text/s_races.txt", "1 Alpha\r\n2 Beta\r\n"),
+            ("game/localization/hu/dataraw/text/s_races.txt", "1 Alfa\r\n2 Béta\r\n"),
+            ("mods/new/texts.en.toml", "[\"dataraw/text/s_races.txt\"]\n2 = \"Blorbs\"\n3 = \"Zorgons\"\n"),
+            ("mods/new/texts.hu.toml", "[\"dataraw/text/s_races.txt\"]\n3 = \"Zorgonok ő\"\n"),
+            ("mods/top/texts.en.toml", "[\"dataraw/text/s_races.txt\"]\n2 = \"Top\"\n"),
+            ("mods/bad/texts.en.toml", "[\"dataraw/text/s_story.txt\"]\n1 = \"x\"\n"),
+        ];
+        // The game's files in its code page, the patches in UTF-8.
+        let bytes = |p: &str, b: &str| if p.ends_with(".toml") { b.as_bytes().to_vec() } else { encoding_rs::WINDOWS_1250.encode(b).0.into_owned() };
+        let files: Arc<dyn Files> = Arc::new(Memory(files.into_iter().map(|(p, b)| (PathBuf::from(p), bytes(p, b))).collect()));
+        let m = |n: &str| Mod { name: n.into(), dir: PathBuf::from("mods").join(n) };
+        let races = |i: &Install| crate::text::decode(&i.read("dataraw/text/s_races.txt").unwrap(), i.lang());
+        let i = Install::open_from(files.clone(), "game", Lang::Hu, vec![m("top"), m("new")]).unwrap();
+        // Hungarian: the mod's Hungarian line, its English one where it has none, the higher mod's over both.
+        assert_eq!(races(&i), "1 Alfa\r\n2|\"Top\"\r\n3|\"Zorgonok ő\"\r\n");
+        assert_eq!(races(&i.with_lang(Lang::En).unwrap()), "1 Alpha\r\n2|\"Top\"\r\n3|\"Zorgons\"\r\n");
+        // Not game files; every language's file is listed in the order they apply.
+        assert!(i.resolve("texts.en.toml").is_none() && i.overrides().is_empty());
+        let t: Vec<(&str, String)> = i.text_patches().unwrap().into_iter().map(|(m, f, _)| (m, f)).collect();
+        assert_eq!(t, [("new", "texts.en.toml".into()), ("new", "texts.hu.toml".into()), ("top", "texts.en.toml".into())]);
+        // A patch for a file that isn't there fails the load, naming the file.
+        let e = Install::open_from(files, "game", Lang::En, vec![m("bad")]).err().unwrap().to_string();
+        assert!(e.contains("dataraw/text/s_story.txt: no such file"), "{e}");
     }
 
     #[test]

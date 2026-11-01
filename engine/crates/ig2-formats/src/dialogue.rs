@@ -32,7 +32,7 @@ pub fn atoi(s: &str) -> i32 {
 /// A block/part header: two digits, then a space or end of line. Title lines such as `1013` at the
 /// top of some txt files would also match the game's `%02d` prefix scan, but only if that part
 /// number were ever requested; they aren't headers.
-fn is_header(line: &str) -> bool {
+pub(crate) fn is_header(line: &str) -> bool {
     let b = line.as_bytes();
     b.len() >= 2 && b[0].is_ascii_digit() && b[1].is_ascii_digit() && b.get(2).is_none_or(|&c| c == b' ' || c == 9)
 }

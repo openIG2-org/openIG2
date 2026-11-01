@@ -30,14 +30,14 @@ pub struct Rejected {
 }
 
 /// Skip the `!`, `*`, `#` markers (and the whitespace after them, if any were present).
-fn skip_markers(s: &str) -> (&str, usize) {
+pub(crate) fn skip_markers(s: &str) -> (&str, usize) {
     let t = s.trim_start_matches(' ');
     let rest = t.trim_start_matches(['!', '*', '#']);
     let n = t.len() - rest.len();
     (if n > 0 { rest.trim_start() } else { rest }, n)
 }
 
-fn take_number(s: &str) -> (Option<u32>, &str) {
+pub(crate) fn take_number(s: &str) -> (Option<u32>, &str) {
     let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     (s[..end].parse().ok(), &s[end..])
 }

@@ -662,6 +662,9 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
     for (m, _) in install.rule_patches().unwrap_or_default() {
         eprintln!("ig2-client: mod {m}: rules.toml");
     }
+    for (m, f, _) in install.text_patches().unwrap_or_default() {
+        eprintln!("ig2-client: mod {m}: {f}");
+    }
     tr::set_game(install.lang());
     Ok(install)
 }
@@ -677,11 +680,12 @@ fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
 }
 
 /// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`): the override files
-/// but a pack's pictures and models (only drawn, ADR 0054 §7), and each `rules.toml` as `rules.toml#<k>` in the order
-/// they apply (ADR 0044 §9); `None` without mods.
+/// but a pack's pictures and models (only drawn, ADR 0054 §7), each `rules.toml` as `rules.toml#<k>` in the order
+/// they apply (ADR 0044 §9) and each text patch as `texts.<lang>.toml#<k>` likewise (§13); `None` without mods.
 pub fn mods_fingerprint(install: &Install) -> Option<[u8; 32]> {
     let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR)).map(|f| (f.path.to_owned(), std::fs::read(f.file).unwrap_or_default())).collect();
     files.extend(install.rule_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("rules.toml#{k}"), b)));
+    files.extend(install.text_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, f, b))| (format!("{f}#{k}"), b)));
     ig2_net::session::mods_fingerprint(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())))
 }
 

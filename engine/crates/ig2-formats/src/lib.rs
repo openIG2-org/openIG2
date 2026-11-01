@@ -20,6 +20,7 @@ pub mod scn;
 pub mod story_data;
 pub mod strings;
 pub mod text;
+pub mod textpatch;
 pub mod tutorial;
 pub mod vfs;
 pub mod xv;

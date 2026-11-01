@@ -1,9 +1,11 @@
-# ADR 0044: mods: files that override the install's, and rule patches
+# ADR 0044: mods: files that override the install's, rule patches and text patches
 
 Date: 2026-11-01. Status: accepted. Implemented by `ig2-formats::vfs` (`Install::open_with_mods`, `Mod`), the
 client's `--mod` and `mods/enabled.txt`, the multiplayer room's fingerprint (`ig2-net::session::modded_fingerprint`,
 `Refusal::Mods`) and `ig2-check`'s mods report; part 2 (rule patches, §6–§9) by `ig2-rules::patch`
-(`Rules::apply_patch`, applied in `Rules::from_install`) and `Install::rule_patches`.
+(`Rules::apply_patch`, applied in `Rules::from_install`) and `Install::rule_patches`; part 3 (text patches,
+§10–§13; story scripts, §14) by `ig2-formats::textpatch` (`TextPatch`, applied in `Install::open_from`) and
+`Install::text_patches`.
 
 ## Context
 Players want to change the game's content: a sharper texture, a reworded text, a new music track. The engine reads
@@ -84,12 +86,66 @@ numbers, not a new file. So a mod may change named fields of the tables `ig2_rul
 9. **Multiplayer**: each active `rules.toml` is hashed into the mods fingerprint (§4) as the path `rules.toml#<k>`,
    `k` its 0-based place in the order patches apply, so the same patches in the same order match.
 
-Story scripts are game files in `dataraw/` (`re/rules/campaign.md`), so part 1 already lets a mod replace one whole;
-the campaign tables the story engine indexes from the exe (`campaign_words`) are raw words addressed by exe address,
+The campaign tables the story engine indexes from the exe (`campaign_words`) are raw words addressed by exe address,
 without named fields, so they have no patch table.
 
+## Part 3: text patches and story scripts
+A new race or story needs its own lines: a race name in `s_races.txt`, offers in `ajanlat.eng`, a message's text.
+Replacing those files whole (§1) works but takes every other line with it, so two mods can't both add a race, and a
+mod made for the English files breaks the Hungarian ones. So a mod may set single lines by key.
+
+10. **The files**: `texts.<lang>.toml` at the mod folder's top, `<lang>` one of `en`, `de`, `fr`, `es`, `it`, `hu`
+    (the `localization/` codes, `en` for the base). Not game paths: the file index skips them. TOML in UTF-8; each
+    table is a game text file's path, its keys the file's own keys:
+
+    | File | Key | Value |
+    |---|---|---|
+    | `dataraw/text/txtNN.txt` (UI table) | `"file section index"`, as on the file's lines (section 1..=11, index 1..=52) | a line |
+    | `dataraw/text/s_story.txt`, `s_anims.txt`, `s_races.txt`, `s_stname.txt`, `s_design.txt` (keyed) | the line number, 1..=65535 | a line |
+    | `dataraw/diplomac/*.eng` but `special.eng` (phrases) | the phrase code, `001/000/003` or `A001/000` | a phrase, or an array of variants; `\n` between a phrase's lines |
+    | `dataraw/uzenetek/txtNNNN.txt` (message text parts) | the part number, 1..=99 | the part's lines, `\n` between them |
+
+    ```toml
+    ["dataraw/text/s_races.txt"]
+    900 = "Zorgons"
+    ["dataraw/diplomac/ajanlat.eng"]
+    "001/000/003" = ["Zorg greets #1#.", "Zorg is hungry.\nVery hungry."]
+    ```
+11. **Language and order**: in a game whose texts are in language L, a mod's `texts.en.toml` applies, then its
+    `texts.<L>.toml` over it, so a line the mod has no L text for shows in English. Mods apply lowest priority first,
+    so the first mod in `enabled.txt` has the last word on a key (its English line beats a lower mod's L line).
+    A key a file has is replaced, a key it lacks is added: a UI line is appended (the later line of a key wins,
+    `StringProcess`), a keyed line goes before the first larger number (`LoadStrTable` asserts increasing keys), a
+    phrase code's phrases are all dropped and the patch's variants appended (`GetSzoveg` picks among a code's
+    variants). A message part keeps its header (anim start, speed, speaker, map anim) and gets the patch's lines, each
+    a `+` (new line) line; a part the file lacks is an error, since its header can't be guessed: a new message is a new
+    file (§1). The patched file is the game's text in its code page, so every reader (sim, screens, `ig2-check`) sees
+    the patched lines; the install keeps the patched bytes from opening on (`Install::read`, not `read_raw`).
+12. **Errors**: a file that doesn't parse, a path that isn't one of the four kinds or that no file has, a malformed or
+    out-of-range key, a value that isn't a string (or, for phrases, an array of strings), a line break in a table
+    line, a character outside the texts' code page (Windows-1250 for Hungarian, 1252 otherwise) or a missing message
+    part fails the load, naming the patch file, the mod, the path and the key. `ig2-check` checks each file on its
+    own and says how many keys it sets, and loads the string tables in every installed language with the patches.
+13. **Multiplayer**: each text patch file, every language, is hashed into the mods fingerprint (§4) as
+    `texts.<lang>.toml#<k>`, `k` its place in the order the files apply (all of a mod's languages, `en` first), so
+    players with other texts don't share a room even in another language.
+
+14. **Story scripts can't be mod files**: the campaign is not data. The 1999 authors wrote every story as C code
+    (`story.cpp`, `st_*.cpp`: `re/rules/campaign.md`), compiled into the exe, and the port is Rust (`ig2-sim`'s
+    `story.rs`, `storyline.rs`, `elem.rs`, …) over the story engine's buckets, variables, counters and event flags.
+    There is no script file to replace and no interpreter to load one. What is data, and so moddable already: the
+    `.scn` maps (which stories start, `vSet` variables, `szStart` counters), the story data tables
+    (`text/building.txt`, `designs.txt`, `values.txt`, `fleet.txt`), the message dialogue scripts
+    (`uzenetek/msgNNNN.txt`) and texts: replaced whole (§1) or by key (§10), and checked by `ig2-check` like the
+    install's own. New story logic would need: a story description format (triggers over the `StoryWorld` reads,
+    actions as `StoryEvent`s, the engine's variables, counters and flags), story ids of its own outside the
+    campaign's (1..=868, 2301, 2311), an interpreter in `ig2-sim` that runs it in `Story_Check`'s order after the
+    built-in stories, deterministic and in the save, its files hashed into the fingerprint, and `ig2-check` validation
+    of every trigger and action. That is a feature of its own (the "Story mods" idea in `docs/ENHANCEMENTS.md`).
+
 ## Consequences
-- A mod replaces whole files, and changes rule-table fields by name (`rules.toml`); the campaign's exe words are not
-  patchable.
+- A mod replaces whole files, changes rule-table fields by name (`rules.toml`) and text lines by key
+  (`texts.<lang>.toml`); the campaign's exe words and the story logic are not patchable.
+- Without mods nothing changes: no patch is read and every file is the install's bytes.
 - The engine still ships nothing: a mod is the player's own files; tests build tiny synthetic installs and mods.
 - Single player needs no agreement; replays and saves record nothing about mods yet.

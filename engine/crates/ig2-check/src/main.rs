@@ -4,7 +4,8 @@
 //! `ig2-check [INSTALL_DIR] [--quick] [--mod NAME]...`: the install from the argument, else found as the client finds
 //! it (`ig2_rules::install`). `--quick` skips decoding the music, sounds and videos (their containers are still read).
 //! The enabled mods (`--mod`, else `mods/enabled.txt`, ADR 0044) are loaded over the install, so their files are
-//! checked too, and listed with the install file each one replaces or the file it adds.
+//! checked too, and listed with the install file each one replaces or the file it adds; each `rules.toml` and
+//! `texts.<lang>.toml` is checked on its own.
 //! Exit code 0 when everything loads, 1 when something fails, 2 when there is no install.
 
 use std::io::Read;
@@ -165,7 +166,13 @@ fn texts(inst: &Install, g: &mut Group) {
         if lang != Lang::En && !inst.root().join("localization").join(dir).is_dir() {
             continue;
         }
-        let Ok(li) = inst.with_lang(lang) else { continue };
+        let li = match inst.with_lang(lang) {
+            Ok(li) => li,
+            Err(e) => {
+                g.failed.push((format!("string tables ({dir})"), e.to_string()));
+                continue;
+            }
+        };
         g.check(&format!("string tables ({dir})"), || {
             let mut ui = UiStrings::default();
             for n in (1..=19).filter(|&n| n != 12) {
@@ -367,6 +374,19 @@ fn main() {
                     g.ok += 1;
                 }
                 Err(e) => g.failed.push((format!("mod {name}: rules.toml"), e)),
+            }
+        }
+        // Each text patch file on its own (ADR 0044 §12); together they were applied when the install opened.
+        for (name, file, bytes) in inst.text_patches().unwrap_or_default() {
+            let lang = ig2_formats::textpatch::file_lang(&file).unwrap_or(lang);
+            let from = format!("mod {name}: {file}");
+            let checked = String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string()).and_then(|t| ig2_formats::textpatch::TextPatch::default().add(&t, &from, lang));
+            match checked {
+                Ok(n) => {
+                    g.notes.push(format!("{from} sets {n} lines"));
+                    g.ok += 1;
+                }
+                Err(e) => g.failed.push((from, e)),
             }
         }
         report(&g, Instant::now());

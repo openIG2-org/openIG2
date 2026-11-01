@@ -174,7 +174,7 @@ The window opens at 1600x900 until a size is saved.
 table and script of your install the way the game does and lists what fails; it finds the install like the client
 when no folder is given. `--quick` skips the sound and video decoding. Exit code 0 = all ok, 1 = failures, 2 = no
 install. A full run takes about a minute. `--mod NAME` (repeatable) checks those mods instead of `mods/enabled.txt`'s;
-the "mods" line lists every file each enabled mod replaces or adds and checks each mod's `rules.toml`, and its files
+the "mods" line lists every file each enabled mod replaces or adds and checks each mod's `rules.toml` and text patches, and its files
 are loaded with the install's.
 
 ## Mods
@@ -223,10 +223,47 @@ reload = 10
 The tables and their fields are listed in ADR 0044 §6 (`techs`, `buildings`, `hulls`, `space_weapons`,
 `ship_types`, `spy_missions`, `problem_curves`, the ground weapons and the race, difficulty, radar and spy lists).
 When several mods change the same field, the one higher in `enabled.txt` wins. A wrong table, id or field stops the
-game with a message naming the mod and the field, and `ig2-check` shows the same message. Story scripts are files in
-`dataraw\`, so a mod replaces them whole like any other file.
+game with a message naming the mod and the field, and `ig2-check` shows the same message.
 
-In multiplayer every player needs the same mod files and `rules.toml`s: the room refuses a player with other mods
+To change or add single lines of text without replacing a whole file, put a `texts.en.toml` at the top of the mod
+folder, and `texts.de.toml`, `texts.fr.toml`, `texts.es.toml`, `texts.it.toml` or `texts.hu.toml` for other
+languages; a line your mod has no translation for shows its English one. Each `["<file>"]` heading names a game text
+file and the lines under it set that file's entries by their key (ADR 0044 §10). An example for a made-up race:
+
+```toml
+# Race names: line 900 is new, so it is added.
+["dataraw/text/s_races.txt"]
+900 = "Zorgons"
+
+# Interface text: "file section index", as written in the file.
+["dataraw/text/txt03.txt"]
+"3 1 1" = "Mend"
+
+# Diplomacy offer 001/000/003: two variants, one picked at random; \n starts a new line, #1# is the empire's name.
+["dataraw/diplomac/ajanlat.eng"]
+"001/000/003" = ["Zorg greets #1#.", "Zorg is hungry.\nVery hungry."]
+
+# Message 0193, part 1: new lines, same speaker and timing.
+["dataraw/uzenetek/txt0193.txt"]
+1 = "Zorg line one.\nZorg line two."
+```
+
+and `texts.hu.toml` beside it:
+
+```toml
+["dataraw/text/s_races.txt"]
+900 = "Zorgonok"
+```
+
+A key the file already has is replaced, a new one is added; a message part must already exist (a new message is a
+new file). A wrong file, key or a letter the game's font lacks stops the game with a message naming the mod, the file
+and the key, and `ig2-check` says how many lines each file sets.
+
+Story scripts can't be changed: the campaign's stories are program code, not files (ADR 0044 §14). What a mod can
+replace is their data: the `.scn` maps (which stories start, their values), `dataraw\text\fleet.txt`,
+`building.txt`, `designs.txt`, `values.txt`, the message scripts in `dataraw\uzenetek\` and the texts.
+
+In multiplayer every player needs the same mod files, `rules.toml`s and text patches: the room refuses a player with other mods
 ("Other mods enabled"), and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
 are the exception: they only change what you see, so players with and without them play together.
 
