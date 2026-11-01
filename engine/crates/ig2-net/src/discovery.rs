@@ -10,7 +10,8 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -137,6 +138,13 @@ pub struct Announcer {
 
 impl Announcer {
     /// Listen on `0.0.0.0:DISCOVERY_PORT`, shared with other hosts on this machine (`SO_REUSEADDR`).
+    /// The browser has no UDP sockets (ADR 0047 §9).
+    #[cfg(target_arch = "wasm32")]
+    pub fn bind_lan() -> io::Result<Self> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn bind_lan() -> io::Result<Self> {
         let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
         s.set_reuse_address(true)?;

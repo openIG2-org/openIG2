@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openIG2</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px/1.5 system-ui, sans-serif; overflow: hidden; }
+  /* The client's canvas (winit appends it): the whole page. */
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; }
+  #setup { max-width: 34em; margin: 12vh auto 0; padding: 0 16px; }
+  #setup h1 { font-size: 1.5em; font-weight: 600; margin: 0 0 .5em; }
+  #setup button, #setup select { font: inherit; padding: .4em 1em; margin: .3em .5em .3em 0; }
+  #status { min-height: 3em; color: #aaa; white-space: pre-wrap; }
+  #status.error { color: #f88; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="setup">
+  <h1>openIG2</h1>
+  <p>Pick the folder of your own Imperium Galactica II install (the GOG one, with <code>ig2.exe</code>). The page keeps
+  a copy in this browser's private storage for your next visit; nothing is uploaded.</p>
+  <p>
+    <button id="pick">Choose the install folder…</button>
+    <input id="folder" type="file" webkitdirectory hidden>
+    <button id="play" hidden>Play</button>
+    <button id="forget" hidden>Forget the stored copy</button>
+  </p>
+  <p>
+    <label>Language
+      <select id="lang">
+        <option value="">default</option>
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="it">Italiano</option>
+        <option value="hu">Magyar</option>
+      </select>
+    </label>
+  </p>
+  <p id="status"></p>
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

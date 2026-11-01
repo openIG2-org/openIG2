@@ -7,7 +7,8 @@
 //! back and resumed in a new room, the joiner rejoining it, and the game goes on from there. A desync ends the run
 //! with the first turn whose hashes differ and the fields that differ.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use ig2_net::galaxy::GalaxyOptions;
 use ig2_net::lobby::{LobbyClient, LobbyHost, Settings, Status};

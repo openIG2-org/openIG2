@@ -23,6 +23,18 @@ const HEAD: usize = 6;
 /// The header in front of a relayed datagram (head and an address).
 pub const DATA_HEAD: usize = HEAD + 6;
 
+/// A host's room at the rendezvous service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rendezvous {
+    /// No service, or not registered yet.
+    Off,
+    Asking,
+    /// The room is open; the service sees this host at this public address.
+    Registered(SocketAddrV4),
+    Refused(Refusal),
+    NoAnswer,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refusal {
     /// No room with that session and pin.
@@ -339,7 +351,7 @@ impl Service {
 /// packets and socket errors (an ICMP-reported unreachable peer) are dropped, never fatal.
 pub fn serve(socket: &std::net::UdpSocket, service: &mut Service, mut stop: impl FnMut(&Service) -> bool) -> std::io::Result<()> {
     socket.set_read_timeout(Some(Duration::from_millis(200)))?;
-    let start = std::time::Instant::now();
+    let start = web_time::Instant::now();
     // A relayed datagram is at most QUIC's 1200 bytes plus the header; anything longer is not ours.
     let mut buf = [0u8; 2048];
     let mut out = Vec::new();

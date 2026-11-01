@@ -8,7 +8,7 @@
 
 use std::cell::RefCell;
 use std::sync::OnceLock;
-use std::time::Instant;
+use web_time::Instant;
 
 pub fn on() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

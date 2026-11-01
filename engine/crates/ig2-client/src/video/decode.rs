@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ig2_formats::mp4::{self, Codec, Mp4, Track};
+#[cfg(not(target_arch = "wasm32"))]
 use openh264::decoder::{DecodedYUV, Decoder, DecoderConfig, Flush};
+#[cfg(not(target_arch = "wasm32"))]
 use openh264::formats::YUVSource;
 use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
 
@@ -62,7 +64,23 @@ impl Clip {
 
 }
 
+/// No H.264 decoder in the browser build yet: WebCodecs comes with ADR 0047 part 3.
+#[cfg(target_arch = "wasm32")]
+pub struct Frames;
+
+#[cfg(target_arch = "wasm32")]
+impl Frames {
+    pub fn new(_: Arc<Clip>) -> Result<Self, String> {
+        Err("no video decoder in the browser build yet".into())
+    }
+
+    pub fn next_frame(&mut self) -> Option<Image> {
+        None
+    }
+}
+
 /// The video track decoded frame by frame.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Frames {
     clip: Arc<Clip>,
     dec: Decoder,
@@ -72,6 +90,7 @@ pub struct Frames {
     flushed: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Frames {
     pub fn new(clip: Arc<Clip>) -> Result<Self, String> {
         let cfg = DecoderConfig::new().flush_after_decode(Flush::NoFlush);
@@ -116,6 +135,7 @@ impl Frames {
 /// `video_fragment.shader`: `Y' = 1.1643·(Y − 1/16)`, `R = Y' + 1.596·Cr`, `G = Y' − 0.391·Cb − 0.813·Cr`,
 /// `B = Y' + 2.018·Cb` (the shader's `video_u_texture` carries Cr, `video_v_texture` Cb), clamped by the frame
 /// buffer. The half-size chroma planes are sampled bilinearly at GL's texel centres.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn rgba(y: &DecodedYUV) -> Image {
     let (w, h) = y.dimensions();
     let (ys, us, vs) = y.strides();
@@ -148,6 +168,7 @@ pub fn rgba(y: &DecodedYUV) -> Image {
 }
 
 /// One pixel of `video_fragment.shader` from the sampled planes (0..=1 each).
+#[cfg(not(target_arch = "wasm32"))]
 fn shade(y: f32, cb: f32, cr: f32) -> [u8; 3] {
     let l = 1.1643 * (y - 0.0625);
     let (cb, cr) = (cb - 0.5, cr - 0.5);

@@ -10,7 +10,8 @@ use std::future::Future;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::task::{ready, Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 use crate::joincode::PIN_BYTES;
 use crate::lockstep::Msg;
+pub use crate::rendezvous::Rendezvous;
 use crate::rendezvous::{Packet, Refusal, MAGIC};
 use crate::transport::Transport;
 use crate::wire;
@@ -413,18 +415,6 @@ const NO_ANSWER: Duration = Duration::from_secs(6);
 /// The joiner's direct try at the host's public address (the hole punch), then the relayed one.
 const DIRECT: Duration = Duration::from_secs(4);
 const RELAYED: Duration = Duration::from_secs(10);
-
-/// A host's room at the rendezvous service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Rendezvous {
-    /// No service, or not registered yet.
-    Off,
-    Asking,
-    /// The room is open; the service sees this host at this public address.
-    Registered(SocketAddrV4),
-    Refused(Refusal),
-    NoAnswer,
-}
 
 struct Registration {
     socket: Arc<RelaySocket>,

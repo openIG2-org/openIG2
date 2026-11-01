@@ -328,7 +328,7 @@ pub struct World<'r> {
     pub start_voice: Option<i32>,
     /// A multiplayer game (ADR 0014 §5): the session whose peer runs the sim, and the session's clock. The world
     /// holds the game between pumps (the peer holds a stand-in), so the screens read it as in single player.
-    pub net: Option<(crate::mp_lobby::Session<'r>, std::time::Instant)>,
+    pub net: Option<(crate::mp_lobby::Session<'r>, web_time::Instant)>,
     /// The session's hold status the message line last told (ours: who paused, dropped, left or came back).
     pub net_seen: ig2_net::session::HoldStatus,
     /// Multiplayer: the ticks since the last turn ran (a turn every [`ig2_net::TURN_TICKS`] ticks, [`World::turn_phase`]).
@@ -707,7 +707,7 @@ impl<'r> World<'r> {
         }
         let chunks = game.state.chunks();
         let mut w = Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned()));
-        w.net = Some((net, std::time::Instant::now()));
+        w.net = Some((net, web_time::Instant::now()));
         w
     }
 

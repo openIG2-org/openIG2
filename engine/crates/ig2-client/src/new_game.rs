@@ -120,7 +120,7 @@ pub fn tutorial<'r>(inst: &Install, n: u8, seed: u32, rules: &'r GameRules) -> R
 
 /// `SDL_GetTicks()` for a start's seeds: the milliseconds of the wall clock (the original's ticks since boot).
 pub fn wall_ticks() -> u32 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u32)
+    web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u32)
 }
 
 /// `--new-campaign C[,D[,SEED[,TICKS]]]`: campaign 1..=3, difficulty 1/2/4 (default 2), `RandomInit`'s seed and

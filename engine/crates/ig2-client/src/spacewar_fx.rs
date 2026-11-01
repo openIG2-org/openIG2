@@ -54,7 +54,7 @@ pub struct Tables {
 
 impl Tables {
     pub fn read(install: &ig2_formats::Install) -> Result<Self, String> {
-        let exe = std::fs::read(install.root().join("ig2.exe")).map_err(|e| e.to_string())?;
+        let exe = install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
         let img = ig2_rules::PeImage::parse(&exe).map_err(|e| e.to_string())?;
         let read = |(va, size, n): (u32, usize, usize)| img.read(va, size * n).map(|b| b.to_vec()).map_err(|e| e.to_string());
         let i32_at = |b: &[u8], o: usize| i32::from_le_bytes(b[o..o + 4].try_into().unwrap());

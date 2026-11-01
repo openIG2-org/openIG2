@@ -178,7 +178,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
 /// image: `BirodalomMIzik` 0x915F58 (the AI plays the empire; without it the AI skips everyone) and
 /// `BirodalomTamadhat` 0x915F44 (may attack), 19 bytes each.
 pub fn scenario_globals(inst: &Install) -> Result<Vec<(u32, Vec<u8>)>, String> {
-    let exe = std::fs::read(inst.root().join("ig2.exe")).map_err(|e| format!("ig2.exe: {e}"))?;
+    let exe = inst.read_raw("ig2.exe").map_err(|e| format!("ig2.exe: {e}"))?;
     let pe = ig2_rules::PeImage::parse(&exe).map_err(|e| e.to_string())?;
     [ig2_sim::save::va::AI_EMPIRE, ig2_sim::save::va::MAY_ATTACK]
         .into_iter()

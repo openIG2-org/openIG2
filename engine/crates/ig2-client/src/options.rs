@@ -201,7 +201,7 @@ pub const KEPT_REPLAYS: usize = 50;
 
 /// A new replay's file name: the start time (UTC, so names sort by age) and the mode.
 pub fn replay_name(multiplayer: bool) -> String {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let secs = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let (days, s) = (secs / 86400, secs % 86400);
     // Civil date from days since 1970-01-01 (H. Hinnant's algorithm).
     let z = days as i64 + 719468;

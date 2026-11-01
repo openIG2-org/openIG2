@@ -15,7 +15,7 @@ use std::time::Duration;
 use ig2_net::discovery::{Announcement, Found};
 use ig2_net::galaxy::{GalaxyOptions, MAX_AIS, PLANETS};
 use ig2_net::joincode::JoinCode;
-use ig2_net::quic::Rendezvous;
+use ig2_net::rendezvous::Rendezvous;
 use ig2_net::lobby::{LobbyClient, LobbyHost, LobbyState, Refusal, Settings, SlotKind, Start, Status};
 use ig2_net::session::{ClientSession, HoldStatus, HostSession, MpSave, SessionEvent, SessionSettings};
 use ig2_net::{Peer, Transport};
@@ -109,14 +109,22 @@ pub trait Net {
     fn set_relay(&mut self, _relay: Option<SocketAddrV4>) {}
 }
 
+/// The client's links: QUIC natively; none in the browser yet (ADR 0047 part 4).
+#[cfg(not(target_arch = "wasm32"))]
+pub type ClientNet = QuicNet;
+#[cfg(target_arch = "wasm32")]
+pub type ClientNet = OfflineNet;
+
 /// QUIC links and LAN discovery (ADR 0008), and the rendezvous service the player set (ADR 0018).
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 pub struct QuicNet {
     browser: Option<ig2_net::discovery::Browser>,
-    queried: Option<std::time::Instant>,
+    queried: Option<web_time::Instant>,
     relay: Option<SocketAddrV4>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct QuicListener {
     host: ig2_net::quic::QuicHost,
     announcer: Option<ig2_net::discovery::Announcer>,
@@ -129,6 +137,7 @@ struct QuicListener {
     lan: Option<std::net::Ipv4Addr>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl QuicListener {
     fn new(host: ig2_net::quic::QuicHost, announcer: Option<ig2_net::discovery::Announcer>) -> Self {
         let lan = ig2_net::portmap::local_ipv4(std::net::Ipv4Addr::new(192, 0, 2, 1)).ok();
@@ -137,6 +146,7 @@ impl QuicListener {
 }
 
 /// Every protocol's failure, in the order tried.
+#[cfg(not(target_arch = "wasm32"))]
 fn map_errors(errors: &[(ig2_net::portmap::Protocol, ig2_net::portmap::Error)]) -> String {
     let name = |p| match p {
         ig2_net::portmap::Protocol::Upnp => "UPnP",
@@ -145,6 +155,7 @@ fn map_errors(errors: &[(ig2_net::portmap::Protocol, ig2_net::portmap::Error)]) 
     errors.iter().map(|(p, e)| format!("{}: {e}", name(*p))).collect::<Vec<_>>().join("; ")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Listener for QuicListener {
     fn accept(&mut self) -> Option<Box<dyn Transport>> {
         if let Some(a) = &mut self.announcer {
@@ -235,6 +246,7 @@ impl Listener for QuicListener {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Net for QuicNet {
     fn listen(&mut self) -> Result<Box<dyn Listener>, String> {
         let any = |port| std::net::SocketAddr::from(([0, 0, 0, 0], port));
@@ -259,7 +271,7 @@ impl Net for QuicNet {
         }
         let Some(b) = &mut self.browser else { return Vec::new() };
         if self.queried.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
-            self.queried = Some(std::time::Instant::now());
+            self.queried = Some(web_time::Instant::now());
             let _ = b.query();
         }
         let _ = b.poll();
@@ -325,7 +337,9 @@ impl Net for QuicNet {
     }
 }
 
-/// No network (the headless script runs): hosting gets a listener nobody reaches, the LAN is empty, joins fail.
+/// No network (the headless script runs, the browser build): hosting gets a listener nobody reaches, the LAN is empty,
+/// joins fail.
+#[derive(Default)]
 pub struct OfflineNet;
 
 struct Unreached;
@@ -1766,7 +1780,7 @@ mod tests {
 
     /// Tick every screen until `done` (2 s at most); returns the starts that came out.
     fn run(screens: &mut [&mut MpScreen], net: &mut LoopNet, done: impl Fn(&[&mut MpScreen]) -> bool) -> Vec<(usize, Begun)> {
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let mut begun = Vec::new();
         loop {
             for (i, s) in screens.iter_mut().enumerate() {
@@ -1829,7 +1843,7 @@ mod tests {
 
     /// Tick the guests until each one's start came out.
     fn started(guests: &mut [MpScreen], net: &mut LoopNet) -> Vec<Begun> {
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let mut begun: Vec<Option<Begun>> = guests.iter().map(|_| None).collect();
         while begun.iter().any(Option::is_none) {
             for (g, b) in guests.iter_mut().zip(begun.iter_mut()) {
@@ -1880,7 +1894,7 @@ mod tests {
                 assert_eq!(w.game.state.mem.i32(ig2_sim::save::va::PLANET_COUNT), 20);
             }
             // The last joiner sets its first planet's tax (a starmap order) through its world's outbox.
-            let t = std::time::Instant::now();
+            let t = web_time::Instant::now();
             let mut sent = false;
             while worlds.iter().any(|w| w.net.as_ref().unwrap().0.peer().turn < 30) {
                 for w in &mut worlds {
@@ -1984,7 +1998,7 @@ mod tests {
         worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
         let turn = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().turn;
         let joiner = worlds[1].net.as_ref().unwrap().0.peer().empire;
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let mut dead = false;
         while worlds.iter().any(|w| turn(w) < 40) {
             for w in &mut worlds {
@@ -2032,7 +2046,7 @@ mod tests {
         let mut worlds = vec![mk(b)];
         worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
         let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let step = |worlds: &mut Vec<World>, until: &dyn Fn(&[World]) -> bool| {
             while !until(worlds) {
                 for w in worlds.iter_mut() {
@@ -2097,7 +2111,7 @@ mod tests {
         let mut worlds = vec![mk(b)];
         worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
         let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let step = |worlds: &mut Vec<World<'static>>, done: &dyn Fn(&[World]) -> bool| {
             while !done(worlds) {
                 for w in worlds.iter_mut() {
@@ -2147,7 +2161,7 @@ mod tests {
         let en = |w: &World| w.game.state.mem.i32(ig2_sim::save::va::EN);
         assert_eq!(worlds.iter().map(en).collect::<Vec<_>>(), [1, 2, 3], "each machine's own EN");
         let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let step = |worlds: &mut Vec<World<'static>>, done: &dyn Fn(&[World]) -> bool| {
             while !done(worlds) {
                 for w in worlds.iter_mut() {
@@ -2182,7 +2196,7 @@ mod tests {
         // It joins again by the room's Join under the same name: the host's door sends the state now.
         let mut again = MpScreen::open(false, "Guest1", RULES);
         type_text(&mut again, "local", &mut net);
-        let t2 = std::time::Instant::now();
+        let t2 = web_time::Instant::now();
         let b = loop {
             for w in worlds.iter_mut() {
                 w.pump();
@@ -2259,7 +2273,7 @@ mod tests {
     #[test]
     fn a_joiner_under_options_keeps_the_session_running() {
         let Some((mut a, mut g)) = two_worlds() else { return };
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let ms = || t.elapsed().as_millis() as u32;
         let mut clocks = [0, 1].map(|_| ig2_sim::time::TickClock::new(ig2_sim::time::SIM_TICK_MS, ms()));
         let turn = |w: &crate::world::World| w.net.as_ref().unwrap().0.peer().turn;
@@ -2428,7 +2442,7 @@ mod tests {
         // On its own planet: another's is refused unseen (`Game::foreign_planet`).
         let home = g.game.state.colony().planets.iter().position(|p| p.owner == joiner).expect("the joiner's planet");
         g.send(ig2_sim::game::ColonyOrder::Build { planet: home as i32, kind: 0, x: 0, y: 0 }.into());
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         while turn(&a) < 20 || turn(&g) < 20 {
             for w in [&mut a, &mut g] {
                 w.pump();
@@ -2463,7 +2477,7 @@ mod tests {
             b
         };
         let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let step = |worlds: &mut Vec<World<'static>>, done: &dyn Fn(&[World]) -> bool| {
             while !done(worlds) {
                 for w in worlds.iter_mut() {
@@ -2587,7 +2601,7 @@ mod tests {
         let mut worlds = vec![mk(b)];
         worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
         let turn = |w: &World| w.net.as_ref().unwrap().0.peer().turn;
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         while worlds.iter().any(|w| turn(w) < 10) {
             for w in &mut worlds {
                 w.pump();
@@ -2646,7 +2660,7 @@ mod tests {
         assert!(matches!(b, Begun::Host { .. }));
         // A host that goes away leaves its joiners on the connection page, "Disconnected".
         drop(b);
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         while !guests.iter().all(|g| g.lost && g.role.is_none()) {
             for g in &mut guests {
                 g.tick(&mut net);
@@ -2735,7 +2749,7 @@ mod tests {
         guest.open = 100.0;
         guest.paste(&text);
         guest.key(Some(EntryKey::Enter), false, &mut net);
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         while !guest.state().is_some_and(|st| st.members.len() == 2 && st.private) {
             host.tick(&mut host_net);
             guest.tick(&mut net);
@@ -2769,7 +2783,7 @@ mod tests {
         host.relay = Field::new(MAX_ADDRESS);
         host.paste(&relay);
         host.host(&mut host_net);
-        let t = std::time::Instant::now();
+        let t = web_time::Instant::now();
         let seen = loop {
             host.tick(&mut host_net);
             if let Some(Role::Host { listener, .. }) = &host.role {

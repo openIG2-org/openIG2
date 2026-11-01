@@ -29,3 +29,6 @@ __pycache__/
 
 # Rust
 target/
+
+# The browser build (tools/build_web.py).
+/web/pkg/

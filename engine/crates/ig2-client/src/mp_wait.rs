@@ -11,7 +11,8 @@
 //! back through the door). The joining question (`DrawOverMode` 2) has no counterpart: the door admits a returning
 //! human by name and refuses newcomers to a started game.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::font::{Align, Font, Virtual};
 use crate::render::{Frame, TexId};

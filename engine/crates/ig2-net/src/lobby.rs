@@ -10,7 +10,8 @@
 //! never crosses the link, and a joiner knows it reached the real host once the host's confirmation checks out.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use ig2_sim::game::GameRules;
 use serde::{Deserialize, Serialize};

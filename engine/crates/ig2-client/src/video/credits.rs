@@ -12,7 +12,7 @@ const FONT: &str = "fonts/jurabook.ttf";
 
 /// The credits line from the user's ig2.exe.
 pub fn text(install: &ig2_formats::Install) -> Option<String> {
-    let exe = std::fs::read(install.root().join("ig2.exe")).ok()?;
+    let exe = install.read_raw("ig2.exe").ok()?;
     let at = exe.windows(MARK.len()).position(|w| w == MARK)?;
     let end = exe[at..].iter().position(|&b| b == 0)?;
     String::from_utf8(exe[at..at + end].to_vec()).ok()

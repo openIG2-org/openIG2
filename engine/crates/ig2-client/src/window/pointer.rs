@@ -30,7 +30,7 @@ impl Overlay {
     /// The wait overlay, the tooltip, then the pointer, over everything.
     pub fn draw(&self, f: &mut Frame, h: &crate::ui::Hud, size: [f32; 2]) {
         if let (Some(w), Some(font)) = (&self.wait, &h.font) {
-            w.draw(f, font, h.white, &crate::font::Virtual::new(size), &h.palette, &|n| h.texts.get(18, 5, n), std::time::Instant::now());
+            w.draw(f, font, h.white, &crate::font::Virtual::new(size), &h.palette, &|n| h.texts.get(18, 5, n), web_time::Instant::now());
         }
         if let (Some(b), Some(font)) = (&self.replay, &h.font) {
             let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 };

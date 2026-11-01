@@ -85,7 +85,7 @@ pub struct Rand(pub u32);
 impl Rand {
     /// Seeded from the clock (cosmetic).
     pub fn seeded() -> Self {
-        Self(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos()))
+        Self(web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos()))
     }
 
     /// `rand()`, 0..=0x7fff.
@@ -293,7 +293,7 @@ impl Audio {
             None => (None, None),
         };
         let opts = ig2_formats::options::Options::load();
-        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos());
+        let seed = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos());
         Self {
             install,
             tables,

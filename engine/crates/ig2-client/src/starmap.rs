@@ -159,7 +159,7 @@ fn sky_sphere(r: &mut Renderer, install: &Install) -> Vec<(Vec<crate::render3d::
 
 /// `DDColor` from the user's `ig2.exe` (never shipped: ADR 0004).
 pub(crate) fn read_palette(install: &Install) -> Result<Vec<[f32; 3]>, String> {
-    let exe = std::fs::read(install.root().join("ig2.exe")).map_err(|e| e.to_string())?;
+    let exe = install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
     let img = ig2_rules::PeImage::parse(&exe).map_err(|e| e.to_string())?;
     let b = img.read(DD_COLOR, 4 * DD_COLORS).map_err(|e| e.to_string())?;
     let mut p: Vec<[f32; 3]> = b.chunks_exact(4).map(|c| [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0]).collect();

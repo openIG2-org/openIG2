@@ -7,6 +7,8 @@ use wgpu::util::DeviceExt;
 use crate::assets::Image;
 
 const SHADER: &str = r#"
+// The 2D kinds take derivatives inside the switch on a quad's kind; browsers' WGSL compilers reject that unless told.
+diagnostic(off, derivative_uniformity);
 struct U { screen: vec2<f32>, time: f32, sharp: u32 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(1) @binding(0) var tex: texture_2d<f32>;
@@ -566,8 +568,8 @@ impl Renderer {
     /// A headless renderer (no surface): `--snapshot`.
     pub fn headless(format: wgpu::TextureFormat) -> Result<Self, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| e.to_string())?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).map_err(|e| e.to_string())?;
+        let adapter = crate::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).map_err(|e| e.to_string())?;
+        let (device, queue) = crate::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).map_err(|e| e.to_string())?;
         Ok(Self::new(device, queue, format))
     }
 
@@ -2085,7 +2087,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if let (Some(spec), Some(font)) = (&o.mp_wait, &hud.font) {
         let w = crate::mp_wait::Wait::staged(spec);
         let v = crate::font::Virtual::new([o.size.0 as f32, o.size.1 as f32]);
-        w.draw(&mut frame, font, hud.white, &v, &hud.palette, &|n| hud.texts.get(18, 5, n), std::time::Instant::now());
+        w.draw(&mut frame, font, hud.white, &v, &hud.palette, &|n| hud.texts.get(18, 5, n), web_time::Instant::now());
     }
     // `UpdateFrame`'s last pass at `--mouse` (re/screens/input.md §8), not over a staged menu: the hot-spot's tooltip
     // (the pointer at rest), then the pointer (over the map view hot-spot 0x35 its types 2/5/6/7, `orders::view_pointer`).

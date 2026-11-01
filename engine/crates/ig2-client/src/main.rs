@@ -41,6 +41,9 @@
 //! (ADR 0044): `--mod NAME` (repeatable), else `mods/enabled.txt` beside the settings, override the install's files. The default save is `quick-1.sav` in `IG2_SAVE_DIR` (else the
 //! repository's `_local/saves`). Saves, installs and rendered PNGs hold game data: keep them out of the repo.
 
+// The browser build runs only the window (`web::start`): the command line's other paths are compiled but unused there.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
+
 mod assets;
 mod audio;
 mod backdrop;
@@ -113,6 +116,8 @@ mod upscale;
 mod trade_scene;
 mod ui;
 mod video;
+#[cfg(target_arch = "wasm32")]
+mod web;
 mod window;
 mod world;
 
@@ -607,6 +612,15 @@ pub fn save_f32(save: Option<&SaveGame>, n: &str) -> f32 {
 /// The install's folder (`ig2_rules::install`: `IG2_INSTALL_DIR`, the folder remembered in the settings file, the GOG
 /// registry and default folders); one found otherwise than remembered is remembered for the next start.
 pub fn install_root() -> Result<PathBuf, Vec<(ig2_rules::install::Candidate, ig2_rules::install::Verdict)>> {
+    // The files the page handed over (ADR 0047).
+    #[cfg(target_arch = "wasm32")]
+    return Ok(PathBuf::from(web::ROOT));
+    #[cfg(not(target_arch = "wasm32"))]
+    install_on_disk()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn install_on_disk() -> Result<PathBuf, Vec<(ig2_rules::install::Candidate, ig2_rules::install::Verdict)>> {
     use ig2_rules::install::Source;
     let settings = ig2_formats::options::Options::load();
     let remembered = settings.get(setup::INSTALL_KEY).filter(|s| !s.is_empty()).map(PathBuf::from);
@@ -625,7 +639,11 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
         let places: Vec<String> = tried.iter().map(|(c, v)| format!("{} ({}): {}", c.path.display(), c.source.label(), v.describe())).collect();
         format!("no Imperium Galactica II install found; set IG2_INSTALL_DIR to its folder (looked in: {})", places.join("; "))
     })?;
-    let install = Install::open_with_mods(&root, language(o, &root), enabled_mods(o)).map_err(|e| e.to_string())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let files = std::sync::Arc::new(ig2_formats::vfs::Disk);
+    #[cfg(target_arch = "wasm32")]
+    let files = web::files();
+    let install = Install::open_from(files, &root, language(o, &root), enabled_mods(o)).map_err(|e| e.to_string())?;
     for m in install.mods() {
         eprintln!("ig2-client: mod {} ({} files)", m.name, install.overrides().iter().filter(|f| f.mod_name == m.name).count());
     }
@@ -727,6 +745,22 @@ fn colony_check(map: &str, surface: &str) -> Result<(), String> {
     colony::check(&install, &rules, map, surface.parse().map_err(|_| "surface: a number")?)
 }
 
+/// Waits for a wgpu request.
+#[cfg(not(target_arch = "wasm32"))]
+pub use pollster::block_on;
+
+/// The browser never blocks: its window asks the GPU asynchronously, and the paths that would block (`--snapshot`, the
+/// setup window) don't run there.
+#[cfg(target_arch = "wasm32")]
+pub fn block_on<F: std::future::Future>(_: F) -> F::Output {
+    unreachable!("the browser build never blocks on the GPU")
+}
+
+/// The page starts the client through `web::start` once the install's files are in (web/main.js).
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     prof::start();
     let args: Vec<String> = std::env::args().skip(1).collect();

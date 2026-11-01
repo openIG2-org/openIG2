@@ -274,7 +274,7 @@ impl Harness {
                 }
                 w.set_speed(Speed::Fastest);
             }
-            let at = crate::prof::on().then(std::time::Instant::now);
+            let at = crate::prof::on().then(web_time::Instant::now);
             w.tick();
             if let Some(at) = at {
                 let ms = at.elapsed().as_secs_f64() * 1000.0;
@@ -650,7 +650,7 @@ pub fn main(args: &[String]) -> Result<(), String> {
     let mut failed = 0;
     for run in &runs {
         for &seed in &seeds {
-            let t = std::time::Instant::now();
+            let t = web_time::Instant::now();
             let mut r = h.play(run, Limits { seed, ..limits });
             if seeds.len() > 1 {
                 r.name += &format!(" seed {seed}");

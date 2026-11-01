@@ -741,6 +741,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1504,9 +1514,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1876,11 +1888,13 @@ dependencies = [
  "ab_glyph",
  "arboard",
  "bytemuck",
+ "console_error_panic_hook",
  "cpal",
  "ig2-formats",
  "ig2-net",
  "ig2-rules",
  "ig2-sim",
+ "js-sys",
  "lewton",
  "openh264",
  "png",
@@ -1888,6 +1902,10 @@ dependencies = [
  "serde",
  "serde_json",
  "symphonia",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "wgpu",
  "winit",
  "xbrz-rs",
@@ -1908,6 +1926,7 @@ dependencies = [
 name = "ig2-net"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.2.17",
  "getrandom 0.3.4",
  "ig2-formats",
  "ig2-rules",
@@ -1923,6 +1942,7 @@ dependencies = [
  "spake2",
  "thiserror 2.0.21",
  "tokio",
+ "web-time",
 ]
 
 [[package]]

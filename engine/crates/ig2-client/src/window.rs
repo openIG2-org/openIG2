@@ -27,7 +27,10 @@
 //! §10). `IG2_VSYNC=0` starts with vsync off.
 
 use std::sync::Arc;
-use std::time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+use crate::web::arboard;
+use web_time::Instant;
 
 use ig2_net::{Command, StarmapCmd};
 use ig2_sim::game::{LocalView, OrderEvent, StarmapOrder};
@@ -48,6 +51,39 @@ use crate::starmap::{Assets, Pick, View};
 use crate::starmap_menus::{Do, MenuKind, Menus};
 use crate::starmap_panels::{Action, PanelModels, Panels};
 use crate::world::World;
+
+/// The page's answer to come: [`GpuParts::request`]'s result.
+#[cfg(target_arch = "wasm32")]
+type GpuWait = std::rc::Rc<std::cell::RefCell<Option<Result<GpuParts, String>>>>;
+
+/// The window's surface and the device it was asked for.
+struct GpuParts {
+    window: Arc<Window>,
+    surface: wgpu::Surface<'static>,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl GpuParts {
+    async fn request(window: Arc<Window>) -> Result<Self, String> {
+        let desc = wgpu::InstanceDescriptor::default();
+        let instance = wgpu::Instance::new(&desc);
+        let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            // The browser build needs WebGPU: the gamma-space passes view each texture both as sRGB and as linear,
+            // which WebGL2 can't (ADR 0047 §4).
+            .map_err(|e| if cfg!(target_arch = "wasm32") { format!("this browser offers no WebGPU ({e})") } else { e.to_string() })?;
+        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor::default()).await.map_err(|e| e.to_string())?;
+        Ok(Self { window, surface, adapter, device, queue })
+    }
+}
 
 struct Gpu {
     window: Arc<Window>,
@@ -115,7 +151,7 @@ struct Front {
     scenarios: Option<crate::mainscr_scenario::Assets>,
     /// Our MP screens (ADR 0014), their links, and the session a started room built (the starmap takes it).
     mp: Option<crate::mp_lobby::MpScreen>,
-    net: crate::mp_lobby::QuicNet,
+    net: crate::mp_lobby::ClientNet,
     session: Option<crate::mp_lobby::Session<'static>>,
     /// Ours (ADR 0034): the statistics screen over the menu (a game's end, or the history).
     stats: Option<crate::stats_screen::StatsScreen>,
@@ -187,6 +223,9 @@ struct App {
     /// The top bar's tooltip (`window/pointer.rs`).
     bar_tip: crate::kit::Tooltip,
     gpu: Option<Gpu>,
+    /// The browser build's GPU while the page's adapter and device requests run.
+    #[cfg(target_arch = "wasm32")]
+    gpu_wait: Option<GpuWait>,
     view: Option<View>,
     clock: TickClock,
     start: Instant,
@@ -498,6 +537,13 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
     crate::prof::mark("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
+    // The browser owns the loop: it runs the app after this returns.
+    #[cfg(target_arch = "wasm32")]
+    {
+        winit::platform::web::EventLoopExtWebSys::spawn_app(event_loop, app);
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     event_loop.run_app(&mut app).map_err(|e| e.to_string())
 }
 
@@ -693,6 +739,8 @@ impl App {
             bar_tip: Default::default(),
             dip_input: Default::default(),
             gpu: None,
+            #[cfg(target_arch = "wasm32")]
+            gpu_wait: None,
             view: None,
             clock: TickClock::new(SIM_TICK_MS, 0),
             start,
@@ -1006,27 +1054,43 @@ impl App {
     }
 
     fn init_gpu(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
-        let d = self.display;
-        let attrs = Window::default_attributes().with_title(format!("Imperium Galactica II — openIG2 {}", crate::version()));
-        let attrs = match d.size {
-            Some((w, h)) if d.mode == crate::display::Mode::Window => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
-            _ => attrs.with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0)),
+        #[cfg(not(target_arch = "wasm32"))]
+        let attrs = {
+            let d = self.display;
+            let attrs = Window::default_attributes().with_title(format!("Imperium Galactica II — openIG2 {}", crate::version()));
+            let attrs = match d.size {
+                Some((w, h)) if d.mode == crate::display::Mode::Window => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+                _ => attrs.with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0)),
+            };
+            with_icon(attrs.with_fullscreen(d.fullscreen(el.primary_monitor())))
         };
-        let attrs = with_icon(attrs.with_fullscreen(d.fullscreen(el.primary_monitor())));
+        // A canvas added to the page, sized by the page's stylesheet (web/index.html).
+        #[cfg(target_arch = "wasm32")]
+        let attrs = winit::platform::web::WindowAttributesExtWebSys::with_append(Window::default_attributes(), true);
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
+        #[cfg(not(target_arch = "wasm32"))]
+        return self.finish_gpu(pollster::block_on(GpuParts::request(window))?);
+        // The page's adapter and device come asynchronously; `about_to_wait` finishes the start (ADR 0047 §4).
+        #[cfg(target_arch = "wasm32")]
+        {
+            let wait = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let to = wait.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let w = window.clone();
+                *to.borrow_mut() = Some(GpuParts::request(window).await);
+                w.request_redraw();
+            });
+            self.gpu_wait = Some(wait);
+            Ok(())
+        }
+    }
+
+    fn finish_gpu(&mut self, parts: GpuParts) -> Result<(), String> {
+        let GpuParts { window, surface, adapter, device, queue } = parts;
         // The Options screen's display rows, offering the monitor's sizes.
         let now = window.inner_size();
         self.opt_rows.retain(|r| !r.ours);
         self.opt_rows.extend(crate::display::rows(&self.settings, &crate::display::sizes(window.current_monitor().as_ref()), (now.width, now.height)));
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let surface = instance.create_surface(window.clone()).map_err(|e| e.to_string())?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .map_err(|e| e.to_string())?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).map_err(|e| e.to_string())?;
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats.iter().copied().find(wgpu::TextureFormat::is_srgb).unwrap_or(caps.formats[0]);
         let size = window.inner_size();
@@ -2352,7 +2416,7 @@ impl App {
             Out::Start(b) => {
                 let rules = self.rules;
                 let ticks = crate::new_game::wall_ticks();
-                let built = crate::new_game::StartTexts::read(&self.install).and_then(|t| t.with(&self.install, |data| crate::mp_lobby::launch(b, data, rules, ticks, Box::new(crate::mp_lobby::QuicNet::default())))).and_then(|r| r);
+                let built = crate::new_game::StartTexts::read(&self.install).and_then(|t| t.with(&self.install, |data| crate::mp_lobby::launch(b, data, rules, ticks, Box::new(crate::mp_lobby::ClientNet::default())))).and_then(|r| r);
                 let Some(f) = &mut self.front else { return };
                 match built {
                     Ok(s) => {
@@ -4077,7 +4141,7 @@ impl App {
         let Some(o) = self.world.game.over.filter(|_| self.display.statistics) else { return };
         let view = self.world.game.local_view();
         let (y, m, d) = self.world.curr.date();
-        let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_secs());
+        let when = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |t| t.as_secs());
         let rec = crate::stats_screen::Match::record(&self.world.game, o, view.empire, self.world.net.is_some(), [y, m, d], when);
         if let Some(dir) = crate::stats_screen::history_dir() {
             if let Err(e) = crate::stats_screen::append(&dir, &rec) {
@@ -5144,6 +5208,10 @@ fn research_key(k: NamedKey) -> Option<crate::research::Key> {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
+        #[cfg(target_arch = "wasm32")]
+        if self.gpu_wait.is_some() {
+            return;
+        }
         if self.gpu.is_none() {
             if let Err(e) = self.init_gpu(el) {
                 eprintln!("ig2-client: {e}");
@@ -5152,7 +5220,15 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(parts) = self.gpu_wait.as_ref().and_then(|w| w.borrow_mut().take()) {
+            self.gpu_wait = None;
+            if let Err(e) = parts.and_then(|p| self.finish_gpu(p)) {
+                crate::web::failed(&e);
+                _el.exit();
+            }
+        }
         if let Some(g) = &self.gpu {
             g.window.request_redraw();
         }

@@ -16,11 +16,21 @@ rcgen = { version = "0.14.7", default-features = false, features = ["crypto", "r
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"], optional = true }
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
-socket2 = "0.6"
 thiserror.workspace = true
+# std::time natively; the page's clock in the browser, where std's panics (ADR 0047).
+web-time = "1.1"
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "io-util", "time"], optional = true }
 igd-next = { version = "0.17.1", default-features = false, optional = true }
 spake2 = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+socket2 = "0.6"
+
+# The browser build (ADR 0047): the page's crypto.getRandomValues.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+# spake2's rand_core 0.6 still asks the older one.
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }

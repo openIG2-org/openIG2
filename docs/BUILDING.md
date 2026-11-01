@@ -43,6 +43,21 @@ archive on macOS 14; there is no Intel archive.
 `ig2-check` (`engine/crates/ig2-check`) validates an install: `cargo run --release -p ig2-check -- [DIR] [--quick]`.
 `ig2-rendezvous` (`engine/crates/ig2-rendezvous`) is the optional internet relay service (`docs/RENDEZVOUS.md`).
 
+## Browser build
+The client also builds for `wasm32-unknown-unknown` (ADR 0047). It needs the target and `wasm-bindgen-cli` at the
+version of the `wasm-bindgen` crate in `engine/Cargo.lock`:
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
+python -I tools/build_web.py
+python -m http.server 8047 --bind 127.0.0.1 --directory web
+```
+`tools/build_web.py` builds the release wasm and writes the module and its loader to `web/pkg/` (gitignored). Open
+`http://127.0.0.1:8047/` in a browser with WebGPU (current Chrome or Edge; Firefox and Safari where WebGPU is on), pick the install folder: the page copies it into the
+browser's private storage (OPFS; on the next visit Play starts from that copy), loads every file but the videos into
+the client and starts the main menu. Not there yet: WebGL2, videos, saves, settings, multiplayer, the clipboard (ADR 0047's later parts). Serve it on localhost only; the page holds no
+game data, but publishing it is a release decision.
+
 ## Tests
 ```bash
 cd engine
