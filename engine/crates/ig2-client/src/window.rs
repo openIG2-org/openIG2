@@ -2605,6 +2605,7 @@ impl App {
                 t.ai_off = Some(self.world.game.state.mem.i32(ig2_sim::save::va::AI_OFF));
                 t.push(&mut self.world.game.state.mem);
                 self.tutorial = Some(t);
+                self.world.drop_replay();
                 (self.tutorial_at, self.tutorial_buttons) = (crate::tutorial_ui::PARKED, (false, false));
                 self.tutorial_effects(effects);
                 // `GlobalMusicVolumeCsokkento` (after `TutorialStart`'s own `TutorialStop(true)`): the music ducked while
@@ -3196,6 +3197,7 @@ impl App {
         self.akt_planet = None;
         self.fleet_groups = Default::default();
         self.volt_harc = false;
+        self.world.end_replay();
         self.world = w;
         self.autosave = (self.world.curr.date(), 0);
         self.apply_battle_rows();
@@ -3220,6 +3222,21 @@ impl App {
             self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
         }
         self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
+        self.start_replay();
+    }
+
+    /// ADR 0038: the game's replay into `replays/` beside the slots, unless the "Record replays" row is off.
+    fn start_replay(&mut self) {
+        let on = self.settings.int(crate::display::REPLAYS) != Some(0);
+        let Some(dir) = crate::options::slot_dir().map(|d| d.join("replays")).filter(|_| on) else { return };
+        let mp = self.world.net.is_some();
+        let r = std::fs::create_dir_all(&dir).and_then(|()| {
+            crate::options::prune_replays(&dir, crate::options::KEPT_REPLAYS - 1)?;
+            self.world.record_replay(dir.join(crate::options::replay_name(mp)))
+        });
+        if let Err(e) = r {
+            eprintln!("ig2-client: replay: {e}");
+        }
     }
 
     /// The battle screen's part of the frame's update (re/screens/spacewar.md): a started battle opens it, an ended one

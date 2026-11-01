@@ -80,6 +80,10 @@ first day of months 1 and 7, as the original does, while the original's "Auto Sa
 "Autosave every" saves every 10, 30 or 90 game days instead and keeps the autosave before it in slot 23, so the
 load list shows the last two.
 
+Every game also writes a replay (`replays/<date>_<time>_sp.ig2r` or `_mp`) beside the slots, and the newest 50 are
+kept (ADR 0038). A viewer is not in the client yet. The Remake row "Record replays" (`RecordReplays`, on by
+default) turns recording off.
+
 ### Display settings
 Options → the game tab, under the original's rows and a "Remake" heading. A press cycles the row; changes apply
 at once and are saved in `ig2-rework-options.dat`. The Options screen also opens from the main menu (the Settings label at the bottom right, or the `O` key), without its slot list, Load and Save.
@@ -103,6 +107,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Settings in menu (`MenuSettings`) | On by default: the main menu shows a Settings label and opens Options on `O` (ADR 0031), and a Quick game label (ADR 0039); off keeps the original's menu |
 | Language (`Language`) | Default (the client's own choice), English, Magyar, Deutsch, Francais, Espanol or Italiano (ADR 0031); applies at the next start, the screen says "Restart to change the language"; greyed while `--lang` or `IG2_LANG` is set |
 | Fleet groups (`FleetGroups`) | On by default: on the starmap Ctrl+1…9 put the selected fleet in a group, Alt+1…9 select the group's fleet, pressed again the view centres on it (ADR 0035); the plain 1…3 stay the speed keys; the groups are saved beside the save slot (`save<n>.groups`); off leaves Ctrl/Alt+1…3 as speed keys as in the original |
+| Record replays (`RecordReplays`) | On by default: each game writes a replay file (`replays/*.ig2r`); off = the original (none) (ADR 0038) |
 
 The window opens at 1600x900 until a size is saved.
 

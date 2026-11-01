@@ -7,7 +7,7 @@
 //! and what the game asked of the client (videos, battles, the end).
 //! In a campaign it also plays the story's part of the player ([`story`]).
 //!
-//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`, runs
+//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]`, runs
 //! `campaign:C[:D[:L]]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` ([`mp`]), or `all`.
 
 mod mp;
@@ -66,11 +66,14 @@ pub struct Limits {
     pub autopilot: bool,
     /// Multiplayer: compare both machines' states at the same turn every this many ticks ([`mp`]).
     pub compare_every: u64,
+    /// Every machine records its replay (ADR 0038), played back headless before each save and at the end: it
+    /// must reach the machine's state.
+    pub replay: bool,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 120, autopilot: true, compare_every: 200 }
+        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 120, autopilot: true, compare_every: 200, replay: false }
     }
 }
 
@@ -227,6 +230,7 @@ impl Harness {
             w.game.autopilot(en);
         }
         w.set_speed(Speed::Fastest);
+        let mut replay = limits.replay.then(|| record(&mut w));
         let mut since: BTreeMap<i32, (i32, i32, i32)> = BTreeMap::new();
         let mut progress = (signature(&w.game), months(&w.game));
         let mut clock = (w.game.state.mem.i32(va::IDO), 0u64);
@@ -349,11 +353,18 @@ impl Harness {
             }
             if limits.save_every > 0 && months(&w.game) >= next_save && battle.is_none() {
                 next_save = months(&w.game) + limits.save_every;
+                if let Some(b) = &replay {
+                    self.check_replay(&mut w, b, tick, report);
+                }
                 match self.save_and_load(w, tick, report) {
                     Ok(n) => w = n,
                     Err(e) => return End::Error(e),
                 }
+                replay = limits.replay.then(|| record(&mut w));
             }
+        }
+        if let Some(b) = &replay {
+            self.check_replay(&mut w, b, report.ticks, report);
         }
         report.date = date(&w.game);
         let story = w.game.state.story();
@@ -362,6 +373,35 @@ impl Harness {
         let alive = w.game.state.alive();
         report.empires = (1..alive.len()).filter(|&e| alive[e]).map(|e| (e, colony.planets.iter().skip(1).filter(|p| p.owner as usize == e).count())).collect();
         end
+    }
+
+    /// The replay `w` recorded into `buf` since [`record`], played back headless (ADR 0038): it must reach `w`'s
+    /// state. The recording ends; its chunks' hashes.
+    pub(super) fn check_replay(&self, w: &mut World, buf: &ig2_net::replay::Buffer, tick: u64, report: &mut Report) -> Vec<Option<u64>> {
+        use ig2_net::replay::{Playback, Replay};
+        let state = w.replay_hash();
+        w.end_replay();
+        let replay = match Replay::read(&buf.take()) {
+            Ok(r) => r,
+            Err(e) => {
+                report.problem(tick, format!("the replay doesn't read back: {e}"));
+                return Vec::new();
+            }
+        };
+        let mut p = match Playback::new(&replay, &self.rules) {
+            Ok(p) => p,
+            Err(e) => {
+                report.problem(tick, format!("the replay doesn't start: {e}"));
+                return Vec::new();
+            }
+        };
+        p.game_mut().design_texts = w.game.design_texts.clone();
+        match p.run_to_end() {
+            Ok(h) if h == state => report.note(0, "replays played back to the recorded state"),
+            Ok(h) => report.problem(tick, format!("the replay plays back to hash {h:016x}, the game is at {state:016x}")),
+            Err(d) => report.problem(tick, d.to_string()),
+        }
+        replay.chunks.iter().map(|c| c.hash).collect()
     }
 
     /// The Options screen's save and load: our save file of the running game, loaded back as a slot is.
@@ -391,6 +431,13 @@ impl Harness {
         n.game.state.mem.set_i32(va::IDO_SPEED, w.game.state.mem.i32(va::IDO_SPEED));
         Ok(n)
     }
+}
+
+/// [`Limits::replay`]: `w` records its replay into memory from now on.
+pub(super) fn record(w: &mut World) -> ig2_net::replay::Buffer {
+    let b = ig2_net::replay::Buffer::default();
+    w.record_into(Box::new(b.clone())).expect("a replay records into memory");
+    b
 }
 
 /// The messages screen as a player clicks through it: `Messages_Belep`, then each dialogue typed out with the first
@@ -538,10 +585,10 @@ pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec
     Ok(runs)
 }
 
-/// `ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]`: every run's report; an
+/// `ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]`: every run's report; an
 /// error when one failed.
 pub fn main(args: &[String]) -> Result<(), String> {
-    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]")?;
+    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]")?;
     let mut limits = Limits::default();
     let mut seeds = vec![limits.seed];
     let mut it = args[1..].iter();
@@ -554,6 +601,7 @@ pub fn main(args: &[String]) -> Result<(), String> {
             "--save-every" => limits.save_every = n(v)? as i32,
             "--stall" => limits.stall = n(v)? as i32,
             "--compare-every" => limits.compare_every = n(v)?,
+            "--replay" => limits.replay = n(v)? != 0,
             "--human" => limits.autopilot = match v.as_str() { "ai" => true, "idle" => false, _ => return Err(format!("--human {v}: ai or idle")) },
             _ => return Err(format!("{a}: unknown")),
         }
@@ -602,6 +650,22 @@ mod tests {
         }
         let failed: Vec<&str> = reports.iter().filter(|r| r.failed()).map(|r| r.name.as_str()).collect();
         assert!(failed.is_empty(), "failed runs: {failed:?}");
+    }
+
+    /// ADR 0038: a short skirmish and a loopback multiplayer game, every machine recording its replay across a
+    /// save and load; each replay plays back headless to its machine's state, and both machines' alike.
+    #[test]
+    fn replays_play_back() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let h = Harness::new(install).unwrap();
+        for run in parse_runs("skirmish,mp", Vec::new).unwrap() {
+            let r = h.play(&run, Limits { ticks: 4000, save_every: 1, replay: true, ..Limits::default() });
+            assert!(!r.failed() && r.saves > 0, "{}", r.text());
+            assert!(r.notes.contains_key("replays played back to the recorded state"), "{}", r.text());
+        }
     }
 
     #[test]

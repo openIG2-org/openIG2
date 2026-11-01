@@ -171,6 +171,7 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
         Err(e) => return End::Error(e),
     };
     report.human = worlds[0].net.as_ref().unwrap().0.peer().empire as usize;
+    let mut replays = limits.replay.then(|| worlds.each_mut().map(super::record));
     let every = (limits.compare_every / TURN_TICKS as u64).max(1);
     let mut next_compare = turn(&worlds[0]) + every;
     let mut compares = 0u64;
@@ -287,19 +288,36 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
         if limits.save_every > 0 && months(&worlds[0].game) >= next_save && !battle.iter().any(|b| *b) && !worlds[0].game.realtime_running() {
             next_save = months(&worlds[0].game) + limits.save_every;
             hashed += hashes(&worlds[1]);
+            if let Some(b) = &replays {
+                check_replays(hx, &mut worlds, b, tick, report);
+            }
             match resume(hx, &texts, &mut worlds, limits, tick, report) {
                 Ok(w) => worlds = w,
                 Err(e) => return End::Error(e),
             }
+            replays = limits.replay.then(|| worlds.each_mut().map(super::record));
         }
     };
     report.note(0, format!("{compares} state compares at the same turn, {} turns hashed alike", hashed + hashes(&worlds[1])));
+    if let Some(b) = &replays {
+        check_replays(hx, &mut worlds, b, report.ticks, report);
+    }
     let w = &worlds[0];
     report.date = super::date(&w.game);
     let colony = w.game.state.colony();
     let alive = w.game.state.alive();
     report.empires = (1..alive.len()).filter(|&e| alive[e]).map(|e| (e, colony.planets.iter().skip(1).filter(|p| p.owner as usize == e).count())).collect();
     end
+}
+
+/// Both machines' replays played back ([`Harness::check_replay`]), and their checks alike where both recorded the
+/// same steps (every peer writes the same bundles).
+fn check_replays(hx: &Harness, worlds: &mut [World; 2], bufs: &[ig2_net::replay::Buffer; 2], tick: u64, report: &mut Report) {
+    let [a, b] = worlds;
+    let (ca, cb) = (hx.check_replay(a, &bufs[0], tick, report), hx.check_replay(b, &bufs[1], tick, report));
+    if let Some(k) = ca.iter().zip(&cb).position(|(x, y)| x.is_some() && y.is_some() && x != y) {
+        report.problem(tick, format!("the machines' replays differ from chunk {k} on"));
+    }
 }
 
 /// The host's MP save, read back and checked, resumed in a new room the joiner rejoins: the game goes on there.

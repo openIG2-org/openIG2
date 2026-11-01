@@ -178,6 +178,38 @@ fn two_peers_stay_in_lockstep() {
     assert_ne!(solo.peers[0].0.hashes.last(), s.peers[0].0.hashes.last());
 }
 
+/// Every peer writes the game's replay (ADR 0038): each plays back headless to its peer's state, and both record
+/// the same checks.
+#[test]
+fn every_peers_replay_plays_back() {
+    use ig2_net::replay::{Buffer, Playback, Recorder, Replay, CHECK_EVERY};
+    let Some((rules, state)) = common::setup(SAVE) else { return };
+    let mut s = Session::new();
+    s.join(1, 6, |_| Peer::new(1, 6, game(state.clone(), &rules), DEFAULT_DELAY));
+    s.join(2, 3, |_| Peer::new(2, 3, game(state.clone(), &rules), DEFAULT_DELAY));
+    let bufs = [Buffer::default(), Buffer::default()];
+    for ((p, _), b) in s.peers.iter_mut().zip(&bufs) {
+        p.replay = Some(Recorder::peer(Box::new(b.clone()), p, "test", 0x1234).unwrap());
+    }
+    let turns = 2 * CHECK_EVERY as u64 + 30;
+    s.run_to(turns, act);
+    assert_eq!(agree(&s.peers) as u64, turns);
+    let mut checks = Vec::new();
+    for ((p, _), b) in s.peers.iter_mut().zip(&bufs) {
+        p.replay.take().unwrap().flush(p.hash());
+        let r = Replay::read(&b.take()).unwrap();
+        assert!(r.meta.multiplayer && r.meta.empire == p.empire && r.meta.rules == 0x1234 && r.torn == 0);
+        assert_eq!(r.steps(), p.turn);
+        assert_eq!(r.chunks.iter().flat_map(|c| c.steps.iter().flatten()).count(), 9, "the commands sent");
+        let mut play = Playback::new(&r, &rules).unwrap();
+        assert_eq!(play.run_to_end(), Ok(p.hash()));
+        assert_eq!(play.peer.tick, p.tick);
+        checks.push(r.chunks.iter().map(|c| c.hash).collect::<Vec<_>>());
+    }
+    assert_eq!(checks[0], checks[1]);
+    assert_eq!(checks[0].len(), 3);
+}
+
 /// A player's pause (0x407, room speed 4) stops the clock and the tick on every machine while the turns go on, and
 /// the un-pause starts them again (`time-and-rng.md`, the tick gate); at another room speed the pause is ignored.
 #[test]

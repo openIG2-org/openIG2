@@ -130,6 +130,34 @@ pub fn slot_dir() -> Option<PathBuf> {
     ig2_formats::options::Options::path().and_then(|p| p.parent().map(Path::to_path_buf))
 }
 
+/// The replays kept in `replays/` (ADR 0038): the newest by name.
+pub const KEPT_REPLAYS: usize = 50;
+
+/// A new replay's file name: the start time (UTC, so names sort by age) and the mode.
+pub fn replay_name(multiplayer: bool) -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let (days, s) = (secs / 86400, secs % 86400);
+    // Civil date from days since 1970-01-01 (H. Hinnant's algorithm).
+    let z = days as i64 + 719468;
+    let (era, doe) = (z.div_euclid(146097), z.rem_euclid(146097));
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    let y = yoe + era * 400 + (m <= 2) as i64;
+    format!("{y:04}-{m:02}-{d:02}_{:02}{:02}{:02}_{}.ig2r", s / 3600, s / 60 % 60, s % 60, if multiplayer { "mp" } else { "sp" })
+}
+
+/// Delete all but the `keep` newest replays in `dir`.
+pub fn prune_replays(dir: &Path, keep: usize) -> std::io::Result<()> {
+    let mut names: Vec<PathBuf> = std::fs::read_dir(dir)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "ig2r")).collect();
+    names.sort();
+    for p in &names[..names.len().saturating_sub(keep)] {
+        std::fs::remove_file(p)?;
+    }
+    Ok(())
+}
+
 /// The slot title after the state in our `save<n>.ig2s`: this magic, the name (31 bytes, NUL padded) and the date.
 const SLOT_MAGIC: &[u8; 8] = b"IG2SLOT1";
 const SLOT_TRAILER: usize = 8 + 31 + 12;

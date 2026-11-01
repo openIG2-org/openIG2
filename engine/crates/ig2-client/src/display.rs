@@ -1,6 +1,6 @@
 //! The remake's display settings (an enhanced setting, docs/USER_GUIDE.md → Options): window, borderless or
 //! fullscreen, the resolution, vsync and the 4:3 letterbox, with the live background (ADR 0015) and the names'
-//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034); kept in our settings file and shown as extra rows on the Options screen's game page
+//! language (ADR 0017), the clean name entry (ADR 0024), the info boxes' models (ADR 0025), the battle's slider (ADR 0027), the Hungarian articles (ADR 0028) the centred Exit label (ADR 0029) the W/A/S/D camera (ADR 0030), the autosave's cadence (ADR 0032), the menu Settings label and Language row (ADR 0031), the fleet groups (ADR 0035), the game statistics (ADR 0034) and the replays (ADR 0038); kept in our settings file and shown as extra rows on the Options screen's game page
 //! (`crate::options`, in the original's font and colours under a "Remake" heading). The original has a fixed
 //! 640×480 or 800×600 screen and none of these rows.
 
@@ -46,6 +46,8 @@ pub const LANGS: [Lang; 6] = [Lang::En, Lang::Hu, Lang::De, Lang::Fr, Lang::Es, 
 pub fn language(f: &File) -> Option<Lang> {
     f.int(LANGUAGE).and_then(|n| LANGS.get((n as usize).checked_sub(1)?).copied())
 }
+/// ADR 0038: each game writes its replay into `replays/` beside the slots (on by default).
+pub const REPLAYS: &str = "RecordReplays";
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
 const ID_MODE: i32 = 301;
@@ -200,6 +202,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(14, "Language", LANGUAGE, language(f).map_or(0, |l| 1 + LANGS.iter().position(|&x| x == l).unwrap() as i32), langs, 6),
         row(15, "Fleet groups", FLEET_GROUPS, d.fleet_groups as i32, Vec::new(), 1),
         row(16, "Game statistics", STATISTICS, d.statistics as i32, Vec::new(), 1),
+        row(17, "Record replays", REPLAYS, (f.int(REPLAYS) != Some(0)) as i32, Vec::new(), 1),
     ]
 }
 
@@ -234,7 +237,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

@@ -354,6 +354,8 @@ pub struct Peer<'r> {
     /// The ticks' events since the caller last took them (the UI's).
     pub events: Vec<GameEvent>,
     pub desyncs: Vec<Desync>,
+    /// The replay this peer writes as it runs its turns (ADR 0038).
+    pub replay: Option<crate::replay::Recorder>,
 }
 
 impl<'r> Peer<'r> {
@@ -381,6 +383,7 @@ impl<'r> Peer<'r> {
             hashes: Vec::new(),
             events: Vec::new(),
             desyncs: Vec::new(),
+            replay: None,
         }
     }
 
@@ -410,6 +413,11 @@ impl<'r> Peer<'r> {
 
     pub fn hash(&self) -> u64 {
         snapshot::state_hash(&self.game, &self.pending)
+    }
+
+    /// The sim-originated commands for the next tick boundary (part of the synced state).
+    pub fn pending(&self) -> &[Command] {
+        &self.pending
     }
 
     /// The next turn this peer holds no bundle for (run or buffered).
@@ -475,8 +483,7 @@ impl<'r> Peer<'r> {
                 break;
             }
             let Some(b) = self.bundles.remove(&self.turn) else { break };
-            self.run_turn(&b);
-            let hash = self.hash();
+            let hash = self.run_bundle(&b);
             self.hashes.push((b.turn, hash));
             link.send(&Msg::Hash { turn: b.turn, hash });
             if self.kept.len() == KEPT_BUNDLES {
@@ -501,6 +508,17 @@ impl<'r> Peer<'r> {
             self.unacked.insert(self.next_input, commands);
             self.next_input += 1;
         }
+    }
+
+    /// Run turn `b.turn` and record it; the state hash after it.
+    pub(crate) fn run_bundle(&mut self, b: &Bundle) -> u64 {
+        self.run_turn(b);
+        let hash = self.hash();
+        if let Some(r) = &mut self.replay {
+            r.inputs_from(&b.commands);
+            r.step(|| hash);
+        }
+        hash
     }
 
     /// One turn: at each tick boundary the sim's own pending messages, then (first tick) the bundle; then the tick.

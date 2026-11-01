@@ -23,6 +23,7 @@ pub mod portmap;
 #[cfg(feature = "quic")]
 pub mod quic;
 pub mod rendezvous;
+pub mod replay;
 pub mod session;
 pub mod snapshot;
 pub mod transport;

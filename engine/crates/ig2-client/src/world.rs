@@ -342,6 +342,9 @@ pub struct World<'r> {
     /// `MainScenarioDescriptor` (exe 0xbbd140) is set: the game was started as a scenario from the main menu
     /// (`StoreScenarioDescription` 0x504120); `InitNewGame` (every other start and every `LoadSave`) clears it.
     pub scenario: bool,
+    /// The replay this machine writes (ADR 0038) and its file; in multiplayer the peer's recorder writes it.
+    pub replay: Option<std::path::PathBuf>,
+    recorder: Option<ig2_net::replay::Recorder>,
 }
 
 /// The session as the wait overlay sees it (`crate::mp_wait`, [`World::wait_view`]).
@@ -594,7 +597,7 @@ impl<'r> World<'r> {
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
         let ui = crate::ui::UiSnap::read(&game.state);
-        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false }
+        Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, scenario: false, replay: None, recorder: None }
     }
 
     /// A multiplayer game from our room's start (`mp_lobby::launch`): the peer's start state, untouched (every machine
@@ -850,7 +853,13 @@ impl<'r> World<'r> {
         }
         let human = self.curr.human;
         let from = self.game.events.len();
+        if let Some(r) = &mut self.recorder {
+            r.watch(&self.game);
+        }
         for c in std::mem::take(&mut self.outbox) {
+            if let Some(r) = &mut self.recorder {
+                r.input(ig2_net::replay::Input::Order { issuer: human, command: c.clone() });
+            }
             c.apply(&mut self.game, human);
         }
         self.realtime.extend(self.game.events[from..].iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
@@ -871,6 +880,66 @@ impl<'r> World<'r> {
         // Same tick: the fleets keep gliding from `prev`.
         self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game) };
         self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+    }
+
+    /// Start writing this game's replay into `path` (ADR 0038): single player from now (between ticks), multiplayer
+    /// from the peer's turn. Any replay being written is finished first.
+    pub fn record_replay(&mut self, path: std::path::PathBuf) -> std::io::Result<()> {
+        self.end_replay();
+        self.record_into(Box::new(std::io::BufWriter::new(std::fs::File::create(&path)?)))?;
+        self.replay = Some(path);
+        Ok(())
+    }
+
+    /// [`World::record_replay`] into `out`.
+    pub fn record_into(&mut self, out: Box<dyn std::io::Write + Send>) -> std::io::Result<()> {
+        if self.net.is_some() {
+            let r = self.in_peer(|peer| ig2_net::replay::Recorder::peer(out, peer, crate::version(), 0));
+            self.net.as_mut().unwrap().0.peer_mut().replay = Some(r?);
+        } else {
+            self.recorder = Some(ig2_net::replay::Recorder::single_player(out, &self.game, crate::version())?);
+        }
+        Ok(())
+    }
+
+    /// Multiplayer: `f` on the peer holding the game as the lockstep sees it (the synced `EN`, as [`World::mp_pump`]).
+    fn in_peer<T>(&mut self, f: impl FnOnce(&mut ig2_net::Peer<'r>) -> T) -> T {
+        let (net, _) = self.net.as_mut().expect("multiplayer");
+        local_en(&mut self.game, false);
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        let t = f(net.peer_mut());
+        std::mem::swap(&mut self.game, &mut net.peer_mut().game);
+        local_en(&mut self.game, true);
+        t
+    }
+
+    /// The state hash a replay checks (between ticks; in multiplayer at a turn boundary, between pumps).
+    pub fn replay_hash(&mut self) -> u64 {
+        match self.net {
+            Some(_) => self.in_peer(|peer| peer.hash()),
+            None => ig2_net::replay::sp_hash(&self.game),
+        }
+    }
+
+    /// Write the replay's last steps and close it; its file.
+    pub fn end_replay(&mut self) -> Option<std::path::PathBuf> {
+        let recorder = match &mut self.net {
+            Some((net, _)) => net.peer_mut().replay.take(),
+            None => self.recorder.take(),
+        };
+        if let Some(mut r) = recorder {
+            // Single player: the screen state since the last tick, kept as the replay's tail.
+            r.watch(&self.game);
+            r.flush(self.replay_hash());
+        }
+        self.replay.take()
+    }
+
+    /// Stop writing the replay and delete its file (the tutorial records none).
+    pub fn drop_replay(&mut self) {
+        if let Some(p) = self.end_replay() {
+            let _ = std::fs::remove_file(p);
+        }
     }
 
     /// `IdoPause`.
@@ -922,6 +991,9 @@ impl<'r> World<'r> {
             Speed::Fastest => 3,
         };
         self.game.set_speed(level, false);
+        if let Some(r) = &mut self.recorder {
+            r.input(ig2_net::replay::Input::Speed(level));
+        }
     }
 
     /// One 50 ms sim tick, as the original's frame runs it: the lockstep messages the last tick sent first
@@ -932,7 +1004,11 @@ impl<'r> World<'r> {
             self.mp_tick();
             return;
         }
-        // The client keeps no event history yet (the UI that shows them comes later).
+        if let Some(r) = &mut self.recorder {
+            r.watch(&self.game);
+        }
+        // The client keeps no event history yet (the UI that shows them comes later). The same delivery as
+        // `ig2_net::replay::deliver`, which plays a replay back.
         let events = self.game.take_events();
         self.videos.extend(events.iter().filter_map(crate::video::Request::of));
         self.story_ui.extend(events.iter().filter_map(StoryUi::of));
@@ -948,6 +1024,9 @@ impl<'r> World<'r> {
         self.game.advance_clock();
         self.game.run_tick();
         drop(run);
+        if let Some(r) = &mut self.recorder {
+            r.sp_step(&self.game);
+        }
         // At once: a battle starts paused, so no next tick would hand them over.
         self.realtime.extend(self.game.events.iter().filter_map(|e| if let GameEvent::RealTime(r) = e { Some(*r) } else { None }));
         self.ground_war_routed |= self.game.events.iter().any(|e| matches!(e, GameEvent::Battle(BattleEvent::GroundRealTime { .. })));
@@ -977,6 +1056,9 @@ impl<'r> World<'r> {
         }
         let mut t = self.game.state.ticker();
         let id = t.pop()?;
+        if let Some(r) = &mut self.recorder {
+            r.input(ig2_net::replay::Input::PopMessage);
+        }
         self.popped.push(id);
         let text: Vec<u8> = t.on_screen.iter().copied().take_while(|&b| b != 0).collect();
         let important = t.on_screen_important != 0;

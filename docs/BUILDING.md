@@ -62,7 +62,7 @@ frame or an input script's frames without a window; it is used by the capture co
 `engine/crates/ig2-client/src/main.rs`.
 
 ## Play-through harness
-`ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N]` plays whole games
+`ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1]` plays whole games
 headless at
 the fastest speed on the player's path (`World::tick`, the commands a screen sends), with the sim's AI playing the
 human's empire (`Game::autopilot`). Runs: `campaign:C[:D[:L]]` (campaign 1..=3, difficulty 1/2/4, storyline 1/2; 0 or
