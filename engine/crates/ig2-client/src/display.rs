@@ -92,6 +92,8 @@ pub const SMOOTH_GLOWS: &str = "SmoothGlows";
 pub const MODERN_STARMAP: &str = "ModernStarmapHud";
 /// ADR 0067: Esc's in-game menu (the Options screen) as the modern egui page (on by default; 0 = the original's).
 pub const MODERN_MENU: &str = "ModernGameMenu";
+/// ADR 0062: the egui pages' and HUD's size, n = 50 + 10·n per cent (default 5 = 100 %).
+pub const UI_SCALE: &str = "UiScale";
 
 /// ADR 0058: the speech's volume; 0 = the sound volume's (the original's, the default), n = (n − 1) × 10 per cent.
 pub const VOICE_VOLUME: &str = "VoiceVolume";
@@ -101,6 +103,11 @@ pub const EXTRA_SPEEDS: &str = "ExtraSpeeds";
 /// The speech's volume the settings file chooses (ADR 0058), `None` = the sound volume's.
 pub fn voice_volume(f: &File) -> Option<i32> {
     f.int(VOICE_VOLUME).filter(|n| (1..=11).contains(n)).map(|n| (n - 1) * 10)
+}
+
+/// The UI scale the settings file chooses (ADR 0062), in per cent: 50..=200, 100 when unset.
+pub fn ui_scale(f: &File) -> u32 {
+    50 + 10 * f.int(UI_SCALE).unwrap_or(5).clamp(0, 15) as u32
 }
 
 /// The rows' ids (past the exe's 101..=107 and 201..=211).
@@ -324,6 +331,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(38, Group::Graphics, "Smooth glows", SMOOTH_GLOWS, d.smooth_glows as i32, Vec::new(), 1),
         row(39, Group::Interface, "Modern starmap HUD", MODERN_STARMAP, d.modern_starmap as i32, Vec::new(), 1),
         row(40, Group::Interface, "Modern in-game menu", MODERN_MENU, d.modern_menu as i32, Vec::new(), 1),
+        row(41, Group::Interface, "UI scale", UI_SCALE, (ui_scale(f) as i32 - 50) / 10, (0..=15).map(|n| format!("{}%", 50 + 10 * n).into_bytes()).collect(), 15),
     ]
 }
 
@@ -358,7 +366,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 5]);
         // The theme row: Classic first, Modern by its stored name.
         let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
         assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));
@@ -400,5 +408,22 @@ mod tests {
         assert_eq!((row.value, row.labels[row.value as usize].as_slice(), row.labels.len() as i32), (9, &b"80%"[..], row.states + 1));
         f.set(VOICE_VOLUME, "12");
         assert_eq!(voice_volume(&f), None);
+    }
+
+    /// The UI scale: 100 % unset, 50..=200 % in tens, out-of-range values held at the ends; the row shows the per cent.
+    #[test]
+    fn ui_scale_row() {
+        let mut f = File::default();
+        assert_eq!(ui_scale(&f), 100);
+        f.set(UI_SCALE, "0");
+        assert_eq!(ui_scale(&f), 50);
+        f.set(UI_SCALE, "8");
+        assert_eq!(ui_scale(&f), 130);
+        f.set(UI_SCALE, "99");
+        assert_eq!(ui_scale(&f), 200);
+        f.set(UI_SCALE, "3");
+        let r = rows(&f, &[(800, 600)], (800, 600));
+        let row = r.iter().find(|r| r.key == UI_SCALE).unwrap();
+        assert_eq!((row.value, row.labels[row.value as usize].as_slice(), row.labels.len() as i32), (3, &b"80%"[..], row.states + 1));
     }
 }

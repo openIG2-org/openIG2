@@ -7,9 +7,17 @@
 use crate::theme::Theme;
 use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Vec2};
 
-/// The page's height in points at any window size: the screens' 480 virtual lines, so a page scales with the window
-/// as every screen does (and stays sharp: egui draws at the window's pixels).
-pub const POINTS_HIGH: f32 = 540.0;
+/// The page's height in points at 100 % UI scale and any window size (a 1080-line window draws a point as a pixel),
+/// so a page scales with the window as every screen does (and stays sharp: egui draws at the window's
+/// pixels). The window's DPI factor plays no part: the band is already in physical pixels.
+pub const POINTS_HIGH: f32 = 1080.0;
+
+/// The "UI scale" option in per cent (ADR 0062; the settings file's `UiScale`), read by every page's next frame.
+static UI_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(100);
+
+pub fn set_ui_scale(percent: u32) {
+    UI_SCALE.store(percent.clamp(50, 200), std::sync::atomic::Ordering::Relaxed);
+}
 
 /// The egui context, its renderer and the frame's painted output.
 pub struct Gui {
@@ -47,9 +55,14 @@ impl Gui {
         self
     }
 
-    /// Points per band pixel for a band `h` pixels high.
+    /// Band pixels per point for a band `h` pixels high at the current UI scale.
     pub fn scale(h: u32) -> f32 {
-        (h as f32 / POINTS_HIGH).max(0.25)
+        Self::scale_at(h, UI_SCALE.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Band pixels per point for a band `h` pixels high at `percent` UI scale.
+    pub fn scale_at(h: u32, percent: u32) -> f32 {
+        (h as f32 / POINTS_HIGH * percent as f32 / 100.0).max(0.25)
     }
 
     /// The pointer moved to `px` (band pixels), or left the window (`None`).
@@ -262,6 +275,20 @@ pub fn focus_ring(ui: &egui::Ui, rect: egui::Rect) {
 mod tests {
     use super::*;
 
+    /// 100 % draws a point as a pixel at 1080p and grows with the window; the option multiplies it (200 % is the
+    /// pages' size before the option, 540 points high).
+    #[test]
+    fn scale_follows_the_window_and_the_option() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(near(Gui::scale_at(1080, 100), 1.0));
+        assert!(near(Gui::scale_at(1440, 100), 4.0 / 3.0));
+        assert!(near(Gui::scale_at(2160, 100), 2.0));
+        assert!(near(Gui::scale_at(1080, 150), 1.5));
+        assert!(near(Gui::scale_at(1080, 200), 2.0));
+        assert!(near(Gui::scale_at(1080, 50), 0.5));
+        assert_eq!(Gui::scale_at(240, 50), 0.25);
+    }
+
     /// The bundled font has the languages' letters (Hungarian's ő and ű, the others' accents), and both themes map.
     #[test]
     fn font_has_the_letters_and_themes_map() {
@@ -301,6 +328,7 @@ mod tests {
                 _ => {}
             }
         }
-        assert_eq!((clicks, k), (1, 2.0));
+        assert_eq!(clicks, 1);
+        assert!((k - 1.0).abs() < 1e-5);
     }
 }

@@ -7,7 +7,7 @@
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--battle-effects] [--smooth-glows] [--modern-hud] [--modern-menu] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--ui-scale P] [--battle-effects] [--smooth-glows] [--modern-hud] [--modern-menu] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -171,6 +171,8 @@ pub struct Options {
     pub theme: Option<String>,
     /// `--upscale 2|4`: the textures upscaled (ADR 0054; else the settings file's `TextureUpscale`); 1 = off.
     pub upscale: u8,
+    /// `--ui-scale P`: the egui pages and HUD at P per cent, 50..=200 (ADR 0062; else the settings file's `UiScale`).
+    pub ui_scale: Option<u32>,
     /// `--modern-lighting`: anti-aliasing, per-pixel lighting, soft shadows and bloom (ADR 0055; else the settings
     /// file's rows).
     pub modern_lighting: bool,
@@ -339,6 +341,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         sharp_text: false,
         theme: None,
         upscale: 1,
+        ui_scale: None,
         modern_lighting: false,
         battle_effects: false,
         smooth_glows: false,
@@ -454,6 +457,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     _ => return Err("--upscale 2|4".into()),
                 }
             }
+            "--ui-scale" => o.ui_scale = Some(val()?.trim().parse().ok().filter(|p| (50..=200).contains(p)).ok_or("--ui-scale 50..200")?),
             "--modern-lighting" => o.modern_lighting = true,
             "--multiplayer" => o.multiplayer = true,
             "--backdrop" => o.backdrop = true,
@@ -580,6 +584,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     render::set_sharp_text(o.sharp_text);
     theme::set(o.theme.as_deref().unwrap_or(""));
     upscale::set_factor(o.upscale);
+    gui::set_ui_scale(o.ui_scale.unwrap_or(100));
     if o.modern_lighting {
         render3d::set_lighting(render3d::Lighting { msaa: true, per_pixel: true, soft_shadows: true, bloom: true });
     }

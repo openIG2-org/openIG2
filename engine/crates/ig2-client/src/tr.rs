@@ -53,6 +53,8 @@ const TABLE: &[(&str, &str)] = &[
     ("Battle effects", "Csataeffektusok"),
     ("Smooth glows", "Lágy fények"),
     ("Modern starmap HUD", "Modern csillagtérkép-felület"),
+    ("UI scale", "Felület mérete"),
+    ("The size of the remake's own pages and panels; they grow with the window.", "A remake saját oldalainak és paneljeinek mérete; az ablakkal együtt nőnek."),
     // The modern starmap HUD (ADR 0065).
     ("Speed", "Sebesség"),
     ("Quick research", "Gyors kutatás"),

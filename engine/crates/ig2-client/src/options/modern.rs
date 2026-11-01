@@ -198,6 +198,7 @@ pub fn describe(key: &str) -> &'static str {
         "Bloom" => "A soft glow around fire, blasts and the colony's weather.",
         "SmoothGlows" => "Soft, round glows and stars on the starmap and the backgrounds at any resolution.",
         "BattleEffects" => "Sparks, shock waves, smoke and glowing shots on top of the battles' own effects.",
+        "UiScale" => "The size of the remake's own pages and panels; they grow with the window.",
         "ModernStarmapHud" => "The starmap's bar, info box, minimap and camera buttons as clear modern panels; off = the original's.",
         "ModernGameMenu" => "Esc's in-game menu with saving, loading and every setting as a modern page; off = the original's.",
         "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",
@@ -263,12 +264,15 @@ pub struct Modern {
     pub game: bool,
     pub ask: Option<Game>,
     pub out: Option<Act>,
+    /// The UI scale row's value the egui layer last showed (ADR 0062).
+    previewed: Option<i32>,
 }
 
 impl Modern {
     pub fn new(o: &OptionsScreen, name: Vec<u8>, binds: crate::bindings::Bindings) -> Self {
-        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, editing: false, name, binds, capture: None, kept: Default::default(), game: false, ask: None, out: None };
+        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, editing: false, name, binds, capture: None, kept: Default::default(), game: false, ask: None, out: None, previewed: None };
         m.keep(o);
+        m.previewed = scale_row(o);
         m
     }
 
@@ -370,6 +374,7 @@ impl Modern {
         self.binds = self.kept.3.clone();
         (self.capture, self.ask, o.entry) = (None, None, None);
         check_dependencies(&mut o.rows, o.multiplayer);
+        self.preview_scale(o);
     }
 
     /// ADR 0067: an action of the Save & load tab (a button, Enter on its line). False when it is off.
@@ -705,6 +710,19 @@ impl Modern {
         if click {
             sound(crate::audio::CLICK);
         }
+        // The UI scale shows at once (a drag resizes the page when it ends, so the track stays under the pointer).
+        if ctx.dragged_id().is_none() {
+            self.preview_scale(o);
+        }
+    }
+
+    /// The page's UI scale row into the egui layer when it changed: what the slider shows is what the next frame draws.
+    fn preview_scale(&mut self, o: &OptionsScreen) {
+        let v = scale_row(o);
+        if let (Some(n), true) = (v, v != self.previewed) {
+            crate::gui::set_ui_scale(50 + 10 * n.clamp(0, 15) as u32);
+            self.previewed = v;
+        }
     }
 
     /// ADR 0067: the Save & load tab: the slot list at the left; the selected slot's preview (or the save name's
@@ -918,6 +936,19 @@ impl Modern {
         let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
         let field = egui::vec2(CONTROL - 10.0, 30.0);
         match it {
+            Item::Row(k) if o.rows[k].key == crate::display::UI_SCALE => {
+                let r = &o.rows[k];
+                let mut v = r.value;
+                ui.add_sized([44.0, 30.0], egui::Label::new(s(value_text(texts, r, v))));
+                ui.spacing_mut().slider_width = CONTROL - 64.0;
+                let resp = ui.add(egui::Slider::new(&mut v, 0..=r.states).show_value(false));
+                if resp.changed() {
+                    Self::set(o, k, v);
+                }
+                if resp.drag_started() {
+                    sound(crate::audio::CLICK);
+                }
+            }
             Item::Row(k) => {
                 let r = &o.rows[k];
                 let v = if r.locked { 0 } else { r.value };
@@ -1017,6 +1048,11 @@ fn ago(file: &std::path::Path, lang: ig2_formats::text::Lang) -> Option<Vec<u8>>
         _ => ("Saved {} days ago", secs / 86400),
     };
     Some(crate::tr::fill(lang, en, &[n.to_string().as_bytes()]))
+}
+
+/// The UI scale row's value.
+fn scale_row(o: &OptionsScreen) -> Option<i32> {
+    o.rows.iter().find(|r| r.key == crate::display::UI_SCALE).map(|r| r.value)
 }
 
 /// "DISPLAY" → "Display" (the tab titles are the table's upper-case texts).

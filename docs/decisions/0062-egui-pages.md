@@ -22,9 +22,17 @@ keep matching the exe (ADR 0009).
    `Gpu::present_over` draws our frame, then egui's triangles into the same target (`LoadOp::Load`), then the game's
    pointer as a separate quad frame (`Frame::keep`) on top. In a window narrower than 4:3 all three go into the
    band's target before it is put on the window, so the page sits in the band like every screen.
-3. **Scale**: a page is laid out in points, 540 points high whatever the window (`gui::POINTS_HIGH`): it scales with
-   the window as the 640 × 480 screens do (the UI scale the screens already have), but egui tessellates at the
-   window's pixels, so text and edges stay sharp at 1440p and 4K without "Sharp UI".
+3. **Scale**: a page is laid out in points; at 100 % the window is 1080 points high (`gui::POINTS_HIGH`), so a
+   1080-line window draws a point as one pixel, and the points grow with the window height as the 640 × 480
+   screens do (1.33 px at 1440p, 2 px at 4K). The "UI scale" option (`UiScale`, Remake row under Interface, 50–200 % in tens, 100 % by
+   default; `--ui-scale P`) multiplies it: `Gui::scale` = band height ÷ 1080 × per cent ÷ 100, read by every
+   page's and the modern starmap HUD's next frame, so a change shows at once without a restart. On the modern
+   Options page the row is a slider whose value previews when it is set (a drag resizes the page when the drag
+   ends, so the track stays under the pointer); Back puts the applied value back, Apply stores it. The window's DPI
+   factor plays no part (the band is in physical pixels). egui tessellates at the window's pixels, so text and edges
+   stay sharp at 1440p and 4K without "Sharp UI". The original screens keep filling the window (their 640 × 480
+   layout is the exe's); the option sizes only the remake's egui layer. Until 2026-11-01 a page was 540 points high
+   (two pixels a point at 1080p, now 200 %), which made every page and the HUD too large at 1080p and above.
 4. **Input**: while a page is up it owns the pointer: the window turns its moves, buttons and wheel (band pixels)
    into egui events (`Gui::pointer`, `button`, `wheel`), and the screen under it sees none of them; the right button
    also stays the menu's Back (ADR 0059). The keyboard stays with the page's own navigation (the Options screen's
