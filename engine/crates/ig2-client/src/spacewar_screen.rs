@@ -440,6 +440,8 @@ pub struct FxGfx {
     fighter: Option<Mesh>,
     villam: Option<crate::render::TexId>,
     flare: Option<crate::render::TexId>,
+    /// The enhanced effects' soft dot and ring ([`crate::battle_fx::pictures`]).
+    extra: [crate::render::TexId; 2],
 }
 
 impl FxGfx {
@@ -447,7 +449,8 @@ impl FxGfx {
         let debris = std::array::from_fn(|i| Mesh::load(r, install, "vector/spacewar/", &format!("darab{}.xvb", i + 1), "textures/spacewar/"));
         let tex = |r: &mut crate::render::Renderer, n: &str| crate::assets::Image::load(install, &format!("dataraw/textures/spacewar/{n}_bmp.pvr")).map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
         let fighter = Mesh::load(r, install, "vector/spacewar/", "vad10.xvb", "textures/spacewar/");
-        Self { debris, rings: HashMap::new(), ring_light: None, fighter, villam: tex(r, "villam"), flare: tex(r, "flare") }
+        let extra = crate::battle_fx::pictures().map(|i| r.add_texture(&i));
+        Self { debris, rings: HashMap::new(), ring_light: None, fighter, villam: tex(r, "villam"), flare: tex(r, "flare"), extra }
     }
 }
 
@@ -1151,6 +1154,54 @@ impl<'a> Scene<'a> {
         }
     }
 
+    /// The enhanced effects (ADR 0057) over the classic particles: the layers' smoke (`smoke.bmp`'s first cell), glows,
+    /// sparks and rings added, and a soft halo round each projectile in its own colour. Nothing with Classic.
+    #[allow(clippy::too_many_arguments)]
+    fn extra(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, b: &Battle, fx: &crate::spacewar_fx::Fx, weapons: &[ig2_sim::spacebattle::WeaponRules], g: &FxGfx, smoke: Option<crate::render::TexId>) {
+        use crate::battle_fx::Sprite;
+        let Some(x) = fx.extra.as_ref() else { return };
+        let m = cam.matrix();
+        let axes = [m[0], m[1]];
+        let crate::render::Frame { scene, late, .. } = f;
+        let Some(scene) = scene.as_mut() else { return };
+        let world = |q: [f32; 3]| self.world(q);
+        let mut put = |verts: &mut Vec<crate::render3d::MeshVertex>, tex: crate::render::TexId, blob: bool| {
+            let start = scene.dynamic.len() as u32;
+            scene.dynamic.append(verts);
+            let range = start..scene.dynamic.len() as u32;
+            if !range.is_empty() {
+                let shadow = if blob { crate::render3d::Shadow::Blob } else { crate::render3d::Shadow::None };
+                late.push(crate::render3d::MeshDraw { mesh: None, range, tex, glass: true, cloud: false, shadow, video: false, additive: !blob, depth_write: false });
+            }
+        };
+        let mut v = Vec::new();
+        x.quads(Sprite::Smoke, axes, world, 1.0 / SCENE_SCALE, [0.0, 0.0, 0.2, 0.2], &mut v);
+        // Dark smoke would vanish against space: a faint dust lit by the blasts, added.
+        put(&mut v, smoke.unwrap_or(self.assets.white), false);
+        // The projectiles' halos: 3× the shot's size, half its colour.
+        let forms = &fx.tables.forms;
+        for (fi, pool) in b.pools.iter().enumerate() {
+            let Some(form) = forms.get(fi) else { continue };
+            for s in pool.shots.iter().filter(|s| s.shooter.is_some()) {
+                let (word, size) = crate::spacewar_fx::shot_look(s, weapons, forms, form.size, b.tick);
+                if size <= 0.0 {
+                    continue;
+                }
+                let c = crate::starmap::particle_color(word).map(|k| k * 0.5);
+                let w = self.world([s.pos.x, s.pos.y, s.pos.z]);
+                let h = (size * 3.0).max(4.0) / SCENE_SCALE;
+                let q = |sx: f32, sy: f32| crate::render3d::MeshVertex { pos: std::array::from_fn(|k| w[k] + (m[0][k] * sx + m[1][k] * sy) * h), normal: [0.0; 3], uv: [(sx + 1.0) / 2.0, (sy + 1.0) / 2.0], color: [c[0], c[1], c[2], 1.0] };
+                v.extend([q(-1.0, -1.0), q(1.0, -1.0), q(1.0, 1.0), q(-1.0, -1.0), q(1.0, 1.0), q(-1.0, 1.0)]);
+            }
+        }
+        x.quads(Sprite::Spark, axes, world, 1.0 / SCENE_SCALE, [0.0, 0.0, 1.0, 1.0], &mut v);
+        put(&mut v, g.extra[0], false);
+        x.quads(Sprite::Ring, axes, world, 1.0 / SCENE_SCALE, [0.0, 0.0, 1.0, 1.0], &mut v);
+        put(&mut v, g.extra[1], false);
+        x.quads(Sprite::Glow, axes, world, 1.0 / SCENE_SCALE, [0.0, 0.0, 1.0, 1.0], &mut v);
+        put(&mut v, g.flare.unwrap_or(self.assets.white), false);
+    }
+
     /// The lightning (`villamfrissit`, `villam::Update`, `kiralyvonalhuzo`; spec §6.8.4): each bolt's Hermite curve as
     /// a ribbon of half-width `W·fov/−z` px, `villam.bmp` scrolling along it, added; the flare a `flare.bmp` square.
     fn bolts(&self, f: &mut crate::render::Frame, cam: &crate::starmap::Camera, fx: &crate::spacewar_fx::Fx, g: &FxGfx) {
@@ -1502,6 +1553,7 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
         scene.rings(f, r, install, s.battle, fx, &mut gfx.fx);
         scene.shots(f, cam, s.battle, fx, weapons, &gfx.forms);
         scene.particles(f, cam, fx, &gfx.fx_textures);
+        scene.extra(f, cam, s.battle, fx, weapons, &gfx.fx, gfx.fx_textures[2]);
         scene.debris(f, fx, &gfx.fx);
         scene.bolts(f, cam, fx, &gfx.fx);
     }

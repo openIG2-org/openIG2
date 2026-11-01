@@ -1136,6 +1136,10 @@ pub struct ColonyScene {
     env: Vec<EnvPart>,
     /// The buildings' smoke ([`crate::colony_smoke`]) and where it comes from.
     smoke: crate::colony_smoke::Smoke,
+    /// The ruins made since the war's effects last took them (the enhanced smoke columns, ADR 0057).
+    new_ruins: Vec<V3>,
+    /// The enhanced effects' soft dot and ring ([`crate::battle_fx::pictures`]), made on first use.
+    extra_tex: Option<[TexId; 2]>,
     emitters: crate::colony_smoke::Emitters,
     /// Snow or rain ([`crate::colony_weather`]), moved once a drawn frame.
     weather: Option<crate::colony_weather::Weather>,
@@ -1506,7 +1510,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new(), unit_poses: Vec::new(), placed })
+        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), new_ruins: Vec::new(), extra_tex: None, emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new(), unit_poses: Vec::new(), placed })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -1556,6 +1560,7 @@ impl ColonyScene {
         for &(slot, kind, xf, foot, at) in &old.placed {
             if !self.placed.iter().any(|p| p.0 == slot && p.1 == kind) {
                 self.smoke.ruin(crate::colony_smoke::Ruin::new(slot, kind, xf, foot, at));
+                self.new_ruins.push(at);
             }
         }
         for (slot, (x, y), boxes) in old.last_scaffolds {
@@ -1578,6 +1583,13 @@ impl ColonyScene {
     /// The shown war's particles and scorch marks for the smoke, and its hits put onto their target's mesh (spec
     /// §5.6: the building's faces, the unit's body or gun as last drawn).
     pub fn take_fx(&mut self, fx: &mut crate::colony_fx::WarFx) {
+        // A smoke column over each new ruin (ADR 0057).
+        for at in self.new_ruins.drain(..) {
+            if let Some(x) = fx.layers() {
+                x.blast([at[0] - 20.0, at[1], at[2]], 120.0);
+                x.column([at[0] - 20.0, at[1], at[2]], 70.0, 10.0);
+            }
+        }
         for q in fx.owner1.drain(..) {
             self.smoke.push(q);
         }
@@ -2285,6 +2297,34 @@ impl View {
             if dynamic.len() as u32 > base {
                 let tex = scene.colony_texture(r, install, "robbanas.bmp");
                 draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
+            }
+        }
+        // The enhanced effects (ADR 0057): the layers' smoke darkening what lies below, their sparks, rings and glows
+        // added, and a soft halo round each laser beam. Nothing with Classic.
+        if let (true, Some(x)) = (curr.visible, self.overlay.fx.extra.as_ref()) {
+            use crate::battle_fx::Sprite;
+            let [dot, ring] = *scene.extra_tex.get_or_insert_with(|| crate::battle_fx::pictures().map(|i| r.add_texture(&i)));
+            let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
+            let flare = scene.colony_texture(r, install, "flare.bmp");
+            let axes = [basis.rows[0], basis.rows[1]];
+            for (sprite, tex) in [(Sprite::Smoke, rcloud), (Sprite::Spark, dot), (Sprite::Ring, ring), (Sprite::Glow, flare)] {
+                let base = dynamic.len() as u32;
+                x.quads(sprite, axes, |p| p, 1.0, [0.0, 0.0, 1.0, 1.0], &mut dynamic);
+                if dynamic.len() as u32 > base {
+                    let blob = sprite == Sprite::Smoke;
+                    let shadow = if blob { Shadow::Blob } else { Shadow::None };
+                    draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow, video: false, additive: !blob, depth_write: false });
+                }
+            }
+            let base = dynamic.len() as u32;
+            for (b, _) in &self.overlay.fx.beams {
+                let c = [0.35, 0.12, 0.08, 1.0];
+                for w in b.samples().windows(2) {
+                    dynamic.extend(ribbon(basis.eye, w[0].0, w[1].0, b.width * 6.0, 0.5, 0.5, c, c));
+                }
+            }
+            if dynamic.len() as u32 > base {
+                draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: dot, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
             }
         }
         // The projectiles' models (spec §5.1, `WF::LoadMesh` exe 0x483f70, `WF::Update` exe 0x4a5300): the shells of list B

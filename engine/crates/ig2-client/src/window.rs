@@ -518,6 +518,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     if !o.modern_lighting {
         crate::render3d::set_lighting(app.display.lighting);
     }
+    crate::battle_fx::set_enhanced(o.battle_effects || app.display.battle_effects);
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
         crate::spacewar_screen::go_live(&mut app.world, crate::spacewar_screen::Dump::load(&p)?.battle);
@@ -955,6 +956,7 @@ impl App {
         }
         if let Some(c) = &mut self.colony {
             c.scene.take_fx(&mut c.ui.fx);
+            c.ui.fx.step_layers(c.ui.war.counter());
         }
         if let Some(c) = &mut self.colony {
             for id in c.ui.sounds.drain(..) {
@@ -3302,6 +3304,7 @@ impl App {
         crate::theme::set(self.settings.get(crate::display::UI_THEME).unwrap_or(""));
         crate::upscale::set_factor(d.upscale);
         crate::render3d::set_lighting(d.lighting);
+        crate::battle_fx::set_enhanced(d.battle_effects);
         if d.colour_blind != old.colour_blind {
             crate::starmap::set_colour_blind(d.colour_blind);
             self.reload_palettes();

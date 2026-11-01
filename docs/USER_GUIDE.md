@@ -76,6 +76,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--upscale 2\|4` | Texture upscaling at 2× or 4× for this run, over the settings file |
 | `--modern-lighting` | Anti-aliasing, per-pixel lighting, soft shadows and bloom on for this run, over the settings file |
 | `--theme NAME` | UI theme for this run (Classic, Modern or a mod folder's), over the settings file |
+| `--battle-effects` | Enhanced battle effects for this run, over the settings file |
 
 ## Controls
 The controls are the original's. The most used:
@@ -159,6 +160,7 @@ screens show the same values.
 | Per-pixel lighting (`PixelLighting`) | Off by default: the space battle's ships and flying pieces are lit per pixel by the same lights instead of per corner, so their hulls shade smoothly (ADR 0055) |
 | Soft shadows (`SoftShadows`) | Off by default: the colony's building shadows get soft edges instead of hard ones (ADR 0055) |
 | Bloom (`Bloom`) | Off by default: the glowing 3D effects (fire, blasts, the colony's weather) get a soft glow around them (ADR 0055) |
+| Battle effects (`BattleEffects`) | Classic by default, under "Graphics": Enhanced adds sparks, expanding shock rings, embers, smoke and smoke columns to the explosions of the space battle and the ground war, a blue flash where a shield takes a hit and a soft glow round every shot and laser beam, on top of the original's own effects and at the same moments (ADR 0057). Takes effect at once |
 | Starmap mouse camera (`StarmapMouseCamera`) | On by default: the wheel zooms the starmap and a right drag moves it; an unmoved right click gives its order on the release (ADR 0049); off = the original: no wheel, the right press orders at once |
 | High-score entry (`HighScoreEntry`) | On by default: after a won scenario the main menu opens its list in high-score view and asks for your name (Enter keeps it; the score is the days the win took, fewer is better); the tables are kept in the remake's settings file (ADR 0050); off = the original, which never asks |
 | Computer empires (`EnhancedAi`) | Classic by default: the computer empires of a new single-player game play as in the original. Enhanced (ADR 0045): they expand faster, build the labs their research needs, buy every planet's building when they can pay, set taxes by morale and research a colony ship when there are planets to take. A game keeps the choice it started with (saved with it); a multiplayer room has its own row |

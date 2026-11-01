@@ -7,7 +7,7 @@
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--battle-effects] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -47,6 +47,7 @@
 mod assets;
 mod audio;
 mod backdrop;
+mod battle_fx;
 mod chat;
 mod console;
 mod colony;
@@ -157,6 +158,8 @@ pub struct Options {
     /// `--modern-lighting`: anti-aliasing, per-pixel lighting, soft shadows and bloom (ADR 0055; else the settings
     /// file's rows).
     pub modern_lighting: bool,
+    /// `--battle-effects`: the battles' enhanced effects (ADR 0057; else the settings file's `BattleEffects`).
+    pub battle_effects: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -315,6 +318,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         theme: None,
         upscale: 1,
         modern_lighting: false,
+        battle_effects: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -412,6 +416,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--reveal" => o.reveal = true,
             "--letterbox" => o.letterbox = true,
             "--sharp-ui" => o.sharp_ui = true,
+            "--battle-effects" => o.battle_effects = true,
             "--sharp-text" => o.sharp_text = true,
             "--theme" => o.theme = Some(val()?),
             "--upscale" => {
@@ -550,6 +555,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     if o.modern_lighting {
         render3d::set_lighting(render3d::Lighting { msaa: true, per_pixel: true, soft_shadows: true, bloom: true });
     }
+    battle_fx::set_enhanced(o.battle_effects);
     Ok(o)
 }
 

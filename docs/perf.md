@@ -99,6 +99,11 @@ whole starmap, colony and combat worlds read and written back by `starmap_pass`)
 day), `diplomacy_tick` 0.08 ms, the rest under 0.06 ms. The start: `gpu` (wgpu instance, adapter, device) 355 ms,
 `assets` 110 ms, `spy scene` 50 ms, the rest under 50 ms.
 
+Battle effects (ADR 0057, 2026-11-01, same machine and method): the space battle of the `fx8` capture (two fleets
+fighting, ships exploding; `IG2_PROFILE_BATTLE`, unpaused by the tour's `Space`), 1920 × 1080, 21 one-second lines
+each: Classic 1.23 ms median (worst frame 3.6 ms median), Enhanced 1.24 ms (3.4 ms); the layers' particles (at most
+4096 a battle) cost nothing measurable next to the screen's build.
+
 Next candidates: the state views (`state.colony()`, `combat()`, `starmap()`) read and written back whole by each
 system per tick (`starmap_pass`, `with_ai`, `with_diplomacy`): a view that stays decoded between the systems, or
 writes only what changed, would cut most of the tick; the autosave (12.7 ms on the frame thread at each save: write

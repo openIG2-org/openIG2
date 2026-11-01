@@ -348,6 +348,8 @@ pub struct Fx {
     loops: HashMap<(usize, usize), Looping>,
     /// The loop commands due since the caller last took them.
     pub loop_out: Vec<Loop>,
+    /// The "Enhanced" battle effects' layers (ADR 0057); none with Classic.
+    pub extra: Option<crate::battle_fx::Layers>,
 }
 
 impl Fx {
@@ -371,6 +373,7 @@ impl Fx {
             debris,
             loops: HashMap::new(),
             loop_out: Vec::new(),
+            extra: None,
         }
     }
 
@@ -481,6 +484,12 @@ impl Fx {
     /// trails (`Hajtomu`), the dying ships (`urhajomeghalas`), then `ParticleFrissit` on the five sets. `matrices` are
     /// the units' node matrices, `toward_eye` the unit vector from the battle towards the camera.
     pub fn tick(&mut self, b: &Battle, weapons: &[WeaponRules], events: &[BattleEvent], matrices: &[crate::scene::M3], toward_eye: [f32; 3]) {
+        if crate::battle_fx::enhanced() != self.extra.is_some() {
+            self.extra = crate::battle_fx::enhanced().then(|| crate::battle_fx::Layers::new([0.0; 3], 20.0));
+        }
+        if let Some(x) = self.extra.as_mut() {
+            enhance(x, b, events);
+        }
         // The projectiles in flight.
         for (fi, pool) in b.pools.iter().enumerate() {
             let kind = self.tables.forms.get(fi).map_or(0, |f| f.kind);
@@ -850,6 +859,51 @@ impl Fx {
             self.sets[set][i] = p;
         }
     }
+}
+
+/// The enhanced layers' share of a battle tick (ADR 0057): blasts where ships (with their big classic puffs), guns and fighter groups go, sparks on
+/// the hits (a shield flash while the ship's shields hold), shield flashes on the planet's shield, a smoke column
+/// behind each lost ship; then the layers step.
+fn enhance(x: &mut crate::battle_fx::Layers, b: &Battle, events: &[BattleEvent]) {
+    let at = |p: &ig2_sim::spacebattle::V4| [p.x, p.y, p.z];
+    for e in events {
+        match *e {
+            BattleEvent::Hit { unit, beam, .. } => {
+                let Some(u) = b.units.get(unit) else { continue };
+                let r = u.ship_type.scale * 300.0;
+                if u.shield > 0 {
+                    x.shield(at(&u.pos), r);
+                } else if !beam {
+                    x.hit(at(&u.pos), r);
+                }
+            }
+            BattleEvent::ShipLost { unit } => {
+                let Some(u) = b.units.get(unit) else { continue };
+                x.column(at(&u.pos), u.ship_type.scale * 600.0, 4.0);
+            }
+            BattleEvent::GunDestroyed { gun } => {
+                let Some(g) = b.guns.get(gun) else { continue };
+                x.blast(at(&g.pos), 40.0);
+                x.column(at(&g.pos), 25.0, 6.0);
+            }
+            BattleEvent::FightersLost { fighter, .. } => {
+                let Some(g) = b.fighters.get(fighter) else { continue };
+                x.blast(at(&g.pos), 8.0);
+            }
+            BattleEvent::ShieldHit { at: p, .. } => x.shield(at(&p), 30.0),
+            _ => {}
+        }
+    }
+    // The big blast with the dying ship's big classic puff (`urhajomeghalas` at 16), small ones after it.
+    for u in b.units.iter().filter(|u| !u.alive && !u.retreating) {
+        let r = u.ship_type.scale * 1000.0;
+        match u.exploding {
+            16 => x.blast(at(&u.pos), r),
+            30 | 40 => x.blast(at(&u.pos), r * 0.5),
+            _ => {}
+        }
+    }
+    x.step();
 }
 
 /// `lovedeksound` on a new projectile (ELF 0x69c890, exe 0x57adb0; spec §6.7.3): the weapon's firing sound and the

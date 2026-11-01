@@ -116,17 +116,27 @@ pub struct WarFx {
     pub scorches: Vec<V3>,
     /// The tracers' and beams' draws (the exe's shared libc stream).
     rand: MsvcRand,
+    /// The "Enhanced" battle effects' layers (ADR 0057; none with Classic) and the 20 Hz tick they last stepped on.
+    pub extra: Option<crate::battle_fx::Layers>,
+    stepped: Option<i64>,
 }
 
 impl Default for WarFx {
     fn default() -> Self {
-        Self { puffs: Vec::new(), flashes: Vec::new(), tracers: Vec::new(), beams: Vec::new(), aimed: Vec::new(), owner1: Vec::new(), scorches: Vec::new(), rand: MsvcRand(1) }
+        Self { puffs: Vec::new(), flashes: Vec::new(), tracers: Vec::new(), beams: Vec::new(), aimed: Vec::new(), owner1: Vec::new(), scorches: Vec::new(), rand: MsvcRand(1), extra: None, stepped: None }
     }
 }
 
 impl WarFx {
     /// One of the shown war's events; `counter` = `ColonyCounter` now.
     pub fn event(&mut self, e: &GroundEvent, counter: f32) {
+        if let Some(x) = self.layers() {
+            match *e {
+                GroundEvent::Flash { at, size } => x.blast(at.map(|v| v as f32), size as f32 * 4.0),
+                GroundEvent::HitFlash { to, size, .. } => x.hit(to, size as f32 * 1.5),
+                _ => {}
+            }
+        }
         match *e {
             GroundEvent::Flash { at, size } => {
                 let now = counter as i64;
@@ -154,6 +164,26 @@ impl WarFx {
             GroundEvent::MachineGun { from, to } => self.machine_gun(from, to),
             GroundEvent::Laser { from, to, target } => self.aimed.push((from, to, target, 20)),
             _ => {}
+        }
+    }
+
+    /// The enhanced layers, made or dropped as the "Battle effects" option says.
+    pub fn layers(&mut self) -> Option<&mut crate::battle_fx::Layers> {
+        if crate::battle_fx::enhanced() != self.extra.is_some() {
+            // The ground war's up is −height.
+            self.extra = crate::battle_fx::enhanced().then(|| crate::battle_fx::Layers::new([1.0, 0.0, 0.0], 20.0));
+        }
+        self.extra.as_mut()
+    }
+
+    /// The enhanced layers stepped on the 20 Hz ticks (`(int)counter / 5`) up to `counter` (at most a second's worth).
+    pub fn step_layers(&mut self, counter: f32) {
+        let now = (counter as i64).div_euclid(5);
+        let last = self.stepped.replace(now).unwrap_or(now);
+        if let Some(x) = self.layers() {
+            for _ in 0..(now - last).clamp(0, 20) {
+                x.step();
+            }
         }
     }
 

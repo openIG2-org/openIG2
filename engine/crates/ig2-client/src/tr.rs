@@ -50,6 +50,7 @@ const TABLE: &[(&str, &str)] = &[
     ("UI theme", "Felület témája"),
     ("Modern", "Modern"),
     ("The look of the remake's own screens; Classic keeps the game's colours.", "A remake saját képernyőinek kinézete; a Klasszikus a játék színeit tartja meg."),
+    ("Battle effects", "Csataeffektusok"),
     ("Starmap mouse camera", "Egérkamera a térképen"),
     ("High-score entry", "Rekordlista-bejegyzés"),
     ("Computer empires", "Gépi birodalmak"),
@@ -135,6 +136,7 @@ const TABLE: &[(&str, &str)] = &[
     ("The title video's music starts with the intro, not under the logos.", "A címvideó zenéje a bevezetővel indul, nem a logók alatt."),
     ("Enhanced fixes the original campaign story's slips in the next new game.", "Fejlett: a következő új játékban javítja az eredeti kampánytörténet hibáit."),
     ("Smooths the game's pictures and model textures 2x or 4x as they load.", "Betöltéskor 2x vagy 4x simítja a játék képeit és modelltextúráit."),
+    ("Sparks, shock waves, smoke and glowing shots on top of the battles' own effects.", "Szikrák, lökéshullámok, füst és izzó lövések a csaták saját effektusai fölött."),
     // The research screen's auto research switches (label and state within 22 letters) and tooltips.
     ("Auto ships", "Auto hajók"),
     ("Auto buildings", "Auto épületek"),
