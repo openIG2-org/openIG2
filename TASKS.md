@@ -58,7 +58,7 @@ at the next cleanup.
 - [x] **Join codes and private rooms**: in the MP room UI.
 - [x] **Desync soak**: long loopback MP games with every order type; trace the untraced MP paths when a
   desync shows (U15 economy, U18 production, U22 AI, U23 ground war; `re/README.md` → Open unknowns).
-- [ ] **Rendezvous / relay service**. The service and the client side are done (ADR 0018, `docs/RENDEZVOUS.md`); decided 2026-11-01: a public instance on our own VPS; left: the server (maintainers provide it), then deploying the service there. Its public game list is done (ADR 0060).
+- [x] **Rendezvous / relay service**. The service and the client side (ADR 0018, `docs/RENDEZVOUS.md`), its public game list (ADR 0060), and the public instance at `ig2relay.justdawee.hu:30000`, the game's default relay server.
 - [x] **Multiplayer: join a running game as a spectator** (issue #37; ADR 0026).
 
 ### Player-visible deviations

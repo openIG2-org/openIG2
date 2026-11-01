@@ -1,7 +1,7 @@
 # ADR 0018: The rendezvous and relay service
 
-Date: 2026-10-30. Status: accepted (the software). Running a public instance is not decided: the game ships no
-service address and nothing is hosted by the project. Builds on ADR 0005 §3–§6 (NAT traversal ladder, the
+Date: 2026-10-30. Status: accepted. Amended 2026-11-01: the project runs a public instance at `ig2relay.justdawee.hu:30000` and the
+game uses it by default (Consequences). Builds on ADR 0005 §3–§6 (NAT traversal ladder, the
 rendezvous service), ADR 0008 (the lobby protocol and its password binding) and ADR 0014's amendment (join codes).
 Implemented by `ig2_net::rendezvous` (protocol and service state), `ig2_net::quic` (the client side) and the
 `ig2-rendezvous` binary; how to run one: `docs/RENDEZVOUS.md`.
@@ -58,8 +58,10 @@ rest. Its directory (an internet session browser) is a separate step and not par
 ## Consequences
 - With any relay running, everybody who can reach it can host and join, whatever their NAT; the price is one hop
   of latency for relayed games (fine for lockstep, ADR 0005 §1) and the relay's bandwidth.
-- The project publishes the software only. Who runs a public instance, where, and whether the game lists it by
-  default is a maintainers' decision (it would need an operator, a host with a public IPv4 and UDP port 29172,
-  monitoring, and an abuse contact); until then players run their own (`docs/RENDEZVOUS.md`).
+- The project runs a public instance at `ig2relay.justdawee.hu:30000` (its own server, the Docker image of `deploy/rendezvous`), and
+  the relay field defaults to it (`mp_lobby::DEFAULT_RELAY`) until a player saves another address or an empty one
+  (no `relay.txt` = the default). So by default hosting a room and joining by code or from the public list reach
+  that service, which sees the players' public IPv4 addresses while their rooms are open (`docs/RENDEZVOUS.md`,
+  What the service can and can't see). Players can still run their own.
 - Tests run the service on 127.0.0.1 only: room and limit rules on the service state, two QUIC peers through a
   local relay (punch path and relay-only), and a short lockstep game relay-only with identical hashes.

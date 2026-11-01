@@ -4,8 +4,9 @@ Players behind routers without UPnP / NAT-PMP, or behind carrier-grade NAT, can'
 addresses alone. A rendezvous service fixes that: it opens a room per hosted game, helps both sides punch a hole
 through their NATs, and relays the game's (encrypted) packets when punching fails. Design and protocol: ADR 0018.
 
-The project runs no public service and the game has no built-in address: whoever wants internet games runs one
-(a friend's always-on machine, a small VPS) and tells the other players its address.
+The project runs a public service at `ig2relay.justdawee.hu:30000`, and the game uses it by default (the relay field's value until
+you save another one; an empty field turns the service off). Anyone can also run their own (a friend's always-on
+machine, a small VPS) and tell the other players its address; this page is how.
 
 ## Build and run
 ```bash
@@ -71,7 +72,7 @@ show with their name, scenario and players (dimmed: another game version, instal
 which stays in the address field if the connection fails. A room leaves the list when its host switches it off,
 leaves or starts, and 15 s after its host stops refreshing it.
 
-The project's own public instance is decided but not running yet; until it is, use a service you or a friend run.
+The project's public instance (`ig2relay.justdawee.hu:30000`) is the default, so the list works without typing anything.
 
 To try it on one machine: start `ig2-rendezvous --listen 127.0.0.1:29172`, open two clients (separate
 `IG2_OPTIONS_DIR` and `IG2_SLOT_DIR` folders), type `127.0.0.1` as the relay server in both, host and switch the list

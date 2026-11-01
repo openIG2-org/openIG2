@@ -31,6 +31,9 @@ use crate::render::{kind, Blend, Frame, Instance, TexId};
 pub const GAME_PORT: u16 = ig2_net::discovery::DISCOVERY_PORT + 1;
 /// The relay address's file in the save folder.
 const RELAY_FILE: &str = "relay.txt";
+/// The project's public rendezvous service (ADR 0018), the relay field's value until the player saves another one
+/// (an empty field, saved as an empty `relay.txt`, turns it off).
+pub const DEFAULT_RELAY: &str = "ig2relay.justdawee.hu:30000";
 /// The longest password typed.
 const MAX_FIELD: usize = 40;
 /// The longest address typed or pasted (a join code with four addresses and its dashes is 84).
@@ -627,7 +630,8 @@ pub struct MpScreen {
     pub selected: Option<usize>,
     pub address: Field,
     pub password: Field,
-    /// The rendezvous service's address (ADR 0018), empty for none; kept in the save folder's `relay.txt`.
+    /// The rendezvous service's address (ADR 0018), empty for none; kept in the save folder's `relay.txt`
+    /// ([`DEFAULT_RELAY`] without one).
     pub relay: Field,
     /// The connection page lists the service's public rooms (ADR 0060) instead of the LAN's sessions.
     pub internet: Option<Vec<(SocketAddrV4, Listing)>>,
@@ -713,6 +717,12 @@ mod words {
     pub const ASKING: &[u8] = b"Asking the relay server...";
     pub const NO_PUBLIC: &[u8] = b"No public games on the relay server";
     pub const NEED_RELAY: &[u8] = b"Type a relay server to browse internet games";
+}
+
+/// The relay field's start: the saved `relay.txt`, even an empty one (the player turned the service off), else the
+/// default.
+fn saved_relay(file: std::io::Result<String>, default: &str) -> String {
+    file.unwrap_or_else(|_| default.into())
 }
 
 /// A typed relay address ("host" or "host:port", the default port [`ig2_net::rendezvous::DEFAULT_PORT`]); empty is
@@ -802,7 +812,9 @@ impl MpScreen {
     }
 
     fn with_saved_relay(mut self) -> Self {
-        let saved = self.save_dir.as_ref().and_then(|d| ig2_formats::userfs::read_to_string(d.join(RELAY_FILE)).ok()).unwrap_or_default();
+        let Some(d) = &self.save_dir else { return self };
+        // The unit tests never reach the public service.
+        let saved = saved_relay(ig2_formats::userfs::read_to_string(d.join(RELAY_FILE)), if cfg!(test) { "" } else { DEFAULT_RELAY });
         for c in saved.trim().bytes().filter(|c| (0x20..0x7f).contains(c)) {
             self.relay.key(EntryKey::Char(c));
         }
@@ -3087,6 +3099,14 @@ mod tests {
 
     /// A room through a rendezvous service on 127.0.0.1 (ADR 0018): the host types the relay and its room opens there;
     /// a joiner whose code names no reachable address finds the host through the service.
+    #[test]
+    fn the_public_relay_is_the_default_until_one_is_saved() {
+        let missing = || Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert_eq!(saved_relay(missing(), DEFAULT_RELAY), DEFAULT_RELAY);
+        assert_eq!(saved_relay(Ok(String::new()), DEFAULT_RELAY), "");
+        assert_eq!(saved_relay(Ok("10.0.0.2".into()), DEFAULT_RELAY), "10.0.0.2");
+    }
+
     #[test]
     fn a_room_is_joined_through_the_relay() {
         let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();

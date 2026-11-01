@@ -48,9 +48,9 @@ from the releases once one carries it. Its binaries are not signed: clear the do
 `IG2_INSTALL_DIR` at it or drop it onto the not-found window), or install it through CrossOver, Whisky or Heroic.
 macOS builds are new and tested by CI only: please report what goes wrong.
 The game starts at the title and main menu, like the original: campaign, scenario, skirmish, tutorial, load, and
-the multiplayer rings (LAN, direct IP or join code, optionally through a relay server you or a friend run:
-`docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code
-(Ctrl+V) into the "Address or join code" field with no LAN game selected and press Join. With a relay server set,
+the multiplayer rings (LAN, direct IP or join code, through the project's relay server `ig2relay.justdawee.hu:30000` by default, or
+one you or a friend run: `docs/RENDEZVOUS.md`; our MP room replaces the original's IRC screen). To join by code, paste the host's join code
+(Ctrl+V) into the "Address or join code" field with no LAN game selected and press Join. With a relay server set (the default),
 "Browse internet games" lists the rooms on its public list (a host switches "Public list: yes" in its room) and a
 double click joins one.
 In the room every empire is a card: its colour, the race's picture, the holder and a mark ("Host", "Ready" or "Not ready"). If you press Start as host while someone is not ready, the room says so and the button becomes "Start anyway"; pressing it again readies everyone and starts.

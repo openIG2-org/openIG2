@@ -1,7 +1,7 @@
 # ADR 0060: A public game list on the rendezvous service
 
-Date: 2026-11-01. Status: accepted (the software). The public instance it is meant for (decided 2026-11-01: on the
-project's own server) is not running yet; until then the list works with any service a player runs. Builds on ADR
+Date: 2026-11-01. Status: accepted. The public instance it is meant for runs at `ig2relay.justdawee.hu:30000`, the game's default
+relay server (ADR 0018, amended); the list works with any service a player runs. Builds on ADR
 0018 (the rendezvous and relay service), ADR 0008 (LAN discovery's announcement) and ADR 0014's amendment (join
 codes). Implemented by `ig2_net::rendezvous` (`Listing`, the packets, `Service`'s list, `list`),
 `ig2_net::quic::QuicHost::publish` and `ig2-client::mp_lobby` (the host's switch, the connection page's list).
@@ -41,9 +41,8 @@ players find each other without that channel, and one click can join through the
    name (a `*` for a password), the scenario and humans/slots; a room this game can't join (another lobby version,
    rules or mods, or started) is dimmed. A click selects, a second click or Join joins: the room's join code is put
    in the address field and joined as typed, so a failure leaves the code there to retry or share.
-6. **The service address is the relay field** (`relay.txt`), empty by default. The game ships no address; when the
-   public instance runs, its address becomes a documented choice (`docs/RENDEZVOUS.md`), and whether it becomes
-   the default is a later decision.
+6. **The service address is the relay field** (`relay.txt`); without one it is the public instance, `ig2relay.justdawee.hu:30000`
+   (amended 2026-11-01: first empty by default).
 
 ## Consequences
 - Anyone who can reach the service can read the listed rooms' names and the hosts' public addresses (a Lookup with
