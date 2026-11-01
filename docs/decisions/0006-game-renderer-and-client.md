@@ -99,7 +99,8 @@ The asset viewer (`ig2-viewer`) already uses wgpu 25 through eframe 0.32 (egui),
 - Text uses the remaster's fonts from the install (`Jura`, `Inconsolata`, FreeType-rendered there; for us a
   pure-Rust rasteriser such as `fontdue` or `ab_glyph` into a glyph atlas) and the original's string tables.
 - **egui** (immediate mode) is for developer overlays only (sim inspector, network stats, debug toggles),
-  drawn over the game through `egui-wgpu` when enabled. It is never the game's own UI.
+  drawn over the game through `egui-wgpu` when enabled. It is never the game's own UI. (ADR 0062: and the remake's
+  own designed pages, not the original's screens.)
 
 ### 8. Crates
 - `ig2-client` (binary): window, frame loop, screens, the sim driver, snapshot mode. The renderer lives in it

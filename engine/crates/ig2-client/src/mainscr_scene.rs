@@ -681,6 +681,9 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     // The row frame's globals (`--dkm`, else the exe's boot values), carried by the scenario list's frame.
     let [m0, c0, n0] = o.dkm.unwrap_or([0.0, std::f32::consts::FRAC_PI_2, 0.0]);
     let (mut dk, mut dk_owner) = (crate::kit::DesignFrame::with_phase(m0, c0, n0), 0u8);
+    // Ours (ADR 0062): the modern Options screen's egui page, driven by the script's pointer.
+    let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&install);
+    let k = crate::gui::Gui::scale(o.size.1);
     for t in 0..=script.end() {
         let mut press = None;
         let mut release = None;
@@ -803,6 +806,19 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 println!("t {t}: {a:?}");
             }
         }
+        if let Some(os) = options.as_mut().map(|o| &mut o.1).filter(|os| os.modern.is_some()) {
+            gui.pointer(Some(vv.px(mouse[0], mouse[1])), k);
+            if press.is_some() {
+                gui.button(0, true);
+            }
+            if release.is_some() {
+                gui.button(0, false);
+            }
+            let theme = hud.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
+                crate::theme::look(&crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: 0.0 })
+            });
+            gui.run(o.size, &crate::gui::style(&theme), |ctx| os.modern_page(ctx, &hud.texts, &theme, &mut |id| println!("t {t}: sound {id:?}")));
+        }
         if let Some((_, os)) = &mut options {
             os.hover(mouse);
             if let Some(p) = press {
@@ -865,7 +881,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 // hides it: −2; phase 0).
                 hud.draw_pointer(&mut frame, size, [mouse[0] as i32, mouse[1] as i32], s.hand as i32);
             }
-            let rgba = r.draw_to_image(&frame, o.size, 0.0);
+            let rgba = r.draw_to_image_over(&frame, o.size, 0.0, |d, q, tex| gui.paint(d, q, tex));
             let path = crate::script::grab_path(out, t);
             crate::assets::write_snapshot(&path, o, &rgba)?;
             println!("{}: t {t} | menu {:?} M {} tav {} cel {} gt {} hovered {:?} hand {} race {:?}", path.display(), s.menu, s.m, s.tav, s.cel, s.gt, s.hovered, s.hand, s.race_boxes);

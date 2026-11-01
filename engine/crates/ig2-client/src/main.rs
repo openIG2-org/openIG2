@@ -73,6 +73,7 @@ mod display;
 mod event_log;
 mod fleet_groups;
 mod font;
+mod gui;
 mod help;
 mod hud;
 mod icon;

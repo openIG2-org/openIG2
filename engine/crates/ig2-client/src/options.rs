@@ -646,9 +646,8 @@ impl OptionsScreen {
     /// The pointer moved (`Mouse_x/y`): the hover-only slot pick and a grabbed slider's drag (`Options_Main`).
     pub fn hover(&mut self, at: [f32; 2]) {
         self.at = at;
-        if let Some(mut m) = self.modern.take() {
-            m.hover(self, at);
-            self.modern = Some(m);
+        // The modern screen's pointer is the egui page's (`modern_page`).
+        if self.modern.is_some() {
             return;
         }
         self.tip.moved(at);
@@ -682,11 +681,9 @@ impl OptionsScreen {
     /// A left press (`Mouse_Lenyom`): `Options_Main`'s actions, the rows' toggles (`KirakMenuPontok`). With the name
     /// entry up only the slot list is off (a save press starts the entry again).
     pub fn press(&mut self, at: [f32; 2], sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
-        if let Some(mut m) = self.modern.take() {
+        if self.modern.is_some() {
             self.at = at;
-            let a = if self.leaving.is_none() { m.press(self, at, sound) } else { None };
-            self.modern = Some(m);
-            return a;
+            return None;
         }
         self.hover(at);
         self.slot_grab = self.spot_at(at) == id::SLOTS;
@@ -817,9 +814,6 @@ impl OptionsScreen {
     }
 
     pub fn release(&mut self) {
-        if let Some(m) = &mut self.modern {
-            m.release();
-        }
         self.held = false;
         self.released = true;
         self.grab = None;
@@ -863,10 +857,12 @@ impl OptionsScreen {
         }
     }
 
-    /// The modern screen's list scrolled by the mouse wheel.
-    pub fn modern_wheel(&mut self, steps: i32) {
+    /// Ours (ADR 0062): a frame of the main menu's modern screen, the egui page (its draw and pointer input).
+    pub fn modern_page(&mut self, ctx: &egui::Context, texts: &crate::ui::UiTexts, theme: &crate::theme::Theme, sound: &mut dyn FnMut(crate::audio::SoundId)) {
         if let Some(mut m) = self.modern.take() {
-            m.wheel(self, steps);
+            if self.leaving.is_none() {
+                m.show(self, ctx, texts, theme, sound);
+            }
             self.modern = Some(m);
         }
     }
@@ -1018,8 +1014,8 @@ impl OptionsScreen {
     /// tracks), the tooltip. The 3D behind (the main menu's scene when load only, else black) is the window's.
     pub fn draw(&mut self, f: &mut Frame, d: &Draw) {
         self.drawn = true;
-        if let Some(m) = &self.modern {
-            m.draw(self, f, d);
+        // The modern screen is the egui page (`modern_page`), drawn over the frame.
+        if self.modern.is_some() {
             return;
         }
         self.draw_faders(f, d);

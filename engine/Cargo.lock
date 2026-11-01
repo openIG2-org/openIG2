@@ -2209,6 +2209,8 @@ dependencies = [
  "bytemuck",
  "console_error_panic_hook",
  "cpal",
+ "egui",
+ "egui-wgpu",
  "ig2-formats",
  "ig2-net",
  "ig2-rules",

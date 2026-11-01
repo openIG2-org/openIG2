@@ -1,5 +1,7 @@
 # ADR 0053: the main menu's Options screen
 
+Status note: the screen is now drawn with egui (ADR 0062); behaviour unchanged.
+
 Date: 2026-11-01. Status: accepted. Implemented by `ig2-client::options::modern` (the screen) on the model of
 `ig2-client::options` and `ig2-client::display` (the rows, ADR 0048), opened by the main menu's Settings label and
 `O` (ADR 0031).

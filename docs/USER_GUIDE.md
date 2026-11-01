@@ -134,8 +134,8 @@ turn to the next page. A press cycles the row; changes apply at once and are sav
 
 In the main menu, the Settings label at the bottom right (or the `O` key) opens the modern Options screen with every
 setting, the original's and ours, in tabs: Display, Sound, Interface, Game, Controls, Accessibility, Multiplayer
-(your name in multiplayer games) and Language. The line above the buttons says what the setting under the pointer does. Click a
-switch, the arrows of a choice or a slider's track; Apply saves and applies the changes, Back leaves and takes back
+(your name in multiplayer games) and Language. Each setting has its description under its label, and every tab scrolls with the wheel. Click a
+switch, a drop-down or a slider's track; Apply saves and applies the changes, Back leaves and takes back
 what wasn't applied. Keyboard: Tab / Shift+Tab (or Page Down / Up) change the tab, Up / Down move between the settings
 and the buttons, Left / Right change a value (sliders by 5), Enter or Space toggles or presses, Esc is Back. Both
 screens show the same values.

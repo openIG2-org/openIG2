@@ -222,7 +222,9 @@ impl App {
                 }
                 None => {
                     let kind = if !game {
-                        self.front.as_ref().is_some_and(|f| f.s.hand) as i32
+                        // Ours (ADR 0062): the hand over an egui page's buttons.
+                        let page = self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+                        (if page { self.gpu.as_ref().is_some_and(|g| g.gui.hand) } else { self.front.as_ref().is_some_and(|f| f.s.hand) }) as i32
                     } else if crate::hud::bar_tip_spot(at).is_some() {
                         1
                     } else {

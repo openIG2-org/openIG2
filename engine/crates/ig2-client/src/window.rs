@@ -102,6 +102,8 @@ struct Gpu {
     assets: Assets,
     /// Where a window narrower than 4:3 draws its band before it goes on the window.
     band_target: Option<crate::render::Target>,
+    /// Ours (ADR 0062): the designed pages' egui layer.
+    gui: crate::gui::Gui,
 }
 
 impl Gpu {
@@ -118,13 +120,26 @@ impl Gpu {
 
     /// Draw the frame on the window: through the band's target when it is letterboxed top and bottom, with the
     /// side strips black under the "letterbox" option. Gives the frame back (the overlays' `SaveScreen`).
-    fn present(&mut self, mut frame: crate::render::Frame, out: &wgpu::Texture, t: f32) -> crate::render::Frame {
+    fn present(&mut self, frame: crate::render::Frame, out: &wgpu::Texture, t: f32) -> crate::render::Frame {
+        self.present_over(frame, None, out, t)
+    }
+
+    /// [`Gpu::present`], with this frame's egui page (ADR 0062) over the band and `top` (the pointer) over it.
+    fn present_over(&mut self, mut frame: crate::render::Frame, top: Option<crate::render::Frame>, out: &wgpu::Texture, t: f32) -> crate::render::Frame {
         let l = self.layout();
         crate::kit::layout::letterbox_bars(&mut frame, &l, self.assets.white);
         let size = (self.config.width, self.config.height);
         let [x, y, w, h] = l.band();
+        let over = |r: &mut Renderer, gui: &mut crate::gui::Gui, tex: &wgpu::Texture, px: (u32, u32)| {
+            gui.paint(&r.device, &r.queue, tex);
+            if let Some(mut top) = top {
+                top.keep = true;
+                r.draw(&top, tex, px, t);
+            }
+        };
         if [w, h] == [size.0 as i32, size.1 as i32] {
             self.renderer.draw(&frame, out, size, t);
+            over(&mut self.renderer, &mut self.gui, out, size);
             return frame;
         }
         let px = (w as u32, h as u32);
@@ -133,6 +148,7 @@ impl Gpu {
             None => self.band_target.insert(self.renderer.target(px)),
         };
         self.renderer.draw_into(&frame, target, px, t);
+        over(&mut self.renderer, &mut self.gui, target.texture(), px);
         let mut f = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         let c = [x as f32 + w as f32 / 2.0, y as f32 + h as f32 / 2.0];
         f.push(target.tex, crate::render::Blend::Alpha, crate::render::Instance::new(crate::render::kind::SPRITE, c, [w as f32 / 2.0, h as f32 / 2.0], [1.0; 4]));
@@ -1162,7 +1178,7 @@ impl App {
         // Loaded with the rest at start: at its first opening it would hold that frame for tens of milliseconds.
         self.spy_scene = crate::spy_scene::SpyScene::load(&mut renderer, &self.install).ok().map(std::rc::Rc::new);
         crate::prof::mark("spy scene");
-        self.gpu = Some(Gpu { window, surface, config, renderer, assets, band_target: None });
+        self.gpu = Some(Gpu { window, surface, config, renderer, assets, band_target: None, gui: crate::gui::Gui::new(format).install_fonts(&self.install) });
         Ok(())
     }
 
@@ -2350,14 +2366,25 @@ impl App {
         if let (Some(o), Some(h)) = (&mut self.options, &self.hud) {
             draw_options(o, h, &mut frame, size, self.start.elapsed().as_secs_f64() * 1000.0);
         }
-        if let Some(h) = &self.hud {
+        // Ours (ADR 0062): the modern Options screen is an egui page, over the 2D and under the pointer.
+        let mut top = None;
+        if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
+            let audio = &mut self.audio;
+            let theme = h.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
+                crate::theme::look(&crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 })
+            });
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id)));
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        } else if let Some(h) = &self.hud {
             ov.draw(&mut frame, h, size);
         }
         let Ok(out) = g.surface.get_current_texture() else {
             self.reconfigure();
             return;
         };
-        g.present(frame, &out.texture, now as f32 / 1000.0);
+        g.present_over(frame, top, &out.texture, now as f32 / 1000.0);
         g.window.pre_present_notify();
         out.present();
     }
@@ -5392,6 +5419,37 @@ impl ApplicationHandler for App {
             let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
             self.cursor = [position.x as f32, position.y as f32 - top];
         }
+        // Ours (ADR 0062): an egui page up (the modern Options screen) takes the pointer; the keys stay the screen's.
+        if self.options.as_ref().is_some_and(|o| o.s.modern.is_some())
+            && let Some(g) = &mut self.gpu
+        {
+            let k = crate::gui::Gui::scale(g.band().1);
+            let top = g.layout().frame[1] as f32;
+            match &event {
+                WindowEvent::CursorMoved { position, .. } => g.gui.pointer(Some([position.x as f32, position.y as f32 - top]), k),
+                WindowEvent::CursorLeft { .. } => g.gui.pointer(None, k),
+                WindowEvent::MouseInput { state, button, .. } => {
+                    let b = match button {
+                        MouseButton::Left => 0,
+                        MouseButton::Right => 1,
+                        _ => 2,
+                    };
+                    g.gui.button(b, *state == ElementState::Pressed);
+                    // The right button stays the menu's Back (ADR 0059).
+                    if *button == MouseButton::Left {
+                        return;
+                    }
+                }
+                WindowEvent::MouseWheel { delta, .. } => {
+                    g.gui.wheel(match delta {
+                        MouseScrollDelta::LineDelta(_, y) => *y,
+                        MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                    });
+                    return;
+                }
+                _ => {}
+            }
+        }
         if let WindowEvent::KeyboardInput { event: ref k, is_synthetic, .. } = event {
             self.research_key_seen(k);
             // ADR 0030: a W/A/S/D up ends its pan whichever screen has the keyboard (help, a video, a battle…).
@@ -5560,15 +5618,6 @@ impl ApplicationHandler for App {
                     } else {
                         o.s.release();
                     }
-                }
-            }
-            WindowEvent::MouseWheel { delta, .. } if self.options.as_ref().is_some_and(|o| o.s.modern.is_some()) => {
-                let steps = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => y.round() as i32,
-                    MouseScrollDelta::PixelDelta(p) => (p.y / 20.0).round() as i32,
-                };
-                if let Some(o) = &mut self.options {
-                    o.s.modern_wheel(steps);
                 }
             }
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.options.is_some() => {}

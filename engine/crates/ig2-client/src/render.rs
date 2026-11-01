@@ -411,6 +411,13 @@ pub struct Target {
     pub size: (u32, u32),
 }
 
+impl Target {
+    /// The texture drawn into.
+    pub fn texture(&self) -> &wgpu::Texture {
+        &self.texture
+    }
+}
+
 /// A texture registered with the renderer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TexId(pub(crate) usize);
@@ -434,6 +441,8 @@ pub struct Frame {
     /// A picture over the whole target under everything else, the scene too (`Copy3hatterkep`: the game behind an
     /// overlay screen, re/screens/overlay-background.md): its texture and its gamma-space grey.
     pub backdrop: Option<(TexId, f32)>,
+    /// Drawn over what the target holds, not cleared first (the pointer over an egui page, ADR 0062).
+    pub keep: bool,
     late_at: usize,
     pub(crate) instances: Vec<Instance>,
     batches: Vec<Batch>,
@@ -875,7 +884,7 @@ impl Renderer {
             }
             let [r, g, b, a] = frame.clear;
             let [r, g, b] = if gamma { [r, g, b] } else { [r, g, b].map(|c| encode_srgb(c, self.format)) };
-            let load = if !first || frame.scene.is_some() || backdrop.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
+            let load = if !first || frame.keep || frame.scene.is_some() || backdrop.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -970,6 +979,11 @@ impl Renderer {
 
     /// Draw into an offscreen texture and read it back as RGBA8 (sRGB).
     pub fn draw_to_image(&mut self, frame: &Frame, size: (u32, u32), time: f32) -> Vec<u8> {
+        self.draw_to_image_over(frame, size, time, |_, _, _| {})
+    }
+
+    /// [`Renderer::draw_to_image`] with `over` drawing into the texture after the frame (an egui page, ADR 0062).
+    pub fn draw_to_image_over(&mut self, frame: &Frame, size: (u32, u32), time: f32, over: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::Texture)) -> Vec<u8> {
         let (w, h) = size;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("snapshot"),
@@ -985,6 +999,7 @@ impl Renderer {
             Some(b) => self.draw(&Frame { backdrop: Some(b), ..frame.clone() }, &tex, size, time),
             None => self.draw(frame, &tex, size, time),
         }
+        over(&self.device, &self.queue, &tex);
         let row = (4 * w).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,

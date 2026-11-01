@@ -1,30 +1,16 @@
 //! Ours (ADR 0053): the main menu's Options screen. Every setting of the in-game screen (`OptionsScreen`'s rows,
-//! sliders) and the multiplayer name in seven tabs with switches, choices, sliders and a description line; Apply
-//! writes them through `OptionsScreen::store`, Back takes back what was not applied. Drawn with the kit's faders,
-//! filled quads and the game's font in the 640×480 virtual pixels; its colours and font sizes are the UI theme's (ADR 0056).
+//! sliders) and the multiplayer name in eight tabs with switches, drop-downs, sliders and descriptions; Apply writes
+//! them through `OptionsScreen::store`, Back takes back what was not applied. A designed egui page (ADR 0062) in the
+//! UI theme's colours (ADR 0056); the keyboard moves through it with the screen's own keys.
 
-use super::{check_dependencies, Act, Draw, Group, OptionsScreen, Row};
-use crate::font::Align;
-use crate::render::{kind, Blend, Frame, Instance};
+use super::{check_dependencies, Act, Group, OptionsScreen, Row};
+use crate::ui::UiTexts;
 
-/// A setting's line.
-const ROW_H: f32 = 17.0;
-const PANEL: [f32; 4] = [20.0, 12.0, 600.0, 456.0];
-const TABS_Y: f32 = 44.0;
-const TAB: [f32; 3] = [26.0, 74.0, 72.0];
-const LIST_Y: f32 = 72.0;
-/// The settings a tab shows at once (the list ends above the description line); the Controls tab scrolls.
-const MAX_ITEMS: usize = 19;
-const LABEL_X: f32 = 40.0;
-const CTRL: [f32; 2] = [392.0, 600.0];
-const DESC_Y: f32 = 408.0;
-const BACK: [f32; 4] = [36.0, 432.0, 130.0, 22.0];
-const APPLY: [f32; 4] = [474.0, 432.0, 130.0, 22.0];
 /// `MultiplayerNev`'s length (`IOMaxLen` 9 in the menu's name entry, mainscr.rs).
 const NAME_MAX: usize = 9;
 const NAME_KEY: &str = "MultiplayerNev";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
     Display,
     Sound,
@@ -188,54 +174,29 @@ pub enum Nav {
     Erase,
 }
 
-/// What is under the pointer.
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Spot {
-    Tab(Tab),
-    /// A setting and where on its line: -1 the choice's left arrow, 1 its right arrow or the switch, 0 elsewhere.
-    Item(usize, i32),
-    Back,
-    Apply,
-}
-
 /// The screen's own state; the values are the `OptionsScreen`'s.
 #[derive(Debug, Clone)]
 pub struct Modern {
     pub tab: Tab,
     /// The focused line: a setting of the tab, then Back, then Apply.
     pub focus: usize,
-    hover: Option<Spot>,
-    /// The slider being dragged.
-    drag: Option<usize>,
+    /// The last input was a key: the focus is marked and kept in view.
+    keyed: bool,
+    /// The focused line last scrolled into view.
+    shown: Option<(Tab, usize)>,
     pub editing: bool,
     /// `MultiplayerNev` in the font's bytes.
     pub name: Vec<u8>,
-    /// ADR 0058: the keys, the action waiting for its new key, the Controls tab's first line shown.
+    /// ADR 0058: the keys, the action waiting for its new key.
     pub binds: crate::bindings::Bindings,
     pub capture: Option<usize>,
-    scroll: usize,
     /// The applied values Back puts back: the rows', the sliders', the name, the keys.
     kept: (Vec<i32>, [i32; 3], Vec<u8>, crate::bindings::Bindings),
 }
 
-fn inside(r: [f32; 4], at: [f32; 2]) -> bool {
-    crate::kit::inside_f(r, at)
-}
-
-fn tab_box(k: usize) -> [f32; 4] {
-    [TAB[0] + k as f32 * TAB[1], TABS_Y, TAB[2], 20.0]
-}
-
-fn line_y(i: usize) -> f32 {
-    LIST_Y + i as f32 * ROW_H
-}
-
-/// The slider's track: x, width.
-const TRACK: [f32; 2] = [CTRL[0] + 4.0, 160.0];
-
 impl Modern {
     pub fn new(o: &OptionsScreen, name: Vec<u8>, binds: crate::bindings::Bindings) -> Self {
-        let mut m = Self { tab: Tab::Display, focus: 0, hover: None, drag: None, editing: false, name, binds, capture: None, scroll: 0, kept: Default::default() };
+        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, editing: false, name, binds, capture: None, kept: Default::default() };
         m.keep(o);
         m
     }
@@ -257,22 +218,6 @@ impl Modern {
         items(&o.rows, self.tab)
     }
 
-    fn spot(&self, o: &OptionsScreen, at: [f32; 2]) -> Option<Spot> {
-        if let Some(k) = (0..Tab::ALL.len()).find(|&k| inside(tab_box(k), at)) {
-            return Some(Spot::Tab(Tab::ALL[k]));
-        }
-        if inside(BACK, at) {
-            return Some(Spot::Back);
-        }
-        if inside(APPLY, at) {
-            return Some(Spot::Apply);
-        }
-        let n = self.items(o).len().saturating_sub(self.scroll).min(MAX_ITEMS);
-        let i = (0..n).find(|&i| inside([32.0, line_y(i), 576.0, ROW_H], at))? + self.scroll;
-        let part = if at[0] >= CTRL[1] - 18.0 { 1 } else if (CTRL[0]..CTRL[0] + 18.0).contains(&at[0]) { -1 } else { 0 };
-        Some(Spot::Item(i, part))
-    }
-
     fn enabled(o: &OptionsScreen, it: Item) -> bool {
         match it {
             Item::Row(k) => o.rows[k].enabled,
@@ -281,74 +226,28 @@ impl Modern {
         }
     }
 
-    /// Step a row's value by `d`, wrapping as the in-game press does.
-    fn step(o: &mut OptionsScreen, k: usize, d: i32) {
+    /// Set a row's value as the in-game press does: an exe row marks the detail custom, the dependencies follow.
+    fn set(o: &mut OptionsScreen, k: usize, v: i32) {
         let r = &mut o.rows[k];
-        let n = r.states + 1;
-        r.value = (r.value + d).rem_euclid(n.max(1));
+        r.value = v;
         if !r.ours {
             o.gfx_detail = 3;
         }
         check_dependencies(&mut o.rows, o.multiplayer);
     }
 
-    fn slider_to(o: &mut OptionsScreen, i: usize, x: f32) {
-        o.sliders[i].value = (((x - TRACK[0]) / TRACK[1]) * 100.0).round().clamp(0.0, 100.0) as i32;
-    }
-
-    pub fn hover(&mut self, o: &mut OptionsScreen, at: [f32; 2]) {
-        self.hover = self.spot(o, at);
-        if let Some(i) = self.drag {
-            Self::slider_to(o, i, at[0]);
-        }
-    }
-
-    pub fn press(&mut self, o: &mut OptionsScreen, at: [f32; 2], sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
-        self.hover = self.spot(o, at);
-        self.editing = false;
-        self.capture = None;
-        let spot = self.hover?;
-        match spot {
-            Spot::Tab(t) => self.set_tab(t),
-            Spot::Back => self.back(o),
-            Spot::Apply if !self.pending(o) => return None,
-            Spot::Apply => self.apply(o),
-            Spot::Item(i, part) => {
-                self.focus = i;
-                let it = self.items(o)[i];
-                // The value's side only: a press on the label just focuses.
-                if !Self::enabled(o, it) || at[0] < CTRL[0] {
-                    return None;
-                }
-                self.editing = it == Item::Name;
-                match it {
-                    Item::Row(k) => Self::step(o, k, if part < 0 { -1 } else { 1 }),
-                    Item::Slider(s) if at[0] >= CTRL[0] => {
-                        Self::slider_to(o, s, at[0]);
-                        self.drag = Some(s);
-                    }
-                    Item::Bind(b) => self.capture = Some(b),
-                    Item::Reset => self.binds = Default::default(),
-                    _ => {}
-                }
-            }
-        }
-        sound(crate::audio::CLICK);
-        None
-    }
-
-    pub fn release(&mut self) {
-        self.drag = None;
+    /// Step a row's value by `d`, wrapping as the in-game press does.
+    fn step(o: &mut OptionsScreen, k: usize, d: i32) {
+        let r = &o.rows[k];
+        let v = (r.value + d).rem_euclid((r.states + 1).max(1));
+        Self::set(o, k, v);
     }
 
     fn set_tab(&mut self, t: Tab) {
         self.tab = t;
         self.focus = 0;
-        self.scroll = 0;
         self.capture = None;
         self.editing = false;
-        self.drag = None;
-        self.hover = None;
     }
 
     /// Apply: the values into the settings file (the window stores and applies them on `dirty`).
@@ -388,14 +287,8 @@ impl Modern {
         }
     }
 
-    /// The mouse wheel: the Controls tab's list scrolls `steps` lines up (positive) or down.
-    pub fn wheel(&mut self, o: &OptionsScreen, steps: i32) {
-        let max = self.items(o).len().saturating_sub(MAX_ITEMS);
-        self.scroll = (self.scroll as i32 - steps).clamp(0, max as i32) as usize;
-    }
-
     pub fn key(&mut self, o: &mut OptionsScreen, k: Nav, sound: &mut dyn FnMut(crate::audio::SoundId)) {
-        self.hover = None;
+        self.keyed = true;
         if self.capture.is_some() {
             // Esc (or another key of the screen's own) gives up waiting for the key.
             self.capture = None;
@@ -418,12 +311,7 @@ impl Modern {
         match k {
             Nav::NextTab => self.set_tab(Tab::ALL[(tab + 1) % Tab::ALL.len()]),
             Nav::PrevTab => self.set_tab(Tab::ALL[(tab + Tab::ALL.len() - 1) % Tab::ALL.len()]),
-            Nav::Up | Nav::Down => {
-                self.focus = (self.focus + if k == Nav::Up { lines - 1 } else { 1 }) % lines;
-                // The focused line in view.
-                let f = self.focus.min(items.len().saturating_sub(1));
-                self.scroll = self.scroll.min(f).max((f + 1).saturating_sub(MAX_ITEMS));
-            }
+            Nav::Up | Nav::Down => self.focus = (self.focus + if k == Nav::Up { lines - 1 } else { 1 }) % lines,
             Nav::Back => self.back(o),
             Nav::Left | Nav::Right | Nav::Activate => {
                 let d = if k == Nav::Left { -1 } else { 1 };
@@ -449,201 +337,306 @@ impl Modern {
     }
 }
 
-// The draw.
+// The page (ADR 0062): egui over the main menu's scene.
 
-fn quad(f: &mut Frame, d: &Draw, r: [f32; 4], c: [f32; 3], a: f32) {
-    let v = &d.v;
-    f.push(d.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, v.px(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0), [r[2] * v.k / 2.0, r[3] * v.k / 2.0], [c[0], c[1], c[2], a]));
+/// The card a setting sits in: its group's heading (the remake text table's key); `None` = the card before's.
+fn section(o: &OptionsScreen, it: Item) -> Option<&'static str> {
+    Some(match it {
+        Item::Row(k) if o.rows[k].ours => o.rows[k].group.title(),
+        Item::Row(k) if o.rows[k].page == 1 => Group::Graphics.title(),
+        Item::Row(_) => Group::Game.title(),
+        Item::Slider(2) => Group::Display.title(),
+        Item::Slider(_) => Group::Sound.title(),
+        Item::Name => Group::Multiplayer.title(),
+        Item::Bind(b) => crate::bindings::ACTIONS[b].ctx.title(),
+        Item::Reset => return None,
+    })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn text(f: &mut Frame, d: &Draw, s: &[u8], x: f32, y: f32, size: usize, align: Align, c: [f32; 3]) {
-    match align {
-        Align::Right => d.font.text(f, &d.v, s, x - s.len() as f32 * d.font.advance(size), y, 0, size, Align::Left, c, None),
-        _ => d.font.text(f, &d.v, s, x, y, 0, size, align, c, None),
+/// The tab's settings in cards: (heading, the settings' indices into the tab's items).
+fn cards(o: &OptionsScreen, items: &[Item]) -> Vec<(&'static str, Vec<usize>)> {
+    let mut v: Vec<(&'static str, Vec<usize>)> = Vec::new();
+    for (i, &it) in items.iter().enumerate() {
+        match (section(o, it), v.last_mut()) {
+            (Some(s), Some(last)) if last.0 != s => v.push((s, vec![i])),
+            (Some(s), None) => v.push((s, vec![i])),
+            (_, Some(last)) => last.1.push(i),
+            (None, None) => v.push(("", vec![i])),
+        }
+    }
+    v
+}
+
+/// A setting's label.
+fn label(o: &OptionsScreen, texts: &UiTexts, it: Item) -> Vec<u8> {
+    match it {
+        Item::Row(k) => {
+            let r = &o.rows[k];
+            match exe_name(&r.key) {
+                _ if r.ours => texts.ours(&String::from_utf8_lossy(&r.name)),
+                Some(n) => texts.get(13, 2, n),
+                None => r.name.clone(),
+            }
+        }
+        Item::Slider(i) => o.sliders[i].title.clone(),
+        Item::Name => texts.ours("Player name"),
+        Item::Bind(b) => texts.ours(crate::bindings::ACTIONS[b].name),
+        Item::Reset => texts.ours("Reset all keys"),
     }
 }
 
-fn boxed(f: &mut Frame, d: &Draw, r: [f32; 4], fill: [f32; 3], edge: [f32; 3], clear: [f32; 2]) {
-    crate::kit::fader::fader(f, d.white, &d.v, r, fill, clear[0], edge, clear[1]);
+/// A row's value `v` as the choice shows it.
+fn value_text(texts: &UiTexts, r: &Row, v: i32) -> Vec<u8> {
+    match r.labels.get(v.max(0) as usize) {
+        Some(l) => texts.ours(&String::from_utf8_lossy(l)),
+        None if r.states == 2 => texts.get(13, 3, 3 + v.clamp(0, 2) as u16),
+        None => texts.get(13, 3, if v != 0 { 1 } else { 2 }),
+    }
 }
 
+fn key_of(o: &OptionsScreen, it: Item) -> &str {
+    match it {
+        Item::Row(k) => &o.rows[k].key,
+        Item::Slider(i) => ["Music Volume", "Sound Volume", "Gamma Correction"][i],
+        Item::Name => NAME_KEY,
+        Item::Bind(_) => "Bind",
+        Item::Reset => "ResetKeys",
+    }
+}
+
+/// The page's size in points, its sidebar's width and its controls' column.
+const PAGE: [f32; 2] = [860.0, 500.0];
+const SIDEBAR: f32 = 168.0;
+const CONTROL: f32 = 210.0;
 
 impl Modern {
-    /// A setting's label.
-    fn label(o: &OptionsScreen, d: &Draw, it: Item) -> Vec<u8> {
-        match it {
-            Item::Row(k) => {
-                let r = &o.rows[k];
-                match exe_name(&r.key) {
-                    _ if r.ours => d.texts.ours(&String::from_utf8_lossy(&r.name)),
-                    Some(n) => d.texts.get(13, 2, n),
-                    None => r.name.clone(),
+    /// One frame of the page: draws it and takes its pointer input.
+    pub fn show(&mut self, o: &mut OptionsScreen, ctx: &egui::Context, texts: &UiTexts, theme: &crate::theme::Theme, sound: &mut dyn FnMut(crate::audio::SoundId)) {
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
+        let tr = |en: &str| s(texts.ours(en));
+        if ctx.input(|i| i.pointer.any_pressed()) {
+            // A press anywhere ends the name entry and the wait for a key, as a click on the old screen did.
+            (self.editing, self.capture, self.keyed) = (false, None, false);
+        }
+        let mut click = false;
+        let hot = crate::gui::ink(theme.hot);
+        crate::gui::page(ctx, "options", egui::Vec2::from(PAGE), |ui| {
+            ui.horizontal(|ui| {
+                ui.heading(egui::RichText::new(tr("OPTIONS")).strong());
+            });
+            ui.add_space(10.0);
+            let body = ui.available_height() - 52.0;
+            ui.horizontal_top(|ui| {
+                // The tabs.
+                ui.vertical(|ui| {
+                    ui.set_width(SIDEBAR);
+                    for tab in Tab::ALL {
+                        let on = tab == self.tab;
+                        let title = title_case(&tr(tab.title()));
+                        let r = ui.add_sized([SIDEBAR, 34.0], egui::Button::selectable(on, egui::RichText::new(title).size(16.0)));
+                        if on {
+                            let bar = egui::Rect::from_min_size(r.rect.left_top() + egui::vec2(0.0, 7.0), egui::vec2(3.0, r.rect.height() - 14.0));
+                            ui.painter().rect_filled(bar, 2.0, ui.visuals().hyperlink_color);
+                        }
+                        if r.clicked() && !on {
+                            self.set_tab(tab);
+                            click = true;
+                        }
+                    }
+                });
+                ui.add_space(12.0);
+                // The settings.
+                let items = self.items(o);
+                ui.vertical(|ui| egui::ScrollArea::vertical().id_salt(self.tab).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(body).auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 10.0;
+                    let all = cards(o, &items);
+                    let several = all.len() > 1;
+                    for (title, lines) in all {
+                        let title = (several && !title.is_empty()).then(|| tr(title));
+                        crate::gui::card(ui, title.as_deref(), |ui| {
+                            for i in lines {
+                                click |= self.line(o, ui, texts, i, items[i], hot, sound);
+                            }
+                        });
+                        ui.add_space(8.0);
+                    }
+                }));
+            });
+            ui.add_space(6.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                let items = self.items(o);
+                // The status: the wait for a key, a key two actions share, the language's restart.
+                let lang = items.iter().find_map(|&it| match it {
+                    Item::Row(k) if o.rows[k].key == crate::display::LANGUAGE => Some(o.rows[k].value),
+                    _ => None,
+                });
+                let clash = match items.get(self.focus) {
+                    Some(&Item::Bind(b)) => self.binds.clash(b),
+                    _ => None,
+                };
+                if self.capture.is_some() {
+                    ui.label(egui::RichText::new(tr("Press the new key; Esc keeps the old one.")).color(hot));
+                } else if let Some(c) = clash {
+                    ui.label(egui::RichText::new(format!("{} {}", tr("Also the key of:"), s(label(o, texts, Item::Bind(c))))).color(hot));
+                } else if lang.is_some() && o.lang_at_start.is_some_and(|v| Some(v) != lang) {
+                    ui.label(egui::RichText::new(tr("Restart to change the language")).color(hot));
+                } else if self.tab == Tab::Controls {
+                    ui.label(egui::RichText::new(tr(describe("Bind"))).weak());
                 }
-            }
-            Item::Slider(i) => o.sliders[i].title.clone(),
-            Item::Name => d.texts.ours("Player name"),
-            Item::Bind(b) => {
-                let a = &crate::bindings::ACTIONS[b];
-                match a.ctx {
-                    crate::bindings::Ctx::Global => d.texts.ours(a.name),
-                    c => [d.texts.ours(c.title()), b": ".to_vec(), d.texts.ours(a.name)].concat(),
-                }
-            }
-            Item::Reset => d.texts.ours("Reset all keys"),
-        }
-    }
-
-    fn key_of(o: &OptionsScreen, it: Item) -> &str {
-        match it {
-            Item::Row(k) => &o.rows[k].key,
-            Item::Slider(i) => ["Music Volume", "Sound Volume", "Gamma Correction"][i],
-            Item::Name => NAME_KEY,
-            Item::Bind(_) => "Bind",
-            Item::Reset => "ResetKeys",
-        }
-    }
-
-    pub fn draw(&self, o: &OptionsScreen, f: &mut Frame, d: &Draw) {
-        let t = &crate::theme::look(d);
-        // Opaque: the menu's ring labels would show through.
-        boxed(f, d, PANEL, t.panel, t.panel_edge, t.panel_clear);
-        text(f, d, &d.texts.ours("OPTIONS"), 320.0, 22.0, t.big, Align::Centre, t.text);
-        for (k, &tab) in Tab::ALL.iter().enumerate() {
-            let on = tab == self.tab;
-            let hot = self.hover == Some(Spot::Tab(tab));
-            let r = tab_box(k);
-            boxed(f, d, r, if on { t.tab_on } else { t.tab }, if on { t.panel_edge } else { t.tab }, t.button_clear);
-            text(f, d, &d.texts.ours(tab.title()), r[0] + r[2] / 2.0, r[1] + 6.0, t.small, Align::Centre, if hot { t.hot } else if on { t.text } else { t.dim });
-        }
-        quad(f, d, [32.0, LIST_Y - 5.0, 576.0, 1.0], t.panel_edge.map(|c| c / 255.0), 1.0);
-        let items = self.items(o);
-        for (i, &it) in items.iter().enumerate().skip(self.scroll).take(MAX_ITEMS) {
-            self.draw_item(o, f, d, i, it);
-        }
-        // More lines above or below the Controls tab's view.
-        if self.scroll > 0 {
-            text(f, d, b"^", CTRL[1] + 6.0, line_y(0) + 4.0, t.small, Align::Left, t.dim);
-        }
-        if items.len() > self.scroll + MAX_ITEMS {
-            text(f, d, b"v", CTRL[1] + 6.0, line_y(MAX_ITEMS - 1) + 4.0, t.small, Align::Left, t.dim);
-        }
-        // The Language tab: the restart notice (as on the in-game Remake page).
-        let lang = items.iter().find_map(|&it| match it {
-            Item::Row(k) if o.rows[k].key == crate::display::LANGUAGE => Some(o.rows[k].value),
-            _ => None,
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let pending = self.pending(o);
+                    let apply = crate::gui::primary(ui, pending, &tr("Apply")).on_hover_text(tr("Save the changes and use them."));
+                    if self.keyed && self.focus == items.len() + 1 {
+                        crate::gui::focus_ring(ui, apply.rect);
+                    }
+                    let back = crate::gui::secondary(ui, &tr("Back")).on_hover_text(tr("Leave; changes not applied are taken back."));
+                    if self.keyed && self.focus == items.len() {
+                        crate::gui::focus_ring(ui, back.rect);
+                    }
+                    if apply.clicked() {
+                        self.apply(o);
+                        click = true;
+                    }
+                    if back.clicked() {
+                        self.back(o);
+                        click = true;
+                    }
+                });
+            });
         });
-        if lang.is_some() && o.lang_at_start.is_some_and(|v| Some(v) != lang) {
-            text(f, d, &d.texts.ours("Restart to change the language"), LABEL_X, line_y(items.len()) + 8.0, t.small, Align::Left, t.hot);
-        }
-        quad(f, d, [32.0, DESC_Y - 6.0, 576.0, 1.0], t.panel_edge.map(|c| c / 255.0), 1.0);
-        let at = self.hover.or(Some(Spot::Item(self.focus, 0)));
-        let desc = match at {
-            _ if self.capture.is_some() => Some("Press the new key; Esc keeps the old one."),
-            Some(Spot::Item(i, _)) => items.get(i).map(|&it| describe(Self::key_of(o, it))),
-            Some(Spot::Back) => Some("Leave; changes not applied are taken back."),
-            Some(Spot::Apply) => Some("Save the changes and use them."),
-            _ => None,
-        };
-        // A key two actions share where both apply: the other action named instead.
-        let clash = match at {
-            Some(Spot::Item(i, _)) if self.capture.is_none() => match items.get(i) {
-                Some(&Item::Bind(b)) => self.binds.clash(b),
-                _ => None,
-            },
-            _ => None,
-        };
-        if let Some(c) = clash {
-            let s = [d.texts.ours("Also the key of:"), b" ".to_vec(), Self::label(o, d, Item::Bind(c))].concat();
-            text(f, d, &s, 320.0, DESC_Y, t.small, Align::Centre, t.hot);
-        } else if let Some(s) = desc.filter(|s| !s.is_empty()) {
-            text(f, d, &d.texts.ours(s), 320.0, DESC_Y, t.small, Align::Centre, t.dim);
-        }
-        let pending = self.pending(o);
-        for (r, label, spot, k, live) in [(BACK, "Back", Spot::Back, 0, true), (APPLY, "Apply", Spot::Apply, 1, pending)] {
-            let focused = self.focus == items.len() + k;
-            let hot = self.hover == Some(spot);
-            boxed(f, d, r, if live { t.button } else { t.tab }, if focused || hot { t.panel_edge } else { t.tab }, t.button_clear);
-            text(f, d, &d.texts.ours(label), r[0] + r[2] / 2.0, r[1] + 7.0, t.small, Align::Centre, if hot { t.hot } else if live { t.text } else { t.dim });
+        if click {
+            sound(crate::audio::CLICK);
         }
     }
 
-    fn draw_item(&self, o: &OptionsScreen, f: &mut Frame, d: &Draw, i: usize, it: Item) {
-        let t = &crate::theme::look(d);
-        let y = line_y(i - self.scroll);
-        let ty = y + (ROW_H - d.font.height(t.small)) / 2.0;
+    /// A setting's line: its label and description, its control at the right. True when it was clicked.
+    #[allow(clippy::too_many_arguments)]
+    fn line(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, i: usize, it: Item, hot: egui::Color32, sound: &mut dyn FnMut(crate::audio::SoundId)) -> bool {
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
         let live = Self::enabled(o, it);
-        let hot = matches!(self.hover, Some(Spot::Item(h, _)) if h == i);
-        if self.focus == i || hot {
-            quad(f, d, [32.0, y, 576.0, ROW_H], t.on_track, if self.focus == i { 0.28 } else { 0.14 });
+        let mut click = false;
+        let bg = ui.painter().add(egui::Shape::Noop);
+        let row = ui.horizontal(|ui| {
+            ui.set_min_height(36.0);
+            let text_w = ui.available_width() - CONTROL - 12.0;
+            ui.vertical(|ui| {
+                ui.set_width(text_w);
+                ui.spacing_mut().item_spacing.y = 1.0;
+                let name = egui::RichText::new(s(label(o, texts, it))).size(15.5);
+                ui.add_enabled(live, egui::Label::new(name).wrap());
+                // The keys' common description is the status line's (one line, not one per key).
+                let d = if matches!(it, Item::Bind(_)) { "" } else { describe(key_of(o, it)) };
+                if !d.is_empty() {
+                    ui.add_enabled(live, egui::Label::new(egui::RichText::new(s(texts.ours(d))).small().weak()).wrap());
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.set_width(CONTROL);
+                ui.add_enabled_ui(live, |ui| click |= self.control(o, ui, texts, it, hot, sound));
+            });
+        });
+        let rect = row.response.rect.expand2(egui::vec2(6.0, 4.0));
+        let hovered = ui.rect_contains_pointer(rect);
+        if hovered && ui.input(|x| x.pointer.primary_pressed()) {
+            self.focus = i;
         }
-        let c = if !live { t.off } else if hot { t.hot } else { t.text };
-        text(f, d, &Self::label(o, d, it), LABEL_X, ty, t.small, Align::Left, c);
-        let vc = if live { t.accent } else { t.off };
+        let focused = self.keyed && self.focus == i;
+        if hovered || focused {
+            let fill = ui.visuals().selection.bg_fill.gamma_multiply(if focused { 0.30 } else { 0.16 });
+            ui.painter().set(bg, egui::Shape::rect_filled(rect, 8.0, fill));
+        }
+        if focused {
+            crate::gui::focus_ring(ui, rect);
+            if self.shown != Some((self.tab, i)) {
+                ui.scroll_to_rect(rect, None);
+                self.shown = Some((self.tab, i));
+            }
+        }
+        click
+    }
+
+    /// A setting's control: a switch, a drop-down, a slider, the name field, a key. True when it was clicked.
+    fn control(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, it: Item, hot: egui::Color32, sound: &mut dyn FnMut(crate::audio::SoundId)) -> bool {
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
+        let field = egui::vec2(CONTROL - 10.0, 30.0);
         match it {
             Item::Row(k) => {
                 let r = &o.rows[k];
                 let v = if r.locked { 0 } else { r.value };
                 if r.states == 1 && r.labels.is_empty() {
-                    // The switch: its track, the knob at the right when on.
-                    let on = v != 0;
-                    let tr = [CTRL[1] - 30.0, y + 3.0, 28.0, ROW_H - 6.0];
-                    quad(f, d, tr, if !live { t.off_track } else if on { t.on_track } else { t.off_track }, 1.0);
-                    let kx = if on { tr[0] + tr[2] - tr[3] } else { tr[0] };
-                    quad(f, d, [kx + 1.0, tr[1] + 1.0, tr[3] - 2.0, tr[3] - 2.0], if live { t.knob } else { t.off }, 1.0);
-                    let s = d.texts.get(13, 3, if on { 1 } else { 2 });
-                    text(f, d, &s, tr[0] - 6.0, ty, t.small, Align::Right, vc);
-                } else {
-                    let s = match r.labels.get(v.max(0) as usize) {
-                        Some(l) => d.texts.ours(&String::from_utf8_lossy(l)),
-                        None if r.states == 2 => d.texts.get(13, 3, 3 + v.clamp(0, 2) as u16),
-                        None => d.texts.get(13, 3, if v != 0 { 1 } else { 2 }),
-                    };
-                    text(f, d, b"<", CTRL[0] + 4.0, ty, t.small, Align::Left, vc);
-                    text(f, d, b">", CTRL[1] - 4.0, ty, t.small, Align::Right, vc);
-                    text(f, d, &s, (CTRL[0] + CTRL[1]) / 2.0, ty, t.small, Align::Centre, vc);
+                    let mut on = v != 0;
+                    if crate::gui::switch(ui, &mut on).changed() {
+                        Self::set(o, k, on as i32);
+                        return true;
+                    }
+                    ui.label(egui::RichText::new(s(texts.get(13, 3, if on { 1 } else { 2 }))).weak());
+                    return false;
+                }
+                let mut pick = None;
+                egui::ComboBox::from_id_salt(("row", k)).width(field.x).height(320.0).selected_text(s(value_text(texts, r, v))).show_ui(ui, |ui| {
+                    for n in 0..=r.states {
+                        if ui.add(egui::Button::selectable(n == v, s(value_text(texts, r, n)))).clicked() {
+                            pick = Some(n);
+                        }
+                    }
+                });
+                if let Some(n) = pick.filter(|&n| n != v) {
+                    Self::set(o, k, n);
+                    return true;
                 }
             }
-            Item::Slider(s) => {
-                let v = o.sliders[s].value;
-                let mid = y + ROW_H / 2.0;
-                quad(f, d, [TRACK[0], mid - 1.5, TRACK[1], 3.0], t.off_track, 1.0);
-                let x = TRACK[0] + TRACK[1] * v as f32 / 100.0;
-                quad(f, d, [TRACK[0], mid - 1.5, x - TRACK[0], 3.0], if live { t.on_track } else { t.off_track }, 1.0);
-                quad(f, d, [x - 3.0, y + 3.0, 6.0, ROW_H - 6.0], if live { t.knob } else { t.off }, 1.0);
-                text(f, d, format!("{v}%").as_bytes(), CTRL[1] - 4.0, ty, t.small, Align::Right, vc);
+            Item::Slider(i) => {
+                let mut v = o.sliders[i].value;
+                // The value in a column of its own, so the track doesn't move with it.
+                ui.add_sized([44.0, 30.0], egui::Label::new(format!("{v}%")));
+                ui.spacing_mut().slider_width = CONTROL - 64.0;
+                let r = ui.add(egui::Slider::new(&mut v, 0..=100).show_value(false));
+                if r.changed() {
+                    o.sliders[i].value = v;
+                }
+                if r.drag_started() {
+                    sound(crate::audio::CLICK);
+                }
             }
             Item::Name => {
-                let r = [CTRL[0], y + 1.0, CTRL[1] - CTRL[0], ROW_H - 2.0];
-                quad(f, d, r, t.off_track, 1.0);
-                if self.editing {
-                    quad(f, d, [r[0], r[1] + r[3] - 1.0, r[2], 1.0], t.accent, 1.0);
-                }
-                text(f, d, &self.name, r[0] + 6.0, ty, t.small, Align::Left, t.text);
-                if self.editing && crate::kit::fader_design::blink(d.now_ms) {
-                    let x = r[0] + 6.0 + self.name.len() as f32 * d.font.advance(t.small);
-                    quad(f, d, [x, r[1] + 2.0, 1.0, r[3] - 4.0], t.text, 1.0);
+                let caret = self.editing && (ui.input(|x| x.time) * 2.0) as u64 % 2 == 0;
+                let text = s(self.name.clone()) + if caret { "|" } else { " " };
+                let stroke = if self.editing { egui::Stroke::new(1.5f32, ui.visuals().hyperlink_color) } else { ui.visuals().widgets.inactive.bg_stroke };
+                let b = egui::Button::new(egui::RichText::new(text).monospace()).fill(ui.visuals().extreme_bg_color).stroke(stroke);
+                if ui.add_sized(field, b).clicked() {
+                    self.editing = true;
+                    return true;
                 }
             }
             Item::Bind(b) => {
-                let r = [CTRL[1] - 110.0, y + 1.0, 108.0, ROW_H - 2.0];
-                quad(f, d, r, t.off_track, 1.0);
-                let (s, c) = match self.capture {
-                    // The description line says what to do.
-                    Some(c) if c == b => (b"...".to_vec(), t.hot),
-                    _ => {
-                        let name = crate::bindings::key_name(self.binds.0[b]).unwrap_or("?").as_bytes().to_vec();
-                        (name, if self.binds.clash(b).is_some() { t.hot } else { vc })
-                    }
+                let (text, c) = match self.capture {
+                    // The status line says what to do.
+                    Some(c) if c == b => ("…".to_owned(), hot),
+                    _ => (crate::bindings::key_name(self.binds.0[b]).unwrap_or("?").to_owned(), if self.binds.clash(b).is_some() { hot } else { ui.visuals().text_color() }),
                 };
-                text(f, d, &s, r[0] + r[2] / 2.0, ty, t.small, Align::Centre, c);
+                if ui.add_sized([120.0, 30.0], egui::Button::new(egui::RichText::new(text).monospace().color(c))).clicked() {
+                    self.capture = Some(b);
+                    return true;
+                }
             }
             Item::Reset => {
-                let s = if self.binds.is_default() { d.texts.ours("Original keys") } else { d.texts.ours("Reset") };
-                text(f, d, &s, CTRL[1] - 4.0, ty, t.small, Align::Right, vc);
+                let t = if self.binds.is_default() { "Original keys" } else { "Reset" };
+                if ui.add_enabled(!self.binds.is_default(), egui::Button::new(s(texts.ours(t))).min_size(egui::vec2(120.0, 30.0))).clicked() {
+                    self.binds = Default::default();
+                    return true;
+                }
             }
         }
+        false
     }
+}
+
+/// "DISPLAY" → "Display" (the tab titles are the table's upper-case texts).
+fn title_case(s: &str) -> String {
+    let lower = s.to_lowercase();
+    let mut c = lower.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -664,7 +657,7 @@ mod tests {
         o
     }
 
-    /// Every setting sits on exactly one tab, and every tab fits above the description line.
+    /// Every setting sits on exactly one tab, in a card with a heading.
     #[test]
     fn every_setting_on_one_tab() {
         let o = screen();
@@ -675,7 +668,8 @@ mod tests {
         }
         for t in Tab::ALL {
             assert!(!items(&o.rows, t).is_empty(), "{t:?}");
-            assert!(t == Tab::Controls || items(&o.rows, t).len() <= MAX_ITEMS && line_y(MAX_ITEMS) <= DESC_Y - 8.0, "{t:?}");
+            // Every card has a heading in the remake text table.
+            assert!(cards(&o, &items(&o.rows, t)).iter().all(|(h, _)| crate::tr::has(h)), "{t:?}");
         }
         assert_eq!(items(&o.rows, Tab::Sound)[..2], [Item::Slider(0), Item::Slider(1)]);
         assert_eq!(items(&o.rows, Tab::Controls).len(), crate::bindings::ACTIONS.len() + 1);
@@ -741,6 +735,23 @@ mod tests {
         m.key(&mut o, Nav::Back, &mut quiet);
         assert_eq!((o.sliders[0].value, m.name.as_slice(), o.rows[vsync].value), (80, &b"Kim"[..], 0));
         assert!(o.leaving());
+    }
+
+    /// The page draws every tab (egui without a GPU), and the keyboard's focus on Apply is the page's Apply.
+    #[test]
+    fn page_shows_every_tab() {
+        let mut o = screen();
+        let texts = crate::ui::UiTexts { strings: Default::default(), kinds: Vec::new(), lang: ig2_formats::text::Lang::En };
+        let theme = crate::theme::Theme::modern();
+        let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        for t in Tab::ALL {
+            o.modern.as_mut().unwrap().set_tab(t);
+            for _ in 0..2 {
+                g.run((1280, 720), &crate::gui::style(&theme), |ctx| o.modern_page(ctx, &texts, &theme, &mut |_| {}));
+            }
+            assert_eq!(o.modern.as_ref().unwrap().tab, t);
+        }
+        assert!(!o.leaving());
     }
 
     /// A choice steps both ways and wraps; a disabled row ignores the keys.
