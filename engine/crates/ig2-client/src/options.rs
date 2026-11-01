@@ -20,6 +20,8 @@ use crate::kit::{fader, fader_design, inside, DesignFrame, FaderDesign, Lasers, 
 use crate::render::{kind, Blend, Frame, Instance, TexId};
 use crate::ui::UiTexts;
 
+pub mod modern;
+
 /// The slots (`1..=0x18`); 23 and 24 can't be saved to (24 is the autosave's).
 pub const SLOTS: usize = 24;
 /// The option rows' table in the exe (`0x9160a0`, 17 × 0x22c).
@@ -43,14 +45,16 @@ pub enum Group {
     Game,
     Accessibility,
     Multiplayer,
+    /// ADR 0053: the language rows (the main menu screen's Language tab).
+    Language,
 }
 
 impl Group {
-    pub const ALL: [Group; 5] = [Group::Display, Group::Interface, Group::Game, Group::Accessibility, Group::Multiplayer];
+    pub const ALL: [Group; 6] = [Group::Display, Group::Interface, Group::Game, Group::Accessibility, Group::Multiplayer, Group::Language];
 
     /// The heading's English text (the remake text table's key, ADR 0042).
     pub fn title(self) -> &'static str {
-        ["Screen", "Interface", "Game", "Accessibility", "Multiplayer"][self as usize]
+        ["Screen", "Interface", "Game", "Accessibility", "Multiplayer", "Language"][self as usize]
     }
 }
 
@@ -364,6 +368,8 @@ pub struct OptionsScreen {
     pub settings_only: bool,
     /// Ours (ADR 0031): the Language row's value the client started with; another one shows the restart line.
     pub lang_at_start: Option<i32>,
+    /// Ours (ADR 0053): the main menu's modern screen over these values (its draw and input instead of the exe's).
+    pub modern: Option<modern::Modern>,
     /// `OptionsHarcFolyik` (exe 0xbae24f): a battle runs (no saving without `DEBUGX`). Set by `SpaceWar_Kilep`
     /// towards Options (exe 0x562c0f) and `Colony_Kilep` with a ground war on the planet (exe 0x466631).
     pub battle: bool,
@@ -450,6 +456,7 @@ impl OptionsScreen {
             load_only,
             settings_only: false,
             lang_at_start: None,
+            modern: None,
             battle: false,
             debug: false,
             multiplayer,
@@ -641,6 +648,11 @@ impl OptionsScreen {
     /// The pointer moved (`Mouse_x/y`): the hover-only slot pick and a grabbed slider's drag (`Options_Main`).
     pub fn hover(&mut self, at: [f32; 2]) {
         self.at = at;
+        if let Some(mut m) = self.modern.take() {
+            m.hover(self, at);
+            self.modern = Some(m);
+            return;
+        }
         self.tip.moved(at);
         if self.leaving.is_some() || self.sure {
             return;
@@ -672,6 +684,12 @@ impl OptionsScreen {
     /// A left press (`Mouse_Lenyom`): `Options_Main`'s actions, the rows' toggles (`KirakMenuPontok`). With the name
     /// entry up only the slot list is off (a save press starts the entry again).
     pub fn press(&mut self, at: [f32; 2], sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
+        if let Some(mut m) = self.modern.take() {
+            self.at = at;
+            let a = if self.leaving.is_none() { m.press(self, at, sound) } else { None };
+            self.modern = Some(m);
+            return a;
+        }
         self.hover(at);
         self.slot_grab = self.spot_at(at) == id::SLOTS;
         self.held = true;
@@ -801,6 +819,9 @@ impl OptionsScreen {
     }
 
     pub fn release(&mut self) {
+        if let Some(m) = &mut self.modern {
+            m.release();
+        }
         self.held = false;
         self.released = true;
         self.grab = None;
@@ -810,12 +831,31 @@ impl OptionsScreen {
     /// Esc (`ESC_Pressed` ELF 0x581440 on screen 13: back to `OptionsElottiKep`, the main menu when load only; in
     /// the name entry `Options_EscPressed`: the entry ends).
     pub fn escape(&mut self) {
+        if self.modern.is_some() {
+            self.modern_key(modern::Nav::Back, &mut |_| {});
+            return;
+        }
         if self.entry.take().is_some() {
             return;
         }
         if self.leaving.is_none() {
             self.leave(if self.load_only { Act::MainMenu } else { Act::Back });
         }
+    }
+
+    /// Ours (ADR 0053): a key on the main menu's modern screen.
+    pub fn modern_key(&mut self, k: modern::Nav, sound: &mut dyn FnMut(crate::audio::SoundId)) {
+        if let Some(mut m) = self.modern.take() {
+            if self.leaving.is_none() {
+                m.key(self, k, sound);
+            }
+            self.modern = Some(m);
+        }
+    }
+
+    /// A text is being typed (the save name, the modern screen's player name): letters are no hotkeys.
+    pub fn typing(&self) -> bool {
+        self.entry.is_some() || self.modern.as_ref().is_some_and(|m| m.editing)
     }
 
     /// A key in the name entry (`DoKeyboard` ELF 0x57fd20 with `IOMode`): a character goes in at the cursor (at the full
@@ -888,6 +928,9 @@ impl OptionsScreen {
         ] {
             o.set(k, &v.to_string());
         }
+        if let Some(m) = &self.modern {
+            o.set("MultiplayerNev", &String::from_utf8_lossy(&m.name));
+        }
         for r in &self.rows {
             match r.labels.get(r.value.max(0) as usize) {
                 Some(l) if r.ours && r.key == crate::display::RESOLUTION => o.set(&r.key, &String::from_utf8_lossy(l)),
@@ -956,6 +999,10 @@ impl OptionsScreen {
     /// tracks), the tooltip. The 3D behind (the main menu's scene when load only, else black) is the window's.
     pub fn draw(&mut self, f: &mut Frame, d: &Draw) {
         self.drawn = true;
+        if let Some(m) = &self.modern {
+            m.draw(self, f, d);
+            return;
+        }
         self.draw_faders(f, d);
         self.draw_texts(f, d);
         let under = if self.held { 0 } else { self.spot_at(self.tip.mouse) };
@@ -1631,7 +1678,7 @@ mod tests {
         assert!(o.row_y(SUB_LINES as i32 + 1) + 0xf <= 62 + 384);
         o.press([40.0, y(22)], &mut |_| {});
         assert_eq!(o.sub, 1);
-        assert_eq!(o.remake_lines()[..2], [Line::Heading(Group::Interface), Line::Row(26)]);
+        assert_eq!(o.remake_lines()[0], pages[1][0]);
         o.press([40.0, y(22)], &mut |_| {});
         assert_eq!(o.sub, 0);
         // Leaving the page shows its first sub-page again.

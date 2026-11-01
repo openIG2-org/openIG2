@@ -116,8 +116,16 @@ list comes back. A replay only plays on the version that recorded it: one that d
 row "Record replays" (`RecordReplays`, on by default) turns recording off.
 
 ### Display settings
-Options → the REMAKE tab, grouped (Screen, Interface, Game, Accessibility), with a "Page" row to turn to the next page. A press cycles the row; changes apply
-at once and are saved in `ig2-rework-options.dat`. The Options screen also opens from the main menu (the Settings label at the bottom right, or the `O` key), without its slot list, Load and Save.
+In a game: Options → the REMAKE tab, grouped (Screen, Interface, Game, Accessibility, Language), with a "Page" row to
+turn to the next page. A press cycles the row; changes apply at once and are saved in `ig2-rework-options.dat`.
+
+In the main menu, the Settings label at the bottom right (or the `O` key) opens the modern Options screen with every
+setting, the original's and ours, in tabs: Display, Sound, Interface, Game, Accessibility, Multiplayer (your name in
+multiplayer games) and Language. The line above the buttons says what the setting under the pointer does. Click a
+switch, the arrows of a choice or a slider's track; Apply saves and applies the changes, Back leaves and takes back
+what wasn't applied. Keyboard: Tab / Shift+Tab (or Page Down / Up) change the tab, Up / Down move between the settings
+and the buttons, Left / Right change a value (sliders by 5), Enter or Space toggles or presses, Esc is Back. Both
+screens show the same values.
 
 | Row (key) | |
 |---|---|

@@ -751,6 +751,26 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             release = None;
             right = None;
         }
+        // Ours (ADR 0053): the modern Options screen takes the keys.
+        if let Some(os) = options.as_mut().map(|o| &mut o.1).filter(|os| os.modern.is_some()) {
+            use crate::options::modern::Nav;
+            for k in keys.drain(..) {
+                let nav = match k.to_ascii_lowercase().as_str() {
+                    "escape" | "esc" => Nav::Back,
+                    "up" => Nav::Up,
+                    "down" => Nav::Down,
+                    "left" => Nav::Left,
+                    "right" => Nav::Right,
+                    "tab" | "pagedown" => Nav::NextTab,
+                    "pageup" => Nav::PrevTab,
+                    "enter" | "return" | "space" => Nav::Activate,
+                    "backspace" => Nav::Erase,
+                    c if c.len() == 1 => Nav::Char(k.as_bytes()[0]),
+                    _ => continue,
+                };
+                os.modern_key(nav, &mut |id| println!("t {t}: sound {id:?}"));
+            }
+        }
         for k in &keys {
             use crate::options::EntryKey;
             let key = match k.to_ascii_lowercase().as_str() {
@@ -805,6 +825,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                         os.settings_only = true;
                         os.slots = vec![None; crate::options::SLOTS + 1];
                         os.lang_at_start = Some(file.int(crate::display::LANGUAGE).unwrap_or(0));
+                        os.modern = Some(crate::options::modern::Modern::new(&os, s.player.clone()));
                     }
                     options = Some((h, os));
                 }

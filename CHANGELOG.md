@@ -7,6 +7,7 @@ Getting the game from "every part works" to "a player can install it and play it
 
 - Sharper textures on big screens: a new Remake row "Texture upscaling" (2x or 4x) smooths the game's pictures and model textures as they load, and texture packs in the mods folder can replace any picture or model with a higher-resolution one; every picture keeps its place (off keeps the original's look).
 - The title video stays quiet over the two logos and its music starts with the intro (Remake row "Title music with intro"; off plays the music from the first logo as the original).
+- A new Options screen in the main menu (Settings or `O`): every setting in tabs (display, sound, interface, game, accessibility, multiplayer, language) with switches, sliders and choices, a line explaining each one, and Apply/Back; it works with the keyboard alone, in English and Hungarian, and the in-game Options screen sees the same values.
 - Win a scenario and you can put your name in its high-score table: the list opens on it and asks for your name; the table shows how many days the win took (Remake row "High-score entry"; off keeps the original, which never asks).
 - Starmap: the mouse wheel zooms and a right drag moves the map; a right click still gives the fleet its order (Remake row "Starmap mouse camera"; off keeps the original's controls).
 - Options: the remake's own settings have their own REMAKE page, grouped and paged, so every one can be reached; the game page looks like the original again.

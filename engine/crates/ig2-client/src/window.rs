@@ -2252,12 +2252,15 @@ impl App {
             }
             // `OptionsCsakLoadLehet = 1; AktKep = 0xd`: Options in load-only mode over the main menu's scene.
             Act::LoadGame => self.open_options(true),
-            // Ours (ADR 0031): the same screen without the slot list, Load and Save.
+            // Ours (ADR 0031): the same screen's settings without the slot list, Load and Save, drawn and driven as the
+            // modern main-menu screen (ADR 0053) with the multiplayer name.
             Act::Settings => {
                 self.open_options(true);
+                let name = self.front.as_ref().map(|f| f.s.player.clone()).unwrap_or_default();
                 if let Some(o) = &mut self.options {
                     o.s.settings_only = true;
                     o.s.slots = vec![None; crate::options::SLOTS + 1];
+                    o.s.modern = Some(crate::options::modern::Modern::new(&o.s, name));
                 }
             }
             // `Mainscreen_Update3D` exe 0x50147d: `OpenBink("misc/credits.bik", 1, 0, 0, force)`, blocking.
@@ -2530,6 +2533,33 @@ impl App {
     fn options_key(&mut self, k: &Key) {
         use crate::options::EntryKey;
         let Some(o) = &mut self.options else { return };
+        if o.s.modern.is_some() {
+            use crate::options::modern::Nav;
+            let typing = o.s.typing();
+            let shift = self.modifiers.shift_key();
+            let nav = match k.as_ref() {
+                Key::Named(NamedKey::Escape) => Some(Nav::Back),
+                Key::Named(NamedKey::ArrowUp) => Some(Nav::Up),
+                Key::Named(NamedKey::ArrowDown) => Some(Nav::Down),
+                Key::Named(NamedKey::ArrowLeft) => Some(Nav::Left),
+                Key::Named(NamedKey::ArrowRight) => Some(Nav::Right),
+                Key::Named(NamedKey::Tab) => Some(if shift { Nav::PrevTab } else { Nav::NextTab }),
+                Key::Named(NamedKey::PageDown) => Some(Nav::NextTab),
+                Key::Named(NamedKey::PageUp) => Some(Nav::PrevTab),
+                Key::Named(NamedKey::Enter) => Some(Nav::Activate),
+                Key::Named(NamedKey::Space) if !typing => Some(Nav::Activate),
+                Key::Named(NamedKey::Space) => Some(Nav::Char(b' ')),
+                Key::Named(NamedKey::Backspace) => Some(Nav::Erase),
+                Key::Character(c) if typing && !self.modifiers.control_key() && !self.modifiers.alt_key() => self.hud.as_ref().map_or_else(|| c.as_bytes().to_vec(), |h| h.texts.encode(c)).first().map(|&b| Nav::Char(b)),
+                Key::Character("o" | "O") => Some(Nav::Back),
+                _ => None,
+            };
+            let audio = &mut self.audio;
+            if let (Some(n), Some(o)) = (nav, &mut self.options) {
+                o.s.modern_key(n, &mut |id| audio.play(id));
+            }
+            return;
+        }
         let act = if o.s.entry.is_some() {
             let key = match k.as_ref() {
                 Key::Named(NamedKey::Escape) => {
@@ -3145,6 +3175,9 @@ impl App {
             }
         }
         s.store(&mut self.settings);
+        if let (Some(m), Some(f)) = (&s.modern, &mut self.front) {
+            f.s.player = m.name.clone();
+        }
         for r in &mut self.opt_rows {
             if let Some(n) = s.rows.iter().find(|n| n.key == r.key) {
                 r.value = n.value;
@@ -5227,9 +5260,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.help.is_some() => {}
             // `remapKeyCodes` (exe 0x4e4670): the key downs the exe never queues reach nothing (the key ups go on); a
-            // numpad digit's character still types into an entry up (its SDL_TEXTINPUT).
+            // numpad digit's character still types into an entry up (its SDL_TEXTINPUT). Ours: the main menu's modern
+            // Options screen (ADR 0053) takes them all (Tab, the numpad's arrows).
             WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && !do_keyboard::exe_queues_key_down(event)
-                && !(do_keyboard::numpad_digit(event) && self.entry_up()) => {}
+                && !(do_keyboard::numpad_digit(event) && self.entry_up()) && !self.options.as_ref().is_some_and(|o| o.s.modern.is_some()) => {}
             // Esc is the exit hot-spot (`MainCallBackEventHandler` on `AktKep` 1); F1 does nothing there. Help has no
             // keyboard handler of its own, but `DoKeyboard` stays live (exe 0x4db1a0): F2..F10, O and M leave it for
             // their screen (`AktKep` changes, `Help_Kilep`), Space, P and 1/2/3 pause and set the speed.
@@ -5284,7 +5318,7 @@ impl ApplicationHandler for App {
                     o.s.hover(at);
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } if self.options.is_some() && { let at = self.options.as_ref().map_or([0.0; 2], |o| o.s.at); self.top_bar_mouse(button, state == ElementState::Pressed, at) } => {}
+            WindowEvent::MouseInput { state, button, .. } if self.options.as_ref().is_some_and(|o| o.s.modern.is_none()) && { let at = self.options.as_ref().map_or([0.0; 2], |o| o.s.at); self.top_bar_mouse(button, state == ElementState::Pressed, at) } => {}
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.options.is_some() => {
                 let audio = &mut self.audio;
                 if let Some(o) = &mut self.options {
@@ -5299,9 +5333,12 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.options.is_some() => {}
             // `DoKeyboard` on the options screen: the F-keys (also in the name entry) and M ask for their screen.
             WindowEvent::KeyboardInput { event, .. } if self.options.is_some() => {
-                if event.state == ElementState::Pressed {
+                // Ours (ADR 0053): a held Esc, Enter, Space or O acts once on the modern screen.
+                let once = event.repeat && self.options.as_ref().is_some_and(|o| o.s.modern.is_some())
+                    && matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::Space) | Key::Character("o" | "O"));
+                if event.state == ElementState::Pressed && !once {
                     let k = event.logical_key.as_ref();
-                    let entry = self.options.as_ref().is_some_and(|o| o.s.entry.is_some());
+                    let entry = self.options.as_ref().is_some_and(|o| o.s.typing());
                     if let Some(n) = do_keyboard::f_key_screen(&k) {
                         self.f_key(n);
                     } else if !(matches!(k, Key::Character("m" | "M")) && !entry && self.m_key()) {
@@ -5318,8 +5355,10 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.front.is_some() => {
-                // A held Esc's repeats would close the statistics screen and go on to the menu's own Esc.
-                if event.state == ElementState::Pressed && !(event.repeat && self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some())) {
+                // A held Esc's repeats would close the statistics screen and go on to the menu's own Esc; ours: a held Esc
+                // or Enter that closed the Options screen (ADR 0053) goes no further.
+                let closer = matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter));
+                if event.state == ElementState::Pressed && !(event.repeat && (closer || self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some()))) {
                     self.front_key(&event.logical_key);
                 }
             }
