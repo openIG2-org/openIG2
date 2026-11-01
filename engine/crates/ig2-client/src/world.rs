@@ -147,6 +147,8 @@ pub struct Snapshot {
     pub orbit: f32,
     /// The radar ranges the starmap shows (re/screens/starmap.md §6.3).
     pub radar: crate::starmap_radar::Rings,
+    /// The circles `radar` was made from and how many are planets' ([`Snapshot::radar_at`]).
+    pub radar_circles: (Vec<crate::starmap_radar::Circle>, usize),
     /// The waypoint chains (`+0x50`, `Waypointek` +0/+4, next +8) of the fleets whose routes are drawn (the human's
     /// and story fleet 0x1f88), by slot: `Show_Flottak3d` draws the selected one's (re/screens/starmap.md §4.3).
     pub waypoints: Vec<(usize, Vec<[f32; 2]>)>,
@@ -218,6 +220,7 @@ impl Snapshot {
             .collect();
         let (circles, planet_circles) = crate::starmap_radar::circles(state, &map, &game.radar_tables(), en);
         let radar = crate::starmap_radar::rings(&circles, planet_circles);
+        let radar_circles = (circles, planet_circles);
         let waypoints = map
             .fleets
             .iter()
@@ -238,7 +241,45 @@ impl Snapshot {
             .collect();
         let own_names_only = m.u8(va::MULTIPLAYER) != 0 && !all;
         let wormholes = map.wormholes.iter().skip(1).filter(|w| w.revealed_a && w.revealed_b || debug).map(|w| ([w.ax, w.ay], [w.bx, w.by], w.tint)).collect();
-        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, waypoints, own_names_only, wormholes }
+        Self { tick: m.i32(va::IDO2), time: m.i32(va::IDO), human: en as u8, planets, fleets, orbit: 0.0, radar, radar_circles, waypoints, own_names_only, wormholes }
+    }
+
+    /// Ours (ADR 0063): the radar ranges with the fleets' circles where [`Snapshot::fleets_at`] draws the fleets, so a
+    /// fleet's zone glides with it instead of stepping each tick (each turn, 100 ms, in multiplayer); the snapshot's
+    /// own rings when no fleet circle moved.
+    pub fn radar_at(&self, prev: &Snapshot, alpha: f32) -> std::borrow::Cow<'_, crate::starmap_radar::Rings> {
+        match self.radar_circles_at(prev, alpha) {
+            Some(at) => std::borrow::Cow::Owned(crate::starmap_radar::rings(&at, self.radar_circles.1)),
+            None => std::borrow::Cow::Borrowed(&self.radar),
+        }
+    }
+
+    /// The radar circles with the fleets' moved as [`Snapshot::fleets_at`] moves the fleets; `None` when none moved.
+    pub fn radar_circles_at(&self, prev: &Snapshot, alpha: f32) -> Option<Vec<crate::starmap_radar::Circle>> {
+        let a = alpha.clamp(0.0, 1.0);
+        let mut moved = false;
+        let at = self
+            .radar_circles
+            .0
+            .iter()
+            .map(|c| {
+                let mut out = *c;
+                // A fleet's circle (`id` = −slot) moves as its fleet does: back from now by the rest of its way.
+                fn at(fleets: &[FleetView], slot: usize) -> Option<&FleetView> {
+                    fleets.binary_search_by_key(&slot, |f| f.slot).ok().map(|i| &fleets[i])
+                }
+                let slot = (-(c.id as i32)).max(0) as usize;
+                if let (true, Some(f), Some(b)) = (c.id < 0 && a < 1.0, at(&self.fleets, slot), at(&prev.fleets, slot)) {
+                    let (dx, dy) = (f.pos[0] - b.pos[0], f.pos[1] - b.pos[1]);
+                    if b.owner == f.owner && (dx != 0.0 || dy != 0.0) && dx * dx + dy * dy <= MAX_STEP * MAX_STEP {
+                        out.centre = [b.pos[0] + dx * a + (c.centre[0] - f.pos[0]), b.pos[1] + dy * a + (c.centre[1] - f.pos[1])];
+                        moved = true;
+                    }
+                }
+                out
+            })
+            .collect();
+        moved.then_some(at)
     }
 
     /// The fleets between `prev` (alpha 0) and `self` (alpha 1). A fleet pairs with the same slot in `prev`; one

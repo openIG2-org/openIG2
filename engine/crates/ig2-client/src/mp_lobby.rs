@@ -2446,6 +2446,8 @@ mod tests {
         let mut clocks = [0, 25].map(|at| ig2_sim::time::TickClock::new(ig2_sim::time::SIM_TICK_MS, at));
         let mut steps = [Vec::new(), Vec::new()];
         let mut last = [f32::NAN; 2];
+        // The joiner's own fleet's radar circle (ADR 0063): it glides with the fleet, frame by frame.
+        let (mut zone_frames, mut zone_last) = (0, None::<(f32, f32)>);
         for now in (100..3100).step_by(16) {
             match now {
                 1092 => pause(&mut a, true),
@@ -2464,6 +2466,19 @@ mod tests {
                     steps[i].push(x - last[i]);
                 }
                 last[i] = x;
+                if i == 1 {
+                    let circles = w.curr.radar_circles_at(&w.prev, alpha).unwrap_or_else(|| w.curr.radar_circles.0.clone());
+                    // (A new galaxy's fleets get their range from the first ticks.)
+                    let z = circles.iter().find(|c| c.id == -(f.slot as i16)).map(|c| c.centre[0]);
+                    if let Some(z) = z {
+                        assert!((z - x).abs() < 1e-3, "the zone sits on the fleet: {z} {x}");
+                        if let Some((z0, x0)) = zone_last {
+                            assert!(((z - z0) - (x - x0)).abs() < 1e-3, "the zone moves as the fleet does");
+                            zone_frames += (z != z0) as u32;
+                        }
+                    }
+                    zone_last = z.map(|z| (z, x));
+                }
             }
         }
         for (i, s) in steps.iter().enumerate() {
@@ -2472,6 +2487,7 @@ mod tests {
             assert!(step > 0.0 && moving.iter().all(|d| *d > 0.0 && *d < 2.0 * step), "machine {i}: the fleet hops {s:?}");
             assert!(s.len() - moving.len() > 40, "machine {i}: the pause stops the fleet");
         }
+        assert!(zone_frames > 60, "the fleet's zone moved in {zone_frames} frames");
     }
 
     /// Issue #32: the host's pause stops the date on both machines (the session keeps turning), and the joiner's

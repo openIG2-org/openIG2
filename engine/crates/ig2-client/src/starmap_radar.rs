@@ -266,4 +266,21 @@ mod tests {
         assert_eq!(r.discs, vec![([0.0, 0.0], 60.0, false)]);
         assert!(r.dots.iter().all(|d| !d.fleet));
     }
+
+    /// ADR 0063: a fleet's zone glides with the fleet between two snapshots (the planets' stay put); at the end of the
+    /// way it is the snapshot's own rings.
+    #[test]
+    fn a_fleets_zone_glides_between_snapshots() {
+        let snap = |x: f32| {
+            let circles = vec![c(-500.0, 0.0, 60.0, 1), c(x, 0.0, 40.0, -3)];
+            let fleet = crate::world::FleetView { slot: 3, pos: [x, 0.0], owner: 2, visible: true, target: None, order: 0, flags: 0, name: Vec::new(), ships: 1, story_id: 0, kind: 0, target_index: 0 };
+            crate::world::Snapshot { radar: rings(&circles, 1), radar_circles: (circles, 1), fleets: vec![fleet], ..Default::default() }
+        };
+        let (prev, curr) = (snap(100.0), snap(120.0));
+        let half = curr.radar_at(&prev, 0.5);
+        assert_eq!(half.discs, vec![([-500.0, 0.0], 60.0, false), ([110.0, 0.0], 40.0, true)]);
+        assert_eq!(*half, rings(&[c(-500.0, 0.0, 60.0, 1), c(110.0, 0.0, 40.0, -3)], 1));
+        assert!(matches!(curr.radar_at(&prev, 1.0), std::borrow::Cow::Borrowed(r) if *r == curr.radar));
+        assert!(matches!(curr.radar_at(&curr, 0.3), std::borrow::Cow::Borrowed(_)), "nothing moved");
+    }
 }

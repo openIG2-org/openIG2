@@ -51,7 +51,13 @@ peer, so one far player slowed everyone's orders for the whole game.
    turns. Raising sends empty inputs for the skipped turns; lowering sends none until the turn catches up, so no
    turn waits and no order is lost either way. The room's start delay stays the slowest link's (ADR 0007), and every
    peer comes down from there to what its own link allows: a LAN reaches 0 within a few seconds.
-4. **Always on, no option.** It changes no rule and no synced state, and single player is untouched.
+4. **The fleets' radar zones glide.** The starmap rebuilt the radar ranges (`RadarRangeKi`, re/screens/starmap.md
+   §6.3) once per snapshot while the fleet sprites are interpolated every frame, so a fleet's blue zone stepped
+   behind its sprite each tick (20 a second), and each turn (10 a second) in multiplayer. Each frame now moves the
+   fleets' circles exactly as `Snapshot::fleets_at` moves their fleets and rebuilds the rings from them
+   (`Snapshot::radar_at`); at the end of the way, and whenever nothing moves, they are the snapshot's own, the exe's
+   dots bit for bit.
+5. **Always on, no option.** It changes no rule and no synced state, and single player is untouched.
 
 ## Consequences
 - An order shows on the issuing machine in the frame it is given (0 ms, as in single player); the other machines

@@ -981,7 +981,7 @@ impl View {
         for &(t, b, i) in &self.backdrop {
             f.push(t, b, i);
         }
-        self.radar(&mut f, a, &m, &curr.radar);
+        self.radar(&mut f, a, &m, &curr.radar_at(prev, alpha));
 
         // System stars: `n{(surface − 1) % 8 + 1}` glows in the star colour (spec §3.2).
         for p in self.planets(curr) {
