@@ -7,7 +7,7 @@
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--letterbox] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--sharp-ui] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -137,6 +137,8 @@ pub struct Options {
     /// The window (`size` is its band, [`kit::Layout::band`]); `--letterbox`: the 3D stops at the 4:3 frame.
     pub window: (u32, u32),
     pub letterbox: bool,
+    /// `--sharp-ui`: the 2D pictures and text sampled sharp (ADR 0043; else the settings file's `SharpUi`).
+    pub sharp_ui: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -288,6 +290,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         size: (1920, 1080),
         window: (1920, 1080),
         letterbox: false,
+        sharp_ui: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -383,6 +386,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             }
             "--reveal" => o.reveal = true,
             "--letterbox" => o.letterbox = true,
+            "--sharp-ui" => o.sharp_ui = true,
             "--multiplayer" => o.multiplayer = true,
             "--backdrop" => o.backdrop = true,
             "--background" => {
@@ -503,6 +507,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     }
     o.window = o.size;
     kit::layout::set_letterbox(o.letterbox);
+    render::set_sharp_ui(o.sharp_ui);
     Ok(o)
 }
 

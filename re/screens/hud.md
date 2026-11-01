@@ -42,6 +42,7 @@ vertices (`x, y, 0.5, 1`, colour, `u, v`) handed to `gl_draw_tlv` 0x4f68f0, whic
   `GL_LINEAR`; mag `GL_LINEAR`; wrap from the PVR's `SGLB`/`TXNV` metadata word (bit 0/1 repeat in s/t, bit 2/3
   trilinear (+anisotropy), bit 4 nearest). The screen pictures have one level and `TXNV` = 11: bilinear on level 0,
   repeat (at 800 × 600 the 2× pictures are minified 1.6×, so the glyphs alias thin rather than blur).
+  Ours: the same; the "Sharp UI" option (ADR 0043) samples sprites and glyphs sharp bilinear for big windows.
 
 ### 1.2 Faders
 Every translucent box (`KirakFader` ELF 0x547920, `FadeKerettelKerekit` 0x538330, `FadeScreen` 0x537890) is queued

@@ -24,7 +24,6 @@ Grouped by area; sizes are rough guesses for one developer.
 | Menus | Two Options screens: a dedicated main-menu Options screen with its own modern layout (every setting, grouped in tabs), and a reworked in-game Options screen (the original's look by default, tidied rows) | the in-game screen is cramped, and the remake rows sit under the original's | 1-2 weeks |
 | Menus | More options: key rebinding, UI scale, separate music/voice/effect volumes, game speed steps, autosave interval | today's options are the original's few plus the remake rows | 1-2 weeks |
 | UI | A modernised, themeable UI skin (colours, frames, fonts), the classic look kept as the default theme | the 2D panels look dated at high resolutions | weeks |
-| UI | High-DPI / UI scaling for 4K screens | the 800x600 layout is small or blurry on big screens | 1 week |
 | Graphics | Sharper text (vector or high-resolution font rendering at any window size) | the 800x600 bitmap font blurs when scaled up | weeks |
 | Graphics | Upscaled textures and other graphics upgrades, each its own option | the original textures are low-resolution on modern screens | weeks |
 | Graphics | Better effects: particle explosions, smoke, beams, shields in the space and ground battles (after the classic effects are complete, `re/deviations.md` 420/421) | the battles look flat | 2-4 weeks |
@@ -45,6 +44,7 @@ Grouped by area; sizes are rough guesses for one developer.
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 457 | all screens, 2D pictures and text | "Sharp UI" (`SharpUi`, Remake row; `--sharp-ui`) samples the 2D pictures, the font and the pointer sharp bilinear: each texel a flat square, only its border pixel blended, so the UI scaled to a 1440p or 4K window stays crisp; the exe samples them bilinearly (`GL_LINEAR`, soft when magnified, 2.25× at 4K); off (the default) = the exe (ADR 0043) | yes | hud.md §1.1 |
 | 5 | campaign story 834 | proposal: empire 1's siege fleets start at planet 8340, not at planet −1's (0, 0) (enhanced ruleset only; classic stays bit-exact) | minor | campaign/elem.md §8.14 |
 | 146 | game end, high scores | proposal: a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
 | 169 | starmap, wheel | proposal: wheel zoom (and right-drag pan) on the starmap; classic has neither | minor | starmap.md |

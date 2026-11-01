@@ -50,6 +50,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--lang en\|hu\|de\|fr\|es\|it` | UI language; wins over `IG2_LANG`, which wins over the Options Language row, then the original's own choice |
 | `--multiplayer` | Open the main menu on the multiplayer connection page |
 | `--size WxH`, `--letterbox` | Window size; letterbox wide windows instead of the remaster's layout |
+| `--sharp-ui` | Sharp UI on for this run, over the settings file |
 
 ## Controls
 The controls are the original's. The most used:
@@ -117,6 +118,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Event log (`EventLog`) | On by default: the messages screen (F10) has an "EVENT LOG" label (or press `L`) that lists every message line of this game, newest first; click All, Battles, Research, Diplomacy, Colonies or Story to filter, type to search (Backspace deletes, Esc closes), scroll with the wheel, the arrow keys or PgUp/PgDn; clicking a line about a planet or a fleet shows it on the starmap. The log is not saved: a loaded game starts with an empty one (ADR 0040); off shows the original screen |
 | Subtitles (`Subtitles`) | Off by default: a spoken message line's text stays at the bottom of the screen while its voice plays (ADR 0036). The install has no texts for the videos, the campaign start voice or the units' voices, so these get none; the message screen types its spoken text anyway |
 | Colour-blind colours (`ColourBlindColours`) | Off by default: empires 1–8 get colours that stay apart with red-green or blue-yellow colour blindness, in names, the minimap, the info screen, the top bar and the fleet icons (ADR 0036) |
+| Sharp UI (`SharpUi`) | Off by default: the panels, text and pointer are drawn with crisp texel edges instead of the original's smooth scaling, for big windows (1440p, 4K) where the 640×480 layout is scaled several times (ADR 0043); the UI's size follows the window either way |
 
 The window opens at 1600x900 until a size is saved.
 

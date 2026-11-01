@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 use crate::assets::Image;
 
 const SHADER: &str = r#"
-struct U { screen: vec2<f32>, time: f32, _pad: f32 };
+struct U { screen: vec2<f32>, time: f32, sharp: f32 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var smp: sampler;
@@ -57,6 +57,22 @@ fn vs(@builtin(vertex_index) vi: u32, i: I) -> VO {
 
 const PI: f32 = 3.14159265;
 
+// A 2D sprite's or glyph's texel at `t`: bilinear (the exe's), or with "Sharp UI" (ADR 0043) sharp bilinear: each
+// texel a flat square blended with its neighbour only over the border pixel; at a scale of 1 or below, bilinear.
+fn sample2d(t: vec2<f32>) -> vec4<f32> {
+    let dx = dpdx(t);
+    let dy = dpdy(t);
+    if u.sharp < 0.5 {
+        return textureSample(tex, smp, t);
+    }
+    let dims = vec2<f32>(textureDimensions(tex));
+    let texel = t * dims - 0.5;
+    let px = max(1.0 / max(fwidth(texel), vec2(1e-6)), vec2(1.0));
+    let f = fract(texel);
+    let s = (floor(texel) + clamp((f - 0.5) * px + 0.5, vec2(0.0), vec2(1.0)) + 0.5) / dims;
+    return textureSampleGrad(tex, smp, s, dx, dy);
+}
+
 // Coverage of the edge of a shape whose signed distance (in quad units, < 0 inside) is `d`.
 fn cover(d: f32) -> f32 {
     let w = max(fwidth(d), 1e-4);
@@ -70,7 +86,7 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
         // Textured sprite.
         case 0u: {
             let t = v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw;
-            return textureSample(tex, smp, t) * v.color;
+            return sample2d(t) * v.color;
         }
         // Lit sphere sampling an equirectangular map: param.x = longitude turn (0..1), uv = the map's rect.
         case 1u: {
@@ -122,7 +138,7 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
         case 7u: {
             let h = 0.5 / vec2<f32>(textureDimensions(tex));
             let t = clamp(v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw, v.uv.xy + h, v.uv.xy + v.uv.zw - h);
-            return textureSample(tex, smp, t) * v.color;
+            return sample2d(t) * v.color;
         }
         // Soft round glow (procedural stars).
         default: {
@@ -133,6 +149,13 @@ fn fs(v: VO) -> @location(0) vec4<f32> {
     }
 }
 "#;
+
+/// The "Sharp UI" option (ADR 0043, off by default): the 2D sprites and glyphs sampled sharp bilinear.
+static SHARP_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_sharp_ui(on: bool) {
+    SHARP_UI.store(on, std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Instance kinds (`I.kind`).
 pub mod kind {
@@ -299,7 +322,8 @@ impl Frame {
 struct Uniforms {
     screen: [f32; 2],
     time: f32,
-    _pad: f32,
+    /// 1: "Sharp UI" (ADR 0043).
+    sharp: f32,
 }
 
 pub struct Renderer {
@@ -619,7 +643,7 @@ impl Renderer {
         crate::prof::count("passes", 1);
         crate::prof::count("quads", frame.instances.len() as u64);
         crate::prof::count("batches", frame.batches.len() as u64);
-        let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, _pad: 0.0 };
+        let u = Uniforms { screen: [size.0 as f32, size.1 as f32], time, sharp: SHARP_UI.load(std::sync::atomic::Ordering::Relaxed) as u32 as f32 };
         self.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
         // The backdrop's quad goes after the frame's own in the buffer.
         let backdrop = frame.backdrop.map(|(tex, c)| {
