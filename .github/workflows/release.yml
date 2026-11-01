@@ -84,7 +84,7 @@ jobs:
     name: macOS archive
     # After the Windows job: that one creates the release, this one adds its archive (unsigned).
     needs: windows
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:

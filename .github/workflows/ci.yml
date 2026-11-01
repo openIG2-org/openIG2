@@ -107,7 +107,7 @@ jobs:
   macos:
     name: macOS build, tests, clippy
     # Apple Silicon (arm64): what the release archive is built on.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:

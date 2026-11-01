@@ -5,7 +5,7 @@
 - On Linux: a C/C++ compiler and the ALSA, udev, xkbcommon and Wayland headers (Debian/Ubuntu:
   `sudo apt-get install build-essential pkg-config libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev`).
   CI builds, tests and lints on Ubuntu 22.04.
-- On macOS: the Xcode command line tools (`xcode-select --install`). CI builds, tests and lints on macOS 14
+- On macOS: the Xcode command line tools (`xcode-select --install`). CI builds, tests and lints on macOS 15
   (Apple Silicon); Metal through wgpu, CoreAudio through cpal.
 - A GPU with Vulkan, DirectX 12 or Metal (wgpu).
 - For reverse engineering only: Ghidra (headless), Python 3 with Frida 17 (`_local/venv`), the GOG `ig2.exe`.
@@ -38,7 +38,7 @@ On macOS the same script stages `openig2-<version>-macos-arm64/` (or `-macos-x64
 `.tar.gz`, listing the dylibs each binary links (system frameworks only). The binaries are **not signed or
 notarized** (no Apple developer account): Gatekeeper blocks them until the player clears the quarantine
 (`xattr -dr com.apple.quarantine .`, `tools/release/README.txt`). CI and the release workflow build the arm64
-archive on macOS 14; there is no Intel archive.
+archive on macOS 15; there is no Intel archive.
 
 `ig2-check` (`engine/crates/ig2-check`) validates an install: `cargo run --release -p ig2-check -- [DIR] [--quick]`.
 `ig2-rendezvous` (`engine/crates/ig2-rendezvous`) is the optional internet relay service (`docs/RENDEZVOUS.md`).
