@@ -333,6 +333,8 @@ pub struct Game<'r> {
     pub spectators: bool,
     /// Ours (ADR 0037): each empire's auto-research switches (`research::auto` bits; all 0 = the original). Synced.
     pub auto_research: [u8; EMPIRES],
+    /// Ours (ADR 0034): the game's statistics, a day at each day change (`crate::stats`). Synced.
+    pub stats: crate::stats::Stats,
     /// The single-player battle screen (ours, classic view; not in the state).
     pub sp_battles: SpBattles,
     /// How the game ended (`GameStarted` 0xBAE297 cleared by `ExitToMainScreen`): `MEGHALAS` and `MEGNYERES` end
@@ -442,6 +444,7 @@ impl<'r> Game<'r> {
             realtime: RealTime::default(),
             spectators: false,
             auto_research: [0; EMPIRES],
+            stats: Default::default(),
             sp_battles: SpBattles::default(),
             over: None,
             answering: None,
@@ -919,9 +922,13 @@ impl<'r> Game<'r> {
         let m = &mut self.state.mem;
         let (nap, old) = (m.i32(va::NAP), m.i32(va::OLD_NAP));
         let first_event = self.events.len();
+        let mut counted = first_event;
         if nap != old {
             m.set_i32(va::OLD_NAP, nap);
             self.daily();
+            counted = self.stats_ships_built(counted);
+            let s = crate::stats::sample(&self.state);
+            self.stats.day(s);
         }
         self.trade();
         self.battlefield_hand_offs();
@@ -942,7 +949,20 @@ impl<'r> Game<'r> {
             self.dropships_mp();
         }
         self.fill_fresh_buildings();
+        self.stats_ships_built(counted);
         self.post_messages(first_event);
+    }
+
+    /// Ours (ADR 0034): the ships built by the events from `from` on (line 0 of `Legyart`, by the planet's owner),
+    /// up to the end; returns the end.
+    fn stats_ships_built(&mut self, from: usize) -> usize {
+        for e in &self.events[from..] {
+            if let GameEvent::Production(ProductionEvent::Built { planet, line: 0, .. }) = *e {
+                let owner = self.state.mem.u8(va::PLANETS + (planet * PLANET_SIZE) as u32 + 0x20);
+                self.stats.ship_built(owner as usize);
+            }
+        }
+        self.events.len()
     }
 
     /// Building records appended this tick hold uninitialised bytes in the original: the records past the used

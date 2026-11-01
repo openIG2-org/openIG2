@@ -340,6 +340,8 @@ protocol 7), the machine whose own empire dies plays the defeat videos and retur
   fallen. You can watch the game until you leave it."
 - It sees every planet, fleet and name (`LocalView::spectating`, machine-local, not synced).
 - Its screens' orders are dropped (`World::pump`); every peer ignores a bundle order from a dead empire (§5.7).
+- The game's statistics (ours, ADR 0034, `game-end.md` §11) are synced state: snapshot version 11 and the state hash carry
+  `Game::stats` (lobby protocol 9), so every machine records the same numbers with its own result.
   Chat still works. Leaving = the menu exit (`Session::leave`).
 - Late spectators (option on): a connection whose name is none of the game's humans is admitted at the running game's
   door (after the version/rules/join code/password checks) as a spectator, at most 8 (`Refused{Full}` beyond), on

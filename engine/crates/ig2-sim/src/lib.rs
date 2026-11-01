@@ -28,6 +28,7 @@ pub mod spacebattle;
 pub mod spacebattle_raw;
 pub mod spacewar;
 pub mod spy;
+pub mod stats;
 pub mod story;
 pub mod storyline;
 pub mod time;

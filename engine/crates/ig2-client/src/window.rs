@@ -117,6 +117,8 @@ struct Front {
     mp: Option<crate::mp_lobby::MpScreen>,
     net: crate::mp_lobby::QuicNet,
     session: Option<crate::mp_lobby::Session<'static>>,
+    /// Ours (ADR 0034): the statistics screen over the menu (a game's end, or the history).
+    stats: Option<crate::stats_screen::StatsScreen>,
 }
 
 impl Front {
@@ -127,7 +129,7 @@ impl Front {
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None }
     }
 }
 
@@ -247,6 +249,10 @@ struct App {
     video: Option<crate::video::playback::Playback>,
     video_queue: std::collections::VecDeque<String>,
     after_video: AfterVideo,
+    /// Ours (ADR 0034): the finished game's record the main menu shows once the end videos are over.
+    stats_end: Option<crate::stats_screen::Match>,
+    /// `--stage-win DAYS` (`crate::Options::stage_win`).
+    stage_win: Option<u32>,
     /// `s_anims.txt` (the story videos' names), read on the first request.
     anim_names: Option<ig2_formats::strings::KeyedStrings>,
     /// The messages screen's talking-head clip, `MesKellAnimInditas`, and `uzenetanim_<EN>.txt` once read.
@@ -428,6 +434,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     (app.opt_rows, app.tech_defaults, app.volatile) = (opt_rows, l.tech_defaults, l.volatile);
     app.apply_battle_rows();
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
+    app.stage_win = o.stage_win;
     app.backdrop.live = o.background.unwrap_or(app.settings.int("LiveBackground") != Some(0));
     app.one_language = o.texts.unwrap_or(app.settings.int("OneLanguage") != Some(0));
     app.lang_at_start = app.settings.int(crate::display::LANGUAGE).unwrap_or(0);
@@ -571,12 +578,24 @@ fn draw_options(o: &mut OptionsUp, h: &crate::ui::Hud, frame: &mut crate::render
 }
 
 /// The main menu's 2D (`MainScrGfx2D_1/_2`): the scenario list, the name entry.
-fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: &mut crate::render::Frame, size: [f32; 2], now_ms: f64) {
+/// Ours: the statistics screen over it (ADR 0034), and its "History" item while `history` is on.
+#[allow(clippy::too_many_arguments)]
+fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Renderer, install: &ig2_formats::Install, frame: &mut crate::render::Frame, size: [f32; 2], now_ms: f64, history: bool) {
     crate::mainscr_scene::draw_2d(&mut fr.s, &mut fr.scenarios, h, r, install, frame, size, now_ms);
-    if let (Some(mp), Some(font)) = (&fr.mp, &h.font) {
-        let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
+    let Some(font) = &h.font else { return };
+    let d = crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
+    if let Some(st) = &fr.stats {
+        st.draw(frame, &d);
+    } else if let Some(mp) = &fr.mp {
         mp.draw(frame, &d, crate::kit::fader_design::blink(now_ms));
+    } else if history && front_history_shown(fr) {
+        crate::stats_screen::draw_history_item(frame, &d, crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, fr.at), fr.s.gt);
     }
+}
+
+/// The main menu's "History" item is up (ours, ADR 0034): the main ring set at rest, as the Settings label.
+fn front_history_shown(fr: &Front) -> bool {
+    fr.stats.is_none() && fr.mp.is_none() && fr.s.at_rest()
 }
 
 /// `PlayerFaj[EN]`, the music's race.
@@ -676,6 +695,8 @@ impl App {
             video: None,
             video_queue: Default::default(),
             after_video: AfterVideo::Resume,
+            stats_end: None,
+            stage_win: None,
             anim_names: None,
             head: Default::default(),
             head_armed: false,
@@ -2073,6 +2094,9 @@ impl App {
         if let Some(mp) = &mut fr.mp {
             mp.hover(fr.at);
         }
+        if let Some(st) = &mut fr.stats {
+            st.hover(fr.at);
+        }
         if let Some(st) = fr.s.take_started() {
             self.front_start(st);
             return;
@@ -2085,7 +2109,7 @@ impl App {
         fr.s.covered = self.options.is_some();
         if let Some(h) = &self.hud {
             let now = self.start.elapsed().as_secs_f64() * 1000.0;
-            draw_front_2d(fr, h, &mut g.renderer, &self.install, &mut frame, size, now);
+            draw_front_2d(fr, h, &mut g.renderer, &self.install, &mut frame, size, now, self.display.statistics);
         }
         if let (Some(o), Some(h)) = (&mut self.options, &self.hud) {
             draw_options(o, h, &mut frame, size, self.start.elapsed().as_secs_f64() * 1000.0);
@@ -2875,7 +2899,10 @@ impl App {
             net.leave();
         }
         let scene = self.front.take().and_then(|f| f.scene);
-        self.front = Some(Front::new(scene, self.now_ms(), &self.settings));
+        let mut front = Front::new(scene, self.now_ms(), &self.settings);
+        // Ours (ADR 0034): a finished game's statistics, after its end videos.
+        front.stats = self.stats_end.take().map(crate::stats_screen::StatsScreen::end);
+        self.front = Some(front);
         self.close_screens();
         self.audio.play_music(crate::audio::Music::Menu, false, human_race(&self.world.game.state));
     }
@@ -3549,6 +3576,19 @@ impl App {
     fn front_key(&mut self, k: &Key) {
         use crate::options::EntryKey;
         let Some(f) = &mut self.front else { return };
+        if let Some(st) = &mut f.stats {
+            match k.as_ref() {
+                Key::Named(NamedKey::Escape | NamedKey::Enter) => {
+                    if st.back().is_some() {
+                        f.stats = None;
+                    }
+                }
+                Key::Named(NamedKey::ArrowLeft) => st.step_metric(false),
+                Key::Named(NamedKey::ArrowRight) => st.step_metric(true),
+                _ => {}
+            }
+            return;
+        }
         if let Some(mp) = &mut f.mp {
             // Ctrl+V pastes (a join code), Ctrl+C copies the host's join code.
             if self.modifiers.control_key() {
@@ -3722,12 +3762,33 @@ impl App {
         let race = human_race(&self.world.game.state) as usize;
         let campaign = self.world.game.state.mem.i32(ig2_sim::save::va::CAMPAIGN_TYPE) > 0;
         let names: Vec<String> = reqs.iter().flat_map(|r| r.names(anims, &self.tables.videos, race, campaign)).collect();
+        if reqs.iter().any(crate::video::Request::ends_game) {
+            self.record_match();
+        }
         // A spectator's game goes on after its defeat (ADR 0026).
         let ends = reqs.iter().any(crate::video::Request::ends_game) && !self.world.game.local_view().spectating;
         match (ends, names.is_empty()) {
             (true, true) => self.exit_to_main_menu(),
             (true, false) => self.queue_videos(names, false, AfterVideo::MainMenu),
             (false, _) => self.queue_videos(names, false, AfterVideo::Resume),
+        }
+    }
+
+    /// Ours (ADR 0034, re/rules/game-end.md §11): the game ended for this machine: its record is added to the match
+    /// history and, unless it watches on as a spectator, shown once the end videos are over.
+    fn record_match(&mut self) {
+        let Some(o) = self.world.game.over.filter(|_| self.display.statistics) else { return };
+        let view = self.world.game.local_view();
+        let (y, m, d) = self.world.curr.date();
+        let when = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_secs());
+        let rec = crate::stats_screen::Match::record(&self.world.game, o, view.empire, self.world.net.is_some(), [y, m, d], when);
+        if let Some(dir) = crate::stats_screen::history_dir() {
+            if let Err(e) = crate::stats_screen::append(&dir, &rec) {
+                eprintln!("ig2-client: match history: {e}");
+            }
+        }
+        if !view.spectating {
+            self.stats_end = Some(rec);
         }
     }
 
@@ -3922,6 +3983,13 @@ impl App {
     }
 
     fn frame(&mut self) {
+        if self.stage_win.is_some_and(|d| self.world.game.stats.days >= d) {
+            self.stage_win = None;
+            let en = self.world.game.local_view().empire as u32;
+            for e in (1..ig2_sim::colony_side::EMPIRES as u32).filter(|&e| e != en) {
+                self.world.game.state.mem.set_u8(ig2_sim::save::va::EMPIRE_ALIVE + e, 0);
+            }
+        }
         self.send_renames();
         self.take_video_requests();
         self.take_story_ui();
@@ -4975,9 +5043,36 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if self.front.is_some() => {
-                if event.state == ElementState::Pressed {
+                // A held Esc's repeats would close the statistics screen and go on to the menu's own Esc.
+                if event.state == ElementState::Pressed && !(event.repeat && self.front.as_ref().is_some_and(|f| f.stats.is_some())) {
                     self.front_key(&event.logical_key);
                 }
+            }
+            // Ours (ADR 0034): the statistics screen takes either button, acting on the release so the menu under it
+            // gets neither half of the click.
+            WindowEvent::MouseInput { state, button: MouseButton::Left | MouseButton::Right, .. } if self.front.as_ref().is_some_and(|f| f.stats.is_some()) => {
+                let Some(f) = &mut self.front else { return };
+                if state == ElementState::Released {
+                    let at = f.at;
+                    if f.stats.as_mut().and_then(|st| st.press(at)).is_some() {
+                        f.stats = None;
+                        self.audio.play(crate::audio::CLICK);
+                    }
+                }
+            }
+            // The main menu's "History" item (ours, ADR 0034).
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. }
+                if self.display.statistics && self.front.as_ref().is_some_and(|f| front_history_shown(f) && crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, f.at)) =>
+            {
+                let (list, error) = match crate::stats_screen::history_dir().map(|d| crate::stats_screen::load(&d)) {
+                    Some(Ok(l)) => (l, None),
+                    Some(Err(e)) => (Vec::new(), Some(e)),
+                    None => (Vec::new(), None),
+                };
+                if let Some(f) = &mut self.front {
+                    f.stats = Some(crate::stats_screen::StatsScreen::history(list, error));
+                }
+                self.audio.play(crate::audio::CLICK);
             }
             // Our MP screens: either button's press.
             WindowEvent::MouseInput { state: ElementState::Pressed, button: button @ (MouseButton::Left | MouseButton::Right), .. } if self.front.as_ref().is_some_and(|f| f.mp.is_some()) => {
@@ -5002,7 +5097,7 @@ impl ApplicationHandler for App {
             }
             // The wheel is no event of `MainCallBackEventHandler`'s (exe 0x4e2db0); the middle button drops the held ones.
             WindowEvent::MouseWheel { .. } if self.front.is_some() => {}
-            WindowEvent::MouseInput { button: MouseButton::Middle, .. } if self.front.is_some() => {
+            WindowEvent::MouseInput { button: MouseButton::Middle, .. } if self.front.as_ref().is_some_and(|f| f.stats.is_none()) => {
                 if let Some(f) = &mut self.front {
                     f.s.middle();
                 }

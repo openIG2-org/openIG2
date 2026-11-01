@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use ig2_sim::game::{Game, GameRules, Libc, MpFormation, RealTime, ViewMode};
 use ig2_sim::colony_side::EMPIRES;
 use ig2_sim::ground::Field;
+use ig2_sim::stats::Stats;
 use ig2_sim::save::{HumanSide, Memory, SaveState, StoryQueues, BUILDING_SIZE, DESIGN_SIZE, FLEET_SIZE};
 use ig2_sim::story::Queue;
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 10;
+pub const VERSION: u16 = 11;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -92,12 +93,14 @@ struct View<'a> {
     ai_difficulty: &'a [i32; EMPIRES],
     /// `Game::auto_research` (ADR 0037; since version 10).
     auto_research: &'a [u8; EMPIRES],
+    /// `Game::stats` (ADR 0034; since version 11).
+    stats: &'a Stats,
 }
 
 /// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state), `T` the version 6 one, `F` the
-/// version 7 one, `S` the version 8 one, `D` the version 9 one, `A` the version 10 one.
+/// version 7 one, `S` the version 8 one, `D` the version 9 one, `A` the version 10 one, `G` the version 11 one.
 #[derive(Deserialize)]
-struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool, D = [i32; EMPIRES], A = [u8; EMPIRES]> {
+struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool, D = [i32; EMPIRES], A = [u8; EMPIRES], G = Stats> {
     mem: Vec<(u32, ByteBuf)>,
     template: Vec<(String, ByteBuf)>,
     fleets: ByteBuf,
@@ -124,16 +127,17 @@ struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormati
     spectators: S,
     ai_difficulty: D,
     auto_research: A,
+    stats: G,
 }
 
-impl<I, T, F, S, D> Owned<I, T, F, S, D, ()> {
-    /// An older state: no auto research (off); a version 4..=8 one (`D = ()`) no own computer levels (the game's); a
+impl<I, T, F, S, D, A> Owned<I, T, F, S, D, A, ()> {
+    /// An older state: no statistics; a version 4..=9 one (`A = ()`) no auto research (off); a version 4..=8 one (`D = ()`) no own computer levels (the game's); a
     /// version 4..=7 one (`S = ()`) no spectators (off); a version 4..=6 one (`F = ()`) no formation phase; a version 4
     /// or 5 one (`T = ()`) no transfer panels, a version 4 one (`I = ()`) no inboxes either.
     #[allow(clippy::type_complexity)]
-    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>, formation: impl FnOnce(F) -> MpFormation, spectators: impl FnOnce(S) -> bool, difficulty: impl FnOnce(D) -> [i32; EMPIRES]) -> Owned {
-        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, formation: f, spectators: s, ai_difficulty: d, .. } = self;
-        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: formation(f), spectators: spectators(s), ai_difficulty: difficulty(d), auto_research: [0; EMPIRES] }
+    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>, formation: impl FnOnce(F) -> MpFormation, spectators: impl FnOnce(S) -> bool, difficulty: impl FnOnce(D) -> [i32; EMPIRES], research: impl FnOnce(A) -> [u8; EMPIRES]) -> Owned {
+        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, formation: f, spectators: s, ai_difficulty: d, auto_research: a, .. } = self;
+        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: formation(f), spectators: spectators(s), ai_difficulty: difficulty(d), auto_research: research(a), stats: Stats::default() }
     }
 }
 
@@ -170,6 +174,7 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
         spectators: g.spectators,
         ai_difficulty: &s.ai_difficulty,
         auto_research: &g.auto_research,
+        stats: &g.stats,
     }
 }
 
@@ -206,6 +211,7 @@ pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)>
         ("spectators", h(&v.spectators)),
         ("ai_difficulty", h(&v.ai_difficulty)),
         ("auto_research", h(&v.auto_research)),
+        ("stats", h(&v.stats)),
     ]
 }
 
@@ -292,13 +298,14 @@ impl Snapshot {
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
         let o: Owned = match wire::from_slice(&self.state) {
             Ok(o) => o,
-            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], ()>>(&self.state)
-                .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |()| [0; EMPIRES])))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |()| false, |()| [0; EMPIRES])))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |()| MpFormation::default(), |()| false, |()| [0; EMPIRES])))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES])))
-                .or_else(|_| wire::from_slice::<Owned<(), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES])))
+            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], ()>>(&self.state)
+                .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |()| [0; EMPIRES])))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |()| [0; EMPIRES], |()| [0; EMPIRES])))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES])))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES])))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES])))
+                .or_else(|_| wire::from_slice::<Owned<(), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES])))
                 .map_err(|_| e)?,
         };
         let mut s = SaveState::from_parts(Memory::from_runs(o.mem.into_iter().map(|(at, b)| (at, b.0)).collect()), o.template.into_iter().map(|(n, b)| (n, b.0)).collect());
@@ -341,6 +348,7 @@ impl Snapshot {
         g.realtime.formation = o.formation;
         g.spectators = o.spectators;
         g.auto_research = o.auto_research;
+        g.stats = o.stats;
         Ok((g, o.pending))
     }
 
@@ -399,7 +407,7 @@ impl Header {
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
         // Version 4 states lack the inboxes, 4 and 5 the transfer panels, 4..=6 the formation phase (read as none),
-        // 4..=7 the spectators option (off), 4..=8 the computers' own levels (the game's).
+        // 4..=7 the spectators option (off), 4..=8 the computers' own levels (the game's), 4..=9 auto research (off), 4..=10 the statistics (none).
         if !(4..=VERSION).contains(&h.version) {
             return Err(Error::Version(h.version));
         }

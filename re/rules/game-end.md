@@ -127,3 +127,26 @@ The exe inlines `MEGHALAS` into `BirodalomMeghal`, `MEGNYERES(true)` into `Megny
 ## 10. Runtime check
 `tools/trace/run_gameend.py` (`gameend.js`), quick.scn (EN 6, race 6, `CampaignType` 0), report
 `traces/2026-10-23-game-end.md`.
+
+## 11. Ours: the statistics screen and the match history (ADR 0034, enhancements 444–446)
+The original keeps no record of a finished game; its only per-empire history is the info screen's monthly
+`InfoCharts` (`info-messages.md` §1, 55 months, overwritten). Ours, on by default (`GameStatistics`, Options →
+Remake; 0 = the original: no screen, nothing recorded):
+- **Sampling** (`ig2_sim::stats`): `run_tick`'s day change (`Nap != OldNap`, after `daily`) adds a day to
+  `Game::stats`. Each day: the ships lost (`max(0, ships yesterday + built today − ships now)` per empire: destroyed,
+  given away or captured); every `every`-th day a sample of empires 1..=8: planets, population, the last tax and the
+  info score (`InfoWorld::values` §1.2: `[2]`, `[1]`, `[0]`, `[9]`), techs (`[5]`), `BattlesWon` (`[7]`), credits
+  (`Penz[e]` truncated), ships (the `Hajok` whose fleet the empire owns); a dead empire's row is zeros but its
+  battles. Ships built count `ProductionEvent::Built` on line 0 by the planet's owner, each tick. At most 240
+  samples: past that, every other one is dropped and `every` doubles (1, 2, 4, … days), so a game of any length fits.
+- It reads the synced state only and writes nothing the original has: classic replays and traces are unchanged, and
+  every multiplayer peer holds the same statistics (in the snapshot and its hash, save format version 11; older saves
+  start with none). An original `.sav` loads with none.
+- **The end** (`ig2-client`): when a game ends for this machine (`GameEvent::GameOver`, §3), the client freezes a
+  record: the date (local time), the mode (campaign, scenario, skirmish, multiplayer), the empires (name, race,
+  human), the result for the local empire (won, lost, ended), the length in game days, the samples plus a last one
+  of the state now, the built/lost/battle totals. After the end videos (§2) the statistics screen opens; a press or
+  Esc goes on to the main menu. A defeated spectator (ADR 0026) gets its record at its defeat and no screen: it watches on.
+- **History**: each record is appended to `match-history.json` beside the saves (`IG2_SAVE_DIR`); the main menu's
+  "History" item (ours, bottom left: the Settings label of ADR 0031 mirrored, shown when it would be) lists the newest first (date, mode, result, length, empires);
+  a row opens its statistics screen. In multiplayer each machine writes its own record of the shared statistics.

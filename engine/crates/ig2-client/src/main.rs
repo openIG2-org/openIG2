@@ -99,6 +99,7 @@ mod starmap_panels;
 mod starmap_planet;
 mod starmap_radar;
 mod starmap_tip;
+mod stats_screen;
 mod trade;
 mod topbar_menus;
 mod tutorial_ui;
@@ -165,6 +166,9 @@ pub struct Options {
     pub ui_frames: u32,
     /// `--trade-cheat`: the exe's `TradeCheat` (every own planet counts as a trade port; re/screens/trade.md §5.3).
     pub trade_cheat: bool,
+    /// `--stage-win DAYS`: once the game has run DAYS days every other empire dies, so the next tick's victory check
+    /// ends it as won (the game-end trace's staging, re/rules/game-end.md §10; tests the end and its statistics).
+    pub stage_win: Option<u32>,
     /// `--trade-eta N`: the unsaved `AktEtaDays` (the trade screen's delivery time) as the exe had it.
     pub trade_eta: Option<i32>,
     /// `--dkm M,CEL,NOVELO`: the row frame's global phase at the script's start (`DesignKeret1`'s `dkm`, `dkmcel`,
@@ -293,6 +297,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         show_message: None,
         ui_frames: 150,
         trade_cheat: false,
+        stage_win: None,
         trade_eta: None,
         dkm: None,
         spy_frame: None,
@@ -402,6 +407,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--open-message" => o.open_message = Some(val()?.parse().map_err(|e| format!("--open-message: {e}"))?),
             "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),
             "--trade-cheat" => o.trade_cheat = true,
+            "--stage-win" => o.stage_win = Some(val()?.parse().map_err(|e| format!("--stage-win: {e}"))?),
             "--dkm" => {
                 let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse().map_err(|e| format!("--dkm: {e}"))).collect::<Result<_, _>>()?;
                 o.dkm = Some(v.try_into().map_err(|_| "--dkm: three numbers".to_string())?);

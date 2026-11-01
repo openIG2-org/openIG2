@@ -250,7 +250,7 @@ pub struct MainScr {
     /// Our MP screens are up (`mp_lobby`, ADR 0014): the rings are flown out (`Cel` 6) as for the scenario list.
     pub mp: bool,
     /// The scenario list's load after the ring's press: the UI ticks left until `ScenarioGombraRanyomtak`'s resets.
-    loading: Option<u8>,
+    pub loading: Option<u8>,
     /// `YouAreDisconnectedVolt` (0xbbd144) and the reason `GetString(0x12, 4, n)` (0xdb94f8): set by `FRISSIT_MainScr`
     /// (exe 0x4f7300) on the main menu after a multiplayer drop (`MultiPlayer::ReceiveData` 0x515910: 0xb, 0xc or the
     /// host's); OK or Esc clears it.
@@ -473,7 +473,12 @@ impl MainScr {
 
     /// Ours (ADR 0031): the Settings label shows while the main ring set is up and idle.
     pub fn settings_shown(&self) -> bool {
-        self.settings && !self.covered && self.menu == Menu::Main && self.cel == 1.0 && self.scenario.is_none() && self.name.is_none() && !self.mp && self.race.is_none()
+        self.settings && self.at_rest()
+    }
+
+    /// The main ring set at rest with nothing over it (ours: where the Settings and History labels show).
+    pub fn at_rest(&self) -> bool {
+        !self.covered && self.menu == Menu::Main && self.cel == 1.0 && self.scenario.is_none() && self.name.is_none() && !self.mp && self.race.is_none()
             && self.disconnected.is_none() && self.leaving.is_none() && self.start.is_none() && self.loading.is_none()
     }
 
