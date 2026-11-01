@@ -425,3 +425,59 @@ fn a_newcomer_watches_a_running_game() {
         }
     });
 }
+
+/// ADR 0033: the host sets each computer's level in the room; every machine builds the same start with those levels
+/// (the AIs' `Nehezseg`, the humans' the game's 1), the state carries them through a snapshot, and two machines run
+/// in step.
+#[test]
+fn per_computer_levels_travel_and_stay_in_step() {
+    let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
+    let rules = common::game_rules(&inst);
+    common::with_start_data(&inst, |data| {
+        use ig2_net::snapshot::Snapshot;
+        use ig2_sim::save::va;
+        let mut h = LobbyHost::new_galaxy(settings(), 0xD1FF, RULES, "Host");
+        assert!(h.set_options(GalaxyOptions { planets: 20, ais: 3, ..GalaxyOptions::default() }));
+        let mut a = join(&mut h, "Alice");
+        pump(&mut h, &mut [&mut a], |h, c| h.state().members.len() == 2 && synced(h, c));
+        let ais = h.state().ais();
+        assert_eq!(ais.len(), 3);
+        let mut o = h.state().galaxy.unwrap();
+        for (&e, level) in ais.iter().zip([3, 2, 1]) {
+            o.difficulty[e as usize - 1] = level;
+        }
+        assert!(h.set_options(o));
+        pump(&mut h, &mut [&mut a], synced);
+        assert_eq!(a.state.as_ref().unwrap().galaxy, Some(o), "the joiner sees the levels");
+        a.ready(true);
+        pump(&mut h, &mut [&mut a], |h, _| h.state().members[1].ready);
+        assert!(h.set_ready(0, true));
+        let humans: Vec<u8> = (0..2).map(|m| h.state().empire_of(m).unwrap()).collect();
+
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 777).ok().expect("the room starts");
+        let mut c = started(a, data, &rules).unwrap();
+        for g in [&hs.own.game, &c.peer.game] {
+            let d = g.state.difficulties();
+            assert_eq!(ais.iter().map(|&e| d[e as usize]).collect::<Vec<_>>(), [4, 2, 1], "the AIs' levels");
+            assert!(humans.iter().all(|&e| d[e as usize] == 1), "the humans keep the game's");
+            assert_eq!(g.state.mem.i32(va::NEHEZSEG), 1, "the game's level stays the original's");
+            // The start's `BirodalomIsmeriMiotaKi`: a hard computer knows the humans at once, an easy one after 0x708.
+            let since = |e: u8, k: u8| g.state.mem.i32(va::EMPIRE_KNOWN_SINCE + 0x4c * e as u32 + 4 * k as u32);
+            assert_eq!((since(ais[0], humans[0]), since(ais[2], humans[0])), (0, 0x708));
+        }
+        let snap = Snapshot::capture(&hs.own.game, &[], 0, 0);
+        assert_eq!(snap.restore(&rules).unwrap().0.state.ai_difficulty, hs.own.game.state.ai_difficulty, "the snapshot keeps them");
+
+        let mut now = Duration::ZERO;
+        while hs.own.turn < 200 || c.peer.turn < 200 {
+            now += Duration::from_millis(10);
+            hs.pump(now, (hs.own.turn < 200) as usize).unwrap();
+            hs.own.events.clear();
+            c.pump(now, (c.peer.turn < 200) as usize).unwrap();
+            c.peer.events.clear();
+            assert!(now < Duration::from_secs(300), "stalled at {}", hs.own.turn);
+        }
+        assert!(agree(&hs.own, &c.peer) >= 200, "every turn from 0");
+        assert!(hs.host.desyncs.is_empty(), "{:?}", hs.host.desyncs);
+    });
+}

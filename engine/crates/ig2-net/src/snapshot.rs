@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use ig2_sim::game::{Game, GameRules, Libc, MpFormation, RealTime, ViewMode};
+use ig2_sim::colony_side::EMPIRES;
 use ig2_sim::ground::Field;
 use ig2_sim::save::{HumanSide, Memory, SaveState, StoryQueues, BUILDING_SIZE, DESIGN_SIZE, FLEET_SIZE};
 use ig2_sim::story::Queue;
@@ -17,7 +18,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 8;
+pub const VERSION: u16 = 9;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -87,12 +88,14 @@ struct View<'a> {
     formation: &'a MpFormation,
     /// `Game::spectators` (ADR 0026; since version 8).
     spectators: bool,
+    /// `SaveState::ai_difficulty` (ADR 0033; since version 9).
+    ai_difficulty: &'a [i32; EMPIRES],
 }
 
 /// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state), `T` the version 6 one, `F` the
-/// version 7 one, `S` the version 8 one.
+/// version 7 one, `S` the version 8 one, `D` the version 9 one.
 #[derive(Deserialize)]
-struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool> {
+struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool, D = [i32; EMPIRES]> {
     mem: Vec<(u32, ByteBuf)>,
     template: Vec<(String, ByteBuf)>,
     fleets: ByteBuf,
@@ -117,14 +120,16 @@ struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormati
     transfers: T,
     formation: F,
     spectators: S,
+    ai_difficulty: D,
 }
 
-impl<I, T, F> Owned<I, T, F, ()> {
-    /// An older state: no spectators (off); a version 4..=6 one (`F = ()`) no formation phase; a version 4 or 5 one (`T = ()`) no transfer panels, a version 4 one
-    /// (`I = ()`) no inboxes either.
-    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>, formation: impl FnOnce(F) -> MpFormation) -> Owned {
-        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, formation: f, .. } = self;
-        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: formation(f), spectators: false }
+impl<I, T, F, S> Owned<I, T, F, S, ()> {
+    /// An older state: no own computer levels (the game's); a version 4..=7 one (`S = ()`) no spectators (off); a
+    /// version 4..=6 one (`F = ()`) no formation phase; a version 4 or 5 one (`T = ()`) no transfer panels, a
+    /// version 4 one (`I = ()`) no inboxes either.
+    fn upgrade(self, inboxes: impl FnOnce(I) -> Vec<(u8, ByteBuf)>, transfers: impl FnOnce(T) -> BTreeMap<u8, (i32, i32)>, formation: impl FnOnce(F) -> MpFormation, spectators: impl FnOnce(S) -> bool) -> Owned {
+        let Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: i, transfers: t, formation: f, spectators: s, .. } = self;
+        Owned { mem, template, fleets, ships, waypoints, designs, buildings, story, buckets, multiplayer_blob, fresh_buildings, libc, fleet_name, empire_names, family_names, ground_fields, view, humans, realtime, pending, inboxes: inboxes(i), transfers: transfers(t), formation: formation(f), spectators: spectators(s), ai_difficulty: [0; EMPIRES] }
     }
 }
 
@@ -159,6 +164,7 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
         transfers: &s.transfer_panels,
         formation: &g.realtime.formation,
         spectators: g.spectators,
+        ai_difficulty: &s.ai_difficulty,
     }
 }
 
@@ -193,6 +199,7 @@ pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)>
         ("transfers", h(&v.transfers)),
         ("formation", h(&v.formation)),
         ("spectators", h(&v.spectators)),
+        ("ai_difficulty", h(&v.ai_difficulty)),
     ]
 }
 
@@ -279,11 +286,12 @@ impl Snapshot {
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
         let o: Owned = match wire::from_slice(&self.state) {
             Ok(o) => o,
-            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, ()>>(&self.state)
-                .map(|o| o.upgrade(|i| i, |t| t, |f| f))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |()| MpFormation::default())))
-                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default())))
-                .or_else(|_| wire::from_slice::<Owned<(), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default())))
+            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, ()>>(&self.state)
+                .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |()| false)))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |()| MpFormation::default(), |()| false)))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default(), |()| false)))
+                .or_else(|_| wire::from_slice::<Owned<(), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default(), |()| false)))
                 .map_err(|_| e)?,
         };
         let mut s = SaveState::from_parts(Memory::from_runs(o.mem.into_iter().map(|(at, b)| (at, b.0)).collect()), o.template.into_iter().map(|(n, b)| (n, b.0)).collect());
@@ -313,6 +321,7 @@ impl Snapshot {
             s.humans.entry(e).or_default().inbox = inbox.0;
         }
         s.transfer_panels = o.transfers;
+        s.ai_difficulty = o.ai_difficulty;
         let mut g = Game::new(s, rules);
         g.libc = Libc(o.libc);
         g.fleet_name = o.fleet_name.map(|b| b.0);
@@ -382,7 +391,7 @@ impl Header {
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
         // Version 4 states lack the inboxes, 4 and 5 the transfer panels, 4..=6 the formation phase (read as none),
-        // 4..=7 the spectators option (off).
+        // 4..=7 the spectators option (off), 4..=8 the computers' own levels (the game's).
         if !(4..=VERSION).contains(&h.version) {
             return Err(Error::Version(h.version));
         }

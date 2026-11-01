@@ -1167,7 +1167,7 @@ fn spy_context(d: &SpyData) -> spy::SpyContext {
         human: std::array::from_fn(|e| m.u8(va::PLAYER_KI + e as u32) == 1),
         human_empire: d.en,
         multiplayer: d.multiplayer,
-        difficulty: m.i32(va::NEHEZSEG),
+        difficulty: d.state.difficulties(),
         ..Default::default()
     }
 }

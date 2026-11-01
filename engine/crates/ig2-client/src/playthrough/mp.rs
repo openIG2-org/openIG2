@@ -164,7 +164,8 @@ pub(super) fn play(hx: &Harness, ais: u8, planets: u8, limits: Limits, report: &
         Ok(t) => t,
         Err(e) => return End::Error(e),
     };
-    let options = GalaxyOptions { planets, ais, battle_status: 0, ..GalaxyOptions::default() };
+    // Mixed computer levels (ADR 0033), so the desync check covers each level's AI.
+    let options = GalaxyOptions { planets, ais, battle_status: 0, difficulty: [1, 2, 3, 1, 2, 3, 1, 2], ..GalaxyOptions::default() };
     let mut worlds = match room(limits.seed as u64 | 1, Some(options), None).and_then(|r| start(hx, &texts, r, None, limits.seed, limits.autopilot)) {
         Ok(w) => w,
         Err(e) => return End::Error(e),

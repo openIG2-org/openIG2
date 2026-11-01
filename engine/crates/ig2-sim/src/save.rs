@@ -754,6 +754,9 @@ pub struct SaveState {
     pub transfer_panels: BTreeMap<u8, (i32, i32)>,
     /// `GameInfo[0..GameInfoMut]` (exe 0xE3E3A0 / 0xE3E3A4): the starmap's info lines (`re/formats/save.md` §4.5).
     pub game_info: Vec<GameInfo>,
+    /// Ours (ADR 0033, the MP room's per-computer level): each computer empire's `Nehezseg`, 0 = the game's
+    /// (`NEHEZSEG`). Not in the exe's save; our snapshot carries it.
+    pub ai_difficulty: [i32; EMPIRES],
 }
 
 /// One `GameInfo` entry (exe stride 0xC): `+0` the line's index in `GameInfoList` (gameinfo.txt), `+4` its text
@@ -846,6 +849,7 @@ impl SaveState {
             humans: BTreeMap::new(),
             transfer_panels: BTreeMap::new(),
             game_info: Vec::new(),
+            ai_difficulty: [0; EMPIRES],
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -915,6 +919,7 @@ impl SaveState {
             humans: BTreeMap::new(),
             transfer_panels: BTreeMap::new(),
             game_info,
+            ai_difficulty: [0; EMPIRES],
             template,
             wf_ranges,
             fields: BTreeMap::new(),
@@ -1502,6 +1507,12 @@ impl SaveState {
         self.mem.flags(va::EMPIRE_ALIVE)
     }
 
+    /// Each empire's difficulty: `Nehezseg`, or its own level (ADR 0033, [`SaveState::ai_difficulty`]).
+    pub fn difficulties(&self) -> [i32; EMPIRES] {
+        let n = self.mem.i32(va::NEHEZSEG);
+        self.ai_difficulty.map(|d| if d > 0 { d } else { n })
+    }
+
     /// `InfoCharts`, `InfoChartsSmoothed` (`info-messages.md` §1).
     pub fn info_charts(&self) -> Charts {
         Charts::from_bytes(&self.mem.read(va::INFO_CHARTS, crate::info::SIZE), &self.mem.read(va::INFO_SMOOTHED, crate::info::SIZE))
@@ -1757,7 +1768,7 @@ impl SaveState {
             tech: self.tech(),
             alive: self.alive(),
             all_techs: m.i32(va::ALL_TECHS) != 0,
-            difficulty: m.i32(va::NEHEZSEG).max(0) as usize,
+            difficulty: self.difficulties().map(|d| d.max(0) as usize),
             ..Default::default()
         };
         w.strength.ground = self.per_planet(va::GROUND);

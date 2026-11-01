@@ -260,7 +260,7 @@ fn world(s: &Value) -> (ColonyWorld, Streams) {
         last_near_fleet: per_planet("utolso"),
         tech: TechTable { bytes: hexs(&s["tech"]) },
         all_techs: s["allTechs"].as_i64().unwrap() != 0,
-        difficulty: s["nehezseg"].as_i64().unwrap() as usize,
+        difficulty: [s["nehezseg"].as_i64().unwrap() as usize; 19],
         ..Default::default()
     };
     let arr = |k: &str| ints(&s[k]).into_iter().map(|x| x as i32).collect::<Vec<_>>();
@@ -506,7 +506,7 @@ fn money_calls_match_the_game() {
                 }
                 let (e, k) = (c["e"].as_u64().unwrap() as usize, c["k"].as_i64().unwrap() as i32);
                 let pre = &c["pre"];
-                let mut w = ColonyWorld { difficulty: pre["nehezseg"].as_i64().unwrap() as usize, ..Default::default() };
+                let mut w = ColonyWorld { difficulty: [pre["nehezseg"].as_i64().unwrap() as usize; 19], ..Default::default() };
                 w.money[e] = treasury(pre, e);
                 let ki = hexs(&pre["playerKi"]);
                 let ctx = EconomyContext {

@@ -40,13 +40,15 @@ overwritten by the next message 2; ours: host only).
 | `OnlyServerCanModifyTime` | 0xBAE55C | 0/1 = id − 0x28 | 0 | 0x28, 0x29 |
 | `ProgramMode` | 0xBAE544 | 1..3 = id − 0x1E (connection kind, not a galaxy option) | MainScr's | 0x1F..0x21 |
 | `ProgramSebesseg` | 0xBAE54C | fixed 4 (the host's in-game speed buttons act) | 4 | none |
-| `Nehezseg` | 0x92827C | forced 1 by `InitNewGame(seed, 2, 0, 1)` | 1 | none |
+| `Nehezseg` | 0x92827C | forced 1 by `InitNewGame(seed, 2, 0, 1)` (ours, enhanced: each computer slot's own level, ADR 0033) | 1 | none |
 | `ProgramPlayers` | 0x912ACC | fixed 8 | 8 | none |
 
 - Battle status (the sim's readers, `ig2_sim::game::battles`, `ground.rs` `route`): 0 = space and ground battles
   in real time, 1 = space only, 2 = ground only, 3 = neither (both computed).
 - Galaxy shape: stored, sent and saved; no reader in the generated galaxy (§3 of `rules/new-game.md` ignores it).
-- No money, tech, difficulty or diplomacy options: the MP start forces them (`rules/new-game.md` §13).
+- No money, tech, difficulty or diplomacy options: the MP start forces them (`rules/new-game.md` §13). Ours (ADR
+  0033): the host sets each computer slot's level (easy, the default = the original's 1; normal; hard = 4), drawn
+  after "Computer" with strings 15/4/1..3, click up, right click down; the computer empire plays at that `Nehezseg`.
 - Strings: 14/2/1..4 "20/40/60/80 planets", 14/1/1 "AI players:", 14/1/3..10 "Player n race", 14/1/11 "Cancel",
   14/1/12 "Start game", 14/5/4..6 "Start", "Cancel", "Ready", 14/5/2 "Server IP address", 14/5/3 "Disconnected"
   (the line a joiner gets when the host is gone), 14/5/1 "Starting story set to" (the `mpstory` config line).

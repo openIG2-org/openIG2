@@ -474,7 +474,12 @@ mod spot {
     pub const PRIVATE: u32 = 0x73;
     pub const CODE: u32 = 0x74;
     pub const RELAY: u32 = 0x36;
+    /// Ours (ADR 0033): a computer slot's level.
+    pub const LEVEL: u32 = 0x78;
 }
+
+/// Where a computer slot's level is drawn and clicked (ADR 0033); the holder's box ends there.
+const LEVEL_X: f32 = 280.0;
 
 /// The connection page's relay field.
 const RELAY_BOX: [f32; 4] = [130.0, 354.0, 380.0, 18.0];
@@ -927,11 +932,15 @@ impl MpScreen {
                     v.push((id, [BUTTONS[k], 392.0, 90.0, 30.0]));
                 }
             }
-            Some(_) => {
+            Some(st) => {
                 for i in 0..8 {
                     let y = 52.0 + 32.0 * i as f32;
                     v.push((spot::RACE + i, [44.0, y, 120.0, 26.0]));
-                    v.push((spot::HOLDER + i, [170.0, y, 160.0, 26.0]));
+                    let level = self.is_host() && st.galaxy.is_some() && st.slots.get(i as usize).is_some_and(|s| s.kind == SlotKind::Ai);
+                    if level {
+                        v.push((spot::LEVEL + i, [LEVEL_X - 4.0, y, 110.0, 26.0]));
+                    }
+                    v.push((spot::HOLDER + i, [170.0, y, if level { LEVEL_X - 4.0 - 170.0 } else { 160.0 }, 26.0]));
                 }
                 if self.is_host() {
                     v.extend([(spot::PORT_MAP, [20.0, 318.0, 400.0, 16.0]), (spot::PRIVATE, [430.0, 318.0, 190.0, 16.0]), (spot::CODE, [20.0, 336.0, 600.0, 16.0])]);
@@ -1073,6 +1082,14 @@ impl MpScreen {
                     (Role::Joiner(c), false) if matches!(s.kind, SlotKind::Open | SlotKind::Ai) => c.pick(Some(s.empire)),
                     _ => return None,
                 }
+            }
+            // The host's click: the next level (right: the previous), easy → normal → hard → easy.
+            i if (spot::LEVEL..spot::LEVEL + 8).contains(&i) => {
+                let k = (slot(i - spot::LEVEL)?.empire as usize).clamp(1, 8) - 1;
+                let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
+                let mut o = lobby.state().galaxy?;
+                o.difficulty[k] = if right { (o.difficulty[k] + 1) % 3 + 1 } else { o.difficulty[k] % 3 + 1 };
+                lobby.set_options(o);
             }
             i if (spot::OPTION..spot::OPTION + 2 * OPTIONS as u32).contains(&i) => {
                 let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
@@ -1238,6 +1255,11 @@ impl MpScreen {
             };
             let holder_c = if own || (hover == spot::HOLDER + i as u32 && matches!(s.kind, SlotKind::Open | SlotKind::Ai)) { 2 } else { 0x22 };
             text(f, &who, 176.0, y, 2, Align::Left, holder_c);
+            if let (SlotKind::Ai, Some(o)) = (s.kind, st.galaxy) {
+                // ADR 0033: the computer's level (the skirmish menu's strings 15/4/1..3).
+                let c = if !self.is_host() { 0x25 } else if hover == spot::LEVEL + i as u32 { 2 } else { 0x22 };
+                text(f, &d.texts.get(15, 4, o.difficulty[(s.empire as usize).clamp(1, 8) - 1].clamp(1, 3) as u16), LEVEL_X, y, 2, Align::Left, c);
+            }
             if ready {
                 text(f, &d.texts.get(14, 5, 6), 386.0, y, 2, Align::Right, 2);
             }
@@ -1835,6 +1857,36 @@ mod tests {
             }
             let stand_in = &worlds[0].net.as_ref().unwrap().0.peer().game;
             assert!(stand_in.state.fleets.is_empty(), "the peer holds the stand-in between pumps");
+        }
+    }
+
+    /// ADR 0033: the host clicks a computer slot's level (left: up, right: down); the joiner sees it but can't change
+    /// it, and both machines' games give that computer the level's `Nehezseg`.
+    #[test]
+    fn the_host_sets_a_computer_level() {
+        let mut net = LoopNet::default();
+        let (mut host, mut guests) = room(1, &mut net);
+        click(&mut host, spot::OPTION + 3, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().galaxy.is_some_and(|g| g.ais == 1));
+        let i = host.state().unwrap().slots.iter().position(|s| s.kind == SlotKind::Ai).expect("an AI slot") as u32;
+        let e = host.state().unwrap().slots[i as usize].empire;
+        assert!(!guests[0].boxes().iter().any(|b| b.0 == spot::LEVEL + i), "a joiner has no level button");
+        for right in [false, false, true] {
+            assert!(click(&mut host, spot::LEVEL + i, right, &mut net).is_some());
+        }
+        click(&mut guests[0], spot::READY, false, &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().members.iter().skip(1).all(|m| m.ready));
+        assert_eq!(guests[0].state().unwrap().galaxy.unwrap().difficulty[e as usize - 1], 2, "easy → normal → hard → normal");
+        let Some(Ok(inst)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let rules: &'static GameRules = Box::leak(Box::new(crate::rules::load(&inst).unwrap().0));
+        let texts = crate::new_game::StartTexts::read(&inst).unwrap();
+        let Some(Out::Start(b)) = click(&mut host, spot::READY, false, &mut net) else { panic!("no start") };
+        let hub = net.clone();
+        let mk = |b: Begun| texts.with(&inst, |data| launch(b, data, rules, 4242, Box::new(hub.clone()))).unwrap().map(|s| crate::world::World::new_mp(s, rules)).unwrap();
+        let mut worlds = vec![mk(b)];
+        worlds.extend(started(&mut guests, &mut net).into_iter().map(mk));
+        for w in &worlds {
+            assert_eq!(w.game.state.difficulties()[e as usize], 2, "empire {e}'s level on every machine");
         }
     }
 

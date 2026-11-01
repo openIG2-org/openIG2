@@ -45,8 +45,8 @@ pub struct ResearchContext {
     pub speed_mult: i32,
     /// `Nap` (1..=30).
     pub day: i32,
-    /// `Nehezseg`.
-    pub difficulty: usize,
+    /// `Nehezseg` by empire (ADR 0033: an MP computer's own level).
+    pub difficulty: [usize; EMPIRES],
     pub multiplayer: bool,
     /// `EN`.
     pub human_empire: u8,
@@ -101,8 +101,8 @@ fn labs_ok(techs: &TechTable, t: usize, labs: &[i32; 4]) -> bool {
 pub fn tick(techs: &mut TechTable, research: &mut Research, labs: &[[i32; 4]; EMPIRES], money: &mut [Treasury; EMPIRES],
     rules: &ResearchRules, ctx: &mut ResearchContext) -> Vec<ResearchEvent> {
     let mut events = Vec::new();
-    let dev = rules.difficulty_speed.get(ctx.difficulty).copied().unwrap_or(1.0);
     for e in 1..EMPIRES {
+        let dev = rules.difficulty_speed.get(ctx.difficulty[e]).copied().unwrap_or(1.0);
         let t = research.current[e];
         if t < 1 {
             money[e].reserve[3] = 0.0;
@@ -180,7 +180,7 @@ fn ai_income(rules: &ResearchRules, ctx: &ResearchContext, e: usize) -> Option<f
     if ctx.human_controlled[e] {
         return None;
     }
-    let m = rules.difficulty_money.get(ctx.difficulty).copied().unwrap_or(1.0) as f64;
+    let m = rules.difficulty_money.get(ctx.difficulty[e]).copied().unwrap_or(1.0) as f64;
     Some(if ctx.multiplayer { m * 0.5 } else { m })
 }
 

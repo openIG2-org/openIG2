@@ -75,7 +75,7 @@ impl World<'_> {
         let o = me.owner as usize;
         let t = self.totals(f as i32);
         let own = t.hp as f32 * t.attack as f32;
-        let m = if self.spy.ctx.difficulty > 2 { 0.9f32 } else { 0.7 };
+        let m = if self.spy.ctx.difficulty(o) > 2 { 0.9f32 } else { 0.7 };
         let (mut best, mut near, mut dist, mut foe) = (0.0f32, false, 0.0f32, 0);
         for g in 1..self.starmap.fleets.len() {
             let r = &self.starmap.fleets[g];
@@ -179,7 +179,7 @@ impl World<'_> {
     #[allow(clippy::needless_range_loop)]
     pub(crate) fn war_target(&self, e: usize, main_fleet: &[i32; EMPIRES]) -> usize {
         let ctx = self.ctx;
-        let diff = self.spy.ctx.difficulty;
+        let diff = self.spy.ctx.difficulty(e);
         if !ctx.may_attack[e] || self.wars(e) != 0 {
             return 0;
         }
@@ -385,7 +385,7 @@ impl AiState {
                 *x = cvtt(me.tx as f64);
             }
         }
-        let diff = w.spy.ctx.difficulty;
+        let diff = w.spy.ctx.difficulty(o);
         if diff < 4 && (9 * diff) != 0 && w.ctx.tick.wrapping_rem(9 * diff) == 0 {
             w.order_unscripted(f, order::NONE, order::POINT, 0.0, 0.0);
             return 0;
@@ -529,7 +529,7 @@ impl AiState {
         if (!w.ctx.story_no_war || mp) && w.wars(e) == 0 {
             let t = w.war_target(e, &self.main_fleet);
             if t > 0 && w.known_since[e][t] < 0 {
-                let diff = w.spy.ctx.difficulty;
+                let diff = w.spy.ctx.difficulty(e);
                 if w.r(1, 720) == 1 || w.planet_count[e] == 0 || (diff == 4 && w.human(t) && w.r(1, 720) == 1) {
                     hooks.declare_war(w, e, t);
                 }
@@ -592,7 +592,7 @@ impl AiState {
                 }
             }
             let fleet_kind = kind;
-            let g = if w.spy.ctx.difficulty > 2 { 1.2f32 } else { 1.0 };
+            let g = if w.spy.ctx.difficulty(e) > 2 { 1.2f32 } else { 1.0 };
             let (cx, cy) = (self.centre_x[e] as f32, self.centre_y[e] as f32);
             let no_planets = w.planet_count[e] == 0;
             let mut best = 1e10f32;
@@ -673,7 +673,7 @@ impl AiState {
             }
         }
         if kind > 0 {
-            let hi = if w.spy.ctx.difficulty == 1 { 50 } else { 1 };
+            let hi = if w.spy.ctx.difficulty(e) == 1 { 50 } else { 1 };
             if w.r(1, hi) != 1 {
                 kind = 0;
             }

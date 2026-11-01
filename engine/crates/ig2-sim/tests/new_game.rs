@@ -192,6 +192,7 @@ fn new_campaign_matches_the_exe() {
                     _ => i,
                 }, |r| r as u8)
             }).collect(),
+            ai_difficulty: [0; 19],
         });
         let skirmish = j["skirmish"].as_object().map(|s| NewSkirmish {
             en: int(&s["en"]),

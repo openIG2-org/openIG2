@@ -53,7 +53,7 @@ fn chance_estimate_matches_the_exe() {
             }
             spies.count[t] = r["count"].as_i64().unwrap() as i32;
             spies.roster[e][k] = Spy::from_bytes(&unhex(r["me"].as_str().unwrap()));
-            let mut ctx = SpyContext { difficulty: r["diff"].as_i64().unwrap() as i32, multiplayer: r["mp"].as_u64().unwrap() != 0, ..Default::default() };
+            let mut ctx = SpyContext { difficulty: [r["diff"].as_i64().unwrap() as i32; 19], multiplayer: r["mp"].as_u64().unwrap() != 0, ..Default::default() };
             ctx.race[e] = r["race"].as_u64().unwrap() as u8;
             ctx.human[e] = r["human"].as_u64().unwrap() == 1;
             let mut rng = Streams::default();

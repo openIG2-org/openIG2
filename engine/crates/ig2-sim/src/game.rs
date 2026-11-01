@@ -407,6 +407,8 @@ struct Globals {
     race: [u8; EMPIRES],
     alive: [bool; EMPIRES],
     difficulty: i32,
+    /// Each empire's (ADR 0033, [`SaveState::difficulties`]).
+    difficulties: [i32; EMPIRES],
     pp: usize,
     pp2: usize,
     all_techs: bool,
@@ -759,6 +761,7 @@ impl<'r> Game<'r> {
             race: self.state.races(),
             alive: self.state.alive(),
             difficulty: m.i32(va::NEHEZSEG),
+            difficulties: self.state.difficulties(),
             pp: m.i32(va::PROGRAM_PLAYERS).max(0) as usize,
             pp2: m.i32(va::PROGRAM_PLAYERS2).max(0) as usize,
             all_techs: m.i32(va::ALL_TECHS) != 0,
@@ -1009,7 +1012,7 @@ impl<'r> Game<'r> {
         if g.human.get(e).copied().unwrap_or(false) {
             return None;
         }
-        let m = self.rules.difficulty_money.get(g.difficulty.max(0) as usize).copied().unwrap_or(1.0) as f64;
+        let m = self.rules.difficulty_money.get(g.difficulties[e].max(0) as usize).copied().unwrap_or(1.0) as f64;
         Some(if g.multiplayer { m * 0.5 } else { m })
     }
 
@@ -1075,7 +1078,7 @@ impl<'r> Game<'r> {
         ResearchContext {
             speed_mult: g.speed,
             day: g.day,
-            difficulty: g.difficulty.max(0) as usize,
+            difficulty: g.difficulties.map(|d| d.max(0) as usize),
             multiplayer: g.multiplayer,
             human_empire: g.en as u8,
             human_controlled: g.human,
@@ -1176,7 +1179,7 @@ impl<'r> Game<'r> {
             ai_off: m.i32(va::AI_OFF) != 0,
             story_quiet: adat_i32(&a, 0xb0) != 0,
             spare_human: std::array::from_fn(|e| adat_i32(&a, 0xd0 + 4 * e) != 0),
-            difficulty: g.difficulty,
+            difficulty: g.difficulties,
             tutorial: g.tutorial,
             forced_answer: m.i32(va::FORCED_ANSWER),
             main_fleet: m.i32s(va::AI_MAIN_FLEET),
@@ -1227,7 +1230,7 @@ impl<'r> Game<'r> {
             human_empire: g.en,
             program_players: g.pp as i32,
             multiplayer: g.multiplayer,
-            difficulty: g.difficulty,
+            difficulty: g.difficulties,
             debug: m.u8(va::DEBUGX) != 0,
             tutorial: g.tutorial,
             no_recruits: m.u8(va::TUTORIAL_NO_RECRUITS) != 0,
@@ -1995,15 +1998,15 @@ impl<'r> Game<'r> {
     }
 
     fn production_context(&self, g: &Globals, speed: i32) -> ProductionContext {
-        let d = g.difficulty.max(0) as usize;
+        let d = g.difficulties.map(|d| d.max(0) as usize);
         let name = self.fleet_name();
         ProductionContext {
             speed_mult: speed,
             day: g.day,
             multiplayer: g.multiplayer,
             human_controlled: g.human,
-            difficulty_production: self.rules.difficulty_production.get(d).copied().unwrap_or(1.0),
-            difficulty_money: self.rules.difficulty_money.get(d).copied().unwrap_or(1.0),
+            difficulty_production: d.map(|d| self.rules.difficulty_production.get(d).copied().unwrap_or(1.0)),
+            difficulty_money: d.map(|d| self.rules.difficulty_money.get(d).copied().unwrap_or(1.0)),
             default_fleet_name: name.clone(),
             numbered_fleet_name: name,
         }

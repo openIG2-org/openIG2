@@ -315,8 +315,8 @@ pub struct SpyContext {
     /// `ProgramPlayers`.
     pub program_players: i32,
     pub multiplayer: bool,
-    /// `Nehezseg`.
-    pub difficulty: i32,
+    /// `Nehezseg` by empire (ADR 0033: an MP computer's own level; [`SpyContext::difficulty`]).
+    pub difficulty: [i32; EMPIRES],
     /// `DEBUGX`.
     pub debug: bool,
     /// Tutorial active or paused.
@@ -335,6 +335,10 @@ pub struct SpyContext {
 }
 
 impl SpyContext {
+    /// Empire `e`'s `Nehezseg` (past the table: the game's, index 0).
+    pub fn difficulty(&self, e: usize) -> i32 {
+        self.difficulty.get(e).copied().unwrap_or(self.difficulty[0])
+    }
     fn forced(&self, v: i32) -> bool {
         !self.multiplayer && self.forced == v
     }
@@ -825,7 +829,7 @@ impl Spies {
         if w.ctx.race(e) == 3 {
             att = (att as f64 * 1.5) as i32;
         }
-        if w.ctx.difficulty == 1 && !w.ctx.multiplayer && w.ctx.human(e) {
+        if w.ctx.difficulty(e) == 1 && !w.ctx.multiplayer && w.ctx.human(e) {
             att = (att as f64 * 1.5) as i32;
         }
         if def <= att || w.ctx.tutorial {
@@ -1359,7 +1363,7 @@ impl Spies {
         if w.r(1, 20) == 1 {
             rank += 2;
         }
-        if self.count[e] < 2 && !w.ctx.multiplayer && w.ctx.difficulty == 1 && w.ctx.human(e) {
+        if self.count[e] < 2 && !w.ctx.multiplayer && w.ctx.difficulty(e) == 1 && w.ctx.human(e) {
             rank += 2;
         }
         let rank = rank.min(20);
@@ -1432,7 +1436,7 @@ impl Spies {
             if ctx.race(e) == 3 {
                 a = (a as f64 * 1.5) as i32;
             }
-            if ctx.difficulty == 1 && !ctx.multiplayer && ctx.human(e) {
+            if ctx.difficulty(e) == 1 && !ctx.multiplayer && ctx.human(e) {
                 a = (a as f64 * 1.5) as i32;
             }
             if d <= a {
@@ -1501,7 +1505,7 @@ pub fn mission_chance(rule: &MissionRule, infiltration: u8, m: usize, ctx: &SpyC
 /// The success chance in percent (spec §5.1, f32).
 pub fn chance(rule: &MissionRule, infiltration: u8, m: usize, ctx: &SpyContext, e: usize) -> i32 {
     let mut mult: f32 = if ctx.race(e) == 3 { 2.0 } else { 1.0 };
-    if ctx.difficulty == 1 && !ctx.multiplayer && ctx.human(e) {
+    if ctx.difficulty(e) == 1 && !ctx.multiplayer && ctx.human(e) {
         mult *= 2.0;
     }
     let (floor, full, max) = (rule.skill_floor as i32, rule.skill_full as i32, rule.chance as i32);

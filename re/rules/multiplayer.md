@@ -354,6 +354,15 @@ protocol 7), the machine whose own empire dies plays the defeat videos and retur
   `a_newcomer_watches_a_running_game`; `ig2-client` `mp_lobby.rs` `a_defeated_joiner_watches_without_orders`,
   `a_newcomer_joins_the_running_game_to_watch`.
 
+### 7.1.4 Computer levels (ours, ADR 0033, enhanced; row 443)
+
+The original forces `Nehezseg` 1 for the whole MP game (`InitNewGame(seed, 2, 0, 1)`, `re/screens/start.md` §1). The
+room's host sets each computer slot's level (`GalaxyOptions::difficulty`, easy 1 by default, normal 2, hard 3 =
+`Nehezseg` 4; lobby protocol 8). The start gives each computer empire that `Nehezseg` as its own
+(`SaveState::ai_difficulty`; snapshot version 9, older saves have none), and the AI's readers of `Nehezseg` (income,
+research and production multipliers, fleet, spy and diplomacy decisions, the start's known-since) ask the empire they
+work for (`SaveState::difficulties`). The global stays 1; humans and the story keep it.
+
 ### 7.2 The session layer (ours, ADR 0011 §4–§6; `ig2_net::session`)
 
 No UI; the lobby screens sit on top. Time is the caller's (`now`, any monotonic origin), so the policy is

@@ -184,7 +184,7 @@ fn context(s: &Regions, g: &Value) -> DiplomacyContext {
         ai_off: gi("aioff") != 0,
         story_quiet: gi("quiet") != 0,
         spare_human: std::array::from_fn(|e| i32_at(&s["spare"], 4 * e) != 0),
-        difficulty: gi("diff") as i32,
+        difficulty: [gi("diff") as i32; 19],
         tutorial: gi("tut") != 0,
         forced_answer: gi("forced") as i32,
         main_fleet: i32s(&s["mifo"]),
@@ -328,7 +328,7 @@ fn colony_world(s: &Regions, g: &Value) -> ColonyWorld {
         needed_morale: per("moral"),
         last_near_fleet: per("utolso"),
         all_techs: g["alltechs"].as_i64().unwrap_or(0) != 0,
-        difficulty: g["diff"].as_i64().unwrap_or(0).max(0) as usize,
+        difficulty: [g["diff"].as_i64().unwrap_or(0).max(0) as usize; 19],
         ..Default::default()
     };
     for e in 0..EMPIRES {

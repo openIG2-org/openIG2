@@ -33,11 +33,14 @@ pub struct GalaxyOptions {
     pub formation: bool,
     /// Ours (ADR 0026, enhanced; off = the original): a player whose empire dies stays and watches (`Game::spectators`).
     pub spectators: bool,
+    /// Ours (ADR 0033, enhanced): the computer's level in each slot (empires 1..=8), the skirmish menu's 1 easy,
+    /// 2 normal, 3 hard ([`nehezseg`]); all 1 = the original (`InitNewGame(seed, 2, 0, 1)`). Read for AI slots only.
+    pub difficulty: [u8; 8],
 }
 
 impl Default for GalaxyOptions {
     fn default() -> Self {
-        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false, spectators: false }
+        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false, spectators: false, difficulty: [1; 8] }
     }
 }
 
@@ -52,8 +55,14 @@ impl GalaxyOptions {
             host_time: self.host_time,
             formation: self.formation,
             spectators: self.spectators,
+            difficulty: self.difficulty.map(|d| d.clamp(1, 3)),
         }
     }
+}
+
+/// A room level's `Nehezseg` (the skirmish menu's mapping, `SetScirmishGameOptions` exe 0x503e80: 3, hard, is 4).
+pub fn nehezseg(level: u8) -> i32 {
+    if level >= 3 { 4 } else { level.max(1) as i32 }
 }
 
 /// The start of a generated galaxy as every member gets it (message 3's seed with message 2's room, ours with the
@@ -109,6 +118,7 @@ impl GalaxyStart {
             battle_status: self.options.battle_status as i32,
             server_time: self.options.host_time as i32,
             races,
+            ai_difficulty: std::array::from_fn(|e| if (1..=8).contains(&e) { nehezseg(self.options.difficulty[e - 1]) } else { 0 }),
         };
         let mut game = Game::before_start(data, rules);
         game.start_mp_galaxy(&cfg, data);
@@ -169,7 +179,8 @@ mod tests {
 
     #[test]
     fn options_are_clamped() {
-        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true, spectators: true }.clamped();
-        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true, spectators: true });
+        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true, spectators: true, difficulty: [0, 1, 2, 3, 4, 9, 1, 1] }.clamped();
+        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true, spectators: true, difficulty: [1, 1, 2, 3, 3, 3, 1, 1] });
+        assert_eq!([1, 2, 3].map(nehezseg), [1, 2, 4]);
     }
 }

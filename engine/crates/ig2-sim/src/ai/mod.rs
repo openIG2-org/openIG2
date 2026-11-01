@@ -856,7 +856,7 @@ pub fn spy_missions(w: &mut World, e: usize) {
             if s.xp < 2000 && ((sel[k] && k == best) || (!sel[k] && !busy)) {
                 m = 1;
             }
-            if k == best && w.r(1, 500 - 200 * w.spy.ctx.difficulty) <= 1 && w.spy.colony.money[e].pools[4] >= 0.0 {
+            if k == best && w.r(1, 500 - 200 * w.spy.ctx.difficulty(e)) <= 1 && w.spy.colony.money[e].pools[4] >= 0.0 {
                 let mut pick = None;
                 w.spy.rng.choice_begin();
                 for t in 1..=w.spy.ctx.program_players.max(0) as usize {
@@ -1053,7 +1053,7 @@ mod tests {
     }
 
     fn fixture() -> Fixture {
-        let mut sctx = SpyContext { program_players: 8, difficulty: 2, ..Default::default() };
+        let mut sctx = SpyContext { program_players: 8, difficulty: [2; EMPIRES], ..Default::default() };
         for e in 1..=4 {
             sctx.alive[e] = true;
             sctx.race[e] = e as u8;
@@ -1310,7 +1310,7 @@ mod tests {
         fx.colony.knows[2][3] = 1;
         fx.colony.planets[1] = planet(3, 1.0, 100, 0);
         fx.rel[2][3].level = 1;
-        fx.sctx.difficulty = 3; // rndlog(10, 1, −100) = 1: the best spy always looks for a mission
+        fx.sctx.difficulty = [3; EMPIRES]; // rndlog(10, 1, −100) = 1: the best spy always looks for a mission
         fx.colony.money[2].pools[4] = 5000.0;
         run(&mut fx, |w| spy_missions(w, 2));
         let s = fx.spies.roster[2][1];

@@ -497,8 +497,8 @@ pub struct DiplomacyContext {
     pub story_quiet: bool,
     /// `StoryAdat+0xd0 + 4e != 0`: `e` must not pick the human as a target.
     pub spare_human: [bool; EMPIRES],
-    /// `Nehezseg`.
-    pub difficulty: i32,
+    /// `Nehezseg` by empire (ADR 0033: an MP computer's own level; [`DiplomacyContext::difficulty`]).
+    pub difficulty: [i32; EMPIRES],
     /// Tutorial active or paused.
     pub tutorial: bool,
     /// exe 0xB7724C: 0 = the AI decides, 1 = always no, other = always yes.
@@ -516,6 +516,11 @@ pub struct DiplomacyContext {
 }
 
 impl DiplomacyContext {
+    /// Empire `e`'s `Nehezseg` (past the table: the game's, index 0).
+    pub fn difficulty(&self, e: usize) -> i32 {
+        self.difficulty.get(e).copied().unwrap_or(self.difficulty[0])
+    }
+
     /// `CsaladtagElrabolvaKi[e]` (indices past 8 read the next array, as in the original).
     pub fn kidnapped(&self, e: usize) -> i32 {
         self.kidnap.get(e).copied().unwrap_or(0)
@@ -901,7 +906,7 @@ impl Diplomacy {
         if !ctx.may_attack[e] || self.wars(ctx, e) != 0 {
             return 0;
         }
-        let g = if ctx.difficulty > 2 { 1.2f32 } else { 1.0 };
+        let g = if ctx.difficulty(e) > 2 { 1.2f32 } else { 1.0 };
         let fleet = |slot: i32| w.starmap.fleets.get(slot.max(0) as usize).map_or((0, 0), |f| (f.strength, f.ground_strength));
         let mine = fleet(ctx.main_fleet[e]);
         let (mut best, mut pick) = (1e8f32, 0);
@@ -912,7 +917,7 @@ impl Diplomacy {
                 || !ctx.may_attack[c]
                 || w.starmap.met[e][c] == 0
                 || !(ctx.multiplayer || c != ctx.human_empire || !ctx.spare_human[e])
-                || !(ctx.difficulty > 1 || !human || self.wars(ctx, c) == 0)
+                || !(ctx.difficulty(e) > 1 || !human || self.wars(ctx, c) == 0)
             {
                 continue;
             }
@@ -925,7 +930,7 @@ impl Diplomacy {
                 _ => 0,
             };
             if human && self.wars(ctx, c) > 0 {
-                score += (3 - ctx.difficulty) * 500;
+                score += (3 - ctx.difficulty(e)) * 500;
             }
             let reach = w.planets.iter().skip(1).any(|p| {
                 p.owner as usize == c
@@ -1106,7 +1111,7 @@ impl Diplomacy {
                 _ => {}
             }
             if Self::rnd(w, 100) < 51
-                && (lvl(self) == level::NEUTRAL || w.ctx.difficulty > 2)
+                && (lvl(self) == level::NEUTRAL || w.ctx.difficulty(a) > 2)
                 && self.target(w, a) == b
                 && self.known_since[a][b] < 0
             {
@@ -1427,7 +1432,7 @@ impl Diplomacy {
                 {
                     t = 0;
                 }
-                if w.ctx.difficulty == 4 || q.v[FAVOUR] < 4500 {
+                if w.ctx.difficulty(b) == 4 || q.v[FAVOUR] < 4500 {
                     return false;
                 }
                 match msg.sub {
@@ -2207,7 +2212,7 @@ mod tests {
         assert_eq!(d.relations[1][2].v[field::FAVOUR], 5000 + 300 + 500);
         assert_eq!(d.relations[2][1].v[field::RESPECT], 3000);
         // On the hardest difficulty the AI never pays.
-        w.ctx.difficulty = 4;
+        w.ctx.difficulty = [4; EMPIRES];
         w.events.clear();
         d.receive_message(&mut w, &mut ledger, Letter { from: 1, to: 2, declaration: false, msg });
         assert!(w.events.contains(&DiploEvent::Message { from: 1, to: 2, msg, accepted: Some(false) }));

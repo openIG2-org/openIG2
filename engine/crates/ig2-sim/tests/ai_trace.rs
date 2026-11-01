@@ -278,7 +278,7 @@ fn colony_world(s: &Regions, g: &Value) -> ColonyWorld {
         planets,
         occupied: per("hanyep"),
         all_techs: g["alltechs"].as_i64().unwrap_or(0) != 0,
-        difficulty: g["diff"].as_i64().unwrap_or(0).max(0) as usize,
+        difficulty: [g["diff"].as_i64().unwrap_or(0).max(0) as usize; 19],
         ..Default::default()
     };
     w.strength.ground = per("foldi");
@@ -436,7 +436,7 @@ fn decode(s: &Regions, g: &Value) -> Decoded {
         human_empire: gi("en") as usize,
         program_players: gi("pp") as i32,
         multiplayer: gi("mp") != 0,
-        difficulty: gi("diff") as i32,
+        difficulty: [gi("diff") as i32; 19],
         day: gi("nap") as i32,
         ..Default::default()
     };

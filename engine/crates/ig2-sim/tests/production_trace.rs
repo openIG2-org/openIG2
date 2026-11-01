@@ -127,7 +127,7 @@ fn research_context(g: &Value, s: &Regions) -> ResearchContext {
     ResearchContext {
         speed_mult: n("speed"),
         day: n("nap"),
-        difficulty: n("diff") as usize,
+        difficulty: [n("diff") as usize; 19],
         multiplayer: n("mp") != 0,
         human_empire: n("en") as u8,
         human_controlled: std::array::from_fn(|e| s["ki"][e] == 1),
@@ -324,8 +324,8 @@ fn replay_production(path: &std::path::Path, r: &ig2_rules::Rules) {
             day: n("nap"),
             multiplayer: n("mp") != 0,
             human_controlled: std::array::from_fn(|e| state["ki"][e] == 1),
-            difficulty_production: r.difficulty_production_mult[diff],
-            difficulty_money: r.difficulty_money_mult[diff],
+            difficulty_production: [r.difficulty_production_mult[diff]; 19],
+            difficulty_money: [r.difficulty_money_mult[diff]; 19],
             default_fleet_name: name.clone(),
             numbered_fleet_name: name,
         };

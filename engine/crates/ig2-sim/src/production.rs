@@ -181,10 +181,10 @@ pub struct ProductionContext {
     pub multiplayer: bool,
     /// `PlayerKi[e] == 1`.
     pub human_controlled: [bool; EMPIRES],
-    /// `NehezsegGyartasSzorzo[Nehezseg]`: AI production speed.
-    pub difficulty_production: f32,
-    /// `NehezsegPenzSzorzo[Nehezseg]`: AI income (`MoneyHozzaad`).
-    pub difficulty_money: f32,
+    /// `NehezsegGyartasSzorzo[Nehezseg]` by empire (ADR 0033: an MP computer's own level): AI production speed.
+    pub difficulty_production: [f32; EMPIRES],
+    /// `NehezsegPenzSzorzo[Nehezseg]` by empire: AI income (`MoneyHozzaad`).
+    pub difficulty_money: [f32; EMPIRES],
     /// `AlapFlottaNev`: the default fleet name new units' fleets get.
     pub default_fleet_name: Vec<u8>,
     /// String 17/5: a fleet created under this name is numbered (normally equal to the above).
@@ -219,7 +219,7 @@ fn ai_income(ctx: &ProductionContext, e: usize) -> Option<f64> {
     if ctx.human_controlled[e] {
         return None;
     }
-    let m = ctx.difficulty_money as f64;
+    let m = ctx.difficulty_money[e] as f64;
     Some(if ctx.multiplayer { m * 0.5 } else { m })
 }
 
@@ -248,7 +248,7 @@ impl Shipyard {
                 let ai = !ctx.human_controlled.get(o).copied().unwrap_or(false);
                 let mut s = rate.wrapping_mul(ctx.speed_mult) as f64 * 0.03;
                 if ai {
-                    s *= ctx.difficulty_production as f64;
+                    s *= ctx.difficulty_production.get(o).copied().unwrap_or(1.0) as f64;
                 }
                 if ctx.multiplayer && ai {
                     s *= 0.5;

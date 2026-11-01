@@ -35,6 +35,8 @@ row: with it on, each human side with six or more ships picks a formation before
 Its "Defeated players" row (off: leave, as in the original; on: stay and watch) lets a player whose empire falls
 return to the starmap, see the whole map and chat, without giving orders, until they leave. With it on, others can
 also join the running game with Join under a new name to watch it.
+Each computer slot shows its level after "Computer": easy (the default, as in the original), normal or hard. The
+host clicks it to raise the level and right-clicks to lower it; the computer empire then plays at that difficulty.
 
 | Flag | |
 |---|---|

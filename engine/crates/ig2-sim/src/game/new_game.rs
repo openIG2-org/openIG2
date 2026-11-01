@@ -82,6 +82,9 @@ pub struct NewMpGalaxy {
     /// `PlayerFaj` of empires 1..=18 (index 0 unused); empty: `Start_Init`'s (exe 0x5bfbf0) defaults, each empire
     /// its own race, 15..=18 races 1, 3, 1, 1.
     pub races: Vec<u8>,
+    /// Ours (ADR 0033, the room's per-computer level): each computer empire's `Nehezseg` (0: the game's, 1).
+    /// A human's entry is ignored.
+    pub ai_difficulty: [i32; EMPIRES],
 }
 
 /// A skirmish (the skirmish menu's `SetScirmishGameOptions`, exe 0x503e80 → `InitNewGame(ticks, 3, 0, Nehezseg)`).
@@ -291,6 +294,7 @@ impl<'r> Game<'r> {
             m.set_u8(va::PLAYER_KI + i as u32, if cfg.humans.contains(&i) { 1 } else { 2 });
             m.set_u8(va::EMPIRE_ALIVE + i as u32, (i <= 8 && cfg.alive.contains(&i)) as u8);
         }
+        self.state.ai_difficulty = std::array::from_fn(|e| if cfg.humans.contains(&(e as i32)) { 0 } else { cfg.ai_difficulty[e] });
         let init = Init { mode: 2, campaign: 0, difficulty: 1, seed: cfg.seed, ticks: cfg.ticks };
         self.init_new_game(&init, None, data, data.image);
         self.state.rebuild_template();
@@ -438,6 +442,7 @@ impl<'r> Game<'r> {
     fn init_new_game(&mut self, cfg: &Init, camp: Option<&NewCampaign>, data: &StartData, image: &dyn Fn(u32, usize) -> Vec<u8>) {
         let mode = cfg.mode;
         let ct = if mode != 0 { 0 } else if (1..=3).contains(&cfg.campaign) { cfg.campaign } else { 1 };
+        let own = self.state.ai_difficulty;
         let m = self.m();
         // 0: the scenario's leftovers.
         m.set_u8(0xBAD0E8, 0);
@@ -550,9 +555,11 @@ impl<'r> Game<'r> {
             if mode == 3 && !human(m, e) && e > 8 {
                 m.set_u8(va::EMPIRE_ALIVE + e as u32, 0);
             }
+            // ADR 0033: a computer with its own level knows the others as at that level.
+            let d = if own[e] > 0 { own[e] } else { difficulty };
             for k in 1..EMPIRES {
                 m.set_u8(va::EMPIRE_KNOWS + (19 * e + k) as u32, 0);
-                let since = if human(m, k) || difficulty != 4 { KNOWN[difficulty as usize] } else { 600 };
+                let since = if human(m, k) || d != 4 { KNOWN[d as usize] } else { 600 };
                 m.set_i32(va::EMPIRE_KNOWN_SINCE + (0x4c * e + 4 * k) as u32, since);
             }
             m.set_u8(va::EMPIRE_KNOWS + (19 * e + e) as u32, 1);

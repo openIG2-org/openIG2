@@ -279,7 +279,7 @@ fn spy_matches_every_traced_call() {
                 human_empire: gi("en") as usize,
                 program_players: gi("pp") as i32,
                 multiplayer: gi("mp") != 0,
-                difficulty: gi("diff") as i32,
+                difficulty: [gi("diff") as i32; 19],
                 debug: gi("debug") != 0,
                 tutorial: gi("tut") != 0,
                 no_recruits: gi("norecruit") != 0,
@@ -523,7 +523,7 @@ fn colony_world(s: &Regions, g: &Value) -> ColonyWorld {
         needed_morale: per("moral"),
         last_near_fleet: per("utolso"),
         all_techs: g["alltechs"].as_i64().unwrap_or(0) != 0,
-        difficulty: g["diff"].as_i64().unwrap_or(0).max(0) as usize,
+        difficulty: [g["diff"].as_i64().unwrap_or(0).max(0) as usize; 19],
         ..Default::default()
     };
     for e in 0..EMPIRES {

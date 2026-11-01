@@ -437,8 +437,8 @@ pub struct ColonyWorld {
     pub knows: [[u8; EMPIRES]; EMPIRES],
     /// The "all techs" switch (exe 0xB77254).
     pub all_techs: bool,
-    /// `Nehezseg`: index into `NehezsegPenzSzorzo`.
-    pub difficulty: usize,
+    /// `Nehezseg` by empire (ADR 0033: an MP computer's own level): index into `NehezsegPenzSzorzo`.
+    pub difficulty: [usize; EMPIRES],
     /// `AutoBuildMitEpit[c]`: the last category → building pick (a persistent global).
     pub autobuild_pick: [i32; CATEGORIES],
     /// How a pick of building 0 resolves (undefined in the original).
@@ -506,7 +506,7 @@ impl ColonyWorld {
         if ctx.human_controlled[e] {
             return None;
         }
-        let m = rules.difficulty_money.get(self.difficulty).copied().unwrap_or(1.0) as f64;
+        let m = rules.difficulty_money.get(self.difficulty[e]).copied().unwrap_or(1.0) as f64;
         Some(if ctx.multiplayer { m * 0.5 } else { m })
     }
 
