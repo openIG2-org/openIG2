@@ -58,13 +58,13 @@ Accepted on 2026-11-01; each gets an ADR when it is built, then moves to "Shippe
 | 457 | all screens, 2D pictures and text | "Sharp UI" (`SharpUi`, Remake row; `--sharp-ui`) samples the 2D pictures, the font and the pointer sharp bilinear: each texel a flat square, only its border pixel blended, so the UI scaled to a 1440p or 4K window stays crisp; the exe samples them bilinearly (`GL_LINEAR`, soft when magnified, 2.25× at 4K); off (the default) = the exe (ADR 0043) | yes | hud.md §1.1 |
 | 5 | campaign story 834 | empire 1's siege fleets start at planet 8340, not at planet −1's (0, 0) (enhanced ruleset only; classic stays bit-exact) | minor | campaign/elem.md §8.14 |
 | 146 | game end, high scores | a working high-score entry after a won scenario (dead code in the exe; score = Ido − scenario_kezdesi_ido [guess]) | minor | game-end.md §6 |
-| 169 | starmap, wheel | wheel zoom (and right-drag pan) on the starmap; classic has neither | minor | starmap.md |
 | 322 | title video | music only with the intro, not over the logos (ours matches the exe today) | minor | video.md §4 |
 
 ## Shipped
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 169 | starmap, mouse camera | the wheel zooms like numpad + / − and a right drag pans the map (the order of an unmoved right click goes out on its release); the exe has neither and gives the right press's order at once; `StarmapMouseCamera` on (default), off = the exe (ADR 0049) | minor | starmap.md §10.3 |
 | 460 | all screens, text | "Sharp text" (`SharpText`, Remake row; `--sharp-text`) draws a magnified glyph's coverage as a distance field: Catmull-Rom inside its cell, the 0.5 edge kept and the ramp one screen pixel wide, so text stays crisp with smooth curves at 1440p and 4K; same quads, advances and atlas cells; minified or 1:1 (800x600) the exe's bilinear path unchanged; off (the default) = the exe (ADR 0046) | yes | messages.md §1 |
 | 451 | research, auto research | three per-empire switches (ships, buildings, tanks) on the research screen, left of the ball under the list panel, with tooltips; an idle research slot starts the next tech by the computer empires' race priority, inside the sim tick (a lockstep order in multiplayer, saved in our saves); the original has no such switches; all off (the default) = the original (ADR 0037) | yes | production-research.md §2.5, research.md §5.8 |
 | 133 | colony camera | ours zooms with the mouse wheel; the original has no wheel zoom (classic: none) | minor | colony.md §11.9 |

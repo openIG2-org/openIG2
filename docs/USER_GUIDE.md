@@ -79,7 +79,8 @@ The controls are the original's. The most used:
 |---|---|
 | Space, 1/2/3 | Pause, game speed |
 | F1 | Help |
-| Mouse wheel | Zoom |
+| Mouse wheel | Zoom (on the starmap: Remake row "Starmap mouse camera") |
+| Starmap: right drag | Move the map (Remake row "Starmap mouse camera") |
 | Starmap: left press | Select; hold for the radial icons, release over one to use it |
 | Starmap: left click on a planet's info box | The planet's long info (tax, auto-build, priority, station sale) |
 | Starmap: Shift + right click | Waypoint chains |
@@ -140,6 +141,7 @@ at once and are saved in `ig2-rework-options.dat`. The Options screen also opens
 | Colour-blind colours (`ColourBlindColours`) | Off by default: empires 1–8 get colours that stay apart with red-green or blue-yellow colour blindness, in names, the minimap, the info screen, the top bar and the fleet icons (ADR 0036) |
 | Sharp UI (`SharpUi`) | Off by default: the panels, text and pointer are drawn with crisp texel edges instead of the original's smooth scaling, for big windows (1440p, 4K) where the 640×480 layout is scaled several times (ADR 0043); the UI's size follows the window either way |
 | Sharp text (`SharpText`) | Off by default: on big windows (1440p, 4K) the game's own font is drawn with sharp, smooth edges instead of the original's blur, every letter in the same place and size (ADR 0046); combines with Sharp UI; at 800x600 nothing changes |
+| Starmap mouse camera (`StarmapMouseCamera`) | On by default: the wheel zooms the starmap and a right drag moves it; an unmoved right click gives its order on the release (ADR 0049); off = the original: no wheel, the right press orders at once |
 
 The window opens at 1600x900 until a size is saved.
 

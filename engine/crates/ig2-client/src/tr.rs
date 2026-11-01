@@ -34,6 +34,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Colour-blind colours", "Színtévesztő színek"),
     ("Sharp UI", "Éles felület"),
     ("Sharp text", "Éles szöveg"),
+    ("Starmap mouse camera", "Egérkamera a térképen"),
     ("Window", "Ablak"),
     ("Borderless", "Keretlen"),
     ("Fullscreen", "Teljes kép"),

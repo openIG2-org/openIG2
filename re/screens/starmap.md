@@ -409,6 +409,10 @@ off the starmap). A panel spares only its owner's fleets.
   `0x15(fleet, mode, kind, (f32)target, 0)`, or for no pick (or Shift) a point: `get_pos` (the galaxy point under
   the cursor, `SikMetszespont` on h = 0) pulled within 600 of the centre, mode 13 (append a waypoint) with Shift,
   14 (patrol) when the click is on the fleet itself (`Tavolsag < max(225, (Zoom/20)²)/4`).
+- Ours (ADR 0049, `StarmapMouseCamera`, on by default; off = the above): the wheel zooms one zoom-key step per notch
+  (§10.6's gate); a right press on the map grabs the galaxy point under the pointer, a move past 4 pixels with
+  only the right button held drags the pivot so it stays there (±300 square), and the order goes out on an unmoved
+  release at the press's point instead of on the press. The exe reads no wheel and never drags with the right button.
 - Minimap (hot-spot 7, `STAR_M.RAW` colour 0xd, §10.6): on the press and every frame while held (`Mouse_Megfogva`,
   not on the release frame) the view's target pivot `XStart = −((x − 274)/92 − 0.5)·600`, `YStart = −((y − 388)/65 −
   0.5)·600` (±299.9), tweened over 4 frames (`TargetFrame` 4, zoom/rotate/pitch kept): a drag; `PlaySoundGlobal(0)` on
