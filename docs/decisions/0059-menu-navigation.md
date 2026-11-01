@@ -13,10 +13,15 @@ Menus idea asks for clearer navigation, fewer clicks to a game and a back path e
 ## Decision
 1. **An option**, "Menu navigation" (`MenuNavigation`): Classic (0, the default) keeps the exe's flow and the
    remake's labels exactly; Enhanced (1) turns on 2–4. Apply changes it at once on the main menu.
-2. **One grouped panel** at the left of the main ring set at rest replaces the four labels: *Play* (Continue,
-   Quick game, New game, Load, Multiplayer), *Extras* (History, Replays), Settings, Quit. New game, Load and
-   Multiplayer do what their rings do; the rings stay. The panel is drawn with the UI theme (ADR 0056) when one is
-   chosen, else in the Settings label's look, so Classic theme + Enhanced navigation still looks like the game.
+2. **One panel in place of the rings**, at the left, replaces the rings and the four labels: on the main set
+   *Play* (Continue, Quick game, New game, Load, Multiplayer, Tutorial), *Extras* (History, Replays, Credits),
+   Settings, Quit; on a sub-set its rings' entries (New game: Campaign, Scenarios; Multiplayer: Local network,
+   Internet; Tutorial: Parts 1-5) and over a confirmed race the difficulty rings' (Easy, Normal, Hard). Every entry
+   does what its ring does. The rings, their labels and hot-spots are gone (amended 2026-11-01: two menus on top of
+   each other read as two main menus); the background (galaxy, meteors, ships, camera) stays, a set changes at once
+   instead of flying out and in, and the panel takes presses once the scene is half faded in (as the rings once in
+   place). The panel is drawn with the UI theme (ADR 0056) when one is chosen, else in the Settings label's look, so
+   Classic theme + Enhanced navigation still looks like the game.
 3. **Continue** loads the newest save of the slot folder (slots, autosaves, the quick save) by its file time that reads, one
    click from the menu to the game; disabled when there is none.
 4. **Back everywhere**: Esc and the right button on empty space step back one screen on every menu screen; a

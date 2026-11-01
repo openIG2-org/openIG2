@@ -57,9 +57,10 @@ In the room every empire is a card: its colour, the race's picture, the holder a
 For a quick game, click "Quick game" at the bottom right of the main menu: the skirmish settings open on their own
 (race, computer players, difficulty, planets, technology, money, population), set to your last skirmish's choices;
 Start begins a generated galaxy. The full single-player path is still there.
-With "Menu navigation: Enhanced" (Options, Interface) the main menu shows one panel at the left instead: Continue
-(loads your newest save, autosave or quick save), Quick game, New game, Load, Multiplayer, History, Replays, Settings
-and Quit. On every menu screen Esc or a right click on empty space goes one step back, and a Back label at the bottom
+With "Menu navigation: Enhanced" (Options, Interface) the main menu shows one panel at the left instead of the
+rotating rings: Continue (loads your newest save, autosave or quick save), Quick game, New game, Load, Multiplayer,
+Tutorial, History, Replays, Credits, Settings and Quit. New game, Multiplayer, Tutorial and the difficulty choice
+after picking a race show their choices in the same panel. On every menu screen Esc or a right click on empty space goes one step back, and a Back label at the bottom
 left shows where a screen has no back button of its own.
 Hosting asks your router to forward the game port (UPnP / NAT-PMP); the room shows whether it worked, and a
 click on that line switches it off. A generated galaxy's room also has an off-by-default "Space battle formations"

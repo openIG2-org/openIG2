@@ -666,13 +666,25 @@ Clicks to a game from the main set: campaign 4 (Single, Campaign, race twice, a 
 Scenario, Start) plus a row, a skirmish 3 plus its settings, Quick game 2, a saved game 3 (Load, a slot, Load).
 
 ### 15.2 Enhanced (`MenuNavigation` 1)
-- **Main menu panel** while the main set is at rest (`MainScr::at_rest`): in place of the separate Settings /
-  Quick game / History / Replays labels, one grouped panel at the left (`menu_flow::PANEL`, clear of the rings,
-  whose boxes start at x 120): *Play*: Continue, Quick game, New game (= the Single ring), Load (= the Load ring),
-  Multiplayer (= the Multiplayer ring with its name entry); *Extras*: History (only with `GameStatistics`),
-  Replays; then Settings, Quit. The rings stay and work as before (Credits and Tutorial are only rings).
-  Drawn in the chosen UI theme's panel, buttons and colours (ADR 0056) when a theme is chosen, else in the Settings
-  label's look (the button font, colour 1, colour 2 under the pointer, faded in with the scene).
+- **The panel replaces the rings** (`MainScr::panel`, `menu_flow::Panel`): the rings, their labels and hot-spots
+  are neither drawn nor hit-tested (`rings_live` is off); the background (§5: galaxy, meteors, ships, camera) stays.
+  One panel at the left (`menu_flow::PANEL`, x 4, from y 110, 22 px lines) stands for the ring set at rest, every
+  entry doing what its ring does (`MainScr::act_item`), with either button as a box ring:
+
+  | Set | Panel entries (ring) |
+  |---|---|
+  | main | *Play*: Continue (ours), Quick game (ours), New game (Single, direct 4), Load game (box 2), Multiplayer (direct 3, the name entry first), Tutorial (box 5); *Extras*: History (ours, only with `GameStatistics`), Replays (ours), Game credits (direct 0); Settings (ours); Quit (box 1) |
+  | single | *New game*: Campaign (box 0), Scenarios (box 1); Back label (the Back ring) |
+  | multi (after the name entry) | *Multiplayer*: Local network (box 0), Internet (box 1); Back label |
+  | tutorial | *Tutorial*: Part 1..5 (direct 0..4); Back label |
+  | race confirmed (difficulty rings, `Tav <= 1.333`) | *Difficulty*: Easy (ring 0), Normal (ring 2), Hard (ring 1), as `press_level`; Back label |
+
+  A set changes at once (`fly_to` puts `Tav` and `Cel` at 1; with `Cel` 1 the hidden rings don't fly in). The
+  panel shows while `Cel == Tav == 1` and the scene is half faded in (`GT >= 0.5`: UI tick 166 after entering, the
+  rings rest at 180), never under the scenario list, the name or high-score entry, our MP screens, the disconnected
+  box, Options, History or Replays, nor once a start is under way. `O` opens Settings only on the main set's
+  panel. Drawn in the chosen UI theme's panel, buttons and colours (ADR 0056) when a theme is chosen, else in the
+  Settings label's look (the button font, colour 1, colour 2 under the pointer, faded in with the scene).
 - **Continue** loads the newest readable one of the slot folder's saves (`save1..24.ig2s`, `save1..24.sav`, `quicksave.ig2s`,
   the autosaves in slots 23/24 included) by modification time, as the Load screen's Load does (`load_file`); with
   none it is drawn disabled and does nothing.
@@ -680,9 +692,10 @@ Scenario, Start) plus a row, a skirmish 3 plus its settings, Quick game 2, a sav
   ring sets, the race choice, the name entry, the scenario and quick-game panels, our MP screens, Load and
   Settings, History, Replays. A visible "Back" label (bottom left, `menu_flow::BACK`) shows where the screen has no
   back of its own: the race choice and difficulty rings, the single, tutorial and multiplayer sets and the name
-  entry. Esc on the main set at rest does nothing (the classic fly-out and back is dropped). The right button keeps
-  acting on a spot that takes it (box rings, panel boxes, list rows). The high-score entry keeps the exe's rule.
+  entry. Esc on the main set at rest does nothing (the classic fly-out and back is dropped), nor once a start is
+  under way. The right button keeps acting on a spot that takes it (panel entries, panel boxes, list rows). The
+  high-score entry keeps the exe's rule.
 - Off (the default): §15.1 exactly; captures run with the option off.
 
 Port status: `menu_flow.rs` (panel, Back label, `saves_newest_first`), `MainScr::flow`, the window's dispatch; tests
-`menu_flow::tests`, `mainscr::tests::{flow_panel_replaces_the_labels, flow_back_paths}`.
+`menu_flow::tests`, `mainscr::tests::{flow_panel_replaces_the_rings, flow_back_paths}`.

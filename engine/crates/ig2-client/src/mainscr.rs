@@ -465,9 +465,9 @@ impl MainScr {
 
     /// The rings `Update3D` tests at all: `None` while a text entry (`EnterNameMode`; the IP, IRC and disconnected
     /// states) is up, the scenario list or our MP screens are (their rings are flown out to `Cel` 6), or the screen is
-    /// left; else the count and whether they are the difficulty rings.
+    /// left; else the count and whether they are the difficulty rings. Ours (ADR 0059): none with the panel.
     fn rings_live(&self) -> Option<(usize, bool)> {
-        if self.name.is_some() || self.disconnected.is_some() || self.scenario.is_some() || self.mp || self.leaving.is_some() {
+        if self.flow || self.name.is_some() || self.disconnected.is_some() || self.scenario.is_some() || self.mp || self.leaving.is_some() {
             return None;
         }
         if self.race.is_some() {
@@ -521,13 +521,29 @@ impl MainScr {
         self.settings && !self.flow && self.at_rest()
     }
 
-    /// Ours (ADR 0059): the grouped panel shows in the labels' place.
-    pub fn flow_shown(&self) -> bool {
-        self.flow && self.at_rest()
+    /// Ours (ADR 0059): the panel in the rings' place, for the ring set at rest (the main set's grouped panel, a
+    /// sub-set's entries, the difficulty rings' while they would take a press); the rings are hidden.
+    pub fn panel(&self) -> Option<crate::menu_flow::Panel> {
+        use crate::menu_flow::Panel;
+        if !self.flow || self.covered || self.scenario.is_some() || self.name.is_some() || self.mp || self.disconnected.is_some() || self.high_score.is_some()
+            || self.leaving.is_some() || self.start.is_some() || self.loading.is_some()
+        {
+            return None;
+        }
+        if let Some(r) = &self.race {
+            return (r.confirmed && !r.unconfirming && !r.start_game && self.tav <= 1.333).then_some(Panel::Level);
+        }
+        // As the rings: in place (they snap there with the panel), and the scene faded half in.
+        (self.cel == 1.0 && self.tav == 1.0 && self.gt >= 0.5).then_some(match self.menu {
+            Menu::Main => Panel::Main,
+            Menu::Single => Panel::Single,
+            Menu::Multi => Panel::Multi,
+            Menu::Tutorial => Panel::Tutorial,
+        })
     }
 
     pub fn flow_item_at(&self, at: [f32; 2]) -> Option<crate::menu_flow::Item> {
-        self.flow_shown().then(|| crate::menu_flow::item_at(at, self.history)).flatten()
+        self.panel().and_then(|p| crate::menu_flow::item_at(p, at, self.history))
     }
 
     /// Ours (ADR 0059): the Back label, on the screens without a back of their own: the ring sub-sets, the race
@@ -541,7 +557,7 @@ impl MainScr {
         self.back_shown() && crate::kit::inside_f(crate::menu_flow::BACK, at)
     }
 
-    /// A panel entry's action: New game, Load, Multiplayer and Quit as their rings.
+    /// A panel entry's action: a ring's entry as its ring (the panel offers only the current set's).
     fn act_item(&mut self, i: crate::menu_flow::Item) -> Option<Act> {
         use crate::menu_flow::Item;
         match i {
@@ -550,10 +566,21 @@ impl MainScr {
             Item::NewGame => self.act_direct(4),
             Item::Load => self.act_box(2),
             Item::Multiplayer => self.act_direct(3),
+            Item::Tutorial => self.act_box(5),
             Item::History => Some(Act::History),
             Item::Replays => Some(Act::Replays),
+            Item::Credits => self.act_direct(0),
             Item::Settings => Some(Act::Settings),
             Item::Quit => self.act_box(1),
+            Item::Campaign | Item::Local => self.act_box(0),
+            Item::Scenarios | Item::Internet => self.act_box(1),
+            Item::Part(n) => self.act_direct(n as usize - 1),
+            // As a difficulty ring: `Cel` 5, the heads close, then the screen is left.
+            Item::Level(l) => {
+                self.race.as_mut()?.press_level(l);
+                self.cel = 5.0;
+                None
+            }
         }
     }
 
@@ -584,7 +611,7 @@ impl MainScr {
 
     /// Ours (ADR 0031): `O` on the main menu.
     pub fn settings_key(&self) -> Option<Act> {
-        (self.settings_shown() || self.flow_shown()).then_some(Act::Settings)
+        (self.settings_shown() || self.panel() == Some(crate::menu_flow::Panel::Main)).then_some(Act::Settings)
     }
 
     /// The race box (0xe..=0x10) under `at`: the 160 × 160 square round the sphere's projected centre, while they're on.
@@ -638,6 +665,10 @@ impl MainScr {
             }
             return None;
         }
+        // Either button, as a box ring.
+        if let Some(i) = self.flow_item_at(at) {
+            return self.act_item(i);
+        }
         if let Some(sc) = &mut self.scenario {
             use crate::mainscr_scenario::Act as S;
             return match sc.press(at, left)? {
@@ -680,9 +711,6 @@ impl MainScr {
         }
         if left && self.quick_at(at) {
             return Some(Act::QuickGame);
-        }
-        if let Some(i) = self.flow_item_at(at).filter(|_| left) {
-            return self.act_item(i);
         }
         // A box ring acts on the press frame, then the frame loop waits for the release (`Mouse_FelengedesMajdMegvar`).
         let boxed = self.box_ring_at(at);
@@ -824,7 +852,8 @@ impl MainScr {
         // The list's load runs inside `MainScr_Main`: no key is read until it returns. `MainScr_CancelIPEnter` skips the
         // high-score entry (0x99), and the list under it has its hot-spots off.
         // Ours (ADR 0059): on the main set at rest there is no step back (the exe flies out and in again).
-        if self.loading.is_some() || self.high_score.is_some() || (self.flow && self.at_rest()) {
+        // Nor once a start is under way (the fly-out's hold).
+        if self.loading.is_some() || self.high_score.is_some() || (self.flow && (self.at_rest() || self.start.is_some() || self.leaving.is_some())) {
             return;
         }
         if let Some(sc) = &mut self.scenario {
@@ -893,10 +922,15 @@ impl MainScr {
         None
     }
 
-    /// A menu change: the rings fly out (`Cel` 5) and come back as `menu`'s set.
+    /// A menu change: the rings fly out (`Cel` 5) and come back as `menu`'s set; ours (ADR 0059): with the panel
+    /// (the rings hidden) the set changes at once.
     fn fly_to(&mut self, menu: Menu) {
         self.menu = menu;
         self.cel = 5.0;
+        if self.flow {
+            self.rings = if menu == Menu::Single || menu == Menu::Multi { 3 } else { 6 };
+            (self.tav, self.cel) = (1.0, 1.0);
+        }
     }
 
     /// One 10 ms UI tick (`FRISSIT_MainScr2`, exe 0x4f65f0, spec §5; the gate `MainElindult` is open once a frame was
@@ -954,6 +988,10 @@ impl MainScr {
         self.meteor_timer += 1;
         self.m = (self.m as f64 + 0.1) as f32;
         let mut r = tick_stream();
+        // Ours (ADR 0059): with the panel the hidden rings don't fly in.
+        if self.flow && self.cel == 1.0 {
+            self.tav = 1.0;
+        }
         self.tick_meteors(&mut r);
         self.tick_ships(&mut r);
         // The rings toward `Cel` by 0.05 (f64), clamped; reaching 5.0 going out brings them back as the next set.
@@ -1215,34 +1253,70 @@ mod tests {
         assert_eq!(s.settings_key(), None);
     }
 
-    /// Ours (ADR 0059): the grouped panel takes the labels' place; its entries act as their rings.
-    #[test]
-    fn flow_panel_replaces_the_labels() {
-        use crate::menu_flow::{item_at, Item, PANEL};
-        let centre = |i: Item| {
-            let y = (0..2 * PANEL[3] as i32).map(|y| PANEL[1] + y as f32 * 0.5).find(|&y| item_at([60.0, y], true) == Some(i)).unwrap();
-            [60.0, y + 4.0]
-        };
+    /// Ours (ADR 0059): the menu at rest with the panel.
+    fn flowing() -> MainScr {
         let mut s = MainScr::enter();
-        s.settings = true;
+        (s.flow, s.tav, s.gt) = (true, 1.0, 1.0);
+        s
+    }
+
+    /// Ours (ADR 0059): a panel entry's centre.
+    fn centre(p: crate::menu_flow::Panel, i: crate::menu_flow::Item) -> [f32; 2] {
+        let y = (220..900).map(|y| y as f32 * 0.5).find(|&y| crate::menu_flow::item_at(p, [60.0, y], true) == Some(i)).unwrap();
+        [60.0, y + 4.0]
+    }
+
+    /// Ours (ADR 0059): the panel takes the rings' place (hidden, no hot-spots); its entries act as their rings.
+    #[test]
+    fn flow_panel_replaces_the_rings() {
+        use crate::menu_flow::{Item, Panel};
+        // Not during the intro's fade-in (the hidden rings don't fly in): from tick 167, as the rings rest at 180.
+        let mut s = MainScr::enter();
         s.flow = true;
+        let n = (0..400).find(|_| {
+            s.tick();
+            s.panel().is_some()
+        });
+        assert_eq!((n, s.tav), (Some(166), 1.0));
+        let mut s = flowing();
+        s.settings = true;
+        assert!((0..6).all(|k| s.ring_at(s.ring_centre(k)).is_none()));
         let label = [(SETTINGS_BOX[0] + 10) as f32, (SETTINGS_BOX[1] + 10) as f32];
         assert_eq!((s.settings_shown(), s.press(label), s.settings_key()), (false, None, Some(Act::Settings)));
-        assert_eq!(s.press(centre(Item::Continue)), None);
+        let main = |i| centre(Panel::Main, i);
+        assert_eq!(s.press(main(Item::Continue)), None);
         s.can_continue = true;
-        assert_eq!(s.press(centre(Item::Continue)), Some(Act::Continue));
-        for (i, a) in [(Item::QuickGame, Act::QuickGame), (Item::History, Act::History), (Item::Replays, Act::Replays), (Item::Settings, Act::Settings), (Item::Quit, Act::Quit)] {
-            assert_eq!(s.press(centre(i)), Some(a));
+        assert_eq!(s.press(main(Item::Continue)), Some(Act::Continue));
+        for (i, a) in [(Item::QuickGame, Act::QuickGame), (Item::History, Act::History), (Item::Replays, Act::Replays), (Item::Credits, Act::Credits), (Item::Settings, Act::Settings), (Item::Quit, Act::Quit)] {
+            assert_eq!(s.press(main(i)), Some(a));
         }
-        assert_eq!((s.press(centre(Item::NewGame)), s.menu), (None, Menu::Single));
-        let mut s = MainScr::enter();
-        s.flow = true;
-        assert_eq!((s.press(centre(Item::Load)), s.cel), (Some(Act::LoadGame), 6.0));
-        let mut s = MainScr::enter();
-        s.flow = true;
-        assert_eq!((s.press(centre(Item::Multiplayer)), s.menu, s.name.is_some()), (None, Menu::Multi, true));
-        // The panel is gone once the main set isn't at rest.
-        assert_eq!(s.flow_item_at(centre(Item::Quit)), None);
+        // A set changes at once: New game's entries.
+        assert_eq!((s.press(main(Item::NewGame)), s.menu, s.panel(), s.settings_key()), (None, Menu::Single, Some(Panel::Single), None));
+        assert!((0..3).all(|k| s.ring_at(s.ring_centre(k)).is_none()));
+        assert_eq!(s.clone().press(centre(Panel::Single, Item::Scenarios)), Some(Act::OpenScenarios));
+        assert_eq!((s.press(centre(Panel::Single, Item::Campaign)), s.panel()), (Some(Act::Campaign), None));
+        // The difficulty entries while the difficulty rings would take a press.
+        let r = s.race.as_mut().unwrap();
+        r.confirmed = true;
+        r.selected = Some(1);
+        s.tav = 1.3;
+        assert_eq!(s.panel(), Some(Panel::Level));
+        s.press(centre(Panel::Level, Item::Level(2)));
+        assert_eq!((s.race.as_ref().map(|r| (r.level, r.start_game)), s.cel, s.panel()), (Some((2, true)), 5.0, None));
+        let mut s = flowing();
+        assert_eq!((s.press(main(Item::Load)), s.cel), (Some(Act::LoadGame), 6.0));
+        let mut s = flowing();
+        s.press(main(Item::Tutorial));
+        assert_eq!(s.panel(), Some(Panel::Tutorial));
+        assert_eq!((s.press(centre(Panel::Tutorial, Item::Part(3))), s.start.clone()), (Some(Act::Tutorial(3)), Some(Start::Tutorial(3))));
+        let mut s = flowing();
+        assert_eq!((s.press(main(Item::Multiplayer)), s.menu, s.name.is_some()), (None, Menu::Multi, true));
+        // No panel under the name entry; once it ends, the multiplayer entries.
+        assert_eq!((s.panel(), s.flow_item_at(main(Item::Quit))), (None, None));
+        s.name = None;
+        assert_eq!((s.press(centre(Panel::Multi, Item::Internet)), s.mp), (Some(Act::MultiMatchmaking), true));
+        s.close_mp();
+        assert_eq!((s.press(centre(Panel::Multi, Item::Local)), s.mp), (Some(Act::MultiServer), true));
     }
 
     /// Ours (ADR 0059): the Back label, Esc and the right button on empty space go one step back.
@@ -1254,26 +1328,26 @@ mod tests {
                 s.tick();
             }
         };
-        let mut s = MainScr::enter();
-        s.flow = true;
+        let mut s = flowing();
         s.tav = 1.0;
         // At rest on the main set: no Back label, and Esc stays (the exe flies out and in again).
         assert!(!s.back_shown());
         s.escape();
         assert_eq!(s.cel, 1.0);
+        let new_game = centre(crate::menu_flow::Panel::Main, crate::menu_flow::Item::NewGame);
         // Single set: the Back label, then the right button on empty space.
-        s.press(s.ring_centre(4));
+        s.press(new_game);
         rest(&mut s);
         assert!(s.back_shown() && s.press(back).is_none());
         assert_eq!(s.menu, Menu::Main);
         rest(&mut s);
-        s.press(s.ring_centre(4));
+        s.press(new_game);
         rest(&mut s);
         assert_eq!(s.press_right([300.0, 470.0]), None);
         assert_eq!(s.menu, Menu::Main);
         // The name entry: Back ends it.
         rest(&mut s);
-        s.press(s.ring_centre(3));
+        s.press(centre(crate::menu_flow::Panel::Main, crate::menu_flow::Item::Multiplayer));
         assert!(s.name.is_some() && s.back_shown());
         s.press(back);
         assert_eq!((s.name.is_none(), s.menu), (true, Menu::Main));

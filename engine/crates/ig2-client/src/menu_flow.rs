@@ -10,7 +10,7 @@ use crate::render::Frame;
 /// The option's key in our settings file (0 classic, the default; 1 enhanced).
 pub const KEY: &str = "MenuNavigation";
 
-/// A panel entry.
+/// A panel entry: one for every ring of the four ring sets and the difficulty rings, and ours.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Item {
     Continue,
@@ -18,36 +18,91 @@ pub enum Item {
     NewGame,
     Load,
     Multiplayer,
+    Tutorial,
     History,
     Replays,
+    Credits,
     Settings,
     Quit,
+    Campaign,
+    Scenarios,
+    Local,
+    Internet,
+    /// A tutorial part 1..=5.
+    Part(u8),
+    /// A difficulty ring by its index (`LABELS_LEVEL`: 0 easy, 1 hard, 2 normal).
+    Level(u8),
 }
 
 impl Item {
     /// The remake text table's key (ADR 0042).
     fn label(self) -> &'static str {
-        ["Continue", "Quick game", "New game", "Load game", "Multiplayer", "History", "Replays", "Settings", "Quit"][self as usize]
+        match self {
+            Item::Continue => "Continue",
+            Item::QuickGame => "Quick game",
+            Item::NewGame => "New game",
+            Item::Load => "Load game",
+            Item::Multiplayer => "Multiplayer",
+            Item::Tutorial => "Tutorial",
+            Item::History => "History",
+            Item::Replays => "Replays",
+            Item::Credits => "Game credits",
+            Item::Settings => "Settings",
+            Item::Quit => "Quit",
+            Item::Campaign => "Campaign",
+            Item::Scenarios => "Scenarios",
+            Item::Local => "Local network",
+            Item::Internet => "Internet",
+            Item::Part(n) => ["Part 1", "Part 2", "Part 3", "Part 4", "Part 5"][(n as usize).clamp(1, 5) - 1],
+            Item::Level(0) => "Easy",
+            Item::Level(1) => "Hard",
+            Item::Level(_) => "Normal",
+        }
     }
 }
 
-/// The panel's lines: group headings and entries.
-const LINES: [(Option<&str>, Option<Item>); 11] = [
-    (Some("Play"), None),
-    (None, Some(Item::Continue)),
-    (None, Some(Item::QuickGame)),
-    (None, Some(Item::NewGame)),
-    (None, Some(Item::Load)),
-    (None, Some(Item::Multiplayer)),
-    (Some("Extras"), None),
-    (None, Some(Item::History)),
-    (None, Some(Item::Replays)),
-    (None, Some(Item::Settings)),
-    (None, Some(Item::Quit)),
-];
+/// Which ring set the panel stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Panel {
+    Main,
+    Single,
+    Multi,
+    Tutorial,
+    /// The difficulty rings over the confirmed race.
+    Level,
+}
 
-/// The panel's box: left of the rings (ring 4's box starts at x 120), its lines [`LINE`] apart from `PANEL[1] + 6`.
-pub const PANEL: [f32; 4] = [4.0, 110.0, 112.0, 262.0];
+type Line = (Option<&'static str>, Option<Item>);
+
+/// The panel's lines: group headings and entries.
+fn lines(p: Panel) -> Vec<Line> {
+    let head = |h| (Some(h), None);
+    let item = |i| (None, Some(i));
+    match p {
+        Panel::Main => vec![
+            head("Play"),
+            item(Item::Continue),
+            item(Item::QuickGame),
+            item(Item::NewGame),
+            item(Item::Load),
+            item(Item::Multiplayer),
+            item(Item::Tutorial),
+            head("Extras"),
+            item(Item::History),
+            item(Item::Replays),
+            item(Item::Credits),
+            item(Item::Settings),
+            item(Item::Quit),
+        ],
+        Panel::Single => vec![head("New game"), item(Item::Campaign), item(Item::Scenarios)],
+        Panel::Multi => vec![head("Multiplayer"), item(Item::Local), item(Item::Internet)],
+        Panel::Tutorial => std::iter::once(head("Tutorial")).chain((1..=5).map(|n| item(Item::Part(n)))).collect(),
+        Panel::Level => vec![head("Difficulty"), item(Item::Level(0)), item(Item::Level(2)), item(Item::Level(1))],
+    }
+}
+
+/// The panel's left, top and width; its lines [`LINE`] apart from `PANEL[1] + 6`.
+pub const PANEL: [f32; 3] = [4.0, 110.0, 112.0];
 const LINE: f32 = 22.0;
 /// The gap before Extras and before Settings.
 const GAP: f32 = 6.0;
@@ -55,10 +110,10 @@ const GAP: f32 = 6.0;
 pub const BACK: [f32; 4] = [8.0, 448.0, 96.0, 22.0];
 
 /// The lines' boxes, History left out when `history` is off.
-fn layout(history: bool) -> Vec<(Option<&'static str>, Option<Item>, [f32; 4])> {
+fn layout(p: Panel, history: bool) -> Vec<(Option<&'static str>, Option<Item>, [f32; 4])> {
     let mut y = PANEL[1] + 6.0;
     let mut out = Vec::new();
-    for (head, item) in LINES {
+    for (head, item) in lines(p) {
         if item == Some(Item::History) && !history {
             continue;
         }
@@ -71,19 +126,25 @@ fn layout(history: bool) -> Vec<(Option<&'static str>, Option<Item>, [f32; 4])> 
     out
 }
 
+/// The panel's box round its lines.
+fn panel_box(p: Panel, history: bool) -> [f32; 4] {
+    let last = layout(p, history).last().map_or(PANEL[1], |l| l.2[1] + l.2[3]);
+    [PANEL[0], PANEL[1], PANEL[2], last + 6.0 - PANEL[1]]
+}
+
 /// The entry under `at`.
-pub fn item_at(at: [f32; 2], history: bool) -> Option<Item> {
-    layout(history).into_iter().find(|&(_, i, r)| i.is_some() && crate::kit::inside_f(r, at)).and_then(|(_, i, _)| i)
+pub fn item_at(p: Panel, at: [f32; 2], history: bool) -> Option<Item> {
+    layout(p, history).into_iter().find(|&(_, i, r)| i.is_some() && crate::kit::inside_f(r, at)).and_then(|(_, i, _)| i)
 }
 
 /// The panel: in the chosen UI theme (ADR 0056), else as the Settings label (the button font, colour 1, colour 2
 /// under the pointer, faded in with the scene). Continue is dimmed without a save.
-pub fn draw_panel(f: &mut Frame, d: &Draw, history: bool, can_continue: bool, at: [f32; 2], fade: f32) {
+pub fn draw_panel(f: &mut Frame, d: &Draw, p: Panel, history: bool, can_continue: bool, at: [f32; 2], fade: f32) {
     let theme = crate::theme::current();
     if let Some(t) = &theme {
-        t.panel(f, d.white, &d.v, PANEL);
+        t.panel(f, d.white, &d.v, panel_box(p, history));
     }
-    for (head, item, r) in layout(history) {
+    for (head, item, r) in layout(p, history) {
         let (text, c, size) = match (head, item, &theme) {
             (Some(h), _, Some(t)) => (h, t.accent, t.small),
             (Some(h), _, None) => (h, d.col(1, 60.0 * fade), 3),
@@ -146,15 +207,17 @@ mod tests {
 
     #[test]
     fn panel_items_and_history() {
-        let centre = |i: Item, h: bool| layout(h).into_iter().find(|&(_, x, _)| x == Some(i)).map(|(_, _, r)| [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]).unwrap();
-        for i in [Item::Continue, Item::QuickGame, Item::NewGame, Item::Load, Item::Multiplayer, Item::History, Item::Replays, Item::Settings, Item::Quit] {
-            assert_eq!(item_at(centre(i, true), true), Some(i));
+        let centre = |i: Item, h: bool| layout(Panel::Main, h).into_iter().find(|&(_, x, _)| x == Some(i)).map(|(_, _, r)| [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]).unwrap();
+        for i in [Item::Continue, Item::QuickGame, Item::NewGame, Item::Load, Item::Multiplayer, Item::Tutorial, Item::History, Item::Replays, Item::Credits, Item::Settings, Item::Quit] {
+            assert_eq!(item_at(Panel::Main, centre(i, true), true), Some(i));
         }
-        assert!(layout(false).iter().all(|&(_, i, _)| i != Some(Item::History)));
-        // The headings take no click; the panel stays left of the rings' boxes and above the Back label.
-        assert_eq!(item_at([60.0, PANEL[1] + 12.0], true), None);
-        let last = layout(true).last().unwrap().2;
-        assert!(PANEL[0] + PANEL[2] < 120.0 && last[1] + last[3] <= PANEL[1] + PANEL[3] && PANEL[1] + PANEL[3] < BACK[1]);
+        assert!(layout(Panel::Main, false).iter().all(|&(_, i, _)| i != Some(Item::History)));
+        // The headings take no click; every panel stays above the Back label.
+        assert_eq!(item_at(Panel::Main, [60.0, PANEL[1] + 12.0], true), None);
+        for p in [Panel::Main, Panel::Single, Panel::Multi, Panel::Tutorial, Panel::Level] {
+            let b = panel_box(p, true);
+            assert!(b[1] + b[3] < BACK[1], "{p:?}");
+        }
     }
 
     #[test]

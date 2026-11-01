@@ -2340,7 +2340,8 @@ impl App {
         let scene = fr.scene.get_or_insert_with(|| crate::mainscr_scene::MainScene::load(&mut g.renderer, &self.install));
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         fr.s.race_boxes = scene.draw(&mut frame, &mut g.renderer, &self.install, &fr.s, &crate::font::Virtual::new(size));
-        fr.s.covered = self.options.is_some();
+        // Ours (ADR 0059): the panel stays out of reach under History and Replays.
+        fr.s.covered = self.options.is_some() || (fr.s.flow && (fr.stats.is_some() || fr.replays.is_some()));
         if let Some(h) = &self.hud {
             let now = self.start.elapsed().as_secs_f64() * 1000.0;
             draw_front_2d(fr, h, &mut g.renderer, &self.install, &mut frame, size, now, self.display.statistics);

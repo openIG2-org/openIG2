@@ -435,8 +435,9 @@ impl MainScene {
         if let Some(l) = s.labels() {
             self.labels = Some(l);
         }
+        // Ours (ADR 0059): the panel stands in for the rings.
         let ring = self.model(install, VECTORS, TEXTURES, "korke1.xvb");
-        for i in 0..s.rings {
+        for i in (0..s.rings).filter(|_| !s.flow) {
             let at = s.ring_pos(i);
             let t = Placement::add_to_scene(ring.origin, 0.7).world(s.ring_rot(i), at);
             for p in &ring.parts {
@@ -550,9 +551,9 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
         let c = d.col(if s.quick_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
         font.text(frame, &d.v, &d.texts.ours("Quick game"), (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
     }
-    // Ours (ADR 0059): the grouped panel in the labels' place, the Back label.
-    if s.flow_shown() {
-        crate::menu_flow::draw_panel(frame, &d, s.history, s.can_continue, s.at, s.gt);
+    // Ours (ADR 0059): the panel in the rings' place, the Back label.
+    if let Some(p) = s.panel() {
+        crate::menu_flow::draw_panel(frame, &d, p, s.history, s.can_continue, s.at, s.gt);
     }
     if s.back_shown() {
         crate::menu_flow::draw_back(frame, &d, s.at, s.gt);
