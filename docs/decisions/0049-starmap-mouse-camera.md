@@ -1,7 +1,6 @@
-# ADR 0049: wheel zoom and right-drag pan on the starmap
+# ADR 0049: wheel zoom on the starmap
 
-Date: 2026-11-01. Status: accepted. Implemented by `ig2-client::starmap` (`Camera::drag`), `ig2-client::window`
-(`wheel`, the starmap's right press and release, `cursor_moved`) and `ig2-client::display` (the "Starmap mouse
+Date: 2026-11-01. Status: accepted. Implemented by `ig2-client::window` (`wheel`) and `ig2-client::display` (the "Starmap mouse
 camera" row).
 
 ## Context
@@ -15,17 +14,12 @@ wheel and a right-drag first. The colony screen already zooms with the wheel (do
    gives its order at once and never moves the camera.
 2. **The wheel** zooms as the zoom keys do, one `StarmapKeyboardDoModifies` step per notch (`Zoom ± (640 − Zoom)/50`,
    clamp [2, 580]); not while the long info, the zoom-in view or the fleet panel is up (the keys' own gate).
-3. **The right drag**: a right press on the map grabs the galaxy point under the pointer; once the pointer has moved
-   more than 4 pixels (the left click's tolerance) with only the right button held, the pivot moves so that point
-   stays under the pointer, inside `Starmap_Move0`'s ±300 square. Rotation, tilt and zoom are kept.
-4. **The order moves to the release**: with the row on, the right press on the map gives no order; an unmoved
-   release gives the press's order at the press's point (the modifiers as at the release). A drag gives none. The
-   scripted capture runs keep the exe's controls. The
-   info box's right release (colony, split) and the console and panel spots' right presses are unchanged. This is
-   the only timing change: an order arrives a press-to-release later (one or two frames), which no rule reads.
+3. **The right button stays the exe's**: its press gives the order at once and never moves the camera. Panning is
+   the edges, the minimap, the arrows and W/A/S/D (ADR 0030).
 
 ## Rejected
-- **Keeping the order on the press and panning too**: a right-drag with a fleet selected would send it to the press
+- **A right-drag pan** (shipped first, removed the same day): with the order moved to an unmoved release, quick
+  repeated orders often moved the map by a few pixels and dropped the order; W/A/S/D already pans.
+- **Keeping the order on the press and a right-drag pan too**: a right-drag with a fleet selected would send it to the press
   point every time the player pans.
-- **Middle-button drag**: the original's mice had no middle button reachable by every player, and the right drag is
-  the common convention in the genre.
+- **Middle-button drag**: the original's mice had no middle button reachable by every player.

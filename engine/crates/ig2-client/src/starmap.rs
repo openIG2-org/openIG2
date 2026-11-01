@@ -448,15 +448,6 @@ impl Camera {
         }
     }
 
-    /// ADR 0049 (ours; the original has no drag): the pivot moves so the galaxy point `grab` lies under the screen
-    /// point `s` again, kept inside `Starmap_Move0`'s ±300 square.
-    pub fn drag(&mut self, grab: [f32; 2], s: [f32; 2]) {
-        if let Some(w) = self.to_world(s) {
-            self.x = (self.x + grab[0] - w[0]).clamp(-PAN_LIMIT, PAN_LIMIT);
-            self.y = (self.y - (grab[1] - w[1])).clamp(-PAN_LIMIT, PAN_LIMIT);
-        }
-    }
-
     /// `StarmapSetTopView` (ELF 0x6fdae0): the targets `[XStart, YStart, Zoom, Rotate, Pitch]` over the planets the
     /// human knows or owns (box from ±1000, zoom ÷ 1.7); without any, the pivot and zoom stay (no move starts).
     pub fn top_view(&self, s: &Snapshot) -> ([f32; 5], bool) {
@@ -1465,17 +1456,6 @@ mod tests {
         assert!(moves);
         assert_eq!(t, [0.0, 0.0, zx.min(zy) / 1.7, 0.0, -1.5608]);
         assert!(!cam(1.0, -0.5).top_view(&Snapshot::default()).1);
-    }
-
-    #[test]
-    fn a_drag_keeps_the_grabbed_point_under_the_pointer() {
-        let mut c = cam(0.7, -0.95);
-        let grab = c.to_world([900.0, 500.0]).unwrap();
-        c.drag(grab, [1000.0, 620.0]);
-        let w = c.to_world([1000.0, 620.0]).unwrap();
-        assert!((w[0] - grab[0]).abs() < 0.01 && (w[1] - grab[1]).abs() < 0.01, "{w:?} {grab:?}");
-        c.drag([1e6, 1e6], [1000.0, 620.0]);
-        assert!(c.x.abs() <= PAN_LIMIT && c.y.abs() <= PAN_LIMIT);
     }
 
     #[test]

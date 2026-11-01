@@ -6,7 +6,7 @@
 //! messages screen, Esc or O the Options screen (settings, save and load slots, quit; re/screens/options.md), each
 //! with the original's gates; a screen up leaves through its closing first.
 //! Starmap: the screen edges, the minimap and the arrows and numpad +/- = the camera; ours (ADR 0049) also wheel =
-//! zoom and right drag = pan, the right click's order then on the release; PgUp/PgDn = the previous/next own planet or fleet, left click = select (again: the next unit
+//! zoom (the right button never pans: it gives orders); PgUp/PgDn = the previous/next own planet or fleet, left click = select (again: the next unit
 //! under the cursor), the right press = the selected fleet's order (Shift: waypoint, Ctrl: attack, Alt: a point), `c`
 //! colonises.
 //! Colony: wheel = zoom, left drag = pan, right drag = turn and tilt (the original's both-buttons drag); the building
@@ -240,9 +240,6 @@ struct App {
     /// Where the left and right buttons went down on the starmap (a click is a press and release in place).
     left_down: Option<[f32; 2]>,
     right_down: Option<[f32; 2]>,
-    /// ADR 0049: a right press on the map with the starmap's mouse camera on: the galaxy point grabbed, the press's
-    /// pointer and whether it has moved into a drag (else the release gives the press's order).
-    right_drag: Option<([f32; 2], [f32; 2], bool)>,
     /// The info screen's buttons held (`Mouse_Gomb`; `Info_Main`'s drags and select menus).
     info_down: bool,
     modifiers: ModifiersState,
@@ -753,7 +750,6 @@ impl App {
             cursor: [0.0; 2],
             left_down: None,
             right_down: None,
-            right_drag: None,
             info_down: false,
             modifiers: ModifiersState::empty(),
             title_at: start,
@@ -5754,15 +5750,6 @@ impl App {
                 Default::default()
             });
         }
-        let map_up = self.mouse_held == 2 && self.colony.is_none() && !self.under_screen();
-        if let (Some(v), Some((grab, start, panning))) = (&mut self.view, &mut self.right_drag) {
-            // ADR 0049: past the click's 4 pixels the held right button drags the map; only it held (a left press
-            // meanwhile is no press on the starmap, `mouse`).
-            *panning |= (start[0] - p[0]).abs() + (start[1] - p[1]).abs() > 4.0;
-            if *panning && map_up {
-                v.camera.drag(*grab, p);
-            }
-        }
         if let Some(c) = self.colony.as_mut().filter(|_| self.overlay.is_none() && self.spy.is_none()) {
             // `ShowColony`: both buttons held turn and tilt the camera (colony.md §2.1).
             if self.mouse_held == 3 && !c.ui.picking() {
@@ -5858,9 +5845,6 @@ impl App {
             _ => 0,
         };
         self.mouse_held = if pressed { self.mouse_held | bit } else { self.mouse_held & !bit };
-        if pressed && bit == 2 {
-            self.right_drag = None;
-        }
         // `Mouse_FelengedesMajdMegvar`: `IG2_gameUpdate` (exe 0x4e0440) runs no screen until every button is up, so
         // nothing (the top bar included) takes the presses and releases meanwhile.
         if self.wait_release {
@@ -6045,16 +6029,13 @@ impl App {
             (MouseButton::Right, ElementState::Pressed) if self.colony.is_some() => self.colony_input(|ui, ctx, at, now| ui.press(ctx, at, false, now)),
             // `Starmap_Main` gives the map's right-button orders (0x15, the rally 0x400) on the press, not under the
             // radial menu (ELF 0x6f50a0 lines 731-732; a press with the left button held is no press, above); the right
-            // button never drags the camera. The info box's right action (colony / split) is the release's. ADR 0049:
-            // with the starmap's mouse camera on, the press grabs the map and the order waits for an unmoved release.
+            // button never drags the camera (ADR 0049 keeps it so: a pan there moved the map under rapid orders). The
+            // info box's right action (colony / split) is the release's.
             (MouseButton::Right, ElementState::Pressed) => {
                 self.right_down = Some(self.cursor);
                 let gated = self.menus.rop.is_some();
                 if on_starmap && !gated && !self.on_info_box(self.cursor) {
-                    match self.view.as_ref().and_then(|v| v.camera.to_world(self.cursor)).filter(|_| self.display.starmap_mouse) {
-                        Some(grab) => self.right_drag = Some((grab, self.cursor, false)),
-                        None => self.starmap_click(self.cursor, true),
-                    }
+                    self.starmap_click(self.cursor, true);
                 }
             }
             (MouseButton::Right, ElementState::Released) if self.panel_held.is_some() => {
@@ -6068,9 +6049,7 @@ impl App {
             // The exe tests only the pointer at the release (`AktIkon2 == 8`, lines 1309, 1455), wherever the press was.
             (MouseButton::Right, ElementState::Released) => {
                 self.right_down = None;
-                if let Some((_, start, false)) = self.right_drag.take().filter(|_| on_starmap) {
-                    self.starmap_click(start, true);
-                } else if on_starmap && self.on_info_box(self.cursor) {
+                if on_starmap && self.on_info_box(self.cursor) {
                     self.starmap_click(self.cursor, true);
                 }
             }
