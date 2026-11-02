@@ -701,14 +701,18 @@ impl Hud {
 
     /// The starmap's radial menu, the planet's long info and the select menus (re/screens/starmap.md §14–§17) at the
     /// camera's zoom.
+    /// Under the modern HUD (`modern`) only the rename: its own [`Self::modern_menus`] show the rest.
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_starmap_menus(&self, f: &mut Frame, m: &crate::starmap_menus::Menus, p: &crate::starmap_panels::Panels, state: &SaveState, rules: &ig2_rules::Rules, size: [f32; 2], zoom: f32, time: f32) {
+    pub fn draw_starmap_menus(&self, f: &mut Frame, m: &crate::starmap_menus::Menus, p: &crate::starmap_panels::Panels, state: &SaveState, rules: &ig2_rules::Rules, size: [f32; 2], zoom: f32, time: f32, modern: bool) {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
         let t = crate::starmap_menus::MenuTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names, infostr: &self.infostr };
         // `StarmapGfx2D_3`'s rename entry, over the short info.
         if let Some(r) = &m.rename {
             r.draw(f, &d, time * 1000.0);
+        }
+        if modern {
+            return;
         }
         m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, crate::starmap_hud::counter(time), &p.faders.starf, p.exit_fader());
     }
@@ -860,8 +864,80 @@ impl Hud {
             labels: m::Labels { pause: ours("Pause"), speed: ours("Speed"), research: ours("Quick research"), idle: ours("No research"), redirect: ours("Redirect") },
             blink: (time * 2.0) as i64 % 2 == 0,
             race: col(curr.human as usize + 15),
+            menus: self.modern_menus(state, rules, menus, view.camera.zoom, view.camera.size, time),
             ..Default::default()
         }
+    }
+
+    /// Ours (ADR 0065): the radial menu, the open select menu and the long info for the modern HUD, from the same state
+    /// and texts the original's drawing reads, on the virtual screen of a band `size` pixels big at camera zoom `zoom`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn modern_menus(&self, state: &SaveState, rules: &ig2_rules::Rules, menus: &crate::starmap_menus::Menus, zoom: f32, size: [f32; 2], time: f32) -> crate::starmap_modern::Menus {
+        use crate::starmap_modern as m;
+        let lang = self.texts.lang;
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
+        let v = Virtual::new(size);
+        let s = crate::gui::Gui::scale(size[1].round() as u32);
+        let mut out = m::Menus { map: [v.x0 / s, v.y0 / s, v.k / s], ..Default::default() };
+        // `StarmapVoltRopikonAlap`: the icons from frame 30 with the button held.
+        if let Some(r) = menus.rop.filter(|r| r.frame >= 30 && menus.held) {
+            let [lx, ly] = r.last();
+            let hit = crate::starmap_menus::HIT;
+            out.radial = Some(m::Radial {
+                at: [r.at[0] as f32, r.at[1] as f32],
+                centres: hit.map(|c| [(lx + c[0]) as f32, (ly + c[1]) as f32]),
+                icons: r.places,
+                names: r.places.map(|i| if i > 0 { dec(&self.texts.get(17, 6, i as u16)) } else { String::new() }),
+                frame: r.frame,
+                hover: r.hover,
+            });
+        }
+        let t = crate::starmap_menus::MenuTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names, infostr: &self.infostr };
+        if let Some(sm) = &menus.menu {
+            let lines = menus.menu_lines(&t, sm);
+            let rows = sm.rows();
+            out.select = Some(m::Select {
+                rows: lines.iter().zip(&rows).map(|((v, text, sub), (_, r))| m::SelectRow { rect: r.map(|c| c as f32), text: dec(text), sub: dec(sub), hovered: *v == sm.hovered }).collect(),
+            });
+        }
+        if let Some(i) = menus.info {
+            let q = i.q(zoom);
+            let exit_in = ((zoom - i.backup[2]) / (600.0 - i.backup[2])).clamp(0.0, 1.0);
+            if q.is_some() || exit_in > 0.0 {
+                let li = menus.long_info(&t, state, rules, i.planet, crate::starmap_hud::counter(time));
+                let label = |n: u16| dec(&self.texts.get(2, 2, n));
+                let owner = crate::starmap_menus::planet(state, i.planet)[0x20];
+                let mut y = 34.0 + 10.0;
+                let mut lines = Vec::new();
+                let mut title = String::new();
+                for l in &li.lines {
+                    if l.n == 1 {
+                        title = dec(&l.value);
+                    } else {
+                        let needed = l.needed.as_ref().map(|nd| (label(l.n + 1), dec(nd)));
+                        lines.push(m::InfoRow { y, label: label(l.n), value: dec(&l.value), short: l.colour == 6 && l.n != 13, needed, special: l.n == 13 });
+                    }
+                    y += 16.0;
+                }
+                let problems = li.problems.as_ref().map(|ps| (label(14), y, ps.iter().map(|(v, n)| (*v, dec(n))).collect()));
+                let settings = li.settings.as_ref().map(|vals| ([label(15), label(16), label(17)], vals.clone().map(|v| dec(&v)), label(18)));
+                let hot = menus.info_spot(state, menus.pointer).or_else(|| (exit_in >= 1.0 && crate::starmap_menus::exit_spot(menus.pointer)).then_some(9));
+                let colour = self.palette.get(if owner == 0 { 12 } else { owner as usize + 15 }).copied().unwrap_or([1.0; 3]);
+                out.info = Some(m::LongInfo {
+                    q: q.unwrap_or(0.0),
+                    exit_in,
+                    exit: dec(&self.texts.get(2, 4, 4)),
+                    title,
+                    colour: crate::gui::ink(colour),
+                    lines,
+                    problems,
+                    settings,
+                    hot: hot.filter(|&h| h != 100),
+                    held: menus.held,
+                });
+            }
+        }
+        out
     }
 
     /// The research screen's 2D passes around its models (re/screens/research.md §3).

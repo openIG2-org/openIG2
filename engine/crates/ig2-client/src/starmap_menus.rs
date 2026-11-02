@@ -17,7 +17,7 @@ use crate::kit::FaderDesign;
 use crate::starmap_panels::{Action, Draw2d, Panels};
 
 /// `Starmap_RopIkonX/Y` (exe 0x9270d4/0x9270e8): the places' hit centres from `LastMouseX/Y`, places 1..=4.
-const HIT: [[i32; 2]; 4] = [[29, 86], [81, 125], [132, 86], [81, 49]];
+pub const HIT: [[i32; 2]; 4] = [[29, 86], [81, 125], [132, 86], [81, 49]];
 /// `Starmap_RopIkonX2/Y2` (exe 0x9270fc/0x927110): the icons' top-left from `LastMouseX/Y`.
 const ICON_AT: [[i32; 2]; 4] = [[5, 62], [56, 100], [107, 62], [56, 24]];
 /// `LastMouseX/Y = Mouse − (82, 84)`.
@@ -28,7 +28,7 @@ pub const ICON_FRAME: [i32; 19] = [0, 13, 9, 10, 8, 1, 2, 6, 7, 5, 0, 0, 0, 3, 4
 /// One drawn frame of `GFX_Starmap`'s zoom loops (the display's 60 Hz [inf], like the panels).
 const DRAWN_FRAME: f32 = crate::starmap_panels::PANEL_FRAME;
 
-fn planet(state: &SaveState, p: usize) -> Vec<u8> {
+pub(crate) fn planet(state: &SaveState, p: usize) -> Vec<u8> {
     state.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE)
 }
 
@@ -86,7 +86,7 @@ pub struct Rop {
 
 impl Rop {
     /// `LastMouseX/Y`.
-    fn last(&self) -> [i32; 2] {
+    pub fn last(&self) -> [i32; 2] {
         [self.at[0] - ORIGIN[0], self.at[1] - ORIGIN[1]]
     }
 
@@ -132,7 +132,7 @@ impl PlanetInfo {
     }
 
     /// `q = (Zoom − L)/(600 − L)`, `None` while the panel isn't shown (`Zoom ≤ L`).
-    fn q(&self, zoom: f32) -> Option<f32> {
+    pub fn q(&self, zoom: f32) -> Option<f32> {
         let l = self.floor();
         (zoom > l).then(|| (zoom - l) / (600.0 - l))
     }
@@ -168,6 +168,22 @@ pub struct SelectMenu {
 }
 
 impl SelectMenu {
+    /// Each item's value and the rectangle its row answers in (`hover`'s tests as rectangles, right and bottom
+    /// edges exclusive).
+    pub fn rows(&self) -> Vec<(i32, [i32; 4])> {
+        let (x, y) = (self.x, self.y);
+        match self.kind {
+            MenuKind::Tax | MenuKind::AutoBuild => self.items.iter().enumerate().map(|(i, &v)| (v, [x, y + 13 * i as i32, 121, 13])).collect(),
+            MenuKind::Priority => (1..4).map(|k| (k, [x, y + 13 * (k - 1), 121, 13])).collect(),
+            MenuKind::Sale(_) => vec![(1, [x, y, 6 * self.texts.first().map_or(0, |t| t.len()) as i32 + 1, 13])],
+            MenuKind::Planets => {
+                let w = 6 * (self.a + self.b + 1);
+                let rows = self.rows.max(1);
+                self.items.iter().enumerate().map(|(i, &p)| (p, [x + w * (i as i32 / rows), y + 13 * (i as i32 % rows), w + 1, 13])).collect()
+            }
+        }
+    }
+
     fn hover(&mut self, at: [f32; 2]) {
         let (mx, my) = (at[0] as i32, at[1] as i32);
         let (x, y) = (self.x, self.y);
@@ -208,7 +224,7 @@ impl SelectMenu {
 }
 
 /// The long info's hot-spots (`Starmap_MouseInit` exe 0x5b99d0, re/screens/starmap.md §15.3).
-const INFO_SPOTS: &[(u32, [i32; 4])] = &[
+pub const INFO_SPOTS: &[(u32, [i32; 4])] = &[
     (0x5a, [400, 289, 100, 16]),
     (0x5b, [506, 289, 30, 16]),
     (0x5c, [542, 289, 20, 16]),
@@ -815,6 +831,8 @@ pub fn staged(state: &SaveState, sel: &Selection, panels: &Panels, cam: [f32; 4]
         let places = rop_places(state, sel, panels, false, (false, false), blink, 0.0);
         m.rop = Some(Rop { at: [at[0] as i32, at[1] as i32], frame: 50, places, hover: 0 });
         m.held = true;
+        let p = m.pointer;
+        m.hover(p);
     }
     if let Some(spec) = menu {
         let (kind, xy) = spec.split_once('@').ok_or("--menu KIND@X,Y")?;
@@ -1011,68 +1029,91 @@ impl Menus {
             let rgb = d.palette.get(c).copied().unwrap_or([1.0; 3]);
             d.font.text(f, &d.v, s, x, y, len, size, align, [rgb[0] * bright, rgb[1] * bright, rgb[2] * bright], None);
         };
-        let label = |f: &mut Frame, n: u16, y: f32| txt(f, &t.texts.get(2, 2, n), x0 + 10.0, y0 + y, 8, 3, Align::Left, 1);
-        let value = |f: &mut Frame, s: &[u8], x: f32, y: f32, c: usize| txt(f, s, x0 + x, y0 + y, 0x1a, 3, Align::Left, c);
+        let info = self.long_info(t, state, rules, p, counter);
+        let mut cc = 10.0;
+        for l in &info.lines {
+            txt(f, &t.texts.get(2, 2, l.n), x0 + 10.0, y0 + cc, 8, 3, Align::Left, 1);
+            txt(f, &l.value, x0 + 0x4e as f32, y0 + cc, l.len, 3, Align::Left, l.colour);
+            if let Some(need) = &l.needed {
+                txt(f, &t.texts.get(2, 2, l.n + 1), x0 + 0x8c as f32, y0 + cc, 8, 3, Align::Left, 1);
+                txt(f, need, x0 + 0xd0 as f32, y0 + cc, 0x1a, 3, Align::Left, l.colour);
+            }
+            cc += 16.0;
+        }
+        if let Some(problems) = &info.problems {
+            txt(f, &t.texts.get(2, 2, 14), x0 + 10.0, y0 + cc, 9, 3, Align::Left, 1);
+            for (v, name) in problems {
+                txt(f, v.to_string().as_bytes(), x0 + 0x56 as f32, y0 + cc + 2.0, 2, 2, Align::Right, 6);
+                txt(f, b"%", x0 + 99.0, y0 + cc + 2.0, 1, 2, Align::Left, 6);
+                txt(f, name, x0 + 0x70 as f32, y0 + cc + 2.0, 0x20, 2, Align::Left, 0x21);
+                cc += 12.0;
+            }
+        }
+        if let Some(values) = &info.settings {
+            for (k, v) in values.iter().enumerate() {
+                let y = 0x104 as f32 + 22.0 * k as f32;
+                txt(f, &t.texts.get(2, 2, 15 + k as u16), x0 + 10.0, y0 + y, 0x20, 2, Align::Left, 1);
+                txt(f, v, x0 + 0x52 as f32, y0 + y, 0x10, 2, Align::Field, 0x21);
+                txt(f, &t.texts.get(2, 2, 18), x0 + 0xba as f32, y0 + y, 5, 2, Align::Field, if self.all_held(k) { 2 } else { 1 });
+                if k != 1 {
+                    txt(f, b"-", x0 + 0xe4 as f32, y0 + y - 2.0, 1, 3, Align::Left, 1);
+                    txt(f, b"+", x0 + 0xfe as f32, y0 + y - 2.0, 1, 3, Align::Left, 1);
+                }
+            }
+        }
+    }
+
+    /// The button is held over settings row `k`'s "ALL" (its text then colour 2).
+    pub fn all_held(&self, k: usize) -> bool {
+        let [mx, my] = self.pointer;
+        let y = 34.0 + 0x104 as f32 + 22.0 * k as f32;
+        self.held && mx >= 320.0 + 0xba as f32 && mx <= 320.0 + 0xd8 as f32 && my >= y - 5.0 && my <= y + 11.0
+    }
+
+    /// The long info's lines of planet `p` (`StarmapHosszuInfoKiir`'s rows and values). It steps the SPECIAL row's
+    /// turn (the function's statics): one caller a frame.
+    pub fn long_info(&self, t: &MenuTexts, state: &SaveState, rules: &ig2_rules::Rules, p: usize, counter: i32) -> LongInfo {
         let e = en(state);
         let r = planet(state, p);
         let owner = r[0x20];
         let debug = state.mem.u8(va::DEBUGX) != 0;
         let sats = r[0xc4 + e as usize];
         let seen = owner == e || sats != 0 || debug;
-        let mut cc = 10.0;
-        label(f, 1, cc);
-        value(f, cstr(&r[..0x18]), 0x4e as f32, cc, 3);
-        cc += 16.0;
-        label(f, 2, cc);
+        let mut lines = Vec::new();
+        let line = |n: u16, value: Vec<u8>, colour: usize| InfoLine { n, value, colour, len: 0x1a, needed: None };
+        lines.push(line(1, cstr(&r[..0x18]).to_vec(), 3));
         let mut s = t.hu(5, r[0x22] as u16);
         if seen {
             let rich = crate::starmap_hud::richness(state, rules, p, e);
             s = [&s[..], b" (", rich.to_string().as_bytes(), b"% ", &t.hu(5, 20), b")"].concat();
         }
-        value(f, &s, 0x4e as f32, cc, 0x21);
-        cc += 16.0;
+        lines.push(line(2, s, 0x21));
         if owner != 0 {
-            label(f, 3, cc);
-            value(f, &t.empire_names.get(owner as usize).cloned().unwrap_or_default(), 0x4e as f32, cc, 0x21);
-            cc += 16.0;
+            lines.push(line(3, t.empire_names.get(owner as usize).cloned().unwrap_or_default(), 0x21));
         }
-        label(f, 4, cc);
         let race = if owner == 0 { e as usize } else { r[0x21] as usize };
         let mut s = if owner != 0 { [t.hu(1, (r[0x21] as u16).saturating_add(5)), b" ".to_vec()].concat() } else { Vec::new() };
         if seen {
             let aff = rules.race_surface_affinity.get(race).and_then(|v| v.get(r[0x22] as usize)).copied().unwrap_or(0);
             s = [&s[..], b"(", aff.to_string().as_bytes(), b"% ", &t.hu(5, 21), b")"].concat();
         }
-        value(f, &s, 0x4e as f32, cc, 0x21);
-        cc += 16.0;
+        lines.push(line(4, s, 0x21));
         if owner != 0 && seen {
-            label(f, 5, cc);
-            value(f, format!("\x01{} ({:+})", i32_at(&r, 0x28), i32_at(&r, 0x2c)).as_bytes(), 0x4e as f32, cc, 0x21);
-            cc += 16.0;
+            lines.push(line(5, format!("\x01{} ({:+})", i32_at(&r, 0x28), i32_at(&r, 0x2c)).into_bytes(), 0x21));
         }
         if owner != 0 && (owner == e || debug) {
-            label(f, 6, cc);
             let morale = (i32_at(&r, 0x30) / 100) as f32 as i32;
-            value(f, &t.hu(4, (41 + morale).clamp(0, 52) as u16), 0x4e as f32, cc, 0x21);
-            cc += 16.0;
-            label(f, 7, cc);
-            value(f, format!("${}", i32_at(&r, 0x44)).as_bytes(), 0x4e as f32, cc, 0x21);
-            cc += 16.0;
+            lines.push(line(6, t.hu(4, (41 + morale).clamp(0, 52) as u16), 0x21));
+            lines.push(line(7, format!("${}", i32_at(&r, 0x44)).into_bytes(), 0x21));
             for (n, a, b, mark) in [(8u16, 0x28usize, 0x50usize, b'\x01'), (10, 0x48, 0x4c, b'\x02')] {
                 let c = if i32_at(&r, a) < i32_at(&r, b) { 6 } else { 0x21 };
-                label(f, n, cc);
-                value(f, &[&[mark][..], i32_at(&r, a).to_string().as_bytes()].concat(), 0x4e as f32, cc, c);
-                txt(f, &t.texts.get(2, 2, n + 1), x0 + 0x8c as f32, y0 + cc, 8, 3, Align::Left, 1);
-                value(f, &[&[mark][..], i32_at(&r, b).to_string().as_bytes()].concat(), 0xd0 as f32, cc, c);
-                cc += 16.0;
+                let num = |o: usize| [&[mark][..], i32_at(&r, o).to_string().as_bytes()].concat();
+                lines.push(InfoLine { needed: Some(num(b)), ..line(n, num(a), c) });
             }
         }
         if owner != 0 && (owner == e || sats > 1 || debug) {
-            label(f, 12, cc);
-            txt(f, i32_at(&r, 0x58).to_string().as_bytes(), x0 + 0x4e as f32, y0 + cc, 8, 3, Align::Left, 0x21);
-            cc += 16.0;
+            lines.push(InfoLine { len: 8, ..line(12, i32_at(&r, 0x58).to_string().into_bytes(), 0x21) });
         }
-        label(f, 13, cc);
         // The info texts in turn, one every 30 `Counter` frames.
         let (mut sp, mut old, mut h) = self.special.get();
         if sp != p {
@@ -1090,38 +1131,49 @@ impl Menus {
         }
         self.special.set((sp, old, h));
         let code = i16_at(&r, 0x168 + 2 * h);
-        if code != 0 {
-            if let Some((_, s)) = t.infostr.iter().find(|s| s.0 == code) {
-                value(f, s, 0x4e as f32, cc, 6);
-            }
-        }
-        cc += 16.0;
-        if owner != 0 && (owner == e || debug) {
-            txt(f, &t.texts.get(2, 2, 14), x0 + 10.0, y0 + cc, 9, 3, Align::Left, 1);
-            for pr in crate::starmap_hud::problem_order(&r, debug) {
-                let v = i32_at(&r, 0x118 + 4 * pr) / 10000;
-                txt(f, v.to_string().as_bytes(), x0 + 0x56 as f32, y0 + cc + 2.0, 2, 2, Align::Right, 6);
-                txt(f, b"%", x0 + 99.0, y0 + cc + 2.0, 1, 2, Align::Left, 6);
-                txt(f, &t.hu(4, (21 + pr) as u16), x0 + 0x70 as f32, y0 + cc + 2.0, 0x20, 2, Align::Left, 0x21);
-                cc += 12.0;
-            }
-        }
-        if owner == e {
-            let values = [t.tax(r[0x34] as i32), t.autobuild(r[0x6c] as i32), t.priority(r[0x6d] as i32)];
-            for (k, v) in values.iter().enumerate() {
-                let y = 0x104 as f32 + 22.0 * k as f32;
-                txt(f, &t.texts.get(2, 2, 15 + k as u16), x0 + 10.0, y0 + y, 0x20, 2, Align::Left, 1);
-                txt(f, v, x0 + 0x52 as f32, y0 + y, 0x10, 2, Align::Field, 0x21);
-                let [mx, my] = self.pointer;
-                let pressed = self.held && mx >= x0 + 0xba as f32 && mx <= x0 + 0xd8 as f32 && my >= y0 + y - 5.0 && my <= y0 + y + 11.0;
-                txt(f, &t.texts.get(2, 2, 18), x0 + 0xba as f32, y0 + y, 5, 2, Align::Field, if pressed { 2 } else { 1 });
-                if k != 1 {
-                    txt(f, b"-", x0 + 0xe4 as f32, y0 + y - 2.0, 1, 3, Align::Left, 1);
-                    txt(f, b"+", x0 + 0xfe as f32, y0 + y - 2.0, 1, 3, Align::Left, 1);
-                }
-            }
+        let special = t.infostr.iter().find(|s| code != 0 && s.0 == code).map(|s| s.1.clone()).unwrap_or_default();
+        lines.push(line(13, special, 6));
+        let problems = (owner != 0 && (owner == e || debug)).then(|| {
+            crate::starmap_hud::problem_order(&r, debug).into_iter().map(|pr| (i32_at(&r, 0x118 + 4 * pr) / 10000, t.hu(4, (21 + pr) as u16))).collect()
+        });
+        let settings = (owner == e).then(|| [t.tax(r[0x34] as i32), t.autobuild(r[0x6c] as i32), t.priority(r[0x6d] as i32)]);
+        LongInfo { lines, problems, settings }
+    }
+
+    /// An open select menu's lines (§16, §17): each item's value, its text and (the planet list) its production text.
+    pub fn menu_lines(&self, t: &MenuTexts, m: &SelectMenu) -> Vec<(i32, Vec<u8>, Vec<u8>)> {
+        match m.kind {
+            MenuKind::Tax => m.items.iter().map(|&v| (v, t.tax(v), Vec::new())).collect(),
+            MenuKind::AutoBuild => m.items.iter().map(|&v| (v, t.autobuild(v), Vec::new())).collect(),
+            MenuKind::Priority => (1..4).map(|k| (k, t.priority(k), Vec::new())).collect(),
+            MenuKind::Sale(_) => vec![(1, fill_format(&t.hu(5, 45), &m.texts[0], &m.texts[1]), Vec::new())],
+            MenuKind::Planets => m.items.iter().zip(&m.texts).map(|(&p, s)| {
+                let (name, text) = split_planet_item(s);
+                (p, name.to_vec(), text.to_vec())
+            }).collect(),
         }
     }
+}
+
+/// One line of the long info (re/screens/starmap.md §15.2): the label `GetString(2, 2, n)`, the value, its colour
+/// and field length, and the workers' and energy's NEEDED value (label `n + 1`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoLine {
+    pub n: u16,
+    pub value: Vec<u8>,
+    pub colour: usize,
+    pub len: usize,
+    pub needed: Option<Vec<u8>>,
+}
+
+/// The long info's contents (`StarmapHosszuInfoKiir`), for the original's layout and the modern panel.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LongInfo {
+    pub lines: Vec<InfoLine>,
+    /// The PROBLEMS row (the player's planet): each problem's per cent and name.
+    pub problems: Option<Vec<(i32, Vec<u8>)>>,
+    /// The player's planet: the tax, auto-build and priority values.
+    pub settings: Option<[Vec<u8>; 3]>,
 }
 
 /// The planet list's item: the name, then the production text (`pct%-design`), split where the stored text began.
@@ -1165,6 +1217,33 @@ mod tests {
         assert_eq!(r.hover, 2, "21² + 21² = 882 ≤ 900");
         r.hover_at([267.0 + 22.0, 242.0 + 22.0]);
         assert_eq!(r.hover, 0);
+    }
+
+    /// The rows the modern menus draw (ADR 0065) are the rows `hover` answers: inside each row its value, beside the
+    /// box none.
+    #[test]
+    fn select_rows_are_the_hover_rows() {
+        let base = SelectMenu { kind: MenuKind::Tax, x: 100, y: 50, hovered: -1, items: (0..8).collect(), texts: Vec::new(), a: 0, b: 0, rows: 0, cols: 1 };
+        let menus = [
+            base.clone(),
+            SelectMenu { kind: MenuKind::AutoBuild, items: (0..=6).collect(), ..base.clone() },
+            SelectMenu { kind: MenuKind::Priority, items: (1..4).collect(), ..base.clone() },
+            SelectMenu { kind: MenuKind::Sale(2), items: vec![1], texts: vec![b"Fortress".to_vec(), b"1200".to_vec()], ..base.clone() },
+            SelectMenu { kind: MenuKind::Planets, items: (1..=40).collect(), texts: vec![b"x".to_vec(); 40], a: 8, b: 6, rows: 20, cols: 2, ..base.clone() },
+        ];
+        for mut m in menus {
+            let rows = m.rows();
+            assert_eq!(rows.len(), if m.kind == MenuKind::Priority { 3 } else { m.items.len() });
+            for (v, r) in rows {
+                let [x, y, w, h] = r.map(|c| c as f32);
+                for at in [[x + w / 2.0, y + h / 2.0], [x, y], [x + w - 2.0, y + h - 1.0]] {
+                    m.hover(at);
+                    assert_eq!(m.hovered, v, "{:?} at {at:?}", m.kind);
+                }
+            }
+            m.hover([90.0, 40.0]);
+            assert_eq!(m.hovered, -1, "{:?}", m.kind);
+        }
     }
 
     /// The long info's buttons and menus and the radial icons drive the sim on `quick-1.sav` (IG2_INSTALL_DIR and

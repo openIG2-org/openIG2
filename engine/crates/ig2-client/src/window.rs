@@ -1855,6 +1855,10 @@ impl App {
                         self.tween_to([t[0], t[1], zoom], 4);
                     }
                 }
+                // Under the long info the card's left button and the production button leave it (hot-spots 8, 11).
+                Act::Info(false) if self.menus.info_on() && !locked => self.leave_long_info(false),
+                Act::Panel(11) if self.menus.info_on() && !locked => self.leave_long_info(true),
+                Act::Panel(_) if self.menus.info_on() => {}
                 Act::Info(right) if !locked && !self.menus.info_on() && self.menus.rename.is_none() && !self.wait_release => {
                     if right {
                         self.info_box_click();
@@ -2110,16 +2114,12 @@ impl App {
         }
         if self.menus.info_on() {
             // Hot-spots 8 (left), 9 and 11 leave; the panel's buttons and menus; the rest of the screen is caught.
-            let cam = self.camera3();
-            // Leaving raises the tutorial's 0x16 (exe 0x5b3035), then plays the zoom sound (exe 0x5b303c).
-            if (at[0] < 166.0 && at[1] >= 424.0) || crate::starmap_menus::exit_spot(at) {
-                self.world.game.tutorial_check_event(0x16);
-                self.sounds.push(crate::audio::SoundId::global(5));
-                self.menus.leave_info(cam, false);
-            } else if (422.0..466.0).contains(&at[0]) && (432.0..476.0).contains(&at[1]) {
-                self.world.game.tutorial_check_event(0x16);
-                self.sounds.push(crate::audio::SoundId::global(5));
-                self.menus.leave_info(cam, true);
+            // Under the modern HUD the info box and the production button are its card's (`modern_apply`).
+            let classic = !self.modern_up();
+            if (classic && at[0] < 166.0 && at[1] >= 424.0) || crate::starmap_menus::exit_spot(at) {
+                self.leave_long_info(false);
+            } else if classic && (422.0..466.0).contains(&at[0]) && (432.0..476.0).contains(&at[1]) {
+                self.leave_long_info(true);
             } else if let Some(dos) = self.menus.press_info(&self.world.game.state, at) {
                 self.apply_do(dos);
             }
@@ -2173,6 +2173,19 @@ impl App {
             self.menus.open_rop(at, places);
         }
         true
+    }
+
+    /// Leave the long info (hot-spot 8, 9, or 11 with `production`): the tutorial's event 0x16 (exe 0x5b3035), the
+    /// zoom sound (exe 0x5b303c), the camera flies back.
+    fn leave_long_info(&mut self, production: bool) {
+        // Once: the original's fly out is a blocking loop that reads no input.
+        if self.menus.info.is_some_and(|i| matches!(i.phase, crate::starmap_menus::InfoPhase::Leaving(_))) {
+            return;
+        }
+        self.world.game.tutorial_check_event(0x16);
+        self.sounds.push(crate::audio::SoundId::global(5));
+        let cam = self.camera3();
+        self.menus.leave_info(cam, production);
     }
 
     /// The left button went up after [`Self::starmap_press`]: an open select menu sends, the radial menu fires its
@@ -5218,9 +5231,9 @@ impl App {
         let backdrop = if self.overlay.is_some() || (self.spy.is_some() && self.spacewar.is_none()) { self.backdrop() } else { None };
         drop(backdrop_time);
         let kep = self.tutorial_kep();
-        // Ours (ADR 0065): the modern HUD's bar, and its card, console and minimap (the long info keeps the original's).
+        // Ours (ADR 0065): the modern HUD's bar, card, console and minimap, its menus and long info.
         let modern_bar = self.modern_up();
-        let modern_hud = modern_bar && !self.menus.info_on();
+        let modern_hud = modern_bar;
         let mut mv = None;
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
@@ -5370,13 +5383,14 @@ impl App {
                         let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
                         let mut m = h.modern_view(&self.world.game.state, self.tables, &self.world.ui, v, &self.world.prev, &self.world.curr, &sel, alpha, t, &self.panels, &self.menus, gates);
                         m.bind_keys(&self.bindings);
-                        if !modern_hud {
-                            (m.info, m.mini) = (None, None);
+                        // Under the long info the console and the minimap are off (hot-spots 1..=7).
+                        if self.menus.info_on() {
+                            m.mini = None;
                         }
                         mv = Some(m);
                     }
                     h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, self.tables, &sel, panel_tex, size, t);
-                    h.draw_starmap_menus(&mut frame, &self.menus, &self.panels, &self.world.game.state, self.tables, size, v.camera.zoom, t);
+                    h.draw_starmap_menus(&mut frame, &self.menus, &self.panels, &self.world.game.state, self.tables, size, v.camera.zoom, t, modern_bar);
                 }
                 (crate::ui::Screen::Design, ..) => {
                     if let Some(d) = &mut self.design {
@@ -6409,7 +6423,7 @@ impl App {
         if bit != 0 && (self.gui_held & bit != 0 || (pressed && self.over_gui())) {
             if pressed {
                 self.gui_held |= bit;
-                if self.mouse_held == 3 && self.over_info_card() && !self.starmap_locked() {
+                if self.mouse_held == 3 && self.over_info_card() && !self.starmap_locked() && !self.menus.info_on() {
                     self.wait_release = true;
                     self.gui_held = 0;
                     self.start_rename();

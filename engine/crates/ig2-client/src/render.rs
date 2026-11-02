@@ -2183,10 +2183,10 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         depth[m] = 5.0;
         c.pose(&mut r, &l.install, &depth);
     }
-    // Ours (ADR 0065): `--modern-hud` draws the bar, the info box, the console and the minimap as egui panels (the long
-    // info keeps the original's box).
+    // Ours (ADR 0065): `--modern-hud` draws the bar, the info box, the console, the minimap, the menus and the long info
+    // as egui panels.
     hud.modern_bar = o.modern_hud;
-    if !o.modern_hud || o.planet_info {
+    if !o.modern_hud {
         hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info, globe);
     }
     // An info panel at rest: its selection frame morphed in (re/screens/starmap.md §19.4).
@@ -2207,10 +2207,13 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let tex = models.render(&mut r, &l.install, &l.tables, &panels, &world.game.state, &sel, &view.camera.matrix(), size);
         hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &l.tables, &sel, tex, size, t);
     }
+    let mut staged = None;
     if o.planet_info || o.rop_menu.is_some() || o.menu.is_some() {
         let c = &view.camera;
         let (menus, _) = crate::starmap_menus::staged(&world.game.state, &sel, &panels, [c.x, c.y, c.zoom, c.rotate], o.planet_info, o.rop_menu, o.menu.as_deref(), o.mouse, t)?;
-        hud.draw_starmap_menus(&mut frame, &menus, &panels, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], view.camera.zoom.max(if menus.info_on() { 599.0 } else { 0.0 }), t);
+        let zoom = view.camera.zoom.max(if menus.info_on() { 599.0 } else { 0.0 });
+        hud.draw_starmap_menus(&mut frame, &menus, &panels, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], zoom, t, o.modern_hud);
+        staged = Some((menus, zoom));
     }
     if let Some(spec) = &o.top_menu {
         crate::topbar_menus::stage(&mut hud, &mut world, &l.tables, spec, o.top_mouse.unwrap_or([0.0; 2]))?;
@@ -2247,9 +2250,13 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     let rgba = if o.modern_hud {
         let size = [o.size.0 as f32, o.size.1 as f32];
-        let menus = crate::starmap_menus::Menus::default();
+        let (menus, zoom) = staged.unwrap_or_default();
         let mut mv = hud.modern_view(&world.game.state, &l.tables, &world.ui, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels, &menus, None);
         mv.bind_keys(&crate::bindings::Bindings::default());
+        mv.menus = hud.modern_menus(&world.game.state, &l.tables, &menus, zoom, size, t);
+        if menus.info_on() {
+            mv.mini = None;
+        }
         let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
         let style = crate::starmap_modern::style(&hud, size);
         let k = crate::gui::Gui::scale(o.size.1);

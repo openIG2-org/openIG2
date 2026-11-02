@@ -159,7 +159,7 @@ impl App {
         let modern = self.modern_up();
         let over_gui = self.over_gui();
         let bar_spot = |at: [f32; 2]| if modern { None } else { crate::hud::bar_tip_spot(at) };
-        let starmap = if starmap_shown && bar_spot(at).is_none() && !over_gui { self.starmap_tip(at).filter(|t| !modern || !matches!(t.id, 8 | 10 | 11)) } else { None };
+        let starmap = if starmap_shown && bar_spot(at).is_none() && !over_gui { self.starmap_tip(at).filter(|t| !modern || !(matches!(t.id, 8 | 10 | 11) || (t.id == 0x35 && t.now))) } else { None };
         // The info and messages screens' hot-spots (`Info_MouseInit`'s texts); a held one keeps its own (`Mouse_Megfogva`).
         let info = match (&self.hud, self.overlay) {
             (Some(h), Some(crate::ui::Screen::Info)) if game => {

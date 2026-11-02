@@ -4,7 +4,8 @@
 //! short info with its tanks and production buttons; the console's camera buttons and the minimap. The window fills
 //! a [`View`] from the same state the classic HUD reads, runs [`show`] once a frame and applies the [`Act`]s through
 //! the classic hot-spots' own code, so the orders, sounds and tutorial gates are the same. The radial menu, the select
-//! menus and the panels stay the original's.
+//! menus and the planet's long info are drawn here too ([`Menus`]) on the original's own places, so its hot-spot code
+//! still decides what is pressed; the panels stay the original's.
 //!
 //! The look is a ship's console: small dark plates with cut corners, a hairline edge and corner marks in the player's
 //! colour, drawn icons with their keys in the tooltips. It is laid out in points and follows the shared UI scale.
@@ -190,6 +191,8 @@ pub struct View {
     pub blink: bool,
     /// The player's empire colour: the plates' edges and what is on.
     pub race: Color32,
+    /// The long-press menus and the long info.
+    pub menus: Menus,
 }
 
 impl View {
@@ -272,6 +275,8 @@ enum Icon {
     Mail,
     /// A screen of the screen menu by its number (`AktKep`).
     Screen(i32),
+    /// A radial menu icon by its number (`StarmapRopIkonok`).
+    Rop(i32),
 }
 
 /// `pts` (in `k` units around `m`) as one line, closed or not.
@@ -363,6 +368,83 @@ fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
             p.rect_stroke(Rect::from_center_size(m, vec2(k * 2.0, k * 1.4)), 0.0, s, egui::StrokeKind::Middle);
             path(p, m, k, &[(-1.0, -0.7), (0.0, 0.1), (1.0, -0.7)], false, s);
         }
+        Icon::Rop(n) => match n {
+            // Redirect: a curved route ending on a ringed target.
+            3 => {
+                let mut v = arc(pos2(m.x + k * 0.5, m.y + k * 0.9), k * 1.4, k * 1.6, PI * 1.0, PI * 1.38);
+                v.push(pos2(m.x + k * 0.25, m.y - k * 0.62));
+                p.add(Shape::line(v, s));
+                p.circle_stroke(pos2(m.x + k * 0.55, m.y - k * 0.55), k * 0.42, s);
+                p.circle_filled(pos2(m.x + k * 0.55, m.y - k * 0.55), k * 0.14, c);
+            }
+            // Satellite: a body between two panels; the spy satellite adds its lens.
+            5 | 6 => {
+                p.rect_stroke(Rect::from_center_size(m, vec2(k * 0.6, k * 0.6)), 0.0, s, egui::StrokeKind::Middle);
+                for d in [-1.0, 1.0] {
+                    p.line_segment([pos2(m.x + d * k * 0.3, m.y), pos2(m.x + d * k * 0.5, m.y)], s);
+                    p.rect_stroke(Rect::from_center_size(pos2(m.x + d * k * 0.8, m.y), vec2(k * 0.6, k * 0.95)), 0.0, s, egui::StrokeKind::Middle);
+                }
+                if n == 6 {
+                    p.circle_filled(pos2(m.x, m.y + k * 0.62), k * 0.2, c);
+                    p.line_segment([pos2(m.x, m.y + k * 0.3), pos2(m.x, m.y + k * 0.45)], s);
+                }
+            }
+            // Terraform: a globe with its parallels.
+            7 => {
+                p.circle_stroke(m, k, s);
+                p.add(Shape::line(arc(m, k, k * 0.35, 0.0, PI), s));
+                p.add(Shape::line(arc(pos2(m.x, m.y - k * 0.45), k * 0.88, k * 0.22, 0.0, PI), Stroke::new(1.0f32, c.gamma_multiply(0.7))));
+                p.add(Shape::line(arc(m, k * 0.4, k, -PI * 0.5, PI * 0.5), Stroke::new(1.0f32, c.gamma_multiply(0.7))));
+            }
+            // Colonise: a flag planted on a world's rim.
+            8 => {
+                p.add(Shape::line(arc(pos2(m.x, m.y + k * 2.0), k * 1.3, k * 1.05, PI * 1.2, PI * 1.8), s));
+                p.line_segment([pos2(m.x - k * 0.3, m.y + k * 0.95), pos2(m.x - k * 0.3, m.y - k * 1.0)], s);
+                p.add(Shape::convex_polygon(vec![pos2(m.x - k * 0.3, m.y - k * 1.0), pos2(m.x + k * 0.75, m.y - k * 0.65), pos2(m.x - k * 0.3, m.y - k * 0.3)], c, Stroke::NONE));
+            }
+            // The vehicles' info: a tank over a list.
+            9 => {
+                icon(p, Rect::from_center_size(pos2(m.x, m.y - k * 0.35), r.size() * 0.8), Icon::Tanks, c);
+                for (j, w) in [1.0, 0.6].iter().enumerate() {
+                    let y = m.y + k * (0.55 + 0.38 * j as f32);
+                    p.line_segment([pos2(m.x - k, y), pos2(m.x - k + 2.0 * k * w, y)], Stroke::new(1.2f32, c));
+                }
+            }
+            // Join: two routes merging into one.
+            0xe => {
+                path(p, m, k, &[(-0.8, -0.9), (0.0, 0.0), (0.8, -0.9)], false, s);
+                path(p, m, k, &[(0.0, 0.0), (0.0, 1.0)], false, s);
+                path(p, m, k, &[(-0.4, 0.6), (0.0, 1.0), (0.4, 0.6)], false, s);
+            }
+            // Wormhole: a spiral.
+            0x10 => {
+                let v: Vec<Pos2> = (0..=40).map(|j| {
+                    let t = j as f32 / 40.0;
+                    let a = t * TAU * 1.6;
+                    pos2(m.x + a.cos() * k * (0.15 + 0.85 * t), m.y + a.sin() * k * (0.15 + 0.85 * t))
+                }).collect();
+                p.add(Shape::line(v, s));
+            }
+            // Virus alert: a cell with its spikes.
+            0x11 => {
+                p.circle_stroke(m, k * 0.55, s);
+                for j in 0..8 {
+                    let a = TAU * j as f32 / 8.0 + PI / 8.0;
+                    let (x, y) = (a.cos(), a.sin());
+                    p.line_segment([pos2(m.x + x * k * 0.55, m.y + y * k * 0.55), pos2(m.x + x * k * 0.9, m.y + y * k * 0.9)], s);
+                    p.circle_filled(pos2(m.x + x * k * 1.0, m.y + y * k * 1.0), k * 0.12, c);
+                }
+            }
+            // The gigabomb: a sphere with a burst of rays.
+            0x12 => {
+                p.circle_filled(pos2(m.x - k * 0.15, m.y + k * 0.2), k * 0.6, c);
+                for j in 0..5 {
+                    let a = -PI * 0.15 - PI * 0.175 * j as f32;
+                    p.line_segment([pos2(m.x + k * 0.45 + a.cos() * k * 0.2, m.y - k * 0.45 + a.sin() * k * 0.2), pos2(m.x + k * 0.45 + a.cos() * k * 0.6, m.y - k * 0.45 + a.sin() * k * 0.6)], s);
+                }
+            }
+            _ => icon(p, r, Icon::Details, c),
+        },
         Icon::Screen(n) => match n {
             // Help: a question mark in a ring.
             1 => {
@@ -629,6 +711,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     } else {
         acts.push(Act::Hold(None));
     }
+    menus(ctx, &v.menus, &ink);
     acts
 }
 
@@ -908,6 +991,332 @@ fn minimap(ui: &mut egui::Ui, mini: &Mini, v: &View, ink: &Ink, acts: &mut Vec<A
     }
 }
 
+/// The starmap's long-press menus and the planet's long info (re/screens/starmap.md §14–§17), laid out on the original's
+/// virtual screen so the classic hot-spot code that hit-tests them (`crate::starmap_menus`) answers exactly what is
+/// shown. Painted on their own layers: they take no input from egui.
+#[derive(Debug, Clone, Default)]
+pub struct Menus {
+    /// Virtual pixels → points: `(x0 + x·k, y0 + y·k)`.
+    pub map: [f32; 3],
+    pub radial: Option<Radial>,
+    pub select: Option<Select>,
+    pub info: Option<LongInfo>,
+}
+
+/// The radial icon menu (`StarmapRopIkonMod`), shown once the button has been held 0.3 s.
+#[derive(Debug, Clone, Default)]
+pub struct Radial {
+    /// The press point and the four places' hit centres (`LastMouse + Starmap_RopIkonX/Y`), virtual.
+    pub at: [f32; 2],
+    pub centres: [[f32; 2]; 4],
+    /// The places' icons (0 = none) and names (`StarmapRopIkon_Nev`).
+    pub icons: [i32; 4],
+    pub names: [String; 4],
+    /// `RopIkonFrame`: 30..=50 while it comes in; it answers from 50.
+    pub frame: i32,
+    /// `AktRopIkon2`.
+    pub hover: i32,
+}
+
+/// An open select menu: its rows' rectangles (virtual), texts and the one under the pointer (`smSelected`).
+#[derive(Debug, Clone, Default)]
+pub struct Select {
+    pub rows: Vec<SelectRow>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SelectRow {
+    pub rect: [f32; 4],
+    pub text: String,
+    /// The planet list's production text.
+    pub sub: String,
+    pub hovered: bool,
+}
+
+/// The planet's long info (`StarmapPlanetInfoMod`).
+#[derive(Debug, Clone, Default)]
+pub struct LongInfo {
+    /// How far the camera has flown in (`q`, 0..=1) and the exit button's slide (`StarmapInfoOffHoltart`).
+    pub q: f32,
+    pub exit_in: f32,
+    pub exit: String,
+    /// The name (the first line) and the planet owner's colour.
+    pub title: String,
+    pub colour: Color32,
+    pub lines: Vec<InfoRow>,
+    /// The PROBLEMS label, its virtual y and each problem's per cent and name.
+    pub problems: Option<Problems>,
+    /// The player's planet: the TAX, AUTO BUILD, PRIORITY labels and values, and "ALL".
+    pub settings: Option<([String; 3], [String; 3], String)>,
+    /// The long info's hot-spot under the pointer (`crate::starmap_menus::INFO_SPOTS`, 9 = the exit button) and
+    /// whether the left button is held.
+    pub hot: Option<u32>,
+    pub held: bool,
+}
+
+/// The long info's PROBLEMS row: its label, virtual y and each problem's per cent and name.
+pub type Problems = (String, f32, Vec<(i32, String)>);
+
+/// A line of the long info at virtual y: label, value, the shortage colour, the NEEDED label and value, the
+/// SPECIAL row.
+#[derive(Debug, Clone, Default)]
+pub struct InfoRow {
+    pub y: f32,
+    pub label: String,
+    pub value: String,
+    pub short: bool,
+    pub needed: Option<(String, String)>,
+    pub special: bool,
+}
+
+/// The long info's panel (`KirakFader(319, 33, 302, 326)`) and the exit button's row (hot-spot 9's top).
+const INFO_PANEL: [f32; 4] = [319.0, 33.0, 302.0, 326.0];
+const EXIT: [f32; 4] = [445.0, 380.0, 164.0, 30.0];
+
+impl Menus {
+    fn at(&self, x: f32, y: f32) -> Pos2 {
+        pos2(self.map[0] + x * self.map[2], self.map[1] + y * self.map[2])
+    }
+
+    fn rect(&self, r: [f32; 4]) -> Rect {
+        Rect::from_min_max(self.at(r[0], r[1]), self.at(r[0] + r[2], r[1] + r[3]))
+    }
+
+    /// Virtual pixels as points (sizes, fonts).
+    fn k(&self, v: f32) -> f32 {
+        v * self.map[2]
+    }
+}
+
+/// The radial menu's icons come in from frame 30 to 50 (0.3 s to 0.5 s held), easing out of the press point.
+pub fn radial_in(frame: i32) -> f32 {
+    let t = ((frame - 30) as f32 / 20.0).clamp(0.0, 1.0);
+    1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t)
+}
+
+/// The rop icon's drawn icon (`Starmap_RopIkonKonvert`'s picture, re/screens/starmap.md §14.5).
+fn rop_icon(n: i32) -> Icon {
+    match n {
+        1 => Icon::Tanks,
+        2 => Icon::Factory,
+        4 => Icon::Screen(3),
+        0xd => Icon::Split,
+        0xf => Icon::Details,
+        n => Icon::Rop(n),
+    }
+}
+
+/// The game's text in the panel's font: the font's private marks (the population's and energy's signs) dropped.
+fn clean(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+fn menus(ctx: &egui::Context, m: &Menus, ink: &Ink) {
+    if let Some(i) = &m.info {
+        long_info(&ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("smh-long-info"))), m, i, ink);
+    }
+    let top = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("smh-menus")));
+    if let Some(s) = &m.select {
+        select(&top, m, s, ink);
+    }
+    if let Some(r) = &m.radial {
+        radial(&top, m, r, ink);
+    }
+}
+
+/// The radial menu: a hub at the press point, a hairline to each icon, the icons on small plates that come out of the
+/// hub; armed (from frame 50) their edges light, the one under the pointer fills and shows its name.
+fn radial(p: &egui::Painter, m: &Menus, r: &Radial, ink: &Ink) {
+    let t = radial_in(r.frame);
+    let armed = r.frame >= 50;
+    let hub = m.at(r.at[0], r.at[1]);
+    // About the 30-pixel circle each icon answers in.
+    let side = m.k(42.0);
+    p.circle_stroke(hub, m.k(3.0), Stroke::new(1.5f32, ink.accent.gamma_multiply(t)));
+    let mut label = None;
+    for k in 0..4 {
+        if r.icons[k] <= 0 {
+            continue;
+        }
+        let c = m.at(r.centres[k][0], r.centres[k][1]);
+        let c = hub + (c - hub) * t;
+        let hot = armed && r.hover == r.icons[k];
+        let dir = (c - hub).normalized();
+        p.line_segment([hub + dir * m.k(5.0), c - dir * side * 0.62], Stroke::new(1.0f32, ink.accent.gamma_multiply(0.45 * t)));
+        let rect = Rect::from_center_size(c, vec2(side, side));
+        let mut plate = plate_shape(rect, ink);
+        if let Shape::Vec(v) = &mut plate {
+            // The edge: the accent once armed, lit under the pointer.
+            if let Some(Shape::Path(path)) = v.get_mut(1) {
+                path.stroke.width = if hot { 2.0 } else { 1.0 };
+                path.stroke.color = egui::epaint::ColorMode::Solid(if hot { lerp(ink.accent, Color32::WHITE, 0.3) } else if armed { ink.accent.gamma_multiply(0.75) } else { ink.edge });
+                if hot {
+                    path.fill = lerp(ink.fill, ink.accent, 0.35);
+                }
+            }
+        }
+        let mut faded = p.clone();
+        faded.multiply_opacity(t);
+        faded.add(plate);
+        let fg = if hot { Color32::WHITE } else { lerp(ink.text.gamma_multiply(0.8), ink.text, if armed { 1.0 } else { 0.0 }) };
+        icon(&faded, rect.shrink(side * 0.06), rop_icon(r.icons[k]), fg);
+        if hot && !r.names[k].is_empty() {
+            label = Some((k, rect));
+        }
+    }
+    // The name out beside the icon under the pointer, away from the hub, over the other icons.
+    if let Some((k, rect)) = label {
+        let g = p.layout_no_wrap(r.names[k].clone(), FontId::proportional(m.k(6.2).max(11.0)), ink.text);
+        let pad = vec2(8.0, 4.0);
+        let size = g.size() + pad * 2.0;
+        let gap = 4.0;
+        let at = match k {
+            0 => pos2(rect.left() - gap - size.x, rect.center().y - size.y / 2.0),
+            1 => pos2(rect.center().x - size.x / 2.0, rect.bottom() + gap),
+            2 => pos2(rect.right() + gap, rect.center().y - size.y / 2.0),
+            _ => pos2(rect.center().x - size.x / 2.0, rect.top() - gap - size.y),
+        };
+        let at = Rect::from_min_size(at, size);
+        p.add(plate_shape(at, &Ink { fill: ink.fill.to_opaque(), ..*ink }));
+        p.galley(at.min + pad, g, ink.text);
+    }
+}
+
+/// A select menu: a plate around the rows, the row under the pointer filled in the accent.
+fn select(p: &egui::Painter, m: &Menus, s: &Select, ink: &Ink) {
+    let Some(first) = s.rows.first() else { return };
+    let mut b = m.rect(first.rect);
+    for r in &s.rows {
+        b = b.union(m.rect(r.rect));
+    }
+    let font = FontId::proportional(m.k(6.0).max(11.0));
+    let sub = FontId::proportional(m.k(5.0).max(10.0));
+    // Room for the texts (the sale's line is wider than its row).
+    let widest = s.rows.iter().map(|r| p.layout_no_wrap(r.text.clone(), font.clone(), ink.text).size().x + if r.sub.is_empty() { 0.0 } else { p.layout_no_wrap(r.sub.clone(), sub.clone(), ink.dim).size().x + m.k(4.0) }).fold(0.0, f32::max);
+    b.max.x = b.max.x.max(b.min.x + widest + m.k(4.0));
+    // Opaque: it opens over the long info's own fields.
+    let solid = Ink { fill: ink.fill.to_opaque(), ..*ink };
+    p.add(plate_shape(b.expand2(vec2(m.k(5.0), m.k(3.0))), &solid));
+    for r in &s.rows {
+        let mut rect = m.rect(r.rect);
+        if s.rows.len() == 1 {
+            rect.max.x = b.max.x;
+        }
+        if r.hovered {
+            p.rect_filled(rect.expand2(vec2(m.k(3.0), 0.0)), 1.0, ink.accent.gamma_multiply(0.32));
+        }
+        let colour = if r.hovered { Color32::WHITE } else { ink.text };
+        let g = p.layout_no_wrap(r.text.clone(), font.clone(), colour);
+        let w = g.size().x;
+        p.galley(pos2(rect.left(), rect.center().y - g.size().y / 2.0), g, colour);
+        if !r.sub.is_empty() {
+            let g = p.layout_no_wrap(r.sub.clone(), sub.clone(), ink.dim);
+            p.galley(pos2(rect.left() + w + m.k(4.0), rect.center().y - g.size().y / 2.0), g, ink.dim);
+        }
+    }
+}
+
+/// The long info: a console plate over the original's box with the planet's name as its title, the rows in two
+/// columns, the problems, the settings as controls on the original's hot-spots, the exit button sliding in below.
+fn long_info(p: &egui::Painter, m: &Menus, i: &LongInfo, ink: &Ink) {
+    let mut p = p.clone();
+    p.multiply_opacity(i.q.clamp(0.0, 1.0));
+    let panel = m.rect(INFO_PANEL);
+    p.add(plate_shape(panel, ink));
+    let x0 = INFO_PANEL[0] + 1.0;
+    let label_font = FontId::proportional(m.k(5.8).max(10.0));
+    let value_font = FontId::proportional(m.k(6.6).max(11.0));
+    let warn = Color32::from_rgb(235, 96, 84);
+    let text = |s: &str, x: f32, y: f32, font: &FontId, c: Color32| {
+        let g = p.layout_no_wrap(s.to_string(), font.clone(), c);
+        let h = g.size().y;
+        p.galley(m.at(x, y) - vec2(0.0, h / 2.0), g, c);
+    };
+    // The title: the name in the owner's colour, a hairline under it.
+    text(&i.title, x0 + 10.0, 10.0 + 34.0 + 4.0, &FontId::proportional(m.k(9.0).max(14.0)), lerp(i.colour, Color32::WHITE, 0.2));
+    p.line_segment([m.at(x0 + 10.0, 34.0 + 19.0), m.at(INFO_PANEL[0] + INFO_PANEL[2] - 10.0, 34.0 + 19.0)], Stroke::new(1.0f32, ink.edge));
+    for l in &i.lines {
+        let y = l.y + 4.0;
+        text(&l.label, x0 + 10.0, y, &label_font, ink.dim);
+        let c = if l.short { warn } else if l.special { ink.accent } else { ink.text };
+        text(&clean(&l.value), x0 + 0x4e as f32, y, &value_font, c);
+        if let Some((label, value)) = &l.needed {
+            text(label, x0 + 0x8c as f32, y, &label_font, ink.dim);
+            text(&clean(value), x0 + 0xd0 as f32, y, &value_font, c);
+        }
+    }
+    if let Some((label, y, problems)) = &i.problems {
+        text(label, x0 + 10.0, y + 4.0, &label_font, ink.dim);
+        for (n, (pct, name)) in problems.iter().enumerate() {
+            let y = y + 6.0 + 12.0 * n as f32;
+            let g = p.layout_no_wrap(format!("{pct}%"), label_font.clone(), warn);
+            p.galley(m.at(x0 + 0x6a as f32, y) - vec2(g.size().x, g.size().y / 2.0), g, warn);
+            text(name, x0 + 0x70 as f32, y, &label_font, ink.text);
+        }
+    }
+    if let Some((labels, values, all)) = &i.settings {
+        p.line_segment([m.at(x0 + 10.0, 280.0), m.at(INFO_PANEL[0] + INFO_PANEL[2] - 10.0, 280.0)], Stroke::new(1.0f32, ink.edge));
+        let spot = |id: u32| crate::starmap_menus::INFO_SPOTS.iter().find(|s| s.0 == id).map(|s| m.rect(s.1.map(|c| c as f32)));
+        let state = |id: u32| (i.hot == Some(id), i.hot == Some(id) && i.held);
+        for k in 0..3 {
+            let [field, all_id, minus, plus] = [[0x5a, 0x5b, 0x5c, 0x5d], [0x5e, 0x5f, 0, 0], [0x60, 0x61, 0x62, 0x63]][k];
+            let y = 34.0 + 0x104 as f32 + 22.0 * k as f32 + 3.0;
+            text(&labels[k], x0 + 10.0, y, &label_font, ink.dim);
+            // The value: an inset field that opens its menu, with a chevron.
+            if let Some(r) = spot(field) {
+                let (hot, down) = state(field);
+                control(&p, r, ink, hot, down);
+                let g = p.layout_no_wrap(values[k].clone(), value_font.clone(), ink.text);
+                p.galley(pos2(r.left() + m.k(4.0), r.center().y - g.size().y / 2.0), g, ink.text);
+                let c = pos2(r.right() - m.k(6.0), r.center().y);
+                let s = m.k(2.0);
+                p.add(Shape::line(vec![pos2(c.x - s, c.y - s * 0.5), pos2(c.x, c.y + s * 0.5), pos2(c.x + s, c.y - s * 0.5)], Stroke::new(1.3f32, ink.accent)));
+            }
+            if let Some(r) = spot(all_id) {
+                let (hot, down) = state(all_id);
+                control(&p, r, ink, hot, down);
+                let g = p.layout_no_wrap(all.clone(), label_font.clone(), if down { Color32::WHITE } else { ink.accent });
+                p.galley(r.center() - g.size() / 2.0, g, if down { Color32::WHITE } else { ink.accent });
+            }
+            for (id, plus) in [(minus, false), (plus, true)] {
+                if let Some(r) = spot(id).filter(|_| id != 0) {
+                    let (hot, down) = state(id);
+                    control(&p, r, ink, hot, down);
+                    let (c, s) = (r.center(), r.height() * 0.22);
+                    let st = Stroke::new(1.5f32, if hot { Color32::WHITE } else { ink.text });
+                    p.line_segment([pos2(c.x - s, c.y), pos2(c.x + s, c.y)], st);
+                    if plus {
+                        p.line_segment([pos2(c.x, c.y - s), pos2(c.x, c.y + s)], st);
+                    }
+                }
+            }
+        }
+    }
+    // The exit button slides in from the right as the camera flies in.
+    if i.exit_in > 0.0 {
+        let x = ((1.0 - ((i.exit_in as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0) as f32;
+        let r = m.rect([EXIT[0] + x, EXIT[1], EXIT[2], EXIT[3]]);
+        let hot = i.hot == Some(9);
+        p.add(plate_shape(r, ink));
+        if hot {
+            p.add(Shape::convex_polygon(cut_corners(r.shrink(1.0), 6.0), ink.accent.gamma_multiply(if i.held { 0.45 } else { 0.25 }), Stroke::NONE));
+        }
+        let g = p.layout_no_wrap(i.exit.clone(), FontId::proportional(m.k(7.0).max(12.0)), if hot { Color32::WHITE } else { ink.text });
+        p.galley(r.center() - g.size() / 2.0, g, if hot { Color32::WHITE } else { ink.text });
+    }
+}
+
+/// A small control on the long info: an inset field, lit under the pointer, pressed while held.
+fn control(p: &egui::Painter, r: Rect, ink: &Ink, hot: bool, down: bool) {
+    let fill = match () {
+        _ if down => ink.accent.gamma_multiply(0.4),
+        _ if hot => ink.accent.gamma_multiply(0.18),
+        _ => Color32::from_black_alpha(90),
+    };
+    p.rect_filled(r, 2.0, fill);
+    p.rect_stroke(r, 2.0, Stroke::new(1.0f32, if hot { ink.accent.gamma_multiply(0.8) } else { ink.edge }), egui::StrokeKind::Inside);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1001,6 +1410,37 @@ mod tests {
         assert_eq!(left, vec![Act::Info(false)]);
         let right = drive(&view(), &[(None, None), (None, Some((1, true))), (None, Some((1, false)))], at);
         assert_eq!(right, vec![Act::Info(true)]);
+    }
+
+    /// The menus and the long info are drawn only: no panel under the pointer over them and no act for a click (the
+    /// window's hot-spot code takes the press, as the original's); the radial icons come in from frame 30 to 50.
+    #[test]
+    fn menus_take_no_input() {
+        assert_eq!((radial_in(0), radial_in(30), radial_in(50), radial_in(70)), (0.0, 0.0, 1.0, 1.0));
+        assert!(radial_in(40) > 0.5 && radial_in(40) < 1.0);
+        let mut v = view();
+        let centres = crate::starmap_menus::HIT.map(|c| [(238 + c[0]) as f32, (156 + c[1]) as f32]);
+        v.menus = Menus {
+            map: [240.0, 0.0, 2.25],
+            radial: Some(Radial { at: [320.0, 240.0], centres, icons: [2, 4, 3, 9], frame: 50, hover: 3, ..Default::default() }),
+            select: Some(Select { rows: vec![SelectRow { rect: [400.0, 300.0, 121.0, 13.0], text: "Low".into(), hovered: true, ..Default::default() }] }),
+            info: Some(LongInfo { q: 1.0, exit_in: 1.0, title: "Magellan 10".into(), ..Default::default() }),
+        };
+        // On the select menu's row, on the long info's panel, on a radial icon.
+        for at in [pos2(240.0 + 450.0 * 2.25, 306.0 * 2.25), pos2(240.0 + 350.0 * 2.25, 100.0 * 2.25), pos2(240.0 + 370.0 * 2.25, 242.0 * 2.25)] {
+            let acts = drive(&v, &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], |_| at);
+            assert!(acts.is_empty(), "{acts:?}");
+            let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+            let style = crate::gui::style(&crate::theme::Theme::modern());
+            let mut st = State::default();
+            g.pointer(Some([at.x, at.y]), crate::gui::Gui::scale(SIZE.1));
+            for _ in 0..3 {
+                g.run(SIZE, &style, |ctx| {
+                    show(ctx, &v, &mut st);
+                });
+            }
+            assert!(!g.ctx.is_pointer_over_area());
+        }
     }
 
     /// A held zoom-in button holds hot-spot 5 as the left button, every frame until the release.

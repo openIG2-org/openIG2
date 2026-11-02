@@ -6,17 +6,25 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original; listed in `docs/ENHANCEMENTS.md`). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (488).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (496).
 
 ## Open: player-visible
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 489 | starmap, modern HUD and long info | open-fix: the right button does nothing on hot-spots 9, 0xb, 0x5a-0x63, 0x65+ and 0x32; the exe takes either button (`Mouse_Lenyom`/`Mouse_Felenged`) | yes | starmap.md §15.3, §16 |
+| 490 | starmap, long info | open-fix: a press on the production button's place (422..466, 432..476) leaves with the production view on any planet; the exe's hot-spot 11 is on only for the player's planet or DEBUGX (`Starmap_MouseInit2`) | yes | starmap.md §15.1 |
+| 491 | starmap, long info | open-investigate: the tanks button (hot-spot 10) ends the long info and opens the vehicle transfer (`AktRopIkon` 1) in the exe; ours ignores it (classic and modern); to verify live | yes | starmap.md §15.1 |
+| 492 | starmap, long info | open-investigate: a right release on the info box opens the colony screen in the exe; ours ignores it; to verify live | yes | starmap.md §15.1 |
+| 493 | starmap, station sale menu | open-fix: the hover width is the design name's length; the exe uses the whole formatted line's length | yes | starmap.md §16 |
 
 ## Open: minor
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 488 | starmap, modern HUD, long info | open: under the modern HUD the info card's left click and its production button leave the long info on the click's release; the exe leaves on the press of hot-spot 8 / 0xb (`Starmap_Main`) | no | starmap.md §15.1 |
+| 494 | starmap, radial menu | open-fix: the menu fires on the left button's release even with the right one still held; the exe waits for the last button (`Mouse_Felenged`) | no | starmap.md §14.2 |
+| 495 | starmap, long info | open-fix: `TutorialPaused` doesn't switch off the settings hot-spots 0x5a-0x63 (`Starmap_MouseInit2`) | no | starmap.md §15.3 |
 | 20 | main menu | the fly-out (t 360) runs a little ahead at 4:3; meteor/ship RNG and pose differ | minor | mainscr.md §14 |
 | 150 | main menu, exit animation | the exe's respawning saucer (RNG) is missing and the meteors' material is fully black (faintly lit in the exe) | minor | mainscr.md §14 |
 | 154 | main menu, scenario list | the picture slide transitions at t 820/880 still differ (3D RNG/pose) | minor | mainscr.md §14 |

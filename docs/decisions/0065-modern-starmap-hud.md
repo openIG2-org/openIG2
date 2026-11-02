@@ -46,9 +46,9 @@ re/screens/hud.md §2, re/screens/input.md §6) and must stay exactly as they ar
    (and so is that button's release); anywhere else it reaches the map as before. While the HUD is up the original's
    positional spots under it are off (the console mask, the info box, the top bar's spots, the panels' 8/10/11), so a
    click on open map where they were picks or orders. The wheel over a panel doesn't zoom.
-5. **Unchanged**: the radial icon menu, the select menus, the production view, the transfer panel, the fleet's and
-   vehicles' info panels and the planet's long info (whose box keeps the original's info box under it while open).
-   They keep their original look; a later part may redraw them.
+5. **Unchanged**: the production view, the transfer panel and the fleet's and vehicles' info panels keep their
+   original look; a later part may redraw them. The radial icon menu, the select menus and the planet's long info are
+   redrawn since 2026-11-02 (amendment below).
 6. **Scale and ratio**: the plates are laid out in egui points and follow the shared UI scale of the egui layer: the
    top plates are 30 points high and the corner plates about 250 points wide, a small share of the screen at the
    default scale on 1080p and above; a player who wants them bigger or smaller sets the UI scale. The first version's
@@ -56,6 +56,32 @@ re/screens/hud.md §2, re/screens/input.md §6) and must stay exactly as they ar
    corners and edges (4:3, 16:9, 21:9) and stay sharp at any resolution; the UI theme (ADR 0056) is their style.
 
 ## Consequences
-- The original's HUD code stays and draws whenever the option is off (and under the long info).
+- The original's HUD code stays and draws whenever the option is off.
 - No exe capture exists for the new look: screenshots go with the change (`--snapshot --modern-hud`).
 - The info card shows no turning globe or fleet model (the original's box does); a colour mark stands for it.
+
+## Amendment (2026-11-02): the long-press menus and the long info
+The first screen package of "Modern versions of every original screen" (`docs/ENHANCEMENTS.md`, UI row).
+1. **What**: with the HUD on, the radial icon menu (re/screens/starmap.md §14), the select menus (tax, auto-build,
+   priority, a station's sale, the production view's planet list, §16–§17) and the planet's long info (§15) are drawn
+   by `starmap_modern::Menus` from `ui::Hud::modern_menus` instead of the original's brushes, faders and bitmap font.
+2. **Same places, same input**: they are laid out on the original's virtual 640 × 480 screen (mapped to the band like
+   the original's 2D) and painted on egui layers that take no input, so the original's hot-spot code
+   (`starmap_menus`: the radial's 30-pixel circles from frame 50, the menus' 13-pixel rows, the long info's buttons,
+   the exit button) decides what the pointer is over, what the press opens and what the release sends: the same items,
+   order, keys, hover, press-and-hold behaviour, sounds and orders. They follow the band's size, not the UI scale.
+3. **Look** (the console's): the radial icons on small cut-corner plates with a hub at the press point and a hairline
+   to each icon; they come out of the hub from 0.3 s held and light their edges at 0.5 s, when they answer; the one
+   under the pointer fills in the accent and shows its name (`StarmapRopIkon_Nev`) beside it, away from the hub (so the
+   original's tooltip for it is off). The select menus are opaque plates with the row under the pointer filled. The
+   long info is one plate: the planet's name as its title in the owner's colour, the labels small and dim, the values
+   (shortages red), the problems, the settings as an inset field with a chevron (its menu), an ALL chip and − / +
+   buttons on the original's hot-spots, each lit under the pointer and pressed while held; the exit button slides in
+   as the camera flies in. Drawn icons for every radial icon (redirect, satellite, spy satellite, terraform, colonise,
+   vehicle info, join, wormhole, virus alert, gigabomb, and the HUD's tanks, production, colony, split, details).
+4. **The long info under the HUD**: the HUD stays up (its info card's left button and production button leave the
+   long info, as the original's info box and production button do; the minimap and the camera's buttons are off, as
+   hot-spots 1..=7 are); both buttons on the card don't start a rename while it is up.
+5. **Classic unchanged**: without the option, and in every capture and replay, the original's drawing runs (it now
+   reads its rows from the same `Menus::long_info`); `--snapshot --modern-hud` with `--planet-info`, `--rop-menu`,
+   `--menu` and `--mouse` draws the new look.
