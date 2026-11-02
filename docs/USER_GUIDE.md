@@ -312,6 +312,66 @@ The tech appears on the research screen once the Mezon plant is researched, and 
 once the tech is; computer empires research and build it too. Other fields and the limits are in ADR 0069; `ig2-check`
 shows where each new entry landed. Saves made with the mod need it to load.
 
+Ships and tanks work the same way: every hull, weapon and part is a tech. A new hull or space weapon is a copy of an
+original (`like`) with its own tech, which says what it costs and how strong it is; a new part (an engine, a shield,
+a radar, a tank turret) is a tech that is `like` an original part and fits wherever that part fits. Example: a
+cruiser hull, a laser and a tank, each researched in a free field:
+
+```toml
+[[techs.new]]
+key = "star_galleon"
+category = 5                  # any category with a free field (ships and tanks have none)
+name = "Star galleon"
+prerequisites = [9]           # the Cruiser
+price = 150000                # the hull's price, time, hit points and firepower
+build_time = 40
+hp = 2500
+firepower = 60
+
+[[hulls.new]]
+key = "star_galleon"          # uses the tech of the same key
+like = 9                      # the Cruiser's hull: slots, model, battle ship type
+
+[[techs.new]]
+key = "plasma_lance"
+category = 2
+name = "Plasma lance"
+prerequisites = [20]          # the Beam laser
+price = 450
+firepower = 30                # its damage in battle
+
+[[space_weapons.new]]
+key = "plasma_lance"
+like = 3                      # the Beam laser's weapon record (graphics, speed)
+reload = 120
+range = 80
+
+[[techs.new]]
+key = "siege_crawler"
+category = 11
+name = "Siege crawler"
+prerequisites = [148]         # the Mega tracked tank
+price = 14000
+hp = 300
+
+[[hulls.new]]
+key = "siege_crawler"
+like = 22                     # the Mega tracked's hull: a new tank
+hp = 90000                    # a unit's hit points in the ground war
+
+[[techs.new]]
+key = "ion_drive"
+category = 4
+like = 61                     # Hyperdrive MK 5: the same speed, the same slots
+name = "Ion drive"
+prerequisites = [61]
+price = 7000
+```
+
+Once researched, the design screen offers the new hulls and the new parts in their originals' slots; the ships and
+tanks built from them fight like their originals with their own values, and computer empires fit them too. Fields a
+tech doesn't set start as its original's (price, time, hit points, firepower, capacity). The rest is in ADR 0069.
+
 A mod can also add stories: a `stories.toml` at the top of the mod folder lists `[[story]]` tables, each with `when`
 triggers and `do` actions, that run after the built-in stories. A story fires once, or again and again with
 `repeat = true` (`every` days apart, at most `times` times). Triggers: the day, a planet's owner, a dead empire, a

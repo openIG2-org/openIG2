@@ -482,7 +482,9 @@ impl Game<'_> {
     /// records' words.
     fn live_weapons(&self) -> (Vec<WeaponRules>, Vec<Vec<i32>>) {
         let (mut w, mut words) = (self.rules.space.weapons.clone(), self.rules.space.weapon_words.clone());
-        crate::spacebattle::fegyverszamol(&mut w, &mut words, &self.rules.ai.design.firepower);
+        let space = &self.rules.space;
+        let added: Vec<_> = space.added_weapons.iter().map(|&(t, w)| (t, w, self.rules.ai.design.role(t))).collect();
+        crate::spacebattle::fegyverszamol(&mut w, &mut words, &self.rules.ai.design.firepower, &added);
         (w, words)
     }
 

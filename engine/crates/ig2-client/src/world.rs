@@ -313,7 +313,10 @@ impl Snapshot {
 pub fn check_kinds(state: &SaveState, rules: &GameRules) -> Result<(), String> {
     match state.unknown_kind(rules.side.colony.buildings.len()) {
         Some(k) => Err(format!("the save has building kind {k}, which no active mod adds (enable the mods it was played with)")),
-        None => Ok(()),
+        None => match state.unknown_hull(rules.ai.design.hulls.len()) {
+            Some(h) => Err(format!("the save has a design of hull {h}, which no active mod adds (enable the mods it was played with)")),
+            None => Ok(()),
+        },
     }
 }
 

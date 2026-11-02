@@ -1530,7 +1530,7 @@ mod tests {
     #[test]
     fn design_pass_creates_a_design_per_buildable_slot() {
         let mut fx = fixture();
-        let mut hulls = vec![crate::spacewar::Hull { class: 1, flags: [0; 6], tech: 11 }; DESIGN_SLOTS];
+        let mut hulls = vec![crate::spacewar::Hull { class: 1, flags: [0; 6], tech: 11, like: 0 }; DESIGN_SLOTS];
         hulls[1].tech = 10;
         let mut slot_types = vec![vec![vec![0; 12]; 27]; 14];
         slot_types[0][1][0] = 7;
@@ -1546,6 +1546,7 @@ mod tests {
             race_pod_table: vec![1; 19],
             pod_slot_types: slot_types,
             tank_speeds: vec![0.0; 5],
+            tech_like: Vec::new(),
         };
         fx.rules.pod_slot_max = slot_max;
         fx.rules.pods = vec![PodRule { id: 7, techs: [20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }];

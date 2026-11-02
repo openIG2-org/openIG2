@@ -12,7 +12,7 @@ use ig2_sim::messages::Texts;
 use ig2_sim::placement::{PlacementRules, Terrain};
 use ig2_sim::radar::RadarRules;
 use ig2_sim::research::ResearchRules;
-use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
+use ig2_sim::spacewar::{DesignRules, GunRules};
 use ig2_sim::spacebattle::{FormRules, FormationSlot, ShipType, SpaceRules};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
 
@@ -81,17 +81,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
     let terrains = maps.iter().map(|m| m.terrain.clone()).collect();
-    let design = DesignRules {
-        hulls: r.hulls.iter().map(|h| Hull { class: h.class, flags: h.flags, tech: h.tech }).collect(),
-        tech_price: r.techs.iter().map(|t| t.price).collect(),
-        tech_time: r.techs.iter().map(|t| t.build_time).collect(),
-        tech_hp: r.techs.iter().map(|t| t.hp).collect(),
-        tech_capacity: r.techs.iter().map(|t| t.capacity).collect(),
-        firepower: r.techs.iter().map(|t| t.firepower).collect(),
-        race_pod_table: r.race_pod_table.clone(),
-        pod_slot_types: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.pod_type).collect()).collect()).collect(),
-        tank_speeds: r.tank_speeds.clone(),
-    };
+    let design = DesignRules::from_rules(&r);
     let story = |p: &str| read(p).unwrap_or_default();
     let messages = read("dataraw/text/uzenet.txt")
         .map(|raw| Texts::parse(&raw).with_story(&story("dataraw/text/s_story.txt"), &story("dataraw/text/txt02.txt"), inst.lang()))
@@ -221,5 +211,7 @@ pub fn space_rules(inst: &Install, r: &ig2_rules::Rules) -> Result<SpaceRules, S
             .collect(),
         building_tech: r.buildings.iter().map(|b| b.tech).collect(),
         building_hp: r.buildings.iter().map(|b| b.max_hp).collect(),
+        tech_like: ig2_sim::spacewar::DesignRules::from_rules(r).tech_like,
+        added_weapons: r.added_weapons.iter().map(|a| (a.tech, a.index)).collect(),
     })
 }

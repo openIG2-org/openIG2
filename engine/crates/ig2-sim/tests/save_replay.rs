@@ -26,7 +26,7 @@ use ig2_sim::radar::RadarRules;
 use ig2_sim::research::ResearchRules;
 use ig2_sim::save::{group_chunks, modelled, va, SaveState};
 use ig2_sim::ground::{GroundMap, GroundRules};
-use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
+use ig2_sim::spacewar::{DesignRules, GunRules};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
 use ig2_sim::story::{MessageText, StoryEvent};
 use ig2_sim::trade::{Delivery, DELIVERY};
@@ -250,17 +250,7 @@ fn game_rules(inst: &Install) -> GameRules {
         .map(|(t, h, base)| GroundMap { terrain: t.clone(), heights: h.clone(), base: *base, footprints: r.building_footprints.clone() })
         .collect();
     let terrains = terrains.into_iter().map(|t| t.0).collect();
-    let design = DesignRules {
-        hulls: r.hulls.iter().map(|h| Hull { class: h.class, flags: h.flags, tech: h.tech }).collect(),
-        tech_price: r.techs.iter().map(|t| t.price).collect(),
-        tech_time: r.techs.iter().map(|t| t.build_time).collect(),
-        tech_hp: r.techs.iter().map(|t| t.hp).collect(),
-        tech_capacity: r.techs.iter().map(|t| t.capacity).collect(),
-        firepower: r.techs.iter().map(|t| t.firepower).collect(),
-        race_pod_table: r.race_pod_table.clone(),
-        pod_slot_types: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.pod_type).collect()).collect()).collect(),
-        tank_speeds: r.tank_speeds.clone(),
-    };
+    let design = DesignRules::from_rules(&r);
     GameRules {
         side,
         placement: PlacementRules { terrains, footprints: r.building_footprints.clone() },

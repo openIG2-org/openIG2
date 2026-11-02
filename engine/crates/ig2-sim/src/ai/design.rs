@@ -160,6 +160,7 @@ pub fn tech_fits(rules: &AiRules, tech: &TechTable, debug: bool, h: usize, t: us
         return false;
     }
     let table = rules.design.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
+    let h = rules.design.hull_role(h);
     let Some(&kind) = rules.design.pod_slot_types.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1)))
     else {
         return false;
@@ -170,7 +171,7 @@ pub fn tech_fits(rules: &AiRules, tech: &TechTable, debug: bool, h: usize, t: us
 /// `GetMaxRarakhato(pt, h, k)` (exe 0x4b42f0): how many units slot `k` of hull `h` takes.
 pub fn slot_max(rules: &AiRules, pt: i16, h: usize, k: usize) -> i32 {
     let table = rules.design.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
-    rules.pod_slot_max.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1))).copied().unwrap_or(0)
+    rules.pod_slot_max.get(table.max(0) as usize).and_then(|x| x.get(rules.design.hull_role(h))).and_then(|x| x.get(k.wrapping_sub(1))).copied().unwrap_or(0)
 }
 
 /// `TervAutoDesign(e, d, variant)` (§10.3, exe 0x541920) on a record: the best tech `e` (of race `race`) has for
@@ -186,6 +187,7 @@ pub fn auto_design_record(rules: &AiRules, tech: &TechTable, debug: bool, raw: &
     let pt = rd_i16(raw, 0x40);
     let hu = hull.max(0) as usize;
     let hull_tech = rules.design.hulls.get(hu).map_or(0, |h| h.tech);
+    let ground = GROUND_HULLS.contains(&(rules.design.role(hull_tech.max(0) as usize) as i32));
     let allow = |table: &[u8; 18]| table[9 * variant + race] != 0;
     let mut tutorial = 0;
     let mut k = 1;
@@ -199,20 +201,22 @@ pub fn auto_design_record(rules: &AiRules, tech: &TechTable, debug: bool, raw: &
             if human && t == 0x12 && hull_tech == 5 {
                 tutorial += 1;
             }
+            // A mod's part by its role's rules (ADR 0069 §10).
+            let role = rules.design.role(t);
             let mut s = tech.byte(t, 0x3c + race) as i32 + 100;
-            if variant != 0 && GROUND_HULLS.contains(&hull_tech) {
-                s = rules.ground_priority.get(t * 9 + race).copied().unwrap_or(0) as i32 + 100;
+            if variant != 0 && ground {
+                s = rules.ground_priority.get(role * 9 + race).copied().unwrap_or(0) as i32 + 100;
             }
-            if variant == 0 && (0x1a..=0x1d).contains(&t) {
+            if variant == 0 && (0x1a..=0x1d).contains(&role) {
                 s -= 100;
             }
-            if !allow(&SHIELDS_OK) && (0x31..=0x36).contains(&t) {
+            if !allow(&SHIELDS_OK) && (0x31..=0x36).contains(&role) {
                 s -= 100;
             }
-            if !allow(&T41_OK) && (0x41..=0x43).contains(&t) {
+            if !allow(&T41_OK) && (0x41..=0x43).contains(&role) {
                 s -= 100;
             }
-            if !allow(&T44_OK) && (0x44..=0x45).contains(&t) {
+            if !allow(&T44_OK) && (0x44..=0x45).contains(&role) {
                 s -= 100;
             }
             if s > 0 && tech_fits(rules, tech, debug, hu, t, k, 5, e, pt) && best <= s {
@@ -229,6 +233,12 @@ pub fn auto_design_record(rules: &AiRules, tech: &TechTable, debug: bool, raw: &
         k += 1;
     }
     tutorial
+}
+
+/// Ours (ADR 0069 §10): the hull the AI designs hull slot `s` with: the last mod hull like `s` whose tech `e` owns,
+/// else `s`.
+pub fn slot_hull(rules: &DesignRules, tech: &TechTable, e: usize, s: usize) -> usize {
+    (DESIGN_SLOTS..rules.hulls.len()).rev().find(|&h| rules.hull_role(h) == s && tech.status(rules.hulls[h].tech.max(0) as usize, e) == 5).unwrap_or(s)
 }
 
 /// `TervUjraSzamol(e, d, false, true)` (`space-combat.md` §2.4) on a record of an empire of race `race`.
@@ -277,7 +287,7 @@ impl AiState {
                     for k in super::design::FIRST_OWN..=n.max(0) as usize {
                         let Some(x) = w.des(e, k as i32) else { continue };
                         let r = &x.raw;
-                        if v == BEST && rd_i16(r, 0x16) >= 0 && r[0x18] != 0 && r[0x19] == 0 && rd_i32(r, 0x44) == s as i32 {
+                        if v == BEST && rd_i16(r, 0x16) >= 0 && r[0x18] != 0 && r[0x19] == 0 && w.rules.design.hull_role(rd_i32(r, 0x44).max(0) as usize) == s {
                             d = k as i32;
                         }
                     }
@@ -328,6 +338,11 @@ impl AiState {
                 if d > 0 {
                     let du = d as usize;
                     let old = w.des_i32(e, d, 0x20);
+                    // A mod's hull for the slot once the empire owns its tech (ADR 0069 §10).
+                    let h = slot_hull(&w.rules.design, &w.spy.colony.tech, e, s);
+                    if redo && h != s {
+                        w.edit_design(e, du, |r| r[0x44..0x48].copy_from_slice(&(h as i32).to_le_bytes()));
+                    }
                     if redo {
                         w.auto_design(e, du, v);
                     }

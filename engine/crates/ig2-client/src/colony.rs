@@ -2931,11 +2931,12 @@ impl View {
 /// `ShowColony` while EN has units to land (`CheckPlacing(EN)` false, `GetFirstUnPlacedTank(EN)` exe 0x47ac10;
 /// spec §11.7): `AktEpuletTipus = −10 − design`, so `buildshown` is that unit's hull (`Tervek[EN][design] + 0x44 − 0x13`) in
 /// the colour `min(EN, 10)`.
-pub fn landing_unit(state: &SaveState, curr: &ColonySnap) -> Option<(usize, i32)> {
+pub fn landing_unit(state: &SaveState, curr: &ColonySnap, rules: &ig2_rules::Rules) -> Option<(usize, i32)> {
     let en = state.mem.i32(ig2_sim::save::va::EN);
     let &(_, design) = curr.to_land.iter().find(|&&(o, _)| o == en)?;
     let rec = state.designs.get(usize::try_from(en).ok()?)?.get(usize::try_from(design).ok()?)?;
-    let hull = (i32::from_le_bytes(rec[0x44..0x48].try_into().ok()?) - 0x13).clamp(0, 4) as usize;
+    // A mod's tank shows the ground hull it is like (ADR 0069 §8).
+    let hull = (rules.hull_role(i32::from_le_bytes(rec[0x44..0x48].try_into().ok()?).max(0) as usize) as i32 - 0x13).clamp(0, 4) as usize;
     Some((hull, en.min(10)))
 }
 

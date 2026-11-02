@@ -1766,6 +1766,12 @@ impl SaveState {
         (1..=self.planet_count()).flat_map(|p| self.slots(p)).map(|b| b[0]).find(|&k| k as usize >= kinds)
     }
 
+    /// Ours (ADR 0069 §11): the first hull a live design names that `hulls` (the active rules' count) lacks.
+    pub fn unknown_hull(&self, hulls: usize) -> Option<i32> {
+        let hull = |r: &[u8]| i32::from_le_bytes(r[0x44..0x48].try_into().unwrap());
+        self.designs.iter().flatten().filter(|r| r.len() >= 0x48 && i16::from_le_bytes([r[0x16], r[0x17]]) > 0).map(|r| hull(r)).find(|&h| h as usize >= hulls)
+    }
+
     pub fn colony(&self) -> ColonyWorld {
         let n = self.planet_count();
         let unrest = self.per_planet(va::UNREST);

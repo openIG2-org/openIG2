@@ -250,6 +250,10 @@ pub struct SpaceRules {
     /// `EpuletekLeiro[type].+0` (tech) and `+8` (hit points).
     pub building_tech: Vec<u8>,
     pub building_hp: Vec<i32>,
+    /// Ours (ADR 0069 §7, §9): the original tech each tech plays (empty without mods) and the mods' weapons as
+    /// (tech, weapon).
+    pub tech_like: Vec<u8>,
+    pub added_weapons: Vec<(usize, usize)>,
 }
 
 impl SpaceRules {
@@ -293,6 +297,8 @@ impl SpaceRules {
             forms: self.forms.clone(),
             formations: self.formations.clone(),
             building_tech: self.building_tech.clone(),
+            tech_like: self.tech_like.clone(),
+            added_weapons: self.added_weapons.clone(),
         }
     }
 }
@@ -854,8 +860,9 @@ impl WeaponRules {
 /// reload: pod techs 0x11..=0x20 → weapon `t − 0x11`, `fp · reload / 250` (weapons 11 and 12: `/ 3500`); techs
 /// 0x41..=0x47 → weapon `t − 0x34` with `fp · 25` from 0x44; weapons 20..=24 from techs 0x71..=0x75. The words of
 /// [`SpaceRules::weapon_words`] that hold a rewritten damage (its own record's and the next one's) follow.
-/// [obs: the live table of `spwc-fx8`, test `fegyverszamol_matches_the_live_table`.]
-pub fn fegyverszamol(weapons: &mut [WeaponRules], words: &mut [Vec<i32>], firepower: &[i32]) {
+/// [obs: the live table of `spwc-fx8`, test `fegyverszamol_matches_the_live_table`.] A mod's weapon (`added`:
+/// tech, weapon, the tech's role; ADR 0069 §9) takes its role's formula with its own tech's firepower.
+pub fn fegyverszamol(weapons: &mut [WeaponRules], words: &mut [Vec<i32>], firepower: &[i32], added: &[(usize, usize, usize)]) {
     let fp = |t: usize| firepower.get(t).copied().unwrap_or(0);
     let reload = |w: usize| weapons.get(w).map_or(0, |x| x.reload);
     let mut out = Vec::new();
@@ -871,6 +878,14 @@ pub fn fegyverszamol(weapons: &mut [WeaponRules], words: &mut [Vec<i32>], firepo
     }
     for w in 0x14..0x19usize {
         out.push((w, fp(w + 0x5d).wrapping_mul(reload(w)) / 250));
+    }
+    for &(t, w, role) in added {
+        let (f, div) = match role {
+            0x41..=0x48 if role > 0x43 => (fp(t).wrapping_mul(25), 250),
+            0x11..=0x20 if matches!(role - 0x11, 11 | 12) => (fp(t), 3500),
+            _ => (fp(t), 250),
+        };
+        out.push((w, f.wrapping_mul(reload(w)) / div));
     }
     let mut set = |w: usize, d: i32| {
         if let Some(x) = weapons.get_mut(w) {
@@ -3685,6 +3700,19 @@ pub struct SetupRules {
     pub formations: Vec<Vec<FormationSlot>>,
     /// `EpuletekLeiro[type].+0`: the tech of each building type (exe 0x8EBA38 × 0x24).
     pub building_tech: Vec<u8>,
+    /// [`SpaceRules::tech_like`], [`SpaceRules::added_weapons`].
+    pub tech_like: Vec<u8>,
+    pub added_weapons: Vec<(usize, usize)>,
+}
+
+impl SetupRules {
+    /// The original tech whose role tech `t` plays (ADR 0069 §7).
+    pub fn role(&self, t: usize) -> usize {
+        match self.tech_like.get(t).copied().unwrap_or(0) {
+            0 => t,
+            l => l as usize,
+        }
+    }
 }
 
 /// The parts of a fleet record (`Flottak`, 0x80 bytes) the setup reads.
@@ -4033,7 +4061,7 @@ impl Battle {
         let (mut t, model, mut hp) = if design < SCENERY {
             let Some(d) = s.design(owner, design) else { return -1 };
             let (model, hp) = (d.hull_tech, d.hp.wrapping_mul(15));
-            let t = design_type(model);
+            let t = design_type(s.rules.role(model.max(0) as usize) as i32);
             let (c0, c2) = (self.cell[0], self.cell[2]);
             let i = race * TYPES_PER_RACE + t;
             if let Some(rec) = (0 <= i).then_some(()).and_then(|_| s.types.get_mut(i as usize)) {
@@ -4151,13 +4179,18 @@ impl Battle {
             for k in 1..=d.slots.max(0) as usize {
                 let (Some(&id), Some(&n)) = (d.raw.get(0x50 + k), d.raw.get(0x5d + k)) else { break };
                 let n = n as i32;
-                match id {
-                    0x11..=0x20 => self.add_mount(s, u, id as i32 - 0x11, n),
-                    0x41..=0x48 => self.add_mount(s, u, id as i32 - 0x34, n),
-                    _ => {}
+                // A mod's weapon first, else by the tech's role (ADR 0069 §9).
+                let role = s.rules.role(id as usize) as i32;
+                match s.rules.added_weapons.iter().find(|a| a.0 == id as usize) {
+                    Some(&(_, w)) => self.add_mount(s, u, w as i32, n),
+                    None => match role {
+                        0x11..=0x20 => self.add_mount(s, u, role - 0x11, n),
+                        0x41..=0x48 => self.add_mount(s, u, role - 0x34, n),
+                        _ => {}
+                    },
                 }
                 let unit = &mut self.units[u];
-                (unit.shield, unit.pods) = pod_effect(id, hp, unit.shield, unit.pods);
+                (unit.shield, unit.pods) = pod_effect(role as u8, hp, unit.shield, unit.pods);
             }
         }
         ret
@@ -4543,7 +4576,7 @@ impl Battle {
 
 /// `AddFleet`'s two sorts of a side's waiting ships (spec §7.10 step 4).
 fn sort_side(s: &Setup, list: &mut [Entry]) {
-    let class = |e: &Entry| slot_class(design_type(s.design(e.owner, e.design).map_or(0, |d| d.hull_tech)));
+    let class = |e: &Entry| slot_class(design_type(s.design(e.owner, e.design).map_or(0, |d| s.rules.role(d.hull_tech.max(0) as usize) as i32)));
     let key = |e: &Entry| e.race.wrapping_mul(1000).wrapping_add(s.design(e.owner, e.design).map_or(0, |d| d.hull_tech));
     let n = list.len();
     for i in 0..n {
@@ -5026,6 +5059,7 @@ mod tests {
             forms: vec![FormRules { loaded: true, slots: 3, size: 1.0 }; FORMS],
             formations: vec![line(20), line(20)],
             building_tech: Vec::new(),
+            ..Default::default()
         };
         let mut types = vec![ShipType::default(); 240];
         for race in [3, 5, 6] {
@@ -5097,6 +5131,69 @@ mod tests {
         b.winner = 6;
         let r = b.finish();
         assert_eq!((r.winner, r.human_took_part, r.participants.len(), r.loser_retreated, b.active), (6, true, 3, false, false));
+    }
+
+    /// A mod's items (ADR 0069 §7–§9): tech 71 is a hull tech like the cruiser's (9), 32 mounts the mod's weapon 40, 64 is
+    /// like the energy shield (0x31). The units take the cruiser's ship type, weapon 40 and the shield's share; the live
+    /// table gives weapon 40 its role's damage from tech 32's firepower.
+    #[test]
+    fn a_mods_hull_weapon_and_shield_play_their_originals() {
+        let line = |y| (0..6).map(|k| FormationSlot { cell: [40 + 8 * k, y, 5, 3], waypoint_count: 1, waypoints: [[40 + 8 * k, y, 5, 3]; 4] }).collect::<Vec<_>>();
+        let mut weapons = vec![WeaponRules::default(); 41];
+        weapons[40] = WeaponRules { kind: 1, reload: 120, range: 80, ..Default::default() };
+        let mut tech_like = vec![0u8; 193];
+        (tech_like[71], tech_like[32], tech_like[64]) = (9, 20, 0x31);
+        let rules = SetupRules {
+            weapons: weapons.clone(),
+            forms: vec![FormRules { loaded: true, slots: 3, size: 1.0 }; FORMS],
+            formations: vec![line(20), line(20)],
+            tech_like,
+            added_weapons: vec![(32, 40)],
+            ..Default::default()
+        };
+        let mut types = vec![ShipType::default(); 240];
+        for race in [3, 6] {
+            types[race * 12 + 2].scale = 0.002;
+        }
+        let mut designs = vec![vec![design(0, 0, 0, &[])]; EMPIRES];
+        for (e, race) in [(3usize, 3i16), (6, 6)] {
+            designs[e].push(design(60, 71, race, &[(32, 2), (64, 1)]));
+        }
+        let fleet = |owner| SetupFleet { owner, story_id: 0, hp: 180, x: 10.0, y: 20.0 };
+        let fleets = [SetupFleet::default(), fleet(3), fleet(6)];
+        let ships = [SetupShip::default(), SetupShip { fleet: 1, design: 1, experience: 0 }, SetupShip { fleet: 2, design: 1, experience: 0 }];
+        let vehicles = [crate::spacewar::Vehicle { fleet: 0, design: 0x7fff, count: 0 }];
+        let mut inp = SetupInput {
+            fleets: vec![1, 2],
+            planet: 0,
+            ground_war: false,
+            human: 6,
+            human_controlled: std::array::from_fn(|e| e == 6),
+            multiplayer: false,
+            asteroids: false,
+            story_pact: [0; EMPIRES],
+            story_zachkin: 0,
+            story_retreat: [1; EMPIRES],
+            fleet_records: &fleets,
+            ships: &ships,
+            vehicles: &vehicles,
+            designs: &designs,
+            planet_record: None,
+            defence_fleets: None,
+        };
+        let mut slots: Vec<Battle> = (0..10).map(|_| Battle::slot()).collect();
+        let mut rng = Streams::default();
+        assert_eq!(new_battle(&mut slots, &mut inp, &rules, &mut types, &mut rng), Some(0));
+        assert_eq!(slots[0].units.len(), 2);
+        for u in &slots[0].units {
+            assert_eq!((u.kind, u.hp, u.shield, u.pods), (2, 900, 135, 1));
+            assert_eq!((u.mounts.len(), u.mounts[0].weapon, u.mounts[0].count, u.range_max), (1, 40, 2, 80.0));
+        }
+        let mut words = vec![vec![0; 46]; 41];
+        let mut firepower = vec![0; 193];
+        firepower[32] = 30;
+        fegyverszamol(&mut weapons, &mut words, &firepower, &[(32, 40, 20)]);
+        assert_eq!((weapons[40].damage, words[40][2]), ([30 * 120 / 250; 12], 30 * 120 / 250));
     }
 
     /// `infoszamol`'s one-shot block as decompiled (exe 0x574ee1): side 3's 200 against side 6's 40 (enemies both

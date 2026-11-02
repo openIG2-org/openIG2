@@ -888,7 +888,8 @@ impl<'a> War<'a> {
             u.index = i;
             u.rt.ai_group = 0;
             self.set_pos(i, x, y);
-            let hull = design_of(&self.world.designs, owner, d).map_or(0, |x| x.hull) - 0x13;
+            // A mod's tank is the ground hull it is like (ADR 0069 §8).
+            let hull = design_of(&self.world.designs, owner, d).map_or(0, |x| self.rules.designs.hull_role(x.hull.max(0) as usize) as i32) - 0x13;
             let u = self.um(i);
             u.hull = hull;
             u.flags2 |= 2;
@@ -943,7 +944,7 @@ impl<'a> War<'a> {
         let mut special = false;
         let (mut flags, mut weapons, mut regen) = (0u32, 0u32, None);
         for k in 0..slots.max(0) as usize {
-            let pod = des.raw.get(0x51 + k).copied().unwrap_or(0);
+            let pod = self.rules.designs.role(des.raw.get(0x51 + k).copied().unwrap_or(0) as usize) as u8;
             let (f, w, c) = match pod {
                 0x96 => (0x40000, 0, None),
                 0x97 => (0x80000, 0, None),
@@ -2557,6 +2558,28 @@ mod tests {
             assert_eq!(w.u(0).flags & flag::PLACED, flag::PLACED);
         });
         assert_eq!(x.draws, 2);
+    }
+
+    /// A mod's tank (ADR 0069 §8): hull 26 like the mega tracked (0x16) with a turret tech like 0xa1 is that ground hull
+    /// with that weapon, and takes its own hit points.
+    #[test]
+    fn a_mods_tank_plays_its_ground_hull() {
+        let mut x = fx();
+        x.rules.designs.hulls = vec![Default::default(); 27];
+        x.rules.designs.hulls[26].like = 0x16;
+        x.rules.designs.tech_like = vec![0; 193];
+        x.rules.designs.tech_like[176] = 0xa1;
+        x.rules.hull_hp.resize(27, 0);
+        (x.rules.hull_hp[0x16], x.rules.hull_hp[26]) = (300, 300);
+        x.world.designs[1] = vec![design(0x16, 2, &[0xa1], 50, 20), design(26, 2, &[176], 50, 20), design(0x16, 2, &[0xa1], 50, 20)];
+        with_war(&mut x, |w| {
+            let (a, b) = (w.add_tank(1, 200, 1, 1, true, 100, 100, 0), w.add_tank(2, 200, 1, 1, true, 300, 300, 0));
+            assert_ne!(a, b);
+            for u in [a, b] {
+                assert_eq!((w.u(u).hull, w.u(u).weapons, w.u(u).pods), (3, weapon::W100, 1));
+            }
+            assert_eq!(w.u(a).max_hp, w.u(b).max_hp);
+        });
     }
 
     #[test]

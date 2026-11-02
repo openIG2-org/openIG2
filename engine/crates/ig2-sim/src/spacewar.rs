@@ -30,6 +30,8 @@ pub struct Hull {
     pub flags: [u8; 6],
     /// `+0xc`: the hull's own tech (its price, time, firepower and hit points are the base stats).
     pub tech: i32,
+    /// Ours (ADR 0069 §8): a mod's hull plays the role of this original hull; 0 = itself.
+    pub like: u8,
 }
 
 /// `TervClear(e, d)` on a design record (`ai-empire.md` §10.2).
@@ -82,16 +84,51 @@ pub struct DesignRules {
     pub pod_slot_types: Vec<Vec<Vec<i32>>>,
     /// `TankAlapSpeed` (f32 × 5): ground hulls, indexed by hull tech − 0x91.
     pub tank_speeds: Vec<f32>,
+    /// Ours (ADR 0069 §7): the original tech each tech plays (0 = itself; empty without mods).
+    pub tech_like: Vec<u8>,
 }
 
 impl DesignRules {
+    /// The tables from the user's exe and mods.
+    pub fn from_rules(r: &ig2_rules::Rules) -> Self {
+        Self {
+            hulls: r.hulls.iter().map(|h| Hull { class: h.class, flags: h.flags, tech: h.tech, like: h.like }).collect(),
+            tech_price: r.techs.iter().map(|t| t.price).collect(),
+            tech_time: r.techs.iter().map(|t| t.build_time).collect(),
+            tech_hp: r.techs.iter().map(|t| t.hp).collect(),
+            tech_capacity: r.techs.iter().map(|t| t.capacity).collect(),
+            firepower: r.techs.iter().map(|t| t.firepower).collect(),
+            race_pod_table: r.race_pod_table.clone(),
+            pod_slot_types: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.pod_type).collect()).collect()).collect(),
+            tank_speeds: r.tank_speeds.clone(),
+            tech_like: if r.techs.iter().any(|t| t.like != 0) { r.techs.iter().map(|t| t.like).collect() } else { Vec::new() },
+        }
+    }
+
+    /// The original tech whose role tech `t` plays: every fixed tech-number check reads it (ADR 0069 §7).
+    pub fn role(&self, t: usize) -> usize {
+        match self.tech_like.get(t).copied().unwrap_or(0) {
+            0 => t,
+            l => l as usize,
+        }
+    }
+
+    /// The original hull whose role hull `h` plays (its slots, its ground index; ADR 0069 §8).
+    pub fn hull_role(&self, h: usize) -> usize {
+        match self.hulls.get(h).map_or(0, |x| x.like) {
+            0 => h,
+            l => l as usize,
+        }
+    }
+
     /// `GetGyartasAr(empire, tech)` with the empire's race: race 4/7 build tech 13 at ¾ price, race 5
     /// gets ×0.7000001 (a double) on everything outside techs 81..=144 and 13/14.
     pub fn price(&self, race: u8, tech: usize) -> i32 {
-        if (race == 4 || race == 7) && tech == 13 {
-            return (self.tech_price[13] as f64 * 0.75) as i32;
+        let role = self.role(tech);
+        if (race == 4 || race == 7) && role == 13 {
+            return (self.tech_price[tech] as f64 * 0.75) as i32;
         }
-        if race == 5 && !(81..=144).contains(&tech) && tech != 13 && tech != 14 {
+        if race == 5 && !(81..=144).contains(&role) && role != 13 && role != 14 {
             return (self.tech_price[tech] as f64 * f64::from_bits(0x3FE6_6666_9C16_4B9C)) as i32;
         }
         self.tech_price[tech]
@@ -99,8 +136,8 @@ impl DesignRules {
 
     /// `GetGyartasIdo(empire, tech)`: race 4 builds tech 13 in half the time.
     pub fn time(&self, race: u8, tech: usize) -> i32 {
-        if race == 4 && tech == 13 {
-            return self.tech_time[13] / 2;
+        if race == 4 && self.role(tech) == 13 {
+            return self.tech_time[tech] / 2;
         }
         self.tech_time[tech]
     }
@@ -108,7 +145,7 @@ impl DesignRules {
     /// `GetMaxPodok(table_index, hull)`: slots whose pod type is > 0.
     pub fn slot_count(&self, table_index: i16, hull: usize) -> i32 {
         let table = self.race_pod_table.get(table_index.max(0) as usize).copied().unwrap_or(0) - 1;
-        let Some(slots) = self.pod_slot_types.get(table.max(0) as usize).and_then(|t| t.get(hull)) else { return 0 };
+        let Some(slots) = self.pod_slot_types.get(table.max(0) as usize).and_then(|t| t.get(self.hull_role(hull))) else { return 0 };
         slots.iter().filter(|&&t| t > 0).count() as i32
     }
 }
@@ -226,7 +263,7 @@ impl Design {
         self.speed = if self.class < 2 {
             f32::from_bits(0x3d75c28f) // 0.06
         } else {
-            let s = rules.tank_speeds.get((self.hull_tech - 0x91) as usize).copied().unwrap_or(0.0);
+            let s = rules.tank_speeds.get((rules.role(tech) as i32 - 0x91) as usize).copied().unwrap_or(0.0);
             (s as f64 / 100.0) as f32
         };
         self.radar = 0;
@@ -237,21 +274,23 @@ impl Design {
             if t == 0 {
                 continue;
             }
+            // The fixed checks by the tech's role, the values from its own record.
+            let role = rules.role(t);
             let c = self.counts[k] as i32;
             self.build_time = self.build_time.wrapping_add(rules.time(race, t).wrapping_mul(c));
             self.price = self.price.wrapping_add(rules.price(race, t).wrapping_mul(c));
             self.capacity = self.capacity.wrapping_add(rules.tech_capacity[t].wrapping_mul(c as u8));
-            if !(0x31..=0x36).contains(&t) && t != 0x25 {
+            if !(0x31..=0x36).contains(&role) && role != 0x25 {
                 self.attack = self.attack.wrapping_add(c.wrapping_mul(rules.firepower[t]));
                 self.hp = self.hp.wrapping_add(c.wrapping_mul(rules.tech_hp[t]));
             }
-            if (0x39..=0x3d).contains(&t) {
-                self.speed = ((t as i32 - 0x38) as f64 * 0.02 + 0.06) as f32;
+            if (0x39..=0x3d).contains(&role) {
+                self.speed = ((role as i32 - 0x38) as f64 * 0.02 + 0.06) as f32;
             }
-            if (0x21..=0x24).contains(&t) {
-                self.radar = (t - 0x20) as u8;
+            if (0x21..=0x24).contains(&role) {
+                self.radar = (role - 0x20) as u8;
             }
-            if t == 0x38 {
+            if role == 0x38 {
                 self.stealth = 1;
             }
         }
@@ -259,7 +298,7 @@ impl Design {
         // each step truncates (f64).
         let (base_attack, base_hp) = (self.attack as f64, self.hp as f64);
         for &t in &self.pods[..slots] {
-            let share = match t {
+            let share = match rules.role(t as usize) {
                 0x31 => 0.15,
                 0x32 => 0.3,
                 0x33 => 0.45,

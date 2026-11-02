@@ -18,7 +18,7 @@ use ig2_rules::Rules;
 use ig2_sim::colony::Building;
 use ig2_sim::ground::*;
 use ig2_sim::rng::Streams;
-use ig2_sim::spacewar::{CombatFleet, CombatWorld, Design, DesignRules, FleetTotals, Hull, Vehicle, NO_DESIGN};
+use ig2_sim::spacewar::{CombatFleet, CombatWorld, Design, DesignRules, FleetTotals, Vehicle, NO_DESIGN};
 use serde_json::Value;
 
 fn rules() -> Option<Rules> {
@@ -66,17 +66,7 @@ fn ints(v: &Value) -> Vec<i32> {
 }
 
 fn design_rules(r: &Rules) -> DesignRules {
-    DesignRules {
-        hulls: r.hulls.iter().map(|h| Hull { class: h.class, flags: h.flags, tech: h.tech }).collect(),
-        tech_price: r.techs.iter().map(|t| t.price).collect(),
-        tech_time: r.techs.iter().map(|t| t.build_time).collect(),
-        tech_hp: r.techs.iter().map(|t| t.hp).collect(),
-        tech_capacity: r.techs.iter().map(|t| t.capacity).collect(),
-        firepower: r.techs.iter().map(|t| t.firepower).collect(),
-        race_pod_table: r.race_pod_table.clone(),
-        pod_slot_types: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.pod_type).collect()).collect()).collect(),
-        tank_speeds: r.tank_speeds.clone(),
-    }
+    DesignRules::from_rules(r)
 }
 
 fn ground_rules(r: &Rules) -> GroundRules {

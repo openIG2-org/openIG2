@@ -523,7 +523,7 @@ fn fegyverszamol_matches_the_live_table() {
             let st = statics(&e["statics"]);
             let (live, live_words) = weapons(&st);
             let (mut w, mut words) = (base.clone(), base_words.clone());
-            fegyverszamol(&mut w, &mut words, &firepower);
+            fegyverszamol(&mut w, &mut words, &firepower, &[]);
             assert_eq!(w, live, "{}", p.display());
             assert_eq!(words, live_words, "{}", p.display());
             checked += 1;
@@ -778,6 +778,7 @@ fn check_setup(p: &Value, a: &Mem, b: &Mem, st: &Statics, forms: &[Vec<Formation
         forms: br.forms,
         formations: forms.to_vec(),
         building_tech: g(0x8eba38).chunks(0x24).map(|c| c[0]).collect(),
+        ..Default::default()
     };
     let mut types = ship_types(a.global(0x91f488));
     let mut rng = Streams::default();
@@ -879,7 +880,7 @@ fn check_formation(p: &Value, e: &Value, forms: &[Vec<FormationSlot>], moved: &m
         defence_fleets: None,
     };
     let (br, _) = rules(&a, &sa);
-    let rules = SetupRules { weapons: br.weapons, forms: br.forms, formations: forms.to_vec(), building_tech: Vec::new() };
+    let rules = SetupRules { weapons: br.weapons, forms: br.forms, formations: forms.to_vec(), building_tech: Vec::new(), ..Default::default() };
     let mut types = ship_types(a.global(0x91f488));
     let mut rng = Streams::default();
     for i in 0..21 {

@@ -72,3 +72,52 @@ fn bad_entries_name_what_is_wrong_and_change_nothing() {
     m.apply_patch(&format!("{MOD}[techs.136]\nprice = 1\n[buildings.56]\nenergy = 5\n")).unwrap();
     assert_eq!((m.techs[136].price, m.buildings[56].energy), (1, 5));
 }
+
+const ARMADA: &str = include_str!("mods/armada/rules.toml");
+
+#[test]
+fn the_ship_mod_appends_a_hull_a_weapon_and_a_tank_and_fits_its_parts() {
+    let Some(mut r) = rules() else { return };
+    let before = r.clone();
+    r.apply_patch(ARMADA).unwrap();
+    // The research entries: first free fields of categories 5, 2, 11 and 4.
+    let idx: Vec<usize> = r.added_techs.iter().map(|a| a.index).collect();
+    assert_eq!(idx, [71, 32, 174, 62]);
+    // Hulls 25 (cruiser) and 26 (tank) follow the originals and play their roles.
+    assert_eq!(r.hulls.len(), 27);
+    let (h, t) = (&r.hulls[25], &r.hulls[26]);
+    assert_eq!((h.like, h.tech, h.id, h.class, r.hull_role(25)), (9, 71, 9, 1, 9));
+    assert_eq!((t.like, t.tech, t.id, t.class, r.hull_role(26)), (22, 174, 22, 2, 22));
+    assert_eq!((r.tech_role(71), r.tech_role(174), r.tech_role(62), r.tech_role(32)), (9, 148, 61, 20));
+    assert_eq!((r.ground_hull_hp[26], r.ground_hull_hp[25]), (90000, before.ground_hull_hp[9]));
+    assert_eq!(r.unit_models.transfer[26], before.unit_models.transfer[22]);
+    // Weapon 40 is the beam laser's record with the mod's reload and range.
+    let w = &r.space_weapons[40];
+    let b = &before.space_weapons[3];
+    assert_eq!((w.reload, w.range, w.graphic, w.accuracy), (120, 80, b.graphic, b.accuracy));
+    assert_eq!(r.added_weapons[0].tech, 32);
+    assert_eq!(r.space_weapon_table().len(), 41 * 0x5c);
+    // Parts fit wherever their original fits; the tank's tech is no pod.
+    let lists = |t: i32| r.pod_types.iter().filter(|p| p.techs.contains(&t)).map(|p| p.id).collect::<Vec<_>>();
+    assert_eq!(lists(32), lists(20));
+    assert_eq!(lists(62), lists(61));
+    assert!(lists(174).is_empty());
+    assert_eq!(r.research_screen.models[61], before.research_screen.models[60]);
+    // Nothing original moved.
+    assert!(r.hulls[..25].iter().zip(&before.hulls).all(|(a, b)| (a.tech, a.like) == (b.tech, 0)));
+    assert_eq!(r.space_weapon_table()[..40 * 0x5c], before.space_weapon_table()[..]);
+}
+
+#[test]
+fn bad_items_name_what_is_wrong() {
+    let Some(r) = rules() else { return };
+    let err = |t: &str| r.clone().apply_patch(t).unwrap_err();
+    let tech = "[[techs.new]]\nkey = \"a\"\ncategory = 5\n";
+    assert_eq!(err("[[hulls.new]]\nkey = \"a\"\nlike = 24\n"), "hulls.new \"a\".like: hull 24 is unused");
+    assert_eq!(err("[[hulls.new]]\nkey = \"a\"\nlike = 9\n"), "hulls.new \"a\": needs tech = <an added tech>");
+    assert_eq!(err("[[hulls.new]]\nkey = \"a\"\nlike = 9\ntech = 9\n"), "hulls.new \"a\".tech: tech 9 is not a mod's tech");
+    assert_eq!(err(&format!("{tech}[[hulls.new]]\nkey = \"a\"\nlike = 9\n[[hulls.new]]\nkey = \"b\"\nlike = 9\ntech = \"a\"\n")), "hulls.new \"b\".tech: tech 71 already is another hull's or weapon's");
+    assert_eq!(err(&format!("{tech}[[space_weapons.new]]\nkey = \"a\"\nlike = 30\n")), "space_weapons.new \"a\".tech: weapon 30 has no pod tech: give tech 71 a like");
+    assert_eq!(err(&format!("{tech}like = 100\n")), "techs.new \"a\".like: tech 100 is not an original ship or tank item (1..=80, 145..=176)");
+    assert!(err(&format!("{tech}[[space_weapons.new]]\nkey = \"a\"\nlike = 3\nrelaod = 1\n")).starts_with("space_weapons.new \"a\".relaod: unknown field (fields: like, tech, kind,"));
+}

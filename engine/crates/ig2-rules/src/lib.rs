@@ -278,6 +278,9 @@ pub struct Tech {
     pub unknown: [i32; 5],
     /// `TalalmanyokrEro[i]`: firepower / strength value [inf from res_info "FIREPOWER"].
     pub firepower: i32,
+    /// Ours (ADR 0069 §7): a mod's new tech plays the role of this original tech (every fixed tech-number check);
+    /// 0 = the tech itself, as every original.
+    pub like: u8,
 }
 
 /// Building descriptor (`EpuletekLeiro`, 36 bytes). Fields pinned in `re/rules/colony-economy.md` §2.3.
@@ -338,6 +341,14 @@ pub struct AddedTech {
     pub description: Vec<String>,
 }
 
+/// A hull or space weapon a mod added (ADR 0069 §8, §9): its key, its index (`Alapok`, `fegyverek`) and its tech.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct AddedItem {
+    pub key: String,
+    pub index: usize,
+    pub tech: usize,
+}
+
 /// A building kind a mod added (ADR 0069).
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct AddedBuilding {
@@ -362,7 +373,7 @@ pub struct BuildingModel {
 
 /// A model of the colony screen's units: the name (`LoadBox`) and the vector directory it loads from
 /// (`+0x34`: 0 `starmap/transfer`, 1 `spacewar`, 2 `talalmanyok`, 3 `colony`).
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct UnitModel {
     pub name: String,
     pub dir: i32,
@@ -574,6 +585,8 @@ pub struct Hull {
     pub tech: i32,
     /// +0x10..+0x23 [unk; read by the design and spy screens].
     pub extra: [i32; 5],
+    /// Ours (ADR 0069 §8): a mod's new hull plays the role of this original hull; 0 = the hull itself.
+    pub like: u8,
 }
 
 /// Space weapon record (`fegyverek`, 92 bytes; `re/rules/space-combat.md` §2.2).
@@ -634,6 +647,9 @@ pub struct Rules {
     /// The techs and building kinds mods added (ADR 0069), in the order they were added.
     pub added_techs: Vec<AddedTech>,
     pub added_buildings: Vec<AddedBuilding>,
+    /// The hulls and space weapons mods added (ADR 0069 §8, §9).
+    pub added_hulls: Vec<AddedItem>,
+    pub added_weapons: Vec<AddedItem>,
     pub pod_types: Vec<PodType>,
     /// `[pod_table][hull][slot]`: 14 tables × 27 hulls × 12 slots.
     pub pod_slots: Vec<Vec<Vec<PodSlot>>>,
@@ -833,6 +849,22 @@ pub struct ShipTypeRecord {
 }
 
 impl Rules {
+    /// The original tech whose role tech `t` plays (ADR 0069 §7): `t` itself unless a mod's tech is `like` another.
+    pub fn tech_role(&self, t: usize) -> usize {
+        match self.techs.get(t).map_or(0, |x| x.like) {
+            0 => t,
+            l => l as usize,
+        }
+    }
+
+    /// The original hull whose role hull `h` plays (ADR 0069 §8).
+    pub fn hull_role(&self, h: usize) -> usize {
+        match self.hulls.get(h).map_or(0, |x| x.like) {
+            0 => h,
+            l => l as usize,
+        }
+    }
+
     /// `fegyverek` as the exe holds it (40 × 0x5c bytes), for readers that index past a record like the battle does.
     pub fn space_weapon_table(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.space_weapons.len() * 0x5c);
@@ -883,6 +915,7 @@ impl Rules {
                     building: r[39],
                     unknown: [i32_at(r, 28), i32_at(r, 36), i32_at(r, 60), i32_at(r, 64), i32_at(r, 68) & 0xFF],
                     firepower: firepower[i],
+                    like: 0,
                 }
             })
             .collect();
@@ -957,6 +990,7 @@ impl Rules {
                     id: i32_at(r, 8),
                     tech: i32_at(r, 12),
                     extra: std::array::from_fn(|k| i32_at(r, 16 + 4 * k)),
+                    like: 0,
                 }
             })
             .collect();
@@ -997,6 +1031,8 @@ impl Rules {
             buildings,
             added_techs: Vec::new(),
             added_buildings: Vec::new(),
+            added_hulls: Vec::new(),
+            added_weapons: Vec::new(),
             pod_types,
             pod_slots,
             race_pod_table: ints(layout::RACE_POD_TABLE)?,

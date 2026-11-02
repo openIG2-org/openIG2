@@ -1,0 +1,61 @@
+# A test mod (ADR 0069 §7–§9): a cruiser hull, a laser, a tank and an engine, each with its own research entry.
+
+[[techs.new]]
+key = "star_galleon"
+category = 5                  # a free field after the bases
+name = "Star galleon"
+description = ["A cruiser hull with", "room for a heavier battery."]
+prerequisites = [9]           # Cruiser
+research_cost = 30000
+research_time = 100
+price = 150000
+build_time = 40
+hp = 2500
+firepower = 60
+
+[[hulls.new]]
+key = "star_galleon"          # takes the tech of the same key
+like = 9                      # Cruiser: its slots, model and battle ship type
+
+[[techs.new]]
+key = "plasma_lance"
+category = 2                  # the weapons' free field
+name = "Plasma lance"
+prerequisites = [20]          # Beam laser
+research_cost = 8000
+research_time = 60
+price = 450
+firepower = 30
+
+[[space_weapons.new]]
+key = "plasma_lance"
+like = 3                      # the Beam laser's record (tech 20)
+reload = 120
+range = 80
+
+[[techs.new]]
+key = "siege_crawler"
+category = 11                 # a free field after the mines
+name = "Siege crawler"
+prerequisites = [148]         # Mega tracked
+research_cost = 20000
+research_time = 80
+price = 14000
+build_time = 20
+hp = 300
+firepower = 40
+
+[[hulls.new]]
+key = "siege_crawler"
+like = 22                     # Mega tracked: a ground hull, so a new tank
+hp = 90000
+
+[[techs.new]]
+key = "ion_drive"
+category = 4                  # a free field after the drives
+like = 61                     # Hyperdrive MK 5: the same speed, fits the same pods
+name = "Ion drive"
+prerequisites = [61]
+research_cost = 12000
+research_time = 70
+price = 7000

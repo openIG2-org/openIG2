@@ -375,6 +375,9 @@ fn main() {
                     // Added entries (ADR 0069): where each landed.
                     g.notes.extend(r.added_techs.iter().map(|a| format!("  adds tech {} \"{}\" (category {}, field {})", a.index, a.key, (a.index - 1) / 16 + 1, (a.index - 1) % 16 + 1)));
                     g.notes.extend(r.added_buildings.iter().map(|a| format!("  adds building kind {} \"{}\" (like {})", a.kind, a.key, r.buildings[a.kind].like)));
+                    g.notes.extend(r.added_hulls.iter().map(|a| format!("  adds hull {} \"{}\" (like {}, tech {})", a.index, a.key, r.hulls[a.index].like, a.tech)));
+                    g.notes.extend(r.added_weapons.iter().map(|a| format!("  adds space weapon {} \"{}\" (tech {})", a.index, a.key, a.tech)));
+                    g.notes.extend(r.added_techs.iter().filter(|a| r.techs[a.index].like != 0).map(|a| format!("  tech {} \"{}\" is like tech {}", a.index, a.key, r.techs[a.index].like)));
                     g.ok += 1;
                 }
                 Err(e) => g.failed.push((format!("mod {name}: rules.toml"), e)),

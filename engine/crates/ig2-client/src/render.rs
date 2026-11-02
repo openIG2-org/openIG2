@@ -1285,7 +1285,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut panel_model = crate::colony_ui::PanelBuilding::default();
     let light = view.panel_light(&l.rules.ground_maps, curr.map);
-    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr), ui.spin(), light, size, scene.sky.as_deref());
+    let panel = panel_model.render(r, &l.install, &l.tables, ui.kind, crate::colony::landing_unit(&world.game.state, &curr, &l.tables), ui.spin(), light, size, scene.sky.as_deref());
     let en = world.game.state.mem.i32(ig2_sim::save::va::EN);
     let info_model = crate::colony_ui::render_kis_info(r, &l.install, &l.tables, &ui, &mut scene, &mut panel_model, &curr, en, light, size);
     let mut frame = view.build(r, &l.install, &l.tables, &l.rules.ground_maps, &mut scene, &prev, &curr, o.alpha, t);

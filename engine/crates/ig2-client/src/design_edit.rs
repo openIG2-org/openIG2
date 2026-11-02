@@ -196,9 +196,10 @@ impl Design {
         slot_max(c.sim, pt, hull, k).min(c.techs.byte(self.scratch[0x50 + k] as usize, 0x24) as i32)
     }
 
-    /// The bases the empire can build (`Alapok[1..25]` whose hull tech has status 5 for `EN` and isn't obsolete).
-    fn bases(&self, c: &Ctx) -> Vec<usize> {
-        (1..25)
+    /// The bases the empire can build (`Alapok[1..25]`, and a mod's after them, whose hull tech has status 5 for `EN`
+    /// and isn't obsolete).
+    pub(crate) fn bases(&self, c: &Ctx) -> Vec<usize> {
+        (1..c.rules.hulls.len())
             .filter(|&b| {
                 let t = c.rules.hulls.get(b).map_or(0, |h| h.tech).clamp(0, 192) as usize;
                 c.techs.status(t, c.en()) == 5 && c.techs.byte(t, 0x26) & 1 == 0

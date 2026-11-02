@@ -82,3 +82,62 @@ techs no category, field or name; filling the empty records keeps all of it.
   categories is researchable but gives nothing yet (ships, weapons and tanks are a later part).
 - ADR 0044 §7's "saves keep only the per-empire state" was wrong for `+0x2c..+0x3c`: a loaded save keeps its own
   prerequisites, labs, research cost and time; patches of those reach new games.
+
+## Amendment (part 2): ship hulls, ship parts, weapons and tanks
+Implemented by `ig2-rules::patch` (`like` on `[[techs.new]]`, `[[hulls.new]]`, `[[space_weapons.new]]`;
+`Rules::added_hulls`, `Rules::added_weapons`, `Tech::like`, `Hull::like`), `ig2-sim` (`DesignRules::role`,
+`DesignRules::hull_role`, `SpaceRules::added_weapons`, `World::slot_hull`) and `ig2-client` (the design screen's hull
+list, `world::check_kinds`).
+
+**Context.** Every ship and tank item is a tech: a design names its hull by `Alapok` index (`+0x44`, i32; the hull
+names its tech) and its slots by tech number (`+0x51..`, u8). The exe recognises items by fixed tech numbers: weapons
+0x11..=0x20 and 0x41..=0x48 (`t − 0x11`, `t − 0x34` into `fegyverek`), shields 0x31..=0x36, engines 0x39..=0x3d,
+radars 0x21..=0x24, ground hull techs 0x91..=0x95 (`TankAlapSpeed[t − 0x91]`), tank turrets 0xa1..=0xa9, ground hulls
+`Alapok` 0x13..=0x17 (`hull − 0x13` indexes the ground war's tables). Categories 1 (ships) and 10 (tanks) have no free
+research field.
+
+**Decision.**
+7. **A part plays an original's role.** `[[techs.new]]` takes `like = <tech>`: an original tech of the ship or tank
+   categories (1..=80, 145..=176). Every fixed tech-number check (the design stats' shields, engines, radars and
+   stealth, the battle's pod effects and weapon, the ground war's pods, the AI's design rules, the research picker's
+   category) reads the tech's role (`DesignRules::role`); prices, time, hit points, firepower and capacity come from
+   the tech's own record. The tech is appended to every pod type (`PodTipusok`) that lists the original, so it fits
+   wherever the original fits (at most 16 per pod type). Its research-screen model and size start as the original's.
+   Without `like`, a new tech in categories 1..=5 and 10..=11 gives nothing (as in part 1).
+8. **A new hull is appended** (`Alapok` 25, 26, …) as a copy of the original it is `like` (1..=24):
+   ```toml
+   [[hulls.new]]
+   key = "star_galleon"
+   like = 9                 # an original hull: class, flags, slots, models, battle ship type
+   tech = "star_galleon"    # its tech (price, time, hp, firepower, capacity); the tech becomes `like` the hull's tech
+   hp = 260                 # optional, ground hulls: a member's hit points in the ground war (`TankAlapHP`)
+   flags = [0, 0, 0, 0, 0, 0]  # optional, as `[hulls.<id>]`
+   ```
+   Every hull-indexed table gets the original's entry at the new index: the slot layouts of all pod tables
+   (`PodFajok`), the design screen's model (`Hull.id` stays the original's model index), the ground hit points, the
+   starmap's transfer model. Tables the exe indexes by the hull's tech or ground index (`TankAlapSpeed`, turning
+   speeds, armour, the tank models, the battle's ship type) are read through the role (`DesignRules::hull_role`).
+   A ground hull (`like` 0x13..=0x17) is a new tank. The design screen lists every hull whose tech the empire owns.
+9. **A new space weapon is appended** (`fegyverek` 40, 41, …) as a copy of the weapon it is `like`:
+   ```toml
+   [[space_weapons.new]]
+   key = "plasma_lance"
+   like = 3                 # an original weapon record (0..=39): graphics, kind, flags
+   tech = "plasma_lance"    # the pod tech that mounts it; the tech becomes `like` the weapon's tech
+   reload = 30              # optional: any `[space_weapons.<id>]` field
+   range = 900
+   ```
+   The battle mounts a tech's added weapon first, else the role's (`AddUjUrhajo`); `fegyverszamol` gives the new
+   weapon the damage formula of the original's tech with the new tech's firepower. A part `like` a weapon tech
+   without a `[[space_weapons.new]]` fires the original weapon with its own firepower.
+10. **The AI** designs hull slot `s` with the last added hull `like s` whose tech it owns (else `s`; a redesign
+    upgrades the hull), and fits the best part per slot over every tech, new ones by their role's rules.
+11. **Saves and multiplayer.** Designs are game state; hull and weapon records are rules (the `rules.toml` is in the
+    mods fingerprint, ADR 0044 §9; the lockstep hash covers the designs and the tech table). A save whose design
+    names a hull the active rules lack refuses to load ("enable the mods it was played with").
+12. Errors: a `like` outside the ranges above (or a defence/building tech), an unknown hull or weapon, a tech
+    that is not an added tech's or is already a hull's, a pod type over 16 techs: the load fails naming the entry.
+
+**Consequences.** Classic play is byte-exact: without `like` the role is the tech itself and no table grows. A new
+item looks like its original (models, sounds, battle type); its texts are its tech's (`name`, `description`, a
+`texts.<lang>.toml` patch). Capacity is the free research fields (part 1).

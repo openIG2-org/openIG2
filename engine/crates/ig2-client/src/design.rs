@@ -1093,12 +1093,12 @@ pub fn pod_count(rules: &ig2_rules::Rules, race: i16, hull: i32) -> usize {
 
 /// `PodFajok[table − 1][hull][0..12]` (`HanyasFajPodTablazatatHasznalja[race]`): each slot's pod class.
 fn pod_slots(rules: &ig2_rules::Rules, race: i16, hull: i32) -> Vec<i32> {
-    rules.design_screen.pod_slots(race.max(0) as usize, hull.max(0) as usize)
+    rules.design_screen.pod_slots(race.max(0) as usize, rules.hull_role(hull.max(0) as usize))
 }
 
 /// `min(GetMaxRarakhato(race, hull, k), Talalmanyok[tech].+0x24)`: how many of `tech` pod `k` takes.
 pub(crate) fn max_fitted(rules: &ig2_rules::Rules, techs: &TechTable, race: i16, hull: i32, k: usize, tech: i32) -> i32 {
-    rules.design_screen.pod_max(race.max(0) as usize, hull.max(0) as usize, k).min(techs.byte(tech.clamp(0, 192) as usize, 0x24) as i32)
+    rules.design_screen.pod_max(race.max(0) as usize, rules.hull_role(hull.max(0) as usize), k).min(techs.byte(tech.clamp(0, 192) as usize, 0x24) as i32)
 }
 
 /// `PodTipusok[KeresPod(class)]`'s name (`NEWGAME_Design`): an empty slot's class.
@@ -1201,6 +1201,101 @@ mod tests {
         // About (0, −1, 0) by 0.002: x leans to +z.
         let v = scene::apply(&s.turn, [1.0, 0.0, 0.0]);
         assert!((v[2] - 0.002).abs() < 1e-5 && v[1].abs() < 1e-7, "{v:?}");
+    }
+
+    /// A mod's hull, weapon, engine and tank (ADR 0069 §7–§11, the test mod `ig2-rules/tests/mods/armada`) on
+    /// quick-1.sav, a save made without the mod: once owned, the design screen offers the new hulls, the AI's fit puts
+    /// the new weapon and engine in their originals' slots, the designs take their roles' speeds, a planet builds a
+    /// ship and a tank of them, the save keeps them with the state hash, the mods fingerprint changes, and without
+    /// the mod the save refuses to load (skips without the install and save).
+    #[test]
+    fn a_mods_hull_weapon_and_tank_are_designed_built_and_saved() {
+        use ig2_sim::colony_side::status;
+        use ig2_sim::spacewar::Design as Record;
+        let Some(Ok(plain)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let armada = ig2_formats::vfs::Mod { name: "armada".into(), dir: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ig2-rules/tests/mods/armada") };
+        let install = Install::open_with_mods(plain.root(), ig2_formats::text::Lang::En, vec![armada]).unwrap();
+        assert_ne!(crate::mods_fingerprint(&install), crate::mods_fingerprint(&plain));
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let texts = crate::ui::UiTexts::load(&install);
+        assert_eq!(crate::hud::tech_name(&texts, 71), b"Star galleon");
+        let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        let en = w.curr.human as usize;
+        let race = w.game.state.mem.u8(va::PLAYER_FAJ + en as u32);
+
+        // Own the new techs and their originals; no other laser or drive, so the fit ties the new with the old.
+        let mut techs = w.game.state.tech();
+        for t in (0x11..=0x20).chain(0x41..=0x48).chain(0x39..=0x3c) {
+            techs.set_status(t, en, status::UNKNOWN);
+        }
+        for t in [9, 20, 61, 148, 0xa1, 71, 32, 174, 62] {
+            techs.set_status(t, en, status::OWNED);
+        }
+        w.game.state.store_tech(&techs);
+        let c = Ctx { install: &install, state: &w.game.state, techs: &techs, rules: &tables, sim: &rules.ai, debug: false, texts: Some(&texts) };
+        let bases = blank().bases(&c);
+        assert!(bases.contains(&25) && bases.contains(&26), "{bases:?}");
+
+        let fitted = |hull: i32| {
+            let mut r = [0u8; 0x84];
+            ig2_sim::spacewar::clear_design_record(&mut r);
+            r[0x44..0x48].copy_from_slice(&hull.to_le_bytes());
+            r[0x40..0x42].copy_from_slice(&(race as u16).to_le_bytes());
+            ig2_sim::ai::design::auto_design_record(&rules.ai, &techs, false, &mut r, en, race, 0, false);
+            ig2_sim::ai::design::recompute_record(&rules.ai.design, race, &mut r);
+            r
+        };
+        let (ship, tank) = (fitted(25), fitted(26));
+        let s = Record::from_bytes(&ship);
+        assert_eq!((s.class, s.hull_tech), (1, 71));
+        assert!(s.pods.contains(&32) && s.pods.contains(&62), "{:?}", s.pods);
+        let mk5 = ((61 - 0x38) as f64 * 0.02 + 0.06) as f32;
+        assert_eq!(s.speed, if race == 2 { (mk5 as f64 + 0.02) as f32 } else { mk5 });
+        let t = Record::from_bytes(&tank);
+        assert_eq!((t.class, t.hull_tech), (2, 174));
+        assert_eq!(t.speed, (tables.tank_speeds[148 - 0x91] as f64 / 100.0) as f32);
+
+        // Stored through the design order, built on the human's planet 42.
+        for r in [ship, tank] {
+            w.game.design_order(en as u8, ig2_sim::game::DesignOrder::Store { mode: 0, design: 0, record: r, copy: false });
+        }
+        let of = |h: i32| w.game.state.combat().designs[en].iter().position(|d| d.hull == h && d.class > 0).expect("stored") as i16;
+        let (ds, dt) = (of(25), of(26));
+        let mut colony = w.game.state.colony();
+        assert_eq!(colony.planets[42].owner as usize, en);
+        let q = &mut colony.planets[42].production;
+        for (line, d) in [(0, ds), (1, dt)] {
+            q[8 * line..8 * line + 2].copy_from_slice(&d.to_le_bytes());
+            q[0x10 + 4 * line] = 1;
+            q[0x28 + 4 * line..0x2c + 4 * line].copy_from_slice(&0i32.to_le_bytes());
+        }
+        w.game.state.store_colony(&colony);
+        let built = |w: &crate::world::World| {
+            let c = w.game.state.combat();
+            (c.ships.iter().any(|s| s.design == ds && c.fleets.get(s.fleet.max(0) as usize).is_some_and(|f| f.owner as usize == en)),
+             c.vehicles.iter().any(|v| v.design == dt && v.count > 0))
+        };
+        for _ in 0..2000 {
+            if built(&w) == (true, true) {
+                break;
+            }
+            w.tick();
+        }
+        assert_eq!(built(&w), (true, true), "a ship and a tank of the mod's hulls");
+
+        // The save keeps them and the state hash; without the mod it refuses to load.
+        let file = w.save_file();
+        let back = crate::world::World::load_bytes(&file, &rules, &defaults, &volatile).unwrap();
+        assert_eq!(built(&back), (true, true));
+        assert_eq!(ig2_net::snapshot::state_hash(&back.game, &[]), ig2_net::snapshot::state_hash(&w.game, &[]));
+        let (classic, classic_defaults) = crate::rules::load(&plain).unwrap();
+        let err = crate::world::World::load_bytes(&file, &classic, &classic_defaults, &volatile).err().expect("refused");
+        assert!(err.contains("hull 25"), "{err}");
     }
 
     fn blank() -> Design {

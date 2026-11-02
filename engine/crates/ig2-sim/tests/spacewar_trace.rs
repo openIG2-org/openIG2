@@ -63,17 +63,7 @@ fn f32_at(b: &[u8], o: usize) -> f32 {
 }
 
 fn design_rules(r: &Rules) -> DesignRules {
-    DesignRules {
-        hulls: r.hulls.iter().map(|h| Hull { class: h.class, flags: h.flags, tech: h.tech }).collect(),
-        tech_price: r.techs.iter().map(|t| t.price).collect(),
-        tech_time: r.techs.iter().map(|t| t.build_time).collect(),
-        tech_hp: r.techs.iter().map(|t| t.hp).collect(),
-        tech_capacity: r.techs.iter().map(|t| t.capacity).collect(),
-        firepower: r.techs.iter().map(|t| t.firepower).collect(),
-        race_pod_table: r.race_pod_table.clone(),
-        pod_slot_types: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.pod_type).collect()).collect()).collect(),
-        tank_speeds: r.tank_speeds.clone(),
-    }
+    DesignRules::from_rules(r)
 }
 
 #[test]

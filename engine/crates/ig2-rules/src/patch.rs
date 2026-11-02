@@ -2,7 +2,7 @@
 
 use toml_edit::{DocumentMut, TableLike, Value};
 
-use crate::{layout, AddedBuilding, AddedTech, Building, Hull, ProblemCurve, Rules, ShipTypeRecord, SpaceWeapon, SpyMission, Tech};
+use crate::{layout, AddedBuilding, AddedItem, AddedTech, Building, Hull, ProblemCurve, Rules, ShipTypeRecord, SpaceWeapon, SpyMission, Tech};
 
 /// A field a patch can set from a TOML value.
 trait Field {
@@ -82,8 +82,8 @@ fn fields(body: &dyn TableLike, at: &str) -> Result<Vec<(String, Value)>, String
 }
 
 fn entries<'a>(body: &'a dyn TableLike, table: &str) -> Result<Vec<(&'a str, &'a dyn TableLike)>, String> {
-    // `[[techs.new]]` / `[[buildings.new]]` are added entries, not a record id ([`add_new`]).
-    let added = matches!(table, "techs" | "buildings");
+    // `[[techs.new]]`, `[[buildings.new]]`, … are added entries, not a record id ([`add_new`]).
+    let added = matches!(table, "techs" | "buildings" | "hulls" | "space_weapons");
     body.iter().filter(|(id, e)| !(added && *id == "new" && e.is_array_of_tables())).map(|(id, e)| Ok((id, e.as_table_like().ok_or_else(|| format!("{table}.{id}: expected a table of fields"))?))).collect()
 }
 
@@ -148,6 +148,43 @@ const FIELDS: usize = 16;
 const DEFENCES: std::ops::RangeInclusive<usize> = 28..=43;
 /// The buildings' techs, the colony pick list's (categories 6..=9).
 const BUILDING_TECHS: std::ops::RangeInclusive<usize> = 81..=144;
+
+/// Techs a new tech can be `like` (ADR 0069 §7): ships, weapons and parts (categories 1..=5), tanks and their pods
+/// (10..=11).
+fn part_tech(t: usize) -> bool {
+    (1..=80).contains(&t) || (145..=176).contains(&t)
+}
+
+/// The pod tech that mounts space weapon `w` (`AddUjUrhajo`: techs 0x11..=0x20 → `t − 0x11`, 0x41..=0x48 → `t − 0x34`).
+fn weapon_tech(w: usize) -> Option<usize> {
+    match w {
+        0..=15 => Some(w + 0x11),
+        16..=20 => Some(w + 0x34),
+        _ => None,
+    }
+}
+
+/// Tech `t` plays original `l`'s role (ADR 0069 §7) and starts with its production values (the fields `entry` doesn't
+/// set), its slot maximum (`+0x24`) and the AI's design priorities (`+0x3c + race`).
+fn inherit(r: &mut Rules, t: usize, l: usize, entry: &toml_edit::Table) {
+    let o = r.techs[l].clone();
+    let x = &mut r.techs[t];
+    x.like = l as u8;
+    for (f, from, to) in [("price", o.price, &mut x.price), ("build_time", o.build_time, &mut x.build_time), ("hp", o.hp, &mut x.hp), ("firepower", o.firepower, &mut x.firepower)] {
+        if !entry.contains_key(f) {
+            *to = from;
+        }
+    }
+    if !entry.contains_key("capacity") {
+        x.capacity = o.capacity;
+    }
+    let s = layout::TECHS.1;
+    r.tech_defaults[t * s + 0x24] = r.tech_defaults[l * s + 0x24];
+    r.tech_defaults.copy_within(l * s + 0x3c..l * s + 0x45, t * s + 0x3c);
+}
+
+/// Pod types list at most this many techs (`PodTipusok +20`, i32 × 16).
+const POD_TECHS: usize = 16;
 
 /// Tech slot `t` is free (ADR 0069 §1): the exe's empty `-` record (static fields and every status zero) that no
 /// building prices itself with.
@@ -277,15 +314,58 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
         kinds.push((kind, like, at, *e));
     }
 
+    let (hulls, weapons) = (new_list(doc, "hulls")?, new_list(doc, "space_weapons")?);
+    let mut items = Vec::new();
+    for (key, at, e) in &hulls {
+        if r.added_hulls.iter().any(|a| &a.key == key) {
+            return Err(format!("{at}: the key is used twice"));
+        }
+        let original = r.hulls.len() - r.added_hulls.len();
+        let like = e.get("like").and_then(|v| v.as_value()).ok_or_else(|| format!("{at}: needs like = <an original hull>"))?;
+        let like = int_in(like, 1..=original as i64 - 1).map_err(|m| format!("{at}.like: {m}"))? as usize;
+        if r.hulls[like].class == 0 {
+            return Err(format!("{at}.like: hull {like} is unused"));
+        }
+        let h = r.hulls.len();
+        if h > u8::MAX as usize {
+            return Err(format!("{at}: more than {} hulls", u8::MAX));
+        }
+        r.hulls.push(Hull { index: h, like: like as u8, ..r.hulls[like].clone() });
+        copy_at(&mut r.ground_hull_hp, like, h);
+        copy_at(&mut r.unit_models.transfer, like, h);
+        r.added_hulls.push(AddedItem { key: key.clone(), index: h, tech: 0 });
+        items.push((true, h, like, at, *e));
+    }
+    for (key, at, e) in &weapons {
+        if r.added_weapons.iter().any(|a| &a.key == key) {
+            return Err(format!("{at}: the key is used twice"));
+        }
+        let original = r.space_weapons.len() - r.added_weapons.len();
+        let like = e.get("like").and_then(|v| v.as_value()).ok_or_else(|| format!("{at}: needs like = <an original weapon>"))?;
+        let like = int_in(like, 0..=original as i64 - 1).map_err(|m| format!("{at}.like: {m}"))? as usize;
+        let w = r.space_weapons.len();
+        r.space_weapons.push(SpaceWeapon { index: w, ..r.space_weapons[like].clone() });
+        r.added_weapons.push(AddedItem { key: key.clone(), index: w, tech: 0 });
+        items.push((false, w, like, at, *e));
+    }
+
     // Pass 2: the fields.
     let mut n = 0;
-    for (t, at, e) in slots {
+    for &(t, ref at, e) in &slots {
         let a = r.added_techs.iter().position(|a| a.index == t).expect("added in pass 1");
+        if let Some(item) = e.get("like") {
+            let v = value(item, &format!("{at}.like"))?;
+            let l = tech_ref(r, v).map_err(|m| format!("{at}.like: {m}"))? as usize;
+            if !part_tech(l) || r.techs[l].name == "-" || r.techs[l].like != 0 {
+                return Err(format!("{at}.like: tech {l} is not an original ship or tank item (1..=80, 145..=176)"));
+            }
+            inherit(r, t, l, e);
+        }
         for (f, item) in e.iter() {
             let v = value(item, &format!("{at}.{f}"))?;
             let err = |m: String| format!("{at}.{f}: {m}");
             match f {
-                "key" | "category" | "field" => continue,
+                "key" | "category" | "field" | "like" => continue,
                 "name" => r.added_techs[a].name = text(v).map_err(err)?,
                 "description" => {
                     r.added_techs[a].description = match v.as_array() {
@@ -314,7 +394,7 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
                 _ => {
                     let field = r.techs[t].field(f).ok_or_else(|| {
                         let more = Tech::FIELDS.join(", ");
-                        format!("{at}.{f}: unknown field (fields: category, field, name, description, ai_priority, building, model, size, {more})")
+                        format!("{at}.{f}: unknown field (fields: category, field, name, description, ai_priority, building, like, model, size, {more})")
                     })?;
                     field.set(v).map_err(err)?;
                 }
@@ -360,6 +440,64 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
         }
         if b.priority > 6 || b.max_hp <= 0 {
             return Err(format!("{at}: needs priority 0..=6 and max_hp above 0"));
+        }
+    }
+    for (hull, i, like, at, e) in items {
+        let mut tech = None;
+        for (f, item) in e.iter() {
+            let v = value(item, &format!("{at}.{f}"))?;
+            let err = |m: String| format!("{at}.{f}: {m}");
+            match (hull, f) {
+                (_, "key" | "like") => continue,
+                (_, "tech") => tech = Some(tech_ref(r, v).map_err(err)? as usize),
+                (true, "hp") => r.ground_hull_hp[i].set(v).map_err(err)?,
+                (true, _) => {
+                    let field = r.hulls[i].field(f).filter(|_| f != "tech").ok_or_else(|| format!("{at}.{f}: unknown field (fields: like, tech, hp, class, flags)"))?;
+                    field.set(v).map_err(err)?;
+                }
+                (false, _) => {
+                    let more = SpaceWeapon::FIELDS.join(", ");
+                    let field = r.space_weapons[i].field(f).ok_or_else(|| format!("{at}.{f}: unknown field (fields: like, tech, {more})"))?;
+                    field.set(v).map_err(err)?;
+                }
+            }
+            n += 1;
+        }
+        // The added tech of the same key unless the entry names one; it must be a mod's tech.
+        let key = at.split('"').nth(1).unwrap_or_default();
+        let t = tech.or_else(|| r.added_techs.iter().find(|a| a.key == key).map(|a| a.index)).ok_or_else(|| format!("{at}: needs tech = <an added tech>"))?;
+        if !r.added_techs.iter().any(|a| a.index == t) {
+            return Err(format!("{at}.tech: tech {t} is not a mod's tech"));
+        }
+        if r.added_hulls.iter().chain(&r.added_weapons).any(|a| a.tech == t) {
+            return Err(format!("{at}.tech: tech {t} already is another hull's or weapon's"));
+        }
+        let original = if hull { Some(r.hulls[like].tech.max(0) as usize) } else { weapon_tech(like) };
+        if r.techs[t].like == 0 {
+            let l = original.ok_or_else(|| format!("{at}.tech: weapon {like} has no pod tech: give tech {t} a like"))?;
+            let entry = slots.iter().find(|s| s.0 == t).expect("an added tech").2;
+            inherit(r, t, l, entry);
+        }
+        let list = if hull { &mut r.added_hulls } else { &mut r.added_weapons };
+        list.iter_mut().find(|a| a.index == i).expect("added in pass 1").tech = t;
+        if hull {
+            r.hulls[i].tech = t as i32;
+        }
+    }
+    // A new part fits wherever its original fits and starts with its research-screen model.
+    for a in &r.added_techs {
+        let (t, l) = (a.index, r.techs[a.index].like as usize);
+        if l == 0 {
+            continue;
+        }
+        if r.research_screen.models.get(t - 1).is_none_or(|m| m.is_empty()) {
+            copy_at(&mut r.research_screen.models, l - 1, t - 1);
+        }
+        for p in r.pod_types.iter_mut().filter(|p| p.techs.contains(&(l as i32)) && !p.techs.contains(&(t as i32))) {
+            if p.techs.len() >= POD_TECHS {
+                return Err(format!("techs.new \"{}\": pod type {} already lists {POD_TECHS} techs", a.key, p.id));
+            }
+            p.techs.push(t as i32);
         }
     }
     Ok(n)

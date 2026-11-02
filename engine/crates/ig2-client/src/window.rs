@@ -916,7 +916,7 @@ impl App {
         let size = [h.band.0 as f32, h.band.1 as f32];
         let t = h.ms as f32 / 1000.0;
         let light = c.view.panel_light(self.maps, curr.map);
-        let unit = crate::colony::landing_unit(&self.world.game.state, curr);
+        let unit = crate::colony::landing_unit(&self.world.game.state, curr, self.tables);
         let panel = c.panel.render(r, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), light, size, c.scene.sky.as_deref());
         let info_model = crate::colony_ui::render_kis_info(r, &self.install, self.tables, &c.ui, &mut c.scene, &mut c.panel, curr, self.world.curr.human as i32, light, size);
         let mut frame = c.view.build(r, &self.install, self.tables, self.maps, &mut c.scene, prev, curr, 1.0, t);
@@ -5399,7 +5399,7 @@ impl App {
             }
             (Some(s), ..) => (crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]), s),
             (None, Some(c), Some(prev), Some(curr)) => {
-                let unit = crate::colony::landing_unit(&self.world.game.state, curr);
+                let unit = crate::colony::landing_unit(&self.world.game.state, curr, self.tables);
                 let light = c.view.panel_light(self.maps, curr.map);
                 colony_panel = c.panel.render(&mut g.renderer, &self.install, self.tables, c.ui.kind, unit, c.ui.spin(), light, size, c.scene.sky.as_deref());
                 colony_info = crate::colony_ui::render_kis_info(&mut g.renderer, &self.install, self.tables, &c.ui, &mut c.scene, &mut c.panel, curr, self.world.curr.human as i32, light, size);
