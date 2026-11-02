@@ -26,6 +26,7 @@ pub mod tutorial;
 pub mod userfs;
 pub mod vfs;
 pub mod xv;
+pub mod zipfs;
 
 pub use container::{decode as decode_container, ContainerKind};
 pub use vfs::Install;

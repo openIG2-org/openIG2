@@ -211,24 +211,46 @@ the "mods" line lists every file each enabled mod replaces or adds and checks ea
 are loaded with the install's.
 
 ## Mods
-A mod replaces the install's files with your own: a sharper texture, another text, another sound (ADR 0044). The
-remake still ships no game files; a mod is files you make or download.
+A mod changes the game with your own files: a sharper texture, another text, another sound, other rule values, a
+theme (ADR 0044, 0068). The remake still ships no game files; a mod is files you make or download.
 
-1. Find the mods folder: `mods` beside the settings files (`%LOCALAPPDATA%\GyroscopeGames\ig2\mods`, or
-   `IG2_OPTIONS_DIR\mods`). Make it if it is missing.
-2. Make a folder for your mod in it, for example `mods\sharp-menu`.
-3. Put each file at the same path it has in the install:
-   `mods\sharp-menu\dataraw\textures\main\eng\unselected\0_credits_bmp.pvr` replaces the install's
+**Installing a mod** in three steps:
+1. Drop the mod's `.zip` (or its folder) into the `mods` folder beside the game's executable. Main menu → Mods →
+   Open mods folder opens it (and makes it when missing). Don't unpack the zip: the game reads it as it is.
+2. Main menu → Mods (the Mods label above Quick game, or the grouped menu's Extras → Mods): switch the mod on, use
+   the arrows to order it (the higher mod's files win when two mods have the same file), then Apply.
+3. Restart the game (Restart now on the same page). The page shows each mod's problems in red and the files another
+   mod above it overrides; a broken mod is skipped and the game starts without it.
+
+**Making a mod** in three steps:
+1. Make a folder named after your mod and put each file at the same path it has in the install:
+   `sharp-menu\dataraw\textures\main\eng\unselected\0_credits_bmp.pvr` replaces the install's
    `dataraw\textures\main\eng\unselected\0_credits_bmp.pvr`. Names are not case-sensitive. A mod's file also beats
    the install's translated copy under `localization\<language>\`. Files may be plain (textures as PowerVR v3
-   `.pvr`, texts in the game's text format) or in the install's own packed form.
-4. Enable it: write its folder name in `mods\enabled.txt`, one mod a line, the most important first (when two mods
-   have the same file, the one higher in the list wins; `#` starts a comment). Or start the client with
-   `--mod sharp-menu` (repeatable) for one run, which replaces the list.
-5. Check it: `ig2-check --quick` lists the files your mod replaces or adds, and loads them.
+   `.pvr`, texts in the game's text format) or in the install's own packed form. Rule, text and story changes are
+   files at the folder's top (below).
+2. Describe it in a `mod.toml` at the folder's top (every line optional):
+
+   ```toml
+   name = "Sharp menu"
+   author = "Your name"
+   version = "1.0"
+   description = "Sharper main menu labels."
+   picture = "picture.png"   # a PNG in the mod, shown on the Mods page
+   game = "0.7"              # the openIG2 version it was made for
+   ```
+3. Zip the folder (Windows: right click → Send to → Compressed folder; one top folder inside the zip is fine) and
+   share the zip. Check it first: `ig2-check --quick` lists the files your mod replaces or adds, and loads them.
+
+Where mods are read: the `mods` folder beside the executable and the one beside the settings files
+(`%LOCALAPPDATA%\GyroscopeGames\ig2\mods`, or `IG2_OPTIONS_DIR\mods`); a mod in the first wins over one of the same
+name in the second. The enabled list is `enabled.txt` in the settings' `mods` folder: one mod name a line (a folder's
+name, or a zip's without `.zip`), the most important first, `#` starts a comment. The Mods page writes it; you can
+edit it by hand too. `--mod sharp-menu` (repeatable) replaces the list for one run. A zip may hold stored or
+deflated files only (what every zip tool writes), no passwords, no files outside the mod.
 
 `ig2.exe` can't be replaced: the rule tables are read from it. To change rules, put a `rules.toml` at the top of
-the mod folder (`mods\cheap-labsules.toml`); it sets single fields of the tables by name. A record is
+the mod folder (`mods\cheap-labs\rules.toml`); it sets single fields of the tables by name. A record is
 `[<table>.<id>]` with `field = value` lines; a list is `[<list>]` with `<index> = value` lines. The ids and the
 current values are in the file `cargo run --release -p ig2-rules --bin ig2-rules-dump <install> rules.ron` writes
 (keep it to yourself: it holds the game's values). An example (made-up numbers):
@@ -255,8 +277,8 @@ reload = 10
 
 The tables and their fields are listed in ADR 0044 §6 (`techs`, `buildings`, `hulls`, `space_weapons`,
 `ship_types`, `spy_missions`, `problem_curves`, the ground weapons and the race, difficulty, radar and spy lists).
-When several mods change the same field, the one higher in `enabled.txt` wins. A wrong table, id or field stops the
-game with a message naming the mod and the field, and `ig2-check` shows the same message.
+When several mods change the same field, the one higher in `enabled.txt` wins. A wrong table, id or field starts the
+game without the mods, and the Mods page and `ig2-check` show the message naming the mod and the field.
 
 A mod can also add stories: a `stories.toml` at the top of the mod folder lists `[[story]]` tables, each with `when`
 triggers and `do` actions, that fire once after the built-in stories. The format is in ADR 0061; `ig2-check` validates the file.
@@ -300,7 +322,7 @@ replace is their data: the `.scn` maps (which stories start, their values), `dat
 `building.txt`, `designs.txt`, `values.txt`, the message scripts in `dataraw\uzenetek\` and the texts.
 
 In multiplayer every player needs the same mod files, `rules.toml`s and text patches: the room refuses a player with other mods
-("Other mods enabled"), and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
+("Other mods enabled"; compare your Mods page with the host's), the room page lists its mods, and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
 are the exception: they only change what you see, so players with and without them play together.
 
 ### UI themes
@@ -309,7 +331,7 @@ multiplayer lobby, the event log); the game's own screens keep the original's lo
 Interface setting "UI theme": Classic (default), Modern, or any mod folder that has a `theme.toml`, listed by the
 folder's name (the theme doesn't need `enabled.txt` and doesn't affect multiplayer).
 
-To make one, create `mods\<name>	heme.toml`. Every key is optional and starts from Modern's value; colours are
+To make one, create `mods\<name>\theme.toml`. Every key is optional and starts from Modern's value; colours are
 `[red, green, blue]` from 0 to 255:
 
 ```toml
@@ -337,13 +359,13 @@ plain replacement, a pack's file can be any size: the game still places and size
 original, so a picture four times as large draws in the same spot, only sharper.
 
 - **Pictures**: put a PNG (or a `.pvr`) at `hires\` + the install's path, with `.png` for `.pvr`:
-  `mods\hd-colony\hires\dataraw	extures\colonyoo_bmp.png` is drawn for the install's
-  `dataraw	extures\colonyoo_bmp.pvr`. Any size and aspect works; keep transparency in the PNG's alpha channel.
+  `mods\hd-colony\hires\dataraw\textures\colony\foo_bmp.png` is drawn for the install's
+  `dataraw\textures\colony\foo_bmp.pvr`. Any size and aspect works; keep transparency in the PNG's alpha channel.
   Model textures, interface pictures and the pointer all work this way; the font does not.
-- **Models**: put a model file at `hires\` + the install's path: `mods\hd-colony\hires\datarawector\colony\<name>.xv`
-  is drawn for the install's `datarawector\colony\<name>.xv` (buildings and every other model). It is scaled so
+- **Models**: put a model file at `hires\` + the install's path: `mods\hd-colony\hires\dataraw\vector\colony\<name>.xv`
+  is drawn for the install's `dataraw\vector\colony\<name>.xv` (buildings and every other model). It is scaled so
   its largest side matches the original's, so it fits the original's place whatever units it was built in. Its
-  textures are found by name like the original's: put new ones in the mod's `dataraw	extures\colony\`, or sharper
+  textures are found by name like the original's: put new ones in the mod's `dataraw\textures\colony\`, or sharper
   versions of the install's in `hires\`.
 - Enable the pack like any mod (`enabled.txt` or `--mod`). A pack's picture wins over Texture upscaling.
 - Packs, like all mods, are yours to make or download; the project ships no graphics.

@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Mods are easy now: drop a `.zip` (or a folder) into a `mods` folder next to the game and switch it on in the new Mods page (main menu), with its picture, author and description, up/down priority arrows, notices about problems and overridden files, and a restart button; a broken mod no longer stops the game from starting, and the multiplayer room lists the mods in use.
 - Modern in-game menu (Options, Interface; on by default): Esc or O in a game, and the main menu's Load game, open the same designed page as the main menu's Settings, with a first tab "Save & load": the 24 slots with name and game date and a preview of the selected one, Load (double click too), Save with a name field, Quit to main menu and Exit game (both ask first), under the original's rules for what may be saved or loaded; switch it off for the original's screen (ADR 0067).
 - Esc in the chat line, a design's name and a save's name no longer acts while the screen is changing.
 - The planet in the starmap's planet details no longer trembles while the game is paused: the camera now stays on the planet instead of swinging between its last two positions.

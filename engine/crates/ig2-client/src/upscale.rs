@@ -81,7 +81,7 @@ fn pack(install: &Install, path: &str) -> Option<Arc<Hires>> {
     })
 }
 
-fn decode_png(bytes: &[u8]) -> Result<Hires, String> {
+pub(crate) fn decode_png(bytes: &[u8]) -> Result<Hires, String> {
     let mut d = png::Decoder::new(std::io::Cursor::new(bytes));
     d.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA | png::Transformations::STRIP_16);
     let mut r = d.read_info().map_err(|e| e.to_string())?;

@@ -82,6 +82,7 @@ mod kit;
 mod lighting;
 mod mainscr;
 mod menu_flow;
+mod mods_page;
 mod mainscr_scene;
 mod mainscr_race;
 mod mainscr_scenario;
@@ -606,6 +607,18 @@ pub struct Loaded {
 }
 
 pub fn load(o: &Options) -> Result<Loaded, String> {
+    match load_with(o) {
+        // Ours (ADR 0068 §2): a mod that breaks the load can't keep the game from starting (the Mods page says why).
+        Err(e) if o.mods.as_ref().is_none_or(|m| !m.is_empty()) && !ig2_formats::vfs::Mod::enabled(o.mods.clone()).0.is_empty() => {
+            eprintln!("ig2-client: the mods failed to load, starting without them: {e}");
+            mods_page::set_failed(&e);
+            load_with(&Options { mods: Some(Vec::new()), ..o.clone() })
+        }
+        r => r,
+    }
+}
+
+fn load_with(o: &Options) -> Result<Loaded, String> {
     let install = open_install(o)?;
     prof::mark("install");
     let (rules, tech_defaults) = rules::load(&install)?;
@@ -690,6 +703,7 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
     #[cfg(target_arch = "wasm32")]
     let files = web::files();
     let install = Install::open_from(files, &root, language(o, &root), enabled_mods(o)).map_err(|e| e.to_string())?;
+    mods_page::set_loaded(&install);
     for m in install.mods() {
         eprintln!("ig2-client: mod {} ({} files)", m.name, install.overrides().iter().filter(|f| f.mod_name == m.name).count());
     }
@@ -706,12 +720,13 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
     Ok(install)
 }
 
-/// The mods to load (ADR 0044 §2): `--mod` names, else `mods/enabled.txt`'s, found in the mods folder; a missing one
-/// is reported and skipped.
+/// The mods to load (ADR 0044 §2): `--mod` names, else `mods/enabled.txt`'s, found in the mods folders (ADR 0068 §1);
+/// a missing or broken one is reported and skipped.
 fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
+    mods_page::GIVEN.store(o.mods.is_some(), std::sync::atomic::Ordering::Relaxed);
     let (mods, missing) = ig2_formats::vfs::Mod::enabled(o.mods.clone());
-    for n in missing {
-        eprintln!("ig2-client: mod {n}: no such folder in the mods folder");
+    for (n, why) in missing {
+        eprintln!("ig2-client: mod {n} not loaded: {why}");
     }
     mods
 }
@@ -721,7 +736,7 @@ fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
 /// they apply (ADR 0044 §9), each text patch as `texts.<lang>.toml#<k>` likewise (§13) and each `stories.toml` as
 /// `stories.toml#<k>` in the order they run (ADR 0061 §6); `None` without mods.
 pub fn mods_fingerprint(install: &Install) -> Option<[u8; 32]> {
-    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR)).map(|f| (f.path.to_owned(), std::fs::read(f.file).unwrap_or_default())).collect();
+    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR)).map(|f| (f.path.to_owned(), install.read_file(f.file).unwrap_or_default())).collect();
     files.extend(install.rule_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("rules.toml#{k}"), b)));
     files.extend(install.text_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, f, b))| (format!("{f}#{k}"), b)));
     files.extend(install.story_files().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("{}#{k}", ig2_formats::vfs::STORY_FILE), b)));

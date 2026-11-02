@@ -452,6 +452,12 @@ impl MpScreen {
                         ui.add(egui::Label::new(RichText::new(w(words::NEED_SAVED)).small().weak()).wrap());
                     });
                 }
+                // Ours (ADR 0068 §6): everyone in the room has the host's mods (a mismatch is refused).
+                let mods = crate::mods_page::loaded();
+                if !mods.is_empty() {
+                    let line = format!("{} {}", crate::tr::text(lang, "Mods in this game:"), mods.join(", "));
+                    ui.add(egui::Label::new(RichText::new(line).small().color(accent)).wrap());
+                }
             });
             // The host's connection, the chat.
             ui.vertical(|ui| {

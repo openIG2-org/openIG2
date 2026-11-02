@@ -65,6 +65,8 @@ impl Files for Disk {
 #[derive(Clone)]
 pub struct Install {
     files: Arc<dyn Files>,
+    /// The files without the zip mods' (`files` wraps them when a zip mod is enabled), for [`Install::with_lang`].
+    base: Arc<dyn Files>,
     root: PathBuf,
     lang: Lang,
     /// Lowercase relative path with `/` separators → absolute path (a mod's file over the install's).
@@ -88,17 +90,130 @@ pub const RULES_PATCH: &str = "rules.toml";
 /// A mod's story description file at its folder's top (ADR 0061 §1); not a game path.
 pub const STORY_FILE: &str = "stories.toml";
 
-/// An enabled mod: a folder mirroring the install's layout (ADR 0044).
+/// A mod's description file at its top (ADR 0068 §3); not a game path.
+pub const MOD_FILE: &str = "mod.toml";
+
+/// An enabled mod: a folder mirroring the install's layout (ADR 0044), or a `.zip` of one (ADR 0068).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mod {
     pub name: String,
+    /// The mod's folder, or its zip file.
     pub dir: PathBuf,
 }
 
+/// A mod's `mod.toml` (ADR 0068 §3): every key optional.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModInfo {
+    pub name: Option<String>,
+    pub author: Option<String>,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    /// A PNG in the mod (its path there).
+    pub picture: Option<String>,
+    /// The openIG2 version it was made for (MAJOR.MINOR).
+    pub game: Option<String>,
+}
+
+impl ModInfo {
+    pub fn parse(text: &str) -> std::result::Result<Self, String> {
+        let doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| format!("{MOD_FILE}: {}", e.message()))?;
+        let key = |k: &str| -> std::result::Result<Option<String>, String> {
+            match doc.get(k) {
+                None => Ok(None),
+                Some(v) => v.as_str().map(|s| Some(s.trim().to_owned())).ok_or_else(|| format!("{MOD_FILE}: {k} must be a text in quotes")),
+            }
+        };
+        Ok(Self { name: key("name")?, author: key("author")?, version: key("version")?, description: key("description")?, picture: key("picture")?, game: key("game")? })
+    }
+}
+
 impl Mod {
-    /// The mods folder beside the settings files (`mods/` next to [`Options::path`](crate::options::Options::path)).
+    /// The mods folder beside the settings files (`mods/` next to [`Options::path`](crate::options::Options::path)):
+    /// where `enabled.txt` is.
     pub fn folder() -> Option<PathBuf> {
         crate::options::Options::path().and_then(|p| p.parent().map(|d| d.join("mods")))
+    }
+
+    /// The mods folder beside the game's executable (ADR 0068 §1).
+    pub fn exe_folder() -> Option<PathBuf> {
+        if cfg!(target_arch = "wasm32") {
+            return None;
+        }
+        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("mods")))
+    }
+
+    /// The folders searched for mods, the first one winning a name: beside the executable, then the settings'.
+    pub fn folders() -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = Self::exe_folder().into_iter().chain(Self::folder()).collect();
+        v.dedup();
+        v
+    }
+
+    /// Every mod in `folders` (each a folder or a `.zip`), by name; a name the first folder has wins, a folder over a
+    /// zip of the same name (ADR 0068 §1).
+    pub fn available_in(folders: &[PathBuf]) -> Vec<Mod> {
+        let mut found: std::collections::BTreeMap<String, Mod> = std::collections::BTreeMap::new();
+        for folder in folders {
+            let Ok(entries) = std::fs::read_dir(folder) else { continue };
+            let mut here: Vec<Mod> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let (p, name) = (e.path(), e.file_name().into_string().ok()?);
+                    if p.is_dir() {
+                        return Some(Mod { name, dir: p });
+                    }
+                    let stem = name.len().checked_sub(4).filter(|&i| name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".zip"))?;
+                    Some(Mod { name: name[..stem].to_owned(), dir: p })
+                })
+                .collect();
+            here.sort_by_key(|m| !m.dir.is_dir());
+            for m in here {
+                found.entry(m.name.clone()).or_insert(m);
+            }
+        }
+        found.into_values().collect()
+    }
+
+    /// [`Mod::available_in`] the [`Mod::folders`].
+    pub fn available() -> Vec<Mod> {
+        Self::available_in(&Self::folders())
+    }
+
+    pub fn is_zip(&self) -> bool {
+        self.dir.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) && !self.dir.is_dir()
+    }
+
+    /// Whether the mod can be loaded: a zip's directory reads and follows the rules (ADR 0068 §2).
+    pub fn check(&self) -> std::result::Result<(), String> {
+        self.zip().map(|_| ())
+    }
+
+    fn zip(&self) -> std::result::Result<Option<crate::zipfs::Zip>, String> {
+        if !self.is_zip() {
+            return Ok(None);
+        }
+        let mut f = BufReader::new(File::open(&self.dir).map_err(|e| e.to_string())?);
+        crate::zipfs::Zip::open(&mut f).map(Some)
+    }
+
+    /// The file `rel` (a path inside the mod, `/`-separated, any case) from the disk.
+    pub fn read(&self, rel: &str) -> std::result::Result<Vec<u8>, String> {
+        match self.zip()? {
+            Some(z) => {
+                let name = z.names().find(|n| n.eq_ignore_ascii_case(rel)).ok_or_else(|| format!("{rel}: not in the mod"))?.to_owned();
+                z.read(&mut BufReader::new(File::open(&self.dir).map_err(|e| e.to_string())?), &name)
+            }
+            None => std::fs::read(self.dir.join(rel)).map_err(|e| format!("{rel}: {e}")),
+        }
+    }
+
+    /// The mod's `mod.toml`; the default without one.
+    pub fn info(&self) -> std::result::Result<ModInfo, String> {
+        self.check()?;
+        match self.read(MOD_FILE) {
+            Ok(b) => ModInfo::parse(&String::from_utf8(b).map_err(|_| format!("{MOD_FILE}: not UTF-8 text"))?),
+            Err(_) => Ok(ModInfo::default()),
+        }
     }
 
     /// `mods/enabled.txt`'s names in order: one a line, `#` comments and blank lines skipped.
@@ -106,18 +221,90 @@ impl Mod {
         text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()).map(str::to_owned).collect()
     }
 
-    /// The mods to load (ADR 0044 §2): `given` (`--mod`), else `mods/enabled.txt`'s names, found in [`Mod::folder`];
-    /// the names without a folder are the second list.
-    pub fn enabled(given: Option<Vec<String>>) -> (Vec<Mod>, Vec<String>) {
-        let Some(folder) = Self::folder() else { return (Vec::new(), given.unwrap_or_default()) };
-        let names = given.unwrap_or_else(|| crate::userfs::read_to_string(folder.join("enabled.txt")).map(|t| Self::parse_enabled(&t)).unwrap_or_default());
-        Self::find(&folder, &names)
+    /// `mods/enabled.txt` in the settings' mods folder (ADR 0044 §2).
+    pub fn enabled_file() -> Option<PathBuf> {
+        Self::folder().map(|f| f.join("enabled.txt"))
     }
 
-    /// The named mods in `folder`, in the given order; the names without a folder are the second list.
+    /// `enabled.txt`'s names (none without the file).
+    pub fn enabled_names() -> Vec<String> {
+        Self::enabled_file().and_then(|f| crate::userfs::read_to_string(f).ok()).map(|t| Self::parse_enabled(&t)).unwrap_or_default()
+    }
+
+    /// `enabled.txt` for `names` in priority order (ADR 0068 §4).
+    pub fn enabled_text(names: &[String]) -> String {
+        let mut t = String::from("# The enabled mods, the first one winning a file. Written by the game's Mods page.\n");
+        for n in names {
+            t.push_str(n);
+            t.push('\n');
+        }
+        t
+    }
+
+    /// The mods to load (ADR 0044 §2): `given` (`--mod`), else `mods/enabled.txt`'s names, found in [`Mod::folders`];
+    /// the names that can't be loaded are the second list, each with why.
+    pub fn enabled(given: Option<Vec<String>>) -> (Vec<Mod>, Vec<(String, String)>) {
+        let names = given.unwrap_or_else(Self::enabled_names);
+        Self::pick(&Self::available(), &names)
+    }
+
+    /// The named mods of `available`, in the given order; the names missing or broken are the second list, with why.
+    pub fn pick(available: &[Mod], names: &[String]) -> (Vec<Mod>, Vec<(String, String)>) {
+        let (mut found, mut bad) = (Vec::new(), Vec::new());
+        for n in names {
+            match available.iter().find(|m| &m.name == n) {
+                None => bad.push((n.clone(), "no such folder or zip in the mods folders".to_owned())),
+                Some(m) => match m.check() {
+                    Ok(()) => found.push(m.clone()),
+                    Err(e) => bad.push((n.clone(), e)),
+                },
+            }
+        }
+        (found, bad)
+    }
+
+    /// The named mods in `folder`, in the given order; the names missing or broken are the second list.
     pub fn find(folder: &Path, names: &[String]) -> (Vec<Mod>, Vec<String>) {
-        let (found, missing): (Vec<&String>, Vec<&String>) = names.iter().partition(|n| folder.join(n).is_dir());
-        (found.into_iter().map(|n| Mod { name: n.clone(), dir: folder.join(n) }).collect(), missing.into_iter().cloned().collect())
+        let (found, bad) = Self::pick(&Self::available_in(&[folder.to_path_buf()]), names);
+        (found, bad.into_iter().map(|(n, _)| n).collect())
+    }
+}
+
+/// The install's files with the zip mods' files beside them (ADR 0068 §2): a path under a zip's path is that zip's file.
+struct WithZips {
+    base: Arc<dyn Files>,
+    zips: Vec<(PathBuf, crate::zipfs::Zip)>,
+}
+
+impl WithZips {
+    fn zip_of<'a>(&'a self, path: &Path) -> Option<(&'a Path, &'a crate::zipfs::Zip, String)> {
+        self.zips.iter().find_map(|(z, zip)| {
+            let rel = path.strip_prefix(z).ok()?.to_string_lossy().replace('\\', "/");
+            Some((z.as_path(), zip, rel))
+        })
+    }
+}
+
+impl Files for WithZips {
+    fn scan(&self, root: &Path) -> io::Result<Vec<PathBuf>> {
+        match self.zips.iter().find(|(z, _)| z == root) {
+            Some((z, zip)) => Ok(zip.names().map(|n| z.join(n)).collect()),
+            None => self.base.scan(root),
+        }
+    }
+
+    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+        match self.zip_of(path) {
+            Some((z, zip, rel)) => zip.read(&mut self.base.open(z)?, &rel).map_err(io::Error::other),
+            None => self.base.read(path),
+        }
+    }
+
+    fn open(&self, path: &Path) -> io::Result<Box<dyn ReadSeek>> {
+        match self.zip_of(path) {
+            Some(_) => Ok(Box::new(io::Cursor::new(self.read(path)?))),
+            None => self.base.open(path),
+        }
     }
 }
 
@@ -149,6 +336,14 @@ impl Install {
     /// [`Install::open_with_mods`] with the bytes from `files`.
     pub fn open_from(files: Arc<dyn Files>, root: impl Into<PathBuf>, lang: Lang, mods: Vec<Mod>) -> Result<Self> {
         let root = root.into();
+        let base = files;
+        let mut zips = Vec::new();
+        for m in mods.iter().filter(|m| m.is_zip()) {
+            let mut r = base.open(&m.dir).map_err(|source| Error::Io { path: m.dir.display().to_string(), source })?;
+            let zip = crate::zipfs::Zip::open(&mut r).map_err(|msg| Error::Format { format: "mod zip", msg: format!("mod {}: {msg}", m.name) })?;
+            zips.push((m.dir.clone(), zip));
+        }
+        let files: Arc<dyn Files> = if zips.is_empty() { base.clone() } else { Arc::new(WithZips { base: base.clone(), zips }) };
         let mut index = scan(&*files, &root)?;
         if !index.contains_key("dataraw/text/scenario.txt") {
             return Err(Error::NotFound(format!(
@@ -159,6 +354,13 @@ impl Install {
         let (mut modded, mut patches, mut texts, mut stories) = (HashMap::new(), Vec::new(), Vec::new(), Vec::new());
         for (i, m) in mods.iter().enumerate().rev() {
             let mut found = scan(&*files, &m.dir)?;
+            // The description and its picture aren't game files (ADR 0068 §3).
+            if let Some(p) = found.remove(MOD_FILE) {
+                let info = files.read(&p).ok().and_then(|b| ModInfo::parse(&String::from_utf8_lossy(&b)).ok()).unwrap_or_default();
+                if let Some(pic) = info.picture {
+                    found.remove(&normalize(&pic));
+                }
+            }
             patches.extend(found.remove(RULES_PATCH).map(|p| (i, p)));
             stories.extend(found.remove(STORY_FILE).map(|p| (i, p)));
             texts.extend(Lang::ALL.into_iter().filter_map(|l| found.remove(&textpatch::file_name(l)).map(|p| (i, l, p))));
@@ -169,7 +371,7 @@ impl Install {
                 index.insert(k, p);
             }
         }
-        let mut install = Self { files, root, lang, index, mods, modded, patches, texts, stories, patched: HashMap::new() };
+        let mut install = Self { files, base, root, lang, index, mods, modded, patches, texts, stories, patched: HashMap::new() };
         install.patched = install.patch_texts()?;
         Ok(install)
     }
@@ -198,7 +400,7 @@ impl Install {
 
     /// The same install and mods in another texts' language.
     pub fn with_lang(&self, lang: Lang) -> Result<Self> {
-        Self::open_from(self.files.clone(), &self.root, lang, self.mods.clone())
+        Self::open_from(self.base.clone(), &self.root, lang, self.mods.clone())
     }
 
     /// The enabled mods, highest priority first.
@@ -236,6 +438,11 @@ impl Install {
                 Ok((self.mods[*i].name.as_str(), textpatch::file_name(*l), bytes))
             })
             .collect()
+    }
+
+    /// The bytes of a file the index holds ([`Override::file`], a zip mod's too), as stored.
+    pub fn read_file(&self, file: &Path) -> Result<Vec<u8>> {
+        self.files.read(file).map_err(|source| Error::Io { path: file.display().to_string(), source })
     }
 
     /// Every file a mod provides, in path order.
@@ -431,6 +638,63 @@ mod tests {
         let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();
         assert_eq!(text(&i, "dataraw/textures/colony/a_bmp.pvr"), "second a");
         let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn zip_mods_beside_folders_by_priority() {
+        let t = tree("zip");
+        let (exe, settings) = (t.join("exe-mods"), t.join("mods"));
+        std::fs::create_dir_all(&exe).unwrap();
+        let toml = "name = \"Zipped\"\nauthor = \"Someone\"\nversion = \"1.2\"\npicture = \"Shot.png\"\ngame = \"0.7\"\n";
+        let z = crate::zipfs::build(&[
+            ("zipped/mod.toml", toml.as_bytes(), true),
+            ("zipped/shot.png", b"png", false),
+            ("zipped/DataRaw/Textures/Colony/B_BMP.pvr", b"zip b", true),
+            ("zipped/dataraw/textures/colony/zip_bmp.pvr", b"zip new", false),
+            ("zipped/rules.toml", b"zip patch", false),
+        ]);
+        std::fs::write(exe.join("zipped.zip"), &z).unwrap();
+        // A broken download, and a zip that names a file outside it.
+        std::fs::write(exe.join("broken.zip"), &z[..z.len() / 2]).unwrap();
+        std::fs::write(exe.join("evil.zip"), crate::zipfs::build(&[("../../evil.dll", b"x", false)])).unwrap();
+        // The same name in both folders: the one beside the executable wins.
+        std::fs::write(settings.join("second.zip"), crate::zipfs::build(&[("x.txt", b"x", false)])).unwrap();
+        let all = Mod::available_in(&[exe.clone(), settings.clone()]);
+        let names: Vec<(&str, bool)> = all.iter().map(|m| (m.name.as_str(), m.is_zip())).collect();
+        assert_eq!(names, [("broken", true), ("evil", true), ("first", false), ("second", false), ("zipped", true)]);
+        let want: Vec<String> = ["zipped", "broken", "second", "evil", "gone"].map(String::from).into();
+        let (mods, bad) = Mod::pick(&all, &want);
+        assert_eq!(mods.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["zipped", "second"]);
+        let bad: Vec<&str> = bad.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(bad, ["broken", "evil", "gone"]);
+        assert!(Mod::pick(&all, &["evil".into()]).1[0].1.contains("unsafe file name"));
+        let info = mods[0].info().unwrap();
+        assert_eq!((info.name.as_deref(), info.version.as_deref(), info.picture.as_deref()), (Some("Zipped"), Some("1.2"), Some("Shot.png")));
+        assert_eq!(mods[0].read("SHOT.PNG").unwrap(), b"png");
+        let i = Install::open_with_mods(t.join("install"), Lang::Hu, mods.clone()).unwrap();
+        // The zip is first: its copy wins; a file only the folder mod has still comes from it.
+        assert_eq!(text(&i, "dataraw/textures/colony/b_bmp.pvr"), "zip b");
+        assert_eq!(text(&i, "dataraw/textures/colony/a_bmp.pvr"), "second a");
+        assert_eq!(text(&i.with_lang(Lang::En).unwrap(), "dataraw/textures/colony/zip_bmp.pvr"), "zip new");
+        // `mod.toml` and its picture aren't game files; the zip's rules patch is one.
+        assert!(i.resolve("mod.toml").is_none() && i.resolve("shot.png").is_none());
+        assert_eq!(i.rule_patches().unwrap(), [("second", b"second patch".to_vec()), ("zipped", b"zip patch".to_vec())]);
+        let o = i.overrides().into_iter().find(|o| o.path.ends_with("zip_bmp.pvr")).unwrap();
+        assert_eq!((o.mod_name, i.read_file(o.file).unwrap()), ("zipped", b"zip new".to_vec()));
+        // Lower priority: the folder's copy wins.
+        let i = Install::open_with_mods(t.join("install"), Lang::En, mods.into_iter().rev().collect()).unwrap();
+        assert_eq!(text(&i, "dataraw/textures/colony/b_bmp.pvr"), "second b");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[test]
+    fn mod_toml_and_enabled_text() {
+        let i = ModInfo::parse("name = \"A\"\ndescription = \"Two\\nlines\"\n").unwrap();
+        assert_eq!((i.name.as_deref(), i.description.as_deref(), i.author), (Some("A"), Some("Two\nlines"), None));
+        assert!(ModInfo::parse("version = 2").unwrap_err().contains("version"));
+        assert!(ModInfo::parse("name = ").is_err());
+        let names: Vec<String> = vec!["b".into(), "a".into()];
+        assert_eq!(Mod::parse_enabled(&Mod::enabled_text(&names)), names);
     }
 
     /// Files a host hands over in memory (how a browser feeds its copy of the install).

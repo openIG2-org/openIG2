@@ -754,7 +754,7 @@ fn refusal_text(r: Refusal) -> &'static [u8] {
     match r {
         Refusal::Version => b"Another game version",
         Refusal::Rules => b"Another game install (rules differ)",
-        Refusal::Mods => b"Other mods enabled (mods differ)",
+        Refusal::Mods => b"Other mods enabled (mods differ; see Mods)",
         Refusal::Code => b"Wrong join code",
         Refusal::Full => b"The game is full",
         Refusal::Started => b"The game has started",

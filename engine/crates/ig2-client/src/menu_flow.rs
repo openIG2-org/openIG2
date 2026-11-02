@@ -21,6 +21,8 @@ pub enum Item {
     Tutorial,
     History,
     Replays,
+    /// Ours (ADR 0068): the mod manager.
+    Mods,
     Credits,
     Settings,
     Quit,
@@ -46,6 +48,7 @@ impl Item {
             Item::Tutorial => "Tutorial",
             Item::History => "History",
             Item::Replays => "Replays",
+            Item::Mods => "Mods",
             Item::Credits => "Game credits",
             Item::Settings => "Settings",
             Item::Quit => "Quit",
@@ -90,6 +93,7 @@ fn lines(p: Panel) -> Vec<Line> {
             head("Extras"),
             item(Item::History),
             item(Item::Replays),
+            item(Item::Mods),
             item(Item::Credits),
             item(Item::Settings),
             item(Item::Quit),
@@ -208,7 +212,7 @@ mod tests {
     #[test]
     fn panel_items_and_history() {
         let centre = |i: Item, h: bool| layout(Panel::Main, h).into_iter().find(|&(_, x, _)| x == Some(i)).map(|(_, _, r)| [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0]).unwrap();
-        for i in [Item::Continue, Item::QuickGame, Item::NewGame, Item::Load, Item::Multiplayer, Item::Tutorial, Item::History, Item::Replays, Item::Credits, Item::Settings, Item::Quit] {
+        for i in [Item::Continue, Item::QuickGame, Item::NewGame, Item::Load, Item::Multiplayer, Item::Tutorial, Item::History, Item::Replays, Item::Mods, Item::Credits, Item::Settings, Item::Quit] {
             assert_eq!(item_at(Panel::Main, centre(i, true), true), Some(i));
         }
         assert!(layout(Panel::Main, false).iter().all(|&(_, i, _)| i != Some(Item::History)));

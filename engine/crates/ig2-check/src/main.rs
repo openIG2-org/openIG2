@@ -352,8 +352,8 @@ fn main() {
     groups.push(install);
     if !inst.mods().is_empty() || !missing.is_empty() {
         let mut g = Group::new("mods");
-        for n in missing {
-            g.check(&format!("mod {n}"), || Err("no such folder in the mods folder".into()));
+        for (n, why) in missing {
+            g.check(&format!("mod {n}"), || Err(why));
         }
         for m in inst.mods() {
             let files: Vec<_> = inst.overrides().into_iter().filter(|o| o.mod_name == m.name).collect();

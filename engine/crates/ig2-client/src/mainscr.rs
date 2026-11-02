@@ -72,6 +72,8 @@ pub enum Act {
     Continue,
     History,
     Replays,
+    /// Ours (ADR 0068): the panel's Mods, the classic menu's Mods label.
+    Mods,
 }
 
 /// What `MainScr_Kilep` starts (spec §2.2 step 3).
@@ -242,6 +244,8 @@ pub const TOGGLE_BOX: [i32; 4] = [300, 446, 110, 19];
 pub const SETTINGS_BOX: [i32; 4] = [536, 448, 96, 22];
 /// Ours (ADR 0039): the Quick game label's box, above the Settings label.
 pub const QUICK_BOX: [i32; 4] = [516, 424, 116, 22];
+/// Ours (ADR 0068): the Mods label's box, above the Quick game label.
+pub const MODS_BOX: [i32; 4] = [536, 400, 96, 22];
 
 /// The exe's hot-spot test (exe 0x510390): `x0 <= x <= x0 + w - 1` on the pointer's integer pixel.
 pub fn in_box(at: [f32; 2], r: [i32; 4]) -> bool {
@@ -513,7 +517,7 @@ impl MainScr {
         // 0x27 (300, 446, 110 × 19) also outside the list: `MainScr_MouseInit2` (exe 0x4ff7b0) switches it on whenever
         // the skirmish settings are off, `Mode_Scenario_Valasztas` 0 included.
         let toggle = self.scenario.is_none() && in_box(at, TOGGLE_BOX);
-        self.hand = self.hovered.is_some() || toggle || self.settings_at(at) || self.quick_at(at) || self.flow_item_at(at).is_some_and(|i| i != crate::menu_flow::Item::Continue || self.can_continue) || self.back_at(at) || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
+        self.hand = self.hovered.is_some() || toggle || self.settings_at(at) || self.quick_at(at) || self.mods_at(at) || self.flow_item_at(at).is_some_and(|i| i != crate::menu_flow::Item::Continue || self.can_continue) || self.back_at(at) || self.scenario.as_ref().is_some_and(|sc| sc.hot() != 0) || self.race_box_at(at).is_some();
     }
 
     /// Ours (ADR 0031): the Settings label shows while the main ring set is up and idle.
@@ -569,6 +573,7 @@ impl MainScr {
             Item::Tutorial => self.act_box(5),
             Item::History => Some(Act::History),
             Item::Replays => Some(Act::Replays),
+            Item::Mods => Some(Act::Mods),
             Item::Credits => self.act_direct(0),
             Item::Settings => Some(Act::Settings),
             Item::Quit => self.act_box(1),
@@ -597,6 +602,11 @@ impl MainScr {
     /// Ours (ADR 0039): the Quick game label, shown with the Settings label.
     pub fn quick_at(&self, at: [f32; 2]) -> bool {
         self.settings_shown() && in_box(at, QUICK_BOX)
+    }
+
+    /// Ours (ADR 0068): the Mods label, shown with the Settings label.
+    pub fn mods_at(&self, at: [f32; 2]) -> bool {
+        self.settings_shown() && in_box(at, MODS_BOX)
     }
 
     /// Ours (ADR 0039): the quick game's panel: the scenario panel with only the skirmish entry of `entries`, its
@@ -711,6 +721,9 @@ impl MainScr {
         }
         if left && self.quick_at(at) {
             return Some(Act::QuickGame);
+        }
+        if left && self.mods_at(at) {
+            return Some(Act::Mods);
         }
         // A box ring acts on the press frame, then the frame loop waits for the release (`Mouse_FelengedesMajdMegvar`).
         let boxed = self.box_ring_at(at);
@@ -1287,7 +1300,7 @@ mod tests {
         assert_eq!(s.press(main(Item::Continue)), None);
         s.can_continue = true;
         assert_eq!(s.press(main(Item::Continue)), Some(Act::Continue));
-        for (i, a) in [(Item::QuickGame, Act::QuickGame), (Item::History, Act::History), (Item::Replays, Act::Replays), (Item::Credits, Act::Credits), (Item::Settings, Act::Settings), (Item::Quit, Act::Quit)] {
+        for (i, a) in [(Item::QuickGame, Act::QuickGame), (Item::History, Act::History), (Item::Replays, Act::Replays), (Item::Mods, Act::Mods), (Item::Credits, Act::Credits), (Item::Settings, Act::Settings), (Item::Quit, Act::Quit)] {
             assert_eq!(s.press(main(i)), Some(a));
         }
         // A set changes at once: New game's entries.

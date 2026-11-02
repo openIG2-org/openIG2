@@ -182,6 +182,8 @@ struct Front {
     stats: Option<crate::stats_screen::StatsScreen>,
     /// Ours (ADR 0038 §6): the replays list over the menu.
     replays: Option<crate::replay_viewer::ReplayList>,
+    /// Ours (ADR 0068): the mod manager over the menu.
+    mods: Option<crate::mods_page::ModsPage>,
     /// The press that opened the statistics or replays screen: its release isn't theirs (ADR 0059: the panel's
     /// entries lie over their rows).
     opening: bool,
@@ -198,7 +200,7 @@ impl Front {
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, opening: false }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, mods: None, opening: false }
     }
 }
 
@@ -752,7 +754,7 @@ fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Rend
 /// The main menu's "History" and "Replays" items are up (ours, ADR 0034, 0038): the main ring set at rest, as the
 /// Settings label.
 fn front_history_shown(fr: &Front) -> bool {
-    fr.stats.is_none() && fr.replays.is_none() && fr.mp.is_none() && !fr.s.flow && fr.s.at_rest()
+    fr.stats.is_none() && fr.replays.is_none() && fr.mods.is_none() && fr.mp.is_none() && !fr.s.flow && fr.s.at_rest()
 }
 
 /// `PlayerFaj[EN]`, the music's race.
@@ -2492,7 +2494,7 @@ impl App {
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         fr.s.race_boxes = scene.draw(&mut frame, &mut g.renderer, &self.install, &fr.s, &crate::font::Virtual::new(size));
         // Ours (ADR 0059): the panel stays out of reach under History and Replays.
-        fr.s.covered = self.options.is_some() || (fr.s.flow && (fr.stats.is_some() || fr.replays.is_some()));
+        fr.s.covered = self.options.is_some() || fr.mods.is_some() || (fr.s.flow && (fr.stats.is_some() || fr.replays.is_some()));
         if let Some(h) = &self.hud {
             let now = self.start.elapsed().as_secs_f64() * 1000.0;
             draw_front_2d(fr, h, &mut g.renderer, &self.install, &mut frame, size, now, self.display.statistics);
@@ -2504,6 +2506,7 @@ impl App {
         // and under the pointer.
         let mut top = None;
         let mut mp_outs = Vec::new();
+        let mut mods_acts = Vec::new();
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
@@ -2512,6 +2515,13 @@ impl App {
                 // Load only: no save to hand back.
                 let _ = o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id));
             });
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        } else if let (Some(mods), Some(h)) = (fr.mods.as_mut(), &self.hud) {
+            // Ours (ADR 0068): the mod manager.
+            let theme = theme(h);
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| mods_acts = mods.show(ctx, &theme));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -2537,6 +2547,24 @@ impl App {
         for o in mp_outs {
             self.front_mp_out(o);
         }
+        for a in mods_acts {
+            self.mods_act(a);
+        }
+    }
+
+    /// The mod manager's request (ADR 0068 §5).
+    fn mods_act(&mut self, a: crate::mods_page::Act) {
+        use crate::mods_page::Act;
+        let Some(f) = &mut self.front else { return };
+        match a {
+            Act::Back => f.mods = None,
+            Act::Restart => match crate::mods_page::restart() {
+                Ok(()) => f.quit = true,
+                Err(e) => eprintln!("ig2-client: restart: {e}"),
+            },
+            Act::Click => {}
+        }
+        self.audio.play(crate::audio::CLICK);
     }
 
     /// A ring's request (`crate::mainscr::Act`): load game starts the game from the save (the Options screen's load
@@ -2610,6 +2638,12 @@ impl App {
             }
             Act::History => self.open_history(),
             Act::Replays => self.open_replays(),
+            Act::Mods => {
+                if let Some(f) = &mut self.front {
+                    f.mods = Some(crate::mods_page::ModsPage::open(&self.install));
+                }
+                self.audio.play(crate::audio::CLICK);
+            }
             // Ours (ADR 0050): `AddHighscore` (`LoadHighscores`, the entry slotted in, `SaveHighscores`) into our
             // settings file (`options.dat` stays untouched), and the list's tables reloaded.
             Act::HighScore => {
@@ -4267,6 +4301,12 @@ impl App {
             }
             return;
         }
+        if let Some(m) = &mut f.mods {
+            if let Some(a) = m.key(k, self.modifiers.shift_key()) {
+                self.mods_act(a);
+            }
+            return;
+        }
         if let Some(mp) = &mut f.mp {
             // Ctrl+V pastes (a join code), Ctrl+C copies the host's join code.
             if self.modifiers.control_key() {
@@ -5662,7 +5702,8 @@ impl ApplicationHandler for App {
         // The modern starmap HUD (ADR 0065) sees the pointer too; `mouse` gives it the buttons over its panels.
         // The multiplayer pages (ADR 0066) take it the same way.
         let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
-        let page = mp_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+        let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
+        let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         if !page && (self.modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
@@ -5704,8 +5745,15 @@ impl ApplicationHandler for App {
                         _ => 2,
                     };
                     g.gui.button(b, *state == ElementState::Pressed);
-                    // The right button stays the menu's Back (ADR 0059); the multiplayer page acts on it itself. A left
-                    // release still reaches the menu there (as before the page, which took presses only).
+                    // The right button stays the menu's Back (ADR 0059); the multiplayer page acts on it itself, the
+                    // Mods page is left by its release. A left release still reaches the menu under the multiplayer
+                    // page (as before the page, which took presses only).
+                    if mods_page && *button == MouseButton::Right {
+                        if *state == ElementState::Released {
+                            self.mods_act(crate::mods_page::Act::Back);
+                        }
+                        return;
+                    }
                     if (*button == MouseButton::Left && !(mp_page && *state == ElementState::Released)) || (mp_page && *button != MouseButton::Left) {
                         return;
                     }
@@ -5810,10 +5858,11 @@ impl ApplicationHandler for App {
             WindowEvent::MouseWheel { .. } | WindowEvent::MouseInput { .. } if self.help.is_some() => {}
             // `remapKeyCodes` (exe 0x4e4670): the key downs the exe never queues reach nothing (the key ups go on); a
             // numpad digit's character still types into an entry up (its SDL_TEXTINPUT). Ours: the main menu's modern
-            // Options screen (ADR 0053) and the multiplayer pages (ADR 0066) take them all (Tab, Delete, Home, End).
+            // Options screen (ADR 0053), the multiplayer pages (ADR 0066) and the Mods page (ADR 0068) take them all (Tab,
+            // Delete, Home, End).
             WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && !do_keyboard::exe_queues_key_down(event)
                 && !(do_keyboard::numpad_digit(event) && self.entry_up()) && !self.options.as_ref().is_some_and(|o| o.s.modern.is_some())
-                && !(self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some())) => {}
+                && !(self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some() || f.mods.is_some())) => {}
             // Esc is the exit hot-spot (`MainCallBackEventHandler` on `AktKep` 1); F1 does nothing there. Help has no
             // keyboard handler of its own, but `DoKeyboard` stays live (exe 0x4db1a0): F2..F10, O and M leave it for
             // their screen (`AktKep` changes, `Help_Kilep`), Space, P and 1/2/3 pause and set the speed.
@@ -5928,7 +5977,7 @@ impl ApplicationHandler for App {
                 // A held Esc's repeats would close the statistics screen and go on to the menu's own Esc; ours: a held Esc
                 // or Enter that closed the Options screen (ADR 0053) goes no further.
                 let closer = matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter));
-                if event.state == ElementState::Pressed && !(event.repeat && (closer || self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some()))) {
+                if event.state == ElementState::Pressed && !(event.repeat && (closer || self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some() || f.mods.is_some()))) {
                     self.front_key(&event.logical_key);
                 }
             }

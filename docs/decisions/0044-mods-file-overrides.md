@@ -26,7 +26,7 @@ The original has no mod support.
    blank lines skipped), first line = highest priority: the first listed mod that has a file wins. `--mod <name>`
    (repeatable, same order rule) replaces the list for one run. A named folder that is missing is reported and
    skipped. The list is a text file and not a row in `ig2-rework-options.dat` because that file is binary and the
-   Options screen has no mod page yet; a page that writes the same list is a later step.
+   Options screen has no mod page yet; a page that writes the same list is a later step (done: ADR 0068).
 3. **Lookup**: the install's index and every enabled mod's files are merged into one index; for a game path the
    candidates stay the localized copy, then the plain path, but a candidate a mod provides comes before any the
    install provides, so a mod's `dataraw/x` beats the install's `localization/hu/dataraw/x`. Texture name fallbacks

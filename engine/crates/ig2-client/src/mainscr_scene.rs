@@ -550,6 +550,10 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
         let [x, y, w, _] = crate::mainscr::QUICK_BOX;
         let c = d.col(if s.quick_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
         font.text(frame, &d.v, &d.texts.ours("Quick game"), (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
+        // Ours (ADR 0068): the Mods label above that.
+        let [x, y, w, _] = crate::mainscr::MODS_BOX;
+        let c = d.col(if s.mods_at(s.at) { 2 } else { 1 }, 100.0 * s.gt);
+        font.text(frame, &d.v, &d.texts.ours("Mods"), (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
     }
     // Ours (ADR 0059): the panel in the rings' place, the Back label.
     if let Some(p) = s.panel() {

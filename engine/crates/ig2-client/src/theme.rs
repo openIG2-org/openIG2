@@ -156,25 +156,24 @@ pub fn set(name: &str) {
 }
 
 fn load(name: &str) -> Result<Theme, String> {
-    let dir = ig2_formats::vfs::Mod::folder().ok_or("no mods folder")?;
-    let path = dir.join(name).join(FILE);
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let m = ig2_formats::vfs::Mod::available().into_iter().find(|m| m.name == name).ok_or("no such mod")?;
+    load_from(&m)
+}
+
+/// A mod's theme file, a folder's or a zip's (ADR 0068).
+fn load_from(m: &ig2_formats::vfs::Mod) -> Result<Theme, String> {
+    let text = String::from_utf8(m.read(FILE)?).map_err(|_| format!("{FILE}: not UTF-8 text"))?;
     Theme::parse(&text)
 }
 
-/// The themes offered: Classic, Modern, then each mod folder with a theme file that parses, in name order.
+/// The themes offered: Classic, Modern, then each mod (folder or zip) with a theme file that parses, in name order.
 pub fn offered() -> Vec<String> {
     let mut v = vec![CLASSIC.to_owned(), MODERN.to_owned()];
-    let mut mods: Vec<String> = ig2_formats::vfs::Mod::folder()
-        .and_then(|d| std::fs::read_dir(d).ok())
+    let mods: Vec<String> = ig2_formats::vfs::Mod::available()
         .into_iter()
-        .flatten()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().join(FILE).is_file())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n != CLASSIC && n != MODERN && load(n).is_ok())
+        .filter(|m| m.name != CLASSIC && m.name != MODERN && load_from(m).is_ok())
+        .map(|m| m.name)
         .collect();
-    mods.sort();
     v.extend(mods);
     v
 }
