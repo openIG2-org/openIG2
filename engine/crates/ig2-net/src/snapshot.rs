@@ -20,7 +20,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 14;
+pub const VERSION: u16 = 15;
 pub const HEADER: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -100,13 +100,27 @@ struct View<'a> {
     enhanced_ai: bool,
     /// `Game::story_fixes` (ADR 0052; since version 13).
     story_fixes: bool,
-    /// `SaveState::mod_stories` (ADR 0061; since version 14).
+    /// `SaveState::mod_stories` (ADR 0061; since version 14, repeats and timers since version 15).
     mod_stories: &'a ModStoryState,
+}
+
+/// The version 14 story mods' state (ADR 0061 part 1: no repeating stories, no timers).
+#[derive(Deserialize)]
+struct ModStoryState14 {
+    fired: std::collections::BTreeSet<String>,
+    flags: std::collections::BTreeSet<String>,
+    counters: BTreeMap<String, i32>,
+}
+
+impl From<ModStoryState14> for ModStoryState {
+    fn from(o: ModStoryState14) -> Self {
+        Self { fired: o.fired, flags: o.flags, counters: o.counters, ..Self::default() }
+    }
 }
 
 /// A state as saved; `I` = the version 5 tail (`()` reads a version 4 state), `T` the version 6 one, `F` the
 /// version 7 one, `S` the version 8 one, `D` the version 9 one, `A` the version 10 one, `G` the version 11 one, `H` the
-/// version 12 one, `K` the version 13 one, `M` the version 14 one.
+/// version 12 one, `K` the version 13 one, `M` the version 15 one (`ModStoryState14` reads a version 14 one).
 #[derive(Deserialize)]
 struct Owned<I = Vec<(u8, ByteBuf)>, T = BTreeMap<u8, (i32, i32)>, F = MpFormation, S = bool, D = [i32; EMPIRES], A = [u8; EMPIRES], G = Stats, H = bool, K = bool, M = ModStoryState> {
     mem: Vec<(u32, ByteBuf)>,
@@ -316,8 +330,9 @@ impl Snapshot {
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
         let o: Owned = match wire::from_slice(&self.state) {
             Ok(o) => o,
-            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, bool, ()>>(&self.state)
-                .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |k| k, |()| ModStoryState::default()))
+            Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, bool, ModStoryState14>>(&self.state)
+                .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |k| k, ModStoryState::from))
+                .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, bool, ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |k| k, |()| ModStoryState::default())))
                 .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |()| false, |()| ModStoryState::default())))
                 .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |()| false, |()| false, |()| ModStoryState::default())))
                 .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))

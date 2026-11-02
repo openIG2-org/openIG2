@@ -1,6 +1,6 @@
 # ADR 0061: Story mods: a story description format and its interpreter
 
-Date: 2026-11-01. Status: accepted (part 1). Builds on ADR 0044 (mods; §14 says why the campaign's own stories can't
+Date: 2026-11-01. Status: accepted (parts 1 and 2). Builds on ADR 0044 (mods; §14 says why the campaign's own stories can't
 be modded: they are program code). Implemented by `ig2_sim::story_mods` (`ModStory`, `parse`, `ModStoryState`,
 `ModScripts`), `ig2_formats::vfs::Install::story_files`, the client's rules (`story.mods`), the snapshot's
 `mod_stories` (save format 14) and `ig2-check`'s mods group.
@@ -44,6 +44,20 @@ story logic gets a declarative description that the sim interprets.
    | `fleet_at` | `{ fleet, planet, within? }` | a live fleet with story id `fleet` is within `within` (default 20) map units of the planet |
    | `answered` | `{ message, answer }` | the check runs for the human's answer `answer` to message block `message` (`st_Message`: `StoryEsemeny[6]` and `StoryMessageBlokk`/`Resz`) |
 
+   Part 2 adds (`empire` fields default to `"human"`):
+
+   | Trigger | Value | Holds when |
+   |---|---|---|
+   | `all` / `any` | `[ trigger, … ]` | every / some listed trigger holds (they nest) |
+   | `not` | `{ trigger }` | the trigger doesn't hold |
+   | `battle` | `{ result = "won" \| "lost", kind? = "space" \| "ground", empire?, planet? }` | the check runs for a battle's end (`Story_SpaceBattleFinished`: `StoryEsemeny[3]`; `Story_GroundBattleFinishedCheck`: `[4]`) and `empire` won / lost it. Space: `empire` owns a participant (`SpwFlottak`) and is / isn't `SpWarKiNyert`. Ground: `empire` is the landing fleet's owner (as `Story_GroundBattleFinishedSave` saved it, exe 0xF26538) or the planet's owner when the battle started (`StoryAdat+0xf4`), and its side won (the won bytes, exe 0xF26532); `planet` limits it to a ground battle on that planet |
+   | `tech` | `{ tech, empire? }` | `Talalmany[tech].+0x45 + e == 5` (researched); `tech` 0..=192 |
+   | `money` | `{ empire?, at_least?, at_most? }` | `MoneyMennyi(e, 0)` is in the range |
+   | `relation` | `{ a, b, at_least?, at_most? }` | `Viszony[a][b].+0x25` (1 war, 3 neutral, 4 non-aggression, 5 alliance) is in the range |
+   | `spy_report` | `{ mission?, target?, success?, died? }` | the check runs for a spy report (`Story_KemEsemeny`: `StoryEsemeny[15]`, `KemkedesTipus == 3`; single player only, as in the original) whose `KemEsemeny` mission (`+0x14`), target empire (`+0x18`), success (`+0xc`) and death (`+8`) match the given fields |
+   | `building` | `{ kind, planet?, empire? }` | a planet of `empire` (only `planet`, when given) has a finished building of kind `kind` (`Epuletek[p] + 0x20·k`: `+0 == kind`, `+8 == 0`) |
+   | `timer` | a name | the mod timer runs and its day has come (it stays expired until stopped or restarted) |
+
    An empire is 0..=18 or `"human"` (`EN`, the local human; each human in canonical multiplayer is
    `StoryWorld::human` on its machine's check, the same rule the built-in stories follow).
 3. **Actions** (the story engine's events, `StoryEvent`, and its fleet helpers):
@@ -60,6 +74,20 @@ story logic gets a declarative description that the sim interprets.
    | `set_counter` / `add_counter` | `{ name, value }` | the mod counter := / += value (wrapping i32) |
    | `win` | `true` | `MEGNYERES(1)`: the human wins |
    | `lose` | `true` | `MEGHALAS(EN)`: the human's empire dies |
+
+   Part 2 adds:
+
+   | Action | Value | Does |
+   |---|---|---|
+   | `give_tech` | `{ tech, empire? }` | `st_SetTalalmanyAllapot(tech, 5, e)` (exe 0x602920): researched, its research time from the race, the recompute; the stories' specials queue gets `(e, tech)` as for the built-in stories |
+   | `remove_tech` | `{ tech, empire? }` | `st_SetTalalmanyAllapot(tech, 3, e)`: back to researchable (what was built with it stays) |
+   | `change_relation` | `{ a, b, by }` | `Viszony[b][a]` value 2 (`+4`, i16) `+= by` (−10000..=10000; `st_ViszonyValt(a, b, x)` moves it by 100·x) |
+   | `diplomacy` | `{ a, b, state }` | `"war"` `st_SetHaborusViszony` (0x602820), `"neutral"` `st_SetSemlegesViszony` (0x6028a0), `"non_aggression"` `st_SetNonagressionViszony` (0x602860), `"alliance"` `st_SetSzovetsegesViszony` (0x6028e0), `"trade"` story 9's trade agreement (`Viszony[a][b].+0x24 := 1` both ways) |
+   | `add_building` | `{ planet, kind, level? }` | `EpuletNewSearchLocation(p, kind, true, level, −1, −1)` (`AutoAddBuilding`, 0x53cca0): a finished building placed for free (level default 0) |
+   | `ground_units` | `{ planet \| fleet, design, count? }` | `TankNew(place, design, count)` (0x541750): `count` (default 1, ≤ 1000) units of the holder's owner's design slot into planet `planet`'s garrison (`place = −planet`) or into the live mod fleet with story id `fleet`; nothing when there's no such planet or fleet |
+   | `start_timer` | `{ name, days }` | the mod timer runs out `days` days from now (restarting a running one) |
+   | `stop_timer` | a name | the timer is gone |
+   | `chain` | a story name | that story of the same file fires at once, its triggers and `every` ignored, unless it may no longer fire (a once-story that fired, a repeating one at its `times`) |
 
    Fleet story ids are 10000..=32767, outside the campaign's (1..=868, 2301, 2311), so a mod's fleet is never one a
    built-in story searches for.
@@ -85,12 +113,25 @@ story logic gets a declarative description that the sim interprets.
 8. **Classic games**: without a `stories.toml` the interpreter has no stories and touches nothing: the sim runs as
    before, byte for byte.
 
+9. **Repeating stories, timers and chains** (part 2): a story with `repeat = true` fires in every check where its
+   triggers hold, at least `every` days (default 1) after its last firing, at most `times` times (no limit when not
+   given); `every` and `times` without `repeat` are errors. A timer is a named day: `start_timer` sets it, the
+   `timer` trigger holds once it has come, `stop_timer` removes it; timers, like flags and counters, are shared by
+   every enabled mod. A `chain` names a story of the same file (an unknown name is an error) and the file's chains
+   may not lead back to the story they start from (an error naming it), so a chain always ends. Like a check, a chain
+   sets the story's mark (once-stories) or its last firing and count (repeating ones) before its actions run.
+10. **Part 2's state and the original's battle winner**: `ModStoryState` gains `repeats` (`(Ido of the last firing,
+    times fired)` per repeating story) and `timers` (the `Ido` each runs out at); save format 15 (a version 14 state
+    loads with both empty). The story engine reads `SpWarKiNyert` (exe 0xBAA1EC), which the battle code writes
+    (`SpaceWarVege`, `SimulateSpBattle`), at each check: before part 2 the port's story engine kept 0 there, so the
+    built-in stories that compare a battle's participants with the winner (`st_SpWarPart…`, `rnd` 118, `fable`,
+    `begin`) now see the real winner, as in the original.
+
 ## Later parts
-More triggers (a battle's start/end and winner, a tech researched, money, relations, a spy report, a story's
-counter-days timer) and actions (diplomacy, relation changes, planet info lines, buildings, techs, a repeating
-story or a timer), and a worked example mod in `docs/USER_GUIDE.md`.
+Planet info lines, a story starting a video by file name, and story texts as message parameters, as players ask.
 
 ## Consequences
 - Mods can add story logic without code; the campaign's own stories stay as they are.
 - The engine ships no story: the tests use a tiny made-up story over a synthetic world.
-- Save format 14; MP rooms compare the story files through the mods fingerprint.
+- Save format 14 (part 1), 15 (part 2); MP rooms compare the story files through the mods fingerprint.
+- `docs/USER_GUIDE.md` has a worked example mod; a test parses it, so it stays valid.

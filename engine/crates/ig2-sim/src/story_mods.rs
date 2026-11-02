@@ -1,15 +1,15 @@
 //! Story mods (ADR 0061): a mod's `stories.toml`, stories as triggers over the story engine's reads and actions as
 //! its events, and the interpreter [`ModScripts`] that `Story_Check` runs after the built-in scripts.
 //!
-//! A story fires once, in the first check where all its triggers hold. The state (fired stories, the mods' flags and
-//! counters) is ours, saved in our snapshot ([`crate::save::SaveState::mod_stories`]); without stories nothing runs.
+//! A story fires once, in the first check where all its triggers hold, or again and again (`repeat`). The state (fired
+//! stories, the mods' flags, counters and timers) is ours, saved in our snapshot ([`crate::save::SaveState::mod_stories`]); without stories nothing runs.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use toml_edit::{DocumentMut, Item, TableLike, Value};
 
 use crate::colony_side::EMPIRES;
-use crate::story::{Script, Story, StoryEvent, StoryWorld, DAY};
+use crate::story::{flag, Script, Story, StoryEvent, StoryWorld, DAY};
 
 /// Fleet story ids a mod may use: above the campaign's (1..=868, 2301, 2311) and within the fleet's i16 field.
 pub const FLEET_IDS: std::ops::RangeInclusive<i32> = 10000..=32767;
@@ -41,6 +41,27 @@ pub enum Trigger {
     Counter { name: String, at_least: Option<i32>, at_most: Option<i32> },
     FleetAt { fleet: i32, planet: i32, within: f32 },
     Answered { message: i32, answer: i32 },
+    All(Vec<Trigger>),
+    Any(Vec<Trigger>),
+    Not(Box<Trigger>),
+    /// `ground`: `None` either kind.
+    Battle { ground: Option<bool>, won: bool, empire: Who, planet: Option<i32> },
+    Tech { tech: i32, empire: Who },
+    Money { empire: Who, at_least: Option<i32>, at_most: Option<i32> },
+    Relation { a: Who, b: Who, at_least: Option<i32>, at_most: Option<i32> },
+    SpyReport { mission: Option<i32>, target: Option<Who>, success: Option<bool>, died: Option<bool> },
+    Building { kind: i32, planet: Option<i32>, empire: Who },
+    Timer(String),
+}
+
+/// A diplomatic state a story sets (`st_Set…Viszony`, story 9's trade agreement).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Diplomacy {
+    War,
+    Neutral,
+    NonAggression,
+    Alliance,
+    Trade,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,6 +78,25 @@ pub enum Action {
     AddCounter { name: String, value: i32 },
     Win,
     Lose,
+    GiveTech { tech: i32, empire: Who },
+    RemoveTech { tech: i32, empire: Who },
+    ChangeRelation { a: Who, b: Who, by: i32 },
+    Diplomacy { a: Who, b: Who, state: Diplomacy },
+    AddBuilding { planet: i32, kind: i32, level: i32 },
+    /// Into planet `planet`'s garrison (`place` = −planet) or the mod fleet with story id `place`.
+    GroundUnits { place: i32, design: i32, count: i32 },
+    StartTimer { name: String, days: i32 },
+    StopTimer(String),
+    /// Another story of the same file, by key.
+    Chain(String),
+}
+
+/// A repeating story's limits (ADR 0061 §9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Repeat {
+    /// The least gap between two firings, in days.
+    pub every: i32,
+    pub times: Option<i32>,
 }
 
 /// One `[[story]]`.
@@ -66,15 +106,22 @@ pub struct ModStory {
     pub key: String,
     pub when: Vec<Trigger>,
     pub actions: Vec<Action>,
+    /// `None`: it fires once.
+    pub repeat: Option<Repeat>,
 }
 
 /// The interpreter's state: every enabled mod's, in one place.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ModStoryState {
+    /// The once-stories that fired.
     pub fired: BTreeSet<String>,
     pub flags: BTreeSet<String>,
     pub counters: BTreeMap<String, i32>,
+    /// The repeating stories that fired: `(Ido of the last firing, times fired)` (since save format 15).
+    pub repeats: BTreeMap<String, (i32, i32)>,
+    /// The running timers: the `Ido` each runs out at (since save format 15).
+    pub timers: BTreeMap<String, i32>,
 }
 
 // ------------------------------------------------------------------------------------------------ parsing
@@ -116,9 +163,45 @@ impl<'a> Fields<'a> {
         self.get(k).ok_or_else(|| format!("{at}: missing")).and_then(|v| who(v, &at))
     }
 
+    /// An empire, `"human"` when not given.
+    fn who_or_human(&mut self, k: &'static str) -> Result<Who, String> {
+        let at = format!("{}.{k}", self.at);
+        self.get(k).map_or(Ok(Who::Human), |v| who(v, &at))
+    }
+
+    fn opt_who(&mut self, k: &'static str) -> Result<Option<Who>, String> {
+        let at = format!("{}.{k}", self.at);
+        self.get(k).map(|v| who(v, &at)).transpose()
+    }
+
+    fn opt_bool(&mut self, k: &'static str) -> Result<Option<bool>, String> {
+        let at = format!("{}.{k}", self.at);
+        self.get(k).map(|v| v.as_bool().ok_or_else(|| format!("{at}: expected true or false"))).transpose()
+    }
+
+    /// One of `words` (its index), `None` when not given.
+    fn opt_word(&mut self, k: &'static str, words: &[&str]) -> Result<Option<usize>, String> {
+        let at = format!("{}.{k}", self.at);
+        self.get(k).map(|v| word(v, &at, words)).transpose()
+    }
+
+    fn word(&mut self, k: &'static str, words: &[&str]) -> Result<usize, String> {
+        let at = format!("{}.{k}", self.at);
+        self.opt_word(k, words)?.ok_or_else(|| format!("{at}: missing"))
+    }
+
     fn name(&mut self, k: &'static str) -> Result<String, String> {
         let at = format!("{}.{k}", self.at);
         self.get(k).ok_or_else(|| format!("{at}: missing")).and_then(|v| name(v, &at))
+    }
+
+    /// `at_least` and `at_most`, at least one of them.
+    fn bounds(&mut self, range: std::ops::RangeInclusive<i64>) -> Result<(Option<i32>, Option<i32>), String> {
+        let b = (self.opt_int("at_least", range.clone())?, self.opt_int("at_most", range)?);
+        if b == (None, None) {
+            return Err(format!("{}: give at_least, at_most or both", self.at));
+        }
+        Ok(b)
     }
 
     /// Fails on a key no getter asked for.
@@ -154,6 +237,10 @@ fn name(v: &Value, at: &str) -> Result<String, String> {
     }
 }
 
+fn word(v: &Value, at: &str, words: &[&str]) -> Result<usize, String> {
+    v.as_str().and_then(|s| words.iter().position(|w| *w == s)).ok_or_else(|| format!("{at}: expected one of \"{}\"", words.join("\", \"")))
+}
+
 fn yes(v: &Value, at: &str) -> Result<(), String> {
     match v.as_bool() {
         Some(true) => Ok(()),
@@ -164,9 +251,15 @@ fn yes(v: &Value, at: &str) -> Result<(), String> {
 const PLANET: std::ops::RangeInclusive<i64> = 1..=0xffff;
 const KEY: std::ops::RangeInclusive<i64> = 1..=0xffff;
 const ANY: std::ops::RangeInclusive<i64> = i32::MIN as i64..=i32::MAX as i64;
+const TECH: std::ops::RangeInclusive<i64> = 0..=crate::save::TECHS as i64 - 1;
+/// A building kind (`Epuletek` `+0`, a byte; 0 is an empty slot).
+const BUILDING: std::ops::RangeInclusive<i64> = 1..=255;
+const FLEET: std::ops::RangeInclusive<i64> = *FLEET_IDS.start() as i64..=*FLEET_IDS.end() as i64;
 
-const TRIGGERS: &str = "day, planet_owner, empire_dead, flag, not_flag, counter, fleet_at, answered";
-const ACTIONS: &str = "message, ticker, video, give_planet, spawn_fleet, money, set_flag, clear_flag, set_counter, add_counter, win, lose";
+const TRIGGERS: &str =
+    "day, planet_owner, empire_dead, flag, not_flag, counter, fleet_at, answered, all, any, not, battle, tech, money, relation, spy_report, building, timer";
+const ACTIONS: &str = "message, ticker, video, give_planet, spawn_fleet, money, set_flag, clear_flag, set_counter, add_counter, win, lose, \
+    give_tech, remove_tech, change_relation, diplomacy, add_building, ground_units, start_timer, stop_timer, chain";
 
 /// The one key of a `when` or `do` entry.
 fn entry<'a>(v: &'a Value, at: &str) -> Result<(&'a str, &'a Value), String> {
@@ -193,17 +286,63 @@ fn trigger(v: &Value, at: &str) -> Result<Trigger, String> {
         "flag" => Trigger::Flag(name(v, &at)?),
         "not_flag" => Trigger::NotFlag(name(v, &at)?),
         "counter" => {
-            let mut f = Fields::new(v, at.clone())?;
-            let t = Trigger::Counter { name: f.name("name")?, at_least: f.opt_int("at_least", ANY)?, at_most: f.opt_int("at_most", ANY)? };
+            let mut f = Fields::new(v, at)?;
+            let name = f.name("name")?;
+            let (at_least, at_most) = f.bounds(ANY)?;
             f.done()?;
-            if matches!(t, Trigger::Counter { at_least: None, at_most: None, .. }) {
-                return Err(format!("{at}: give at_least, at_most or both"));
-            }
+            Trigger::Counter { name, at_least, at_most }
+        }
+        "all" | "any" => {
+            let list = v.as_array().ok_or_else(|| format!("{at}: expected an array [ … ] of triggers"))?;
+            let ts = list.iter().enumerate().map(|(j, v)| trigger(v, &format!("{at} {}:", j + 1))).collect::<Result<_, _>>()?;
+            if k == "all" { Trigger::All(ts) } else { Trigger::Any(ts) }
+        }
+        "not" => Trigger::Not(Box::new(trigger(v, &format!("{at}:"))?)),
+        "battle" => {
+            let mut f = Fields::new(v, at)?;
+            let ground = f.opt_word("kind", &["space", "ground"])?.map(|k| k == 1);
+            let won = f.word("result", &["won", "lost"])? == 0;
+            let empire = f.who_or_human("empire")?;
+            let planet = f.opt_int("planet", PLANET)?;
+            f.done()?;
+            Trigger::Battle { ground, won, empire, planet }
+        }
+        "tech" => {
+            let mut f = Fields::new(v, at)?;
+            let t = Trigger::Tech { tech: f.int("tech", TECH)?, empire: f.who_or_human("empire")? };
+            f.done()?;
             t
         }
+        "money" => {
+            let mut f = Fields::new(v, at)?;
+            let empire = f.who_or_human("empire")?;
+            let (at_least, at_most) = f.bounds(ANY)?;
+            f.done()?;
+            Trigger::Money { empire, at_least, at_most }
+        }
+        "relation" => {
+            let mut f = Fields::new(v, at)?;
+            let (a, b) = (f.who("a")?, f.who("b")?);
+            let (at_least, at_most) = f.bounds(0..=9)?;
+            f.done()?;
+            Trigger::Relation { a, b, at_least, at_most }
+        }
+        "spy_report" => {
+            let mut f = Fields::new(v, at)?;
+            let t = Trigger::SpyReport { mission: f.opt_int("mission", 0..=255)?, target: f.opt_who("target")?, success: f.opt_bool("success")?, died: f.opt_bool("died")? };
+            f.done()?;
+            t
+        }
+        "building" => {
+            let mut f = Fields::new(v, at)?;
+            let t = Trigger::Building { kind: f.int("kind", BUILDING)?, planet: f.opt_int("planet", PLANET)?, empire: f.who_or_human("empire")? };
+            f.done()?;
+            t
+        }
+        "timer" => Trigger::Timer(name(v, &at)?),
         "fleet_at" => {
             let mut f = Fields::new(v, at.clone())?;
-            let fleet = f.int("fleet", *FLEET_IDS.start() as i64..=*FLEET_IDS.end() as i64)?;
+            let fleet = f.int("fleet", FLEET)?;
             let planet = f.int("planet", PLANET)?;
             let within = f.opt_int("within", 1..=10000)?.unwrap_or(20) as f32;
             f.done()?;
@@ -242,7 +381,7 @@ fn action(v: &Value, at: &str) -> Result<Action, String> {
         "spawn_fleet" => {
             let mut f = Fields::new(v, at)?;
             let a = Action::SpawnFleet {
-                id: f.int("id", *FLEET_IDS.start() as i64..=*FLEET_IDS.end() as i64)?,
+                id: f.int("id", FLEET)?,
                 owner: f.who("owner")?,
                 planet: f.int("planet", PLANET)?,
                 design: f.int("design", 0..=crate::ai::DESIGN_SLOTS as i64 - 1)?,
@@ -264,6 +403,52 @@ fn action(v: &Value, at: &str) -> Result<Action, String> {
         "add_counter" => counter(v, at).map(|(name, value)| Action::AddCounter { name, value })?,
         "win" => yes(v, &at).map(|()| Action::Win)?,
         "lose" => yes(v, &at).map(|()| Action::Lose)?,
+        "give_tech" | "remove_tech" => {
+            let mut f = Fields::new(v, at)?;
+            let (tech, empire) = (f.int("tech", TECH)?, f.who_or_human("empire")?);
+            f.done()?;
+            if k == "give_tech" { Action::GiveTech { tech, empire } } else { Action::RemoveTech { tech, empire } }
+        }
+        "change_relation" => {
+            let mut f = Fields::new(v, at)?;
+            let a = Action::ChangeRelation { a: f.who("a")?, b: f.who("b")?, by: f.int("by", -10000..=10000)? };
+            f.done()?;
+            a
+        }
+        "diplomacy" => {
+            let mut f = Fields::new(v, at)?;
+            let (a, b) = (f.who("a")?, f.who("b")?);
+            let state = [Diplomacy::War, Diplomacy::Neutral, Diplomacy::NonAggression, Diplomacy::Alliance, Diplomacy::Trade]
+                [f.word("state", &["war", "neutral", "non_aggression", "alliance", "trade"])?];
+            f.done()?;
+            Action::Diplomacy { a, b, state }
+        }
+        "add_building" => {
+            let mut f = Fields::new(v, at)?;
+            let a = Action::AddBuilding { planet: f.int("planet", PLANET)?, kind: f.int("kind", BUILDING)?, level: f.opt_int("level", 0..=255)?.unwrap_or(0) };
+            f.done()?;
+            a
+        }
+        "ground_units" => {
+            let mut f = Fields::new(v, at.clone())?;
+            let (planet, fleet) = (f.opt_int("planet", PLANET)?, f.opt_int("fleet", FLEET)?);
+            let (design, count) = (f.int("design", 0..=crate::ai::DESIGN_SLOTS as i64 - 1)?, f.opt_int("count", 1..=1000)?.unwrap_or(1));
+            f.done()?;
+            let place = match (planet, fleet) {
+                (Some(p), None) => -p,
+                (None, Some(id)) => id,
+                _ => return Err(format!("{at}: give planet or fleet (one of them)")),
+            };
+            Action::GroundUnits { place, design, count }
+        }
+        "start_timer" => {
+            let mut f = Fields::new(v, at)?;
+            let a = Action::StartTimer { name: f.name("name")?, days: f.int("days", 0..=(i32::MAX / DAY) as i64)? };
+            f.done()?;
+            a
+        }
+        "stop_timer" => Action::StopTimer(name(v, &at)?),
+        "chain" => Action::Chain(name(v, &at)?),
         _ => return Err(format!("{at}: unknown action (known: {ACTIONS})")),
     };
     Ok(a)
@@ -288,9 +473,18 @@ pub fn parse(text: &str, mod_name: &str) -> Result<Vec<ModStory>, String> {
         if out.iter().any(|s| s.key == key) {
             return Err(format!("{at}: a second story of that name"));
         }
-        if let Some((k, _)) = t.iter().find(|(k, _)| !["name", "when", "do"].contains(k)) {
-            return Err(format!("{at}: unknown field `{k}` (known: name, when, do)"));
+        if let Some((k, _)) = t.iter().find(|(k, _)| !["name", "when", "do", "repeat", "every", "times"].contains(k)) {
+            return Err(format!("{at}: unknown field `{k}` (known: name, when, do, repeat, every, times)"));
         }
+        let field = |k: &str| t.get(k).and_then(Item::as_value);
+        let repeat = match field("repeat").map(|v| v.as_bool().ok_or_else(|| format!("{at}: repeat: expected true or false"))).transpose()? {
+            Some(true) => Some(Repeat {
+                every: field("every").map(|v| int(v, &format!("{at}: every"), 1..=(i32::MAX / DAY) as i64)).transpose()?.unwrap_or(1),
+                times: field("times").map(|v| int(v, &format!("{at}: times"), 1..=i32::MAX as i64)).transpose()?,
+            }),
+            _ if field("every").is_some() || field("times").is_some() => return Err(format!("{at}: every and times need repeat = true")),
+            _ => None,
+        };
         let list = |k: &str| -> Result<Vec<&Value>, String> {
             match t.get(k) {
                 None => Ok(Vec::new()),
@@ -302,7 +496,35 @@ pub fn parse(text: &str, mod_name: &str) -> Result<Vec<ModStory>, String> {
         if actions.is_empty() {
             return Err(format!("{at}: no `do` actions"));
         }
-        out.push(ModStory { key, when, actions });
+        out.push(ModStory { key, when, actions, repeat });
+    }
+    // Chains name a story of the same file; resolved to its key, and no chain leads back to where it started.
+    let keys: Vec<String> = out.iter().map(|s| s.key.clone()).collect();
+    for s in out.iter_mut() {
+        for a in s.actions.iter_mut() {
+            if let Action::Chain(n) = a {
+                let key = format!("{mod_name}/{n}");
+                if !keys.contains(&key) {
+                    return Err(format!("story {}: chain: no story \"{n}\" in this file", &s.key[mod_name.len() + 1..]));
+                }
+                *n = key;
+            }
+        }
+    }
+    for s in &out {
+        let (mut todo, mut seen) = (vec![s.key.as_str()], BTreeSet::new());
+        while let Some(k) = todo.pop() {
+            for a in &out.iter().find(|s| s.key == k).expect("resolved above").actions {
+                if let Action::Chain(next) = a {
+                    if *next == s.key {
+                        return Err(format!("story {}: its chains lead back to it", &s.key[mod_name.len() + 1..]));
+                    }
+                    if seen.insert(next.as_str()) {
+                        todo.push(next);
+                    }
+                }
+            }
+        }
     }
     Ok(out)
 }
@@ -342,7 +564,59 @@ fn holds(t: &Trigger, s: &Story, w: &dyn StoryWorld) -> bool {
                 })
             }
         }
-        Trigger::Answered { message, answer } => s.flags[crate::story::flag::MESSAGE] && s.message == (*message, *answer),
+        Trigger::Answered { message, answer } => s.flags[flag::MESSAGE] && s.message == (*message, *answer),
+        Trigger::All(ts) => ts.iter().all(|t| holds(t, s, w)),
+        Trigger::Any(ts) => ts.iter().any(|t| holds(t, s, w)),
+        Trigger::Not(t) => !holds(t, s, w),
+        Trigger::Battle { ground, won, empire, planet: on } => {
+            let e = empire.of(w);
+            // A space battle: `Story_SpaceBattleFinished`'s participants and `SpWarKiNyert`.
+            let space = *ground != Some(true)
+                && on.is_none()
+                && s.flags[flag::SPACE_END]
+                && s.battle.iter().any(|p| p.owner == e)
+                && (s.battle_winner == e) == *won;
+            // A ground battle: the landing fleet's owner against the planet's owner when it started (`StoryAdat+0xf4`).
+            let g = &s.ground;
+            let (attacker, defender) = (g.fleet_owner, s.adat_i32(0xf4));
+            let side = if attacker == e && defender != e {
+                Some(g.attacker_won)
+            } else if defender == e && attacker != e {
+                Some(g.defender_won)
+            } else {
+                None
+            };
+            let ground_battle = *ground != Some(false) && s.flags[flag::GROUND_END] && on.is_none_or(|p| p == g.planet) && side == Some(*won);
+            space || ground_battle
+        }
+        Trigger::Tech { tech, empire } => w.tech_status(*tech, empire.of(w)) == 5,
+        Trigger::Money { empire, at_least, at_most } => {
+            let m = w.money(empire.of(w));
+            at_least.is_none_or(|b| m >= b as f64) && at_most.is_none_or(|b| m <= b as f64)
+        }
+        Trigger::Relation { a, b, at_least, at_most } => {
+            let l = w.relation_level(a.of(w), b.of(w));
+            at_least.is_none_or(|m| l >= m) && at_most.is_none_or(|m| l <= m)
+        }
+        Trigger::SpyReport { mission, target, success, died } => {
+            let k = &s.kem;
+            s.flags[flag::SPY]
+                && s.spy_kind == 3
+                && mission.is_none_or(|m| k.mission == m)
+                && target.is_none_or(|t| k.target == t.of(w))
+                && success.is_none_or(|x| k.success == x)
+                && died.is_none_or(|d| (k.died == 1) == d)
+        }
+        Trigger::Building { kind, planet: on, empire } => {
+            let e = empire.of(w);
+            (1..=w.planet_count()).filter(|&p| on.is_none_or(|q| q == p) && w.planet_owner(p) == e).any(|p| {
+                (1..=w.building_count(p)).any(|k| {
+                    let (b, _, unfinished) = w.building(p, k);
+                    b == *kind && unfinished == 0
+                })
+            })
+        }
+        Trigger::Timer(n) => st.timers.get(n).is_some_and(|&at| w.ido() >= at),
     }
 }
 
@@ -387,21 +661,91 @@ fn act(a: &Action, s: &mut Story, w: &mut dyn StoryWorld) {
         }
         Action::Win => w.event(StoryEvent::Won),
         Action::Lose => w.event(StoryEvent::EmpireDies(w.human())),
+        Action::GiveTech { tech, empire } => {
+            let e = empire.of(w);
+            s.set_tech_state(*tech, e, w);
+        }
+        Action::RemoveTech { tech, empire } => w.event(StoryEvent::SetTechState { tech: *tech, state: 3, empire: empire.of(w) }),
+        Action::ChangeRelation { a, b, by } => w.event(StoryEvent::RelationChange { a: a.of(w), b: b.of(w), delta: *by }),
+        Action::Diplomacy { a, b, state } => {
+            let (a, b) = (a.of(w), b.of(w));
+            w.event(match state {
+                Diplomacy::War => StoryEvent::DeclareWar { a, b },
+                Diplomacy::Neutral => StoryEvent::MakeNeutral { a, b },
+                Diplomacy::NonAggression => StoryEvent::MakeNonAggression { a, b },
+                Diplomacy::Alliance => StoryEvent::MakeAllies { a, b },
+                Diplomacy::Trade => StoryEvent::TradeAgreement { a, b },
+            })
+        }
+        Action::AddBuilding { planet: p, kind, level } => {
+            if planet(*p, w) {
+                w.event(StoryEvent::PlaceStoryBuilding { planet: *p, kind: *kind, level: *level });
+            }
+        }
+        Action::GroundUnits { place, design, count } => {
+            let holder = if *place < 0 {
+                planet(-place, w).then_some(*place)
+            } else {
+                (1..=w.fleet_count()).find(|&f| w.fleet_owner(f) != 0xff && w.fleet_id(f) == *place)
+            };
+            if let Some(fleet) = holder {
+                w.event(StoryEvent::NewTanks { fleet, design: *design, count: *count });
+            }
+        }
+        Action::StartTimer { name, days } => {
+            let at = w.ido().saturating_add(days * DAY);
+            s.mod_state.timers.insert(name.clone(), at);
+        }
+        Action::StopTimer(name) => {
+            s.mod_state.timers.remove(name);
+        }
+        Action::Chain(_) => unreachable!("the interpreter runs chains"),
     }
 }
 
-/// The interpreter: every unfired story whose triggers all hold fires (its mark first, then its actions in order).
+/// May the story fire now? A once-story until it fired; a repeating one until `times`, `every` days apart (`gap`
+/// false: a chain, which ignores `every`).
+fn ready(story: &ModStory, s: &Story, ido: i32, gap: bool) -> bool {
+    match story.repeat {
+        None => !s.mod_state.fired.contains(&story.key),
+        Some(r) => s.mod_state.repeats.get(&story.key).is_none_or(|&(last, n)| {
+            r.times.is_none_or(|t| n < t) && (!gap || ido >= last.saturating_add(r.every.saturating_mul(DAY)))
+        }),
+    }
+}
+
+/// Its mark first (so a nested check its actions cause can't fire it again), then its actions in order; a chain fires
+/// the named story at once when it may fire (the parser rules out loops).
+fn fire(story: &ModStory, defs: &[ModStory], s: &mut Story, w: &mut dyn StoryWorld) {
+    if story.repeat.is_some() {
+        let r = s.mod_state.repeats.entry(story.key.clone()).or_insert((0, 0));
+        *r = (w.ido(), r.1.saturating_add(1));
+    } else {
+        s.mod_state.fired.insert(story.key.clone());
+    }
+    for a in &story.actions {
+        match a {
+            Action::Chain(key) => {
+                if let Some(next) = defs.iter().find(|d| d.key == *key)
+                    && ready(next, s, w.ido(), false)
+                {
+                    fire(next, defs, s, w);
+                }
+            }
+            _ => act(a, s, w),
+        }
+    }
+}
+
+/// The interpreter: every story that may fire and whose triggers all hold fires.
 pub struct ModScripts;
 
 impl Script for ModScripts {
     fn run(&self, s: &mut Story, w: &mut dyn StoryWorld) {
         let defs = s.mod_defs.clone();
         for story in defs.iter() {
-            if !s.mod_state.fired.contains(&story.key) && story.when.iter().all(|t| holds(t, s, w)) {
-                s.mod_state.fired.insert(story.key.clone());
-                for a in &story.actions {
-                    act(a, s, w);
-                }
+            if ready(story, s, w.ido(), true) && story.when.iter().all(|t| holds(t, s, w)) {
+                fire(story, &defs, s, w);
             }
         }
     }

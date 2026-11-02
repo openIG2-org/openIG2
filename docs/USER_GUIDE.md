@@ -312,7 +312,69 @@ once the tech is; computer empires research and build it too. Other fields and t
 shows where each new entry landed. Saves made with the mod need it to load.
 
 A mod can also add stories: a `stories.toml` at the top of the mod folder lists `[[story]]` tables, each with `when`
-triggers and `do` actions, that fire once after the built-in stories. The format is in ADR 0061; `ig2-check` validates the file.
+triggers and `do` actions, that run after the built-in stories. A story fires once, or again and again with
+`repeat = true` (`every` days apart, at most `times` times). Triggers: the day, a planet's owner, a dead empire, a
+battle won or lost, a tech researched, money, relations, a spy report, a building, a timer, the mod's flags and
+counters, a fleet at a planet, a message answered, combined with `all`, `any` and `not`. Actions: messages and
+ticker lines, videos, planets, fleets, ground units, buildings, money, techs, relations and diplomacy (war, peace,
+alliance, trade), flags, counters, timers, another story (`chain`), winning or losing. The full list is in ADR 0061;
+`ig2-check` validates the file. A worked example, `mods/zorg-ultimatum/stories.toml`:
+
+```toml
+# Day 60: a warning on the ticker and a 30-day countdown.
+[[story]]
+name = "warning"
+when = [{ day = 60 }]
+do = [{ ticker = 9100 }, { start_timer = { name = "ultimatum", days = 30 } }]
+
+# The human gave in in time (a non-aggression pact or better with empire 3): peace, a gift, the threat is over.
+[[story]]
+name = "peace"
+when = [{ timer = "ultimatum" }, { relation = { a = "human", b = 3, at_least = 4 } }]
+do = [{ ticker = 9101 }, { money = { empire = "human", amount = 5000 } }, { set_flag = "zorg-peace" }]
+
+# Otherwise war: empire 3 declares it and lands troops on planet 12.
+[[story]]
+name = "war"
+when = [{ timer = "ultimatum" }, { not_flag = "zorg-peace" }]
+do = [{ diplomacy = { a = 3, b = "human", state = "war" } },
+      { spawn_fleet = { id = 20001, owner = 3, planet = 12, design = 2, ships = 6 } },
+      { ground_units = { fleet = 20001, design = 20, count = 8 } },
+      { chain = "raids" }]
+
+# While at war, every 10 days, empire 3 gets 2000 credits (at most 5 times).
+[[story]]
+name = "raids"
+repeat = true
+every = 10
+times = 5
+when = [{ relation = { a = "human", b = 3, at_most = 1 } }]
+do = [{ money = { empire = 3, amount = 2000 } }]
+
+# Winning a battle against them, or having tech 40, ends it: peace and a building on planet 12 when the human owns it.
+[[story]]
+name = "victory"
+when = [{ flag = "zorg-war" }, { any = [{ battle = { result = "won" } }, { tech = { tech = 40 } }] }]
+do = [{ diplomacy = { a = 3, b = "human", state = "neutral" } }, { add_building = { planet = 12, kind = 7 } }, { ticker = 9102 }]
+
+[[story]]
+name = "at-war"
+when = [{ relation = { a = "human", b = 3, at_most = 1 } }]
+do = [{ set_flag = "zorg-war" }]
+```
+
+with its ticker lines in `texts.en.toml`:
+
+```toml
+["dataraw/text/s_story.txt"]
+9100 = "The Zorgons demand a pact within 30 days."
+9101 = "The Zorgons accept your pact and send a gift."
+9102 = "The Zorgons sue for peace."
+```
+
+Planets are numbered as in the `.scn` maps (from 1); designs, techs and building kinds are the slots and lines of the
+game's own tables, so a mod for another map or race picks its own numbers. A story with a typo stops the game at start
+with the mod, the story and the entry named.
 
 To change or add single lines of text without replacing a whole file, put a `texts.en.toml` at the top of the mod
 folder, and `texts.de.toml`, `texts.fr.toml`, `texts.es.toml`, `texts.it.toml` or `texts.hu.toml` for other

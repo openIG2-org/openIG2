@@ -242,6 +242,8 @@ pub mod va {
     pub const STORY_GROUND: u32 = 0xF26538;
     pub const STORY_GROUND_WON: u32 = 0xF26532;
     pub const STORY_YOU_WERE_IN_BATTLE: u32 = 0xF26531;
+    /// `SpWarKiNyert` (i32): the last space battle's winning owner.
+    pub const SP_WINNER: u32 = 0xBAA1EC;
     pub const STORY_SPY_KIND: u32 = 0xF26588;
     /// `CTF_value[3]` (i32): the attack each side lost in the last auto-resolved battle.
     pub const CTF_VALUE: u32 = 0xF261EC;
@@ -2377,6 +2379,8 @@ impl SaveState {
             defender_won: m.u8(va::STORY_GROUND_WON + 1) != 0,
         };
         st.you_were_in_battle = m.u8(va::STORY_YOU_WERE_IN_BATTLE) != 0;
+        // The battle code writes `SpWarKiNyert` itself (`SpaceWarVege`, `SimulateSpBattle`); the story only reads it.
+        st.battle_winner = m.i32(va::SP_WINNER);
         st.spy_kind = m.i32(va::STORY_SPY_KIND);
         st.all_fleets_visible = m.u8(va::STORY_ALL_FLEETS_VISIBLE);
         st.message = (m.i32(va::STORY_MESSAGE), m.i32(va::STORY_MESSAGE + 4));
