@@ -277,6 +277,9 @@ struct App {
     modern_hold: Option<(u32, bool)>,
     gui_held: u8,
     modern_acts: Vec<crate::starmap_modern::Act>,
+    /// Ours (ADR 0070): the modern colony screen's state and the acts of its last frame.
+    colony_modern: crate::colony_modern::State,
+    colony_acts: Vec<crate::colony_modern::Act>,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -623,6 +626,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     app.display.modern_starmap = false;
     // The original's Options screen: the scripts click its hot-spots (ADR 0067's page needs a pointer of its own).
     app.display.modern_menu = false;
+    // The original's colony panels: the scripts click their hot-spots (ADR 0070's need the window).
+    app.display.modern_colony = false;
     app.world.game.empire_names = hud.empire_names.clone();
     hud.set_one_language(&app.install, o.texts == Some(true));
     app.hud = Some(hud);
@@ -807,6 +812,8 @@ impl App {
             modern_hold: None,
             gui_held: 0,
             modern_acts: Vec::new(),
+            colony_modern: Default::default(),
+            colony_acts: Vec::new(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
             left_down: None,
@@ -914,7 +921,7 @@ impl App {
         let info_model = crate::colony_ui::render_kis_info(r, &self.install, self.tables, &c.ui, &mut c.scene, &mut c.panel, curr, self.world.curr.human as i32, light, size);
         let mut frame = c.view.build(r, &self.install, self.tables, self.maps, &mut c.scene, prev, curr, 1.0, t);
         let cursor = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
-        let input = crate::ui::ColonyInput { ui: &c.ui, sim: self.world.game.rules, panel, cursor, pointer: false, info_model, now_ms: h.ms, time: t, names: true, rename: None };
+        let input = crate::ui::ColonyInput { ui: &c.ui, sim: self.world.game.rules, panel, cursor, pointer: false, info_model, now_ms: h.ms, time: t, names: true, rename: None, modern: false };
         hud.draw_colony(&mut frame, &self.world.game.state, self.tables, self.maps, &c.view, &c.scene, curr, &input);
         hud.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Colony, t);
         let rgba = r.draw_to_image(&frame, h.band, t);
@@ -1793,9 +1800,65 @@ impl App {
         self.display.modern_starmap && self.front.is_none() && self.colony.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.view.is_some()
     }
 
+    /// Ours (ADR 0070): the modern colony screen is up (its option on, the colony shown with nothing over it, not in
+    /// the planet info mode, which keeps the original's panels).
+    fn colony_modern_up(&self) -> bool {
+        self.display.modern_colony && self.front.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.world.colony_curr.is_some() && self.colony.as_ref().is_some_and(|c| c.ui.info.is_none())
+    }
+
     /// The pointer is over one of the modern HUD's panels (its last frame's).
     fn over_gui(&self) -> bool {
-        self.modern_up() && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
+        (self.modern_up() || self.colony_modern_up()) && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
+    }
+
+    /// The pointer is over the modern colony's card (its last frame's).
+    fn over_colony_card(&self) -> bool {
+        self.gpu.as_ref().is_some_and(|g| {
+            let at = g.gui.ctx.input(|i| i.pointer.latest_pos());
+            let card = g.gui.ctx.memory(|m| m.area_rect(egui::Id::new("cmh-card")));
+            at.zip(card).is_some_and(|(p, r)| r.contains(p))
+        })
+    }
+
+    /// The modern colony screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the classic
+    /// hot-spots' code ([`crate::colony_ui::ColonyUi::modern_act`]).
+    fn colony_modern_apply(&mut self) {
+        let up = self.colony_modern_up();
+        if let Some(c) = &mut self.colony {
+            (c.ui.modern, c.ui.war.modern) = (up, up);
+        }
+        if !up {
+            self.colony_acts.clear();
+            return;
+        }
+        for a in std::mem::take(&mut self.colony_acts) {
+            match a {
+                crate::colony_modern::Act::Bar(b) => self.bar_act(b),
+                // The both-buttons rename on the card: its releases do nothing (`Colony_Main` exe 0x4667fb).
+                crate::colony_modern::Act::Card(_) if self.menus.rename.is_some() => {}
+                a => self.colony_input(|ui, c, _, now| ui.modern_act(c, a, now)),
+            }
+        }
+    }
+
+    /// A modern top bar's act (the starmap HUD's and the colony's): the classic bar's code.
+    fn bar_act(&mut self, a: crate::starmap_modern::Act) {
+        use crate::starmap_modern::Act;
+        let time = self.time_keys_allowed() || self.multiplayer();
+        match a {
+            Act::Pause if time => self.toggle_pause(),
+            Act::Speed(n) if time => self.set_speed(n),
+            Act::Messages => self.messages_from_bar(),
+            Act::History(on) => {
+                if let Some(h) = &mut self.hud {
+                    h.history_open = on;
+                }
+            }
+            Act::Screen(n) => self.top_menu_screen(n),
+            Act::Start(t) => self.quick_research(t),
+            Act::Stop(t) => self.world.send(Command::Research { order: ig2_net::ResearchCmd::Stop { tech: t } }),
+            _ => {}
+        }
     }
 
     /// The pointer is over the modern HUD's info card.
@@ -1818,20 +1881,9 @@ impl App {
             return;
         }
         for a in std::mem::take(&mut self.modern_acts) {
-            let time = self.time_keys_allowed() || self.multiplayer();
             let locked = self.starmap_locked();
             match a {
-                Act::Pause if time => self.toggle_pause(),
-                Act::Speed(n) if time => self.set_speed(n),
-                Act::Messages => self.messages_from_bar(),
-                Act::History(on) => {
-                    if let Some(h) = &mut self.hud {
-                        h.history_open = on;
-                    }
-                }
-                Act::Screen(n) => self.top_menu_screen(n),
-                Act::Start(t) => self.quick_research(t),
-                Act::Stop(t) => self.world.send(Command::Research { order: ig2_net::ResearchCmd::Stop { tech: t } }),
+                Act::Pause | Act::Speed(_) | Act::Messages | Act::History(_) | Act::Screen(_) | Act::Start(_) | Act::Stop(_) => self.bar_act(a),
                 Act::Hold(h) if h != self.modern_hold => {
                     if let Some((s, _)) = self.modern_hold.take() {
                         self.console_let_go(s);
@@ -5235,6 +5287,8 @@ impl App {
         let modern_bar = self.modern_up();
         let modern_hud = modern_bar;
         let mut mv = None;
+        let colony_modern = self.colony_modern_up();
+        let mut cmv = None;
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
         let size = { let (w, h) = g.band(); [w as f32, h as f32] };
@@ -5365,12 +5419,21 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
-            h.modern_bar = modern_bar && screen == crate::ui::Screen::Starmap;
+            h.modern_bar = (modern_bar && screen == crate::ui::Screen::Starmap) || (colony_modern && screen == crate::ui::Screen::Colony);
             match (screen, &self.colony, &self.world.colony_curr) {
                 (crate::ui::Screen::Colony, Some(c), Some(curr)) => {
                     let cursor = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
-                    let input = crate::ui::ColonyInput { ui: &c.ui, sim: self.world.game.rules, panel: colony_panel, cursor, pointer: false, info_model: colony_info, now_ms: now, time: t, names, rename: self.menus.rename.as_ref() };
+                    let input = crate::ui::ColonyInput { ui: &c.ui, sim: self.world.game.rules, panel: colony_panel, cursor, pointer: false, info_model: colony_info, now_ms: now, time: t, names, rename: self.menus.rename.as_ref(), modern: colony_modern };
                     h.draw_colony(&mut frame, &self.world.game.state, self.tables, self.maps, &c.view, &c.scene, curr, &input);
+                    if colony_modern {
+                        let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                        let mut m = h.colony_modern_view(&self.world.game.state, self.tables, &self.world.ui, self.maps, &c.view, curr, &c.ui, self.world.game.rules, gates, t);
+                        m.bar.bind_keys(&self.bindings);
+                        if let Some(r) = &self.menus.rename {
+                            m.card.title = format!("{}_", ig2_formats::text::decode(&r.text, h.texts.lang));
+                        }
+                        cmv = Some(m);
+                    }
                 }
                 (crate::ui::Screen::Starmap, ..) => {
                     h.draw_starmap_names(&mut frame, v, &g.assets, &self.world.prev, &self.world.curr, alpha, t);
@@ -5426,7 +5489,7 @@ impl App {
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, kep);
             }
-            if mv.is_none() {
+            if mv.is_none() && cmv.is_none() {
                 ov.draw(&mut frame, h, size);
             }
         }
@@ -5437,6 +5500,14 @@ impl App {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.modern, &mut self.modern_acts, g.band());
             g.gui.run(band, &style, |ctx| acts.extend(crate::starmap_modern::show(ctx, mv, st)));
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        }
+        if let (Some(cv), Some(h)) = (&cmv, &self.hud) {
+            let style = crate::starmap_modern::style(h, size);
+            let (st, acts, band) = (&mut self.colony_modern, &mut self.colony_acts, g.band());
+            g.gui.run(band, &style, |ctx| acts.extend(crate::colony_modern::show(ctx, cv, st)));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -5472,6 +5543,7 @@ impl App {
             self.frames = 0;
         }
         self.modern_apply();
+        self.colony_modern_apply();
     }
 }
 
@@ -5718,7 +5790,7 @@ impl ApplicationHandler for App {
         let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
         let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
-        if !page && (self.modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.colony_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();
@@ -6423,17 +6495,24 @@ impl App {
         if bit != 0 && (self.gui_held & bit != 0 || (pressed && self.over_gui())) {
             if pressed {
                 self.gui_held |= bit;
-                if self.mouse_held == 3 && self.over_info_card() && !self.starmap_locked() && !self.menus.info_on() {
+                if self.mouse_held == 3 && self.modern_up() && self.over_info_card() && !self.starmap_locked() && !self.menus.info_on() {
                     self.wait_release = true;
                     self.gui_held = 0;
                     self.start_rename();
+                }
+                // The colony's card is hot-spot 4: both buttons with nothing selected start the planet's name entry.
+                if self.mouse_held == 3 && self.colony_modern_up() && self.over_colony_card() && self.colony.as_ref().is_some_and(|c| c.ui.selected == 0 && c.ui.war.selected.is_empty()) {
+                    self.wait_release = true;
+                    self.gui_held = 0;
+                    self.colony_acts.clear();
+                    self.start_colony_rename();
                 }
             } else {
                 self.gui_held &= !bit;
             }
             return;
         }
-        let modern = self.modern_up();
+        let modern = self.modern_up() || self.colony_modern_up();
         if !modern && self.top_menus_button(button, pressed) {
             return;
         }
@@ -6924,7 +7003,7 @@ impl App {
     /// The pointer on the colony's short info (hot-spot 4, (0, 424) 166 × 56) with no unit or building selected
     /// (`ColonyInfoMod` 0).
     fn colony_rename_spot(&self) -> bool {
-        let Some(c) = &self.colony else { return false };
+        let Some(c) = self.colony.as_ref().filter(|_| !self.colony_modern_up()) else { return false };
         let at = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
         (0.0..166.0).contains(&at[0]) && (424.0..480.0).contains(&at[1]) && c.ui.selected == 0 && c.ui.war.selected.is_empty()
     }

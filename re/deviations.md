@@ -6,7 +6,7 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original; listed in `docs/ENHANCEMENTS.md`). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (496).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (500).
 
 ## Open: player-visible
 
@@ -90,6 +90,10 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 432 | window icon | the game and the setup window, the taskbar and the program file show the remake's own drawn icon, not the original's (the project ships no original assets) | minor | - |
 | 380 | SpaceWar, end zoom-out | the battle planet is ~29 levels less red than the exe's (red only; not the light, fog, cloud shells, texture or `uv_mul`) during the end zoom-out, which lasts 1.6 s (0.8 s towards options); the close-up matches; a colour tolerance that doesn't change gameplay | no | spacewar.md §9 |
 | 407 | colony, building pick | the pointer's unit is decided before the building (press, hold, right button), so the leftovers (faces posed at load, a unit's model in front outside its pick circle, an unfinished building's cut-away top) only change picks on model outlines (4793 of 4800 grid points agree with the exe) | no | colony.md §10 |
+| 496 | colony, big ships' charge bar (modern colony screen) | the modern panel fills the bar at 300, the timer's full value; the original divides by 200 and the bar runs past its cell (colony.md §11.1); the original's panels are unchanged | yes | ADR 0070, colony.md §11.1 |
+| 497 | colony, modern panels' buttons | the modern colony screen's buttons act on the release over them (a drag off cancels), the original's on the press; the press still runs the original's code, so the order and sound are the same, a moment later | yes | ADR 0070 |
+| 498 | colony, modern build menu | a building is picked with one click on its row; the original's pick list is held open under the pointer, and hovering one of its entries drops the build cursor; the end state of a pick is the same | yes | ADR 0070, colony.md §10 |
+| 499 | colony, modern panels and the wheel | the mouse wheel over a modern panel doesn't zoom the view (as ADR 0065's starmap panels) | yes | ADR 0070 |
 
 ## Enhanced
 

@@ -113,6 +113,7 @@ mod starmap_hud;
 mod starmap_info;
 mod starmap_menus;
 mod starmap_modern;
+mod colony_modern;
 mod spacewar_fx;
 mod spacewar_hud;
 mod spacewar_live;
@@ -185,6 +186,8 @@ pub struct Options {
     pub modern_hud: bool,
     /// `--modern-menu`: the Options screen as the modern in-game menu (ADR 0067; snapshots draw the original's without it).
     pub modern_menu: bool,
+    /// `--modern-colony`: the colony snapshot with the modern panels (ADR 0070).
+    pub modern_colony: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -348,6 +351,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         smooth_glows: false,
         modern_hud: false,
         modern_menu: false,
+        modern_colony: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -449,6 +453,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--smooth-glows" => o.smooth_glows = true,
             "--modern-hud" => o.modern_hud = true,
             "--modern-menu" => o.modern_menu = true,
+            "--modern-colony" => o.modern_colony = true,
             "--sharp-text" => o.sharp_text = true,
             "--theme" => o.theme = Some(val()?),
             "--upscale" => {

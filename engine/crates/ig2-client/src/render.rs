@@ -1293,8 +1293,10 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     if let Some(gm) = l.rules.ground_maps.get(curr.map) {
         ui.war.project(&view, gm, &curr, &scene.unit_centres);
     }
-    let input = crate::ui::ColonyInput { ui: &ui, sim: &l.rules, panel, cursor, pointer: false, info_model, now_ms, time: t, names: true, rename: None };
+    let input = crate::ui::ColonyInput { ui: &ui, sim: &l.rules, panel, cursor, pointer: false, info_model, now_ms, time: t, names: true, rename: None, modern: o.modern_colony };
     hud.draw_colony(&mut frame, &world.game.state, &l.tables, &l.rules.ground_maps, &view, &scene, &curr, &input);
+    // Ours (ADR 0070): `--modern-colony` draws the bar and the panels as egui ones over the 3D view.
+    hud.modern_bar = o.modern_colony;
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Colony, t);
     // `UpdateFrame`'s last pass at `--mouse` (re/screens/input.md §8): the hot-spot's tooltip (the pointer at rest),
     // then the pointer of its type (colony.md §11.10).
@@ -1304,7 +1306,27 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
         let tip = ui.tip(&c, m).map(|(_, t)| t);
         hud.snapshot_tip_pointer(&mut frame, [o.size.0 as f32, o.size.1 as f32], m, tip.as_deref(), ui.cursor(&c, m), ui.mouse_phase().max(0) as u64);
     }
-    let rgba = r.draw_to_image(&frame, o.size, t);
+    let rgba = if o.modern_colony {
+        let size = [o.size.0 as f32, o.size.1 as f32];
+        let mut cv = hud.colony_modern_view(&world.game.state, &l.tables, &world.ui, &l.rules.ground_maps, &view, &curr, &ui, &l.rules, None, t);
+        cv.bar.bind_keys(&crate::bindings::Bindings::default());
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
+        let style = crate::starmap_modern::style(hud, size);
+        let k = crate::gui::Gui::scale(o.size.1);
+        let mut st = crate::colony_modern::State::default();
+        // The first frames size and place the anchored panels; `--mouse` hovers them.
+        for _ in 0..3 {
+            if let Some(m) = o.mouse {
+                gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
+            }
+            gui.run(o.size, &style, |ctx| {
+                crate::colony_modern::show(ctx, &cv, &mut st);
+            });
+        }
+        r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex))
+    } else {
+        r.draw_to_image(&frame, o.size, t)
+    };
     crate::assets::write_snapshot(out, o, &rgba)?;
     let gm = &l.rules.ground_maps[curr.map];
     let e = view.camera.eye(gm);

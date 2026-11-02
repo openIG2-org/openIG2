@@ -138,6 +138,8 @@ pub struct WarUi {
     /// The tutorial's colony lock (`Colony_MouseInit2` exe 0x467990: `Mouse_Szoveg_Off_Range(1, MouseSzovegSzam)`
     /// before any other test): the war's buttons go with every other hot-spot.
     pub locked: bool,
+    /// Ours (ADR 0070): the modern war strip is up; the classic buttons under it are off.
+    pub modern: bool,
     /// `KeretesKijeloles`, `keretstartx/y`: the box's corner while the left button is held.
     pub box_start: Option<[f32; 2]>,
     /// `+0x146`: each unit's selection when the press came (Shift keeps it).
@@ -334,6 +336,9 @@ impl WarUi {
 
     /// The enabled war button under `p`.
     pub fn button(&self, c: &WarCtx, p: [f32; 2]) -> Option<u32> {
+        if self.modern {
+            return None;
+        }
         BUTTONS.iter().find(|&&(id, x, _)| crate::kit::inside_f([x, 443.0, 31.0, 31.0], p) && self.enabled(c, id)).map(|&(id, _, _)| id)
     }
 
@@ -764,26 +769,42 @@ impl WarUi {
         // planet; else "You attacked the planet %s of the %s!" (3, 2, 6) with the planet and its owner (the other
         // way round with `Lang` 4, which the GOG exe never has: re/formats/locale.md §2); in multiplayer
         // `"%s (%s) vs. %s (%s)"`: the attacker's empire and player (`PlayerNev`), then the owner's.
-        if self.banner_on {
-            let k = (2 * self.banner).min(100) as f32 / 100.0;
-            let owner = d.empire_names.get(c.snap.owner as usize).cloned().unwrap_or_default();
-            let text = if c.snap.multiplayer {
-                let side = |e: i32| [d.empire_names.get(e.clamp(0, 18) as usize).cloned().unwrap_or_default(), b" (".to_vec(), (d.player_name)(e), b")".to_vec()].concat();
-                Some([side(c.snap.attacker), b" vs. ".to_vec(), side(c.snap.owner as i32)].concat())
-            } else if c.foreign() {
-                // ADR 0028: the Hungarian line names the owner first, as the exe's `Lang` 4 branch passes them.
-                let hu = crate::diplomacy::articles_on(d.texts.lang == ig2_formats::text::Lang::Hu);
-                let args: [&[u8]; 2] = if hu { [&owner, &c.snap.planet_name] } else { [&c.snap.planet_name, &owner] };
-                Some(sprintf_s(&d.line(6), &args))
-            } else {
-                (1..0x10).contains(&c.snap.attacker).then(|| sprintf_s(&d.line(5), &[&d.empire_names[c.snap.attacker as usize], &c.snap.planet_name]))
-            };
-            if let Some(t) = text {
-                let t = crate::diplomacy::articles(&t, d.texts.lang == ig2_formats::text::Lang::Hu);
-                let rgb = col(2).map(|x| x * k);
-                d.font.text(f, v, &t, 200.0, 30.0, 70, 2, Align::Left, rgb, None);
+        if let Some((t, k)) = self.banner_text(c, d) {
+            let rgb = col(2).map(|x| x * k);
+            d.font.text(f, v, &t, 200.0, 30.0, 70, 2, Align::Left, rgb, None);
+        }
+        self.draw_marks(f, c, d, p);
+        if !c.snap.war_flag {
+            return;
+        }
+        // The buttons, drawn while enabled; the charge bars under 0xb and 0xc.
+        let full = [1.0; 4];
+        let (fighters, ships) = c.timers();
+        for (id, frame) in self.shown_buttons(c) {
+            let Some(&(_, x, brush)) = BUTTONS.iter().find(|b| b.0 == id) else { continue };
+            if let Some(b) = d.brushes.get(brush) {
+                d.pics.brush(f, v, b, frame as i32, None, full);
+            }
+            if id == 0xb || id == 0xc {
+                let t = if id == 0xb { fighters } else { ships };
+                fill(f, x, 427.0, 31.0, 5.0, 6);
+                fill(f, x, 427.0, (t as f64 * 31.0 / 200.0) as i32 as f32, 5.0, 7);
             }
         }
+        // `ColonyGfx2D_1`: the retreat and landing lines (owner ≠ EN, `local_22`).
+        let (retreat, landing) = self.notices(c);
+        if retreat {
+            d.font.text(f, v, &d.line(3), 220.0, 40.0, 70, 2, Align::Left, col(2), None);
+        }
+        if landing {
+            d.font.text(f, v, &d.line(4), 220.0, 50.0, 70, 2, Align::Left, col(2), None);
+        }
+    }
+
+    /// `WF::WriteStuff`'s group sizes and the selection box (the parts over the 3D view, which the modern panels keep).
+    pub fn draw_marks(&self, f: &mut Frame, c: &WarCtx, d: &Draw2d, p: [f32; 2]) {
+        let col = |i: usize| d.palette.get(i).copied().unwrap_or([1.0; 3]);
+        let v = d.v;
         if !c.snap.war_flag && self.selected.is_empty() {
             return;
         }
@@ -801,17 +822,40 @@ impl WarUi {
                 f.push(d.white, Blend::Alpha, Instance::line(v.px(a[0], a[1]), v.px(b[0], b[1]), v.k.max(1.0), rgb));
             }
         }
-        if !c.snap.war_flag {
-            return;
+    }
+
+    /// `ColonyGfx2D_2`'s attack banner while `TamadasSzovegCounter` runs and its brightness (`min(100, 2·counter)` %,
+    /// `KiirStrSzinSzorzo`): EN's planet: "The %s attacked your planet %s!" (3, 2, 5) with the attacker and the
+    /// planet; else "You attacked the planet %s of the %s!" (3, 2, 6) with the planet and its owner (the other way
+    /// round with `Lang` 4, which the GOG exe never has: re/formats/locale.md §2); in multiplayer `"%s (%s) vs. %s
+    /// (%s)"`: the attacker's empire and player (`PlayerNev`), then the owner's.
+    pub fn banner_text(&self, c: &WarCtx, d: &Draw2d) -> Option<(Vec<u8>, f32)> {
+        if !self.banner_on {
+            return None;
         }
-        // The buttons, drawn while enabled; the charge bars under 0xb and 0xc.
-        let full = [1.0; 4];
-        let (fighters, ships) = c.timers();
-        for &(id, x, brush) in &BUTTONS {
-            // Brushes 21, 24..=27 only with `local_22`; 20 (0xb) and 30 (0x12) without.
-            if !self.enabled(c, id) || ((0xc..=0x10).contains(&id) && !c.shows()) {
-                continue;
-            }
+        let k = (2 * self.banner).min(100) as f32 / 100.0;
+        let owner = d.empire_names.get(c.snap.owner as usize).cloned().unwrap_or_default();
+        let text = if c.snap.multiplayer {
+            let side = |e: i32| [d.empire_names.get(e.clamp(0, 18) as usize).cloned().unwrap_or_default(), b" (".to_vec(), (d.player_name)(e), b")".to_vec()].concat();
+            Some([side(c.snap.attacker), b" vs. ".to_vec(), side(c.snap.owner as i32)].concat())
+        } else if c.foreign() {
+            // ADR 0028: the Hungarian line names the owner first, as the exe's `Lang` 4 branch passes them.
+            let hu = crate::diplomacy::articles_on(d.texts.lang == ig2_formats::text::Lang::Hu);
+            let args: [&[u8]; 2] = if hu { [&owner, &c.snap.planet_name] } else { [&c.snap.planet_name, &owner] };
+            Some(sprintf_s(&d.line(6), &args))
+        } else {
+            (1..0x10).contains(&c.snap.attacker).then(|| sprintf_s(&d.line(5), &[&d.empire_names[c.snap.attacker as usize], &c.snap.planet_name]))
+        };
+        text.map(|t| (crate::diplomacy::articles(&t, d.texts.lang == ig2_formats::text::Lang::Hu), k))
+    }
+
+    /// The war buttons [`WarUi::draw`] puts up (enabled; brushes 21, 24..=27 only with `local_22`, 20 (0xb) and 30
+    /// (0x12) without) and their brush frames: armed, the mine layers' state, retreating.
+    pub fn shown_buttons(&self, c: &WarCtx) -> Vec<(u32, usize)> {
+        if !c.snap.war_flag {
+            return Vec::new();
+        }
+        BUTTONS.iter().filter(|&&(id, _, _)| self.enabled(c, id) && !((0xc..=0x10).contains(&id) && !c.shows())).map(|&(id, _, _)| {
             let frame = match id {
                 0xb => (self.armed == 1) as usize + 1,
                 0xc => (self.armed == 2) as usize + 1,
@@ -819,24 +863,24 @@ impl WarUi {
                 0x10 => c.retreating() as usize + 1,
                 _ => 1,
             };
-            if let Some(b) = d.brushes.get(brush) {
-                d.pics.brush(f, v, b, frame as i32, None, full);
-            }
-            if id == 0xb || id == 0xc {
-                let t = if id == 0xb { fighters } else { ships };
-                fill(f, x, 427.0, 31.0, 5.0, 6);
-                fill(f, x, 427.0, (t as f64 * 31.0 / 200.0) as i32 as f32, 5.0, 7);
-            }
-        }
-        // `ColonyGfx2D_1`: the retreat and landing lines (owner ≠ EN, `local_22`).
-        if c.foreign() && c.shows() {
-            if c.retreating() {
-                d.font.text(f, v, &d.line(3), 220.0, 40.0, 70, 2, Align::Left, col(2), None);
-            }
-            if c.snap.to_land.iter().any(|&(o, _)| o == c.en) {
-                d.font.text(f, v, &d.line(4), 220.0, 50.0, 70, 2, Align::Left, col(2), None);
-            }
-        }
+            (id, frame)
+        }).collect()
+    }
+
+    /// The fighters' and big ships' charge timers (`WF+0x7fc/0x800 + 8(EN − 1)`), full at 200 and 300.
+    pub fn charges(&self, c: &WarCtx) -> (i32, i32) {
+        c.timers()
+    }
+
+    /// The retreat and landing lines are up (owner ≠ EN, `local_22`; EN retreating, EN's units still on board).
+    pub fn notices(&self, c: &WarCtx) -> (bool, bool) {
+        let on = c.snap.war_flag && c.foreign() && c.shows();
+        (on && c.retreating(), on && c.snap.to_land.iter().any(|&(o, _)| o == c.en))
+    }
+
+    /// The selected units (`GetSelNum`'s), for the modern unit card.
+    pub fn chosen_units<'a>(&'a self, c: &'a WarCtx) -> Vec<&'a UnitView> {
+        self.chosen(c).collect()
     }
 }
 

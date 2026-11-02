@@ -331,6 +331,9 @@ pub struct ColonyUi {
     /// `ColonyPlanetInfoMod` (spec §12): the planet's long info with its select menus (the starmap's code on the
     /// colony's planet), `None` while off.
     pub info: Option<crate::starmap_menus::Menus>,
+    /// Ours (ADR 0070): the modern panels are up, so the classic hot-spots under them are off (the 3D view's stays);
+    /// their clicks arrive as [`ColonyUi::modern_act`].
+    pub modern: bool,
 }
 
 impl Default for ColonyUi {
@@ -370,6 +373,7 @@ impl Default for ColonyUi {
             flash: false,
             scene_buildings: Vec::new(),
             info: None,
+            modern: false,
         }
     }
 }
@@ -465,6 +469,9 @@ impl ColonyUi {
         if self.all_off {
             return None;
         }
+        if self.modern && self.info.is_none() {
+            return inside(SPOTS[11].1, p).then_some(0x14);
+        }
         // In the info mode `Off_Range(1, 0x14)`: 4 stays, 10 keeps its own test, 0x15..=0x1e only on EN's planet.
         if self.info.is_some() {
             let en = c.owner_is_en();
@@ -476,21 +483,23 @@ impl ColonyUi {
             let info = INFO_SPOTS.iter().filter(|(id, r)| inside(*r, p) && (en || *id >= 0x1f));
             return base.chain(info).map(|&(id, _)| id).min();
         }
+        SPOTS.iter().find(|(id, r)| inside(*r, p) && self.spot_on(c, *id)).map(|&(id, _)| id)
+    }
+
+    /// `Colony_MouseInit2`'s test for hot-spot `id` outside the info mode.
+    fn spot_on(&self, c: &Ctx, id: u32) -> bool {
         let own = c.own();
         let sel = c.building(self.target(c)).filter(|b| own && b.flags & 0x10 == 0);
-        SPOTS.iter().find(|(id, r)| {
-            inside(*r, p)
-                && match id {
-                    1 => sel.is_some_and(|b| b.damage > 0),
-                    2 => sel.is_some() && !self.no_demolish,
-                    0x11 => sel.is_some(),
-                    6 | 7 => own,
-                    8 => c.snap.self_destruct != -1 && c.owner_is_en(),
-                    9 => c.snap.self_destruct != -1,
-                    10 => crate::colony_war::self_destruct_ready(&c.war()),
-                    _ => true,
-                }
-        }).map(|&(id, _)| id)
+        match id {
+            1 => sel.is_some_and(|b| b.damage > 0),
+            2 => sel.is_some() && !self.no_demolish,
+            0x11 => sel.is_some(),
+            6 | 7 => own,
+            8 => c.snap.self_destruct != -1 && c.owner_is_en(),
+            9 => c.snap.self_destruct != -1,
+            10 => crate::colony_war::self_destruct_ready(&c.war()),
+            _ => true,
+        }
     }
 
     /// `Mouse_Tipus` at `p` (spec §11.10): the hot-spot's own shape (`Mouse_Szoveg_Set`'s last argument: 1 for the
@@ -523,8 +532,13 @@ impl ColonyUi {
     pub fn tip(&self, c: &Ctx, p: [f32; 2]) -> Option<(u32, Vec<u8>)> {
         let w = c.war();
         let id = c.snap.war_flag.then(|| self.war.button(&w, p)).flatten().or_else(|| self.spot(c, p))?;
+        Some((id, self.spot_text(c, id)))
+    }
+
+    /// Hot-spot `id`'s tooltip ([`ColonyUi::tip`]).
+    fn spot_text(&self, c: &Ctx, id: u32) -> Vec<u8> {
         let line = |n: u16| c.texts.get(3, 1, n);
-        let text = match id {
+        match id {
             1 | 2 => line(id as u16),
             5 | 6 | 8 => line(id as u16 - 1),
             0xa..=0x12 => line(id as u16 - 3),
@@ -546,8 +560,7 @@ impl ColonyUi {
                 }
             }
             _ => Vec::new(),
-        };
-        Some((id, text))
+        }
     }
 
     /// `ColonyMouse`'s frame counter for the pointer's animation (`MouseFazis`, one a UI tick).
@@ -741,30 +754,13 @@ impl ColonyUi {
         }
         out.commands = w.commands;
         self.voices.extend(w.voice);
-        // `ColonyGfx2D_3`: with the left button up an open window takes its answer and shuts.
-        if let (true, Some(w)) = (left, self.window.take()) {
+        // `ColonyGfx2D_3`: with the left button up an open window takes its answer and shuts (the modern panels answer
+        // it with their own buttons).
+        if let (true, false, Some(w)) = (left, self.modern, self.window) {
+            self.window = None;
             let cells = self.window_cells(c, w);
             if w.row(cells, p) == 1 {
-                // `HandleRepairWindow` sounds for any "yes" (exe 0x47d170); `HandleDemolishWindow` (0x47ced0) only
-                // with the building there, after its order.
-                if w == Confirm::Repair {
-                    let r = self.rand.below(2);
-                    self.sounds.push(colony(r));
-                }
-                if let (Confirm::Demolish, Some(_)) = (w, c.building(self.selected)) {
-                    let r = self.rand.below(4);
-                    self.sounds.push(SoundId::new(Table::Gr, 13 + r as u16));
-                }
-                if let Some(b) = c.building(self.selected) {
-                    let (planet, slot) = (c.snap.planet as i32, b.slot as i32);
-                    out.commands.push(match w {
-                        Confirm::Repair => ColonyOrder::Repair { planet, slot },
-                        Confirm::Demolish => ColonyOrder::Demolish { planet, slot },
-                    }.into());
-                    if w == Confirm::Demolish {
-                        self.selected = 0;
-                    }
-                }
+                self.answer_yes(c, w, &mut out);
             }
         }
         match held {
@@ -780,6 +776,98 @@ impl ColonyUi {
             _ => {}
         }
         out
+    }
+
+    /// A window's "Yes" (`HandleRepairWindow`/`HandleDemolishWindow`): the order for the selected building.
+    fn answer_yes(&mut self, c: &Ctx, w: Confirm, out: &mut Outcome) {
+        // `HandleRepairWindow` sounds for any "yes" (exe 0x47d170); `HandleDemolishWindow` (0x47ced0) only with the
+        // building there, after its order.
+        if w == Confirm::Repair {
+            let r = self.rand.below(2);
+            self.sounds.push(colony(r));
+        }
+        if let (Confirm::Demolish, Some(_)) = (w, c.building(self.selected)) {
+            let r = self.rand.below(4);
+            self.sounds.push(SoundId::new(Table::Gr, 13 + r as u16));
+        }
+        if let Some(b) = c.building(self.selected) {
+            let (planet, slot) = (c.snap.planet as i32, b.slot as i32);
+            out.commands.push(match w {
+                Confirm::Repair => ColonyOrder::Repair { planet, slot },
+                Confirm::Demolish => ColonyOrder::Demolish { planet, slot },
+            }.into());
+            if w == Confirm::Demolish {
+                self.selected = 0;
+            }
+        }
+    }
+
+    /// Ours (ADR 0070): a modern panel's click through the classic hot-spot's own code: a button is pressed at its
+    /// spot's centre (the war's act on the press, the windows open on it), the short info released there, a build
+    /// menu entry picked as the held pick list's, a window answered as by its rows.
+    pub fn modern_act(&mut self, c: &Ctx, a: crate::colony_modern::Act, now_ms: u32) -> Outcome {
+        use crate::colony_modern::Act;
+        let was = (self.modern, self.war.modern);
+        (self.modern, self.war.modern) = (false, false);
+        let centre = |r: [f32; 4]| [r[0] + r[2] / 2.0, r[1] + r[3] / 2.0];
+        let mut out = Outcome::default();
+        match a {
+            Act::Spot(id) => {
+                let r = crate::colony_war::BUTTONS.iter().find(|b| b.0 == id).map(|b| [b.1, 443.0, 31.0, 31.0]).or_else(|| SPOTS.iter().find(|s| s.0 == id).map(|s| s.1));
+                if let Some(r) = r {
+                    out = self.press(c, centre(r), true, now_ms);
+                    // Nothing waits for this press's release (the pick list and the short info have their own acts).
+                    self.held = None;
+                }
+            }
+            Act::Card(right) => {
+                let p = centre(SPOTS[2].1);
+                let mut o = self.press(c, p, !right, now_ms);
+                let r = self.release(c, p, !right, now_ms);
+                o.commands.extend(r.commands);
+                (o.starmap, o.colony, o.error) = (r.starmap, r.colony, r.error.or(o.error));
+                out = o;
+            }
+            Act::Radar(u, first) => {
+                let p = [522.0 + u[0].clamp(0.0, 0.99) * 100.0, 362.0 + u[1].clamp(0.0, 0.99) * 100.0];
+                if first {
+                    out = self.press(c, p, true, now_ms);
+                    self.held = None;
+                } else {
+                    self.radar(p);
+                }
+            }
+            // Hot-spot 6 (EN's planet, no build orders on their way): the press's click, then the release's pick;
+            // a negative entry is the short press that toggles the build cursor.
+            Act::Pick(t) if c.own() && self.pending == 0 => {
+                self.sounds.push(CLICK);
+                let held = if t < 0 { now_ms } else { now_ms.wrapping_sub(301) };
+                self.pick(c, Picker { at: [0.0; 2], pressed_ms: held, hovered: t }, now_ms);
+            }
+            Act::Answer(yes) => {
+                if let Some(w) = self.window.take().filter(|_| yes) {
+                    self.answer_yes(c, w, &mut out);
+                }
+            }
+            _ => {}
+        }
+        (self.modern, self.war.modern) = was;
+        out
+    }
+
+    /// The open repair or demolish window.
+    pub fn window(&self) -> Option<Confirm> {
+        self.window
+    }
+
+    /// The window's title and, for the repair, its price (`WriteRepairWindow`/`WriteDemolishWindow`).
+    pub fn window_texts(&self, c: &Ctx, w: Confirm) -> (Vec<u8>, Option<i32>, [Vec<u8>; 2]) {
+        let cost = (w == Confirm::Repair).then(|| c.building(self.selected).map_or(0, |b| {
+            let k = c.rules.buildings.get(b.kind as usize);
+            let price = k.map_or(0, |k| c.state.tech().price(k.tech as usize));
+            ig2_sim::game::repair_price(price, b.damage, k.map_or(1, |k| k.max_hp))
+        }));
+        (c.text(4, if w == Confirm::Repair { 4 } else { 1 }), cost, [c.text(4, 2), c.text(4, 3)])
     }
 
     /// A key (`ColonyKeyboardHandler`): `E` the priority switch, the previous/next own planet's colony (the handler's
@@ -1155,6 +1243,91 @@ impl ColonyUi {
     }
 }
 
+/// The building's product line's number: `output · +0x18 · +0x1e / 256` (× `GetBolygoGazdagsag(p)`/100 for class 3;
+/// kinds 6/7 show 5000/7000 with planet info −0x215c).
+fn product(c: &Ctx, b: &crate::colony::BuildingView, k: &ig2_rules::Building) -> i32 {
+    let mut n = k.output * b.yield_pct as i32 * b.efficiency as i32 / 0x100;
+    let r = c.planet_rec(c.snap.planet);
+    if k.b1 == 3 {
+        let world = c.state.colony();
+        let ctx = ig2_sim::colony::EconomyContext {
+            multiplayer: c.state.mem.u8(va::MULTIPLAYER) != 0,
+            human_empire: c.en() as u8,
+            empire_race: c.state.races(),
+            ..Default::default()
+        };
+        if let Some(p) = world.planets.get(c.snap.planet) {
+            n = n * ig2_sim::colony::production_base(p, &c.sim.side.colony, &ctx) / 100;
+        }
+    }
+    // `BolygoInfoIs(p, −0x215c)`: kinds 6 and 7 show 5000 and 7000.
+    let story = (0..5).any(|i| i16::from_le_bytes([r[0x16a + 2 * i], r[0x16b + 2 * i]]) == -0x215c);
+    if story && b.kind == 6 {
+        n = 5000;
+    }
+    if story && b.kind == 7 {
+        n = 7000;
+    }
+    n
+}
+
+/// One build menu entry (an offered tech) for the modern panel.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MenuEntry {
+    pub tech: usize,
+    /// The pick list's column (`Epulet_Terulet_Nev`'s group).
+    pub column: usize,
+    pub kind: usize,
+    pub name: Vec<u8>,
+    /// The planet's buildings of the kind.
+    pub count: i32,
+    pub price: i32,
+    /// Pickable: a working hub, or the hub itself.
+    pub ok: bool,
+    /// The tutorial's lock.
+    pub locked: bool,
+}
+
+/// The selected building's info ([`ColonyUi::modern_parts`]).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BuildingParts {
+    pub name: Vec<u8>,
+    /// Hit points left and the most.
+    pub hp: (i32, i32),
+    /// "Damage :".
+    pub damage: Vec<u8>,
+    /// "Working:", "Not working" or "Not completed".
+    pub status: Vec<u8>,
+    pub efficiency: Option<i32>,
+    /// "Compl. :" with the work done and the whole.
+    pub built: Option<(Vec<u8>, i32, i32)>,
+    /// "Product:" (or "Product: nothing") for a producer.
+    pub product: Option<Vec<u8>>,
+    /// The product's icon byte and amount (a working producer).
+    pub output: Option<(u8, i32)>,
+}
+
+/// What [`ColonyUi::modern_parts`] reads.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModernParts {
+    pub own: bool,
+    pub menu: Vec<MenuEntry>,
+    pub building: Option<BuildingParts>,
+    /// Hot-spots 1 (repair), 2 (demolish), 0x11 (on/off), 10 (self-destruct), 8 (call it off) on.
+    pub buttons: [bool; 5],
+    /// The building the buttons stand for is switched off (`+0x19` bit 5).
+    pub switched_off: bool,
+    /// The tooltips of 1, 2, 0x11, 10, 8, 4 and 0x13.
+    pub tips: [Vec<u8>; 7],
+    pub war_tips: Vec<(u32, Vec<u8>)>,
+    /// The build cursor is up, build orders are on their way, `AktEpuletTipus`.
+    pub cursor: bool,
+    pub pending: bool,
+    pub kind: usize,
+    /// The tutorial's colony lock (every hot-spot off).
+    pub locked: bool,
+}
+
 /// `DrawHpStripe(v, max, x, y, w, 255)` (ELF 0x45f6a0): a black 5-pixel bar, inside it `(w − 2)·v/max` pixels of
 /// colour 7 above half, 3 above a quarter, else 6.
 #[allow(clippy::too_many_arguments)]
@@ -1457,28 +1630,7 @@ impl ColonyUi {
         if k.b1 != 0 {
             let label = c.text(2, 13);
             line(f, &label, 0.0, 33.0, 0xf, 1, Align::Left, 0x23);
-            let mut n = k.output * b.yield_pct as i32 * b.efficiency as i32 / 0x100;
-            let r = c.planet_rec(c.snap.planet);
-            if k.b1 == 3 {
-                let world = c.state.colony();
-                let ctx = ig2_sim::colony::EconomyContext {
-                    multiplayer: c.state.mem.u8(va::MULTIPLAYER) != 0,
-                    human_empire: c.en() as u8,
-                    empire_race: c.state.races(),
-                    ..Default::default()
-                };
-                if let Some(p) = world.planets.get(c.snap.planet) {
-                    n = n * ig2_sim::colony::production_base(p, &c.sim.side.colony, &ctx) / 100;
-                }
-            }
-            // `BolygoInfoIs(p, −0x215c)`: kinds 6 and 7 show 5000 and 7000.
-            let story = (0..5).any(|i| i16::from_le_bytes([r[0x16a + 2 * i], r[0x16b + 2 * i]]) == -0x215c);
-            if story && b.kind == 6 {
-                n = 5000;
-            }
-            if story && b.kind == 7 {
-                n = 7000;
-            }
+            let n = product(c, b, k);
             let mut s = match k.b1 {
                 1 => vec![1],
                 2 => vec![2],
@@ -1489,6 +1641,63 @@ impl ColonyUi {
             line(f, &s, (label.len() * 6) as f32, 32.0, 7, 2, Align::Left, 0x23);
         }
         true
+    }
+
+    /// Ours (ADR 0070): what the modern panels show of the screen's input state: the build menu, the selected
+    /// building's info and the buttons that are on, with the original's texts.
+    pub fn modern_parts(&self, c: &Ctx) -> ModernParts {
+        let mut count: HashMap<u8, i32> = HashMap::new();
+        for b in &c.snap.buildings {
+            *count.entry(b.kind).or_default() += 1;
+        }
+        let hub = c.has_hub();
+        let race = c.state.races()[c.en()];
+        let techs = c.state.tech();
+        let menu = layout(&c.offered()).into_iter().map(|(t, column, _)| {
+            let kind = c.kind_of(t);
+            let price = c.rules.buildings.get(kind).map_or(0, |b| ig2_sim::colony_side::price(&techs, race, b.tech as usize));
+            MenuEntry { tech: t, column, kind, name: (c.tech_name)(t), count: count.get(&(kind as u8)).copied().unwrap_or(0), price, ok: hub || t == 0x51, locked: self.is_locked(c, t) }
+        }).collect();
+        let on = |id: u32| !self.all_off && self.info.is_none() && self.spot_on(c, id);
+        ModernParts {
+            own: c.own(),
+            menu,
+            building: self.building_parts(c),
+            buttons: [on(1), on(2), on(0x11), on(10), on(8)],
+            switched_off: c.building(self.target(c)).is_some_and(|b| b.flags & 0x20 != 0),
+            tips: [1, 2, 0x11, 10, 8, 4, 0x13].map(|id| self.spot_text(c, id)),
+            war_tips: crate::colony_war::BUTTONS.map(|b| (b.0, self.spot_text(c, b.0))).to_vec(),
+            cursor: self.build_mode,
+            pending: self.pending != 0,
+            kind: self.kind,
+            locked: self.all_off,
+        }
+    }
+
+    /// `ColonyKisInfo`'s building half as data ([`ColonyUi::draw_building_info`]'s lines).
+    fn building_parts(&self, c: &Ctx) -> Option<BuildingParts> {
+        let b = c.building(self.selected)?;
+        let k = c.rules.buildings.get(b.kind as usize)?;
+        let mut p = BuildingParts { name: (c.tech_name)(k.tech as usize), hp: (k.max_hp - b.damage, k.max_hp), damage: c.text(2, 11), ..Default::default() };
+        if b.flags & 1 == 0 {
+            if b.work_left == 0 {
+                p.status = c.text(2, 14);
+                if k.b1 != 0 {
+                    p.product = Some(c.text(2, 15));
+                }
+            } else {
+                p.status = c.text(2, 16);
+                p.built = Some((c.text(2, 17), k.build_work - b.work_left as i32 / 50, k.build_work));
+            }
+            return Some(p);
+        }
+        let full = c.text(2, 12);
+        p.status = full.strip_suffix(b"%").unwrap_or(&full).to_vec();
+        p.efficiency = Some(b.efficiency as i32 * 100 / 0x100);
+        if k.b1 != 0 {
+            (p.product, p.output) = (Some(c.text(2, 13)), Some((k.b1, product(c, b, k))));
+        }
+        Some(p)
     }
 
     /// `ColonySelectEpuletMode`: the build menu's pick list is open.
@@ -1822,5 +2031,57 @@ mod tests {
         let (classic, classic_defaults) = crate::rules::load(&plain).unwrap();
         let err = crate::world::World::load_bytes(&file, &classic, &classic_defaults, &volatile).err().expect("refused");
         assert!(err.contains("building kind 56"), "{err}");
+    }
+
+    /// ADR 0070: the modern panels' acts run the classic hot-spots' code on quick-1.sav's planet 42 (EN's, at peace,
+    /// a working hub): the classic spots under the panels are off, the demolish button opens the window and its "Yes"
+    /// sends the order, a build menu entry puts the cursor up, the card's right click is the starmap.
+    #[test]
+    fn modern_acts_run_the_classic_spots() {
+        use crate::colony_modern::Act;
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (sim, defaults) = crate::rules::load(&install).unwrap();
+        let state = SaveState::from_save(&save, &defaults);
+        let snap = crate::colony::ColonySnap::read(&state, 42).unwrap();
+        let rules = ig2_rules::Rules::from_install(&install).unwrap();
+        let texts = crate::ui::UiTexts::load(&install);
+        let names = |_: usize| b"x".to_vec();
+        let c = Ctx { state: &state, snap: &snap, rules: &rules, sim: &sim, texts: &texts, tech_name: &names };
+        let mut ui = ColonyUi::enter(&snap, true, &state);
+        ui.selected = snap.buildings.iter().find(|b| b.kind != 1).map(|b| b.slot).unwrap();
+        // The parts: the menu offers the hub, the selected building can be demolished and switched.
+        let parts = ui.modern_parts(&c);
+        assert!(parts.own && parts.menu.iter().any(|e| e.tech == 0x51 && e.ok));
+        assert!(parts.buttons[1] && parts.buttons[2]);
+        // With the panels up a press where the demolish button was is the view's.
+        ui.modern = true;
+        ui.press(&c, [228.0, 458.0], true, 0);
+        ui.release(&c, [228.0, 458.0], true, 0);
+        assert_eq!(ui.window(), None);
+        // (The view's press on the ground dropped the selection.)
+        ui.selected = snap.buildings.iter().find(|b| b.kind != 1).map(|b| b.slot).unwrap();
+        let slot = ui.selected as i32;
+        assert_eq!(ui.modern_act(&c, Act::Spot(2), 0).commands, vec![]);
+        assert_eq!(ui.window(), Some(Confirm::Demolish));
+        assert!(ui.modern, "the flag comes back");
+        let out = ui.modern_act(&c, Act::Answer(true), 0);
+        assert_eq!(out.commands, vec![ColonyOrder::Demolish { planet: 42, slot }.into()]);
+        assert_eq!((ui.window(), ui.selected), (None, 0));
+        // "No" only shuts it.
+        ui.modern_act(&c, Act::Spot(1), 0);
+        assert!(ui.modern_act(&c, Act::Answer(false), 0).commands.is_empty());
+        // A pick: the entry's kind with the cursor up; the cursor button toggles it.
+        ui.modern_act(&c, Act::Pick(0x51), 1000);
+        assert_eq!((ui.kind, ui.build_mode), (c.kind_of(0x51), true));
+        ui.modern_act(&c, Act::Pick(-1), 2000);
+        assert!(!ui.build_mode);
+        // The card's right click: the starmap.
+        assert!(ui.modern_act(&c, Act::Card(true), 0).starmap);
+        assert!(ui.info.is_none());
+        ui.modern_act(&c, Act::Card(false), 0);
+        assert!(ui.info.is_some(), "the left click is the planet info mode");
     }
 }

@@ -383,6 +383,9 @@ pub struct ColonyInput<'a> {
     pub names: bool,
     /// The planet's name entry (`IOAzonosito` 0x1f), drawn by `ColonyGfx2D_4`.
     pub rename: Option<&'a crate::starmap_menus::Rename>,
+    /// Ours (ADR 0070): the modern panels are up: of the 2D parts only the building names, the units' group sizes and
+    /// the selection box stay.
+    pub modern: bool,
 }
 
 /// Which screen is up.
@@ -565,6 +568,16 @@ impl Hud {
             view.names(f, font, &self.palette, &by_kind, scene, maps, curr);
         }
         let ui = input.ui;
+        if input.modern {
+            let v = Virtual::new(view.camera.size);
+            let design_name = |u: &crate::colony::UnitView| self.unit_design_name(state, u);
+            let weapon_name = |u: &crate::colony::UnitView| self.unit_weapon_name(state, u);
+            let player_name = |_: i32| Vec::new();
+            let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name, player_name: &player_name };
+            let w = crate::colony_war::WarCtx { snap: curr, en: state.mem.i32(ig2_sim::save::va::EN), tutorial_paused: false };
+            ui.war.draw_marks(f, &w, &d, input.cursor);
+            return;
+        }
         let mut c = crate::colony::hud_state(state, rules, &|t| self.tech_name(t), curr, view, maps, ui.kind, ui.selected);
         c.panel_model = input.panel;
         c.info = ui.info.as_ref().map(|_| state.mem.read(ig2_sim::save::va::PLANETS + (curr.planet * ig2_sim::save::PLANET_SIZE) as u32, 0x21)[0x20] as i32 == state.mem.i32(ig2_sim::save::va::EN));
@@ -576,12 +589,8 @@ impl Hud {
         let sel = crate::orders::Selection { mode: 1, planet: curr.planet, fleet: 0 };
         let ctx = crate::colony_ui::Ctx { state, snap: curr, rules, sim: input.sim, texts: &self.texts, tech_name: &|t| self.tech_name(t) };
         // The ground war's parts (colony.md §11): `Tervek[side]+0x84·design`'s name (+0), the weapon pod's tech name.
-        let record = |u: &crate::colony::UnitView| state.designs.get(u.side.max(0) as usize).and_then(|d| d.get(u.design.max(0) as usize)).copied();
-        let design_name = |u: &crate::colony::UnitView| record(u).map_or_else(Vec::new, |r| r[..0x14].iter().copied().take_while(|&b| b != 0).collect());
-        let weapon_name = |u: &crate::colony::UnitView| {
-            let pod = if u.flags & ig2_sim::ground::flag::TURRET != 0 { u.design as usize } else { record(u).map_or(0, |r| if r[0x51] != 0 { r[0x51] } else { r[0x52] } as usize) };
-            if pod == 0 { Vec::new() } else { self.tech_name(pod) }
-        };
+        let design_name = |u: &crate::colony::UnitView| self.unit_design_name(state, u);
+        let weapon_name = |u: &crate::colony::UnitView| self.unit_weapon_name(state, u);
         let player_name = |e: i32| state.mem.read(0xBAE588 + 11 * e.clamp(0, 18) as u32, 11).iter().copied().take_while(|&b| b != 0).collect::<Vec<u8>>();
         let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name, player_name: &player_name };
         let w = crate::colony_war::WarCtx { snap: curr, en: state.mem.i32(ig2_sim::save::va::EN), tutorial_paused: false };
@@ -769,33 +778,8 @@ impl Hud {
         let hu = lang == ig2_formats::text::Lang::Hu;
         let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
         let col = |i: usize| crate::gui::ink(self.palette.get(i).copied().unwrap_or([1.0; 3]));
-        let bar = &s.bar;
-        let (y, mo, d) = bar.date;
-        // The line: the chat entry, the error text, the waiting or story text, else the scrolling message.
-        let pulsing = self.story_line.clone().or_else(|| self.message_waiting.then(|| self.texts.get(0x12, 2, 1)));
-        let (line, waiting) = match (&self.chat.entry, &self.error, &pulsing) {
-            (Some(e), ..) => (format!("{}_", dec(&e.text)), false),
-            (None, Some((t, _)), _) => (dec(t), true),
-            (None, None, Some(t)) => (dec(t), true),
-            _ => (dec(&self.scroller.text), false),
-        };
         let md = crate::topbar_menus::Data::read(state, rules, &self.texts, 2, gates, false);
-        let screens = crate::topbar_menus::TopMenus::screen_rows()
-            .map(|(_, i)| m::ScreenItem {
-                n: i,
-                name: md.names.get(i as usize).map(|n| dec(n)).unwrap_or_default(),
-                key: dec(crate::topbar_menus::KEY_NAMES[i as usize]).trim_end_matches('-').trim().to_string(),
-                on: !md.disabled[i as usize],
-                current: i == 2,
-            })
-            .collect();
-        let research = m::Research {
-            headers: md.headers.iter().map(|h| dec(h)).collect(),
-            items: md.items.iter().map(|i| (i.tech, dec(&i.name), i.col, md.startable(i.tech), i.short, i.cost)).collect(),
-            current: (md.current > 0).then(|| (md.current, dec(&md.current_name), md.pct, md.left)),
-            researchable: bar.researchable,
-            footer: md.footer.clone().map(|f| dec(&f)),
-        };
+        let mut out = self.bar_view(state, rules, s, curr.human, gates, time, 2);
         // The selection's short info: `StarmapRovidInfoKiir`'s lines by their place.
         let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
         let counter = crate::starmap_hud::counter(time);
@@ -838,12 +822,52 @@ impl Hud {
         if let (Some(i), Some(r)) = (&mut info, &menus.rename) {
             i.title = format!("{}_", dec(&r.text));
         }
-        let mini = (!panels.minimap_off()).then(|| {
+        out.info = info;
+        out.menus = self.modern_menus(state, rules, menus, view.camera.zoom, view.camera.size, time);
+        out.mini = (!panels.minimap_off()).then(|| {
             let fleets = curr.fleets_at(prev, alpha);
             let mm = crate::starmap_hud::Minimap::new(curr, &fleets, sel, &view.camera);
             let conv = |v: &Vec<([f32; 2], usize, bool)>| v.iter().map(|&(p, c, on)| (m::mini_unit(p), col(c), on)).collect();
             m::Mini { planets: conv(&mm.planets), fleets: conv(&mm.fleets), view: mm.view.map(|p| p.map(m::mini_unit)) }
         });
+        out
+    }
+
+    /// Ours (ADR 0065, ADR 0070): the modern top bar's part of the view, the screen `current` (`AktKep`) marked.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bar_view(&self, state: &SaveState, rules: &ig2_rules::Rules, s: &UiSnap, human: u8, gates: Option<&[bool; 20]>, time: f32, current: i32) -> crate::starmap_modern::View {
+        use crate::starmap_modern as m;
+        let lang = self.texts.lang;
+        let hu = lang == ig2_formats::text::Lang::Hu;
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
+        let col = |i: usize| crate::gui::ink(self.palette.get(i).copied().unwrap_or([1.0; 3]));
+        let bar = &s.bar;
+        let (y, mo, d) = bar.date;
+        // The line: the chat entry, the error text, the waiting or story text, else the scrolling message.
+        let pulsing = self.story_line.clone().or_else(|| self.message_waiting.then(|| self.texts.get(0x12, 2, 1)));
+        let (line, waiting) = match (&self.chat.entry, &self.error, &pulsing) {
+            (Some(e), ..) => (format!("{}_", dec(&e.text)), false),
+            (None, Some((t, _)), _) => (dec(t), true),
+            (None, None, Some(t)) => (dec(t), true),
+            _ => (dec(&self.scroller.text), false),
+        };
+        let md = crate::topbar_menus::Data::read(state, rules, &self.texts, current, gates, false);
+        let screens = crate::topbar_menus::TopMenus::screen_rows()
+            .map(|(_, i)| m::ScreenItem {
+                n: i,
+                name: md.names.get(i as usize).map(|n| dec(n)).unwrap_or_default(),
+                key: dec(crate::topbar_menus::KEY_NAMES[i as usize]).trim_end_matches('-').trim().to_string(),
+                on: !md.disabled[i as usize],
+                current: i == current,
+            })
+            .collect();
+        let research = m::Research {
+            headers: md.headers.iter().map(|h| dec(h)).collect(),
+            items: md.items.iter().map(|i| (i.tech, dec(&i.name), i.col, md.startable(i.tech), i.short, i.cost)).collect(),
+            current: (md.current > 0).then(|| (md.current, dec(&md.current_name), md.pct, md.left)),
+            researchable: bar.researchable,
+            footer: md.footer.clone().map(|f| dec(&f)),
+        };
         let tip = |n: u16| dec(&self.texts.get(2, 1, n));
         let ours = |e: &str| dec(&self.texts.ours(e));
         m::View {
@@ -858,13 +882,10 @@ impl Hud {
             history_open: self.history_open,
             screens,
             research,
-            info,
-            mini,
             tips: [String::new(), tip(1), tip(2), tip(3), tip(4), tip(5), tip(6), tip(7), tip(0xa), tip(0xb)],
             labels: m::Labels { pause: ours("Pause"), speed: ours("Speed"), research: ours("Quick research"), idle: ours("No research"), redirect: ours("Redirect") },
             blink: (time * 2.0) as i64 % 2 == 0,
-            race: col(curr.human as usize + 15),
-            menus: self.modern_menus(state, rules, menus, view.camera.zoom, view.camera.size, time),
+            race: col(human as usize + 15),
             ..Default::default()
         }
     }
@@ -938,6 +959,141 @@ impl Hud {
             }
         }
         out
+    }
+
+    /// Ours (ADR 0070): what the modern colony screen shows this frame, from the state the classic panels read.
+    #[allow(clippy::too_many_arguments)]
+    pub fn colony_modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, s: &UiSnap, maps: &[ig2_sim::ground::GroundMap], view: &crate::colony::View, curr: &crate::colony::ColonySnap, ui: &crate::colony_ui::ColonyUi, sim: &ig2_sim::game::GameRules, gates: Option<&[bool; 20]>, time: f32) -> crate::colony_modern::View {
+        use crate::colony_modern as m;
+        let lang = self.texts.lang;
+        let hu = lang == ig2_formats::text::Lang::Hu;
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
+        let col = |i: usize| crate::gui::ink(self.palette.get(i).copied().unwrap_or([1.0; 3]));
+        let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18);
+        let bar = self.bar_view(state, rules, s, en as u8, gates, time, 3);
+        let ctx = crate::colony_ui::Ctx { state, snap: curr, rules, sim, texts: &self.texts, tech_name: &|t| self.tech_name(t) };
+        let parts = ui.modern_parts(&ctx);
+        let hs = crate::colony::hud_state(state, rules, &|t| self.tech_name(t), curr, view, maps, ui.kind, ui.selected);
+        let w = crate::colony_war::WarCtx { snap: curr, en, tutorial_paused: false };
+        let units = ui.war.chosen_units(&w);
+        let empire = |e: i32| self.empire_names.get(e.clamp(0, 18) as usize).map(|n| dec(n)).unwrap_or_default();
+        // The short info: the units selected, else the building, else the planet's (`ColonyInfoMod` 1, 2, 0).
+        let mut card = m::Card { tip: dec(&parts.tips[5]), surplus: hs.own.then_some((hs.workers, hs.energy)), ..Default::default() };
+        if let Some(first) = units.first() {
+            let owner = col((first.owner + 0xf).max(0) as usize);
+            card.colour = owner;
+            card.title = if units.len() > 1 { dec(&sprintf(&self.texts.get(3, 2, 33), &[units.len() as i64])) } else { dec(&self.unit_design_name(state, first)) };
+            card.lines = vec![(empire(first.owner), owner), (dec(&self.unit_weapon_name(state, first)), col(0x23))];
+        } else if let Some(b) = &parts.building {
+            card.colour = col(0x22);
+            card.title = dec(&b.name);
+            let mut status = dec(&b.status);
+            if let Some(e) = b.efficiency {
+                status = format!("{status} {e}%");
+            }
+            card.lines.push((status, if b.efficiency.is_some_and(|e| e < 100) { col(6) } else { col(0x23) }));
+            match (&b.product, b.output) {
+                (Some(label), Some((icon, n))) => card.product = Some((dec(label), icon, n)),
+                (Some(label), None) => card.lines.push((dec(label), col(0x23))),
+                _ => {}
+            }
+            card.bars.push((dec(&b.damage), b.hp.0 as f32 / b.hp.1.max(1) as f32));
+            if let Some((label, done, all)) = &b.built {
+                card.bars.push((dec(label), *done as f32 / (*all).max(1) as f32));
+            }
+        } else {
+            card.planet = true;
+            let t = crate::starmap_hud::InfoTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names };
+            let counter = crate::starmap_hud::counter(time);
+            let sel = crate::orders::Selection { mode: 1, planet: curr.planet, fleet: 0 };
+            let ib = crate::starmap_hud::InfoBox::new(state, rules, &t, &sel, self.starmap.step(curr.planet, counter), counter);
+            let mut main: Vec<_> = ib.lines.iter().filter(|l| l.1 >= 50.0).collect();
+            main.sort_by(|a, b| a.2.total_cmp(&b.2));
+            card.title = main.first().map(|l| dec(&l.0)).unwrap_or_default();
+            card.colour = col(if curr.owner == 0 { 12 } else { curr.owner as usize + 15 });
+            card.lines = main.iter().skip(1).map(|l| (dec(&crate::diplomacy::articles(&l.0, hu)), col(l.4))).collect();
+        }
+        // `TutorialPaused` turns demolish and on/off dead (`Colony_Main`); the colony lock every button.
+        let paused = state.mem.u8(ig2_sim::save::va::TUTORIAL_PAUSED) != 0;
+        let actions = m::Actions {
+            on: [parts.buttons[0], parts.buttons[1] && !paused, parts.buttons[2] && !paused, parts.buttons[3]],
+            switched_off: parts.switched_off,
+            tips: [0, 1, 2, 3].map(|i| dec(&parts.tips[i])),
+        };
+        let build = (parts.own && !parts.locked && ui.info.is_none()).then(|| m::Build {
+            headers: (1..=4u16).map(|k| dec(&self.txt17.get(0x11, 3, 0x22 + k))).collect(),
+            entries: parts.menu.iter().map(|e| m::Entry {
+                tech: e.tech as i32,
+                column: e.column,
+                name: dec(&e.name),
+                count: e.count,
+                price: crate::starmap_modern::money(e.price as f64),
+                ok: e.ok && !e.locked,
+                current: e.kind == parts.kind,
+            }).collect(),
+            current: hs.build.as_ref().map(|(name, price, energy, workers)| (dec(name), crate::starmap_modern::money(*price as f64), *energy, *workers)),
+            cursor: parts.cursor,
+            pending: parts.pending,
+            build_tip: dec(&parts.tips[6]),
+            cursor_tip: dec(&self.texts.ours("Build cursor")),
+        });
+        let war = curr.war_flag.then(|| {
+            let (fighters, ships) = ui.war.charges(&w);
+            let (retreat, landing) = ui.war.notices(&w);
+            let mut sides: Vec<(i32, i32)> = Vec::new();
+            for u in curr.units.iter().filter(|u| u.flags2 & 4 == 0) {
+                match sides.iter_mut().find(|s| s.0 == u.owner) {
+                    Some(s) => s.1 += 1,
+                    None => sides.push((u.owner, 1)),
+                }
+            }
+            sides.sort_by_key(|s| (s.0 != en, s.0));
+            m::War {
+                buttons: ui.war.shown_buttons(&w).into_iter().map(|(id, frame)| (id, frame, parts.war_tips.iter().find(|t| t.0 == id).map(|t| dec(&t.1)).unwrap_or_default())).collect(),
+                charge: (fighters as f32 / 200.0, ships as f32 / 300.0),
+                sides: sides.into_iter().map(|(o, n)| (col((o + 0xf).max(0) as usize), empire(o), n)).collect(),
+                notices: [(retreat, 3u16), (landing, 4)].into_iter().filter(|x| x.0).map(|(_, n)| dec(&self.texts.get(3, 2, n))).collect(),
+            }
+        });
+        let banner = self.font.as_ref().and_then(|font| {
+            let v = Virtual::new(view.camera.size);
+            let design_name = |u: &crate::colony::UnitView| self.unit_design_name(state, u);
+            let weapon_name = |u: &crate::colony::UnitView| self.unit_weapon_name(state, u);
+            let player_name = |e: i32| state.mem.read(0xBAE588 + 11 * e.clamp(0, 18) as u32, 11).iter().copied().take_while(|&b| b != 0).collect::<Vec<u8>>();
+            let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name, player_name: &player_name };
+            ui.war.banner_text(&w, &d).map(|(t, k)| (dec(&t), k))
+        });
+        let destruct = (curr.self_destruct != -1).then(|| m::Destruct {
+            lines: [dec(&self.texts.get(3, 5, 1)), dec(&self.texts.get(3, 5, 2))],
+            seconds: curr.self_destruct / 20,
+            cancel: parts.buttons[4].then(|| dec(&self.texts.get(3, 5, 3))),
+        });
+        let confirm = ui.window().map(|wd| {
+            let (title, cost, [yes, no]) = ui.window_texts(&ctx, wd);
+            m::Confirm { title: dec(&title), price: cost.map(|c| format!("{} {}", dec(&self.texts.get(3, 4, 5)), crate::starmap_modern::money(c as f64))), yes: dec(&yes), no: dec(&no) }
+        });
+        let unit = |x: f32, y: f32| [(x - 522.0) / 100.0, (y - 362.0) / 100.0];
+        let radar = m::Radar {
+            buildings: hs.buildings.iter().map(|&(gx, gy, c)| ([gx / 200.0, gy / 200.0], col(c))).collect(),
+            units: hs.units.iter().map(|&(gx, gy, own)| ([gx / 200.0, gy / 200.0], own)).collect(),
+            view: hs.view.map(|q| q.map(|c| unit(c[0], c[1]))),
+            tip: dec(&self.texts.get(3, 1, 4)),
+        };
+        let starmap = bar.screens.iter().find(|s| s.n == 2).map(|s| s.name.clone()).unwrap_or_default();
+        m::View { bar, card, actions, build, war, banner, destruct, confirm, radar, details: dec(&self.texts.ours("Details")), starmap }
+    }
+
+    /// `Tervek[side]+0x84·design`'s name (+0).
+    fn unit_design_name(&self, state: &SaveState, u: &crate::colony::UnitView) -> Vec<u8> {
+        let record = state.designs.get(u.side.max(0) as usize).and_then(|d| d.get(u.design.max(0) as usize)).copied();
+        record.map_or_else(Vec::new, |r| r[..0x14].iter().copied().take_while(|&b| b != 0).collect())
+    }
+
+    /// The unit's weapon pod's tech name (`GiveOneTankWeaponName`): a turret's own pod, else the design's.
+    fn unit_weapon_name(&self, state: &SaveState, u: &crate::colony::UnitView) -> Vec<u8> {
+        let record = state.designs.get(u.side.max(0) as usize).and_then(|d| d.get(u.design.max(0) as usize)).copied();
+        let pod = if u.flags & ig2_sim::ground::flag::TURRET != 0 { u.design as usize } else { record.map_or(0, |r| if r[0x51] != 0 { r[0x51] } else { r[0x52] } as usize) };
+        if pod == 0 { Vec::new() } else { self.tech_name(pod) }
     }
 
     /// The research screen's 2D passes around its models (re/screens/research.md §3).

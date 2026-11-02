@@ -228,17 +228,17 @@ pub struct State {
 
 /// The HUD's colours this frame.
 #[derive(Debug, Clone, Copy)]
-struct Ink {
-    text: Color32,
-    dim: Color32,
+pub(crate) struct Ink {
+    pub text: Color32,
+    pub dim: Color32,
     /// The player's colour, lifted toward the text so it reads on the dark plates.
-    accent: Color32,
-    fill: Color32,
-    edge: Color32,
+    pub accent: Color32,
+    pub fill: Color32,
+    pub edge: Color32,
 }
 
 impl Ink {
-    fn new(ctx: &egui::Context, race: Color32) -> Self {
+    pub(crate) fn new(ctx: &egui::Context, race: Color32) -> Self {
         let v = &ctx.style().visuals;
         let text = v.widgets.inactive.fg_stroke.color;
         let base = if race.a() == 0 || race == Color32::BLACK { v.hyperlink_color } else { race };
@@ -249,14 +249,14 @@ impl Ink {
     }
 }
 
-fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
+pub(crate) fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
 /// The vector icons the HUD's buttons draw.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Icon {
+pub(crate) enum Icon {
     Pause,
     Play(u8),
     RotateLeft,
@@ -293,7 +293,7 @@ fn arc(c: Pos2, rx: f32, ry: f32, a0: f32, a1: f32) -> Vec<Pos2> {
     }).collect()
 }
 
-fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
+pub(crate) fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
     use std::f32::consts::{PI, TAU};
     let s = Stroke::new(1.4f32, c);
     let m = r.center();
@@ -540,7 +540,7 @@ fn plate_shape(r: Rect, ink: &Ink) -> Shape {
 }
 
 /// `add` on a console plate with `margin` inside.
-fn plate<R>(ui: &mut egui::Ui, ink: &Ink, margin: Margin, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+pub(crate) fn plate<R>(ui: &mut egui::Ui, ink: &Ink, margin: Margin, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
     let under = ui.painter().add(Shape::Noop);
     let r = egui::Frame::new().inner_margin(margin).show(ui, add);
     ui.painter().set(under, plate_shape(r.response.rect, ink));
@@ -548,7 +548,7 @@ fn plate<R>(ui: &mut egui::Ui, ink: &Ink, margin: Margin, add: impl FnOnce(&mut 
 }
 
 /// A tooltip: the name and, when bound, its key in a small key cap.
-fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egui::Response {
+pub(crate) fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egui::Response {
     if name.is_empty() {
         return resp;
     }
@@ -567,7 +567,7 @@ fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egui::Response
 }
 
 /// A square icon button: hover fades in a lit fill and edge, `on` marks the chosen one with an accent bar below.
-fn icon_button(ui: &mut egui::Ui, ink: &Ink, i: Icon, on: bool, enabled: bool, size: f32) -> egui::Response {
+pub(crate) fn icon_button(ui: &mut egui::Ui, ink: &Ink, i: Icon, on: bool, enabled: bool, size: f32) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(size, size), if enabled { Sense::click() } else { Sense::hover() });
     let hot = ui.ctx().animate_bool_with_time(resp.id, enabled && resp.hovered(), 0.12);
     let p = ui.painter();
@@ -593,20 +593,20 @@ fn icon_button(ui: &mut egui::Ui, ink: &Ink, i: Icon, on: bool, enabled: bool, s
 }
 
 /// Clicked with the left or the right button.
-fn either(r: &egui::Response) -> bool {
+pub(crate) fn either(r: &egui::Response) -> bool {
     r.clicked() || r.secondary_clicked()
 }
 
 /// A thin upright rule between groups on a plate.
-fn rule(ui: &mut egui::Ui, ink: &Ink, h: f32) {
+pub(crate) fn rule(ui: &mut egui::Ui, ink: &Ink, h: f32) {
     let (r, _) = ui.allocate_exact_size(vec2(9.0, h), Sense::hover());
     ui.painter().line_segment([pos2(r.center().x, r.top() + 2.0), pos2(r.center().x, r.bottom() - 2.0)], Stroke::new(1.0f32, ink.edge));
 }
 
 /// The HUD's points: the gap to the screen's edges, the top plates' buttons and inside margin.
-const EDGE: f32 = 8.0;
-const BUTTON: f32 = 20.0;
-const TOP: Margin = Margin { left: 9, right: 9, top: 5, bottom: 5 };
+pub(crate) const EDGE: f32 = 8.0;
+pub(crate) const BUTTON: f32 = 20.0;
+pub(crate) const TOP: Margin = Margin { left: 9, right: 9, top: 5, bottom: 5 };
 /// The minimap's width (its height keeps the classic window's ratio), the camera buttons under it.
 const MAP_W: f32 = 168.0;
 const CAM: f32 = 19.0;
@@ -620,6 +620,32 @@ const INFO_W: f32 = 228.0;
 /// One frame of the HUD over the starmap; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = Vec::new();
+    let ink = bar(ctx, v, st, &mut acts);
+    // The selection, bottom left.
+    if let Some(info) = &v.info {
+        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
+            plate(ui, &ink, Margin::symmetric(10, 8), |ui| info_card(ui, info, v, &ink, &mut acts));
+        });
+    }
+    // The minimap with the camera's buttons under it, bottom right.
+    if let Some(mini) = &v.mini {
+        egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
+            plate(ui, &ink, NAV, |ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                minimap(ui, mini, v, &ink, &mut acts);
+                camera_buttons(ui, v, &ink, &mut acts);
+            });
+        });
+    } else {
+        acts.push(Act::Hold(None));
+    }
+    menus(ctx, &v.menus, &ink);
+    acts
+}
+
+/// The top bar's plates (time, date and money; the message line; the research and the screens), shared with the
+/// modern colony screen (ADR 0070); the frame's colours.
+pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<Act>) -> Ink {
     let ink = Ink::new(ctx, v.race);
     ctx.style_mut(|s| {
         s.visuals.window_stroke = Stroke::new(1.0f32, ink.edge);
@@ -685,34 +711,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let right_x = if right.is_positive() { right.left() } else { ctx.screen_rect().right() - 480.0 };
     let room = right_x - left.right() - 2.0 * EDGE;
     if room > BUTTON + 20.0 {
-        message_line(ctx, v, &ink, pos2(left.right() + EDGE * 0.75, left.top()), room.min(LINE_W), left.height(), &mut acts);
+        message_line(ctx, v, &ink, pos2(left.right() + EDGE * 0.75, left.top()), room.min(LINE_W), left.height(), acts);
     }
     if st.research_open {
         let r = egui::Area::new(egui::Id::new("smh-research")).pivot(Align2::RIGHT_TOP).fixed_pos(pos2(right.right(), right.bottom() + 4.0)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::same(10), |ui| research_menu(ui, v, st, &ink, &mut acts));
+            plate(ui, &ink, Margin::same(10), |ui| research_menu(ui, v, st, &ink, acts));
         });
         close_outside(ctx, st, &[r.response.rect, status]);
     }
-    // The selection, bottom left.
-    if let Some(info) = &v.info {
-        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::symmetric(10, 8), |ui| info_card(ui, info, v, &ink, &mut acts));
-        });
-    }
-    // The minimap with the camera's buttons under it, bottom right.
-    if let Some(mini) = &v.mini {
-        egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, NAV, |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                minimap(ui, mini, v, &ink, &mut acts);
-                camera_buttons(ui, v, &ink, &mut acts);
-            });
-        });
-    } else {
-        acts.push(Act::Hold(None));
-    }
-    menus(ctx, &v.menus, &ink);
-    acts
+    ink
 }
 
 /// The running research's name, per cent and progress, or the idle text; a click opens the quick-research menu.

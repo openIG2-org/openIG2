@@ -58,6 +58,7 @@ const TABLE: &[(&str, &str)] = &[
     // The modern starmap HUD (ADR 0065).
     ("Speed", "Sebesség"),
     ("Quick research", "Gyors kutatás"),
+    ("Build cursor", "Építési kurzor"),
     ("No research", "Nincs kutatás"),
     ("Redirect", "Átirányítás"),
     ("Details", "Részletek"),
@@ -154,6 +155,8 @@ const TABLE: &[(&str, &str)] = &[
     ("The starmap's bar, info box, minimap and camera buttons as clear modern panels; off = the original's.", "A csillagtérkép sávja, információs doboza, minitérképe és kameragombjai letisztult, modern paneleken; kikapcsolva az eredeti."),
     ("Modern in-game menu", "Modern játék közbeni menü"),
     ("Esc's in-game menu with saving, loading and every setting as a modern page; off = the original's.", "Az Esc játék közbeni menüje mentéssel, betöltéssel és minden beállítással, modern oldalként; kikapcsolva az eredeti."),
+    ("Modern colony screen", "Modern kolónia képernyő"),
+    ("The colony's build menu, info card, buttons, radar and ground war panels as modern panels; off = the original's.", "A kolónia építési menüje, információs kártyája, gombjai, radarja és földi háborús panelei modern paneleken; kikapcsolva az eredeti."),
     ("SAVE & LOAD", "MENTÉS ÉS BETÖLTÉS"),
     ("Saves", "Mentések"),
     ("Selected save", "Kiválasztott mentés"),
