@@ -650,7 +650,10 @@ pub fn start_world<'r>(o: &Options, install: &Install, save: Option<&SaveGame>, 
             w.campaign_intro();
             w
         }
-        (None, Some(s)) => world::World::load(s, rules, tech_defaults, volatile),
+        (None, Some(s)) => {
+            world::check_kinds(&ig2_sim::save::SaveState::from_save(s, tech_defaults), rules)?;
+            world::World::load(s, rules, tech_defaults, volatile)
+        }
         // The main menu without the default save: campaign 1's start stands in until the player picks a game. It is
         // not a started campaign: no start voice (it would replace the title's menu music) and no queued clips.
         (None, None) if o.main_menu => {

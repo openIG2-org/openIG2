@@ -38,6 +38,7 @@ fn colony_rules(r: &ig2_rules::Rules) -> ColonyRules {
                 output: b.output,
                 scaled_effect: b.flags[0] & 1 != 0,
                 passive_effect: b.flags[1] & 1 != 0,
+                like: b.like,
             })
             .collect(),
         curves: r

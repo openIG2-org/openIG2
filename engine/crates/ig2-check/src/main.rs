@@ -364,17 +364,25 @@ fn main() {
         // Each patch on its own, against the exe's tables (ADR 0044 §8).
         let exe = ig2_rules::Rules::from_exe(&inst.read_raw("ig2.exe").unwrap_or_default());
         for (name, bytes) in inst.rule_patches().unwrap_or_default() {
-            let applied = || -> Result<usize, String> {
+            let applied = || -> Result<(usize, ig2_rules::Rules), String> {
                 let mut r = exe.as_ref().map_err(|e| e.to_string())?.clone();
-                r.apply_patch(&String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?)
+                let n = r.apply_patch(&String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?)?;
+                Ok((n, r))
             };
             match applied() {
-                Ok(n) => {
+                Ok((n, r)) => {
                     g.notes.push(format!("mod {name}: rules.toml sets {n} fields"));
+                    // Added entries (ADR 0069): where each landed.
+                    g.notes.extend(r.added_techs.iter().map(|a| format!("  adds tech {} \"{}\" (category {}, field {})", a.index, a.key, (a.index - 1) / 16 + 1, (a.index - 1) % 16 + 1)));
+                    g.notes.extend(r.added_buildings.iter().map(|a| format!("  adds building kind {} \"{}\" (like {})", a.kind, a.key, r.buildings[a.kind].like)));
                     g.ok += 1;
                 }
                 Err(e) => g.failed.push((format!("mod {name}: rules.toml"), e)),
             }
+        }
+        // Together, in load order: a mod's entries may name an earlier mod's keys (ADR 0069).
+        if inst.rule_patches().is_ok_and(|p| p.len() > 1) {
+            g.check("mods: every rules.toml together", || ig2_rules::Rules::from_install(&inst).map(|_| ()).map_err(|e| e.to_string()));
         }
         // Each text patch file on its own (ADR 0044 §12); together they were applied when the install opened.
         for (name, file, bytes) in inst.text_patches().unwrap_or_default() {

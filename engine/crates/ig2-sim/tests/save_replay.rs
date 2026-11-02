@@ -208,6 +208,7 @@ fn game_rules(inst: &Install) -> GameRules {
                 output: b.output,
                 scaled_effect: b.flags[0] & 1 != 0,
                 passive_effect: b.flags[1] & 1 != 0,
+                like: b.like,
             })
             .collect(),
         curves: r.problem_curves.iter().map(|c| Curve { a: c.a, b: c.b, c: c.c, d: c.d, rate: c.rate, weight: c.weight }).collect(),
@@ -268,6 +269,7 @@ fn game_rules(inst: &Install) -> GameRules {
             race_money: r.race_research_money_mult.clone(),
             difficulty_speed: r.difficulty_development_mult.clone(),
             difficulty_money: r.difficulty_money_mult.clone(),
+            added_techs: ResearchRules::added(r.added_techs.iter().map(|a| a.index), &r.tech_defaults),
         },
         diplomacy: DiplomacyRules {
             surface_affinity: r.race_surface_affinity.concat(),

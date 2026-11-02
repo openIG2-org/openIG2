@@ -336,8 +336,9 @@ impl Deals for ColonyDeals<'_> {
         let Some(pl) = self.world.planets.get(p) else { return PlanetTerms::default() };
         let mut buildings = [0; 6];
         for b in &pl.buildings {
-            if (b.kind as usize) < 6 && b.work_left == 0 {
-                buildings[b.kind as usize] += 1;
+            let role = self.rules.colony.role(b.kind);
+            if role < 6 && b.work_left == 0 {
+                buildings[role] += 1;
             }
         }
         PlanetTerms {

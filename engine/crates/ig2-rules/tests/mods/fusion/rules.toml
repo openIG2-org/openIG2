@@ -1,0 +1,21 @@
+# A test mod (ADR 0069): a power-plant tech after the Mezon plant and the plant it gives.
+
+[[techs.new]]
+key = "fusion_reactor"
+category = 9                  # power plants
+name = "Fusion reactor"
+description = ["A plant that fuses the colony's", "waste into energy."]
+prerequisites = [135]         # Mezon plant
+research_cost = 40000
+research_time = 120
+price = 9000
+build_time = 30
+ai_priority = 8
+
+[[buildings.new]]
+key = "fusion_reactor"
+like = 55                     # Mezon plant: an energy producer
+tech = "fusion_reactor"
+output = 400
+workers = 600
+max_hp = 3000

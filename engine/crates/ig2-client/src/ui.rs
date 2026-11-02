@@ -167,6 +167,13 @@ impl UiTexts {
                 strings.add_file(&text::decode(&b, install.lang()));
             }
         }
+        // A mod's tech is named in its slot's empty (`-` or missing) `txt17` line unless a text patch named it (ADR 0069).
+        for a in crate::rules::added_techs(install) {
+            let key = (17, (8 + (a.index - 1) / 48) as u16, ((a.index - 1) % 48 + 1) as u16);
+            if matches!(strings.get(key.0, key.1, key.2), "" | "-") {
+                strings.entries.insert(key, a.name);
+            }
+        }
         let kinds = install.read("dataraw/uzenetek/uzenetek.txt").map(|b| dialogue::parse_message_index(&text::decode(&b, install.lang()))).unwrap_or_default();
         Self { strings, kinds, lang: install.lang() }
     }

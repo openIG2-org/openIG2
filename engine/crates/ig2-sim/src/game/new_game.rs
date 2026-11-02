@@ -1794,6 +1794,10 @@ impl<'r> Game<'r> {
                     }
                     _ => return false,
                 };
+                // A mod's tech keeps its default statuses: the scenario never knew it (ADR 0069).
+                if k == "rprojectallapot" && self.rules.research.added_techs.iter().any(|a| a.0 == cur.tech) {
+                    return true;
+                }
                 let mut r = at.map_or_else(|| vec![0; len], |a| m.read(a, len));
                 let ok = match k.as_bytes()[0] {
                     b's' => spy_field(&mut r, k, rest, toks),

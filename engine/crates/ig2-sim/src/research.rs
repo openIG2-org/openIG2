@@ -23,6 +23,16 @@ pub struct ResearchRules {
     pub difficulty_speed: Vec<f32>,
     /// `NehezsegPenzSzorzo[difficulty]`: AI income (`MoneyHozzaad`).
     pub difficulty_money: Vec<f32>,
+    /// The techs mods added (ADR 0069): the number and the default record's `+0x2c..+0x3c` (prerequisites, labs,
+    /// research cost and time), which a save keeps per tech.
+    pub added_techs: Vec<(usize, [u8; 16])>,
+}
+
+impl ResearchRules {
+    /// [`ResearchRules::added_techs`] of techs `added` in `Talalmanyok0` `defaults`.
+    pub fn added(added: impl IntoIterator<Item = usize>, defaults: &[u8]) -> Vec<(usize, [u8; 16])> {
+        added.into_iter().map(|t| (t, defaults[t * crate::colony_side::TECH_STRIDE + 0x2c..][..16].try_into().unwrap())).collect()
+    }
 }
 
 /// Per-empire research state.

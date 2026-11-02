@@ -1758,6 +1758,12 @@ impl SaveState {
 
     /// The colony side systems' world (planets 0..=HanyBolygo with their buildings, money, techs, contacts, the
     /// per-empire and per-planet tables).
+    /// A building kind on a planet that `kinds` (the rules' building kinds) lacks: a save made with a mod's kind
+    /// (ADR 0069) loaded without that mod.
+    pub fn unknown_kind(&self, kinds: usize) -> Option<u8> {
+        (1..=self.planet_count()).flat_map(|p| self.slots(p)).map(|b| b[0]).find(|&k| k as usize >= kinds)
+    }
+
     pub fn colony(&self) -> ColonyWorld {
         let n = self.planet_count();
         let unrest = self.per_planet(va::UNREST);

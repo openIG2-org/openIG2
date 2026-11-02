@@ -1731,4 +1731,96 @@ mod tests {
         assert_eq!(format_s(b"No room for %s here", b"Farm"), b"No room for Farm here".to_vec());
         assert_eq!(format_s(b"plain", b"x"), b"plain".to_vec());
     }
+
+    /// A mod's tech and building (ADR 0069, the test mod `ig2-rules/tests/mods/fusion`) on quick-1.sav, a save made
+    /// without the mod: the tech turns up once its prerequisite is owned, is researched, its building is offered,
+    /// built through the screen and works as the plant it is like; the snapshot keeps it, the state hash survives
+    /// the round trip, and without the mod the save refuses to load (skips without the install and save).
+    #[test]
+    fn a_mods_tech_and_building_are_researched_built_and_saved() {
+        use ig2_sim::colony_side::status;
+        let Some(Ok(plain)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let fusion = ig2_formats::vfs::Mod { name: "fusion".into(), dir: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ig2-rules/tests/mods/fusion") };
+        let install = ig2_formats::Install::open_with_mods(plain.root(), ig2_formats::text::Lang::En, vec![fusion]).unwrap();
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let texts = crate::ui::UiTexts::load(&install);
+        assert_eq!(crate::hud::tech_name(&texts, 136), b"Fusion reactor");
+        assert_eq!(crate::research::tech_infos(&install)[136][1], b"waste into energy.");
+        let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        let en = w.curr.human as usize;
+
+        // Unknown (the save's 0 lifted on load) until the Mezon plant is owned, then researchable.
+        let mut techs = w.game.state.tech();
+        assert_eq!(techs.status(136, en), status::UNKNOWN);
+        techs.set_status(135, en, status::OWNED);
+        techs.recompute(en as i32, false);
+        assert_eq!(techs.status(136, en), status::RESEARCHABLE);
+        // Started, then one day of work short of done.
+        w.game.state.store_tech(&techs);
+        w.game.research_order(en as u8, ig2_sim::game::ResearchOrder::Start { tech: 136 });
+        let mut techs = w.game.state.tech();
+        techs.set_research_time(136, en, techs.base_research_time(136) * 4 - 1);
+        w.game.state.store_tech(&techs);
+        for _ in 0..20_000 {
+            if w.game.state.tech().status(136, en) == status::OWNED {
+                break;
+            }
+            w.tick();
+        }
+        assert_eq!(w.game.state.tech().status(136, en), status::OWNED, "researched");
+
+        // Offered in the pick list's power-plant column as kind 56, built through the screen.
+        w.show_colony(Some(42));
+        let names = |t: usize| crate::hud::tech_name(&texts, t);
+        let snap = w.colony_curr.clone().unwrap();
+        let before = snap.buildings.len();
+        let mut ui = ColonyUi::enter(&snap, true, &w.game.state);
+        let at = {
+            let c = Ctx { state: &w.game.state, snap: &snap, rules: &tables, sim: &rules, texts: &texts, tech_name: &names };
+            assert_eq!(c.kind_of(136), 56);
+            ui.press(&c, [100.0, 80.0], true, 0);
+            let (_, colm, row) = layout(&c.offered()).into_iter().find(|&(t, _, _)| t == 136).expect("offered");
+            let pk = ui.picker.unwrap();
+            let at = [pk.at[0] + (colm * 0x78) as f32 + 20.0, pk.at[1] + (row * 0xd + 0xe) as f32 + 5.0];
+            ui.drag(&c, at);
+            ui.release(&c, at, true, 1000);
+            assert_eq!(ui.kind, 56);
+            ui.hover(&c, Some((100, 100)), Some((100, 100)));
+            ui.ghost.expect("a free spot").at
+        };
+        let out = {
+            let c = Ctx { state: &w.game.state, snap: &snap, rules: &tables, sim: &rules, texts: &texts, tech_name: &names };
+            ui.press(&c, [320.0, 300.0], true, 2000)
+        };
+        for cmd in out.commands {
+            w.send(cmd);
+        }
+        w.pump();
+        let snap = w.colony_curr.clone().unwrap();
+        assert_eq!(snap.buildings.len(), before + 1);
+        let b = snap.buildings.iter().find(|b| b.kind == 56).expect("kind 56 stands");
+        assert_eq!(((b.x as i32), (b.y as i32)), at);
+        // Finished, it produces energy as a power plant (the role of kind 55).
+        let mut colony = w.game.state.colony();
+        let produced = colony.planets[42].energy_produced;
+        let slot = colony.planets[42].buildings.iter().position(|b| b.kind == 56).unwrap();
+        colony.planets[42].buildings[slot].work_left = 0;
+        ig2_sim::colony::building_pass(&mut colony.planets[42], &rules.side.colony, true);
+        assert!(colony.planets[42].energy_produced > produced, "{} > {produced}", colony.planets[42].energy_produced);
+
+        // The snapshot keeps it and the state hash; without the mod the save refuses to load.
+        let file = w.save_file();
+        let back = crate::world::World::load_bytes(&file, &rules, &defaults, &volatile).unwrap();
+        assert!(back.game.state.colony().planets[42].buildings.iter().any(|b| b.kind == 56));
+        assert_eq!(back.game.state.tech().status(136, en), status::OWNED);
+        assert_eq!(ig2_net::snapshot::state_hash(&back.game, &[]), ig2_net::snapshot::state_hash(&w.game, &[]));
+        let (classic, classic_defaults) = crate::rules::load(&plain).unwrap();
+        let err = crate::world::World::load_bytes(&file, &classic, &classic_defaults, &volatile).err().expect("refused");
+        assert!(err.contains("building kind 56"), "{err}");
+    }
 }

@@ -19,6 +19,9 @@ pub struct StartTexts {
     fleet_name: Vec<u8>,
     design_texts: std::collections::BTreeMap<i32, Vec<u8>>,
     message_kinds: i32,
+    /// The mods' rule tables over the exe image (ADR 0044 §7, ADR 0069): `Talalmanyok0` and `EpuletekLeiro`, which
+    /// the start copies from the exe; empty without rule patches.
+    tables: Vec<(u32, Vec<u8>)>,
 }
 
 impl StartTexts {
@@ -38,22 +41,47 @@ impl StartTexts {
             keyed.add_file(29, &text::decode(&b, inst.lang()));
         }
         let kinds = inst.read("dataraw/uzenetek/uzenetek.txt").map(|b| dialogue::parse_message_index(&text::decode(&b, inst.lang())).len()).unwrap_or(0);
+        let mut tech_names: Vec<Vec<u8>> =
+            (0..193u16).map(|t| if t == 0 { Vec::new() } else { hu_bytes(hu.get(0x11, 8 + (t - 1) / 48, (t - 1) % 48 + 1)) }).collect();
+        let mut tables = Vec::new();
+        if !inst.rule_patches().map_err(|e| e.to_string())?.is_empty() {
+            let r = ig2_rules::Rules::from_install(inst).map_err(|e| e.to_string())?;
+            for a in &r.added_techs {
+                if matches!(&tech_names[a.index][..], b"" | b"-") {
+                    tech_names[a.index] = hu_bytes(&a.name);
+                }
+            }
+            let originals = ig2_rules::layout::BUILDINGS.2;
+            tables.push((ig2_rules::layout::TECHS.0, r.tech_defaults));
+            tables.push((ig2_rules::layout::BUILDINGS.0, r.buildings[..originals].iter().flat_map(|b| b.raw()).collect()));
+        }
         Ok(Self {
             exe,
             race_names: (0..20).map(|r| hu_bytes(hu.get(0x11, 1, r + 5))).collect(),
             constellations: (1..=15).map(|k| enc(keyed.get(29, k).unwrap_or(""))).collect(),
-            tech_names: (0..193u16).map(|t| if t == 0 { Vec::new() } else { hu_bytes(hu.get(0x11, 8 + (t - 1) / 48, (t - 1) % 48 + 1)) }).collect(),
+            tech_names,
             design_names: (0..47u16).map(|k| hu_bytes(hu.get(0x11, 7, k + 1))).collect(),
             fleet_name: hu_bytes(hu.get(17, 5, 46)),
             design_texts: design_texts(inst),
             message_kinds: kinds as i32,
+            tables,
         })
     }
 
     /// The sim's view of these, with the exe image (`PeImage::read_loaded`, BSS as zero) and `scenario/<n>.scn`.
     pub fn with<T>(&self, inst: &Install, f: impl FnOnce(&StartData) -> T) -> Result<T, String> {
         let pe = ig2_rules::PeImage::parse(&self.exe).map_err(|e| e.to_string())?;
-        let image = |at: u32, len: usize| pe.read_loaded(at, len).unwrap_or_else(|_| vec![0; len]);
+        let image = |at: u32, len: usize| {
+            let mut v = pe.read_loaded(at, len).unwrap_or_else(|_| vec![0; len]);
+            for (va, t) in &self.tables {
+                // The overlap of [at, at + len) and the table.
+                let (lo, hi) = (at.max(*va) as usize, (at as usize + len).min(*va as usize + t.len()));
+                if lo < hi {
+                    v[lo - at as usize..hi - at as usize].copy_from_slice(&t[lo - *va as usize..hi - *va as usize]);
+                }
+            }
+            v
+        };
         let scenario = |n: i32| inst.read(&format!("dataraw/scenario/{n}.scn")).ok().map(|b| text::decode(&b, inst.lang()));
         let data = StartData {
             image: &image,
@@ -143,6 +171,22 @@ pub fn parse_campaign(v: &str) -> Result<NewCampaign, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A new campaign with the test mod (ADR 0069, `ig2-rules/tests/mods/fusion`): the start copies the mod's tech
+    /// record (unknown to every empire, the mod's research cost) and patched building kinds from the rules, not the
+    /// exe; without rule patches the start is the exe's (skips without the install).
+    #[test]
+    fn a_new_game_starts_from_the_mods_tables() {
+        let Some(Ok(plain)) = Install::from_env(Lang::En) else { return };
+        let fusion = ig2_formats::vfs::Mod { name: "fusion".into(), dir: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ig2-rules/tests/mods/fusion") };
+        let install = Install::open_with_mods(plain.root(), Lang::En, vec![fusion]).unwrap();
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let game = campaign(&install, &parse_campaign("1").unwrap(), &rules).unwrap();
+        let techs = game.state.tech();
+        assert!((1..ig2_sim::colony_side::EMPIRES).all(|e| techs.status(136, e) == ig2_sim::colony_side::status::UNKNOWN));
+        assert_eq!((techs.research_cost(136), techs.byte(136, 0x27)), (40000, 56));
+        assert!(StartTexts::read(&plain).unwrap().tables.is_empty());
+    }
 
     #[test]
     fn campaign_argument() {

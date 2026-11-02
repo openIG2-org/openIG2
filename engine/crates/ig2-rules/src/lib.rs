@@ -272,6 +272,8 @@ pub struct Tech {
     pub hp: i32,
     /// +37 (u8): vehicle capacity added to a design (`TervUjraSzamol`, design `+0x28`).
     pub capacity: u8,
+    /// +39 (u8): the building kind the tech gives (the colony pick list, the research screen's building models).
+    pub building: u8,
     /// Unidentified static words: +28, +36 (byte 37 is `capacity`) and +60..+68 [unk].
     pub unknown: [i32; 5],
     /// `TalalmanyokrEro[i]`: firepower / strength value [inf from res_info "FIREPOWER"].
@@ -303,10 +305,48 @@ pub struct Building {
     /// +32 bit 0: the effect is the scaled output (otherwise 1 per building);
     /// +33 bit 0: the effect persists while the building isn't working.
     pub flags: [u8; 2],
+    /// Ours (ADR 0069): a mod's new kind plays the role of this original kind (its effect, its autobuild
+    /// categories); 0 = the kind itself, as every original.
+    pub like: u8,
+}
+
+impl Building {
+    /// The 36-byte `EpuletekLeiro` record `from_exe` reads.
+    pub fn raw(&self) -> [u8; 36] {
+        let mut r = [0; 36];
+        r[..4].copy_from_slice(&[self.tech, self.b1, self.priority, self.b3]);
+        for (at, v) in [(4, self.build_work), (8, self.max_hp), (12, self.energy), (16, self.workers), (20, self.output), (24, self.w24), (28, self.w28)] {
+            r[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        r[32..34].copy_from_slice(&self.flags);
+        r
+    }
+
+    /// The original kind whose role kind `kind` plays (ADR 0069).
+    pub fn role(&self) -> usize {
+        if self.like == 0 { self.index } else { self.like as usize }
+    }
+}
+
+/// A tech a mod added (ADR 0069): its key, the free slot it took and the texts it brings.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct AddedTech {
+    pub key: String,
+    pub index: usize,
+    /// Shown where the game's `txt17` line for the slot is still empty (`-` or missing).
+    pub name: String,
+    pub description: Vec<String>,
+}
+
+/// A building kind a mod added (ADR 0069).
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct AddedBuilding {
+    pub key: String,
+    pub kind: usize,
 }
 
 /// How the colony screen shows a building kind (`Building[k − 1]`, 0x6c bytes; `re/screens/colony.md` §3).
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct BuildingModel {
     /// `+0x00`: the model (`LoadMaxLevelBox` in `vector/colony/`).
     pub model: String,
@@ -591,6 +631,9 @@ pub struct Rules {
     /// `Talalmanyok` (exe 0xB9C0C8); a loaded save overwrites the per-empire state of each tech.
     pub tech_defaults: Vec<u8>,
     pub buildings: Vec<Building>,
+    /// The techs and building kinds mods added (ADR 0069), in the order they were added.
+    pub added_techs: Vec<AddedTech>,
+    pub added_buildings: Vec<AddedBuilding>,
     pub pod_types: Vec<PodType>,
     /// `[pod_table][hull][slot]`: 14 tables × 27 hulls × 12 slots.
     pub pod_slots: Vec<Vec<Vec<PodSlot>>>,
@@ -837,6 +880,7 @@ impl Rules {
                     research_time: i32_at(r, 56),
                     hp: i32_at(r, 32),
                     capacity: r[37],
+                    building: r[39],
                     unknown: [i32_at(r, 28), i32_at(r, 36), i32_at(r, 60), i32_at(r, 64), i32_at(r, 68) & 0xFF],
                     firepower: firepower[i],
                 }
@@ -861,6 +905,7 @@ impl Rules {
                     w24: i32_at(r, 24),
                     w28: i32_at(r, 28),
                     flags: [r[32], r[33]],
+                    like: 0,
                 }
             })
             .collect();
@@ -950,6 +995,8 @@ impl Rules {
             tech_defaults: tb.to_vec(),
             techs,
             buildings,
+            added_techs: Vec::new(),
+            added_buildings: Vec::new(),
             pod_types,
             pod_slots,
             race_pod_table: ints(layout::RACE_POD_TABLE)?,

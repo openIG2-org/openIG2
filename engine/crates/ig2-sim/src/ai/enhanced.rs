@@ -93,7 +93,10 @@ fn place(w: &World, e: usize, c: usize, reserve: f64, rank: fn(&Planet) -> i32) 
     let rules = &w.spy.side_rules;
     let range = |v: &Vec<i32>| v.get(c).copied().unwrap_or(0).max(0) as usize;
     let (lo, hi) = (range(&rules.autobuild.min), range(&rules.autobuild.max));
-    let kind = (lo..=hi).rev().find(|&k| rules.colony.buildings.get(k).is_some_and(|b| colony.tech.status(b.tech as usize, e) == status::OWNED))?;
+    let kind = (lo..=hi)
+        .flat_map(|k| std::iter::once(k).chain(rules.colony.kinds_like(k)))
+        .filter(|&k| rules.colony.buildings.get(k).is_some_and(|b| colony.tech.status(b.tech as usize, e) == status::OWNED))
+        .last()?;
     let cost = price(&colony.tech, w.race(e), rules.colony.buildings[kind].tech as usize);
     if colony.money[e].available(2) < cost as f64 + reserve {
         return None;

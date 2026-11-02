@@ -97,6 +97,8 @@ pub struct BuildingKind {
     pub scaled_effect: bool,
     /// +33 bit 0: the effect persists while not working.
     pub passive_effect: bool,
+    /// Ours (ADR 0069): a mod's kind plays this original kind's role (0 = its own, as every original).
+    pub like: u8,
 }
 
 /// One `ProblemakLeiro` entry.
@@ -136,6 +138,22 @@ pub struct ColonyRules {
     pub kidnap_morale: Vec<i32>,
     /// Per race production multiplier (`FajSpeckoGyartasKapacitasSzorzo`).
     pub race_production: Vec<f32>,
+}
+
+impl ColonyRules {
+    /// The original kind whose role building kind `kind` plays (ADR 0069): its own, unless a mod's kind is `like`
+    /// another. The economy's effects and the kinds it checks go by role, so a mod's kind counts as its original.
+    pub fn role(&self, kind: u8) -> usize {
+        match self.buildings.get(kind as usize) {
+            Some(k) if k.like != 0 => k.like as usize,
+            _ => kind as usize,
+        }
+    }
+
+    /// The mods' kinds that are `like` original kind `k` (ADR 0069), in kind order; none for the original tables.
+    pub fn kinds_like(&self, k: usize) -> impl Iterator<Item = usize> + '_ {
+        self.buildings.iter().enumerate().filter(move |(_, b)| k != 0 && b.like as usize == k).map(|(i, _)| i)
+    }
 }
 
 /// One building slot (32-byte instance, spec §2.2). Empty slots have `kind == 0`.
@@ -396,7 +414,7 @@ pub fn building_pass(planet: &mut Planet, rules: &ColonyRules, owner_is_human: b
             b.flags &= !flag::SWITCHED_OFF;
         }
         let k = &rules.buildings[b.kind as usize];
-        let damaged = k.max_hp < b.damage * 2 && !kind::DEFENCES.contains(&(b.kind as usize));
+        let damaged = k.max_hp < b.damage * 2 && !kind::DEFENCES.contains(&rules.role(b.kind));
         b.flags = (b.flags & !flag::DAMAGED) | if damaged { flag::DAMAGED } else { 0 };
         if b.flags & (flag::DAMAGED | flag::SWITCHED_OFF) == 0 {
             energy[k.priority as usize] += k.energy;
@@ -411,7 +429,7 @@ pub fn building_pass(planet: &mut Planet, rules: &ColonyRules, owner_is_human: b
     cut_to(&mut workers, planet.population);
     let factories_stopped = planet.has_event(event::FACTORIES_STOPPED);
     for b in planet.buildings.iter_mut() {
-        if factories_stopped && kind::FACTORIES.contains(&(b.kind as usize)) {
+        if factories_stopped && kind::FACTORIES.contains(&rules.role(b.kind)) {
             b.flags &= !flag::WORKING;
         }
         b.flags &= !(flag::NO_WORKERS | flag::NO_ENERGY);
@@ -429,7 +447,7 @@ pub fn building_pass(planet: &mut Planet, rules: &ColonyRules, owner_is_human: b
     let produced: i32 = planet
         .buildings
         .iter()
-        .filter(|b| b.working() && (b.kind == 1 || kind::POWER_PLANTS.contains(&(b.kind as usize))))
+        .filter(|b| b.working() && (rules.role(b.kind) == kind::COLONY_HUB || kind::POWER_PLANTS.contains(&rules.role(b.kind))))
         .map(|b| {
             let k = &rules.buildings[b.kind as usize];
             k.output * b.yield_pct as i32 * (k.max_hp - b.damage) / k.max_hp
@@ -451,8 +469,8 @@ pub fn building_pass(planet: &mut Planet, rules: &ColonyRules, owner_is_human: b
     }
 
     for b in planet.buildings.iter_mut().filter(|b| b.kind != 0) {
-        let t = b.kind as usize;
-        let k = &rules.buildings[t];
+        let k = &rules.buildings[b.kind as usize];
+        let t = rules.role(b.kind);
         let scaled = |eff: i16| k.output * b.yield_pct as i32 * eff as i32 / 256;
         if b.working() {
             b.shown_energy = k.energy as i16;
@@ -946,6 +964,21 @@ mod tests {
         assert_eq!((p.energy_produced, p.energy_demand), (900, 300));
         assert_eq!(fx.effect[19], 0);
         assert_eq!(fx.effect[1], 1);
+    }
+
+    #[test]
+    fn a_mods_kind_plays_the_role_of_the_kind_it_is_like() {
+        // Kind 56 (ADR 0069): a plant like 52 with twice the output.
+        let mut r = rules();
+        r.buildings.push(BuildingKind { output: 8, like: 52, ..r.buildings[52] });
+        assert_eq!((r.role(56), r.role(52), r.role(0)), (52, 52, 0));
+        assert_eq!(r.kinds_like(52).collect::<Vec<_>>(), [56]);
+        assert_eq!(r.kinds_like(0).count() + r.kinds_like(19).count(), 0);
+        let mut p = Planet { owner: 1, population: 1000, buildings: vec![b(52), b(56)], ..Default::default() };
+        let fx = building_pass(&mut p, &r, false);
+        // Energy as a power plant (4 + 8) × 100; the effect, the counts under the original kind.
+        assert_eq!(p.energy_produced, 1200);
+        assert_eq!((fx.active[52], fx.effect[52]), (2, 4 * 100 * 256 / 256 + 8 * 100 * 256 / 256));
     }
 
     #[test]

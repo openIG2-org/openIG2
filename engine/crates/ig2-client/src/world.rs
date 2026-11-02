@@ -309,6 +309,14 @@ impl Snapshot {
 }
 
 /// Where a fleet's order sends it: a point, a planet or another fleet (`+0x40` order, `+0x42` kind, `+0x44` target).
+/// A save played with a mod's building kind (ADR 0069) needs that mod: without it the kind has no rules.
+pub fn check_kinds(state: &SaveState, rules: &GameRules) -> Result<(), String> {
+    match state.unknown_kind(rules.side.colony.buildings.len()) {
+        Some(k) => Err(format!("the save has building kind {k}, which no active mod adds (enable the mods it was played with)")),
+        None => Ok(()),
+    }
+}
+
 fn target(map: &ig2_sim::fleet::Starmap, f: &ig2_sim::fleet::Fleet) -> Option<[f32; 2]> {
     use ig2_sim::fleet::order;
     if f.order == order::NONE {
@@ -592,12 +600,14 @@ impl<'r> World<'r> {
                 return Err("a multiplayer save (resume it from a multiplayer room)".into());
             }
             let (mut game, _) = snap.restore(rules).map_err(|e| e.to_string())?;
+            check_kinds(&game.state, rules)?;
             // As `World::load`: the client shows single player's real-time battles.
             game.sp_battles.live = true;
             let chunks = game.state.chunks();
             return Ok(Self::from_game(game, SavedView::from_chunks(|n| chunks.get(n).cloned())));
         }
         let save = SaveGame::parse(bytes).map_err(|e| e.to_string())?;
+        check_kinds(&SaveState::from_save(&save, tech_defaults), rules)?;
         Ok(Self::load(&save, rules, tech_defaults, volatile))
     }
 

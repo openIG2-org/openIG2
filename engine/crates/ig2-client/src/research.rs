@@ -1319,6 +1319,14 @@ pub fn tech_infos(install: &Install) -> Vec<[Vec<u8>; 3]> {
         let get = |i: usize| rec.get(i).map(|l| l.to_vec()).unwrap_or_default();
         out.push([get(1), get(2), get(3)]);
     }
+    // A mod's tech brings its own lines (ADR 0069), in the game's code page.
+    for a in crate::rules::added_techs(install).into_iter().filter(|a| !a.description.is_empty()) {
+        if out.len() <= a.index {
+            out.resize(a.index + 1, Default::default());
+        }
+        let line = |i: usize| a.description.get(i).map(|l| install.lang().encoding().encode(l).0.into_owned()).unwrap_or_default();
+        out[a.index] = [line(0), line(1), line(2)];
+    }
     out
 }
 

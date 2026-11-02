@@ -435,7 +435,21 @@ fn adat_i32(adat: &[u8], off: usize) -> i32 {
 }
 
 impl<'r> Game<'r> {
-    pub fn new(state: SaveState, rules: &'r GameRules) -> Self {
+    pub fn new(mut state: SaveState, rules: &'r GameRules) -> Self {
+        // A mod's tech (ADR 0069) in a game saved without the mod: the save left its free slot empty (every status 0,
+        // no prerequisites, cost or time), so it gets the mod's fields and is unknown (1) to every empire until its
+        // prerequisites are met.
+        if !rules.research.added_techs.is_empty() {
+            let mut techs = state.tech();
+            for (t, fields) in &rules.research.added_techs {
+                if (1..EMPIRES).all(|e| techs.status(*t, e) == 0) {
+                    let at = t * crate::colony_side::TECH_STRIDE + 0x2c;
+                    techs.bytes[at..at + 16].copy_from_slice(fields);
+                    (1..EMPIRES).for_each(|e| techs.set_status(*t, e, crate::colony_side::status::UNKNOWN));
+                }
+            }
+            state.store_tech(&techs);
+        }
         Self {
             state,
             rules,

@@ -537,13 +537,14 @@ impl ColonyWorld {
             work = (work as f64 / 1.5) as i32;
         }
         let mut y = 100u8;
-        if kind == kind::SOLAR {
+        let role = rules.colony.role(kind) as u8;
+        if role == kind::SOLAR {
             if planet.has_event(0x619) {
                 y = 0;
             } else if planet.has_event(0x5fb) {
                 y = ctx.story_value(0x5fb);
             }
-        } else if (19..=22).contains(&kind) {
+        } else if (19..=22).contains(&role) {
             if planet.has_event(0x60f) {
                 y = ctx.story_value(0x60f);
             } else if planet.has_event(0x669) {
@@ -553,10 +554,10 @@ impl ColonyWorld {
                 y = 0;
             }
         }
-        if kind == kind::MAGMA && planet.has_event(0x64b) {
+        if role == kind::MAGMA && planet.has_event(0x64b) {
             y = (y as f64 * 1.33) as i32 as u8;
         }
-        if (kind == kind::SOLAR && planet.surface == 3) || (kind == kind::MAGMA && planet.surface == 4) {
+        if (role == kind::SOLAR && planet.surface == 3) || (role == kind::MAGMA && planet.surface == 4) {
             y = (y as f64 * 1.5) as i32 as u8;
         }
         let owner = planet.owner;
@@ -787,7 +788,7 @@ impl Arrivals for ColonyArrivals<'_> {
         star.owner = pl.owner;
         star.visible = pl.visibility;
         star.epidemic = pl.epidemic;
-        star.has_hub = pl.buildings.iter().any(|b| b.kind == kind::COLONY_HUB as u8 && b.work_left == 0);
+        star.has_hub = pl.buildings.iter().any(|b| self.rules.colony.role(b.kind) == kind::COLONY_HUB && b.work_left == 0);
     }
 
     fn terraform(&mut self, p: usize, owner: u8) -> u8 {
@@ -910,9 +911,13 @@ impl ColonyWorld {
         let ab = &rules.autobuild;
         let tech = |t: usize| rules.colony.buildings[t].tech as usize;
         for c in 1..CATEGORIES {
+            // A mod's kind ranks right after the original it is like (ADR 0069).
             let range = ab.min[c].max(0) as usize..=ab.max[c].max(0) as usize;
-            self.autobuild_pick[c] =
-                range.rev().find(|&t| self.tech.status(tech(t), owner) == status::OWNED).unwrap_or(0) as i32;
+            self.autobuild_pick[c] = range
+                .flat_map(|k| std::iter::once(k).chain(rules.colony.kinds_like(k)))
+                .filter(|&t| self.tech.status(tech(t), owner) == status::OWNED)
+                .last()
+                .unwrap_or(0) as i32;
         }
         let pick = self.autobuild_pick;
         let mut have = [0i32; 17];
@@ -977,7 +982,7 @@ impl ColonyWorld {
                 let level = pl.problems.get(k).copied().unwrap_or(0);
                 let ok = (k == 0 || (lim * 10000 <= level && lim * 10000 <= targets[k]))
                     && (k > 0 || (pl.workers_demand + rules.colony.buildings[b].workers <= pl.population && c as i32 == want))
-                    && fx.inactive[b] == 0;
+                    && fx.inactive[rules.colony.role(b as u8)] == 0;
                 if !ok {
                     continue;
                 }
@@ -987,12 +992,12 @@ impl ColonyWorld {
                     (ab.min[c].max(0) as usize..=ab.max[c].max(0) as usize).map(|t| fx.inactive[t]).sum::<i32>()
                 };
                 n += fx.under_construction[1..=51].iter().sum::<i32>();
-                if n != 0 || (k == 10 && fx.effect[b] >= 4) {
+                if n != 0 || (k == 10 && fx.effect[rules.colony.role(b as u8)] >= 4) {
                     continue;
                 }
                 let mut s = if k == 0 { m.listed_priority * 10000 / 10 } else { level.checked_div(lim).unwrap_or(0) };
                 if k == 10 {
-                    s = (s as f32 / (3.0f32 - 2.0 / (fx.effect[b] as f32 + 1.0))) as i32;
+                    s = (s as f32 / (3.0f32 - 2.0 / (fx.effect[rules.colony.role(b as u8)] as f32 + 1.0))) as i32;
                 }
                 if best_s < s {
                     best_s = s;
@@ -1006,7 +1011,7 @@ impl ColonyWorld {
         // With no power-plant tech, category 1's building is 0 and the original reads `inactive[0]`, a
         // stack slot it never zeroes (it clears types 1..=55): see [`ZeroPick`].
         let b = pick[best_c].max(0) as usize;
-        if best_c == 0 || fx.inactive[b] > 0 || (b == 0 && self.zero_pick == ZeroPick::Skip) {
+        if best_c == 0 || fx.inactive[rules.colony.role(b as u8)] > 0 || (b == 0 && self.zero_pick == ZeroPick::Skip) {
             best_s = 0;
         }
         let score = (pl.autobuild_counter / 20 + (aggr + 2) * 10).wrapping_mul(best_s);
@@ -1040,7 +1045,7 @@ impl ColonyWorld {
                 } else {
                     self.add_money(e, 2, -(cost as f64), rules, ctx);
                     self.planets[b.planet].autobuild_counter = 0;
-                    if b.kind as usize == kind::TRADE_PORT {
+                    if rules.colony.role(b.kind as u8) == kind::TRADE_PORT {
                         let owner = self.planets[b.planet].owner as usize;
                         self.empires.bump_trade_ports(owner);
                     }
@@ -1081,7 +1086,7 @@ impl ColonyWorld {
             } else {
                 self.add_money(e, 2, -(cost as f64), rules, ctx);
                 self.planets[b.planet].autobuild_counter = 0;
-                if b.kind as usize == kind::TRADE_PORT {
+                if rules.colony.role(b.kind as u8) == kind::TRADE_PORT {
                     self.empires.bump_trade_ports(e);
                 }
                 events.push(SideEvent::AutobuildPlaced { empire: e as u8, planet: b.planet, kind, slot });

@@ -78,7 +78,9 @@ numbers, not a new file. So a mod may change named fields of the tables `ig2_rul
    lowest priority first, so the first mod in `enabled.txt` has the last word on a field, as with files. A tech
    patch also rewrites the same field in `tech_defaults` (the raw `Talalmanyok0` records the live tech table starts
    from, ADR 0004), so every reader — the sim's rules, the live tech table, the screens — sees one table. Saves keep
-   only the per-empire tech state over those defaults, so a patch applies to loaded saves too.
+   the per-empire tech state and each tech's `+0x2c..+0x3c` (prerequisites, labs, research cost and time) over
+   those defaults, so a patch of those four reaches new games only; the other fields apply to loaded saves too
+   (corrected in ADR 0069, which also made new games start from the patched tables).
 8. **Errors**: a patch that doesn't parse, or names an unknown table, field or id, or gives a value of the wrong kind
    or out of range, fails the load with the mod, table, id and field named (for an unknown field the known ones are
    listed). Nothing is half-applied: the client stops with the message. `ig2-check` checks each mod's `rules.toml`

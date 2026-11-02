@@ -16,6 +16,14 @@ use ig2_sim::spacewar::{DesignRules, GunRules, Hull};
 use ig2_sim::spacebattle::{FormRules, FormationSlot, ShipType, SpaceRules};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
 
+/// The techs the install's mods add (ADR 0069), for their texts; none (and no rules read) without rule patches.
+pub fn added_techs(inst: &Install) -> Vec<ig2_rules::AddedTech> {
+    match inst.rule_patches() {
+        Ok(p) if !p.is_empty() => ig2_rules::Rules::from_install(inst).map(|r| r.added_techs).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
 /// The rule tables and the `Talalmanyok0` defaults a save is loaded over.
 pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
     let r = ig2_rules::Rules::from_install(inst)?;
@@ -34,6 +42,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
                 output: b.output,
                 scaled_effect: b.flags[0] & 1 != 0,
                 passive_effect: b.flags[1] & 1 != 0,
+                like: b.like,
             })
             .collect(),
         curves: r.problem_curves.iter().map(|c| Curve { a: c.a, b: c.b, c: c.c, d: c.d, rate: c.rate, weight: c.weight }).collect(),
@@ -95,6 +104,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
             race_money: r.race_research_money_mult.clone(),
             difficulty_speed: r.difficulty_development_mult.clone(),
             difficulty_money: r.difficulty_money_mult.clone(),
+            added_techs: ResearchRules::added(r.added_techs.iter().map(|a| a.index), &r.tech_defaults),
         },
         diplomacy: DiplomacyRules {
             surface_affinity: r.race_surface_affinity.concat(),

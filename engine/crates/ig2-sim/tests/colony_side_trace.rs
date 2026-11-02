@@ -89,6 +89,7 @@ fn rules(inst: &Install, statics: &Value) -> SideRules {
                 output: b.output,
                 scaled_effect: b.flags[0] & 1 != 0,
                 passive_effect: b.flags[1] & 1 != 0,
+                like: b.like,
             })
             .collect(),
         curves: r.problem_curves.iter().map(|c| Curve { a: c.a, b: c.b, c: c.c, d: c.d, rate: c.rate, weight: c.weight }).collect(),

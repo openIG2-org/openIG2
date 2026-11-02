@@ -280,6 +280,37 @@ The tables and their fields are listed in ADR 0044 §6 (`techs`, `buildings`, `h
 When several mods change the same field, the one higher in `enabled.txt` wins. A wrong table, id or field starts the
 game without the mods, and the Mods page and `ig2-check` show the message naming the mod and the field.
 
+A `rules.toml` can also add techs and building kinds (ADR 0069). A new tech takes a free field of a research
+category (the empty `-` entries of the research screen); a new building is a new kind that starts as a copy of an
+original kind (`like`) and does what that kind does: a power plant gives energy, a house living space. Example: a
+reactor researched after the Mezon plant, built like it, with more output:
+
+```toml
+[[techs.new]]
+key = "fusion_reactor"        # your own name for it; other entries use it
+category = 9                  # power plants (6 civil, 7 research, 8 military, 9 power plants)
+name = "Fusion reactor"
+description = ["A plant that fuses the colony's", "waste into energy."]
+prerequisites = [135]         # the Mezon plant's tech (numbers as ig2-rules-dump prints them)
+research_cost = 40000
+research_time = 120
+price = 9000
+build_time = 30
+ai_priority = 8               # computer empires research lower numbers first
+
+[[buildings.new]]
+key = "fusion_reactor"
+like = 55                     # the Mezon plant: model, footprint, role
+tech = "fusion_reactor"       # its price and name come from this tech
+output = 400
+workers = 600
+max_hp = 3000
+```
+
+The tech appears on the research screen once the Mezon plant is researched, and the plant in the colony's build list
+once the tech is; computer empires research and build it too. Other fields and the limits are in ADR 0069; `ig2-check`
+shows where each new entry landed. Saves made with the mod need it to load.
+
 A mod can also add stories: a `stories.toml` at the top of the mod folder lists `[[story]]` tables, each with `when`
 triggers and `do` actions, that fire once after the built-in stories. The format is in ADR 0061; `ig2-check` validates the file.
 

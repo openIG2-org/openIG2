@@ -116,6 +116,7 @@ fn research_matches_every_traced_tick() {
         race_money: r.race_research_money_mult.clone(),
         difficulty_speed: r.difficulty_development_mult.clone(),
         difficulty_money: r.difficulty_money_mult.clone(),
+        added_techs: ResearchRules::added(r.added_techs.iter().map(|a| a.index), &r.tech_defaults),
     };
     for p in paths {
         replay_research(&p, &rules);
