@@ -45,11 +45,14 @@ pub struct DesignScene {
     target: Option<Target>,
     /// `DES_MSK.RAW`: the hot-spots' colours.
     pub mask: Vec<u8>,
+    /// Ours (ADR 0075): under the modern panels the console is not drawn (the hull, its pods, the tech models and
+    /// the wire sphere are).
+    pub modern: bool,
 }
 
 impl DesignScene {
     pub fn new(r: &mut Renderer, install: &Install) -> Self {
-        Self { models: HashMap::new(), textures: HashMap::new(), white: r.add_texture(&Image::white()), target: None, mask: crate::design::mask(install) }
+        Self { models: HashMap::new(), textures: HashMap::new(), white: r.add_texture(&Image::white()), target: None, mask: crate::design::mask(install), modern: false }
     }
 
     fn model(&mut self, r: &mut Renderer, install: &Install, vdir: &str, name: &str, tdir: &str, frame: Option<usize>) -> Option<Model> {
@@ -135,7 +138,7 @@ impl DesignScene {
         // `desSetGombFrame(DesMelyikGombot, DesGombFrame)`: the pressed button (child 6 → b) at `f + 60`, once open.
         let pressed = s.button_frame().filter(|_| s.opened && !s.closing && s.frame >= 60.0);
         let pressed = pressed.and_then(|(b, f)| Some((b, self.console(r, install, f)?)));
-        if let Some(m) = self.console(r, install, s.frame) {
+        if let Some(m) = self.console(r, install, s.frame).filter(|_| !self.modern) {
             let t = Placement::add_to_scene(m.origin, 1.1).world((0.0, 0.0, 0.0), [0.0, 0.0, z]);
             let under = |p: &scene::Part, b: u16| p.index.len() >= 2 && p.index[0] == BUTTONS && p.index[1] == b;
             let parts: Vec<&scene::Part> = match &pressed {

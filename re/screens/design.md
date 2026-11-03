@@ -419,6 +419,7 @@ stream), the exe frame order (§8: `design_main` after the 3D update and draw, o
 seeing press and release a frame late), every sound in order and tick.
 Missing: the 3D pass's one-frame-late pointer (the hover marker may start a tick early); the first marked frame's
 part-tint (the client tints the whole model).
+With "Modern design screen" (`ModernDesign`, default on; ADR 0075) the screen is design-kit panels around the turning hull acting through the hot-spots' own code; classic stays when off.
 Open `re/deviations.md` rows: 66 (hull turn phase), 84, 114 (first marked
 frame tint), 229 (one frame of 2D latency, found here), 359.
 Captures: `run_screendiff.py <install> quick-1.sav design` (still after 600 UI ticks), with `--script

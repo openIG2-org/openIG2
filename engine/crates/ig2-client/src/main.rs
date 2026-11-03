@@ -117,6 +117,7 @@ mod starmap_menus;
 mod starmap_modern;
 mod colony_modern;
 mod fleet_modern;
+mod design_modern;
 mod production_modern;
 mod research_modern;
 mod spacewar_fx;
@@ -235,6 +236,14 @@ pub struct Options {
     /// `--stage-win DAYS`: once the game has run DAYS days every other empire dies, so the next tick's victory check
     /// ends it as won (the game-end trace's staging, re/rules/game-end.md §10; tests the end and its statistics).
     pub stage_win: Option<u32>,
+    /// `--stage-queue`: the snapshot's selected planet gets a production queue (`starmap_panels::stage_queue`).
+    pub stage_queue: bool,
+    /// `--modern-design [--design-edit K]`: the design screen's modern panels (ADR 0075), modifying the chosen design
+    /// with pod K's tech list open.
+    pub modern_design: bool,
+    pub design_edit: Option<usize>,
+    /// `--design-row N`: the list's row chosen first.
+    pub design_row: Option<usize>,
     /// `--watch FILE`: the window opens this replay in the viewer (ADR 0038 §6).
     pub watch: Option<PathBuf>,
     /// `--trade-eta N`: the unsaved `AktEtaDays` (the trade screen's delivery time) as the exe had it.
@@ -382,6 +391,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
         ui_frames: 150,
         trade_cheat: false,
         stage_win: None,
+        stage_queue: false,
+        modern_design: false,
+        design_edit: None,
+        design_row: None,
         watch: None,
         trade_eta: None,
         dkm: None,
@@ -514,6 +527,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--show-message" => o.show_message = Some(val()?.parse().map_err(|e| format!("--show-message: {e}"))?),
             "--trade-cheat" => o.trade_cheat = true,
             "--watch" => o.watch = Some(PathBuf::from(val()?)),
+            "--stage-queue" => o.stage_queue = true,
+            "--modern-design" => o.modern_design = true,
+            "--design-row" => o.design_row = Some(val()?.parse().map_err(|e| format!("--design-row: {e}"))?),
+            "--design-edit" => o.design_edit = Some(val()?.parse().map_err(|e| format!("--design-edit: {e}"))?),
             "--stage-win" => o.stage_win = Some(val()?.parse().map_err(|e| format!("--stage-win: {e}"))?),
             "--dkm" => {
                 let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse().map_err(|e| format!("--dkm: {e}"))).collect::<Result<_, _>>()?;

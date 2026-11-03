@@ -1043,12 +1043,13 @@ impl Hud {
             let name = |d: usize| Some(dec(&Panels::design_name(state, d))).filter(|n| !n.is_empty()).unwrap_or_else(|| "—".into());
             m::Line {
                 title: dec(&self.texts.ours(if l == 0 { "Ships" } else { "Vehicles" })),
-                capacity: (dec(&self.texts.get(2, 4, 3)), if line.capacity < 1 { dec(&self.texts.get(2, 4, 2)) } else { line.capacity.to_string() }),
+                capacity: (dec(&self.texts.get(2, 4, 3)).trim_end_matches([':', ' ']).to_string(), if line.capacity < 1 { dec(&self.texts.get(2, 4, 2)) } else { line.capacity.to_string() }),
                 working: line.capacity >= 1,
                 progress: line.progress.map(|w| w as f32 / 76.0),
                 slots: std::array::from_fn(|k| {
                     line.slots[k].as_ref().map(|(d, n, count, price)| m::Slot {
                         name: dec(n),
+                        kind: Panels::design_hull_price(state, *d).map(|(t, _)| dec(&crate::hud::tech_name(&self.texts, t.clamp(0, 192) as usize))).unwrap_or_default(),
                         count: *count,
                         price: format!("${price}"),
                         repeat: line.repeat[k],
@@ -1056,7 +1057,16 @@ impl Hud {
                         station: Panels::is_station(state, *d),
                     })
                 }),
-                designs: Panels::line_designs(state, l).into_iter().map(|d| (d, name(d), d == 0 || !full || !Panels::is_station(state, d))).collect(),
+                designs_in: std::array::from_fn(|k| line.slots[k].as_ref().map_or(0, |s| s.0)),
+                designs: Panels::line_designs(state, l)
+                    .into_iter()
+                    .map(|d| m::Entry {
+                        design: d,
+                        name: name(d),
+                        price: Panels::design_hull_price(state, d).filter(|_| d > 0).map(|(_, p)| format!("${p}")).unwrap_or_default(),
+                        ok: d == 0 || !full || !Panels::is_station(state, d),
+                    })
+                    .collect(),
             }
         });
         m::View {
@@ -1065,6 +1075,15 @@ impl Hud {
             exit: dec(&self.texts.get(2, 4, 4)),
             exit_locked: panels.locks.exit,
             tips: [tip(0xc), tip(0xd), tip(0xe), tip(0xf), tip(0x10), tip(0x11), tip(0x12), tip(0x13), tip(0x23)],
+            labels: m::Labels {
+                empty: dec(&self.texts.ours("Empty")),
+                free: dec(&self.texts.ours("Free slot")),
+                no_design: dec(&self.texts.ours("No design chosen")),
+                design: dec(&self.texts.ours("Blueprint")),
+                slot: dec(&self.texts.ours("Slot {}")),
+                repeat: dec(&self.texts.ours("Repeat")),
+                into_fleet: dec(&self.texts.ours("Into fleet")),
+            },
         }
     }
 
@@ -1091,24 +1110,28 @@ impl Hud {
         let list = (1..=16).filter_map(|k| {
             let t = ((r.area - 1) * 16 + k).min(192);
             let st = techs.status(t, en);
-            (st >= 2).then(|| m::Tech { field: k as i32, name: dec(&crate::hud::tech_name(&self.texts, t)), status: st, pct: pct(t) })
+            let cost = if st == 3 { crate::starmap_modern::money(crate::research::days_and_cost(state, rules, &techs, t, en).1 as f64) } else { String::new() };
+            (st >= 2).then(|| m::Tech { field: k as i32, name: dec(&crate::hud::tech_name(&self.texts, t)), status: st, pct: pct(t), cost })
         }).collect();
         let detail = (r.field != -1).then(|| {
             let t = r.tech.clamp(0, 192) as usize;
             let status = techs.status(t, en);
-            let pre: Vec<String> = techs.prerequisites(t).iter().filter(|&&p| p != 0).map(|&p| dec(&crate::hud::tech_name(&self.texts, p))).collect();
-            let need = format!("{}: {}", dec(&self.texts.get(4, 2, 1)), if pre.is_empty() { dec(&self.texts.get(4, 2, 2)) } else { pre.join(", ") });
+            let mut pre: Vec<(String, bool)> = techs.prerequisites(t).iter().filter(|&&p| p != 0).map(|&p| (dec(&crate::hud::tech_name(&self.texts, p)), techs.status(p, en) == 5)).collect();
+            if pre.is_empty() {
+                pre.push((dec(&self.texts.get(4, 2, 2)), true));
+            }
+            let label = |b: &[u8]| dec(b).trim_end_matches([':', ' ']).to_string();
+            let need = (label(&self.texts.get(4, 2, 1)), pre);
             let labs = crate::research::labs(state, en);
             let needed = techs.labs_needed(t);
             let (days, cost) = crate::research::days_and_cost(state, rules, &techs, t, en);
             m::Detail {
                 name: dec(&crate::hud::tech_name(&self.texts, t)),
-                status,
                 info: infos.get(t).map(|l| l.iter().map(|x| dec(x)).filter(|x| !x.is_empty()).collect()).unwrap_or_default(),
                 need,
                 labs: (0..3).filter(|&i| needed[i] != 0).map(|i| (needed[i] as i32, labs[i + 1], t4(0x11 + i as u16), t4(0x14 + i as u16))).collect(),
-                days: (status < 5).then(|| format!("{}: {days}", dec(&self.texts.get(4, 2, 5)))),
-                cost: (status < 5).then(|| format!("{}: {}", dec(&self.texts.get(4, 2, 6)), crate::starmap_modern::money(cost as f64))),
+                days: (status < 5).then(|| (label(&self.texts.get(4, 2, 5)), days.to_string())),
+                cost: (status < 5).then(|| (crate::starmap_modern::money(cost as f64), crate::starmap_modern::money(2.0 * cost as f64))),
             }
         });
         let cur = (current > 0).then(|| {
@@ -1122,7 +1145,8 @@ impl Hud {
             }
         });
         let ours = |e: &str| dec(&self.texts.ours(e));
-        let auto = crate::research::AUTO.map(|(bit, label, _)| (ours(label), r.auto_shown() & bit != 0));
+        let auto_names = ["Ships", "Buildings", "Tanks"];
+        let auto = std::array::from_fn(|i| (ours(auto_names[i]), r.auto_shown() & crate::research::AUTO[i].0 != 0));
         let auto_tips = crate::research::AUTO.map(|(_, _, tip)| ours(tip));
         m::View {
             bar: self.bar_view(state, rules, s, en as u8, gates, time, 4),
@@ -1136,9 +1160,91 @@ impl Hud {
             start_on: !r.button_pressed && (current > 0 || r.can_start(state)),
             urgent: r.urgent,
             auto,
-            labels: [t4(6), t4(0x18), t4(0x17), ours("No research")],
+            labels: m::Labels {
+                start: t4(6),
+                stop: t4(0x18),
+                jump: t4(0x17),
+                none: ours("No research"),
+                done: ours("Done"),
+                locked: ours("Locked"),
+                funding: ours("Funding"),
+                normal: ours("Normal"),
+                double: ours("Double money"),
+                labs: ours("Labs"),
+                auto: ours("Auto research"),
+                on: ours("ON"),
+                off: ours("OFF"),
+                exit: ours("Exit"),
+                groups: [ours("Ships and weapons"), ours("Buildings"), ours("Vehicles")],
+            },
             tips: [t4(if current > 0 { 0x18 } else { 6 }), t4(0x17), t4(8), auto_tips[0].clone(), auto_tips[1].clone(), auto_tips[2].clone()],
         }
+    }
+
+    /// Ours (ADR 0075): what the modern design screen shows, from the state `DesignGfx2D_1` and `_2` read
+    /// (re/screens/design.md §5.3, §5.4).
+    #[allow(clippy::too_many_arguments)]
+    pub fn design_modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, s: &UiSnap, d: &crate::design::Design, tips: &[Vec<u8>], gates: Option<&[bool; 20]>, time: f32) -> crate::design_modern::View {
+        use crate::design::{field, name, pod_count};
+        use crate::design_modern as m;
+        let lang = self.texts.lang;
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
+        let ours = |e: &str| dec(&self.texts.ours(e));
+        let label = |k: u16| dec(&self.texts.get(5, 2, k)).trim_end_matches([':', ' ']).to_string();
+        let tech = |t: i32| dec(&crate::hud::tech_name(&self.texts, t.clamp(0, 192) as usize));
+        let i32_at = |r: &[u8], o: usize| i32::from_le_bytes(r[o..o + 4].try_into().unwrap());
+        let i16_at = |r: &[u8], o: usize| i16::from_le_bytes([r[o], r[o + 1]]);
+        let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
+        let techs = state.tech();
+        let all = state.designs.get(en).map_or(&[][..], |x| &x[..]);
+        let hull_obsolete = |r: &[u8]| techs.byte(i32_at(r, field::HULL_TECH).clamp(0, 192) as usize, 0x26) & 1 != 0;
+        let rows = (1..=d.count())
+            .filter_map(|n| all.get(d.order[n]).map(|r| m::Row { n, name: dec(name(r)), kind: tech(i32_at(r, field::HULL_TECH)), off: hull_obsolete(r) || r[field::OBSOLETE] != 0 }))
+            .collect();
+        let mut v = m::View { rows, pointer: d.pointer, pod: d.pod, editing: d.mode != 0, ..Default::default() };
+        if let Some(r) = d.edited(state) {
+            let time = ((i32_at(r, field::EFFORT) as f64 / 0.03) / 1000.0 / 50.0) as i64;
+            v.left = vec![(label(5), tech(i32_at(r, field::HULL_TECH))), (label(7), format!("${}", i32_at(r, field::PRICE)))];
+            v.right = vec![(label(6), time.to_string()), (label(8), crate::design::units_of(state, en, d.current()).to_string())];
+            if let Some(cap) = d.record(state).map(|x| x[field::TANKS]).filter(|&c| c != 0) {
+                v.right.push((label(9), cap.to_string()));
+            }
+            let speed = if r[field::NO_SPEED] != 0 {
+                "-".to_string()
+            } else {
+                let x = f32::from_le_bytes(r[field::SPEED..field::SPEED + 4].try_into().unwrap());
+                (if r[field::QUARTER_SPEED] != 0 { ((x * 100.0 + 0.5) as i32 as f64 / 4.0) as i64 } else { (x * 100.0 + 0.5) as i64 }).to_string()
+            };
+            v.stats = vec![(label(2), speed), (label(3), i32_at(r, field::FIREPOWER).to_string()), (label(4), i32_at(r, field::HP).to_string())];
+            v.name = dec(name(r));
+            let (race, hull) = (i16_at(r, field::RACE), i32_at(r, field::HULL));
+            v.pods = (1..=pod_count(rules, race, hull))
+                .map(|k| {
+                    let t = r[0x50 + k] as i32;
+                    let max = crate::design::max_fitted(rules, &techs, race, hull, k, t);
+                    let mut class = dec(&crate::design::pod_type_name(&self.texts, rules, race, hull, k));
+                    if t != 0 && max > 1 {
+                        class = format!("{class} · max {max}");
+                    }
+                    m::Pod { k, class, tech: if t == 0 { String::new() } else { tech(t) }, count: r[0x5d + k] as i32, counts: d.spot_state(state, &techs, rules, 0x34 + 2 * k as u32) }
+                })
+                .collect();
+        }
+        v.entry = d.entry.as_ref().map(|e| (dec(&e.text), e.cursor));
+        let empty = ours("Empty");
+        v.popup = d.popup.as_ref().map(|p| match p {
+            crate::design_edit::Popup::Base { items, .. } => m::Popup { button: 1, rows: items.iter().map(|&b| (b as i32, tech(rules.hulls.get(b).map_or(0, |h| h.tech)))).collect() },
+            crate::design_edit::Popup::Delete { text, .. } => m::Popup { button: 4, rows: vec![(1, dec(text))] },
+            crate::design_edit::Popup::ModifyOk { rows, .. } => m::Popup { button: 5, rows: rows.iter().enumerate().map(|(i, r)| (i as i32 + 1, dec(r))).collect() },
+            crate::design_edit::Popup::PodRow { items } => m::Popup { button: 0x54, rows: items.iter().map(|&t| (t as i32, if t == 0 { empty.clone() } else { tech(t as i32) })).collect() },
+        });
+        let on = |id: u32| d.sub_zoom == 0.0 && d.spot_state(state, &techs, rules, id);
+        let names = if d.mode != 0 { [(5, "OK"), (6, "Cancel"), (7, "Auto"), (8, "Clear")] } else { [(1, "New"), (2, "Redesign"), (3, "Modify"), (4, "Delete")] };
+        v.buttons = names.map(|(id, l)| (id, ours(l), on(id)));
+        v.labels = m::Labels { designs: ours("Blueprints"), parts: ours("Parts"), pods: ours("POD"), empty, choose: ours("Choose"), exit: ours("Exit"), name: label(1) };
+        v.tips = tips.iter().map(|t| dec(t)).collect();
+        v.bar = self.bar_view(state, rules, s, en as u8, gates, time, 5);
+        v
     }
 
     /// Ours (ADR 0070): what the modern colony screen shows this frame, from the state the classic panels read.
@@ -1351,6 +1457,19 @@ impl Hud {
         r.draw_over(f, &d, state, rules, &crate::research::Texts { infos, arrow });
         let t = r.tip_text(tips, &self.texts, r.tip.shown);
         r.tip.draw(f, font, self.white, &d.v, &self.palette, &t);
+    }
+
+    /// Ours (ADR 0071): the research screen's 3D part under the modern panels: the wire sphere's and the models'
+    /// wireframes (additive), then the models.
+    pub fn draw_research_scene(&self, f: &mut Frame, r: &crate::research::Research, models: Option<TexId>, lines: Vec<crate::render::Instance>, size: [f32; 2], time: f32) {
+        let Some(font) = &self.font else { return };
+        let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
+        for l in lines {
+            f.push(self.white, crate::render::Blend::GammaAdditive, l);
+        }
+        if let Some(m) = models {
+            r.draw_models(f, &d, m);
+        }
     }
 
     /// The design screen's 2D pass over its scene (re/screens/design.md §5): the faders, the scroll bar, the

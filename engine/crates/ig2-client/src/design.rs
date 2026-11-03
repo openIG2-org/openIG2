@@ -68,7 +68,7 @@ const HULL_TURN: (f32, f32, f32) = (1.047_166_7, 0.785_375, 0.0);
 
 /// `Des_Hangok` (`InitSounds(Des_Hangok, 4)`): screen21 (opening), be1 (a hull loaded), ki1 (the list), screen23
 /// (closing).
-fn des(i: u16) -> SoundId {
+pub(crate) fn des(i: u16) -> SoundId {
     SoundId::new(Table::Des, i)
 }
 

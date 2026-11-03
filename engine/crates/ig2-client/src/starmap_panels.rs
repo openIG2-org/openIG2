@@ -405,6 +405,28 @@ pub fn queue(state: &SaveState, p: usize) -> [QueueLine; 2] {
     })
 }
 
+/// `--stage-queue` (snapshots): planet `p`'s lines given capacity and their first designs queued (the line's first
+/// three for ships with the head unit 42 % built, two vehicles), the lamps mixed; the production view's still.
+pub fn stage_queue(state: &mut SaveState, p: usize) {
+    let at = va::PLANETS + (p * PLANET_SIZE) as u32;
+    for l in 0..2 {
+        state.mem.set_i32(at + 0x70 + 4 * l as u32, [1000, 200][l]);
+        state.mem.set_u8(at + 0xa8 + l as u32, 0);
+        let designs: Vec<usize> = Panels::line_designs(state, l).into_iter().filter(|&d| d > 0 && !Panels::is_station(state, d)).take(3 - l).collect();
+        for (k, &d) in designs.iter().enumerate() {
+            let k = k as u32;
+            state.mem.write(at + 0x78 + 8 * l as u32 + 2 * k, &(d as i16).to_le_bytes());
+            state.mem.set_u8(at + 0x88 + 4 * l as u32 + k, [3, 12, 1][k as usize]);
+            state.mem.set_u8(at + 0x90 + 4 * l as u32 + k, (k == 1) as u8);
+            state.mem.set_u8(at + 0xad + 4 * l as u32 + k, (k == 0) as u8);
+        }
+        if let Some(&d) = designs.first() {
+            let time = design(state, en(state), d).map_or(0, |r| i32_at(r, 0x20));
+            state.mem.set_i32(at + 0xa0 + 4 * l as u32, time * 58 / 100);
+        }
+    }
+}
+
 /// One row of the transfer panel: a design and how many of it each side holds (ships, or the vehicles' counts).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Row {
@@ -982,6 +1004,11 @@ impl Panels {
         design(state, en(state), d).map(|r| cstr(&r[..0x14]).to_vec()).unwrap_or_default()
     }
 
+    /// Ours (ADR 0071): a design of the player's hull research entry and unit price (`+0x48`, `+0x24`).
+    pub fn design_hull_price(state: &SaveState, d: usize) -> Option<(i32, i32)> {
+        design(state, en(state), d).map(|r| (i32_at(r, crate::design::field::HULL_TECH), i32_at(r, crate::design::field::PRICE)))
+    }
+
     /// Line `l` of planet `p` can take no more stations: `+0x114` built plus the line's queued ones reach 8.
     pub fn stations_full(state: &SaveState, p: usize, l: usize) -> bool {
         let r = planet(state, p);
@@ -1420,6 +1447,8 @@ pub struct PanelModels {
     /// (`SInfoOldFleet`: a new fleet starts the turn again).
     flags: HashMap<u8, Option<Loaded>>,
     flag_fleet: Option<(usize, f32)>,
+    /// Ours (ADR 0071): the modern production view's slot pictures ([`PanelModels::render_thumbs`]).
+    thumb_target: Option<Target>,
 }
 
 /// `TransfAlap` `+0x34`: where the hull's model and its textures are (`ShowStarmap`, `ProductGFX`).
@@ -1434,7 +1463,7 @@ fn transfer_dirs(dir: i32) -> (&'static str, &'static str) {
 impl PanelModels {
     pub fn new(r: &mut Renderer) -> Self {
         let white = r.add_texture(&crate::assets::Image::white());
-        Self { prod: HashMap::new(), units: HashMap::new(), textures: HashMap::new(), white, target: None, globe: None, globes: HashMap::new(), globe_target: None, flags: HashMap::new(), flag_fleet: None }
+        Self { prod: HashMap::new(), units: HashMap::new(), textures: HashMap::new(), white, target: None, globe: None, globes: HashMap::new(), globe_target: None, flags: HashMap::new(), flag_fleet: None, thumb_target: None }
     }
 
     /// The info box's planet picture (`StarmapLoadInfoBolygo` ELF 0x6d3950, `StarmapFrissitBolygoUrhajok` 0x6d3d40,
@@ -1582,6 +1611,41 @@ impl PanelModels {
             self.units.insert(key, loaded);
         }
         self.units.get(&key).and_then(|l| l.as_ref())
+    }
+
+    /// Ours (ADR 0071): the modern production view's slot pictures, each queued design's hull (as the head units:
+    /// the race digit, the vehicle skin, the tilt) turning 0.02 a UI frame in its own cell of a window-sized texture:
+    /// slot `r = k + 4L` centred at [`thumb_cell`]'s point, 72 virtual pixels across its largest half-extent, at the
+    /// transfer panel's depth. `None` when no slot has a design.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_thumbs(&mut self, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, state: &SaveState, sel: &Selection, cam: &[[f32; 3]; 3], size: [f32; 2], frames: f32) -> Option<TexId> {
+        let q = queue(state, sel.planet);
+        let owner = planet(state, sel.planet)[0x20];
+        let races = state.races();
+        let e = en(state);
+        let l = [10.0, 10.0, -10.0];
+        let lights = lighting::Lights::default().ambient(0x404040).parallel(0x808080, std::array::from_fn(|i| cam[i][0] * l[0] + cam[i][1] * l[1] + cam[i][2] * l[2]));
+        let spin = scene::mul(&scene::axis_matrix([0.0, (-0.5f32).cos(), (-0.5f32).sin()], 0.02 * frames), &tilt());
+        let (mut dynamic, mut draws) = (Vec::new(), Vec::new());
+        const S: f32 = 72.0 / 1024.0;
+        for (line, ql) in q.iter().enumerate() {
+            for (k, slot) in ql.slots.iter().enumerate() {
+                let Some(rec) = slot.as_ref().and_then(|s| design(state, owner, s.0)) else { continue };
+                let hull = i32_at(rec, 0x44).max(0) as usize;
+                let digit = if line == 0 { races.get(i16_at(rec, 0x40).clamp(0, 18) as usize).copied().unwrap_or(0) } else { races.get(e as usize).copied().unwrap_or(0) };
+                let digit = rules.race_role(digit as usize) as u8;
+                let [x, y] = thumb_cell(k + 4 * line);
+                if let Some(u) = self.unit(r, install, rules, hull, digit, owner, S, -600.0) {
+                    let m = scene::mul(&spin, &Placement::add_to_scene(u.model.origin, S).matrix).map(|x| x * 1024.0);
+                    let (model, texs, glows) = (u.model.clone(), u.texs.clone(), u.glows.clone());
+                    bake(&model, &m, [x - 320.0, y - 250.0, -600.0], &texs, &glows, 1.0, &lights, &mut dynamic, &mut draws);
+                }
+            }
+        }
+        if dynamic.is_empty() {
+            return None;
+        }
+        Some(finish(r, &mut self.thumb_target, dynamic, draws, size))
     }
 
     /// Render the panels' models into their texture (`None` when nothing is shown). `size` = the window in pixels,
@@ -1738,6 +1802,12 @@ fn finish(r: &mut Renderer, target: &mut Option<Target>, dynamic: Vec<MeshVertex
 }
 
 /// `RotateObj(π/2, 0, 0)` then `RotateObj2((1, 0, 0), −0.5)`: the panels' models stand up and lean towards the eye.
+/// Ours (ADR 0071): slot `r`'s cell centre in [`PanelModels::render_thumbs`]'s texture (virtual 640 × 480): four
+/// 160-wide columns, the lines' two rows 240 apart, so no turning hull reaches a neighbour's 160 × 90 picture.
+pub fn thumb_cell(r: usize) -> [f32; 2] {
+    [80.0 + 160.0 * (r % 4) as f32, 120.0 + 240.0 * (r / 4) as f32]
+}
+
 pub(crate) fn tilt() -> M3 {
     scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], -0.5), &scene::create_matrix(std::f32::consts::FRAC_PI_2, 0.0, 0.0))
 }

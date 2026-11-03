@@ -1756,6 +1756,9 @@ pub struct ResearchModels {
     pub glow: Option<TexId>,
     /// The button lines' arrowhead (`LoadNyilszar` exe 0x59d8f0: `textures/starmap/nyilhegy.bmp`).
     pub arrow: Option<TexId>,
+    /// Ours (ADR 0071): under the modern panels only the wire sphere, the ball and the tech models are drawn, not
+    /// the console.
+    pub modern: bool,
 }
 
 /// The camera: `vx = 600·x/w + 320`, `vy = 600·y/w + 250` (w = −z), like the starmap's panels.
@@ -1794,7 +1797,7 @@ impl ResearchModels {
         let mask = Self::mask(install);
         let mut load = |name| install.resolve_texture("textures/starmap/", name).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img));
         let (glow, arrow) = (load("laservago.bmp"), load("nyilhegy.bmp"));
-        Self { frames: HashMap::new(), ball: None, techs: HashMap::new(), textures: HashMap::new(), white, target: None, mask, centres: Vec::new(), glow, arrow }
+        Self { frames: HashMap::new(), ball: None, techs: HashMap::new(), textures: HashMap::new(), white, target: None, mask, centres: Vec::new(), glow, arrow, modern: false }
     }
 
     /// `RESE_MSK.RAW` (kep 0x58): a 32-byte `mhwanh` header (640 × 480), a 768-byte palette, then the pixels.
@@ -1979,7 +1982,7 @@ impl ResearchModels {
         };
         let mozgato = ((1.0 - s.frame / 60.0) * 26.0 + 3.0) as i32 as f32;
         let place = |m: &Model| Placement::add_to_scene(m.origin, 0.95).world((0.0, 0.0, 0.0), [0.0, mozgato, -650.0]);
-        if let Some(m) = self.console(install, s) {
+        if let Some(m) = self.console(install, s).filter(|_| !self.modern) {
             let t = place(&m);
             for p in &m.parts {
                 if hidden(p) {

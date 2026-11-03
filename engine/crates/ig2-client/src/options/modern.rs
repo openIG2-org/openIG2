@@ -250,6 +250,7 @@ pub fn describe(key: &str) -> &'static str {
         "ModernColony" => "The colony's build menu, info card, buttons, radar and ground war panels as modern panels; off = the original's.",
         "ModernInfo" => "The info screen's empires, sortable planet and fleet list, details, money, charts and star log as modern panels; off = the original's.",
         "ModernCursors" => "Sharp pointers in the design's colours, animated, with a modern UI theme; off = the original's.",
+        "ModernDesign" => "The ship and vehicle design screen as modern panels around the turning hull; off = the original's.",
         "ModernMainMenu" => "The main menu as a modern grouped menu with Continue; off = the original's rings.",
         "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",
         _ => "",

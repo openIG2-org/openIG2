@@ -17,6 +17,10 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 491 | starmap, long info | open-investigate: the tanks button (hot-spot 10) ends the long info and opens the vehicle transfer (`AktRopIkon` 1) in the exe; ours ignores it (classic and modern); to verify live | yes | starmap.md §15.1 |
 | 492 | starmap, long info | open-investigate: a right release on the info box opens the colony screen in the exe; ours ignores it; to verify live | yes | starmap.md §15.1 |
 | 493 | starmap, station sale menu | open-fix: the hover width is the design name's length; the exe uses the whole formatted line's length | yes | starmap.md §16 |
+| 521 | starmap, modern production view | open-fix: the design list opens on a click on the slot and picks with a second click; the exe opens it on the press at the pointer and picks on the release | yes | starmap.md §12 |
+| 522 | research, modern screen | open: the 3D tech models cannot be clicked or grabbed, the ball cannot be dragged and the lab tooltips (0x13-0x18) are missing | yes | research.md §7 |
+| 524 | design, modern screen | open-fix: the popups (new, delete, modify OK, pod tech list) stay up until a pick or a press elsewhere instead of following the held left button; the left button's 3D pod pick on the hull is off under the panels | yes | design.md §14 |
+| 526 | design, modern screen | the list rows, plates and popup rows act on a press, never on the release of a held left button, so a drag over the rows or from a plate onto a popup row does nothing; the list scrolls with the wheel and its own bar at any length (the exe's thumb, spot 10, only past 15 designs); the previous/next keys beside the plates are the remake's; orders go out at once instead of a few frames later | no | design.md §6.1, ADR 0075 |
 
 ## Open: minor
 
@@ -109,6 +113,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 514 | modern pause menu and Options page, click sound | the click sound plays on every activation; the original plays `PlaySoundGlobal(0)` only on Quit, Back and No | no | ADR 0078 |
 | 518 | modern main menu, entries | an entry acts when the button is released over it (either button); the original's rings and the classic panel act on the press frame (`IG2_gameUpdate`, exe 0x4e0440) | no | ADR 0078 |
 | 520 | starmap, modern long info's settings menus | the tax, autobuild and priority lists open over their field with the current value marked; the original's drop under the field with no mark; the choice made is the same | yes | ADR 0077 |
+| 523 | research and design, modern exit plates | the exit plate is the top bar's starmap pick (client only); the exe has no exit button on these screens (the top bar's keys, F-keys, Esc) | no | research.md §7, design.md §14 |
 
 ## Enhanced
 

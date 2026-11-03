@@ -550,32 +550,6 @@ pub(crate) fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egu
     })
 }
 
-/// A square icon button: hover fades in a lit fill and edge, `on` marks the chosen one with an accent bar below.
-pub(crate) fn icon_button(ui: &mut egui::Ui, ink: &Ink, i: Icon, on: bool, enabled: bool, size: f32) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(size, size), if enabled { Sense::click() } else { Sense::hover() });
-    let hot = ui.ctx().animate_bool_with_time(resp.id, enabled && resp.hovered(), 0.12);
-    let p = ui.painter();
-    if resp.is_pointer_button_down_on() && enabled {
-        p.rect_filled(r, 2.0, ink.accent.gamma_multiply(0.35));
-    } else if on {
-        p.rect_filled(r, 2.0, ink.accent.gamma_multiply(0.16));
-    }
-    if hot > 0.0 {
-        p.rect_filled(r, 2.0, Color32::from_white_alpha((18.0 * hot) as u8));
-        p.rect_stroke(r, 2.0, Stroke::new(1.0f32, ink.accent.gamma_multiply(0.7 * hot)), egui::StrokeKind::Inside);
-    }
-    if on {
-        p.rect_filled(Rect::from_min_max(pos2(r.left() + 3.0, r.bottom() - 2.0), pos2(r.right() - 3.0, r.bottom())), 0.0, ink.accent);
-    }
-    let fg = match () {
-        _ if !enabled => ink.dim.gamma_multiply(0.6),
-        _ if on => lerp(ink.accent, Color32::WHITE, 0.35),
-        _ => lerp(ink.text.gamma_multiply(0.82), ink.text, hot),
-    };
-    icon(p, r.shrink(1.0), i, fg);
-    resp
-}
-
 /// Clicked with the left or the right button.
 pub(crate) fn either(r: &egui::Response) -> bool {
     r.clicked() || r.secondary_clicked()

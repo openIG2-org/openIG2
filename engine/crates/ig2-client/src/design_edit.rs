@@ -207,6 +207,67 @@ impl Design {
             .collect()
     }
 
+    /// Ours (ADR 0075): an act of the modern panels, run through the hot-spots' own code (`Design_Main`, §6.1): a
+    /// row of the list (spot 9), the console buttons (1..=8; 1, 4 and the modifying OK open their popup, which stays
+    /// up until a pick or a close instead of the held button's release), a pod row (0x54: the pod, and its tech list
+    /// while `CanModify`), a pod count's −/+ held (the cells 0x35..=0x52 with the `KezdoIdo` repeat), the name (0x56).
+    pub fn modern_act(&mut self, c: &Ctx, a: crate::design_modern::Act) {
+        use crate::design_modern::Act;
+        let on = |s: &Self, id: u32| s.sub_zoom == 0.0 && (id != 0x54 || (s.opened && !s.closing)) && s.spot_state(c.state, c.techs, c.rules, id);
+        // Another control pressed while a popup is up: the popup closes unpicked first (its button let go elsewhere).
+        if self.popup.is_some() && matches!(a, Act::Row(_) | Act::Key(_) | Act::Button(_) | Act::Pod(_) | Act::Name) {
+            self.selected = -1;
+            self.held = None;
+            self.edit_release(c);
+        }
+        match a {
+            Act::Row(m) if on(self, 9) && (1..=self.count()).contains(&m) => {
+                self.sounds.push(CLICK);
+                self.sounds.push(crate::design::des(2));
+                if m != self.pointer {
+                    self.retexture = true;
+                }
+                self.pointer = m;
+                self.scroll_to_pointer();
+            }
+            Act::Key(up) => self.key(if up { crate::design::Key::Up } else { crate::design::Key::Down }),
+            Act::Button(id) if on(self, id) => {
+                self.edit_press(c, id, [320.0, 240.0]);
+                // A one-shot button's hold ends at once; a popup's waits for its pick.
+                if self.popup.is_none() {
+                    self.held = None;
+                }
+            }
+            Act::Pick(sel) if self.popup.is_some() => {
+                self.selected = sel;
+                self.held = None;
+                self.edit_release(c);
+            }
+            Act::Close => {
+                self.selected = -1;
+                self.held = None;
+                self.edit_release(c);
+            }
+            Act::Pod(k) if on(self, 0x54) => {
+                self.sounds.push(CLICK);
+                self.pod = k;
+                self.pod_row_press(c);
+            }
+            Act::Hold(Some((k, plus))) => {
+                let id = 0x33 + 2 * k as u32 + plus as u32;
+                if self.held != Some(id) && (0x35..=0x52).contains(&id) && on(self, id) {
+                    self.sounds.push(CLICK);
+                    self.held = Some(id);
+                    self.repeat = 0;
+                    self.count_held(c, id);
+                }
+            }
+            Act::Hold(None) if matches!(self.held, Some(0x35..=0x52)) => self.held = None,
+            Act::Name => self.name_press(c),
+            _ => {}
+        }
+    }
+
     /// The name input on `stored` (the viewing mode's design) or the scratch.
     fn start_entry(&mut self, text: Vec<u8>, stored: Option<usize>) {
         self.entry = Some(NameEntry { cursor: text.len(), text, clear: true, stored });

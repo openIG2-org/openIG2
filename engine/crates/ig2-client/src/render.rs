@@ -1405,6 +1405,9 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     let t = world.curr.tick as f32 * 0.05;
     if o.modern_research {
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+        models.modern = true;
+        let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
+        hud.draw_research_scene(&mut frame, &s, tex, lines, size, t);
         hud.modern_bar = true;
         hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
         let mut rv = hud.research_modern_view(state, &l.tables, &world.ui, &s, &infos, None, t);
@@ -1455,8 +1458,9 @@ fn design_ctx<'a>(state: &'a ig2_sim::save::SaveState, techs: &'a ig2_sim::colon
 fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let state = &world.game.state;
     let techs = state.tech();
-    let mut s = crate::design::Design::open(state, true);
+    let mut s = crate::design::Design::open(state, !o.modern_design);
     s.hold_open();
+    s.names = crate::design_edit::Names::read(&hud.texts);
     if let Some(m) = o.mouse {
         s.tip.mouse = m;
     }
@@ -1464,16 +1468,48 @@ fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let mut scene = crate::design_scene::DesignScene::new(r, &l.install);
     {
         let c = design_ctx(state, &techs, l, world, hud);
-        for _ in 0..o.ui_frames.max(1) {
+        for i in 0..o.ui_frames.max(1) {
             s.step(&c, &scene.mask);
             s.tooltip(&c, &scene.mask, &tips, s.frames as f64 * 10.0);
+            // `--design-edit K`: modify (spot 3), then pod K's row (spot 0x54) once the hull is in.
+            if let (Some(k), 0) = (o.design_edit, i) {
+                s.modern_act(&c, crate::design_modern::Act::Row(o.design_row.unwrap_or(s.pointer)));
+                s.modern_act(&c, crate::design_modern::Act::Button(3));
+                s.pod = k;
+            }
+            if let (Some(k), true) = (o.design_edit, i + 1 == o.ui_frames.max(1)) {
+                s.modern_act(&c, crate::design_modern::Act::Pod(k));
+            }
         }
     }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+    scene.modern = o.modern_design;
     scene.draw(&mut frame, r, &l.install, &l.tables, &mut s, state, &techs, en, size);
+    if o.modern_design {
+        hud.modern_bar = true;
+        hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
+        let mut dv = hud.design_modern_view(state, &l.tables, &world.ui, &s, &tips, None, t);
+        dv.bar.bind_keys(&crate::bindings::Bindings::default());
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
+        let style = crate::starmap_modern::style(hud, size);
+        let k = crate::gui::Gui::scale(o.size.1);
+        let mut st = crate::design_modern::State::default();
+        for _ in 0..3 {
+            if let Some(m) = o.mouse {
+                gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
+            }
+            gui.run(o.size, &style, |ctx| {
+                crate::design_modern::show(ctx, &dv, &mut st);
+            });
+        }
+        let rgba = r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex));
+        crate::assets::write_snapshot(out, o, &rgba)?;
+        println!("{}: modern design {} (rank {} of {}) mode {} pod {}", out.display(), s.current(), s.pointer, s.count(), s.mode, s.pod);
+        return Ok(());
+    }
     hud.draw_design(&mut frame, &mut s, state, &techs, &l.tables, &tips, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
     hud.snapshot_pointer(&mut frame, size, o.mouse);
@@ -2214,6 +2250,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     let assets = crate::starmap::Assets::load(&mut r, &l.install);
     let mut view = snapshot_view(o, &world);
     let lv = world.game.local_view();
+    if o.stage_queue {
+        crate::starmap_panels::stage_queue(&mut world.game.state, lv.planet.max(0) as usize);
+    }
     let saved = match lv.starmap_mode {
         1 => Some(crate::starmap::Pick::Planet(lv.planet.max(0) as usize)),
         2 => Some(crate::starmap::Pick::Fleet(lv.fleet.max(0) as usize)),
@@ -2373,6 +2412,10 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         }
         let mut top = crate::render::Frame::new([0.0; 4]);
         crate::fleet_modern::pictures(&mut top, &fst.wells, panel_tex, &crate::font::Virtual::new(size));
+        if pv.is_some() {
+            let thumbs = models.render_thumbs(&mut r, &l.install, &l.tables, &world.game.state, &sel, &view.camera.matrix(), size, o.ui_frames as f32);
+            crate::production_modern::pictures(&mut top, &pst.wells, thumbs, &crate::font::Virtual::new(size));
+        }
         r.draw_to_image_over_top(&frame, Some(top), o.size, t, |d, q, tex| gui.paint(d, q, tex))
     } else {
         r.draw_to_image(&frame, o.size, t)

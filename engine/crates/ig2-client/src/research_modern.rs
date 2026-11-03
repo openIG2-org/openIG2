@@ -1,16 +1,19 @@
-//! Ours (ADR 0071): the research screen (`AktKep` 4, re/screens/research.md) as modern panels on the egui layer, the
-//! "Modern research screen" option. The same functions as the original's screen without its 3D console: the twelve
-//! categories (the wheels' buttons), the category's known techs in their status with the progress per cent (the
-//! lists), the shown tech's info lines, prerequisites, labs needed against the player's, days and daily cost (the info
-//! box and the panels' texts), start or stop (hot-spot 1), the running project with its money and days left and the
-//! jump to it (hot-spot 0x19), the urgent button (hot-spot 4: double money, double speed) and the auto-research
-//! switches (§5.8). The window fills a [`View`] from what `ResearchGfx2D_2` reads, runs [`show`] once a frame and hands
-//! the [`Act`]s to [`crate::research::Research::modern_act`], which runs the original's code; the keys stay the
-//! screen's.
+//! Ours (ADR 0071): the research screen (`AktKep` 4, re/screens/research.md) as modern panels on the egui
+//! layer, the "Modern research screen" option, drawn with the design kit (ADR 0073, `gui::ds`) after the research
+//! board. The same functions as the original's screen: the twelve categories (the wheels' buttons) as tiles in three
+//! groups at the bottom, the category's known techs in their status with the progress or the cost (the lists), the
+//! shown tech's info lines, prerequisites, labs needed against the player's, days and cost (the info box and the
+//! panels' texts), the funding (the urgent button, hot-spot 4: double money, double speed), start or stop (hot-spot
+//! 1), the running project with the jump to it (hot-spot 0x19) and the auto-research switches (§5.8); the exit is the
+//! top bar's starmap pick. The original's wire sphere, ball and tech models stay in the middle (the console is not
+//! drawn: `crate::research::ResearchModels::modern`). The window fills a [`View`] from what `ResearchGfx2D_2` reads,
+//! runs [`show`] once a frame and hands the [`Act`]s to [`crate::research::Research::modern_act`], which runs the
+//! original's code; the keys stay the screen's.
 
-use egui::{pos2, vec2, Align2, Color32, FontId, Margin, Rect, RichText, Sense, Stroke};
+use egui::{pos2, vec2, Align2, Color32, Rect, Sense, Ui};
 
-use crate::starmap_modern::{self as sm, lerp, plate, tip, Ink, EDGE};
+use crate::gui::ds::{self, Font, PanelKind, Plate, Text, Weight};
+use crate::starmap_modern::{self as sm};
 
 /// What the panels ask for.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -52,21 +55,23 @@ pub struct Tech {
     pub status: u8,
     /// The progress per cent (0 or 100 shows none).
     pub pct: u32,
+    /// What it costs to research.
+    pub cost: String,
 }
 
 /// The shown tech.
 #[derive(Debug, Clone, Default)]
 pub struct Detail {
     pub name: String,
-    pub status: u8,
     pub info: Vec<String>,
-    /// "Required: …".
-    pub need: String,
+    /// The prerequisites' label and each one with whether the player owns it (none: "nothing").
+    pub need: (String, Vec<(String, bool)>),
     /// Per lab (ships, tanks, buildings): needed, the player's, the tooltips (required, operational).
     pub labs: Vec<(i32, i32, String, String)>,
-    /// Days required and the cost, unless owned.
-    pub days: Option<String>,
-    pub cost: Option<String>,
+    /// The days' label and value, unless owned.
+    pub days: Option<(String, String)>,
+    /// The cost at normal and at double money, unless owned.
+    pub cost: Option<(String, String)>,
 }
 
 /// The running project.
@@ -76,6 +81,27 @@ pub struct Current {
     pub money: String,
     pub days: String,
     pub part: f32,
+}
+
+/// The labels the panels need: start, stop, the running project's jump, no research, done, locked, funding, normal,
+/// double money, labs, the auto switches' heading, on, off, exit, the three groups.
+#[derive(Debug, Clone, Default)]
+pub struct Labels {
+    pub start: String,
+    pub stop: String,
+    pub jump: String,
+    pub none: String,
+    pub done: String,
+    pub locked: String,
+    pub funding: String,
+    pub normal: String,
+    pub double: String,
+    pub labs: String,
+    pub auto: String,
+    pub on: String,
+    pub off: String,
+    pub exit: String,
+    pub groups: [String; 3],
 }
 
 /// What the screen shows this frame.
@@ -93,8 +119,7 @@ pub struct View {
     pub start_on: bool,
     pub urgent: bool,
     pub auto: [(String, bool); 3],
-    /// Labels: start, stop, the running project's jump, the info box's title.
-    pub labels: [String; 4],
+    pub labels: Labels,
     /// Tooltips: start/stop, the jump, urgent, the auto switches.
     pub tips: [String; 6],
 }
@@ -105,107 +130,88 @@ pub struct State {
     pub bar: sm::State,
 }
 
-const AREA_W: f32 = 210.0;
-const LIST_W: f32 = 300.0;
-const INFO_W: f32 = 330.0;
+/// The boards' gap to the screen's edges, the list's and the detail's widths, the category tiles' height.
+const EDGE: f32 = 24.0;
+const LIST_W: f32 = 460.0;
+const INFO_W: f32 = 470.0;
+const TILE_H: f32 = 44.0;
+const EXIT_W: f32 = 220.0;
+/// The panels' titles (600 20 / 0.16 em), a status word (500 14 / 0.1 em), a tile's name (15 / 0.06 em).
+const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
+const STATUS: Font = Font::DATA.sized(14.0).tracking(0.10).upper(true);
+const TILE: Font = Font::DATA.sized(15.0).tracking(0.06);
 
-/// The rows' colours by status: owned, researching, researchable, seen.
-fn status_ink(ink: &Ink, s: u8) -> Color32 {
-    match s {
-        5 => lerp(ink.text, Color32::from_rgb(110, 205, 120), 0.5),
-        4 => lerp(ink.accent, Color32::WHITE, 0.25),
-        3 => Color32::WHITE,
-        _ => ink.dim,
-    }
+/// The original's buttons (start/stop, urgent, the categories) act on the press (`Mouse_Lenyom`, §4).
+fn pressed(r: &egui::Response) -> bool {
+    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
 }
+
+/// The categories' groups (ships and weapons with the special one, buildings, vehicles), in the board's order.
+const GROUPS: [&[usize]; 3] = [&[1, 2, 3, 4, 5, 12], &[6, 7, 8, 9], &[10, 11]];
 
 /// One frame of the screen; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut bar = Vec::new();
-    let ink = sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
+    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
     let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(46.0, |r| r.bottom() + 6.0);
+    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
     let screen = ctx.screen_rect();
-    let total = AREA_W + LIST_W + INFO_W + 2.0 * 14.0 + 2.0 * 8.0 + 2.0 * 6.0;
-    let left = ((screen.width() - total) / 2.0).max(EDGE);
-    let height = (screen.height() - top - EDGE).clamp(200.0, 640.0);
-    let a = egui::Area::new(egui::Id::new("rmh-areas")).fixed_pos(pos2(left, top)).fade_in(false).show(ctx, |ui| {
-        plate(ui, &ink, Margin::symmetric(7, 7), |ui| areas(ui, v, &ink, &mut acts));
+    // The bottom row first: the panels above stop over it.
+    let nav = egui::Area::new(egui::Id::new("rmh-areas")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| categories(ui, v, screen.width() - 2.0 * EDGE, &mut acts));
+    let room = nav.response.rect.top() - 16.0 - top;
+    let list = egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| {
+        ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, (room - 240.0).max(26.0 * 4.0), &mut acts));
     });
-    let l = egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(a.response.rect.right() + 6.0, top)).fade_in(false).show(ctx, |ui| {
-        plate(ui, &ink, Margin::symmetric(7, 7), |ui| list(ui, v, &ink, height, &mut acts));
+    egui::Area::new(egui::Id::new("rmh-auto")).fixed_pos(pos2(EDGE, list.response.rect.bottom() + 16.0)).fade_in(false).show(ctx, |ui| {
+        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| auto(ui, v, &mut acts));
     });
-    egui::Area::new(egui::Id::new("rmh-info")).fixed_pos(pos2(l.response.rect.right() + 6.0, top)).fade_in(false).show(ctx, |ui| {
-        plate(ui, &ink, Margin::symmetric(12, 9), |ui| info(ui, v, &ink, &mut acts));
+    egui::Area::new(egui::Id::new("rmh-info")).anchor(Align2::RIGHT_TOP, vec2(-EDGE, top)).fade_in(false).show(ctx, |ui| {
+        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| info(ui, v, room - 32.0, &mut acts));
     });
     acts
 }
 
-/// The twelve categories, the ships', the buildings', the tanks' and the special one apart.
-fn areas(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
-    ui.set_width(AREA_W);
-    ui.spacing_mut().item_spacing.y = 0.0;
-    for (i, a) in v.areas.iter().enumerate() {
-        if i > 0 && matches!(a.n, 6 | 10 | 12) {
-            ui.add_space(4.0);
-            let (r, _) = ui.allocate_exact_size(vec2(AREA_W, 1.0), Sense::hover());
-            ui.painter().rect_filled(r, 0.0, ink.edge);
-            ui.add_space(4.0);
-        }
-        let on = a.n == v.area;
-        let (r, resp) = ui.allocate_exact_size(vec2(AREA_W, 26.0), Sense::click());
-        let hot = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.1);
-        let p = ui.painter();
-        if on {
-            p.rect_filled(r, 2.0, ink.accent.gamma_multiply(0.2));
-            p.rect_filled(Rect::from_min_max(r.min, pos2(r.left() + 2.0, r.bottom())), 0.0, ink.accent);
-        } else if hot > 0.0 {
-            p.rect_filled(r, 2.0, Color32::from_white_alpha((14.0 * hot) as u8));
-        }
-        let c = if on { Color32::WHITE } else { lerp(ink.text.gamma_multiply(0.85), ink.text, hot) };
-        p.with_clip_rect(Rect::from_min_max(r.min, pos2(r.right() - 40.0, r.bottom()))).text(pos2(r.left() + 9.0, r.center().y), Align2::LEFT_CENTER, &a.name, FontId::proportional(13.0), c);
-        p.text(pos2(r.right() - 6.0, r.center().y), Align2::RIGHT_CENTER, format!("{}/{}", a.owned, a.known), FontId::proportional(10.5), ink.dim);
-        if a.running {
-            p.circle_filled(pos2(r.right() - 44.0, r.center().y), 3.0, ink.accent);
-        }
-        if resp.clicked() {
-            acts.push(Act::Area(a.n));
-        }
-    }
-}
-
-/// The category's known techs with their status and per cent.
-fn list(ui: &mut egui::Ui, v: &View, ink: &Ink, height: f32, acts: &mut Vec<Act>) {
-    ui.set_width(LIST_W);
-    ui.set_min_height(height.min(16.0 * 26.0));
-    let name = v.areas.iter().find(|a| a.n == v.area).map_or("", |a| a.name.as_str());
-    ui.label(RichText::new(name.to_uppercase()).size(11.0).strong().color(ink.accent));
-    ui.add_space(3.0);
-    egui::ScrollArea::vertical().max_height(height - 24.0).auto_shrink([false, true]).show(ui, |ui| {
+/// The category's title with its owned / known count, its known techs with their status at the right.
+fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let w = LIST_W - 32.0;
+    ui.set_width(w);
+    ui.spacing_mut().item_spacing.y = 8.0;
+    let area = v.areas.iter().find(|a| a.n == v.area);
+    let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
+    let base = ds::fit::baseline(r, TITLE);
+    let count = area.map_or(String::new(), |a| format!("{} / {} {}", a.owned, a.known, v.labels.done));
+    let cw = Text::new(&count, Font::LABEL).layout(ui.ctx(), w * 0.45).width;
+    Text::new(&count, Font::LABEL).right().color(k.ink_muted).baseline(base).paint(ui, r.with_min_x(r.right() - cw));
+    Text::new(area.map_or("", |a| a.name.as_str()), TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
+    egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for t in &v.techs {
+            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+            let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
             let on = t.field == v.field;
-            let (r, resp) = ui.allocate_exact_size(vec2(LIST_W, 26.0), Sense::click());
-            let hot = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.1);
-            let p = ui.painter();
-            if on {
-                p.rect_filled(r, 2.0, ink.accent.gamma_multiply(0.2));
-                p.rect_stroke(r, 2.0, Stroke::new(1.0f32, ink.accent.gamma_multiply(0.7)), egui::StrokeKind::Inside);
-            } else if hot > 0.0 {
-                p.rect_filled(r, 2.0, Color32::from_white_alpha((14.0 * hot) as u8));
-            }
-            let c = lerp(status_ink(ink, t.status), Color32::WHITE, hot * 0.4);
-            p.with_clip_rect(Rect::from_min_max(r.min, pos2(r.right() - 44.0, r.bottom()))).text(pos2(r.left() + 9.0, r.center().y), Align2::LEFT_CENTER, &t.name, FontId::proportional(13.0), c);
-            if t.status == 5 {
-                let m = pos2(r.right() - 14.0, r.center().y);
-                p.line_segment([pos2(m.x - 4.0, m.y), pos2(m.x - 1.0, m.y + 3.0)], Stroke::new(1.6f32, c));
-                p.line_segment([pos2(m.x - 1.0, m.y + 3.0), pos2(m.x + 5.0, m.y - 4.0)], Stroke::new(1.6f32, c));
-            } else if t.pct > 0 && t.pct < 100 {
-                p.text(pos2(r.right() - 8.0, r.center().y), Align2::RIGHT_CENTER, format!("{}%", t.pct), FontId::proportional(11.5), c);
-                let b = Rect::from_min_size(pos2(r.left() + 9.0, r.bottom() - 4.0), vec2(LIST_W - 18.0, 2.0));
-                p.rect_filled(b, 0.0, Color32::from_black_alpha(140));
-                p.rect_filled(Rect::from_min_size(b.min, vec2(b.width() * t.pct as f32 / 100.0, 2.0)), 0.0, c);
-            }
+            ds::row_back(ui, r, hot, on);
+            let inner = r.shrink2(vec2(8.0, 0.0));
+            let base = ds::fit::baseline(r, Font::BODY);
+            // The status at the right: done, the bar and per cent, the cost, locked.
+            let (right_w, col) = match t.status {
+                5 => (Text::new(&v.labels.done, STATUS).right().color(k.ink_muted).baseline(base).paint(ui, inner.with_min_x(inner.right() - 120.0)).width, k.ink),
+                4 => {
+                    let pct = format!("{}%", t.pct);
+                    let pr = Rect::from_min_max(pos2(inner.right() - 44.0, r.top()), inner.max);
+                    Text::new(&pct, Font::READOUT.sized(15.0).tracking(0.04)).right().color(k.lcd_ink).baseline(base).paint(ui, pr);
+                    let b = Rect::from_center_size(pos2(pr.left() - 8.0 - 60.0, r.center().y), vec2(120.0, 6.0));
+                    let p = ui.painter();
+                    p.rect_filled(b, 3, k.glass);
+                    p.rect_filled(b.with_max_x(b.left() + (b.width() * t.pct as f32 / 100.0).max(6.0)), 3, k.lcd_ink);
+                    ds::rim(p, b, 3, k.rim);
+                    (44.0 + 8.0 + 120.0, k.ink)
+                }
+                3 => (Text::new(&t.cost, STATUS).right().color(k.info).baseline(base).paint(ui, inner.with_min_x(inner.right() - 140.0)).width, k.ink),
+                _ => (Text::new(&v.labels.locked, STATUS).right().color(k.ink_muted).baseline(base).paint(ui, inner.with_min_x(inner.right() - 120.0)).width, k.ink_muted),
+            };
+            let name_box = inner.with_max_x(inner.right() - right_w - 12.0);
+            Text::new(&t.name, Font::BODY).color(col.lerp_to_gamma(Color32::WHITE, hot * 0.5)).baseline(base).paint(ui, name_box);
             if resp.clicked() {
                 acts.push(Act::Field(t.field));
             }
@@ -213,144 +219,229 @@ fn list(ui: &mut egui::Ui, v: &View, ink: &Ink, height: f32, acts: &mut Vec<Act>
     });
 }
 
-/// The shown tech, start/stop, the running project, urgent and the auto switches.
-fn info(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
-    ui.set_width(INFO_W);
-    ui.spacing_mut().item_spacing.y = 4.0;
-    if let Some(d) = &v.detail {
-        ui.add(egui::Label::new(RichText::new(&d.name).size(17.0).strong().color(status_ink(ink, d.status).max_white())).truncate());
-        for l in &d.info {
-            ui.label(RichText::new(l).size(12.5).color(ink.text));
+/// The auto-research switches as settings rows (`.sw`) with an on/off plate.
+fn auto(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let w = LIST_W - 32.0;
+    ui.set_width(w);
+    ui.spacing_mut().item_spacing.y = 8.0;
+    Text::new(&v.labels.auto, Font::LABEL).color(k.ink_muted).show(ui, vec2(w, 18.0));
+    for (i, (name, on)) in v.auto.iter().enumerate() {
+        let (r, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
+        let p = ui.painter();
+        p.rect_filled(r, ds::RADIUS_PLATE, k.glass_raised);
+        ds::rim(p, r, ds::RADIUS_PLATE, k.rim);
+        let f = Font::DATA.tracking(0.08);
+        Text::new(name, f).baseline(ds::fit::baseline(r, f)).paint(ui, r.shrink2(vec2(10.0, 0.0)).with_max_x(r.right() - 90.0));
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(r.right() - 10.0 - 64.0, r.top() + 6.0), pos2(r.right() - 10.0, r.bottom() - 6.0))));
+        let label = if *on { &v.labels.on } else { &v.labels.off };
+        let b = c.add(Plate::new(label).width(64.0).height(28.0).primary(*on).font(Plate::FONT.sized(13.0).tracking(0.12)));
+        if ds::tip(b, &v.tips[3 + i]).clicked() {
+            acts.push(Act::Auto(i));
         }
-        ui.label(RichText::new(&d.need).size(11.5).color(ink.dim));
-        if !d.labs.is_empty() {
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 14.0;
-                for (i, (need, have, tip_need, tip_have)) in d.labs.iter().enumerate() {
-                    let short = *have < *need;
-                    let resp = ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        lab_mark(ui, ink, i);
-                        let c = if short { Color32::from_rgb(235, 96, 84) } else { Color32::WHITE };
-                        ui.label(RichText::new(format!("{have} / {need}")).size(12.5).strong().color(c));
-                    }).response;
-                    tip(resp, &format!("{tip_need}: {need}\n{tip_have}: {have}"), "", ink);
+    }
+}
+
+/// The shown tech: its name, its lines, the table (prerequisites, labs, days), the funding, start or stop, the
+/// running project.
+fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let w = INFO_W - 32.0;
+    ui.set_width(w);
+    ui.spacing_mut().item_spacing.y = 14.0;
+    if let Some(d) = &v.detail {
+        Text::new(&d.name, Font::HEADING.sized(24.0)).show(ui, vec2(w, 30.0));
+        let body = d.info.join(" ");
+        if !body.is_empty() {
+            let lines = ((room - 420.0) / 26.0).clamp(2.0, 8.0) as usize;
+            let fit = Text::new(&body, Font::BODY).lines(lines).layout(ui.ctx(), w);
+            let (r, resp) = ui.allocate_exact_size(vec2(w, fit.galley.size().y), Sense::hover());
+            ui.painter().galley(r.min, fit.galley.clone(), Color32::WHITE);
+            if fit.cut {
+                ds::tip(resp, &body);
+            }
+        }
+        // The table (`.ig-table`, 120 for the labels, 6 between rows).
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let row = |ui: &mut Ui, label: &str, h: f32| {
+                let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
+                let first = Rect::from_min_size(r.min, vec2(w, 20.0));
+                Text::new(label, Font::LABEL).color(k.ink_muted).baseline(ds::fit::baseline(first, Font::DATA)).paint(ui, first.with_max_x(r.left() + 112.0));
+                r.with_min_x(r.left() + 120.0)
+            };
+            let need = &d.need.1;
+            let r = row(ui, &d.need.0, 22.0 * need.len().max(1) as f32 - 2.0);
+            for (i, (name, owned)) in need.iter().enumerate() {
+                let line = Rect::from_min_size(pos2(r.left(), r.top() + 22.0 * i as f32), vec2(r.width(), 20.0));
+                Text::new(name, Font::DATA).color(if *owned { k.info } else { k.ink_muted }).baseline(ds::fit::baseline(line, Font::DATA)).paint(ui, line);
+            }
+            if !d.labs.is_empty() {
+                let r = row(ui, &v.labels.labs, 20.0);
+                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                c.spacing_mut().item_spacing.x = 16.0;
+                for (need, have, tip_need, tip_have) in &d.labs {
+                    let s = format!("{have} / {need}");
+                    let resp = Text::new(&s, Font::DATA).color(if have < need { k.enemy } else { k.info }).show(&mut c, vec2(64.0, 20.0));
+                    ds::tip(resp, &format!("{tip_need}: {need}\n{tip_have}: {have}"));
                 }
+            }
+            if let Some((label, days)) = &d.days {
+                let r = row(ui, label, 20.0);
+                Text::new(days, Font::DATA).color(k.info).baseline(ds::fit::baseline(r, Font::DATA)).paint(ui, r);
+            }
+        });
+        if let Some((normal, double)) = &d.cost {
+            ds::separator(ui, 0.0);
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                Text::new(&v.labels.funding, Font::LABEL).color(k.ink_muted).show(ui, vec2(w, 18.0));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let half = (w - 8.0) / 2.0;
+                    for (urgent, label, cost) in [(false, &v.labels.normal, normal), (true, &v.labels.double, double)] {
+                        let on = v.urgent == urgent;
+                        let b = ui.add(Plate::new(label).sub(cost).width(half).height(64.0).primary(on).font(Plate::FONT.sized(16.0)));
+                        // The urgent button flips the funding: a press on the other plate.
+                        if pressed(&ds::tip(b, &v.tips[2])) && !on {
+                            acts.push(Act::Urgent);
+                        }
+                    }
+                });
             });
         }
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 14.0;
-            for s in [&d.days, &d.cost].into_iter().flatten() {
-                ui.label(RichText::new(s).size(12.0).color(ink.accent));
-            }
-        });
     }
-    ui.add_space(4.0);
-    let label = if v.stop { &v.labels[1] } else { &v.labels[0] };
-    let b = ui.add_enabled(v.start_on, egui::Button::new(RichText::new(label).size(13.5).strong()).min_size(vec2(INFO_W, 28.0)));
-    if tip(b, &v.tips[0], "", ink).clicked() {
+    let label = if v.stop { &v.labels.stop } else { &v.labels.start };
+    let b = ui.add_enabled(v.start_on, Plate::new(label).width(w).height(52.0).primary(v.stop));
+    if pressed(&ds::tip(b, &v.tips[0])) {
         acts.push(Act::StartStop);
     }
-    ui.add_space(4.0);
-    let (r, _) = ui.allocate_exact_size(vec2(INFO_W, 1.0), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, ink.edge);
-    ui.add_space(2.0);
-    if let Some(c) = &v.current {
-        let resp = ui.horizontal(|ui| {
-            ui.add(egui::Label::new(RichText::new(&c.name).size(14.0).strong().color(lerp(ink.accent, Color32::WHITE, 0.3))).truncate().sense(Sense::click()))
-        });
-        if tip(resp.inner, &v.tips[1], "", ink).clicked() {
-            acts.push(Act::Current);
-        }
-        let (r, _) = ui.allocate_exact_size(vec2(INFO_W, 4.0), Sense::hover());
-        let p = ui.painter();
-        p.rect_filled(r, 1.0, Color32::from_black_alpha(150));
-        p.rect_filled(Rect::from_min_size(r.min, vec2(r.width() * c.part.clamp(0.0, 1.0), 4.0)), 1.0, ink.accent);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 14.0;
-            ui.label(RichText::new(&c.money).size(12.0).color(ink.text));
-            ui.label(RichText::new(&c.days).size(12.0).color(ink.text));
-        });
-    } else {
-        ui.label(RichText::new(&v.labels[3]).size(12.5).color(ink.dim));
-    }
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        if tip(toggle(ui, ink, "×2", v.urgent, 44.0), &v.tips[2], "", ink).clicked() {
-            acts.push(Act::Urgent);
-        }
-        for (i, (name, on)) in v.auto.iter().enumerate() {
-            if tip(toggle(ui, ink, name, *on, (INFO_W - 44.0 - 18.0) / 3.0), &v.tips[3 + i], "", ink).clicked() {
-                acts.push(Act::Auto(i));
+    // The running project: its name (a click shows it), its bar, its money and days.
+    match &v.current {
+        Some(c) => {
+            let (r, resp) = ui.allocate_exact_size(vec2(w, 58.0), Sense::click());
+            let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
+            let p = ui.painter();
+            p.rect_filled(r, ds::RADIUS_PLATE, k.glass_raised);
+            ds::rim(p, r, ds::RADIUS_PLATE, k.rim.lerp_to_gamma(k.rim_bright, hot));
+            let inner = r.shrink2(vec2(10.0, 6.0));
+            let top = Rect::from_min_size(inner.min, vec2(inner.width(), 20.0));
+            let jw = Text::new(&v.labels.jump, Font::LABEL.sized(11.0)).layout(ui.ctx(), inner.width() * 0.4).width;
+            Text::new(&v.labels.jump, Font::LABEL.sized(11.0)).right().color(k.ink_muted).baseline(ds::fit::baseline(top, Font::DATA)).paint(ui, top.with_min_x(top.right() - jw));
+            Text::new(&c.name, Font::DATA).color(k.ink.lerp_to_gamma(Color32::WHITE, hot)).baseline(ds::fit::baseline(top, Font::DATA)).paint(ui, top.with_max_x(top.right() - jw - 8.0));
+            let b = Rect::from_min_size(pos2(inner.left(), top.bottom() + 4.0), vec2(inner.width(), 6.0));
+            ui.painter().rect_filled(b, 3, k.glass_deep);
+            ui.painter().rect_filled(b.with_max_x(b.left() + (b.width() * c.part.clamp(0.0, 1.0)).max(6.0)), 3, k.lcd_ink);
+            ds::rim(ui.painter(), b, 3, k.rim);
+            let low = Rect::from_min_max(pos2(inner.left(), b.bottom() + 2.0), inner.max);
+            let base = ds::fit::baseline(low, Font::LABEL.sized(12.0));
+            Text::new(&c.money, Font::LABEL.sized(12.0).upper(false)).color(k.ink_silver).baseline(base).paint(ui, low.with_max_x(low.center().x));
+            Text::new(&c.days, Font::LABEL.sized(12.0).upper(false)).right().color(k.ink_silver).baseline(base).paint(ui, low.with_min_x(low.center().x));
+            if ds::tip(resp, &v.tips[1]).clicked() {
+                acts.push(Act::Current);
             }
         }
+        None => _ = Text::new(&v.labels.none, Font::LABEL).color(k.ink_muted).show(ui, vec2(w, 18.0)),
+    }
+}
+
+/// The categories as tiles in their three groups (`.grp`, flex 3 : 2 : 1, two rows), the exit at the right.
+fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        let room = width - EXIT_W - 3.0 * 12.0;
+        let h = 8.0 + 16.0 + 6.0 + 2.0 * TILE_H + 6.0 + 10.0;
+        for (g, ns) in GROUPS.iter().enumerate() {
+            let cols = ns.len().div_ceil(2);
+            let gw = room * cols as f32 / 6.0;
+            let (r, _) = ui.allocate_exact_size(vec2(gw, h), Sense::hover());
+            let p = ui.painter();
+            p.rect_filled(r, ds::RADIUS_PANEL, k.glass_frame);
+            ds::rim(p, r, ds::RADIUS_PANEL, k.metal_dark);
+            ds::edge_line(p, r, ds::RADIUS_PANEL as f32, true, k.metal_light);
+            let head = Rect::from_min_size(r.min + vec2(10.0, 8.0), vec2(gw - 20.0, 16.0));
+            Text::new(&v.labels.groups[g], Font::LABEL.sized(12.0).tracking(0.16)).color(k.ink_silver).paint(ui, head);
+            let tw = (gw - 20.0 - 6.0 * (cols - 1) as f32) / cols as f32;
+            for (i, n) in ns.iter().enumerate() {
+                let Some(a) = v.areas.iter().find(|a| a.n == *n) else { continue };
+                let at = pos2(head.left() + (i / 2) as f32 * (tw + 6.0), head.bottom() + 6.0 + (i % 2) as f32 * (TILE_H + 6.0));
+                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(at, vec2(tw, TILE_H))));
+                // Every category's button stays on, the chosen one too (`Forgotabla` clicks and turns it again).
+                let resp = tile(&mut c, a, a.n == v.area, vec2(tw, TILE_H));
+                if pressed(&resp) {
+                    acts.push(Act::Area(a.n));
+                }
+            }
+        }
+        // The exit: the top bar's starmap pick (`AktKepKell` 2).
+        ui.allocate_ui_with_layout(vec2(EXIT_W, h), egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            if ui.add(Plate::new(&v.labels.exit).width(EXIT_W).height(56.0)).clicked() {
+                acts.push(Act::Bar(sm::Act::Screen(2)));
+            }
+        });
     });
 }
 
-/// A lab's mark: a flask with the lab's letter-free shape (ships, tanks, buildings: one, two, three bars).
-fn lab_mark(ui: &mut egui::Ui, ink: &Ink, i: usize) {
-    let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+/// A category tile (`.cat`): the name, owned / known on LCD digits, the owned share as a line along the bottom; the
+/// chosen one pressed with a white rim, its line in LCD ink; the running project's category marked with a dot.
+fn tile(ui: &mut Ui, a: &Area, on: bool, size: egui::Vec2) -> egui::Response {
+    let k = ds::tokens();
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered() && ui.is_enabled());
+    let sel = ui.ctx().animate_bool_with_time(resp.id.with("sel"), on, ds::anim(ds::GLIDE_TIME));
     let p = ui.painter();
-    let s = Stroke::new(1.3f32, ink.accent);
-    let m = r.center();
-    p.add(egui::Shape::closed_line(vec![pos2(m.x - 2.0, r.top() + 1.0), pos2(m.x + 2.0, r.top() + 1.0), pos2(m.x + 2.0, m.y - 1.0), pos2(r.right() - 1.0, r.bottom() - 1.0), pos2(r.left() + 1.0, r.bottom() - 1.0), pos2(m.x - 2.0, m.y - 1.0)], s));
-    for j in 0..=i {
-        let y = r.bottom() - 3.0 - 2.0 * j as f32;
-        p.line_segment([pos2(m.x - 3.0 + j as f32, y), pos2(m.x + 3.0 - j as f32, y)], s);
+    ds::plate_fill(p, r, ds::RADIUS_PLATE, on || resp.is_pointer_button_down_on());
+    if sel > 0.0 {
+        ds::rim(p, r, ds::RADIUS_PLATE, k.ink.gamma_multiply(sel));
+    } else if hot > 0.0 {
+        ds::rim(p, r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
     }
-}
-
-/// A labelled switch, lit when on.
-fn toggle(ui: &mut egui::Ui, ink: &Ink, label: &str, on: bool, w: f32) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
-    let hot = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
-    let p = ui.painter();
-    p.rect_filled(r, 2.0, if on { ink.accent.gamma_multiply(0.3) } else { Color32::from_white_alpha((8.0 + 12.0 * hot) as u8) });
-    p.rect_stroke(r, 2.0, Stroke::new(1.0f32, if on { ink.accent } else { ink.edge }), egui::StrokeKind::Inside);
-    let c = if on { Color32::WHITE } else { lerp(ink.dim, ink.text, hot) };
-    let mut g = p.layout_no_wrap(label.to_string(), FontId::proportional(11.5), c);
-    if g.size().x > w - 6.0 {
-        g = p.layout_no_wrap(label.to_string(), FontId::proportional(11.5 * (w - 6.0) / g.size().x), c);
+    let enabled = a.known > 0;
+    let count = format!("{}/{}", a.owned, a.known);
+    let cf = Font::READOUT.sized(15.0).tracking(0.08);
+    let inner = r.shrink2(vec2(12.0, 0.0));
+    let base = ds::fit::baseline(r, TILE);
+    let cw = Text::new(&count, cf).right().color(if !enabled { k.ink_muted } else if on { k.ink } else { k.ink_silver }).baseline(base).paint(ui, inner.with_min_x(inner.right() - 60.0)).width;
+    let mut name = inner.with_max_x(inner.right() - cw - 10.0);
+    if a.running {
+        // The running project's category: a lit dot before the name.
+        let c = pos2(name.left() + 3.0, r.center().y);
+        ui.painter().circle_filled(c, 3.0, k.lcd_ink);
+        name = name.with_min_x(name.left() + 12.0);
     }
-    p.galley(r.center() - g.size() / 2.0, g, c);
+    Text::new(&a.name, TILE.weight(Weight::Medium)).shrink(12.0).color(if enabled { k.ink } else { k.ink_muted }).baseline(base).paint(ui, name);
+    if enabled && a.known > 0 {
+        let part = a.owned as f32 / a.known as f32;
+        let line = Rect::from_min_size(pos2(r.left(), r.bottom() - 3.0), vec2(r.width() * part, 3.0));
+        ui.painter().rect_filled(line, egui::CornerRadius { sw: ds::RADIUS_PLATE, ..Default::default() }, k.ink_muted.lerp_to_gamma(k.lcd_ink, sel));
+    }
     resp
-}
-
-trait MaxWhite {
-    fn max_white(self) -> Color32;
-}
-
-impl MaxWhite for Color32 {
-    /// A dim (seen) title still reads as a title.
-    fn max_white(self) -> Color32 {
-        lerp(self, Color32::WHITE, 0.3)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn run(v: &View, st: &mut State, events: Vec<egui::Event>) -> (egui::Context, Vec<Act>) {
+    fn run(v: &View, st: &mut State, events: Vec<egui::Event>, width: f32) -> (egui::Context, Vec<Act>) {
         let ctx = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb).ctx;
+        ds::set_motion(false);
         let mut acts = Vec::new();
         for i in 0..4 {
             let ev = if i == 3 { events.clone() } else { Vec::new() };
-            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0))), events: ev, ..Default::default() };
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 1080.0))), events: ev, ..Default::default() };
             let _ = ctx.run(input, |ctx| acts = show(ctx, v, st));
         }
         (ctx, acts)
     }
 
-    fn view() -> View {
+    fn view(name: &str) -> View {
         View {
-            areas: (1..=12).map(|n| Area { n, name: format!("Area {n}"), known: 3, owned: 1, running: n == 2 }).collect(),
+            areas: (1..=12).map(|n| Area { n, name: format!("{name} {n}"), known: 3, owned: 1, running: n == 2 }).collect(),
             area: 2,
-            techs: vec![Tech { field: 1, name: "Laser".into(), status: 5, pct: 100 }, Tech { field: 2, name: "Ion".into(), status: 4, pct: 40 }],
+            techs: vec![Tech { field: 1, name: "Laser".into(), status: 5, pct: 100, ..Default::default() }, Tech { field: 2, name: name.into(), status: 4, pct: 40, ..Default::default() }],
             field: 2,
-            detail: Some(Detail { name: "Ion".into(), status: 4, info: vec!["A gun".into()], need: "Required: Laser".into(), labs: vec![(1, 2, "need".into(), "have".into())], days: Some("Days: 4".into()), cost: Some("Cost: 9".into()) }),
+            detail: Some(Detail { name: name.into(), info: vec!["A gun".into()], need: ("Required".into(), vec![("Laser".into(), true)]), labs: vec![(1, 2, "need".into(), "have".into())], days: Some(("Days".into(), "4".into())), cost: Some(("$9".into(), "$18".into())) }),
             stop: true,
             start_on: true,
             ..Default::default()
@@ -358,30 +449,43 @@ mod tests {
     }
 
     #[test]
-    fn the_three_panels_sit_side_by_side_under_the_bar() {
-        let (ctx, acts) = run(&view(), &mut State::default(), Vec::new());
-        assert!(acts.is_empty());
+    fn the_panels_keep_the_boards_places() {
+        for w in [1440.0, 1920.0, 2520.0] {
+            let (ctx, acts) = run(&view("Ion"), &mut State::default(), Vec::new(), w);
+            assert!(acts.is_empty());
+            let r = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
+            let (l, a, i, n) = (r("rmh-list"), r("rmh-auto"), r("rmh-info"), r("rmh-areas"));
+            assert!((l.width() - LIST_W).abs() < 1.0 && (i.width() - INFO_W).abs() < 1.0, "{w}: {l:?} {i:?}");
+            assert!(l.bottom() < a.top() && a.bottom() < n.top() && i.bottom() < n.top(), "{w}");
+            assert!(i.right() <= w - EDGE + 0.5 && n.right() <= w - EDGE + 0.5, "{w}: {n:?}");
+        }
+    }
+
+    /// Long names are cut inside their boxes: the panels keep their widths.
+    #[test]
+    fn long_names_keep_the_panels() {
+        let (ctx, _) = run(&view(&"Very long translated research name ".repeat(5)), &mut State::default(), Vec::new(), 1920.0);
         let r = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
-        let (a, l, i) = (r("rmh-areas"), r("rmh-list"), r("rmh-info"));
-        assert!(a.right() < l.left() && l.right() < i.left() && i.right() <= 1920.0);
-        assert_eq!(a.top(), l.top());
+        assert!((r("rmh-list").width() - LIST_W).abs() < 1.0 && (r("rmh-info").width() - INFO_W).abs() < 1.0);
     }
 
     #[test]
     fn a_click_on_a_category_and_a_row_asks_for_them() {
-        let v = view();
+        let v = view("Ion");
         let mut st = State::default();
-        let (ctx, _) = run(&v, &mut st, Vec::new());
-        let a = ctx.memory(|m| m.area_rect(egui::Id::new("rmh-areas"))).unwrap();
-        // The fourth category's row: 7 margin, 26 a row, none of the gaps before category 6.
-        let at = pos2(a.left() + 40.0, a.top() + 7.0 + 26.0 * 3.0 + 13.0);
+        let (ctx, _) = run(&v, &mut st, Vec::new(), 1920.0);
+        let n = ctx.memory(|m| m.area_rect(egui::Id::new("rmh-areas"))).unwrap();
+        let l = ctx.memory(|m| m.area_rect(egui::Id::new("rmh-list"))).unwrap();
         let click = |p: egui::Pos2| vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }, egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }];
-        let ctx2 = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb).ctx;
-        let mut acts = Vec::new();
-        for ev in [Vec::new(), Vec::new(), click(at)] {
-            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0))), events: ev, ..Default::default() };
-            let _ = ctx2.run(input, |ctx| acts = show(ctx, &v, &mut st));
-        }
-        assert_eq!(acts, vec![Act::Area(4)]);
+        // The first group's third tile (category 3): column 1, row 0.
+        let room = 1920.0 - 2.0 * EDGE - EXIT_W - 36.0;
+        let tw = (room * 3.0 / 6.0 - 20.0 - 12.0) / 3.0;
+        let at = pos2(n.left() + 10.0 + tw + 6.0 + 20.0, n.top() + 8.0 + 16.0 + 6.0 + 20.0);
+        let (_, acts) = run(&v, &mut st, click(at), 1920.0);
+        assert_eq!(acts, vec![Act::Area(3)]);
+        // The first row of the list: field 1.
+        let at = pos2(l.left() + 40.0, l.top() + 16.0 + 26.0 + 8.0 + 13.0);
+        let (_, acts) = run(&v, &mut st, click(at), 1920.0);
+        assert_eq!(acts, vec![Act::Field(1)]);
     }
 }

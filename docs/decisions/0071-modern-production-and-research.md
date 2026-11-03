@@ -1,6 +1,6 @@
 # ADR 0071: the modern production view and research screen
 
-Date: 2026-11-03. Status: accepted (the production and research screens of the "Modern versions of every original
+Date: 2026-11-03. Status: accepted; amended below (the design kit) (the production and research screens of the "Modern versions of every original
 screen" package, `docs/ENHANCEMENTS.md` → UI). Implemented by `ig2-client::production_modern` and
 `ig2-client::research_modern` (the panels and their acts), `ui::Hud::production_modern_view` and
 `research_modern_view` (what they show, read from the state `StarmapGfx2D_3` and `ResearchGfx2D_2` read),
@@ -54,3 +54,26 @@ hot-spot and stay as they are.
   production view) is off.
 - No exe capture exists for the new look: screenshots go with the change.
 - The research screen's opening and closing sounds are not played in the modern screen (it has no animation).
+
+## Amendment: the design kit (2026-11-03)
+The production view and the research screen are redrawn with the design kit (ADR 0073) after the production and
+research boards (1920 × 1080 at 100 % UI scale, one design pixel one point; 4:3 and 21:9 keep working):
+- **Production view**: the planet on the kit's title plate between the previous key and the next and planet-list
+  keys; per line a 600-wide glass panel (title, capacity on an LCD, "none" dimmed) with four 90-high slots: the
+  slot's number, a 128 × 72 picture well, the design's name, its hull and its price, the head unit's bar with its
+  per cent, the count on an LCD between round −/+ buttons, the repeat and "into a fleet" lamp plates; an empty slot
+  says so and has a "+ Blueprint" plate. Each queued design's hull turns in its well
+  (`starmap_panels::PanelModels::render_thumbs`: one cell per slot of a window-sized texture, as the head units are
+  posed and lit, drawn into the wells in the window's top frame). The design list is a deep panel under its slot
+  with each design's unit price, the slot's design selected, a ninth station muted. Exit is the board's plate at
+  the bottom right. The panels slide in from their sides; under 4:3 the panels go under the plate.
+- **Research screen**: the category's techs (top left, deep panel) with their status at the right (done, the bar
+  and per cent, the cost, locked); the auto-research switches as settings rows under it; the shown tech at the
+  right (name, lines, prerequisites with the owned ones in info blue, labs red when short, days), the funding as
+  two plates (normal, double money: the urgent button), start or stop, the running project with its jump; the
+  twelve categories as tiles in three groups at the bottom (ships and weapons with the special one, buildings,
+  vehicles), each with owned / known and a progress line; an exit plate (the top bar's starmap pick). The original's
+  wire sphere, ball and tech models turn in the middle (`research::ResearchModels::modern` leaves the console out).
+- **Input**: the buttons, lamps, keys, tiles and plates act on the press of either button, as the original's
+  latched hot-spots; a held count keeps repeating with the pointer off it until the button is up.
+- `--snapshot --stage-queue` gives the snapshot's planet a production queue (a still of the filled view).
