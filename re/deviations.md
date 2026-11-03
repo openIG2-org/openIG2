@@ -37,6 +37,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 508 | colony, modern radar | open: on-screen zoom keys (held = numpad +/-) and a starmap key the exe lacks | no | colony.md §11.9 |
 | 509 | colony, info mode under the modern panels | open: a press anywhere off the modern panels is hot-spot 0x20; the exe's 0x20 is the whole screen under its panel's dead 0x1f | no | colony.md §12.2 |
 | 540 | trade, modern offer rows | open: no hold-and-drag re-pick on the offer rows (the original re-picks with the button held, hot-spots 0x23 and 0x24) | yes | ADR 0076 |
+| 541 | space battle, modern HUD | open: a press on a modern top-bar pop-up (research list, message history, screen menus) during a battle may also reach the battlefield (the HUD's panels hold only the bar's rectangle); unverified | yes | ADR 0077 |
+| 542 | space battle, modern top bar | open: the bar's right press, the second-button rule and the message key's gate are not checked against the original's top bar handler (exe 0x4e07d6, 0x4e086d, 0x555470) | yes | ADR 0077 |
+| 543 | space battle, modern HUD | open: a stance-slider drag loses its mapping when the selection changes while it runs | no | ADR 0077 |
 
 ## Keep
 
@@ -115,7 +118,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 513 | modern pause menu, Esc and O | Esc or O steps from a sub-page to the pause menu to the game and takes back unapplied settings; the original leaves the screen at once | yes | ADR 0078 |
 | 514 | modern pause menu and Options page, click sound | the click sound plays on every activation; the original plays `PlaySoundGlobal(0)` only on Quit, Back and No | no | ADR 0078 |
 | 518 | modern main menu, entries | an entry acts when the button is released over it (either button); the original's rings and the classic panel act on the press frame (`IG2_gameUpdate`, exe 0x4e0440) | no | ADR 0078 |
-| 520 | starmap, modern long info's settings menus | the tax, autobuild and priority lists open over their field with the current value marked; the original's drop under the field with no mark; the choice made is the same | yes | ADR 0077 |
+| 520 | starmap, modern long info's settings menus | the tax, autobuild and priority lists open on their own field, at its width and opaque, with the current value marked; the original's drop under the field with no mark; the choice made is the same | yes | ADR 0077 |
 | 523 | research and design, modern exit plates | the exit plate is the top bar's starmap pick (client only); the exe has no exit button on these screens (the top bar's keys, F-keys, Esc) | no | research.md §7, design.md §14 |
 | 537 | diplomacy, modern page | an Exit plate and scrolling contact cards (the original has neither); the menus open by click instead of press, drag and release (the pick is replayed as the original's press, drag and release); off = the original's | yes | ADR 0076 |
 | 538 | spy, modern page | the arrows jump to the next or previous agent, with no edge scrolling of the carousel; the lists are click dropdowns instead of press, drag and release; off = the original's | yes | ADR 0076 |

@@ -248,6 +248,11 @@ impl App {
                 }
             });
         }
+        // Ours (ADR 0077): over the modern fleet and transfer panels the tooltip is the panels' (the kit's look).
+        if starmap_shown && self.fleet_modern_up() {
+            let lang = self.hud.as_ref().map(|h| h.texts.lang);
+            self.fleet_modern.tip = out.tip.take().zip(lang).map(|((_, t), lang)| ig2_formats::text::decode(t.split(|&b| b == 0).next().unwrap_or(&[]), lang).trim().to_string()).filter(|t| !t.is_empty());
+        }
         // `GFX_DrawOver`'s last line: `Mouse_Tipus = DrawOverSelected > 0`; no tooltip under it.
         if self.mp_wait.is_open() {
             out.tip = None;

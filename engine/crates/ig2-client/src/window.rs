@@ -2674,6 +2674,7 @@ impl App {
     /// Ours (ADR 0077): so are the fleet and transfer panels'.
     fn starmap_virtual(&self, at: [f32; 2]) -> [f32; 2] {
         match () {
+            _ if self.modern_up() && self.modern.list_open() => self.modern.list_pointer(at),
             _ if self.modern_up() && self.menus.info_on() => self.modern.info_pointer(at),
             _ if self.fleet_modern_up() => self.fleet_modern.pointer(at),
             _ => at,

@@ -142,10 +142,19 @@ impl Live {
             let plans = crate::spacewar_ui::Plans { designs: &combat.designs, ships: &combat.ships, gun_tech, gun_hp, firepower: &world.game.rules.ai.design.firepower, fleets: &world.game.state.fleets };
             let scroll = world.game.state.mem.u8(ig2_sim::save::va::TUTORIAL_ACTIVE) == 0;
             self.ui.story_no_retreat = world.game.state.mem.i32(ig2_sim::save::va::STORY_ADAT + 0x98) != 0;
+            // Ours (ADR 0077): the modern rail reaches the window's right edge, where the original's column ended 20
+            // pixels short of it: on the rail the right edge doesn't scroll.
+            let mut at = self.pointer;
+            if let Some(m) = &self.modern {
+                let v = crate::font::Virtual::new([self.window[0] as f32, self.window[1] as f32]);
+                if at[0] as f32 >= v.x0 + m.rail_left() * v.k {
+                    at[0] = at[0].min(self.window[0] - 9);
+                }
+            }
             for _ in 0..due {
                 self.ui.tick(b, &plans, &mut out);
                 if scroll {
-                    self.ui.autoscroll(self.pointer, self.window, self.left || self.right);
+                    self.ui.autoscroll(at, self.window, self.left || self.right);
                 }
             }
         }
@@ -186,7 +195,8 @@ impl Live {
         let pointer = mouse;
         let (raw, mut mouse) = match self.modern.as_ref().map(|m| m.spot(mouse)) {
             Some(Some((id, at))) => (Some(id), at),
-            Some(None) => (self.ui.spot(&self.mask, mouse).map(|s| if crate::battle_modern::replaced(s) { 0x4c } else { s }), mouse),
+            // The battlefield fills the window: beyond the original's 640 × 480 it is the battlefield too.
+            Some(None) => (Some(self.ui.spot(&self.mask, mouse).map_or(0x4c, |s| if crate::battle_modern::replaced(s) { 0x4c } else { s })), mouse),
             None => (self.ui.spot(&self.mask, mouse), mouse),
         };
         let spot = self.ui.latch(raw);
@@ -250,7 +260,9 @@ impl Live {
         if let Some(big) = shown.big.as_ref().filter(|_| !shown.modern) {
             crate::spacewar_hud::big_box(&mut frame, hud, &virt, &shown, big);
         }
-        crate::spacewar_hud::notices(&mut frame, hud, &virt, [b.human_retreated, b.ai_retreated, self.ui.formation(b)], self.ui.column[0], self.ui.fade);
+        // The notices end at virtual x 620; the modern rail's left edge where a narrow screen puts it nearer.
+        let dx = self.modern.as_ref().map_or(0.0, |m| (m.rail_left() - 8.0 - 620.0).min(0.0));
+        crate::spacewar_hud::notices(&mut frame, hud, &virt, [b.human_retreated, b.ai_retreated, self.ui.formation(b)], self.ui.column[0], self.ui.fade, dx);
         if self.ui.mp_waiting(b) {
             crate::spacewar_hud::waiting(&mut frame, hud, &virt, self.ui.fade);
         }

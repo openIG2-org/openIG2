@@ -418,14 +418,15 @@ pub struct BigShip {
 /// `GetString(0xb, 1, 2)`) at y 30, an AI's (`+0x2d91`, `(0xb, 1, 3)`) on the next line (+10), and in the formation
 /// phase (`+0x2d85`) `(0xb, 1, 4)` on the next, its multiplier scaled by `(slot-0 counter·100/50)/100` (ints), so it
 /// slides in and out with the weapon column [obs spacewar_info t500: the exe's caption right-aligned at x 620].
-pub fn notices(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, [own, ai, formation]: [bool; 3], slot0: i32, fade: f32) {
+/// `dx` moves them across (virtual; ours, ADR 0077: left of the modern rail where it reaches into the 640 screen).
+pub fn notices(f: &mut Frame, hud: &crate::ui::Hud, v: &Virtual, [own, ai, formation]: [bool; 3], slot0: i32, fade: f32, dx: f32) {
     let Some(font) = &hud.font else { return };
     let base = (fade * 100.0) as i32;
     let colour = |k: i32| hud.palette.get(2).copied().unwrap_or([1.0; 3]).map(|x| x * k as f32 / 100.0);
     let line = |f: &mut Frame, line: u16, y: f32, k: i32| {
         let t = hud.texts.get(0xb, 1, line);
         let t = t.split(|&c| c == 0).next().unwrap_or(&[]);
-        font.text(f, v, t, 200.0, y, 0x46, 2, Align::Right, colour(k), None);
+        font.text(f, v, t, 200.0 + dx, y, 0x46, 2, Align::Right, colour(k), None);
     };
     let mut y = 30.0;
     if own {

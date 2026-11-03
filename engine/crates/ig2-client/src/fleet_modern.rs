@@ -127,6 +127,8 @@ pub struct State {
     sale_at: Option<Pos2>,
     /// The wells: the source rectangle on the virtual 640 × 480 screen, the well in pixels, the opacity.
     pub wells: Vec<([f32; 4], Rect, f32)>,
+    /// The original's tooltip text shown now (the window's, `window/pointer.rs`).
+    pub tip: Option<String>,
 }
 
 /// A control's rect and the virtual point of the original's it is.
@@ -216,7 +218,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     let ppp = ctx.pixels_per_point();
     let screen = ctx.screen_rect();
     let virt = crate::font::Virtual::new([screen.width() * ppp, screen.height() * ppp]);
-    *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], sale_at: st.sale_at, ..Default::default() };
+    *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], sale_at: st.sale_at, tip: st.tip.take(), ..Default::default() };
     let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 28.0;
     // Room down to the selection card (24 from the bottom, about 150 high).
     let room = (screen.bottom() - top - EDGE - 200.0).max(360.0);
@@ -230,6 +232,11 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
             View::Tanks(ti) => tanks(ui, ti, st, screen, top, slide),
         }
     });
+    // The original's tooltip of the spot under the pointer (`Starmap_MouseInit2`'s texts, its rest timer), in the
+    // kit's look.
+    if let (Some(text), Some(p)) = (&st.tip, ctx.input(|i| i.pointer.hover_pos())) {
+        ds::tip_at(ctx, "fmh-tip", p, text);
+    }
     let o = t;
     // The sale menu lies over the models (drawn after the panels): the wells under it stay empty while it is open.
     if let Some((m, _)) = &st.menu {
@@ -252,13 +259,15 @@ fn panel(ui: &egui::Ui, r: Rect, title: &str, owner: &str, colour: Color32, stat
     let base = ds::fit::baseline(inner, TITLE);
     let w = Text::new(title, TITLE).color(k.ink).baseline(base).paint(ui, inner.with_max_x(inner.left() + inner.width() * 0.5)).width;
     let mut x = inner.left() + w + 18.0;
+    // The owner and the status centred on the title's capitals (the board's header row centres its items).
+    let mid = |f: Font| base - (TITLE.cap() - f.cap()) / 2.0;
     if !owner.is_empty() {
         let f = Text::new(owner, OWNER).color(colour).layout(ui.ctx(), (inner.right() - x) * 0.5);
-        ds::glowing_galley(p, pos2(x, base - f.baseline()), &f.galley, colour);
+        ds::glowing_galley(p, pos2(x, mid(OWNER) - f.baseline()), &f.galley, colour);
         x += f.width + 18.0;
     }
     if !status.is_empty() {
-        Text::new(status, STATUS).color(k.ink_muted).baseline(base).paint(ui, Rect::from_min_max(pos2(x, inner.top()), inner.max));
+        Text::new(status, STATUS).color(k.ink_muted).baseline(mid(STATUS)).paint(ui, Rect::from_min_max(pos2(x, inner.top()), inner.max));
     }
 }
 
@@ -276,8 +285,8 @@ fn card(ui: &mut egui::Ui, r: Rect, c: &Card, src: [f32; 4], alpha: f32, round: 
     }
     let inner = r.shrink(8.0);
     // The board's 130-point well in a 196-point card; the transfer's button row under the name.
-    let foot = if round.is_some() { 42.0 + 8.0 } else { 0.0 };
-    let well = Rect::from_min_max(inner.min, pos2(inner.right(), (inner.top() + 130.0).min(inner.bottom() - 20.0 - 8.0 - foot)));
+    let (foot, well_h) = if round.is_some() { (42.0 + 8.0 + 14.0, 118.0) } else { (0.0, 130.0) };
+    let well = Rect::from_min_max(inner.min, pos2(inner.right(), (inner.top() + well_h).min(inner.bottom() - 20.0 - 8.0 - foot)));
     p.rect_filled(well, ds::RADIUS_PLATE, k.glass_deep);
     ds::radial(p, well, ds::RADIUS_PLATE, [0.5, 0.6], &[(0.0, k.rim_bright.gamma_multiply(0.18 + 0.12 * hot)), (0.7, Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
     ds::rim(p, well, ds::RADIUS_PLATE, k.rim);
@@ -393,7 +402,7 @@ fn fleet(ui: &mut egui::Ui, f: &FleetInfo, st: &mut State, screen: Rect, top: f3
     p.hline(pic.x_range(), pic.bottom() - 0.5, Stroke::new(1.0f32, k.rim));
     if let Some(d) = &f.detail {
         let wf = (PREVIEW[2] / PREVIEW[3]).min(pic.width() / pic.height());
-        let ph = (pic.height() - 24.0).min((pic.width() - 48.0) / wf);
+        let ph = (pic.height() - 8.0).min((pic.width() - 48.0) / wf);
         st.wells.push((PREVIEW, Rect::from_center_size(pic.center(), vec2(ph * wf, ph)), ui.opacity()));
         let inner = Rect::from_min_max(pic.left_bottom() + vec2(24.0, 18.0), right.max - vec2(24.0, 12.0));
         Text::new(&d.name, DETAIL_NAME).color(k.ink).shrink(15.0).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 26.0)));
@@ -439,7 +448,7 @@ fn fleet(ui: &mut egui::Ui, f: &FleetInfo, st: &mut State, screen: Rect, top: f3
     if let Some(c) = &f.cap {
         capacity(ui, foot, c, 200.0);
     }
-    let ew = Text::new(&f.exit, EXIT).layout(ui.ctx(), f32::INFINITY).width.clamp(100.0, 220.0) + 80.0;
+    let ew = Text::new(&f.exit, EXIT).layout(ui.ctx(), f32::INFINITY).width.clamp(80.0, 220.0) + 80.0;
     let exit = Rect::from_min_size(pos2(foot.right() - ew, foot.center().y - 22.0), vec2(ew, 44.0));
     plate(ui, exit, &f.exit);
     st.spots.push((exit, [527.0, 410.0]));
@@ -507,17 +516,15 @@ fn transfer(ui: &mut egui::Ui, t: &Transfer, st: &mut State, screen: Rect, top: 
         let foot = Rect::from_min_max(pos2(r.left() + PAD.x, body.bottom()), pos2(r.right() - PAD.x, r.bottom()));
         capacity(ui, foot, &side.cap, 160.0);
         if right {
-            let ew = Text::new(&t.exit, EXIT).layout(ui.ctx(), f32::INFINITY).width.clamp(100.0, 200.0) + 72.0;
+            let ew = Text::new(&t.exit, EXIT).layout(ui.ctx(), f32::INFINITY).width.clamp(80.0, 200.0) + 72.0;
             let exit = Rect::from_min_size(pos2(foot.right() - ew, foot.center().y - 22.0), vec2(ew, 44.0));
             plate(ui, exit, &t.exit);
             st.spots.push((exit, [527.0, 410.0]));
         }
     }
-    // The arrows between the panels.
-    let c = pos2(screen.center().x, top + h * 0.5 - 40.0) + slide;
-    for (dy, icon) in [(-14.0, ds::Icon::ChevronRight), (14.0, ds::Icon::ChevronLeft)] {
-        icon.paint(ui.painter(), Rect::from_center_size(c + vec2(0.0, dy), vec2(28.0, 28.0)), k.ink_silver);
-    }
+    // The exchange mark between the panels.
+    let c = pos2(screen.center().x, top + h * 0.5 - 28.0) + slide;
+    ds::Icon::Swap.paint(ui.painter(), Rect::from_center_size(c, vec2(28.0, 28.0)), k.ink_silver);
 }
 
 /// The tank info board: the list panel 560 wide, the data panel 760, 40 apart, under a title plate.
@@ -796,7 +803,15 @@ impl crate::ui::Hud {
             }));
         }
         let (owner_name, colour) = owner_of(owner);
-        let status = card.map(|c| c.lines.iter().skip(1).map(|l| l.0.clone()).filter(|l| !l.is_empty()).take(1).collect::<Vec<_>>().join(" · ")).unwrap_or_default();
+        // The card's status line and its last (the speed) line, as the board's header: "WAITING · SPEED 6".
+        let status = card.map(|c| {
+            let lines: Vec<&str> = c.lines.iter().skip(1).map(|l| l.0.trim()).filter(|l| !l.is_empty()).collect();
+            let mut v: Vec<String> = lines.first().map(|l| l.to_string()).into_iter().collect();
+            if lines.len() > 2 {
+                v.push(lines[lines.len() - 1].replace(':', ""));
+            }
+            v.join(" · ")
+        }).unwrap_or_default();
         Some(View::Fleet(FleetInfo {
             title: fr.map(|r| dec(&r[..0x14])).unwrap_or_default(),
             owner: owner_name,

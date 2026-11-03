@@ -199,6 +199,8 @@ fn planet_plate(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
             acts.push(Act::Spot(0xc));
         }
         let plate = ds::title_plate(ui, &v.planet, PLATE_W);
+        // The planet list opens under the plate (`starmap_modern::planet_list`, the next frame).
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(crate::starmap_modern::PLATE_ID), (plate.rect, v.planet.clone())));
         let plate = ui.interact(plate.rect, ui.id().with("pmh-name"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         // The planet list opens on the press and picks on the release, as the original's (hot-spot 0x32).
         let list = |r: &egui::Response| r.is_pointer_button_down_on() && r.ctx.input(|i| i.pointer.primary_pressed());

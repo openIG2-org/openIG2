@@ -1814,8 +1814,10 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
         if tick % 5 == o.sim_phase && !world.paused() {
             world.tick();
         }
-        // The window pixel under the pointer (`MainCallBackEventHandler`'s mapping backwards, as the tracer's).
-        live.pointer = [(mouse[0] * size[0] / 640.0).ceil() as i32, (mouse[1] * size[1] / 480.0).ceil() as i32];
+        // The window pixel under the pointer (`MainCallBackEventHandler`'s mapping backwards, as the tracer's), on the
+        // virtual screen's band (a wide window's pointer at virtual x 725 is on the rail, not past the edge).
+        let band = crate::font::Virtual::new(size);
+        live.pointer = [(band.x0 + mouse[0] * band.k).ceil() as i32, (band.y0 + mouse[1] * band.k).ceil() as i32];
         live.window = [o.size.0 as i32, o.size.1 as i32];
         outs.extend(live.update(world, now));
         let t = now as f32 / 1000.0;

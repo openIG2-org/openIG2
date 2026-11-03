@@ -743,7 +743,7 @@ Radar rectangle on screen: **x 274..368 (94 px), y 388..455 (67 px)**, centre (3
    `a = ((0x5dc - (v - 0x2134)) * 0xff) / 0x5dc` (int), at least 1; two triangles over (0,0)-(640,480), colour `a<<24 | 0x010101`, z 0.5, `polygonsfader(.., 2, 0)` (normal blend, transparency 255-a, texture `fadertexture`):
    a fade to black that is almost opaque 1500 units after 8500. Drawn after the dots.
 
-Port status: under the modern HUD the 2D HUD is drawn on the design kit instead (ADR 0077): top bar, weapon rail (§5.1), ship info, selection card, radar plate with the camera keys (§5.3, §5.5), retreat popup (§5.4); the original's hot-spots, orders and keys stay the only input path.
+Port status: under the modern HUD the 2D HUD is drawn on the design kit instead (ADR 0077): top bar, weapon rail (§5.1), ship info, selection card, radar plate with the camera keys (§5.3, §5.5), retreat popup (§5.4); the original's hot-spots, orders and keys stay the only input path; the battlefield beyond the 4:3 picture answers selection and orders (ADR 0077's amendment).
 
 ## 6. Overlays and effects
 ### 6.1 `lovedekekkirak` (ELF 0x6823c0)

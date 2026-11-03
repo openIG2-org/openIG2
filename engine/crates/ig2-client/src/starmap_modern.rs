@@ -231,7 +231,16 @@ pub struct State {
     placed: Option<Placed>,
     /// The game's turning globe cut into the card's and the long info's planet ([`crate::fleet_modern::pictures`]).
     pub wells: Vec<([f32; 4], Rect, f32)>,
+    /// The planet list moved under the production view's title plate: its bounds and each drawn row with the
+    /// middle of the original's (virtual), for the pointer's remap.
+    list: Option<([f32; 3], Vec<ListRow>)>,
 }
+
+/// A drawn row of the moved planet list and the middle of the original's (virtual).
+type ListRow = (Rect, [f32; 2]);
+
+/// Where the modern production view put its title plate and the planet on it (`production_modern`, last frame).
+pub const PLATE_ID: &str = "pmh-plate";
 
 /// The info box's globe on the original's virtual screen (`render_globe`'s render target), with a margin.
 const GLOBE_SRC: [f32; 4] = [6.0, 433.5, 34.0, 34.0];
@@ -573,6 +582,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = Vec::new();
     let ink = bar(ctx, v, st, &mut acts);
     st.placed = None;
+    st.list = None;
     st.wells.clear();
     // The selection, bottom left (the long info shows the planet itself).
     if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
@@ -1078,6 +1088,10 @@ pub struct Radial {
 #[derive(Debug, Clone, Default)]
 pub struct Select {
     pub rows: Vec<SelectRow>,
+    /// A settings menu's field (0 tax, 1 autobuild, 2 priority).
+    pub field: Option<usize>,
+    /// The planet list (`MenuKind::Planets`).
+    pub planets: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1207,6 +1221,19 @@ fn spot_centre(id: u32) -> Option<[f32; 2]> {
 }
 
 impl State {
+    /// The moved planet list is open (the pointer goes through [`State::list_pointer`]).
+    pub fn list_open(&self) -> bool {
+        self.list.is_some()
+    }
+
+    /// The pointer `at` (virtual) over the moved planet list: over a drawn row the middle of the original's; elsewhere
+    /// unchanged (a press there closes the list, as the original's off its rows).
+    pub fn list_pointer(&self, at: [f32; 2]) -> [f32; 2] {
+        let Some((map, rows)) = &self.list else { return at };
+        let p = pos2(map[0] + at[0] * map[2], map[1] + at[1] * map[2]);
+        rows.iter().find(|r| r.0.contains(p)).map_or(at, |r| r.1)
+    }
+
     /// The pointer `at` (virtual) as the original's long-info hot-spots should see it under the modern panel: over one
     /// of its controls, the middle of the original's spot; over the panel (or where the original's controls were),
     /// the original panel's empty part; over an open settings menu, its original place. Elsewhere unchanged.
@@ -1235,11 +1262,20 @@ fn menus(ctx: &egui::Context, v: &View, st: &mut State, ink: &Ink, acts: &mut Ve
         return;
     }
     egui::Area::new(egui::Id::new("smh-menus")).order(egui::Order::Foreground).interactable(false).fixed_pos(ctx.screen_rect().min).fade_in(false).show(ctx, |ui| {
-        if let Some(s) = &m.select {
+        // Taken: the production view puts it back each frame it is up.
+        let plate = ui.ctx().data_mut(|d| {
+            let id = egui::Id::new(PLATE_ID);
+            let v = d.get_temp::<(Rect, String)>(id);
+            d.remove::<(Rect, String)>(id);
+            v
+        });
+        if let (Some(s), Some((plate, name))) = (m.select.as_ref().filter(|s| s.planets), plate) {
+            st.list = Some((m.map, planet_list(ui, s, plate, &name)));
+        } else if let Some(s) = &m.select {
             let (shift, field) = select_shift(m, s, st, ui.ctx().screen_rect());
-            // A settings menu marks the field's value (ADR 0077).
-            let current = field.and_then(|n| m.info.as_ref()?.settings.as_ref().map(|x| x.1[n].clone()));
-            let bounds = select(ui, m, s, shift, current.as_deref());
+            // A settings menu marks the field's value and is the field's width (ADR 0077).
+            let current = field.and_then(|f| m.info.as_ref()?.settings.as_ref().map(|x| x.1[f.0].clone()));
+            let bounds = select(ui, m, s, shift, current.as_deref(), field.map(|f| f.1.width()));
             if let Some(pl) = &mut st.placed {
                 pl.menu = (shift != [0.0; 2]).then_some((shift, bounds));
             }
@@ -1252,14 +1288,11 @@ fn menus(ctx: &egui::Context, v: &View, st: &mut State, ink: &Ink, acts: &mut Ve
 
 /// A settings menu of the long info opens over its modern field, the field's value on the field (ADR 0077; under
 /// it when no row is the value, kept on the screen): moved by as much from where the original opened it at the press
-/// (virtual); and which field (0 tax, 1 autobuild, 2 priority).
-fn select_shift(m: &Menus, s: &Select, st: &State, screen: Rect) -> ([f32; 2], Option<usize>) {
-    let (Some(pl), Some(first)) = (&st.placed, s.rows.first()) else { return ([0.0; 2], None) };
-    let dist = |c: [f32; 2]| (c[0] - first.rect[0]).abs() + (c[1] - first.rect[1]).abs();
-    let near = pl.spots.iter().filter(|sp| matches!(sp.0, 0x5a | 0x5e | 0x60)).filter_map(|sp| spot_centre(sp.0).map(|c| (sp.1, dist(c), sp.0))).min_by(|a, b| a.1.total_cmp(&b.1));
-    let Some((field, _, id)) = near.filter(|n| n.1 < 60.0) else { return ([0.0; 2], None) };
-    let n = [0x5a, 0x5e, 0x60].iter().position(|&x| x == id);
-    let value = n.and_then(|n| m.info.as_ref()?.settings.as_ref().map(|x| x.1[n].clone()));
+/// (virtual); and which field (0 tax, 1 autobuild, 2 priority) with its rect.
+fn select_shift(m: &Menus, s: &Select, st: &State, screen: Rect) -> ([f32; 2], Option<(usize, Rect)>) {
+    let (Some(pl), Some(n), true) = (&st.placed, s.field, !s.rows.is_empty()) else { return ([0.0; 2], None) };
+    let Some(field) = pl.spots.iter().find(|sp| sp.0 == [0x5a, 0x5e, 0x60][n]).map(|sp| sp.1) else { return ([0.0; 2], None) };
+    let value = m.info.as_ref().and_then(|i| i.settings.as_ref()).map(|x| x.1[n].clone());
     let on_field = value.and_then(|v| s.rows.iter().position(|r| r.text == v));
     let k = m.map[2];
     let (x0, y0) = s.rows.iter().fold((f32::MAX, f32::MAX), |a, r| (a.0.min(r.rect[0]), a.1.min(r.rect[1])));
@@ -1271,7 +1304,40 @@ fn select_shift(m: &Menus, s: &Select, st: &State, screen: Rect) -> ([f32; 2], O
         None if field.bottom() + 8.0 + h <= screen.bottom() - 8.0 => field.bottom() + 8.0,
         None => field.top() - 8.0 - h,
     };
-    ([(left - m.map[0]) / k - x0, (top - m.map[1]) / k - y0], n)
+    ([(left - m.map[0]) / k - x0, (top - m.map[1]) / k - y0], Some((n, field)))
+}
+
+/// The planet list under the production view's title plate (the "Select planet" board): the plate's width and a bit,
+/// the board's 52-point rows, the planet on the plate in the list's selected look, the row under the pointer with the
+/// bright rim. The original's rows answer the pointer moved onto them ([`State::list_pointer`]).
+fn planet_list(ui: &egui::Ui, s: &Select, plate: Rect, current: &str) -> Vec<ListRow> {
+    let k = ds::tokens();
+    let screen = ui.ctx().screen_rect();
+    let n = s.rows.len().max(1) as f32;
+    let row_h = 52.0f32.min(((screen.bottom() - plate.bottom() - 32.0) / n).floor()).max(24.0);
+    let w = plate.width() + 20.0;
+    let panel = Rect::from_min_size(pos2(plate.center().x - w / 2.0, plate.bottom() + 10.0), vec2(w, row_h * n + 12.0));
+    let p = ui.painter();
+    ds::shadow(p, panel, ds::RADIUS_PANEL, 8, 24, 0, Color32::from_black_alpha(204));
+    p.rect_filled(panel, ds::RADIUS_PANEL, k.void);
+    ds::paint_panel(p, panel, ds::PanelKind::Deep, 0.97);
+    let font = Font::DATA.sized(16.0).tracking(0.08);
+    let mut rows = Vec::new();
+    for (i, r) in s.rows.iter().enumerate() {
+        let row = Rect::from_min_size(panel.min + vec2(6.0, 6.0 + i as f32 * row_h), vec2(w - 12.0, row_h)).shrink2(vec2(0.0, 2.0));
+        let hot = ds::hover_t(ui.ctx(), egui::Id::new(("smh-planets", i)), r.hovered);
+        if r.text == current {
+            ds::hgrad(p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
+            ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
+        }
+        if hot > 0.0 {
+            ds::rim(p, row.shrink(1.0), ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
+        }
+        Text::new(&r.text, font).color(k.ink).shrink(12.0).paint_only(ui, row.shrink2(vec2(16.0, 0.0)));
+        // The drawn row reaches its whole height (the margins included).
+        rows.push((row.expand2(vec2(6.0, 2.0)), [r.rect[0] + r.rect[2] / 2.0, r.rect[1] + r.rect[3] / 2.0]));
+    }
+    rows
 }
 
 /// The radial menu: a hub at the press point, a hairline to each icon, the icons on metal keys that come out of the
@@ -1337,8 +1403,9 @@ fn radial(ui: &egui::Ui, m: &Menus, r: &Radial, ink: &Ink) {
 }
 
 /// A select menu (moved by `shift`, virtual): a deep glass panel around the rows, the row under the pointer in the
-/// list's selected look. Its bounds in points.
-fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2], current: Option<&str>) -> Rect {
+/// list's selected look; `width` a settings field's (the rows stay inside the original's, which the pointer reaches).
+/// Its bounds in points.
+fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2], current: Option<&str>, width: Option<f32>) -> Rect {
     let k = ds::tokens();
     let p = ui.painter();
     let rect = |r: [f32; 4]| m.rect([r[0] + shift[0], r[1] + shift[1], r[2], r[3]]);
@@ -1352,8 +1419,13 @@ fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2], current: Option
     let sub = Font::LABEL.upper(false).sized((row_h * 0.45).clamp(10.0, 13.0));
     // Room for the texts (the sale's line is wider than its row).
     let widest = s.rows.iter().map(|r| Text::new(&r.text, font).layout(ui.ctx(), f32::INFINITY).width + if r.sub.is_empty() { 0.0 } else { Text::new(&r.sub, sub).layout(ui.ctx(), f32::INFINITY).width + 10.0 }).fold(0.0, f32::max);
-    b.max.x = b.max.x.max(b.min.x + widest + 16.0);
-    let panel = b.expand2(vec2(8.0, 6.0));
+    b.max.x = match width {
+        Some(w) => b.max.x.min(b.min.x + (w - 8.0).max(widest + 16.0)),
+        None => b.max.x.max(b.min.x + widest + 16.0),
+    };
+    let panel = b.expand2(vec2(if width.is_some() { 4.0 } else { 8.0 }, 6.0));
+    // Opaque: the field and the plates under the list don't show through (the boards' menus).
+    p.rect_filled(panel, ds::RADIUS_PANEL, k.void);
     ds::paint_panel(p, panel, ds::PanelKind::Deep, 0.97);
     for r in &s.rows {
         let mut row = rect(r.rect);
@@ -1489,7 +1561,7 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
                 if hot > 0.0 {
                     ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
                 }
-                Text::new(all, Font::LABEL.tracking(0.12).upper(false)).center().shrink(9.0).color(k.ink).paint_only(ui, r.shrink2(vec2(3.0, 0.0)));
+                Text::new(&calm(all), Font::LABEL.tracking(0.12).upper(false)).center().shrink(9.0).color(k.ink).paint_only(ui, r.shrink2(vec2(3.0, 0.0)));
                 spots.push((all_id, r));
                 for (id, glyph) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
                     let r = next(LI_ROUND, LI_ROUND);
@@ -1640,7 +1712,7 @@ mod tests {
         v.menus = Menus {
             map: [240.0, 0.0, 2.25],
             radial: Some(Radial { at: [320.0, 240.0], centres, icons: [2, 4, 3, 9], frame: 50, hover: 3, ..Default::default() }),
-            select: Some(Select { rows: vec![SelectRow { rect: [400.0, 300.0, 121.0, 13.0], text: "Low".into(), hovered: true, ..Default::default() }] }),
+            select: Some(Select { rows: vec![SelectRow { rect: [400.0, 300.0, 121.0, 13.0], text: "Low".into(), hovered: true, ..Default::default() }], field: None, planets: false }),
             info: Some(LongInfo { q: 1.0, exit_in: 1.0, title: "Magellan 10".into(), ..Default::default() }),
         };
         // On the select menu's row, on the long info's panel (at the screen's right), on a radial icon.
@@ -1723,7 +1795,7 @@ mod tests {
         assert_eq!(st.info_pointer([100.0, 200.0]), [100.0, 200.0]);
         // A tax menu opened at the field's spot (its rows from the press point) is drawn at the modern field, and the
         // pointer over a drawn row reaches the row.
-        v.menus.select = Some(Select { rows: vec![SelectRow { rect: [450.0, 297.0, 80.0, 13.0], text: "Low".into(), ..Default::default() }, SelectRow { rect: [450.0, 310.0, 80.0, 13.0], text: "High".into(), ..Default::default() }] });
+        v.menus.select = Some(Select { rows: vec![SelectRow { rect: [450.0, 297.0, 80.0, 13.0], text: "Low".into(), ..Default::default() }, SelectRow { rect: [450.0, 310.0, 80.0, 13.0], text: "High".into(), ..Default::default() }], field: Some(0), planets: false });
         for _ in 0..2 {
             g.run(SIZE, &style, |ctx| _ = show(ctx, &v, &mut st));
         }
@@ -1737,7 +1809,42 @@ mod tests {
         let back = st.info_pointer(virt(row));
         assert!((back[0] - 470.0).abs() < 0.01 && (back[1] - 316.0).abs() < 0.01, "{back:?}");
         // Off the drawn menu, the original's rows at their old place answer nothing (no unseen pick).
-        assert_eq!(st.info_pointer([470.0, 316.0]), NEUTRAL);
+        assert_eq!(st.info_pointer([470.0, 316.0]), NEUTRAL);        // The menu's kind names its field, wherever the press opened it: an autobuild menu opened nearer the tax
+        // field still opens on the autobuild one, its value ("Civil") marked there; the list is the field's width.
+        v.menus.select = Some(Select { rows: vec![SelectRow { rect: [450.0, 297.0, 121.0, 13.0], text: "None".into(), ..Default::default() }, SelectRow { rect: [450.0, 310.0, 121.0, 13.0], text: "Civil".into(), ..Default::default() }], field: Some(1), planets: false });
+        for _ in 0..2 {
+            g.run(SIZE, &style, |ctx| _ = show(ctx, &v, &mut st));
+        }
+        let (shift, bounds) = st.placed.as_ref().and_then(|p| p.menu).expect("menu");
+        let field = st.placed.as_ref().unwrap().spots.iter().find(|s| s.0 == 0x5e).unwrap().1;
+        assert!((field.center().y - (map[1] + (316.5 + shift[1]) * map[2])).abs() < 1.0, "{shift:?}");
+        assert!(bounds.width() < field.width() + 12.0, "{bounds:?} {field:?}");
+    }
+
+    /// The planet list opens under the production view's plate at the board's rows, the plate's planet marked, and
+    /// the pointer on a drawn row reaches the original's row; without the plate the list stays the original's.
+    #[test]
+    fn planet_list_opens_under_the_plate() {
+        let mut v = view();
+        v.menus = Menus { map: [240.0, 0.0, 2.25], ..Default::default() };
+        let row = |y: f32, t: &str| SelectRow { rect: [300.0, y, 120.0, 13.0], text: t.into(), ..Default::default() };
+        v.menus.select = Some(Select { rows: vec![row(90.0, "Tra 5"), row(103.0, "Magellan 10")], field: None, planets: true });
+        let plate = Rect::from_min_size(pos2(780.0, 64.0), vec2(360.0, 60.0));
+        let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        let mut st = State::default();
+        g.run(SIZE, &style, |ctx| {
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(PLATE_ID), (plate, "Magellan 10".to_string())));
+            _ = show(ctx, &v, &mut st);
+        });
+        let (_, rows) = st.list.clone().expect("moved list");
+        assert!(rows[0].0.top() > plate.bottom() && (rows[1].0.top() - rows[0].0.top() - 52.0).abs() < 0.5, "{rows:?}");
+        let virt = |p: Pos2| [(p.x - 240.0) / 2.25, p.y / 2.25];
+        assert_eq!(st.list_pointer(virt(rows[1].0.center())), [360.0, 109.5]);
+        assert_eq!(st.list_pointer([10.0, 400.0]), [10.0, 400.0]);
+        // The next frame without the production view's plate: the original's list.
+        g.run(SIZE, &style, |ctx| _ = show(ctx, &v, &mut st));
+        assert!(!st.list_open());
     }
 
     /// Long texts (a long translation, a long name) never resize the panels: they are cut or shrunk inside them.

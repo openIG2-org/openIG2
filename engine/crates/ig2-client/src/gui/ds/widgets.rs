@@ -281,6 +281,8 @@ pub enum Icon {
     /// A volume's mute button (`volume-2`, crossed out when muted).
     Speaker,
     SpeakerOff,
+    /// Two opposed arrows (`arrow-left-right`): an exchange between two sides.
+    Swap,
 }
 
 impl Icon {
@@ -324,6 +326,12 @@ impl Icon {
                 for y in [6.0, 12.0, 18.0] {
                     poly(&[(4.0, y), (20.0, y)]);
                 }
+            }
+            Icon::Swap => {
+                poly(&[(3.0, 8.0), (20.0, 8.0)]);
+                poly(&[(16.0, 4.0), (20.0, 8.0), (16.0, 12.0)]);
+                poly(&[(21.0, 16.0), (4.0, 16.0)]);
+                poly(&[(8.0, 12.0), (4.0, 16.0), (8.0, 20.0)]);
             }
             Icon::Speaker | Icon::SpeakerOff => {
                 poly(&[(11.0, 5.0), (6.0, 9.0), (2.0, 9.0), (2.0, 15.0), (6.0, 15.0), (11.0, 19.0), (11.0, 5.0)]);
@@ -943,6 +951,17 @@ pub fn tip(resp: Response, text: &str) -> Response {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(fit.width.min(320.0), fit.galley.size().y), Sense::hover());
         ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
     })
+}
+
+/// A tooltip at a point (a game hot-spot's text where no egui widget is under the pointer): a deep panel beside `at`,
+/// kept on the screen, up to three lines of 320 points.
+pub fn tip_at(ctx: &egui::Context, id: &str, at: egui::Pos2, text: &str) {
+    egui::Area::new(egui::Id::new(id)).order(egui::Order::Tooltip).interactable(false).fixed_pos(at + Vec2::new(16.0, 18.0)).constrain(true).fade_in(false).show(ctx, |ui| {
+        panel(ui, PanelKind::Deep, 0.97, 8.0, |ui| {
+            ui.set_max_width(320.0);
+            Text::new(text, Font::DATA).lines(3).show(ui, Vec2::new(Text::new(text, Font::DATA).layout(ui.ctx(), 320.0).width.min(320.0), 20.0));
+        });
+    });
 }
 
 /// A drop-down (egui's combo box in the kit's look: a well with a chevron, the list in a deep panel).

@@ -79,3 +79,33 @@ settings menus dropped under their field with no mark of the value set.
 - Classic and every capture and replay are unchanged: the panels are the modern HUD's (its option and `--modern-hud`;
   `--panel fleet --select-fleet F` and `--panel transfer:F1,F2` stage them in snapshots, `--screen spacewar --battle
   … --script … --modern-hud` the battle).
+
+## Amendment 2026-11-03: compare-and-fix pass against the fleet, transfer, select menu, planet list and space battle boards
+- Fleet header: the owner and the status centred on the title's capitals; the status line adds the card's speed
+  ("VÁRAKOZÁS · SEBESSÉG 6"); the exit plates are as wide as their text; the preview model is larger.
+- Transfer: the board's 118-point model well with the count and arrow row under the name; one exchange mark
+  (`ds::Icon::Swap`) between the panels instead of two chevrons.
+- Settings menus: each opens on its own field (its kind, `Select.field`, not the nearest spot), at the field's width,
+  opaque, the value set marked; the ALL plates read "Mind" and "All" as the boards.
+- Planet list of the production view (board "MenuPlanets"): opens under the planet's title plate at its width with
+  52-point rows, the plate's planet marked, the pointer's row lit; the pointer's remap keeps the original's rows
+  (`starmap_modern::State::list_pointer`).
+- The original's tooltips over the fleet, transfer and vehicle panels use the kit's tooltip (`ds::tip_at`, also the
+  battle's); an empty tip draws no box.
+- Battle HUD: the ship info slides out from under the rail (cut at its edge, the model shown once clear); values use the
+  row's width; the crew row is always the original's big box; rail labels of more words go on two lines; the card's
+  padded fields are one space ("TE: 0"); the info model fills more of its wells; the notices move left of the rail on
+  narrow screens.
+- Battle input: the info panel over the radar, card and camera keys takes the press; the battlefield beyond the
+  original's 4:3 picture answers selection and orders; hovering the rail at the window's right edge no longer
+  edge-scrolls (the original's column ended 20 px short of it). The snapshot harness maps the scripted battle pointer
+  onto the virtual band.
+- Kept: the card and well models are at the original's render size (camera-fixed targets; the boards fit each model);
+  the transfer's "1 tank doesn't fit" line is not drawn (no original text), and a full fleet's vehicles are marked on
+  both sides as the original does; the minimap stays off under the fleet and transfer panels; the planet list has no
+  globes in its rows (one render per listed planet); the battle's rail keys hold the original's turning weapon icons
+  (the boards draw line icons), the camera keys stay the original's six and the "14 selected" joined line keeps the
+  original's line.
+- Not driven in a live window: no save at hand reaches a real-time battle (the fleets met lopsided and were
+  auto-resolved); the battle's HUD input ran through the scripted snapshot path, which feeds the same `Live::frame` as
+  the window. Open input rows 541 to 543 in `re/deviations.md`.

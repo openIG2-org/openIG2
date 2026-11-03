@@ -987,7 +987,10 @@ impl Hud {
         if let Some(sm) = &menus.menu {
             let lines = menus.menu_lines(&t, sm);
             let rows = sm.rows();
+            use crate::starmap_menus::MenuKind;
             out.select = Some(m::Select {
+                field: match sm.kind { MenuKind::Tax => Some(0), MenuKind::AutoBuild => Some(1), MenuKind::Priority => Some(2), _ => None },
+                planets: sm.kind == MenuKind::Planets,
                 rows: lines.iter().zip(&rows).map(|((v, text, sub), (_, r))| m::SelectRow { rect: r.map(|c| c as f32), text: dec(text), sub: dec(sub), hovered: *v == sm.hovered }).collect(),
             });
         }

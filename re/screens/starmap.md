@@ -742,7 +742,7 @@ to even. 0x58 (24, 24, 592, 339) covers the map; the minimap is off. Hot-spot 9 
 `run_screen.py … --kep 2 --planet 71 --rop 2` (production) and `--fleets 2 --rop 0xe --rop-fleet 1` (two new
 fleets of the human beside planet 71, the transfer between them) press the icons in ig2.exe itself (`screen.js`
 writes `AktRopIkon` 0xE83654 right after `Starmap_Main` clears it) and save the moment.
-Under the modern HUD the panel is the design board's two panels on the design kit (`fleet_modern.rs`, ADR 0077); the original's panel code takes the pointer through a remap, the models are cut into the cards' wells.
+Under the modern HUD the panel is the design board's two panels on the design kit (`fleet_modern.rs`, ADR 0077); the original's panel code takes the pointer through a remap, the models are cut into the cards' wells; compared with the boards (header, exchange mark, tooltips in the kit's look), see ADR 0077's amendment.
 
 ## 14. The radial icon menu ("rop" icons)
 Pressing the left button on the map picks a unit and opens up to four icons around the pointer; releasing the button

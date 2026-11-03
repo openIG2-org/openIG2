@@ -86,6 +86,10 @@ pub struct State {
     /// A control's rect, its hot-spot and how a point on it maps to the original's (`None`: the spot's own middle).
     spots: Vec<(Rect, u32, Option<Map>)>,
     yes: Option<Rect>,
+    /// The big info panel (cut at the rail): over the radar, the keys or the card it is no control of theirs.
+    big: Option<Rect>,
+    /// The rail's left edge (virtual; 0 before the first frame).
+    rail: f32,
     /// The info model's well and the rail's icon wells (slot) in pixels, with their opacity.
     pub wells: Vec<(Well, Rect, f32)>,
 }
@@ -117,6 +121,9 @@ impl State {
             return None;
         }
         let p = pos2(m[0] + at[0] * m[2], m[1] + at[1] * m[2]);
+        if self.big.is_some_and(|b| b.contains(p)) {
+            return Some((DEAD, at));
+        }
         if let Some((r, id, map)) = self.spots.iter().find(|s| s.0.contains(p)) {
             let u = [((p.x - r.left()) / r.width()).clamp(0.0, 1.0), ((p.y - r.top()) / r.height()).clamp(0.0, 1.0)];
             let to = match map {
@@ -139,6 +146,11 @@ impl State {
             Some(Map::Radar) => [274.0 + u[0] * 94.0, 388.0 + u[1] * 67.0],
             _ => [50.0 + u[0] * 113.0, 465.0],
         })
+    }
+
+    /// The rail's left edge on the virtual screen (640 or beyond on a wide one; 640 before the HUD's first frame).
+    pub fn rail_left(&self) -> f32 {
+        if self.map[2] == 0.0 { 640.0 } else { self.rail }
     }
 
     /// The pointer is on the retreat question's Yes.
@@ -187,7 +199,11 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
         rail(ui, v, st, screen, top, nav.top() - 16.0);
         card(ui, v, st, screen);
         if let Some(b) = &v.big {
-            big(ui, b, st, screen, top);
+            // It slides out from under the rail: cut at the rail's left edge.
+            let clip = Rect::from_min_max(screen.min, pos2(screen.right() - RAIL_W - 4.0, screen.bottom()));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(screen));
+            child.set_clip_rect(clip);
+            big(&mut child, b, st, screen, top, clip);
         }
     });
     if let Some(r) = &v.retreat {
@@ -204,6 +220,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
 /// first, the retreat key last, at the screen's right edge (the board's `nav`, 96 wide, from 60 down to the plate).
 fn rail(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect, top: f32, bottom: f32) {
     let x = screen.right() - RAIL_W;
+    st.rail = (x - st.map[0]) / st.map[2];
     let keys: Vec<usize> = (0..9).filter(|&i| v.rail[i].as_ref().is_some_and(|k| k.shown > 0.0)).collect();
     let retreat = v.rail[9].as_ref().filter(|k| k.shown > 0.0);
     let n = keys.len() + 1 + retreat.is_some() as usize;
@@ -246,7 +263,9 @@ fn rail_key(ui: &egui::Ui, r: Rect, name: &str, charge: Option<f32>, lit: bool, 
         }
     }
     let bar = charge.map(|_| 10.0).unwrap_or(0.0);
-    let icon_h = (r.height() - 14.0 - 6.0 - 12.0 - bar).max(16.0);
+    let two = name.contains(' ') && Text::new(name, RAIL).layout(ui.ctx(), f32::INFINITY).width > r.width() - 8.0;
+    let label_h = if two { 28.0 } else { 14.0 };
+    let icon_h = (r.height() - label_h - 6.0 - 12.0 - bar).max(16.0);
     let icon = Rect::from_center_size(pos2(r.center().x, r.top() + 10.0 + icon_h / 2.0), vec2(icon_h.min(56.0) * 1.2, icon_h));
     match well {
         Some((w, st)) => st.wells.push((w, icon, ui.opacity() * shown)),
@@ -260,8 +279,8 @@ fn rail_key(ui: &egui::Ui, r: Rect, name: &str, charge: Option<f32>, lit: bool, 
             p.circle_stroke(at(15.0, 12.0), 2.0 * s, Stroke::new(1.5 * s, c));
         }
     }
-    let label = Rect::from_min_size(pos2(r.left() + 4.0, icon.bottom() + 6.0), vec2(r.width() - 8.0, 14.0));
-    Text::new(name, RAIL).center().shrink(8.5).color(if off { k.ink_muted } else { k.ink }).paint(ui, label);
+    let label = Rect::from_min_size(pos2(r.left() + 4.0, icon.bottom() + 6.0), vec2(r.width() - 8.0, label_h));
+    Text::new(name, RAIL).center().lines(if two { 2 } else { 1 }).shrink(8.5).color(if off { k.ink_muted } else { k.ink }).paint(ui, label);
     if let Some(c) = charge {
         let b = Rect::from_center_size(pos2(r.center().x, label.bottom() + 8.0), vec2(60.0, 4.0));
         p.rect_filled(b, 2, k.lcd);
@@ -416,7 +435,7 @@ fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
 
 /// The big info box as the board's panel left of the rail: the title and the owner, the selected unit's model under
 /// it (the original's info model in its well) with the count, the data table with the hull bar, the weapons.
-fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32) {
+fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32, clip: Rect) {
     let k = ds::tokens();
     let w = 440.0;
     let rows = b.rows.len() + b.weapons.len();
@@ -428,7 +447,8 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32) {
     ds::paint_panel(&p, r, ds::PanelKind::Glass, 0.92);
     let head = Rect::from_min_size(r.min, vec2(w, 52.0));
     ds::header_strip(&p, head);
-    st.panels.push(r);
+    st.panels.push(r.intersect(clip));
+    st.big = Some(r.intersect(clip));
     let inner = head.shrink2(vec2(18.0, 0.0));
     let base = ds::fit::baseline(inner, BIG_TITLE);
     let tw = Text::new(&b.title, BIG_TITLE).color(k.ink).baseline(base).paint(ui, inner.with_max_x(inner.left() + inner.width() * 0.55)).width;
@@ -440,7 +460,11 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32) {
     let pic = Rect::from_min_size(head.left_bottom(), vec2(w, 200.0));
     p.rect_filled(pic, 0, k.void);
     p.hline(pic.x_range(), pic.bottom() - 0.5, Stroke::new(1.0f32, k.rim));
-    st.wells.push((Well::Info, Rect::from_center_size(pic.center(), vec2(190.0, 190.0)), ui.opacity()));
+    let well = Rect::from_center_size(pic.center(), vec2(190.0, 190.0));
+    // A picture can't be cut: the model shows once its well is clear of the rail.
+    if clip.contains_rect(well) {
+        st.wells.push((Well::Info, well, ui.opacity()));
+    }
     let lw = 14.0 + 12.0 * b.count.len() as f32;
     let lcd = Rect::from_min_size(pic.right_bottom() - vec2(14.0 + lw, 14.0 + 26.0), vec2(lw, 26.0));
     ds::lcd_window(&p, lcd);
@@ -451,7 +475,9 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32) {
         let base = ds::fit::baseline(row, Font::DATA);
         let (a, c) = row.split_left_right_at_x(row.left() + 120.0);
         Text::new(label.trim().trim_end_matches(':'), Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
-        let vw = Text::new(value, Font::DATA).color(k.info).baseline(base).paint(ui, c.with_max_x(c.left() + c.width() * 0.5)).width;
+        // The hull's value leaves the row's right half to its bar.
+        let vc = if b.hull.is_some() && n == 0 { c.with_max_x(c.left() + c.width() * 0.5) } else { c };
+        let vw = Text::new(value, Font::DATA).color(k.info).baseline(base).paint(ui, vc).width;
         if let (Some(hf), 0) = (b.hull, n) {
             hull_bar(&p, Rect::from_min_size(pos2(c.left() + vw + 14.0, row.center().y - 3.0), vec2((c.width() - vw - 14.0).max(30.0), 6.0)), hf);
         }
@@ -511,12 +537,12 @@ fn tooltip(ctx: &egui::Context, v: &View, st: &State) {
     if text.is_empty() || !still {
         return;
     }
-    egui::Area::new(egui::Id::new("bmh-tip")).order(egui::Order::Tooltip).interactable(false).fixed_pos(p + vec2(16.0, 18.0)).constrain(true).fade_in(false).show(ctx, |ui| {
-        ds::panel(ui, ds::PanelKind::Deep, 0.97, 8.0, |ui| {
-            ui.set_max_width(320.0);
-            Text::new(text, Font::DATA).lines(3).show(ui, vec2(Text::new(text, Font::DATA).layout(ui.ctx(), 320.0).width.min(320.0), 20.0));
-        });
-    });
+    ds::tip_at(ctx, "bmh-tip", p, text);
+}
+
+/// A line of the original's with its padded fields ("TE:    0") as one space each.
+fn spaced(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The original's render targets in the wells [`show`] left: the info model (its corner of the screen, 0..60 ×
@@ -526,7 +552,7 @@ pub fn pictures(f: &mut crate::render::Frame, wells: &[(Well, Rect, f32)], info:
         // Each target covers its virtual rectangle (`fixed_texture`): the info model's 0..60 × 420..480, the
         // column's 560..640 × 20..480.
         let (tex, area, src) = match w {
-            Well::Info => (info, [0.0, 420.0, 60.0, 60.0], [0.0, 420.0, 60.0, 60.0]),
+            Well::Info => (info, [0.0, 420.0, 60.0, 60.0], [7.5, 427.5, 45.0, 45.0]),
             Well::Weapon(i) => (column, [560.0, 20.0, 80.0, 460.0], [places[i][0] - 16.0, places[i][1] - 16.0, 32.0, 32.0]),
         };
         let Some(tex) = tex else { continue };
@@ -585,14 +611,14 @@ impl crate::ui::Hud {
             (card.owner, card.colour) = empire(owner);
             if st.ships != 0 && st.max_hp != 0 {
                 let r = if st.own == 0 { Vec::new() } else if (st.rank_sum as f32 / st.ships as f32) < 0.0 { b"-".to_vec() } else { rank(self, st.rank_sum / st.ships) };
-                card.lines.push(dec(&format(&s(0xb), &[st.value as i64], &[&r])));
+                card.lines.push(spaced(&dec(&format(&s(0xb), &[st.value as i64], &[&r]))));
                 card.hull = Some((label(format(&s(0xc), &[0], &[])), hull()));
             }
         } else if st.total != 0 && st.sel_guns != 0 && st.last_kind == 2 && st.last != -1 {
             card.title = if st.total == 1 && ui.title_tech >= 0 { dec(&self.tech_name(ui.title_tech as usize)) } else { dec(&format(&s(0xd), &[st.total as i64], &[])) };
             (card.owner, card.colour) = empire(b.planet_owner);
             if st.ships != 0 && st.max_hp != 0 {
-                card.lines.push(dec(&format(&s(0xe), &[st.value as i64], &[])));
+                card.lines.push(spaced(&dec(&format(&s(0xe), &[st.value as i64], &[]))));
                 card.hull = Some((label(format(&s(0xf), &[0], &[])), hull()));
             }
         } else if st.total == 0 {
@@ -628,9 +654,8 @@ impl crate::ui::Hud {
                 rows.push((dec(&s(0x1a)), if st.shield == 0 { "-".into() } else { format!("{}%", 100 - st.shield_used * 100 / st.shield) }));
             }
             rows.push((dec(&s(0x1b)), st.value.to_string()));
-            if st.own != 0 && st.ships != 0 {
-                rows.push((dec(&s(0x1c)), dec(&rank(self, st.rank_sum / st.ships))));
-            }
+            // The crew's label always, its rank for the viewer's own ships (`nagyinfokiir`).
+            rows.push((dec(&s(0x1c)), if st.own != 0 && st.ships != 0 { dec(&rank(self, st.rank_sum / st.ships)) } else { String::new() }));
             big.rows = rows;
             big.weapons = ui.big.weapons.iter().take(10).map(|(t, n)| (dec(&self.tech_name(*t as usize)), n.to_string())).collect();
             big
