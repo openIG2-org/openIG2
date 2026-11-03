@@ -310,6 +310,8 @@ pub struct SpyContext {
     pub alive: [bool; EMPIRES],
     pub human: [bool; EMPIRES],
     pub race: [u8; EMPIRES],
+    /// Ours (ADR 0069 §13): the original race each race plays (`spacewar::race_role`; empty without added races).
+    pub race_like: Vec<u8>,
     /// `EN`.
     pub human_empire: usize,
     /// `ProgramPlayers`.
@@ -355,8 +357,9 @@ impl SpyContext {
             None => e == self.human_empire,
         }
     }
+    /// The original race empire `e`'s race plays (ADR 0069 §13): the fixed race checks read it.
     fn race(&self, e: usize) -> u8 {
-        self.race.get(e).copied().unwrap_or(0)
+        crate::spacewar::race_role(&self.race_like, self.race.get(e).copied().unwrap_or(0))
     }
 }
 
@@ -619,7 +622,7 @@ impl Spies {
             return;
         }
         let money = |w: &World, e: usize| w.colony.money.get(e).map_or(0.0, |m| m.available(0));
-        let race = w.ctx.race(e) as usize;
+        let race = w.ctx.race[e] as usize;
         match o {
             Order::Dismiss { spy } if (spy as usize) < SLOTS => self.spy_mut(e, spy as usize).state = state::NONE,
             Order::Recall { spy } if (spy as usize) < SLOTS => {
@@ -1370,7 +1373,8 @@ impl Spies {
         let xp_at = |r: i32| w.rules.rank_xp.get(r as usize).copied().unwrap_or(0);
         let (lo, hi) = (xp_at(rank), xp_at(rank + 1));
         let xp = w.r(lo, hi);
-        let own_race = w.ctx.race(e) as i32 == race;
+        let own_race = w.ctx.race[e] as i32 == race;
+
         let steps = (rank - 1) * w.rules.rank_points.get(race as usize).copied().unwrap_or(0);
         let s = self.spy_mut(e, k);
         s.rank = rank as u8;

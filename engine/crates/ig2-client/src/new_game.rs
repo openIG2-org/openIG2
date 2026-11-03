@@ -188,8 +188,50 @@ mod tests {
         assert!(StartTexts::read(&plain).unwrap().tables.is_empty());
     }
 
+    /// A mod's race and planet type (ADR 0069 §13, §14, the test mod `ig2-rules/tests/mods/frontier`) in a generated
+    /// galaxy: race 15 plays the human and an AI empire; a share of the free volcanic planets turns into planet type
+    /// 9; race 15 starts with its original's (race 3's) techs and a home world of its own favourite type; the game
+    /// plays on with the AI; the texts name both; a save of it refuses to load without the mod (skips without the
+    /// install).
+    #[test]
+    fn a_mods_race_and_planet_type_play_in_a_new_galaxy() {
+        use ig2_sim::colony_side::{status, TECHS};
+        let Some(Ok(plain)) = Install::from_env(Lang::En) else { return };
+        let frontier = ig2_formats::vfs::Mod { name: "frontier".into(), dir: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ig2-rules/tests/mods/frontier") };
+        let install = Install::open_with_mods(plain.root(), Lang::En, vec![frontier]).unwrap();
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let options = ig2_net::galaxy::GalaxyOptions { planets: 80, ..Default::default() };
+        let start = ig2_net::galaxy::GalaxyStart::new(4242, options, [15, 2, 3, 15, 5, 6, 7, 8], vec![2, 3, 4]);
+        let mut game = StartTexts::read(&install).unwrap().with(&install, |data| start.build(data, &rules, 1, &[1], 77)).unwrap();
+        let races = game.state.races();
+        assert_eq!((races[1], races[3], races[4]), (15, 3, 15));
+        let planets = |g: &ig2_sim::game::Game| (1..=g.state.planet_count()).map(|p| g.state.mem.read(ig2_sim::save::va::PLANETS + (p * ig2_sim::save::PLANET_SIZE) as u32, ig2_sim::save::PLANET_SIZE)).collect::<Vec<_>>();
+        let start_planets = planets(&game);
+        let ash = start_planets.iter().filter(|r| r[0x22] == 9).count();
+        assert!(ash > 0 && start_planets.iter().all(|r| r[0x22] != 9 || r[0x20] == 0), "{ash} ash worlds, all free");
+        // Its original's start techs; its home world the first type of its own row's best liking.
+        let techs = game.state.tech();
+        assert!((1..TECHS).all(|t| techs.status(t, 1) == techs.status(t, 3)));
+        let row = &rules.side.colony.surface_growth[15];
+        let best = (1..=8).max_by_key(|&k| (row[k], std::cmp::Reverse(k))).unwrap();
+        let home = start_planets.iter().find(|r| r[0x20] == 1).unwrap();
+        assert_eq!((home[0x21], row[best] >= row[home[0x22] as usize]), (15, true));
+        assert_eq!(techs.status(1, 1) == status::OWNED, techs.status(1, 3) == status::OWNED);
+        for _ in 0..3000 {
+            game.run_tick();
+        }
+        assert!(planets(&game).iter().filter(|r| r[0x20] == 4).all(|r| r[0x21] == 15), "the AI's colonies are of its race");
+        let texts = crate::ui::UiTexts::load(&install);
+        assert_eq!((texts.race(15), texts.surface(9), texts.race(3)), (b"Vorlani".to_vec(), b"Ash world".to_vec(), crate::ui::UiTexts::load(&plain).race(3)));
+        assert!(texts.playable_races().ends_with(&[8, 15]));
+        assert_eq!(crate::world::check_kinds(&game.state, &rules), Ok(()));
+        let (classic, _) = crate::rules::load(&plain).unwrap();
+        assert!(crate::world::check_kinds(&game.state, &classic).unwrap_err().contains("race 15"));
+    }
+
     #[test]
     fn campaign_argument() {
+
         let c = parse_campaign("2,4,77,9000").unwrap();
         assert_eq!((c.campaign, c.difficulty, c.seed, c.ticks, c.last_storyline), (2, 4, 77, 9000, None));
         let c = parse_campaign("1").unwrap();

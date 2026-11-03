@@ -159,7 +159,7 @@ impl Game<'_> {
                 let mut c = self.state.colony();
                 let kind = c.planets[p].buildings[k - 1].kind;
                 let tech = self.rules.side.colony.buildings[kind as usize].tech as usize;
-                let race = self.globals().race[e];
+                let race = self.rules.ai.design.race_role(self.globals().race[e]);
                 let x = crate::colony_side::price(&c.tech, race, tech) / 2;
                 let income = self.ai_income(e);
                 c.money[e].add(0, x as f64, income);
@@ -224,7 +224,8 @@ impl Game<'_> {
         let g = self.globals();
         let mut c = self.state.colony();
         let tech = self.rules.side.colony.buildings[kind as usize].tech as usize;
-        let price = crate::colony_side::price(&c.tech, g.race[e], tech);
+        let price = crate::colony_side::price(&c.tech, self.rules.ai.design.race_role(g.race[e]), tech);
+
         if self.state.mem.i32(va::RESEARCH_CHEAT) == 0 {
             if c.money[e].available(0) < price as f64 {
                 self.events.push(GameEvent::ColonyOrder(ColonyOrderEvent::BuildRefused { empire: issuer, planet: p, kind }));

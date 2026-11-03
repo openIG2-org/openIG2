@@ -1088,6 +1088,7 @@ pub(crate) mod tests {
             owner: 2,
             owner_race: 0,
             surface: 1,
+            planet_type: 1,
             map: 0,
             buildings: Vec::new(),
             units: vec![unit(0, 1, weapon::FIGHTER), unit(1, 1, weapon::AMMO), unit(2, 1, weapon::KAMIKAZE), unit(3, 2, 0)],

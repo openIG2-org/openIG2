@@ -86,6 +86,16 @@ pub struct DesignRules {
     pub tank_speeds: Vec<f32>,
     /// Ours (ADR 0069 §7): the original tech each tech plays (0 = itself; empty without mods).
     pub tech_like: Vec<u8>,
+    /// Ours (ADR 0069 §13): the original race each race plays and the one whose AI priorities it uses, indexed by
+    /// race (empty without added races).
+    pub race_like: Vec<u8>,
+    pub race_ai: Vec<u8>,
+}
+
+/// The original race race `r` plays in a race table `like` (index race → its original; ADR 0069 §13): an added
+/// race's `like`, else `r` (an empty table: every race is itself).
+pub fn race_role(like: &[u8], r: u8) -> u8 {
+    like.get(r as usize).copied().unwrap_or(r)
 }
 
 impl DesignRules {
@@ -102,6 +112,14 @@ impl DesignRules {
             pod_slot_types: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.pod_type).collect()).collect()).collect(),
             tank_speeds: r.tank_speeds.clone(),
             tech_like: if r.techs.iter().any(|t| t.like != 0) { r.techs.iter().map(|t| t.like).collect() } else { Vec::new() },
+            race_like: match r.added_races.last() {
+                Some(a) => (0..=a.race).map(|x| r.race_role(x) as u8).collect(),
+                None => Vec::new(),
+            },
+            race_ai: match r.added_races.last() {
+                Some(a) => (0..=a.race).map(|x| r.added_races.iter().find(|a| a.race == x).map_or(x, |a| a.ai) as u8).collect(),
+                None => Vec::new(),
+            },
         }
     }
 
@@ -121,10 +139,21 @@ impl DesignRules {
         }
     }
 
+    /// The original race race `r` plays: every fixed race-number check reads it (ADR 0069 §13).
+    pub fn race_role(&self, r: u8) -> u8 {
+        race_role(&self.race_like, r)
+    }
+
+    /// The original race whose AI priorities race `r` uses (ADR 0069 §13).
+    pub fn race_ai(&self, r: u8) -> u8 {
+        race_role(&self.race_ai, r)
+    }
+
+
     /// `GetGyartasAr(empire, tech)` with the empire's race: race 4/7 build tech 13 at ¾ price, race 5
     /// gets ×0.7000001 (a double) on everything outside techs 81..=144 and 13/14.
     pub fn price(&self, race: u8, tech: usize) -> i32 {
-        let role = self.role(tech);
+        let (race, role) = (self.race_role(race), self.role(tech));
         if (race == 4 || race == 7) && role == 13 {
             return (self.tech_price[tech] as f64 * 0.75) as i32;
         }
@@ -136,7 +165,7 @@ impl DesignRules {
 
     /// `GetGyartasIdo(empire, tech)`: race 4 builds tech 13 in half the time.
     pub fn time(&self, race: u8, tech: usize) -> i32 {
-        if race == 4 && self.role(tech) == 13 {
+        if self.race_role(race) == 4 && self.role(tech) == 13 {
             return self.tech_time[tech] / 2;
         }
         self.tech_time[tech]
@@ -316,7 +345,7 @@ impl Design {
             };
             self.hp = (base_hp * share + self.hp as f64) as i32;
         }
-        if race == 2 && self.class == 1 {
+        if rules.race_role(race) == 2 && self.class == 1 {
             self.speed = (self.speed as f64 + 0.02) as f32;
         }
     }

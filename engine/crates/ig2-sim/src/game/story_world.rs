@@ -195,9 +195,11 @@ impl StoryWorld for GameStory<'_, '_> {
     fn campaign_tables(&self) -> &CampaignTables {
         &self.game.rules.story.campaign
     }
+    /// The original race empire `e`'s race plays (ADR 0069 §13): the scripts compare fixed race numbers.
     fn race(&self, e: i32) -> i32 {
-        self.g.race.get(e.max(0) as usize).copied().unwrap_or(0) as i32
+        self.game.rules.ai.design.race_role(self.g.race.get(e.max(0) as usize).copied().unwrap_or(0)) as i32
     }
+
     fn knows(&self, a: i32, b: i32) -> bool {
         self.mem().u8(va::EMPIRE_KNOWS + (a.max(0) as usize * EMPIRES + b.max(0) as usize) as u32) != 0
     }
@@ -399,9 +401,11 @@ impl StoryWorld for GameStory<'_, '_> {
     fn planet_morale(&self, p: i32) -> i32 {
         rd_i32(&self.planet(p), 0x30)
     }
+    /// The original surface planet `p`'s type plays (ADR 0069 §14): the scripts compare fixed surfaces.
     fn planet_surface(&self, p: i32) -> i32 {
-        self.planet(p)[0x22] as i32
+        self.game.rules.side.colony.surface_role(self.planet(p)[0x22]) as i32
     }
+
     fn planet_richness(&self, p: i32) -> i32 {
         rd_i32(&self.planet(p), 0x24)
     }

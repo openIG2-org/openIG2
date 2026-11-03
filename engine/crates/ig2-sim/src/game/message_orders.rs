@@ -192,7 +192,8 @@ impl Game<'_> {
                     self.new_message(id, 0);
                     let name = self.empire_name(empire.clamp(0, 255) as u8);
                     self.set_param(1, &name);
-                    let race = self.state.races().get(empire.max(0) as usize).copied().unwrap_or(0) as i32;
+                    let race = self.rules.ai.design.race_role(self.state.races().get(empire.max(0) as usize).copied().unwrap_or(0)) as i32;
+
                     self.message_race(race);
                 }
                 StoryEvent::MessageRace(r) => self.message_race(r),

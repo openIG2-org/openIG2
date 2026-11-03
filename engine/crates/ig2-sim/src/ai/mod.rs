@@ -556,7 +556,7 @@ impl AiState {
             if ground < pl.population.wrapping_sub(10000).wrapping_mul(k) / 5000 {
                 pl.autobuild_mode = military;
             }
-            if spy_centres.is_some_and(|n| n < 12) && pl.population > 7000 && no_centre && race != 5 {
+            if spy_centres.is_some_and(|n| n < 12) && pl.population > 7000 && no_centre && w.rules.design.race_role(race as u8) != 5 {
                 pl.autobuild_mode = 7;
             }
         }
@@ -899,7 +899,8 @@ pub fn spy_missions(w: &mut World, e: usize) {
                 let mut pick = None;
                 w.spy.rng.choice_begin();
                 for t in 1..=w.spy.ctx.program_players.max(0) as usize {
-                    if t == e || !w.alive(t) || w.spy.colony.knows[e][t] == 0 || w.race(t) == 5 {
+                    if t == e || !w.alive(t) || w.spy.colony.knows[e][t] == 0 || w.rules.design.race_role(w.race(t)) == 5 {
+
                         continue;
                     }
                     for m2 in 3..=10 {
@@ -1547,6 +1548,8 @@ mod tests {
             pod_slot_types: slot_types,
             tank_speeds: vec![0.0; 5],
             tech_like: Vec::new(),
+            race_like: Vec::new(),
+            race_ai: Vec::new(),
         };
         fx.rules.pod_slot_max = slot_max;
         fx.rules.pods = vec![PodRule { id: 7, techs: [20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }];

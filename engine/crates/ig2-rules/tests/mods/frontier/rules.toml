@@ -1,0 +1,18 @@
+# A test mod (ADR 0069 §13, §14): a new planet type and a new race.
+
+[[planet_types.new]]
+key = "ash_world"
+like = 4                          # an original planet type: its colony maps, terrain, weather and sounds
+name = "Ash world"
+share = 40                        # of a new game's free planets of the like type
+affinity = { 1 = 60, 4 = 90 }     # growth in percent by race; the others keep the like type's
+
+[[races.new]]
+key = "vorlani"
+like = 3                          # an original race: its fixed rules, heads, ships and spies
+ai = 5                            # the AI's production, military and research priorities
+name = "Vorlani"
+plural = "Vorlanis"
+production = 1.25
+research_time = 0.9
+affinity = { 2 = 130, ash_world = 160 }

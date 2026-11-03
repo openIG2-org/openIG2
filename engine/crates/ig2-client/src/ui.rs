@@ -21,6 +21,8 @@ pub struct UiSnap {
     pub known: [bool; 19],
     pub alive: [bool; 19],
     pub races: [u8; 19],
+    /// The original race each empire's race plays (ADR 0069 §13): the heads, models and fixed race checks.
+    pub roles: [u8; 19],
     /// `Viszony[a][e].+0x25`: 1 war, 2 cease-fire, 3 neutral, 4 NAP, 5 alliance.
     pub levels: Vec<[u8; 19]>,
     /// The inbox (`Uzenetek`, 0x88 each): block id, kept/read flag, date (`+0xc`, an `Ido`).
@@ -45,7 +47,8 @@ fn cstr(b: &[u8]) -> Vec<u8> {
 }
 
 impl UiSnap {
-    pub fn read(state: &SaveState) -> Self {
+    pub fn read(state: &SaveState, rules: &ig2_sim::game::GameRules) -> Self {
+        let design = &rules.ai.design;
         let en = state.mem.i32(va::EN).clamp(0, 18) as usize;
         let charts = state.info_charts().smoothed;
         let met = state.starmap().met;
@@ -64,13 +67,20 @@ impl UiSnap {
             known: std::array::from_fn(|e| met.get(en).is_some_and(|r| r[e] != 0)),
             alive: state.alive(),
             races: state.races(),
+            roles: state.races().map(|r| design.race_role(r)),
+
             levels: (0..19).map(|a| std::array::from_fn(|e| rel.get(a).map_or(0, |r| r[e].level))).collect(),
             inbox,
             queue: entries(&t.main, t.count).into_iter().map(|e| (cstr(e), e[0x3c] != 0)).collect(),
             history: entries(&t.history, t.history_count).into_iter().map(cstr).collect(),
             bar: bar_state(state, en),
             inbox_params,
-            info: crate::info_screen::InfoData::read(state),
+            info: crate::info_screen::InfoData {
+                race: design.race_role(state.races()[en]),
+                surface_like: rules.side.colony.surface_like.clone(),
+                ..crate::info_screen::InfoData::read(state)
+            },
+
             scenario: false,
             game_info: state.game_info.iter().map(|g| (cstr(&g.text), g.colour.max(0) as usize)).collect(),
         }
@@ -174,9 +184,38 @@ impl UiTexts {
                 strings.entries.insert(key, a.name);
             }
         }
+        mod_names(&mut strings, install);
         let kinds = install.read("dataraw/uzenetek/uzenetek.txt").map(|b| dialogue::parse_message_index(&text::decode(&b, install.lang()))).unwrap_or_default();
         Self { strings, kinds, lang: install.lang() }
     }
+
+    /// `Faj_Nev[r]` = `GetString(0x11, 1, r + 5)`; a mod's race its own name (ADR 0069 §13).
+    pub fn race(&self, r: u8) -> Vec<u8> {
+        match self.strings.get(0, 1, r as u16) {
+            "" => self.get(0x11, 1, r as u16 + 5),
+            name => self.encode(name),
+        }
+    }
+
+    /// The races a player picks from: 1..=8 and the mods' races (ADR 0069 §13).
+    pub fn playable_races(&self) -> Vec<u8> {
+        (1..=8).chain(self.strings.entries.range((0, 1, 0)..(0, 2, 0)).map(|(k, _)| k.2 as u8)).collect()
+    }
+
+    /// The race names by race number: `Faj_Nev[0..20]` and the mods' races after them.
+    pub fn races(&self) -> Vec<Vec<u8>> {
+        let n = self.strings.entries.range((0, 1, 0)..(0, 2, 0)).map(|(k, _)| k.2 as usize + 1).max().unwrap_or(0).max(20);
+        (0..n).map(|r| self.race(r as u8)).collect()
+    }
+
+    /// Planet type `s`'s name, `GetString(0x11, 5, s)`; a mod's type its own (ADR 0069 §14).
+    pub fn surface(&self, s: u8) -> Vec<u8> {
+        match self.strings.get(0, 5, s as u16) {
+            "" => self.get(0x11, 5, s as u16),
+            name => self.encode(name),
+        }
+    }
+
 
     /// `GetString(file, section, index)` as the font's bytes: the file's own bytes (its language's code page; the
     /// Hungarian ő/ű are not Latin-1).
@@ -195,6 +234,18 @@ impl UiTexts {
     }
 }
 
+/// The names of the mods' races and planet types (ADR 0069 §13, §14), under file 0 (no game text file has it): race
+/// `r` at (0, 1, r), planet type `s` at (0, 5, s); [`UiTexts::race`], [`UiTexts::surface`].
+fn mod_names(strings: &mut UiStrings, install: &Install) {
+    let (races, types) = crate::rules::added_names(install);
+    for a in races {
+        strings.entries.insert((0, 1, a.race as u16), a.name);
+    }
+    for a in types {
+        strings.entries.insert((0, 5, a.surface as u16), a.name);
+    }
+}
+
 /// The `txt17.txt` the name tables come from (`BirodalomNev`, `Moral_Nev`, `Problemak_Nev`, the planet menus' names,
 /// …), its texts in its own code page. Classic (`one` false): the Hungarian file, which `StringReadAll` (exe
 /// 0x531e40) reads whatever the game's language [obs: the empire names in the live table and the morale name on the
@@ -206,6 +257,7 @@ pub fn names_txt17(install: &Install, one: bool) -> UiTexts {
     if let Ok(b) = file {
         strings.add_file(&text::decode(&b, lang));
     }
+    mod_names(&mut strings, install);
     UiTexts { strings, kinds: Vec::new(), lang }
 }
 
@@ -307,7 +359,8 @@ pub fn draw_info(f: &mut Frame, font: &Font, white: TexId, v: &Virtual, s: &UiSn
             c = 0xc;
         }
         // `Faj_Nev[e]` = `GetString(0x11, 1, race + 5)`.
-        let name = texts.get(0x11, 1, s.races[e] as u16 + 5);
+        let name = texts.race(s.races[e]);
+
         font.text(f, v, &name, x, 117.0, 0x27, 2, Align::Left, col(c), None);
     }
 }

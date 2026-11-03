@@ -177,6 +177,7 @@ fn context(s: &Regions, g: &Value) -> DiplomacyContext {
         human: std::array::from_fn(|e| s["ki"][e] == 1),
         player_ki: s["ki"][..EMPIRES].try_into().unwrap(),
         race: s["faj"][..EMPIRES].try_into().unwrap(),
+        race_like: Vec::new(),
         human_empire: gi("en") as usize,
         multiplayer: gi("mp") != 0,
         debug: gi("debug") != 0,
@@ -471,7 +472,7 @@ fn diplomacy_matches_every_traced_call() {
     }
     let r = ig2_rules::Rules::from_install(&inst).expect("catalogued exe");
     let rules = DiplomacyRules {
-        surface_affinity: r.race_surface_affinity.concat(),
+        surface_affinity: r.race_surface_affinity.clone(),
         research_money: r.race_research_money_mult.clone(),
         research_time: r.race_research_time_mult.clone(),
         ..DiplomacyRules::from_table(&r.declare_war_unreliability)

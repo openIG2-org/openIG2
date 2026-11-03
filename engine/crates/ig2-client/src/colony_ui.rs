@@ -226,8 +226,9 @@ impl Ctx<'_> {
     fn offered(&self) -> Vec<usize> {
         let tech = self.state.tech();
         let en = self.en();
-        let race = self.state.races()[en];
-        (0x51..0x91).filter(|&t| tech.status(t, en) == 5 && (race != 5 || !matches!(t, 0x69 | 0x81..=0x83))).collect()
+        let race = self.rules.race_role(self.state.races()[en] as usize);
+        (0x51..0x91)
+.filter(|&t| tech.status(t, en) == 5 && (race != 5 || !matches!(t, 0x69 | 0x81..=0x83))).collect()
     }
     /// `Talalmanyok[t] + 0x27`: the building kind tech `t` gives.
     fn kind_of(&self, t: usize) -> usize {
@@ -1651,7 +1652,7 @@ impl ColonyUi {
             *count.entry(b.kind).or_default() += 1;
         }
         let hub = c.has_hub();
-        let race = c.state.races()[c.en()];
+        let race = c.rules.race_role(c.state.races()[c.en()] as usize) as u8;
         let techs = c.state.tech();
         let menu = layout(&c.offered()).into_iter().map(|(t, column, _)| {
             let kind = c.kind_of(t);
@@ -2045,7 +2046,7 @@ mod tests {
         let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
         let (sim, defaults) = crate::rules::load(&install).unwrap();
         let state = SaveState::from_save(&save, &defaults);
-        let snap = crate::colony::ColonySnap::read(&state, 42).unwrap();
+        let snap = crate::colony::ColonySnap::read(&state, 42, &Default::default()).unwrap();
         let rules = ig2_rules::Rules::from_install(&install).unwrap();
         let texts = crate::ui::UiTexts::load(&install);
         let names = |_: usize| b"x".to_vec();

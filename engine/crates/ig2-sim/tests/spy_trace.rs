@@ -287,6 +287,7 @@ fn spy_matches_every_traced_call() {
                 day: gi("nap") as i32,
                 senders: None,
                 listed: [false; EMPIRES],
+                race_like: Vec::new(),
             };
             let mut sp = spies(&before);
             let mut colony = colony_world(&before, g);

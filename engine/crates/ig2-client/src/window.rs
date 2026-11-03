@@ -534,7 +534,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     // A new campaign enters the starmap after its intro (re/screens/mainscr.md §9.1).
     let start = world.start_voice.take();
     if !title && start.is_none() {
-        audio.play_music(music, o.main_menu, human_race(&world.game.state));
+        audio.play_music(music, o.main_menu, human_race(&world.game));
     }
     // The option rows as the exe holds them, their values from the settings file (the registry `SaveOptions` fills).
     let mut opt_rows = ig2_rules::PeImage::parse(&exe).map(|img| crate::options::read_rows(&img, &crate::ui::UiTexts::load(&l.install))).unwrap_or_default();
@@ -773,11 +773,12 @@ fn front_history_shown(fr: &Front) -> bool {
     fr.stats.is_none() && fr.replays.is_none() && fr.mods.is_none() && fr.mp.is_none() && !fr.s.flow && fr.s.at_rest()
 }
 
-/// `PlayerFaj[EN]`, the music's race.
-pub(crate) fn human_race(state: &ig2_sim::save::SaveState) -> u8 {
-    let en = state.mem.i32(ig2_sim::save::va::EN).max(0) as u32;
-    state.mem.u8(ig2_sim::save::va::PLAYER_FAJ + en)
+/// `PlayerFaj[EN]`, the music's race: a mod's race plays its original's (ADR 0069 §13).
+pub(crate) fn human_race(game: &ig2_sim::game::Game) -> u8 {
+    let en = game.state.mem.i32(ig2_sim::save::va::EN).max(0) as u32;
+    game.rules.ai.design.race_role(game.state.mem.u8(ig2_sim::save::va::PLAYER_FAJ + en))
 }
+
 
 impl App {
     fn new(world: World<'static>, install: ig2_formats::Install, tables: &'static ig2_rules::Rules, rules: &'static ig2_sim::game::GameRules, audio: crate::audio::Audio) -> Self {
@@ -1137,7 +1138,7 @@ impl App {
         for id in self.sounds.drain(..) {
             self.audio.play(id);
         }
-        self.audio.frame(human_race(&self.world.game.state));
+        self.audio.frame(human_race(&self.world.game));
     }
 
     fn init_gpu(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
@@ -2178,7 +2179,7 @@ impl App {
         if let Some(line) = k.and_then(|k| e.key(k)) {
             h.chat.entry = None;
             if !line.is_empty() {
-                let races: Vec<Vec<u8>> = (0..20).map(|r| h.texts.get(0x11, 1, r + 5)).collect();
+                let races = h.texts.races();
                 self.world.say(&line, &races);
             }
         }
@@ -2698,7 +2699,7 @@ impl App {
         for _ in 0..due {
             self.audio.tick();
         }
-        self.audio.frame(human_race(&self.world.game.state));
+        self.audio.frame(human_race(&self.world.game));
         fr.s.frame();
         // The main menu (`AktKep` 15) steps the row frame's globals too; the scenario list's frame carries them.
         let list = fr.s.scenario.as_mut().map(|sc| &mut sc.frame);
@@ -2854,7 +2855,8 @@ impl App {
                 let Some(f) = &mut self.front else { return };
                 let name = String::from_utf8_lossy(&f.s.player).into_owned();
                 let story = ig2_formats::config::Config::read(self.install.root()).int("mpstory");
-                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods).with_story(story));
+                let races = crate::rules::added_names(&self.install).0.iter().map(|a| a.race as u8).collect();
+                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods).with_races(races).with_story(story));
             }
             Act::Tutorial(_) => {}
             // Ours (ADR 0059): the newest save that reads, as the Load screen's Load.
@@ -3269,7 +3271,7 @@ impl App {
         for id in self.sounds.drain(..) {
             self.audio.play(id);
         }
-        self.audio.frame(human_race(&self.world.game.state));
+        self.audio.frame(human_race(&self.world.game));
         self.backdrop_switch();
         let backdrop = self.backdrop();
         let Some(h) = &mut self.help else { return };
@@ -3328,7 +3330,7 @@ impl App {
         for id in self.sounds.drain(..) {
             self.audio.play(id);
         }
-        self.audio.frame(human_race(&self.world.game.state));
+        self.audio.frame(human_race(&self.world.game));
         self.backdrop_switch();
         let backdrop = self.backdrop();
         let Some(g) = &mut self.gpu else { return };
@@ -3706,7 +3708,7 @@ impl App {
         front.stats = self.stats_end.take().map(crate::stats_screen::StatsScreen::end);
         self.front = Some(front);
         self.close_screens();
-        self.audio.play_music(crate::audio::Music::Menu, false, human_race(&self.world.game.state));
+        self.audio.play_music(crate::audio::Music::Menu, false, human_race(&self.world.game));
     }
 
     /// What the screen asks once it has faded out (or, for a save, at once).
@@ -4098,7 +4100,7 @@ impl App {
         self.front = None;
         // A campaign's intro comes first; the music follows it (`AfterVideo::StarmapEntry`).
         if self.world.videos.is_empty() {
-            self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+            self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game));
         }
         self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
         if self.world.viewer.is_none() {
@@ -4211,7 +4213,7 @@ impl App {
                     // Under the options screen (MP: the time runs on): the battle ends without its screen.
                     if self.spacewar_parked.as_ref().is_some_and(|sw| sw.ui.slot == slot) {
                         self.spacewar_parked = None;
-                        self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                        self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game));
                     }
                     if let Some(sw) = self.spacewar.as_mut().filter(|sw| sw.ui.slot == slot) {
                         sw.over(&self.world, now);
@@ -4247,7 +4249,7 @@ impl App {
             g.assets.planet_meshes.load_battle(&mut g.renderer, &self.install);
         }
         // `SpaceWar_Belep` exe 0x5628ac: `PlayMusicSpWar(1, 0)` (crossfade) when no battle ran yet.
-        self.audio.play_music(crate::audio::Music::SpWar, false, human_race(&self.world.game.state));
+        self.audio.play_music(crate::audio::Music::SpWar, false, human_race(&self.world.game));
         self.spacewar = crate::spacewar_live::Live::enter(&mut self.world, slot, &cam, &self.install, now);
     }
 
@@ -4392,7 +4394,7 @@ impl App {
                     self.stop_battle_loops();
                     // `Starmap_Belep` exe 0x5b1d74: `PlayMusicMain(0, 0)` unless a battle still runs.
                     if self.spacewar.as_ref().is_some_and(|sw| sw.ended) {
-                        self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                        self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game));
                     }
                     // A battle over during the zoom-out towards Options (MP: the time runs on): phase 2 still takes
                     // the 0xd branch (`OptionsHarcFolyik = 1`) before its end, so Options opens.
@@ -4635,7 +4637,7 @@ impl App {
         };
         let races = |e: u8| {
             let race = self.world.game.state.mem.u8(ig2_sim::save::va::PLAYER_FAJ + e as u32);
-            self.hud.as_ref().map_or_else(Vec::new, |h| h.texts.get(0x11, 1, race as u16 + 5))
+            self.hud.as_ref().map_or_else(Vec::new, |h| h.texts.race(race))
         };
         let late = late.into_iter().map(|(e, name)| crate::mp_wait::Late { empire: e, name: name.into_bytes(), text: races(e) }).collect();
         let now = Instant::now();
@@ -4725,7 +4727,7 @@ impl App {
             return;
         }
         let anims = self.anim_names.get_or_insert_with(|| crate::video::anim_names(&self.install));
-        let race = human_race(&self.world.game.state) as usize;
+        let race = human_race(&self.world.game) as usize;
         let campaign = self.world.game.state.mem.i32(ig2_sim::save::va::CAMPAIGN_TYPE) > 0;
         let names: Vec<String> = reqs.iter().flat_map(|r| r.names(anims, &self.tables.videos, race, campaign)).collect();
         if reqs.iter().any(crate::video::Request::ends_game) {
@@ -4785,9 +4787,9 @@ impl App {
                 f.ui_ms = now;
             }
             match std::mem::take(&mut self.after_video) {
-                AfterVideo::MenuMusic => self.audio.play_music(crate::audio::Music::Menu, true, human_race(&self.world.game.state)),
+                AfterVideo::MenuMusic => self.audio.play_music(crate::audio::Music::Menu, true, human_race(&self.world.game)),
                 AfterVideo::StarmapEntry(c) => {
-                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game));
                     self.audio.play_start_voice(c);
                 }
                 AfterVideo::MainMenu => self.exit_to_main_menu(),
@@ -4832,7 +4834,7 @@ impl App {
         let en = state.mem.i32(ig2_sim::save::va::EN);
         let lists = self.clip_lists.get_or_insert_with(|| crate::video::message::load_lists(&self.install, en));
         let k = state.mem.i32(ig2_sim::save::va::INBOX_RANDOM + 4 * d.index as u32);
-        let race = human_race(state);
+        let race = human_race(&self.world.game);
         let table = &self.tables.videos.message_clips;
         let steps = std::mem::take(&mut d.clip);
         let audio = &mut self.audio;
@@ -5237,7 +5239,7 @@ impl App {
                 // plays first, `AfterVideo::StarmapEntry`).
                 let battle = self.spacewar_parked.is_some() || self.spacewar.as_ref().is_some_and(|sw| !sw.ended);
                 if !battle && self.world.videos.is_empty() {
-                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game.state));
+                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game));
                 }
             }
             for _ in 0..due_ui {
@@ -5337,7 +5339,7 @@ impl App {
                 if shown {
                     c.ui.ui_frame(s, self.world.curr.human as i32, &mut c.view.camera);
                     if let Some(m) = crate::colony_ui::ColonyUi::war_music(&mut self.volt_harc, s.at_war) {
-                        self.audio.play_music(m, false, human_race(&self.world.game.state));
+                        self.audio.play_music(m, false, human_race(&self.world.game));
                     }
                 }
             }

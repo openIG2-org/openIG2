@@ -212,10 +212,12 @@ fn game_rules(inst: &Install) -> GameRules {
             })
             .collect(),
         curves: r.problem_curves.iter().map(|c| Curve { a: c.a, b: c.b, c: c.c, d: c.d, rate: c.rate, weight: c.weight }).collect(),
-        surface_growth: r.race_surface_affinity.iter().map(|v| v[..9].try_into().unwrap()).collect(),
+        surface_growth: r.race_surface_affinity.clone(),
         self_destruct_fear: r.race_fear_threshold.clone(),
         kidnap_morale: r.kidnap_morale.clone(),
         race_production: r.race_production_mult.clone(),
+        surface_like: Vec::new(),
+        surface_share: Vec::new(),
     };
     let mut modes = vec![AutobuildMode::default()];
     for m in 1..=10 {
@@ -262,7 +264,7 @@ fn game_rules(inst: &Install) -> GameRules {
             added_techs: ResearchRules::added(r.added_techs.iter().map(|a| a.index), &r.tech_defaults),
         },
         diplomacy: DiplomacyRules {
-            surface_affinity: r.race_surface_affinity.concat(),
+            surface_affinity: r.race_surface_affinity.clone(),
             research_money: r.race_research_money_mult.clone(),
             research_time: r.race_research_time_mult.clone(),
             ..DiplomacyRules::from_table(&r.declare_war_unreliability)

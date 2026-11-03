@@ -1,6 +1,6 @@
 # ADR 0069: mods add techs and building kinds
 
-Status: accepted. Implemented by `ig2-rules::patch` (`add_new`, `Rules::added_techs`, `Rules::added_buildings`),
+Status: accepted (amended: part 2 ships, part 3 races and planet types). Implemented by `ig2-rules::patch` (`add_new`, `Rules::added_techs`, `Rules::added_buildings`),
 `ig2-sim` (`ColonyRules::role`/`kinds_like`, `ResearchRules::added_techs`, `Game::new`, `SaveState::unknown_kind`) and
 `ig2-client` (`new_game::StartTexts`, `ui::UiTexts::load`, `research::tech_infos`, `world::check_kinds`). Part 1 of
 "Everything moddable" (docs/ENHANCEMENTS.md); later parts add ship hulls, weapons, tanks, races, planet types.
@@ -141,3 +141,65 @@ research field.
 **Consequences.** Classic play is byte-exact: without `like` the role is the tech itself and no table grows. A new
 item looks like its original (models, sounds, battle type); its texts are its tech's (`name`, `description`, a
 `texts.<lang>.toml` patch). Capacity is the free research fields (part 1).
+
+## Amendment (part 3): races and planet types
+Implemented by `ig2-rules::patch` (`[[races.new]]`, `[[planet_types.new]]`; `Rules::added_races`,
+`Rules::added_planet_types`, `Rules::race_role`, `Rules::surface_role`), `ig2-sim` (`spacewar::race_role`,
+`DesignRules::race_like`/`race_ai`, the contexts' `race_like`, `ColonyRules::surface_like`/`surface_share`,
+`Game::added_planet_types`, `SaveState::unknown_race`/`unknown_surface`) and `ig2-client` (`UiTexts::race`/`surface`/
+`playable_races`, the lobby's `with_races`, `world::check_kinds`).
+
+**Context.** An empire's race is `PlayerFaj[e]` (a byte); the 15 originals (0..=14; 1..=8 playable, 9..=14 the
+traders, pirates and other peoples) index every race table: `FajBolygoViszony` (15 × 9), the production, research,
+diplomacy and AI multipliers, the spy tables, the pod tables, the battle's ship types (`race·12 + type`), the
+portraits and leader videos. The exe also tests fixed race numbers (race 5 has no spies and no diplomacy, race 3
+doubles trade income and spy chances, races 4 and 7 build tech 13 cheaper, race 2's cruisers are faster, the AI's
+tech priorities exist for races 0..=8, hull models take the race digit). A planet's type is `Bolygok +0x22`
+(surfaces 1..=8): it picks the colony maps, the terrain textures (`textures/colony/terrainmap/<s>/`), the weather,
+the ambient sounds, the globe, the solar and magma yields and its column of `FajBolygoViszony`. There is no race
+colour: colours are the empires' (`0xf + e`), so a race brings none.
+
+**Decision.**
+13. **A new race takes the next race number** (15, 16, …) and plays the original it is `like` (1..=14):
+    ```toml
+    [[races.new]]
+    key = "vorlani"
+    like = 3                 # its fixed race rules, heads, portraits, ship models and types, spies, pod tables
+    ai = 5                   # optional: the AI's production share, military autobuild and tech priorities; else like
+    name = "Vorlani"         # where the game writes a race's name (lobby, info screen, diplomacy, spies)
+    plural = "Vorlanis"
+    production = 1.25        # optional traits: production, research_time, research_money, peace_threshold,
+    research_time = 0.9      #   trade_demand, fear_threshold, ai_production_share, ai_military_autobuild,
+    affinity = { 2 = 130, ash_world = 160 }   # spy_cost, spy_hire_cost; growth % by planet type
+    ```
+    Every race table gets the like's row at the new number (the AI's two from `ai`), then the traits. Every fixed
+    race-number check reads the role (`race_role`); the trait tables read the race itself, so a new race's own
+    numbers count wherever the original's do. The AI's research and design priorities are the `ai` race's. A new
+    game gives a new race its original's start techs; in a generated galaxy its home world is of its own favourite
+    type and peopled by it (the originals keep the exe's quirk: the empire number's race). The multiplayer room
+    (classic and modern) offers the new races beside 1..=8; every member runs the same mods (ADR 0044 §9).
+14. **A new planet type takes the next surface number** (9, 10, …) and looks and behaves like its `like` (1..=8):
+    ```toml
+    [[planet_types.new]]
+    key = "ash_world"
+    like = 4                 # colony maps, terrain, weather, sounds, globe, the solar/magma yields
+    name = "Ash world"
+    terrain = "textures/colony/terrainmap/ash/"   # optional: its own terrain textures, files the mod ships
+    share = 40               # % of the like type's free planets a new game turns into it
+    affinity = { 1 = 60, vorlani = 160 }          # growth % by race; the others keep the like type's
+    ```
+    The affinity table gets a column per type (the like's, then the cells). A new game turns each free planet of the
+    like type into the new type when a fixed hash of the planet and the type falls under `share`: no random draw, so
+    the streams stay the original's; the colony map stays the like's. Terraforming picks the best of every column of
+    the owner's row (the exe's quirk: the empire number's row), so a new type can also come from terraforming. The
+    story scripts read a planet's type through its role.
+15. **Saves and errors.** A save whose empire or owned planet has a race the active rules lack, or a planet of an
+    unknown type, refuses to load ("enable the mods it was played with"). A missing or used key, a `like` or `ai`
+    outside the originals, an unknown key in `affinity`, a share over 100 or an unknown field fails the load naming
+    the entry; `[races.<n>]` and `[planet_types.<n>]` are refused (the race tables are patched by name, ADR 0044 §6).
+    `ig2-check` lists each new race and type.
+
+**Consequences.** Classic play is byte-exact: without added races every role is the race itself, the affinity rows
+keep their 9 columns, the terraforming row is searched over the same 8 types and no planet changes. A new race looks
+and sounds like its original (heads, videos, ship models, music); a new planet type like its own (unless the mod
+brings terrain textures).

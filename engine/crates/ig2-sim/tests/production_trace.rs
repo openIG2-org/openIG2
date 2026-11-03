@@ -133,6 +133,7 @@ fn research_context(g: &Value, s: &Regions) -> ResearchContext {
         human_empire: n("en") as u8,
         human_controlled: std::array::from_fn(|e| s["ki"][e] == 1),
         race: s["faj"][..EMPIRES].try_into().unwrap(),
+        race_ai: Vec::new(),
         story_bonus: n("bonus"),
         cheat: n("cheat") != 0,
         all_techs: n("all") != 0,

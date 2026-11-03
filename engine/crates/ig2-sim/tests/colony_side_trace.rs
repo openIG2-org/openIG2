@@ -93,10 +93,12 @@ fn rules(inst: &Install, statics: &Value) -> SideRules {
             })
             .collect(),
         curves: r.problem_curves.iter().map(|c| Curve { a: c.a, b: c.b, c: c.c, d: c.d, rate: c.rate, weight: c.weight }).collect(),
-        surface_growth: r.race_surface_affinity.iter().map(|v| v[..9].try_into().unwrap()).collect(),
+        surface_growth: r.race_surface_affinity.clone(),
         self_destruct_fear: r.race_fear_threshold.clone(),
         kidnap_morale: r.kidnap_morale.clone(),
         race_production: r.race_production_mult.clone(),
+        surface_like: Vec::new(),
+        surface_share: Vec::new(),
     };
     // Autobuild modes from the install's autobldN.txt, names from the exe; checked against the live tables.
     let mut modes = vec![AutobuildMode::default()];
@@ -223,6 +225,7 @@ fn context(s: &Value) -> EconomyContext {
         human_empire: s["en"].as_i64().unwrap() as u8,
         human_controlled: std::array::from_fn(|e| ki[e] == 1),
         empire_race: faj.try_into().unwrap(),
+        race_like: Vec::new(),
         players: s["players2"].as_i64().unwrap() as i32,
         kidnap_state: std::array::from_fn(|e| kidnap[e] as i32),
         global_morale: s["gmoral"].as_i64().unwrap() as i32,

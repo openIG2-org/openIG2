@@ -533,7 +533,8 @@ impl ColonyWorld {
         self.occupied[p] += 1;
         let desc = rules.colony.buildings[kind as usize];
         let mut work = desc.build_work * 50;
-        if ctx.empire_race[planet.owner as usize] == 4 {
+        if crate::spacewar::race_role(&ctx.race_like, ctx.empire_race[planet.owner as usize]) == 4 {
+
             work = (work as f64 / 1.5) as i32;
         }
         let mut y = 100u8;
@@ -557,7 +558,8 @@ impl ColonyWorld {
         if role == kind::MAGMA && planet.has_event(0x64b) {
             y = (y as f64 * 1.33) as i32 as u8;
         }
-        if (role == kind::SOLAR && planet.surface == 3) || (role == kind::MAGMA && planet.surface == 4) {
+        let surface = rules.colony.surface_role(planet.surface);
+        if (role == kind::SOLAR && surface == 3) || (role == kind::MAGMA && surface == 4) {
             y = (y as f64 * 1.5) as i32 as u8;
         }
         let owner = planet.owner;
@@ -740,14 +742,15 @@ impl ColonyWorld {
     /// Terraforming arrival (spec §5.1) on unowned planet `p` by `owner`: the new surface and colony map.
     pub fn terraform(&mut self, p: usize, owner: u8, rules: &SideRules, maps: &PlacementRules) -> (u8, u8) {
         // The affinity row is the owner's empire number, not its race (original quirk).
-        let row = rules.colony.surface_growth.get(owner as usize).copied().unwrap_or([0; 9]);
+        // A mod's planet types are candidates too (ADR 0069 §14); the colony map is the like surface's.
+        let row = rules.colony.surface_growth.get(owner as usize).cloned().unwrap_or_default();
         let mut surface = 1;
-        for s in 2..=8 {
+        for s in 2..row.len() {
             if row[s] > row[surface] {
                 surface = s;
             }
         }
-        let map = self.next_colony_map(surface as u8 - 1, maps);
+        let map = self.next_colony_map(rules.colony.surface_role(surface as u8).wrapping_sub(1), maps);
         let pl = &mut self.planets[p];
         pl.surface = surface as u8;
         pl.colony_map = map;
@@ -1034,7 +1037,7 @@ impl ColonyWorld {
                 continue;
             }
             let t = rules.colony.buildings[b.kind as usize].tech as usize;
-            let cost = price(&self.tech, ctx.empire_race[e], t);
+            let cost = price(&self.tech, crate::spacewar::race_role(&ctx.race_like, ctx.empire_race[e]), t);
             if cost as f64 <= self.money[e].available(2) {
                 let kind = b.kind as u8;
                 // Building 0 has no footprint (the search reads before the table) and never fits.
@@ -1072,7 +1075,7 @@ impl ColonyWorld {
                 continue;
             }
             let t = rules.colony.buildings[b.kind as usize].tech as usize;
-            let cost = price(&self.tech, ctx.empire_race[e], t);
+            let cost = price(&self.tech, crate::spacewar::race_role(&ctx.race_like, ctx.empire_race[e]), t);
             if cost as f64 > self.money[e].available(2) {
                 self.money[e].reserve[2] = (cost + 100) as f64;
                 waiting[e] = true;
@@ -1251,8 +1254,9 @@ mod tests {
     #[test]
     fn terraforming_uses_the_owner_number_as_the_affinity_row() {
         let mut rules = SideRules::default();
-        rules.colony.surface_growth = vec![[0; 9]; 4];
-        rules.colony.surface_growth[3] = [9, 1, 5, 7, 7, 2, 0, 0, 0]; // surface 0 isn't a candidate; first max wins
+        rules.colony.surface_growth = vec![vec![0; 9]; 4];
+        rules.colony.surface_growth[3] = vec![9, 1, 5, 7, 7, 2, 0, 0, 0]; // surface 0 isn't a candidate; first max wins
+
         let maps = PlacementRules {
             terrains: (0..4).map(|kind| Terrain { mask: [0; 650], kind, start: (100, 100) }).collect(),
             ..Default::default()

@@ -1146,7 +1146,8 @@ impl Trade {
         // `GetGyartasAr(+0x40, hull tech) + Σ GetGyartasAr(+0x40, pod tech)·amount` over the record's pods (`+0x4c`),
         // a fifth for fighters (`+0x36`).
         let owner = i16_at(r, 0x40);
-        let race = state.mem.u8(va::PLAYER_FAJ + owner.clamp(0, 19) as u32);
+        let race = rules.race_role(state.mem.u8(va::PLAYER_FAJ + owner.clamp(0, 19) as u32) as usize) as u8;
+
         let price = |t: i32| ig2_sim::colony_side::price(techs, race, t.clamp(0, 192) as usize);
         let mut value = price(hull_tech);
         for k in 1..=i32_at(r, 0x4c).clamp(0, 12) as usize {

@@ -113,7 +113,7 @@ impl App {
     /// `KepernyokLetiltva`, its end restores them (`SpaceWar_Kilep` exe 0x562b50), the zoom's end only [0xd].
     fn screen_off(&self, n: i32) -> bool {
         (n != 0xd && (self.spacewar.is_some() || self.spacewar_parked.is_some()))
-            || crate::topbar_menus::screens_off(&self.world.game.state, self.tutorial.as_ref().map(|t| &t.t.gates.screens))
+            || crate::topbar_menus::screens_off(&self.world.game.state, self.tutorial.as_ref().map(|t| &t.t.gates.screens), &self.world.game.rules.ai.design.race_like)
                 .get(n as usize)
                 .copied()
                 .unwrap_or(false)

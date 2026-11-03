@@ -46,10 +46,12 @@ fn colony_rules(r: &ig2_rules::Rules) -> ColonyRules {
             .iter()
             .map(|c| Curve { a: c.a, b: c.b, c: c.c, d: c.d, rate: c.rate, weight: c.weight })
             .collect(),
-        surface_growth: r.race_surface_affinity.iter().map(|v| v[..9].try_into().unwrap()).collect(),
+        surface_growth: r.race_surface_affinity.clone(),
         self_destruct_fear: r.race_fear_threshold.clone(),
         kidnap_morale: r.kidnap_morale.clone(),
         race_production: r.race_production_mult.clone(),
+        surface_like: Vec::new(),
+        surface_share: Vec::new(),
     }
 }
 

@@ -1844,7 +1844,8 @@ impl ResearchModels {
             let (name, vdir, tdir) = if c == 1 && k > 4 {
                 let mut n = name.into_bytes();
                 if k < 12 && n.len() > 4 {
-                    n[4] = b'0' + race;
+                    n[4] = b'0' + rules.race_role(race as usize) as u8;
+
                 }
                 (String::from_utf8_lossy(&n).into_owned(), "vector/spacewar/", "textures/spacewar/")
             } else if (6..=9).contains(&c) {

@@ -405,6 +405,8 @@ pub struct LobbyHost {
     dirty: bool,
     /// The AI pick's generator (a galaxy room; the host's own, not the sim's).
     rng: u64,
+    /// Ours (ADR 0069 §13): the mods' races a slot may pick besides 1..=8.
+    races: Vec<u8>,
 }
 
 /// What [`LobbyHost::start`] returns: the lockstep relay, the host's own peer start and link, and the door
@@ -428,7 +430,13 @@ impl LobbyHost {
             members: vec![Member { id: 0, name: truncate(host_name, MAX_NAME), ready: false }],
             galaxy: None,
         };
-        Self { door: Door::new(settings, session, rules), epoch: Instant::now(), state, links: BTreeMap::new(), next_id: 1, dirty: false, rng: session | 1 }
+        Self { door: Door::new(settings, session, rules), epoch: Instant::now(), state, links: BTreeMap::new(), next_id: 1, dirty: false, rng: session | 1, races: Vec::new() }
+    }
+
+    /// The mods' races a slot may pick besides 1..=8 (ADR 0069 §13; every member runs the same mods).
+    pub fn with_races(mut self, races: Vec<u8>) -> Self {
+        self.races = races;
+        self
     }
 
     /// The room's mods fingerprint (`session::mods_fingerprint`), to name a mods mismatch as such.
@@ -494,7 +502,8 @@ impl LobbyHost {
     /// `empire`'s race in a galaxy room (the race popup, ids 0x3B..0x42): `member` its own slot's, the host (0) any
     /// slot's. Races 1..=8. Clears every ready flag.
     pub fn set_race(&mut self, member: u8, empire: u8, race: u8) -> bool {
-        if self.state.galaxy.is_none() || !(1..=8).contains(&race) || (member != 0 && self.state.empire_of(member) != Some(empire)) {
+        if self.state.galaxy.is_none() || !((1..=8).contains(&race) || self.races.contains(&race)) || (member
+ != 0 && self.state.empire_of(member) != Some(empire)) {
             return false;
         }
         let Some(s) = self.state.slots.iter_mut().find(|s| s.empire == empire) else { return false };

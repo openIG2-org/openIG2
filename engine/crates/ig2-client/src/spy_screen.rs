@@ -72,7 +72,7 @@ impl SpyTexts {
             family: tbl(5, &|k| h(3, k + 9)),
             rebellion: tbl(4, &|k| h(3, k + 14)),
             sure: (43..=45).map(|i| h(6, i)).collect(),
-            races: tbl(14, &|k| h(1, k + 5)),
+            races: { let mut v = tbl(14, &|k| h(1, k + 5)); v.extend(txt17.races().into_iter().skip(v.len())); v },
             training: tbl(5, &|k| texts.get(7, 6, k)),
             target_kinds: tbl(5, &|k| texts.get(7, 6, k + 5)),
             morale: (0..=20).map(|k| txt17.get(17, 4, 41 + k)).collect(),
@@ -1095,7 +1095,8 @@ impl SpyScreen {
                 }
             }
             List::Race => {
-                if s > 0 && d.races[s as usize] != 5 {
+                if s > 0 && d.rules.ai.design.race_role(d.races[s as usize]) != 5 {
+
                     self.plan.race = s;
                     if d.mission(self.plan.mission).kind == 1 {
                         self.plan.target = 0;
@@ -1164,6 +1165,7 @@ fn spy_context(d: &SpyData) -> spy::SpyContext {
     spy::SpyContext {
         alive: d.alive,
         race: d.races,
+        race_like: d.rules.ai.design.race_like.clone(),
         human: std::array::from_fn(|e| m.u8(va::PLAYER_KI + e as u32) == 1),
         human_empire: d.en,
         multiplayer: d.multiplayer,

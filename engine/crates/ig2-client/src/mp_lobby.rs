@@ -602,6 +602,8 @@ pub struct MpScreen {
     rules: [u8; 32],
     /// The enabled mods' fingerprint (zero without mods), to name a mods mismatch (ADR 0044 §4).
     mods: [u8; 32],
+    /// Ours (ADR 0069 §13): the mods' races a slot may pick besides 1..=8.
+    races: Vec<u8>,
     /// The fade 0..100 (+4 a 10 ms tick).
     pub open: f32,
     pub list: Vec<Found>,
@@ -774,6 +776,12 @@ impl MpScreen {
         self
     }
 
+    /// The mods' races a slot may pick besides 1..=8 (ADR 0069 §13).
+    pub fn with_races(mut self, races: Vec<u8>) -> Self {
+        self.races = races;
+        self
+    }
+
     /// `Start_Belep` (exe 0x5bf4b0): `MultiplayerStartStory = atoi(GetParam("mpstory", "0"))`, shown as a chat line
     /// when non-zero.
     pub fn with_story(mut self, story: i32) -> Self {
@@ -791,6 +799,7 @@ impl MpScreen {
             name: name.to_string(),
             rules,
             mods: [0; 32],
+            races: Vec::new(),
             open: 0.0,
             list: Vec::new(),
             selected: None,
@@ -883,7 +892,7 @@ impl MpScreen {
         match net.listen() {
             Ok(mut listener) => {
                 let settings = Settings { name: format!("{}'s galaxy", self.name), scenario: "galaxy".into(), private: false, password: self.password() };
-                let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name).with_mods(self.mods);
+                let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name).with_mods(self.mods).with_races(self.races.clone());
                 listener.register(lobby.session());
                 listener.map_port(true);
                 self.chat.clear();
@@ -907,7 +916,7 @@ impl MpScreen {
                 let s = &save.session;
                 let settings = Settings { name: s.name.clone(), scenario: s.scenario.clone(), private: false, password: self.password() };
                 let slots: Vec<(u8, u8)> = s.humans.iter().map(|h| (h.empire, 0)).collect();
-                let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name).with_mods(self.mods);
+                let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name).with_mods(self.mods).with_races(self.races.clone());
                 let mine = s.humans.iter().find(|h| h.name == lobby.state().members[0].name).or(s.humans.first()).map(|h| h.empire);
                 lobby.pick(0, mine);
                 listener.register(lobby.session());
@@ -1236,7 +1245,10 @@ impl MpScreen {
             }
             i if (spot::RACE..spot::RACE + 8).contains(&i) => {
                 let s = slot(i - spot::RACE)?;
-                return self.set_race((i - spot::RACE) as usize, if right { (s.race + 6) % 8 + 1 } else { s.race % 8 + 1 });
+                let all: Vec<u8> = (1..=8).chain(self.races.iter().copied()).collect();
+                let at = all.iter().position(|&r| r == s.race).unwrap_or(0);
+                return self.set_race((i - spot::RACE) as usize, all[if right { at + all.len() - 1 } else { at + 1 } % all.len()]);
+
             }
             i if (spot::HOLDER..spot::HOLDER + 8).contains(&i) => {
                 let s = slot(i - spot::HOLDER)?;

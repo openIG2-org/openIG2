@@ -148,8 +148,8 @@ pub struct DiplomacyRules {
     /// `Megbizhatatlansag_DeclareWar` (exe 0x902FC0): `[undeclared][row][0 victim, 1 others]` unreliability
     /// added by a war (spec §8.1).
     pub declare_war: [[[i32; 2]; 4]; 2],
-    /// `FajBolygoViszony` (exe 0x90B9D8), flat `race·9 + surface`: planet values (spec §6.3).
-    pub surface_affinity: Vec<i32>,
+    /// `FajBolygoViszony` (exe 0x90B9D8), `[race][surface]`: planet values (spec §6.3).
+    pub surface_affinity: Vec<Vec<i32>>,
     /// `FajSpeckoKutatasMoneySzorzo` / `FajSpeckoKutatasIdoSzorzo` per race: tech values.
     pub research_money: Vec<f32>,
     pub research_time: Vec<f32>,
@@ -487,6 +487,8 @@ pub struct DiplomacyContext {
     pub player_ki: [u8; EMPIRES],
     /// `PlayerFaj`.
     pub race: [u8; EMPIRES],
+    /// Ours (ADR 0069 §13): the original race each race plays (`spacewar::race_role`; empty without added races).
+    pub race_like: Vec<u8>,
     /// `EN`.
     pub human_empire: usize,
     pub multiplayer: bool,
@@ -521,6 +523,12 @@ pub struct DiplomacyContext {
 }
 
 impl DiplomacyContext {
+    /// The original race empire `e`'s race plays (ADR 0069 §13).
+    fn role(&self, e: usize) -> u8 {
+        crate::spacewar::race_role(&self.race_like, self.race[e])
+    }
+
+
     /// Empire `e`'s `Nehezseg` (past the table: the game's, index 0).
     pub fn difficulty(&self, e: usize) -> i32 {
         self.difficulty.get(e).copied().unwrap_or(self.difficulty[0])
@@ -1001,7 +1009,7 @@ impl Diplomacy {
     }
 
     fn discover_as(&mut self, w: &mut World, owner: usize, e: usize) {
-        if e == 0 || w.ctx.race[e] == 5 || self.players.iter().any(|s| s.empire == e as i32) {
+        if e == 0 || w.ctx.role(e) == 5 || self.players.iter().any(|s| s.empire == e as i32) {
             return;
         }
         if e != owner && e < 9 {
@@ -1149,7 +1157,7 @@ impl Diplomacy {
 
     /// `ElkuldHaduzenet(a, b)`.
     fn declare_war(&mut self, w: &mut World, a: usize, b: usize) {
-        if w.ctx.race[a] == 5 || w.ctx.race[b] == 5 || (!w.ctx.enabled && !w.ctx.multiplayer) {
+        if w.ctx.role(a) == 5 || w.ctx.role(b) == 5 || (!w.ctx.enabled && !w.ctx.multiplayer) {
             self.war(w, a, b, true, 0);
         } else {
             self.send(w, a, b, true, Message::ai(cat::NEGOTIATE, negotiate::DECLARE_WAR, -1));
@@ -1160,7 +1168,7 @@ impl Diplomacy {
 
     /// `ElkuldUzenetMI`: the AI sends (race 5 on either side: dropped).
     fn send(&mut self, w: &mut World, a: usize, b: usize, declaration: bool, msg: Message) {
-        if w.ctx.race[a] == 5 || w.ctx.race[b] == 5 {
+        if w.ctx.role(a) == 5 || w.ctx.role(b) == 5 {
             return;
         }
         self.receive_message(w, &mut (), Letter { from: a as i32, to: b as i32, declaration, msg });
@@ -1388,7 +1396,8 @@ impl Diplomacy {
             cat::OFFER_FOR if msg.sub2 == item::TECH && w.tech.status(msg.value2.max(0) as usize, b) != status::OWNED => return false,
             _ => {}
         }
-        let bonus = if w.ctx.race[a] == 7 { 1000 } else { 0 };
+        let bonus = if w.ctx.role(a) == 7 { 1000 } else { 0 };
+
         let lvl = self.level(b, a);
         let (mut give, mut want) = (0, 0);
         if matches!(msg.cat, cat::OFFER_FOR | cat::DEMAND | cat::OFFER) {
@@ -1582,7 +1591,7 @@ impl Diplomacy {
                 }
                 let x = (x as f64 * if demand { 1.2 } else { 0.6 }) as i32;
                 let race = if t.owner != 0 { t.race as usize } else { e };
-                let aff = w.rules.surface_affinity.get(race * 9 + t.surface as usize).copied().unwrap_or(0);
+                let aff = w.rules.surface_affinity.get(race).and_then(|r| r.get(t.surface as usize)).copied().unwrap_or(0);
                 let s = ((t.richness - 100) as f64 / 100.0) as f32 as f64 + (aff - 100) as f64 / 100.0;
                 let x = (((s as f32) / 3.0 + 1.0) * x as f32) as i32;
                 if !t.capturable {
@@ -2183,8 +2192,8 @@ mod tests {
     #[test]
     fn planet_value() {
         let mut fx = Fixture::new();
-        fx.rules.surface_affinity = vec![100; 15 * 9];
-        fx.rules.surface_affinity[3 * 9 + 2] = 160;
+        fx.rules.surface_affinity = vec![vec![100; 9]; 15];
+        fx.rules.surface_affinity[3][2] = 160;
         let mut d = neutral();
         d.planets[1] = 7;
         let w = fx.world();
@@ -2236,7 +2245,8 @@ mod tests {
     fn offer_for_trades_planet_and_tech() {
         let mut fx = Fixture::new();
         fx.tech.set_status(7, 2, status::OWNED);
-        fx.rules.surface_affinity = vec![100; 135];
+        fx.rules.surface_affinity = vec![vec![100; 9]; 15];
+
         let mut d = neutral();
         d.planets[1] = 3;
         d.relations[2][1].v[field::FRIENDLY] = 6000;

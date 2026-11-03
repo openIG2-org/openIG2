@@ -223,6 +223,12 @@ fn strncpy(dst: &mut [u8], src: &[u8], n: usize) {
 fn put_i16(r: &mut [u8], o: usize, v: i16) {
     r[o..o + 2].copy_from_slice(&v.to_le_bytes());
 }
+/// A fixed hash of planet `p` and planet type `s` (ADR 0069 §14).
+fn planet_hash(p: usize, s: u8) -> u32 {
+    let h = (p as u32).wrapping_mul(0x9E37_79B1) ^ (s as u32).wrapping_mul(0x85EB_CA77);
+    (h ^ (h >> 15)).wrapping_mul(0x2C1B_3C6D) >> 8
+}
+
 fn put_i32(r: &mut [u8], o: usize, v: i32) {
     r[o..o + 4].copy_from_slice(&v.to_le_bytes());
 }
@@ -645,7 +651,7 @@ impl<'r> Game<'r> {
                 m.set_i32(r + 0x38, 0);
             }
         }
-        let races = self.state.races();
+        let races = self.state.races().map(|r| self.rules.ai.design.race_role(r));
         for i in 1..=8usize {
             if races[i] != 5 {
                 let kemek0 = image(0xBB1FA8, 0x3dc);
@@ -676,9 +682,11 @@ impl<'r> Game<'r> {
                 strncpy(&mut techs[t * TECH_SIZE..], n, 0x10);
             }
         }
+        // A mod's race starts with its original's (ADR 0069 §13).
+        let roles = races.map(|r| self.rules.ai.design.race_role(r));
         for t in 1..TECHS {
             for e in 1..=pp2.min(18) as usize {
-                techs[t * TECH_SIZE + 0x45 + e] = t0[t * TECH_SIZE + 0x45 + races[e] as usize];
+                techs[t * TECH_SIZE + 0x45 + e] = t0[t * TECH_SIZE + 0x45 + roles[e] as usize];
             }
         }
         self.m().write(va::TECHS, &techs);
@@ -915,6 +923,7 @@ impl<'r> Game<'r> {
                 self.put_prec(p, &r);
             }
         }
+        self.added_planet_types(n as usize);
         // 55, 56: tech patches.
         self.tech_patches();
         let mp = self.state.mem.u8(va::MULTIPLAYER) != 0;
@@ -934,6 +943,30 @@ impl<'r> Game<'r> {
         m.set_i32(va::BATTLE_SPEED, 1);
         m.set_u8(0xBAE264, 0);
         self.diplomacy_daily(false);
+    }
+
+    /// Ours (ADR 0069 §14): each free planet of a surface a mod's planet type is `like` turns into that type with the
+    /// type's `share` in percent, picked by a hash of the planet and the type (no random draw: the streams stay the
+    /// original's). Its colony map stays (the like surface's).
+    fn added_planet_types(&mut self, n: usize) {
+        let colony = &self.rules.side.colony;
+        if colony.surface_like.is_empty() {
+            return;
+        }
+        let types: Vec<(u8, u8, u8)> = (crate::colony::SURFACES..colony.surface_like.len())
+            .map(|s| (s as u8, colony.surface_like[s], colony.surface_share.get(s).copied().unwrap_or(0)))
+            .collect();
+        for p in 1..=n {
+            let mut r = self.prec(p);
+            if r[0x20] != 0 {
+                continue;
+            }
+            let pick = types.iter().find(|&&(s, like, share)| like == r[0x22] && planet_hash(p, s) % 100 < share as u32);
+            if let Some(&(s, ..)) = pick {
+                r[0x22] = s;
+                self.put_prec(p, &r);
+            }
+        }
     }
 
     /// Step 53: every planet's battlefield camera at its default (`WF[i]` for i < `HanyBolygo2`).
@@ -2192,7 +2225,13 @@ impl<'r> Game<'r> {
                 continue;
             }
             let race = races[c] as u32;
-            let liking = |k: u32| i32::from_le_bytes(image(0x90B9D8 + 4 * (k + 9 * race), 4).try_into().unwrap());
+            // A mod's race (ADR 0069 §13): its own row of the rules (the exe's table has the 15 originals').
+            let row = self.rules.side.colony.surface_growth.get(race as usize).filter(|_| race as usize >= crate::colony::RACES).cloned();
+            let liking = |k: u32| match &row {
+                Some(r) => r.get(k as usize).copied().unwrap_or(0),
+                None => i32::from_le_bytes(image(0x90B9D8 + 4 * (k + 9 * race), 4).try_into().unwrap()),
+            };
+
             let m = (1..=8).map(liking).fold(0, i32::max);
             let (mut kind, mut ties) = (0, 0);
             for k in 1..=8 {
@@ -2228,10 +2267,13 @@ impl<'r> Game<'r> {
         for p in 0..n as u32 {
             self.m().set_i32(va::WARFARE + p * va::WARFARE_STRIDE + 0x18, 1);
         }
-        // The home worlds: Generate_Planet(home, c, c, true, true, 0, 0).
+        // The home worlds: Generate_Planet(home, c, c, true, true, 0, 0): the people are the empire number's race; a
+        // mod's race peoples its own (ADR 0069 §13).
         for c in 1..=players {
             if alive[c] {
-                self.generate_planet(home[c], c, c as u8, true, true, &prod);
+                let race = if races[c] as usize >= crate::colony::RACES { races[c] } else { c as u8 };
+                self.generate_planet(home[c], c, race, true, true, &prod);
+
             }
         }
     }
@@ -2664,8 +2706,9 @@ impl StoryWorld for InitWorld<'_, '_, '_> {
         &self.tables
     }
     fn race(&self, e: i32) -> i32 {
-        self.game.state.races().get(e.max(0) as usize).copied().unwrap_or(0) as i32
+        self.game.rules.ai.design.race_role(self.game.state.races().get(e.max(0) as usize).copied().unwrap_or(0)) as i32
     }
+
     fn config_int(&self, key: &str) -> i32 {
         match key {
             "storyline" => self.cfg.storyline,

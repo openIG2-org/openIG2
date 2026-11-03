@@ -806,7 +806,7 @@ fn info(o: &Options) -> Result<(), String> {
     }
     if o.colony.is_some() {
         for p in &s.planets {
-            if let Some(c) = colony::ColonySnap::read(&w.game.state, p.index) {
+            if let Some(c) = colony::ColonySnap::read(&w.game.state, p.index, &w.game.rules.side.colony) {
                 let vehicles = c.units.iter().filter(|u| u.flags & ig2_sim::ground::flag::TURRET == 0).count();
                 if !c.buildings.is_empty() || !c.units.is_empty() {
                     println!("colony {:3} owner {:2} map {:2} surface {} | {} buildings, {} units ({vehicles} vehicles), {} shots, war {}", p.index, c.owner, c.map, c.surface, c.buildings.len(), c.units.len(), c.shots.len(), c.at_war);

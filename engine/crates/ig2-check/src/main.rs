@@ -377,7 +377,10 @@ fn main() {
                     g.notes.extend(r.added_buildings.iter().map(|a| format!("  adds building kind {} \"{}\" (like {})", a.kind, a.key, r.buildings[a.kind].like)));
                     g.notes.extend(r.added_hulls.iter().map(|a| format!("  adds hull {} \"{}\" (like {}, tech {})", a.index, a.key, r.hulls[a.index].like, a.tech)));
                     g.notes.extend(r.added_weapons.iter().map(|a| format!("  adds space weapon {} \"{}\" (tech {})", a.index, a.key, a.tech)));
-                    g.notes.extend(r.added_techs.iter().filter(|a| r.techs[a.index].like != 0).map(|a| format!("  tech {} \"{}\" is like tech {}", a.index, a.key, r.techs[a.index].like)));
+                    g.notes.extend(r.added_races.iter().map(|a| format!("  adds race {} \"{}\" (like {}, AI like {})", a.race, a.key, a.like, a.ai)));
+                    g.notes.extend(r.added_planet_types.iter().map(|a| format!("  adds planet type {} \"{}\" (like {}, {}% of a new game's)", a.surface, a.key, a.like, a.share)));
+                    g.notes.extend(r.added_techs.iter().filter(|a| r.techs[a.index].like != 0)
+.map(|a| format!("  tech {} \"{}\" is like tech {}", a.index, a.key, r.techs[a.index].like)));
                     g.ok += 1;
                 }
                 Err(e) => g.failed.push((format!("mod {name}: rules.toml"), e)),

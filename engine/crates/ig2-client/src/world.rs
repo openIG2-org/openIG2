@@ -315,9 +315,16 @@ pub fn check_kinds(state: &SaveState, rules: &GameRules) -> Result<(), String> {
         Some(k) => Err(format!("the save has building kind {k}, which no active mod adds (enable the mods it was played with)")),
         None => match state.unknown_hull(rules.ai.design.hulls.len()) {
             Some(h) => Err(format!("the save has a design of hull {h}, which no active mod adds (enable the mods it was played with)")),
-            None => Ok(()),
+            None => match state.unknown_race(rules.ai.design.race_like.len().max(ig2_sim::colony::RACES)) {
+                Some(r) => Err(format!("the save has race {r}, which no active mod adds (enable the mods it was played with)")),
+                None => match state.unknown_surface(rules.side.colony.surface_like.len().max(ig2_sim::colony::SURFACES)) {
+                    Some(s) => Err(format!("the save has planet type {s}, which no active mod adds (enable the mods it was played with)")),
+                    None => Ok(()),
+                },
+            },
         },
     }
+
 }
 
 fn target(map: &ig2_sim::fleet::Starmap, f: &ig2_sim::fleet::Fleet) -> Option<[f32; 2]> {
@@ -687,7 +694,7 @@ impl<'r> World<'r> {
 
     fn from_game(game: Game<'r>, view: SavedView) -> Self {
         let curr = Snapshot { orbit: view.orbit, ..Snapshot::read(&game) };
-        let ui = crate::ui::UiSnap::read(&game.state);
+        let ui = crate::ui::UiSnap::read(&game.state, game.rules);
         Self { game, prev: curr.clone(), curr, view, colony: None, colony_prev: None, colony_curr: None, ui, outbox: Vec::new(), order_events: Vec::new(), colony_events: Vec::new(), local_lines: Vec::new(), popped: Vec::new(), realtime: Vec::new(), ground_war_routed: false, story_ui: Vec::new(), videos: Vec::new(), ground_voices: Vec::new(), ground_fx: Vec::new(), start_voice: None, net: None, net_seen: Default::default(), net_since: 0, chat_lines: Vec::new(), net_over: false, net_host: None, net_resyncs: 0, net_real: None, scenario: false, replay: None, recorder: None, log: Default::default(), log_on: true, viewer: None }
     }
 
@@ -765,10 +772,10 @@ impl<'r> World<'r> {
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
         next.orbit = (self.curr.orbit as f64 + ticks as f64 * speed as f64 / 1500.0) as f32;
         self.prev = std::mem::replace(&mut self.curr, next);
-        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state, self.game.rules) };
         self.colony_prev = self.colony_curr.take();
         if let Some(p) = self.colony {
-            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p, &self.game.rules.side.colony);
         }
     }
 
@@ -898,10 +905,10 @@ impl<'r> World<'r> {
         let speed = self.game.state.mem.i32(va::IDO_SPEED);
         next.orbit = (self.curr.orbit as f64 + 2.0 * speed as f64 / 1500.0) as f32;
         self.prev = std::mem::replace(&mut self.curr, next);
-        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state, self.game.rules) };
         self.colony_prev = self.colony_curr.take();
         if let Some(p) = self.colony {
-            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p, &self.game.rules.side.colony);
         }
         true
     }
@@ -943,10 +950,10 @@ impl<'r> World<'r> {
     /// The screens' snapshots of the game as it is now, within the same tick (the fleets keep gliding from `prev`).
     fn reread(&mut self) {
         if let Some(p) = self.colony {
-            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p, &self.game.rules.side.colony);
         }
         self.curr = Snapshot { orbit: self.curr.orbit, ..Snapshot::read(&self.game) };
-        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state, self.game.rules) };
     }
 
     /// The story's starmap texts for this machine's empire (`StoryEvent::Notice`, [`notice_line`]) into the message ring.
@@ -1295,12 +1302,12 @@ impl<'r> World<'r> {
         next.orbit = if frozen { self.curr.orbit } else { (self.curr.orbit as f64 + speed as f64 / 1500.0) as f32 };
         self.prev = std::mem::replace(&mut self.curr, next);
         let ui = crate::prof::scope("t_ui");
-        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state, self.game.rules) };
         drop(ui);
         let _colony = crate::prof::scope("t_colony");
         self.colony_prev = self.colony_curr.take();
         if let Some(p) = self.colony {
-            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p);
+            self.colony_curr = crate::colony::ColonySnap::read(&self.game.state, p, &self.game.rules.side.colony);
         }
     }
 
@@ -1327,7 +1334,7 @@ impl<'r> World<'r> {
         self.popped.push((id, text.clone()));
         let important = t.on_screen_important != 0;
         self.game.state.store_ticker(&t);
-        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state) };
+        self.ui = crate::ui::UiSnap { scenario: self.scenario, ..crate::ui::UiSnap::read(&self.game.state, self.game.rules) };
         Some((text, important))
     }
 
@@ -1339,7 +1346,7 @@ impl<'r> World<'r> {
         if let Some(p) = p {
             self.game.set_view(ig2_sim::game::LocalView { planet: p as i32, ..self.game.local_view() });
         }
-        self.colony_curr = p.and_then(|p| crate::colony::ColonySnap::read(&self.game.state, p));
+        self.colony_curr = p.and_then(|p| crate::colony::ColonySnap::read(&self.game.state, p, &self.game.rules.side.colony));
         self.colony_prev = self.colony_curr.clone();
     }
 }

@@ -215,7 +215,8 @@ impl SpyScreen {
             List::Race => {
                 let rows = self.rows(d, g.t, p.list);
                 for (n, (e, text, _)) in rows.iter().enumerate() {
-                    let col = if d.races[*e as usize] == 5 { 1 } else if *e == p.selected { 6 } else { 3 };
+                    let col = if d.rules.ai.design.race_role(d.races[*e as usize]) == 5 { 1 }
+ else if *e == p.selected { 6 } else { 3 };
                     g.t2(f, text, x, y + n as i32 * 13 + 3, 0x18, col);
                 }
                 if rows.is_empty() {

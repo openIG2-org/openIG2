@@ -97,7 +97,8 @@ fn place(w: &World, e: usize, c: usize, reserve: f64, rank: fn(&Planet) -> i32) 
         .flat_map(|k| std::iter::once(k).chain(rules.colony.kinds_like(k)))
         .filter(|&k| rules.colony.buildings.get(k).is_some_and(|b| colony.tech.status(b.tech as usize, e) == status::OWNED))
         .last()?;
-    let cost = price(&colony.tech, w.race(e), rules.colony.buildings[kind].tech as usize);
+    let cost = price(&colony.tech, w.rules.design.race_role(w.race(e)), rules.colony.buildings[kind].tech as usize);
+
     if colony.money[e].available(2) < cost as f64 + reserve {
         return None;
     }
@@ -252,7 +253,7 @@ impl AiState {
         let colony = &mut *w.spy.colony;
         let research = &mut *w.spy.research;
         if research.current[e] == 0 {
-            let race = w.spy.ctx.race.get(e).copied().unwrap_or(0);
+            let race = w.rules.design.race_ai(w.spy.ctx.race.get(e).copied().unwrap_or(0));
             let r = if race < 9 { race as usize } else { 1 };
             let labs = &colony.empires.labs[e];
             let open = |t: usize| t > 0 && colony.tech.status(t, e) == status::RESEARCHABLE && research::labs_ok(&colony.tech, t, labs);

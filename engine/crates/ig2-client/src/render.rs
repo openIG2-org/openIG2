@@ -1194,7 +1194,7 @@ fn diplomacy_sequence(o: &crate::Options, out: &std::path::Path, script: &crate:
 /// `--snapshot --colony P`: planet `P`'s colony screen.
 fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud, p: usize) -> Result<(), String> {
     use crate::colony::{ColonyScene, ColonySnap, View};
-    let curr = ColonySnap::read(&world.game.state, p).ok_or(format!("no planet {p}"))?;
+    let curr = ColonySnap::read(&world.game.state, p, &world.game.rules.side.colony).ok_or(format!("no planet {p}"))?;
     let prev = world.colony_prev.clone().filter(|s| s.planet == p).unwrap_or_else(|| curr.clone());
     let mut scene = ColonyScene::load(r, &l.install, &l.tables, &l.rules.ground_maps, &curr)?;
     let mut view = View::new(&curr, o.size, o.scale, &scene);
@@ -1853,7 +1853,7 @@ fn messages_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::
                     let en = state.mem.i32(ig2_sim::save::va::EN);
                     let lists = lists.get_or_insert_with(|| crate::video::message::load_lists(&l.install, en));
                     let k = state.mem.i32(ig2_sim::save::va::INBOX_RANDOM + 4 * d.index as u32);
-                    let race = crate::window::human_race(state);
+                    let race = crate::window::human_race(&world.game);
                     let table = &l.tables.videos.message_clips;
                     let steps = std::mem::take(&mut d.clip);
                     for s in &steps {

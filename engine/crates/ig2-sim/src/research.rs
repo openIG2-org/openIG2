@@ -66,6 +66,10 @@ pub struct ResearchContext {
     pub human_controlled: [bool; EMPIRES],
     /// `PlayerFaj[e]`.
     pub race: [u8; EMPIRES],
+    /// Ours (ADR 0069 §13): the original race whose AI priorities each race uses (`spacewar::race_role`; empty
+    /// without added races).
+    pub race_ai: Vec<u8>,
+
     /// `StoryAdat+0x6c`: the human's research bonus in percent (SP).
     pub story_bonus: i32,
     /// The research cheat (exe 0xB7727C): the human ignores labs; every running project completes.
@@ -232,7 +236,10 @@ pub fn ai_pick(techs: &mut TechTable, research: &mut Research, labs: &[[i32; 4];
     if ctx.human_controlled[e] || research.current[e] != 0 {
         return;
     }
-    let r = if ctx.race[e] < 9 { ctx.race[e] as usize } else { 1 };
+    let r = match crate::spacewar::race_role(&ctx.race_ai, ctx.race[e]) {
+        r @ 0..=8 => r as usize,
+        _ => 1,
+    };
     let cheat = e == ctx.human_empire as usize && ctx.cheat;
     let (mut pick, mut best) = (0, -1i32);
     for t in 1..TECHS {
@@ -281,7 +288,10 @@ pub fn auto_pick(techs: &mut TechTable, research: &mut Research, labs: &[[i32; 4
     if on == 0 || !ctx.human_controlled[e] || research.current[e] != 0 {
         return;
     }
-    let r = if ctx.race[e] < 9 { ctx.race[e] as usize } else { 1 };
+    let r = match crate::spacewar::race_role(&ctx.race_ai, ctx.race[e]) {
+        r @ 0..=8 => r as usize,
+        _ => 1,
+    };
     let cheat = e == ctx.human_empire as usize && ctx.cheat;
     let pick = (1..TECHS)
         .filter(|&t| auto::switch(t) & on != 0 && techs.status(t, e) == status::RESEARCHABLE)

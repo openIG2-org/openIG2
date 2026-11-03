@@ -342,7 +342,8 @@ fn hull_name(rules: &ig2_rules::Rules, m: usize, race: i16) -> Option<(String, &
     let name = rules.design_screen.models.get(m).filter(|n| !n.is_empty())?;
     let mut name = name.clone().into_bytes();
     if (5..12).contains(&m) && name.len() > 4 {
-        name[4] = b'0'.wrapping_add(race as u8);
+        name[4] = b'0'.wrapping_add(rules.race_role(race.max(0) as usize) as u8);
+
     }
     let tdir = match m {
         0..=4 => "textures/talalmanyok/",

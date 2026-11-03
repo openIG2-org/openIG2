@@ -41,6 +41,8 @@ pub struct InfoData {
     pub multiplayer: bool,
     /// `PlayerFaj[EN]` (race 5 has two auto-build modes fewer).
     pub race: u8,
+    /// The original surface each planet type plays (ADR 0069 §14; empty without a mod's types): the globes.
+    pub surface_like: Vec<u8>,
 }
 
 /// A planet's row (`KirakBolygoInfo` exe 0x4eb840).
@@ -795,7 +797,7 @@ impl InfoScreen {
     pub fn frame_view(&self, s: &UiSnap) -> crate::screen_frames::InfoFrame {
         crate::screen_frames::InfoFrame {
             known: std::array::from_fn(|k| s.known[k + 1]),
-            races: std::array::from_fn(|k| s.races[k + 1]),
+            races: std::array::from_fn(|k| s.roles[k + 1]),
             chart: (!self.star_log).then_some(self.chart),
             blink: self.blink,
             tri: self.tri,
@@ -837,7 +839,8 @@ impl InfoScreen {
                 Entry::Planet(i) => crate::screen_frames::GlobeView {
                     fleet: false,
                     rotation: g.planet,
-                    surface: d.planets[i].surface,
+                    surface: d.surface_like.get(d.planets[i].surface as usize).copied().unwrap_or(d.planets[i].surface),
+
                     red: self.problem_rows[k].2.then_some(red | 14 << 8 | 14 << 16),
                     at: g.pos,
                     alpha: 1.0 - t,
@@ -1309,7 +1312,7 @@ pub fn detail_lines(s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, 
             put(o, &p.name, x + 80.0, y0 + y, 0x1a, 2, Align::Left, 3);
             y += 13.0;
             label(o, 2, y, 0xb);
-            let surface = [hu(5, r[0x22] as i32), format!(" ({}% ", richness(r, s, rules, d.multiplayer)).into_bytes(), hu(5, 20), b")".to_vec()].concat();
+            let surface = [txt17.surface(r[0x22]), format!(" ({}% ", richness(r, s, rules, d.multiplayer)).into_bytes(), hu(5, 20), b")".to_vec()].concat();
             put(o, &surface, x + 80.0, y0 + y, 0x1a, 2, Align::Left, 0x21);
             y += 13.0;
             if owner != 0 && (owner == en || (en == 7 && r[0xcb] == 0) || r[0xc4 + en] != 0 || d.debug) {

@@ -158,7 +158,10 @@ pub struct ColonySnap {
     pub owner: u8,
     /// The owner's race (`PlayerFaj[owner]`): race 4 builds in two thirds of the work ([`cut_height`]).
     pub owner_race: u8,
+    /// The original surface the planet's type plays (ADR 0069 §14: a mod's type looks, sounds and weathers like its
+    /// `like`); `planet_type` is the planet's own (`+0x22`).
     pub surface: u8,
+    pub planet_type: u8,
     pub map: usize,
     pub buildings: Vec<BuildingView>,
     pub units: Vec<UnitView>,
@@ -201,7 +204,7 @@ pub struct ColonySnap {
 }
 
 impl ColonySnap {
-    pub fn read(state: &SaveState, planet: usize) -> Option<Self> {
+    pub fn read(state: &SaveState, planet: usize, rules: &ig2_sim::colony::ColonyRules) -> Option<Self> {
         let colony = state.colony();
         let p = colony.planets.get(planet)?;
         let field = state.ground_field(planet).unwrap_or_default();
@@ -293,7 +296,8 @@ impl ColonySnap {
             tick: state.mem.i32(ig2_sim::save::va::IDO2),
             owner: p.owner,
             owner_race: state.races().get(p.owner as usize).copied().unwrap_or(0),
-            surface: p.surface,
+            surface: rules.surface_role(p.surface),
+            planet_type: p.surface,
             map: p.colony_map as usize,
             buildings,
             units,
@@ -889,8 +893,9 @@ fn built_fraction(rules: &ig2_rules::Rules, race: u8, kind: u8, left: u16) -> Op
         return None;
     }
     let mut total = rules.buildings.get(kind as usize).map_or(0, |b| b.build_work) * 50;
-    if race == 4 {
+    if rules.race_role(race as usize) == 4 {
         total = (total as f64 / 1.5) as i32;
+
     }
     Some((1.0 - left as f32 / total as f32).max(0.0))
 }
@@ -1332,7 +1337,11 @@ impl ColonyScene {
 
         // The terrain object (spec §2.2), its lakes and lava glassy.
         let surf = surfaces.get(s.map).ok_or(format!("no colony map {}", s.map))?;
-        let mut terrain = Model::load(install, "vector/colony/terrainobj/", &surf.model, &format!("textures/colony/terrainmap/{}/", s.surface))?;
+        // A mod's planet type: its own terrain textures if it brings them (ADR 0069 §14).
+        let own = rules.added_planet_types.iter().find(|a| a.surface == s.planet_type as usize && !a.terrain.is_empty());
+        let tdir = own.map_or_else(|| format!("textures/colony/terrainmap/{}/", s.surface), |a| format!("{}/", a.terrain.trim_end_matches('/')));
+        let mut terrain = Model::load(install, "vector/colony/terrainobj/", &surf.model, &tdir)?;
+
         let lake = if s.surface == 1 || s.surface == 5 { 0.72 } else { 0.6 };
         terrain.set_look("tavak", Look::Glass(lake));
         terrain.set_look("viz", Look::Glass(0.37));
@@ -2948,8 +2957,9 @@ pub fn hud_state(state: &SaveState, tables: &ig2_rules::Rules, name: &dyn Fn(usi
     let i = |o: usize| i32::from_le_bytes(r[o..o + 4].try_into().unwrap());
     let own = r[0x20] as usize == en && r[0x64] & 1 == 0;
     let build = tables.buildings.get(build_kind).map(|b| {
-        let race = state.races()[en];
+        let race = tables.race_role(state.races()[en] as usize) as u8;
         let price = ig2_sim::colony_side::price(&state.tech(), race, b.tech as usize);
+
         (name(b.tech as usize), price, b.energy, b.workers)
     });
     let buildings = curr
@@ -3247,7 +3257,7 @@ mod tests {
         let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
         let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
         let (sim, defaults) = crate::rules::load(&install).unwrap();
-        let snap = ColonySnap::read(&SaveState::from_save(&save, &defaults), 17).unwrap();
+        let snap = ColonySnap::read(&SaveState::from_save(&save, &defaults), 17, &Default::default()).unwrap();
         let tables = ig2_rules::Rules::from_install(&install).unwrap();
         let b = snap.buildings.iter().find(|b| b.slot == 18).unwrap();
         assert_eq!((b.kind, b.work_left), (26, 21400));
@@ -3288,7 +3298,7 @@ mod tests {
         let Ok(mut r) = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb) else { return };
         let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
         let (rules, defaults) = crate::rules::load(&install).unwrap();
-        let snap = ColonySnap::read(&SaveState::from_save(&save, &defaults), 42).unwrap();
+        let snap = ColonySnap::read(&SaveState::from_save(&save, &defaults), 42, &Default::default()).unwrap();
         let tables = ig2_rules::Rules::from_install(&install).unwrap();
         let scene = ColonyScene::load(&mut r, &install, &tables, &rules.ground_maps, &snap).unwrap();
         let gm = &rules.ground_maps[snap.map];
@@ -3325,7 +3335,7 @@ mod tests {
         let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
         let (rules, defaults) = crate::rules::load(&install).unwrap();
         let state = SaveState::from_save(&save, &defaults);
-        let snap = ColonySnap::read(&state, 42).unwrap();
+        let snap = ColonySnap::read(&state, 42, &Default::default()).unwrap();
         assert!(snap.visible && snap.camera.centre);
         let tables = ig2_rules::Rules::from_install(&install).unwrap();
         let gm = &rules.ground_maps[snap.map];

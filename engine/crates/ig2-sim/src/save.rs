@@ -1772,8 +1772,19 @@ impl SaveState {
         self.designs.iter().flatten().filter(|r| r.len() >= 0x48 && i16::from_le_bytes([r[0x16], r[0x17]]) > 0).map(|r| hull(r)).find(|&h| h as usize >= hulls)
     }
 
+    /// Ours (ADR 0069 §13, §14): the first race (an empire's or an owned planet's people) at or past `races` and the
+    /// first planet type at or past `surfaces` (the active rules' counts).
+    pub fn unknown_race(&self, races: usize) -> Option<u8> {
+        let owned = (1..=self.planet_count()).map(|p| self.planet_record(p)).filter(|r| r[0x20] != 0).map(|r| r[0x21]);
+        self.races()[1..].iter().copied().chain(owned).find(|&r| r as usize >= races)
+    }
+    pub fn unknown_surface(&self, surfaces: usize) -> Option<u8> {
+        (1..=self.planet_count()).map(|p| self.planet_record(p)[0x22]).find(|&s| s as usize >= surfaces)
+    }
+
     pub fn colony(&self) -> ColonyWorld {
         let n = self.planet_count();
+
         let unrest = self.per_planet(va::UNREST);
         let planets = (0..=n).map(|p| planet_from(&self.planet_record(p), if p == 0 { &[] } else { self.slots(p) }, unrest[p])).collect();
         let m = &self.mem;

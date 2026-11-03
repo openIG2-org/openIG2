@@ -2,7 +2,7 @@
 
 use toml_edit::{DocumentMut, TableLike, Value};
 
-use crate::{layout, AddedBuilding, AddedItem, AddedTech, Building, Hull, ProblemCurve, Rules, ShipTypeRecord, SpaceWeapon, SpyMission, Tech};
+use crate::{layout, AddedBuilding, AddedItem, AddedPlanetType, AddedRace, AddedTech, Building, Hull, ProblemCurve, Rules, ShipTypeRecord, SpaceWeapon, SpyMission, Tech};
 
 /// A field a patch can set from a TOML value.
 trait Field {
@@ -503,6 +503,169 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
     Ok(n)
 }
 
+/// The original races (`FajBolygoViszony` and the other race tables have 15 rows; 1..=14 are races, 0 none).
+const RACES: usize = 15;
+/// The original planet types (surfaces 1..=8; the affinity rows have 9 columns).
+const SURFACES: usize = 9;
+
+/// A race by its number or by the key of an added race.
+fn race_ref(r: &Rules, k: &str) -> Result<usize, String> {
+    match k.parse::<usize>() {
+        Ok(n) if (1..RACES).contains(&n) => Ok(n),
+        Ok(_) => Err(format!("expected a race 1..={} or an added race's key", RACES - 1)),
+        Err(_) => r.added_races.iter().find(|a| a.key == k).map(|a| a.race).ok_or_else(|| format!("no added race \"{k}\"")),
+    }
+}
+
+/// A planet type by its number or by the key of an added type.
+fn surface_ref(r: &Rules, k: &str) -> Result<usize, String> {
+    match k.parse::<usize>() {
+        Ok(n) if (1..SURFACES).contains(&n) => Ok(n),
+        Ok(_) => Err(format!("expected a planet type 1..={} or an added type's key", SURFACES - 1)),
+        Err(_) => r.added_planet_types.iter().find(|a| a.key == k).map(|a| a.surface).ok_or_else(|| format!("no added planet type \"{k}\"")),
+    }
+}
+
+/// Every race-indexed table gets race `from`'s entry at race `to` (the AI's two tables `ai`'s).
+fn copy_race(r: &mut Rules, from: usize, ai: usize, to: usize) {
+    copy_at(&mut r.race_pod_table, from, to);
+    copy_at(&mut r.design_screen.pod_table, from, to);
+    copy_at(&mut r.race_surface_affinity, from, to);
+    copy_at(&mut r.race_production_mult, from, to);
+    copy_at(&mut r.race_research_time_mult, from, to);
+    copy_at(&mut r.race_research_money_mult, from, to);
+    copy_at(&mut r.race_peace_threshold, from, to);
+    copy_at(&mut r.race_trade_demand, from, to);
+    copy_at(&mut r.race_fear_threshold, from, to);
+    copy_at(&mut r.race_ai_production_share, ai, to);
+    copy_at(&mut r.race_ai_military_autobuild, ai, to);
+    copy_at(&mut r.spy_rank_points, from, to);
+    copy_at(&mut r.spy_templates, from, to);
+    copy_at(&mut r.spy_race_cost_mult, from, to);
+    copy_at(&mut r.spy_hire_cost_mult, from, to);
+    copy_at(&mut r.diplomacy_screen.head_anims, from, to);
+    for k in 0..2 {
+        copy_at(&mut r.diplomacy_screen.portraits, 2 * (from - 1) + k, 2 * (to - 1) + k);
+    }
+    for t in 0..12 {
+        copy_at(&mut r.ship_types, from * 12 + t, to * 12 + t);
+    }
+    for v in [&mut r.videos.loss, &mut r.videos.win] {
+        if from < v.len() {
+            copy_at(v, from, to);
+        }
+    }
+}
+
+/// `affinity = { <key> = <growth %>, … }`: the race × surface cells `cell` names by each key.
+fn affinity(r: &mut Rules, v: &Value, at: &str, cell: impl Fn(&Rules, &str) -> Result<(usize, usize), String>) -> Result<usize, String> {
+    let t = v.as_inline_table().ok_or_else(|| format!("{at}: expected {{ <key> = <growth %>, … }}"))?;
+    for (k, x) in t.iter() {
+        let (race, surface) = cell(r, k).map_err(|m| format!("{at}.{k}: {m}"))?;
+        r.race_surface_affinity[race][surface].set(x).map_err(|m| format!("{at}.{k}: {m}"))?;
+    }
+    Ok(t.len())
+}
+
+/// `[[races.new]]` and `[[planet_types.new]]` (ADR 0069 §13, §14): a new race takes the next race number and starts
+/// as a copy of the original race it is `like` in every race table; a new planet type takes the next surface number
+/// and starts with the `like` surface's affinity column. Returns the fields set.
+fn add_races(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
+    let (races, types) = (new_list(doc, "races")?, new_list(doc, "planet_types")?);
+    // Pass 1: the numbers, so the entries can name each other by key.
+    for (key, at, e) in &types {
+        if r.added_planet_types.iter().any(|a| &a.key == key) {
+            return Err(format!("{at}: the key is used twice"));
+        }
+        let like = e.get("like").and_then(|v| v.as_value()).ok_or_else(|| format!("{at}: needs like = <an original planet type 1..={}>", SURFACES - 1))?;
+        let like = int_in(like, 1..=SURFACES as i64 - 1).map_err(|m| format!("{at}.like: {m}"))? as usize;
+        let s = SURFACES + r.added_planet_types.len();
+        if s > u8::MAX as usize {
+            return Err(format!("{at}: more than {} planet types", u8::MAX));
+        }
+        for row in r.race_surface_affinity.iter_mut() {
+            copy_at(row, like, s);
+        }
+        r.added_planet_types.push(AddedPlanetType { key: key.clone(), surface: s, like, name: key.clone(), terrain: String::new(), share: 0 });
+    }
+    for (key, at, e) in &races {
+        if r.added_races.iter().any(|a| &a.key == key) {
+            return Err(format!("{at}: the key is used twice"));
+        }
+        let original = |f: &str| -> Result<Option<usize>, String> {
+            e.get(f).and_then(|v| v.as_value()).map(|v| int_in(v, 1..=RACES as i64 - 1).map(|n| n as usize).map_err(|m| format!("{at}.{f}: {m}"))).transpose()
+        };
+        let like = original("like")?.ok_or_else(|| format!("{at}: needs like = <an original race 1..={}>", RACES - 1))?;
+        let ai = original("ai")?.unwrap_or(like);
+        let race = RACES + r.added_races.len();
+        if race > u8::MAX as usize {
+            return Err(format!("{at}: more than {} races", u8::MAX));
+        }
+        copy_race(r, like, ai, race);
+        r.added_races.push(AddedRace { key: key.clone(), race, like, ai, name: key.clone(), plural: String::new() });
+    }
+    // Pass 2: the fields.
+    let mut n = 0;
+    for (i, (_, at, e)) in types.iter().enumerate() {
+        let a = r.added_planet_types.len() - types.len() + i;
+        let s = r.added_planet_types[a].surface;
+        for (f, item) in e.iter() {
+            let v = value(item, &format!("{at}.{f}"))?;
+            let err = |m: String| format!("{at}.{f}: {m}");
+            match f {
+                "key" | "like" => continue,
+                "name" => r.added_planet_types[a].name = text(v).map_err(err)?,
+                "terrain" => r.added_planet_types[a].terrain = text(v).map_err(err)?,
+                "share" => r.added_planet_types[a].share = int_in(v, 0..=100).map_err(err)? as u8,
+                "affinity" => {
+                    n += affinity(r, v, &format!("{at}.{f}"), |r, k| Ok((race_ref(r, k)?, s)))?;
+                    continue;
+                }
+                _ => return Err(format!("{at}.{f}: unknown field (fields: like, name, terrain, share, affinity)")),
+            }
+            n += 1;
+        }
+    }
+    for (i, (_, at, e)) in races.iter().enumerate() {
+        let a = r.added_races.len() - races.len() + i;
+        let race = r.added_races[a].race;
+        for (f, item) in e.iter() {
+            let v = value(item, &format!("{at}.{f}"))?;
+            let err = |m: String| format!("{at}.{f}: {m}");
+            match f {
+                "key" | "like" | "ai" => continue,
+                "name" => r.added_races[a].name = text(v).map_err(err)?,
+                "plural" => r.added_races[a].plural = text(v).map_err(err)?,
+                "production" => r.race_production_mult[race].set(v).map_err(err)?,
+                "research_time" => r.race_research_time_mult[race].set(v).map_err(err)?,
+                "research_money" => r.race_research_money_mult[race].set(v).map_err(err)?,
+                "peace_threshold" => r.race_peace_threshold[race].set(v).map_err(err)?,
+                "trade_demand" => r.race_trade_demand[race].set(v).map_err(err)?,
+                "fear_threshold" => r.race_fear_threshold[race].set(v).map_err(err)?,
+                "ai_production_share" => r.race_ai_production_share[race].set(v).map_err(err)?,
+                "ai_military_autobuild" => r.race_ai_military_autobuild[race].set(v).map_err(err)?,
+                "spy_cost" => r.spy_race_cost_mult[race].set(v).map_err(err)?,
+                "spy_hire_cost" => r.spy_hire_cost_mult[race].set(v).map_err(err)?,
+                "affinity" => {
+                    n += affinity(r, v, &format!("{at}.{f}"), |r, k| Ok((race, surface_ref(r, k)?)))?;
+                    continue;
+                }
+                _ => {
+                    return Err(format!(
+                        "{at}.{f}: unknown field (fields: like, ai, name, plural, production, research_time, research_money, peace_threshold, \
+                         trade_demand, fear_threshold, ai_production_share, ai_military_autobuild, spy_cost, spy_hire_cost, affinity)"
+                    ))
+                }
+            }
+            n += 1;
+        }
+        if r.added_races[a].plural.is_empty() {
+            r.added_races[a].plural = r.added_races[a].name.clone();
+        }
+    }
+    Ok(n)
+}
+
 impl Tech {
     /// Writes the patchable static fields back into the tech's raw `Talalmanyok0` record (the offsets `from_exe` reads).
     fn write_raw(&self, r: &mut [u8]) {
@@ -522,9 +685,15 @@ impl Rules {
     pub fn apply_patch(&mut self, text: &str) -> Result<usize, String> {
         let doc: DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| e.to_string().trim_end().to_owned())?;
         let mut r = self.clone();
-        let mut n = add_new(&mut r, &doc)?;
+        let mut n = add_races(&mut r, &doc)? + add_new(&mut r, &doc)?;
         for (name, item) in doc.iter() {
             let body = item.as_table_like().ok_or_else(|| format!("{name}: expected a table"))?;
+            if matches!(name, "races" | "planet_types") {
+                match body.iter().find(|(k, _)| *k != "new") {
+                    Some((k, _)) => return Err(format!("{name}.{k}: only [[{name}.new]] entries (the race tables are patched by name, ADR 0044 §6)")),
+                    None => continue,
+                }
+            }
             n += dispatch!(r, name, body;
                 records: techs, buildings, hulls, space_weapons, ship_types, spy_missions, problem_curves;
                 rows: ground_weapons => ["min", "max", "period", "unknown"],

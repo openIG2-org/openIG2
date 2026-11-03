@@ -1082,7 +1082,7 @@ impl Menus {
         let mut lines = Vec::new();
         let line = |n: u16, value: Vec<u8>, colour: usize| InfoLine { n, value, colour, len: 0x1a, needed: None };
         lines.push(line(1, cstr(&r[..0x18]).to_vec(), 3));
-        let mut s = t.hu(5, r[0x22] as u16);
+        let mut s = t.txt17.surface(r[0x22]);
         if seen {
             let rich = crate::starmap_hud::richness(state, rules, p, e);
             s = [&s[..], b" (", rich.to_string().as_bytes(), b"% ", &t.hu(5, 20), b")"].concat();

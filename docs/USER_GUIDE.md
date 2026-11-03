@@ -374,6 +374,39 @@ Once researched, the design screen offers the new hulls and the new parts in the
 tanks built from them fight like their originals with their own values, and computer empires fit them too. Fields a
 tech doesn't set start as its original's (price, time, hit points, firepower, capacity). The rest is in ADR 0069.
 
+Races and planet types work the same way: a new race or planet type is a copy of an original (`like`) with its own
+name and values. A race brings its traits (production, research, diplomacy, the AI's shares, spy costs) and how well
+it grows on each planet type; it looks, sounds and acts like its original (heads, ships, the original's fixed race
+rules), and the computer plays it like the race named in `ai`. A planet type looks like its original (colony maps,
+terrain, weather, sounds) unless the mod brings its own terrain textures, and a new game turns `share` per cent of
+the original's free planets into it. Example: a race that plays like the Shinari, and an ash world like a volcanic
+planet:
+
+```toml
+[[planet_types.new]]
+key = "ash_world"
+like = 4                      # volcanic (planet types 1..=8 in the original's order)
+name = "Ash world"
+share = 40                    # 40 % of a new game's free volcanic planets
+affinity = { 1 = 60, 4 = 90 } # growth in per cent by race; the others keep the volcanic type's
+
+[[races.new]]
+key = "vorlani"
+like = 3                      # the Shinari (races 1..=14 in the original's order)
+ai = 5                        # computer empires of this race play like race 5
+name = "Vorlani"
+plural = "Vorlanis"
+production = 1.25
+research_time = 0.9
+affinity = { 2 = 130, ash_world = 160 }
+```
+
+In a multiplayer room the new race is in each player's race list beside the eight originals, for humans and
+computer empires alike. The other trait fields are `research_money`, `peace_threshold`, `trade_demand`,
+`fear_threshold`, `ai_production_share`, `ai_military_autobuild`, `spy_cost` and `spy_hire_cost`; a planet type may
+name a `terrain` folder of its own textures. Saves made with the mod need it to load. Details in ADR 0069.
+
+
 A mod can also add stories: a `stories.toml` at the top of the mod folder lists `[[story]]` tables, each with `when`
 triggers and `do` actions, that run after the built-in stories. A story fires once, or again and again with
 `repeat = true` (`every` days apart, at most `times` times). Triggers: the day, a planet's owner, a dead empire, a

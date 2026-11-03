@@ -356,6 +356,31 @@ pub struct AddedBuilding {
     pub kind: usize,
 }
 
+/// A race a mod added (ADR 0069 §13): its key, its number (15, 16, …), the original race it plays (`like`: the
+/// fixed race rules, models, heads, spies, ship types) and the AI's (`ai`), and its names.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct AddedRace {
+    pub key: String,
+    pub race: usize,
+    pub like: usize,
+    pub ai: usize,
+    pub name: String,
+    pub plural: String,
+}
+
+/// A planet type (surface) a mod added (ADR 0069 §14): its key, its number (9, 10, …), the original surface it
+/// looks and behaves like, its name, its own terrain textures (empty: the like's) and the share of the like's free
+/// planets a new game turns into it.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct AddedPlanetType {
+    pub key: String,
+    pub surface: usize,
+    pub like: usize,
+    pub name: String,
+    pub terrain: String,
+    pub share: u8,
+}
+
 /// How the colony screen shows a building kind (`Building[k − 1]`, 0x6c bytes; `re/screens/colony.md` §3).
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct BuildingModel {
@@ -650,6 +675,9 @@ pub struct Rules {
     /// The hulls and space weapons mods added (ADR 0069 §8, §9).
     pub added_hulls: Vec<AddedItem>,
     pub added_weapons: Vec<AddedItem>,
+    /// The races and planet types mods added (ADR 0069 §13, §14).
+    pub added_races: Vec<AddedRace>,
+    pub added_planet_types: Vec<AddedPlanetType>,
     pub pod_types: Vec<PodType>,
     /// `[pod_table][hull][slot]`: 14 tables × 27 hulls × 12 slots.
     pub pod_slots: Vec<Vec<Vec<PodSlot>>>,
@@ -1033,6 +1061,8 @@ impl Rules {
             added_buildings: Vec::new(),
             added_hulls: Vec::new(),
             added_weapons: Vec::new(),
+            added_races: Vec::new(),
+            added_planet_types: Vec::new(),
             pod_types,
             pod_slots,
             race_pod_table: ints(layout::RACE_POD_TABLE)?,
@@ -1321,6 +1351,16 @@ impl Rules {
             rules.apply_patch(&text).map_err(|e| format!("mod {name}: rules.toml: {e}"))?;
         }
         Ok(rules)
+    }
+
+    /// The original race race `r` plays (ADR 0069 §13): an added race's `like`, else `r`.
+    pub fn race_role(&self, r: usize) -> usize {
+        self.added_races.iter().find(|a| a.race == r).map_or(r, |a| a.like)
+    }
+
+    /// The original surface planet type `s` looks and behaves like (ADR 0069 §14): an added type's `like`, else `s`.
+    pub fn surface_role(&self, s: usize) -> usize {
+        self.added_planet_types.iter().find(|a| a.surface == s).map_or(s, |a| a.like)
     }
 
     /// Serialise to RON (for local inspection and modding; never commit the output).

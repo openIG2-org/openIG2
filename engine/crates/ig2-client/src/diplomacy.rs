@@ -225,7 +225,7 @@ impl Texts {
             phrases: (1..=13).map(|k| ui.get(6, 4, k)).collect(),
             family: (1..=5).map(|k| ui.get(6, 2, k)).collect(),
             status: (1..=6).map(|k| ui.get(6, 5, k)).collect(),
-            races: (0..20).map(|r| ui.get(0x11, 1, r + 5)).collect(),
+            races: ui.races(),
             techs: (0..TECHS).map(|t| crate::hud::tech_name(ui, t)).collect(),
             hungarian: install.lang() == ig2_formats::text::Lang::Hu,
             specials: {

@@ -106,13 +106,13 @@ pub fn layout(researchable: impl Fn(usize) -> bool) -> (Vec<(i32, usize, usize)>
 
 /// `KepernyokLetiltva` as the screens read it: the tutorial's array after `Fake_FRISSITES` (exe 0x4de720) rewrote
 /// [6] (no contacts, unless [2] is off), [6..=8] (race 5) and [6]/[7]/[8] (diplomacy, spy, trade not enabled yet).
-pub fn screens_off(state: &SaveState, tutorial: Option<&[bool; 20]>) -> [bool; 20] {
+pub fn screens_off(state: &SaveState, tutorial: Option<&[bool; 20]>, race_like: &[u8]) -> [bool; 20] {
     let m = &state.mem;
     let mut disabled = tutorial.copied().unwrap_or([false; 20]);
     if !disabled[2] {
         disabled[6] = m.i32(MAX_PLAYEREK) == 0;
     }
-    if m.u8(PLAYER_FAJ + crate::research::en(state) as u32) == 5 {
+    if ig2_sim::spacewar::race_role(race_like, m.u8(PLAYER_FAJ + crate::research::en(state) as u32)) == 5 {
         disabled[6..=8].fill(true);
     }
     disabled[6] |= m.u8(va::DIPLOMACY_ENABLED) == 0;
@@ -127,7 +127,8 @@ impl Data {
     pub fn read(state: &SaveState, rules: &ig2_rules::Rules, texts: &crate::ui::UiTexts, screen: i32, tutorial: Option<&[bool; 20]>, battle: bool) -> Self {
         let m = &state.mem;
         let en = crate::research::en(state);
-        let mut disabled = screens_off(state, tutorial);
+        let race_like: Vec<u8> = rules.added_races.last().map_or_else(Vec::new, |a| (0..=a.race).map(|r| rules.race_role(r) as u8).collect());
+        let mut disabled = screens_off(state, tutorial, &race_like);
         if battle {
             disabled = [true; 20];
         }
@@ -432,13 +433,14 @@ mod tests {
         let mut tut = [false; 20];
         tut[6] = true;
         tut[4] = true;
-        let off = screens_off(&w.game.state, Some(&tut));
+        let off = screens_off(&w.game.state, Some(&tut), &[]);
         assert!(!off[6] && off[4] && !off[7] && !off[8], "contacts lift the tutorial's [6] while the starmap is on");
         tut[2] = true;
-        assert!(screens_off(&w.game.state, Some(&tut))[6], "with [2] off the tutorial's [6] stays");
+        assert!(screens_off(&w.game.state, Some(&tut), &[])[6], "with [2] off the tutorial's [6] stays");
         w.game.state.mem.set_u8(va::SPY_ENABLED, 0);
         w.game.state.mem.set_i32(MAX_PLAYEREK, 0);
-        let off = screens_off(&w.game.state, None);
+        let off = screens_off(&w.game.state, None, &[]);
+
         assert!(off[6] && off[7] && !off[8] && !off[3], "no contacts, no spies yet: F6 and F7 refused");
     }
 

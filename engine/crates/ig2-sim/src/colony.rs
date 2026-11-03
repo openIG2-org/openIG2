@@ -125,22 +125,39 @@ impl Curve {
 }
 
 /// Rule tables the economy needs, normally read from the user's exe (`ig2-rules`, ADR 0004).
+/// The original races (0..=14, the race tables' rows) and planet types (surfaces 1..=8, the affinity columns).
+pub const RACES: usize = 15;
+pub const SURFACES: usize = 9;
+
 #[derive(Debug, Clone, Default)]
 pub struct ColonyRules {
+
     pub buildings: Vec<BuildingKind>,
     /// 20 curves: 0 = morale, 1..=19 = problems.
     pub curves: Vec<Curve>,
-    /// `[race][surface]` growth factor in percent (`FajBolygoViszony`).
-    pub surface_growth: Vec<[i32; 9]>,
+    /// `[race][surface]` growth factor in percent (`FajBolygoViszony`; a mod's races and planet types add rows and
+    /// columns, ADR 0069 §13, §14).
+    pub surface_growth: Vec<Vec<i32>>,
     /// Per race (`FajFelelemOnmegsemmisitotolSzint`).
     pub self_destruct_fear: Vec<i32>,
     /// Per kidnapped-family-member state (`CsaladtagMoralCsokkenesLeiro`).
     pub kidnap_morale: Vec<i32>,
     /// Per race production multiplier (`FajSpeckoGyartasKapacitasSzorzo`).
     pub race_production: Vec<f32>,
+    /// Ours (ADR 0069 §14): the original surface each planet type plays (index surface → its original; empty
+    /// without added planet types).
+    pub surface_like: Vec<u8>,
+    /// Ours (ADR 0069 §14): the share in percent of the like surface's free planets a new game turns into each
+    /// added planet type (index surface).
+    pub surface_share: Vec<u8>,
 }
 
 impl ColonyRules {
+    /// The original surface planet type `s` looks and behaves like (ADR 0069 §14).
+    pub fn surface_role(&self, s: u8) -> u8 {
+        self.surface_like.get(s as usize).copied().unwrap_or(s)
+    }
+
     /// The original kind whose role building kind `kind` plays (ADR 0069): its own, unless a mod's kind is `like`
     /// another. The economy's effects and the kinds it checks go by role, so a mod's kind counts as its original.
     pub fn role(&self, kind: u8) -> usize {
@@ -308,6 +325,9 @@ pub struct EconomyContext {
     pub human_controlled: [bool; 19],
     /// `PlayerFaj[e]`.
     pub empire_race: [u8; 19],
+    /// Ours (ADR 0069 §13): the original race each race plays (`spacewar::race_role`; empty without added races).
+    pub race_like: Vec<u8>,
+
     /// `ProgramPlayers2`.
     pub players: i32,
     /// `CsaladtagElrabolvaKi[e]`, empires 0..9.
@@ -717,7 +737,7 @@ fn smooth_and_morale(planet: &mut Planet, targets: &[i32; problem::COUNT], rules
 /// Spec §7: the monthly population change (momentum toward a morale-driven target).
 fn grow(planet: &mut Planet, fx: &Effects, rules: &ColonyRules, ctx: &EconomyContext, rng: &mut Streams) {
     let mr = planet.morale - planet.morale % 100;
-    let mut f = rules.surface_growth[planet.race as usize][planet.surface as usize] as f32 / 100.0;
+    let mut f = rules.surface_growth.get(planet.race as usize).and_then(|r| r.get(planet.surface as usize)).copied().unwrap_or(0) as f32 / 100.0;
     if fx.effect[kind::WATER_PLANT] > 0 {
         f = (f as f64 + 0.1) as f32;
     }
@@ -932,10 +952,13 @@ mod tests {
         ColonyRules {
             buildings,
             curves: vec![curve; 20],
-            surface_growth: vec![[100; 9]; 15],
+            surface_growth: vec![vec![100; 9]; 15],
             self_destruct_fear: vec![40; 15],
             kidnap_morale: vec![0; 6],
             race_production: vec![1.0; 15],
+            surface_like: Vec::new(),
+            surface_share: Vec::new(),
+
         }
     }
 

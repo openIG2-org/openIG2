@@ -1645,6 +1645,8 @@ impl PanelModels {
                     let Some(rec) = (d > 0).then(|| design(state, owner, d as usize)).flatten() else { continue };
                     let hull = i32_at(rec, 0x44).max(0) as usize;
                     let digit = if l == 0 { races.get(i16_at(rec, 0x40).clamp(0, 18) as usize).copied().unwrap_or(0) } else { races.get(e as usize).copied().unwrap_or(0) };
+                    let digit = rules.race_role(digit as usize) as u8;
+
                     let t = q[l].progress.map_or(0.05, |w| (w as f32 / 76.0).clamp(0.05, 0.95));
                     if let Some(u) = self.unit(r, install, rules, hull, digit, owner, s, at[2]) {
                         let m = scene::mul(&spin, &Placement::add_to_scene(u.model.origin, s).matrix).map(|x| x * 1024.0);

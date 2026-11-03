@@ -128,6 +128,14 @@ impl MpScreen {
                 Some(ctx.load_texture(format!("mp-race-{k}"), pixels, egui::TextureOptions::LINEAR))
             })
             .collect();
+        // A mod's race wears its original's head (ADR 0069 §13).
+        for a in crate::rules::added_names(install).0 {
+            let head = self.heads.get(a.like.wrapping_sub(1)).cloned().flatten();
+            if self.heads.len() < a.race {
+                self.heads.resize(a.race, None);
+            }
+            self.heads[a.race - 1] = head;
+        }
     }
 
     /// One frame of the page; `flow`: a right click is Back (ADR 0059).
@@ -587,13 +595,14 @@ impl MpScreen {
                     }
                 }
                 // The race.
-                let race_name = |r: u8| s(texts.get(0x11, 1, (r.clamp(0, 19) + 5) as u16));
+                let race_name = |r: u8| s(texts.race(r));
                 let race_w = 96.0;
                 if st.galaxy.is_some() {
                     if (host || own) && sl.kind != SlotKind::Closed {
                         let mut pick = None;
                         egui::ComboBox::from_id_salt(("mp-race", i)).width(race_w).truncate().selected_text(race_name(sl.race)).show_ui(ui, |ui| {
-                            for r in 1..=8u8 {
+                            for r in texts.playable_races() {
+
                                 if ui.add(egui::Button::selectable(r == sl.race, race_name(r))).clicked() {
                                     pick = Some(r);
                                 }

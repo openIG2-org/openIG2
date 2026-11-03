@@ -16,13 +16,24 @@ use ig2_sim::spacewar::{DesignRules, GunRules};
 use ig2_sim::spacebattle::{FormRules, FormationSlot, ShipType, SpaceRules};
 use ig2_sim::spy::{MissionRule, Spy, SpyRules};
 
-/// The techs the install's mods add (ADR 0069), for their texts; none (and no rules read) without rule patches.
-pub fn added_techs(inst: &Install) -> Vec<ig2_rules::AddedTech> {
+/// The rules with the install's mods; none (and no rules read) without rule patches.
+fn mod_rules(inst: &Install) -> Option<ig2_rules::Rules> {
     match inst.rule_patches() {
-        Ok(p) if !p.is_empty() => ig2_rules::Rules::from_install(inst).map(|r| r.added_techs).unwrap_or_default(),
-        _ => Vec::new(),
+        Ok(p) if !p.is_empty() => ig2_rules::Rules::from_install(inst).ok(),
+        _ => None,
     }
 }
+
+/// The techs the install's mods add (ADR 0069), for their texts.
+pub fn added_techs(inst: &Install) -> Vec<ig2_rules::AddedTech> {
+    mod_rules(inst).map(|r| r.added_techs).unwrap_or_default()
+}
+
+/// The races and planet types the install's mods add (ADR 0069 §13, §14), for their names.
+pub fn added_names(inst: &Install) -> (Vec<ig2_rules::AddedRace>, Vec<ig2_rules::AddedPlanetType>) {
+    mod_rules(inst).map(|r| (r.added_races, r.added_planet_types)).unwrap_or_default()
+}
+
 
 /// The rule tables and the `Talalmanyok0` defaults a save is loaded over.
 pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
@@ -46,11 +57,20 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
             })
             .collect(),
         curves: r.problem_curves.iter().map(|c| Curve { a: c.a, b: c.b, c: c.c, d: c.d, rate: c.rate, weight: c.weight }).collect(),
-        surface_growth: r.race_surface_affinity.iter().map(|v| v[..9].try_into().unwrap()).collect(),
+        surface_growth: r.race_surface_affinity.clone(),
         self_destruct_fear: r.race_fear_threshold.clone(),
         kidnap_morale: r.kidnap_morale.clone(),
         race_production: r.race_production_mult.clone(),
+        surface_like: match r.added_planet_types.last() {
+            Some(a) => (0..=a.surface).map(|s| r.surface_role(s) as u8).collect(),
+            None => Vec::new(),
+        },
+        surface_share: match r.added_planet_types.last() {
+            Some(a) => (0..=a.surface).map(|s| r.added_planet_types.iter().find(|t| t.surface == s).map_or(0, |t| t.share)).collect(),
+            None => Vec::new(),
+        },
     };
+
     let mut modes = vec![AutobuildMode::default()];
     for m in 1..=10 {
         let raw = read(&format!("dataraw/text/autobld{m}.txt"))?;
@@ -97,7 +117,7 @@ pub fn load(inst: &Install) -> Result<(GameRules, Vec<u8>), String> {
             added_techs: ResearchRules::added(r.added_techs.iter().map(|a| a.index), &r.tech_defaults),
         },
         diplomacy: DiplomacyRules {
-            surface_affinity: r.race_surface_affinity.concat(),
+            surface_affinity: r.race_surface_affinity.clone(),
             research_money: r.race_research_money_mult.clone(),
             research_time: r.race_research_time_mult.clone(),
             ..DiplomacyRules::from_table(&r.declare_war_unreliability)

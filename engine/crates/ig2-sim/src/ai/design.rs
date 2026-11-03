@@ -179,10 +179,11 @@ pub fn slot_max(rules: &AiRules, pt: i16, h: usize, k: usize) -> i32 {
 /// hull, once per slot).
 #[allow(clippy::too_many_arguments)]
 pub fn auto_design_record(rules: &AiRules, tech: &TechTable, debug: bool, raw: &mut [u8; 0x84], e: usize, race: u8, variant: usize, human: bool) -> usize {
-    let race = match race {
+    let race = match rules.design.race_ai(race) {
         r @ 0..=8 => r as usize,
         _ => 1,
     };
+
     let hull = rd_i32(raw, 0x44);
     let pt = rd_i16(raw, 0x40);
     let hu = hull.max(0) as usize;
