@@ -964,6 +964,119 @@ impl Hud {
         out
     }
 
+    /// Ours (ADR 0071): what the modern production view shows, from the state `StarmapGfx2D_3` reads
+    /// (re/screens/starmap.md §12.3).
+    pub fn production_modern_view(&self, state: &SaveState, panels: &crate::starmap_panels::Panels, planet: usize) -> crate::production_modern::View {
+        use crate::production_modern as m;
+        use crate::starmap_panels::Panels;
+        let lang = self.texts.lang;
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
+        let tip = |n: u16| dec(&self.texts.get(2, 1, n));
+        let q = crate::starmap_panels::queue(state, planet);
+        let lines = std::array::from_fn(|l| {
+            let line = &q[l];
+            let full = Panels::stations_full(state, planet, l);
+            let name = |d: usize| Some(dec(&Panels::design_name(state, d))).filter(|n| !n.is_empty()).unwrap_or_else(|| "—".into());
+            m::Line {
+                title: dec(&self.texts.ours(if l == 0 { "Ships" } else { "Vehicles" })),
+                capacity: (dec(&self.texts.get(2, 4, 3)), if line.capacity < 1 { dec(&self.texts.get(2, 4, 2)) } else { line.capacity.to_string() }),
+                working: line.capacity >= 1,
+                progress: line.progress.map(|w| w as f32 / 76.0),
+                slots: std::array::from_fn(|k| {
+                    line.slots[k].as_ref().map(|(d, n, count, price)| m::Slot {
+                        name: dec(n),
+                        count: *count,
+                        price: format!("${price}"),
+                        repeat: line.repeat[k],
+                        into_fleet: (l == 1).then_some(line.into_fleet[k]),
+                        station: Panels::is_station(state, *d),
+                    })
+                }),
+                designs: Panels::line_designs(state, l).into_iter().map(|d| (d, name(d), d == 0 || !full || !Panels::is_station(state, d))).collect(),
+            }
+        });
+        m::View {
+            planet: dec(&Panels::planet_name(state, planet)),
+            lines,
+            exit: dec(&self.texts.get(2, 4, 4)),
+            exit_locked: panels.locks.exit,
+            tips: [tip(0xc), tip(0xd), tip(0xe), tip(0xf), tip(0x10), tip(0x11), tip(0x12), tip(0x13), tip(0x23)],
+        }
+    }
+
+    /// Ours (ADR 0071): what the modern research screen shows, from the state `ResearchGfx2D_2` reads
+    /// (re/screens/research.md §3).
+    #[allow(clippy::too_many_arguments)]
+    pub fn research_modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, s: &UiSnap, r: &crate::research::Research, infos: &[[Vec<u8>; 3]], gates: Option<&[bool; 20]>, time: f32) -> crate::research_modern::View {
+        use crate::research_modern as m;
+        let lang = self.texts.lang;
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
+        let en = crate::research::en(state);
+        let techs = state.tech();
+        let (time_mult, _) = crate::research::race_mults(state, rules, en);
+        let pct = |t: usize| ((techs.research_time(t, en) * 100) as f32 / (techs.base_research_time(t) as f32 * time_mult) + 0.5) as u32;
+        let current = state.mem.i32(ig2_sim::save::va::RESEARCHING + 4 * en as u32);
+        let t4 = |n: u16| dec(&self.texts.get(4, 1, n));
+        // The categories' names: the tooltips of their buttons (`GetString(4, 1, k)`).
+        const AREA_TIP: [u16; 12] = [5, 2, 1, 3, 4, 9, 12, 11, 10, 14, 15, 13];
+        let areas = (1..=12usize).map(|n| {
+            let ts = ((n - 1) * 16 + 1..=n * 16).map(|t| techs.status(t.min(192), en));
+            let (known, owned) = ts.fold((0, 0), |(k, o), st| (k + (st >= 2) as usize, o + (st == 5) as usize));
+            m::Area { n, name: t4(AREA_TIP[n - 1]), known, owned, running: current > 0 && ((current - 1) / 16 + 1) as usize == n }
+        }).collect();
+        let list = (1..=16).filter_map(|k| {
+            let t = ((r.area - 1) * 16 + k).min(192);
+            let st = techs.status(t, en);
+            (st >= 2).then(|| m::Tech { field: k as i32, name: dec(&crate::hud::tech_name(&self.texts, t)), status: st, pct: pct(t) })
+        }).collect();
+        let detail = (r.field != -1).then(|| {
+            let t = r.tech.clamp(0, 192) as usize;
+            let status = techs.status(t, en);
+            let pre: Vec<String> = techs.prerequisites(t).iter().filter(|&&p| p != 0).map(|&p| dec(&crate::hud::tech_name(&self.texts, p))).collect();
+            let need = format!("{}: {}", dec(&self.texts.get(4, 2, 1)), if pre.is_empty() { dec(&self.texts.get(4, 2, 2)) } else { pre.join(", ") });
+            let labs = crate::research::labs(state, en);
+            let needed = techs.labs_needed(t);
+            let (days, cost) = crate::research::days_and_cost(state, rules, &techs, t, en);
+            m::Detail {
+                name: dec(&crate::hud::tech_name(&self.texts, t)),
+                status,
+                info: infos.get(t).map(|l| l.iter().map(|x| dec(x)).filter(|x| !x.is_empty()).collect()).unwrap_or_default(),
+                need,
+                labs: (0..3).filter(|&i| needed[i] != 0).map(|i| (needed[i] as i32, labs[i + 1], t4(0x11 + i as u16), t4(0x14 + i as u16))).collect(),
+                days: (status < 5).then(|| format!("{}: {days}", dec(&self.texts.get(4, 2, 5)))),
+                cost: (status < 5).then(|| format!("{}: {}", dec(&self.texts.get(4, 2, 6)), crate::starmap_modern::money(cost as f64))),
+            }
+        });
+        let cur = (current > 0).then(|| {
+            let c = current.clamp(0, 192) as usize;
+            let (days, cost) = crate::research::days_and_cost(state, rules, &techs, c, en);
+            m::Current {
+                name: dec(&crate::hud::tech_name(&self.texts, c)),
+                money: format!("{}: {}", dec(&self.texts.get(4, 2, 3)), crate::starmap_modern::money(cost as f64)),
+                days: format!("{}: {days}", dec(&self.texts.get(4, 2, 4))),
+                part: pct(c) as f32 / 100.0,
+            }
+        });
+        let ours = |e: &str| dec(&self.texts.ours(e));
+        let auto = crate::research::AUTO.map(|(bit, label, _)| (ours(label), r.auto_shown() & bit != 0));
+        let auto_tips = crate::research::AUTO.map(|(_, _, tip)| ours(tip));
+        m::View {
+            bar: self.bar_view(state, rules, s, en as u8, gates, time, 4),
+            areas,
+            area: r.area,
+            techs: list,
+            field: r.field,
+            detail,
+            current: cur,
+            stop: current > 0,
+            start_on: !r.button_pressed && (current > 0 || r.can_start(state)),
+            urgent: r.urgent,
+            auto,
+            labels: [t4(6), t4(0x18), t4(0x17), ours("No research")],
+            tips: [t4(if current > 0 { 0x18 } else { 6 }), t4(0x17), t4(8), auto_tips[0].clone(), auto_tips[1].clone(), auto_tips[2].clone()],
+        }
+    }
+
     /// Ours (ADR 0070): what the modern colony screen shows this frame, from the state the classic panels read.
     #[allow(clippy::too_many_arguments)]
     pub fn colony_modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, s: &UiSnap, maps: &[ig2_sim::ground::GroundMap], view: &crate::colony::View, curr: &crate::colony::ColonySnap, ui: &crate::colony_ui::ColonyUi, sim: &ig2_sim::game::GameRules, gates: Option<&[bool; 20]>, time: f32) -> crate::colony_modern::View {

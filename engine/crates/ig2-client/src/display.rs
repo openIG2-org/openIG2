@@ -96,6 +96,9 @@ pub const MODERN_MENU: &str = "ModernGameMenu";
 pub const MODERN_COLONY: &str = "ModernColony";
 /// ADR 0072: the info screen as the modern egui panels (on by default; 0 = the original's).
 pub const MODERN_INFO: &str = "ModernInfo";
+/// ADR 0071: the research screen and the starmap's production view as the modern egui panels (on by default; 0 = the
+/// original's).
+pub const MODERN_RESEARCH: &str = "ModernResearch";
 /// ADR 0062: the egui pages' and HUD's size, n = 50 + 10·n per cent (default 5 = 100 %).
 pub const UI_SCALE: &str = "UiScale";
 
@@ -158,6 +161,7 @@ pub struct Display {
     pub modern_menu: bool,
     pub modern_colony: bool,
     pub modern_info: bool,
+    pub modern_research: bool,
 }
 
 /// Where W/A/S/D pan the camera (ADR 0030).
@@ -225,6 +229,7 @@ impl Display {
             modern_menu: f.int(MODERN_MENU) != Some(0),
             modern_colony: f.int(MODERN_COLONY) != Some(0),
             modern_info: f.int(MODERN_INFO) != Some(0),
+            modern_research: f.int(MODERN_RESEARCH) != Some(0),
         }
     }
 
@@ -340,6 +345,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(39, Group::Interface, "Modern starmap HUD", MODERN_STARMAP, d.modern_starmap as i32, Vec::new(), 1),
         row(40, Group::Interface, "Modern in-game menu", MODERN_MENU, d.modern_menu as i32, Vec::new(), 1),
         row(42, Group::Interface, "Modern colony screen", MODERN_COLONY, d.modern_colony as i32, Vec::new(), 1),
+        row(43, Group::Interface, "Modern research screen", MODERN_RESEARCH, d.modern_research as i32, Vec::new(), 1),
         row(44, Group::Interface, "Modern info screen", MODERN_INFO, d.modern_info as i32, Vec::new(), 1),
         row(41, Group::Interface, "UI scale", UI_SCALE, (ui_scale(f) as i32 - 50) / 10, (0..=15).map(|n| format!("{}%", 50 + 10 * n).into_bytes()).collect(), 15),
     ]
@@ -360,12 +366,12 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let mut f = File::default();
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true, modern_colony: true, modern_info: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true, modern_colony: true, modern_info: true, modern_research: true });
         f.set(MODE, "2");
         f.set(RESOLUTION, "1280x720");
         f.set(VSYNC, "0");
         f.set(LETTERBOX, "1");
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true, modern_colony: true, modern_info: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true, modern_colony: true, modern_info: true, modern_research: true });
         assert_eq!(parse_size("12x7"), None);
     }
 
@@ -376,7 +382,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 5]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 5]);
         // The theme row: Classic first, Modern by its stored name.
         let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
         assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));

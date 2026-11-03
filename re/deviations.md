@@ -97,6 +97,8 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 501 | info, modern input | the limit follows a press or drag on its bar (the original sets it whenever the pointer rests on the bar, no button needed; same order 0x5c); an empire is picked by a click, not the pointer passing over its column; the panels take the left button only (the original's rows, buttons and menus also the right) | yes | ADR 0072 |
 | 502 | info, modern list | the list shows every planet or fleet of the empire, scrolling and sortable by order, name, size or alerts; the original shows four rows at a time with arrows and a scroll bar; a planet row's problem line steps by itself, not shared by four rows; a fleet's detail shows its whole design list (the original's nine) | yes | ADR 0072, info.md |
 | 503 | info, modern panels | the 3D frame, its globes, heads and button animation aren't drawn in the modern info screen; off = the original's | yes | ADR 0072 |
+| 505 | production view and research screen, modern panels' buttons | the modern production view's and research screen's buttons act on the release over them (a drag off cancels), the original's on the press; the count buttons and the planet list still act on the press and the same code runs, so the orders and sounds are the same | yes | ADR 0071 |
+| 506 | production view, modern design list | a slot's design is picked with one click in a list beside the slot; the original's list is held open under the pointer and picks on the release; the order (0x1d(4)) and its checks are the release's | yes | ADR 0071, starmap.md §12.5 |
 
 ## Enhanced
 

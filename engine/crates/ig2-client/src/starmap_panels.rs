@@ -203,6 +203,9 @@ pub struct Panels {
     clock: Option<f32>,
     /// `starf`, `fifo`: the faders' shine and drift.
     pub faders: StarmapFaders,
+    /// Ours (ADR 0071): the production view is the modern panels'; its positional hot-spots (0xc..=0x36, the exit 9)
+    /// are off, the panels press them by id.
+    pub modern: bool,
 }
 
 #[cfg(test)]
@@ -693,6 +696,9 @@ impl Panels {
                 let shown = rows(state, t).len().min(8) as u32;
                 return matches!(id, 8..=11) || (0x43..0x43 + 2 * shown).contains(&id) || (0x57..=0x58).contains(&id);
             }
+            if self.product && self.modern {
+                return matches!(id, 8 | 10 | 11);
+            }
             if self.product {
                 if id == 8 || id == 9 || id == 10 || id == 11 {
                     return true;
@@ -910,11 +916,7 @@ impl Panels {
     fn open_list(&mut self, state: &SaveState, sel: &Selection, id: u32, at: [f32; 2]) {
         let l = ((id - 0x2a) / 4) as usize;
         let k = ((id - 0x2a) % 4) as usize;
-        let e = en(state);
-        let all = state.designs.get(e as usize).map_or(0, |d| d.len());
-        let designs: Vec<usize> = (0..all)
-            .filter(|&d| d == 0 || design(state, e, d).is_some_and(|x| i16_at(x, 0x16) == l as i16 + 1 && x[0x18] & 1 != 0))
-            .collect();
+        let designs = Self::line_designs(state, l);
         let n = designs.len() as i32;
         let cols = ((n + 31) / 32).max(1);
         let per_col = (n + cols - 1) / cols;
@@ -939,6 +941,48 @@ impl Panels {
         let slot = (0..4).rev().find(|&j| r[0x98 + 4 * l + j] == ui).unwrap_or(k);
         self.list = Some(DesignList { line: l, slot, ui, x, y, per_col: per_col.max(1), cols, designs, hovered: -1 });
         self.hover(at);
+    }
+
+    /// Ours (ADR 0071): the modern view's design pick for line `l`'s slot `k`: the slot's design list opened at its
+    /// hot-spot (0x2a..=0x31) and released on design `d`, so the original's checks (an eighth station, the design
+    /// already there) and its click and 0x1d(4) are the release's.
+    pub fn modern_pick(&mut self, state: &SaveState, sel: &Selection, l: usize, k: usize, d: usize) -> Vec<Action> {
+        let id = 0x2a + 4 * l as u32 + k as u32;
+        let Some([x, y, w, h]) = SPOTS.iter().find(|s| s.0 == id).map(|s| s.1) else { return Vec::new() };
+        self.open_list(state, sel, id, [(x + w / 2) as f32, (y + h / 2) as f32]);
+        if let Some(list) = &mut self.list {
+            list.hovered = list.designs.iter().position(|&x| x == d).map_or(-1, |i| i as i32);
+        }
+        self.release(state, sel)
+    }
+
+    /// The design list of line `l` (`open_list`'s): design 0 and the player's visible designs of the line's class.
+    pub fn line_designs(state: &SaveState, l: usize) -> Vec<usize> {
+        let e = en(state);
+        let all = state.designs.get(e as usize).map_or(0, |d| d.len());
+        (0..all).filter(|&d| d == 0 || design(state, e, d).is_some_and(|x| i16_at(x, 0x16) == l as i16 + 1 && x[0x18] & 1 != 0)).collect()
+    }
+
+    /// A design of the player's is a station (`+0x37`).
+    pub fn is_station(state: &SaveState, d: usize) -> bool {
+        design(state, en(state), d).is_some_and(|x| x[0x37] != 0)
+    }
+
+    /// The planet's name and a design of the player's name (`+0..0x18`, `+0..0x14`).
+    pub fn planet_name(state: &SaveState, p: usize) -> Vec<u8> {
+        cstr(&planet(state, p)[..0x18]).to_vec()
+    }
+
+    pub fn design_name(state: &SaveState, d: usize) -> Vec<u8> {
+        design(state, en(state), d).map(|r| cstr(&r[..0x14]).to_vec()).unwrap_or_default()
+    }
+
+    /// Line `l` of planet `p` can take no more stations: `+0x114` built plus the line's queued ones reach 8.
+    pub fn stations_full(state: &SaveState, p: usize, l: usize) -> bool {
+        let r = planet(state, p);
+        let e = en(state);
+        let queued = (0..4).filter(|&k| i16_at(&r, 0x78 + 8 * l + 2 * k) > 0 && design(state, e, i16_at(&r, 0x78 + 8 * l + 2 * k) as usize).is_some_and(|x| x[0x37] != 0)).count() as i32;
+        i32_at(&r, 0x114) + queued > 7
     }
 
     /// Hot-spot 0x57: the scroll bar sets the first row, 2632/n pixels a thumb, even rows only.
@@ -1849,6 +1893,73 @@ mod tests {
         w.tick();
         w.pump();
         assert!(fleet(&w.game.state, f).is_some_and(|r| r[0x15] == e), "the panel's emptied fleet was deleted");
+    }
+
+    /// Ours (ADR 0071): the modern production view's acts give the classic panel's orders; its hidden spots are off.
+    #[test]
+    fn modern_production_acts_send_the_classic_orders() {
+        use ig2_net::{Command, StarmapCmd};
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        w.game.state.mem.set_i32(va::AKT_KEP, 0);
+        w.game.set_screen(2);
+        let send = |w: &mut crate::world::World, acts: Vec<Action>| {
+            for a in acts {
+                if let Action::Send(o) = a {
+                    w.send(Command::Starmap { order: StarmapCmd::from(o) });
+                }
+            }
+            w.pump();
+        };
+        let e = en(&w.game.state);
+        let p = (1..=w.game.state.planet_count()).find(|&p| planet(&w.game.state, p)[0x20] == e).unwrap();
+        let sel = Selection { mode: 1, planet: p, fleet: 0 };
+        let mut panels = Panels::opened("production").unwrap();
+        panels.modern = true;
+        // The original's positional spots are off under the modern panels: the slot's list, a count, the exit.
+        for at in [[50.0, 150.0], [170.0, 150.0], [500.0, 400.0]] {
+            assert_eq!(panels.spot(&w.game.state, &sel, at), None);
+        }
+        let state = &w.game.state;
+        let d = Panels::line_designs(state, 0).into_iter().find(|&d| d > 0 && design(state, e, d).is_some_and(|x| x[0x36] == 0 && x[0x37] == 0)).unwrap();
+        let acts = panels.modern_pick(&w.game.state, &sel, 0, 0, d);
+        assert!(panels.list.is_none());
+        send(&mut w, acts);
+        assert_eq!(queue(&w.game.state, p)[0].slots[0].as_ref().map(|s| (s.0, s.2)), Some((d, 1)));
+        // The same design again sends nothing (the release's check).
+        assert_eq!(panels.modern_pick(&w.game.state, &sel, 0, 0, d), vec![]);
+        // Plus at its half, then held: the first frame and from the 12th 100 Hz tick.
+        let (id, at) = crate::production_modern::count_spot(0, 0, true);
+        let acts = panels.press_id(&w.game.state, &sel, id, at, true).unwrap();
+        send(&mut w, acts);
+        assert_eq!(queue(&w.game.state, p)[0].slots[0].as_ref().map(|s| s.2), Some(2));
+        for _ in 0..12 {
+            let acts = panels.hold_frame(&w.game.state, &sel, at);
+            send(&mut w, acts);
+        }
+        panels.release(&w.game.state, &sel);
+        assert_eq!(queue(&w.game.state, p)[0].slots[0].as_ref().map(|s| s.2), Some(3));
+        // Minus at its half.
+        let (id, at) = crate::production_modern::count_spot(0, 0, false);
+        let acts = panels.press_id(&w.game.state, &sel, id, at, true).unwrap();
+        send(&mut w, acts);
+        panels.release(&w.game.state, &sel);
+        assert_eq!(queue(&w.game.state, p)[0].slots[0].as_ref().map(|s| s.2), Some(2));
+        // Repeat (hot-spot 0xe) and design 0 removes.
+        let acts = panels.press_id(&w.game.state, &sel, 0xe, [0.0; 2], true).unwrap();
+        send(&mut w, acts);
+        assert!(queue(&w.game.state, p)[0].repeat[0]);
+        let acts = panels.modern_pick(&w.game.state, &sel, 0, 0, 0);
+        send(&mut w, acts);
+        assert!(queue(&w.game.state, p)[0].slots[0].is_none());
+        // The exit by id closes the view.
+        panels.press_id(&w.game.state, &sel, 9, [0.0; 2], true);
+        assert!(!panels.production_open());
     }
 
     #[test]

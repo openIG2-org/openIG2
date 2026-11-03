@@ -1390,8 +1390,31 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
         s.tooltip(state, &models.mask, &tips, &hud.texts, &models.centres, s.frames as f64 * 10.0);
     }
     let size = [o.size.0 as f32, o.size.1 as f32];
-    let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
     let t = world.curr.tick as f32 * 0.05;
+    if o.modern_research {
+        let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
+        hud.modern_bar = true;
+        hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
+        let mut rv = hud.research_modern_view(state, &l.tables, &world.ui, &s, &infos, None, t);
+        rv.bar.bind_keys(&crate::bindings::Bindings::default());
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
+        let style = crate::starmap_modern::style(hud, size);
+        let k = crate::gui::Gui::scale(o.size.1);
+        let mut st = crate::research_modern::State::default();
+        for _ in 0..3 {
+            if let Some(m) = o.mouse {
+                gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
+            }
+            gui.run(o.size, &style, |ctx| {
+                crate::research_modern::show(ctx, &rv, &mut st);
+            });
+        }
+        let rgba = r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex));
+        crate::assets::write_snapshot(out, o, &rgba)?;
+        println!("{}: modern research area {} field {} tech {}", out.display(), s.area, s.field, s.tech);
+        return Ok(());
+    }
+    let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
     hud.draw_research(&mut frame, &mut s, &infos, &tips, state, &l.tables, (tex, models.glow, models.arrow), lines, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Research, t);
@@ -2248,7 +2271,8 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if let Some(n) = o.spin_frames {
         panels.spin_frames = n;
     }
-    if o.panel.is_some() {
+    panels.modern = o.modern_hud && o.modern_research;
+    if o.panel.is_some() && !(panels.modern && panels.transfer.is_none() && panels.info.is_none()) {
         let size = [o.size.0 as f32, o.size.1 as f32];
         let tex = models.render(&mut r, &l.install, &l.tables, &panels, &world.game.state, &sel, &view.camera.matrix(), size);
         hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &l.tables, &sel, tex, size, t);
@@ -2307,6 +2331,8 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let style = crate::starmap_modern::style(&hud, size);
         let k = crate::gui::Gui::scale(o.size.1);
         let mut st = crate::starmap_modern::State::default();
+        let pv = (panels.modern && panels.production_open()).then(|| hud.production_modern_view(&world.game.state, &panels, sel.planet));
+        let mut pst = crate::production_modern::State::default();
         // The first frames size and place the anchored panels; `--mouse` hovers them.
         for _ in 0..3 {
             if let Some(m) = o.mouse {
@@ -2314,6 +2340,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
             }
             gui.run(o.size, &style, |ctx| {
                 crate::starmap_modern::show(ctx, &mv, &mut st);
+                if let Some(pv) = &pv {
+                    crate::production_modern::show(ctx, pv, &mut pst, mv.race);
+                }
             });
         }
         r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex))

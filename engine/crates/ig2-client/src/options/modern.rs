@@ -201,6 +201,7 @@ pub fn describe(key: &str) -> &'static str {
         "UiScale" => "The size of the remake's own pages and panels; they grow with the window.",
         "ModernStarmapHud" => "The starmap's bar, info box, minimap and camera buttons as clear modern panels; off = the original's.",
         "ModernGameMenu" => "Esc's in-game menu with saving, loading and every setting as a modern page; off = the original's.",
+        "ModernResearch" => "The research screen and the starmap's production view as modern panels; off = the original's.",
         "ModernColony" => "The colony's build menu, info card, buttons, radar and ground war panels as modern panels; off = the original's.",
         "ModernInfo" => "The info screen's empires, sortable planet and fleet list, details, money, charts and star log as modern panels; off = the original's.",
         "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",

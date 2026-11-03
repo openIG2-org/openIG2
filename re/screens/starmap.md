@@ -1130,6 +1130,7 @@ frames after the press).
 panel) open them in ig2.exe through `AktRopIkon`.
 
 ## Client status
+The production view (§12) has modern console plates under the modern HUD with "Modern research screen" on (ADR 0071, `production_modern.rs`, acts through `starmap_panels`'s classic orders); the classic view stays when the option is off, in input scripts and in captures.
 With `ModernStarmapHud` on (default; ADR 0065, `starmap_modern.rs`) an egui layer redraws §11's HUD as a compact console (selection panel with icon buttons, minimap with the camera-button strip under it) and the top bar with its screen icons through the same hot-spot code; off (and in snapshots without `--modern-hud`) the classic HUD is unchanged.
 The same option redraws the radial icon menu (§14), the select menus and planet list (§16, §17) and the long info (§15) as console plates (`starmap_modern::Menus`, `ui::Hud::modern_menus`; ADR 0065 amendment), drawn on the virtual geometry with input through `starmap_menus`; under the long info the HUD stays up.
 The bottom-left info box's turning model (planet globe, fleet model, §11) is cut to the box `[5, 423, 167, 475]` by default (`BoxModelsInside`, `starmap_hud.rs`; ADR 0025, row 434); snapshots and captures stay classic.

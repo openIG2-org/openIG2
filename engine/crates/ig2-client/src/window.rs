@@ -282,6 +282,13 @@ struct App {
     colony_acts: Vec<crate::colony_modern::Act>,
     info_modern: crate::info_modern::State,
     info_acts: Vec<crate::info_modern::Act>,
+    /// Ours (ADR 0071): the modern production view's and research screen's state, the acts of their last frame and the
+    /// count button held (line, slot, plus).
+    production_modern: crate::production_modern::State,
+    production_acts: Vec<crate::production_modern::Act>,
+    production_hold: Option<(usize, usize, bool)>,
+    research_modern: crate::research_modern::State,
+    research_acts: Vec<crate::research_modern::Act>,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -630,6 +637,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     app.display.modern_menu = false;
     // The original's colony panels: the scripts click their hot-spots (ADR 0070's need the window).
     app.display.modern_colony = false;
+    // The original's research screen and production view: the scripts click their hot-spots (ADR 0071's need the window).
+    app.display.modern_research = false;
     app.world.game.empire_names = hud.empire_names.clone();
     hud.set_one_language(&app.install, o.texts == Some(true));
     app.hud = Some(hud);
@@ -818,6 +827,11 @@ impl App {
             info_modern: Default::default(),
             info_acts: Vec::new(),
             colony_acts: Vec::new(),
+            production_modern: Default::default(),
+            production_acts: Vec::new(),
+            production_hold: None,
+            research_modern: Default::default(),
+            research_acts: Vec::new(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
             left_down: None,
@@ -1604,7 +1618,9 @@ impl App {
             self.research_tips = crate::research::tips(&h.texts);
         }
         let place = self.research_place.unwrap_or_else(|| crate::research::Place::read(&self.world.game.state));
-        self.research = Some(crate::research::Research::open_at(&self.world.game.state, self.tables, opens_animated(from), place));
+        // The modern screen (ADR 0071) has no 3D console to open.
+        let animated = opens_animated(from) && !self.display.modern_research;
+        self.research = Some(crate::research::Research::open_at(&self.world.game.state, self.tables, animated, place));
         self.overlay = Some(crate::ui::Screen::Research);
     }
 
@@ -1867,9 +1883,19 @@ impl App {
         }
     }
 
+    /// Ours (ADR 0071): the modern research screen is up (its option on, the screen shown with nothing over it).
+    fn research_modern_up(&self) -> bool {
+        self.display.modern_research && self.overlay == Some(crate::ui::Screen::Research) && self.research.is_some() && self.front.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none()
+    }
+
+    /// Ours (ADR 0071): the modern production view is up (under the modern starmap HUD).
+    fn production_modern_up(&self) -> bool {
+        self.modern_up() && self.display.modern_research && self.panels.production_open()
+    }
+
     /// The pointer is over one of the modern HUD's panels (its last frame's).
     fn over_gui(&self) -> bool {
-        (self.modern_up() || self.colony_modern_up() || self.info_modern_up()) && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
+        (self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up()) && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
     }
 
     /// The pointer is over the modern colony's card (its last frame's).
@@ -1898,6 +1924,80 @@ impl App {
                 // The both-buttons rename on the card: its releases do nothing (`Colony_Main` exe 0x4667fb).
                 crate::colony_modern::Act::Card(_) if self.menus.rename.is_some() => {}
                 a => self.colony_input(|ui, c, _, now| ui.modern_act(c, a, now)),
+            }
+        }
+    }
+
+    /// The modern production view's acts of its last frame through the original's panel code: the spots by id, a held
+    /// count button as the original's held hot-spot at the half it lowers or raises with, a design as the list's
+    /// release, the planet list opened on the press for the release to pick.
+    fn production_modern_apply(&mut self) {
+        use crate::production_modern::Act;
+        let up = self.production_modern_up();
+        self.panels.modern = self.modern_up() && self.display.modern_research;
+        let sel = self.selection();
+        if !up || self.starmap_locked() {
+            self.production_acts.clear();
+            if self.production_hold.take().is_some() {
+                let acts = self.panels.release(&self.world.game.state, &sel);
+                self.apply(acts);
+            }
+            return;
+        }
+        for a in std::mem::take(&mut self.production_acts) {
+            let state = &self.world.game.state;
+            match a {
+                Act::Spot(0x32) => {
+                    let at = self.virtual_cursor();
+                    let dos = self.menus.open_menu(state, MenuKind::Planets, at);
+                    self.apply_do(dos);
+                    // The release is the menu's (`starmap_release`), not the panel's.
+                    (self.gui_held, self.menus.held) = (0, true);
+                }
+                Act::Spot(id) => {
+                    if let Some(acts) = self.panels.press_id(state, &sel, id, [0.0; 2], true) {
+                        self.apply(acts);
+                    }
+                }
+                Act::Pick(l, k, d) => {
+                    let acts = self.panels.modern_pick(state, &sel, l, k, d);
+                    self.apply(acts);
+                }
+                Act::Hold(h) if h != self.production_hold => {
+                    if self.production_hold.take().is_some() {
+                        let acts = self.panels.release(&self.world.game.state, &sel);
+                        self.apply(acts);
+                    }
+                    if let Some((l, k, plus)) = h {
+                        let (id, at) = crate::production_modern::count_spot(l, k, plus);
+                        if let Some(acts) = self.panels.press_id(&self.world.game.state, &sel, id, at, true) {
+                            self.apply(acts);
+                        }
+                    }
+                    self.production_hold = h;
+                }
+                Act::Hold(_) => {}
+            }
+        }
+    }
+
+    /// The modern research screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the
+    /// screen's own code ([`crate::research::Research::modern_act`]).
+    fn research_modern_apply(&mut self) {
+        if !self.research_modern_up() {
+            self.research_acts.clear();
+            return;
+        }
+        for a in std::mem::take(&mut self.research_acts) {
+            match a {
+                crate::research_modern::Act::Bar(b) => self.bar_act(b),
+                a => {
+                    let Some(r) = &mut self.research else { continue };
+                    for o in r.modern_act(&self.world.game.state, a) {
+                        let crate::research::Act::Send(c) = o;
+                        self.world.send(c);
+                    }
+                }
             }
         }
     }
@@ -5327,8 +5427,9 @@ impl App {
         self.audio_frame(due_ui);
         self.row_frame_phase(due_ui);
         // A button held on a panel steps on the 100 Hz UI ticks (`Starmap_Main::KezdoIdo` counts 60 a second).
-        if self.panel_held.is_some() {
-            let at = self.virtual_cursor();
+        if self.panel_held.is_some() || self.production_hold.is_some() {
+            // The modern view's held count button keeps its half (ADR 0071).
+            let at = self.production_hold.map_or_else(|| self.virtual_cursor(), |(l, k, plus)| crate::production_modern::count_spot(l, k, plus).1);
             for _ in 0..due_ui {
                 let acts = self.panels.hold_frame(&self.world.game.state, &sel, at);
                 self.apply(acts);
@@ -5352,12 +5453,19 @@ impl App {
         let mut cmv = None;
         let info_modern = self.info_modern_up();
         let mut imv = None;
+        // Ours (ADR 0071): the production view's and the research screen's modern panels; the original's production
+        // view (its 3D buttons, faders and texts) is not drawn under them.
+        let production_modern = self.production_modern_up();
+        let mut pmv = None;
+        let research_modern = self.research_modern_up();
+        let mut rmv = None;
+        let classic_panels = !(self.panels.modern && self.panels.transfer.is_none() && self.panels.info.is_none());
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
         let size = { let (w, h) = g.band(); [w as f32, h as f32] };
         let cam = v.camera.matrix();
         let offscreen = crate::prof::scope("offscreen");
-        let panel_tex = match (&mut self.panel_models, self.colony.is_none() && self.overlay.is_none() && self.panels.active()) {
+        let panel_tex = match (&mut self.panel_models, self.colony.is_none() && self.overlay.is_none() && self.panels.active() && classic_panels) {
             (Some(m), true) => m.render(&mut g.renderer, &self.install, self.tables, &self.panels, &self.world.game.state, &sel, &cam, size),
             _ => None,
         };
@@ -5445,7 +5553,7 @@ impl App {
             self.dip_input.released = false;
         }
         let research = match (&self.research, self.overlay) {
-            (Some(r), Some(crate::ui::Screen::Research)) => {
+            (Some(r), Some(crate::ui::Screen::Research)) if !research_modern => {
                 let m = self.research_models.get_or_insert_with(|| crate::research::ResearchModels::new(&mut g.renderer, &self.install));
                 Some(m.render(&mut g.renderer, &self.install, self.tables, r, &self.world.game.state, size))
             }
@@ -5483,7 +5591,7 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
-            h.modern_bar = (modern_bar && screen == crate::ui::Screen::Starmap) || (colony_modern && screen == crate::ui::Screen::Colony) || (info_modern && screen == crate::ui::Screen::Info);
+            h.modern_bar = (modern_bar && screen == crate::ui::Screen::Starmap) || (colony_modern && screen == crate::ui::Screen::Colony) || (info_modern && screen == crate::ui::Screen::Info) || (research_modern && screen == crate::ui::Screen::Research);
             h.modern_info = info_modern && screen == crate::ui::Screen::Info;
             if h.modern_info {
                 let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
@@ -5523,7 +5631,12 @@ impl App {
                         }
                         mv = Some(m);
                     }
-                    h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, self.tables, &sel, panel_tex, size, t);
+                    if classic_panels {
+                        h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, self.tables, &sel, panel_tex, size, t);
+                    }
+                    if production_modern {
+                        pmv = Some(h.production_modern_view(&self.world.game.state, &self.panels, sel.planet));
+                    }
                     h.draw_starmap_menus(&mut frame, &self.menus, &self.panels, &self.world.game.state, self.tables, size, v.camera.zoom, t, modern_bar);
                 }
                 (crate::ui::Screen::Design, ..) => {
@@ -5543,6 +5656,14 @@ impl App {
                         h.draw_trade(&mut frame, tr, &self.world.game.state, self.tables, &self.trade_tips, size, t);
                     }
                 }
+                (crate::ui::Screen::Research, ..) if research_modern => {
+                    if let Some(r) = &self.research {
+                        let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                        let mut m = h.research_modern_view(&self.world.game.state, self.tables, &self.world.ui, r, &self.tech_infos, gates, t);
+                        m.bar.bind_keys(&self.bindings);
+                        rmv = Some(m);
+                    }
+                }
                 (crate::ui::Screen::Research, ..) => {
                     if let (Some(r), Some((tex, lines))) = (&mut self.research, research) {
                         let (glow, arrow) = self.research_models.as_ref().map_or((None, None), |m| (m.glow, m.arrow));
@@ -5560,7 +5681,7 @@ impl App {
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, kep);
             }
-            if mv.is_none() && cmv.is_none() && imv.is_none() {
+            if mv.is_none() && cmv.is_none() && imv.is_none() && rmv.is_none() {
                 ov.draw(&mut frame, h, size);
             }
         }
@@ -5570,7 +5691,13 @@ impl App {
         if let (Some(mv), Some(h)) = (&mv, &self.hud) {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.modern, &mut self.modern_acts, g.band());
-            g.gui.run(band, &style, |ctx| acts.extend(crate::starmap_modern::show(ctx, mv, st)));
+            let (pst, pacts) = (&mut self.production_modern, &mut self.production_acts);
+            g.gui.run(band, &style, |ctx| {
+                acts.extend(crate::starmap_modern::show(ctx, mv, st));
+                if let Some(pv) = &pmv {
+                    pacts.extend(crate::production_modern::show(ctx, pv, pst, mv.race));
+                }
+            });
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -5587,6 +5714,14 @@ impl App {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.info_modern, &mut self.info_acts, g.band());
             g.gui.run(band, &style, |ctx| acts.extend(crate::info_modern::show(ctx, iv, st)));
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        }
+        if let (Some(rv), Some(h)) = (&rmv, &self.hud) {
+            let style = crate::starmap_modern::style(h, size);
+            let (st, acts, band) = (&mut self.research_modern, &mut self.research_acts, g.band());
+            g.gui.run(band, &style, |ctx| acts.extend(crate::research_modern::show(ctx, rv, st)));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -5623,6 +5758,8 @@ impl App {
         }
         self.modern_apply();
         self.colony_modern_apply();
+        self.production_modern_apply();
+        self.research_modern_apply();
         self.info_modern_apply();
     }
 }
@@ -5870,7 +6007,7 @@ impl ApplicationHandler for App {
         let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
         let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
-        if !page && (self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();
@@ -6593,7 +6730,7 @@ impl App {
             }
             return;
         }
-        let modern = self.modern_up() || self.colony_modern_up() || self.info_modern_up();
+        let modern = self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up();
         if !modern && self.top_menus_button(button, pressed) {
             return;
         }
@@ -6693,7 +6830,7 @@ impl App {
                 }
             }
             // `Research_Main` (exe 0x523c10) acts on either button's press (re/screens/input.md §7).
-            (MouseButton::Left | MouseButton::Right, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Research) => self.research_press(button == MouseButton::Left),
+            (MouseButton::Left | MouseButton::Right, ElementState::Pressed) if self.overlay == Some(crate::ui::Screen::Research) && !self.research_modern_up() => self.research_press(button == MouseButton::Left),
             // The buttons for the drags and the faders (`Mouse_Lekerdez`).
             (MouseButton::Left | MouseButton::Right, _) if self.overlay == Some(crate::ui::Screen::Research) => {
                 if let Some(r) = &mut self.research {

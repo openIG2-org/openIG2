@@ -115,6 +115,8 @@ mod starmap_info;
 mod starmap_menus;
 mod starmap_modern;
 mod colony_modern;
+mod production_modern;
+mod research_modern;
 mod spacewar_fx;
 mod spacewar_hud;
 mod spacewar_live;
@@ -191,6 +193,8 @@ pub struct Options {
     pub modern_colony: bool,
     /// `--modern-info`: the info screen snapshot with the modern panels (ADR 0072).
     pub modern_info: bool,
+    /// `--modern-research`: the research screen and the production view as ADR 0071's modern panels.
+    pub modern_research: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -356,6 +360,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         modern_menu: false,
         modern_colony: false,
         modern_info: false,
+        modern_research: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -459,6 +464,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--modern-menu" => o.modern_menu = true,
             "--modern-colony" => o.modern_colony = true,
             "--modern-info" => o.modern_info = true,
+            "--modern-research" => o.modern_research = true,
             "--sharp-text" => o.sharp_text = true,
             "--theme" => o.theme = Some(val()?),
             "--upscale" => {

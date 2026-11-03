@@ -50,7 +50,7 @@ const MODEL_TIP: u32 = 0x11;
 /// each one's switch, label and tooltip.
 const AUTO_BOX: [f32; 4] = [4.0, 192.0, 133.0, 40.0];
 const AUTO_TIP: u32 = 0x40;
-const AUTO: [(u8, &str, &str); 3] = [
+pub(crate) const AUTO: [(u8, &str, &str); 3] = [
     (ig2_sim::research::auto::SHIPS, "Auto ships", "Idle research picks ships, weapons, radars, shields, bombs"),
     (ig2_sim::research::auto::BUILDINGS, "Auto buildings", "Idle research picks buildings and power plants"),
     (ig2_sim::research::auto::TANKS, "Auto tanks", "Idle research picks tanks, turrets and mines"),
@@ -615,7 +615,7 @@ impl Research {
 
     /// `ResearchStartStop`'s first branch: nothing runs, the shown tech is researchable (3) and the labs suffice
     /// (or the research cheat 0xB7727C is on).
-    fn can_start(&self, state: &SaveState) -> bool {
+    pub(crate) fn can_start(&self, state: &SaveState) -> bool {
         let en = en(state);
         let t = self.tech.clamp(0, 192) as usize;
         let techs = state.tech();
@@ -665,6 +665,37 @@ impl Research {
         out
     }
 
+    /// Ours (ADR 0071): the modern screen's acts through the original's code: a category is `TT_*` (as PgUp/PgDn,
+    /// unless an order is on its way), a row `TalalmanyKivalasztva`, start/stop `ResearchStartStop` (a press: it
+    /// clicks), urgent `ResearchDoubleGomb`, the jump hot-spot 0x19, a switch the toggles' order (§5.8).
+    pub fn modern_act(&mut self, state: &SaveState, a: crate::research_modern::Act) -> Vec<Act> {
+        use crate::research_modern::Act as M;
+        let mut out = Vec::new();
+        match a {
+            M::Area(n) if !self.button_pressed && (1..=12).contains(&n) => self.choose_area(n),
+            M::Field(k) if (1..=16).contains(&k) => {
+                self.sounds.push(CLICK);
+                self.choose_field(k);
+            }
+            M::StartStop => out = self.start_stop(state, true),
+            M::Urgent => out = self.double(),
+            M::Current if !self.button_pressed => {
+                let current = state.mem.i32(va::RESEARCHING + 4 * en(state) as u32);
+                if current > 0 {
+                    self.jump_to(current);
+                }
+            }
+            M::Auto(i) if i < 3 => {
+                let switches = self.auto_shown() ^ AUTO[i].0;
+                self.auto_sent = Some(switches);
+                out.push(Act::Send(Command::Research { order: ResearchCmd::Auto { switches } }));
+            }
+            _ => {}
+        }
+        (self.drawn_area, self.drawn_tech) = (self.area, self.tech);
+        out
+    }
+
     /// The human's auto-research switches as the game now holds them (once a frame); a sent order that came back
     /// stops overriding them.
     pub fn set_auto(&mut self, switches: u8) {
@@ -674,7 +705,7 @@ impl Research {
         }
     }
 
-    fn auto_shown(&self) -> u8 {
+    pub(crate) fn auto_shown(&self) -> u8 {
         self.auto_sent.unwrap_or(self.auto)
     }
 
@@ -1339,7 +1370,7 @@ pub(crate) fn race_mults(state: &SaveState, rules: &ig2_rules::Rules, en: usize)
 /// `ResearchGfx2D_2`'s days left and daily cost of tech `t` for the human: the labs over the need (+5, /5, f64),
 /// doubled when urgent, the story bonus in SP, at most the work left, at least 1; days = left / speed / 50; the
 /// cost per day = price × money mult × left / total, doubled when urgent.
-fn days_and_cost(state: &SaveState, rules: &ig2_rules::Rules, techs: &TechTable, t: usize, en: usize) -> (u32, u32) {
+pub(crate) fn days_and_cost(state: &SaveState, rules: &ig2_rules::Rules, techs: &TechTable, t: usize, en: usize) -> (u32, u32) {
     let (time_mult, money_mult) = race_mults(state, rules, en);
     let labs = labs(state, en);
     let need = techs.labs_needed(t);
@@ -2442,6 +2473,33 @@ mod tests {
         assert_eq!(s.auto_sent, None);
         s.closing = true;
         assert_eq!(s.auto_row(tanks), None);
+    }
+
+    /// Ours (ADR 0071): the modern screen's acts run the original's code: the category and row, urgent, the switches.
+    #[test]
+    fn modern_acts_run_the_screens_code() {
+        use crate::research_modern::Act as M;
+        use ig2_sim::research::auto::SHIPS;
+        let mut s = screen();
+        let state = SaveState::from_parts(Default::default(), Vec::new());
+        // A category off the wheel (tanks) and a row of it.
+        assert_eq!(s.modern_act(&state, M::Area(10)), vec![]);
+        assert_eq!((s.area, s.field, s.tech), (10, 1, 145));
+        assert_eq!(s.modern_act(&state, M::Field(3)), vec![]);
+        assert_eq!((s.field, s.tech, s.fields[10]), (3, 147, 3));
+        assert_eq!(s.sounds.last(), Some(&CLICK));
+        // Out of range: nothing.
+        s.modern_act(&state, M::Field(17));
+        s.modern_act(&state, M::Area(13));
+        assert_eq!((s.area, s.field), (10, 3));
+        // Urgent toggles and sends; an order on its way holds the category.
+        assert_eq!(s.modern_act(&state, M::Urgent), vec![Act::Send(Command::Research { order: ResearchCmd::Urgent })]);
+        assert!(s.urgent);
+        s.button_pressed = true;
+        s.modern_act(&state, M::Area(3));
+        assert_eq!(s.area, 10);
+        assert_eq!(s.modern_act(&state, M::Auto(0)), vec![Act::Send(Command::Research { order: ResearchCmd::Auto { switches: SHIPS } })]);
+        assert_eq!(s.auto_shown(), SHIPS);
     }
 
     /// `Forgotabla` (exe 0x51e360) clicks for the middle wheel's categories; the off-wheel buttons' `TT_*` (exe
