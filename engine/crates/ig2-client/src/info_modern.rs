@@ -53,6 +53,9 @@ pub struct EmpireRow {
     pub colour: Color32,
     pub race: Color32,
     pub head: usize,
+    /// The race's name (the ring's label) and the empire is the human's (its label in the own colour).
+    pub short: String,
+    pub own: bool,
     pub planets: u32,
     pub fleets: u32,
 }
@@ -286,6 +289,8 @@ const EMPIRE_W: f32 = 960.0;
 const ROW_H: f32 = 92.0;
 const GLYPH: egui::Vec2 = egui::Vec2::new(76.0, 40.0);
 const EXIT_W: f32 = 220.0;
+/// The part of a leader's picture the rings show: the face (the 128-point picture has a wide margin).
+const HEAD_UV: Rect = Rect { min: pos2(0.14, 0.08), max: pos2(0.86, 0.80) };
 /// The list's columns after the picture (92): the name, then the three cells.
 const COLS: [f32; 4] = [92.0, 170.0, 130.0, 170.0];
 
@@ -375,9 +380,10 @@ fn rings(ctx: &egui::Context, v: &View, st: &State, top: f32, w: f32, d: f32, ac
             if let Some(r) = row {
                 // The leader in the ring's dark window, lit up a little under the pointer.
                 if let Some(t) = st.pics.as_ref().and_then(|p| p.head(r.head)) {
-                    let face = Rect::from_center_size(ring.center(), vec2(d * 0.8, d * 0.8));
+                    // The board's head over the ring, a little above the centre (its chin on the ring's dark window).
+                    let face = Rect::from_center_size(ring.center() - vec2(0.0, d * 0.04), vec2(d * 0.94, d * 0.94));
                     let c = Color32::from_gray((215.0 + 40.0 * hot.max(on as u8 as f32)) as u8);
-                    p.add(egui::epaint::RectShape::filled(face, 255, c).with_texture(t.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))));
+                    p.add(egui::epaint::RectShape::filled(face, d * 0.12, c).with_texture(t.id(), HEAD_UV));
                 } else {
                     p.circle_filled(ring.center(), d * 0.22, r.race);
                 }
@@ -390,13 +396,13 @@ fn rings(ctx: &egui::Context, v: &View, st: &State, top: f32, w: f32, d: f32, ac
                 p.circle_stroke(ring.center(), d / 2.0 + 1.0, Stroke::new(1.0f32, k.rim_bright.gamma_multiply(hot)));
             }
             let label = Rect::from_min_size(pos2(slot.left() - RING_GAP / 2.0 + 1.0, ring.bottom() + 6.0), vec2(d + RING_GAP - 2.0, 18.0));
-            let (name, c) = row.map_or((v.labels.unknown.as_str(), k.ink_muted), |r| (r.name.as_str(), r.colour));
+            let (name, c) = row.map_or((v.labels.unknown.as_str(), k.ink_muted), |r| (if r.short.is_empty() { r.name.as_str() } else { r.short.as_str() }, if r.own { k.own } else { r.colour }));
             Text::new(name, Font::LABEL).center().shrink(10.0).color(c.gamma_multiply(fade)).paint(ui, label);
             if resp.clicked() && !on {
                 acts.push(Act::Empire(e));
             }
-            if row.is_some() {
-                resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            if let Some(r) = row {
+                ds::tip(resp.on_hover_cursor(egui::CursorIcon::PointingHand), &r.name);
             }
         });
     }
@@ -465,13 +471,16 @@ fn empire_panel(ui: &mut Ui, v: &View, st: &mut State, w: f32, acts: &mut Vec<Ac
                 for (c, half) in v.summary.chunks(2).take(2).enumerate() {
                     ui.allocate_ui_with_layout(vec2(col, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                         ui.spacing_mut().item_spacing.y = 6.0;
+                        // The board's `.ig-table` lines: the labels muted in a column as wide as the widest (at most a
+                        // third), the values in info blue, the empire's name in its colour.
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let lw = half.iter().map(|(l, _)| Text::new(l, Font::LABEL).layout(ui.ctx(), f32::INFINITY).width).fold(0.0, f32::max).min(col / 3.0);
                         for (n, (l, val)) in half.iter().enumerate() {
-                            // The board's `.ig-table` line: the label muted, the value; the empire's name in its colour.
                             let (rect, _) = ui.allocate_exact_size(vec2(col, 22.0), Sense::hover());
                             let base = ds::fit::baseline(rect, Font::DATA);
-                            Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, rect.with_max_x(rect.left() + 98.0));
-                            let c = if c == 0 && n == 0 { v.selected_name.1 } else { k.ink };
-                            Text::new(val, Font::DATA).shrink(11.0).baseline(base).color(c).paint(ui, rect.with_min_x(rect.left() + 110.0));
+                            Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, rect.with_max_x(rect.left() + lw));
+                            let c = if c == 0 && n == 0 { v.selected_name.1 } else { k.info };
+                            Text::new(val, Font::DATA).shrink(11.0).baseline(base).color(c).paint(ui, rect.with_min_x(rect.left() + lw + 16.0));
                         }
                     });
                 }
@@ -687,7 +696,7 @@ fn empire_list(ui: &mut Ui, v: &View, st: &State, head: Rect, body: Rect, acts: 
             let face = Rect::from_center_size(pos2(x[0] + 40.0, rect.center().y), vec2(72.0, 72.0));
             ds::radial(ui.painter(), face.expand(4.0), 255, [0.5, 0.5], &[(0.0, Color32::BLACK), (0.62, Color32::BLACK), (0.66, k.metal_light), (1.0, k.metal_dark)]);
             match st.pics.as_ref().and_then(|p| p.head(e.head)) {
-                Some(t) => _ = ui.painter().add(egui::epaint::RectShape::filled(face, 255, Color32::from_gray(230)).with_texture(t.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0)))),
+                Some(t) => _ = ui.painter().add(egui::epaint::RectShape::filled(face, 255, Color32::from_gray(230)).with_texture(t.id(), HEAD_UV)),
                 None => _ = ui.painter().circle_filled(face.center(), 8.0, e.race),
             }
             let base = ds::fit::baseline(rect, Font::DATA);
@@ -711,16 +720,17 @@ fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::V
     ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.88);
     let inner = rect.shrink2(vec2(24.0, 18.0));
     let left = Rect::from_min_size(inner.min, vec2(236.0, inner.height()));
-    let pic = Rect::from_min_size(pos2(left.center().x - 110.0, left.top()), vec2(220.0, 220.0));
+    // Back (the board's "‹ List") over the column, the globe under it.
+    let back = Rect::from_min_size(left.min, vec2(left.width(), 34.0));
+    let label = format!("‹  {}", v.labels.back);
+    if either_click(&ui.put(back, ds::Plate::new(&label).font(ds::Plate::FONT.sized(16.0)).height(34.0).width(left.width()))) {
+        acts.push(Act::Back);
+    }
+    let pic = Rect::from_min_size(pos2(left.center().x - 110.0, back.bottom() + 16.0), vec2(220.0, 220.0));
     picture(ui, pic, d.globe, d.name.1, st, ui.ctx().input(|i| i.time) as f32 * 0.008);
     let name = Rect::from_min_size(pos2(left.left(), pic.bottom() + 14.0), vec2(left.width(), 32.0));
     Text::new(&d.name.0, Font::HEADING.sized(24.0).weight(Weight::Medium)).center().shrink(16.0).color(k.ink).paint(ui, name);
     Text::new(&d.owner.0, Font::DATA.upper(true)).center().shrink(11.0).color(d.owner.1).paint(ui, name.translate(vec2(0.0, 32.0)).with_max_y(name.bottom() + 52.0));
-    let back = Rect::from_min_size(pos2(left.center().x - 80.0, name.bottom() + 66.0), vec2(160.0, 34.0));
-    let r = ui.put(back, ds::Plate::new(&v.labels.back).font(ds::Plate::FONT.sized(14.0)).height(34.0).width(160.0));
-    if r.clicked() {
-        acts.push(Act::Back);
-    }
     let table = Rect::from_min_max(pos2(left.right() + 24.0, inner.top()), inner.right_bottom());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(table).layout(egui::Layout::top_down(egui::Align::Min)));
     egui::ScrollArea::vertical().id_salt("imh-detail-rows").auto_shrink([false; 2]).show(&mut child, |ui| {
@@ -729,6 +739,11 @@ fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::V
             detail_row(ui, r, acts);
         }
     });
+}
+
+/// A press with either button (the original's detail buttons take both).
+fn either_click(r: &egui::Response) -> bool {
+    r.clicked() || r.secondary_clicked()
 }
 
 /// One detail row: the label (150 wide) and the values on one baseline, or the setting's drop-down.
@@ -743,8 +758,8 @@ fn detail_row(ui: &mut Ui, r: &DetailRow, acts: &mut Vec<Act>) {
     match &r.setting {
         Some(s) => {
             let cur = s.items.iter().find(|i| i.0 == s.current).map_or(String::new(), |i| i.1.clone());
-            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(vals.with_max_x(vals.left() + 260.0)));
-            ds::dropdown(&mut c, ("imh-setting", s.hot), &cur, 240.0, |ui| {
+            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(vals));
+            ds::dropdown(&mut c, ("imh-setting", s.hot), &cur, vals.width() - 8.0, |ui| {
                 for (i, n) in &s.items {
                     if ui.selectable_label(*i == s.current, n).clicked() && *i != s.current {
                         acts.push(Act::Setting(s.hot, *i));
@@ -920,7 +935,7 @@ pub fn view(h: &Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules,
                 5 => 7,
                 _ => 1,
             };
-            EmpireRow { e: k, name: h.empire_names.get(k).map(|n| dec(n)).unwrap_or_default(), colour: col(c), race: col(k + 15), head: s.roles[k].clamp(1, 8) as usize, planets: d.known_planets[k], fleets: d.known_fleets[k] }
+            EmpireRow { e: k, name: h.empire_names.get(k).map(|n| dec(n)).unwrap_or_default(), colour: col(c), race: col(k + 15), head: s.roles[k].clamp(1, 8) as usize, short: dec(&h.texts.race(s.races[k])), own: k == en, planets: d.known_planets[k], fleets: d.known_fleets[k] }
         })
         .collect();
     let label = |k: u16| dec(&h.texts.get(9, 3, k));
@@ -989,6 +1004,14 @@ pub fn view(h: &Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules,
                     (if mine || d.radar > 1 { f.ships as i64 } else { -1 }, if f.owner as usize == en { f.power as i64 } else { -1 }, 0)
                 }
             };
+            // The human's own entries name their owner in the own colour (the board's green).
+            let owned = match entry {
+                Entry::Planet(i) => d.planets[i].owner as usize == en,
+                Entry::Fleet(i) => d.fleets[i].owner as usize == en,
+            };
+            if owned {
+                owner.1 = ds::tokens().own;
+            }
             Row { index: j, fleet: matches!(entry, Entry::Fleet(_)), globe, title, owner, cells, queue, size, alert }
         })
         .collect();
@@ -1019,7 +1042,17 @@ pub fn view(h: &Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules,
             }
             None => Default::default(),
         };
-        Detail { name, owner, globe, rows: detail_rows(&lines, &dec, &col, &setting) }
+        // The board's table: the values in the ink (the original's value colour 0x21), the rest in their colours; the
+        // name's row is the left column's title.
+        let ink = |c: usize| if c == 0x21 { ds::tokens().ink } else { col(c) };
+        let mut rows = detail_rows(&lines, &dec, &ink, &setting);
+        rows.retain(|r| r.values.first().is_none_or(|v| v.0 != name.0));
+        let owner = match ui.detail_entry(d, en) {
+            Some(Entry::Planet(i)) if d.planets[i].owner as usize == en => (owner.0, ds::tokens().own),
+            Some(Entry::Fleet(i)) if d.fleets[i].owner as usize == en => (owner.0, ds::tokens().own),
+            _ => owner,
+        };
+        Detail { name, owner, globe, rows }
     });
     let series = (1..=8)
         .filter(|&k| s.known[k])
@@ -1033,7 +1066,7 @@ pub fn view(h: &Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules,
         empires,
         selected: ui.selected,
         summary,
-        selected_name: (h.empire_names.get(e).map(|n| dec(n)).unwrap_or_default(), col(if e == en { 0x23 } else { 1 })),
+        selected_name: (h.empire_names.get(e).map(|n| dec(n)).unwrap_or_default(), if e == en { ds::tokens().own } else { col(1) }),
         money,
         rows,
         detail,

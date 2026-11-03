@@ -129,7 +129,9 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let card = Rect::from_min_max(pos2(head.right() + GAP, top), pos2(w - EDGE, head.bottom()));
     place(ctx, "mmh-card", card, |ui| card_panel(ui, v, card.size(), &mut acts));
     let plates = 48.0;
-    let text = Rect::from_min_max(pos2(x0, head.bottom() + 28.0 * g), pos2(w - EDGE, bottom - plates - 24.0 * g));
+    // The board's 430-high text panel, shorter where the window is.
+    let text_top = head.bottom() + 28.0 * g;
+    let text = Rect::from_min_max(pos2(x0, text_top), pos2(w - EDGE, (text_top + 430.0).min(bottom - plates - 24.0 * g)));
     place(ctx, "mmh-text", text, |ui| text_panel(ui, v, text.size(), &mut acts));
     let full = Rect::from_min_size(pos2(x0, bottom - plates), vec2(260.0, plates));
     place(ctx, "mmh-full", full, |ui| {
@@ -225,7 +227,7 @@ fn card_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let inner = rect.shrink2(vec2(24.0, 20.0));
     Text::new(&o.subject, Font::HEADING).lines(2).color(k.ink).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 52.0)));
     for (n, (l, val)) in [(&v.labels.sender, &o.sender), (&v.labels.date, &o.date)].into_iter().enumerate() {
-        let r = Rect::from_min_size(pos2(inner.left(), inner.top() + 64.0 + n as f32 * 28.0), vec2(inner.width(), 22.0));
+        let r = Rect::from_min_size(pos2(inner.left(), inner.top() + 56.0 + n as f32 * 28.0), vec2(inner.width(), 22.0));
         let base = ds::fit::baseline(r, Font::DATA);
         Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + 100.0));
         Text::new(val, Font::DATA).shrink(11.0).baseline(base).color(k.ink).paint(ui, r.with_min_x(r.left() + 110.0));
