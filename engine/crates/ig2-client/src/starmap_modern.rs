@@ -268,7 +268,6 @@ pub(crate) enum Icon {
     TiltDown,
     TopView,
     SideView,
-    Bolt,
     Tanks,
     Factory,
     Details,
@@ -332,7 +331,6 @@ pub(crate) fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
             p.add(Shape::closed_line(arc(m, k * 1.1, k * 0.35, 0.0, TAU), s));
             p.circle_filled(pos2(m.x, m.y - k * 0.1), k * 0.32, c);
         }
-        Icon::Bolt => path(p, m, k, &[(0.2, -1.0), (-0.55, 0.15), (0.0, 0.15), (-0.2, 1.0), (0.55, -0.15), (0.0, -0.15)], true, s),
         Icon::Tanks => {
             p.rect_stroke(Rect::from_center_size(pos2(m.x, m.y + k * 0.35), vec2(k * 2.0, k * 0.8)), k * 0.4, s, egui::StrokeKind::Middle);
             p.rect_filled(Rect::from_center_size(pos2(m.x - k * 0.1, m.y - k * 0.3), vec2(k * 0.9, k * 0.55)), 1.0, c);
@@ -581,12 +579,6 @@ pub(crate) fn icon_button(ui: &mut egui::Ui, ink: &Ink, i: Icon, on: bool, enabl
 /// Clicked with the left or the right button.
 pub(crate) fn either(r: &egui::Response) -> bool {
     r.clicked() || r.secondary_clicked()
-}
-
-/// A thin upright rule between groups on a plate.
-pub(crate) fn rule(ui: &mut egui::Ui, ink: &Ink, h: f32) {
-    let (r, _) = ui.allocate_exact_size(vec2(9.0, h), Sense::hover());
-    ui.painter().line_segment([pos2(r.center().x, r.top() + 2.0), pos2(r.center().x, r.bottom() - 2.0)], Stroke::new(1.0f32, ink.edge));
 }
 
 /// The HUD's points: the other screens' gap to the screen's edges.
