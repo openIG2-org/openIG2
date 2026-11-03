@@ -1,7 +1,7 @@
 # ADR 0062: egui for the remake's own pages
 
 Date: 2026-11-01. Status: accepted (part 1: the layer and the main-menu Options page; part 2, the multiplayer pages:
-ADR 0066; part 3, the starmap HUD: ADR 0065; part 4, the in-game menu: ADR 0067). Amended by ADR 0073 (the style, the fonts and the shared widgets). Amends ADR 0006 §7 (egui was
+ADR 0066; part 3, the starmap HUD: ADR 0065; part 4, the in-game menu: ADR 0067). Amended by ADR 0073 (the style, the fonts and the shared widgets) and ADR 0078 (the Options page in the boards' five tabs of cards). Amends ADR 0006 §7 (egui was
 for developer overlays only). Implemented by `ig2-client::gui` (the layer, the style, the shared widgets),
 `options::modern` (the page) and the window's frame and input (`window.rs`: `Gpu::present_over`, the pointer
 routing); the snapshot's `--script` drives the page too (`mainscr_scene::sequence`).

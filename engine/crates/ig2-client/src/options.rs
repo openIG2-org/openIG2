@@ -313,6 +313,8 @@ pub enum Act {
     Save(usize, Vec<u8>),
     /// Ours (ADR 0067): the modern menu's Exit game: the game quits (as the window's close).
     Exit,
+    /// Ours (ADR 0067): the pause menu's Help: back to the game with the help screen over it.
+    Help,
 }
 
 /// The save-name entry (`IOMode` with `IOAzonosito` 0x83).

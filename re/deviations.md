@@ -104,6 +104,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 506 | production view, modern design list | a slot's design is picked with one click in a list beside the slot; the original's list is held open under the pointer and picks on the release; the order (0x1d(4)) and its checks are the release's | yes | ADR 0071, starmap.md §12.5 |
 | 510 | starmap, modern long info | under the modern HUD the long info's exit and production plates act on the release over them, the original's hot-spots 9 and 11 on the press | yes | ADR 0079 |
 | 511 | starmap, modern long info | under the modern HUD the stations' sale strips (hot-spots 0x65..) stay live at the original's place with no station list drawn | yes | ADR 0079 |
+| 512 | modern in-game menu, slot pick | a slot is picked by a click and a double click loads it; the original picks by hover and drag (`Options_Main` id 4, exe 0x51a320) | yes | ADR 0078 |
+| 513 | modern pause menu, Esc and O | Esc or O steps from a sub-page to the pause menu to the game and takes back unapplied settings; the original leaves the screen at once | yes | ADR 0078 |
+| 514 | modern pause menu and Options page, click sound | the click sound plays on every activation; the original plays `PlaySoundGlobal(0)` only on Quit, Back and No | no | ADR 0078 |
 
 ## Enhanced
 

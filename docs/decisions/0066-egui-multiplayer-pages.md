@@ -1,6 +1,6 @@
 # ADR 0066: the multiplayer pages on egui
 
-Date: 2026-11-01. Status: accepted (part 2 of ADR 0062). Implemented by `ig2-client::mp_lobby::page` (the pages),
+Date: 2026-11-01. Status: accepted (part 2 of ADR 0062); amended by ADR 0078 (the pages in the browser and room boards' layout). Implemented by `ig2-client::mp_lobby::page` (the pages),
 `mp_lobby` (`MpScreen::act`, `apply`, `next_field`, `step_list`: the screens' logic, unchanged in what it sends) and
 the window's frame and pointer routing (`window.rs`: `front_frame`, the "ADR 0062" block of `window_event`); the
 snapshot's `--script` drives the pages too (`mainscr_scene::sequence`).

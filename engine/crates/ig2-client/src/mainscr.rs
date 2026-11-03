@@ -314,6 +314,10 @@ pub struct MainScr {
     pub flow: bool,
     pub history: bool,
     pub can_continue: bool,
+    /// Ours (ADR 0078): the grouped panel is the modern egui page (`mainscr_modern`): the old panel's boxes are off;
+    /// Continue's line (the newest save's name and date).
+    pub modern: bool,
+    pub continue_line: Option<(Vec<u8>, [i32; 3])>,
 }
 
 /// `kamerapont` and `elforgatas` from `MainScrMozgato` with the y and z amplitudes and offsets of `Update3D` (100, −100,
@@ -392,6 +396,8 @@ impl MainScr {
             settings: false,
             covered: false,
             flow: false,
+            modern: false,
+            continue_line: None,
             history: true,
             can_continue: false,
         };
@@ -547,7 +553,7 @@ impl MainScr {
     }
 
     pub fn flow_item_at(&self, at: [f32; 2]) -> Option<crate::menu_flow::Item> {
-        self.panel().and_then(|p| crate::menu_flow::item_at(p, at, self.history))
+        self.panel().filter(|_| !self.modern).and_then(|p| crate::menu_flow::item_at(p, at, self.history))
     }
 
     /// Ours (ADR 0059): the Back label, on the screens without a back of their own: the ring sub-sets, the race
@@ -558,11 +564,11 @@ impl MainScr {
     }
 
     pub fn back_at(&self, at: [f32; 2]) -> bool {
-        self.back_shown() && crate::kit::inside_f(crate::menu_flow::BACK, at)
+        self.back_shown() && !(self.modern && self.panel().is_some()) && crate::kit::inside_f(crate::menu_flow::BACK, at)
     }
 
     /// A panel entry's action: a ring's entry as its ring (the panel offers only the current set's).
-    fn act_item(&mut self, i: crate::menu_flow::Item) -> Option<Act> {
+    pub fn act_item(&mut self, i: crate::menu_flow::Item) -> Option<Act> {
         use crate::menu_flow::Item;
         match i {
             Item::Continue => self.can_continue.then_some(Act::Continue),

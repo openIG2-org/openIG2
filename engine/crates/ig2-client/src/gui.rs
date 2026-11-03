@@ -232,6 +232,28 @@ pub fn page(ctx: &egui::Context, id: &str, size: Vec2, add: impl FnOnce(&mut egu
     });
 }
 
+/// A board's page (ADR 0078): the screen under it dimmed by `dim`, a deep glass panel `size` points (at most the
+/// screen less 16) centred over it with 28 × 32 points inside, fading and sliding in as it opens.
+pub fn board<R>(ctx: &egui::Context, id: &str, size: Vec2, dim: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let screen = ctx.screen_rect();
+    ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, Color32::from_black_alpha((255.0 * dim) as u8));
+    let size = size.min(screen.size() - egui::vec2(16.0, 16.0));
+    let t = ds::open_t(ctx, egui::Id::new(id), true);
+    egui::Area::new(egui::Id::new(id)).fixed_pos(screen.center() - size / 2.0 + egui::vec2(0.0, (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
+        ui.multiply_opacity(t);
+        let at = ui.painter().add(egui::Shape::Noop);
+        let r = egui::Frame::new().inner_margin(Margin { left: 32, right: 32, top: 28, bottom: 28 }).show(ui, |ui| {
+            let inner = size - egui::vec2(64.0, 56.0);
+            ui.set_min_size(inner);
+            ui.set_max_size(inner);
+            add(ui)
+        });
+        ds::behind(ui, at, |p| ds::paint_panel(p, r.response.rect, ds::PanelKind::Deep, 0.88));
+        r.inner
+    })
+    .inner
+}
+
 /// A titled card: a lighter glass box grouping settings, its heading in the label style ([`ds::card`]).
 pub fn card<R>(ui: &mut egui::Ui, title: Option<&str>, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ds::card(ui, title, add)

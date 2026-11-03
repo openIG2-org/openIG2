@@ -146,17 +146,18 @@ impl MenuStyle {
 }
 
 /// One entry of a [`menu`]: its label, a second line (`.sub`, the save's name and date), muted (`.off`: shown, not
-/// available).
+/// available), a key at the right (`kbd`: the in-game menu's Esc, O, F1).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MenuEntry<'a> {
     pub text: &'a str,
     pub sub: Option<&'a str>,
     pub off: bool,
+    pub hint: Option<&'a str>,
 }
 
 impl<'a> MenuEntry<'a> {
     pub fn new(text: &'a str) -> Self {
-        Self { text, sub: None, off: false }
+        Self { text, sub: None, off: false, hint: None }
     }
 }
 
@@ -193,8 +194,13 @@ pub fn menu(ui: &mut Ui, id: impl std::hash::Hash, style: MenuStyle, entries: &[
         if l.focus {
             focus_mark(ui.painter(), rect, RADIUS_PLATE as f32, 2.0);
         }
-        let inner = rect.shrink2(Vec2::new(20.0, 0.0));
+        let mut inner = rect.shrink2(Vec2::new(20.0, 0.0));
         let colour = if e.off || !l.on { k.ink_muted } else { k.ink };
+        if let Some(h) = e.hint {
+            let hf = Font::LABEL.tracking(0.1).upper(false);
+            let fit = Text::new(h, hf).right().color(k.ink_silver).baseline(baseline(inner, style.font)).paint_only(ui, inner.with_min_x(inner.right() - 80.0));
+            inner = inner.with_max_x(inner.right() - fit.width - SPACE[2]);
+        }
         let cut = match e.sub {
             None => Text::new(e.text, style.font).color(colour).paint_only(ui, inner).cut,
             Some(sub) => {
@@ -521,8 +527,13 @@ impl Widget for ListRow<'_> {
 /// room the control leaves); `focused` lit (the keyboard's row), `enabled` false muted.
 pub fn option_row<R>(ui: &mut Ui, label: &str, focused: bool, enabled: bool, control: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
     const FONT: Font = Font { size: 16.0, line: 20.0, weight: Weight::Regular, tracking: 0.05, upper: false, lcd: false };
+    option_row_in(ui, 50.0, FONT, label, focused, enabled, control)
+}
+
+/// An [`option_row`] `height` high with its label in `font` (the key rows, `.krow`: 40 high, 15 / 20).
+pub fn option_row_in<R>(ui: &mut Ui, height: f32, font: Font, label: &str, focused: bool, enabled: bool, control: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
     let k = tokens();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 50.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
     let hover = hover_t(ui.ctx(), resp.id, resp.hovered() && enabled);
     if focused {
         ui.painter().rect_filled(rect, RADIUS_PLATE, k.rim_bright.gamma_multiply(0.12));
@@ -535,7 +546,7 @@ pub fn option_row<R>(ui: &mut Ui, label: &str, focused: bool, enabled: bool, con
     }
     let r = control(&mut child);
     let used = child.min_rect().width();
-    let cut = Text::new(label, FONT).color(if enabled { k.ink } else { k.ink_muted }).paint_only(ui, inner.with_max_x(inner.right() - used - SPACE[2])).cut;
+    let cut = Text::new(label, font).shrink(font.size - 3.0).color(if enabled { k.ink } else { k.ink_muted }).paint_only(ui, inner.with_max_x(inner.right() - used - SPACE[2])).cut;
     (tip_if(resp, cut, label), r)
 }
 
@@ -579,7 +590,7 @@ fn segments(ui: &mut Ui, labels: &[&str], selected: usize, font: Font, width: Op
         let sr = ui.interact(r, id.with(i), Sense::click());
         let l = look(ui, &sr, false);
         let c = if i == selected { k.ink } else { k.ink_muted.lerp_to_gamma(k.ink_silver, l.hover) };
-        let cut = Text::new(s, font).center().color(ink(l.on, c)).paint_only(ui, r.shrink2(Vec2::new(4.0, 0.0))).cut;
+        let cut = Text::new(s, font).center().shrink(font.size - 3.0).color(ink(l.on, c)).paint_only(ui, r.shrink2(Vec2::new(4.0, 0.0))).cut;
         if tip_if(sr, cut, s).clicked() && l.on {
             clicked = Some(i);
         }

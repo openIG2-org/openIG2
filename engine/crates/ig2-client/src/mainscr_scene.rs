@@ -556,10 +556,10 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
         font.text(frame, &d.v, &d.texts.ours("Mods"), (x + w / 2) as f32, (y + 4) as f32, 0, 3, crate::font::Align::Centre, c, None);
     }
     // Ours (ADR 0059): the panel in the rings' place, the Back label.
-    if let Some(p) = s.panel() {
+    if let Some(p) = s.panel().filter(|_| !s.modern) {
         crate::menu_flow::draw_panel(frame, &d, p, s.history, s.can_continue, s.at, s.gt);
     }
-    if s.back_shown() {
+    if s.back_shown() && !(s.modern && s.panel().is_some()) {
         crate::menu_flow::draw_back(frame, &d, s.at, s.gt);
     }
 }
@@ -667,6 +667,9 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     let file = ig2_formats::options::Options::load();
     s.settings = file.int(crate::display::MENU_SETTINGS) != Some(0);
     s.flow = file.int(crate::menu_flow::KEY) == Some(1);
+    // Ours (ADR 0078): the modern main menu with `--modern-menu` (scripts compared with the exe keep the rings).
+    s.modern = o.modern_menu;
+    s.flow |= s.modern;
     s.history = file.int(crate::display::STATISTICS) != Some(0);
     let size = [o.size.0 as f32, o.size.1 as f32];
     let vv = Virtual::new(size);
@@ -787,6 +790,25 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             release = None;
             right = None;
         }
+        // Ours (ADR 0078): the modern main menu's page, driven by the script's pointer.
+        let mut picked = None;
+        if let (true, None, None, Some(p)) = (s.modern, &mp, &options, s.panel()) {
+            gui.pointer(Some(vv.px(mouse[0], mouse[1])), k);
+            if press.is_some() {
+                gui.button(0, true);
+            }
+            if release.is_some() {
+                gui.button(0, false);
+            }
+            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let mut pick = None;
+            gui.run(o.size, &crate::gui::style(&theme), |ctx| pick = crate::mainscr_modern::page(ctx, &hud.texts, p, s.history, s.can_continue, s.continue_line.as_ref(), s.gt.min(1.0)));
+            match pick {
+                Some(crate::mainscr_modern::Pick::Item(i)) => picked = s.act_item(i),
+                Some(crate::mainscr_modern::Pick::Back) => s.escape(),
+                None => {}
+            }
+        }
         // Ours (ADR 0053): the modern Options screen takes the keys.
         if let Some(os) = options.as_mut().map(|o| &mut o.1).filter(|os| os.modern.is_some()) {
             for k in keys.drain(..) {
@@ -844,7 +866,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 println!("t {t}: options {a:?}");
             }
         } else {
-            let acts = [due, press.and_then(|p| s.press(p)), right.and_then(|p| s.press_right(p)), release.and_then(|p| s.release(p)), settings.take()];
+            let acts = [due, picked, press.and_then(|p| s.press(p)), right.and_then(|p| s.press_right(p)), release.and_then(|p| s.release(p)), settings.take()];
             for a in acts.into_iter().flatten() {
                 println!("t {t}: {a:?}");
                 prepare(&mut s, a, &mut assets, &install, &hud.texts);

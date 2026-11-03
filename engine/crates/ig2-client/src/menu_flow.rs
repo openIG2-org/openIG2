@@ -38,7 +38,7 @@ pub enum Item {
 
 impl Item {
     /// The remake text table's key (ADR 0042).
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Item::Continue => "Continue",
             Item::QuickGame => "Quick game",

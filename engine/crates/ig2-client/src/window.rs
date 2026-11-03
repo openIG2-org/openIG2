@@ -197,6 +197,10 @@ impl Front {
         s.flow = settings.int(crate::menu_flow::KEY) == Some(1);
         s.history = settings.int(crate::display::STATISTICS) != Some(0);
         s.can_continue = crate::options::slot_dir().is_some_and(|d| !crate::menu_flow::saves_newest_first(&d).is_empty());
+        // Ours (ADR 0078): the modern main menu brings the grouped panel with it.
+        s.modern = settings.int(crate::display::MODERN_MAIN_MENU) != Some(0);
+        s.flow |= s.modern;
+        s.continue_line = s.modern.then(crate::mainscr_modern::continue_line).flatten();
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
@@ -1829,6 +1833,11 @@ impl App {
     }
 
     /// Ours (ADR 0072): the modern info screen is up (its option on, the info screen shown with nothing over it).
+    /// Ours (ADR 0078): the modern main menu's page is up (it sees the pointer; a press over its panel is its own).
+    fn main_menu_modern_up(&self) -> bool {
+        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.mp.is_none() && f.mods.is_none() && f.s.panel().is_some())
+    }
+
     fn info_modern_up(&self) -> bool {
         self.display.modern_info && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Info) && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
     }
@@ -2747,6 +2756,7 @@ impl App {
         let mut top = None;
         let mut mp_outs = Vec::new();
         let mut mods_acts = Vec::new();
+        let mut main_pick = None;
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
@@ -2765,6 +2775,12 @@ impl App {
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
+        } else if let (true, Some(p), Some(h)) = (fr.s.modern && fr.mp.is_none(), fr.s.panel(), &self.hud) {
+            // Ours (ADR 0078): the modern main menu over the scene.
+            let theme = theme(h);
+            let (history, can, line, gt) = (fr.s.history, fr.s.can_continue, fr.s.continue_line.clone(), fr.s.gt.min(1.0));
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| main_pick = crate::mainscr_modern::page(ctx, &h.texts, p, history, can, line.as_ref(), gt));
+            ov.draw(&mut frame, h, size);
         } else if let (Some(mp), Some(h)) = (fr.mp.as_mut(), &self.hud) {
             let theme = theme(h);
             mp.load_heads(&g.gui.ctx, &self.install);
@@ -2789,6 +2805,20 @@ impl App {
         }
         for a in mods_acts {
             self.mods_act(a);
+        }
+        match main_pick {
+            Some(crate::mainscr_modern::Pick::Item(i)) => {
+                self.audio.play(crate::audio::CLICK);
+                if let Some(a) = self.front.as_mut().and_then(|f| f.s.act_item(i)) {
+                    self.front_act(a);
+                }
+            }
+            Some(crate::mainscr_modern::Pick::Back) => {
+                if let Some(f) = &mut self.front {
+                    f.s.escape();
+                }
+            }
+            None => {}
         }
     }
 
@@ -3729,11 +3759,12 @@ impl App {
         use crate::options::Act;
         let Some(o) = self.options.take() else { return };
         self.store_settings_from(&o.s);
-        if a != Act::Back {
+        if !matches!(a, Act::Back | Act::Help) {
             self.trade_under_options = None;
         }
+        let help = a == Act::Help;
         match a {
-            Act::Back => {
+            Act::Back | Act::Help => {
                 // `SetIdoPause(OptionsOldIdoPause)`.
                 if !o.was_paused {
                     self.send(StarmapOrder::Pause { paused: false });
@@ -3798,6 +3829,9 @@ impl App {
                     f.quit = true;
                 }
             }
+        }
+        if help {
+            self.open_help();
         }
     }
 
@@ -6024,7 +6058,7 @@ impl ApplicationHandler for App {
         let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
         let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
-        if !page && (self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.main_menu_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();

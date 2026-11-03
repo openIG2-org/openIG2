@@ -1,10 +1,12 @@
 //! Ours (ADR 0053): the main menu's Options screen. Every setting of the in-game screen (`OptionsScreen`'s rows,
-//! sliders) and the multiplayer name in eight tabs with switches, drop-downs, sliders and descriptions; Apply writes
-//! them through `OptionsScreen::store`, Back takes back what was not applied. A designed egui page (ADR 0062) in the
-//! UI theme's colours (ADR 0056); the keyboard moves through it with the screen's own keys. In a game (and from the
-//! main menu's Load game) the same page with a first tab, Save & load: the slots, Load, Save, Quit and Exit (ADR 0067).
+//! sliders) and the multiplayer name in five tabs of cards with toggles, segments, steppers, sliders and keys; Apply
+//! writes them through `OptionsScreen::store`, Back takes back what was not applied. A designed egui page (ADR 0062,
+//! the board's layout: ADR 0078) in the UI theme's colours (ADR 0056); the keyboard moves through it with the screen's
+//! own keys. In a game the pause menu first: Continue, Save, Load, Options, Help, Quit and Exit, the save and load page
+//! behind Save and Load (from the main menu's Load game that page alone) (ADR 0067).
 
 use super::{check_dependencies, id, Act, Group, OptionsScreen, Row, SLOTS};
+use crate::gui::ds::{self, Font, Text};
 use crate::ui::UiTexts;
 
 /// `MultiplayerNev`'s length (`IOMaxLen` 9 in the menu's name entry, mainscr.rs).
@@ -14,36 +16,31 @@ const NAME_KEY: &str = "MultiplayerNev";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
     Display,
-    Sound,
-    Interface,
-    Game,
     Accessibility,
-    Multiplayer,
-    Language,
     /// ADR 0058: the key bindings.
     Controls,
-    /// ADR 0067: the in-game page's slots and actions.
+    Sound,
+    Game,
+    /// ADR 0067: the save and load page (no tab of the rail).
     Saves,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [Tab::Display, Tab::Sound, Tab::Interface, Tab::Game, Tab::Controls, Tab::Accessibility, Tab::Multiplayer, Tab::Language];
+    pub const ALL: [Tab; 5] = [Tab::Display, Tab::Accessibility, Tab::Controls, Tab::Sound, Tab::Game];
 
     /// The label (the remake text table's key).
     pub fn title(self) -> &'static str {
-        ["DISPLAY", "SOUND", "INTERFACE", "GAME", "ACCESSIBILITY", "MULTIPLAYER", "LANGUAGE", "CONTROLS", "SAVE & LOAD"][self as usize]
+        ["DISPLAY", "ACCESSIBILITY", "CONTROLS", "SOUND", "GAME", "SAVE & LOAD"][self as usize]
     }
 
-    fn group(self) -> Option<Group> {
+    /// The tab's cards in order (the remake text table's keys); Controls' are the actions' places.
+    fn cards(self) -> &'static [&'static str] {
         match self {
-            Tab::Display => Some(Group::Display),
-            Tab::Sound => Some(Group::Sound),
-            Tab::Controls | Tab::Saves => None,
-            Tab::Interface => Some(Group::Interface),
-            Tab::Game => Some(Group::Game),
-            Tab::Accessibility => Some(Group::Accessibility),
-            Tab::Multiplayer => Some(Group::Multiplayer),
-            Tab::Language => Some(Group::Language),
+            Tab::Display => &["Screen", "Graphics", "Interface", "Detail"],
+            Tab::Accessibility => &["Readability", "Subtitles and colours", "Language"],
+            Tab::Sound => &["Volume", "Music"],
+            Tab::Game => &["Battles and saving", "Enhancements", "Handling"],
+            Tab::Controls | Tab::Saves => &[],
         }
     }
 }
@@ -57,12 +54,12 @@ pub enum Item {
     /// ADR 0058: an action's key (`crate::bindings::ACTIONS`), and the reset of every key.
     Bind(usize),
     Reset,
-    /// ADR 0067: a save slot (1..=24), an action of the Save & load tab.
+    /// ADR 0067: a save slot (1..=24), an action of the save and load page.
     Slot(usize),
     Game(Game),
 }
 
-/// ADR 0067: the Save & load tab's actions.
+/// ADR 0067: the pause menu's entries and the save and load page's actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Game {
     Load,
@@ -71,12 +68,16 @@ pub enum Game {
     Quit,
     /// The game quits (asks first).
     Exit,
-    /// Under the tutorial: back to it.
+    /// Back to the game (under the tutorial: to it).
     Continue,
+    /// The settings' tabs.
+    Options,
+    /// The help screen over the game.
+    Help,
 }
 
 impl Game {
-    /// The button's label (the remake text table's key).
+    /// The entry's label (the remake text table's key).
     fn label(self, tutorial: bool) -> &'static str {
         match self {
             Game::Load => "Load",
@@ -84,44 +85,88 @@ impl Game {
             Game::Quit if tutorial => "Quit the tutorial",
             Game::Quit => "Quit to main menu",
             Game::Exit => "Exit game",
-            Game::Continue => "Continue tutorial",
+            Game::Continue if tutorial => "Continue tutorial",
+            Game::Continue => "Continue",
+            Game::Options => "Options",
+            Game::Help => "Help",
         }
     }
 }
 
-/// ADR 0067: the Save & load tab's lines: the slots the original lets you pick (1..=22, and 23, 24 when filled;
-/// none under the tutorial), then the actions the screen has (the original's buttons, Exit ours).
-pub fn game_items(o: &OptionsScreen) -> Vec<Item> {
-    let slots = (1..=SLOTS).filter(|&n| !o.tutorial && (n < 23 || o.filled(n))).map(Item::Slot);
-    let acts: &[Game] = if o.tutorial {
-        &[Game::Continue, Game::Quit]
-    } else if o.load_only {
-        &[Game::Load]
+/// ADR 0067: the pause menu's entries (the original's buttons, Save and Load on their page; Help and Exit ours).
+pub fn menu_items(o: &OptionsScreen) -> Vec<Game> {
+    if o.tutorial {
+        vec![Game::Continue, Game::Options, Game::Quit]
     } else {
-        &[Game::Load, Game::Save, Game::Quit, Game::Exit]
-    };
+        // No help screen over a battle or a ground war (`open_help` refuses it there).
+        let help = (!o.battle).then_some(Game::Help);
+        [Game::Continue, Game::Save, Game::Load, Game::Options].into_iter().chain(help).chain([Game::Quit, Game::Exit]).collect()
+    }
+}
+
+/// ADR 0067: the save and load page's lines: the autosaves when filled (24, 23), the slots the original lets you
+/// pick (1..=22), then Save and Load (Load alone from the main menu).
+pub fn game_items(o: &OptionsScreen) -> Vec<Item> {
+    let slots = [24, 23].into_iter().filter(|&n| o.filled(n)).chain(1..=22).filter(|&n| n <= SLOTS).map(Item::Slot);
+    let acts: &[Game] = if o.load_only { &[Game::Load] } else { &[Game::Save, Game::Load] };
     slots.chain(acts.iter().map(|&g| Item::Game(g))).collect()
 }
 
-/// The tab's settings in order (ADR 0053 §2): Display the remake's rows, gamma, the exe's graphics rows, the modern
-/// lighting's (ADR 0055); Sound the
-/// two volumes, then ours; Game the exe's game rows, then ours; Multiplayer the name, then ours; Controls the keys
-/// and their reset (ADR 0058); the rest the group's rows.
-pub fn items(rows: &[Row], tab: Tab) -> Vec<Item> {
-    let ours = |g| rows.iter().enumerate().filter(move |(_, r)| r.ours && r.group == g).map(|(k, _)| Item::Row(k));
-    let exe = |page| rows.iter().enumerate().filter(move |(_, r)| !r.ours && r.page == page).map(|(k, _)| Item::Row(k));
-    let mut v: Vec<Item> = match tab {
-        Tab::Sound => vec![Item::Slider(0), Item::Slider(1)],
-        Tab::Controls => return (0..crate::bindings::ACTIONS.len()).map(Item::Bind).chain([Item::Reset]).collect(),
-        Tab::Display => ours(Group::Display).chain([Item::Slider(2)]).chain(exe(1)).chain(ours(Group::Graphics)).collect(),
-        Tab::Game => exe(2).collect(),
-        Tab::Multiplayer => vec![Item::Name],
-        _ => Vec::new(),
-    };
-    if !matches!(tab, Tab::Display) {
-        v.extend(tab.group().into_iter().flat_map(ours));
+/// Where a setting sits: its tab and card (the boards' grouping; a row the table doesn't name goes by its group).
+fn place(rows: &[Row], it: Item) -> (Tab, &'static str) {
+    use crate::display as d;
+    match it {
+        Item::Slider(2) => (Tab::Display, "Screen"),
+        Item::Slider(_) => (Tab::Sound, "Volume"),
+        Item::Name => (Tab::Game, "Handling"),
+        Item::Bind(b) => (Tab::Controls, crate::bindings::ACTIONS[b].ctx.title()),
+        Item::Reset => (Tab::Controls, ""),
+        Item::Slot(_) | Item::Game(_) => (Tab::Saves, ""),
+        Item::Row(k) => {
+            let r = &rows[k];
+            if !r.ours {
+                return if r.page == 1 { (Tab::Display, "Detail") } else { (Tab::Game, "Battles and saving") };
+            }
+            match r.key.as_str() {
+                d::UI_SCALE | d::SHARP_TEXT | d::SLIDER_UNDER | d::CLEAN_ENTRY => (Tab::Accessibility, "Readability"),
+                d::WASD | d::STARMAP_MOUSE | d::FLEET_GROUPS | d::EVENT_LOG | crate::menu_flow::KEY => (Tab::Game, "Handling"),
+                d::AUTOSAVE => (Tab::Game, "Battles and saving"),
+                d::TITLE_MUSIC => (Tab::Sound, "Music"),
+                d::TEXTURE_UPSCALE => (Tab::Display, "Graphics"),
+                d::SHARP_UI => (Tab::Display, "Interface"),
+                _ => match r.group {
+                    Group::Display => (Tab::Display, "Screen"),
+                    Group::Graphics => (Tab::Display, "Graphics"),
+                    Group::Interface => (Tab::Display, "Interface"),
+                    Group::Game => (Tab::Game, "Enhancements"),
+                    Group::Accessibility => (Tab::Accessibility, "Subtitles and colours"),
+                    Group::Language => (Tab::Accessibility, "Language"),
+                    Group::Multiplayer => (Tab::Game, "Handling"),
+                    Group::Sound => (Tab::Sound, "Volume"),
+                },
+            }
+        }
     }
-    v
+}
+
+/// The tab's settings in order: card by card (the tab's order; Controls' in the actions' order), within a card the
+/// volumes, the rows, the gamma, the name; the keys' reset last.
+pub fn items(rows: &[Row], tab: Tab) -> Vec<Item> {
+    if tab == Tab::Saves {
+        return Vec::new();
+    }
+    let all = [Item::Slider(0), Item::Slider(1)].into_iter().chain((0..rows.len()).map(Item::Row)).chain([Item::Slider(2), Item::Name]).chain((0..crate::bindings::ACTIONS.len()).map(Item::Bind)).chain([Item::Reset]);
+    let mut v: Vec<(usize, Item)> = all.filter_map(|it| {
+        let (t, card) = place(rows, it);
+        let order = match t {
+            Tab::Controls if card.is_empty() => usize::MAX,
+            Tab::Controls => crate::bindings::ACTIONS.iter().position(|a| a.ctx.title() == card).unwrap_or(0),
+            _ => tab.cards().iter().position(|&c| c == card).unwrap_or(usize::MAX),
+        };
+        (t == tab).then_some((order, it))
+    }).collect();
+    v.sort_by_key(|&(o, _)| o);
+    v.into_iter().map(|(_, it)| it).collect()
 }
 
 /// The string (file 13, section 2) an exe row's key stands for: rows 7–16 show the next-but-one string in the exe
@@ -205,6 +250,7 @@ pub fn describe(key: &str) -> &'static str {
         "ModernColony" => "The colony's build menu, info card, buttons, radar and ground war panels as modern panels; off = the original's.",
         "ModernInfo" => "The info screen's empires, sortable planet and fleet list, details, money, charts and star log as modern panels; off = the original's.",
         "ModernCursors" => "Sharp pointers in the design's colours, animated, with a modern UI theme; off = the original's.",
+        "ModernMainMenu" => "The main menu as a modern grouped menu with Continue; off = the original's rings.",
         "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",
         _ => "",
     }
@@ -250,12 +296,14 @@ pub fn nav(name: &str, typing: bool) -> Option<Nav> {
 #[derive(Debug, Clone)]
 pub struct Modern {
     pub tab: Tab,
-    /// The focused line: a setting of the tab, then Back, then Apply.
+    /// The focused line: a setting of the tab, then Back, then Apply; on the pause menu its entry.
     pub focus: usize,
     /// The last input was a key: the focus is marked and kept in view.
     keyed: bool,
     /// The focused line last scrolled into view.
     shown: Option<(Tab, usize)>,
+    /// The line under the pointer (its description is the footer's).
+    hovered: Option<usize>,
     pub editing: bool,
     /// `MultiplayerNev` in the font's bytes.
     pub name: Vec<u8>,
@@ -264,8 +312,9 @@ pub struct Modern {
     pub capture: Option<usize>,
     /// The applied values Back puts back: the rows', the sliders', the name, the keys.
     kept: (Vec<i32>, [i32; 3], Vec<u8>, crate::bindings::Bindings),
-    /// ADR 0067: the in-game page (the Save & load tab first), the question up (Quit, Exit), the save asked for.
+    /// ADR 0067: the in-game page, its pause menu up, the question up (Quit, Exit), the save asked for.
     pub game: bool,
+    pub menu: bool,
     pub ask: Option<Game>,
     pub out: Option<Act>,
     /// The UI scale row's value the egui layer last showed (ADR 0062).
@@ -274,22 +323,25 @@ pub struct Modern {
 
 impl Modern {
     pub fn new(o: &OptionsScreen, name: Vec<u8>, binds: crate::bindings::Bindings) -> Self {
-        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, editing: false, name, binds, capture: None, kept: Default::default(), game: false, ask: None, out: None, previewed: None };
+        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, hovered: None, editing: false, name, binds, capture: None, kept: Default::default(), game: false, menu: false, ask: None, out: None, previewed: None };
         m.keep(o);
         m.previewed = scale_row(o);
         m
     }
 
-    /// ADR 0067: the page as the in-game menu, on its Save & load tab with the selected slot focused.
+    /// ADR 0067: the page as the in-game menu (the pause menu first); from the main menu's Load game the save and load
+    /// page with the selected slot focused.
     pub fn in_game(o: &OptionsScreen, name: Vec<u8>, binds: crate::bindings::Bindings) -> Self {
-        let mut m = Self { game: true, tab: Tab::Saves, ..Self::new(o, name, binds) };
-        m.focus = game_items(o).iter().position(|&it| it == Item::Slot(o.slot)).unwrap_or(0);
+        let mut m = Self { game: true, menu: !o.load_only, ..Self::new(o, name, binds) };
+        if o.load_only {
+            m.open_saves(o);
+        }
         m
     }
 
-    /// The page's tabs: Save & load first in a game.
+    /// The rail's tabs.
     pub fn tabs(&self) -> Vec<Tab> {
-        self.game.then_some(Tab::Saves).into_iter().chain(Tab::ALL).collect()
+        Tab::ALL.to_vec()
     }
 
     fn values(&self, o: &OptionsScreen) -> (Vec<i32>, [i32; 3], Vec<u8>, crate::bindings::Bindings) {
@@ -348,6 +400,19 @@ impl Modern {
         self.editing = false;
     }
 
+    /// The save and load page, the selected slot focused.
+    fn open_saves(&mut self, o: &OptionsScreen) {
+        self.set_tab(Tab::Saves);
+        self.menu = false;
+        self.focus = game_items(o).iter().position(|&it| it == Item::Slot(o.slot)).unwrap_or(0);
+    }
+
+    /// Back to the pause menu, on `g`.
+    fn back_to_menu(&mut self, o: &OptionsScreen, g: Game) {
+        self.menu = true;
+        self.focus = menu_items(o).iter().position(|&x| x == g).unwrap_or(0);
+    }
+
     /// Apply: the values into the settings file (the window stores and applies them on `dirty`).
     fn apply(&mut self, o: &mut OptionsScreen) {
         if self.name.is_empty() {
@@ -357,9 +422,15 @@ impl Modern {
         o.dirty = true;
     }
 
-    /// Back: what wasn't applied taken back, then the screen leaves (as Esc on the in-game screen).
+    /// Back: what wasn't applied taken back, then the screen leaves (as Esc on the in-game screen); in a game back to
+    /// the pause menu first.
     fn back(&mut self, o: &mut OptionsScreen) {
         self.revert(o);
+        if self.game && !self.menu && !o.load_only {
+            let at = if self.tab == Tab::Saves { Game::Save } else { Game::Options };
+            self.back_to_menu(o, at);
+            return;
+        }
         if o.leaving.is_none() {
             o.leave(if o.load_only { Act::MainMenu } else { Act::Back });
         }
@@ -381,14 +452,29 @@ impl Modern {
         self.preview_scale(o);
     }
 
-    /// ADR 0067: an action of the Save & load tab (a button, Enter on its line). False when it is off.
+    /// ADR 0067: a pause menu entry or a save and load action (a button, Enter on its line). False when it is off.
     fn act(&mut self, o: &mut OptionsScreen, g: Game) -> bool {
-        if !Self::enabled(o, Item::Game(g)) {
+        // From the menu Save and Load open their page; the page's Save while the name is typed saves it.
+        let open = (self.menu && matches!(g, Game::Load | Game::Save)) || (g == Game::Save && o.entry.is_some());
+        if !Self::enabled(o, Item::Game(g)) && !open {
             return false;
         }
         match g {
+            // From the pause menu Save and Load open their page (Save with the name entry when the slot allows it).
+            Game::Load | Game::Save if self.menu => {
+                self.open_saves(o);
+                if g == Game::Save && Self::enabled(o, Item::Game(Game::Save)) {
+                    o.start_entry();
+                }
+            }
             Game::Load => self.leave(o, Act::Load(o.slot)),
+            Game::Save if o.entry.is_some() => self.out = o.entry_key(super::EntryKey::Enter),
             Game::Save => o.start_entry(),
+            Game::Options => {
+                self.set_tab(Tab::Display);
+                self.menu = false;
+            }
+            Game::Help => self.leave(o, Act::Help),
             // Under the tutorial no question (`Options_Kilep`: `TutorialStop(1)`, `ExitToMainScreen`).
             Game::Quit if o.tutorial => self.leave(o, Act::MainMenu),
             Game::Quit | Game::Exit => self.ask = Some(g),
@@ -406,7 +492,7 @@ impl Modern {
         }
     }
 
-    /// Load, Quit, Exit: what wasn't applied taken back, then the screen goes.
+    /// Load, Quit, Exit, Help: what wasn't applied taken back, then the screen goes.
     fn leave(&mut self, o: &mut OptionsScreen, a: Act) {
         self.revert(o);
         o.leave(a);
@@ -461,8 +547,24 @@ impl Modern {
             }
             return;
         }
+        if self.menu {
+            let entries = menu_items(o);
+            match k {
+                Nav::Up => self.focus = (self.focus + entries.len() - 1) % entries.len(),
+                Nav::Down => self.focus = (self.focus + 1) % entries.len(),
+                Nav::Back => {
+                    self.back(o);
+                    sound(crate::audio::CLICK);
+                }
+                Nav::Activate if self.act(o, entries[self.focus.min(entries.len() - 1)]) => sound(crate::audio::CLICK),
+                _ => {}
+            }
+            return;
+        }
         let items = self.items(o);
-        let lines = items.len() + 2;
+        // The save and load page has Back alone after its lines.
+        let tail = if self.tab == Tab::Saves { 1 } else { 2 };
+        let lines = items.len() + tail;
         if self.editing {
             match k {
                 Nav::Char(c) if c >= 0x20 && self.name.len() < NAME_MAX => self.name.push(c),
@@ -475,10 +577,11 @@ impl Modern {
             return;
         }
         let tabs = self.tabs();
-        let tab = tabs.iter().position(|&t| t == self.tab).unwrap();
+        let tab = tabs.iter().position(|&t| t == self.tab);
         match k {
-            Nav::NextTab => self.set_tab(tabs[(tab + 1) % tabs.len()]),
-            Nav::PrevTab => self.set_tab(tabs[(tab + tabs.len() - 1) % tabs.len()]),
+            Nav::NextTab | Nav::PrevTab if tab.is_none() => {}
+            Nav::NextTab => self.set_tab(tabs[(tab.unwrap() + 1) % tabs.len()]),
+            Nav::PrevTab => self.set_tab(tabs[(tab.unwrap() + tabs.len() - 1) % tabs.len()]),
             Nav::Up | Nav::Down => {
                 self.focus = (self.focus + if k == Nav::Up { lines - 1 } else { 1 }) % lines;
                 // A slot focused is the slot picked.
@@ -493,7 +596,7 @@ impl Modern {
                     (Some(0), _) if k == Nav::Activate => self.back(o),
                     (Some(1), _) if k == Nav::Activate && self.pending(o) => self.apply(o),
                     (Some(1), _) if k == Nav::Activate => return,
-                    (Some(_), _) => self.focus = items.len() + usize::from(k == Nav::Right),
+                    (Some(_), _) => self.focus = items.len() + usize::from(k == Nav::Right && tail == 2),
                     (None, Some(&it)) if Self::enabled(o, it) => match it {
                         Item::Row(r) => Self::step(o, r, d),
                         Item::Slider(s) if k != Nav::Activate => o.sliders[s].value = (o.sliders[s].value + 5 * d).clamp(0, 100),
@@ -522,31 +625,17 @@ impl Modern {
     }
 }
 
-// The page (ADR 0062): egui over the main menu's scene.
+// The page (ADR 0062, the boards' layout ADR 0078): egui over the main menu's scene or the game.
 
-/// The card a setting sits in: its group's heading (the remake text table's key); `None` = the card before's.
-fn section(o: &OptionsScreen, it: Item) -> Option<&'static str> {
-    Some(match it {
-        Item::Row(k) if o.rows[k].ours => o.rows[k].group.title(),
-        Item::Row(k) if o.rows[k].page == 1 => Group::Graphics.title(),
-        Item::Row(_) => Group::Game.title(),
-        Item::Slider(2) => Group::Display.title(),
-        Item::Slider(_) => Group::Sound.title(),
-        Item::Name => Group::Multiplayer.title(),
-        Item::Bind(b) => crate::bindings::ACTIONS[b].ctx.title(),
-        Item::Reset | Item::Slot(_) | Item::Game(_) => return None,
-    })
-}
-
-/// The tab's settings in cards: (heading, the settings' indices into the tab's items).
-fn cards(o: &OptionsScreen, items: &[Item]) -> Vec<(&'static str, Vec<usize>)> {
+/// The tab's settings in cards: (heading, the settings' indices into the tab's items); the keys' reset in none.
+fn cards(rows: &[Row], items: &[Item]) -> Vec<(&'static str, Vec<usize>)> {
     let mut v: Vec<(&'static str, Vec<usize>)> = Vec::new();
     for (i, &it) in items.iter().enumerate() {
-        match (section(o, it), v.last_mut()) {
-            (Some(s), Some(last)) if last.0 != s => v.push((s, vec![i])),
-            (Some(s), None) => v.push((s, vec![i])),
-            (_, Some(last)) => last.1.push(i),
-            (None, None) => v.push(("", vec![i])),
+        let (_, card) = place(rows, it);
+        match v.last_mut() {
+            _ if card.is_empty() => {}
+            Some(last) if last.0 == card => last.1.push(i),
+            _ => v.push((card, vec![i])),
         }
     }
     v
@@ -560,13 +649,14 @@ fn label(o: &OptionsScreen, texts: &UiTexts, it: Item) -> Vec<u8> {
             match exe_name(&r.key) {
                 _ if r.ours => texts.ours(&String::from_utf8_lossy(&r.name)),
                 Some(n) => texts.get(13, 2, n),
-                None => r.name.clone(),
+                // The exe's own English-only names (Cutscenes, View Rotation) through the remake's table.
+                None => texts.ours(&String::from_utf8_lossy(&r.name)),
             }
         }
         Item::Slider(i) => o.sliders[i].title.clone(),
         Item::Name => texts.ours("Player name"),
         Item::Bind(b) => texts.ours(crate::bindings::ACTIONS[b].name),
-        Item::Reset => texts.ours("Reset all keys"),
+        Item::Reset => texts.ours("Original keys"),
         Item::Slot(n) => n.to_string().into_bytes(),
         Item::Game(g) => texts.ours(g.label(o.tutorial)),
     }
@@ -592,125 +682,74 @@ fn key_of(o: &OptionsScreen, it: Item) -> &str {
     }
 }
 
-/// The page's size in points, its sidebar's width and its controls' column.
-const PAGE: [f32; 2] = [860.0, 500.0];
-const SIDEBAR: f32 = 168.0;
-const CONTROL: f32 = 210.0;
+/// How a row is set: a toggle, segments (`wide`: under its label, the segments sharing the card's width), a stepper,
+/// the UI scale's slider.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Kind {
+    Toggle,
+    Segments { wide: bool },
+    Stepper,
+    Scale,
+}
+
+fn kind(r: &Row, texts: &UiTexts) -> Kind {
+    if r.key == crate::display::UI_SCALE {
+        return Kind::Scale;
+    }
+    if r.states == 1 && r.labels.is_empty() {
+        return Kind::Toggle;
+    }
+    if r.states > 3 {
+        return Kind::Stepper;
+    }
+    // Three or four values with long words get the row's width (the board's display mode, autosave, WASD).
+    let letters: usize = (0..=r.states).map(|v| value_text(texts, r, v).len()).sum();
+    Kind::Segments { wide: r.states >= 2 && letters > 12 }
+}
+
+/// A line's height (`.orow` 50, `.krow` 40, a wide row 50 + the segments' 36).
+fn line_height(o: &OptionsScreen, texts: &UiTexts, it: Item) -> f32 {
+    match it {
+        Item::Bind(_) => 40.0,
+        Item::Row(k) if matches!(kind(&o.rows[k], texts), Kind::Segments { wide: true }) => 92.0,
+        _ => 50.0,
+    }
+}
+
+/// The board's panel (1640 × 920 at 1920 × 1080), its rail and the cards' gaps.
+const PAGE: [f32; 2] = [1640.0, 920.0];
+const RAIL: f32 = 280.0;
+const GAP: f32 = 20.0;
+/// The save and load board's panel and its right column.
+const SAVES_PAGE: [f32; 2] = [1440.0, 880.0];
+const ASIDE: f32 = 440.0;
+/// The pause menu's panel width.
+const MENU_W: f32 = 520.0;
 
 impl Modern {
     /// One frame of the page: draws it and takes its pointer input.
-    pub fn show(&mut self, o: &mut OptionsScreen, ctx: &egui::Context, texts: &UiTexts, theme: &crate::theme::Theme, sound: &mut dyn FnMut(crate::audio::SoundId)) {
+    pub fn show(&mut self, o: &mut OptionsScreen, ctx: &egui::Context, texts: &UiTexts, _theme: &crate::theme::Theme, sound: &mut dyn FnMut(crate::audio::SoundId)) {
         let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
         let tr = |en: &str| s(texts.ours(en));
         if ctx.input(|i| i.pointer.any_pressed()) {
             // A press anywhere ends the name entry and the wait for a key, as a click on the old screen did.
             (self.editing, self.capture, self.keyed) = (false, None, false);
         }
-        let mut click = false;
-        let hot = crate::gui::ink(theme.hot);
-        crate::gui::page(ctx, "options", egui::Vec2::from(PAGE), |ui| {
-            ui.horizontal(|ui| {
-                ui.heading(egui::RichText::new(tr("OPTIONS")).strong());
-            });
-            ui.add_space(10.0);
-            let body = ui.available_height() - 52.0;
-            ui.horizontal_top(|ui| {
-                // The tabs.
-                ui.vertical(|ui| {
-                    ui.set_width(SIDEBAR);
-                    for tab in self.tabs() {
-                        let on = tab == self.tab;
-                        let title = title_case(&tr(tab.title()));
-                        let r = ui.add_sized([SIDEBAR, 34.0], egui::Button::selectable(on, egui::RichText::new(title).size(16.0)));
-                        if on {
-                            let bar = egui::Rect::from_min_size(r.rect.left_top() + egui::vec2(0.0, 7.0), egui::vec2(3.0, r.rect.height() - 14.0));
-                            ui.painter().rect_filled(bar, 2.0, ui.visuals().hyperlink_color);
-                        }
-                        if r.clicked() && !on {
-                            self.set_tab(tab);
-                            click = true;
-                        }
-                    }
-                });
-                ui.add_space(12.0);
-                // The settings.
-                let items = self.items(o);
-                if self.tab == Tab::Saves {
-                    click |= self.saves(o, ui, texts, &items, body);
-                    return;
-                }
-                ui.vertical(|ui| egui::ScrollArea::vertical().id_salt(self.tab).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(body).auto_shrink([false, false]).show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 10.0;
-                    let all = cards(o, &items);
-                    let several = all.len() > 1;
-                    for (title, lines) in all {
-                        let title = (several && !title.is_empty()).then(|| tr(title));
-                        crate::gui::card(ui, title.as_deref(), |ui| {
-                            for i in lines {
-                                click |= self.line(o, ui, texts, i, items[i], hot, sound);
-                            }
-                        });
-                        ui.add_space(8.0);
-                    }
-                }));
-            });
-            ui.add_space(6.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                let items = self.items(o);
-                // The status: the wait for a key, a key two actions share, the language's restart.
-                let lang = items.iter().find_map(|&it| match it {
-                    Item::Row(k) if o.rows[k].key == crate::display::LANGUAGE => Some(o.rows[k].value),
-                    _ => None,
-                });
-                let clash = match items.get(self.focus) {
-                    Some(&Item::Bind(b)) => self.binds.clash(b),
-                    _ => None,
-                };
-                if self.capture.is_some() {
-                    ui.label(egui::RichText::new(tr("Press the new key; Esc keeps the old one.")).color(hot));
-                } else if let Some(c) = clash {
-                    ui.label(egui::RichText::new(format!("{} {}", tr("Also the key of:"), s(label(o, texts, Item::Bind(c))))).color(hot));
-                } else if lang.is_some() && o.lang_at_start.is_some_and(|v| Some(v) != lang) {
-                    ui.label(egui::RichText::new(tr("Restart to change the language")).color(hot));
-                } else if self.tab == Tab::Controls {
-                    ui.label(egui::RichText::new(tr(describe("Bind"))).weak());
-                } else if self.tab == Tab::Saves {
-                    // Why Load or Save is off (the original greys them without a word).
-                    let why = if o.entry.is_some() {
-                        "Enter saves, Esc cancels."
-                    } else if o.multiplayer && !o.tutorial {
-                        "Multiplayer: no loading; only the host saves."
-                    } else if o.battle_lock() && !o.load_only && !o.tutorial {
-                        "No saving during a battle."
-                    } else {
-                        ""
-                    };
-                    if !why.is_empty() {
-                        ui.label(egui::RichText::new(tr(why)).weak());
-                    }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let pending = self.pending(o);
-                    let apply = crate::gui::primary(ui, pending, &tr("Apply")).on_hover_text(tr("Save the changes and use them."));
-                    if self.keyed && self.focus == items.len() + 1 {
-                        crate::gui::focus_ring(ui, apply.rect);
-                    }
-                    let back = crate::gui::secondary(ui, &tr("Back")).on_hover_text(tr("Leave; changes not applied are taken back."));
-                    if self.keyed && self.focus == items.len() {
-                        crate::gui::focus_ring(ui, back.rect);
-                    }
-                    if apply.clicked() {
-                        self.apply(o);
-                        click = true;
-                    }
-                    if back.clicked() {
-                        self.back(o);
-                        click = true;
-                    }
-                });
-            });
-        });
+        let click = if self.menu {
+            self.pause_menu(o, ctx, texts)
+        } else if self.tab == Tab::Saves {
+            self.saves(o, ctx, texts)
+        } else {
+            self.settings(o, ctx, texts, sound)
+        };
+        // Quit and Exit ask first.
+        let g = self.ask.unwrap_or(Game::Quit);
+        let (q, yes) = if g == Game::Exit { ("Exit the game? Play since the last save is lost.", "Exit") } else { ("Quit to the main menu? Play since the last save is lost.", "Quit") };
+        match ds::confirm(ctx, "options-ask", self.ask.is_some(), &tr(g.label(false)), &tr(q), &tr(yes), &tr("Cancel")) {
+            Some(true) => self.confirm(o),
+            Some(false) => self.ask = None,
+            None => {}
+        }
         if click {
             sound(crate::audio::CLICK);
         }
@@ -729,312 +768,559 @@ impl Modern {
         }
     }
 
-    /// ADR 0067: the Save & load tab: the slot list at the left; the selected slot's preview (or the save name's
-    /// field) and the actions (or the question) at the right. True when something was clicked.
-    fn saves(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, items: &[Item], body: f32) -> bool {
+    /// ADR 0067: the pause menu (the in-game menu board: a 520-point deep panel, PAUSE, the last save, the entries
+    /// with their keys). True when something was clicked.
+    fn pause_menu(&mut self, o: &mut OptionsScreen, ctx: &egui::Context, texts: &UiTexts) -> bool {
         let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
         let tr = |en: &str| s(texts.ours(en));
+        let k = ds::tokens();
+        let screen = ctx.screen_rect();
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, egui::Color32::from_black_alpha(140));
+        let entries = menu_items(o);
+        let labels: Vec<String> = entries.iter().map(|g| tr(g.label(o.tutorial))).collect();
+        let key = |id: &str| crate::bindings::ACTIONS.iter().position(|a| a.id == id).and_then(|i| crate::bindings::key_name(self.binds.0[i])).unwrap_or("");
+        let hints: Vec<Option<&str>> = entries.iter().map(|g| match g {
+            Game::Continue => Some("ESC"),
+            Game::Save => Some(key("QuickSave")),
+            Game::Options => Some(key("Options")),
+            Game::Help => Some(key("Help")),
+            _ => None,
+        }).collect();
+        // The last save: how long ago, its name.
+        let last = o.slots.iter().flatten().filter_map(|sl| Some((std::fs::metadata(&sl.file).ok()?.modified().ok()?, sl))).max_by_key(|(t, _)| *t).map(|(_, sl)| sl);
+        let sub = last.and_then(|sl| Some(format!("{}  ·  {}", s(ago(&sl.file, texts.lang)?), s(sl.name.clone()))));
+        let n_items = entries.len() as f32;
+        let quits = entries.iter().filter(|g| matches!(g, Game::Quit | Game::Exit)).count();
+        let h = 28.0 + 34.0 + 4.0 + if sub.is_some() { 20.0 } else { 0.0 } + 18.0 + n_items * 52.0 + (n_items - 1.0) * 4.0 + 25.0 + 20.0;
+        let size = egui::vec2(MENU_W, h).min(screen.size() - egui::vec2(16.0, 16.0));
+        let t = ds::open_t(ctx, egui::Id::new("pause-menu"), true);
+        let top = (screen.center().y - size.y / 2.0 - 50.0).max(screen.top() + 8.0);
+        let mut picked = None;
+        egui::Area::new(egui::Id::new("pause-menu")).fixed_pos(egui::pos2(screen.center().x - size.x / 2.0, top + (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
+            ui.multiply_opacity(t);
+            let at = ui.painter().add(egui::Shape::Noop);
+            let r = egui::Frame::new().inner_margin(egui::Margin { left: 20, right: 20, top: 28, bottom: 20 }).show(ui, |ui| {
+                ui.set_width(size.x - 40.0);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let w = ui.available_width();
+                let title = Font::PAGE_TITLE.sized(28.0).tracking(0.3);
+                Text::new(&tr("Pause"), Font { line: 34.0, ..title }).color(k.ink_silver).show(ui, egui::vec2(w, 38.0));
+                if let Some(sub) = &sub {
+                    let f = Font::DATA.sized(14.0).tracking(0.08);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        Text::new(sub, Font { line: 20.0, ..f }).color(k.info).show(ui, egui::vec2(w - 40.0, 20.0));
+                    });
+                }
+                ui.add_space(18.0);
+                let style = ds::MenuStyle { font: ds::MenuStyle::MENU.font.sized(20.0), height: 52.0 };
+                let split = entries.len() - quits;
+                let mk = |r: std::ops::Range<usize>| -> Vec<ds::MenuEntry> { r.map(|i| ds::MenuEntry { hint: hints[i], ..ds::MenuEntry::new(&labels[i]) }).collect() };
+                let focus = |base: usize| self.focus.checked_sub(base).filter(|_| self.keyed);
+                // The plate on the focused entry (the board's `.sel`), on Continue under the pointer.
+                if let Some(i) = ds::menu(ui, "pause-a", style, &mk(0..split), Some(self.focus).filter(|&f| f < split), focus(0)) {
+                    picked = Some(i);
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    ds::separator(ui, 0.0);
+                });
+                ui.add_space(4.0);
+                if let Some(i) = ds::menu(ui, "pause-b", style, &mk(split..entries.len()), self.focus.checked_sub(split), focus(split)) {
+                    picked = Some(split + i);
+                }
+            });
+            ds::behind(ui, at, |p| ds::paint_panel(p, r.response.rect, ds::PanelKind::Deep, 0.90));
+        });
+        match picked {
+            Some(i) => {
+                self.focus = i;
+                self.act(o, entries[i])
+            }
+            None => false,
+        }
+    }
+
+    /// The settings' page (the options boards): the title, the rail of tabs, the tab's cards in columns, the footer's
+    /// status line, Original keys (Controls), Back and Apply. True when something was clicked.
+    fn settings(&mut self, o: &mut OptionsScreen, ctx: &egui::Context, texts: &UiTexts, sound: &mut dyn FnMut(crate::audio::SoundId)) -> bool {
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
+        let tr = |en: &str| s(texts.ours(en));
+        let k = ds::tokens();
         let mut click = false;
-        let list_w = (ui.available_width() * 0.56).min(380.0);
-        let slots = items.iter().take_while(|it| matches!(it, Item::Slot(_))).count();
-        if slots > 0 {
-            ui.vertical(|ui| {
-                ui.set_width(list_w);
-                crate::gui::card(ui, Some(&tr("Saves")), |ui| {
-                    egui::ScrollArea::vertical().id_salt("slots").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(body - 40.0).auto_shrink([false, false]).show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        for (i, &it) in items[..slots].iter().enumerate() {
-                            let Item::Slot(n) = it else { continue };
-                            click |= self.slot_line(o, ui, texts, i, n);
+        let dim = if self.game { 0.55 } else { 0.5 };
+        crate::gui::board(ctx, "options", egui::Vec2::from(PAGE), dim, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            let w = ui.available_width();
+            Text::new(&tr("OPTIONS"), Font::PAGE_TITLE).color(k.ink_silver).show(ui, egui::vec2(w, 36.0));
+            ui.add_space(24.0);
+            let footer = 20.0 + 44.0;
+            let body = ui.available_height() - 24.0 - footer;
+            let items = self.items(o);
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                // The rail.
+                ui.vertical(|ui| {
+                    ui.set_width(RAIL);
+                    let tabs = self.tabs();
+                    let names: Vec<String> = tabs.iter().map(|t| tr(t.title())).collect();
+                    let entries: Vec<ds::MenuEntry> = names.iter().map(|n| ds::MenuEntry::new(n)).collect();
+                    let sel = tabs.iter().position(|&t| t == self.tab);
+                    if let Some(i) = ds::menu(ui, "options-rail", ds::MenuStyle::RAIL, &entries, sel, None) {
+                        if Some(i) != sel {
+                            self.set_tab(tabs[i]);
+                            click = true;
                         }
+                    }
+                });
+                ui.add_space(32.0);
+                // The cards in columns, each card to the shortest column (the boards: three; Sound two).
+                let all = cards(&o.rows, &items);
+                let n = if self.tab == Tab::Sound { 2 } else { 3 }.min(all.len().max(1));
+                let width = ui.available_width();
+                let col_w = (width - GAP * (n as f32 - 1.0)) / n as f32;
+                let mut cols: Vec<(f32, Vec<usize>)> = vec![(0.0, Vec::new()); n];
+                for (c, (_, lines)) in all.iter().enumerate() {
+                    let h = 36.0 + 28.0 + lines.iter().map(|&i| line_height(o, texts, items[i])).sum::<f32>();
+                    let shortest = (0..n).min_by(|&a, &b| cols[a].0.total_cmp(&cols[b].0)).unwrap();
+                    cols[shortest].0 += h + GAP;
+                    cols[shortest].1.push(c);
+                }
+                self.hovered = None;
+                ui.vertical(|ui| {
+                    ui.set_width(width);
+                    egui::ScrollArea::vertical().id_salt(self.tab).scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(body).auto_shrink([false, false]).show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(GAP, 0.0);
+                            for (_, cs) in &cols {
+                                ui.vertical(|ui| {
+                                    ui.set_width(col_w);
+                                    ui.spacing_mut().item_spacing = egui::vec2(0.0, 2.0);
+                                    for &c in cs {
+                                        let (title, lines) = &all[c];
+                                        ds::card(ui, Some(&tr(title)), |ui| {
+                                            for &i in lines {
+                                                click |= self.line(o, ui, texts, i, items[i], sound);
+                                            }
+                                        });
+                                        ui.add_space(GAP - 2.0);
+                                    }
+                                });
+                            }
+                        });
                     });
                 });
             });
-            ui.add_space(12.0);
-        }
-        let right_w = ui.available_width();
-        ui.vertical(|ui| {
-            ui.set_width(right_w);
-            ui.spacing_mut().item_spacing.y = 10.0;
-            if slots > 0 {
-                crate::gui::card(ui, Some(&tr("Selected save")), |ui| click |= self.preview(o, ui, texts));
-            }
-            crate::gui::card(ui, None, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                let w = ui.available_width();
-                if let Some(g) = self.ask {
-                    let q = if g == Game::Exit { "Exit the game? Play since the last save is lost." } else { "Quit to the main menu? Play since the last save is lost." };
-                    ui.add(egui::Label::new(egui::RichText::new(tr(q)).size(15.5)).wrap());
-                    match two(ui, &tr(if g == Game::Exit { "Exit" } else { "Quit" }), &tr("Cancel")) {
-                        (true, _) => self.confirm(o),
-                        (_, true) => self.ask = None,
-                        _ => return,
-                    }
-                    click = true;
-                    return;
-                }
-                for (i, &it) in items.iter().enumerate().skip(slots) {
-                    let Item::Game(g) = it else { continue };
-                    let live = Self::enabled(o, it);
-                    let text = egui::RichText::new(s(label(o, texts, it))).size(15.5);
-                    let mut b = egui::Button::new(if g == Game::Load { text.strong() } else { text }).min_size(egui::vec2(w, 34.0));
-                    if g == Game::Load && live {
-                        b = b.fill(ui.visuals().selection.bg_fill);
-                    }
-                    let r = ui.add_enabled(live, b);
-                    if self.keyed && self.focus == i && live {
-                        crate::gui::focus_ring(ui, r.rect);
-                    }
-                    if r.clicked() {
-                        self.focus = i;
-                        click |= self.act(o, g);
-                    }
-                }
-            });
+            ui.add_space(24.0);
+            click |= self.footer(o, ui, texts, &items);
         });
         click
     }
 
-    /// A slot's line: its number, name and game date; a click picks it, a double click loads it.
-    fn slot_line(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, i: usize, n: usize) -> bool {
-        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
-        let (rect, r) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::click());
-        let v = ui.visuals();
-        let (on, focused) = (o.slot == n, self.keyed && self.focus == i);
-        if on || r.hovered() {
-            let fill = v.selection.bg_fill.gamma_multiply(if on { 0.45 } else { 0.16 });
-            ui.painter().rect_filled(rect, 6.0, fill);
-        }
-        if focused {
-            crate::gui::focus_ring(ui, rect);
-            if self.shown != Some((self.tab, i)) {
-                ui.scroll_to_rect(rect, None);
-                self.shown = Some((self.tab, i));
-            }
-        }
-        let font = egui::TextStyle::Body.resolve(ui.style());
-        let y = rect.center().y;
-        let p = ui.painter();
-        p.text(egui::pos2(rect.left() + 8.0, y), egui::Align2::LEFT_CENTER, format!("{n:>2}"), font.clone(), v.weak_text_color());
-        match o.slots.get(n).and_then(Option::as_ref) {
-            Some(slot) => {
-                p.text(egui::pos2(rect.left() + 38.0, y), egui::Align2::LEFT_CENTER, s(slot.name.clone()), font.clone(), if on { v.strong_text_color() } else { v.text_color() });
-                p.text(egui::pos2(rect.right() - 8.0, y), egui::Align2::RIGHT_CENTER, date(slot.date), egui::FontId::proportional(12.5), v.weak_text_color());
-            }
-            None => {
-                p.text(egui::pos2(rect.left() + 38.0, y), egui::Align2::LEFT_CENTER, s(texts.ours("Empty")), font, v.weak_text_color());
-            }
-        }
-        // The slots are off while the save name is typed (`Options_MouseInit2`: id 4 only without `IOMode`).
-        if o.entry.is_some() {
-            return false;
-        }
-        if r.double_clicked() {
-            return self.act(o, Game::Load);
-        }
-        if r.clicked() {
-            (o.slot, self.focus) = (n, i);
-            return true;
-        }
-        false
-    }
-
-    /// The selected slot's preview, or the save name's field while it is up.
-    fn preview(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts) -> bool {
+    /// The settings page's footer: a rim line, the status (what is wanted, or the line's description), the buttons.
+    fn footer(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, items: &[Item]) -> bool {
         let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
         let tr = |en: &str| s(texts.ours(en));
-        ui.set_min_height(120.0);
-        let kind = match o.slot {
-            24 => texts.ours("Autosave"),
-            23 => texts.ours("Previous autosave"),
-            n => crate::tr::fill(texts.lang, "Slot {}", &[n.to_string().as_bytes()]),
+        let k = ds::tokens();
+        let mut click = false;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 64.0), egui::Sense::hover());
+        ui.painter().hline(rect.x_range(), rect.top() + 0.5, egui::Stroke::new(1.0f32, k.rim));
+        let row = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + 20.0), rect.max);
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        child.spacing_mut().item_spacing.x = 16.0;
+        let pending = self.pending(o);
+        let apply = child.add_enabled(pending, ds::Plate::new(&tr("Apply")).primary(pending).width(180.0).focused(self.keyed && self.focus == items.len() + 1));
+        let back = child.add(ds::Plate::new(&tr("Back")).width(180.0).focused(self.keyed && self.focus == items.len()));
+        if self.tab == Tab::Controls {
+            let reset = items.iter().position(|&it| it == Item::Reset);
+            let r = child.add_enabled(!self.binds.is_default(), ds::Plate::new(&tr("Original keys")).width(220.0).focused(self.keyed && reset == Some(self.focus)));
+            if r.clicked() {
+                self.binds = Default::default();
+                click = true;
+            }
+        }
+        if apply.on_hover_text(tr("Save the changes and use them.")).clicked() {
+            self.apply(o);
+            click = true;
+        }
+        if back.on_hover_text(tr("Leave; changes not applied are taken back.")).clicked() {
+            self.back(o);
+            click = true;
+        }
+        // The status: the wait for a key, a key two actions share, the language's restart, else the line's description.
+        let lang = o.rows.iter().find(|r| r.key == crate::display::LANGUAGE).map(|r| r.value);
+        let line = self.hovered.or(Some(self.focus)).and_then(|i| items.get(i).copied());
+        let clash = match items.get(self.focus) {
+            Some(&Item::Bind(b)) => self.binds.clash(b),
+            _ => None,
         };
-        if let Some(e) = &o.entry {
-            ui.label(egui::RichText::new(tr("Save name")).small().weak());
-            let caret = (ui.input(|x| x.time) * 2.0) as u64 % 2 == 0;
-            let (a, b) = e.text.split_at(e.cursor.min(e.text.len()));
-            let text = format!("{}{}{}", s(a.to_vec()), if caret { "|" } else { " " }, s(b.to_vec()));
-            let v = ui.visuals();
-            egui::Frame::new().fill(v.extreme_bg_color).stroke(egui::Stroke::new(1.5f32, v.hyperlink_color)).corner_radius(6).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(egui::RichText::new(text).monospace().size(16.0));
-            });
-            ui.label(egui::RichText::new(s(kind)).small().weak());
-            return match two(ui, &tr("Save"), &tr("Cancel")) {
-                (true, _) => {
-                    self.out = o.entry_key(super::EntryKey::Enter);
-                    true
-                }
-                (_, true) => {
-                    o.entry = None;
-                    true
-                }
-                _ => false,
-            };
-        }
-        match o.slots.get(o.slot).and_then(Option::as_ref) {
-            Some(slot) => {
-                ui.add(egui::Label::new(egui::RichText::new(s(slot.name.clone())).size(20.0).strong()).wrap());
-                ui.label(s(crate::tr::fill(texts.lang, "Game date: {}", &[date(slot.date).as_bytes()])));
-                ui.label(egui::RichText::new(s(kind)).weak());
-                if let Some(t) = ago(&slot.file, texts.lang) {
-                    ui.label(egui::RichText::new(s(t)).small().weak());
-                }
-            }
-            None => {
-                ui.label(egui::RichText::new(tr("Empty slot")).size(20.0).weak());
-                ui.label(egui::RichText::new(s(kind)).weak());
-            }
-        }
-        false
+        let (text, c) = if self.capture.is_some() {
+            (tr("Press the new key; Esc keeps the old one."), k.focus)
+        } else if let Some(c) = clash {
+            (format!("{} {}", tr("Also the key of:"), s(label(o, texts, Item::Bind(c)))), k.focus)
+        } else if self.tab == Tab::Accessibility && o.lang_at_start.is_some_and(|v| Some(v) != lang) {
+            (tr("Restart to change the language"), k.focus)
+        } else if let Some(it) = line {
+            let d = describe(key_of(o, it));
+            (if d.is_empty() { String::new() } else { tr(d) }, k.ink_silver)
+        } else {
+            (String::new(), k.ink_silver)
+        };
+        let used = child.min_rect().width();
+        let f = Font::BODY.sized(15.0).tracking(0.05);
+        Text::new(&text, Font { line: 22.0, ..f }).color(c).lines(2).paint(ui, row.with_max_x(row.right() - used - 16.0));
+        click
     }
 
-    /// A setting's line: its label and description, its control at the right. True when it was clicked.
-    #[allow(clippy::too_many_arguments)]
-    fn line(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, i: usize, it: Item, hot: egui::Color32, sound: &mut dyn FnMut(crate::audio::SoundId)) -> bool {
+    /// A setting's line in its card: a settings row (`.orow`), a wide one (the label over the segments), a key's row
+    /// (`.krow`). True when it was clicked.
+    fn line(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, i: usize, it: Item, sound: &mut dyn FnMut(crate::audio::SoundId)) -> bool {
         let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
         let live = Self::enabled(o, it);
+        let focused = self.keyed && self.focus == i;
+        let name = s(label(o, texts, it));
         let mut click = false;
-        let bg = ui.painter().add(egui::Shape::Noop);
-        let row = ui.horizontal(|ui| {
-            ui.set_min_height(36.0);
-            let text_w = ui.available_width() - CONTROL - 12.0;
-            ui.vertical(|ui| {
-                ui.set_width(text_w);
-                ui.spacing_mut().item_spacing.y = 1.0;
-                let name = egui::RichText::new(s(label(o, texts, it))).size(15.5);
-                ui.add_enabled(live, egui::Label::new(name).wrap());
-                // The keys' common description is the status line's (one line, not one per key).
-                let d = if matches!(it, Item::Bind(_)) { "" } else { describe(key_of(o, it)) };
-                if !d.is_empty() {
-                    ui.add_enabled(live, egui::Label::new(egui::RichText::new(s(texts.ours(d))).small().weak()).wrap());
+        let resp = match it {
+            Item::Reset => return false,
+            Item::Bind(b) => {
+                let f = Font { size: 15.0, line: 20.0, weight: ds::Weight::Regular, tracking: 0.05, upper: false, lcd: false };
+                ds::option_row_in(ui, 40.0, f, &name, focused, live, |ui| click |= self.control(o, ui, texts, Item::Bind(b), sound)).0
+            }
+            Item::Row(k) if matches!(kind(&o.rows[k], texts), Kind::Segments { wide: true }) => {
+                // `.orow.wide`: the label, 8 points, the segments in equal columns.
+                let t = ds::tokens();
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 92.0), egui::Sense::click());
+                let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered() && live);
+                if focused {
+                    ui.painter().rect_filled(rect, ds::RADIUS_PLATE, t.rim_bright.gamma_multiply(0.12));
                 }
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.set_width(CONTROL);
-                ui.add_enabled_ui(live, |ui| click |= self.control(o, ui, texts, it, hot, sound));
-            });
-        });
-        let rect = row.response.rect.expand2(egui::vec2(6.0, 4.0));
-        let hovered = ui.rect_contains_pointer(rect);
-        if hovered && ui.input(|x| x.pointer.primary_pressed()) {
+                ds::rim(ui.painter(), rect, ds::RADIUS_PLATE, t.rim_bright.gamma_multiply(if focused { 1.0 } else { hover * 0.6 }));
+                let inner = rect.shrink(8.0);
+                let f = Font { size: 16.0, line: 20.0, weight: ds::Weight::Regular, tracking: 0.05, upper: false, lcd: false };
+                Text::new(&name, f).color(if live { t.ink } else { t.ink_muted }).paint(ui, inner.with_max_y(inner.top() + 32.0));
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner.with_min_y(inner.bottom() - 36.0)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                if !live {
+                    child.disable();
+                }
+                click |= self.control(o, &mut child, texts, it, sound);
+                resp
+            }
+            _ => ds::option_row(ui, &name, focused, live, |ui| click |= self.control(o, ui, texts, it, sound)).0,
+        };
+        if resp.hovered() || ui.rect_contains_pointer(resp.rect) {
+            self.hovered = Some(i);
+        }
+        if resp.clicked() || (ui.rect_contains_pointer(resp.rect) && ui.input(|x| x.pointer.primary_pressed())) {
             self.focus = i;
         }
-        let focused = self.keyed && self.focus == i;
-        if hovered || focused {
-            let fill = ui.visuals().selection.bg_fill.gamma_multiply(if focused { 0.30 } else { 0.16 });
-            ui.painter().set(bg, egui::Shape::rect_filled(rect, 8.0, fill));
-        }
-        if focused {
-            crate::gui::focus_ring(ui, rect);
-            if self.shown != Some((self.tab, i)) {
-                ui.scroll_to_rect(rect, None);
-                self.shown = Some((self.tab, i));
-            }
+        if focused && self.shown != Some((self.tab, i)) {
+            ui.scroll_to_rect(resp.rect, None);
+            self.shown = Some((self.tab, i));
         }
         click
     }
 
-    /// A setting's control: a switch, a drop-down, a slider, the name field, a key. True when it was clicked.
-    fn control(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, it: Item, hot: egui::Color32, sound: &mut dyn FnMut(crate::audio::SoundId)) -> bool {
+    /// A setting's control: a toggle, segments, a stepper, a slider, the name field, a key. True when it was clicked.
+    fn control(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, it: Item, sound: &mut dyn FnMut(crate::audio::SoundId)) -> bool {
         let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
-        let field = egui::vec2(CONTROL - 10.0, 30.0);
+        let k = ds::tokens();
         match it {
-            Item::Row(k) if o.rows[k].key == crate::display::UI_SCALE => {
-                let r = &o.rows[k];
-                let mut v = r.value;
-                ui.add_sized([44.0, 30.0], egui::Label::new(s(value_text(texts, r, v))));
-                ui.spacing_mut().slider_width = CONTROL - 64.0;
-                let resp = ui.add(egui::Slider::new(&mut v, 0..=r.states).show_value(false));
+            Item::Row(r) => {
+                let row = &o.rows[r];
+                let v = if row.locked { 0 } else { row.value };
+                match kind(row, texts) {
+                    Kind::Scale => {
+                        let mut f = v as f32 / row.states.max(1) as f32;
+                        let resp = ds::slider(ui, &mut f, &s(value_text(texts, row, v)));
+                        if resp.changed() {
+                            Self::set(o, r, (f * row.states as f32).round() as i32);
+                        }
+                        if resp.drag_started() {
+                            sound(crate::audio::CLICK);
+                        }
+                    }
+                    Kind::Toggle => {
+                        let mut on = v != 0;
+                        if ds::toggle(ui, &mut on, &s(texts.get(13, 3, 2)), &s(texts.get(13, 3, 1))).changed() {
+                            Self::set(o, r, on as i32);
+                            return true;
+                        }
+                    }
+                    Kind::Segments { wide } => {
+                        let names: Vec<String> = (0..=row.states).map(|n| s(value_text(texts, row, n))).collect();
+                        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+                        let mut sel = v.max(0) as usize;
+                        if ds::segmented(ui, &mut sel, &refs, wide.then(|| ui.available_width())).changed() {
+                            Self::set(o, r, sel as i32);
+                            return true;
+                        }
+                    }
+                    Kind::Stepper => {
+                        let (_, d) = ds::stepper(ui, &s(value_text(texts, row, v)), 128.0);
+                        if d != 0 {
+                            Self::step(o, r, d);
+                            return true;
+                        }
+                    }
+                }
+            }
+            Item::Slider(i) => {
+                let mut f = o.sliders[i].value as f32 / 100.0;
+                let resp = ds::slider(ui, &mut f, &format!("{}%", o.sliders[i].value));
                 if resp.changed() {
-                    Self::set(o, k, v);
+                    o.sliders[i].value = (f * 100.0).round() as i32;
                 }
                 if resp.drag_started() {
                     sound(crate::audio::CLICK);
                 }
             }
-            Item::Row(k) => {
-                let r = &o.rows[k];
-                let v = if r.locked { 0 } else { r.value };
-                if r.states == 1 && r.labels.is_empty() {
-                    let mut on = v != 0;
-                    if crate::gui::switch(ui, &mut on).changed() {
-                        Self::set(o, k, on as i32);
-                        return true;
-                    }
-                    ui.label(egui::RichText::new(s(texts.get(13, 3, if on { 1 } else { 2 }))).weak());
-                    return false;
-                }
-                let mut pick = None;
-                egui::ComboBox::from_id_salt(("row", k)).width(field.x).height(320.0).selected_text(s(value_text(texts, r, v))).show_ui(ui, |ui| {
-                    for n in 0..=r.states {
-                        if ui.add(egui::Button::selectable(n == v, s(value_text(texts, r, n)))).clicked() {
-                            pick = Some(n);
-                        }
-                    }
-                });
-                if let Some(n) = pick.filter(|&n| n != v) {
-                    Self::set(o, k, n);
-                    return true;
-                }
-            }
-            Item::Slider(i) => {
-                let mut v = o.sliders[i].value;
-                // The value in a column of its own, so the track doesn't move with it.
-                ui.add_sized([44.0, 30.0], egui::Label::new(format!("{v}%")));
-                ui.spacing_mut().slider_width = CONTROL - 64.0;
-                let r = ui.add(egui::Slider::new(&mut v, 0..=100).show_value(false));
-                if r.changed() {
-                    o.sliders[i].value = v;
-                }
-                if r.drag_started() {
-                    sound(crate::audio::CLICK);
-                }
-            }
             Item::Name => {
+                // A recessed field (`.field input`), the caret while it is typed.
                 let caret = self.editing && (ui.input(|x| x.time) * 2.0) as u64 % 2 == 0;
-                let text = s(self.name.clone()) + if caret { "|" } else { " " };
-                let stroke = if self.editing { egui::Stroke::new(1.5f32, ui.visuals().hyperlink_color) } else { ui.visuals().widgets.inactive.bg_stroke };
-                let b = egui::Button::new(egui::RichText::new(text).monospace()).fill(ui.visuals().extreme_bg_color).stroke(stroke);
-                if ui.add_sized(field, b).clicked() {
+                let text = s(self.name.clone()) + if caret { "|" } else { "" };
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(180.0, 36.0), egui::Sense::click());
+                let p = ui.painter();
+                p.rect_filled(rect, ds::RADIUS_PLATE, k.glass_deep);
+                ds::rim(p, rect, ds::RADIUS_PLATE, if self.editing { k.focus } else { k.rim });
+                Text::new(&text, Font::DATA.sized(16.0).tracking(0.08)).paint(ui, rect.shrink2(egui::vec2(12.0, 0.0)));
+                if resp.clicked() {
                     self.editing = true;
                     return true;
                 }
             }
             Item::Bind(b) => {
-                let (text, c) = match self.capture {
-                    // The status line says what to do.
-                    Some(c) if c == b => ("…".to_owned(), hot),
-                    _ => (crate::bindings::key_name(self.binds.0[b]).unwrap_or("?").to_owned(), if self.binds.clash(b).is_some() { hot } else { ui.visuals().text_color() }),
-                };
-                if ui.add_sized([120.0, 30.0], egui::Button::new(egui::RichText::new(text).monospace().color(c))).clicked() {
+                let listening = self.capture == Some(b);
+                let text = if listening { "…" } else { crate::bindings::key_name(self.binds.0[b]).unwrap_or("?") };
+                if ds::key_cap(ui, text, listening || self.binds.clash(b).is_some()).clicked() {
                     self.capture = Some(b);
                     return true;
                 }
             }
-            Item::Reset => {
-                let t = if self.binds.is_default() { "Original keys" } else { "Reset" };
-                if ui.add_enabled(!self.binds.is_default(), egui::Button::new(s(texts.ours(t))).min_size(egui::vec2(120.0, 30.0))).clicked() {
-                    self.binds = Default::default();
-                    return true;
-                }
-            }
-            // Drawn by the Save & load tab itself.
-            Item::Slot(_) | Item::Game(_) => {}
+            // Drawn by the footer and the save and load page.
+            Item::Reset | Item::Slot(_) | Item::Game(_) => {}
         }
         false
     }
-}
 
-/// A yes and a no button sharing the width: which was clicked.
-fn two(ui: &mut egui::Ui, yes: &str, no: &str) -> (bool, bool) {
-    ui.horizontal(|ui| {
-        let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-        let y = ui.add_sized([half, 32.0], egui::Button::new(egui::RichText::new(yes).strong()).fill(ui.visuals().selection.bg_fill));
-        let n = ui.add_sized([half, 32.0], egui::Button::new(no));
-        (y.clicked(), n.clicked())
-    })
-    .inner
+    /// ADR 0067: the save and load page (its board: the slots' table at the left, the selected save and the name with
+    /// Save and Load at the right, the footer's hint and Back). True when something was clicked.
+    fn saves(&mut self, o: &mut OptionsScreen, ctx: &egui::Context, texts: &UiTexts) -> bool {
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
+        let tr = |en: &str| s(texts.ours(en));
+        let k = ds::tokens();
+        let mut click = false;
+        let items = game_items(o);
+        crate::gui::board(ctx, "saves", egui::Vec2::from(SAVES_PAGE), 0.55, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            let w = ui.available_width();
+            Text::new(&tr("SAVE & LOAD"), Font::PAGE_TITLE).color(k.ink_silver).show(ui, egui::vec2(w, 36.0));
+            ui.add_space(20.0);
+            let body = ui.available_height() - 20.0 - 64.0;
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                let list_w = w - ASIDE - 32.0;
+                ui.vertical(|ui| {
+                    ui.set_width(list_w);
+                    ui.set_height(body);
+                    click |= self.slot_table(o, ui, texts, &items, body);
+                });
+                ui.add_space(32.0);
+                ui.vertical(|ui| {
+                    ui.set_width(ASIDE);
+                    click |= self.aside(o, ui, texts, &items);
+                });
+            });
+            ui.add_space(20.0);
+            // The footer: the hint, Back.
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 64.0), egui::Sense::hover());
+            ui.painter().hline(rect.x_range(), rect.top() + 0.5, egui::Stroke::new(1.0f32, k.rim));
+            let row = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + 20.0), rect.max);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            if child.add(ds::Plate::new(&tr("Back")).width(200.0).focused(self.keyed && self.focus == items.len())).clicked() {
+                self.back(o);
+                click = true;
+            }
+            // Why Load or Save is off (the original greys them without a word).
+            let why = if o.entry.is_some() {
+                "Enter saves, Esc cancels."
+            } else if o.multiplayer && !o.tutorial {
+                "Multiplayer: no loading; only the host saves."
+            } else if o.battle_lock() && !o.load_only && !o.tutorial {
+                "No saving during a battle."
+            } else {
+                ""
+            };
+            let f = Font::BODY.sized(15.0).tracking(0.05);
+            Text::new(&tr(why), Font { line: 22.0, ..f }).color(k.ink_silver).paint(ui, row.with_max_x(row.right() - 216.0));
+        });
+        click
+    }
+
+    /// The slots' table (`.srow`: #, name, game date, saved; 40 high): the autosaves, a rim line, the slots.
+    fn slot_table(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, items: &[Item], body: f32) -> bool {
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
+        let tr = |en: &str| s(texts.ours(en));
+        let k = ds::tokens();
+        let cols = |r: egui::Rect| {
+            let x = r.left() + 12.0;
+            let date = r.right() - 12.0 - 150.0 - 12.0 - 150.0;
+            [egui::Rect::from_x_y_ranges(x..=x + 44.0, r.y_range()), egui::Rect::from_x_y_ranges(x + 56.0..=date - 12.0, r.y_range()), egui::Rect::from_x_y_ranges(date..=date + 150.0, r.y_range()), egui::Rect::from_x_y_ranges(r.right() - 162.0..=r.right() - 12.0, r.y_range())]
+        };
+        let (head, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
+        for (c, t) in cols(head).into_iter().zip(["#", "Saves", "Game date", "Saved"]) {
+            Text::new(&if t == "#" { t.to_owned() } else { tr(t) }, Font::LABEL).color(k.ink_muted).paint(ui, c);
+        }
+        ui.add_space(4.0);
+        let mut click = false;
+        let lcd = Font { size: 16.0, line: 18.0, ..Font::READOUT }.tracking(0.08);
+        egui::ScrollArea::vertical().id_salt("slots").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(body - 32.0).auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let mut autos = true;
+            for (i, &it) in items.iter().enumerate() {
+                let Item::Slot(n) = it else { continue };
+                if autos && n <= 22 {
+                    autos = false;
+                    if i > 0 {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 9.0), egui::Sense::hover());
+                        ui.painter().hline(r.x_range().shrink(12.0), r.center().y, egui::Stroke::new(1.0f32, k.rim));
+                    }
+                }
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::click());
+                let on = o.slot == n;
+                let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
+                let p = ui.painter();
+                if on {
+                    ds::hgrad(p, rect, ds::RADIUS_PLATE, &[(0.0, egui::Color32::from_white_alpha(41)), (1.0, egui::Color32::from_white_alpha(5))]);
+                    ds::rim(p, rect, ds::RADIUS_PLATE, k.ink_silver);
+                } else {
+                    ds::rim(p, rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
+                }
+                if self.keyed && self.focus == i {
+                    ds::focus_mark(p, rect, ds::RADIUS_PLATE as f32, 2.0);
+                    if self.shown != Some((self.tab, i)) {
+                        ui.scroll_to_rect(rect, None);
+                        self.shown = Some((self.tab, i));
+                    }
+                }
+                let [cn, cname, cdate, cage] = cols(rect);
+                let body_f = Font::BODY.sized(17.0);
+                Text::new(&if n > 22 { "A".to_owned() } else { n.to_string() }, lcd).color(k.ink_muted).paint(ui, cn);
+                match o.slots.get(n).and_then(Option::as_ref) {
+                    Some(slot) => {
+                        let name = match n {
+                            24 => tr("Autosave"),
+                            23 => tr("Previous autosave"),
+                            _ => s(slot.name.clone()),
+                        };
+                        Text::new(&name, body_f).color(k.ink).paint(ui, cname);
+                        Text::new(&date(slot.date), lcd).color(k.info).paint(ui, cdate);
+                        if let Some(a) = age(&slot.file, texts.lang) {
+                            Text::new(&s(a), Font::BODY.sized(14.0)).color(k.ink_muted).paint(ui, cage);
+                        }
+                    }
+                    None => {
+                        Text::new(&tr("Empty"), body_f).color(k.ink_muted).paint(ui, cname);
+                    }
+                }
+                // The slots are off while the save name is typed (`Options_MouseInit2`: id 4 only without `IOMode`).
+                if o.entry.is_some() {
+                    continue;
+                }
+                if resp.double_clicked() {
+                    click |= self.act(o, Game::Load);
+                } else if resp.clicked() {
+                    (o.slot, self.focus) = (n, i);
+                    click = true;
+                }
+            }
+        });
+        click
+    }
+
+    /// The right column: the selected save's card, the name field with Save and Load.
+    fn aside(&mut self, o: &mut OptionsScreen, ui: &mut egui::Ui, texts: &UiTexts, items: &[Item]) -> bool {
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
+        let tr = |en: &str| s(texts.ours(en));
+        let k = ds::tokens();
+        let mut click = false;
+        let kind = match o.slot {
+            24 => texts.ours("Autosave"),
+            23 => texts.ours("Previous autosave"),
+            n => crate::tr::fill(texts.lang, "Slot {}", &[n.to_string().as_bytes()]),
+        };
+        let slot = o.slots.get(o.slot).and_then(Option::as_ref).cloned();
+        ds::panel(ui, ds::PanelKind::Glass, 0.88, 24.0, |ui| {
+            ui.set_width(ASIDE - 48.0);
+            ui.spacing_mut().item_spacing.y = 14.0;
+            ds::heading_label(ui, &tr("Selected save"));
+            let w = ui.available_width();
+            let title = Font::HEADING.sized(24.0).tracking(0.08);
+            match &slot {
+                Some(sl) => {
+                    Text::new(&s(sl.name.clone()), Font { line: 30.0, ..title }).show(ui, egui::vec2(w, 30.0));
+                    ds::kv(ui, &tr("Game date"), &date(sl.date), ds::Tone::Info, 150.0);
+                    ds::kv(ui, &tr("Slot"), &s(kind.clone()), ds::Tone::Info, 150.0);
+                    if let Some(a) = age(&sl.file, texts.lang) {
+                        ds::kv(ui, &tr("Saved"), &s(a), ds::Tone::Info, 150.0);
+                    }
+                }
+                None => {
+                    Text::new(&tr("Empty slot"), Font { line: 30.0, ..title }).color(k.ink_muted).show(ui, egui::vec2(w, 30.0));
+                    ds::kv(ui, &tr("Slot"), &s(kind.clone()), ds::Tone::Info, 150.0);
+                }
+            }
+        });
+        ui.add_space(20.0);
+        ds::panel(ui, ds::PanelKind::Glass, 0.88, 24.0, |ui| {
+            ui.set_width(ASIDE - 48.0);
+            ui.spacing_mut().item_spacing.y = 8.0;
+            let w = ui.available_width();
+            ds::heading_label(ui, &tr("Save name"));
+            // The field: the name being typed with its caret, else what Save would start with.
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 44.0), egui::Sense::click());
+            let p = ui.painter();
+            p.rect_filled(rect, ds::RADIUS_PLATE, k.glass_deep);
+            ds::rim(p, rect, ds::RADIUS_PLATE, if o.entry.is_some() { k.focus } else { k.rim });
+            ds::edge_line(p, rect, ds::RADIUS_PLATE as f32, true, egui::Color32::from_black_alpha(200));
+            let f = Font::DATA.sized(17.0).tracking(0.08);
+            match &o.entry {
+                Some(e) => {
+                    let caret = (ui.input(|x| x.time) * 2.0) as u64 % 2 == 0;
+                    let (a, b) = e.text.split_at(e.cursor.min(e.text.len()));
+                    let text = format!("{}{}{}", s(a.to_vec()), if caret { "|" } else { " " }, s(b.to_vec()));
+                    Text::new(&text, f).paint(ui, rect.shrink2(egui::vec2(14.0, 0.0)));
+                }
+                None => {
+                    let shown = slot.as_ref().map_or_else(|| format!("Save Game {:02}", o.slot), |sl| s(sl.name.clone()));
+                    Text::new(&shown, f).color(k.ink_muted).paint(ui, rect.shrink2(egui::vec2(14.0, 0.0)));
+                }
+            }
+            if resp.clicked() && o.entry.is_none() && Self::enabled(o, Item::Game(Game::Save)) {
+                o.start_entry();
+                click = true;
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                let half = (w - 12.0) / 2.0;
+                for g in [Game::Save, Game::Load] {
+                    let at = items.iter().position(|&it| it == Item::Game(g));
+                    let Some(at) = at else { continue };
+                    let live = Self::enabled(o, Item::Game(g)) || (g == Game::Save && o.entry.is_some());
+                    let r = ui.add_enabled(live, ds::Plate::new(&tr(g.label(false))).primary(g == Game::Load || o.entry.is_some()).width(half).focused(self.keyed && self.focus == at));
+                    if r.clicked() {
+                        self.focus = at;
+                        click |= self.act(o, g);
+                    }
+                }
+            });
+            let hint = if slot.is_some() && !o.load_only { "Saving here overwrites the old save." } else { "" };
+            let f = Font::BODY.sized(14.0).tracking(0.04);
+            Text::new(&tr(hint), Font { line: 20.0, ..f }).color(k.ink_muted).lines(2).show(ui, egui::vec2(w, 40.0));
+        });
+        click
+    }
 }
 
 /// A save's game date (year, month, day).
@@ -1054,16 +1340,21 @@ fn ago(file: &std::path::Path, lang: ig2_formats::text::Lang) -> Option<Vec<u8>>
     Some(crate::tr::fill(lang, en, &[n.to_string().as_bytes()]))
 }
 
+/// The table's short age ("12 minutes ago"), the column under "Saved".
+fn age(file: &std::path::Path, lang: ig2_formats::text::Lang) -> Option<Vec<u8>> {
+    let secs = std::fs::metadata(file).ok()?.modified().ok()?.elapsed().ok()?.as_secs();
+    let (en, n) = match secs {
+        0..60 => return Some(crate::tr::get(lang, "just now")),
+        60..3600 => ("{} minutes ago", secs / 60),
+        3600..86400 => ("{} hours ago", secs / 3600),
+        _ => ("{} days ago", secs / 86400),
+    };
+    Some(crate::tr::fill(lang, en, &[n.to_string().as_bytes()]))
+}
+
 /// The UI scale row's value.
 fn scale_row(o: &OptionsScreen) -> Option<i32> {
     o.rows.iter().find(|r| r.key == crate::display::UI_SCALE).map(|r| r.value)
-}
-
-/// "DISPLAY" → "Display" (the tab titles are the table's upper-case texts).
-fn title_case(s: &str) -> String {
-    let lower = s.to_lowercase();
-    let mut c = lower.chars();
-    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1096,7 +1387,7 @@ mod tests {
         for t in Tab::ALL {
             assert!(!items(&o.rows, t).is_empty(), "{t:?}");
             // Every card has a heading in the remake text table.
-            assert!(cards(&o, &items(&o.rows, t)).iter().all(|(h, _)| crate::tr::has(h)), "{t:?}");
+            assert!(cards(&o.rows, &items(&o.rows, t)).iter().all(|(h, _)| crate::tr::has(h)), "{t:?}");
         }
         assert_eq!(items(&o.rows, Tab::Sound)[..2], [Item::Slider(0), Item::Slider(1)]);
         assert_eq!(items(&o.rows, Tab::Controls).len(), crate::bindings::ACTIONS.len() + 1);
@@ -1146,13 +1437,14 @@ mod tests {
         o.store(&mut f);
         assert_eq!((f.int(crate::display::VSYNC), f.get(NAME_KEY)), (Some(0), Some("Kim")));
         // A slider and the name changed, then Back: both taken back, the screen leaves.
-        m.key(&mut o, Nav::NextTab, &mut quiet);
+        for _ in 0..3 {
+            m.key(&mut o, Nav::NextTab, &mut quiet);
+        }
+        assert_eq!(m.tab, Tab::Sound);
         m.key(&mut o, Nav::Right, &mut quiet);
         assert_eq!(o.sliders[0].value, 85);
-        m.key(&mut o, Nav::PrevTab, &mut quiet);
-        m.key(&mut o, Nav::PrevTab, &mut quiet);
-        assert_eq!(m.tab, Tab::Language);
-        m.key(&mut o, Nav::PrevTab, &mut quiet);
+        m.key(&mut o, Nav::NextTab, &mut quiet);
+        m.focus = items(&o.rows, Tab::Game).iter().position(|&i| i == Item::Name).unwrap();
         m.key(&mut o, Nav::Activate, &mut quiet);
         assert!(m.editing);
         m.key(&mut o, Nav::Erase, &mut quiet);
@@ -1216,25 +1508,36 @@ mod tests {
         o
     }
 
+    /// The save and load page's line `it` focused.
     fn focus(o: &mut OptionsScreen, it: Item) {
         let at = game_items(o).iter().position(|&i| i == it).unwrap();
-        o.modern.as_mut().unwrap().focus = at;
+        let m = o.modern.as_mut().unwrap();
+        (m.menu, m.tab, m.focus) = (false, Tab::Saves, at);
+    }
+
+    /// The pause menu's entry `g` focused.
+    fn menu_focus(o: &mut OptionsScreen, g: Game) {
+        let at = menu_items(o).iter().position(|&x| x == g).unwrap();
+        let m = o.modern.as_mut().unwrap();
+        (m.menu, m.focus) = (true, at);
     }
 
     fn key(o: &mut OptionsScreen, k: Nav) -> Option<Act> {
         o.modern_key(k, &mut |_| {})
     }
 
-    /// The tab's lines and the original's gates: 22 slots and the filled 24; Load a filled slot, Save not on 23, 24,
-    /// in a battle or a joiner's multiplayer game; the tutorial's two buttons; Load game's Load alone.
+    /// The pause menu first; the page's lines and the original's gates: the filled autosave 24 and the 22 slots; Load a
+    /// filled slot, Save not on 23, 24, in a battle or a joiner's multiplayer game; the tutorial's menu; Load game's Load
+    /// alone.
     #[test]
     fn save_and_load_lines_and_gates() {
         let mut o = game();
         let m = o.modern.as_ref().unwrap();
-        assert_eq!((m.tab, m.tabs().len(), m.tabs()[0]), (Tab::Saves, Tab::ALL.len() + 1, Tab::Saves));
+        assert!(m.menu && m.tabs() == Tab::ALL);
+        assert_eq!(menu_items(&o).len(), 7);
         let lines = game_items(&o);
-        assert_eq!(lines.len(), 23 + 4);
-        assert!(lines.contains(&Item::Slot(24)) && !lines.contains(&Item::Slot(23)));
+        assert_eq!(lines.len(), 23 + 2);
+        assert!(lines[0] == Item::Slot(24) && !lines.contains(&Item::Slot(23)));
         let on = |o: &OptionsScreen, g| Modern::enabled(o, Item::Game(g));
         o.slot = 1;
         assert!(on(&o, Game::Load) && on(&o, Game::Save));
@@ -1253,11 +1556,35 @@ mod tests {
         assert!(on(&o, Game::Save));
         o.multiplayer = false;
         o.tutorial = true;
-        assert_eq!(game_items(&o), [Item::Game(Game::Continue), Item::Game(Game::Quit)]);
+        assert_eq!(menu_items(&o), [Game::Continue, Game::Options, Game::Quit]);
         o.tutorial = false;
         o.load_only = true;
         assert_eq!(game_items(&o).last(), Some(&Item::Game(Game::Load)));
         assert_eq!(game_items(&o).len(), 24);
+        let m = Modern::in_game(&o, b"Kim".to_vec(), Default::default());
+        assert!(!m.menu && m.tab == Tab::Saves);
+    }
+
+    /// The pause menu's Save opens the page with the name entry; Options the tabs; Back from either is the menu again;
+    /// Help leaves for the help screen.
+    #[test]
+    fn pause_menu_opens_its_pages() {
+        let mut o = game();
+        o.slot = 3;
+        menu_focus(&mut o, Game::Save);
+        key(&mut o, Nav::Activate);
+        assert!(o.entry.is_some() && o.modern.as_ref().unwrap().tab == Tab::Saves);
+        key(&mut o, Nav::Back);
+        key(&mut o, Nav::Back);
+        assert!(o.modern.as_ref().unwrap().menu && !o.leaving());
+        menu_focus(&mut o, Game::Options);
+        key(&mut o, Nav::Activate);
+        assert_eq!(o.modern.as_ref().unwrap().tab, Tab::Display);
+        key(&mut o, Nav::Back);
+        assert!(o.modern.as_ref().unwrap().menu);
+        menu_focus(&mut o, Game::Help);
+        key(&mut o, Nav::Activate);
+        assert_eq!((0..3).find_map(|_| o.done()), Some(Act::Help));
     }
 
     /// Save: the slot's name or "Save Game nn", the first letter clears it, Enter hands the save back; Esc cancels.
@@ -1285,6 +1612,8 @@ mod tests {
         key(&mut o, Nav::Back);
         assert!(o.entry.is_none() && !o.leaving());
         key(&mut o, Nav::Back);
+        assert!(o.modern.as_ref().unwrap().menu && !o.leaving());
+        key(&mut o, Nav::Back);
         assert!(o.leaving());
         assert_eq!(o.done().or_else(|| o.done()).or_else(|| o.done()), Some(Act::Back));
     }
@@ -1293,12 +1622,12 @@ mod tests {
     #[test]
     fn quit_exit_and_load() {
         let mut o = game();
-        focus(&mut o, Item::Game(Game::Quit));
+        menu_focus(&mut o, Game::Quit);
         key(&mut o, Nav::Activate);
         assert_eq!(o.modern.as_ref().unwrap().ask, Some(Game::Quit));
         key(&mut o, Nav::Back);
         assert!(o.modern.as_ref().unwrap().ask.is_none() && !o.leaving());
-        focus(&mut o, Item::Game(Game::Exit));
+        menu_focus(&mut o, Game::Exit);
         key(&mut o, Nav::Activate);
         key(&mut o, Nav::Activate);
         let done = |o: &mut OptionsScreen| (0..3).find_map(|_| o.done());
@@ -1313,7 +1642,7 @@ mod tests {
         // Under the tutorial Quit goes without the question.
         let mut o = game();
         o.tutorial = true;
-        focus(&mut o, Item::Game(Game::Quit));
+        menu_focus(&mut o, Game::Quit);
         key(&mut o, Nav::Activate);
         assert_eq!(done(&mut o), Some(Act::MainMenu));
     }
@@ -1327,7 +1656,11 @@ mod tests {
         let mut o = game();
         for step in 0..4 {
             match step {
-                1 => o.start_entry(),
+                1 => {
+                    let m = o.modern.as_mut().unwrap();
+                    (m.menu, m.tab) = (false, Tab::Saves);
+                    o.start_entry();
+                }
                 2 => (o.entry, o.modern.as_mut().unwrap().ask) = (None, Some(Game::Exit)),
                 3 => (o.tutorial, o.modern.as_mut().unwrap().ask) = (true, None),
                 _ => {}
@@ -1343,10 +1676,16 @@ mod tests {
         for t in ["Saved just now", "Saved {} minutes ago", "Saved {} hours ago", "Saved {} days ago", "Enter saves, Esc cancels.", "No saving during a battle."] {
             assert!(crate::tr::has(t), "{t}");
         }
+        for t in ["Detail", "Readability", "Subtitles and colours", "Volume", "Music", "Battles and saving", "Enhancements", "Handling", "Original keys", "Game date", "Slot", "Saved"] {
+            assert!(crate::tr::has(t), "{t}");
+        }
+        for t in ["Saving here overwrites the old save.", "just now", "{} minutes ago", "{} hours ago", "{} days ago", "Pause", "OPTIONS"] {
+            assert!(crate::tr::has(t), "{t}");
+        }
         for t in ["Multiplayer: no loading; only the host saves.", "Quit to the main menu? Play since the last save is lost.", "Exit the game? Play since the last save is lost.", describe("ModernGameMenu")] {
             assert!(crate::tr::has(t), "{t}");
         }
-        for g in [Game::Load, Game::Save, Game::Quit, Game::Exit, Game::Continue] {
+        for g in [Game::Load, Game::Save, Game::Quit, Game::Exit, Game::Continue, Game::Options, Game::Help] {
             assert!(crate::tr::has(g.label(false)) && crate::tr::has(g.label(true)), "{g:?}");
         }
     }

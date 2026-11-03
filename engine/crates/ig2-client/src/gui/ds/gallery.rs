@@ -40,7 +40,7 @@ pub fn page(ctx: &egui::Context, cursors: &[(Cursor, Vec<egui::TextureHandle>)])
         panel(ui, PanelKind::Deep, 0.8, 16.0, |ui| {
             ui.spacing_mut().item_spacing.y = SPACE[0];
             caption(ui, "Játék · menu");
-            let play = [MenuEntry { text: "Tovább", sub: Some("Sokáig elment · 2357.03.11"), off: false }, MenuEntry::new("Új játék"), MenuEntry { text: "Betöltés", sub: None, off: true }, MenuEntry::new("Többjátékos és nagyon hosszú menüpont")];
+            let play = [MenuEntry { sub: Some("Sokáig elment · 2357.03.11"), hint: Some("ESC"), ..MenuEntry::new("Tovább") }, MenuEntry::new("Új játék"), MenuEntry { off: true, ..MenuEntry::new("Betöltés") }, MenuEntry::new("Többjátékos és nagyon hosszú menüpont")];
             menu(ui, "g-menu-a", MenuStyle::MENU, &play, Some(0), Some(1));
             forced(true, false, || menu(ui, "g-menu-b", MenuStyle::MENU, &[MenuEntry::new("Beállítások (hover)")], None, None));
             forced(true, true, || menu(ui, "g-menu-c", MenuStyle::MENU, &[MenuEntry::new("Kilépés (pressed)")], None, None));

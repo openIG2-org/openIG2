@@ -119,7 +119,7 @@ The controls are the original's; the main menu's Options screen → Controls cha
 The full key and hot-spot tables per screen are in `re/screens/input.md`.
 
 ## Saves and settings
-Our own saves go to the Options screen's slots (`IG2_SLOT_DIR`; with the modern in-game menu on, its "Save & load" tab shows them: click a slot, double click or Load loads it, Save asks for a name); original `.sav` files load with `--save`. Our
+Our own saves go to the Options screen's slots (`IG2_SLOT_DIR`; with the modern in-game menu on, its Save and Load pages show them: click a slot, double click or Load loads it, Save asks for a name); original `.sav` files load with `--save`. Our
 settings are kept in our own file (`IG2_OPTIONS_DIR`), never in the original's.
 
 F12 quick-saves into `quicksave.ig2s` beside the slots and Shift+F12 loads it back (ADR 0032); both work where the
@@ -140,8 +140,7 @@ In a game with "Modern in-game menu" off: Options → the REMAKE tab, grouped (S
 turn to the next page. A press cycles the row; changes apply at once and are saved in `ig2-rework-options.dat`.
 
 In the main menu, the Settings label at the bottom right (or the `O` key) opens the modern Options screen with every
-setting, the original's and ours, in tabs: Display, Sound, Interface, Game, Controls, Accessibility, Multiplayer
-(your name in multiplayer games) and Language. Each setting has its description under its label, and every tab scrolls with the wheel. Click a
+setting, the original's and ours, in five tabs of cards: Display, Accessibility, Controls, Sound and Game. Each setting has its description under its label, and every tab scrolls with the wheel. Click a
 switch, a drop-down or a slider's track; Apply saves and applies the changes, Back leaves and takes back
 what wasn't applied. Keyboard: Tab / Shift+Tab (or Page Down / Up) change the tab, Up / Down move between the settings
 and the buttons, Left / Right change a value (sliders by 5), Enter or Space toggles or presses, Esc is Back. Both
@@ -182,7 +181,7 @@ Shift and Alt can't be changed; typing names and chat always uses the real keys.
 | Sharp UI (`SharpUi`) | Off by default: the panels, text and pointer are drawn with crisp texel edges instead of the original's smooth scaling, for big windows (1440p, 4K) where the 640×480 layout is scaled several times (ADR 0043); the UI's size follows the window either way |
 | Sharp text (`SharpText`) | Off by default: on big windows (1440p, 4K) the game's own font is drawn with sharp, smooth edges instead of the original's blur, every letter in the same place and size (ADR 0046); combines with Sharp UI; at 800x600 nothing changes |
 | Modern starmap HUD (`ModernStarmapHud`) | On by default, under "Interface": on the starmap the top bar (with the screens as a row of icons), the selection's compact info panel (icon buttons for details, colony or split, tanks and production), and the minimap with a strip of camera buttons under it are redrawn as small console plates in your empire colour that follow the UI scale; the radial icon menu, the select menus (tax, auto-build, priority, a station's sale, the planet list) and a planet's long info get the same look on the original's places; the production, transfer, fleet and vehicle panels stay the original's. Off = the original's HUD (ADR 0065) |
-| Modern in-game menu (`ModernGameMenu`) | On by default, under "Interface": Esc or `O` in a game, and the main menu's Load game, open the main menu's Options page with a first tab "Save & load" (the 24 slots, a preview, Load, Save, Quit to main menu, Exit game); settings wait for Apply. Off = the original's Options screen (ADR 0067) |
+| Modern in-game menu (`ModernGameMenu`) | On by default, under "Interface": Esc or `O` in a game, and the main menu's Load game, open a pause menu (Continue, Save, Load, Options, Help, Quit to main menu, Exit game; Save and Load show the 24 slots and a preview); its Options page's settings wait for Apply. Off = the original's Options screen (ADR 0067) |
 | Modern research screen (`ModernResearch`) | On by default, under "Interface": the research screen and the starmap's production view are redrawn as small console plates in your empire colour (production: planet, ships and vehicles plates, four slots with count buttons that repeat while held; research: categories, techs, prerequisites, labs, days and cost, start/stop, urgent, auto-research), with the same functions and keys. Off = the original's screens (ADR 0071) |
 | Modern colony screen (`ModernColony`) | On by default, under "Interface": the colony screen's panels (build menu, short info with repair, demolish, on/off and self-destruct icons, the ground war's buttons and sides, the radar) are redrawn as small console plates in your empire colour, with the same functions and keys; the planet info mode keeps the original's panels. Off = the original's panels (ADR 0070) |
 | Modern info screen (`ModernInfo`) | On by default, under "Interface": the information screen is redrawn as small console plates in your empire colour: the empires met, the selected empire's planets and fleets as one scrolling list you can sort (order, name, size, alerts), the detail rows with Back, drop-down menus for a planet's settings, the money triangle, the spending limit (set by pressing or dragging on its bar) and the ten charts or the star log; same functions and keys. Off = the original's screen (ADR 0072) |

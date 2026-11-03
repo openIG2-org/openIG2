@@ -1,6 +1,6 @@
 # ADR 0067: the modern in-game menu
 
-Date: 2026-11-01. Status: accepted (part 4 of the egui package, after ADR 0062, 0065 and 0066). Implemented by
+Date: 2026-11-01. Status: accepted (part 4 of the egui package, after ADR 0062, 0065 and 0066); amended by ADR 0078 (a pause menu first, save and load on their own page). Implemented by
 `ig2-client::options::modern` (the Save & load tab, its keys and acts), `OptionsScreen` (the same gates and acts as
 the original's screen) and the window (`window.rs`: `open_options`, `options_game_frame`'s egui frame, `options_act`);
 `--snapshot --screen options --modern-menu` draws it headless.
