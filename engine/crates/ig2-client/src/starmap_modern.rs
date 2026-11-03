@@ -620,7 +620,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
 
 /// The cast-metal plate (the navigation's: `radial-gradient(ellipse at 50% 0%, metal-light, metal 35 %, metal-dark)`
 /// with the relief).
-fn metal_plate(p: &egui::Painter, r: Rect, radius: u8) {
+pub(crate) fn metal_plate(p: &egui::Painter, r: Rect, radius: u8) {
     let k = ds::tokens();
     ds::shadow(p, r.translate(vec2(0.0, 3.0)), radius, 0, 8, 0, Color32::from_black_alpha(204));
     ds::radial(p, r, radius, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);

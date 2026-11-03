@@ -118,6 +118,7 @@ mod starmap_modern;
 mod colony_modern;
 mod fleet_modern;
 mod design_modern;
+mod battle_modern;
 mod production_modern;
 mod research_modern;
 mod spacewar_fx;

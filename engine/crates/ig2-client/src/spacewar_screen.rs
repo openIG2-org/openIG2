@@ -189,6 +189,7 @@ impl Dump {
             pointer: 0,
             formation: None,
             kering: self.kering.unwrap_or(0.0),
+            modern: false,
         }
     }
 
@@ -261,6 +262,8 @@ pub struct Shown<'a> {
     pub formation: Option<i32>,
     /// `smkeringeto` (exe 0xF176DC): the console's side lights circle with it (`smMozgatMainFenyek`).
     pub kering: f32,
+    /// Ours (ADR 0077): the modern HUD draws the column, the console, the radar and the info boxes.
+    pub modern: bool,
 }
 
 /// The battle camera's state (spec §2.1).
@@ -1517,6 +1520,9 @@ pub struct Gfx {
     /// The weapon column's and the small info box's textures ([`fixed_texture`]), drawn into again each frame.
     column_target: Option<crate::render::Target>,
     info_target: Option<crate::render::Target>,
+    /// The column's and the info model's render targets of the last frame (ADR 0077: cut into the modern HUD).
+    pub column_tex: Option<crate::render::TexId>,
+    pub info_tex: Option<crate::render::TexId>,
 }
 
 impl Gfx {
@@ -1531,7 +1537,7 @@ impl Gfx {
         });
         let forms = s.fx.map_or_else(Vec::new, |(fx, _)| fx.tables.forms.iter().map(|f| if f.name.is_empty() { None } else { Mesh::load(r, install, "vector/spacewar/", &f.name, "textures/spacewar/") }).collect());
         let szar = crate::assets::Image::load(install, "dataraw/textures/spacewar/szar_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
-        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), point: crate::assets::Image::load(install, "star.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t)), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])), column_target: None, info_target: None }
+        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), point: crate::assets::Image::load(install, "star.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t)), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])), column_target: None, info_target: None, column_tex: None, info_tex: None }
     }
 }
 
@@ -1572,15 +1578,21 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
     // [obs fx7 t1000..t1245 with the big box open: weapons 5.0-8.6 -> 2.8-6.0; the info model then left its box].
     let mut column = Vec::new();
     scene.weapons(&mut column, &gfx.panel);
-    put_fixed(f, &virt, fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT, s.kering, true, s.view.xcenter), COLUMN_RECT, None);
+    gfx.column_tex = fixed_texture(r, &mut gfx.column_target, &column, COLUMN_RECT, s.kering, true, s.view.xcenter);
+    if !s.modern {
+        put_fixed(f, &virt, gfx.column_tex, COLUMN_RECT, None);
+    }
     let mut info = Vec::new();
     scene.info_model(&mut info, s.battle, s.spin, 1.0 - s.fade);
     let info_tex = fixed_texture(r, &mut gfx.info_target, &info, INFO_MODEL_RECT, s.kering, false, 320.0);
     if let Some(c) = gfx.console.as_mut() {
         c.relight(r, s.kering, &cam.matrix());
     }
+    gfx.info_tex = info_tex;
     crate::spacewar_hud::draw(f, hud, gfx.console.as_ref(), gfx.point, &virt, s);
-    put_fixed(f, &virt, info_tex, INFO_MODEL_RECT, crate::kit::layout::box_model_clip(&virt));
+    if !s.modern {
+        put_fixed(f, &virt, info_tex, INFO_MODEL_RECT, crate::kit::layout::box_model_clip(&virt));
+    }
 }
 
 /// A battle point on the virtual screen and the projection's pixels per battle unit there.
@@ -1739,6 +1751,12 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
     [c.x, c.y, c.rotate, c.pitch, c.zoom] = cam;
     let mut live = crate::spacewar_live::Live::enter(world, 0, &view.camera, &l.install, 0).ok_or("no battle slot")?;
     live.ui.kering = kering;
+    // Ours (ADR 0077): `--modern-hud` draws the modern battle HUD.
+    let mut gui = o.modern_hud.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
+    if gui.is_some() {
+        live.modern = Some(Default::default());
+    }
+    let mut bar_state = crate::starmap_modern::State::default();
     let mut panel_models = crate::starmap_panels::PanelModels::new(r);
     let (mut mouse, mut next, mut shift) = ([320.0f32, 240.0], 0, false);
     for tick in 0..=script.end() {
@@ -1819,14 +1837,44 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
             }
             left |= *o == Out::Left;
         }
-        if let (Some(mut f), true) = (frame, script.grabs.binary_search(&tick).is_ok()) {
+        // The modern HUD runs every frame: its placed controls are the next frame's hot-spots.
+        let grab = script.grabs.binary_search(&tick).is_ok();
+        if let (Some(g), Some(b)) = (&mut gui, world.game.realtime.slots.get(live.ui.slot)) {
+            let bv = hud.battle_modern_view(&live.ui, b);
+            let bar = hud.bar_view(&world.game.state, &l.tables, &world.ui, world.curr.human, None, t, 0);
+            let style = crate::starmap_modern::style(hud, size);
+            let st = live.modern.get_or_insert_with(Default::default);
+            for _ in 0..if grab { 3 } else { 1 } {
+                g.pointer(Some(crate::font::Virtual::new(size).px(mouse[0], mouse[1])), crate::gui::Gui::scale(o.size.1));
+                g.run(o.size, &style, |ctx| {
+                    crate::starmap_modern::bar(ctx, &bar, &mut bar_state, &mut Vec::new());
+                    crate::battle_modern::show(ctx, &bv, st);
+                });
+            }
+        }
+        if let (Some(mut f), true) = (frame, grab) {
             hud.speed = (world.game.speed_level() - 1).clamp(0, 2) as usize;
             hud.paused = world.paused();
+            hud.modern_bar = gui.is_some();
             hud.draw(&mut f, size, &world.ui, &l.tables, crate::ui::Screen::Starmap, t);
-            if let Some(top) = live.over_bar.take() {
-                f.append(top);
-            }
-            let rgba = r.draw_to_image(&f, o.size, t);
+            let rgba = match (&mut gui, &live.modern) {
+                (Some(g), Some(st)) => {
+                    let mut top = crate::render::Frame::new([0.0; 4]);
+                    if let Some(gfx) = &live.gfx {
+                        crate::battle_modern::pictures(&mut top, &st.wells, gfx.info_tex, gfx.column_tex, &crate::battle_modern::places(&live.ui), &crate::font::Virtual::new(size));
+                    }
+                    if let Some(over) = live.over_bar.take() {
+                        top.append(over);
+                    }
+                    r.draw_to_image_over_top(&f, Some(top), o.size, t, |d, q, tex| g.paint(d, q, tex))
+                }
+                _ => {
+                    if let Some(top) = live.over_bar.take() {
+                        f.append(top);
+                    }
+                    r.draw_to_image(&f, o.size, t)
+                }
+            };
             let path = crate::script::grab_path(out, tick);
             crate::assets::write_snapshot(&path, o, &rgba)?;
             let u = &live.ui;

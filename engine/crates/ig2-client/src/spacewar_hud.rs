@@ -63,7 +63,7 @@ impl Stats {
 }
 
 /// `sprintf` with `%d` and `%s`, each with an optional width (`%4d`: right-aligned in 4 cells, `%-4d` left).
-fn format(fmt: &[u8], nums: &[i64], strs: &[&[u8]]) -> Vec<u8> {
+pub(crate) fn format(fmt: &[u8], nums: &[i64], strs: &[&[u8]]) -> Vec<u8> {
     let (mut out, mut i, mut n, mut s) = (Vec::new(), 0, nums.iter(), strs.iter());
     while i < fmt.len() {
         if fmt[i] != b'%' {
@@ -105,7 +105,7 @@ fn format(fmt: &[u8], nums: &[i64], strs: &[&[u8]]) -> Vec<u8> {
 }
 
 /// The rank text (`GetString(0xb, 1, 6..10)` by the average rank: below 4, 0x10, 0x1e, 0x32, else; "-" below 0).
-fn rank(hud: &crate::ui::Hud, avg: i32) -> Vec<u8> {
+pub(crate) fn rank(hud: &crate::ui::Hud, avg: i32) -> Vec<u8> {
     let k = match avg {
         a if a < 0 => return b"-".to_vec(),
         a if a < 4 => 6,
@@ -132,6 +132,9 @@ pub fn draw(f: &mut Frame, hud: &crate::ui::Hud, console: Option<&crate::starmap
         for [x, y, w, h] in [[lx, ly, hx - lx, 1.0], [lx, hy - 1.0, hx - lx, 1.0], [lx, ly, 1.0, hy - ly], [hx - 1.0, ly, 1.0, hy - ly]] {
             f.push(hud.white, Blend::GammaAlpha, Instance::new(kind::SPRITE, [x + w / 2.0, y + h / 2.0], [w / 2.0, h / 2.0], [c[0], c[1], c[2], 1.0]));
         }
+    }
+    if d.modern {
+        return;
     }
     if let Some(c) = console {
         c.draw(f, v);

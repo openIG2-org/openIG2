@@ -10,7 +10,7 @@ use crate::world::World;
 
 pub struct Live {
     pub ui: SpaceWarUi,
-    gfx: Option<Gfx>,
+    pub gfx: Option<Gfx>,
     /// The battle tick the poses last saw.
     seen_tick: i32,
     /// `STAR_M.RAW` (kep 0x1f): the camera cluster's hot-spot mask.
@@ -36,6 +36,8 @@ pub struct Live {
     /// The frame's tooltip and pointer, which go over the top bar and the tutorial's window (`UpdateFrame` draws
     /// them last): the caller appends them after those.
     pub over_bar: Option<crate::render::Frame>,
+    /// Ours (ADR 0077): the modern HUD's placed controls (its last frame's), while it is on.
+    pub modern: Option<crate::battle_modern::State>,
     /// The zoom-out runs towards the options screen (`starmaphovaleptovabb = 0xd`, `SpaceWar_Kilep` phase 1).
     pub to_options: bool,
     /// The zoom-out runs towards another screen (an F-key or the top bar's spot 7, both only with `DEBUGX`): its
@@ -57,7 +59,7 @@ impl Live {
         world.game.sp_battles.on_screen = true;
         world.game.realtime.fx.clear();
         let fx = crate::spacewar_fx::Tables::read(install).map_err(|e| eprintln!("ig2-client: the battle effects' tables: {e}")).ok().map(crate::spacewar_fx::Fx::new);
-        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx, loops: Default::default(), tip: Default::default(), over_bar: None, to_options: false, to_screen: None })
+        Some(Self { ui, gfx: None, seen_tick, mask, left: false, right: false, zoomed: false, ended: false, pointer: [320, 240], window: [640, 480], ticks100: now as u64 / 10, fx, loops: Default::default(), tip: Default::default(), over_bar: None, modern: None, to_options: false, to_screen: None })
     }
 
     /// The end check closed the battle (`AktKepKell = 2`): `SpaceWar_Kilep`'s zoom-out.
@@ -179,18 +181,38 @@ impl Live {
     pub fn frame(&mut self, world: &World, r: &mut crate::render::Renderer, install: &ig2_formats::Install, assets: &crate::starmap::Assets, v: &mut crate::starmap::View, hud: &crate::ui::Hud, tables: &ig2_rules::Rules, mouse: [f32; 2], shift: bool, now: u32, alpha: f32, t: f32, size: [f32; 2], globe: Option<crate::render::TexId>) -> (Option<crate::render::Frame>, Vec<Out>) {
         let mut out = Vec::new();
         let Some(b) = world.game.realtime.slots.get(self.ui.slot) else { return (None, out) };
-        self.ui.mouse = mouse;
-        let raw = self.ui.spot(&self.mask, mouse);
+        // Under the modern HUD its controls are the original's hot-spots, at the point on them the original's code
+        // reads (the radar, the slider); the original's own places are the battlefield's.
+        let pointer = mouse;
+        let (raw, mut mouse) = match self.modern.as_ref().map(|m| m.spot(mouse)) {
+            Some(Some((id, at))) => (Some(id), at),
+            Some(None) => (self.ui.spot(&self.mask, mouse).map(|s| if crate::battle_modern::replaced(s) { 0x4c } else { s }), mouse),
+            None => (self.ui.spot(&self.mask, mouse), mouse),
+        };
         let spot = self.ui.latch(raw);
+        // A latched drag keeps its control's mapping (the radar's pan, the slider), clamped to it; one begun on the
+        // battlefield keeps the real pointer across the HUD (`Mouse_Megfogva`).
+        if let Some(m) = &self.modern {
+            match spot {
+                Some(id @ (0x1f | 0x37)) => mouse = m.map_to(id, pointer).unwrap_or(mouse),
+                Some(0x4c) => mouse = pointer,
+                _ => {}
+            }
+        }
+        self.ui.mouse = mouse;
         self.ui.buttons(self.left, self.right, spot == Some(0x4c));
         self.ui.megfogva_update(spot);
         if !self.left && self.ui.retreat_window {
-            let yes = crate::spacewar_hud::retreat_hover(hud, mouse) == 1;
+            let yes = match &self.modern {
+                Some(m) => m.yes(pointer),
+                None => crate::spacewar_hud::retreat_hover(hud, mouse) == 1,
+            };
             let paused = world.game.state.mem.u8(ig2_sim::save::va::TUTORIAL_PAUSED) != 0;
             self.ui.retreat_window_frame(yes, paused, &mut out);
         }
         self.ui.hot_spots(b, spot, now, &mut out);
         let mut shown = self.ui.shown(b, tables);
+        shown.modern = self.modern.is_some();
         shown.fx = self.fx.as_ref().map(|fx| (fx, world.game.rules.space.weapons.as_slice()));
         // The guns' buildings' damaged fraction (`building +4 / EpuletekLeiro[type] +8`).
         let blocks = world.game.state.buildings.get(b.planet.max(0) as usize);
@@ -225,7 +247,7 @@ impl Live {
         let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
         hud.draw_battle_starmap(&mut frame, &world.game.state, tables, v, &world.prev, &world.curr, &sel, alpha, t, shown.fade, globe);
         let virt = crate::font::Virtual::new(size);
-        if let Some(big) = &shown.big {
+        if let Some(big) = shown.big.as_ref().filter(|_| !shown.modern) {
             crate::spacewar_hud::big_box(&mut frame, hud, &virt, &shown, big);
         }
         crate::spacewar_hud::notices(&mut frame, hud, &virt, [b.human_retreated, b.ai_retreated, self.ui.formation(b)], self.ui.column[0], self.ui.fade);
@@ -257,18 +279,18 @@ impl Live {
             crate::spacewar_hud::banner(&mut frame, hud, &virt, &t, now.saturating_sub(t0), self.ui.fade);
         }
         // `WriteRetreatWindow` is the frame's last text (spec §3 step 14), over the console and the radar.
-        if self.ui.retreat_window {
+        if self.ui.retreat_window && !shown.modern {
             crate::spacewar_hud::retreat_window(&mut frame, hud, &virt, mouse);
         }
         // The tooltip (`GFX_DateMoneyScrollFade`'s fader pass 3) and the cursor (`UpdateFrame`): `MousePointerType` 0 → 1,
         // 2 → 5, 3 → 7, 4 → 6; 1 keeps the hot-spots' type 1.
         let tips = crate::spacewar_hud::tooltips(hud, &shown, self.ui.formation(b));
-        self.tip.moved(mouse);
+        self.tip.moved(pointer);
         let under = raw.map_or(0, |a| a.saturating_sub(0x1e));
         let len = tips.get(under as usize).map_or(0, |t| t.len());
         self.tip.update(now as f64, if len == 0 { 0 } else { under }, len, self.left || self.right);
         let mut top = crate::render::Frame::new([0.0; 4]);
-        if let (Some(t), Some(font)) = (tips.get(self.tip.shown as usize), hud.font.as_ref()) {
+        if let (Some(t), Some(font), false) = (tips.get(self.tip.shown as usize), hud.font.as_ref(), shown.modern) {
             self.tip.draw(&mut top, font, hud.white, &virt, &hud.palette, t);
         }
         let kind = match shown.pointer {
@@ -278,7 +300,12 @@ impl Live {
             4 => 6,
             _ => 1,
         };
-        crate::spacewar_hud::cursor(&mut top, &virt, gfx.cursor, kind, self.ticks100, mouse);
+        // Ours (ADR 0073 §6): the modern pointer set (select, move, attack) with modern cursors on.
+        if crate::gui::ds::cursor::modern() {
+            hud.draw_pointer_phase(&mut top, size, [pointer[0] as i32, pointer[1] as i32], kind, self.ticks100);
+        } else {
+            crate::spacewar_hud::cursor(&mut top, &virt, gfx.cursor, kind, self.ticks100, pointer);
+        }
         self.over_bar = Some(top);
         let (units, guns) = crate::spacewar_screen::pick(gfx, assets, &shown, &v.camera);
         let plane = crate::spacewar_screen::plane_point(&shown, mouse, crate::spacewar_ui::PLANE_H * shown.view.scale);

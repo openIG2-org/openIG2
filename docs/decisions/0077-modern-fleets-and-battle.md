@@ -1,8 +1,9 @@
 # ADR 0077: the fleet panels, the planet settings menus and the space battle on the design kit
 
-Date: 2026-11-03. Status: accepted (the fleet info and transfer panels, the settings menus). Amends ADR 0065 and ADR
+Date: 2026-11-03. Status: accepted. Amends ADR 0065 and ADR
 0079 (the modern starmap HUD) on the design kit of ADR 0073. Implemented by `ig2-client::fleet_modern` and the
-window's pointer (`window.rs`: `starmap_virtual`, `fleet_modern_up`), `starmap_modern` (the settings menus).
+window's pointer (`window.rs`: `starmap_virtual`, `fleet_modern_up`), `starmap_modern` (the settings menus),
+`battle_modern` and `spacewar_live` (the battle's hot-spots).
 
 ## Context
 The design system's fleet boards ("Fleet info over the starmap", "Transfer between two fleets", the four "Select
@@ -42,7 +43,26 @@ settings menus dropped under their field with no mark of the value set.
    field (a native list box), the value in the list's selected look, the row under the pointer with the bright rim
    fading in; the long info is the board's 500 wide, the ALL plates 64. The planet list keeps lighting the pointer's
    row. The hot-spot remap of ADR 0079 §4 follows the moved list.
-6. **Text**: every label through the kit's fitted text in a fixed box (cut with "…" and its whole text as a tooltip,
+6. **The space battle** (the boards "Space battle" and "Space battle: ship info"), with the same option: the modern
+   top bar; the weapon rail at the screen's right edge (the board's 96-wide keys: the ship info key, a key per weapon
+   group the original's column shows, sliding in and out with it, the retreat key at the bottom; each key holds the
+   original's turning weapon icon with its reload clock and "off" mark, cut out of the column's render target, its
+   name and a charge bar of the reload; in the formation phase the formations, the chosen one lit); the selection
+   card at the bottom left (the small info box's three cases: the selected units with the info model in its well,
+   the guns, or the battle overview with the fighters' stance slider); the big info box as the board's panel left of
+   the rail (the model, the count in an LCD window, the data table with the hull bar, the weapons), sliding in with
+   the original's slide; the navigation plate at the bottom right (the radar drawn from the original's data: the
+   units turned by the snapped yaw, the view's outline on the grid plane; the camera cluster's six buttons as metal
+   keys); the retreat question as the kit's modal. The 3D battle, its overlays and the notices stay the original's.
+   **Same functions**: the HUD takes no input; the battle asks it which of the original's hot-spots the pointer is
+   on and at which point (`battle_modern::State::spot`: over a control its hot-spot, the radar and the slider mapped
+   onto the original's window and bar; over a panel no control; elsewhere the original's, with its replaced places
+   the battlefield's). So both mouse buttons on the camera keys (one zoom key in and out, one pitch key up and down,
+   as the original's cluster), the radar's press and drag, the weapon groups (left toggles the mounts, right arms the
+   fire pointer), the formations, the info toggle, the stance, the retreat (the release over Yes), the keys and the
+   lockstep orders are the original's. The modern pointer set (select, move, attack, target) replaces `MOUSE.BMP` in
+   the battle too when "Modern cursors" is on (ADR 0073 §6).
+7. **Text**: every label through the kit's fitted text in a fixed box (cut with "…" and its whole text as a tooltip,
    or shrunk to a floor); long or translated names never widen a card, a panel or a row. The game's strings
    throughout; the one new label, "Equipment" over the pod list, is ours (ADR 0042).
 
@@ -52,5 +72,10 @@ settings menus dropped under their field with no mark of the value set.
   navigation plate.
 - The board's "1 tank doesn't fit" line and the long info's colony plate have no original function and are not
   drawn.
+- The battle's rail keys are where the original's column was (the screen's right edge); the camera keys keep the
+  original's six (top view, yaw left and right, the angled view, zoom, pitch) rather than the board's split zoom keys.
+- The battle's HUD controls answer from the previous frame's layout (the HUD is drawn after the battle's input), as
+  the starmap's modern panels.
 - Classic and every capture and replay are unchanged: the panels are the modern HUD's (its option and `--modern-hud`;
-  `--panel fleet --select-fleet F` and `--panel transfer:F1,F2` stage them in snapshots).
+  `--panel fleet --select-fleet F` and `--panel transfer:F1,F2` stage them in snapshots, `--screen spacewar --battle
+  … --script … --modern-hud` the battle).

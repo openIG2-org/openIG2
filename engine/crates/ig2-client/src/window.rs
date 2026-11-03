@@ -293,10 +293,12 @@ struct App {
     production_hold: Option<(usize, usize, bool)>,
     research_modern: crate::research_modern::State,
     research_acts: Vec<crate::research_modern::Act>,
-    /// Ours (ADR 0077): where the modern fleet and transfer panels put the original's controls.
+    /// Ours (ADR 0077): where the modern fleet and transfer panels put the original's controls; the modern battle
+    /// HUD's top bar.
     fleet_modern: crate::fleet_modern::State,
     design_modern: crate::design_modern::State,
     design_acts: Vec<crate::design_modern::Act>,
+    battle_bar: crate::starmap_modern::State,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -847,6 +849,7 @@ impl App {
             fleet_modern: Default::default(),
             design_modern: Default::default(),
             design_acts: Vec::new(),
+            battle_bar: Default::default(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
             left_down: None,
@@ -2484,6 +2487,11 @@ impl App {
             _ if self.fleet_modern_up() => self.fleet_modern.pointer(at),
             _ => at,
         }
+    }
+
+    /// Ours (ADR 0077): the modern battle HUD is up (the battle shown with nothing over it, the modern HUD's option).
+    fn battle_modern_up(&self) -> bool {
+        self.display.modern_starmap && self.spacewar.is_some() && self.front.is_none() && self.options.is_none() && self.help.is_none()
     }
 
     /// Ours (ADR 0077): the modern fleet info or transfer panel is up (under the modern starmap HUD; the vehicles'
@@ -5579,25 +5587,71 @@ impl App {
             _ => None,
         };
         if self.spacewar.is_some() {
+            // Ours (ADR 0077): the modern battle HUD with the modern starmap HUD's option.
+            let modern = self.display.modern_starmap;
+            if let Some(sw) = &mut self.spacewar {
+                match modern {
+                    true => _ = sw.modern.get_or_insert_with(Default::default),
+                    false => sw.modern = None,
+                }
+            }
             let Some(mut frame) = self.spacewar_frame(now, alpha, size, t, globe) else { return };
             let (Some(g), Some(h)) = (&mut self.gpu, &mut self.hud) else { return };
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
-            h.modern_bar = false;
+            h.modern_bar = modern;
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Starmap, t);
             // The tutorial's window over the battle too (`GFX_DateMoneyScrollFade` pass 3, every `AktKep` but 0xd).
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, 11);
             }
-            if let Some(top) = self.spacewar.as_mut().and_then(|s| s.over_bar.take()) {
-                frame.append(top);
+            let mut top = None;
+            let mut bar_acts = Vec::new();
+            if let (true, Some(sw)) = (modern, &mut self.spacewar) {
+                if let Some(b) = self.world.game.realtime.slots.get(sw.ui.slot) {
+                    let bv = h.battle_modern_view(&sw.ui, b);
+                    let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                    let mut bar = h.bar_view(&self.world.game.state, self.tables, &self.world.ui, self.world.curr.human, gates, t, 0);
+                    bar.bind_keys(&self.bindings);
+                    let style = crate::starmap_modern::style(h, size);
+                    let (st, bs, band) = (sw.modern.get_or_insert_with(Default::default), &mut self.battle_bar, g.band());
+                    g.gui.run(band, &style, |ctx| {
+                        crate::starmap_modern::bar(ctx, &bar, bs, &mut bar_acts);
+                        crate::battle_modern::show(ctx, &bv, st);
+                    });
+                    let mut f = crate::render::Frame::new([0.0; 4]);
+                    if let Some(gfx) = &sw.gfx {
+                        crate::battle_modern::pictures(&mut f, &st.wells, gfx.info_tex, gfx.column_tex, &crate::battle_modern::places(&sw.ui), &crate::font::Virtual::new(size));
+                    }
+                    top = Some(f);
+                }
             }
-            ov.draw(&mut frame, h, size);
+            match &mut top {
+                Some(f) => {
+                    if let Some(over) = self.spacewar.as_mut().and_then(|s| s.over_bar.take()) {
+                        f.append(over);
+                    }
+                    ov.draw(f, h, size);
+                }
+                None => {
+                    if let Some(over) = self.spacewar.as_mut().and_then(|s| s.over_bar.take()) {
+                        frame.append(over);
+                    }
+                    ov.draw(&mut frame, h, size);
+                }
+            }
             if let Ok(out) = g.surface.get_current_texture() {
-                self.backdrop.last = Some((g.present(frame, &out.texture, t), t));
+                self.backdrop.last = Some((g.present_over(frame, top, &out.texture, t), t));
                 g.window.pre_present_notify();
                 out.present();
+            }
+            // The original's screen menu is off in a battle (`topbar_menus` with the battle flag) but under `DEBUGX`.
+            let debug = self.world.game.state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
+            for a in bar_acts {
+                if debug || !matches!(a, crate::starmap_modern::Act::Screen(_)) {
+                    self.bar_act(a);
+                }
             }
             return;
         }
@@ -6147,7 +6201,7 @@ impl ApplicationHandler for App {
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
         let either = self.main_menu_modern_up();
-        if !page && (self.modern_up() || self.main_menu_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();
@@ -6278,7 +6332,7 @@ impl ApplicationHandler for App {
             }
             // The top bar's drop-downs take the buttons first on every screen with the bar (`MOUSE_SelectScreens`).
             WindowEvent::MouseInput { state, button, .. }
-                if (self.help.is_some() || self.options.is_some() || self.spacewar.is_some()) && !self.tutorial_owns_input() && self.top_menus_button(button, state == ElementState::Pressed) => {}
+                if (self.help.is_some() || self.options.is_some() || (self.spacewar.is_some() && !self.battle_modern_up())) && !self.tutorial_owns_input() && self.top_menus_button(button, state == ElementState::Pressed) => {}
             WindowEvent::CursorMoved { position, .. } if self.help.is_some() => {
                 let top = self.gpu.as_ref().map_or(0, |g| g.layout().frame[1]) as f32;
                 let (bw, bh) = self.gpu.as_ref().map_or((640, 480), |g| g.band());
@@ -6601,7 +6655,8 @@ impl ApplicationHandler for App {
                 }
                 // The top bar's plain spots as on every screen: pause and the speeds on either button's press, the
                 // message line (7) with its battle gate (`DEBUGX`) and the right button's history.
-                if !down || first {
+                // Under the modern battle HUD its own bar (egui) has them.
+                if (!down || first) && !self.battle_modern_up() {
                     self.top_bar_mouse(button, down, at);
                 }
             }

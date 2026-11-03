@@ -409,8 +409,8 @@ pub struct SpaceWarUi {
     pub gun_timers: Vec<[i32; 3]>,
     gun_was: Vec<bool>,
     /// The small box's title (`infoszamol`'s snapshot): one unit's plan name and the tech under it; the big box's.
-    title: Vec<u8>,
-    title_tech: i32,
+    pub title: Vec<u8>,
+    pub title_tech: i32,
     pub big: crate::spacewar_hud::BigInfo,
     /// `MousePointerType` (0 normal, 2 own unit, 3 attack, 4 the armed fire cursor) and `spwckezdotimer` (ms).
     pub start_ms: Option<u32>,
@@ -2000,6 +2000,7 @@ impl SpaceWarUi {
             pointer: self.pointer,
             formation: self.formation(b).then_some(self.formation_pick),
             kering: self.kering,
+            modern: false,
         }
     }
 

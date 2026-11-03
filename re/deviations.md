@@ -114,6 +114,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 518 | modern main menu, entries | an entry acts when the button is released over it (either button); the original's rings and the classic panel act on the press frame (`IG2_gameUpdate`, exe 0x4e0440) | no | ADR 0078 |
 | 520 | starmap, modern long info's settings menus | the tax, autobuild and priority lists open over their field with the current value marked; the original's drop under the field with no mark; the choice made is the same | yes | ADR 0077 |
 | 523 | research and design, modern exit plates | the exit plate is the top bar's starmap pick (client only); the exe has no exit button on these screens (the top bar's keys, F-keys, Esc) | no | research.md §7, design.md §14 |
+| 528 | space battle, modern HUD | the camera keys keep the original's six (top view, yaw left and right, the angled view, zoom, pitch), not the board's split zoom keys; the HUD's controls answer from the previous frame's layout | yes | ADR 0077 |
 
 ## Enhanced
 

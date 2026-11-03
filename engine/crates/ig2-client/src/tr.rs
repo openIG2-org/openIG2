@@ -59,6 +59,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Speed", "Sebesség"),
     // The modern fleet panel (ADR 0077).
     ("Equipment", "Felszerelés"),
+    ("Ship info", "Hajó info"),
     ("Quick research", "Gyors kutatás"),
     ("Build cursor", "Építési kurzor"),
     ("No research", "Nincs kutatás"),
